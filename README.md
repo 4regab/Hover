@@ -18,11 +18,16 @@ Built with .NET 8 and WPF. A Windows descendant of
 - **Notes on the right edge.** Hover the right side and your notes fan out as
   tabs. Click one to open it. Plain-text notes with live Markdown styling,
   checkbox tasks, colours, search, pinning and word-based undo.
+- **Name a note yourself.** A note's title normally follows its first line. Click
+  the title in an open note, or right-click its tab, to name it something else and
+  it stays put however you edit the note. Clear the name and it follows the first
+  line again.
 - **Screenshots on the left edge.** Every snip you take and every image you copy
   lands in a tray on the left. Hover to see them as thumbnails, each with a Delete
   button. Drag one straight onto a website, a chat box, a folder or a terminal.
 - **Out of the way.** Both panels are hidden until you hover the edge, so the
-  screen stays clean.
+  screen stays clean. If you would rather they stayed put, Settings can switch
+  auto-hide off for the notes deck and the screenshot tray separately.
 - **Autosave and archive**, a searchable All Notes window, drag-to-reorder, and
   multi-monitor support.
 - **Import / export** as Markdown, plain text, or a `.stickies` archive.

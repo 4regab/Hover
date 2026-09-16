@@ -41,6 +41,35 @@ public sealed class TransferTests
     }
 
     [Test]
+    public void StickyNote_carries_a_hand_written_title_through_an_export()
+    {
+        var named = new StickyNote(new Note { Title = "Groceries", Body = "milk", TitleLocked = true });
+        var derived = new StickyNote(new Note { Title = "milk", Body = "milk" });
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(named.ToNote().TitleLocked, Is.True);
+            Assert.That(named.ToNote().Title, Is.EqualTo("Groceries"));
+            Assert.That(derived.ToNote().TitleLocked, Is.False);
+        });
+    }
+
+    [Test]
+    public void An_import_without_a_title_is_never_treated_as_hand_written()
+    {
+        // A file written by another tool can claim the flag while carrying no title.
+        var odd = new StickyNote { Title = "", Body = "# Derived\nrest", TitleLocked = true };
+
+        var restored = odd.ToNote();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(restored.Title, Is.EqualTo("Derived"));
+            Assert.That(restored.TitleLocked, Is.False);
+        });
+    }
+
+    [Test]
     public void StickyNote_derives_a_missing_title_on_import()
     {
         var restored = new StickyNote { Body = "# Imported\nBody" }.ToNote();

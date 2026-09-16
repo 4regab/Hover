@@ -298,6 +298,15 @@ public sealed class LibraryWindow : Window
             Margin = new Thickness(0, 10, 0, 0),
             HorizontalAlignment = HorizontalAlignment.Right,
         };
+        buttons.Children.Add(Action("Rename", () =>
+        {
+            if (_selectedId is not { } id || NoteStore.Shared.Get(id) is not { } note) return;
+            var input = RenameDialog.Ask(this, note.Title, "Name this note",
+                "Leave it empty and the title follows the note's first line again.");
+            if (input is null) return;
+            NoteStore.Shared.SetTitle(id, input);
+            _detailTitle.Text = NoteStore.Shared.Get(id)?.DisplayTitle ?? "";
+        }));
         buttons.Children.Add(Action("Cycle colour", () =>
         {
             if (_selectedId is { } id) NoteStore.Shared.CycleColor(id);

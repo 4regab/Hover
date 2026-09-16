@@ -89,6 +89,7 @@ public sealed class ImageStripManager : IDisposable
         {
             s.RefreshLevel();
             s.Layout();
+            s.Redraw();
         }
     }
 

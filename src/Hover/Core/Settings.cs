@@ -24,6 +24,8 @@ public static class Settings
         public DeckStyle DeckStyle { get; set; } = DeckStyle.Tabs;
         public bool KeepFanned { get; set; }
         public double DeckScale { get; set; } = 1.0;
+        public bool AutoHideNotes { get; set; } = true;
+        public bool AutoHideShots { get; set; } = true;
 
         public Shortcut ScNewNote { get; set; } = new(ModifierKeys.Control | ModifierKeys.Alt, Key.N);
         public Shortcut ScAllNotes { get; set; } = new(ModifierKeys.Control | ModifierKeys.Alt, Key.A);
@@ -183,6 +185,24 @@ public static class Settings
     /// How long the deck may sit untouched before it tidies itself away.
     public static readonly TimeSpan FanIdleTimeout = TimeSpan.FromSeconds(4);
     public static readonly TimeSpan NoteIdleTimeout = TimeSpan.FromSeconds(60);
+
+    /// Let the notes deck put itself away — on a timeout, when the pointer leaves it,
+    /// and when a click lands in another app. Off, the deck stays out once it is out,
+    /// and only Esc, clicking the tab again, or the pointer never having woken it
+    /// puts it back. An open note that is pinned already ignores all three.
+    public static bool AutoHideNotes
+    {
+        get => M.AutoHideNotes;
+        set { M.AutoHideNotes = value; Save(); }
+    }
+
+    /// The same for the screenshot tray. Off, the tray keeps a close button, since
+    /// walking the pointer away is no longer what shuts it.
+    public static bool AutoHideShots
+    {
+        get => M.AutoHideShots;
+        set { M.AutoHideShots = value; Save(); }
+    }
 
     public static DeckStyle DeckStyle
     {

@@ -52,6 +52,11 @@ public sealed class Store : IDisposable
             Exec("ALTER TABLE notes ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0;");
             Log.Line("migrated notes table — added pinned");
         }
+        if (!existing.Contains("title_locked"))
+        {
+            Exec("ALTER TABLE notes ADD COLUMN title_locked INTEGER NOT NULL DEFAULT 0;");
+            Log.Line("migrated notes table — added title_locked");
+        }
     }
 
     private void Exec(string sql)
@@ -77,7 +82,7 @@ public sealed class Store : IDisposable
         {
             using var cmd = _db.CreateCommand();
             cmd.CommandText =
-                "SELECT id,title,body,color,created,modified,archived,sort_order,pinned " +
+                "SELECT id,title,body,color,created,modified,archived,sort_order,pinned,title_locked " +
                 "FROM notes ORDER BY sort_order ASC;";
             using var r = cmd.ExecuteReader();
             while (r.Read())
@@ -94,6 +99,7 @@ public sealed class Store : IDisposable
                     Archived = r.GetInt32(6) != 0,
                     Order = r.GetDouble(7),
                     Pinned = r.GetInt32(8) != 0,
+                    TitleLocked = r.GetInt32(9) != 0,
                 });
             }
         }
@@ -112,12 +118,13 @@ public sealed class Store : IDisposable
         {
             using var cmd = _db.CreateCommand();
             cmd.CommandText = """
-            INSERT INTO notes (id,title,body,color,created,modified,archived,sort_order,pinned)
-            VALUES ($id,$title,$body,$color,$created,$modified,$archived,$order,$pinned)
+            INSERT INTO notes (id,title,body,color,created,modified,archived,sort_order,pinned,title_locked)
+            VALUES ($id,$title,$body,$color,$created,$modified,$archived,$order,$pinned,$titleLocked)
             ON CONFLICT(id) DO UPDATE SET
               title=excluded.title, body=excluded.body, color=excluded.color,
               modified=excluded.modified, archived=excluded.archived,
-              sort_order=excluded.sort_order, pinned=excluded.pinned;
+              sort_order=excluded.sort_order, pinned=excluded.pinned,
+              title_locked=excluded.title_locked;
             """;
             cmd.Parameters.AddWithValue("$id", n.Id);
             cmd.Parameters.AddWithValue("$title", n.Title ?? "");
@@ -128,6 +135,7 @@ public sealed class Store : IDisposable
             cmd.Parameters.AddWithValue("$archived", n.Archived ? 1 : 0);
             cmd.Parameters.AddWithValue("$order", n.Order);
             cmd.Parameters.AddWithValue("$pinned", n.Pinned ? 1 : 0);
+            cmd.Parameters.AddWithValue("$titleLocked", n.TitleLocked ? 1 : 0);
             cmd.ExecuteNonQuery();
         }
         catch (Exception e)

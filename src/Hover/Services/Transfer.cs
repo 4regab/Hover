@@ -33,6 +33,10 @@ public sealed class StickyNote
     public bool Archived { get; set; }
     public double Order { get; set; }
 
+    /// Absent in files written before notes could be named by hand, which is exactly
+    /// the false they should read back as.
+    public bool TitleLocked { get; set; }
+
     public StickyNote() { }
 
     public StickyNote(Note n)
@@ -46,6 +50,7 @@ public sealed class StickyNote
         Modified = n.Modified;
         Archived = n.Archived;
         Order = n.Order;
+        TitleLocked = n.TitleLocked;
     }
 
     public Note ToNote() => new()
@@ -58,6 +63,7 @@ public sealed class StickyNote
         Modified = Modified,
         Archived = Archived,
         Order = Order,
+        TitleLocked = TitleLocked && !string.IsNullOrEmpty(Title),
     };
 }
 

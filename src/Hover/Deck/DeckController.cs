@@ -81,8 +81,9 @@ public sealed class DeckController : IDisposable
         };
         _window.Deactivated += (_, _) =>
         {
-            // A click in any other app dismisses the open note — unless it is pinned.
-            if (State.ExpandedId is null || OpenNoteIsPinned) return;
+            // A click in any other app dismisses the open note — unless it is pinned,
+            // or auto-hide is off, in which case only the user closes the note.
+            if (State.ExpandedId is null || OpenNoteIsPinned || !Settings.AutoHideNotes) return;
             _window.Dispatcher.BeginInvoke(new Action(Dismiss), DispatcherPriority.Background);
         };
 
@@ -183,6 +184,14 @@ public sealed class DeckController : IDisposable
         // A menu open over the deck is the deck being used, even though the pointer
         // has walked off the strip to reach it.
         if (_menuOpen)
+        {
+            NoteActivity();
+            return;
+        }
+        // Auto-hide off: the deck stays where the user put it. The clock is kept
+        // wound anyway, so switching auto-hide back on gives a full grace period
+        // rather than closing the deck the instant the setting changes.
+        if (!Settings.AutoHideNotes)
         {
             NoteActivity();
             return;
@@ -843,6 +852,7 @@ public sealed class DeckController : IDisposable
     private void AttachNoteMenu(FrameworkElement el, Note note)
     {
         var menu = new ContextMenu();
+        menu.Items.Add(MenuItemFor("Rename…", () => RenameNote(note.Id)));
         menu.Items.Add(MenuItemFor(note.Pinned ? "Unpin" : "Pin",
             () => NoteStore.Shared.TogglePin(note.Id)));
         menu.Items.Add(MenuItemFor("Archive", () => NoteStore.Shared.SetArchived(note.Id, true)));
@@ -865,9 +875,42 @@ public sealed class DeckController : IDisposable
         return item;
     }
 
+    /// Name a note by hand. The prompt is a modal window, so the deck has to be
+    /// activatable while it is up — and must not tidy itself away underneath it,
+    /// since the pointer moving onto the dialog counts as leaving the strip. That is
+    /// the same problem the deck's own menus have, so it borrows the same flag.
+    public void RenameNote(string id)
+    {
+        if (NoteStore.Shared.Get(id) is not { } note) return;
+        _menuOpen = true;
+        PrepareForMenu();
+        try
+        {
+            var input = Hover.Windows.RenameDialog.Ask(_window, note.Title, "Name this note",
+                "Leave it empty and the title follows the note's first line again.");
+            if (input is not null) NoteStore.Shared.SetTitle(id, input);
+        }
+        finally
+        {
+            _menuOpen = false;
+            NoteActivity();
+            _window.SetAcceptsKeys(State.ExpandedId is not null);
+        }
+    }
+
     private void ShowContextMenu()
     {
-        var menu = Menu(Actions.BuildMainMenu(this));
+        var built = Actions.BuildMainMenu(this);
+        // With auto-hide off, moving the pointer away no longer puts the deck back,
+        // so the deck needs somewhere to be sent by hand. Not offered alongside
+        // "keep the deck fanned out", where being out is the resting state and there
+        // is nowhere for it to go.
+        if (!Settings.AutoHideNotes && !Settings.KeepFanned)
+        {
+            built.Items.Insert(0, new Separator());
+            built.Items.Insert(0, MenuItemFor("Hide the deck", CollapseToRest));
+        }
+        var menu = Menu(built);
         menu.PlacementTarget = _window.Root;
         PrepareForMenu();
         menu.IsOpen = true;
@@ -973,7 +1016,7 @@ public sealed class DeckController : IDisposable
             return;
         }
         if (State.Phase == DeckPhase.Fan && !Settings.KeepFanned &&
-            !HotZone.Contains(Screens.Cursor))
+            Settings.AutoHideNotes && !HotZone.Contains(Screens.Cursor))
         {
             SetState(DeckState.Rest);
             return;
