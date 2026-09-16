@@ -1,0 +1,15 @@
+<svg width="256" height="256" viewBox="0 0 256 256" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Hover">
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="256" y2="256" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#3A86E0"/>
+      <stop offset="1" stop-color="#5A4BD6"/>
+    </linearGradient>
+  </defs>
+
+  <!-- App tile -->
+  <rect x="16" y="16" width="224" height="224" rx="52" fill="url(#tile)"/>
+
+  <!-- A pointer floating above its own shadow: the app appears when you hover. -->
+  <ellipse cx="128" cy="188" rx="46" ry="12" fill="#000000" fill-opacity="0.18"/>
+  <path d="M104 60 L104 168 L131 141 L150 182 L168 174 L149 133 L186 133 Z" fill="#FFFFFF"/>
+</svg>
