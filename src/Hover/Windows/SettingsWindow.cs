@@ -173,6 +173,19 @@ public sealed class SettingsWindow : Window
 
         _body.Children.Add(Toggle("Keep the deck fanned out", Settings.KeepFanned,
             _ => Actions.ToggleKeepFanned()));
+        _body.Children.Add(Toggle("Hide the deck by itself", Settings.AutoHideNotes, v =>
+        {
+            Settings.AutoHideNotes = v;
+            Actions.Refresh();
+        }));
+        _body.Children.Add(Hint("On, the deck puts itself away when you move off it. " +
+                                "Off, it stays out until you press Esc or click its tab."));
+        _body.Children.Add(Toggle("Hide the screenshot tray by itself", Settings.AutoHideShots, v =>
+        {
+            Settings.AutoHideShots = v;
+            Actions.Refresh();
+        }));
+        _body.Children.Add(Hint("Off, the tray stays open and gets its own close button."));
         _body.Children.Add(Toggle("Dock the deck to the left edge", Settings.DeckOnLeftEdge,
             _ => Actions.ToggleDeckEdge()));
         _body.Children.Add(Toggle("Keep the deck over full-screen apps", Settings.ShowOverFullScreen,

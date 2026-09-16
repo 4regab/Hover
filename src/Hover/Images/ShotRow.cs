@@ -164,7 +164,7 @@ public sealed class ShotRow : Border
 
     /// A round flat button, so the corner ✕ reads as a chip rather than a boxy
     /// default WPF button.
-    private static ControlTemplate RoundButtonTemplate()
+    internal static ControlTemplate RoundButtonTemplate()
     {
         var border = new FrameworkElementFactory(typeof(Border));
         border.SetValue(Border.CornerRadiusProperty, new CornerRadius(10));

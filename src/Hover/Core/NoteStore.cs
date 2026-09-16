@@ -84,7 +84,24 @@ public sealed class NoteStore : INotifyPropertyChanged, IDisposable
         var n = Get(id);
         if (n is null || n.Body == body) return;
         n.Body = body;
-        n.Title = Note.DerivedTitle(body);
+        n.Title = Note.TitleFor(body, n.Title, n.TitleLocked);
+        n.Modified = DateTime.Now;
+        _store.Upsert(n);
+        Changed();
+    }
+
+    /// Name a note by hand. An empty name hands the title back to the first line of
+    /// the body, which is where it came from before the note was ever renamed.
+    public void SetTitle(string id, string? title)
+    {
+        var n = Get(id);
+        if (n is null) return;
+        var clean = Note.CleanTitle(title);
+        var locked = clean.Length > 0;
+        var next = locked ? clean : Note.DerivedTitle(n.Body);
+        if (n.TitleLocked == locked && n.Title == next) return;
+        n.TitleLocked = locked;
+        n.Title = next;
         n.Modified = DateTime.Now;
         _store.Upsert(n);
         Changed();
@@ -157,10 +174,13 @@ public sealed class NoteStore : INotifyPropertyChanged, IDisposable
     /// Permanently remove a just-created draft that never acquired any content.
     /// This is deliberately separate from Delete: silently abandoning an empty
     /// draft should not replace a real pending deletion in the Undo toast.
+    ///
+    /// A note the user has named is not an abandoned draft, whatever its body says —
+    /// typing a name is the clearest sign yet that the note is wanted.
     public bool DiscardIfEmpty(string id)
     {
         var n = Get(id);
-        if (n is null || !string.IsNullOrWhiteSpace(n.Body)) return false;
+        if (n is null || n.TitleLocked || !string.IsNullOrWhiteSpace(n.Body)) return false;
         _notes.Remove(n);
         _store.Delete(id);
         Changed();

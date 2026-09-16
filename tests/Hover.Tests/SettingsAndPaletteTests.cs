@@ -29,6 +29,42 @@ public sealed class SettingsAndPaletteTests
     }
 
     [Test]
+    public void Auto_hide_is_on_by_default_and_both_panels_toggle_independently()
+    {
+        var originalNotes = Settings.AutoHideNotes;
+        var originalShots = Settings.AutoHideShots;
+        try
+        {
+            Assert.Multiple(() =>
+            {
+                Assert.That(originalNotes, Is.True, "a fresh install hides the deck by itself");
+                Assert.That(originalShots, Is.True, "a fresh install hides the tray by itself");
+            });
+
+            Settings.AutoHideNotes = false;
+            Assert.Multiple(() =>
+            {
+                Assert.That(Settings.AutoHideNotes, Is.False);
+                Assert.That(Settings.AutoHideShots, Is.True, "the tray is not dragged along");
+            });
+
+            Settings.AutoHideShots = false;
+            Settings.AutoHideNotes = true;
+            Assert.Multiple(() =>
+            {
+                Assert.That(Settings.AutoHideNotes, Is.True);
+                Assert.That(Settings.AutoHideShots, Is.False);
+            });
+        }
+        finally
+        {
+            Settings.AutoHideNotes = originalNotes;
+            Settings.AutoHideShots = originalShots;
+            Settings.Flush();
+        }
+    }
+
+    [Test]
     public void Invalid_edge_width_falls_back_to_the_standard_width()
     {
         var original = Settings.EdgeWidth;

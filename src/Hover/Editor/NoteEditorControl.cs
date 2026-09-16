@@ -159,6 +159,17 @@ public sealed class NoteEditorControl : Grid
         _headerTitle.Foreground = _pal.InkAt(0.92);
         _headerTitle.TextTrimming = TextTrimming.CharacterEllipsis;
         _headerTitle.VerticalAlignment = VerticalAlignment.Center;
+        // Clicking the title names the note. Transparent rather than no background:
+        // a TextBlock with no brush is only hit-testable over the glyphs themselves,
+        // which makes a short title a very small target.
+        _headerTitle.Background = Brushes.Transparent;
+        _headerTitle.Cursor = Cursors.Hand;
+        _headerTitle.ToolTip = "Click to name this note";
+        _headerTitle.MouseLeftButtonUp += (_, e) =>
+        {
+            e.Handled = true;
+            _controller.RenameNote(_note.Id);
+        };
         grid.Children.Add(_headerTitle);
 
         var right = new StackPanel

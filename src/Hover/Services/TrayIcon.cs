@@ -11,8 +11,8 @@ namespace Hover.Services;
 
 /// Windows has no accessory-app dock trick to opt out of, but it does expect a way
 /// back into an app with no window — so the pill's menu is also a tray icon.
-/// The icon is drawn at startup rather than shipped as a file: a single sticky note
-/// on its edge, which is the whole app.
+/// The icon is drawn at startup rather than shipped as a file: a small fan of sticky
+/// notes, which is the whole app.
 public sealed class TrayIcon : IDisposable
 {
     private readonly NotifyIcon _icon;
@@ -69,9 +69,13 @@ public sealed class TrayIcon : IDisposable
         _menu.IsOpen = true;
     }
 
-    /// The Hover mark, drawn to match assets/hover.svg: a white pointer floating
-    /// above a soft shadow on a blue→purple tile. Drawn in code so no icon file has
-    /// to ship, and it stays crisp at tray size.
+    /// The Hover mark, drawn to match assets/hover.svg: a fan of three sticky notes
+    /// floating above a soft shadow on an indigo tile. Drawn in code so no icon file
+    /// has to ship, and it stays crisp at tray size.
+    ///
+    /// The writing and the tick on the front note are left out here. At 32 px a
+    /// 7-unit stroke from the 256-space artwork is under one pixel, so they only turn
+    /// the note grey; the three fanned colours are what has to survive.
     public static Icon Draw()
     {
         const int S = 32;
@@ -81,27 +85,69 @@ public sealed class TrayIcon : IDisposable
             g.SmoothingMode = SmoothingMode.AntiAlias;
             g.Clear(Color.Transparent);
 
-            // Rounded tile with the app's blue→purple gradient.
+            // Rounded tile with the app's indigo gradient, top to bottom.
             using var tilePath = RoundedRect(1, 1, S - 2, S - 2, 7);
             using var tile = new LinearGradientBrush(
                 new Rectangle(0, 0, S, S),
-                Color.FromArgb(0x3A, 0x86, 0xE0), Color.FromArgb(0x5A, 0x4B, 0xD6), 45f);
+                Color.FromArgb(0x53, 0x43, 0xBE), Color.FromArgb(0x1F, 0x19, 0x48), 90f);
             g.FillPath(tile, tilePath);
 
-            // The pointer's shadow, then the pointer — 256-space coords scaled to 32.
-            float k = S / 256f;
-            using var shadow = new SolidBrush(Color.FromArgb(46, 0, 0, 0));
-            g.FillEllipse(shadow, (128 - 46) * k, (188 - 12) * k, 92 * k, 24 * k);
+            // Everything below is in the artwork's own 256-space, put through the
+            // same transform the SVG applies to the fan: rotate about the hinge the
+            // notes splay from, lift the whole group, then scale down to the tray.
+            const float Hinge = 208f, LiftAbout = 130f, Lift = 1.07f;
+            var k = S / 256f;
 
-            var pts = new[]
+            Matrix Fan(float rot)
             {
-                new PointF(104, 60), new PointF(104, 168), new PointF(131, 141),
-                new PointF(150, 182), new PointF(168, 174), new PointF(149, 133),
-                new PointF(186, 133),
-            };
-            for (var i = 0; i < pts.Length; i++) pts[i] = new PointF(pts[i].X * k, pts[i].Y * k);
-            using var white = new SolidBrush(Color.White);
-            g.FillPolygon(white, pts);
+                var m = new Matrix();
+                // Added last applies first, so this reads bottom-up.
+                m.Scale(k, k);
+                m.Translate(128, LiftAbout);
+                m.Scale(Lift, Lift);
+                m.Translate(-128, -LiftAbout);
+                m.RotateAt(rot, new PointF(128, Hinge));
+                return m;
+            }
+
+            // The shadow the fan floats above: 256-space centre 128,200 radius 86x22,
+            // carried through the group lift and down to tray pixels.
+            var shadowCy = LiftAbout + (200 - LiftAbout) * Lift;
+            using var shadow = new SolidBrush(Color.FromArgb(70, 0x12, 0x08, 0x2A));
+            g.FillEllipse(shadow,
+                (128 - 86 * Lift) * k, (shadowCy - 22 * Lift) * k,
+                2 * 86 * Lift * k, 2 * 22 * Lift * k);
+
+            // Mint and Rose sit behind, so they carry the same shading the SVG gives
+            // them rather than their raw palette colour.
+            Note(-16f, 72, 60, 112, 126, Color.FromArgb(0x9E, 0xD3, 0xBB), null);
+            Note(16f, 72, 60, 112, 126, Color.FromArgb(0xE9, 0xB8, 0xC5), null);
+            Note(-3f, 70, 54, 116, 132, Color.FromArgb(0xFC, 0xE7, 0x95),
+                 Color.FromArgb(0xE0, 0xAD, 0x08));
+
+            void Note(float rot, float x, float y, float w, float h, Color paper, Color? bar)
+            {
+                using var m = Fan(rot);
+                using var path = RoundedRect(x, y, w, h, 15);
+                path.Transform(m);
+                using var fill = new SolidBrush(paper);
+                g.FillPath(fill, path);
+
+                if (bar is not { } barColor) return;
+                // The saturated strip down the edge the note hangs from, kept inside
+                // the note's own rounded outline.
+                var clip = g.Clip;
+                g.SetClip(path);
+                using var barBrush = new SolidBrush(barColor);
+                var strip = new[]
+                {
+                    new PointF(x, y), new PointF(x + 15, y),
+                    new PointF(x + 15, y + h), new PointF(x, y + h),
+                };
+                m.TransformPoints(strip);
+                g.FillPolygon(barBrush, strip);
+                g.Clip = clip;
+            }
         }
         var handle = bmp.GetHicon();
         try

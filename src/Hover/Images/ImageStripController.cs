@@ -1,5 +1,6 @@
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Effects;
 using System.Windows.Threading;
@@ -78,6 +79,10 @@ public sealed class ImageStripController : IDisposable
         _window.Raise();
     }
 
+    /// Repaint against the current preferences. An open tray has to be redrawn, not
+    /// just re-laid-out: turning auto-hide off is what puts the close button there.
+    public void Redraw() => Render();
+
     // MARK: Wake zone
 
     public Win32.RECT EdgeStrip
@@ -144,6 +149,10 @@ public sealed class ImageStripController : IDisposable
     private void IdleTick()
     {
         if (!_open) { _idle.Stop(); return; }
+        // Auto-hide off: the tray stays until the close button is used. The clock is
+        // kept wound so switching auto-hide back on gives a full grace period rather
+        // than shutting the tray the instant the setting changes.
+        if (!Settings.AutoHideShots) { _lastActivity = DateTime.Now; return; }
         var now = Screens.Cursor;
         if (!HotZone.Contains(now)) { Collapse(); return; }
         if (Math.Abs(now.X - _lastPointer.X) > 2 || Math.Abs(now.Y - _lastPointer.Y) > 2)
@@ -196,9 +205,41 @@ public sealed class ImageStripController : IDisposable
             FontSize = 12.5,
             FontWeight = FontWeights.SemiBold,
             Foreground = NoteColor.Tint(Colors.White, 0.9),
-            Margin = new Thickness(2, 0, 0, 8),
+            Margin = new Thickness(2, 0, 0, 0),
+            VerticalAlignment = VerticalAlignment.Center,
         };
-        outer.Children.Add(header);
+
+        var headerRow = new Grid { Margin = new Thickness(0, 0, 0, 8) };
+        headerRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        headerRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        headerRow.Children.Add(header);
+
+        // With auto-hide off, walking the pointer away no longer shuts the tray, so
+        // it needs a way to be closed on purpose.
+        if (!Settings.AutoHideShots)
+        {
+            var close = new Button
+            {
+                Content = "✕",
+                FontSize = 11,
+                FontWeight = FontWeights.Bold,
+                Foreground = Brushes.White,
+                Width = 20,
+                Height = 20,
+                Padding = new Thickness(0),
+                Cursor = Cursors.Hand,
+                Focusable = false,
+                ToolTip = "Close the tray",
+                Background = NoteColor.Tint(Colors.White, 0.12),
+                BorderThickness = new Thickness(0),
+                Template = ShotRow.RoundButtonTemplate(),
+            };
+            close.Click += (_, e) => { e.Handled = true; Collapse(); };
+            Grid.SetColumn(close, 1);
+            headerRow.Children.Add(close);
+        }
+
+        outer.Children.Add(headerRow);
 
         if (shots.Count == 0)
         {

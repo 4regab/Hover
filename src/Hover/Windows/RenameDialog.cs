@@ -6,14 +6,14 @@ using Hover.Core;
 
 namespace Hover.Windows;
 
-/// A one-field prompt for renaming a tray picture. WPF ships no input box, and the
-/// rest of the app is dark and chromeless, so this is a small themed window rather
-/// than a system dialog.
+/// A one-field prompt for naming a tray picture or a note. WPF ships no input box,
+/// and the rest of the app is dark and chromeless, so this is a small themed window
+/// rather than a system dialog.
 public sealed class RenameDialog : Window
 {
     private readonly TextBox _field = new();
 
-    private RenameDialog(Window? owner, string current)
+    private RenameDialog(Window? owner, string current, string prompt, string? hint)
     {
         Title = "Rename";
         Owner = owner;
@@ -30,7 +30,7 @@ public sealed class RenameDialog : Window
         var panel = new StackPanel { Margin = new Thickness(16) };
         panel.Children.Add(new TextBlock
         {
-            Text = "New name",
+            Text = prompt,
             FontSize = 12,
             Foreground = NoteColor.Tint(Colors.White, 0.8),
             Margin = new Thickness(0, 0, 0, 6),
@@ -44,6 +44,18 @@ public sealed class RenameDialog : Window
         _field.CaretBrush = Brushes.White;
         _field.BorderThickness = new Thickness(0);
         panel.Children.Add(_field);
+
+        if (hint is not null)
+        {
+            panel.Children.Add(new TextBlock
+            {
+                Text = hint,
+                FontSize = 11,
+                Foreground = NoteColor.Tint(Colors.White, 0.45),
+                TextWrapping = TextWrapping.Wrap,
+                Margin = new Thickness(0, 6, 0, 0),
+            });
+        }
 
         var buttons = new StackPanel
         {
@@ -67,10 +79,13 @@ public sealed class RenameDialog : Window
         Loaded += (_, _) => { _field.Focus(); _field.SelectAll(); };
     }
 
-    /// Show the prompt and return the entered name, or null if cancelled.
-    public static string? Ask(Window? owner, string current)
+    /// Show the prompt and return the entered name, or null if cancelled. An empty
+    /// string is a real answer — the note rename treats it as "go back to the
+    /// derived title" — so callers must check for null, not for emptiness.
+    public static string? Ask(Window? owner, string current,
+                              string prompt = "New name", string? hint = null)
     {
-        var dialog = new RenameDialog(owner, current);
+        var dialog = new RenameDialog(owner, current, prompt, hint);
         return dialog.ShowDialog() == true ? dialog._field.Text : null;
     }
 
