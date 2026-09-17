@@ -1,0 +1,308 @@
+using System.IO;
+using System.Text.Json;
+using System.Text.Json.Serialization;
+using System.Windows.Input;
+using System.Windows.Threading;
+using Microsoft.Win32;
+
+namespace Hover.Core;
+
+/// The handful of togglable preferences, in one JSON file beside the database.
+/// Writes are debounced through Save(), which every setter calls.
+public static class Settings
+{
+    private sealed class Model
+    {
+        public bool ShowOverFullScreen { get; set; }
+        public bool DeckOnLeftEdge { get; set; }
+        public double NoteFontSize { get; set; } = 13.5;
+        public string NoteFontName { get; set; } = "Segoe Script";
+        public string TabFontName { get; set; } = "";
+        public string CodeFontName { get; set; } = "Consolas";
+        public double EdgeWidth { get; set; } = 14;
+        public bool MarkdownStyling { get; set; } = true;
+        public DeckStyle DeckStyle { get; set; } = DeckStyle.Tabs;
+        public bool KeepFanned { get; set; }
+        public double DeckScale { get; set; } = 1.0;
+        public bool AutoHideNotes { get; set; } = true;
+        public bool AutoHideShots { get; set; } = true;
+        public string ShotsFolder { get; set; } = "";
+        public int ShotRetentionDays { get; set; }
+
+        public Shortcut ScNewNote { get; set; } = new(ModifierKeys.Control | ModifierKeys.Alt, Key.N);
+        public Shortcut ScAllNotes { get; set; } = new(ModifierKeys.Control | ModifierKeys.Alt, Key.A);
+        public Shortcut ScArchive { get; set; } = new(ModifierKeys.Control | ModifierKeys.Alt, Key.L);
+
+        public Shortcut ScArchiveNote { get; set; } = new(ModifierKeys.Control | ModifierKeys.Shift, Key.A);
+        public Shortcut ScClose { get; set; } = new(ModifierKeys.None, Key.Escape);
+        public Shortcut ScFind { get; set; } = new(ModifierKeys.Control, Key.F);
+        public Shortcut ScTask { get; set; } = new(ModifierKeys.Control, Key.T);
+        public Shortcut ScPin { get; set; } = new(ModifierKeys.Control, Key.P);
+        public Shortcut ScColour { get; set; } = new(ModifierKeys.Control, Key.OemPeriod);
+        // Not plain Ctrl+Backspace: that belongs to the text view, where it deletes
+        // the word before the caret the way it does in every other editor.
+        public Shortcut ScDelete { get; set; } = new(ModifierKeys.Control | ModifierKeys.Shift, Key.Back);
+        public Shortcut ScBigger { get; set; } = new(ModifierKeys.Control, Key.OemPlus);
+        public Shortcut ScSmaller { get; set; } = new(ModifierKeys.Control, Key.OemMinus);
+    }
+
+    private static readonly JsonSerializerOptions Json = new()
+    {
+        WriteIndented = true,
+        Converters = { new JsonStringEnumConverter() },
+    };
+
+    private static readonly Model M = Load();
+
+    private static Model Load()
+    {
+        try
+        {
+            if (File.Exists(Paths.SettingsFile))
+            {
+                var m = JsonSerializer.Deserialize<Model>(File.ReadAllText(Paths.SettingsFile), Json);
+                if (m is not null) return Migrate(m);
+            }
+        }
+        catch (Exception e)
+        {
+            Log.Line($"settings load failed — {e.Message}");
+        }
+        return new Model();
+    }
+
+    /// Settings written by an older build are brought forward here.
+    private static Model Migrate(Model m)
+    {
+        // Ctrl+Backspace used to delete the note. It is the word-delete key in every
+        // text field on Windows, so anyone still holding the old binding is moved to
+        // Ctrl+Shift+Backspace rather than losing a word and a note at once.
+        if (m.ScDelete.Modifiers == ModifierKeys.Control && m.ScDelete.Key == Key.Back)
+        {
+            m.ScDelete = new Shortcut(ModifierKeys.Control | ModifierKeys.Shift, Key.Back);
+            Log.Line("migrated settings — delete-note moved off Ctrl+Backspace");
+        }
+        return m;
+    }
+
+    private static DispatcherTimer? _writeBack;
+
+    /// Every setter calls this, and a slider calls its setter on every pixel of the
+    /// drag — so the write itself waits for the value to settle. Flush() forces it
+    /// out when the app is closing.
+    public static void Save()
+    {
+        _writeBack?.Stop();
+        _writeBack = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(400) };
+        _writeBack.Tick += (_, _) => Flush();
+        _writeBack.Start();
+    }
+
+    public static void Flush()
+    {
+        _writeBack?.Stop();
+        _writeBack = null;
+        try
+        {
+            File.WriteAllText(Paths.SettingsFile, JsonSerializer.Serialize(M, Json));
+        }
+        catch (Exception e)
+        {
+            Log.Line($"settings save failed — {e.Message}");
+        }
+    }
+
+    public static bool ShowOverFullScreen
+    {
+        get => M.ShowOverFullScreen;
+        set { M.ShowOverFullScreen = value; Save(); }
+    }
+
+    public static bool DeckOnLeftEdge
+    {
+        get => M.DeckOnLeftEdge;
+        set { M.DeckOnLeftEdge = value; Save(); }
+    }
+
+    /// Max tabs the fan shows before collapsing the remainder into "+N".
+    /// Five keeps every tab at full size instead of squeezing the deck.
+    public const int FanLimit = 5;
+
+    /// Body text size inside a note.
+    public static readonly (string Name, double Size)[] FontSizes =
+    {
+        ("Small", 12), ("Medium", 13.5), ("Large", 15.5), ("Extra Large", 18),
+    };
+
+    public const double FontMin = 10, FontMax = 30;
+
+    public static double NoteFontSize
+    {
+        get => M.NoteFontSize is >= FontMin and <= FontMax ? M.NoteFontSize : 13.5;
+        set { M.NoteFontSize = Math.Clamp(value, FontMin, FontMax); Save(); }
+    }
+
+    /// Family the note body is set in; empty means the system font. Defaults to a
+    /// hand, the way a sticky note actually looks.
+    public static string NoteFontName
+    {
+        get => M.NoteFontName;
+        set { M.NoteFontName = value; Save(); }
+    }
+
+    /// Family the deck tab labels are set in; empty follows the note face.
+    public static string TabFontName
+    {
+        get => M.TabFontName;
+        set { M.TabFontName = value ?? ""; Save(); }
+    }
+
+    /// Family inline `code` spans are set in; defaults to Consolas.
+    public static string CodeFontName
+    {
+        get => M.CodeFontName;
+        set { M.CodeFontName = string.IsNullOrEmpty(value) ? "Consolas" : value; Save(); }
+    }
+
+    /// How far from the screen edge the deck notices the pointer. A wider strip is
+    /// easier to hit; a narrower one stays further out of the way.
+    public static readonly (string Name, double Width)[] EdgeWidths =
+    {
+        ("Narrow", 8), ("Standard", 14), ("Wide", 28), ("Very wide", 44),
+    };
+
+    public static double EdgeWidth
+    {
+        get => M.EdgeWidth >= 4 ? M.EdgeWidth : 14;
+        set { M.EdgeWidth = value; Save(); }
+    }
+
+    /// Style Markdown inline — headings, emphasis, code, quotes.
+    public static bool MarkdownStyling
+    {
+        get => M.MarkdownStyling;
+        set { M.MarkdownStyling = value; Save(); }
+    }
+
+    /// How long the deck may sit untouched before it tidies itself away.
+    public static readonly TimeSpan FanIdleTimeout = TimeSpan.FromSeconds(4);
+    public static readonly TimeSpan NoteIdleTimeout = TimeSpan.FromSeconds(60);
+
+    /// Let the notes deck put itself away — on a timeout, when the pointer leaves it,
+    /// and when a click lands in another app. Off, the deck stays out once it is out,
+    /// and only Esc, clicking the tab again, or the pointer never having woken it
+    /// puts it back. An open note that is pinned already ignores all three.
+    public static bool AutoHideNotes
+    {
+        get => M.AutoHideNotes;
+        set { M.AutoHideNotes = value; Save(); }
+    }
+
+    /// The same for the screenshot tray. Off, the tray keeps a close button, since
+    /// walking the pointer away is no longer what shuts it.
+    public static bool AutoHideShots
+    {
+        get => M.AutoHideShots;
+        set { M.AutoHideShots = value; Save(); }
+    }
+
+    /// Folder the tray keeps pictures in. Empty means Paths.DefaultShots. Changing it
+    /// moves no existing file. It changes where the tray reads, and where new pictures
+    /// are written.
+    public static string ShotsFolder
+    {
+        get => M.ShotsFolder;
+        set { M.ShotsFolder = value ?? ""; Save(); }
+    }
+
+    /// Days a picture is kept before the tray removes it. Zero keeps everything and is
+    /// the default. Removed files go to the Recycle Bin.
+    public static readonly (string Name, int Days)[] ShotRetentions =
+    {
+        ("Keep everything", 0), ("A week", 7), ("A month", 30), ("Three months", 90),
+    };
+
+    public static int ShotRetentionDays
+    {
+        get => M.ShotRetentionDays > 0 ? M.ShotRetentionDays : 0;
+        set { M.ShotRetentionDays = Math.Max(0, value); Save(); }
+    }
+
+    public static DeckStyle DeckStyle
+    {
+        get => M.DeckStyle;
+        set { M.DeckStyle = value; Save(); }
+    }
+
+    /// Make the fan the resting state instead of the pill, so the tabs and their
+    /// labels stay on the edge without being hovered first.
+    public static bool KeepFanned
+    {
+        get => M.KeepFanned;
+        set { M.KeepFanned = value; Save(); }
+    }
+
+    /// One multiplier behind every deck metric — tab width, the lap between tabs, the
+    /// label type, the chips and the resting pill — so the deck grows without
+    /// drifting out of proportion with itself.
+    public const double DeckScaleMin = 0.7, DeckScaleMax = 1.8;
+
+    public static double DeckScale
+    {
+        get => M.DeckScale is >= DeckScaleMin and <= DeckScaleMax ? M.DeckScale : 1.0;
+        set { M.DeckScale = Math.Clamp(value, DeckScaleMin, DeckScaleMax); Save(); }
+    }
+
+    // MARK: Shortcuts
+
+    public static Shortcut ScNewNote { get => M.ScNewNote; set { M.ScNewNote = value; Save(); } }
+    public static Shortcut ScAllNotes { get => M.ScAllNotes; set { M.ScAllNotes = value; Save(); } }
+    public static Shortcut ScArchive { get => M.ScArchive; set { M.ScArchive = value; Save(); } }
+
+    public static Shortcut ScArchiveNote { get => M.ScArchiveNote; set { M.ScArchiveNote = value; Save(); } }
+    public static Shortcut ScClose { get => M.ScClose; set { M.ScClose = value; Save(); } }
+    public static Shortcut ScFind { get => M.ScFind; set { M.ScFind = value; Save(); } }
+    public static Shortcut ScTask { get => M.ScTask; set { M.ScTask = value; Save(); } }
+    public static Shortcut ScPin { get => M.ScPin; set { M.ScPin = value; Save(); } }
+    public static Shortcut ScColour { get => M.ScColour; set { M.ScColour = value; Save(); } }
+    public static Shortcut ScDelete { get => M.ScDelete; set { M.ScDelete = value; Save(); } }
+    public static Shortcut ScBigger { get => M.ScBigger; set { M.ScBigger = value; Save(); } }
+    public static Shortcut ScSmaller { get => M.ScSmaller; set { M.ScSmaller = value; Save(); } }
+
+    // MARK: Launch at login — HKCU Run, no elevation needed
+
+    private const string RunKey = @"Software\Microsoft\Windows\CurrentVersion\Run";
+    private const string RunValue = "Hover";
+
+    public static bool LaunchAtLogin
+    {
+        get
+        {
+            try
+            {
+                using var key = Registry.CurrentUser.OpenSubKey(RunKey);
+                return key?.GetValue(RunValue) is string s && s.Length > 0;
+            }
+            catch { return false; }
+        }
+        set
+        {
+            try
+            {
+                using var key = Registry.CurrentUser.CreateSubKey(RunKey);
+                if (key is null) return;
+                if (value)
+                {
+                    var exe = Environment.ProcessPath;
+                    if (exe is null) return;
+                    key.SetValue(RunValue, $"\"{exe}\"");
+                }
+                else key.DeleteValue(RunValue, throwOnMissingValue: false);
+            }
+            catch (Exception e)
+            {
+                Log.Line($"launch-at-login toggle failed — {e.Message}");
+            }
+        }
+    }
+}
