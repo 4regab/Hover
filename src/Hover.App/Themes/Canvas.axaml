@@ -206,4 +206,129 @@
         <Setter Property="TextWrapping" Value="Wrap" />
         <Setter Property="Margin" Value="0,3,0,0" />
     </Style>
+
+
+    <!-- ============ the mark-up editor ============ -->
+    <Style Selector="Button.tool">
+        <Setter Property="Width" Value="30" />
+        <Setter Property="Height" Value="28" />
+        <Setter Property="Padding" Value="0" />
+        <Setter Property="CornerRadius" Value="6" />
+        <Setter Property="BorderThickness" Value="0" />
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="Foreground" Value="{StaticResource Ink3}" />
+        <Setter Property="HorizontalContentAlignment" Value="Center" />
+        <Setter Property="VerticalContentAlignment" Value="Center" />
+        <Setter Property="RenderTransform" Value="none" />
+        <Setter Property="Transitions">
+            <Transitions>
+                <TransformOperationsTransition Property="RenderTransform"
+                                               Duration="0:0:0.14" Easing="0.23,1,0.32,1" />
+            </Transitions>
+        </Setter>
+    </Style>
+
+    <Style Selector="Button.tool:pointerover /template/ ContentPresenter">
+        <Setter Property="Background" Value="{StaticResource DarkFill}" />
+    </Style>
+
+    <Style Selector="Button.tool:pressed">
+        <Setter Property="RenderTransform" Value="scale(0.93)" />
+    </Style>
+
+    <!-- The tool in use. Shown by a filled background rather than a colour, so it reads
+         at a glance without competing with the ink colours next to it. -->
+    <Style Selector="Button.tool.on">
+        <Setter Property="Foreground" Value="{StaticResource Ink}" />
+    </Style>
+
+    <Style Selector="Button.tool.on /template/ ContentPresenter">
+        <Setter Property="Background" Value="{StaticResource DarkFillStrong}" />
+    </Style>
+
+    <Style Selector="Button.tool:disabled">
+        <Setter Property="Opacity" Value="0.32" />
+    </Style>
+
+    <Style Selector="Button.swatch">
+        <Setter Property="Width" Value="20" />
+        <Setter Property="Height" Value="20" />
+        <Setter Property="Margin" Value="1,0" />
+        <Setter Property="Padding" Value="0" />
+        <Setter Property="CornerRadius" Value="999" />
+        <Setter Property="BorderThickness" Value="2" />
+        <Setter Property="BorderBrush" Value="Transparent" />
+        <Setter Property="VerticalAlignment" Value="Center" />
+        <Setter Property="RenderTransform" Value="none" />
+        <Setter Property="Transitions">
+            <Transitions>
+                <TransformOperationsTransition Property="RenderTransform"
+                                               Duration="0:0:0.14" Easing="0.23,1,0.32,1" />
+            </Transitions>
+        </Setter>
+    </Style>
+
+    <Style Selector="Button.swatch:pointerover">
+        <Setter Property="RenderTransform" Value="scale(1.12)" />
+    </Style>
+
+    <Style Selector="Button.swatch:pressed">
+        <Setter Property="RenderTransform" Value="scale(0.92)" />
+    </Style>
+
+    <!-- The chosen colour gets a ring, which works for all three and needs no tick. -->
+    <Style Selector="Button.swatch.on">
+        <Setter Property="BorderBrush" Value="White" />
+    </Style>
+
+    <Style Selector="Button.primary">
+        <Setter Property="Background" Value="White" />
+        <Setter Property="Foreground" Value="#111111" />
+        <Setter Property="BorderThickness" Value="0" />
+        <Setter Property="CornerRadius" Value="7" />
+        <Setter Property="Padding" Value="14,6" />
+        <Setter Property="FontSize" Value="12.5" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+        <Setter Property="RenderTransform" Value="none" />
+        <Setter Property="Transitions">
+            <Transitions>
+                <TransformOperationsTransition Property="RenderTransform"
+                                               Duration="0:0:0.14" Easing="0.23,1,0.32,1" />
+            </Transitions>
+        </Setter>
+    </Style>
+
+    <Style Selector="Button.primary:pointerover /template/ ContentPresenter">
+        <Setter Property="Background" Value="#E8E8E8" />
+        <Setter Property="TextElement.Foreground" Value="#111111" />
+    </Style>
+
+    <Style Selector="Button.primary:pressed">
+        <Setter Property="RenderTransform" Value="scale(0.97)" />
+    </Style>
+
+    <Style Selector="Button.quiet">
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="Foreground" Value="{StaticResource Ink3}" />
+        <Setter Property="BorderThickness" Value="0" />
+        <Setter Property="CornerRadius" Value="7" />
+        <Setter Property="Padding" Value="12,6" />
+        <Setter Property="FontSize" Value="12.5" />
+        <Setter Property="RenderTransform" Value="none" />
+        <Setter Property="Transitions">
+            <Transitions>
+                <TransformOperationsTransition Property="RenderTransform"
+                                               Duration="0:0:0.14" Easing="0.23,1,0.32,1" />
+            </Transitions>
+        </Setter>
+    </Style>
+
+    <Style Selector="Button.quiet:pointerover /template/ ContentPresenter">
+        <Setter Property="Background" Value="{StaticResource DarkFill}" />
+        <Setter Property="TextElement.Foreground" Value="{StaticResource Ink}" />
+    </Style>
+
+    <Style Selector="Button.quiet:pressed">
+        <Setter Property="RenderTransform" Value="scale(0.97)" />
+    </Style>
 </Styles>

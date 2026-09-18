@@ -22,6 +22,17 @@ public partial class ShotRowView : UserControl
         RoutedEvent.Register<ShotRowView, RoutedEventArgs>(
             nameof(DragRequested), RoutingStrategies.Bubble);
 
+    /// Raised when the picture should be opened for drawing on.
+    public static readonly RoutedEvent<RoutedEventArgs> MarkUpRequestedEvent =
+        RoutedEvent.Register<ShotRowView, RoutedEventArgs>(
+            nameof(MarkUpRequested), RoutingStrategies.Bubble);
+
+    public event EventHandler<RoutedEventArgs>? MarkUpRequested
+    {
+        add => AddHandler(MarkUpRequestedEvent, value);
+        remove => RemoveHandler(MarkUpRequestedEvent, value);
+    }
+
     public event EventHandler<RoutedEventArgs>? DeleteRequested
     {
         add => AddHandler(DeleteRequestedEvent, value);
@@ -68,6 +79,12 @@ public partial class ShotRowView : UserControl
         // The click would otherwise also reach the row and start a drag.
         e.Handled = true;
         RaiseEvent(new RoutedEventArgs(DeleteRequestedEvent));
+    }
+
+    private void OnMarkUp(object? sender, RoutedEventArgs e)
+    {
+        e.Handled = true;
+        RaiseEvent(new RoutedEventArgs(MarkUpRequestedEvent));
     }
 
     private void OnPressed(object? sender, PointerPressedEventArgs e)

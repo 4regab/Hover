@@ -58,12 +58,17 @@ public partial class ShotTray : UserControl, INotifyPropertyChanged
     /// A picture is being dragged out of the tray.
     public event EventHandler<Shot>? DragRequested;
 
+    /// The "Mark up" button from the mockup, now that the editor exists. Opens the
+    /// picture in the mark-up window; saving there adds an edited copy to the tray.
+    public event EventHandler<Shot>? MarkUpRequested;
+
     public ShotTray()
     {
         InitializeComponent();
         DataContext = this;
         AddHandler(ShotRowView.DeleteRequestedEvent, OnRowDelete);
         AddHandler(ShotRowView.DragRequestedEvent, OnRowDrag);
+        AddHandler(ShotRowView.MarkUpRequestedEvent, OnRowMarkUp);
     }
 
     /// Replaces everything on show. Newest day first.
@@ -87,6 +92,12 @@ public partial class ShotTray : UserControl, INotifyPropertyChanged
     {
         if (e.Source is ShotRowView { Item: not null } row)
             DragRequested?.Invoke(this, row.Item.Shot);
+    }
+
+    private void OnRowMarkUp(object? sender, RoutedEventArgs e)
+    {
+        if (e.Source is ShotRowView { Item: not null } row)
+            MarkUpRequested?.Invoke(this, row.Item.Shot);
     }
 
     // MARK: Change notification
