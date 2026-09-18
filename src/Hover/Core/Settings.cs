@@ -28,12 +28,14 @@ public static class Settings
         public double DeckScale { get; set; } = 1.0;
         public bool AutoHideNotes { get; set; } = true;
         public bool AutoHideShots { get; set; } = true;
+        public bool SeenWelcome { get; set; }
         public string ShotsFolder { get; set; } = "";
         public int ShotRetentionDays { get; set; }
 
         public Shortcut ScNewNote { get; set; } = new(ModifierKeys.Control | ModifierKeys.Alt, Key.N);
         public Shortcut ScAllNotes { get; set; } = new(ModifierKeys.Control | ModifierKeys.Alt, Key.A);
         public Shortcut ScArchive { get; set; } = new(ModifierKeys.Control | ModifierKeys.Alt, Key.L);
+        public Shortcut ScSnip { get; set; } = new(ModifierKeys.Control | ModifierKeys.Alt, Key.S);
 
         public Shortcut ScArchiveNote { get; set; } = new(ModifierKeys.Control | ModifierKeys.Shift, Key.A);
         public Shortcut ScClose { get; set; } = new(ModifierKeys.None, Key.Escape);
@@ -239,6 +241,15 @@ public static class Settings
         set { M.AutoHideShots = value; Save(); }
     }
 
+    /// Set once the welcome has been shown and dismissed. Hover draws nothing until
+    /// the pointer reaches an edge, so a first run with no explanation looks like a
+    /// failed install.
+    public static bool SeenWelcome
+    {
+        get => M.SeenWelcome;
+        set { M.SeenWelcome = value; Save(); }
+    }
+
     /// Folder the tray keeps pictures in. Empty means Paths.DefaultShots. Changing it
     /// moves no existing file. It changes where the tray reads, and where new pictures
     /// are written.
@@ -291,6 +302,7 @@ public static class Settings
     public static Shortcut ScNewNote { get => M.ScNewNote; set { M.ScNewNote = value; Save(); } }
     public static Shortcut ScAllNotes { get => M.ScAllNotes; set { M.ScAllNotes = value; Save(); } }
     public static Shortcut ScArchive { get => M.ScArchive; set { M.ScArchive = value; Save(); } }
+    public static Shortcut ScSnip { get => M.ScSnip; set { M.ScSnip = value; Save(); } }
 
     public static Shortcut ScArchiveNote { get => M.ScArchiveNote; set { M.ScArchiveNote = value; Save(); } }
     public static Shortcut ScClose { get => M.ScClose; set { M.ScClose = value; Save(); } }

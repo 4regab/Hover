@@ -5,6 +5,7 @@ using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using Hover.Core;
 using Hover.Images;
+using Hover.Interop;
 using NUnit.Framework;
 
 namespace Hover.Tests;
@@ -80,5 +81,41 @@ public sealed class ShotStoreTests
         using var ms = new MemoryStream();
         encoder.Save(ms);
         return ms.ToArray();
+    }
+
+    /// The box a snip drag makes. Either corner can be the one you started from, and
+    /// neither may leave the desktop — a drag that runs off the edge stops at it.
+    [Test]
+    public void Snip_box_is_corner_order_blind_and_stays_on_the_desktop()
+    {
+        var from = new Win32.POINT { X = 900, Y = 600 };
+        var to = new Win32.POINT { X = 300, Y = 200 };
+
+        var dragged = SnipOverlay.Box(from, to, 0, 0, 1920, 1080);
+        var other = SnipOverlay.Box(to, from, 0, 0, 1920, 1080);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(dragged.Left, Is.EqualTo(300));
+            Assert.That(dragged.Top, Is.EqualTo(200));
+            Assert.That(dragged.Width, Is.EqualTo(600));
+            Assert.That(dragged.Height, Is.EqualTo(400));
+            Assert.That(other.Left, Is.EqualTo(dragged.Left), "the other way round is the same box");
+            Assert.That(other.Width, Is.EqualTo(dragged.Width));
+            Assert.That(other.Height, Is.EqualTo(dragged.Height));
+        });
+
+        // Off the edge, on a desktop whose origin is negative: a second display placed
+        // to the left of the main one.
+        var off = SnipOverlay.Box(new Win32.POINT { X = -4000, Y = -4000 },
+                                  new Win32.POINT { X = 9000, Y = 9000 },
+                                  -1920, 0, 1920, 1080);
+        Assert.Multiple(() =>
+        {
+            Assert.That(off.Left, Is.EqualTo(-1920));
+            Assert.That(off.Top, Is.EqualTo(0));
+            Assert.That(off.Right, Is.EqualTo(1920));
+            Assert.That(off.Bottom, Is.EqualTo(1080));
+        });
     }
 }

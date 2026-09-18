@@ -37,6 +37,26 @@ public static class Actions
     public static void OpenAllNotes() => ShowLibrary(archived: false);
     public static void OpenArchive() => ShowLibrary(archived: true);
 
+    /// Drag a box over the screen and keep what was inside it.
+    ///
+    /// The panels are put away first and the screen is photographed a moment later, so
+    /// an open tray or fanned deck cannot end up in your screenshot. The wait is the
+    /// time Windows needs to paint what was underneath them.
+    public static void Snip()
+    {
+        if (Hover.Images.SnipOverlay.InProgress) return;
+        Decks?.CollapseAll();
+        ImageStrips?.CollapseAll();
+
+        var settle = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(160) };
+        settle.Tick += (_, _) =>
+        {
+            settle.Stop();
+            Hover.Images.SnipOverlay.Start();
+        };
+        settle.Start();
+    }
+
     private static void ShowLibrary(bool archived)
     {
         if (_library is null || !_library.IsLoaded)
@@ -175,6 +195,7 @@ public static class Actions
         menu.Items.Add(Item($"New Note  {Settings.ScNewNote}", NewNote));
         menu.Items.Add(Item($"All Notes  {Settings.ScAllNotes}", OpenAllNotes));
         menu.Items.Add(Item($"Archive  {Settings.ScArchive}", OpenArchive));
+        menu.Items.Add(Item($"New Screenshot  {Settings.ScSnip}", Snip));
         menu.Items.Add(new Separator());
 
         menu.Items.Add(Check("Show over full-screen apps", Settings.ShowOverFullScreen,

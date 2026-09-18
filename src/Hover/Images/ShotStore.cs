@@ -349,6 +349,30 @@ public sealed class ShotStore : IDisposable
 
     // MARK: Mutations the tray asks for
 
+    /// Takes a finished PNG — a snip, right now — writes it into the Shots folder and
+    /// puts it at the top of the tray. Returns the path, or null if this exact picture
+    /// is already here or the write failed. Shares the clipboard route's dedupe, so
+    /// snipping the same unchanged window twice keeps one copy.
+    public string? SavePng(byte[] png, string prefix)
+    {
+        try
+        {
+            var hash = Hash(png);
+            if (_hashes.Contains(hash)) return null;
+
+            var path = Path.Combine(Paths.Shots, $"{prefix}-{Stamp()}.png");
+            File.WriteAllBytes(path, png);
+            Add(path, hash);
+            Log.Line($"saved {Path.GetFileName(path)}");
+            return path;
+        }
+        catch (Exception e)
+        {
+            Log.Line($"saving a picture failed — {e.Message}");
+            return null;
+        }
+    }
+
     /// Rename a picture, keeping its extension. Returns the new path or null on
     /// failure or a name clash.
     public string? Rename(Shot shot, string newBaseName)

@@ -53,6 +53,7 @@ public sealed class SettingsWindow : Window
         _body.Children.Add(ShortcutRow("New note", () => Settings.ScNewNote, v => Settings.ScNewNote = v, global: true));
         _body.Children.Add(ShortcutRow("All Notes", () => Settings.ScAllNotes, v => Settings.ScAllNotes = v, global: true));
         _body.Children.Add(ShortcutRow("Archive", () => Settings.ScArchive, v => Settings.ScArchive = v, global: true));
+        _body.Children.Add(ShortcutRow("New screenshot", () => Settings.ScSnip, v => Settings.ScSnip = v, global: true));
 
         _body.Children.Add(Heading("Inside a note"));
         _body.Children.Add(ShortcutRow("Close", () => Settings.ScClose, v => Settings.ScClose = v,
@@ -501,6 +502,7 @@ public sealed class SettingsWindow : Window
         yield return ("New note", Settings.ScNewNote);
         yield return ("All Notes", Settings.ScAllNotes);
         yield return ("Archive", Settings.ScArchive);
+        yield return ("New screenshot", Settings.ScSnip);
         yield return ("Close", Settings.ScClose);
         yield return ("Find in note", Settings.ScFind);
         yield return ("Task on / off", Settings.ScTask);

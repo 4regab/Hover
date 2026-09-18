@@ -26,11 +26,28 @@ public sealed class ShotRow : Border
     /// screen edges change size together.
     public static double RowHeight => 80 * Deck.DeckGeom.Scale;
 
+    /// A row never gets shorter than this share of its width, so a panorama is still a
+    /// target you can hit, nor taller than this, so one long phone screenshot cannot
+    /// take over the tray. Past the cap the picture is cropped, as every row used to be.
+    private const double MinRatio = 0.3;
+    private const double MaxRatio = 1.2;
+
+    /// How tall the row for this picture will be, asked before the row is built: the
+    /// tray needs it to size its own panel. Shot caches its thumbnail, so the second
+    /// ask costs nothing.
+    public static double HeightFor(Shot shot, double width)
+    {
+        var thumb = shot.Thumbnail((int)(width * 2));
+        if (thumb is null || thumb.PixelWidth <= 0) return RowHeight;
+        var ratio = (double)thumb.PixelHeight / thumb.PixelWidth;
+        return Math.Round(width * Math.Clamp(ratio, MinRatio, MaxRatio));
+    }
+
     public ShotRow(Shot shot, double width)
     {
         _shot = shot;
         Width = width;
-        Height = RowHeight;
+        Height = HeightFor(shot, width);
         Margin = new Thickness(0, 0, 0, 8);
         CornerRadius = new CornerRadius(8);
         ClipToBounds = true;
@@ -41,7 +58,9 @@ public sealed class ShotRow : Border
 
         var grid = new Grid();
 
-        // The picture fills the row.
+        // The picture fills the row, and the row was sized to the picture's own shape,
+        // so nothing is cropped and no empty band is left around it. Only a picture
+        // past the shape limits above loses anything.
         grid.Children.Add(new Image
         {
             Source = shot.Thumbnail((int)(width * 2)),
@@ -77,9 +96,9 @@ public sealed class ShotRow : Border
 
         ContextMenu = BuildMenu();
 
-        // Rows crop the picture to roughly 2.7:1 so many fit the tray, which leaves two
-        // screenshots of the same window looking alike. The hover card shows enough to
-        // tell them apart. The notes deck solves this with PreviewCard, which will not
+        // Rows are small, so two screenshots of the same window still look alike. The
+        // hover card shows enough to tell them apart. The notes deck solves this with
+        // PreviewCard, which will not
         // work here: this window is about 200 px wide and would clip the card.
         //
         // A Popup, not a ToolTip. WPF shows a ToolTip only while its window is active,

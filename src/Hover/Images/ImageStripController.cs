@@ -30,6 +30,9 @@ public sealed class ImageStripController : IDisposable
     /// Close to the width of a note peek card, and scaled by the same deck-size
     /// preference, so the tray and the notes deck stay in proportion.
     private static double PanelWidth => 260 * DeckGeom.Scale;
+
+    /// What is left for a row once the card's padding and room for a scrollbar are taken.
+    private static double RowWidth => PanelWidth - 24 - 12;
     private static readonly TimeSpan OpenIdle = TimeSpan.FromSeconds(6);
 
     public ImageStripController(ScreenInfo screen)
@@ -186,8 +189,11 @@ public sealed class ImageStripController : IDisposable
 
         // Only as tall as what is in it. A floor here left a band of empty panel under
         // a short list. The empty state is the one case that needs its own room, for
-        // the "no pictures yet" line.
-        var wanted = shots.Count == 0 ? 120 : shots.Count * (ShotRow.RowHeight + 8) + 52;
+        // the "no pictures yet" line. Rows are as tall as their own pictures are
+        // shaped, so this adds them up rather than multiplying one row height.
+        var wanted = 52.0;
+        if (shots.Count == 0) wanted = 120;
+        else foreach (var shot in shots) wanted += ShotRow.HeightFor(shot, RowWidth) + 8;
 
         var card = new Border
         {
@@ -219,7 +225,31 @@ public sealed class ImageStripController : IDisposable
         var headerRow = new Grid { Margin = new Thickness(0, 0, 0, 8) };
         headerRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         headerRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        headerRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         headerRow.Children.Add(header);
+
+        // Take a new screenshot without leaving the tray. The tray shuts itself first,
+        // so it is not in the picture.
+        var snip = new Button
+        {
+            Content = "＋",
+            FontSize = 13,
+            FontWeight = FontWeights.Bold,
+            Foreground = Brushes.White,
+            Width = 20,
+            Height = 20,
+            Padding = new Thickness(0),
+            Cursor = Cursors.Hand,
+            Focusable = false,
+            ToolTip = $"New screenshot  {Settings.ScSnip}",
+            Background = NoteColor.Tint(Colors.White, 0.12),
+            BorderThickness = new Thickness(0),
+            Margin = new Thickness(0, 0, 6, 0),
+            Template = ShotRow.RoundButtonTemplate(),
+        };
+        snip.Click += (_, e) => { e.Handled = true; Services.Actions.Snip(); };
+        Grid.SetColumn(snip, 1);
+        headerRow.Children.Add(snip);
 
         // With auto-hide off, walking the pointer away no longer shuts the tray, so
         // it needs a way to be closed on purpose.
@@ -242,7 +272,7 @@ public sealed class ImageStripController : IDisposable
                 Template = ShotRow.RoundButtonTemplate(),
             };
             close.Click += (_, e) => { e.Handled = true; Collapse(); };
-            Grid.SetColumn(close, 1);
+            Grid.SetColumn(close, 2);
             headerRow.Children.Add(close);
         }
 
@@ -265,8 +295,7 @@ public sealed class ImageStripController : IDisposable
         else
         {
             var list = new StackPanel();
-            var rowWidth = PanelWidth - 24 - 12;   // card padding + scrollbar room
-            foreach (var shot in shots) list.Children.Add(new ShotRow(shot, rowWidth));
+            foreach (var shot in shots) list.Children.Add(new ShotRow(shot, RowWidth));
 
             var scroller = new ScrollViewer
             {

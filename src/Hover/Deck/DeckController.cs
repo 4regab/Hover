@@ -363,23 +363,13 @@ public sealed class DeckController : IDisposable
             return;
         }
 
-        // A hit-testable strip along the edge, behind the tabs. Without it the whole
-        // fan except the tabs themselves is click-through, and the pill's menu has
-        // nothing left to right-click: reaching for the pill opens the fan first.
-        // Only as wide as the deck, so it covers almost none of what is behind it.
-        // Not Brushes.Transparent: a layered window decides what is click-through
-        // from the alpha it actually painted, so a fully transparent fill is passed
-        // straight through to the app underneath. One step of alpha is invisible and
-        // enough to catch the click.
-        var strip = new Border
-        {
-            Width = DeckGeom.FanWidth,
-            Height = h,
-            Background = new SolidColorBrush(Color.FromArgb(1, 0, 0, 0)),
-        };
-        Canvas.SetLeft(strip, onRight ? w - DeckGeom.FanWidth : 0);
-        Canvas.SetTop(strip, 0);
-        root.Children.Add(strip);
+        // No invisible strip along the edge any more. One used to sit behind the tabs
+        // so the whole fan took clicks, which meant Hover owned the last 35 px of the
+        // screen for as long as the deck was out — with "keep the deck fanned" on,
+        // that is always, and every click and wheel turn meant for a scrollbar landed
+        // here instead. Only the tabs are painted, so only the tabs take the pointer;
+        // the gaps between them belong to whatever is behind. The deck's own
+        // right-click menu still opens from any tab.
 
         // Everything on the deck rides one canvas, so the wheel can carry the whole
         // stack up and down by moving a single element rather than laying out again.

@@ -53,6 +53,10 @@ public partial class App : Application
         _tray = new TrayIcon();
         UndoToast.Shared.Start();
 
+        // Nothing is on screen at this point — the panels are hidden and there is no
+        // main window — so a first run needs telling where the app went.
+        WelcomeWindow.ShowOnce();
+
         Log.Line("started");
     }
 
@@ -67,6 +71,7 @@ public partial class App : Application
         TryRegister("New note", Settings.ScNewNote, Actions.NewNote);
         TryRegister("All Notes", Settings.ScAllNotes, Actions.OpenAllNotes);
         TryRegister("Archive", Settings.ScArchive, Actions.OpenArchive);
+        TryRegister("New screenshot", Settings.ScSnip, Actions.Snip);
 
         if (failed.Count == 0)
         {

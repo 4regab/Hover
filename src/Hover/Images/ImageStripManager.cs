@@ -80,6 +80,12 @@ public sealed class ImageStripManager : IDisposable
             if (!ReferenceEquals(s, active)) s.Collapse();
     }
 
+    /// Shut every tray. Asked for before a snip, so the tray is not in the picture.
+    public void CollapseAll()
+    {
+        foreach (var s in _strips.Values) s.Collapse();
+    }
+
     /// Re-place every tray after a preference change (the tray edge follows the note
     /// deck edge, so flipping the deck flips the tray).
     public void RefreshAll()

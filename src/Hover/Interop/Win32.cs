@@ -53,6 +53,16 @@ public static class Win32
     private static extern short GetAsyncKeyState(int vKey);
 
     private const int VK_LBUTTON = 0x01, VK_RBUTTON = 0x02, VK_MBUTTON = 0x04;
+    private const int VK_ESCAPE = 0x1B;
+
+    /// True while Escape is held, asked without needing the keyboard.
+    ///
+    /// Windows gives the foreground to whoever is answering user input at that moment.
+    /// A window put up a moment later — the snip overlay, which first waits for the
+    /// panels to get out of the picture — is refused it, and a window without the
+    /// foreground is never sent a key press at all. Reading the key state does not care
+    /// who has focus.
+    public static bool EscapeHeld => (GetAsyncKeyState(VK_ESCAPE) & 0x8000) != 0;
 
     /// True while any mouse button is held down. Which button does not matter — the
     /// question is only whether something is being clicked or dragged right now.

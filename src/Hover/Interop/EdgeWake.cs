@@ -47,10 +47,15 @@ public sealed class EdgeWake
         return (int)Math.Round(bandDips * screen.Scale);
     }
 
+    /// Set while something is using the whole screen and the edges are not a request —
+    /// a snip being drawn, for one. Every zone reads as empty until it is cleared, and
+    /// the wait starts again afterwards rather than carrying on from before.
+    public static bool Suspended { get; set; }
+
     /// Call once per poll per display. True on the single tick the wait is met.
     public bool Woke(string device, bool inside)
     {
-        if (!inside)
+        if (!inside || Suspended)
         {
             _since.Remove(device);
             _woke.Remove(device);

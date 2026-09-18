@@ -100,6 +100,13 @@ public sealed class DeckManager : IDisposable
             if (!ReferenceEquals(d, active)) d.CollapseToRest();
     }
 
+    /// Put every deck away, wherever it is. Asked for before a snip, so the deck is not
+    /// in the picture.
+    public void CollapseAll()
+    {
+        foreach (var d in _decks.Values) d.CollapseToRest();
+    }
+
     public void RefreshAll()
     {
         foreach (var d in _decks.Values)
