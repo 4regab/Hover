@@ -1,8 +1,10 @@
 <Solution>
   <Folder Name="/src/">
     <Project Path="src/Hover/Hover.csproj" />
+    <Project Path="src/Hover.App/Hover.App.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/Hover.Tests/Hover.Tests.csproj" />
+    <Project Path="tests/Hover.App.Tests/Hover.App.Tests.csproj" />
   </Folder>
 </Solution>

@@ -6,3 +6,8 @@ obj/
 publish/
 dist/
 TestResults/
+
+
+# Throwaway Avalonia probe used to settle the window questions. Deleted once the
+# real deck window is proven.
+spike/
