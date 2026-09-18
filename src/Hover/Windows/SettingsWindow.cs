@@ -199,15 +199,34 @@ public sealed class SettingsWindow : Window
         };
         _body.Children.Add(Labelled("Deck size", scale, scaleLabel));
 
-        _body.Children.Add(Toggle("Keep the deck fanned out", Settings.KeepFanned,
-            _ => Actions.ToggleKeepFanned()));
-        _body.Children.Add(Toggle("Hide the deck by itself", Settings.AutoHideNotes, v =>
+        // "Keep the deck fanned out" beats "hide the deck by itself": a fan that is the
+        // resting state has nothing to tidy itself away to. Both switches used to be
+        // offered as equals, so turning hiding on while the deck was kept fanned looked
+        // broken. The one that cannot apply is now greyed out and says why.
+        var hideDeck = Toggle("Hide the deck by itself", Settings.AutoHideNotes, v =>
         {
             Settings.AutoHideNotes = v;
             Actions.Refresh();
+        });
+        var fannedWins = Hint("Kept fanned out, the deck stays on screen, so hiding by " +
+                              "itself has nothing to do.");
+
+        void SyncDeckHiding()
+        {
+            hideDeck.IsEnabled = !Settings.KeepFanned;
+            fannedWins.Visibility = Settings.KeepFanned ? Visibility.Visible : Visibility.Collapsed;
+        }
+
+        _body.Children.Add(Toggle("Keep the deck fanned out", Settings.KeepFanned, _ =>
+        {
+            Actions.ToggleKeepFanned();
+            SyncDeckHiding();
         }));
+        _body.Children.Add(hideDeck);
         _body.Children.Add(Hint("On, the deck puts itself away when you move off it. " +
                                 "Off, it stays out until you press Esc or click its tab."));
+        _body.Children.Add(fannedWins);
+        SyncDeckHiding();
         _body.Children.Add(Toggle("Hide the screenshot tray by itself", Settings.AutoHideShots, v =>
         {
             Settings.AutoHideShots = v;
@@ -373,7 +392,7 @@ public sealed class SettingsWindow : Window
         return stack;
     }
 
-    private static FrameworkElement Toggle(string title, bool value, Action<bool> set)
+    private static CheckBox Toggle(string title, bool value, Action<bool> set)
     {
         var box = new CheckBox
         {
