@@ -13,9 +13,8 @@ A Windows desktop app (.NET 8, Avalonia) that keeps two edge panels a hover away
 Neither panel shows until the pointer reaches its edge. There is no main window;
 the app lives in the system tray.
 
-The app was rewritten from WPF to Avalonia. The screenshots half is done; the
-notes half is being rebuilt. See "What is not built yet" below before planning
-work.
+The app was rewritten from WPF to Avalonia. Both halves work; see "What is not
+built yet" below for the gaps.
 
 ## Build, test, run
 
@@ -57,16 +56,20 @@ src/Hover/
                Settings, Paths, Palette, Ink (fonts), TaskSyntax, DeckStyle.
   Deck/        HoverWindow — the borderless, topmost, no-focus host window the
                edge panels sit in, including the Win32 region shaping that makes
-               its blank areas click-through.
+               its blank areas click-through. EdgePanel — where a panel sits on a
+               screen edge and when the pointer makes it appear.
+  Notes/       NoteDeck — the notes panel: the list, and one note open for typing
+               in an AvaloniaEdit editor.
   Images/      The screenshot half: ShotStore (watches the folder + clipboard),
                Shot/ShotItem, ShotTray + ShotRowView (the panel and its rows),
                ShotGroups (day headings), Snip + SnipOverlay (drag a box),
-               Markup + MarkupCanvas + AnnotateWindow (draw on a picture),
-               TrayPreviewWindow (temporary host, see below).
+               Markup + MarkupCanvas + AnnotateWindow (draw on a picture).
   Interop/     Win32 P/Invoke, monitor enumeration, edge-wake timing, global
                hotkeys, the hidden message window, clipboard pictures, screen
                capture.
-  Services/    Tray (tray icon, menu, the screenshot shortcut).
+  Services/    Tray (tray icon, menu, global shortcuts), Panels (the two edge
+               panels and everything they are wired to).
+  Windows/     Ordinary windows: Settings, All notes.
   Themes/      Canvas.axaml — the panel colours, hover reveals and press feedback.
   Assets/      hover.ico (the app icon, also loaded at run time for the tray).
 tests/Hover.Tests/   NUnit tests, headless Avalonia.
@@ -80,10 +83,10 @@ carry a legacy `Noty` reference **only** in `Core/Paths.cs`, which migrates an o
 
 ## What is not built yet
 
-The notes half has no UI: no note editor, no right-edge deck, no All Notes or
-Settings window. `Core/` already has the model, storage and encryption for it.
-The screenshot panel is shown by `TrayPreviewWindow`, an ordinary window standing
-in until the panel gets its real left-edge `HoverWindow`.
+Rebinding the global shortcuts has no screen; Settings lists them read-only. There
+is no welcome screen for a first run, no import or export, and no rename dialog for
+a note. The notes panel shows one list; the old app's fanned tabs and hover preview
+cards are not back.
 
 Spell check is gone and is not coming back soon: neither Avalonia nor AvaloniaEdit
 has it.
@@ -134,5 +137,5 @@ has it.
   render interface and no UI thread. `TestEnvironment` redirects the data and
   shots folders to a temp path via `HOVER_DATA_DIR` / `HOVER_SHOTS_DIR`. Headless
   UI can be rendered to a PNG with `window.GetLastRenderedFrame()`.
-- **Nothing stops a second copy launching.** The old app had a named mutex; this
-  one does not yet.
+- **Nothing stops a second copy launching.** A named mutex in `Program.cs` makes a
+  second launch exit in silence — including a launch you start while debugging.
