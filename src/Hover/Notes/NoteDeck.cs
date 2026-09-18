@@ -1,4 +1,5 @@
 using Avalonia;
+using Avalonia.Collections;
 using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
 using Avalonia.Input;
@@ -12,35 +13,43 @@ using Hover.Core;
 
 namespace Hover.Notes;
 
-/// The notes deck: coloured tabs shingled down the screen edge, and one note pulled
-/// open for typing.
+/// The notes deck: coloured tabs shingled down the screen edge, and one note pulled out
+/// over them for typing.
 ///
-/// A tab is the note. Hovering one shows a card of what is written on it; clicking one
-/// pulls the note out over the deck, exactly as a sticky would come off a stack. There
-/// is no separate list — the deck *is* the list, which is the whole idea of the app.
+/// A tab is the note. Hovering one draws a corner of that note's paper out from under the
+/// deck; clicking one pulls the whole sheet out, exactly as a sticky would come off a
+/// stack. There is no separate list — the deck *is* the list, which is the whole idea of
+/// the app.
 ///
-/// A note is a plain string. Typing goes into the editor, and the string is written back
-/// to storage a moment after the typing stops rather than on every key, so a long note
-/// is not encrypted and saved thirty times a second.
+/// Everything is drawn on one canvas as wide as the widest sheet, and pinned to the edge
+/// the deck is stuck to. Tabs and sheets are placed by the width the deck *reserves*, not
+/// the width they draw: the extra bleed runs off the screen edge, so their lean cannot
+/// open a wedge of background between them and the edge they are stuck to.
+///
+/// Most of that canvas paints nothing. `PartsWanted` tells the panel which rectangles are
+/// really there, so the mouse falls straight through the rest.
 public sealed class NoteDeck : UserControl
 {
     /// How long after the last keystroke the note is written to storage.
     private static readonly TimeSpan SaveAfter = TimeSpan.FromMilliseconds(400);
 
-    /// How long the pointer must sit on a tab before its card appears, so cards do not
+    /// How long the pointer must rest on a tab before its card appears, so cards do not
     /// flash past while the pointer travels down the deck.
     private static readonly TimeSpan CardAfter = TimeSpan.FromMilliseconds(320);
 
+    /// A card never comes out shorter than this, however short its tab.
+    private const double MinSheetHeight = 132;
+
     private readonly bool _onRight;
-    private readonly Canvas _fan = new();
-    private readonly Border _card;
-    private readonly Border _paper;
+    private readonly Canvas _stack = new();
+    private readonly Border _sheet;
     private readonly TextEditor _text;
     private readonly TextBlock _openTitle;
 
     private readonly DispatcherTimer _save;
     private readonly DispatcherTimer _cardWait;
     private NoteTab? _cardFor;
+    private PreviewCard? _card;
     private Note? _open;
     private bool _filling;
 
@@ -48,10 +57,9 @@ public sealed class NoteDeck : UserControl
     /// open for typing, false when it closes.
     public event EventHandler<bool>? Typing;
 
-    /// Raised with how wide the panel needs to be: the fan alone, the fan and a card, or
-    /// the fan and an open note. The panel is kept no wider than it has to be, because
-    /// every pixel of it is a pixel of the screen the mouse cannot click through.
-    public event EventHandler<double>? WidthWanted;
+    /// Raised with the rectangles the deck is actually painting, in layout units from the
+    /// panel's top-left corner.
+    public event EventHandler<IReadOnlyList<Rect>>? PartsWanted;
 
     public NoteDeck() : this(!Settings.DeckOnLeftEdge) { }
 
@@ -65,7 +73,7 @@ public sealed class NoteDeck : UserControl
             ShowLineNumbers = false,
             FontFamily = Ink.BodyFamily,
             FontSize = Ink.BodySize(14),
-            Padding = new Thickness(12, 8, 12, 12),
+            Padding = new Thickness(4, 0, 4, 8),
             Background = Brushes.Transparent,
             HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
             VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
@@ -81,29 +89,22 @@ public sealed class NoteDeck : UserControl
             TextTrimming = TextTrimming.CharacterEllipsis,
         };
 
-        _paper = new Border
+        // The open note is the same shape as a tab and as the card: rounded where it
+        // leaves the deck, square where it meets the screen edge.
+        _sheet = new Border
         {
-            CornerRadius = new CornerRadius(14),
+            Width = DeckGeom.EditorWidth + DeckGeom.Bleed,
+            Height = DeckGeom.EditorHeight,
+            CornerRadius = onRight
+                ? new CornerRadius(14, 0, 0, 14)
+                : new CornerRadius(0, 14, 14, 0),
             ClipToBounds = true,
             IsVisible = false,
-            Effect = TabShapes.Shadow(0.4, 22, _onRight ? -6 : 6, 4),
+            Effect = TabShapes.Shadow(0.4, 22, onRight ? -6 : 6, 4),
             Child = OpenNoteBody(),
         };
 
-        _card = new Border
-        {
-            CornerRadius = new CornerRadius(12),
-            Padding = new Thickness(14, 12, 14, 14),
-            IsVisible = false,
-            IsHitTestVisible = false,
-            Effect = TabShapes.Shadow(0.35, 18, _onRight ? -4 : 4, 3),
-        };
-
-        var layers = new Panel();
-        layers.Children.Add(_fan);
-        layers.Children.Add(_card);
-        layers.Children.Add(_paper);
-        Content = layers;
+        Content = _stack;
 
         _save = new DispatcherTimer { Interval = SaveAfter };
         _save.Tick += (_, _) => { _save.Stop(); Store(); };
@@ -117,6 +118,25 @@ public sealed class NoteDeck : UserControl
         Rebuild();
     }
 
+    // MARK: Placing things against the edge
+
+    /// Puts a child against the edge the deck is stuck to. `reserved` is the width the
+    /// deck gives it; anything the child draws past that runs off the screen edge.
+    private void Place(Control child, double top, double reserved)
+    {
+        Canvas.SetTop(child, top);
+        if (_onRight) Canvas.SetLeft(child, Math.Max(0, Bounds.Width - reserved));
+        else Canvas.SetLeft(child, reserved - child.Width);
+        if (!_stack.Children.Contains(child)) _stack.Children.Add(child);
+    }
+
+    /// One rectangle against the edge: `width` wide, `height` tall, at `top`.
+    private Rect Part(double top, double width, double height)
+    {
+        var x = _onRight ? Math.Max(0, Bounds.Width - width) : 0;
+        return new Rect(x, top, width, height);
+    }
+
     // MARK: The fan
 
     /// Lays the tabs out down the edge. Called on every size change and whenever the
@@ -124,20 +144,39 @@ public sealed class NoteDeck : UserControl
     private void Rebuild()
     {
         if (_open is not null) return;   // the deck is behind an open note
-        _fan.Children.Clear();
+        _stack.Children.Clear();
+        _card = null;
+        _cardFor = null;
+
+        var height = Bounds.Height;
+        if (height <= 0 || Bounds.Width <= 0) return;
 
         var notes = NoteStore.Shared.Active;
-        var height = Bounds.Height;
-        if (height <= 0) return;
-
         if (notes.Count == 0)
         {
-            Place(NewNoteButton(), 20);
+            var plus = NewNoteButton();
+            Place(plus, 20, DeckGeom.PlusSize + 6);
+            Parts(new[] { Part(12, DeckGeom.LiveStrip, DeckGeom.PlusSize + 24) });
             return;
         }
 
         var longest = notes.Max(n => Ink.MeasureTabLabel(n.DisplayTitle));
         var layout = DeckGeom.Layout(height, notes.Count, Settings.DeckStyle, longest);
+
+        // The dashed rule the deck hangs from, right at the screen edge.
+        var rule = new Avalonia.Controls.Shapes.Line
+        {
+            StartPoint = new Point(0, 0),
+            EndPoint = new Point(0, Math.Min(layout.StackHeight + 26, height - 24)),
+            Stroke = NoteColor.Tint(Colors.White, 0.35),
+            StrokeThickness = 1,
+            StrokeDashArray = new AvaloniaList<double> { 3, 4 },
+            IsHitTestVisible = false,
+            Width = 1,
+        };
+        Canvas.SetTop(rule, Math.Max(0, layout.Top - 13));
+        Canvas.SetLeft(rule, _onRight ? Bounds.Width - 3.5 : 3.5);
+        _stack.Children.Add(rule);
 
         for (var i = 0; i < notes.Count; i++)
         {
@@ -145,28 +184,25 @@ public sealed class NoteDeck : UserControl
             var strip = i == notes.Count - 1 ? layout.ItemHeight : layout.Pitch;
             var tab = new NoteTab(note, false, layout.ItemHeight, strip, _onRight);
             tab.PointerEntered += (_, _) => WaitThenCard(tab);
-            tab.PointerExited += (_, _) => HideCard(tab);
+            tab.PointerExited += (_, _) => DropCard(tab);
             tab.PointerPressed += (_, e) =>
             {
                 if (!e.GetCurrentPoint(tab).Properties.IsLeftButtonPressed) return;
                 e.Handled = true;
                 Edit(note);
             };
-            Place(tab, layout.Top + i * layout.Pitch);
+            Place(tab, layout.Top + i * layout.Pitch, DeckGeom.TabWidth);
         }
 
-        Place(NewNoteButton(), layout.Top + (notes.Count - 1) * layout.Pitch
-                               + layout.ItemHeight + DeckGeom.PlusGap);
-    }
+        var last = layout.Top + (notes.Count - 1) * layout.Pitch + layout.ItemHeight;
+        // The plus sits a little in from the edge rather than hanging off it: it is a
+        // button, not a sheet of paper, so it has no bleed.
+        Place(NewNoteButton(), last + DeckGeom.PlusGap, DeckGeom.PlusSize + 6);
 
-    /// Tabs hang off the edge the deck is stuck to, so they are pinned to that side and
-    /// only their top is positioned.
-    private void Place(Control child, double top)
-    {
-        Canvas.SetTop(child, top);
-        if (_onRight) Canvas.SetRight(child, 0);
-        else Canvas.SetLeft(child, 0);
-        _fan.Children.Add(child);
+        // Only the strip along the edge is really there.
+        var top = Math.Max(0, layout.Top - 16);
+        var bottom = last + DeckGeom.PlusGap + DeckGeom.PlusSize + 8;
+        Parts(new[] { Part(top, DeckGeom.LiveStrip, bottom - top) });
     }
 
     private Control NewNoteButton()
@@ -178,9 +214,6 @@ public sealed class NoteDeck : UserControl
             CornerRadius = new CornerRadius(DeckGeom.PlusSize / 2),
             Background = new SolidColorBrush(Color.Parse("#2A2A2C")),
             Cursor = new Cursor(StandardCursorType.Hand),
-            Margin = _onRight
-                ? new Thickness(0, 0, DeckGeom.Bleed, 0)
-                : new Thickness(DeckGeom.Bleed, 0, 0, 0),
             Child = new TextBlock
             {
                 Text = "＋",
@@ -211,75 +244,47 @@ public sealed class NoteDeck : UserControl
         _cardWait.Start();
     }
 
-    private void HideCard(NoteTab tab)
+    private void DropCard(NoteTab tab)
     {
         if (!ReferenceEquals(_cardFor, tab)) return;
         _cardWait.Stop();
         _cardFor = null;
-        _card.IsVisible = false;
-        _card.Child = null;
-        Want(DeckGeom.RestingWidth);
+        TakeCardAway();
     }
 
-    /// Fills the card with the note and puts it beside its tab. The panel has to widen
-    /// first, so the card is placed after the next layout pass.
+    private void TakeCardAway()
+    {
+        if (_card is null) return;
+        _stack.Children.Remove(_card);
+        _card = null;
+        if (_open is null) Rebuild();
+    }
+
+    /// Draws the note's paper out from under the deck, level with its tab.
     private void ShowCard()
     {
         if (_cardFor is not { } tab || _open is not null) return;
-        var note = tab.Note;
-        var palette = note.Palette;
+        TakeCardAway();
 
-        var stack = new StackPanel { Spacing = 3 };
-        stack.Children.Add(new TextBlock
-        {
-            Text = note.DisplayTitle,
-            FontFamily = Ink.SystemFace,
-            FontSize = 13,
-            FontWeight = FontWeight.SemiBold,
-            Foreground = palette.InkBrush,
-            TextTrimming = TextTrimming.CharacterEllipsis,
-        });
-        stack.Children.Add(new TextBlock
-        {
-            Text = Fmt.Ago(note.Modified),
-            FontFamily = Ink.SystemFace,
-            FontSize = 10.5,
-            Foreground = palette.InkAt(0.55),
-            Margin = new Thickness(0, 0, 0, 4),
-        });
+        var card = new PreviewCard(tab.Note, _onRight);
+        var tabTop = Canvas.GetTop(tab);
+        var tabHeight = tab.Height;
 
-        var body = note.Body.Trim();
-        if (body.Length > 0)
-        {
-            stack.Children.Add(new TextBlock
-            {
-                Text = body.Length > 400 ? body[..400] + "…" : body,
-                FontFamily = Ink.BodyFamily,
-                FontSize = Ink.BodySize(12.5),
-                Foreground = palette.InkAt(0.9),
-                TextWrapping = TextWrapping.Wrap,
-                MaxLines = 12,
-                TextTrimming = TextTrimming.CharacterEllipsis,
-            });
-        }
+        // A tall tab gets a card its own height; a short one gets the minimum, grown
+        // evenly about the tab so the two still read as the same sheet.
+        var height = Math.Max(MinSheetHeight, tabHeight);
+        var top = tabTop + tabHeight / 2 - height / 2;
+        top = Math.Clamp(top, 8, Math.Max(8, Bounds.Height - height - 8));
+        card.Height = height;
 
-        _card.Background = palette.PaperBrush;
-        _card.Width = DeckGeom.CardWidth;
-        _card.Child = stack;
-        _card.HorizontalAlignment = _onRight
-            ? Avalonia.Layout.HorizontalAlignment.Left
-            : Avalonia.Layout.HorizontalAlignment.Right;
-        _card.VerticalAlignment = Avalonia.Layout.VerticalAlignment.Top;
-        _card.IsVisible = true;
-        Want(DeckGeom.RestingWidth + DeckGeom.CardWidth + 12);
+        _card = card;
+        card.ZIndex = 5;
+        Place(card, top, PreviewCard.CardWidth);
 
-        // Level with the tab it belongs to, and never off the top or bottom.
-        Dispatcher.UIThread.Post(() =>
+        Parts(new[]
         {
-            if (!_card.IsVisible) return;
-            var wanted = Canvas.GetTop(tab) + 6;
-            var limit = Math.Max(0, Bounds.Height - _card.Bounds.Height - 8);
-            _card.Margin = new Thickness(0, Math.Clamp(wanted, 8, limit), 0, 0);
+            Part(Math.Max(0, top - 4), PreviewCard.CardWidth, height + 8),
+            Part(0, DeckGeom.LiveStrip, Bounds.Height),
         });
     }
 
@@ -313,19 +318,15 @@ public sealed class NoteDeck : UserControl
         var right = new StackPanel
         {
             Orientation = Orientation.Horizontal,
-            Spacing = 4,
+            Spacing = 2,
             HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Right,
         };
         right.Children.Add(pin);
         right.Children.Add(colour);
         right.Children.Add(bin);
 
-        var bar = new Grid
-        {
-            ColumnDefinitions = new ColumnDefinitions("Auto,*,Auto"),
-            Margin = new Thickness(8, 8, 8, 2),
-        };
-        _openTitle.Margin = new Thickness(8, 0, 8, 0);
+        var bar = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*,Auto") };
+        _openTitle.Margin = new Thickness(6, 0, 6, 0);
         Grid.SetColumn(back, 0);
         Grid.SetColumn(_openTitle, 1);
         Grid.SetColumn(right, 2);
@@ -333,7 +334,14 @@ public sealed class NoteDeck : UserControl
         bar.Children.Add(_openTitle);
         bar.Children.Add(right);
 
-        var page = new Grid { RowDefinitions = new RowDefinitions("Auto,*") };
+        var page = new Grid
+        {
+            RowDefinitions = new RowDefinitions("Auto,*"),
+            // The bleed side gets no padding: that edge runs off the screen.
+            Margin = _onRight
+                ? new Thickness(14, 10, 10 + DeckGeom.Bleed, 12)
+                : new Thickness(10 + DeckGeom.Bleed, 10, 14, 12),
+        };
         Grid.SetRow(bar, 0);
         Grid.SetRow(_text, 1);
         page.Children.Add(bar);
@@ -368,8 +376,11 @@ public sealed class NoteDeck : UserControl
     public void Edit(Note note)
     {
         _cardWait.Stop();
-        _card.IsVisible = false;
-        _card.Child = null;
+        _cardFor = null;
+
+        var from = _card is null ? -1d : Canvas.GetTop(_card);
+        _stack.Children.Clear();
+        _card = null;
 
         _open = note;
         _filling = true;
@@ -377,15 +388,19 @@ public sealed class NoteDeck : UserControl
         _filling = false;
 
         Paint();
-        _fan.IsVisible = false;
-        _paper.IsVisible = true;
-        _paper.Margin = new Thickness(8, 14, 8, 14);
-        Want(DeckGeom.OpenWidth);
+        _sheet.IsVisible = true;
+
+        // Level with wherever the note was in the deck, and never off the screen.
+        var top = from >= 0 ? from : (Bounds.Height - DeckGeom.EditorHeight) / 2;
+        top = Math.Clamp(top, 10, Math.Max(10, Bounds.Height - DeckGeom.EditorHeight - 10));
+        Place(_sheet, top, DeckGeom.EditorWidth);
+        Parts(new[] { Part(Math.Max(0, top - 6), DeckGeom.EditorWidth, DeckGeom.EditorHeight + 12) });
+
         Typing?.Invoke(this, true);
 
         // Focus is asked for after this layout pass, not during it: the editor has only
-        // just been made visible, and a control that has not been laid out yet cannot
-        // take the keyboard — the caret would land nowhere and typing would be lost.
+        // just been made visible, and a control that has not been laid out yet cannot take
+        // the keyboard — the caret would land nowhere and typing would be lost.
         Dispatcher.UIThread.Post(() =>
         {
             if (_open is null) return;
@@ -402,9 +417,8 @@ public sealed class NoteDeck : UserControl
         Store();
         var id = _open.Id;
         _open = null;
-        _paper.IsVisible = false;
-        _fan.IsVisible = true;
-        Want(DeckGeom.RestingWidth);
+        _sheet.IsVisible = false;
+        _stack.Children.Remove(_sheet);
         Typing?.Invoke(this, false);
         // A note opened and left blank is not a note, so it does not clutter the deck.
         NoteStore.Shared.DiscardIfEmpty(id);
@@ -417,16 +431,16 @@ public sealed class NoteDeck : UserControl
     {
         if (_open is null) return;
         var palette = _open.Palette;
-        _paper.Background = palette.PaperBrush;
+        _sheet.Background = palette.PaperBrush;
         _text.Foreground = palette.InkBrush;
         _text.TextArea.Caret.CaretBrush = palette.InkBrush;
         _openTitle.Foreground = palette.InkAt(0.8);
         _openTitle.Text = _open.DisplayTitle;
-        foreach (var chip in _paper.GetVisualDescendants().OfType<Button>())
-            chip.Foreground = palette.InkAt(0.8);
+        foreach (var chip in _sheet.GetVisualDescendants().OfType<Button>())
+            chip.Foreground = palette.InkAt(0.75);
     }
 
-    private void Want(double width) => WidthWanted?.Invoke(this, width);
+    private void Parts(IReadOnlyList<Rect> parts) => PartsWanted?.Invoke(this, parts);
 
     private void Touched()
     {

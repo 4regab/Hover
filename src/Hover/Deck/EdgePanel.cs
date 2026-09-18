@@ -46,8 +46,30 @@ public sealed class EdgePanel : IDisposable
     private readonly EdgeWake _wake = new();
 
     private ScreenInfo? _on;
+    private IReadOnlyList<Rect> _parts = Array.Empty<Rect>();
+
+    /// How far into the panel the pointer counts as being "on the deck".
+    ///
+    /// A panel is as wide as the widest sheet it can draw, but leaving the deck means
+    /// leaving the strip along the screen edge — not leaving the whole window. Without
+    /// this, a panel wide enough for an open note would never close.
+    public double LiveStrip { get; set; }
 
     public bool IsOpen { get; private set; }
+
+    /// The screen the panel is out on, and where it sits there in device pixels. The
+    /// hover card is a separate window and needs both to place itself.
+    public ScreenInfo? On => _on;
+
+    public Win32.RECT Where
+    {
+        get
+        {
+            if (_on is not { } screen) return default;
+            var (x, y, w, h) = Rect(screen);
+            return new Win32.RECT { Left = x, Top = y, Right = x + w, Bottom = y + h };
+        }
+    }
 
     /// Set by the content while it must not be taken away: a note being typed into,
     /// or a menu standing open over the panel.
@@ -98,6 +120,40 @@ public sealed class EdgePanel : IDisposable
         if (IsOpen && _on is not null) Open(_on);
     }
 
+    /// Tells Windows which parts of the panel are really there.
+    ///
+    /// A panel is as wide as the widest thing it can show, but most of the time it only
+    /// paints a strip along the screen edge. Without a shape, the empty part would still
+    /// swallow clicks meant for the window underneath. Rectangles are in layout units,
+    /// measured from the panel's own top-left corner.
+    public void SetParts(IReadOnlyList<Rect> parts)
+    {
+        _parts = parts;
+        Shape();
+    }
+
+    private void Shape()
+    {
+        if (_on is not { } screen) return;
+        var scale = screen.Scale;
+        var (_, _, w, h) = Rect(screen);
+
+        if (_parts.Count == 0)
+        {
+            _window.ShapeRounded(w, h, (int)Math.Round(12 * scale));
+            return;
+        }
+
+        var pixels = _parts.Select(p => new Win32.RECT
+        {
+            Left = (int)Math.Floor(p.X * scale),
+            Top = (int)Math.Floor(p.Y * scale),
+            Right = (int)Math.Ceiling(p.Right * scale),
+            Bottom = (int)Math.Ceiling(p.Bottom * scale),
+        }).ToList();
+        _window.ShapeParts(pixels, (int)Math.Round(10 * scale));
+    }
+
     /// Runs a drag with the window briefly allowed to activate, which is what other
     /// apps demand of a drag source.
     public void WhileDragging(Action body) => _window.WhileActivatable(body);
@@ -142,6 +198,24 @@ public sealed class EdgePanel : IDisposable
 
         var (x, y, w, h) = Rect(screen);
         var slack = (int)Math.Round(Slack * screen.Scale);
+
+        // Leaving the deck means leaving the parts that are actually drawn, not the
+        // window, which is as wide as the widest sheet the panel can show.
+        if (_parts.Count > 0)
+        {
+            foreach (var part in _parts)
+            {
+                var left = x + (int)Math.Floor(part.X * screen.Scale) - slack;
+                var top = y + (int)Math.Floor(part.Y * screen.Scale) - slack;
+                var right = x + (int)Math.Ceiling(part.Right * screen.Scale) + slack;
+                var bottom = y + (int)Math.Ceiling(part.Bottom * screen.Scale) + slack;
+                if (cursor.X >= left && cursor.X <= right &&
+                    cursor.Y >= top && cursor.Y <= bottom) return;
+            }
+            Close();
+            return;
+        }
+
         var near = cursor.X >= x - slack && cursor.X <= x + w + slack &&
                    cursor.Y >= y - slack && cursor.Y <= y + h + slack;
         if (near) return;
@@ -158,8 +232,7 @@ public sealed class EdgePanel : IDisposable
         _window.Height = h / screen.Scale;
         _window.Show();
         _window.PlaceDevice(x, y, w, h);
-        // The corners outside the rounded edge would otherwise still take clicks.
-        _window.ShapeRounded(w, h, (int)Math.Round(12 * screen.Scale));
+        Shape();
         _window.Raise();
         IsOpen = true;
     }

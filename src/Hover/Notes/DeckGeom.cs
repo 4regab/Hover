@@ -68,11 +68,20 @@ public static class DeckGeom
     public static double RestingWidth => TabWidth + Bleed + 10;
 
     /// The hover card that shows what is written on a note.
-    public const double CardWidth = 300;
+    public static double CardWidth => PreviewCard.CardWidth;
 
-    /// The open note, and how wide the panel grows to hold it.
-    public const double EditorWidth = 440;
-    public static double OpenWidth => EditorWidth + FanWidth * 0.4;
+    /// The open note is a sheet, not a full-height panel — it slides out of the deck at
+    /// roughly the height of the tab it came from.
+    public const double EditorWidth = 460;
+    public const double EditorHeight = 380;
+
+    /// The open note runs to the screen edge and covers its own tab, exactly as a pulled
+    /// sticky would. A little wider than the note so the lean has somewhere to go.
+    public static double PanelWidth => Math.Max(FanWidth, EditorWidth) + 22;
+
+    /// How far into the panel counts as being on the deck. The panel is as wide as the
+    /// widest sheet it can draw; the deck itself is only the strip against the edge.
+    public static double LiveStrip => FanWidth + 20;
 
     /// `count` tabs down a panel this tall, with the strip of each sized to the longest
     /// label so titles read in full until they hit the cap and ellipsise.

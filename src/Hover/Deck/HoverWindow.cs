@@ -124,4 +124,43 @@ public class HoverWindow : Window
         if (Handle == IntPtr.Zero) return;
         Win32.SetWindowRgn(Handle, IntPtr.Zero, true);
     }
+
+    /// Tells Windows the window is only these rectangles, everything else being a hole
+    /// the mouse falls through to whatever is underneath.
+    ///
+    /// This is what WPF gave for free: its see-through windows tested each pixel, so
+    /// unpainted parts never took a click. An Avalonia window is an ordinary rectangle,
+    /// so the shape has to be spelled out. Rectangles are in device pixels, relative to
+    /// the window's own top-left corner.
+    public void ShapeParts(IReadOnlyList<Win32.RECT> parts, int radius)
+    {
+        if (Handle == IntPtr.Zero) return;
+        if (parts.Count == 0) { ShapeRounded(1, 1, 0); return; }
+
+        var whole = IntPtr.Zero;
+        foreach (var part in parts)
+        {
+            if (part.Width <= 0 || part.Height <= 0) continue;
+            var diameter = Math.Max(0, radius * 2);
+            var piece = diameter > 0
+                ? Win32.CreateRoundRectRgn(part.Left, part.Top, part.Right + 1, part.Bottom + 1,
+                                           diameter, diameter)
+                : Win32.CreateRectRgn(part.Left, part.Top, part.Right + 1, part.Bottom + 1);
+            if (piece == IntPtr.Zero) continue;
+
+            if (whole == IntPtr.Zero)
+            {
+                whole = piece;
+                continue;
+            }
+            // CombineRgn writes into a region that already exists, so the running total
+            // is combined with itself and the new piece.
+            Win32.CombineRgn(whole, whole, piece, Win32.RGN_OR);
+            Win32.DeleteObject(piece);
+        }
+
+        if (whole == IntPtr.Zero) return;
+        // Windows takes ownership once the call succeeds.
+        if (Win32.SetWindowRgn(Handle, whole, true) == 0) Win32.DeleteObject(whole);
+    }
 }

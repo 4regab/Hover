@@ -124,6 +124,14 @@ public static class Win32
     [DllImport("gdi32.dll")]
     public static extern IntPtr CreateRectRgn(int left, int top, int right, int bottom);
 
+    /// Adds two regions together. Used to hand Windows a window shape made of several
+    /// rectangles — an edge panel is a narrow strip plus whatever sheet is drawn out of
+    /// it, and everything between the two must stay clickable.
+    public const int RGN_OR = 2;
+
+    [DllImport("gdi32.dll")]
+    public static extern int CombineRgn(IntPtr destination, IntPtr a, IntPtr b, int mode);
+
     [DllImport("gdi32.dll")]
     public static extern bool DeleteObject(IntPtr handle);
 

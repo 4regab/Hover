@@ -31,11 +31,15 @@ public static class Panels
         var shotsEdge = notesEdge == Edge.Left ? Edge.Right : Edge.Left;
 
         _deck = new NoteDeck(notesEdge == Edge.Right);
-        _notes = new EdgePanel(notesEdge, _deck, Notes.DeckGeom.RestingWidth,
-                               () => Settings.AutoHideNotes, opaque: false);
-        // The deck knows how much room it needs: tabs only, tabs and a hover card, or
-        // tabs and an open note.
-        _deck.WidthWanted += (_, width) => _notes?.SetWidth(width);
+        _notes = new EdgePanel(notesEdge, _deck, Notes.DeckGeom.PanelWidth,
+                               () => Settings.AutoHideNotes, opaque: false)
+        {
+            LiveStrip = Notes.DeckGeom.LiveStrip,
+        };
+        // The panel is as wide as the widest sheet the deck can draw, and paints almost
+        // none of it. The deck says which rectangles are really there, so clicks fall
+        // straight through the rest.
+        _deck.PartsWanted += (_, parts) => _notes?.SetParts(parts);
         // A note being typed into must not be whipped away, and it needs the keyboard.
         _deck.Typing += (_, typing) =>
         {
