@@ -1,8 +1,10 @@
 <Application xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              x:Class="Hover.App"
-             RequestedThemeVariant="Light">
+             RequestedThemeVariant="Dark">
     <Application.Styles>
         <FluentTheme />
+        <!-- Direction B, Canvas. Panel colours, hover reveals and press feedback. -->
+        <StyleInclude Source="avares://Hover/Themes/Canvas.axaml" />
     </Application.Styles>
 </Application>

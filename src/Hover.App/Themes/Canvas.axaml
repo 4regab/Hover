@@ -1,0 +1,209 @@
+<Styles xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <!-- Direction B, Canvas. The values are the ones in design/b-canvas.html, which
+         in turn come from Notion's dark workspace. Motion follows Emil Kowalski's
+         standards: strong ease-out curves, nothing over 300ms, opacity and transform
+         only, presses scale slightly. -->
+
+    <Styles.Resources>
+        <!-- Surfaces -->
+        <SolidColorBrush x:Key="Dark" Color="#191919" />
+        <SolidColorBrush x:Key="DarkLine" Color="#18FFFFFF" />
+        <SolidColorBrush x:Key="DarkFill" Color="#17FFFFFF" />
+        <SolidColorBrush x:Key="DarkFillStrong" Color="#26FFFFFF" />
+        <SolidColorBrush x:Key="DarkDashed" Color="#24FFFFFF" />
+
+        <!-- Text, three steps down from white -->
+        <SolidColorBrush x:Key="Ink" Color="#FFFFFFFF" />
+        <SolidColorBrush x:Key="Ink2" Color="#CFFFFFFF" />
+        <SolidColorBrush x:Key="Ink3" Color="#9EFFFFFF" />
+        <SolidColorBrush x:Key="Ink4" Color="#75FFFFFF" />
+        <SolidColorBrush x:Key="Ink5" Color="#57FFFFFF" />
+
+        <!-- One accent for danger, Notion's dark-mode red -->
+        <SolidColorBrush x:Key="Danger" Color="#FF7369" />
+
+        <!-- Buttons that float on top of a picture -->
+        <SolidColorBrush x:Key="Scrim" Color="#A80A0A0A" />
+        <SolidColorBrush x:Key="ScrimHover" Color="#38FFFFFF" />
+
+        <!-- 180ms is the reveal, 140ms is a press. -->
+        <Thickness x:Key="PanelPad">0</Thickness>
+    </Styles.Resources>
+
+    <!-- ============ the panel ============ -->
+    <Style Selector="Border.panel">
+        <Setter Property="Background" Value="{StaticResource Dark}" />
+        <Setter Property="BorderBrush" Value="{StaticResource DarkLine}" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="CornerRadius" Value="12" />
+        <Setter Property="ClipToBounds" Value="True" />
+    </Style>
+
+    <!-- ============ the header ============ -->
+    <Style Selector="TextBlock.title">
+        <Setter Property="FontSize" Value="13" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+        <Setter Property="Foreground" Value="{StaticResource Ink}" />
+        <Setter Property="VerticalAlignment" Value="Center" />
+    </Style>
+
+    <Style Selector="Border.count">
+        <Setter Property="Background" Value="{StaticResource DarkFill}" />
+        <Setter Property="CornerRadius" Value="999" />
+        <Setter Property="Padding" Value="6,1" />
+        <Setter Property="VerticalAlignment" Value="Center" />
+    </Style>
+
+    <Style Selector="Border.count > TextBlock">
+        <Setter Property="FontSize" Value="11" />
+        <Setter Property="Foreground" Value="{StaticResource Ink4}" />
+    </Style>
+
+    <!-- ============ the snip button ============ -->
+    <Style Selector="Button.snip">
+        <Setter Property="Background" Value="{StaticResource DarkFill}" />
+        <Setter Property="Foreground" Value="{StaticResource Ink2}" />
+        <Setter Property="BorderThickness" Value="0" />
+        <Setter Property="CornerRadius" Value="7" />
+        <Setter Property="Padding" Value="8,0,10,0" />
+        <Setter Property="Height" Value="27" />
+        <Setter Property="FontSize" Value="12" />
+        <Setter Property="FontWeight" Value="Medium" />
+        <Setter Property="VerticalContentAlignment" Value="Center" />
+        <Setter Property="RenderTransform" Value="none" />
+        <Setter Property="Transitions">
+            <Transitions>
+                <BrushTransition Property="Background" Duration="0:0:0.16" />
+                <TransformOperationsTransition Property="RenderTransform"
+                                               Duration="0:0:0.14" Easing="0.23,1,0.32,1" />
+            </Transitions>
+        </Setter>
+    </Style>
+
+    <Style Selector="Button.snip:pointerover /template/ ContentPresenter">
+        <Setter Property="Background" Value="{StaticResource DarkFillStrong}" />
+        <Setter Property="TextElement.Foreground" Value="{StaticResource Ink}" />
+    </Style>
+
+    <Style Selector="Button.snip:pressed">
+        <Setter Property="RenderTransform" Value="scale(0.96)" />
+    </Style>
+
+    <!-- ============ day headings ============ -->
+    <Style Selector="TextBlock.group">
+        <Setter Property="FontSize" Value="10.5" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+        <Setter Property="Foreground" Value="{StaticResource Ink5}" />
+        <Setter Property="LetterSpacing" Value="0.8" />
+        <Setter Property="VerticalAlignment" Value="Center" />
+    </Style>
+
+    <Style Selector="Border.rule">
+        <Setter Property="Height" Value="1" />
+        <Setter Property="Background" Value="{StaticResource DarkLine}" />
+        <Setter Property="VerticalAlignment" Value="Center" />
+    </Style>
+
+    <!-- ============ one picture ============ -->
+    <Style Selector="Border.shot">
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="CornerRadius" Value="9" />
+        <Setter Property="Padding" Value="5" />
+        <Setter Property="Cursor" Value="Hand" />
+        <Setter Property="Transitions">
+            <Transitions>
+                <BrushTransition Property="Background" Duration="0:0:0.16" />
+            </Transitions>
+        </Setter>
+    </Style>
+
+    <Style Selector="Border.shot:pointerover">
+        <Setter Property="Background" Value="{StaticResource DarkFill}" />
+    </Style>
+
+    <Style Selector="Border.frame">
+        <Setter Property="CornerRadius" Value="6" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="BorderBrush" Value="#12FFFFFF" />
+        <Setter Property="ClipToBounds" Value="True" />
+    </Style>
+
+    <Style Selector="TextBlock.name">
+        <Setter Property="FontSize" Value="11" />
+        <Setter Property="Foreground" Value="{StaticResource Ink3}" />
+        <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+    </Style>
+
+    <Style Selector="TextBlock.when">
+        <Setter Property="FontSize" Value="11" />
+        <Setter Property="Foreground" Value="{StaticResource Ink5}" />
+    </Style>
+
+    <!-- ============ buttons that sit on a picture ============ -->
+    <!-- Hidden until the picture is pointed at. A delete button on every thumbnail
+         all the time is what made the old tray feel cluttered. -->
+    <Style Selector="Border.shot Button.onshot">
+        <Setter Property="Opacity" Value="0" />
+        <Setter Property="IsHitTestVisible" Value="False" />
+        <Setter Property="Background" Value="{StaticResource Scrim}" />
+        <Setter Property="Foreground" Value="{StaticResource Ink}" />
+        <Setter Property="BorderThickness" Value="0" />
+        <Setter Property="CornerRadius" Value="6" />
+        <Setter Property="Height" Value="22" />
+        <Setter Property="Padding" Value="0" />
+        <Setter Property="FontSize" Value="11" />
+        <Setter Property="VerticalContentAlignment" Value="Center" />
+        <Setter Property="HorizontalContentAlignment" Value="Center" />
+        <Setter Property="RenderTransform" Value="scale(0.92)" />
+        <Setter Property="Transitions">
+            <Transitions>
+                <DoubleTransition Property="Opacity" Duration="0:0:0.18" Easing="0.23,1,0.32,1" />
+                <TransformOperationsTransition Property="RenderTransform"
+                                               Duration="0:0:0.18" Easing="0.23,1,0.32,1" />
+            </Transitions>
+        </Setter>
+    </Style>
+
+    <Style Selector="Border.shot:pointerover Button.onshot">
+        <Setter Property="Opacity" Value="1" />
+        <Setter Property="IsHitTestVisible" Value="True" />
+        <Setter Property="RenderTransform" Value="none" />
+    </Style>
+
+    <Style Selector="Button.onshot:pointerover /template/ ContentPresenter">
+        <Setter Property="Background" Value="{StaticResource ScrimHover}" />
+    </Style>
+
+    <Style Selector="Button.onshot:pressed">
+        <Setter Property="RenderTransform" Value="scale(0.88)" />
+    </Style>
+
+    <Style Selector="Button.kill:pointerover /template/ ContentPresenter">
+        <Setter Property="Background" Value="{StaticResource Danger}" />
+    </Style>
+
+    <!-- ============ the empty tray ============ -->
+    <Style Selector="Border.empty">
+        <Setter Property="BorderBrush" Value="{StaticResource DarkDashed}" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="CornerRadius" Value="9" />
+        <Setter Property="Padding" Value="16,26" />
+    </Style>
+
+    <Style Selector="Border.empty TextBlock.lead">
+        <Setter Property="FontSize" Value="12.5" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+        <Setter Property="Foreground" Value="{StaticResource Ink2}" />
+        <Setter Property="HorizontalAlignment" Value="Center" />
+    </Style>
+
+    <Style Selector="Border.empty TextBlock.sub">
+        <Setter Property="FontSize" Value="12" />
+        <Setter Property="Foreground" Value="{StaticResource Ink4}" />
+        <Setter Property="TextAlignment" Value="Center" />
+        <Setter Property="TextWrapping" Value="Wrap" />
+        <Setter Property="Margin" Value="0,3,0,0" />
+    </Style>
+</Styles>

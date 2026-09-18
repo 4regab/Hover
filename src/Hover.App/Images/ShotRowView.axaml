@@ -1,0 +1,42 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:img="using:Hover.Images"
+             x:Class="Hover.Images.ShotRowView"
+             x:DataType="img:ShotItem">
+
+    <!-- One picture: the frame, two buttons that appear only while the pointer is on
+         it, and a plain caption underneath. The caption is under the picture rather
+         than over it, because on a dark panel the picture is already separated from
+         the chrome and does not need a gradient. -->
+    <Border Classes="shot" PointerPressed="OnPressed">
+        <StackPanel>
+            <Border Classes="frame" Name="Frame">
+                <Panel>
+                    <Image Name="Picture" Stretch="UniformToFill"
+                           Source="{Binding Thumb}" />
+
+                    <!-- The "Mark up" button from the mockup lands with the annotate
+                         feature. A button that does nothing is worse than no button. -->
+                    <Button Classes="onshot kill" Width="22"
+                            HorizontalAlignment="Right" VerticalAlignment="Top"
+                            Margin="0,5,5,0"
+                            Click="OnDelete" ToolTip.Tip="Delete">
+                        <Path Width="11" Height="11" Stretch="Uniform"
+                              Stroke="White" StrokeThickness="2.4" StrokeLineCap="Round"
+                              Data="M 6,6 L 18,18 M 18,6 L 6,18" />
+                    </Button>
+                </Panel>
+            </Border>
+
+            <Grid ColumnDefinitions="*,Auto" Margin="3,6,3,1">
+                <TextBlock Grid.Column="0" Classes="name" Text="{Binding Name}" />
+                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="4"
+                            Margin="8,0,0,0">
+                    <TextBlock Classes="when" Text="{Binding When}" />
+                    <TextBlock Classes="when" Text="·" IsVisible="{Binding Size, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+                    <TextBlock Classes="when" Text="{Binding Size}" />
+                </StackPanel>
+            </Grid>
+        </StackPanel>
+    </Border>
+</UserControl>

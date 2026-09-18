@@ -1,0 +1,72 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:img="using:Hover.Images"
+             x:Class="Hover.Images.ShotTray"
+             x:DataType="img:ShotTray"
+             Width="288">
+
+    <!-- Direction B. A dark panel so a white screenshot reads as a picture instead
+         of blending into the chrome.
+
+         Top-aligned on purpose: the panel must end under its last picture. Letting it
+         stretch is what produced the dead space below the rows before. -->
+    <Border Classes="panel" VerticalAlignment="Top">
+        <StackPanel>
+
+            <!-- Header -->
+            <Border BorderBrush="{StaticResource DarkLine}" BorderThickness="0,0,0,1">
+                <Grid ColumnDefinitions="Auto,Auto,*,Auto" Margin="16,13,11,11">
+                    <TextBlock Grid.Column="0" Classes="title" Text="Screenshots" />
+                    <Border Grid.Column="1" Classes="count" Margin="9,0,0,0"
+                            IsVisible="{Binding HasShots}">
+                        <TextBlock Text="{Binding Count}" />
+                    </Border>
+                    <Button Grid.Column="3" Classes="snip" Click="OnSnip"
+                            ToolTip.Tip="New snip (Ctrl+Alt+S)">
+                        <StackPanel Orientation="Horizontal" Spacing="5">
+                            <Path Width="13" Height="13" Stretch="Uniform"
+                                  Stroke="{Binding $parent[Button].Foreground}"
+                                  StrokeThickness="2" StrokeLineCap="Round"
+                                  Data="M 12,5 V 19 M 5,12 H 19" />
+                            <TextBlock Text="Snip" VerticalAlignment="Center" />
+                        </StackPanel>
+                    </Button>
+                </Grid>
+            </Border>
+
+            <!-- Empty state. The old tray showed a blank row with a stray delete
+                 button here, which looked broken rather than empty. -->
+            <Border Classes="empty" Margin="11,10,11,14" IsVisible="{Binding IsEmpty}">
+                <StackPanel>
+                    <TextBlock Classes="lead" Text="Nothing here yet" />
+                    <TextBlock Classes="sub" Text="Press Ctrl+Alt+S to snip part of the screen." />
+                </StackPanel>
+            </Border>
+
+            <!-- Pictures, grouped by day -->
+            <ItemsControl ItemsSource="{Binding Groups}" IsVisible="{Binding HasShots}">
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate x:DataType="img:ShotGroup">
+                        <StackPanel>
+                            <Grid ColumnDefinitions="Auto,*" Margin="16,12,16,7">
+                                <TextBlock Grid.Column="0" Classes="group"
+                                           Text="{Binding Label}" />
+                                <Border Grid.Column="1" Classes="rule" Margin="8,0,0,0" />
+                            </Grid>
+
+                            <ItemsControl ItemsSource="{Binding Items}" Margin="11,0,11,4">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate x:DataType="img:ShotItem">
+                                        <img:ShotRowView Margin="0,0,0,3" />
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </StackPanel>
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+
+            <Panel Height="8" IsVisible="{Binding HasShots}" />
+        </StackPanel>
+    </Border>
+</UserControl>
