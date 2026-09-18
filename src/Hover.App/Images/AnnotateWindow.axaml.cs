@@ -1,3 +1,4 @@
+using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Interactivity;
@@ -18,9 +19,12 @@ public partial class AnnotateWindow : Window
     private readonly Markup _markup = new();
     private readonly MarkupCanvas _canvas;
 
-    private Button? _arrow, _box, _highlight, _crop, _undo;
+    private Button? _arrow, _box, _draw, _text, _highlight, _crop, _undo;
     private Button? _red, _yellow, _blue;
     private TextBlock? _status;
+    private readonly Canvas _typingLayer = new();
+    private TextBox? _typing;
+    private Point _typingAt;
 
     /// Raised with the finished PNG when the user saves. Not raised if they discard.
     public event EventHandler<byte[]>? Saved;
@@ -32,9 +36,12 @@ public partial class AnnotateWindow : Window
 
         _canvas = new MarkupCanvas(_picture, _markup);
         _canvas.Drawn += (_, _) => Sync();
+        _canvas.TextRequested += (_, at) => StartTyping(at);
 
         _arrow = this.FindControl<Button>("ArrowTool");
         _box = this.FindControl<Button>("BoxTool");
+        _draw = this.FindControl<Button>("DrawTool");
+        _text = this.FindControl<Button>("TextTool");
         _highlight = this.FindControl<Button>("HighlightTool");
         _crop = this.FindControl<Button>("CropTool");
         _undo = this.FindControl<Button>("UndoButton");
@@ -44,7 +51,15 @@ public partial class AnnotateWindow : Window
         _status = this.FindControl<TextBlock>("Status");
 
         var stage = this.FindControl<Border>("Stage");
-        if (stage is not null) stage.Child = _canvas;
+        // The typing box sits above the picture rather than inside it: the picture is
+        // painted, not built from controls, so it cannot hold one.
+        if (stage is not null)
+        {
+            var layers = new Grid();
+            layers.Children.Add(_canvas);
+            layers.Children.Add(_typingLayer);
+            stage.Child = layers;
+        }
 
         // Open at the picture's size where that fits, so nothing is scaled down unless
         // the screenshot is bigger than the screen.
@@ -73,6 +88,8 @@ public partial class AnnotateWindow : Window
     {
         Mark(_arrow, Tool.Arrow);
         Mark(_box, Tool.Box);
+        Mark(_draw, Tool.Draw);
+        Mark(_text, Tool.Text);
         Mark(_highlight, Tool.Highlight);
         Mark(_crop, Tool.Crop);
 
@@ -108,6 +125,8 @@ public partial class AnnotateWindow : Window
 
     private void Choose(Tool tool)
     {
+        // Changing tool finishes whatever was being typed, so the words are not lost.
+        CommitTyping();
         _canvas.Tool = tool;
         Sync();
     }
@@ -115,11 +134,69 @@ public partial class AnnotateWindow : Window
     private void Choose(Color colour)
     {
         _canvas.Colour = colour;
+        if (_typing is not null) _typing.Foreground = new SolidColorBrush(colour);
         Sync();
+    }
+
+    // MARK: Typing
+
+    /// Puts a typing box on the picture where it was clicked, at the size the words will
+    /// be saved, so what is typed is what comes out.
+    private void StartTyping(Point at)
+    {
+        CommitTyping();
+
+        var spot = _canvas.ToLocal(at);
+        var box = new TextBox
+        {
+            FontFamily = Ink.SystemFace,
+            FontWeight = FontWeight.SemiBold,
+            FontSize = Math.Max(8, _canvas.TextSize * _canvas.Shown),
+            Foreground = new SolidColorBrush(_canvas.Colour),
+            CaretBrush = Brushes.White,
+            Background = new SolidColorBrush(Colors.Black, 0.55),
+            BorderThickness = new Thickness(0),
+            Padding = new Thickness(0),
+            MinWidth = 60,
+            AcceptsReturn = false,
+        };
+        Canvas.SetLeft(box, spot.X);
+        Canvas.SetTop(box, spot.Y);
+
+        box.LostFocus += (_, _) => CommitTyping();
+        box.KeyDown += (_, e) =>
+        {
+            if (e.Key == Key.Enter) { e.Handled = true; CommitTyping(); }
+            else if (e.Key == Key.Escape) { e.Handled = true; CancelTyping(); }
+        };
+
+        _typing = box;
+        _typingAt = at;
+        _typingLayer.Children.Add(box);
+        box.Focus();
+    }
+
+    /// Turns whatever was typed into a mark and takes the box away.
+    private void CommitTyping()
+    {
+        if (_typing is not { } box) return;
+        _typing = null;
+        _typingLayer.Children.Remove(box);
+        _canvas.AddText(_typingAt, box.Text ?? string.Empty);
+        Sync();
+    }
+
+    private void CancelTyping()
+    {
+        if (_typing is not { } box) return;
+        _typing = null;
+        _typingLayer.Children.Remove(box);
     }
 
     private void OnArrow(object? s, RoutedEventArgs e) => Choose(Tool.Arrow);
     private void OnBox(object? s, RoutedEventArgs e) => Choose(Tool.Box);
+    private void OnDraw(object? s, RoutedEventArgs e) => Choose(Tool.Draw);
+    private void OnText(object? s, RoutedEventArgs e) => Choose(Tool.Text);
     private void OnHighlight(object? s, RoutedEventArgs e) => Choose(Tool.Highlight);
     private void OnCrop(object? s, RoutedEventArgs e) => Choose(Tool.Crop);
 
@@ -141,6 +218,7 @@ public partial class AnnotateWindow : Window
     /// button does.
     public void Save()
     {
+        CommitTyping();
         var png = _markup.Export(_picture);
         if (png is null)
         {
@@ -153,12 +231,21 @@ public partial class AnnotateWindow : Window
 
     public void Discard()
     {
+        CancelTyping();
         Log.Line("snip thrown away from the mark-up window");
         Close();
     }
 
     protected override void OnKeyDown(KeyEventArgs e)
     {
+        // While the typing box is up the keyboard belongs to it: numbers are numbers,
+        // and Enter finishes the words rather than saving the picture.
+        if (_typing is not null)
+        {
+            base.OnKeyDown(e);
+            return;
+        }
+
         switch (e.Key)
         {
             case Key.Enter:
@@ -176,8 +263,10 @@ public partial class AnnotateWindow : Window
                 return;
             case Key.D1: Choose(Tool.Arrow); e.Handled = true; return;
             case Key.D2: Choose(Tool.Box); e.Handled = true; return;
-            case Key.D3: Choose(Tool.Highlight); e.Handled = true; return;
-            case Key.D4: Choose(Tool.Crop); e.Handled = true; return;
+            case Key.D3: Choose(Tool.Draw); e.Handled = true; return;
+            case Key.D4: Choose(Tool.Text); e.Handled = true; return;
+            case Key.D5: Choose(Tool.Highlight); e.Handled = true; return;
+            case Key.D6: Choose(Tool.Crop); e.Handled = true; return;
         }
         base.OnKeyDown(e);
     }

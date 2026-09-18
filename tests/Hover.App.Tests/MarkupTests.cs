@@ -201,6 +201,56 @@ public sealed class MarkupTests
         Assert.That(m.Export(picture), Is.Null);
     }
 
+    /// A hand-drawn line has to reach the file like any other mark.
+    [AvaloniaTest]
+    public void A_hand_drawn_line_is_in_the_saved_file()
+    {
+        using var picture = Plain(100, 100, Colors.White);
+        var m = new Markup();
+        m.Add(new PenMark(new[]
+        {
+            new Point(10, 10), new Point(40, 30), new Point(70, 80),
+        }, Markup.Red));
+
+        Assert.That(CountReddish(Decode(m.Export(picture)!)), Is.GreaterThan(0),
+            "the stroke was not drawn");
+    }
+
+    /// A single tap with the pen leaves a dot rather than nothing at all.
+    [AvaloniaTest]
+    public void A_single_tap_with_the_pen_leaves_a_dot()
+    {
+        using var picture = Plain(100, 100, Colors.White);
+        var m = new Markup();
+        m.Add(new PenMark(new[] { new Point(50, 50) }, Markup.Red));
+
+        Assert.That(CountReddish(Decode(m.Export(picture)!)), Is.GreaterThan(0));
+    }
+
+    [AvaloniaTest]
+    public void Typed_words_are_in_the_saved_file()
+    {
+        using var picture = Plain(200, 120, Colors.White);
+        var m = new Markup();
+        m.Add(new TextMark(new Point(20, 30), "Look here", Markup.Red, 28));
+
+        Assert.That(CountReddish(Decode(m.Export(picture)!)), Is.GreaterThan(0),
+            "the words were not drawn");
+    }
+
+    /// Words are sized from the picture, so a note on a big screenshot is still legible
+    /// and a note on a small crop is not a headline.
+    [AvaloniaTest]
+    public void Word_size_follows_the_size_of_the_picture()
+    {
+        Assert.Multiple(() =>
+        {
+            Assert.That(Mark.TextSizeFor(new PixelSize(80, 60)), Is.EqualTo(13));
+            Assert.That(Mark.TextSizeFor(new PixelSize(4000, 3000)), Is.EqualTo(44));
+            Assert.That(Mark.TextSizeFor(new PixelSize(660, 660)), Is.EqualTo(30));
+        });
+    }
+
     private static Bitmap Decode(byte[] png)
     {
         using var stream = new MemoryStream(png);

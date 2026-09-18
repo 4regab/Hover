@@ -123,4 +123,65 @@ public sealed class MarkupCanvasTests
         });
         window.Close();
     }
+
+    /// Freehand keeps the whole path, not just the two ends, or a curve would come out
+    /// as a straight line.
+    [AvaloniaTest]
+    public void Drawing_by_hand_keeps_every_point_the_pointer_passed_through()
+    {
+        var (window, canvas, markup) = Open();
+        canvas.Tool = Tool.Draw;
+
+        window.MouseDown(new Point(20, 20), MouseButton.Left);
+        window.MouseMove(new Point(60, 30));
+        window.MouseMove(new Point(90, 80));
+        window.MouseMove(new Point(120, 140));
+        window.MouseUp(new Point(120, 140), MouseButton.Left);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.That(markup.Marks, Has.Count.EqualTo(1));
+        Assert.That(markup.Marks[0], Is.TypeOf<PenMark>());
+        var stroke = (PenMark)markup.Marks[0];
+        Assert.That(stroke.Points, Has.Count.GreaterThanOrEqualTo(4),
+            "the middle of the stroke was thrown away");
+        window.Close();
+    }
+
+    /// The text tool places words with a click, so it must not start a drag or leave a
+    /// mark on its own — the window has to put a typing box up first.
+    [AvaloniaTest]
+    public void The_text_tool_asks_the_window_for_words_instead_of_drawing()
+    {
+        var (window, canvas, markup) = Open();
+        canvas.Tool = Tool.Text;
+        Point? asked = null;
+        canvas.TextRequested += (_, at) => asked = at;
+
+        Drag(window, new Point(40, 60), new Point(140, 160));
+
+        Assert.That(markup.IsEmpty, Is.True, "a click with the text tool should draw nothing");
+        Assert.That(asked, Is.Not.Null, "the window was never asked for words");
+        Assert.Multiple(() =>
+        {
+            Assert.That(asked!.Value.X, Is.EqualTo(40).Within(1));
+            Assert.That(asked!.Value.Y, Is.EqualTo(60).Within(1));
+        });
+
+        canvas.AddText(asked!.Value, "  hello  ");
+        Assert.That(markup.Marks, Has.Count.EqualTo(1));
+        var words = (TextMark)markup.Marks[0];
+        Assert.That(words.Text, Is.EqualTo("hello"), "spaces round the words should go");
+        window.Close();
+    }
+
+    /// An empty typing box must leave nothing behind, or a stray click with the text
+    /// tool would need undoing.
+    [AvaloniaTest]
+    public void Empty_words_leave_nothing_behind()
+    {
+        var (window, canvas, markup) = Open();
+        canvas.AddText(new Point(10, 10), "   ");
+        Assert.That(markup.IsEmpty, Is.True);
+        window.Close();
+    }
 }

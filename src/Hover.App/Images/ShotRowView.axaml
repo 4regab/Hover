@@ -15,16 +15,13 @@
                     <Image Name="Picture" Stretch="UniformToFill"
                            Source="{Binding Thumb}" />
 
-                    <Button Classes="onshot" Name="MarkUp"
+                    <Button Classes="onshot" Name="MarkUp" Width="22"
                             HorizontalAlignment="Right" VerticalAlignment="Top"
-                            Margin="0,5,32,0" Padding="8,0"
-                            Click="OnMarkUp" ToolTip.Tip="Draw on this picture">
-                        <StackPanel Orientation="Horizontal" Spacing="5">
-                            <Path Width="12" Height="12" Stretch="Uniform"
-                                  Stroke="White" StrokeThickness="1.9" StrokeLineCap="Round"
-                                  Data="M 4,20 H 8 L 20,8 L 16,4 L 4,16 Z" />
-                            <TextBlock Text="Mark up" VerticalAlignment="Center" />
-                        </StackPanel>
+                            Margin="0,5,32,0"
+                            Click="OnMarkUp" ToolTip.Tip="Mark up">
+                        <Path Width="12" Height="12" Stretch="Uniform"
+                              Stroke="White" StrokeThickness="1.9" StrokeLineCap="Round"
+                              Data="M 4,20 H 8 L 20,8 L 16,4 L 4,16 Z" />
                     </Button>
 
                     <Button Classes="onshot kill" Width="22"

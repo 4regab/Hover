@@ -1,3 +1,4 @@
+using System.Globalization;
 using Avalonia;
 using Avalonia.Media;
 using Avalonia.Media.Imaging;
@@ -10,6 +11,8 @@ public enum Tool
 {
     Arrow,
     Box,
+    Draw,
+    Text,
     Highlight,
     Crop,
 }
@@ -27,6 +30,19 @@ public abstract record Mark
     /// swamp a small one, so thickness follows the picture's shorter side.
     public static double ThicknessFor(PixelSize picture) =>
         Math.Clamp(Math.Min(picture.Width, picture.Height) / 200.0, 2, 6);
+
+    /// Typed words follow the picture the same way, so a note on a phone screenshot is
+    /// not a speck and a note on a small crop is not a headline.
+    public static double TextSizeFor(PixelSize picture) =>
+        Math.Clamp(Math.Min(picture.Width, picture.Height) / 22.0, 13, 44);
+
+    /// A pen that rounds its ends, so lines and freehand strokes show no corners.
+    protected static Pen Stroke(Color colour, double thickness) =>
+        new(new SolidColorBrush(colour), thickness)
+        {
+            LineCap = PenLineCap.Round,
+            LineJoin = PenLineJoin.Round,
+        };
 }
 
 public sealed record ArrowMark(Point From, Point To, Color Colour) : Mark
@@ -70,6 +86,67 @@ public sealed record HighlightMark(Rect Area, Color Colour) : Mark
 {
     public override void Draw(DrawingContext ctx, double thickness) =>
         ctx.FillRectangle(new SolidColorBrush(Colour, 0.35), Area);
+}
+
+/// A line drawn by hand: the points the pointer passed through, joined up.
+public sealed record PenMark(IReadOnlyList<Point> Points, Color Colour) : Mark
+{
+    public override void Draw(DrawingContext ctx, double thickness)
+    {
+        if (Points.Count == 0) return;
+        if (Points.Count == 1)
+        {
+            // A tap with the pen leaves a dot rather than nothing.
+            ctx.DrawEllipse(new SolidColorBrush(Colour), null, Points[0],
+                            thickness / 2, thickness / 2);
+            return;
+        }
+
+        var line = new StreamGeometry();
+        using (var draw = line.Open())
+        {
+            draw.BeginFigure(Points[0], false);
+            for (var i = 1; i < Points.Count; i++) draw.LineTo(Points[i]);
+            draw.EndFigure(false);
+        }
+        ctx.DrawGeometry(null, Stroke(Colour, thickness), line);
+    }
+}
+
+/// Typed words on the picture.
+///
+/// The size is fixed when the words are placed rather than worked out at draw time,
+/// because a crop changes the picture's size and the words should not change with it.
+public sealed record TextMark(Point At, string Text, Color Colour, double FontSize) : Mark
+{
+    public override void Draw(DrawingContext ctx, double thickness)
+    {
+        if (Text.Length == 0) return;
+        var words = Words();
+
+        // A dark card behind the words, so a colour that suits one screenshot still
+        // reads on a pale one.
+        var pad = FontSize * 0.28;
+        var card = new Rect(At.X - pad, At.Y - pad * 0.6,
+                            words.Width + pad * 2, words.Height + pad * 1.2);
+        ctx.DrawRectangle(new SolidColorBrush(Colors.Black, 0.55), null,
+                          new RoundedRect(card, FontSize * 0.22));
+        ctx.DrawText(words, At);
+    }
+
+    /// Laid out in the picture's own pixels, so the screen's scaling never reaches the
+    /// saved file.
+    private FormattedText Words() =>
+        new(Text, CultureInfo.CurrentCulture, FlowDirection.LeftToRight,
+            new Typeface(Ink.SystemFace, FontStyle.Normal, FontWeight.SemiBold),
+            FontSize, new SolidColorBrush(Colour));
+
+    /// How much room the words take, in the picture's pixels.
+    public Avalonia.Size Measure()
+    {
+        var words = Words();
+        return new Avalonia.Size(words.Width, words.Height);
+    }
 }
 
 /// Everything drawn on one picture, plus the crop, in the order it was done.

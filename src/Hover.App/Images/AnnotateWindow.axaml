@@ -24,12 +24,24 @@
                           Stroke="{Binding $parent[Button].Foreground}" StrokeThickness="1.8"
                           Data="M 4,5 H 20 V 19 H 4 Z" />
                 </Button>
-                <Button Classes="tool" Name="HighlightTool" Click="OnHighlight" ToolTip.Tip="Highlight (3)">
+                <Button Classes="tool" Name="DrawTool" Click="OnDraw" ToolTip.Tip="Draw (3)">
+                    <Path Width="16" Height="16" Stretch="Uniform"
+                          Stroke="{Binding $parent[Button].Foreground}" StrokeThickness="1.8"
+                          StrokeLineCap="Round" StrokeJoin="Round"
+                          Data="M 4,20 C 8,20 6,14 10,14 C 14,14 12,8 16,8 C 19,8 19,11 21,11" />
+                </Button>
+                <Button Classes="tool" Name="TextTool" Click="OnText" ToolTip.Tip="Text (4)">
+                    <Path Width="16" Height="16" Stretch="Uniform"
+                          Stroke="{Binding $parent[Button].Foreground}" StrokeThickness="1.8"
+                          StrokeLineCap="Round"
+                          Data="M 4,5 H 20 M 12,5 V 20 M 9,20 H 15" />
+                </Button>
+                <Button Classes="tool" Name="HighlightTool" Click="OnHighlight" ToolTip.Tip="Highlight (5)">
                     <Path Width="16" Height="16" Stretch="Uniform"
                           Fill="{Binding $parent[Button].Foreground}"
                           Data="M 3,14 H 21 V 19 H 3 Z M 6,5 H 18 V 11 H 6 Z" />
                 </Button>
-                <Button Classes="tool" Name="CropTool" Click="OnCrop" ToolTip.Tip="Crop (4)">
+                <Button Classes="tool" Name="CropTool" Click="OnCrop" ToolTip.Tip="Crop (6)">
                     <Path Width="16" Height="16" Stretch="Uniform"
                           Stroke="{Binding $parent[Button].Foreground}" StrokeThickness="1.8"
                           StrokeLineCap="Round"

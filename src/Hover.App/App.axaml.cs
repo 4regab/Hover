@@ -30,6 +30,7 @@ public partial class App : Application
                 // No main window: Hover lives in the system tray. The edge panels are
                 // created on demand, and are not moved over yet.
                 desktop.ShutdownMode = ShutdownMode.OnExplicitShutdown;
+                Services.Tray.Install(this);
             }
         }
 

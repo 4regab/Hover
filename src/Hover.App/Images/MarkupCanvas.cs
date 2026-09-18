@@ -24,12 +24,18 @@ public sealed class MarkupCanvas : Control, ICustomHitTest
     private Point? _from;
     private Point _to;
     private bool _dragging;
+    private readonly List<Point> _trail = new();
 
     public Tool Tool { get; set; } = Tool.Arrow;
     public Color Colour { get; set; } = Markup.Red;
 
     /// Raised when a drag finishes, so the window can refresh its undo button.
     public event EventHandler? Drawn;
+
+    /// Raised when the text tool is clicked, carrying the spot in the picture that was
+    /// clicked. The window answers by putting a typing box there: this control paints
+    /// itself and cannot hold one.
+    public event EventHandler<Point>? TextRequested;
 
     public MarkupCanvas(Bitmap picture, Markup markup)
     {
@@ -75,6 +81,31 @@ public sealed class MarkupCanvas : Control, ICustomHitTest
             Math.Clamp((local.Y - area.Y) / scale, 0, size.Height));
     }
 
+    /// A point in the picture turned back into a point in this control, so the window
+    /// can put the typing box exactly where the click landed.
+    public Point ToLocal(Point picture)
+    {
+        var (area, scale) = Fit();
+        return new Point(area.X + picture.X * scale, area.Y + picture.Y * scale);
+    }
+
+    /// How much the picture is shrunk for display. The typing box matches it, so what
+    /// is typed is the size it will be saved.
+    public double Shown => Fit().Scale;
+
+    /// The size typed words come out at, in the picture's own pixels.
+    public double TextSize => Mark.TextSizeFor(PictureSize);
+
+    /// Puts typed words on the picture at a spot that was clicked. An empty box leaves
+    /// no trace, so a stray click with the text tool costs nothing.
+    public void AddText(Point at, string text)
+    {
+        var words = text.Trim();
+        if (words.Length == 0) return;
+        _markup.Add(new TextMark(at, words, Colour, TextSize));
+        Drawn?.Invoke(this, EventArgs.Empty);
+    }
+
     public override void Render(DrawingContext ctx)
     {
         var (area, scale) = Fit();
@@ -112,6 +143,9 @@ public sealed class MarkupCanvas : Control, ICustomHitTest
             case Tool.Highlight:
                 new HighlightMark(Between(from, to), Colour).Draw(ctx, thickness);
                 break;
+            case Tool.Draw:
+                new PenMark(_trail.ToList(), Colour).Draw(ctx, thickness);
+                break;
             case Tool.Crop:
                 var box = Between(from, to);
                 ctx.DrawRectangle(null, new Pen(Brushes.White, thickness * 0.6)
@@ -140,8 +174,20 @@ public sealed class MarkupCanvas : Control, ICustomHitTest
     {
         base.OnPointerPressed(e);
         if (!e.GetCurrentPoint(this).Properties.IsLeftButtonPressed) return;
-        _from = ToPicture(e.GetPosition(this));
-        _to = _from.Value;
+        var at = ToPicture(e.GetPosition(this));
+
+        // Text is placed by a click, not dragged out, so it never starts a drag.
+        if (Tool == Tool.Text)
+        {
+            TextRequested?.Invoke(this, at);
+            e.Handled = true;
+            return;
+        }
+
+        _from = at;
+        _to = at;
+        _trail.Clear();
+        _trail.Add(at);
         _dragging = true;
         e.Pointer.Capture(this);
         InvalidateVisual();
@@ -152,6 +198,9 @@ public sealed class MarkupCanvas : Control, ICustomHitTest
         base.OnPointerMoved(e);
         if (!_dragging) return;
         _to = ToPicture(e.GetPosition(this));
+        // Freehand keeps every point the pointer passed through; the other tools only
+        // need where the drag started and where it is now.
+        if (Tool == Tool.Draw) _trail.Add(_to);
         InvalidateVisual();
     }
 
@@ -163,6 +212,7 @@ public sealed class MarkupCanvas : Control, ICustomHitTest
         e.Pointer.Capture(null);
         Commit(start, ToPicture(e.GetPosition(this)));
         _from = null;
+        _trail.Clear();
         InvalidateVisual();
         Drawn?.Invoke(this, EventArgs.Empty);
     }
@@ -184,6 +234,9 @@ public sealed class MarkupCanvas : Control, ICustomHitTest
                 break;
             case Tool.Highlight when box.Width >= 6 && box.Height >= 6:
                 _markup.Add(new HighlightMark(box, Colour));
+                break;
+            case Tool.Draw when _trail.Count > 1 || travelled >= 2:
+                _markup.Add(new PenMark(_trail.ToList(), Colour));
                 break;
             case Tool.Crop when box.Width >= 12 && box.Height >= 12:
                 _markup.SetCrop(box);
