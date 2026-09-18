@@ -9,17 +9,18 @@ namespace Hover.Services;
 
 /// The way back into an app with no window.
 ///
-/// Hover has no main window, so the tray icon and one global shortcut are the whole
-/// front door: take a screenshot, look at the ones already taken, or quit.
+/// Hover has no main window, so the tray icon and a few global shortcuts are the whole
+/// front door: write a note, take a screenshot, look at what is already there, or quit.
 public static class Tray
 {
     private static HotKeys? _keys;
-    private static TrayPreviewWindow? _shots;
 
-    /// Puts the icon in the tray and claims the screenshot shortcut. Called once at
-    /// startup.
+    /// Puts the icon in the tray, builds the panels and claims the shortcuts. Called
+    /// once at startup.
     public static void Install(Application app)
     {
+        Panels.Install();
+
         var icon = new TrayIcon
         {
             Icon = Picture(),
@@ -27,56 +28,49 @@ public static class Tray
             IsVisible = true,
             Menu = Menu(),
         };
-        // A left click goes straight to the screenshots, because that is the reason to
-        // come back to the app.
-        icon.Clicked += (_, _) => ShowShots();
+        // A left click opens the notes, because that is the reason to come back.
+        icon.Clicked += (_, _) => Panels.NewNote();
 
         // Held by the application, or the icon is collected and vanishes from the tray.
         TrayIcon.SetIcons(app, new TrayIcons { icon });
 
         _keys = new HotKeys();
-        if (!_keys.Register(Settings.ScSnip, Snip.Begin))
-            Log.Line($"another app already owns {Settings.ScSnip} — use the tray menu instead");
+        Claim(Settings.ScSnip, Snip.Begin);
+        Claim(Settings.ScNewNote, Panels.NewNote);
+    }
+
+    private static void Claim(Shortcut shortcut, Action action)
+    {
+        if (_keys is null) return;
+        if (!_keys.Register(shortcut, action))
+            Log.Line($"another app already owns {shortcut} — use the tray menu instead");
     }
 
     private static NativeMenu Menu()
     {
         var menu = new NativeMenu();
 
-        var snip = new NativeMenuItem($"New screenshot  {Settings.ScSnip}");
-        snip.Click += (_, _) => Snip.Begin();
-        menu.Add(snip);
-
-        var shots = new NativeMenuItem("Screenshots…");
-        shots.Click += (_, _) => ShowShots();
-        menu.Add(shots);
-
+        menu.Add(Item($"New note  {Settings.ScNewNote}", Panels.NewNote));
+        menu.Add(Item($"New screenshot  {Settings.ScSnip}", Snip.Begin));
+        menu.Add(Item("Screenshots", Panels.ShowShots));
         menu.Add(new NativeMenuItemSeparator());
-
-        var quit = new NativeMenuItem("Quit Hover");
-        quit.Click += (_, _) => Quit();
-        menu.Add(quit);
+        menu.Add(Item("Quit Hover", Quit));
 
         return menu;
     }
 
-    /// One screenshots window, reused. Opening it twice would give two panels showing
-    /// the same pictures.
-    private static void ShowShots()
+    private static NativeMenuItem Item(string header, Action click)
     {
-        if (_shots is null)
-        {
-            _shots = new TrayPreviewWindow();
-            _shots.Closed += (_, _) => _shots = null;
-        }
-        _shots.Show();
-        _shots.Activate();
+        var item = new NativeMenuItem(header);
+        item.Click += (_, _) => click();
+        return item;
     }
 
     private static void Quit()
     {
         _keys?.Dispose();
         _keys = null;
+        Panels.Dispose();
         if (Application.Current?.ApplicationLifetime is
             Avalonia.Controls.ApplicationLifetimes.IClassicDesktopStyleApplicationLifetime desktop)
         {

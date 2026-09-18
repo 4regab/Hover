@@ -25,6 +25,9 @@ public sealed class TestEnvironment
     [OneTimeTearDown]
     public void TearDown()
     {
+        // Anything that used the shared store holds the database open, and a locked
+        // file cannot be deleted.
+        Hover.Core.NoteStore.Shared.Dispose();
         SqliteConnection.ClearAllPools();
         Environment.SetEnvironmentVariable("HOVER_DATA_DIR", null);
         Environment.SetEnvironmentVariable("HOVER_SHOTS_DIR", null);

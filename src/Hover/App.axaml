@@ -4,6 +4,7 @@
              RequestedThemeVariant="Dark">
     <Application.Styles>
         <FluentTheme />
+        <StyleInclude Source="avares://AvaloniaEdit/Themes/Fluent/AvaloniaEdit.xaml" />
         <!-- Direction B, Canvas. Panel colours, hover reveals and press feedback. -->
         <StyleInclude Source="avares://Hover/Themes/Canvas.axaml" />
     </Application.Styles>
