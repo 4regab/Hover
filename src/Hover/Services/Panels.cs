@@ -20,6 +20,7 @@ public static class Panels
     private static EdgePanel? _shots;
     private static NoteDeck? _deck;
     private static ShotTray? _tray;
+    private static bool _watching;
 
     /// The notes panel, so the tray menu can open a new note in it.
     public static NoteDeck? Deck => _deck;
@@ -30,7 +31,7 @@ public static class Panels
         var shotsEdge = notesEdge == Edge.Left ? Edge.Right : Edge.Left;
 
         _deck = new NoteDeck();
-        _notes = new EdgePanel(notesEdge, _deck, 330, Settings.AutoHideNotes);
+        _notes = new EdgePanel(notesEdge, _deck, 330, () => Settings.AutoHideNotes);
         // A note being typed into must not be whipped away, and it needs the keyboard.
         _deck.Typing += (_, typing) =>
         {
@@ -46,26 +47,42 @@ public static class Panels
             VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
             Content = _tray,
         };
-        _shots = new EdgePanel(shotsEdge, trayScroll, 300, Settings.AutoHideShots);
+        _shots = new EdgePanel(shotsEdge, trayScroll, 300, () => Settings.AutoHideShots);
 
         _tray.DeleteRequested += (_, shot) => ShotStore.Shared.Delete(shot);
         _tray.SnipRequested += (_, _) => Snip.Begin();
         _tray.MarkUpRequested += (_, shot) => MarkUp(shot);
-        _tray.DragRequested += (_, shot) => _shots?.WhileDragging(() => { });
-        ShotStore.Shared.Changed += (_, _) => Dispatcher.UIThread.Post(ReloadShots);
 
-        ShotStore.Shared.Start();
+        // The picture watcher is started once for the life of the app. Panels can be
+        // built again when the edges are swapped; the folder does not need re-watching.
+        if (!_watching)
+        {
+            ShotStore.Shared.Changed += OnShotsChanged;
+            ShotStore.Shared.Start();
+            _watching = true;
+        }
         ReloadShots();
     }
 
+    private static void OnShotsChanged(object? sender, EventArgs e) =>
+        Dispatcher.UIThread.Post(ReloadShots);
+
     /// Opens the notes panel with a fresh note ready to type into. Used by the tray
-    /// menu, which is the only way in when no panel is showing.
+    /// menu and the global shortcut, which are the only ways in when no panel is showing.
     public static void NewNote()
     {
         if (_notes is null || _deck is null) return;
         var screen = Interop.Screens.At(Interop.Screens.Cursor);
         if (screen is not null) _notes.Open(screen);
         _deck.Edit(NoteStore.Shared.Create());
+    }
+
+    /// Opens the notes panel on its list, without making a note.
+    public static void ShowNotes()
+    {
+        if (_notes is null) return;
+        var screen = Interop.Screens.At(Interop.Screens.Cursor);
+        if (screen is not null) _notes.Open(screen);
     }
 
     /// Opens the screenshots panel without waiting for the pointer to reach the edge.
@@ -91,9 +108,31 @@ public static class Panels
         Snip.MarkUp(picture);
     }
 
-    public static void Dispose()
+    /// Throws both panels away and builds them again. Used after the edges are swapped
+    /// in Settings, which is the one change a running panel cannot absorb.
+    public static void Rebuild()
+    {
+        Close();
+        Install();
+    }
+
+    private static void Close()
     {
         _notes?.Dispose();
         _shots?.Dispose();
+        _notes = null;
+        _shots = null;
+        _deck = null;
+        _tray = null;
+    }
+
+    public static void Dispose()
+    {
+        if (_watching)
+        {
+            ShotStore.Shared.Changed -= OnShotsChanged;
+            _watching = false;
+        }
+        Close();
     }
 }

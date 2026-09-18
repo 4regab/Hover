@@ -39,7 +39,7 @@ public sealed class EdgePanel : IDisposable
 
     private readonly Edge _edge;
     private readonly double _width;
-    private readonly bool _autoHide;
+    private readonly Func<bool> _autoHide;
     private readonly HoverWindow _window;
     private readonly Border _frame;
     private readonly DispatcherTimer _poll;
@@ -53,7 +53,7 @@ public sealed class EdgePanel : IDisposable
     /// or a menu standing open over the panel.
     public bool Pinned { get; set; }
 
-    public EdgePanel(Edge edge, Control content, double width, bool autoHide)
+    public EdgePanel(Edge edge, Control content, double width, Func<bool> autoHide)
     {
         _edge = edge;
         _width = width;
@@ -121,7 +121,8 @@ public sealed class EdgePanel : IDisposable
 
     private void Maybe_Close(Win32.POINT cursor)
     {
-        if (Pinned || !_autoHide) return;
+        // Read every time, so turning auto-hide off in Settings takes effect at once.
+        if (Pinned || !_autoHide()) return;
         if (_on is not { } screen) return;
 
         var (x, y, w, h) = Rect(screen);

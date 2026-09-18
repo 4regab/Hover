@@ -37,6 +37,8 @@ public static class Tray
         _keys = new HotKeys();
         Claim(Settings.ScSnip, Snip.Begin);
         Claim(Settings.ScNewNote, Panels.NewNote);
+        Claim(Settings.ScAllNotes, () => Windows.LibraryWindow.Open());
+        Claim(Settings.ScArchive, () => Windows.LibraryWindow.Open(true));
     }
 
     private static void Claim(Shortcut shortcut, Action action)
@@ -52,7 +54,12 @@ public static class Tray
 
         menu.Add(Item($"New note  {Settings.ScNewNote}", Panels.NewNote));
         menu.Add(Item($"New screenshot  {Settings.ScSnip}", Snip.Begin));
+        menu.Add(Item("Notes", Panels.ShowNotes));
         menu.Add(Item("Screenshots", Panels.ShowShots));
+        menu.Add(new NativeMenuItemSeparator());
+        menu.Add(Item($"All notes  {Settings.ScAllNotes}", () => Windows.LibraryWindow.Open()));
+        menu.Add(Item($"Archive  {Settings.ScArchive}", () => Windows.LibraryWindow.Open(true)));
+        menu.Add(Item("Settings", Windows.SettingsWindow.Open));
         menu.Add(new NativeMenuItemSeparator());
         menu.Add(Item("Quit Hover", Quit));
 
