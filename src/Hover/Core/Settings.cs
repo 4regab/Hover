@@ -1,8 +1,8 @@
 using System.IO;
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using System.Windows.Input;
-using System.Windows.Threading;
+using Avalonia.Input;
+using Avalonia.Threading;
 using Microsoft.Win32;
 
 namespace Hover.Core;
@@ -32,22 +32,22 @@ public static class Settings
         public string ShotsFolder { get; set; } = "";
         public int ShotRetentionDays { get; set; }
 
-        public Shortcut ScNewNote { get; set; } = new(ModifierKeys.Control | ModifierKeys.Alt, Key.N);
-        public Shortcut ScAllNotes { get; set; } = new(ModifierKeys.Control | ModifierKeys.Alt, Key.A);
-        public Shortcut ScArchive { get; set; } = new(ModifierKeys.Control | ModifierKeys.Alt, Key.L);
-        public Shortcut ScSnip { get; set; } = new(ModifierKeys.Control | ModifierKeys.Alt, Key.S);
+        public Shortcut ScNewNote { get; set; } = new(KeyModifiers.Control | KeyModifiers.Alt, Key.N);
+        public Shortcut ScAllNotes { get; set; } = new(KeyModifiers.Control | KeyModifiers.Alt, Key.A);
+        public Shortcut ScArchive { get; set; } = new(KeyModifiers.Control | KeyModifiers.Alt, Key.L);
+        public Shortcut ScSnip { get; set; } = new(KeyModifiers.Control | KeyModifiers.Alt, Key.S);
 
-        public Shortcut ScArchiveNote { get; set; } = new(ModifierKeys.Control | ModifierKeys.Shift, Key.A);
-        public Shortcut ScClose { get; set; } = new(ModifierKeys.None, Key.Escape);
-        public Shortcut ScFind { get; set; } = new(ModifierKeys.Control, Key.F);
-        public Shortcut ScTask { get; set; } = new(ModifierKeys.Control, Key.T);
-        public Shortcut ScPin { get; set; } = new(ModifierKeys.Control, Key.P);
-        public Shortcut ScColour { get; set; } = new(ModifierKeys.Control, Key.OemPeriod);
+        public Shortcut ScArchiveNote { get; set; } = new(KeyModifiers.Control | KeyModifiers.Shift, Key.A);
+        public Shortcut ScClose { get; set; } = new(KeyModifiers.None, Key.Escape);
+        public Shortcut ScFind { get; set; } = new(KeyModifiers.Control, Key.F);
+        public Shortcut ScTask { get; set; } = new(KeyModifiers.Control, Key.T);
+        public Shortcut ScPin { get; set; } = new(KeyModifiers.Control, Key.P);
+        public Shortcut ScColour { get; set; } = new(KeyModifiers.Control, Key.OemPeriod);
         // Not plain Ctrl+Backspace: that belongs to the text view, where it deletes
         // the word before the caret the way it does in every other editor.
-        public Shortcut ScDelete { get; set; } = new(ModifierKeys.Control | ModifierKeys.Shift, Key.Back);
-        public Shortcut ScBigger { get; set; } = new(ModifierKeys.Control, Key.OemPlus);
-        public Shortcut ScSmaller { get; set; } = new(ModifierKeys.Control, Key.OemMinus);
+        public Shortcut ScDelete { get; set; } = new(KeyModifiers.Control | KeyModifiers.Shift, Key.Back);
+        public Shortcut ScBigger { get; set; } = new(KeyModifiers.Control, Key.OemPlus);
+        public Shortcut ScSmaller { get; set; } = new(KeyModifiers.Control, Key.OemMinus);
     }
 
     private static readonly JsonSerializerOptions Json = new()
@@ -81,9 +81,9 @@ public static class Settings
         // Ctrl+Backspace used to delete the note. It is the word-delete key in every
         // text field on Windows, so anyone still holding the old binding is moved to
         // Ctrl+Shift+Backspace rather than losing a word and a note at once.
-        if (m.ScDelete.Modifiers == ModifierKeys.Control && m.ScDelete.Key == Key.Back)
+        if (m.ScDelete.Modifiers == KeyModifiers.Control && m.ScDelete.Key == Key.Back)
         {
-            m.ScDelete = new Shortcut(ModifierKeys.Control | ModifierKeys.Shift, Key.Back);
+            m.ScDelete = new Shortcut(KeyModifiers.Control | KeyModifiers.Shift, Key.Back);
             Log.Line("migrated settings — delete-note moved off Ctrl+Backspace");
         }
         return m;

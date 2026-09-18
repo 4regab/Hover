@@ -14,7 +14,7 @@ Hover keeps two things a hover away: **notes** on the right edge and a **screens
 tray** on the left. Nothing sits on screen until you need it — move the pointer to
 an edge and the panel appears. There is no taskbar window to manage.
 
-Built with .NET 8 and WPF.
+Built with .NET 8 and Avalonia.
 
 ## What it does
 

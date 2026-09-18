@@ -1,5 +1,5 @@
 using System.ComponentModel;
-using System.Windows.Threading;
+using Avalonia.Threading;
 
 namespace Hover.Core;
 

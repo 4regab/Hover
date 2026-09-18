@@ -2,12 +2,11 @@
 
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
+    <!-- Windows-only on purpose: the app is built on Win32 window flags, the
+         Windows clipboard listener, global hotkeys and DPAPI. -->
     <TargetFramework>net8.0-windows</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
-    <UseWPF>true</UseWPF>
-    <!-- Windows Forms comes along purely for Screen and NotifyIcon. -->
-    <UseWindowsForms>true</UseWindowsForms>
     <AssemblyName>Hover</AssemblyName>
     <RootNamespace>Hover</RootNamespace>
     <ApplicationManifest>app.manifest</ApplicationManifest>
@@ -17,21 +16,23 @@
     <Company>Hover</Company>
     <LangVersion>latest</LangVersion>
     <EnableWindowsTargeting>true</EnableWindowsTargeting>
-    <!-- WFAC010 tells WinForms apps to set the DPI mode in code. This is a WPF app
-         placing its own windows in device pixels, so PerMonitorV2 has to be declared
-         in the manifest, before any code runs. -->
-    <NoWarn>$(NoWarn);WFAC010</NoWarn>
+    <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
   </PropertyGroup>
 
   <ItemGroup>
-    <!-- WPF and WinForms share type names (Color, Brush, TextBox...); WinForms is here
-         only for Screen and NotifyIcon, so its implicit usings are dropped. -->
-    <Using Remove="System.Windows.Forms" />
-    <Using Remove="System.Drawing" />
+    <!-- The tray icon is loaded at run time, so it has to be in the app's resources as
+         well as being the .exe icon. -->
+    <AvaloniaResource Include="Assets\hover.ico" />
   </ItemGroup>
 
   <ItemGroup>
+    <PackageReference Include="Avalonia" Version="12.1.2" />
+    <PackageReference Include="Avalonia.Desktop" Version="12.1.2" />
+    <PackageReference Include="Avalonia.Themes.Fluent" Version="12.1.2" />
     <PackageReference Include="Microsoft.Data.Sqlite" Version="8.0.10" />
+    <!-- DPAPI, which wrapped the note encryption key. WPF got this from the
+         Windows Desktop framework; a plain Avalonia app needs the package. -->
+    <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="8.0.0" />
   </ItemGroup>
 
 </Project>

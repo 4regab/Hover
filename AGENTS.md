@@ -4,7 +4,7 @@ Guidance for humans and AI agents working in this repository.
 
 ## What Hover is
 
-A Windows desktop app (.NET 8, WPF) that keeps two edge panels a hover away:
+A Windows desktop app (.NET 8, Avalonia) that keeps two edge panels a hover away:
 
 - **Notes** on the right edge — an edge deck of sticky notes.
 - **A screenshot tray** on the left edge — every snip and copied image, ready to
@@ -12,6 +12,10 @@ A Windows desktop app (.NET 8, WPF) that keeps two edge panels a hover away:
 
 Neither panel shows until the pointer reaches its edge. There is no main window;
 the app lives in the system tray.
+
+The app was rewritten from WPF to Avalonia. The screenshots half is done; the
+notes half is being rebuilt. See "What is not built yet" below before planning
+work.
 
 ## Build, test, run
 
@@ -35,11 +39,11 @@ dotnet test .\Hover.slnx -c Release
 .\build.ps1 installer
 ```
 
-Only one copy of Hover runs at a time (a named mutex). If a launch seems to do
-nothing, an instance is already running — stop `Hover` (and any old `Noty`) first:
+If a launch seems to do nothing, a copy is probably already running — the app has
+no window, so the only sign of life is the tray icon:
 
 ```powershell
-Get-Process Hover, Noty -ErrorAction SilentlyContinue | Stop-Process -Force
+Get-Process Hover -ErrorAction SilentlyContinue | Stop-Process -Force
 ```
 
 Requires the .NET 8 SDK. The app targets `net8.0-windows` and must build on
@@ -50,23 +54,22 @@ Windows (or with `EnableWindowsTargeting`).
 ```
 src/Hover/
   Core/        Model + storage: Note, NoteStore, Store (SQLite), Crypto (AES-GCM),
-               Settings, Paths, Palette, Ink (fonts), TaskSyntax.
-  Deck/        The notes edge deck: DeckManager (one per display, polls the
-               pointer), DeckController (per-display state machine), DeckWindow
-               (the borderless, click-through host window), DeckGeom (metrics),
-               Controls/ (custom-drawn tabs, pill, preview card).
-  Editor/      The note text view: NoteTextBox (a RichTextBox that treats a note
-               as plain text), Styler (renders text -> FlowDocument with inline
-               Markdown), DocMap (maps document <-> plain-string offsets).
-  Images/      The screenshot tray: ShotStore (watches the folder + clipboard),
-               Shot, ShotRow (a thumbnail with a delete button), ShotDrag
-               (drag-out payload), ImageStripController / ImageStripManager.
-  Interop/     Win32 P/Invoke, monitor enumeration, global hotkeys, spell langs.
-  Services/    Actions (menu/shortcut commands), Transfer (import/export),
-               TrayIcon.
-  Windows/     Ordinary windows: All Notes, Settings, image preview, rename.
-  Assets/      hover.ico (the app icon).
-tests/Hover.Tests/   NUnit tests.
+               Settings, Paths, Palette, Ink (fonts), TaskSyntax, DeckStyle.
+  Deck/        HoverWindow — the borderless, topmost, no-focus host window the
+               edge panels sit in, including the Win32 region shaping that makes
+               its blank areas click-through.
+  Images/      The screenshot half: ShotStore (watches the folder + clipboard),
+               Shot/ShotItem, ShotTray + ShotRowView (the panel and its rows),
+               ShotGroups (day headings), Snip + SnipOverlay (drag a box),
+               Markup + MarkupCanvas + AnnotateWindow (draw on a picture),
+               TrayPreviewWindow (temporary host, see below).
+  Interop/     Win32 P/Invoke, monitor enumeration, edge-wake timing, global
+               hotkeys, the hidden message window, clipboard pictures, screen
+               capture.
+  Services/    Tray (tray icon, menu, the screenshot shortcut).
+  Themes/      Canvas.axaml — the panel colours, hover reveals and press feedback.
+  Assets/      hover.ico (the app icon, also loaded at run time for the tray).
+tests/Hover.Tests/   NUnit tests, headless Avalonia.
 assets/hover.svg     Icon source (the .ico in src/Hover/Assets was generated from it).
 installer/Hover.iss  Inno Setup script (driven by build.ps1).
 ```
@@ -75,20 +78,33 @@ Note: the C# namespace is `Hover.*`. Some environment-variable and folder names
 carry a legacy `Noty` reference **only** in `Core/Paths.cs`, which migrates an old
 `%APPDATA%\Noty` install to `%APPDATA%\Hover` on first run. Leave that path alone.
 
+## What is not built yet
+
+The notes half has no UI: no note editor, no right-edge deck, no All Notes or
+Settings window. `Core/` already has the model, storage and encryption for it.
+The screenshot panel is shown by `TrayPreviewWindow`, an ordinary window standing
+in until the panel gets its real left-edge `HoverWindow`.
+
+Spell check is gone and is not coming back soon: neither Avalonia nor AvaloniaEdit
+has it.
+
 ## How it works (the parts that surprise people)
 
-- **A note is a plain string.** The RichTextBox document is only a rendering of
-  that string, rebuilt after edits. Anything in the document not derived from the
-  string is discarded on the next pass. See `Editor/DocMap.cs` and `Styler.cs`.
-- **Undo is home-grown.** The document is swapped out on restyle, so WPF's undo
-  can't survive it; `NoteTextBox` keeps plain-text snapshots instead.
-- **The deck windows are borderless, topmost, and `WS_EX_NOACTIVATE`** so hovering
-  them never steals focus. That bit must be cleared for anything that needs
-  activation — keyboard focus in an open note, and OLE drag-out from the image
-  tray (Chromium refuses drags from a no-activate window). See
-  `Deck/DeckWindow.cs` (`SetAcceptsKeys`, `WhileActivatable`).
-- **Pointer is polled, not hooked.** `DeckManager` / `ImageStripManager` poll the
-  cursor every ~90 ms to notice it reaching an edge.
+- **A note is a plain string.** Anything the editor shows is a rendering of that
+  string, rebuilt after edits.
+- **The edge windows are borderless, topmost, and `WS_EX_NOACTIVATE`** so hovering
+  them never steals focus. The flag must be set before the window is first shown,
+  and cleared for anything that needs activation — keyboard focus in an open note,
+  and drag-out from the screenshot panel. See `Deck/HoverWindow.cs`
+  (`SetAcceptsKeys`, `WhileActivatable`).
+- **Clicks do not fall through blank areas on their own.** WPF got that free from
+  layered-window hit testing; Avalonia does not. `HoverWindow` gives Windows an
+  explicit shape with `SetWindowRgn`, and anything painted rather than built from
+  controls needs `ICustomHitTest` to be reachable at all — see `MarkupCanvas`.
+- **Pointer is polled, not hooked.** `EdgeWake` is asked once per tick whether the
+  pointer has sat in an edge band long enough.
+- **Marks on a picture are stored in the picture's own pixels**, never in window
+  units, so the saved file matches what was on screen whatever size the editor was.
 - **Note bodies are encrypted** (AES-GCM, DPAPI-wrapped key). Screenshots are
   plain files on purpose, so they can be dragged into other apps.
 
@@ -105,12 +121,18 @@ carry a legacy `Noty` reference **only** in `Core/Paths.cs`, which migrates an o
 
 ## Gotchas
 
-- **WPF vs WinForms name clashes.** WinForms is referenced only for `Screen` and
-  `NotifyIcon`; its implicit usings are dropped in the csproj. Fully-qualify or
-  alias when you need a WinForms type.
+- **Avalonia type names shadow their own namespaces.** `WindowDecorations`,
+  `HorizontalAlignment`, `VerticalAlignment` and `Screens` all collide with
+  members in scope; qualify them (`Avalonia.Controls.WindowDecorations.None`,
+  `Avalonia.Layout.HorizontalAlignment`, `Interop.Screens.Cursor`).
+- **A message-window handler must name the messages it wants.** Answering every
+  message also answers `WM_NCCREATE`, and Windows then abandons the half-built
+  window. See `Interop/MessageWindow.cs`.
 - **`str_replace` on files with `—` (em dash) and non-ASCII** can be finicky;
   anchor on unique ASCII lines.
-- **Tests need STA + a WPF Application** for anything touching controls; see the
-  `[Apartment(ApartmentState.STA)]` fixtures. `TestEnvironment` redirects the data
-  and shots folders to a temp path via `HOVER_DATA_DIR` / `HOVER_SHOTS_DIR`.
-- **The single-instance mutex** will silently make a second launch exit.
+- **Tests that touch controls need `[AvaloniaTest]`**, not `[Test]`, or there is no
+  render interface and no UI thread. `TestEnvironment` redirects the data and
+  shots folders to a temp path via `HOVER_DATA_DIR` / `HOVER_SHOTS_DIR`. Headless
+  UI can be rendered to a PNG with `window.GetLastRenderedFrame()`.
+- **Nothing stops a second copy launching.** The old app had a named mutex; this
+  one does not yet.

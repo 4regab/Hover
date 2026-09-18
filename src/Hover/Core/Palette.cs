@@ -1,4 +1,4 @@
-using System.Windows.Media;
+using Avalonia.Media;
 
 namespace Hover.Core;
 
@@ -21,9 +21,10 @@ public sealed class NoteColor
         Paper = Hex(paper);
         Dash = Hex(dash);
         Ink = Hex(ink);
-        PaperBrush = Freeze(Paper);
-        DashBrush = Freeze(Dash);
-        InkBrush = Freeze(Ink);
+        // Avalonia brushes have no Freeze; they are already cheap to share.
+        PaperBrush = new SolidColorBrush(Paper);
+        DashBrush = new SolidColorBrush(Dash);
+        InkBrush = new SolidColorBrush(Ink);
     }
 
     public static readonly IReadOnlyList<NoteColor> All = new[]
@@ -41,22 +42,12 @@ public sealed class NoteColor
     public static NoteColor At(int i) => All[((i % All.Count) + All.Count) % All.Count];
 
     /// Ink at a given opacity — used all over for secondary text on paper.
-    public Brush InkAt(double alpha) => Tint(Ink, alpha);
-    public Brush DashAt(double alpha) => Tint(Dash, alpha);
+    public IBrush InkAt(double alpha) => Tint(Ink, alpha);
+    public IBrush DashAt(double alpha) => Tint(Dash, alpha);
 
-    public static Brush Tint(Color c, double alpha)
-    {
-        var b = new SolidColorBrush(Color.FromArgb((byte)Math.Clamp(alpha * 255, 0, 255), c.R, c.G, c.B));
-        b.Freeze();
-        return b;
-    }
-
-    private static SolidColorBrush Freeze(Color c)
-    {
-        var b = new SolidColorBrush(c);
-        b.Freeze();
-        return b;
-    }
+    public static IBrush Tint(Color c, double alpha) =>
+        new SolidColorBrush(Color.FromArgb(
+            (byte)Math.Clamp(alpha * 255, 0, 255), c.R, c.G, c.B));
 
     private static Color Hex(uint v) => Color.FromRgb(
         (byte)((v >> 16) & 0xFF), (byte)((v >> 8) & 0xFF), (byte)(v & 0xFF));

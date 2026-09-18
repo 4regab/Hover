@@ -1,6 +1,5 @@
 using System.Globalization;
-using System.Windows;
-using System.Windows.Media;
+using Avalonia.Media;
 
 namespace Hover.Core;
 
@@ -125,8 +124,8 @@ public static class Ink
         var text = (title ?? "").ToUpperInvariant();
         if (text.Length == 0) return 0;
         var ft = new FormattedText(text, CultureInfo.CurrentUICulture, FlowDirection.LeftToRight,
-            new Typeface(TabFamily, FontStyles.Normal, FontWeights.SemiBold, FontStretches.Normal),
-            TabFontSize, Brushes.Black, 1.0);
+            new Typeface(TabFamily, FontStyle.Normal, FontWeight.SemiBold, FontStretch.Normal),
+            TabFontSize, Brushes.Black);
         return ft.Width + TabTracking * text.Length;
     }
 
@@ -139,7 +138,7 @@ public static class Ink
     }
 
     private static HashSet<string> InstalledFamilies() =>
-        _installed ??= Fonts.SystemFontFamilies
-            .SelectMany(f => f.FamilyNames.Values)
+        _installed ??= FontManager.Current.SystemFonts
+            .Select(f => f.Name)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
 }

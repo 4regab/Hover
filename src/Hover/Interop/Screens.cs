@@ -1,9 +1,9 @@
-using System.Windows;
+using Avalonia;
 
 namespace Hover.Interop;
 
 /// One physical display: bounds in device pixels, its work area, and its scale.
-/// WPF lays out in DIPs, so everything the deck computes is multiplied through
+/// Avalonia lays out in DIPs, so everything the deck computes is multiplied through
 /// `Scale` on the way to `SetWindowPos`.
 public sealed record ScreenInfo(
     IntPtr Handle,

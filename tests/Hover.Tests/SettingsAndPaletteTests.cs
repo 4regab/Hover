@@ -1,5 +1,5 @@
-using System.Windows.Input;
-using System.Windows.Media;
+using Avalonia.Input;
+using Avalonia.Media;
 using Hover.Core;
 using NUnit.Framework;
 using System.IO;
@@ -88,7 +88,7 @@ public sealed class SettingsAndPaletteTests
         try
         {
             Settings.DeckStyle = DeckStyle.Compact;
-            Settings.ScFind = new Shortcut(ModifierKeys.Control | ModifierKeys.Shift, Key.F);
+            Settings.ScFind = new Shortcut(KeyModifiers.Control | KeyModifiers.Shift, Key.F);
 
             Settings.Flush();
             var json = File.ReadAllText(Paths.SettingsFile);
@@ -129,8 +129,8 @@ public sealed class SettingsAndPaletteTests
         {
             Assert.That(transparent.Color, Is.EqualTo(Color.FromArgb(0, 10, 20, 30)));
             Assert.That(opaque.Color, Is.EqualTo(Color.FromArgb(255, 10, 20, 30)));
-            Assert.That(transparent.IsFrozen, Is.True);
-            Assert.That(opaque.IsFrozen, Is.True);
+            // No frozen-brush check: Avalonia has no such thing. It was a WPF
+            // performance detail, not something the app's behaviour depends on.
         });
     }
 }

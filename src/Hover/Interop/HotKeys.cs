@@ -1,5 +1,4 @@
-using System.Windows.Input;
-using System.Windows.Interop;
+using Avalonia.Input;
 using Hover.Core;
 
 namespace Hover.Interop;
@@ -8,20 +7,13 @@ namespace Hover.Interop;
 /// permission — the Windows counterpart of the original's Carbon hotkeys.
 public sealed class HotKeys : IDisposable
 {
-    private readonly HwndSource _source;
+    private readonly MessageWindow _window;
     private readonly Dictionary<int, Action> _actions = new();
     private int _nextId = 1;
 
     public HotKeys()
     {
-        // A message-only window: never shown, exists purely to receive WM_HOTKEY.
-        _source = new HwndSource(new HwndSourceParameters("HoverHotKeys")
-        {
-            Width = 0,
-            Height = 0,
-            ParentWindow = new IntPtr(-3),   // HWND_MESSAGE
-        });
-        _source.AddHook(Hook);
+        _window = new MessageWindow("HoverHotKeys", Handle, Win32.WM_HOTKEY);
     }
 
     /// Returns false when Windows refuses the binding. The caller owns the user-facing
@@ -29,7 +21,7 @@ public sealed class HotKeys : IDisposable
     public bool Register(Shortcut shortcut, Action action)
     {
         if (!shortcut.IsSet) return true;
-        var vk = (uint)KeyInterop.VirtualKeyFromKey(shortcut.Key);
+        var vk = Keys.VirtualKey(shortcut.Key);
         if (vk == 0)
         {
             Log.Line($"hotkey {shortcut} has no Windows virtual-key mapping");
@@ -37,13 +29,13 @@ public sealed class HotKeys : IDisposable
         }
 
         uint mods = Win32.MOD_NOREPEAT;
-        if (shortcut.Modifiers.HasFlag(ModifierKeys.Control)) mods |= Win32.MOD_CONTROL;
-        if (shortcut.Modifiers.HasFlag(ModifierKeys.Alt)) mods |= Win32.MOD_ALT;
-        if (shortcut.Modifiers.HasFlag(ModifierKeys.Shift)) mods |= Win32.MOD_SHIFT;
-        if (shortcut.Modifiers.HasFlag(ModifierKeys.Windows)) mods |= Win32.MOD_WIN;
+        if (shortcut.Modifiers.HasFlag(KeyModifiers.Control)) mods |= Win32.MOD_CONTROL;
+        if (shortcut.Modifiers.HasFlag(KeyModifiers.Alt)) mods |= Win32.MOD_ALT;
+        if (shortcut.Modifiers.HasFlag(KeyModifiers.Shift)) mods |= Win32.MOD_SHIFT;
+        if (shortcut.Modifiers.HasFlag(KeyModifiers.Meta)) mods |= Win32.MOD_WIN;
 
         var id = _nextId++;
-        if (Win32.RegisterHotKey(_source.Handle, id, mods, vk))
+        if (Win32.RegisterHotKey(_window.Handle, id, mods, vk))
         {
             _actions[id] = action;
             return true;
@@ -57,26 +49,19 @@ public sealed class HotKeys : IDisposable
     /// Called after the user rebinds a global shortcut in Settings.
     public void Clear()
     {
-        foreach (var id in _actions.Keys) Win32.UnregisterHotKey(_source.Handle, id);
+        foreach (var id in _actions.Keys) Win32.UnregisterHotKey(_window.Handle, id);
         _actions.Clear();
         _nextId = 1;
     }
 
-    private IntPtr Hook(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
+    private void Handle(int msg, IntPtr wParam, IntPtr lParam)
     {
-        if (msg != Win32.WM_HOTKEY) return IntPtr.Zero;
-        if (_actions.TryGetValue(wParam.ToInt32(), out var action))
-        {
-            handled = true;
-            action();
-        }
-        return IntPtr.Zero;
+        if (_actions.TryGetValue(wParam.ToInt32(), out var action)) action();
     }
 
     public void Dispose()
     {
         Clear();
-        _source.RemoveHook(Hook);
-        _source.Dispose();
+        _window.Dispose();
     }
 }

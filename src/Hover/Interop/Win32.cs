@@ -109,6 +109,29 @@ public static class Win32
 
     public const int MDT_EFFECTIVE_DPI = 0;
 
+    // MARK: Window shape
+
+    /// Avalonia's see-through windows are not layered windows, so Windows hands the
+    /// whole rectangle to the mouse even where nothing is painted. WPF tested each
+    /// pixel's transparency instead. Handing Windows an explicit shape restores the
+    /// old behaviour: anything outside the shape does not exist to the pointer and
+    /// clicks land in the app underneath.
+
+    [DllImport("gdi32.dll")]
+    public static extern IntPtr CreateRoundRectRgn(int left, int top, int right, int bottom,
+        int widthEllipse, int heightEllipse);
+
+    [DllImport("gdi32.dll")]
+    public static extern IntPtr CreateRectRgn(int left, int top, int right, int bottom);
+
+    [DllImport("gdi32.dll")]
+    public static extern bool DeleteObject(IntPtr handle);
+
+    /// Windows takes ownership of the region handle, so it must not be deleted after
+    /// a successful call.
+    [DllImport("user32.dll")]
+    public static extern int SetWindowRgn(IntPtr hWnd, IntPtr region, bool redraw);
+
     // MARK: Hotkeys
 
     public const int WM_HOTKEY = 0x0312;

@@ -1,9 +1,6 @@
-using System.IO;
 using System.Security.Cryptography;
-using System.Windows;
-using System.Windows.Interop;
-using System.Windows.Media.Imaging;
-using System.Windows.Threading;
+using Avalonia.Threading;
+using Avalonia.Media.Imaging;
 using Hover.Core;
 using Hover.Interop;
 
@@ -33,7 +30,7 @@ public sealed class ShotStore : IDisposable
     private readonly Dictionary<string, Known> _known = new(StringComparer.OrdinalIgnoreCase);
 
     private FileSystemWatcher? _watcher;
-    private HwndSource? _clipboardSource;
+    private MessageWindow? _clipboardWindow;
     private DispatcherTimer? _rescan;
     private DispatcherTimer? _tidy;
 
@@ -289,9 +286,9 @@ public sealed class ShotStore : IDisposable
             _rescan.Start();
         }
 
-        var dispatcher = Application.Current?.Dispatcher;
-        if (dispatcher is null || dispatcher.CheckAccess()) Run();
-        else dispatcher.BeginInvoke(Run);
+        var dispatcher = Dispatcher.UIThread;
+        if (dispatcher.CheckAccess()) Run();
+        else dispatcher.Post(Run);
     }
 
     // MARK: The clipboard
@@ -300,17 +297,9 @@ public sealed class ShotStore : IDisposable
     {
         try
         {
-            // A message-only window: it exists solely to receive clipboard-changed
-            // messages. It is never shown.
-            var parameters = new HwndSourceParameters("HoverClipboardListener")
-            {
-                Width = 0,
-                Height = 0,
-                ParentWindow = new IntPtr(-3), // HWND_MESSAGE
-            };
-            _clipboardSource = new HwndSource(parameters);
-            _clipboardSource.AddHook(ClipboardHook);
-            Win32.AddClipboardFormatListener(_clipboardSource.Handle);
+            _clipboardWindow = new MessageWindow("HoverClipboardListener",
+                (_, _, _) => CaptureClipboardImage(), Win32.WM_CLIPBOARDUPDATE);
+            Win32.AddClipboardFormatListener(_clipboardWindow.Handle);
         }
         catch (Exception e)
         {
@@ -318,21 +307,18 @@ public sealed class ShotStore : IDisposable
         }
     }
 
-    private IntPtr ClipboardHook(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
-    {
-        if (msg == Win32.WM_CLIPBOARDUPDATE) CaptureClipboardImage();
-        return IntPtr.Zero;
-    }
-
     private void CaptureClipboardImage()
     {
         try
         {
-            if (!Clipboard.ContainsImage()) return;
-            var image = Clipboard.GetImage();
-            if (image is null) return;
+            // Windows hands over a BMP; the tray stores PNG, so everything on disk is
+            // one format and can be dragged anywhere.
+            var bmp = ClipboardImage.Read();
+            if (bmp is null) return;
 
-            var png = EncodePng(image);
+            var png = ToPng(bmp);
+            if (png is null) return;
+
             var hash = Hash(png);
             if (_hashes.Contains(hash)) return;   // already have this exact picture
 
@@ -412,16 +398,25 @@ public sealed class ShotStore : IDisposable
 
     // MARK: Bits
 
-    private void Notify() => Application.Current?.Dispatcher.BeginInvoke(
+    private void Notify() => Dispatcher.UIThread.Post(
         () => Changed?.Invoke(this, EventArgs.Empty));
 
-    private static byte[] EncodePng(BitmapSource image)
+    /// Re-encodes any image the decoder understands as PNG. Null if it cannot be read.
+    private static byte[]? ToPng(byte[] source)
     {
-        var encoder = new PngBitmapEncoder();
-        encoder.Frames.Add(BitmapFrame.Create(image));
-        using var ms = new MemoryStream();
-        encoder.Save(ms);
-        return ms.ToArray();
+        try
+        {
+            using var input = new MemoryStream(source);
+            using var bitmap = new Bitmap(input);
+            using var output = new MemoryStream();
+            bitmap.Save(output, new PngBitmapEncoderOptions());
+            return output.ToArray();
+        }
+        catch (Exception e)
+        {
+            Log.Line($"could not re-encode a picture as PNG — {e.Message}");
+            return null;
+        }
     }
 
     private static string Hash(byte[] bytes) => Convert.ToHexString(SHA256.HashData(bytes));
@@ -439,11 +434,10 @@ public sealed class ShotStore : IDisposable
         _rescan?.Stop();
         _tidy?.Stop();
         _watcher?.Dispose();
-        if (_clipboardSource is not null)
+        if (_clipboardWindow is not null)
         {
-            Win32.RemoveClipboardFormatListener(_clipboardSource.Handle);
-            _clipboardSource.RemoveHook(ClipboardHook);
-            _clipboardSource.Dispose();
+            Win32.RemoveClipboardFormatListener(_clipboardWindow.Handle);
+            _clipboardWindow.Dispose();
         }
     }
 }
