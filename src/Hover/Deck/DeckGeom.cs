@@ -45,7 +45,6 @@ public static class DeckGeom
     // Rest — a 12 px pill of colour dashes
     public static double PillWidth => 12 * Scale;
     public static double DashHeight => 14 * Scale;
-    public static double DashWidth => 7 * Scale;
     public static double DashGap => 5 * Scale;
     public static double PillPad => 7 * Scale;
     public const int MaxDashes = 14;

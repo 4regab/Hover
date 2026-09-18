@@ -127,10 +127,4 @@ public static class DocMap
         if (end < 0) end = text.Length;
         return (start, end - start);
     }
-
-    public static string LineAt(string text, int index)
-    {
-        var (s, len) = LineRange(text, index);
-        return text.Substring(s, len);
-    }
 }
