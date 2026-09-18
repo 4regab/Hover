@@ -1,0 +1,819 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Hover — direction C, Index</title>
+<link rel="stylesheet" href="tokens.css">
+<style>
+/* ============================================================
+   DIRECTION C — INDEX
+   Built for speed rather than for looking like paper. One panel holds a
+   searchable list of notes; one holds a tight grid of pictures. Every row
+   has a number, and the number is the shortcut. Type is small, spacing is
+   tight, and nothing moves that does not have to.
+
+   The Notion reference here is Notion's own search dialog, not a Notion
+   page: hairlines, muted labels, one accent, no decoration.
+   ============================================================ */
+
+.panel {
+    background: var(--canvas);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    box-shadow:
+        0 0 0 0.5px rgba(15, 15, 15, 0.05),
+        0 10px 32px -8px rgba(15, 15, 15, 0.3);
+    overflow: hidden;
+}
+
+/* ---------- search ---------- */
+.find {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 9px 12px;
+    border-bottom: 1px solid var(--line);
+}
+
+.find svg {
+    width: 14px;
+    height: 14px;
+    color: var(--text-3);
+    flex: none;
+}
+
+.find input {
+    border: 0;
+    outline: 0;
+    background: transparent;
+    font: inherit;
+    font-size: 13px;
+    color: var(--text);
+    width: 100%;
+}
+
+.find input::placeholder {
+    color: var(--text-3);
+}
+
+.kbd {
+    font-size: 10.5px;
+    font-weight: 500;
+    color: var(--text-3);
+    background: var(--canvas-3);
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    padding: 1px 5px;
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+}
+
+/* ---------- the note list ---------- */
+.list {
+    width: 340px;
+}
+
+.sect {
+    padding: 10px 12px 4px;
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.09em;
+    color: var(--text-3);
+}
+
+.rows {
+    padding: 0 6px 8px;
+}
+
+.row {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    padding: 7px 8px;
+    border-radius: 5px;
+    cursor: pointer;
+    /* Rows are navigated with the keyboard tens of times a day. Background
+       only, no transform, and a short duration so it never feels laggy. */
+    transition: background var(--t-hover) ease;
+}
+
+.row:hover,
+.row[data-sel="true"] {
+    background: var(--fill-hover);
+}
+
+.row[data-sel="true"] {
+    background: var(--fill-active);
+}
+
+.row i {
+    width: 6px;
+    height: 6px;
+    border-radius: 999px;
+    flex: none;
+}
+
+.row .nm {
+    font-size: 13px;
+    color: var(--text);
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.row .sub {
+    font-size: 11.5px;
+    color: var(--text-3);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 118px;
+}
+
+.row .when {
+    font-size: 11px;
+    color: var(--text-3);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+
+.row .num {
+    font-size: 10.5px;
+    color: var(--text-3);
+    font-variant-numeric: tabular-nums;
+    min-width: 12px;
+    text-align: right;
+    opacity: 0;
+    transition: opacity var(--t-hover) ease;
+}
+
+.list:hover .num {
+    opacity: 1;
+}
+
+.row .pin {
+    width: 11px;
+    height: 11px;
+    color: var(--text-3);
+    flex: none;
+}
+
+/* Bottom hint strip, the same idea as Raycast's footer. */
+.hints {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 7px 12px;
+    border-top: 1px solid var(--line);
+    background: var(--canvas-2);
+    font-size: 11px;
+    color: var(--text-3);
+}
+
+.hints span {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+}
+
+/* ---------- the open note ---------- */
+.sheet-note {
+    width: 400px;
+    display: flex;
+    flex-direction: column;
+    min-height: 400px;
+}
+
+.sheet-head {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    padding: 10px 10px 10px 14px;
+    border-bottom: 1px solid var(--line);
+}
+
+.sheet-head i {
+    width: 7px;
+    height: 7px;
+    border-radius: 999px;
+    flex: none;
+}
+
+.sheet-head .nm {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text);
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.ib {
+    width: 24px;
+    height: 24px;
+    display: grid;
+    place-items: center;
+    border: 0;
+    border-radius: 4px;
+    background: transparent;
+    color: var(--text-3);
+    cursor: pointer;
+    transition:
+        background var(--t-hover) ease,
+        color var(--t-hover) ease,
+        transform var(--t-press) var(--ease-out);
+}
+
+.ib:hover {
+    background: var(--fill-active);
+    color: var(--text);
+}
+
+.ib:active {
+    transform: scale(0.93);
+}
+
+.ib[data-on="true"] {
+    color: var(--ink-purple);
+}
+
+.ib svg {
+    width: 14px;
+    height: 14px;
+}
+
+.sheet-body {
+    flex: 1;
+    padding: 12px 16px;
+    font-size: 13.5px;
+    line-height: 1.6;
+    color: var(--text);
+}
+
+.task {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    margin: 0 0 4px;
+}
+
+.box {
+    width: 14px;
+    height: 14px;
+    margin-top: 3px;
+    flex: none;
+    border: 1.5px solid rgba(55, 53, 47, 0.28);
+    border-radius: 3px;
+    background: transparent;
+    cursor: pointer;
+    display: grid;
+    place-items: center;
+    transition:
+        border-color var(--t-hover) ease,
+        background var(--t-hover) ease,
+        transform var(--t-press) var(--ease-out);
+}
+
+.box:active {
+    transform: scale(0.9);
+}
+
+.box[data-done="true"] {
+    background: var(--text);
+    border-color: var(--text);
+}
+
+.box svg {
+    width: 9px;
+    height: 9px;
+    color: #fff;
+    opacity: 0;
+    transition: opacity var(--t-press) var(--ease-out);
+}
+
+.box[data-done="true"] svg {
+    opacity: 1;
+}
+
+.task[data-done="true"] .tx {
+    color: var(--text-3);
+    text-decoration: line-through;
+    text-decoration-color: rgba(55, 53, 47, 0.3);
+}
+
+.caret {
+    display: inline-block;
+    width: 1.5px;
+    height: 1.05em;
+    background: var(--text);
+    vertical-align: -0.16em;
+    animation: blink 1.1s steps(1) infinite;
+}
+
+@keyframes blink { 50% { opacity: 0; } }
+
+/* ---------- the tray ---------- */
+.tray {
+    width: 300px;
+}
+
+.tray-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 9px 9px 9px 13px;
+    border-bottom: 1px solid var(--line);
+}
+
+.tray-title {
+    font-size: 12.5px;
+    font-weight: 600;
+    color: var(--text);
+}
+
+.spacer { flex: 1; }
+
+.add {
+    height: 24px;
+    padding: 0 8px;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    border: 1px solid var(--line-strong);
+    border-radius: 5px;
+    background: var(--canvas);
+    color: var(--text-2);
+    font: inherit;
+    font-size: 11.5px;
+    cursor: pointer;
+    transition:
+        background var(--t-hover) ease,
+        color var(--t-hover) ease,
+        transform var(--t-press) var(--ease-out);
+}
+
+.add:hover {
+    background: var(--text);
+    border-color: var(--text);
+    color: #fff;
+}
+
+.add:active {
+    transform: scale(0.95);
+}
+
+.add svg { width: 12px; height: 12px; }
+
+/* Two across. Twice as many pictures visible in the same height, which is
+   what a tray of nine is for. */
+.grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 5px;
+    padding: 8px;
+}
+
+.cell {
+    position: relative;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    overflow: hidden;
+    background: var(--canvas-2);
+    cursor: grab;
+    transition:
+        border-color var(--t-hover) ease,
+        transform var(--t-press) var(--ease-out);
+}
+
+.cell:hover {
+    border-color: var(--text-3);
+}
+
+.cell:active {
+    transform: scale(0.98);
+}
+
+/* The number is the shortcut. Hold Alt and press it to drag that picture
+   out, so the tray works without the mouse at all. */
+.badge {
+    position: absolute;
+    top: 4px;
+    left: 4px;
+    min-width: 15px;
+    height: 15px;
+    padding: 0 3px;
+    display: grid;
+    place-items: center;
+    border-radius: 3px;
+    background: rgba(20, 20, 20, 0.6);
+    color: #fff;
+    font-size: 9.5px;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    opacity: 0;
+    transition: opacity var(--t-hover) ease;
+}
+
+.tray:hover .badge {
+    opacity: 1;
+}
+
+.tools {
+    position: absolute;
+    top: 4px;
+    right: 4px;
+    display: flex;
+    gap: 3px;
+    opacity: 0;
+    transform: scale(0.94);
+    transform-origin: top right;
+    transition:
+        opacity var(--t-reveal) var(--ease-out),
+        transform var(--t-reveal) var(--ease-out);
+}
+
+.cell:hover .tools {
+    opacity: 1;
+    transform: none;
+}
+
+.tool {
+    width: 19px;
+    height: 19px;
+    display: grid;
+    place-items: center;
+    border: 0;
+    border-radius: 4px;
+    background: rgba(20, 20, 20, 0.62);
+    color: #fff;
+    cursor: pointer;
+    transition:
+        background var(--t-hover) ease,
+        transform var(--t-press) var(--ease-out);
+}
+
+.tool:hover { background: rgba(20, 20, 20, 0.85); }
+.tool.danger:hover { background: var(--red); }
+.tool:active { transform: scale(0.88); }
+.tool svg { width: 10px; height: 10px; }
+
+.cap {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    padding: 3px 5px;
+    background: linear-gradient(to top, rgba(0, 0, 0, 0.8), rgba(0, 0, 0, 0));
+    color: rgba(255, 255, 255, 0.92);
+    font-size: 9.5px;
+    font-variant-numeric: tabular-nums;
+    display: flex;
+    gap: 5px;
+    opacity: 0;
+    transition: opacity var(--t-reveal) var(--ease-out);
+}
+
+.cell:hover .cap { opacity: 1; }
+
+.cap .r { margin-left: auto; opacity: 0.68; }
+
+.empty {
+    grid-column: 1 / -1;
+    padding: 20px 14px;
+    text-align: center;
+    border: 1px dashed var(--line-strong);
+    border-radius: 6px;
+    color: var(--text-3);
+    font-size: 11.5px;
+    line-height: 1.5;
+}
+
+.empty b {
+    display: block;
+    color: var(--text-2);
+    font-weight: 600;
+    font-size: 12px;
+    margin-bottom: 2px;
+}
+
+/* ---------- fake screenshot content ---------- */
+.mock { height: 74px; position: relative; overflow: hidden; }
+.mock-term { background: #0c1a0c; }
+.mock-term .ln { position: absolute; left: 5px; height: 2.5px; border-radius: 2px; background: #4ade80; }
+.mock-diagram { background: #fff; }
+.mock-diagram .bx { position: absolute; border: 1.2px solid #c9c7c2; border-radius: 2px; background: #f3f2f0; }
+.mock-code { background: #1e1e1e; }
+.mock-code .ln { position: absolute; left: 6px; height: 2.5px; border-radius: 2px; }
+.mock-web { background: #fff; }
+.mock-web .bar2 { position: absolute; inset: 0 0 auto 0; height: 11px; background: #efeeec; border-bottom: 1px solid #e0dedb; }
+.mock-web .ln { position: absolute; left: 7px; height: 4px; border-radius: 2px; background: #dedcd8; }
+.mock-note { background: var(--paper-purple); }
+.mock-note .ln { position: absolute; left: 7px; height: 3px; border-radius: 2px; background: rgba(105,64,165,.35); }
+.mock-shot { background: #12331c; }
+.mock-shot .ln { position: absolute; left: 6px; height: 3px; border-radius: 2px; background: rgba(255,255,255,.35); }
+</style>
+</head>
+<body>
+<div class="desktop">
+<div class="sheet">
+
+<div class="doc">
+    <h1>C — Index</h1>
+    <p class="lede">Built for speed. The reference is Notion's search dialog, not a Notion page.</p>
+    <p>
+        The resting deck becomes a searchable list rather than a stack of tabs, so
+        forty notes are as reachable as four. Every row and every picture carries a
+        number, and the number is the shortcut. Type is small, spacing is tight, and
+        the only thing that moves is what you point at.
+    </p>
+</div>
+
+<div class="stage">
+    <div>
+        <p class="caption">Deck, resting — hover the list</p>
+        <div class="panel list">
+            <div class="find">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><circle cx="11" cy="11" r="6"/><path d="m16 16 4 4"/></svg>
+                <input placeholder="Search notes" value="">
+                <span class="kbd">Ctrl F</span>
+            </div>
+
+            <div class="sect">Pinned</div>
+            <div class="rows">
+                <div class="row" data-sel="true">
+                    <i style="background:var(--ink-purple)"></i>
+                    <span class="nm">Careerdog tasks</span>
+                    <svg class="pin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M12 17v5M9 4h6l-1 6 3 3H7l3-3-1-6Z"/></svg>
+                    <span class="when">1h</span>
+                    <span class="num">1</span>
+                </div>
+            </div>
+
+            <div class="sect">Recent</div>
+            <div class="rows">
+                <div class="row">
+                    <i style="background:var(--ink-yellow)"></i>
+                    <span class="nm">Groceries</span>
+                    <span class="sub">oat milk, rice, chilli oil</span>
+                    <span class="when">3h</span>
+                    <span class="num">2</span>
+                </div>
+                <div class="row">
+                    <i style="background:var(--ink-blue)"></i>
+                    <span class="nm">Avalonia notes</span>
+                    <span class="sub">SetWindowRgn for click-thr…</span>
+                    <span class="when">Thu</span>
+                    <span class="num">3</span>
+                </div>
+                <div class="row">
+                    <i style="background:var(--ink-green)"></i>
+                    <span class="nm">Pricing ideas</span>
+                    <span class="sub">4.99 one-off, no trial</span>
+                    <span class="when">Thu</span>
+                    <span class="num">4</span>
+                </div>
+                <div class="row">
+                    <i style="background:var(--ink-orange)"></i>
+                    <span class="nm">Installer checklist</span>
+                    <span class="sub">sign, version, upload</span>
+                    <span class="when">Wed</span>
+                    <span class="num">5</span>
+                </div>
+                <div class="row">
+                    <i style="background:var(--ink-gray)"></i>
+                    <span class="nm">Scratch</span>
+                    <span class="when">Mon</span>
+                    <span class="num">6</span>
+                </div>
+            </div>
+
+            <div class="hints">
+                <span><span class="kbd">↑↓</span> move</span>
+                <span><span class="kbd">↵</span> open</span>
+                <span><span class="kbd">Ctrl N</span> new</span>
+            </div>
+        </div>
+    </div>
+
+    <div>
+        <p class="caption">Note, open</p>
+        <div class="panel sheet-note">
+            <div class="sheet-head">
+                <i style="background:var(--ink-purple)"></i>
+                <span class="nm">Careerdog tasks</span>
+                <button class="ib" data-on="true" title="Pinned (Ctrl+P)">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 17v5M9 4h6l-1 6 3 3H7l3-3-1-6Z"/></svg>
+                </button>
+                <button class="ib" title="Colour (Ctrl+.)">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="7"/><path d="M12 5a7 7 0 0 1 0 14Z" fill="currentColor" stroke="none"/></svg>
+                </button>
+                <button class="ib" title="More">
+                    <svg viewBox="0 0 24 24" fill="currentColor" stroke="none"><circle cx="5" cy="12" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="19" cy="12" r="1.7"/></svg>
+                </button>
+                <button class="ib" title="Close (Esc)">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg>
+                </button>
+            </div>
+
+            <div class="sheet-body">
+                <div class="task" data-done="true">
+                    <button class="box" data-done="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><path d="m4 12 5 5L20 6"/></svg></button>
+                    <div class="tx">Ship the snip overlay</div>
+                </div>
+                <div class="task" data-done="true">
+                    <button class="box" data-done="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><path d="m4 12 5 5L20 6"/></svg></button>
+                    <div class="tx">Move storage to Avalonia</div>
+                </div>
+                <div class="task">
+                    <button class="box"></button>
+                    <div class="tx">Annotate: arrows, boxes, crop</div>
+                </div>
+                <div class="task">
+                    <button class="box"></button>
+                    <div class="tx">Rebuild the editor<span class="caret"></span></div>
+                </div>
+                <div class="task">
+                    <button class="box"></button>
+                    <div class="tx">Price page, then Stripe</div>
+                </div>
+            </div>
+
+            <div class="hints">
+                <span><span class="kbd">Ctrl T</span> task</span>
+                <span><span class="kbd">Ctrl F</span> find</span>
+                <span style="margin-left:auto">Saved 1h ago</span>
+            </div>
+        </div>
+    </div>
+
+    <div>
+        <p class="caption">Screenshot tray — hover a picture</p>
+        <div class="panel tray">
+            <div class="tray-head">
+                <div class="tray-title">Screenshots</div>
+                <span class="kbd">9</span>
+                <div class="spacer"></div>
+                <button class="add" title="New snip (Ctrl+Alt+S)">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+                    Snip
+                </button>
+            </div>
+
+            <div class="grid">
+                <div class="cell">
+                    <div class="mock mock-term">
+                        <div class="ln" style="top:8px;width:96px"></div>
+                        <div class="ln" style="top:16px;width:124px;opacity:.6"></div>
+                        <div class="ln" style="top:24px;width:76px;opacity:.6"></div>
+                        <div class="ln" style="top:32px;width:110px;opacity:.4"></div>
+                        <div class="ln" style="top:40px;width:60px;opacity:.4"></div>
+                    </div>
+                    <span class="badge">1</span>
+                    <div class="tools">
+                        <button class="tool" title="Annotate"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 20h4L20 8l-4-4L4 16v4Z"/></svg></button>
+                        <button class="tool danger" title="Delete"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+                    </div>
+                    <div class="cap"><span>18:44</span><span class="r">214 KB</span></div>
+                </div>
+
+                <div class="cell">
+                    <div class="mock mock-diagram">
+                        <div class="bx" style="left:10px;top:12px;width:34px;height:17px"></div>
+                        <div class="bx" style="left:58px;top:12px;width:34px;height:17px"></div>
+                        <div class="bx" style="left:34px;top:44px;width:34px;height:17px"></div>
+                    </div>
+                    <span class="badge">2</span>
+                    <div class="tools">
+                        <button class="tool" title="Annotate"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 20h4L20 8l-4-4L4 16v4Z"/></svg></button>
+                        <button class="tool danger" title="Delete"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+                    </div>
+                    <div class="cap"><span>17:08</span><span class="r">96 KB</span></div>
+                </div>
+
+                <div class="cell">
+                    <div class="mock mock-code">
+                        <div class="ln" style="top:9px;width:42px;background:#c586c0"></div>
+                        <div class="ln" style="top:17px;width:92px;background:#9cdcfe"></div>
+                        <div class="ln" style="top:25px;width:66px;background:#ce9178"></div>
+                        <div class="ln" style="top:33px;width:104px;background:#6a9955"></div>
+                        <div class="ln" style="top:41px;width:52px;background:#4ec9b0"></div>
+                    </div>
+                    <span class="badge">3</span>
+                    <div class="tools">
+                        <button class="tool" title="Annotate"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 20h4L20 8l-4-4L4 16v4Z"/></svg></button>
+                        <button class="tool danger" title="Delete"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+                    </div>
+                    <div class="cap"><span>Thu</span><span class="r">61 KB</span></div>
+                </div>
+
+                <div class="cell">
+                    <div class="mock mock-web">
+                        <div class="bar2"></div>
+                        <div class="ln" style="top:20px;width:74px;height:6px;background:#cfcdc9"></div>
+                        <div class="ln" style="top:34px;width:118px"></div>
+                        <div class="ln" style="top:44px;width:96px"></div>
+                        <div class="ln" style="top:54px;width:110px"></div>
+                    </div>
+                    <span class="badge">4</span>
+                    <div class="tools">
+                        <button class="tool" title="Annotate"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 20h4L20 8l-4-4L4 16v4Z"/></svg></button>
+                        <button class="tool danger" title="Delete"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+                    </div>
+                    <div class="cap"><span>Thu</span><span class="r">340 KB</span></div>
+                </div>
+
+                <div class="cell">
+                    <div class="mock mock-note">
+                        <div class="ln" style="top:10px;width:64px"></div>
+                        <div class="ln" style="top:20px;width:44px;opacity:.6"></div>
+                        <div class="ln" style="top:32px;width:78px;opacity:.45"></div>
+                        <div class="ln" style="top:42px;width:56px;opacity:.45"></div>
+                    </div>
+                    <span class="badge">5</span>
+                    <div class="tools">
+                        <button class="tool" title="Annotate"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 20h4L20 8l-4-4L4 16v4Z"/></svg></button>
+                        <button class="tool danger" title="Delete"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+                    </div>
+                    <div class="cap"><span>Wed</span><span class="r">12 KB</span></div>
+                </div>
+
+                <div class="cell">
+                    <div class="mock mock-shot">
+                        <div class="ln" style="top:12px;width:88px"></div>
+                        <div class="ln" style="top:22px;width:62px;opacity:.6"></div>
+                        <div class="ln" style="top:36px;width:100px;opacity:.4"></div>
+                    </div>
+                    <span class="badge">6</span>
+                    <div class="tools">
+                        <button class="tool" title="Annotate"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 20h4L20 8l-4-4L4 16v4Z"/></svg></button>
+                        <button class="tool danger" title="Delete"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+                    </div>
+                    <div class="cap"><span>Wed</span><span class="r">88 KB</span></div>
+                </div>
+            </div>
+
+            <div class="hints">
+                <span><span class="kbd">Alt 1-9</span> grab</span>
+                <span><span class="kbd">A</span> mark up</span>
+                <span><span class="kbd">⌫</span> delete</span>
+            </div>
+        </div>
+
+        <p class="caption" style="margin-top:22px">Tray, empty</p>
+        <div class="panel tray">
+            <div class="tray-head">
+                <div class="tray-title">Screenshots</div>
+                <div class="spacer"></div>
+                <button class="add"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>Snip</button>
+            </div>
+            <div class="grid">
+                <div class="empty">
+                    <b>No pictures yet</b>
+                    Ctrl+Alt+S snips. Copying an image adds it too.
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="doc">
+    <h2>What this fixes</h2>
+    <ul>
+        <li>Nine tabs do not fit on a screen edge; ninety rows do. The deck stops having a limit, and the "+2 more" tab disappears.</li>
+        <li>Search arrives, which Hover has no equivalent of today.</li>
+        <li>Two pictures across instead of one, so nine are visible without scrolling.</li>
+        <li>Every note and every picture is reachable from the keyboard, which suits a tool you open a hundred times a day.</li>
+        <li>Shortcuts are printed in the panel rather than hidden in Settings.</li>
+    </ul>
+
+    <h2>The risk</h2>
+    <ul>
+        <li>This is the least warm of the three. It reads as a developer tool, not a sticky note. If you want people to feel something when the panel slides out, this is not it.</li>
+        <li>Note colours shrink to 6px dots, so colour stops being a way to recognise a note across the room.</li>
+        <li>Two-across thumbnails are small. A screenshot of dense text is unreadable at that size and you have to open it.</li>
+    </ul>
+
+    <h2>Motion</h2>
+    <ul>
+        <li>List rows change background only, 160ms. No movement at all, because arrow-key navigation would fight it.</li>
+        <li>The hover tools on a picture scale from <code>0.94</code>, anchored top right, 180ms.</li>
+        <li>Number badges fade in when the panel is hovered, 160ms, so they are not permanent clutter.</li>
+        <li>Nothing animates on a keyboard shortcut.</li>
+    </ul>
+
+    <h2>Cost to build</h2>
+    <ul>
+        <li>Highest of the three. Search, a keyboard model for the list, and a new panel that does not exist yet.</li>
+        <li>It also changes what Hover is, so it is the one to reject fastest if it does not feel right.</li>
+    </ul>
+</div>
+
+</div>
+</div>
+</body>
+</html>
