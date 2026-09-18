@@ -49,6 +49,20 @@ public static class Win32
     [DllImport("user32.dll")]
     public static extern bool GetCursorPos(out POINT p);
 
+    [DllImport("user32.dll")]
+    private static extern short GetAsyncKeyState(int vKey);
+
+    private const int VK_LBUTTON = 0x01, VK_RBUTTON = 0x02, VK_MBUTTON = 0x04;
+
+    /// True while any mouse button is held down. Which button does not matter — the
+    /// question is only whether something is being clicked or dragged right now.
+    /// Asked by the wake gate: a held button at the screen edge is a scrollbar being
+    /// dragged, not a request to open a panel.
+    public static bool AnyMouseButtonDown =>
+        (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0
+        || (GetAsyncKeyState(VK_RBUTTON) & 0x8000) != 0
+        || (GetAsyncKeyState(VK_MBUTTON) & 0x8000) != 0;
+
     // MARK: Monitors
 
     [StructLayout(LayoutKind.Sequential)]

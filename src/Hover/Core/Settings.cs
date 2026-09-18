@@ -20,6 +20,8 @@ public static class Settings
         public string TabFontName { get; set; } = "";
         public string CodeFontName { get; set; } = "Consolas";
         public double EdgeWidth { get; set; } = 14;
+        public int WakeDelayMs { get; set; } = 250;
+        public bool WakeAtScreenEdge { get; set; } = true;
         public bool MarkdownStyling { get; set; } = true;
         public DeckStyle DeckStyle { get; set; } = DeckStyle.Tabs;
         public bool KeepFanned { get; set; }
@@ -175,6 +177,37 @@ public static class Settings
     {
         get => M.EdgeWidth >= 4 ? M.EdgeWidth : 14;
         set { M.EdgeWidth = value; Save(); }
+    }
+
+    /// How long the pointer has to rest in the wake zone before a panel comes out.
+    /// The zone shares the screen edge with scrollbars, so opening on the first touch
+    /// meant reaching for a scrollbar opened the deck. Applies to the notes deck and
+    /// the screenshot tray alike.
+    public static readonly (string Name, int Ms)[] WakeDelays =
+    {
+        ("Straight away", 0), ("After a beat — 250 ms", 250), ("After 400 ms", 400),
+        ("After 800 ms", 800), ("After 1.5 seconds", 1500), ("After 3 seconds", 3000),
+    };
+
+    public const int WakeDelayMax = 5000;
+
+    public static int WakeDelayMs
+    {
+        get => Math.Clamp(M.WakeDelayMs, 0, WakeDelayMax);
+        set { M.WakeDelayMs = Math.Clamp(value, 0, WakeDelayMax); Save(); }
+    }
+
+    public static TimeSpan WakeDelay => TimeSpan.FromMilliseconds(WakeDelayMs);
+
+    /// Only count the pointer as reaching the edge when it is pushed right into it,
+    /// a pixel or two out, rather than anywhere in the band above. Scrollbars sit
+    /// just inside that, so scrolling or clicking one stops waking the panels. An
+    /// edge that touches another display ignores this — the pointer crosses onto the
+    /// next screen there instead of stopping.
+    public static bool WakeAtScreenEdge
+    {
+        get => M.WakeAtScreenEdge;
+        set { M.WakeAtScreenEdge = value; Save(); }
     }
 
     /// Style Markdown inline — headings, emphasis, code, quotes.

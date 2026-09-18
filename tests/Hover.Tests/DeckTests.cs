@@ -1,5 +1,6 @@
 using Hover.Core;
 using Hover.Deck;
+using Hover.Interop;
 using NUnit.Framework;
 
 namespace Hover.Tests;
@@ -67,5 +68,82 @@ public sealed class DeckTests
             Assert.That(layout.Pitch, Is.GreaterThanOrEqualTo(DeckGeom.PitchMin));
             Assert.That(layout.Overflows, Is.True);
         });
+    }
+
+    /// The gate that stopped the deck opening every time the pointer crossed the edge
+    /// on its way to a scrollbar. Silent breakage here is either a deck that never
+    /// opens or one that flaps open and shut, so it is worth a check.
+    [Test]
+    [NonParallelizable]
+    public void Wake_gate_waits_for_the_pointer_to_settle_and_only_fires_once_a_visit()
+    {
+        Assume.That(Win32.AnyMouseButtonDown, Is.False, "a mouse button is being held");
+
+        var original = Settings.WakeDelayMs;
+        try
+        {
+            Settings.WakeDelayMs = 0;
+            var instant = new EdgeWake();
+            Assert.Multiple(() =>
+            {
+                Assert.That(instant.Woke("display-1", inside: true), Is.True, "no wait set, so it opens on arrival");
+                Assert.That(instant.Woke("display-1", inside: true), Is.False, "already open for this visit");
+                Assert.That(instant.Woke("display-1", inside: false), Is.False, "the pointer left");
+                Assert.That(instant.Woke("display-1", inside: true), Is.True, "and came back");
+            });
+
+            Settings.WakeDelayMs = 300;
+            var waits = new EdgeWake();
+            Assert.That(waits.Woke("display-1", inside: true), Is.False, "the wait has not passed");
+            Thread.Sleep(350);
+            Assert.That(waits.Woke("display-1", inside: true), Is.True, "the pointer rested long enough");
+
+            // Leaving restarts the clock rather than carrying the old arrival forward.
+            Assert.That(waits.Woke("display-1", inside: false), Is.False);
+            Assert.That(waits.Woke("display-1", inside: true), Is.False, "back at the edge, waiting again");
+        }
+        finally
+        {
+            Settings.WakeDelayMs = original;
+            Settings.Flush();
+        }
+    }
+
+    /// The rule that keeps the wake zone off the scrollbar: pinned to the screen edge
+    /// on an outer edge, the full band on one the pointer can cross.
+    [Test]
+    [NonParallelizable]
+    public void Wake_band_is_pinned_to_the_edge_only_where_the_pointer_can_stop()
+    {
+        var original = Settings.WakeAtScreenEdge;
+        try
+        {
+            var screen = new ScreenInfo(IntPtr.Zero, "display-1",
+                new Win32.RECT { Left = 0, Top = 0, Right = 1920, Bottom = 1080 },
+                new Win32.RECT { Left = 0, Top = 0, Right = 1920, Bottom = 1040 },
+                Scale: 1.25);
+
+            Settings.WakeAtScreenEdge = false;
+            Assert.That(EdgeWake.WakeBandWidth(screen, onRight: true, 14), Is.EqualTo(18),
+                        "off, the band is the preference scaled to device pixels");
+
+            Settings.WakeAtScreenEdge = true;
+            Assert.That(EdgeWake.WakeBandWidth(screen, onRight: true, 14),
+                        Is.EqualTo(EdgeWake.PinnedPixels), "an outer edge pins to the edge");
+
+            var shared = screen with { NeighbourRight = true };
+            Assert.Multiple(() =>
+            {
+                Assert.That(EdgeWake.WakeBandWidth(shared, onRight: true, 14), Is.EqualTo(18),
+                            "the pointer crosses a shared edge, so it keeps the full band");
+                Assert.That(EdgeWake.WakeBandWidth(shared, onRight: false, 14),
+                            Is.EqualTo(EdgeWake.PinnedPixels), "its other edge is still outer");
+            });
+        }
+        finally
+        {
+            Settings.WakeAtScreenEdge = original;
+            Settings.Flush();
+        }
     }
 }

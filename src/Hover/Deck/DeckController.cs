@@ -251,7 +251,8 @@ public sealed class DeckController : IDisposable
         get
         {
             var s = _screen;
-            var w = (int)Math.Round(Math.Max(DeckGeom.PillWidth + 2, Settings.EdgeWidth) * s.Scale);
+            var w = EdgeWake.WakeBandWidth(s, OnRight,
+                Math.Max(DeckGeom.PillWidth + 2, Settings.EdgeWidth));
             // Auto-hidden deck: no pill to aim at, so the wake zone is a tall band
             // down the edge — the middle stretch — and hovering anywhere along it
             // brings the deck out.

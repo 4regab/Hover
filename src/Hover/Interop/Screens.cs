@@ -12,6 +12,12 @@ public sealed record ScreenInfo(
     Win32.RECT Work,
     double Scale)
 {
+    /// True when another display sits immediately beyond this one's left or right
+    /// edge. The pointer runs straight through a shared edge onto the next screen
+    /// instead of stopping against it, so nothing can be pinned there.
+    public bool NeighbourLeft { get; init; }
+    public bool NeighbourRight { get; init; }
+
     /// The display's work area in DIPs, which is what the deck lays out against.
     public Rect WorkDips => new(Work.Left / Scale, Work.Top / Scale,
                                 Work.Width / Scale, Work.Height / Scale);
@@ -40,8 +46,35 @@ public static class Screens
             list.Add(new ScreenInfo(h, info.szDevice, info.rcMonitor, info.rcWork, scale));
             return true;
         }, IntPtr.Zero);
+        return WithNeighbours(list);
+    }
+
+    /// Marks the left and right edges that another display butts against. Windows
+    /// lays the desktop out with no gap between adjoining monitors, so touching
+    /// bounds and an overlapping vertical run is what "the pointer can cross here"
+    /// means.
+    private static List<ScreenInfo> WithNeighbours(List<ScreenInfo> list)
+    {
+        if (list.Count < 2) return list;
+
+        for (var i = 0; i < list.Count; i++)
+        {
+            var s = list[i];
+            list[i] = s with
+            {
+                NeighbourLeft = list.Any(o => o.Device != s.Device
+                                              && o.Bounds.Right == s.Bounds.Left
+                                              && SharesRows(o, s)),
+                NeighbourRight = list.Any(o => o.Device != s.Device
+                                               && o.Bounds.Left == s.Bounds.Right
+                                               && SharesRows(o, s)),
+            };
+        }
         return list;
     }
+
+    private static bool SharesRows(ScreenInfo a, ScreenInfo b) =>
+        a.Bounds.Top < b.Bounds.Bottom && a.Bounds.Bottom > b.Bounds.Top;
 
     public static Win32.POINT Cursor
     {

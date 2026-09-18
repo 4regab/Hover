@@ -95,7 +95,7 @@ public sealed class ImageStripController : IDisposable
             // A thin vertical band down the left edge — the whole middle stretch, so
             // resting the pointer anywhere along the edge wakes the tray. Nothing is
             // drawn here at rest; the band is only a wake zone.
-            var w = (int)Math.Round(Math.Max(3, Settings.EdgeWidth) * s.Scale);
+            var w = EdgeWake.WakeBandWidth(s, onRight: false, Math.Max(3, Settings.EdgeWidth));
             var margin = (int)Math.Round(s.Work.Height * 0.15);
             return new Win32.RECT
             {
@@ -184,10 +184,15 @@ public sealed class ImageStripController : IDisposable
     {
         var shots = ShotStore.Shared.Shots;
 
+        // Only as tall as what is in it. A floor here left a band of empty panel under
+        // a short list. The empty state is the one case that needs its own room, for
+        // the "no pictures yet" line.
+        var wanted = shots.Count == 0 ? 120 : shots.Count * (ShotRow.RowHeight + 8) + 52;
+
         var card = new Border
         {
             Width = PanelWidth,
-            Height = Math.Min(h - 16, Math.Max(160, shots.Count * (ShotRow.RowHeight + 8) + 52)),
+            Height = Math.Min(h - 16, wanted),
             Background = new SolidColorBrush(Color.FromArgb(0xF2, 0x1C, 0x1C, 0x20)),
             CornerRadius = new CornerRadius(0, 12, 12, 0),
             Effect = new DropShadowEffect

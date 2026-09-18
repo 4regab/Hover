@@ -14,7 +14,7 @@ public sealed class DeckManager : IDisposable
 {
     private readonly Dictionary<string, DeckController> _decks = new();
     private readonly DispatcherTimer _poll;
-    private readonly Dictionary<string, bool> _outside = new();
+    private readonly EdgeWake _wake = new();
     private string _layoutSignature = "";
     private DateTime _lastDisplayCheck = DateTime.Now;
     private static readonly TimeSpan DisplayCheckEvery = TimeSpan.FromSeconds(2);
@@ -58,21 +58,19 @@ public sealed class DeckManager : IDisposable
             }
         }
 
-        // The deck wakes on the pointer *arriving*, not on it merely being there. A
-        // fan left untouched tidies itself away after a few seconds, and without this
-        // the very next poll would find the pointer still parked on the pill and open
-        // it again — the deck would flap open and shut for as long as you left the
-        // mouse where it was. Tracking areas give the original this for free.
+        // The deck wakes on the pointer *settling* in the strip, not on it merely
+        // being there: EdgeWake holds it back until the pointer has rested for the
+        // wake delay with no button held, and only lets it fire once per visit. A fan
+        // left untouched tidies itself away after a few seconds, and without that
+        // once-per-visit rule the very next poll would find the pointer still parked
+        // on the pill and open it again — the deck would flap open and shut for as
+        // long as you left the mouse where it was.
         var p = Screens.Cursor;
         foreach (var deck in _decks.Values)
         {
             var inside = deck.EdgeStrip.Contains(p);
-            if (inside && deck.State.Phase == DeckPhase.Rest &&
-                _outside.GetValueOrDefault(deck.Device, true))
-            {
-                deck.PointerEntered();
-            }
-            _outside[deck.Device] = !inside;
+            var woke = _wake.Woke(deck.Device, inside);
+            if (woke && deck.State.Phase == DeckPhase.Rest) deck.PointerEntered();
         }
     }
 
@@ -85,6 +83,7 @@ public sealed class DeckManager : IDisposable
         {
             _decks[device].Dispose();
             _decks.Remove(device);
+            _wake.Forget(device);
         }
         foreach (var (device, screen) in live)
         {

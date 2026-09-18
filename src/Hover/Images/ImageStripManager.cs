@@ -9,7 +9,7 @@ namespace Hover.Images;
 public sealed class ImageStripManager : IDisposable
 {
     private readonly Dictionary<string, ImageStripController> _strips = new();
-    private readonly Dictionary<string, bool> _outside = new();
+    private readonly EdgeWake _wake = new();
     private readonly DispatcherTimer _poll;
     private string _layoutSignature = "";
     private DateTime _lastDisplayCheck = DateTime.Now;
@@ -47,14 +47,12 @@ public sealed class ImageStripManager : IDisposable
             }
         }
 
+        // Same gate as the notes deck: the pointer has to rest on the edge, with no
+        // button held, before the tray comes out.
         var p = Screens.Cursor;
         foreach (var strip in _strips.Values)
-        {
-            var inside = strip.EdgeStrip.Contains(p);
-            if (inside && _outside.GetValueOrDefault(strip.Device, true))
+            if (_wake.Woke(strip.Device, strip.EdgeStrip.Contains(p)))
                 strip.PointerEntered();
-            _outside[strip.Device] = !inside;
-        }
     }
 
     public void Rebuild(List<ScreenInfo>? screens = null)
@@ -66,6 +64,7 @@ public sealed class ImageStripManager : IDisposable
         {
             _strips[device].Dispose();
             _strips.Remove(device);
+            _wake.Forget(device);
         }
         foreach (var (device, screen) in live)
         {

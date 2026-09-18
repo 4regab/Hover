@@ -139,6 +139,33 @@ public sealed class SettingsWindow : Window
             Actions.Refresh();
         };
         _body.Children.Add(Labelled("Wake the deck within", edge));
+        edge.IsEnabled = !Settings.WakeAtScreenEdge;
+
+        _body.Children.Add(Toggle("Only at the very edge of the screen", Settings.WakeAtScreenEdge, v =>
+        {
+            Settings.WakeAtScreenEdge = v;
+            edge.IsEnabled = !v;
+        }));
+        _body.Children.Add(Hint("On, the pointer has to be pushed into the edge itself, " +
+                                "where it stops dead. Scrollbars sit a few pixels inside " +
+                                "that, so scrolling or clicking one never opens anything. " +
+                                "This replaces the width above, and an edge that touches " +
+                                "another display ignores it."));
+
+        var delay = new ComboBox { Margin = new Thickness(0, 4, 0, 10) };
+        foreach (var (name, _) in Settings.WakeDelays) delay.Items.Add(name);
+        delay.SelectedIndex = Math.Max(0, Array.FindIndex(Settings.WakeDelays,
+            d => d.Ms == Settings.WakeDelayMs));
+        delay.SelectionChanged += (_, _) =>
+        {
+            if (delay.SelectedIndex >= 0) Settings.WakeDelayMs = Settings.WakeDelays[delay.SelectedIndex].Ms;
+        };
+        _body.Children.Add(Labelled("Open it once the pointer rests", delay));
+        _body.Children.Add(Hint("The edge is also where scrollbars live. A wait means " +
+                                "passing over the edge no longer opens anything, and a " +
+                                "held mouse button never opens it at all — so clicking " +
+                                "the edge or dragging a scrollbar is safe. Applies to " +
+                                "the screenshot tray too."));
 
         var style = new ComboBox { Margin = new Thickness(0, 4, 0, 10) };
         foreach (DeckStyle s in Enum.GetValues<DeckStyle>()) style.Items.Add(s.Title());
