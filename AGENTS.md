@@ -58,8 +58,9 @@ src/Hover/
                edge panels sit in, including the Win32 region shaping that makes
                its blank areas click-through. EdgePanel — where a panel sits on a
                screen edge and when the pointer makes it appear.
-  Notes/       NoteDeck — the notes panel: the list, and one note open for typing
-               in an AvaloniaEdit editor.
+  Notes/       The notes deck: NoteDeck (the fan, the hover card and one note open),
+               NoteTab (a tab of coloured paper with its title on its side),
+               DeckGeom (how the tabs shingle), TabShapes (the tab outline).
   Images/      The screenshot half: ShotStore (watches the folder + clipboard),
                Shot/ShotItem, ShotTray + ShotRowView (the panel and its rows),
                ShotGroups (day headings), Snip + SnipOverlay (drag a box),
@@ -85,8 +86,8 @@ carry a legacy `Noty` reference **only** in `Core/Paths.cs`, which migrates an o
 
 Rebinding the global shortcuts has no screen; Settings lists them read-only. There
 is no welcome screen for a first run, no import or export, and no rename dialog for
-a note. The notes panel shows one list; the old app's fanned tabs and hover preview
-cards are not back.
+a note. Dragging a tab to reorder the deck is not back, and neither is the resting
+pill — the fan comes straight out when the pointer reaches the edge.
 
 Spell check is gone and is not coming back soon: neither Avalonia nor AvaloniaEdit
 has it.

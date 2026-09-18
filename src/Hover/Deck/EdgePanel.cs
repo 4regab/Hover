@@ -38,7 +38,7 @@ public sealed class EdgePanel : IDisposable
     private const double Slack = 26;
 
     private readonly Edge _edge;
-    private readonly double _width;
+    private double _width;
     private readonly Func<bool> _autoHide;
     private readonly HoverWindow _window;
     private readonly Border _frame;
@@ -53,7 +53,8 @@ public sealed class EdgePanel : IDisposable
     /// or a menu standing open over the panel.
     public bool Pinned { get; set; }
 
-    public EdgePanel(Edge edge, Control content, double width, Func<bool> autoHide)
+    public EdgePanel(Edge edge, Control content, double width, Func<bool> autoHide,
+                     bool opaque = true)
     {
         _edge = edge;
         _width = width;
@@ -61,13 +62,15 @@ public sealed class EdgePanel : IDisposable
 
         _frame = new Border
         {
-            Background = new SolidColorBrush(Color.Parse("#1C1C1E")),
-            BorderBrush = new SolidColorBrush(Color.Parse("#2E2E30")),
-            BorderThickness = new Thickness(1),
+            // The notes deck paints its own paper and floats on the desktop, so it asks
+            // for no panel behind it. The screenshot tray is a dark card and does.
+            Background = opaque ? new SolidColorBrush(Color.Parse("#1C1C1E")) : null,
+            BorderBrush = opaque ? new SolidColorBrush(Color.Parse("#2E2E30")) : null,
+            BorderThickness = new Thickness(opaque ? 1 : 0),
             CornerRadius = new CornerRadius(
                 edge == Edge.Right ? 12 : 0, edge == Edge.Right ? 0 : 12,
                 edge == Edge.Right ? 0 : 12, edge == Edge.Right ? 12 : 0),
-            Padding = new Thickness(8),
+            Padding = new Thickness(opaque ? 8 : 0),
             Child = content,
             HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Stretch,
             VerticalAlignment = Avalonia.Layout.VerticalAlignment.Stretch,
@@ -82,6 +85,18 @@ public sealed class EdgePanel : IDisposable
 
     /// Lets an open note take the keyboard. A resting panel never does.
     public void AcceptKeys(bool value) => _window.SetAcceptsKeys(value);
+
+    /// Changes how wide the panel is.
+    ///
+    /// The notes deck asks for this: narrow while it is only showing tabs, wider for a
+    /// hover card, wider again for an open note. Every pixel of an open panel is a pixel
+    /// the mouse cannot click through, so the panel is kept no wider than it has to be.
+    public void SetWidth(double dips)
+    {
+        if (Math.Abs(_width - dips) < 0.5) return;
+        _width = dips;
+        if (IsOpen && _on is not null) Open(_on);
+    }
 
     /// Runs a drag with the window briefly allowed to activate, which is what other
     /// apps demand of a drag source.

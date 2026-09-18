@@ -30,8 +30,12 @@ public static class Panels
         var notesEdge = Settings.DeckOnLeftEdge ? Edge.Left : Edge.Right;
         var shotsEdge = notesEdge == Edge.Left ? Edge.Right : Edge.Left;
 
-        _deck = new NoteDeck();
-        _notes = new EdgePanel(notesEdge, _deck, 330, () => Settings.AutoHideNotes);
+        _deck = new NoteDeck(notesEdge == Edge.Right);
+        _notes = new EdgePanel(notesEdge, _deck, Notes.DeckGeom.RestingWidth,
+                               () => Settings.AutoHideNotes, opaque: false);
+        // The deck knows how much room it needs: tabs only, tabs and a hover card, or
+        // tabs and an open note.
+        _deck.WidthWanted += (_, width) => _notes?.SetWidth(width);
         // A note being typed into must not be whipped away, and it needs the keyboard.
         _deck.Typing += (_, typing) =>
         {
