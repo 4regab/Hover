@@ -22,6 +22,7 @@
                         <TextBlock Text="{Binding Count}" />
                     </Border>
                     <Button Grid.Column="3" Classes="snip" Click="OnSnip"
+                            IsVisible="{Binding CanSnip}"
                             ToolTip.Tip="New snip (Ctrl+Alt+S)">
                         <StackPanel Orientation="Horizontal" Spacing="5">
                             <Path Width="13" Height="13" Stretch="Uniform"

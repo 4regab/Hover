@@ -11,3 +11,6 @@ TestResults/
 # Throwaway Avalonia probe used to settle the window questions. Deleted once the
 # real deck window is proven.
 spike/
+
+# Preview build of the new tray, used for testing by hand.
+preview/

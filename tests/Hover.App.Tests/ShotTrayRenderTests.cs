@@ -48,7 +48,7 @@ public sealed class ShotTrayRenderTests
         }
 
         var path = Path.Combine(_folder, name);
-        target.Save(path);
+        target.Save(path, new PngBitmapEncoderOptions());
         target.Dispose();
         return path;
     }
@@ -90,7 +90,7 @@ public sealed class ShotTrayRenderTests
 
         using var frame = Render(tray, 320, 900);
         var output = Path.Combine(AppContext.BaseDirectory, "tray-canvas.png");
-        frame.Save(output);
+        frame.Save(output, new PngBitmapEncoderOptions());
         TestContext.Out.WriteLine($"rendered: {output}");
 
         Assert.Multiple(() =>
@@ -111,7 +111,7 @@ public sealed class ShotTrayRenderTests
 
         using var frame = Render(tray, 320, 220);
         var output = Path.Combine(AppContext.BaseDirectory, "tray-canvas-empty.png");
-        frame.Save(output);
+        frame.Save(output, new PngBitmapEncoderOptions());
         TestContext.Out.WriteLine($"rendered: {output}");
 
         Assert.Multiple(() =>

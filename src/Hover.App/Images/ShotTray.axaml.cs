@@ -34,6 +34,21 @@ public partial class ShotTray : UserControl, INotifyPropertyChanged
     public bool HasShots => Count > 0;
     public bool IsEmpty => Count == 0;
 
+    private bool _canSnip = true;
+
+    /// Whether the Snip button is offered. Off in the preview host, where snipping is
+    /// not wired up, so the tray never shows a button that does nothing.
+    public bool CanSnip
+    {
+        get => _canSnip;
+        set
+        {
+            if (_canSnip == value) return;
+            _canSnip = value;
+            Raise();
+        }
+    }
+
     /// The Snip button was pressed.
     public event EventHandler? SnipRequested;
 
