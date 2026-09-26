@@ -6,8 +6,7 @@ using System.Windows.Media.Imaging;
 
 namespace Hover.Windows;
 
-/// A pasted picture shown full size. The bitmap is already decrypted in memory —
-/// nothing is written to disk in the clear. Esc or a click closes it.
+/// A screenshot shown full size. Esc or a click closes it.
 public sealed class ImagePreviewWindow : Window
 {
     private ImagePreviewWindow(BitmapSource image, Window? owner)

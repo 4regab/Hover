@@ -7,11 +7,14 @@ using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
+using Hover.Core;
+using Hover.Images;
 
 namespace Hover.Owl;
 
-/// The workspace: a header (brand, Open app, Workspace / Insights / Settings, close)
-/// over one of three pages. The notch panel and the dashboard window each hold one.
+/// The workspace: a header (brand, Open app, Workspace / Insights / Settings,
+/// layout, close) over one of three pages. The notch panel and the dashboard window
+/// each hold one.
 public sealed class WorkspaceView : UserControl
 {
     private readonly bool _dashboard;
@@ -19,11 +22,13 @@ public sealed class WorkspaceView : UserControl
     private readonly RadioButton[] _tabs = new RadioButton[3];
     private readonly FrameworkElement?[] _pages = new FrameworkElement?[3];
     private readonly string _group = "tabs" + Guid.NewGuid().ToString("N");
+    private Button? _layoutButton;
 
     private TasksCard? _tasks;
     private TimerCard? _timer;
     private NotepadCard? _notepad;
     private EventsCard? _events;
+    private ShotsCard? _shots;
     private InsightsPage? _insights;
 
     public WorkspaceView(bool dashboard)
@@ -52,7 +57,9 @@ public sealed class WorkspaceView : UserControl
             OwlApp.Tick += OnTick;
             OwlApp.EventsChanged += OnEvents;
             OwlApp.DayChanged += OnDay;
-            OnPlanner(); OnTimer(); OnEvents();
+            OwlApp.LayoutChanged += OnLayout;
+            ShotStore.Shared.Changed += OnShots;
+            OnPlanner(); OnTimer(); OnEvents(); _shots?.Refresh();
         }
         else
         {
@@ -61,6 +68,8 @@ public sealed class WorkspaceView : UserControl
             OwlApp.Tick -= OnTick;
             OwlApp.EventsChanged -= OnEvents;
             OwlApp.DayChanged -= OnDay;
+            OwlApp.LayoutChanged -= OnLayout;
+            ShotStore.Shared.Changed -= OnShots;
         }
     }
 
@@ -86,40 +95,64 @@ public sealed class WorkspaceView : UserControl
 
     private void OnEvents() => _events?.Refresh();
 
+    private void OnShots(object? sender, EventArgs e) => _shots?.Refresh();
+
+    private int CurrentTab => _tabs.ToList().FindIndex(t => t.IsChecked == true) is var i and >= 0 ? i : 0;
+
     private void OnDay()
     {
+        _notepad?.Flush();
         _pages[0] = _pages[1] = null;
-        ShowTab(_tabs.ToList().FindIndex(t => t.IsChecked == true) is var i and >= 0 ? i : 0);
+        ShowTab(CurrentTab);
+    }
+
+    /// The card layout changed — here or in the other view. A view that made the
+    /// change itself by dragging a splitter already shows it and keeps its cards,
+    /// so a half-typed task survives the drag.
+    private void OnLayout(object? source)
+    {
+        if (ReferenceEquals(source, this)) return;
+        _notepad?.Flush();
+        _pages[0] = null;
+        if (CurrentTab == 0) ShowTab(0);
     }
 
     // MARK: Header
 
     private FrameworkElement Header()
     {
-        var bar = new DockPanel { Margin = new Thickness(14, 10, 12, 10), LastChildFill = false };
+        var bar = new DockPanel { Margin = new Thickness(16, 10, 12, 10), LastChildFill = false };
 
-        var logo = new Image { Width = 26, Height = 26, Source = AppIcon.Value, Margin = new Thickness(0, 0, 10, 0) };
+        var logo = new Image { Width = 22, Height = 22, Source = AppIcon.Value, Margin = new Thickness(0, 0, 9, 0) };
         RenderOptions.SetBitmapScalingMode(logo, BitmapScalingMode.HighQuality);
-        var brand = Ui.Row(logo, Ui.Text("Hover", 16.5, Ui.White, FontWeights.SemiBold));
+        var name = Ui.Text("Hover", 15, Ui.White, FontWeights.SemiBold);
+        name.FontFamily = Ui.Display;
+        var brand = Ui.Row(logo, name);
         DockPanel.SetDock(brand, Dock.Left);
         bar.Children.Add(brand);
 
         if (!_dashboard)
         {
-            var open = Ui.Button("OwlChromeButton", Ui.IconText(Ui.IcWindow, "Open app", 13, Ui.White),
-                "OpenApp", "Open app", () => OwlApp.OpenDashboard?.Invoke()).Margin(16, 0);
+            var open = Ui.Button("OwlChromeButton", Ui.IconText(Ui.IcWindow, "Open app", 12.5, Ui.Ink),
+                "OpenApp", "Open app", () => OwlApp.OpenDashboard?.Invoke()).Margin(14, 0);
             DockPanel.SetDock(open, Dock.Left);
             bar.Children.Add(open);
 
-            var close = Ui.Button("OwlBase", Ui.Icon(Ui.IcClose, 12, Ui.White), "Close", "Close",
+            var close = Ui.Button("OwlBase", Ui.Icon(Ui.IcClose, 10, Ui.Ink), "Close", "Close",
                 () => OwlApp.Collapse?.Invoke());
-            close.Background = Ui.Frozen(Color.FromRgb(0x0F, 0x0F, 0x0F));
-            close.Width = close.Height = 32;
-            close.Tag = new CornerRadius(16);
+            close.Background = Ui.Frozen(Color.FromArgb(0x1A, 0xFF, 0xFF, 0xFF));
+            close.Width = close.Height = 28;
+            close.Tag = new CornerRadius(14);
             close.Padding = new Thickness(0);
             DockPanel.SetDock(close, Dock.Right);
-            bar.Children.Add(close.Margin(12, 0));
+            bar.Children.Add(close.Margin(10, 0));
         }
+
+        _layoutButton = Ui.IconButton(Ui.IcLayout, "CustomizeCards", "Customize cards", OpenLayoutMenu, 13, Ui.InkDim);
+        _layoutButton.Width = _layoutButton.Height = 28;
+        _layoutButton.Padding = new Thickness(0);
+        DockPanel.SetDock(_layoutButton, Dock.Right);
+        bar.Children.Add(_layoutButton.Margin(8, 0));
 
         var seg = new StackPanel { Orientation = Orientation.Horizontal };
         string[] names = { "Workspace", "Insights", "Settings" };
@@ -140,8 +173,8 @@ public sealed class WorkspaceView : UserControl
         }
         var segBox = new Border
         {
-            Background = Ui.Frozen(Color.FromRgb(0x43, 0x43, 0x43)),
-            CornerRadius = new CornerRadius(7),
+            Background = Ui.Frozen(Color.FromArgb(0x14, 0xFF, 0xFF, 0xFF)),
+            CornerRadius = new CornerRadius(9),
             Padding = new Thickness(2),
             Child = seg,
             VerticalAlignment = VerticalAlignment.Center,
@@ -149,6 +182,34 @@ public sealed class WorkspaceView : UserControl
         DockPanel.SetDock(segBox, Dock.Right);
         bar.Children.Add(segBox);
         return bar;
+    }
+
+    /// Show or hide cards straight from the header; order and the rest are in
+    /// Settings → Cards.
+    private void OpenLayoutMenu()
+    {
+        var m = new ContextMenu();
+        foreach (var c in Settings.Cards)
+        {
+            var id = c.Id;
+            var item = Ui.MenuText(CardLayout.Title(id), () => SetCards(CardLayout.Show(Settings.Cards, id, !Settings.Cards.First(x => x.Id == id).Visible)));
+            item.IsCheckable = true;
+            item.IsChecked = c.Visible;
+            // The last visible card cannot be hidden.
+            item.IsEnabled = !c.Visible || Settings.Cards.Count(x => x.Visible) > 1;
+            AutomationProperties.SetAutomationId(item, "ToggleCard" + id);
+            m.Items.Add(item);
+        }
+        m.Items.Add(new Separator());
+        m.Items.Add(Ui.MenuItem(Ui.IcReset, "Reset Layout", () => SetCards(CardLayout.Default)));
+        m.Items.Add(Ui.MenuItem(Ui.IcSettings, "Arrange Cards…", () => ShowSettings(SettingsPage.Section.Cards)));
+        Ui.Open(m, _layoutButton!);
+    }
+
+    internal static void SetCards(IReadOnlyList<CardSlot> cards, object? source = null)
+    {
+        Settings.Cards = cards;
+        OwlApp.RaiseLayoutChanged(source);
     }
 
     private static readonly Lazy<ImageSource?> AppIcon = new(() =>
@@ -162,19 +223,31 @@ public sealed class WorkspaceView : UserControl
         catch { return null; }
     });
 
+    private SettingsPage.Section _section;
+
+    /// Settings, open at one of its sections.
+    internal void ShowSettings(SettingsPage.Section section)
+    {
+        _section = section;
+        ShowTab(2);
+    }
+
     public void ShowTab(int index)
     {
         if (_tabs[index].IsChecked != true) { _tabs[index].IsChecked = true; return; }
         // Settings is rebuilt each time so its switches and shortcut show what is
-        // current — both can change from the tray menu or the Settings window.
+        // current — both can change from the tray menu or the other view.
         if (index == 2) _pages[2] = null;
         _pages[index] ??= index switch
         {
             0 => BuildWorkspace(),
             1 => (_insights = new InsightsPage()).Root,
-            _ => new SettingsPage(this).Root,
+            _ => new SettingsPage(this, _section).Root,
         };
+        // A deep link opens its section once; the Settings tab itself starts at General.
+        if (index == 2) _section = SettingsPage.Section.General;
         _page.Content = _pages[index];
+        if (_layoutButton is not null) _layoutButton.Visibility = index == 0 ? Visibility.Visible : Visibility.Hidden;
     }
 
     /// Put the caret in "What needs doing?" — the hotkey's first stop.
@@ -188,24 +261,64 @@ public sealed class WorkspaceView : UserControl
         _tasks?.FocusInput();
     }
 
+    /// The visible cards side by side, each column a star share of the width, with a
+    /// splitter in every gap. Dragging one shares the width between its two
+    /// neighbours; letting go saves the new shares.
     private FrameworkElement BuildWorkspace()
     {
-        var grid = new Grid { Margin = new Thickness(12, 0, 12, 12) };
-        foreach (var w in new[] { 2.17, 1.0, 0.94, 1.0 })
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(w, GridUnitType.Star) });
+        var grid = new Grid { Margin = new Thickness(10, 0, 10, 10) };
+        _tasks = null; _timer = null; _notepad = null; _events = null; _shots = null;
+        var slots = Settings.Cards.Where(c => c.Visible).ToList();
+        var columns = new List<(ColumnDefinition Col, string Id)>();
 
-        _tasks = new TasksCard();
-        _timer = new TimerCard();
-        _notepad = new NotepadCard();
-        _events = new EventsCard(() => ShowTab(2));
-        var cards = new[] { _tasks.Root, _timer.Root, _notepad.Root, _events.Root };
-        for (var i = 0; i < cards.Length; i++)
+        for (var i = 0; i < slots.Count; i++)
         {
-            Grid.SetColumn(cards[i], i);
-            cards[i].Margin = new Thickness(i == 0 ? 0 : 5, 0, i == 3 ? 0 : 5, 0);
-            grid.Children.Add(cards[i]);
+            if (i > 0)
+            {
+                grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+                var split = new GridSplitter { Style = Ui.Style("OwlSplitter") };
+                AutomationProperties.SetAutomationId(split, "CardSplitter");
+                split.DragCompleted += (_, e) => { if (!e.Canceled) SaveWidths(columns); };
+                split.KeyUp += (_, e) => { if (e.Key is Key.Left or Key.Right) SaveWidths(columns); };
+                Grid.SetColumn(split, grid.ColumnDefinitions.Count - 1);
+                grid.Children.Add(split);
+            }
+            var slot = slots[i];
+            var col = new ColumnDefinition
+            {
+                Width = new GridLength(slot.Width, GridUnitType.Star),
+                // The narrowest each card still reads well at: the timer's buttons, the
+                // task field, a column of thumbnails.
+                MinWidth = slot.Id switch { CardLayout.Tasks => 168, CardLayout.Timer => 156, _ => 132 },
+            };
+            grid.ColumnDefinitions.Add(col);
+            columns.Add((col, slot.Id));
+            var card = CardFor(slot.Id);
+            Grid.SetColumn(card, grid.ColumnDefinitions.Count - 1);
+            grid.Children.Add(card);
         }
         return grid;
+    }
+
+    private FrameworkElement CardFor(string id) => id switch
+    {
+        CardLayout.Tasks => (_tasks = new TasksCard()).Root,
+        CardLayout.Timer => (_timer = new TimerCard()).Root,
+        CardLayout.Notepad => (_notepad = new NotepadCard()).Root,
+        CardLayout.Events => (_events = new EventsCard(() => ShowSettings(SettingsPage.Section.Calendar))).Root,
+        _ => (_shots = new ShotsCard()).Root,
+    };
+
+    /// Turn the columns' laid-out widths back into star shares with the same total
+    /// as before, so the other cards' shares — and hidden ones' — keep their meaning.
+    private void SaveWidths(List<(ColumnDefinition Col, string Id)> columns)
+    {
+        var cards = Settings.Cards;
+        var total = columns.Sum(c => c.Col.ActualWidth);
+        if (total <= 0) return;
+        var stars = columns.Sum(c => cards.First(x => x.Id == c.Id).Width);
+        var widths = columns.ToDictionary(c => c.Id, c => c.Col.ActualWidth / total * stars);
+        SetCards(cards.Select(c => widths.TryGetValue(c.Id, out var w) ? c with { Width = Math.Round(w, 3) } : c).ToList(), this);
     }
 }
 
@@ -216,9 +329,9 @@ internal sealed class TasksCard
     private static readonly Brush ActiveRow = Ui.Frozen(Color.FromArgb(0x1C, 0xFF, 0xFF, 0xFF));
     public Border Root { get; }
     private readonly TextBox _input;
-    private readonly TextBlock _count = Ui.Text("0 / 0", 12.5, Ui.InkDim);
+    private readonly TextBlock _count = Ui.Text("0 / 0", 12, Ui.InkDim);
     private readonly StackPanel _list = new();
-    private readonly TextBlock _date = Ui.Text("", 12.5, Ui.InkDim);
+    private readonly TextBlock _date = Ui.Text("", 11.5, Ui.InkFaint);
     private string? _renaming;
     private Point? _press;
     private Border? _dropMark;
@@ -235,7 +348,7 @@ internal sealed class TasksCard
         AutomationProperties.SetAutomationId(_count, "TaskCount");
         DockPanel.SetDock(_count, Dock.Right);
         head.Children.Add(_count);
-        head.Children.Add(Ui.IconText(Ui.IcChecklist, "Today’s tasks", 14.5, Ui.Ink, FontWeights.SemiBold));
+        head.Children.Add(Ui.CardTitle(Ui.IcChecklist, "Today’s tasks", Ui.Green));
         g.Children.Add(head);
 
         _input = new TextBox { Style = Ui.Style("OwlField"), VerticalContentAlignment = VerticalAlignment.Center };
@@ -254,7 +367,7 @@ internal sealed class TasksCard
         fieldGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         fieldGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         fieldGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        var plus = Ui.Icon(Ui.IcAdd, 12, Ui.Ink).Margin(0, 0, 8);
+        var plus = Ui.Icon(Ui.IcAdd, 11, Ui.InkDim).Margin(0, 0, 8);
         var inner = new Grid();
         inner.Children.Add(hint);
         inner.Children.Add(_input);
@@ -269,8 +382,8 @@ internal sealed class TasksCard
         fieldGrid.Children.Add(enter);
         var field = new Border
         {
-            Background = Ui.Wash, CornerRadius = new CornerRadius(9),
-            Padding = new Thickness(12, 5, 6, 5), Margin = new Thickness(0, 12, 0, 8),
+            Background = Ui.Wash, CornerRadius = new CornerRadius(8),
+            Padding = new Thickness(11, 5, 6, 5), Margin = new Thickness(0, 12, 0, 6),
             Child = fieldGrid, Cursor = Cursors.IBeam,
         };
         field.MouseLeftButtonDown += (_, _) => _input.Focus();
@@ -294,11 +407,11 @@ internal sealed class TasksCard
         var foot = new DockPanel { Margin = new Thickness(0, 8, 0, 0) };
         DockPanel.SetDock(_date, Dock.Right);
         foot.Children.Add(_date);
-        foot.Children.Add(Ui.Text("Drag to reorder", 12.5, Ui.InkDim));
+        foot.Children.Add(Ui.Text("Drag to reorder", 11.5, Ui.InkFaint));
         Grid.SetRow(foot, 3);
         g.Children.Add(foot);
 
-        Root = Ui.Card(Ui.Green, g);
+        Root = Ui.Card(g);
         Refresh();
     }
 
@@ -337,7 +450,7 @@ internal sealed class TasksCard
         g.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
         var check = Ui.IconButton(t.Done ? Ui.IcDoneSolid : Ui.IcRing, "Check", t.Done ? $"Mark “{t.Title}” not done" : $"Mark “{t.Title}” done",
-            () => OwlApp.Planner.SetDone(t.Id, !t.Done), 18, t.Done ? Ui.Ink : Ui.InkDim);
+            () => OwlApp.Planner.SetDone(t.Id, !t.Done), 17, t.Done ? Ui.Accent(Ui.Green) : Ui.InkFaint);
         check.VerticalAlignment = VerticalAlignment.Top;
         check.Margin = new Thickness(-5, -3, 4, 0);
         g.Children.Add(check);
@@ -378,7 +491,7 @@ internal sealed class TasksCard
         if (active)
         {
             var paused = timer.State == FocusTimer.Phase.Paused;
-            var status = Ui.IconText(paused ? Ui.IcPause : Ui.IcClock, paused ? "Paused" : "Active session", 11.5, Ui.Ink, FontWeights.SemiBold);
+            var status = Ui.IconText(paused ? Ui.IcPause : Ui.IcClock, paused ? "Paused" : "Active session", 11.5, Ui.Accent(Ui.Orange), FontWeights.SemiBold);
             DockPanel.SetDock(status, Dock.Right);
             meta.Children.Add(status);
         }
@@ -425,7 +538,7 @@ internal sealed class TasksCard
 
         var wrap = new StackPanel();
         wrap.Children.Add(body);
-        wrap.Children.Add(Ui.Dots().Margin(8, 1, 8, 1));
+        wrap.Children.Add(Ui.Hairline().Margin(34, 1, 8, 1));
         wrap.Tag = t.Id;
         return wrap;
     }
@@ -453,7 +566,7 @@ internal sealed class TasksCard
         if (target?.Children[0] is Border b)
         {
             _dropMark = b;
-            b.BorderBrush = Ui.Ink;
+            b.BorderBrush = Ui.Accent(Ui.Blue);
             b.BorderThickness = i < _list.Children.Count ? new Thickness(0, 2, 0, 0) : new Thickness(0, 0, 0, 2);
         }
     }
@@ -508,10 +621,10 @@ internal sealed class TasksCard
 internal sealed class TimerCard
 {
     public Border Root { get; }
-    private static readonly Brush DarkButton = Ui.Frozen(Color.FromRgb(0x19, 0x16, 0x1B));
-    private readonly DotMatrix _clock = new() { Pitch = 4.6, Fill = Ui.Frozen(Color.FromRgb(0x14, 0x12, 0x1E)), HorizontalAlignment = HorizontalAlignment.Center };
+    private static readonly Brush PauseButton = Ui.Frozen(Color.FromRgb(0x3A, 0x3A, 0x3C));
+    private readonly DotMatrix _clock = new() { Pitch = 4.4, Weight = 0.7, Fill = Ui.White, HorizontalAlignment = HorizontalAlignment.Center };
     private readonly TextBlock _status = Ui.Text("Ready", 12, Ui.InkDim);
-    private readonly Border _fill = new() { Background = Ui.Ink, HorizontalAlignment = HorizontalAlignment.Left, CornerRadius = new CornerRadius(1.5) };
+    private readonly Border _fill = new() { Background = Ui.Accent(Ui.Orange), HorizontalAlignment = HorizontalAlignment.Left, CornerRadius = new CornerRadius(1.5) };
     private readonly Grid _track = new() { Width = 112, Height = 3, Margin = new Thickness(0, 12, 0, 0) };
     private readonly Button _main;
     private readonly Button _done;
@@ -531,26 +644,26 @@ internal sealed class TimerCard
             if (t.State == FocusTimer.Phase.Ready) t.Start();
             else t.Toggle();
         });
-        _main.MinWidth = 104;
-        _done = Ui.Button("OwlBase", Ui.Icon(Ui.IcCheck, 14, Ui.White), "TimerDone", "Complete", OwlApp.CompleteFocus);
-        _done.Background = Ui.Frozen(Color.FromArgb(0xE6, 0x2A, 0x26, 0x33));
-        _done.Width = _done.Height = 38;
-        _done.Tag = new CornerRadius(19);
+        _main.MinWidth = 92;
+        _done = Ui.Button("OwlBase", Ui.Icon(Ui.IcCheck, 13, Ui.White), "TimerDone", "Complete", OwlApp.CompleteFocus);
+        _done.Background = Ui.WashStrong;
+        _done.Width = _done.Height = 36;
+        _done.Tag = new CornerRadius(18);
         _done.Padding = new Thickness(0);
 
         var buttons = Ui.Row(_main, _done.Margin(8, 0));
         buttons.HorizontalAlignment = HorizontalAlignment.Center;
-        buttons.Margin = new Thickness(0, 30, 0, 0);
+        buttons.Margin = new Thickness(0, 26, 0, 0);
 
         Button? setTime = null;
-        setTime = Ui.Button("OwlLink", Ui.IconText(Ui.IcSliders, "Set time", 12.5, Ui.Ink), "SetTime", "Set time", () =>
+        setTime = Ui.Button("OwlLink", Ui.IconText(Ui.IcSliders, "Set time", 12, Ui.InkDim), "SetTime", "Set time", () =>
         {
             var t = OwlApp.Timer;
             var task = OwlApp.Planner.Find(t.TaskId);
             Popover.Duration(setTime!, task?.Title ?? "Focus session", (int)t.Duration.TotalMinutes,
                 save: min => OwlApp.SetDuration(min, false), start: min => OwlApp.SetDuration(min, true));
         });
-        _more = Ui.IconButton(Ui.IcMore, "TimerMore", "Timer options", () => Ui.Open(Menu(), _more!), 12);
+        _more = Ui.IconButton(Ui.IcMore, "TimerMore", "Timer options", () => Ui.Open(Menu(), _more!), 12, Ui.InkDim);
         var links = Ui.Row(setTime, _more.Margin(6, 0));
         links.HorizontalAlignment = HorizontalAlignment.Center;
         links.Margin = new Thickness(0, 10, 0, 0);
@@ -561,7 +674,13 @@ internal sealed class TimerCard
         stack.Children.Add(_track);
         stack.Children.Add(buttons);
         stack.Children.Add(links);
-        Root = Ui.Card(Ui.Lilac, stack);
+        var title = Ui.CardTitle(Ui.IcStopwatch, "Focus", Ui.Orange);
+        title.Margin = new Thickness(16, 14, 16, 0);
+        title.VerticalAlignment = VerticalAlignment.Top;
+        var box = new Grid();
+        box.Children.Add(stack);
+        box.Children.Add(title);
+        Root = Ui.Card(box);
         Refresh();
     }
 
@@ -597,10 +716,10 @@ internal sealed class TimerCard
         };
         if (!Equals(AutomationProperties.GetName(_main), label) || _main.Content is not StackPanel)
         {
-            // Paused, the button turns white, as the demo's Resume does.
-            var resume = t.State == FocusTimer.Phase.Paused;
-            _main.Background = resume ? Ui.White : DarkButton;
-            _main.Content = Ui.IconText(glyph, label, 13.5, resume ? Ui.Ink : Ui.White, FontWeights.SemiBold);
+            // Start and Resume are the prominent white button; Pause steps back to grey.
+            var prominent = t.State != FocusTimer.Phase.Running;
+            _main.Background = prominent ? Ui.White : PauseButton;
+            _main.Content = Ui.IconText(glyph, label, 13, prominent ? Ui.Black : Ui.White, FontWeights.SemiBold);
             AutomationProperties.SetName(_main, label);
             _main.ToolTip = label;
         }
@@ -614,8 +733,8 @@ internal sealed class NotepadCard
 {
     public Border Root { get; }
     private readonly TextBox _box;
-    private readonly TextBlock _words = Ui.Text("0 words", 12, Ui.InkDim);
-    private readonly TextBlock _date = Ui.Text("", 12, Ui.InkDim, FontWeights.SemiBold);
+    private readonly TextBlock _words = Ui.Text("0 words", 11.5, Ui.InkFaint);
+    private readonly TextBlock _date = Ui.Text("", 11.5, Ui.InkDim, FontWeights.SemiBold);
     private readonly DispatcherTimer _save = new() { Interval = TimeSpan.FromMilliseconds(400) };
     private DateOnly _day;
     private bool _syncing;
@@ -627,7 +746,7 @@ internal sealed class NotepadCard
         foreach (var h in new[] { GridLength.Auto, GridLength.Auto, new GridLength(1, GridUnitType.Star), GridLength.Auto })
             g.RowDefinitions.Add(new RowDefinition { Height = h });
 
-        g.Children.Add(Ui.IconText(Ui.IcCompose, "Notepad", 15, Ui.Ink, FontWeights.SemiBold));
+        g.Children.Add(Ui.CardTitle(Ui.IcCompose, "Notepad", Ui.Yellow));
         var dateBlock = new StackPanel { Margin = new Thickness(0, 12, 0, 10) };
         dateBlock.Children.Add(_date);
         dateBlock.Children.Add(Ui.Rule().Margin(0, 10));
@@ -645,7 +764,7 @@ internal sealed class NotepadCard
         };
         AutomationProperties.SetAutomationId(_box, "Notepad");
         AutomationProperties.SetName(_box, "Notepad");
-        var hint = Ui.Text("Write something down…", 13.5, Ui.InkDim);
+        var hint = Ui.Text("Write something down…", 13.5, Ui.InkFaint);
         hint.VerticalAlignment = VerticalAlignment.Top;
         hint.TextWrapping = TextWrapping.Wrap;
         hint.IsHitTestVisible = false;
@@ -680,18 +799,18 @@ internal sealed class NotepadCard
         hint.Visibility = _box.Text.Length == 0 ? Visibility.Visible : Visibility.Collapsed;
 
         AutomationProperties.SetAutomationId(_words, "WordCount");
-        var foot = Ui.Row(Ui.Icon(Ui.IcLines, 11, Ui.InkDim).Margin(0, 1, 7), _words);
+        var foot = Ui.Row(Ui.Icon(Ui.IcLines, 10, Ui.InkFaint).Margin(0, 1, 7), _words);
         foot.Margin = new Thickness(0, 8, 0, 0);
         Grid.SetRow(foot, 3);
         g.Children.Add(foot);
 
-        Root = Ui.Card(Ui.Olive, g);
+        Root = Ui.Card(g);
         Sync();
     }
 
     private static string Words(int n) => n == 1 ? "1 word" : $"{n} words";
 
-    private void Flush()
+    public void Flush()
     {
         _save.Stop();
         if (_box.Text != OwlApp.Planner.Note(_day)) OwlApp.Planner.SetNote(_day, _box.Text);
@@ -725,7 +844,7 @@ internal sealed class EventsCard
     public EventsCard(Action openSettings)
     {
         _openSettings = openSettings;
-        var g = new Grid { Margin = new Thickness(14, 12, 12, 12) };
+        var g = new Grid { Margin = new Thickness(16, 12, 12, 12) };
         foreach (var h in new[] { GridLength.Auto, new GridLength(1, GridUnitType.Star), GridLength.Auto })
             g.RowDefinitions.Add(new RowDefinition { Height = h });
 
@@ -740,7 +859,7 @@ internal sealed class EventsCard
         }, 12);
         DockPanel.SetDock(more, Dock.Right);
         head.Children.Add(more);
-        head.Children.Add(Ui.IconText(Ui.IcCalendar, "Events", 15, Ui.Ink, FontWeights.SemiBold));
+        head.Children.Add(Ui.CardTitle(Ui.IcCalendar, "Events", Ui.Red));
         g.Children.Add(head);
 
         var scroll = new ScrollViewer
@@ -757,11 +876,12 @@ internal sealed class EventsCard
         Grid.SetRow(_footBar, 2);
         g.Children.Add(_footBar);
 
-        Root = Ui.Card(Ui.Slate, g);
+        Root = Ui.Card(g);
         Refresh();
     }
 
-    private static readonly Brush Tile = Ui.Frozen(Color.FromArgb(0x38, 0x10, 0x20, 0x30));
+    private static readonly Brush Tile = Ui.Wash;
+    private static readonly Brush NowBar = Ui.Accent(Ui.Red);
 
     private static Border TileFor(params UIElement[] lines)
     {
@@ -797,7 +917,7 @@ internal sealed class EventsCard
                 title.TextTrimming = TextTrimming.None;
                 _body.Children.Add(TileFor(title, Ui.Text(Ui.When(r.RemindAt!.Value, now), 11.5, Ui.InkDim).Margin(0, 2)));
             }
-            _body.Children.Add(Ui.Dots().Margin(0, 4, 0, 8));
+            _body.Children.Add(Ui.Hairline().Margin(0, 4, 0, 8));
         }
 
         var today = new DockPanel { Margin = new Thickness(0, 0, 0, 6) };
@@ -826,9 +946,9 @@ internal sealed class EventsCard
             foreach (var e in OwlApp.Events)
             {
                 var title = Ui.Text(e.Title, 13.5, Ui.Ink, FontWeights.SemiBold);
-                var when = Ui.Text(e.AllDay ? "All day" : $"{Ui.Clock(e.Start)} – {Ui.Clock(e.End)}", 11.5, Ui.Ink).Margin(0, 2);
+                var when = Ui.Text(e.AllDay ? "All day" : $"{Ui.Clock(e.Start)} – {Ui.Clock(e.End)}", 11.5, Ui.InkDim).Margin(0, 2);
                 var tile = e.HappeningAt(now)
-                    ? TileFor(title, when, Ui.Text("Happening now", 11, Ui.Ink, FontWeights.SemiBold).Margin(0, 2))
+                    ? TileFor(title, when, Ui.Text("Happening now", 11, NowBar, FontWeights.SemiBold).Margin(0, 2))
                     : TileFor(title, when);
                 if (e.End <= now && !e.AllDay) tile.Opacity = 0.55;
                 _body.Children.Add(tile);
@@ -839,7 +959,7 @@ internal sealed class EventsCard
         _footBar.Children.Clear();
         _footBar.Children.Add(_foot);
         if (OwlApp.Planner.Data.CalendarSource.Length == 0)
-            _foot.Children.Add(Ui.IconText(Ui.IcCalendar, "Not connected", 12, Ui.InkDim));
+            _foot.Children.Add(Ui.IconText(Ui.IcCalendar, "Not connected", 11.5, Ui.InkFaint));
         else
         {
             var ok = string.IsNullOrEmpty(OwlApp.CalendarError);
@@ -850,6 +970,107 @@ internal sealed class EventsCard
             _footBar.Children.Insert(0, refresh);
             refresh.HorizontalAlignment = HorizontalAlignment.Right;
             _footBar.LastChildFill = false;
+        }
+    }
+}
+
+
+// MARK: Screenshots
+
+/// Every snip and copied picture, newest first, as a grid of thumbnails that fills
+/// the card's width. Drag one out to a folder, a browser or a chat box.
+internal sealed class ShotsCard
+{
+    public Border Root { get; }
+    private readonly WrapPanel _grid = new();
+    private readonly ScrollViewer _scroll;
+    private readonly StackPanel _empty = new() { VerticalAlignment = VerticalAlignment.Center, HorizontalAlignment = HorizontalAlignment.Center };
+    private readonly TextBlock _count = Ui.Text("", 12, Ui.InkDim);
+    private const double Gap = 8, TileMin = 104;
+
+    public ShotsCard()
+    {
+        var g = new Grid { Margin = new Thickness(16, 14, 12, 12) };
+        foreach (var h in new[] { GridLength.Auto, new GridLength(1, GridUnitType.Star), GridLength.Auto })
+            g.RowDefinitions.Add(new RowDefinition { Height = h });
+
+        var head = new DockPanel();
+        Button? more = null;
+        more = Ui.IconButton(Ui.IcMore, "ShotsMore", "Screenshot options", () =>
+        {
+            var m = new ContextMenu();
+            m.Items.Add(Ui.MenuItem(Ui.IcFolder, "Open Folder", () =>
+            {
+                try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(Paths.Shots) { UseShellExecute = true }); }
+                catch (Exception e) { Log.Line($"open shots folder failed — {e.Message}"); }
+            }));
+            Ui.Open(m, more!);
+        }, 12, Ui.InkDim);
+        DockPanel.SetDock(more, Dock.Right);
+        head.Children.Add(more);
+        AutomationProperties.SetAutomationId(_count, "ShotCount");
+        DockPanel.SetDock(_count, Dock.Right);
+        head.Children.Add(_count.Margin(0, 0, 4));
+        head.Children.Add(Ui.CardTitle(Ui.IcPhoto, "Screenshots", Ui.Teal));
+        g.Children.Add(head);
+
+        _scroll = new ScrollViewer
+        {
+            VerticalScrollBarVisibility = ScrollBarVisibility.Hidden,
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+            Content = _grid,
+            Margin = new Thickness(0, 12, 4, 0),
+            Focusable = false,
+        };
+        _scroll.SizeChanged += (_, _) => Fit();
+        Grid.SetRow(_scroll, 1);
+        g.Children.Add(_scroll);
+
+        _empty.Children.Add(Ui.Icon(Ui.IcPhoto, 22, Ui.InkFaint));
+        var line1 = Ui.Text("No screenshots yet", 13, Ui.InkDim, FontWeights.SemiBold).Margin(0, 10, 0, 0);
+        line1.HorizontalAlignment = HorizontalAlignment.Center;
+        _empty.Children.Add(line1);
+        var line2 = Ui.Text("Press Win+Shift+S, or copy any picture.", 11.5, Ui.InkFaint).Margin(0, 3, 0, 0);
+        line2.TextWrapping = TextWrapping.Wrap;
+        line2.TextTrimming = TextTrimming.None;
+        line2.TextAlignment = TextAlignment.Center;
+        _empty.Children.Add(line2);
+        Grid.SetRow(_empty, 1);
+        g.Children.Add(_empty);
+
+        var foot = Ui.Text("Drag a picture out to share it", 11.5, Ui.InkFaint).Margin(0, 8, 0, 0);
+        Grid.SetRow(foot, 2);
+        g.Children.Add(foot);
+
+        Root = Ui.Card(g);
+        Refresh();
+    }
+
+    public void Refresh()
+    {
+        var shots = ShotStore.Shared.Shots;
+        _count.Text = shots.Count == 0 ? "" : shots.Count.ToString(CultureInfo.CurrentCulture);
+        _empty.Visibility = shots.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+        _scroll.Visibility = shots.Count == 0 ? Visibility.Collapsed : Visibility.Visible;
+        _grid.Children.Clear();
+        foreach (var s in shots) _grid.Children.Add(new ShotRow(s));
+        Fit();
+    }
+
+    /// As many columns as fit at the minimum tile width, each tile then stretched to
+    /// share the row, at the 16:10 of a typical screen.
+    private void Fit()
+    {
+        var w = _scroll.ActualWidth;
+        if (w <= 0) return;
+        var cols = Math.Max(1, (int)((w + Gap) / (TileMin + Gap)));
+        var tile = Math.Floor((w - Gap * (cols - 1)) / cols);
+        for (var i = 0; i < _grid.Children.Count; i++)
+        {
+            var t = (FrameworkElement)_grid.Children[i];
+            t.Width = tile;
+            t.Height = Math.Round(tile * 0.625);
+            t.Margin = new Thickness(0, 0, i % cols == cols - 1 ? 0 : Gap, Gap);
         }
     }
 }

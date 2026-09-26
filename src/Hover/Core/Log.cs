@@ -3,12 +3,9 @@ using System.IO;
 
 namespace Hover.Core;
 
-/// Set HOVER_DEBUG_DECK=1 to trace deck state transitions, as the original does.
+/// One line per event, to %APPDATA%\Hover\hover.log and the debugger.
 public static class Log
 {
-    public static readonly bool DeckTracing =
-        Environment.GetEnvironmentVariable("HOVER_DEBUG_DECK") == "1";
-
     private static readonly object Gate = new();
 
     public static void Line(string message)
@@ -20,10 +17,5 @@ public static class Log
             lock (Gate) File.AppendAllText(Paths.Log, stamp + Environment.NewLine);
         }
         catch { /* logging must never take the app down */ }
-    }
-
-    public static void Deck(string message)
-    {
-        if (DeckTracing) Line("deck: " + message);
     }
 }

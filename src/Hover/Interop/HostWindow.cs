@@ -1,24 +1,21 @@
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Interop;
-using System.Windows.Media;
-using Hover.Core;
-using Hover.Interop;
 
-namespace Hover.Deck;
+namespace Hover.Interop;
 
-/// Borderless, click-through-where-blank, never-in-the-taskbar window that the deck
-/// is drawn into.
+/// Borderless, click-through-where-blank, never-in-the-taskbar window the notch is
+/// drawn into.
 ///
-/// It carries WS_EX_NOACTIVATE while dormant so brushing the pill cannot steal focus
-/// from whatever you are working in. That bit has to come *off* before an open note
-/// can take keystrokes — the Windows counterpart of overriding `canBecomeKey`.
-public sealed class DeckWindow : Window
+/// It carries WS_EX_NOACTIVATE while resting so brushing the notch cannot steal
+/// focus from whatever you are working in. That bit has to come *off* before the
+/// open workspace can take keystrokes.
+public sealed class HostWindow : Window
 {
     /// A null background — not a transparent brush — is what makes the empty part of
-    /// the window click-through. The window stays at full deck size in every state
-    /// (resizing it on each transition made the pill flash), so most of it is empty
-    /// most of the time and must never swallow a click meant for the app underneath.
+    /// the window click-through. The window stays at full size in every state
+    /// (resizing it on each transition made it flash), so most of it is empty most of
+    /// the time and must never swallow a click meant for the app underneath.
     public Canvas Root { get; } = new()
     {
         Background = null,
@@ -28,7 +25,7 @@ public sealed class DeckWindow : Window
     private IntPtr _hwnd;
     private bool _acceptsKeys;
 
-    public DeckWindow()
+    public HostWindow()
     {
         WindowStyle = WindowStyle.None;
         ResizeMode = ResizeMode.NoResize;
@@ -65,7 +62,7 @@ public sealed class DeckWindow : Window
         Win32.SetWindowLong(_hwnd, Win32.GWL_EXSTYLE, ex);
     }
 
-    /// An open note needs the keyboard; the pill and the fan must never take it.
+    /// The open workspace needs the keyboard; the resting notch must never take it.
     public void SetAcceptsKeys(bool value)
     {
         if (_acceptsKeys == value) return;
@@ -108,9 +105,9 @@ public sealed class DeckWindow : Window
         Activate();
     }
 
-    /// Place the window in device pixels. Everything the deck computes is in DIPs
-    /// and gets multiplied through the monitor's scale on the way here, because a
-    /// second display can be at a different DPI entirely.
+    /// Place the window in device pixels. Layout is computed in DIPs and multiplied
+    /// through the monitor's scale on the way here, because a second display can be
+    /// at a different DPI entirely.
     public void PlaceDevice(int x, int y, int w, int h)
     {
         if (_hwnd == IntPtr.Zero) return;

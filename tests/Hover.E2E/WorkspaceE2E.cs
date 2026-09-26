@@ -13,7 +13,8 @@ namespace Hover.E2E;
 /// The whole NotchOwl story against the real app: hover to open, the shortcut, tasks,
 /// time limits, focus sessions, the timer in the notch, the notepad's Ctrl+Enter,
 /// reminders, reordering, a calendar feed, Insights, the dashboard, encryption at
-/// rest and persistence across a restart. Screenshots of each state land in
+/// rest, persistence across a restart, the configurable cards, the Screenshots card
+/// and the notch's clock and quota items. Screenshots of each state land in
 /// HOVER_E2E_OUT.
 [TestFixture, NonParallelizable]
 public sealed class WorkspaceE2E
@@ -47,6 +48,14 @@ public sealed class WorkspaceE2E
         var psi = new ProcessStartInfo(Exe) { UseShellExecute = false };
         psi.Environment["HOVER_DATA_DIR"] = Path.Combine(_root, "data");
         psi.Environment["HOVER_SHOTS_DIR"] = Path.Combine(_root, "shots");
+        // A Codex home with one session log, so the Codex quota has something to read.
+        var codex = Path.Combine(_root, "codex", "sessions", "2026", "01", "01");
+        Directory.CreateDirectory(codex);
+        var reset = DateTimeOffset.UtcNow.AddHours(3).ToUnixTimeSeconds();
+        File.WriteAllText(Path.Combine(codex, "rollout-e2e.jsonl"),
+            "{\"timestamp\":\"" + DateTimeOffset.UtcNow.ToString("o") + "\",\"type\":\"event_msg\",\"payload\":{\"type\":\"token_count\"," +
+            "\"rate_limits\":{\"primary\":{\"used_percent\":37,\"window_minutes\":300,\"resets_at\":" + reset + "}}}}\n");
+        psi.Environment["CODEX_HOME"] = Path.Combine(_root, "codex");
         _app = Process.Start(psi)!;
         _notch = null;
         Wait(() => _app.HasExited || Notch() is not null, "the notch window appears", 20000);
@@ -313,6 +322,7 @@ public sealed class WorkspaceE2E
             "END:VCALENDAR\r\n");
 
         Select(WaitFind("TabSettings"));
+        Select(WaitFind("SectionCalendar"));
         SetValue(WaitFind("CalendarSource"), ics);
         Invoke(WaitFind("CalendarConnect"));
         Shot("12-settings");
@@ -387,6 +397,7 @@ public sealed class WorkspaceE2E
         var file = Path.Combine(_root, "backup.json");
         OpenWithShortcut();
         Select(WaitFind("TabSettings"));
+        Select(WaitFind("SectionData"));
         Invoke(WaitFind("ExportBackup"));
         // UI Automation lists an owned dialog under its owner, not the desktop.
         var isDialog = new PropertyCondition(AutomationElement.ClassNameProperty, "#32770");
@@ -424,6 +435,7 @@ public sealed class WorkspaceE2E
     {
         OpenWithShortcut();
         Select(WaitFind("TabSettings"));
+        Select(WaitFind("SectionData"));
         Invoke(WaitFind("Quit"));
         Assert.That(_app!.WaitForExit(15000), Is.True, "Quit Hover exits the app");
 
@@ -436,6 +448,78 @@ public sealed class WorkspaceE2E
         Assert.That(Named("Write the weekly update"), Is.Not.Null);
         Assert.That(TaskOrder(new[] { "Design landing page", "Buy oat milk" }).First(), Is.EqualTo("Buy oat milk"), "the order survives");
         Shot("17-after-restart");
+    }
+
+    [Test, Order(22)]
+    public void CardsCanBeHiddenMovedAndResized()
+    {
+        OpenWithShortcut();
+        Select(WaitFind("TabWorkspace"));
+        Assert.That(Visible("ShotsMore"), Is.True, "the Screenshots card shows by default");
+
+        Invoke(WaitFind("CustomizeCards"));
+        Invoke(MenuItem("Screenshots"));
+        Wait(() => !Visible("ShotsMore"), "the header menu hides a card");
+        Invoke(WaitFind("CustomizeCards"));
+        Invoke(MenuItem("Screenshots"));
+        Wait(() => Visible("ShotsMore"), "and shows it again");
+
+        Select(WaitFind("TabSettings"));
+        Select(WaitFind("SectionCards"));
+        Invoke(WaitFind("MoveLeftshots"));
+        Shot("18-settings-cards");
+        Select(WaitFind("TabWorkspace"));
+        Wait(() => WaitFind("ShotsMore").Current.BoundingRectangle.Left < WaitFind("EventsMore").Current.BoundingRectangle.Left,
+            "moving Screenshots left puts it before Events");
+
+        var before = WaitFind("TaskCount").Current.BoundingRectangle.Right;
+        var split = WaitFind("CardSplitter").Current.BoundingRectangle;
+        // Leftwards: Today's tasks has room to give, the timer beside it barely any.
+        Mouse.Drag((int)(split.Left + split.Width / 2), (int)(split.Top + split.Height / 2),
+            (int)(split.Left + split.Width / 2) - 90, (int)(split.Top + split.Height / 2));
+        Wait(() => WaitFind("TaskCount").Current.BoundingRectangle.Right < before - 40, "dragging the first gap narrows Today's tasks");
+        Shot("19-resized");
+        Wait(() => File.ReadAllText(Path.Combine(_root, "data", "settings.json")).Contains("\"Cards\""), "the layout is saved");
+
+        Select(WaitFind("TabSettings"));
+        Select(WaitFind("SectionCards"));
+        Invoke(WaitFind("ResetLayout"));
+        Select(WaitFind("TabWorkspace"));
+        Wait(() => WaitFind("ShotsMore").Current.BoundingRectangle.Left > WaitFind("EventsMore").Current.BoundingRectangle.Left,
+            "Reset layout puts the cards back");
+    }
+
+    [Test, Order(23)]
+    public void AScreenshotLandsInTheScreenshotsCard()
+    {
+        OpenWithShortcut();
+        var file = Path.Combine(_root, "shots", "e2e-shot.png");
+        using (var bmp = new Bitmap(320, 200))
+        {
+            using (var g = Graphics.FromImage(bmp)) g.Clear(Color.SteelBlue);
+            bmp.Save(file, ImageFormat.Png);
+        }
+        Wait(() => Name("ShotCount") == "1", "the new picture is counted", 10000);
+        Assert.That(Named("e2e-shot.png"), Is.Not.Null, "its thumbnail is in the card");
+        Shot("20-screenshots");
+    }
+
+    [Test, Order(24)]
+    public void TheNotchCanShowTheClockAndAQuota()
+    {
+        OpenWithShortcut();
+        Select(WaitFind("TabSettings"));
+        Select(WaitFind("SectionNotch"));
+        Toggle(WaitFind("NotchItemclock"));
+        Toggle(WaitFind("NotchItemcodex"));
+        Wait(() => Name("QuotaStatuscodex").StartsWith("37% used"), "Settings shows Codex's reading", 15000);
+        Shot("21-settings-notch");
+        Select(WaitFind("TabWorkspace"));
+        Invoke(Find("Close")!);
+        Wait(() => !Visible("TabWorkspace"), "the workspace closes");
+        Wait(() => Visible("NotchClock") && Name("NotchClock").Length > 0, "the resting notch shows the time");
+        Wait(() => Name("NotchQuotaCodex") == "37%", "and the Codex quota");
+        Shot("22-notch-items", top: true);
     }
 
     // MARK: Helpers — finding things
@@ -570,6 +654,9 @@ public sealed class WorkspaceE2E
 
     private static void Select(AutomationElement e) =>
         ((SelectionItemPattern)e.GetCurrentPattern(SelectionItemPattern.Pattern)).Select();
+
+    private static void Toggle(AutomationElement e) =>
+        ((TogglePattern)e.GetCurrentPattern(TogglePattern.Pattern)).Toggle();
 
     private static void SetValue(AutomationElement e, string v) =>
         ((ValuePattern)e.GetCurrentPattern(ValuePattern.Pattern)).SetValue(v);

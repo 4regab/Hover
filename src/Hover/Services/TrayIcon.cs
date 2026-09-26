@@ -10,7 +10,7 @@ using Hover.Interop;
 namespace Hover.Services;
 
 /// Windows has no accessory-app dock trick to opt out of, but it does expect a way
-/// back into an app with no window — so the pill's menu is also a tray icon.
+/// back into an app with no window — so the tray icon carries the menu.
 /// The icon is drawn at startup rather than shipped as a file: a small fan of sticky
 /// notes, which is the whole app.
 public sealed class TrayIcon : IDisposable

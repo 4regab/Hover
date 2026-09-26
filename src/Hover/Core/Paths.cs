@@ -37,13 +37,12 @@ public static class Paths
         return dir;
     }
 
-    public static string Db => Path.Combine(Support, "notes.db");
     public static string Key => Path.Combine(Support, "note.key");
     public static string SettingsFile => Path.Combine(Support, "settings.json");
     public static string Log => Path.Combine(Support, "hover.log");
 
-    /// The image tray's folder — plain PNGs under Pictures, so a picture dragged out
-    /// of the tray is a real file any other app can take. An env override points it
+    /// The Screenshots card's folder — plain PNGs under Pictures, so a picture
+    /// dragged out of the card is a real file any other app can take. An env override points it
     /// elsewhere for tests. Made on first use.
     public static string Shots
     {

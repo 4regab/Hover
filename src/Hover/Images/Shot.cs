@@ -4,8 +4,8 @@ using Hover.Core;
 
 namespace Hover.Images;
 
-/// One picture in the tray: the plain file on disk, plus a small thumbnail decoded
-/// once and kept frozen so the strip can redraw without touching the disk again.
+/// One screenshot: the plain file on disk, plus a small thumbnail decoded once and
+/// kept frozen so the card can redraw without touching the disk again.
 public sealed class Shot
 {
     public string Path { get; }

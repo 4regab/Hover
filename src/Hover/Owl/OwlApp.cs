@@ -18,6 +18,17 @@ public static class OwlApp
     /// Midnight passed: every view rebuilds for the new day.
     public static event Action? DayChanged;
 
+    /// The card layout changed. The argument is the view that changed it, if any.
+    public static event Action<object?>? LayoutChanged;
+    public static void RaiseLayoutChanged(object? source) => LayoutChanged?.Invoke(source);
+
+    /// The latest usage reading for each quota the notch shows, and when it was taken.
+    public static event Action? QuotasChanged;
+    public static IReadOnlyDictionary<string, (QuotaReading Reading, DateTime At)> Quotas => _quotas;
+    private static readonly Dictionary<string, (QuotaReading Reading, DateTime At)> _quotas = new();
+    private static readonly HashSet<string> _quotaBusy = new();
+    private static readonly TimeSpan QuotaEvery = TimeSpan.FromMinutes(5);
+
     public static IReadOnlyList<CalEvent> Events { get; private set; } = Array.Empty<CalEvent>();
     /// Null while nothing has been fetched; otherwise the last error, or "".
     public static string? CalendarError { get; private set; }
@@ -28,6 +39,8 @@ public static class OwlApp
     public static Action? OpenDashboard { get; set; }
     public static Action? Collapse { get; set; }
     public static Action? ShowWorkspace { get; set; }
+    /// The dashboard window, opened on its Settings tab.
+    public static Action? OpenSettings { get; set; }
     /// A workspace preference changed that the notch draws from.
     public static Action? SettingsChanged { get; set; }
 
@@ -86,7 +99,57 @@ public static class OwlApp
         if (Planner.Data.CalendarSource.Length > 0 && !CalendarBusy && DateTime.Now - _fetched > FetchEvery)
             _ = RefreshCalendar();
 
+        RefreshQuotas();
         Tick?.Invoke();
+    }
+
+    // MARK: Quotas
+
+    /// Read each quota the notch shows once it is five minutes old — or now, when
+    /// forced (switched on, or Refresh in Settings). Readings for quotas switched off
+    /// are dropped so a stale number never comes back with the switch. While the
+    /// notch is not always shown nothing displays them, so nothing is read either.
+    public static void RefreshQuotas(bool force = false)
+    {
+        var on = NotchItem.Quotas.Where(Settings.HasNotchItem).ToList();
+        var dropped = _quotas.Keys.Where(k => !on.Contains(k)).ToList();
+        foreach (var k in dropped) _quotas.Remove(k);
+        if (dropped.Count > 0) QuotasChanged?.Invoke();
+        if (!force && !Settings.ShowIdleNotch) return;
+
+        foreach (var id in on)
+        {
+            if (_quotaBusy.Contains(id)) continue;
+            if (!force && _quotas.TryGetValue(id, out var q) && DateTime.Now - q.At < QuotaEvery) continue;
+            _quotaBusy.Add(id);
+            _ = ReadQuota(id);
+        }
+    }
+
+    private static async Task ReadQuota(string id)
+    {
+        QuotaReading r;
+        try
+        {
+            // Off the UI thread entirely: the PATH walk, the log scan and the SQLite
+            // read are all synchronous.
+            r = id switch
+            {
+                NotchItem.Kiro => await Task.Run(() => Quota.Kiro(CancellationToken.None)),
+                NotchItem.Codex => await Task.Run(() => Quota.Codex(DateTime.Now)),
+                _ => await Task.Run(() => Quota.Cursor(CancellationToken.None)),
+            };
+        }
+        catch (Exception e)
+        {
+            r = QuotaReading.Fail(e.Message);
+        }
+        if (!r.Ok) Log.Line($"quota {id}: {r.Detail}");
+        // Resumes on the UI thread: the await was started from the dispatcher.
+        _quotaBusy.Remove(id);
+        if (!Settings.HasNotchItem(id)) return;
+        _quotas[id] = (r, DateTime.Now);
+        QuotasChanged?.Invoke();
     }
 
     /// A session whose task was finished or deleted elsewhere ends with it.

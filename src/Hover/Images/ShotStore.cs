@@ -9,7 +9,7 @@ using Hover.Interop;
 
 namespace Hover.Images;
 
-/// The pictures behind the image tray.
+/// The pictures behind the Screenshots card.
 ///
 /// Two ways in: a new file appearing in the Shots folder (a saved Snipping Tool
 /// capture), and an image landing on the clipboard (a snip that only went to the
@@ -31,7 +31,7 @@ public sealed class ShotStore : IDisposable
     /// Raised whenever the set of pictures changed.
     public event EventHandler? Changed;
 
-    /// Newest first — the freshest snip sits at the top of the tray.
+    /// Newest first — the freshest snip comes first in the card.
     public IReadOnlyList<Shot> Shots => _shots;
 
     private ShotStore() { }
@@ -174,7 +174,7 @@ public sealed class ShotStore : IDisposable
         }
     }
 
-    // MARK: Mutations the tray asks for
+    // MARK: Mutations the card asks for
 
     /// Rename a picture, keeping its extension. Returns the new path or null on
     /// failure or a name clash.

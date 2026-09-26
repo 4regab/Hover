@@ -9,13 +9,13 @@ using System.Windows.Media.Effects;
 using System.Windows.Shapes;
 using System.Windows.Threading;
 using Hover.Core;
-using Hover.Deck;
 using Hover.Interop;
 
 namespace Hover.Owl;
 
 /// The black notch shape and what is inside it. Openness 0 is the resting shape —
-/// a small tab, the running timer, or nothing — and 1 is the open workspace. The
+/// a hairline tab, a slim pill of glanceable items, or nothing — and 1 is the open
+/// workspace. The
 /// shape grows from one to the other and the workspace is revealed through it.
 internal sealed class NotchShell : Canvas
 {
@@ -41,7 +41,7 @@ internal sealed class NotchShell : Canvas
         Text = "WELCOME BACK", Pitch = 1.8, Weight = 0.7, Fill = Ui.White, IsHitTestVisible = false,
     };
 
-    private Size _rest, _open = new(1000, 420);
+    private Size _rest, _open = new(1120, 420);
     private bool _opening, _greet;
 
     /// Show the greeting for this opening. Cleared when the opening ends.
@@ -91,7 +91,7 @@ internal sealed class NotchShell : Canvas
         var w = Lerp(_rest.Width, _open.Width, t);
         var h = Lerp(_rest.Height, _open.Height, t);
         var (rr, re) = RestCorners(_rest);
-        var r = Lerp(rr, 22, t);
+        var r = Lerp(rr, 24, t);
         var ear = Lerp(re, 10, t);
         var cx = ActualWidth / 2;
 
@@ -132,10 +132,11 @@ internal sealed class NotchShell : Canvas
         SetTop(Greeting, Math.Max(4, Math.Min(h - gs.Height - 9, 64)));
     }
 
+    /// A fully round pill at rest, with a small flare into the screen edge.
     private static (double Radius, double Ear) RestCorners(Size s)
     {
         var r = Math.Min(s.Height / 2, 14);
-        return (r, Math.Max(0, Math.Min(6, s.Height - r)));
+        return (r, Math.Max(0, Math.Min(5, s.Height - r)));
     }
 
     /// A notch: square top edge flush with the screen, rounded bottom corners, and a
@@ -168,32 +169,47 @@ internal sealed class NotchHost : IDisposable
 {
     public enum Mode { Rest, Peek, Open }
 
-    private enum RestKind { None, Tab, Timer, Alert }
+    private enum RestKind { None, Tab, Pill, Alert }
 
     public string Device { get; }
     public Mode State { get; private set; } = Mode.Rest;
     public NotchManager? Manager { get; init; }
 
     private ScreenInfo _screen;
-    private readonly DeckWindow _window = new();
+    private readonly HostWindow _window = new();
     private readonly NotchShell _shell = new();
     private WorkspaceView? _view;
     private IntPtr _hwnd;
     private IntPtr _previous;
     private Size _open;
     private RestKind _kind = (RestKind)(-1);
+    /// The resting size last handed to the shell, so it is re-laid-out only when the
+    /// shape really changes — not on every one-second tick.
+    private Size _restApplied = new(-1, -1);
 
     // Pointer bookkeeping for the hover trigger, in device pixels.
     private DateTime? _zoneSince, _outsideSince;
     private bool _armed = true;
 
-    private readonly DotMatrix _time = new() { Pitch = 2.2, Weight = 0.7, Fill = Ui.White };
-    private readonly DotMatrix _alertTitle = new() { Pitch = 2, Weight = 0.7, Fill = Ui.White };
-    private readonly TextBlock _alertText = Ui.Text("", 12, Ui.WhiteDim);
+    // The resting pill: one segment per item, built once and updated in place.
+    private readonly StackPanel _pill = new() { Orientation = Orientation.Horizontal };
+    private readonly DotMatrix _time = new() { Pitch = 1.5, Weight = 0.78, Fill = Ui.White };
+    private readonly Ellipse _timerDot = new() { Width = 6, Height = 6 };
+    private readonly FrameworkElement _timerSeg;
+    private readonly TextBlock _clock = Ui.Text("", 12, Ui.White, FontWeights.SemiBold);
+    private readonly Dictionary<string, (FrameworkElement Seg, Ring Ring, TextBlock Text)> _quotaSegs = new();
+    private string _pillKey = "";
+
+    private readonly DotMatrix _alertTitle = new() { Pitch = 1.6, Weight = 0.75, Fill = Ui.White };
+    private readonly TextBlock _alertText = Ui.Text("", 11.5, Ui.WhiteDim);
     private readonly StackPanel _alertBox = new();
     private (string Title, string Text)? _alert;
 
-    private static readonly Size TabSize = new(150, 7), TimerSize = new(190, 38);
+    /// Heights of the resting shapes. Small on purpose: the notch at rest is a hint,
+    /// not a panel — a hairline when there is nothing to show, a slim pill when there
+    /// is.
+    private static readonly Size TabSize = new(96, 5);
+    private const double PillHeight = 24, PillPad = 12, PillGap = 12;
     private static readonly TimeSpan Dwell = TimeSpan.FromMilliseconds(120);
     private static readonly TimeSpan LeaveGrace = TimeSpan.FromMilliseconds(350);
 
@@ -204,6 +220,8 @@ internal sealed class NotchHost : IDisposable
         _window.Title = "Hover notch";
         AutomationProperties.SetAutomationId(_window, "HoverNotch");
         AutomationProperties.SetAutomationId(_time, "NotchTime");
+        AutomationProperties.SetAutomationId(_clock, "NotchClock");
+        _timerSeg = Ui.Row(_timerDot, _time.Margin(6, 0));
         _window.Root.Children.Add(_shell);
 
         _window.SourceInitialized += (_, _) => _hwnd = new WindowInteropHelper(_window).Handle;
@@ -238,14 +256,14 @@ internal sealed class NotchHost : IDisposable
         Layout();
     }
 
-    /// One window size for every state, as the deck does: resizing a layered window
+    /// One window size for every state: resizing a layered window
     /// on each transition makes it blink. Everything outside the shape is
     /// click-through, so the empty part costs nothing.
     private void Layout()
     {
         var s = _screen;
         var work = s.WorkDips;
-        _open = new Size(Math.Min(1000, work.Width - 24), Math.Min(420, work.Height - 24));
+        _open = new Size(Math.Min(1120, work.Width - 24), Math.Min(420, work.Height - 24));
         const double Pad = 40;   // room for the flare and the shadow
         var w = (int)Math.Round((_open.Width + 2 * Pad) * s.Scale);
         var h = (int)Math.Round((_open.Height + Pad) * s.Scale);
@@ -261,32 +279,49 @@ internal sealed class NotchHost : IDisposable
     private Size RestSize => _kind switch
     {
         RestKind.Tab => TabSize,
-        RestKind.Timer => TimerSize,
-        RestKind.Alert => new Size(Math.Clamp(Math.Max(_alertTitle.DesiredSize.Width, _alertText.DesiredSize.Width) + 48, 220, 420), 56),
+        // Rounded up to a few pixels so a clock ticking from 1:11 to 1:12 does not
+        // make the pill twitch.
+        RestKind.Pill => new Size(Math.Ceiling((_pill.DesiredSize.Width + 2 * PillPad) / 4) * 4, PillHeight),
+        RestKind.Alert => new Size(Math.Clamp(Math.Max(_alertTitle.DesiredSize.Width, _alertText.DesiredSize.Width) + 40, 200, 420), 46),
         _ => new Size(0, 0),
     };
 
-    /// The resting notch holds the running time, centred low as on a Mac where the
-    /// camera takes the top, or a short message spelled in dots.
+    /// The resting notch holds a slim row of glanceable items, or a short message
+    /// spelled in dots.
     private void BuildMini()
     {
         var m = _shell.Mini;
-        _time.HorizontalAlignment = HorizontalAlignment.Center;
-        _time.VerticalAlignment = VerticalAlignment.Bottom;
-        _time.Margin = new Thickness(0, 0, 0, 7);
-        m.Children.Add(_time);
+        _time.VerticalAlignment = VerticalAlignment.Center;
+        _timerDot.VerticalAlignment = VerticalAlignment.Center;
+        _clock.Typography.NumeralAlignment = FontNumeralAlignment.Tabular;
+        _clock.FontFamily = Ui.Display;
+        _pill.HorizontalAlignment = HorizontalAlignment.Center;
+        _pill.VerticalAlignment = VerticalAlignment.Center;
+        m.Children.Add(_pill);
 
         _alertTitle.HorizontalAlignment = HorizontalAlignment.Center;
         _alertText.HorizontalAlignment = HorizontalAlignment.Center;
-        _alertText.MaxWidth = 372;
-        _alertText.Margin = new Thickness(0, 6, 0, 0);
+        _alertText.MaxWidth = 380;
+        _alertText.Margin = new Thickness(0, 5, 0, 0);
         _alertBox.Children.Add(_alertTitle);
         _alertBox.Children.Add(_alertText);
         _alertBox.HorizontalAlignment = HorizontalAlignment.Center;
-        _alertBox.VerticalAlignment = VerticalAlignment.Bottom;
-        _alertBox.Margin = new Thickness(0, 0, 0, 8);
+        _alertBox.VerticalAlignment = VerticalAlignment.Center;
         AutomationProperties.SetAutomationId(_alertTitle, "NotchAlert");
         m.Children.Add(_alertBox);
+    }
+
+    private (FrameworkElement Seg, Ring Ring, TextBlock Text) QuotaSeg(string id)
+    {
+        if (_quotaSegs.TryGetValue(id, out var q)) return q;
+        var ring = new Ring { Width = 11, Height = 11, VerticalAlignment = VerticalAlignment.Center };
+        var name = Ui.Text(id switch { NotchItem.Kiro => "Kiro", NotchItem.Codex => "Codex", _ => "Cursor" }, 11.5, Ui.WhiteDim);
+        var value = Ui.Text("—", 11.5, Ui.White, FontWeights.SemiBold);
+        value.Typography.NumeralAlignment = FontNumeralAlignment.Tabular;
+        var seg = Ui.Row(ring, name.Margin(6, 0), value.Margin(4, 0));
+        // The row is a panel, which UI Automation does not see; the value is text.
+        AutomationProperties.SetAutomationId(value, "NotchQuota" + char.ToUpperInvariant(id[0]) + id[1..]);
+        return _quotaSegs[id] = (seg, ring, value);
     }
 
     public void ShowAlert((string Title, string Text)? alert)
@@ -295,12 +330,21 @@ internal sealed class NotchHost : IDisposable
         UpdateRest();
     }
 
+    /// Which items the pill shows right now. The timer only while it runs; the rest
+    /// only when the notch is set to stay visible.
+    private List<string> PillItems()
+    {
+        var running = OwlApp.Timer.State != FocusTimer.Phase.Ready;
+        return Settings.NotchItems.Where(id => id == NotchItem.Timer ? running : Settings.ShowIdleNotch).ToList();
+    }
+
     /// Pick the resting shape and refresh what it shows. Called every second.
     public void UpdateRest()
     {
         var t = OwlApp.Timer;
+        var items = _alert is null ? PillItems() : new List<string>();
         var kind = _alert is not null ? RestKind.Alert
-            : t.State != FocusTimer.Phase.Ready ? RestKind.Timer
+            : items.Count > 0 ? RestKind.Pill
             : Settings.ShowIdleNotch ? RestKind.Tab
             : RestKind.None;
 
@@ -312,18 +356,54 @@ internal sealed class NotchHost : IDisposable
             _alertText.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
         }
         _alertBox.Visibility = kind == RestKind.Alert ? Visibility.Visible : Visibility.Collapsed;
-        _time.Visibility = kind == RestKind.Timer ? Visibility.Visible : Visibility.Collapsed;
-        if (kind == RestKind.Timer)
-        {
-            _time.Text = t.Text;
-            _time.Opacity = t.State == FocusTimer.Phase.Paused ? 0.5 : 1;
-        }
+        _pill.Visibility = kind == RestKind.Pill ? Visibility.Visible : Visibility.Collapsed;
 
-        if (kind != _kind || kind == RestKind.Alert)
+        if (kind == RestKind.Pill)
         {
-            _kind = kind;
-            _shell.SetSizes(RestSize, _open);
+            var key = string.Join(",", items);
+            if (key != _pillKey)
+            {
+                _pillKey = key;
+                _pill.Children.Clear();
+                foreach (var id in items)
+                {
+                    var seg = id switch
+                    {
+                        NotchItem.Clock => _clock,
+                        NotchItem.Timer => _timerSeg,
+                        _ => QuotaSeg(id).Seg,
+                    };
+                    seg.Margin = new Thickness(_pill.Children.Count == 0 ? 0 : PillGap, 0, 0, 0);
+                    seg.VerticalAlignment = VerticalAlignment.Center;
+                    _pill.Children.Add(seg);
+                }
+            }
+            if (items.Contains(NotchItem.Clock)) _clock.Text = DateTime.Now.ToString("t", System.Globalization.CultureInfo.CurrentCulture);
+            if (items.Contains(NotchItem.Timer))
+            {
+                var paused = t.State == FocusTimer.Phase.Paused;
+                _time.Text = t.Text;
+                _time.Opacity = paused ? 0.55 : 1;
+                _timerDot.Fill = Ui.Accent(paused ? Ui.Rgb(0x8E, 0x8E, 0x93) : Ui.Orange);
+            }
+            foreach (var id in items.Where(NotchItem.Quotas.Contains))
+            {
+                var (_, ring, text) = QuotaSeg(id);
+                var reading = OwlApp.Quotas.TryGetValue(id, out var q) ? q.Reading : null;
+                ring.Value = reading?.Used;
+                text.Text = reading?.Used is { } u ? $"{u:0}%" : "—";
+                text.Foreground = reading is null || reading.Ok ? Ui.White : Ui.WhiteDim;
+            }
+            // A child's new text does not invalidate the panel's own measure.
+            _pill.InvalidateMeasure();
+            _pill.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
         }
+        else _pillKey = "";
+
+        _kind = kind;
+        if (RestSize == _restApplied) return;
+        _restApplied = RestSize;
+        _shell.SetSizes(_restApplied, _open);
     }
 
     // MARK: Opening and closing
@@ -337,7 +417,7 @@ internal sealed class NotchHost : IDisposable
             var s = _screen;
             var rest = RestSize;
             var halfW = Math.Max(rest.Width / 2, 110) * s.Scale;
-            var h = Math.Max(rest.Height, 5) * s.Scale;
+            var h = Math.Max(rest.Height, 6) * s.Scale;
             var cx = s.Work.Left + s.Work.Width / 2.0;
             return new Win32.RECT
             {
@@ -515,9 +595,11 @@ public sealed class NotchManager : IDisposable
 
         OwlApp.Timer.Changed += UpdateRest;
         OwlApp.Tick += UpdateRest;
+        OwlApp.QuotasChanged += UpdateRest;
         OwlApp.SettingsChanged = UpdateRest;
         OwlApp.Collapse = CollapseAll;
-        OwlApp.OpenDashboard = OpenDashboard;
+        OwlApp.OpenDashboard = () => OpenDashboard();
+        OwlApp.OpenSettings = () => OpenDashboard(settings: true);
         OwlApp.ShowWorkspace = Toggle;
         _alertEnd.Tick += (_, _) =>
         {
@@ -599,13 +681,14 @@ public sealed class NotchManager : IDisposable
         _alertEnd.Start();
     }
 
-    public void OpenDashboard()
+    public void OpenDashboard(bool settings = false)
     {
         if (_dashboard is null || !_dashboard.IsLoaded)
         {
             _dashboard = new DashboardWindow();
             _dashboard.Closed += (_, _) => _dashboard = null;
         }
+        if (settings) _dashboard.View.ShowTab(2);
         _dashboard.Show();
         if (_dashboard.WindowState == WindowState.Minimized) _dashboard.WindowState = WindowState.Normal;
         // Activate while this process still holds the foreground; collapsing first
@@ -618,6 +701,7 @@ public sealed class NotchManager : IDisposable
     {
         Microsoft.Win32.SystemEvents.PowerModeChanged -= OnPower;
         Microsoft.Win32.SystemEvents.SessionSwitch -= OnSession;
+        OwlApp.QuotasChanged -= UpdateRest;
         _poll.Stop();
         _alertEnd.Stop();
         _dashboard?.Close();
@@ -630,16 +714,18 @@ public sealed class NotchManager : IDisposable
 /// small a place to work.
 public sealed class DashboardWindow : Window
 {
+    public WorkspaceView View { get; } = new(dashboard: true) { Margin = new Thickness(0, 4, 0, 0) };
+
     public DashboardWindow()
     {
         Title = "Hover";
-        Width = 1100;
-        Height = 580;
-        MinWidth = 860;
+        Width = 1200;
+        Height = 600;
+        MinWidth = 880;
         MinHeight = 460;
         WindowStartupLocation = WindowStartupLocation.CenterScreen;
         Background = Brushes.Black;
-        Content = new WorkspaceView(dashboard: true) { Margin = new Thickness(0, 4, 0, 0) };
+        Content = View;
         AutomationProperties.SetAutomationId(this, "HoverDashboard");
         SourceInitialized += (_, _) =>
         {

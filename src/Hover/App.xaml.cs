@@ -1,12 +1,10 @@
 using System.Threading;
 using System.Windows;
 using Hover.Core;
-using Hover.Deck;
 using Hover.Images;
 using Hover.Interop;
 using Hover.Owl;
 using Hover.Services;
-using Hover.Windows;
 
 namespace Hover;
 
@@ -14,8 +12,6 @@ public partial class App : Application
 {
     private static Mutex? _single;
 
-    private DeckManager? _decks;
-    private ImageStripManager? _imageStrips;
     private NotchManager? _notch;
     private HotKeys? _hotKeys;
     private TrayIcon? _tray;
@@ -25,7 +21,7 @@ public partial class App : Application
     {
         base.OnStartup(e);
 
-        // One deck per display is the point; two copies of the app is not.
+        // One notch per display is the point; two copies of the app is not.
         _single = new Mutex(true, "Local\\HoverRunningInstance", out var fresh);
         if (!fresh)
         {
@@ -39,17 +35,13 @@ public partial class App : Application
             args.Handled = true;
         };
 
-        _decks = new DeckManager();
-        Actions.Decks = _decks;
         Actions.OnShortcutsChanged = RegisterHotKeys;
 
-        // The image tray watches for screenshots and copied pictures, and shows them
-        // on the opposite screen edge from the note deck.
+        // Screenshots and copied pictures land in the workspace's Screenshots card.
         ShotStore.Shared.Start();
-        _imageStrips = new ImageStripManager();
-        Actions.ImageStrips = _imageStrips;
 
-        // The workspace: tasks, focus timer, notepad and events at the top centre.
+        // The workspace: tasks, focus timer, notepad, events and screenshots at the
+        // top centre.
         OwlApp.Start();
         _notch = new NotchManager();
 
@@ -62,31 +54,25 @@ public partial class App : Application
             _notch?.Alert(title, text);
             _tray?.Notify(title, text);
         };
-        UndoToast.Shared.Start();
 
         Log.Line("started");
     }
 
-    /// Rebinding in Settings tears the whole set down and puts it back, which is the
-    /// only way RegisterHotKey lets a binding change.
+    /// Rebinding in Settings tears the set down and puts it back, which is the only
+    /// way RegisterHotKey lets a binding change.
     private void RegisterHotKeys()
     {
         if (_hotKeys is null) return;
         _hotKeys.Clear();
 
-        var failed = new List<(string Command, Shortcut Shortcut)>();
-        TryRegister("Open workspace", Settings.ScWorkspace, () => _notch?.Toggle());
-        TryRegister("New note", Settings.ScNewNote, Actions.NewNote);
-        TryRegister("All Notes", Settings.ScAllNotes, Actions.OpenAllNotes);
-        TryRegister("Archive", Settings.ScArchive, Actions.OpenArchive);
-
-        if (failed.Count == 0)
+        var shortcut = Settings.ScWorkspace;
+        if (_hotKeys.Register(shortcut, () => _notch?.Toggle()))
         {
             _reportedHotKeyFailures = null;
             return;
         }
 
-        var signature = string.Join("\n", failed.Select(f => $"{f.Command}:{f.Shortcut}"));
+        var signature = shortcut.ToString();
         if (signature == _reportedHotKeyFailures) return;
         _reportedHotKeyFailures = signature;
 
@@ -95,22 +81,15 @@ public partial class App : Application
         Dispatcher.BeginInvoke(() =>
         {
             if (_reportedHotKeyFailures != signature) return;
-            ShowHotKeyWarning(failed);
+            ShowHotKeyWarning(shortcut);
         });
-
-        void TryRegister(string command, Shortcut shortcut, Action action)
-        {
-            if (!_hotKeys.Register(shortcut, action)) failed.Add((command, shortcut));
-        }
     }
 
-    private static void ShowHotKeyWarning(IReadOnlyList<(string Command, Shortcut Shortcut)> failed)
+    private static void ShowHotKeyWarning(Shortcut shortcut)
     {
-        var bindings = string.Join("\n", failed.Select(f => $"• {f.Command} — {f.Shortcut}"));
-        var subject = failed.Count == 1 ? "this global shortcut" : "these global shortcuts";
-        var message = $"Hover couldn't register {subject}:\n\n{bindings}\n\n" +
-                      "Windows has reserved the shortcut or another app is already using it. " +
-                      "Choose a different shortcut in Settings.";
+        var message = $"Hover couldn't register the workspace shortcut, {shortcut}.\n\n" +
+                      "Windows has reserved it or another app is already using it. " +
+                      "Choose a different shortcut in Settings → General.";
 
         var owner = Current.Windows.OfType<Window>().FirstOrDefault(w => w.IsActive);
         if (owner is not null)
@@ -128,8 +107,6 @@ public partial class App : Application
         _notch?.Dispose();
         _tray?.Dispose();
         _hotKeys?.Dispose();
-        _decks?.Dispose();
-        _imageStrips?.Dispose();
         ShotStore.Shared.Dispose();
         Settings.Flush();
         base.OnExit(e);

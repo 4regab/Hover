@@ -1,8 +1,9 @@
 <ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
                     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
 
-  <!-- The workspace's controls. Keyed only, so nothing here leaks into the notes
-       deck or the ordinary windows. -->
+  <!-- The workspace's controls. Keyed only, so nothing leaks into stock windows.
+       Dark-mode system values throughout: white type in three strengths, fills of
+       white at a few percent, the system blue for focus and the prominent action. -->
 
   <FontFamily x:Key="OwlIcons">Segoe Fluent Icons, Segoe MDL2 Assets</FontFamily>
   <FontFamily x:Key="OwlFont">Segoe UI Variable Text, Segoe UI</FontFamily>
@@ -13,37 +14,43 @@
     <Setter Property="Background" Value="Transparent" />
     <Setter Property="BorderBrush" Value="Transparent" />
     <Setter Property="BorderThickness" Value="0" />
-    <Setter Property="Foreground" Value="#D9000000" />
+    <Setter Property="Foreground" Value="#EBFFFFFF" />
     <Setter Property="FontFamily" Value="{StaticResource OwlFont}" />
     <Setter Property="FontSize" Value="13" />
     <Setter Property="Padding" Value="4" />
     <Setter Property="HorizontalContentAlignment" Value="Center" />
     <Setter Property="VerticalContentAlignment" Value="Center" />
-    <Setter Property="Tag" Value="6" />
+    <Setter Property="Tag" Value="8" />
     <Setter Property="Template">
       <Setter.Value>
         <ControlTemplate TargetType="Button">
-          <Border x:Name="Bd" Background="{TemplateBinding Background}"
-                  BorderBrush="{TemplateBinding BorderBrush}"
-                  BorderThickness="{TemplateBinding BorderThickness}"
-                  CornerRadius="{Binding Tag, RelativeSource={RelativeSource TemplatedParent}}"
-                  Padding="{TemplateBinding Padding}" SnapsToDevicePixels="True">
-            <ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
-                              VerticalAlignment="{TemplateBinding VerticalContentAlignment}" />
-          </Border>
+          <Grid>
+            <Border x:Name="Bd" Background="{TemplateBinding Background}"
+                    BorderBrush="{TemplateBinding BorderBrush}"
+                    BorderThickness="{TemplateBinding BorderThickness}"
+                    CornerRadius="{Binding Tag, RelativeSource={RelativeSource TemplatedParent}}"
+                    Padding="{TemplateBinding Padding}" SnapsToDevicePixels="True">
+              <ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
+                                VerticalAlignment="{TemplateBinding VerticalContentAlignment}" />
+            </Border>
+            <!-- Hover lifts the fill a shade instead of fading the whole button. -->
+            <Border x:Name="Lift" Background="#FFFFFFFF" Opacity="0" IsHitTestVisible="False"
+                    CornerRadius="{Binding Tag, RelativeSource={RelativeSource TemplatedParent}}" />
+            <Border x:Name="Ring" BorderBrush="#CC0A84FF" BorderThickness="0" IsHitTestVisible="False"
+                    CornerRadius="{Binding Tag, RelativeSource={RelativeSource TemplatedParent}}" />
+          </Grid>
           <ControlTemplate.Triggers>
             <Trigger Property="IsMouseOver" Value="True">
-              <Setter TargetName="Bd" Property="Opacity" Value="0.82" />
+              <Setter TargetName="Lift" Property="Opacity" Value="0.07" />
             </Trigger>
             <Trigger Property="IsPressed" Value="True">
-              <Setter TargetName="Bd" Property="Opacity" Value="0.65" />
+              <Setter TargetName="Lift" Property="Opacity" Value="0.13" />
             </Trigger>
             <Trigger Property="IsEnabled" Value="False">
-              <Setter TargetName="Bd" Property="Opacity" Value="0.55" />
+              <Setter TargetName="Bd" Property="Opacity" Value="0.4" />
             </Trigger>
             <Trigger Property="IsKeyboardFocused" Value="True">
-              <Setter TargetName="Bd" Property="BorderBrush" Value="#990A84FF" />
-              <Setter TargetName="Bd" Property="BorderThickness" Value="1.5" />
+              <Setter TargetName="Ring" Property="BorderThickness" Value="2" />
             </Trigger>
           </ControlTemplate.Triggers>
         </ControlTemplate>
@@ -51,89 +58,70 @@
     </Setter>
   </Style>
 
-  <!-- Icon-only buttons on the paper cards: no fill until hovered. -->
+  <!-- Icon-only buttons on the cards: no fill until hovered. -->
   <Style x:Key="OwlIconButton" TargetType="Button" BasedOn="{StaticResource OwlBase}">
-    <Setter Property="Template">
-      <Setter.Value>
-        <ControlTemplate TargetType="Button">
-          <Border x:Name="Bd" Background="Transparent" CornerRadius="6"
-                  Padding="{TemplateBinding Padding}"
-                  BorderBrush="Transparent" BorderThickness="1.5">
-            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
-          </Border>
-          <ControlTemplate.Triggers>
-            <Trigger Property="IsMouseOver" Value="True">
-              <Setter TargetName="Bd" Property="Background" Value="#17000000" />
-            </Trigger>
-            <Trigger Property="IsPressed" Value="True">
-              <Setter TargetName="Bd" Property="Background" Value="#26000000" />
-            </Trigger>
-            <Trigger Property="IsKeyboardFocused" Value="True">
-              <Setter TargetName="Bd" Property="BorderBrush" Value="#990A84FF" />
-            </Trigger>
-          </ControlTemplate.Triggers>
-        </ControlTemplate>
-      </Setter.Value>
-    </Setter>
+    <Setter Property="Tag" Value="7" />
   </Style>
 
+  <!-- The prominent action: white on the dark card, as on a Mac in dark mode. -->
   <Style x:Key="OwlDarkButton" TargetType="Button" BasedOn="{StaticResource OwlBase}">
-    <Setter Property="Background" Value="#FF19161B" />
-    <Setter Property="Foreground" Value="White" />
+    <Setter Property="Background" Value="#F2FFFFFF" />
+    <Setter Property="Foreground" Value="#FF000000" />
     <Setter Property="FontWeight" Value="SemiBold" />
-    <Setter Property="Padding" Value="14,8" />
-    <Setter Property="Tag" Value="8" />
+    <Setter Property="Padding" Value="14,7" />
+    <Setter Property="Tag" Value="9" />
   </Style>
 
   <Style x:Key="OwlChromeButton" TargetType="Button" BasedOn="{StaticResource OwlBase}">
-    <Setter Property="Background" Value="#FF373737" />
-    <Setter Property="Foreground" Value="#F2FFFFFF" />
-    <Setter Property="Padding" Value="9,3" />
-    <Setter Property="Tag" Value="6" />
+    <Setter Property="Background" Value="#1AFFFFFF" />
+    <Setter Property="Foreground" Value="#EBFFFFFF" />
+    <Setter Property="Padding" Value="10,4" />
+    <Setter Property="Tag" Value="8" />
   </Style>
 
   <Style x:Key="OwlBlueButton" TargetType="Button" BasedOn="{StaticResource OwlBase}">
     <Setter Property="Background" Value="#FF0A84FF" />
     <Setter Property="Foreground" Value="White" />
     <Setter Property="FontWeight" Value="SemiBold" />
-    <Setter Property="Padding" Value="10,3" />
+    <Setter Property="Padding" Value="12,5" />
   </Style>
 
   <Style x:Key="OwlLightButton" TargetType="Button" BasedOn="{StaticResource OwlBase}">
-    <Setter Property="Background" Value="#1C000000" />
-    <Setter Property="Padding" Value="10,3" />
+    <Setter Property="Background" Value="#1AFFFFFF" />
+    <Setter Property="Padding" Value="11,5" />
   </Style>
 
   <Style x:Key="OwlLink" TargetType="Button" BasedOn="{StaticResource OwlBase}">
-    <Setter Property="Padding" Value="0" />
-    <Setter Property="Foreground" Value="#A6000000" />
+    <Setter Property="Padding" Value="4,2" />
+    <Setter Property="Foreground" Value="#8CFFFFFF" />
     <Setter Property="FontSize" Value="12" />
   </Style>
 
   <!-- Segmented controls. Dark: the header's Workspace / Insights / Settings.
-       Ink: black when chosen, used on paper (Tasks/Focus, 15m/25m/45m/60m). -->
+       Ink: the smaller ones inside cards (Tasks/Focus, 15m/25m/45m/60m). -->
   <Style x:Key="OwlSegmentDark" TargetType="RadioButton">
     <Setter Property="FocusVisualStyle" Value="{x:Null}" />
     <Setter Property="Cursor" Value="Hand" />
-    <Setter Property="Foreground" Value="#E6FFFFFF" />
+    <Setter Property="Foreground" Value="#D9FFFFFF" />
     <Setter Property="FontFamily" Value="{StaticResource OwlFont}" />
-    <Setter Property="FontSize" Value="13" />
+    <Setter Property="FontSize" Value="12.5" />
     <Setter Property="Template">
       <Setter.Value>
         <ControlTemplate TargetType="RadioButton">
-          <Border x:Name="Bd" Background="Transparent" CornerRadius="5" Padding="13,3"
+          <Border x:Name="Bd" Background="Transparent" CornerRadius="7" Padding="14,4"
                   BorderBrush="Transparent" BorderThickness="1.5">
             <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
           </Border>
           <ControlTemplate.Triggers>
             <Trigger Property="IsMouseOver" Value="True">
-              <Setter TargetName="Bd" Property="Background" Value="#26FFFFFF" />
+              <Setter TargetName="Bd" Property="Background" Value="#12FFFFFF" />
             </Trigger>
             <Trigger Property="IsChecked" Value="True">
-              <Setter TargetName="Bd" Property="Background" Value="#FF595959" />
+              <Setter TargetName="Bd" Property="Background" Value="#FF48484A" />
+              <Setter Property="Foreground" Value="White" />
             </Trigger>
             <Trigger Property="IsKeyboardFocused" Value="True">
-              <Setter TargetName="Bd" Property="BorderBrush" Value="#990A84FF" />
+              <Setter TargetName="Bd" Property="BorderBrush" Value="#CC0A84FF" />
             </Trigger>
           </ControlTemplate.Triggers>
         </ControlTemplate>
@@ -144,27 +132,27 @@
   <Style x:Key="OwlSegmentInk" TargetType="RadioButton">
     <Setter Property="FocusVisualStyle" Value="{x:Null}" />
     <Setter Property="Cursor" Value="Hand" />
-    <Setter Property="Foreground" Value="#D9000000" />
+    <Setter Property="Foreground" Value="#B3FFFFFF" />
     <Setter Property="FontFamily" Value="{StaticResource OwlFont}" />
-    <Setter Property="FontSize" Value="13" />
+    <Setter Property="FontSize" Value="12.5" />
     <Setter Property="HorizontalContentAlignment" Value="Center" />
     <Setter Property="Template">
       <Setter.Value>
         <ControlTemplate TargetType="RadioButton">
-          <Border x:Name="Bd" Background="Transparent" CornerRadius="4" Padding="4,3"
+          <Border x:Name="Bd" Background="Transparent" CornerRadius="6" Padding="6,3"
                   BorderBrush="Transparent" BorderThickness="1.5">
             <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
           </Border>
           <ControlTemplate.Triggers>
             <Trigger Property="IsMouseOver" Value="True">
-              <Setter TargetName="Bd" Property="Background" Value="#14000000" />
+              <Setter TargetName="Bd" Property="Background" Value="#12FFFFFF" />
             </Trigger>
             <Trigger Property="IsChecked" Value="True">
-              <Setter TargetName="Bd" Property="Background" Value="#FF141416" />
+              <Setter TargetName="Bd" Property="Background" Value="#FF636366" />
               <Setter Property="Foreground" Value="White" />
             </Trigger>
             <Trigger Property="IsKeyboardFocused" Value="True">
-              <Setter TargetName="Bd" Property="BorderBrush" Value="#990A84FF" />
+              <Setter TargetName="Bd" Property="BorderBrush" Value="#CC0A84FF" />
             </Trigger>
           </ControlTemplate.Triggers>
         </ControlTemplate>
@@ -172,13 +160,46 @@
     </Setter>
   </Style>
 
-  <!-- A bare text field for paper: the card is the background. -->
+  <!-- A row in the Settings sidebar. -->
+  <Style x:Key="OwlSidebarItem" TargetType="RadioButton">
+    <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+    <Setter Property="Cursor" Value="Hand" />
+    <Setter Property="Foreground" Value="#D9FFFFFF" />
+    <Setter Property="FontFamily" Value="{StaticResource OwlFont}" />
+    <Setter Property="FontSize" Value="13" />
+    <Setter Property="Margin" Value="0,0,0,2" />
+    <Setter Property="Template">
+      <Setter.Value>
+        <ControlTemplate TargetType="RadioButton">
+          <Border x:Name="Bd" Background="Transparent" CornerRadius="8" Padding="10,6"
+                  BorderBrush="Transparent" BorderThickness="1.5">
+            <ContentPresenter HorizontalAlignment="Left" VerticalAlignment="Center" />
+          </Border>
+          <ControlTemplate.Triggers>
+            <Trigger Property="IsMouseOver" Value="True">
+              <Setter TargetName="Bd" Property="Background" Value="#0DFFFFFF" />
+            </Trigger>
+            <Trigger Property="IsChecked" Value="True">
+              <Setter TargetName="Bd" Property="Background" Value="#1FFFFFFF" />
+              <Setter Property="Foreground" Value="White" />
+            </Trigger>
+            <Trigger Property="IsKeyboardFocused" Value="True">
+              <Setter TargetName="Bd" Property="BorderBrush" Value="#CC0A84FF" />
+            </Trigger>
+          </ControlTemplate.Triggers>
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
+  </Style>
+
+  <!-- A bare text field: whatever it sits in is the background. -->
   <Style x:Key="OwlField" TargetType="TextBox">
     <Setter Property="Background" Value="Transparent" />
     <Setter Property="BorderThickness" Value="0" />
-    <Setter Property="Foreground" Value="#E6000000" />
-    <Setter Property="CaretBrush" Value="#E6000000" />
-    <Setter Property="SelectionBrush" Value="#660A84FF" />
+    <Setter Property="Foreground" Value="#EBFFFFFF" />
+    <Setter Property="CaretBrush" Value="#FF0A84FF" />
+    <Setter Property="SelectionBrush" Value="#FF0A84FF" />
+    <Setter Property="SelectionOpacity" Value="0.45" />
     <Setter Property="FontFamily" Value="{StaticResource OwlFont}" />
     <Setter Property="FontSize" Value="13.5" />
     <Setter Property="FocusVisualStyle" Value="{x:Null}" />
@@ -193,11 +214,11 @@
     </Setter>
   </Style>
 
-  <!-- On / off switch for the Settings tab. -->
+  <!-- On / off switch: the system green when on. -->
   <Style x:Key="OwlSwitch" TargetType="CheckBox">
     <Setter Property="FocusVisualStyle" Value="{x:Null}" />
     <Setter Property="Cursor" Value="Hand" />
-    <Setter Property="Foreground" Value="#E6000000" />
+    <Setter Property="Foreground" Value="#EBFFFFFF" />
     <Setter Property="FontFamily" Value="{StaticResource OwlFont}" />
     <Setter Property="FontSize" Value="13" />
     <Setter Property="Template">
@@ -209,19 +230,60 @@
               <ColumnDefinition Width="Auto" />
             </Grid.ColumnDefinitions>
             <ContentPresenter VerticalAlignment="Center" Margin="0,0,12,0" />
-            <Border x:Name="Track" Grid.Column="1" Width="34" Height="20" CornerRadius="10"
-                    Background="#33000000" BorderBrush="Transparent" BorderThickness="1.5">
-              <Ellipse x:Name="Knob" Width="14" Height="14" Fill="White"
-                       HorizontalAlignment="Left" Margin="2,0" />
+            <Border x:Name="Track" Grid.Column="1" Width="36" Height="22" CornerRadius="11"
+                    Background="#3DFFFFFF" BorderBrush="Transparent" BorderThickness="1.5">
+              <Ellipse x:Name="Knob" Width="16" Height="16" Fill="White"
+                       HorizontalAlignment="Left" Margin="1.5,0" />
             </Border>
           </Grid>
           <ControlTemplate.Triggers>
             <Trigger Property="IsChecked" Value="True">
-              <Setter TargetName="Track" Property="Background" Value="#FF1C1C1E" />
+              <Setter TargetName="Track" Property="Background" Value="#FF30D158" />
               <Setter TargetName="Knob" Property="HorizontalAlignment" Value="Right" />
             </Trigger>
+            <Trigger Property="IsEnabled" Value="False">
+              <Setter Property="Opacity" Value="0.45" />
+            </Trigger>
             <Trigger Property="IsKeyboardFocused" Value="True">
-              <Setter TargetName="Track" Property="BorderBrush" Value="#990A84FF" />
+              <Setter TargetName="Track" Property="BorderBrush" Value="#CC0A84FF" />
+            </Trigger>
+          </ControlTemplate.Triggers>
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
+  </Style>
+
+  <!-- The gap between two cards: drag it to share the width differently. Invisible
+       until the pointer finds it, then a short pill handle, as in a Mac split view. -->
+  <Style x:Key="OwlSplitter" TargetType="GridSplitter">
+    <Setter Property="Width" Value="8" />
+    <Setter Property="HorizontalAlignment" Value="Center" />
+    <Setter Property="VerticalAlignment" Value="Stretch" />
+    <Setter Property="ResizeBehavior" Value="PreviousAndNext" />
+    <Setter Property="ResizeDirection" Value="Columns" />
+    <Setter Property="Cursor" Value="SizeWE" />
+    <!-- Focusable, so the arrow keys can resize too. -->
+    <Setter Property="Focusable" Value="True" />
+    <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+    <Setter Property="KeyboardIncrement" Value="16" />
+    <Setter Property="Template">
+      <Setter.Value>
+        <ControlTemplate TargetType="GridSplitter">
+          <Grid Background="Transparent">
+            <Border x:Name="Handle" Width="4" Height="36" CornerRadius="2" Background="#66FFFFFF"
+                    HorizontalAlignment="Center" VerticalAlignment="Center" Opacity="0" />
+          </Grid>
+          <ControlTemplate.Triggers>
+            <Trigger Property="IsMouseOver" Value="True">
+              <Setter TargetName="Handle" Property="Opacity" Value="1" />
+            </Trigger>
+            <Trigger Property="IsKeyboardFocused" Value="True">
+              <Setter TargetName="Handle" Property="Opacity" Value="1" />
+              <Setter TargetName="Handle" Property="Background" Value="#FF0A84FF" />
+            </Trigger>
+            <Trigger Property="IsDragging" Value="True">
+              <Setter TargetName="Handle" Property="Opacity" Value="1" />
+              <Setter TargetName="Handle" Property="Background" Value="#FF0A84FF" />
             </Trigger>
           </ControlTemplate.Triggers>
         </ControlTemplate>

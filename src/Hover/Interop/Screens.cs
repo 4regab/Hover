@@ -3,7 +3,7 @@ using System.Windows;
 namespace Hover.Interop;
 
 /// One physical display: bounds in device pixels, its work area, and its scale.
-/// WPF lays out in DIPs, so everything the deck computes is multiplied through
+/// WPF lays out in DIPs, so everything the notch computes is multiplied through
 /// `Scale` on the way to `SetWindowPos`.
 public sealed record ScreenInfo(
     IntPtr Handle,
@@ -12,7 +12,7 @@ public sealed record ScreenInfo(
     Win32.RECT Work,
     double Scale)
 {
-    /// The display's work area in DIPs, which is what the deck lays out against.
+    /// The display's work area in DIPs, which is what the notch lays out against.
     public Rect WorkDips => new(Work.Left / Scale, Work.Top / Scale,
                                 Work.Width / Scale, Work.Height / Scale);
 

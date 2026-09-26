@@ -1,4 +1,3 @@
-using Microsoft.Data.Sqlite;
 using NUnit.Framework;
 using System.IO;
 
@@ -25,7 +24,6 @@ public sealed class TestEnvironment
     [OneTimeTearDown]
     public void TearDown()
     {
-        SqliteConnection.ClearAllPools();
         Environment.SetEnvironmentVariable("HOVER_DATA_DIR", null);
         Environment.SetEnvironmentVariable("HOVER_SHOTS_DIR", null);
         if (_root is not null && Directory.Exists(_root))

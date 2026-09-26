@@ -4,15 +4,15 @@ using System.Windows;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using Hover.Core;
-using Hover.Deck;
+using Hover.Interop;
 
 namespace Hover.Images;
 
-/// Starts a drag of a picture out of the tray. Chromium targets (Chrome/Gmail,
+/// Starts a drag of a picture out of the Screenshots card. Chromium targets (Chrome/Gmail,
 /// Discord, ChatGPT in a browser) accept a dropped image *file*, so the file drop
 /// leads. The picture bits ride along as a DIB for editors that paste on drop.
 ///
-/// The drag is run with the tray window made briefly activatable: an OLE drag from
+/// The drag is run with the notch window made briefly activatable: an OLE drag from
 /// a no-activate tool window is refused by Chromium, which is what showed the
 /// no-drop cursor.
 public static class ShotDrag
@@ -22,7 +22,7 @@ public static class ShotDrag
         try
         {
             var data = BuildData(shot);
-            var window = Window.GetWindow(source) as DeckWindow;
+            var window = Window.GetWindow(source) as HostWindow;
             if (window is not null)
                 window.WhileActivatable(() => DragDrop.DoDragDrop(source, data, DragDropEffects.Copy));
             else

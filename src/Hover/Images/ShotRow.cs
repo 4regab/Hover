@@ -1,91 +1,86 @@
 using System.Windows;
+using System.Windows.Automation.Peers;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
 using Hover.Core;
+using Hover.Owl;
 using Hover.Windows;
 
 namespace Hover.Images;
 
-/// One picture in the tray: just the thumbnail, with a small ✕ in the corner to
-/// delete it — no file name or wide buttons, so many pictures fit. Drag the
-/// thumbnail out to a folder, a website or a chat box; click it to open full size;
-/// right-click to copy.
+/// One picture in the Screenshots card: just the thumbnail, with a small ✕ that
+/// appears on hover to delete it. Drag the thumbnail out to a folder, a website or a
+/// chat box; click it to open full size; right-click to copy, rename or reveal.
 public sealed class ShotRow : Border
 {
     private readonly Shot _shot;
-    private Button _delete = null!;
+    private readonly Button _delete;
     private Point _pressAt;
     private bool _maybeDrag;
     private bool _dragging;
 
-    public const double RowHeight = 96;
+    private static readonly Brush Rest = Ui.Edge;
+    private static readonly Brush Hot = Ui.Frozen(Color.FromArgb(0x73, 0xFF, 0xFF, 0xFF));
 
-    public ShotRow(Shot shot, double width)
+    /// Decoded once at this width whatever the tile's size, so resizing the card
+    /// never goes back to the disk.
+    private const int ThumbPixels = 480;
+
+    public ShotRow(Shot shot)
     {
         _shot = shot;
-        Width = width;
-        Height = RowHeight;
-        Margin = new Thickness(0, 0, 0, 8);
-        CornerRadius = new CornerRadius(8);
+        CornerRadius = new CornerRadius(9);
         ClipToBounds = true;
-        Background = NoteColor.Tint(Colors.Black, 0.35);
-        BorderBrush = NoteColor.Tint(Colors.White, 0.10);
+        Background = Ui.Wash;
+        BorderBrush = Rest;
         BorderThickness = new Thickness(1);
         Cursor = Cursors.Hand;
-        ToolTip = $"{shot.Name}\nDrag out · click to open · right-click to copy";
+        ToolTip = $"{shot.Name}\nDrag out · click to open · right-click for more";
+        System.Windows.Automation.AutomationProperties.SetName(this, shot.Name);
+        System.Windows.Automation.AutomationProperties.SetAutomationId(this, "Shot");
 
         var grid = new Grid();
-
-        // The picture fills the row.
-        grid.Children.Add(new Image
+        var image = new Image
         {
-            Source = shot.Thumbnail((int)(width * 2)),
+            Source = shot.Thumbnail(ThumbPixels),
             Stretch = Stretch.UniformToFill,
             IsHitTestVisible = false,
-        });
-
-        // A small ✕ delete button in the top-right corner.
-        var del = new Button
-        {
-            Content = "✕",
-            FontSize = 11,
-            FontWeight = FontWeights.Bold,
-            Foreground = Brushes.White,
-            Width = 20,
-            Height = 20,
-            Padding = new Thickness(0),
-            HorizontalAlignment = HorizontalAlignment.Right,
-            VerticalAlignment = VerticalAlignment.Top,
-            Margin = new Thickness(0, 5, 5, 0),
-            Cursor = Cursors.Hand,
-            Focusable = false,
-            ToolTip = "Delete",
-            Background = new SolidColorBrush(Color.FromArgb(0xC8, 0x20, 0x20, 0x24)),
-            BorderThickness = new Thickness(0),
-            Template = RoundButtonTemplate(),
         };
-        del.Click += (_, e) => { e.Handled = true; ShotStore.Shared.Delete(_shot); };
-        grid.Children.Add(del);
-        _delete = del;
+        RenderOptions.SetBitmapScalingMode(image, BitmapScalingMode.HighQuality);
+        grid.Children.Add(image);
+
+        _delete = Ui.Button("OwlBase", Ui.Icon(Ui.IcClose, 8, Ui.White), "DeleteShot", "Delete", () => ShotStore.Shared.Delete(_shot));
+        _delete.Width = _delete.Height = 20;
+        _delete.Padding = new Thickness(0);
+        _delete.Tag = new CornerRadius(10);
+        _delete.Background = Ui.Frozen(Color.FromArgb(0xCC, 0x1C, 0x1C, 0x1E));
+        _delete.HorizontalAlignment = HorizontalAlignment.Right;
+        _delete.VerticalAlignment = VerticalAlignment.Top;
+        _delete.Margin = new Thickness(0, 5, 5, 0);
+        _delete.Focusable = false;
+        _delete.Visibility = Visibility.Hidden;
+        grid.Children.Add(_delete);
 
         Child = grid;
-
         ContextMenu = BuildMenu();
+        Popover.Track(ContextMenu);
 
         PreviewMouseLeftButtonDown += OnDown;
         PreviewMouseMove += OnMove;
         PreviewMouseLeftButtonUp += OnUp;
-        MouseEnter += (_, _) => BorderBrush = NoteColor.Tint(Colors.White, 0.5);
-        MouseLeave += (_, _) => BorderBrush = NoteColor.Tint(Colors.White, 0.10);
+        MouseEnter += (_, _) => { BorderBrush = Hot; _delete.Visibility = Visibility.Visible; };
+        MouseLeave += (_, _) => { BorderBrush = Rest; _delete.Visibility = Visibility.Hidden; };
     }
+
+    /// A Border has no automation peer of its own; the tile needs one to be found.
+    protected override AutomationPeer OnCreateAutomationPeer() => new FrameworkElementAutomationPeer(this);
 
     private void OnDown(object sender, MouseButtonEventArgs e)
     {
-        // A click on the delete button belongs to the button, not the row — don't
+        // A click on the delete button belongs to the button, not the tile — don't
         // arm a drag or an open, so the button's own Click deletes the picture.
         if (IsOnDelete(e)) return;
-        if (e.ClickCount == 2) { e.Handled = true; _maybeDrag = false; OpenFull(); return; }
         _pressAt = e.GetPosition(this);
         _maybeDrag = true;
         _dragging = false;
@@ -110,14 +105,11 @@ public sealed class ShotRow : Border
     }
 
     /// True when the event started on the delete button (or its inner content), so
-    /// the row leaves it alone.
+    /// the tile leaves it alone.
     private bool IsOnDelete(RoutedEventArgs e)
     {
-        for (var d = e.OriginalSource as DependencyObject; d is not null;
-             d = System.Windows.Media.VisualTreeHelper.GetParent(d))
-        {
+        for (var d = e.OriginalSource as DependencyObject; d is not null; d = VisualTreeHelper.GetParent(d))
             if (ReferenceEquals(d, _delete)) return true;
-        }
         return false;
     }
 
@@ -130,18 +122,18 @@ public sealed class ShotRow : Border
     private ContextMenu BuildMenu()
     {
         var menu = new ContextMenu();
-        menu.Items.Add(Item("Copy", () =>
+        menu.Items.Add(Ui.MenuItem(Ui.IcCopy, "Copy", () =>
         {
             var full = _shot.FullSize();
             if (full is not null) Clipboard.SetImage(full);
         }));
-        menu.Items.Add(Item("Rename…", () =>
+        menu.Items.Add(Ui.MenuItem(Ui.IcRename, "Rename…", () =>
         {
             var current = System.IO.Path.GetFileNameWithoutExtension(_shot.Name);
             var input = RenameDialog.Ask(Window.GetWindow(this), current);
             if (!string.IsNullOrWhiteSpace(input)) ShotStore.Shared.Rename(_shot, input);
         }));
-        menu.Items.Add(Item("Reveal in Explorer", () =>
+        menu.Items.Add(Ui.MenuItem(Ui.IcFolder, "Show in Explorer", () =>
         {
             try
             {
@@ -151,30 +143,7 @@ public sealed class ShotRow : Border
             catch (Exception ex) { Log.Line($"reveal failed — {ex.Message}"); }
         }));
         menu.Items.Add(new Separator());
-        menu.Items.Add(Item("Delete", () => ShotStore.Shared.Delete(_shot)));
+        menu.Items.Add(Ui.MenuItem(Ui.IcDelete, "Delete", () => ShotStore.Shared.Delete(_shot)));
         return menu;
-    }
-
-    private static MenuItem Item(string header, Action action)
-    {
-        var item = new MenuItem { Header = header };
-        item.Click += (_, _) => action();
-        return item;
-    }
-
-    /// A round flat button, so the corner ✕ reads as a chip rather than a boxy
-    /// default WPF button.
-    internal static ControlTemplate RoundButtonTemplate()
-    {
-        var border = new FrameworkElementFactory(typeof(Border));
-        border.SetValue(Border.CornerRadiusProperty, new CornerRadius(10));
-        border.SetBinding(Border.BackgroundProperty,
-            new System.Windows.Data.Binding("Background")
-            { RelativeSource = System.Windows.Data.RelativeSource.TemplatedParent });
-        var presenter = new FrameworkElementFactory(typeof(ContentPresenter));
-        presenter.SetValue(HorizontalAlignmentProperty, HorizontalAlignment.Center);
-        presenter.SetValue(VerticalAlignmentProperty, VerticalAlignment.Center);
-        border.AppendChild(presenter);
-        return new ControlTemplate(typeof(Button)) { VisualTree = border };
     }
 }

@@ -4,17 +4,16 @@ Guidance for humans and AI agents working in this repository.
 
 ## What Hover is
 
-A Windows desktop app (.NET 8, WPF) that keeps three surfaces a hover away:
+A Windows desktop app (.NET 8, WPF) with one surface a hover away: **the notch**
+at the top centre (after NotchOwl for Mac). At rest it is a slim pill showing the
+items the user picked — the time, a running focus timer, Kiro / Codex / Cursor
+quota gauges — or a hairline, or nothing. Hovering it, clicking it or `Alt+N`
+opens the workspace: configurable, resizable cards (today's tasks, focus timer,
+daily notepad, today's events, screenshots), Insights and Settings.
 
-- **The workspace** at the top centre — a notch (after NotchOwl for Mac) holding
-  today's tasks, a focus timer, a daily notepad, today's events, Insights and its
-  own settings. `Alt+N` opens it too.
-- **Notes** on the right edge — an edge deck of sticky notes.
-- **A screenshot tray** on the left edge — every snip and copied image, ready to
-  drag out.
-
-None of them shows until the pointer reaches it. The only ordinary windows are the
-workspace dashboard ("Open app"), All Notes and Settings; the app lives in the tray.
+The only ordinary window is the dashboard ("Open app"), the same workspace in a
+normal window; the app lives in the tray. (Sticky notes and the edge tray were
+removed in 1.1; an old `notes.db` is left on disk untouched.)
 
 ## Build, test, run
 
@@ -55,27 +54,21 @@ Windows (or with `EnableWindowsTargeting`).
 
 ```
 src/Hover/
-  Core/        Model + storage: Note, NoteStore, Store (SQLite), Crypto (AES-GCM),
-               Settings, Paths, Palette, Ink (fonts), TaskSyntax.
-  Deck/        The notes edge deck: DeckManager (one per display, polls the
-               pointer), DeckController (per-display state machine), DeckWindow
-               (the borderless, click-through host window), DeckGeom (metrics),
-               Controls/ (custom-drawn tabs, pill, preview card).
-  Editor/      The note text view: NoteTextBox (a RichTextBox that treats a note
-               as plain text), Styler (renders text -> FlowDocument with inline
-               Markdown), DocMap (maps document <-> plain-string offsets).
-  Images/      The screenshot tray: ShotStore (watches the folder + clipboard),
-               Shot, ShotRow (a thumbnail with a delete button), ShotDrag
-               (drag-out payload), ImageStripController / ImageStripManager.
-  Interop/     Win32 P/Invoke, monitor enumeration, global hotkeys, spell langs.
-  Services/    Actions (menu/shortcut commands), Transfer (import/export),
-               TrayIcon.
-  Windows/     Ordinary windows: All Notes, Settings, image preview, rename.
+  Core/        Model + storage: Settings, Paths, Crypto (AES-GCM, DPAPI key),
+               Shortcut, Log, Layout (the card layout rules and the notch item
+               ids — no WPF), Quota (Kiro / Codex / Cursor usage readers — no WPF).
+  Images/      Screenshots: ShotStore (watches the folder + clipboard), Shot,
+               ShotRow (a thumbnail tile), ShotDrag (drag-out payload).
+  Interop/     Win32 P/Invoke, monitor enumeration, global hotkeys, HostWindow
+               (the borderless, click-through window the notch is drawn in).
+  Services/    Actions (tray menu commands), TrayIcon.
+  Windows/     Image preview, rename dialog.
   Owl/         The workspace: Planner (tasks, notepad, focus time, one sealed file),
-               FocusTimer, Insights, Calendar (.ics reader), OwlApp (shared state
-               and the one-second tick), Notch (the top-centre host, one per
-               display), WorkspaceView (the cards), Pages (Insights, Settings),
-               Popover, Ui (palette, dot-matrix type, chart).
+               FocusTimer, Insights, Calendar (.ics reader), OwlApp (shared state,
+               the one-second tick, quota polling), Notch (the top-centre host, one
+               per display), WorkspaceView (header + the cards), Pages (Insights,
+               Settings), Popover, Ui (palette, dot-matrix type, chart, ring gauge).
+  Themes/      Styles.xaml (menus, tooltips), Owl.xaml (the workspace's controls).
   Assets/      hover.ico (the app icon).
 tests/Hover.Tests/   NUnit tests.
 tests/Hover.E2E/     UI Automation run against the real app. Not in Hover.slnx.
@@ -89,26 +82,30 @@ carry a legacy `Noty` reference **only** in `Core/Paths.cs`, which migrates an o
 
 ## How it works (the parts that surprise people)
 
-- **A note is a plain string.** The RichTextBox document is only a rendering of
-  that string, rebuilt after edits. Anything in the document not derived from the
-  string is discarded on the next pass. See `Editor/DocMap.cs` and `Styler.cs`.
-- **Undo is home-grown.** The document is swapped out on restyle, so WPF's undo
-  can't survive it; `NoteTextBox` keeps plain-text snapshots instead.
-- **The deck windows are borderless, topmost, and `WS_EX_NOACTIVATE`** so hovering
-  them never steals focus. That bit must be cleared for anything that needs
-  activation — keyboard focus in an open note, and OLE drag-out from the image
-  tray (Chromium refuses drags from a no-activate window). See
-  `Deck/DeckWindow.cs` (`SetAcceptsKeys`, `WhileActivatable`).
-- **Pointer is polled, not hooked.** `DeckManager` / `ImageStripManager` poll the
-  cursor every ~90 ms to notice it reaching an edge; `NotchManager` every 50 ms.
+- **The notch window is borderless, topmost, and `WS_EX_NOACTIVATE`** while
+  resting, so brushing it never steals focus. The bit comes off while the
+  workspace is open (keyboard), and briefly for an OLE drag-out of a screenshot
+  (Chromium refuses drags from a no-activate window). See `Interop/HostWindow.cs`
+  (`SetAcceptsKeys`, `WhileActivatable`).
+- **Pointer is polled, not hooked.** `NotchManager` reads the cursor every 50 ms.
 - **The workspace's timers run at `DispatcherPriority.Normal`.** WPF runs
   Background-priority work only when no input is waiting in the queue, and in
   testing that starved the focus clock and the notch poll for 8–14 s at a time.
-- **The notch reuses `DeckWindow`** — one full-size, click-through window per
-  display. The shape grows from its resting size (tab, timer, alert) to the
-  workspace by animating one `Openness` value.
-- **Note bodies are encrypted** (AES-GCM, DPAPI-wrapped key). Screenshots are
-  plain files on purpose, so they can be dragged into other apps.
+- **One full-size, click-through window per display.** The shape grows from its
+  resting size (hairline, pill, alert) to the workspace by animating one
+  `Openness` value; the window itself never resizes (that made it blink).
+- **Cards are star columns with a `GridSplitter` in every gap.** Letting go of a
+  splitter turns the laid-out widths back into star shares with the same total
+  and saves them (`Settings.Cards`). `CardLayout.Normalize` repairs any saved
+  layout: unknown ids dropped, new cards added, widths clamped, never all hidden.
+- **Quotas have no official API.** `Core/Quota.cs` reads what each tool exposes,
+  read-only: `kiro-cli chat --no-interactive /usage` output; the `rate_limits` of
+  the newest `token_count` event in `~/.codex/sessions/**/rollout-*.jsonl`; and
+  `cursor.com/api/usage-summary` with the token from Cursor's `state.vscdb`. Each
+  is off until switched on in Settings → Notch, and `OwlApp` re-reads it every five
+  minutes. A format change in any of them shows as a readable failure, not a crash.
+- **The planner is encrypted** (AES-GCM, DPAPI-wrapped key). Screenshots are plain
+  files on purpose, so they can be dragged into other apps.
 
 ## Conventions
 
@@ -129,6 +126,10 @@ carry a legacy `Noty` reference **only** in `Core/Paths.cs`, which migrates an o
 - **`str_replace` on files with `—` (em dash) and non-ASCII** can be finicky;
   anchor on unique ASCII lines.
 - **Tests need STA + a WPF Application** for anything touching controls; see the
-  `[Apartment(ApartmentState.STA)]` fixtures. `TestEnvironment` redirects the data
+  `[Apartment(ApartmentState.STA)]` fixtures. `Core/Layout.cs` and `Core/Quota.cs`
+  have no WPF, so their tests also run on Linux or macOS by linking those two
+  files into a plain `net8.0` NUnit project. `TestEnvironment` redirects the data
   and shots folders to a temp path via `HOVER_DATA_DIR` / `HOVER_SHOTS_DIR`.
 - **The single-instance mutex** will silently make a second launch exit.
+- **UI Automation can't see a `Border` or a `Panel`.** Give E2E hooks to a
+  control or a `TextBlock`, or give the element an automation peer (`ShotRow`).

@@ -10,24 +10,41 @@ using System.Windows.Shapes;
 namespace Hover.Owl;
 
 /// The workspace's palette and the small builders every card uses. The look is
-/// paper cards — green, lilac, olive, slate — on a black notch.
+/// dark graphite cards on the black notch, as widgets are drawn on a Mac: one
+/// surface colour, a hairline edge, white type in three strengths, and a single
+/// system accent per card carried only by its icon.
 internal static class Ui
 {
-    public static readonly Color Green = Rgb(0x7B, 0x9B, 0x86);
-    public static readonly Color Lilac = Rgb(0x8C, 0x83, 0xA9);
-    public static readonly Color Olive = Rgb(0x9C, 0x96, 0x5A);
-    public static readonly Color Slate = Rgb(0x7A, 0x94, 0xAB);
+    // Accents — the dark-mode system colours.
+    public static readonly Color Green = Rgb(0x30, 0xD1, 0x58);
+    public static readonly Color Purple = Rgb(0xBF, 0x5A, 0xF2);
+    public static readonly Color Yellow = Rgb(0xFF, 0xD6, 0x0A);
+    public static readonly Color Blue = Rgb(0x0A, 0x84, 0xFF);
+    public static readonly Color Teal = Rgb(0x64, 0xD2, 0xFF);
+    public static readonly Color Orange = Rgb(0xFF, 0x9F, 0x0A);
+    public static readonly Color Red = Rgb(0xFF, 0x45, 0x3A);
 
-    public static readonly Brush Ink = Frozen(Color.FromArgb(0xE6, 0, 0, 0));
-    public static readonly Brush InkDim = Frozen(Color.FromArgb(0x99, 0, 0, 0));
-    public static readonly Brush InkFaint = Frozen(Color.FromArgb(0x66, 0, 0, 0));
-    public static readonly Brush Wash = Frozen(Color.FromArgb(0x14, 0, 0, 0));
-    public static readonly Brush WashStrong = Frozen(Color.FromArgb(0x24, 0, 0, 0));
+    public static readonly Brush Surface = Frozen(Rgb(0x1C, 0x1C, 0x1E));
+    public static readonly Brush SurfaceRaised = Frozen(Rgb(0x2C, 0x2C, 0x2E));
+    public static readonly Brush Edge = Frozen(Color.FromArgb(0x14, 0xFF, 0xFF, 0xFF));
+
+    public static readonly Brush Ink = Frozen(Color.FromArgb(0xEB, 0xFF, 0xFF, 0xFF));
+    public static readonly Brush InkDim = Frozen(Color.FromArgb(0x8C, 0xFF, 0xFF, 0xFF));
+    public static readonly Brush InkFaint = Frozen(Color.FromArgb(0x4D, 0xFF, 0xFF, 0xFF));
+    public static readonly Brush Wash = Frozen(Color.FromArgb(0x0F, 0xFF, 0xFF, 0xFF));
+    public static readonly Brush WashStrong = Frozen(Color.FromArgb(0x1F, 0xFF, 0xFF, 0xFF));
     public static readonly Brush White = Frozen(Colors.White);
     public static readonly Brush WhiteDim = Frozen(Color.FromArgb(0xA6, 0xFF, 0xFF, 0xFF));
+    public static readonly Brush Black = Frozen(Colors.Black);
 
     public static readonly FontFamily Font = new("Segoe UI Variable Text, Segoe UI");
+    public static readonly FontFamily Display = new("Segoe UI Variable Display, Segoe UI");
     public static readonly FontFamily Icons = new("Segoe Fluent Icons, Segoe MDL2 Assets");
+
+    public static Brush Accent(Color c) => Frozen(c);
+
+    /// Green, then amber, then red as a quota fills.
+    public static Color Level(double used) => used < 70 ? Green : used < 90 ? Orange : Red;
 
     // Segoe Fluent Icons / MDL2 code points.
     public const string IcPlay = "\uE768", IcPause = "\uE769", IcCheck = "\uE73E", IcMore = "\uE712",
@@ -38,7 +55,9 @@ internal static class Ui
         IcClock = "\uE917", IcBolt = "\uE945", IcSliders = "\uE9E9", IcRing = "\uEA3A",
         IcDone = "\uE930", IcTarget = "\uF272", IcChecklist = "\uE9D5", IcCompose = "\uE70B",
         IcSettings = "\uE713", IcFolder = "\uE8B7", IcWarning = "\uE7BA", IcDoneSolid = "\uEC61",
-        IcChevronUp = "\uE70E";
+        IcChevronUp = "\uE70E", IcPhoto = "\uE91B", IcLayout = "\uECA5", IcChevronLeft = "\uE76B",
+        IcChevronRight = "\uE76C", IcGauge = "\uEC4A", IcNotch = "\uE7F4", IcView = "\uE890",
+        IcHide = "\uED1A", IcReset = "\uE777";
 
     public static Color Rgb(byte r, byte g, byte b) => Color.FromRgb(r, g, b);
 
@@ -122,7 +141,7 @@ internal static class Ui
     public static Button IconButton(string glyph, string id, string name, Action onClick, double size = 12,
         Brush? fg = null)
     {
-        var b = Button("OwlIconButton", Icon(glyph, size, fg), id, name, onClick);
+        var b = Button("OwlIconButton", Icon(glyph, size, fg ?? InkDim), id, name, onClick);
         b.Padding = new Thickness(5);
         return b;
     }
@@ -132,64 +151,47 @@ internal static class Ui
         FontWeight? weight = null) =>
         Row(Icon(glyph, size - 1, fg).Margin(0, 1, 6), Text(text, size, fg, weight));
 
-    /// A paper card: colour, grain and rounded corners.
-    public static Border Card(Color colour, UIElement content, double radius = 16)
+    /// Corner radius of a card. The open notch is rounded at 24 and cards sit 10 in
+    /// from its edge, so 14 keeps the corners concentric.
+    public const double CardRadius = 14;
+
+    /// A card: the graphite surface, a hairline edge and a faint top light, so it
+    /// reads as a raised pane rather than a flat rectangle.
+    public static Border Card(UIElement content, double radius = CardRadius)
     {
         var grid = new Grid();
-        grid.Children.Add(new Border { Background = Grain, CornerRadius = new CornerRadius(radius) });
+        grid.Children.Add(new Border { Background = Sheen, CornerRadius = new CornerRadius(radius), IsHitTestVisible = false });
         grid.Children.Add(content);
         return new Border
         {
-            Background = new SolidColorBrush(colour),
+            Background = Surface,
+            BorderBrush = Edge,
+            BorderThickness = new Thickness(1),
             CornerRadius = new CornerRadius(radius),
             Child = grid,
-            ClipToBounds = false,
+            SnapsToDevicePixels = true,
         };
     }
 
-    /// A light speckle over each card, the texture of paper. Drawn once, tiled.
-    private static readonly Brush Grain = MakeGrain();
+    private static readonly Brush Sheen = MakeSheen();
 
-    private static Brush MakeGrain()
+    private static Brush MakeSheen()
     {
-        const int S = 96;
-        var px = new byte[S * S * 4];
-        var rnd = new Random(7);
-        for (var i = 0; i < S * S; i++)
-        {
-            var light = rnd.Next(2) == 0;
-            var a = (byte)rnd.Next(0, 26);
-            var v = light ? (byte)255 : (byte)0;
-            // Premultiplied BGRA.
-            var pv = (byte)(v * a / 255);
-            px[i * 4] = pv; px[i * 4 + 1] = pv; px[i * 4 + 2] = pv; px[i * 4 + 3] = a;
-        }
-        var bmp = BitmapSource.Create(S, S, 96, 96, PixelFormats.Pbgra32, null, px, S * 4);
-        bmp.Freeze();
-        var brush = new ImageBrush(bmp)
-        {
-            TileMode = TileMode.Tile,
-            Viewport = new Rect(0, 0, S / 2.0, S / 2.0),
-            ViewportUnits = BrushMappingMode.Absolute,
-            Stretch = Stretch.Fill,
-        };
-        brush.Freeze();
-        return brush;
+        var b = new LinearGradientBrush(Color.FromArgb(0x0A, 0xFF, 0xFF, 0xFF), Color.FromArgb(0, 0xFF, 0xFF, 0xFF), 90);
+        b.Freeze();
+        return b;
     }
 
-    /// The dotted rule between task rows.
-    public static Line Dots(Brush? stroke = null) => new()
-    {
-        X1 = 0, X2 = 4000, Y1 = 0.5, Y2 = 0.5,
-        Stroke = stroke ?? InkFaint,
-        StrokeThickness = 1.4,
-        StrokeDashArray = new DoubleCollection { 0.1, 2.6 },
-        StrokeDashCap = PenLineCap.Round,
-        Height = 2,
-        ClipToBounds = true,
-        HorizontalAlignment = HorizontalAlignment.Stretch,
-        SnapsToDevicePixels = true,
-    };
+    /// A card's title row: the accent-tinted glyph, then the title.
+    public static StackPanel CardTitle(string glyph, string title, Color accent) =>
+        Row(Icon(glyph, 13, Accent(accent)).Margin(0, 1, 8), Text(title, 13.5, Ink, FontWeights.SemiBold));
+
+    /// The quiet capitals over a group: "TODAY", "REMINDERS".
+    public static TextBlock Section(string text) =>
+        Text(text.ToUpper(CultureInfo.CurrentCulture), 10.5, InkDim, FontWeights.SemiBold);
+
+    /// A one-pixel rule between rows.
+    public static Border Hairline() => Rule(Wash);
 
     public static Border Rule(Brush? fill = null) => new()
     {
@@ -342,10 +344,10 @@ internal sealed class BarChart : FrameworkElement
     public event Action<int>? Picked;
 
     private int? _hover;
-    private static readonly Brush FrontBrush = Ui.Frozen(Color.FromRgb(0x1C, 0x1C, 0x1E));
-    private static readonly Brush BackBrush = Ui.Frozen(Color.FromArgb(0x38, 0x14, 0x10, 0x30));
-    private static readonly Pen GridPen = new(Ui.Frozen(Color.FromArgb(0x1A, 0, 0, 0)), 1);
-    private static readonly Pen HoverPen = new(Ui.Frozen(Color.FromArgb(0x80, 0, 0, 0)), 1);
+    public static readonly Brush FrontBrush = Ui.Accent(Ui.Purple);
+    public static readonly Brush BackBrush = Ui.Frozen(Color.FromArgb(0x2E, 0xFF, 0xFF, 0xFF));
+    private static readonly Pen GridPen = new(Ui.Frozen(Color.FromArgb(0x14, 0xFF, 0xFF, 0xFF)), 1);
+    private static readonly Pen HoverPen = new(Ui.Frozen(Color.FromArgb(0x66, 0xFF, 0xFF, 0xFF)), 1);
 
     private const double Axis = 34, LabelBand = 40;
 
@@ -427,5 +429,53 @@ internal sealed class BarChart : FrameworkElement
     {
         var h = Math.Max(2, plotH * v / max);
         dc.DrawRoundedRectangle(fill, null, new Rect(cx - w / 2, top + plotH - h, w, h), 3, 3);
+    }
+}
+
+
+/// A small ring gauge: a faint track and an arc for the share used, tinted green,
+/// amber or red as it fills. Null draws the track alone — nothing read yet.
+internal sealed class Ring : FrameworkElement
+{
+    private double? _value;
+    public double? Value
+    {
+        get => _value;
+        set { if (_value == value) return; _value = value; InvalidateVisual(); }
+    }
+
+    public double Stroke { get; set; } = 2;
+
+    private static readonly Pen Track = MakeTrack();
+
+    private static Pen MakeTrack()
+    {
+        var p = new Pen(Ui.Frozen(Color.FromArgb(0x38, 0xFF, 0xFF, 0xFF)), 2);
+        p.Freeze();
+        return p;
+    }
+
+    protected override Size MeasureOverride(Size available) => new(Width is > 0 ? Width : 12, Height is > 0 ? Height : 12);
+
+    protected override void OnRender(DrawingContext dc)
+    {
+        var r = Math.Min(ActualWidth, ActualHeight) / 2 - Stroke / 2;
+        if (r <= 0) return;
+        var c = new Point(ActualWidth / 2, ActualHeight / 2);
+        dc.DrawEllipse(null, Stroke == 2 ? Track : new Pen(Track.Brush, Stroke), c, r, r);
+        if (_value is not { } v || v <= 0) return;
+        var pen = new Pen(Ui.Accent(Ui.Level(v)), Stroke) { StartLineCap = PenLineCap.Round, EndLineCap = PenLineCap.Round };
+        if (v >= 99.95) { dc.DrawEllipse(null, pen, c, r, r); return; }
+        var a = v / 100 * 2 * Math.PI;
+        var start = new Point(c.X, c.Y - r);
+        var end = new Point(c.X + r * Math.Sin(a), c.Y - r * Math.Cos(a));
+        var g = new StreamGeometry();
+        using (var ctx = g.Open())
+        {
+            ctx.BeginFigure(start, false, false);
+            ctx.ArcTo(end, new Size(r, r), 0, v > 50, SweepDirection.Clockwise, true, false);
+        }
+        g.Freeze();
+        dc.DrawGeometry(null, pen, g);
     }
 }

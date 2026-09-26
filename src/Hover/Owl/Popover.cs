@@ -9,14 +9,14 @@ using System.Windows.Media.Effects;
 
 namespace Hover.Owl;
 
-/// The small light sheets that drop from a row or the timer: focus duration and a
+/// The small dark sheets that drop from a row or the timer: focus duration and a
 /// custom reminder time.
 internal static class Popover
 {
     /// Count of popovers and menus open right now; the notch stays open while > 0.
     public static int Open { get; private set; }
 
-    private static readonly Brush Sheet = Ui.Frozen(Color.FromArgb(0xF5, 0xDD, 0xE4, 0xE6));
+    private static readonly Brush Sheet = Ui.Frozen(Color.FromArgb(0xFA, 0x2C, 0x2C, 0x2E));
 
     /// A sheet centred under its anchor, with an arrow pointing up at it — as wide as
     /// a task row when it drops from one.
@@ -27,6 +27,8 @@ internal static class Popover
         var card = new Border
         {
             Background = Sheet,
+            BorderBrush = Ui.Edge,
+            BorderThickness = new Thickness(1),
             CornerRadius = new CornerRadius(12),
             Padding = new Thickness(18, 14, 18, 14),
             Width = width,
@@ -42,7 +44,7 @@ internal static class Popover
         var sheet = new StackPanel
         {
             Margin = new Thickness(Shadow),
-            Effect = new DropShadowEffect { BlurRadius = 24, ShadowDepth = 4, Direction = 270, Opacity = 0.35 },
+            Effect = new DropShadowEffect { BlurRadius = 28, ShadowDepth = 6, Direction = 270, Opacity = 0.55 },
         };
         sheet.Children.Add(arrow);
         sheet.Children.Add(card);
@@ -102,7 +104,7 @@ internal static class Popover
             var v = Parse(custom.Text);
             foreach (var (m, rb) in radios) rb.IsChecked = v == m;
         };
-        s.Children.Add(new Border { Background = Ui.Wash, CornerRadius = new CornerRadius(6), Padding = new Thickness(2), Child = presets });
+        s.Children.Add(new Border { Background = Ui.Wash, CornerRadius = new CornerRadius(8), Padding = new Thickness(2), Child = presets });
 
         void Nudge(int by) => custom.Text = Math.Clamp((Parse(custom.Text) ?? minutes) + by, 1, 600).ToString(CultureInfo.CurrentCulture);
         var stepper = new StackPanel { Margin = new Thickness(6, 0, 0, 0) };
@@ -177,7 +179,7 @@ internal static class Popover
         }
         s.Children.Add(Line("Date", date));
         s.Children.Add(Line("Time", time));
-        var error = Ui.Text("", 12, Ui.Frozen(Color.FromRgb(0x9A, 0x16, 0x16)));
+        var error = Ui.Text("", 12, Ui.Accent(Ui.Red));
         s.Children.Add(error);
         s.Children.Add(Ui.Rule().Margin(0, 10, 0, 12));
 
