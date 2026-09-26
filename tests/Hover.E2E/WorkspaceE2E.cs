@@ -69,6 +69,12 @@ public sealed class WorkspaceE2E
     {
         if (TestContext.CurrentContext.Result.Outcome.Status != NUnit.Framework.Interfaces.TestStatus.Failed) return;
         Shot("FAILED-" + TestContext.CurrentContext.Test.MethodName);
+        try   // diag: what the app was doing while the step failed
+        {
+            var log = Path.Combine(_root, "data", "hover.log");
+            TestContext.Progress.WriteLine("diag: app log tail at failure —\n" + string.Join("\n", File.ReadAllLines(log).TakeLast(25)));
+        }
+        catch (Exception e) { TestContext.Progress.WriteLine("diag: no log — " + e.Message); }
         try
         {
             Keys.Press(Keys.Escape);

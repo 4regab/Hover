@@ -561,8 +561,14 @@ public sealed class NotchManager : IDisposable
         }
     }
 
+    private long _lastPoll = -1;                                                         // diag
+    private static readonly System.Diagnostics.Stopwatch PollClock = System.Diagnostics.Stopwatch.StartNew();   // diag
+
     private void Tick()
     {
+        var at = PollClock.ElapsedMilliseconds;                                          // diag
+        if (_lastPoll >= 0 && at - _lastPoll > 1500) Log.Line($"diag: poll gap {at - _lastPoll} ms");   // diag
+        _lastPoll = at;                                                                  // diag
         var now = DateTime.Now;
         // Enumerating displays costs a P/Invoke per monitor; they rarely change.
         if (now - _lastDisplayCheck > TimeSpan.FromSeconds(2))

@@ -44,6 +44,7 @@ public static class OwlApp
 
     public static void Start()
     {
+        Log.Line($"diag: render tier {System.Windows.Media.RenderCapability.Tier >> 16}");   // diag
         Timer.Credited += (start, span) => Planner.AddFocus(start, span);
         ResetDuration();
         _day = Planner.Today;
@@ -72,7 +73,8 @@ public static class OwlApp
 
     private static void OnTick()
     {
-        System.Threading.Interlocked.Exchange(ref _lastTickMs, Up.ElapsedMilliseconds);   // diag
+        var gap = Up.ElapsedMilliseconds - System.Threading.Interlocked.Exchange(ref _lastTickMs, Up.ElapsedMilliseconds);   // diag
+        if (_ticks > 0 && gap > 1500) Log.Line($"diag: tick gap {gap} ms");   // diag
         if (++_ticks % 4 == 0)                                                            // diag
             Log.Line($"diag: tick {_ticks} mono={Up.ElapsedMilliseconds} wall={DateTime.Now:HH:mm:ss.fff} {Timer.State}/{(Timer.Stopwatch ? "sw" : "cd")} " +
                      $"elapsed={Timer.Elapsed.TotalSeconds:0.0}s {Timer.Text} subs={Tick?.GetInvocationList().Length ?? 0}");

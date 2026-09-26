@@ -9,7 +9,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        attempt: [1, 2, 3]   # diag: repeat the E2E to catch an intermittent stall
+        attempt: [1, 2, 3, 4]   # diag: repeat the E2E to catch an intermittent stall
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
