@@ -45,11 +45,20 @@ public sealed class TrayIcon : IDisposable
         {
             if (e.Button == MouseButtons.Left)
             {
-                Actions.OpenAllNotes();
+                Hover.Owl.OwlApp.OpenDashboard?.Invoke();
                 return;
             }
             ShowMenu();
         };
+    }
+
+    /// A Windows notification from the tray icon. The time's-up chime is played here
+    /// too, since Windows silences notifications during a Focus session — exactly
+    /// when a focus timer ends.
+    public void Notify(string title, string text)
+    {
+        if (title == "Time's up") System.Media.SystemSounds.Asterisk.Play();
+        _icon.ShowBalloonTip(6000, title, text, ToolTipIcon.None);
     }
 
     private void ShowMenu()

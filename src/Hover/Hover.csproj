@@ -34,4 +34,9 @@
     <PackageReference Include="Microsoft.Data.Sqlite" Version="8.0.10" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- Also a WPF resource: the workspace header draws the icon from it. -->
+    <Resource Include="Assets\hover.ico" />
+  </ItemGroup>
+
 </Project>

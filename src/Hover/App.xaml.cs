@@ -4,6 +4,7 @@ using Hover.Core;
 using Hover.Deck;
 using Hover.Images;
 using Hover.Interop;
+using Hover.Owl;
 using Hover.Services;
 using Hover.Windows;
 
@@ -15,6 +16,7 @@ public partial class App : Application
 
     private DeckManager? _decks;
     private ImageStripManager? _imageStrips;
+    private NotchManager? _notch;
     private HotKeys? _hotKeys;
     private TrayIcon? _tray;
     private string? _reportedHotKeyFailures;
@@ -47,10 +49,19 @@ public partial class App : Application
         _imageStrips = new ImageStripManager();
         Actions.ImageStrips = _imageStrips;
 
+        // The workspace: tasks, focus timer, notepad and events at the top centre.
+        OwlApp.Start();
+        _notch = new NotchManager();
+
         _hotKeys = new HotKeys();
         RegisterHotKeys();
 
         _tray = new TrayIcon();
+        OwlApp.Notify = (title, text) =>
+        {
+            _notch?.Alert(title, text);
+            _tray?.Notify(title, text);
+        };
         UndoToast.Shared.Start();
 
         Log.Line("started");
@@ -64,6 +75,7 @@ public partial class App : Application
         _hotKeys.Clear();
 
         var failed = new List<(string Command, Shortcut Shortcut)>();
+        TryRegister("Open workspace", Settings.ScWorkspace, () => _notch?.Toggle());
         TryRegister("New note", Settings.ScNewNote, Actions.NewNote);
         TryRegister("All Notes", Settings.ScAllNotes, Actions.OpenAllNotes);
         TryRegister("Archive", Settings.ScArchive, Actions.OpenArchive);
@@ -111,6 +123,9 @@ public partial class App : Application
 
     protected override void OnExit(ExitEventArgs e)
     {
+        // Bank a running session's focus time before anything is torn down.
+        OwlApp.Shutdown();
+        _notch?.Dispose();
         _tray?.Dispose();
         _hotKeys?.Dispose();
         _decks?.Dispose();

@@ -50,6 +50,7 @@ public sealed class SettingsWindow : Window
         _body.Children.Add(Heading("Shortcuts"));
         _body.Children.Add(Hint("Click a shortcut and press the keys you want. " +
                                 "Global ones need no special permission."));
+        _body.Children.Add(ShortcutRow("Open workspace", () => Settings.ScWorkspace, v => Settings.ScWorkspace = v, global: true));
         _body.Children.Add(ShortcutRow("New note", () => Settings.ScNewNote, v => Settings.ScNewNote = v, global: true));
         _body.Children.Add(ShortcutRow("All Notes", () => Settings.ScAllNotes, v => Settings.ScAllNotes = v, global: true));
         _body.Children.Add(ShortcutRow("Archive", () => Settings.ScArchive, v => Settings.ScArchive = v, global: true));
@@ -358,6 +359,7 @@ public sealed class SettingsWindow : Window
 
     private static IEnumerable<(string Title, Shortcut Shortcut)> AllShortcuts()
     {
+        yield return ("Open workspace", Settings.ScWorkspace);
         yield return ("New note", Settings.ScNewNote);
         yield return ("All Notes", Settings.ScAllNotes);
         yield return ("Archive", Settings.ScArchive);

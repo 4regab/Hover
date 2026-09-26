@@ -155,6 +155,9 @@ public static class Actions
     {
         var menu = new ContextMenu();
 
+        menu.Items.Add(Item($"Open Workspace  {Settings.ScWorkspace}", () => Hover.Owl.OwlApp.ShowWorkspace?.Invoke()));
+        menu.Items.Add(Item("Open Dashboard", () => Hover.Owl.OwlApp.OpenDashboard?.Invoke()));
+        menu.Items.Add(new Separator());
         menu.Items.Add(Item($"New Note  {Settings.ScNewNote}", NewNote));
         menu.Items.Add(Item($"All Notes  {Settings.ScAllNotes}", OpenAllNotes));
         menu.Items.Add(Item($"Archive  {Settings.ScArchive}", OpenArchive));
