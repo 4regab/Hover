@@ -1,4 +1,4 @@
-"""Writes Hover's icon: assets/hover.svg and src/Hover/Assets/hover.ico.
+"""Writes Hover's icon: assets/logo.svg and src/Hover/Assets/hover.ico.
 
     python assets/make-icon.py        (needs Pillow: pip install pillow)
 
@@ -111,7 +111,7 @@ def svg():
 
 
 if __name__ == "__main__":
-    (ROOT / "assets" / "hover.svg").write_text(svg(), encoding="utf-8")
+    (ROOT / "assets" / "logo.svg").write_text(svg(), encoding="utf-8")
     ico_path = ROOT / "src" / "Hover" / "Assets" / "hover.ico"
     ico_path.write_bytes(ico([frame(s) for s in SIZES]))
 
@@ -124,4 +124,4 @@ if __name__ == "__main__":
     assert small.getpixel((7, 7)) == (255, 255, 255, 255), "crossbar"
     assert small.getpixel((4, 8)) == (255, 255, 255, 255), "left stem"
     assert small.getpixel((0, 0))[3] == 0, "outside the tile"
-    print(f"wrote {ico_path.relative_to(ROOT)} ({ico_path.stat().st_size} bytes) and assets/hover.svg")
+    print(f"wrote {ico_path.relative_to(ROOT)} ({ico_path.stat().st_size} bytes) and assets/logo.svg")
