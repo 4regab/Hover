@@ -384,36 +384,13 @@ public sealed class WorkspaceE2E
         AutomationElement? dialog = null;
         Wait(() => (dialog = Notch()?.FindFirst(TreeScope.Children, isDialog)
             ?? HoverWindows().FirstOrDefault(w => w.Current.ClassName == "#32770")) is not null, "the save dialog opens");
-        AutomationElement? name = null;
-        Wait(() => (name = dialog!.FindFirst(TreeScope.Descendants, new AndCondition(
-            new PropertyCondition(AutomationElement.AutomationIdProperty, "1001"),
-            new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.Edit)))) is not null, "the file name box is there");
-        SetValue(name!, file);
-        // diag: what the dialog holds and what is about to be pressed.
-        TestContext.Progress.WriteLine($"diag: name box reads '{((ValuePattern)name!.GetCurrentPattern(ValuePattern.Pattern)).Current.Value}'");
-        foreach (AutomationElement c in dialog!.FindAll(TreeScope.Children, Condition.TrueCondition))
-            TestContext.Progress.WriteLine($"diag: dialog child id='{c.Current.AutomationId}' name='{c.Current.Name}' {c.Current.ControlType.ProgrammaticName}");
-        var save = dialog!.FindFirst(TreeScope.Children, new PropertyCondition(AutomationElement.AutomationIdProperty, "1"));
-        TestContext.Progress.WriteLine($"diag: invoking '{save?.Current.Name}' ({save?.Current.ControlType.ProgrammaticName})");
-        Invoke(save!);
-        Thread.Sleep(2500);
-        if (!File.Exists(file))
-        {
-            var log = Path.Combine(_root, "data", "hover.log");
-            TestContext.Progress.WriteLine("diag: log tail —\n" + string.Join("\n", File.ReadAllLines(log).TakeLast(4)));
-            var docs = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
-            foreach (var f in Directory.EnumerateFiles(docs, "Hover planner*.json", SearchOption.AllDirectories))
-                TestContext.Progress.WriteLine($"diag: found {f}");
-            TestContext.Progress.WriteLine($"diag: dialog still open: {Notch()?.FindFirst(TreeScope.Children, isDialog) is not null}");
-            // The way a person does it: the dialog opens with its name box focused.
-            Invoke(WaitFind("ExportBackup"));
-            Wait(() => Notch()?.FindFirst(TreeScope.Children, isDialog) is not null, "the save dialog opens again");
-            Thread.Sleep(500);
-            Keys.Type(file);
-            Keys.Press(Keys.Return);
-            Thread.Sleep(1500);
-            TestContext.Progress.WriteLine($"diag: typed path saved: {File.Exists(file)}; log —\n" + string.Join("\n", File.ReadAllLines(log).TakeLast(3)));
-        }
+        // The dialog opens with its file name selected. Setting that box through UI
+        // Automation changes the text but not the dialog's own idea of the name, so
+        // the path is typed, as a person would.
+        Thread.Sleep(600);
+        Keys.Type(file);
+        Keys.Press(Keys.Return);
+        Wait(() => Notch()?.FindFirst(TreeScope.Children, isDialog) is null, "the save dialog closes");
         Wait(() => File.Exists(file), "the backup is written");
         using var json = System.Text.Json.JsonDocument.Parse(File.ReadAllText(file));
         var titles = json.RootElement.GetProperty("Tasks").EnumerateArray().Select(t => t.GetProperty("Title").GetString()).ToList();

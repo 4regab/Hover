@@ -311,15 +311,16 @@ internal sealed class SettingsPage
         // Data
         var export = Ui.Button("OwlDarkButton", "Export JSON backup…", "ExportBackup", "Export JSON backup", () =>
         {
+            // Without InitialDirectory the dialog opens in the working directory —
+            // Program Files for an installed copy, where nothing can be saved.
             var dlg = new Microsoft.Win32.SaveFileDialog
             {
                 FileName = $"Hover planner {DateTime.Now:yyyy-MM-dd}.json",
                 Filter = "JSON (*.json)|*.json",
+                InitialDirectory = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
             };
-            var chosen = dlg.ShowDialog();
-            Log.Line($"export: dialog returned {chosen?.ToString() ?? "null"} for '{dlg.FileName}'");   // diag
-            if (chosen != true) return;
-            try { planner.Export(dlg.FileName); Log.Line("export: written"); }
+            if (dlg.ShowDialog() != true) return;
+            try { planner.Export(dlg.FileName); }
             catch (Exception e)
             {
                 Log.Line($"export failed — {e.Message}");

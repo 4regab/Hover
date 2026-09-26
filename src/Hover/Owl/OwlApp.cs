@@ -33,6 +33,10 @@ public static class OwlApp
 
     private static DispatcherTimer? _tick;
     private static bool _ending;
+    private static int _ticks;                                   // diag
+    private static long _lastTickMs;                              // diag
+    private static readonly System.Diagnostics.Stopwatch Up = System.Diagnostics.Stopwatch.StartNew();   // diag
+    private static System.Threading.Timer? _watchdog;             // diag
     private static DateOnly _day;
     private static string? _ics;
     private static DateTime _fetched = DateTime.MinValue;
@@ -55,6 +59,12 @@ public static class OwlApp
         _tick = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
         _tick.Tick += (_, _) => OnTick();
         _tick.Start();
+        // diag: notice, off the UI thread, when the one-second tick stops arriving.
+        _watchdog = new System.Threading.Timer(_ =>
+        {
+            var age = Up.ElapsedMilliseconds - System.Threading.Interlocked.Read(ref _lastTickMs);
+            if (age > 2500) Log.Line($"diag: watchdog — no tick for {age} ms (enabled {_tick?.IsEnabled})");
+        }, null, 2000, 2000);
         _ = RefreshCalendar();
     }
 
@@ -62,6 +72,10 @@ public static class OwlApp
 
     private static void OnTick()
     {
+        System.Threading.Interlocked.Exchange(ref _lastTickMs, Up.ElapsedMilliseconds);   // diag
+        if (++_ticks % 4 == 0)                                                            // diag
+            Log.Line($"diag: tick {_ticks} mono={Up.ElapsedMilliseconds} wall={DateTime.Now:HH:mm:ss.fff} {Timer.State}/{(Timer.Stopwatch ? "sw" : "cd")} " +
+                     $"elapsed={Timer.Elapsed.TotalSeconds:0.0}s {Timer.Text} subs={Tick?.GetInvocationList().Length ?? 0}");
         if (Timer.Finished)
         {
             var task = Planner.Find(Timer.TaskId);
