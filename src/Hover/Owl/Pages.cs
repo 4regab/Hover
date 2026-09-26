@@ -316,9 +316,15 @@ internal sealed class SettingsPage
                 FileName = $"Hover planner {DateTime.Now:yyyy-MM-dd}.json",
                 Filter = "JSON (*.json)|*.json",
             };
-            if (dlg.ShowDialog() != true) return;
-            try { planner.Export(dlg.FileName); }
-            catch (Exception e) { MessageBox.Show(e.Message, "Export failed", MessageBoxButton.OK, MessageBoxImage.Warning); }
+            var chosen = dlg.ShowDialog();
+            Log.Line($"export: dialog returned {chosen?.ToString() ?? "null"} for '{dlg.FileName}'");   // diag
+            if (chosen != true) return;
+            try { planner.Export(dlg.FileName); Log.Line("export: written"); }
+            catch (Exception e)
+            {
+                Log.Line($"export failed — {e.Message}");
+                MessageBox.Show(e.Message, "Export failed", MessageBoxButton.OK, MessageBoxImage.Warning);
+            }
         });
         export.HorizontalAlignment = HorizontalAlignment.Left;
         var quit = Ui.Button("OwlLightButton", "Quit Hover", "Quit", "Quit Hover", Hover.Services.Actions.Quit);
