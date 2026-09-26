@@ -226,7 +226,13 @@ public static class Calendar
             yield break;
         }
         var r = e.Rule;
-        var freq = r.GetValueOrDefault("FREQ", "DAILY");
+        var freq = r.GetValueOrDefault("FREQ", "");
+        // Sub-daily rules are not expanded; their first occurrence still shows.
+        if (freq is not ("DAILY" or "WEEKLY" or "MONTHLY" or "YEARLY"))
+        {
+            yield return start;
+            yield break;
+        }
         var interval = int.TryParse(r.GetValueOrDefault("INTERVAL"), out var iv) && iv > 0 ? iv : 1;
         int? count = int.TryParse(r.GetValueOrDefault("COUNT"), out var c) ? c : null;
         DateTime? last = null;
@@ -260,7 +266,7 @@ public static class Calendar
                     "WEEKLY" => start.Wall.AddDays(7 * interval * step),
                     "MONTHLY" => start.Wall.AddMonths(interval * step),
                     "YEARLY" => start.Wall.AddYears(interval * step),
-                    _ => start.Wall.AddDays(interval * step),
+                    _ => start.Wall.AddDays(interval * step),   // DAILY
                 };
                 // AddMonths clamps Jan 31 to Feb 28; RFC 5545 skips such months instead.
                 if (freq is "MONTHLY" or "YEARLY" && w.Day != start.Wall.Day) continue;

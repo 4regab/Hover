@@ -43,7 +43,7 @@ public sealed class Planner
     private static Planner? _shared;
     public static Planner Shared => _shared ??= new Planner(Path.Combine(Paths.Support, "planner.dat"));
 
-    private readonly string? _path;
+    private string? _path;
     private readonly Func<DateTime> _now;
     public PlannerData Data { get; private set; } = new();
     public event Action? Changed;
@@ -73,9 +73,15 @@ public sealed class Planner
         }
         catch (Exception e)
         {
-            // Never write over a file we could not read: park it where it can be recovered.
+            // Never write over a file we could not read: park it where it can be
+            // recovered, and if even that fails, keep this session in memory only.
             Log.Line($"planner load failed — {e.Message}");
-            try { File.Copy(_path, _path + ".unreadable-" + DateTime.Now.ToString("yyyyMMddHHmmss"), true); } catch { }
+            try { File.Copy(_path, _path + ".unreadable-" + DateTime.Now.ToString("yyyyMMddHHmmss"), true); }
+            catch (Exception copy)
+            {
+                Log.Line($"planner backup failed — {copy.Message}; not saving over the original");
+                _path = null;
+            }
             Data = new PlannerData();
         }
     }

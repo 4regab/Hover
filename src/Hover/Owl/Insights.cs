@@ -24,7 +24,8 @@ public static class Insights
     {
         var day = Day(d, today).Active ? today : today.AddDays(-1);
         var n = 0;
-        // ponytail: walks back one day at a time, capped at ten years.
+        // ponytail: walks back a day at a time, each day a scan of every task, capped
+        // at ten years. Fine for years of tasks; index tasks by day if it ever shows.
         while (n < 3650 && Day(d, day).Active) { n++; day = day.AddDays(-1); }
         return n;
     }

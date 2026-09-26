@@ -271,6 +271,14 @@ public sealed class CalendarTests
     }
 
     [Test]
+    public void SubDailyRulesShowOnlyTheirFirstOccurrence()
+    {
+        var ics = Ics(Ev("UID:h\nSUMMARY:Ping\nDTSTART:20260916T090000\nDTEND:20260916T091000\nRRULE:FREQ=HOURLY"));
+        Assert.That(Calendar.For(ics, new DateOnly(2026, 9, 16)), Has.Count.EqualTo(1));
+        Assert.That(Calendar.For(ics, new DateOnly(2026, 9, 17)), Is.Empty);
+    }
+
+    [Test]
     public void DailyIntervalUntilAndMonthlySkipsShortMonths()
     {
         var ics = Ics(
