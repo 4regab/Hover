@@ -79,7 +79,8 @@ src/Hover/
   Assets/      hover.ico (the app icon).
 tests/Hover.Tests/   NUnit tests.
 tests/Hover.E2E/     UI Automation run against the real app. Not in Hover.slnx.
-assets/hover.svg     Icon source (the .ico in src/Hover/Assets was generated from it).
+assets/make-icon.py  Writes assets/hover.svg and src/Hover/Assets/hover.ico, each .ico
+                     size drawn on its own pixel grid. Edit it, not its output. Needs Pillow.
 installer/Hover.iss  Inno Setup script (driven by build.ps1).
 ```
 
