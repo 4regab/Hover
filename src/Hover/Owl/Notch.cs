@@ -36,6 +36,17 @@ internal sealed class NotchShell : Canvas
     public Border ViewHost { get; } = new();
 
     private Size _rest, _open = new(980, 440);
+    private bool _opening;
+
+    /// Set while opening or open. The workspace must be visible — clipped to the
+    /// still-tiny shape, and transparent — from the very first frame, because WPF
+    /// will not give keyboard focus to an element that is hidden, and the shortcut
+    /// puts the caret in the task field straight away.
+    public bool Opening
+    {
+        get => _opening;
+        set { _opening = value; Relayout(); }
+    }
 
     public NotchShell()
     {
@@ -91,7 +102,7 @@ internal sealed class NotchShell : Canvas
         SetLeft(ViewHost, cx - _open.Width / 2);
         ViewHost.Clip = Outline(w, h, r, 0, (_open.Width - w) / 2);
         ViewHost.Opacity = Math.Clamp((t - 0.35) / 0.65, 0, 1);
-        ViewHost.Visibility = t <= 0.001 ? Visibility.Hidden : Visibility.Visible;
+        ViewHost.Visibility = t <= 0.001 && !_opening ? Visibility.Hidden : Visibility.Visible;
         ViewHost.IsHitTestVisible = t >= 0.999;
 
         Mini.Width = _rest.Width;
@@ -400,6 +411,7 @@ internal sealed class NotchHost : IDisposable
             _view ??= NewView();
             _window.SetAcceptsKeys(true);
             _window.Raise();
+            _shell.Opening = true;
             Animate(1, 300, new CubicEase { EasingMode = EasingMode.EaseOut });
         }
         State = peek && State != Mode.Open ? Mode.Peek : Mode.Open;
@@ -407,7 +419,13 @@ internal sealed class NotchHost : IDisposable
         if (!focusInput) return;
         _window.Focus(foreground: true);
         // After the first layout pass, or the field is not in the tree yet.
-        _window.Dispatcher.BeginInvoke(() => _view?.FocusTaskInput(), DispatcherPriority.Input);
+        _window.Dispatcher.BeginInvoke(() =>
+        {
+            _view?.FocusTaskInput();
+            if (!_window.IsActive || Keyboard.FocusedElement is not TextBox)
+                Log.Line($"notch: shortcut focus fell short — active {_window.IsActive}, " +
+                         $"focused {Keyboard.FocusedElement?.GetType().Name ?? "nothing"}");
+        }, DispatcherPriority.Input);
     }
 
     private WorkspaceView NewView()
@@ -428,6 +446,7 @@ internal sealed class NotchHost : IDisposable
             _previous != IntPtr.Zero && Win32.IsWindow(_previous))
             Win32.SetForegroundWindow(_previous);
         _window.SetAcceptsKeys(false);
+        _shell.Opening = false;
         Animate(0, 220, new CubicEase { EasingMode = EasingMode.EaseIn });
     }
 

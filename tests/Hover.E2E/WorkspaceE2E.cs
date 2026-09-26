@@ -337,11 +337,11 @@ public sealed class WorkspaceE2E
 
     private static AutomationElement? Notch() => Top("HoverNotch");
 
-    /// In the notch, or failing that in one of its popovers.
+    /// In the notch, or failing that in any other Hover window (menus, popovers).
     private static AutomationElement? Find(string automationId)
     {
         var c = new PropertyCondition(AutomationElement.AutomationIdProperty, automationId);
-        return Notch()?.FindFirst(TreeScope.Descendants, c) ?? Popups(c);
+        return Notch()?.FindFirst(TreeScope.Descendants, c) ?? Anywhere(c);
     }
 
     private static AutomationElement WaitFind(string automationId)
@@ -364,28 +364,52 @@ public sealed class WorkspaceE2E
     private static AutomationElement WaitNamed(string name, bool popup = false)
     {
         AutomationElement? e = null;
-        Wait(() => (e = popup ? Popups(NameIs(name)) : Named(name)) is not null, $"'{name}' appears");
+        Wait(() => (e = popup ? Anywhere(NameIs(name)) : Named(name)) is not null, $"'{name}' appears");
         return e!;
     }
 
-    /// Menus and popovers are windows of their own, straight under the desktop.
-    private static AutomationElement? Popups(Condition c)
+    private static IEnumerable<AutomationElement> HoverWindows()
     {
         var pid = Notch()?.Current.ProcessId ?? -1;
-        var windows = AutomationElement.RootElement.FindAll(TreeScope.Children,
-            new PropertyCondition(AutomationElement.ProcessIdProperty, pid));
-        foreach (AutomationElement w in windows)
-        {
-            if (w.Current.AutomationId is "HoverNotch" or "HoverDashboard") continue;
-            if (w.FindFirst(TreeScope.Subtree, c) is { } hit) return hit;
-        }
+        return AutomationElement.RootElement.FindAll(TreeScope.Children,
+            new PropertyCondition(AutomationElement.ProcessIdProperty, pid)).Cast<AutomationElement>();
+    }
+
+    /// Menus and popovers are windows of their own. UI Automation may list them
+    /// under the desktop or under the window that owns them, so every Hover window
+    /// is searched, on-screen elements only.
+    private static AutomationElement? Anywhere(Condition c)
+    {
+        var onScreen = new AndCondition(c, new PropertyCondition(AutomationElement.IsOffscreenProperty, false));
+        foreach (var w in HoverWindows())
+            if (w.FindFirst(TreeScope.Subtree, onScreen) is { } hit) return hit;
         return null;
+    }
+
+    /// Hover's top-level windows and what is in them, for a failure message.
+    private static string Describe()
+    {
+        var sb = new StringBuilder("\nHover windows:");
+        try
+        {
+            foreach (var w in HoverWindows())
+            {
+                sb.Append($"\n  [{w.Current.ControlType.ProgrammaticName}] id='{w.Current.AutomationId}' name='{w.Current.Name}' class='{w.Current.ClassName}' offscreen={w.Current.IsOffscreen}");
+                var kids = w.FindAll(TreeScope.Descendants, new PropertyCondition(AutomationElement.IsOffscreenProperty, false))
+                    .Cast<AutomationElement>().Take(60)
+                    .Select(k => k.Current.AutomationId is { Length: > 0 } id ? "#" + id : k.Current.Name)
+                    .Where(n => n.Length > 0 && n.Length < 60);
+                sb.Append("\n    ").Append(string.Join(" | ", kids));
+            }
+        }
+        catch (Exception e) { sb.Append(" (" + e.Message + ")"); }
+        return sb.ToString();
     }
 
     private static AutomationElement MenuItem(string name)
     {
         AutomationElement? e = null;
-        Wait(() => (e = Popups(new AndCondition(NameIs(name),
+        Wait(() => (e = Anywhere(new AndCondition(NameIs(name),
             new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.MenuItem)))) is not null,
             $"menu item '{name}' appears");
         return e!;
@@ -439,7 +463,7 @@ public sealed class WorkspaceE2E
             catch (Exception e) { last = e; }   // elements come and go while the UI rebuilds
             Thread.Sleep(100);
         }
-        Assert.Fail($"Timed out waiting until {what}.{(last is null ? "" : " Last error: " + last.Message)}");
+        Assert.Fail($"Timed out waiting until {what}.{(last is null ? "" : " Last error: " + last.Message)}{Describe()}");
     }
 
     private static int IndexOf(byte[] hay, byte[] needle)
@@ -455,9 +479,16 @@ public sealed class WorkspaceE2E
         {
             var h = top ? Math.Min(160, ScreenH) : ScreenH;
             using var bmp = new Bitmap(ScreenW, h);
-            // CaptureBlt, or layered windows — the notch is one — can be left out.
+            // BitBlt with CAPTUREBLT, or layered windows — the notch is one — can be
+            // left out. Graphics.CopyFromScreen refuses that flag combination.
             using (var g = Graphics.FromImage(bmp))
-                g.CopyFromScreen(0, 0, 0, 0, new Size(ScreenW, h), CopyPixelOperation.SourceCopy | CopyPixelOperation.CaptureBlt);
+            {
+                var dst = g.GetHdc();
+                var src = Native.GetDC(IntPtr.Zero);
+                Native.BitBlt(dst, 0, 0, ScreenW, h, src, 0, 0, 0x00CC0020 | 0x40000000);
+                Native.ReleaseDC(IntPtr.Zero, src);
+                g.ReleaseHdc(dst);
+            }
             bmp.Save(Path.Combine(Out, name + ".png"), ImageFormat.Png);
         }
         catch (Exception e) { TestContext.Progress.WriteLine($"screenshot {name} failed: {e.Message}"); }
@@ -468,6 +499,9 @@ internal static class Native
 {
     [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
     [DllImport("user32.dll")] public static extern int GetSystemMetrics(int index);
+    [DllImport("user32.dll")] public static extern IntPtr GetDC(IntPtr hwnd);
+    [DllImport("user32.dll")] public static extern int ReleaseDC(IntPtr hwnd, IntPtr dc);
+    [DllImport("gdi32.dll")] public static extern bool BitBlt(IntPtr dst, int x, int y, int w, int h, IntPtr src, int sx, int sy, uint rop);
     [DllImport("user32.dll", SetLastError = true)] public static extern uint SendInput(uint n, INPUT[] inputs, int size);
 
     [StructLayout(LayoutKind.Sequential)]
