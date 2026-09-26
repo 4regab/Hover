@@ -1,15 +1,13 @@
 name: ci
+# Windows runners bill at twice the Linux rate and the end-to-end run takes
+# minutes, so this runs for pull requests and on demand, not on every push.
 on:
-  push:
+  pull_request:
   workflow_dispatch:
 jobs:
   windows:
     runs-on: windows-latest
     timeout-minutes: 30
-    strategy:
-      fail-fast: false
-      matrix:
-        attempt: [1, 2, 3, 4]   # diag: repeat the E2E to catch an intermittent stall
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
@@ -32,6 +30,6 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: e2e-shots-${{ matrix.attempt }}
+          name: e2e-shots
           path: e2e-shots
           if-no-files-found: ignore

@@ -106,7 +106,7 @@ internal static class Popover
 
         void Nudge(int by) => custom.Text = Math.Clamp((Parse(custom.Text) ?? minutes) + by, 1, 600).ToString(CultureInfo.CurrentCulture);
         var stepper = new StackPanel { Margin = new Thickness(6, 0, 0, 0) };
-        var up = Ui.IconButton("\uE70E", "MinutesUp", "More minutes", () => Nudge(1), 8);
+        var up = Ui.IconButton(Ui.IcChevronUp, "MinutesUp", "More minutes", () => Nudge(1), 8);
         var down = Ui.IconButton(Ui.IcChevronDown, "MinutesDown", "Fewer minutes", () => Nudge(-1), 8);
         up.Padding = down.Padding = new Thickness(3, 0, 3, 0);
         stepper.Children.Add(up);

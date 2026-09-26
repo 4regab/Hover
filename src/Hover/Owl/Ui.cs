@@ -31,9 +31,9 @@ internal static class Ui
 
     // Segoe Fluent Icons / MDL2 code points.
     public const string IcPlay = "\uE768", IcPause = "\uE769", IcCheck = "\uE73E", IcMore = "\uE712",
-        IcAdd = "\uE710", IcCalendar = "\uE787", IcEdit = "\uE70F", IcStopwatch = "\uE916",
+        IcAdd = "\uE710", IcCalendar = "\uE787", IcStopwatch = "\uE916",
         IcBell = "\uEA8F", IcRefresh = "\uE72C", IcDelete = "\uE74D", IcCopy = "\uE8C8",
-        IcForward = "\uE72A", IcRename = "\uE8AC", IcReturn = "\uE751", IcList = "\uE8FD",
+        IcForward = "\uE72A", IcRename = "\uE8AC", IcReturn = "\uE751",
         IcLines = "\uE8E4", IcClose = "\uE711", IcWindow = "\uE78B", IcChevronDown = "\uE70D",
         IcClock = "\uE917", IcBolt = "\uE945", IcSliders = "\uE9E9", IcRing = "\uEA3A",
         IcDone = "\uE930", IcTarget = "\uF272", IcChecklist = "\uE9D5", IcCompose = "\uE70B",

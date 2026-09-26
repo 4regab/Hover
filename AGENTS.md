@@ -4,14 +4,17 @@ Guidance for humans and AI agents working in this repository.
 
 ## What Hover is
 
-A Windows desktop app (.NET 8, WPF) that keeps two edge panels a hover away:
+A Windows desktop app (.NET 8, WPF) that keeps three surfaces a hover away:
 
+- **The workspace** at the top centre — a notch (after NotchOwl for Mac) holding
+  today's tasks, a focus timer, a daily notepad, today's events, Insights and its
+  own settings. `Alt+N` opens it too.
 - **Notes** on the right edge — an edge deck of sticky notes.
 - **A screenshot tray** on the left edge — every snip and copied image, ready to
   drag out.
 
-Neither panel shows until the pointer reaches its edge. There is no main window;
-the app lives in the system tray.
+None of them shows until the pointer reaches it. The only ordinary windows are the
+workspace dashboard ("Open app"), All Notes and Settings; the app lives in the tray.
 
 ## Build, test, run
 
@@ -24,6 +27,9 @@ dotnet build .\Hover.slnx -c Release
 
 # Run the tests
 dotnet test .\Hover.slnx -c Release
+
+# End-to-end: drives the real Hover.exe (takes over the pointer; build first)
+dotnet test .\tests\Hover.E2E\Hover.E2E.csproj -c Release
 
 # Build and launch
 .\build.ps1 release run
@@ -65,8 +71,14 @@ src/Hover/
   Services/    Actions (menu/shortcut commands), Transfer (import/export),
                TrayIcon.
   Windows/     Ordinary windows: All Notes, Settings, image preview, rename.
+  Owl/         The workspace: Planner (tasks, notepad, focus time, one sealed file),
+               FocusTimer, Insights, Calendar (.ics reader), OwlApp (shared state
+               and the one-second tick), Notch (the top-centre host, one per
+               display), WorkspaceView (the cards), Pages (Insights, Settings),
+               Popover, Ui (palette, dot-matrix type, chart).
   Assets/      hover.ico (the app icon).
 tests/Hover.Tests/   NUnit tests.
+tests/Hover.E2E/     UI Automation run against the real app. Not in Hover.slnx.
 assets/hover.svg     Icon source (the .ico in src/Hover/Assets was generated from it).
 installer/Hover.iss  Inno Setup script (driven by build.ps1).
 ```
@@ -88,7 +100,13 @@ carry a legacy `Noty` reference **only** in `Core/Paths.cs`, which migrates an o
   tray (Chromium refuses drags from a no-activate window). See
   `Deck/DeckWindow.cs` (`SetAcceptsKeys`, `WhileActivatable`).
 - **Pointer is polled, not hooked.** `DeckManager` / `ImageStripManager` poll the
-  cursor every ~90 ms to notice it reaching an edge.
+  cursor every ~90 ms to notice it reaching an edge; `NotchManager` every 50 ms.
+- **The workspace's timers run at `DispatcherPriority.Normal`.** WPF runs
+  Background-priority work only when no input is waiting in the queue, and in
+  testing that starved the focus clock and the notch poll for 8–14 s at a time.
+- **The notch reuses `DeckWindow`** — one full-size, click-through window per
+  display. The shape grows from its resting size (tab, timer, alert) to the
+  workspace by animating one `Openness` value.
 - **Note bodies are encrypted** (AES-GCM, DPAPI-wrapped key). Screenshots are
   plain files on purpose, so they can be dragged into other apps.
 

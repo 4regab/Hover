@@ -83,18 +83,6 @@ internal sealed class NotchShell : Canvas
         Relayout();
     }
 
-    /// The shape's area right now, in this canvas's coordinates.
-    public Rect ShapeBounds
-    {
-        get
-        {
-            var t = Openness;
-            var w = Lerp(_rest.Width, _open.Width, t);
-            var h = Lerp(_rest.Height, _open.Height, t);
-            return new Rect(ActualWidth / 2 - w / 2, 0, w, h);
-        }
-    }
-
     private static double Lerp(double a, double b, double t) => a + (b - a) * t;
 
     private void Relayout()
@@ -518,7 +506,10 @@ public sealed class NotchManager : IDisposable
         Microsoft.Win32.SystemEvents.PowerModeChanged += OnPower;
         Microsoft.Win32.SystemEvents.SessionSwitch += OnSession;
         Rebuild(Screens.All());
-        _poll = new DispatcherTimer(DispatcherPriority.Background) { Interval = TimeSpan.FromMilliseconds(50) };
+        // Normal priority for the same reason as the workspace clock: at Background it
+        // starved for seconds under UI Automation traffic and the notch stopped
+        // answering the pointer. The work is a cursor read and a few rectangles.
+        _poll = new DispatcherTimer(DispatcherPriority.Normal) { Interval = TimeSpan.FromMilliseconds(50) };
         _poll.Tick += (_, _) => Tick();
         _poll.Start();
 
@@ -561,14 +552,8 @@ public sealed class NotchManager : IDisposable
         }
     }
 
-    private long _lastPoll = -1;                                                         // diag
-    private static readonly System.Diagnostics.Stopwatch PollClock = System.Diagnostics.Stopwatch.StartNew();   // diag
-
     private void Tick()
     {
-        var at = PollClock.ElapsedMilliseconds;                                          // diag
-        if (_lastPoll >= 0 && at - _lastPoll > 1500) Log.Line($"diag: poll gap {at - _lastPoll} ms");   // diag
-        _lastPoll = at;                                                                  // diag
         var now = DateTime.Now;
         // Enumerating displays costs a P/Invoke per monitor; they rarely change.
         if (now - _lastDisplayCheck > TimeSpan.FromSeconds(2))

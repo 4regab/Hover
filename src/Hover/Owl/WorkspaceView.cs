@@ -45,7 +45,6 @@ public sealed class WorkspaceView : UserControl
 
     private void Subscribe(bool on)
     {
-        Hover.Core.Log.Line($"diag: view {GetHashCode():x} subscribe {on}");   // diag
         if (on)
         {
             OwlApp.Planner.Changed += OnPlanner;
@@ -79,11 +78,8 @@ public sealed class WorkspaceView : UserControl
         _timer?.Refresh();
     }
 
-    private int _viewTicks;   // diag
-
     private void OnTick()
     {
-        if (++_viewTicks % 4 == 0) Hover.Core.Log.Line($"diag: view {GetHashCode():x} tick, clock {_timer?.ClockText}");   // diag
         _timer?.Refresh();
         _events?.RefreshIfHappeningChanged();
     }
@@ -340,7 +336,7 @@ internal sealed class TasksCard
         g.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         g.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
-        var check = Ui.IconButton(t.Done ? "\uEC61" : Ui.IcRing, "Check", t.Done ? $"Mark “{t.Title}” not done" : $"Mark “{t.Title}” done",
+        var check = Ui.IconButton(t.Done ? Ui.IcDoneSolid : Ui.IcRing, "Check", t.Done ? $"Mark “{t.Title}” not done" : $"Mark “{t.Title}” done",
             () => OwlApp.Planner.SetDone(t.Id, !t.Done), 18, t.Done ? Ui.Ink : Ui.InkDim);
         check.VerticalAlignment = VerticalAlignment.Top;
         check.Margin = new Thickness(-5, -3, 4, 0);
@@ -580,8 +576,6 @@ internal sealed class TimerCard
         else m.Items.Add(Ui.MenuItem(Ui.IcClose, "End Session", OwlApp.EndSession));
         return m;
     }
-
-    public string ClockText => _clock.Text;   // diag
 
     public void Refresh()
     {

@@ -4,17 +4,35 @@
 
 <h1 align="center">Hover</h1>
 
-<p align="center">Sticky notes and screenshots that live at the edge of your screen.</p>
+<p align="center">Tasks, a focus timer, notes and today's events at the top of your screen — plus sticky notes and screenshots at its edges.</p>
 
-Hover keeps two things a hover away: **notes** on the right edge and a **screenshot
-tray** on the left. Nothing sits on screen until you need it — move the pointer to
-an edge and the panel appears. There is no taskbar window to manage.
+Hover keeps your day a hover away. Rest the pointer at the **top centre** of the
+screen, or press `Alt+N`, and a notch drops down with today's tasks, a focus timer,
+a daily notepad and your calendar — a Windows take on
+[NotchOwl](https://www.notchowl.com). **Sticky notes** wait on the right edge and a
+**screenshot tray** on the left. Nothing sits on screen until you need it.
 
 Built with .NET 8 and WPF. A Windows descendant of
 [aimen08/noty](https://github.com/aimen08/noty).
 
 ## What it does
 
+- **A workspace in the notch.** Hover the top centre or press `Alt+N`:
+  - **Today's tasks** — add with Enter, check off, drag to reorder. Each task's `⋯`
+    menu can focus it, rename it, give it a time limit, set a reminder (in 30
+    minutes, in an hour, this evening, tomorrow morning, or a custom time), move
+    it to tomorrow, duplicate or delete it. Unfinished tasks roll over to today.
+  - **Focus timer** — pick a task and press play, or start the timer on its own.
+    Countdown or stopwatch; pause, resume, add five minutes. Close the notch and
+    the time keeps running in it. Timers pause while the PC sleeps.
+  - **Daily notepad** — saves as you type. `Ctrl+Enter` turns the line under the
+    caret into a task.
+  - **Events** — today's events from any calendar's iCal (`.ics`) address or file,
+    read-only, with your reminders above them.
+  - **Insights** — the last seven days of tasks completed against planned, focus
+    time, active days and your streak. Pick a day to see just that day.
+  - **Open app** shows the same workspace in an ordinary window.
+  - **Export** everything as a JSON backup from the workspace's Settings tab.
 - **Notes on the right edge.** Hover the right side and your notes fan out as
   tabs. Click one to open it. Plain-text notes with live Markdown styling,
   checkbox tasks, colours, search, pinning and word-based undo.
@@ -31,7 +49,8 @@ Built with .NET 8 and WPF. A Windows descendant of
 - **Autosave and archive**, a searchable All Notes window, drag-to-reorder, and
   multi-monitor support.
 - **Import / export** as Markdown, plain text, or a `.stickies` archive.
-- **Local and private** — no account, server, analytics or network access.
+- **Local and private** — no account, server or analytics. The only network
+  request is the calendar address you add, if you add one.
 
 ## Install
 
@@ -46,9 +65,21 @@ Global:
 
 | Shortcut | Action |
 |---|---|
+| `Alt+N` | Open or close the workspace |
 | `Ctrl+Alt+N` | New note |
 | `Ctrl+Alt+A` | All Notes |
 | `Ctrl+Alt+L` | Archive |
+
+In the workspace:
+
+| Shortcut | Action |
+|---|---|
+| `Enter` | Add the task you typed |
+| `Ctrl+Enter` | In the notepad, turn the caret's line into a task |
+| `Esc` | Close the workspace |
+
+`Alt+N` mirrors NotchOwl's `Option+N`. It also means Insert in Office and File name
+in file dialogs, so change it in Settings if you use those.
 
 Inside a note:
 
@@ -68,13 +99,14 @@ Shortcuts can be changed in Settings (right-click the tray icon → Settings).
 ## Privacy
 
 Notes live in `%APPDATA%\Hover`. Note bodies are encrypted with AES-GCM, and the
-key is protected with Windows DPAPI.
+key is protected with Windows DPAPI. The workspace — tasks, notepad, focus time —
+is kept in `planner.dat` beside them, sealed with the same key.
 
 Screenshots are ordinary picture files in a `Hover Shots` folder under Pictures, so
 you can drag one straight into another app. They are not encrypted — a file you can
 drop onto any program cannot also be locked.
 
-Nothing leaves your machine.
+Nothing leaves your machine, except a request to the calendar address you add.
 
 ## Build
 

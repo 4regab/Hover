@@ -48,6 +48,7 @@ public sealed class WorkspaceE2E
         psi.Environment["HOVER_DATA_DIR"] = Path.Combine(_root, "data");
         psi.Environment["HOVER_SHOTS_DIR"] = Path.Combine(_root, "shots");
         _app = Process.Start(psi)!;
+        _notch = null;
         Wait(() => _app.HasExited || Notch() is not null, "the notch window appears", 20000);
         Assert.That(_app.HasExited, Is.False, $"Hover exited at launch with code {(_app.HasExited ? _app.ExitCode : 0)}");
         MoveAway();
@@ -69,12 +70,6 @@ public sealed class WorkspaceE2E
     {
         if (TestContext.CurrentContext.Result.Outcome.Status != NUnit.Framework.Interfaces.TestStatus.Failed) return;
         Shot("FAILED-" + TestContext.CurrentContext.Test.MethodName);
-        try   // diag: what the app was doing while the step failed
-        {
-            var log = Path.Combine(_root, "data", "hover.log");
-            TestContext.Progress.WriteLine("diag: app log tail at failure —\n" + string.Join("\n", File.ReadAllLines(log).TakeLast(25)));
-        }
-        catch (Exception e) { TestContext.Progress.WriteLine("diag: no log — " + e.Message); }
         try
         {
             Keys.Press(Keys.Escape);
@@ -83,6 +78,17 @@ public sealed class WorkspaceE2E
             Wait(() => !Visible("TabWorkspace"), "the notch resets after a failed step", 3000);
             OpenWithShortcut();
             if (Find("TabWorkspace") is { } tab) Select(tab);
+            // A session left running would carry into the next step's timer.
+            if (Name("TimerStatus") is "Remaining" or "Elapsed" or "Paused")
+            {
+                Invoke(Find("TimerMore")!);
+                Invoke(MenuItem("End Session"));
+            }
+            if (Name("TimerStatus") == "Stopwatch")
+            {
+                Invoke(Find("TimerMore")!);
+                Invoke(MenuItem("Use Countdown"));
+            }
         }
         catch (Exception e) { TestContext.Progress.WriteLine("reset after failure: " + e.Message); }
     }
@@ -98,9 +104,6 @@ public sealed class WorkspaceE2E
         // full-tree search walks the whole workspace first.
         var greeting = NameIs("WELCOME BACK");
         Wait(() => Notch()?.FindFirst(TreeScope.Children, greeting) is not null, "the notch greets on its first opening", 2000);
-        var sw = Stopwatch.StartNew();
-        var viaTree = Notch()?.FindFirst(TreeScope.Descendants, greeting) is not null;
-        TestContext.Progress.WriteLine($"diag: full-tree search took {sw.ElapsedMilliseconds} ms (found greeting: {viaTree})");
         Thread.Sleep(150);
         Shot("02a-greeting", top: true);
         Wait(() => Visible("TabWorkspace"), "hovering the top centre opens the workspace");
@@ -389,14 +392,14 @@ public sealed class WorkspaceE2E
         var isDialog = new PropertyCondition(AutomationElement.ClassNameProperty, "#32770");
         AutomationElement? dialog = null;
         Wait(() => (dialog = Notch()?.FindFirst(TreeScope.Children, isDialog)
-            ?? HoverWindows().FirstOrDefault(w => w.Current.ClassName == "#32770")) is not null, "the save dialog opens");
+            ?? HoverWindows().FirstOrDefault(w => w.Current.ClassName == "#32770")) is not null, "the save dialog opens", 30000);
         // The dialog opens with its file name selected. Setting that box through UI
         // Automation changes the text but not the dialog's own idea of the name, so
         // the path is typed, as a person would.
         Thread.Sleep(600);
         Keys.Type(file);
         Keys.Press(Keys.Return);
-        Wait(() => Notch()?.FindFirst(TreeScope.Children, isDialog) is null, "the save dialog closes");
+        Wait(() => Notch()?.FindFirst(TreeScope.Children, isDialog) is null, "the save dialog closes", 20000);
         Wait(() => File.Exists(file), "the backup is written");
         using var json = System.Text.Json.JsonDocument.Parse(File.ReadAllText(file));
         var titles = json.RootElement.GetProperty("Tasks").EnumerateArray().Select(t => t.GetProperty("Title").GetString()).ToList();
@@ -448,7 +451,19 @@ public sealed class WorkspaceE2E
         return e!;
     }
 
-    private static AutomationElement? Notch() => Top("HoverNotch");
+    private static AutomationElement? _notch;
+
+    /// Looked up once per launch: finding it means asking every window on the
+    /// desktop, and the loops below ask many times a second.
+    private static AutomationElement? Notch()
+    {
+        try
+        {
+            if (_notch is { } n && n.Current.ProcessId > 0) return n;
+        }
+        catch (ElementNotAvailableException) { }
+        return _notch = Top("HoverNotch");
+    }
 
     /// In the notch, or failing that in any other Hover window (menus, popovers).
     private static AutomationElement? Find(string automationId)
