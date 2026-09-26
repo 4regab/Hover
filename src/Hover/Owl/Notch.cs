@@ -403,12 +403,7 @@ internal sealed class NotchHost : IDisposable
         if (State == Mode.Rest)
         {
             _previous = Win32.GetForegroundWindow();
-            if (_view is null)
-            {
-                var built = System.Diagnostics.Stopwatch.StartNew();
-                _view = NewView();
-                Log.Line($"notch: built the workspace in {built.ElapsedMilliseconds} ms");
-            }
+            _view ??= NewView();
             _window.SetAcceptsKeys(true);
             _window.Raise();
             _shell.Opening = true;
@@ -434,28 +429,13 @@ internal sealed class NotchHost : IDisposable
     private void Greet()
     {
         _shell.Greet = true;
-        // Diagnostics: how the greeting actually played on this machine.
-        var clock = System.Diagnostics.Stopwatch.StartNew();
-        var frames = 0;
-        long first = -1;
-        void Frame(object? s, EventArgs e)
-        {
-            if (first < 0) first = clock.ElapsedMilliseconds;
-            frames++;
-        }
-        CompositionTarget.Rendering += Frame;
         var a = new DoubleAnimationUsingKeyFrames();
         a.KeyFrames.Add(new EasingDoubleKeyFrame(0.06, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(160)),
             new CubicEase { EasingMode = EasingMode.EaseOut }));
         a.KeyFrames.Add(new LinearDoubleKeyFrame(0.09, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(560))));
         a.KeyFrames.Add(new EasingDoubleKeyFrame(1, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(940)),
             new CubicEase { EasingMode = EasingMode.EaseOut }));
-        a.Completed += (_, _) =>
-        {
-            CompositionTarget.Rendering -= Frame;
-            _shell.Greet = false;
-            Log.Line($"notch: greeting — first frame at {first} ms, {frames} frames, done at {clock.ElapsedMilliseconds} ms");
-        };
+        a.Completed += (_, _) => _shell.Greet = false;
         _shell.BeginAnimation(NotchShell.OpennessProperty, a);
     }
 

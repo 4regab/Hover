@@ -181,8 +181,9 @@ public sealed class WorkspaceView : UserControl
     public void FocusTaskInput()
     {
         ShowTab(0);
-        // Coming from another tab, the cards were only just swapped in; lay them out
-        // now or the field is not in the visual tree yet and refuses focus.
+        // A ContentControl only puts its content into the visual tree when it is
+        // measured, and an element outside the tree refuses focus. The cards may be
+        // fresh — swapped in from another tab, or built for this very opening.
         UpdateLayout();
         _tasks?.FocusInput();
     }
@@ -387,7 +388,7 @@ internal sealed class TasksCard
 
         if (!active && !t.Done)
         {
-            var play = Ui.IconButton(Ui.IcPlay, "Play", $"Focus on “{t.Title}”", () => OwlApp.StartFocus(t), 10);
+            var play = Ui.IconButton(Ui.IcPlay, "Play", $"Focus on “{t.Title}”", () => OwlApp.StartFocus(t), 10, Ui.InkDim);
             play.VerticalAlignment = VerticalAlignment.Top;
             Grid.SetColumn(play, 2);
             g.Children.Add(play);

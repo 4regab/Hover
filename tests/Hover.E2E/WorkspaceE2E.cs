@@ -87,12 +87,18 @@ public sealed class WorkspaceE2E
     public void HoveringTheNotchOpensItAndLeavingClosesIt()
     {
         Native.SetCursorPos(ScreenW / 2, 0);
-        // The first opening after launch says hello in dots on the way out.
-        Wait(() => Named("WELCOME BACK") is not null, "the notch greets on its first opening", 2000);
+        // The first opening after launch says hello in dots on the way out. It lasts
+        // under a second, so it is looked for among the window's direct children: a
+        // full-tree search walks the whole workspace first.
+        var greeting = NameIs("WELCOME BACK");
+        Wait(() => Notch()?.FindFirst(TreeScope.Children, greeting) is not null, "the notch greets on its first opening", 2000);
+        var sw = Stopwatch.StartNew();
+        var viaTree = Notch()?.FindFirst(TreeScope.Descendants, greeting) is not null;
+        TestContext.Progress.WriteLine($"diag: full-tree search took {sw.ElapsedMilliseconds} ms (found greeting: {viaTree})");
         Thread.Sleep(150);
         Shot("02a-greeting", top: true);
         Wait(() => Visible("TabWorkspace"), "hovering the top centre opens the workspace");
-        Wait(() => Named("WELCOME BACK") is null, "the greeting clears once the workspace is open", 3000);
+        Wait(() => Notch()?.FindFirst(TreeScope.Children, greeting) is null, "the greeting clears once the workspace is open", 3000);
         Thread.Sleep(300);
         Shot("02-peek");
         Assert.That(Visible("OpenApp") && Visible("Close") && Visible("TabInsights") && Visible("TabSettings"), Is.True);
@@ -254,6 +260,28 @@ public sealed class WorkspaceE2E
     }
 
     [Test, Order(12)]
+    public void DuplicateMoveToTomorrowAndDelete()
+    {
+        Invoke(WaitNamed("More for “Buy oat milk”"));
+        Invoke(MenuItem("Duplicate"));
+        Wait(() => All("Buy oat milk").Count == 2, "Duplicate adds a copy");
+        WaitName("TaskCount", "1 / 5");
+
+        Invoke(WaitNamed("More for “Buy oat milk”"));
+        Invoke(MenuItem("Move to Tomorrow"));
+        Wait(() => All("Buy oat milk").Count == 1, "Move to Tomorrow takes it off today");
+        WaitName("TaskCount", "1 / 4");
+
+        WaitFind("TaskInput").SetFocus();
+        Keys.Type("Temporary task"); Keys.Press(Keys.Return);
+        WaitName("TaskCount", "1 / 5");
+        Invoke(WaitNamed("More for “Temporary task”"));
+        Invoke(MenuItem("Delete"));
+        Wait(() => Named("Temporary task") is null, "Delete removes the task");
+        WaitName("TaskCount", "1 / 4");
+    }
+
+    [Test, Order(13)]
     public void DragToReorder()
     {
         var titles = new[] { "Design landing page", "Review pull request", "Write the weekly update", "Buy oat milk" };
@@ -265,7 +293,7 @@ public sealed class WorkspaceE2E
         Shot("11-reordered");
     }
 
-    [Test, Order(13)]
+    [Test, Order(14)]
     public void CalendarFeedShowsTodaysEvents()
     {
         var ics = Path.Combine(_root, "today.ics");
@@ -286,7 +314,23 @@ public sealed class WorkspaceE2E
         Shot("12-calendar");
     }
 
-    [Test, Order(14)]
+    [Test, Order(15)]
+    public void TimesUpEndsTheSessionAndSaysSo()
+    {
+        Invoke(WaitFind("SetTime"));
+        SetValue(WaitFind("CustomMinutes"), "1");
+        Invoke(WaitFind("StartFocus"));
+        WaitName("TimerStatus", "Remaining");
+        Wait(() => Regex.IsMatch(Name("TimerClock"), @"^(01:00|00:5\d)$"), "a one-minute countdown runs");
+        Invoke(Find("Close")!);
+        Wait(() => Visible("NotchAlert") && Name("NotchAlert") == "TIME'S UP", "the notch says time is up", 80000);
+        Shot("15-times-up", top: true);
+        OpenWithShortcut();
+        WaitName("TimerStatus", "Ready");
+        WaitName("TimerClock", "25:00");
+    }
+
+    [Test, Order(16)]
     public void InsightsCountsCompletedTasksAndFocusTime()
     {
         Select(WaitFind("TabInsights"));
@@ -295,13 +339,13 @@ public sealed class WorkspaceE2E
         Assert.That(Named("of 4 planned"), Is.Not.Null);
         Shot("13-insights-tasks");
         Select(WaitFind("InsightsFocus"));
-        Wait(() => Regex.IsMatch(Name("InsightsBig"), @"^\d+m$"), "the focus view shows time focused");
+        Wait(() => Regex.IsMatch(Name("InsightsBig"), @"^[1-9]\d*m$"), "the focus view counts the minute just focused");
         Assert.That(Named("Time focused"), Is.Not.Null);
         Shot("13-insights-focus");
         Select(WaitFind("TabWorkspace"));
     }
 
-    [Test, Order(15)]
+    [Test, Order(17)]
     public void EscAndClickingAwayClose()
     {
         Assert.That(Visible("TabWorkspace"), Is.True);
@@ -314,7 +358,7 @@ public sealed class WorkspaceE2E
         Wait(() => !Visible("TabWorkspace"), "a click in another app closes it");
     }
 
-    [Test, Order(16)]
+    [Test, Order(18)]
     public void OpenAppShowsTheDashboard()
     {
         OpenWithShortcut();
@@ -328,7 +372,34 @@ public sealed class WorkspaceE2E
         Wait(() => Top("HoverDashboard") is null, "the dashboard closes");
     }
 
-    [Test, Order(17)]
+    [Test, Order(19)]
+    public void ExportWritesAReadableJsonBackup()
+    {
+        var file = Path.Combine(_root, "backup.json");
+        OpenWithShortcut();
+        Select(WaitFind("TabSettings"));
+        Invoke(WaitFind("ExportBackup"));
+        // UI Automation lists an owned dialog under its owner, not the desktop.
+        var isDialog = new PropertyCondition(AutomationElement.ClassNameProperty, "#32770");
+        AutomationElement? dialog = null;
+        Wait(() => (dialog = Notch()?.FindFirst(TreeScope.Children, isDialog)
+            ?? HoverWindows().FirstOrDefault(w => w.Current.ClassName == "#32770")) is not null, "the save dialog opens");
+        AutomationElement? name = null;
+        Wait(() => (name = dialog!.FindFirst(TreeScope.Descendants, new AndCondition(
+            new PropertyCondition(AutomationElement.AutomationIdProperty, "1001"),
+            new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.Edit)))) is not null, "the file name box is there");
+        SetValue(name!, file);
+        Invoke(dialog!.FindFirst(TreeScope.Children, new PropertyCondition(AutomationElement.AutomationIdProperty, "1")));
+        Wait(() => File.Exists(file), "the backup is written");
+        using var json = System.Text.Json.JsonDocument.Parse(File.ReadAllText(file));
+        var titles = json.RootElement.GetProperty("Tasks").EnumerateArray().Select(t => t.GetProperty("Title").GetString()).ToList();
+        Assert.That(titles, Does.Contain("Buy oat milk").And.Contain("Write the weekly update"));
+        Assert.That(json.RootElement.GetProperty("Notes").EnumerateObject().Any(n => n.Value.GetString() == "Call the bank"), Is.True);
+        Wait(() => Visible("TabSettings"), "the notch stays open under its own dialog");
+        Select(WaitFind("TabWorkspace"));
+    }
+
+    [Test, Order(20)]
     public void PlannerIsEncryptedAtRest()
     {
         var file = Path.Combine(_root, "data", "planner.dat");
@@ -338,7 +409,7 @@ public sealed class WorkspaceE2E
         Assert.That(IndexOf(bytes, Encoding.UTF8.GetBytes("Call the bank")), Is.EqualTo(-1), "the notepad is not stored in plain text");
     }
 
-    [Test, Order(18)]
+    [Test, Order(21)]
     public void EverythingSurvivesARestart()
     {
         OpenWithShortcut();
