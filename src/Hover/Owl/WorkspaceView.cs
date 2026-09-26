@@ -181,6 +181,9 @@ public sealed class WorkspaceView : UserControl
     public void FocusTaskInput()
     {
         ShowTab(0);
+        // Coming from another tab, the cards were only just swapped in; lay them out
+        // now or the field is not in the visual tree yet and refuses focus.
+        UpdateLayout();
         _tasks?.FocusInput();
     }
 

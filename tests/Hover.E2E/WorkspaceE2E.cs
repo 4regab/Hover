@@ -62,11 +62,23 @@ public sealed class WorkspaceE2E
         if (File.Exists(log)) TestContext.Progress.WriteLine("---- hover.log ----\n" + File.ReadAllText(log));
     }
 
+    /// A failed step leaves the notch closed and on the Workspace tab, so the next
+    /// step starts where it expects to instead of failing for the same reason.
     [TearDown]
     public void AfterEach()
     {
-        if (TestContext.CurrentContext.Result.Outcome.Status == NUnit.Framework.Interfaces.TestStatus.Failed)
-            Shot("FAILED-" + TestContext.CurrentContext.Test.MethodName);
+        if (TestContext.CurrentContext.Result.Outcome.Status != NUnit.Framework.Interfaces.TestStatus.Failed) return;
+        Shot("FAILED-" + TestContext.CurrentContext.Test.MethodName);
+        try
+        {
+            Keys.Press(Keys.Escape);
+            MoveAway();
+            if (Visible("TabWorkspace") && Find("Close") is { } close) Invoke(close);
+            Wait(() => !Visible("TabWorkspace"), "the notch resets after a failed step", 3000);
+            OpenWithShortcut();
+            if (Find("TabWorkspace") is { } tab) Select(tab);
+        }
+        catch (Exception e) { TestContext.Progress.WriteLine("reset after failure: " + e.Message); }
     }
 
     // MARK: The story
