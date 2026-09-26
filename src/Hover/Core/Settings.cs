@@ -26,7 +26,12 @@ public static class Settings
         public double DeckScale { get; set; } = 1.0;
         public bool AutoHideNotes { get; set; } = true;
         public bool AutoHideShots { get; set; } = true;
+        public bool ShowIdleNotch { get; set; } = true;
+        public bool HoverOpensWorkspace { get; set; } = true;
 
+        // Option-N on a Mac. Alt+N here also means "Insert" in Office and "File name"
+        // in file dialogs; while Hover runs, it opens the workspace instead.
+        public Shortcut ScWorkspace { get; set; } = new(ModifierKeys.Alt, Key.N);
         public Shortcut ScNewNote { get; set; } = new(ModifierKeys.Control | ModifierKeys.Alt, Key.N);
         public Shortcut ScAllNotes { get; set; } = new(ModifierKeys.Control | ModifierKeys.Alt, Key.A);
         public Shortcut ScArchive { get; set; } = new(ModifierKeys.Control | ModifierKeys.Alt, Key.L);
@@ -204,6 +209,22 @@ public static class Settings
         set { M.AutoHideShots = value; Save(); }
     }
 
+    /// The small black tab at the top centre that shows where the workspace opens.
+    /// Off, the tab is gone but hovering the same spot still opens it.
+    public static bool ShowIdleNotch
+    {
+        get => M.ShowIdleNotch;
+        set { M.ShowIdleNotch = value; Save(); }
+    }
+
+    /// Resting the pointer on the notch opens the workspace. Off, it takes the
+    /// shortcut or a click — the top edge is where maximised browsers keep their tabs.
+    public static bool HoverOpensWorkspace
+    {
+        get => M.HoverOpensWorkspace;
+        set { M.HoverOpensWorkspace = value; Save(); }
+    }
+
     public static DeckStyle DeckStyle
     {
         get => M.DeckStyle;
@@ -231,6 +252,7 @@ public static class Settings
 
     // MARK: Shortcuts
 
+    public static Shortcut ScWorkspace { get => M.ScWorkspace; set { M.ScWorkspace = value; Save(); } }
     public static Shortcut ScNewNote { get => M.ScNewNote; set { M.ScNewNote = value; Save(); } }
     public static Shortcut ScAllNotes { get => M.ScAllNotes; set { M.ScAllNotes = value; Save(); } }
     public static Shortcut ScArchive { get => M.ScArchive; set { M.ScArchive = value; Save(); } }
