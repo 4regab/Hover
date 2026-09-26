@@ -18,31 +18,48 @@ internal static class Popover
 
     private static readonly Brush Sheet = Ui.Frozen(Color.FromArgb(0xF5, 0xDD, 0xE4, 0xE6));
 
+    /// A sheet centred under its anchor, with an arrow pointing up at it — as wide as
+    /// a task row when it drops from one.
     private static Popup Show(FrameworkElement anchor, FrameworkElement body)
     {
+        const double Shadow = 14;
+        var width = Math.Clamp(anchor.ActualWidth + 16, 330, 470);
         var card = new Border
         {
             Background = Sheet,
             CornerRadius = new CornerRadius(12),
             Padding = new Thickness(18, 14, 18, 14),
-            Margin = new Thickness(14),
-            Width = 330,
+            Width = width,
             Child = body,
+        };
+        var arrow = new System.Windows.Shapes.Path
+        {
+            Data = Geometry.Parse("M0,9 L9,0.6 Q10,-0.2 11,0.6 L20,9 Z"),
+            Fill = Sheet,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            Margin = new Thickness(0, 0, 0, -0.5),
+        };
+        var sheet = new StackPanel
+        {
+            Margin = new Thickness(Shadow),
             Effect = new DropShadowEffect { BlurRadius = 24, ShadowDepth = 4, Direction = 270, Opacity = 0.35 },
         };
+        sheet.Children.Add(arrow);
+        sheet.Children.Add(card);
         var pop = new Popup
         {
-            Child = card,
+            Child = sheet,
             PlacementTarget = anchor,
             Placement = PlacementMode.Bottom,
+            HorizontalOffset = (anchor.ActualWidth - width) / 2 - Shadow,
+            VerticalOffset = -Shadow + 2,
             AllowsTransparency = true,
             StaysOpen = false,
-            PopupAnimation = PopupAnimation.Fade,
             Focusable = true,
         };
         pop.Opened += (_, _) => Open++;
         pop.Closed += (_, _) => Open--;
-        card.PreviewKeyDown += (_, e) =>
+        sheet.PreviewKeyDown += (_, e) =>
         {
             if (e.Key == Key.Escape) { e.Handled = true; pop.IsOpen = false; }
         };

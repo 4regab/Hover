@@ -225,7 +225,10 @@ internal sealed class SettingsPage
 
         CheckBox Switch(string label, string id, bool on, Action<bool> set)
         {
-            var cb = new CheckBox { Style = Ui.Style("OwlSwitch"), Content = label, IsChecked = on, Margin = new Thickness(0, 0, 0, 6) };
+            var text = Ui.Text(label, 13);
+            text.TextWrapping = TextWrapping.Wrap;
+            text.TextTrimming = TextTrimming.None;
+            var cb = new CheckBox { Style = Ui.Style("OwlSwitch"), Content = text, IsChecked = on, Margin = new Thickness(0, 0, 0, 6) };
             AutomationProperties.SetAutomationId(cb, id);
             AutomationProperties.SetName(cb, label);
             cb.Checked += (_, _) => set(true);
@@ -235,20 +238,22 @@ internal sealed class SettingsPage
 
         // General
         var shortcut = Ui.Text(Settings.ScWorkspace.ToString(), 13, Ui.Ink, FontWeights.SemiBold);
-        var shortcutRow = new DockPanel { Margin = new Thickness(0, 0, 0, 4) };
-        var change = Ui.Button("OwlLightButton", "Change…", "ChangeShortcut", "Change shortcut", Hover.Services.Actions.OpenSettings);
-        DockPanel.SetDock(change, Dock.Right);
-        shortcutRow.Children.Add(change);
-        shortcutRow.Children.Add(Ui.Row(Ui.Text("Open workspace", 13), shortcut.Margin(8, 0)));
-        Add(0, Ui.Green, "General", "\uE713",
+        AutomationProperties.SetAutomationId(shortcut, "WorkspaceShortcut");
+        var shortcutRow = new DockPanel { Margin = new Thickness(0, 0, 0, 6) };
+        DockPanel.SetDock(shortcut, Dock.Right);
+        shortcutRow.Children.Add(shortcut);
+        shortcutRow.Children.Add(Ui.Text("Open workspace", 13));
+        var change = Ui.Button("OwlLightButton", "Change shortcut…", "ChangeShortcut", "Change shortcut", Hover.Services.Actions.OpenSettings);
+        change.HorizontalAlignment = HorizontalAlignment.Left;
+        Add(0, Ui.Green, "General", Ui.IcSettings,
             Switch("Launch at login", "LaunchAtLogin", Settings.LaunchAtLogin, v => Settings.LaunchAtLogin = v),
             Note("Hover starts with Windows and waits at the top of the screen."),
-            Switch("Open when the pointer rests at the top", "HoverOpens", Settings.HoverOpensWorkspace, v => Settings.HoverOpensWorkspace = v),
+            Switch("Open on hover", "HoverOpens", Settings.HoverOpensWorkspace, v => Settings.HoverOpensWorkspace = v),
             Note("Off, only the shortcut or a click on the notch opens it — handy if browser tabs live up there."),
             Switch("Show the notch when idle", "IdleNotch", Settings.ShowIdleNotch, v => { Settings.ShowIdleNotch = v; OwlApp.SettingsChanged?.Invoke(); }),
             Note("A small black tab marks where to hover. A running timer always shows."),
             shortcutRow,
-            Note("Or hover the top centre of the screen."));
+            change);
 
         // Focus
         var planner = OwlApp.Planner;
@@ -291,11 +296,17 @@ internal sealed class SettingsPage
             if (dlg.ShowDialog() == true) { source.Text = dlg.FileName; Connect(dlg.FileName); }
         });
         var disconnect = Ui.Button("OwlLink", "Disconnect", "CalendarDisconnect", "Disconnect calendar", () => { source.Text = ""; Connect(""); });
+        disconnect.HorizontalAlignment = HorizontalAlignment.Left;
+        // Wraps rather than clipping when the card is narrow.
+        var buttons = new WrapPanel { Margin = new Thickness(0, 10, 0, 6) };
+        buttons.Children.Add(connect.Margin(0, 0, 8, 6));
+        buttons.Children.Add(browse.Margin(0, 0, 0, 6));
         Add(2, Ui.Slate, "Calendar", Ui.IcCalendar,
             Note("Paste the private iCal (.ics) address from Outlook, Google or iCloud, or choose an exported .ics file. Hover only reads events."),
             sourceBox,
-            Ui.Row(connect, browse.Margin(8, 0), disconnect.Margin(4, 0)).Margin(0, 10, 0, 6),
-            status);
+            buttons,
+            status,
+            disconnect);
 
         // Data
         var export = Ui.Button("OwlDarkButton", "Export JSON backup…", "ExportBackup", "Export JSON backup", () =>
@@ -312,7 +323,7 @@ internal sealed class SettingsPage
         export.HorizontalAlignment = HorizontalAlignment.Left;
         var quit = Ui.Button("OwlLightButton", "Quit Hover", "Quit", "Quit Hover", Hover.Services.Actions.Quit);
         quit.HorizontalAlignment = HorizontalAlignment.Left;
-        Add(3, Ui.Olive, "Your data", "\uE8B7",
+        Add(3, Ui.Olive, "Your data", Ui.IcFolder,
             Note("Tasks, notes and focus time stay on this PC, encrypted. Nothing is sent anywhere except the calendar address you add."),
             export,
             Note("A plain JSON copy of everything in the workspace.").Margin(0, 6, 0, 16),

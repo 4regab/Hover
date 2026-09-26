@@ -113,7 +113,7 @@ public sealed class WorkspaceView : UserControl
 
             var close = Ui.Button("OwlBase", Ui.Icon(Ui.IcClose, 12, Ui.White), "Close", "Close",
                 () => OwlApp.Collapse?.Invoke());
-            close.Background = Ui.Frozen(Color.FromRgb(0x1C, 0x1C, 0x1E));
+            close.Background = Ui.Frozen(Color.FromRgb(0x0F, 0x0F, 0x0F));
             close.Width = close.Height = 32;
             close.Tag = new CornerRadius(16);
             close.Padding = new Thickness(0);
@@ -140,7 +140,7 @@ public sealed class WorkspaceView : UserControl
         }
         var segBox = new Border
         {
-            Background = Ui.Frozen(Color.FromRgb(0x26, 0x26, 0x28)),
+            Background = Ui.Frozen(Color.FromRgb(0x43, 0x43, 0x43)),
             CornerRadius = new CornerRadius(7),
             Padding = new Thickness(2),
             Child = seg,
@@ -187,7 +187,7 @@ public sealed class WorkspaceView : UserControl
     private FrameworkElement BuildWorkspace()
     {
         var grid = new Grid { Margin = new Thickness(12, 0, 12, 12) };
-        foreach (var w in new[] { 2.1, 1.0, 1.0, 1.05 })
+        foreach (var w in new[] { 2.17, 1.0, 0.94, 1.0 })
             grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(w, GridUnitType.Star) });
 
         _tasks = new TasksCard();
@@ -209,6 +209,7 @@ public sealed class WorkspaceView : UserControl
 
 internal sealed class TasksCard
 {
+    private static readonly Brush ActiveRow = Ui.Frozen(Color.FromArgb(0x1C, 0xFF, 0xFF, 0xFF));
     public Border Root { get; }
     private readonly TextBox _input;
     private readonly TextBlock _count = Ui.Text("0 / 0", 12.5, Ui.InkDim);
@@ -230,7 +231,7 @@ internal sealed class TasksCard
         AutomationProperties.SetAutomationId(_count, "TaskCount");
         DockPanel.SetDock(_count, Dock.Right);
         head.Children.Add(_count);
-        head.Children.Add(Ui.IconText(Ui.IcList, "Today’s tasks", 14.5, Ui.Ink, FontWeights.SemiBold));
+        head.Children.Add(Ui.IconText(Ui.IcChecklist, "Today’s tasks", 14.5, Ui.Ink, FontWeights.SemiBold));
         g.Children.Add(head);
 
         _input = new TextBox { Style = Ui.Style("OwlField"), VerticalContentAlignment = VerticalAlignment.Center };
@@ -399,7 +400,7 @@ internal sealed class TasksCard
             Child = g,
             Padding = new Thickness(8, 7, 2, 7),
             CornerRadius = new CornerRadius(9),
-            Background = active ? Ui.Wash : Brushes.Transparent,
+            Background = active ? ActiveRow : Brushes.Transparent,
             Tag = t.Id,
         };
 
@@ -503,7 +504,8 @@ internal sealed class TasksCard
 internal sealed class TimerCard
 {
     public Border Root { get; }
-    private readonly DotClock _clock = new() { Pitch = 5.4, HorizontalAlignment = HorizontalAlignment.Center };
+    private static readonly Brush DarkButton = Ui.Frozen(Color.FromRgb(0x19, 0x16, 0x1B));
+    private readonly DotMatrix _clock = new() { Pitch = 4.6, Fill = Ui.Frozen(Color.FromRgb(0x14, 0x12, 0x1E)), HorizontalAlignment = HorizontalAlignment.Center };
     private readonly TextBlock _status = Ui.Text("Ready", 12, Ui.InkDim);
     private readonly Border _fill = new() { Background = Ui.Ink, HorizontalAlignment = HorizontalAlignment.Left, CornerRadius = new CornerRadius(1.5) };
     private readonly Grid _track = new() { Width = 112, Height = 3, Margin = new Thickness(0, 12, 0, 0) };
@@ -591,7 +593,10 @@ internal sealed class TimerCard
         };
         if (!Equals(AutomationProperties.GetName(_main), label) || _main.Content is not StackPanel)
         {
-            _main.Content = Ui.IconText(glyph, label, 13.5, Ui.White, FontWeights.SemiBold);
+            // Paused, the button turns white, as the demo's Resume does.
+            var resume = t.State == FocusTimer.Phase.Paused;
+            _main.Background = resume ? Ui.White : DarkButton;
+            _main.Content = Ui.IconText(glyph, label, 13.5, resume ? Ui.Ink : Ui.White, FontWeights.SemiBold);
             AutomationProperties.SetName(_main, label);
             _main.ToolTip = label;
         }
@@ -618,7 +623,7 @@ internal sealed class NotepadCard
         foreach (var h in new[] { GridLength.Auto, GridLength.Auto, new GridLength(1, GridUnitType.Star), GridLength.Auto })
             g.RowDefinitions.Add(new RowDefinition { Height = h });
 
-        g.Children.Add(Ui.IconText(Ui.IcEdit, "Notepad", 15, Ui.Ink, FontWeights.SemiBold));
+        g.Children.Add(Ui.IconText(Ui.IcCompose, "Notepad", 15, Ui.Ink, FontWeights.SemiBold));
         var dateBlock = new StackPanel { Margin = new Thickness(0, 12, 0, 10) };
         dateBlock.Children.Add(_date);
         dateBlock.Children.Add(Ui.Rule().Margin(0, 10));
@@ -752,7 +757,7 @@ internal sealed class EventsCard
         Refresh();
     }
 
-    private static readonly Brush Tile = Ui.Frozen(Color.FromArgb(0x50, 0x10, 0x20, 0x30));
+    private static readonly Brush Tile = Ui.Frozen(Color.FromArgb(0x38, 0x10, 0x20, 0x30));
 
     private static Border TileFor(params UIElement[] lines)
     {
@@ -834,7 +839,7 @@ internal sealed class EventsCard
         else
         {
             var ok = string.IsNullOrEmpty(OwlApp.CalendarError);
-            _foot.Children.Add(Ui.IconText(ok ? Ui.IcDone : "\uE7BA", OwlApp.CalendarBusy ? "Refreshing…" : ok ? "Connected" : "Can’t refresh", 12, Ui.InkDim));
+            _foot.Children.Add(Ui.IconText(ok ? Ui.IcDone : Ui.IcWarning, OwlApp.CalendarBusy ? "Refreshing…" : ok ? "Connected" : "Can’t refresh", 12, Ui.InkDim));
             if (!ok) _foot.ToolTip = OwlApp.CalendarError;
             var refresh = Ui.IconButton(Ui.IcRefresh, "RefreshCalendar", "Refresh calendar", () => _ = OwlApp.RefreshCalendar(), 11);
             DockPanel.SetDock(refresh, Dock.Right);

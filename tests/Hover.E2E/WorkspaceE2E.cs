@@ -75,8 +75,13 @@ public sealed class WorkspaceE2E
     public void HoveringTheNotchOpensItAndLeavingClosesIt()
     {
         Native.SetCursorPos(ScreenW / 2, 0);
+        // The first opening after launch says hello in dots on the way out.
+        Wait(() => Named("WELCOME BACK") is not null, "the notch greets on its first opening", 2000);
+        Thread.Sleep(150);
+        Shot("02a-greeting", top: true);
         Wait(() => Visible("TabWorkspace"), "hovering the top centre opens the workspace");
-        Thread.Sleep(400);
+        Wait(() => Named("WELCOME BACK") is null, "the greeting clears once the workspace is open", 3000);
+        Thread.Sleep(300);
         Shot("02-peek");
         Assert.That(Visible("OpenApp") && Visible("Close") && Visible("TabInsights") && Visible("TabSettings"), Is.True);
 
@@ -107,6 +112,7 @@ public sealed class WorkspaceE2E
         Invoke(MenuItem("Set Time Limit…"));
         Select(WaitFind("Preset45"));
         Assert.That(Value("CustomMinutes"), Is.EqualTo("45"));
+        Thread.Sleep(200);
         Shot("04-duration-popover");
         Invoke(WaitNamed("Save", popup: true));
         Wait(() => Named("45m") is not null, "the row shows its 45m limit");
@@ -208,6 +214,23 @@ public sealed class WorkspaceE2E
     }
 
     [Test, Order(10)]
+    public void ADueReminderShowsInTheNotch()
+    {
+        Invoke(WaitNamed("More for “Write weekly update”"));
+        var remind = MenuItem("Remind Me");
+        ((ExpandCollapsePattern)remind.GetCurrentPattern(ExpandCollapsePattern.Pattern)).Expand();
+        Invoke(MenuItem("Custom…"));
+        // A minute ago: due on the app's next one-second tick.
+        SetValue(WaitFind("ReminderTime"), DateTime.Now.AddMinutes(-1).ToString("t"));
+        Invoke(WaitNamed("Save", popup: true));
+        Invoke(Find("Close")!);
+        Wait(() => Visible("NotchAlert") && Name("NotchAlert") == "REMINDER", "the notch spells out the reminder");
+        Shot("10-alert", top: true);
+        Wait(() => !Visible("NotchAlert"), "the alert clears after a few seconds", 15000);
+        OpenWithShortcut();
+    }
+
+    [Test, Order(11)]
     public void RenameFromTheMenu()
     {
         Invoke(WaitNamed("More for “Write weekly update”"));
@@ -218,7 +241,7 @@ public sealed class WorkspaceE2E
         Wait(() => Named("Write the weekly update") is not null && Named("Write weekly update") is null, "the task is renamed");
     }
 
-    [Test, Order(11)]
+    [Test, Order(12)]
     public void DragToReorder()
     {
         var titles = new[] { "Design landing page", "Review pull request", "Write the weekly update", "Buy oat milk" };
@@ -230,7 +253,7 @@ public sealed class WorkspaceE2E
         Shot("11-reordered");
     }
 
-    [Test, Order(12)]
+    [Test, Order(13)]
     public void CalendarFeedShowsTodaysEvents()
     {
         var ics = Path.Combine(_root, "today.ics");
@@ -251,7 +274,7 @@ public sealed class WorkspaceE2E
         Shot("12-calendar");
     }
 
-    [Test, Order(13)]
+    [Test, Order(14)]
     public void InsightsCountsCompletedTasksAndFocusTime()
     {
         Select(WaitFind("TabInsights"));
@@ -266,7 +289,7 @@ public sealed class WorkspaceE2E
         Select(WaitFind("TabWorkspace"));
     }
 
-    [Test, Order(14)]
+    [Test, Order(15)]
     public void EscAndClickingAwayClose()
     {
         Assert.That(Visible("TabWorkspace"), Is.True);
@@ -279,7 +302,7 @@ public sealed class WorkspaceE2E
         Wait(() => !Visible("TabWorkspace"), "a click in another app closes it");
     }
 
-    [Test, Order(15)]
+    [Test, Order(16)]
     public void OpenAppShowsTheDashboard()
     {
         OpenWithShortcut();
@@ -293,7 +316,7 @@ public sealed class WorkspaceE2E
         Wait(() => Top("HoverDashboard") is null, "the dashboard closes");
     }
 
-    [Test, Order(16)]
+    [Test, Order(17)]
     public void PlannerIsEncryptedAtRest()
     {
         var file = Path.Combine(_root, "data", "planner.dat");
@@ -303,7 +326,7 @@ public sealed class WorkspaceE2E
         Assert.That(IndexOf(bytes, Encoding.UTF8.GetBytes("Call the bank")), Is.EqualTo(-1), "the notepad is not stored in plain text");
     }
 
-    [Test, Order(17)]
+    [Test, Order(18)]
     public void EverythingSurvivesARestart()
     {
         OpenWithShortcut();
@@ -377,12 +400,16 @@ public sealed class WorkspaceE2E
 
     /// Menus and popovers are windows of their own. UI Automation may list them
     /// under the desktop or under the window that owns them, so every Hover window
-    /// is searched, on-screen elements only.
+    /// but the dashboard is searched, on-screen elements only. The dashboard holds a
+    /// second copy of the workspace and must never answer for the notch.
     private static AutomationElement? Anywhere(Condition c)
     {
         var onScreen = new AndCondition(c, new PropertyCondition(AutomationElement.IsOffscreenProperty, false));
         foreach (var w in HoverWindows())
+        {
+            if (w.Current.AutomationId == "HoverDashboard") continue;
             if (w.FindFirst(TreeScope.Subtree, onScreen) is { } hit) return hit;
+        }
         return null;
     }
 

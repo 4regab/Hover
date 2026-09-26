@@ -35,8 +35,21 @@ internal sealed class NotchShell : Canvas
     /// The workspace, always laid out at its full open size.
     public Border ViewHost { get; } = new();
 
-    private Size _rest, _open = new(980, 440);
-    private bool _opening;
+    /// "WELCOME BACK", spelled in dots while the notch opens.
+    public DotMatrix Greeting { get; } = new()
+    {
+        Text = "WELCOME BACK", Pitch = 1.8, Weight = 0.7, Fill = Ui.White, IsHitTestVisible = false,
+    };
+
+    private Size _rest, _open = new(1000, 420);
+    private bool _opening, _greet;
+
+    /// Show the greeting for this opening. Cleared when the opening ends.
+    public bool Greet
+    {
+        get => _greet;
+        set { _greet = value; Relayout(); }
+    }
 
     /// Set while opening or open. The workspace must be visible — clipped to the
     /// still-tiny shape, and transparent — from the very first frame, because WPF
@@ -59,6 +72,7 @@ internal sealed class NotchShell : Canvas
         Children.Add(_shape);
         Children.Add(Mini);
         Children.Add(ViewHost);
+        Children.Add(Greeting);
         SizeChanged += (_, _) => Relayout();
     }
 
@@ -110,6 +124,24 @@ internal sealed class NotchShell : Canvas
         SetLeft(Mini, cx - _rest.Width / 2);
         Mini.Opacity = Math.Clamp(1 - t * 3, 0, 1);
         Mini.Visibility = Mini.Opacity <= 0 ? Visibility.Hidden : Visibility.Visible;
+
+        // The greeting sits low in the small notch, grows a little with it, and has
+        // faded by the time the cards are in.
+        Greeting.Visibility = _greet ? Visibility.Visible : Visibility.Collapsed;
+        if (!_greet) return;
+        var pitch = 1.8 + 1.6 * Math.Clamp(t / 0.6, 0, 1);
+        if (Math.Abs(Greeting.Pitch - pitch) > 0.01)
+        {
+            Greeting.Pitch = pitch;
+            Greeting.InvalidateMeasure();
+            Greeting.InvalidateVisual();
+        }
+        Greeting.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
+        var gs = Greeting.DesiredSize;
+        var fits = w >= gs.Width + 24 && h >= gs.Height + 12;
+        Greeting.Opacity = fits ? Math.Clamp((0.6 - t) / 0.3, 0, 1) : 0;
+        SetLeft(Greeting, cx - gs.Width / 2);
+        SetTop(Greeting, Math.Max(4, Math.Min(h - gs.Height - 9, 64)));
     }
 
     private static (double Radius, double Ear) RestCorners(Size s)
@@ -142,41 +174,6 @@ internal sealed class NotchShell : Canvas
     }
 }
 
-/// A small progress ring for the resting timer.
-internal sealed class Ring : FrameworkElement
-{
-    private double _progress;
-    public double Progress
-    {
-        get => _progress;
-        set { if (Math.Abs(_progress - value) > 0.0005) { _progress = value; InvalidateVisual(); } }
-    }
-
-    private static readonly Pen Track = new(Ui.Frozen(Color.FromArgb(0x55, 0xFF, 0xFF, 0xFF)), 2);
-    private static readonly Pen Arc = new(Ui.White, 2) { StartLineCap = PenLineCap.Round, EndLineCap = PenLineCap.Round };
-
-    protected override void OnRender(DrawingContext dc)
-    {
-        var c = new Point(ActualWidth / 2, ActualHeight / 2);
-        var rad = Math.Min(ActualWidth, ActualHeight) / 2 - 1.5;
-        dc.DrawEllipse(null, Track, c, rad, rad);
-        // The ring empties as the countdown runs, like a clock hand sweeping back.
-        var left = 1 - _progress;
-        if (left <= 0.001) return;
-        if (left >= 0.999) { dc.DrawEllipse(null, Arc, c, rad, rad); return; }
-        var angle = left * 2 * Math.PI;
-        var end = new Point(c.X + rad * Math.Sin(angle), c.Y - rad * Math.Cos(angle));
-        var g = new StreamGeometry();
-        using (var ctx = g.Open())
-        {
-            ctx.BeginFigure(new Point(c.X, c.Y - rad), false, false);
-            ctx.ArcTo(end, new Size(rad, rad), 0, left > 0.5, SweepDirection.Clockwise, true, false);
-        }
-        g.Freeze();
-        dc.DrawGeometry(null, Arc, g);
-    }
-}
-
 /// The notch on one display: resting at the top centre, opening into the workspace
 /// when the pointer rests on it, when it is clicked, or on the shortcut.
 internal sealed class NotchHost : IDisposable
@@ -202,13 +199,13 @@ internal sealed class NotchHost : IDisposable
     private DateTime? _zoneSince, _outsideSince;
     private bool _armed = true;
 
-    private readonly Ring _ring = new() { Width = 14, Height = 14 };
-    private readonly TextBlock _ringGlyph = Ui.Icon(Ui.IcStopwatch, 12, Ui.White);
-    private readonly DotClock _time = new() { Pitch = 2.3, Fill = Ui.White };
-    private readonly TextBlock _alertText = Ui.Text("", 12.5, Ui.White, FontWeights.SemiBold);
+    private readonly DotMatrix _time = new() { Pitch = 2.2, Weight = 0.7, Fill = Ui.White };
+    private readonly DotMatrix _alertTitle = new() { Pitch = 2, Weight = 0.7, Fill = Ui.White };
+    private readonly TextBlock _alertText = Ui.Text("", 12, Ui.WhiteDim);
+    private readonly StackPanel _alertBox = new();
     private (string Title, string Text)? _alert;
 
-    private static readonly Size TabSize = new(150, 7), TimerSize = new(176, 28);
+    private static readonly Size TabSize = new(150, 7), TimerSize = new(190, 38);
     private static readonly TimeSpan Dwell = TimeSpan.FromMilliseconds(120);
     private static readonly TimeSpan LeaveGrace = TimeSpan.FromMilliseconds(350);
 
@@ -260,7 +257,7 @@ internal sealed class NotchHost : IDisposable
     {
         var s = _screen;
         var work = s.WorkDips;
-        _open = new Size(Math.Min(980, work.Width - 24), Math.Min(440, work.Height - 24));
+        _open = new Size(Math.Min(1000, work.Width - 24), Math.Min(420, work.Height - 24));
         const double Pad = 40;   // room for the flare and the shadow
         var w = (int)Math.Round((_open.Width + 2 * Pad) * s.Scale);
         var h = (int)Math.Round((_open.Height + Pad) * s.Scale);
@@ -277,30 +274,31 @@ internal sealed class NotchHost : IDisposable
     {
         RestKind.Tab => TabSize,
         RestKind.Timer => TimerSize,
-        RestKind.Alert => new Size(Math.Clamp(_alertText.DesiredSize.Width + 64, 220, 420), 32),
+        RestKind.Alert => new Size(Math.Clamp(Math.Max(_alertTitle.DesiredSize.Width, _alertText.DesiredSize.Width) + 48, 220, 420), 56),
         _ => new Size(0, 0),
     };
 
+    /// The resting notch holds the running time, centred low as on a Mac where the
+    /// camera takes the top, or a short message spelled in dots.
     private void BuildMini()
     {
         var m = _shell.Mini;
-        m.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        m.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        m.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-
-        var left = new Grid { Margin = new Thickness(13, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center };
-        left.Children.Add(_ring);
-        left.Children.Add(_ringGlyph);
-        m.Children.Add(left);
-
-        _alertText.Margin = new Thickness(8, 0, 14, 0);
-        Grid.SetColumn(_alertText, 1);
-        m.Children.Add(_alertText);
-
-        _time.Margin = new Thickness(0, 0, 14, 0);
-        _time.VerticalAlignment = VerticalAlignment.Center;
-        Grid.SetColumn(_time, 2);
+        _time.HorizontalAlignment = HorizontalAlignment.Center;
+        _time.VerticalAlignment = VerticalAlignment.Bottom;
+        _time.Margin = new Thickness(0, 0, 0, 7);
         m.Children.Add(_time);
+
+        _alertTitle.HorizontalAlignment = HorizontalAlignment.Center;
+        _alertText.HorizontalAlignment = HorizontalAlignment.Center;
+        _alertText.MaxWidth = 372;
+        _alertText.Margin = new Thickness(0, 6, 0, 0);
+        _alertBox.Children.Add(_alertTitle);
+        _alertBox.Children.Add(_alertText);
+        _alertBox.HorizontalAlignment = HorizontalAlignment.Center;
+        _alertBox.VerticalAlignment = VerticalAlignment.Bottom;
+        _alertBox.Margin = new Thickness(0, 0, 0, 8);
+        AutomationProperties.SetAutomationId(_alertTitle, "NotchAlert");
+        m.Children.Add(_alertBox);
     }
 
     public void ShowAlert((string Title, string Text)? alert)
@@ -320,20 +318,17 @@ internal sealed class NotchHost : IDisposable
 
         if (kind == RestKind.Alert)
         {
-            _alertText.Text = $"{_alert!.Value.Title} · {_alert.Value.Text}";
+            _alertTitle.Text = _alert!.Value.Title.ToUpperInvariant();
+            _alertText.Text = _alert.Value.Text;
+            _alertTitle.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
             _alertText.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
         }
-        _ring.Visibility = kind == RestKind.Timer && !t.Stopwatch && t.State == FocusTimer.Phase.Running ? Visibility.Visible : Visibility.Collapsed;
-        _ringGlyph.Text = kind == RestKind.Alert ? Ui.IcBell : t.State == FocusTimer.Phase.Paused ? Ui.IcPause : Ui.IcStopwatch;
-        _ringGlyph.Visibility = kind == RestKind.Alert || (kind == RestKind.Timer && _ring.Visibility != Visibility.Visible)
-            ? Visibility.Visible : Visibility.Collapsed;
-        _alertText.Visibility = kind == RestKind.Alert ? Visibility.Visible : Visibility.Collapsed;
+        _alertBox.Visibility = kind == RestKind.Alert ? Visibility.Visible : Visibility.Collapsed;
         _time.Visibility = kind == RestKind.Timer ? Visibility.Visible : Visibility.Collapsed;
         if (kind == RestKind.Timer)
         {
             _time.Text = t.Text;
-            _time.Opacity = t.State == FocusTimer.Phase.Paused ? 0.55 : 1;
-            _ring.Progress = t.Progress;
+            _time.Opacity = t.State == FocusTimer.Phase.Paused ? 0.5 : 1;
         }
 
         if (kind != _kind || kind == RestKind.Alert)
@@ -412,7 +407,8 @@ internal sealed class NotchHost : IDisposable
             _window.SetAcceptsKeys(true);
             _window.Raise();
             _shell.Opening = true;
-            Animate(1, 300, new CubicEase { EasingMode = EasingMode.EaseOut });
+            if (Manager?.TakeGreeting() == true) Greet();
+            else Animate(1, 300, new CubicEase { EasingMode = EasingMode.EaseOut });
         }
         State = peek && State != Mode.Open ? Mode.Peek : Mode.Open;
         _outsideSince = null;
@@ -426,6 +422,21 @@ internal sealed class NotchHost : IDisposable
                 Log.Line($"notch: shortcut focus fell short — active {_window.IsActive}, " +
                          $"focused {Keyboard.FocusedElement?.GetType().Name ?? "nothing"}");
         }, DispatcherPriority.Input);
+    }
+
+    /// The first opening after launch or a return to the PC: the notch grows a
+    /// little and says hello, then opens the rest of the way.
+    private void Greet()
+    {
+        _shell.Greet = true;
+        var a = new DoubleAnimationUsingKeyFrames();
+        a.KeyFrames.Add(new EasingDoubleKeyFrame(0.06, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(160)),
+            new CubicEase { EasingMode = EasingMode.EaseOut }));
+        a.KeyFrames.Add(new LinearDoubleKeyFrame(0.09, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(560))));
+        a.KeyFrames.Add(new EasingDoubleKeyFrame(1, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(940)),
+            new CubicEase { EasingMode = EasingMode.EaseOut }));
+        a.Completed += (_, _) => _shell.Greet = false;
+        _shell.BeginAnimation(NotchShell.OpennessProperty, a);
     }
 
     private WorkspaceView NewView()
@@ -447,6 +458,7 @@ internal sealed class NotchHost : IDisposable
             Win32.SetForegroundWindow(_previous);
         _window.SetAcceptsKeys(false);
         _shell.Opening = false;
+        _shell.Greet = false;
         Animate(0, 220, new CubicEase { EasingMode = EasingMode.EaseIn });
     }
 
@@ -482,9 +494,29 @@ public sealed class NotchManager : IDisposable
     private string _signature = "";
     private DateTime _lastDisplayCheck = DateTime.MinValue;
     private DashboardWindow? _dashboard;
+    private bool _greet = true;
+
+    internal bool TakeGreeting()
+    {
+        var g = _greet;
+        _greet = false;
+        return g;
+    }
+
+    private void OnPower(object? sender, Microsoft.Win32.PowerModeChangedEventArgs e)
+    {
+        if (e.Mode == Microsoft.Win32.PowerModes.Resume) _greet = true;
+    }
+
+    private void OnSession(object? sender, Microsoft.Win32.SessionSwitchEventArgs e)
+    {
+        if (e.Reason == Microsoft.Win32.SessionSwitchReason.SessionUnlock) _greet = true;
+    }
 
     public NotchManager()
     {
+        Microsoft.Win32.SystemEvents.PowerModeChanged += OnPower;
+        Microsoft.Win32.SystemEvents.SessionSwitch += OnSession;
         Rebuild(Screens.All());
         _poll = new DispatcherTimer(DispatcherPriority.Background) { Interval = TimeSpan.FromMilliseconds(50) };
         _poll.Tick += (_, _) => Tick();
@@ -593,6 +625,8 @@ public sealed class NotchManager : IDisposable
 
     public void Dispose()
     {
+        Microsoft.Win32.SystemEvents.PowerModeChanged -= OnPower;
+        Microsoft.Win32.SystemEvents.SessionSwitch -= OnSession;
         _poll.Stop();
         _alertEnd.Stop();
         _dashboard?.Close();

@@ -13,10 +13,10 @@ namespace Hover.Owl;
 /// paper cards — green, lilac, olive, slate — on a black notch.
 internal static class Ui
 {
-    public static readonly Color Green = Rgb(0x86, 0xA8, 0x8E);
-    public static readonly Color Lilac = Rgb(0x93, 0x8A, 0xAE);
-    public static readonly Color Olive = Rgb(0xA6, 0xA3, 0x62);
-    public static readonly Color Slate = Rgb(0x84, 0x9E, 0xB0);
+    public static readonly Color Green = Rgb(0x7B, 0x9B, 0x86);
+    public static readonly Color Lilac = Rgb(0x8C, 0x83, 0xA9);
+    public static readonly Color Olive = Rgb(0x9C, 0x96, 0x5A);
+    public static readonly Color Slate = Rgb(0x7A, 0x94, 0xAB);
 
     public static readonly Brush Ink = Frozen(Color.FromArgb(0xE6, 0, 0, 0));
     public static readonly Brush InkDim = Frozen(Color.FromArgb(0x99, 0, 0, 0));
@@ -36,7 +36,9 @@ internal static class Ui
         IcForward = "\uE72A", IcRename = "\uE8AC", IcReturn = "\uE751", IcList = "\uE8FD",
         IcLines = "\uE8E4", IcClose = "\uE711", IcWindow = "\uE78B", IcChevronDown = "\uE70D",
         IcClock = "\uE917", IcBolt = "\uE945", IcSliders = "\uE9E9", IcRing = "\uEA3A",
-        IcDone = "\uE930", IcTarget = "\uF272";
+        IcDone = "\uE930", IcTarget = "\uF272", IcChecklist = "\uE9D5", IcCompose = "\uE70B",
+        IcSettings = "\uE713", IcFolder = "\uE8B7", IcWarning = "\uE7BA", IcDoneSolid = "\uEC61",
+        IcChevronUp = "\uE70E";
 
     public static Color Rgb(byte r, byte g, byte b) => Color.FromRgb(r, g, b);
 
@@ -59,15 +61,38 @@ internal static class Ui
         VerticalAlignment = VerticalAlignment.Center,
     };
 
-    public static TextBlock Icon(string glyph, double size = 13, Brush? fg = null) => new()
+    public static FrameworkElement Icon(string glyph, double size = 13, Brush? fg = null)
     {
-        Text = glyph,
-        FontFamily = Icons,
-        FontSize = size,
-        Foreground = fg ?? Ink,
-        VerticalAlignment = VerticalAlignment.Center,
-        HorizontalAlignment = HorizontalAlignment.Center,
-    };
+        if (glyph == IcPlay)
+            return new Path
+            {
+                Data = PlayShape,
+                Fill = fg ?? Ink,
+                Width = size * 0.78,
+                Height = size * 0.9,
+                Stretch = Stretch.Fill,
+                VerticalAlignment = VerticalAlignment.Center,
+                HorizontalAlignment = HorizontalAlignment.Center,
+            };
+        return new TextBlock
+        {
+            Text = glyph,
+            FontFamily = Icons,
+            FontSize = size,
+            Foreground = fg ?? Ink,
+            VerticalAlignment = VerticalAlignment.Center,
+            HorizontalAlignment = HorizontalAlignment.Center,
+        };
+    }
+
+    private static readonly Geometry PlayShape = MakePlayShape();
+
+    private static Geometry MakePlayShape()
+    {
+        var g = Geometry.Parse("M1,0.4 Q0,-0.2 0,1 L0,9 Q0,10.2 1,9.6 L8.4,5.6 Q9.4,5 8.4,4.4 Z");
+        g.Freeze();
+        return g;
+    }
 
     public static StackPanel Row(params UIElement[] children)
     {
@@ -205,27 +230,57 @@ internal static class Ui
         $"{((t.Date - now.Date).Days == 1 ? "Tomorrow" : DayMonth(t))} at {Clock(t)}";
 }
 
-/// The dot-matrix clock face: each digit a 5×7 grid of dots, the way the notch
-/// timer reads on a Mac.
-internal sealed class DotClock : FrameworkElement
+/// Dot-matrix type: each character a 5×7 grid of dots — the timer's face, and the
+/// capitals the notch spells its messages in ("WELCOME BACK").
+internal sealed class DotMatrix : FrameworkElement
 {
     private static readonly Dictionary<char, string[]> Glyphs = new()
     {
-        ['0'] = new[] { "01110", "10001", "10011", "10101", "11001", "10001", "01110" },
+        ['A'] = new[] { "01110", "10001", "10001", "11111", "10001", "10001", "10001" },
+        ['B'] = new[] { "11110", "10001", "10001", "11110", "10001", "10001", "11110" },
+        ['C'] = new[] { "01110", "10001", "10000", "10000", "10000", "10001", "01110" },
+        ['D'] = new[] { "11110", "10001", "10001", "10001", "10001", "10001", "11110" },
+        ['E'] = new[] { "11111", "10000", "10000", "11110", "10000", "10000", "11111" },
+        ['F'] = new[] { "11111", "10000", "10000", "11110", "10000", "10000", "10000" },
+        ['G'] = new[] { "01110", "10001", "10000", "10111", "10001", "10001", "01111" },
+        ['H'] = new[] { "10001", "10001", "10001", "11111", "10001", "10001", "10001" },
+        ['I'] = new[] { "01110", "00100", "00100", "00100", "00100", "00100", "01110" },
+        ['J'] = new[] { "00111", "00010", "00010", "00010", "00010", "10010", "01100" },
+        ['K'] = new[] { "10001", "10010", "10100", "11000", "10100", "10010", "10001" },
+        ['L'] = new[] { "10000", "10000", "10000", "10000", "10000", "10000", "11111" },
+        ['M'] = new[] { "10001", "11011", "10101", "10101", "10001", "10001", "10001" },
+        ['N'] = new[] { "10001", "10001", "11001", "10101", "10011", "10001", "10001" },
+        ['O'] = new[] { "01110", "10001", "10001", "10001", "10001", "10001", "01110" },
+        ['P'] = new[] { "11110", "10001", "10001", "11110", "10000", "10000", "10000" },
+        ['Q'] = new[] { "01110", "10001", "10001", "10001", "10101", "10010", "01101" },
+        ['R'] = new[] { "11110", "10001", "10001", "11110", "10100", "10010", "10001" },
+        ['S'] = new[] { "01111", "10000", "10000", "01110", "00001", "00001", "11110" },
+        ['T'] = new[] { "11111", "00100", "00100", "00100", "00100", "00100", "00100" },
+        ['U'] = new[] { "10001", "10001", "10001", "10001", "10001", "10001", "01110" },
+        ['V'] = new[] { "10001", "10001", "10001", "10001", "10001", "01010", "00100" },
+        ['W'] = new[] { "10001", "10001", "10001", "10101", "10101", "10101", "01010" },
+        ['X'] = new[] { "10001", "10001", "01010", "00100", "01010", "10001", "10001" },
+        ['Y'] = new[] { "10001", "10001", "10001", "01010", "00100", "00100", "00100" },
+        ['Z'] = new[] { "11111", "00001", "00010", "00100", "01000", "10000", "11111" },
+        [' '] = new[] { "000", "000", "000", "000", "000", "000", "000" },
+        ['\''] = new[] { "1", "1", "0", "0", "0", "0", "0" },
+        ['.'] = new[] { "0", "0", "0", "0", "0", "0", "1" },
+        ['-'] = new[] { "000", "000", "000", "111", "000", "000", "000" },
+        ['0'] = new[] { "01110", "11011", "11011", "11011", "11011", "11011", "01110" },
         ['1'] = new[] { "00100", "01100", "00100", "00100", "00100", "00100", "01110" },
         ['2'] = new[] { "01110", "10001", "00001", "00010", "00100", "01000", "11111" },
-        ['3'] = new[] { "11110", "00001", "00001", "01110", "00001", "00001", "11110" },
+        ['3'] = new[] { "01110", "10001", "00001", "00110", "00001", "10001", "01110" },
         ['4'] = new[] { "00010", "00110", "01010", "10010", "11111", "00010", "00010" },
-        ['5'] = new[] { "11111", "10000", "11110", "00001", "00001", "10001", "01110" },
-        ['6'] = new[] { "00110", "01000", "10000", "11110", "10001", "10001", "01110" },
+        ['5'] = new[] { "11111", "10000", "10000", "11110", "00001", "00001", "11110" },
+        ['6'] = new[] { "01110", "10001", "10000", "11110", "10001", "10001", "01110" },
         ['7'] = new[] { "11111", "00001", "00010", "00100", "01000", "01000", "01000" },
         ['8'] = new[] { "01110", "10001", "10001", "01110", "10001", "10001", "01110" },
-        ['9'] = new[] { "01110", "10001", "10001", "01111", "00001", "00010", "01100" },
-        [':'] = new[] { "0", "0", "1", "0", "1", "0", "0" },
+        ['9'] = new[] { "01110", "10001", "10001", "01111", "00001", "10001", "01110" },
+        [':'] = new[] { "0", "1", "1", "0", "1", "1", "0" },
     };
 
     public static readonly DependencyProperty TextProperty = DependencyProperty.Register(
-        nameof(Text), typeof(string), typeof(DotClock),
+        nameof(Text), typeof(string), typeof(DotMatrix),
         new FrameworkPropertyMetadata("00:00",
             FrameworkPropertyMetadataOptions.AffectsMeasure | FrameworkPropertyMetadataOptions.AffectsRender));
 
@@ -235,7 +290,10 @@ internal sealed class DotClock : FrameworkElement
     public double Pitch { get; set; } = 5;
     public Brush Fill { get; set; } = Ui.Ink;
 
-    private double GlyphWidth(char c) => (Glyphs.TryGetValue(c, out var g) ? g[0].Length : 5) * Pitch;
+    /// Dot diameter as a share of the pitch.
+    public double Weight { get; set; } = 0.66;
+
+    private double GlyphWidth(char c) => (Glyphs.TryGetValue(char.ToUpperInvariant(c), out var g) ? g[0].Length : 5) * Pitch;
     private double Gap => Pitch * 1.4;
 
     protected override Size MeasureOverride(Size available)
@@ -246,11 +304,11 @@ internal sealed class DotClock : FrameworkElement
 
     protected override void OnRender(DrawingContext dc)
     {
-        var r = Pitch * 0.34;
+        var r = Pitch * Weight / 2;
         var x = 0.0;
         foreach (var ch in Text)
         {
-            if (Glyphs.TryGetValue(ch, out var g))
+            if (Glyphs.TryGetValue(char.ToUpperInvariant(ch), out var g))
             {
                 for (var row = 0; row < 7; row++)
                     for (var col = 0; col < g[row].Length; col++)
@@ -266,10 +324,10 @@ internal sealed class DotClock : FrameworkElement
 
     private sealed class Peer : FrameworkElementAutomationPeer
     {
-        public Peer(DotClock owner) : base(owner) { }
-        protected override string GetNameCore() => ((DotClock)Owner).Text;
+        public Peer(DotMatrix owner) : base(owner) { }
+        protected override string GetNameCore() => ((DotMatrix)Owner).Text;
         protected override AutomationControlType GetAutomationControlTypeCore() => AutomationControlType.Text;
-        protected override string GetClassNameCore() => nameof(DotClock);
+        protected override string GetClassNameCore() => nameof(DotMatrix);
     }
 }
 
@@ -319,7 +377,7 @@ internal sealed class BarChart : FrameworkElement
         var plotH = Math.Max(10, ActualHeight - LabelBand - 8);
         var top = 8.0;
         var colW = (ActualWidth - Axis) / n;
-        var barW = Math.Min(44, colW * 0.44);
+        var barW = Math.Min(40, colW * 0.36);
         var dpi = VisualTreeHelper.GetDpi(this).PixelsPerDip;
 
         // Axis ticks: three steps.
@@ -344,8 +402,13 @@ internal sealed class BarChart : FrameworkElement
             else if (Back is null) dc.DrawRectangle(FrontBrush, null, new Rect(cx - barW / 2, top + plotH - 1.5, barW, 1.5));
             dc.Pop();
 
+            // The pointer's column: a hairline from the top of the plot down to its bar.
             if (_hover == i || Selected == i)
-                dc.DrawLine(HoverPen, new Point(cx, top), new Point(cx, top + plotH * 0.25));
+            {
+                var tallest = Math.Max(Front[i], Back is { } bk && i < bk.Count ? bk[i] : 0);
+                var barTop = top + plotH - Math.Max(2, plotH * tallest / max);
+                if (barTop > top + 2) dc.DrawLine(HoverPen, new Point(cx, top), new Point(cx, barTop - 3));
+            }
 
             if (i < Labels.Count)
             {

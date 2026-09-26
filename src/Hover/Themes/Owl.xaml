@@ -11,6 +11,8 @@
     <Setter Property="FocusVisualStyle" Value="{x:Null}" />
     <Setter Property="Cursor" Value="Hand" />
     <Setter Property="Background" Value="Transparent" />
+    <Setter Property="BorderBrush" Value="Transparent" />
+    <Setter Property="BorderThickness" Value="0" />
     <Setter Property="Foreground" Value="#D9000000" />
     <Setter Property="FontFamily" Value="{StaticResource OwlFont}" />
     <Setter Property="FontSize" Value="13" />
@@ -37,7 +39,7 @@
               <Setter TargetName="Bd" Property="Opacity" Value="0.65" />
             </Trigger>
             <Trigger Property="IsEnabled" Value="False">
-              <Setter TargetName="Bd" Property="Opacity" Value="0.4" />
+              <Setter TargetName="Bd" Property="Opacity" Value="0.55" />
             </Trigger>
             <Trigger Property="IsKeyboardFocused" Value="True">
               <Setter TargetName="Bd" Property="BorderBrush" Value="#990A84FF" />
@@ -76,15 +78,15 @@
   </Style>
 
   <Style x:Key="OwlDarkButton" TargetType="Button" BasedOn="{StaticResource OwlBase}">
-    <Setter Property="Background" Value="#FF1C1C1E" />
+    <Setter Property="Background" Value="#FF19161B" />
     <Setter Property="Foreground" Value="White" />
     <Setter Property="FontWeight" Value="SemiBold" />
-    <Setter Property="Padding" Value="14,7" />
+    <Setter Property="Padding" Value="14,8" />
     <Setter Property="Tag" Value="8" />
   </Style>
 
   <Style x:Key="OwlChromeButton" TargetType="Button" BasedOn="{StaticResource OwlBase}">
-    <Setter Property="Background" Value="#FF333336" />
+    <Setter Property="Background" Value="#FF373737" />
     <Setter Property="Foreground" Value="#F2FFFFFF" />
     <Setter Property="Padding" Value="9,3" />
     <Setter Property="Tag" Value="6" />
@@ -128,7 +130,7 @@
               <Setter TargetName="Bd" Property="Background" Value="#26FFFFFF" />
             </Trigger>
             <Trigger Property="IsChecked" Value="True">
-              <Setter TargetName="Bd" Property="Background" Value="#FF48484A" />
+              <Setter TargetName="Bd" Property="Background" Value="#FF595959" />
             </Trigger>
             <Trigger Property="IsKeyboardFocused" Value="True">
               <Setter TargetName="Bd" Property="BorderBrush" Value="#990A84FF" />
@@ -149,7 +151,7 @@
     <Setter Property="Template">
       <Setter.Value>
         <ControlTemplate TargetType="RadioButton">
-          <Border x:Name="Bd" Background="Transparent" CornerRadius="4" Padding="12,2"
+          <Border x:Name="Bd" Background="Transparent" CornerRadius="4" Padding="4,3"
                   BorderBrush="Transparent" BorderThickness="1.5">
             <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
           </Border>
