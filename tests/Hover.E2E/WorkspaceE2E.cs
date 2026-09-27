@@ -13,9 +13,9 @@ namespace Hover.E2E;
 /// The whole NotchOwl story against the real app: hover to open, the shortcut, tasks,
 /// time limits, focus sessions, the timer in the notch, the notepad's Ctrl+Enter,
 /// reminders, reordering, a calendar feed, Insights, the dashboard, encryption at
-/// rest, persistence across a restart, the configurable cards, the Screenshots card
-/// and the notch's quota item. Screenshots of each state land in
-/// HOVER_E2E_OUT.
+/// rest, persistence across a restart, the configurable cards, the Screenshots card,
+/// the notch's quota item, and the Kiro page running a stand-in kiro-cli headlessly.
+/// Screenshots of each state land in HOVER_E2E_OUT.
 [TestFixture, NonParallelizable]
 public sealed class WorkspaceE2E
 {
@@ -28,6 +28,8 @@ public sealed class WorkspaceE2E
 
     private string _root = "";
     private Process? _app;
+    private string Bin => Path.Combine(_root, "bin");
+    private string Project => Path.Combine(_root, "my project");
 
     private static int ScreenW => Native.GetSystemMetrics(0);
     private static int ScreenH => Native.GetSystemMetrics(1);
@@ -39,6 +41,12 @@ public sealed class WorkspaceE2E
         Directory.CreateDirectory(Out);
         _root = Path.Combine(Path.GetTempPath(), "hover-e2e-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(_root);
+        // Kiro's folder is remembered from a previous run but has since gone, so the
+        // Kiro page has to ask for another. The folder is made later, in the Kiro step.
+        Directory.CreateDirectory(Path.Combine(_root, "data"));
+        File.WriteAllText(Path.Combine(_root, "data", "settings.json"),
+            "{\"KiroFolder\": " + System.Text.Json.JsonSerializer.Serialize(Project) + "}");
+        FakeKiro();
         Start();
         Shot("01-rest", top: true);
     }
@@ -56,6 +64,8 @@ public sealed class WorkspaceE2E
             "{\"timestamp\":\"" + DateTimeOffset.UtcNow.ToString("o") + "\",\"type\":\"event_msg\",\"payload\":{\"type\":\"token_count\"," +
             "\"rate_limits\":{\"primary\":{\"used_percent\":37,\"window_minutes\":300,\"resets_at\":" + reset + "}}}}\n");
         psi.Environment["CODEX_HOME"] = Path.Combine(_root, "codex");
+        // The stand-in kiro-cli comes first on PATH, so the Kiro page runs it.
+        psi.Environment["PATH"] = Bin + ";" + Environment.GetEnvironmentVariable("PATH");
         _app = Process.Start(psi)!;
         _notch = null;
         Wait(() => _app.HasExited || Notch() is not null, "the notch window appears", 20000);
@@ -119,7 +129,9 @@ public sealed class WorkspaceE2E
         Wait(() => Notch()?.FindFirst(TreeScope.Children, greeting) is null, "the greeting clears once the workspace is open", 3000);
         Thread.Sleep(300);
         Shot("02-peek");
-        Assert.That(Visible("OpenApp") && Visible("Close") && Visible("TabInsights") && Visible("TabSettings"), Is.True);
+        Assert.That(Visible("OpenApp") && Visible("Close") && Visible("TabKiro") && Visible("TabSettings"), Is.True);
+        Assert.That(Visible("TabInsights"), Is.False, "Insights lives in Settings now");
+        Assert.That(Find("TabKiro")!.Current.Name, Is.EqualTo("Kiro"), "an icon tab still has a name for screen readers");
 
         MoveAway();
         Wait(() => !Visible("TabWorkspace"), "moving the pointer away closes a workspace opened by hover");
@@ -322,9 +334,9 @@ public sealed class WorkspaceE2E
             "END:VCALENDAR\r\n");
 
         Select(WaitFind("TabSettings"));
-        Select(WaitFind("SectionCalendar"));
-        SetValue(WaitFind("CalendarSource"), ics);
-        Invoke(WaitFind("CalendarConnect"));
+        Select(WaitFind("SectionIntegrations"));
+        SetValue(Reveal("CalendarSource"), ics);
+        Invoke(Reveal("CalendarConnect"));
         Shot("12-settings");
         Select(WaitFind("TabWorkspace"));
         Wait(() => Named("Design review") is not null, "today's event is listed");
@@ -352,7 +364,8 @@ public sealed class WorkspaceE2E
     [Test, Order(16)]
     public void InsightsCountsCompletedTasksAndFocusTime()
     {
-        Select(WaitFind("TabInsights"));
+        Select(WaitFind("TabSettings"));
+        Select(WaitFind("SectionData"));
         WaitName("InsightsBig", "1");
         Assert.That(Named("Tasks completed") ?? Named("Task completed"), Is.Not.Null);
         Assert.That(Named("of 4 planned"), Is.Not.Null);
@@ -398,7 +411,7 @@ public sealed class WorkspaceE2E
         OpenWithShortcut();
         Select(WaitFind("TabSettings"));
         Select(WaitFind("SectionData"));
-        Invoke(WaitFind("ExportBackup"));
+        Invoke(Reveal("ExportBackup"));
         // UI Automation lists an owned dialog under its owner, not the desktop.
         var isDialog = new PropertyCondition(AutomationElement.ClassNameProperty, "#32770");
         AutomationElement? dialog = null;
@@ -436,7 +449,7 @@ public sealed class WorkspaceE2E
         OpenWithShortcut();
         Select(WaitFind("TabSettings"));
         Select(WaitFind("SectionData"));
-        Invoke(WaitFind("Quit"));
+        Invoke(Reveal("Quit"));
         Assert.That(_app!.WaitForExit(15000), Is.True, "Quit Hover exits the app");
 
         Start();
@@ -464,8 +477,11 @@ public sealed class WorkspaceE2E
         Invoke(MenuItem("Screenshots"));
         Wait(() => Visible("ShotsMore"), "and shows it again");
 
-        Select(WaitFind("TabSettings"));
-        Select(WaitFind("SectionCards"));
+        // The header menu's deep link: Settings, at the Cards heading.
+        Invoke(WaitFind("CustomizeCards"));
+        Invoke(MenuItem("Arrange Cards…"));
+        Wait(() => Find("SectionWorkspace") is { } s && ((SelectionItemPattern)s.GetCurrentPattern(SelectionItemPattern.Pattern)).Current.IsSelected,
+            "Arrange Cards opens Settings at Workspace");
         Invoke(WaitFind("MoveLeftshots"));
         Shot("18-settings-cards");
         Select(WaitFind("TabWorkspace"));
@@ -482,8 +498,8 @@ public sealed class WorkspaceE2E
         Wait(() => File.ReadAllText(Path.Combine(_root, "data", "settings.json")).Contains("\"Cards\""), "the layout is saved");
 
         Select(WaitFind("TabSettings"));
-        Select(WaitFind("SectionCards"));
-        Invoke(WaitFind("ResetLayout"));
+        Select(WaitFind("SectionWorkspace"));
+        Invoke(Reveal("ResetLayout"));
         Select(WaitFind("TabWorkspace"));
         Wait(() => WaitFind("ShotsMore").Current.BoundingRectangle.Left > WaitFind("EventsMore").Current.BoundingRectangle.Left,
             "Reset layout puts the cards back");
@@ -511,17 +527,156 @@ public sealed class WorkspaceE2E
     {
         OpenWithShortcut();
         Select(WaitFind("TabSettings"));
-        Select(WaitFind("SectionNotch"));
-        Toggle(WaitFind("NotchItemcodex"));
+        Select(WaitFind("SectionIntegrations"));
+        Toggle(Reveal("NotchItemcodex"));
         Wait(() => Name("QuotaStatuscodex").StartsWith("37% used"), "Settings shows Codex's reading", 15000);
         Wait(() => Name("WorkspaceQuotaCodex") == "37%", "the workspace header shows it too");
-        Toggle(WaitFind("QuotasOnNotch"));
+        Toggle(Reveal("QuotasOnNotch"));
         Shot("21-settings-notch");
         Select(WaitFind("TabWorkspace"));
         Invoke(Find("Close")!);
         Wait(() => !Visible("TabWorkspace"), "the workspace closes");
         Wait(() => Name("NotchQuotaCodex") == "37%", "the resting notch shows the Codex quota");
         Shot("22-notch-items", top: true);
+    }
+
+    [Test, Order(25)]
+    public void KiroRunsATaskHeadlesslyInTheChosenFolder()
+    {
+        OpenWithShortcut();
+        Select(WaitFind("TabKiro"));
+        WaitFind("KiroNotice");
+        Assert.That(Visible("KiroPrompt"), Is.False, "nothing can run before the note is read");
+        Thread.Sleep(600);
+        Shot("23-kiro-notice");
+        Invoke(WaitFind("KiroNoticeOk"));
+
+        // The remembered folder has gone: no prompt, and no quiet fallback to another folder.
+        WaitFind("KiroEmpty");
+        Wait(() => Name("KiroEmptyDetail").Contains("isn’t there any more"), "the page says the remembered folder has gone");
+        Assert.That(Visible("KiroPrompt"), Is.False, "no prompt without a usable folder");
+        Assert.That(Visible("KiroChooseFolder"), Is.True);
+        Thread.Sleep(600);
+        Shot("24-kiro-empty");
+
+        Directory.CreateDirectory(Project);
+        Select(WaitFind("TabWorkspace"));
+        Select(WaitFind("TabKiro"));
+        WaitFind("KiroPrompt");
+        WaitName("KiroFolder", Project);
+        WaitName("KiroStatus", "Ready when you are");
+
+        const string Task = "Rename the helper and update its callers";
+        WaitFind("KiroPrompt").SetFocus();
+        Wait(() => Find("KiroPrompt")?.Current.HasKeyboardFocus == true, "the prompt takes the caret");
+        Keys.Type(Task);
+        Thread.Sleep(400);
+        Shot("25-kiro-prompt");
+        Keys.Chord(Keys.Control, Keys.Return);
+        WaitFind("KiroStop");
+        WaitName("KiroTask", Task);
+        Wait(() => Name("KiroStatus") == "Thinking it through", "the ghost thinks first", 10000);
+        Thread.Sleep(700);
+        Shot("26-kiro-thinking");
+        Wait(() => Name("KiroStatus") == "Reading the code", "then reads", 10000);
+        Thread.Sleep(900);
+        Shot("27-kiro-reading");
+        Wait(() => Name("KiroStatus") == "Making changes", "then edits", 10000);
+        Thread.Sleep(500);
+        Shot("28-kiro-editing");
+        Wait(() => Name("KiroStatus") == "All done", "the run completes", 20000);
+        Assert.That(Value("KiroResult"), Is.EqualTo("Renamed the helper and updated 3 callers."));
+        Assert.That(Visible("KiroStop"), Is.False, "nothing to stop once it's done");
+        Thread.Sleep(1200);
+        Shot("29-kiro-done");
+        Assert.That(File.ReadAllText(Path.Combine(Bin, "cwd.txt")).Trim(), Is.EqualTo(Project), "Kiro ran in the chosen folder");
+        Assert.That(File.ReadAllText(Path.Combine(Bin, "stdin.txt")).Trim(), Is.EqualTo(Task), "the prompt went in on stdin");
+        Assert.That(File.ReadAllText(Path.Combine(Bin, "args.txt")).Trim(),
+            Is.EqualTo("chat --no-interactive --trust-all-tools --agent-engine v3 --output-format stream-json"));
+
+        // Stop, part way through.
+        Invoke(WaitFind("KiroNewTask"));
+        File.WriteAllText(Path.Combine(Bin, "hang"), "");
+        WaitFind("KiroPrompt").SetFocus();
+        Wait(() => Find("KiroPrompt")?.Current.HasKeyboardFocus == true, "the prompt takes the caret");
+        Keys.Type("A long task");
+        Invoke(WaitFind("KiroRun"));
+        Wait(() => Name("KiroStatus") == "Making changes", "the long task gets going", 15000);
+        Invoke(WaitFind("KiroStop"));
+        Wait(() => Name("KiroStatus") == "Stopped", "Stop ends the run", 10000);
+        Thread.Sleep(1200);
+        Shot("30-kiro-stopped");
+        File.Delete(Path.Combine(Bin, "hang"));
+        Wait(() => !Process.GetProcessesByName("PING").Any(p => { try { return p.StartTime > _app!.StartTime; } catch { return false; } }),
+            "the stand-in's children are killed with it", 10000);
+
+        // A failure reads as what to do about it.
+        File.WriteAllText(Path.Combine(Bin, "fail"), "");
+        Invoke(WaitFind("KiroRunAgain"));
+        Wait(() => Name("KiroStatus") == "Couldn’t finish", "a failed run says so", 15000);
+        Assert.That(Value("KiroResult"), Does.StartWith("Kiro needs you to sign in"));
+        Thread.Sleep(1200);
+        Shot("31-kiro-failed");
+        File.Delete(Path.Combine(Bin, "fail"));
+        Invoke(WaitFind("KiroNewTask"));
+        WaitFind("KiroPrompt");
+    }
+
+    [Test, Order(26)]
+    public void KirosFolderAndTheNoteAreRememberedAcrossARestart()
+    {
+        OpenWithShortcut();
+        Select(WaitFind("TabSettings"));
+        Select(WaitFind("SectionData"));
+        Invoke(Reveal("Quit"));
+        Assert.That(_app!.WaitForExit(15000), Is.True);
+        var json = File.ReadAllText(Path.Combine(_root, "data", "settings.json"));
+        Assert.That(json, Does.Contain("\"KiroNoticeSeen\": true"));
+
+        Start();
+        OpenWithShortcut();
+        Select(WaitFind("TabKiro"));
+        WaitFind("KiroPrompt");
+        Assert.That(Visible("KiroNotice"), Is.False, "the note is shown once");
+        WaitName("KiroFolder", Project);
+        Select(WaitFind("TabSettings"));
+        Select(WaitFind("SectionIntegrations"));
+        Reveal("SettingsKiroFolder");
+        Thread.Sleep(400);
+        Shot("32-settings-integrations");
+        Select(WaitFind("TabWorkspace"));
+    }
+
+    /// A kiro-cli.cmd that records its input, folder and arguments, then plays a
+    /// short run: thinking, a read, an edit, and a final answer. A "hang" file makes
+    /// it wait (to be stopped), a "fail" file makes it fail as a signed-out CLI does.
+    private void FakeKiro()
+    {
+        Directory.CreateDirectory(Bin);
+        static string Update(string body) => "echo {\"type\":\"sessionUpdate\",\"data\":{\"update\":{" + body + "}}}";
+        File.WriteAllText(Path.Combine(Bin, "kiro-cli.cmd"), string.Join("\r\n", new[]
+        {
+            "@echo off",
+            "findstr \"^\" > \"%~dp0stdin.txt\"",
+            "cd > \"%~dp0cwd.txt\"",
+            "echo %*> \"%~dp0args.txt\"",
+            "echo {\"type\":\"runStarted\",\"data\":{}}",
+            "if exist \"%~dp0fail\" goto fail",
+            "ping -n 3 127.0.0.1 > nul",
+            Update("\"sessionUpdate\":\"agent_thought_chunk\",\"content\":{\"type\":\"text\",\"text\":\"hm\"}"),
+            "ping -n 4 127.0.0.1 > nul",
+            Update("\"sessionUpdate\":\"tool_call\",\"kind\":\"read\",\"title\":\"Reading src\""),
+            "ping -n 4 127.0.0.1 > nul",
+            Update("\"sessionUpdate\":\"tool_call\",\"kind\":\"edit\",\"title\":\"Editing\""),
+            "if exist \"%~dp0hang\" ping -n 120 127.0.0.1 > nul",
+            "ping -n 3 127.0.0.1 > nul",
+            "echo {\"type\":\"runFinished\",\"data\":{\"stopReason\":\"end_turn\",\"finalText\":\"Renamed the helper and updated 3 callers.\"}}",
+            "exit /b 0",
+            ":fail",
+            "echo Failed to open browser for authentication. 1>&2",
+            "echo Please try again with: kiro-cli login --use-device-flow 1>&2",
+            "exit /b 1",
+        }) + "\r\n");
     }
 
     // MARK: Helpers — finding things
@@ -636,6 +791,16 @@ public sealed class WorkspaceE2E
             new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.MenuItem)))) is not null,
             $"menu item '{name}' appears");
         return e!;
+    }
+
+    /// An element further down a scrolling Settings section. Focusing it scrolls it
+    /// into view (WPF brings a focused element into view), after which it is on screen.
+    private static AutomationElement Reveal(string automationId)
+    {
+        AutomationElement? e = null;
+        Wait(() => (e = Find(automationId)) is not null, $"{automationId} exists");
+        if (e!.Current.IsOffscreen) e.SetFocus();
+        return WaitFind(automationId);
     }
 
     private static bool Visible(string automationId) => Find(automationId) is { Current.IsOffscreen: false };

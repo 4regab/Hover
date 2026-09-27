@@ -36,24 +36,7 @@ public static class Quota
     {
         var exe = OnPath("kiro-cli");
         if (exe is null) return QuotaReading.Fail("kiro-cli isn’t installed or isn’t on PATH.");
-        // A .cmd shim has to go through cmd; an .exe runs directly.
-        var shim = exe.EndsWith(".cmd", StringComparison.OrdinalIgnoreCase) || exe.EndsWith(".bat", StringComparison.OrdinalIgnoreCase);
-        var psi = new ProcessStartInfo(shim ? "cmd.exe" : exe)
-        {
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            RedirectStandardInput = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-            StandardOutputEncoding = Encoding.UTF8,
-            StandardErrorEncoding = Encoding.UTF8,
-        };
-        if (shim) { psi.ArgumentList.Add("/d"); psi.ArgumentList.Add("/c"); psi.ArgumentList.Add(exe); }
-        foreach (var a in new[] { "chat", "--no-interactive", "/usage" }) psi.ArgumentList.Add(a);
-        psi.Environment["NO_COLOR"] = "1";
-        psi.Environment["TERM"] = "dumb";
-
-        using var p = new Process { StartInfo = psi };
+        using var p = new Process { StartInfo = Hidden(exe, "chat", "--no-interactive", "/usage") };
         try
         {
             // One deadline for the exit and both pipes: a grandchild that inherits
@@ -394,6 +377,35 @@ public static class Quota
 
     private static double? Num(string s) =>
         double.TryParse(s, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var v) ? v : null;
+
+    /// A command-line tool run as a hidden child: no console window, all three pipes
+    /// redirected, UTF-8 both ways and no colour codes. The quota read and the Kiro
+    /// page (Services.KiroRunner) both start kiro-cli this way.
+    internal static ProcessStartInfo Hidden(string exe, params string[] args)
+    {
+        // A .cmd shim has to go through cmd; an .exe runs directly.
+        var shim = exe.EndsWith(".cmd", StringComparison.OrdinalIgnoreCase) || exe.EndsWith(".bat", StringComparison.OrdinalIgnoreCase);
+        var psi = new ProcessStartInfo(shim ? "cmd.exe" : exe)
+        {
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            RedirectStandardInput = true,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            StandardOutputEncoding = Encoding.UTF8,
+            StandardErrorEncoding = Encoding.UTF8,
+            // Without a BOM: the prompt goes in on stdin, and a BOM would be its first character.
+            StandardInputEncoding = new UTF8Encoding(false),
+        };
+        if (shim) { psi.ArgumentList.Add("/d"); psi.ArgumentList.Add("/c"); psi.ArgumentList.Add(exe); }
+        foreach (var a in args) psi.ArgumentList.Add(a);
+        psi.Environment["NO_COLOR"] = "1";
+        psi.Environment["TERM"] = "dumb";
+        return psi;
+    }
+
+    /// Escape codes out of a tool's printed output.
+    internal static string StripAnsi(string text) => Ansi.Replace(text, "");
 
     /// The first match for a command on PATH, trying Windows' executable suffixes.
     internal static string? OnPath(string name)

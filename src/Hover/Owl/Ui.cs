@@ -105,7 +105,9 @@ internal static class Ui
         IcChevronUp = "chevron-up", IcPhoto = "photo", IcLayout = "layout", IcChevronLeft = "chevron-left",
         IcChevronRight = "chevron-right", IcGauge = "gauge", IcNotch = "notch", IcView = "view",
         IcHide = "hide", IcReset = "reset", IcCut = "cut", IcSparkles = "sparkles",
-        IcTerminal = "terminal", IcPalette = "palette", IcImport = "import";
+        IcTerminal = "terminal", IcPalette = "palette", IcImport = "import",
+        IcHome = "home", IcGhost = "ghost", IcStop = "stop", IcShield = "shield", IcFolderOpen = "folder-open",
+        IcChart = "chart", IcPlug = "plug", IcSend = "send";
 
     /// The icons a command button can wear.
     public static readonly string[] ButtonIcons =

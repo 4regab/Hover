@@ -44,6 +44,33 @@ public sealed class SettingsTests
     }
 
     [Test]
+    public void Kiros_folder_and_the_note_are_saved_and_a_blank_folder_is_none()
+    {
+        var folder = Settings.KiroFolder;
+        var seen = Settings.KiroNoticeSeen;
+        try
+        {
+            Settings.KiroFolder = @"C:\Projects\Hover";
+            Settings.KiroNoticeSeen = true;
+            Settings.Flush();
+            var json = File.ReadAllText(Paths.SettingsFile);
+            Assert.Multiple(() =>
+            {
+                Assert.That(json, Does.Contain("\"KiroFolder\": \"C:\\\\Projects\\\\Hover\""));
+                Assert.That(json, Does.Contain("\"KiroNoticeSeen\": true"));
+            });
+            Settings.KiroFolder = "   ";
+            Assert.That(Settings.KiroFolder, Is.Null);
+        }
+        finally
+        {
+            Settings.KiroFolder = folder;
+            Settings.KiroNoticeSeen = seen;
+            Settings.Flush();
+        }
+    }
+
+    [Test]
     public void Notch_items_toggle_one_at_a_time()
     {
         var items = Settings.NotchItems;
