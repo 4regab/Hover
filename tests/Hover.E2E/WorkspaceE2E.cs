@@ -542,7 +542,10 @@ public sealed class WorkspaceE2E
     private static AutomationElement? _notch;
 
     /// Looked up once per launch: finding it means asking every window on the
-    /// desktop, and the loops below ask many times a second.
+    /// desktop, and the loops below ask many times a second. There is one notch per
+    /// display, listed in z-order, so the first one is often another display's: the
+    /// one wanted is the notch over the primary display's top centre, where the
+    /// pointer and the shortcut open it.
     private static AutomationElement? Notch()
     {
         try
@@ -550,7 +553,10 @@ public sealed class WorkspaceE2E
             if (_notch is { } n && n.Current.ProcessId > 0) return n;
         }
         catch (ElementNotAvailableException) { }
-        return _notch = Top("HoverNotch");
+        return _notch = AutomationElement.RootElement.FindAll(TreeScope.Children,
+                new PropertyCondition(AutomationElement.AutomationIdProperty, "HoverNotch"))
+            .Cast<AutomationElement>()
+            .FirstOrDefault(w => w.Current.BoundingRectangle.Contains(ScreenW / 2.0, 0.5));
     }
 
     /// In the notch, or failing that in any other Hover window (menus, popovers).

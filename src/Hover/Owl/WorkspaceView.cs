@@ -12,9 +12,9 @@ using Hover.Images;
 
 namespace Hover.Owl;
 
-/// The workspace: a header (brand, Open app, Workspace / Insights / Settings,
-/// layout, close) over one of three pages. The notch panel and the dashboard window
-/// each hold one.
+/// The workspace: a header (the Hover name, which opens the app window, the user's
+/// command buttons, Workspace / Insights / Settings, layout, close) over one of three
+/// pages. The notch panel and the dashboard window each hold one.
 public sealed class WorkspaceView : UserControl
 {
     private readonly bool _dashboard;
@@ -24,6 +24,8 @@ public sealed class WorkspaceView : UserControl
     private readonly string _group = "tabs" + Guid.NewGuid().ToString("N");
     private Button? _layoutButton;
     private QuotaStrip? _quotaStrip;
+    private StackPanel? _buttons;
+    private readonly List<UIElement> _launchers = new();
 
     private TasksCard? _tasks;
     private TimerCard? _timer;
@@ -60,6 +62,7 @@ public sealed class WorkspaceView : UserControl
             OwlApp.DayChanged += OnDay;
             OwlApp.LayoutChanged += OnLayout;
             OwlApp.QuotasChanged += OnQuotas;
+            OwlApp.ButtonsChanged += AddLaunchButtons;
             ShotStore.Shared.Changed += OnShots;
             OnPlanner(); OnTimer(); OnEvents(); OnQuotas(); _shots?.Refresh();
         }
@@ -72,6 +75,7 @@ public sealed class WorkspaceView : UserControl
             OwlApp.DayChanged -= OnDay;
             OwlApp.LayoutChanged -= OnLayout;
             OwlApp.QuotasChanged -= OnQuotas;
+            OwlApp.ButtonsChanged -= AddLaunchButtons;
             ShotStore.Shared.Changed -= OnShots;
         }
     }
@@ -134,19 +138,21 @@ public sealed class WorkspaceView : UserControl
         var left = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
         head.Children.Add(left);
 
-        // The app window's own title bar already says "Hover".
+        // The app window's own title bar already says "Hover". In the notch the logo
+        // and name are the way into that window.
         if (!_dashboard)
         {
             var logo = new Image { Width = 22, Height = 22, Source = AppIcon.Value, Margin = new Thickness(0, 0, 9, 0) };
             RenderOptions.SetBitmapScalingMode(logo, BitmapScalingMode.HighQuality);
             var name = Ui.Text("Hover", 16, Ui.Ink, FontWeights.SemiBold);
             name.FontFamily = Ui.Display;
-            left.Children.Add(logo);
-            left.Children.Add(name);
-            var open = Ui.Button("OwlChromeButton", Ui.IconText(Ui.IcWindow, "Open app", 12.5, Ui.Ink, FontWeights.Medium),
-                "OpenApp", "Open app", () => OwlApp.OpenDashboard?.Invoke()).Margin(16, 0);
+            var open = Ui.Button("OwlBase", Ui.Row(logo, name), "OpenApp", "Open app", () => OwlApp.OpenDashboard?.Invoke());
+            open.Padding = new Thickness(6, 3, 8, 3);
+            open.Margin = new Thickness(-6, 0, 6, 0);
             left.Children.Add(open);
         }
+        _buttons = left;
+        AddLaunchButtons();
 
         var right = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
         Grid.SetColumn(right, 2);
@@ -198,6 +204,37 @@ public sealed class WorkspaceView : UserControl
             right.Children.Add(close.Margin(6, 0));
         }
         return head;
+    }
+
+    /// The user's command buttons, after the name: each a filled circle in its own
+    /// colour holding its icon, as the card titles are marked. Built again whenever
+    /// Settings → Buttons changes them.
+    private void AddLaunchButtons()
+    {
+        if (_buttons is null) return;
+        foreach (var old in _launchers) _buttons.Children.Remove(old);
+        _launchers.Clear();
+        foreach (var b in Settings.Buttons)
+        {
+            var button = b;
+            var btn = Ui.Button("OwlIconButton", Ui.Icon(b.Icon, 14, Ui.White), "LaunchButton" + _launchers.Count, b.Name, () => Launch(button));
+            btn.Background = Ui.Accent(Ui.AccentNamed(b.Color));
+            btn.Width = btn.Height = 28;
+            btn.Padding = new Thickness(0);
+            btn.ToolTip = b.Name + "\n" + b.Command;
+            btn.Margin = new Thickness(_launchers.Count == 0 && _dashboard ? 0 : 6, 0, 0, 0);
+            _launchers.Add(btn);
+            _buttons.Children.Add(btn);
+        }
+    }
+
+    private void Launch(LaunchButton b)
+    {
+        // Lets the new terminal come to the front even after the notch has folded
+        // away and handed the keyboard back to the window it came from.
+        Interop.Win32.AllowSetForegroundWindow(Interop.Win32.ASFW_ANY);
+        Services.Launcher.Run(b);
+        if (!_dashboard) OwlApp.Collapse?.Invoke();
     }
 
     /// Show or hide cards straight from the header; order and the rest are in

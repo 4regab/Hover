@@ -10,66 +10,46 @@ using System.Windows.Shapes;
 
 namespace Hover.Owl;
 
-/// The workspace's palette and the small builders every card uses. The colours are
-/// Apple's system colours for grouped content: in dark mode the notch opens into a
-/// black panel holding #1C1C1E cards; in light mode a #F2F2F7 panel holding white
-/// ones, as in iOS Settings. Surfaces are solid, with no borders or gloss. Type
-/// comes in three strengths of one label colour. Every brush here reads the current
-/// appearance, so views are built after Theme has settled.
+/// The workspace's palette and the small builders every card uses. The colours come
+/// from Theme.Current: by default Apple's system colours for grouped content (in dark
+/// mode a black panel holding #1C1C1E cards; in light mode a #F2F2F7 panel holding
+/// white ones, as in iOS Settings), or a theme taken from VS Code. Surfaces are
+/// solid, with no borders or gloss. Type comes in three strengths of one label
+/// colour. Every brush here reads the current theme, so views are built after Theme
+/// has settled.
 internal static class Ui
 {
-    // Accents — Apple's system colours, a shade brighter in dark mode.
-    public static Color Green => Theme.Dark ? Rgb(0x30, 0xD1, 0x58) : Rgb(0x34, 0xC7, 0x59);
-    public static Color Purple => Theme.Dark ? Rgb(0xBF, 0x5A, 0xF2) : Rgb(0xAF, 0x52, 0xDE);
-    public static Color Yellow => Theme.Dark ? Rgb(0xFF, 0xD6, 0x0A) : Rgb(0xFF, 0xCC, 0x00);
-    public static Color Blue => Theme.Dark ? Rgb(0x0A, 0x84, 0xFF) : Rgb(0x00, 0x7A, 0xFF);
-    public static Color Teal => Theme.Dark ? Rgb(0x64, 0xD2, 0xFF) : Rgb(0x32, 0xAD, 0xE6);
-    public static Color Orange => Theme.Dark ? Rgb(0xFF, 0x9F, 0x0A) : Rgb(0xFF, 0x95, 0x00);
-    public static Color Red => Theme.Dark ? Rgb(0xFF, 0x45, 0x3A) : Rgb(0xFF, 0x3B, 0x30);
+    // Accents — Apple's system colours, a shade brighter in dark mode, or the theme's.
+    public static Color Green => Argb(Theme.Current.Green);
+    public static Color Purple => Argb(Theme.Current.Purple);
+    public static Color Yellow => Argb(Theme.Current.Yellow);
+    public static Color Blue => Argb(Theme.Current.Blue);
+    public static Color Teal => Argb(Theme.Current.Teal);
+    public static Color Orange => Argb(Theme.Current.Orange);
+    public static Color Red => Argb(Theme.Current.Red);
     public static Color Gray => Rgb(0x8E, 0x8E, 0x93);
 
-    private sealed class Palette
+    /// The accents a command button can take, by the name its settings keep.
+    public static readonly string[] AccentNames = { "blue", "teal", "green", "yellow", "orange", "red", "purple", "gray" };
+
+    public static Color AccentNamed(string name) => name switch
     {
-        public required Brush Ink, InkDim, InkFaint, Fill, Wash, WashStrong, Separator, Surface, Sheet, SheetEdge, PanelEdge;
-        public required Color Panel;
+        "teal" => Teal, "green" => Green, "yellow" => Yellow, "orange" => Orange,
+        "red" => Red, "purple" => Purple, "gray" => Gray, _ => Blue,
+    };
+
+    /// The theme's colours as frozen brushes, made once per theme.
+    private sealed class Paint(Core.Palette p)
+    {
+        public readonly Core.Palette For = p;
+        public readonly Brush Ink = Frozen(Argb(p.Ink)), InkDim = Frozen(Argb(p.InkDim)), InkFaint = Frozen(Argb(p.InkFaint)),
+            Fill = Frozen(Argb(p.Fill)), Wash = Frozen(Argb(p.Wash)), WashStrong = Frozen(Argb(p.WashStrong)),
+            Separator = Frozen(Argb(p.Separator)), Surface = Frozen(Argb(p.Surface)), Sheet = Frozen(Argb(p.Sheet)),
+            SheetEdge = Frozen(Argb(p.SheetEdge)), PanelEdge = Frozen(Argb(p.PanelEdge));
     }
 
-    // Values from Apple's dark and light system colour tables: label, secondaryLabel,
-    // tertiaryLabel; secondarySystemFill, tertiarySystemFill, systemFill; separator;
-    // secondarySystemGroupedBackground (cards) and systemGroupedBackground (panel).
-    private static readonly Palette D = new()
-    {
-        Ink = Frozen(Colors.White),
-        InkDim = Frozen(Color.FromArgb(0x99, 0xEB, 0xEB, 0xF5)),
-        InkFaint = Frozen(Color.FromArgb(0x4D, 0xEB, 0xEB, 0xF5)),
-        Fill = Frozen(Color.FromArgb(0x52, 0x78, 0x78, 0x80)),
-        Wash = Frozen(Color.FromArgb(0x3D, 0x76, 0x76, 0x80)),
-        WashStrong = Frozen(Color.FromArgb(0x5C, 0x78, 0x78, 0x80)),
-        Separator = Frozen(Color.FromArgb(0x99, 0x54, 0x54, 0x58)),
-        Surface = Frozen(Rgb(0x1C, 0x1C, 0x1E)),
-        Sheet = Frozen(Rgb(0x2C, 0x2C, 0x2E)),
-        SheetEdge = Frozen(Color.FromArgb(0x1F, 0xFF, 0xFF, 0xFF)),
-        PanelEdge = Frozen(Color.FromArgb(0x1A, 0xFF, 0xFF, 0xFF)),
-        Panel = Colors.Black,
-    };
-
-    private static readonly Palette L = new()
-    {
-        Ink = Frozen(Colors.Black),
-        InkDim = Frozen(Color.FromArgb(0x99, 0x3C, 0x3C, 0x43)),
-        InkFaint = Frozen(Color.FromArgb(0x4D, 0x3C, 0x3C, 0x43)),
-        Fill = Frozen(Color.FromArgb(0x29, 0x78, 0x78, 0x80)),
-        Wash = Frozen(Color.FromArgb(0x1F, 0x76, 0x76, 0x80)),
-        WashStrong = Frozen(Color.FromArgb(0x33, 0x78, 0x78, 0x80)),
-        Separator = Frozen(Color.FromArgb(0x4A, 0x3C, 0x3C, 0x43)),
-        Surface = Frozen(Colors.White),
-        Sheet = Frozen(Colors.White),
-        SheetEdge = Frozen(Color.FromArgb(0x1A, 0, 0, 0)),
-        PanelEdge = Frozen(Color.FromArgb(0x1A, 0, 0, 0)),
-        Panel = Rgb(0xF2, 0xF2, 0xF7),
-    };
-
-    private static Palette P => Theme.Dark ? D : L;
+    private static Paint? _paint;
+    private static Paint P => _paint is { } x && ReferenceEquals(x.For, Theme.Current) ? x : _paint = new Paint(Theme.Current);
 
     public static Brush Ink => P.Ink;
     public static Brush InkDim => P.InkDim;
@@ -88,8 +68,10 @@ internal static class Ui
     public static Brush Sheet => P.Sheet;
     public static Brush SheetEdge => P.SheetEdge;
     /// The open notch and the app window, and the faint line around the notch.
-    public static Color Panel => P.Panel;
+    public static Color Panel => Argb(Theme.Current.Panel);
     public static Brush PanelEdge => P.PanelEdge;
+
+    public static Color Argb(uint c) => Color.FromArgb((byte)(c >> 24), (byte)(c >> 16), (byte)(c >> 8), (byte)c);
 
     // The resting notch is black in both appearances, as a real notch is.
     public static readonly Brush White = Frozen(Colors.White);
@@ -114,13 +96,21 @@ internal static class Ui
         IcAdd = "add", IcCalendar = "calendar", IcStopwatch = "stopwatch",
         IcBell = "bell", IcRefresh = "refresh", IcDelete = "delete", IcCopy = "copy",
         IcForward = "forward", IcRename = "rename", IcReturn = "return",
-        IcLines = "lines", IcClose = "close", IcWindow = "window", IcChevronDown = "chevron-down",
+        IcLines = "lines", IcClose = "close", IcChevronDown = "chevron-down",
         IcClock = "clock", IcBolt = "bolt", IcSliders = "sliders", IcRing = "ring",
         IcDone = "done", IcTarget = "target", IcChecklist = "checklist", IcCompose = "compose",
         IcSettings = "settings", IcFolder = "folder", IcWarning = "warning", IcDoneSolid = "done-solid",
         IcChevronUp = "chevron-up", IcPhoto = "photo", IcLayout = "layout", IcChevronLeft = "chevron-left",
         IcChevronRight = "chevron-right", IcGauge = "gauge", IcNotch = "notch", IcView = "view",
-        IcHide = "hide", IcReset = "reset", IcCut = "cut", IcSparkles = "sparkles";
+        IcHide = "hide", IcReset = "reset", IcCut = "cut", IcSparkles = "sparkles",
+        IcTerminal = "terminal", IcPalette = "palette", IcImport = "import";
+
+    /// The icons a command button can wear.
+    public static readonly string[] ButtonIcons =
+    {
+        "terminal", "bot", "sparkles", "code", "rocket", "bolt", "brain", "command", "globe", "git", "database", "server",
+        "cloud", "cpu", "bug", "flask", "book", "compose", "music", "coffee", "star", "heart", "flame", "wrench", "package", "folder",
+    };
 
     public static Color Rgb(byte r, byte g, byte b) => Color.FromRgb(r, g, b);
 

@@ -9,6 +9,14 @@ namespace Hover.Core;
 
 public enum Appearance { System, Light, Dark }
 
+/// How big the workspace opens. Each is capped by the display it opens on.
+public enum WorkspaceSize { Default, Large, ExtraLarge }
+
+/// A button in the workspace header that opens a terminal and runs Command there,
+/// in Folder (the user's folder when empty). Icon is an icon name, Color an accent
+/// name (see Ui.AccentNamed), so the button follows the theme.
+public sealed record LaunchButton(string Name, string Command, string Icon, string Color, string? Folder = null);
+
 /// The handful of preferences, in one JSON file beside the planner.
 /// Writes are debounced through Save(), which every setter calls. Keys an older
 /// build wrote (the notes deck's) are ignored on load and dropped on the next save.
@@ -21,6 +29,9 @@ public static class Settings
         public List<string>? NotchItems { get; set; }
         public bool QuotasOnNotch { get; set; }
         public Appearance Appearance { get; set; } = Appearance.System;
+        public SavedTheme? Theme { get; set; }
+        public WorkspaceSize WorkspaceSize { get; set; }
+        public List<LaunchButton>? Buttons { get; set; }
         public List<CardSlot>? Cards { get; set; }
 
         // Option-N on a Mac. Alt+N here also means "Insert" in Office and "File name"
@@ -115,11 +126,31 @@ public static class Settings
         set { M.QuotasOnNotch = value; Save(); }
     }
 
-    /// Light, dark, or whatever Windows is set to.
+    /// Light, dark, or whatever Windows is set to. Applies to Hover's own theme.
     public static Appearance Appearance
     {
         get => M.Appearance;
         set { M.Appearance = value; Save(); }
+    }
+
+    /// A theme taken from a VS Code colour theme, or null for Hover's own.
+    public static SavedTheme? Theme
+    {
+        get => M.Theme;
+        set { M.Theme = value; Save(); }
+    }
+
+    public static WorkspaceSize WorkspaceSize
+    {
+        get => M.WorkspaceSize;
+        set { M.WorkspaceSize = value; Save(); }
+    }
+
+    /// The header's command buttons, in order.
+    public static IReadOnlyList<LaunchButton> Buttons
+    {
+        get => M.Buttons ??= new List<LaunchButton>();
+        set { M.Buttons = value.ToList(); Save(); }
     }
 
     public static void SetNotchItem(string id, bool on)

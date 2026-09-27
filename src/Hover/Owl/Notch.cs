@@ -291,8 +291,7 @@ internal sealed class NotchHost : IDisposable
     private void Layout()
     {
         var s = _screen;
-        var work = s.WorkDips;
-        _open = new Size(Math.Min(1120, work.Width - 24), Math.Min(440, work.Height - 24));
+        _open = OpenSize();
         const double Pad = 40;   // room for the flare and the shadow
         var w = (int)Math.Round((_open.Width + 2 * Pad) * s.Scale);
         var h = (int)Math.Round((_open.Height + Pad) * s.Scale);
@@ -301,6 +300,19 @@ internal sealed class NotchHost : IDisposable
         _window.Root.Width = _shell.Width = w / s.Scale;
         _window.Root.Height = _shell.Height = h / s.Scale;
         _shell.SetSizes(RestSize, _open);
+    }
+
+    /// The open workspace's size from Settings → Notch, kept inside the display.
+    private Size OpenSize()
+    {
+        var (w, h) = Settings.WorkspaceSize switch
+        {
+            WorkspaceSize.Large => (1320d, 520d),
+            WorkspaceSize.ExtraLarge => (1560d, 600d),
+            _ => (1120d, 440d),
+        };
+        var work = _screen.WorkDips;
+        return new Size(Math.Min(w, work.Width - 24), Math.Min(h, work.Height - 24));
     }
 
     // MARK: Resting shape
@@ -437,6 +449,8 @@ internal sealed class NotchHost : IDisposable
         else _pillKey = "";
 
         _kind = kind;
+        // Settings → Notch → Workspace size, or nothing: the comparison is cheap.
+        if (OpenSize() != _open) { Layout(); _restApplied = RestSize; return; }
         var rest = RestSize;
         if (rest == _restApplied) return;
         _restApplied = rest;
@@ -566,7 +580,8 @@ internal sealed class NotchHost : IDisposable
         }
         var tab = _view.CurrentTab;
         _view = NewView();
-        _view.ShowTab(tab);
+        if (tab == 2) _view.ShowSettings(SettingsPage.Last);
+        else _view.ShowTab(tab);
     }
 
     public void Collapse()
@@ -802,7 +817,8 @@ public sealed class DashboardWindow : Window
         View.Flush();
         View = NewView();
         Content = View;
-        View.ShowTab(tab);
+        if (tab == 2) View.ShowSettings(SettingsPage.Last);
+        else View.ShowTab(tab);
         ApplyTheme();
     }
 

@@ -18,7 +18,7 @@ NAMES = {
     "check": "check", "more": "ellipsis", "add": "plus", "calendar": "calendar",
     "stopwatch": "timer", "bell": "bell", "refresh": "refresh-cw", "delete": "trash",
     "copy": "copy", "forward": "arrow-right", "rename": "pencil", "return": "corner-down-left",
-    "lines": "text-align-start", "close": "x", "window": "app-window",
+    "lines": "text-align-start", "close": "x",
     "chevron-down": "chevron-down", "chevron-up": "chevron-up",
     "chevron-left": "chevron-left", "chevron-right": "chevron-right",
     "clock": "clock", "bolt": "zap", "sliders": "sliders-horizontal", "ring": "circle",
@@ -27,6 +27,13 @@ NAMES = {
     "warning": "triangle-alert", "photo": "image", "layout": "layout-grid", "gauge": "gauge",
     "notch": "panel-top", "view": "eye", "hide": "eye-off", "reset": "rotate-ccw",
     "cut": "scissors", "sparkles": "sparkles",
+    # Command buttons, and the Buttons and Theme settings.
+    "terminal": "square-terminal", "bot": "bot", "code": "code", "rocket": "rocket",
+    "brain": "brain", "globe": "globe", "git": "git-branch", "database": "database",
+    "cloud": "cloud", "cpu": "cpu", "bug": "bug", "flask": "flask-conical", "book": "book-open",
+    "music": "music", "coffee": "coffee", "star": "star", "heart": "heart", "wrench": "wrench",
+    "package": "package", "command": "command", "flame": "flame", "server": "server",
+    "palette": "palette", "import": "file-down",
 }
 
 NUM = re.compile(r"[-+]?(?:\d*\.\d+|\d+\.?)(?:[eE][-+]?\d+)?")

@@ -22,6 +22,10 @@ public static class OwlApp
     public static event Action<object?>? LayoutChanged;
     public static void RaiseLayoutChanged(object? source) => LayoutChanged?.Invoke(source);
 
+    /// The header's command buttons were added, edited or removed.
+    public static event Action? ButtonsChanged;
+    public static void RaiseButtonsChanged() => ButtonsChanged?.Invoke();
+
     /// The latest usage reading for each quota the notch shows, and when it was taken.
     public static event Action? QuotasChanged;
     public static void RaiseQuotasChanged() => QuotasChanged?.Invoke();

@@ -200,7 +200,10 @@ internal sealed class InsightsPage
 /// of grouped rows, each row a label on the left and its control on the right.
 internal sealed class SettingsPage
 {
-    public enum Section { General, Notch, Cards, Focus, Calendar, Data }
+    public enum Section { General, Theme, Notch, Buttons, Cards, Focus, Calendar, Data }
+
+    /// The section shown last, so a rebuild for a new theme opens where it was.
+    public static Section Last { get; private set; }
 
     public FrameworkElement Root { get; }
     private readonly WorkspaceView _owner;
@@ -213,7 +216,9 @@ internal sealed class SettingsPage
     private static (Section Id, string Title, string Glyph, Color Tint)[] Sections => new[]
     {
         (Section.General, "General", Ui.IcSettings, Ui.Gray),
+        (Section.Theme, "Theme", Ui.IcPalette, Ui.Yellow),
         (Section.Notch, "Notch", Ui.IcNotch, Ui.Purple),
+        (Section.Buttons, "Buttons", Ui.IcTerminal, Ui.Teal),
         (Section.Cards, "Cards", Ui.IcLayout, Ui.Blue),
         (Section.Focus, "Focus", Ui.IcStopwatch, Ui.Orange),
         (Section.Calendar, "Calendar", Ui.IcCalendar, Ui.Red),
@@ -266,7 +271,7 @@ internal sealed class SettingsPage
 
     public void Show(Section section)
     {
-        _current = section;
+        _current = Last = section;
         _pane.Children.Clear();
         _quotaRows.Clear();
         var title = Ui.Text(Sections.First(x => x.Id == section).Title, 20, Ui.Ink, FontWeights.SemiBold);
@@ -275,7 +280,9 @@ internal sealed class SettingsPage
         switch (section)
         {
             case Section.General: General(); break;
+            case Section.Theme: Themes(); break;
             case Section.Notch: Notch(); break;
+            case Section.Buttons: Buttons(); break;
             case Section.Cards: Cards(); break;
             case Section.Focus: Focus(); break;
             case Section.Calendar: Calendar(); break;
@@ -385,20 +392,12 @@ internal sealed class SettingsPage
     private void General()
     {
         Group(
-            Row("Appearance", "Follow Windows, or keep Hover light or dark.",
-                Segments("Appearance", new[] { (Appearance.System, "System"), (Appearance.Light, "Light"), (Appearance.Dark, "Dark") },
-                    Settings.Appearance, v =>
-                    {
-                        Settings.Appearance = v;
-                        // After this click has finished: the switch rebuilds this very page.
-                        _owner.Dispatcher.BeginInvoke(Theme.Refresh);
-                    })),
             Row("Launch at login", "Hover starts with Windows and waits at the top of the screen.",
                 Switch("LaunchAtLogin", "Launch at login", Settings.LaunchAtLogin, v => Settings.LaunchAtLogin = v)),
             Row("Open on hover", "Off, only the shortcut or a click on the notch opens it — handy if browser tabs live up there.",
                 Switch("HoverOpens", "Open on hover", Settings.HoverOpensWorkspace, v => Settings.HoverOpensWorkspace = v)),
             Row("Workspace shortcut", "Click, then press the keys. Include Ctrl, Alt, Shift or Win.", ShortcutField()));
-        Footnote("The same workspace opens from the tray icon, and in its own window from “Open app”.");
+        Footnote("The same workspace opens from the tray icon, and in its own window from a click on the Hover name.");
     }
 
     /// A button that shows the shortcut and records the next chord pressed into it.
@@ -438,6 +437,249 @@ internal sealed class SettingsPage
             if (changed) Hover.Services.Actions.ShortcutsChanged();
         };
         return field;
+    }
+
+    // MARK: Theme
+
+    // ponytail: the installed themes are read once per run (about 20 small files); a
+    // theme added to an editor later shows after Hover restarts.
+    private static readonly Lazy<List<(InstalledTheme Source, SavedTheme Theme)>> InstalledThemes = new(() =>
+    {
+        var list = new List<(InstalledTheme, SavedTheme)>();
+        foreach (var s in Palette.Installed())
+            if (Palette.Read(s.Path, s.Label, s.Dark) is { } t) list.Add((s, t));
+        return list;
+    });
+
+    private void Themes()
+    {
+        var current = Settings.Theme;
+        Group(Row("Appearance", "Hover's own colours: follow Windows, or keep them light or dark.",
+            Segments("Appearance", new[] { (Appearance.System, "System"), (Appearance.Light, "Light"), (Appearance.Dark, "Dark") },
+                current is null ? Settings.Appearance : (Appearance)(-1), v =>
+                {
+                    Settings.Theme = null;
+                    Settings.Appearance = v;
+                    // After this click has finished: the switch rebuilds this very page.
+                    _owner.Dispatcher.BeginInvoke(Theme.Refresh);
+                })));
+
+        Heading("Themes");
+        var tiles = new WrapPanel { Margin = new Thickness(4, 0, 0, 4) };
+        var hoverDark = Settings.Appearance switch { Appearance.Light => false, Appearance.Dark => true, _ => Theme.SystemDark() };
+        tiles.Children.Add(ThemeTile(hoverDark ? Palette.HoverDark : Palette.HoverLight, "Hover", "Built in", current is null, () => ApplyTheme(null)));
+        var installed = InstalledThemes.Value;
+        // An imported file is not in the list; it still shows while it is the one in use.
+        if (current is not null && !installed.Any(x => Same(x.Theme, current)))
+            tiles.Children.Add(ThemeTile(Palette.From(current), current.Name, "Imported", true, () => { }));
+        foreach (var (source, theme) in installed)
+            tiles.Children.Add(ThemeTile(Palette.From(theme), source.Label, source.From, current is not null && Same(theme, current), () => ApplyTheme(theme)));
+        _pane.Children.Add(tiles);
+
+        var status = Ui.Text("", 11.5, Ui.InkDim);
+        var import = Ui.Button("OwlLink", Ui.IconText(Ui.IcImport, "Import a VS Code theme file…", 12, Ui.Accent(Ui.Blue)), "ImportTheme", "Import a VS Code theme file", () =>
+        {
+            var dlg = new Microsoft.Win32.OpenFileDialog { Filter = "VS Code colour theme (*.json)|*.json|All files|*.*" };
+            if (dlg.ShowDialog() != true) return;
+            if (Palette.Read(dlg.FileName) is { } t) ApplyTheme(t);
+            else status.Text = "That file has no VS Code theme colours in it.";
+        });
+        _pane.Children.Add(Ui.Row(import, status.Margin(8, 0)).Margin(8, 0, 0, 4));
+        Footnote("The colour themes of VS Code, Cursor, Kiro and Windsurf on this PC show here, and any VS Code theme file (.json) can be imported. " +
+                 "A theme colours the open workspace, its menus and the app window; the resting notch stays black.");
+    }
+
+    private void ApplyTheme(SavedTheme? theme)
+    {
+        Settings.Theme = theme;
+        _owner.Dispatcher.BeginInvoke(Theme.Refresh);
+    }
+
+    private static bool Same(SavedTheme a, SavedTheme b) =>
+        a.Name == b.Name && a.Dark == b.Dark && a.Colors.Count == b.Colors.Count &&
+        a.Colors.All(kv => b.Colors.TryGetValue(kv.Key, out var v) && v == kv.Value);
+
+    /// A theme as a small picture of the workspace in its colours: the panel, a card
+    /// with a title and two lines of text, and its accents. The one in use is ringed.
+    private static Button ThemeTile(Palette p, string name, string from, bool picked, Action pick)
+    {
+        static Brush B(uint c) => Ui.Frozen(Ui.Argb(c));
+        static Border Bar(uint c, double w, double top) => new()
+        {
+            Width = w, Height = 4, CornerRadius = new CornerRadius(2), Background = B(c),
+            HorizontalAlignment = HorizontalAlignment.Left, Margin = new Thickness(0, top, 0, 0),
+        };
+        var card = new StackPanel { Margin = new Thickness(9, 8, 9, 8) };
+        var heading = Bar(p.Ink, 46, 0);
+        heading.Margin = new Thickness(5, 0, 0, 0);
+        heading.VerticalAlignment = VerticalAlignment.Center;
+        var title = new StackPanel { Orientation = Orientation.Horizontal };
+        title.Children.Add(new System.Windows.Shapes.Ellipse { Width = 9, Height = 9, Fill = B(p.Blue), VerticalAlignment = VerticalAlignment.Center });
+        title.Children.Add(heading);
+        card.Children.Add(title);
+        card.Children.Add(Bar(p.InkDim, 74, 8));
+        card.Children.Add(Bar(p.InkDim, 54, 5));
+        var dots = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 8, 0, 0) };
+        foreach (var c in new[] { p.Green, p.Orange, p.Red, p.Purple, p.Teal })
+            dots.Children.Add(new System.Windows.Shapes.Ellipse { Width = 7, Height = 7, Fill = B(c), Margin = new Thickness(0, 0, 4, 0) });
+        card.Children.Add(dots);
+
+        var preview = new Border
+        {
+            Height = 86, CornerRadius = new CornerRadius(12), Background = B(p.Panel), Padding = new Thickness(8),
+            BorderThickness = new Thickness(picked ? 2.5 : 1), BorderBrush = picked ? Ui.Accent(Ui.Blue) : Ui.Separator,
+            Child = new Border { CornerRadius = new CornerRadius(7), Background = B(p.Surface), Child = card },
+        };
+        var body = new StackPanel { Width = 150 };
+        body.Children.Add(preview);
+        body.Children.Add(Ui.Text(name, 12.5, Ui.Ink, picked ? FontWeights.SemiBold : FontWeights.Normal).Margin(3, 6, 3, 0));
+        body.Children.Add(Ui.Text(from, 11, Ui.InkDim).Margin(3, 1, 3, 0));
+        var b = Ui.Button("OwlBase", body, "Theme" + name, name, pick);
+        b.Padding = new Thickness(5);
+        b.HorizontalContentAlignment = HorizontalAlignment.Left;
+        return b.Margin(0, 0, 4, 4);
+    }
+
+    // MARK: Buttons
+
+    /// Which button the editor is open on: null for none, -1 for a new one.
+    private int? _editing;
+
+    private void Buttons()
+    {
+        var list = Settings.Buttons.ToList();
+        if (list.Count > 0) Group(list.Select((b, i) => ButtonRow(b, i, list)).ToArray());
+        if (_editing is { } index) ButtonEditor(index, list);
+        else
+        {
+            var add = Ui.Button("OwlLink", Ui.IconText(Ui.IcAdd, "Add a button", 12, Ui.Accent(Ui.Blue)), "AddButton", "Add a button",
+                () => { _editing = -1; Show(Section.Buttons); });
+            add.HorizontalAlignment = HorizontalAlignment.Left;
+            _pane.Children.Add(add.Margin(8, 0, 0, 4));
+        }
+        Footnote("Buttons sit beside the Hover name at the top of the workspace. Each opens a terminal (Windows Terminal when it is installed) " +
+                 "in its folder and runs its command there: claude, kiro-cli, codex, npm run dev, anything you would type.");
+    }
+
+    private FrameworkElement ButtonRow(LaunchButton b, int i, List<LaunchButton> list)
+    {
+        var lead = new Border
+        {
+            Width = 24, Height = 24, CornerRadius = new CornerRadius(12), Background = Ui.Accent(Ui.AccentNamed(b.Color)),
+            Child = Ui.Icon(b.Icon, 13, Ui.White), Margin = new Thickness(0, 0, 10, 0), VerticalAlignment = VerticalAlignment.Center,
+        };
+        var tools = new StackPanel { Orientation = Orientation.Horizontal };
+        if (i > 0)
+            tools.Children.Add(Ui.IconButton(Ui.IcChevronUp, "MoveButtonUp" + i, "Move " + b.Name + " left", () =>
+            {
+                (list[i - 1], list[i]) = (list[i], list[i - 1]);
+                SaveButtons(list);
+            }, 14));
+        tools.Children.Add(Ui.IconButton(Ui.IcRename, "EditButton" + i, "Edit " + b.Name, () => { _editing = i; Show(Section.Buttons); }, 14));
+        tools.Children.Add(Ui.IconButton(Ui.IcDelete, "DeleteButton" + i, "Delete " + b.Name, () =>
+        {
+            list.RemoveAt(i);
+            SaveButtons(list);
+        }, 14));
+        var where = string.IsNullOrWhiteSpace(b.Folder) ? "" : "   in " + b.Folder;
+        return Row(b.Name, b.Command + where, tools, lead);
+    }
+
+    private void SaveButtons(List<LaunchButton> list)
+    {
+        Settings.Buttons = list;
+        OwlApp.RaiseButtonsChanged();
+        _editing = null;
+        Show(Section.Buttons);
+    }
+
+    private void ButtonEditor(int index, List<LaunchButton> list)
+    {
+        var start = index >= 0 && index < list.Count ? list[index] : new LaunchButton("", "", Ui.IcTerminal, "blue");
+        var icon = start.Icon;
+        var color = start.Color;
+
+        static TextBox Field(string text, string id, string name, int max)
+        {
+            var f = new TextBox { Style = Ui.Style("OwlField"), Text = text, FontSize = 12.5, MaxLength = max };
+            AutomationProperties.SetAutomationId(f, id);
+            AutomationProperties.SetName(f, name);
+            return f;
+        }
+        static Border Boxed(TextBox f, double width) => new()
+        {
+            Background = Ui.Wash, CornerRadius = new CornerRadius(8), Padding = new Thickness(9, 5, 9, 5), Width = width, Child = f,
+        };
+        var name = Field(start.Name, "ButtonName", "Button name", 40);
+        var command = Field(start.Command, "ButtonCommand", "Command", 500);
+        var folder = Field(start.Folder ?? "", "ButtonFolder", "Start in", 260);
+        var choose = Ui.Button("OwlLightButton", "Choose…", "ButtonFolderChoose", "Choose a folder", () =>
+        {
+            var dlg = new Microsoft.Win32.OpenFolderDialog { InitialDirectory = Services.Launcher.Folder(folder.Text) };
+            if (dlg.ShowDialog() == true) folder.Text = dlg.FolderName;
+        });
+
+        Heading(index >= 0 ? "Edit button" : "New button");
+        Group(
+            Row("Name", "Shown when the pointer rests on the button.", Boxed(name, 300)),
+            Row("Command", "What you would type in a terminal.", Boxed(command, 300)),
+            Row("Start in", "The folder it runs in. Empty means your user folder.", Ui.Row(Boxed(folder, 206), choose.Margin(8, 0))));
+
+        var icons = new WrapPanel { Margin = new Thickness(10, 10, 4, 4) };
+        var colors = new WrapPanel { Margin = new Thickness(10, 8, 4, 8) };
+        // Both pickers draw the choice in the colour picked, so they are the preview.
+        void Draw()
+        {
+            icons.Children.Clear();
+            foreach (var g in Ui.ButtonIcons)
+            {
+                var glyph = g;
+                var on = g == icon;
+                var b = Ui.Button("OwlIconButton", Ui.Icon(g, 15, on ? Ui.White : Ui.Ink), "ButtonIcon" + g, g, () => { icon = glyph; Draw(); });
+                b.Width = b.Height = 32;
+                b.Padding = new Thickness(0);
+                b.Background = on ? Ui.Accent(Ui.AccentNamed(color)) : Ui.Wash;
+                icons.Children.Add(b.Margin(0, 0, 6, 6));
+            }
+            colors.Children.Clear();
+            foreach (var c in Ui.AccentNames)
+            {
+                var picked = c;
+                var on = c == color;
+                var dot = new System.Windows.Shapes.Ellipse
+                {
+                    Width = 22, Height = 22, Fill = Ui.Accent(Ui.AccentNamed(c)), Stroke = Ui.Ink, StrokeThickness = on ? 2.5 : 0,
+                };
+                var b = Ui.Button("OwlIconButton", dot, "ButtonColor" + c, c, () => { color = picked; Draw(); });
+                b.Width = b.Height = 30;
+                b.Padding = new Thickness(0);
+                colors.Children.Add(b.Margin(0, 0, 4, 0));
+            }
+        }
+        Draw();
+        Heading("Icon");
+        Group(icons);
+        Heading("Colour");
+        Group(colors);
+
+        var save = Ui.Button("OwlBlueButton", "Save", "ButtonSave", "Save button", () =>
+        {
+            var n = name.Text.Trim();
+            var cmd = command.Text.Trim();
+            if (n.Length == 0 || cmd.Length == 0) return;
+            var made = new LaunchButton(n, cmd, icon, color, string.IsNullOrWhiteSpace(folder.Text) ? null : folder.Text.Trim());
+            if (index >= 0 && index < list.Count) list[index] = made; else list.Add(made);
+            SaveButtons(list);
+        });
+        void Validate() => save.IsEnabled = name.Text.Trim().Length > 0 && command.Text.Trim().Length > 0;
+        name.TextChanged += (_, _) => Validate();
+        command.TextChanged += (_, _) => Validate();
+        Validate();
+        var cancel = Ui.Button("OwlLightButton", "Cancel", "ButtonCancel", "Cancel", () => { _editing = null; Show(Section.Buttons); });
+        var actions = Ui.Row(cancel.Margin(0, 0, 8, 0), save);
+        actions.HorizontalAlignment = HorizontalAlignment.Right;
+        _pane.Children.Add(actions.Margin(0, 4, 4, 14));
+        name.Loaded += (_, _) => name.Focus();
     }
 
     // MARK: Notch
@@ -485,6 +727,16 @@ internal sealed class SettingsPage
                  "Cursor from cursor.com and Claude Code from api.anthropic.com, each with the sign-in that tool already keeps. " +
                  "Nothing else is sent.");
         RefreshQuotaRows();
+
+        Heading("Workspace");
+        Group(Row("Workspace size", "How big the notch opens. It never grows past the screen.",
+            Segments("WorkspaceSize", new[] { (WorkspaceSize.Default, "Default"), (WorkspaceSize.Large, "Large"), (WorkspaceSize.ExtraLarge, "Extra large") },
+                Settings.WorkspaceSize, v =>
+                {
+                    Settings.WorkspaceSize = v;
+                    OwlApp.SettingsChanged?.Invoke();
+                })));
+        Footnote("The app window keeps its own size: drag its edges.");
     }
 
     /// One notch item's row: its switch turns the item on and off.

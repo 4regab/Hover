@@ -396,7 +396,7 @@ public static class Quota
         double.TryParse(s, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var v) ? v : null;
 
     /// The first match for a command on PATH, trying Windows' executable suffixes.
-    private static string? OnPath(string name)
+    internal static string? OnPath(string name)
     {
         var exts = OperatingSystem.IsWindows()
             ? (Environment.GetEnvironmentVariable("PATHEXT") ?? ".EXE;.CMD;.BAT").Split(';', StringSplitOptions.RemoveEmptyEntries)

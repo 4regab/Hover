@@ -6,14 +6,17 @@ Guidance for humans and AI agents working in this repository.
 
 A Windows desktop app (.NET 8, WPF) with one surface a hover away: **the notch**
 at the top centre (after NotchOwl for Mac). At rest it is a slim pill showing the
-items the user picked — the time, a running focus timer, Kiro / Codex / Cursor
-quota gauges — or a hairline, or nothing. Hovering it, clicking it or `Alt+N`
-opens the workspace: configurable, resizable cards (today's tasks, focus timer,
-daily notepad, today's events, screenshots), Insights and Settings.
+items the user picked — the time, a running focus timer, Claude Code / Kiro /
+Codex / Cursor quota gauges — or a hairline, or nothing. Hovering it, clicking it
+or `Alt+N` opens the workspace: a header (the Hover name, the user's command
+buttons, the switched-on quotas, Workspace / Insights / Settings) over
+configurable, resizable cards (today's tasks, focus timer, daily notepad, today's
+events, screenshots).
 
-The only ordinary window is the dashboard ("Open app"), the same workspace in a
-normal window; the app lives in the tray. (Sticky notes and the edge tray were
-removed in 1.1; an old `notes.db` is left on disk untouched.)
+The only ordinary window is the dashboard (a click on the Hover name, or a second
+launch of the exe), the same workspace in a normal window; the app lives in the
+tray. (Sticky notes and the edge tray were removed in 1.1; an old `notes.db` is
+left on disk untouched.)
 
 ## Build, test, run
 
@@ -40,8 +43,9 @@ dotnet test .\tests\Hover.E2E\Hover.E2E.csproj -c Release
 .\build.ps1 installer
 ```
 
-Only one copy of Hover runs at a time (a named mutex). If a launch seems to do
-nothing, an instance is already running — stop `Hover` (and any old `Noty`) first:
+Only one copy of Hover runs at a time (a named mutex). A second launch opens the
+running copy's dashboard and exits. Stop every `Hover` (and any old `Noty`) before
+an E2E run, or the test's copy exits and the test drives the other one:
 
 ```powershell
 Get-Process Hover, Noty -ErrorAction SilentlyContinue | Stop-Process -Force
@@ -56,24 +60,32 @@ Windows (or with `EnableWindowsTargeting`).
 src/Hover/
   Core/        Model + storage: Settings, Paths, Crypto (AES-GCM, DPAPI key),
                Shortcut, Log, Layout (the card layout rules and the notch item
-               ids — no WPF), Quota (Kiro / Codex / Cursor usage readers — no WPF).
+               ids), Quota (Claude Code / Kiro / Codex / Cursor usage readers),
+               Palette (every colour, Hover's light and dark, and the VS Code theme
+               reader and finder). Layout, Quota and Palette have no WPF.
   Images/      Screenshots: ShotStore (watches the folder + clipboard), Shot,
                ShotRow (a thumbnail tile), ShotDrag (drag-out payload).
   Interop/     Win32 P/Invoke, monitor enumeration, global hotkeys, HostWindow
                (the borderless, click-through window the notch is drawn in).
-  Services/    Actions (tray menu commands), TrayIcon.
+  Services/    Actions (tray menu commands), TrayIcon, Launcher (runs a command
+               button in a terminal).
   Windows/     Image preview, rename dialog.
   Owl/         The workspace: Planner (tasks, notepad, focus time, one sealed file),
                FocusTimer, Insights, Calendar (.ics reader), OwlApp (shared state,
-               the one-second tick, quota polling), Notch (the top-centre host, one
-               per display), WorkspaceView (header + the cards), Pages (Insights,
-               Settings), Popover, Ui (palette, dot-matrix type, chart, ring gauge).
+               the one-second tick, quota polling, the alarm), Notch (the top-centre
+               host, one per display, and the dashboard window), WorkspaceView
+               (header + the cards), Pages (Insights, Settings), Popover, Theme
+               (the palette in use), Ui (brushes, builders, chart, ring gauge),
+               Icons (generated line icons), Corners (pill-shaped corner radii).
   Themes/      Styles.xaml (menus, tooltips), Owl.xaml (the workspace's controls).
-  Assets/      hover.ico (the app icon).
+  Assets/      hover.ico (the app icon), Fonts/ (Inter and Inter Display).
 tests/Hover.Tests/   NUnit tests.
 tests/Hover.E2E/     UI Automation run against the real app. Not in Hover.slnx.
 assets/make-icon.py  Writes assets/logo.svg and src/Hover/Assets/hover.ico, each .ico
                      size drawn on its own pixel grid. Edit it, not its output. Needs Pillow.
+assets/make-line-icons.py  Writes src/Hover/Owl/Icons.cs from Lucide at a pinned
+                     version. Add an icon to NAMES and run it; don't edit Icons.cs.
+assets/demo-*        The README's pictures.
 installer/Hover.iss  Inno Setup script (driven by build.ps1).
 ```
 
@@ -94,17 +106,35 @@ carry a legacy `Noty` reference **only** in `Core/Paths.cs`, which migrates an o
   testing that starved the focus clock and the notch poll for 8–14 s at a time.
 - **One full-size, click-through window per display.** The shape grows from its
   resting size (hairline, pill, alert) to the workspace by animating one
-  `Openness` value; the window itself never resizes (that made it blink).
+  `Openness` value; the window itself never resizes (that made it blink), except
+  when Settings → Notch → Workspace size changes.
 - **Cards are star columns with a `GridSplitter` in every gap.** Letting go of a
   splitter turns the laid-out widths back into star shares with the same total
   and saves them (`Settings.Cards`). `CardLayout.Normalize` repairs any saved
   layout: unknown ids dropped, new cards added, widths clamped, never all hidden.
+- **Colours come from one `Palette`.** Hover's own light and dark are Apple's
+  system colours. A VS Code theme is read from its file (following `include`),
+  and only the few colour ids in `Palette.Keys` are kept, in `Settings.Theme`, so
+  the theme survives the editor being removed. `Palette.Installed` lists the
+  themes VS Code, Cursor, Kiro and Windsurf have on the PC. Code-built elements
+  take their brushes when they are made, so a theme change rebuilds the views
+  (`Theme.Changed`); the XAML styles read the same colours as dynamic resources
+  that `Theme.Publish` rewrites. The resting notch is always black.
+- **Command buttons run in a terminal.** `Launcher` opens a Windows Terminal tab
+  (`wt -d <folder> pwsh -NoExit -Command <command>`, with `;` escaped for wt), or a
+  PowerShell window when wt is missing. The shell stays open, so errors show.
 - **Quotas have no official API.** `Core/Quota.cs` reads what each tool exposes,
-  read-only: `kiro-cli chat --no-interactive /usage` output; the `rate_limits` of
-  the newest `token_count` event in `~/.codex/sessions/**/rollout-*.jsonl`; and
-  `cursor.com/api/usage-summary` with the token from Cursor's `state.vscdb`. Each
-  is off until switched on in Settings → Notch, and `OwlApp` re-reads it every five
-  minutes. A format change in any of them shows as a readable failure, not a crash.
+  read-only: `api.anthropic.com/api/oauth/usage` with Claude Code's own sign-in
+  (never refreshed, which would rotate Claude Code's tokens); `kiro-cli chat
+  --no-interactive /usage` output; the `rate_limits` of the newest `token_count`
+  event in `~/.codex/sessions/**/rollout-*.jsonl`; and `cursor.com/api/usage-summary`
+  with the token from Cursor's `state.vscdb`. Each is off until switched on in
+  Settings → Notch, and `OwlApp` re-reads it five minutes after the last read
+  finished. A format change in any of them shows as a readable failure, not a
+  crash. The Kiro read is the heavy one: kiro-cli and the MCP servers it starts
+  take a few hundred MB for about eight seconds, then all exit.
+- **The alarm is a sound file.** When a countdown ends, `OwlApp.RingAlarm` plays
+  `Windows\Media\Alarm01.wav`; the toast sound is held back by Do not disturb.
 - **The planner is encrypted** (AES-GCM, DPAPI-wrapped key). Screenshots are plain
   files on purpose, so they can be dragged into other apps.
 
@@ -126,11 +156,15 @@ carry a legacy `Noty` reference **only** in `Core/Paths.cs`, which migrates an o
   alias when you need a WinForms type.
 - **`str_replace` on files with `—` (em dash) and non-ASCII** can be finicky;
   anchor on unique ASCII lines.
+- **Line endings are CRLF** (`.gitattributes`). Tools that write LF leave a mixed
+  file; normalise before committing.
 - **Tests need STA + a WPF Application** for anything touching controls; see the
   `[Apartment(ApartmentState.STA)]` fixtures. `Core/Layout.cs` and `Core/Quota.cs`
   have no WPF, so their tests also run on Linux or macOS by linking those two
   files into a plain `net8.0` NUnit project. `TestEnvironment` redirects the data
   and shots folders to a temp path via `HOVER_DATA_DIR` / `HOVER_SHOTS_DIR`.
-- **The single-instance mutex** will silently make a second launch exit.
+- **There is one `HoverNotch` window per display.** UI Automation lists them in
+  z-order, so the first is often another display's. The E2E tests bind the one
+  over the primary display's top centre.
 - **UI Automation can't see a `Border` or a `Panel`.** Give E2E hooks to a
   control or a `TextBlock`, or give the element an automation peer (`ShotRow`).
