@@ -7,7 +7,9 @@
 <p align="center">Your day in a notch at the top of the screen.</p>
 
 
-https://github.com/user-attachments/assets/6924efc3-5dcf-4098-8851-ce79bf3b4be4
+
+https://github.com/user-attachments/assets/024e6b18-0f3e-47b9-99da-2a521644863f
+
 
 
 Rest the pointer at the **top centre** of your main screen, or press `Alt+N`, and the
