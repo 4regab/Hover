@@ -1,6 +1,0 @@
-<svg width="256" height="256" viewBox="0 0 256 256" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Hover">
-  <!-- Written by make-icon.py: edit that, not this. A round H — a white disc on a
-       black tile, cut by a slot from the top (the notch) and one from the bottom. -->
-  <rect x="16" y="16" width="224" height="224" rx="52" fill="#000"/>
-  <path d="M112,49.616 V96 A16,16 0 0 0 144,96 V49.616 A80,80 0 0 1 144,206.384 V160 A16,16 0 0 0 112,160 V206.384 A80,80 0 0 1 112,49.616 Z" fill="#fff"/>
-</svg>

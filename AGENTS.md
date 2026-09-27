@@ -82,8 +82,9 @@ src/Hover/
   Assets/      hover.ico (the app icon), Fonts/ (Inter and Inter Display).
 tests/Hover.Tests/   NUnit tests.
 tests/Hover.E2E/     UI Automation run against the real app. Not in Hover.slnx.
-assets/make-icon.py  Writes assets/logo.svg and src/Hover/Assets/hover.ico, each .ico
-                     size drawn on its own pixel grid. Edit it, not its output. Needs Pillow.
+assets/hover.png     The logo (README picture, source of the app icon).
+assets/make-icon.py  Writes src/Hover/Assets/hover.ico from assets/hover.png, one frame
+                     per size. Replace hover.png and run it; don't edit the .ico. Needs Pillow.
 assets/make-line-icons.py  Writes src/Hover/Owl/Icons.cs from Lucide at a pinned
                      version. Add an icon to NAMES and run it; don't edit Icons.cs.
 assets/demo-*        The README's pictures.

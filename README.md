@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/logo.svg" width="96" height="96" alt="Hover">
+  <img src="assets/hover.png" width="96" height="96" alt="Hover">
 </p>
 
 <h1 align="center">Hover</h1>
