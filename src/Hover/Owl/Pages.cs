@@ -194,9 +194,16 @@ internal sealed class InsightsPage
 
 /// Settings, laid out as on a Mac: a sidebar of sections beside one scrolling pane
 /// of grouped rows, each row a label on the left and its control on the right.
+/// Four sections, each a few headed groups: General (launch, shortcut, appearance),
+/// Workspace (the notch, cards, command buttons, focus), Integrations (AI quotas,
+/// calendar, Kiro) and Insights & Data. A deep link names a section and, optionally,
+/// the heading to scroll to.
 internal sealed class SettingsPage
 {
-    public enum Section { General, Theme, Notch, Buttons, Cards, Focus, Calendar, Data }
+    public enum Section { General, Workspace, Integrations, Data }
+
+    // Headings a deep link can scroll to.
+    public const string CardsAnchor = "Cards", ButtonsAnchor = "Command buttons", CalendarAnchor = "Calendar", KiroAnchor = "Kiro";
 
     /// The section shown last, so a rebuild for a new theme opens where it was.
     public static Section Last { get; private set; }
@@ -207,21 +214,19 @@ internal sealed class SettingsPage
     private readonly ScrollViewer _scroll;
     private Section _current;
     private readonly Dictionary<string, (Ring Ring, TextBlock Text)> _quotaRows = new();
+    private readonly Dictionary<string, FrameworkElement> _anchors = new();
+    private InsightsPage? _insights;
 
     // Built on each use: the tints differ between light and dark.
     private static (Section Id, string Title, string Glyph, Color Tint)[] Sections => new[]
     {
         (Section.General, "General", Ui.IcSettings, Ui.Gray),
-        (Section.Theme, "Theme", Ui.IcPalette, Ui.Yellow),
-        (Section.Notch, "Notch", Ui.IcNotch, Ui.Purple),
-        (Section.Buttons, "Buttons", Ui.IcTerminal, Ui.Teal),
-        (Section.Cards, "Cards", Ui.IcLayout, Ui.Blue),
-        (Section.Focus, "Focus", Ui.IcStopwatch, Ui.Orange),
-        (Section.Calendar, "Calendar", Ui.IcCalendar, Ui.Red),
-        (Section.Data, "Your data", Ui.IcFolder, Ui.Green),
+        (Section.Workspace, "Workspace", Ui.IcLayout, Ui.Blue),
+        (Section.Integrations, "Integrations", Ui.IcPlug, Ui.Purple),
+        (Section.Data, "Insights & Data", Ui.IcChart, Ui.Green),
     };
 
-    public SettingsPage(WorkspaceView owner, Section start)
+    public SettingsPage(WorkspaceView owner, Section start, string? anchor = null)
     {
         _owner = owner;
         var side = new StackPanel { Margin = new Thickness(8) };
@@ -244,6 +249,7 @@ internal sealed class SettingsPage
             AutomationProperties.SetName(rb, title);
             var captured = id;
             rb.Checked += (_, _) => Show(captured);
+            rb.ToolTip = title;
             side.Children.Add(rb);
         }
         var sidebar = Ui.Card(new ScrollViewer { Content = side, VerticalScrollBarVisibility = ScrollBarVisibility.Hidden, Focusable = false });
@@ -259,32 +265,71 @@ internal sealed class SettingsPage
         grid.Children.Add(sidebar);
         Grid.SetColumn(pane, 1);
         grid.Children.Add(pane);
-        grid.Loaded += (_, _) => OwlApp.QuotasChanged += OnQuotas;
-        grid.Unloaded += (_, _) => OwlApp.QuotasChanged -= OnQuotas;
+        grid.Loaded += (_, _) =>
+        {
+            OwlApp.QuotasChanged += OnQuotas;
+            OwlApp.Planner.Changed += OnPlanner;
+        };
+        grid.Unloaded += (_, _) =>
+        {
+            OwlApp.QuotasChanged -= OnQuotas;
+            OwlApp.Planner.Changed -= OnPlanner;
+        };
         Root = grid;
-        Show(start);
+        Show(start, anchor);
     }
 
-    public void Show(Section section)
+    private void OnPlanner() => _insights?.Refresh();
+
+    /// A section, from the top or from one of its headings.
+    public void Show(Section section, string? anchor = null)
     {
         _current = Last = section;
         _pane.Children.Clear();
         _quotaRows.Clear();
+        _anchors.Clear();
+        _insights = null;
         var title = Ui.Text(Sections.First(x => x.Id == section).Title, 20, Ui.Ink, FontWeights.SemiBold);
         title.FontFamily = Ui.Display;
         _pane.Children.Add(title.Margin(0, 0, 0, 14));
         switch (section)
         {
-            case Section.General: General(); break;
-            case Section.Theme: Themes(); break;
-            case Section.Notch: Notch(); break;
-            case Section.Buttons: Buttons(); break;
-            case Section.Cards: Cards(); break;
-            case Section.Focus: Focus(); break;
-            case Section.Calendar: Calendar(); break;
-            default: Data(); break;
+            case Section.General:
+                General();
+                Heading("Appearance");
+                Themes();
+                break;
+            case Section.Workspace:
+                Heading("Notch");
+                Notch();
+                Heading(CardsAnchor);
+                Cards();
+                Heading(ButtonsAnchor);
+                Buttons();
+                Heading("Focus");
+                Focus();
+                break;
+            case Section.Integrations:
+                Heading("AI quotas");
+                Quotas();
+                Heading(CalendarAnchor);
+                Calendar();
+                Heading(KiroAnchor);
+                Kiro();
+                break;
+            default:
+                InsightsView();
+                Heading("Your data");
+                Data();
+                break;
         }
         _scroll.ScrollToTop();
+        if (anchor is not null && _anchors.TryGetValue(anchor, out var mark))
+            // Once laid out: before that the heading has no position to scroll to.
+            _scroll.Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Loaded, () =>
+            {
+                if (mark.IsVisible) _scroll.ScrollToVerticalOffset(Math.Max(0, mark.TranslatePoint(new Point(0, 0), _pane).Y - 4));
+            });
     }
 
     // MARK: Building blocks
@@ -312,7 +357,14 @@ internal sealed class SettingsPage
         _pane.Children.Add(t.Margin(12, 0, 12, 18));
     }
 
-    private void Heading(string text) => _pane.Children.Add(Ui.Section(text).Margin(12, 4, 0, 6));
+    private void Heading(string text)
+    {
+        var h = Ui.Section(text).Margin(12, 4, 0, 6);
+        // The first heading sits right under the title; later ones start a new group.
+        if (_pane.Children.Count > 1) h.Margin = new Thickness(12, 10, 0, 6);
+        _anchors[text] = h;
+        _pane.Children.Add(h);
+    }
 
     /// A label (and a quieter line under it) on the left, a control on the right.
     private static FrameworkElement Row(string label, string? sub, FrameworkElement? control, UIElement? lead = null)
@@ -546,7 +598,7 @@ internal sealed class SettingsPage
         else
         {
             var add = Ui.Button("OwlLink", Ui.IconText(Ui.IcAdd, "Add a button", 12, Ui.Accent(Ui.Blue)), "AddButton", "Add a button",
-                () => { _editing = -1; Show(Section.Buttons); });
+                () => { _editing = -1; Show(Section.Workspace, ButtonsAnchor); });
             add.HorizontalAlignment = HorizontalAlignment.Left;
             _pane.Children.Add(add.Margin(8, 0, 0, 4));
         }
@@ -568,7 +620,7 @@ internal sealed class SettingsPage
                 (list[i - 1], list[i]) = (list[i], list[i - 1]);
                 SaveButtons(list);
             }, 14));
-        tools.Children.Add(Ui.IconButton(Ui.IcRename, "EditButton" + i, "Edit " + b.Name, () => { _editing = i; Show(Section.Buttons); }, 14));
+        tools.Children.Add(Ui.IconButton(Ui.IcRename, "EditButton" + i, "Edit " + b.Name, () => { _editing = i; Show(Section.Workspace, ButtonsAnchor); }, 14));
         tools.Children.Add(Ui.IconButton(Ui.IcDelete, "DeleteButton" + i, "Delete " + b.Name, () =>
         {
             list.RemoveAt(i);
@@ -583,7 +635,7 @@ internal sealed class SettingsPage
         Settings.Buttons = list;
         OwlApp.RaiseButtonsChanged();
         _editing = null;
-        Show(Section.Buttons);
+        Show(Section.Workspace, ButtonsAnchor);
     }
 
     private void ButtonEditor(int index, List<LaunchButton> list)
@@ -668,7 +720,7 @@ internal sealed class SettingsPage
         name.TextChanged += (_, _) => Validate();
         command.TextChanged += (_, _) => Validate();
         Validate();
-        var cancel = Ui.Button("OwlLightButton", "Cancel", "ButtonCancel", "Cancel", () => { _editing = null; Show(Section.Buttons); });
+        var cancel = Ui.Button("OwlLightButton", "Cancel", "ButtonCancel", "Cancel", () => { _editing = null; Show(Section.Workspace, ButtonsAnchor); });
         var actions = Ui.Row(cancel.Margin(0, 0, 8, 0), save);
         actions.HorizontalAlignment = HorizontalAlignment.Right;
         _pane.Children.Add(actions.Margin(0, 4, 4, 14));
@@ -679,11 +731,20 @@ internal sealed class SettingsPage
 
     private void Notch()
     {
-        Heading("Show in the notch");
-        Group(ItemRow(NotchItem.Timer, "The focus timer, while it runs.", Tile(Ui.IcStopwatch, Ui.Orange)));
-        Footnote("With nothing to show, the notch hides. Hover the top centre or press the shortcut to open it.");
+        Group(ItemRow(NotchItem.Timer, "The focus timer, while it runs.", Tile(Ui.IcStopwatch, Ui.Orange)),
+            Row("Workspace size", "How big the notch opens. It never grows past the screen.",
+                Segments("WorkspaceSize", new[] { (WorkspaceSize.Small, "Small"), (WorkspaceSize.Default, "Default"), (WorkspaceSize.Large, "Large"), (WorkspaceSize.ExtraLarge, "Extra large") },
+                    Settings.WorkspaceSize, v =>
+                    {
+                        Settings.WorkspaceSize = v;
+                        OwlApp.SettingsChanged?.Invoke();
+                    })));
+        Footnote("With nothing to show, the notch hides. Hover the top centre or press the shortcut to open it. " +
+                 "The app window keeps its own size: drag its edges.");
+    }
 
-        Heading("AI quotas");
+    private void Quotas()
+    {
         var rows = new List<FrameworkElement>();
         foreach (var id in NotchItem.Quotas)
         {
@@ -710,16 +771,6 @@ internal sealed class SettingsPage
                  "Cursor from cursor.com and Claude Code from api.anthropic.com, each with the sign-in that tool already keeps. " +
                  "Nothing else is sent.");
         RefreshQuotaRows();
-
-        Heading("Workspace");
-        Group(Row("Workspace size", "How big the notch opens. It never grows past the screen.",
-            Segments("WorkspaceSize", new[] { (WorkspaceSize.Small, "Small"), (WorkspaceSize.Default, "Default"), (WorkspaceSize.Large, "Large"), (WorkspaceSize.ExtraLarge, "Extra large") },
-                Settings.WorkspaceSize, v =>
-                {
-                    Settings.WorkspaceSize = v;
-                    OwlApp.SettingsChanged?.Invoke();
-                })));
-        Footnote("The app window keeps its own size: drag its edges.");
     }
 
     /// One notch item's row: its switch turns the item on and off.
@@ -748,7 +799,7 @@ internal sealed class SettingsPage
 
     private void OnQuotas()
     {
-        if (_current == Section.Notch) RefreshQuotaRows();
+        if (_current == Section.Integrations) RefreshQuotaRows();
     }
 
     private void RefreshQuotaRows()
@@ -806,7 +857,7 @@ internal sealed class SettingsPage
     private void Apply(IReadOnlyList<CardSlot> cards)
     {
         WorkspaceView.SetCards(cards);
-        Show(Section.Cards);
+        Show(Section.Workspace, CardsAnchor);
     }
 
     // MARK: Focus
@@ -881,6 +932,44 @@ internal sealed class SettingsPage
         OwlApp.Planner.Data.CalendarSource.Length == 0 ? "Not connected."
         : string.IsNullOrEmpty(OwlApp.CalendarError) ? $"Connected — {OwlApp.Events.Count} event(s) today."
         : $"Couldn’t read it: {OwlApp.CalendarError}";
+
+    // MARK: Kiro
+
+    private void Kiro()
+    {
+        var folder = Settings.KiroFolder;
+        var usable = Hover.Services.KiroRunner.UsableFolder(folder);
+        var change = Ui.Button("OwlLightButton", usable ? "Change…" : "Choose…", "SettingsKiroFolder", "Choose Kiro's folder", () =>
+        {
+            KiroPage.ChooseFolder();
+            Show(Section.Integrations, KiroAnchor);
+        });
+        var again = Ui.Button("OwlLightButton", "Show", "KiroNoticeAgain", "Show the note about tool access again", () =>
+        {
+            Settings.KiroNoticeSeen = false;
+            OwlApp.Kiro.RaiseChanged();
+            Show(Section.Integrations, KiroAnchor);
+        });
+        again.IsEnabled = Settings.KiroNoticeSeen;
+        Group(
+            Row("Project folder", folder is null ? "None yet. Kiro asks for one before its first task."
+                    : usable ? folder : $"{folder} isn’t there any more; Kiro will ask for another.", change,
+                Tile(Ui.IcFolder, Ui.Purple)),
+            Row("Note about tool access", "The note the Kiro page shows before its first task.", again, Tile(Ui.IcShield, Ui.Green)));
+        Footnote("Tasks from the Kiro page run as \"kiro-cli chat --no-interactive --trust-all-tools\" in the background, in that folder, " +
+                 "with no terminal window. The prompt goes to kiro-cli on its input, never on a command line. Kiro can edit files and run " +
+                 "commands there without asking, so keep the folder under version control.");
+    }
+
+    // MARK: Insights
+
+    private void InsightsView()
+    {
+        _insights = new InsightsPage();
+        _insights.Root.Margin = new Thickness(0, 0, 0, 6);
+        _insights.Root.Height = 286;
+        _pane.Children.Add(_insights.Root);
+    }
 
     // MARK: Data
 

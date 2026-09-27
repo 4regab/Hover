@@ -32,6 +32,8 @@ public static class Settings
         public WorkspaceSize WorkspaceSize { get; set; }
         public List<LaunchButton>? Buttons { get; set; }
         public List<CardSlot>? Cards { get; set; }
+        public string? KiroFolder { get; set; }
+        public bool KiroNoticeSeen { get; set; }
 
         // Option-N on a Mac. Alt+N here also means "Insert" in Office and "File name"
         // in file dialogs; while Hover runs, it opens the workspace instead.
@@ -158,6 +160,22 @@ public static class Settings
     }
 
     public static Shortcut ScWorkspace { get => M.ScWorkspace; set { M.ScWorkspace = value; Save(); } }
+
+    /// The project folder the Kiro page last ran in, as picked. It is kept even when
+    /// it has gone missing; Services.KiroRunner.UsableFolder decides whether it can
+    /// still be used, and the page asks for another rather than fall back to one.
+    public static string? KiroFolder
+    {
+        get => M.KiroFolder;
+        set { M.KiroFolder = string.IsNullOrWhiteSpace(value) ? null : value; Save(); }
+    }
+
+    /// The Kiro page's one-time note about full tool access has been read.
+    public static bool KiroNoticeSeen
+    {
+        get => M.KiroNoticeSeen;
+        set { M.KiroNoticeSeen = value; Save(); }
+    }
 
     // MARK: Launch at login — HKCU Run, no elevation needed
 

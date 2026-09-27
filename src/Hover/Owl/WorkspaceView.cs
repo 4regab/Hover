@@ -13,8 +13,8 @@ using Hover.Images;
 namespace Hover.Owl;
 
 /// The workspace: a header (the Hover name, which opens the app window, the user's
-/// command buttons, Workspace / Insights / Settings, layout, close) over one of three
-/// pages. The notch panel and the dashboard window each hold one.
+/// command buttons, the quotas, the Workspace / Kiro / Settings icons, layout, close)
+/// over one of three pages. The notch panel and the dashboard window each hold one.
 public sealed class WorkspaceView : UserControl
 {
     private readonly bool _dashboard;
@@ -32,7 +32,6 @@ public sealed class WorkspaceView : UserControl
     private NotepadCard? _notepad;
     private EventsCard? _events;
     private ShotsCard? _shots;
-    private InsightsPage? _insights;
 
     public WorkspaceView(bool dashboard)
     {
@@ -87,7 +86,6 @@ public sealed class WorkspaceView : UserControl
         _tasks?.Refresh();
         _notepad?.Sync();
         _events?.Refresh();
-        _insights?.Refresh();
     }
 
     private void OnTimer()
@@ -111,7 +109,7 @@ public sealed class WorkspaceView : UserControl
     private void OnDay()
     {
         _notepad?.Flush();
-        _pages[0] = _pages[1] = null;
+        _pages[0] = null;
         ShowTab(CurrentTab);
     }
 
@@ -161,24 +159,31 @@ public sealed class WorkspaceView : UserControl
         // The AI quotas that are switched on, right beside the tabs. They sit in the
         // stretching middle column, so on a narrow header they are cut off before
         // the tabs or the close button are.
-        _quotaStrip = new QuotaStrip(() => ShowSettings(SettingsPage.Section.Notch));
+        _quotaStrip = new QuotaStrip(() => ShowSettings(SettingsPage.Section.Integrations));
         _quotaStrip.Root.Margin = new Thickness(12, 0, 10, 0);
         Grid.SetColumn(_quotaStrip.Root, 1);
         head.Children.Add(_quotaStrip.Root);
 
-        string[] names = { "Workspace", "Insights", "Settings" };
-        for (var i = 0; i < 3; i++)
+        // Icons rather than words, so the header keeps its width for the command
+        // buttons and the quotas. Each still has its name for the tooltip and for
+        // screen readers, and the arrow keys move between them as between any
+        // radio buttons.
+        (string Id, string Name, string Glyph)[] pages = { ("Workspace", "Workspace", Ui.IcHome), ("Kiro", "Kiro", Ui.IcGhost), ("Settings", "Settings", Ui.IcSettings) };
+        for (var i = 0; i < pages.Length; i++)
         {
             var index = i;
+            var icon = (System.Windows.Shapes.Path)Ui.Icon(pages[i].Glyph, 16, Ui.InkDim);
             var tab = new RadioButton
             {
-                Style = Ui.Style("OwlSegmentDark"),
-                Content = names[i],
+                Style = Ui.Style("OwlSegmentIcon"),
+                Content = icon,
                 GroupName = _group,
+                ToolTip = pages[i].Name,
             };
-            AutomationProperties.SetAutomationId(tab, "Tab" + names[i]);
-            AutomationProperties.SetName(tab, names[i]);
-            tab.Checked += (_, _) => ShowTab(index);
+            AutomationProperties.SetAutomationId(tab, "Tab" + pages[i].Id);
+            AutomationProperties.SetName(tab, pages[i].Name);
+            tab.Checked += (_, _) => { icon.Stroke = Ui.Ink; ShowTab(index); };
+            tab.Unchecked += (_, _) => icon.Stroke = Ui.InkDim;
             _tabs[i] = tab;
         }
         right.Children.Add(new Segmented(_tabs) { VerticalAlignment = VerticalAlignment.Center });
@@ -201,7 +206,7 @@ public sealed class WorkspaceView : UserControl
 
     /// The user's command buttons, after the name: each a filled circle in its own
     /// colour holding its icon, as the card titles are marked. Built again whenever
-    /// Settings → Buttons changes them.
+    /// Settings → Workspace → Command buttons changes them.
     private void AddLaunchButtons()
     {
         if (_buttons is null) return;
@@ -231,7 +236,7 @@ public sealed class WorkspaceView : UserControl
     }
 
     /// Show or hide cards straight from the header; order and the rest are in
-    /// Settings → Cards.
+    /// Settings → Workspace → Cards.
     private void OpenLayoutMenu()
     {
         var m = new ContextMenu();
@@ -248,7 +253,7 @@ public sealed class WorkspaceView : UserControl
         }
         m.Items.Add(new Separator());
         m.Items.Add(Ui.MenuItem(Ui.IcReset, "Reset Layout", () => SetCards(CardLayout.Default)));
-        m.Items.Add(Ui.MenuItem(Ui.IcSettings, "Arrange Cards…", () => ShowSettings(SettingsPage.Section.Cards)));
+        m.Items.Add(Ui.MenuItem(Ui.IcSettings, "Arrange Cards…", () => ShowSettings(SettingsPage.Section.Workspace, SettingsPage.CardsAnchor)));
         Ui.Open(m, _layoutButton!);
     }
 
@@ -271,11 +276,13 @@ public sealed class WorkspaceView : UserControl
     });
 
     private SettingsPage.Section _section;
+    private string? _anchor;
 
-    /// Settings, open at one of its sections.
-    internal void ShowSettings(SettingsPage.Section section)
+    /// Settings, open at one of its sections, scrolled to one of its headings.
+    internal void ShowSettings(SettingsPage.Section section, string? anchor = null)
     {
         _section = section;
+        _anchor = anchor;
         ShowTab(2);
     }
 
@@ -288,11 +295,11 @@ public sealed class WorkspaceView : UserControl
         _pages[index] ??= index switch
         {
             0 => BuildWorkspace(),
-            1 => (_insights = new InsightsPage()).Root,
-            _ => new SettingsPage(this, _section).Root,
+            1 => new KiroPage().Root,
+            _ => new SettingsPage(this, _section, _anchor).Root,
         };
         // A deep link opens its section once; the Settings tab itself starts at General.
-        if (index == 2) _section = SettingsPage.Section.General;
+        if (index == 2) { _section = SettingsPage.Section.General; _anchor = null; }
         _page.Content = _pages[index];
         if (_layoutButton is not null) _layoutButton.Visibility = index == 0 ? Visibility.Visible : Visibility.Hidden;
     }
@@ -355,7 +362,7 @@ public sealed class WorkspaceView : UserControl
         CardLayout.Tasks => (_tasks = new TasksCard()).Root,
         CardLayout.Timer => (_timer = new TimerCard()).Root,
         CardLayout.Notepad => (_notepad = new NotepadCard()).Root,
-        CardLayout.Events => (_events = new EventsCard(() => ShowSettings(SettingsPage.Section.Calendar))).Root,
+        CardLayout.Events => (_events = new EventsCard(() => ShowSettings(SettingsPage.Section.Integrations, SettingsPage.CalendarAnchor))).Root,
         _ => (_shots = new ShotsCard()).Root,
     };
 
@@ -1190,7 +1197,7 @@ internal sealed class ShotsCard
 
 /// The AI quotas that are switched on, as glass chips in the header: a ring, the
 /// tool, the share used. They show here whether or not they stay on the resting
-/// notch. A click opens Settings → Notch, where they are switched on and off.
+/// notch. A click opens Settings → Integrations, where they are switched on and off.
 internal sealed class QuotaStrip
 {
     public StackPanel Root { get; } = new()

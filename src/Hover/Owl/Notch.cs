@@ -299,7 +299,7 @@ internal sealed class NotchHost : IDisposable
         _shell.SetSizes(RestSize, _open);
     }
 
-    /// The open workspace's size from Settings → Notch, kept inside the display.
+    /// The open workspace's size from Settings → Workspace, kept inside the display.
     private Size OpenSize()
     {
         var (w, h) = Settings.WorkspaceSize switch
@@ -438,7 +438,7 @@ internal sealed class NotchHost : IDisposable
         else _pillKey = "";
 
         _kind = kind;
-        // Settings → Notch → Workspace size, or nothing: the comparison is cheap.
+        // Settings → Workspace → Workspace size, or nothing: the comparison is cheap.
         if (OpenSize() != _open) { Layout(); _restApplied = RestSize; return; }
         var rest = RestSize;
         if (rest == _restApplied) return;

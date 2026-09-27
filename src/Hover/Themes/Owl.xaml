@@ -164,6 +164,30 @@
     <Setter Property="Template" Value="{StaticResource OwlSegmentTemplate}" />
   </Style>
 
+  <!-- The header's page switcher: an icon per segment, so the text template's
+       hidden bold label (which keeps a text segment from changing width) is left out. -->
+  <Style x:Key="OwlSegmentIcon" TargetType="RadioButton" BasedOn="{StaticResource OwlSegmentDark}">
+    <Setter Property="Padding" Value="13,6" />
+    <Setter Property="Template">
+      <Setter.Value>
+        <ControlTemplate TargetType="RadioButton">
+          <Grid Background="Transparent">
+            <ContentPresenter x:Name="Label" Margin="{TemplateBinding Padding}" HorizontalAlignment="Center" VerticalAlignment="Center" />
+          </Grid>
+          <ControlTemplate.Triggers>
+            <MultiTrigger>
+              <MultiTrigger.Conditions>
+                <Condition Property="IsPressed" Value="True" />
+                <Condition Property="IsChecked" Value="False" />
+              </MultiTrigger.Conditions>
+              <Setter TargetName="Label" Property="Opacity" Value="0.45" />
+            </MultiTrigger>
+          </ControlTemplate.Triggers>
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
+  </Style>
+
   <Style x:Key="OwlSegmentInk" TargetType="RadioButton" BasedOn="{StaticResource OwlSegmentDark}">
     <Setter Property="FontSize" Value="12.5" />
     <Setter Property="Padding" Value="10,4" />

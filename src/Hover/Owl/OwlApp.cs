@@ -11,6 +11,8 @@ public static class OwlApp
 {
     public static Planner Planner => Planner.Shared;
     public static FocusTimer Timer { get; } = new();
+    /// The Kiro page's headless runs, several at once.
+    public static KiroSessions Kiro { get; } = new();
 
     /// Once a second, for clock faces.
     public static event Action? Tick;
@@ -77,6 +79,22 @@ public static class OwlApp
         _tick.Tick += (_, _) => OnTick();
         _tick.Start();
         _ = RefreshCalendar();
+
+        // A Kiro task can take minutes; the notch has usually been folded away by the
+        // time it ends, so the end is announced as a reminder is.
+        Kiro.Ended += (s, r) => Notify?.Invoke((r.State switch
+        {
+            Services.KiroState.Completed => "Kiro is done",
+            Services.KiroState.Cancelled => "Kiro stopped",
+            _ => "Kiro couldn't finish",
+        }) + ": " + s.Title, FirstLine(r.Text));
+    }
+
+    private static string FirstLine(string text)
+    {
+        var line = text.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).FirstOrDefault() ?? "";
+        line = line.TrimStart('#', ' ', '*');
+        return line.Length > 120 ? line[..119] + "…" : line;
     }
 
     private static void Dispatch(Action a) => System.Windows.Application.Current?.Dispatcher.BeginInvoke(a);
@@ -282,5 +300,10 @@ public static class OwlApp
     }
 
     /// Called as the app quits, so a running session's time is not lost.
-    public static void Shutdown() => Timer.Pause();
+    /// A running Kiro task is stopped rather than left working with nobody watching.
+    public static void Shutdown()
+    {
+        Timer.Pause();
+        Kiro.StopAll();
+    }
 }

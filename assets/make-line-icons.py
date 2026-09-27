@@ -34,6 +34,9 @@ NAMES = {
     "music": "music", "coffee": "coffee", "star": "star", "heart": "heart", "wrench": "wrench",
     "package": "package", "command": "command", "flame": "flame", "server": "server",
     "palette": "palette", "import": "file-down",
+    # The header's page icons, the Kiro page and the grouped Settings.
+    "home": "house", "ghost": "ghost", "stop": "square", "shield": "shield-check",
+    "folder-open": "folder-open", "chart": "chart-column", "plug": "plug", "send": "arrow-up",
 }
 
 NUM = re.compile(r"[-+]?(?:\d*\.\d+|\d+\.?)(?:[eE][-+]?\d+)?")

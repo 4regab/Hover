@@ -23,7 +23,8 @@ your AI quotas, or nothing at all. Built with .NET 8 and WPF, for Windows 10 and
 - **Notepad**: one note a day; `Ctrl+Enter` turns a line into a task.
 - **Events**: today's events from any iCal (`.ics`) calendar.
 - **Screenshots**: every snip and copied image, ready to drag into any app.
-- **Insights**: seven days of finished tasks and focus time.
+- **Kiro**: pick a project folder, type a task, and Kiro CLI does it there in the background. Run up to three at once; each gets a ghost on an animated stage that shows how it's going.
+- **Insights**: seven days of finished tasks and focus time, in Settings.
 - **AI quotas**: Claude Code, Kiro, Codex and Cursor usage, in the header or on the notch.
 - **Command buttons**: one click opens a terminal that runs `claude`, `kiro-cli` or any command.
 - **Themes**: Hover light or dark, or any VS Code theme on your PC.
@@ -46,6 +47,11 @@ There is no account, server or analytics. Hover only goes online for the calenda
 address you add and, if you switch them on, the Cursor and Claude Code quotas (one
 request every five minutes each, with the sign-in that tool already keeps). The
 Kiro quota runs `kiro-cli /usage` on your PC; the Codex quota reads Codex's own logs.
+
+The Kiro page runs `kiro-cli chat --no-interactive --trust-all-tools` in the folder
+you choose. With full tool access Kiro can edit files and run commands there
+without asking, so choose a folder under version control. Hover explains this the
+first time you open the page.
 
 ## Build
 
