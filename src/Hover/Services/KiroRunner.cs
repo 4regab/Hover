@@ -113,6 +113,7 @@ public sealed class KiroStream
 {
     private readonly StringBuilder _said = new();
     private readonly Queue<string> _plain = new();
+    private const int SaidLimit = 64 * 1024;
 
     public KiroPhase Phase { get; private set; } = KiroPhase.Starting;
     public string? FinalText { get; private set; }
@@ -214,7 +215,12 @@ public sealed class KiroStream
     {
         if (content.ValueKind == JsonValueKind.Array)
             foreach (var part in content.EnumerateArray()) AppendText(part);
-        else if (Str(content, "text") is { } t) _said.Append(t);
+        else if (Str(content, "text") is { } t)
+        {
+            _said.Append(t);
+            // A long run can say a lot; only the end is ever shown.
+            if (_said.Length > SaidLimit) _said.Remove(0, _said.Length - SaidLimit);
+        }
     }
 
     /// ACP's tool kinds, with the title as a fallback for a tool that gives none.

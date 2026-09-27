@@ -618,6 +618,33 @@ public sealed class WorkspaceE2E
         Thread.Sleep(1200);
         Shot("31-kiro-failed");
         File.Delete(Path.Combine(Bin, "fail"));
+
+        // Two at once, each with its own ghost and its own kiro-cli.
+        File.WriteAllText(Path.Combine(Bin, "hang"), "");
+        foreach (var task in new[] { "First long task", "Second long task" })
+        {
+            Invoke(WaitFind("KiroNewTask"));
+            WaitFind("KiroPrompt").SetFocus();
+            Wait(() => Find("KiroPrompt")?.Current.HasKeyboardFocus == true, "the prompt takes the caret");
+            Keys.Type(task);
+            Invoke(WaitFind("KiroRun"));
+            WaitName("KiroTask", task);
+        }
+        Wait(() => Name("KiroSummary") == "2 working · 2 finished", "the stage counts both running tasks");
+        Assert.That(Visible("KiroSession3"), Is.True, "every task has its ghost and label");
+        Wait(() => Name("KiroStatus") == "Making changes", "the second gets going", 15000);
+        Thread.Sleep(900);
+        Shot("31b-kiro-two-at-once");
+        Invoke(WaitFind("KiroSession0"));
+        WaitName("KiroTask", "Rename the helper and update its callers");
+        Assert.That(Value("KiroResult"), Is.EqualTo("Renamed the helper and updated 3 callers."), "a finished task keeps its answer");
+        foreach (var label in new[] { "KiroSession2", "KiroSession3" })
+        {
+            Invoke(WaitFind(label));
+            Invoke(WaitFind("KiroStop"));
+            Wait(() => Name("KiroStatus") == "Stopped", "each stops on its own", 10000);
+        }
+        File.Delete(Path.Combine(Bin, "hang"));
         Invoke(WaitFind("KiroNewTask"));
         WaitFind("KiroPrompt");
     }

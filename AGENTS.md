@@ -12,7 +12,7 @@ or `Alt+N` opens the workspace: a header (the Hover name, the user's command
 buttons, the switched-on quotas, and three icon tabs: Workspace, Kiro, Settings)
 over one of three pages. Workspace holds configurable, resizable cards (today's
 tasks, focus timer, daily notepad, today's events, screenshots). Kiro runs a
-Kiro CLI task headlessly in a chosen folder. Settings has four sections (General,
+Kiro CLI tasks headlessly, several at once, in a chosen folder. Settings has four sections (General,
 Workspace, Integrations, Insights & Data).
 
 The only ordinary window is the dashboard (a click on the Hover name, or a second
@@ -77,9 +77,10 @@ src/Hover/
                FocusTimer, Insights, Calendar (.ics reader), OwlApp (shared state,
                the one-second tick, quota polling, the alarm), Notch (the top-centre
                host, on the main display only, and the dashboard window), WorkspaceView
-               (header + the cards), Pages (Insights, Settings), KiroSession (the one
-               shared Kiro run; no WPF), KiroPage, Ghost (the Kiro page's animated
-               ghost, drawn in code), Popover, Theme
+               (header + the cards), Pages (Insights, Settings), KiroSession (one Kiro
+               run) and KiroSessions (all of them, shared; no WPF), KiroPage, Ghost
+               (the ghost actor and the shared 30 fps frame clock), GhostStage (the
+               page's animated scene, every ghost in one element), Popover, Theme
                (the palette in use), Ui (brushes, builders, chart, ring gauge,
                segmented control),
                Icons (generated line icons), Corners (pill-shaped corner radii).
@@ -152,9 +153,16 @@ carry a legacy `Noty` reference **only** in `Core/Paths.cs`, which migrates an o
   ghost's phase and the final answer; the exit code decides success. There is no
   log view on purpose. Folder first: no prompt until a folder that exists is picked
   (`Settings.KiroFolder`), and a missing one asks for another rather than falling
-  back. Full tool access is explained once (`Settings.KiroNoticeSeen`). One run at a
-  time, in `OwlApp.Kiro`, shared by both views. It announces its end like a reminder
-  does and is stopped when Hover quits.
+  back. Full tool access is explained once (`Settings.KiroNoticeSeen`). Runs live in
+  `OwlApp.Kiro`, shared by both views: up to three at once (each kiro-cli takes a
+  few hundred MB while it works) and the newest six kept. Each announces its end as
+  a reminder does, and all are stopped when Hover quits.
+- **The Kiro animation is cheap on purpose.** `GhostStage` draws the whole scene
+  (backdrop, aurora, stars, motes, every ghost) in one `OnRender`. It runs from one
+  shared clock (`Frames`), throttled to 30 fps, which is hooked into
+  `CompositionTarget.Rendering` only while a stage is visible and its window isn't
+  minimised. Brushes and geometry are frozen and reused. With Windows' animation
+  effects off, it draws still.
 - **The alarm is a sound file.** When a countdown ends, `OwlApp.RingAlarm` plays
   `Windows\Media\Alarm01.wav`; the toast sound is held back by Do not disturb.
 - **The planner is encrypted** (AES-GCM, DPAPI-wrapped key). Screenshots are plain
@@ -185,7 +193,7 @@ carry a legacy `Noty` reference **only** in `Core/Paths.cs`, which migrates an o
   have no WPF, so their tests also run on Linux or macOS by linking those two
   files into a plain `net8.0` NUnit project. The same goes for the Kiro runner:
   link `Core/Quota.cs`, `Core/Log.cs`, `Core/Paths.cs`, `Services/KiroRunner.cs`
-  and `Owl/KiroSession.cs` with `KiroRunnerTests.cs` and `TestEnvironment.cs` (its
+  and `Owl/KiroSession.cs` (both session classes) with `KiroRunnerTests.cs` and `TestEnvironment.cs` (its
   stand-in kiro-cli is a `.cmd` on Windows and a shell script elsewhere). `TestEnvironment` redirects the data
   and shots folders to a temp path via `HOVER_DATA_DIR` / `HOVER_SHOTS_DIR`.
 - **There is one `HoverNotch` window per display.** UI Automation lists them in

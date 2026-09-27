@@ -23,7 +23,7 @@ your AI quotas, or nothing at all. Built with .NET 8 and WPF, for Windows 10 and
 - **Notepad**: one note a day; `Ctrl+Enter` turns a line into a task.
 - **Events**: today's events from any iCal (`.ics`) calendar.
 - **Screenshots**: every snip and copied image, ready to drag into any app.
-- **Kiro**: pick a project folder, type a task, and Kiro CLI does it there in the background while a ghost shows how it's going.
+- **Kiro**: pick a project folder, type a task, and Kiro CLI does it there in the background. Run up to three at once; each gets a ghost on an animated stage that shows how it's going.
 - **Insights**: seven days of finished tasks and focus time, in Settings.
 - **AI quotas**: Claude Code, Kiro, Codex and Cursor usage, in the header or on the notch.
 - **Command buttons**: one click opens a terminal that runs `claude`, `kiro-cli` or any command.

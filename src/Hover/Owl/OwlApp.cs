@@ -11,8 +11,8 @@ public static class OwlApp
 {
     public static Planner Planner => Planner.Shared;
     public static FocusTimer Timer { get; } = new();
-    /// The Kiro page's headless run, one at a time.
-    public static KiroSession Kiro { get; } = new();
+    /// The Kiro page's headless runs, several at once.
+    public static KiroSessions Kiro { get; } = new();
 
     /// Once a second, for clock faces.
     public static event Action? Tick;
@@ -82,12 +82,12 @@ public static class OwlApp
 
         // A Kiro task can take minutes; the notch has usually been folded away by the
         // time it ends, so the end is announced as a reminder is.
-        Kiro.Ended += r => Notify?.Invoke(r.State switch
+        Kiro.Ended += (s, r) => Notify?.Invoke((r.State switch
         {
             Services.KiroState.Completed => "Kiro is done",
             Services.KiroState.Cancelled => "Kiro stopped",
             _ => "Kiro couldn't finish",
-        }, FirstLine(r.Text));
+        }) + ": " + s.Title, FirstLine(r.Text));
     }
 
     private static string FirstLine(string text)
@@ -304,6 +304,6 @@ public static class OwlApp
     public static void Shutdown()
     {
         Timer.Pause();
-        Kiro.Stop();
+        Kiro.StopAll();
     }
 }

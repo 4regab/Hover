@@ -283,17 +283,14 @@ public sealed class KiroSessionTests
         Assert.That(s.Start(_folder, "  Write the changelog  "), Is.True);
         Assert.That(s.State, Is.EqualTo(KiroState.Running));
         Assert.That(got, Is.EqualTo((_folder, "Write the changelog")));
-        Assert.That(s.Start(_folder, "another"), Is.False, "one task at a time");
+        Assert.That(s.Start(_folder, "another"), Is.False, "a session runs one task, once");
 
         release.SetResult(new KiroResult(KiroState.Completed, "Wrote it.", 0));
         await WaitFor(() => s.State != KiroState.Running);
         Assert.That(s.State, Is.EqualTo(KiroState.Completed));
         Assert.That(s.Result!.Text, Is.EqualTo("Wrote it."));
         Assert.That(ended.Single().State, Is.EqualTo(KiroState.Completed));
-
-        s.Reset();
-        Assert.That(s.State, Is.EqualTo(KiroState.Idle));
-        Assert.That(s.Prompt, Is.EqualTo("Write the changelog"), "the last task is still there to run again");
+        Assert.That(s.Title, Is.EqualTo("Write the changelog"));
     }
 
     [Test]
@@ -332,9 +329,103 @@ public sealed class KiroSessionTests
         Assert.That(s.Result, Is.EqualTo(new KiroResult(KiroState.Failed, "boom")));
     }
 
-    private static async Task WaitFor(Func<bool> done)
+    internal static async Task WaitFor(Func<bool> done)
     {
         var sw = Stopwatch.StartNew();
         while (!done() && sw.Elapsed < TimeSpan.FromSeconds(5)) await Task.Delay(20);
+    }
+}
+
+/// Several tasks at once: a cap on how many run, and on how many are kept.
+public sealed class KiroSessionsTests
+{
+    private string _folder = "";
+    private readonly List<TaskCompletionSource<KiroResult>> _runs = new();
+
+    [SetUp]
+    public void Folder()
+    {
+        _folder = Path.Combine(Path.GetTempPath(), "hover-kiro-sessions-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(_folder);
+        _runs.Clear();
+    }
+
+    [TearDown]
+    public void Clean() => Directory.Delete(_folder, true);
+
+    private KiroSessions Make() => new(() => new KiroSession((_, _, _, ct) =>
+    {
+        var tcs = new TaskCompletionSource<KiroResult>();
+        ct.Register(() => tcs.TrySetResult(new KiroResult(KiroState.Cancelled, "stopped", -1)));
+        lock (_runs) _runs.Add(tcs);
+        return tcs.Task;
+    }));
+
+    private void Finish(int i) => _runs[i].TrySetResult(new KiroResult(KiroState.Completed, $"done {i}", 0));
+
+    [Test]
+    public async Task Tasks_run_side_by_side_up_to_the_cap()
+    {
+        var k = Make();
+        var a = k.Start(_folder, "one");
+        var b = k.Start(_folder, "two");
+        var c = k.Start(_folder, "three");
+        Assert.Multiple(() =>
+        {
+            Assert.That(new[] { a, b, c }, Has.None.Null);
+            Assert.That(k.Running, Is.EqualTo(KiroSessions.MaxRunning));
+            Assert.That(k.Start(_folder, "four"), Is.Null, "no fourth kiro-cli while three work");
+            Assert.That(k.Selected, Is.SameAs(c), "a new task is the one shown");
+            Assert.That(k.All.Select(s => s.Prompt), Is.EqualTo(new[] { "one", "two", "three" }));
+        });
+
+        Finish(1);
+        await KiroSessionTests.WaitFor(() => k.Running == 2);
+        Assert.That(b!.State, Is.EqualTo(KiroState.Completed));
+        Assert.That(a!.Busy && c!.Busy, Is.True, "the others carry on");
+        Assert.That(k.Start(_folder, "four"), Is.Not.Null, "a free slot takes a new task");
+        k.StopAll();
+        await KiroSessionTests.WaitFor(() => k.Running == 0);
+        Assert.That(k.All.Count(s => s.State == KiroState.Cancelled), Is.EqualTo(3));
+    }
+
+    [Test]
+    public async Task Only_the_newest_are_kept_and_running_ones_never_go()
+    {
+        var k = Make();
+        for (var i = 0; i < KiroSessions.MaxKept + 2; i++)
+        {
+            k.Start(_folder, "task " + i);
+            Finish(i);
+            await KiroSessionTests.WaitFor(() => k.Running == 0);
+        }
+        Assert.That(k.All, Has.Count.EqualTo(KiroSessions.MaxKept));
+        Assert.That(k.All.First().Prompt, Is.EqualTo("task 2"));
+    }
+
+    [Test]
+    public async Task Again_replaces_a_finished_task_in_place_and_dismiss_removes_it()
+    {
+        var k = Make();
+        var a = k.Start(_folder, "one")!;
+        k.Start(_folder, "two");
+        Assert.That(k.Again(a), Is.Null, "not while it runs");
+        Finish(0);
+        await KiroSessionTests.WaitFor(() => !a.Busy);
+
+        var again = k.Again(a)!;
+        Assert.Multiple(() =>
+        {
+            Assert.That(k.All[0], Is.SameAs(again));
+            Assert.That(again.Prompt, Is.EqualTo("one"));
+            Assert.That(k.All, Does.Not.Contain(a));
+        });
+        Finish(2);
+        await KiroSessionTests.WaitFor(() => !again.Busy);
+        k.Select(again);
+        k.Dismiss(again);
+        Assert.That(k.All.Select(s => s.Prompt), Is.EqualTo(new[] { "two" }));
+        Assert.That(k.Selected, Is.Null, "dismissing the shown task goes back to a new one");
+        k.StopAll();
     }
 }

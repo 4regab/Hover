@@ -5,17 +5,108 @@ using Hover.Services;
 
 namespace Hover.Owl;
 
-/// The Kiro page's ghost: what a run is doing, shown as a mood instead of a log. It
-/// floats while idle; while Kiro works it bobs faster with sparkles circling it, and
-/// its eyes and arms follow the broad phase (scanning lines while reading, darting
-/// while searching, typing while editing, looking up while thinking). A finished run
-/// hops with a burst and happy eyes, a failed one droops with crossed eyes, a
-/// stopped one dozes. Eye changes happen inside a blink, and every other value eases
-/// toward its target, so no state ever snaps into the next.
+/// The one clock every Kiro animation draws from: hooked into WPF's render loop only
+/// while something animated is on screen, and throttled to 30 frames a second, which
+/// is smooth for this motion at a fraction of the work of the display's full rate.
+internal static class Frames
+{
+    public const double Interval = 1 / 30.0;
+    private static readonly Stopwatch Clock = Stopwatch.StartNew();
+    private static readonly List<Action<double>> Subscribers = new();
+    private static double _last;
+    private static TimeSpan _lastRender;
+
+    /// Seconds since the app started, on the animation clock.
+    public static double Now => Clock.Elapsed.TotalSeconds;
+
+    /// With Windows' animation effects turned off, everything is drawn still.
+    public static bool Still => !SystemParameters.ClientAreaAnimation;
+
+    public static void Add(Action<double> onFrame)
+    {
+        if (Subscribers.Contains(onFrame)) return;
+        Subscribers.Add(onFrame);
+        if (Subscribers.Count == 1)
+        {
+            _last = Now;
+            CompositionTarget.Rendering += OnRendering;
+        }
+    }
+
+    public static void Remove(Action<double> onFrame)
+    {
+        if (!Subscribers.Remove(onFrame) || Subscribers.Count > 0) return;
+        CompositionTarget.Rendering -= OnRendering;
+    }
+
+    private static void OnRendering(object? sender, EventArgs e)
+    {
+        // WPF can raise Rendering more than once for one frame.
+        if (e is RenderingEventArgs r)
+        {
+            if (r.RenderingTime == _lastRender) return;
+            _lastRender = r.RenderingTime;
+        }
+        var now = Now;
+        if (now - _last < Interval * 0.9) return;
+        // A long gap (the notch folded away) is not played back as a jump.
+        var dt = Math.Min(now - _last, 0.1);
+        _last = now;
+        foreach (var s in Subscribers.ToArray()) s(dt);
+    }
+}
+
+/// Runs an element's animation only while it can be seen: visible, and not in a
+/// minimised window.
+internal sealed class FrameHook
+{
+    private readonly FrameworkElement _owner;
+    private readonly Action<double> _frame;
+    private Window? _window;
+    private bool _on;
+
+    public FrameHook(FrameworkElement owner, Action<double> frame)
+    {
+        _owner = owner;
+        _frame = frame;
+        owner.IsVisibleChanged += (_, _) => Update();
+        owner.Loaded += (_, _) =>
+        {
+            _window = Window.GetWindow(owner);
+            if (_window is not null) _window.StateChanged += OnState;
+            Update();
+        };
+        owner.Unloaded += (_, _) =>
+        {
+            if (_window is not null) _window.StateChanged -= OnState;
+            _window = null;
+            Update();
+        };
+    }
+
+    private void OnState(object? sender, EventArgs e) => Update();
+
+    public void Update()
+    {
+        var on = _owner.IsLoaded && _owner.IsVisible && !Frames.Still && _window?.WindowState != WindowState.Minimized;
+        if (on == _on) return;
+        _on = on;
+        if (on) Frames.Add(_frame);
+        else Frames.Remove(_frame);
+    }
+}
+
+/// One ghost: what a Kiro task is doing, shown as a mood instead of a log. It floats
+/// while idle; while Kiro works it bobs faster with sparkles circling it, and its
+/// eyes and arms follow the broad phase (scanning lines while reading, darting while
+/// searching, typing while editing, looking up while thinking). A finished task hops
+/// with a burst and happy eyes, a failed one droops with crossed eyes, a stopped one
+/// dozes. Eye changes happen inside a blink, and every other value eases toward its
+/// target, so no state snaps into the next.
 ///
-/// Drawn in code on a 100 x 100 grid scaled to fit, one frame per render tick, and
-/// only while it is on screen. With Windows' animations turned off it draws still.
-internal sealed class Ghost : FrameworkElement
+/// Not an element: it is stepped by its host and drawn into the host's frame on a
+/// 100 x 100 grid, so a stage of several costs one element and one render.
+internal sealed class GhostActor
 {
     private enum Mood { Idle, Working, Happy, Sad, Asleep }
     private enum Eyes { Open, Happy, Crossed, Closed }
@@ -23,41 +114,35 @@ internal sealed class Ghost : FrameworkElement
     private Mood _mood = Mood.Idle;
     private KiroPhase _phase = KiroPhase.Starting;
     private Eyes _eyes = Eyes.Open, _eyesWanted = Eyes.Open;
-
-    private readonly Stopwatch _clock = Stopwatch.StartNew();
-    private readonly Random _rng = new();
-    private double _t, _last, _moodAt;
-    private double _blinkAt = -1, _nextBlink = 2;
+    private readonly Random _rng;
+    private double _t, _moodAt = -10;
+    private double _blinkAt = -1, _nextBlink;
     private double _glanceAt, _lookX, _lookY, _lookToX, _lookToY;
-    private bool _running;
 
-    // Eased values: where each one is, and where it is heading.
-    private double _amp = 2.5, _speed = 1.4, _sink, _tilt, _glow = 0.35, _energy, _fade = 1, _typing, _armsUp;
+    // Eased values, heading for Targets().
+    private double _amp = 2.5, _speed = 1.4, _sink, _tilt, _glow = 0.35, _energy, _fade = 1, _typing, _armsUp, _pick;
     private double _bobPhase, _wavePhase, _orbit;
     private Color _aura;
-
     private readonly RadialGradientBrush _auraBrush = new() { GradientOrigin = new Point(0.5, 0.45) };
     private readonly GradientStop _auraIn = new(), _auraOut = new() { Offset = 1 };
 
-    private static readonly Brush Body = Ui.Frozen(Colors.White);
-    private static readonly Brush Face = Ui.Frozen(Color.FromRgb(0x26, 0x21, 0x3A));
-    private static readonly Brush Cheek = Ui.Frozen(Color.FromArgb(0x70, 0xFF, 0x8F, 0xB1));
-    private static readonly Pen FacePen = Frozen(new Pen(Face, 2.4) { StartLineCap = PenLineCap.Round, EndLineCap = PenLineCap.Round });
-    private static readonly Geometry Star = MakeStar();
+    /// Picked on the stage: it gets a spotlight.
+    public bool Selected { get; set; }
+    public bool Busy => _mood == Mood.Working;
 
-    public Ghost()
+    public GhostActor(int seed = 0)
     {
+        _rng = new Random(seed == 0 ? Environment.TickCount : seed);
+        // Out of step with its neighbours, so a row of them doesn't bob as one.
+        _bobPhase = _rng.NextDouble() * 2;
+        _wavePhase = _rng.NextDouble() * 3;
+        _orbit = _rng.NextDouble() * Math.PI * 2;
+        _nextBlink = 1 + _rng.NextDouble() * 3;
         _aura = Ui.Purple;
         _auraBrush.GradientStops.Add(_auraIn);
         _auraBrush.GradientStops.Add(_auraOut);
-        IsHitTestVisible = false;
-        IsVisibleChanged += (_, _) => Animate(IsVisible);
-        Unloaded += (_, _) => Animate(false);
     }
 
-    private static bool Still => !SystemParameters.ClientAreaAnimation;
-
-    /// Show a run's state. Cheap to call on every change.
     public void Show(KiroState state, KiroPhase phase)
     {
         var mood = state switch
@@ -74,61 +159,31 @@ internal sealed class Ghost : FrameworkElement
             _mood = mood;
             _moodAt = _t;
             _eyesWanted = mood switch { Mood.Happy => Eyes.Happy, Mood.Sad => Eyes.Crossed, Mood.Asleep => Eyes.Closed, _ => Eyes.Open };
-            // The new eyes arrive behind a blink.
             if (_eyesWanted != _eyes) _blinkAt = _t;
         }
-        if (Still)
+        if (Frames.Still)
         {
             _eyes = _eyesWanted;
             _blinkAt = -1;
-            Settle(snap: true);
+            _moodAt = -10;
+            Settle(1);
         }
-        InvalidateVisual();
-    }
-
-    private void Animate(bool on)
-    {
-        on &= !Still;
-        if (on == _running) return;
-        _running = on;
-        if (on)
-        {
-            _last = _clock.Elapsed.TotalSeconds;
-            CompositionTarget.Rendering += OnFrame;
-        }
-        else CompositionTarget.Rendering -= OnFrame;
-    }
-
-    private void OnFrame(object? sender, EventArgs e)
-    {
-        var now = _clock.Elapsed.TotalSeconds;
-        // A long gap (the notch folded away) is not played back as a jump.
-        var dt = Math.Clamp(now - _last, 0, 0.1);
-        _last = now;
-        _t += dt;
-        Step(dt);
-        InvalidateVisual();
     }
 
     // MARK: Motion
 
-    private (double Amp, double Speed, double Sink, double Tilt, double Glow, double Energy, double Fade, double Typing, double ArmsUp, Color Aura) Targets()
+    private (double Amp, double Speed, double Sink, double Tilt, double Glow, double Energy, double Fade, double Typing, double ArmsUp, Color Aura) Targets() => _mood switch
     {
-        var purple = Ui.Purple;
-        return _mood switch
-        {
-            Mood.Working => (4, _phase == KiroPhase.Running ? 4.6 : 3.2, 0, 0, 0.6, _phase == KiroPhase.Running ? 1.4 : 1, 1,
-                _phase is KiroPhase.Editing or KiroPhase.Writing ? 1 : 0, 0, purple),
-            Mood.Happy => (3, 2.6, 0, 0, 0.95, 0.35, 1, 0, 1, Ui.Green),
-            Mood.Sad => (0.8, 0.8, 6, -7, 0.35, 0, 1, 0, -0.4, Ui.Red),
-            Mood.Asleep => (1.2, 0.9, 3, 4, 0.18, 0, 0.62, 0, -0.2, Color.FromRgb(0x8E, 0x8E, 0x93)),
-            _ => (2.5, 1.4, 0, 0, 0.35, 0, 1, 0, 0, purple),
-        };
-    }
+        Mood.Working => (4, _phase == KiroPhase.Running ? 4.6 : 3.2, 0, 0, 0.6, _phase == KiroPhase.Running ? 1.4 : 1, 1,
+            _phase is KiroPhase.Editing or KiroPhase.Writing ? 1 : 0, 0, Ui.Purple),
+        Mood.Happy => (3, 2.6, 0, 0, 0.95, 0.35, 1, 0, 1, Ui.Green),
+        Mood.Sad => (0.8, 0.8, 6, -7, 0.35, 0, 1, 0, -0.4, Ui.Red),
+        Mood.Asleep => (1.2, 0.9, 3, 4, 0.18, 0, 0.62, 0, -0.2, Ui.Gray),
+        _ => (2.5, 1.4, 0, 0, 0.35, 0, 1, 0, 0, Ui.Purple),
+    };
 
-    private void Settle(bool snap, double dt = 0)
+    private void Settle(double k)
     {
-        var k = snap ? 1 : 1 - Math.Exp(-dt * 5);
         var g = Targets();
         _amp += (g.Amp - _amp) * k;
         _speed += (g.Speed - _speed) * k;
@@ -139,19 +194,19 @@ internal sealed class Ghost : FrameworkElement
         _fade += (g.Fade - _fade) * k;
         _typing += (g.Typing - _typing) * k;
         _armsUp += (g.ArmsUp - _armsUp) * k;
+        _pick += ((Selected ? 1 : 0) - _pick) * k;
         _aura = Mix(_aura, g.Aura, k);
     }
 
-    private void Step(double dt)
+    public void Step(double dt)
     {
-        Settle(snap: false, dt);
+        _t += dt;
+        Settle(1 - Math.Exp(-dt * 5));
         _bobPhase += dt * _speed;
         _wavePhase += dt * (2.5 + _energy * 4);
         _orbit += dt * (0.9 + _energy * 1.6);
 
-        // Blinks: now and then, and on demand to change the eyes.
-        if (_blinkAt < 0 && _t >= _nextBlink && _mood is not Mood.Asleep)
-            _blinkAt = _t;
+        if (_blinkAt < 0 && _t >= _nextBlink && _mood is not Mood.Asleep) _blinkAt = _t;
         if (_blinkAt >= 0)
         {
             var p = (_t - _blinkAt) / BlinkLength;
@@ -180,7 +235,7 @@ internal sealed class Ghost : FrameworkElement
                 switch (_phase)
                 {
                     case KiroPhase.Reading:
-                        // Left to right along a line, then back to the start of the next.
+                        // Along a line, then back to the start of the next.
                         var line = (_t * 0.85) % 1;
                         _lookToX = line < 0.85 ? -2.6 + line / 0.85 * 5.2 : 2.6 - (line - 0.85) / 0.15 * 5.2;
                         _lookToY = 0.6 + Math.Floor(_t * 0.85 % 3) * 0.7;
@@ -218,7 +273,6 @@ internal sealed class Ghost : FrameworkElement
     {
         if (_t - _glanceAt < every) return;
         _glanceAt = _t;
-        // Back to the middle as often as not, so it doesn't look lost.
         var centre = _rng.NextDouble() < 0.4;
         _lookToX = centre ? 0 : (_rng.NextDouble() * 2 - 1) * x;
         _lookToY = centre ? 0 : (_rng.NextDouble() * 2 - 1) * y;
@@ -226,49 +280,75 @@ internal sealed class Ghost : FrameworkElement
 
     // MARK: Drawing
 
-    protected override Size MeasureOverride(Size available) =>
-        new(double.IsInfinity(available.Width) ? 160 : available.Width, double.IsInfinity(available.Height) ? 160 : available.Height);
+    private static readonly Brush Body = Ui.Frozen(Colors.White);
+    private static readonly Brush Face = Ui.Frozen(Color.FromRgb(0x26, 0x21, 0x3A));
+    private static readonly Brush Cheek = Ui.Frozen(Color.FromArgb(0x70, 0xFF, 0x8F, 0xB1));
+    private static readonly Brush Shadow = Ui.Frozen(Color.FromArgb(0x30, 0, 0, 0));
+    private static readonly Pen FacePen = Freeze(new Pen(Face, 2.4) { StartLineCap = PenLineCap.Round, EndLineCap = PenLineCap.Round });
+    private static readonly Pen Rim = Freeze(new Pen(Ui.Frozen(Color.FromArgb(0x22, 0, 0, 0)), 1));
+    private static readonly Pen BadgeInk = Freeze(new Pen(Brushes.White, 1.8) { StartLineCap = PenLineCap.Round, EndLineCap = PenLineCap.Round, LineJoin = PenLineJoin.Round });
+    private static readonly Pen ZInk = Freeze(new Pen(Ui.Frozen(Color.FromArgb(0xB0, 0x8E, 0x8E, 0x93)), 1.3) { StartLineCap = PenLineCap.Round, EndLineCap = PenLineCap.Round, LineJoin = PenLineJoin.Round });
+    private static readonly Geometry Star = Parse("M 0,-1 Q 0.12,-0.12 1,0 Q 0.12,0.12 0,1 Q -0.12,0.12 -1,0 Q -0.12,-0.12 0,-1 Z");
+    private static readonly Geometry HappyEye = Parse("M -4 1.6 Q 0 -4.4 4 1.6");
+    private static readonly Geometry CrossEye = Parse("M -3 -3 L 3 3 M 3 -3 L -3 3");
+    private static readonly Geometry ClosedEye = Parse("M -4 0 Q 0 2.6 4 0");
+    private static readonly Geometry Tick = Parse("M -3,0.2 L -0.8,2.4 L 3.2,-2.2");
+    private static readonly Geometry Zed = Parse("M -1,-1 L 1,-1 L -1,1 L 1,1");
+    private static readonly Point[] Hem = new Point[31];
 
-    protected override void OnRender(DrawingContext dc)
+    /// Draw into a 100 x 100 box at (x, y) with the given side.
+    public void Draw(DrawingContext dc, double x, double y, double side, bool light)
     {
-        var side = Math.Min(ActualWidth, ActualHeight);
-        if (side <= 0) return;
-        dc.PushTransform(new TranslateTransform((ActualWidth - side) / 2, (ActualHeight - side) / 2));
-        dc.PushTransform(new ScaleTransform(side / 100, side / 100));
-
+        dc.PushTransform(new MatrixTransform(side / 100, 0, 0, side / 100, x, y));
         var since = _t - _moodAt;
         var bob = Math.Sin(_bobPhase * Math.PI) * _amp;
-        // A finished run hops once; a failed one shudders.
         if (_mood == Mood.Happy && since < 0.5) bob -= 10 * Math.Sin(Math.PI * since / 0.5);
         var shake = _mood == Mood.Sad && since < 0.7 ? 3 * Math.Sin(since * 38) * Math.Exp(-since * 5) : 0;
-        var y = bob + _sink;
+        var dy = bob + _sink;
 
-        // The glow behind, breathing faster while Kiro works, and the shadow under.
+        // The picked one stands in a pool of light.
+        if (_pick > 0.02)
+        {
+            dc.PushOpacity(_pick);
+            dc.DrawEllipse(Spot, null, new Point(50, 91), 30, 7);
+            dc.Pop();
+        }
+
         var pulse = _glow + (_mood == Mood.Working ? Math.Sin(_t * 3) * 0.12 : 0);
         _auraIn.Color = Color.FromArgb((byte)(Math.Clamp(pulse, 0, 1) * 150), _aura.R, _aura.G, _aura.B);
         _auraOut.Color = Color.FromArgb(0, _aura.R, _aura.G, _aura.B);
         var auraR = 40 + pulse * 6;
-        dc.DrawEllipse(_auraBrush, null, new Point(50, 50 + y * 0.4), auraR, auraR);
+        dc.DrawEllipse(_auraBrush, null, new Point(50, 50 + dy * 0.4), auraR, auraR);
         var lift = Math.Clamp((-bob + 10) / 20, 0, 1);
-        dc.DrawEllipse(Ui.Tint(Colors.Black, (byte)(0x18 + 0x18 * (1 - lift))), null, new Point(50, 91), 17 - lift * 5, 2.6);
+        dc.PushOpacity(0.55 + 0.45 * (1 - lift));
+        dc.DrawEllipse(Shadow, null, new Point(50, 91), 17 - lift * 5, 2.6);
+        dc.Pop();
 
-        Sparkles(dc, y, behind: true);
+        Sparkles(dc, dy, behind: true);
 
         dc.PushOpacity(_fade);
-        dc.PushTransform(new TranslateTransform(shake, y));
+        dc.PushTransform(new TranslateTransform(shake, dy));
         dc.PushTransform(new RotateTransform(_tilt + (_mood == Mood.Working ? Math.Sin(_t * 1.1) * 3 : 0), 50, 58));
         var breathe = 1 + Math.Sin(_bobPhase * Math.PI * 2) * 0.015;
         dc.PushTransform(new ScaleTransform(1 / breathe, breathe, 50, 74));
-
-        Arms(dc);
-        dc.DrawGeometry(Body, Theme.Dark ? null : new Pen(Ui.Tint(Colors.Black, 0x22), 1), Outline());
+        var rim = light ? Rim : null;
+        Arms(dc, rim);
+        dc.DrawGeometry(Body, rim, Outline());
         DrawFace(dc);
-
         dc.Pop(); dc.Pop(); dc.Pop(); dc.Pop();
 
-        Sparkles(dc, y, behind: false);
-        Extras(dc, y, since);
-        dc.Pop(); dc.Pop();
+        Sparkles(dc, dy, behind: false);
+        Extras(dc, dy, since);
+        dc.Pop();
+    }
+
+    private static readonly Brush Spot = MakeSpot();
+
+    private static Brush MakeSpot()
+    {
+        var b = new RadialGradientBrush(Color.FromArgb(0x70, 0xFF, 0xFF, 0xFF), Color.FromArgb(0, 0xFF, 0xFF, 0xFF));
+        b.Freeze();
+        return b;
     }
 
     /// Round head, straight sides, and a hem that ripples, faster as Kiro works.
@@ -282,60 +362,52 @@ internal sealed class Ghost : FrameworkElement
             c.ArcTo(new Point(74, 42), new Size(24, 24), 0, false, SweepDirection.Clockwise, true, true);
             c.LineTo(new Point(74, 70), true, true);
             const int N = 30;
-            var pts = new Point[N + 1];
             for (var i = 0; i <= N; i++)
             {
-                var x = 74 - 48.0 * i / N;
                 var wave = Math.Sin(_wavePhase * 2 + i / (double)N * Math.PI * 6) * (2.2 + _energy * 0.8);
-                // Deepest in the middle of each scallop, pinned where it meets the sides.
+                // Deepest mid-scallop, pinned where it meets the sides.
                 var edge = Math.Sin(Math.PI * i / N);
-                pts[i] = new Point(x, 72 + wave * (0.45 + 0.55 * edge) + 3 * edge);
+                Hem[i] = new Point(74 - 48.0 * i / N, 72 + wave * (0.45 + 0.55 * edge) + 3 * edge);
             }
-            c.PolyLineTo(pts, true, true);
+            c.PolyLineTo(Hem, true, true);
         }
         g.Freeze();
         return g;
     }
 
-    private void Arms(DrawingContext dc)
+    private void Arms(DrawingContext dc, Pen? rim)
     {
         // Typing while it edits, up in the air when it's done, hanging when it failed.
         var tap = _typing * Math.Sin(_t * 16) * 1.6;
         var wave = _armsUp > 0.5 ? Math.Sin(_t * 9) * 10 : 0;
         // WPF turns clockwise for a positive angle: the left arm swings out with +1.
-        foreach (var (x, dir, phase) in new[] { (25.5, 1, 0.0), (74.5, -1, Math.PI) })
+        for (var side = 0; side < 2; side++)
         {
-            var lift = _typing > 0 ? tap * Math.Sin(phase + Math.PI / 2) : 0;
+            var x = side == 0 ? 25.5 : 74.5;
+            var dir = side == 0 ? 1 : -1;
+            var lift = tap * (side == 0 ? 1 : -1);
             dc.PushTransform(new RotateTransform(dir * (35 + _armsUp * 70) + dir * wave, x, 54));
-            dc.DrawEllipse(Body, Theme.Dark ? null : new Pen(Ui.Tint(Colors.Black, 0x22), 1), new Point(x, 60 + lift), 4, 6.5);
+            dc.DrawEllipse(Body, rim, new Point(x, 60 + lift), 4, 6.5);
             dc.Pop();
         }
     }
 
     private void DrawFace(DrawingContext dc)
     {
-        var shut = 0.0;
-        if (_blinkAt >= 0) shut = Math.Sin(Math.PI * Math.Clamp((_t - _blinkAt) / BlinkLength, 0, 1));
+        var shut = _blinkAt >= 0 ? Math.Sin(Math.PI * Math.Clamp((_t - _blinkAt) / BlinkLength, 0, 1)) : 0;
         var open = 1 - shut * 0.92;
-        foreach (var cx in new[] { 41.0, 59.0 })
+        for (var i = 0; i < 2; i++)
         {
-            var c = new Point(cx + _lookX, 43 + _lookY);
+            var c = new Point((i == 0 ? 41.0 : 59.0) + _lookX, 43 + _lookY);
             switch (_eyes)
             {
                 case Eyes.Open:
                     dc.DrawEllipse(Face, null, c, 3.3, 5.2 * open);
-                    // A glint, so the eyes read as looking rather than as holes.
                     if (open > 0.6) dc.DrawEllipse(Body, null, new Point(c.X + 1, c.Y - 2.2), 0.9, 1.1);
                     break;
-                case Eyes.Happy:
-                    Line(dc, c, open, "M -4 1.6 Q 0 -4.4 4 1.6");
-                    break;
-                case Eyes.Crossed:
-                    Line(dc, c, open, "M -3 -3 L 3 3 M 3 -3 L -3 3");
-                    break;
-                default:
-                    Line(dc, c, 1, "M -4 0 Q 0 2.6 4 0");
-                    break;
+                case Eyes.Happy: Stroke(dc, HappyEye, c, open); break;
+                case Eyes.Crossed: Stroke(dc, CrossEye, c, open); break;
+                default: Stroke(dc, ClosedEye, c, 1); break;
             }
         }
         if (_eyes == Eyes.Happy)
@@ -345,24 +417,14 @@ internal sealed class Ghost : FrameworkElement
         }
     }
 
-    private static readonly Dictionary<string, Geometry> Strokes = new();
-
-    private static void Line(DrawingContext dc, Point at, double squash, string data)
+    private static void Stroke(DrawingContext dc, Geometry g, Point at, double squash)
     {
-        if (!Strokes.TryGetValue(data, out var g))
-        {
-            g = Geometry.Parse(data);
-            g.Freeze();
-            Strokes[data] = g;
-        }
         dc.PushTransform(new MatrixTransform(1, 0, 0, Math.Max(squash, 0.08), at.X, at.Y));
         dc.DrawGeometry(null, FacePen, g);
         dc.Pop();
     }
 
-    /// Three sparkles on a tilted ring while Kiro works; the half of the ring behind
-    /// the ghost is drawn before it, dimmer.
-    private void Sparkles(DrawingContext dc, double y, bool behind)
+    private void Sparkles(DrawingContext dc, double dy, bool behind)
     {
         var show = Math.Clamp(_energy, 0, 1);
         if (show < 0.02) return;
@@ -371,23 +433,23 @@ internal sealed class Ghost : FrameworkElement
             var a = _orbit + i * Math.PI * 2 / 3;
             var back = Math.Sin(a) < 0;
             if (back != behind) continue;
-            var p = new Point(50 + Math.Cos(a) * 41, 54 + Math.Sin(a) * 11 + y * 0.5);
+            var p = new Point(50 + Math.Cos(a) * 41, 54 + Math.Sin(a) * 11 + dy * 0.5);
             var s = (2.4 + Math.Sin(_t * 5 + i) * 0.8) * (back ? 0.75 : 1);
-            DrawStar(dc, p, s, Ui.Accent(i == 1 ? Ui.Teal : Ui.Purple), show * (back ? 0.45 : 1));
+            DrawStar(dc, p, s, Paint(i == 1 ? Ui.Teal : Ui.Purple), show * (back ? 0.45 : 1));
         }
     }
 
-    private void Extras(DrawingContext dc, double y, double since)
+    private void Extras(DrawingContext dc, double dy, double since)
     {
-        // Thinking: three dots over the head, lighting in turn.
         if (_mood == Mood.Working && _phase is KiroPhase.Thinking or KiroPhase.Planning or KiroPhase.Starting)
             for (var i = 0; i < 3; i++)
             {
                 var on = 0.35 + 0.65 * Math.Max(0, Math.Sin(_t * 4 - i * 0.9));
-                dc.DrawEllipse(Ui.Tint(Ui.Purple, (byte)(on * 255)), null, new Point(43 + i * 7, 9 + y * 0.6 - on * 1.2), 2, 2);
+                dc.PushOpacity(on);
+                dc.DrawEllipse(Paint(Ui.Purple), null, new Point(43 + i * 7, 9 + dy * 0.6 - on * 1.2), 2, 2);
+                dc.Pop();
             }
 
-        // A finished run: a burst of stars, once.
         if (_mood == Mood.Happy && since < 1.1)
         {
             var p = since / 1.1;
@@ -396,55 +458,42 @@ internal sealed class Ghost : FrameworkElement
                 var a = i * Math.PI / 4 + 0.3;
                 var d = 16 + 34 * (1 - Math.Pow(1 - p, 3));
                 DrawStar(dc, new Point(50 + Math.Cos(a) * d, 46 + Math.Sin(a) * d * 0.8), 3.2 * (1 - p * 0.6),
-                    Ui.Accent(i % 2 == 0 ? Ui.Yellow : Ui.Green), 1 - p);
+                    Paint(i % 2 == 0 ? Ui.Yellow : Ui.Green), 1 - p);
             }
         }
 
-        // Stopped: a z drifting up now and then.
         if (_mood == Mood.Asleep && since > 0.4)
         {
             var p = (_t * 0.45) % 1;
-            dc.PushOpacity(Math.Sin(Math.PI * p) * 0.8);
-            var at = new Point(71 + p * 6, 26 - p * 12 + y);
             var s = 2 + p * 1.5;
-            dc.DrawGeometry(null, new Pen(Ui.InkDim, 1.3) { StartLineCap = PenLineCap.Round, EndLineCap = PenLineCap.Round, LineJoin = PenLineJoin.Round },
-                new PathGeometry(new[] { new PathFigure(new Point(at.X - s, at.Y - s), new PathSegment[]
-                {
-                    new LineSegment(new Point(at.X + s, at.Y - s), true), new LineSegment(new Point(at.X - s, at.Y + s), true),
-                    new LineSegment(new Point(at.X + s, at.Y + s), true),
-                }, false) }));
-            dc.Pop();
+            dc.PushOpacity(Math.Sin(Math.PI * p) * 0.9);
+            dc.PushTransform(new MatrixTransform(s, 0, 0, s, 71 + p * 6, 26 - p * 12 + dy));
+            dc.DrawGeometry(null, ZInk, Zed);
+            dc.Pop(); dc.Pop();
         }
 
-        // A badge that pops in with the ending: a tick, a bang, or a stop square.
         if (_mood is Mood.Happy or Mood.Sad or Mood.Asleep)
         {
             var q = Math.Clamp(since / 0.4, 0, 1);
             var pop = 1 + 2.7 * Math.Pow(q - 1, 3) + 1.7 * Math.Pow(q - 1, 2);   // ease-out-back
-            if (Still) pop = 1;
-            var tint = _mood switch { Mood.Happy => Ui.Green, Mood.Sad => Ui.Red, _ => Color.FromRgb(0x8E, 0x8E, 0x93) };
-            var c = new Point(73, 24 + y * (_mood == Mood.Happy ? 1 : 0.5));
-            dc.PushTransform(new ScaleTransform(pop, pop, c.X, c.Y));
-            dc.DrawEllipse(Ui.Accent(tint), new Pen(Ui.Surface, 1.6), c, 7, 7);
-            var white = new Pen(Brushes.White, 1.8) { StartLineCap = PenLineCap.Round, EndLineCap = PenLineCap.Round, LineJoin = PenLineJoin.Round };
+            var tint = _mood switch { Mood.Happy => Ui.Green, Mood.Sad => Ui.Red, _ => Ui.Gray };
+            var c = new Point(73, 24 + dy * (_mood == Mood.Happy ? 1 : 0.5));
+            dc.PushTransform(new MatrixTransform(pop, 0, 0, pop, c.X, c.Y));
+            dc.DrawEllipse(Paint(tint), null, new Point(0, 0), 7, 7);
             switch (_mood)
             {
-                case Mood.Happy:
-                    dc.DrawGeometry(null, white, Geometry.Parse($"M {c.X - 3},{c.Y + 0.2} L {c.X - 0.8},{c.Y + 2.4} L {c.X + 3.2},{c.Y - 2.2}"));
-                    break;
+                case Mood.Happy: dc.DrawGeometry(null, BadgeInk, Tick); break;
                 case Mood.Sad:
-                    dc.DrawLine(white, new Point(c.X, c.Y - 3.4), new Point(c.X, c.Y + 0.8));
-                    dc.DrawEllipse(Brushes.White, null, new Point(c.X, c.Y + 3.2), 1, 1);
+                    dc.DrawLine(BadgeInk, new Point(0, -3.4), new Point(0, 0.8));
+                    dc.DrawEllipse(Brushes.White, null, new Point(0, 3.2), 1, 1);
                     break;
-                default:
-                    dc.DrawRoundedRectangle(Brushes.White, null, new Rect(c.X - 2.3, c.Y - 2.3, 4.6, 4.6), 0.8, 0.8);
-                    break;
+                default: dc.DrawRoundedRectangle(Brushes.White, null, new Rect(-2.3, -2.3, 4.6, 4.6), 0.8, 0.8); break;
             }
             dc.Pop();
         }
     }
 
-    private static void DrawStar(DrawingContext dc, Point at, double size, Brush fill, double opacity)
+    public static void DrawStar(DrawingContext dc, Point at, double size, Brush fill, double opacity)
     {
         if (opacity <= 0.01) return;
         dc.PushOpacity(opacity);
@@ -454,20 +503,56 @@ internal sealed class Ghost : FrameworkElement
         dc.Pop();
     }
 
-    /// A four-pointed sparkle of unit radius.
-    private static Geometry MakeStar()
+    // Brushes by colour, made once: the frame loop would otherwise make a dozen a frame.
+    private static readonly Dictionary<Color, Brush> Brushes_ = new();
+
+    private static Brush Paint(Color c)
     {
-        var g = Geometry.Parse("M 0,-1 Q 0.12,-0.12 1,0 Q 0.12,0.12 0,1 Q -0.12,0.12 -1,0 Q -0.12,-0.12 0,-1 Z");
+        if (!Brushes_.TryGetValue(c, out var b))
+        {
+            if (Brushes_.Count > 64) Brushes_.Clear();   // theme changes leave old colours behind
+            Brushes_[c] = b = Ui.Frozen(c);
+        }
+        return b;
+    }
+
+    private static Geometry Parse(string data)
+    {
+        var g = Geometry.Parse(data);
         g.Freeze();
         return g;
     }
 
-    private static Color Mix(Color a, Color b, double k) => Color.FromArgb(
-        (byte)(a.A + (b.A - a.A) * k), (byte)(a.R + (b.R - a.R) * k), (byte)(a.G + (b.G - a.G) * k), (byte)(a.B + (b.B - a.B) * k));
-
-    private static Pen Frozen(Pen p)
+    private static Pen Freeze(Pen p)
     {
         p.Freeze();
         return p;
+    }
+
+    internal static Color Mix(Color a, Color b, double k) => Color.FromArgb(
+        (byte)(a.A + (b.A - a.A) * k), (byte)(a.R + (b.R - a.R) * k), (byte)(a.G + (b.G - a.G) * k), (byte)(a.B + (b.B - a.B) * k));
+}
+
+/// A single ghost as an element, for the first-use note.
+internal sealed class Ghost : FrameworkElement
+{
+    private readonly GhostActor _actor = new();
+
+    public Ghost()
+    {
+        IsHitTestVisible = false;
+        _ = new FrameHook(this, dt => { _actor.Step(dt); InvalidateVisual(); });
+    }
+
+    public void Show(KiroState state, KiroPhase phase)
+    {
+        _actor.Show(state, phase);
+        InvalidateVisual();
+    }
+
+    protected override void OnRender(DrawingContext dc)
+    {
+        var side = Math.Min(ActualWidth, ActualHeight);
+        if (side > 0) _actor.Draw(dc, (ActualWidth - side) / 2, (ActualHeight - side) / 2, side, !Theme.Dark);
     }
 }
