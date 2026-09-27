@@ -10,7 +10,8 @@ public sealed record ScreenInfo(
     string Device,
     Win32.RECT Bounds,
     Win32.RECT Work,
-    double Scale)
+    double Scale,
+    bool Primary)
 {
     /// The display's work area in DIPs, which is what the notch lays out against.
     public Rect WorkDips => new(Work.Left / Scale, Work.Top / Scale,
@@ -37,7 +38,8 @@ public static class Screens
             if (Win32.GetDpiForMonitor(h, Win32.MDT_EFFECTIVE_DPI, out var dpiX, out _) == 0 && dpiX > 0)
                 scale = dpiX / 96.0;
 
-            list.Add(new ScreenInfo(h, info.szDevice, info.rcMonitor, info.rcWork, scale));
+            const uint MONITORINFOF_PRIMARY = 1;
+            list.Add(new ScreenInfo(h, info.szDevice, info.rcMonitor, info.rcWork, scale, (info.dwFlags & MONITORINFOF_PRIMARY) != 0));
             return true;
         }, IntPtr.Zero);
         return list;
@@ -51,7 +53,4 @@ public static class Screens
             return p;
         }
     }
-
-    public static ScreenInfo? At(Win32.POINT p) =>
-        All().FirstOrDefault(s => s.Bounds.Contains(p));
 }

@@ -69,11 +69,7 @@ internal sealed class InsightsPage
         AutomationProperties.SetAutomationId(_focusTab, "InsightsFocus");
         _tasksTab.Checked += (_, _) => { _focus = false; Refresh(); };
         _focusTab.Checked += (_, _) => { _focus = true; Refresh(); };
-        var toggle = new Border
-        {
-            Background = Ui.Wash, CornerRadius = new CornerRadius(9), Padding = new Thickness(2),
-            Child = Ui.Row(_tasksTab, _focusTab), HorizontalAlignment = HorizontalAlignment.Left,
-        };
+        var toggle = new Segmented(_tasksTab, _focusTab) { HorizontalAlignment = HorizontalAlignment.Left };
         var top = new DockPanel();
         DockPanel.SetDock(_range, Dock.Right);
         top.Children.Add(_range);
@@ -363,11 +359,11 @@ internal sealed class SettingsPage
         Child = Ui.Icon(glyph, 14, Ui.White), Margin = new Thickness(0, 0, 10, 0), VerticalAlignment = VerticalAlignment.Center,
     };
 
-    /// A capsule of choices with the picked one raised, as a Mac segmented control.
+    /// A capsule of choices with the picked one raised, as an iOS segmented control.
     private static Border Segments<T>(string idPrefix, IEnumerable<(T Value, string Label)> options, T current, Action<T> pick)
     {
         var group = idPrefix + Guid.NewGuid().ToString("N");
-        var row = new StackPanel { Orientation = Orientation.Horizontal };
+        var items = new List<RadioButton>();
         foreach (var (value, label) in options)
         {
             var rb = new RadioButton
@@ -379,12 +375,9 @@ internal sealed class SettingsPage
             AutomationProperties.SetName(rb, label);
             var captured = value;
             rb.Checked += (_, _) => pick(captured);
-            row.Children.Add(rb);
+            items.Add(rb);
         }
-        return new Border
-        {
-            Background = Ui.Wash, CornerRadius = new CornerRadius(9), Padding = new Thickness(2), Child = row,
-        };
+        return new Segmented(items.ToArray());
     }
 
     // MARK: General
@@ -686,19 +679,9 @@ internal sealed class SettingsPage
 
     private void Notch()
     {
-        Group(Row("Always show the notch",
-            "Keeps a slim pill at the top of the screen with the time. Off, the notch appears only for a running timer, a message, or quotas kept on it.",
-            Switch("IdleNotch", "Always show the notch", Settings.ShowIdleNotch, v =>
-            {
-                Settings.ShowIdleNotch = v;
-                OwlApp.SettingsChanged?.Invoke();
-            })));
-        Footnote("Hovering the top centre opens the workspace either way.");
-
         Heading("Show in the notch");
-        Group(
-            ItemRow(NotchItem.Clock, "The time of day, while the notch is always shown.", Tile(Ui.IcClock, Ui.Blue)),
-            ItemRow(NotchItem.Timer, "The focus timer while it runs, even when the notch isn't always shown.", Tile(Ui.IcStopwatch, Ui.Orange)));
+        Group(ItemRow(NotchItem.Timer, "The focus timer, while it runs.", Tile(Ui.IcStopwatch, Ui.Orange)));
+        Footnote("With nothing to show, the notch hides. Hover the top centre or press the shortcut to open it.");
 
         Heading("AI quotas");
         var rows = new List<FrameworkElement>();
@@ -730,7 +713,7 @@ internal sealed class SettingsPage
 
         Heading("Workspace");
         Group(Row("Workspace size", "How big the notch opens. It never grows past the screen.",
-            Segments("WorkspaceSize", new[] { (WorkspaceSize.Default, "Default"), (WorkspaceSize.Large, "Large"), (WorkspaceSize.ExtraLarge, "Extra large") },
+            Segments("WorkspaceSize", new[] { (WorkspaceSize.Small, "Small"), (WorkspaceSize.Default, "Default"), (WorkspaceSize.Large, "Large"), (WorkspaceSize.ExtraLarge, "Extra large") },
                 Settings.WorkspaceSize, v =>
                 {
                     Settings.WorkspaceSize = v;

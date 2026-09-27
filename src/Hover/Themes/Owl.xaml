@@ -126,22 +126,30 @@
     <Setter Property="Tag" Value="99" />
   </Style>
 
-  <!-- The segmented control of iOS: a grey track (built in code, radius 9) with the
-       picked segment raised on a thumb one step smaller. -->
+  <!-- One segment of Ui's Segmented control, the iOS segmented control: the label
+       alone. The raised thumb behind the picked segment belongs to the control, so
+       it can slide from one segment to the next. A hidden semibold copy of the
+       label keeps room for the picked weight, so picking never shifts the row. -->
   <ControlTemplate x:Key="OwlSegmentTemplate" TargetType="RadioButton">
     <Grid Background="Transparent">
-      <Border x:Name="Thumb" CornerRadius="7" Background="{DynamicResource Owl.Thumb}" Opacity="0">
-        <Border.Effect>
-          <DropShadowEffect BlurRadius="8" ShadowDepth="2" Direction="270" Opacity="0.14" RenderingBias="Performance" />
-        </Border.Effect>
-      </Border>
-      <ContentPresenter Margin="{TemplateBinding Padding}" HorizontalAlignment="Center" VerticalAlignment="Center" />
+      <Grid Margin="{TemplateBinding Padding}">
+        <TextBlock Text="{Binding Content, RelativeSource={RelativeSource TemplatedParent}}" FontWeight="SemiBold"
+                   Visibility="Hidden" HorizontalAlignment="Center" />
+        <ContentPresenter x:Name="Label" HorizontalAlignment="Center" VerticalAlignment="Center" />
+      </Grid>
     </Grid>
     <ControlTemplate.Triggers>
       <Trigger Property="IsChecked" Value="True">
-        <Setter TargetName="Thumb" Property="Opacity" Value="1" />
         <Setter Property="FontWeight" Value="SemiBold" />
       </Trigger>
+      <!-- iOS dims a segment's label while it is held down. -->
+      <MultiTrigger>
+        <MultiTrigger.Conditions>
+          <Condition Property="IsPressed" Value="True" />
+          <Condition Property="IsChecked" Value="False" />
+        </MultiTrigger.Conditions>
+        <Setter TargetName="Label" Property="Opacity" Value="0.45" />
+      </MultiTrigger>
     </ControlTemplate.Triggers>
   </ControlTemplate>
 
@@ -151,8 +159,8 @@
     <Setter Property="Foreground" Value="{DynamicResource Owl.Ink}" />
     <Setter Property="FontFamily" Value="{StaticResource OwlFont}" />
     <Setter Property="FontSize" Value="13" />
-    <Setter Property="FontWeight" Value="Medium" />
-    <Setter Property="Padding" Value="16,5" />
+    <Setter Property="FontWeight" Value="Normal" />
+    <Setter Property="Padding" Value="14,6" />
     <Setter Property="Template" Value="{StaticResource OwlSegmentTemplate}" />
   </Style>
 

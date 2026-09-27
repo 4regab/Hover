@@ -17,7 +17,8 @@ public sealed class SettingsTests
         try
         {
             Settings.ScWorkspace = new Shortcut(ModifierKeys.Control | ModifierKeys.Shift, Key.H);
-            Settings.NotchItems = new[] { NotchItem.Kiro, "bogus", NotchItem.Clock };
+            // "clock" was a notch item once; old settings files may still hold it.
+            Settings.NotchItems = new[] { NotchItem.Kiro, "bogus", "clock", NotchItem.Timer };
             Settings.Cards = CardLayout.Show(CardLayout.Default, CardLayout.Shots, false);
             Settings.Flush();
 
@@ -29,7 +30,7 @@ public sealed class SettingsTests
                 Assert.That(json, Does.Contain("\"NotchItems\""));
                 Assert.That(json, Does.Contain("\"Cards\""));
                 // Unknown ids are dropped, and the canonical order wins over the order given.
-                Assert.That(Settings.NotchItems, Is.EqualTo(new[] { NotchItem.Clock, NotchItem.Kiro }));
+                Assert.That(Settings.NotchItems, Is.EqualTo(new[] { NotchItem.Timer, NotchItem.Kiro }));
                 Assert.That(Settings.Cards.Single(c => c.Id == CardLayout.Shots).Visible, Is.False);
             });
         }

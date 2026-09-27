@@ -2,8 +2,10 @@ using System.Globalization;
 using System.Windows;
 using System.Windows.Automation.Peers;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Media.Animation;
 using System.Windows.Media.Effects;
 using System.Windows.Media.Imaging;
 using System.Windows.Shapes;
@@ -465,5 +467,80 @@ internal sealed class Ring : FrameworkElement
         }
         g.Freeze();
         dc.DrawGeometry(null, pen, g);
+    }
+}
+
+
+/// The segmented control of iOS: equal segments on a grey track, the picked one on
+/// a raised thumb that slides across to it, and a hairline between two segments
+/// when neither is picked. The segments are RadioButtons in the OwlSegment styles.
+/// With none picked (a custom duration) the thumb goes away.
+internal sealed class Segmented : Border
+{
+    private static readonly Duration Slide = TimeSpan.FromMilliseconds(260);
+    private static readonly IEasingFunction Ease = new CubicEase { EasingMode = EasingMode.EaseOut };
+
+    private readonly RadioButton[] _items;
+    private readonly UniformGrid _row = new() { Rows = 1 };
+    private readonly UniformGrid _lines = new() { Rows = 1, IsHitTestVisible = false };
+    private readonly TranslateTransform _slide = new();
+    private readonly Border _thumb = new()
+    {
+        CornerRadius = new CornerRadius(7), HorizontalAlignment = HorizontalAlignment.Left,
+        IsHitTestVisible = false, Opacity = 0,
+    };
+    private int _at = -1;
+
+    public Segmented(params RadioButton[] items)
+    {
+        _items = items;
+        Background = Ui.Wash;
+        CornerRadius = new CornerRadius(9);
+        Padding = new Thickness(2);
+        _thumb.RenderTransform = _slide;
+        _thumb.SetResourceReference(BackgroundProperty, "Owl.Thumb");
+        // In light mode a soft shadow lifts the white thumb off the grey track. The
+        // dark thumb is a lighter grey and stands out on its own, as on iOS.
+        if (!Theme.Dark)
+            _thumb.Effect = new DropShadowEffect { BlurRadius = 8, ShadowDepth = 3, Direction = 270, Opacity = 0.12, RenderingBias = RenderingBias.Performance };
+
+        _row.Columns = _lines.Columns = items.Length;
+        foreach (var rb in items)
+        {
+            _row.Children.Add(rb);
+            _lines.Children.Add(new Rectangle { Width = 1, Fill = Ui.Separator, HorizontalAlignment = HorizontalAlignment.Left, Margin = new Thickness(-0.5, 8, 0, 8) });
+            rb.Checked += (_, _) => Move(animate: true);
+            rb.Unchecked += (_, _) => Move(animate: true);
+        }
+        var g = new Grid();
+        g.Children.Add(_lines);
+        g.Children.Add(_thumb);
+        g.Children.Add(_row);
+        Child = g;
+        _row.SizeChanged += (_, _) => Move(animate: false);
+    }
+
+    private void Move(bool animate)
+    {
+        var at = Array.FindIndex(_items, r => r.IsChecked == true);
+        var w = _row.ActualWidth / _items.Length;
+        if (w <= 0) return;
+        _thumb.Width = w;
+        for (var i = 0; i < _items.Length; i++)
+            _lines.Children[i].Opacity = i == 0 || at == i || at == i - 1 ? 0 : 1;
+
+        if (at < 0) { _thumb.Opacity = 0; _at = -1; return; }
+        // Checking one segment unchecks the last, and both call here.
+        if (animate && at == _at) return;
+        var x = at * w;
+        if (animate && _at >= 0)
+            _slide.BeginAnimation(TranslateTransform.XProperty, new DoubleAnimation(x, Slide) { EasingFunction = Ease });
+        else
+        {
+            _slide.BeginAnimation(TranslateTransform.XProperty, null);
+            _slide.X = x;
+        }
+        _thumb.Opacity = 1;
+        _at = at;
     }
 }

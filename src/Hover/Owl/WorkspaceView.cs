@@ -158,13 +158,14 @@ public sealed class WorkspaceView : UserControl
         Grid.SetColumn(right, 2);
         head.Children.Add(right);
 
-        // The AI quotas that are switched on, centred between the two ends.
+        // The AI quotas that are switched on, right beside the tabs. They sit in the
+        // stretching middle column, so on a narrow header they are cut off before
+        // the tabs or the close button are.
         _quotaStrip = new QuotaStrip(() => ShowSettings(SettingsPage.Section.Notch));
-        _quotaStrip.Root.Margin = new Thickness(12, 0, 12, 0);
+        _quotaStrip.Root.Margin = new Thickness(12, 0, 10, 0);
         Grid.SetColumn(_quotaStrip.Root, 1);
         head.Children.Add(_quotaStrip.Root);
 
-        var seg = new StackPanel { Orientation = Orientation.Horizontal };
         string[] names = { "Workspace", "Insights", "Settings" };
         for (var i = 0; i < 3; i++)
         {
@@ -179,16 +180,8 @@ public sealed class WorkspaceView : UserControl
             AutomationProperties.SetName(tab, names[i]);
             tab.Checked += (_, _) => ShowTab(index);
             _tabs[i] = tab;
-            seg.Children.Add(tab);
         }
-        right.Children.Add(new Border
-        {
-            Background = Ui.Wash,
-            CornerRadius = new CornerRadius(9),
-            Padding = new Thickness(2),
-            Child = seg,
-            VerticalAlignment = VerticalAlignment.Center,
-        });
+        right.Children.Add(new Segmented(_tabs) { VerticalAlignment = VerticalAlignment.Center });
 
         _layoutButton = Ui.IconButton(Ui.IcLayout, "CustomizeCards", "Customize cards", OpenLayoutMenu, 16, Ui.InkDim);
         _layoutButton.Width = _layoutButton.Height = 30;
@@ -725,7 +718,9 @@ internal sealed class TimerCard
 
         var body = new StackPanel { VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(16, 0, 16, 0) };
         body.Children.Add(new Viewbox { Child = face, StretchDirection = StretchDirection.DownOnly, MaxHeight = 184 });
-        body.Children.Add(buttons);
+        // The Small workspace can leave the card narrower than the two buttons: they
+        // shrink with it rather than being cut off.
+        body.Children.Add(new Viewbox { Child = buttons, StretchDirection = StretchDirection.DownOnly });
 
         Button? setTime = null;
         setTime = Ui.Button("OwlLink", "Set time", "SetTime", "Set time", () =>
@@ -1022,7 +1017,8 @@ internal sealed class EventsCard
             t.TextWrapping = TextWrapping.Wrap;
             t.TextTrimming = TextTrimming.None;
             _body.Children.Add(t);
-            _body.Children.Add(Ui.Button("OwlLightButton", "Connect calendar", "ConnectCalendar", "Connect calendar", _openSettings)
+            _body.Children.Add(Ui.Button("OwlLightButton", new TextBlock { Text = "Connect calendar", TextTrimming = TextTrimming.CharacterEllipsis },
+                "ConnectCalendar", "Connect calendar", _openSettings)
                 .Margin(0, 8, 0, 0));
             ((Button)_body.Children[^1]).HorizontalAlignment = HorizontalAlignment.Left;
         }
@@ -1190,7 +1186,7 @@ internal sealed class QuotaStrip
     public StackPanel Root { get; } = new()
     {
         Orientation = Orientation.Horizontal,
-        HorizontalAlignment = HorizontalAlignment.Center,
+        HorizontalAlignment = HorizontalAlignment.Right,
         VerticalAlignment = VerticalAlignment.Center,
     };
     private readonly Action _openSettings;

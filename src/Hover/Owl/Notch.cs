@@ -14,7 +14,7 @@ using Hover.Interop;
 namespace Hover.Owl;
 
 /// The black notch shape and what is inside it. Openness 0 is the resting shape —
-/// a hairline tab, a slim pill of glanceable items, or nothing — and 1 is the open
+/// a slim pill of glanceable items, or nothing — and 1 is the open
 /// workspace. The
 /// shape grows from one to the other and the workspace is revealed through it.
 internal sealed class NotchShell : Canvas
@@ -194,7 +194,7 @@ internal sealed class NotchHost : IDisposable
 {
     public enum Mode { Rest, Peek, Open }
 
-    private enum RestKind { None, Tab, Pill, Alert }
+    private enum RestKind { None, Pill, Alert }
 
     public string Device { get; }
     public Mode State { get; private set; } = Mode.Rest;
@@ -223,7 +223,6 @@ internal sealed class NotchHost : IDisposable
     private readonly TextBlock _time = Ui.Text("", 12.5, Ui.White, FontWeights.SemiBold);
     private readonly Ellipse _timerDot = new() { Width = 6, Height = 6 };
     private readonly FrameworkElement _timerSeg;
-    private readonly TextBlock _clock = Ui.Text("", 12.5, Ui.White, FontWeights.SemiBold);
     private readonly Dictionary<string, (FrameworkElement Seg, Ring Ring, TextBlock Text)> _quotaSegs = new();
     private string _pillKey = "";
 
@@ -233,9 +232,8 @@ internal sealed class NotchHost : IDisposable
     private (string Title, string Text)? _alert;
 
     /// Heights of the resting shapes. Small on purpose: the notch at rest is a hint,
-    /// not a panel — a hairline when there is nothing to show, a slim pill when there
-    /// is.
-    private static readonly Size TabSize = new(96, 5);
+    /// not a panel — a slim pill when there is something to show, and nothing when
+    /// there is not. The user knows where it is.
     private const double PillHeight = 24, PillPad = 12, PillGap = 12;
     private static readonly TimeSpan Dwell = TimeSpan.FromMilliseconds(120);
     private static readonly TimeSpan LeaveGrace = TimeSpan.FromMilliseconds(350);
@@ -247,7 +245,6 @@ internal sealed class NotchHost : IDisposable
         _window.Title = "Hover notch";
         AutomationProperties.SetAutomationId(_window, "HoverNotch");
         AutomationProperties.SetAutomationId(_time, "NotchTime");
-        AutomationProperties.SetAutomationId(_clock, "NotchClock");
         _timerSeg = Ui.Row(_timerDot, _time.Margin(6, 0));
         _time.Typography.NumeralAlignment = FontNumeralAlignment.Tabular;
         _window.Root.Children.Add(_shell);
@@ -307,6 +304,9 @@ internal sealed class NotchHost : IDisposable
     {
         var (w, h) = Settings.WorkspaceSize switch
         {
+            // Three quarters of Default: the smallest that still fits all five cards
+            // side by side and the timer's buttons under its ring.
+            WorkspaceSize.Small => (840d, 340d),
             WorkspaceSize.Large => (1320d, 520d),
             WorkspaceSize.ExtraLarge => (1560d, 600d),
             _ => (1120d, 440d),
@@ -319,7 +319,6 @@ internal sealed class NotchHost : IDisposable
 
     private Size RestSize => _kind switch
     {
-        RestKind.Tab => TabSize,
         // Rounded up to a few pixels so a clock ticking from 1:11 to 1:12 does not
         // make the pill twitch.
         RestKind.Pill => new Size(Math.Ceiling((_pill.DesiredSize.Width + 2 * PillPad) / 4) * 4, PillHeight),
@@ -334,8 +333,6 @@ internal sealed class NotchHost : IDisposable
         var m = _shell.Mini;
         _time.VerticalAlignment = VerticalAlignment.Center;
         _timerDot.VerticalAlignment = VerticalAlignment.Center;
-        _clock.Typography.NumeralAlignment = FontNumeralAlignment.Tabular;
-        _clock.FontFamily = Ui.Display;
         _pill.HorizontalAlignment = HorizontalAlignment.Center;
         _pill.VerticalAlignment = VerticalAlignment.Center;
         m.Children.Add(_pill);
@@ -376,14 +373,13 @@ internal sealed class NotchHost : IDisposable
     }
 
     /// Which items the pill shows right now. The timer only while it runs; the quotas
-    /// when they are set to stay on the notch; the time when the notch is always shown.
+    /// when they are set to stay on the notch.
     private List<string> PillItems()
     {
         var running = OwlApp.Timer.State != FocusTimer.Phase.Ready;
         return Settings.NotchItems.Where(id =>
             id == NotchItem.Timer ? running
-            : NotchItem.Quotas.Contains(id) ? Settings.QuotasOnNotch
-            : Settings.ShowIdleNotch).ToList();
+            : NotchItem.Quotas.Contains(id) && Settings.QuotasOnNotch).ToList();
     }
 
     /// Pick the resting shape and refresh what it shows. Called every second.
@@ -393,7 +389,6 @@ internal sealed class NotchHost : IDisposable
         var items = _alert is null ? PillItems() : new List<string>();
         var kind = _alert is not null ? RestKind.Alert
             : items.Count > 0 ? RestKind.Pill
-            : Settings.ShowIdleNotch ? RestKind.Tab
             : RestKind.None;
 
         if (kind == RestKind.Alert)
@@ -415,18 +410,12 @@ internal sealed class NotchHost : IDisposable
                 _pill.Children.Clear();
                 foreach (var id in items)
                 {
-                    var seg = id switch
-                    {
-                        NotchItem.Clock => _clock,
-                        NotchItem.Timer => _timerSeg,
-                        _ => QuotaSeg(id).Seg,
-                    };
+                    var seg = id == NotchItem.Timer ? _timerSeg : QuotaSeg(id).Seg;
                     seg.Margin = new Thickness(_pill.Children.Count == 0 ? 0 : PillGap, 0, 0, 0);
                     seg.VerticalAlignment = VerticalAlignment.Center;
                     _pill.Children.Add(seg);
                 }
             }
-            if (items.Contains(NotchItem.Clock)) _clock.Text = DateTime.Now.ToString("t", System.Globalization.CultureInfo.CurrentCulture);
             if (items.Contains(NotchItem.Timer))
             {
                 var paused = t.State == FocusTimer.Phase.Paused;
@@ -624,7 +613,7 @@ internal sealed class NotchHost : IDisposable
     }
 }
 
-/// One notch per display, the pointer poll that wakes them, and the shortcut.
+/// The notch on the main display, the pointer poll that wakes it, and the shortcut.
 public sealed class NotchManager : IDisposable
 {
     private readonly Dictionary<string, NotchHost> _hosts = new();
@@ -692,13 +681,16 @@ public sealed class NotchManager : IDisposable
 
     private static string Signature(List<ScreenInfo> screens) =>
         string.Join("|", screens.Select(s =>
-            $"{s.Device}:{s.Bounds.Left},{s.Bounds.Top},{s.Bounds.Right},{s.Bounds.Bottom}:" +
+            $"{s.Device}{(s.Primary ? "*" : "")}:{s.Bounds.Left},{s.Bounds.Top},{s.Bounds.Right},{s.Bounds.Bottom}:" +
             $"{s.Work.Left},{s.Work.Top},{s.Work.Right},{s.Work.Bottom}@{s.Scale}"));
 
+    /// One notch, on the main display: a second one on every other screen was more
+    /// in the way than useful.
     private void Rebuild(List<ScreenInfo> screens)
     {
         _signature = Signature(screens);
-        var live = screens.ToDictionary(s => s.Device);
+        var main = screens.FirstOrDefault(s => s.Primary) ?? screens.FirstOrDefault();
+        var live = main is null ? new Dictionary<string, ScreenInfo>() : new Dictionary<string, ScreenInfo> { [main.Device] = main };
         foreach (var gone in _hosts.Keys.Where(d => !live.ContainsKey(d)).ToList())
         {
             _hosts[gone].Dispose();
@@ -734,14 +726,12 @@ public sealed class NotchManager : IDisposable
         host.Expand(peek, focusInput);
     }
 
-    /// The shortcut: open on the display holding the pointer, or close.
+    /// The shortcut: open the notch, or close it.
     public void Toggle()
     {
-        var open = _hosts.Values.FirstOrDefault(h => h.State != NotchHost.Mode.Rest);
-        if (open is not null) { open.Collapse(); return; }
-        var screen = Screens.At(Screens.Cursor);
-        var host = (screen is not null ? _hosts.GetValueOrDefault(screen.Device) : null) ?? _hosts.Values.FirstOrDefault();
-        if (host is not null) OpenOn(host, focusInput: true);
+        if (_hosts.Values.FirstOrDefault() is not { } host) return;
+        if (host.State != NotchHost.Mode.Rest) host.Collapse();
+        else OpenOn(host, focusInput: true);
     }
 
     public void CollapseAll()

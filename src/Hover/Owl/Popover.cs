@@ -86,7 +86,6 @@ internal static class Popover
         AutomationProperties.SetAutomationId(custom, "CustomMinutes");
         AutomationProperties.SetName(custom, "Custom minutes");
 
-        var presets = new UniformGrid { Rows = 1 };
         var group = "dur" + Guid.NewGuid().ToString("N");
         var radios = new List<(int, RadioButton)>();
         foreach (var m in new[] { 15, 25, 45, 60 })
@@ -97,14 +96,13 @@ internal static class Popover
             var captured = m;
             rb.Checked += (_, _) => { if (custom.Text != captured.ToString(CultureInfo.CurrentCulture)) custom.Text = captured.ToString(CultureInfo.CurrentCulture); };
             radios.Add((m, rb));
-            presets.Children.Add(rb);
         }
         custom.TextChanged += (_, _) =>
         {
             var v = Parse(custom.Text);
             foreach (var (m, rb) in radios) rb.IsChecked = v == m;
         };
-        s.Children.Add(new Border { Background = Ui.Wash, CornerRadius = new CornerRadius(9), Padding = new Thickness(2), Child = presets });
+        s.Children.Add(new Segmented(radios.Select(r => r.Item2).ToArray()));
 
         void Nudge(int by) => custom.Text = Math.Clamp((Parse(custom.Text) ?? minutes) + by, 1, 600).ToString(CultureInfo.CurrentCulture);
         var stepper = new StackPanel { Margin = new Thickness(6, 0, 0, 0) };

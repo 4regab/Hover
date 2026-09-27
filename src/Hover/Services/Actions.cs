@@ -25,11 +25,6 @@ public static class Actions
         menu.Items.Add(Item($"Open Workspace  {Settings.ScWorkspace}", () => OwlApp.ShowWorkspace?.Invoke()));
         menu.Items.Add(Item("Open App Window", () => OwlApp.OpenDashboard?.Invoke()));
         menu.Items.Add(new Separator());
-        menu.Items.Add(Check("Always Show the Notch", Settings.ShowIdleNotch, () =>
-        {
-            Settings.ShowIdleNotch = !Settings.ShowIdleNotch;
-            OwlApp.SettingsChanged?.Invoke();
-        }));
         menu.Items.Add(Check("Launch at Login", Settings.LaunchAtLogin, () => Settings.LaunchAtLogin = !Settings.LaunchAtLogin));
         menu.Items.Add(new Separator());
         menu.Items.Add(Item("Settings…", () => OwlApp.OpenSettings?.Invoke()));

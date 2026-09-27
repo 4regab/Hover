@@ -14,7 +14,7 @@ namespace Hover.E2E;
 /// time limits, focus sessions, the timer in the notch, the notepad's Ctrl+Enter,
 /// reminders, reordering, a calendar feed, Insights, the dashboard, encryption at
 /// rest, persistence across a restart, the configurable cards, the Screenshots card
-/// and the notch's clock and quota items. Screenshots of each state land in
+/// and the notch's quota item. Screenshots of each state land in
 /// HOVER_E2E_OUT.
 [TestFixture, NonParallelizable]
 public sealed class WorkspaceE2E
@@ -507,12 +507,11 @@ public sealed class WorkspaceE2E
     }
 
     [Test, Order(24)]
-    public void TheNotchCanShowTheClockAndAQuota()
+    public void TheNotchCanKeepAQuota()
     {
         OpenWithShortcut();
         Select(WaitFind("TabSettings"));
         Select(WaitFind("SectionNotch"));
-        Toggle(WaitFind("NotchItemclock"));
         Toggle(WaitFind("NotchItemcodex"));
         Wait(() => Name("QuotaStatuscodex").StartsWith("37% used"), "Settings shows Codex's reading", 15000);
         Wait(() => Name("WorkspaceQuotaCodex") == "37%", "the workspace header shows it too");
@@ -521,8 +520,7 @@ public sealed class WorkspaceE2E
         Select(WaitFind("TabWorkspace"));
         Invoke(Find("Close")!);
         Wait(() => !Visible("TabWorkspace"), "the workspace closes");
-        Wait(() => Visible("NotchClock") && Name("NotchClock").Length > 0, "the resting notch shows the time");
-        Wait(() => Name("NotchQuotaCodex") == "37%", "and the Codex quota");
+        Wait(() => Name("NotchQuotaCodex") == "37%", "the resting notch shows the Codex quota");
         Shot("22-notch-items", top: true);
     }
 
@@ -542,10 +540,9 @@ public sealed class WorkspaceE2E
     private static AutomationElement? _notch;
 
     /// Looked up once per launch: finding it means asking every window on the
-    /// desktop, and the loops below ask many times a second. There is one notch per
-    /// display, listed in z-order, so the first one is often another display's: the
-    /// one wanted is the notch over the primary display's top centre, where the
-    /// pointer and the shortcut open it.
+    /// desktop, and the loops below ask many times a second. The one wanted is the
+    /// notch over the primary display's top centre, where the pointer and the
+    /// shortcut open it.
     private static AutomationElement? Notch()
     {
         try

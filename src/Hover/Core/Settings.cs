@@ -10,7 +10,7 @@ namespace Hover.Core;
 public enum Appearance { System, Light, Dark }
 
 /// How big the workspace opens. Each is capped by the display it opens on.
-public enum WorkspaceSize { Default, Large, ExtraLarge }
+public enum WorkspaceSize { Default, Small, Large, ExtraLarge }
 
 /// A button in the workspace header that opens a terminal and runs Command there,
 /// in Folder (the user's folder when empty). Icon is an icon name, Color an accent
@@ -24,7 +24,6 @@ public static class Settings
 {
     private sealed class Model
     {
-        public bool ShowIdleNotch { get; set; } = true;
         public bool HoverOpensWorkspace { get; set; } = true;
         public List<string>? NotchItems { get; set; }
         public bool QuotasOnNotch { get; set; }
@@ -91,15 +90,6 @@ public static class Settings
         }
     }
 
-    /// "Always show the notch": the resting pill stays at the top centre with the
-    /// items chosen below. Off, the notch shows only while a timer runs or a message
-    /// is up, and hovering the same spot still opens it.
-    public static bool ShowIdleNotch
-    {
-        get => M.ShowIdleNotch;
-        set { M.ShowIdleNotch = value; Save(); }
-    }
-
     /// Resting the pointer on the notch opens the workspace. Off, it takes the
     /// shortcut or a click — the top edge is where maximised browsers keep their tabs.
     public static bool HoverOpensWorkspace
@@ -119,7 +109,7 @@ public static class Settings
     public static bool HasNotchItem(string id) => NotchItems.Contains(id);
 
     /// The AI quotas that are switched on always show in the workspace header. On,
-    /// they also stay on the resting notch, even when the notch isn't always shown.
+    /// they also stay on the resting notch.
     public static bool QuotasOnNotch
     {
         get => M.QuotasOnNotch;

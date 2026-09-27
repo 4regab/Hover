@@ -68,14 +68,13 @@ public static class CardLayout
 /// What the resting notch can show.
 public static class NotchItem
 {
-    public const string Clock = "clock", Timer = "timer", Kiro = "kiro", Codex = "codex", Cursor = "cursor", Claude = "claude";
+    public const string Timer = "timer", Kiro = "kiro", Codex = "codex", Cursor = "cursor", Claude = "claude";
 
-    public static readonly IReadOnlyList<string> All = new[] { Clock, Timer, Claude, Kiro, Codex, Cursor };
+    public static readonly IReadOnlyList<string> All = new[] { Timer, Claude, Kiro, Codex, Cursor };
     public static readonly IReadOnlyList<string> Quotas = new[] { Claude, Kiro, Codex, Cursor };
 
     public static string Title(string id) => id switch
     {
-        Clock => "Time",
         Timer => "Focus timer",
         Claude => "Claude Code quota",
         Kiro => "Kiro CLI quota",

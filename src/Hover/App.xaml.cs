@@ -23,7 +23,7 @@ public partial class App : Application
     {
         base.OnStartup(e);
 
-        // One notch per display is the point; two copies of the app is not.
+        // One notch is the point; two copies of the app is not.
         _single = new Mutex(true, "Local\\HoverRunningInstance", out var fresh);
         if (!fresh)
         {

@@ -5,9 +5,9 @@ Guidance for humans and AI agents working in this repository.
 ## What Hover is
 
 A Windows desktop app (.NET 8, WPF) with one surface a hover away: **the notch**
-at the top centre (after NotchOwl for Mac). At rest it is a slim pill showing the
-items the user picked — the time, a running focus timer, Claude Code / Kiro /
-Codex / Cursor quota gauges — or a hairline, or nothing. Hovering it, clicking it
+at the top centre of the main display (after NotchOwl for Mac). At rest it is a
+slim pill showing the items the user picked — a running focus timer, Claude Code /
+Kiro / Codex / Cursor quota gauges — or nothing. Hovering it, clicking it
 or `Alt+N` opens the workspace: a header (the Hover name, the user's command
 buttons, the switched-on quotas, Workspace / Insights / Settings) over
 configurable, resizable cards (today's tasks, focus timer, daily notepad, today's
@@ -73,9 +73,10 @@ src/Hover/
   Owl/         The workspace: Planner (tasks, notepad, focus time, one sealed file),
                FocusTimer, Insights, Calendar (.ics reader), OwlApp (shared state,
                the one-second tick, quota polling, the alarm), Notch (the top-centre
-               host, one per display, and the dashboard window), WorkspaceView
+               host, on the main display only, and the dashboard window), WorkspaceView
                (header + the cards), Pages (Insights, Settings), Popover, Theme
-               (the palette in use), Ui (brushes, builders, chart, ring gauge),
+               (the palette in use), Ui (brushes, builders, chart, ring gauge,
+               segmented control),
                Icons (generated line icons), Corners (pill-shaped corner radii).
   Themes/      Styles.xaml (menus, tooltips), Owl.xaml (the workspace's controls).
   Assets/      hover.ico (the app icon), Fonts/ (Inter and Inter Display).
@@ -104,8 +105,8 @@ carry a legacy `Noty` reference **only** in `Core/Paths.cs`, which migrates an o
 - **The workspace's timers run at `DispatcherPriority.Normal`.** WPF runs
   Background-priority work only when no input is waiting in the queue, and in
   testing that starved the focus clock and the notch poll for 8–14 s at a time.
-- **One full-size, click-through window per display.** The shape grows from its
-  resting size (hairline, pill, alert) to the workspace by animating one
+- **One full-size, click-through window, on the main display.** The shape grows
+  from its resting size (pill, alert, or nothing) to the workspace by animating one
   `Openness` value; the window itself never resizes (that made it blink), except
   when Settings → Notch → Workspace size changes.
 - **Cards are star columns with a `GridSplitter` in every gap.** Letting go of a

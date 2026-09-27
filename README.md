@@ -7,12 +7,12 @@
 <p align="center">Your day in a notch at the top of the screen.</p>
 
 <p align="center">
-  <img src="assets/demo-rest.png" width="600" alt="The resting notch: the time, a running focus timer and two AI quotas">
+  <img src="assets/demo-rest.png" width="600" alt="The resting notch: a running focus timer and two AI quotas">
 </p>
 
-Rest the pointer at the **top centre** of the screen, or press `Alt+N`, and the notch
-opens into your workspace. At rest it is a slim pill with the time, a running timer
-and your AI quotas. Built with .NET 8 and WPF, for Windows 10 and 11.
+Rest the pointer at the **top centre** of your main screen, or press `Alt+N`, and the
+notch opens into your workspace. At rest it is a slim pill with a running timer and
+your AI quotas, or nothing at all. Built with .NET 8 and WPF, for Windows 10 and 11.
 
 ![The open workspace in dark mode](assets/demo-dark.jpg)
 
