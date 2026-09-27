@@ -6,17 +6,13 @@
 
 <p align="center">Your day in a notch at the top of the screen.</p>
 
-<p align="center">
-  <img src="assets/demo-rest.png" width="600" alt="The resting notch: a running focus timer and two AI quotas">
-</p>
+
+https://github.com/user-attachments/assets/6924efc3-5dcf-4098-8851-ce79bf3b4be4
+
 
 Rest the pointer at the **top centre** of your main screen, or press `Alt+N`, and the
 notch opens into your workspace. At rest it is a slim pill with a running timer and
 your AI quotas, or nothing at all. Built with .NET 8 and WPF, for Windows 10 and 11.
-
-![The open workspace in dark mode](assets/demo-dark.jpg)
-
-![The open workspace in light mode](assets/demo-light.jpg)
 
 ## Features
 
@@ -31,24 +27,11 @@ your AI quotas, or nothing at all. Built with .NET 8 and WPF, for Windows 10 and
 - **Themes**: Hover light or dark, or any VS Code theme on your PC.
 - **Your layout**: show, hide, resize and reorder cards, and pick the workspace size.
 
-![Settings → Theme, with the VS Code themes found on this PC](assets/demo-themes.jpg)
 
 ## Install
 
 Download the latest `Hover-Setup-*.exe` from Releases and run it, or build it
 yourself (below).
-
-## Shortcuts
-
-| Shortcut | Action |
-|---|---|
-| `Alt+N` | Open or close the workspace (global) |
-| `Enter` | Add the task you typed |
-| `Ctrl+Enter` | In the notepad, turn the caret's line into a task |
-| `Esc` | Close the workspace |
-
-`Alt+N` also means Insert in Office and File name in file dialogs, so change it in
-Settings → General if you use those.
 
 ## Privacy
 
@@ -80,9 +63,6 @@ dotnet test .\Hover.slnx -c Release
 .\build.ps1 installer
 ```
 
-See [AGENTS.md](AGENTS.md) for the layout of the code and how to work in it.
-
 ## License
 
-MIT. See [LICENSE](LICENSE). Hover includes the Inter font and Lucide icons; their
-licences are in [THIRD-PARTY-NOTICES.txt](THIRD-PARTY-NOTICES.txt).
+MIT. See [LICENSE](LICENSE). 
