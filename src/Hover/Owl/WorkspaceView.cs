@@ -258,13 +258,14 @@ public sealed class WorkspaceView : UserControl
         OwlApp.RaiseLayoutChanged(source);
     }
 
+    // The logo without the app icon's dark square, which showed as a box on the panel.
     private static readonly Lazy<ImageSource?> AppIcon = new(() =>
     {
         try
         {
-            var d = BitmapDecoder.Create(new Uri("pack://application:,,,/Hover;component/Assets/hover.ico"),
+            var d = BitmapDecoder.Create(new Uri("pack://application:,,,/Hover;component/Assets/hover-mark.png"),
                 BitmapCreateOptions.None, BitmapCacheOption.OnLoad);
-            return d.Frames.OrderBy(f => f.PixelWidth).Last();
+            return d.Frames[0];
         }
         catch { return null; }
     });

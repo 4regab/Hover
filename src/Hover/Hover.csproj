@@ -35,8 +35,10 @@
   </ItemGroup>
 
   <ItemGroup>
-    <!-- Also a WPF resource: the tray icon and the workspace header load it from here. -->
+    <!-- Also a WPF resource: the tray icon loads it from here. -->
     <Resource Include="Assets\hover.ico" />
+    <!-- The logo without its dark square, for the workspace header. -->
+    <Resource Include="Assets\hover-mark.png" />
     <!-- Inter, the workspace's type. Licence in THIRD-PARTY-NOTICES.txt. -->
     <Resource Include="Assets\Fonts\*.ttf" />
   </ItemGroup>

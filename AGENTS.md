@@ -79,12 +79,14 @@ src/Hover/
                segmented control),
                Icons (generated line icons), Corners (pill-shaped corner radii).
   Themes/      Styles.xaml (menus, tooltips), Owl.xaml (the workspace's controls).
-  Assets/      hover.ico (the app icon), Fonts/ (Inter and Inter Display).
+  Assets/      hover.ico (the app icon), hover-mark.png (the logo without its dark
+               square, for the workspace header), Fonts/ (Inter and Inter Display).
 tests/Hover.Tests/   NUnit tests.
 tests/Hover.E2E/     UI Automation run against the real app. Not in Hover.slnx.
 assets/hover.png     The logo (README picture, source of the app icon).
-assets/make-icon.py  Writes src/Hover/Assets/hover.ico from assets/hover.png, one frame
-                     per size. Replace hover.png and run it; don't edit the .ico. Needs Pillow.
+assets/make-icon.py  Writes src/Hover/Assets/hover.ico (one frame per size) and
+                     hover-mark.png from assets/hover.png. Replace hover.png and run it;
+                     don't edit the outputs. Needs Pillow.
 assets/make-line-icons.py  Writes src/Hover/Owl/Icons.cs from Lucide at a pinned
                      version. Add an icon to NAMES and run it; don't edit Icons.cs.
 assets/demo-*        The README's pictures.
