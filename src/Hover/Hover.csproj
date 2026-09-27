@@ -35,7 +35,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <!-- Also a WPF resource: the workspace header draws the icon from it. -->
+    <!-- Also a WPF resource: the tray icon and the workspace header load it from here. -->
     <Resource Include="Assets\hover.ico" />
   </ItemGroup>
 
