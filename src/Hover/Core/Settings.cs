@@ -1,0 +1,177 @@
+using System.IO;
+using System.Text.Json;
+using System.Text.Json.Serialization;
+using System.Windows.Input;
+using System.Windows.Threading;
+using Microsoft.Win32;
+
+namespace Hover.Core;
+
+public enum Appearance { System, Light, Dark }
+
+/// The handful of preferences, in one JSON file beside the planner.
+/// Writes are debounced through Save(), which every setter calls. Keys an older
+/// build wrote (the notes deck's) are ignored on load and dropped on the next save.
+public static class Settings
+{
+    private sealed class Model
+    {
+        public bool ShowIdleNotch { get; set; } = true;
+        public bool HoverOpensWorkspace { get; set; } = true;
+        public List<string>? NotchItems { get; set; }
+        public bool QuotasOnNotch { get; set; }
+        public Appearance Appearance { get; set; } = Appearance.System;
+        public List<CardSlot>? Cards { get; set; }
+
+        // Option-N on a Mac. Alt+N here also means "Insert" in Office and "File name"
+        // in file dialogs; while Hover runs, it opens the workspace instead.
+        public Shortcut ScWorkspace { get; set; } = new(ModifierKeys.Alt, Key.N);
+    }
+
+    private static readonly JsonSerializerOptions Json = new()
+    {
+        WriteIndented = true,
+        Converters = { new JsonStringEnumConverter() },
+    };
+
+    private static readonly Model M = Load();
+
+    private static Model Load()
+    {
+        try
+        {
+            if (File.Exists(Paths.SettingsFile))
+            {
+                var m = JsonSerializer.Deserialize<Model>(File.ReadAllText(Paths.SettingsFile), Json);
+                if (m is not null) return m;
+            }
+        }
+        catch (Exception e)
+        {
+            Log.Line($"settings load failed — {e.Message}");
+        }
+        return new Model();
+    }
+
+    private static DispatcherTimer? _writeBack;
+
+    /// Every setter calls this, and a splitter calls its setter on every pixel of the
+    /// drag — so the write itself waits for the value to settle. Flush() forces it
+    /// out when the app is closing.
+    public static void Save()
+    {
+        _writeBack?.Stop();
+        _writeBack = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(400) };
+        _writeBack.Tick += (_, _) => Flush();
+        _writeBack.Start();
+    }
+
+    public static void Flush()
+    {
+        _writeBack?.Stop();
+        _writeBack = null;
+        try
+        {
+            File.WriteAllText(Paths.SettingsFile, JsonSerializer.Serialize(M, Json));
+        }
+        catch (Exception e)
+        {
+            Log.Line($"settings save failed — {e.Message}");
+        }
+    }
+
+    /// "Always show the notch": the resting pill stays at the top centre with the
+    /// items chosen below. Off, the notch shows only while a timer runs or a message
+    /// is up, and hovering the same spot still opens it.
+    public static bool ShowIdleNotch
+    {
+        get => M.ShowIdleNotch;
+        set { M.ShowIdleNotch = value; Save(); }
+    }
+
+    /// Resting the pointer on the notch opens the workspace. Off, it takes the
+    /// shortcut or a click — the top edge is where maximised browsers keep their tabs.
+    public static bool HoverOpensWorkspace
+    {
+        get => M.HoverOpensWorkspace;
+        set { M.HoverOpensWorkspace = value; Save(); }
+    }
+
+    /// What the resting notch shows, in order. See NotchItem for the ids. The quota
+    /// items are off until switched on, since each reads another app's sign-in.
+    public static IReadOnlyList<string> NotchItems
+    {
+        get => M.NotchItems ??= new List<string> { NotchItem.Timer };
+        set { M.NotchItems = NotchItem.All.Where(value.Contains).ToList(); Save(); }
+    }
+
+    public static bool HasNotchItem(string id) => NotchItems.Contains(id);
+
+    /// The AI quotas that are switched on always show in the workspace header. On,
+    /// they also stay on the resting notch, even when the notch isn't always shown.
+    public static bool QuotasOnNotch
+    {
+        get => M.QuotasOnNotch;
+        set { M.QuotasOnNotch = value; Save(); }
+    }
+
+    /// Light, dark, or whatever Windows is set to.
+    public static Appearance Appearance
+    {
+        get => M.Appearance;
+        set { M.Appearance = value; Save(); }
+    }
+
+    public static void SetNotchItem(string id, bool on)
+    {
+        var set = NotchItems.ToHashSet();
+        if (on) set.Add(id); else set.Remove(id);
+        NotchItems = set.ToList();
+    }
+
+    /// The workspace cards: which show, in what order, and how wide.
+    public static IReadOnlyList<CardSlot> Cards
+    {
+        get => M.Cards = CardLayout.Normalize(M.Cards);
+        set { M.Cards = CardLayout.Normalize(value); Save(); }
+    }
+
+    public static Shortcut ScWorkspace { get => M.ScWorkspace; set { M.ScWorkspace = value; Save(); } }
+
+    // MARK: Launch at login — HKCU Run, no elevation needed
+
+    private const string RunKey = @"Software\Microsoft\Windows\CurrentVersion\Run";
+    private const string RunValue = "Hover";
+
+    public static bool LaunchAtLogin
+    {
+        get
+        {
+            try
+            {
+                using var key = Registry.CurrentUser.OpenSubKey(RunKey);
+                return key?.GetValue(RunValue) is string s && s.Length > 0;
+            }
+            catch { return false; }
+        }
+        set
+        {
+            try
+            {
+                using var key = Registry.CurrentUser.CreateSubKey(RunKey);
+                if (key is null) return;
+                if (value)
+                {
+                    var exe = Environment.ProcessPath;
+                    if (exe is null) return;
+                    key.SetValue(RunValue, $"\"{exe}\"");
+                }
+                else key.DeleteValue(RunValue, throwOnMissingValue: false);
+            }
+            catch (Exception e)
+            {
+                Log.Line($"launch-at-login toggle failed — {e.Message}");
+            }
+        }
+    }
+}

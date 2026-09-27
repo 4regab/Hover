@@ -1,0 +1,8 @@
+# Normalise line endings so the repo is consistent across machines.
+* text=auto eol=crlf
+
+# Binary assets — never touch their bytes.
+*.ico binary
+*.png binary
+*.gif binary
+*.stickies binary
