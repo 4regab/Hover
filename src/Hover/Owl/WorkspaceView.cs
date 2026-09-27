@@ -717,11 +717,19 @@ internal sealed class TimerCard
         buttons.HorizontalAlignment = HorizontalAlignment.Center;
         buttons.Margin = new Thickness(0, 20, 0, 0);
 
-        var body = new StackPanel { VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(16, 0, 16, 0) };
+        // A grid, not a stack: a stack gives the ring unlimited height, so on a short
+        // card (the Small workspace) it stayed full size and pushed up behind the title.
+        // Here the ring gets what the buttons leave and shrinks to fit. Centred at its
+        // own height, so on a tall card it lays out as before.
+        var body = new Grid { VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(16, 0, 16, 0) };
+        foreach (var h in new[] { new GridLength(1, GridUnitType.Star), GridLength.Auto, GridLength.Auto })
+            body.RowDefinitions.Add(new RowDefinition { Height = h });
         body.Children.Add(new Viewbox { Child = face, StretchDirection = StretchDirection.DownOnly, MaxHeight = 184 });
         // The Small workspace can leave the card narrower than the two buttons: they
         // shrink with it rather than being cut off.
-        body.Children.Add(new Viewbox { Child = buttons, StretchDirection = StretchDirection.DownOnly });
+        var buttonBox = new Viewbox { Child = buttons, StretchDirection = StretchDirection.DownOnly };
+        Grid.SetRow(buttonBox, 1);
+        body.Children.Add(buttonBox);
 
         Button? setTime = null;
         setTime = Ui.Button("OwlLink", "Set time", "SetTime", "Set time", () =>
@@ -735,6 +743,7 @@ internal sealed class TimerCard
         var links = Ui.Row(setTime, _more.Margin(4, 0));
         links.HorizontalAlignment = HorizontalAlignment.Center;
         links.Margin = new Thickness(0, 10, 0, 0);
+        Grid.SetRow(links, 2);
         body.Children.Add(links);
 
         var g = new Grid { Margin = new Thickness(16, 14, 16, 14) };
