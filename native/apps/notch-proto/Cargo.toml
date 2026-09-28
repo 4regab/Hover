@@ -1,0 +1,22 @@
+[package]
+name = "notch-proto"
+description = "Phase 1A prototype: the Windows notch window on Slint + winit + wgpu (DX12 through DirectComposition)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+hover-notch = { path = "../../crates/hover-notch" }
+slint = { version = "=1.18.1", default-features = false, features = ["std", "compat-1-2", "backend-winit", "renderer-femtovg-wgpu", "unstable-wgpu-30", "unstable-winit-030", "accessibility"] }
+serde_json = "1"
+image = { version = "0.25", default-features = false, features = ["png"] }
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62", features = [
+    "Win32_Foundation", "Win32_UI_WindowsAndMessaging", "Win32_Graphics_Gdi", "Win32_Graphics_Dwm",
+    "Win32_UI_HiDpi", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_Shell", "Win32_System_Threading",
+    "Win32_System_LibraryLoader", "Win32_System_ProcessStatus",
+] }
+
+[build-dependencies]
+slint-build = "=1.18.1"

@@ -278,15 +278,23 @@ fn rss_mb() -> f64 {
     std::fs::read_to_string("/proc/self/statm").ok().and_then(|s| s.split(' ').nth(1).and_then(|v| v.parse::<f64>().ok())).map_or(0.0, |p| p * 4096.0 / 1048576.0)
 }
 
+/// Peak resident set so far (Linux VmHWM), in MB.
+fn peak_mb() -> f64 {
+    std::fs::read_to_string("/proc/self/status").ok().and_then(|s| s.lines().find(|l| l.starts_with("VmHWM:")).and_then(|l| l.split_whitespace().nth(1)?.parse::<f64>().ok())).map_or(0.0, |k| k / 1024.0)
+}
+
 fn bench() {
     // Headless timings of the engine and the Slint frame for the report.
     let win = headless::window();
     slint::platform::set_platform(Box::new(headless::Headless(win.clone()))).unwrap();
+    eprintln!("start: RSS {:.1} MB, peak {:.1} MB", rss_mb(), peak_mb());
     let ui = ChatWindow::new().unwrap();
     win.set_size(slint::PhysicalSize::new(1104, 424));
     ui.show().unwrap();
+    eprintln!("window: RSS {:.1} MB, peak {:.1} MB", rss_mb(), peak_mb());
     let mut buf = vec![slint::Rgb8Pixel::default(); 1104 * 424];
     win.draw_if_needed(|r| { r.render(&mut buf, 1104); });
+    eprintln!("first Slint frame: RSS {:.1} MB, peak {:.1} MB", rss_mb(), peak_mb());
     let t = Instant::now();
     let app = Rc::new(RefCell::new(App::new(turns(200))));
     app.borrow_mut().frame(&ui);
@@ -312,7 +320,7 @@ fn bench() {
         s.frame(&ui);
         if i % 10 == 0 { eprintln!("  chunk {i}: RSS {:.1} MB, sections {}, texts {}", rss_mb(), s.thread.sections.len(), s.thread.sections.last().map_or(0, |x| x.frag.texts.len())); }
     }
-    eprintln!("streamed chunk into a 200-turn thread (relayout + paint): mean {:?}; RSS {:.1} MB", t.elapsed() / 60, rss_mb());
+    eprintln!("streamed chunk into a 200-turn thread (relayout + paint): mean {:?}; RSS {:.1} MB, peak {:.1} MB", t.elapsed() / 60, rss_mb(), peak_mb());
 }
 
 fn main() {

@@ -15,7 +15,9 @@ const fx = JSON.parse(readFileSync(join(repo, 'native', 'golden', 'fixtures', 'o
 const page0 = pathToFileURL(join(repo, 'src', 'Hover', 'Assets', 'kiro-office.html')).href;
 const W = 1104, H = 424;
 
-const browser = await chromium.launch({ args: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--font-render-hinting=none'] });
+// BROWSER_CHANNEL=msedge on Windows: Edge is WebView2's engine, with the same system fonts.
+const channel = process.env.BROWSER_CHANNEL;
+const browser = await chromium.launch({ ...(channel ? { channel } : {}), args: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--font-render-hinting=none'] });
 // ONLY=a,b captures just those views.
 const only = process.env.ONLY?.split(',');
 async function view(name, { time = 'night', state = fx.state, steps = [], settle = 6000, query = '' } = {}) {

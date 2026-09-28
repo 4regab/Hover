@@ -1,0 +1,124 @@
+name: native
+# The Rust candidate (native/), and the Phase 0-1 evidence it is judged by. Runs for
+# pull requests that touch it, and on demand. The C# app's own checks stay in ci.yml.
+on:
+  pull_request:
+    paths: ['native/**', 'port/**', '.github/workflows/native.yml']
+  workflow_dispatch:
+jobs:
+  portable:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Goldens still come from the office's own md.js and diagram.js
+        run: node native/golden/gen.mjs && git diff --exit-code -- native/golden
+      - name: Tests (headless)
+        working-directory: native
+        run: cargo test --workspace --release --locked
+
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Environment
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force evidence | Out-Null
+          [ordered]@{
+            commit = git rev-parse HEAD; image = $env:ImageOS + ' ' + $env:ImageVersion
+            os = (Get-CimInstance Win32_OperatingSystem | ForEach-Object { "$($_.Caption) $($_.Version)" })
+            gpu = (Get-CimInstance Win32_VideoController | ForEach-Object { "$($_.Name) $($_.DriverVersion)" })
+            dotnet = (dotnet --version); rust = (rustc --version)
+          } | ConvertTo-Json | Set-Content evidence/env.json
+          Get-Content evidence/env.json
+      - name: Larger screen
+        continue-on-error: true
+        shell: pwsh
+        run: Set-DisplayResolution -Width 1920 -Height 1080 -Force
+
+      # ---- the baseline: the current C# Hover ----
+      - name: Publish the C# Hover (the baseline)
+        shell: pwsh
+        run: .\build.ps1 publish
+      - name: Build the benchmark tools
+        shell: pwsh
+        run: |
+          dotnet build port/tools/FakeAcp -c Release -o tools/FakeAcp
+          dotnet build port/tools/HoverFixture -c Release -o tools/HoverFixture
+
+      # ---- the candidate ----
+      - name: Rust tests
+        working-directory: native
+        run: cargo test --workspace --release --locked
+      - name: Build the prototypes
+        working-directory: native
+        run: cargo build --release --locked -p notch-proto -p chat-proto
+      - name: Notch self-test (drives the real desktop)
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          $p = Start-Process native/target/release/notch-proto.exe -ArgumentList '--selftest', 'evidence/notch' -PassThru -RedirectStandardError evidence/notch-stderr.txt
+          if (-not $p.WaitForExit(90000)) { Stop-Process $p -Force; Write-Warning 'notch self-test timed out' }
+          Get-Content evidence/notch-stderr.txt -ErrorAction SilentlyContinue
+          Get-Content evidence/notch/report.json -ErrorAction SilentlyContinue
+      - name: Notch self-test, WS_EX_TRANSPARENT alone (comparison)
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          $p = Start-Process native/target/release/notch-proto.exe -ArgumentList '--selftest', 'evidence/notch-transparent', '--hit', 'transparent' -PassThru -RedirectStandardError evidence/notch-transparent-stderr.txt
+          if (-not $p.WaitForExit(90000)) { Stop-Process $p -Force }
+          Get-Content evidence/notch-transparent-stderr.txt -ErrorAction SilentlyContinue | Select-String 'PASS|FAIL|done'
+      - name: Chat prototype on Windows fonts (headless)
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force evidence/chat | Out-Null
+          native/target/release/chat-proto.exe --screenshot evidence/chat/rich-select.png --select 2>&1 | Tee-Object evidence/chat/select.txt
+          native/target/release/chat-proto.exe --screenshot evidence/chat/rich-2x.png --scale 2 2>&1
+          native/target/release/chat-proto.exe --bench 2>&1 | Tee-Object evidence/chat/bench.txt
+      - name: Baseline captures in Edge (WebView2's engine and fonts)
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          npm i --no-save --prefix port/bench playwright@1
+          $env:BROWSER_CHANNEL = 'msedge'; $env:NODE_PATH = "$PWD/port/bench/node_modules"
+          node port/bench/capture-office.mjs evidence/baseline-edge
+      - name: Benchmark (indicative only; no GPU on the runner)
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          $fx = (Get-ChildItem tools/HoverFixture/HoverFixture.exe).FullName
+          $fa = (Get-ChildItem tools/FakeAcp/FakeAcp.exe).FullName
+          pwsh port/bench/Measure-Hover.ps1 -Exe publish/Hover.exe -Impl csharp -Out evidence/bench -Runs 1 -Quick -Fixture $fx -FakeAcp $fa
+          pwsh port/bench/Measure-Hover.ps1 -Exe native/target/release/notch-proto.exe -Impl native -Out evidence/bench -Runs 1 -Quick -Scenarios S1, S2, S3
+      - name: Package the prototypes
+        if: always()
+        shell: pwsh
+        run: |
+          $d = 'dist-native'; New-Item -ItemType Directory -Force $d/fonts, $d/fixtures | Out-Null
+          Copy-Item native/target/release/notch-proto.exe, native/target/release/chat-proto.exe $d -ErrorAction SilentlyContinue
+          Copy-Item web/office/fonts/PixelifySans.ttf $d/fonts
+          Copy-Item native/golden/fixtures/rich.md $d/fixtures
+          Copy-Item port/phase1/RUN-ON-WINDOWS.md $d -ErrorAction SilentlyContinue
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: native-prototypes-windows
+          path: dist-native
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: phase1-evidence-windows
+          path: evidence
+          if-no-files-found: ignore

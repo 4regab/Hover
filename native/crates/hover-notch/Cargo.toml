@@ -1,0 +1,6 @@
+[package]
+name = "hover-notch"
+description = "The notch's geometry, animation and hover rules (Notch.cs), with no windowing."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
