@@ -7,16 +7,59 @@ use windows::Win32::Foundation::{LocalFree, HLOCAL};
 use windows::Win32::Security::Cryptography::{CryptProtectData, CryptUnprotectData, CRYPTPROTECT_UI_FORBIDDEN, CRYPT_INTEGER_BLOB};
 use windows::Win32::System::Com::CoTaskMemFree;
 use windows::Win32::System::Registry::{RegDeleteKeyValueW, RegGetValueW, RegSetKeyValueW, HKEY_CURRENT_USER, REG_SZ, RRF_RT_REG_SZ};
-use windows::Win32::UI::Shell::{FOLDERID_RoamingAppData, SHGetKnownFolderPath, KNOWN_FOLDER_FLAG};
+use windows::Win32::UI::Shell::{FOLDERID_LocalAppData, FOLDERID_Profile, FOLDERID_ProgramFiles, FOLDERID_RoamingAppData, SHGetKnownFolderPath, KNOWN_FOLDER_FLAG};
 
-pub fn app_data() -> Option<PathBuf> {
+fn known(id: &windows::core::GUID) -> Option<PathBuf> {
     unsafe {
-        let p: PWSTR = SHGetKnownFolderPath(&FOLDERID_RoamingAppData, KNOWN_FOLDER_FLAG(0), None).ok()?;
+        let p: PWSTR = SHGetKnownFolderPath(id, KNOWN_FOLDER_FLAG(0), None).ok()?;
         let s = p.to_string().ok();
         CoTaskMemFree(Some(p.0 as *const _));
         s.map(PathBuf::from)
     }
 }
+
+/// Environment.SpecialFolder.ApplicationData.
+pub fn app_data() -> Option<PathBuf> { known(&FOLDERID_RoamingAppData) }
+/// UserProfile, LocalApplicationData and ProgramFiles, as Palette.Installed asks for them.
+pub fn home() -> Option<PathBuf> { known(&FOLDERID_Profile) }
+pub fn local_app_data() -> Option<PathBuf> { known(&FOLDERID_LocalAppData) }
+pub fn program_files() -> Option<PathBuf> { known(&FOLDERID_ProgramFiles) }
+/// Only Linux keeps other apps' settings in one config folder.
+pub fn config_dir() -> Option<PathBuf> { None }
+
+// MARK: The look: Theme.SystemDark and Animator.Still
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Look { pub dark: bool, pub animations: bool }
+
+/// Windows keeps "app mode" per user; a missing value means the light default. Motion
+/// follows "Animation effects" (SystemParameters.ClientAreaAnimation).
+pub fn look() -> Look {
+    use windows::Win32::System::Registry::RRF_RT_REG_DWORD;
+    use windows::Win32::UI::WindowsAndMessaging::{SystemParametersInfoW, SPI_GETCLIENTAREAANIMATION, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS};
+    let (k, v) = (wide(r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize"), wide("AppsUseLightTheme"));
+    let mut light = 1u32;
+    let mut len = 4u32;
+    let read = unsafe { RegGetValueW(HKEY_CURRENT_USER, PCWSTR(k.as_ptr()), PCWSTR(v.as_ptr()), RRF_RT_REG_DWORD, None, Some(&mut light as *mut u32 as *mut _), Some(&mut len)) };
+    let dark = read.is_ok() && light == 0;
+    let mut on = windows::core::BOOL(1);
+    let got = unsafe { SystemParametersInfoW(SPI_GETCLIENTAREAANIMATION, 0, Some(&mut on as *mut _ as *mut _), SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS(0)) };
+    Look { dark, animations: got.is_err() || on.as_bool() }
+}
+
+/// UserPreferenceChanged's stand-in: the look read again every second, and `changed`
+/// called when it differs (see the report: a registry read, no hidden window).
+pub fn watch_look(changed: impl Fn() + Send + 'static) {
+    std::thread::Builder::new().name("look".into()).spawn(move || {
+        let mut last = look();
+        loop {
+            std::thread::sleep(std::time::Duration::from_secs(1));
+            let now = look();
+            if now != last { last = now; changed(); }
+        }
+    }).expect("a thread to watch the look");
+}
+
 
 /// Path.GetFullPath: GetFullPathNameW, which std::path::absolute calls.
 pub fn full_path(p: &Path) -> PathBuf { std::path::absolute(p).unwrap_or_else(|_| p.to_path_buf()) }

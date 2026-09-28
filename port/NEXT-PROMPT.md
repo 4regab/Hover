@@ -130,8 +130,8 @@ Build the Windows path from the C# code and a Linux path with the same behaviour
 **Phase 3C: product**
 - [ ] The app shell (`native/apps/hover`): owns settings, key, history, sessions and the tool hosts; single instance (second launch opens the dashboard); quits cleanly (tools shut down, history flushed, settings flushed)
 - [ ] Settings window (General, Integrations, Kiro, Codex, Cursor) in Slint, 1:1 with `Pages.cs` (the automation ids in SCREENS.md)
-- [ ] Quotas (Claude, Kiro, Codex, Cursor with SQLite) at their Windows and Linux locations; the 5-minute refresh and readable failures
-- [ ] Palette and VS Code themes (JSONC, `include`, the installed-theme finder on both platforms); light and dark; System follows the platform
+- [x] Quotas (Claude, Kiro, Codex, Cursor with SQLite) at their Windows and Linux locations; the 5-minute refresh and readable failures
+- [x] Palette and VS Code themes (JSONC, `include`, the installed-theme finder on both platforms); light and dark; System follows the platform
 - [ ] Music (office-beats.ogg), tray and notifications, dashboard window, the Alt+N hotkey with rebinding and the conflict warning; launch at login in Settings
 - [ ] Notch extras: greeting animation, quota rings, the running and done states, the alert; end announcements (A10)
 - [ ] Linux notch: the X11 path under Xvfb with the self-test adapted; the Wayland path under headless weston, or documented limits plus MCQs

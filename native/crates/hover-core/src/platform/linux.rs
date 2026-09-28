@@ -8,7 +8,16 @@ use zbus::blocking::{Connection, Proxy};
 use zbus::zvariant::{OwnedObjectPath, OwnedValue, Value};
 use crate::crypto::KeyError;
 
-fn home() -> Option<PathBuf> { std::env::var_os("HOME").filter(|h| !h.is_empty()).map(PathBuf::from) }
+/// Environment.SpecialFolder.UserProfile.
+pub fn home() -> Option<PathBuf> { std::env::var_os("HOME").filter(|h| !h.is_empty()).map(PathBuf::from) }
+
+/// Windows-only known folders (the editors' install folders); none on Linux.
+pub fn local_app_data() -> Option<PathBuf> { None }
+pub fn program_files() -> Option<PathBuf> { None }
+
+/// $XDG_CONFIG_HOME (~/.config): where Electron apps, KDE and GTK keep their settings.
+pub fn config_dir() -> Option<PathBuf> { xdg("XDG_CONFIG_HOME", ".config") }
+
 
 /// An XDG base directory: the variable when it holds an absolute path (the spec
 /// ignores a relative one), else the fallback under $HOME.
@@ -193,5 +202,164 @@ mod tests {
     #[test]
     fn exec_is_quoted_as_the_desktop_entry_spec_asks() {
         assert_eq!(quote_exec(Path::new("/opt/My $App/hover\"x")), "\"/opt/My \\$App/hover\\\"x\"");
+    }
+}
+
+// MARK: The desktop's look: dark or light, and whether things may move
+
+/// What Theme.SystemDark and Animator.Still read on Windows, from the desktop: the
+/// settings portal first (org.freedesktop.appearance color-scheme; GNOME's
+/// enable-animations, which its portal passes through), else the desktop's own
+/// files: GNOME through gsettings, KDE's kdeglobals, GTK's settings.ini. With
+/// nothing to go by: light, as Windows' missing value means, and animations on.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Look { pub dark: bool, pub animations: bool }
+
+pub fn look() -> Look { look_on(None) }
+
+pub fn look_on(bus: Option<&str>) -> Look {
+    let p = portal(bus);
+    let dark = p.as_ref().and_then(|p| p.0).map(|scheme| scheme == 1).or_else(files_dark).unwrap_or(false);
+    let animations = p.as_ref().and_then(|p| p.1).or_else(files_animations).unwrap_or(true);
+    Look { dark, animations }
+}
+
+const PORTAL: &str = "org.freedesktop.portal.Desktop";
+const PORTAL_PATH: &str = "/org/freedesktop/portal/desktop";
+const SETTINGS: &str = "org.freedesktop.portal.Settings";
+
+fn connect(bus: Option<&str>) -> Option<Connection> {
+    match bus {
+        Some(a) => zbus::blocking::connection::Builder::address(a).ok()?.build().ok(),
+        None => Connection::session().ok(),
+    }
+}
+
+/// A setting through ReadOne (portal version 2), else Read, whose value comes wrapped
+/// in one more variant.
+fn portal_read(p: &Proxy<'_>, ns: &str, key: &str) -> Option<OwnedValue> {
+    if let Ok(v) = p.call::<_, _, OwnedValue>("ReadOne", &(ns, key)) { return Some(v); }
+    let v: OwnedValue = p.call("Read", &(ns, key)).ok()?;
+    match &*v { Value::Value(inner) => OwnedValue::try_from(&**inner).ok(), _ => Some(v) }
+}
+
+/// (color-scheme, enable-animations) from the portal; None when there is no portal.
+fn portal(bus: Option<&str>) -> Option<(Option<u32>, Option<bool>)> {
+    let c = connect(bus)?;
+    let p = Proxy::new(&c, PORTAL, PORTAL_PATH, SETTINGS).ok()?;
+    let scheme = portal_read(&p, "org.freedesktop.appearance", "color-scheme").and_then(|v| u32::try_from(v).ok());
+    let anim = portal_read(&p, "org.gnome.desktop.interface", "enable-animations").and_then(|v| bool::try_from(v).ok());
+    if scheme.is_none() && anim.is_none() { return None; }
+    Some((scheme, anim))
+}
+
+/// `gsettings get <schema> <key>`, when GNOME's tools are there.
+fn gsettings(schema: &str, key: &str) -> Option<String> {
+    let o = std::process::Command::new("gsettings").args(["get", schema, key]).stderr(std::process::Stdio::null()).output().ok()?;
+    o.status.success().then(|| String::from_utf8_lossy(&o.stdout).trim().trim_matches('\'').to_owned())
+}
+
+fn read_config(rel: &str) -> Option<String> { config_dir().and_then(|c| std::fs::read_to_string(c.join(rel)).ok()) }
+
+fn files_dark() -> Option<bool> {
+    if let Some(s) = gsettings("org.gnome.desktop.interface", "color-scheme") {
+        match s.as_str() { "prefer-dark" => return Some(true), "prefer-light" => return Some(false), _ => {} }
+    }
+    if let Some(d) = std::env::var("GTK_THEME").ok().and_then(|t| gtk_theme_dark(&t)) { return Some(d); }
+    read_config("kdeglobals").and_then(|t| kde_dark(&t))
+        .or_else(|| read_config("gtk-4.0/settings.ini").and_then(|t| gtk_dark(&t)))
+        .or_else(|| read_config("gtk-3.0/settings.ini").and_then(|t| gtk_dark(&t)))
+}
+
+fn files_animations() -> Option<bool> {
+    if let Some(s) = gsettings("org.gnome.desktop.interface", "enable-animations") { return Some(s == "true"); }
+    read_config("kdeglobals").and_then(|t| kde_animations(&t))
+}
+
+/// One key of one [group] of an INI-style file (kdeglobals, settings.ini).
+fn ini<'a>(text: &'a str, group: &str, key: &str) -> Option<&'a str> {
+    let mut inside = false;
+    for line in text.lines().map(str::trim) {
+        if line.starts_with('[') { inside = line == format!("[{group}]"); continue; }
+        if !inside { continue; }
+        if let Some((k, v)) = line.split_once('=') { if k.trim() == key { return Some(v.trim()); } }
+    }
+    None
+}
+
+/// "Adwaita:dark", "Arc-Dark": a GTK theme named for its dark variant.
+fn gtk_theme_dark(name: &str) -> Option<bool> {
+    let n = name.to_ascii_lowercase();
+    if n.is_empty() { return None; }
+    Some(n.ends_with(":dark") || n.ends_with("-dark"))
+}
+
+/// KDE: the colour scheme's window background, else its name.
+pub fn kde_dark(text: &str) -> Option<bool> {
+    if let Some(bg) = ini(text, "Colors:Window", "BackgroundNormal") {
+        let c: Vec<f64> = bg.split(',').filter_map(|x| x.trim().parse().ok()).collect();
+        if c.len() >= 3 { return Some((0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]) / 255.0 < 0.5); }
+    }
+    ini(text, "General", "ColorScheme").map(|s| s.to_ascii_lowercase().contains("dark"))
+}
+
+/// KDE: "Animation speed" all the way to instant writes a factor of 0.
+pub fn kde_animations(text: &str) -> Option<bool> {
+    ini(text, "KDE", "AnimationDurationFactor").and_then(|f| f.parse::<f64>().ok()).map(|f| f > 0.0)
+}
+
+/// GTK: gtk-application-prefer-dark-theme, else the theme's name.
+pub fn gtk_dark(text: &str) -> Option<bool> {
+    if let Some(v) = ini(text, "Settings", "gtk-application-prefer-dark-theme") {
+        return Some(matches!(v.to_ascii_lowercase().as_str(), "1" | "true" | "yes"));
+    }
+    ini(text, "Settings", "gtk-theme-name").and_then(gtk_theme_dark)
+}
+
+/// Calls `changed` whenever the look may have changed, on a thread of its own:
+/// the portal's SettingChanged signal where there is a portal (UserPreferenceChanged's
+/// counterpart), else a look at the files every five seconds.
+pub fn watch_look(changed: impl Fn() + Send + 'static) { watch_look_on(None, changed) }
+
+pub fn watch_look_on(bus: Option<String>, changed: impl Fn() + Send + 'static) {
+    std::thread::Builder::new().name("look".into()).spawn(move || {
+        if portal(bus.as_deref()).is_some() {
+            if let Some(c) = connect(bus.as_deref()) {
+                if let Ok(p) = Proxy::new(&c, PORTAL, PORTAL_PATH, SETTINGS) {
+                    if let Ok(signals) = p.receive_signal("SettingChanged") {
+                        for m in signals {
+                            let Ok((ns, _key, _v)) = m.body().deserialize::<(String, String, OwnedValue)>() else { continue };
+                            if ns == "org.freedesktop.appearance" || ns == "org.gnome.desktop.interface" { changed(); }
+                        }
+                        return;
+                    }
+                }
+            }
+        }
+        let mut last = look_on(bus.as_deref());
+        loop {
+            std::thread::sleep(Duration::from_secs(5));
+            let now = look_on(bus.as_deref());
+            if now != last { last = now; changed(); }
+        }
+    }).expect("a thread to watch the desktop's look");
+}
+
+#[cfg(test)]
+mod look_tests {
+    use super::*;
+
+    #[test]
+    fn reads_the_desktops_own_files() {
+        assert_eq!(kde_dark("[General]\nColorScheme=BreezeDark\n"), Some(true));
+        assert_eq!(kde_dark("[General]\nColorScheme=BreezeDark\n[Colors:Window]\nBackgroundNormal=239,240,241\n"), Some(false));
+        assert_eq!(kde_dark("[Colors:Window]\nBackgroundNormal=32,35,38\n"), Some(true));
+        assert_eq!(kde_dark("[KDE]\nSingleClick=false\n"), None);
+        assert_eq!(kde_animations("[KDE]\nAnimationDurationFactor=0\n"), Some(false));
+        assert_eq!(kde_animations("[KDE]\nAnimationDurationFactor=0.5\n"), Some(true));
+        assert_eq!(gtk_dark("[Settings]\ngtk-application-prefer-dark-theme=1\ngtk-theme-name=Adwaita\n"), Some(true));
+        assert_eq!(gtk_dark("[Settings]\ngtk-theme-name=Arc-Dark\n"), Some(true));
+        assert_eq!(gtk_dark("[Settings]\ngtk-theme-name=Adwaita\n"), Some(false));
+        assert_eq!(gtk_theme_dark("Adwaita:dark"), Some(true));
     }
 }

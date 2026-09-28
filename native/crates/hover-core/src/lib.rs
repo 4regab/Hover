@@ -7,6 +7,7 @@ pub mod images;
 pub mod json;
 pub mod log;
 pub mod model;
+pub mod palette;
 pub mod paths;
 pub mod platform;
 pub mod settings;

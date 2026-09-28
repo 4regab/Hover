@@ -38,8 +38,16 @@ const MAX_DEPTH: usize = 64;
 
 /// One JSON document, as Utf8JsonReader takes it by default: no comments, no
 /// trailing commas, only the four JSON whitespace characters, nothing after the value.
-pub fn parse(text: &str) -> Result<Json> {
-    let mut p = Parser { b: text.as_bytes(), i: 0, depth: 0 };
+pub fn parse(text: &str) -> Result<Json> { parse_with(text, false) }
+
+/// JsonDocumentOptions { CommentHandling = Skip, AllowTrailingCommas = true }: how
+/// Palette reads VS Code's theme files and manifests. `//` and `/* */` comments go
+/// wherever whitespace may be (an unclosed one is an error), and one comma may
+/// follow the last item of an object or array.
+pub fn parse_jsonc(text: &str) -> Result<Json> { parse_with(text, true) }
+
+fn parse_with(text: &str, jsonc: bool) -> Result<Json> {
+    let mut p = Parser { b: text.as_bytes(), i: 0, depth: 0, jsonc };
     p.ws();
     if p.i == p.b.len() { return err("empty document"); }
     let v = p.value()?;
@@ -61,11 +69,39 @@ pub fn text_of(bytes: &[u8]) -> String {
     String::from_utf8_lossy(bytes).into_owned()
 }
 
-struct Parser<'a> { b: &'a [u8], i: usize, depth: usize }
+struct Parser<'a> { b: &'a [u8], i: usize, depth: usize, jsonc: bool }
 
 impl Parser<'_> {
     fn ws(&mut self) {
-        while self.i < self.b.len() && matches!(self.b[self.i], b' ' | b'\t' | b'\n' | b'\r') { self.i += 1; }
+        loop {
+            while self.i < self.b.len() && matches!(self.b[self.i], b' ' | b'\t' | b'\n' | b'\r') { self.i += 1; }
+            if !self.jsonc || self.b.get(self.i) != Some(&b'/') { return; }
+            match self.b.get(self.i + 1) {
+                Some(b'/') => {
+                    // A line comment ends at \n or \r (Utf8JsonReader also ends it at U+2028/9).
+                    self.i += 2;
+                    while self.i < self.b.len() && !matches!(self.b[self.i], b'\n' | b'\r') {
+                        if self.b[self.i..].starts_with("\u{2028}".as_bytes()) || self.b[self.i..].starts_with("\u{2029}".as_bytes()) { break; }
+                        self.i += 1;
+                    }
+                }
+                Some(b'*') => {
+                    match self.b[self.i + 2..].windows(2).position(|w| w == b"*/") {
+                        Some(k) => self.i += 2 + k + 2,
+                        // Unclosed: left for value() to refuse.
+                        None => return,
+                    }
+                }
+                _ => return,
+            }
+        }
+    }
+
+    /// After a comma: in JSONC the closing bracket may come next.
+    fn trailing(&mut self, close: u8) -> bool {
+        if !self.jsonc { return false; }
+        self.ws();
+        if self.b.get(self.i) == Some(&close) { self.i += 1; true } else { false }
     }
 
     fn value(&mut self) -> Result<Json> {
@@ -109,7 +145,7 @@ impl Parser<'_> {
             out.push((k, v));
             self.ws();
             match self.b.get(self.i) {
-                Some(b',') => self.i += 1,
+                Some(b',') => { self.i += 1; if self.trailing(b'}') { break; } }
                 Some(b'}') => { self.i += 1; break; }
                 _ => return err(format!("expected ',' or '}}' at {}", self.i)),
             }
@@ -129,7 +165,7 @@ impl Parser<'_> {
             out.push(self.value()?);
             self.ws();
             match self.b.get(self.i) {
-                Some(b',') => self.i += 1,
+                Some(b',') => { self.i += 1; if self.trailing(b']') { break; } }
                 Some(b']') => { self.i += 1; break; }
                 _ => return err(format!("expected ',' or ']' at {}", self.i)),
             }
@@ -481,8 +517,21 @@ mod tests {
         assert_eq!(Json::Num("-0".into()).i32().unwrap(), 0);
     }
 
+    /// JsonCommentHandling.Skip with AllowTrailingCommas, as VS Code's files need.
+    #[test]
+    fn jsonc_skips_comments_and_takes_trailing_commas() {
+        let v = parse_jsonc("// theme\n{ /* a */ \"colors\": { \"x\": \"#fff\", // y\n }, \"l\": [1, 2,], }\r\n/* end */").unwrap();
+        assert_eq!(v.get("colors").unwrap().get("x").unwrap().as_str(), Some("#fff"));
+        assert_eq!(v.get("l").unwrap().items().unwrap().len(), 2);
+        for bad in ["{\"a\":1 /* open", "{,}", "[,]", "[1,,]", "{\"a\":1,,}", "/ {}", "{\"a\" // c\n : 1 x}"] {
+            assert!(parse_jsonc(bad).is_err(), "{bad:?}");
+        }
+        assert!(parse("{\"a\":1,}").is_err() && parse("{} // c").is_err());
+    }
+
     #[test]
     fn text_follows_the_byte_order_mark_as_read_all_text_does() {
+
         assert_eq!(text_of(b"\xEF\xBB\xBF{}"), "{}");
         assert_eq!(text_of(b"\xFF\xFE{\0}\0"), "{}");
         assert_eq!(text_of(b"a\xFFb"), "a\u{FFFD}b");
