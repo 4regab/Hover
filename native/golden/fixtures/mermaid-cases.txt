@@ -1,0 +1,40 @@
+graph TD
+  A --> B
+===
+flowchart TB
+  start([Start]) --> check{"Is it<br>ready?"}
+  check -- yes --> go((Go))
+  check -- no --> wait[[Wait]]
+  wait --> db[(Store)]
+  db --> hex{{Hex}}
+  hex --> flag>Flag]
+  flag --> r(Round) --> check
+===
+graph LR; a-->b; b-->c; a & b --> d
+===
+flowchart RL
+  x --- y
+  y ==> z
+  z -.- x
+  z --o w
+  w --x x
+===
+flowchart BT
+  %% a comment
+  subgraph one [Group]
+  p --> q
+  end
+  classDef red fill:#f00
+  class p red
+  style q fill:#0f0
+  q -->|a long label that is wider than usual| p
+===
+sequenceDiagram
+  A->>B: hi
+===
+graph TD
+  A --> B ~~~ C
+===
+flowchart TD
+  n1["A label that is long enough to need wrapping onto several lines in the box"] --> n2
+  n2 --> n2

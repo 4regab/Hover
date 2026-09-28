@@ -1,0 +1,9 @@
+[package]
+name = "hover-diagram"
+description = "The office's diagram.js, ported: Mermaid flowcharts to the same SVG."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+fancy-regex.workspace = true
