@@ -8,6 +8,7 @@ cutover has been reviewed; the C# app under `src/` is still the product.
 | `phase0/` | The baseline (`BASELINE.md`), the feature and screen checklists, what md.js/diagram.js really support, the frozen benchmark procedure and thresholds, and baseline screenshots (`baseline/`). |
 | `phase1/REPORT.md` | The Phase 1 feasibility report: evidence, gate status, gaps, costs. |
 | `phase1/RUN-ON-WINDOWS.md` | How to run the prototypes and gates on a real desktop. |
+| `HANDOFF.md`, `NEXT-PROMPT.md` | The state for the next agent, and the prompt that sets its work (all remaining phases, Windows and Linux). |
 | `bench/` | `Measure-Hover.ps1` (the benchmark) and `capture-office.mjs` (baseline captures). |
 | `tools/` | `FakeAcp` (a stand-in ACP agent) and `HoverFixture` (a sealed history written with Hover's own code). |
 | `../native/` | The Rust workspace: `hover-md`, `hover-diagram`, `hover-chat`, `hover-notch`, `apps/chat-proto`, `apps/notch-proto`. |

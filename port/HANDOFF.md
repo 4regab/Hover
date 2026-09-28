@@ -32,10 +32,13 @@ evidence, findings and what still differs).
 1. md.js hangs on U+2028/U+2029 in list lines and throws on `\0n\0`: the port does neither.
 2. Step-list open/closed state: per session in the port (the baseline's leak is fixed).
 3. Carry on through all phases on Linux; Windows gates stay pending.
-4. **Open, waiting on the user:** what to start next. The recommendation given was
-   Phase 3A (sessions, tested with `port/tools/FakeAcp`) and 3B (persistence without
-   DPAPI) before Phase 2 (the office scene). Ask with multiple-choice questions if the
-   user hasn't said.
+4. **All remaining phases next**, in the order and with the rules in
+   `port/NEXT-PROMPT.md` (the prompt the user hands to the next agent): 3B, 3A, 3C, 2, 4.
+5. **Linux is a first-class target**, not just the dev VM: the app must work on Linux as
+   well as Windows (the platform table in NEXT-PROMPT.md). Linux gates can be run (Xvfb).
+6. Parity by porting the C# logic line by line, tested against C#-derived output; no new
+   .NET fixture tools. Obvious bugs: fix and list; unsure: ask with MCQs. New crates
+   allowed with a reason. Push after each feature; report each with evidence.
 
 ## Where things are
 
@@ -141,11 +144,4 @@ Costs per area are in REPORT.md.
 
 ## Next steps
 
-1. Get the user's answer on what to start next (decision 4), with multiple-choice
-   questions if needed.
-2. If 3A: port AcpHost/KiroStream/KiroSession from `src/Hover/**` into a new
-   `native/crates/hover-acp`, tested against `port/tools/FakeAcp` recordings.
-3. If 3B: port the on-disk formats (settings, sealed history) into
-   `native/crates/hover-store`, with round-trip tests against `port/tools/HoverFixture`
-   output. DPAPI itself stays a Windows-only, pending check.
-4. Keep every Windows item in RUN-ON-WINDOWS.md up to date as features land.
+Follow `port/NEXT-PROMPT.md`: its goal, rules, acceptance criteria and checklist.
