@@ -309,3 +309,8 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+Chromium broken-image icon (native/crates/hover-chat/assets/broken_image_*.png)
+https://chromium.googlesource.com/chromium/src/+/main/third_party/blink/public/default_100_percent/blink/
+Copyright 2015 The Chromium Authors. BSD-style licence:
+https://chromium.googlesource.com/chromium/src/+/main/LICENSE

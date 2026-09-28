@@ -146,7 +146,7 @@ fn a_long_rich_conversation_stays_responsive() {
     let t = Instant::now();
     th.set(&turns, 360.0);
     let layout = t.elapsed();
-    let mut p = Painter::new(&f, Box::new(|_| None));
+    let mut p = Painter::new(&f, hover_chat::Images::none());
     let t = Instant::now();
     let _ = p.paint(&th, th.height - 300.0, 360, 300, 1.0, hover_chat::theme::DRAWER_BG);
     let first = t.elapsed();
@@ -361,4 +361,73 @@ fn step_list_state_belongs_to_its_session() {
     th.session = 4;
     th.set(&turns, 358.0);
     assert_eq!(th.sections[0].frag.texts.len(), open);
+}
+
+/// The answer's content, laid out at the page's answer width (the thread less its padding).
+fn answer(src: &str, width: f32, images: hover_chat::images::Shared) -> Thread {
+    let mut th = Thread::new(Shaper::new(&fonts()), "Juno", [47, 201, 176, 255]);
+    th.use_images(images);
+    th.set(&[Turn { answer: src.into(), ..Turn::new("Q") }], width + 24.0);
+    th
+}
+
+/// Images that don't load take the room of their alt text, with the broken-image icon
+/// before it (golden/gen-broken.mjs): the image boxes and the paragraphs after them sit
+/// where the page puts them, relative to the answer's first paragraph.
+#[test]
+fn broken_images_take_their_alt_texts_room() {
+    use hover_chat::doc::Shape;
+    let want: serde_json::Value = serde_json::from_str(&golden("expected/broken.json")).unwrap();
+    for case in want.as_array().unwrap() {
+        let src = case["src"].as_str().unwrap();
+        let th = answer(src, case["width"].as_f64().unwrap() as f32, hover_chat::Images::none());
+        let f = &th.sections[0].frag;
+        let top = f.texts.iter().find(|t| t.text.starts_with("Before") || t.text.starts_with("Text")).unwrap().y;
+        // The image boxes: their fill, or (no alt) nothing drawn, so only the others are checked.
+        let boxes: Vec<(f32, f32)> = f.shapes.iter().filter_map(|s| match s {
+            Shape::Rect { y, h, fill: Some(c), .. } if *c == hover_chat::theme::IMG_BG => Some((y - top, *h)), _ => None }).collect();
+        let page: Vec<(f32, f32)> = case["imgs"].as_array().unwrap().iter().map(|r| (r[1].as_f64().unwrap() as f32, r[3].as_f64().unwrap() as f32)).filter(|r| r.1 > 0.0).collect();
+        assert_eq!(boxes.len(), page.len(), "{src:?}");
+        for (b, p) in boxes.iter().zip(&page) {
+            assert!((b.0 - p.0).abs() < 0.5 && (b.1 - p.1).abs() < 0.5, "{src:?}: box {b:?}, page {p:?}");
+        }
+        let icons = f.shapes.iter().filter(|s| matches!(s, Shape::Broken { .. })).count();
+        assert_eq!(icons, page.len(), "{src:?}: one icon per image with alt text");
+        let after = f.texts.iter().find(|t| t.text == "After").unwrap().y - top;
+        let page_after = case["ps"].as_array().unwrap().last().unwrap()[1].as_f64().unwrap() as f32;
+        assert!((after - page_after).abs() < 0.5, "{src:?}: After at {after}, page {page_after}");
+    }
+}
+
+/// An image loads later: until then it is broken-looking; when it arrives only the
+/// sections that show it are laid out again, now at the image's size.
+#[test]
+fn an_image_that_arrives_lays_out_only_its_section_again() {
+    use std::cell::Cell;
+    use std::rc::Rc;
+    let png = {
+        let mut b = std::io::Cursor::new(vec![]);
+        image::RgbaImage::from_pixel(200, 100, image::Rgba([200, 50, 50, 255])).write_to(&mut b, image::ImageFormat::Png).unwrap();
+        b.into_inner()
+    };
+    let ready = Rc::new(Cell::new(false));
+    let r = ready.clone();
+    let images = hover_chat::Images::new(Box::new(move |_| if r.get() { hover_chat::Fetch::Bytes(png.clone()) } else { hover_chat::Fetch::Pending }));
+    let mut th = Thread::new(Shaper::new(&fonts()), "Juno", [47, 201, 176, 255]);
+    th.use_images(images.clone());
+    let turns = vec![Turn { answer: "No image.".into(), ..Turn::new("A") }, Turn { answer: "See\n\n![pic](https://e.x/p.png)".into(), ..Turn::new("B") }];
+    th.set(&turns, 358.0);
+    let h0 = th.sections[1].h;
+    assert!(th.sections[1].frag.shapes.iter().any(|s| matches!(s, hover_chat::doc::Shape::Broken { .. })));
+    ready.set(true);
+    let n = th.relayouts;
+    assert!(th.image_changed("https://e.x/p.png"));
+    th.set(&turns, 358.0);
+    assert_eq!(th.relayouts, n + 1, "only the section with the image");
+    assert!((th.sections[1].h - (h0 - 18.0 + 100.0)).abs() < 1.0, "{} vs {h0}", th.sections[1].h);
+    let mut p = Painter::new(&fonts(), images);
+    let px = p.paint(&th, 0.0, 358, th.height as u32, 1.0, hover_chat::theme::DRAWER_BG);
+    let (x, y) = (12 + 100, (th.sections[1].y + th.sections[1].h - 50.0) as u32);
+    let c = px.pixel(x, y).unwrap();
+    assert!(c.red() > 150 && c.green() < 100, "the image is painted: {c:?}");
 }

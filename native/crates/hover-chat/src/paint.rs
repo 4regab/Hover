@@ -36,16 +36,15 @@ struct Mask {
     data: Vec<u8>,
 }
 
-/// Fetches an image's bytes for a URL the image rule allowed (web or session files host).
-pub type Loader = Box<dyn Fn(&str) -> Option<Vec<u8>>>;
-
 pub struct Painter {
     scaler: ScaleContext,
     glyphs: HashMap<GlyphKey, Option<Mask>>,
-    images: HashMap<String, Option<Pixmap>>,
+    /// Shared with the thread (it lays images out by their size).
+    pub images: crate::images::Shared,
+    /// Chromium's broken-image icon at 100 % and 200 %.
+    broken: [Pixmap; 2],
     svgs: HashMap<(usize, u32), Option<Pixmap>>,
     fontdb: Arc<usvg::fontdb::Database>,
-    pub loader: Loader,
     /// Painted frames, for the benchmark.
     pub frames: u64,
     /// Seconds, for the live step's shimmer (a 2 s loop, as `@keyframes flow`).
@@ -63,7 +62,7 @@ text{fill:#f6f2ff;text-anchor:middle}.e{fill:none;stroke:rgba(246,242,255,.62);s
 .el rect{fill:#1a1220;stroke:rgba(255,255,255,.09)}.el text{fill:rgba(246,242,255,.62);font-size:11px}";
 
 impl Painter {
-    pub fn new(font_files: &[Vec<u8>], loader: Loader) -> Self {
+    pub fn new(font_files: &[Vec<u8>], images: crate::images::Shared) -> Self {
         let mut db = usvg::fontdb::Database::new();
         for f in font_files { db.load_font_data(f.clone()); }
         db.load_system_fonts();
@@ -74,27 +73,9 @@ impl Painter {
                 break;
             }
         }
-        Painter { scaler: ScaleContext::new(), glyphs: HashMap::new(), images: HashMap::new(), svgs: HashMap::new(), fontdb: Arc::new(db), loader, frames: 0, time: 0.0, hover: None }
-    }
-
-    /// The natural size of an image, once it has been loaded.
-    pub fn image_size(&mut self, src: &str) -> Option<(f32, f32)> {
-        self.image(src).map(|p| (p.width() as f32, p.height() as f32))
-    }
-
-    fn image(&mut self, src: &str) -> Option<&Pixmap> {
-        if !self.images.contains_key(src) {
-            let px = (self.loader)(src).and_then(|b| image::load_from_memory(&b).ok()).map(|img| {
-                let rgba = img.to_rgba8();
-                let mut p = Pixmap::new(rgba.width(), rgba.height()).unwrap();
-                for (d, s) in p.pixels_mut().iter_mut().zip(rgba.pixels()) {
-                    *d = tiny_skia::ColorU8::from_rgba(s[0], s[1], s[2], s[3]).premultiply();
-                }
-                p
-            });
-            self.images.insert(src.to_string(), px);
-        }
-        self.images.get(src).and_then(|p| p.as_ref())
+        let icon = |b: &[u8]| Pixmap::decode_png(b).expect("broken_image.png");
+        let broken = [icon(include_bytes!("../assets/broken_image_100.png")), icon(include_bytes!("../assets/broken_image_200.png"))];
+        Painter { scaler: ScaleContext::new(), glyphs: HashMap::new(), images, broken, svgs: HashMap::new(), fontdb: Arc::new(db), frames: 0, time: 0.0, hover: None }
     }
 
     /// Paints `th` from `scroll` (thread px) into a w x h device-pixel buffer.
@@ -228,9 +209,18 @@ impl Painter {
                     px.stroke_path(&path, &p, &Stroke { width: width * k, ..Default::default() }, Transform::identity(), None);
                 }
             }
+            Shape::Broken { x, y } => {
+                // 14 x 16 at the top left of the box; the 200 % bitmap from 150 % up, as Chromium picks.
+                let b = &self.broken[(k >= 1.5) as usize];
+                let s = k * 14.0 / b.width() as f32;
+                let (tx, ty) = (((ox + x) * k).round(), ((dy + y) * k).round());
+                px.draw_pixmap(0, 0, b.as_ref(), &tiny_skia::PixmapPaint { quality: tiny_skia::FilterQuality::Bilinear, ..Default::default() },
+                    Transform::from_row(s, 0.0, 0.0, s, tx, ty), None);
+            }
             Shape::Image { x, y, w, h, radius, src, cover } => {
                 let (x, y, w, h, r) = ((ox + x) * k, (dy + y) * k, w * k, h * k, radius * k);
-                let Some(img) = self.image(src) else {
+                let mut images = self.images.borrow_mut();
+                let Some(img) = images.pixmap(src) else {
                     // .md img { background: rgba(255,255,255,.04) } while it loads, or broken.
                     fill_rect(px, x, y, w, h, r, [255, 255, 255, 10]);
                     return;

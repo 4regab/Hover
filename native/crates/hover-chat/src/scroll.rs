@@ -14,7 +14,7 @@ pub const LINE: f32 = 40.0;
 const PAGE: f32 = 0.875;
 
 /// Which scrollbar: the thread's, or a box's by (section, scroller).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum BarId { Thread, Box(usize, usize) }
 
 /// One scrollbar: where it is (x, y along the top or left edge, and its length) and
@@ -81,6 +81,99 @@ impl Bar {
     }
 }
 
+/// A cubic Bézier timing function from (0,0) to (1,1), as gfx::CubicBezier.
+#[derive(Clone, Copy, Debug)]
+struct Bezier { x1: f64, y1: f64, x2: f64, y2: f64 }
+
+impl Bezier {
+    fn at(a: f64, b: f64, t: f64) -> f64 { 3.0 * a * t * (1.0 - t) * (1.0 - t) + 3.0 * b * t * t * (1.0 - t) + t * t * t }
+    fn d(a: f64, b: f64, t: f64) -> f64 { 3.0 * a * (1.0 - t) * (1.0 - t) + 6.0 * (b - a) * t * (1.0 - t) + 3.0 * (1.0 - b) * t * t }
+    /// The curve's parameter for progress x (x is monotonic for x1, x2 in [0, 1]).
+    fn t_for(&self, x: f64) -> f64 {
+        let mut t = x;
+        for _ in 0..8 {
+            let e = Self::at(self.x1, self.x2, t) - x;
+            let d = Self::d(self.x1, self.x2, t);
+            if e.abs() < 1e-7 { return t; }
+            if d.abs() < 1e-6 { break; }
+            t -= e / d;
+        }
+        let (mut lo, mut hi) = (0.0, 1.0);
+        t = x;
+        for _ in 0..40 {
+            if Self::at(self.x1, self.x2, t) < x { lo = t } else { hi = t }
+            t = (lo + hi) / 2.0;
+        }
+        t
+    }
+    fn value(&self, x: f64) -> f64 { if x <= 0.0 { 0.0 } else if x >= 1.0 { 1.0 } else { Self::at(self.y1, self.y2, self.t_for(x)) } }
+    fn slope(&self, x: f64) -> f64 {
+        let t = self.t_for(x.clamp(0.0, 1.0));
+        let dx = Self::d(self.x1, self.x2, t);
+        if dx.abs() < 1e-9 { 0.0 } else { Self::d(self.y1, self.y2, t) / dx }
+    }
+}
+
+/// A user scroll's animation, as cc's ScrollOffsetAnimationCurve animates a wheel,
+/// arrow or track scroll: ease-in-out (0.42, 0, 0.58, 1) over 6 to 12 frames at 60 Hz,
+/// shorter the further it goes (kInverseDelta: 12 frames up to 120 px, 6 from 480 px).
+/// A new scroll during one retargets it, keeping its speed (UpdateTarget). Times are
+/// seconds from any fixed start.
+#[derive(Clone, Debug)]
+pub struct Smooth {
+    from: f64,
+    to: f64,
+    start: f64,
+    end: f64,
+    curve: Bezier,
+}
+
+const EASE: Bezier = Bezier { x1: 0.42, y1: 0.0, x2: 0.58, y2: 1.0 };
+
+fn inverse_delta(delta: f64) -> f64 {
+    let (a, b, min, max) = (120.0, 480.0, 6.0, 12.0);
+    let slope = (min - max) / (b - a);
+    let offset = max - a * slope;
+    (offset + delta.abs() * slope).clamp(min, max) / 60.0
+}
+
+impl Smooth {
+    pub fn new(from: f32, to: f32, now: f64) -> Self {
+        let (from, to) = (from as f64, to as f64);
+        Smooth { from, to, start: now, end: now + inverse_delta(to - from), curve: EASE }
+    }
+
+    pub fn value(&self, now: f64) -> f32 {
+        let d = self.end - self.start;
+        if d <= 0.0 || now >= self.end { return self.to as f32; }
+        (self.from + (self.to - self.from) * self.curve.value((now - self.start) / d)) as f32
+    }
+
+    pub fn done(&self, now: f64) -> bool { now >= self.end }
+    pub fn target(&self) -> f32 { self.to as f32 }
+
+    fn velocity(&self, now: f64) -> f64 {
+        let d = self.end - self.start;
+        if d <= 0.0 || now >= self.end { return 0.0; }
+        self.curve.slope((now - self.start) / d) * (self.to - self.from) / d
+    }
+
+    /// Heads for a new target from where the scroll is now, at the speed it has.
+    pub fn retarget(&mut self, to: f32, now: f64) {
+        let to = to as f64;
+        if (to - self.to).abs() < 0.01 { return; }
+        let cur = self.value(now) as f64;
+        let delta = to - cur;
+        if delta.abs() < 0.01 || self.done(now) { *self = Smooth::new(cur as f32, to as f32, now); return; }
+        let v = self.velocity(now);
+        // The velocity bound: no longer than the present speed takes, with a fudge for the ease out.
+        let bound = if v.abs() < 0.01 { f64::MAX } else { let b = delta / v * 2.5; if b < 0.0 { f64::MAX } else { b } };
+        let dur = inverse_delta(delta).min(bound);
+        let slope = (v * dur / delta).clamp(-1000.0, 1000.0);
+        *self = Smooth { from: cur, to, start: now, end: now + dur, curve: Bezier { y1: EASE.x1 * slope, ..EASE } };
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -100,5 +193,24 @@ mod tests {
         assert_eq!(b.step(Part::TrackForward, 100.0), 271.0 * 0.875);
         assert_eq!(b.drag(0.0, 12.0), 0.0);
         assert_eq!(b.drag(0.0, 271.0 - 12.0 - 11.0), b.max());
+    }
+
+    #[test]
+    fn smooth_scrolls_ease_over_chromiums_durations_and_retarget_at_speed() {
+        // 100 px (a wheel notch on Windows): 12 frames; 600 px: 6.
+        let s = Smooth::new(0.0, 100.0, 0.0);
+        assert!((s.end - 0.2).abs() < 1e-9);
+        assert!((Smooth::new(0.0, 600.0, 0.0).end - 0.1).abs() < 1e-9);
+        assert_eq!(s.value(0.0), 0.0);
+        assert!((s.value(0.1) - 50.0).abs() < 0.01, "ease-in-out is half way at half time");
+        assert!(s.value(0.05) < 25.0, "it eases in");
+        assert_eq!(s.value(0.3), 100.0);
+        // A second notch half way: from where it is, at the speed it has, to 200.
+        let mut r = s.clone();
+        let (p, v) = (s.value(0.1), s.velocity(0.1));
+        r.retarget(200.0, 0.1);
+        assert!((r.value(0.1) - p).abs() < 0.01);
+        assert!((r.velocity(0.1001) - v).abs() / v < 0.02, "{} vs {v}", r.velocity(0.1001));
+        assert_eq!(r.value(1.0), 200.0);
     }
 }

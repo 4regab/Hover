@@ -19,6 +19,8 @@ pub const LINK_UNDERLINE: Rgba = a(0xc4a2ff, 0.4);
 pub const CODE_BG: Rgba = a(0xffffff, 0.08);
 pub const PRE_BG: Rgba = a(0x000000, 0.35);
 pub const FIGURE_BG: Rgba = a(0x000000, 0.25);
+/// `.md img { background: rgba(255,255,255,.04) }`
+pub const IMG_BG: Rgba = a(0xffffff, 0.04);
 pub const TH_BG: Rgba = a(0xffffff, 0.05);
 pub const QUOTE_BAR: Rgba = a(0xc4a2ff, 0.4);
 pub const YOU_BG: Rgba = a(0x9046ff, 0.24);

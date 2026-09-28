@@ -10,10 +10,12 @@
 //! | Images | the office's image rule, decoded by `image`, clipped to rounded corners |
 
 pub mod doc;
+pub mod images;
 pub mod paint;
 pub mod scroll;
 pub mod state;
 pub mod theme;
 
 pub use doc::{Hit, Pos, Shaper, Stage, Step, StepIcon, Tail, Thread, Turn, Unit};
+pub use images::{Fetch, ImageState, Images};
 pub use paint::Painter;

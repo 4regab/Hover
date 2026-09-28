@@ -25,7 +25,7 @@ fn main() {
     let turns = hover_chat::state::turns(s);
     let mut th = Thread::new(Shaper::new(&f), name, color);
     th.set(&turns, 358.0);
-    let mut p = Painter::new(&f, Box::new(|_| None));
+    let mut p = Painter::new(&f, hover_chat::Images::none());
     let t = std::time::Instant::now();
     let px = p.paint(&th, 0.0, (358.0 * scale) as u32, (th.height * scale).ceil() as u32, scale, hover_chat::theme::DRAWER_BG);
     eprintln!("height {} px, painted in {:?}", th.height, t.elapsed());

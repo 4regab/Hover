@@ -14,6 +14,7 @@ use parley::{
     LineHeight, PositionedLayoutItem, StyleProperty,
 };
 
+use crate::images::ImageState;
 use crate::theme::{self, Rgba};
 
 /// The brush parley carries on each run: a colour, and whether it is inline code
@@ -66,13 +67,15 @@ pub enum Shape {
     /// An open polyline (the step list's chevron).
     Line { pts: Vec<(f32, f32)>, color: Rgba, width: f32 },
     Svg { x: f32, y: f32, w: f32, h: f32, svg: Rc<str> },
+    /// Chromium's broken-image icon (14 x 16), at the top left of an image that isn't there.
+    Broken { x: f32, y: f32 },
     Glow { x: f32, y: f32, r: f32, color: Rgba },
 }
 
 impl Shape {
     fn shift(&mut self, dx: f32, dy: f32) {
         match self {
-            Shape::Rect { x, y, .. } | Shape::Image { x, y, .. } | Shape::Svg { x, y, .. } | Shape::Glow { x, y, .. } => { *x += dx; *y += dy; }
+            Shape::Rect { x, y, .. } | Shape::Image { x, y, .. } | Shape::Svg { x, y, .. } | Shape::Glow { x, y, .. } | Shape::Broken { x, y } => { *x += dx; *y += dy; }
             Shape::Line { pts, .. } => for p in pts { p.0 += dx; p.1 += dy; },
         }
     }
@@ -80,6 +83,7 @@ impl Shape {
         match self {
             Shape::Rect { y, h, .. } | Shape::Image { y, h, .. } | Shape::Svg { y, h, .. } => y + h,
             Shape::Glow { y, r, .. } => y + r,
+            Shape::Broken { y, .. } => y + 16.0,
             Shape::Line { pts, .. } => pts.iter().fold(f32::MIN, |m, p| m.max(p.1)),
         }
     }
@@ -350,7 +354,9 @@ fn spans_of(inl: &[Inline]) -> Vec<Span> {
 pub(crate) struct Md<'a> {
     pub sh: &'a mut Shaper,
     /// Image sizes, once known (the painter decodes them).
-    pub image_size: &'a dyn Fn(&str) -> Option<(f32, f32)>,
+    pub image_state: &'a dyn Fn(&str) -> ImageState,
+    /// The images the content uses (its section is laid out again when one arrives).
+    pub used: Vec<String>,
 }
 
 impl Md<'_> {
@@ -383,19 +389,31 @@ impl Md<'_> {
             run.clear();
         };
         for i in inl {
-            if let Inline::Image { src, .. } = i {
+            if let Inline::Image { src, alt, .. } = i {
                 if matches!(run.last(), Some(Inline::Break)) { run.pop(); lit_br = true; }
                 emit(self, &mut run, &mut flow, &mut lit_br);
                 lit_br = false;
                 let mut f = Frag::default();
                 if !has_text { f.copy.push(Tok::Img); }
-                // An image that hasn't loaded (or can't) takes no room, as in the page.
-                if let Some((iw, ih)) = (self.image_size)(src) {
+                self.used.push(src.clone());
+                if let ImageState::Ready(iw, ih) = (self.image_state)(src) {
                     let k = (w / iw).min(320.0 / ih).min(1.0);
                     f.shapes.push(Shape::Image { x: 0.0, y: 0.0, w: iw * k, h: ih * k, radius: 9.0, src: src.clone(), cover: false });
                     flow.add(Boxed { frag: f, mt: 4.0, h: ih * k, mb: 4.0 }, 0.0);
                 } else {
-                    flow.frag.copy.append(&mut f.copy);
+                    // Loading or broken, Chromium draws the same: a block as wide as the
+                    // answer, as tall as its alt text (none: no height), with the broken-image
+                    // icon and then the alt text, which is not selectable. Measured in
+                    // golden/expected/broken.json.
+                    let h = if alt.is_empty() { 0.0 } else {
+                        let (mut tb, h) = self.para_box(&[Span::Gap(16.0), plain(alt, None)], look, w, Alignment::Start);
+                        tb.text.clear();
+                        f.shapes.push(Shape::Rect { x: 0.0, y: 0.0, w, h, radius: [9.0; 4], fill: Some(theme::IMG_BG), stroke: None });
+                        f.shapes.push(Shape::Broken { x: 0.0, y: 0.0 });
+                        f.texts.push(tb);
+                        h
+                    };
+                    flow.add(Boxed { frag: f, mt: 4.0, h, mb: 4.0 }, 0.0);
                 }
             } else {
                 run.push(i.clone());
@@ -717,6 +735,9 @@ pub struct Section {
     pub summary: Option<[f32; 4]>,
     /// Where the answer's copy tokens start (a select-all inside `.ans`).
     pub answer_tok: Option<usize>,
+    /// The answer's images, and whether one of them changed since it was laid out.
+    pub images: Vec<String>,
+    stale: bool,
     key: (Turn, u32, bool, bool),
 }
 
@@ -731,7 +752,7 @@ pub struct Thread {
     pub selection: Option<(Pos, Pos)>,
     /// What the selection takes in after its last box (see [`Tail`]).
     pub tail: Tail,
-    pub image_size: Box<dyn Fn(&str) -> Option<(f32, f32)>>,
+    pub image_state: Box<dyn Fn(&str) -> ImageState>,
     pub image_rule: Box<dyn Fn(&str) -> Option<String>>,
     /// The step lists the user opened (true) or closed (false), by (session, turn). The
     /// page keys them by turn only, so switching chats carried turn i's choice into the
@@ -810,7 +831,7 @@ pub enum Hit {
 impl Thread {
     pub fn new(sh: Shaper, who: &str, color: Rgba) -> Self {
         Thread { sh, width: 360.0, who: who.into(), color, sections: vec![], height: 0.0, selection: None, tail: Tail::None,
-            image_size: Box::new(|_| None), image_rule: Box::new(|s| if s.starts_with("http") { Some(s.into()) } else { None }),
+            image_state: Box::new(|_| ImageState::Broken), image_rule: Box::new(|s| if s.starts_with("http") { Some(s.into()) } else { None }),
             steps_user: Default::default(), session: 0, hide_steps: false, relayouts: 0, hscroll: Default::default() }
     }
 
@@ -840,14 +861,14 @@ impl Thread {
             let live = i + 1 == turns.len() && t.stage == Stage::Working;
             let open = self.steps_open(i, live);
             let key = (t.clone(), wkey, open, live);
-            let reuse = old.get_mut(i).and_then(|o| o.take_if(|s| s.key == key));
+            let reuse = old.get_mut(i).and_then(|o| o.take_if(|s| s.key == key && !s.stale));
             let mut s = match reuse {
                 Some(s) => s,
                 None => {
                     self.relayouts += 1;
                     self.hscroll.retain(|k, _| k.0 != i);
-                    let (frag, h, summary, answer_tok) = self.turn(t, width - pl - pr, open, live);
-                    Section { y: 0.0, h, frag, summary, answer_tok, key }
+                    let (frag, h, summary, answer_tok, images) = self.turn(t, width - pl - pr, open, live);
+                    Section { y: 0.0, h, frag, summary, answer_tok, images, stale: false, key }
                 }
             };
             if i > 0 { y += theme::THREAD_GAP; }
@@ -868,7 +889,8 @@ impl Thread {
 
     // One turn, as flex items with 7 px gaps: the you-bubble, the step list, the status,
     // the who line and the answer.
-    fn turn(&mut self, t: &Turn, w: f32, open: bool, live: bool) -> (Frag, f32, Option<[f32; 4]>, Option<usize>) {
+    fn turn(&mut self, t: &Turn, w: f32, open: bool, live: bool) -> (Frag, f32, Option<[f32; 4]>, Option<usize>, Vec<String>) {
+        let mut images = vec![];
         let mut frag = Frag::default();
         let mut summary = None;
         let mut answer_tok = None;
@@ -973,15 +995,16 @@ impl Thread {
             let failed = t.stage == Stage::Failed;
             let inset = if failed { 12.0 } else { 0.0 };
             let blocks = hover_md::parse(&t.answer, Some(&*self.image_rule));
-            let size = &*self.image_size;
-            let mut md = Md { sh: &mut self.sh, image_size: size };
+            let state = &*self.image_state;
+            let mut md = Md { sh: &mut self.sh, image_state: state, used: vec![] };
             let b = md.blocks(&blocks, look, w - inset, true);
+            images = md.used;
             if failed { frag.shapes.push(rect(0.0, y, 2.0, b.h, 0.0, Some(theme::BAD))); }
             answer_tok = Some(frag.copy.len());
             frag.append(b.frag, inset, y);
             y += b.h;
         }
-        (frag, y, summary, answer_tok)
+        (frag, y, summary, answer_tok, images)
     }
 
     /// The open step list: one flex row (`.work div { display: flex; gap: 8px }`) whose
@@ -1088,6 +1111,21 @@ impl Thread {
             ((si, k), crate::scroll::Bar { vertical: false, x: ox + x, y: s.y + y + h, len: w, content: sc.content, view: w,
                 pos: self.hscroll.get(&(si, k)).copied().unwrap_or(0.0) })
         }))
+    }
+
+    /// Lays images out by their state in a shared cache (the painter's).
+    pub fn use_images(&mut self, images: crate::images::Shared) {
+        self.image_state = Box::new(move |src| images.borrow_mut().state(src));
+    }
+
+    /// An image arrived (or failed): the sections that show it are laid out again on the
+    /// next `set`. Returns whether any does.
+    pub fn image_changed(&mut self, src: &str) -> bool {
+        let mut any = false;
+        for s in &mut self.sections {
+            if s.images.iter().any(|i| i == src) { s.stale = true; any = true; }
+        }
+        any
     }
 
     /// Scrolls a box sideways (clamped to its content).

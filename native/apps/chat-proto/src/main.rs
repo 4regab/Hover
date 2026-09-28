@@ -3,15 +3,19 @@
 //!   chat-proto                         a window (Linux dev or Windows)
 //!   chat-proto --stream                an answer streams in at 20 chunks per second
 //!   chat-proto --turns 200             a long rich conversation
-//!   chat-proto --screenshot out.png [--select] [--scale 2] [--hscroll 80]   headless, software renderer
+//!   chat-proto --answer a.md           the last turn's answer from a file
+//!   chat-proto --screenshot out.png [--select] [--scale 2] [--hscroll 80] [--images]   headless, software renderer
+//!                                     (--images: load the answer's images, as the window does)
 //!                                     (--hscroll: the code blocks scrolled sideways by that much; --top: the thread scrolled to its top)
 //!   chat-proto --bench                 headless timings for the report
+mod net;
+
 use std::cell::RefCell;
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
-use hover_chat::scroll::{Bar, BarId, Part, THICK};
+use hover_chat::scroll::{Bar, BarId, Part, Smooth, THICK};
 use hover_chat::{state, Hit, Painter, Pos, Shaper, Stage, Tail, Thread, Turn, Unit};
 use slint::{ComponentHandle, Model, SharedPixelBuffer, VecModel};
 
@@ -101,6 +105,35 @@ fn double_click() -> (Duration, (f32, f32)) {
     unsafe { (Duration::from_millis(GetDoubleClickTime() as u64), (GetSystemMetrics(SM_CXDOUBLECLK) as f32, GetSystemMetrics(SM_CYDOUBLECLK) as f32)) }
 }
 
+/// A wheel delta from Slint (60 px per notch, whatever the system says) as Chromium
+/// scrolls it on Windows: the system's lines per notch at 100/3 px a line (100 px for
+/// the default 3), or a page for "one screen at a time" (as 87.5 % of the view does).
+#[cfg(windows)]
+fn wheel_px(d: f32) -> f32 {
+    use windows::Win32::UI::WindowsAndMessaging::{SystemParametersInfoW, SPI_GETWHEELSCROLLLINES, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS};
+    let mut lines: u32 = 3;
+    let _ = unsafe { SystemParametersInfoW(SPI_GETWHEELSCROLLLINES, 0, Some(&mut lines as *mut u32 as *mut _), SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS(0)) };
+    let lines = if lines == u32::MAX { 3 } else { lines };
+    d / 60.0 * lines as f32 * 100.0 / 3.0
+}
+
+#[cfg(not(windows))]
+fn wheel_px(d: f32) -> f32 { d }
+
+/// Whether Windows' "Animation effects" are on (SPI_GETCLIENTAREAANIMATION): Chromium
+/// scrolls without animating and reports prefers-reduced-motion when they are off.
+#[cfg(windows)]
+fn animations() -> bool {
+    use windows::core::BOOL;
+    use windows::Win32::UI::WindowsAndMessaging::{SystemParametersInfoW, SPI_GETCLIENTAREAANIMATION, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS};
+    let mut on = BOOL(1);
+    let _ = unsafe { SystemParametersInfoW(SPI_GETCLIENTAREAANIMATION, 0, Some(&mut on as *mut BOOL as *mut _), SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS(0)) };
+    on.as_bool()
+}
+
+#[cfg(not(windows))]
+fn animations() -> bool { std::env::var_os("HOVER_REDUCED_MOTION").is_none() }
+
 /// Windows' defaults, on the Linux dev VM.
 #[cfg(not(windows))]
 fn double_click() -> (Duration, (f32, f32)) {
@@ -128,6 +161,13 @@ struct App {
     /// track held down (where, and since when: it repeats after 250 ms, every 50 ms).
     grab: Option<(BarId, f32)>,
     press: Option<(BarId, Part, f32, Instant)>,
+    /// The image loader and the URLs it has finished with (drained on the UI thread).
+    net: Option<Rc<net::Net>>,
+    /// Scrolls on their way (wheel, arrows, track), by scrollbar.
+    smooth: std::collections::HashMap<BarId, Smooth>,
+    /// Whether scrolls animate (Windows' animation effects; read at start).
+    motion: bool,
+    arrivals: Option<std::sync::mpsc::Receiver<String>>,
     t0: Instant,
 }
 
@@ -137,8 +177,39 @@ impl App {
         // Laid out on the first frame, once the viewport (and so the bar) is known.
         let thread = Thread::new(Shaper::new(&f), who, color);
         let p0 = Pos { section: 0, text: 0, byte: 0 };
-        App { thread, painter: Painter::new(&f, Box::new(|_| None)), turns, scroll: 0.0, anchor: None, unit: Unit::Char, unit_anchor: (p0, p0, Tail::None),
+        App { thread, painter: Painter::new(&f, hover_chat::Images::none()), turns, net: None, arrivals: None, smooth: Default::default(), motion: animations(), scroll: 0.0, anchor: None, unit: Unit::Char, unit_anchor: (p0, p0, Tail::None),
             clicks: Clicks { at: None, x: 0.0, y: 0.0, n: 0 }, dragging: false, stick: true, dirty: true, view: (0.0, 0.0), vbar: true, grab: None, press: None, t0: Instant::now() }
+    }
+
+    /// Loads images as the office does, for fixture session `session`: the web, Hover's
+    /// pasted-images folder, and the session's own folder through its files host.
+    fn load_images(&mut self, session: usize) {
+        let s = &fixture()["state"]["sessions"][session];
+        let (tx, rx) = std::sync::mpsc::channel();
+        let tx = std::sync::Mutex::new(tx);
+        let net = Rc::new(net::Net::new(move |u| { let _ = tx.lock().unwrap().send(u); }));
+        if let Some(d) = net::support() { net.hosts.lock().unwrap().insert("hover.images".into(), d.join("kiro-images")); }
+        let folder = s["folder"].as_str().unwrap_or("").to_string();
+        let files = s["files"].as_str().map(str::to_string);
+        if let Some(f) = &files { net.hosts.lock().unwrap().insert(f.to_ascii_lowercase(), PathBuf::from(&folder)); }
+        let n = net.clone();
+        let images = hover_chat::Images::new(Box::new(move |u| n.fetch(u)));
+        self.painter.images = images.clone();
+        self.thread.use_images(images);
+        // main.js imageFor: the web as is; other paths only inside the session's folder.
+        self.thread.image_rule = Box::new(move |src| hover_md::image::image_for(&hover_md::image::Session { files: files.as_deref(), folder: &folder }, src));
+        (self.net, self.arrivals, self.dirty) = (Some(net), Some(rx), true);
+    }
+
+    /// Takes in the images that arrived: their sections are laid out again. Returns
+    /// whether anything is to be drawn again.
+    fn drain(&mut self) -> bool {
+        let Some(rx) = &self.arrivals else { return false };
+        let urls: Vec<String> = rx.try_iter().collect();
+        for u in &urls {
+            if self.thread.image_changed(u) { self.dirty = true; }
+        }
+        !urls.is_empty()
     }
 
     fn relayout(&mut self, width: f32, height: f32) {
@@ -207,10 +278,44 @@ impl App {
     }
 
     fn scroll_to(&mut self, id: BarId, pos: f32) {
+        self.smooth.remove(&id);
+        self.set_pos(id, pos);
+    }
+
+    fn set_pos(&mut self, id: BarId, pos: f32) {
         match id {
             BarId::Thread => self.scroll = pos,
             BarId::Box(s, k) => self.thread.scroll_box((s, k), pos),
         }
+    }
+
+    /// Where a scrollbar is headed: its animation's target, else where it is.
+    fn target(&self, id: BarId) -> Option<f32> {
+        self.smooth.get(&id).map(|s| s.target()).or_else(|| self.bar(id).map(|b| b.pos))
+    }
+
+    /// A user scroll by `delta`, animated as Chromium animates it unless the system's
+    /// animation effects are off; deltas add up on the target, as UpdateTarget does.
+    fn scroll_by(&mut self, id: BarId, delta: f32) {
+        let (Some(b), Some(to)) = (self.bar(id), self.target(id)) else { return };
+        let to = (to + delta).clamp(0.0, b.max());
+        if !self.motion { return self.scroll_to(id, to); }
+        let now = self.t0.elapsed().as_secs_f64();
+        match self.smooth.get_mut(&id) {
+            Some(s) if !s.done(now) => s.retarget(to, now),
+            _ => { self.smooth.insert(id, Smooth::new(b.pos, to, now)); }
+        }
+    }
+
+    /// One frame of the running scroll animations; whether any is still running.
+    fn animate(&mut self) -> bool {
+        let now = self.t0.elapsed().as_secs_f64();
+        let running: Vec<(BarId, f32, bool)> = self.smooth.iter().map(|(id, s)| (*id, s.value(now), s.done(now))).collect();
+        for (id, pos, done) in &running {
+            self.set_pos(*id, *pos);
+            if *done { self.smooth.remove(id); }
+        }
+        !running.is_empty()
     }
 
     /// The pointer on the scrollbars, which come before the text: Some(redraw) when
@@ -234,8 +339,9 @@ impl App {
                 match b.part(along) {
                     Part::Thumb => self.grab = Some((id, along - b.thumb().0)),
                     part => {
-                        let pos = b.step(part, along);
-                        self.scroll_to(id, pos);
+                        let from = self.target(id).unwrap_or(b.pos);
+                        let to = Bar { pos: from, ..b }.step(part, along);
+                        self.scroll_by(id, to - from);
                         self.press = Some((id, part, along, Instant::now()));
                     }
                 }
@@ -258,10 +364,10 @@ impl App {
     fn repeat(&mut self) -> bool {
         let Some((id, part, along, since)) = self.press else { return false };
         if since.elapsed() < Duration::from_millis(250) { return false; }
-        let Some(b) = self.bar(id) else { return false };
-        let pos = b.step(part, along);
-        self.scroll_to(id, pos);
-        pos != b.pos
+        let (Some(b), Some(from)) = (self.bar(id), self.target(id)) else { return false };
+        let to = Bar { pos: from, ..b }.step(part, along);
+        self.scroll_by(id, to - from);
+        to != from
     }
 }
 
@@ -331,17 +437,27 @@ fn wire(ui: &ChatWindow, app: Rc<RefCell<App>>) {
         {
             let mut s = a.borrow_mut();
             let (dx, dy) = if shift && dx == 0.0 { (dy, 0.0) } else { (dx, dy) };
-            s.scroll += dy;
+            let (dx, dy) = (wheel_px(dx), wheel_px(dy));
+            if dy != 0.0 {
+                if s.vbar { s.scroll_by(BarId::Thread, dy); }
+            }
             if dx != 0.0 {
                 let yy = y + s.scroll;
-                if let Some(id) = s.thread.box_at(x, yy) {
-                    let pos = s.thread.hscroll.get(&id).copied().unwrap_or(0.0) + dx;
-                    s.thread.scroll_box(id, pos);
-                }
+                if let Some((si, k)) = s.thread.box_at(x, yy) { s.scroll_by(BarId::Box(si, k), dx); }
             }
         }
         r();
     });
+    // Scroll animations, at 60 Hz while one runs.
+    let (r, a) = (redraw.clone(), app.clone());
+    let anim = slint::Timer::default();
+    anim.start(slint::TimerMode::Repeated, Duration::from_millis(16), move || { let on = a.borrow_mut().animate(); if on { r(); } });
+    std::mem::forget(anim);
+    // Images that arrived on the loader's threads.
+    let (r, a) = (redraw.clone(), app.clone());
+    let img = slint::Timer::default();
+    img.start(slint::TimerMode::Repeated, Duration::from_millis(50), move || { let any = a.borrow_mut().drain(); if any { r(); } });
+    std::mem::forget(img);
     // Held arrows and track presses repeat.
     let (r, a) = (redraw.clone(), app.clone());
     let rep = slint::Timer::default();
@@ -456,7 +572,11 @@ mod headless {
     }
 }
 
-fn screenshot(out: &str, select: bool, scale: f32, n: usize, session: usize, hscroll: f32, top: bool) {
+/// What the headless screenshot shows, besides the session.
+struct Shot { select: bool, scale: f32, hscroll: f32, top: bool, images: bool, answer: Option<String> }
+
+fn screenshot(out: &str, n: usize, session: usize, o: Shot) {
+    let Shot { select, scale, hscroll, top, .. } = o;
     let win = headless::window();
     slint::platform::set_platform(Box::new(headless::Headless(win.clone()))).unwrap();
     let ui = ChatWindow::new().unwrap();
@@ -467,6 +587,8 @@ fn screenshot(out: &str, select: bool, scale: f32, n: usize, session: usize, hsc
     header(&ui, session);
     let app = Rc::new(RefCell::new(App::new(turns(n, session))));
     app.borrow_mut().thread.session = fixture()["state"]["sessions"][session]["id"].as_u64().unwrap_or(0);
+    if let Some(a) = &o.answer { if let Some(t) = app.borrow_mut().turns.last_mut() { t.answer = a.clone(); } }
+    if o.images { app.borrow_mut().load_images(session); }
     let render = |ui: &ChatWindow| -> Vec<slint::Rgb8Pixel> {
         slint::platform::update_timers_and_animations();
         let mut buf = vec![slint::Rgb8Pixel::default(); (w * h) as usize];
@@ -476,6 +598,14 @@ fn screenshot(out: &str, select: bool, scale: f32, n: usize, session: usize, hsc
         buf
     };
     render(&ui);
+    app.borrow_mut().frame(&ui);
+    // Until every image is in (or has failed), at most 20 s.
+    let t = Instant::now();
+    while app.borrow().net.as_ref().is_some_and(|n| n.busy()) && t.elapsed() < Duration::from_secs(20) {
+        std::thread::sleep(Duration::from_millis(50));
+        app.borrow_mut().frame(&ui);
+    }
+    app.borrow_mut().drain();
     app.borrow_mut().frame(&ui);
     if select {
         let mut s = app.borrow_mut();
@@ -562,13 +692,16 @@ fn main() {
     }
     if let Some(out) = val("--screenshot") {
         let scale = val("--scale").and_then(|s| s.parse().ok()).unwrap_or(1.0);
-        let hs = val("--hscroll").and_then(|s| s.parse().ok()).unwrap_or(0.0);
-        return screenshot(&out, has("--select"), scale, n, session, hs, has("--top"));
+        let hscroll = val("--hscroll").and_then(|s| s.parse().ok()).unwrap_or(0.0);
+        let answer = val("--answer").map(|p| std::fs::read_to_string(p).expect("--answer file"));
+        return screenshot(&out, n, session, Shot { select: has("--select"), scale, hscroll, top: has("--top"), images: has("--images"), answer });
     }
     let ui = ChatWindow::new().unwrap();
     header(&ui, session);
     let app = Rc::new(RefCell::new(App::new(turns(n, session))));
     app.borrow_mut().thread.session = fixture()["state"]["sessions"][session]["id"].as_u64().unwrap_or(0);
+    if let Some(p) = val("--answer") { if let Some(t) = app.borrow_mut().turns.last_mut() { t.answer = std::fs::read_to_string(p).expect("--answer file"); } }
+    app.borrow_mut().load_images(session);
     wire(&ui, app.clone());
     if has("--stream") {
         stream(&ui, app);
@@ -584,7 +717,19 @@ mod tests {
     #[test]
     fn scrollbars_take_presses_drags_and_hover() {
         let mut app = App::new(turns(1, 1));
+        // With animation effects on, a press heads for its target; the steps add up there.
         app.relayout(358.0, 271.0);
+        app.scroll = 0.0;
+        let (t0, tl) = app.bar(BarId::Thread).unwrap().thumb();
+        app.bars_pointer(0, 353.0, t0 + tl + 100.0);
+        app.bars_pointer(2, 353.0, 0.0);
+        app.bars_pointer(0, 353.0, t0 + tl + 100.0);
+        app.bars_pointer(2, 353.0, 0.0);
+        assert!((app.target(BarId::Thread).unwrap() - 2.0 * 271.0 * 0.875).abs() < 0.01);
+        assert!(app.scroll < 1.0, "not there at once");
+        // The rest without animation, to check positions straight away.
+        app.smooth.clear();
+        app.motion = false;
         assert!(app.vbar, "the rich session overflows 271 px");
         assert_eq!(app.thread.width, 348.0, "the bar takes 10 px from the thread");
         app.scroll = 0.0;
