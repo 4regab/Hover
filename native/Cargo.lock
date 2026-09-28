@@ -1997,6 +1997,8 @@ dependencies = [
  "image",
  "lewton",
  "libc",
+ "raw-window-handle",
+ "serde",
  "slint",
  "slint-build",
  "windows",

@@ -1,0 +1,198 @@
+// Owl/OfficeView.cs: the office, with Settings laid over it from the gear and a back
+// button to return. The office itself is Phase 2's (the three.js scene in wgpu); until
+// then its place holds a stand-in with the page's top-right controls (music, settings,
+// and in the notch fold and open-in-a-window).
+
+import { Pal, Fonts, Icon, Icons, PillButton } from "widgets.slint";
+import { SettingsPage, Side, Block, Opt } from "settings.slint";
+export { Side, Block, Opt }
+
+// What Settings shows, set from Rust for each window that has an office.
+export global Page {
+    in property <[Side]> sections;
+    in property <int> current;
+    in property <[Block]> blocks;
+    in property <bool> recording;
+    // The picker's menu: where, what, and which row asked.
+    in property <bool> menu-open;
+    in property <length> menu-x;
+    in property <length> menu-y;
+    in property <[Opt]> menu;
+    in property <string> menu-id;
+    callback section(int);
+    callback toggled(string, bool);
+    callback pressed(string);
+    callback picked-seg(string, int);
+    callback open-picker(string, length, length);
+    callback menu-pick(string, int);
+    callback menu-close();
+    callback tile(string);
+    callback record();
+    callback chord(KeyEvent) -> bool;
+}
+
+// The page's controls and the office's state, for the stand-in.
+export global Office {
+    in property <bool> beats;
+    in property <string> summary: "The office is quiet.";
+    callback toggle-beats();
+    callback open-settings();
+    callback fold();
+    callback open-app();
+}
+
+// The page's glass buttons (#beats, the gear), 30 px round.
+component Glass inherits Rectangle {
+    in property <string> icon;
+    in property <string> id;
+    in property <string> label;
+    in property <bool> on;
+    callback clicked;
+    width: 30px;
+    height: 30px;
+    border-radius: 15px;
+    background: ta.has-hover ? #ffffff2e : #ffffff1a;
+    accessible-role: button;
+    accessible-id: id;
+    accessible-label: label;
+    accessible-checkable: id == "beats";
+    accessible-checked: on;
+    accessible-action-default => { clicked(); }
+    Icon { name: icon; size: 16px; tint: on ? #ffd27a : #f6f2ffcc; }
+    ta := TouchArea { mouse-cursor: pointer; clicked => { clicked(); } }
+}
+
+export component OfficeView inherits Rectangle {
+    in property <bool> dashboard;
+    in property <bool> in-settings;
+    callback back();
+    callback fold();
+
+    // The office's stand-in, inset 8 in the notch to keep inside the shape's curves.
+    office := Rectangle {
+        x: dashboard ? 0 : 8px;
+        y: dashboard ? 0 : 8px;
+        width: parent.width - (dashboard ? 0 : 16px);
+        height: parent.height - (dashboard ? 0 : 16px);
+        visible: !in-settings;
+        border-radius: dashboard ? 0 : 24px;
+        clip: true;
+        background: @linear-gradient(180deg, #1d1428 0%, #120c18 100%);
+        Text {
+            x: 20px; y: 16px;
+            text: "Agent office";
+            color: #f6f2ff;
+            font-size: 14px;
+            font-weight: 600;
+            font-family: Fonts.display;
+            accessible-role: button;
+            accessible-id: "openApp";
+            TouchArea { enabled: !dashboard; mouse-cursor: pointer; clicked => { Office.open-app(); } }
+        }
+        Text {
+            x: 20px; y: 40px;
+            text: Office.summary;
+            color: #f6f2ff99;
+            font-size: 12px;
+        }
+        HorizontalLayout {
+            x: parent.width - self.width - 14px;
+            y: 12px;
+            spacing: 8px;
+            Glass { id: "beats"; label: "Chill beats"; icon: Icons.music; on: Office.beats; clicked => { Office.toggle-beats(); } }
+            Glass { id: "settings"; label: "Settings"; icon: Icons.settings; clicked => { Office.open-settings(); } }
+            if !dashboard: Glass { id: "fold"; label: "Close"; icon: Icons.close; clicked => { Office.fold(); } }
+        }
+    }
+
+    // Settings over the office: a bar (back, and close in the notch), then the page.
+    if in-settings: Rectangle {
+        background: Pal.panel;
+        border-radius: dashboard ? 0 : 32px;
+        VerticalLayout {
+            HorizontalLayout {
+                padding-left: 10px;
+                padding-top: 10px;
+                padding-right: 12px;
+                padding-bottom: 8px;
+                PillButton {
+                    id: "BackToOffice";
+                    label: "Back to the office";
+                    text: "Agent office";
+                    icon: Icons.chevron-left;
+                    fg: Pal.ink;
+                    pad-x: 9px;
+                    pad-y: 4px;
+                    horizontal-stretch: 0;
+                    clicked => { back(); }
+                }
+                Rectangle { horizontal-stretch: 1; }
+                if !dashboard: PillButton {
+                    id: "Close";
+                    label: "Close";
+                    icon: Icons.close;
+                    width: 28px;
+                    height: 28px;
+                    pad-x: 7px;
+                    pad-y: 7px;
+                    fg: Pal.ink-dim;
+                    clicked => { fold(); }
+                }
+            }
+            SettingsPage {
+                vertical-stretch: 1;
+                sections: Page.sections;
+                current: Page.current;
+                blocks: Page.blocks;
+                recording: Page.recording;
+                section(i) => { Page.section(i); }
+                toggled(id, v) => { Page.toggled(id, v); }
+                pressed(id) => { Page.pressed(id); }
+                picked-seg(id, n) => { Page.picked-seg(id, n); }
+                open-picker(id, x, y) => { Page.open-picker(id, x, y); }
+                tile(id) => { Page.tile(id); }
+                record => { Page.record(); }
+                chord(e) => { Page.chord(e) }
+            }
+        }
+    }
+
+    // A context menu (Styles.xaml): the sheet, its edge, the picked item ticked.
+    if Page.menu-open: TouchArea {
+        clicked => { Page.menu-close(); }
+    }
+    if Page.menu-open: Rectangle {
+        x: min(Page.menu-x - root.absolute-position.x, root.width - self.width - 8px);
+        y: min(Page.menu-y - root.absolute-position.y + 4px, root.height - self.height - 8px);
+        width: max(180px, items.preferred-width);
+        height: items.preferred-height;
+        border-radius: 10px;
+        background: Pal.sheet;
+        border-width: 1px;
+        border-color: Pal.sheet-edge;
+        drop-shadow-blur: 18px;
+        drop-shadow-offset-y: 6px;
+        drop-shadow-color: #00000055;
+        items := VerticalLayout {
+            padding: 5px;
+            for o[i] in Page.menu: Rectangle {
+                height: 26px;
+                border-radius: 6px;
+                background: ta.has-hover ? Pal.blue : transparent;
+                accessible-role: list-item;
+                accessible-label: o.label;
+                accessible-checkable: true;
+                accessible-checked: o.on;
+                accessible-action-default => { Page.menu-pick(Page.menu-id, i); }
+                HorizontalLayout {
+                    padding-left: 8px;
+                    padding-right: 14px;
+                    spacing: 6px;
+                    Rectangle { width: 14px; if o.on: Icon { name: Icons.check; size: 12px; tint: ta.has-hover ? white : Pal.ink; } }
+                    Text { text: o.label; font-size: 13px; color: ta.has-hover ? white : Pal.ink; vertical-alignment: center; }
+                }
+                ta := TouchArea { clicked => { Page.menu-pick(Page.menu-id, i); } }
+            }
+        }
+    }
+}

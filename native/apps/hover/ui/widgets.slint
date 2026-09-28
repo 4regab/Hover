@@ -1,0 +1,316 @@
+// Themes/Owl.xaml and Owl/Ui.cs in Slint: the palette in use, the line icons, and the
+// controls Settings is built from, at the C#'s sizes.
+
+import { Icons } from "icons.slint";
+export { Icons }
+
+import "../assets/Inter-Regular.ttf";
+import "../assets/Inter-Medium.ttf";
+import "../assets/Inter-SemiBold.ttf";
+import "../assets/Inter-Bold.ttf";
+import "../assets/InterDisplay-SemiBold.ttf";
+
+// Core/Palette.cs's colours, set from Rust when the theme changes (Theme.Publish).
+export global Pal {
+    in property <bool> dark: true;
+    in property <color> ink: #ffffff;
+    in property <color> ink-dim: #ebebf599;
+    in property <color> ink-faint: #ebebf54d;
+    in property <color> fill: #78788052;
+    in property <color> wash: #7676803d;
+    in property <color> wash-strong: #7878805c;
+    in property <color> separator: #54545899;
+    in property <color> surface: #1c1c1e;
+    in property <color> sheet: #2c2c2e;
+    in property <color> sheet-edge: #ffffff1f;
+    in property <color> panel: #000000;
+    in property <color> panel-edge: #ffffff1a;
+    in property <color> thumb: #636366;
+    in property <color> row-hover: #ffffff14;
+    in property <color> switch-off: #39393d;
+    in property <color> handle: #ffffff66;
+    in property <color> blue: #0a84ff;
+    in property <color> green: #30d158;
+    in property <color> purple: #bf5af2;
+    in property <color> yellow: #ffd60a;
+    in property <color> teal: #64d2ff;
+    in property <color> orange: #ff9f0a;
+    in property <color> red: #ff453a;
+    // Ui.Gray and the Kiro bot's purple (BotGlyph.Purple), the same in every theme.
+    out property <color> gray: #8e8e93;
+    out property <color> bot: #9b6bff;
+    // Windows' "Animation effects" or the desktop's reduced motion.
+    in property <bool> motion: true;
+}
+
+export global Fonts {
+    out property <string> text: "Inter";
+    out property <string> display: "Inter Display";
+}
+
+// Ui.Icon: a Lucide line icon on its 24 grid, stroked in the colour given.
+export component Icon inherits Path {
+    in property <string> name;
+    in property <color> tint: Pal.ink;
+    in property <length> size: 14px;
+    width: size;
+    height: size;
+    viewbox-width: 24;
+    viewbox-height: 24;
+    commands: name;
+    stroke: tint;
+    stroke-width: 2px * size / 24px;
+    fill: transparent;
+    stroke-line-cap: round;
+    stroke-line-join: round;
+}
+
+// OwlFocusRing: 2.5 px in the accent at 70 %, 3 px outside, radius 11.
+// Shown for keyboard focus only, as WPF's FocusVisualStyle is.
+component FocusRing inherits Rectangle {
+    in property <bool> shown;
+    in property <length> w;
+    in property <length> h;
+    x: -3px;
+    y: -3px;
+    width: w + 6px;
+    height: h + 6px;
+    border-radius: 11px;
+    border-width: shown ? 2.5px : 0;
+    border-color: Pal.blue.with-alpha(0.7);
+}
+
+// OwlBase and its styles: a pill (Tag 99 capped at half the height), the Lift shade on
+// hover (8 %) and press (16 %), 35 % when disabled.
+export component PillButton inherits Rectangle {
+    in property <string> text;
+    in property <string> icon;
+    in property <string> id;
+    in property <string> label: text;
+    in property <bool> enabled: true;
+    in property <length> pad-x: 14px;
+    in property <length> pad-y: 5px;
+    in property <length> font-size: 13px;
+    in property <int> weight: 500;
+    in property <color> fg: Pal.ink;
+    in property <color> bg: Pal.fill;
+    in property <bool> chevron;
+    in property <bool> bold-text;
+    callback clicked;
+    accessible-role: button;
+    accessible-id: id;
+    accessible-label: label;
+    accessible-enabled: enabled;
+    accessible-action-default => { clicked(); }
+    forward-focus: fs;
+    height: max(24px, row.preferred-height + 2 * pad-y);
+    min-width: row.preferred-width + 2 * pad-x;
+    border-radius: min(self.height, self.width) / 2;
+    background: bg;
+    opacity: enabled ? 1 : 0.35;
+    Rectangle {
+        border-radius: parent.border-radius;
+        background: Pal.ink.with-alpha(!enabled ? 0 : ta.pressed ? 0.16 : ta.has-hover ? 0.08 : 0);
+    }
+    row := HorizontalLayout {
+        alignment: center;
+        spacing: 6px;
+        padding-left: pad-x;
+        padding-right: pad-x;
+        if icon != "": Icon { name: icon; size: font-size - 1px; tint: fg; y: (parent.height - self.height) / 2 + 1px; }
+        Text { text: text; color: fg; font-size: font-size; font-weight: bold-text ? 600 : weight; vertical-alignment: center; }
+        if chevron: Icon { name: Icons.chevron-down; size: 11px; tint: Pal.ink-dim; y: (parent.height - self.height) / 2; }
+    }
+    property <bool> by-pointer;
+    ta := TouchArea {
+        enabled: enabled;
+        mouse-cursor: pointer;
+        pointer-event(e) => { if (e.kind == PointerEventKind.down) { by-pointer = true; } }
+        clicked => { fs.focus(); clicked(); }
+    }
+    fs := FocusScope {
+        enabled: enabled;
+        focus-changed-event => { if (!self.has-focus) { by-pointer = false; } }
+        key-pressed(e) => {
+            if (e.text == " " || e.text == "\n") { clicked(); return accept; }
+            reject
+        }
+    }
+    FocusRing { w: root.width; h: root.height; shown: fs.has-focus && !by-pointer; }
+}
+
+// OwlSwitch: a 42 × 26 track (green when on), a 22 white knob sliding 16 px.
+export component Switch inherits Rectangle {
+    in property <string> id;
+    in property <string> label;
+    in property <bool> enabled: true;
+    in-out property <bool> on;
+    callback toggled(bool);
+    accessible-role: switch;
+    accessible-id: id;
+    accessible-label: label;
+    accessible-checkable: true;
+    accessible-checked: on;
+    accessible-enabled: enabled;
+    accessible-action-default => { on = !on; toggled(on); }
+    width: 42px;
+    height: 26px;
+    border-radius: 13px;
+    background: on ? Pal.green : Pal.switch-off;
+    opacity: enabled ? 1 : 0.4;
+    animate background { duration: Pal.motion ? 150ms : 0; }
+    Rectangle {
+        x: on ? 18px : 2px;
+        y: 2px;
+        width: 22px;
+        height: 22px;
+        border-radius: 11px;
+        background: white;
+        drop-shadow-blur: 3px;
+        drop-shadow-offset-y: 1px;
+        drop-shadow-color: #00000030;
+        animate x { duration: Pal.motion ? 150ms : 0; easing: ease-out; }
+    }
+    property <bool> by-pointer;
+    TouchArea {
+        enabled: enabled;
+        mouse-cursor: pointer;
+        pointer-event(e) => { if (e.kind == PointerEventKind.down) { by-pointer = true; } }
+        clicked => { fs.focus(); on = !on; toggled(on); }
+    }
+    fs := FocusScope {
+        enabled: enabled;
+        focus-changed-event => { if (!self.has-focus) { by-pointer = false; } }
+        key-pressed(e) => {
+            if (e.text == " ") { on = !on; toggled(on); return accept; }
+            reject
+        }
+    }
+    FocusRing { w: root.width; h: root.height; shown: fs.has-focus && !by-pointer; }
+}
+
+// Ui.Segmented with OwlSegmentInk: a Wash track (radius 9, padding 2), the picked
+// segment on a Thumb (radius 7) that slides over 260 ms, hairlines between two
+// unpicked neighbours; 12.5 px labels, semibold when picked, padded 10,4, 58 wide at least.
+export component Segments inherits Rectangle {
+    in property <string> id;
+    in property <[string]> labels;
+    // Segments are equally wide: as wide as the widest label, picked (semibold).
+    in property <string> longest;
+    in property <bool> enabled: true;
+    in-out property <int> picked;
+    callback pick(int);
+    property <length> seg-w: max(58px, measure.preferred-width + 20px);
+    property <length> seg-h: measure.preferred-height + 8px;
+    width: seg-w * labels.length + 4px;
+    height: seg-h + 4px;
+    border-radius: 9px;
+    background: Pal.wash;
+    opacity: enabled ? 1 : 0.4;
+    measure := Text { visible: false; font-size: 12.5px; font-weight: 600; text: longest; }
+    for l[i] in labels: Rectangle {
+        // Hairline before a segment when neither it nor the one before is picked.
+        x: 2px + i * seg-w - 0.5px;
+        y: 8px;
+        width: 1px;
+        height: max(0, parent.height - 16px);
+        background: i > 0 && picked != i && picked != i - 1 ? Pal.separator : transparent;
+    }
+    if picked >= 0: Rectangle {
+        x: 2px + picked * seg-w;
+        y: 2px;
+        width: seg-w;
+        height: seg-h;
+        border-radius: 7px;
+        background: Pal.thumb;
+        drop-shadow-blur: 8px;
+        drop-shadow-offset-y: 3px;
+        drop-shadow-color: #0000001f;
+        animate x { duration: Pal.motion ? 260ms : 0; easing: ease-out; }
+    }
+    for l[i] in labels: Rectangle {
+        x: 2px + i * seg-w;
+        y: 2px;
+        width: seg-w;
+        height: seg-h;
+        accessible-role: button;
+        accessible-id: id + l;
+        accessible-label: l;
+        accessible-checkable: true;
+        accessible-checked: picked == i;
+        accessible-action-default => { picked = i; pick(i); }
+        Text {
+            text: l;
+            color: Pal.ink;
+            font-size: 12.5px;
+            font-weight: picked == i ? 600 : 400;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+            opacity: ta.pressed && picked != i ? 0.45 : 1;
+        }
+        ta := TouchArea {
+            enabled: enabled;
+            mouse-cursor: pointer;
+            clicked => { picked = i; pick(i); }
+        }
+    }
+}
+
+// Ui.Ring: a track and an arc from twelve o'clock, green, amber, red as it fills.
+export component Ring inherits Rectangle {
+    in property <float> value: -1;
+    in property <length> stroke: 2px;
+    in property <color> track: Pal.wash-strong;
+    in property <color> tint: value < 70 ? Pal.green : value < 90 ? Pal.orange : Pal.red;
+    property <float> r: (min(self.width, self.height) / 2 - stroke / 2) / 1px;
+    property <float> cx: self.width / 2 / 1px;
+    property <float> cy: self.height / 2 / 1px;
+    property <float> a: min(value, 100) / 100 * 360;
+    Path {
+        width: 100%;
+        height: 100%;
+        viewbox-width: root.width / 1px;
+        viewbox-height: root.height / 1px;
+        stroke: track;
+        stroke-width: stroke;
+        fill: transparent;
+        MoveTo { x: cx - r; y: cy; }
+        ArcTo { x: cx + r; y: cy; radius-x: r; radius-y: r; sweep: true; }
+        ArcTo { x: cx - r; y: cy; radius-x: r; radius-y: r; sweep: true; }
+    }
+    if value > 0 && value < 99.95: Path {
+        width: 100%;
+        height: 100%;
+        viewbox-width: root.width / 1px;
+        viewbox-height: root.height / 1px;
+        stroke: tint;
+        stroke-width: stroke;
+        stroke-line-cap: round;
+        fill: transparent;
+        MoveTo { x: cx; y: cy - r; }
+        ArcTo { x: cx + r * sin(a * 1deg); y: cy - r * cos(a * 1deg); radius-x: r; radius-y: r; large-arc: value > 50; sweep: true; }
+    }
+    if value >= 99.95: Path {
+        width: 100%;
+        height: 100%;
+        viewbox-width: root.width / 1px;
+        viewbox-height: root.height / 1px;
+        stroke: tint;
+        stroke-width: stroke;
+        fill: transparent;
+        MoveTo { x: cx - r; y: cy; }
+        ArcTo { x: cx + r; y: cy; radius-x: r; radius-y: r; sweep: true; }
+        ArcTo { x: cx - r; y: cy; radius-x: r; radius-y: r; sweep: true; }
+    }
+}
+
+// A row's lead: the icon in white on a 24 px accent tile, radius 7 (Pages.Tile).
+export component Tile inherits Rectangle {
+    in property <string> icon;
+    in property <color> tint;
+    width: 24px;
+    height: 24px;
+    border-radius: 7px;
+    background: tint;
+    Icon { name: icon; size: 14px; tint: white; }
+}

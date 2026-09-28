@@ -1,0 +1,282 @@
+// Owl/Pages.cs's SettingsPage, drawn from the blocks pages.rs builds: a 196 px sidebar
+// card of the five sections beside one scrolling pane of grouped rows.
+
+import { Pal, Fonts, Icon, Icons, PillButton, Switch, Segments, Ring, Tile } from "widgets.slint";
+import { ScrollView } from "std-widgets.slint";
+
+export struct Opt { label: string, on: bool }
+
+// One row. control: 0 none, 1 switch, 2 button, 3 shortcut, 4 segments, 5 picker, 6 text.
+// lead: 0 none, 1 tile, 2 ring.
+export struct RowData {
+    label: string, sub: string, sub-id: string, enabled: bool,
+    control: int, id: string, name: string, text: string, on: bool, button-enabled: bool,
+    labels: [string], longest: string, picked: int, options: [Opt],
+    lead: int, icon: string, tint: color, ring: float,
+}
+
+export struct TileData {
+    id: string, name: string, from: string, picked: bool,
+    panel: color, surface: color, ink: color, ink-dim: color, blue: color,
+    green: color, orange: color, red: color, purple: color, teal: color,
+}
+
+// kind: 0 title, 1 heading, 2 group, 3 footnote, 4 tiles, 5 link.
+export struct Block {
+    kind: int, text: string, first: bool, rows: [RowData], tiles: [TileData],
+    id: string, name: string, icon: string, dim: bool, status: string,
+}
+
+export struct Side { title: string, icon: string, tint: color }
+
+// Ui.Text's 11.5 px dim line, wrapped.
+component Sub inherits Text {
+    font-size: 11.5px;
+    color: Pal.ink-dim;
+    wrap: word-wrap;
+}
+
+component SidebarItem inherits Rectangle {
+    in property <Side> item;
+    in property <bool> picked;
+    in property <string> id;
+    callback clicked;
+    height: 34px;
+    border-radius: 8px;
+    background: picked ? Pal.blue : ta.has-hover ? Pal.row-hover : transparent;
+    accessible-role: tab;
+    accessible-id: id;
+    accessible-label: item.title;
+    accessible-item-selectable: true;
+    accessible-item-selected: picked;
+    accessible-action-default => { clicked(); }
+    HorizontalLayout {
+        padding-left: 8px;
+        padding-right: 8px;
+        padding-top: 5px;
+        padding-bottom: 5px;
+        spacing: 10px;
+        Tile { icon: item.icon; tint: item.tint; }
+        Text { text: item.title; font-size: 13px; color: picked ? white : Pal.ink; vertical-alignment: center; }
+    }
+    ta := TouchArea { mouse-cursor: pointer; clicked => { clicked(); } }
+}
+
+// The theme preview: the panel, a card with a title and two lines, and five accents;
+// ringed in blue when it is the one in use (Pages.ThemeTile).
+component ThemeTile inherits Rectangle {
+    in property <TileData> t;
+    callback clicked;
+    width: 160px;
+    height: 136px;
+    border-radius: 12px;
+    background: ta.has-hover ? Pal.ink.with-alpha(0.08) : transparent;
+    accessible-role: button;
+    accessible-id: t.id;
+    accessible-label: t.name;
+    accessible-action-default => { clicked(); }
+    Rectangle {
+        x: 5px; y: 5px; width: 150px; height: 86px;
+        border-radius: 12px;
+        background: t.panel;
+        border-width: t.picked ? 2.5px : 1px;
+        border-color: t.picked ? Pal.blue : Pal.separator;
+        Rectangle {
+            x: 8px; y: 8px; width: parent.width - 16px; height: parent.height - 16px;
+            border-radius: 7px;
+            background: t.surface;
+            Rectangle { x: 9px; y: 8px; width: 9px; height: 9px; border-radius: 4.5px; background: t.blue; }
+            Rectangle { x: 23px; y: 10.5px; width: 46px; height: 4px; border-radius: 2px; background: t.ink; }
+            Rectangle { x: 9px; y: 25px; width: 74px; height: 4px; border-radius: 2px; background: t.ink-dim; }
+            Rectangle { x: 9px; y: 34px; width: 54px; height: 4px; border-radius: 2px; background: t.ink-dim; }
+            for c[i] in [t.green, t.orange, t.red, t.purple, t.teal]: Rectangle {
+                x: 9px + i * 11px; y: 46px; width: 7px; height: 7px; border-radius: 3.5px; background: c;
+            }
+        }
+    }
+    Text { x: 8px; y: 97px; width: 144px; text: t.name; font-size: 12.5px; color: Pal.ink; font-weight: t.picked ? 600 : 400; overflow: elide; }
+    Text { x: 8px; y: 114px; width: 144px; text: t.from; font-size: 11px; color: Pal.ink-dim; overflow: elide; }
+    ta := TouchArea { mouse-cursor: pointer; clicked => { clicked(); } }
+}
+
+component RowView inherits Rectangle {
+    in property <RowData> r;
+    in property <bool> recording;
+    in property <int> index;
+    callback toggled(string, bool);
+    callback pressed(string);
+    callback picked-seg(string, int);
+    callback open-picker(string, length, length);
+    callback record;
+    callback chord(KeyEvent) -> bool;
+    min-height: 42px;
+    opacity: r.enabled ? 1 : 0.4;
+    layout := HorizontalLayout {
+        padding-left: 12px;
+        padding-right: 12px;
+        padding-top: 9px;
+        padding-bottom: 9px;
+        spacing: 0;
+        if r.lead == 1: VerticalLayout { alignment: center; padding-right: 10px; Tile { icon: r.icon; tint: r.tint; } }
+        if r.lead == 2: VerticalLayout { alignment: center; padding-left: 2px; padding-right: 12px; Ring { width: 20px; height: 20px; stroke: 2.5px; value: r.ring; } }
+        VerticalLayout {
+            alignment: center;
+            horizontal-stretch: 1;
+            spacing: 2px;
+            Text { text: r.label; font-size: 13px; color: Pal.ink; overflow: elide; }
+            if r.sub != "": Sub { text: r.sub; accessible-id: r.sub-id; }
+        }
+        if r.control != 0: VerticalLayout {
+            alignment: center;
+            padding-left: 12px;
+            if r.control == 1: Switch { id: r.id; label: r.name; on: r.on; enabled: r.enabled; toggled(v) => { toggled(r.id, v); } }
+            if r.control == 2: PillButton { id: r.id; label: r.name; text: r.text; enabled: r.enabled && r.button-enabled; clicked => { pressed(r.id); } }
+            if r.control == 3: shortcut := PillButton {
+                id: "WorkspaceShortcut";
+                label: "Notch shortcut";
+                text: r.text;
+                min-width: 96px;
+                bold-text: true;
+                clicked => { record(); keys.focus(); }
+                keys := FocusScope {
+                    key-pressed(e) => { if (recording) { return chord(e) ? accept : reject; } reject }
+                    focus-changed-event => { if (!self.has-focus && recording) { root.record(); } }
+                }
+            }
+            if r.control == 4: Segments { id: r.id; labels: r.labels; longest: r.longest; picked: r.picked; enabled: r.enabled; pick(i) => { picked-seg(r.id, i); } }
+            if r.control == 5: pk := PillButton {
+                id: r.id;
+                label: r.name + ": " + r.text;
+                text: r.text;
+                chevron: true;
+                pad-x: 12px;
+                pad-y: 4px;
+                font-size: 12.5px;
+                enabled: r.enabled;
+                clicked => { open-picker(r.id, self.absolute-position.x, self.absolute-position.y + self.height); }
+            }
+            if r.control == 6: Text { text: r.text; font-size: 12.5px; color: Pal.ink-dim; }
+        }
+    }
+}
+
+export component SettingsPage inherits Rectangle {
+    in property <[Side]> sections;
+    in property <int> current;
+    in property <[Block]> blocks;
+    in property <bool> recording;
+    in-out property <length> scroll-y;
+    callback section(int);
+    callback toggled(string, bool);
+    callback pressed(string);
+    callback picked-seg(string, int);
+    callback open-picker(string, length, length);
+    callback tile(string);
+    callback record;
+    callback chord(KeyEvent) -> bool;
+
+    // Margin 10,0,10,10 around the grid; the sidebar card, 8 between, the pane.
+    Rectangle {
+        x: 10px;
+        y: 0;
+        width: 196px;
+        height: parent.height - 10px;
+        border-radius: 22px;
+        background: Pal.surface;
+        VerticalLayout {
+            padding: 8px;
+            alignment: start;
+            for s[i] in sections: SidebarItem {
+                item: s;
+                id: "Section" + s.title;
+                picked: i == current;
+                clicked => { section(i); }
+            }
+        }
+    }
+    pane := ScrollView {
+        x: 214px;
+        y: 0;
+        width: parent.width - 224px;
+        height: parent.height - 10px;
+        content-y <=> scroll-y;
+        content-width: self.visible-width;
+        content-height: col.preferred-height;
+        col := VerticalLayout {
+            width: pane.visible-width;
+            padding-left: 14px;
+            padding-right: 14px;
+            padding-top: 6px;
+            padding-bottom: 18px;
+            for b in blocks: VerticalLayout {
+                if b.kind == 0: Text { text: b.text; font-size: 20px; font-weight: 600; font-family: Fonts.display; color: Pal.ink; accessible-role: text; }
+                if b.kind == 0: Rectangle { height: 14px; }
+                if b.kind == 1: HorizontalLayout {
+                    padding-left: 12px;
+                    padding-top: b.first ? 4px : 10px;
+                    padding-bottom: 6px;
+                    Text { text: b.text; font-size: 10.5px; font-weight: 600; color: Pal.ink-dim; }
+                }
+                if b.kind == 2: VerticalLayout {
+                    padding-bottom: 6px;
+                    Rectangle {
+                        border-radius: 12px;
+                        background: Pal.surface;
+                        VerticalLayout {
+                            for r[i] in b.rows: VerticalLayout {
+                                if i > 0: HorizontalLayout { padding-left: 12px; Rectangle { height: 1px; background: Pal.separator; } }
+                                RowView {
+                                    r: r;
+                                    index: i;
+                                    recording: root.recording;
+                                    toggled(id, v) => { root.toggled(id, v); }
+                                    pressed(id) => { root.pressed(id); }
+                                    picked-seg(id, n) => { root.picked-seg(id, n); }
+                                    open-picker(id, x, y) => { root.open-picker(id, x, y); }
+                                    record => { root.record(); }
+                                    chord(e) => { root.chord(e) }
+                                }
+                            }
+                        }
+                    }
+                }
+                if b.kind == 3: HorizontalLayout {
+                    padding-left: 12px;
+                    padding-right: 12px;
+                    padding-bottom: 18px;
+                    Sub { text: b.text; }
+                }
+                // A WrapPanel of 160 px tiles, 4 apart: as many a line as fit.
+                if b.kind == 4: Rectangle {
+                    property <int> per: max(1, floor((pane.visible-width - 32px) / 164px));
+                    height: ceil(b.tiles.length / per) * 140px + 4px;
+                    for t[i] in b.tiles: ThemeTile {
+                        x: 4px + mod(i, per) * 164px;
+                        y: floor(i / per) * 140px;
+                        t: t;
+                        clicked => { root.tile(t.id); }
+                    }
+                }
+                if b.kind == 5: HorizontalLayout {
+                    padding-left: 8px;
+                    padding-bottom: 4px;
+                    alignment: start;
+                    spacing: 8px;
+                    PillButton {
+                        id: b.id;
+                        label: b.name;
+                        text: b.text;
+                        icon: b.icon;
+                        bg: transparent;
+                        fg: b.dim ? Pal.ink-dim : Pal.blue;
+                        pad-x: 6px;
+                        pad-y: 3px;
+                        font-size: 12px;
+                        clicked => { root.pressed(b.id); }
+                    }
+                    if b.status != "": Sub { text: b.status; vertical-alignment: center; }
+                }
+            }
+        }
+    }
+}

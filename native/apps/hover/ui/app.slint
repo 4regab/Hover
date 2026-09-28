@@ -1,1 +1,287 @@
-export component Placeholder inherits Window {}
+// Hover's windows: the notch (Notch.cs NotchShell and NotchHost's resting shapes), the
+// dashboard (DashboardWindow) and the shortcut's warning (App.ShowHotKeyWarning).
+
+import { Pal, Fonts, Icon, Icons, PillButton, Ring } from "widgets.slint";
+import { BotGlyph, WorkDots } from "bot.slint";
+import { OfficeView, Page, Office, Side, Block, Opt } from "office.slint";
+export { Pal, Page, Office, Side, Block, Opt }
+
+export struct QuotaItem { id: string, name: string, ring: float, value: string, dim: bool }
+
+// The notch's little clock (Animator): seconds, stepped at 30 fps while something moves.
+export global Clock {
+    in property <float> t;
+    in property <float> done-since: 9;
+}
+
+export component NotchWindow inherits Window {
+    // The shape, in window DIPs (hover-notch's frame).
+    in property <string> shape-commands;
+    in property <string> rim-commands;
+    in property <length> shape-x;
+    in property <length> shape-w;
+    in property <length> shape-h;
+    in property <length> shape-r;
+    in property <color> shape-fill: black;
+    in property <float> rim-opacity;
+    in property <float> mini-opacity: 1;
+    in property <float> view-opacity;
+    in property <bool> view-visible;
+    in property <float> openness;
+    in property <length> open-w: 1120px;
+    in property <length> open-h: 440px;
+    in property <length> rest-w;
+    in property <length> rest-h;
+    // The resting shape: 0 nothing, 1 the pill, 2 an alert.
+    in property <int> rest-kind;
+    in property <[QuotaItem]> quotas;
+    in property <string> working;
+    in property <bool> show-working;
+    in property <string> done;
+    in property <bool> show-done;
+    in property <string> alert-title;
+    in property <string> alert-text;
+    in property <bool> greet;
+    in property <bool> in-settings;
+    // The working words rise into place when they change (260 ms): Rust sets rise to 0
+    // with no duration, then to 1 with 260 ms.
+    in property <float> rise: 1;
+    in property <duration> rise-ms: 0;
+    out property <length> pill-width: pill.preferred-width;
+    out property <length> alert-width: max(alert-t.preferred-width, alert-x.preferred-width);
+    callback escape();
+    callback shape-pressed();
+    callback shape-clicked();
+    callback back();
+    callback fold();
+
+    title: "Hover notch";
+    no-frame: true;
+    background: transparent;
+    always-on-top: true;
+    accessible-role: groupbox;
+    accessible-id: "HoverNotch";
+    default-font-family: Fonts.text;
+
+    // DropShadowEffect: blur 24, depth 4, 50 % in dark; blur 36, depth 10, 22 % in light.
+    Rectangle {
+        x: root.shape-x;
+        y: 0;
+        width: root.shape-w;
+        height: root.shape-h;
+        visible: root.shape-w > 1px && root.shape-h > 1px;
+        border-bottom-left-radius: root.shape-r;
+        border-bottom-right-radius: root.shape-r;
+        background: black;
+        drop-shadow-blur: Pal.dark ? 24px : 36px;
+        drop-shadow-offset-y: Pal.dark ? 4px : 10px;
+        drop-shadow-color: Pal.dark ? #00000080 : #00000038;
+    }
+    Path {
+        y: 0;
+        width: root.width;
+        height: root.height;
+        viewbox-width: root.width / 1px;
+        viewbox-height: root.height / 1px;
+        commands: root.shape-commands;
+        fill: root.shape-fill;
+        stroke: transparent;
+    }
+    Path {
+        y: 0;
+        width: root.width;
+        height: root.height;
+        viewbox-width: root.width / 1px;
+        viewbox-height: root.height / 1px;
+        commands: root.rim-commands;
+        fill: transparent;
+        stroke: Pal.panel-edge;
+        stroke-width: 1px;
+        opacity: root.rim-opacity;
+    }
+    TouchArea {
+        x: root.shape-x;
+        y: 0;
+        width: root.shape-w;
+        height: root.shape-h;
+        pointer-event(e) => { if (e.kind == PointerEventKind.down) { root.shape-pressed(); } }
+        clicked => { root.shape-clicked(); }
+    }
+
+    // Mini: the resting shape's content, centred in it.
+    Rectangle {
+        x: (root.width - root.rest-w) / 2;
+        y: 0;
+        width: root.rest-w;
+        height: root.rest-h;
+        opacity: root.mini-opacity;
+        visible: root.mini-opacity > 0;
+        pill := HorizontalLayout {
+            visible: root.rest-kind == 1;
+            alignment: center;
+            spacing: 12px;
+            for q in root.quotas: HorizontalLayout {
+                spacing: 0;
+                VerticalLayout { alignment: center; Ring { width: 11px; height: 11px; value: q.ring; track: #ffffff38; } }
+                Rectangle { width: 6px; }
+                Text { text: q.name; font-size: 11.5px; color: #ffffffa6; vertical-alignment: center; }
+                Rectangle { width: 4px; }
+                Text {
+                    text: q.value;
+                    font-size: 11.5px;
+                    font-weight: 600;
+                    color: q.dim ? #ffffffa6 : white;
+                    vertical-alignment: center;
+                    accessible-role: text;
+                    accessible-id: "NotchQuota" + (q.id == "claude" ? "Claude" : q.id == "kiro" ? "Kiro" : q.id == "codex" ? "Codex" : "Cursor");
+                    accessible-label: q.value;
+                }
+            }
+            if root.show-working: HorizontalLayout {
+                VerticalLayout { alignment: center; BotGlyph { width: 17px; height: 17px; live: true; t: Clock.t; motion: Pal.motion; } }
+                Rectangle { width: 7px; }
+                Text {
+                    text: root.working;
+                    font-size: 12px;
+                    font-weight: 600;
+                    color: white;
+                    vertical-alignment: center;
+                    opacity: root.rise;
+                    y: (1 - root.rise) * 6px;
+                    animate opacity, y { duration: root.rise-ms; easing: cubic-bezier(0.215, 0.61, 0.355, 1); }
+                    accessible-role: text;
+                    accessible-id: "NotchKiro";
+                    accessible-label: root.working;
+                }
+                Rectangle { width: 3px; }
+                VerticalLayout { alignment: center; padding-top: 1px; WorkDots { t: Clock.t; motion: Pal.motion; } }
+            }
+            if root.show-done: HorizontalLayout {
+                VerticalLayout { alignment: center; BotGlyph { width: 17px; height: 17px; finished: true; t: Clock.t; since: Clock.done-since; motion: Pal.motion; } }
+                Rectangle { width: 7px; }
+                Text {
+                    text: root.done;
+                    font-size: 12px;
+                    font-weight: 600;
+                    color: white;
+                    vertical-alignment: center;
+                    accessible-role: text;
+                    accessible-id: "NotchKiroDone";
+                    accessible-label: root.done;
+                }
+            }
+        }
+        VerticalLayout {
+            visible: root.rest-kind == 2;
+            alignment: center;
+            spacing: 5px;
+            alert-t := Text {
+                text: root.alert-title;
+                font-size: 13.5px;
+                font-weight: 600;
+                color: white;
+                horizontal-alignment: center;
+                overflow: elide;
+                accessible-role: text;
+                accessible-id: "NotchAlert";
+                accessible-label: root.alert-title;
+            }
+            alert-x := Text {
+                text: root.alert-text;
+                font-size: 11.5px;
+                color: #ffffffa6;
+                horizontal-alignment: center;
+                overflow: elide;
+                max-width: 380px;
+            }
+        }
+    }
+
+    // ViewHost: laid out at the open size, clipped by the growing shape.
+    Rectangle {
+        x: root.shape-x;
+        y: 0;
+        width: root.shape-w;
+        height: root.shape-h;
+        clip: true;
+        border-bottom-left-radius: root.shape-r;
+        border-bottom-right-radius: root.shape-r;
+        visible: root.view-visible;
+        FocusScope {
+            key-pressed(e) => {
+                if (e.text == Key.Escape) { root.escape(); return accept; }
+                reject
+            }
+            Rectangle {
+                x: (root.shape-w - root.open-w) / 2;
+                y: 0;
+                width: root.open-w;
+                height: root.open-h;
+                opacity: root.view-opacity;
+                OfficeView {
+                    dashboard: false;
+                    in-settings: root.in-settings;
+                    back => { root.back(); }
+                    fold => { root.fold(); }
+                }
+            }
+        }
+    }
+
+    // "Welcome back", said while the notch opens: low in the small notch, growing a
+    // little with it, gone by the time the cards are in.
+    if root.greet: greeting := Text {
+        property <bool> fits: root.shape-w >= self.preferred-width + 24px && root.shape-h >= self.preferred-height + 12px;
+        text: "Welcome back";
+        font-family: Fonts.display;
+        font-weight: 600;
+        font-size: (12 + 10 * clamp(root.openness / 0.6, 0, 1)) * 1px;
+        color: white;
+        x: (root.width - self.preferred-width) / 2;
+        y: max(4px, min(root.shape-h - self.preferred-height - 9px, 64px));
+        opacity: fits ? clamp((0.6 - root.openness) / 0.3, 0, 1) : 0;
+    }
+}
+
+export component DashboardWindow inherits Window {
+    in property <bool> in-settings;
+    callback back();
+    title: "Hover";
+    preferred-width: 1200px;
+    preferred-height: 620px;
+    min-width: 880px;
+    min-height: 480px;
+    background: Pal.panel;
+    default-font-family: Fonts.text;
+    accessible-role: groupbox;
+    accessible-id: "HoverDashboard";
+    OfficeView {
+        dashboard: true;
+        in-settings: root.in-settings;
+        back => { root.back(); }
+    }
+}
+
+// MessageBox with the warning icon and OK.
+export component WarningWindow inherits Window {
+    in property <string> message;
+    callback ok();
+    title: "Global shortcut unavailable";
+    width: 440px;
+    height: layout.preferred-height;
+    background: Pal.sheet;
+    default-font-family: Fonts.text;
+    layout := VerticalLayout {
+        padding: 20px;
+        spacing: 16px;
+        HorizontalLayout {
+            spacing: 14px;
+            VerticalLayout { alignment: start; Icon { name: Icons.warning; size: 28px; tint: Pal.orange; } }
+            Text { text: root.message; wrap: word-wrap; font-size: 13px; color: Pal.ink; }
+        }
+        HorizontalLayout {
+            alignment: end;
+            PillButton { id: "OK"; text: "OK"; bg: Pal.blue; fg: white; pad-x: 22px; clicked => { root.ok(); } }
+        }
+    }
+}

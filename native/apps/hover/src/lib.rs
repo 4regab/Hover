@@ -3,5 +3,9 @@
 //! them on screen.
 
 pub mod app;
+pub mod keys;
 pub mod music;
+pub mod pages;
 pub mod rest;
+#[cfg(not(windows))]
+pub mod sni;

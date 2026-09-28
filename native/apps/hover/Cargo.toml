@@ -31,11 +31,15 @@ cpal = "0.18"
 [target.'cfg(not(windows))'.dependencies]
 # Already in the tree (winit): the notch's X11 window (override-redirect, its input
 # shape), the global shortcut (XGrabKey) and the screenshots of the real screen.
-x11rb = { version = "0.13", features = ["shape", "xkb"] }
+x11rb = { version = "0.13", features = ["shape", "randr"] }
+# Already in the tree (winit): the X window behind winit's.
+raw-window-handle = "0.6"
 # Already in the tree: the tray (StatusNotifierItem), notifications, and the portal's
 # global shortcut on Wayland. With its object server, which the tray needs.
 zbus = { version = "5", default-features = false, features = ["async-io", "blocking-api"] }
 libc = "0.2"
+# In the tree (zbus): the tray menu's node type is serialised as D-Bus asks.
+serde = { version = "1", features = ["derive"] }
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.62", features = [

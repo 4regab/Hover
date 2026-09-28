@@ -244,7 +244,11 @@ impl Default for Openness {
 }
 
 impl Openness {
+    /// Standing still at a value (where an interrupted greeting had got to).
+    pub fn at(v: f64) -> Openness { Openness { from: v, to: v, start: 0.0, dur: 1.0 } }
+
     pub fn value(&self, now_ms: f64) -> f64 {
+
         let k = ((now_ms - self.start) / self.dur).clamp(0.0, 1.0);
         let e = if self.to > self.from { ease_out_cubic(k) } else { ease_in_cubic(k) };
         self.from + (self.to - self.from) * e
