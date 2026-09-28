@@ -71,7 +71,18 @@ rustup target add x86_64-pc-windows-msvc                                     # W
 mkdir -p /projects/sandbox/pw && cd /projects/sandbox/pw && npm init -y && npm i playwright
 npx playwright install chromium        # not --with-deps (no apt here)
 ln -s /projects/sandbox/pw/node_modules /projects/sandbox/node_modules
+# Linux desktop stack, for the Linux gates (Amazon Linux 2023 has these in dnf):
+dnf install -y xorg-x11-server-Xvfb weston dbus-daemon dbus-tools gnome-keyring libsecret \
+  at-spi2-core python3-gobject mesa-vulkan-drivers mesa-libEGL libxkbcommon-x11 squashfs-tools rpm-build
+# .NET 10, only to build and run port/tools/FakeAcp (net10.0, runs on Linux). HoverFixture
+# is WPF + DPAPI and can't run here; hover-data (hover-core) is its Rust counterpart.
+curl -sSL https://dot.net/v1/dotnet-install.sh | bash -s -- --channel 10.0 --install-dir /opt/dotnet10
+DOTNET_ROOT=/opt/dotnet10 /opt/dotnet10/dotnet build port/tools/FakeAcp/FakeAcp.csproj -c Release -o /projects/sandbox/fakeacp
 ```
+
+The secret_service test starts its own dbus-daemon (a config with no service
+directories: the stock session config activates the desktop's keyring in the real
+home) and GNOME Keyring. It skips where they aren't installed.
 
 ## Commands
 
@@ -141,6 +152,14 @@ KiroStream, sessions, job object, provider adapters; B: AES-GCM framing, DPAPI, 
 System.Text.Json shapes, C#↔Rust round-trips; C: settings, quotas, palette and themes,
 music, tray, dashboard, single instance), Phase 4 (validation, installer, cutover).
 Costs per area are in REPORT.md.
+
+## Progress in the all-phases session (2026-09-28)
+
+- **3B done** (`9bf324a`): `native/crates/hover-core`, evidence and three open
+  questions in `port/phase3/REPORT.md`, Windows checks in `port/phase3/RUN-ON-WINDOWS.md`.
+  Platform layout decided and written in `port/README.md`.
+- **Next: 3A**: AcpHost, KiroStream, KiroSession(s), the process group / job object,
+  the adapters, FakeAcp replays, the office `state` message (KiroPage.Push/State).
 
 ## Next steps
 
