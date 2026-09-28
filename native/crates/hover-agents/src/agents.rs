@@ -24,7 +24,10 @@ fn user_bin(name: &str) -> Option<PathBuf> {
     Some(crate::proc::home().join(".local/bin").join(name)).filter(|p| p.is_file())
 }
 
-fn find(name: &str) -> Option<PathBuf> { on_path(name).or_else(|| user_bin(name)) }
+/// A command on PATH, else in the user's own bin folder (a desktop session's PATH
+/// often lacks ~/.local/bin). The quota read looks for kiro-cli this way too.
+pub fn find(name: &str) -> Option<PathBuf> { on_path(name).or_else(|| user_bin(name)) }
+
 
 /// The program that speaks ACP for the tool, or none when it isn't installed.
 pub fn exe(t: AgentTool) -> Option<PathBuf> {

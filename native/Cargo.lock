@@ -1962,6 +1962,18 @@ name = "hover-notch"
 version = "0.1.0"
 
 [[package]]
+name = "hover-quota"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "hover-agents",
+ "hover-core",
+ "libsqlite3-sys",
+ "regex",
+ "ureq",
+]
+
+[[package]]
 name = "htmlparser"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2801,6 +2813,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e8a484fa48be5f62a8d3ffed767779d0ab808cfead91de98ef4362d469097dfb"
 dependencies = [
  "pkg-config",
+]
+
+[[package]]
+name = "libsqlite3-sys"
+version = "0.38.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f1d20bef17f513b9b3004532233187769cd072d790971f4e4da0e346eb6401e8"
+dependencies = [
+ "cc",
+ "pkg-config",
+ "vcpkg",
 ]
 
 [[package]]
