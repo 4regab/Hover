@@ -17,7 +17,8 @@ const W = 1104, H = 424;
 
 // BROWSER_CHANNEL=msedge on Windows: Edge is WebView2's engine, with the same system fonts.
 const channel = process.env.BROWSER_CHANNEL;
-const browser = await chromium.launch({ ...(channel ? { channel } : {}), args: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--font-render-hinting=none'] });
+// Playwright hides scrollbars unless told not to; WebView2 shows them, and they take width.
+const browser = await chromium.launch({ ...(channel ? { channel } : {}), ignoreDefaultArgs: ['--hide-scrollbars'], args: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--font-render-hinting=none'] });
 // ONLY=a,b captures just those views.
 const only = process.env.ONLY?.split(',');
 async function view(name, { time = 'night', state = fx.state, steps = [], settle = 6000, query = '' } = {}) {

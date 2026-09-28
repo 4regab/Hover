@@ -28,11 +28,13 @@ Each concern has its own implementation. Slint's StyledText is used for none of 
 
 | Concern | Implementation | Result |
 |---|---|---|
-| Parsing | `hover-md`: md.js ported line for line, writing the same HTML, then read back into blocks | byte-identical on 7 fixtures and 3 956 random documents |
+| Parsing | `hover-md`: md.js ported line for line, writing the same HTML, then read back into blocks | byte-identical on 9 fixtures and 3 956 random documents |
 | Diagrams | `hover-diagram`: diagram.js ported; the same SVG, rasterised by resvg with page.html's `.flow` CSS | byte-identical on 8 cases |
 | Images in answers | `imageFor` ported (web, and the session folder only) | 12 path cases identical |
-| Layout | page.html's box model by hand (margin collapsing, lists, tables in auto layout, quotes, code, step lists as flex rows); text by parley | step rows within 0.01 px of the page |
+| Layout | page.html's box model by hand (margin collapsing, lists, tables in auto layout, quotes, code, step lists as flex rows); text by parley | step rows within 0.01 px of the page; code, table and diagram boxes within 0.03 px (with scrollbars, `golden/gen-scroll.mjs`) |
 | Selection and copy | parley cursors across every text box; a copy serialiser fitted to Chromium's | identical on 5 fixture sessions and 600 random answers from the real page (`golden/gen-copy.mjs`) |
+| Double and triple click | ICU word boundaries (with the CJK/Thai dictionaries) plus Chromium's full-stop rule; Blink's word side at soft wraps; paragraph = line to the next break, with the block's end; Windows' trailing spaces | 3 602 of 3 606 clicks identical to the page (`golden/gen-words.mjs`, every character of `fixtures/words.md` at ¼ and ¾ of its width); 3 skipped where the lines wrap elsewhere; the 4 others are emoji (below) |
+| Scrollbars | `hover-chat::scroll`: the thin Fluent bar measured in Chromium (10 px, arrows, 6 px thumb, 11 px minimum, 40 px arrow step, 87.5 % page, 250/50 ms repeat); the thread's takes 10 px from the content; a code block wider than the drawer scrolls sideways under its own bar | geometry unit-tested against the page's pixels; Windows look **pending** |
 | Painting | tiny-skia plus swash glyph masks, viewport only, with glyph, image and diagram caches | see the timings |
 | Chrome and composer | Slint: header, `TextInput` composer (Enter, Shift+Enter), send/queue/stop, Ctrl+C, Ctrl+A | headless screenshots in `shots/` |
 | Accessibility | one Slint text node per visible text box, over the painted thread | the nodes are there; not yet checked with a UIA client |
@@ -61,11 +63,31 @@ Findings about the baseline that change what parity means:
 4. **Copy details are Chromium's.** A rule settles pending newlines. A paragraph that is
    only an image copies as blank lines. A table at the end of a selection adds a trailing
    newline. A diagram's labels are part of the copy.
+5. **The thread has a real scrollbar, and it takes width.** WebView2 draws classic
+   (non-overlay) scrollbars; `scrollbar-width: thin` is 10 px, so an overflowing thread's
+   text is 10 px narrower and wraps differently. Playwright hides scrollbars by default,
+   so **the Phase 0 captures in `baseline/` show none**, and the copy and step-row
+   goldens were measured without them (they don't depend on width, or use the width they
+   were taken at). `capture-office.mjs` now shows the bars, for the Windows run; the
+   Chromium captures in `baseline/` were not retaken.
+6. **Tables never scroll sideways in the page.** `.ans { overflow-wrap: anywhere }` lets
+   any cell break anywhere, so `.table { overflow: auto }` never overflows. Only code
+   blocks do. The port keeps the table path (it follows the same rule) but it never fires.
+7. **A double click is Blink's word granularity, not the character under the pointer.**
+   The caret nearest the pointer picks the word that starts there, so the right half of a
+   word's last letter selects the space after it, except at the end of a soft-wrapped
+   line. `foo.bar` is three words (`3.14` one). On Windows the spaces after the word come
+   too. Emoji next to a space or each other select as Chromium's ICU does only in part
+   (it walks boundaries forwards and backwards differently there): 4 clicks differ.
 
 Chat gaps that remain (none are known blockers):
-- Code blocks and tables are clipped at the drawer's edge; horizontal scrolling is not
-  done yet.
-- The thread has no scrollbar (`scrollbar-width: thin`) and no smooth wheel scrolling.
+- No smooth wheel scrolling, and no animated scroll for arrow and track presses (Chromium
+  animates both on Windows).
+- The scrollbars' look is Chromium's Fluent bar as drawn on Linux; Windows 11 should match,
+  Windows 10 draws classic bars. To compare on Windows.
+- A broken or unloaded image in the page shows the broken-image icon and its alt text;
+  the port shows nothing ("The flow" in the rich session, seen in captures with the
+  scrollbars shown).
 - The glass blur (`backdrop-filter: blur(18px) saturate(1.4)`) is not drawn: the drawer is
   flat. This needs the office scene behind it (Phase 2).
 - Web images are not fetched: the prototype's loader returns nothing. The drawing and
@@ -74,7 +96,6 @@ Chat gaps that remain (none are known blockers):
   menu; the transcript view; the fresh-answer fade; the drawer's slide.
 - The selection colour is a guess (`theme::SELECTION`) until it is compared with WebView2.
 - Accessibility: the text nodes don't expose the text selection to UIA.
-- Only single clicks. Double-click word selection and triple-click line selection are not done.
 
 ## 1A: notch
 

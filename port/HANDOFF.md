@@ -62,18 +62,28 @@ cargo test --release --workspace          # all tests (goldens, copy corpus, not
 cargo check --target x86_64-pc-windows-msvc -p notch-proto -p chat-proto   # Windows type-check
 ./target/release/chat-proto --screenshot out.png --select --session 1
 node golden/gen.mjs                       # md/diagram goldens (must stay unchanged)
-# the copy goldens need Playwright: npm i playwright; then node native/golden/gen-copy.mjs
+# the page goldens need Playwright (npm i playwright; npx playwright install chromium):
+node golden/gen-copy.mjs     # copy corpus (about 1 min)
+node golden/gen-words.mjs    # double/triple clicks on every character (about 6 min)
+node golden/gen-scroll.mjs   # box sizes with the scrollbars shown
 ```
 
-On Linux the tests need fontconfig, plus DejaVu Sans Mono for the code font.
+On Linux the tests need fontconfig, plus DejaVu Sans and Sans Mono
+(`dnf install dejavu-sans-fonts dejavu-sans-mono-fonts` on Amazon Linux). The Windows
+type-check needs `rustup target add x86_64-pc-windows-msvc`. Keep `node_modules` outside
+the repo (a symlink at `/projects/sandbox/node_modules` works for the scripts).
 
 ## State at handoff
 
 **Done:**
 - Phase 0 docs and the baseline captures.
-- md.js and diagram.js ported with byte parity: 7 fixtures, 3 956 random documents and
+- md.js and diagram.js ported with byte parity: 9 fixtures, 3 956 random documents and
   8 diagrams.
 - Chat copy identical to Chromium's on 605 cases.
+- Double and triple click: 3 602 of 3 606 page clicks identical (4 emoji cases differ).
+- Thin scrollbars (thread, and sideways in code blocks), measured in Chromium with its
+  scrollbars shown; box heights within 0.03 px of the page. Finding: the Phase 0
+  captures were taken with Playwright's hidden scrollbars (REPORT.md, finding 5).
 - Step lists (live step, toggle, flex shrink, ellipsis, tags), prompt thumbnails.
 - Both prototypes build, and type-check for Windows.
 
@@ -97,9 +107,8 @@ while `WS_EX_TRANSPARENT` is toggled from the 50 ms poll. The fallbacks are in R
 
 1. Wait for the user's Windows results (RUN-ON-WINDOWS.md) before Phase 2.
 2. Meanwhile, portable Phase 1 chat gaps:
-   - horizontal scroll in `pre` and tables;
-   - a thin scrollbar;
-   - double- and triple-click selection;
+   - smooth (animated) wheel, arrow and track scrolling;
+   - the broken-image icon and alt text the page shows for an image that doesn't load;
    - fetching web images;
    - composer image paste, drop and pick;
    - the model menu;

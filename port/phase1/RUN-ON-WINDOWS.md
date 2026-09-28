@@ -42,6 +42,16 @@ Record the Windows build, GPU and driver, and the scale factors in the report.
   shows a long conversation; `chat-proto.exe --stream` streams an answer.
 - Drag to select from the prose into the list, the table and the code. Press Ctrl+C,
   then paste into Notepad.
+- Double-click a word: it and the spaces after it are selected (WebView2's Windows
+  behaviour). Triple-click: the line up to the next break. Drag after either: the
+  selection grows by whole words or lines. Compare with the same clicks in Hover.
+- The thread's scrollbar and the code block's sideways bar: drag the thumbs, press
+  and hold the arrows and the track, Shift+wheel over the code, and hover a thumb (it
+  darkens). Compare their look with Hover's office side by side (Windows 10 draws
+  classic bars, 11 Fluent ones; the port draws Fluent's).
+- Scrollbar width: the port assumes WebView2's thin bar is 10 px, as Chromium's is on
+  Linux. Screenshot the rich session in Hover and in `chat-proto.exe`: the thread's
+  lines should wrap at the same words, and the bars should be equally wide.
 - Click a link: the browser opens it.
 - Type in the composer, including through an IME. Enter sends; Shift+Enter adds a new line.
 - Run Accessibility Insights (or Inspect.exe) over the window. The conversation should
