@@ -226,3 +226,80 @@ Linux adaptations (the C# never ran there):
 ### Costs of what's left in 3A
 
 Nothing in code. The notch alert and tray balloon on a turn's end (A10) come with 3C.
+
+## 3C: the product (`native/apps/hover`, `native/crates/hover-quota`)
+
+**Status: built and run on Linux (X11 under Xvfb, and XWayland inside headless
+weston); the Windows half type-checks for MSVC and its checks are pending.**
+
+| C# | Rust | What it does |
+|---|---|---|
+| `Core/Quota.cs` | `hover-quota` (`lib.rs`, `read.rs`, `sqlite.rs`, `num.rs`) | The four readers line for line: kiro-cli's report (25 s deadline for the exit and both pipes, the tree killed), Codex's newest `rollout-*.jsonl`, Cursor's token from `state.vscdb` (SQLite read-only, 2 s lock wait; built in on Linux, `winsqlite3.dll` on Windows) then `usage-summary`, Claude Code's `.credentials.json` then `api/oauth/usage`, never refreshed. .NET's `"0"`/`"0.##"` rounding (15 digits, half away from zero) and `d MMM HH:mm` in local time. |
+| `OwlApp` quotas | `schedule.rs` | Off until switched on; read five minutes after the last read (30 s tick), at once when forced; a quota switched off loses its reading; one read per quota at a time, each on a thread. |
+| `Core/Palette.cs`, `Owl/Theme.cs` | `hover-core::palette`, `platform::look` | Hover's light and dark, `From` a VS Code theme, JSONC files with `include` (depth 4), the installed-theme finder, the colour arithmetic (Math.Round's half-to-even). System follows the platform: Windows' `AppsUseLightTheme` and "Animation effects"; on Linux the settings portal (`color-scheme`, GNOME's `enable-animations`), else gsettings, `kdeglobals`, GTK's `settings.ini`; changes watched. |
+| `Owl/OwlApp.cs`, `App.xaml.cs` | `apps/hover/src/app.rs`, `main.rs` | One owner of the settings, key, history, the three ACP hosts and the sessions. Ends announced (notch alert 8 s + notification) unless an office is in view, counted until seen. Single instance (a second launch opens the app window). Quit, the tray's Quit, SIGTERM or SIGINT: sessions stopped, tools shut down, history and settings flushed. |
+| `Owl/Pages.cs`, `Themes/Owl.xaml` | `pages.rs` (the page as data), `ui/settings.slint`, `ui/widgets.slint` | The five sections row for row with the C#'s words and automation ids (`accessible-id`, which AccessKit gives UIA as AutomationId and AT-SPI as its id); switch, segmented control with its sliding thumb, pills, pickers and their menu, theme tiles, the shortcut recorder (Esc stops, a modifier is required, the chord is kept as WPF's Key). |
+| `Owl/Notch.cs`, `Owl/Bot.cs` | `notch.rs`, `rest.rs`, `ui/app.slint`, `ui/bot.slint` | Rest (nothing, the pill, the alert), quota rings coloured by level, the working bot with the status words rising in (260 ms) and the dots, the done bot's hop (0.9 s), "Welcome back" on the first opening and after resume/unlock (160/560/940 ms keyframes), peek and open, Esc and click-away, the four office sizes. The office itself is a stand-in until Phase 2. |
+| `Interop/HotKeys.cs` | `win.rs` (`RegisterHotKey`), `x11.rs` (`XGrabKey` with and without Caps/Num Lock) | Rebindable; refused chords warned about once per chord (App.ShowHotKeyWarning). |
+| `Services/TrayIcon.cs`, `Actions.cs` | `win.rs` (`Shell_NotifyIcon`, a popup menu, the balloon), `sni.rs` | Linux: StatusNotifierItem with its menu over `com.canonical.dbusmenu`, notifications over `org.freedesktop.Notifications`. The menu is BuildMainMenu's seven entries. |
+| `KiroPage`'s beats | `music.rs` | `office-beats.ogg` decoded in Rust (lewton), played through WASAPI/ALSA (cpal): off until switched on, remembered (`office.json`), the page's fade (16 frames up to 0.32, 11 down), silent while no office is in view, the device let go when silent. |
+| `DashboardWindow` | `DashboardWindow` in `ui/app.slint` | 1200×620, min 880×480; on Windows the title bar takes the panel's colour (DWM). |
+
+New crates, each with its reason in `Cargo.toml`: `libsqlite3-sys` (Cursor's database), `lewton` and `cpal` (the music).
+
+### Evidence
+
+`cargo test --release --workspace`: **145 passed** (103 before 3C). MSVC `cargo check --workspace --all-targets`: green. `cargo clippy -p hover -p hover-quota -p hover-core --all-targets`: no warnings.
+
+| Test | Against |
+|---|---|
+| `hover-quota/tests/quota.rs` (15) | `LayoutAndQuotaTests.cs` (QuotaTests) case for case; plus the readers against stand-ins: a local HTTP server checks the headers and every refusal's words, a real SQLite file holds Cursor's token (text and UTF-16 blob), a script stands in for kiro-cli including a grandchild holding stdout past the deadline. Run in four time zones. |
+| `hover-quota` unit (3) | .NET's custom-format rounding; OwlApp's five-minute book |
+| `hover-core::palette` (5), `tests/look.rs` | Palette.From's values worked out line by line; Read with includes and a loop; the installed-theme finder over fake extension folders (nls labels, fillers, newest version, a broken manifest); a stand-in settings portal on a private bus answering `ReadOne` and sending `SettingChanged` |
+| `apps/hover` lib (12) | OwlApp's end announcements and unseen count, quota switching, the pill's model, Pages' ids and words from SCREENS.md and Pages.cs, the shortcut recorder, VK and keysym tables, the music's fade and loop |
+| `apps/hover/tests/tray.rs` | a stand-in panel on a private bus: registers the item, reads its title, icon sizes and the menu (labels, separators, Launch at Login's tick), clicks an item and the icon; a notification with its 6 s timeout |
+| `hover --selftest` on X11 | **13/13** under Xvfb and under XWayland in headless weston: placement on the primary work area, override-redirect + dock + 32-bit visual, the notch never takes focus at rest, the input shape is the pill (then the open panel), a click on the empty part reaches the window below, hover peeks without focus and folds after the leave grace, Alt+N opens with the keyboard, Esc folds and gives the focus back, a click on the pill opens, a chord another client holds is refused, **0 frames drawn in 3 s at rest**. [report](shots/x11-selftest-report.json) |
+| second launch, Linux | the second process exits at once (7 ms); the first logs "another launch: opening the app window" |
+
+Screenshots (`shots/`): on the X11 screen [the pill](shots/x11-rest-pill.png), [peek](shots/x11-peek.png), [open](shots/x11-open.png), [Settings over the notch](shots/x11-open-settings.png) (Xvfb has no compositor, so the transparent part shows black); headless (software renderer) [pill with rings and a task at work](shots/notch-rest-pill-2x.png), [alert](shots/notch-rest-alert-2x.png), [unseen ends](shots/notch-rest-done-2x.png), the greeting at [120](shots/notch-greeting-120ms.png)/[400](shots/notch-greeting-400ms.png)/[700 ms](shots/notch-greeting-700ms.png), [Settings in the notch](shots/notch-open-settings.png), each section in the app window dark and light (`settings-*-dark.png`, `settings-*-light.png`), [a VS Code theme](shots/settings-general-vscode-dark-plus.png), [the model picker](shots/settings-kiro-model-menu.png).
+
+Fonts: Inter and Inter Display, embedded as in the C# app (not Segoe UI: the C# app draws Settings and the notch in Inter too); fontconfig resolves `sans-serif` to DejaVu Sans here, used only as a fallback for glyphs Inter lacks.
+
+### Where each quota lives on Linux
+
+| Quota | Windows (C#) | Linux | Seen here |
+|---|---|---|---|
+| Claude Code | `%USERPROFILE%\.claude\.credentials.json`, `CLAUDE_CONFIG_DIR` | `~/.claude/.credentials.json`, the same variable | not signed in; tested with a stand-in |
+| Kiro CLI | `kiro-cli` on PATH | PATH, then `~/.local/bin` | not installed; tested with a script |
+| Codex | `~/.codex/sessions`, `CODEX_HOME` | the same | tested with a fixture folder |
+| Cursor | `%APPDATA%\Cursor\User\globalStorage\state.vscdb` | `$XDG_CONFIG_HOME/Cursor/…/state.vscdb` (`~/.config`) | tested with a real SQLite file |
+
+### Differences from the C# app
+
+Fixed or adapted (listed, not asked):
+12. **Linux words**: "starts when you log in", "Win" → "Super", "the system" for Windows in Appearance, "computer" for PC; Codex's read only is offered (3A, 10).
+13. **Month names** in quota details are English (`26 Sep`); C# used the current culture's. Only non-English Windows shows the difference.
+14. **Installed themes sort** by lower-cased label, where C# used the culture's comparer; the same for ASCII names.
+15. **System's dark mode on Windows** is re-read every second where C# listened to `UserPreferenceChanged` (no hidden message window needed); a switch shows within a second.
+16. **Signals on Linux**: SIGTERM/SIGINT (logout, `kill`) quit as Quit does, flushing everything; C# had no such path.
+17. **Pickers on Linux** go through zenity or kdialog (whichever the desktop has); without either, the button does nothing and says so in the log.
+
+Nearest equivalents on Linux (asked below): the notch on Wayland; the notch's transparency without a compositor.
+
+### Questions (answer like `5A 6B`; work continues meanwhile)
+
+5. **The notch on native Wayland.** winit has no layer-shell, and Wayland lets no ordinary window place itself, stay on top or pass clicks through. Today Hover runs its notch through XWayland on Wayland desktops (tested inside weston: 13/13); GNOME and KDE both ship XWayland.
+   - **A.** Keep XWayland (now). One caveat: on GNOME Wayland, XGrabKey only sees keys while an X window has focus, so Alt+N must come from the portal (C below).
+   - **B.** Add a native path through `wlr-layer-shell` (sway, Hyprland, KDE; not GNOME) with smithay-client-toolkit, XWayland elsewhere. About 3–4 days.
+   - **C.** A, and take the shortcut from the GlobalShortcuts portal on Wayland (GNOME 48+, KDE 6); about 1 day.
+6. **No compositor (bare X11, no picom):** the transparent part of the notch shows black.
+   - **A.** Leave it (every desktop environment composites).
+   - **B.** Detect it (`_NET_WM_CM_S0` unowned) and shrink the window to the shape while resting (the window resizes then, which C# avoided on Windows because it blinked).
+
+### Pending on Windows (RUN-ON-WINDOWS.md, 3C)
+
+The notch self-test in the product (not only notch-proto), the tray icon, menu and balloon, the rebindable hotkey and its conflict box, the dashboard's caption colours, Settings' pickers, the music through WASAPI, the four quotas at their Windows paths with real sign-ins, DPI 100–200 % and a second monitor, UIA ids with Accessibility Insights.
+
+### Costs of what's left in 3C
+
+The Windows run: about half a day. Questions 5 and 6 if B: 1–4 days.

@@ -33,3 +33,26 @@ Build `cargo build --release -p hover-agents --example probe -p chat-proto`.
 | Killed Hover leaves nothing | `chat-proto.exe --acp <path to kiro-cli.exe> --folder C:\some\project`, send a long task, kill `chat-proto.exe` in Task Manager | no `kiro-cli` (or what it started) is left in Task Manager |
 | Non-ASCII prompt | send `Réponds «oui» 👋` in chat-proto --acp | the tool's answer shows it read the prompt intact |
 | FakeAcp live | `dotnet build ..\port\tools\FakeAcp -c Release`; `$env:FAKEACP="…\FakeAcp.exe"; cargo test --release -p hover-agents --test fakeacp` | 5 passed (the same recordings as on Linux) |
+
+## 3C: the product
+
+Build `cargo build --release -p hover`; run `target\release\hover.exe` with `$env:HOVER_DATA_DIR` set to a fresh folder unless a check says otherwise. Stop any C# Hover first.
+
+| Check | How | Pass when |
+|---|---|---|
+| Notch at rest | start; switch on a quota in Settings → Integrations | a black pill at the top centre of the primary display; Task Manager shows no taskbar button; typing elsewhere keeps its focus |
+| Click-through | click the desktop 100 px left of the pill and far below it | the click reaches what is under it |
+| Peek | rest the pointer on the pill (or the top-centre strip) | opens after ~120 ms without taking focus; folds 350 ms after the pointer leaves |
+| Shortcut | press Alt+N; then Esc | opens with the keyboard in it; Esc folds and the previous app has the focus again |
+| Rebinding and conflict | Settings → General → Notch shortcut, press Ctrl+Alt+Delete-free chords such as Ctrl+Shift+K; then a chord another app holds (e.g. Win+L) | the new chord toggles the notch, the old one doesn't; the taken chord shows "Global shortcut unavailable" once |
+| Greeting | first open after launch; lock and unlock; sleep and resume | "Welcome back" grows with the notch each time |
+| Tray | left-click the tray icon; right-click it | the app window opens; the menu shows 5 items with Launch at Login ticked as set; each works |
+| Balloon | run a task (`chat` in the notch is Phase 2; meanwhile `probe.exe`) and fold the notch | an alert in the notch for 8 s and a balloon naming the tool |
+| Second launch | start `hover.exe` again | the second exits, the first opens its app window in the foreground |
+| Dashboard caption | open the app window in dark and light | the title bar is the panel's colour with the matching text |
+| Pickers | Settings → Kiro → Change…; General → Import a VS Code theme file… | the system's folder and file dialogs; a theme file applies |
+| Music | the office's music button | the loop fades in; folding the notch fades it out |
+| Quotas | sign in to each tool; switch each on | each row shows its percentage and detail as the C# app shows it, side by side |
+| DPI | 100, 125, 150, 175, 200 %, and a second monitor at another scale | placed on the primary work area, crisp, the pill's hit area matches its shape |
+| UIA | Accessibility Insights on the notch and Settings | the ids in SCREENS.md are there (`HoverNotch`, `NotchQuota*`, `NotchKiro`, `NotchAlert`, every Settings id) |
+| Launch at login | toggle in Settings and in the tray | `HKCU\…\Run\Hover` holds the quoted exe path, and goes when off |

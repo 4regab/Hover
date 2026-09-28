@@ -73,6 +73,20 @@ pub struct App {
     pub headless: bool,
 }
 
+/// Set by SIGTERM or SIGINT (a logout, a kill, Ctrl+C): the poll quits cleanly, so the
+/// tools are shut down and the history and settings flushed, as Quit does.
+#[cfg(not(windows))]
+pub static QUIT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+#[cfg(not(windows))]
+fn on_signals() {
+    extern "C" fn on(_: libc::c_int) { QUIT.store(true, std::sync::atomic::Ordering::SeqCst); }
+    unsafe {
+        libc::signal(libc::SIGTERM, on as extern "C" fn(libc::c_int) as libc::sighandler_t);
+        libc::signal(libc::SIGINT, on as extern "C" fn(libc::c_int) as libc::sighandler_t);
+    }
+}
+
 /// The notch's frames drawn (the self-test's idle check).
 pub static FRAMES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
@@ -201,6 +215,8 @@ impl App {
     }
 
     fn poll(self: &Rc<Self>) {
+        #[cfg(not(windows))]
+        if QUIT.load(std::sync::atomic::Ordering::SeqCst) { let _ = slint::quit_event_loop(); return; }
         #[cfg(windows)]
         for m in win::take_messages() { self.on_message(m); }
         let act = notch::poll(&mut self.n.borrow_mut());
@@ -351,7 +367,11 @@ impl App {
             self.refresh_page(false);
         }
         if settings { self.show_settings_in(1, Section::General); }
-        if let Some(d) = &*self.dash.borrow() { let _ = d.show(); }
+        if let Some(d) = &*self.dash.borrow() {
+            let _ = d.show();
+            #[cfg(windows)]
+            { let p = self.palette.borrow(); win::caption(d.window(), p.dark, p.panel); }
+        }
         self.collapse();
         self.watching_changed();
     }
@@ -390,7 +410,11 @@ impl App {
         *self.palette.borrow_mut() = p.clone();
         let motion = self.look.get().animations;
         publish!(self.notch, &p, motion);
-        if let Some(d) = &*self.dash.borrow() { publish!(d, &p, motion); }
+        if let Some(d) = &*self.dash.borrow() {
+            publish!(d, &p, motion);
+            #[cfg(windows)]
+            win::caption(d.window(), p.dark, p.panel);
+        }
     }
 
     pub fn look_changed(self: &Rc<Self>, look: Look) {
@@ -520,7 +544,7 @@ fn main() {
 
     // One notch is the point; two copies of the app is not. A second launch asks the
     // running copy to open its window, then exits.
-    let _instance = match hover_core::single::claim(|_token| ui_do(|a| a.open_dashboard(false))) {
+    let _instance = match hover_core::single::claim(|_token| ui_do(|a| { hover_core::log::line("another launch: opening the app window"); a.open_dashboard(false); })) {
         Ok(hover_core::single::Claim::First(i)) => i,
         Ok(hover_core::single::Claim::Second) => return,
         Err(e) => { hover_core::log::line(&format!("single instance: {e}")); return; }
@@ -533,6 +557,8 @@ fn main() {
         if std::env::var_os("HOVER_WAYLAND").is_none() { std::env::remove_var("WAYLAND_DISPLAY"); }
     }
     select_backend();
+    #[cfg(not(windows))]
+    on_signals();
     let hover = Hover::start();
     let look = hover_core::platform::look();
     let selftest = arg("--selftest");

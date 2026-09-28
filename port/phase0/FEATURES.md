@@ -60,8 +60,8 @@ Source references are to the C# app or the office page (`web/office`).
 | A6 | Idle shutdown (5/15 min), restart with `session/load` (replay muted) | AcpHost | port |
 | A7 | Sign-in/installation checks (status commands, 5-min cache, hints), MCP failure detection (Kiro) | Agents, AcpHost | port (Codex check run on Linux) |
 | A8 | Stream reading: phases, steps, context %, answer = last message after last tool | KiroStream | port |
-| A9 | Folder first; one-time full-access notice | KiroPage | — (P3C) |
-| A10 | End announcements (notch alert + tray balloon) unless the office is watched | OwlApp | — (P3C) |
+| A9 | Folder first; one-time full-access notice | KiroPage | port (notice setting and Settings row; the office's notice is Phase 2) |
+| A10 | End announcements (notch alert + tray balloon) unless the office is watched | OwlApp | port (alert + notification/balloon; Linux tested) |
 | A11 | Windows Job Object (`KILL_ON_JOB_CLOSE`), all tools shut down on quit | ChildJob | port (Linux: process group + watchdog, tested with kill -9; Windows pending) |
 
 ## Persistence
@@ -80,32 +80,32 @@ Source references are to the C# app or the office page (`web/office`).
 
 | # | Feature | Source | Rust |
 |---|---|---|---|
-| Q1 | Claude Code: `.credentials.json`, `api/oauth/usage`, never refreshed | Quota.Claude | — (P3C) |
-| Q2 | Kiro: `kiro-cli chat --no-interactive /usage` parse | Quota.Kiro | — (P3C) |
-| Q3 | Codex: newest `rollout-*.jsonl` `rate_limits` | Quota.Codex | — (P3C) |
-| Q4 | Cursor: `state.vscdb` token (SQLite, read-only) → `usage-summary` | Quota.Cursor | — (P3C) |
-| Q5 | Off until switched on; refresh 5 min after the last read; readable failures | OwlApp | — (P3C) |
-| T1 | Palette: Hover light/dark (Apple colours), System follows Windows | Palette, Theme | — (P3C) |
-| T2 | VS Code theme import (JSONC, `include`), installed-theme finder (VS Code, Cursor, Kiro, Windsurf) | Palette | — (P3C) |
-| M1 | `office-beats.ogg`: off until switched on, remembered, fades to 0.32, silent while hidden, needs a click first | beats | — (P3C) |
+| Q1 | Claude Code: `.credentials.json`, `api/oauth/usage`, never refreshed | Quota.Claude | port (tests ported; Linux location) |
+| Q2 | Kiro: `kiro-cli chat --no-interactive /usage` parse | Quota.Kiro | port (tests ported; script stand-in) |
+| Q3 | Codex: newest `rollout-*.jsonl` `rate_limits` | Quota.Codex | port (tests ported) |
+| Q4 | Cursor: `state.vscdb` token (SQLite, read-only) → `usage-summary` | Quota.Cursor | port (SQLite; Linux location) |
+| Q5 | Off until switched on; refresh 5 min after the last read; readable failures | OwlApp | port |
+| T1 | Palette: Hover light/dark (Apple colours), System follows Windows | Palette, Theme | port (Linux: settings portal + fallbacks) |
+| T2 | VS Code theme import (JSONC, `include`), installed-theme finder (VS Code, Cursor, Kiro, Windsurf) | Palette | port (Linux editor folders added) |
+| M1 | `office-beats.ogg`: off until switched on, remembered, fades to 0.32, silent while hidden, needs a click first | beats | port (lewton + cpal) |
 
 ## Windows shell
 
 | # | Feature | Source | Rust |
 |---|---|---|---|
-| W1 | Notch window: borderless, topmost, tool window, per-pixel transparent, click-through where empty, full size in every state | HostWindow, Notch | proto |
-| W2 | `WS_EX_NOACTIVATE` at rest, removed while open; previous foreground restored on collapse | HostWindow, Notch | proto |
-| W3 | Placement: primary display work area, DIP layout × monitor scale, 4 office sizes capped to work area −24 | NotchHost.Layout | proto |
-| W4 | Pointer poll 50 ms; dwell 120 ms to peek; leave grace 350 ms; re-arm after collapse; click promotes peek | NotchManager | proto |
-| W5 | Openness animation: 300 ms cubic ease-out open, 220 ms ease-in close; content fade; greeting keyframes | NotchShell | proto (no greeting) |
-| W6 | Resting pill: quota rings, running bot + status + work dots, done bot; alert 8 s | UpdateRest | proto (glyph only) |
-| W7 | Resting-notch bot glyph and work dots (30 fps only while live) | Bot.cs | proto |
-| W8 | Global hotkey (default Alt+N, rebindable, conflict warning) | HotKeys | proto (fixed Alt+N) |
-| W9 | Esc and click-away collapse | Notch | proto |
-| W10 | Display/DPI change handling (2 s signature poll, DpiChanged) | Notch | proto (poll) |
+| W1 | Notch window: borderless, topmost, tool window, per-pixel transparent, click-through where empty, full size in every state | HostWindow, Notch | port (X11: override-redirect, ARGB, input shape; tested) |
+| W2 | `WS_EX_NOACTIVATE` at rest, removed while open; previous foreground restored on collapse | HostWindow, Notch | port (X11 focus tested) |
+| W3 | Placement: primary display work area, DIP layout × monitor scale, 4 office sizes capped to work area −24 | NotchHost.Layout | port (X11 tested) |
+| W4 | Pointer poll 50 ms; dwell 120 ms to peek; leave grace 350 ms; re-arm after collapse; click promotes peek | NotchManager | port (X11 tested) |
+| W5 | Openness animation: 300 ms cubic ease-out open, 220 ms ease-in close; content fade; greeting keyframes | NotchShell | port (greeting keyframes) |
+| W6 | Resting pill: quota rings, running bot + status + work dots, done bot; alert 8 s | UpdateRest | port |
+| W7 | Resting-notch bot glyph and work dots (30 fps only while live) | Bot.cs | port |
+| W8 | Global hotkey (default Alt+N, rebindable, conflict warning) | HotKeys | port (Linux XGrabKey tested; Windows pending) |
+| W9 | Esc and click-away collapse | Notch | port (X11 tested) |
+| W10 | Display/DPI change handling (2 s signature poll, DpiChanged) | Notch | port (poll) |
 | W11 | Single instance: `Local\HoverRunningInstance` mutex; second launch signals `Local\HoverShowApp` → dashboard | App.xaml.cs | port (Linux: lock + socket in `$XDG_RUNTIME_DIR`; Windows check pending) |
-| W12 | Dashboard window 1200×620 (min 880×480), DWM dark/caption colours | DashboardWindow | — (P3C) |
-| W13 | Tray icon, menu, balloon; launch at login (HKCU Run) | TrayIcon, Actions | — (P3C) |
-| W14 | Settings: General, Integrations, Kiro, Codex, Cursor (every control in SCREENS.md) | Pages.cs | — (P3C) |
-| W15 | UI Automation ids (list in SCREENS.md) | all | proto (notch ids) |
+| W12 | Dashboard window 1200×620 (min 880×480), DWM dark/caption colours | DashboardWindow | port |
+| W13 | Tray icon, menu, balloon; launch at login (HKCU Run) | TrayIcon, Actions | port (Linux SNI + notifications tested; Windows pending) |
+| W14 | Settings: General, Integrations, Kiro, Codex, Cursor (every control in SCREENS.md) | Pages.cs | port (every SCREENS.md id) |
+| W15 | UI Automation ids (list in SCREENS.md) | all | port (accessible-id; AT-SPI in P4) |
 | W16 | Deployment: single-file exe, Inno installer, Run key, no admin | build.ps1, Hover.iss | — (P4) |

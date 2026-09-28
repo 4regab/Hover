@@ -12,7 +12,7 @@ cutover has been reviewed; the C# app under `src/` is still the product.
 | `HANDOFF.md`, `NEXT-PROMPT.md` | The state for the next agent (rules, decisions, setup, lessons), and the prompt for the next session with the checklist ticked so far (3C, 2 and 4 remain). |
 | `bench/` | `Measure-Hover.ps1` (the benchmark) and `capture-office.mjs` (baseline captures). |
 | `tools/` | `FakeAcp` (a stand-in ACP agent) and `HoverFixture` (a sealed history written with Hover's own code). |
-| `../native/` | The Rust workspace: `hover-core` (paths, settings, sealing, history, images, single instance), `hover-agents` (ACP, the tools, sessions, the office's state message), `hover-md`, `hover-diagram`, `hover-chat`, `hover-notch`, `apps/chat-proto`, `apps/notch-proto`. |
+| `../native/` | The Rust workspace: `hover-core` (paths, settings, sealing, history, images, single instance), `hover-agents` (ACP, the tools, sessions, the office's state message), `hover-quota` (the quota readers), `hover-md`, `hover-diagram`, `hover-chat`, `hover-notch`, `apps/hover` (the product: notch, app window, Settings, tray, shortcut, music), `apps/chat-proto`, `apps/notch-proto`. |
 
 ## Build (Linux dev VM or Windows)
 
@@ -23,8 +23,8 @@ cargo run --release -p chat-proto -- --screenshot shot.png --select
 node golden/gen.mjs                     # re-derive the goldens from the office's own JS
 ```
 
-On Linux, `notch-proto` is only a plain dev window so far. Its notch behaviour is
-Windows-only (`apps/notch-proto/src/win.rs`) until Phase 3C.
+`apps/hover` is the product (`hover`, `hover --shots DIR`, `hover --selftest DIR` on X11).
+On Linux its notch is an X11 override-redirect window (XWayland on Wayland desktops).
 
 ## Platform layout
 
@@ -40,5 +40,10 @@ Windows and Linux are both targets. The logic is shared; what differs sits in a
 | `note.key` | DPAPI, current user | Secret Service item, else the key in a 0600 file | `platform::SystemKeyGuard` |
 | Launch at login | HKCU `…\Run\Hover` | `~/.config/autostart/hover.desktop` | `platform::SystemAutostart` |
 | Single instance | `Local\HoverRunningInstance` mutex, `Local\HoverShowApp` event | lock on `$XDG_RUNTIME_DIR/hover.lock`, `hover.sock` | `hover-core::single` |
+| Look (dark, motion) | `AppsUseLightTheme`, animation effects | settings portal, gsettings, kdeglobals, GTK | `hover-core::platform::look` |
+| Notch window | DirectComposition, `WS_EX_*` | override-redirect, ARGB visual, XShape input region | `apps/hover` `win.rs`, `x11.rs` |
+| Shortcut | `RegisterHotKey` | `XGrabKey` on the root | `win.rs`, `x11.rs` |
+| Tray, notifications | `Shell_NotifyIcon`, balloon | StatusNotifierItem + dbusmenu, `org.freedesktop.Notifications` | `win.rs`, `sni.rs` |
+| Cursor's database | `winsqlite3.dll` | SQLite built in | `hover-quota::sqlite` |
 
 `cargo check --release --workspace --target x86_64-pc-windows-msvc` must stay green.

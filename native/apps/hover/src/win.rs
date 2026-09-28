@@ -374,3 +374,15 @@ pub fn pick(folder: bool) -> Option<String> {
         s
     }
 }
+
+/// DashboardWindow.ApplyTheme: the title bar in the panel's colour, dark or light, so
+/// bar and window read as one surface. Older Windows ignores these and keeps its own.
+pub fn caption(window: &slint::Window, dark: bool, panel: u32) {
+    use windows::Win32::Graphics::Dwm::{DWMWA_CAPTION_COLOR, DWMWA_TEXT_COLOR, DWMWA_USE_IMMERSIVE_DARK_MODE};
+    let Some(h) = hwnd_of(window) else { return };
+    let set = |attr, v: u32| unsafe { let _ = DwmSetWindowAttribute(h, attr, &v as *const u32 as _, 4); };
+    set(DWMWA_USE_IMMERSIVE_DARK_MODE, dark as u32);
+    // COLORREF is 0x00BBGGRR.
+    set(DWMWA_CAPTION_COLOR, ((panel & 0xFF) << 16) | (panel & 0xFF00) | ((panel >> 16) & 0xFF));
+    set(DWMWA_TEXT_COLOR, if dark { 0x00FF_FFFF } else { 0 });
+}
