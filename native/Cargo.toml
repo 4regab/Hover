@@ -7,7 +7,8 @@ members = ["crates/*", "apps/*"]
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
-rust-version = "1.88"
+# 1.89: File::try_lock, for the single instance on Linux.
+rust-version = "1.89"
 license = "MIT"
 
 [workspace.dependencies]

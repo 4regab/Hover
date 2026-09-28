@@ -1,0 +1,408 @@
+//! Core/Settings.cs: the handful of preferences in settings.json, written as
+//! System.Text.Json writes the C# Model (indented, enums by name, every property in
+//! declaration order, nulls included). Writes wait 400 ms for the value to settle;
+//! flush forces them out. Keys an older build wrote are ignored and dropped.
+
+use crate::json::{self, Json, Result};
+use crate::model::{notch_item, opt_text, AcpOption, AgentOptions, AgentTool, Appearance, SavedTheme, WorkspaceSize};
+use crate::shortcut::Shortcut;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Condvar, Mutex, Weak};
+use std::time::{Duration, Instant};
+
+/// Settings.Model, field for field.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Model {
+    pub hover_opens_workspace: bool,
+    pub notch_items: Option<Vec<Option<String>>>,
+    pub appearance: Appearance,
+    pub theme: Option<SavedTheme>,
+    pub workspace_size: WorkspaceSize,
+    pub kiro_folder: Option<String>,
+    pub kiro_notice_seen: bool,
+    pub kiro_model: Option<String>,
+    pub kiro_effort: Option<String>,
+    pub kiro_agent: Option<String>,
+    pub kiro_read_only: bool,
+    pub kiro_require_mcp: bool,
+    pub kiro_idle_minutes: i32,
+    pub kiro_hide_steps: bool,
+    /// Codex's and Cursor's settings, by tool id. Kiro's are the fields above.
+    pub agents: Option<Vec<(String, Option<AgentOptions>)>>,
+    /// What each tool last offered (models, efforts, modes), for its settings page.
+    pub agent_offers: Option<Vec<(String, Option<Vec<AcpOption>>)>>,
+    pub agent_tool: Option<String>,
+    pub sc_workspace: Shortcut,
+}
+
+impl Default for Model {
+    fn default() -> Self {
+        Model {
+            hover_opens_workspace: true, notch_items: None, appearance: Appearance::System, theme: None, workspace_size: WorkspaceSize::Default,
+            kiro_folder: None, kiro_notice_seen: false, kiro_model: None, kiro_effort: Some("high".into()), kiro_agent: None,
+            kiro_read_only: false, kiro_require_mcp: false, kiro_idle_minutes: 5, kiro_hide_steps: false, agents: None, agent_offers: None,
+            agent_tool: None, sc_workspace: Shortcut::DEFAULT,
+        }
+    }
+}
+
+fn enum_or<T>(v: &Json, names: &[&str], make: fn(usize) -> T, default: T) -> Result<T> {
+    Ok(v.enum_of(names)?.map(make).unwrap_or(default))
+}
+
+impl Model {
+    pub fn to_json(&self) -> Json {
+        let s = |v: &Option<String>| Json::opt_str_of(v.as_deref());
+        Json::obj(vec![
+            ("HoverOpensWorkspace", Json::Bool(self.hover_opens_workspace)),
+            ("NotchItems", self.notch_items.as_ref().map_or(Json::Null, |l| Json::Arr(l.iter().map(s).collect()))),
+            ("Appearance", Json::str(Appearance::NAMES[self.appearance as usize])),
+            ("Theme", self.theme.as_ref().map_or(Json::Null, SavedTheme::to_json)),
+            ("WorkspaceSize", Json::str(WorkspaceSize::NAMES[self.workspace_size as usize])),
+            ("KiroFolder", s(&self.kiro_folder)),
+            ("KiroNoticeSeen", Json::Bool(self.kiro_notice_seen)),
+            ("KiroModel", s(&self.kiro_model)),
+            ("KiroEffort", s(&self.kiro_effort)),
+            ("KiroAgent", s(&self.kiro_agent)),
+            ("KiroReadOnly", Json::Bool(self.kiro_read_only)),
+            ("KiroRequireMcp", Json::Bool(self.kiro_require_mcp)),
+            ("KiroIdleMinutes", Json::int(self.kiro_idle_minutes as i64)),
+            ("KiroHideSteps", Json::Bool(self.kiro_hide_steps)),
+            ("Agents", self.agents.as_ref().map_or(Json::Null, |m| Json::Obj(m.iter().map(|(k, v)| (k.clone(), v.as_ref().map_or(Json::Null, AgentOptions::to_json))).collect()))),
+            ("AgentOffers", self.agent_offers.as_ref().map_or(Json::Null, |m| Json::Obj(m.iter().map(|(k, v)| (k.clone(),
+                v.as_ref().map_or(Json::Null, |l| Json::Arr(l.iter().map(AcpOption::to_json).collect())))).collect()))),
+            ("AgentTool", s(&self.agent_tool)),
+            ("ScWorkspace", self.sc_workspace.to_json()),
+        ])
+    }
+
+    /// Deserialize<Model>: the defaults, then each property the file names, in file
+    /// order. Any value of the wrong kind fails the whole read, as the serializer does.
+    pub fn from_json(v: &Json) -> Result<Model> {
+        let mut m = Model::default();
+        for (k, x) in v.props()? {
+            let b = || x.bool();
+            match k.as_str() {
+                "HoverOpensWorkspace" => m.hover_opens_workspace = b()?,
+                "NotchItems" => m.notch_items = x.opt_list(Json::opt_str)?,
+                "Appearance" => m.appearance = enum_or(x, &Appearance::NAMES, Appearance::from_index, Appearance::System)?,
+                "Theme" => m.theme = if x.is_null() { None } else { Some(SavedTheme::from_json(x)?) },
+                "WorkspaceSize" => m.workspace_size = enum_or(x, &WorkspaceSize::NAMES, WorkspaceSize::from_index, WorkspaceSize::Default)?,
+                "KiroFolder" => m.kiro_folder = opt_text(Some(x))?,
+                "KiroNoticeSeen" => m.kiro_notice_seen = b()?,
+                "KiroModel" => m.kiro_model = opt_text(Some(x))?,
+                "KiroEffort" => m.kiro_effort = opt_text(Some(x))?,
+                "KiroAgent" => m.kiro_agent = opt_text(Some(x))?,
+                "KiroReadOnly" => m.kiro_read_only = b()?,
+                "KiroRequireMcp" => m.kiro_require_mcp = b()?,
+                "KiroIdleMinutes" => m.kiro_idle_minutes = x.i32()?,
+                "KiroHideSteps" => m.kiro_hide_steps = b()?,
+                "Agents" => m.agents = x.opt_map(|o| if o.is_null() { Ok(None) } else { AgentOptions::from_json(o).map(Some) })?,
+                "AgentOffers" => m.agent_offers = x.opt_map(|l| l.opt_list(|o| if o.is_null() { Ok(None) } else { AcpOption::from_json(o).map(Some) })
+                    .map(|l| l.map(|l| l.into_iter().flatten().collect())))?,
+                "AgentTool" => m.agent_tool = opt_text(Some(x))?,
+                // A null shortcut would leave C# with none at all (and a crash where
+                // it is read); here it is unset, as a cleared shortcut is.
+                "ScWorkspace" => m.sc_workspace = if x.is_null() { Shortcut::default() } else { Shortcut::from_json(x)? },
+                _ => {}
+            }
+        }
+        Ok(m)
+    }
+
+    /// The file's text, with the platform's newline.
+    pub fn text(&self) -> String { self.to_json().indented(json::NEWLINE) }
+}
+
+/// Settings.Load: the file's model, or the defaults when there is none or it can't be read.
+pub fn load_model(file: &Path) -> Model {
+    let Ok(bytes) = std::fs::read(file) else { return Model::default() };
+    match json::parse(&json::text_of(&bytes)).and_then(|v| if v.is_null() { Ok(Model::default()) } else { Model::from_json(&v) }) {
+        Ok(m) => m,
+        Err(e) => { crate::log::line(&format!("settings load failed — {e}")); Model::default() }
+    }
+}
+
+const SETTLE: Duration = Duration::from_millis(400);
+
+pub struct Settings {
+    file: PathBuf,
+    m: Mutex<Model>,
+    due: Arc<(Mutex<Option<Instant>>, Condvar)>,
+    me: Weak<Settings>,
+    writer: Mutex<bool>,
+    autostart: Box<dyn crate::platform::Autostart + Send + Sync>,
+}
+
+impl Settings {
+    pub fn load(file: PathBuf) -> Arc<Settings> {
+        let m = load_model(&file);
+        Arc::new_cyclic(|me| Settings {
+            file, m: Mutex::new(m), due: Arc::new((Mutex::new(None), Condvar::new())), me: me.clone(), writer: Mutex::new(false),
+            autostart: Box::new(crate::platform::SystemAutostart),
+        })
+    }
+
+    /// The copy of the model the setters change.
+    pub fn model(&self) -> Model { self.m.lock().unwrap().clone() }
+
+    /// Settings.Save: the write waits until nothing has changed for 400 ms.
+    pub fn save(&self) {
+        let (lock, cv) = &*self.due;
+        *lock.lock().unwrap() = Some(Instant::now() + SETTLE);
+        cv.notify_all();
+        let mut started = self.writer.lock().unwrap();
+        if *started { return; }
+        *started = true;
+        let (due, me) = (self.due.clone(), self.me.clone());
+        std::thread::Builder::new().name("settings".into()).spawn(move || loop {
+            let (lock, cv) = &*due;
+            let mut d = lock.lock().unwrap();
+            loop {
+                match *d {
+                    None => d = cv.wait(d).unwrap(),
+                    Some(t) if Instant::now() < t => d = cv.wait_timeout(d, t - Instant::now()).unwrap().0,
+                    Some(_) => break,
+                }
+            }
+            *d = None;
+            drop(d);
+            match me.upgrade() { Some(s) => s.write(), None => return }
+        }).expect("a thread for the settings");
+    }
+
+    /// Settings.Flush: written now, a pending write dropped.
+    pub fn flush(&self) {
+        *self.due.0.lock().unwrap() = None;
+        self.write();
+    }
+
+    fn write(&self) {
+        let text = self.m.lock().unwrap().text();
+        if let Err(e) = std::fs::write(&self.file, text) { crate::log::line(&format!("settings save failed — {e}")); }
+    }
+
+    fn change(&self, f: impl FnOnce(&mut Model)) {
+        f(&mut self.m.lock().unwrap());
+        self.save();
+    }
+
+    pub fn hover_opens_workspace(&self) -> bool { self.m.lock().unwrap().hover_opens_workspace }
+    pub fn set_hover_opens_workspace(&self, v: bool) { self.change(|m| m.hover_opens_workspace = v) }
+
+    /// What the resting notch shows, in canonical order. Ids an older build saved (the
+    /// focus timer's) are left out, and, as the C# getter does, out of the model too.
+    pub fn notch_items(&self) -> Vec<&'static str> {
+        let mut m = self.m.lock().unwrap();
+        let have = m.notch_items.clone().unwrap_or_default();
+        let list: Vec<&'static str> = notch_item::ALL.into_iter().filter(|id| have.iter().any(|h| h.as_deref() == Some(*id))).collect();
+        m.notch_items = Some(list.iter().map(|s| Some(s.to_string())).collect());
+        list
+    }
+
+    pub fn set_notch_items(&self, value: &[&str]) {
+        let list: Vec<Option<String>> = notch_item::ALL.into_iter().filter(|id| value.contains(id)).map(|s| Some(s.to_string())).collect();
+        self.change(|m| m.notch_items = Some(list));
+    }
+
+    pub fn has_notch_item(&self, id: &str) -> bool { self.notch_items().contains(&id) }
+
+    pub fn set_notch_item(&self, id: &str, on: bool) {
+        let mut set = self.notch_items();
+        if on { if let Some(k) = notch_item::ALL.into_iter().find(|k| *k == id) { if !set.contains(&k) { set.push(k); } } } else { set.retain(|k| *k != id); }
+        self.set_notch_items(&set);
+    }
+
+    pub fn appearance(&self) -> Appearance { self.m.lock().unwrap().appearance }
+    pub fn set_appearance(&self, v: Appearance) { self.change(|m| m.appearance = v) }
+    pub fn theme(&self) -> Option<SavedTheme> { self.m.lock().unwrap().theme.clone() }
+    pub fn set_theme(&self, v: Option<SavedTheme>) { self.change(|m| m.theme = v) }
+    pub fn workspace_size(&self) -> WorkspaceSize { self.m.lock().unwrap().workspace_size }
+    pub fn set_workspace_size(&self, v: WorkspaceSize) { self.change(|m| m.workspace_size = v) }
+    pub fn sc_workspace(&self) -> Shortcut { self.m.lock().unwrap().sc_workspace }
+    pub fn set_sc_workspace(&self, v: Shortcut) { self.change(|m| m.sc_workspace = v) }
+
+    /// The folder the last task ran in, as picked, even when it has gone missing; a
+    /// blank one is none.
+    pub fn kiro_folder(&self) -> Option<String> { self.m.lock().unwrap().kiro_folder.clone() }
+    pub fn set_kiro_folder(&self, v: Option<&str>) {
+        let v = v.filter(|s| !s.trim().is_empty()).map(str::to_owned);
+        self.change(|m| m.kiro_folder = v)
+    }
+
+    pub fn kiro_notice_seen(&self) -> bool { self.m.lock().unwrap().kiro_notice_seen }
+    pub fn set_kiro_notice_seen(&self, v: bool) { self.change(|m| m.kiro_notice_seen = v) }
+
+    /// How a tool's runs are set up (Settings → Kiro, Codex, Cursor).
+    pub fn agent_options(&self, t: AgentTool) -> AgentOptions {
+        let m = self.m.lock().unwrap();
+        if t == AgentTool::Kiro {
+            return AgentOptions { model: m.kiro_model.clone(), effort: m.kiro_effort.clone(), read_only: m.kiro_read_only, idle_minutes: m.kiro_idle_minutes,
+                agent: m.kiro_agent.clone(), require_mcp: m.kiro_require_mcp, hide_steps: m.kiro_hide_steps };
+        }
+        m.agents.as_ref().and_then(|a| a.iter().find(|(k, _)| k == t.id())).and_then(|(_, v)| v.clone()).unwrap_or_default()
+    }
+
+    pub fn set_agent_options(&self, t: AgentTool, mut v: AgentOptions) {
+        if v.model.as_deref() == Some("auto") { v.model = None; }
+        if v.agent.as_deref().is_some_and(|a| a.trim().is_empty()) { v.agent = None; }
+        if !AgentOptions::IDLE_CHOICES.contains(&v.idle_minutes) { v.idle_minutes = AgentOptions::IDLE_CHOICES[0]; }
+        self.change(|m| {
+            if t == AgentTool::Kiro {
+                m.kiro_model = v.model;
+                m.kiro_effort = Some(v.effort.unwrap_or_else(|| "high".into()));
+                m.kiro_agent = v.agent;
+                m.kiro_read_only = v.read_only;
+                m.kiro_require_mcp = v.require_mcp;
+                m.kiro_idle_minutes = v.idle_minutes;
+                m.kiro_hide_steps = v.hide_steps;
+            } else {
+                let v = AgentOptions { agent: None, require_mcp: false, ..v };
+                let a = m.agents.get_or_insert_with(Vec::new);
+                match a.iter_mut().find(|(k, _)| k == t.id()) { Some(slot) => slot.1 = Some(v), None => a.push((t.id().into(), Some(v))) }
+            }
+        });
+    }
+
+    /// The models, efforts and modes the tool offered the last time it ran.
+    pub fn agent_offers(&self, t: AgentTool) -> Vec<AcpOption> {
+        let m = self.m.lock().unwrap();
+        m.agent_offers.as_ref().and_then(|a| a.iter().find(|(k, _)| k == t.id())).and_then(|(_, v)| v.clone()).unwrap_or_default()
+    }
+
+    /// Every turn reports them; only a change is written.
+    pub fn set_agent_offers(&self, t: AgentTool, offers: &[AcpOption]) {
+        {
+            let m = self.m.lock().unwrap();
+            let old = m.agent_offers.as_ref().and_then(|a| a.iter().find(|(k, _)| k == t.id())).and_then(|(_, v)| v.as_ref());
+            if old.is_some_and(|o| o.as_slice() == offers) { return; }
+        }
+        self.change(|m| {
+            let a = m.agent_offers.get_or_insert_with(Vec::new);
+            match a.iter_mut().find(|(k, _)| k == t.id()) { Some(slot) => slot.1 = Some(offers.to_vec()), None => a.push((t.id().into(), Some(offers.to_vec()))) }
+        });
+    }
+
+    /// The tool the last new task went to.
+    pub fn agent_tool(&self) -> AgentTool { AgentTool::parse(self.m.lock().unwrap().agent_tool.as_deref()).unwrap_or(AgentTool::Kiro) }
+    pub fn set_agent_tool(&self, t: AgentTool) { self.change(|m| m.agent_tool = Some(t.id().into())) }
+
+    /// Launch at login: outside settings.json, in the platform's own place.
+    pub fn launch_at_login(&self) -> bool { self.autostart.enabled() }
+    pub fn set_launch_at_login(&self, on: bool) {
+        if let Err(e) = self.autostart.set(on) { crate::log::line(&format!("launch-at-login toggle failed — {e}")); }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::shortcut::{Key, Modifiers};
+
+    /// A fresh Model as `JsonSerializer.Serialize(new Model(), Json)` writes it, derived
+    /// from Settings.cs: WriteIndented, JsonStringEnumConverter, declaration order,
+    /// nulls written, and Environment.NewLine (CRLF on Windows).
+    const DEFAULT_FILE: &str = "{\r\n  \"HoverOpensWorkspace\": true,\r\n  \"NotchItems\": null,\r\n  \"Appearance\": \"System\",\r\n  \"Theme\": null,\r\n  \"WorkspaceSize\": \"Default\",\r\n  \"KiroFolder\": null,\r\n  \"KiroNoticeSeen\": false,\r\n  \"KiroModel\": null,\r\n  \"KiroEffort\": \"high\",\r\n  \"KiroAgent\": null,\r\n  \"KiroReadOnly\": false,\r\n  \"KiroRequireMcp\": false,\r\n  \"KiroIdleMinutes\": 5,\r\n  \"KiroHideSteps\": false,\r\n  \"Agents\": null,\r\n  \"AgentOffers\": null,\r\n  \"AgentTool\": null,\r\n  \"ScWorkspace\": {\r\n    \"Key\": \"N\",\r\n    \"Modifiers\": \"Alt\"\r\n  }\r\n}";
+
+    #[test]
+    fn a_fresh_model_writes_as_system_text_json_writes_it() {
+        assert_eq!(Model::default().to_json().indented("\r\n"), DEFAULT_FILE);
+        assert_eq!(Model::from_json(&json::parse(DEFAULT_FILE).unwrap()).unwrap(), Model::default());
+    }
+
+    fn temp(name: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!("hover-settings-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        d.join("settings.json")
+    }
+
+    /// SettingsTests.Flush_writes_readable_JSON_with_the_shortcut_and_notch_items.
+    #[test]
+    fn the_shortcut_and_notch_items_as_settings_tests_expect() {
+        let s = Settings::load(temp("items"));
+        s.set_sc_workspace(Shortcut { key: Key::letter('H').unwrap(), modifiers: Modifiers::CONTROL | Modifiers::SHIFT });
+        s.m.lock().unwrap().notch_items = Some(["kiro", "bogus", "clock", "timer", "claude"].iter().map(|x| Some(x.to_string())).collect());
+        s.flush();
+        let text = std::fs::read_to_string(&s.file).unwrap();
+        assert!(text.contains("\"ScWorkspace\""));
+        assert!(text.contains("\"Key\": \"H\""));
+        assert!(text.contains("\"NotchItems\""));
+        assert_eq!(s.notch_items(), vec!["claude", "kiro"]);
+        s.set_notch_items(&["kiro"]);
+        s.set_notch_item("codex", true);
+        assert!(s.has_notch_item("codex"));
+        s.set_notch_item("kiro", false);
+        assert_eq!(s.notch_items(), vec!["codex"]);
+    }
+
+    /// SettingsTests.Kiros_folder_and_the_note_are_saved_and_a_blank_folder_is_none.
+    #[test]
+    fn the_folder_escapes_its_backslashes_and_blank_is_none() {
+        let s = Settings::load(temp("folder"));
+        s.set_kiro_folder(Some(r"C:\Projects\Hover"));
+        s.set_kiro_notice_seen(true);
+        s.flush();
+        let text = std::fs::read_to_string(&s.file).unwrap();
+        assert!(text.contains("\"KiroFolder\": \"C:\\\\Projects\\\\Hover\""));
+        assert!(text.contains("\"KiroNoticeSeen\": true"));
+        s.set_kiro_folder(Some("   "));
+        assert_eq!(s.kiro_folder(), None);
+    }
+
+    /// SetAgentOptions' normalising, and the Agents dictionary's shape.
+    #[test]
+    fn agent_options_are_kept_as_set_agent_options_keeps_them() {
+        let s = Settings::load(temp("agents"));
+        s.set_agent_options(AgentTool::Codex, AgentOptions { model: Some("auto".into()), agent: Some("x".into()), require_mcp: true, idle_minutes: 7, read_only: true, ..Default::default() });
+        s.set_agent_options(AgentTool::Kiro, AgentOptions { model: Some("claude-opus-5.5".into()), effort: None, agent: Some(" ".into()), idle_minutes: 15, ..Default::default() });
+        assert_eq!(s.agent_options(AgentTool::Codex), AgentOptions { read_only: true, ..Default::default() });
+        assert_eq!(s.agent_options(AgentTool::Cursor), AgentOptions::default());
+        let k = s.agent_options(AgentTool::Kiro);
+        assert_eq!((k.model.as_deref(), k.effort.as_deref(), k.agent, k.idle_minutes), (Some("claude-opus-5.5"), Some("high"), None, 15));
+        let text = s.model().to_json().indented("\n");
+        assert!(text.contains("  \"Agents\": {\n    \"codex\": {\n      \"Model\": null,\n      \"Effort\": null,\n      \"ReadOnly\": true,\n      \"IdleMinutes\": 5,\n      \"Agent\": null,\n      \"RequireMcp\": false,\n      \"HideSteps\": false\n    }\n  },"), "{text}");
+        let offers = vec![AcpOption { id: "model".into(), category: Some("model".into()), current: Some("a".into()),
+            choices: vec![crate::model::AcpChoice { value: "a".into(), name: "A <1>".into() }] }];
+        s.set_agent_offers(AgentTool::Kiro, &offers);
+        assert_eq!(s.agent_offers(AgentTool::Kiro), offers);
+        let text = s.model().to_json().indented("\n");
+        assert!(text.contains("\"AgentOffers\": {\n    \"kiro\": [\n      {\n        \"Id\": \"model\",\n        \"Category\": \"model\",\n        \"Current\": \"a\",\n        \"Choices\": [\n          {\n            \"Value\": \"a\",\n            \"Name\": \"A \\u003C1\\u003E\"\n          }\n        ]\n      }\n    ]\n  },"), "{text}");
+        s.set_agent_tool(AgentTool::Cursor);
+        assert_eq!(s.agent_tool(), AgentTool::Cursor);
+        // A file the model wrote reads back to the same model, and the same text.
+        let again = Model::from_json(&json::parse(&s.model().text()).unwrap()).unwrap();
+        assert_eq!(again, s.model());
+        assert_eq!(again.text(), s.model().text());
+    }
+
+    /// Settings.Load: an unreadable file, or a value of the wrong kind anywhere, gives
+    /// the defaults; unknown keys and case-different names are ignored.
+    #[test]
+    fn a_bad_file_gives_the_defaults() {
+        let f = temp("bad");
+        for bad in ["{", "[]", "{\"KiroIdleMinutes\": 5.0}", "{\"HoverOpensWorkspace\": null}", "{\"Appearance\": \"Blue\"}", "{\"KiroFolder\": 3}"] {
+            std::fs::write(&f, bad).unwrap();
+            assert_eq!(load_model(&f), Model::default(), "{bad}");
+        }
+        std::fs::write(&f, "\u{feff}{\"hoverOpensWorkspace\": false, \"Deck\": [1], \"Appearance\": \"dark\", \"WorkspaceSize\": 3, \"KiroFolder\": \"a\", \"KiroFolder\": \"b\"}").unwrap();
+        let m = load_model(&f);
+        assert!(m.hover_opens_workspace);
+        assert_eq!((m.appearance, m.workspace_size, m.kiro_folder.as_deref()), (Appearance::Dark, WorkspaceSize::ExtraLarge, Some("b")));
+        std::fs::write(&f, "null").unwrap();
+        assert_eq!(load_model(&f), Model::default());
+    }
+
+    #[test]
+    fn writes_wait_for_the_value_to_settle() {
+        let s = Settings::load(temp("debounce"));
+        s.set_hover_opens_workspace(false);
+        std::thread::sleep(Duration::from_millis(200));
+        s.set_kiro_notice_seen(true);
+        std::thread::sleep(Duration::from_millis(250));
+        assert!(!s.file.exists(), "a change 250 ms ago holds the write back");
+        std::thread::sleep(Duration::from_millis(400));
+        let m = load_model(&s.file);
+        assert!(!m.hover_opens_workspace && m.kiro_notice_seen);
+    }
+}

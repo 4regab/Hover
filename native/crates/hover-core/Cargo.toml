@@ -1,0 +1,25 @@
+[package]
+name = "hover-core"
+description = "Hover's model and storage (Core/*.cs, AgentHistory): paths, settings.json as System.Text.Json writes it, AES-GCM sealing, the key's protection, the session history."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+# AES-256-GCM, as Core/Crypto.cs seals with AesGcm. Pure Rust, so it cross-compiles for
+# MSVC without the ring/cc trouble noted in chat-proto (no AES-GCM crate was in the tree).
+aes-gcm = { version = "0.10", default-features = false, features = ["aes", "alloc"] }
+# Already in the tree (through winit and slint): the key's and the GUIDs' randomness,
+# and local time with its offset as DateTime.Now writes it.
+getrandom = "0.3"
+chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62", features = ["Win32_Foundation", "Win32_Security_Cryptography", "Win32_UI_Shell", "Win32_System_Com", "Win32_System_Registry", "Win32_System_Threading", "Win32_Security", "Win32_UI_WindowsAndMessaging"] }
+
+[target.'cfg(unix)'.dependencies]
+# Already in the tree (accesskit_unix): the Secret Service over D-Bus, for note.key.
+zbus = { version = "5", default-features = false, features = ["async-io", "blocking-api"] }
+
+[dev-dependencies]
+serde_json = "1"

@@ -1,7 +1,7 @@
 # Feature checklist
 
 Every row must pass on Windows in the native build before cutover. The **Rust** column
-says where the candidate stands after Phase 1:
+says where the candidate stands now (Phase 3B done):
 
 - `proto`: a Phase 1 prototype implements it, with evidence in `port/phase1/REPORT.md`.
 - `port`: logic ported and tested headlessly. Windows verification may still be pending.
@@ -68,13 +68,13 @@ Source references are to the C# app or the office page (`web/office`).
 
 | # | Feature | Source | Rust |
 |---|---|---|---|
-| P1 | `note.key`: 32 bytes, DPAPI CurrentUser, no entropy | Crypto | — (P3B) |
-| P2 | AES-256-GCM, `nonce(12) ‖ ciphertext ‖ tag(16)`, UTF-8 JSON, no AAD | Crypto | — (P3B) |
-| P3 | `agents/index.dat` + `agents/<key>.dat`, tmp + replace, ordered off-thread writes, 10 s flush | AgentHistory | — (P3B) |
-| P4 | System.Text.Json shapes (PascalCase, enum strings, local-offset dates) | AgentHistory | — (P3B) |
-| P5 | `settings.json` (indented, string enums, debounced 400 ms) | Settings | — (P3B) |
-| P6 | `HOVER_DATA_DIR`, `%APPDATA%\Noty` migration, `planner.dat*` removal | Paths, OwlApp | — (P3B) |
-| P7 | `kiro-images` (pasted images), swept after 14 days | KiroPage | — (P3C) |
+| P1 | `note.key`: 32 bytes, DPAPI CurrentUser, no entropy | Crypto | port (DPAPI: Windows check pending; Linux: Secret Service or 0600 file, tested) |
+| P2 | AES-256-GCM, `nonce(12) ‖ ciphertext ‖ tag(16)`, UTF-8 JSON, no AAD | Crypto | port (GCM vector; C# round trip pending) |
+| P3 | `agents/index.dat` + `agents/<key>.dat`, tmp + replace, ordered off-thread writes, 10 s flush | AgentHistory | port |
+| P4 | System.Text.Json shapes (PascalCase, enum strings, local-offset dates) | AgentHistory | port (derived from the source; C# comparison pending) |
+| P5 | `settings.json` (indented, string enums, debounced 400 ms) | Settings | port (byte comparison with C# pending) |
+| P6 | `HOVER_DATA_DIR`, `%APPDATA%\Noty` migration, `planner.dat*` removal | Paths, OwlApp | port (Linux: `$XDG_DATA_HOME/Hover`) |
+| P7 | `kiro-images` (pasted images), swept after 14 days | KiroPage | port |
 
 ## Integrations
 
@@ -103,7 +103,7 @@ Source references are to the C# app or the office page (`web/office`).
 | W8 | Global hotkey (default Alt+N, rebindable, conflict warning) | HotKeys | proto (fixed Alt+N) |
 | W9 | Esc and click-away collapse | Notch | proto |
 | W10 | Display/DPI change handling (2 s signature poll, DpiChanged) | Notch | proto (poll) |
-| W11 | Single instance: `Local\HoverRunningInstance` mutex; second launch signals `Local\HoverShowApp` → dashboard | App.xaml.cs | — (P3B) |
+| W11 | Single instance: `Local\HoverRunningInstance` mutex; second launch signals `Local\HoverShowApp` → dashboard | App.xaml.cs | port (Linux: lock + socket in `$XDG_RUNTIME_DIR`; Windows check pending) |
 | W12 | Dashboard window 1200×620 (min 880×480), DWM dark/caption colours | DashboardWindow | — (P3C) |
 | W13 | Tray icon, menu, balloon; launch at login (HKCU Run) | TrayIcon, Actions | — (P3C) |
 | W14 | Settings: General, Integrations, Kiro, Codex, Cursor (every control in SCREENS.md) | Pages.cs | — (P3C) |

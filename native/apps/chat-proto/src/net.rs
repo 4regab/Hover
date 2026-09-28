@@ -125,14 +125,8 @@ fn decode(s: &str) -> Option<String> {
     String::from_utf8(out).ok()
 }
 
-/// Hover's data folder, as Paths.Support finds it (HOVER_DATA_DIR, else %APPDATA%\Hover).
-pub fn support() -> Option<PathBuf> {
-    if let Some(d) = std::env::var_os("HOVER_DATA_DIR").filter(|d| !d.is_empty()) { return Some(PathBuf::from(d)); }
-    #[cfg(windows)]
-    { std::env::var_os("APPDATA").map(|a| PathBuf::from(a).join("Hover")) }
-    #[cfg(not(windows))]
-    { std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config/Hover")) }
-}
+/// Hover's data folder (Paths.Support: HOVER_DATA_DIR, else %APPDATA%\\Hover or the XDG data folder).
+pub fn support() -> Option<PathBuf> { Some(hover_core::paths::support().to_path_buf()) }
 
 #[cfg(test)]
 mod tests {

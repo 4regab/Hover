@@ -221,7 +221,7 @@ impl App {
         let (tx, rx) = std::sync::mpsc::channel();
         let tx = std::sync::Mutex::new(tx);
         let net = Rc::new(net::Net::new(move |u| { let _ = tx.lock().unwrap().send(u); }));
-        if let Some(d) = net::support() { net.hosts.lock().unwrap().insert("hover.images".into(), d.join("kiro-images")); }
+        if let Some(d) = net::support() { net.hosts.lock().unwrap().insert("hover.images".into(), hover_core::images::folder(&d)); }
         let folder = s["folder"].as_str().unwrap_or("").to_string();
         let files = s["files"].as_str().map(str::to_string);
         if let Some(f) = &files { net.hosts.lock().unwrap().insert(f.to_ascii_lowercase(), PathBuf::from(&folder)); }

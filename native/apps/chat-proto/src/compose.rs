@@ -8,7 +8,6 @@ use std::io::Cursor;
 use std::path::{Path, PathBuf};
 
 pub const MAX_PICS: usize = 4;
-const MAX_BYTES: usize = 8 * 1024 * 1024;
 
 /// One pending image: its data URL (what the page sends) and its pixels, for the strip.
 #[derive(Clone)]
@@ -75,23 +74,11 @@ pub fn from_rgba(w: u32, h: u32, rgba: Vec<u8>) -> Option<Pic> {
     shrink(png.get_ref())
 }
 
-/// KiroPage.SaveImages: the paths written, in order; anything else is skipped.
+/// KiroPage.SaveImages (hover-core): the paths written, in order.
 pub fn save(urls: &[String], folder: &Path) -> Vec<PathBuf> {
-    let mut out = vec![];
-    for url in urls {
-        if out.len() >= MAX_PICS { break; }
-        let Some(rest) = url.strip_prefix("data:image/") else { continue };
-        let Some((head, data)) = rest.split_once(',') else { continue };
-        let Some(kind) = head.strip_suffix(";base64") else { continue };
-        let ext = match kind { "png" => ".png", "jpeg" => ".jpg", "gif" => ".gif", "webp" => ".webp", _ => continue };
-        if data.len() * 3 / 4 > MAX_BYTES { continue; }
-        let Some(bytes) = unb64(data) else { continue };
-        if std::fs::create_dir_all(folder).is_err() { continue; }
-        let name: String = format!("{}-{}", stamp(), guid()).chars().take(24).collect();
-        let p = folder.join(format!("{name}{ext}"));
-        if std::fs::write(&p, bytes).is_ok() { out.push(p); }
-    }
-    out
+    let items: Vec<hover_core::json::Json> = urls.iter().map(hover_core::json::Json::str).collect();
+    let _ = std::fs::create_dir_all(folder);
+    hover_core::images::save(&items, folder)
 }
 
 /// The URL the page shows a saved image at (KiroPage.State).
@@ -99,49 +86,6 @@ pub fn url_for(p: &Path) -> String {
     let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
     let enc: String = name.bytes().map(|c| if c.is_ascii_alphanumeric() || b"-_.~".contains(&c) { (c as char).to_string() } else { format!("%{c:02X}") }).collect();
     format!("https://hover.images/{enc}")
-}
-
-/// Local time as yyyyMMdd-HHmmss (DateTime.Now).
-fn stamp() -> String {
-    #[cfg(windows)]
-    {
-        let t = unsafe { windows::Win32::System::SystemInformation::GetLocalTime() };
-        format!("{:04}{:02}{:02}-{:02}{:02}{:02}", t.wYear, t.wMonth, t.wDay, t.wHour, t.wMinute, t.wSecond)
-    }
-    #[cfg(not(windows))]
-    {
-        // UTC on the dev VM.
-        let s = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs()) as i64;
-        let (days, rem) = (s.div_euclid(86400), s.rem_euclid(86400));
-        let (y, m, d) = civil(days);
-        format!("{y:04}{m:02}{d:02}-{:02}{:02}{:02}", rem / 3600, rem / 60 % 60, rem % 60)
-    }
-}
-
-#[cfg(not(windows))]
-fn civil(z: i64) -> (i64, i64, i64) {
-    // Howard Hinnant's days-to-civil.
-    let z = z + 719468;
-    let era = z.div_euclid(146097);
-    let doe = z - era * 146097;
-    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = doy - (153 * mp + 2) / 5 + 1;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 };
-    (yoe + era * 400 + (m <= 2) as i64, m, d)
-}
-
-/// Guid.NewGuid().ToString("N"): 32 random hex digits.
-fn guid() -> String {
-    use std::hash::{BuildHasher, Hasher};
-    let mut s = String::new();
-    for i in 0..2u64 {
-        let mut h = std::collections::hash_map::RandomState::new().build_hasher();
-        h.write_u64(i ^ std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_nanos() as u64));
-        s.push_str(&format!("{:016x}", h.finish()));
-    }
-    s
 }
 
 const B64: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
@@ -155,29 +99,6 @@ fn b64(b: &[u8]) -> String {
         }
     }
     o
-}
-
-/// Convert.FromBase64String: None on anything malformed.
-fn unb64(s: &str) -> Option<Vec<u8>> {
-    let s: Vec<u8> = s.bytes().filter(|c| !c.is_ascii_whitespace()).collect();
-    if s.len() % 4 != 0 { return None; }
-    let mut o = Vec::with_capacity(s.len() / 4 * 3);
-    for c in s.chunks(4) {
-        let mut n = 0u32;
-        let mut pad = 0;
-        for (i, &ch) in c.iter().enumerate() {
-            let v = match ch {
-                b'=' if i >= 2 => { pad += 1; 0 }
-                _ if pad > 0 => return None,
-                _ => B64.iter().position(|&x| x == ch)? as u32,
-            };
-            n = n << 6 | v;
-        }
-        o.push((n >> 16) as u8);
-        if pad < 2 { o.push((n >> 8) as u8); }
-        if pad < 1 { o.push(n as u8); }
-    }
-    Some(o)
 }
 
 /// The system's file picker, for "Attach an image": png, jpeg, gif and webp, several.
@@ -228,10 +149,10 @@ mod tests {
         let small = png(300, 200);
         let p = shrink(&small).unwrap();
         assert_eq!(p.url, format!("data:image/png;base64,{}", b64(&small)));
-        assert_eq!(unb64(&p.url[22..]).unwrap(), small);
+        assert_eq!(hover_core::images::from_base64(&p.url[22..]).unwrap(), small);
         let big = shrink(&png(4000, 1000)).unwrap();
         assert!(big.url.starts_with("data:image/jpeg;base64,"));
-        let j = unb64(&big.url[23..]).unwrap();
+        let j = hover_core::images::from_base64(&big.url[23..]).unwrap();
         let d = image::load_from_memory(&j).unwrap();
         assert_eq!((d.width(), d.height()), (2000, 500));
         assert!(shrink(b"not an image").is_none());
