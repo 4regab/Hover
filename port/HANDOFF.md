@@ -97,11 +97,14 @@ the repo (a symlink at `/projects/sandbox/node_modules` works for the scripts).
 **The main notch risk:** whether click-through works with a DirectComposition window
 while `WS_EX_TRANSPARENT` is toggled from the 50 ms poll. The fallbacks are in REPORT.md.
 
-**Open decisions for the user:**
-1. md.js hangs on U+2028/U+2029 in list lines, and throws on `\0n\0`. The port does
-   neither. Keep that, or copy the old behaviour?
-2. Step-list open/closed state follows the turn index across sessions (a baseline quirk,
-   copied in the port). Keep it, or fix it?
+**Decisions taken (2026-09-28):**
+1. md.js's hang and throw: the port keeps its own behaviour (neither).
+2. Step-list state: per session in the port (the baseline's leak is fixed).
+3. No Windows PC soon. The user asked to carry on through all phases on Linux. Windows
+   gates stay marked **pending**, never passed, and nothing replaces the C# app until
+   they are run and the cutover is reviewed.
+4. Each push to `rust-port/phase-0-1` is allowed, and the `ci` run it starts is cancelled
+   at once. After each feature: a short summary with screenshots.
 
 ## Next steps
 

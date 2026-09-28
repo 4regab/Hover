@@ -342,3 +342,23 @@ fn scrolling_boxes_are_laid_out_as_the_page_lays_them_out() {
         }
     }
 }
+
+/// A step list opened in one chat stays open there, and doesn't open turn i of the next.
+#[test]
+fn step_list_state_belongs_to_its_session() {
+    let (mut th, turns) = fixture(3);
+    th.session = 4;
+    th.set(&turns, 358.0);
+    let closed = th.sections[0].frag.texts.len();
+    th.toggle_steps(&turns, 0);
+    let open = th.sections[0].frag.texts.len();
+    assert!(open > closed);
+    // Another session with the same turns: closed, as it was never opened there.
+    th.session = 5;
+    th.set(&turns, 358.0);
+    assert_eq!(th.sections[0].frag.texts.len(), closed);
+    // Back: still open.
+    th.session = 4;
+    th.set(&turns, 358.0);
+    assert_eq!(th.sections[0].frag.texts.len(), open);
+}

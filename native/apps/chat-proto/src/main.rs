@@ -466,6 +466,7 @@ fn screenshot(out: &str, select: bool, scale: f32, n: usize, session: usize, hsc
     ui.show().unwrap();
     header(&ui, session);
     let app = Rc::new(RefCell::new(App::new(turns(n, session))));
+    app.borrow_mut().thread.session = fixture()["state"]["sessions"][session]["id"].as_u64().unwrap_or(0);
     let render = |ui: &ChatWindow| -> Vec<slint::Rgb8Pixel> {
         slint::platform::update_timers_and_animations();
         let mut buf = vec![slint::Rgb8Pixel::default(); (w * h) as usize];
@@ -567,6 +568,7 @@ fn main() {
     let ui = ChatWindow::new().unwrap();
     header(&ui, session);
     let app = Rc::new(RefCell::new(App::new(turns(n, session))));
+    app.borrow_mut().thread.session = fixture()["state"]["sessions"][session]["id"].as_u64().unwrap_or(0);
     wire(&ui, app.clone());
     if has("--stream") {
         stream(&ui, app);

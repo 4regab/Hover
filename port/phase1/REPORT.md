@@ -56,10 +56,12 @@ Findings about the baseline that change what parity means:
    Segoe UI Variable Text on Windows 11 and Segoe UI on Windows 10. The native chat
    resolves the same stack against system fonts, so it lands on the same face.
 2. **md.js hangs** on a list-item line containing U+2028/U+2029, and **throws** on a stray
-   `\0n\0`. The port does neither (MARKDOWN.md). **Decision needed.**
+   `\0n\0`. The port does neither (MARKDOWN.md). **Decided (review, 2026-09-28): keep
+   the port's behaviour.** A fix in the C# app's md.js is a separate change.
 3. **The open/closed state of a step list follows the turn index, not the session.**
-   Switching straight from one chat to another carries turn *i*'s choice over. The port
-   keeps this (`Thread::steps_user`) for 1:1 behaviour. **Decision needed:** keep or fix.
+   Switching straight from one chat to another carries turn *i*'s choice over.
+   **Decided (review, 2026-09-28): fixed in the port.** `Thread::steps_user` is keyed by
+   session and turn; a deliberate difference from the baseline.
 4. **Copy details are Chromium's.** A rule settles pending newlines. A paragraph that is
    only an image copies as blank lines. A table at the end of a selection adds a trailing
    newline. A diagram's labels are part of the copy.
@@ -153,7 +155,7 @@ These are estimates for the reviewer. Nothing below has been started.
 1. On a real Windows 10/11 PC, run `notch-proto --selftest` in both hit modes, and the
    `chat-proto` manual checks in RUN-ON-WINDOWS.md.
 2. Record the Phase 0 C# baseline with `Measure-Hover.ps1` on the same PC.
-3. Settle the three decisions above (md.js hang and throw; the step-list state leak).
+3. ~~Settle the decisions above~~ (done: keep the port's md.js; step-list state per session).
 
 Building the prototypes needs the Rust toolchain on that PC (`cargo build --release -p
 notch-proto -p chat-proto` in `native/`), because no CI artifacts exist.

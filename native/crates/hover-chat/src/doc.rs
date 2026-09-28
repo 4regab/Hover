@@ -733,11 +733,12 @@ pub struct Thread {
     pub tail: Tail,
     pub image_size: Box<dyn Fn(&str) -> Option<(f32, f32)>>,
     pub image_rule: Box<dyn Fn(&str) -> Option<String>>,
-    /// The step lists the user opened (true) or closed (false), by turn index. In the
-    /// page this outlives the session (it is read off the thread before each render),
-    /// so switching straight to another chat keeps turn i's choice; `keep_steps_state`
-    /// carries it across as the page does.
-    pub steps_user: std::collections::HashMap<usize, bool>,
+    /// The step lists the user opened (true) or closed (false), by (session, turn). The
+    /// page keys them by turn only, so switching chats carried turn i's choice into the
+    /// next one; decided in review: the port keeps each session's own (REPORT.md).
+    pub steps_user: std::collections::HashMap<(u64, usize), bool>,
+    /// The session shown (its id in the state message), for `steps_user`.
+    pub session: u64,
     pub hide_steps: bool,
     /// Section layouts made since the thread was created (for the tests and the benchmark).
     pub relayouts: usize,
@@ -810,19 +811,19 @@ impl Thread {
     pub fn new(sh: Shaper, who: &str, color: Rgba) -> Self {
         Thread { sh, width: 360.0, who: who.into(), color, sections: vec![], height: 0.0, selection: None, tail: Tail::None,
             image_size: Box::new(|_| None), image_rule: Box::new(|s| if s.starts_with("http") { Some(s.into()) } else { None }),
-            steps_user: Default::default(), hide_steps: false, relayouts: 0, hscroll: Default::default() }
+            steps_user: Default::default(), session: 0, hide_steps: false, relayouts: 0, hscroll: Default::default() }
     }
 
     /// Whether turn i's step list is open: the user's choice, else open while it runs.
     fn steps_open(&self, i: usize, live: bool) -> bool {
-        self.steps_user.get(&i).copied().unwrap_or(live)
+        self.steps_user.get(&(self.session, i)).copied().unwrap_or(live)
     }
 
     /// A click on a summary: the list flips and stays that way (details toggle).
     pub fn toggle_steps(&mut self, turns: &[Turn], i: usize) {
         let live = i + 1 == turns.len() && turns[i].stage == Stage::Working;
         let open = self.steps_open(i, live);
-        self.steps_user.insert(i, !open);
+        self.steps_user.insert((self.session, i), !open);
         let w = self.width;
         self.set(turns, w);
     }
