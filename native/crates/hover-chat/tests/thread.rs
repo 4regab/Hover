@@ -431,3 +431,37 @@ fn an_image_that_arrives_lays_out_only_its_section_again() {
     let c = px.pixel(x, y).unwrap();
     assert!(c.red() > 150 && c.green() < 100, "the image is painted: {c:?}");
 }
+
+/// .ans.fresh: the new answer (only it) fades in over .35 s, rising 4 px; laying the
+/// turn out again (the next state) drops the fade, as main.js's re-render does.
+#[test]
+fn a_fresh_answer_fades_in_and_a_relayout_ends_it() {
+    let f = fonts();
+    let mut th = Thread::new(Shaper::new(&f), "Juno", [47, 201, 176, 255]);
+    let mut turns = vec![Turn { answer: "A fresh answer, painted white.".into(), ..Turn::new("Question?") }];
+    th.set(&turns, 358.0);
+    let mut p = Painter::new(&f, hover_chat::Images::none());
+    let h = th.height as u32;
+    let bright = |px: &resvg::tiny_skia::Pixmap, y0: f32, y1: f32| (y0 as u32..y1 as u32).flat_map(|y| (0..358).map(move |x| (x, y)))
+        .filter(|&(x, y)| px.pixel(x, y).unwrap().red() > 200).count();
+    let s = &th.sections[0];
+    let (ti, _, _) = s.answer_at.unwrap();
+    let ans = &s.frag.texts[ti];
+    let (a0, a1) = (s.y + ans.y, s.y + ans.y + ans.layout.height());
+    let full = bright(&p.paint(&th, 0.0, 358, h, 1.0, hover_chat::theme::DRAWER_BG), a0, a1);
+    let prompt = bright(&p.paint(&th, 0.0, 358, h, 1.0, hover_chat::theme::DRAWER_BG), 0.0, a0 - 30.0);
+    assert!(full > 50);
+    p.time = 10.0;
+    th.fresh = Some((0, 10.0));
+    let px = p.paint(&th, 0.0, 358, h, 1.0, hover_chat::theme::DRAWER_BG);
+    assert_eq!(bright(&px, a0, a1), 0, "invisible at the start");
+    assert_eq!(bright(&px, 0.0, a0 - 30.0), prompt, "the prompt doesn't fade");
+    assert!(p.fading(&th));
+    p.time = 10.35;
+    assert!(!p.fading(&th));
+    assert_eq!(bright(&p.paint(&th, 0.0, 358, h, 1.0, hover_chat::theme::DRAWER_BG), a0, a1), full);
+    p.time = 10.1;
+    turns[0].answer.push_str(" More.");
+    th.set(&turns, 358.0);
+    assert_eq!(th.fresh, None);
+}

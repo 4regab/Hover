@@ -79,6 +79,10 @@ the repo (a symlink at `/projects/sandbox/node_modules` works for the scripts).
   8 diagrams.
 - Chat copy identical to Chromium's on 605 cases.
 - Double and triple click: 3 602 of 3 606 page clicks identical (4 emoji cases differ).
+- Images (web, `hover.images`, files host; broken-image boxes fitted on the page), smooth
+  scrolling (cc's curve), composer images (paste, drop, pick, SaveImages), the model pill
+  and menu, the toast, the transcript view, the fresh fade, the drawer slide, and the
+  selection exposed to UIA through read-only `TextInput` nodes.
 - Thin scrollbars (thread, and sideways in code blocks), measured in Chromium with its
   scrollbars shown; box heights within 0.03 px of the page. Finding: the Phase 0
   captures were taken with Playwright's hidden scrollbars (REPORT.md, finding 5).
@@ -107,17 +111,8 @@ while `WS_EX_TRANSPARENT` is toggled from the 50 ms poll. The fallbacks are in R
 ## Next steps
 
 1. Wait for the user's Windows results (RUN-ON-WINDOWS.md) before Phase 2.
-2. Meanwhile, portable Phase 1 chat gaps:
-   - smooth (animated) wheel, arrow and track scrolling;
-   - the broken-image icon and alt text the page shows for an image that doesn't load;
-   - fetching web images;
-   - composer image paste, drop and pick;
-   - the model menu;
-   - the transcript view;
-   - the fresh-answer fade;
-   - the drawer slide;
-   - exposing the selection to UIA;
-   - checking the selection colour against WebView2.
+2. The portable Phase 1 chat gaps are all built (REPORT.md lists what still differs).
+   Checking the selection colour against WebView2 needs Windows.
 3. After the gate review:
    - Phase 2: the office scene in wgpu, then the full-workload benchmark against the
      frozen thresholds.

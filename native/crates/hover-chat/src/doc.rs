@@ -735,6 +735,8 @@ pub struct Section {
     pub summary: Option<[f32; 4]>,
     /// Where the answer's copy tokens start (a select-all inside `.ans`).
     pub answer_tok: Option<usize>,
+    /// Where the answer's texts, shapes and scrolling boxes start (it fades in on its own).
+    pub answer_at: Option<(usize, usize, usize)>,
     /// The answer's images, and whether one of them changed since it was laid out.
     pub images: Vec<String>,
     stale: bool,
@@ -766,6 +768,8 @@ pub struct Thread {
     /// How far each sideways-scrolling box is scrolled, by (section, scroller). A section
     /// laid out again starts at 0, as the page's re-rendered answer does.
     pub hscroll: std::collections::HashMap<(usize, usize), f32>,
+    /// `.ans.fresh`: the section whose answer just arrived, and when (the painter's clock).
+    pub fresh: Option<(usize, f32)>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -832,7 +836,7 @@ impl Thread {
     pub fn new(sh: Shaper, who: &str, color: Rgba) -> Self {
         Thread { sh, width: 360.0, who: who.into(), color, sections: vec![], height: 0.0, selection: None, tail: Tail::None,
             image_state: Box::new(|_| ImageState::Broken), image_rule: Box::new(|s| if s.starts_with("http") { Some(s.into()) } else { None }),
-            steps_user: Default::default(), session: 0, hide_steps: false, relayouts: 0, hscroll: Default::default() }
+            steps_user: Default::default(), session: 0, hide_steps: false, relayouts: 0, hscroll: Default::default(), fresh: None }
     }
 
     /// Whether turn i's step list is open: the user's choice, else open while it runs.
@@ -867,8 +871,10 @@ impl Thread {
                 None => {
                     self.relayouts += 1;
                     self.hscroll.retain(|k, _| k.0 != i);
-                    let (frag, h, summary, answer_tok, images) = self.turn(t, width - pl - pr, open, live);
-                    Section { y: 0.0, h, frag, summary, answer_tok, images, stale: false, key }
+                    let (frag, h, summary, answer_tok, images, answer_at) = self.turn(t, width - pl - pr, open, live);
+                    // A re-render drops .fresh (main.js consumes the flag), so the fade stops.
+                    if self.fresh.is_some_and(|f| f.0 == i) { self.fresh = None; }
+                    Section { y: 0.0, h, frag, summary, answer_tok, answer_at, images, stale: false, key }
                 }
             };
             if i > 0 { y += theme::THREAD_GAP; }
@@ -889,8 +895,10 @@ impl Thread {
 
     // One turn, as flex items with 7 px gaps: the you-bubble, the step list, the status,
     // the who line and the answer.
-    fn turn(&mut self, t: &Turn, w: f32, open: bool, live: bool) -> (Frag, f32, Option<[f32; 4]>, Option<usize>, Vec<String>) {
+    #[allow(clippy::type_complexity)]
+    fn turn(&mut self, t: &Turn, w: f32, open: bool, live: bool) -> (Frag, f32, Option<[f32; 4]>, Option<usize>, Vec<String>, Option<(usize, usize, usize)>) {
         let mut images = vec![];
+        let mut answer_at = None;
         let mut frag = Frag::default();
         let mut summary = None;
         let mut answer_tok = None;
@@ -1001,10 +1009,11 @@ impl Thread {
             images = md.used;
             if failed { frag.shapes.push(rect(0.0, y, 2.0, b.h, 0.0, Some(theme::BAD))); }
             answer_tok = Some(frag.copy.len());
+            answer_at = Some((frag.texts.len(), frag.shapes.len(), frag.scrollers.len()));
             frag.append(b.frag, inset, y);
             y += b.h;
         }
-        (frag, y, summary, answer_tok, images)
+        (frag, y, summary, answer_tok, images, answer_at)
     }
 
     /// The open step list: one flex row (`.work div { display: flex; gap: 8px }`) whose
@@ -1317,12 +1326,25 @@ impl Thread {
         sel.geometry(&t.layout).into_iter().map(|(b, _)| (b.x0 as f32, b.y0 as f32, b.x1 as f32, b.y1 as f32)).collect()
     }
 
-    /// Per text box: the text, for assistive technology, and its rectangle in thread
-    /// coordinates.
-    pub fn accessible_blocks(&self) -> Vec<(String, [f32; 4])> {
+    /// Per text box: the text, for assistive technology, its rectangle in thread
+    /// coordinates, and the part of it that is selected (byte range).
+    pub fn accessible_blocks(&self) -> Vec<(String, [f32; 4], Option<(usize, usize)>)> {
         self.texts().filter(|(_, t, _)| !t.text.is_empty())
-            .map(|(p, t, sy)| (t.text.clone(), [t.x - self.offset(p.section, t) + theme::THREAD_PAD[3], sy + t.y, t.layout.width(), t.layout.height()]))
+            .map(|(p, t, sy)| (t.text.clone(), [t.x - self.offset(p.section, t) + theme::THREAD_PAD[3], sy + t.y, t.layout.width(), t.layout.height()],
+                self.selected_in(p.section, p.text)))
             .collect()
+    }
+
+    /// The selected bytes of one text box, if any.
+    pub fn selected_in(&self, section: usize, text: usize) -> Option<(usize, usize)> {
+        let (a, f) = self.selection?;
+        let (lo, hi) = if a <= f { (a, f) } else { (f, a) };
+        let key = (section, text);
+        if key < (lo.section, lo.text) || key > (hi.section, hi.text) { return None; }
+        let len = self.sections[section].frag.texts[text].text.len();
+        let s = if key == (lo.section, lo.text) { lo.byte } else { 0 };
+        let e = if key == (hi.section, hi.text) { hi.byte } else { len };
+        (s < e).then_some((s, e.min(len)))
     }
 
     /// Every glyph run's items, for painting.

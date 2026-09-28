@@ -195,6 +195,9 @@ struct App {
     tool: String,
     /// The fixture session shown.
     index: usize,
+    blocks: Vec<A11yBlock>,
+    /// Which turns had an answer at the last frame (None before the first), for .fresh.
+    answered: Option<Vec<bool>>,
     toast_timer: slint::Timer,
     arrivals: Option<std::sync::mpsc::Receiver<String>>,
     t0: Instant,
@@ -207,7 +210,7 @@ impl App {
         let thread = Thread::new(Shaper::new(&f), who, color);
         let p0 = Pos { section: 0, text: 0, byte: 0 };
         App { thread, painter: Painter::new(&f, hover_chat::Images::none()), turns, net: None, arrivals: None, smooth: Default::default(), motion: animations(),
-            pics: vec![], tools: models::tools(&fixture()["state"]), tool: String::new(), index: 1, toast_timer: Default::default(), scroll: 0.0, anchor: None, unit: Unit::Char, unit_anchor: (p0, p0, Tail::None),
+            pics: vec![], tools: models::tools(&fixture()["state"]), tool: String::new(), index: 1, answered: None, blocks: vec![], toast_timer: Default::default(), scroll: 0.0, anchor: None, unit: Unit::Char, unit_anchor: (p0, p0, Tail::None),
             clicks: Clicks { at: None, x: 0.0, y: 0.0, n: 0 }, dragging: false, stick: true, dirty: true, view: (0.0, 0.0), vbar: true, grab: None, press: None, t0: Instant::now() }
     }
 
@@ -298,9 +301,12 @@ impl App {
         if w < 1.0 || h < 1.0 {
             return;
         }
+        let fresh = self.fresh_turn();
+        if fresh.is_some() { self.stick = true; }
         if self.stick || self.dirty || self.view != (w, h) || self.thread.sections.len() != self.turns.len() {
             self.relayout(w, h);
         }
+        if let Some(i) = fresh { self.thread.fresh = Some((i, self.t0.elapsed().as_secs_f32())); }
         self.scroll = self.scroll.clamp(0.0, (self.thread.height - h).max(0.0));
         let k = ui.window().scale_factor();
         self.painter.time = self.t0.elapsed().as_secs_f32();
@@ -312,11 +318,21 @@ impl App {
         let mut buf = SharedPixelBuffer::<slint::Rgba8Pixel>::new(px.width(), px.height());
         buf.make_mut_bytes().copy_from_slice(px.data());
         ui.set_thread(slint::Image::from_rgba8_premultiplied(buf));
+        // The accessible nodes are in thread coordinates under a layer the window moves by
+        // the scroll; the list (a node per visible text box)
+        // is replaced only when it changes, as re-creating the nodes costs a frame.
+        ui.set_thread_scroll(self.scroll);
         let blocks: Vec<A11yBlock> = self.thread.accessible_blocks().into_iter()
-            .filter(|(_, r)| r[1] + r[3] > self.scroll && r[1] < self.scroll + h)
-            .map(|(text, r)| A11yBlock { x: r[0], y: r[1] - self.scroll, w: r[2], h: r[3], text: text.into() })
+            .filter(|(_, r, _)| r[1] + r[3] > self.scroll && r[1] < self.scroll + h)
+            .map(|(text, r, sel)| {
+                let (s, e) = sel.map_or((-1, -1), |(s, e)| (s as i32, e as i32));
+                A11yBlock { x: r[0], y: r[1], w: r[2], h: r[3], text: text.into(), sel_start: s, sel_end: e }
+            })
             .collect();
-        ui.set_blocks(Rc::new(VecModel::from(blocks)).into());
+        if blocks != self.blocks {
+            ui.set_blocks(Rc::new(VecModel::from(blocks.clone())).into());
+            self.blocks = blocks;
+        }
     }
 
     /// A scrollbar, in viewport coordinates.
@@ -375,7 +391,17 @@ impl App {
             self.set_pos(*id, *pos);
             if *done { self.smooth.remove(id); }
         }
-        !running.is_empty()
+        !running.is_empty() || self.painter.fading(&self.thread)
+    }
+
+    /// main.js fromHost: a turn whose answer is new since the last state is fresh (never
+    /// on the first state); renderDrawer puts .fresh on the last turn's answer only and
+    /// jumps to the bottom. Returns the turn to mark, if any.
+    fn fresh_turn(&mut self) -> Option<usize> {
+        let now: Vec<bool> = self.turns.iter().map(|t| !t.answer.is_empty()).collect();
+        let before = self.answered.replace(now.clone())?;
+        let any = now.iter().enumerate().any(|(k, &a)| a && !before.get(k).copied().unwrap_or(false));
+        (any && self.motion && !self.turns.is_empty()).then(|| self.turns.len() - 1)
     }
 
     /// The pointer on the scrollbars, which come before the text: Some(redraw) when

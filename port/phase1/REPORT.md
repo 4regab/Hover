@@ -37,17 +37,22 @@ Each concern has its own implementation. Slint's StyledText is used for none of 
 | Scrollbars | `hover-chat::scroll`: the thin Fluent bar measured in Chromium (10 px, arrows, 6 px thumb, 11 px minimum, 40 px arrow step, 87.5 % page, 250/50 ms repeat); the thread's takes 10 px from the content; a code block wider than the drawer scrolls sideways under its own bar | geometry unit-tested against the page's pixels; Windows look **pending** |
 | Painting | tiny-skia plus swash glyph masks, viewport only, with glyph, image and diagram caches | see the timings |
 | Chrome and composer | Slint: header, `TextInput` composer (Enter, Shift+Enter), send/queue/stop, Ctrl+C, Ctrl+A | headless screenshots in `shots/` |
-| Accessibility | one Slint text node per visible text box, over the painted thread | the nodes are there; not yet checked with a UIA client |
+| Images | `hover-chat::images`, shared by layout and painter; `chat-proto/net.rs` loads the web on 4 workers (ureq; schannel on Windows), `hover.images` and the session's files host from disk, never outside the folder. Pending and broken images take their alt text's room with Chromium's broken-image icon | the page's layout of 5 broken-image cases within 0.5 px (`golden/gen-broken.mjs`); a loaded image lays out only its own section again |
+| Smooth scrolling | `scroll::Smooth`: cc's ScrollOffsetAnimationCurve (ease-in-out, 6–12 frames by distance, retargeting at the present speed); Windows' wheel lines × 100/3 px; off with Windows' animation effects | unit-tested on the curve's numbers |
+| Composer images | `chat-proto/compose.rs`: main.js `shrink` (2000 px, JPEG 90 unless small and a web format) and `addPics` (4, then the toast); `KiroPage.SaveImages` (data:image/*;base64, 8 MiB, the 24-character names); paste (clipboard files or bitmap), drop (winit), pick (IFileOpenDialog); the 52 px strip with remove buttons | unit tests; screenshot `shots/chat-proto-composer-images-2x.png` |
+| Model pill and menu | `chat-proto/models.rs`: renderPill, openMenu (above the pill, 6 px clear, inside the office by 8), EFFORT, arrow keys, Esc, the check, efforts that keep it open, `setModel` | unit test on the fixture's tools; `shots/chat-proto-model-menu-2x.png` |
+| Transcript, fade, slide | showTranscript ("History" in the tool's colour, the wake placeholder, no Stop); `.ans.fresh` (painted as a layer: .35 s ease-out, 4 px rise, only the last turn's answer, cut by the next re-layout as the page's re-render cuts it); the drawer's .35 s slide and .25 s fade | fade unit-tested in pixels; `shots/chat-proto-transcript-2x.png` |
+| Accessibility | one read-only, transparent Slint `TextInput` per visible text box, over the painted thread, with the thread's selection set on it: Slint gives UIA a text range and a selection only for a `TextInput` | the nodes are there; **not yet checked with a UIA client** |
 
 Headless timings. These come from the Linux VM on the software renderer, so they can
 show where a problem is but cannot pass G2:
 
 | | |
 |---|---|
-| 200 rich turns: layout and first frame | 204 ms |
-| Scroll frame (thread paint plus Slint frame of the whole window) | 1.7 ms mean, 6.3 ms worst |
+| 200 rich turns: layout and first frame | 201 ms |
+| Scroll frame (thread paint plus Slint frame of the whole window) | 2.0 ms mean, 6.5 ms worst (1.7 ms with plain accessible nodes; the `TextInput` nodes cost 0.3 ms) |
 | A streamed chunk into a 200-turn thread | 1.9 ms (only that turn is laid out again) |
-| Resident memory with 200 rich turns | 48 MB (Linux RSS; not comparable to Windows private WS) |
+| Resident memory with 200 rich turns | 50 MB (Linux RSS; not comparable to Windows private WS) |
 
 Findings about the baseline that change what parity means:
 
@@ -82,22 +87,26 @@ Findings about the baseline that change what parity means:
    too. Emoji next to a space or each other select as Chromium's ICU does only in part
    (it walks boundaries forwards and backwards differently there): 4 clicks differ.
 
-Chat gaps that remain (none are known blockers):
-- No smooth wheel scrolling, and no animated scroll for arrow and track presses (Chromium
-  animates both on Windows).
-- The scrollbars' look is Chromium's Fluent bar as drawn on Linux; Windows 11 should match,
-  Windows 10 draws classic bars. To compare on Windows.
-- A broken or unloaded image in the page shows the broken-image icon and its alt text;
-  the port shows nothing ("The flow" in the rich session, seen in captures with the
-  scrollbars shown).
-- The glass blur (`backdrop-filter: blur(18px) saturate(1.4)`) is not drawn: the drawer is
-  flat. This needs the office scene behind it (Phase 2).
-- Web images are not fetched: the prototype's loader returns nothing. The drawing and
-  sizing paths are done.
-- Not in the prototype: pasted, dropped and picked images in the composer; the model
-  menu; the transcript view; the fresh-answer fade; the drawer's slide.
-- The selection colour is a guess (`theme::SELECTION`) until it is compared with WebView2.
-- Accessibility: the text nodes don't expose the text selection to UIA.
+Every chat gap listed at handoff is now built. What still differs, by design or pending:
+- **Windows checks pending:** the scrollbars' look (Chromium's Fluent bar as drawn on
+  Linux; Windows 10 draws classic bars), the wheel step, the selection colour
+  (`theme::SELECTION` is a guess), UIA reading the selection, IME, drop and the picker.
+- **The glass blur** (`backdrop-filter: blur(18px) saturate(1.4)`) is not drawn, on the
+  drawer, the menu or the toast: they are flat. It needs the office scene behind them
+  (Phase 2).
+- **Files dropped anywhere on the window are taken.** winit reports no pointer position
+  during a file drag, so the port can't tell the composer from the rest; the page takes
+  them only on the composer, and shows the composer lit (`.over`) meanwhile.
+- **A click beside the open model menu only closes it.** In the page the same click also
+  reaches what is under it.
+- **The fresh fade lasts until the next state.** As in the page: each state re-renders the
+  thread and drops `.fresh`, so a streamed answer's fade is cut at its next chunk.
+- **Web images over 32 MB are treated as broken** (the page has no limit); decoded images
+  are capped at 4096 px on their long side.
+- Slint's software renderer (the headless screenshots, and a fallback on Windows) doesn't
+  clip to rounded corners and drops an element that has both a clip and a shadow: the
+  composer's thumbnails are rounded in their pixels, and the menu's shadow is a separate
+  element.
 
 ## 1A: notch
 

@@ -15,6 +15,9 @@ export struct A11yBlock {
     w: length,
     h: length,
     text: string,
+    // The selected bytes of the text, or -1: UI Automation's TextPattern reads them.
+    sel-start: int,
+    sel-end: int,
 }
 
 component Icon inherits Path {
@@ -88,6 +91,7 @@ component Avatar inherits Rectangle {
 export component ChatWindow inherits Window {
     in property <image> thread;
     in property <[A11yBlock]> blocks;
+    in property <length> thread-scroll;
     in property <string> who: "Juno";
     in property <string> tool: "Codex";
     in property <color> tool-color: #3fd6a0;
@@ -299,13 +303,32 @@ export component ChatWindow inherits Window {
                     source: root.thread;
                     image-fit: fill;
                 }
-                for b in root.blocks: Rectangle {
+                // One read-only, invisible TextInput per visible text box: Slint exposes a text
+                // range and its selection to UI Automation only for a TextInput. The pointer
+                // goes to the thread's TouchArea above them.
+                Rectangle {
+                y: -root.thread-scroll;
+                height: 0;
+                for b in root.blocks: TextInput {
                     x: b.x;
                     y: b.y;
                     width: b.w;
                     height: b.h;
+                    text: b.text;
+                    read-only: true;
+                    wrap: word-wrap;
+                    font-size: 12.5px;
+                    color: transparent;
+                    selection-foreground-color: transparent;
+                    selection-background-color: transparent;
                     accessible-role: text;
                     accessible-label: b.text;
+                    init => {
+                        if (b.sel-start >= 0) {
+                            self.set-selection-offsets(b.sel-start, b.sel-end);
+                        }
+                    }
+                }
                 }
                 keys := FocusScope {
                     key-pressed(event) => {

@@ -85,41 +85,63 @@ impl Painter {
         px.fill(color(bg));
         let view = (scroll, scroll + h as f32 / scale);
         let ox = theme::THREAD_PAD[3];
+        // .ans.fresh: @keyframes rise { from { opacity: 0; transform: translateY(4px) } },
+        // .35s ease-out. The answer is drawn on a layer, then put down faded and lowered.
+        let fade = th.fresh.and_then(|(si, t0)| {
+            let p = (self.time - t0) / 0.35;
+            (p < 1.0 && th.sections.get(si).is_some_and(|s| s.answer_at.is_some())).then(|| (si, crate::scroll::ease_out(p.max(0.0))))
+        });
+        let mut layer = fade.map(|_| Pixmap::new(px.width(), px.height()).unwrap());
         for (si, s) in th.sections.iter().enumerate() {
             if s.y + s.h + 10.0 < view.0 || s.y - 10.0 > view.1 { continue; }
             let dy = s.y - scroll;
-            for sh in &s.frag.shapes {
-                self.shape(&mut px, sh, ox, dy, scale);
+            let (t_at, s_at, k_at) = match (fade, s.answer_at) { (Some((f, _)), Some(a)) if f == si => a, _ => (usize::MAX, usize::MAX, usize::MAX) };
+            for (i, sh) in s.frag.shapes.iter().enumerate() {
+                let to = if i >= s_at { layer.as_mut().unwrap() } else { &mut px };
+                self.shape(to, sh, ox, dy, scale);
             }
             // What scrolls sideways with a box, cut to it (only square fills do).
             for (k, sc) in s.frag.scrollers.iter().enumerate() {
+                let to = if k >= k_at { layer.as_mut().unwrap() } else { &mut px };
                 let off = th.hscroll.get(&(si, k)).copied().unwrap_or(0.0);
                 let [cx, _, cw, _] = sc.clip;
                 for sh in &sc.shapes {
                     if let Shape::Rect { x, y, w, h, fill: Some(f), .. } = sh {
                         let (a, b) = ((x - off).max(cx), (x - off + w).min(cx + cw));
-                        if b > a { fill_rect(&mut px, (ox + a) * scale, (dy + y) * scale, (b - a) * scale, h * scale, 0.0, *f); }
+                        if b > a { fill_rect(to, (ox + a) * scale, (dy + y) * scale, (b - a) * scale, h * scale, 0.0, *f); }
                     }
                 }
             }
             for (ti, t) in s.frag.texts.iter().enumerate() {
                 let top = s.y + t.y;
                 if top > view.1 || top + t.layout.height() < view.0 { continue; }
+                let to = if ti >= t_at { layer.as_mut().unwrap() } else { &mut px };
                 let off = th.offset(si, t);
                 for (x0, y0, x1, y1) in th.selection_rects(si, ti) {
                     let (mut a, mut b) = (ox + t.x - off + x0, ox + t.x - off + x1);
                     if let Some(c) = t.clip { a = a.max(ox + c[0]); b = b.min(ox + c[0] + c[2]); }
-                    if b > a { fill_rect(&mut px, a * scale, (dy + t.y + y0) * scale, (b - a) * scale, (y1 - y0) * scale, 0.0, theme::SELECTION); }
+                    if b > a { fill_rect(to, a * scale, (dy + t.y + y0) * scale, (b - a) * scale, (y1 - y0) * scale, 0.0, theme::SELECTION); }
                 }
-                self.text(&mut px, t, ox + t.x - off, dy + t.y, scale, off);
+                self.text(to, t, ox + t.x - off, dy + t.y, scale, off);
             }
         }
         // The boxes' own scrollbars, inside their rounded bottom corners.
         for (id, b) in th.hbars() {
             if b.y > view.1 || b.y + THICK < view.0 { continue; }
-            self.bar(&mut px, &Bar { y: b.y - scroll, ..b }, scale, self.hover == Some(BarId::Box(id.0, id.1)), [0.0, 0.0, 9.0, 9.0]);
+            let to = match (fade, &mut layer) { (Some((f, _)), Some(l)) if f == id.0 => l, _ => &mut px };
+            self.bar(to, &Bar { y: b.y - scroll, ..b }, scale, self.hover == Some(BarId::Box(id.0, id.1)), [0.0, 0.0, 9.0, 9.0]);
+        }
+        if let (Some((_, e)), Some(l)) = (fade, layer) {
+            let paint = tiny_skia::PixmapPaint { opacity: e, quality: tiny_skia::FilterQuality::Bilinear, ..Default::default() };
+            px.draw_pixmap(0, 0, l.as_ref(), &paint, Transform::from_translate(0.0, 4.0 * (1.0 - e) * scale), None);
         }
         px
+    }
+
+    /// Whether a frame drawn now would differ from the last because of time alone (the
+    /// fresh answer's fade).
+    pub fn fading(&self, th: &Thread) -> bool {
+        th.fresh.is_some_and(|(_, t0)| self.time - t0 < 0.35)
     }
 
     /// Draws a scrollbar (in CSS px of the buffer): the track, the arrow buttons and the

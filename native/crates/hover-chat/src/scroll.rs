@@ -128,6 +128,11 @@ pub struct Smooth {
     curve: Bezier,
 }
 
+/// CSS `ease-out`, cubic-bezier(0, 0, 0.58, 1).
+pub fn ease_out(x: f32) -> f32 {
+    Bezier { x1: 0.0, y1: 0.0, x2: 0.58, y2: 1.0 }.value(x as f64) as f32
+}
+
 const EASE: Bezier = Bezier { x1: 0.42, y1: 0.0, x2: 0.58, y2: 1.0 };
 
 fn inverse_delta(delta: f64) -> f64 {
