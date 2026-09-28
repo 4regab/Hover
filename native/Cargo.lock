@@ -699,6 +699,7 @@ dependencies = [
  "arboard",
  "hover-chat",
  "image",
+ "serde_json",
  "slint",
  "slint-build",
 ]
@@ -1755,6 +1756,7 @@ dependencies = [
  "image",
  "parley",
  "resvg",
+ "serde_json",
  "swash",
 ]
 

@@ -47,6 +47,8 @@ pub struct Painter {
     pub loader: Loader,
     /// Painted frames, for the benchmark.
     pub frames: u64,
+    /// Seconds, for the live step's shimmer (a 2 s loop, as `@keyframes flow`).
+    pub time: f32,
 }
 
 // page.html's `.flow` rules, with its CSS variables resolved (usvg reads no `:not()`).
@@ -69,7 +71,7 @@ impl Painter {
                 break;
             }
         }
-        Painter { scaler: ScaleContext::new(), glyphs: HashMap::new(), images: HashMap::new(), svgs: HashMap::new(), fontdb: Arc::new(db), loader, frames: 0 }
+        Painter { scaler: ScaleContext::new(), glyphs: HashMap::new(), images: HashMap::new(), svgs: HashMap::new(), fontdb: Arc::new(db), loader, frames: 0, time: 0.0 }
     }
 
     /// The natural size of an image, once it has been loaded.
@@ -156,7 +158,20 @@ impl Painter {
                     px.fill_rect(rect, &p, Transform::identity(), None);
                 }
             }
-            Shape::Image { x, y, w, h, radius, src } => {
+            Shape::Line { pts, color: c, width } => {
+                let mut pb = PathBuilder::new();
+                for (i, (px_, py_)) in pts.iter().enumerate() {
+                    let (a, b) = ((ox + px_) * k, (dy + py_) * k);
+                    if i == 0 { pb.move_to(a, b) } else { pb.line_to(a, b) }
+                }
+                if let Some(path) = pb.finish() {
+                    let mut p = Paint::default();
+                    p.set_color(color(*c));
+                    p.anti_alias = true;
+                    px.stroke_path(&path, &p, &Stroke { width: width * k, ..Default::default() }, Transform::identity(), None);
+                }
+            }
+            Shape::Image { x, y, w, h, radius, src, cover } => {
                 let (x, y, w, h, r) = ((ox + x) * k, (dy + y) * k, w * k, h * k, radius * k);
                 let Some(img) = self.image(src) else {
                     // .md img { background: rgba(255,255,255,.04) } while it loads, or broken.
@@ -164,10 +179,13 @@ impl Painter {
                     return;
                 };
                 let (iw, ih) = (img.width() as f32, img.height() as f32);
+                // object-fit: cover scales to fill and centres; otherwise the box is the image's size.
+                let (sx, sy) = if *cover { let s = (w / iw).max(h / ih); (s, s) } else { (w / iw, h / ih) };
+                let (tx, ty) = (x + (w - iw * sx) / 2.0, y + (h - ih * sy) / 2.0);
                 let mut p = Paint::default();
                 p.anti_alias = true;
                 p.shader = tiny_skia::Pattern::new(img.as_ref(), tiny_skia::SpreadMode::Pad, tiny_skia::FilterQuality::Bicubic, 1.0,
-                    Transform::from_row(w / iw, 0.0, 0.0, h / ih, x, y));
+                    Transform::from_row(sx, 0.0, 0.0, sy, tx, ty));
                 if let Some(path) = rounded(x, y, w, h, [r; 4]) {
                     px.fill_path(&path, &p, FillRule::Winding, Transform::identity(), None);
                 }
@@ -196,6 +214,17 @@ impl Painter {
     fn text(&mut self, px: &mut Pixmap, t: &TextBox, x: f32, y: f32, k: f32) {
         // The clip is in the text box's parent coordinates: x - t.x is that origin.
         let clip = t.clip.map(|c| [((x - t.x + c[0]) * k) as i32, ((y - t.y + c[1]) * k) as i32, ((x - t.x + c[0] + c[2]) * k) as i32, ((y - t.y + c[1] + c[3]) * k) as i32]);
+        // .work .on span: linear-gradient(90deg, dim 30%, #fff 50%, dim 70%) at 200% width,
+        // moved by -200% every 2 s, clipped to the text.
+        let sw = t.layout.width().max(1.0);
+        let phase = (self.time / 2.0).fract();
+        let shimmer = |gx: f32| -> Rgba {
+            let u = ((gx - 2.0 * sw * phase) / (2.0 * sw)).rem_euclid(1.0);
+            let m = if u <= 0.3 || u >= 0.7 { 0.0 } else if u <= 0.5 { (u - 0.3) / 0.2 } else { (0.7 - u) / 0.2 };
+            let d = theme::DIM;
+            let l = |a: u8, b: u8| (a as f32 + (b as f32 - a as f32) * m).round() as u8;
+            [l(d[0], 255), l(d[1], 255), l(d[2], 255), l(d[3], 255)]
+        };
         for item in Thread::items(t) {
             let PositionedLayoutItem::GlyphRun(run) = item else { continue };
             let style = run.style();
@@ -230,6 +259,7 @@ impl Painter {
                     rnd.render(&mut scaler, g.id as u16).map(|img| Mask { left: img.placement.left, top: img.placement.top, w: img.placement.width, h: img.placement.height, data: img.data })
                 });
                 if let Some(mk) = mask {
+                    let c = if t.shimmer { shimmer(g.x + g.advance / 2.0) } else { c };
                     blit(px, gx.floor() as i32 + mk.left, gy as i32 - mk.top, mk, c, clip);
                 }
             }

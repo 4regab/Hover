@@ -67,6 +67,24 @@ fn unescape(s: &str) -> String {
     s.replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", "\"").replace("&#39;", "'").replace("&amp;", "&")
 }
 
+/// `white-space: normal`: runs of ASCII whitespace (not U+00A0) are one space, as the
+/// page shows and copies them. md.js leaves raw newlines only where the browser folds
+/// them (a list item's continuation lines); in paragraphs it writes <br>.
+fn collapse(s: &str) -> String {
+    let mut o = String::with_capacity(s.len());
+    let mut ws = false;
+    for c in s.chars() {
+        if matches!(c, ' ' | '\t' | '\n' | '\r' | '\x0C') {
+            if !ws { o.push(' '); }
+            ws = true;
+        } else {
+            o.push(c);
+            ws = false;
+        }
+    }
+    o
+}
+
 fn tokens(html: &str) -> Vec<Tok<'_>> {
     let mut out = vec![];
     let mut rest = html;
@@ -167,7 +185,7 @@ impl<'a> Reader<'a> {
             task = Some(attrs.contains("done"));
             self.at += 2; // <span …></span>
         }
-        let content = self.inlines_until(&["li", "ul", "ol"]);
+        let content = trim_end(self.inlines_until(&["li", "ul", "ol"]));
         let mut lists = vec![];
         loop {
             match self.toks.get(self.at) {
@@ -208,7 +226,7 @@ impl<'a> Reader<'a> {
     }
 
     fn inlines(&mut self, close: &str) -> Vec<Inline> {
-        let v = self.inlines_until(&[close]);
+        let v = trim_end(self.inlines_until(&[close]));
         if matches!(self.toks.get(self.at), Some(Tok::Close(n)) if *n == close) {
             self.at += 1;
         }
@@ -228,7 +246,13 @@ impl<'a> Reader<'a> {
             self.at += 1;
             let link = self.links.last().cloned();
             match t {
-                Tok::Text(text) if !text.is_empty() => out.push(Inline::Text { text, marks: self.marks, link }),
+                Tok::Text(text) if !text.is_empty() => {
+                    let mut text = collapse(&text);
+                    // A space after a space (across marks) folds too.
+                    let prev_space = matches!(out.last(), Some(Inline::Text { text: t, .. }) if t.ends_with(' ')) || matches!(out.last(), None | Some(Inline::Break));
+                    if prev_space && text.starts_with(' ') { text.remove(0); }
+                    if !text.is_empty() { out.push(Inline::Text { text, marks: self.marks, link }); }
+                }
                 Tok::Open { name: "br", .. } => out.push(Inline::Break),
                 Tok::Open { name: "img", attrs } => out.push(Inline::Image {
                     src: attr(attrs, "src").unwrap_or_default(),
@@ -254,6 +278,16 @@ impl<'a> Reader<'a> {
             _ => {}
         }
     }
+}
+
+// Trailing whitespace at the end of a block neither shows nor copies.
+fn trim_end(mut v: Vec<Inline>) -> Vec<Inline> {
+    while let Some(Inline::Text { text, .. }) = v.last_mut() {
+        let t = text.trim_end_matches(' ').len();
+        text.truncate(t);
+        if text.is_empty() { v.pop(); } else { break; }
+    }
+    v
 }
 
 /// Blocks for HTML written by [`crate::markdown`].

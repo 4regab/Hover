@@ -10,7 +10,7 @@ use std::path::PathBuf;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
-use hover_chat::{Hit, Painter, Pos, Shaper, Stage, Thread, Turn};
+use hover_chat::{state, Hit, Painter, Pos, Shaper, Stage, Thread, Turn};
 use slint::{ComponentHandle, Model, SharedPixelBuffer, VecModel};
 
 slint::include_modules!();
@@ -37,16 +37,43 @@ fn rich() -> String {
     String::from_utf8(read("native/golden/fixtures/rich.md", "fixtures/rich.md")).unwrap()
 }
 
-fn turns(n: usize) -> Vec<Turn> {
-    (0..n).map(|i| Turn {
-        prompt: if i == 0 { "The notch blinks when I change the workspace size in Settings. Find out why and fix it.".into() } else { format!("Step {}: tighten the refresh-token check.", i + 1) },
-        queued: false,
-        steps: 3,
-        took: Some("3 min".into()),
-        stage: Stage::Done,
-        status: None,
-        answer: rich(),
-    }).collect()
+fn fixture() -> serde_json::Value {
+    serde_json::from_str(&String::from_utf8(read("native/golden/fixtures/office-state.json", "fixtures/office-state.json")).unwrap()).unwrap()
+}
+
+/// A session from the office-state fixture (1: the rich answer), made n turns long by
+/// repeating its turns.
+fn turns(n: usize, session: usize) -> (Vec<Turn>, &'static str, [u8; 4]) {
+    let fx = fixture();
+    let s = &fx["state"]["sessions"][session];
+    let (name, color) = state::BOTS[s["bot"].as_u64().unwrap_or(1) as usize];
+    let base = state::turns(s);
+    let mut v: Vec<Turn> = (0..n.max(1)).map(|i| {
+        let mut t = base[i % base.len()].clone();
+        if i > 0 { t.prompt = format!("Step {}: tighten the refresh-token check.", i + 1); t.status = None; if t.stage == Stage::Working { t.stage = Stage::Done; } }
+        t
+    }).collect();
+    if n > 1 { if let Some(l) = v.last_mut() { *l = base[base.len() - 1].clone(); } }
+    let _ = rich;
+    (v, name, color)
+}
+
+/// renderDrawer's header: the bot, the tool's badge, the title, the folder, the context.
+fn header(ui: &ChatWindow, session: usize) {
+    let fx = fixture();
+    let s = &fx["state"]["sessions"][session];
+    let (name, c) = state::BOTS[s["bot"].as_u64().unwrap_or(1) as usize];
+    // main.js TOOLS: name and badge colour.
+    let (tool, tc) = match s["tool"].as_str().unwrap_or("kiro") { "codex" => ("Codex", 0x3fd6a0), "cursor" => ("Cursor", 0x7cc0ff), _ => ("Kiro", 0xb48cff) };
+    let busy = matches!(s["stage"].as_str(), Some("waking" | "working"));
+    ui.set_who(name.into());
+    ui.set_bot_color(slint::Color::from_rgb_u8(c[0], c[1], c[2]));
+    ui.set_tool(tool.into());
+    ui.set_tool_color(slint::Color::from_argb_encoded(0xff000000 | tc));
+    ui.set_session_title(s["title"].as_str().unwrap_or("").into());
+    ui.set_folder(s["folder"].as_str().unwrap_or("").into());
+    ui.set_context(s["ctx"].as_f64().unwrap_or(0.0) as f32);
+    ui.set_busy(busy);
 }
 
 struct App {
@@ -57,14 +84,15 @@ struct App {
     anchor: Option<Pos>,
     dragging: bool,
     stick: bool,
+    t0: Instant,
 }
 
 impl App {
-    fn new(turns: Vec<Turn>) -> Self {
+    fn new((turns, who, color): (Vec<Turn>, &str, [u8; 4])) -> Self {
         let f = fonts();
-        let mut thread = Thread::new(Shaper::new(&f), "Juno", [0x2f, 0xc9, 0xb0, 255]);
+        let mut thread = Thread::new(Shaper::new(&f), who, color);
         thread.set(&turns, 360.0);
-        App { thread, painter: Painter::new(&f, Box::new(|_| None)), turns, scroll: 0.0, anchor: None, dragging: false, stick: true }
+        App { thread, painter: Painter::new(&f, Box::new(|_| None)), turns, scroll: 0.0, anchor: None, dragging: false, stick: true, t0: Instant::now() }
     }
 
     fn relayout(&mut self, width: f32, height: f32) {
@@ -87,6 +115,7 @@ impl App {
         }
         self.scroll = self.scroll.clamp(0.0, (self.thread.height - h).max(0.0));
         let k = ui.window().scale_factor();
+        self.painter.time = self.t0.elapsed().as_secs_f32();
         let px = self.painter.paint(&self.thread, self.scroll, (w * k).round() as u32, (h * k).round() as u32, k, hover_chat::theme::DRAWER_BG);
         let mut buf = SharedPixelBuffer::<slint::Rgba8Pixel>::new(px.width(), px.height());
         buf.make_mut_bytes().copy_from_slice(px.data());
@@ -123,6 +152,7 @@ fn wire(ui: &ChatWindow, app: Rc<RefCell<App>>) {
             let yy = y + s.scroll;
             match (kind, s.thread.hit(x, yy)) {
                 (0, Hit::Link(url)) if !shift => { open_link(&url); }
+                (0, Hit::Toggle(i)) => { let turns = s.turns.clone(); s.thread.toggle_steps(&turns, i); }
                 (0, Hit::Text(p)) => {
                     if shift { if let Some(an) = s.anchor { s.thread.select(an, p); } } else { s.anchor = Some(p); s.thread.select(p, p); }
                     s.dragging = true;
@@ -150,7 +180,7 @@ fn wire(ui: &ChatWindow, app: Rc<RefCell<App>>) {
     ui.on_send(move |text| {
         {
             let mut s = a.borrow_mut();
-            s.turns.push(Turn { prompt: text.trim().to_string(), queued: false, steps: 0, took: None, stage: Stage::Waking, status: Some("Waking up…".into()), answer: String::new() });
+            s.turns.push(Turn { stage: Stage::Waking, status: Some("Waking up…".into()), ..Turn::new(text.trim()) });
             s.stick = true;
         }
         if let Some(ui) = w.upgrade() { ui.set_busy(true); }
@@ -166,7 +196,16 @@ fn wire(ui: &ChatWindow, app: Rc<RefCell<App>>) {
         if let Some(ui) = w.upgrade() { ui.set_busy(false); }
         r();
     });
+    let (r, a) = (redraw.clone(), app.clone());
+    ui.on_select_all(move || { a.borrow_mut().thread.select_all(); r(); });
     ui.on_close(|| { let _ = slint::quit_event_loop(); });
+    // The live step's shimmer runs while it is on screen, at the page's 30 fps.
+    let (r, a) = (redraw.clone(), app.clone());
+    let shimmer = slint::Timer::default();
+    shimmer.start(slint::TimerMode::Repeated, Duration::from_millis(33), move || {
+        if a.borrow().thread.sections.iter().any(|s| s.frag.texts.iter().any(|t| t.shimmer)) { r(); }
+    });
+    std::mem::forget(shimmer);
     // The thread's size is known once laid out; redraw whenever the window changes.
     let r2 = redraw.clone();
     let t = slint::Timer::default();
@@ -185,7 +224,7 @@ fn stream(ui: &ChatWindow, app: Rc<RefCell<App>>) {
     let words: Vec<String> = rich().split_inclusive(' ').map(String::from).collect();
     {
         let mut s = app.borrow_mut();
-        s.turns.push(Turn { prompt: "Say it again, slowly.".into(), queued: false, steps: 0, took: None, stage: Stage::Working, status: Some("Writing it up…".into()), answer: String::new() });
+        s.turns.push(Turn { stage: Stage::Working, status: Some("Writing it up…".into()), ..Turn::new("Say it again, slowly.") });
         s.stick = true;
     }
     ui.set_busy(true);
@@ -235,7 +274,7 @@ mod headless {
     }
 }
 
-fn screenshot(out: &str, select: bool, scale: f32, n: usize) {
+fn screenshot(out: &str, select: bool, scale: f32, n: usize, session: usize) {
     let win = headless::window();
     slint::platform::set_platform(Box::new(headless::Headless(win.clone()))).unwrap();
     let ui = ChatWindow::new().unwrap();
@@ -243,7 +282,8 @@ fn screenshot(out: &str, select: bool, scale: f32, n: usize) {
     let (w, h) = ((1104.0 * scale) as u32, (424.0 * scale) as u32);
     win.set_size(slint::PhysicalSize::new(w, h));
     ui.show().unwrap();
-    let app = Rc::new(RefCell::new(App::new(turns(n))));
+    header(&ui, session);
+    let app = Rc::new(RefCell::new(App::new(turns(n, session))));
     let render = |ui: &ChatWindow| -> Vec<slint::Rgb8Pixel> {
         slint::platform::update_timers_and_animations();
         let mut buf = vec![slint::Rgb8Pixel::default(); (w * h) as usize];
@@ -296,7 +336,7 @@ fn bench() {
     win.draw_if_needed(|r| { r.render(&mut buf, 1104); });
     eprintln!("first Slint frame: RSS {:.1} MB, peak {:.1} MB", rss_mb(), peak_mb());
     let t = Instant::now();
-    let app = Rc::new(RefCell::new(App::new(turns(200))));
+    let app = Rc::new(RefCell::new(App::new(turns(200, 1))));
     app.borrow_mut().frame(&ui);
     eprintln!("200 rich turns: open (layout + first frame) {:?}; RSS {:.1} MB", t.elapsed(), rss_mb());
     let mut worst = Duration::ZERO;
@@ -328,15 +368,17 @@ fn main() {
     let has = |f: &str| args.iter().any(|a| a == f);
     let val = |f: &str| args.iter().position(|a| a == f).and_then(|i| args.get(i + 1)).cloned();
     let n: usize = val("--turns").and_then(|s| s.parse().ok()).unwrap_or(1);
+    let session: usize = val("--session").and_then(|s| s.parse().ok()).unwrap_or(1);
     if has("--bench") {
         return bench();
     }
     if let Some(out) = val("--screenshot") {
         let scale = val("--scale").and_then(|s| s.parse().ok()).unwrap_or(1.0);
-        return screenshot(&out, has("--select"), scale, n);
+        return screenshot(&out, has("--select"), scale, n, session);
     }
     let ui = ChatWindow::new().unwrap();
-    let app = Rc::new(RefCell::new(App::new(turns(n))));
+    header(&ui, session);
+    let app = Rc::new(RefCell::new(App::new(turns(n, session))));
     wire(&ui, app.clone());
     if has("--stream") {
         stream(&ui, app);

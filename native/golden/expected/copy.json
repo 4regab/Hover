@@ -1,0 +1,45 @@
+{
+ "done-rich": {
+  "thread": "The notch blinks when I change the workspace size in Settings. Find out why and fix it.\n3 steps · 3 min\nJuno\n· 3 min\nWhat changed\nI moved the token check into RefreshService and made refresh tokens expire after 30 days. Using an expired one now returns 401, and the old fallback is gone.\n\nSee the RFC or https://example.com/docs/auth.\n\nFiles\nsrc/auth/refresh.ts: the expiry check\nsrc/auth/session.ts: passes the clock in\nso tests can move time\nwithout sleeping\ntests/refresh.test.ts\nBuild is clean\nDeploy to staging\nAll 83 tests pass\nThe tokens in production were minted before this change,\nso they get the full 30 days from today.\n\nFile\tLines\tStatus\nrefresh.ts\t+24 −3\tchanged\nsession.ts\t+6\tchanged\nrefresh.test.ts\t+61\tnew\nexport function expired(t: Token, now = Date.now()): boolean {\n  return now - t.issuedAt > 30 * DAY; // 30 days\n}\nyes\nexpired\nRequest\nToken valid?\nServe\n401\n\n\nThat's all. Reply \"ship it\" and I will open the PR.",
+  "answer": "What changed\nI moved the token check into RefreshService and made refresh tokens expire after 30 days. Using an expired one now returns 401, and the old fallback is gone.\n\nSee the RFC or https://example.com/docs/auth.\n\nFiles\nsrc/auth/refresh.ts: the expiry check\nsrc/auth/session.ts: passes the clock in\nso tests can move time\nwithout sleeping\ntests/refresh.test.ts\nBuild is clean\nDeploy to staging\nAll 83 tests pass\nThe tokens in production were minted before this change,\nso they get the full 30 days from today.\n\nFile\tLines\tStatus\nrefresh.ts\t+24 −3\tchanged\nsession.ts\t+6\tchanged\nrefresh.test.ts\t+61\tnew\nexport function expired(t: Token, now = Date.now()): boolean {\n  return now - t.issuedAt > 30 * DAY; // 30 days\n}\nyes\nexpired\nRequest\nToken valid?\nServe\n401\n\n\nThat's all. Reply \"ship it\" and I will open the PR.",
+  "rows": []
+ },
+ "failed": {
+  "thread": "Upgrade three to 0.171 and fix anything that breaks.\n2 steps · 48 s\nNova\n· 48 s\nI couldn't finish. npm install stopped with a peer dependency conflict: @react-three/fiber 8 needs three 0.170 or older.\n\nReply \"upgrade fiber too\" and I will move both together.",
+  "answer": "I couldn't finish. npm install stopped with a peer dependency conflict: @react-three/fiber 8 needs three 0.170 or older.\n\nReply \"upgrade fiber too\" and I will move both together.",
+  "rows": []
+ },
+ "stopped": {
+  "thread": "Rename the Hover.Owl namespace to Hover.Workspace everywhere.\n1 step · 22 s\nAda\n· 22 s\nStopped before any file was changed.",
+  "answer": "Stopped before any file was changed.",
+  "rows": []
+ },
+ "failed-steps-open": {
+  "thread": "Upgrade three to 0.171 and fix anything that breaks.\n2 steps · 48 s\nRead package.json\nRan npm install three@0.171.0\nfailed\nNova\n· 48 s\nI couldn't finish. npm install stopped with a peer dependency conflict: @react-three/fiber 8 needs three 0.170 or older.\n\nReply \"upgrade fiber too\" and I will move both together.",
+  "answer": "I couldn't finish. npm install stopped with a peer dependency conflict: @react-three/fiber 8 needs three 0.170 or older.\n\nReply \"upgrade fiber too\" and I will move both together.",
+  "rows": [
+   [
+    14,
+    109.66
+   ],
+   [
+    131.66,
+    214.34
+   ]
+  ]
+ },
+ "working-live": {
+  "thread": "Refresh tokens never expire. Make them expire after 30 days and return 401 when one is used after that.\n2 steps\nRead src/auth/session.ts\nReading src/auth/refresh.ts\nReading…",
+  "answer": "",
+  "rows": [
+   [
+    14,
+    153.48
+   ],
+   [
+    175.48,
+    170.52
+   ]
+  ]
+ }
+}

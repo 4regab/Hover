@@ -11,7 +11,8 @@
 
 pub mod doc;
 pub mod paint;
+pub mod state;
 pub mod theme;
 
-pub use doc::{Hit, Pos, Shaper, Stage, Thread, Turn};
+pub use doc::{Hit, Pos, Shaper, Stage, Step, StepIcon, Thread, Turn};
 pub use paint::Painter;

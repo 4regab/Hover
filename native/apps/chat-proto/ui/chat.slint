@@ -98,6 +98,7 @@ export component ChatWindow inherits Window {
     callback pointer(int, length, length, bool);
     callback wheel(length);
     callback copy-selection();
+    callback select-all();
     callback send(string);
     callback stop();
     callback close();
@@ -255,6 +256,10 @@ export component ChatWindow inherits Window {
                     key-pressed(event) => {
                         if (event.modifiers.control && (event.text == "c" || event.text == "C")) {
                             root.copy-selection();
+                            return accept;
+                        }
+                        if (event.modifiers.control && (event.text == "a" || event.text == "A")) {
+                            root.select-all();
                             return accept;
                         }
                         return reject;

@@ -28,19 +28,23 @@ pub struct TextBox {
     pub layout: Layout<Ink>,
     pub x: f32,
     pub y: f32,
-    /// The text as laid out, for copying (inline boxes are not in it).
+    /// The text as laid out, for copying (inline boxes are not in it). Empty for
+    /// drawn-only text (list markers, the code block's language tag, an ellipsis).
     pub text: String,
-    /// What goes between the previous box's text and this one's in a copy.
-    pub sep: &'static str,
     pub links: Vec<(Range<usize>, Rc<str>)>,
     /// `overflow: auto` of the box it sits in (x, y, w, h), in the same coordinates as x, y.
     pub clip: Option<[f32; 4]>,
+    /// The live step's moving highlight (`.work .on` in page.html).
+    pub shimmer: bool,
 }
 
 #[derive(Clone, Debug)]
 pub enum Shape {
     Rect { x: f32, y: f32, w: f32, h: f32, radius: [f32; 4], fill: Option<Rgba>, stroke: Option<(Rgba, f32)> },
-    Image { x: f32, y: f32, w: f32, h: f32, radius: f32, src: String },
+    /// `cover`: object-fit: cover (a prompt's thumbnails); otherwise the image is scaled to w x h.
+    Image { x: f32, y: f32, w: f32, h: f32, radius: f32, src: String, cover: bool },
+    /// An open polyline (the step list's chevron).
+    Line { pts: Vec<(f32, f32)>, color: Rgba, width: f32 },
     Svg { x: f32, y: f32, w: f32, h: f32, svg: Rc<str> },
     Glow { x: f32, y: f32, r: f32, color: Rgba },
 }
@@ -49,14 +53,36 @@ impl Shape {
     fn shift(&mut self, dx: f32, dy: f32) {
         match self {
             Shape::Rect { x, y, .. } | Shape::Image { x, y, .. } | Shape::Svg { x, y, .. } | Shape::Glow { x, y, .. } => { *x += dx; *y += dy; }
+            Shape::Line { pts, .. } => for p in pts { p.0 += dx; p.1 += dy; },
         }
     }
     pub fn bottom(&self) -> f32 {
         match self {
             Shape::Rect { y, h, .. } | Shape::Image { y, h, .. } | Shape::Svg { y, h, .. } => y + h,
             Shape::Glow { y, r, .. } => y + r,
+            Shape::Line { pts, .. } => pts.iter().fold(f32::MIN, |m, p| m.max(p.1)),
         }
     }
+}
+
+/// What a copy is made of, in document order: the page's selection serialiser
+/// (Chromium's) adds newlines at block edges, and this reproduces what it gives for the
+/// blocks md.js writes. The rules were read off the real page (native/golden/copy.json
+/// and the block-pair table in port/phase1/REPORT.md).
+#[derive(Clone, Debug)]
+pub enum Tok {
+    /// A selectable text box (an index into `Frag::texts`).
+    Text(usize),
+    /// At least n newlines before the next text: the edge of a block.
+    Req(u8),
+    /// Characters between two boxes of one block (a table's tab, a <br> before an image).
+    Lit(&'static str),
+    /// A paragraph that is only an image (display: block, no text).
+    Img,
+    /// A rule.
+    Hr,
+    /// Text that is copied but drawn by something else (a diagram's labels).
+    Virt(String),
 }
 
 /// Laid-out content in coordinates relative to its own top left.
@@ -64,6 +90,7 @@ impl Shape {
 pub struct Frag {
     pub texts: Vec<TextBox>,
     pub shapes: Vec<Shape>,
+    pub copy: Vec<Tok>,
 }
 
 impl Frag {
@@ -77,8 +104,21 @@ impl Frag {
     }
     fn append(&mut self, mut other: Frag, dx: f32, dy: f32) {
         other.shift(dx, dy);
+        let base = self.texts.len();
+        self.copy.extend(other.copy.into_iter().map(|t| match t { Tok::Text(i) => Tok::Text(i + base), t => t }));
         self.texts.append(&mut other.texts);
         self.shapes.append(&mut other.shapes);
+    }
+    /// A selectable text box, and its place in the copy.
+    fn text(&mut self, t: TextBox) {
+        self.copy.push(Tok::Text(self.texts.len()));
+        self.texts.push(t);
+    }
+    fn one(t: TextBox, after: u8) -> Frag {
+        let mut f = Frag::default();
+        f.text(t);
+        f.copy.push(Tok::Req(after));
+        f
     }
 }
 
@@ -236,39 +276,56 @@ pub(crate) struct Md<'a> {
 }
 
 impl Md<'_> {
-    fn para_box(&mut self, spans: &[Span], look: Look, w: f32, sep: &'static str, align: Alignment) -> (TextBox, f32) {
+    fn para_box(&mut self, spans: &[Span], look: Look, w: f32, align: Alignment) -> (TextBox, f32) {
         let (layout, text, links) = self.sh.text(spans, look, Some(w), align);
         let h = layout.height();
-        (TextBox { layout, x: 0.0, y: 0.0, text, sep, links, clip: None }, h)
+        (TextBox { layout, x: 0.0, y: 0.0, text, links, clip: None, shimmer: false }, h)
     }
 
-    /// A paragraph: text, split around images (which are display: block).
+    /// A paragraph: text, split around images (which are display: block). A <br> just
+    /// before an image only ends the line the image starts anyway; one just after it is
+    /// an empty line. An image with text around it adds nothing to a copy; a paragraph
+    /// that is only images copies as `Tok::Img`s.
     fn para(&mut self, inl: &[Inline], look: Look, w: f32, mt: f32, mb: f32) -> Boxed {
         let mut flow = Flow::new();
         let mut run: Vec<Inline> = vec![];
-        let mut first = true;
-        let emit = |me: &mut Self, run: &mut Vec<Inline>, flow: &mut Flow, first: &mut bool| {
+        let has_text = inl.iter().any(|i| matches!(i, Inline::Text { .. }));
+        let mut lit_br = false;
+        let emit = |me: &mut Self, run: &mut Vec<Inline>, flow: &mut Flow, lit_br: &mut bool| {
+            // Spaces at either side of a block image collapse away.
+            if let Some(Inline::Text { text, .. }) = run.last_mut() { let n = text.trim_end_matches(' ').len(); text.truncate(n); }
+            if let Some(Inline::Text { text, .. }) = run.first_mut() { if text.starts_with(' ') { text.remove(0); } }
+            run.retain(|i| !matches!(i, Inline::Text { text, .. } if text.is_empty()));
             if run.is_empty() { return; }
-            let (tb, h) = me.para_box(&spans_of(run), look, w, if *first { "\n\n" } else { "\n" }, Alignment::Start);
-            *first = false;
-            flow.add(Boxed { frag: Frag { texts: vec![tb], shapes: vec![] }, mt: 0.0, h, mb: 0.0 }, 0.0);
+            let (tb, h) = me.para_box(&spans_of(run), look, w, Alignment::Start);
+            let mut f = Frag::default();
+            f.text(tb);
+            if std::mem::take(lit_br) { f.copy.push(Tok::Lit("\n")); }
+            flow.add(Boxed { frag: f, mt: 0.0, h, mb: 0.0 }, 0.0);
             run.clear();
         };
         for i in inl {
             if let Inline::Image { src, .. } = i {
-                // A <br> right before an image only ends the line the image starts anyway.
-                if matches!(run.last(), Some(Inline::Break)) { run.pop(); }
-                emit(self, &mut run, &mut flow, &mut first);
+                if matches!(run.last(), Some(Inline::Break)) { run.pop(); lit_br = true; }
+                emit(self, &mut run, &mut flow, &mut lit_br);
+                lit_br = false;
+                let mut f = Frag::default();
+                if !has_text { f.copy.push(Tok::Img); }
                 // An image that hasn't loaded (or can't) takes no room, as in the page.
-                let Some((iw, ih)) = (self.image_size)(src) else { continue };
-                let k = (w / iw).min(320.0 / ih).min(1.0);
-                flow.add(Boxed { frag: Frag { texts: vec![], shapes: vec![Shape::Image { x: 0.0, y: 0.0, w: iw * k, h: ih * k, radius: 9.0, src: src.clone() }] }, mt: 4.0, h: ih * k, mb: 4.0 }, 0.0);
-            } else if !(run.is_empty() && matches!(i, Inline::Break) && !flow.frag.shapes.is_empty()) {
+                if let Some((iw, ih)) = (self.image_size)(src) {
+                    let k = (w / iw).min(320.0 / ih).min(1.0);
+                    f.shapes.push(Shape::Image { x: 0.0, y: 0.0, w: iw * k, h: ih * k, radius: 9.0, src: src.clone(), cover: false });
+                    flow.add(Boxed { frag: f, mt: 4.0, h: ih * k, mb: 4.0 }, 0.0);
+                } else {
+                    flow.frag.copy.append(&mut f.copy);
+                }
+            } else {
                 run.push(i.clone());
             }
         }
-        emit(self, &mut run, &mut flow, &mut first);
+        emit(self, &mut run, &mut flow, &mut lit_br);
         let mut b = flow.through();
+        if has_text { b.frag.copy.push(Tok::Req(2)); }
         b.mt = b.mt.max(mt);
         b.mb = b.mb.max(mb);
         b
@@ -292,17 +349,17 @@ impl Md<'_> {
             Block::Heading(level, inl) => {
                 let (size, color) = match level { 3 => (15.0, look.color), 4 => (14.0, look.color), _ => (13.0, theme::DIM) };
                 let look = Look { size, lh: 1.3, color, weight: 700.0, ..look };
-                let (tb, h) = self.para_box(&spans_of(inl), look, w, "\n\n", Alignment::Start);
-                Boxed { frag: Frag { texts: vec![tb], shapes: vec![] }, mt: 12.0, h, mb: 6.0 }
+                let (tb, h) = self.para_box(&spans_of(inl), look, w, Alignment::Start);
+                Boxed { frag: Frag::one(tb, 1), mt: 12.0, h, mb: 6.0 }
             }
-            Block::Rule => Boxed { frag: Frag { texts: vec![], shapes: vec![rect(0.0, 0.0, w, 1.0, 0.0, Some(theme::LINE))] }, mt: 12.0, h: 1.0, mb: 12.0 },
+            Block::Rule => Boxed { frag: Frag { shapes: vec![rect(0.0, 0.0, w, 1.0, 0.0, Some(theme::LINE))], copy: vec![Tok::Hr], ..Default::default() }, mt: 12.0, h: 1.0, mb: 12.0 },
             Block::Code { lang, text } => {
                 // .md pre: 1px border, 10px 12px padding; code 11.5px/1.55, white-space: pre.
                 let look = Look { size: 11.5, lh: 1.55, family: theme::MONO, ..look };
                 let spans = [Span::Text { text: text.clone(), marks: Default::default(), link: None, color: None, family: Some(theme::MONO), size: None, weight: None }];
                 let (layout, t, _) = self.sh.text(&spans, look, None, Alignment::Start);
                 let h = layout.height().max(11.5 * 1.55) + 22.0;
-                let mut frag = Frag { texts: vec![TextBox { layout, x: 13.0, y: 11.0, text: t, sep: "\n\n", links: vec![], clip: Some([1.0, 1.0, w - 2.0, h - 2.0]) }], shapes: vec![] };
+                let mut frag = Frag::one(TextBox { layout, x: 13.0, y: 11.0, text: t, links: vec![], clip: Some([1.0, 1.0, w - 2.0, h - 2.0]), shimmer: false }, 1);
                 frag.shapes.insert(0, Shape::Rect { x: 0.0, y: 0.0, w, h, radius: [10.0; 4], fill: Some(theme::PRE_BG), stroke: Some((theme::LINE, 1.0)) });
                 if let Some(lang) = lang {
                     // pre[data-lang]::before: 9.5px pixel font, faint, uppercase, right 8 top 5.
@@ -310,7 +367,7 @@ impl Md<'_> {
                     let (lay, _, _) = self.sh.text(&[plain(&lang.to_uppercase(), None)], l, None, Alignment::Start);
                     let lw = lay.width();
                     // Not selectable in the page (generated content): drawn, not in the copy text.
-                    frag.texts.push(TextBox { layout: lay, x: w - 8.0 - lw - 1.0, y: 6.0, text: String::new(), sep: "", links: vec![], clip: None });
+                    frag.texts.push(TextBox { layout: lay, x: w - 8.0 - lw - 1.0, y: 6.0, text: String::new(), links: vec![], clip: None, shimmer: false });
                 }
                 Boxed { frag, mt: 0.0, h, mb: 9.0 }
             }
@@ -321,7 +378,8 @@ impl Md<'_> {
                 let k = (inner / sw).min(1.0);
                 let (dw, dh) = (sw * k, shh * k);
                 let h = dh + 22.0;
-                let frag = Frag { texts: vec![], shapes: vec![
+                // The labels are text in the page's SVG: a selection over the figure copies them.
+                let frag = Frag { copy: vec![Tok::Virt(svg_text(svg)), Tok::Req(1)], texts: vec![], shapes: vec![
                     Shape::Rect { x: 0.0, y: 0.0, w, h, radius: [10.0; 4], fill: Some(theme::FIGURE_BG), stroke: Some((theme::LINE, 1.0)) },
                     Shape::Svg { x: 11.0 + (inner - dw) / 2.0, y: 11.0, w: dw, h: dh, svg: svg.as_str().into() },
                 ] };
@@ -352,10 +410,10 @@ impl Md<'_> {
             let cw = w - left;
             let mut spans = lead;
             spans.extend(spans_of(&it.content));
-            let (tb, h) = self.para_box(&spans, look, cw, "\n", Alignment::Start);
+            let (tb, h) = self.para_box(&spans, look, cw, Alignment::Start);
             let first_line_h = tb.layout.lines().next().map_or(h, |l| l.metrics().line_height);
             let baseline = tb.layout.lines().next().map_or(h * 0.75, |l| l.metrics().baseline);
-            let mut frag = Frag { texts: vec![tb], shapes: vec![] };
+            let mut frag = Frag::one(tb, 1);
             if let Some(done) = it.task {
                 let top = (first_line_h - 12.0) / 2.0 + 1.0;
                 frag.shapes.push(if done {
@@ -377,7 +435,7 @@ impl Md<'_> {
                 let (lay, _, _) = self.sh.text(&[plain(&marker, Some(theme::FAINT))], look, None, Alignment::Start);
                 let mw = lay.width();
                 let mb = lay.lines().next().map_or(0.0, |l| l.metrics().baseline);
-                li.frag.texts.push(TextBox { layout: lay, x: -(mw + if ordered { 4.0 } else { 7.0 }), y: baseline - mb, text: String::new(), sep: "", links: vec![], clip: None });
+                li.frag.texts.push(TextBox { layout: lay, x: -(mw + if ordered { 4.0 } else { 7.0 }), y: baseline - mb, text: String::new(), links: vec![], clip: None, shimmer: false });
             }
             li.frag.shift(left, 0.0);
             li.mt = li.mt.max(2.0);
@@ -428,17 +486,19 @@ impl Md<'_> {
                 let l = Look { weight: if ri == 0 { 600.0 } else { 400.0 }, ..look };
                 let align = match cell.map(|c| c.align) { Some(Align::Center) => Alignment::Center, Some(Align::Right) => Alignment::End, _ => Alignment::Start };
                 let spans = cell.map(|c| spans_of(&c.content)).unwrap_or_default();
-                let (tb, h) = self.para_box(&spans, l, widths[c] - 18.0, if c == 0 { "\n" } else { "\t" }, align);
+                let (tb, h) = self.para_box(&spans, l, widths[c] - 18.0, align);
                 row_h = row_h.max(h + 12.0);
                 cells.push((tb, x));
                 x += widths[c];
             }
             if ri == 0 { frag.shapes.push(rect(1.0, y, inner, row_h, 0.0, Some(theme::TH_BG))); }
-            for (mut tb, cx) in cells {
+            for (c, (mut tb, cx)) in cells.into_iter().enumerate() {
                 tb.x = cx + 9.0;
                 tb.y = y + 6.0;
-                frag.texts.push(tb);
+                if c > 0 { frag.copy.push(Tok::Lit("\t")); }
+                frag.text(tb);
             }
+            frag.copy.push(Tok::Req(1));
             y += row_h;
             if ri + 1 < all.len() { frag.shapes.push(rect(1.0, y, inner, 1.0, 0.0, Some(theme::LINE))); y += 1.0; }
         }
@@ -452,6 +512,22 @@ fn rect(x: f32, y: f32, w: f32, h: f32, r: f32, fill: Option<Rgba>) -> Shape {
     Shape::Rect { x, y, w, h, radius: [r; 4], fill, stroke: None }
 }
 
+/// A flowchart's labels as a selection copies them: one line per <text>, its <tspan>s run together.
+fn svg_text(svg: &str) -> String {
+    let mut lines = vec![];
+    for part in svg.split("<text").skip(1) {
+        let body = part.split_once('>').map_or("", |x| x.1);
+        let body = body.split("</text>").next().unwrap_or("");
+        let mut t = String::new();
+        let mut tag = false;
+        for c in body.chars() {
+            match c { '<' => tag = true, '>' => tag = false, c if !tag => t.push(c), _ => {} }
+        }
+        lines.push(t.replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", "\"").replace("&#39;", "'").replace("&amp;", "&"));
+    }
+    lines.join("\n")
+}
+
 fn svg_size(svg: &str) -> (f32, f32) {
     let num = |k: &str| svg.split(&format!(" {k}=\"")).nth(1).and_then(|s| s.split('"').next()).and_then(|v| v.parse().ok()).unwrap_or(100.0);
     (num("width"), num("height"))
@@ -459,15 +535,54 @@ fn svg_size(svg: &str) -> (f32, f32) {
 
 // ---- the thread ------------------------------------------------------------------
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Stage { Waking, Working, Done, Failed, Stopped }
+
+/// A step's icon (main.js ICON): the host sends one of these per step.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StepIcon { Read, Edit, Run, Search, Think }
+
+impl StepIcon {
+    pub fn parse(s: &str) -> Self {
+        match s { "read" => Self::Read, "edit" => Self::Edit, "run" => Self::Run, "search" => Self::Search, _ => Self::Think }
+    }
+    fn path(self) -> &'static str {
+        match self {
+            Self::Read => r#"<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/>"#,
+            Self::Edit => r#"<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/>"#,
+            Self::Run => r#"<path d="m4 17 6-5-6-5"/><path d="M12 19h8"/>"#,
+            Self::Search => r#"<circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>"#,
+            Self::Think => r#"<path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12.7V16h8v-1.3A7 7 0 0 0 12 2Z"/>"#,
+        }
+    }
+}
+
+/// `.ic svg`: 13 px, stroke-width 2 on the 24-unit grid, round caps and joins.
+fn icon_svg(icon: StepIcon, color: Rgba) -> Rc<str> {
+    format!(r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="rgb({},{},{})" stroke-opacity="{}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">{}</svg>"#,
+        color[0], color[1], color[2], color[3] as f32 / 255.0, icon.path()).into()
+}
+
+/// One step as the host sends it: an icon, a line ("Read src/a.cs") and a tag ("failed").
+#[derive(Clone, Debug, PartialEq)]
+pub struct Step {
+    pub icon: StepIcon,
+    pub text: String,
+    pub tag: Option<String>,
+}
+
+/// main.js LIVE: the running step says what it is doing.
+const LIVE: [(&str, &str); 7] = [("Read ", "Reading "), ("Edited ", "Editing "), ("Ran ", "Running "), ("Searched ", "Searching "),
+    ("Fetched ", "Fetching "), ("Deleted ", "Deleting "), ("Moved ", "Moving ")];
 
 /// One turn as the office shows it.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Turn {
     pub prompt: String,
+    /// The prompt's pasted images (URLs the painter's loader can fetch).
+    pub images: Vec<String>,
     pub queued: bool,
-    pub steps: usize,
+    pub steps: Vec<Step>,
     pub took: Option<String>,
     pub stage: Stage,
     /// The live status line ("Thinking…") while the turn runs.
@@ -475,11 +590,19 @@ pub struct Turn {
     pub answer: String,
 }
 
+impl Turn {
+    pub fn new(prompt: &str) -> Self {
+        Turn { prompt: prompt.into(), images: vec![], queued: false, steps: vec![], took: None, stage: Stage::Done, status: None, answer: String::new() }
+    }
+}
+
 pub struct Section {
     pub y: f32,
     pub h: f32,
     pub frag: Frag,
-    key: (Turn, u32),
+    /// The step list's summary line, which toggles it (x, y, w, h in section coordinates).
+    pub summary: Option<[f32; 4]>,
+    key: (Turn, u32, bool, bool),
 }
 
 pub struct Thread {
@@ -493,6 +616,12 @@ pub struct Thread {
     pub selection: Option<(Pos, Pos)>,
     pub image_size: Box<dyn Fn(&str) -> Option<(f32, f32)>>,
     pub image_rule: Box<dyn Fn(&str) -> Option<String>>,
+    /// The step lists the user opened (true) or closed (false), by turn index. In the
+    /// page this outlives the session (it is read off the thread before each render),
+    /// so switching straight to another chat keeps turn i's choice; `keep_steps_state`
+    /// carries it across as the page does.
+    pub steps_user: std::collections::HashMap<usize, bool>,
+    pub hide_steps: bool,
     /// Section layouts made since the thread was created (for the tests and the benchmark).
     pub relayouts: usize,
 }
@@ -506,6 +635,8 @@ pub struct Pos {
 
 pub enum Hit {
     Link(Rc<str>),
+    /// The step list's summary of this turn: a click opens or closes it.
+    Toggle(usize),
     Text(Pos),
     None,
 }
@@ -513,11 +644,26 @@ pub enum Hit {
 impl Thread {
     pub fn new(sh: Shaper, who: &str, color: Rgba) -> Self {
         Thread { sh, width: 360.0, who: who.into(), color, sections: vec![], height: 0.0, selection: None,
-            image_size: Box::new(|_| None), image_rule: Box::new(|s| if s.starts_with("http") { Some(s.into()) } else { None }), relayouts: 0 }
+            image_size: Box::new(|_| None), image_rule: Box::new(|s| if s.starts_with("http") { Some(s.into()) } else { None }),
+            steps_user: Default::default(), hide_steps: false, relayouts: 0 }
     }
 
-    /// Lays the thread out for the drawer's width, re-using every section whose turn
-    /// and width haven't changed.
+    /// Whether turn i's step list is open: the user's choice, else open while it runs.
+    fn steps_open(&self, i: usize, live: bool) -> bool {
+        self.steps_user.get(&i).copied().unwrap_or(live)
+    }
+
+    /// A click on a summary: the list flips and stays that way (details toggle).
+    pub fn toggle_steps(&mut self, turns: &[Turn], i: usize) {
+        let live = i + 1 == turns.len() && turns[i].stage == Stage::Working;
+        let open = self.steps_open(i, live);
+        self.steps_user.insert(i, !open);
+        let w = self.width;
+        self.set(turns, w);
+    }
+
+    /// Lays the thread out for the drawer's width, re-using every section whose turn,
+    /// width and step-list state haven't changed.
     pub fn set(&mut self, turns: &[Turn], width: f32) {
         self.width = width;
         let wkey = width.to_bits();
@@ -525,13 +671,16 @@ impl Thread {
         let [pt, pr, pb, pl] = theme::THREAD_PAD;
         let mut y = pt;
         for (i, t) in turns.iter().enumerate() {
-            let reuse = old.get_mut(i).and_then(|o| o.take_if(|s| s.key.0 == *t && s.key.1 == wkey));
+            let live = i + 1 == turns.len() && t.stage == Stage::Working;
+            let open = self.steps_open(i, live);
+            let key = (t.clone(), wkey, open, live);
+            let reuse = old.get_mut(i).and_then(|o| o.take_if(|s| s.key == key));
             let mut s = match reuse {
                 Some(s) => s,
                 None => {
                     self.relayouts += 1;
-                    let (frag, h) = self.turn(t, width - pl - pr);
-                    Section { y: 0.0, h, frag, key: (t.clone(), wkey) }
+                    let (frag, h, summary) = self.turn(t, width - pl - pr, open, live);
+                    Section { y: 0.0, h, frag, summary, key }
                 }
             };
             if i > 0 { y += theme::THREAD_GAP; }
@@ -545,63 +694,114 @@ impl Thread {
         }
     }
 
-    // One turn: the you-bubble, the steps line, the status, the who line and the answer,
-    // as flex items with 7 px gaps.
-    fn turn(&mut self, t: &Turn, w: f32) -> (Frag, f32) {
+    fn line(&mut self, text: &str, look: Look, w: Option<f32>) -> TextBox {
+        let (layout, text, _) = self.sh.text(&[plain(text, None)], look, w, Alignment::Start);
+        TextBox { layout, x: 0.0, y: 0.0, text, links: vec![], clip: None, shimmer: false }
+    }
+
+    // One turn, as flex items with 7 px gaps: the you-bubble, the step list, the status,
+    // the who line and the answer.
+    fn turn(&mut self, t: &Turn, w: f32, open: bool, live: bool) -> (Frag, f32, Option<[f32; 4]>) {
         let mut frag = Frag::default();
-        let mut y = 0.0;
-        let gap = |y: &mut f32, first: bool| if !first { *y += theme::THREAD_GAP };
-        // .you: max-width 88%, padding 6px 10px, 1px border, radius 14 14 4 14, at the right.
-        let mut spans = vec![plain(&t.prompt, None)];
-        if t.queued {
-            spans.push(Span::Break);
-            spans.push(Span::Text { text: "Queued · sends when this run ends".into(), marks: Default::default(), link: None, color: Some(theme::LI), family: None, size: Some(11.0), weight: Some(600.0) });
-        }
-        let maxw = w * 0.88 - 22.0;
+        let mut summary = None;
         let look = Look::body();
-        let (mut layout, text, _) = self.sh.text(&spans, look, Some(maxw), Alignment::Start);
-        let tw = layout.calculate_content_widths().max.min(maxw).ceil();
+        // .you: max-width 88%, padding 6px 10px, 1px border, radius 14 14 4 14, at the right.
+        let maxw = w * 0.88 - 22.0;
+        let (mut layout, text, _) = self.sh.text(&[plain(&t.prompt, None)], look, Some(maxw), Alignment::Start);
+        let mut tw = layout.calculate_content_widths().max.min(maxw).ceil();
+        // .you .pics: 72 px thumbnails, gap 5, wrapping, 5 px under.
+        let per_row = (((maxw + 5.0) / 77.0).floor() as usize).max(1);
+        let pics = t.images.len();
+        if pics > 0 { tw = tw.max(((pics.min(per_row)) as f32 * 77.0 - 5.0).min(maxw)); }
+        let q = t.queued.then(|| self.line("Queued · sends when this run ends", Look { size: 11.0, color: theme::LI, weight: 600.0, lh: 1.5, ..look }, Some(maxw)));
+        if let Some(q) = &q { tw = tw.max(q.layout.calculate_content_widths().max.min(maxw).ceil()); }
         layout.break_all_lines(Some(tw));
         layout.align(Alignment::Start, AlignmentOptions::default());
-        let bh = layout.height() + 14.0;
+        let pics_h = if pics > 0 { pics.div_ceil(per_row) as f32 * 77.0 } else { 0.0 };
+        let qh = q.as_ref().map_or(0.0, |q| q.layout.height() + 3.0);
+        let bh = pics_h + layout.height() + qh + 14.0;
         let bw = tw + 22.0;
         let bx = w - bw;
-        frag.shapes.push(Shape::Rect { x: bx, y, w: bw, h: bh, radius: [14.0, 14.0, 4.0, 14.0], fill: Some(theme::YOU_BG), stroke: Some((theme::YOU_EDGE, 1.0)) });
-        frag.texts.push(TextBox { layout, x: bx + 11.0, y: y + 7.0, text, sep: "\n\n", links: vec![], clip: None });
-        y += bh;
-        if t.steps > 0 {
-            gap(&mut y, false);
-            // details.work summary: 11.5px faint, a 6 px chevron, then "n steps · took".
-            let label = format!("{} step{}{}", t.steps, if t.steps == 1 { "" } else { "s" }, t.took.as_ref().map_or(String::new(), |s| format!(" · {s}")));
-            let l = Look { size: 11.5, color: theme::FAINT, lh: 1.5, ..look };
-            let (lay, text, _) = self.sh.text(&[plain(&label, None)], l, Some(w), Alignment::Start);
-            let h = lay.height() + 2.0;
-            frag.shapes.push(Shape::Rect { x: 3.0, y: y + h / 2.0 - 4.0, w: 5.0, h: 5.0, radius: [0.0; 4], fill: None, stroke: Some((theme::FAINT, 1.5)) });
-            frag.texts.push(TextBox { layout: lay, x: 16.0, y: y + 1.0, text, sep: "\n", links: vec![], clip: None });
-            y += h;
+        frag.shapes.push(Shape::Rect { x: bx, y: 0.0, w: bw, h: bh, radius: [14.0, 14.0, 4.0, 14.0], fill: Some(theme::YOU_BG), stroke: Some((theme::YOU_EDGE, 1.0)) });
+        for (k, src) in t.images.iter().enumerate() {
+            let (c, r) = ((k % per_row) as f32, (k / per_row) as f32);
+            frag.shapes.push(Shape::Image { x: bx + 11.0 + c * 77.0, y: 7.0 + r * 77.0, w: 72.0, h: 72.0, radius: 8.0, src: src.clone(), cover: true });
+        }
+        let ty = 7.0 + pics_h;
+        let lh = layout.height();
+        frag.text(TextBox { layout, x: bx + 11.0, y: ty, text, links: vec![], clip: None, shimmer: false });
+        if let Some(mut q) = q {
+            frag.copy.push(Tok::Req(1));
+            q.x = bx + 11.0;
+            q.y = ty + lh + 3.0;
+            frag.text(q);
+        }
+        frag.copy.push(Tok::Req(1));
+        let mut y = bh;
+
+        if !t.steps.is_empty() && !self.hide_steps {
+            y += theme::THREAD_GAP;
+            // details.work: a flex column, gap 2. summary: 11.5px faint, padding 1px 0,
+            // the chevron (6 px, border 1.5, margin 0 2px) and then the text, gap 6.
+            let took = t.took.as_ref().map_or(String::new(), |s| format!(" · {s}"));
+            let label = format!("{} step{}{took}", t.steps.len(), if t.steps.len() == 1 { "" } else { "s" });
+            let mut sb = self.line(&label, Look { size: 11.5, color: theme::FAINT, lh: 1.5, ..look }, None);
+            let sh = sb.layout.height() + 2.0;
+            let (cx, cy, r) = (5.0, y + sh / 2.0, 2.25f32);
+            // The border's two sides as a polyline, turned -45 deg (closed) or 45 (open).
+            let pts = [(r, -r), (r, r), (-r, r)].map(|(px, py)| {
+                let (c, sn) = (std::f32::consts::FRAC_1_SQRT_2, if open { std::f32::consts::FRAC_1_SQRT_2 } else { -std::f32::consts::FRAC_1_SQRT_2 });
+                (cx + px * c - py * sn, cy + px * sn + py * c)
+            });
+            frag.shapes.push(Shape::Line { pts: pts.to_vec(), color: theme::FAINT, width: 1.5 });
+            sb.x = 16.0;
+            sb.y = y + 1.0;
+            let sw = sb.layout.width();
+            frag.text(sb);
+            frag.copy.push(Tok::Req(1));
+            summary = Some([0.0, y, w, sh]);
+            y += sh;
+            if open {
+                y += 2.0 + 3.0;
+                let rows_h = self.steps(&mut frag, t, y, w - 2.0, live);
+                y += rows_h;
+            }
+            let _ = sw;
         }
         if let Some(status) = &t.status {
-            gap(&mut y, false);
-            let l = Look { size: 12.0, lh: 1.5, ..look };
-            let (lay, text, _) = self.sh.text(&[plain(status, None)], l, Some(w - 21.0), Alignment::Start);
-            let h = lay.height();
-            frag.shapes.push(Shape::Rect { x: 1.0, y: y + h / 2.0 - 5.5, w: 11.0, h: 11.0, radius: [5.5; 4], fill: None, stroke: Some((theme::LI, 1.6)) });
-            frag.texts.push(TextBox { layout: lay, x: 21.0, y, text, sep: "\n", links: vec![], clip: None });
+            // .status: flex, gap 8, 12px ink; the think icon in the accent colour.
+            y += theme::THREAD_GAP;
+            let mut tb = self.line(status, Look { size: 12.0, lh: 1.5, ..look }, Some(w - 21.0));
+            let h = tb.layout.height();
+            frag.shapes.push(Shape::Svg { x: 0.0, y: y + (h - 13.0) / 2.0, w: 13.0, h: 13.0, svg: icon_svg(StepIcon::Think, theme::LI) });
+            tb.x = 21.0;
+            tb.y = y;
+            frag.text(tb);
+            frag.copy.push(Tok::Req(1));
             y += h;
         }
         if !t.answer.is_empty() {
-            gap(&mut y, false);
-            // .who: margin 2px 0 -4px; avatar 18 x 16; the name in the pixel font; the time.
+            y += theme::THREAD_GAP;
+            // .who: margin 2px 0 -4px, flex, gap 7; the avatar (18 x 16), the name in the
+            // pixel font, then "· took". Each is a flex item, so each copies on its own line.
             y += 2.0;
-            let l = Look { size: 11.5, lh: 1.5, color: theme::FAINT, ..look };
-            let mut spans = vec![Span::Gap(25.0), Span::Text { text: self.who.clone(), marks: Default::default(), link: None, color: Some(theme::DIM), family: Some(theme::PIXEL), size: None, weight: Some(600.0) }];
-            if let Some(took) = &t.took { spans.push(Span::Gap(7.0)); spans.push(plain(&format!("· {took}"), None)); }
-            let (lay, text, _) = self.sh.text(&spans, l, Some(w), Alignment::Start);
-            let h = lay.height().max(16.0);
+            let mut name = self.line(&self.who.clone(), Look { size: 11.5, lh: 1.5, color: theme::DIM, weight: 600.0, family: theme::PIXEL }, None);
+            let h = name.layout.height().max(16.0);
             avatar(&mut frag.shapes, 0.0, y + (h - 16.0) / 2.0, 18.0, 16.0, 5.0, self.color);
-            frag.texts.push(TextBox { layout: lay, x: 0.0, y, text, sep: "\n", links: vec![], clip: None });
-            y += h - 4.0;
-            gap(&mut y, false);
+            name.x = 25.0;
+            name.y = y + (h - name.layout.height()) / 2.0;
+            let nx = 25.0 + name.layout.width() + 7.0;
+            frag.text(name);
+            frag.copy.push(Tok::Req(1));
+            if let Some(took) = &t.took {
+                let mut tb = self.line(&format!("· {took}"), Look { size: 11.5, lh: 1.5, color: theme::FAINT, ..look }, None);
+                tb.x = nx;
+                tb.y = y + (h - tb.layout.height()) / 2.0;
+                frag.text(tb);
+                frag.copy.push(Tok::Req(1));
+            }
+            y += h - 4.0 + theme::THREAD_GAP;
+            // .ans.err: border-left 2px, padding-left 10px.
             let failed = t.stage == Stage::Failed;
             let inset = if failed { 12.0 } else { 0.0 };
             let blocks = hover_md::parse(&t.answer, Some(&*self.image_rule));
@@ -612,7 +812,98 @@ impl Thread {
             frag.append(b.frag, inset, y);
             y += b.h;
         }
-        (frag, y)
+        (frag, y, summary)
+    }
+
+    /// The open step list: one flex row (`.work div { display: flex; gap: 8px }`) whose
+    /// steps shrink in proportion to their width, each an icon, a one-line text that ends
+    /// in an ellipsis, and a tag. Returns the row's height.
+    fn steps(&mut self, frag: &mut Frag, t: &Turn, y: f32, avail: f32, live: bool) -> f32 {
+        struct Row { icon: StepIcon, text: TextBox, tag: Option<TextBox>, tag_w: f32, on: bool }
+        let n = t.steps.len();
+        let mono = Look { size: 11.5, lh: 14.0 / 11.5, color: theme::DIM, weight: 400.0, family: theme::MONO };
+        let mut rows: Vec<Row> = vec![];
+        for (j, st) in t.steps.iter().enumerate() {
+            let on = live && j + 1 == n;
+            let text = match (on, LIVE.iter().find(|(w, _)| st.text.starts_with(w))) {
+                (true, Some((w, l))) => format!("{l}{}", &st.text[w.len()..]),
+                _ => st.text.clone(),
+            };
+            let tb = self.line(&text, Look { color: if on { theme::INK } else { theme::DIM }, ..mono }, None);
+            let (tag, tag_w) = match (&st.tag, on) {
+                (Some(tag), false) => {
+                    let bad = tag == "failed";
+                    let tb = self.line(tag, Look { size: 10.5, lh: 1.5, color: if bad { theme::BAD } else { theme::OK }, weight: 400.0, family: theme::SANS }, None);
+                    let w = tb.layout.width() + 14.0;
+                    (Some(tb), w)
+                }
+                _ => (None, 0.0),
+            };
+            rows.push(Row { icon: st.icon, text: tb, tag, tag_w, on });
+        }
+        // Flex shrink: base = content; min = icon + gaps + tag (the text can go to 0).
+        let base: Vec<f32> = rows.iter().map(|r| 13.0 + 8.0 + r.text.layout.width() + if r.tag.is_some() { 8.0 + r.tag_w } else { 0.0 }).collect();
+        let min: Vec<f32> = rows.iter().map(|r| 21.0 + if r.tag.is_some() { 8.0 + r.tag_w } else { 0.0 }).collect();
+        let gaps = 8.0 * (n.saturating_sub(1)) as f32;
+        let mut widths = base.clone();
+        let mut frozen = vec![false; n];
+        loop {
+            let used: f32 = widths.iter().sum::<f32>() + gaps;
+            if used <= avail + 0.01 { break; }
+            let free = avail - gaps - (0..n).filter(|&i| frozen[i]).map(|i| widths[i]).sum::<f32>();
+            let scaled: f32 = (0..n).filter(|&i| !frozen[i]).map(|i| base[i]).sum();
+            if scaled <= 0.0 { break; }
+            let mut violated = false;
+            let total_base: f32 = (0..n).filter(|&i| !frozen[i]).map(|i| base[i]).sum();
+            let shrink = total_base - free;
+            for i in 0..n {
+                if frozen[i] { continue; }
+                widths[i] = base[i] - shrink * base[i] / scaled;
+                if widths[i] < min[i] { widths[i] = min[i]; frozen[i] = true; violated = true; }
+            }
+            if !violated { break; }
+        }
+        let row_h = rows.iter().map(|r| if r.tag.is_some() { 15.75f32 } else { 14.0 }).fold(0.0, f32::max);
+        let mut x = 2.0;
+        for (r, rw) in rows.into_iter().zip(widths) {
+            let cy = y + row_h / 2.0;
+            let icolor = if r.on { theme::LI } else { theme::FAINT };
+            frag.shapes.push(Shape::Svg { x, y: cy - 6.5, w: 13.0, h: 13.0, svg: icon_svg(r.icon, icolor) });
+            let text_w = (rw - 21.0 - if r.tag.is_some() { 8.0 + r.tag_w } else { 0.0 }).max(0.0);
+            let mut tb = r.text;
+            tb.x = x + 21.0;
+            tb.y = cy - tb.layout.height() / 2.0;
+            tb.shimmer = r.on;
+            let full = tb.layout.width();
+            if full > text_w + 0.01 {
+                // text-overflow: ellipsis: whole clusters that fit before the "…".
+                let ell = self.line("…", Look { color: if r.on { theme::INK } else { theme::DIM }, ..mono }, None);
+                let ew = ell.layout.width();
+                let c = parley::Cursor::from_point(&tb.layout, (text_w - ew).max(0.0), 1.0);
+                let mut cut = c.geometry(&tb.layout, 0.0).x0 as f32;
+                if cut > text_w - ew { cut = parley::Cursor::from_byte_index(&tb.layout, c.index().saturating_sub(1), parley::Affinity::Downstream).geometry(&tb.layout, 0.0).x0 as f32; }
+                tb.clip = Some([tb.x, tb.y - 2.0, cut.max(0.0), tb.layout.height() + 4.0]);
+                let mut e = ell;
+                e.text.clear();
+                e.x = tb.x + cut;
+                e.y = tb.y;
+                frag.texts.push(e);
+            }
+            frag.text(tb);
+            frag.copy.push(Tok::Req(1));
+            if let Some(mut tag) = r.tag {
+                let tx = x + rw - r.tag_w;
+                let bad = tag.layout.lines().next().is_some() && matches!(tag.text.as_str(), "failed");
+                frag.shapes.push(Shape::Rect { x: tx, y: cy - 15.75 / 2.0, w: r.tag_w, h: 15.75, radius: [7.875; 4],
+                    fill: Some(if bad { [255, 69, 58, 38] } else { [48, 209, 88, 38] }), stroke: None });
+                tag.x = tx + 7.0;
+                tag.y = cy - tag.layout.height() / 2.0;
+                frag.text(tag);
+                frag.copy.push(Tok::Req(1));
+            }
+            x += rw + 8.0;
+        }
+        row_h
     }
 
     fn texts(&self) -> impl Iterator<Item = (Pos, &TextBox, f32)> {
@@ -622,6 +913,11 @@ impl Thread {
     /// What is under a point in thread coordinates (y from the thread's top).
     pub fn hit(&self, x: f32, y: f32) -> Hit {
         let x = x - theme::THREAD_PAD[3];
+        for (i, s) in self.sections.iter().enumerate() {
+            if let Some([sx, sy, sw, sh]) = s.summary {
+                if x >= sx && x < sx + sw && y >= s.y + sy && y < s.y + sy + sh { return Hit::Toggle(i); }
+            }
+        }
         let mut best: Option<(f32, Pos)> = None;
         for (p, t, sy) in self.texts() {
             if t.text.is_empty() { continue; }
@@ -651,23 +947,66 @@ impl Thread {
         self.selection = if anchor == focus { None } else { Some((anchor, focus)) };
     }
 
-    /// The selected text as the page would copy it: blocks on their own lines, table
-    /// cells separated by tabs.
+    /// The selected text as the page would copy it (see [`Tok`]).
     pub fn selected_text(&self) -> String {
         let Some((a, f)) = self.selection else { return String::new() };
         let (lo, hi) = if a <= f { (a, f) } else { (f, a) };
+        let (lo_k, hi_k) = ((lo.section, lo.text), (hi.section, hi.text));
         let mut out = String::new();
-        let mut first = true;
-        for (p, t, _) in self.texts() {
-            let key = (p.section, p.text);
-            if key < (lo.section, lo.text) || key > (hi.section, hi.text) || t.text.is_empty() { continue; }
-            let s = if key == (lo.section, lo.text) { lo.byte } else { 0 };
-            let e = if key == (hi.section, hi.text) { hi.byte } else { t.text.len() };
-            if !first { out.push_str(t.sep); }
-            first = false;
-            out.push_str(t.text.get(s.min(e)..e).unwrap_or(""));
+        let (mut pending, mut emitted, mut text_seen) = (0u8, false, false);
+        let mut lit = String::new();
+        let mut started = false;
+        for (si, s) in self.sections.iter().enumerate() {
+            for tok in &s.frag.copy {
+                let key = match tok { Tok::Text(i) => Some((si, *i)), _ => None };
+                if let Some(k) = key {
+                    if k < lo_k { continue; }
+                    if k > hi_k { return out; }
+                    started = true;
+                } else if !started {
+                    continue;
+                }
+                match tok {
+                    Tok::Text(i) => {
+                        let t = &s.frag.texts[*i];
+                        let st = if (si, *i) == lo_k { lo.byte } else { 0 };
+                        let en = if (si, *i) == hi_k { hi.byte } else { t.text.len() };
+                        let piece = t.text.get(st.min(en)..en).unwrap_or("");
+                        if piece.is_empty() && (si, *i) == hi_k { return out; }
+                        if emitted { for _ in 0..pending { out.push('\n'); } out.push_str(&lit); }
+                        lit.clear();
+                        out.push_str(piece);
+                        pending = 0;
+                        emitted = true;
+                        text_seen = true;
+                        if (si, *i) == hi_k { return out; }
+                    }
+                    Tok::Req(n) => pending = pending.max(*n),
+                    Tok::Lit(l) => lit.push_str(l),
+                    Tok::Hr => if emitted { for _ in 0..pending { out.push('\n'); } out.push_str(&std::mem::take(&mut lit)); pending = 0; },
+                    Tok::Img => {
+                        if emitted { for _ in 0..pending { out.push('\n'); } out.push_str(&std::mem::take(&mut lit)); }
+                        pending = if text_seen { 2 } else { 1 };
+                        emitted = true;
+                    }
+                    Tok::Virt(v) => {
+                        if emitted { for _ in 0..pending { out.push('\n'); } out.push_str(&std::mem::take(&mut lit)); }
+                        out.push_str(v);
+                        pending = 0;
+                        emitted = true;
+                        text_seen = true;
+                    }
+                }
+            }
         }
         out
+    }
+
+    /// Everything, as a select-all over the thread copies it.
+    pub fn select_all(&mut self) {
+        let first = self.sections.iter().enumerate().find_map(|(si, s)| s.frag.copy.iter().find_map(|t| if let Tok::Text(i) = t { Some(Pos { section: si, text: *i, byte: 0 }) } else { None }));
+        let last = self.sections.iter().enumerate().rev().find_map(|(si, s)| s.frag.copy.iter().rev().find_map(|t| if let Tok::Text(i) = t { Some(Pos { section: si, text: *i, byte: s.frag.texts[*i].text.len() }) } else { None }));
+        if let (Some(a), Some(b)) = (first, last) { self.selection = Some((a, b)); }
     }
 
     /// Selection rectangles for one text box, in its own coordinates.
