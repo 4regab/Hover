@@ -22,7 +22,7 @@ public static class Actions
     public static ContextMenu BuildMainMenu()
     {
         var menu = new ContextMenu();
-        menu.Items.Add(Item($"Open Workspace  {Settings.ScWorkspace}", () => OwlApp.ShowWorkspace?.Invoke()));
+        menu.Items.Add(Item($"Open Agent Office  {Settings.ScWorkspace}", () => OwlApp.ShowOffice?.Invoke()));
         menu.Items.Add(Item("Open App Window", () => OwlApp.OpenDashboard?.Invoke()));
         menu.Items.Add(new Separator());
         menu.Items.Add(Check("Launch at Login", Settings.LaunchAtLogin, () => Settings.LaunchAtLogin = !Settings.LaunchAtLogin));

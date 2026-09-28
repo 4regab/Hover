@@ -1,32 +1,46 @@
 using System.Windows.Threading;
 using Hover.Core;
-using Microsoft.Win32;
 
 namespace Hover.Owl;
 
-/// The workspace's shared state: one planner, one focus timer, today's calendar.
-/// Every view (the notch panel and the dashboard window) draws from here, so they
-/// stay in step without talking to each other.
+/// The shared state: the agents, their sessions, and the quota readings. Every view
+/// (the notch and the app window) draws from here, so they stay in step without
+/// talking to each other.
 public static class OwlApp
 {
-    public static Planner Planner => Planner.Shared;
-    public static FocusTimer Timer { get; } = new();
-    /// The Kiro page's headless runs, several at once.
-    public static KiroSessions Kiro { get; } = new();
+    /// Each agent tool's ACP process, shared by all of its sessions and shut down when
+    /// it has been idle for the time in its settings.
+    public static IReadOnlyDictionary<Services.AgentTool, Services.AcpHost> Agents { get; } =
+        Services.Agents.All.ToDictionary(t => t, t =>
+        {
+            var host = new Services.AcpHost(t, () => Settings.AgentOptions(t));
+            // What the tool offers (models, efforts) fills in its settings page.
+            host.OptionsSeen += (tool, offers) => Dispatch(() => Settings.SetAgentOffers(tool, offers));
+            return host;
+        });
 
-    /// Once a second, for clock faces.
-    public static event Action? Tick;
-    public static event Action? EventsChanged;
-    /// Midnight passed: every view rebuilds for the new day.
-    public static event Action? DayChanged;
+    /// The office's runs, several at once, each with Kiro, Codex or Cursor.
+    public static KiroSessions Kiro { get; } = new(tool => new KiroSession((f, p, pr, ct, resume, events) =>
+        Agents[tool].Run(f, p, pr, ct, resume, events)))
+    {
+        // Every session, sealed, until the user deletes it; the office's bookshelf lists them.
+        History = new AgentHistory(System.IO.Path.Combine(Paths.Support, "agents")),
+    };
 
-    /// The card layout changed. The argument is the view that changed it, if any.
-    public static event Action<object?>? LayoutChanged;
-    public static void RaiseLayoutChanged(object? source) => LayoutChanged?.Invoke(source);
+    /// Kiro tasks that ended while no Kiro page was in view. The resting notch keeps
+    /// saying so until one is looked at.
+    public static int KiroUnseen { get; private set; }
 
-    /// The header's command buttons were added, edited or removed.
-    public static event Action? ButtonsChanged;
-    public static void RaiseButtonsChanged() => ButtonsChanged?.Invoke();
+    /// The tool of those unseen ends, or null when they were different tools.
+    public static string? KiroUnseenTool { get; private set; }
+
+    /// A Kiro page came into view: the ends it announced have been seen.
+    public static void KiroSeen()
+    {
+        if (KiroUnseen == 0) return;
+        KiroUnseen = 0;
+        Kiro.RaiseChanged();
+    }
 
     /// The latest usage reading for each quota the notch shows, and when it was taken.
     public static event Action? QuotasChanged;
@@ -36,58 +50,66 @@ public static class OwlApp
     private static readonly HashSet<string> _quotaBusy = new();
     private static readonly TimeSpan QuotaEvery = TimeSpan.FromMinutes(5);
 
-    public static IReadOnlyList<CalEvent> Events { get; private set; } = Array.Empty<CalEvent>();
-    /// Null while nothing has been fetched; otherwise the last error, or "".
-    public static string? CalendarError { get; private set; }
-    public static bool CalendarBusy { get; private set; }
-
-    // Host hooks, set by NotchHost.
+    // Host hooks, set by NotchManager.
     public static Action<string, string>? Notify { get; set; }
     public static Action? OpenDashboard { get; set; }
     public static Action? Collapse { get; set; }
-    public static Action? ShowWorkspace { get; set; }
-    /// The dashboard window, opened on its Settings tab.
+    /// The shortcut and the tray: open the notch, or close it.
+    public static Action? ShowOffice { get; set; }
+    /// The app window, opened on Settings.
     public static Action? OpenSettings { get; set; }
-    /// A workspace preference changed that the notch draws from.
+    /// A preference changed that the notch draws from.
     public static Action? SettingsChanged { get; set; }
 
     private static DispatcherTimer? _tick;
-    private static bool _ending;
-    private static DateOnly _day;
-    private static string? _ics;
-    private static DateTime _fetched = DateTime.MinValue;
-    private static readonly TimeSpan FetchEvery = TimeSpan.FromMinutes(15);
 
     public static void Start()
     {
-        Timer.Credited += (start, span) => Planner.AddFocus(start, span);
-        ResetDuration();
-        _day = Planner.Today;
-        Planner.Changed += DropStaleSession;
-        if (Planner.RollOver()) Planner.Save();
-
-        // Timers stop while the PC sleeps, so Insights only ever counts time at the desk.
-        SystemEvents.PowerModeChanged += (_, e) =>
-        {
-            if (e.Mode == PowerModes.Suspend) Dispatch(Timer.Pause);
-        };
+        DropPlanner();
 
         // Normal, not the default Background: WPF holds Background work back while
         // any input is waiting in the queue, and under UI Automation traffic that
-        // froze the clock for ten seconds at a time. A focus timer must not stall.
-        _tick = new DispatcherTimer(DispatcherPriority.Normal) { Interval = TimeSpan.FromSeconds(1) };
-        _tick.Tick += (_, _) => OnTick();
+        // held timers back for ten seconds at a time.
+        _tick = new DispatcherTimer(DispatcherPriority.Normal) { Interval = TimeSpan.FromSeconds(30) };
+        _tick.Tick += (_, _) => RefreshQuotas();
         _tick.Start();
-        _ = RefreshCalendar();
+        RefreshQuotas();
 
         // A Kiro task can take minutes; the notch has usually been folded away by the
-        // time it ends, so the end is announced as a reminder is.
-        Kiro.Ended += (s, r) => Notify?.Invoke((r.State switch
+        // time it ends, so the end is announced, unless the office is in view and it
+        // was seen happening.
+        Kiro.Ended += (s, r) =>
         {
-            Services.KiroState.Completed => "Kiro is done",
-            Services.KiroState.Cancelled => "Kiro stopped",
-            _ => "Kiro couldn't finish",
-        }) + ": " + s.Title, FirstLine(r.Text));
+            if (KiroPage.Watching) return;
+            KiroUnseen++;
+            var who = Services.Agents.Name(s.Tool);
+            KiroUnseenTool = KiroUnseen == 1 || KiroUnseenTool == who ? who : null;
+            Notify?.Invoke((r.State switch
+            {
+                Services.KiroState.Completed => $"{who} is done",
+                Services.KiroState.Cancelled => $"{who} stopped",
+                _ => $"{who} couldn't finish",
+            }) + ": " + s.Title, FirstLine(KiroText.Plain(r.Text)));
+        };
+    }
+
+    /// Tasks, the notepad, focus time and the calendar address went with the
+    /// workspace in 2.0, and the user chose to have them deleted, not kept. The key
+    /// (note.key) stays: the agents' history is sealed with it.
+    public static void DropPlanner()
+    {
+        try
+        {
+            foreach (var f in System.IO.Directory.EnumerateFiles(Paths.Support, "planner.dat*"))
+            {
+                System.IO.File.Delete(f);
+                Log.Line($"removed {System.IO.Path.GetFileName(f)} (the workspace is gone)");
+            }
+        }
+        catch (Exception e) when (e is System.IO.IOException or UnauthorizedAccessException)
+        {
+            Log.Line($"couldn't remove the old planner - {e.Message}");
+        }
     }
 
     private static string FirstLine(string text)
@@ -99,63 +121,11 @@ public static class OwlApp
 
     private static void Dispatch(Action a) => System.Windows.Application.Current?.Dispatcher.BeginInvoke(a);
 
-    private static readonly string AlarmFile =
-        System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "Media", "Alarm01.wav");
-    private static System.Media.SoundPlayer? _alarm;
-
-    /// The time's-up alarm: the sound Windows Clock rings with, about six seconds long.
-    /// It used to be the "Asterisk" system sound, a soft chime of just over a second that
-    /// was easy to miss, and silent under the "No sounds" scheme. The notification's
-    /// own sound is no help either: Windows holds it back while it is busy or in Do not
-    /// disturb.
-    private static void RingAlarm()
-    {
-        try
-        {
-            _alarm ??= new System.Media.SoundPlayer(AlarmFile);
-            _alarm.Play();
-        }
-        catch (Exception e)
-        {
-            Log.Line($"alarm sound failed — {e.Message}");
-            System.Media.SystemSounds.Exclamation.Play();
-        }
-    }
-
-    private static void OnTick()
-    {
-        if (Timer.Finished)
-        {
-            var task = Planner.Find(Timer.TaskId);
-            EndSession();
-            RingAlarm();
-            Notify?.Invoke("Time's up", task is null ? "Your focus session is complete." : $"Focus on “{task.Title}” is complete.");
-        }
-
-        foreach (var r in Planner.TakeDueReminders())
-            Notify?.Invoke("Reminder", r.Title);
-
-        if (Planner.Today != _day)
-        {
-            _day = Planner.Today;
-            if (Planner.RollOver()) Planner.Save();
-            Reparse();
-            DayChanged?.Invoke();
-        }
-
-        if (Planner.Data.CalendarSource.Length > 0 && !CalendarBusy && DateTime.Now - _fetched > FetchEvery)
-            _ = RefreshCalendar();
-
-        RefreshQuotas();
-        Tick?.Invoke();
-    }
-
     // MARK: Quotas
 
     /// Read each quota that is switched on once it is five minutes old — or now, when
     /// forced (switched on, or Refresh in Settings). Readings for quotas switched off
-    /// are dropped so a stale number never comes back with the switch. The workspace
-    /// header always shows the ones switched on, so they are always read.
+    /// are dropped so a stale number never comes back with the switch.
     public static void RefreshQuotas(bool force = false)
     {
         var on = NotchItem.Quotas.Where(Settings.HasNotchItem).ToList();
@@ -199,111 +169,12 @@ public static class OwlApp
         QuotasChanged?.Invoke();
     }
 
-    /// A session whose task was finished or deleted elsewhere ends with it.
-    private static void DropStaleSession()
-    {
-        if (Timer.TaskId is { } id && Planner.Find(id) is not { Done: false })
-            EndSession();
-    }
-
-    // MARK: Focus
-
-    public static void StartFocus(PlanTask task)
-    {
-        if (Timer.State != FocusTimer.Phase.Ready) EndSession();
-        // A task with no limit of its own keeps the stopwatch if that is what is set.
-        Timer.Configure(TimeSpan.FromMinutes(task.LimitMinutes ?? Planner.Data.DefaultFocusMinutes),
-            task.LimitMinutes is null && Timer.Stopwatch);
-        Timer.Attach(task.Id);
-        Timer.Start();
-    }
-
-    /// The check next to the timer: the task is done and the session ends.
-    public static void CompleteFocus()
-    {
-        var id = Timer.TaskId;
-        EndSession();
-        if (id is not null) Planner.SetDone(id, true);
-    }
-
-    public static void EndSession()
-    {
-        // Stopping credits focus time, which saves the planner, which raises Changed,
-        // which lands back in DropStaleSession while this session is still ending.
-        if (_ending) return;
-        _ending = true;
-        try
-        {
-            Timer.Stop();
-            ResetDuration();
-        }
-        finally { _ending = false; }
-    }
-
-    public static void ResetDuration() =>
-        Timer.Configure(TimeSpan.FromMinutes(Planner.Data.DefaultFocusMinutes), Timer.Stopwatch);
-
-    /// Set the length from the timer's own "Set time".
-    public static void SetDuration(int minutes, bool start)
-    {
-        Timer.Configure(TimeSpan.FromMinutes(minutes));
-        if (Timer.TaskId is { } id) Planner.SetLimit(id, minutes);
-        if (start && Timer.State != FocusTimer.Phase.Running) Timer.Start();
-    }
-
-    // MARK: Calendar
-
-    public static async Task RefreshCalendar()
-    {
-        var source = Planner.Data.CalendarSource;
-        if (source.Length == 0)
-        {
-            _ics = null;
-            CalendarError = null;
-            Events = Array.Empty<CalEvent>();
-            EventsChanged?.Invoke();
-            return;
-        }
-        CalendarBusy = true;
-        EventsChanged?.Invoke();
-        try
-        {
-            _ics = await Calendar.Fetch(source);
-            CalendarError = "";
-        }
-        catch (Exception e)
-        {
-            Log.Line($"calendar fetch failed — {e.Message}");
-            CalendarError = e.Message;
-        }
-        finally
-        {
-            _fetched = DateTime.Now;
-            CalendarBusy = false;
-        }
-        Reparse();
-    }
-
-    private static void Reparse()
-    {
-        try
-        {
-            Events = _ics is null ? Array.Empty<CalEvent>() : Calendar.For(_ics, Planner.Today);
-        }
-        catch (Exception e)
-        {
-            Log.Line($"calendar parse failed — {e.Message}");
-            CalendarError = "The calendar file could not be read.";
-            Events = Array.Empty<CalEvent>();
-        }
-        EventsChanged?.Invoke();
-    }
-
-    /// Called as the app quits, so a running session's time is not lost.
-    /// A running Kiro task is stopped rather than left working with nobody watching.
+    /// Called as the app quits. A running task is stopped rather than left working
+    /// with nobody watching.
     public static void Shutdown()
     {
-        Timer.Pause();
         Kiro.StopAll();
+        foreach (var host in Agents.Values) host.Shutdown("Hover quit");
+        Kiro.History?.Flush();
     }
 }

@@ -1,64 +1,9 @@
 using System.IO;
 using System.Text;
-using System.Text.Json;
 using Hover.Core;
 using NUnit.Framework;
 
 namespace Hover.Tests;
-
-public sealed class LayoutTests
-{
-    [Test]
-    public void A_missing_layout_is_every_card_in_order()
-    {
-        Assert.That(CardLayout.Normalize(null).Select(c => c.Id),
-            Is.EqualTo(new[] { "tasks", "timer", "notepad", "events", "shots" }));
-    }
-
-    [Test]
-    public void A_saved_layout_is_repaired()
-    {
-        var saved = new[]
-        {
-            new CardSlot("events", true, 9), new CardSlot("bogus"), new CardSlot("events"),
-            new CardSlot("tasks", true, 0.1), new CardSlot("timer", true, double.NaN),
-        };
-        var n = CardLayout.Normalize(saved);
-        Assert.Multiple(() =>
-        {
-            Assert.That(n.Select(c => c.Id).Distinct().Count(), Is.EqualTo(5), "unknown and repeated cards dropped, missing ones added");
-            Assert.That(n[0].Id, Is.EqualTo("events"), "the saved order is kept");
-            Assert.That(n.Single(c => c.Id == "events").Width, Is.EqualTo(CardLayout.MaxWidth));
-            Assert.That(n.Single(c => c.Id == "tasks").Width, Is.EqualTo(CardLayout.MinWidth));
-            Assert.That(n.Single(c => c.Id == "timer").Width, Is.EqualTo(CardLayout.Default.Single(c => c.Id == "timer").Width), "a broken width falls back to the default");
-        });
-    }
-
-    [Test]
-    public void Every_card_hidden_brings_back_tasks()
-    {
-        var n = CardLayout.Normalize(CardLayout.Default.Select(c => c with { Visible = false }));
-        Assert.That(n.Single(c => c.Visible).Id, Is.EqualTo(CardLayout.Tasks));
-    }
-
-    [Test]
-    public void Cards_move_within_bounds()
-    {
-        Assert.Multiple(() =>
-        {
-            Assert.That(CardLayout.Move(CardLayout.Default, "timer", -1).Select(c => c.Id).Take(2), Is.EqualTo(new[] { "timer", "tasks" }));
-            Assert.That(CardLayout.Move(CardLayout.Default, "tasks", -1)[0].Id, Is.EqualTo("tasks"));
-            Assert.That(CardLayout.Move(CardLayout.Default, "shots", 1).Last().Id, Is.EqualTo("shots"));
-        });
-    }
-
-    [Test]
-    public void A_card_saved_without_a_width_gets_the_default()
-    {
-        var saved = JsonSerializer.Deserialize<List<CardSlot>>("[{\"Id\":\"shots\",\"Visible\":false}]")!;
-        Assert.That(saved[0], Is.EqualTo(new CardSlot("shots", false, 1)));
-    }
-}
 
 public sealed class QuotaTests
 {

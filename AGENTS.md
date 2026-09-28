@@ -4,21 +4,21 @@ Guidance for humans and AI agents working in this repository.
 
 ## What Hover is
 
-A Windows desktop app (.NET 8, WPF) with one surface a hover away: **the notch**
+A Windows desktop app (.NET 10, WPF) with one surface a hover away: **the notch**
 at the top centre of the main display (after NotchOwl for Mac). At rest it is a
-slim pill showing the items the user picked — a running focus timer, Claude Code /
-Kiro / Codex / Cursor quota gauges — or nothing. Hovering it, clicking it
-or `Alt+N` opens the workspace: a header (the Hover name, the user's command
-buttons, the switched-on quotas, and three icon tabs: Workspace, Kiro, Settings)
-over one of three pages. Workspace holds configurable, resizable cards (today's
-tasks, focus timer, daily notepad, today's events, screenshots). Kiro runs a
-Kiro CLI tasks headlessly, several at once, in a chosen folder. Settings has four sections (General,
-Workspace, Integrations, Insights & Data).
+slim pill showing the Claude Code / Kiro / Codex / Cursor quota gauges the user
+switched on, and an agent at work, or nothing. Hovering it, clicking it or `Alt+N`
+opens the **Agent office**, which fills the notch: it hands tasks to Kiro, Codex or
+Cursor, which run headlessly, several at once, each in a chosen folder, as bots at
+desks in a three.js office. The office's gear opens Settings over it (five
+sections: General, Integrations, Kiro, Codex, Cursor), with a back button.
 
-The only ordinary window is the dashboard (a click on the Hover name, or a second
-launch of the exe), the same workspace in a normal window; the app lives in the
-tray. (Sticky notes and the edge tray were removed in 1.1; an old `notes.db` is
-left on disk untouched.)
+The only ordinary window is the dashboard (a click on the office's name in the
+notch, or a second launch of the exe), the same office in a normal window; the app
+lives in the tray. (Sticky notes and the edge tray went in 1.1. The workspace
+(tasks, focus timer, notepad, events, screenshots, command buttons, Insights) went
+in 2.0; its `planner.dat` is deleted on first run, as the user chose. `note.key`
+stays: the agents' history is sealed with it.)
 
 ## Build, test, run
 
@@ -53,7 +53,8 @@ an E2E run, or the test's copy exits and the test drives the other one:
 Get-Process Hover, Noty -ErrorAction SilentlyContinue | Stop-Process -Force
 ```
 
-Requires the .NET 8 SDK. The app targets `net8.0-windows` and must build on
+Requires the .NET 10 SDK. The app targets `net10.0-windows10.0.17763.0` (the WebView2
+composition control needs the Windows SDK projection) and must build on
 Windows (or with `EnableWindowsTargeting`).
 
 ## Layout
@@ -61,32 +62,36 @@ Windows (or with `EnableWindowsTargeting`).
 ```
 src/Hover/
   Core/        Model + storage: Settings, Paths, Crypto (AES-GCM, DPAPI key),
-               Shortcut, Log, Layout (the card layout rules and the notch item
-               ids), Quota (Claude Code / Kiro / Codex / Cursor usage readers),
-               Palette (every colour, Hover's light and dark, and the VS Code theme
-               reader and finder). Layout, Quota and Palette have no WPF.
-  Images/      Screenshots: ShotStore (watches the folder + clipboard), Shot,
-               ShotRow (a thumbnail tile), ShotDrag (drag-out payload).
+               Shortcut, Log, Layout (the notch item ids), Quota (Claude Code /
+               Kiro / Codex / Cursor usage readers), Palette (every colour, Hover's
+               light and dark, and the VS Code theme reader and finder). Layout,
+               Quota and Palette have no WPF.
   Interop/     Win32 P/Invoke, monitor enumeration, global hotkeys, HostWindow
                (the borderless, click-through window the notch is drawn in).
-  Services/    Actions (tray menu commands), TrayIcon, Launcher (runs a command
-               button in a terminal), KiroRunner (runs a Kiro page task headlessly
-               and reads its stream-json; no WPF).
-  Windows/     Image preview, rename dialog.
-  Owl/         The workspace: Planner (tasks, notepad, focus time, one sealed file),
-               FocusTimer, Insights, Calendar (.ics reader), OwlApp (shared state,
-               the one-second tick, quota polling, the alarm), Notch (the top-centre
-               host, on the main display only, and the dashboard window), WorkspaceView
-               (header + the cards), Pages (Insights, Settings), KiroSession (one Kiro
-               run) and KiroSessions (all of them, shared; no WPF), KiroPage, Ghost
-               (the ghost actor and the shared 30 fps frame clock), GhostStage (the
-               page's animated scene, every ghost in one element), Popover, Theme
-               (the palette in use), Ui (brushes, builders, chart, ring gauge,
-               segmented control),
-               Icons (generated line icons), Corners (pill-shaped corner radii).
-  Themes/      Styles.xaml (menus, tooltips), Owl.xaml (the workspace's controls).
+  Services/    Actions (tray menu commands), TrayIcon, Agents (Kiro, Codex, Cursor:
+               where each is, how it starts, install and sign-in checks), AcpHost
+               (one tool running as an ACP server, shared by its sessions, stopped
+               when idle), KiroRunner (KiroStream, which reads ACP session updates,
+               the shared result types, and Kiro's fallback model list). No WPF.
+  Owl/         OwlApp (shared state, quota polling), Notch (the top-centre host, on
+               the main display only, and the dashboard window), OfficeView (the
+               office, with Settings laid over it), Pages (Settings), KiroSession
+               (one agent session of any tool: its turns, state and cancellation)
+               and KiroSessions (all of them, shared; no WPF), AgentHistory (every
+               session, sealed, until deleted; no WPF), KiroPage (hosts the
+               office in WebView2), Bot (the notch's bot glyph and its frame
+               clock), KiroText (Markdown to plain text), Popover (counts open
+               menus), Theme (the palette in use), Ui (brushes, builders, ring
+               gauge, segmented control), Icons (generated line icons), Corners
+               (pill-shaped corner radii).
+  Themes/      Styles.xaml (menus, tooltips), Owl.xaml (Settings' controls).
   Assets/      hover.ico (the app icon), hover-mark.png (the logo without its dark
-               square, for the workspace header), Fonts/ (Inter and Inter Display).
+               square), Fonts/ (Inter and Inter Display),
+               kiro-office.html (built from web/office; do not edit), office-beats.ogg.
+web/office/          The Agent office page: main.js (three.js scene and UI), page.html,
+                     md.js (Markdown to escaped HTML) and diagram.js (Mermaid flowcharts
+                     to SVG), both written here with no library.
+                     `npm ci` once, then `node web/office/build.mjs` writes the asset.
 tests/Hover.Tests/   NUnit tests.
 tests/Hover.E2E/     UI Automation run against the real app. Not in Hover.slnx.
 assets/hover.png     The logo (README picture, source of the app icon).
@@ -107,21 +112,19 @@ carry a legacy `Noty` reference **only** in `Core/Paths.cs`, which migrates an o
 
 - **The notch window is borderless, topmost, and `WS_EX_NOACTIVATE`** while
   resting, so brushing it never steals focus. The bit comes off while the
-  workspace is open (keyboard), and briefly for an OLE drag-out of a screenshot
-  (Chromium refuses drags from a no-activate window). See `Interop/HostWindow.cs`
-  (`SetAcceptsKeys`, `WhileActivatable`).
+  office is open (keyboard). See `Interop/HostWindow.cs` (`SetAcceptsKeys`).
 - **Pointer is polled, not hooked.** `NotchManager` reads the cursor every 50 ms.
-- **The workspace's timers run at `DispatcherPriority.Normal`.** WPF runs
+- **Hover's timers run at `DispatcherPriority.Normal`.** WPF runs
   Background-priority work only when no input is waiting in the queue, and in
-  testing that starved the focus clock and the notch poll for 8–14 s at a time.
+  testing that starved the notch poll for 8–14 s at a time.
 - **One full-size, click-through window, on the main display.** The shape grows
-  from its resting size (pill, alert, or nothing) to the workspace by animating one
+  from its resting size (pill, alert, or nothing) to the office by animating one
   `Openness` value; the window itself never resizes (that made it blink), except
-  when Settings → Workspace → Workspace size changes.
-- **Cards are star columns with a `GridSplitter` in every gap.** Letting go of a
-  splitter turns the laid-out widths back into star shares with the same total
-  and saves them (`Settings.Cards`). `CardLayout.Normalize` repairs any saved
-  layout: unknown ids dropped, new cards added, widths clamped, never all hidden.
+  when Settings → General → Office size changes.
+- **Settings sits over the office.** The office's gear (`settings` message) makes
+  `OfficeView` lay `SettingsPage` over it, with a back button (and a close
+  button in the notch). The office is only collapsed meanwhile, so its sessions go on
+  and it comes back at once (after 30 s hidden its WebView2 is dropped and made again).
 - **Colours come from one `Palette`.** Hover's own light and dark are Apple's
   system colours. A VS Code theme is read from its file (following `include`),
   and only the few colour ids in `Palette.Keys` are kept, in `Settings.Theme`, so
@@ -129,10 +132,8 @@ carry a legacy `Noty` reference **only** in `Core/Paths.cs`, which migrates an o
   themes VS Code, Cursor, Kiro and Windsurf have on the PC. Code-built elements
   take their brushes when they are made, so a theme change rebuilds the views
   (`Theme.Changed`); the XAML styles read the same colours as dynamic resources
-  that `Theme.Publish` rewrites. The resting notch is always black.
-- **Command buttons run in a terminal.** `Launcher` opens a Windows Terminal tab
-  (`wt -d <folder> pwsh -NoExit -Command <command>`, with `;` escaped for wt), or a
-  PowerShell window when wt is missing. The shell stays open, so errors show.
+  that `Theme.Publish` rewrites. The resting notch is always black, and the office
+  keeps its own look.
 - **Quotas have no official API.** `Core/Quota.cs` reads what each tool exposes,
   read-only: `api.anthropic.com/api/oauth/usage` with Claude Code's own sign-in
   (never refreshed, which would rotate Claude Code's tokens); `kiro-cli chat
@@ -143,30 +144,70 @@ carry a legacy `Noty` reference **only** in `Core/Paths.cs`, which migrates an o
   finished. A format change in any of them shows as a readable failure, not a
   crash. The Kiro read is the heavy one: kiro-cli and the MCP servers it starts
   take a few hundred MB for about eight seconds, then all exit.
-- **The Kiro page runs kiro-cli headlessly, never in a terminal.** `KiroRunner`
-  starts `kiro-cli chat --no-interactive --trust-all-tools --agent-engine v3
-  --output-format stream-json` as a hidden child (`Quota.Hidden`, shared with the
-  quota read) with the chosen folder as its working directory. The prompt goes in
-  on stdin, never on the command line. Stop kills the whole process tree. The
-  stream-json events (ACP session updates, `runFinished` with `finalText`,
-  `runError`) are undocumented, so `KiroStream` reads them loosely. They drive the
-  ghost's phase and the final answer; the exit code decides success. There is no
-  log view on purpose. Folder first: no prompt until a folder that exists is picked
-  (`Settings.KiroFolder`), and a missing one asks for another rather than falling
-  back. Full tool access is explained once (`Settings.KiroNoticeSeen`). Runs live in
-  `OwlApp.Kiro`, shared by both views: up to three at once (each kiro-cli takes a
-  few hundred MB while it works) and the newest six kept. Each announces its end as
-  a reminder does, and all are stopped when Hover quits.
-- **The Kiro animation is cheap on purpose.** `GhostStage` draws the whole scene
-  (backdrop, aurora, stars, motes, every ghost) in one `OnRender`. It runs from one
-  shared clock (`Frames`), throttled to 30 fps, which is hooked into
-  `CompositionTarget.Rendering` only while a stage is visible and its window isn't
-  minimised. Brushes and geometry are frozen and reused. With Windows' animation
-  effects off, it draws still.
-- **The alarm is a sound file.** When a countdown ends, `OwlApp.RingAlarm` plays
-  `Windows\Media\Alarm01.wav`; the toast sound is held back by Do not disturb.
-- **The planner is encrypted** (AES-GCM, DPAPI-wrapped key). Screenshots are plain
-  files on purpose, so they can be dragged into other apps.
+- **Agents run as ACP servers, never in a terminal.** Each tool is one long-lived
+  hidden child (`AcpHost`, JSON-RPC over stdio), started by the first task that
+  needs it and shared by all that tool's sessions: `kiro-cli acp --agent-engine v3
+  --auth-method cli`, `codex-acp` (the `@agentclientprotocol/codex-acp` adapter)
+  and `cursor-agent acp` (looked up in `%LOCALAPPDATA%\cursor-agent`, never as
+  `agent`, which other tools also install). A conversation is an ACP session; a
+  reply goes to the same one. After the idle time in the tool's settings (5 or 15
+  minutes with nothing running) the process is shut down, and the next reply starts
+  it again and loads the conversation back (`session/load`, its replay ignored).
+  Model, effort and access are session config options, set per turn where the tool
+  offers them; what it offers is kept in `Settings.AgentOffers` for its settings
+  page. Read only: Kiro runs with autopilot off and Hover refuses its write
+  approvals; Cursor runs in Ask mode; Codex's read-only mode wrote files anyway on
+  Windows (no sandbox), so it isn't offered. Stop sends `session/cancel`, and a tool
+  that doesn't stop within 8 s is shut down if nothing else of it runs. Prompts go
+  over stdin, never on a command line. `KiroStream` reads the updates loosely (the
+  answer is the last message, after the last tool call); they drive the bot's pose
+  and the steps. Folder first: no prompt until a folder that exists is picked
+  (`Settings.KiroFolder`). Full tool access is explained once
+  (`Settings.KiroNoticeSeen`). Sessions live in `OwlApp.Kiro`, shared by both
+  views, so hiding or closing a view never stops one: up to three run at once
+  across all tools, and the newest six are kept. Each announces its end, naming the
+  tool, and all tools are shut down when Hover quits. They run in a Windows job that
+  kills them with Hover, so a killed or crashed Hover leaves none behind. Install and sign-in are
+  checked with each tool's own status command (kept five minutes); a tool that
+  fails is greyed in the office with what to do.
+- **Sessions are kept until the user deletes them.** `AgentHistory` seals an index
+  (`agents/index.dat`, the only part held in memory) and one file per session
+  (`agents/<key>.dat`, read when it is opened) with Hover's key (`note.key`), and writes
+  them off the UI thread in order. A session is saved when it starts, on each reply
+  and when a turn ends. The office's bookshelf (and the history button) lists them;
+  opening one shows its chat without a desk, and a reply wakes it: it gets a desk
+  (the oldest finished session gives one up and stays in the history) and its tool
+  loads the conversation back. Delete (the chat's bin, or the bin by a history row)
+  asks first, stops a run, and removes the session from the office and the disk.
+- **A new task starts from one circle.** At the office's bottom left: a click shows
+  each tool's own logo (the name on hover; a tool not installed or signed in is
+  grey and says why), a pick grows the box for that tool (prompt, image, folder,
+  model, send). Esc, the chevron or a click on the office folds it back; a draft is
+  kept and marked with a dot. There is no dock: the wall board lists the sessions
+  as notes (bot and title), or says the office is quiet.
+- **Answers are Markdown, drawn without a library.** `md.js` escapes everything
+  the agent wrote and emits only its own tags, so an answer can't inject HTML or
+  script. Links go to the browser through Hover (`link`), web images load
+  directly, and images in the session's folder load from a per-session virtual host
+  (`f<key>.hover`). ```mermaid flowcharts become SVG (`diagram.js`: layered
+  layout, loops set aside); other Mermaid kinds show as code. The composer's model
+  pill sets the tool's default model and effort, as Settings does; its one round
+  button sends, queues a reply while a run goes, or stops the run when the box is
+  empty. Each tool's page can hide the tools it runs from the chat.
+- **The office is a web page on purpose.** `KiroPage` shows `web/office` in a
+  `WebView2CompositionControl` (a windowed WebView2 can't draw in the layered notch
+  window), from one shared WebView2 environment. It is made when the page shows,
+  paused and set to low memory while hidden, and disposed when the page unloads
+  (the app window closes) or 30 s after it was hidden (the notch folds, Settings opens) (reopening costs
+  about 1 s warm, 2.4 s cold). A page made again reopens the chat that was open
+  (`KiroPage._open`) and puts the camera back (`office.view` in localStorage). The page draws at one pixel per CSS pixel without
+  antialiasing, redraws its shadow map only when something moved, and drops to
+  10 fps when nothing happens (30 fps while a bot walks or works). Measured: WebView2
+  itself is about 94 MB private working set; the office on top of a blank page adds
+  about 16 MB, so the renderer is not the cost.
+- **The office has its own close and open-in-a-window.** In the notch the page shows a
+  close button (`fold`) and its name opens the app window (`openApp`); Esc with
+  nothing open in the page folds the notch. In the app window both are left out.
 
 ## Conventions
 
@@ -191,13 +232,17 @@ carry a legacy `Noty` reference **only** in `Core/Paths.cs`, which migrates an o
 - **Tests need STA + a WPF Application** for anything touching controls; see the
   `[Apartment(ApartmentState.STA)]` fixtures. `Core/Layout.cs` and `Core/Quota.cs`
   have no WPF, so their tests also run on Linux or macOS by linking those two
-  files into a plain `net8.0` NUnit project. The same goes for the Kiro runner:
-  link `Core/Quota.cs`, `Core/Log.cs`, `Core/Paths.cs`, `Services/KiroRunner.cs`
-  and `Owl/KiroSession.cs` (both session classes) with `KiroRunnerTests.cs` and `TestEnvironment.cs` (its
-  stand-in kiro-cli is a `.cmd` on Windows and a shell script elsewhere). `TestEnvironment` redirects the data
-  and shots folders to a temp path via `HOVER_DATA_DIR` / `HOVER_SHOTS_DIR`.
+  files into a plain `net10.0` NUnit project. The same goes for the agents: link
+  `Core/Quota.cs`, `Core/Log.cs`, `Core/Paths.cs`, `Services/KiroRunner.cs`,
+  `Services/Agents.cs`, `Services/AcpHost.cs` and `Owl/KiroSession.cs` with
+  `KiroRunnerTests.cs` and `TestEnvironment.cs` (its stand-in ACP agent talks over
+  in-memory pipes). `TestEnvironment` redirects the data folder to a temp path via
+  `HOVER_DATA_DIR`.
 - **There is one `HoverNotch` window per display.** UI Automation lists them in
   z-order, so the first is often another display's. The E2E tests bind the one
   over the primary display's top centre.
 - **UI Automation can't see a `Border` or a `Panel`.** Give E2E hooks to a
-  control or a `TextBlock`, or give the element an automation peer (`ShotRow`).
+  control or a `TextBlock`, or give the element an automation peer. The office itself
+  is a web page: UI Automation sees only the WebView2, so drive it over DevTools.
+- **The E2E suite (`tests/Hover.E2E`) still drives the 1.x workspace** and fails
+  against 2.0 until it is rewritten for the office.

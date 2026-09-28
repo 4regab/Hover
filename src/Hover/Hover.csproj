@@ -2,25 +2,28 @@
 
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
-    <TargetFramework>net8.0-windows</TargetFramework>
+    <TargetFramework>net10.0-windows10.0.17763.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <UseWPF>true</UseWPF>
+    <!-- A tray app that is idle most of the time: no background GC thread, and the
+         GC compacts harder to hold less memory (ConserveMemory below). -->
+    <ConcurrentGarbageCollection>false</ConcurrentGarbageCollection>
     <!-- Windows Forms comes along purely for Screen and NotifyIcon. -->
     <UseWindowsForms>true</UseWindowsForms>
     <AssemblyName>Hover</AssemblyName>
     <RootNamespace>Hover</RootNamespace>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>Assets\hover.ico</ApplicationIcon>
-    <Version>1.1.0</Version>
+    <Version>2.0.0</Version>
     <Product>Hover</Product>
     <Company>Hover</Company>
     <LangVersion>latest</LangVersion>
     <EnableWindowsTargeting>true</EnableWindowsTargeting>
     <!-- WFAC010 tells WinForms apps to set the DPI mode in code. This is a WPF app
          placing its own windows in device pixels, so PerMonitorV2 has to be declared
-         in the manifest, before any code runs. -->
-    <NoWarn>$(NoWarn);WFAC010</NoWarn>
+         in the manifest, before any code runs. WFO0003 is the same warning on .NET 10. -->
+    <NoWarn>$(NoWarn);WFAC010;WFO0003</NoWarn>
   </PropertyGroup>
 
   <ItemGroup>
@@ -31,7 +34,13 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="Microsoft.Data.Sqlite" Version="8.0.10" />
+    <RuntimeHostConfigurationOption Include="System.GC.ConserveMemory" Value="5" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.12" />
+    <!-- The Kiro page's office is a web page (web/office) shown in WebView2. -->
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.4191.47" />
   </ItemGroup>
 
   <ItemGroup>
@@ -41,6 +50,10 @@
     <Resource Include="Assets\hover-mark.png" />
     <!-- Inter, the workspace's type. Licence in THIRD-PARTY-NOTICES.txt. -->
     <Resource Include="Assets\Fonts\*.ttf" />
+    <!-- The Kiro office, built by web/office/build.mjs: three.js and the page in one file. -->
+    <EmbeddedResource Include="Assets\kiro-office.html" LogicalName="Hover.KiroOffice.html" />
+    <!-- The office's music: "Lofi Hip Hop Loop" by omfgdude, CC0 (opengameart.org/node/94031). -->
+    <EmbeddedResource Include="Assets\office-beats.ogg" LogicalName="Hover.OfficeBeats.ogg" />
   </ItemGroup>
 
 </Project>

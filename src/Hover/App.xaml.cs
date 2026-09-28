@@ -1,7 +1,6 @@
 using System.Threading;
 using System.Windows;
 using Hover.Core;
-using Hover.Images;
 using Hover.Interop;
 using Hover.Owl;
 using Hover.Services;
@@ -62,11 +61,7 @@ public partial class App : Application
             // Light or dark first: every view reads its colours when it is built.
             Theme.Start();
 
-            // Screenshots and copied pictures land in the workspace's Screenshots card.
-            ShotStore.Shared.Start();
-
-            // The workspace: tasks, focus timer, notepad, events and screenshots at the
-            // top centre.
+            // The agent office, at the top centre.
             OwlApp.Start();
             _notch = new NotchManager();
 
@@ -121,7 +116,7 @@ public partial class App : Application
 
     private static void ShowHotKeyWarning(Shortcut shortcut)
     {
-        var message = $"Hover couldn't register the workspace shortcut, {shortcut}.\n\n" +
+        var message = $"Hover couldn't register the notch shortcut, {shortcut}.\n\n" +
                       "Windows has reserved it or another app is already using it. " +
                       "Choose a different shortcut in Settings → General.";
 
@@ -136,12 +131,11 @@ public partial class App : Application
 
     protected override void OnExit(ExitEventArgs e)
     {
-        // Bank a running session's focus time before anything is torn down.
+        // Stop the agents before anything is torn down.
         OwlApp.Shutdown();
         _notch?.Dispose();
         _tray?.Dispose();
         _hotKeys?.Dispose();
-        ShotStore.Shared.Dispose();
         Settings.Flush();
         base.OnExit(e);
     }

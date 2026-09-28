@@ -5,228 +5,41 @@ using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
 using Hover.Core;
+using Hover.Services;
 
 namespace Hover.Owl;
 
-/// Insights: the last seven days of finished tasks and active focus time.
-internal sealed class InsightsPage
-{
-    public FrameworkElement Root { get; }
-    private bool _focus;
-    private int? _day;
-    private readonly RadioButton _tasksTab, _focusTab;
-    private readonly TextBlock _heading = Ui.Section("");
-    private readonly TextBlock _big = Ui.Text("", 44, Ui.Ink, FontWeights.SemiBold);
-    private readonly TextBlock _caption = Ui.Text("", 13.5, Ui.InkDim);
-    private readonly StackPanel _progress = new();
-    private readonly TextBlock _focusTotal = Ui.Text("", 13, Ui.Ink, FontWeights.SemiBold);
-    private readonly TextBlock _activeDays = Ui.Text("", 13, Ui.Ink, FontWeights.SemiBold);
-    private readonly TextBlock _streak = Ui.Text("", 13, Ui.Ink, FontWeights.SemiBold);
-    private readonly Button _wholeWeek;
-    private readonly TextBlock _range = Ui.Text("", 12, Ui.InkDim);
-    private readonly BarChart _chart = new();
-    private readonly StackPanel _legend = new() { Orientation = Orientation.Horizontal };
-    private readonly Button _pick;
-    private List<DayStat> _week = new();
-
-    public InsightsPage()
-    {
-        // Summary card.
-        var left = new StackPanel { Margin = new Thickness(18, 16, 18, 14) };
-        left.Children.Add(_heading);
-        _big.FontFamily = Ui.Display;
-        AutomationProperties.SetAutomationId(_big, "InsightsBig");
-        left.Children.Add(_big.Margin(0, 6, 0, 0));
-        left.Children.Add(_caption);
-        left.Children.Add(_progress);
-        left.Children.Add(Ui.Rule().Margin(0, 12, 0, 10));
-        FrameworkElement Stat(string glyph, string label, TextBlock value)
-        {
-            var d = new DockPanel { Margin = new Thickness(0, 4, 0, 4) };
-            DockPanel.SetDock(value, Dock.Right);
-            d.Children.Add(value);
-            d.Children.Add(Ui.IconText(glyph, label, 13, Ui.InkDim));
-            return d;
-        }
-        left.Children.Add(Stat(Ui.IcStopwatch, "Focus time", _focusTotal));
-        left.Children.Add(Stat(Ui.IcCalendar, "Active days", _activeDays));
-        left.Children.Add(Stat(Ui.IcBolt, "Current streak", _streak));
-        _wholeWeek = Ui.Button("OwlLink", "Show whole week", "WholeWeek", "Show whole week", () => { _day = null; Refresh(); });
-        _wholeWeek.HorizontalAlignment = HorizontalAlignment.Left;
-        left.Children.Add(_wholeWeek.Margin(0, 8));
-        var summary = Ui.Card(left);
-        summary.Width = 270;
-
-        // Chart card.
-        var g = new Grid { Margin = new Thickness(18, 14, 18, 12) };
-        foreach (var h in new[] { GridLength.Auto, new GridLength(1, GridUnitType.Star), GridLength.Auto })
-            g.RowDefinitions.Add(new RowDefinition { Height = h });
-
-        var group = "ins" + Guid.NewGuid().ToString("N");
-        _tasksTab = new RadioButton { Style = Ui.Style("OwlSegmentInk"), Content = "Tasks", GroupName = group, IsChecked = true, MinWidth = 74 };
-        _focusTab = new RadioButton { Style = Ui.Style("OwlSegmentInk"), Content = "Focus", GroupName = group, MinWidth = 74 };
-        AutomationProperties.SetAutomationId(_tasksTab, "InsightsTasks");
-        AutomationProperties.SetAutomationId(_focusTab, "InsightsFocus");
-        _tasksTab.Checked += (_, _) => { _focus = false; Refresh(); };
-        _focusTab.Checked += (_, _) => { _focus = true; Refresh(); };
-        var toggle = new Segmented(_tasksTab, _focusTab) { HorizontalAlignment = HorizontalAlignment.Left };
-        var top = new DockPanel();
-        DockPanel.SetDock(_range, Dock.Right);
-        top.Children.Add(_range);
-        top.Children.Add(toggle);
-        g.Children.Add(top);
-
-        _chart.Margin = new Thickness(0, 12, 0, 4);
-        _chart.Picked += i => { _day = _day == i ? null : i; Refresh(); };
-        Grid.SetRow(_chart, 1);
-        g.Children.Add(_chart);
-
-        var bottom = new DockPanel();
-        _pick = Ui.Button("OwlLink", "", "PickDay", "Select a day", OpenDayMenu);
-        DockPanel.SetDock(_pick, Dock.Right);
-        bottom.Children.Add(_pick);
-        bottom.Children.Add(_legend);
-        Grid.SetRow(bottom, 2);
-        g.Children.Add(bottom);
-        var chartCard = Ui.Card(g);
-
-        var grid = new Grid { Margin = new Thickness(10, 0, 10, 10) };
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        grid.Children.Add(summary);
-        Grid.SetColumn(chartCard, 1);
-        chartCard.Margin = new Thickness(8, 0, 0, 0);
-        grid.Children.Add(chartCard);
-        Root = grid;
-        Refresh();
-    }
-
-    private void OpenDayMenu()
-    {
-        var m = new ContextMenu();
-        for (var i = 0; i < _week.Count; i++)
-        {
-            var idx = i;
-            var item = Ui.MenuText(_week[i].Day.ToString("dddd, d MMM", CultureInfo.CurrentCulture), () => { _day = idx; Refresh(); });
-            item.IsCheckable = true;
-            item.IsChecked = _day == i;
-            m.Items.Add(item);
-        }
-        if (_day is not null)
-        {
-            m.Items.Add(new Separator());
-            m.Items.Add(Ui.MenuText("Whole Week", () => { _day = null; Refresh(); }));
-        }
-        Ui.Open(m, _pick);
-    }
-
-    private static FrameworkElement Swatch(Brush b, string label) =>
-        Ui.Row(new Border { Width = 8, Height = 8, CornerRadius = new CornerRadius(4), Background = b, Margin = new Thickness(0, 1, 6, 0) },
-            Ui.Text(label, 12, Ui.InkDim)).Margin(0, 0, 14);
-
-    public void Refresh()
-    {
-        var p = OwlApp.Planner;
-        var today = p.Today;
-        _week = Insights.Week(p.Data, today);
-        var sel = _day is { } d && d < _week.Count ? _week[d] : null;
-
-        _range.Text = $"{Ui.DayMonth(_week[0].Day.ToDateTime(TimeOnly.MinValue))} – {Ui.DayMonth(today.ToDateTime(TimeOnly.MinValue))}";
-        _heading.Text = (sel is null ? "Last 7 days" : sel.Day.ToString("dddd, d MMM", CultureInfo.CurrentCulture)).ToUpper(CultureInfo.CurrentCulture);
-
-        var completed = sel?.Completed ?? _week.Sum(x => x.Completed);
-        var planned = sel?.Planned ?? _week.Sum(x => x.Planned);
-        var minutes = sel?.FocusMinutes ?? _week.Sum(x => x.FocusMinutes);
-
-        _progress.Children.Clear();
-        if (_focus)
-        {
-            _big.Text = Insights.Duration(minutes);
-            _caption.Text = "Time focused";
-        }
-        else
-        {
-            _big.Text = completed.ToString(CultureInfo.CurrentCulture);
-            _caption.Text = completed == 1 ? "Task completed" : "Tasks completed";
-            var bar = new Grid { Height = 6, Margin = new Thickness(0, 14, 0, 8) };
-            bar.Children.Add(new Border { Background = Ui.WashStrong, CornerRadius = new CornerRadius(3) });
-            var frac = planned == 0 ? 0 : Math.Clamp((double)completed / planned, 0, 1);
-            var fill = new Border { Background = Ui.Accent(Ui.Green), CornerRadius = new CornerRadius(3), HorizontalAlignment = HorizontalAlignment.Left };
-            bar.SizeChanged += (_, _) => fill.Width = bar.ActualWidth * frac;
-            bar.Children.Add(fill);
-            _progress.Children.Add(bar);
-            _progress.Children.Add(Ui.Text($"of {planned} planned", 12.5, Ui.InkDim));
-        }
-        AutomationProperties.SetName(_big, _big.Text);
-
-        _focusTotal.Text = Insights.Duration(_week.Sum(x => x.FocusMinutes));
-        _activeDays.Text = $"{_week.Count(x => x.Active)} of 7";
-        _streak.Text = $"{Insights.Streak(p.Data, today)}d";
-        _wholeWeek.Visibility = sel is null ? Visibility.Collapsed : Visibility.Visible;
-
-        _chart.Labels = _week.Select(x => (x.Day.ToString("ddd", CultureInfo.CurrentCulture), x.Day.Day.ToString(CultureInfo.CurrentCulture))).ToList();
-        if (_focus)
-        {
-            _chart.Front = _week.Select(x => Math.Round(x.FocusMinutes)).ToList();
-            _chart.Back = null;
-        }
-        else
-        {
-            _chart.Front = _week.Select(x => (double)x.Completed).ToList();
-            _chart.Back = _week.Select(x => (double)x.Planned).ToList();
-        }
-        _chart.Selected = _day;
-        _chart.Redraw();
-
-        _legend.Children.Clear();
-        if (_focus) _legend.Children.Add(Swatch(BarChart.FrontBrush, "Focus minutes"));
-        else
-        {
-            _legend.Children.Add(Swatch(BarChart.FrontBrush, "Completed"));
-            _legend.Children.Add(Swatch(BarChart.BackBrush, "Planned"));
-        }
-        var pickLabel = sel is null ? "Select a day" : "Change day";
-        _pick.Content = Ui.Row(Ui.Text(pickLabel, 12.5, Ui.Ink), Ui.Icon(Ui.IcChevronDown, 8, Ui.InkDim).Margin(6, 2));
-        AutomationProperties.SetName(_pick, pickLabel);
-    }
-}
-
-
 /// Settings, laid out as on a Mac: a sidebar of sections beside one scrolling pane
 /// of grouped rows, each row a label on the left and its control on the right.
-/// Four sections, each a few headed groups: General (launch, shortcut, appearance),
-/// Workspace (the notch, cards, command buttons, focus), Integrations (AI quotas,
-/// calendar, Kiro) and Insights & Data. A deep link names a section and, optionally,
-/// the heading to scroll to.
+/// Five sections, each a few headed groups: General (launch, shortcut, the notch,
+/// appearance), Integrations (AI quotas), and Kiro, Codex and Cursor (model, tools,
+/// folder). A deep link names a section and, optionally, the heading to scroll to.
 internal sealed class SettingsPage
 {
-    public enum Section { General, Workspace, Integrations, Data }
-
-    // Headings a deep link can scroll to.
-    public const string CardsAnchor = "Cards", ButtonsAnchor = "Command buttons", CalendarAnchor = "Calendar", KiroAnchor = "Kiro";
+    public enum Section { General, Integrations, Kiro, Codex, Cursor }
 
     /// The section shown last, so a rebuild for a new theme opens where it was.
     public static Section Last { get; private set; }
 
     public FrameworkElement Root { get; }
-    private readonly WorkspaceView _owner;
+    private readonly FrameworkElement _owner;
     private readonly StackPanel _pane = new() { Margin = new Thickness(14, 6, 14, 18) };
     private readonly ScrollViewer _scroll;
     private Section _current;
     private readonly Dictionary<string, (Ring Ring, TextBlock Text)> _quotaRows = new();
     private readonly Dictionary<string, FrameworkElement> _anchors = new();
-    private InsightsPage? _insights;
 
     // Built on each use: the tints differ between light and dark.
     private static (Section Id, string Title, string Glyph, Color Tint)[] Sections => new[]
     {
         (Section.General, "General", Ui.IcSettings, Ui.Gray),
-        (Section.Workspace, "Workspace", Ui.IcLayout, Ui.Blue),
         (Section.Integrations, "Integrations", Ui.IcPlug, Ui.Purple),
-        (Section.Data, "Insights & Data", Ui.IcChart, Ui.Green),
+        (Section.Kiro, "Kiro", Ui.IcGhost, BotGlyph.Purple),
+        (Section.Codex, "Codex", Ui.IcTerminal, Ui.Green),
+        (Section.Cursor, "Cursor", Ui.IcSparkles, Ui.Blue),
     };
 
-    public SettingsPage(WorkspaceView owner, Section start, string? anchor = null)
+    public SettingsPage(FrameworkElement owner, Section start, string? anchor = null)
     {
         _owner = owner;
         var side = new StackPanel { Margin = new Thickness(8) };
@@ -265,21 +78,11 @@ internal sealed class SettingsPage
         grid.Children.Add(sidebar);
         Grid.SetColumn(pane, 1);
         grid.Children.Add(pane);
-        grid.Loaded += (_, _) =>
-        {
-            OwlApp.QuotasChanged += OnQuotas;
-            OwlApp.Planner.Changed += OnPlanner;
-        };
-        grid.Unloaded += (_, _) =>
-        {
-            OwlApp.QuotasChanged -= OnQuotas;
-            OwlApp.Planner.Changed -= OnPlanner;
-        };
+        grid.Loaded += (_, _) => OwlApp.QuotasChanged += OnQuotas;
+        grid.Unloaded += (_, _) => OwlApp.QuotasChanged -= OnQuotas;
         Root = grid;
         Show(start, anchor);
     }
-
-    private void OnPlanner() => _insights?.Refresh();
 
     /// A section, from the top or from one of its headings.
     public void Show(Section section, string? anchor = null)
@@ -288,7 +91,6 @@ internal sealed class SettingsPage
         _pane.Children.Clear();
         _quotaRows.Clear();
         _anchors.Clear();
-        _insights = null;
         var title = Ui.Text(Sections.First(x => x.Id == section).Title, 20, Ui.Ink, FontWeights.SemiBold);
         title.FontFamily = Ui.Display;
         _pane.Children.Add(title.Margin(0, 0, 0, 14));
@@ -296,31 +98,17 @@ internal sealed class SettingsPage
         {
             case Section.General:
                 General();
-                Heading("Appearance");
-                Themes();
-                break;
-            case Section.Workspace:
                 Heading("Notch");
                 Notch();
-                Heading(CardsAnchor);
-                Cards();
-                Heading(ButtonsAnchor);
-                Buttons();
-                Heading("Focus");
-                Focus();
+                Heading("Appearance");
+                Themes();
                 break;
             case Section.Integrations:
                 Heading("AI quotas");
                 Quotas();
-                Heading(CalendarAnchor);
-                Calendar();
-                Heading(KiroAnchor);
-                Kiro();
                 break;
             default:
-                InsightsView();
-                Heading("Your data");
-                Data();
+                Agent(section);
                 break;
         }
         _scroll.ScrollToTop();
@@ -441,14 +229,16 @@ internal sealed class SettingsPage
                 Switch("LaunchAtLogin", "Launch at login", Settings.LaunchAtLogin, v => Settings.LaunchAtLogin = v)),
             Row("Open on hover", "Off, only the shortcut or a click on the notch opens it — handy if browser tabs live up there.",
                 Switch("HoverOpens", "Open on hover", Settings.HoverOpensWorkspace, v => Settings.HoverOpensWorkspace = v)),
-            Row("Workspace shortcut", "Click, then press the keys. Include Ctrl, Alt, Shift or Win.", ShortcutField()));
-        Footnote("The same workspace opens from the tray icon, and in its own window from a click on the Hover name.");
+            Row("Notch shortcut", "Click, then press the keys. Include Ctrl, Alt, Shift or Win.", ShortcutField()),
+            Row("Quit Hover", "Stops every agent that is still working.",
+                Ui.Button("OwlLightButton", "Quit", "Quit", "Quit Hover", Hover.Services.Actions.Quit)));
+        Footnote("The same office opens from the tray icon, and in its own window from a click on its name in the notch.");
     }
 
     /// A button that shows the shortcut and records the next chord pressed into it.
     private static Button ShortcutField()
     {
-        var field = Ui.Button("OwlLightButton", Settings.ScWorkspace.ToString(), "WorkspaceShortcut", "Workspace shortcut", () => { });
+        var field = Ui.Button("OwlLightButton", Settings.ScWorkspace.ToString(), "WorkspaceShortcut", "Notch shortcut", () => { });
         field.MinWidth = 96;
         field.FontWeight = FontWeights.SemiBold;
         var recording = false;
@@ -531,7 +321,7 @@ internal sealed class SettingsPage
         });
         _pane.Children.Add(Ui.Row(import, status.Margin(8, 0)).Margin(8, 0, 0, 4));
         Footnote("The colour themes of VS Code, Cursor, Kiro and Windsurf on this PC show here, and any VS Code theme file (.json) can be imported. " +
-                 "A theme colours the open workspace, its menus and the app window; the resting notch stays black.");
+                 "A theme colours Settings, its menus and the app window; the office and the resting notch keep their own look.");
     }
 
     private void ApplyTheme(SavedTheme? theme)
@@ -585,154 +375,11 @@ internal sealed class SettingsPage
         return b.Margin(0, 0, 4, 4);
     }
 
-    // MARK: Buttons
-
-    /// Which button the editor is open on: null for none, -1 for a new one.
-    private int? _editing;
-
-    private void Buttons()
-    {
-        var list = Settings.Buttons.ToList();
-        if (list.Count > 0) Group(list.Select((b, i) => ButtonRow(b, i, list)).ToArray());
-        if (_editing is { } index) ButtonEditor(index, list);
-        else
-        {
-            var add = Ui.Button("OwlLink", Ui.IconText(Ui.IcAdd, "Add a button", 12, Ui.Accent(Ui.Blue)), "AddButton", "Add a button",
-                () => { _editing = -1; Show(Section.Workspace, ButtonsAnchor); });
-            add.HorizontalAlignment = HorizontalAlignment.Left;
-            _pane.Children.Add(add.Margin(8, 0, 0, 4));
-        }
-        Footnote("Buttons sit beside the Hover name at the top of the workspace. Each opens a terminal (Windows Terminal when it is installed) " +
-                 "in its folder and runs its command there: claude, kiro-cli, codex, npm run dev, anything you would type.");
-    }
-
-    private FrameworkElement ButtonRow(LaunchButton b, int i, List<LaunchButton> list)
-    {
-        var lead = new Border
-        {
-            Width = 24, Height = 24, CornerRadius = new CornerRadius(12), Background = Ui.Accent(Ui.AccentNamed(b.Color)),
-            Child = Ui.Icon(b.Icon, 13, Ui.White), Margin = new Thickness(0, 0, 10, 0), VerticalAlignment = VerticalAlignment.Center,
-        };
-        var tools = new StackPanel { Orientation = Orientation.Horizontal };
-        if (i > 0)
-            tools.Children.Add(Ui.IconButton(Ui.IcChevronUp, "MoveButtonUp" + i, "Move " + b.Name + " left", () =>
-            {
-                (list[i - 1], list[i]) = (list[i], list[i - 1]);
-                SaveButtons(list);
-            }, 14));
-        tools.Children.Add(Ui.IconButton(Ui.IcRename, "EditButton" + i, "Edit " + b.Name, () => { _editing = i; Show(Section.Workspace, ButtonsAnchor); }, 14));
-        tools.Children.Add(Ui.IconButton(Ui.IcDelete, "DeleteButton" + i, "Delete " + b.Name, () =>
-        {
-            list.RemoveAt(i);
-            SaveButtons(list);
-        }, 14));
-        var where = string.IsNullOrWhiteSpace(b.Folder) ? "" : "   in " + b.Folder;
-        return Row(b.Name, b.Command + where, tools, lead);
-    }
-
-    private void SaveButtons(List<LaunchButton> list)
-    {
-        Settings.Buttons = list;
-        OwlApp.RaiseButtonsChanged();
-        _editing = null;
-        Show(Section.Workspace, ButtonsAnchor);
-    }
-
-    private void ButtonEditor(int index, List<LaunchButton> list)
-    {
-        var start = index >= 0 && index < list.Count ? list[index] : new LaunchButton("", "", Ui.IcTerminal, "blue");
-        var icon = start.Icon;
-        var color = start.Color;
-
-        static TextBox Field(string text, string id, string name, int max)
-        {
-            var f = new TextBox { Style = Ui.Style("OwlField"), Text = text, FontSize = 12.5, MaxLength = max };
-            AutomationProperties.SetAutomationId(f, id);
-            AutomationProperties.SetName(f, name);
-            return f;
-        }
-        static Border Boxed(TextBox f, double width) => new()
-        {
-            Background = Ui.Wash, CornerRadius = new CornerRadius(8), Padding = new Thickness(9, 5, 9, 5), Width = width, Child = f,
-        };
-        var name = Field(start.Name, "ButtonName", "Button name", 40);
-        var command = Field(start.Command, "ButtonCommand", "Command", 500);
-        var folder = Field(start.Folder ?? "", "ButtonFolder", "Start in", 260);
-        var choose = Ui.Button("OwlLightButton", "Choose…", "ButtonFolderChoose", "Choose a folder", () =>
-        {
-            var dlg = new Microsoft.Win32.OpenFolderDialog { InitialDirectory = Services.Launcher.Folder(folder.Text) };
-            if (dlg.ShowDialog() == true) folder.Text = dlg.FolderName;
-        });
-
-        Heading(index >= 0 ? "Edit button" : "New button");
-        Group(
-            Row("Name", "Shown when the pointer rests on the button.", Boxed(name, 300)),
-            Row("Command", "What you would type in a terminal.", Boxed(command, 300)),
-            Row("Start in", "The folder it runs in. Empty means your user folder.", Ui.Row(Boxed(folder, 206), choose.Margin(8, 0))));
-
-        var icons = new WrapPanel { Margin = new Thickness(10, 10, 4, 4) };
-        var colors = new WrapPanel { Margin = new Thickness(10, 8, 4, 8) };
-        // Both pickers draw the choice in the colour picked, so they are the preview.
-        void Draw()
-        {
-            icons.Children.Clear();
-            foreach (var g in Ui.ButtonIcons)
-            {
-                var glyph = g;
-                var on = g == icon;
-                var b = Ui.Button("OwlIconButton", Ui.Icon(g, 15, on ? Ui.White : Ui.Ink), "ButtonIcon" + g, g, () => { icon = glyph; Draw(); });
-                b.Width = b.Height = 32;
-                b.Padding = new Thickness(0);
-                b.Background = on ? Ui.Accent(Ui.AccentNamed(color)) : Ui.Wash;
-                icons.Children.Add(b.Margin(0, 0, 6, 6));
-            }
-            colors.Children.Clear();
-            foreach (var c in Ui.AccentNames)
-            {
-                var picked = c;
-                var on = c == color;
-                var dot = new System.Windows.Shapes.Ellipse
-                {
-                    Width = 22, Height = 22, Fill = Ui.Accent(Ui.AccentNamed(c)), Stroke = Ui.Ink, StrokeThickness = on ? 2.5 : 0,
-                };
-                var b = Ui.Button("OwlIconButton", dot, "ButtonColor" + c, c, () => { color = picked; Draw(); });
-                b.Width = b.Height = 30;
-                b.Padding = new Thickness(0);
-                colors.Children.Add(b.Margin(0, 0, 4, 0));
-            }
-        }
-        Draw();
-        Heading("Icon");
-        Group(icons);
-        Heading("Colour");
-        Group(colors);
-
-        var save = Ui.Button("OwlBlueButton", "Save", "ButtonSave", "Save button", () =>
-        {
-            var n = name.Text.Trim();
-            var cmd = command.Text.Trim();
-            if (n.Length == 0 || cmd.Length == 0) return;
-            var made = new LaunchButton(n, cmd, icon, color, string.IsNullOrWhiteSpace(folder.Text) ? null : folder.Text.Trim());
-            if (index >= 0 && index < list.Count) list[index] = made; else list.Add(made);
-            SaveButtons(list);
-        });
-        void Validate() => save.IsEnabled = name.Text.Trim().Length > 0 && command.Text.Trim().Length > 0;
-        name.TextChanged += (_, _) => Validate();
-        command.TextChanged += (_, _) => Validate();
-        Validate();
-        var cancel = Ui.Button("OwlLightButton", "Cancel", "ButtonCancel", "Cancel", () => { _editing = null; Show(Section.Workspace, ButtonsAnchor); });
-        var actions = Ui.Row(cancel.Margin(0, 0, 8, 0), save);
-        actions.HorizontalAlignment = HorizontalAlignment.Right;
-        _pane.Children.Add(actions.Margin(0, 4, 4, 14));
-        name.Loaded += (_, _) => name.Focus();
-    }
-
     // MARK: Notch
 
     private void Notch()
     {
-        Group(ItemRow(NotchItem.Timer, "The focus timer, while it runs.", Tile(Ui.IcStopwatch, Ui.Orange)),
-            Row("Workspace size", "How big the notch opens. It never grows past the screen.",
+        Group(Row("Office size", "How big the notch opens. It never grows past the screen.",
                 Segments("WorkspaceSize", new[] { (WorkspaceSize.Small, "Small"), (WorkspaceSize.Default, "Default"), (WorkspaceSize.Large, "Large"), (WorkspaceSize.ExtraLarge, "Extra large") },
                     Settings.WorkspaceSize, v =>
                     {
@@ -755,13 +402,6 @@ internal sealed class SettingsPage
             _quotaRows[id] = (ring, text);
             rows.Add(row);
         }
-        rows.Add(Row("Keep quotas on the notch",
-            "On, the quotas switched on above stay in the resting notch. Off, they show only in the workspace header, when the notch opens.",
-            Switch("QuotasOnNotch", "Keep quotas on the notch", Settings.QuotasOnNotch, v =>
-            {
-                Settings.QuotasOnNotch = v;
-                OwlApp.SettingsChanged?.Invoke();
-            })));
         Group(rows.ToArray());
         var refresh = Ui.Button("OwlLink", Ui.IconText(Ui.IcRefresh, "Refresh quotas now", 12, Ui.InkDim), "RefreshQuotas", "Refresh quotas now",
             () => OwlApp.RefreshQuotas(force: true));
@@ -780,12 +420,9 @@ internal sealed class SettingsPage
             {
                 Settings.SetNotchItem(id, v);
                 OwlApp.SettingsChanged?.Invoke();
-                if (NotchItem.Quotas.Contains(id))
-                {
-                    OwlApp.RefreshQuotas(force: true);
-                    // The header's chips follow the switch at once, reading or not.
-                    OwlApp.RaiseQuotasChanged();
-                }
+                OwlApp.RefreshQuotas(force: true);
+                // The notch follows the switch at once, reading or not.
+                OwlApp.RaiseQuotasChanged();
                 RefreshQuotaRows();
             }), lead);
 
@@ -813,197 +450,139 @@ internal sealed class SettingsPage
         }
     }
 
-    // MARK: Cards
+    // MARK: Kiro, Codex, Cursor
 
-    private static Dictionary<string, (string Glyph, Color Tint)> CardLook => new()
-    {
-        [CardLayout.Tasks] = (Ui.IcChecklist, Ui.Green),
-        [CardLayout.Timer] = (Ui.IcStopwatch, Ui.Orange),
-        [CardLayout.Notepad] = (Ui.IcCompose, Ui.Yellow),
-        [CardLayout.Events] = (Ui.IcCalendar, Ui.Red),
-        [CardLayout.Shots] = (Ui.IcPhoto, Ui.Teal),
-    };
+    private static AgentTool ToolOf(Section s) => s switch { Section.Codex => AgentTool.Codex, Section.Cursor => AgentTool.Cursor, _ => AgentTool.Kiro };
 
-    private void Cards()
+    private void Agent(Section section)
     {
-        var cards = Settings.Cards;
+        var tool = ToolOf(section);
+        var name = Agents.Name(tool);
+        var id = name;
+        var o = Settings.AgentOptions(tool);
+        var offers = Settings.AgentOffers(tool);
+        void Set(AgentOptions n)
+        {
+            Settings.SetAgentOptions(tool, n);
+            Show(section);
+        }
+        AcpOption? Offer(string category, params string[] ids) =>
+            offers.FirstOrDefault(x => x.Category == category) ?? offers.FirstOrDefault(x => ids.Contains(x.Id));
+
+        // Installed and signed in? Greyed out, with what to do, when not.
+        var ready = Agents.Known(tool);
+        if (ready is null)
+            _ = Agents.Check(tool).ContinueWith(_ => { if (_current == section) Show(section); }, TaskScheduler.FromCurrentSynchronizationContext());
+        var status = ready is null ? "Checking…" : ready.Ok ? "Installed and signed in." : ready.Hint;
+        var recheck = Ui.Button("OwlLightButton", "Check again", id + "Recheck", $"Check {name} again", () =>
+            _ = Agents.Check(tool, fresh: true).ContinueWith(_ => { if (_current == section) Show(section); }, TaskScheduler.FromCurrentSynchronizationContext()));
+        Group(Row(name, status, recheck, Tile(ready is { Ok: false } ? Ui.IcBell : Ui.IcDone, ready is { Ok: false } ? Ui.Orange : Ui.Green)));
+        var usable = ready is not { Ok: false };
+
+        Heading("Model");
+        // The models the tool offered in its last run; Kiro has a list to start from.
+        var models = Offer("model", "model")?.Choices.Select(c => (c.Value, c.Name)).ToList()
+                     ?? (tool == AgentTool.Kiro ? KiroRunner.Models.Select(m => (m.Id, m.Name)).ToList() : new());
+        // A list without an "auto" of its own gets one: no model sent, the tool's default.
+        if (models.Count == 0 || !(models[0].Item1 == "auto" || models[0].Item1.StartsWith("default", StringComparison.Ordinal))) models.Insert(0, ("", "Default"));
+        var current = o.Model ?? models[0].Item1;
+        var model = Picker(id + "Model", "Model", models.FirstOrDefault(m => m.Item1 == current).Item2 ?? current,
+            models.Select(m => (m.Item2, m.Item1 == current, (Action)(() => Set(o with { Model = m.Item1 == models[0].Item1 || m.Item1.Length == 0 ? null : m.Item1 })))));
+        var effortOffer = Offer("thought_level", "effortLevel", "reasoning_effort", "effort");
+        var levels = effortOffer?.Choices.Select(c => c.Value).ToList() ?? new();
+        FrameworkElement effort = levels.Count == 0
+            ? Ui.Text(tool == AgentTool.Cursor ? "Part of the model" : "Set by the model", 12.5, Ui.InkDim)
+            : Segments(id + "Effort", levels.Select(l => (l, l == "xhigh" ? "X-High" : char.ToUpperInvariant(l[0]) + l[1..])),
+                o.Effort is { } e && levels.Contains(e) ? e : effortOffer?.Current is { } now && levels.Contains(now) ? now : levels[0], v => Set(o with { Effort = v }));
+        Group(
+            Row("Model", Offer("model", "model") is null
+                    ? $"More models show here once {name} has run a task."
+                    : $"The first is {name}’s own choice for each task.", model, Tile("brain", Ui.Purple)),
+            Row("Effort", levels.Count == 0
+                    ? tool == AgentTool.Cursor ? "Cursor’s models carry their effort in their name." : "Shown once a task has run with a model that takes one."
+                    : "How long it thinks. Higher is slower and uses more of your plan.", effort, Tile(Ui.IcGauge, Ui.Orange)));
+
+        Heading("Tools and memory");
         var rows = new List<FrameworkElement>();
-        for (var i = 0; i < cards.Count; i++)
+        if (tool == AgentTool.Kiro)
         {
-            var c = cards[i];
-            var id = c.Id;
-            var left = Ui.IconButton(Ui.IcChevronLeft, "MoveLeft" + id, $"Move {CardLayout.Title(id)} left",
-                () => Apply(CardLayout.Move(Settings.Cards, id, -1)), 10, Ui.InkDim);
-            var right = Ui.IconButton(Ui.IcChevronRight, "MoveRight" + id, $"Move {CardLayout.Title(id)} right",
-                () => Apply(CardLayout.Move(Settings.Cards, id, 1)), 10, Ui.InkDim);
-            left.IsEnabled = i > 0;
-            right.IsEnabled = i < cards.Count - 1;
-            var show = Switch("ShowCard" + id, $"Show {CardLayout.Title(id)}", c.Visible,
-                v => Apply(CardLayout.Show(Settings.Cards, id, v)));
-            // The last card showing stays: an empty workspace has nothing to click.
-            show.IsEnabled = !c.Visible || cards.Count(x => x.Visible) > 1;
-            var controls = Ui.Row(left, right.Margin(2, 0, 10), show);
-            var (glyph, tint) = CardLook[id];
-            rows.Add(Row(CardLayout.Title(id), c.Visible ? $"{Math.Round(c.Width / cards.Where(x => x.Visible).Sum(x => x.Width) * 100)}% of the width" : "Hidden",
-                controls, Tile(glyph, tint)));
+            var modes = Offer("mode", "mode")?.Choices.Select(c => (c.Value, c.Name)).ToList()
+                        ?? KiroRunner.Agents(Settings.KiroFolder).Select(a => (a, a)).ToList();
+            var agent = Picker("KiroAgent", "Agent", o.Agent is null ? "Default" : modes.FirstOrDefault(m => m.Item1 == o.Agent).Item2 ?? o.Agent,
+                new[] { ("Default", o.Agent is null, (Action)(() => Set(o with { Agent = null }))) }.Concat(
+                    modes.Where(m => m.Item1 != "vibe").Select(m => (m.Item2, m.Item1 == o.Agent, (Action)(() => Set(o with { Agent = m.Item1 }))))));
+            rows.Add(Row("Agent", "Its MCP servers, skills and steering come with it. Kiro’s own modes (Spec, Plan…) are here too.", agent, Tile("bot", Ui.Blue)));
         }
+        if (Agents.ReadOnlyWorks(tool))
+            rows.Add(Row("Tool access", o.ReadOnly ? $"{name} can only read and search. It can’t change files or run commands."
+                    : $"{name} can edit files and run commands without asking.",
+                Segments(id + "Tools", new[] { (false, "Full"), (true, "Read only") }, o.ReadOnly, v => Set(o with { ReadOnly = v })),
+                Tile(Ui.IcShield, Ui.Green)));
+        else
+            rows.Add(Row("Tool access", $"Full: {name} can edit files and run commands without asking. Read only isn’t offered, because " +
+                                        "Codex’s read-only mode needs a sandbox it doesn’t have on Windows.", null, Tile(Ui.IcShield, Ui.Green)));
+        if (tool == AgentTool.Kiro)
+            rows.Add(Row("Require MCP servers", "Stop the task when one of the agent’s MCP servers doesn’t start.",
+                Switch("KiroRequireMcp", "Require MCP servers", o.RequireMcp, v => Set(o with { RequireMcp = v })), Tile(Ui.IcPlug, Ui.Teal)));
+        rows.Add(Row("Show the tools it runs", o.HideSteps ? $"The chat shows only what you asked and {name}’s answers. The steps are still kept."
+                : $"The chat lists each file {name} reads or edits and each command it runs.",
+            Switch(id + "ShowSteps", "Show the tools it runs", !o.HideSteps, v => Set(o with { HideSteps = !v })), Tile(Ui.IcLines, Ui.Blue)));
+        rows.Add(Row("Keep it running", $"How long {name} stays open with nothing to do. A reply after that starts it again and picks the conversation back up.",
+            Segments(id + "Idle", AgentOptions.IdleChoices.Select(m => (m, $"{m} min")), o.IdleMinutes, v => Set(o with { IdleMinutes = v })),
+            Tile(Ui.IcClock, Ui.Gray)));
         Group(rows.ToArray());
-        Footnote("Left to right, as they sit in the workspace. Drag the gap between two cards to resize them.");
-        var reset = Ui.Button("OwlLightButton", "Reset layout", "ResetLayout", "Reset layout", () => Apply(CardLayout.Default));
-        reset.HorizontalAlignment = HorizontalAlignment.Left;
-        _pane.Children.Add(reset.Margin(12, 0, 0, 0));
-    }
+        foreach (var r in rows) r.IsEnabled = usable;
 
-    private void Apply(IReadOnlyList<CardSlot> cards)
-    {
-        WorkspaceView.SetCards(cards);
-        Show(Section.Workspace, CardsAnchor);
-    }
-
-    // MARK: Focus
-
-    private void Focus()
-    {
-        var planner = OwlApp.Planner;
-        var presets = new System.Windows.Controls.Primitives.UniformGrid { Rows = 1, Width = 220 };
-        var group = "def" + Guid.NewGuid().ToString("N");
-        foreach (var m in new[] { 15, 25, 45, 60 })
+        if (tool != AgentTool.Kiro)
         {
-            var rb = new RadioButton { Style = Ui.Style("OwlSegmentInk"), Content = $"{m}m", GroupName = group, IsChecked = planner.Data.DefaultFocusMinutes == m };
-            AutomationProperties.SetAutomationId(rb, $"Default{m}");
-            var captured = m;
-            rb.Checked += (_, _) =>
-            {
-                planner.SetDefaultFocus(captured);
-                if (OwlApp.Timer.State == FocusTimer.Phase.Ready && OwlApp.Timer.TaskId is null) OwlApp.ResetDuration();
-            };
-            presets.Children.Add(rb);
+            Footnote($"{name} runs in the background as an ACP server (\"{(System.IO.Path.GetFileNameWithoutExtension(Agents.Exe(tool) ?? Agents.Id(tool)) + " " + string.Join(" ", Agents.Arguments(tool))).Trim()}\"), " +
+                     "one for all its tasks, with no terminal window. Prompts go to it on its input, never on a command line. Changes apply to the next task.");
+            return;
         }
-        Group(Row("Default length", "Used when a task has no time limit of its own.",
-            new Border { Background = Ui.Wash, CornerRadius = new CornerRadius(9), Padding = new Thickness(2), Child = presets }));
-        Footnote("Timers pause while the PC sleeps; Insights counts only active focus time.");
-    }
 
-    // MARK: Calendar
-
-    private void Calendar()
-    {
-        var planner = OwlApp.Planner;
-        var source = new TextBox { Style = Ui.Style("OwlField"), Text = planner.Data.CalendarSource, FontSize = 12.5 };
-        AutomationProperties.SetAutomationId(source, "CalendarSource");
-        AutomationProperties.SetName(source, "Calendar address");
-        var sourceBox = new Border
-        {
-            Background = Ui.Wash, CornerRadius = new CornerRadius(10), Padding = new Thickness(10, 7, 10, 7), Child = source, Margin = new Thickness(12, 10, 12, 4),
-        };
-        var status = Ui.Text(CalendarStatus(), 11.5, Ui.InkDim);
-        status.TextWrapping = TextWrapping.Wrap;
-        status.TextTrimming = TextTrimming.None;
-        void Connect(string value)
-        {
-            planner.SetCalendarSource(value);
-            status.Text = "Connecting…";
-            _ = OwlApp.RefreshCalendar().ContinueWith(_ => _owner.Dispatcher.Invoke(() => status.Text = CalendarStatus()));
-        }
-        var connect = Ui.Button("OwlDarkButton", "Connect", "CalendarConnect", "Connect calendar", () => Connect(source.Text));
-        var browse = Ui.Button("OwlLightButton", "Choose file…", "CalendarBrowse", "Choose calendar file", () =>
-        {
-            var dlg = new Microsoft.Win32.OpenFileDialog { Filter = "Calendar (*.ics)|*.ics|All files|*.*" };
-            if (dlg.ShowDialog() == true) { source.Text = dlg.FileName; Connect(dlg.FileName); }
-        });
-        var disconnect = Ui.Button("OwlLink", "Disconnect", "CalendarDisconnect", "Disconnect calendar", () => { source.Text = ""; Connect(""); });
-        var buttons = new WrapPanel { Margin = new Thickness(12, 6, 12, 10) };
-        buttons.Children.Add(connect.Margin(0, 0, 8, 0));
-        buttons.Children.Add(browse.Margin(0, 0, 8, 0));
-        buttons.Children.Add(disconnect);
-
-        var box = new StackPanel();
-        var intro = Row("Calendar address", "Paste the private iCal (.ics) address from Outlook, Google or iCloud, or choose an exported .ics file.", null);
-        intro.Margin = new Thickness(12, 10, 12, 0);
-        box.Children.Add(intro);
-        box.Children.Add(sourceBox);
-        box.Children.Add(buttons);
-        _pane.Children.Add(new Border { Background = Ui.Surface, CornerRadius = new CornerRadius(12), Child = box, Margin = new Thickness(0, 0, 0, 6) });
-        _pane.Children.Add(status.Margin(12, 0, 12, 18));
-        Footnote("Hover only reads events. It refreshes every 15 minutes.");
-    }
-
-    private static string CalendarStatus() =>
-        OwlApp.Planner.Data.CalendarSource.Length == 0 ? "Not connected."
-        : string.IsNullOrEmpty(OwlApp.CalendarError) ? $"Connected — {OwlApp.Events.Count} event(s) today."
-        : $"Couldn’t read it: {OwlApp.CalendarError}";
-
-    // MARK: Kiro
-
-    private void Kiro()
-    {
+        Heading("Project");
         var folder = Settings.KiroFolder;
-        var usable = Hover.Services.KiroRunner.UsableFolder(folder);
-        var change = Ui.Button("OwlLightButton", usable ? "Change…" : "Choose…", "SettingsKiroFolder", "Choose Kiro's folder", () =>
+        var have = KiroRunner.UsableFolder(folder);
+        var change = Ui.Button("OwlLightButton", have ? "Change…" : "Choose…", "SettingsKiroFolder", "Choose the agents' folder", () =>
         {
             KiroPage.ChooseFolder();
-            Show(Section.Integrations, KiroAnchor);
+            Show(section);
         });
         var again = Ui.Button("OwlLightButton", "Show", "KiroNoticeAgain", "Show the note about tool access again", () =>
         {
             Settings.KiroNoticeSeen = false;
             OwlApp.Kiro.RaiseChanged();
-            Show(Section.Integrations, KiroAnchor);
+            Show(section);
         });
         again.IsEnabled = Settings.KiroNoticeSeen;
         Group(
-            Row("Project folder", folder is null ? "None yet. Kiro asks for one before its first task."
-                    : usable ? folder : $"{folder} isn’t there any more; Kiro will ask for another.", change,
+            Row("Project folder", folder is null ? "None yet. The office asks for one before the first task."
+                    : have ? folder : $"{folder} isn’t there any more; the office will ask for another.", change,
                 Tile(Ui.IcFolder, Ui.Purple)),
-            Row("Note about tool access", "The note the Kiro page shows before its first task.", again, Tile(Ui.IcShield, Ui.Green)));
-        Footnote("Tasks from the Kiro page run as \"kiro-cli chat --no-interactive --trust-all-tools\" in the background, in that folder, " +
-                 "with no terminal window. The prompt goes to kiro-cli on its input, never on a command line. Kiro can edit files and run " +
-                 "commands there without asking, so keep the folder under version control.");
+            Row("Note about tool access", "The note the office shows before its first task.", again, Tile(Ui.IcSparkles, Ui.Gray)));
+        Footnote("Kiro runs in the background as an ACP server (\"kiro-cli " + string.Join(" ", Agents.Arguments(tool)) + "\"), one for all its " +
+                 "tasks, with no terminal window. Prompts go to it on its input, never on a command line. Changes apply to the next task.");
     }
 
-    // MARK: Insights
-
-    private void InsightsView()
+    /// A button showing the current choice, opening a menu of the others.
+    private static Button Picker(string id, string name, string shown, IEnumerable<(string Label, bool On, Action Pick)> options)
     {
-        _insights = new InsightsPage();
-        _insights.Root.Margin = new Thickness(0, 0, 0, 6);
-        _insights.Root.Height = 286;
-        _pane.Children.Add(_insights.Root);
-    }
-
-    // MARK: Data
-
-    private void Data()
-    {
-        var planner = OwlApp.Planner;
-        var export = Ui.Button("OwlLightButton", "Export…", "ExportBackup", "Export JSON backup", () =>
-        {
-            // Without InitialDirectory the dialog opens in the working directory —
-            // Program Files for an installed copy, where nothing can be saved.
-            var dlg = new Microsoft.Win32.SaveFileDialog
+        Button? b = null;
+        b = Ui.Button("OwlLightButton", Ui.Row(Ui.Text(shown, 12.5, Ui.Ink, FontWeights.Medium), Ui.Icon(Ui.IcChevronDown, 11, Ui.InkDim).Margin(6, 0)),
+            id, name, () =>
             {
-                FileName = $"Hover planner {DateTime.Now:yyyy-MM-dd}.json",
-                Filter = "JSON (*.json)|*.json",
-                InitialDirectory = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
-            };
-            if (dlg.ShowDialog() != true) return;
-            try { planner.Export(dlg.FileName); }
-            catch (Exception e)
-            {
-                Log.Line($"export failed — {e.Message}");
-                MessageBox.Show(e.Message, "Export failed", MessageBoxButton.OK, MessageBoxImage.Warning);
-            }
-        });
-        var folder = Ui.Button("OwlLightButton", "Open…", "OpenShotsFolder", "Open screenshots folder", () =>
-        {
-            try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(Paths.Shots) { UseShellExecute = true }); }
-            catch (Exception e) { Log.Line($"open shots folder failed — {e.Message}"); }
-        });
-        var quit = Ui.Button("OwlLightButton", "Quit", "Quit", "Quit Hover", Hover.Services.Actions.Quit);
-        Group(
-            Row("JSON backup", "A plain copy of your tasks, notepad and focus time.", export),
-            Row("Screenshots folder", "Plain picture files, so they can be dragged into any app.", folder),
-            Row("Quit Hover", null, quit));
-        Footnote("Tasks, the notepad and focus time stay on this PC, encrypted. Nothing is sent anywhere except the calendar address you add and, if switched on, the Cursor and Claude Code usage requests.");
+                var m = new ContextMenu();
+                foreach (var (label, on, pick) in options)
+                {
+                    var item = Ui.MenuText(label, pick);
+                    item.IsCheckable = true;
+                    item.IsChecked = on;
+                    m.Items.Add(item);
+                }
+                Ui.Open(m, b!);
+            });
+        b.Padding = new Thickness(12, 4, 10, 4);
+        AutomationProperties.SetName(b, $"{name}: {shown}");
+        return b;
     }
 }

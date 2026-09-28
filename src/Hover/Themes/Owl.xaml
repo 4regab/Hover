@@ -164,30 +164,6 @@
     <Setter Property="Template" Value="{StaticResource OwlSegmentTemplate}" />
   </Style>
 
-  <!-- The header's page switcher: an icon per segment, so the text template's
-       hidden bold label (which keeps a text segment from changing width) is left out. -->
-  <Style x:Key="OwlSegmentIcon" TargetType="RadioButton" BasedOn="{StaticResource OwlSegmentDark}">
-    <Setter Property="Padding" Value="13,6" />
-    <Setter Property="Template">
-      <Setter.Value>
-        <ControlTemplate TargetType="RadioButton">
-          <Grid Background="Transparent">
-            <ContentPresenter x:Name="Label" Margin="{TemplateBinding Padding}" HorizontalAlignment="Center" VerticalAlignment="Center" />
-          </Grid>
-          <ControlTemplate.Triggers>
-            <MultiTrigger>
-              <MultiTrigger.Conditions>
-                <Condition Property="IsPressed" Value="True" />
-                <Condition Property="IsChecked" Value="False" />
-              </MultiTrigger.Conditions>
-              <Setter TargetName="Label" Property="Opacity" Value="0.45" />
-            </MultiTrigger>
-          </ControlTemplate.Triggers>
-        </ControlTemplate>
-      </Setter.Value>
-    </Setter>
-  </Style>
-
   <Style x:Key="OwlSegmentInk" TargetType="RadioButton" BasedOn="{StaticResource OwlSegmentDark}">
     <Setter Property="FontSize" Value="12.5" />
     <Setter Property="Padding" Value="10,4" />
@@ -239,6 +215,30 @@
           <ScrollViewer x:Name="PART_ContentHost" Focusable="False"
                         VerticalScrollBarVisibility="Hidden"
                         HorizontalScrollBarVisibility="Hidden" />
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
+  </Style>
+
+  <!-- A slim scroll bar: a pill thumb and no arrows, shown only where it's needed. -->
+  <Style x:Key="OwlThinScrollBar" TargetType="ScrollBar">
+    <Setter Property="Width" Value="8" />
+    <Setter Property="MinWidth" Value="8" />
+    <Setter Property="Background" Value="Transparent" />
+    <Setter Property="Template">
+      <Setter.Value>
+        <ControlTemplate TargetType="ScrollBar">
+          <Track x:Name="PART_Track" Orientation="{TemplateBinding Orientation}" IsDirectionReversed="True">
+            <Track.Thumb>
+              <Thumb>
+                <Thumb.Template>
+                  <ControlTemplate TargetType="Thumb">
+                    <Border Width="5" CornerRadius="2.5" HorizontalAlignment="Center" Background="{DynamicResource Owl.Handle}" />
+                  </ControlTemplate>
+                </Thumb.Template>
+              </Thumb>
+            </Track.Thumb>
+          </Track>
         </ControlTemplate>
       </Setter.Value>
     </Setter>
@@ -305,52 +305,6 @@
             </Trigger>
             <Trigger Property="IsEnabled" Value="False">
               <Setter Property="Opacity" Value="0.4" />
-            </Trigger>
-          </ControlTemplate.Triggers>
-        </ControlTemplate>
-      </Setter.Value>
-    </Setter>
-  </Style>
-
-  <!-- The splitter's keyboard focus: its handle, in blue. -->
-  <Style x:Key="OwlSplitterFocus">
-    <Setter Property="Control.Template">
-      <Setter.Value>
-        <ControlTemplate>
-          <Border Width="4" Height="36" CornerRadius="2" Background="{DynamicResource Owl.Accent}"
-                  HorizontalAlignment="Center" VerticalAlignment="Center" />
-        </ControlTemplate>
-      </Setter.Value>
-    </Setter>
-  </Style>
-
-  <!-- The gap between two cards: drag it to share the width differently. Invisible
-       until the pointer finds it, then a short pill handle, as in a Mac split view. -->
-  <Style x:Key="OwlSplitter" TargetType="GridSplitter">
-    <Setter Property="Width" Value="10" />
-    <Setter Property="HorizontalAlignment" Value="Center" />
-    <Setter Property="VerticalAlignment" Value="Stretch" />
-    <Setter Property="ResizeBehavior" Value="PreviousAndNext" />
-    <Setter Property="ResizeDirection" Value="Columns" />
-    <Setter Property="Cursor" Value="SizeWE" />
-    <!-- Focusable, so the arrow keys can resize too. -->
-    <Setter Property="Focusable" Value="True" />
-    <Setter Property="FocusVisualStyle" Value="{StaticResource OwlSplitterFocus}" />
-    <Setter Property="KeyboardIncrement" Value="16" />
-    <Setter Property="Template">
-      <Setter.Value>
-        <ControlTemplate TargetType="GridSplitter">
-          <Grid Background="Transparent">
-            <Border x:Name="Handle" Width="4" Height="36" CornerRadius="2" Background="{DynamicResource Owl.Handle}"
-                    HorizontalAlignment="Center" VerticalAlignment="Center" Opacity="0" />
-          </Grid>
-          <ControlTemplate.Triggers>
-            <Trigger Property="IsMouseOver" Value="True">
-              <Setter TargetName="Handle" Property="Opacity" Value="1" />
-            </Trigger>
-            <Trigger Property="IsDragging" Value="True">
-              <Setter TargetName="Handle" Property="Opacity" Value="1" />
-              <Setter TargetName="Handle" Property="Background" Value="{DynamicResource Owl.Accent}" />
             </Trigger>
           </ControlTemplate.Triggers>
         </ControlTemplate>

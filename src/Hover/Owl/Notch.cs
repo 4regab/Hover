@@ -203,7 +203,7 @@ internal sealed class NotchHost : IDisposable
     private ScreenInfo _screen;
     private readonly HostWindow _window = new();
     private readonly NotchShell _shell = new();
-    private WorkspaceView? _view;
+    private OfficeView? _view;
     private IntPtr _hwnd;
     private IntPtr _previous;
     private Size _open;
@@ -220,9 +220,14 @@ internal sealed class NotchHost : IDisposable
 
     // The resting pill: one segment per item, built once and updated in place.
     private readonly StackPanel _pill = new() { Orientation = Orientation.Horizontal };
-    private readonly TextBlock _time = Ui.Text("", 12.5, Ui.White, FontWeights.SemiBold);
-    private readonly Ellipse _timerDot = new() { Width = 6, Height = 6 };
-    private readonly FrameworkElement _timerSeg;
+    // Kiro on the resting notch: its bot at work beside what it's doing (the words
+    // slide in when they change), then a happy bot once a task has ended and nobody
+    // has looked yet.
+    private readonly TextBlock _kiroText = Ui.Text("", 12, Ui.White, FontWeights.SemiBold);
+    private readonly TextBlock _kiroDoneText = Ui.Text("", 12, Ui.White, FontWeights.SemiBold);
+    private readonly BotGlyph _kiroDoneBot = new() { Width = 17, Height = 17, Finished = true, VerticalAlignment = VerticalAlignment.Center };
+    private readonly FrameworkElement _kiroSeg, _kiroDoneSeg;
+    private int _kiroDoneShown;
     private readonly Dictionary<string, (FrameworkElement Seg, Ring Ring, TextBlock Text)> _quotaSegs = new();
     private string _pillKey = "";
 
@@ -244,9 +249,13 @@ internal sealed class NotchHost : IDisposable
         _screen = screen;
         _window.Title = "Hover notch";
         AutomationProperties.SetAutomationId(_window, "HoverNotch");
-        AutomationProperties.SetAutomationId(_time, "NotchTime");
-        _timerSeg = Ui.Row(_timerDot, _time.Margin(6, 0));
-        _time.Typography.NumeralAlignment = FontNumeralAlignment.Tabular;
+        AutomationProperties.SetAutomationId(_kiroText, "NotchKiro");
+        AutomationProperties.SetAutomationId(_kiroDoneText, "NotchKiroDone");
+        _kiroSeg = Ui.Row(new BotGlyph { Width = 17, Height = 17, Live = true, VerticalAlignment = VerticalAlignment.Center },
+            _kiroText.Margin(7, 0), new WorkDots { VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(3, 1, 0, 0) });
+        _kiroText.RenderTransform = new TranslateTransform();
+        _kiroDoneSeg = Ui.Row(_kiroDoneBot, _kiroDoneText.Margin(7, 0));
+        foreach (var t in new[] { _kiroText, _kiroDoneText }) t.VerticalAlignment = VerticalAlignment.Center;
         _window.Root.Children.Add(_shell);
         Theme.Changed += OnTheme;
 
@@ -331,8 +340,6 @@ internal sealed class NotchHost : IDisposable
     private void BuildMini()
     {
         var m = _shell.Mini;
-        _time.VerticalAlignment = VerticalAlignment.Center;
-        _timerDot.VerticalAlignment = VerticalAlignment.Center;
         _pill.HorizontalAlignment = HorizontalAlignment.Center;
         _pill.VerticalAlignment = VerticalAlignment.Center;
         m.Children.Add(_pill);
@@ -357,7 +364,7 @@ internal sealed class NotchHost : IDisposable
             Width = 11, Height = 11, VerticalAlignment = VerticalAlignment.Center,
             TrackBrush = Ui.Frozen(Color.FromArgb(0x38, 0xFF, 0xFF, 0xFF)),
         };
-        var name = Ui.Text(QuotaStrip.Short(id), 11.5, Ui.WhiteDim);
+        var name = Ui.Text(NotchItem.Short(id), 11.5, Ui.WhiteDim);
         var value = Ui.Text("—", 11.5, Ui.White, FontWeights.SemiBold);
         value.Typography.NumeralAlignment = FontNumeralAlignment.Tabular;
         var seg = Ui.Row(ring, name.Margin(6, 0), value.Margin(4, 0));
@@ -372,20 +379,28 @@ internal sealed class NotchHost : IDisposable
         UpdateRest();
     }
 
-    /// Which items the pill shows right now. The timer only while it runs; the quotas
-    /// when they are set to stay on the notch.
+    /// Which items the pill shows right now: the quotas switched on, and Kiro, while a
+    /// task works and once one has ended unseen, until the office is looked at.
     private List<string> PillItems()
     {
-        var running = OwlApp.Timer.State != FocusTimer.Phase.Ready;
-        return Settings.NotchItems.Where(id =>
-            id == NotchItem.Timer ? running
-            : NotchItem.Quotas.Contains(id) && Settings.QuotasOnNotch).ToList();
+        var items = Settings.NotchItems.Where(NotchItem.Quotas.Contains).ToList();
+        if (OwlApp.Kiro.Running > 0) items.Add(KiroRun);
+        if (OwlApp.KiroUnseen > 0) items.Add(KiroDone);
+        return items;
     }
 
-    /// Pick the resting shape and refresh what it shows. Called every second.
+    private const string KiroRun = "kiro-run", KiroDone = "kiro-done";
+
+    private FrameworkElement Segment(string id) => id switch
+    {
+        KiroRun => _kiroSeg,
+        KiroDone => _kiroDoneSeg,
+        _ => QuotaSeg(id).Seg,
+    };
+
+    /// Pick the resting shape and refresh what it shows.
     public void UpdateRest()
     {
-        var t = OwlApp.Timer;
         var items = _alert is null ? PillItems() : new List<string>();
         var kind = _alert is not null ? RestKind.Alert
             : items.Count > 0 ? RestKind.Pill
@@ -410,18 +425,38 @@ internal sealed class NotchHost : IDisposable
                 _pill.Children.Clear();
                 foreach (var id in items)
                 {
-                    var seg = id == NotchItem.Timer ? _timerSeg : QuotaSeg(id).Seg;
+                    var seg = Segment(id);
                     seg.Margin = new Thickness(_pill.Children.Count == 0 ? 0 : PillGap, 0, 0, 0);
                     seg.VerticalAlignment = VerticalAlignment.Center;
                     _pill.Children.Add(seg);
                 }
             }
-            if (items.Contains(NotchItem.Timer))
+            if (items.Contains(KiroRun))
             {
-                var paused = t.State == FocusTimer.Phase.Paused;
-                _time.Text = t.Text;
-                _time.Opacity = paused ? 0.55 : 1;
-                _timerDot.Fill = Ui.Accent(paused ? Ui.Gray : Ui.Orange);
+                // The newest task at work, and how many more are.
+                var all = OwlApp.Kiro.All.Where(s => s.Busy).ToList();
+                var text = Services.Agents.Name(all[^1].Tool) + " · " + KiroPage.Status(all[^1]) + (all.Count > 1 ? $" · {all.Count}" : "");
+                if (text != _kiroText.Text)
+                {
+                    _kiroText.Text = text;
+                    // The new words rise into place.
+                    if (!Animator.Still)
+                    {
+                        var d = new Duration(TimeSpan.FromMilliseconds(260));
+                        var ease = new System.Windows.Media.Animation.CubicEase { EasingMode = System.Windows.Media.Animation.EasingMode.EaseOut };
+                        _kiroText.BeginAnimation(UIElement.OpacityProperty, new System.Windows.Media.Animation.DoubleAnimation(0, 1, d));
+                        _kiroText.RenderTransform.BeginAnimation(TranslateTransform.YProperty, new System.Windows.Media.Animation.DoubleAnimation(6, 0, d) { EasingFunction = ease });
+                    }
+                }
+                AutomationProperties.SetName(_kiroText, _kiroText.Text);
+            }
+            if (items.Contains(KiroDone))
+            {
+                var n = OwlApp.KiroUnseen;
+                if (n != _kiroDoneShown) { _kiroDoneShown = n; _kiroDoneBot.Cheer(); }
+                var who = OwlApp.KiroUnseenTool;
+                _kiroDoneText.Text = n > 1 ? (who is null ? $"{n} tasks ended" : $"{n} {who} tasks ended") : $"{who ?? "A task"} ended";
+                AutomationProperties.SetName(_kiroDoneText, _kiroDoneText.Text);
             }
             foreach (var id in items.Where(NotchItem.Quotas.Contains))
             {
@@ -522,14 +557,8 @@ internal sealed class NotchHost : IDisposable
         _outsideSince = null;
         if (!focusInput) return;
         _window.Focus(foreground: true);
-        // After the first layout pass, or the field is not in the tree yet.
-        _window.Dispatcher.BeginInvoke(() =>
-        {
-            _view?.FocusTaskInput();
-            if (!_window.IsActive || Keyboard.FocusedElement is not TextBox)
-                Log.Line($"notch: shortcut focus fell short — active {_window.IsActive}, " +
-                         $"focused {Keyboard.FocusedElement?.GetType().Name ?? "nothing"}");
-        }, DispatcherPriority.Input);
+        // After the first layout pass, or the office is not in the tree yet.
+        _window.Dispatcher.BeginInvoke(() => _view?.FocusOffice(), DispatcherPriority.Input);
     }
 
     /// The first opening after launch or a return to the PC: the notch grows a
@@ -547,30 +576,28 @@ internal sealed class NotchHost : IDisposable
         _shell.BeginAnimation(NotchShell.OpennessProperty, a);
     }
 
-    private WorkspaceView NewView()
+    private OfficeView NewView()
     {
-        var v = new WorkspaceView(dashboard: false);
+        var v = new OfficeView(dashboard: false);
         _shell.ViewHost.Child = v;
         return v;
     }
 
-    /// Light and dark are baked into the cards when they are built, so a switch
+    /// Light and dark are baked into the views when they are built, so a switch
     /// builds them again — straight away while open, on the next opening otherwise.
     private void OnTheme()
     {
         _shell.ApplyTheme();
         if (_view is null) return;
-        _view.Flush();
         if (State == Mode.Rest)
         {
             _shell.ViewHost.Child = null;
             _view = null;
             return;
         }
-        var tab = _view.CurrentTab;
+        var settings = _view.InSettings;
         _view = NewView();
-        if (tab == 2) _view.ShowSettings(SettingsPage.Last);
-        else _view.ShowTab(tab);
+        if (settings) _view.ShowSettings(SettingsPage.Last);
     }
 
     public void Collapse()
@@ -653,14 +680,13 @@ public sealed class NotchManager : IDisposable
         _poll.Tick += (_, _) => Tick();
         _poll.Start();
 
-        OwlApp.Timer.Changed += UpdateRest;
-        OwlApp.Tick += UpdateRest;
         OwlApp.QuotasChanged += UpdateRest;
+        OwlApp.Kiro.Changed += UpdateRest;
         OwlApp.SettingsChanged = UpdateRest;
         OwlApp.Collapse = CollapseAll;
         OwlApp.OpenDashboard = () => OpenDashboard();
         OwlApp.OpenSettings = () => OpenDashboard(settings: true);
-        OwlApp.ShowWorkspace = Toggle;
+        OwlApp.ShowOffice = Toggle;
         Theme.Changed += OnTheme;
         _alertEnd.Tick += (_, _) =>
         {
@@ -755,7 +781,7 @@ public sealed class NotchManager : IDisposable
             _dashboard = new DashboardWindow();
             _dashboard.Closed += (_, _) => _dashboard = null;
         }
-        if (settings) _dashboard.View.ShowTab(2);
+        if (settings) _dashboard.View.ShowSettings(SettingsPage.Section.General);
         _dashboard.Show();
         if (_dashboard.WindowState == WindowState.Minimized) _dashboard.WindowState = WindowState.Normal;
         // Activate while this process still holds the foreground; collapsing first
@@ -770,6 +796,7 @@ public sealed class NotchManager : IDisposable
         Microsoft.Win32.SystemEvents.SessionSwitch -= OnSession;
         Theme.Changed -= OnTheme;
         OwlApp.QuotasChanged -= UpdateRest;
+        OwlApp.Kiro.Changed -= UpdateRest;
         _poll.Stop();
         _alertEnd.Stop();
         _dashboard?.Close();
@@ -778,14 +805,14 @@ public sealed class NotchManager : IDisposable
     }
 }
 
-/// "Open app": the same workspace in an ordinary window, for when the notch is too
+/// "Open app": the same office in an ordinary window, for when the notch is too
 /// small a place to work. Its title bar takes the panel's colour (Windows 11), so
 /// the bar and the window read as one surface.
 public sealed class DashboardWindow : Window
 {
-    public WorkspaceView View { get; private set; } = NewView();
+    public OfficeView View { get; private set; } = NewView();
 
-    private static WorkspaceView NewView() => new(dashboard: true);
+    private static OfficeView NewView() => new(dashboard: true);
 
     public DashboardWindow()
     {
@@ -800,15 +827,13 @@ public sealed class DashboardWindow : Window
         SourceInitialized += (_, _) => ApplyTheme();
     }
 
-    /// Build the view again for a new appearance, on the tab it was showing.
+    /// Build the view again for a new appearance, on the page it was showing.
     public void Rebuild()
     {
-        var tab = View.CurrentTab;
-        View.Flush();
+        var settings = View.InSettings;
         View = NewView();
         Content = View;
-        if (tab == 2) View.ShowSettings(SettingsPage.Last);
-        else View.ShowTab(tab);
+        if (settings) View.ShowSettings(SettingsPage.Last);
         ApplyTheme();
     }
 

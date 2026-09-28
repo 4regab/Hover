@@ -9,15 +9,10 @@ namespace Hover.Core;
 
 public enum Appearance { System, Light, Dark }
 
-/// How big the workspace opens. Each is capped by the display it opens on.
+/// How big the notch opens. Each is capped by the display it opens on.
 public enum WorkspaceSize { Default, Small, Large, ExtraLarge }
 
-/// A button in the workspace header that opens a terminal and runs Command there,
-/// in Folder (the user's folder when empty). Icon is an icon name, Color an accent
-/// name (see Ui.AccentNamed), so the button follows the theme.
-public sealed record LaunchButton(string Name, string Command, string Icon, string Color, string? Folder = null);
-
-/// The handful of preferences, in one JSON file beside the planner.
+/// The handful of preferences, in one JSON file in Hover's folder.
 /// Writes are debounced through Save(), which every setter calls. Keys an older
 /// build wrote (the notes deck's) are ignored on load and dropped on the next save.
 public static class Settings
@@ -26,17 +21,26 @@ public static class Settings
     {
         public bool HoverOpensWorkspace { get; set; } = true;
         public List<string>? NotchItems { get; set; }
-        public bool QuotasOnNotch { get; set; }
         public Appearance Appearance { get; set; } = Appearance.System;
         public SavedTheme? Theme { get; set; }
         public WorkspaceSize WorkspaceSize { get; set; }
-        public List<LaunchButton>? Buttons { get; set; }
-        public List<CardSlot>? Cards { get; set; }
         public string? KiroFolder { get; set; }
         public bool KiroNoticeSeen { get; set; }
+        public string? KiroModel { get; set; }
+        public string KiroEffort { get; set; } = "high";
+        public string? KiroAgent { get; set; }
+        public bool KiroReadOnly { get; set; }
+        public bool KiroRequireMcp { get; set; }
+        public int KiroIdleMinutes { get; set; } = 5;
+        public bool KiroHideSteps { get; set; }
+        /// Codex's and Cursor's settings, by tool id. Kiro's are the fields above.
+        public Dictionary<string, Services.AgentOptions>? Agents { get; set; }
+        /// What each tool last offered (models, efforts, modes), for its settings page.
+        public Dictionary<string, List<Services.AcpOption>>? AgentOffers { get; set; }
+        public string? AgentTool { get; set; }
 
         // Option-N on a Mac. Alt+N here also means "Insert" in Office and "File name"
-        // in file dialogs; while Hover runs, it opens the workspace instead.
+        // in file dialogs; while Hover runs, it opens the notch instead.
         public Shortcut ScWorkspace { get; set; } = new(ModifierKeys.Alt, Key.N);
     }
 
@@ -67,8 +71,7 @@ public static class Settings
 
     private static DispatcherTimer? _writeBack;
 
-    /// Every setter calls this, and a splitter calls its setter on every pixel of the
-    /// drag — so the write itself waits for the value to settle. Flush() forces it
+    /// Every setter calls this, several at a time — so the write itself waits for the value to settle. Flush() forces it
     /// out when the app is closing.
     public static void Save()
     {
@@ -92,7 +95,7 @@ public static class Settings
         }
     }
 
-    /// Resting the pointer on the notch opens the workspace. Off, it takes the
+    /// Resting the pointer on the notch opens it. Off, it takes the
     /// shortcut or a click — the top edge is where maximised browsers keep their tabs.
     public static bool HoverOpensWorkspace
     {
@@ -104,19 +107,12 @@ public static class Settings
     /// items are off until switched on, since each reads another app's sign-in.
     public static IReadOnlyList<string> NotchItems
     {
-        get => M.NotchItems ??= new List<string> { NotchItem.Timer };
+        // Ids an older build saved (the focus timer's) are left out.
+        get => M.NotchItems = NotchItem.All.Where((M.NotchItems ?? new List<string>()).Contains).ToList();
         set { M.NotchItems = NotchItem.All.Where(value.Contains).ToList(); Save(); }
     }
 
     public static bool HasNotchItem(string id) => NotchItems.Contains(id);
-
-    /// The AI quotas that are switched on always show in the workspace header. On,
-    /// they also stay on the resting notch.
-    public static bool QuotasOnNotch
-    {
-        get => M.QuotasOnNotch;
-        set { M.QuotasOnNotch = value; Save(); }
-    }
 
     /// Light, dark, or whatever Windows is set to. Applies to Hover's own theme.
     public static Appearance Appearance
@@ -138,25 +134,11 @@ public static class Settings
         set { M.WorkspaceSize = value; Save(); }
     }
 
-    /// The header's command buttons, in order.
-    public static IReadOnlyList<LaunchButton> Buttons
-    {
-        get => M.Buttons ??= new List<LaunchButton>();
-        set { M.Buttons = value.ToList(); Save(); }
-    }
-
     public static void SetNotchItem(string id, bool on)
     {
         var set = NotchItems.ToHashSet();
         if (on) set.Add(id); else set.Remove(id);
         NotchItems = set.ToList();
-    }
-
-    /// The workspace cards: which show, in what order, and how wide.
-    public static IReadOnlyList<CardSlot> Cards
-    {
-        get => M.Cards = CardLayout.Normalize(M.Cards);
-        set { M.Cards = CardLayout.Normalize(value); Save(); }
     }
 
     public static Shortcut ScWorkspace { get => M.ScWorkspace; set { M.ScWorkspace = value; Save(); } }
@@ -175,6 +157,58 @@ public static class Settings
     {
         get => M.KiroNoticeSeen;
         set { M.KiroNoticeSeen = value; Save(); }
+    }
+
+    /// How an agent's runs are set up (Settings → Kiro, Codex, Cursor). Read when a
+    /// run starts.
+    public static Services.AgentOptions AgentOptions(Services.AgentTool t)
+    {
+        if (t == Services.AgentTool.Kiro)
+            return new(M.KiroModel, M.KiroEffort, M.KiroReadOnly, M.KiroIdleMinutes, M.KiroAgent, M.KiroRequireMcp, M.KiroHideSteps);
+        return M.Agents?.GetValueOrDefault(Services.Agents.Id(t)) ?? Services.AgentOptions.Default;
+    }
+
+    public static void SetAgentOptions(Services.AgentTool t, Services.AgentOptions value)
+    {
+        value = value with
+        {
+            Model = value.Model is null or "auto" ? null : value.Model,
+            Agent = string.IsNullOrWhiteSpace(value.Agent) ? null : value.Agent,
+            IdleMinutes = Services.AgentOptions.IdleChoices.Contains(value.IdleMinutes) ? value.IdleMinutes : Services.AgentOptions.IdleChoices[0],
+        };
+        if (t == Services.AgentTool.Kiro)
+        {
+            M.KiroModel = value.Model;
+            M.KiroEffort = value.Effort ?? "high";
+            M.KiroAgent = value.Agent;
+            M.KiroReadOnly = value.ReadOnly;
+            M.KiroRequireMcp = value.RequireMcp;
+            M.KiroIdleMinutes = value.IdleMinutes;
+            M.KiroHideSteps = value.HideSteps;
+        }
+        else (M.Agents ??= new())[Services.Agents.Id(t)] = value with { Agent = null, RequireMcp = false };
+        Save();
+    }
+
+    /// The models, efforts and modes the tool offered the last time it ran.
+    public static IReadOnlyList<Services.AcpOption> AgentOffers(Services.AgentTool t) =>
+        M.AgentOffers?.GetValueOrDefault(Services.Agents.Id(t)) ?? new List<Services.AcpOption>();
+
+    public static void SetAgentOffers(Services.AgentTool t, IReadOnlyList<Services.AcpOption> offers)
+    {
+        var id = Services.Agents.Id(t);
+        var old = M.AgentOffers?.GetValueOrDefault(id);
+        // Every turn reports them; only a change is written.
+        if (old is not null && JsonSerializer.Serialize(old) == JsonSerializer.Serialize(offers)) return;
+        (M.AgentOffers ??= new())[id] = offers.ToList();
+        Save();
+    }
+
+    /// The tool the last new task went to.
+    public static Services.AgentTool AgentTool
+    {
+        get => Services.Agents.Parse(M.AgentTool) ?? Services.AgentTool.Kiro;
+        set { M.AgentTool = Services.Agents.Id(value); Save(); }
     }
 
     // MARK: Launch at login — HKCU Run, no elevation needed

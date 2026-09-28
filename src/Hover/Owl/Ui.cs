@@ -31,15 +31,6 @@ internal static class Ui
     public static Color Red => Argb(Theme.Current.Red);
     public static Color Gray => Rgb(0x8E, 0x8E, 0x93);
 
-    /// The accents a command button can take, by the name its settings keep.
-    public static readonly string[] AccentNames = { "blue", "teal", "green", "yellow", "orange", "red", "purple", "gray" };
-
-    public static Color AccentNamed(string name) => name switch
-    {
-        "teal" => Teal, "green" => Green, "yellow" => Yellow, "orange" => Orange,
-        "red" => Red, "purple" => Purple, "gray" => Gray, _ => Blue,
-    };
-
     /// The theme's colours as frozen brushes, made once per theme.
     private sealed class Paint(Core.Palette p)
     {
@@ -108,13 +99,6 @@ internal static class Ui
         IcTerminal = "terminal", IcPalette = "palette", IcImport = "import",
         IcHome = "home", IcGhost = "ghost", IcStop = "stop", IcShield = "shield", IcFolderOpen = "folder-open",
         IcChart = "chart", IcPlug = "plug", IcSend = "send";
-
-    /// The icons a command button can wear.
-    public static readonly string[] ButtonIcons =
-    {
-        "terminal", "bot", "sparkles", "code", "rocket", "bolt", "brain", "command", "globe", "git", "database", "server",
-        "cloud", "cpu", "bug", "flask", "book", "compose", "music", "coffee", "star", "heart", "flame", "wrench", "package", "folder",
-    };
 
     public static Color Rgb(byte r, byte g, byte b) => Color.FromRgb(r, g, b);
 
@@ -318,112 +302,6 @@ internal static class Ui
         menu.PlacementTarget = anchor;
         menu.Placement = System.Windows.Controls.Primitives.PlacementMode.Bottom;
         menu.IsOpen = true;
-    }
-
-    public static string Clock(DateTime t) => t.ToString("h:mm tt", CultureInfo.CurrentCulture);
-    public static string DayMonth(DateTime t) => t.ToString("d MMM", CultureInfo.CurrentCulture);
-
-    /// "16 Sep at 5:24 PM", or "Tomorrow at 9:00 AM".
-    public static string When(DateTime t, DateTime now) =>
-        $"{((t.Date - now.Date).Days == 1 ? "Tomorrow" : DayMonth(t))} at {Clock(t)}";
-}
-
-/// Seven columns of bars with a right-hand axis. With two series the lighter one
-/// (planned) stands behind the darker (completed). Clicking a column picks the day.
-internal sealed class BarChart : FrameworkElement
-{
-    public IReadOnlyList<(string Top, string Bottom)> Labels { get; set; } = Array.Empty<(string, string)>();
-    public IReadOnlyList<double> Front { get; set; } = Array.Empty<double>();
-    public IReadOnlyList<double>? Back { get; set; }
-    public int? Selected { get; set; }
-    public event Action<int>? Picked;
-
-    private int? _hover;
-    public static Brush FrontBrush => Ui.Accent(Ui.Purple);
-    public static Brush BackBrush => Ui.WashStrong;
-    private static Pen GridPen => new(Ui.Wash, 1);
-    private static Pen HoverPen => new(Ui.InkFaint, 1);
-
-    private const double Axis = 34, LabelBand = 40;
-
-    public BarChart()
-    {
-        Cursor = Cursors.Hand;
-        MouseMove += (_, e) => { var i = Column(e.GetPosition(this)); if (i != _hover) { _hover = i; InvalidateVisual(); } };
-        MouseLeave += (_, _) => { _hover = null; InvalidateVisual(); };
-        MouseLeftButtonUp += (_, e) => { if (Column(e.GetPosition(this)) is { } i) Picked?.Invoke(i); };
-    }
-
-    private int? Column(Point p)
-    {
-        var n = Front.Count;
-        if (n == 0) return null;
-        var w = (ActualWidth - Axis) / n;
-        var i = (int)(p.X / w);
-        return i >= 0 && i < n ? i : null;
-    }
-
-    public void Redraw() => InvalidateVisual();
-
-    protected override void OnRender(DrawingContext dc)
-    {
-        dc.DrawRectangle(Brushes.Transparent, null, new Rect(RenderSize));   // hit-testable everywhere
-        var n = Front.Count;
-        if (n == 0) return;
-        var max = Insights.NiceMax(Math.Max(Front.DefaultIfEmpty(0).Max(), Back?.DefaultIfEmpty(0).Max() ?? 0));
-        var plotH = Math.Max(10, ActualHeight - LabelBand - 8);
-        var top = 8.0;
-        var colW = (ActualWidth - Axis) / n;
-        var barW = Math.Min(40, colW * 0.36);
-        var dpi = VisualTreeHelper.GetDpi(this).PixelsPerDip;
-
-        // Axis ticks: three steps.
-        for (var k = 0; k <= 3; k++)
-        {
-            var v = max * k / 3;
-            var y = top + plotH - plotH * k / 3;
-            dc.DrawLine(GridPen, new Point(0, y), new Point(ActualWidth - Axis, y));
-            var label = new FormattedText(Math.Round(v).ToString(CultureInfo.CurrentCulture), CultureInfo.CurrentCulture,
-                FlowDirection.LeftToRight, new Typeface(Ui.Font, FontStyles.Normal, FontWeights.Normal, FontStretches.Normal),
-                11, Ui.InkDim, dpi);
-            dc.DrawText(label, new Point(ActualWidth - label.Width, y - label.Height / 2));
-        }
-
-        for (var i = 0; i < n; i++)
-        {
-            var cx = colW * i + colW / 2;
-            var dim = Selected is { } s && s != i;
-            dc.PushOpacity(dim ? 0.45 : 1);
-            if (Back is { } back && i < back.Count && back[i] > 0) Bar(dc, cx, barW, back[i], max, plotH, top, BackBrush);
-            if (Front[i] > 0) Bar(dc, cx, barW, Front[i], max, plotH, top, FrontBrush);
-            else if (Back is null) dc.DrawRectangle(FrontBrush, null, new Rect(cx - barW / 2, top + plotH - 1.5, barW, 1.5));
-            dc.Pop();
-
-            // The pointer's column: a hairline from the top of the plot down to its bar.
-            if (_hover == i || Selected == i)
-            {
-                var tallest = Math.Max(Front[i], Back is { } bk && i < bk.Count ? bk[i] : 0);
-                var barTop = top + plotH - Math.Max(2, plotH * tallest / max);
-                if (barTop > top + 2) dc.DrawLine(HoverPen, new Point(cx, top), new Point(cx, barTop - 3));
-            }
-
-            if (i < Labels.Count)
-            {
-                var (a, b) = Labels[i];
-                var t1 = new FormattedText(a, CultureInfo.CurrentCulture, FlowDirection.LeftToRight,
-                    new Typeface(Ui.Font, FontStyles.Normal, FontWeights.Normal, FontStretches.Normal), 12.5, Ui.Ink, dpi);
-                var t2 = new FormattedText(b, CultureInfo.CurrentCulture, FlowDirection.LeftToRight,
-                    new Typeface(Ui.Font, FontStyles.Normal, FontWeights.Normal, FontStretches.Normal), 12, Ui.InkDim, dpi);
-                dc.DrawText(t1, new Point(cx - t1.Width / 2, top + plotH + 8));
-                dc.DrawText(t2, new Point(cx - t2.Width / 2, top + plotH + 24));
-            }
-        }
-    }
-
-    private static void Bar(DrawingContext dc, double cx, double w, double v, double max, double plotH, double top, Brush fill)
-    {
-        var h = Math.Max(2, plotH * v / max);
-        dc.DrawRoundedRectangle(fill, null, new Rect(cx - w / 2, top + plotH - h, w, h), 3, 3);
     }
 }
 

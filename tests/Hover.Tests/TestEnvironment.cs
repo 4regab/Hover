@@ -18,14 +18,12 @@ public sealed class TestEnvironment
         _root = Path.Combine(Path.GetTempPath(), "Hover.Tests", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(_root);
         Environment.SetEnvironmentVariable("HOVER_DATA_DIR", _root);
-        Environment.SetEnvironmentVariable("HOVER_SHOTS_DIR", Path.Combine(_root, "shots"));
     }
 
     [OneTimeTearDown]
     public void TearDown()
     {
         Environment.SetEnvironmentVariable("HOVER_DATA_DIR", null);
-        Environment.SetEnvironmentVariable("HOVER_SHOTS_DIR", null);
         if (_root is not null && Directory.Exists(_root))
             Directory.Delete(_root, recursive: true);
     }

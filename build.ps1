@@ -37,6 +37,8 @@ function Publish-Hover {
         "-r", "win-x64",
         "--self-contained", "true",
         "-p:PublishSingleFile=true",
+        # Compiled ahead of time, so less memory goes on compiling code at startup.
+        "-p:PublishReadyToRun=true",
         "-p:IncludeNativeLibrariesForSelfExtract=true",
         "-p:DebugType=None",
         "-p:DebugSymbols=false",
@@ -97,14 +99,14 @@ switch ($Mode.ToLower()) {
         Stop-Hover
         dotnet build $project -c Release --nologo
         if ($Then -eq "run") {
-            Start-Process (Join-Path $PSScriptRoot "src\Hover\bin\Release\net8.0-windows\Hover.exe")
+            Start-Process (Join-Path $PSScriptRoot "src\Hover\bin\Release\net10.0-windows10.0.17763.0\Hover.exe")
         }
     }
     default {
         Stop-Hover
         dotnet build $project -c Debug --nologo
         if ($Then -eq "run") {
-            Start-Process (Join-Path $PSScriptRoot "src\Hover\bin\Debug\net8.0-windows\Hover.exe")
+            Start-Process (Join-Path $PSScriptRoot "src\Hover\bin\Debug\net10.0-windows10.0.17763.0\Hover.exe")
         }
     }
 }

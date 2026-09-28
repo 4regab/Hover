@@ -9,17 +9,15 @@ namespace Hover.Tests;
 public sealed class SettingsTests
 {
     [Test]
-    public void Flush_writes_readable_JSON_with_the_shortcut_notch_items_and_cards()
+    public void Flush_writes_readable_JSON_with_the_shortcut_and_notch_items()
     {
         var shortcut = Settings.ScWorkspace;
         var items = Settings.NotchItems;
-        var cards = Settings.Cards;
         try
         {
             Settings.ScWorkspace = new Shortcut(ModifierKeys.Control | ModifierKeys.Shift, Key.H);
-            // "clock" was a notch item once; old settings files may still hold it.
-            Settings.NotchItems = new[] { NotchItem.Kiro, "bogus", "clock", NotchItem.Timer };
-            Settings.Cards = CardLayout.Show(CardLayout.Default, CardLayout.Shots, false);
+            // "clock" and "timer" were notch items once; old settings files may still hold them.
+            Settings.NotchItems = new[] { NotchItem.Kiro, "bogus", "clock", "timer", NotchItem.Claude };
             Settings.Flush();
 
             var json = File.ReadAllText(Paths.SettingsFile);
@@ -28,17 +26,14 @@ public sealed class SettingsTests
                 Assert.That(json, Does.Contain("\"ScWorkspace\""));
                 Assert.That(json, Does.Contain("\"Key\": \"H\""));
                 Assert.That(json, Does.Contain("\"NotchItems\""));
-                Assert.That(json, Does.Contain("\"Cards\""));
                 // Unknown ids are dropped, and the canonical order wins over the order given.
-                Assert.That(Settings.NotchItems, Is.EqualTo(new[] { NotchItem.Timer, NotchItem.Kiro }));
-                Assert.That(Settings.Cards.Single(c => c.Id == CardLayout.Shots).Visible, Is.False);
+                Assert.That(Settings.NotchItems, Is.EqualTo(new[] { NotchItem.Claude, NotchItem.Kiro }));
             });
         }
         finally
         {
             Settings.ScWorkspace = shortcut;
             Settings.NotchItems = items;
-            Settings.Cards = cards;
             Settings.Flush();
         }
     }
@@ -71,15 +66,32 @@ public sealed class SettingsTests
     }
 
     [Test]
+    public void The_old_planner_is_removed_and_the_key_the_history_needs_stays()
+    {
+        var key = Path.Combine(Paths.Support, "note.key");
+        var hadKey = File.Exists(key);
+        if (!hadKey) File.WriteAllText(key, "k");
+        foreach (var f in new[] { "planner.dat", "planner.dat.tmp", "planner.dat.unreadable-20260101000000" })
+            File.WriteAllText(Path.Combine(Paths.Support, f), "x");
+        Owl.OwlApp.DropPlanner();
+        Assert.Multiple(() =>
+        {
+            Assert.That(Directory.EnumerateFiles(Paths.Support, "planner.dat*"), Is.Empty);
+            Assert.That(File.Exists(key), Is.True);
+        });
+        if (!hadKey) File.Delete(key);
+    }
+
+    [Test]
     public void Notch_items_toggle_one_at_a_time()
     {
         var items = Settings.NotchItems;
         try
         {
-            Settings.NotchItems = new[] { NotchItem.Timer };
+            Settings.NotchItems = new[] { NotchItem.Kiro };
             Settings.SetNotchItem(NotchItem.Codex, true);
             Assert.That(Settings.HasNotchItem(NotchItem.Codex), Is.True);
-            Settings.SetNotchItem(NotchItem.Timer, false);
+            Settings.SetNotchItem(NotchItem.Kiro, false);
             Assert.That(Settings.NotchItems, Is.EqualTo(new[] { NotchItem.Codex }));
         }
         finally

@@ -4,7 +4,7 @@
        Hover.slnx on purpose: it launches the app and takes over the pointer, so it
        runs only when asked for (CI does, on a Windows runner). -->
   <PropertyGroup>
-    <TargetFramework>net8.0-windows</TargetFramework>
+    <TargetFramework>net10.0-windows</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <IsPackable>false</IsPackable>

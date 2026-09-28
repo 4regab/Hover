@@ -21,7 +21,7 @@ public sealed class WorkspaceE2E
 {
     private static readonly string Exe = Environment.GetEnvironmentVariable("HOVER_EXE")
         ?? Path.GetFullPath(Path.Combine(TestContext.CurrentContext.TestDirectory,
-            "..", "..", "..", "..", "..", "src", "Hover", "bin", "Release", "net8.0-windows", "Hover.exe"));
+            "..", "..", "..", "..", "..", "src", "Hover", "bin", "Release", "net10.0-windows10.0.17763.0", "Hover.exe"));
 
     private static readonly string Out = Environment.GetEnvironmentVariable("HOVER_E2E_OUT")
         ?? Path.Combine(TestContext.CurrentContext.TestDirectory, "e2e-shots");

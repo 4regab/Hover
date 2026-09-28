@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.IO;
 using System.Text;
 using System.Text.Json;
@@ -16,91 +15,76 @@ public enum KiroPhase { Starting, Thinking, Planning, Reading, Searching, Editin
 /// reason when it failed or was stopped.
 public sealed record KiroResult(KiroState State, string Text, int? ExitCode = null);
 
-/// Runs one Kiro CLI task headlessly in a folder, as a hidden child of Hover:
-///
-///   kiro-cli chat --no-interactive --trust-all-tools --agent-engine v3 --output-format stream-json
-///
-/// with the prompt written to stdin, never put on the command line, and the folder as
-/// the working directory. Full tool access is on because nobody is there to approve
-/// a tool call; the Kiro page's first-use note and its folder-first flow are the
-/// boundary instead. No WPF in here, so it can be driven by a stand-in kiro-cli.
+/// One thing Kiro did in a run, from a tool call: its ACP kind (read, edit, execute,
+/// search...), its title, the file or command it was about, and how it went
+/// (in_progress, completed, failed).
+public sealed record KiroStep(string Id, string Kind, string Title, string? Target, string Status);
+
+/// Detail from a run as it goes, beside its phase: a step that started or ended, how
+/// full Kiro's context is (0 to 100), and Kiro's own session id, which lets a reply
+/// carry on the same conversation (kiro-cli chat --resume-id).
+public sealed record KiroEvent(KiroStep? Step = null, double? Context = null, string? SessionId = null);
+
+/// How one agent's runs are set up, from its page in Settings. Null model or effort
+/// leaves the tool's own default. Read only refuses whatever would change a file or run
+/// a command. IdleMinutes is how long the tool's process stays up with nothing to do.
+/// Agent (a Kiro agent, sent as its mode) and RequireMcp are Kiro's alone. HideSteps
+/// keeps the tools it runs out of the chat (they are still kept).
+public sealed record AgentOptions(string? Model = null, string? Effort = null, bool ReadOnly = false,
+    int IdleMinutes = 5, string? Agent = null, bool RequireMcp = false, bool HideSteps = false)
+{
+    public static readonly AgentOptions Default = new();
+    public static readonly int[] IdleChoices = { 5, 15 };
+}
+
+/// What Hover knows about kiro-cli without starting it: its models as a fallback
+/// before a run has listed them, the agents on disk, and whether a folder can be used.
+/// The runs themselves go through AcpHost.
 public static class KiroRunner
 {
-    public static readonly IReadOnlyList<string> Arguments = new[]
+    /// Settings → Kiro's models until a run has listed Kiro's own. Auto lets Kiro pick.
+    public static readonly IReadOnlyList<(string Id, string Name)> Models = new[]
     {
-        "chat", "--no-interactive", "--trust-all-tools", "--agent-engine", "v3", "--output-format", "stream-json",
+        ("auto", "Auto"), ("claude-opus-5.5", "Claude Opus 5.5"), ("claude-opus-5", "Claude Opus 5"),
+        ("claude-sonnet-5", "Claude Sonnet 5"), ("claude-opus-4.8", "Claude Opus 4.8"), ("claude-sonnet-4.6", "Claude Sonnet 4.6"),
+        ("claude-haiku-4.5", "Claude Haiku 4.5"), ("gpt-5.6-sol", "GPT-5.6 Sol"), ("gpt-5.6-terra", "GPT-5.6 Terra"),
+        ("gpt-5.6-luna", "GPT-5.6 Luna"), ("deepseek-3.2", "DeepSeek 3.2"), ("minimax-m2.5", "MiniMax M2.5"),
+        ("glm-5", "GLM-5"), ("qwen3-coder-next", "Qwen3 Coder Next"),
     };
 
-    /// A folder Kiro can work in: a full path to a directory that is there now.
+    // Names from files on disk are only offered when they are plain.
+    private static bool Plain(string? s) => !string.IsNullOrEmpty(s) && s.All(c => char.IsAsciiLetterOrDigit(c) || c is '-' or '_' or '.');
+
+    /// The agents kiro-cli can run with: the user's in ~/.kiro/agents and the
+    /// project's in <folder>/.kiro/agents, by the name in each file. Under ACP an agent
+    /// is a session mode, so Kiro's own modes (plan, spec...) come from the run instead.
+    public static IReadOnlyList<string> Agents(string? folder)
+    {
+        var names = new List<string>();
+        var dirs = new List<string> { Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".kiro", "agents") };
+        if (UsableFolder(folder)) dirs.Add(Path.Combine(folder!, ".kiro", "agents"));
+        foreach (var dir in dirs.Where(Directory.Exists))
+            foreach (var file in Directory.EnumerateFiles(dir, "*.json"))
+            {
+                var name = Path.GetFileNameWithoutExtension(file);
+                try
+                {
+                    using var doc = JsonDocument.Parse(File.ReadAllText(file));
+                    if (doc.RootElement.ValueKind == JsonValueKind.Object && doc.RootElement.TryGetProperty("name", out var n) &&
+                        n.ValueKind == JsonValueKind.String && n.GetString() is { Length: > 0 } s) name = s;
+                }
+                catch (Exception e) when (e is IOException or JsonException or UnauthorizedAccessException) { }
+                if (Plain(name) && !names.Contains(name)) names.Add(name);
+            }
+        return names;
+    }
+
+    /// A folder an agent can work in: a full path to a directory that is there now.
     public static bool UsableFolder(string? path)
     {
         if (string.IsNullOrWhiteSpace(path)) return false;
         try { return Path.IsPathFullyQualified(path) && Directory.Exists(path); }
         catch (ArgumentException) { return false; }
-    }
-
-    /// Runs the task to the end, or until ct is cancelled, which kills kiro-cli and
-    /// everything it started. Phases are reported through progress as they change.
-    /// Never throws: every way it can go wrong comes back as a Failed result.
-    public static async Task<KiroResult> Run(string folder, string prompt, IProgress<KiroPhase>? progress,
-        CancellationToken ct, string? exe = null)
-    {
-        if (!UsableFolder(folder)) return new(KiroState.Failed, "That folder isn’t there any more. Choose another one.");
-        if (string.IsNullOrWhiteSpace(prompt)) return new(KiroState.Failed, "Tell Kiro what to do first.");
-        exe ??= Quota.OnPath("kiro-cli");
-        if (exe is null) return new(KiroState.Failed, "kiro-cli isn’t installed or isn’t on PATH. Install it from kiro.dev/cli, then try again.");
-
-        var psi = Quota.Hidden(exe, Arguments.ToArray());
-        psi.WorkingDirectory = folder;
-        using var p = new Process { StartInfo = psi };
-        var stream = new KiroStream();
-        try { p.Start(); }
-        catch (Exception e) { return new(KiroState.Failed, $"kiro-cli couldn’t start: {e.Message}"); }
-        progress?.Report(KiroPhase.Starting);
-
-        // Registered only once the process exists; the kill runs straight from Cancel,
-        // so a Hover that is quitting doesn't leave Kiro working on its own.
-        using var stop = ct.Register(() => Kill(p));
-        var stderr = ReadCapped(p.StandardError, 32 * 1024);
-        try
-        {
-            // One trailing newline, as a prompt piped in from a shell would end.
-            await p.StandardInput.WriteAsync(prompt.Trim() + "\n");
-            p.StandardInput.Close();
-        }
-        catch (IOException) { /* it exited before reading; its exit code says why */ }
-
-        var stdout = Task.Run(async () =>
-        {
-            while (await p.StandardOutput.ReadLineAsync() is { } line)
-                if (stream.Feed(line) is { } phase) progress?.Report(phase);
-        });
-        await p.WaitForExitAsync(CancellationToken.None);
-        // A grandchild (an MCP server) can hold the pipes open after kiro-cli has
-        // gone. Its output is not wanted; the run is over when kiro-cli is.
-        await Task.WhenAny(Task.WhenAll(stdout, stderr), Task.Delay(TimeSpan.FromSeconds(3)));
-        var err = stderr.IsCompletedSuccessfully ? stderr.Result : "";
-        return stream.Outcome(p.ExitCode, ct.IsCancellationRequested, err);
-    }
-
-    private static void Kill(Process p)
-    {
-        try { if (!p.HasExited) p.Kill(entireProcessTree: true); }
-        catch { /* already gone */ }
-    }
-
-    private static async Task<string> ReadCapped(StreamReader r, int max)
-    {
-        var sb = new StringBuilder();
-        var buf = new char[4096];
-        int n;
-        while ((n = await r.ReadAsync(buf)) > 0)
-        {
-            sb.Append(buf, 0, n);
-            // Keep the end: that is where a CLI says why it gave up.
-            if (sb.Length > max) sb.Remove(0, sb.Length - max);
-        }
-        return sb.ToString();
     }
 }
 
@@ -115,12 +99,31 @@ public sealed class KiroStream
     private readonly Queue<string> _plain = new();
     private const int SaidLimit = 64 * 1024;
 
+    /// Who is talking, for the messages a result carries.
+    public string Name { get; init; } = "Kiro";
+
     public KiroPhase Phase { get; private set; } = KiroPhase.Starting;
     public string? FinalText { get; private set; }
     public string? StopReason { get; private set; }
     public string? Error { get; private set; }
     public bool Interrupted { get; private set; }
     public bool Finished { get; private set; }
+    /// Kiro's id for this conversation, for a reply to resume.
+    public string? SessionId { get; private set; }
+    /// How full Kiro's context is, 0 to 100, as it last said.
+    public double? Context { get; private set; }
+
+    private readonly List<KiroEvent> _events = new();
+    private readonly Dictionary<string, KiroStep> _steps = new();
+
+    /// The steps, context and session id seen since the last call.
+    public IReadOnlyList<KiroEvent> Drain()
+    {
+        if (_events.Count == 0) return Array.Empty<KiroEvent>();
+        var e = _events.ToArray();
+        _events.Clear();
+        return e;
+    }
 
     /// Everything Kiro has said so far, from its message chunks.
     public string Said => _said.ToString();
@@ -162,6 +165,11 @@ public sealed class KiroStream
             if (reason == "cancelled") Interrupted = true;
         }
         if (FindUpdate(root, 0) is { } update) Update(update);
+        if ((Str(body, "sessionId") ?? Str(root, "sessionId")) is { Length: > 0 } id && id != SessionId)
+        {
+            SessionId = id;
+            _events.Add(new KiroEvent(SessionId: id));
+        }
     }
 
     /// The event's name and its payload, from {"type": ..., "data": {...}} or the
@@ -194,8 +202,23 @@ public sealed class KiroStream
         switch (Str(u, "sessionUpdate"))
         {
             case "agent_message_chunk":
+                // Text after a tool call, or under a new message id, is a new message;
+                // the answer is the last one (Codex, for one, says a warning first).
+                var mid = Str(u, "messageId");
+                // Codex marks its answer (final_answer) apart from what it says first.
+                var final = u.TryGetProperty("_meta", out var cm) && cm.ValueKind == JsonValueKind.Object &&
+                            cm.TryGetProperty("codex", out var cx) && Str(cx, "phase") == "final_answer";
+                if (_afterTool || (mid is not null && _message is not null && mid != _message) || (final && !_final)) { _said.Clear(); _afterTool = false; }
+                _final |= final;
+                if (mid is not null) _message = mid;
                 if (u.TryGetProperty("content", out var c)) AppendText(c);
                 Phase = KiroPhase.Writing;
+                break;
+            case "usage_update":
+                // Codex: {"used": tokens, "size": the context window}.
+                if (u.TryGetProperty("used", out var used) && used.ValueKind == JsonValueKind.Number &&
+                    u.TryGetProperty("size", out var size) && size.ValueKind == JsonValueKind.Number && size.GetDouble() > 0)
+                    SetContext(used.GetDouble() * 100 / size.GetDouble());
                 break;
             case "agent_thought_chunk":
                 Phase = KiroPhase.Thinking;
@@ -207,8 +230,51 @@ public sealed class KiroStream
             case "tool_call_update":
             case "tool_call_chunk":
                 if (ToolPhase(Str(u, "kind"), Str(u, "title")) is { } phase) Phase = phase;
+                if (_said.Length > 0) _afterTool = true;
+                Step(u);
+                break;
+            case "session_info_update":
+                // {"_meta":{"kiro":{"contextUsage":{"usagePercentage":3.37}}}}
+                if (u.TryGetProperty("_meta", out var meta) && meta.ValueKind == JsonValueKind.Object &&
+                    meta.TryGetProperty("kiro", out var kiro) && kiro.ValueKind == JsonValueKind.Object &&
+                    kiro.TryGetProperty("contextUsage", out var usage) && usage.ValueKind == JsonValueKind.Object &&
+                    usage.TryGetProperty("usagePercentage", out var pct) && pct.ValueKind == JsonValueKind.Number)
+                    SetContext(pct.GetDouble());
                 break;
         }
+    }
+
+    private bool _afterTool;
+    private string? _message;
+    private bool _final;
+
+    private void SetContext(double pct)
+    {
+        var v = Math.Clamp(pct, 0, 100);
+        if (Context is not { } old || Math.Abs(old - v) >= 0.5) { Context = v; _events.Add(new KiroEvent(Context: v)); }
+    }
+
+    /// A tool call starts a step; its updates carry the status. The first one names it.
+    private void Step(JsonElement u)
+    {
+        if (Str(u, "toolCallId") is not { Length: > 0 } id) return;
+        var status = Str(u, "status") ?? "in_progress";
+        if (_steps.TryGetValue(id, out var known))
+        {
+            if (known.Status == status) return;
+            known = known with { Status = status, Title = Str(u, "title") ?? known.Title };
+        }
+        else
+        {
+            string? target = null;
+            if (u.TryGetProperty("locations", out var locs) && locs.ValueKind == JsonValueKind.Array)
+                foreach (var l in locs.EnumerateArray()) { target = Str(l, "path"); if (target is not null) break; }
+            if (target is null && u.TryGetProperty("rawInput", out var raw))
+                target = Str(raw, "command") ?? Str(raw, "path") ?? Str(raw, "pattern") ?? Str(raw, "query") ?? Str(raw, "url");
+            known = new KiroStep(id, Str(u, "kind") ?? "other", Str(u, "title") ?? "Working", target, status);
+        }
+        _steps[id] = known;
+        _events.Add(new KiroEvent(Step: known));
     }
 
     private void AppendText(JsonElement content)
@@ -248,10 +314,10 @@ public sealed class KiroStream
     {
         var said = Clip((FinalText ?? Said).Trim());
         if (cancelled || Interrupted)
-            return new(KiroState.Cancelled, said.Length > 0 ? said : "Stopped before Kiro finished.", exitCode);
-        if (StopReason == "refusal") return new(KiroState.Failed, "Kiro declined this request.", exitCode);
+            return new(KiroState.Cancelled, said.Length > 0 ? said : $"Stopped before {Name} finished.", exitCode);
+        if (StopReason == "refusal") return new(KiroState.Failed, $"{Name} declined this request.", exitCode);
         if (exitCode == 0 && Error is null)
-            return new(KiroState.Completed, said.Length > 0 ? said : "Done. Kiro didn’t leave a summary.", exitCode);
+            return new(KiroState.Completed, said.Length > 0 ? said : $"Done. {Name} didn’t leave a summary.", exitCode);
         return new(KiroState.Failed, Explain(exitCode, stderr), exitCode);
     }
 

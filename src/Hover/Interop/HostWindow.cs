@@ -70,27 +70,6 @@ public sealed class HostWindow : Window
         ApplyExStyle();
     }
 
-    /// Run an action with the window temporarily activatable — WS_EX_NOACTIVATE
-    /// cleared and the window given foreground. An OLE drag started from a
-    /// no-activate tool window is refused by Chromium targets (Chrome, Discord,
-    /// Electron), which show the no-drop cursor. Clearing the bit for the length of
-    /// the drag makes the window a drag source those targets accept, then the
-    /// previous state is put back.
-    public void WhileActivatable(Action body)
-    {
-        var previous = _acceptsKeys;
-        try
-        {
-            if (!previous) { _acceptsKeys = true; ApplyExStyle(); }
-            if (_hwnd != IntPtr.Zero) Win32.SetForegroundWindow(_hwnd);
-            body();
-        }
-        finally
-        {
-            if (_acceptsKeys != previous) { _acceptsKeys = previous; ApplyExStyle(); }
-        }
-    }
-
     public void Raise()
     {
         if (_hwnd == IntPtr.Zero) return;

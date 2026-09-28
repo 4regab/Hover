@@ -40,22 +40,4 @@ public static class Paths
     public static string Key => Path.Combine(Support, "note.key");
     public static string SettingsFile => Path.Combine(Support, "settings.json");
     public static string Log => Path.Combine(Support, "hover.log");
-
-    /// The Screenshots card's folder — plain PNGs under Pictures, so a picture
-    /// dragged out of the card is a real file any other app can take. An env override points it
-    /// elsewhere for tests. Made on first use.
-    public static string Shots
-    {
-        get
-        {
-            var overridden = Environment.GetEnvironmentVariable("HOVER_SHOTS_DIR");
-            var dir = string.IsNullOrWhiteSpace(overridden)
-                ? Path.Combine(
-                    Environment.GetFolderPath(Environment.SpecialFolder.MyPictures),
-                    "Hover Shots")
-                : Path.GetFullPath(overridden);
-            Directory.CreateDirectory(dir);
-            return dir;
-        }
-    }
 }
