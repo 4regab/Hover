@@ -1,6 +1,6 @@
-//! The Windows side of the notch (Interop/HostWindow.cs, Screens.cs, HotKeys.cs), plus
-//! what the self-test needs to watch it from outside: screen capture, synthetic input,
-//! and a helper window in another process standing in for "the app underneath".
+//! Windows: the notch window (Interop/HostWindow.cs, Screens.cs), the shortcut
+//! (HotKeys.cs), the tray icon (Services/TrayIcon.cs), the resume and unlock that make
+//! the next opening say hello, and the file pickers. notch-proto's code, grown.
 
 use std::sync::atomic::{AtomicIsize, Ordering};
 
@@ -9,22 +9,18 @@ use windows::core::{w, BOOL, PCWSTR};
 use windows::Win32::Foundation::{COLORREF, HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
 use windows::Win32::Graphics::Dwm::{DwmSetWindowAttribute, DWMWA_TRANSITIONS_FORCEDISABLED};
 use windows::Win32::Graphics::Gdi::*;
-use windows::Win32::System::LibraryLoader::GetModuleHandleW;
-use windows::Win32::System::Threading::{GetCurrentProcess, GetProcessTimes};
 use windows::Win32::UI::HiDpi::{GetDpiForMonitor, MDT_EFFECTIVE_DPI};
 use windows::Win32::UI::Input::KeyboardAndMouse::*;
 use windows::Win32::UI::Shell::{DefSubclassProc, SetWindowSubclass};
 use windows::Win32::UI::WindowsAndMessaging::*;
 
-pub use windows::Win32::Foundation::HWND as Hwnd;
 
 /// How the empty part of the window lets clicks through.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HitMode {
-    /// WS_EX_LAYERED | WS_EX_TRANSPARENT while the pointer is off the shape (the default).
+    /// WS_EX_LAYERED | WS_EX_TRANSPARENT while the pointer is off the shape (notch-proto
+    /// also tried WS_EX_TRANSPARENT alone; Windows gates both, RUN-ON-WINDOWS).
     Layered,
-    /// WS_EX_TRANSPARENT alone (for comparison in the self-test).
-    Transparent,
 }
 
 pub fn hwnd_of(window: &slint::Window) -> Option<HWND> {
@@ -34,10 +30,6 @@ pub fn hwnd_of(window: &slint::Window) -> Option<HWND> {
         RawWindowHandle::Win32(h) => Some(HWND(h.hwnd.get() as *mut _)),
         _ => None,
     })?
-}
-
-pub fn ex_style(h: HWND) -> isize {
-    unsafe { GetWindowLongPtrW(h, GWL_EXSTYLE) }
 }
 
 /// WS_EX_TOOLWINDOW always; WS_EX_NOACTIVATE unless the office takes keys; the
@@ -78,12 +70,6 @@ pub fn raise(h: HWND) {
     unsafe {
         let _ = SetWindowPos(h, Some(HWND_TOPMOST), 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
     }
-}
-
-pub fn window_rect(h: HWND) -> Rect {
-    let mut r = RECT::default();
-    unsafe { let _ = GetWindowRect(h, &mut r); }
-    Rect { left: r.left, top: r.top, right: r.right, bottom: r.bottom }
 }
 
 #[derive(Clone, Debug)]
@@ -154,188 +140,237 @@ pub fn is_ours(h: HWND, ours: HWND) -> bool {
     h == ours || unsafe { GetAncestor(h, GA_ROOTOWNER) } == ours
 }
 
-pub fn window_from_point(x: i32, y: i32) -> HWND {
-    unsafe { WindowFromPoint(POINT { x, y }) }
-}
 
-// ---- messages the notch needs that winit doesn't pass on -----------------------------
+// MARK: Messages winit doesn't pass on
 
 pub const HOTKEY_ID: i32 = 1;
+const WM_TRAY: u32 = WM_APP + 1;
+const TRAY_ID: u32 = 1;
 
 #[derive(Clone, Copy, Debug)]
 pub enum Msg {
     Hotkey,
     /// WA_INACTIVE: another window took the foreground.
     Deactivated,
+    /// A resume or an unlock: the next opening says hello (NotchManager.OnPower, OnSession).
+    Greet,
+    TrayLeft,
+    TrayMenu(usize),
 }
 
 thread_local! {
     static QUEUE: std::cell::RefCell<Vec<Msg>> = const { std::cell::RefCell::new(Vec::new()) };
 }
 
-pub fn take_messages() -> Vec<Msg> {
-    QUEUE.with(|q| std::mem::take(&mut *q.borrow_mut()))
-}
+pub fn take_messages() -> Vec<Msg> { QUEUE.with(|q| std::mem::take(&mut *q.borrow_mut())) }
+
+fn push(m: Msg) { QUEUE.with(|q| q.borrow_mut().push(m)); }
+
+static NOTCH: AtomicIsize = AtomicIsize::new(0);
+
+pub fn set_notch(h: HWND) { NOTCH.store(h.0 as isize, Ordering::SeqCst); }
+fn notch() -> Option<HWND> { let v = NOTCH.load(Ordering::SeqCst); (v != 0).then_some(HWND(v as *mut _)) }
 
 unsafe extern "system" fn subclass(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM, _id: usize, _data: usize) -> LRESULT {
     match msg {
-        WM_HOTKEY if wp.0 as i32 == HOTKEY_ID => {
-            QUEUE.with(|q| q.borrow_mut().push(Msg::Hotkey));
-            WAKE.with(|w| if let Some(f) = &*w.borrow() { f() });
-            return LRESULT(0);
-        }
-        WM_ACTIVATE if (wp.0 & 0xFFFF) as u32 == WA_INACTIVE => {
-            QUEUE.with(|q| q.borrow_mut().push(Msg::Deactivated));
-            WAKE.with(|w| if let Some(f) = &*w.borrow() { f() });
-        }
+        WM_HOTKEY if wp.0 as i32 == HOTKEY_ID => { push(Msg::Hotkey); return LRESULT(0); }
+        WM_ACTIVATE if (wp.0 & 0xFFFF) as u32 == WA_INACTIVE => push(Msg::Deactivated),
+        WM_POWERBROADCAST if wp.0 as u32 == PBT_APMRESUMEAUTOMATIC => push(Msg::Greet),
+        WM_WTSSESSION_CHANGE if wp.0 as u32 == WTS_SESSION_UNLOCK => push(Msg::Greet),
+        WM_TRAY => match (lp.0 as u32) & 0xFFFF {
+            WM_LBUTTONUP => push(Msg::TrayLeft),
+            WM_RBUTTONUP | WM_CONTEXTMENU => { if let Some(i) = unsafe { tray_menu(h) } { push(Msg::TrayMenu(i)); } }
+            _ => {}
+        },
         _ => {}
     }
     unsafe { DefSubclassProc(h, msg, wp, lp) }
 }
 
-thread_local! {
-    static WAKE: std::cell::RefCell<Option<Box<dyn Fn()>>> = const { std::cell::RefCell::new(None) };
-}
-
-/// Alt+N (the default shortcut), and window activation, delivered to `wake`.
-pub fn hook(h: HWND, wake: impl Fn() + 'static) -> bool {
-    WAKE.with(|w| *w.borrow_mut() = Some(Box::new(wake)));
+/// The notch window's messages: the shortcut, activation, resume and unlock, the tray.
+pub fn hook(h: HWND, _wake: impl Fn() + 'static) {
+    use windows::Win32::System::RemoteDesktop::{WTSRegisterSessionNotification, NOTIFY_FOR_THIS_SESSION};
     unsafe {
         let _ = SetWindowSubclass(h, Some(subclass), 1, 0);
-        RegisterHotKey(Some(h), HOTKEY_ID, MOD_ALT | MOD_NOREPEAT, 'N' as u32).is_ok()
+        let _ = WTSRegisterSessionNotification(h, NOTIFY_FOR_THIS_SESSION);
     }
 }
 
-pub fn cpu_ms() -> f64 {
-    let (mut c, mut e, mut k, mut u) = Default::default();
-    unsafe { let _ = GetProcessTimes(GetCurrentProcess(), &mut c, &mut e, &mut k, &mut u); }
-    let t = |f: windows::Win32::Foundation::FILETIME| ((f.dwHighDateTime as u64) << 32 | f.dwLowDateTime as u64) as f64 / 10_000.0;
-    t(k) + t(u)
+// MARK: The shortcut
+
+/// HotKeys.Register: MOD_NOREPEAT and the chord's modifiers; false when Windows
+/// refuses (reserved, or another app has it), logged with the error as the C# does.
+pub fn register_hotkey(sc: &hover_core::shortcut::Shortcut) -> bool {
+    use hover_core::shortcut::Modifiers;
+    let Some(h) = notch() else { return false };
+    if !sc.is_set() { return true; }
+    let Some(vk) = hover_app::keys::vk(sc.key) else {
+        hover_core::log::line(&format!("hotkey {} has no Windows virtual-key mapping", sc.label()));
+        return false;
+    };
+    let mut mods = MOD_NOREPEAT;
+    if sc.modifiers.has(Modifiers::CONTROL) { mods |= MOD_CONTROL; }
+    if sc.modifiers.has(Modifiers::ALT) { mods |= MOD_ALT; }
+    if sc.modifiers.has(Modifiers::SHIFT) { mods |= MOD_SHIFT; }
+    if sc.modifiers.has(Modifiers::WINDOWS) { mods |= MOD_WIN; }
+    match unsafe { RegisterHotKey(Some(h), HOTKEY_ID, mods, vk as u32) } {
+        Ok(()) => true,
+        Err(e) => { hover_core::log::line(&format!("hotkey {} could not be registered (Win32 error {})", sc.label(), e.code().0 & 0xFFFF)); false }
+    }
 }
 
-pub fn private_bytes() -> u64 {
-    use windows::Win32::System::ProcessStatus::{GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS_EX};
-    let mut pmc = PROCESS_MEMORY_COUNTERS_EX::default();
+pub fn clear_hotkeys() {
+    if let Some(h) = notch() { unsafe { let _ = UnregisterHotKey(Some(h), HOTKEY_ID); } }
+}
+
+// MARK: The tray icon
+
+fn wide(s: &str, n: usize) -> Vec<u16> { let mut v: Vec<u16> = s.encode_utf16().take(n - 1).collect(); v.resize(n, 0); v }
+
+fn tray_data(h: HWND) -> windows::Win32::UI::Shell::NOTIFYICONDATAW {
+    let mut d = windows::Win32::UI::Shell::NOTIFYICONDATAW { cbSize: std::mem::size_of::<windows::Win32::UI::Shell::NOTIFYICONDATAW>() as u32, hWnd: h, uID: TRAY_ID, ..Default::default() };
+    d.uCallbackMessage = WM_TRAY;
+    d
+}
+
+/// The app's icon at the size the tray draws it (hover.ico has a frame for each).
+fn app_icon() -> HICON {
     unsafe {
-        let _ = GetProcessMemoryInfo(GetCurrentProcess(), &mut pmc as *mut _ as *mut _, std::mem::size_of::<PROCESS_MEMORY_COUNTERS_EX>() as u32);
-    }
-    pmc.PrivateUsage as u64
-}
-
-// ---- what the self-test uses to look from outside ------------------------------------------
-
-/// The composed desktop in a rectangle (device px), as RGB rows, through the screen DC
-/// (DWM gives it with every layered and DirectComposition window drawn in).
-pub fn capture(r: Rect) -> (u32, u32, Vec<u8>) {
-    let (w, h) = (r.width().max(1), r.height().max(1));
-    unsafe {
-        let screen = GetDC(None);
-        let mem = CreateCompatibleDC(Some(screen));
-        let mut bits: *mut core::ffi::c_void = std::ptr::null_mut();
-        let bi = BITMAPINFO {
-            bmiHeader: BITMAPINFOHEADER { biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32, biWidth: w, biHeight: -h, biPlanes: 1, biBitCount: 32, biCompression: BI_RGB.0, ..Default::default() },
-            ..Default::default()
-        };
-        let bmp = CreateDIBSection(Some(mem), &bi, DIB_RGB_COLORS, &mut bits, None, 0).unwrap_or_default();
-        let old = SelectObject(mem, bmp.into());
-        let _ = BitBlt(mem, 0, 0, w, h, Some(screen), r.left, r.top, SRCCOPY | CAPTUREBLT);
-        let raw = std::slice::from_raw_parts(bits as *const u8, (w * h * 4) as usize);
-        let rgb: Vec<u8> = raw.chunks(4).flat_map(|p| [p[2], p[1], p[0]]).collect();
-        SelectObject(mem, old);
-        let _ = DeleteObject(bmp.into());
-        let _ = DeleteDC(mem);
-        ReleaseDC(None, screen);
-        (w as u32, h as u32, rgb)
-    }
-}
-
-fn send(inputs: &[INPUT]) {
-    unsafe { SendInput(inputs, std::mem::size_of::<INPUT>() as i32); }
-}
-
-pub fn move_to(x: i32, y: i32) {
-    unsafe { let _ = SetCursorPos(x, y); }
-}
-
-pub fn click_at(x: i32, y: i32) {
-    move_to(x, y);
-    std::thread::sleep(std::time::Duration::from_millis(30));
-    let m = |f: MOUSE_EVENT_FLAGS| INPUT { r#type: INPUT_MOUSE, Anonymous: INPUT_0 { mi: MOUSEINPUT { dwFlags: f, ..Default::default() } } };
-    send(&[m(MOUSEEVENTF_LEFTDOWN), m(MOUSEEVENTF_LEFTUP)]);
-}
-
-fn key(vk: VIRTUAL_KEY, up: bool) -> INPUT {
-    INPUT { r#type: INPUT_KEYBOARD, Anonymous: INPUT_0 { ki: KEYBDINPUT { wVk: vk, dwFlags: if up { KEYEVENTF_KEYUP } else { KEYBD_EVENT_FLAGS(0) }, ..Default::default() } } }
-}
-
-pub fn alt_n() {
-    send(&[key(VK_MENU, false), key(VIRTUAL_KEY('N' as u16), false), key(VIRTUAL_KEY('N' as u16), true), key(VK_MENU, true)]);
-}
-
-pub fn escape() {
-    send(&[key(VK_ESCAPE, false), key(VK_ESCAPE, true)]);
-}
-
-pub fn type_text(s: &str) {
-    let mut v = vec![];
-    for u in s.encode_utf16() {
-        for up in [false, true] {
-            v.push(INPUT { r#type: INPUT_KEYBOARD, Anonymous: INPUT_0 { ki: KEYBDINPUT { wScan: u, dwFlags: KEYEVENTF_UNICODE | if up { KEYEVENTF_KEYUP } else { KEYBD_EVENT_FLAGS(0) }, ..Default::default() } } });
-        }
-    }
-    send(&v);
-}
-
-// ---- the helper: "the app underneath", in its own process ------------------------------------
-
-static CLICKS: AtomicIsize = AtomicIsize::new(0);
-
-unsafe extern "system" fn helper_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
-    match msg {
-        WM_LBUTTONDOWN => {
-            let n = CLICKS.fetch_add(1, Ordering::SeqCst) + 1;
-            let (x, y) = ((lp.0 & 0xFFFF) as i16, ((lp.0 >> 16) & 0xFFFF) as i16);
-            println!("click {n} {x} {y}");
-            LRESULT(0)
-        }
-        WM_ACTIVATE => {
-            println!("active {}", (wp.0 & 0xFFFF) != 0);
-            unsafe { DefWindowProcW(h, msg, wp, lp) }
-        }
-        WM_ERASEBKGND => {
-            let mut r = RECT::default();
-            unsafe {
-                let _ = GetClientRect(h, &mut r);
-                let b = CreateSolidBrush(COLORREF(0x00FF00FF));
-                FillRect(HDC(wp.0 as *mut _), &r, b);
-                let _ = DeleteObject(b.into());
+        let bytes: &[u8] = include_bytes!("../assets/hover.ico");
+        let size = GetSystemMetrics(SM_CXSMICON);
+        let off = LookupIconIdFromDirectoryEx(bytes.as_ptr(), true, size, size, LR_DEFAULTCOLOR);
+        if off <= 0 { return LoadIconW(None, IDI_APPLICATION).unwrap_or_default(); }
+        // The directory entry's offset and length, then the image itself.
+        let dir = &bytes[6..];
+        let count = u16::from_le_bytes([bytes[4], bytes[5]]) as usize;
+        for i in 0..count {
+            let e = &dir[i * 16..i * 16 + 16];
+            let (len, at) = (u32::from_le_bytes([e[8], e[9], e[10], e[11]]) as usize, u32::from_le_bytes([e[12], e[13], e[14], e[15]]) as usize);
+            if at as i32 == off {
+                return CreateIconFromResourceEx(&bytes[at..at + len], true, 0x0003_0000, size, size, LR_DEFAULTCOLOR).unwrap_or_default();
             }
-            LRESULT(1)
         }
-        WM_DESTROY => { unsafe { PostQuitMessage(0) }; LRESULT(0) }
-        _ => unsafe { DefWindowProcW(h, msg, wp, lp) },
+        LoadIconW(None, IDI_APPLICATION).unwrap_or_default()
     }
 }
 
-/// A plain magenta window at r, activated, printing each click to stdout.
-pub fn run_helper(r: Rect) {
-    use std::io::Write;
-    unsafe {
-        let inst = GetModuleHandleW(None).unwrap_or_default();
-        let wc = WNDCLASSW { lpfnWndProc: Some(helper_proc), hInstance: inst.into(), lpszClassName: w!("HoverNotchProtoHelper"), hCursor: LoadCursorW(None, IDC_ARROW).unwrap_or_default(), ..Default::default() };
-        RegisterClassW(&wc);
-        let h = CreateWindowExW(WINDOW_EX_STYLE(0), w!("HoverNotchProtoHelper"), w!("Notch test: the app underneath"), WS_POPUP | WS_VISIBLE,
-            r.left, r.top, r.width(), r.height(), None, None, Some(inst.into()), None).unwrap();
-        let _ = ShowWindow(h, SW_SHOW);
-        let _ = SetForegroundWindow(h);
-        println!("hwnd {}", h.0 as isize);
-        let _ = std::io::stdout().flush();
-        let mut m = MSG::default();
-        while GetMessageW(&mut m, None, 0, 0).as_bool() {
-            let _ = TranslateMessage(&m);
-            DispatchMessageW(&m);
-            let _ = std::io::stdout().flush();
+/// Shell_NotifyIcon: the icon, "Hover" as its tip, messages to the notch window.
+pub fn tray_start() {
+    use windows::Win32::UI::Shell::{Shell_NotifyIconW, NIF_ICON, NIF_MESSAGE, NIF_TIP, NIM_ADD};
+    let Some(h) = notch() else { return };
+    let mut d = tray_data(h);
+    d.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
+    d.hIcon = app_icon();
+    d.szTip.copy_from_slice(&wide("Hover", 128));
+    unsafe { let _ = Shell_NotifyIconW(NIM_ADD, &d); }
+}
+
+pub fn tray_stop() {
+    use windows::Win32::UI::Shell::{Shell_NotifyIconW, NIM_DELETE};
+    if let Some(h) = notch() { unsafe { let _ = Shell_NotifyIconW(NIM_DELETE, &tray_data(h)); } }
+}
+
+/// TrayIcon.Notify: a balloon of six seconds.
+pub fn tray_notify(title: &str, text: &str) {
+    use windows::Win32::UI::Shell::{Shell_NotifyIconW, NIF_INFO, NIIF_NONE, NIM_MODIFY};
+    let Some(h) = notch() else { return };
+    let mut d = tray_data(h);
+    d.uFlags = NIF_INFO;
+    d.szInfoTitle.copy_from_slice(&wide(title, 64));
+    d.szInfo.copy_from_slice(&wide(text, 256));
+    d.dwInfoFlags = NIIF_NONE;
+    d.Anonymous.uTimeout = 6000;
+    unsafe { let _ = Shell_NotifyIconW(NIM_MODIFY, &d); }
+}
+
+thread_local! {
+    static MENU: std::cell::RefCell<hover_app::rest::Menu> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+pub fn set_tray_menu(m: hover_app::rest::Menu) { MENU.with(|x| *x.borrow_mut() = m); }
+
+/// The menu at the pointer, as the C# opened its ContextMenu there; the item picked.
+unsafe fn tray_menu(h: HWND) -> Option<usize> {
+    let menu = unsafe { CreatePopupMenu() }.ok()?;
+    MENU.with(|m| {
+        for (i, item) in m.borrow().iter().enumerate() {
+            match item {
+                None => unsafe { let _ = AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null()); },
+                Some((label, check)) => {
+                    let w: Vec<u16> = label.replace('\u{2026}', "...").encode_utf16().chain(Some(0)).collect();
+                    let flags = MF_STRING | if *check == Some(true) { MF_CHECKED } else { MF_UNCHECKED };
+                    unsafe { let _ = AppendMenuW(menu, flags, i + 1, PCWSTR(w.as_ptr())); }
+                }
+            }
         }
+    });
+    let mut p = POINT::default();
+    let picked = unsafe {
+        let _ = GetCursorPos(&mut p);
+        // The menu closes when clicked away only if the window is in the foreground.
+        let _ = SetForegroundWindow(h);
+        let r = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON, p.x, p.y, Some(0), h, None);
+        let _ = DestroyMenu(menu);
+        r.0
+    };
+    (picked > 0).then(|| picked as usize - 1)
+}
+
+// MARK: Plat
+
+#[derive(Default)]
+pub struct Plat { previous: std::cell::Cell<isize>, through: std::cell::Cell<bool>, keys: std::cell::Cell<bool> }
+
+impl crate::notch::Plat for Plat {
+    fn primary(&self) -> (Rect, f64) { let m = primary(); (m.work, m.scale) }
+    fn signature(&self) -> String { monitors().iter().map(|m| format!("{}{}{:?}{:?}{}", m.device, m.primary, m.bounds, m.work, m.scale)).collect() }
+    fn cursor(&self) -> (i32, i32) { cursor() }
+    fn buttons(&self) -> bool { buttons_down() }
+    fn place(&self, r: Rect) { if let Some(h) = notch() { place(h, r); } }
+    fn raise(&self) { if let Some(h) = notch() { raise(h); } }
+    fn set_accepts_keys(&self, on: bool) {
+        self.keys.set(on);
+        if let Some(h) = notch() { apply_styles(h, on, self.through.get(), HitMode::Layered); }
     }
-    let _ = PCWSTR::null();
+    fn remember_foreground(&self) { self.previous.set(foreground().0 as isize); }
+    fn restore_foreground(&self) {
+        let (Some(h), p) = (notch(), HWND(self.previous.get() as *mut _)) else { return };
+        if foreground() == h && !p.is_invalid() && is_window(p) { set_foreground(p); }
+    }
+    fn focus(&self) { if let Some(h) = notch() { set_foreground(h); } }
+    /// The window takes the pointer only over the shape: WS_EX_TRANSPARENT otherwise.
+    fn set_hit(&self, over: bool, _s: (f64, f64, f64, f64), _scale: f64) {
+        let through = !over;
+        if through == self.through.get() { return; }
+        self.through.set(through);
+        if let Some(h) = notch() { apply_styles(h, self.keys.get(), through, HitMode::Layered); }
+    }
+    fn foreground_is_ours(&self) -> bool { notch().is_some_and(|h| is_ours(foreground(), h)) }
+}
+
+// MARK: Pickers
+
+/// The folder picker (KiroPage.ChooseFolder) and the theme file dialog
+/// (Microsoft.Win32.OpenFileDialog), both the system's IFileOpenDialog.
+pub fn pick(folder: bool) -> Option<String> {
+    use windows::Win32::System::Com::{CoCreateInstance, CoInitializeEx, CoTaskMemFree, CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED};
+    use windows::Win32::UI::Shell::{FileOpenDialog, IFileOpenDialog, FOS_FORCEFILESYSTEM, FOS_PICKFOLDERS, SIGDN_FILESYSPATH};
+    use windows::Win32::UI::Shell::Common::COMDLG_FILTERSPEC;
+    unsafe {
+        let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
+        let d: IFileOpenDialog = CoCreateInstance(&FileOpenDialog, None, CLSCTX_INPROC_SERVER).ok()?;
+        let opts = d.GetOptions().ok()?;
+        if folder {
+            let _ = d.SetOptions(opts | FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM);
+        } else {
+            let specs = [COMDLG_FILTERSPEC { pszName: w!("VS Code colour theme (*.json)"), pszSpec: w!("*.json") }, COMDLG_FILTERSPEC { pszName: w!("All files"), pszSpec: w!("*.*") }];
+            let _ = d.SetFileTypes(&specs);
+        }
+        d.Show(notch()).ok()?;
+        let item = d.GetResult().ok()?;
+        let p = item.GetDisplayName(SIGDN_FILESYSPATH).ok()?;
+        let s = p.to_string().ok();
+        CoTaskMemFree(Some(p.0 as *const _));
+        s
+    }
 }

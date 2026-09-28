@@ -36,6 +36,11 @@ use std::time::{Duration, Instant};
 use ui::*;
 use view::{publish, show_page, wire_page, Pane};
 
+/// Takes the shortcut (letting go of the last): false when the system refuses it.
+type HotkeyFn = Box<dyn Fn(&hover_core::shortcut::Shortcut) -> bool>;
+type NotifyFn = Box<dyn Fn(&str, &str)>;
+type MenuFn = Box<dyn Fn(hover_app::rest::Menu)>;
+
 pub struct App {
     pub hover: Arc<Hover>,
     pub notch: NotchWindow,
@@ -61,12 +66,15 @@ pub struct App {
     had_focus: Cell<bool>,
     reported: RefCell<Option<String>>,
     warn: RefCell<Option<WarningWindow>>,
-    pub hotkey: RefCell<Option<Box<dyn Fn(&hover_core::shortcut::Shortcut) -> bool>>>,
-    pub tray_menu: RefCell<Option<Box<dyn Fn(hover_app::rest::Menu)>>>,
-    pub notify: RefCell<Option<Box<dyn Fn(&str, &str)>>>,
+    pub hotkey: RefCell<Option<HotkeyFn>>,
+    pub tray_menu: RefCell<Option<MenuFn>>,
+    pub notify: RefCell<Option<NotifyFn>>,
     /// Headless: nothing is grabbed, placed or announced outside the process.
     pub headless: bool,
 }
+
+/// The notch's frames drawn (the self-test's idle check).
+pub static FRAMES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 thread_local! {
     pub static APP: RefCell<Option<Rc<App>>> = const { RefCell::new(None) };
@@ -149,6 +157,7 @@ impl App {
     pub fn expand(self: &Rc<Self>, peek: bool, focus: bool) {
         let was_rest = self.n.borrow().hover.state == State::Rest;
         notch::expand(&mut self.n.borrow_mut(), peek, focus);
+        if focus { self.notch.invoke_focus_view(); }
         if was_rest {
             self.notch.set_greet(self.n.borrow().greet_from.is_some());
             self.had_focus.set(false);
@@ -325,6 +334,7 @@ impl App {
 
     pub fn open_dashboard(self: &Rc<Self>, settings: bool) {
         if self.dash.borrow().is_none() {
+            hover_core::log::line("app window opened");
             let d = DashboardWindow::new().expect("the app window");
             wire_page!(d, self, 1);
             let a = self.clone();
@@ -456,7 +466,6 @@ fn minimized(w: &slint::Window) -> bool {
 
 impl view::Host for App {
     fn hover(&self) -> &Hover { &self.hover }
-    fn palette(&self) -> Palette { self.palette.borrow().clone() }
     fn system_dark(&self) -> bool { self.look.get().dark }
     fn settings_changed(&self) {
         APP.with(|a| if let Some(a) = a.borrow().clone() {
@@ -531,12 +540,19 @@ fn main() {
     hover_core::platform::watch_look(|| ui_do(|a| a.look_changed(hover_core::platform::look())));
     hover_core::log::line("started");
     #[cfg(not(windows))]
-    if let Some(dir) = selftest { selftest::start(app.clone(), std::path::PathBuf::from(dir)); }
+    if let Some(dir) = selftest {
+        let a = app.clone();
+        Timer::single_shot(Duration::from_millis(500), move || selftest::start(a, std::path::PathBuf::from(dir)));
+    }
     let _ = slint::run_event_loop_until_quit();
+    hover_core::log::line("quitting");
     // Stop the agents before anything is torn down; then the history and the settings.
     app.hover.shutdown();
     app.beats.toggle(false);
+    #[cfg(windows)]
+    win::tray_stop();
     APP.with(|a| a.borrow_mut().take());
+    hover_core::log::line("quit: tools shut down, history and settings flushed");
 }
 
 /// One renderer for the process: femtovg on wgpu through DirectComposition on Windows
@@ -556,8 +572,10 @@ fn select_backend() {
     let sel = slint::BackendSelector::new().backend_name("winit".into())
         .renderer_name(std::env::var("HOVER_RENDERER").unwrap_or_else(|_| "femtovg".into()));
     let sel = sel.with_winit_window_attributes_hook(|a: winit::window::WindowAttributes| {
-        // Only the notch: the app window and the warning are ordinary windows.
-        if a.title != "Hover notch" { return a; }
+        // Only the notch, which is the first window made: the app window and the warning
+        // are ordinary ones. (The title isn't set yet when winit asks.)
+        static FIRST: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+        if !FIRST.swap(false, std::sync::atomic::Ordering::SeqCst) { return a; }
         let a = a.with_transparent(true).with_decorations(false).with_active(false).with_resizable(false)
             .with_window_level(winit::window::WindowLevel::AlwaysOnTop).with_position(winit::dpi::PhysicalPosition::new(-32000, -32000));
         #[cfg(windows)]
@@ -586,10 +604,23 @@ fn platform_start(hover: Arc<Hover>, look: Look, _selftest: bool) -> Rc<App> {
     let x = x11::X::new(conn.clone(), root, size, Box::new(move || sc.get()));
     let win_cell = x.win.clone();
     let app = App::new(hover, Box::new(x), look, false);
+    let _ = app.notch.window().set_rendering_notifier(|s, _| {
+        if matches!(s, slint::RenderingState::AfterRendering) { FRAMES.fetch_add(1, std::sync::atomic::Ordering::Relaxed); }
+    });
     let _ = app.notch.show();
-    scale_cell.set(app.notch.window().scale_factor() as f64);
-    if let Some(w) = x11::window_of(app.notch.window()) { win_cell.set(w); }
-    notch::layout(&app.notch, &mut app.n.borrow_mut(), view::argb(app.palette.borrow().panel));
+    // winit makes its windows once the event loop runs: place the notch from there.
+    let a = app.clone();
+    let find = Rc::new(Timer::default());
+    let f2 = find.clone();
+    find.start(TimerMode::Repeated, Duration::from_millis(10), move || {
+        let Some(w) = x11::window_of(a.notch.window()) else { return };
+        f2.stop();
+        scale_cell.set(a.notch.window().scale_factor() as f64);
+        win_cell.set(w);
+        notch::layout(&a.notch, &mut a.n.borrow_mut(), view::argb(a.palette.borrow().panel));
+        a.update_rest();
+    });
+    std::mem::forget(find);
     // The shortcut, rebindable; a refusal is warned about once per chord.
     let grab = x11::Grab::new(conn, root);
     grab.listen(|| ui_do(|a| a.toggle()));
@@ -627,7 +658,9 @@ fn platform_start(hover: Arc<Hover>, look: Look, _selftest: bool) -> Rc<App> {
     notch::layout(&app.notch, &mut app.n.borrow_mut(), view::argb(app.palette.borrow().panel));
     *app.hotkey.borrow_mut() = Some(Box::new(|sc| { win::clear_hotkeys(); win::register_hotkey(sc) }));
     app.register_hotkeys();
+    win::set_tray_menu(app.menu());
     win::tray_start();
+    *app.tray_menu.borrow_mut() = Some(Box::new(win::set_tray_menu));
     *app.notify.borrow_mut() = Some(Box::new(|t, b| win::tray_notify(t, b)));
     app
 }

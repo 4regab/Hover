@@ -54,6 +54,8 @@ export component NotchWindow inherits Window {
     callback shape-clicked();
     callback back();
     callback fold();
+    // The shortcut opened the notch: the keyboard goes to what is showing (FocusOffice).
+    public function focus-view() { keys.focus(); }
 
     title: "Hover notch";
     no-frame: true;
@@ -207,7 +209,7 @@ export component NotchWindow inherits Window {
         border-bottom-left-radius: root.shape-r;
         border-bottom-right-radius: root.shape-r;
         visible: root.view-visible;
-        FocusScope {
+        keys := FocusScope {
             key-pressed(e) => {
                 if (e.text == Key.Escape) { root.escape(); return accept; }
                 reject

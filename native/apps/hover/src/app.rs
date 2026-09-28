@@ -15,6 +15,8 @@ use std::sync::{Arc, Mutex};
 
 type Hook = Arc<dyn Fn() + Send + Sync>;
 type Notify = Arc<dyn Fn(&str, &str) + Send + Sync>;
+/// A quota reader by notch id (tests hand in a stand-in).
+pub type Reader = Arc<dyn Fn(&str) -> hover_quota::Reading + Send + Sync>;
 
 #[derive(Default)]
 struct Hooks {
@@ -56,7 +58,7 @@ impl Hover {
 
     /// With the parts given (tests hand in stand-in hosts and a reader).
     pub fn with(settings: Arc<Settings>, history: Option<Arc<AgentHistory>>, hosts: Vec<AcpHost>, run: Option<RunTask>,
-                reader: Option<Arc<dyn Fn(&str) -> hover_quota::Reading + Send + Sync>>) -> Arc<Hover> {
+                reader: Option<Reader>) -> Arc<Hover> {
         let hooks: Arc<Mutex<Hooks>> = Default::default();
         for h in &hosts {
             // What the tool offers (models, efforts) fills in its settings page.
@@ -178,12 +180,12 @@ mod tests {
         let folder = dir.to_string_lossy().into_owned();
         h.sessions.start(AgentTool::Kiro, &folder, "Tidy the imports", vec![]).unwrap();
         assert_eq!(h.working_text().as_deref(), Some("Kiro · Waking up…"));
-        wait(|| h.unseen().0 == 1);
+        wait(|| said.lock().unwrap().len() == 1);
         assert_eq!(said.lock().unwrap()[0], ("Kiro is done: Tidy the imports".into(), "Fixed it".into()));
         assert_eq!(h.unseen(), (1, Some("Kiro")));
         assert_eq!(h.working_text(), None);
         h.sessions.start(AgentTool::Codex, &folder, "Second", vec![]).unwrap();
-        wait(|| h.unseen().0 == 2);
+        wait(|| said.lock().unwrap().len() == 2);
         // Two different tools: no one name.
         assert_eq!(h.unseen(), (2, None));
         h.set_watching(true);

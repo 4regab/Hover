@@ -53,7 +53,7 @@ impl X {
     pub fn primary_bounds(&self) -> Rect {
         let c = &*self.conn;
         let whole = Rect { left: 0, top: 0, right: self.screen.0 as i32, bottom: self.screen.1 as i32 };
-        let Ok(p) = c.randr_get_output_primary(self.root).and_then(|r| Ok(r.reply())) else { return whole };
+        let Ok(p) = c.randr_get_output_primary(self.root).map(|r| r.reply()) else { return whole };
         let Ok(p) = p else { return whole };
         let out = if p.output != 0 { Some(p.output) } else {
             // No primary set: the first connected output with a CRTC.
@@ -149,30 +149,15 @@ impl Plat for X {
         let rects: Vec<xproto::Rectangle> = if r.2 > 0 && r.3 > 0 {
             vec![xproto::Rectangle { x: r.0 as i16, y: r.1 as i16, width: r.2 as u16, height: r.3 as u16 }]
         } else { vec![] };
-        let _ = self.conn.shape_rectangles(shape::SO::SET, shape::SK::INPUT, xproto::ClipOrdering::UNSORTED, w, 0, 0, &rects);
-        let _ = self.conn.flush();
+        let r = self.conn.shape_rectangles(shape::SO::SET, shape::SK::INPUT, xproto::ClipOrdering::UNSORTED, w, 0, 0, &rects);
+        if let Err(e) = r.map_err(|e| e.to_string()).and_then(|c| c.check().map_err(|e| format!("{e:?}"))) {
+            hover_core::log::line(&format!("notch input shape: {e}"));
+        }
     }
 
     fn foreground_is_ours(&self) -> bool {
         let w = self.win.get();
         self.conn.get_input_focus().ok().and_then(|r| r.reply().ok()).is_some_and(|f| f.focus == w && w != 0)
-    }
-}
-
-impl X {
-    /// The window's input shape as the server holds it (for the self-test).
-    pub fn input_rects(&self) -> Vec<(i16, i16, u16, u16)> {
-        let w = self.win.get();
-        self.conn.shape_get_rectangles(w, shape::SK::INPUT).ok().and_then(|r| r.reply().ok())
-            .map(|r| r.rectangles.iter().map(|x| (x.x, x.y, x.width, x.height)).collect()).unwrap_or_default()
-    }
-
-    /// The screen's pixels in a rectangle, as RGB (the self-test's screenshots).
-    pub fn capture(&self, r: Rect) -> Option<Vec<u8>> {
-        let img = self.conn.get_image(xproto::ImageFormat::Z_PIXMAP, self.root, r.left as i16, r.top as i16, r.width() as u16, r.height() as u16, !0).ok()?.reply().ok()?;
-        let mut out = Vec::with_capacity((r.width() * r.height() * 3) as usize);
-        for px in img.data.chunks(4) { out.extend([px[2], px[1], px[0]]); }
-        Some(out)
     }
 }
 

@@ -32,6 +32,9 @@ macro_rules! publish {
 }
 pub(crate) use publish;
 
+/// The picker's menu while open: the row that asked, its options, where.
+pub type OpenMenu = (String, Vec<(String, bool)>, f32, f32);
+
 /// Page's state that isn't in the settings.
 pub struct Pane {
     pub section: Section,
@@ -39,7 +42,7 @@ pub struct Pane {
     /// The shortcut field's words while recording ("Press keys…", the modifier hint).
     pub field: Option<String>,
     pub import_status: String,
-    pub menu: Option<(String, Vec<(String, bool)>, f32, f32)>,
+    pub menu: Option<OpenMenu>,
     /// Palette.Installed with each theme read, once per run (as the C#'s Lazy).
     pub installed: Option<Rc<Vec<(InstalledTheme, SavedTheme)>>>,
 }
@@ -134,7 +137,6 @@ pub fn sections(p: &Palette) -> Vec<Side> {
 /// A handler for what Settings asks (the app implements it).
 pub trait Host {
     fn hover(&self) -> &hover_app::app::Hover;
-    fn palette(&self) -> Palette;
     fn system_dark(&self) -> bool;
     /// Something the notch or the tray draw from changed (OwlApp.SettingsChanged).
     fn settings_changed(&self);

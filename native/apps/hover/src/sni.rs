@@ -15,8 +15,10 @@ pub use crate::rest::Menu;
 pub enum Event { Activate, Item(usize) }
 
 type On = Arc<dyn Fn(Event) + Send + Sync>;
+/// A pixmap: width, height, ARGB32 bytes.
+type Pixmap = (i32, i32, Vec<u8>);
 
-struct Item { on: On, icon: Vec<(i32, i32, Vec<u8>)> }
+struct Item { on: On, icon: Vec<Pixmap> }
 
 #[interface(name = "org.kde.StatusNotifierItem")]
 impl Item {
@@ -35,7 +37,7 @@ impl Item {
     #[zbus(property)]
     fn icon_pixmap(&self) -> Vec<(i32, i32, Vec<u8>)> { self.icon.clone() }
     #[zbus(property)]
-    fn tool_tip(&self) -> (String, Vec<(i32, i32, Vec<u8>)>, String, String) { (String::new(), vec![], "Hover".into(), String::new()) }
+    fn tool_tip(&self) -> (String, Vec<Pixmap>, String, String) { (String::new(), vec![], "Hover".into(), String::new()) }
     #[zbus(property)]
     fn item_is_menu(&self) -> bool { false }
     #[zbus(property)]
@@ -50,7 +52,7 @@ impl Item {
 
 struct DbusMenu { on: On, menu: Arc<Mutex<Menu>>, revision: Arc<Mutex<u32>> }
 
-fn v<'a>(x: impl Into<Value<'a>>) -> OwnedValue { Value::from(x.into()).try_to_owned().unwrap() }
+fn v<'a>(x: impl Into<Value<'a>>) -> OwnedValue { x.into().try_to_owned().unwrap() }
 
 fn props(item: &Option<(String, Option<bool>)>) -> HashMap<String, OwnedValue> {
     let mut p = HashMap::new();

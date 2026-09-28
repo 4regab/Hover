@@ -31,7 +31,7 @@ cpal = "0.18"
 [target.'cfg(not(windows))'.dependencies]
 # Already in the tree (winit): the notch's X11 window (override-redirect, its input
 # shape), the global shortcut (XGrabKey) and the screenshots of the real screen.
-x11rb = { version = "0.13", features = ["shape", "randr"] }
+x11rb = { version = "0.13", features = ["shape", "randr", "xtest"] }
 # Already in the tree (winit): the X window behind winit's.
 raw-window-handle = "0.6"
 # Already in the tree: the tray (StatusNotifierItem), notifications, and the portal's
@@ -46,7 +46,7 @@ windows = { version = "0.62", features = [
     "Win32_Foundation", "Win32_UI_WindowsAndMessaging", "Win32_Graphics_Gdi", "Win32_Graphics_Dwm",
     "Win32_UI_HiDpi", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_Shell", "Win32_System_Threading",
     "Win32_System_LibraryLoader", "Win32_System_Power", "Win32_System_RemoteDesktop", "Win32_System_Com",
-    "Win32_UI_Controls_Dialogs",
+    "Win32_UI_Controls_Dialogs", "Win32_UI_Shell_Common",
 ] }
 
 [build-dependencies]
