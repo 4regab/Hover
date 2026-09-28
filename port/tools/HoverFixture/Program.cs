@@ -1,5 +1,6 @@
 // HoverFixture <dataDir> <projectFolder> <turns> <answer.md>
 // Prints the key of the long session it wrote.
+using System.IO;
 using System.Text.Json;
 using Hover.Owl;
 using Hover.Services;

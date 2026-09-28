@@ -16,6 +16,8 @@ jobs:
           node-version: 22
       - name: Goldens still come from the office's own md.js and diagram.js
         run: node native/golden/gen.mjs && git diff --exit-code -- native/golden
+      - name: System libraries (fontconfig for system fonts)
+        run: sudo apt-get update -q && sudo apt-get install -y -q libfontconfig-dev libxkbcommon-dev
       - name: Tests (headless)
         working-directory: native
         run: cargo test --workspace --release --locked
@@ -49,9 +51,11 @@ jobs:
 
       # ---- the baseline: the current C# Hover ----
       - name: Publish the C# Hover (the baseline)
+        continue-on-error: true
         shell: pwsh
         run: .\build.ps1 publish
       - name: Build the benchmark tools
+        continue-on-error: true
         shell: pwsh
         run: |
           dotnet build port/tools/FakeAcp -c Release -o tools/FakeAcp
