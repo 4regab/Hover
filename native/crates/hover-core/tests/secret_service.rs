@@ -84,27 +84,33 @@ fn the_key_lives_in_the_keyring_and_note_key_names_it() {
     let Some(mut b) = bus("keyring") else { return };
     let guard = SystemKeyGuard { bus: Some(b.address.clone()) };
     let file = b.root.join("note.key");
-    let first = Crypto::load_or_create(&file, &guard);
+    let first = Crypto::load_or_create(&file, &guard).unwrap();
     let stored = std::fs::read(&file).unwrap();
     let text = String::from_utf8(stored.clone()).unwrap();
     assert!(text.starts_with("hover-key:secret-service:") && text.ends_with('\n'), "{text:?}");
     let sealed = first.seal("sealed with the keyring's key");
     // A second run finds the same key through the marker.
-    assert_eq!(Crypto::load_or_create(&file, &guard).open(&sealed), "sealed with the keyring's key");
+    assert_eq!(Crypto::load_or_create(&file, &guard).unwrap().open(&sealed), "sealed with the keyring's key");
     let key = guard.unwrap(&stored).unwrap();
     assert_eq!(key.len(), 32);
 
-    // With the keyring gone, the marker can't be read: an error, never the file's bytes.
+    // With the keyring gone, the marker can't be read now: nothing is made or moved,
+    // and this run has no key (decided: a key is never lost).
     b.stop_keyring();
-    assert!(guard.unwrap(&stored).is_err());
+    assert!(guard.unwrap(&stored).is_err_and(|e| e.transient));
+    assert!(Crypto::load_or_create(&file, &guard).is_none());
+    assert_eq!(std::fs::read(&file).unwrap(), stored, "note.key untouched");
     // And a new key made meanwhile goes into the file itself, for this user only.
     let raw = guard.wrap(&[9; 32]).unwrap();
     assert_eq!(raw, [9; 32]);
     assert_eq!(guard.unwrap(&raw).unwrap(), [9; 32]);
 
-    // The keyring back: the old item is still there (a new key never replaces it).
+    // The keyring back: the old item is still there, and the next start reads it.
     b.start_keyring();
     assert_eq!(guard.unwrap(&stored).unwrap(), key);
+    assert_eq!(Crypto::load_or_create(&file, &guard).unwrap().open(&sealed), "sealed with the keyring's key");
+    // A marker for an item the keyring doesn't have is gone for good: set aside.
+    assert!(guard.unwrap(b"hover-key:secret-service:0000000000000000\n").is_err_and(|e| !e.transient));
 }
 
 #[test]
@@ -115,12 +121,12 @@ fn without_a_bus_note_key_holds_the_key_for_this_user_only() {
     let file = dir.join("note.key");
     let _ = std::fs::remove_file(&file);
     let guard = SystemKeyGuard { bus: Some("unix:path=/nonexistent/hover-bus".into()) };
-    let c = Crypto::load_or_create(&file, &guard);
+    let c = Crypto::load_or_create(&file, &guard).unwrap();
     let stored = std::fs::read(&file).unwrap();
     assert_eq!(stored.len(), 32);
     use std::os::unix::fs::PermissionsExt;
     assert_eq!(std::fs::metadata(&file).unwrap().permissions().mode() & 0o777, 0o600);
-    assert_eq!(Crypto::load_or_create(&file, &guard).open(&c.seal("x")), "x");
+    assert_eq!(Crypto::load_or_create(&file, &guard).unwrap().open(&c.seal("x")), "x");
     // A Windows note.key (a DPAPI blob) is not a key here.
     assert!(guard.unwrap(&[1u8; 230]).is_err());
 }

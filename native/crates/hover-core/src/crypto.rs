@@ -11,11 +11,25 @@ use std::sync::{Arc, OnceLock};
 pub const NONCE_SIZE: usize = 12;
 pub const TAG_SIZE: usize = 16;
 
+/// Why a stored key couldn't be read, and whether it can be later.
+#[derive(Debug, Clone, PartialEq)]
+pub struct KeyError {
+    pub reason: String,
+    /// It may read next time (the keyring isn't running or stayed locked): the file
+    /// is left alone and nothing is sealed this run.
+    pub transient: bool,
+}
+
+impl KeyError {
+    pub fn never(reason: impl Into<String>) -> KeyError { KeyError { reason: reason.into(), transient: false } }
+    pub fn not_now(reason: impl Into<String>) -> KeyError { KeyError { reason: reason.into(), transient: true } }
+}
+
 /// How note.key keeps the key from anyone else: what the file holds for a key, and
 /// the key back from what the file holds.
 pub trait KeyGuard {
     fn wrap(&self, key: &[u8]) -> Result<Vec<u8>, String>;
-    fn unwrap(&self, stored: &[u8]) -> Result<Vec<u8>, String>;
+    fn unwrap(&self, stored: &[u8]) -> Result<Vec<u8>, KeyError>;
 }
 
 pub struct Crypto { key: [u8; 32] }
@@ -23,23 +37,33 @@ pub struct Crypto { key: [u8; 32] }
 impl Crypto {
     pub fn with_key(key: [u8; 32]) -> Crypto { Crypto { key } }
 
-    /// LoadOrCreateKey: the stored key when it unwraps to 32 bytes; otherwise a new
-    /// one, written wrapped. As in C#, a key that can't be unwrapped is replaced, so
-    /// what it sealed can't be opened again (asked about in the Phase 3 report).
-    pub fn load_or_create(file: &Path, guard: &dyn KeyGuard) -> Crypto {
+    /// LoadOrCreateKey, except that a key is never destroyed (decided, 2026-09-28): the
+    /// stored key when it unwraps to 32 bytes. One that can never be read (DPAPI
+    /// refuses, the keyring item is gone, the file is foreign) is moved aside as
+    /// note.key.unreadable-<yyyyMMddHHmmss> for recovery by hand, and a new key made.
+    /// One that can't be read now (the keyring isn't running) is left as it is, and
+    /// there is no key this run: None, so nothing is sealed that the next run couldn't
+    /// open. None too when a new key can't be stored (C# sealed with it anyway, and
+    /// that history was lost on the next start).
+    pub fn load_or_create(file: &Path, guard: &dyn KeyGuard) -> Option<Crypto> {
         if file.exists() {
-            match std::fs::read(file).map_err(|e| e.to_string()).and_then(|s| guard.unwrap(&s)) {
-                Ok(plain) if plain.len() == 32 => return Crypto { key: plain.try_into().unwrap() },
-                Ok(_) => {}
-                Err(e) => crate::log::line(&format!("key unwrap failed — {e}")),
+            let got = std::fs::read(file).map_err(|e| KeyError::not_now(e.to_string())).and_then(|s| guard.unwrap(&s));
+            match got {
+                Ok(plain) if plain.len() == 32 => return Some(Crypto { key: plain.try_into().unwrap() }),
+                Ok(_) => set_aside(file, "it doesn't hold a 32-byte key")?,
+                Err(e) if e.transient => {
+                    crate::log::line(&format!("key unwrap failed — {}; no history this run, trying again next start", e.reason));
+                    return None;
+                }
+                Err(e) => set_aside(file, &e.reason)?,
             }
         }
         let mut key = [0u8; 32];
         getrandom::fill(&mut key).expect("the system has no randomness");
-        if let Err(e) = guard.wrap(&key).and_then(|w| write_private(file, &w).map_err(|e| e.to_string())) {
-            crate::log::line(&format!("key write failed — {e}"));
+        match guard.wrap(&key).and_then(|w| write_private(file, &w).map_err(|e| e.to_string())) {
+            Ok(()) => Some(Crypto { key }),
+            Err(e) => { crate::log::line(&format!("key write failed — {e}; no history this run")); None }
         }
-        Crypto { key }
     }
 
     /// Crypto.Seal: the text's UTF-8 under a fresh nonce.
@@ -92,11 +116,23 @@ pub fn write_private(file: &Path, bytes: &[u8]) -> std::io::Result<()> {
     { std::fs::write(file, bytes) }
 }
 
-static GLOBAL: OnceLock<Arc<Crypto>> = OnceLock::new();
+/// Moves an unreadable key out of the way (the planner's naming), or gives up (None)
+/// when it can't: a key is never overwritten.
+fn set_aside(file: &Path, why: &str) -> Option<()> {
+    let mut to = file.as_os_str().to_owned();
+    to.push(format!(".unreadable-{}", crate::time::local_compact().replace('-', "")));
+    match std::fs::rename(file, &to) {
+        Ok(()) => { crate::log::line(&format!("key unwrap failed — {why}; kept as {}, a new key made", Path::new(&to).display())); Some(()) }
+        Err(e) => { crate::log::line(&format!("key unwrap failed — {why}; couldn't set it aside ({e}), no history this run")); None }
+    }
+}
 
-/// Hover's key, loaded or made on first use (the C# static field).
-pub fn global() -> Arc<Crypto> {
-    GLOBAL.get_or_init(|| Arc::new(Crypto::load_or_create(&crate::paths::key(), &crate::platform::SystemKeyGuard::default()))).clone()
+static GLOBAL: OnceLock<Option<Arc<Crypto>>> = OnceLock::new();
+
+/// Hover's key, loaded or made on first use (the C# static field); None when this run
+/// has none (see load_or_create), and then the history is off.
+pub fn global() -> Option<Arc<Crypto>> {
+    GLOBAL.get_or_init(|| Crypto::load_or_create(&crate::paths::key(), &crate::platform::SystemKeyGuard::default()).map(Arc::new)).clone()
 }
 
 #[cfg(test)]
@@ -133,26 +169,57 @@ mod tests {
         assert_eq!(c.open(&c.seal("")), "");
     }
 
+    /// XOR stands in for the platform's wrapping; "LOCKED" reads as a keyring that
+    /// isn't there now, "GONE" as one whose item is gone for good.
     struct Plain;
     impl KeyGuard for Plain {
         fn wrap(&self, key: &[u8]) -> Result<Vec<u8>, String> { Ok(key.iter().map(|b| b ^ 0x5a).collect()) }
-        fn unwrap(&self, s: &[u8]) -> Result<Vec<u8>, String> { Ok(s.iter().map(|b| b ^ 0x5a).collect()) }
+        fn unwrap(&self, s: &[u8]) -> Result<Vec<u8>, KeyError> {
+            match s {
+                b"LOCKED" => Err(KeyError::not_now("the keyring isn't running")),
+                b"GONE" => Err(KeyError::never("the keyring has no such item")),
+                _ => Ok(s.iter().map(|b| b ^ 0x5a).collect()),
+            }
+        }
+    }
+
+    fn dir(name: &str) -> std::path::PathBuf {
+        let d = std::env::temp_dir().join(format!("hover-key-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    fn aside(d: &Path) -> Vec<Vec<u8>> {
+        std::fs::read_dir(d).unwrap().flatten().filter(|e| e.file_name().to_string_lossy().starts_with("note.key.unreadable-"))
+            .map(|e| std::fs::read(e.path()).unwrap()).collect()
     }
 
     #[test]
-    fn the_key_is_kept_and_a_bad_one_replaced() {
-        let d = std::env::temp_dir().join(format!("hover-key-{}", std::process::id()));
-        std::fs::create_dir_all(&d).unwrap();
+    fn the_key_is_kept_and_an_unreadable_one_set_aside_never_lost() {
+        let d = dir("kept");
         let f = d.join("note.key");
-        let _ = std::fs::remove_file(&f);
-        let a = Crypto::load_or_create(&f, &Plain);
-        let sealed = a.seal("x");
-        assert_eq!(Crypto::load_or_create(&f, &Plain).open(&sealed), "x");
+        let sealed = Crypto::load_or_create(&f, &Plain).unwrap().seal("x");
+        assert_eq!(Crypto::load_or_create(&f, &Plain).unwrap().open(&sealed), "x");
         #[cfg(unix)]
         { use std::os::unix::fs::PermissionsExt; assert_eq!(std::fs::metadata(&f).unwrap().permissions().mode() & 0o777, 0o600); }
-        std::fs::write(&f, b"short").unwrap();
-        let c = Crypto::load_or_create(&f, &Plain);
-        assert_eq!(c.open(&sealed), "");
-        assert_eq!(std::fs::read(&f).unwrap().len(), 32);
+        for bad in [&b"short"[..], b"GONE"] {
+            std::fs::write(&f, bad).unwrap();
+            let c = Crypto::load_or_create(&f, &Plain).unwrap();
+            assert_eq!(c.open(&sealed), "");
+            assert_eq!(std::fs::read(&f).unwrap().len(), 32, "a new key");
+            assert!(aside(&d).iter().any(|a| a == bad), "the old one kept beside it");
+            for e in std::fs::read_dir(&d).unwrap().flatten() { if e.file_name() != "note.key" { std::fs::remove_file(e.path()).unwrap(); } }
+        }
+    }
+
+    #[test]
+    fn a_key_that_cant_be_read_now_is_left_alone_and_nothing_is_sealed() {
+        let d = dir("locked");
+        let f = d.join("note.key");
+        std::fs::write(&f, b"LOCKED").unwrap();
+        assert!(Crypto::load_or_create(&f, &Plain).is_none());
+        assert_eq!(std::fs::read(&f).unwrap(), b"LOCKED", "untouched, for the next start");
+        assert!(aside(&d).is_empty());
     }
 }

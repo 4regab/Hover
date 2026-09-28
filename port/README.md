@@ -9,7 +9,7 @@ cutover has been reviewed; the C# app under `src/` is still the product.
 | `phase1/REPORT.md` | The Phase 1 feasibility report: evidence, gate status, gaps, costs. |
 | `phase1/RUN-ON-WINDOWS.md` | How to run the prototypes and gates on a real desktop. |
 | `phase3/REPORT.md`, `phase3/RUN-ON-WINDOWS.md` | Phase 3 (persistence, sessions, product): evidence, differences, questions; the Windows checks. |
-| `HANDOFF.md`, `NEXT-PROMPT.md` | The state for the next agent, and the prompt that sets its work (all remaining phases, Windows and Linux). |
+| `HANDOFF.md`, `NEXT-PROMPT.md` | The state for the next agent (rules, decisions, setup, lessons), and the prompt for the next session with the checklist ticked so far (3C, 2 and 4 remain). |
 | `bench/` | `Measure-Hover.ps1` (the benchmark) and `capture-office.mjs` (baseline captures). |
 | `tools/` | `FakeAcp` (a stand-in ACP agent) and `HoverFixture` (a sealed history written with Hover's own code). |
 | `../native/` | The Rust workspace: `hover-core` (paths, settings, sealing, history, images, single instance), `hover-agents` (ACP, the tools, sessions, the office's state message), `hover-md`, `hover-diagram`, `hover-chat`, `hover-notch`, `apps/chat-proto`, `apps/notch-proto`. |

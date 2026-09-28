@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 use zbus::blocking::{Connection, Proxy};
 use zbus::zvariant::{OwnedObjectPath, OwnedValue, Value};
+use crate::crypto::KeyError;
 
 fn home() -> Option<PathBuf> { std::env::var_os("HOME").filter(|h| !h.is_empty()).map(PathBuf::from) }
 
@@ -52,12 +53,19 @@ impl crate::crypto::KeyGuard for SystemKeyGuard {
         }
     }
 
-    fn unwrap(&self, stored: &[u8]) -> Result<Vec<u8>, String> {
+    fn unwrap(&self, stored: &[u8]) -> Result<Vec<u8>, KeyError> {
         if let Some(id) = std::str::from_utf8(stored).ok().and_then(|s| s.strip_prefix(MARKER)) {
-            return SecretService::connect(self.bus.as_deref()).and_then(|s| s.find(id.trim()));
+            // No keyring now (not started, no session bus, a locked prompt dismissed)
+            // may be one later; an item that isn't there is gone for good.
+            let ss = SecretService::connect(self.bus.as_deref()).map_err(KeyError::not_now)?;
+            return match ss.find(id.trim()) {
+                Ok(Some(k)) => Ok(k),
+                Ok(None) => Err(KeyError::never(format!("the keyring has no Hover key {}", id.trim()))),
+                Err(e) => Err(KeyError::not_now(e)),
+            };
         }
         if stored.len() == 32 { return Ok(stored.to_vec()); }
-        Err("note.key is not a key this build can read (a Windows DPAPI key only opens on Windows)".into())
+        Err(KeyError::never("note.key is not a key this build can read (a Windows DPAPI key only opens on Windows)"))
     }
 }
 
@@ -107,15 +115,16 @@ impl SecretService {
         Ok(Some(result))
     }
 
-    fn find(&self, id: &str) -> Result<Vec<u8>, String> {
+    /// The key, or None when the keyring has no such item.
+    fn find(&self, id: &str) -> Result<Option<Vec<u8>>, String> {
         let (unlocked, locked): (Vec<OwnedObjectPath>, Vec<OwnedObjectPath>) =
             self.service()?.call("SearchItems", &(Self::attributes(id),)).map_err(e)?;
         let items: Vec<OwnedObjectPath> = unlocked.into_iter().chain(locked.iter().cloned()).collect();
-        let Some(first) = items.first().cloned() else { return Err(format!("the keyring has no Hover key {id}")) };
+        let Some(first) = items.first().cloned() else { return Ok(None) };
         self.unlock(locked)?;
         let secrets: HashMap<OwnedObjectPath, (OwnedObjectPath, Vec<u8>, Vec<u8>, String)> =
             self.service()?.call("GetSecrets", &(vec![first.clone()], &self.session)).map_err(e)?;
-        secrets.get(&first).map(|s| s.2.clone()).ok_or_else(|| "the keyring gave no secret".into())
+        secrets.get(&first).map(|s| Some(s.2.clone())).ok_or_else(|| "the keyring gave no secret".into())
     }
 
     fn store(&self, id: &str, key: &[u8]) -> Result<(), String> {

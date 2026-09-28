@@ -90,6 +90,9 @@ Bugs fixed (listed, not asked):
    (C# reads the type up to the first `;`). Both now as C#. Its file names used UTC on
    Linux; now local time, as `DateTime.Now`.
 
+Changed by decision (question 1): C# replaced an unreadable key and lost the history
+sealed with it; the port never does (above).
+
 Known, small, by design:
 4. **An enum given as a number that names no member** (`"Appearance": 7`): .NET keeps
    the number and writes it back; the port reads the property's default.
@@ -98,7 +101,17 @@ Known, small, by design:
    writes the first declared and reads both. Only a shortcut on one of those keys is
    affected; a Windows check is listed.
 
-### Questions (answer like `1A 2B`)
+### Questions, answered (2026-09-28: 1 → B and C together, 2A, 3A, 4A)
+
+Built as answered (`crypto::load_or_create`, tested in `crypto::tests` and
+`tests/secret_service.rs`): **a key is never destroyed.** One that can never be read
+(DPAPI refuses, the keyring item is gone, a foreign file) is kept as
+`note.key.unreadable-<yyyyMMddHHmmss>` and a new key made; one that can't be read *now*
+(the keyring isn't running or stays locked) is left untouched and that run has no
+history (`crypto::global()` is `None`), and the next start tries again. A new key that
+can't be stored also means no history that run, where C# sealed with it and lost it on
+the next start. Linux without a Secret Service keeps the key in a 0600 file (2A),
+`settings.json` is LF on Linux (3A), and the tools aren't paused with Hover (4A).
 
 1. **When `note.key` can't be unwrapped** (DPAPI refuses after a profile repair; on
    Linux the keyring isn't running), C# makes a new key and overwrites the file, so
@@ -195,7 +208,7 @@ Linux adaptations (the C# never ran there):
     a sandbox there).
 11. **One job per tool** on Windows where C# has one for all; both kill on close.
 
-### Questions (answer like `1A 2B`)
+### Question, answered (4A: as now)
 
 4. **An agent's process on Linux when Hover is suspended** (`kill -STOP`, or a laptop
    lid with `systemd` freezing the session): nothing special is done; the tool keeps its

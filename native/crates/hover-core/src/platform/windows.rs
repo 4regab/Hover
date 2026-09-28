@@ -47,7 +47,8 @@ fn dpapi(data: &[u8], protect: bool) -> Result<Vec<u8>, String> {
 
 impl crate::crypto::KeyGuard for SystemKeyGuard {
     fn wrap(&self, key: &[u8]) -> Result<Vec<u8>, String> { dpapi(key, true) }
-    fn unwrap(&self, stored: &[u8]) -> Result<Vec<u8>, String> { dpapi(stored, false) }
+    /// DPAPI refusing is for good (another user's blob, a reset password or profile).
+    fn unwrap(&self, stored: &[u8]) -> Result<Vec<u8>, crate::crypto::KeyError> { dpapi(stored, false).map_err(crate::crypto::KeyError::never) }
 }
 
 const RUN_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
