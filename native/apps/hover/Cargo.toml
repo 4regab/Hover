@@ -1,0 +1,49 @@
+[package]
+name = "hover"
+description = "Hover, native: the notch, the office, Settings, the tray and the shortcut (App.xaml.cs, Owl/*, Services/TrayIcon, Interop/*), on Windows and Linux."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+name = "hover_app"
+path = "src/lib.rs"
+
+[[bin]]
+name = "hover"
+path = "src/main.rs"
+
+[dependencies]
+hover-core = { path = "../../crates/hover-core" }
+hover-agents = { path = "../../crates/hover-agents" }
+hover-quota = { path = "../../crates/hover-quota" }
+hover-notch = { path = "../../crates/hover-notch" }
+# One process, one renderer: femtovg on wgpu (DirectComposition on Windows, as
+# notch-proto; Vulkan or GL on Linux), and the software renderer for headless shots.
+slint = { version = "=1.18.1", default-features = false, features = ["std", "compat-1-2", "backend-winit", "renderer-femtovg", "renderer-femtovg-wgpu", "unstable-wgpu-30", "renderer-software", "software-renderer-systemfonts", "accessibility", "unstable-winit-030"] }
+image = { version = "0.25", default-features = false, features = ["png", "ico"] }
+# The office's music (office-beats.ogg), which the page played through <audio>.
+# New crates: an Ogg Vorbis decoder in pure Rust, and the system's audio output
+# (WASAPI on Windows, ALSA, which PipeWire and PulseAudio serve, on Linux).
+lewton = "0.10"
+cpal = "0.18"
+
+[target.'cfg(not(windows))'.dependencies]
+# Already in the tree (winit): the notch's X11 window (override-redirect, its input
+# shape), the global shortcut (XGrabKey) and the screenshots of the real screen.
+x11rb = { version = "0.13", features = ["shape", "xkb"] }
+# Already in the tree: the tray (StatusNotifierItem), notifications, and the portal's
+# global shortcut on Wayland. With its object server, which the tray needs.
+zbus = { version = "5", default-features = false, features = ["async-io", "blocking-api"] }
+libc = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62", features = [
+    "Win32_Foundation", "Win32_UI_WindowsAndMessaging", "Win32_Graphics_Gdi", "Win32_Graphics_Dwm",
+    "Win32_UI_HiDpi", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_Shell", "Win32_System_Threading",
+    "Win32_System_LibraryLoader", "Win32_System_Power", "Win32_System_RemoteDesktop", "Win32_System_Com",
+    "Win32_UI_Controls_Dialogs",
+] }
+
+[build-dependencies]
+slint-build = "=1.18.1"

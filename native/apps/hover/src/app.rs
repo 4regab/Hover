@@ -1,0 +1,222 @@
+//! Owl/OwlApp.cs: the shared state every view draws from (the settings, the agents'
+//! processes, their sessions and history, the quota readings), the ends announced
+//! while nobody watches, and the orderly quit. No UI here: the views register hooks.
+
+use hover_agents::acp::AcpHost;
+use hover_agents::session::{KiroSession, KiroSessions, RunTask};
+use hover_agents::stream::KiroResult;
+use hover_agents::text;
+use hover_core::history::AgentHistory;
+use hover_core::model::{AgentTool, KiroState};
+use hover_core::settings::Settings;
+use hover_quota::schedule::Poller;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
+
+type Hook = Arc<dyn Fn() + Send + Sync>;
+type Notify = Arc<dyn Fn(&str, &str) + Send + Sync>;
+
+#[derive(Default)]
+struct Hooks {
+    notify: Option<Notify>,
+    quotas: Vec<Hook>,
+    sessions: Vec<Hook>,
+}
+
+#[derive(Default)]
+struct Unseen { count: usize, tool: Option<&'static str> }
+
+pub struct Hover {
+    pub settings: Arc<Settings>,
+    pub history: Option<Arc<AgentHistory>>,
+    pub hosts: Vec<AcpHost>,
+    pub sessions: KiroSessions,
+    pub quotas: Poller,
+    unseen: Mutex<Unseen>,
+    /// KiroPage.Watching: an office is in view (the open notch, or the app window
+    /// not minimised), so an end is seen as it happens and not announced.
+    watching: AtomicBool,
+    hooks: Arc<Mutex<Hooks>>,
+}
+
+impl Hover {
+    /// The real thing: settings.json, the key and history in the data folder, one
+    /// ACP host per tool.
+    pub fn start() -> Arc<Hover> {
+        hover_core::paths::drop_planner(hover_core::paths::support());
+        let settings = Settings::load(hover_core::paths::settings_file());
+        let history = hover_core::crypto::global().map(|c| Arc::new(AgentHistory::new(hover_core::paths::agents(), c)));
+        if history.is_none() { hover_core::log::line("no key this run: sessions aren't kept"); }
+        let hosts: Vec<AcpHost> = AgentTool::ALL.iter().map(|&t| {
+            let s = settings.clone();
+            AcpHost::new(t, move || s.agent_options(t))
+        }).collect();
+        Hover::with(settings, history, hosts, None, None)
+    }
+
+    /// With the parts given (tests hand in stand-in hosts and a reader).
+    pub fn with(settings: Arc<Settings>, history: Option<Arc<AgentHistory>>, hosts: Vec<AcpHost>, run: Option<RunTask>,
+                reader: Option<Arc<dyn Fn(&str) -> hover_quota::Reading + Send + Sync>>) -> Arc<Hover> {
+        let hooks: Arc<Mutex<Hooks>> = Default::default();
+        for h in &hosts {
+            // What the tool offers (models, efforts) fills in its settings page.
+            let s = settings.clone();
+            h.on_options_seen(move |tool, offers| s.set_agent_offers(tool, offers));
+        }
+        let runners: Vec<(AgentTool, AcpHost)> = hosts.iter().map(|h| (h.tool(), h.clone())).collect();
+        let sessions = KiroSessions::new(move |tool| match &run {
+            Some(r) => r.clone(),
+            None => runners.iter().find(|(t, _)| *t == tool).expect("a host per tool").1.runner(),
+        }, history.clone());
+        let fire = |hooks: &Arc<Mutex<Hooks>>, pick: fn(&Hooks) -> &Vec<Hook>| {
+            let list: Vec<Hook> = pick(&hooks.lock().unwrap()).clone();
+            for f in list { f(); }
+        };
+        let qh = hooks.clone();
+        let is_on = { let s = settings.clone(); Arc::new(move |id: &str| s.has_notch_item(id)) };
+        let changed: Arc<dyn Fn() + Send + Sync> = Arc::new(move || fire(&qh, |h| &h.quotas));
+        let quotas = match reader { Some(r) => Poller::new(r, is_on, changed), None => Poller::system(is_on, changed) };
+        let me = Arc::new(Hover { settings, history, hosts, sessions, quotas, unseen: Default::default(), watching: AtomicBool::new(false), hooks });
+        let sh = me.hooks.clone();
+        me.sessions.on_changed(move || fire(&sh, |h| &h.sessions));
+        let weak = Arc::downgrade(&me);
+        me.sessions.on_ended(move |s, r| { if let Some(me) = weak.upgrade() { me.ended(s, r); } });
+        me
+    }
+
+    pub fn on_notify(&self, f: impl Fn(&str, &str) + Send + Sync + 'static) { self.hooks.lock().unwrap().notify = Some(Arc::new(f)); }
+    pub fn on_quotas(&self, f: impl Fn() + Send + Sync + 'static) { self.hooks.lock().unwrap().quotas.push(Arc::new(f)); }
+    pub fn on_sessions(&self, f: impl Fn() + Send + Sync + 'static) { self.hooks.lock().unwrap().sessions.push(Arc::new(f)); }
+
+    pub fn set_watching(&self, on: bool) {
+        self.watching.store(on, Ordering::SeqCst);
+        if on { self.seen(); }
+    }
+
+    /// Kiro tasks that ended while no office was in view, and their tool when all
+    /// were the same one (OwlApp.KiroUnseen, KiroUnseenTool).
+    pub fn unseen(&self) -> (usize, Option<&'static str>) { let u = self.unseen.lock().unwrap(); (u.count, u.tool) }
+
+    /// An office came into view: the ends it announced have been seen.
+    pub fn seen(&self) {
+        {
+            let mut u = self.unseen.lock().unwrap();
+            if u.count == 0 { return; }
+            u.count = 0;
+        }
+        self.sessions.raise_changed();
+    }
+
+    /// A task can take minutes; the notch has usually been folded away by the time it
+    /// ends, so the end is announced, unless an office is in view.
+    fn ended(&self, s: &KiroSession, r: &KiroResult) {
+        if self.watching.load(Ordering::SeqCst) { return; }
+        let who = s.tool.name();
+        {
+            let mut u = self.unseen.lock().unwrap();
+            u.count += 1;
+            u.tool = if u.count == 1 || u.tool == Some(who) { Some(who) } else { None };
+        }
+        let title = match r.state {
+            KiroState::Completed => format!("{who} is done"),
+            KiroState::Cancelled => format!("{who} stopped"),
+            _ => format!("{who} couldn't finish"),
+        } + ": " + &s.title();
+        let body = text::first_line(&text::plain(&r.text));
+        let notify = self.hooks.lock().unwrap().notify.clone();
+        if let Some(n) = notify { n(&title, &body); }
+    }
+
+    /// RefreshQuotas: on the 30 s tick, or forced from Settings.
+    pub fn refresh_quotas(&self, force: bool) { self.quotas.refresh(force); }
+
+    /// The notch's text for the newest task at work, and how many more are.
+    pub fn working_text(&self) -> Option<String> {
+        let busy: Vec<KiroSession> = self.sessions.all().into_iter().filter(KiroSession::busy).collect();
+        let last = busy.last()?;
+        Some(format!("{} · {}{}", last.tool.name(), text::status(last), if busy.len() > 1 { format!(" · {}", busy.len()) } else { String::new() }))
+    }
+
+    /// Called as the app quits. A running task is stopped rather than left working
+    /// with nobody watching; then the tools, the history and the settings.
+    pub fn shutdown(&self) {
+        self.sessions.stop_all();
+        for h in &self.hosts { h.shutdown("Hover quit"); }
+        if let Some(h) = &self.history { h.flush(); }
+        self.settings.flush();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use hover_agents::session::RunArgs;
+    use std::time::Duration;
+
+    fn hover(answer: &'static str, state: KiroState) -> (Arc<Hover>, std::path::PathBuf) {
+        let dir = std::env::temp_dir().join(format!("hover-app-{}-{}", std::process::id(), hover_core::guid_n()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let settings = Settings::load(dir.join("settings.json"));
+        let run: RunTask = Arc::new(move |a: RunArgs| {
+            std::thread::sleep(Duration::from_millis(50));
+            let _ = a;
+            KiroResult::new(state, answer)
+        });
+        (Hover::with(settings, None, vec![], Some(run), Some(Arc::new(|id: &str| hover_quota::Reading { used: Some(10.0), detail: id.into() }))), dir)
+    }
+
+    fn wait(f: impl Fn() -> bool) { for _ in 0..200 { if f() { return; } std::thread::sleep(Duration::from_millis(10)); } panic!("timed out"); }
+
+    /// OwlApp.Start's Ended handler: the title names the tool and the outcome, the text
+    /// is the answer's first plain line, and the ends are counted until seen.
+    #[test]
+    fn an_end_nobody_saw_is_announced_and_counted() {
+        let (h, dir) = hover("## Fixed **it**\n\nMore words.", KiroState::Completed);
+        let said: Arc<Mutex<Vec<(String, String)>>> = Default::default();
+        let s2 = said.clone();
+        h.on_notify(move |t, b| s2.lock().unwrap().push((t.into(), b.into())));
+        let folder = dir.to_string_lossy().into_owned();
+        h.sessions.start(AgentTool::Kiro, &folder, "Tidy the imports", vec![]).unwrap();
+        assert_eq!(h.working_text().as_deref(), Some("Kiro · Waking up…"));
+        wait(|| h.unseen().0 == 1);
+        assert_eq!(said.lock().unwrap()[0], ("Kiro is done: Tidy the imports".into(), "Fixed it".into()));
+        assert_eq!(h.unseen(), (1, Some("Kiro")));
+        assert_eq!(h.working_text(), None);
+        h.sessions.start(AgentTool::Codex, &folder, "Second", vec![]).unwrap();
+        wait(|| h.unseen().0 == 2);
+        // Two different tools: no one name.
+        assert_eq!(h.unseen(), (2, None));
+        h.set_watching(true);
+        assert_eq!(h.unseen().0, 0);
+        // Watched: seen as it happens, not announced.
+        h.sessions.start(AgentTool::Kiro, &folder, "Third", vec![]).unwrap();
+        wait(|| h.sessions.running() == 0);
+        std::thread::sleep(Duration::from_millis(50));
+        assert_eq!((h.unseen().0, said.lock().unwrap().len()), (0, 2));
+        h.shutdown();
+    }
+
+    #[test]
+    fn failures_and_stops_say_so() {
+        let (h, dir) = hover("", KiroState::Failed);
+        let said: Arc<Mutex<Vec<String>>> = Default::default();
+        let s2 = said.clone();
+        h.on_notify(move |t, _| s2.lock().unwrap().push(t.into()));
+        h.sessions.start(AgentTool::Cursor, &dir.to_string_lossy(), "Look", vec![]).unwrap();
+        wait(|| !said.lock().unwrap().is_empty());
+        assert_eq!(said.lock().unwrap()[0], "Cursor couldn't finish: Look");
+    }
+
+    #[test]
+    fn quotas_read_what_is_switched_on() {
+        let (h, _) = hover("", KiroState::Completed);
+        let (tx, rx) = std::sync::mpsc::channel();
+        let tx = Mutex::new(tx);
+        h.on_quotas(move || { let _ = tx.lock().unwrap().send(()); });
+        h.settings.set_notch_item("codex", true);
+        h.refresh_quotas(true);
+        rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert_eq!(h.quotas.reading("codex").unwrap().detail, "codex");
+        assert!(h.quotas.reading("claude").is_none());
+    }
+}

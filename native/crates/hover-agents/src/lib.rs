@@ -8,6 +8,7 @@ pub mod proc;
 pub mod session;
 pub mod state;
 pub mod stream;
+pub mod text;
 
 use std::path::Path;
 

@@ -7,6 +7,8 @@ license.workspace = true
 
 [dependencies]
 hover-core = { path = "../hover-core" }
+# In the tree (hover-md): KiroText's patterns look behind, which regex can't.
+fancy-regex = { workspace = true }
 
 [target.'cfg(unix)'.dependencies]
 # Already in the tree: kill(2) on the tool's process group, and PR_SET_PDEATHSIG.
