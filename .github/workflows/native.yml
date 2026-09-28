@@ -1,9 +1,8 @@
 name: native
-# The Rust candidate (native/), and the Phase 0-1 evidence it is judged by. Runs for
-# pull requests that touch it, and on demand. The C# app's own checks stay in ci.yml.
+# The Rust candidate (native/), and the Phase 0-1 evidence it is judged by.
+# Manual only: never started by a push or a pull request (Actions minutes are limited).
+# The same steps run by hand on a Windows PC: port/phase1/RUN-ON-WINDOWS.md.
 on:
-  pull_request:
-    paths: ['native/**', 'port/**', '.github/workflows/native.yml']
   workflow_dispatch:
 jobs:
   portable:
