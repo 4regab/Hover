@@ -83,6 +83,46 @@ pub enum Tok {
     Hr,
     /// Text that is copied but drawn by something else (a diagram's labels).
     Virt(String),
+    /// A table's end: one newline, and Chromium writes it even when the table is last.
+    TableEnd,
+}
+
+/// The serialiser's state: newlines owed at block edges, owed only once something has
+/// been written; a rule settles them; an image-only paragraph owes 2 after text, 1 before.
+#[derive(Default)]
+struct Copier { out: String, pending: u8, emitted: bool, text_seen: bool, lit: String, table_last: bool }
+
+impl Copier {
+    fn flush(&mut self) {
+        if self.emitted { for _ in 0..self.pending { self.out.push('\n'); } self.out.push_str(&self.lit); }
+        self.lit.clear();
+    }
+    fn text(&mut self, piece: &str) {
+        if piece.is_empty() { return; }
+        self.table_last = false;
+        self.flush();
+        self.out.push_str(piece);
+        self.pending = 0;
+        self.emitted = true;
+        self.text_seen = true;
+    }
+    fn tok(&mut self, t: &Tok) {
+        match t {
+            Tok::Text(_) => {}
+            Tok::Req(n) => self.pending = self.pending.max(*n),
+            Tok::Lit(l) => self.lit.push_str(l),
+            Tok::Hr => if self.emitted { self.flush(); self.pending = 0; },
+            Tok::Img => { self.flush(); self.pending = if self.text_seen { 2 } else { 1 }; self.emitted = true; }
+            Tok::Virt(v) => self.text(v),
+            Tok::TableEnd => { self.pending = self.pending.max(1); self.table_last = true; }
+        }
+        if !matches!(t, Tok::TableEnd | Tok::Req(_)) { self.table_last = false; }
+    }
+    /// The whole of something was copied: a table that ends it leaves its newline.
+    fn finish(mut self) -> String {
+        if self.table_last { self.out.push('\n'); }
+        self.out
+    }
 }
 
 /// Laid-out content in coordinates relative to its own top left.
@@ -498,10 +538,11 @@ impl Md<'_> {
                 if c > 0 { frag.copy.push(Tok::Lit("\t")); }
                 frag.text(tb);
             }
-            frag.copy.push(Tok::Req(1));
+            if ri + 1 < all.len() { frag.copy.push(Tok::Req(1)); }
             y += row_h;
             if ri + 1 < all.len() { frag.shapes.push(rect(1.0, y, inner, 1.0, 0.0, Some(theme::LINE))); y += 1.0; }
         }
+        frag.copy.push(Tok::TableEnd);
         let h = y + 1.0;
         frag.shapes.insert(0, Shape::Rect { x: 0.0, y: 0.0, w, h, radius: [10.0; 4], fill: None, stroke: Some((theme::LINE, 1.0)) });
         Boxed { frag, mt: 0.0, h, mb: 9.0 }
@@ -602,6 +643,8 @@ pub struct Section {
     pub frag: Frag,
     /// The step list's summary line, which toggles it (x, y, w, h in section coordinates).
     pub summary: Option<[f32; 4]>,
+    /// Where the answer's copy tokens start (a select-all inside `.ans`).
+    pub answer_tok: Option<usize>,
     key: (Turn, u32, bool, bool),
 }
 
@@ -679,8 +722,8 @@ impl Thread {
                 Some(s) => s,
                 None => {
                     self.relayouts += 1;
-                    let (frag, h, summary) = self.turn(t, width - pl - pr, open, live);
-                    Section { y: 0.0, h, frag, summary, key }
+                    let (frag, h, summary, answer_tok) = self.turn(t, width - pl - pr, open, live);
+                    Section { y: 0.0, h, frag, summary, answer_tok, key }
                 }
             };
             if i > 0 { y += theme::THREAD_GAP; }
@@ -701,9 +744,10 @@ impl Thread {
 
     // One turn, as flex items with 7 px gaps: the you-bubble, the step list, the status,
     // the who line and the answer.
-    fn turn(&mut self, t: &Turn, w: f32, open: bool, live: bool) -> (Frag, f32, Option<[f32; 4]>) {
+    fn turn(&mut self, t: &Turn, w: f32, open: bool, live: bool) -> (Frag, f32, Option<[f32; 4]>, Option<usize>) {
         let mut frag = Frag::default();
         let mut summary = None;
+        let mut answer_tok = None;
         let look = Look::body();
         // .you: max-width 88%, padding 6px 10px, 1px border, radius 14 14 4 14, at the right.
         let maxw = w * 0.88 - 22.0;
@@ -809,10 +853,11 @@ impl Thread {
             let mut md = Md { sh: &mut self.sh, image_size: size };
             let b = md.blocks(&blocks, look, w - inset, true);
             if failed { frag.shapes.push(rect(0.0, y, 2.0, b.h, 0.0, Some(theme::BAD))); }
+            answer_tok = Some(frag.copy.len());
             frag.append(b.frag, inset, y);
             y += b.h;
         }
-        (frag, y, summary)
+        (frag, y, summary, answer_tok)
     }
 
     /// The open step list: one flex row (`.work div { display: flex; gap: 8px }`) whose
@@ -952,54 +997,42 @@ impl Thread {
         let Some((a, f)) = self.selection else { return String::new() };
         let (lo, hi) = if a <= f { (a, f) } else { (f, a) };
         let (lo_k, hi_k) = ((lo.section, lo.text), (hi.section, hi.text));
-        let mut out = String::new();
-        let (mut pending, mut emitted, mut text_seen) = (0u8, false, false);
-        let mut lit = String::new();
-        let mut started = false;
+        let mut c = Copier::default();
+        let (mut started, mut ended) = (false, false);
         for (si, s) in self.sections.iter().enumerate() {
             for tok in &s.frag.copy {
-                let key = match tok { Tok::Text(i) => Some((si, *i)), _ => None };
-                if let Some(k) = key {
-                    if k < lo_k { continue; }
-                    if k > hi_k { return out; }
-                    started = true;
-                } else if !started {
-                    continue;
+                // Past the selection's last box only its own block end counts.
+                if ended {
+                    if matches!(tok, Tok::Req(_) | Tok::TableEnd) { c.tok(tok); continue; }
+                    return c.out;
                 }
-                match tok {
-                    Tok::Text(i) => {
-                        let t = &s.frag.texts[*i];
-                        let st = if (si, *i) == lo_k { lo.byte } else { 0 };
-                        let en = if (si, *i) == hi_k { hi.byte } else { t.text.len() };
-                        let piece = t.text.get(st.min(en)..en).unwrap_or("");
-                        if piece.is_empty() && (si, *i) == hi_k { return out; }
-                        if emitted { for _ in 0..pending { out.push('\n'); } out.push_str(&lit); }
-                        lit.clear();
-                        out.push_str(piece);
-                        pending = 0;
-                        emitted = true;
-                        text_seen = true;
-                        if (si, *i) == hi_k { return out; }
-                    }
-                    Tok::Req(n) => pending = pending.max(*n),
-                    Tok::Lit(l) => lit.push_str(l),
-                    Tok::Hr => if emitted { for _ in 0..pending { out.push('\n'); } out.push_str(&std::mem::take(&mut lit)); pending = 0; },
-                    Tok::Img => {
-                        if emitted { for _ in 0..pending { out.push('\n'); } out.push_str(&std::mem::take(&mut lit)); }
-                        pending = if text_seen { 2 } else { 1 };
-                        emitted = true;
-                    }
-                    Tok::Virt(v) => {
-                        if emitted { for _ in 0..pending { out.push('\n'); } out.push_str(&std::mem::take(&mut lit)); }
-                        out.push_str(v);
-                        pending = 0;
-                        emitted = true;
-                        text_seen = true;
-                    }
+                if let Tok::Text(i) = tok {
+                    let k = (si, *i);
+                    if k < lo_k { continue; }
+                    if k > hi_k { return c.out; }
+                    started = true;
+                    let t = &s.frag.texts[*i];
+                    let st = if k == lo_k { lo.byte } else { 0 };
+                    let en = if k == hi_k { hi.byte } else { t.text.len() };
+                    c.text(t.text.get(st.min(en)..en).unwrap_or(""));
+                    if k == hi_k && en < t.text.len() { return c.out; }
+                    if k == hi_k { ended = true; }
+                } else if started {
+                    c.tok(tok);
                 }
             }
         }
-        out
+        c.finish()
+    }
+
+    /// A select-all inside turn i's answer (`.ans`), as the page copies it.
+    pub fn answer_text(&self, i: usize) -> String {
+        let s = &self.sections[i];
+        let mut c = Copier::default();
+        for tok in &s.frag.copy[s.answer_tok.unwrap_or(s.frag.copy.len())..] {
+            match tok { Tok::Text(k) => c.text(&s.frag.texts[*k].text), t => c.tok(t) }
+        }
+        c.finish()
     }
 
     /// Everything, as a select-all over the thread copies it.

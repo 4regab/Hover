@@ -184,3 +184,33 @@ fn step_rows_sit_where_the_page_puts_them() {
         for (g, e) in got.iter().zip(&exp) { assert!((g - e).abs() <= 1.5, "{name}: {g} vs {e}"); }
     }
 }
+
+#[test]
+fn answers_copy_as_the_page_copies_them() {
+    // 600 seeded answers mixing every block md.js writes, each copied whole in the page.
+    let want: serde_json::Value = serde_json::from_str(&golden("expected/copy.json")).unwrap();
+    let mut th = Thread::new(Shaper::new(&fonts()), "Juno", [47, 201, 176, 255]);
+    let mut bad = vec![];
+    let rows = want["answers"].as_array().unwrap();
+    for r in rows {
+        let (src, copy) = (r[0].as_str().unwrap(), r[1].as_str().unwrap());
+        th.set(&[Turn { answer: src.into(), ..Turn::new("Q") }], 358.0);
+        let got = th.answer_text(0);
+        if got != copy { bad.push((src.to_string(), copy.to_string(), got)); }
+    }
+    for (s, w, g) in bad.iter().take(4) { eprintln!("---\nsrc  {s:?}\nwant {w:?}\ngot  {g:?}"); }
+    assert!(bad.is_empty(), "{} of {} differ", bad.len(), rows.len());
+}
+
+#[test]
+fn a_selection_ending_before_a_diagram_leaves_its_labels_out() {
+    let mut th = Thread::new(Shaper::new(&fonts()), "Juno", [47, 201, 176, 255]);
+    th.set(&[Turn { answer: "First.\n\n```mermaid\ngraph LR\nA-->B\n```\n\nLast.".into(), ..Turn::new("Q") }], 358.0);
+    let a = find(&th, "First.");
+    let mut f = a;
+    f.byte += "First.".len();
+    th.select(a, f);
+    assert_eq!(th.selected_text(), "First.");
+    th.select_all();
+    assert!(th.selected_text().ends_with("First.\n\nA\nB\nLast."), "{:?}", th.selected_text());
+}

@@ -6,6 +6,7 @@ import { chromium } from 'playwright';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { markdown } from '../../web/office/md.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repo = join(here, '..', '..');
@@ -39,6 +40,22 @@ for (const [name, k, open] of [['done-rich', 1], ['failed', 3], ['stopped', 4], 
   await p.evaluate(() => document.querySelector('#dClose').click());
   await p.clock.runFor(600);
 }
+// A seeded corpus of answers, each shown in the real drawer's .ans and copied whole.
+const PARTS = ['Para with **bold** and `code`.', 'Two\nlines', '### Head', '#### Sub', '- a\n- b', '1. one\n2. two\n   - nested', '- [x] done\n- [ ] todo',
+  '> quoted\n>\n> more', '> - in quote', '| a | b |\n|:--|--:|\n| 1 | 2 |', '```ts\nlet x = 1;\n\nlet y;\n```', '```mermaid\ngraph LR\nA-->B\n```', '---',
+  '![i](https://x.y/a.png)', 'Text ![i](https://x.y/a.png) more', 'Line\n![i](https://x.y/a.png)\nafter', '[link](https://a.b) and https://c.d/e.', '~~gone~~ *em* _em_'];
+let seed = 2026; const rnd = () => (seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
+const corpus = [];
+for (let i = 0; i < 600; i++) { const n = 1 + (rnd() * 5 | 0); const parts = []; for (let j = 0; j < n; j++) parts.push(PARTS[rnd() * PARTS.length | 0]); corpus.push(parts.join('\n\n')); }
+const png = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+await p.evaluate(k => document.querySelectorAll('.tag .nm')[k].click(), 1);
+await p.clock.runFor(600);
+out.answers = await p.evaluate(([hs, png]) => hs.map(([src, h]) => {
+  const a = document.querySelector('#thread .ans'); a.innerHTML = h;
+  for (const i of a.querySelectorAll('img')) i.src = png;
+  const s = getSelection(), r = document.createRange(); r.selectNodeContents(a); s.removeAllRanges(); s.addRange(r);
+  return [src, s.toString()];
+}), [corpus.map(c => [c, markdown(c, { image: u => u })]), png]);
 writeFileSync(join(here, 'expected', 'copy.json'), JSON.stringify(out, null, 1));
-console.log(Object.fromEntries(Object.entries(out).map(([k, v]) => [k, v.thread.length])));
+console.log(Object.fromEntries(Object.entries(out).map(([k, v]) => [k, v.thread?.length ?? v.length])));
 await b.close();
