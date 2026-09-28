@@ -1,7 +1,7 @@
 # Running the Phase 1 prototypes on a real Windows desktop
 
 These steps settle the Windows gates, on a real PC with a GPU. There are no CI
-artifacts (the `native` workflow is manual-only), so build first:
+artifacts (CI is removed on this branch), so build first:
 
 ```powershell
 winget install Rustlang.Rustup   # once; then restart the shell

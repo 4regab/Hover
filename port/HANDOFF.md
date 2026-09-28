@@ -5,10 +5,9 @@ Read this first to continue the work in a new session.
 ## Rules the user set (must follow)
 
 - **Never trigger, re-run or wait on GitHub Actions.** The user has no Actions quota.
-  A push to `rust-port/phase-0-1` starts `ci.yml`, because PR #5 is open. Push only when
-  the user asks, and cancel any run a push starts:
-  `gh api -X POST repos/4regab/Hover/actions/runs/<id>/cancel`
-  (list the runs with `gh api "repos/4regab/Hover/actions/runs?branch=rust-port/phase-0-1&per_page=5"`).
+  Both workflows (`ci.yml`, `native.yml`) were removed from this branch at the user's
+  request, so pushes start nothing. Don't add them back without asking. If a run ever
+  starts, cancel it: `gh api -X POST repos/4regab/Hover/actions/runs/<id>/cancel`.
 - **Never open an image over 5 MB or over 2000 px on a side.** Check `file <png>` first;
   downscale a copy or skip it.
 - Background shell jobs don't survive in the sandbox. Run long things in the
@@ -46,7 +45,6 @@ Read this first to continue the work in a new session.
 | `native/apps/chat-proto` | Slint drawer and composer around hover-chat; `--screenshot`, `--select`, `--session N`, `--turns N`, `--stream`, `--bench` |
 | `native/apps/notch-proto` | Slint + wgpu 30 DX12 (`DxgiFromVisual`), `WS_EX_NOREDIRECTIONBITMAP`, Win32 layer in `src/win.rs`, `--selftest <dir>` (13 checks), `--hit transparent` |
 | `native/golden/` | `gen.mjs` (md and diagram goldens from the real JS), `gen-copy.mjs` (copy goldens from the real page), `fixtures/`, `expected/` |
-| `.github/workflows/native.yml` | manual only (`workflow_dispatch`); never ran to completion |
 
 Specs gathered from the C# source (not in the repo):
 - `/projects/sandbox/work/ui-spec.txt`: the notch, settings, styles and automation ids.

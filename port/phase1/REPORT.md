@@ -2,7 +2,7 @@
 
 **Status: prototypes built, portable gates checked on Linux. Every Windows gate is
 pending.** Nothing here has run on a Windows desktop: the dev VM is Linux, and GitHub
-Actions are not available (the `native` workflow is now manual-only and has never
+Actions are not available (the workflows are removed from this branch; `native` never
 finished a run). The steps to settle the pending gates are in `RUN-ON-WINDOWS.md`.
 This is a feasibility prototype, not a migration. The C# app is unchanged and remains
 the product.

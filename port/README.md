@@ -11,7 +11,6 @@ cutover has been reviewed; the C# app under `src/` is still the product.
 | `bench/` | `Measure-Hover.ps1` (the benchmark) and `capture-office.mjs` (baseline captures). |
 | `tools/` | `FakeAcp` (a stand-in ACP agent) and `HoverFixture` (a sealed history written with Hover's own code). |
 | `../native/` | The Rust workspace: `hover-md`, `hover-diagram`, `hover-chat`, `hover-notch`, `apps/chat-proto`, `apps/notch-proto`. |
-| `../.github/workflows/native.yml` | Linux tests, Windows builds, the self-tests, evidence and downloadable prototypes. |
 
 ## Build (Linux dev VM or Windows)
 
