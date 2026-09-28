@@ -5,7 +5,7 @@ after a candidate has been measured must be listed in §6 with the reason, and i
 make a gate easier to pass. A gate that fails is reported as failed.
 
 The script is `port/bench/Measure-Hover.ps1`. Fixtures come from `port/tools/HoverFixture`
-(sealed history written with the machine's own DPAPI key) and `port/bench/fake-acp.ps1`
+(sealed history written with the machine's own DPAPI key) and `port/tools/FakeAcp`
 (a stand-in ACP agent that replays recorded provider events).
 
 ## 1. Conditions
