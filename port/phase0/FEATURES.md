@@ -36,11 +36,11 @@ Source references are to the C# app or the office page (`web/office`).
 | # | Feature | Source | Rust |
 |---|---|---|---|
 | C1 | Drawer: slide-in (0.35 s cubic-bezier(.2,.9,.25,1)), header (avatar, name, tool badge, title, folder, context ring with tooltip), delete, close | renderDrawer | proto (layout only) |
-| C2 | Thread: you-bubbles with images and queued note, step lists as `<details>` (live step shimmer, kept open/closed per user), status line, answer with who-line and took-time, fade-in of fresh answers | renderDrawer | proto (no steps yet) |
+| C2 | Thread: you-bubbles with images and queued note, step lists as `<details>` (live step shimmer, kept open/closed per user), status line, answer with who-line and took-time, fade-in of fresh answers | renderDrawer | proto (steps, live step, toggle; no fade) |
 | C3 | Stick to bottom when within 40 px of it, or when a fresh answer arrives | renderDrawer | proto |
 | C4 | Safe Markdown exactly as `md.js` (see MARKDOWN.md) | md.js | port (golden parity) |
 | C5 | Mermaid flowcharts exactly as `diagram.js`, others shown as code | diagram.js | port (golden parity) |
-| C6 | Selectable text across blocks, and copy | browser | proto |
+| C6 | Selectable text across blocks, and copy | browser | proto (copy identical to Chromium on 605 cases; no double/triple click) |
 | C7 | Links: http(s) only, open in the browser through Hover | md.js, `link` | proto |
 | C8 | Session images: web URLs, and files inside the session folder through a per-session host; `..` and absolute paths outside rejected | imageFor | port (resolver) + proto (drawing) |
 | C9 | Composer: autosize 28–112 px, Enter sends, Shift+Enter newline, paste/drop/pick images (≤4, shrunk to 2000 px, JPEG 0.9), one round button: send / queue / stop | composer | proto (text, send; images —) |

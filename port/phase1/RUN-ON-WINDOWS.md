@@ -1,8 +1,17 @@
 # Running the Phase 1 prototypes on a real Windows desktop
 
-The CI runner has no GPU and a single virtual display, so these steps are how the
-Windows gates get settled. Download `native-prototypes-windows` from the PR's
-`native` workflow run and unzip it. Everything is per-user; nothing gets installed.
+These steps settle the Windows gates, on a real PC with a GPU. There are no CI
+artifacts (the `native` workflow is manual-only), so build first:
+
+```powershell
+winget install Rustlang.Rustup   # once; then restart the shell
+cd native
+cargo build --release -p notch-proto -p chat-proto
+cd target\release
+```
+
+The prototypes find their fonts and fixtures in the source tree when run from
+`native\target\release`. Nothing gets installed.
 
 ## Notch (`notch-proto.exe`)
 
