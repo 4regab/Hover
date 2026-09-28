@@ -241,7 +241,6 @@ fn double_and_triple_clicks_select_what_the_page_selects() {
     let want: serde_json::Value = serde_json::from_str(&golden("expected/words.json")).unwrap();
     let mut th = Thread::new(Shaper::new(&fonts()), "Juno", [47, 201, 176, 255]);
     th.set(&[Turn { answer: golden("fixtures/words.md"), ..Turn::new("Q") }], 358.0);
-    let pad = hover_chat::theme::THREAD_PAD[3];
     let (mut n, mut bad, mut wrapped, mut emoji_skipped) = (0, vec![], 0, 0);
     for leaf in want.as_array().unwrap() {
         let page = leaf["text"].as_str().unwrap();
@@ -307,4 +306,39 @@ fn a_double_click_on_windows_takes_the_spaces_after_the_word() {
     let (a, f, _) = th.word_at(at(5));
     th.select(a, th.trailing_space(f));
     assert_eq!(th.selected_text(), "two");
+}
+
+/// With its scrollbars shown (golden/gen-scroll.mjs), the page's thread is 10 px
+/// narrower, and a code block wider than the drawer gains a 10 px bar and scrolls:
+/// the boxes' heights, their places relative to the first, and their scroll widths.
+#[test]
+fn scrolling_boxes_are_laid_out_as_the_page_lays_them_out() {
+    let want: serde_json::Value = serde_json::from_str(&golden("expected/scroll.json")).unwrap();
+    for name in ["rich", "wide"] {
+        let w = &want[name];
+        let cw = w["thread"]["cw"].as_f64().unwrap() as f32;
+        let mut th = Thread::new(Shaper::new(&fonts()), "Juno", [47, 201, 176, 255]);
+        th.set(&[Turn { answer: golden(&format!("fixtures/{name}.md")), ..Turn::new("Q") }], cw);
+        let f = &th.sections[0].frag;
+        // The boxes' borders: pre, .table and figure are the 10 px rounded outlines.
+        let boxes: Vec<(f32, f32)> = f.shapes.iter().filter_map(|s| match s {
+            hover_chat::doc::Shape::Rect { y, h, radius, stroke: Some(_), .. } if radius[0] == 10.0 => Some((*y, *h)),
+            _ => None,
+        }).collect();
+        let page = w["boxes"].as_array().unwrap();
+        assert_eq!(boxes.len(), page.len(), "{name}");
+        let (y0, py0) = (boxes[0].0, page[0]["y"].as_f64().unwrap() as f32);
+        for (k, ((y, h), p)) in boxes.iter().zip(page).enumerate() {
+            let (py, ph) = (p["y"].as_f64().unwrap() as f32, p["h"].as_f64().unwrap() as f32);
+            assert!((h - ph).abs() < 0.5, "{name} box {k}: height {h}, page {ph}");
+            assert!((y - y0 - (py - py0)).abs() < 0.5, "{name} box {k}: at {}, page {}", y - y0, py - py0);
+            eprintln!("{name} box {k}: height {h:.2} (page {ph}), at {:.2} (page {:.2})", y - y0, py - py0);
+        }
+        // Scroll widths: only the long code lines overflow (tables wrap anywhere instead).
+        let wide: Vec<f32> = page.iter().filter(|p| p["sw"].as_f64() > p["cw"].as_f64()).map(|p| p["sw"].as_f64().unwrap() as f32).collect();
+        assert_eq!(f.scrollers.len(), wide.len(), "{name}");
+        for (sc, sw) in f.scrollers.iter().zip(wide) {
+            assert!((sc.content - sw).abs() < 6.0, "{name}: scroll width {}, page {sw}", sc.content);
+        }
+    }
 }

@@ -11,6 +11,7 @@
 
 pub mod doc;
 pub mod paint;
+pub mod scroll;
 pub mod state;
 pub mod theme;
 

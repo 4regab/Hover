@@ -3,13 +3,15 @@
 //!   chat-proto                         a window (Linux dev or Windows)
 //!   chat-proto --stream                an answer streams in at 20 chunks per second
 //!   chat-proto --turns 200             a long rich conversation
-//!   chat-proto --screenshot out.png [--select] [--scale 2]   headless, software renderer
+//!   chat-proto --screenshot out.png [--select] [--scale 2] [--hscroll 80]   headless, software renderer
+//!                                     (--hscroll: the code blocks scrolled sideways by that much; --top: the thread scrolled to its top)
 //!   chat-proto --bench                 headless timings for the report
 use std::cell::RefCell;
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
+use hover_chat::scroll::{Bar, BarId, Part, THICK};
 use hover_chat::{state, Hit, Painter, Pos, Shaper, Stage, Tail, Thread, Turn, Unit};
 use slint::{ComponentHandle, Model, SharedPixelBuffer, VecModel};
 
@@ -117,23 +119,43 @@ struct App {
     clicks: Clicks,
     dragging: bool,
     stick: bool,
+    /// The turns changed (a send, a streamed chunk): lay out again.
+    dirty: bool,
+    /// The viewport the thread was laid out for, and whether its scrollbar shows.
+    view: (f32, f32),
+    vbar: bool,
+    /// A thumb being dragged (and how far into it it was grabbed), or an arrow or the
+    /// track held down (where, and since when: it repeats after 250 ms, every 50 ms).
+    grab: Option<(BarId, f32)>,
+    press: Option<(BarId, Part, f32, Instant)>,
     t0: Instant,
 }
 
 impl App {
     fn new((turns, who, color): (Vec<Turn>, &str, [u8; 4])) -> Self {
         let f = fonts();
-        let mut thread = Thread::new(Shaper::new(&f), who, color);
-        thread.set(&turns, 360.0);
+        // Laid out on the first frame, once the viewport (and so the bar) is known.
+        let thread = Thread::new(Shaper::new(&f), who, color);
         let p0 = Pos { section: 0, text: 0, byte: 0 };
         App { thread, painter: Painter::new(&f, Box::new(|_| None)), turns, scroll: 0.0, anchor: None, unit: Unit::Char, unit_anchor: (p0, p0, Tail::None),
-            clicks: Clicks { at: None, x: 0.0, y: 0.0, n: 0 }, dragging: false, stick: true, t0: Instant::now() }
+            clicks: Clicks { at: None, x: 0.0, y: 0.0, n: 0 }, dragging: false, stick: true, dirty: true, view: (0.0, 0.0), vbar: true, grab: None, press: None, t0: Instant::now() }
     }
 
     fn relayout(&mut self, width: f32, height: f32) {
         // #thread keeps to the bottom when it was within 40 px of it.
         let was_near = self.thread.height - self.scroll - height < 40.0;
-        self.thread.set(&self.turns, width);
+        // overflow: auto: once the thread is taller than its box, the thin scrollbar takes
+        // 10 px of its width. It is laid out at the width it had last (a session opens
+        // with the bar, as most overflow the notch), and again only when that flips.
+        self.thread.set(&self.turns, if self.vbar { width - THICK } else { width });
+        let over = self.thread.height > height + 0.5;
+        if over != self.vbar {
+            self.vbar = over;
+            self.thread.set(&self.turns, if over { width - THICK } else { width });
+            // Narrower, it may now overflow after all: the bar stays, as in Chromium.
+            if !over && self.thread.height > height + 0.5 { self.vbar = true; self.thread.set(&self.turns, width - THICK); }
+        }
+        (self.view, self.dirty) = ((width, height), false);
         if was_near || self.stick {
             self.scroll = (self.thread.height - height).max(0.0);
             self.stick = false;
@@ -145,13 +167,17 @@ impl App {
         if w < 1.0 || h < 1.0 {
             return;
         }
-        if self.stick || (w - self.thread.width).abs() > 0.5 || self.thread.sections.len() != self.turns.len() {
+        if self.stick || self.dirty || self.view != (w, h) || self.thread.sections.len() != self.turns.len() {
             self.relayout(w, h);
         }
         self.scroll = self.scroll.clamp(0.0, (self.thread.height - h).max(0.0));
         let k = ui.window().scale_factor();
         self.painter.time = self.t0.elapsed().as_secs_f32();
-        let px = self.painter.paint(&self.thread, self.scroll, (w * k).round() as u32, (h * k).round() as u32, k, hover_chat::theme::DRAWER_BG);
+        let mut px = self.painter.paint(&self.thread, self.scroll, (w * k).round() as u32, (h * k).round() as u32, k, hover_chat::theme::DRAWER_BG);
+        if let Some(b) = self.bar(BarId::Thread) {
+            let hover = self.painter.hover == Some(BarId::Thread);
+            self.painter.bar(&mut px, &b, k, hover, [0.0; 4]);
+        }
         let mut buf = SharedPixelBuffer::<slint::Rgba8Pixel>::new(px.width(), px.height());
         buf.make_mut_bytes().copy_from_slice(px.data());
         ui.set_thread(slint::Image::from_rgba8_premultiplied(buf));
@@ -160,6 +186,82 @@ impl App {
             .map(|(text, r)| A11yBlock { x: r[0], y: r[1] - self.scroll, w: r[2], h: r[3], text: text.into() })
             .collect();
         ui.set_blocks(Rc::new(VecModel::from(blocks)).into());
+    }
+
+    /// A scrollbar, in viewport coordinates.
+    fn bar(&self, id: BarId) -> Option<Bar> {
+        let (w, h) = self.view;
+        match id {
+            BarId::Thread => self.vbar.then(|| Bar { vertical: true, x: w - THICK, y: 0.0, len: h, content: self.thread.height, view: h, pos: self.scroll }),
+            BarId::Box(s, k) => self.thread.hbars().find(|(i, _)| *i == (s, k)).map(|(_, b)| Bar { y: b.y - self.scroll, ..b }),
+        }
+    }
+
+    /// The scrollbar under a point of the viewport, and how far along it the point is.
+    fn bar_at(&self, x: f32, y: f32) -> Option<(BarId, Bar, f32)> {
+        let boxes = self.thread.hbars().map(|(i, _)| BarId::Box(i.0, i.1)).collect::<Vec<_>>();
+        std::iter::once(BarId::Thread).chain(boxes).find_map(|id| {
+            let b = self.bar(id)?;
+            b.along(x, y).map(|a| (id, b, a))
+        })
+    }
+
+    fn scroll_to(&mut self, id: BarId, pos: f32) {
+        match id {
+            BarId::Thread => self.scroll = pos,
+            BarId::Box(s, k) => self.thread.scroll_box((s, k), pos),
+        }
+    }
+
+    /// The pointer on the scrollbars, which come before the text: Some(redraw) when
+    /// they took the event. kind: 0 down, 1 move while down, 2 up, 3 move (hover).
+    fn bars_pointer(&mut self, kind: i32, x: f32, y: f32) -> Option<bool> {
+        if let Some((id, grab)) = self.grab {
+            match kind {
+                1 => if let Some(b) = self.bar(id) {
+                    let along = if b.vertical { y - b.y } else { x - b.x };
+                    let pos = b.drag(grab, along);
+                    self.scroll_to(id, pos);
+                    return Some(true);
+                },
+                2 => { self.grab = None; return Some(true); }
+                _ => {}
+            }
+        }
+        match kind {
+            0 => {
+                let (id, b, along) = self.bar_at(x, y)?;
+                match b.part(along) {
+                    Part::Thumb => self.grab = Some((id, along - b.thumb().0)),
+                    part => {
+                        let pos = b.step(part, along);
+                        self.scroll_to(id, pos);
+                        self.press = Some((id, part, along, Instant::now()));
+                    }
+                }
+                Some(true)
+            }
+            // A held track press follows the pointer, and stops when the thumb reaches it.
+            1 => { let (id, part, _, t) = self.press?; let b = self.bar(id)?; self.press = Some((id, part, if b.vertical { y - b.y } else { x - b.x }, t)); Some(false) }
+            2 => { self.press.take().map(|_| false) }
+            3 => {
+                let hover = self.bar_at(x, y).filter(|(_, b, a)| b.part(*a) == Part::Thumb).map(|(id, _, _)| id);
+                let changed = hover != self.painter.hover;
+                self.painter.hover = hover;
+                Some(changed)
+            }
+            _ => None,
+        }
+    }
+
+    /// A held arrow or track press, one step on.
+    fn repeat(&mut self) -> bool {
+        let Some((id, part, along, since)) = self.press else { return false };
+        if since.elapsed() < Duration::from_millis(250) { return false; }
+        let Some(b) = self.bar(id) else { return false };
+        let pos = b.step(part, along);
+        self.scroll_to(id, pos);
+        pos != b.pos
     }
 }
 
@@ -179,9 +281,16 @@ fn wire(ui: &ChatWindow, app: Rc<RefCell<App>>) {
         let (app, ui) = (app.clone(), ui.as_weak());
         move || { if let Some(ui) = ui.upgrade() { app.borrow_mut().frame(&ui); } }
     };
-    let r = redraw.clone();
-    let a = app.clone();
+    let (r, a, w) = (redraw.clone(), app.clone(), ui.as_weak());
     ui.on_pointer(move |kind, x, y, shift| {
+        let bars = a.borrow_mut().bars_pointer(kind, x, y);
+        if let Some(ui) = w.upgrade() { ui.set_over_bar(a.borrow().bar_at(x, y).is_some() || a.borrow().grab.is_some()); }
+        match bars {
+            Some(true) => return r(),
+            Some(false) => return,
+            None if kind == 3 => return,
+            None => {}
+        }
         {
             let mut s = a.borrow_mut();
             let yy = y + s.scroll;
@@ -215,8 +324,29 @@ fn wire(ui: &ChatWindow, app: Rc<RefCell<App>>) {
         }
         r();
     });
+    // The wheel scrolls the thread; sideways (a tilt, a touchpad, or Shift with the wheel,
+    // as Chromium on Windows takes it) the code block or table under the pointer.
     let (r, a) = (redraw.clone(), app.clone());
-    ui.on_wheel(move |dy| { a.borrow_mut().scroll += dy; r(); });
+    ui.on_wheel(move |dx, dy, x, y, shift| {
+        {
+            let mut s = a.borrow_mut();
+            let (dx, dy) = if shift && dx == 0.0 { (dy, 0.0) } else { (dx, dy) };
+            s.scroll += dy;
+            if dx != 0.0 {
+                let yy = y + s.scroll;
+                if let Some(id) = s.thread.box_at(x, yy) {
+                    let pos = s.thread.hscroll.get(&id).copied().unwrap_or(0.0) + dx;
+                    s.thread.scroll_box(id, pos);
+                }
+            }
+        }
+        r();
+    });
+    // Held arrows and track presses repeat.
+    let (r, a) = (redraw.clone(), app.clone());
+    let rep = slint::Timer::default();
+    rep.start(slint::TimerMode::Repeated, Duration::from_millis(50), move || { let more = a.borrow_mut().repeat(); if more { r(); } });
+    std::mem::forget(rep);
     let a = app.clone();
     ui.on_copy_selection(move || {
         let text = a.borrow().thread.selected_text();
@@ -238,6 +368,7 @@ fn wire(ui: &ChatWindow, app: Rc<RefCell<App>>) {
     });
     let (r, a, w) = (redraw.clone(), app.clone(), ui.as_weak());
     ui.on_stop(move || {
+        a.borrow_mut().dirty = true;
         if let Some(t) = a.borrow_mut().turns.last_mut() {
             t.stage = Stage::Stopped;
             t.status = None;
@@ -287,6 +418,7 @@ fn stream(ui: &ChatWindow, app: Rc<RefCell<App>>) {
         let t0 = Instant::now();
         {
             let mut s = app.borrow_mut();
+            s.dirty = true;
             let last = s.turns.last_mut().unwrap();
             if *k < words.len() {
                 last.answer.push_str(&words[*k]);
@@ -324,7 +456,7 @@ mod headless {
     }
 }
 
-fn screenshot(out: &str, select: bool, scale: f32, n: usize, session: usize) {
+fn screenshot(out: &str, select: bool, scale: f32, n: usize, session: usize, hscroll: f32, top: bool) {
     let win = headless::window();
     slint::platform::set_platform(Box::new(headless::Headless(win.clone()))).unwrap();
     let ui = ChatWindow::new().unwrap();
@@ -354,6 +486,12 @@ fn screenshot(out: &str, select: bool, scale: f32, n: usize, session: usize) {
         f.byte += "That's all".len();
         s.thread.select(a, f);
         eprintln!("selected, copies as:\n---\n{}\n---", s.thread.selected_text());
+    }
+    if top { app.borrow_mut().scroll = 0.0; }
+    if hscroll > 0.0 {
+        let mut s = app.borrow_mut();
+        let ids: Vec<_> = s.thread.hbars().map(|(id, _)| id).collect();
+        for id in ids { s.thread.scroll_box(id, hscroll); }
     }
     app.borrow_mut().frame(&ui);
     let buf = render(&ui);
@@ -405,8 +543,7 @@ fn bench() {
     for i in 0..60 {
         let mut s = app.borrow_mut();
         s.turns.last_mut().unwrap().answer.push_str(&format!(" chunk{i}"));
-        let turns = s.turns.clone();
-        s.thread.set(&turns, 360.0);
+        s.dirty = true;
         s.frame(&ui);
         if i % 10 == 0 { eprintln!("  chunk {i}: RSS {:.1} MB, sections {}, texts {}", rss_mb(), s.thread.sections.len(), s.thread.sections.last().map_or(0, |x| x.frag.texts.len())); }
     }
@@ -424,7 +561,8 @@ fn main() {
     }
     if let Some(out) = val("--screenshot") {
         let scale = val("--scale").and_then(|s| s.parse().ok()).unwrap_or(1.0);
-        return screenshot(&out, has("--select"), scale, n, session);
+        let hs = val("--hscroll").and_then(|s| s.parse().ok()).unwrap_or(0.0);
+        return screenshot(&out, has("--select"), scale, n, session, hs, has("--top"));
     }
     let ui = ChatWindow::new().unwrap();
     header(&ui, session);
@@ -434,4 +572,44 @@ fn main() {
         stream(&ui, app);
     }
     ui.run().unwrap();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The scrollbars under the pointer, as the window drives them (without a window).
+    #[test]
+    fn scrollbars_take_presses_drags_and_hover() {
+        let mut app = App::new(turns(1, 1));
+        app.relayout(358.0, 271.0);
+        assert!(app.vbar, "the rich session overflows 271 px");
+        assert_eq!(app.thread.width, 348.0, "the bar takes 10 px from the thread");
+        app.scroll = 0.0;
+        // A press on the track under the thumb pages down by 87.5 % of the view.
+        let b = app.bar(BarId::Thread).unwrap();
+        let (t0, tl) = b.thumb();
+        assert_eq!(app.bars_pointer(0, 353.0, t0 + tl + 40.0), Some(true));
+        assert!((app.scroll - 271.0 * 0.875).abs() < 0.01, "{}", app.scroll);
+        app.bars_pointer(2, 353.0, 200.0);
+        // The thumb dragged 20 px down scrolls by 20 px of track.
+        let b = app.bar(BarId::Thread).unwrap();
+        let (t0, _) = b.thumb();
+        app.bars_pointer(0, 353.0, t0 + 2.0);
+        app.bars_pointer(1, 353.0, t0 + 22.0);
+        assert!((app.bar(BarId::Thread).unwrap().thumb().0 - (t0 + 20.0)).abs() < 0.01);
+        app.bars_pointer(2, 353.0, t0 + 22.0);
+        // Hovering the thumb darkens it; the text is left to the thread.
+        let (t0, _) = app.bar(BarId::Thread).unwrap().thumb();
+        assert_eq!(app.bars_pointer(3, 353.0, t0 + 1.0), Some(true));
+        assert_eq!(app.painter.hover, Some(BarId::Thread));
+        assert_eq!(app.bars_pointer(0, 100.0, 100.0), None);
+        // The code block's own bar: its arrow scrolls it 40 px.
+        let (id, b) = app.thread.hbars().next().map(|(i, b)| (BarId::Box(i.0, i.1), b)).unwrap();
+        app.scroll = (b.y - 100.0).max(0.0);
+        let b = app.bar(id).unwrap();
+        app.bars_pointer(0, b.x + b.len - 5.0, b.y + 5.0);
+        let BarId::Box(s, k) = id else { unreachable!() };
+        assert_eq!(app.thread.hscroll.get(&(s, k)).copied(), Some(40.0));
+    }
 }

@@ -27,6 +27,11 @@ pub const YOU_EDGE: Rgba = a(0xc4a2ff, 0.2);
 pub const SELECTION: Rgba = a(0x3390ff, 0.45);
 /// `.glass` over the office's dark room: rgba(22,15,30,.72) over #150c14, without the blur.
 pub const DRAWER_BG: Rgba = [22, 14, 26, 255];
+/// The thin Fluent scrollbar on a page with no `color-scheme` (light), as Chromium
+/// draws it: track, thumb and arrows, and the thumb under the pointer.
+pub const SCROLL_TRACK: Rgba = a(0xfcfcfc, 1.0);
+pub const SCROLL_THUMB: Rgba = a(0x8b8b8b, 1.0);
+pub const SCROLL_THUMB_HOVER: Rgba = a(0x636363, 1.0);
 pub const VISOR: Rgba = a(0x121018, 1.0);
 pub const EYE: Rgba = a(0xaaf6ff, 1.0);
 pub const BULB: Rgba = a(0xffd24a, 1.0);

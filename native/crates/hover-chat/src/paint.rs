@@ -14,6 +14,7 @@ use swash::scale::{Render, ScaleContext, Source};
 use swash::zeno::{Format, Vector};
 
 use crate::doc::{Shape, TextBox, Thread};
+use crate::scroll::{Bar, BarId, THICK};
 use crate::theme::{self, Rgba};
 
 #[derive(Hash, PartialEq, Eq, Clone, Copy)]
@@ -49,6 +50,8 @@ pub struct Painter {
     pub frames: u64,
     /// Seconds, for the live step's shimmer (a 2 s loop, as `@keyframes flow`).
     pub time: f32,
+    /// The scrollbar whose thumb is under the pointer (it darkens).
+    pub hover: Option<BarId>,
 }
 
 // page.html's `.flow` rules, with its CSS variables resolved (usvg reads no `:not()`).
@@ -71,7 +74,7 @@ impl Painter {
                 break;
             }
         }
-        Painter { scaler: ScaleContext::new(), glyphs: HashMap::new(), images: HashMap::new(), svgs: HashMap::new(), fontdb: Arc::new(db), loader, frames: 0, time: 0.0 }
+        Painter { scaler: ScaleContext::new(), glyphs: HashMap::new(), images: HashMap::new(), svgs: HashMap::new(), fontdb: Arc::new(db), loader, frames: 0, time: 0.0, hover: None }
     }
 
     /// The natural size of an image, once it has been loaded.
@@ -107,18 +110,72 @@ impl Painter {
             for sh in &s.frag.shapes {
                 self.shape(&mut px, sh, ox, dy, scale);
             }
+            // What scrolls sideways with a box, cut to it (only square fills do).
+            for (k, sc) in s.frag.scrollers.iter().enumerate() {
+                let off = th.hscroll.get(&(si, k)).copied().unwrap_or(0.0);
+                let [cx, _, cw, _] = sc.clip;
+                for sh in &sc.shapes {
+                    if let Shape::Rect { x, y, w, h, fill: Some(f), .. } = sh {
+                        let (a, b) = ((x - off).max(cx), (x - off + w).min(cx + cw));
+                        if b > a { fill_rect(&mut px, (ox + a) * scale, (dy + y) * scale, (b - a) * scale, h * scale, 0.0, *f); }
+                    }
+                }
+            }
             for (ti, t) in s.frag.texts.iter().enumerate() {
                 let top = s.y + t.y;
                 if top > view.1 || top + t.layout.height() < view.0 { continue; }
+                let off = th.offset(si, t);
                 for (x0, y0, x1, y1) in th.selection_rects(si, ti) {
-                    let (mut a, mut b) = (ox + t.x + x0, ox + t.x + x1);
+                    let (mut a, mut b) = (ox + t.x - off + x0, ox + t.x - off + x1);
                     if let Some(c) = t.clip { a = a.max(ox + c[0]); b = b.min(ox + c[0] + c[2]); }
                     if b > a { fill_rect(&mut px, a * scale, (dy + t.y + y0) * scale, (b - a) * scale, (y1 - y0) * scale, 0.0, theme::SELECTION); }
                 }
-                self.text(&mut px, t, ox + t.x, dy + t.y, scale);
+                self.text(&mut px, t, ox + t.x - off, dy + t.y, scale, off);
             }
         }
+        // The boxes' own scrollbars, inside their rounded bottom corners.
+        for (id, b) in th.hbars() {
+            if b.y > view.1 || b.y + THICK < view.0 { continue; }
+            self.bar(&mut px, &Bar { y: b.y - scroll, ..b }, scale, self.hover == Some(BarId::Box(id.0, id.1)), [0.0, 0.0, 9.0, 9.0]);
+        }
         px
+    }
+
+    /// Draws a scrollbar (in CSS px of the buffer): the track, the arrow buttons and the
+    /// 6 px thumb. `radius` rounds the track's corners (top left, top right, bottom
+    /// right, bottom left) where the box's border does.
+    pub fn bar(&mut self, px: &mut Pixmap, b: &Bar, k: f32, hover: bool, radius: [f32; 4]) {
+        let (w, h) = if b.vertical { (THICK, b.len) } else { (b.len, THICK) };
+        if let Some(path) = rounded(b.x * k, b.y * k, w * k, h * k, radius.map(|r| r * k)) {
+            let mut p = Paint::default();
+            p.set_color(color(theme::SCROLL_TRACK));
+            p.anti_alias = true;
+            px.fill_path(&path, &p, FillRule::Winding, Transform::identity(), None);
+        }
+        // Along the bar a, across it c, to the buffer's x, y.
+        let at = |a: f32, c: f32| if b.vertical { ((b.x + c) * k, (b.y + a) * k) } else { ((b.x + a) * k, (b.y + c) * k) };
+        let mut arrow = |tip: f32, base: f32| {
+            let mut pb = PathBuilder::new();
+            let (x, y) = at(tip, 5.0);
+            pb.move_to(x, y);
+            let (x, y) = at(base, 2.0);
+            pb.line_to(x, y);
+            let (x, y) = at(base, 8.0);
+            pb.line_to(x, y);
+            pb.close();
+            if let Some(path) = pb.finish() {
+                let mut p = Paint::default();
+                p.set_color(color(theme::SCROLL_THUMB));
+                p.anti_alias = true;
+                px.fill_path(&path, &p, FillRule::Winding, Transform::identity(), None);
+            }
+        };
+        arrow(3.5, 7.0);
+        arrow(b.len - 3.5, b.len - 7.0);
+        let (t0, tl) = b.thumb();
+        let (x, y) = at(t0, 2.0);
+        let (tw, th) = if b.vertical { (6.0, tl) } else { (tl, 6.0) };
+        fill_rect(px, x, y, tw * k, th * k, 3.0 * k, if hover { theme::SCROLL_THUMB_HOVER } else { theme::SCROLL_THUMB });
     }
 
     fn shape(&mut self, px: &mut Pixmap, sh: &Shape, ox: f32, dy: f32, k: f32) {
@@ -211,9 +268,10 @@ impl Painter {
         }
     }
 
-    fn text(&mut self, px: &mut Pixmap, t: &TextBox, x: f32, y: f32, k: f32) {
-        // The clip is in the text box's parent coordinates: x - t.x is that origin.
-        let clip = t.clip.map(|c| [((x - t.x + c[0]) * k) as i32, ((y - t.y + c[1]) * k) as i32, ((x - t.x + c[0] + c[2]) * k) as i32, ((y - t.y + c[1] + c[3]) * k) as i32]);
+    fn text(&mut self, px: &mut Pixmap, t: &TextBox, x: f32, y: f32, k: f32, off: f32) {
+        // The clip is in the text box's parent coordinates, which don't scroll: x - t.x + off is that origin.
+        let (ox, oy) = (x - t.x + off, y - t.y);
+        let clip = t.clip.map(|c| [((ox + c[0]) * k) as i32, ((oy + c[1]) * k) as i32, ((ox + c[0] + c[2]) * k) as i32, ((oy + c[1] + c[3]) * k) as i32]);
         // .work .on span: linear-gradient(90deg, dim 30%, #fff 50%, dim 70%) at 200% width,
         // moved by -200% every 2 s, clipped to the text.
         let sw = t.layout.width().max(1.0);
@@ -234,7 +292,7 @@ impl Painter {
             if style.brush.code {
                 // .md code { background; padding: 1px 5px; border-radius: 5px }
                 let x0 = x + run.offset() - 5.0;
-                fill_rect(px, x0 * k, (base - m.ascent - 1.0) * k, (run.advance() + 10.0) * k, (m.ascent + m.descent + 2.0) * k, 5.0 * k, theme::CODE_BG);
+                fill_clipped(px, x0 * k, (base - m.ascent - 1.0) * k, (run.advance() + 10.0) * k, (m.ascent + m.descent + 2.0) * k, 5.0 * k, theme::CODE_BG, clip);
             }
             let font = r.font();
             let Some(fref) = swash::FontRef::from_index(font.data.as_ref(), font.index as usize) else { continue };
@@ -269,7 +327,7 @@ impl Painter {
                     let sz = d.size.unwrap_or(if under { m.underline_size } else { m.strikethrough_size }).max(1.0 / k);
                     // text-underline-offset: 2px on links.
                     let dy = if under { 2.0 } else { 0.0 };
-                    fill_rect(px, (x + run.offset()) * k, (base - off + dy) * k, run.advance() * k, sz * k, 0.0, d.brush.color);
+                    fill_clipped(px, (x + run.offset()) * k, (base - off + dy) * k, run.advance() * k, sz * k, 0.0, d.brush.color, clip);
                 }
             }
         }
@@ -297,6 +355,16 @@ fn rounded(x: f32, y: f32, w: f32, h: f32, r: [f32; 4]) -> Option<tiny_skia::Pat
     p.cubic_to(x, y + tl * K, x + tl * K, y, x + tl, y);
     p.close();
     p.finish()
+}
+
+/// A fill cut to a clip (device px); a rounded fill that is cut loses its rounding there,
+/// which is only ever an inline code background at a scrolling box's edge.
+fn fill_clipped(px: &mut Pixmap, x: f32, y: f32, w: f32, h: f32, r: f32, c: Rgba, clip: Option<[i32; 4]>) {
+    let Some([x0, y0, x1, y1]) = clip.map(|c| c.map(|v| v as f32)) else { return fill_rect(px, x, y, w, h, r, c) };
+    let (a, b, t, u) = (x.max(x0), (x + w).min(x1), y.max(y0), (y + h).min(y1));
+    if b <= a || u <= t { return; }
+    let cut = a > x || b < x + w || t > y || u < y + h;
+    fill_rect(px, a, t, b - a, u - t, if cut { 0.0 } else { r }, c);
 }
 
 fn fill_rect(px: &mut Pixmap, x: f32, y: f32, w: f32, h: f32, r: f32, c: Rgba) {

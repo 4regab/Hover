@@ -38,6 +38,24 @@ pub struct TextBox {
     pub shimmer: bool,
     /// A table cell: a double or triple click stays inside it.
     pub cell: bool,
+    /// The box that scrolls it sideways (an index into `Frag::scrollers`).
+    pub scroller: Option<usize>,
+}
+
+/// A box with `overflow: auto` that is wider inside than out (a code block, a table):
+/// its content scrolls sideways under a thin scrollbar along its bottom.
+#[derive(Clone, Debug)]
+pub struct Scroller {
+    /// Where the content shows (x, y, w, h): the padding box less the bar, which sits just under it.
+    pub clip: [f32; 4],
+    /// The scrollable width.
+    pub content: f32,
+    /// Shapes that scroll with the content (a table's header fill and row rules).
+    pub shapes: Vec<Shape>,
+}
+
+impl Scroller {
+    pub fn max(&self) -> f32 { (self.content - self.clip[2]).max(0.0) }
 }
 
 #[derive(Clone, Debug)]
@@ -142,6 +160,7 @@ pub struct Frag {
     pub texts: Vec<TextBox>,
     pub shapes: Vec<Shape>,
     pub copy: Vec<Tok>,
+    pub scrollers: Vec<Scroller>,
 }
 
 impl Frag {
@@ -152,12 +171,20 @@ impl Frag {
             if let Some(c) = &mut t.clip { c[0] += dx; c[1] += dy; }
         }
         for s in &mut self.shapes { s.shift(dx, dy); }
+        for sc in &mut self.scrollers {
+            sc.clip[0] += dx;
+            sc.clip[1] += dy;
+            for s in &mut sc.shapes { s.shift(dx, dy); }
+        }
     }
     fn append(&mut self, mut other: Frag, dx: f32, dy: f32) {
         other.shift(dx, dy);
         let base = self.texts.len();
+        let sbase = self.scrollers.len();
         self.copy.extend(other.copy.into_iter().map(|t| match t { Tok::Text(i) => Tok::Text(i + base), t => t }));
+        for t in &mut other.texts { if let Some(k) = &mut t.scroller { *k += sbase; } }
         self.texts.append(&mut other.texts);
+        self.scrollers.append(&mut other.scrollers);
         self.shapes.append(&mut other.shapes);
     }
     /// A selectable text box, and its place in the copy.
@@ -330,7 +357,7 @@ impl Md<'_> {
     fn para_box(&mut self, spans: &[Span], look: Look, w: f32, align: Alignment) -> (TextBox, f32) {
         let (layout, text, links) = self.sh.text(spans, look, Some(w), align);
         let h = layout.height();
-        (TextBox { layout, x: 0.0, y: 0.0, text, links, clip: None, shimmer: false, cell: false }, h)
+        (TextBox { layout, x: 0.0, y: 0.0, text, links, clip: None, shimmer: false, cell: false, scroller: None }, h)
     }
 
     /// A paragraph: text, split around images (which are display: block). A <br> just
@@ -406,11 +433,30 @@ impl Md<'_> {
             Block::Rule => Boxed { frag: Frag { shapes: vec![rect(0.0, 0.0, w, 1.0, 0.0, Some(theme::LINE))], copy: vec![Tok::Hr], ..Default::default() }, mt: 12.0, h: 1.0, mb: 12.0 },
             Block::Code { lang, text } => {
                 // .md pre: 1px border, 10px 12px padding; code 11.5px/1.55, white-space: pre.
-                let look = Look { size: 11.5, lh: 1.55, family: theme::MONO, ..look };
+                // The code is inline in the pre, whose own font (the answer's) sets a strut:
+                // each line box holds both, on one baseline, so it is taller than 1.55.
+                let line = |sh: &mut Shaper, l: Look| {
+                    let (lay, _, _) = sh.text(&[plain("x", None)], l, None, Alignment::Start);
+                    let m = lay.lines().next().map(|l| l.metrics().clone()).unwrap();
+                    (m.baseline, m.line_height - m.baseline)
+                };
+                let code = Look { size: 11.5, lh: 1.55, family: theme::MONO, ..look };
+                let ((sa, sd), (ca, cd)) = (line(self.sh, look), line(self.sh, code));
+                let lh = sa.max(ca) + sd.max(cd);
+                let look = Look { lh: lh / 11.5, ..code };
                 let spans = [Span::Text { text: text.clone(), marks: Default::default(), link: None, color: None, family: Some(theme::MONO), size: None, weight: None }];
                 let (layout, t, _) = self.sh.text(&spans, look, None, Alignment::Start);
-                let h = layout.height().max(11.5 * 1.55) + 22.0;
-                let mut frag = Frag::one(TextBox { layout, x: 13.0, y: 11.0, text: t, links: vec![], clip: Some([1.0, 1.0, w - 2.0, h - 2.0]), shimmer: false, cell: false }, 1);
+                // Where the taller line puts the code's baseline, against where the strut does.
+                let dy = sa.max(ca) - layout.lines().next().map_or(sa.max(ca), |l| l.metrics().baseline);
+                // overflow: auto: a line wider than the box scrolls, and the bar adds its height.
+                let content = layout.width() + 24.0;
+                let over = content > w - 2.0 + 0.01;
+                let bar = if over { crate::scroll::THICK } else { 0.0 };
+                let h = layout.height().max(lh) + 22.0 + bar;
+                let clip = [1.0, 1.0, w - 2.0, h - 2.0 - bar];
+                let sc = over.then_some(0);
+                let mut frag = Frag::one(TextBox { layout, x: 13.0, y: 11.0 + dy, text: t, links: vec![], clip: Some(clip), shimmer: false, cell: false, scroller: sc }, 1);
+                if over { frag.scrollers.push(Scroller { clip, content, shapes: vec![] }); }
                 frag.shapes.insert(0, Shape::Rect { x: 0.0, y: 0.0, w, h, radius: [10.0; 4], fill: Some(theme::PRE_BG), stroke: Some((theme::LINE, 1.0)) });
                 if let Some(lang) = lang {
                     // pre[data-lang]::before: 9.5px pixel font, faint, uppercase, right 8 top 5.
@@ -418,7 +464,8 @@ impl Md<'_> {
                     let (lay, _, _) = self.sh.text(&[plain(&lang.to_uppercase(), None)], l, None, Alignment::Start);
                     let lw = lay.width();
                     // Not selectable in the page (generated content): drawn, not in the copy text.
-                    frag.texts.push(TextBox { layout: lay, x: w - 8.0 - lw - 1.0, y: 6.0, text: String::new(), links: vec![], clip: None, shimmer: false, cell: false });
+                    // Positioned in the scrolling box, so it scrolls away with the code.
+                    frag.texts.push(TextBox { layout: lay, x: w - 8.0 - lw - 1.0, y: 6.0, text: String::new(), links: vec![], clip: Some(clip), shimmer: false, cell: false, scroller: sc });
                 }
                 Boxed { frag, mt: 0.0, h, mb: 9.0 }
             }
@@ -430,7 +477,7 @@ impl Md<'_> {
                 let (dw, dh) = (sw * k, shh * k);
                 let h = dh + 22.0;
                 // The labels are text in the page's SVG: a selection over the figure copies them.
-                let frag = Frag { copy: vec![Tok::Virt(svg_text(svg)), Tok::Req(1)], texts: vec![], shapes: vec![
+                let frag = Frag { copy: vec![Tok::Virt(svg_text(svg)), Tok::Req(1)], texts: vec![], scrollers: vec![], shapes: vec![
                     Shape::Rect { x: 0.0, y: 0.0, w, h, radius: [10.0; 4], fill: Some(theme::FIGURE_BG), stroke: Some((theme::LINE, 1.0)) },
                     Shape::Svg { x: 11.0 + (inner - dw) / 2.0, y: 11.0, w: dw, h: dh, svg: svg.as_str().into() },
                 ] };
@@ -486,7 +533,7 @@ impl Md<'_> {
                 let (lay, _, _) = self.sh.text(&[plain(&marker, Some(theme::FAINT))], look, None, Alignment::Start);
                 let mw = lay.width();
                 let mb = lay.lines().next().map_or(0.0, |l| l.metrics().baseline);
-                li.frag.texts.push(TextBox { layout: lay, x: -(mw + if ordered { 4.0 } else { 7.0 }), y: baseline - mb, text: String::new(), links: vec![], clip: None, shimmer: false, cell: false });
+                li.frag.texts.push(TextBox { layout: lay, x: -(mw + if ordered { 4.0 } else { 7.0 }), y: baseline - mb, text: String::new(), links: vec![], clip: None, shimmer: false, cell: false, scroller: None });
             }
             li.frag.shift(left, 0.0);
             li.mt = li.mt.max(2.0);
@@ -526,7 +573,11 @@ impl Md<'_> {
         } else {
             mins.clone()
         };
+        // .table { overflow: auto }: a table whose columns can't shrink to fit scrolls sideways.
+        let table_w = widths.iter().sum::<f32>().max(inner);
+        let over = table_w > inner + 0.01;
         let mut frag = Frag::default();
+        let mut scrolled = vec![];
         let mut y = 1.0;
         for (ri, r) in all.iter().enumerate() {
             let mut x = 1.0;
@@ -539,11 +590,12 @@ impl Md<'_> {
                 let spans = cell.map(|c| spans_of(&c.content)).unwrap_or_default();
                 let (mut tb, h) = self.para_box(&spans, l, widths[c] - 18.0, align);
                 tb.cell = true;
+                tb.scroller = over.then_some(0);
                 row_h = row_h.max(h + 12.0);
                 cells.push((tb, x));
                 x += widths[c];
             }
-            if ri == 0 { frag.shapes.push(rect(1.0, y, inner, row_h, 0.0, Some(theme::TH_BG))); }
+            if ri == 0 { scrolled.push(rect(1.0, y, table_w, row_h, 0.0, Some(theme::TH_BG))); }
             for (c, (mut tb, cx)) in cells.into_iter().enumerate() {
                 tb.x = cx + 9.0;
                 tb.y = y + 6.0;
@@ -552,10 +604,18 @@ impl Md<'_> {
             }
             if ri + 1 < all.len() { frag.copy.push(Tok::Req(1)); }
             y += row_h;
-            if ri + 1 < all.len() { frag.shapes.push(rect(1.0, y, inner, 1.0, 0.0, Some(theme::LINE))); y += 1.0; }
+            if ri + 1 < all.len() { scrolled.push(rect(1.0, y, table_w, 1.0, 0.0, Some(theme::LINE))); y += 1.0; }
         }
         frag.copy.push(Tok::TableEnd);
-        let h = y + 1.0;
+        let h = if over {
+            let clip = [1.0, 1.0, inner, y - 1.0];
+            for t in &mut frag.texts { t.clip = Some(clip); }
+            frag.scrollers.push(Scroller { clip, content: table_w, shapes: scrolled });
+            y + crate::scroll::THICK + 1.0
+        } else {
+            frag.shapes.extend(scrolled);
+            y + 1.0
+        };
         frag.shapes.insert(0, Shape::Rect { x: 0.0, y: 0.0, w, h, radius: [10.0; 4], fill: None, stroke: Some((theme::LINE, 1.0)) });
         Boxed { frag, mt: 0.0, h, mb: 9.0 }
     }
@@ -681,6 +741,9 @@ pub struct Thread {
     pub hide_steps: bool,
     /// Section layouts made since the thread was created (for the tests and the benchmark).
     pub relayouts: usize,
+    /// How far each sideways-scrolling box is scrolled, by (section, scroller). A section
+    /// laid out again starts at 0, as the page's re-rendered answer does.
+    pub hscroll: std::collections::HashMap<(usize, usize), f32>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -747,7 +810,7 @@ impl Thread {
     pub fn new(sh: Shaper, who: &str, color: Rgba) -> Self {
         Thread { sh, width: 360.0, who: who.into(), color, sections: vec![], height: 0.0, selection: None, tail: Tail::None,
             image_size: Box::new(|_| None), image_rule: Box::new(|s| if s.starts_with("http") { Some(s.into()) } else { None }),
-            steps_user: Default::default(), hide_steps: false, relayouts: 0 }
+            steps_user: Default::default(), hide_steps: false, relayouts: 0, hscroll: Default::default() }
     }
 
     /// Whether turn i's step list is open: the user's choice, else open while it runs.
@@ -781,6 +844,7 @@ impl Thread {
                 Some(s) => s,
                 None => {
                     self.relayouts += 1;
+                    self.hscroll.retain(|k, _| k.0 != i);
                     let (frag, h, summary, answer_tok) = self.turn(t, width - pl - pr, open, live);
                     Section { y: 0.0, h, frag, summary, answer_tok, key }
                 }
@@ -798,7 +862,7 @@ impl Thread {
 
     fn line(&mut self, text: &str, look: Look, w: Option<f32>) -> TextBox {
         let (layout, text, _) = self.sh.text(&[plain(text, None)], look, w, Alignment::Start);
-        TextBox { layout, x: 0.0, y: 0.0, text, links: vec![], clip: None, shimmer: false, cell: false }
+        TextBox { layout, x: 0.0, y: 0.0, text, links: vec![], clip: None, shimmer: false, cell: false, scroller: None }
     }
 
     // One turn, as flex items with 7 px gaps: the you-bubble, the step list, the status,
@@ -832,7 +896,7 @@ impl Thread {
         }
         let ty = 7.0 + pics_h;
         let lh = layout.height();
-        frag.text(TextBox { layout, x: bx + 11.0, y: ty, text, links: vec![], clip: None, shimmer: false, cell: false });
+        frag.text(TextBox { layout, x: bx + 11.0, y: ty, text, links: vec![], clip: None, shimmer: false, cell: false, scroller: None });
         if let Some(mut q) = q {
             frag.copy.push(Tok::Req(1));
             q.x = bx + 11.0;
@@ -1010,6 +1074,36 @@ impl Thread {
         row_h
     }
 
+    /// How far a text box is moved left by the box that scrolls it.
+    pub fn offset(&self, section: usize, t: &TextBox) -> f32 {
+        t.scroller.map_or(0.0, |k| self.hscroll.get(&(section, k)).copied().unwrap_or(0.0))
+    }
+
+    /// Every sideways scrollbar, in thread coordinates, with its (section, scroller).
+    pub fn hbars(&self) -> impl Iterator<Item = ((usize, usize), crate::scroll::Bar)> + '_ {
+        let ox = theme::THREAD_PAD[3];
+        self.sections.iter().enumerate().flat_map(move |(si, s)| s.frag.scrollers.iter().enumerate().map(move |(k, sc)| {
+            let [x, y, w, h] = sc.clip;
+            ((si, k), crate::scroll::Bar { vertical: false, x: ox + x, y: s.y + y + h, len: w, content: sc.content, view: w,
+                pos: self.hscroll.get(&(si, k)).copied().unwrap_or(0.0) })
+        }))
+    }
+
+    /// Scrolls a box sideways (clamped to its content).
+    pub fn scroll_box(&mut self, id: (usize, usize), pos: f32) {
+        let Some(sc) = self.sections.get(id.0).and_then(|s| s.frag.scrollers.get(id.1)) else { return };
+        self.hscroll.insert(id, pos.clamp(0.0, sc.max()));
+    }
+
+    /// The sideways-scrolling box under a point in thread coordinates.
+    pub fn box_at(&self, x: f32, y: f32) -> Option<(usize, usize)> {
+        let x = x - theme::THREAD_PAD[3];
+        self.sections.iter().enumerate().find_map(|(si, s)| s.frag.scrollers.iter().position(|sc| {
+            let [cx, cy, cw, ch] = sc.clip;
+            x >= cx && x < cx + cw && y >= s.y + cy && y < s.y + cy + ch + crate::scroll::THICK
+        }).map(|k| (si, k)))
+    }
+
     fn texts(&self) -> impl Iterator<Item = (Pos, &TextBox, f32)> {
         self.sections.iter().enumerate().flat_map(|(si, s)| s.frag.texts.iter().enumerate().map(move |(ti, t)| (Pos { section: si, text: ti, byte: 0 }, t, s.y)))
     }
@@ -1025,7 +1119,12 @@ impl Thread {
         let mut best: Option<(f32, Pos)> = None;
         for (p, t, sy) in self.texts() {
             if t.text.is_empty() { continue; }
-            let (lx, ly) = (x - t.x, y - sy - t.y);
+            let off = self.offset(p.section, t);
+            // What a scrolling box hides can't be clicked.
+            if let (Some([cx, cy, cw, ch]), Some(_)) = (t.clip, t.scroller) {
+                if x < cx || x >= cx + cw || y < sy + cy || y >= sy + cy + ch { continue; }
+            }
+            let (lx, ly) = (x - t.x + off, y - sy - t.y);
             let h = t.layout.height();
             let w = t.layout.width();
             let dy = if ly < 0.0 { -ly } else if ly > h { ly - h } else { 0.0 };
@@ -1183,7 +1282,7 @@ impl Thread {
     /// coordinates.
     pub fn accessible_blocks(&self) -> Vec<(String, [f32; 4])> {
         self.texts().filter(|(_, t, _)| !t.text.is_empty())
-            .map(|(_, t, sy)| (t.text.clone(), [t.x + theme::THREAD_PAD[3], sy + t.y, t.layout.width(), t.layout.height()]))
+            .map(|(p, t, sy)| (t.text.clone(), [t.x - self.offset(p.section, t) + theme::THREAD_PAD[3], sy + t.y, t.layout.width(), t.layout.height()]))
             .collect()
     }
 

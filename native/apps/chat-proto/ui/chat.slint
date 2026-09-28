@@ -94,9 +94,12 @@ export component ChatWindow inherits Window {
     in-out property <string> draft;
     out property <length> thread-width: thread-area.width;
     out property <length> thread-height: thread-area.height;
-    // kind: 0 down, 1 move, 2 up; shift for extending.
+    // kind: 0 down, 1 move while down, 2 up, 3 move (hover); shift for extending.
     callback pointer(int, length, length, bool);
-    callback wheel(length);
+    // dx, dy, the pointer, shift.
+    callback wheel(length, length, length, length, bool);
+    // Over a scrollbar: the arrow, not the text cursor.
+    in property <bool> over-bar;
     callback copy-selection();
     callback select-all();
     callback send(string);
@@ -123,6 +126,9 @@ export component ChatWindow inherits Window {
         accessible-label: "Session";
 
         VerticalLayout {
+            // Inside the 1 px border, as the page's box model puts the content (the
+            // thread is 358 px wide in a 360 px drawer).
+            padding: 1px;
             // .dh: padding 9 8 0 10, gap 9
             HorizontalLayout {
                 padding-top: 9px;
@@ -265,18 +271,20 @@ export component ChatWindow inherits Window {
                         return reject;
                     }
                     TouchArea {
-                        mouse-cursor: text;
+                        mouse-cursor: root.over-bar ? default : text;
                         pointer-event(e) => {
                             if (e.button == PointerEventButton.left && e.kind == PointerEventKind.down) {
                                 keys.focus();
                                 root.pointer(0, self.mouse-x, self.mouse-y, e.modifiers.shift);
                             } else if (e.button == PointerEventButton.left && e.kind == PointerEventKind.up) {
                                 root.pointer(2, self.mouse-x, self.mouse-y, false);
+                            } else if (e.kind == PointerEventKind.move) {
+                                root.pointer(3, self.mouse-x, self.mouse-y, false);
                             }
                         }
                         moved => { root.pointer(1, self.mouse-x, self.mouse-y, false); }
                         scroll-event(e) => {
-                            root.wheel(-e.delta-y);
+                            root.wheel(-e.delta-x, -e.delta-y, self.mouse-x, self.mouse-y, e.modifiers.shift);
                             return accept;
                         }
                     }
