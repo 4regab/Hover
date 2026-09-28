@@ -12,7 +12,7 @@ cutover has been reviewed; the C# app under `src/` is still the product.
 | `HANDOFF.md`, `NEXT-PROMPT.md` | The state for the next agent, and the prompt that sets its work (all remaining phases, Windows and Linux). |
 | `bench/` | `Measure-Hover.ps1` (the benchmark) and `capture-office.mjs` (baseline captures). |
 | `tools/` | `FakeAcp` (a stand-in ACP agent) and `HoverFixture` (a sealed history written with Hover's own code). |
-| `../native/` | The Rust workspace: `hover-core` (paths, settings, sealing, history, images, single instance), `hover-md`, `hover-diagram`, `hover-chat`, `hover-notch`, `apps/chat-proto`, `apps/notch-proto`. |
+| `../native/` | The Rust workspace: `hover-core` (paths, settings, sealing, history, images, single instance), `hover-agents` (ACP, the tools, sessions, the office's state message), `hover-md`, `hover-diagram`, `hover-chat`, `hover-notch`, `apps/chat-proto`, `apps/notch-proto`. |
 
 ## Build (Linux dev VM or Windows)
 

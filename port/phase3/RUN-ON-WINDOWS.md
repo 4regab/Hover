@@ -19,3 +19,17 @@ dotnet build ..\port\tools\HoverFixture\HoverFixture.csproj -c Release
 | Noty migration | With no `%APPDATA%\Hover`, make `%APPDATA%\Noty\settings.json`; with `HOVER_DATA_DIR` unset, run `target\release\hover-data where` | it prints `%APPDATA%\Hover`, which now holds the file and `Noty` is gone (take a copy of your real `%APPDATA%\Hover` first, or use a test account) |
 | Launch at login | Not wired to a UI until 3C: then toggle it in Settings and read `HKCU\Software\Microsoft\Windows\CurrentVersion\Run\Hover` | the value is `"<path to the exe>"`, and gone when off |
 | Single instance with the C# app | Start the C# Hover; start the port (from 3C on) | the port exits and the C# dashboard opens; and the other way round |
+
+## 3A: sessions and ACP
+
+Build `cargo build --release -p hover-agents --example probe -p chat-proto`.
+
+| Check | How | Pass when |
+|---|---|---|
+| Each tool found and checked | `target\release\examples\probe.exe C:\some\project` | each installed tool shows its exe; signed-in tools check as installed and signed in, others with the right hint |
+| A real turn per tool | `probe.exe C:\some\project kiro`, then `codex`, then `cursor` | `Completed` with a one-word answer; `offers:` lists the tool's models (and efforts) |
+| Cursor's shim | with Cursor installed by its installer (`%LOCALAPPDATA%\cursor-agent\cursor-agent.cmd`), run the cursor turn | it runs (through `cmd /d /c`) |
+| No console window | watch the screen during the turns | no console window flashes |
+| Killed Hover leaves nothing | `chat-proto.exe --acp <path to kiro-cli.exe> --folder C:\some\project`, send a long task, kill `chat-proto.exe` in Task Manager | no `kiro-cli` (or what it started) is left in Task Manager |
+| Non-ASCII prompt | send `Réponds «oui» 👋` in chat-proto --acp | the tool's answer shows it read the prompt intact |
+| FakeAcp live | `dotnet build ..\port\tools\FakeAcp -c Release`; `$env:FAKEACP="…\FakeAcp.exe"; cargo test --release -p hover-agents --test fakeacp` | 5 passed (the same recordings as on Linux) |

@@ -1,0 +1,31 @@
+> {"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":1,"clientCapabilities":{"fs":{"readTextFile":false,"writeTextFile":false},"terminal":false},"clientInfo":{"name":"hover","version":"1"}}}
+< {"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1,"agentCapabilities":{"loadSession":true}}}
+> {"jsonrpc":"2.0","id":2,"method":"session/new","params":{"cwd":"{folder}","mcpServers":[]}}
+< {"jsonrpc":"2.0","id":2,"result":{"sessionId":"fake-P1-1","configOptions":[]}}
+> {"jsonrpc":"2.0","id":3,"method":"session/prompt","params":{"sessionId":"fake-P1-1","prompt":[{"type":"text","text":"first"}]}}
+< {"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"fake-P1-1","update":{"sessionUpdate":"tool_call","toolCallId":"t0","kind":"read","title":"Step 0","status":"in_progress","locations":[{"path":"src/file0.cs"}]}}}
+< {"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"fake-P1-1","update":{"sessionUpdate":"agent_thought_chunk","content":{"type":"text","text":"thinking "}}}}
+< {"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"fake-P1-1","update":{"sessionUpdate":"agent_thought_chunk","content":{"type":"text","text":"thinking "}}}}
+< {"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"fake-P1-1","update":{"sessionUpdate":"agent_thought_chunk","content":{"type":"text","text":"thinking "}}}}
+< {"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"fake-P1-1","update":{"sessionUpdate":"agent_thought_chunk","content":{"type":"text","text":"thinking "}}}}
+< {"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"fake-P1-1","update":{"sessionUpdate":"tool_call_update","toolCallId":"t0","status":"completed"}}}
+< {"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"fake-P1-1","update":{"sessionUpdate":"agent_thought_chunk","content":{"type":"text","text":"thinking "}}}}
+< {"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"fake-P1-1","update":{"sessionUpdate":"usage_update","used":1280,"size":200000}}}
+< {"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"fake-P1-1","update":{"sessionUpdate":"agent_thought_chunk","content":{"type":"text","text":"thinking "}}}}
+< {"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"fake-P1-1","update":{"sessionUpdate":"agent_thought_chunk","content":{"type":"text","text":"thinking "}}}}
+< {"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"fake-P1-1","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"Done. Nothing needed changing."}}}}
+< {"jsonrpc":"2.0","id":3,"result":{"stopReason":"end_turn"}}
+> {"jsonrpc":"2.0","id":4,"method":"session/prompt","params":{"sessionId":"fake-P1-1","prompt":[{"type":"text","text":"second"}]}}
+< {"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"fake-P1-1","update":{"sessionUpdate":"tool_call","toolCallId":"t0","kind":"read","title":"Step 0","status":"in_progress","locations":[{"path":"src/file0.cs"}]}}}
+< {"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"fake-P1-1","update":{"sessionUpdate":"agent_thought_chunk","content":{"type":"text","text":"thinking "}}}}
+< {"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"fake-P1-1","update":{"sessionUpdate":"agent_thought_chunk","content":{"type":"text","text":"thinking "}}}}
+< {"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"fake-P1-1","update":{"sessionUpdate":"agent_thought_chunk","content":{"type":"text","text":"thinking "}}}}
+< {"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"fake-P1-1","update":{"sessionUpdate":"agent_thought_chunk","content":{"type":"text","text":"thinking "}}}}
+< {"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"fake-P1-1","update":{"sessionUpdate":"tool_call_update","toolCallId":"t0","status":"completed"}}}
+< {"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"fake-P1-1","update":{"sessionUpdate":"agent_thought_chunk","content":{"type":"text","text":"thinking "}}}}
+< {"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"fake-P1-1","update":{"sessionUpdate":"usage_update","used":1280,"size":200000}}}
+< {"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"fake-P1-1","update":{"sessionUpdate":"agent_thought_chunk","content":{"type":"text","text":"thinking "}}}}
+< {"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"fake-P1-1","update":{"sessionUpdate":"agent_thought_chunk","content":{"type":"text","text":"thinking "}}}}
+< {"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"fake-P1-1","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"Done. Nothing needed changing."}}}}
+< {"jsonrpc":"2.0","id":4,"result":{"stopReason":"end_turn"}}
+! eof

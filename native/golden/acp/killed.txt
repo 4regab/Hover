@@ -1,0 +1,7 @@
+> {"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":1,"clientCapabilities":{"fs":{"readTextFile":false,"writeTextFile":false},"terminal":false},"clientInfo":{"name":"hover","version":"1"}}}
+< {"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1,"agentCapabilities":{"loadSession":true}}}
+> {"jsonrpc":"2.0","id":2,"method":"session/new","params":{"cwd":"{folder}","mcpServers":[]}}
+< {"jsonrpc":"2.0","id":2,"result":{"sessionId":"fake-P1-1","configOptions":[]}}
+> {"jsonrpc":"2.0","id":3,"method":"session/prompt","params":{"sessionId":"fake-P1-1","prompt":[{"type":"text","text":"a long task"}]}}
+< {"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"fake-P1-1","update":{"sessionUpdate":"tool_call","toolCallId":"t0","kind":"read","title":"Step 0","status":"in_progress","locations":[{"path":"src/file0.cs"}]}}}
+! eof

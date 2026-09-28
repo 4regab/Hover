@@ -10,9 +10,13 @@
 //!                                      --menu: the model menu open; --history: the transcript view;
 //!                                      --closed: the drawer closed)
 //!   chat-proto --history               a session as a transcript (the history view)
+//!   chat-proto --acp <agent> [--folder d]  a real session: <agent> acp (kiro-cli, or FakeAcp)
+//!                                      run by hover-agents; add --screenshot out.png [--prompt p]
+//!                                      [--mid] to shoot it done (or at its second step)
 //!                                     (--hscroll: the code blocks scrolled sideways by that much; --top: the thread scrolled to its top)
 //!   chat-proto --bench                 headless timings for the report
 mod compose;
+mod live;
 mod models;
 mod net;
 
@@ -70,10 +74,11 @@ fn turns(n: usize, session: usize) -> (Vec<Turn>, &'static str, [u8; 4]) {
     (v, name, color)
 }
 
+/// renderDrawer's header for fixture session `session`.
+fn header(ui: &ChatWindow, session: usize) { header_of(ui, &fixture()["state"]["sessions"][session]); }
+
 /// renderDrawer's header: the bot, the tool's badge, the title, the folder, the context.
-fn header(ui: &ChatWindow, session: usize) {
-    let fx = fixture();
-    let s = &fx["state"]["sessions"][session];
+fn header_of(ui: &ChatWindow, s: &serde_json::Value) {
     let (name, c) = state::BOTS[s["bot"].as_u64().unwrap_or(1) as usize];
     // main.js TOOLS: name and badge colour.
     let (tool, tc) = match s["tool"].as_str().unwrap_or("kiro") { "codex" => ("Codex", 0x3fd6a0), "cursor" => ("Cursor", 0x7cc0ff), _ => ("Kiro", 0xb48cff) };
@@ -216,8 +221,10 @@ impl App {
 
     /// Loads images as the office does, for fixture session `session`: the web, Hover's
     /// pasted-images folder, and the session's own folder through its files host.
-    fn load_images(&mut self, session: usize) {
-        let s = &fixture()["state"]["sessions"][session];
+    fn load_images(&mut self, session: usize) { self.load_images_for(&fixture()["state"]["sessions"][session]); }
+
+    /// load_images, for a session as the state message gives it.
+    fn load_images_for(&mut self, s: &serde_json::Value) {
         let (tx, rx) = std::sync::mpsc::channel();
         let tx = std::sync::Mutex::new(tx);
         let net = Rc::new(net::Net::new(move |u| { let _ = tx.lock().unwrap().send(u); }));
@@ -767,6 +774,65 @@ fn stream(ui: &ChatWindow, app: Rc<RefCell<App>>) {
     std::mem::forget(t);
 }
 
+/// The drawer on a live session: sending starts it (then replies in it), Stop stops
+/// it, and the state is read as KiroPage pushes it, every 120 ms when it changed.
+fn live_window(live: live::Live) {
+    let ui = ChatWindow::new().unwrap();
+    let (name, color) = state::BOTS[0];
+    let app = Rc::new(RefCell::new(App::new((vec![], name, color))));
+    ui.set_session_title("New task".into());
+    ui.set_folder(live.folder.clone().into());
+    ui.set_busy(false);
+    wire(&ui, app.clone());
+    wire_drop(&ui, app.clone());
+    let live = Rc::new(live);
+    let current: Rc<std::cell::Cell<Option<i32>>> = Default::default();
+    let (a, l, c, w) = (app.clone(), live.clone(), current.clone(), ui.as_weak());
+    ui.on_send(move |text| {
+        let Some(ui) = w.upgrade() else { return };
+        let urls: Vec<String> = a.borrow_mut().pics.drain(..).map(|p| p.url).collect();
+        let saved = net::support().map_or(vec![], |d| compose::save(&urls, &hover_core::images::folder(&d)));
+        let paths = saved.iter().map(|p| p.to_string_lossy().into_owned()).collect();
+        match l.send(c.get(), &text, paths) {
+            Ok(id) => {
+                if c.get().is_none() {
+                    // The first send makes the session; the drawer is its from now on.
+                    c.set(Some(id));
+                    let v = l.state_of(id).unwrap();
+                    let mut s = a.borrow_mut();
+                    let (_, who, col) = live_turns(&v);
+                    (s.thread.who, s.thread.color, s.thread.session) = (who.into(), col, id as u64);
+                    s.thread.sections.clear();
+                    s.load_images_for(&v);
+                }
+                a.borrow_mut().stick = true;
+            }
+            Err(t) => toast(&ui, &a.borrow(), &t),
+        }
+        a.borrow().sync_composer(&ui);
+    });
+    let (l, c) = (live.clone(), current.clone());
+    ui.on_stop(move || { if let Some(id) = c.get() { l.sessions.stop(id); } });
+    let (a, l, c, w) = (app.clone(), live.clone(), current.clone(), ui.as_weak());
+    let push = slint::Timer::default();
+    push.start(slint::TimerMode::Repeated, Duration::from_millis(120), move || {
+        let (Some(ui), Some(id)) = (w.upgrade(), c.get()) else { return };
+        if !l.take_dirty() { return; }
+        let Some(v) = l.state_of(id) else { return };
+        header_of(&ui, &v);
+        {
+            let mut s = a.borrow_mut();
+            s.turns = state::turns(&v);
+            s.tool = v["tool"].as_str().unwrap_or("").into();
+            s.dirty = true;
+        }
+        a.borrow_mut().frame(&ui);
+        a.borrow().sync_composer(&ui);
+    });
+    ui.run().unwrap();
+    drop(push);
+}
+
 // ---- headless ------------------------------------------------------------------------
 
 mod headless {
@@ -786,7 +852,15 @@ mod headless {
 }
 
 /// What the headless screenshot shows, besides the session.
-struct Shot { select: bool, scale: f32, hscroll: f32, top: bool, images: bool, answer: Option<String>, pics: usize, menu: bool, history: bool, closed: bool }
+struct Shot { select: bool, scale: f32, hscroll: f32, top: bool, images: bool, answer: Option<String>, pics: usize, menu: bool, history: bool, closed: bool,
+    /// A live session's state (live::Live::state_of) in place of the fixture's.
+    live: Option<serde_json::Value> }
+
+/// A state-message session's turns, with its bot's name and colour.
+fn live_turns(s: &serde_json::Value) -> (Vec<Turn>, &'static str, [u8; 4]) {
+    let (name, color) = state::BOTS[s["bot"].as_u64().unwrap_or(0) as usize % state::BOTS.len()];
+    (state::turns(s), name, color)
+}
 
 fn screenshot(out: &str, n: usize, session: usize, o: Shot) {
     let Shot { select, scale, hscroll, top, .. } = o;
@@ -797,13 +871,14 @@ fn screenshot(out: &str, n: usize, session: usize, o: Shot) {
     let (w, h) = ((1104.0 * scale) as u32, (424.0 * scale) as u32);
     win.set_size(slint::PhysicalSize::new(w, h));
     ui.show().unwrap();
-    header(&ui, session);
-    let app = Rc::new(RefCell::new(App::new(turns(n, session))));
-    app.borrow_mut().thread.session = fixture()["state"]["sessions"][session]["id"].as_u64().unwrap_or(0);
-    app.borrow_mut().tool = fixture()["state"]["sessions"][session]["tool"].as_str().unwrap_or("").to_string();
+    let s = o.live.clone().unwrap_or_else(|| fixture()["state"]["sessions"][session].clone());
+    header_of(&ui, &s);
+    let app = Rc::new(RefCell::new(App::new(if o.live.is_some() { live_turns(&s) } else { turns(n, session) })));
+    app.borrow_mut().thread.session = s["id"].as_u64().unwrap_or(0);
+    app.borrow_mut().tool = s["tool"].as_str().unwrap_or("").to_string();
     app.borrow_mut().index = session;
     if let Some(a) = &o.answer { if let Some(t) = app.borrow_mut().turns.last_mut() { t.answer = a.clone(); } }
-    if o.images { app.borrow_mut().load_images(session); }
+    if o.images { app.borrow_mut().load_images_for(&s); }
     if o.history { history(&ui, &mut app.borrow_mut()); }
     // Composer images: n made-up pictures, as if pasted.
     let pics = (0..o.pics).map(|k| {
@@ -918,13 +993,34 @@ fn main() {
     if has("--bench") {
         return bench();
     }
+    if let Some(exe) = val("--acp") {
+        let folder = val("--folder").unwrap_or_else(|| std::env::current_dir().unwrap().to_string_lossy().into_owned());
+        let live = live::Live::new(PathBuf::from(exe), folder);
+        if let Some(out) = val("--screenshot") {
+            let prompt = val("--prompt").unwrap_or_else(|| "Fix the failing tests and tell me what changed.".into());
+            let id = live.send(None, &prompt, vec![]).expect("the task starts");
+            let t = Instant::now();
+            while t.elapsed() < Duration::from_secs(120) {
+                let s = live.sessions.get(id).unwrap();
+                if if has("--mid") { s.turns[0].steps.len() >= 2 } else { !s.busy() } { break; }
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            let v = live.state_of(id).unwrap();
+            eprintln!("live session: stage {}, {} steps, answer {} bytes", v["stage"], v["turns"][0]["steps"].as_array().map_or(0, Vec::len),
+                v["turns"][0]["answer"].as_str().map_or(0, str::len));
+            let scale = val("--scale").and_then(|s| s.parse().ok()).unwrap_or(1.0);
+            return screenshot(&out, 1, 0, Shot { select: false, scale, hscroll: 0.0, top: has("--top"), images: true, answer: None, pics: 0, menu: false,
+                history: false, closed: false, live: Some(v) });
+        }
+        return live_window(live);
+    }
     if let Some(out) = val("--screenshot") {
         let scale = val("--scale").and_then(|s| s.parse().ok()).unwrap_or(1.0);
         let hscroll = val("--hscroll").and_then(|s| s.parse().ok()).unwrap_or(0.0);
         let answer = val("--answer").map(|p| std::fs::read_to_string(p).expect("--answer file"));
         let pics = val("--pics").and_then(|s| s.parse().ok()).unwrap_or(0);
         return screenshot(&out, n, session, Shot { select: has("--select"), scale, hscroll, top: has("--top"), images: has("--images"), answer,
-            pics, menu: has("--menu"), history: has("--history"), closed: has("--closed") });
+            pics, menu: has("--menu"), history: has("--history"), closed: has("--closed"), live: None });
     }
     let ui = ChatWindow::new().unwrap();
     header(&ui, session);

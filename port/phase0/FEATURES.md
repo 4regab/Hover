@@ -1,7 +1,7 @@
 # Feature checklist
 
 Every row must pass on Windows in the native build before cutover. The **Rust** column
-says where the candidate stands now (Phase 3B done):
+says where the candidate stands now (Phases 3B and 3A done):
 
 - `proto`: a Phase 1 prototype implements it, with evidence in `port/phase1/REPORT.md`.
 - `port`: logic ported and tested headlessly. Windows verification may still be pending.
@@ -52,17 +52,17 @@ Source references are to the C# app or the office page (`web/office`).
 
 | # | Feature | Source | Rust |
 |---|---|---|---|
-| A1 | One shared session system across Kiro, Codex, Cursor; per-tool adapters (exe lookup, args, config options, read-only mapping) | AcpHost, Agents | — (P3A) |
-| A2 | ACP over stdio, newline JSON-RPC; initialize/session new/load/prompt/cancel/set_config_option | AcpHost | — (P3A) |
-| A3 | Permissions: read-only refuses writes (allow read/search/fetch/think), `-32601` for other requests | AcpHost.Permission | — (P3A) |
-| A4 | Concurrency: ≤3 running across tools, newest 6 kept, seats and bots lowest free | KiroSessions | — (P3A) |
-| A5 | Queue replies during a run; stop drops queued replies; cancel with 8 s shutdown rule | KiroSession, AcpHost | — (P3A) |
-| A6 | Idle shutdown (5/15 min), restart with `session/load` (replay muted) | AcpHost | — (P3A) |
-| A7 | Sign-in/installation checks (status commands, 5-min cache, hints), MCP failure detection (Kiro) | Agents, AcpHost | — (P3A) |
-| A8 | Stream reading: phases, steps, context %, answer = last message after last tool | KiroStream | — (P3A) |
+| A1 | One shared session system across Kiro, Codex, Cursor; per-tool adapters (exe lookup, args, config options, read-only mapping) | AcpHost, Agents | port (Linux locations added; real tools pending) |
+| A2 | ACP over stdio, newline JSON-RPC; initialize/session new/load/prompt/cancel/set_config_option | AcpHost | port (FakeAcp recordings) |
+| A3 | Permissions: read-only refuses writes (allow read/search/fetch/think), `-32601` for other requests | AcpHost.Permission | port |
+| A4 | Concurrency: ≤3 running across tools, newest 6 kept, seats and bots lowest free | KiroSessions | port |
+| A5 | Queue replies during a run; stop drops queued replies; cancel with 8 s shutdown rule | KiroSession, AcpHost | port |
+| A6 | Idle shutdown (5/15 min), restart with `session/load` (replay muted) | AcpHost | port |
+| A7 | Sign-in/installation checks (status commands, 5-min cache, hints), MCP failure detection (Kiro) | Agents, AcpHost | port (Codex check run on Linux) |
+| A8 | Stream reading: phases, steps, context %, answer = last message after last tool | KiroStream | port |
 | A9 | Folder first; one-time full-access notice | KiroPage | — (P3C) |
 | A10 | End announcements (notch alert + tray balloon) unless the office is watched | OwlApp | — (P3C) |
-| A11 | Windows Job Object (`KILL_ON_JOB_CLOSE`), all tools shut down on quit | ChildJob | — (P3A) |
+| A11 | Windows Job Object (`KILL_ON_JOB_CLOSE`), all tools shut down on quit | ChildJob | port (Linux: process group + watchdog, tested with kill -9; Windows pending) |
 
 ## Persistence
 

@@ -17,6 +17,7 @@ evidence, findings and what still differs).
 - **How to report:** after each feature, a short summary with screenshots (put them in
   `port/phase1/shots/`, push, and link them). When a decision is needed, give the user
   multiple-choice questions (they answer like `1A 2B`).
+- **Reports and shots now go under `port/phaseN/`** (`port/phase3/shots/` for Phase 3).
 - The user's brief governs the work:
   - Phases 0 to 4, each one gated; 1:1 UI/UX parity with the current app.
   - No WebView2 or Chromium fallback unless measured and presented as a separate candidate.
@@ -158,8 +159,20 @@ Costs per area are in REPORT.md.
 - **3B done** (`9bf324a`): `native/crates/hover-core`, evidence and three open
   questions in `port/phase3/REPORT.md`, Windows checks in `port/phase3/RUN-ON-WINDOWS.md`.
   Platform layout decided and written in `port/README.md`.
-- **Next: 3A**: AcpHost, KiroStream, KiroSession(s), the process group / job object,
-  the adapters, FakeAcp replays, the office `state` message (KiroPage.Push/State).
+- **3A done**: `native/crates/hover-agents` (stream, acp, agents, proc, session,
+  state), FakeAcp recordings in `native/golden/acp/` (re-record with
+  `FAKEACP=/projects/sandbox/fakeacp/FakeAcp HOVER_RECORD=1 cargo test -p hover-agents --test fakeacp -- --test-threads=1`),
+  `chat-proto --acp <agent>` (live window, or `--screenshot` after a real turn).
+- **Next: 3C** (settings window, quotas, palette/themes, music, tray, dashboard,
+  hotkey, notch extras, the Linux notch under Xvfb).
+
+Lessons from this session:
+- `PR_SET_PDEATHSIG` fires when the forking *thread* ends: tools are forked from one
+  long-lived thread (`proc::imp::spawn`).
+- The sandbox's `/tmp` is a tmpfs that gets emptied between calls; keep scratch in
+  `/projects/sandbox/work`.
+- `pgrep -f <name>` matches the shell running it; kill by `$!`.
+- ImageMagick isn't installed; `pip install pillow` for downscaled copies of shots.
 
 ## Next steps
 

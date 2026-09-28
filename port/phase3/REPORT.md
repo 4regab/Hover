@@ -1,7 +1,7 @@
 # Phase 3 report: sessions, persistence, product
 
-**Status: 3B (persistence) built and tested on Linux; its Windows checks are pending.**
-3A and 3C follow in this file as they are built. Nothing here has run on Windows. The
+**Status: 3B (persistence) and 3A (sessions and ACP) built and tested on Linux; their
+Windows checks are pending.** 3C follows in this file as it is built. Nothing here has run on Windows. The
 steps for the pending checks are in `RUN-ON-WINDOWS.md`. The C# app is unchanged and
 is still the product.
 
@@ -130,3 +130,86 @@ Known, small, by design:
 
 None in code. The Windows run above is about half an hour with the Rust toolchain
 installed.
+
+## 3A: sessions and ACP (`native/crates/hover-agents`)
+
+| C# | Rust | What it does |
+|---|---|---|
+| `Services/KiroRunner.cs` `KiroStream` | `stream.rs` | Reads updates loosely: phases from tool kinds then titles, steps (first call names it, updates carry the status, target from `locations` then `rawInput`), context from `usage_update` and Kiro's `session_info_update` (reported when it moves half a point), the answer as the last message (a new message id, text after a tool call, or Codex's `final_answer`), 64 K kept, the outcome and its sign-in / MCP / last-lines explanations. |
+| `Services/AcpHost.cs` | `acp.rs` | One process per tool shared by its sessions; `initialize` (`loadSession`), `session/new`, `session/load` with its replay muted, config options set where offered and different (model, then the effort it may only offer then, then autopilot/mode per tool), `session/prompt` over stdin only, `session/cancel` and the 8 s rule, permission answers (read only allows read/search/fetch/think), `-32601` for the rest, `_kiro/mcp/status`, idle shutdown after 5 or 15 min, a dead tool failing its runs with the end of its stderr. Every message is the C# anonymous object's bytes. |
+| `Services/Agents.cs` | `agents.rs` | Where each tool is (`kiro-cli`, `codex-acp`, Cursor's `%LOCALAPPDATA%\cursor-agent\cursor-agent.cmd` then `cursor-agent`), its ACP arguments, install and sign-in hints, the status check kept 5 minutes and shared while it runs. |
+| `ChildJob`, `Quota.Hidden`, `Quota.OnPath` | `proc.rs` | Windows: a job object (`KILL_ON_JOB_CLOSE`) per tool, `CREATE_NO_WINDOW`, `.cmd` through `cmd /d /c`. Linux: the tool leads its own process group (`setsid`), gets `PR_SET_PDEATHSIG`, and a watchdog `sh` kills the group when Hover's end of its pipe closes, however Hover ended. `NO_COLOR`, `TERM=dumb`, started in the home folder. |
+| `Owl/KiroSession.cs` | `session.rs` | Turns, queue (a reply during a run waits; a stop drops the waiting ones), images sent as paths after the prompt, three running across tools, six kept, seats and bots the lowest free, wake from the history onto a free desk, delete, dismiss, select; saved on start, reply and end. The C# lives on the UI thread; here one lock, a thread per turn, events raised with the lock released. |
+| `KiroPage.Push`, `State`, `Row`, `Relative`, `Short`, `Models`, `History` | `state.rs` | The office's `state` message, `transcript` and `say`, byte for byte. |
+| (the page) | `chat-proto --acp <agent>` | The drawer on a real session: sends start it or reply in it, Stop stops it, and the state is read every 120 ms (KiroPage's push timer) through hover-chat, as the page reads the C# message. |
+
+### Evidence
+
+`cargo test --release --workspace`: 102 tests, all green (35 in hover-agents).
+`cargo check --release --workspace --all-targets --target x86_64-pc-windows-msvc`: green.
+`cargo clippy -p hover-agents -p hover-core --all-targets`: no warnings; chat-proto's
+three are the ones it had before.
+
+| Test | Against |
+|---|---|
+| `tests/acp_host.rs` (8) | `AcpHostTests`, ported with its stand-in agent line for line: a turn and a reply in one session and one process; load after shutdown with the replay ignored; a tool that dies fails its run and the next starts it again; stop; read only refuses a write and says why; model then effort; missing folder or tool. Plus: `-32601` for unserved requests, a permission for an unknown session cancelled, a sign-in error explained, and the `initialize` and `session/prompt` bytes as System.Text.Json writes them (`\u0022`, `\u0026`, `\u0027`, `\u00FC`) |
+| `tests/fakeacp.rs` (5) | **FakeAcp recordings** in `native/golden/acp/`: recorded against the real `port/tools/FakeAcp` process (.NET 10 on Linux) with `FAKEACP=… HOVER_RECORD=1`, replayed without .NET: every line Hover sends must be the recorded one, and FakeAcp's own bytes are played back. A turn with steps, usage and the rich answer, then a reply; a stop at the second step; an idle shutdown and `session/load`; FakeAcp killed mid-run; a queued reply in the same conversation. Live and replayed both pass. |
+| `tests/sessions.rs` (9) | `KiroSessionTests`, `KiroSessionsTests` and the wake/delete cases of `AgentHistoryTests`, ported |
+| `tests/state.rs` | **`golden/fixtures/office-state.json`**, the state the page goldens were made from: the port's message is its bytes. The fixture was written by hand, so four values in it can't be what C# writes, and the expected value corrects them, each commented: session titles (C# derives them from the prompt), a `t0` written as a double (a `long` in C#), Cursor's empty model list (C# always puts Default first), and a history row's `waking` (C# writes `working` for a running entry). |
+| `proc::a_killed_group_takes_what_it_started` | a grandchild dies with its tool |
+
+Killing Hover, on Linux: `probe` (an example in hover-agents) running a turn on FakeAcp,
+then `kill -9` on it:
+
+```
+before:
+    346  304  346 /projects/sandbox/fakeacp/FakeAcp acp --agent-engine v3 --auth-method cli
+    347  304  347 /bin/sh -c read _; kill -KILL -- -"$0" 2>/dev/null 346
+after SIGKILL of the host:
+  nothing left
+```
+
+The real CLIs on Linux: `codex-acp` and `codex` installed from npm are found on PATH;
+the status check says "Sign in: run “codex login” in a terminal." and a turn fails with
+the sign-in explanation in 0.3 s. No sign-in exists here, so no real turn ran; kiro-cli
+and the Cursor CLI are not installed here.
+
+Screenshots (headless, 2×, a live FakeAcp session, the drawer drawn from the Rust state):
+- [mid-run: the live step, Searching…, the queue placeholder and Stop](https://github.com/4regab/Hover/blob/rust-port/phase-0-1/port/phase3/shots/chat-live-fakeacp-working-2x.png)
+- [done: FakeAcp's answer (the rich fixture) with its code, diagram and image](https://github.com/4regab/Hover/blob/rust-port/phase-0-1/port/phase3/shots/chat-live-fakeacp-done-2x.png)
+
+### Differences from the C# app
+
+Fixed (listed, not asked):
+6. **A reply whose id is a number but not an integer** (`"id": 1.5`) threw in
+   `AcpHost.Handle` outside what `Read` catches, which ended the reader for good: the
+   tool looked alive and every later run hung until its timeout. The port ignores the line.
+
+Linux adaptations (the C# never ran there):
+7. **Step lines relative to the folder**: C# compares with a backslash root, so on Linux
+   no target would ever be made relative. The port uses `/` there.
+8. **Tools in `~/.local/bin`** are found when that folder isn't on PATH (a desktop session
+   often lacks it; the counterpart of C#'s Cursor shim).
+9. **Cursor's install hint** is the Linux one (`curl https://cursor.com/install -fsS | bash`).
+10. **Codex read only** is offered on Linux, as C#'s `ReadOnlyWorks` already says (it has
+    a sandbox there).
+11. **One job per tool** on Windows where C# has one for all; both kill on close.
+
+### Questions (answer like `1A 2B`)
+
+4. **An agent's process on Linux when Hover is suspended** (`kill -STOP`, or a laptop
+   lid with `systemd` freezing the session): nothing special is done; the tool keeps its
+   turn going.
+   - **A.** As now.
+   - **B.** Stop the tools' groups with Hover (`SIGSTOP`/`SIGCONT` follow Hover's).
+
+### Pending on Windows (RUN-ON-WINDOWS.md)
+
+- A real turn with kiro-cli, Codex and Cursor (the Cursor `.cmd` through `cmd`).
+- Hover killed from Task Manager mid-turn: the tool and what it started go (job object).
+- The console window never flashes (`CREATE_NO_WINDOW`).
+- Non-ASCII prompts reach each tool intact over stdin.
+
+### Costs of what's left in 3A
+
+Nothing in code. The notch alert and tray balloon on a turn's end (A10) come with 3C.
