@@ -83,7 +83,7 @@ impl Frag {
 }
 
 /// A block's box: its collapsible outer margins and its border-box height.
-struct Boxed {
+pub(crate) struct Boxed {
     frag: Frag,
     mt: f32,
     h: f32,
@@ -124,7 +124,7 @@ impl Flow {
 
 /// Text styling at one point: what page.html's cascade gives a run.
 #[derive(Clone, Copy)]
-struct Look {
+pub(crate) struct Look {
     size: f32,
     lh: f32,
     color: Rgba,

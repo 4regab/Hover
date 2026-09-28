@@ -50,7 +50,7 @@ pub struct Painter {
 }
 
 // page.html's `.flow` rules, with its CSS variables resolved (usvg reads no `:not()`).
-const FLOW_CSS: &str = ".flow{font-family:Inter;font-size:12px}\
+const FLOW_CSS: &str = ".flow{font-family:Inter,'Segoe UI',sans-serif;font-size:12px}\
 .n>rect,.n>path,.n>circle{fill:rgba(144,70,255,.18);stroke:#C4A2FF;stroke-width:1.2}\
 .n.diamond>path{fill:rgba(255,154,74,.14);stroke:#ffb36b}\
 text{fill:#f6f2ff;text-anchor:middle}.e{fill:none;stroke:rgba(246,242,255,.62);stroke-width:1.4}\
@@ -62,6 +62,13 @@ impl Painter {
         let mut db = usvg::fontdb::Database::new();
         for f in font_files { db.load_font_data(f.clone()); }
         db.load_system_fonts();
+        // `sans-serif` as the browser resolves it on each system.
+        for fam in ["Segoe UI", "Noto Sans", "DejaVu Sans"] {
+            if db.faces().any(|f| f.families.iter().any(|(n, _)| n == fam)) {
+                db.set_sans_serif_family(fam);
+                break;
+            }
+        }
         Painter { scaler: ScaleContext::new(), glyphs: HashMap::new(), images: HashMap::new(), svgs: HashMap::new(), fontdb: Arc::new(db), loader, frames: 0 }
     }
 
@@ -102,7 +109,9 @@ impl Painter {
                 let top = s.y + t.y;
                 if top > view.1 || top + t.layout.height() < view.0 { continue; }
                 for (x0, y0, x1, y1) in th.selection_rects(si, ti) {
-                    fill_rect(&mut px, (ox + t.x + x0) * scale, (dy + t.y + y0) * scale, (x1 - x0) * scale, (y1 - y0) * scale, 0.0, theme::SELECTION);
+                    let (mut a, mut b) = (ox + t.x + x0, ox + t.x + x1);
+                    if let Some(c) = t.clip { a = a.max(ox + c[0]); b = b.min(ox + c[0] + c[2]); }
+                    if b > a { fill_rect(&mut px, a * scale, (dy + t.y + y0) * scale, (b - a) * scale, (y1 - y0) * scale, 0.0, theme::SELECTION); }
                 }
                 self.text(&mut px, t, ox + t.x, dy + t.y, scale);
             }
@@ -166,7 +175,7 @@ impl Painter {
             Shape::Svg { x, y, w, h, svg } => {
                 let key = (svg.as_ptr() as usize, (w * k).to_bits());
                 if !self.svgs.contains_key(&key) {
-                    let opts = usvg::Options { fontdb: self.fontdb.clone(), font_family: "Inter".into(), ..Default::default() };
+                    let opts = usvg::Options { fontdb: self.fontdb.clone(), font_family: "sans-serif".into(), ..Default::default() };
                     let src = svg.replacen("><defs>", &format!("><style>{FLOW_CSS}</style><defs>"), 1);
                     let r = usvg::Tree::from_str(&src, &opts).ok().and_then(|tree| {
                         let (pw, ph) = ((w * k).ceil() as u32, (h * k).ceil() as u32);

@@ -2,7 +2,7 @@
 # notch layer is behind cfg(windows). See port/README.md.
 [workspace]
 resolver = "2"
-members = ["crates/*"]
+members = ["crates/*", "apps/*"]
 
 [workspace.package]
 version = "0.1.0"

@@ -1,0 +1,15 @@
+[package]
+name = "chat-proto"
+description = "Phase 1B prototype: the office chat drawer in Slint, with the native rich thread."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+hover-chat = { path = "../../crates/hover-chat" }
+slint = { version = "=1.18.1", default-features = false, features = ["std", "compat-1-2", "backend-winit", "renderer-femtovg", "renderer-software", "software-renderer-systemfonts", "accessibility"] }
+arboard = { version = "3.6", default-features = false }
+image = { version = "0.25", default-features = false, features = ["png"] }
+
+[build-dependencies]
+slint-build = "=1.18.1"
