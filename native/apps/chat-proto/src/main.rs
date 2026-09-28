@@ -5,9 +5,15 @@
 //!   chat-proto --turns 200             a long rich conversation
 //!   chat-proto --answer a.md           the last turn's answer from a file
 //!   chat-proto --screenshot out.png [--select] [--scale 2] [--hscroll 80] [--images]   headless, software renderer
-//!                                     (--images: load the answer's images, as the window does)
+//!                                     (--images: load the answer's images, as the window does;
+//!                                      --pics N: N images in the composer (5 shows the toast);
+//!                                      --menu: the model menu open; --history: the transcript view;
+//!                                      --closed: the drawer closed)
+//!   chat-proto --history               a session as a transcript (the history view)
 //!                                     (--hscroll: the code blocks scrolled sideways by that much; --top: the thread scrolled to its top)
 //!   chat-proto --bench                 headless timings for the report
+mod compose;
+mod models;
 mod net;
 
 use std::cell::RefCell;
@@ -80,6 +86,22 @@ fn header(ui: &ChatWindow, session: usize) {
     ui.set_folder(s["folder"].as_str().unwrap_or("").into());
     ui.set_context(s["ctx"].as_f64().unwrap_or(0.0) as f32);
     ui.set_busy(busy);
+}
+
+/// showTranscript: the drawer on a saved session. "History" in the tool's colour, a
+/// placeholder that says a reply wakes it, and no Stop.
+fn history(ui: &ChatWindow, app: &mut App) {
+    ui.set_who("History".into());
+    ui.set_bot_color(ui.get_tool_color());
+    ui.set_archived(true);
+    ui.set_busy(false);
+    // The thread's who lines too (renderDrawer uses the same b), and no fresh fade.
+    let c = ui.get_tool_color();
+    app.thread.who = "History".into();
+    app.thread.color = [c.red(), c.green(), c.blue(), 255];
+    // Laid out again with the new name.
+    app.thread.sections.clear();
+    app.dirty = true;
 }
 
 /// Counts clicks as Windows does: another press within the double-click time and
@@ -167,6 +189,13 @@ struct App {
     smooth: std::collections::HashMap<BarId, Smooth>,
     /// Whether scrolls animate (Windows' animation effects; read at start).
     motion: bool,
+    /// The composer's images, the tools (for the model pill) and this session's tool.
+    pics: Vec<compose::Pic>,
+    tools: Vec<models::Tool>,
+    tool: String,
+    /// The fixture session shown.
+    index: usize,
+    toast_timer: slint::Timer,
     arrivals: Option<std::sync::mpsc::Receiver<String>>,
     t0: Instant,
 }
@@ -177,7 +206,8 @@ impl App {
         // Laid out on the first frame, once the viewport (and so the bar) is known.
         let thread = Thread::new(Shaper::new(&f), who, color);
         let p0 = Pos { section: 0, text: 0, byte: 0 };
-        App { thread, painter: Painter::new(&f, hover_chat::Images::none()), turns, net: None, arrivals: None, smooth: Default::default(), motion: animations(), scroll: 0.0, anchor: None, unit: Unit::Char, unit_anchor: (p0, p0, Tail::None),
+        App { thread, painter: Painter::new(&f, hover_chat::Images::none()), turns, net: None, arrivals: None, smooth: Default::default(), motion: animations(),
+            pics: vec![], tools: models::tools(&fixture()["state"]), tool: String::new(), index: 1, toast_timer: Default::default(), scroll: 0.0, anchor: None, unit: Unit::Char, unit_anchor: (p0, p0, Tail::None),
             clicks: Clicks { at: None, x: 0.0, y: 0.0, n: 0 }, dragging: false, stick: true, dirty: true, view: (0.0, 0.0), vbar: true, grab: None, press: None, t0: Instant::now() }
     }
 
@@ -199,6 +229,36 @@ impl App {
         // main.js imageFor: the web as is; other paths only inside the session's folder.
         self.thread.image_rule = Box::new(move |src| hover_md::image::image_for(&hover_md::image::Session { files: files.as_deref(), folder: &folder }, src));
         (self.net, self.arrivals, self.dirty) = (Some(net), Some(rx), true);
+    }
+
+    /// The composer's images, pill and menu, into the window.
+    fn sync_composer(&self, ui: &ChatWindow) {
+        let shots: Vec<slint::Image> = self.pics.iter().map(|p| {
+            let mut b = SharedPixelBuffer::<slint::Rgba8Pixel>::new(p.rgba.width(), p.rgba.height());
+            b.make_mut_bytes().copy_from_slice(p.rgba.as_raw());
+            slint::Image::from_rgba8(b)
+        }).collect();
+        ui.set_shots(Rc::new(VecModel::from(shots)).into());
+        let Some(t) = self.tools.iter().find(|t| t.id == self.tool) else { ui.set_has_models(false); return };
+        ui.set_has_models(!t.models.is_empty());
+        let (name, effort) = t.pill();
+        ui.set_model_name(name.into());
+        ui.set_effort_name(effort.into());
+        ui.set_tool_upper(t.name.to_uppercase().into());
+        let (m, e) = t.menu();
+        let item = |(label, checked): (String, bool)| MenuItem { label: label.into(), checked };
+        ui.set_models(Rc::new(VecModel::from(m.into_iter().map(item).collect::<Vec<_>>())).into());
+        ui.set_efforts(Rc::new(VecModel::from(e.into_iter().map(item).collect::<Vec<_>>())).into());
+    }
+
+    /// main.js addPics: in order, until there are 4 (then the toast says so); images that
+    /// don't decode are left out. Returns the toast to show, if any.
+    fn add_pics(&mut self, pics: Vec<Option<compose::Pic>>) -> Option<String> {
+        for p in pics {
+            if self.pics.len() >= compose::MAX_PICS { return Some(format!("Up to {} images at a time.", compose::MAX_PICS)); }
+            if let Some(p) = p { self.pics.push(p); }
+        }
+        None
     }
 
     /// Takes in the images that arrived: their sections are laid out again. Returns
@@ -382,7 +442,116 @@ fn open_link(url: &str) {
     }
 }
 
+/// #toast: shown for 2.8 s.
+fn toast(ui: &ChatWindow, app: &App, text: &str) {
+    ui.set_toast(text.into());
+    ui.set_toast_shown(true);
+    let w = ui.as_weak();
+    app.toast_timer.start(slint::TimerMode::SingleShot, Duration::from_millis(2800), move || { if let Some(ui) = w.upgrade() { ui.set_toast_shown(false); } });
+}
+
+/// Image files: read and shrunk, in order; ones that aren't images are dropped.
+fn files(paths: &[PathBuf]) -> Vec<Option<compose::Pic>> {
+    paths.iter().filter_map(|p| std::fs::read(p).ok()).filter(|b| image::guess_format(b).is_ok()).map(|b| compose::shrink(&b)).collect()
+}
+
+/// The composer: images pasted, picked or dropped; the model pill and menu; the toast;
+/// the office click that opens and closes the drawer.
+fn wire_composer(ui: &ChatWindow, app: Rc<RefCell<App>>) {
+    app.borrow().sync_composer(ui);
+    let add = {
+        let (a, w) = (app.clone(), ui.as_weak());
+        move |pics: Vec<Option<compose::Pic>>| {
+            let Some(ui) = w.upgrade() else { return };
+            let t = a.borrow_mut().add_pics(pics);
+            if let Some(t) = t { toast(&ui, &a.borrow(), &t); }
+            a.borrow().sync_composer(&ui);
+        }
+    };
+    let add2 = add.clone();
+    ui.on_paste_image(move || {
+        // Chromium gives the page the clipboard's files, or its bitmap as a PNG file.
+        let Ok(mut cb) = arboard::Clipboard::new() else { return false };
+        if let Ok(list) = cb.get().file_list() {
+            let pics = files(&list);
+            if !pics.is_empty() { add2(pics); return true; }
+        }
+        match cb.get_image() {
+            Ok(img) => { add2(vec![compose::from_rgba(img.width as u32, img.height as u32, img.bytes.into_owned())]); true }
+            Err(_) => false,
+        }
+    });
+    let add3 = add.clone();
+    ui.on_attach(move || add3(files(&compose::pick())));
+    let (a, w) = (app.clone(), ui.as_weak());
+    ui.on_remove_shot(move |i| {
+        let Some(ui) = w.upgrade() else { return };
+        let mut s = a.borrow_mut();
+        if (i as usize) < s.pics.len() { s.pics.remove(i as usize); }
+        s.sync_composer(&ui);
+    });
+    let (a, w) = (app.clone(), ui.as_weak());
+    ui.on_toggle_menu(move || {
+        let Some(ui) = w.upgrade() else { return };
+        let open = !ui.get_menu_open();
+        if open {
+            let s = a.borrow();
+            s.sync_composer(&ui);
+            // Focus on the checked row, else the first.
+            let cur = s.tools.iter().find(|t| t.id == s.tool).map_or(0, |t| t.menu().0.iter().position(|m| m.1).unwrap_or(0));
+            ui.set_menu_focus(cur as i32);
+        }
+        ui.set_menu_open(open);
+    });
+    let pick = {
+        let (a, w) = (app.clone(), ui.as_weak());
+        move |model: Option<usize>, effort: Option<usize>| {
+            let Some(ui) = w.upgrade() else { return };
+            let mut s = a.borrow_mut();
+            let tool = s.tool.clone();
+            if let Some(t) = s.tools.iter_mut().find(|t| t.id == tool) { eprintln!("post {}", t.pick(model, effort)); }
+            s.sync_composer(&ui);
+            // A model closes the menu; an effort keeps it open, rebuilt.
+            if model.is_some() { ui.set_menu_open(false); }
+        }
+    };
+    let p2 = pick.clone();
+    ui.on_pick_model(move |i| p2(Some(i as usize), None));
+    ui.on_pick_effort(move |i| pick(None, Some(i as usize)));
+    let w = ui.as_weak();
+    ui.on_office_click(move || {
+        let Some(ui) = w.upgrade() else { return };
+        ui.set_menu_open(false);
+        ui.set_open(!ui.get_open());
+    });
+}
+
+/// Files dragged over the window and dropped on it (winit's file drop; it gives no
+/// pointer position, so the whole window takes them where the page takes them on the
+/// composer only).
+fn wire_drop(ui: &ChatWindow, app: Rc<RefCell<App>>) {
+    use slint::winit_030::winit::event::WindowEvent as We;
+    use slint::winit_030::{EventResult, WinitWindowAccessor};
+    let w = ui.as_weak();
+    ui.window().on_winit_window_event(move |_, ev| {
+        let Some(ui) = w.upgrade() else { return EventResult::Propagate };
+        match ev {
+            We::HoveredFile(_) => ui.set_drag_over(true),
+            We::HoveredFileCancelled => ui.set_drag_over(false),
+            We::DroppedFile(p) => {
+                ui.set_drag_over(false);
+                let t = app.borrow_mut().add_pics(files(std::slice::from_ref(p)));
+                if let Some(t) = t { toast(&ui, &app.borrow(), &t); }
+                app.borrow().sync_composer(&ui);
+            }
+            _ => {}
+        }
+        EventResult::Propagate
+    });
+}
+
 fn wire(ui: &ChatWindow, app: Rc<RefCell<App>>) {
+    wire_composer(ui, app.clone());
     let redraw = {
         let (app, ui) = (app.clone(), ui.as_weak());
         move || { if let Some(ui) = ui.upgrade() { app.borrow_mut().frame(&ui); } }
@@ -476,10 +645,28 @@ fn wire(ui: &ChatWindow, app: Rc<RefCell<App>>) {
     ui.on_send(move |text| {
         {
             let mut s = a.borrow_mut();
-            s.turns.push(Turn { stage: Stage::Waking, status: Some("Waking up…".into()), ..Turn::new(text.trim()) });
+            // The page sends the images as data URLs; the host saves them and the turn
+            // shows them from hover.images.
+            let urls: Vec<String> = s.pics.drain(..).map(|p| p.url).collect();
+            let saved = net::support().map_or(vec![], |d| compose::save(&urls, &d.join("kiro-images")));
+            let images = saved.iter().map(|p| compose::url_for(p)).collect();
+            s.turns.push(Turn { stage: Stage::Waking, status: Some("Waking up…".into()), images, ..Turn::new(text.trim()) });
             s.stick = true;
+            s.dirty = true;
         }
-        if let Some(ui) = w.upgrade() { ui.set_busy(true); }
+        if let Some(ui) = w.upgrade() {
+            ui.set_busy(true);
+            // A reply to a saved session wakes it; the drawer then shows it live.
+            if ui.get_archived() {
+                ui.set_archived(false);
+                let mut s = a.borrow_mut();
+                header(&ui, s.index);
+                let c = ui.get_bot_color();
+                (s.thread.who, s.thread.color) = (ui.get_who().into(), [c.red(), c.green(), c.blue(), 255]);
+                s.thread.sections.clear();
+            }
+            a.borrow().sync_composer(&ui);
+        }
         r();
     });
     let (r, a, w) = (redraw.clone(), app.clone(), ui.as_weak());
@@ -573,7 +760,7 @@ mod headless {
 }
 
 /// What the headless screenshot shows, besides the session.
-struct Shot { select: bool, scale: f32, hscroll: f32, top: bool, images: bool, answer: Option<String> }
+struct Shot { select: bool, scale: f32, hscroll: f32, top: bool, images: bool, answer: Option<String>, pics: usize, menu: bool, history: bool, closed: bool }
 
 fn screenshot(out: &str, n: usize, session: usize, o: Shot) {
     let Shot { select, scale, hscroll, top, .. } = o;
@@ -587,8 +774,23 @@ fn screenshot(out: &str, n: usize, session: usize, o: Shot) {
     header(&ui, session);
     let app = Rc::new(RefCell::new(App::new(turns(n, session))));
     app.borrow_mut().thread.session = fixture()["state"]["sessions"][session]["id"].as_u64().unwrap_or(0);
+    app.borrow_mut().tool = fixture()["state"]["sessions"][session]["tool"].as_str().unwrap_or("").to_string();
+    app.borrow_mut().index = session;
     if let Some(a) = &o.answer { if let Some(t) = app.borrow_mut().turns.last_mut() { t.answer = a.clone(); } }
     if o.images { app.borrow_mut().load_images(session); }
+    if o.history { history(&ui, &mut app.borrow_mut()); }
+    // Composer images: n made-up pictures, as if pasted.
+    let pics = (0..o.pics).map(|k| {
+        let mut b = std::io::Cursor::new(vec![]);
+        let c = [[196u8, 162, 255], [63, 214, 160], [255, 154, 74], [90, 168, 255], [255, 111, 174]][k % 5];
+        image::RgbaImage::from_fn(160, 120, |x, y| image::Rgba([c[0], c[1], c[2].saturating_sub(((x + y) / 4) as u8), 255])).write_to(&mut b, image::ImageFormat::Png).unwrap();
+        compose::shrink(b.get_ref())
+    }).collect();
+    let t = app.borrow_mut().add_pics(pics);
+    if let Some(t) = t { toast(&ui, &app.borrow(), &t); }
+    wire_composer(&ui, app.clone());
+    if o.menu { ui.invoke_toggle_menu(); }
+    if o.closed { ui.set_open(false); }
     let render = |ui: &ChatWindow| -> Vec<slint::Rgb8Pixel> {
         slint::platform::update_timers_and_animations();
         let mut buf = vec![slint::Rgb8Pixel::default(); (w * h) as usize];
@@ -694,15 +896,21 @@ fn main() {
         let scale = val("--scale").and_then(|s| s.parse().ok()).unwrap_or(1.0);
         let hscroll = val("--hscroll").and_then(|s| s.parse().ok()).unwrap_or(0.0);
         let answer = val("--answer").map(|p| std::fs::read_to_string(p).expect("--answer file"));
-        return screenshot(&out, n, session, Shot { select: has("--select"), scale, hscroll, top: has("--top"), images: has("--images"), answer });
+        let pics = val("--pics").and_then(|s| s.parse().ok()).unwrap_or(0);
+        return screenshot(&out, n, session, Shot { select: has("--select"), scale, hscroll, top: has("--top"), images: has("--images"), answer,
+            pics, menu: has("--menu"), history: has("--history"), closed: has("--closed") });
     }
     let ui = ChatWindow::new().unwrap();
     header(&ui, session);
     let app = Rc::new(RefCell::new(App::new(turns(n, session))));
     app.borrow_mut().thread.session = fixture()["state"]["sessions"][session]["id"].as_u64().unwrap_or(0);
+    app.borrow_mut().tool = fixture()["state"]["sessions"][session]["tool"].as_str().unwrap_or("").to_string();
+    app.borrow_mut().index = session;
     if let Some(p) = val("--answer") { if let Some(t) = app.borrow_mut().turns.last_mut() { t.answer = std::fs::read_to_string(p).expect("--answer file"); } }
     app.borrow_mut().load_images(session);
+    if has("--history") { history(&ui, &mut app.borrow_mut()); }
     wire(&ui, app.clone());
+    wire_drop(&ui, app.clone());
     if has("--stream") {
         stream(&ui, app);
     }
