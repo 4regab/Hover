@@ -513,14 +513,25 @@ internal sealed class SettingsPage
                     modes.Where(m => m.Item1 != "vibe").Select(m => (m.Item2, m.Item1 == o.Agent, (Action)(() => Set(o with { Agent = m.Item1 }))))));
             rows.Add(Row("Agent", "Its MCP servers, skills and steering come with it. Kiro’s own modes (Spec, Plan…) are here too.", agent, Tile("bot", Ui.Blue)));
         }
-        if (Agents.ReadOnlyWorks(tool))
-            rows.Add(Row("Tool access", o.ReadOnly ? $"{name} can only read and search. It can’t change files or run commands."
-                    : $"{name} can edit files and run commands without asking.",
-                Segments(id + "Tools", new[] { (false, "Full"), (true, "Read only") }, o.ReadOnly, v => Set(o with { ReadOnly = v })),
-                Tile(Ui.IcShield, Ui.Green)));
-        else
-            rows.Add(Row("Tool access", $"Full: {name} can edit files and run commands without asking. Read only isn’t offered, because " +
-                                        "Codex’s read-only mode needs a sandbox it doesn’t have on Windows.", null, Tile(Ui.IcShield, Ui.Green)));
+        // Full access, with or without asking first in the notch, or read only. Read
+        // only (where it holds) overrules asking.
+        var readOnly = Agents.ReadOnlyWorks(tool);
+        var access = readOnly && o.ReadOnly ? "read" : o.Approval switch { AgentApproval.Risky => "risky", AgentApproval.Always => "always", _ => "full" };
+        var choices = new List<(string, string)> { ("full", "Full"), ("risky", "Ask first"), ("always", "Ask always") };
+        if (readOnly) choices.Add(("read", "Read only"));
+        rows.Add(Row("Tool access", access switch
+            {
+                "read" => $"{name} can only read and search. It can’t change files or run commands.",
+                "risky" => $"{name} asks in the notch before it runs a command, deletes or moves files, goes online or touches anything outside the folder. Reading and editing in the folder go ahead.",
+                "always" => $"{name} asks in the notch before any change or command. Reading and searching go ahead.",
+                _ => $"{name} can edit files and run commands without asking.",
+            } + (readOnly ? "" : " Read only isn’t offered, because Codex’s read-only mode needs a sandbox it doesn’t have on Windows."),
+            Segments(id + "Tools", choices, access, v => Set(o with
+            {
+                ReadOnly = v == "read",
+                Approval = v switch { "risky" => AgentApproval.Risky, "always" => AgentApproval.Always, "read" => o.Approval, _ => AgentApproval.Autopilot },
+            })),
+            Tile(Ui.IcShield, Ui.Green)));
         if (tool == AgentTool.Kiro)
             rows.Add(Row("Require MCP servers", "Stop the task when one of the agent’s MCP servers doesn’t start.",
                 Switch("KiroRequireMcp", "Require MCP servers", o.RequireMcp, v => Set(o with { RequireMcp = v })), Tile(Ui.IcPlug, Ui.Teal)));

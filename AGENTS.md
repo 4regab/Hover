@@ -6,8 +6,10 @@ Guidance for humans and AI agents working in this repository.
 
 A Windows desktop app (.NET 10, WPF) with one surface a hover away: **the notch**
 at the top centre of the main display (after NotchOwl for Mac). At rest it is a
-slim pill showing the Claude Code / Kiro / Codex / Cursor quota gauges the user
-switched on, and an agent at work, or nothing. Hovering it, clicking it or `Alt+N`
+slim black island: the Claude Code / Kiro / Codex / Cursor quotas the user switched
+on (each the tool's own logo in its ring), the agents at work (their logos, what the
+one in front is doing, for how long), a question an agent is waiting on, or nothing.
+Hovering it, clicking it or `Alt+N`
 opens the **Agent office**, which fills the notch: it hands tasks to Kiro, Codex or
 Cursor, which run headlessly, several at once, each in a chosen folder, as bots at
 desks in a three.js office. The office's gear opens Settings over it (five
@@ -79,8 +81,11 @@ src/Hover/
                (one agent session of any tool: its turns, state and cancellation)
                and KiroSessions (all of them, shared; no WPF), AgentHistory (every
                session, sealed, until deleted; no WPF), KiroPage (hosts the
-               office in WebView2), Bot (the notch's bot glyph and its frame
-               clock), KiroText (Markdown to plain text), Popover (counts open
+               office in WebView2), AgentWords (what the notch says a session is
+               doing or asking, in a few words; no WPF, in KiroSession.cs), Marks
+               (the tools' logos for WPF, LiveMark and MarkStack: the notch's rings
+               and its stack of agents), Bot (the first-use note's bot glyph and
+               the notch's frame clock), KiroText (Markdown to plain text), Popover (counts open
                menus), Theme (the palette in use), Ui (brushes, builders, ring
                gauge, segmented control), Icons (generated line icons), Corners
                (pill-shaped corner radii).
@@ -118,9 +123,13 @@ carry a legacy `Noty` reference **only** in `Core/Paths.cs`, which migrates an o
   Background-priority work only when no input is waiting in the queue, and in
   testing that starved the notch poll for 8–14 s at a time.
 - **One full-size, click-through window, on the main display.** The shape grows
-  from its resting size (pill, alert, or nothing) to the office by animating one
-  `Openness` value; the window itself never resizes (that made it blink), except
-  when Settings → General → Office size changes.
+  from its resting size (island, alert, question card, or nothing) to the office by
+  animating one `Openness` value; the window itself never resizes (that made it
+  blink), except when Settings → General → Office size changes. The resting size
+  springs to each new width (`RestWidth`, `RestHeight`), so the island breathes as
+  its words change. Open, the office fills the shape edge to edge: no margin, no
+  rim, no corners of its own (the page drops its border in `body.host.notch`); the
+  shape's clip is its only frame, and the island stays at the top of the page.
 - **Settings sits over the office.** The office's gear (`settings` message) makes
   `OfficeView` lay `SettingsPage` over it, with a back button (and a close
   button in the notch). The office is only collapsed meanwhile, so its sessions go on
@@ -155,7 +164,19 @@ carry a legacy `Noty` reference **only** in `Core/Paths.cs`, which migrates an o
   it again and loads the conversation back (`session/load`, its replay ignored).
   Model, effort and access are session config options, set per turn where the tool
   offers them; what it offers is kept in `Settings.AgentOffers` for its settings
-  page. Read only: Kiro runs with autopilot off and Hover refuses its write
+  page. Tool access, per tool: Full (never asks, what 2.0 did, and the default),
+  Ask first (`AgentApproval.Risky`: commands, deletes, moves, the network and
+  anything outside the folder), Ask always, or Read only. Asking takes the tool out
+  of its own autopilot, and `AcpHost.Permission()` answers `session/request_permission`
+  off the read loop: what the setting leaves alone is allowed, the rest goes to the
+  user (`AcpHost.Asking` → `OwlApp` → the session with that ACP id →
+  `KiroSession.Ask`), with no timeout; a stop withdraws it. The question shows in the
+  notch (an amber island with Deny and Review; Review opens the card in the notch,
+  which takes the keyboard: Enter allows, Shift+Enter trusts, Esc denies; hovering
+  doesn't open the office while one waits), over the bot's head in the office (it
+  raises its hand), and at the end of its chat, where a reply counts as Deny. Trust
+  allows the same call for the rest of the session and picks the agent's own
+  allow-always. Read only: Kiro runs with autopilot off and Hover refuses its write
   approvals; Cursor runs in Ask mode; Codex's read-only mode wrote files anyway on
   Windows (no sandbox), so it isn't offered. Stop sends `session/cancel`, and a tool
   that doesn't stop within 8 s is shut down if nothing else of it runs. Prompts go

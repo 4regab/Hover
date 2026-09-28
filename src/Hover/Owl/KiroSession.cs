@@ -121,6 +121,48 @@ public sealed class KiroSession
 
     public bool Busy => State == KiroState.Running;
 
+    private readonly List<(AgentAsk Ask, TaskCompletionSource<AskAnswer> Done)> _asks = new();
+
+    /// What the agent is waiting on the user for, oldest first; empty when nothing.
+    public IReadOnlyList<AgentAsk> Asks => _asks.Select(a => a.Ask).ToList();
+    public AgentAsk? Asking => _asks.Count > 0 ? _asks[0].Ask : null;
+    public bool Waiting => _asks.Count > 0;
+
+    /// The agent asks the user about a tool call. The answer comes from Answer(); a
+    /// run that is stopped (or the token) withdraws the question with Deny.
+    public Task<AskAnswer> Ask(AgentAsk ask, CancellationToken ct = default)
+    {
+        var done = new TaskCompletionSource<AskAnswer>(TaskCreationOptions.RunContinuationsAsynchronously);
+        if (!Busy) { done.SetResult(AskAnswer.Deny); return done.Task; }
+        _asks.Add((ask, done));
+        if (ct.CanBeCanceled)
+        {
+            var ui = SynchronizationContext.Current;
+            ct.Register(() => { if (ui is null) Answer(ask.Id, AskAnswer.Deny); else ui.Post(_ => Answer(ask.Id, AskAnswer.Deny), null); });
+        }
+        Changed?.Invoke();
+        return done.Task;
+    }
+
+    /// Answer a question the agent asked. False when it isn't waiting on that one.
+    public bool Answer(string id, AskAnswer answer)
+    {
+        var i = _asks.FindIndex(a => a.Ask.Id == id);
+        if (i < 0) return false;
+        var (_, done) = _asks[i];
+        _asks.RemoveAt(i);
+        done.TrySetResult(answer);
+        Changed?.Invoke();
+        return true;
+    }
+
+    private void DenyAll()
+    {
+        if (_asks.Count == 0) return;
+        foreach (var (_, done) in _asks) done.TrySetResult(AskAnswer.Deny);
+        _asks.Clear();
+    }
+
     /// Start the session with its first prompt. False, and nothing happens, when it
     /// has started already or the folder or prompt can't be used.
     public bool Start(string folder, string prompt, IReadOnlyList<string>? images = null)
@@ -183,6 +225,8 @@ public sealed class KiroSession
         try { r = await _run(Folder, turn.Text, progress, cts.Token, KiroId, events); }
         catch (Exception e) { r = new KiroResult(KiroState.Failed, e.Message); }
         if (cts.IsCancellationRequested && r.State != KiroState.Completed) r = r with { State = KiroState.Cancelled };
+        // A question the run left behind has nobody to answer it now.
+        DenyAll();
         _cts = null;
         cts.Dispose();
         turn.Result = r;
@@ -212,6 +256,7 @@ public sealed class KiroSession
     public void Stop()
     {
         if (!Busy) return;
+        if (_asks.Count > 0) { DenyAll(); Changed?.Invoke(); }
         try { _cts?.Cancel(); }
         catch (ObjectDisposedException) { }
     }
@@ -363,4 +408,84 @@ public sealed class KiroSessions
 
     /// Something the page shows changed outside a run, like the first-use note.
     public void RaiseChanged() => Changed?.Invoke();
+}
+
+/// What the notch and the office say about a session, in a few words: what its agent
+/// is doing (a verb, and the file or command it is about), and what it asks for. No WPF.
+public static class AgentWords
+{
+    /// The verb and its object: ("Editing", "refresh.ts"), ("Running", "npm test"),
+    /// ("Thinking", "").
+    public static (string Verb, string Object) Activity(KiroSession s)
+    {
+        if (s.State != KiroState.Running)
+            return (s.State switch
+            {
+                KiroState.Completed => "Done", KiroState.Failed => "Couldn’t finish", KiroState.Cancelled => "Stopped", _ => "Ready",
+            }, "");
+        if (s.Phase == KiroPhase.Starting) return ("Waking up", "");
+        var steps = s.Current?.Steps;
+        var step = steps?.LastOrDefault(x => x.Status is "in_progress" or "pending");
+        if (step is null && s.Phase is KiroPhase.Reading or KiroPhase.Searching or KiroPhase.Editing or KiroPhase.Running) step = steps?.LastOrDefault();
+        if (step is null)
+            return (s.Phase switch
+            {
+                KiroPhase.Thinking => "Thinking", KiroPhase.Planning => "Making a plan", KiroPhase.Writing => "Writing it up", _ => "Working",
+            }, "");
+        var verb = step.Kind switch
+        {
+            "read" => "Reading", "edit" => "Editing", "delete" => "Deleting", "move" => "Moving", "execute" => "Running",
+            "search" => "Searching", "fetch" => "Fetching", "think" => "Thinking",
+            _ => KiroStream.ToolPhase(step.Kind, step.Title) switch
+            {
+                KiroPhase.Reading => "Reading", KiroPhase.Editing => "Editing", KiroPhase.Running => "Running",
+                KiroPhase.Searching => "Searching", _ => "Working",
+            },
+        };
+        return (verb, Short(step.Target) ?? "");
+    }
+
+    /// A file's name, or a command's program and first word, short enough for the notch.
+    public static string? Short(string? target)
+    {
+        if (string.IsNullOrWhiteSpace(target)) return null;
+        var t = target.Trim().Replace('\n', ' ');
+        if (t.Contains(' '))
+        {
+            var words = t.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            var head = System.IO.Path.GetFileName(words[0].Trim('"', '\'')) + (words.Length > 1 ? " " + words[1] : "");
+            return head.Length > 26 ? head[..25] + "…" : head;
+        }
+        var name = System.IO.Path.GetFileName(t.TrimEnd('\\', '/').Replace('\\', '/'));
+        if (name.Length == 0) name = t;
+        return name.Length > 28 ? name[..27] + "…" : name;
+    }
+
+    /// The question in one line: ("Wants to run", "npm install").
+    public static (string Verb, string Object) AskLine(AgentAsk a) => a.Kind switch
+    {
+        "execute" => ("Wants to run", Short(a.Command) ?? "a command"),
+        "edit" => ("Wants to edit", Short(a.Path) ?? "a file"),
+        "delete" => ("Wants to delete", Short(a.Path) ?? "files"),
+        "move" => ("Wants to move", Short(a.Path) ?? "files"),
+        "fetch" => ("Wants to go online", ""),
+        _ => ("Wants to use", a.Title),
+    };
+
+    /// The question as its card's title.
+    public static string AskTitle(AgentAsk a) => a.Kind switch
+    {
+        "execute" => "Wants to run a command",
+        "edit" => $"Wants to edit {Short(a.Path) ?? "a file"}",
+        "delete" => $"Wants to delete {Short(a.Path) ?? "files"}",
+        "move" => $"Wants to move {Short(a.Path) ?? "files"}",
+        "fetch" => "Wants to use the network",
+        _ => $"Wants to use {a.Title}",
+    };
+
+    /// The word on the button that allows it.
+    public static string AskAllow(AgentAsk a) => a.Kind switch
+    {
+        "execute" => "Run", "edit" => "Allow edit", "delete" => "Delete", "move" => "Move", _ => "Allow",
+    };
 }

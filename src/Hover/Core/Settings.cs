@@ -33,6 +33,7 @@ public static class Settings
         public bool KiroRequireMcp { get; set; }
         public int KiroIdleMinutes { get; set; } = 5;
         public bool KiroHideSteps { get; set; }
+        public Services.AgentApproval KiroApproval { get; set; }
         /// Codex's and Cursor's settings, by tool id. Kiro's are the fields above.
         public Dictionary<string, Services.AgentOptions>? Agents { get; set; }
         /// What each tool last offered (models, efforts, modes), for its settings page.
@@ -164,7 +165,7 @@ public static class Settings
     public static Services.AgentOptions AgentOptions(Services.AgentTool t)
     {
         if (t == Services.AgentTool.Kiro)
-            return new(M.KiroModel, M.KiroEffort, M.KiroReadOnly, M.KiroIdleMinutes, M.KiroAgent, M.KiroRequireMcp, M.KiroHideSteps);
+            return new(M.KiroModel, M.KiroEffort, M.KiroReadOnly, M.KiroIdleMinutes, M.KiroAgent, M.KiroRequireMcp, M.KiroHideSteps, M.KiroApproval);
         return M.Agents?.GetValueOrDefault(Services.Agents.Id(t)) ?? Services.AgentOptions.Default;
     }
 
@@ -185,6 +186,7 @@ public static class Settings
             M.KiroRequireMcp = value.RequireMcp;
             M.KiroIdleMinutes = value.IdleMinutes;
             M.KiroHideSteps = value.HideSteps;
+            M.KiroApproval = value.Approval;
         }
         else (M.Agents ??= new())[Services.Agents.Id(t)] = value with { Agent = null, RequireMcp = false };
         Save();

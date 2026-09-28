@@ -22,17 +22,15 @@ body[data-time=day] #office{background:radial-gradient(120% 90% at 50% 45%,#4a35
 #tags{position:absolute;inset:0;pointer-events:none;z-index:2}
 .tag{position:absolute;left:0;top:0;will-change:transform}
 .tag .in{position:absolute;left:0;bottom:0;transform:translateX(-50%);display:flex;flex-direction:column;align-items:center;gap:4px}
-.bub{position:relative;max-width:190px;padding:5px 10px 6px;border-radius:10px;background:#f3e8ff;color:#2a1640;font:500 12.5px/1.25 var(--px);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;box-shadow:0 4px 14px rgba(0,0,0,.35);transition:transform .2s}
+.bub{position:relative;max-width:240px;padding:6px 11px 7px;border-radius:12px;background:rgba(14,10,18,.9);color:#fff;font:500 12px/1.25 Inter,"Segoe UI Variable Text","Segoe UI",sans-serif;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;box-shadow:0 0 0 1px rgba(255,255,255,.1),0 10px 24px rgba(0,0,0,.45);transition:transform .2s}
 .bub::after{content:"";position:absolute;left:50%;bottom:-5px;width:10px;height:10px;background:inherit;transform:translateX(-50%) rotate(45deg);border-radius:2px}
 .bub span::after{content:"";display:inline-block;width:0}
-.st-done .bub{background:#d9ffe6;color:#0d4a24}.st-failed .bub{background:#ffe1de;color:#6a130d}
+.st-done .bub{background:rgba(10,30,18,.92);color:#b8f5c9;box-shadow:0 0 0 1px rgba(74,222,128,.35),0 10px 24px rgba(0,0,0,.45)}.st-failed .bub{background:rgba(40,10,10,.92);color:#ffb3ad;box-shadow:0 0 0 1px rgba(255,91,82,.35),0 10px 24px rgba(0,0,0,.45)}
 .st-stopped .bub{background:transparent;box-shadow:none;color:#c9c2e6;font-size:14px;letter-spacing:.2em;animation:zz 2.4s ease-in-out infinite}
 .st-stopped .bub::after{display:none}
 @keyframes zz{50%{transform:translateY(-4px);opacity:.6}}
-.nm{pointer-events:auto;display:flex;align-items:center;gap:5px;padding:2px 8px 3px 6px;border-radius:7px;border:0;background:rgba(10,6,14,.72);color:#fff;font:600 12px/1.2 var(--px);letter-spacing:.03em;box-shadow:0 0 0 1px rgba(255,255,255,.08)}
-.nm i{width:7px;height:7px;border-radius:2px;background:var(--c)}
+.nm{pointer-events:auto;display:flex;align-items:center;gap:5px;padding:2px 8px 3px 3px;border-radius:7px;border:0;background:rgba(10,6,14,.72);color:#fff;font:600 12px/1.2 var(--px);letter-spacing:.03em;box-shadow:0 0 0 1px rgba(255,255,255,.08)}
 .tag.hot .nm{background:var(--c,#9b6bff);box-shadow:0 0 0 2px rgba(255,255,255,.7),0 6px 20px rgba(0,0,0,.4)}
-.tag.hot .nm i{background:#fff}
 .tag.hot .bub{transform:translateY(-2px)}
 /* HUD */
 .brand{position:absolute;left:18px;top:16px;z-index:3;display:flex;gap:10px;align-items:center;padding:7px 14px 7px 8px;border-radius:14px}
@@ -203,15 +201,49 @@ textarea::placeholder{color:var(--faint)}
 .fchip.none{color:#ffb36b}
 #nNote{margin:4px 6px 0;font-size:11px;color:var(--faint)}
 #nGo:disabled{opacity:.3;cursor:default}
-/* The tool's badge on name tags and in the chat. */
-.tb{font:600 9.5px/1.3 Inter,"Segoe UI",sans-serif;font-style:normal;padding:0 5px;border-radius:5px;margin-left:5px;color:var(--t);background:color-mix(in srgb,var(--t) 20%,transparent);letter-spacing:.03em;white-space:nowrap}
-.tag.hot .tb{color:#fff;background:rgba(0,0,0,.25)}
+/* The tool as its own small logo, on name tags, in the chat and the island. */
+.lg.mini{display:inline-grid;vertical-align:-3px;width:16px;height:16px;border-radius:5px;margin:0 0 0 6px;flex:none}
+.lg.mini svg{width:11px;height:11px}.lg.mini.kiro svg{width:12px;height:12px}
+.nm .lg.mini{width:15px;height:15px;border-radius:4px;margin:0}
+.tag.hot .nm .lg.mini{box-shadow:0 0 0 1px rgba(255,255,255,.6)}
+/* A question over the bot's head, or at the end of its chat. */
+.askc{pointer-events:auto;position:relative;width:272px;padding:10px;border-radius:14px;background:rgba(14,10,18,.95);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);
+  box-shadow:0 0 0 1px rgba(255,179,64,.5),0 0 34px rgba(255,179,64,.2),0 14px 30px rgba(0,0,0,.55);font:500 12px/1.4 Inter,"Segoe UI",sans-serif;color:#fff;text-align:left;animation:rise .3s ease-out}
+.askc.over{margin-bottom:6px}
+.askc.over::after{content:"";position:absolute;left:50%;bottom:-5px;width:10px;height:10px;background:inherit;transform:translateX(-50%) rotate(45deg);border-radius:2px;box-shadow:1px 1px 0 rgba(255,179,64,.5)}
+.askc .at{display:flex;align-items:center;gap:7px;font-size:12.5px}.askc .at .lg.mini{margin:0}.askc .at b{font-weight:600;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.askc .at em{margin-left:auto;font-style:normal;font-size:10.5px;color:rgba(255,255,255,.45);white-space:nowrap}
+.askc pre{margin:8px 0 7px;padding:7px 9px;border-radius:9px;background:rgba(0,0,0,.45);font:11.5px/1.5 "Cascadia Code",Consolas,monospace;white-space:pre-wrap;word-break:break-all;max-height:120px;overflow:auto;scrollbar-width:thin}
+.askc pre .pr{color:#ffb340;margin-right:8px;user-select:none}.askc pre .a{color:#9df0ae}.askc pre .d{color:#ffaaa4}.askc pre .pth{color:rgba(255,255,255,.5)}
+.askc .ar{display:flex;align-items:center;gap:7px;font-size:11px;color:rgba(255,255,255,.58);margin-bottom:9px}.askc .ar i{flex:none;width:6px;height:6px;border-radius:50%;background:#ffb340}
+.askc.dz{box-shadow:0 0 0 1px rgba(255,69,58,.55),0 0 34px rgba(255,69,58,.18),0 14px 30px rgba(0,0,0,.55)}.askc.dz .ar i{background:#ff453a}
+.askc .ab{display:flex;gap:6px;align-items:center}.askc .ab .sp{flex:1}
+.askc button{height:26px;padding:0 10px;border:0;border-radius:8px;background:rgba(255,255,255,.1);color:#fff;font:600 11.5px Inter,"Segoe UI",sans-serif}
+.askc button:hover{background:rgba(255,255,255,.17)}.askc button:focus-visible{outline:2px solid #ffb340;outline-offset:1px}
+.askc button.pri{background:#f5f5f7;color:#000}.askc button.pri:hover{background:#fff}.askc button.dz{background:#ff453a}
+.askc.chat{width:auto;background:rgba(255,179,64,.06);box-shadow:inset 0 0 0 1px rgba(255,179,64,.35);backdrop-filter:none}
+.askc.chat.dz{background:rgba(255,69,58,.06);box-shadow:inset 0 0 0 1px rgba(255,69,58,.4)}
+.card.st-waiting .ct b{color:#ffb340}
+/* The island: the resting notch, kept at the top of the open office. */
+#island{position:absolute;left:50%;top:0;transform:translateX(-50%);z-index:4;height:34px;display:flex;align-items:center;gap:9px;padding:0 14px 0 9px;border:0;border-radius:0 0 17px 17px;
+  background:#000;color:#fff;font:500 12.5px Inter,"Segoe UI Variable Text","Segoe UI",sans-serif;white-space:nowrap;box-shadow:0 10px 26px -10px rgba(0,0,0,.8);transition:box-shadow .4s}
+#island::before,#island::after{content:"";position:absolute;top:0;width:12px;height:12px;pointer-events:none}
+#island::before{left:-12px;background:radial-gradient(circle at 0 100%,transparent 11.5px,#000 12px)}
+#island::after{right:-12px;background:radial-gradient(circle at 100% 100%,transparent 11.5px,#000 12px)}
+#island .marks{display:flex;align-items:center}#island .marks .lg.mini{margin:0;box-shadow:0 0 0 2px #000;opacity:.5;transform:scale(.84);transition:.3s}
+#island .marks .lg.mini+.lg.mini{margin-left:-3px}#island .marks .lg.mini.on{opacity:1;transform:none;z-index:1}
+#island .v{color:rgba(255,255,255,.55)}#island b{font-weight:600;max-width:240px;overflow:hidden;text-overflow:ellipsis}
+#island .tm{font:500 11.5px "Cascadia Code",Consolas,monospace;color:rgba(255,255,255,.42);font-variant-numeric:tabular-nums}
+#island.ask{box-shadow:0 8px 30px -6px rgba(255,179,64,.5),inset 0 -1px 0 rgba(255,200,120,.3)}#island.ask .v{color:#ffd08a}
+#island:focus-visible{outline:2px solid var(--li);outline-offset:2px}
 #toast{position:absolute;left:50%;top:18px;transform:translate(-50%,-12px);z-index:7;padding:8px 14px;border-radius:12px;font:600 12.5px var(--px);opacity:0;transition:.25s;pointer-events:none}
 #toast.show{opacity:1;transform:translate(-50%,0)}
 /* Inside Hover the office is the whole page. */
 body.host{background:transparent;overflow:hidden}
 body.host .tools,body.host .note{display:none}
 body.host #office{max-width:none;margin:0;height:100vh;min-height:0;border-radius:16px;box-shadow:none}
+body.host.notch #office{border:0;border-radius:0}
+body.host.notch #office::before{content:"";position:absolute;inset:0 0 auto;height:44px;z-index:1;pointer-events:none;background:linear-gradient(rgba(0,0,0,.9),transparent)}
 .brand b{font:600 14px/1.1 var(--px);letter-spacing:.02em}
 #gl.drag{cursor:grabbing!important}
 .x{width:32px;height:32px;border-radius:10px;border:0;background:rgba(255,255,255,.06);display:grid;place-items:center;flex:none}
@@ -259,6 +291,8 @@ body.host #office{max-width:none;margin:0;height:100vh;min-height:0;border-radiu
 #nInput{height:40px;font-size:12.5px}.composer{padding:6px 6px 5px 9px;border-radius:15px}.cbar{margin-top:2px}
 #pBody{padding:10px 10px}.stats{gap:6px;margin-bottom:10px}.stats div{padding:6px}.stats b{font-size:18px}
 #toast{top:10px;padding:6px 12px;font-size:12px}
+.askc.over{width:240px;padding:8px}.askc.over pre{max-height:58px;margin:6px 0 5px}.askc.over .ar{margin-bottom:7px}.askc.over button{height:24px}
+#island{height:30px;border-radius:0 0 15px 15px;font-size:12px}
 }
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 </style></head><body data-time="night">
@@ -266,6 +300,7 @@ body.host #office{max-width:none;margin:0;height:100vh;min-height:0;border-radiu
 <div id="office">
   <canvas id="gl" aria-label="The agent office. Each bot is a session; click one to open it."></canvas>
   <div id="tags"></div>
+  <button id="island" hidden></button>
   <button class="brand glass" id="brand" title="Open in a window"><span class="av" style="--c:#9b6bff"><i></i></span><b>Agent office</b></button>
   <div class="hud">
     <div class="seg glass" role="group" aria-label="Time of day"><button data-t="auto" aria-label="Follow the clock" title="Follow the clock"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></button><button data-t="night" aria-label="Night" title="Night"><svg viewBox="0 0 24 24"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z"/></svg></button><button data-t="day" aria-label="Day" title="Day"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg></button></div>

@@ -117,7 +117,8 @@ internal sealed class KiroPage
         {
             DropWeb();
             _root.Children.Clear();
-            _root.Children.Add(Notice());
+            // The note is a card; in the notch it keeps clear of the shape's curves.
+            _root.Children.Add(Notice().Margin(_window ? 0 : 10, _window ? 0 : 10, _window ? 0 : 10, _window ? 0 : 10));
             return;
         }
         if (_web is not null) return;
@@ -144,7 +145,8 @@ internal sealed class KiroPage
         };
         AutomationProperties.SetAutomationId(web, "KiroOffice");
         _web = web;
-        _root.Children.Add(new Border { CornerRadius = new CornerRadius(16), ClipToBounds = true, Child = web });
+        // In the notch the shape clips it; the app window keeps soft corners.
+        _root.Children.Add(new Border { CornerRadius = new CornerRadius(_window ? 16 : 0), ClipToBounds = true, Child = web });
         try
         {
             try { await web.EnsureCoreWebView2Async(await SharedEnvironment()); }
@@ -273,6 +275,14 @@ internal sealed class KiroPage
                 break;
             case "stop":
                 session?.Stop();
+                break;
+            case "answer":
+                // The office answered what the agent asked: over its head, or in its chat.
+                if (session is not null && Str(m, "ask") is { } askId)
+                    session.Answer(askId, Str(m, "answer") switch
+                    {
+                        "allow" => AskAnswer.Allow, "trust" => AskAnswer.Trust, "trustAll" => AskAnswer.TrustAll, _ => AskAnswer.Deny,
+                    });
                 break;
             case "remove":
                 if (session is not null) Sessions.Dismiss(session);
@@ -406,7 +416,7 @@ internal sealed class KiroPage
                 // Unknown until checked; the picker offers it meanwhile.
                 ready = Agents.Known(t)?.Ok ?? true,
                 hint = Agents.Known(t)?.Hint ?? "",
-                access = Settings.AgentOptions(t).ReadOnly && Agents.ReadOnlyWorks(t) ? "read only" : "full tool access",
+                access = Access(Settings.AgentOptions(t), t),
                 hideSteps = Settings.AgentOptions(t).HideSteps,
                 // The composer's model and effort picks: what the tool offered last,
                 // Kiro's own list before it has run.
@@ -422,6 +432,16 @@ internal sealed class KiroPage
         _historySent = _historyVersion;
         core.PostWebMessageAsJson(JsonSerializer.Serialize(state, Json));
     }
+
+    /// What a new task's Start button says the tool may do.
+    private static string Access(AgentOptions o, AgentTool t) =>
+        o.ReadOnly && Agents.ReadOnlyWorks(t) ? "read only"
+        : o.Approval switch
+        {
+            AgentApproval.Risky => "full tool access, asking before commands and deletes",
+            AgentApproval.Always => "full tool access, asking before every change",
+            _ => "full tool access",
+        };
 
     private static AcpOption? Offer(AgentTool t, string category, params string[] ids)
     {
@@ -483,8 +503,25 @@ internal sealed class KiroPage
             title = s.Title,
             folder = s.Folder,
             ctx = s.Context is { } c ? (int?)Math.Round(c) : null,
-            stage = Stage(s.State, s.Phase),
+            stage = s.Waiting ? "waiting" : Stage(s.State, s.Phase),
             act = Act(s.Phase),
+            // What the agent is waiting on the user for, and how many more are behind it.
+            ask = s.Asking is { } a ? new
+            {
+                id = a.Id,
+                kind = a.Kind,
+                title = AgentWords.AskTitle(a),
+                line = AgentWords.AskLine(a) is var (verb, obj) ? (verb + " " + obj).Trim() : "",
+                command = a.Command,
+                path = a.Path,
+                preview = a.Preview,
+                added = a.Added,
+                removed = a.Removed,
+                reason = a.Reason,
+                danger = a.Danger,
+                allow = AgentWords.AskAllow(a),
+                more = s.Asks.Count - 1,
+            } : null,
             pose = Pose(s.Phase),
             file = lastStep is null ? "" : Short(lastStep.Target) ?? "",
             turns = s.Turns.Select(t => new
@@ -492,7 +529,7 @@ internal sealed class KiroPage
                 prompt = t.Prompt,
                 images = t.Images.Select(p => $"https://{ImagesHost}/{Uri.EscapeDataString(Path.GetFileName(p))}").ToList(),
                 queued = t.Queued,
-                stage = t.Result is { } r ? Stage(r.State, KiroPhase.Working) : t.Queued ? "queued" : Stage(s.State, s.Phase),
+                stage = t.Result is { } r ? Stage(r.State, KiroPhase.Working) : t.Queued ? "queued" : s.Waiting ? "waiting" : Stage(s.State, s.Phase),
                 steps = t.Steps.Select(x => Row(x, s.Folder)).ToList(),
                 // Markdown as the tool wrote it; the page renders it.
                 answer = t.Result is { } res ? res.Text : "",
@@ -605,7 +642,7 @@ internal sealed class KiroPage
         text.Children.Add(Para("Kiro, Codex and Cursor work on their own here, with full access to their tools. They can edit files " +
                                "and run commands in the project folder you choose, without stopping to ask.", 13.5, Ui.Ink).Margin(0, 8, 0, 0));
         text.Children.Add(Para("So pick the folder with care, and keep it under version control, so you can look over what " +
-                               "changed and undo it if you need to. Settings → Kiro and Cursor can limit them to reading.", 12.5, Ui.InkDim).Margin(0, 6, 0, 0));
+                               "changed and undo it if you need to. In Settings each can be made to ask first, in the notch, or (Kiro and Cursor) only read.", 12.5, Ui.InkDim).Margin(0, 6, 0, 0));
         var ok = Ui.Button("OwlBlueButton", "Got it", "KiroNoticeOk", "Got it", () =>
         {
             Settings.KiroNoticeSeen = true;
@@ -641,25 +678,4 @@ internal sealed class KiroPage
         t.TextTrimming = TextTrimming.None;
         return t;
     }
-
-    /// How a task is going, in a few words: the notch's pill says it.
-    internal static string Status(KiroSession s) => s.State switch
-    {
-        KiroState.Running => s.Phase switch
-        {
-            KiroPhase.Starting => "Waking up…",
-            KiroPhase.Thinking => "Thinking it through",
-            KiroPhase.Planning => "Making a plan",
-            KiroPhase.Reading => "Reading the code",
-            KiroPhase.Searching => "Looking around",
-            KiroPhase.Editing => "Making changes",
-            KiroPhase.Running => "Running commands",
-            KiroPhase.Writing => "Writing it up",
-            _ => "Working on it",
-        },
-        KiroState.Completed => "All done",
-        KiroState.Failed => "Couldn’t finish",
-        KiroState.Cancelled => "Stopped",
-        _ => "Ready",
-    };
 }

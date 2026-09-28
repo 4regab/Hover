@@ -3,8 +3,8 @@ using System.Windows.Media;
 
 namespace Hover.Owl;
 
-/// Hover's Kiro mascot, drawn flat for the places WPF shows it (the notch, the
-/// first-use note): a boxy head, a dark visor with two pixel eyes, headphone pads,
+/// Hover's Kiro mascot, drawn flat for the places WPF shows it (the first-use
+/// note, the missing-WebView2 page): a boxy head, a dark visor with two pixel eyes, headphone pads,
 /// and an antenna bulb in the colour of what it's doing. The office draws the same
 /// bot in 3D (web/office).
 ///
@@ -140,39 +140,6 @@ internal sealed class BotGlyph : FrameworkElement
     }
 }
 
-/// Three dots rising one after another: Kiro is at it. Sits after the notch's
-/// status words.
-internal sealed class WorkDots : FrameworkElement
-{
-    private static readonly Brush Dot = BotGlyph.Freeze(new SolidColorBrush(Color.FromRgb(0xC4, 0xA2, 0xFF)));
-    private double _t;
-
-    public WorkDots()
-    {
-        Width = 14;
-        Height = 12;
-        Loaded += (_, _) => Animator.Add(this);
-        Unloaded += (_, _) => Animator.Remove(this);
-    }
-
-    internal void Step(double dt)
-    {
-        _t += dt;
-        InvalidateVisual();
-    }
-
-    protected override void OnRender(DrawingContext dc)
-    {
-        for (var i = 0; i < 3; i++)
-        {
-            var k = Animator.Still ? 0 : Math.Max(0, Math.Sin(_t * 6 - i * 0.9));
-            dc.PushOpacity(0.45 + 0.55 * k);
-            dc.DrawEllipse(Dot, null, new Point(2 + i * 5, ActualHeight / 2 + 1.5 - k * 2.5), 1.5, 1.5);
-            dc.Pop();
-        }
-    }
-}
-
 /// One 30 fps clock for the notch's little animations, hooked into rendering only
 /// while one of them is on screen, and off entirely with Windows' animations off.
 internal static class Animator
@@ -210,7 +177,8 @@ internal static class Animator
             // A notch folded away hides its pill; nothing there needs drawing.
             if (!el.IsVisible) continue;
             if (el is BotGlyph b) b.Step(step);
-            else if (el is WorkDots d) d.Step(step);
+            else if (el is LiveMark m) m.Step(step);
+            else if (el is MarkStack k) k.StepBy(step);
         }
     }
 }

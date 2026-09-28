@@ -18,7 +18,7 @@ public static class NotchItem
         _ => id,
     };
 
-    /// The name beside a quota on the notch.
+    /// A quota's name, for its tooltip and UI Automation (the notch shows the tool's mark).
     public static string Short(string id) => id switch
     {
         Claude => "Claude", Kiro => "Kiro", Codex => "Codex", _ => "Cursor",

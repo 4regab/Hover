@@ -29,13 +29,34 @@ public sealed record KiroEvent(KiroStep? Step = null, double? Context = null, st
 /// leaves the tool's own default. Read only refuses whatever would change a file or run
 /// a command. IdleMinutes is how long the tool's process stays up with nothing to do.
 /// Agent (a Kiro agent, sent as its mode) and RequireMcp are Kiro's alone. HideSteps
-/// keeps the tools it runs out of the chat (they are still kept).
+/// keeps the tools it runs out of the chat (they are still kept). Approval is when the
+/// agent stops to ask the user first; read only overrules it.
 public sealed record AgentOptions(string? Model = null, string? Effort = null, bool ReadOnly = false,
-    int IdleMinutes = 5, string? Agent = null, bool RequireMcp = false, bool HideSteps = false)
+    int IdleMinutes = 5, string? Agent = null, bool RequireMcp = false, bool HideSteps = false,
+    AgentApproval Approval = AgentApproval.Autopilot)
 {
     public static readonly AgentOptions Default = new();
     public static readonly int[] IdleChoices = { 5, 15 };
 }
+
+/// When an agent with full access stops to ask. Autopilot never asks (what 2.0 did).
+/// Risky asks for commands, deletes, moves, the network and anything outside the
+/// folder, and lets reading, searching and editing inside it go ahead. Always asks
+/// before anything but reading and searching.
+public enum AgentApproval { Autopilot, Risky, Always }
+
+/// A tool call an agent is waiting on the user for (ACP session/request_permission),
+/// told the way the notch and the office show it. Kind is ACP's (execute, edit,
+/// delete...). Command is the command line, Path the file (relative to the folder when
+/// inside it), Preview a few lines of the change, with +/- before each, and Added and
+/// Removed how many lines it changes. Reason is Hover's own few words on why it asks;
+/// Danger marks what can't be taken back easily.
+public sealed record AgentAsk(string Id, string Kind, string Title, string? Command, string? Path, string? Preview,
+    int Added, int Removed, string Reason, bool Danger);
+
+/// The user's answer to an AgentAsk. Trust allows this one and the same again for the
+/// rest of the session; TrustAll allows everything the session asks from now on.
+public enum AskAnswer { Allow, Trust, TrustAll, Deny }
 
 /// What Hover knows about kiro-cli without starting it: its models as a fallback
 /// before a run has listed them, the agents on disk, and whether a folder can be used.
