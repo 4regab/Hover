@@ -10,7 +10,7 @@ use std::path::PathBuf;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
-use hover_chat::{state, Hit, Painter, Pos, Shaper, Stage, Thread, Turn};
+use hover_chat::{state, Hit, Painter, Pos, Shaper, Stage, Tail, Thread, Turn, Unit};
 use slint::{ComponentHandle, Model, SharedPixelBuffer, VecModel};
 
 slint::include_modules!();
@@ -76,12 +76,45 @@ fn header(ui: &ChatWindow, session: usize) {
     ui.set_busy(busy);
 }
 
+/// Counts clicks as Windows does: another press within the double-click time and
+/// rectangle adds one (a third makes a triple click).
+struct Clicks { at: Option<Instant>, x: f32, y: f32, n: u32 }
+
+impl Clicks {
+    fn press(&mut self, x: f32, y: f32) -> u32 {
+        let (time, (w, h)) = double_click();
+        let now = Instant::now();
+        let near = (x - self.x).abs() <= w / 2.0 && (y - self.y).abs() <= h / 2.0;
+        self.n = if near && self.at.is_some_and(|t| now - t <= time) { self.n + 1 } else { 1 };
+        (self.at, self.x, self.y) = (Some(now), x, y);
+        self.n
+    }
+}
+
+/// GetDoubleClickTime and SM_CXDOUBLECLK / SM_CYDOUBLECLK (in DIPs, as the pointer is).
+#[cfg(windows)]
+fn double_click() -> (Duration, (f32, f32)) {
+    use windows::Win32::UI::Input::KeyboardAndMouse::GetDoubleClickTime;
+    use windows::Win32::UI::WindowsAndMessaging::{GetSystemMetrics, SM_CXDOUBLECLK, SM_CYDOUBLECLK};
+    unsafe { (Duration::from_millis(GetDoubleClickTime() as u64), (GetSystemMetrics(SM_CXDOUBLECLK) as f32, GetSystemMetrics(SM_CYDOUBLECLK) as f32)) }
+}
+
+/// Windows' defaults, on the Linux dev VM.
+#[cfg(not(windows))]
+fn double_click() -> (Duration, (f32, f32)) {
+    (Duration::from_millis(500), (4.0, 4.0))
+}
+
 struct App {
     thread: Thread,
     painter: Painter,
     turns: Vec<Turn>,
     scroll: f32,
     anchor: Option<Pos>,
+    /// The word or paragraph a double or triple click selected: a drag grows it by those.
+    unit: Unit,
+    unit_anchor: (Pos, Pos, Tail),
+    clicks: Clicks,
     dragging: bool,
     stick: bool,
     t0: Instant,
@@ -92,7 +125,9 @@ impl App {
         let f = fonts();
         let mut thread = Thread::new(Shaper::new(&f), who, color);
         thread.set(&turns, 360.0);
-        App { thread, painter: Painter::new(&f, Box::new(|_| None)), turns, scroll: 0.0, anchor: None, dragging: false, stick: true, t0: Instant::now() }
+        let p0 = Pos { section: 0, text: 0, byte: 0 };
+        App { thread, painter: Painter::new(&f, Box::new(|_| None)), turns, scroll: 0.0, anchor: None, unit: Unit::Char, unit_anchor: (p0, p0, Tail::None),
+            clicks: Clicks { at: None, x: 0.0, y: 0.0, n: 0 }, dragging: false, stick: true, t0: Instant::now() }
     }
 
     fn relayout(&mut self, width: f32, height: f32) {
@@ -150,14 +185,29 @@ fn wire(ui: &ChatWindow, app: Rc<RefCell<App>>) {
         {
             let mut s = a.borrow_mut();
             let yy = y + s.scroll;
+            let n = if kind == 0 { s.clicks.press(x, y) } else { 0 };
             match (kind, s.thread.hit(x, yy)) {
                 (0, Hit::Link(url)) if !shift => { open_link(&url); }
                 (0, Hit::Toggle(i)) => { let turns = s.turns.clone(); s.thread.toggle_steps(&turns, i); }
-                (0, Hit::Text(p)) => {
+                (0, Hit::Text(p)) if shift || n == 1 => {
                     if shift { if let Some(an) = s.anchor { s.thread.select(an, p); } } else { s.anchor = Some(p); s.thread.select(p, p); }
+                    s.unit = Unit::Char;
+                    s.dragging = true;
+                }
+                (0, Hit::Text(p)) => {
+                    // A double click selects the word (and, as WebView2 does on Windows, the
+                    // spaces after it); a third, the paragraph.
+                    s.unit = if n == 2 { Unit::Word } else { Unit::Para };
+                    let (a0, mut a1, tail) = s.thread.unit_at(p, s.unit);
+                    if n == 2 { a1 = s.thread.trailing_space(a1); }
+                    s.unit_anchor = (a0, a1, tail);
+                    s.anchor = Some(a0);
+                    let (unit, anchor) = (s.unit, s.unit_anchor);
+                    s.thread.select_units(anchor, p, unit);
                     s.dragging = true;
                 }
                 (0, _) => { s.thread.select(Pos { section: 0, text: 0, byte: 0 }, Pos { section: 0, text: 0, byte: 0 }); s.anchor = None; }
+                (1, Hit::Text(p)) if s.dragging && s.unit != Unit::Char => { let (unit, anchor) = (s.unit, s.unit_anchor); s.thread.select_units(anchor, p, unit); }
                 (1, Hit::Text(p)) if s.dragging => { if let Some(an) = s.anchor { s.thread.select(an, p); } }
                 (2, _) => s.dragging = false,
                 _ => return,

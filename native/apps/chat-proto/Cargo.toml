@@ -12,5 +12,9 @@ serde_json = "1"
 arboard = { version = "3.6", default-features = false }
 image = { version = "0.25", default-features = false, features = ["png"] }
 
+[target.'cfg(windows)'.dependencies]
+# The system's double-click time and distance (as notch-proto uses it).
+windows = { version = "0.62", features = ["Win32_UI_WindowsAndMessaging", "Win32_UI_Input_KeyboardAndMouse"] }
+
 [build-dependencies]
 slint-build = "=1.18.1"

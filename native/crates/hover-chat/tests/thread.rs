@@ -3,7 +3,7 @@
 use std::path::Path;
 use std::time::Instant;
 
-use hover_chat::{state, Hit, Painter, Pos, Shaper, Stage, Step, StepIcon, Thread, Turn};
+use hover_chat::{state, Hit, Painter, Pos, Shaper, Stage, Step, StepIcon, Thread, Turn, Unit};
 
 fn fonts() -> Vec<Vec<u8>> {
     let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
@@ -213,4 +213,98 @@ fn a_selection_ending_before_a_diagram_leaves_its_labels_out() {
     assert_eq!(th.selected_text(), "First.");
     th.select_all();
     assert!(th.selected_text().ends_with("First.\n\nA\nB\nLast."), "{:?}", th.selected_text());
+}
+
+/// Golden UTF-16 offsets (the page's text nodes) to byte offsets in a native text box,
+/// which also holds a '\n' for each <br>.
+fn align(page: &str, native: &str) -> Vec<usize> {
+    let mut map = vec![usize::MAX; page.encode_utf16().count() + 1];
+    let (mut u, mut it) = (0, page.chars().peekable());
+    for (b, c) in native.char_indices() {
+        if it.peek() == Some(&c) {
+            map[u] = b;
+            u += c.len_utf16();
+            it.next();
+        }
+    }
+    map[u] = native.len();
+    map
+}
+
+/// Double and triple clicks as the real page answers them (golden/gen-words.mjs): each
+/// character of fixtures/words.md clicked at 1/4 and 3/4 of its width, with the copy of
+/// what got selected. Chromium's Linux editing behaviour, so no trailing space. Where the
+/// pointer lands is parley's hit test (nearest caret), checked in `hit` tests; this is
+/// about what the caret selects.
+#[test]
+fn double_and_triple_clicks_select_what_the_page_selects() {
+    let want: serde_json::Value = serde_json::from_str(&golden("expected/words.json")).unwrap();
+    let mut th = Thread::new(Shaper::new(&fonts()), "Juno", [47, 201, 176, 255]);
+    th.set(&[Turn { answer: golden("fixtures/words.md"), ..Turn::new("Q") }], 358.0);
+    let pad = hover_chat::theme::THREAD_PAD[3];
+    let (mut n, mut bad, mut wrapped, mut emoji_skipped) = (0, vec![], 0, 0);
+    for leaf in want.as_array().unwrap() {
+        let page = leaf["text"].as_str().unwrap();
+        let flat = |s: &str| s.replace('\n', "");
+        let sec = &th.sections[0];
+        let (ti, t) = sec.frag.texts.iter().enumerate().find(|(_, t)| !t.text.is_empty() && flat(&t.text) == flat(page)).unwrap_or_else(|| panic!("no box for {page:?}"));
+        let map = align(page, &t.text);
+        // The soft wraps, in page offsets: the page's (recorded) and this layout's. A caret
+        // that ends a soft-wrapped line in one and not the other depends on the fonts'
+        // metrics, not on the selection rules, and is counted apart.
+        let units: Vec<u16> = page.encode_utf16().collect();
+        let back = |b: usize| map.iter().position(|&m| m == b);
+        let hard = |u: usize| map[u] > 0 && t.text.as_bytes()[map[u] - 1] == b'\n';
+        let page_soft: Vec<usize> = leaf["lines"].as_array().unwrap().iter().map(|v| v.as_u64().unwrap() as usize).filter(|&u| !hard(u)).collect();
+        let lines: Vec<_> = t.layout.lines().collect();
+        let ours: Vec<usize> = lines.windows(2).filter(|w| matches!(w[0].break_reason(), parley::BreakReason::Regular | parley::BreakReason::Emergency))
+            .filter_map(|w| back(w[1].text_range().start)).collect();
+        let ends_soft = |starts: &[usize], c: usize| starts.iter().any(|&s| c < s && units[c..s].iter().all(|&u| u == b' ' as u16));
+        for p in leaf["probes"].as_array().unwrap() {
+            let (i, at) = (p[0].as_u64().unwrap() as usize, p[1].as_f64().unwrap());
+            // From the caret the page's own click found there: its hit test works in whole
+            // pixels, so a narrow glyph's right quarter can still land before it.
+            // A caret after the clicked character sits before any break that follows it.
+            let caret = p[2].as_u64().unwrap() as usize;
+            let byte = if caret > i { let c = page.encode_utf16().nth(caret - 1).unwrap(); let back = if (0xdc00..0xe000).contains(&c) { 2 } else { 1 };
+                let b = map[caret - back]; b + t.text[b..].chars().next().unwrap().len_utf8() } else { map[caret] };
+            let pos = Pos { section: 0, text: ti, byte };
+            if ends_soft(&page_soft, caret) != ends_soft(&ours, caret) { wrapped += 1; continue; }
+            for (k, unit) in [(3, Unit::Word), (4, Unit::Para)] {
+                let (a, f, tail) = th.unit_at(pos, unit);
+                th.selection = Some((a, f));
+                th.tail = tail;
+                let got = th.selected_text();
+                let exp = p[k][1].as_str().unwrap();
+                let k = k - 1;
+                // Emoji next to each other or to a space: Chromium's ICU walks its word
+                // boundaries forwards and backwards inconsistently there (" 🙂" from one
+                // caret, "🙂🎉" from the next). Not reproduced; listed in REPORT.md.
+                let emoji = |s: &str| s.chars().any(|c| c as u32 >= 0x1f000);
+                if unit == Unit::Word && (emoji(exp) || emoji(&got)) { emoji_skipped += 1; continue; }
+                n += 1;
+                if got != exp { bad.push(format!("{page:.20?} @{i} {at} x{k}: got {got:?}, page {exp:?}")); }
+            }
+        }
+    }
+    assert!(bad.is_empty(), "{} of {n} differ:\n{}", bad.len(), bad.join("\n"));
+    // Where this layout wraps a line elsewhere than Chromium did (see above).
+    assert!(wrapped <= 8, "{wrapped} probes wrap differently");
+    assert!(emoji_skipped <= 8, "{emoji_skipped} emoji probes");
+    eprintln!("{n} clicks match the page; skipped: {wrapped} probes where the lines wrap differently, {emoji_skipped} double clicks on emoji");
+}
+
+#[test]
+fn a_double_click_on_windows_takes_the_spaces_after_the_word() {
+    let mut th = Thread::new(Shaper::new(&fonts()), "Juno", [47, 201, 176, 255]);
+    th.set(&[Turn { answer: "one two\nthree".into(), ..Turn::new("Q") }], 358.0);
+    let t = th.sections[0].frag.texts.iter().position(|t| t.text.starts_with("one")).unwrap();
+    let at = |byte| Pos { section: 0, text: t, byte };
+    let (a, f, _) = th.word_at(at(1));
+    th.select(a, th.trailing_space(f));
+    assert_eq!(th.selected_text(), "one ");
+    // Not across a line break.
+    let (a, f, _) = th.word_at(at(5));
+    th.select(a, th.trailing_space(f));
+    assert_eq!(th.selected_text(), "two");
 }

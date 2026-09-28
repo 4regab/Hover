@@ -36,6 +36,8 @@ pub struct TextBox {
     pub clip: Option<[f32; 4]>,
     /// The live step's moving highlight (`.work .on` in page.html).
     pub shimmer: bool,
+    /// A table cell: a double or triple click stays inside it.
+    pub cell: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -121,6 +123,15 @@ impl Copier {
     /// The whole of something was copied: a table that ends it leaves its newline.
     fn finish(mut self) -> String {
         if self.table_last { self.out.push('\n'); }
+        self.out
+    }
+    /// A selection that runs on past its last box (see [`Tail`]).
+    fn tail(mut self, tail: Tail) -> String {
+        match tail {
+            Tail::None => {}
+            Tail::Newline => self.out.push('\n'),
+            Tail::Block => for _ in 0..self.pending { self.out.push('\n'); },
+        }
         self.out
     }
 }
@@ -319,7 +330,7 @@ impl Md<'_> {
     fn para_box(&mut self, spans: &[Span], look: Look, w: f32, align: Alignment) -> (TextBox, f32) {
         let (layout, text, links) = self.sh.text(spans, look, Some(w), align);
         let h = layout.height();
-        (TextBox { layout, x: 0.0, y: 0.0, text, links, clip: None, shimmer: false }, h)
+        (TextBox { layout, x: 0.0, y: 0.0, text, links, clip: None, shimmer: false, cell: false }, h)
     }
 
     /// A paragraph: text, split around images (which are display: block). A <br> just
@@ -399,7 +410,7 @@ impl Md<'_> {
                 let spans = [Span::Text { text: text.clone(), marks: Default::default(), link: None, color: None, family: Some(theme::MONO), size: None, weight: None }];
                 let (layout, t, _) = self.sh.text(&spans, look, None, Alignment::Start);
                 let h = layout.height().max(11.5 * 1.55) + 22.0;
-                let mut frag = Frag::one(TextBox { layout, x: 13.0, y: 11.0, text: t, links: vec![], clip: Some([1.0, 1.0, w - 2.0, h - 2.0]), shimmer: false }, 1);
+                let mut frag = Frag::one(TextBox { layout, x: 13.0, y: 11.0, text: t, links: vec![], clip: Some([1.0, 1.0, w - 2.0, h - 2.0]), shimmer: false, cell: false }, 1);
                 frag.shapes.insert(0, Shape::Rect { x: 0.0, y: 0.0, w, h, radius: [10.0; 4], fill: Some(theme::PRE_BG), stroke: Some((theme::LINE, 1.0)) });
                 if let Some(lang) = lang {
                     // pre[data-lang]::before: 9.5px pixel font, faint, uppercase, right 8 top 5.
@@ -407,7 +418,7 @@ impl Md<'_> {
                     let (lay, _, _) = self.sh.text(&[plain(&lang.to_uppercase(), None)], l, None, Alignment::Start);
                     let lw = lay.width();
                     // Not selectable in the page (generated content): drawn, not in the copy text.
-                    frag.texts.push(TextBox { layout: lay, x: w - 8.0 - lw - 1.0, y: 6.0, text: String::new(), links: vec![], clip: None, shimmer: false });
+                    frag.texts.push(TextBox { layout: lay, x: w - 8.0 - lw - 1.0, y: 6.0, text: String::new(), links: vec![], clip: None, shimmer: false, cell: false });
                 }
                 Boxed { frag, mt: 0.0, h, mb: 9.0 }
             }
@@ -475,7 +486,7 @@ impl Md<'_> {
                 let (lay, _, _) = self.sh.text(&[plain(&marker, Some(theme::FAINT))], look, None, Alignment::Start);
                 let mw = lay.width();
                 let mb = lay.lines().next().map_or(0.0, |l| l.metrics().baseline);
-                li.frag.texts.push(TextBox { layout: lay, x: -(mw + if ordered { 4.0 } else { 7.0 }), y: baseline - mb, text: String::new(), links: vec![], clip: None, shimmer: false });
+                li.frag.texts.push(TextBox { layout: lay, x: -(mw + if ordered { 4.0 } else { 7.0 }), y: baseline - mb, text: String::new(), links: vec![], clip: None, shimmer: false, cell: false });
             }
             li.frag.shift(left, 0.0);
             li.mt = li.mt.max(2.0);
@@ -526,7 +537,8 @@ impl Md<'_> {
                 let l = Look { weight: if ri == 0 { 600.0 } else { 400.0 }, ..look };
                 let align = match cell.map(|c| c.align) { Some(Align::Center) => Alignment::Center, Some(Align::Right) => Alignment::End, _ => Alignment::Start };
                 let spans = cell.map(|c| spans_of(&c.content)).unwrap_or_default();
-                let (tb, h) = self.para_box(&spans, l, widths[c] - 18.0, align);
+                let (mut tb, h) = self.para_box(&spans, l, widths[c] - 18.0, align);
+                tb.cell = true;
                 row_h = row_h.max(h + 12.0);
                 cells.push((tb, x));
                 x += widths[c];
@@ -657,6 +669,8 @@ pub struct Thread {
     pub height: f32,
     /// (section, text box, byte) of the anchor and focus.
     pub selection: Option<(Pos, Pos)>,
+    /// What the selection takes in after its last box (see [`Tail`]).
+    pub tail: Tail,
     pub image_size: Box<dyn Fn(&str) -> Option<(f32, f32)>>,
     pub image_rule: Box<dyn Fn(&str) -> Option<String>>,
     /// The step lists the user opened (true) or closed (false), by turn index. In the
@@ -676,6 +690,51 @@ pub struct Pos {
     pub byte: usize,
 }
 
+/// A selection made by a double or triple click can end past its last box: the page's
+/// selection then ends at the start of the next block, and a copy takes the newlines of
+/// the block end in with it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum Tail {
+    #[default]
+    None,
+    /// One newline: a double click at the very end of a block selects the break after it.
+    Newline,
+    /// The block end's newlines: a triple click selects a whole paragraph.
+    Block,
+}
+
+/// What a click selects: a caret (1), a word (2) or a paragraph (3 and more).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Unit { Char, Word, Para }
+
+/// Word boundaries, as a double click finds them: ICU's, with the CJK and Thai
+/// dictionaries, as Chromium's. Chromium's word rules also break around a full stop
+/// that isn't between two digits ("foo.bar" is three words, "3.14" one), measured in
+/// golden/expected/words.json.
+fn words(text: &str) -> Vec<usize> {
+    let mut b: Vec<usize> = icu_segmenter::WordSegmenter::new_dictionary(Default::default()).segment_str(text).collect();
+    for (i, _) in text.match_indices('.') {
+        let digit = |c: Option<char>| c.is_some_and(|c| c.is_ascii_digit());
+        if !(digit(text[..i].chars().next_back()) && digit(text[i + 1..].chars().next())) {
+            b.push(i);
+            b.push(i + 1);
+        }
+    }
+    b.sort_unstable();
+    b.dedup();
+    b
+}
+
+/// Whether caret `b` ends a soft-wrapped line: only the spaces the wrap hangs are after
+/// it on its line, and it doesn't start that line.
+fn soft_line_end(t: &TextBox, b: usize) -> bool {
+    t.layout.lines().find(|l| l.text_range().contains(&b)).is_some_and(|l| {
+        let r = l.text_range();
+        b > r.start && matches!(l.break_reason(), parley::BreakReason::Regular | parley::BreakReason::Emergency)
+            && t.text[b..r.end].chars().all(|c| c.is_whitespace() && c != '\n')
+    })
+}
+
 pub enum Hit {
     Link(Rc<str>),
     /// The step list's summary of this turn: a click opens or closes it.
@@ -686,7 +745,7 @@ pub enum Hit {
 
 impl Thread {
     pub fn new(sh: Shaper, who: &str, color: Rgba) -> Self {
-        Thread { sh, width: 360.0, who: who.into(), color, sections: vec![], height: 0.0, selection: None,
+        Thread { sh, width: 360.0, who: who.into(), color, sections: vec![], height: 0.0, selection: None, tail: Tail::None,
             image_size: Box::new(|_| None), image_rule: Box::new(|s| if s.starts_with("http") { Some(s.into()) } else { None }),
             steps_user: Default::default(), hide_steps: false, relayouts: 0 }
     }
@@ -739,7 +798,7 @@ impl Thread {
 
     fn line(&mut self, text: &str, look: Look, w: Option<f32>) -> TextBox {
         let (layout, text, _) = self.sh.text(&[plain(text, None)], look, w, Alignment::Start);
-        TextBox { layout, x: 0.0, y: 0.0, text, links: vec![], clip: None, shimmer: false }
+        TextBox { layout, x: 0.0, y: 0.0, text, links: vec![], clip: None, shimmer: false, cell: false }
     }
 
     // One turn, as flex items with 7 px gaps: the you-bubble, the step list, the status,
@@ -773,7 +832,7 @@ impl Thread {
         }
         let ty = 7.0 + pics_h;
         let lh = layout.height();
-        frag.text(TextBox { layout, x: bx + 11.0, y: ty, text, links: vec![], clip: None, shimmer: false });
+        frag.text(TextBox { layout, x: bx + 11.0, y: ty, text, links: vec![], clip: None, shimmer: false, cell: false });
         if let Some(mut q) = q {
             frag.copy.push(Tok::Req(1));
             q.x = bx + 11.0;
@@ -973,12 +1032,12 @@ impl Thread {
             let dx = if lx < 0.0 { -lx } else if lx > w { lx - w } else { 0.0 };
             let d = dy * 4.0 + dx;
             if dy == 0.0 && dx == 0.0 {
-                let c = parley::Cursor::from_point(&t.layout, lx, ly);
-                let idx = c.index();
-                if let Some((_, l)) = t.links.iter().find(|(r, _)| r.contains(&idx) || (idx == r.end && lx < w)) {
-                    if lx <= w { return Hit::Link(l.clone()); }
+                // A link is what the pointer is over; the caret is the nearest boundary.
+                let under = parley::Cluster::from_point_exact(&t.layout, lx, ly).map(|(c, _)| c.text_range().start);
+                if let Some((_, l)) = under.and_then(|u| t.links.iter().find(|(r, _)| r.contains(&u))) {
+                    return Hit::Link(l.clone());
                 }
-                return Hit::Text(Pos { byte: idx, ..p });
+                return Hit::Text(Pos { byte: parley::Cursor::from_point(&t.layout, lx, ly).index(), ..p });
             }
             if best.is_none_or(|(bd, _)| d < bd) {
                 let c = parley::Cursor::from_point(&t.layout, lx.clamp(0.0, w), ly.clamp(0.0, h));
@@ -990,6 +1049,66 @@ impl Thread {
 
     pub fn select(&mut self, anchor: Pos, focus: Pos) {
         self.selection = if anchor == focus { None } else { Some((anchor, focus)) };
+        self.tail = Tail::None;
+    }
+
+    fn text_at(&self, p: Pos) -> &TextBox {
+        &self.sections[p.section].frag.texts[p.text]
+    }
+
+    /// The word a double click at caret `p` selects. The caret is the boundary nearest
+    /// the pointer, and the word is the one that starts there when it is on a boundary
+    /// (Chromium's word granularity), so the right half of a word's last letter selects
+    /// what follows it; but at the end of a soft-wrapped line it is the word before
+    /// (`ChooseWordSide` in Blink's selection_adjuster.cc). At a block's end that is the
+    /// break to the next block; a table cell selects nothing there.
+    pub fn word_at(&self, p: Pos) -> (Pos, Pos, Tail) {
+        let t = self.text_at(p);
+        if p.byte >= t.text.len() {
+            return (p, p, if t.cell { Tail::None } else { Tail::Newline });
+        }
+        let b = words(&t.text);
+        let at = if p.byte > 0 && soft_line_end(t, p.byte) { p.byte - 1 } else { p.byte };
+        let s = b.iter().copied().filter(|&x| x <= at).max().unwrap_or(0);
+        let e = b.iter().copied().find(|&x| x > at).unwrap_or(t.text.len());
+        (Pos { byte: s, ..p }, Pos { byte: e, ..p }, Tail::None)
+    }
+
+    /// The paragraph a triple click at caret `p` selects: the line between hard breaks
+    /// (a <br>, or a newline in code), and the break that ends it. The last line of a
+    /// block takes the block's end; a table cell is selected alone.
+    pub fn paragraph_at(&self, p: Pos) -> (Pos, Pos, Tail) {
+        let t = &self.text_at(p).text;
+        let at = p.byte.min(t.len());
+        let s = t[..at].rfind('\n').map_or(0, |i| i + 1);
+        match t[at..].find('\n') {
+            Some(i) => (Pos { byte: s, ..p }, Pos { byte: at + i + 1, ..p }, Tail::None),
+            None if self.text_at(p).cell => (Pos { byte: s, ..p }, Pos { byte: t.len(), ..p }, Tail::None),
+            None => (Pos { byte: s, ..p }, Pos { byte: t.len(), ..p }, Tail::Block),
+        }
+    }
+
+    /// The unit around caret `p`, as (start, end, tail).
+    pub fn unit_at(&self, p: Pos, unit: Unit) -> (Pos, Pos, Tail) {
+        match unit { Unit::Char => (p, p, Tail::None), Unit::Word => self.word_at(p), Unit::Para => self.paragraph_at(p) }
+    }
+
+    /// WebView2 (Windows editing behaviour) also selects the spaces after a
+    /// double-clicked word, up to the next non-space or line break, inside the block.
+    pub fn trailing_space(&self, p: Pos) -> Pos {
+        let t = &self.text_at(p).text;
+        let n = t.get(p.byte..).map_or(0, |r| r.chars().take_while(|&c| c != '\n' && (c.is_whitespace() || c == '\u{a0}')).map(char::len_utf8).sum());
+        Pos { byte: p.byte + n, ..p }
+    }
+
+    /// Selects a unit, or (after a double or triple click, while dragging) the anchor's
+    /// unit grown by whole units to the one at `focus`, as Chromium extends by granularity.
+    pub fn select_units(&mut self, anchor: (Pos, Pos, Tail), focus: Pos, unit: Unit) {
+        let (a0, a1, at) = anchor;
+        let (f0, f1, ft) = self.unit_at(focus, unit);
+        let (s, e, tail) = if f0 < a0 { (a1, f0, at) } else if f1 > a1 || (f1 == a1 && ft != Tail::None) { (a0, f1, ft) } else { (a0, a1, at) };
+        self.selection = if s == e && tail == Tail::None { None } else { Some((s, e)) };
+        self.tail = tail;
     }
 
     /// The selected text as the page would copy it (see [`Tok`]).
@@ -1004,7 +1123,7 @@ impl Thread {
                 // Past the selection's last box only its own block end counts.
                 if ended {
                     if matches!(tok, Tok::Req(_) | Tok::TableEnd) { c.tok(tok); continue; }
-                    return c.out;
+                    return c.tail(self.tail);
                 }
                 if let Tok::Text(i) = tok {
                     let k = (si, *i);
@@ -1022,6 +1141,7 @@ impl Thread {
                 }
             }
         }
+        if self.tail != Tail::None { return c.tail(self.tail); }
         c.finish()
     }
 
@@ -1039,7 +1159,7 @@ impl Thread {
     pub fn select_all(&mut self) {
         let first = self.sections.iter().enumerate().find_map(|(si, s)| s.frag.copy.iter().find_map(|t| if let Tok::Text(i) = t { Some(Pos { section: si, text: *i, byte: 0 }) } else { None }));
         let last = self.sections.iter().enumerate().rev().find_map(|(si, s)| s.frag.copy.iter().rev().find_map(|t| if let Tok::Text(i) = t { Some(Pos { section: si, text: *i, byte: s.frag.texts[*i].text.len() }) } else { None }));
-        if let (Some(a), Some(b)) = (first, last) { self.selection = Some((a, b)); }
+        if let (Some(a), Some(b)) = (first, last) { self.selection = Some((a, b)); self.tail = Tail::None; }
     }
 
     /// Selection rectangles for one text box, in its own coordinates.

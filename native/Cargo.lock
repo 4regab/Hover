@@ -702,6 +702,7 @@ dependencies = [
  "serde_json",
  "slint",
  "slint-build",
+ "windows",
 ]
 
 [[package]]
@@ -1753,6 +1754,7 @@ name = "hover-chat"
 version = "0.1.0"
 dependencies = [
  "hover-md",
+ "icu_segmenter",
  "image",
  "parley",
  "resvg",
