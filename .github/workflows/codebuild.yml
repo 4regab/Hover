@@ -65,12 +65,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'rustup default failed' }
           Add-Content -Path $env:GITHUB_PATH -Value $cargoBin
 
-      # Not yet a gate on Windows: some tests assume Linux (paths, fonts, Codex's
-      # read-only), and two find real Windows bugs not fixed yet (a stop that doesn't
-      # wake OpenCode's event stream; an old tool's exit failing its replacement's calls).
-      # The failures show in the run; remove continue-on-error once they pass.
       - name: Test
-        continue-on-error: true
         run: .\build.ps1 test
 
       - name: Install Inno Setup
@@ -111,10 +106,11 @@ jobs:
           SUDO=; [ "$(id -u)" -eq 0 ] || SUDO=sudo
           $SUDO apt-get update
           # Build: fontconfig and FreeType (fonts), ALSA (music), xkbcommon (keyboard).
-          # Tests: dbus, GNOME Keyring and Python's GLib; the tests that need them skip without.
+          # Tests: DejaVu (the chat goldens were measured in it), and dbus, GNOME Keyring
+          # and Python's GLib (the tests that need them skip without).
           $SUDO env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
             build-essential pkg-config libfontconfig1-dev libfreetype-dev libasound2-dev \
-            libxkbcommon-dev libxkbcommon-x11-dev \
+            libxkbcommon-dev libxkbcommon-x11-dev fonts-dejavu-core \
             dbus gnome-keyring python3-gi
 
       - name: Install Rust

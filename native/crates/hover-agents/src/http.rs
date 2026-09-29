@@ -69,6 +69,30 @@ struct Timed { s: TcpStream, deadline: Option<Instant>, stopped: Arc<AtomicBool>
 
 impl Read for Timed {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        // On Windows the stop's shutdown doesn't wake a recv that is already waiting, so
+        // Stop hung until the server next sent something. Wait for data in short peeks
+        // instead, looking at the stop between them. A peek that times out takes nothing,
+        // so no byte is lost (a timed-out recv can lose one on Windows).
+        // ponytail: wakes every 100 ms per open request; few are open at once.
+        #[cfg(windows)]
+        loop {
+            if self.stopped.load(Ordering::SeqCst) { return Err(std::io::ErrorKind::ConnectionAborted.into()); }
+            let tick = Duration::from_millis(100);
+            let wait = match self.deadline {
+                Some(d) => {
+                    let left = d.saturating_duration_since(Instant::now());
+                    if left.is_zero() { return Err(std::io::ErrorKind::TimedOut.into()); }
+                    left.min(tick)
+                }
+                None => tick,
+            };
+            self.s.set_read_timeout(Some(wait))?;
+            match self.s.peek(&mut [0u8; 1]) {
+                Ok(_) => { if self.deadline.is_none() { self.s.set_read_timeout(None)?; } break; }
+                Err(e) if matches!(e.kind(), std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock) => {}
+                Err(e) => return Err(e),
+            }
+        }
         if let Some(d) = self.deadline {
             let left = d.saturating_duration_since(Instant::now());
             if left.is_zero() { return Err(std::io::ErrorKind::TimedOut.into()); }

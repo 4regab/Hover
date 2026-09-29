@@ -123,6 +123,10 @@ fn the_state_message_is_the_fixtures_bytes() {
             if let Some((_, Json::Arr(ms))) = p.iter_mut().find(|(k, _)| k == "models") {
                 for m in ms { if let Json::Obj(mp) = m { mp.push(("levels".into(), Json::Null)); } }
             }
+            // Codex offers Read only where it has a sandbox for it: not on Windows.
+            if p.iter().any(|(k, v)| k == "id" && v.as_str() == Some("codex")) {
+                if let Some((_, v)) = p.iter_mut().find(|(k, _)| k == "readOnly") { *v = Json::Bool(hover_agents::agents::read_only_works(AgentTool::Codex)); }
+            }
             p.push(("effortLabel".into(), Json::str("Effort")));
             p.push(("questions".into(), Json::Bool(false)));
         }

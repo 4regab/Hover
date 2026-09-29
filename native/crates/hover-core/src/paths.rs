@@ -113,6 +113,8 @@ mod tests {
         assert!(base.join("Noty").is_dir());
     }
 
+    // Only Linux uses lexical_full_path (Windows asks GetFullPathNameW).
+    #[cfg(unix)]
     #[test]
     fn full_paths_as_getfullpath_makes_them_on_unix() {
         let cwd = Path::new("/home/u/work");

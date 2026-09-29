@@ -207,7 +207,5 @@ port/            the port: reports per phase, benchmark procedure (frozen) and t
   on unique ASCII lines.
 - **One renderer per process**: femtovg (GL) on Linux, femtovg-wgpu DX12 on Windows.
 - **Headless GPU runs** need `XDG_RUNTIME_DIR` set.
-- **`hover-agents`' `fakeacp` replay test** `an_idle_tool_comes_back_with_the_conversation`
-  fails about once in 25 runs when run with the rest of its file. The second connection gets
-  an end of stream before `initialize`. Not diagnosed yet: seen only in replay (no live
-  agent), and it passes on rerun.
+- **The chat's layout goldens** (`hover-chat`'s `thread.rs`) were measured in Linux
+  Chromium with DejaVu Sans, so the three that compare text widths skip on Windows.

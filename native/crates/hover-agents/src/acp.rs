@@ -416,28 +416,35 @@ impl Host {
     }
 
     fn shutdown(&self, why: &str) {
-        let Some(link) = self.link.lock().unwrap().take() else { return };
+        let mut l = self.link.lock().unwrap();
+        let Some(link) = l.take() else { return };
         self.idle.fetch_add(1, Ordering::SeqCst);
-        hover_core::log::line(&format!("acp {}: {why}", self.name()));
+        // Cleared and failed before the link's lock goes: once it does, the next process
+        // can start, and its calls and options must not go with this one.
         self.session_options.lock().unwrap().clear();
         self.fail(CallErr::Gone(format!("{} stopped.", self.name())));
+        drop(l);
+        hover_core::log::line(&format!("acp {}: {why}", self.name()));
         (link.kill)();
     }
 
     fn gone(&self, gen: u64) {
-        let link = {
+        let (link, why) = {
             let mut l = self.link.lock().unwrap();
             if l.as_ref().is_none_or(|x| x.gen != gen) { return; }
-            l.take().unwrap()
+            let link = l.take().unwrap();
+            self.idle.fetch_add(1, Ordering::SeqCst);
+            let text = strip_ansi(&(link.errors)());
+            let lines: Vec<&str> = text.split('\n').map(str::trim).filter(|l| !l.is_empty()).collect();
+            let why = lines[lines.len().saturating_sub(2)..].join(" / ");
+            let tail = if why.is_empty() { String::new() } else { format!(" {}", lines[lines.len().saturating_sub(2)..].join("\n")) };
+            // As in shutdown: under the lock, or a process started meanwhile (a reply
+            // right after an idle shutdown) had its calls failed by this one's exit.
+            self.session_options.lock().unwrap().clear();
+            self.fail(CallErr::Gone(format!("{} stopped unexpectedly.{tail}", self.name())));
+            (link, why)
         };
-        self.idle.fetch_add(1, Ordering::SeqCst);
-        self.session_options.lock().unwrap().clear();
-        let text = strip_ansi(&(link.errors)());
-        let lines: Vec<&str> = text.split('\n').map(str::trim).filter(|l| !l.is_empty()).collect();
-        let why = &lines[lines.len().saturating_sub(2)..];
-        hover_core::log::line(&format!("acp {}: exited - {}", self.name(), why.join(" / ")));
-        let tail = if why.is_empty() { String::new() } else { format!(" {}", why.join("\n")) };
-        self.fail(CallErr::Gone(format!("{} stopped unexpectedly.{tail}", self.name())));
+        hover_core::log::line(&format!("acp {}: exited - {why}", self.name()));
         (link.kill)();
     }
 

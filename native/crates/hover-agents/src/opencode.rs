@@ -1366,7 +1366,9 @@ mod tests {
         let outside = describe(&json::parse(&format!(r#"{{"id":"per_2","permission":"external_directory","patterns":["{far}"],"metadata":{{}},"always":[]}}"#)).unwrap(), "/p");
         assert_eq!((bash.kind.as_str(), bash.command.as_deref(), bash.danger), ("execute", Some("rm -rf build"), true));
         assert_eq!(outside.reason, "Reaches outside the folder");
-        let edit = describe(&json::parse(r#"{"id":"e","permission":"edit","patterns":["src/a.rs"],"metadata":{"filepath":"/p/src/a.rs","diff":"--- a\n+++ b\n-old\n+new\n+more"}}"#).unwrap(), "/p");
+        // A full path as this platform's OpenCode writes it: "/p/..." isn't one on Windows.
+        let (folder, file) = if cfg!(windows) { (r"C:\p", r"C:\\p\\src\\a.rs") } else { ("/p", "/p/src/a.rs") };
+        let edit = describe(&json::parse(&format!(r#"{{"id":"e","permission":"edit","patterns":["src/a.rs"],"metadata":{{"filepath":"{file}","diff":"--- a\n+++ b\n-old\n+new\n+more"}}}}"#)).unwrap(), folder);
         assert_eq!((edit.path.as_deref(), edit.added, edit.removed, edit.preview.as_deref(), edit.reason.as_str()), (Some("src/a.rs"), 2, 1, Some("- old\n+ new\n+ more"), "Changes 3 lines"));
     }
 

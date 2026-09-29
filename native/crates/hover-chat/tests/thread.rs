@@ -177,6 +177,7 @@ fn a_long_rich_conversation_stays_responsive() {
 }
 
 #[test]
+#[cfg_attr(windows, ignore = "the goldens are Linux Chromium's text measurements in DejaVu Sans; Windows lays text out in Segoe UI")]
 fn step_rows_sit_where_the_page_puts_them() {
     // copy.json's `rows`: the summary line and each timeline row, their top in #thread's
     // content and their height.
@@ -252,6 +253,7 @@ fn align(page: &str, native: &str) -> Vec<usize> {
 /// pointer lands is parley's hit test (nearest caret), checked in `hit` tests; this is
 /// about what the caret selects.
 #[test]
+#[cfg_attr(windows, ignore = "the goldens are Linux Chromium's text measurements in DejaVu Sans; Windows lays text out in Segoe UI")]
 fn double_and_triple_clicks_select_what_the_page_selects() {
     let want: serde_json::Value = serde_json::from_str(&golden("expected/words.json")).unwrap();
     let mut th = Thread::new(Shaper::new(&fonts()), "Juno", [47, 201, 176, 255]);
@@ -327,6 +329,7 @@ fn a_double_click_on_windows_takes_the_spaces_after_the_word() {
 /// narrower, and a code block wider than the drawer gains a 10 px bar and scrolls:
 /// the boxes' heights, their places relative to the first, and their scroll widths.
 #[test]
+#[cfg_attr(windows, ignore = "the goldens are Linux Chromium's text measurements in DejaVu Sans; Windows lays text out in Segoe UI")]
 fn scrolling_boxes_are_laid_out_as_the_page_lays_them_out() {
     let want: serde_json::Value = serde_json::from_str(&golden("expected/scroll.json")).unwrap();
     for name in ["rich", "wide"] {
