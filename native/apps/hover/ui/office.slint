@@ -201,12 +201,17 @@ export global Backdrop {
     in property <length> oy;
     in property <length> w;
     in property <length> h;
+    // Off in the headless shots: the software renderer doesn't clip to rounded
+    // corners, so the blurred frame would show as a square behind each glass.
+    in property <bool> live: true;
 }
 
 component Glass inherits Rectangle {
+    // .glass's 1 px line; #fabMain has none.
+    in property <bool> edge: true;
     border-radius: 13px;
     clip: true;
-    Image {
+    if Backdrop.live: Image {
         x: Backdrop.ox - root.absolute-position.x;
         y: Backdrop.oy - root.absolute-position.y;
         width: Backdrop.w;
@@ -219,7 +224,7 @@ component Glass inherits Rectangle {
     // on the panel's empty parts must not reach the scene behind it.
     TouchArea { scroll-event(e) => { accept } }
     background: transparent;
-    border-width: 1px;
+    border-width: edge ? 1px : 0;
     border-color: #ffffff17;
     drop-shadow-blur: 36px;
     drop-shadow-offset-y: 12px;
@@ -551,9 +556,13 @@ component Tag inherits Rectangle {
     height: 0;
     x: t.x;
     y: t.y;
+    // Sized to itself: the Tag is 0 wide, and a layout that narrow puts its rows off
+    // centre from one another (the bubble and the name wouldn't line up).
     col := VerticalLayout {
-        x: -self.preferred-width / 2;
-        y: -self.preferred-height;
+        x: -self.width / 2;
+        y: -self.height;
+        width: self.preferred-width;
+        height: self.preferred-height;
         spacing: 4px;
         alignment: end;
         if t.asking: HorizontalLayout {
@@ -947,6 +956,8 @@ export component OfficeView inherits Rectangle {
             scroll-event(e) => { Office.wheel(e.delta-y, self.mouse-x, self.mouse-y); accept }
             changed has-hover => { if (!self.has-hover) { Office.pointer(4, 0, 0); } }
         }
+        // body.host.notch #office::before: the top 44 px fade into the notch's black.
+        if !root.dashboard: Rectangle { y: 0; height: 44px; background: @linear-gradient(180deg, #000000e6 0%, #00000000 100%); }
         for t in Office.tags: Tag { t: t; clicked => { Office.tag-clicked(t.id); } }
         if Office.hint != "": Rectangle {
             x: Office.tip-x + 14px;
@@ -1033,6 +1044,7 @@ export component OfficeView inherits Rectangle {
             height: 34px;
             if Office.fab != 2: Glass {
                 border-radius: 17px;
+                edge: false;
                 accessible-role: button;
                 accessible-id: "fabMain";
                 accessible-label: Office.fab == 1 ? "Close" : "New task";

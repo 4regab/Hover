@@ -26,7 +26,11 @@ page in `native/golden/page/` and `web/office/` are 55111fc's now.
   marked as refused).
 - `cargo check --target x86_64-pc-windows-msvc --workspace --all-targets`: green. Clippy:
   nothing new.
-- Pictures: `shots/` (the port, headless and under Xvfb), `main/` (main's page).
+- Pictures: `shots/` (the port, headless and under Xvfb), `main/` (main's page). The
+  headless shots are drawn by the software renderer, which can't clip to rounded
+  corners: they leave out the glass's blur and cut the notch's bottom corners as the GPU
+  renderers do. `e2e-*` are the real app (femtovg) under Xvfb; the white specks at the
+  notch's top corners there are Xvfb's lack of a compositor.
 
 ## What was ported
 
@@ -46,7 +50,7 @@ page in `native/golden/page/` and `web/office/` are 55111fc's now.
 ## Found and fixed
 
 Beyond OpenCode itself, comparing the office with main's page and running it end to end
-turned up these, all in the port's UI:
+turned up these (11 to 14 after review of the pictures), all in the port's UI:
 
 | # | What differed from main | Fix |
 |---|---|---|
@@ -60,6 +64,10 @@ turned up these, all in the port's UI:
 | 8 | The note before the first task never showed (A9 was left for Phase 2) | KiroPage.Notice in place of the office until Got it |
 | 9 | The task box: the note sat above the bar in amber, no placeholder, no fold button of its own size | Main's order and colours (the note under the bar, faint), the placeholder, `nFold` |
 | 10 | The composer's Default model sent `""` as the model: C# keeps `Str(m, "model")` as given, and OpenCode would then look for a model called "" | Default clears the model (an obvious bug, fixed here only) |
+| 11 | The office kept 59bac1f's frame: 16 px rounded corners and a 1 px light border, which showed as square light corners inside the notch. Since 639c01c the page has none in Hover (`body.host #office`) | `hover-office::page` composes without them |
+| 12 | The name under a bot sat off centre from its bubble | The tag's column sizes itself (a 0-wide layout put its rows off centre) |
+| 13 | The new-task circle had glass's 1 px line; `#fabMain` has none | `Glass.edge` |
+| 14 | The notch's office lacked the top 44 px fade into the notch's black (`body.host.notch #office::before`) | Added |
 
 ## Differences kept, and why
 

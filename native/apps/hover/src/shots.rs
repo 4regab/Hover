@@ -79,6 +79,26 @@ fn save(w: &Rc<MinimalSoftwareWindow>, size: (u32, u32), scale: f32, backdrop: [
         });
         img.put_pixel((i % pw) as u32, (i / pw) as u32, image::Rgb(px));
     }
+    // The notch clips its open view to the shape's rounded bottom corners, which the
+    // software renderer can't: the corners are cut here as the GPU renderers cut them.
+    let notch = Rc::ptr_eq(w, &adapter(0));
+    let cut = crate::APP.with(|a| a.borrow().as_ref().filter(|a| notch && a.notch.get_view_visible())
+        .map(|a| (a.notch.get_shape_x(), a.notch.get_shape_w(), a.notch.get_shape_h(), a.notch.get_shape_r())));
+    if let Some((sx, sw, sh, r)) = cut {
+        let k = scale;
+        let (x0, x1, y1, r) = (sx * k, (sx + sw) * k, sh * k, r * k);
+        for y in 0..ph { for x in 0..pw {
+            let (px, py) = (x as f32 + 0.5, y as f32 + 0.5);
+            if py < y1 - r || py > y1 || px < x0 || px > x1 { continue; }
+            let cx = if px < x0 + r { x0 + r } else if px > x1 - r { x1 - r } else { continue };
+            let d = (px - cx).hypot(py - (y1 - r)) - r;
+            let a = (d + 0.5).clamp(0.0, 1.0);
+            if a > 0.0 {
+                let o = *img.get_pixel(x as u32, y as u32);
+                img.put_pixel(x as u32, y as u32, image::Rgb([0, 1, 2].map(|c| (o[c] as f32 * (1.0 - a) + backdrop[c] as f32 * a).round() as u8)));
+            }
+        } }
+    }
     img.save(file).expect("the shot is written");
     println!("{}", file.display());
 }
@@ -134,6 +154,9 @@ pub fn run(dir: &Path) {
     });
     let hover = hover_app::app::Hover::with(settings, None, vec![], Some(run), Some(reader));
     let app = App::new(hover.clone(), Box::new(Plain), Look { dark: true, animations: true }, true);
+    // The software renderer doesn't clip to rounded corners: the glass's blurred copy
+    // of the scene would show as a square behind each rounded panel.
+    app.notch.global::<Backdrop>().set_live(false);
     let notch = adapter(0);
     let size = |a: &App| { let n = a.n.borrow(); ((n.win.width()) as u32, (n.win.height()) as u32) };
     let desk = [0x3a, 0x4a, 0x5e];
@@ -317,6 +340,7 @@ pub fn run(dir: &Path) {
 
     // Settings in the app window, every section, dark and light.
     app.open_dashboard(true);
+    if let Some(d) = &*app.dash.borrow() { d.global::<Backdrop>().set_live(false); }
     let dash = adapter(1);
     for (dark, tag) in [(true, "dark"), (false, "light")] {
         hover.settings.set_theme(None);

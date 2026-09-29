@@ -1,6 +1,7 @@
 //! What page.html lays around and over the canvas in host mode: #office's radial
-//! background (night or day), the ::after vignette, the 16 px rounded corners and the
-//! 1 px border, over the body's #07050a. CSS gradients are interpolated premultiplied
+//! background (night or day) and the ::after vignette. Since 639c01c the page drops
+//! #office's rounded corners and border in Hover (body.host #office), so the office
+//! fills its box edge to edge. CSS gradients are interpolated premultiplied
 //! in sRGB; ellipse radii are percentages of the box.
 
 use crate::canvas::css;
@@ -22,12 +23,10 @@ fn radial(x: f64, y: f64, w: f64, h: f64, r: (f64, f64), at: (f64, f64), stops: 
 }
 
 /// The office as the page shows it: the frame (premultiplied RGBA8 from the renderer)
-/// over the background, the vignette over both, the corners and border. RGB8.
+/// over the background, and the vignette over both. RGB8.
 pub fn compose(frame: &[u8], w: usize, h: usize, day: bool) -> Vec<u8> {
     let bg: [(f64, [f64; 4]); 3] = if day { [(0.0, css("#4a3530")), (0.6, css("#241815")), (1.0, css("#0e0a09"))] } else { [(0.0, css("#2a1824")), (0.55, css("#150c14")), (1.0, css("#07050a"))] };
     let vig = [(0.0, [0.0, 0.0, 0.0, 0.0]), (0.6, [0.0, 0.0, 0.0, 0.0]), (1.0, [0.0, 0.0, 0.0, 0.45])];
-    let body = css("#07050a");
-    let border = css("rgba(255,190,150,.16)");
     let (fw, fh) = (w as f64, h as f64);
     let mut out = Vec::with_capacity(w * h * 3);
     for y in 0..h { for x in 0..w {
@@ -38,23 +37,13 @@ pub fn compose(frame: &[u8], w: usize, h: usize, day: bool) -> Vec<u8> {
         let mut c: [f64; 3] = std::array::from_fn(|k| f[k] as f64 / 255.0 + b[k] * (1.0 - fa));
         let v = radial(px, py, fw, fh, (1.3, 1.0), (0.5, 0.5), &vig);
         for k in 0..3 { c[k] = v[k] + c[k] * (1.0 - v[3]); }
-        // The 1 px border inside the 16 px rounded box, and the body outside it.
-        let r = 16.0;
-        let (qx, qy) = ((px - r).min(fw - r - px).min(0.0), (py - r).min(fh - r - py).min(0.0));
-        let d = r - qx.hypot(qy);
-        let edge = px.min(fw - px).min(py).min(fh - py);
-        let inside = (d + 0.5).clamp(0.0, 1.0) * if qx < 0.0 && qy < 0.0 { 1.0 } else { (edge + 0.5).clamp(0.0, 1.0) };
-        let dist = if qx < 0.0 && qy < 0.0 { d } else { edge };
-        let on_border = (1.5 - dist).clamp(0.0, 1.0) * (dist + 0.5).clamp(0.0, 1.0);
-        for k in 0..3 { c[k] = border[k] * border[3] * on_border + c[k] * (1.0 - border[3] * on_border); }
-        for k in 0..3 { c[k] = c[k] * inside + body[k] * (1.0 - inside); }
         out.extend(c.map(|v| (v * 255.0).round().clamp(0.0, 255.0) as u8));
     } }
     out
 }
 
 /// compose(), with what doesn't change from frame to frame (the background, the
-/// vignette, the corners and the border) worked out once per size and time of day.
+/// vignette) worked out once per size and time of day.
 #[derive(Default)]
 pub struct Composer { key: (usize, usize, bool), under: Vec<[f32; 3]>, over: Vec<[f32; 4]> }
 
