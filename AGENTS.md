@@ -6,16 +6,17 @@ Guidance for humans and AI agents working in this repository.
 
 A desktop app for Windows and Linux (Rust, Slint, wgpu), version 3. It has one
 surface a hover away: **the notch** at the top centre of the main display (after
-NotchOwl for Mac). At rest it is a slim pill showing the Claude Code / Kiro / Codex /
-Cursor quota gauges the user switched on, and an agent at work, or nothing. Hovering
-it, clicking it or `Alt+N` opens the **Agent office**, which fills the notch. The
+NotchOwl for Mac). At rest it is a slim black island: the quotas the user switched on
+(each the tool's own logo in its ring), the agents at work (their logos, what the one
+in front is doing, for how long), a question an agent is waiting on, or nothing.
+Hovering it, clicking it or `Alt+N` opens the **Agent office**, which fills the notch. The
 office hands tasks to Kiro, Codex or Cursor, which run headlessly, several at once,
-each in a chosen folder, as bots at desks in a voxel office. The office's gear opens
-Settings over it (five sections: General, Integrations, Kiro, Codex, Cursor), with a
+each in a chosen folder, as bots at desks in a voxel office. The office's menu (time
+of day, music, history, Settings) opens Settings over it (five sections: General, Integrations, Kiro, Codex, Cursor), with a
 back button.
 
-The only ordinary window is the dashboard: the same office in a normal window. It
-opens from a click on the office's name in the notch, or a second launch. The app
+The only ordinary window is the dashboard: the same office in a window with Hover's
+own title bar. It opens from the tray, or a second launch. The app
 lives in the tray.
 
 Up to 2.x Hover was a .NET/WPF app with the office as a web page in WebView2. 3.0 is
@@ -122,11 +123,23 @@ port/            the port: reports per phase, benchmark procedure (frozen) and t
   --agent-engine v3 --auth-method cli`, `codex-acp`, and `cursor-agent acp`.
   - After the tool's idle time (5 or 15 minutes with nothing running) it is shut down.
     The next reply starts it again and loads the conversation back (`session/load`).
+  - Tool access, per tool and per task: Full (never asks, the default), Ask first
+    (commands, deletes, moves, the network, anything outside the folder), Ask always,
+    or Read only. Asking takes the tool out of its own autopilot, and
+    `session/request_permission` is answered off the read loop: what the setting leaves
+    alone is allowed, the rest goes to the user (`KiroSessions::ask`), shown in the
+    notch (an amber island, Review opens a card: Enter allows, Shift+Enter trusts, Esc
+    denies), over the bot's head and in its chat, where a reply counts as Deny. Trust
+    is Hover's, for the session; only Codex's own allow-always is used (Cursor's writes
+    a lasting rule, Kiro's can change a setting). Codex: `workspace-write` (or its
+    renamed `read-only`) for Ask first, `read-only` for Ask always, never `agent`.
   - Read only: Kiro runs with autopilot off and its write approvals are refused;
     Cursor runs in Ask mode.
   - Stop sends `session/cancel`. A tool that doesn't stop within 8 s is shut down.
   - Prompts go over stdin, never on a command line.
   - Up to three sessions run at once across all tools, and the newest six are kept.
+    An end shows in the island (the tool's logo with a badge, and the task) and as a
+    system notification.
   - The tools die with Hover: a Windows job, or a process group with PDEATHSIG on Linux.
 - **Sessions are kept until the user deletes them.** The history is sealed with
   `note.key`: an index plus one file per session, written off the UI thread in order.

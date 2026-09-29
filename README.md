@@ -20,7 +20,8 @@ any agent at work, or nothing at all. Built in Rust with Slint and wgpu, for Win
 
 - **Agent office**: pick a project folder, type a task, and Kiro, Codex or Cursor does it there in the background. Run up to three at once; each gets a bot at a desk in a little 3D office that shows how it's going. Answers show as formatted text with tables, code, images and flowcharts; every session is kept (encrypted) on the office's bookshelf, and a reply picks it back up.
 - **One button to start**: the circle at the bottom left shows each agent's logo; pick one and type.
-- **AI quotas**: Claude Code, Kiro, Codex and Cursor usage on the notch.
+- **Ask before acting**: set an agent to ask first, and the notch shows what it wants to run or change. Run, Trust or Deny it right there, or over the agent's head in the office.
+- **AI quotas**: Claude Code, Kiro, Codex and Cursor usage on the notch, each as its own logo in a ring.
 - **Settings in the office**: the gear opens it; each agent has its own page for model, effort and tool access.
 - **Themes**: Hover light or dark, or any VS Code theme on your PC.
 
