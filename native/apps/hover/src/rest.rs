@@ -1,75 +1,99 @@
-//! What the resting notch shows (NotchHost.PillItems, UpdateRest, QuotaSeg): the
-//! quotas switched on, the newest task at work, the ends nobody has seen, or an alert.
+//! What the resting notch shows (NotchHost.UpdateRest, QuotaSeg): the island's one
+//! agent segment (a question waiting, the agents at work, or an end nobody has seen),
+//! then a divider and the quotas switched on; or the question's card.
 
+use hover_agents::ask::AgentAsk;
+use hover_agents::session::KiroSession;
+use hover_agents::words;
+use hover_core::model::{AgentTool, KiroState};
 use hover_quota::{item, Reading};
 
-pub const KIRO_RUN: &str = "kiro-run";
-pub const KIRO_DONE: &str = "kiro-done";
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Kind { None, Pill, Alert }
+pub enum Kind { None, Pill, Card }
 
-/// One quota's segment: its ring (None: an empty track), its value and whether the
-/// value is the dim one of a failed read.
+/// One quota's segment: its ring (None: an empty track), its number ("38", or "—") and
+/// whether a % follows, and whether it is the dim one of a failed read.
 #[derive(Clone, Debug, PartialEq)]
-pub struct QuotaSeg { pub id: String, pub name: &'static str, pub ring: Option<f64>, pub value: String, pub dim: bool }
+pub struct QuotaSeg { pub id: String, pub name: &'static str, pub ring: Option<f64>, pub value: String, pub pct: bool, pub dim: bool }
+
+/// The agent segment.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Seg {
+    None,
+    /// A question: the session, the ask in front, and how many wait in all.
+    Ask { session: i32, tool: AgentTool, ask: AgentAsk, total: usize },
+    /// At work: the tools in order, the one speaking, what it is doing, for how long.
+    Work { tools: Vec<AgentTool>, active: usize, verb: &'static str, obj: String, secs: f64, name: &'static str, more: usize },
+    /// An end nobody has seen: its tool, how it went, the task, how long it took, and
+    /// how many ended unseen.
+    Done { tool: AgentTool, state: KiroState, title: String, took_secs: f64, count: usize },
+}
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct Rest {
+pub struct Island {
     pub kind: Kind,
-    pub items: Vec<String>,
+    pub seg: Seg,
+    pub divider: bool,
     pub quotas: Vec<QuotaSeg>,
-    pub working: Option<String>,
-    pub done: Option<String>,
-    /// The number of unseen ends: when it grows, the done bot hops again (Cheer).
-    pub done_count: usize,
-    pub alert: Option<(String, String)>,
-}
-
-/// The pill's items in order: the quotas switched on (in Settings' order), then Kiro
-/// at work, then the ends not yet seen.
-pub fn items(on: &[&str], running: usize, unseen: usize) -> Vec<String> {
-    let mut v: Vec<String> = on.iter().filter(|id| item::QUOTAS.contains(id)).map(|s| s.to_string()).collect();
-    if running > 0 { v.push(KIRO_RUN.into()); }
-    if unseen > 0 { v.push(KIRO_DONE.into()); }
-    v
-}
-
-/// "3 Codex tasks ended", "3 tasks ended" (different tools), "Kiro ended", "A task ended".
-pub fn done_text(n: usize, who: Option<&str>) -> String {
-    if n > 1 {
-        match who { None => format!("{n} tasks ended"), Some(w) => format!("{n} {w} tasks ended") }
-    } else {
-        format!("{} ended", who.unwrap_or("A task"))
-    }
+    /// The items, joined: when it changes (or the kind does) the content cross-fades.
+    pub key: String,
 }
 
 /// A quota's segment from its reading: "—" until one arrives, dim when it failed.
 pub fn quota_seg(id: &str, reading: Option<&Reading>) -> QuotaSeg {
+    let used = reading.and_then(|r| r.used);
     QuotaSeg {
         id: id.to_owned(),
         name: item::short(id),
-        ring: reading.and_then(|r| r.used),
-        value: reading.and_then(|r| r.used).map_or("—".into(), |u| format!("{}%", hover_quota::num::custom(u, 0))),
+        ring: used,
+        value: used.map_or("—".into(), |u| hover_quota::num::custom(u, 0)),
+        pct: used.is_some(),
         dim: reading.is_some_and(|r| !r.ok()),
     }
 }
 
-/// UpdateRest: an alert wins; otherwise the pill when it has anything, else nothing.
-pub fn rest(on: &[&str], readings: &dyn Fn(&str) -> Option<Reading>, working: Option<String>, unseen: (usize, Option<&str>), alert: Option<(String, String)>) -> Rest {
-    let items = if alert.is_some() { vec![] } else { items(on, usize::from(working.is_some()), unseen.0) };
-    let kind = if alert.is_some() { Kind::Alert } else if !items.is_empty() { Kind::Pill } else { Kind::None };
-    let quotas = items.iter().filter(|i| item::QUOTAS.contains(&i.as_str())).map(|id| quota_seg(id, readings(id).as_ref())).collect();
-    let has = |k: &str| items.iter().any(|i| i == k);
-    Rest {
-        kind,
-        quotas,
-        working: if has(KIRO_RUN) { working } else { None },
-        done: has(KIRO_DONE).then(|| done_text(unseen.0, unseen.1)),
-        done_count: unseen.0,
-        alert,
-        items,
-    }
+/// What ended unseen, the latest (OwlApp.KiroUnseenLast) and how many.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Unseen { pub count: usize, pub tool: AgentTool, pub state: KiroState, pub title: String, pub took_secs: f64 }
+
+/// UpdateRest: a question waiting wins, else the agents at work, else an end nobody has
+/// seen; then a divider and the quotas. `speaker` picks who speaks among those at work
+/// (it moves on every 3 s); `now` is the clock for their timers; `card` the card is open.
+pub fn island(on: &[&str], readings: &dyn Fn(&str) -> Option<Reading>, sessions: &[KiroSession], unseen: Option<Unseen>,
+    speaker: usize, now: hover_core::time::Stamp, card: bool) -> Island {
+    let waiting: Vec<&KiroSession> = sessions.iter().filter(|s| s.waiting()).collect();
+    let working: Vec<&KiroSession> = sessions.iter().filter(|s| s.busy() && !s.waiting()).collect();
+    let quotas: Vec<QuotaSeg> = item::QUOTAS.iter().filter(|id| on.contains(id)).map(|id| quota_seg(id, readings(id).as_ref())).collect();
+    let (seg, name) = if let Some(s) = waiting.first() {
+        (Seg::Ask { session: s.id, tool: s.tool, ask: s.asking().unwrap().clone(), total: waiting.iter().map(|s| s.asks.len()).sum() }, "ask")
+    } else if !working.is_empty() {
+        let sp = working[speaker % working.len()];
+        let (verb, obj) = words::activity(sp);
+        let secs = sp.current().map_or(0.0, |t| t.ended_at.unwrap_or(now).secs_since(&t.started_at));
+        (Seg::Work { tools: working.iter().map(|s| s.tool).collect(), active: speaker % working.len(), verb, obj, secs, name: sp.tool.name(), more: working.len() - 1 }, "work")
+    } else if let Some(u) = unseen.filter(|u| u.count > 0) {
+        (Seg::Done { tool: u.tool, state: u.state, title: u.title, took_secs: u.took_secs, count: u.count }, "done")
+    } else { (Seg::None, "") };
+    let mut items: Vec<&str> = vec![];
+    if !name.is_empty() { items.push(name); }
+    let divider = !items.is_empty() && !quotas.is_empty();
+    if divider { items.push("|"); }
+    items.extend(quotas.iter().map(|q| q.id.as_str()));
+    let kind = if card && matches!(seg, Seg::Ask { .. }) { Kind::Card } else if !items.is_empty() { Kind::Pill } else { Kind::None };
+    Island { kind, key: items.join(","), seg, divider, quotas }
+}
+
+/// NotchHost.Clock: h:mm:ss past an hour, else m:ss.
+pub fn clock(secs: f64) -> String {
+    let n = secs.max(0.0).floor() as i64;
+    if n >= 3600 { format!("{}:{:02}:{:02}", n / 3600, n / 60 % 60, n % 60) } else { format!("{}:{:02}", n / 60, n % 60) }
+}
+
+/// NotchHost.Took: "45 s", "3m 07s", "1h 05m".
+pub fn took(secs: f64) -> String {
+    if secs < 60.0 { format!("{} s", (secs.round() as i64).max(1)) }
+    else if secs < 3600.0 { format!("{}m {:02}s", (secs / 60.0).floor() as i64, (secs.round() as i64) % 60) }
+    else { format!("{}h {:02}m", (secs / 3600.0).floor() as i64, (secs / 60.0).floor() as i64 % 60) }
 }
 
 /// Ui.Level: a quota's ring goes green, amber, red as it fills. The palette's colour
@@ -98,35 +122,50 @@ pub fn tray_menu(shortcut: &str, launch_at_login: bool) -> Menu {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use hover_core::time::Stamp;
 
     fn ok(v: f64) -> Reading { Reading { used: Some(v), detail: String::new() } }
 
-    /// NotchHost.UpdateRest and PillItems, with its strings.
+    fn running(tool: AgentTool) -> KiroSession {
+        let mut s = KiroSession::new(tool);
+        s.state = KiroState::Running;
+        s.phase = hover_agents::stream::KiroPhase::Thinking;
+        let mut t = hover_agents::session::KiroTurn::new("Tidy the imports", vec![]);
+        t.started_at = Stamp::parse("2026-09-28T10:00:00Z").unwrap();
+        s.turns.push(t);
+        s
+    }
+
+    /// NotchHost.UpdateRest: one agent segment first, a divider, then the quotas.
     #[test]
-    fn the_rest_follows_what_is_on_and_what_happened() {
+    fn the_island_follows_what_is_on_and_what_happened() {
         let none = |_: &str| None;
-        assert_eq!(rest(&[], &none, None, (0, None), None).kind, Kind::None);
-        let r = rest(&["claude", "codex"], &|id: &str| (id == "claude").then(|| ok(37.5)), Some("Kiro · Reading the code · 2".into()), (3, Some("Codex")), None);
-        assert_eq!(r.kind, Kind::Pill);
-        assert_eq!(r.items, ["claude", "codex", KIRO_RUN, KIRO_DONE]);
-        assert_eq!(r.quotas[0], QuotaSeg { id: "claude".into(), name: "Claude", ring: Some(37.5), value: "38%".into(), dim: false });
-        assert_eq!(r.quotas[1].value, "—");
-        assert!(!r.quotas[1].dim);
-        assert_eq!(r.working.as_deref(), Some("Kiro · Reading the code · 2"));
-        assert_eq!(r.done.as_deref(), Some("3 Codex tasks ended"));
-        let failed = Reading::fail("Sign in first.");
-        assert!(quota_seg("kiro", Some(&failed)).dim);
-        assert_eq!(quota_seg("kiro", Some(&failed)).value, "—");
-        // An alert takes the notch over.
-        let a = rest(&["claude"], &none, None, (1, None), Some(("Kiro is done: x".into(), "y".into())));
-        assert_eq!((a.kind, a.items.len()), (Kind::Alert, 0));
+        let now = Stamp::parse("2026-09-28T10:01:05Z").unwrap();
+        assert_eq!(island(&[], &none, &[], None, 0, now, false).kind, Kind::None);
+        let q = island(&["codex", "claude"], &|id: &str| (id == "claude").then(|| ok(37.5)), &[], None, 0, now, false);
+        assert_eq!((q.kind, q.key.as_str(), q.divider), (Kind::Pill, "claude,codex", false));
+        assert_eq!(q.quotas[0], QuotaSeg { id: "claude".into(), name: "Claude", ring: Some(37.5), value: "38".into(), pct: true, dim: false });
+        assert_eq!((q.quotas[1].value.as_str(), q.quotas[1].pct), ("—", false));
+        let s = [running(AgentTool::Kiro), running(AgentTool::Codex)];
+        let w = island(&["claude"], &none, &s, None, 1, now, false);
+        assert_eq!(w.key, "work,|,claude");
+        match &w.seg { Seg::Work { tools, active, verb, secs, more, .. } => assert_eq!((tools.len(), *active, *verb, *secs, *more), (2, 1, "Thinking", 65.0, 1)), s => panic!("{s:?}") }
+        // A question takes the segment over, and the card only when asked for.
+        let mut a = s.clone();
+        a[0].asks.push(AgentAsk { id: "q".into(), kind: "execute".into(), title: "Run".into(), command: Some("npm i".into()), path: None, preview: None,
+            added: 0, removed: 0, reason: "r".into(), danger: false });
+        assert_eq!(island(&[], &none, &a, None, 0, now, false).key, "ask");
+        assert_eq!(island(&[], &none, &a, None, 0, now, true).kind, Kind::Card);
+        assert_eq!(island(&[], &none, &s, None, 0, now, true).kind, Kind::Pill, "no question, no card");
+        let u = Unseen { count: 2, tool: AgentTool::Cursor, state: KiroState::Failed, title: "x".into(), took_secs: 3.0 };
+        assert_eq!(island(&[], &none, &[], Some(u), 0, now, false).key, "done");
+        assert!(quota_seg("kiro", Some(&Reading::fail("Sign in first."))).dim);
     }
 
     #[test]
-    fn done_texts_and_levels() {
-        assert_eq!(done_text(1, Some("Kiro")), "Kiro ended");
-        assert_eq!(done_text(1, None), "A task ended");
-        assert_eq!(done_text(2, None), "2 tasks ended");
+    fn clocks_took_and_levels() {
+        assert_eq!([clock(5.0), clock(65.9), clock(3725.0)], ["0:05", "1:05", "1:02:05"]);
+        assert_eq!([took(0.2), took(44.6), took(187.0), took(3900.0)], ["1 s", "45 s", "3m 07s", "1h 05m"]);
         assert_eq!([level(69.9), level(70.0), level(89.9), level(90.0)], [Level::Green, Level::Orange, Level::Orange, Level::Red]);
         let m = tray_menu("Alt+N", true);
         assert_eq!(m[0].as_ref().unwrap().0, "Open Agent Office  Alt+N");

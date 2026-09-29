@@ -2,11 +2,51 @@
 // dashboard (DashboardWindow) and the shortcut's warning (App.ShowHotKeyWarning).
 
 import { Pal, Fonts, Icon, Icons, PillButton, Ring } from "widgets.slint";
-import { BotGlyph, WorkDots } from "bot.slint";
+import { LiveMark, MarkStack, StackMark } from "marks.slint";
 import { OfficeView, Page, Office, Backdrop, Side, Block, Opt, TagData, ToolData, PanelRow } from "office.slint";
-export { Pal, Page, Office, Backdrop, Side, Block, Opt, TagData, ToolData, PanelRow }
+export { Pal, Page, Office, Backdrop, Side, Block, Opt, TagData, ToolData, PanelRow, StackMark }
 
-export struct QuotaItem { id: string, name: string, ring: float, value: string, dim: bool }
+// A quota on the island: its ring, the number and whether it has a % after it, and
+// whether it is the dim one of a failed read.
+export struct QuotaItem { id: string, name: string, ring: float, value: string, pct: bool, dim: bool }
+
+// The question in the notch's card (NotchHost.Card): what it wants, where, and the
+// buttons' words.
+// A line of a change: 1 added, -1 removed, 0 context.
+export struct PreviewLine { text: string, kind: int }
+export struct CardData { tool: string, title: string, sub: string, count: string, command: string, path: string, preview: [PreviewLine], reason: string, danger: bool, allow: string }
+
+// .Pressable: 0 plain, 1 primary (light), 2 danger (red). small is the island's.
+component Press inherits Rectangle {
+    in property <string> text;
+    in property <string> key;
+    in property <int> kind;
+    in property <bool> small;
+    in property <length> r-left: small ? 7px : 9px;
+    in property <length> r-right: small ? 7px : 9px;
+    callback clicked;
+    property <color> ink: kind == 1 ? black : white;
+    height: small ? 22px : 30px;
+    width: row.preferred-width;
+    border-top-left-radius: r-left;
+    border-bottom-left-radius: r-left;
+    border-top-right-radius: r-right;
+    border-bottom-right-radius: r-right;
+    background: kind == 1 ? (ta.has-hover ? #ffffff : #f2f2f5) : kind == 2 ? (ta.has-hover ? #ff5b51 : #ff453a) : (ta.has-hover ? #ffffff2e : #ffffff1c);
+    accessible-role: button;
+    accessible-label: text;
+    accessible-action-default => { clicked(); }
+    row := HorizontalLayout {
+        padding-left: small ? 9px : 12px;
+        padding-right: small ? 9px : 12px;
+        Text { text: root.text; font-size: small ? 11.5px : 12.5px; font-weight: 600; color: ink; vertical-alignment: center; }
+        if key != "": HorizontalLayout { padding-left: 8px;
+            VerticalLayout { alignment: center; Rectangle { border-radius: 5px; border-width: 1px; border-color: kind == 1 ? #00000029 : #ffffff24;
+                width: kt.preferred-width + 10px; height: kt.preferred-height + 1px;
+                kt := Text { text: key; font-family: "DejaVu Sans Mono"; font-size: 10px; color: ink; opacity: 0.7; } } } }
+    }
+    ta := TouchArea { mouse-cursor: pointer; clicked => { root.clicked(); } }
+}
 
 // The notch's little clock (Animator): seconds, stepped at 30 fps while something moves.
 export global Clock {
@@ -32,23 +72,50 @@ export component NotchWindow inherits Window {
     in property <length> open-h: 440px;
     in property <length> rest-w;
     in property <length> rest-h;
-    // The resting shape: 0 nothing, 1 the pill, 2 an alert.
+    // The resting shape: 0 nothing, 1 the island, 2 the question's card.
     in property <int> rest-kind;
     in property <[QuotaItem]> quotas;
-    in property <string> working;
-    in property <bool> show-working;
-    in property <string> done;
-    in property <bool> show-done;
-    in property <string> alert-title;
-    in property <string> alert-text;
-    in property <bool> greet;
+    // The one agent segment: 0 none, 1 a question, 2 at work, 3 an end not seen.
+    in property <int> seg;
+    in property <bool> divider;
+    // At work: the stack, and what the one speaking is doing, for how long.
+    in property <[StackMark]> stack;
+    in property <int> stack-n;
+    in property <string> act-verb;
+    in property <string> act-obj;
+    in property <string> timer;
+    in property <string> act-label;
+    // Asking: the tool, the words, the command in mono, and "+2" more.
+    in property <string> ask-tool;
+    in property <string> ask-verb;
+    in property <string> ask-obj;
+    in property <bool> ask-mono;
+    in property <string> ask-more;
+    // Ended: the tool and its badge (1 done, 2 failed, 0 stopped), how it went, the task,
+    // how long it took or "+2".
+    in property <string> done-tool;
+    in property <int> done-badge;
+    in property <string> done-verb;
+    in property <string> done-title;
+    in property <string> done-took;
+    in property <CardData> card;
+    // The island's glow (amber asking, green or red for an end): transparent for none.
+    in property <color> glow: transparent;
     in property <bool> in-settings;
-    // The working words rise into place when they change (260 ms): Rust sets rise to 0
-    // with no duration, then to 1 with 260 ms.
+    // New words rise into place (320 ms): Rust sets rise to 0 with no duration, then to
+    // 1 with 320 ms. fade is the cross-fade's way in.
     in property <float> rise: 1;
     in property <duration> rise-ms: 0;
+    in property <float> fade: 1;
+    in property <duration> fade-ms: 0;
     out property <length> pill-width: pill.preferred-width;
-    out property <length> alert-width: max(alert-t.preferred-width, alert-x.preferred-width);
+    out property <length> card-w: 500px;
+    out property <length> card-h: card-l.preferred-height + 26px;
+    callback deny();
+    callback review();
+    // The card's answer: allow, trust, trustAll or deny.
+    callback answer(string);
+    public function focus-card() { card-keys.focus(); }
     callback escape();
     callback shape-pressed();
     callback shape-clicked();
@@ -65,7 +132,8 @@ export component NotchWindow inherits Window {
     accessible-id: "HoverNotch";
     default-font-family: Fonts.text;
 
-    // DropShadowEffect: blur 24, depth 4, 50 % in dark; blur 36, depth 10, 22 % in light.
+    // DropShadowEffect: blur 24, depth 4, 50 % in dark; blur 36, depth 10, 22 % in light;
+    // at rest a glow instead (blur 26, no depth, 62 %) while it asks or an end is new.
     Rectangle {
         x: root.shape-x;
         y: 0;
@@ -75,9 +143,9 @@ export component NotchWindow inherits Window {
         border-bottom-left-radius: root.shape-r;
         border-bottom-right-radius: root.shape-r;
         background: black;
-        drop-shadow-blur: Pal.dark ? 24px : 36px;
-        drop-shadow-offset-y: Pal.dark ? 4px : 10px;
-        drop-shadow-color: Pal.dark ? #00000080 : #00000038;
+        drop-shadow-blur: root.glow.alpha > 0 ? 26px : Pal.dark ? 24px : 36px;
+        drop-shadow-offset-y: root.glow.alpha > 0 ? 0 : Pal.dark ? 4px : 10px;
+        drop-shadow-color: root.glow.alpha > 0 ? root.glow.with-alpha(0.62) : Pal.dark ? #00000080 : #00000038;
     }
     Path {
         y: 0;
@@ -89,18 +157,6 @@ export component NotchWindow inherits Window {
         fill: root.shape-fill;
         stroke: transparent;
     }
-    Path {
-        y: 0;
-        width: root.width;
-        height: root.height;
-        viewbox-width: root.width / 1px;
-        viewbox-height: root.height / 1px;
-        commands: root.rim-commands;
-        fill: transparent;
-        stroke: Pal.panel-edge;
-        stroke-width: 1px;
-        opacity: root.rim-opacity;
-    }
     TouchArea {
         x: root.shape-x;
         y: 0;
@@ -110,91 +166,180 @@ export component NotchWindow inherits Window {
         clicked => { root.shape-clicked(); }
     }
 
-    // Mini: the resting shape's content, centred in it.
+    // Mini: laid out at the target rest size, centred, and clipped to the shape as it
+    // springs, so the words never reflow.
     Rectangle {
-        x: (root.width - root.rest-w) / 2;
+        x: root.shape-x;
         y: 0;
-        width: root.rest-w;
-        height: root.rest-h;
+        width: root.shape-w;
+        height: root.shape-h;
+        clip: true;
         opacity: root.mini-opacity;
         visible: root.mini-opacity > 0;
-        pill := HorizontalLayout {
-            visible: root.rest-kind == 1;
-            alignment: center;
-            spacing: 12px;
-            for q in root.quotas: HorizontalLayout {
-                spacing: 0;
-                VerticalLayout { alignment: center; Ring { width: 11px; height: 11px; value: q.ring; track: #ffffff38; } }
-                Rectangle { width: 6px; }
-                Text { text: q.name; font-size: 11.5px; color: #ffffffa6; vertical-alignment: center; }
-                Rectangle { width: 4px; }
-                Text {
-                    text: q.value;
-                    font-size: 11.5px;
-                    font-weight: 600;
-                    color: q.dim ? #ffffffa6 : white;
-                    vertical-alignment: center;
-                    accessible-role: text;
-                    accessible-id: "NotchQuota" + (q.id == "claude" ? "Claude" : q.id == "kiro" ? "Kiro" : q.id == "codex" ? "Codex" : "Cursor");
-                    accessible-label: q.value;
+        Rectangle {
+            // The cross-fade's way in, animated on its own (the openness drives the outer one).
+            opacity: root.fade;
+            animate opacity { duration: root.fade-ms; easing: cubic-bezier(0.25, 0.46, 0.45, 0.94); }
+            x: (root.shape-w - root.rest-w) / 2;
+            width: root.rest-w;
+            height: root.rest-h;
+            pill := HorizontalLayout {
+                visible: root.rest-kind == 1;
+                x: 4px;
+                width: self.preferred-width;
+                alignment: start;
+                spacing: 12px;
+                // A question: the tool's breathing mark, what it wants, Deny and Review.
+                if root.seg == 1: HorizontalLayout {
+                    VerticalLayout { alignment: center; LiveMark { width: 26px; height: 26px; tool: root.ask-tool; ring: 3; ring-color: #ffb340; t: Clock.t; } }
+                    Rectangle { width: 9px; }
+                    Text {
+                        max-width: 260px;
+                        overflow: elide;
+                        vertical-alignment: center;
+                        text: root.ask-verb;
+                        font-size: 12.5px;
+                        font-weight: 500;
+                        color: #ffffff8c;
+                        accessible-role: text;
+                        accessible-id: "NotchAsk";
+                        accessible-label: root.ask-verb + " " + root.ask-obj;
+                    }
+                    if root.ask-obj != "": Text { text: " " + root.ask-obj; max-width: 220px; overflow: elide; vertical-alignment: center; color: white; font-weight: 600;
+                        font-family: root.ask-mono ? "DejaVu Sans Mono" : Fonts.text; font-size: root.ask-mono ? 12px : 12.5px; }
+                    if root.ask-more != "": Text { text: "  " + root.ask-more; vertical-alignment: center; color: #ffffff5c; font-size: 12.5px; font-weight: 500; }
+                    Rectangle { width: 11px; }
+                    VerticalLayout { alignment: center; Rectangle { width: 1px; height: 14px; background: #ffffff2e; } }
+                    Rectangle { width: 10px; }
+                    VerticalLayout { alignment: center; Press { text: "Deny"; small: true; clicked => { root.deny(); } } }
+                    Rectangle { width: 6px; }
+                    VerticalLayout { alignment: center; Press { text: "Review"; small: true; kind: 1; clicked => { root.review(); } } }
+                    Rectangle { width: 3px; }
+                }
+                // At work: the stack, what the one in front is doing, and for how long.
+                if root.seg == 2: HorizontalLayout {
+                    VerticalLayout { alignment: center; MarkStack { marks: root.stack; n: root.stack-n; t: Clock.t; } }
+                    Rectangle { width: 9px; }
+                    HorizontalLayout {
+                        max-width: 300px;
+                        opacity: root.rise;
+                        y: (1 - root.rise) * 7px;
+                        animate opacity { duration: root.rise-ms; }
+                        animate y { duration: root.rise-ms; easing: cubic-bezier(0.215, 0.61, 0.355, 1); }
+                        accessible-role: text;
+                        accessible-id: "NotchKiro";
+                        accessible-label: root.act-label;
+                        Text { text: root.act-verb; font-size: 12.5px; font-weight: 500; color: #ffffff8c; vertical-alignment: center; }
+                        if root.act-obj != "": Text { text: " " + root.act-obj; font-size: 12.5px; font-weight: 600; color: white; vertical-alignment: center; overflow: elide; }
+                    }
+                    Rectangle { width: 9px; }
+                    Text { text: root.timer; font-size: 11.5px; font-weight: 500; color: #ffffff8c; vertical-alignment: center; }
+                }
+                // An end nobody has seen: the tool with its badge, how it went, the task.
+                if root.seg == 3: HorizontalLayout {
+                    VerticalLayout { alignment: center; LiveMark { width: 18px; height: 18px; tile: 18px; tool: root.done-tool; ring: 0; badge: root.done-badge; } }
+                    Rectangle { width: 9px; }
+                    HorizontalLayout {
+                        max-width: 280px;
+                        opacity: root.rise;
+                        y: (1 - root.rise) * 7px;
+                        animate opacity { duration: root.rise-ms; }
+                        animate y { duration: root.rise-ms; easing: cubic-bezier(0.215, 0.61, 0.355, 1); }
+                        accessible-role: text;
+                        accessible-id: "NotchKiroDone";
+                        accessible-label: root.done-verb + " · " + root.done-title;
+                        Text { text: root.done-verb + " · "; font-size: 12.5px; font-weight: 500; color: #ffffff8c; vertical-alignment: center; }
+                        Text { text: root.done-title; font-size: 12.5px; font-weight: 600; color: white; vertical-alignment: center; overflow: elide; }
+                    }
+                    Rectangle { width: 9px; }
+                    Text { text: root.done-took; font-size: 11.5px; font-weight: 500; color: #ffffff8c; vertical-alignment: center; }
+                }
+                if root.divider: VerticalLayout { alignment: center; Rectangle { width: 1px; height: 14px; background: #ffffff2e; } }
+                for q in root.quotas: HorizontalLayout {
+                    VerticalLayout { alignment: center; LiveMark { width: 24px; height: 24px; tile: 14px; tool: q.id; ring: 1; value: q.ring; } }
+                    Rectangle { width: 5px; }
+                    Text {
+                        text: q.value;
+                        font-size: 11.5px;
+                        font-weight: 600;
+                        color: q.dim ? #ffffffa6 : white;
+                        vertical-alignment: center;
+                        accessible-role: text;
+                        accessible-id: "NotchQuota" + (q.id == "claude" ? "Claude" : q.id == "kiro" ? "Kiro" : q.id == "codex" ? "Codex" : "Cursor");
+                        accessible-label: q.ring >= 0 ? q.name + " " + q.value + "% used" : q.name + " quota";
+                    }
+                    if q.pct: Text { text: "%"; font-size: 10.5px; font-weight: 600; color: #ffffff5c; vertical-alignment: center; }
                 }
             }
-            if root.show-working: HorizontalLayout {
-                VerticalLayout { alignment: center; BotGlyph { width: 17px; height: 17px; live: true; t: Clock.t; motion: Pal.motion; } }
-                Rectangle { width: 7px; }
-                Text {
-                    text: root.working;
-                    font-size: 12px;
-                    font-weight: 600;
-                    color: white;
-                    vertical-alignment: center;
-                    opacity: root.rise;
-                    y: (1 - root.rise) * 6px;
-                    animate opacity, y { duration: root.rise-ms; easing: cubic-bezier(0.215, 0.61, 0.355, 1); }
-                    accessible-role: text;
-                    accessible-id: "NotchKiro";
-                    accessible-label: root.working;
+            // The question as a card, 500 wide: what it wants, the command or change, why
+            // it asks, and Deny (Esc), Trust (Shift+Enter), the allow button (Enter).
+            card-keys := FocusScope {
+                visible: root.rest-kind == 2;
+                key-pressed(e) => {
+                    if (e.text == Key.Escape) { root.answer("deny"); return accept; }
+                    if (e.text == Key.Return && e.modifiers.shift) { root.answer("trust"); return accept; }
+                    if (e.text == Key.Return) { root.answer("allow"); return accept; }
+                    reject
                 }
-                Rectangle { width: 3px; }
-                VerticalLayout { alignment: center; padding-top: 1px; WorkDots { t: Clock.t; motion: Pal.motion; } }
-            }
-            if root.show-done: HorizontalLayout {
-                VerticalLayout { alignment: center; BotGlyph { width: 17px; height: 17px; finished: true; t: Clock.t; since: Clock.done-since; motion: Pal.motion; } }
-                Rectangle { width: 7px; }
-                Text {
-                    text: root.done;
-                    font-size: 12px;
-                    font-weight: 600;
-                    color: white;
-                    vertical-alignment: center;
-                    accessible-role: text;
-                    accessible-id: "NotchKiroDone";
-                    accessible-label: root.done;
+                card-l := VerticalLayout {
+                    x: 14px;
+                    y: 12px;
+                    width: 472px;
+                    height: self.preferred-height;
+                    HorizontalLayout {
+                        spacing: 0;
+                        VerticalLayout { alignment: center; LiveMark { width: 26px; height: 26px; tile: 26px; tool: root.card.tool; ring: 0; } }
+                        VerticalLayout {
+                            padding-left: 10px;
+                            padding-right: 8px;
+                            horizontal-stretch: 1;
+                            alignment: center;
+                            Text { text: root.card.title; font-size: 13.5px; font-weight: 600; color: white; overflow: elide; accessible-role: text; accessible-id: "NotchCardTitle"; }
+                            Text { text: root.card.sub; font-size: 11.5px; color: #ffffff8c; overflow: elide; }
+                        }
+                        if root.card.count != "": VerticalLayout { alignment: center; Rectangle { border-radius: 99px; background: #ffffff17; width: cn.preferred-width + 16px; height: cn.preferred-height + 5px;
+                            cn := Text { text: root.card.count; font-size: 11px; font-weight: 600; color: #ffffff8c; } } }
+                    }
+                    Rectangle { height: 11px; }
+                    Rectangle {
+                        background: #0f0f12;
+                        border-radius: 12px;
+                        border-width: 1px;
+                        border-color: root.card.danger ? #ff453a66 : #ffffff17;
+                        height: min(pre.preferred-height + 19px, 150px);
+                        clip: true;
+                        pre := VerticalLayout {
+                            x: 12px;
+                            y: 9px;
+                            width: parent.width - 24px;
+                            if root.card.command != "": HorizontalLayout {
+                                Text { text: "$  "; font-family: "DejaVu Sans Mono"; font-size: 12.5px; color: #ffb340; }
+                                Text { text: root.card.command; font-family: "DejaVu Sans Mono"; font-size: 12.5px; color: white; wrap: char-wrap; horizontal-stretch: 1; }
+                            }
+                            if root.card.command == "": Text { text: root.card.path; font-family: "DejaVu Sans Mono"; font-size: root.card.preview.length > 0 ? 11.5px : 12.5px;
+                                color: root.card.preview.length > 0 ? #ffffff8c : white; wrap: char-wrap; }
+                            for l in root.card.preview: Text { text: l.text; font-family: "DejaVu Sans Mono"; font-size: 11.5px; wrap: char-wrap;
+                                color: l.kind == 1 ? #9df0ae : l.kind == -1 ? #ffaaa4 : white; }
+                        }
+                    }
+                    Rectangle { height: 10px; }
+                    HorizontalLayout {
+                        spacing: 8px;
+                        VerticalLayout { alignment: center; Rectangle { width: 6px; height: 6px; border-radius: 3px; background: root.card.danger ? #ff453a : #ffb340; } }
+                        Text { text: root.card.reason; font-size: 11.5px; color: #ffffff8c; horizontal-stretch: 1; overflow: elide; vertical-alignment: center; }
+                    }
+                    Rectangle { height: 12px; }
+                    HorizontalLayout {
+                        Press { text: "Deny"; key: "Esc"; clicked => { root.answer("deny"); } }
+                        Rectangle { horizontal-stretch: 1; }
+                        Press { text: "Trust"; key: "Shift+Enter"; r-right: 0; clicked => { root.answer("trust"); } }
+                        Rectangle { width: 1px; }
+                        // More: allow everything this session.
+                        Press { text: "All"; r-left: 0; clicked => { root.answer("trustAll"); } }
+                        Rectangle { width: 8px; }
+                        Press { text: root.card.allow; key: "Enter"; kind: root.card.danger ? 2 : 1; clicked => { root.answer("allow"); } }
+                    }
                 }
-            }
-        }
-        VerticalLayout {
-            visible: root.rest-kind == 2;
-            alignment: center;
-            spacing: 5px;
-            alert-t := Text {
-                text: root.alert-title;
-                font-size: 13.5px;
-                font-weight: 600;
-                color: white;
-                horizontal-alignment: center;
-                overflow: elide;
-                accessible-role: text;
-                accessible-id: "NotchAlert";
-                accessible-label: root.alert-title;
-            }
-            alert-x := Text {
-                text: root.alert-text;
-                font-size: 11.5px;
-                color: #ffffffa6;
-                horizontal-alignment: center;
-                overflow: elide;
-                max-width: 380px;
             }
         }
     }
@@ -230,37 +375,88 @@ export component NotchWindow inherits Window {
         }
     }
 
-    // "Welcome back", said while the notch opens: low in the small notch, growing a
-    // little with it, gone by the time the cards are in.
-    if root.greet: greeting := Text {
-        property <bool> fits: root.shape-w >= self.preferred-width + 24px && root.shape-h >= self.preferred-height + 12px;
-        text: "Welcome back";
-        font-family: Fonts.display;
-        font-weight: 600;
-        font-size: (12 + 10 * clamp(root.openness / 0.6, 0, 1)) * 1px;
-        color: white;
-        x: (root.width - self.preferred-width) / 2;
-        y: max(4px, min(root.shape-h - self.preferred-height - 9px, 64px));
-        opacity: fits ? clamp((0.6 - root.openness) / 0.3, 0, 1) : 0;
-    }
+}
+
+// A caption button as Windows 11 draws them: 46 wide, a light fill on hover, red
+// behind close.
+component Caption inherits Rectangle {
+    in property <string> glyph;
+    in property <string> label;
+    in property <bool> close;
+    callback clicked;
+    width: 46px;
+    background: ta.pressed ? (close ? #b0271a : #ffffff10) : ta.has-hover ? (close ? #c42b1c : #ffffff1a) : transparent;
+    accessible-role: button;
+    accessible-label: label;
+    accessible-action-default => { clicked(); }
+    Path { width: 10px; height: 10px; viewbox-width: 10; viewbox-height: 10; commands: glyph; fill: transparent;
+        stroke: ta.has-hover && close ? white : #ffffffd9; stroke-width: 1px; }
+    ta := TouchArea { clicked => { root.clicked(); } }
 }
 
 export component DashboardWindow inherits Window {
     in property <bool> in-settings;
+    in property <bool> maximized;
     callback back();
+    callback minimize();
+    callback maximize();
+    callback close();
+    // A press on the bar drags the window; on an edge (1 n, 2 s, 3 w, 4 e, 5 nw, 6 ne,
+    // 7 sw, 8 se) it resizes it.
+    callback drag();
+    callback resize(int);
     title: "Hover";
+    no-frame: true;
     preferred-width: 1200px;
     preferred-height: 620px;
     min-width: 880px;
     min-height: 480px;
-    background: Pal.panel;
+    background: #0b0810;
     default-font-family: Fonts.text;
     accessible-role: groupbox;
     accessible-id: "HoverDashboard";
-    OfficeView {
-        dashboard: true;
-        in-settings: root.in-settings;
-        back => { root.back(); }
+    VerticalLayout {
+        // Hover's own title bar: the logo and name, then minimize, maximize, close. The
+        // office fills the window under it, edge to edge.
+        Rectangle {
+            height: 34px;
+            background: #0b0810;
+            TouchArea {
+                pointer-event(e) => { if (e.kind == PointerEventKind.down && e.button == PointerEventButton.left) { root.drag(); } }
+                double-clicked => { root.maximize(); }
+            }
+            HorizontalLayout {
+                padding-left: 12px;
+                Image { width: 16px; height: 16px; y: 9px; source: @image-url("../assets/hover-mark.png"); image-rendering: smooth; }
+                Rectangle { width: 8px; }
+                Text { text: "Hover"; font-size: 12px; font-weight: 500; color: #ffffffd9; vertical-alignment: center; }
+                Rectangle { horizontal-stretch: 1; }
+                Caption { label: "Minimize"; glyph: "M 0 5 L 10 5"; clicked => { root.minimize(); } }
+                Caption { label: root.maximized ? "Restore" : "Maximize"; glyph: root.maximized ? "M 0 2 L 8 2 L 8 10 L 0 10 Z M 2 2 L 2 0 L 10 0 L 10 8 L 8 8" : "M 0.5 0.5 L 9.5 0.5 L 9.5 9.5 L 0.5 9.5 Z"; clicked => { root.maximize(); } }
+                Caption { label: "Close"; close: true; glyph: "M 0 0 L 10 10 M 10 0 L 0 10"; clicked => { root.close(); } }
+            }
+        }
+        Rectangle {
+            vertical-stretch: 1;
+            // In the app window the office sits on the panel's colour (right in light mode).
+            background: Pal.panel;
+            OfficeView {
+                dashboard: true;
+                in-settings: root.in-settings;
+                back => { root.back(); }
+            }
+        }
+    }
+    // The resize border, 6 px, where the frame used to be.
+    if !root.maximized: Rectangle {
+        for e in [{ k: 1, x: 6px, y: 0, w: root.width - 12px, h: 4px }, { k: 2, x: 6px, y: root.height - 6px, w: root.width - 12px, h: 6px },
+                  { k: 3, x: 0, y: 6px, w: 6px, h: root.height - 12px }, { k: 4, x: root.width - 6px, y: 6px, w: 6px, h: root.height - 12px },
+                  { k: 5, x: 0, y: 0, w: 6px, h: 6px }, { k: 6, x: root.width - 6px, y: 0, w: 6px, h: 6px },
+                  { k: 7, x: 0, y: root.height - 6px, w: 6px, h: 6px }, { k: 8, x: root.width - 6px, y: root.height - 6px, w: 6px, h: 6px }]: TouchArea {
+            x: e.x; y: e.y; width: e.w; height: e.h;
+            mouse-cursor: e.k <= 2 ? ns-resize : e.k <= 4 ? ew-resize : e.k == 5 || e.k == 8 ? nwse-resize : nesw-resize;
+            pointer-event(ev) => { if (ev.kind == PointerEventKind.down) { root.resize(e.k); } }
+        }
     }
 }
 

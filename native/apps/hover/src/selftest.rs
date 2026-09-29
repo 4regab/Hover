@@ -26,7 +26,7 @@ fn ask() -> Seen {
         let n = a.n.borrow();
         let _ = tx.send(Seen {
             state: n.hover.state, openness: n.openness(), notch_win: 0, win: (n.win.left, n.win.top, n.win.right, n.win.bottom),
-            work: (n.work.left, n.work.top, n.work.right, n.work.bottom), scale: n.scale, rest: n.rest, in_settings: a.notch_settings.get(),
+            work: (n.work.left, n.work.top, n.work.right, n.work.bottom), scale: n.scale, rest: n.rest_target(), in_settings: a.notch_settings.get(),
         });
     });
     rx.recv_timeout(Duration::from_secs(5)).expect("the UI thread answers")

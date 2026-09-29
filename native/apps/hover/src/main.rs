@@ -57,15 +57,22 @@ pub struct App {
     pub dash_settings: Cell<bool>,
     pub beats: Beats,
     beats_timer: Timer,
-    alert: RefCell<Option<(String, String)>>,
-    alert_timer: Timer,
+    /// The island as last shown: its kind and items (a change cross-fades), what the
+    /// words said (a change rises), how many ends were unseen (a new one glows 6 s).
+    island: RefCell<(i32, String, String, usize)>,
+    /// The question's card is open, and the ask it shows.
+    card: Cell<bool>,
+    card_ask: RefCell<Option<(i32, String)>>,
+    /// NotchHost's 1 s clock: timers, and every 3 s the next agent at work speaks.
+    second_timer: Timer,
+    ticks: Cell<u32>,
+    speaker: Cell<usize>,
+    end_glow: Timer,
     anim_timer: Timer,
     clock_timer: Timer,
     clock_last: Cell<Option<Instant>>,
     poll_timer: Timer,
     quota_timer: Timer,
-    working: RefCell<Option<String>>,
-    done_count: Cell<usize>,
     had_focus: Cell<bool>,
     reported: RefCell<Option<String>>,
     warn: RefCell<Option<WarningWindow>>,
@@ -116,9 +123,9 @@ impl App {
             n: RefCell::new(Notch::new(plat)),
             notch, dash: RefCell::new(None), pane: RefCell::new(Pane::default()), last_blocks: RefCell::new(vec![]),
             palette: RefCell::new(Palette::hover_dark()), look: Cell::new(look), notch_settings: Cell::new(false), dash_settings: Cell::new(false),
-            beats, beats_timer: Timer::default(), alert: RefCell::new(None), alert_timer: Timer::default(), anim_timer: Timer::default(),
+            beats, beats_timer: Timer::default(), island: RefCell::new((-1, String::new(), String::new(), 0)), card: Cell::new(false), card_ask: RefCell::new(None), second_timer: Timer::default(), ticks: Cell::new(0), speaker: Cell::new(0), end_glow: Timer::default(), anim_timer: Timer::default(),
             clock_timer: Timer::default(), clock_last: Cell::new(None), poll_timer: Timer::default(), quota_timer: Timer::default(),
-            working: RefCell::new(None), done_count: Cell::new(0), had_focus: Cell::new(false), reported: RefCell::new(None),
+            had_focus: Cell::new(false), reported: RefCell::new(None),
             warn: RefCell::new(None), hotkey: RefCell::new(None), tray_menu: RefCell::new(None), notify: RefCell::new(None), headless, hover, page: Default::default(),
         });
         APP.with(|a| *a.borrow_mut() = Some(app.clone()));
@@ -139,6 +146,8 @@ impl App {
         // Hooks from other threads land on the UI thread.
         app.hover.on_quotas(|| ui_do(|a| { a.update_rest(); if a.pane.borrow().section == Section::Integrations { a.refresh_page(false); } }));
         app.hover.on_sessions(|| ui_do(|a| { a.update_rest(); a.office_changed(); }));
+        // The notch shows an ending as its own island (the tool's logo, a badge and the
+        // task); the system gets the words.
         app.hover.on_notify(|t, b| { let (t, b) = (t.to_owned(), b.to_owned()); ui_do(move |a| a.announce(&t, &b)); });
         app.start_timers();
         app
@@ -157,8 +166,18 @@ impl App {
         let a = self.clone();
         self.notch.on_shape_clicked(move || {
             let (state, kind) = { let n = a.n.borrow(); (n.hover.state, n.rest_kind) };
-            if state == State::Rest && kind != 0 { a.expand(false, false); }
+            // A click on the card does nothing; on the island (outside its buttons) it opens.
+            if state == State::Rest && kind == 1 { a.expand(false, false); }
         });
+        let a = self.clone();
+        self.notch.on_deny(move || a.answer_asked(hover_agents::ask::AskAnswer::Deny));
+        let a = self.clone();
+        self.notch.on_review(move || a.open_card());
+        let a = self.clone();
+        self.notch.on_answer(move |how| a.answer_asked(match how.as_str() {
+            "allow" => hover_agents::ask::AskAnswer::Allow, "trust" => hover_agents::ask::AskAnswer::Trust,
+            "trustAll" => hover_agents::ask::AskAnswer::TrustAll, _ => hover_agents::ask::AskAnswer::Deny,
+        }));
     }
 
     fn start_timers(self: &Rc<Self>) {
@@ -178,8 +197,10 @@ impl App {
         notch::expand(&mut self.n.borrow_mut(), peek, focus);
         if focus { self.notch.invoke_focus_view(); }
         if was_rest {
-            self.notch.set_greet(self.n.borrow().greet_from.is_some());
             self.had_focus.set(false);
+            // The office shows the question itself.
+            if self.card.get() { self.close_card(false); }
+            self.notch.set_glow(slint::Color::from_argb_u8(0, 0, 0, 0));
         }
         self.notch.set_view_visible(true);
         self.watching_changed();
@@ -188,7 +209,7 @@ impl App {
 
     pub fn collapse(self: &Rc<Self>) {
         notch::collapse(&mut self.n.borrow_mut());
-        self.notch.set_greet(false);
+        self.update_rest();
         self.pane.borrow_mut().menu = None;
         self.watching_changed();
         self.animate();
@@ -207,8 +228,8 @@ impl App {
             let panel = view::argb(a.palette.borrow().panel);
             let done = {
                 let mut n = a.n.borrow_mut();
+                n.still = !a.look.get().animations;
                 notch::shape(&a.notch, &n, panel);
-                if let Some(t0) = n.greet_from { if n.now() - t0 >= 940.0 { n.greet_from = None; a.notch.set_greet(false); } }
                 !n.animating()
             };
             if done {
@@ -249,7 +270,7 @@ impl App {
         // is only known a frame after they change: read it again here.
         let kind = self.notch.get_rest_kind();
         let rest = notch::rest_of(&self.notch, kind);
-        if rest != self.n.borrow().rest { self.n.borrow_mut().rest = rest; }
+        if rest != self.n.borrow().rest_target() { self.n.borrow_mut().set_rest(rest); self.animate(); }
         if !self.n.borrow().anim { notch::shape(&self.notch, &self.n.borrow(), view::argb(self.palette.borrow().panel)); }
         // The app window: minimised or not decides whether an office is in view.
         self.watching_changed();
@@ -271,44 +292,162 @@ impl App {
     // MARK: The resting shape
 
     pub fn update_rest(self: &Rc<Self>) {
+        use hover_app::rest::{Kind, Seg};
+        use hover_core::model::KiroState;
         let hv = &self.hover;
         let on = hv.settings.notch_items();
         let reading = |id: &str| hv.quotas.reading(id);
-        let r = hover_app::rest::rest(&on, &reading, hv.working_text(), hv.unseen(), self.alert.borrow().clone());
+        let sessions = hv.sessions.all();
+        let unseen = hv.unseen_last().map(|u| hover_app::rest::Unseen { count: hv.unseen().0, tool: u.tool, state: u.state, title: u.title, took_secs: u.took_secs });
+        let isl = hover_app::rest::island(&on, &reading, &sessions, unseen, self.speaker.get(), hv.sessions.now(), self.card.get());
+        // No question left: the card goes, and the keyboard goes back.
+        if self.card.get() && !matches!(isl.seg, Seg::Ask { .. }) { self.close_card(true); return; }
         let ui = &self.notch;
-        ui.set_rest_kind(match r.kind { hover_app::rest::Kind::None => 0, hover_app::rest::Kind::Pill => 1, hover_app::rest::Kind::Alert => 2 });
-        ui.set_quotas(view::model_of(r.quotas.iter().map(|q| QuotaItem {
-            id: q.id.as_str().into(), name: q.name.into(), ring: q.ring.map_or(-1.0, |v| v as f32), value: q.value.as_str().into(), dim: q.dim,
-        }).collect()));
+        let kind = match isl.kind { Kind::None => 0, Kind::Pill => 1, Kind::Card => 2 };
         let motion = self.look.get().animations;
-        if r.working != *self.working.borrow() {
-            if let Some(w) = &r.working { ui.set_working(w.as_str().into()); }
-            // The new words rise into place.
-            if r.working.is_some() && motion {
-                ui.set_rise_ms(0);
-                ui.set_rise(0.0);
-                let w = ui.as_weak();
-                Timer::single_shot(Duration::from_millis(1), move || { if let Some(ui) = w.upgrade() { ui.set_rise_ms(260); ui.set_rise(1.0); } });
+        let at_rest = self.n.borrow().hover.state == State::Rest;
+        let (words, ends) = match &isl.seg {
+            Seg::Work { verb, obj, name, .. } => (format!("{name}:{verb}:{obj}"), 0),
+            Seg::Done { count, title, .. } => (format!("done:{count}:{title}"), *count),
+            Seg::Ask { ask, total, .. } => (format!("ask:{}:{total}", ask.id), 0),
+            Seg::None => (String::new(), 0),
+        };
+        let (old_kind, old_key, old_words, old_ends) = self.island.borrow().clone();
+        // The kind or the items changed: the content cross-fades (90 ms held, in by 320).
+        if at_rest && motion && old_kind >= 0 && (old_kind != kind || (kind == 1 && old_key != isl.key)) {
+            ui.set_fade_ms(0);
+            ui.set_fade(0.0);
+            let w = ui.as_weak();
+            Timer::single_shot(Duration::from_millis(90), move || { if let Some(ui) = w.upgrade() { ui.set_fade_ms(230); ui.set_fade(1.0); } });
+        } else if old_words != words && motion && old_kind == kind && old_key == isl.key {
+            // Only the words changed: they rise into place (320 ms).
+            ui.set_rise_ms(0);
+            ui.set_rise(0.0);
+            let w = ui.as_weak();
+            Timer::single_shot(Duration::from_millis(1), move || { if let Some(ui) = w.upgrade() { ui.set_rise_ms(320); ui.set_rise(1.0); } });
+        }
+        ui.set_rest_kind(kind);
+        ui.set_divider(isl.divider);
+        ui.set_quotas(view::model_of(isl.quotas.iter().map(|q| QuotaItem {
+            id: q.id.as_str().into(), name: q.name.into(), ring: q.ring.map_or(-1.0, |v| v as f32), value: q.value.as_str().into(), pct: q.pct, dim: q.dim,
+        }).collect()));
+        let clear = slint::Color::from_argb_u8(0, 0, 0, 0);
+        let mut glow = clear;
+        match &isl.seg {
+            Seg::None => ui.set_seg(0),
+            Seg::Ask { session, tool, ask, total } => {
+                ui.set_seg(1);
+                let (verb, obj) = hover_agents::words::ask_line(ask);
+                ui.set_ask_tool(tool.id().into());
+                ui.set_ask_verb(verb.into());
+                ui.set_ask_obj(obj.as_str().into());
+                ui.set_ask_mono(ask.command.is_some());
+                ui.set_ask_more(if *total > 1 { format!("+{}", total - 1).into() } else { "".into() });
+                glow = slint::Color::from_rgb_u8(0xff, 0xb3, 0x40);
+                let s = sessions.iter().find(|x| x.id == *session);
+                let folder = s.map(|s| hover_office::office::short(&s.folder)).unwrap_or_default();
+                let lines: Vec<PreviewLine> = ask.preview.as_deref().unwrap_or("").lines().map(|l| PreviewLine { text: l.into(),
+                    kind: if l.starts_with('+') { 1 } else if l.starts_with('-') { -1 } else { 0 } }).collect();
+                let why = format!("{}{}", ask.reason, if ask.added + ask.removed > 0 && ask.kind != "edit" { format!(" · +{} −{}", ask.added, ask.removed) } else { String::new() });
+                ui.set_card(CardData {
+                    tool: tool.id().into(), title: hover_agents::words::ask_title(ask).into(),
+                    sub: format!("{folder} · {}", s.map(|s| s.title()).unwrap_or_default()).into(),
+                    count: if *total > 1 { format!("1 of {total}").into() } else { "".into() },
+                    command: ask.command.clone().unwrap_or_default().into(),
+                    path: ask.path.clone().or_else(|| (ask.preview.is_none()).then(|| ask.title.clone())).unwrap_or_default().into(),
+                    preview: view::model_of(lines), reason: why.into(), danger: ask.danger, allow: hover_agents::words::ask_allow(ask).into(),
+                });
+                *self.card_ask.borrow_mut() = Some((*session, ask.id.clone()));
             }
-            *self.working.borrow_mut() = r.working.clone();
+            Seg::Work { tools, active, verb, obj, secs, name, more } => {
+                ui.set_seg(2);
+                // The stack: oldest first, the speaker drawn last, on top.
+                let mut marks: Vec<StackMark> = tools.iter().enumerate().map(|(i, t)| StackMark { tool: t.id().into(), front: if i == *active { 1.0 } else { 0.0 }, i: i as i32 }).collect();
+                marks.sort_by(|a, b| a.front.total_cmp(&b.front));
+                ui.set_stack(view::model_of(marks));
+                ui.set_stack_n(tools.len() as i32);
+                ui.set_act_verb((*verb).into());
+                ui.set_act_obj(obj.as_str().into());
+                ui.set_timer(hover_app::rest::clock(*secs).into());
+                ui.set_act_label(format!("{name}: {verb} {obj}{}", if *more > 0 { format!(", and {more} more at work") } else { String::new() }).trim().into());
+            }
+            Seg::Done { tool, state, title, took_secs, count } => {
+                ui.set_seg(3);
+                ui.set_done_tool(tool.id().into());
+                ui.set_done_badge(match state { KiroState::Completed => 1, KiroState::Failed => 2, _ => 0 });
+                ui.set_done_verb(match state { KiroState::Completed => "Done", KiroState::Failed => "Couldn’t finish", _ => "Stopped" }.into());
+                ui.set_done_title(if title.is_empty() { "the task".into() } else { title.as_str().into() });
+                ui.set_done_took(if *count > 1 { format!("+{}", count - 1).into() } else { hover_app::rest::took(*took_secs).into() });
+                // A new end glows 6 s, green done, red failed; a stop doesn't.
+                if ends > old_ends {
+                    let a = self.clone();
+                    self.end_glow.start(TimerMode::SingleShot, Duration::from_secs(6), move || a.update_rest());
+                }
+                if self.end_glow.running() {
+                    glow = match state { KiroState::Completed => slint::Color::from_rgb_u8(0x32, 0xd7, 0x4b), KiroState::Failed => slint::Color::from_rgb_u8(0xff, 0x45, 0x3a), _ => clear };
+                }
+            }
         }
-        ui.set_show_working(r.working.is_some());
-        ui.set_show_done(r.done.is_some());
-        if let Some(d) = &r.done { ui.set_done(d.as_str().into()); }
-        if r.done_count != self.done_count.get() {
-            if r.done_count > self.done_count.get() { ui.global::<Clock>().set_done_since(0.0); }
-            self.done_count.set(r.done_count);
-        }
-        if let Some((t, x)) = &r.alert { ui.set_alert_title(t.as_str().into()); ui.set_alert_text(x.as_str().into()); }
-        let kind = ui.get_rest_kind();
+        if at_rest { ui.set_glow(glow); }
+        *self.island.borrow_mut() = (kind, isl.key.clone(), words, ends);
+        self.n.borrow_mut().asking = matches!(isl.seg, Seg::Ask { .. });
+        // The 1 s clock runs while someone works or asks.
+        let busy = matches!(isl.seg, Seg::Work { .. } | Seg::Ask { .. });
+        if busy && !self.second_timer.running() {
+            let a = self.clone();
+            self.second_timer.start(TimerMode::Repeated, Duration::from_secs(1), move || {
+                let t = a.ticks.get() + 1;
+                a.ticks.set(t);
+                if t % 3 == 0 { a.speaker.set(a.speaker.get() + 1); }
+                a.update_rest();
+            });
+        } else if !busy { self.second_timer.stop(); self.ticks.set(0); }
         let rest = notch::rest_of(ui, kind);
-        {
+        let changed = {
             let mut n = self.n.borrow_mut();
             n.rest_kind = kind;
-            if n.rest != rest { n.rest = rest; }
-        }
+            n.still = !motion;
+            let c = n.rest_target() != rest;
+            if c { n.set_rest(rest); }
+            c
+        };
         notch::shape(ui, &self.n.borrow(), view::argb(self.palette.borrow().panel));
-        self.clock(r.working.is_some() || r.done.is_some());
+        if changed { self.animate(); }
+        self.clock(busy);
+    }
+
+    /// OpenCard: the question grows into a card that takes the keyboard (Enter allows,
+    /// Shift+Enter trusts, Esc denies).
+    pub fn open_card(self: &Rc<Self>) {
+        if self.n.borrow().hover.state != State::Rest { return; }
+        {
+            let n = self.n.borrow();
+            n.plat.remember_foreground();
+            n.plat.set_accepts_keys(true);
+            n.plat.focus();
+        }
+        self.card.set(true);
+        self.update_rest();
+        self.notch.invoke_focus_card();
+    }
+
+    /// The card goes; give_back hands the keyboard back to what had it.
+    pub fn close_card(self: &Rc<Self>, give_back: bool) {
+        if !self.card.replace(false) { return; }
+        if self.n.borrow().hover.state == State::Rest {
+            let n = self.n.borrow();
+            if give_back { n.plat.restore_foreground(); }
+            n.plat.set_accepts_keys(false);
+        }
+        self.update_rest();
+    }
+
+    /// AnswerAsked: the question in front gets its answer; the next one, if any, shows.
+    pub fn answer_asked(self: &Rc<Self>, answer: hover_agents::ask::AskAnswer) {
+        let Some((id, ask)) = self.card_ask.borrow().clone() else { return };
+        hover_core::log::line(&format!("run {id}: {answer:?} from the notch").to_lowercase());
+        self.hover.sessions.answer(id, &ask, answer);
+        self.update_rest();
     }
 
     /// Animator: one 30 fps clock for the bots and the dots, only while they show.
@@ -332,18 +471,12 @@ impl App {
         });
     }
 
-    /// A few seconds of message in the notch, so an end is seen even when the system
-    /// holds notifications back; and the tray's notification.
+    /// An end: the system's notification (the island shows it on its own).
     pub fn announce(self: &Rc<Self>, title: &str, text: &str) {
-        *self.alert.borrow_mut() = Some((title.to_owned(), text.to_owned()));
         self.update_rest();
-        let a = self.clone();
-        self.alert_timer.start(TimerMode::SingleShot, Duration::from_secs(8), move || a.alert_clear());
         if let Some(n) = &*self.notify.borrow() { n(title, text); }
     }
 
-    /// The alert's 8 s are up.
-    pub fn alert_clear(self: &Rc<Self>) { self.alert_timer.stop(); *self.alert.borrow_mut() = None; self.update_rest(); }
 
     // MARK: Settings and the app window
 
@@ -362,6 +495,25 @@ impl App {
             self.wire_office(d.global::<Office>());
             let a = self.clone();
             d.on_back(move || { a.dash_settings.set(false); if let Some(d) = &*a.dash.borrow() { d.set_in_settings(false); } });
+            // The title bar's own buttons and drag, through winit.
+            {
+                use slint::winit_030::{winit, WinitWindowAccessor};
+                let w = d.as_weak();
+                d.on_minimize(move || { if let Some(d) = w.upgrade() { d.window().set_minimized(true); } });
+                let w = d.as_weak();
+                d.on_maximize(move || { if let Some(d) = w.upgrade() { let m = !d.window().is_maximized(); d.window().set_maximized(m); d.set_maximized(m); } });
+                let w = d.as_weak();
+                let a = self.clone();
+                d.on_close(move || { if let Some(d) = w.upgrade() { let _ = d.hide(); } let a = a.clone(); Timer::single_shot(Duration::ZERO, move || { a.dash.borrow_mut().take(); a.dash_settings.set(false); a.watching_changed(); }); });
+                let w = d.as_weak();
+                d.on_drag(move || { if let Some(d) = w.upgrade() { d.window().with_winit_window(|ww| { let _ = ww.drag_window(); }); } });
+                let w = d.as_weak();
+                d.on_resize(move |k| {
+                    use winit::window::ResizeDirection as R;
+                    let dir = match k { 1 => R::North, 2 => R::South, 3 => R::West, 4 => R::East, 5 => R::NorthWest, 6 => R::NorthEast, 7 => R::SouthWest, _ => R::SouthEast };
+                    if let Some(d) = w.upgrade() { d.window().with_winit_window(|ww| { let _ = ww.drag_resize_window(dir); }); }
+                });
+            }
             let a = self.clone();
             d.window().on_close_requested(move || {
                 let a = a.clone();
@@ -376,8 +528,6 @@ impl App {
         if settings { self.show_settings_in(1, Section::General); }
         if let Some(d) = &*self.dash.borrow() {
             let _ = d.show();
-            #[cfg(windows)]
-            { let p = self.palette.borrow(); win::caption(d.window(), p.dark, p.panel); }
         }
         self.collapse();
         self.watching_changed();
@@ -483,7 +633,8 @@ impl App {
                 let ours = self.n.borrow().plat.foreground_is_ours();
                 if self.n.borrow().hover.state != State::Rest && !ours { self.collapse(); }
             }
-            win::Msg::Greet => self.n.borrow_mut().greet_next = true,
+            // The greeting on a resume or an unlock is gone (main's 639c01c).
+            win::Msg::Greet => {}
             win::Msg::TrayLeft => self.open_dashboard(false),
             win::Msg::TrayMenu(i) => self.menu_item(i),
         }

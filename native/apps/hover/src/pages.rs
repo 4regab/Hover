@@ -278,13 +278,23 @@ fn agent(b: &mut Vec<Block>, section: Section, i: &Input) {
         rows.push(row("Agent", Some("Its MCP servers, skills and steering come with it. Kiro’s own modes (Spec, Plan…) are here too.".into()),
             Control::Picker { id: "KiroAgent".into(), name: "Agent".into(), shown, options }, Lead::Tile("bot", Tint::Blue)));
     }
-    if agents::read_only_works(tool) {
-        rows.push(row("Tool access", Some(if o.read_only { format!("{name} can only read and search. It can’t change files or run commands.") } else { format!("{name} can edit files and run commands without asking.") }),
-            segments(&format!("{id}Tools"), &["Full", "Read only"], o.read_only as i32), Lead::Tile("shield", Tint::Green)));
-    } else {
-        rows.push(row("Tool access", Some(format!("Full: {name} can edit files and run commands without asking. Read only isn’t offered, because \
-            Codex’s read-only mode needs a sandbox it doesn’t have on Windows.")), Control::None, Lead::Tile("shield", Tint::Green)));
-    }
+    // Full access, with or without asking first in the notch, or read only. Read only
+    // (where it holds) overrules asking.
+    let ro = agents::read_only_works(tool);
+    let access = o.access_id(ro);
+    let mut labels = vec!["Full", "Ask first", "Ask always"];
+    if ro { labels.push("Read only"); }
+    let text = match access {
+        "read" => format!("{name} can only read and search. It can’t change files or run commands."),
+        // Codex decides what to ask about itself in this mode: its sandbox lets commands
+        // inside the folder run, and asks to go past it.
+        "risky" if tool == AgentTool::Codex => "Codex asks in the notch before it writes outside the folder or goes online. Inside the folder its sandbox lets it edit and run commands.".into(),
+        "risky" => format!("{name} asks in the notch before it runs a command, deletes or moves files, goes online or touches anything outside the folder. Reading and editing in the folder go ahead."),
+        "always" => format!("{name} asks in the notch before any change or command. Reading and searching go ahead."),
+        _ => format!("{name} can edit files and run commands without asking."),
+    } + if ro { "" } else { " Read only isn’t offered, because Codex’s read-only mode needs a sandbox it doesn’t have on Windows." };
+    let picked = ["full", "risky", "always", "read"].iter().position(|a| *a == access).unwrap_or(0) as i32;
+    rows.push(row("Tool access", Some(text), segments(&format!("{id}Tools"), &labels, picked), Lead::Tile("shield", Tint::Green)));
     if tool == AgentTool::Kiro {
         rows.push(row("Require MCP servers", Some("Stop the task when one of the agent’s MCP servers doesn’t start.".into()),
             switch("KiroRequireMcp", "Require MCP servers", o.require_mcp), Lead::Tile("plug", Tint::Teal)));

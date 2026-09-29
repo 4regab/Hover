@@ -2,6 +2,8 @@
 //! counterpart of Measure-Hover.ps1 (which drives the C# app through UI Automation).
 //! Each command takes the path a user's action takes (toggle is the shortcut's,
 //! open is the history panel's); answers are `bench <what> <value>` lines on stdout.
+// The channel is Linux's (the benchmark there); on Windows Measure-Hover.ps1 drives the app.
+#![cfg_attr(windows, allow(dead_code))]
 
 use slint::ComponentHandle;
 use std::io::BufRead;

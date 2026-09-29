@@ -243,7 +243,12 @@ pub fn picked_seg(h: &dyn Host, id: &str, i: usize) {
                 let n = t.name();
                 let offers = st.agent_offers(t);
                 let new = if id == format!("{n}Effort") { pages::pick_effort(&o, &offers, i) }
-                    else if id == format!("{n}Tools") { hover_core::model::AgentOptions { read_only: i == 1, ..o } }
+                    else if id == format!("{n}Tools") {
+                        use hover_core::model::AgentApproval as A;
+                        // Read only keeps the asking it had; the rest are full access.
+                        let approval = match i { 1 => A::Risky, 2 => A::Always, 3 => o.approval, _ => A::Autopilot };
+                        hover_core::model::AgentOptions { read_only: i == 3, approval, ..o }
+                    }
                     else if id == format!("{n}Idle") { hover_core::model::AgentOptions { idle_minutes: hover_core::model::AgentOptions::IDLE_CHOICES[i], ..o } }
                     else { continue };
                 st.set_agent_options(t, new);

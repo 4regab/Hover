@@ -5,12 +5,14 @@
 
 /// DIP padding around the open shape inside the window (the shadow lives there).
 pub const PAD: f64 = 40.0;
-pub const PILL_HEIGHT: f64 = 24.0;
+pub const PILL_HEIGHT: f64 = 32.0;
+/// The island's padding after its last item (4 before the first is in its content).
+pub const PILL_PAD_RIGHT: f64 = 7.0;
 pub const POLL_MS: u64 = 50;
 pub const DWELL_MS: u64 = 120;
 pub const LEAVE_GRACE_MS: u64 = 350;
-pub const OPEN_MS: f64 = 300.0;
-pub const CLOSE_MS: f64 = 220.0;
+pub const OPEN_MS: f64 = 560.0;
+pub const CLOSE_MS: f64 = 340.0;
 pub const OPEN_R: f64 = 32.0;
 pub const OPEN_EAR: f64 = 10.0;
 
@@ -51,24 +53,61 @@ pub fn placement(work: Rect, scale: f64, open: (f64, f64)) -> Rect {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Rest {
     None,
-    /// Content width in DIPs (the pill's own desired width).
+    /// The island's content width in DIPs, the 4 before its first item included.
     Pill(f64),
-    /// max(title, text) width in DIPs.
-    Alert(f64),
+    /// The question's card, as it measures.
+    Card(f64, f64),
 }
 
+/// RestSize: the island rounded to 2 px (so it doesn't twitch as its clock ticks), with
+/// 7 after its last item; the card as it measures.
 pub fn rest_size(rest: Rest) -> (f64, f64) {
     match rest {
         Rest::None => (0.0, 0.0),
-        Rest::Pill(content) => (((content + 24.0) / 4.0).ceil() * 4.0, PILL_HEIGHT),
-        Rest::Alert(text) => ((text + 40.0).clamp(200.0, 420.0), 46.0),
+        Rest::Pill(content) => (((content + PILL_PAD_RIGHT) / 2.0).ceil() * 2.0, PILL_HEIGHT),
+        Rest::Card(w, h) => (w.ceil(), h.ceil()),
     }
 }
 
-/// Resting corner radius and ear for a shape `h` tall.
+/// RestCorners: the island's round ends (r 16, ear 7); a card's 24 and 10.
 pub fn rest_corners(h: f64) -> (f64, f64) {
-    let r = (h / 2.0).min(14.0);
-    (r, (5.0f64).min(h - r).max(0.0))
+    let r = if h > 60.0 { 24.0 } else { (h / 2.0).min(16.0) };
+    (r, (if h > 60.0 { 10.0 } else { 7.0f64 }).min(h - r).max(0.0))
+}
+
+/// WPF's BackEase, EaseOut: a little past the end, then back.
+pub fn back_ease_out(t: f64, amplitude: f64) -> f64 {
+    let u = 1.0 - t;
+    1.0 - (u * u * u - u * amplitude * (u * std::f64::consts::PI).sin())
+}
+
+/// SineEase, EaseInOut.
+pub fn sine_in_out(t: f64) -> f64 { (1.0 - (t * std::f64::consts::PI).cos()) / 2.0 }
+
+/// SetSizes: the resting shape springs to each new size (BackEase 0.22), in 560 ms when
+/// it grows into the card, else 500; the first size, or with animations off, is at once.
+#[derive(Clone, Copy, Debug)]
+pub struct RestAnim { from: (f64, f64), to: (f64, f64), start: f64, dur: f64, set: bool }
+
+impl Default for RestAnim { fn default() -> Self { RestAnim { from: (0.0, 0.0), to: (0.0, 0.0), start: 0.0, dur: 1.0, set: false } } }
+
+impl RestAnim {
+    pub fn value(&self, now: f64) -> (f64, f64) {
+        let k = ((now - self.start) / self.dur).clamp(0.0, 1.0);
+        let e = back_ease_out(k, 0.22);
+        (self.from.0 + (self.to.0 - self.from.0) * e, self.from.1 + (self.to.1 - self.from.1) * e)
+    }
+    pub fn target(&self) -> (f64, f64) { self.to }
+    pub fn animating(&self, now: f64) -> bool { now - self.start < self.dur && self.from != self.to }
+    pub fn go(&mut self, to: (f64, f64), now: f64, still: bool) {
+        if to == self.to && self.set { return; }
+        let cur = self.value(now);
+        if !self.set || still { *self = RestAnim { from: to, to, start: now, dur: 1.0, set: true }; return; }
+        self.dur = if to.1 > cur.1 + 40.0 { 560.0 } else { 500.0 };
+        self.from = cur;
+        self.to = to;
+        self.start = now;
+    }
 }
 
 fn lerp(a: f64, b: f64, t: f64) -> f64 { a + (b - a) * t }
@@ -95,14 +134,17 @@ pub struct Frame {
     pub view_hit: bool,
 }
 
-pub fn frame(t: f64, rest: (f64, f64), open: (f64, f64)) -> Frame {
+pub fn frame(t: f64, rest: (f64, f64), open: (f64, f64)) -> Frame { frame_way(t, rest, open, false) }
+
+/// frame, closing: the office goes first (clamp((t - 0.55) / 0.45)).
+pub fn frame_way(t: f64, rest: (f64, f64), open: (f64, f64), closing: bool) -> Frame {
     let (rr, re) = rest_corners(rest.1);
     Frame {
         w: lerp(rest.0, open.0, t),
         h: lerp(rest.1, open.1, t),
         r: lerp(rr, OPEN_R, t),
         ear: lerp(re, OPEN_EAR, t),
-        view_opacity: clamp01((t - 0.35) / 0.65),
+        view_opacity: if closing { clamp01((t - 0.55) / 0.45) } else { clamp01((t - 0.35) / 0.65) },
         mini_opacity: clamp01(1.0 - 3.0 * t),
         fill_mix: smoothstep(clamp01((t - 0.2) / 0.6)),
         view_hit: t >= 0.999,
@@ -250,10 +292,12 @@ impl Openness {
     pub fn value(&self, now_ms: f64) -> f64 {
 
         let k = ((now_ms - self.start) / self.dur).clamp(0.0, 1.0);
-        let e = if self.to > self.from { ease_out_cubic(k) } else { ease_in_cubic(k) };
+        // Opening overshoots a touch (BackEase 0.16); closing eases in and out.
+        let e = if self.to > self.from { back_ease_out(k, 0.16) } else { sine_in_out(k) };
         self.from + (self.to - self.from) * e
     }
     pub fn animating(&self, now_ms: f64) -> bool { now_ms - self.start < self.dur && self.from != self.to }
+    pub fn closing(&self) -> bool { self.to < self.from }
     pub fn go(&mut self, to: f64, now_ms: f64) {
         self.from = self.value(now_ms);
         self.to = to;
@@ -281,17 +325,25 @@ mod tests {
 
     #[test]
     fn resting_shapes_and_corners() {
-        assert_eq!(rest_size(Rest::Pill(101.0)), (128.0, 24.0));
-        assert_eq!(rest_size(Rest::Alert(90.0)), (200.0, 46.0));
-        assert_eq!(rest_size(Rest::Alert(600.0)), (420.0, 46.0));
-        assert_eq!(rest_corners(24.0), (12.0, 5.0));
-        assert_eq!(rest_corners(46.0), (14.0, 5.0));
+        // 4 before the first item (in the content), 7 after the last, to 2 px.
+        assert_eq!(rest_size(Rest::Pill(101.0)), (108.0, 32.0));
+        assert_eq!(rest_size(Rest::Pill(100.0)), (108.0, 32.0));
+        assert_eq!(rest_size(Rest::Card(500.0, 181.4)), (500.0, 182.0));
+        assert_eq!(rest_corners(32.0), (16.0, 7.0));
+        assert_eq!(rest_corners(182.0), (24.0, 10.0));
+        let mut a = RestAnim::default();
+        a.go((108.0, 32.0), 0.0, false);
+        assert_eq!(a.value(0.0), (108.0, 32.0), "the first size is at once");
+        a.go((500.0, 182.0), 100.0, false);
+        assert!(a.value(100.0 + 280.0).0 > 108.0 && a.value(100.0 + 560.0) == (500.0, 182.0));
+        assert!(a.value(100.0 + 450.0).0 > 500.0, "it springs a little past");
         let f = frame(1.0, (128.0, 24.0), (1120.0, 440.0));
         assert_eq!((f.w, f.h, f.r, f.ear, f.view_opacity, f.mini_opacity, f.view_hit), (1120.0, 440.0, 32.0, 10.0, 1.0, 0.0, true));
         let f = frame(0.5, (128.0, 24.0), (1120.0, 440.0));
         assert!(!f.view_hit && f.mini_opacity == 0.0 && (f.view_opacity - 0.15 / 0.65).abs() < 1e-9);
         assert!(outline(0.0, 0.0, 0.0, 0.0, 0.0).is_empty());
         assert!(outline(128.0, 24.0, 12.0, 5.0, 40.0).starts_with("M 35.000 0 A 5.000 5.000 0 0 1 40.000 5.000"));
+        assert_eq!(frame_way(0.8, (108.0, 32.0), (1120.0, 440.0), true).view_opacity, (0.25f64 / 0.45).clamp(0.0, 1.0));
     }
 
     #[test]
@@ -340,11 +392,14 @@ mod tests {
     #[test]
     fn openness_eases_both_ways() {
         let mut o = Openness::default();
+        // 560 ms up with BackEase 0.16, 340 down with SineEase in-out.
         o.go(1.0, 0.0);
-        assert!((o.value(150.0) - ease_out_cubic(0.5)).abs() < 1e-12);
-        assert_eq!(o.value(300.0), 1.0);
-        o.go(0.0, 300.0);
-        assert!((o.value(410.0) - (1.0 - ease_in_cubic(0.5))).abs() < 1e-12);
-        assert!(!o.animating(600.0));
+        assert!((o.value(280.0) - back_ease_out(0.5, 0.16)).abs() < 1e-12);
+        assert!(o.value(480.0) > 1.0, "it opens a touch past, then settles");
+        assert_eq!(o.value(560.0), 1.0);
+        o.go(0.0, 560.0);
+        assert!(o.closing());
+        assert!((o.value(730.0) - 0.5).abs() < 1e-12);
+        assert!(!o.animating(900.0));
     }
 }

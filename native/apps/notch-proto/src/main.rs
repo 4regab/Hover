@@ -363,7 +363,8 @@ fn main() {
     let ui = NotchWindow::new().unwrap();
     let rest = match val("--rest").as_deref() {
         Some("none") => Rest::None,
-        Some("alert") => Rest::Alert(180.0),
+        // The question's card (the alert it replaced is gone).
+        Some("alert") => Rest::Card(500.0, 182.0),
         _ => Rest::Pill(150.0),
     };
     let st: Shared = Rc::new(RefCell::new(Notch {

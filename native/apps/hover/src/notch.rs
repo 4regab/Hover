@@ -4,7 +4,7 @@
 //! it. What the platform does (placing, focus, click-through) is behind `Plat`.
 
 use crate::ui::NotchWindow;
-use hover_notch::{ease_out_cubic, frame, open_size, outline, placement, rim, Action, Hover, OfficeSize, Openness, Pointer, Rect, Rest, State, PAD};
+use hover_notch::{frame_way, open_size, outline, placement, Action, Hover, OfficeSize, Openness, Pointer, Rect, Rest, RestAnim, State, PAD};
 use slint::ComponentHandle;
 use std::time::Instant;
 
@@ -39,9 +39,12 @@ pub struct Notch {
     pub plat: Box<dyn Plat>,
     pub hover: Hover,
     pub open: Openness,
-    /// The greeting's keyframes, when this opening says hello.
-    pub greet_from: Option<f64>,
-    pub rest: (f64, f64),
+    /// The resting size, springing to each new one (SetSizes).
+    pub rest_anim: RestAnim,
+    /// With animations off, sizes change at once.
+    pub still: bool,
+    /// A question waits (or its card is open): hovering doesn't open the office.
+    pub asking: bool,
     pub rest_kind: i32,
     pub open_size: (f64, f64),
     pub size: OfficeSize,
@@ -53,8 +56,6 @@ pub struct Notch {
     pub signature: String,
     pub last_display_check: Instant,
     pub anim: bool,
-    /// The first opening after launch, a resume or an unlock says "Welcome back".
-    pub greet_next: bool,
     pub hover_opens: bool,
     pub popover: bool,
 }
@@ -62,49 +63,37 @@ pub struct Notch {
 impl Notch {
     pub fn new(plat: Box<dyn Plat>) -> Notch {
         Notch {
-            plat, hover: Hover::default(), open: Openness::default(), greet_from: None, rest: (0.0, 0.0), rest_kind: 0,
+            plat, hover: Hover::default(), open: Openness::default(), rest_anim: RestAnim::default(), still: false, asking: false, rest_kind: 0,
             open_size: (1120.0, 440.0), size: OfficeSize::Default, scale: 1.0, work: Rect { left: 0, top: 0, right: 1920, bottom: 1080 },
             win: Rect { left: 0, top: 0, right: 1, bottom: 1 }, t0: Instant::now(), over: false, signature: String::new(),
-            last_display_check: Instant::now(), anim: false, greet_next: true, hover_opens: true, popover: false,
+            last_display_check: Instant::now(), anim: false, hover_opens: true, popover: false,
         }
     }
 
     pub fn now(&self) -> f64 { self.t0.elapsed().as_secs_f64() * 1000.0 }
 
-    /// Openness now: the greeting's keyframes while it runs, else the plain easing.
-    pub fn openness(&self) -> f64 {
-        let now = self.now();
-        match self.greet_from { Some(t0) => greeting(now - t0), None => self.open.value(now) }
-    }
+    pub fn openness(&self) -> f64 { self.open.value(self.now()) }
 
-    pub fn animating(&self) -> bool {
-        match self.greet_from { Some(t0) => self.now() - t0 < 940.0, None => self.open.animating(self.now()) }
-    }
-}
+    pub fn animating(&self) -> bool { self.open.animating(self.now()) || self.rest_anim.animating(self.now()) }
 
-/// Greet's keyframes: to 0.06 in 160 ms (ease out), 0.09 by 560 ms (linear), then the
-/// rest of the way by 940 ms (ease out).
-pub fn greeting(ms: f64) -> f64 {
-    if ms <= 0.0 { 0.0 }
-    else if ms < 160.0 { 0.06 * ease_out_cubic(ms / 160.0) }
-    else if ms < 560.0 { 0.06 + 0.03 * (ms - 160.0) / 400.0 }
-    else if ms < 940.0 { 0.09 + 0.91 * ease_out_cubic((ms - 560.0) / 380.0) }
-    else { 1.0 }
+    /// The resting shape as it is drawn now, and the size it is going to (where its
+    /// content is laid out).
+    pub fn rest(&self) -> (f64, f64) { self.rest_anim.value(self.now()) }
+    pub fn rest_target(&self) -> (f64, f64) { self.rest_anim.target() }
+    pub fn set_rest(&mut self, to: (f64, f64)) { let (now, still) = (self.now(), self.still); self.rest_anim.go(to, now, still); }
 }
 
 /// NotchShell.Relayout: the shape, its fill and rim, and what shows through it.
 pub fn shape(ui: &NotchWindow, n: &Notch, panel: slint::Color) {
     let t = n.openness();
-    let f = frame(t, n.rest, n.open_size);
+    let f = frame_way(t, n.rest(), n.open_size, n.open.closing());
     let win_w = n.open_size.0 + 2.0 * PAD;
     let x0 = (win_w - f.w) / 2.0;
     ui.set_shape_commands(outline(f.w, f.h, f.r, f.ear, x0).into());
-    ui.set_rim_commands(rim(f.w, f.h, f.r, f.ear, x0).into());
     ui.set_shape_x(x0 as f32);
     ui.set_shape_w(f.w as f32);
     ui.set_shape_h(f.h as f32);
     ui.set_shape_r(f.r as f32);
-    ui.set_rim_opacity(f.fill_mix as f32);
     // Black while small, as a real notch is; the panel's own colour by the time the
     // cards are in.
     let k = f.fill_mix as f32;
@@ -114,8 +103,9 @@ pub fn shape(ui: &NotchWindow, n: &Notch, panel: slint::Color) {
     ui.set_view_opacity(f.view_opacity as f32);
     ui.set_openness(t as f32);
     ui.set_view_visible(t > 0.001 || n.hover.state != State::Rest);
-    ui.set_rest_w(n.rest.0 as f32);
-    ui.set_rest_h(n.rest.1 as f32);
+    let (tw, th) = n.rest_target();
+    ui.set_rest_w(tw as f32);
+    ui.set_rest_h(th as f32);
     n.plat.set_hit(n.over, (x0, 0.0, f.w, f.h + SHADOW_DEPTH), n.scale);
 }
 
@@ -139,8 +129,9 @@ pub fn layout(ui: &NotchWindow, n: &mut Notch, panel: slint::Color) {
 /// The resting shape from what the pill or the alert measures (NotchHost.RestSize).
 pub fn rest_of(ui: &NotchWindow, kind: i32) -> (f64, f64) {
     match kind {
-        1 => hover_notch::rest_size(Rest::Pill(ui.get_pill_width() as f64)),
-        2 => hover_notch::rest_size(Rest::Alert(ui.get_alert_width() as f64)),
+        // The island's items start 4 in.
+        1 => hover_notch::rest_size(Rest::Pill(4.0 + ui.get_pill_width() as f64)),
+        2 => hover_notch::rest_size(Rest::Card(ui.get_card_w() as f64, ui.get_card_h() as f64)),
         _ => hover_notch::rest_size(Rest::None),
     }
 }
@@ -149,33 +140,26 @@ pub fn rest_of(ui: &NotchWindow, kind: i32) -> (f64, f64) {
 pub fn poll(n: &mut Notch) -> Option<Action> {
     let (x, y) = n.plat.cursor();
     let buttons = n.plat.buttons();
-    let zone = hover_notch::zone(n.work, n.scale, n.rest);
+    let zone = hover_notch::zone(n.work, n.scale, n.rest());
     let panel = hover_notch::panel_zone(n.work, n.scale, n.open_size);
-    let p = Pointer { in_zone: zone.contains(x, y), in_panel: panel.contains(x, y), buttons, popover: n.popover, hover_opens: n.hover_opens };
+    let p = Pointer { in_zone: zone.contains(x, y), in_panel: panel.contains(x, y), buttons, popover: n.popover, hover_opens: n.hover_opens && !n.asking };
     let now = n.now() as u64;
     let act = n.hover.poll(now, &p);
     // The window takes the pointer only over the shape (and its shadow).
-    let f = frame(n.openness(), n.rest, n.open_size);
+    let f = frame_way(n.openness(), n.rest(), n.open_size, n.open.closing());
     let (dx, dy) = ((x - n.win.left) as f64 / n.scale, (y - n.win.top) as f64 / n.scale);
     n.over = n.win.contains(x, y) && hover_notch::hittable(dx, dy, n.open_size.0 + 2.0 * PAD, &f, SHADOW_BLUR, SHADOW_DEPTH);
     act
 }
 
-/// Expand: the office comes in; with the greeting the first time after launch,
-/// a resume or an unlock.
+/// Expand: the office comes in (560 ms, a touch past and back).
 pub fn expand(n: &mut Notch, peek: bool, focus: bool) {
     if n.hover.state == State::Rest {
         n.plat.remember_foreground();
         n.plat.set_accepts_keys(true);
         n.plat.raise();
         let now = n.now();
-        if std::mem::take(&mut n.greet_next) {
-            n.greet_from = Some(now);
-            n.open.go(1.0, now - 10_000.0);
-        } else {
-            n.greet_from = None;
-            n.open.go(1.0, now);
-        }
+        n.open.go(1.0, now);
     }
     n.hover.opened(peek);
     if focus { n.plat.focus(); }
@@ -186,26 +170,6 @@ pub fn collapse(n: &mut Notch) {
     n.hover.collapsed();
     n.plat.restore_foreground();
     n.plat.set_accepts_keys(false);
-    // From wherever the greeting had got to.
-    if let Some(t0) = n.greet_from.take() {
-        let v = greeting(n.now() - t0);
-        n.open = Openness::at(v);
-    }
     let now = n.now();
     n.open.go(0.0, now);
-}
-
-#[cfg(test)]
-mod tests {
-    use super::greeting;
-
-    /// Greet's keyframes at their times.
-    #[test]
-    fn the_greeting_follows_its_keyframes() {
-        assert_eq!(greeting(0.0), 0.0);
-        assert!((greeting(160.0) - 0.06).abs() < 1e-9);
-        assert!((greeting(360.0) - 0.075).abs() < 1e-9);
-        assert!((greeting(560.0) - 0.09).abs() < 1e-9);
-        assert_eq!(greeting(940.0), 1.0);
-    }
 }

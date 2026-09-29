@@ -150,30 +150,40 @@ pub fn run(dir: &Path) {
     let crop = (full.0, 60);
     save(&notch, crop, 2.0, desk, &dir.join("notch-rest-pill-2x.png"));
 
-    // Ends nobody saw: the done bot, then the alert. (Headless there is no event loop
-    // for the hooks to post to, so what they would do is done here.)
-    let said: Arc<std::sync::Mutex<Vec<(String, String)>>> = Default::default();
-    let s2 = said.clone();
-    hover.on_notify(move |t, b| s2.lock().unwrap().push((t.into(), b.into())));
+    // Ends nobody saw: the tool's logo with its badge, and the task. (Headless there is
+    // no event loop for the hooks to post to, so what they would do is done here.)
     *hold.lock().unwrap() = false;
     run_for(400);
-    let first = said.lock().unwrap().first().cloned().unwrap_or_default();
-    app.announce(&first.0, &first.1);
-    save(&notch, crop, 2.0, desk, &dir.join("notch-rest-alert-2x.png"));
-    // After the alert's 8 s: the count of ends not yet seen.
-    app.alert_clear();
-    app.notch.global::<Clock>().set_done_since(0.45);
+    app.update_rest();
+    run_for(500);
     save(&notch, crop, 2.0, desk, &dir.join("notch-rest-done-2x.png"));
+    // Two agents at work and a question: the amber island, then its card.
+    *hold.lock().unwrap() = true;
+    hover.sessions.start(AgentTool::Kiro, &folder, "Tidy the imports again", vec![]);
+    hover.sessions.start(AgentTool::Cursor, &folder, "Look for dead code again", vec![]);
+    run_for(300);
+    app.hover.seen();
+    app.update_rest();
+    run_for(500);
+    app.notch.global::<Clock>().set_t(0.4);
+    save(&notch, crop, 2.0, desk, &dir.join("notch-rest-working-2x.png"));
+    let asker = hover.sessions.all().into_iter().find(|s| s.busy()).unwrap();
+    let ask = hover_agents::ask::AgentAsk { id: "n1".into(), kind: "execute".into(), title: "Run".into(), command: Some("npm install three@0.171.0".into()), path: None,
+        preview: None, added: 0, removed: 0, reason: "Installs packages or uses the network".into(), danger: false };
+    hover.sessions.ask(asker.tool, asker.kiro_id.as_deref().unwrap_or(""), ask, &hover_agents::cancel::Cancel::new(), Box::new(|_| {}));
+    app.update_rest();
+    run_for(700);
+    save(&notch, (full.0, 60), 2.0, desk, &dir.join("notch-rest-ask-2x.png"));
+    app.open_card();
+    run_for(100);
+    // The card's height is known once Slint has laid it out (the poll reads it again).
+    app.update_rest();
+    run_for(700);
+    save(&notch, (full.0, 220), 2.0, desk, &dir.join("notch-rest-card-2x.png"));
+    app.answer_asked(hover_agents::ask::AskAnswer::Deny);
+    run_for(700);
 
-    // Opening: the greeting's keyframes, then open.
-    for (ms, name) in [(120.0, "notch-greeting-120ms.png"), (400.0, "notch-greeting-400ms.png"), (700.0, "notch-greeting-700ms.png")] {
-        { let mut n = app.n.borrow_mut(); n.hover.opened(false); n.greet_from = Some(n.now() - ms); }
-        app.notch.set_greet(true);
-        crate::notch::shape(&app.notch, &app.n.borrow(), view::argb(app.palette.borrow().panel));
-        save(&notch, full, 1.0, desk, &dir.join(name));
-    }
-    { let mut n = app.n.borrow_mut(); n.greet_from = None; n.open = Openness::at(1.0); }
-    app.notch.set_greet(false);
+    { let mut n = app.n.borrow_mut(); n.hover.opened(false); n.open = Openness::at(1.0); }
     app.hover.seen();
     app.update_rest();
     // The office: its thread renders, the frames are taken here (no event loop to post to).
