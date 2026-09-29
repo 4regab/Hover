@@ -347,7 +347,7 @@ internal sealed class NotchHost : IDisposable
         _askText.MaxWidth = 260;
         _workSeg = Ui.Row(_stack, _activity.Margin(9, 0), _timer.Margin(9, 0));
         _askSeg = Ui.Row(_askMark, _askText.Margin(9, 0), Rule().Margin(11, 0),
-            Pressable(Ui.Text("Deny", 11.5, Ui.White, FontWeights.SemiBold), "NotchAskDeny", "Deny", () => AnswerAsked(AskAnswer.Deny), small: true).Margin(10, 0),
+            Pressable(_askDeny, "NotchAskDeny", "Deny", () => AnswerAsked(AskAnswer.Deny), small: true).Margin(10, 0),
             Pressable(Ui.Text("Review", 11.5, Ui.Black, FontWeights.SemiBold), "NotchAskReview", "Review", OpenCard, primary: true, small: true).Margin(6, 0, 3));
         _doneSeg = Ui.Row(_doneMark, _doneText.Margin(9, 0), _doneTook.Margin(9, 0));
         foreach (var t in new[] { _activity, _timer, _askText, _doneText, _doneTook }) t.VerticalAlignment = VerticalAlignment.Center;
@@ -614,9 +614,13 @@ internal sealed class NotchHost : IDisposable
         AutomationProperties.SetName(_activity, $"{Agents.Name(speaker.Tool)}: {verb} {obj}".Trim() + others);
     }
 
+    // "Skip" for a question: turning one down tells the agent it wasn't answered.
+    private readonly TextBlock _askDeny = Ui.Text("Deny", 11.5, Ui.White, FontWeights.SemiBold);
+
     private void ShowAsk(KiroSession s, AgentAsk a, int total)
     {
         _askMark.Tool = Agents.Id(s.Tool);
+        _askDeny.Text = a.IsQuestion ? "Skip" : "Deny";
         var (verb, obj) = AgentWords.AskLine(a);
         _askText.Inlines.Clear();
         _askText.Inlines.Add(new Run(verb) { Foreground = Dim, FontWeight = FontWeights.Medium });
@@ -685,6 +689,13 @@ internal sealed class NotchHost : IDisposable
     private void OpenCard()
     {
         if (_asked is null || State != Mode.Rest) return;
+        // A question's choices are in the office, in its chat: Review opens it there.
+        if (_asked.Value.Ask.IsQuestion)
+        {
+            KiroPage.Reveal(_asked.Value.Session.Id);
+            OwlApp.ShowOffice?.Invoke();
+            return;
+        }
         _cardOpen = true;
         _cardKey = "";
         _cardPrevious = Win32.GetForegroundWindow();

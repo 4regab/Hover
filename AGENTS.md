@@ -10,10 +10,10 @@ slim black island: the Claude Code / Kiro / Codex / Cursor quotas the user switc
 on (each the tool's own logo in its ring), the agents at work (their logos, what the
 one in front is doing, for how long), a question an agent is waiting on, or nothing.
 Hovering it, clicking it or `Alt+N`
-opens the **Agent office**, which fills the notch: it hands tasks to Kiro, Codex or
-Cursor, which run headlessly, several at once, each in a chosen folder, as bots at
-desks in a three.js office. The office's menu (time of day, music, history, Settings) opens Settings over it (five
-sections: General, Integrations, Kiro, Codex, Cursor), with a back button.
+opens the **Agent office**, which fills the notch: it hands tasks to Kiro, Codex,
+Cursor or OpenCode, which run headlessly, several at once, each in a chosen folder, as bots at
+desks in a three.js office. The office's menu (time of day, music, history, Settings) opens Settings over it (six
+sections: General, Integrations, Kiro, Codex, Cursor, OpenCode), with a back button.
 
 The only ordinary window is the dashboard (the tray icon or its menu, or a second
 launch of the exe), the same office in a normal window; the app
@@ -70,10 +70,12 @@ src/Hover/
                Quota and Palette have no WPF.
   Interop/     Win32 P/Invoke, monitor enumeration, global hotkeys, HostWindow
                (the borderless, click-through window the notch is drawn in).
-  Services/    Actions (tray menu commands), TrayIcon, Agents (Kiro, Codex, Cursor:
-               where each is, how it starts, install and sign-in checks), AcpHost
-               (one tool running as an ACP server, shared by its sessions, stopped
-               when idle), KiroRunner (KiroStream, which reads ACP session updates,
+  Services/    Actions (tray menu commands), TrayIcon, Agents (Kiro, Codex, Cursor,
+               OpenCode: where each is, how it starts, install and sign-in checks),
+               IAgentRuntime (in KiroRunner.cs: what the sessions see of a tool),
+               AcpHost (one tool running as an ACP server, shared by its sessions,
+               stopped when idle), OpenCodeHost (OpenCode's own server, the same
+               way), KiroRunner (KiroStream, which reads ACP session updates,
                the shared result types, and Kiro's fallback model list). No WPF.
   Owl/         OwlApp (shared state, quota polling), Notch (the top-centre host, on
                the main display only, and the dashboard window), OfficeView (the
@@ -199,6 +201,26 @@ carry a legacy `Noty` reference **only** in `Core/Paths.cs`, which migrates an o
   kills them with Hover, so a killed or crashed Hover leaves none behind. Install and sign-in are
   checked with each tool's own status command (kept five minutes); a tool that
   fails is greyed in the office with what to do.
+- **OpenCode runs as its own server, as T3 Code runs it.** `OpenCodeHost` starts one
+  hidden `opencode serve --hostname=127.0.0.1 --port=0 --mdns=false` for all its
+  sessions, with a password made for that start (in its environment, sent as Basic
+  auth; never on a command line or in a URL) and `OPENCODE_ENABLE_QUESTION_TOOL=1`.
+  It talks to it over HTTP and its event stream (`/event`), with no Node and no SDK:
+  the JS SDK is a thin client of the same API. Every call names the session's folder
+  (`?directory=`), so that folder's opencode config, agents, skills and MCP servers
+  apply. OpenCode keeps its own providers (API keys, sign-ins, local models); model
+  ids are "provider/model" as it names them, and effort is the model's own variants.
+  A turn subscribes first, then sends `prompt_async` with a message id Hover makes;
+  only an idle after that message (or a busy for it) ends the turn. A dropped stream
+  reconnects and reads status, messages and waiting requests back; a prompt whose
+  answer was lost is looked up by its id, never sent twice. Access is per-session
+  permission rules (OpenCode applies the last match): the agent's own last-word
+  denies go after Hover's, so Full never undoes one; Read only makes every change
+  ask and Hover refuses each. Approvals answer `once` (Trust is Hover's); the
+  question tool's questions show in the chat, over the bot and in the notch, and a
+  skipped one is rejected. A resumed conversation OpenCode no longer has fails
+  rather than start a new one. Checked against OpenCode 1.18.31 (floor 1.14.19).
+  The server takes 30 to 40 s to start cold and about 1 GB while working.
 - **Sessions are kept until the user deletes them.** `AgentHistory` seals an index
   (`agents/index.dat`, the only part held in memory) and one file per session
   (`agents/<key>.dat`, read when it is opened) with Hover's key (`note.key`), and writes
@@ -266,7 +288,12 @@ carry a legacy `Noty` reference **only** in `Core/Paths.cs`, which migrates an o
   `Services/Agents.cs`, `Services/AcpHost.cs` and `Owl/KiroSession.cs` with
   `KiroRunnerTests.cs` and `TestEnvironment.cs` (its stand-in ACP agent talks over
   in-memory pipes). `TestEnvironment` redirects the data folder to a temp path via
-  `HOVER_DATA_DIR`.
+  `HOVER_DATA_DIR`. `OpenCodeHostTests.cs` runs OpenCode against a stand-in
+  `opencode serve` (the same routes, auth and event stream, on localhost).
+  `OpenCodeLiveTests.cs` drives the real one with a real model and is run by hand:
+  `dotnet test .\tests\Hover.Tests -c Release --filter "TestCategory=LiveOpenCode"`
+  (`HOVER_LIVE_MODEL` picks the model; the default is OpenCode's free
+  `opencode/big-pickle`).
 - **There is one `HoverNotch` window per display.** UI Automation lists them in
   z-order, so the first is often another display's. The E2E tests bind the one
   over the primary display's top centre.

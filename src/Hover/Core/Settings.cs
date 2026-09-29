@@ -188,7 +188,8 @@ public static class Settings
             M.KiroHideSteps = value.HideSteps;
             M.KiroApproval = value.Approval;
         }
-        else (M.Agents ??= new())[Services.Agents.Id(t)] = value with { Agent = null, RequireMcp = false };
+        // An agent is Kiro's (the fields above) and OpenCode's (Build, Plan, the user's own).
+        else (M.Agents ??= new())[Services.Agents.Id(t)] = value with { Agent = t == Services.AgentTool.OpenCode ? value.Agent : null, RequireMcp = false };
         Save();
     }
 

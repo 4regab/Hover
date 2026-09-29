@@ -8,7 +8,9 @@ using Hover.Core;
 namespace Hover.Services;
 
 /// One choice in a session config option (ACP session/set_config_option).
-public sealed record AcpChoice(string Value, string Name);
+/// Levels are the efforts this choice takes, where they differ by choice (OpenCode's
+/// variants belong to each model); null when the tool lists effort on its own.
+public sealed record AcpChoice(string Value, string Name, IReadOnlyList<string>? Levels = null);
 
 /// A setting an agent offers for a session: its model, effort, mode and the like.
 /// Category is ACP's hint (model, thought_level, mode), when the agent gives one.
@@ -40,7 +42,7 @@ public sealed class AcpLink
 /// an ACP session, and is shut down once it has had nothing to do for the idle time in
 /// its settings. A reply after that starts it again and loads the conversation back
 /// (session/load). The prompt only ever goes over stdin. No WPF in here.
-public sealed class AcpHost
+public sealed class AcpHost : IAgentRuntime
 {
     private readonly Func<AgentOptions> _options;
     private readonly Func<AcpLink?> _connect;
@@ -64,6 +66,12 @@ public sealed class AcpHost
 
     public AgentTool Tool { get; }
     private string Name => Agents.Name(Tool);
+
+    /// ACP has no questions of its own; effort is a session option where offered.
+    public AgentCaps Caps => new(Questions: false, ReadOnly: Agents.ReadOnlyWorks(Tool), Resume: true, EffortLabel: "Effort");
+
+    /// ACP agents don't ask questions; this is never called.
+    public Func<string, AgentAsk, CancellationToken, Task<IReadOnlyList<IReadOnlyList<string>>?>>? Questioning { get; set; }
 
     /// The tool's process is up.
     public bool Alive => _link is not null;
@@ -256,7 +264,7 @@ public sealed class AcpHost
                 await Set(mode, o.ReadOnly ? "read-only" : !asks ? "agent-full-access"
                     : o.Approval == AgentApproval.Always ? "read-only" : askFirst);
                 break;
-            default:
+            case AgentTool.Cursor:
                 await Set(Find("mode", "mode"), o.ReadOnly ? "ask" : "agent");
                 break;
         }
@@ -556,10 +564,10 @@ public sealed class AcpHost
     /// the title.
     private static string Key(AgentAsk a) => a.Kind + ":" + (a.Command ?? a.Path ?? a.Title);
 
-    private static readonly System.Text.RegularExpressions.Regex Destructive = new(
+    internal static readonly System.Text.RegularExpressions.Regex Destructive = new(
         @"(^|[\s;&|(])(rm|rmdir|del|erase|rd|remove-item|format|mkfs|shutdown|git\s+(push|reset|clean|checkout\s+--))\b",
         System.Text.RegularExpressions.RegexOptions.IgnoreCase);
-    private static readonly System.Text.RegularExpressions.Regex Network = new(
+    internal static readonly System.Text.RegularExpressions.Regex Network = new(
         @"\b((npm|pnpm|yarn|bun|pip|pip3|uv|cargo|dotnet|nuget|gem|go)\s+(i|install|add|restore|get|update|upgrade)|curl|wget|invoke-webrequest|iwr|git\s+(push|pull|fetch|clone))\b",
         System.Text.RegularExpressions.RegexOptions.IgnoreCase);
 

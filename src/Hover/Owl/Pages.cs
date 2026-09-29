@@ -16,7 +16,7 @@ namespace Hover.Owl;
 /// folder). A deep link names a section and, optionally, the heading to scroll to.
 internal sealed class SettingsPage
 {
-    public enum Section { General, Integrations, Kiro, Codex, Cursor }
+    public enum Section { General, Integrations, Kiro, Codex, Cursor, OpenCode }
 
     /// The section shown last, so a rebuild for a new theme opens where it was.
     public static Section Last { get; private set; }
@@ -37,6 +37,7 @@ internal sealed class SettingsPage
         (Section.Kiro, "Kiro", Ui.IcGhost, BotGlyph.Purple),
         (Section.Codex, "Codex", Ui.IcTerminal, Ui.Green),
         (Section.Cursor, "Cursor", Ui.IcSparkles, Ui.Blue),
+        (Section.OpenCode, "OpenCode", Ui.IcTerminal, Ui.Gray),
     };
 
     public SettingsPage(FrameworkElement owner, Section start, string? anchor = null)
@@ -452,7 +453,10 @@ internal sealed class SettingsPage
 
     // MARK: Kiro, Codex, Cursor
 
-    private static AgentTool ToolOf(Section s) => s switch { Section.Codex => AgentTool.Codex, Section.Cursor => AgentTool.Cursor, _ => AgentTool.Kiro };
+    private static AgentTool ToolOf(Section s) => s switch
+    {
+        Section.Codex => AgentTool.Codex, Section.Cursor => AgentTool.Cursor, Section.OpenCode => AgentTool.OpenCode, _ => AgentTool.Kiro,
+    };
 
     private void Agent(Section section)
     {
@@ -490,20 +494,36 @@ internal sealed class SettingsPage
             models.Select(m => (m.Item2, m.Item1 == current, (Action)(() => Set(o with { Model = m.Item1 == models[0].Item1 || m.Item1.Length == 0 ? null : m.Item1 })))));
         var effortOffer = Offer("thought_level", "effortLevel", "reasoning_effort", "effort");
         var levels = effortOffer?.Choices.Select(c => c.Value).ToList() ?? new();
+        // OpenCode's variants belong to each model: only the picked model's are offered.
+        var perModel = tool == AgentTool.OpenCode;
+        if (perModel) levels = Offer("model", "model")?.Choices.FirstOrDefault(c => c.Value == o.Model)?.Levels?.ToList() ?? new();
+        var effortName = OwlApp.Agents[tool].Caps.EffortLabel;
         FrameworkElement effort = levels.Count == 0
-            ? Ui.Text(tool == AgentTool.Cursor ? "Part of the model" : "Set by the model", 12.5, Ui.InkDim)
+            ? Ui.Text(tool == AgentTool.Cursor ? "Part of the model" : perModel ? "None for this model" : "Set by the model", 12.5, Ui.InkDim)
             : Segments(id + "Effort", levels.Select(l => (l, l == "xhigh" ? "X-High" : char.ToUpperInvariant(l[0]) + l[1..])),
                 o.Effort is { } e && levels.Contains(e) ? e : effortOffer?.Current is { } now && levels.Contains(now) ? now : levels[0], v => Set(o with { Effort = v }));
         Group(
             Row("Model", Offer("model", "model") is null
                     ? $"More models show here once {name} has run a task."
+                    : perModel ? "Your OpenCode providers’ models: API keys, sign-ins and local models. Default is your opencode config’s."
                     : $"The first is {name}’s own choice for each task.", model, Tile("brain", Ui.Purple)),
-            Row("Effort", levels.Count == 0
+            Row(effortName, perModel
+                    ? levels.Count == 0 ? "Pick a model with variants to choose one. Default leaves it to OpenCode." : "The picked model’s own variants, from OpenCode."
+                    : levels.Count == 0
                     ? tool == AgentTool.Cursor ? "Cursor’s models carry their effort in their name." : "Shown once a task has run with a model that takes one."
                     : "How long it thinks. Higher is slower and uses more of your plan.", effort, Tile(Ui.IcGauge, Ui.Orange)));
 
         Heading("Tools and memory");
         var rows = new List<FrameworkElement>();
+        if (tool == AgentTool.OpenCode)
+        {
+            var modes = Offer("mode", "mode")?.Choices.Select(c => (c.Value, c.Name)).ToList() ?? new();
+            var agent = Picker("OpenCodeAgent", "Agent", o.Agent is null ? "Default" : modes.FirstOrDefault(m => m.Item1 == o.Agent).Item2 ?? o.Agent,
+                new[] { ("Default", o.Agent is null, (Action)(() => Set(o with { Agent = null }))) }.Concat(
+                    modes.Select(m => (m.Item2, m.Item1 == o.Agent, (Action)(() => Set(o with { Agent = m.Item1 }))))));
+            rows.Add(Row("Agent", modes.Count == 0 ? "Build, Plan and your own agents show here once OpenCode has run a task."
+                    : "OpenCode’s agents, yours included. Plan can’t edit files by its own rules; it isn’t a sandbox.", agent, Tile("bot", Ui.Blue)));
+        }
         if (tool == AgentTool.Kiro)
         {
             var modes = Offer("mode", "mode")?.Choices.Select(c => (c.Value, c.Name)).ToList()
@@ -521,12 +541,14 @@ internal sealed class SettingsPage
         if (readOnly) choices.Add(("read", "Read only"));
         rows.Add(Row("Tool access", access switch
             {
+                "read" when tool == AgentTool.OpenCode => "OpenCode can only read and search. Its server refuses every edit, command, subagent and anything outside the folder.",
                 "read" => $"{name} can only read and search. It can’t change files or run commands.",
                 // Codex decides what to ask about itself in this mode: its sandbox lets
                 // commands inside the folder run, and asks to go past it.
                 "risky" when tool == AgentTool.Codex => "Codex asks in the notch before it writes outside the folder or goes online. Inside the folder its sandbox lets it edit and run commands.",
                 "risky" => $"{name} asks in the notch before it runs a command, deletes or moves files, goes online or touches anything outside the folder. Reading and editing in the folder go ahead.",
                 "always" => $"{name} asks in the notch before any change or command. Reading and searching go ahead.",
+                _ when tool == AgentTool.OpenCode => "OpenCode can edit files and run commands without asking. Deny rules in your OpenCode config still win, and it still asks when it repeats a tool call over and over.",
                 _ => $"{name} can edit files and run commands without asking.",
             } + (readOnly ? "" : " Read only isn’t offered, because Codex’s read-only mode needs a sandbox it doesn’t have on Windows."),
             Segments(id + "Tools", choices, access, v => Set(o with
@@ -547,6 +569,13 @@ internal sealed class SettingsPage
         Group(rows.ToArray());
         foreach (var r in rows) r.IsEnabled = usable;
 
+        if (tool == AgentTool.OpenCode)
+        {
+            Footnote("OpenCode runs in the background as its own server (\"opencode serve\"), one for all its tasks, on this PC only " +
+                     "(127.0.0.1, with a password made for each start), with no terminal window. Your OpenCode providers, agents, skills and MCP servers " +
+                     "work as they do in OpenCode. It uses about 0.5 to 1 GB while it runs, so it stops when idle. Changes apply to the next task.");
+            return;
+        }
         if (tool != AgentTool.Kiro)
         {
             Footnote($"{name} runs in the background as an ACP server (\"{(System.IO.Path.GetFileNameWithoutExtension(Agents.Exe(tool) ?? Agents.Id(tool)) + " " + string.Join(" ", Agents.Arguments(tool))).Trim()}\"), " +

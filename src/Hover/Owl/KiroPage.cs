@@ -55,6 +55,16 @@ internal sealed class KiroPage
     private DateTime _madeAt;
     /// The chat open in the office, shared by both views and kept while the page is dropped.
     private static int? _open;
+    private static readonly HashSet<KiroPage> Live = new();
+
+    /// Open a session's chat in the office: now in a page that is up, and in the next
+    /// page made (the notch's is made as it opens).
+    public static void Reveal(int id)
+    {
+        _open = id;
+        foreach (var p in Live)
+            if (p._ready) p._web?.CoreWebView2?.PostWebMessageAsJson(JsonSerializer.Serialize(new { type = "reveal", id }, Json));
+    }
 
     public KiroPage(bool window, Action openSettings)
     {
@@ -68,11 +78,13 @@ internal sealed class KiroPage
         {
             if (Sessions.History is { } h && !_historyHooked) { _historyHooked = true; h.Changed += () => _historyVersion++; }
             Sessions.Changed += OnChanged;
+            Live.Add(this);
             Build();
         };
         _root.Unloaded += (_, _) =>
         {
             Sessions.Changed -= OnChanged;
+            Live.Remove(this);
             InView.Remove(this);
             _push.Stop();
             DropWeb();
@@ -286,7 +298,16 @@ internal sealed class KiroPage
                 break;
             case "answer":
                 // The office answered what the agent asked: over its head, or in its chat.
-                if (session is not null && Str(m, "ask") is { } askId)
+                // A question's answer is the picked labels, one list per question.
+                if (session is not null && Str(m, "ask") is { } qId && m.TryGetProperty("answers", out var chosen) && chosen.ValueKind == JsonValueKind.Array)
+                {
+                    var lists = chosen.EnumerateArray().Select(a => (IReadOnlyList<string>)(a.ValueKind == JsonValueKind.Array
+                        ? a.EnumerateArray().Where(x => x.ValueKind == JsonValueKind.String).Select(x => x.GetString()!.Trim()).Where(x => x.Length is > 0 and <= 4000).ToList()
+                        : new List<string>())).ToList();
+                    Log.Line($"{Agents.Id(session.Tool)} run {session.Id}: answered a question from the office");
+                    if (!session.AnswerQuestion(qId, lists)) Say("toast", "Pick an answer first.");
+                }
+                else if (session is not null && Str(m, "ask") is { } askId)
                 {
                     var how = Str(m, "answer") switch
                     {
@@ -430,11 +451,14 @@ internal sealed class KiroPage
                 readOnly = Agents.ReadOnlyWorks(t),
                 hideSteps = Settings.AgentOptions(t).HideSteps,
                 // The composer's model and effort picks: what the tool offered last,
-                // Kiro's own list before it has run.
-                models = Models(t).Select(x => new { id = x.Id, name = x.Name }).ToList(),
+                // Kiro's own list before it has run. A model with levels of its own
+                // (OpenCode's variants) takes those instead of the tool's efforts.
+                models = Models(t).Select(x => new { id = x.Id, name = x.Name, levels = x.Levels }).ToList(),
                 model = Settings.AgentOptions(t).Model ?? Models(t).FirstOrDefault().Id,
                 efforts = Offer(t, "thought_level", "effortLevel", "reasoning_effort", "effort")?.Choices.Select(c => c.Value).ToList() ?? new List<string>(),
                 effort = Settings.AgentOptions(t).Effort ?? Offer(t, "thought_level", "effortLevel", "reasoning_effort", "effort")?.Current,
+                effortLabel = OwlApp.Agents[t].Caps.EffortLabel,
+                questions = OwlApp.Agents[t].Caps.Questions,
             }).ToList(),
             sessions = Sessions.All.Select(State).ToList(),
             // The whole history only when it changed since this page last had it.
@@ -452,11 +476,11 @@ internal sealed class KiroPage
 
     /// The models the composer offers; the first, when it isn't the tool's own
     /// "auto", is preceded by a Default that sends none.
-    private static List<(string Id, string Name)> Models(AgentTool t)
+    private static List<(string Id, string Name, IReadOnlyList<string>? Levels)> Models(AgentTool t)
     {
-        var list = Offer(t, "model", "model")?.Choices.Select(c => (c.Value, c.Name)).ToList()
-                   ?? (t == AgentTool.Kiro ? KiroRunner.Models.ToList() : new());
-        if (list.Count == 0 || !(list[0].Item1 == "auto" || list[0].Item1.StartsWith("default", StringComparison.Ordinal))) list.Insert(0, ("", "Default"));
+        var list = Offer(t, "model", "model")?.Choices.Select(c => (c.Value, c.Name, c.Levels)).ToList()
+                   ?? (t == AgentTool.Kiro ? KiroRunner.Models.Select(x => (x.Id, x.Name, (IReadOnlyList<string>?)null)).ToList() : new());
+        if (list.Count == 0 || !(list[0].Item1 == "auto" || list[0].Item1.StartsWith("default", StringComparison.Ordinal))) list.Insert(0, ("", "Default", null));
         return list;
     }
 
@@ -524,6 +548,15 @@ internal sealed class KiroPage
                 danger = a.Danger,
                 allow = AgentWords.AskAllow(a),
                 more = s.Asks.Count - 1,
+                // A question's own choices, which the office shows as buttons.
+                questions = a.Questions?.Select(q => new
+                {
+                    header = q.Header,
+                    question = q.Question,
+                    options = q.Options.Select(o => new { label = o.Label, description = o.Description }).ToList(),
+                    multiple = q.Multiple,
+                    custom = q.Custom,
+                }).ToList(),
             } : null,
             pose = Pose(s.Phase),
             file = lastStep is null ? "" : Short(lastStep.Target) ?? "",
@@ -666,10 +699,10 @@ internal sealed class KiroPage
         title.FontFamily = Ui.Display;
         AutomationProperties.SetAutomationId(title, "KiroNotice");
         text.Children.Add(title);
-        text.Children.Add(Para("Kiro, Codex and Cursor work on their own here, with full access to their tools. They can edit files " +
+        text.Children.Add(Para("Kiro, Codex, Cursor and OpenCode work on their own here, with full access to their tools. They can edit files " +
                                "and run commands in the project folder you choose, without stopping to ask.", 13.5, Ui.Ink).Margin(0, 8, 0, 0));
         text.Children.Add(Para("So pick the folder with care, and keep it under version control, so you can look over what " +
-                               "changed and undo it if you need to. In Settings each can be made to ask first, in the notch, or (Kiro and Cursor) only read.", 12.5, Ui.InkDim).Margin(0, 6, 0, 0));
+                               "changed and undo it if you need to. In Settings each can be made to ask first, in the notch, or (all but Codex) only read. OpenCode's own deny rules always hold.", 12.5, Ui.InkDim).Margin(0, 6, 0, 0));
         var ok = Ui.Button("OwlBlueButton", "Got it", "KiroNoticeOk", "Got it", () =>
         {
             Settings.KiroNoticeSeen = true;

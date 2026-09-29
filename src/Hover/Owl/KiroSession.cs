@@ -125,7 +125,7 @@ public sealed class KiroSession
 
     public bool Busy => State == KiroState.Running;
 
-    private readonly List<(AgentAsk Ask, TaskCompletionSource<AskAnswer> Done)> _asks = new();
+    private readonly List<(AgentAsk Ask, TaskCompletionSource<AskAnswer>? Done, TaskCompletionSource<IReadOnlyList<IReadOnlyList<string>>?>? Answers)> _asks = new();
 
     /// What the agent is waiting on the user for, oldest first; empty when nothing.
     public IReadOnlyList<AgentAsk> Asks => _asks.Select(a => a.Ask).ToList();
@@ -138,24 +138,55 @@ public sealed class KiroSession
     {
         var done = new TaskCompletionSource<AskAnswer>(TaskCreationOptions.RunContinuationsAsynchronously);
         if (!Busy) { done.SetResult(AskAnswer.Deny); return done.Task; }
-        _asks.Add((ask, done));
-        if (ct.CanBeCanceled)
-        {
-            var ui = SynchronizationContext.Current;
-            ct.Register(() => { if (ui is null) Answer(ask.Id, AskAnswer.Deny); else ui.Post(_ => Answer(ask.Id, AskAnswer.Deny), null); });
-        }
+        _asks.Add((ask, done, null));
+        Withdraw(ask, ct);
         Changed?.Invoke();
         return done.Task;
     }
 
-    /// Answer a question the agent asked. False when it isn't waiting on that one.
+    /// The agent asks the user a question (AgentAsk.Questions). The answer comes from
+    /// AnswerQuestion(): each question's picked labels, in order. Null when the user
+    /// skipped it, or it was withdrawn.
+    public Task<IReadOnlyList<IReadOnlyList<string>>?> AskQuestion(AgentAsk ask, CancellationToken ct = default)
+    {
+        var done = new TaskCompletionSource<IReadOnlyList<IReadOnlyList<string>>?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        if (!Busy || !ask.IsQuestion) { done.SetResult(null); return done.Task; }
+        _asks.Add((ask, null, done));
+        Withdraw(ask, ct);
+        Changed?.Invoke();
+        return done.Task;
+    }
+
+    private void Withdraw(AgentAsk ask, CancellationToken ct)
+    {
+        if (!ct.CanBeCanceled) return;
+        var ui = SynchronizationContext.Current;
+        ct.Register(() => { if (ui is null) Answer(ask.Id, AskAnswer.Deny); else ui.Post(_ => Answer(ask.Id, AskAnswer.Deny), null); });
+    }
+
+    /// Answer what the agent asked. False when it isn't waiting on that one. Deny on a
+    /// question skips it.
     public bool Answer(string id, AskAnswer answer)
     {
         var i = _asks.FindIndex(a => a.Ask.Id == id);
         if (i < 0) return false;
-        var (_, done) = _asks[i];
+        var (_, done, answers) = _asks[i];
         _asks.RemoveAt(i);
-        done.TrySetResult(answer);
+        done?.TrySetResult(answer);
+        answers?.TrySetResult(null);
+        Changed?.Invoke();
+        return true;
+    }
+
+    /// Answer a question the agent asked: the labels picked (or typed) for each of its
+    /// questions. False when it isn't waiting on that one, or the answers don't fit.
+    public bool AnswerQuestion(string id, IReadOnlyList<IReadOnlyList<string>> picked)
+    {
+        var i = _asks.FindIndex(a => a.Ask.Id == id && a.Answers is not null);
+        if (i < 0 || picked.Count != _asks[i].Ask.Questions!.Count || picked.All(p => p.Count == 0)) return false;
+        var (_, _, answers) = _asks[i];
+        _asks.RemoveAt(i);
+        answers!.TrySetResult(picked);
         Changed?.Invoke();
         return true;
     }
@@ -163,7 +194,7 @@ public sealed class KiroSession
     private void DenyAll()
     {
         if (_asks.Count == 0) return;
-        foreach (var (_, done) in _asks) done.TrySetResult(AskAnswer.Deny);
+        foreach (var (_, done, answers) in _asks) { done?.TrySetResult(AskAnswer.Deny); answers?.TrySetResult(null); }
         _asks.Clear();
     }
 
@@ -469,6 +500,7 @@ public static class AgentWords
     /// The question in one line: ("Wants to run", "npm install").
     public static (string Verb, string Object) AskLine(AgentAsk a) => a.Kind switch
     {
+        "question" => ("Asks you", a.Title),
         "execute" => ("Wants to run", Short(a.Command) ?? "a command"),
         "edit" => ("Wants to edit", Short(a.Path) ?? "a file"),
         "delete" => ("Wants to delete", Short(a.Path) ?? "files"),
@@ -480,6 +512,7 @@ public static class AgentWords
     /// The question as its card's title.
     public static string AskTitle(AgentAsk a) => a.Kind switch
     {
+        "question" => a.Questions is { Count: > 1 } q ? $"Asks you {q.Count} questions" : "Asks you a question",
         "execute" => "Wants to run a command",
         "edit" => $"Wants to edit {Short(a.Path) ?? "a file"}",
         "delete" => $"Wants to delete {Short(a.Path) ?? "files"}",
@@ -491,6 +524,6 @@ public static class AgentWords
     /// The word on the button that allows it.
     public static string AskAllow(AgentAsk a) => a.Kind switch
     {
-        "execute" => "Run", "edit" => "Allow edit", "delete" => "Delete", "move" => "Move", _ => "Allow",
+        "execute" => "Run", "edit" => "Allow edit", "delete" => "Delete", "move" => "Move", "question" => "Answer", _ => "Allow",
     };
 }

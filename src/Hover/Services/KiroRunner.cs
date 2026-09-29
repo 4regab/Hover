@@ -70,11 +70,47 @@ public enum AgentApproval { Autopilot, Risky, Always }
 /// Removed how many lines it changes. Reason is Hover's own few words on why it asks;
 /// Danger marks what can't be taken back easily.
 public sealed record AgentAsk(string Id, string Kind, string Title, string? Command, string? Path, string? Preview,
-    int Added, int Removed, string Reason, bool Danger);
+    int Added, int Removed, string Reason, bool Danger, IReadOnlyList<AgentQuestion>? Questions = null)
+{
+    /// A question for the user to answer (Kind "question"), not a tool call to allow.
+    public bool IsQuestion => Questions is { Count: > 0 };
+}
+
+/// One question an agent asks the user (OpenCode's question tool): a short header,
+/// the question, its choices, whether several may be picked, and whether the user
+/// may type an answer of their own.
+public sealed record AgentQuestion(string Header, string Question, IReadOnlyList<(string Label, string Description)> Options,
+    bool Multiple, bool Custom);
 
 /// The user's answer to an AgentAsk. Trust allows this one and the same again for the
 /// rest of the session; TrustAll allows everything the session asks from now on.
 public enum AskAnswer { Allow, Trust, TrustAll, Deny }
+
+/// What a tool can really do, so the office only shows what works.
+public sealed record AgentCaps(bool Questions, bool ReadOnly, bool Resume, string EffortLabel);
+
+/// One agent tool as Hover runs it: an ACP server (Kiro, Codex, Cursor) or OpenCode's
+/// own server. Shared by all of that tool's sessions; the sessions and the views only
+/// ever see this. No WPF in here.
+public interface IAgentRuntime
+{
+    AgentTool Tool { get; }
+    AgentCaps Caps { get; }
+    /// The tool's process is up.
+    bool Alive { get; }
+    /// The models, efforts and modes it offers, whenever they are read. Off the UI thread.
+    event Action<AgentTool, IReadOnlyList<AcpOption>>? OptionsSeen;
+    /// Asks the user about a tool call, for the tool's own session id named first.
+    Func<string, AgentAsk, CancellationToken, Task<AskAnswer>>? Asking { get; set; }
+    /// Asks the user a question the agent has (AgentAsk.Questions). The answer is each
+    /// question's picked labels, in order; null when the user skipped it.
+    Func<string, AgentAsk, CancellationToken, Task<IReadOnlyList<IReadOnlyList<string>>?>>? Questioning { get; set; }
+    /// Runs one turn: a new conversation, or the one resume names. Never throws.
+    Task<KiroResult> Run(string folder, string prompt, IProgress<KiroPhase>? progress, CancellationToken ct,
+        string? resume = null, IProgress<KiroEvent>? events = null, string? access = null);
+    /// End the tool's process now. Runs still going fail; the next one starts it again.
+    void Shutdown(string why = "shut down");
+}
 
 /// What Hover knows about kiro-cli without starting it: its models as a fallback
 /// before a run has listed them, the agents on disk, and whether a folder can be used.

@@ -8,35 +8,41 @@ namespace Hover.Owl;
 /// talking to each other.
 public static class OwlApp
 {
-    /// Each agent tool's ACP process, shared by all of its sessions and shut down when
-    /// it has been idle for the time in its settings.
-    public static IReadOnlyDictionary<Services.AgentTool, Services.AcpHost> Agents { get; } =
+    /// Each agent tool's runtime, shared by all of its sessions and shut down when it
+    /// has been idle for the time in its settings: an ACP server for Kiro, Codex and
+    /// Cursor, OpenCode's own server for OpenCode.
+    public static IReadOnlyDictionary<Services.AgentTool, Services.IAgentRuntime> Agents { get; } =
         Services.Agents.All.ToDictionary(t => t, t =>
         {
-            var host = new Services.AcpHost(t, () => Settings.AgentOptions(t));
+            Services.IAgentRuntime host = t == Services.AgentTool.OpenCode
+                ? new Services.OpenCodeHost(() => Settings.AgentOptions(t))
+                : new Services.AcpHost(t, () => Settings.AgentOptions(t));
             // What the tool offers (models, efforts) fills in its settings page.
             host.OptionsSeen += (tool, offers) => Dispatch(() => Settings.SetAgentOffers(tool, offers));
             // A question goes to the session whose conversation it is, on the UI thread,
             // where the notch and the office show it. One nobody holds is turned down.
-            host.Asking = (sid, ask, ct) =>
-            {
-                var answer = new TaskCompletionSource<Services.AskAnswer>(TaskCreationOptions.RunContinuationsAsynchronously);
-                var app = System.Windows.Application.Current;
-                if (app is null) { answer.SetResult(Services.AskAnswer.Deny); return answer.Task; }
-                app.Dispatcher.BeginInvoke(() =>
-                {
-                    // Kiro is made after Agents; by the time a tool asks, it is there.
-                    var s = Kiro?.All.FirstOrDefault(x => x.Tool == t && x.KiroId == sid && x.Busy);
-                    if (s is null) { answer.TrySetResult(Services.AskAnswer.Deny); return; }
-                    Log.Line($"{Services.Agents.Id(t)} run {s.Id} asks: {ask.Kind} ({ask.Reason})");
-                    s.Ask(ask, ct).ContinueWith(a => answer.TrySetResult(a.Result), TaskScheduler.Default);
-                });
-                return answer.Task;
-            };
+            host.Asking = (sid, ask, ct) => ToSession(t, sid, ask, Services.AskAnswer.Deny, (s, a) => s.Ask(a, ct));
+            host.Questioning = (sid, ask, ct) => ToSession(t, sid, ask, null, (s, a) => s.AskQuestion(a, ct));
             return host;
         });
 
-    /// The office's runs, several at once, each with Kiro, Codex or Cursor.
+    private static Task<T> ToSession<T>(Services.AgentTool t, string sid, Services.AgentAsk ask, T none, Func<KiroSession, Services.AgentAsk, Task<T>> ask2)
+    {
+        var answer = new TaskCompletionSource<T>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var app = System.Windows.Application.Current;
+        if (app is null) { answer.SetResult(none); return answer.Task; }
+        app.Dispatcher.BeginInvoke(() =>
+        {
+            // Kiro is made after Agents; by the time a tool asks, it is there.
+            var s = Kiro?.All.FirstOrDefault(x => x.Tool == t && x.KiroId == sid && x.Busy);
+            if (s is null) { answer.TrySetResult(none); return; }
+            Log.Line($"{Services.Agents.Id(t)} run {s.Id} asks: {ask.Kind} ({ask.Reason})");
+            ask2(s, ask).ContinueWith(a => answer.TrySetResult(a.Result), TaskScheduler.Default);
+        });
+        return answer.Task;
+    }
+
+    /// The office's runs, several at once, each with Kiro, Codex, Cursor or OpenCode.
     public static KiroSessions Kiro { get; } = new(tool =>
     {
         // The session's own access (picked when it started) goes with each turn.
