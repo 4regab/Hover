@@ -55,6 +55,8 @@ dashboard and exits. On Windows this uses the named mutex `Local\HoverRunningIns
 
 Headless: `hover --shots DIR` renders every view with the software renderer. On a
 real X display, `hover --selftest DIR` drives the notch and writes `report.json`.
+End to end on Linux: `port/e2e/run.sh` runs the real app under Xvfb with stand-in
+tools and clicks through every feature with real X input (55 checks).
 
 ## Layout
 

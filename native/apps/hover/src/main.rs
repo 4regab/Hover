@@ -163,6 +163,19 @@ impl App {
         let a = self.clone();
         // A click inside means the user is working here: stop closing on pointer-leave.
         self.notch.on_shape_pressed(move || { let mut n = a.n.borrow_mut(); if n.hover.state == State::Peek { n.hover.opened(false); } });
+        // Notch.cs does this on the shell's PreviewMouseDown: a press anywhere in it,
+        // the office included. The office's own elements take the press before the
+        // shape's TouchArea sees it, so it is watched before Slint gets it.
+        {
+            use slint::winit_030::{winit::event::{ElementState, WindowEvent}, EventResult, WinitWindowAccessor};
+            let w = Rc::downgrade(self);
+            self.notch.window().on_winit_window_event(move |_, e| {
+                if let (WindowEvent::MouseInput { state: ElementState::Pressed, .. }, Some(a)) = (e, w.upgrade()) {
+                    if let Ok(mut n) = a.n.try_borrow_mut() { if n.hover.state == State::Peek { n.hover.opened(false); } }
+                }
+                EventResult::Propagate
+            });
+        }
         let a = self.clone();
         self.notch.on_shape_clicked(move || {
             let (state, kind) = { let n = a.n.borrow(); (n.hover.state, n.rest_kind) };
@@ -254,7 +267,7 @@ impl App {
         // Click-away: focus went to another app once the notch had it.
         let (state, ours) = { let n = self.n.borrow(); (n.hover.state, n.plat.foreground_is_ours()) };
         if state == State::Open && !self.headless {
-            if ours { self.had_focus.set(true); } else if self.had_focus.get() && self.pane.borrow().menu.is_none() { self.collapse(); }
+            if ours { self.had_focus.set(true); } else if self.had_focus.get() && self.pane.borrow().menu.is_none() { hover_core::log::line("click-away: the keyboard went elsewhere, folding"); self.collapse(); }
         }
         // Displays rarely change; a look every 2 s.
         let relayout = {
@@ -328,9 +341,10 @@ impl App {
         }
         ui.set_rest_kind(kind);
         ui.set_divider(isl.divider);
-        ui.set_quotas(view::model_of(isl.quotas.iter().map(|q| QuotaItem {
+        let quotas: Vec<QuotaItem> = isl.quotas.iter().map(|q| QuotaItem {
             id: q.id.as_str().into(), name: q.name.into(), ring: q.ring.map_or(-1.0, |v| v as f32), value: q.value.as_str().into(), pct: q.pct, dim: q.dim,
-        }).collect()));
+        }).collect();
+        if let Some(m) = view::sync(ui.get_quotas(), &quotas) { ui.set_quotas(m); }
         let clear = slint::Color::from_argb_u8(0, 0, 0, 0);
         let mut glow = clear;
         match &isl.seg {
@@ -364,7 +378,7 @@ impl App {
                 // The stack: oldest first, the speaker drawn last, on top.
                 let mut marks: Vec<StackMark> = tools.iter().enumerate().map(|(i, t)| StackMark { tool: t.id().into(), front: if i == *active { 1.0 } else { 0.0 }, i: i as i32 }).collect();
                 marks.sort_by(|a, b| a.front.total_cmp(&b.front));
-                ui.set_stack(view::model_of(marks));
+                if let Some(m) = view::sync(ui.get_stack(), &marks) { ui.set_stack(m); }
                 ui.set_stack_n(tools.len() as i32);
                 ui.set_act_verb((*verb).into());
                 ui.set_act_obj(obj.as_str().into());
@@ -501,10 +515,17 @@ impl App {
                 let w = d.as_weak();
                 d.on_minimize(move || { if let Some(d) = w.upgrade() { d.window().set_minimized(true); } });
                 let w = d.as_weak();
-                d.on_maximize(move || { if let Some(d) = w.upgrade() { let m = !d.window().is_maximized(); d.window().set_maximized(m); d.set_maximized(m); } });
+                d.on_maximize(move || { if let Some(d) = w.upgrade() { let m = !d.window().is_maximized(); d.window().set_maximized(m); d.set_is_maximized(m); } });
+                // Maximized by the system too (a double-click or a snap the desktop does):
+                // the caption's glyph and the resize border follow the window.
+                let w = d.as_weak();
+                d.window().on_winit_window_event(move |_, e| {
+                    if let (winit::event::WindowEvent::Resized(_), Some(d)) = (e, w.upgrade()) { d.set_is_maximized(d.window().is_maximized()); }
+                    slint::winit_030::EventResult::Propagate
+                });
                 let w = d.as_weak();
                 let a = self.clone();
-                d.on_close(move || { if let Some(d) = w.upgrade() { let _ = d.hide(); } let a = a.clone(); Timer::single_shot(Duration::ZERO, move || { a.dash.borrow_mut().take(); a.dash_settings.set(false); a.watching_changed(); }); });
+                d.on_close_clicked(move || { if let Some(d) = w.upgrade() { let _ = d.hide(); } let a = a.clone(); Timer::single_shot(Duration::ZERO, move || { a.dash.borrow_mut().take(); a.dash_settings.set(false); a.watching_changed(); }); });
                 let w = d.as_weak();
                 d.on_drag(move || { if let Some(d) = w.upgrade() { d.window().with_winit_window(|ww| { let _ = ww.drag_window(); }); } });
                 let w = d.as_weak();

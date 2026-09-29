@@ -11,7 +11,7 @@ use hover_core::model::AgentTool;
 use hover_office::bot::Stage;
 use hover_office::live::{In, Live};
 use hover_office::office::{Click, Time};
-use slint::{Color, ComponentHandle, Image, ModelRc, Rgba8Pixel, SharedPixelBuffer, SharedString, VecModel};
+use slint::{Color, ComponentHandle, Image, ModelRc, Rgba8Pixel, SharedPixelBuffer, SharedString};
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::time::Duration;
@@ -59,7 +59,8 @@ pub struct Page {
 }
 
 /// The drawer's thread, laid out and painted by hover-chat.
-struct Chat { id: i32, thread: hover_chat::Thread, painter: hover_chat::Painter, scroll: f32, width: f32, key: String }
+/// answered: which turns had an answer at the last paint (None before the first).
+struct Chat { id: i32, thread: hover_chat::Thread, painter: hover_chat::Painter, scroll: f32, width: f32, key: String, answered: Option<Vec<bool>> }
 
 fn fonts() -> Vec<Vec<u8>> { vec![hover_office::canvas::PIXELIFY.to_vec()] }
 
@@ -215,7 +216,7 @@ impl App {
             let which = self.page.target.get();
             let set = |g: crate::ui::Office| {
                 g.set_scene(img.clone());
-                g.set_tags(ModelRc::new(VecModel::from(tags.clone())));
+                if let Some(m) = crate::view::sync(g.get_tags(), &tags) { g.set_tags(m); }
                 g.set_hint(s(&hint));
                 g.set_tip_x(tx as f32);
                 g.set_tip_y(ty as f32);
@@ -296,7 +297,7 @@ impl App {
         let (title, sub, rows, opens) = self.panel_rows(&st, &sessions);
         *p.rows_open.borrow_mut() = opens;
         let open = p.open.get().and_then(|id| sessions.iter().find(|s| s.id == id).cloned());
-        let summary = if sessions.is_empty() { "The office is quiet.".to_owned() } else { format!("{} sessions in the office", sessions.len()) };
+        let summary = if sessions.is_empty() { "The office is quiet.".to_owned() } else { format!("{} session{} in the office", sessions.len(), if sessions.len() == 1 { "" } else { "s" }) };
         let fab = p.fab.get();
         let time_mode = p.time_mode.get();
         let beats = self.beats.want();
@@ -310,11 +311,11 @@ impl App {
             g.set_menu(menu);
             g.set_access_menu(access_menu);
             g.set_access_head(s(format!("{} may", tool.name()).to_uppercase()));
-            g.set_access_opts(ModelRc::new(VecModel::from(access_opts.clone())));
+            if let Some(m) = crate::view::sync(g.get_access_opts(), &access_opts) { g.set_access_opts(m); }
             g.set_new_access(s(acc_label));
             g.set_new_access_full(acc == "full");
             g.set_new_access_tip(s(&acc_tip));
-            g.set_tools(ModelRc::new(VecModel::from(tools.clone())));
+            if let Some(m) = crate::view::sync(g.get_tools(), &tools) { g.set_tools(m); }
             g.set_new_tool(nt as i32);
             g.set_fab(fab);
             g.set_new_folder(s(folder.as_deref().map(hover_office::office::short).unwrap_or_else(|| "Choose a folder".into())));
@@ -326,7 +327,7 @@ impl App {
             g.set_panel(match p.panel.get() { Some("board") => 1, Some("tv") => 2, Some("history") => 3, _ => 0 });
             g.set_panel_title(s(&title));
             g.set_panel_sub(s(&sub));
-            g.set_rows(ModelRc::new(VecModel::from(rows.clone())));
+            if let Some(m) = crate::view::sync(g.get_rows(), &rows) { g.set_rows(m); }
             g.set_drawer(open.is_some());
             if let Some(o) = &open {
                 let (name, c) = hover_office::bot::BOTS[o.bot % 6];
@@ -448,12 +449,18 @@ impl App {
             let (name, c) = hover_office::bot::BOTS[sess.bot % 6];
             let f = fonts();
             *chat = Some(Chat { id, thread: hover_chat::Thread::new(hover_chat::Shaper::new(&f), name, [(c >> 16) as u8, (c >> 8) as u8, c as u8, 255]),
-                painter: hover_chat::Painter::new(&f, hover_chat::Images::none()), scroll: f32::MAX, width: 0.0, key: sess.key.clone() });
+                painter: hover_chat::Painter::new(&f, hover_chat::Images::none()), scroll: f32::MAX, width: 0.0, key: sess.key.clone(), answered: None });
         }
         let c = chat.as_mut().unwrap();
+        // renderDrawer: #thread keeps to the bottom when it was within 40 px of it, and
+        // jumps there when an answer is new since the last state (never on the first).
+        let was_near = c.thread.height - c.scroll - c.thread.view_h < 40.0;
+        let now: Vec<bool> = turns.iter().map(|t| !t.answer.is_empty()).collect();
+        let fresh = c.answered.replace(now.clone()).is_some_and(|before| now.iter().enumerate().any(|(k, &a)| a && !before.get(k).copied().unwrap_or(false)));
         c.thread.tool = sess.tool.id().into();
         c.thread.view_h = h;
         c.thread.set(&turns, w);
+        if was_near || fresh { c.scroll = f32::MAX; }
         *self.page.turns.borrow_mut() = turns;
         c.width = w;
         let max = (c.thread.height - h).max(0.0);
@@ -497,6 +504,8 @@ impl App {
         g.on_new_fold(move || { a.page.fab.set(0); a.office_widgets(); });
         let a = self.clone();
         g.on_new_folder_clicked(move || { if let Some(f) = crate::pick(true) { *a.page.new_folder.borrow_mut() = Some(f); a.office_widgets(); } });
+        let a = self.clone();
+        g.on_new_draft_edited(move || a.office_widgets());
         let a = self.clone();
         g.on_new_go_clicked(move || {
             let text = each_draft(&a).trim().to_owned();

@@ -356,7 +356,7 @@ export component NotchWindow inherits Window {
         visible: root.view-visible;
         keys := FocusScope {
             key-pressed(e) => {
-                if (e.text == Key.Escape) { root.escape(); return accept; }
+                if (e.text == Key.Escape) { view.escape(); return accept; }
                 reject
             }
             Rectangle {
@@ -365,7 +365,7 @@ export component NotchWindow inherits Window {
                 width: root.open-w;
                 height: root.open-h;
                 opacity: root.view-opacity;
-                OfficeView {
+                view := OfficeView {
                     dashboard: false;
                     in-settings: root.in-settings;
                     back => { root.back(); }
@@ -396,11 +396,11 @@ component Caption inherits Rectangle {
 
 export component DashboardWindow inherits Window {
     in property <bool> in-settings;
-    in property <bool> maximized;
+    in property <bool> is-maximized;
     callback back();
     callback minimize();
     callback maximize();
-    callback close();
+    callback close-clicked();
     // A press on the bar drags the window; on an edge (1 n, 2 s, 3 w, 4 e, 5 nw, 6 ne,
     // 7 sw, 8 se) it resizes it.
     callback drag();
@@ -432,23 +432,30 @@ export component DashboardWindow inherits Window {
                 Text { text: "Hover"; font-size: 12px; font-weight: 500; color: #ffffffd9; vertical-alignment: center; }
                 Rectangle { horizontal-stretch: 1; }
                 Caption { label: "Minimize"; glyph: "M 0 5 L 10 5"; clicked => { root.minimize(); } }
-                Caption { label: root.maximized ? "Restore" : "Maximize"; glyph: root.maximized ? "M 0 2 L 8 2 L 8 10 L 0 10 Z M 2 2 L 2 0 L 10 0 L 10 8 L 8 8" : "M 0.5 0.5 L 9.5 0.5 L 9.5 9.5 L 0.5 9.5 Z"; clicked => { root.maximize(); } }
-                Caption { label: "Close"; close: true; glyph: "M 0 0 L 10 10 M 10 0 L 0 10"; clicked => { root.close(); } }
+                Caption { label: root.is-maximized ? "Restore" : "Maximize"; glyph: root.is-maximized ? "M 0 2 L 8 2 L 8 10 L 0 10 Z M 2 2 L 2 0 L 10 0 L 10 8 L 8 8" : "M 0.5 0.5 L 9.5 0.5 L 9.5 9.5 L 0.5 9.5 Z"; clicked => { root.maximize(); } }
+                Caption { label: "Close"; close: true; glyph: "M 0 0 L 10 10 M 10 0 L 0 10"; clicked => { root.close-clicked(); } }
             }
         }
         Rectangle {
             vertical-stretch: 1;
             // In the app window the office sits on the panel's colour (right in light mode).
             background: Pal.panel;
-            OfficeView {
-                dashboard: true;
-                in-settings: root.in-settings;
-                back => { root.back(); }
+            FocusScope {
+                focus-on-click: false;
+                key-pressed(e) => {
+                    if (e.text == Key.Escape) { dv.escape(); return accept; }
+                    reject
+                }
+                dv := OfficeView {
+                    dashboard: true;
+                    in-settings: root.in-settings;
+                    back => { root.back(); }
+                }
             }
         }
     }
     // The resize border, 6 px, where the frame used to be.
-    if !root.maximized: Rectangle {
+    if !root.is-maximized: Rectangle {
         for e in [{ k: 1, x: 6px, y: 0, w: root.width - 12px, h: 4px }, { k: 2, x: 6px, y: root.height - 6px, w: root.width - 12px, h: 6px },
                   { k: 3, x: 0, y: 6px, w: 6px, h: root.height - 12px }, { k: 4, x: root.width - 6px, y: 6px, w: 6px, h: root.height - 12px },
                   { k: 5, x: 0, y: 0, w: 6px, h: 6px }, { k: 6, x: root.width - 6px, y: 0, w: 6px, h: 6px },

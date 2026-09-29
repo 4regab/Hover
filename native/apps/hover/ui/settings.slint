@@ -139,6 +139,8 @@ component RowView inherits Rectangle {
                 bold-text: true;
                 clicked => { record(); keys.focus(); }
                 keys := FocusScope {
+                    // Over the button: the click starts recording and focuses it.
+                    focus-on-click: false;
                     key-pressed(e) => { if (recording) { return chord(e) ? accept : reject; } reject }
                     focus-changed-event => { if (!self.has-focus && recording) { root.record(); } }
                 }

@@ -11,6 +11,7 @@ cutover has been reviewed; the C# app under `src/` is still the product.
 | `phase3/REPORT.md`, `phase3/RUN-ON-WINDOWS.md` | Phase 3 (persistence, sessions, product): evidence, differences, questions; the Windows checks. |
 | `phase2/` | Phase 2 (the office, native): `REPORT.md`, the scene comparison tools (`capture-scene.mjs`, `compare.py`) and `shots/`. |
 | `phase4/` | Phase 4: `REPORT.md` (Linux benchmark, AT-SPI, packages, the cutover checklist), `RUN-ON-WINDOWS.md` (phases 2 and 4), `bench-linux.json`, `atspi-dump.py`. |
+| `phase6/REPORT.md`, `e2e/` | Every feature end to end under Xvfb (real X input, stand-in tools): the bugs it found and fixed, and the suite (`e2e/run.sh`). |
 | `HANDOFF.md`, `NEXT-PROMPT.md` | The state for the next agent (rules, decisions, setup, lessons), and the prompt for the next session with the checklist ticked so far (3C, 2 and 4 remain). |
 | `bench/` | `Measure-Hover.ps1` (the benchmark on Windows), `measure-hover.py` and `fake-acp.py` (the same scenarios on Linux, no .NET), `capture-office.mjs` (baseline captures). |
 | `tools/` | `FakeAcp` (a stand-in ACP agent) and `HoverFixture` (a sealed history written with Hover's own code). |

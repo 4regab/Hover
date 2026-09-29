@@ -64,6 +64,10 @@ pub fn listen() {
                 }
                 "stopall" => { a.hover.sessions.stop_all(); println!("bench ok"); }
                 "running" => println!("bench running {}", a.hover.sessions.running()),
+                "state" => {
+                    let n = a.n.borrow();
+                    println!("bench state {:?} {:.2} view {} kind {} card {}", n.hover.state, n.openness(), a.notch.get_view_visible(), a.notch.get_rest_kind(), a.card.get());
+                }
                 "frames" => {
                     // Presented-frame intervals over the last N seconds (default 10).
                     let secs: f64 = parts.get(1).and_then(|v| v.parse().ok()).unwrap_or(10.0);

@@ -123,6 +123,8 @@ export global Office {
     callback fab-main();
     callback pick-tool(int);
     callback new-go-clicked();
+    // The task's words changed: Start is ready only with some.
+    callback new-draft-edited();
     callback new-fold();
     callback new-folder-clicked();
     callback tag-clicked(int);
@@ -165,6 +167,9 @@ component Glass inherits Rectangle {
         image-fit: fill;
     }
     Rectangle { background: #160f1eb8; border-radius: root.border-radius; }
+    // An element over the page's canvas takes the pointer: a press, a drag or the wheel
+    // on the panel's empty parts must not reach the scene behind it.
+    TouchArea { scroll-event(e) => { accept } }
     background: transparent;
     border-width: 1px;
     border-color: #ffffff17;
@@ -177,6 +182,7 @@ component Glass inherits Rectangle {
 component Graphite inherits Rectangle {
     border-radius: 20px;
     clip: true;
+    TouchArea { scroll-event(e) => { accept } }
     background: @linear-gradient(180deg, #131116f7 0%, #0d0c0ffa 100%);
     border-width: 1px;
     border-color: #ffffff14;
@@ -588,24 +594,43 @@ export component OfficeView inherits Rectangle {
     callback back();
     callback fold();
 
+    // Esc steps back one layer: the page's keydown on the document, which sees it
+    // whichever field has the keyboard (the task box, the reply, the search).
+    public function escape() {
+        if (in-settings) { root.fold(); return; }
+        if (Office.confirm) { Office.confirm-no(); return; }
+        if (Office.access-menu) { Office.open-access(); return; }
+        if (Office.menu) { Office.toggle-menu(); return; }
+        if (Office.fab != 0) { Office.new-fold(); return; }
+        if (Office.drawer) { Office.d-close(); return; }
+        if (Office.panel != 0) { Office.panel-close(); return; }
+        root.fold();
+    }
+
     // Edge to edge: in the notch its shape clips it (the page drops its border in
     // body.host.notch), in the app window it fills the window.
     office := Rectangle {
         visible: !in-settings;
         clip: true;
         background: #07050a;
+        // The box's and the chat's text fields take the keyboard; when they go, nothing
+        // has it and Esc would do nothing (the page's keys are on the document, which
+        // always has them). So it comes back here.
+        property <int> fab-now: Office.fab;
+        property <bool> drawer-now: Office.drawer;
+        property <int> panel-now: Office.panel;
+        property <bool> confirm-now: Office.confirm;
+        property <bool> menu-now: Office.menu;
+        property <bool> settings-now: root.in-settings;
+        changed fab-now => { if (self.fab-now == 0 && !Office.drawer) { focus.focus(); } }
+        changed drawer-now => { if (!self.drawer-now && Office.fab == 0) { focus.focus(); } }
+        changed panel-now => { if (Office.fab == 0) { focus.focus(); } }
+        changed confirm-now => { if (!self.confirm-now && Office.fab == 0) { focus.focus(); } }
+        changed menu-now => { if (!self.menu-now && Office.fab == 0) { focus.focus(); } }
+        changed settings-now => { if (!self.settings-now) { focus.focus(); } }
         focus := FocusScope {
             key-pressed(e) => {
-                if (e.text == Key.Escape) {
-                    if (Office.confirm) { Office.confirm-no(); return accept; }
-                    if (Office.access-menu) { Office.open-access(); return accept; }
-                    if (Office.menu) { Office.toggle-menu(); return accept; }
-                    if (Office.fab != 0) { Office.new-fold(); return accept; }
-                    if (Office.drawer) { Office.d-close(); return accept; }
-                    if (Office.panel != 0) { Office.panel-close(); return accept; }
-                    root.fold();
-                    return accept;
-                }
+                if (e.text == Key.Escape) { root.escape(); return accept; }
                 Office.key(e.text);
                 accept
             }
@@ -768,6 +793,7 @@ export component OfficeView inherits Rectangle {
                         accessible-role: text-input;
                         accessible-id: "nInput";
                         accessible-label: "Task";
+                        edited => { Office.new-draft-edited(); }
                         key-pressed(e) => { if (e.text == "\n" && !e.modifiers.shift) { Office.new-go-clicked(); return accept; } reject }
                         init => { self.focus(); }
                     }
@@ -845,7 +871,9 @@ export component OfficeView inherits Rectangle {
             accessible-id: "panel";
             accessible-label: Office.panel-title;
             VerticalLayout {
+                // Only the list takes the spare height.
                 HorizontalLayout {
+                    vertical-stretch: 0;
                     padding-left: 14px;
                     padding-right: 10px;
                     padding-top: 12px;
@@ -860,6 +888,7 @@ export component OfficeView inherits Rectangle {
                 }
                 Rectangle { height: 1px; background: #ffffff0f; }
                 if Office.panel == 3: HorizontalLayout {
+                    vertical-stretch: 0;
                     padding-left: 12px; padding-right: 12px; padding-top: 12px;
                     // .hfind: a search box with its magnifier.
                     Rectangle { height: 34px; border-radius: 10px; border-width: 1px; border-color: find.has-focus ? #ffffff38 : #ffffff12; background: #1b181e;
@@ -868,13 +897,19 @@ export component OfficeView inherits Rectangle {
                             accessible-role: text-input; accessible-id: "hFind"; accessible-label: "Find a session"; edited => { Office.find-edited(self.text); } }
                         if Office.find == "": Text { x: 32px; text: "Find a session"; font-size: 12.5px; color: #f6f2ff61; vertical-alignment: center; } }
                 }
-                Flickable {
+                // A Flickable is no taller than its content, so a short list would leave
+                // the spare height to the header; the box around it takes it.
+                Rectangle {
                     vertical-stretch: 1;
-                    content-height: list.preferred-height;
-                    list := VerticalLayout {
-                        padding: 12px;
-                        padding-top: 14px;
-                        for r[i] in Office.rows: RowView { r: r; clicked => { Office.row-clicked(i); } delete => { Office.row-delete(i); } }
+                    Flickable {
+                        width: parent.width;
+                        height: parent.height;
+                        content-height: list.preferred-height;
+                        list := VerticalLayout {
+                            padding: 12px;
+                            padding-top: 14px;
+                            for r[i] in Office.rows: RowView { r: r; clicked => { Office.row-clicked(i); } delete => { Office.row-delete(i); } }
+                        }
                     }
                 }
             }
@@ -1016,6 +1051,15 @@ export component OfficeView inherits Rectangle {
     if in-settings: Rectangle {
         background: Pal.panel;
         border-radius: dashboard ? 0 : 32px;
+        // The keyboard's place while Settings shows, and again when a section's rows
+        // (and the switch or button that had it) are replaced: Esc keeps working.
+        skeys := FocusScope {
+            focus-on-click: false;
+            init => { self.focus(); }
+            key-pressed(e) => { if (e.text == Key.Escape) { root.escape(); return accept; } reject }
+        }
+        property <int> section-now: Page.current;
+        changed section-now => { skeys.focus(); }
         VerticalLayout {
             HorizontalLayout {
                 padding-left: 10px;

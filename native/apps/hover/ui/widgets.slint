@@ -128,8 +128,11 @@ export component PillButton inherits Rectangle {
         pointer-event(e) => { if (e.kind == PointerEventKind.down) { by-pointer = true; } }
         clicked => { fs.focus(); clicked(); }
     }
+    // In front of the TouchArea: taking focus on the press would swallow it, and the
+    // first click would never reach the button. The click gives the focus instead.
     fs := FocusScope {
         enabled: enabled;
+        focus-on-click: false;
         focus-changed-event => { if (!self.has-focus) { by-pointer = false; } }
         key-pressed(e) => {
             if (e.text == " " || e.text == "\n") { clicked(); return accept; }
@@ -144,7 +147,9 @@ export component Switch inherits Rectangle {
     in property <string> id;
     in property <string> label;
     in property <bool> enabled: true;
-    in-out property <bool> on;
+    // The setting's value: a click asks for the change, and the page shown again carries
+    // it. Set here, it would break the binding and a reused row would keep it.
+    in property <bool> on;
     callback toggled(bool);
     accessible-role: switch;
     accessible-id: id;
@@ -152,7 +157,7 @@ export component Switch inherits Rectangle {
     accessible-checkable: true;
     accessible-checked: on;
     accessible-enabled: enabled;
-    accessible-action-default => { on = !on; toggled(on); }
+    accessible-action-default => { toggled(!on); }
     width: 42px;
     height: 26px;
     border-radius: 13px;
@@ -176,13 +181,16 @@ export component Switch inherits Rectangle {
         enabled: enabled;
         mouse-cursor: pointer;
         pointer-event(e) => { if (e.kind == PointerEventKind.down) { by-pointer = true; } }
-        clicked => { fs.focus(); on = !on; toggled(on); }
+        clicked => { fs.focus(); toggled(!on); }
     }
+    // In front of the TouchArea: taking focus on the press would swallow it, and the
+    // first click would never reach the button. The click gives the focus instead.
     fs := FocusScope {
         enabled: enabled;
+        focus-on-click: false;
         focus-changed-event => { if (!self.has-focus) { by-pointer = false; } }
         key-pressed(e) => {
-            if (e.text == " ") { on = !on; toggled(on); return accept; }
+            if (e.text == " ") { toggled(!on); return accept; }
             reject
         }
     }
@@ -198,7 +206,8 @@ export component Segments inherits Rectangle {
     // Segments are equally wide: as wide as the widest label, picked (semibold).
     in property <string> longest;
     in property <bool> enabled: true;
-    in-out property <int> picked;
+    // As Switch's on: the model's pick.
+    in property <int> picked;
     callback pick(int);
     property <length> seg-w: max(58px, measure.preferred-width + 20px);
     property <length> seg-h: measure.preferred-height + 8px;
@@ -238,7 +247,7 @@ export component Segments inherits Rectangle {
         accessible-label: l;
         accessible-checkable: true;
         accessible-checked: picked == i;
-        accessible-action-default => { picked = i; pick(i); }
+        accessible-action-default => { pick(i); }
         Text {
             text: l;
             color: Pal.ink;
@@ -251,7 +260,7 @@ export component Segments inherits Rectangle {
         ta := TouchArea {
             enabled: enabled;
             mouse-cursor: pointer;
-            clicked => { picked = i; pick(i); }
+            clicked => { pick(i); }
         }
     }
 }

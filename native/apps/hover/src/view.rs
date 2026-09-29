@@ -69,6 +69,40 @@ fn tint(t: Tint, p: &Palette) -> Color {
 fn s(v: impl AsRef<str>) -> SharedString { SharedString::from(v.as_ref()) }
 fn model<T: Clone + 'static>(v: Vec<T>) -> ModelRc<T> { ModelRc::new(VecModel::from(v)) }
 
+/// The rows of a model already shown, changed in place: a new model makes each repeated
+/// element anew, and one made again between a press and its release (the office's tags
+/// at 10–30 fps, rows while a session runs) loses the click. Returns the model to set
+/// when there is none yet to change.
+pub fn sync<T: Clone + PartialEq + 'static>(cur: ModelRc<T>, v: &[T]) -> Option<ModelRc<T>> {
+    use slint::Model;
+    let Some(m) = cur.as_any().downcast_ref::<VecModel<T>>() else { return Some(model(v.to_vec())) };
+    for (i, t) in v.iter().enumerate() {
+        if i < m.row_count() { if m.row_data(i).as_ref() != Some(t) { m.set_row_data(i, t.clone()); } } else { m.push(t.clone()); }
+    }
+    while m.row_count() > v.len() { m.remove(m.row_count() - 1); }
+    None
+}
+
+/// Settings' blocks, changed in place down to their rows: the page is built again on
+/// every change, and a row made anew loses what it holds (the shortcut field's
+/// keyboard focus while it records, a press).
+pub fn sync_blocks(cur: ModelRc<Block>, v: Vec<Block>) -> Option<ModelRc<Block>> {
+    use slint::Model;
+    let Some(m) = cur.as_any().downcast_ref::<VecModel<Block>>() else { return Some(model(v)) };
+    let n = v.len();
+    for (i, mut b) in v.into_iter().enumerate() {
+        if let Some(old) = (i < m.row_count()).then(|| m.row_data(i)).flatten().filter(|o| o.kind == b.kind) {
+            let rows: Vec<RowData> = b.rows.iter().collect();
+            b.rows = sync(old.rows.clone(), &rows).unwrap_or(old.rows.clone());
+            let tiles: Vec<TileData> = b.tiles.iter().collect();
+            b.tiles = sync(old.tiles.clone(), &tiles).unwrap_or(old.tiles.clone());
+            if old != b { m.set_row_data(i, b); }
+        } else if i < m.row_count() { m.set_row_data(i, b); } else { m.push(b); }
+    }
+    while m.row_count() > n { m.remove(m.row_count() - 1); }
+    None
+}
+
 /// pages.rs's blocks as Slint's.
 pub fn blocks(bs: &[B], p: &Palette) -> Vec<Block> {
     bs.iter().map(|b| {
@@ -303,9 +337,9 @@ macro_rules! show_page {
     ($w:expr, $pane:expr, $blocks:expr, $pal:expr) => {{
         let g = $w.global::<crate::ui::Page>();
         let pane = $pane;
-        g.set_sections(crate::view::model_of(crate::view::sections($pal)));
+        if let Some(m) = crate::view::sync(g.get_sections(), &crate::view::sections($pal)) { g.set_sections(m); }
         g.set_current(pane.section as i32);
-        g.set_blocks(crate::view::model_of($blocks));
+        if let Some(m) = crate::view::sync_blocks(g.get_blocks(), $blocks) { g.set_blocks(m); }
         g.set_recording(pane.recording);
         match &pane.menu {
             Some((id, opts, x, y)) => {

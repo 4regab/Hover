@@ -1,7 +1,9 @@
 # Handoff: Hover native port (Rust + Slint + wgpu)
 
 Last updated 2026-09-29, at the commit carrying this file. All phases are built on Linux;
-what is left is the Windows run, the open questions and the cutover.
+what is left is the Windows run, the open questions and the cutover. Phase 6
+(`port/phase6/REPORT.md`) ran every feature end to end under Xvfb and fixed the eleven UI
+bugs it found; `port/e2e/run.sh` keeps that run (55 checks).
 Read in this order: this file, `port/README.md`, `port/phase4/REPORT.md` (the cutover
 checklist), `port/phase2/REPORT.md`, `port/phase3/REPORT.md`, `port/phase1/REPORT.md` (the chat and notch prototypes),
 `AGENTS.md`. The prompt that sets the next session's work is `port/NEXT-PROMPT.md`.
@@ -146,7 +148,9 @@ cd .. && node port/phase2/capture-scene.mjs OUT && python3 port/phase2/compare.p
 python3 port/bench/measure-hover.py --runs 1 --append --out port/phase4/bench-linux.json   # ~7 min a run
 sh native/installer/package-linux.sh 0.9.0 /projects/sandbox/dist        # .deb + tarball
 dbus-run-session -- python3 port/phase4/atspi-dump.py out.txt           # under DISPLAY; hangs on quit
+port/e2e/run.sh [sA sB ...]    # end to end: Xvfb + AT-SPI + XTEST, fake-agent.py as the tools; 55 checks, ~9 min
 ```
+(`pip install python-xlib pillow`; PyGObject comes with python3-gobject.)
 
 ## State
 
@@ -202,3 +206,16 @@ dbus-run-session -- python3 port/phase4/atspi-dump.py out.txt           # under 
   native-tls.
 - The office-state fixture was hand-made; `hover-agents/tests/state.rs` lists the four
   values in it that C# can't write.
+- Slint, learned the hard way in Phase 6:
+  - A model set anew makes its repeated elements anew. Between a press and its release
+    that loses the click, and it drops keyboard focus. Change shown models in place
+    (`view::sync`, `view::sync_blocks`).
+  - A FocusScope in front of a TouchArea takes the press to get focus. Use
+    `focus-on-click: false`.
+  - A Flickable is no taller than its content inside a layout.
+  - When the focused element goes, nothing has the keyboard: give it back explicitly.
+  - Assigning to a property bound from outside breaks the binding.
+- The accessible actions (AT-SPI `do_action`) bypass all of the above. Drive the UI with
+  real input (XTEST), as `port/e2e/` does.
+- With no window manager, the harness gives the keyboard to a clicked ordinary window.
+  Leave the pointer off the top strip, or hover opens the notch.
