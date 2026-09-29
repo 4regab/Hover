@@ -2,6 +2,8 @@
 
 Copy everything below the line into the next session.
 
+**Status 2026-09-29:** every Linux item below is done or marked `[~]` with the reason. What remains: the Windows run (`port/phase4/REPORT.md`, cutover checklist), benchmark runs 4–5, questions 5–10, the office gaps in `port/phase2/REPORT.md`. A next session starts from `port/HANDOFF.md` → Next.
+
 ---
 
 You are continuing the native port of Hover (repo `4regab/Hover`, branch
@@ -135,22 +137,22 @@ Build the Windows path from the C# code and a Linux path with the same behaviour
 - [x] Music (office-beats.ogg), tray and notifications, dashboard window, the Alt+N hotkey with rebinding and the conflict warning; launch at login in Settings
 - [x] Notch extras: greeting animation, quota rings, the running and done states, the alert; end announcements (A10)
 - [x] Linux notch: the X11 path under Xvfb with the self-test adapted; the Wayland path under headless weston, or documented limits plus MCQs
-- [ ] Report section; push; report
+- [x] Report section; push; report
 
 **Phase 2: office scene**
-- [ ] The three.js scene (`web/office/main.js`, 1 187 lines) in wgpu: voxel room, PBR with ACES, PCF soft shadows, sprites and particles, canvas textures, bots and poses, camera, picking, tags, frame pacing
-- [ ] The page's UI around it (FEATURES O14–O17: panels, toast, confirm, HUD, the new-task circle), driven by the Rust state message
-- [ ] Glass blur behind the drawer, menu and toast
-- [ ] Visual comparison against the page's Chromium captures (scrollbars shown); numbers per SCREENS.md
-- [ ] The full-workload benchmark on Linux against the frozen thresholds
-- [ ] `port/phase2/REPORT.md`; push; report
+- [x] The three.js scene (`web/office/main.js`, 1 187 lines) in wgpu: voxel room, PBR with ACES, PCF soft shadows, sprites and particles, canvas textures, bots and poses, camera, picking, tags, frame pacing
+- [x] The page's UI around it (FEATURES O14–O17: panels, toast, confirm, HUD, the new-task circle), driven by the Rust state message
+- [x] Glass blur behind the drawer, menu and toast
+- [x] Visual comparison against the page's Chromium captures (scrollbars shown); numbers per SCREENS.md
+- [~] The full-workload benchmark on Linux against the frozen thresholds (3 of 5 runs, absolute numbers; the C# side pending)
+- [x] `port/phase2/REPORT.md`; push; report
 
 **Phase 4: validation and packaging**
-- [ ] The full benchmark and parity sweep on Linux (the Windows run stays pending, with steps written)
-- [ ] UIA (Windows, pending) and AT-SPI (Linux, tested with pyatspi) mapping
-- [ ] Packages: the Windows installer for the Rust exe (from `Hover.iss`, build pending) and a Linux AppImage/.deb (built and smoke-tested)
-- [ ] The cutover checklist: first what still needs the C# app before .NET goes (baseline, WebView2 captures, round trips), then what must pass on Windows, what passed on Linux, and the list of what the removal takes out; an MCQ on keeping the page's JS for the goldens
-- [ ] `port/phase4/REPORT.md`; README, FEATURES, HANDOFF and this checklist updated; push; final report
+- [~] The full benchmark and parity sweep on Linux (3 of 5 runs; ΔE over-10 share fails, question 7) (the Windows run stays pending, with steps written)
+- [x] UIA (Windows, pending) and AT-SPI (Linux, tested with pyatspi) mapping
+- [x] Packages: the Windows installer for the Rust exe (from `Hover.iss`, build pending) and a Linux AppImage/.deb (built and smoke-tested)
+- [x] The cutover checklist: first what still needs the C# app before .NET goes (baseline, WebView2 captures, round trips), then what must pass on Windows, what passed on Linux, and the list of what the removal takes out; an MCQ on keeping the page's JS for the goldens
+- [x] `port/phase4/REPORT.md`; README, FEATURES, HANDOFF and this checklist updated; push; final report
 
 ## What not to do
 

@@ -13,23 +13,23 @@ Source references are to the C# app or the office page (`web/office`).
 
 | # | Feature | Source | Rust |
 |---|---|---|---|
-| O1 | Isometric voxel room: 14×11 tiles, walls, door, window, TV, coffee counter, bookcase, board, clock, painting, lounge, beanbags, plants, 6 desks with chairs/lamps | main.js ~60-230 | — (P2) |
-| O2 | Materials: `MeshStandardMaterial` (roughness 0.88 voxels; visor metalness 0.35), ACES filmic tone mapping, exposure per time of day | main.js 20-30, TIMES | — (P2) |
-| O3 | Lights: hemisphere, sun with PCF soft shadows (1536², bias -0.0004, normalBias 0.03), fill, 6 desk point lights, floor lamp | main.js 230-250 | — (P2) |
-| O4 | Shadow map redrawn only when something moved (walks: every frame; otherwise ≤10 Hz; at once on light change) | frame() | — (P2) |
-| O5 | Additive glow sprites (radial texture), window light patch + beam, dust points, steam, vacuum robot loop | main.js | — (P2) |
-| O6 | Canvas textures: sky (day/night), TV stats (4 Hz), session board (kanban, empty state), LED clock (2 Hz, blinking colon) | drawSky/drawTV/drawBoard/drawClock | — (P2) |
-| O7 | Time of day: auto (7–19 = day), night, day; persisted `office.time`; checked every 60 s | setTime | — (P2) |
-| O8 | Bots: 6 named/coloured, walk in through the door and out, sit, poses per stage/act (waking stretch, thinking, reading, editing typing, running, done cheer, failed, stopped asleep), blinking, bulb colour/halo per stage, desk screen glow | class Bot | — (P2) |
-| O9 | Camera: orthographic iso, drag to pan (6 px threshold), wheel zoom about the pointer (0.85–2.8), double-click and `0` reset, `+`/`-` keys, clamp, eased follow (k=5), focus on open bot / board / TV / history, persisted `office.view` | main.js camera | — (P2) |
-| O10 | Picking: raycast bots and props (TV, board, clock, window, door, bookshelf); hover highlight (pane ×1.35, bot ring); tooltip | pick() | — (P2) |
-| O11 | Name tags and bubbles over heads: typed-out text (45 chars/s), stage colours, tool badge, click opens session, hot state | frame(), spawn | — (P2) |
-| O12 | Frame pacing: 30 fps when lively, 10 fps idle, 1 fps with reduced motion; paused while hidden | frame() | — (P2) |
-| O13 | Reduced motion (`prefers-reduced-motion`) | `still` | — (P2) |
-| O14 | Panels: session board (kanban), office overview (stats, context meters), history (search, day groups, delete) | renderPanel | — (P3C) |
-| O15 | Toast (2.8 s), confirm dialog (delete), model menu, tip | main.js | — (P3C) |
-| O16 | HUD: brand (opens app window; still in window mode), time segment, beats, history, settings, close (notch only) | page.html | — (P3C) |
-| O17 | New-task circle: rest → pick (tool logos, greyed with hint) → open box (prompt, images, folder chip, model pill, send), draft dot, Esc/chevron/click folds, arrow keys between logos | setFab/renderNew | — (P3C) |
+| O1 | Isometric voxel room: 14×11 tiles, walls, door, window, TV, coffee counter, bookcase, board, clock, painting, lounge, beanbags, plants, 6 desks with chairs/lamps | main.js ~60-230 | Linux ✅ · Windows pending |
+| O2 | Materials: `MeshStandardMaterial` (roughness 0.88 voxels; visor metalness 0.35), ACES filmic tone mapping, exposure per time of day | main.js 20-30, TIMES | Linux ✅ · Windows pending |
+| O3 | Lights: hemisphere, sun with PCF soft shadows (1536², bias -0.0004, normalBias 0.03), fill, 6 desk point lights, floor lamp | main.js 230-250 | Linux ✅ · Windows pending |
+| O4 | Shadow map redrawn only when something moved (walks: every frame; otherwise ≤10 Hz; at once on light change) | frame() | Linux ✅ · Windows pending |
+| O5 | Additive glow sprites (radial texture), window light patch + beam, dust points, steam, vacuum robot loop | main.js | Linux ✅ · Windows pending |
+| O6 | Canvas textures: sky (day/night), TV stats (4 Hz), session board (kanban, empty state), LED clock (2 Hz, blinking colon) | drawSky/drawTV/drawBoard/drawClock | Linux ✅ · Windows pending |
+| O7 | Time of day: auto (7–19 = day), night, day; persisted `office.time`; checked every 60 s | setTime | Linux ✅ · Windows pending |
+| O8 | Bots: 6 named/coloured, walk in through the door and out, sit, poses per stage/act (waking stretch, thinking, reading, editing typing, running, done cheer, failed, stopped asleep), blinking, bulb colour/halo per stage, desk screen glow | class Bot | Linux ✅ · Windows pending |
+| O9 | Camera: orthographic iso, drag to pan (6 px threshold), wheel zoom about the pointer (0.85–2.8), double-click and `0` reset, `+`/`-` keys, clamp, eased follow (k=5), focus on open bot / board / TV / history, persisted `office.view` | main.js camera | Linux ✅ · Windows pending |
+| O10 | Picking: raycast bots and props (TV, board, clock, window, door, bookshelf); hover highlight (pane ×1.35, bot ring); tooltip | pick() | Linux ✅ · Windows pending |
+| O11 | Name tags and bubbles over heads: typed-out text (45 chars/s), stage colours, tool badge, click opens session, hot state | frame(), spawn | Linux ✅ · Windows pending |
+| O12 | Frame pacing: 30 fps when lively, 10 fps idle, 1 fps with reduced motion; paused while hidden | frame() | Linux ✅ · Windows pending |
+| O13 | Reduced motion (`prefers-reduced-motion`) | `still` | Linux ✅ · Windows pending |
+| O14 | Panels: session board (kanban), office overview (stats, context meters), history (search, day groups, delete) | renderPanel | Linux ✅ · Windows pending |
+| O15 | Toast (2.8 s), confirm dialog (delete), model menu, tip | main.js | Linux ✅ except the model menu · Windows pending |
+| O16 | HUD: brand (opens app window; still in window mode), time segment, beats, history, settings, close (notch only) | page.html | Linux ✅ · Windows pending |
+| O17 | New-task circle: rest → pick (tool logos, greyed with hint) → open box (prompt, images, folder chip, model pill, send), draft dot, Esc/chevron/click folds, arrow keys between logos | setFab/renderNew | Linux ✅ except image attach and the model pill · Windows pending |
 
 ## Chat drawer
 

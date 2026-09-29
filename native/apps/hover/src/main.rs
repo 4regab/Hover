@@ -573,10 +573,15 @@ fn main() {
     hover_core::log::line("started");
     #[cfg(not(windows))]
     if std::env::var_os("HOVER_BENCH").is_some() { bench::listen(); }
+    #[cfg(not(windows))]
     if let Some(dir) = selftest {
         let a = app.clone();
         Timer::single_shot(Duration::from_millis(500), move || selftest::start(a, std::path::PathBuf::from(dir)));
     }
+    // The product's self-test drives X11; on Windows the notch's is notch-proto's for now
+    // (RUN-ON-WINDOWS, 3C).
+    #[cfg(windows)]
+    if selftest.is_some() { hover_core::log::line("--selftest: not in the Windows build yet; run notch-proto --selftest"); }
     let _ = slint::run_event_loop_until_quit();
     hover_core::log::line("quitting");
     // Stop the agents before anything is torn down; then the history and the settings.

@@ -9,10 +9,12 @@ cutover has been reviewed; the C# app under `src/` is still the product.
 | `phase1/REPORT.md` | The Phase 1 feasibility report: evidence, gate status, gaps, costs. |
 | `phase1/RUN-ON-WINDOWS.md` | How to run the prototypes and gates on a real desktop. |
 | `phase3/REPORT.md`, `phase3/RUN-ON-WINDOWS.md` | Phase 3 (persistence, sessions, product): evidence, differences, questions; the Windows checks. |
+| `phase2/` | Phase 2 (the office, native): `REPORT.md`, the scene comparison tools (`capture-scene.mjs`, `compare.py`) and `shots/`. |
+| `phase4/` | Phase 4: `REPORT.md` (Linux benchmark, AT-SPI, packages, the cutover checklist), `RUN-ON-WINDOWS.md` (phases 2 and 4), `bench-linux.json`, `atspi-dump.py`. |
 | `HANDOFF.md`, `NEXT-PROMPT.md` | The state for the next agent (rules, decisions, setup, lessons), and the prompt for the next session with the checklist ticked so far (3C, 2 and 4 remain). |
-| `bench/` | `Measure-Hover.ps1` (the benchmark) and `capture-office.mjs` (baseline captures). |
+| `bench/` | `Measure-Hover.ps1` (the benchmark on Windows), `measure-hover.py` and `fake-acp.py` (the same scenarios on Linux, no .NET), `capture-office.mjs` (baseline captures). |
 | `tools/` | `FakeAcp` (a stand-in ACP agent) and `HoverFixture` (a sealed history written with Hover's own code). |
-| `../native/` | The Rust workspace: `hover-core` (paths, settings, sealing, history, images, single instance), `hover-agents` (ACP, the tools, sessions, the office's state message), `hover-quota` (the quota readers), `hover-md`, `hover-diagram`, `hover-chat`, `hover-notch`, `apps/hover` (the product: notch, app window, Settings, tray, shortcut, music), `apps/chat-proto`, `apps/notch-proto`. |
+| `../native/` | The Rust workspace: `hover-core` (paths, settings, sealing, history, images, single instance), `hover-agents` (ACP, the tools, sessions, the office's state message), `hover-quota` (the quota readers), `hover-office` (the Agent office on wgpu), `hover-md`, `hover-diagram`, `hover-chat`, `hover-notch`, `apps/hover` (the product: notch, app window, Settings, tray, shortcut, music), `apps/chat-proto`, `apps/notch-proto`; `installer/` (the Rust `Hover.iss`, `package-linux.sh`). |
 
 ## Build (Linux dev VM or Windows)
 

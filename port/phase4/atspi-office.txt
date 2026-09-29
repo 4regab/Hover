@@ -1,0 +1,15 @@
+application | hover | 
+  frame | Hover notch | HoverNotch
+    image | The office is quiet. | 
+    button | Agent office | brand
+      image |  | 
+      label | Agent office | 
+    toggle button | Follow the clock | timeAuto
+    toggle button | Night | timeNight
+    toggle button | Day | timeDay
+    toggle button | Chill beats | beats
+    toggle button | Session history | histBtn
+    toggle button | Settings | setBtn
+    toggle button | Close | closeBtn
+    button | New task | fabMain
+      image |  | 

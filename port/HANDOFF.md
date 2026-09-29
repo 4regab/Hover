@@ -1,8 +1,9 @@
 # Handoff: Hover native port (Rust + Slint + wgpu)
 
-Last updated 2026-09-28, at commit `bbd1d66` plus the commit carrying this file.
-Read in this order: this file, `port/README.md`, `port/phase3/REPORT.md` (the latest
-evidence and decisions), `port/phase1/REPORT.md` (the chat and notch prototypes),
+Last updated 2026-09-29, at the commit carrying this file. All phases are built on Linux;
+what is left is the Windows run, the open questions and the cutover.
+Read in this order: this file, `port/README.md`, `port/phase4/REPORT.md` (the cutover
+checklist), `port/phase2/REPORT.md`, `port/phase3/REPORT.md`, `port/phase1/REPORT.md` (the chat and notch prototypes),
 `AGENTS.md`. The prompt that sets the next session's work is `port/NEXT-PROMPT.md`.
 
 ## Rules the user set (they override anything else)
@@ -61,7 +62,16 @@ evidence and decisions), `port/phase1/REPORT.md` (the chat and notch prototypes)
       to keep a copy of the page's JS under `native/golden/` for regenerating them.
     - Don't remove anything yet; that is the user's step after the gates.
 
-No questions are open.
+12. The office has its own wgpu device on its own thread, and its frame is composited
+    on the CPU (`hover-office::live`, `page`). It is dropped 30 s after it is hidden,
+    as KiroPage drops its WebView2.
+13. The benchmark on Linux is `port/bench/measure-hover.py`, with `fake-acp.py` as the
+    agent (no .NET).
+
+**Open questions** (all in the reports; answers look like `5A 7B`):
+- 5: the notch on native Wayland. 6: bare X without a compositor (`phase3/REPORT.md`).
+- 7: the scene's over-ΔE-10 share (`phase2/REPORT.md`).
+- 8: keeping the page's JS for the goldens. 9: S6 growth. 10: an AppImage (`phase4/REPORT.md`).
 
 ## Where things are
 
@@ -70,7 +80,9 @@ No questions are open.
 | `port/phase0/` | BASELINE, FEATURES (the per-feature checklist, kept current), SCREENS (every screen and its automation ids), MARKDOWN, BENCHMARK (**frozen**), `baseline/*.png` (21 Chromium captures of the page, taken with scrollbars hidden) |
 | `port/phase1/` | REPORT (chat and notch prototypes), RUN-ON-WINDOWS, `shots/` |
 | `port/phase3/` | REPORT (3B and 3A done: what, evidence, differences, answered questions), RUN-ON-WINDOWS (3B, 3A checks), `shots/` |
-| `port/bench/` | `Measure-Hover.ps1` (S1–S6, Windows), `capture-office.mjs` (page captures, scrollbars shown) |
+| `port/phase2/` | REPORT (the office), `capture-scene.mjs` + `compare.py` (scene ΔE against the page), `shots/` |
+| `port/phase4/` | REPORT (benchmark, AT-SPI, packages, cutover checklist), RUN-ON-WINDOWS (phases 2 and 4), `bench-linux.json`, `atspi-dump.py`, `atspi-office.txt` |
+| `port/bench/` | `Measure-Hover.ps1` (S1–S6, Windows), `measure-hover.py` + `fake-acp.py` (S1–S6, Linux), `capture-office.mjs` (page captures, scrollbars shown) |
 | `port/tools/` | `FakeAcp` (stand-in ACP agent, net10.0, runs on Linux), `HoverFixture` (WPF + DPAPI, Windows only) |
 | `native/crates/hover-core` | paths (+ Noty move), `settings.json` (System.Text.Json's bytes), json/time (the serializer's rules), shortcut (WPF key names), crypto (AES-GCM, `KeyGuard`), `platform/{windows,linux}` (DPAPI / Secret Service + 0600 file; HKCU Run / XDG autostart), history (sealed `agents/`), images (`kiro-images`), single (one instance), `bin/hover-data` (`write`, `dump`, `where`) |
 | `native/crates/hover-agents` | stream (KiroStream), acp (AcpHost), agents (exe, args, hints, checks), proc (hidden start; job per tool on Windows; process group + PDEATHSIG + watchdog on Linux), cancel, session (KiroSession/KiroSessions), state (the office's `state`/`transcript`/`say` messages), `examples/probe` |
@@ -79,6 +91,10 @@ No questions are open.
 | `native/crates/hover-notch` | notch geometry, animation, hover rules (Notch.cs) |
 | `native/apps/chat-proto` | the Slint drawer: `main.rs`, `net.rs` (images), `compose.rs` (composer images), `models.rs` (model pill), `live.rs` (a real ACP session), `ui/chat.slint` |
 | `native/apps/notch-proto` | Slint + wgpu 30 DX12 notch; Win32 in `win.rs`; `--selftest`; a plain window on Linux |
+| `native/crates/hover-quota` | Quota.cs: the four readers, SQLite (bundled on Linux, winsqlite3 on Windows), .NET number formatting |
+| `native/crates/hover-office` | the office: scene, bot, canvas, office (camera, picking, pacing, tags), `office.wgsl` + render (three.js 0.170's shading), page (the composite), live (the thread), `examples/shot` |
+| `native/apps/hover` | the product: app, pages (Settings), rest, music, sni (tray), notch, x11, win, office_ui, bench (`HOVER_BENCH`), selftest, shots; `ui/*.slint` |
+| `native/installer/` | `Hover.iss` for the Rust exe (same AppId as C#), `package-linux.sh` (.deb + tarball) |
 | `native/golden/` | page/JS generators, `fixtures/` (incl. `office-state.json`), `expected/`, `acp/` (FakeAcp recordings) |
 
 ## Setting up a new sandbox (Amazon Linux 2023)
@@ -87,7 +103,7 @@ No questions are open.
 dnf install -y dejavu-sans-fonts dejavu-sans-mono-fonts dejavu-serif-fonts \
   xorg-x11-server-Xvfb weston dbus-daemon dbus-tools dbus-x11 gnome-keyring libsecret \
   at-spi2-core python3-gobject mesa-vulkan-drivers mesa-libEGL libxkbcommon-x11 \
-  squashfs-tools rpm-build sqlite
+  squashfs-tools rpm-build sqlite xorg-x11-server-Xwayland mesa-dri-drivers alsa-lib-devel xorg-x11-utils
 rustup target add x86_64-pc-windows-msvc
 # Playwright outside the repo, for the page goldens:
 mkdir -p /projects/sandbox/pw && cd /projects/sandbox/pw && npm init -y && npm i playwright
@@ -97,7 +113,9 @@ ln -s /projects/sandbox/pw/node_modules /projects/sandbox/node_modules
 curl -sSL https://dot.net/v1/dotnet-install.sh | bash -s -- --channel 10.0 --install-dir /opt/dotnet10
 cd /projects/sandbox/Hover
 DOTNET_ROOT=/opt/dotnet10 /opt/dotnet10/dotnet build port/tools/FakeAcp/FakeAcp.csproj -c Release -o /projects/sandbox/fakeacp
-pip install pillow                       # half-size copies of 2x shots for viewing
+pip install pillow numpy fonttools       # half-size copies of 2x shots; compare.py
+(cd /projects/sandbox/pw && npm i three@0.170.0)   # capture-scene.mjs
+# Node: PATH=/root/.nvm/versions/node/v22.23.3/bin:$PATH
 mkdir -p /projects/sandbox/work          # scratch: /tmp is emptied between calls
 ```
 
@@ -105,7 +123,7 @@ mkdir -p /projects/sandbox/work          # scratch: /tmp is emptied between call
 
 ```sh
 cd native
-cargo test --release --workspace                                        # 103 tests
+cargo test --release --workspace --no-fail-fast                         # 151 tests
 cargo check --release --workspace --all-targets --target x86_64-pc-windows-msvc
 cargo clippy --release --workspace --all-targets                        # new code: no warnings
 # FakeAcp live, and re-recording golden/acp (only when the scenarios change):
@@ -120,45 +138,51 @@ DOTNET_ROOT=/opt/dotnet10 HOVER_DATA_DIR=/projects/sandbox/work/d FAKEACP_SECOND
 ./target/release/hover-data write|dump|where ...                         # data folders
 cargo run --release -p hover-agents --example probe -- <folder> [kiro|codex|cursor]
 node golden/gen.mjs                                                      # md/diagram goldens: git stays clean
+./target/release/hover --shots DIR                                        # the product's screens, headless
+Xvfb :9 -screen 0 1920x1080x24 +extension GLX +extension RANDR &          # then:
+DISPLAY=:9 HOVER_DATA_DIR=... XDG_RUNTIME_DIR=/projects/sandbox/rt ./target/release/hover --selftest DIR   # 13/13
+./target/release/examples/shot out.png night|day [--empty]                # the office scene
+cd .. && node port/phase2/capture-scene.mjs OUT && python3 port/phase2/compare.py page.png native.png diff.png
+python3 port/bench/measure-hover.py --runs 1 --append --out port/phase4/bench-linux.json   # ~7 min a run
+sh native/installer/package-linux.sh 0.9.0 /projects/sandbox/dist        # .deb + tarball
+dbus-run-session -- python3 port/phase4/atspi-dump.py out.txt           # under DISPLAY; hangs on quit
 ```
 
 ## State
 
 **Done and tested on Linux** (details and evidence in the reports):
-- Phase 0: docs, frozen benchmark, Chromium captures.
-- Phase 1: md.js and diagram.js byte-identical; the chat thread (copy identical to
-  Chromium on 605 cases, 3 602 of 3 606 page clicks, scrollbars, smooth scroll, images,
-  composer images, model menu, toast, transcript, fade, UIA text nodes); the notch
-  prototype (Windows code, type-checked).
-- Phase 3B: persistence, `hover-core` (33 tests incl. a real GNOME Keyring on a private bus).
-- Phase 3A: sessions and ACP, `hover-agents` (35 tests: the C# AcpHost/session tests
-  ported, 5 FakeAcp recordings replayed, the state message byte for byte); tools die with
-  a `kill -9`'d Hover on Linux; `chat-proto --acp` on a live session.
+- Phases 0, 1, 3 (3A, 3B, 3C), 2 and 4's Linux half.
+- 151 tests. The notch self-test is 13/13 under Xvfb, Xwayland and from the `.deb`.
+- The office scene's mean ΔE is 0.83–1.17 (limit 2.0), but the over-10 share is 1.6–3.0 % (limit 1 %: question 7).
+- The Linux benchmark: 3 of 5 runs (`bench-linux.json`).
+- AT-SPI exposes the HUD ids.
+- `.deb` and tarball built. The Rust `Hover.iss` is written.
 
-**Pending on Windows** (steps in the RUN-ON-WINDOWS files): the notch self-test in both
-hit modes, IME/clipboard/drop/picker/UIA, visual parity, the C# baseline, DPAPI and the
-C#↔Rust data round trips, real turns with kiro-cli/Codex/Cursor, the job object on a
-killed Hover.
+**Gaps in the office** (`phase2/REPORT.md`, about 2 days):
+- The drawer lacks selection and copy, images, the model pill and step toggles.
+- No image attach in the new-task box; no model menu.
+- The bot's halo light.
+- Nodes of a bot that left stay in the scene graph.
 
-**Not started:** 3C (product), Phase 2 (office scene), Phase 4 (validation, packaging,
-cutover). Checklist with the done items ticked: `port/NEXT-PROMPT.md`.
+**Pending on Windows**: every RUN-ON-WINDOWS file (phases 1, 3, 2 and 4), and G1–G4 against the C# medians.
 
-## Next: Phase 3C, where to start
+**Benchmark runs 4 and 5** were cut off. Take them with `--append` into the same file.
 
-C# to read (with a context-gatherer sub-agent): `Owl/Pages.cs` (588 lines, Settings'
-five sections), `Core/Quota.cs` (428), `Core/Palette.cs` (301), `Owl/Theme.cs`,
-`Owl/Ui.cs`, `Owl/Notch.cs` (854: rest pill, greeting, rings, alert, dashboard),
-`Owl/Bot.cs`, `Services/TrayIcon.cs`, `Services/Actions.cs`, `Interop/HotKeys.cs`,
-`Interop/HostWindow.cs`, `Owl/OwlApp.cs` (quota polling, end announcements),
-`App.xaml.cs`. `port/phase0/SCREENS.md` lists the screens and automation ids.
+## Next
 
-Suggested order: quotas and palette first (pure logic, testable against the C# tests in
-`tests/Hover.Tests/LayoutAndQuotaTests.cs`), then an app shell that owns `hover-core`
-and `hover-agents` (single instance, tray, hotkey, settings window), then the notch
-extras and the Linux notch (X11 override-redirect + ARGB + XShape under Xvfb; Wayland
-under `weston --backend=headless`, layer-shell or documented limits).
+1. Answers to questions 5–10.
+2. On Windows, the cutover checklist in `phase4/REPORT.md`, in order: the C# baseline, WebView2 captures and round trips first; then the native checks.
+3. The office gaps.
+4. The removal, only on the user's go-ahead.
 
 ## Lessons
+
+- Background jobs (`&`, `nohup`, `run_in_background`) don't outlive the call here: run
+  long work in the foreground with a timeout, in pieces (`--append`).
+- The office's drop freed little until the last frame and blur left Slint's globals and
+  `malloc_trim(0)` ran (S2 319 → 180 MB).
+- `port/bench/*.py` are LF (`.gitattributes`): the `#!` line breaks with CRLF.
+- `pkill -f` can match the calling shell: use `pkill -x`.
 
 - Edit files with `/projects/sandbox/edit.py FILE` (stdin: `old\n===\nnew`, blocks split
   by `\n%%%\n`; asserts one match; writes CRLF). New files: `/projects/sandbox/crlf.sh`.

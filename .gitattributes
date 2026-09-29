@@ -10,3 +10,4 @@
 # Executed on Linux through their #! line (fake-acp.py runs as kiro-cli): a CR after
 # "python3" makes the kernel look for "python3\r".
 port/bench/*.py text eol=lf
+native/installer/*.sh text eol=lf
