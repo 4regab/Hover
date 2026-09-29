@@ -280,7 +280,8 @@ fn kiro_runs_the_cli_and_gives_up_after_its_deadline() {
         std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
         p
     };
-    let ok = script("kiro-ok", "echo \"$@\" >&2; printf '┃ KIRO PRO ┃\\n┃ ██ 17.5% (resets on 2026-10-01) ┃\\n'");
+    // %% in printf's format: bash (CodeBuild's /bin/sh) reads "%(" as a time format.
+    let ok = script("kiro-ok", "echo \"$@\" >&2; printf '┃ KIRO PRO ┃\\n┃ ██ 17.5%% (resets on 2026-10-01) ┃\\n'");
     let r = read::kiro_with(&ok, &["chat", "--no-interactive", "/usage"], std::time::Duration::from_secs(10));
     assert_eq!((r.used, r.detail.as_str()), (Some(17.5), "KIRO PRO · 18% used · resets 2026-10-01"));
     // A grandchild keeps stdout open after kiro-cli has gone: the deadline still holds.

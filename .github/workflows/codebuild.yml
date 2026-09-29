@@ -59,10 +59,12 @@ jobs:
             & $init -y --profile minimal --default-toolchain none
             if ($LASTEXITCODE -ne 0) { throw 'rustup install failed' }
           }
-          & (Join-Path $cargoBin 'rustup.exe') toolchain install $env:RUST_TOOLCHAIN --profile minimal
+          # The image has its own rustup. Letting it update itself here broke the rustup
+          # call after it, so it doesn't; RUSTUP_TOOLCHAIN picks the toolchain instead of
+          # changing the image's default.
+          & (Join-Path $cargoBin 'rustup.exe') toolchain install $env:RUST_TOOLCHAIN --profile minimal --no-self-update
           if ($LASTEXITCODE -ne 0) { throw 'rustup toolchain install failed' }
-          & (Join-Path $cargoBin 'rustup.exe') default $env:RUST_TOOLCHAIN
-          if ($LASTEXITCODE -ne 0) { throw 'rustup default failed' }
+          Add-Content -Path $env:GITHUB_ENV -Value "RUSTUP_TOOLCHAIN=$env:RUST_TOOLCHAIN"
           Add-Content -Path $env:GITHUB_PATH -Value $cargoBin
 
       - name: Test
