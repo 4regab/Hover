@@ -3,10 +3,11 @@
 # needed to build it) and a plain tarball. Run from the repo root after
 #   (cd native && cargo build --release -p hover)
 #   sh native/installer/package-linux.sh [version] [outdir]
+# The version defaults to the workspace's (native/Cargo.toml).
 # The binary carries its fonts, icon and music; it needs only the system libraries
 # listed in Depends.
 set -eu
-VERSION=${1:-0.0.0}
+VERSION=${1:-$(sed -n 's/^version = "\(.*\)"/\1/p' native/Cargo.toml | head -1)}
 OUT=${2:-dist}
 BIN=native/target/release/hover
 [ -x "$BIN" ] || { echo "build $BIN first" >&2; exit 1; }

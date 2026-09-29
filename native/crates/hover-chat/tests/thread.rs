@@ -8,7 +8,7 @@ use hover_chat::{state, Hit, Painter, Pos, Shaper, Stage, Step, StepIcon, Thread
 fn fonts() -> Vec<Vec<u8>> {
     let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
     let mut v: Vec<Vec<u8>> = ([] as [&str; 0]).iter()
-        .map(|f| std::fs::read(repo.join(format!("src/Hover/Assets/Fonts/{f}.ttf"))).unwrap()).collect();
+        .map(|f| std::fs::read(repo.join(format!("native/apps/hover/assets/{f}.ttf"))).unwrap()).collect();
     v.push(std::fs::read(repo.join("web/office/fonts/PixelifySans.ttf")).unwrap());
     v
 }

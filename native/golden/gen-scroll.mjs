@@ -17,7 +17,7 @@ const b = await chromium.launch({ ignoreDefaultArgs: ['--hide-scrollbars'] });
 const p = await b.newPage({ viewport: { width: 1104, height: 424 } });
 await p.clock.install({ time: fx.now });
 await p.addInitScript(() => { const L = []; window.chrome = { webview: { addEventListener: (t, f) => L.push(f), postMessage() {} } }; window.__send = m => L.forEach(f => f({ data: m })); });
-await p.goto(pathToFileURL(join(repo, 'src', 'Hover', 'Assets', 'kiro-office.html')).href);
+await p.goto(pathToFileURL(join(repo, 'native', 'golden', 'page', 'kiro-office.html')).href);
 await p.waitForFunction(() => window.READY);
 await p.evaluate(s => window.__send(s), fx.state);
 await p.clock.runFor(3000);

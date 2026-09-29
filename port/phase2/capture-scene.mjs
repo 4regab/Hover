@@ -12,7 +12,7 @@ const repo = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const out = process.argv[2] || join(repo, 'port', 'phase2', 'shots');
 mkdirSync(out, { recursive: true });
 const fx = JSON.parse(readFileSync(join(repo, 'native', 'golden', 'fixtures', 'office-state.json'), 'utf8'));
-const page0 = pathToFileURL(join(repo, 'src', 'Hover', 'Assets', 'kiro-office.html')).href;
+const page0 = pathToFileURL(join(repo, 'native', 'golden', 'page', 'kiro-office.html')).href;
 const browser = await chromium.launch({ ignoreDefaultArgs: ['--hide-scrollbars'], args: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--font-render-hinting=none'] });
 async function view(name, { time = 'night', empty = false, zoom = false } = {}) {
   const ctx = await browser.newContext({ viewport: { width: 1104, height: 424 }, deviceScaleFactor: 1 });

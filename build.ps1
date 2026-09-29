@@ -1,12 +1,15 @@
 <#
-  Hover for Windows — build helper.
+  Hover for Windows — build helper (the native build: Rust, in .\native).
 
     .\build.ps1              debug build
     .\build.ps1 release      optimised build
     .\build.ps1 release run  build, then relaunch
-    .\build.ps1 publish      single self-contained Hover.exe in .\publish
-    .\build.ps1 installer    Inno Setup installer in .\dist
-    .\build.ps1 installer -Version 1.0.2
+    .\build.ps1 test         the workspace's tests
+    .\build.ps1 publish      Hover.exe in .\publish
+    .\build.ps1 installer    Inno Setup installer in .\dist (the version in native\Cargo.toml)
+    .\build.ps1 installer -Version 3.0.1
+
+  Needs Rust (winget install Rustlang.Rustup) with the MSVC build tools.
 #>
 param(
     [string]$Mode = "debug",
@@ -15,52 +18,44 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$project = Join-Path $PSScriptRoot "src\Hover\Hover.csproj"
+$native = Join-Path $PSScriptRoot "native"
+$manifest = Join-Path $native "Cargo.toml"
 $publishDir = Join-Path $PSScriptRoot "publish"
-$installerScript = Join-Path $PSScriptRoot "installer\Hover.iss"
+$installerScript = Join-Path $native "installer\Hover.iss"
 $distDir = Join-Path $PSScriptRoot "dist"
 
 if ((-not [string]::IsNullOrWhiteSpace($Version)) -and
-    $Version -notmatch '^\d+\.\d+\.\d+(\.\d+)?$') {
-    throw "Version must contain three or four numeric parts, for example 1.0.2"
+    $Version -notmatch '^\d+\.\d+\.\d+$') {
+    throw "Version must have three numeric parts, for example 3.0.1"
 }
 
 function Stop-Hover {
     Get-Process Hover -ErrorAction SilentlyContinue | Stop-Process -Force
 }
 
-function Publish-Hover {
+function Build-Hover([string]$profile) {
     Stop-Hover
-    $publishArguments = @(
-        "publish", $project,
-        "-c", "Release",
-        "-r", "win-x64",
-        "--self-contained", "true",
-        "-p:PublishSingleFile=true",
-        # Compiled ahead of time, so less memory goes on compiling code at startup.
-        "-p:PublishReadyToRun=true",
-        "-p:IncludeNativeLibrariesForSelfExtract=true",
-        "-p:DebugType=None",
-        "-p:DebugSymbols=false",
-        "-o", $publishDir
-    )
-    if (-not [string]::IsNullOrWhiteSpace($Version)) {
-        $publishArguments += "-p:Version=$Version"
-    }
+    $cargoArgs = @("build", "--manifest-path", $manifest, "-p", "hover")
+    if ($profile -eq "release") { $cargoArgs += "--release" }
+    & cargo @cargoArgs
+    if ($LASTEXITCODE -ne 0) { throw "cargo build failed" }
+    return (Join-Path $native "target\$profile\hover.exe")
+}
 
-    & dotnet @publishArguments
-    if ($LASTEXITCODE -ne 0) { throw "dotnet publish failed" }
+function Publish-Hover {
+    $exe = Build-Hover "release"
+    New-Item -ItemType Directory -Path $publishDir -Force | Out-Null
+    # Hover.exe, as the C# build named it: shortcuts and the Run value point there.
+    Copy-Item $exe (Join-Path $publishDir "Hover.exe") -Force
     Copy-Item (Join-Path $PSScriptRoot "LICENSE") $publishDir -Force
+    Copy-Item (Join-Path $PSScriptRoot "THIRD-PARTY-NOTICES.txt") $publishDir -Force
 }
 
 function Get-ProjectVersion {
     if (-not [string]::IsNullOrWhiteSpace($Version)) { return $Version }
-
-    $projectVersion = (& dotnet msbuild $project --nologo -getProperty:Version | Select-Object -Last 1).Trim()
-    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($projectVersion)) {
-        throw "Could not read the application version from Hover.csproj"
-    }
-    return $projectVersion
+    $line = Select-String -Path $manifest -Pattern '^version = "(.+)"' | Select-Object -First 1
+    if (-not $line) { throw "Could not read the version from native\Cargo.toml" }
+    return $line.Matches[0].Groups[1].Value
 }
 
 function Find-InnoCompiler {
@@ -91,22 +86,20 @@ switch ($Mode.ToLower()) {
         $resolvedVersion = Get-ProjectVersion
         $iscc = Find-InnoCompiler
         New-Item -ItemType Directory -Path $distDir -Force | Out-Null
-        & $iscc "/DMyAppVersion=$resolvedVersion" "/DPublishDir=$publishDir" "/O$distDir" $installerScript
+        & $iscc "/DMyAppVersion=$resolvedVersion" "/DExeDir=$publishDir" "/O$distDir" $installerScript
         if ($LASTEXITCODE -ne 0) { throw "Inno Setup compilation failed" }
         Write-Host (Join-Path $distDir "Hover-Setup-$resolvedVersion.exe")
     }
+    "test" {
+        & cargo test --manifest-path $manifest --release --workspace
+        if ($LASTEXITCODE -ne 0) { throw "cargo test failed" }
+    }
     "release" {
-        Stop-Hover
-        dotnet build $project -c Release --nologo
-        if ($Then -eq "run") {
-            Start-Process (Join-Path $PSScriptRoot "src\Hover\bin\Release\net10.0-windows10.0.17763.0\Hover.exe")
-        }
+        $exe = Build-Hover "release"
+        if ($Then -eq "run") { Start-Process $exe }
     }
     default {
-        Stop-Hover
-        dotnet build $project -c Debug --nologo
-        if ($Then -eq "run") {
-            Start-Process (Join-Path $PSScriptRoot "src\Hover\bin\Debug\net10.0-windows10.0.17763.0\Hover.exe")
-        }
+        $exe = Build-Hover "debug"
+        if ($Then -eq "run") { Start-Process $exe }
     }
 }

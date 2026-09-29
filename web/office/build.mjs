@@ -1,5 +1,5 @@
 // Builds the Kiro office: main.js and three.js bundled by esbuild into one page, with
-// the pixel font inlined. It goes into Hover as src/Hover/Assets/kiro-office.html; the
+// the pixel font inlined. It goes to native/golden/page/kiro-office.html (the page the goldens and captures run); the
 // same file opened in a browser plays with demo sessions.
 //
 //   npm ci          (once, in web/office)
@@ -16,6 +16,6 @@ const page = readFileSync(join(here, 'page.html'), 'utf8')
   .replace('/*FONT*/', () => `@font-face{font-family:"Pixelify Sans";font-weight:400 700;src:url(data:font/ttf;base64,${font}) format("truetype")}`)
   .replace('/*APP*/', () => js)
   .replace(/\r?\n/g, '\r\n');
-const out = join(here, '..', '..', 'src', 'Hover', 'Assets', 'kiro-office.html');
+const out = join(here, '..', '..', 'native', 'golden', 'page', 'kiro-office.html');
 writeFileSync(out, page);
 console.log(`${out} ${(page.length / 1048576).toFixed(2)} MB`);

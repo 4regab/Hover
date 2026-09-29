@@ -14,7 +14,7 @@ https://github.com/user-attachments/assets/024e6b18-0f3e-47b9-99da-2a521644863f
 
 Rest the pointer at the **top centre** of your main screen, or press `Alt+N`, and the
 notch opens into the Agent office. At rest it is a slim pill with your AI quotas and
-any agent at work, or nothing at all. Built with .NET 10 and WPF, for Windows 10 and 11.
+any agent at work, or nothing at all. Built in Rust with Slint and wgpu, for Windows 10 and 11 and Linux (X11, or XWayland on Wayland desktops).
 
 ## Features
 
@@ -26,13 +26,14 @@ any agent at work, or nothing at all. Built with .NET 10 and WPF, for Windows 10
 
 ## Install
 
-Download the latest `Hover-Setup-*.exe` from Releases and run it, or build it
-yourself (below).
+Windows: download the latest `Hover-Setup-*.exe` from Releases and run it. It installs
+over a 2.x install in place. Linux: `make install` (below), or the `.deb`.
 
 ## Privacy
 
-Everything lives in `%APPDATA%\Hover`. The agents' sessions are kept in `agents\`,
-encrypted with AES-GCM under a key protected by Windows DPAPI.
+Everything lives in `%APPDATA%\Hover` (Linux: `~/.local/share/Hover`). The agents' sessions
+are kept in `agents/`, encrypted with AES-GCM under a key protected by Windows DPAPI
+(Linux: the Secret Service, else a file only you can read).
 
 There is no account, server or analytics. Hover itself only goes online for the
 Cursor and Claude Code quotas, if you switch them on (one
@@ -47,20 +48,23 @@ running for 5 or 15 idle minutes (Settings), then stops until you reply.
 
 ## Build
 
-Requires the .NET 10 SDK or newer.
+Requires Rust 1.89 or newer (Windows: with the MSVC build tools). The version is in
+`native/Cargo.toml`.
 
 ```powershell
-# Build and run
-.\build.ps1 release run
+# Windows
+.\build.ps1 release run      # build and run
+.\build.ps1 test             # the tests
+.\build.ps1 publish          # Hover.exe in .\publish
+.\build.ps1 installer        # Hover-Setup-<version>.exe in .\dist (needs Inno Setup 6 or 7)
+```
 
-# Self-contained Hover.exe in .\publish
-.\build.ps1 publish
-
-# Run the tests
-dotnet test .\Hover.slnx -c Release
-
-# Windows installer (needs Inno Setup 6 or 7) in .\dist
-.\build.ps1 installer
+```sh
+# Linux
+make                         # release build
+make test
+sudo make install            # /usr/local (PREFIX=, DESTDIR= as usual); make uninstall
+make package                 # .deb and tarball in dist/
 ```
 
 ## License

@@ -12,7 +12,7 @@ const repo = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const out = process.argv[2] || join(repo, 'port', 'phase0', 'baseline');
 mkdirSync(out, { recursive: true });
 const fx = JSON.parse(readFileSync(join(repo, 'native', 'golden', 'fixtures', 'office-state.json'), 'utf8'));
-const page0 = pathToFileURL(join(repo, 'src', 'Hover', 'Assets', 'kiro-office.html')).href;
+const page0 = pathToFileURL(join(repo, 'native', 'golden', 'page', 'kiro-office.html')).href;
 const W = 1104, H = 424;
 
 // BROWSER_CHANNEL=msedge on Windows: Edge is WebView2's engine, with the same system fonts.

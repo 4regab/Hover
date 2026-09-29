@@ -1,14 +1,14 @@
-; Inno Setup script for the native (Rust) Hover: installer/Hover.iss with the Rust exe.
-; The same AppId, folder, exe name and Run value as the C# installer, so installing
-; this over a C# install replaces it in place (and uninstalls as one product).
-;   iscc /DMyAppVersion=<version> /DExeDir=<native\target\release> /O<dir> native\installer\Hover.iss
-; Build pending: needs Windows and Inno Setup 6 or 7 (RUN-ON-WINDOWS.md, phase 4).
+; Inno Setup script for Hover.
+; The same AppId, folder, exe name and Run value as the C# (2.x) installer had, so
+; installing 3.x over a 2.x install replaces it in place (and uninstalls as one product).
+;   .\build.ps1 installer   (iscc /DMyAppVersion=<version> /DExeDir=<publish> /O<dir> native\installer\Hover.iss)
+; build.ps1 installer passes the version from native/Cargo.toml. Needs Inno Setup 6 or 7.
 
 #ifndef MyAppVersion
-  #define MyAppVersion "0.0.0"
+  #define MyAppVersion "3.0.0"
 #endif
 #ifndef ExeDir
-  #define ExeDir "..\target\release"
+  #define ExeDir "..\..\publish"
 #endif
 
 #define MyAppName "Hover"
@@ -19,6 +19,7 @@
 AppId={{B7E2B4C1-6E3A-4E1F-9A2C-1D0F5A7C9E20}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
+VersionInfoVersion={#MyAppVersion}
 AppPublisher={#MyAppPublisher}
 DefaultDirName={localappdata}\Programs\{#MyAppName}
 DefaultGroupName={#MyAppName}
@@ -36,9 +37,9 @@ ArchitecturesAllowed=x64compatible
 CloseApplications=yes
 
 [Files]
-; cargo names it hover.exe; installed as Hover.exe so shortcuts and the Run value an
-; earlier install wrote still point at it.
-Source: "{#ExeDir}\hover.exe"; DestDir: "{app}"; DestName: "{#MyAppExe}"; Flags: ignoreversion
+; build.ps1 publish copies cargo's hover.exe to publish\Hover.exe, the C# build's name, so
+; shortcuts and the Run value an earlier install wrote still point at it.
+Source: "{#ExeDir}\{#MyAppExe}"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\..\LICENSE"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\..\THIRD-PARTY-NOTICES.txt"; DestDir: "{app}"; Flags: ignoreversion
 

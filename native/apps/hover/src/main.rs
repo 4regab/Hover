@@ -2,6 +2,7 @@
 //! centre, the app window, Settings over the office, the tray icon and the shortcut.
 //!
 //!   hover                 run
+//!   hover --version       print the version (native/Cargo.toml's)
 //!   hover --shots DIR     render every view headless (software renderer) into DIR
 //!   hover --selftest DIR  run on the real display, drive it, and write report.json
 
@@ -546,6 +547,9 @@ pub fn local_set(key: &str, value: &str) {
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     let arg = |f: &str| args.iter().position(|a| a == f).and_then(|i| args.get(i + 1)).cloned();
+    // Before the single-instance check, so it answers while Hover runs. (A Windows
+    // GUI exe has no console: print shows from a terminal that pipes it.)
+    if args.iter().any(|a| a == "--version") { println!("Hover {}", env!("CARGO_PKG_VERSION")); return; }
     if let Some(dir) = arg("--shots") { shots::run(std::path::Path::new(&dir)); return; }
 
     // One notch is the point; two copies of the app is not. A second launch asks the

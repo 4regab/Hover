@@ -1,7 +1,7 @@
 Hover includes the following third-party works.
 
 ========================================================================
-Inter font (src/Hover/Assets/Fonts), version 4.1
+Inter font (native/apps/hover/assets), version 4.1
 https://github.com/rsms/inter
 ========================================================================
 
