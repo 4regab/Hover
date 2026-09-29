@@ -10,6 +10,10 @@ Rest the pointer at the **top centre** of your main screen, or press `Alt+N`, an
 notch opens into the Agent office. At rest it is a slim black island with your AI
 quotas and the agents at work, showing what each is doing, or nothing at all. Built with .NET 10 and WPF, for Windows 10 and 11.
 
+<p align="center">
+  <img src="assets/readme/office.jpg" alt="The Agent office: three agents at their desks, each with a note saying what it is doing">
+</p>
+
 ## Features
 
 - **Agent office**: pick a project folder, type a task, and Kiro, Codex or Cursor does it there in the background. Run up to three at once; each gets a bot at a desk in a little 3D office that shows how it's going. Answers show as formatted text with tables, code, images and flowcharts; every session is kept (encrypted) on the office's bookshelf, and a reply picks it back up.
@@ -18,6 +22,15 @@ quotas and the agents at work, showing what each is doing, or nothing at all. Bu
 - **AI quotas**: Claude Code, Kiro, Codex and Cursor usage on the notch, each as its own logo in a ring.
 - **Settings in the office**: the gear opens it; each agent has its own page for model, effort and tool access.
 - **Themes**: Hover light or dark, or any VS Code theme on your PC.
+
+| | |
+|:---:|:---:|
+| <img src="assets/readme/new-task.jpg" alt="Starting a task: prompt, folder, access and model in one box"> | <img src="assets/readme/approval.jpg" alt="An agent asks to change a file, with Deny, Trust and Allow buttons"> |
+| Start a task | Approve a change |
+| <img src="assets/readme/answer.jpg" alt="A finished answer with a table, code and a flowchart"> | <img src="assets/readme/history.jpg" alt="Session history listing past tasks"> |
+| Read the answer | Pick up a past session |
+
+<sub>Screenshots use sample tasks and answers.</sub>
 
 ## Install
 
