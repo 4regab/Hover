@@ -1,5 +1,6 @@
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Media;
 
 namespace Hover.Owl;
 
@@ -47,6 +48,9 @@ public sealed class OfficeView : UserControl
             bar.Children.Add(close);
         }
         var page = new Grid();
+        // In the app window it sits on the dark title bar's colour; the panel's own
+        // colour keeps it right in light mode.
+        if (_dashboard) page.Background = new SolidColorBrush(Ui.Panel);
         page.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         page.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
         page.Children.Add(bar);

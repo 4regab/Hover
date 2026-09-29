@@ -145,8 +145,9 @@ internal sealed class KiroPage
         };
         AutomationProperties.SetAutomationId(web, "KiroOffice");
         _web = web;
-        // In the notch the shape clips it; the app window keeps soft corners.
-        _root.Children.Add(new Border { CornerRadius = new CornerRadius(_window ? 16 : 0), ClipToBounds = true, Child = web });
+        // Edge to edge: in the notch its shape clips it, in the app window the title
+        // bar sits over it. Shown once the office has drawn, so its first frame never flashes.
+        _root.Children.Add(new Border { Child = web, Opacity = 0 });
         try
         {
             try { await web.EnsureCoreWebView2Async(await SharedEnvironment()); }
@@ -251,6 +252,10 @@ internal sealed class KiroPage
                 Log.Line($"kiro office: ready in {(DateTime.UtcNow - _madeAt).TotalMilliseconds:0} ms");
                 Push();
                 _ = CheckTools();
+                // After the first state has been drawn: a short fade, not a pop.
+                if (_web?.Parent is Border shown)
+                    shown.BeginAnimation(UIElement.OpacityProperty,
+                        new System.Windows.Media.Animation.DoubleAnimation(1, TimeSpan.FromMilliseconds(Animator.Still ? 0 : 180)) { BeginTime = TimeSpan.FromMilliseconds(60) });
                 break;
             case "new":
                 var folder = Str(m, "folder");
@@ -260,7 +265,10 @@ internal sealed class KiroPage
                 var tool = Agents.Parse(Str(m, "tool")) ?? Settings.AgentTool;
                 if (Agents.Known(tool) is { Ok: false } not) { Say("toast", not.Hint); _ = CheckTools(fresh: true); break; }
                 Settings.AgentTool = tool;
-                if (Sessions.Start(tool, folder!, prompt, SaveImages(m)) is null)
+                // The access picked in the new-task box, for this session only.
+                var access = Str(m, "access");
+                if (access is not ("full" or "risky" or "always" or "read") || (access == "read" && !Agents.ReadOnlyWorks(tool))) access = null;
+                if (Sessions.Start(tool, folder!, prompt, SaveImages(m), access) is null)
                     Say("toast", Sessions.CanStart ? "Couldn’t start that task." : $"{KiroSessions.MaxRunning} tasks are running. Start another when one is done.");
                 break;
             case "reply":
@@ -416,7 +424,9 @@ internal sealed class KiroPage
                 // Unknown until checked; the picker offers it meanwhile.
                 ready = Agents.Known(t)?.Ok ?? true,
                 hint = Agents.Known(t)?.Hint ?? "",
-                access = Access(Settings.AgentOptions(t), t),
+                // The tool access a new task starts with, unless the box picks another.
+                access = Settings.AgentOptions(t).AccessId(Agents.ReadOnlyWorks(t)),
+                readOnly = Agents.ReadOnlyWorks(t),
                 hideSteps = Settings.AgentOptions(t).HideSteps,
                 // The composer's model and effort picks: what the tool offered last,
                 // Kiro's own list before it has run.
@@ -432,16 +442,6 @@ internal sealed class KiroPage
         _historySent = _historyVersion;
         core.PostWebMessageAsJson(JsonSerializer.Serialize(state, Json));
     }
-
-    /// What a new task's Start button says the tool may do.
-    private static string Access(AgentOptions o, AgentTool t) =>
-        o.ReadOnly && Agents.ReadOnlyWorks(t) ? "read only"
-        : o.Approval switch
-        {
-            AgentApproval.Risky => "full tool access, asking before commands and deletes",
-            AgentApproval.Always => "full tool access, asking before every change",
-            _ => "full tool access",
-        };
 
     private static AcpOption? Offer(AgentTool t, string category, params string[] ids)
     {
@@ -503,6 +503,8 @@ internal sealed class KiroPage
             title = s.Title,
             folder = s.Folder,
             ctx = s.Context is { } c ? (int?)Math.Round(c) : null,
+            // The session's own tool access, or the tool's setting.
+            access = s.Access ?? Settings.AgentOptions(s.Tool).AccessId(Agents.ReadOnlyWorks(s.Tool)),
             stage = s.Waiting ? "waiting" : Stage(s.State, s.Phase),
             act = Act(s.Phase),
             // What the agent is waiting on the user for, and how many more are behind it.
@@ -571,8 +573,10 @@ internal sealed class KiroPage
         _ => "Thinking",
     };
 
-    /// A step as the page lists it: an icon, a line, and a tag when it failed.
-    private static object?[] Row(KiroStep x, string folder)
+    /// A step as the chat's timeline shows it: its kind's icon, a verb, and the file
+    /// (its name bright, its folder dim) or the command it was about, with the change
+    /// it made or what the command printed, and how it went.
+    private static object Row(KiroStep x, string folder)
     {
         var icon = x.Kind switch { "read" => "read", "edit" or "delete" or "move" => "edit", "execute" => "run", "search" or "fetch" => "search", _ => "think" };
         var verb = x.Kind switch
@@ -581,8 +585,30 @@ internal sealed class KiroPage
             "execute" => "Ran", "search" => "Searched", "fetch" => "Fetched", _ => null,
         };
         var target = Relative(x.Target, folder);
-        var text = verb is null || target is null ? x.Title + (target is null ? "" : " " + target) : verb + " " + target;
-        return new object?[] { icon, text, x.Status == "failed" ? "failed" : null };
+        string? name = null, dir = null, cmd = null;
+        if (x.Kind is "execute" or "search") cmd = target ?? (verb is null ? null : x.Title);
+        else if (target is not null && x.Kind is "read" or "edit" or "delete" or "move")
+        {
+            var t = target.Replace('\\', '/');
+            var i = t.LastIndexOf('/');
+            (name, dir) = i < 0 ? (t, null) : (t[(i + 1)..], t[..i]);
+        }
+        else if (target is not null) cmd = target;
+        return new
+        {
+            k = icon,
+            verb = verb ?? x.Title,
+            name,
+            dir,
+            cmd,
+            status = x.Status,
+            add = x.Added,
+            del = x.Removed,
+            diff = x.Diff,
+            @out = x.Output,
+            exit = x.Exit,
+            ms = x.Ms,
+        };
     }
 
     private static string? Relative(string? target, string folder)

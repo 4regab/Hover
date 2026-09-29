@@ -17,8 +17,11 @@ public sealed record KiroResult(KiroState State, string Text, int? ExitCode = nu
 
 /// One thing Kiro did in a run, from a tool call: its ACP kind (read, edit, execute,
 /// search...), its title, the file or command it was about, and how it went
-/// (in_progress, completed, failed).
-public sealed record KiroStep(string Id, string Kind, string Title, string? Target, string Status);
+/// (in_progress, completed, failed). An edit carries how many lines it adds and
+/// removes and a short preview of the change ("- old", "+ new", "  context"); a
+/// command carries the end of its output and its exit code. Ms is how long it took.
+public sealed record KiroStep(string Id, string Kind, string Title, string? Target, string Status,
+    int Added = 0, int Removed = 0, string? Diff = null, string? Output = null, int? Exit = null, double? Ms = null);
 
 /// Detail from a run as it goes, beside its phase: a step that started or ended, how
 /// full Kiro's context is (0 to 100), and Kiro's own session id, which lets a reply
@@ -37,6 +40,21 @@ public sealed record AgentOptions(string? Model = null, string? Effort = null, b
 {
     public static readonly AgentOptions Default = new();
     public static readonly int[] IdleChoices = { 5, 15 };
+
+    /// A session's own tool access, picked when it started: full, risky (ask first),
+    /// always (ask always) or read. Anything else keeps the tool's setting.
+    public AgentOptions WithAccess(string? access) => access switch
+    {
+        "full" => this with { ReadOnly = false, Approval = AgentApproval.Autopilot },
+        "risky" => this with { ReadOnly = false, Approval = AgentApproval.Risky },
+        "always" => this with { ReadOnly = false, Approval = AgentApproval.Always },
+        "read" => this with { ReadOnly = true },
+        _ => this,
+    };
+
+    /// The id WithAccess takes for these options.
+    public string AccessId(bool readOnlyWorks) => ReadOnly && readOnlyWorks ? "read"
+        : Approval switch { AgentApproval.Risky => "risky", AgentApproval.Always => "always", _ => "full" };
 }
 
 /// When an agent with full access stops to ask. Autopilot never asks (what 2.0 did).
@@ -275,27 +293,99 @@ public sealed class KiroStream
         if (Context is not { } old || Math.Abs(old - v) >= 0.5) { Context = v; _events.Add(new KiroEvent(Context: v)); }
     }
 
-    /// A tool call starts a step; its updates carry the status. The first one names it.
+    private readonly Dictionary<string, DateTime> _began = new();
+
+    /// A tool call starts a step; its updates carry the status, and at the end the
+    /// change it made (ACP diff content) or what the command printed (rawOutput).
     private void Step(JsonElement u)
     {
         if (Str(u, "toolCallId") is not { Length: > 0 } id) return;
-        var status = Str(u, "status") ?? "in_progress";
-        if (_steps.TryGetValue(id, out var known))
+        var status = Str(u, "status");
+        if (!_steps.TryGetValue(id, out var known))
         {
-            if (known.Status == status) return;
-            known = known with { Status = status, Title = Str(u, "title") ?? known.Title };
+            known = new KiroStep(id, Str(u, "kind") ?? "other", Str(u, "title") ?? "Working", Target(u), status ?? "in_progress");
+            _began[id] = DateTime.UtcNow;
         }
-        else
+        var next = known with { Status = status ?? known.Status, Title = Str(u, "title") ?? known.Title, Target = known.Target ?? Target(u) };
+        if (DiffOf(u) is { } d) next = next with { Added = d.Added, Removed = d.Removed, Diff = d.Preview };
+        if (next.Kind == "execute")
         {
-            string? target = null;
-            if (u.TryGetProperty("locations", out var locs) && locs.ValueKind == JsonValueKind.Array)
-                foreach (var l in locs.EnumerateArray()) { target = Str(l, "path"); if (target is not null) break; }
-            if (target is null && u.TryGetProperty("rawInput", out var raw))
-                target = Str(raw, "command") ?? Str(raw, "path") ?? Str(raw, "pattern") ?? Str(raw, "query") ?? Str(raw, "url");
-            known = new KiroStep(id, Str(u, "kind") ?? "other", Str(u, "title") ?? "Working", target, status);
+            if (OutputOf(u, out var exit) is { } o) next = next with { Output = o };
+            if (exit is not null) next = next with { Exit = exit };
         }
-        _steps[id] = known;
-        _events.Add(new KiroEvent(Step: known));
+        if (next.Status is "completed" or "failed" && known.Ms is null && _began.TryGetValue(id, out var t0))
+            next = next with { Ms = (DateTime.UtcNow - t0).TotalMilliseconds };
+        if (_steps.ContainsKey(id) && next == known) return;
+        _steps[id] = next;
+        _events.Add(new KiroEvent(Step: next));
+    }
+
+    private static string? Target(JsonElement u)
+    {
+        string? target = null;
+        if (u.TryGetProperty("locations", out var locs) && locs.ValueKind == JsonValueKind.Array)
+            foreach (var l in locs.EnumerateArray()) { target = Str(l, "path"); if (target is { Length: > 0 }) break; }
+        if (target is not { Length: > 0 } && u.TryGetProperty("rawInput", out var raw))
+            target = Str(raw, "command") ?? Str(raw, "path") ?? Str(raw, "file_path") ?? Str(raw, "pattern") ?? Str(raw, "query") ?? Str(raw, "url");
+        return target is { Length: > 0 } ? target : null;
+    }
+
+    /// The change in a tool call's diff content: lines added and removed, and the
+    /// changed part with a line of context before it, up to a dozen lines.
+    internal static (int Added, int Removed, string Preview)? DiffOf(JsonElement u)
+    {
+        if (!u.TryGetProperty("content", out var content) || content.ValueKind != JsonValueKind.Array) return null;
+        int added = 0, removed = 0;
+        var lines = new List<string>();
+        foreach (var item in content.EnumerateArray())
+        {
+            if (Str(item, "type") != "diff") continue;
+            var oldText = Str(item, "oldText");
+            var newText = Str(item, "newText") ?? "";
+            // Kiro sends an empty diff while the edit is still pending.
+            if (string.IsNullOrEmpty(oldText) && newText.Length == 0) continue;
+            var a = oldText is null ? new List<string>() : oldText.Replace("\r", "").TrimEnd('\n').Split('\n').ToList();
+            var b = newText.Replace("\r", "").TrimEnd('\n').Split('\n').ToList();
+            if (oldText is null or "") a.Clear();
+            // What is the same at both ends is not the change.
+            var head = 0;
+            while (head < a.Count && head < b.Count && a[head] == b[head]) head++;
+            var tail = 0;
+            while (tail < a.Count - head && tail < b.Count - head && a[^(tail + 1)] == b[^(tail + 1)]) tail++;
+            var gone = a.Skip(head).Take(a.Count - head - tail).ToList();
+            var came = b.Skip(head).Take(b.Count - head - tail).ToList();
+            removed += gone.Count;
+            added += came.Count;
+            if (lines.Count >= 12) continue;
+            if (head > 0 && a[head - 1].Trim().Length > 0) lines.Add("  " + Clip(a[head - 1].TrimEnd(), 160));
+            lines.AddRange(gone.Take(6).Select(x => "- " + Clip(x.TrimEnd(), 160)));
+            lines.AddRange(came.Take(12 - Math.Min(12, lines.Count)).Select(x => "+ " + Clip(x.TrimEnd(), 160)));
+        }
+        return added + removed == 0 ? null : (added, removed, string.Join("\n", lines.Take(12)));
+    }
+
+    /// The end of what a command printed, and its exit code, from rawOutput: Kiro's
+    /// {output, exitCode}, Codex's {formatted_output, exit_code}, or plain text.
+    internal static string? OutputOf(JsonElement u, out int? exit)
+    {
+        exit = null;
+        string? text = null;
+        if (u.TryGetProperty("rawOutput", out var ro))
+        {
+            if (ro.ValueKind == JsonValueKind.String) text = ro.GetString();
+            else if (ro.ValueKind == JsonValueKind.Object)
+            {
+                text = Str(ro, "formatted_output") ?? Str(ro, "output") ?? Str(ro, "aggregated_output") ?? Str(ro, "stdout");
+                if (Str(ro, "stderr") is { Length: > 0 } err) text = text is { Length: > 0 } ? text + "\n" + err : err;
+                foreach (var n in new[] { "exitCode", "exit_code" })
+                    if (ro.TryGetProperty(n, out var ec) && ec.ValueKind == JsonValueKind.Number && ec.TryGetInt32(out var v)) exit = v;
+            }
+        }
+        if (text is null) return null;
+        var rows = Quota.StripAnsi(text).Replace("\r", "").Split('\n').Select(l => l.TrimEnd()).ToList();
+        while (rows.Count > 0 && rows[^1].Length == 0) rows.RemoveAt(rows.Count - 1);
+        while (rows.Count > 0 && rows[0].Length == 0) rows.RemoveAt(0);
+        return rows.Count == 0 ? null : string.Join("\n", rows.TakeLast(10).Select(l => Clip(l, 200)));
     }
 
     private void AppendText(JsonElement content)

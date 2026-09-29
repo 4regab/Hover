@@ -12,7 +12,7 @@ one in front is doing, for how long), a question an agent is waiting on, or noth
 Hovering it, clicking it or `Alt+N`
 opens the **Agent office**, which fills the notch: it hands tasks to Kiro, Codex or
 Cursor, which run headlessly, several at once, each in a chosen folder, as bots at
-desks in a three.js office. The office's gear opens Settings over it (five
+desks in a three.js office. The office's menu (time of day, history, Settings) opens Settings over it (five
 sections: General, Integrations, Kiro, Codex, Cursor), with a back button.
 
 The only ordinary window is the dashboard (a click on the office's name in the
@@ -105,7 +105,6 @@ assets/make-icon.py  Writes src/Hover/Assets/hover.ico (one frame per size) and
                      don't edit the outputs. Needs Pillow.
 assets/make-line-icons.py  Writes src/Hover/Owl/Icons.cs from Lucide at a pinned
                      version. Add an icon to NAMES and run it; don't edit Icons.cs.
-assets/demo-*        The README's pictures.
 installer/Hover.iss  Inno Setup script (driven by build.ps1).
 ```
 
@@ -123,14 +122,14 @@ carry a legacy `Noty` reference **only** in `Core/Paths.cs`, which migrates an o
   Background-priority work only when no input is waiting in the queue, and in
   testing that starved the notch poll for 8–14 s at a time.
 - **One full-size, click-through window, on the main display.** The shape grows
-  from its resting size (island, alert, question card, or nothing) to the office by
+  from its resting size (island, question card, or nothing) to the office by
   animating one `Openness` value; the window itself never resizes (that made it
   blink), except when Settings → General → Office size changes. The resting size
   springs to each new width (`RestWidth`, `RestHeight`), so the island breathes as
   its words change. Open, the office fills the shape edge to edge: no margin, no
   rim, no corners of its own (the page drops its border in `body.host.notch`); the
-  shape's clip is its only frame, and the island stays at the top of the page.
-- **Settings sits over the office.** The office's gear (`settings` message) makes
+  shape's clip is its only frame. The notch shows nothing of its own while open.
+- **Settings sits over the office.** Settings in the office's menu (`settings` message) makes
   `OfficeView` lay `SettingsPage` over it, with a back button (and a close
   button in the notch). The office is only collapsed meanwhile, so its sessions go on
   and it comes back at once (after 30 s hidden its WebView2 is dropped and made again).
@@ -195,7 +194,7 @@ carry a legacy `Noty` reference **only** in `Core/Paths.cs`, which migrates an o
   (`Settings.KiroFolder`). Full tool access is explained once
   (`Settings.KiroNoticeSeen`). Sessions live in `OwlApp.Kiro`, shared by both
   views, so hiding or closing a view never stops one: up to three run at once
-  across all tools, and the newest six are kept. Each announces its end, naming the
+  across all tools, and the newest six are kept. Each announces its end in the island (the tool's logo with a badge, and the task) and as a Windows notification, naming the
   tool, and all tools are shut down when Hover quits. They run in a Windows job that
   kills them with Hover, so a killed or crashed Hover leaves none behind. Install and sign-in are
   checked with each tool's own status command (kept five minutes); a tool that
@@ -235,9 +234,9 @@ carry a legacy `Noty` reference **only** in `Core/Paths.cs`, which migrates an o
   10 fps when nothing happens (30 fps while a bot walks or works). Measured: WebView2
   itself is about 94 MB private working set; the office on top of a blank page adds
   about 16 MB, so the renderer is not the cost.
-- **The office has its own close and open-in-a-window.** In the notch the page shows a
-  close button (`fold`) and its name opens the app window (`openApp`); Esc with
-  nothing open in the page folds the notch. In the app window both are left out.
+- **The office has its own open-in-a-window.** In the notch the page's name opens the
+  app window (`openApp`). There is no close button: the notch folds when the pointer
+  leaves, on a click outside, or on Esc with nothing open in the page (`fold`).
 
 ## Conventions
 

@@ -408,7 +408,10 @@ const LOGOS = {
 let logoN = 0;
 const logo = id => (LOGOS[id] || LOGOS.kiro).replaceAll('cg$', 'cg' + logoN++);
 // The demo's own list, until Hover sends the real ones.
-let tools = Object.keys(TOOLS).map(id => ({ id, name: TOOLS[id][0], ready: true, hint: '', access: 'full tool access', models: [{ id: 'auto', name: 'Auto' }, { id: 'm1', name: 'GPT-6 Astra' }], model: 'm1', efforts: ['low', 'medium', 'high'], effort: 'high' })), newTool = 'kiro', toolPicked = false;
+let tools = Object.keys(TOOLS).map(id => ({ id, name: TOOLS[id][0], ready: true, hint: '', access: 'full', readOnly: id !== 'codex', models: [{ id: 'auto', name: 'Auto' }, { id: 'm1', name: 'GPT-6 Astra' }], model: 'm1', efforts: ['low', 'medium', 'high'], effort: 'high' })), newTool = 'kiro', toolPicked = false;
+// The access the new-task box picked, by tool, for the tasks it starts next.
+const newAccess = {};
+const newAccessOf = x => { const a = newAccess[x.id] || x.access; return ACCESS[a] && (a !== 'read' || x.readOnly) ? a : 'full'; };
 const toolOf = s => tools.find(x => x.id === (s?.tool || 'kiro')) || tools[0];
 // The tool shows as its own logo, never its name (that is in the tooltip).
 const badge = id => `<span class="lg mini ${TOOLS[id] ? id : 'kiro'}" title="${(TOOLS[id] || TOOLS.kiro)[0]}" role="img" aria-label="${(TOOLS[id] || TOOLS.kiro)[0]}">${logo(id)}</span>`;
@@ -435,8 +438,11 @@ function demo() {
     { id: 1, bot: 0, desk: 0, title: 'Add refresh token expiry', folder: F, ctx: 31, turns: [{ prompt: 'Refresh tokens never expire. Make them expire after 30 days and return 401 when one is used after that.', stage: 'working', act: 'Reading', file: 'src/auth/refresh.ts', target: 'src/auth/refresh.ts', t0: T0 - 1.4 * min, woke: 2.3,
       steps: [['read', 'Read src/auth/session.ts'], ['read', 'Read src/auth/refresh.ts']], final: 'Done. Refresh tokens now expire after 30 days, and using an expired one returns 401.\n\nI changed refresh.ts and added two tests. All 83 tests pass.' }] },
     { id: 2, bot: 1, desk: 1, title: 'Fix the notch flicker on resize', folder: F, ctx: 48, turns: [{ prompt: 'The notch blinks when I change the workspace size in Settings. Find out why and fix it.', stage: 'done', t0: T0 - 26 * min, woke: 2.1, took: 3 * min + 12e3,
-      steps: [['read', 'Read src/Hover/Owl/Notch.cs'], ['read', 'Read src/Hover/Interop/HostWindow.cs'], ['edit', 'Edited src/Hover/Owl/Notch.cs', '+9 −3'], ['run', 'Ran dotnet test', '81 passed']],
-      answer: 'The notch window was resized and moved in two separate calls, so for one frame it had the new size at the old place. That is the blink.\n\nI changed Notch.cs to set the size and position together in one SetWindowPos call. The build is clean and all 81 tests pass.' }] },
+      steps: [{ k: 'read', verb: 'Read', name: 'Notch.cs', dir: 'src/Hover/Owl', status: 'completed' }, { k: 'read', verb: 'Read', name: 'HostWindow.cs', dir: 'src/Hover/Interop', status: 'completed' },
+        { k: 'search', verb: 'Searched', cmd: 'SetWindowPos(', status: 'completed' },
+        { k: 'edit', verb: 'Edited', name: 'Notch.cs', dir: 'src/Hover/Owl', status: 'completed', add: 2, del: 1, ms: 2100, diff: '  private void Layout()\n- _window.Width = w; _window.Left = x;\n+ _window.PlaceDevice(x, top, w, h);\n+ // size and place in one call' },
+        { k: 'run', verb: 'Ran', cmd: 'dotnet test .\\Hover.slnx -c Release', status: 'completed', exit: 0, ms: 14e3, out: 'Passed!  - Failed: 0, Passed: 81, Skipped: 0\nDuration: 13.8 s - Hover.Tests.dll (net10.0)' }],
+      answer: 'The notch window was resized and moved in **two separate calls**, so for one frame it had the new size at the old place. That is the blink.\n\n- Size and position now go through one `SetWindowPos`.\n- Build clean, **81/81** tests pass.\n\n```csharp\n_window.PlaceDevice(x, s.Work.Top, w, h);\n```' }] },
     { id: 3, bot: 2, desk: 3, title: 'Tests for the calendar reader', folder: F, ctx: 12, arrive: true, turns: [{ prompt: 'Write tests for Calendar.cs covering all-day events and repeating events.', stage: 'waking', t0: T0, steps: [], target: 'tests/Hover.Tests/CalendarTests.cs' }] },
     { id: 4, bot: 3, desk: 4, title: 'Upgrade three.js to 0.171', folder: 'B:\\site', ctx: 22, turns: [{ prompt: 'Upgrade three to 0.171 and fix anything that breaks.', stage: 'failed', t0: T0 - 2.3 * 60 * min, woke: 2.4, took: 48e3, steps: [['read', 'Read package.json'], ['run', 'Ran npm install three@0.171.0', 'failed']],
       answer: 'I couldn\'t finish. npm install stopped with a peer dependency conflict: @react-three/fiber 8 needs three 0.170 or older.\n\nReply "upgrade fiber too" and I will move both together.' }] },
@@ -473,8 +479,8 @@ function freeBot() { const used = new Set(sessions.map(s => s.bot)); const i = B
 // Hover's state: every session, its turns, and what the running one is doing.
 function fromHost(m) {
   // In the app window the page has no close button, and its name opens nothing.
-  $('#closeSeg').hidden = !!m.window; $('#brand').classList.toggle('still', !!m.window); $('#brand').tabIndex = m.window ? -1 : 0;
-  // In the notch the office fills the shape, edge to edge, with the island at its top.
+  $('#brand').classList.toggle('still', !!m.window); $('#brand').tabIndex = m.window ? -1 : 0;
+  // In the notch the office fills the shape, edge to edge.
   document.body.classList.toggle('notch', !m.window);
   canStart = m.canStart; maxRunning = m.maxRunning; if (m.tools) tools = m.tools; if (!toolPicked && m.tool) newTool = m.tool;
   if (m.history) history = m.history;
@@ -487,12 +493,12 @@ function fromHost(m) {
     Object.assign(turns[i], { act: h.act, pose: h.pose, file: h.file });
     let s = sessions.find(x => x.id === h.id);
     if (!s) {
-      s = { id: h.id, key: h.key, files: h.files, tool: h.tool, bot: h.bot, desk: h.seat, title: h.title, folder: h.folder, ctx: h.ctx, ask: h.ask, turns };
+      s = { id: h.id, key: h.key, files: h.files, tool: h.tool, bot: h.bot, desk: h.seat, title: h.title, folder: h.folder, ctx: h.ctx, ask: h.ask, access: h.access, turns };
       sessions.push(s); spawn(s, !firstState && last(s).stage === 'waking');
     } else {
       turns.forEach((t, k) => { const old = s.turns[k]; if (t.answer && !(old && old.answer)) t.fresh = !firstState; });
       if (last(s).stage === 'waking' && s.turns.length !== turns.length && s.b.seated) s.b.sinceSeat = 0;
-      Object.assign(s, { files: h.files, title: h.title, folder: h.folder, ctx: h.ctx, ask: h.ask, turns });
+      Object.assign(s, { files: h.files, title: h.title, folder: h.folder, ctx: h.ctx, ask: h.ask, access: h.access, turns });
     }
   }
   for (const s of [...sessions]) if (!seen.has(s.id)) retire(s);
@@ -557,7 +563,7 @@ function doReply(text, images = []) {
   if (wait) changed(s); else play(s, T);
 }
 function doNew(text, folder, images = []) {
-  if (host) { host.postMessage({ type: 'new', prompt: text, folder, images, tool: newTool }); return true; }
+  if (host) { host.postMessage({ type: 'new', prompt: text, folder, images, tool: newTool, access: newAccessOf(tools.find(x => x.id === newTool) || tools[0]) }); return true; }
   let desk = freeDesk();
   if (desk < 0) {
     const old = sessions.filter(s => !busy(s)).sort((a, b) => last(a).t0 - last(b).t0)[0];
@@ -565,7 +571,7 @@ function doNew(text, folder, images = []) {
     desk = old.desk; retire(old);
   }
   const title = text || 'Look at the attached image';
-  const s = { id: nextId++, bot: freeBot(), desk, folder, title: title.length > 60 ? title.slice(0, 59).trimEnd() + '…' : title, ctx: 3, turns: [{ prompt: text, images, stage: 'waking', t0: Date.now(), steps: [] }] };
+  const s = { id: nextId++, tool: newTool, access: newAccessOf(tools.find(x => x.id === newTool) || tools[0]), bot: freeBot(), desk, folder, title: title.length > 60 ? title.slice(0, 59).trimEnd() + '…' : title, ctx: 3, turns: [{ prompt: text, images, stage: 'waking', t0: Date.now(), steps: [] }] };
   sessions.push(s); spawn(s, true); play(s, s.turns[0]);
   return true;
 }
@@ -664,7 +670,22 @@ const ICON = {
   search: '<svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>',
   think: '<svg viewBox="0 0 24 24"><path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12.7V16h8v-1.3A7 7 0 0 0 12 2Z"/></svg>',
 };
-const LIVE = { 'Read ': 'Reading ', 'Edited ': 'Editing ', 'Ran ': 'Running ', 'Searched ': 'Searching ', 'Fetched ': 'Fetching ', 'Deleted ': 'Deleting ', 'Moved ': 'Moving ' };
+// The live verb for a step that is still going: Edited → Editing.
+const VERB_ON = { Read: 'Reading', Edited: 'Editing', Ran: 'Running', Searched: 'Searching', Fetched: 'Fetching', Deleted: 'Deleting', Moved: 'Moving' };
+// Each tool's accent: its ring in the live strip.
+const ACC = { kiro: '#b48cff', codex: '#7A9DFF', cursor: '#ececf0' };
+const CARET = '<svg class="car" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></svg>';
+const CHECK = '<svg class="ckm" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg>';
+const FOLDER = '<svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/></svg>';
+const SHIELD = '<svg viewBox="0 0 24 24"><path d="M12 3 5 6v5c0 4.4 3 8.3 7 9.5 4-1.2 7-5.1 7-9.5V6Z"/></svg>';
+// What a session may do on its own, picked when it starts.
+const ACCESS = {
+  full: ['Trust all', 'Never asks. Edits, runs commands and goes online on its own.'],
+  risky: ['Ask first', 'Asks before commands, deletes, the network and anything outside the folder.'],
+  always: ['Ask always', 'Asks before every change and every command.'],
+  read: ['Read only', 'Reads and searches. Changes nothing.'],
+};
+const accessNote = (id, tool) => tool === 'codex' && id === 'risky' ? 'Asks to write outside the folder or go online. Codex runs the rest.' : ACCESS[id][1];
 function bubbleFor(s) {
   const T = last(s), b = s.b;
   if (b.path.length) return 'On my way…';
@@ -701,39 +722,135 @@ function imageFor(s) {
     return `https://${s.files}/` + q.split('/').map(encodeURIComponent).join('/');
   };
 }
-const took = ms => ms == null ? '' : ms < 60e3 ? `${Math.max(1, Math.round(ms / 1000))} s` : `${Math.round(ms / 60e3)} min`;
+const took = ms => ms == null ? '' : ms < 60e3 ? `${Math.max(1, Math.round(ms / 1000))} s` : ms < 3600e3 ? `${Math.floor(ms / 60e3)}m ${String(Math.round(ms % 60e3 / 1000) % 60).padStart(2, '0')}s` : `${Math.floor(ms / 3600e3)}h ${String(Math.floor(ms % 3600e3 / 60e3)).padStart(2, '0')}m`;
+const hm = ms => ms ? new Date(ms).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }) : '';
+// A command as a row shows its program and first argument; the whole line is in
+// its tooltip and its output block.
+const cmdShort = c => { const w = String(c).trim().split(/\s+/); w[0] = short(w[0].replace(/^["']|["']$/g, '')); return w.slice(0, 2).join(' ') + (w.length > 2 ? ' …' : ''); };
+const ended = x => x.status === 'completed' || x.status === 'failed';
+// Steps from Hover are objects; the demo's are [icon, "Verb target", tag].
+function stepOf(x) {
+  if (!Array.isArray(x)) return x;
+  const [k, text, tag] = x, sp = text.indexOf(' '), verb = sp < 0 ? text : text.slice(0, sp), rest = sp < 0 ? '' : text.slice(sp + 1);
+  const o = { k, verb, status: tag === 'failed' ? 'failed' : 'completed', tag: tag === 'failed' ? null : tag };
+  if (k === 'run' || k === 'search') o.cmd = rest;
+  else if (rest) { const i = rest.lastIndexOf('/'); o.name = rest.slice(i + 1); o.dir = i < 0 ? null : rest.slice(0, i); }
+  const m = /^\+(\d+) −(\d+)$/.exec(o.tag || ''); if (m) { o.add = +m[1]; o.del = +m[2]; o.tag = null; }
+  return o;
+}
+// Which step blocks the user opened or closed, by session, turn and step.
+const stepOpen = new Map(), turnOpen = new Map();
+function stepRow(x, key, live, open) {
+  const verb = live ? VERB_ON[x.verb] || x.verb : x.verb, fail = x.status === 'failed';
+  const body = x.name ? `${esc(verb)} <b>${esc(x.name)}</b>${x.dir ? `<span class="pth">${esc(x.dir)}</span>` : ''}`
+    : x.cmd ? `${esc(verb)} <code>${esc(x.k === 'run' ? cmdShort(x.cmd) : x.cmd.length > 48 ? x.cmd.slice(0, 47) + '…' : x.cmd)}</code>`
+    : live ? `<b>${esc(verb)}</b>` : esc(verb);
+  const r = [];
+  if (x.add || x.del) r.push(`<span class="a">+${x.add || 0}</span><span class="d">−${x.del || 0}</span>`);
+  if (fail) r.push('<span class="bad">failed</span>');
+  else if (x.k === 'run' && x.exit) r.push(`<span class="bad">exit ${x.exit}</span>`);
+  else if (x.tag) r.push(`<span class="okp">${CHECK} ${esc(x.tag)}</span>`);
+  if (x.ms >= 1000) r.push(`<span>${took(x.ms)}</span>`);
+  const blk = x.diff ? `<div class="blk"><pre>${x.diff.split('\n').map(l => `<span class="${l[0] === '+' ? 'a' : l[0] === '-' ? 'd' : 'c'}">${esc(l)}</span>`).join('')}</pre></div>`
+    : x.out ? `<div class="blk"><div class="bh">Terminal${x.exit != null ? `<span class="ex${x.exit ? ' bad' : ''}">exit ${x.exit}</span>` : ''}</div><pre>${x.cmd ? `<span class="pr">$ ${esc(x.cmd)}</span>` : ''}${x.out.split('\n').map(l => `<span>${esc(l) || ' '}</span>`).join('')}</pre></div>` : '';
+  const tip = x.cmd || [x.dir, x.name].filter(Boolean).join('/') || verb;
+  return `<div class="s k-${x.k || 'think'}${fail ? ' fail' : ''}${live ? ' live' : ''}${blk ? ' exp' : ''}${blk && open ? ' open' : ''}" data-s="${key}" title="${esc(tip)}"${blk ? ` role="button" tabindex="0" aria-expanded="${!!open}"` : ''}>`
+    + `<span class="n">${ICON[x.k] || ICON.think}</span><span class="tx">${body}</span><span class="r">${r.join('')}${blk ? CARET : ''}</span></div>${blk}`;
+}
+// One turn's tool calls as a timeline. Files read one after another fold into one
+// row with their names under it. While the turn runs, its latest change or output
+// is open.
+function stepsHTML(s, T, ti, liveTurn) {
+  const list = T.steps.map(stepOf), rows = [], id = s.key || s.id;
+  const isLive = j => liveTurn && j === list.length - 1 && !ended(list[j]);
+  const lastBlk = liveTurn ? list.findLastIndex(x => x.diff || x.out) : -1;
+  for (let j = 0; j < list.length; j++) {
+    const x = list[j];
+    if (x.k === 'read' && x.name && !isLive(j) && x.status !== 'failed') {
+      let e = j;
+      while (e + 1 < list.length && list[e + 1].k === 'read' && list[e + 1].name && !isLive(e + 1) && list[e + 1].status !== 'failed') e++;
+      const names = [...new Map(list.slice(j, e + 1).map(y => [y.name, [y.dir, y.name].filter(Boolean).join('/')])).entries()];
+      if (names.length > 1) {
+        rows.push(`<div class="s k-read"><span class="n">${ICON.read}</span><span class="tx">Read <b>${names.length} files</b></span><span class="r"></span></div>`
+          + `<div class="fchips">${names.map(([n, full]) => `<span title="${esc(full)}">${esc(n)}</span>`).join('')}</div>`);
+        j = e; continue;
+      }
+    }
+    const key = `${id}:${ti}:${j}`;
+    rows.push(stepRow(x, key, isLive(j), stepOpen.has(key) ? stepOpen.get(key) : j === lastBlk));
+  }
+  if (!rows.length) return '';
+  // Over the timeline, one line: how long it worked and what it did. A finished turn
+  // folds to it; the one running stays open. A click opens or folds it.
+  const n = k => list.filter(x => x.k === k).length, files = new Set(list.filter(x => x.k === 'edit').map(x => x.name || x.cmd || x.verb)).size;
+  const bits = [n('read') && `${n('read')} read`, files && `${files} file${files === 1 ? '' : 's'} edited`, n('run') && `${n('run')} run`].filter(Boolean);
+  const key = `${id}:${ti}`, open = turnOpen.has(key) && turnOpen.get(key);
+  // As in Codex: steps fold away once done. While the turn runs, only the step it
+  // is on shows under the line; the rest are one click away.
+  const j = list.length - 1, now = liveTurn && !open && j >= 0 && isLive(j) ? `<div class="steps now">${stepRow(list[j], `${id}:${ti}:${j}:now`, true, stepOpen.get(`${id}:${ti}:${j}:now`))}</div>` : '';
+  const head = liveTurn ? `Working <span class="tm" data-t0="${T.t0}">${clockOf(T.t0)}</span>` : `Worked ${took(T.took ?? 0) || '—'}`;
+  return `<div class="sum${open ? ' open' : ''}" data-t="${key}" role="button" tabindex="0" aria-expanded="${open}"><span class="sw"><b>${head}</b>${bits.map(b => `<span class="dot">·</span>${b}`).join('')}</span>${CARET}</div><div class="steps">${rows.join('')}</div>${now}`;
+}
+// What a finished turn changed, file by file.
+function changesHTML(T) {
+  const by = new Map();
+  for (const x of T.steps.map(stepOf)) {
+    if (x.k !== 'edit' || !x.name || !(x.add || x.del)) continue;
+    const dir = (x.dir || '').split('/').pop(), k = (dir ? dir + '/' : '') + x.name, v = by.get(k) || [0, 0, [x.dir, x.name].filter(Boolean).join('/')];
+    v[0] += x.add || 0; v[1] += x.del || 0; by.set(k, v);
+  }
+  if (!by.size) return '';
+  const all = [...by.values()], a = all.reduce((n, v) => n + v[0], 0), d = all.reduce((n, v) => n + v[1], 0);
+  const pm = (a, d) => `${a ? `<span class="a">+${a}</span>` : ''}${d ? `<span class="d">−${d}</span>` : ''}`;
+  return `<div class="chg"><div class="ch">${by.size} file${by.size === 1 ? '' : 's'} changed <span>+${a} −${d}</span></div>`
+    + [...by].map(([k, v]) => `<div class="fr" title="${esc(v[2])}"><span>${esc(k)}</span><i>${pm(v[0], v[1])}</i></div>`).join('') + '</div>';
+}
 function renderDrawer() {
   const s = cur(); if (!s) return;
-  const T = last(s), st = T.stage, hide = toolOf(s).hideSteps;
-  $('#dAv').innerHTML = LOGO(s.b.css); $('#dName').innerHTML = esc(s.b.name) + badge(s.tool);
-  $('#dTitle').textContent = s.title; $('#dTitle').title = s.title; $('#dFolder').textContent = s.folder || ''; $('#dFolder').title = s.folder || '';
+  const T = last(s), st = T.stage, x = toolOf(s), hide = x.hideSteps;
+  $('#dAv').innerHTML = `<span class="lg ${TOOLS[s.tool] ? s.tool : 'kiro'}" role="img" aria-label="${esc(x.name)}" title="${esc(x.name)}">${logo(s.tool)}</span>`;
+  $('#dTitle').textContent = s.title; $('#dTitle').title = s.title;
+  const f = $('#dFolder'); f.innerHTML = FOLDER + `<span>${esc(short(s.folder) || s.folder || '')}</span>`; f.title = s.folder || ''; f.hidden = !s.folder;
+  const acc = $('#dAccess'), ac = ACCESS[s.access]; acc.hidden = !ac;
+  if (ac) { acc.innerHTML = SHIELD + esc(ac[0]); acc.title = accessNote(s.access, s.tool); acc.className = 'chip ' + s.access; }
   const ctx = $('#ctx'); ctx.hidden = s.ctx == null;
-  if (s.ctx != null) { const tip = `${s.ctx}% of the context window used`; ctx.dataset.tip = tip; ctx.setAttribute('aria-label', tip); $('#ctxRing').style.setProperty('--p', s.ctx); }
+  if (s.ctx != null) { const tip = `${s.ctx}% of the context window used`; ctx.dataset.tip = tip; ctx.setAttribute('aria-label', tip); $('#ctxRing').style.setProperty('--p', s.ctx); $('#ctxPct').textContent = s.ctx + '%'; }
   const th = $('#thread'), keep = th.scrollHeight - th.scrollTop - th.clientHeight < 40;
-  // Which step lists the user has opened or closed, so a new state keeps them.
-  const shut = new Set([...th.querySelectorAll('details.work')].filter(d => d.dataset.user && !d.open).map(d => d.dataset.i));
-  const opened = new Set([...th.querySelectorAll('details.work')].filter(d => d.dataset.user && d.open).map(d => d.dataset.i));
   let fresh = false;
   th.innerHTML = s.turns.map((T, i) => {
-    const lastTurn = T === last(s), liveTurn = lastTurn && st === 'working';
-    const steps = hide ? '' : T.steps.map(([k, text, tag], j) => {
-      const on = liveTurn && j === T.steps.length - 1, word = Object.keys(LIVE).find(w => text.startsWith(w));
-      return `<div class="${on ? 'on' : ''}"><span class="ic">${ICON[k] || ICON.think}</span><span title="${esc(text)}">${esc(on && word ? LIVE[word] + text.slice(word.length) : text)}</span>${tag && !on ? `<em class="${tag === 'failed' ? 'bad' : ''}">${esc(tag)}</em>` : ''}</div>`;
-    }).join('');
-    const open = opened.has(String(i)) || (liveTurn && !shut.has(String(i)));
-    const work = steps ? `<details class="work" data-i="${i}"${open ? ' open' : ''}><summary>${T.steps.length} step${T.steps.length === 1 ? '' : 's'}${T.took != null ? ' · ' + took(T.took) : ''}</summary><div>${steps}</div></details>` : '';
-    const now = lastTurn && st === 'waiting' && s.ask && !s.archived ? askHTML(s, 'chat')
-      : lastTurn && (st === 'waking' || st === 'working')
-      ? `<div class="status"><span class="ic">${ICON.think}</span><span>${st === 'waking' ? 'Waking up…' : T.act === 'Writing' ? 'Writing it up…' : T.act && T.act !== 'Thinking' ? T.act + '…' : 'Thinking…'}</span></div>` : '';
+    const lastTurn = T === last(s), liveTurn = lastTurn && (st === 'working' || st === 'waiting');
+    const steps = hide ? '' : stepsHTML(s, T, i, liveTurn);
+    const now = lastTurn && st === 'waiting' && s.ask && !s.archived ? askHTML(s, 'chat') : '';
     if (T.answer && T.fresh) { fresh = true; T.fresh = false; }
-    const ans = T.answer ? `<div class="who">${LOGO(s.b.css)}<b>${esc(s.b.name)}</b>${T.took != null ? `<span>· ${took(T.took)}</span>` : ''}</div><div class="ans md ${T.stage === 'failed' ? 'err' : ''}${fresh && lastTurn ? ' fresh' : ''}">${md(T.answer, s)}</div>` : '';
+    const ans = T.answer ? `<div><div class="who2">${badge(s.tool)}<b>${esc(s.b.name)}</b>${T.took != null ? `<span>· ${took(T.took)}</span>` : ''}</div><div class="ans md ${T.stage === 'failed' ? 'err' : ''}${fresh && lastTurn ? ' fresh' : ''}">${md(T.answer, s)}</div></div>` : '';
+    const chg = T.answer && !hide ? changesHTML(T) : '';
     const pics = T.images?.length ? `<div class="pics">${T.images.map(u => `<img src="${esc(u)}" alt="Attached image" loading="lazy">`).join('')}</div>` : '';
-    return `<div class="you">${pics}${esc(T.prompt)}${T.queued ? '<span class="q">Queued · sends when this run ends</span>' : ''}</div>${work}${now}${ans}`;
+    return `<div class="me">${pics}${esc(T.prompt)}${T.queued ? '<span class="q">Queued · sends when this run ends</span>' : ''}${T.t0 ? `<span class="when">${hm(T.t0)}</span>` : ''}</div>${steps}${now}${ans}${chg}`;
   }).join('');
+  // A code block in an answer gets its language and a Copy button.
+  for (const pre of th.querySelectorAll('.ans pre')) {
+    const box = document.createElement('div'); box.className = 'cb';
+    box.innerHTML = `<div class="ch">${esc(pre.dataset.lang || 'code')}<button type="button" data-copy>Copy</button></div>`;
+    pre.replaceWith(box); box.appendChild(pre);
+  }
   if (keep || fresh) th.scrollTop = 1e9;
+  renderLive(s);
   const b = busy(s);
-  $('#input').placeholder = s.archived ? `Reply to wake ${toolOf(s).name} and carry on…` : s.ask ? `Or tell ${s.b.name} what to do instead…` : b ? `Reply now, ${toolOf(s).name} reads it when this run ends` : `Reply to ${s.b.name}…`;
+  $('#input').placeholder = s.archived ? `Reply to wake ${x.name} and carry on…` : s.ask ? `Or tell ${s.b.name} what to do instead…` : b ? `Reply. ${s.b.name} reads it when this run ends` : `Reply to ${s.b.name}…`;
   $('#dDel').hidden = false; renderPill('#dModel', s.tool); syncSend();
+}
+// Over the composer while a run goes: what the agent does now, for how long, and
+// Stop. Amber while it waits for the user.
+function renderLive(s) {
+  const el = $('#live'), on = !!s && !s.archived && busy(s);
+  el.hidden = !on; if (!on) return;
+  const T = last(s), asking = T.stage === 'waiting' && s.ask;
+  el.classList.toggle('ask', !!asking); el.style.setProperty('--tc', ACC[s.tool] || ACC.kiro);
+  const words = asking ? `<b>Waiting for you</b> · ${esc(s.ask.line || s.ask.title)}`
+    : T.stage === 'waking' ? '<b>Waking up</b>'
+    : !T.act || T.act === 'Thinking' ? '<b>Thinking</b>' : T.act === 'Writing' ? '<b>Writing it up</b>'
+    : `<b>${esc(T.act)}</b>${T.file ? ' ' + esc(short(T.file)) : ''}`;
+  el.innerHTML = `<span class="spin"></span><span class="lw">${words}</span><span class="tm" data-t0="${T.t0}">${clockOf(T.t0)}</span><button class="stop" type="button" aria-label="Stop this run" title="Stop this run"><i></i>Stop</button>`;
 }
 const day = ms => { const d = new Date(ms), n = new Date(); const k = (n - new Date(d.getFullYear(), d.getMonth(), d.getDate())) / 864e5; return k < 1 ? 'Today' : k < 2 ? 'Yesterday' : k < 7 ? 'This week' : d.toLocaleDateString(undefined, { month: 'long', year: 'numeric' }); };
 let historyFind = '';
@@ -747,11 +864,14 @@ function renderPanel() {
     let at = '';
     const rows = list.map(h => {
       const head = day(h.at) !== at ? `<h4 class="sh">${esc(at = day(h.at))}</h4>` : '';
-      const desk = sessions.some(s => s.key === h.key);
-      return head + `<div class="hrow"><button class="card st-${h.stage}" data-key="${h.key}">${LOGO((TOOLS[h.tool] || TOOLS.kiro)[1])}<span class="ct"><b>${esc(WORD[h.stage] || h.stage)}${badge(h.tool)}${desk ? ' <i class="hat">at a desk</i>' : ''}</b><span>${esc(h.title)}</span><em>${ago(h.at)} · ${h.turns} turn${h.turns === 1 ? '' : 's'} · ${esc(short(h.folder))}</em></span></button><button class="x" data-del="${h.key}" aria-label="Delete ${esc(h.title)}" title="Delete"><svg viewBox="0 0 24 24"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V4h6v3"/></svg></button></div>`;
+      const desk = sessions.some(s => s.key === h.key), tool = TOOLS[h.tool] ? h.tool : 'kiro';
+      const meta = [`<span class="hs st-${h.stage}"><i></i>${esc(WORD[h.stage] || h.stage)}</span>`, esc(ago(h.at)), `${h.turns} turn${h.turns === 1 ? '' : 's'}`, `<span class="hf" title="${esc(h.folder)}">${esc(short(h.folder))}</span>`];
+      return head + `<div class="hrow"><button class="hr" data-key="${h.key}" title="${esc(h.title)}"><span class="lg ${tool}" role="img" aria-label="${TOOLS[tool][0]}">${logo(tool)}</span>`
+        + `<span class="ht"><b>${esc(h.title)}</b><span class="hm">${meta.join('<span class="dot">·</span>')}${desk ? '<span class="hat">At a desk</span>' : ''}</span></span></button>`
+        + `<button class="hx" data-del="${h.key}" aria-label="Delete ${esc(h.title)}" title="Delete"><svg viewBox="0 0 24 24"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V4h6v3"/></svg></button></div>`;
     }).join('');
     const find = body.querySelector('#hFind'), had = document.activeElement === find;
-    body.innerHTML = `<input id="hFind" type="search" placeholder="Find a session" aria-label="Find a session" value="${esc(historyFind)}">${rows || `<p class="none">${history.length ? 'Nothing matches.' : 'Sessions you start are kept here. Open one to read it, reply to carry on.'}</p>`}`;
+    body.innerHTML = `<label class="hfind"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><input id="hFind" type="search" placeholder="Find a session" aria-label="Find a session" value="${esc(historyFind)}"></label>${rows || `<p class="none">${history.length ? 'Nothing matches.' : 'Sessions you start are kept here. Open one to read it, reply to carry on.'}</p>`}`;
     if (had) { const f = body.querySelector('#hFind'); f.focus(); f.setSelectionRange(f.value.length, f.value.length); }
     return;
   }
@@ -772,7 +892,7 @@ function renderPanel() {
   }
 }
 function changed(s) {
-  drawBoard(); renderPanel(); renderAsks(); renderIsland();
+  drawBoard(); renderPanel(); renderAsks();
   if (s && s.id === sel && drawerOpen) renderDrawer();
 }
 
@@ -812,25 +932,8 @@ addEventListener('click', e => {
   if (s?.ask && s.ask.id === card.dataset.ask) answer(s, s.ask.id, b.dataset.ans);
 });
 
-// The island: in the notch, the resting notch stays at the top of the open office,
-// with the agents' logos, what the newest is doing and for how long; amber while one
-// asks. A click opens that session.
-function renderIsland() {
-  const el = $('#island'); if (!el) return;
-  const live = sessions.filter(busy), show = live.length > 0 && (!host || document.body.classList.contains('notch'));
-  el.hidden = !show; if (!show) return;
-  const asking = live.find(x => x.ask && last(x).stage === 'waiting'), s = asking || live[live.length - 1], T = last(s);
-  const words = asking ? `<span class="v">${esc(s.ask.line || s.ask.title)}</span>`
-    : T.stage === 'waking' ? '<span class="v">Waking up</span>'
-    : `<span class="v">${esc(T.act === 'Thinking' || !T.act ? 'Thinking' : T.act === 'Writing' ? 'Writing it up' : T.act)}</span>${T.file && T.act !== 'Thinking' && T.act !== 'Writing' ? ` <b>${esc(short(T.file))}</b>` : ''}`;
-  el.classList.toggle('ask', !!asking);
-  el.dataset.open = s.id; el.dataset.t0 = T.t0;
-  el.innerHTML = `<span class="marks">${live.map(x => badge(x.tool).replace('lg mini', 'lg mini' + (x === s ? ' on' : ''))).join('')}</span>${words}<span class="tm">${clockOf(T.t0)}</span>`;
-  el.setAttribute('aria-label', `${toolOf(s).name}: ${el.querySelector('.v')?.textContent || ''}. Open its chat`);
-}
 const clockOf = t0 => { const n = Math.max(0, Math.floor((Date.now() - t0) / 1000)); return `${Math.floor(n / 60)}:${String(n % 60).padStart(2, '0')}`; };
-setInterval(() => { const el = $('#island'); if (el && !el.hidden) el.querySelector('.tm').textContent = clockOf(+el.dataset.t0); }, 1000);
-$('#island')?.addEventListener('click', () => { const id = +$('#island').dataset.open; if (sessions.some(s => s.id === id)) openSession(id); });
+setInterval(() => { for (const lt of document.querySelectorAll('#live .tm, #thread .sum .tm')) lt.textContent = clockOf(+lt.dataset.t0); }, 1000);
 function openSession(id) {
   closePanel(true); fold();
   viewing = null; sel = id; drawerOpen = true; view.classList.add('open'); $('#drawer').classList.add('open'); $('#drawer').setAttribute('aria-hidden', 'false');
@@ -911,8 +1014,22 @@ $('#pBody').addEventListener('click', e => {
 });
 $('#pBody').addEventListener('input', e => { if (e.target.id === 'hFind') { historyFind = e.target.value; renderPanel(); } });
 $('#dClose').onclick = closeDrawer; $('#pClose').onclick = () => closePanel();
-// A step list the user opens or closes stays that way.
-$('#thread').addEventListener('toggle', e => { if (e.target.matches?.('details.work')) e.target.dataset.user = '1'; }, true);
+// A step with a change or output opens and closes, and stays as the user left it.
+function toggleStep(row) {
+  const open = !row.classList.contains('open'), map = row.dataset.t ? turnOpen : stepOpen;
+  row.classList.toggle('open', open); row.setAttribute('aria-expanded', open); map.set(row.dataset.t || row.dataset.s, open);
+}
+$('#thread').addEventListener('click', e => {
+  const row = e.target.closest('.s.exp,.sum'); if (row) return toggleStep(row);
+  const c = e.target.closest('[data-copy]'); if (c) return copyText(c.closest('.cb').querySelector('pre').textContent, c);
+}, true);
+$('#thread').addEventListener('keydown', e => { const row = e.target.closest?.('.s.exp,.sum'); if (row && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); toggleStep(row); } });
+function copyText(text, btn) {
+  const done = () => { btn.textContent = 'Copied'; setTimeout(() => { btn.textContent = 'Copy'; }, 1400); };
+  const old = () => { const t = document.createElement('textarea'); t.value = text; document.body.appendChild(t); t.select(); document.execCommand('copy'); t.remove(); done(); };
+  navigator.clipboard?.writeText(text).then(done, old) ?? old();
+}
+$('#live').addEventListener('click', e => { if (e.target.closest('.stop')) { const s = cur(); if (s) doStop(s); } });
 // Links open in the browser, through Hover.
 $('#thread').addEventListener('click', e => { const a = e.target.closest('a[href]'); if (!a) return; e.preventDefault(); if (host) host.postMessage({ type: 'link', url: a.href }); else open(a.href, '_blank', 'noopener'); });
 $('#dDel').onclick = () => { const s = cur(); if (s) askDelete(s); };
@@ -963,16 +1080,16 @@ $('#attach').onclick = () => $('#pick').click();
 $('#pick').onchange = e => { addPics(e.target.files, 'reply'); e.target.value = ''; input.focus(); };
 
 function syncSend() {
-  const s = cur(), empty = !input.value.trim() && !attached.reply.length, stop = empty && s && !s.archived && busy(s), b = $('#send');
-  b.classList.toggle('stop', !!stop); b.disabled = empty && !stop;
-  b.innerHTML = stop ? '<svg viewBox="0 0 24 24"><rect x="5" y="5" width="14" height="14" rx="3"/></svg>' : '<svg viewBox="0 0 24 24"><path d="M12 19V5M5 12l7-7 7 7"/></svg>';
-  const label = stop ? 'Stop this run' : s && busy(s) ? 'Queue this reply' : 'Send';
-  b.setAttribute('aria-label', label); b.title = label + (stop ? '' : ' (Enter)');
+  const s = cur(), empty = !input.value.trim() && !attached.reply.length, b = $('#send');
+  b.disabled = empty;
+  // Stop is in the live strip; this button only sends, or queues while a run goes.
+  const label = s && !s.archived && busy(s) ? 'Queue this reply' : 'Send';
+  b.setAttribute('aria-label', label); b.title = label + ' (Enter)';
 }
 input.addEventListener('input', () => { autosize(input); syncSend(); });
 input.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); $('#send').click(); } });
 composer.addEventListener('mousedown', e => { if (!e.target.closest('button,textarea,img')) { e.preventDefault(); input.focus(); } });
-$('#send').onclick = () => { if ($('#send').classList.contains('stop')) { const s = cur(); if (s) doStop(s); return; } const v = input.value.trim(), pics = attached.reply.splice(0); if (!v && !pics.length) return; input.value = ''; autosize(input); renderPics('reply'); doReply(v, pics); };
+$('#send').onclick = () => { const v = input.value.trim(), pics = attached.reply.splice(0); if (!v && !pics.length) return; input.value = ''; autosize(input); renderPics('reply'); doReply(v, pics); };
 
 // New task: the circle, the agents' logos, then the box for the one picked. The
 // folder and the model are the tool's own; each session keeps its folder.
@@ -988,12 +1105,18 @@ function renderNew() {
   $('#nFolder').classList.toggle('none', !newFolder);
   $('#nInput').placeholder = `What should ${tool.name} do? Paste an image to show it.`;
   renderPill('#nModel', tool.id);
+  // What this task may do on its own: the tool's setting until the box picks another.
+  const acc = newAccessOf(tool);
+  $('#nAccessText').textContent = ACCESS[acc][0];
+  $('#nAccess').classList.toggle('full', acc === 'full');
+  $('#nAccess').title = `${ACCESS[acc][0]}: ${accessNote(acc, tool.id)} Click to change.`;
+  $('#nAccess').setAttribute('aria-label', `Tool access: ${ACCESS[acc][0]}. Change`);
   // Said only when something stops the task from starting.
   const why = !tool.ready ? tool.hint : !canStart ? `${maxRunning} tasks are running. Start another when one is done.` : full ? 'All six desks are busy. Stop or remove a session first.' : '';
   $('#nNote').textContent = why; $('#nNote').hidden = !why;
   const draft = !!$('#nInput').value.trim() || attached.new.length > 0;
   $('#nGo').disabled = !tool.ready || !canStart || full || !newFolder || !draft;
-  $('#nGo').title = !newFolder ? 'Choose a folder first' : `Start (Enter). ${tool.name} works with ${tool.access}.`;
+  $('#nGo').title = !newFolder ? 'Choose a folder first' : `Start (Enter). ${tool.name} starts with ${ACCESS[acc][0].toLowerCase()}.`;
   $('#fab').classList.toggle('draft', draft);
 }
 function setFab(to) {
@@ -1056,8 +1179,23 @@ function openMenu(pill) {
 }
 function closeMenu() { if (!menuFor) return; $('#mMenu').hidden = true; menuFor.setAttribute('aria-expanded', 'false'); menuFor.focus(); menuFor = null; }
 for (const id of ['#dModel', '#nModel']) $(id).onclick = e => { e.stopPropagation(); menuFor === $(id) ? closeMenu() : (closeMenu(), openMenu($(id))); };
+// The new task's tool access: Trust all never asks; the rest ask more, or change nothing.
+function openAccess(pill) {
+  const x = tools.find(t => t.id === newTool) || tools[0], menu = $('#mMenu'), now = newAccessOf(x);
+  menuFor = pill; pill.setAttribute('aria-expanded', 'true');
+  menu.innerHTML = `<h5>${esc(x.name)} may</h5>` + Object.keys(ACCESS).filter(a => a !== 'read' || x.readOnly)
+    .map(a => `<button role="menuitemradio" class="acc-opt" aria-checked="${a === now}" data-access="${a}"><span><b>${esc(ACCESS[a][0])}</b><em>${esc(accessNote(a, x.id))}</em></span></button>`).join('')
+    + '<p>For this task only. Settings keeps the default.</p>';
+  menu.hidden = false;
+  const r = pill.getBoundingClientRect(), o = view.getBoundingClientRect(), mh = Math.min(menu.scrollHeight, o.height - 20);
+  menu.style.left = Math.max(8, Math.min(r.left - o.left, o.width - 258)) + 'px';
+  menu.style.top = Math.max(8, r.top - o.top - mh - 6) + 'px';
+  (menu.querySelector('[aria-checked="true"]') || menu.querySelector('button'))?.focus();
+}
+$('#nAccess').onclick = e => { e.stopPropagation(); menuFor === $('#nAccess') ? closeMenu() : (closeMenu(), openAccess($('#nAccess'))); };
 $('#mMenu').addEventListener('click', e => {
   const b = e.target.closest('button'); if (!b || !menuFor) return;
+  if (b.dataset.access) { newAccess[newTool] = b.dataset.access; closeMenu(); renderNew(); return; }
   const x = tools.find(t => t.id === menuFor.dataset.tool);
   if (b.dataset.model != null) x.model = b.dataset.model; else if (b.dataset.effort) x.effort = b.dataset.effort;
   host?.postMessage({ type: 'setModel', tool: x.id, model: x.model, effort: x.effort || null });
@@ -1069,7 +1207,7 @@ $('#mMenu').addEventListener('keydown', e => {
   if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); items[(i + (e.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length]?.focus(); }
   else if (e.key === 'Escape') { e.stopPropagation(); closeMenu(); }
 });
-addEventListener('pointerdown', e => { if (menuFor && !e.target.closest('#mMenu,.mpill')) closeMenu(); });
+addEventListener('pointerdown', e => { if (menuFor && !e.target.closest('#mMenu,.mpill,#nAccess')) closeMenu(); });
 
 // ── Deleting a session, after asking ────────────────────────────────────
 let confirmAction = null;
@@ -1104,9 +1242,13 @@ function showTranscript(h) {
   viewing = s; sel = null; drawerOpen = true; view.classList.add('open'); $('#drawer').classList.add('open'); $('#drawer').setAttribute('aria-hidden', 'false');
   renderDrawer();
 }
-$('#histBtn').onclick = () => panel === 'history' ? closePanel() : openPanel('history');
-$('#setBtn').onclick = () => host ? host.postMessage({ type: 'settings' }) : toast('In Hover this opens Settings.');
-$('#closeBtn').onclick = () => host?.postMessage({ type: 'fold' });
+// The menu: time of day, the history and Settings.
+function closeHud() { $('#hudMenu').hidden = true; $('#menuBtn').setAttribute('aria-expanded', 'false'); }
+$('#menuBtn').onclick = e => { e.stopPropagation(); const m = $('#hudMenu'), open = m.hidden; m.hidden = !open; $('#menuBtn').setAttribute('aria-expanded', open); if (open) (m.querySelector('.tseg .on') || m.querySelector('button')).focus(); };
+addEventListener('pointerdown', e => { if (!e.target.closest('#hudMenu,#menuBtn')) closeHud(); });
+$('#hudMenu').addEventListener('keydown', e => { if (e.key === 'Escape') { e.stopPropagation(); closeHud(); $('#menuBtn').focus(); } });
+$('#histBtn').onclick = () => { closeHud(); panel === 'history' ? closePanel() : openPanel('history'); };
+$('#setBtn').onclick = () => { closeHud(); if (host) host.postMessage({ type: 'settings' }); else toast('In Hover this opens Settings.'); };
 $('#brand').onclick = () => host ? host.postMessage({ type: 'openApp' }) : toast('In Hover this opens the office in a window.');
 $('#nInput').addEventListener('input', renderNew);
 $('#nInput').addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); $('#nGo').click(); } });
@@ -1146,9 +1288,9 @@ const beats = (() => {
 
 // Time of day: follows the PC's clock (day from 7 to 19) until the user picks one.
 let manualTime = localStorage.getItem('office.time') || '';
-function setTime(t) { manualTime = t; if (t) localStorage.setItem('office.time', t); else localStorage.removeItem('office.time'); applyTime(t || autoTime()); shadowDirty = true; poke(); document.querySelectorAll('[data-t]').forEach(b => b.classList.toggle('on', b.dataset.t === (t || 'auto'))); }
+function setTime(t) { manualTime = t; if (t) localStorage.setItem('office.time', t); else localStorage.removeItem('office.time'); applyTime(t || autoTime()); shadowDirty = true; poke(); document.querySelectorAll('[data-time]').forEach(b => { b.classList.toggle('on', b.dataset.time === (t || 'auto')); b.setAttribute('aria-checked', b.dataset.time === (t || 'auto')); }); }
 const autoTime = () => { const h = new Date().getHours(); return h >= 7 && h < 19 ? 'day' : 'night'; };
-document.querySelectorAll('[data-t]').forEach(b => b.onclick = () => setTime(b.dataset.t === 'auto' ? '' : b.dataset.t));
+document.querySelectorAll('[data-time]').forEach(b => b.onclick = () => setTime(b.dataset.time === 'auto' ? '' : b.dataset.time));
 setInterval(() => { if (!manualTime && autoTime() !== time) applyTime(autoTime()); }, 60e3);
 
 // Demo only: force the open (or first) session into a stage, or play a run.

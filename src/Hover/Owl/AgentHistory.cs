@@ -13,7 +13,7 @@ public sealed record SavedTurn(string Prompt, IReadOnlyList<string> Images, IRea
 /// One session as it is kept on disk: enough to show it again and to carry on its
 /// conversation (AcpId is the tool's own session id, for session/load).
 public sealed record SavedSession(string Key, AgentTool Tool, string Folder, string Title, string? AcpId, double? Context,
-    IReadOnlyList<SavedTurn> Turns, DateTime Updated);
+    IReadOnlyList<SavedTurn> Turns, DateTime Updated, string? Access = null);
 
 /// A line in the office's history: what it lists without reading every session.
 public sealed record HistoryEntry(string Key, AgentTool Tool, string Title, string Folder, DateTime Updated, KiroState State, int Turns);

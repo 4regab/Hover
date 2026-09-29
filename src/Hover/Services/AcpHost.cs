@@ -111,11 +111,11 @@ public sealed class AcpHost
     /// asks the agent to stop (session/cancel); one that doesn't within a few seconds
     /// is left, or shut down when nothing else of its runs.
     public async Task<KiroResult> Run(string folder, string prompt, IProgress<KiroPhase>? progress, CancellationToken ct,
-        string? resume = null, IProgress<KiroEvent>? events = null)
+        string? resume = null, IProgress<KiroEvent>? events = null, string? access = null)
     {
         if (!KiroRunner.UsableFolder(folder)) return new(KiroState.Failed, "That folder isn’t there any more. Choose another one.");
         if (string.IsNullOrWhiteSpace(prompt)) return new(KiroState.Failed, $"Tell {Name} what to do first.");
-        var o = _options();
+        var o = _options().WithAccess(access);
         Interlocked.Increment(ref _busy);
         _idle.Change(Timeout.Infinite, Timeout.Infinite);
         var turn = new Turn(new KiroStream { Name = Name }, progress, events, o, folder, ct);

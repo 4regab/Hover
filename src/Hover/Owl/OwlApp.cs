@@ -37,8 +37,13 @@ public static class OwlApp
         });
 
     /// The office's runs, several at once, each with Kiro, Codex or Cursor.
-    public static KiroSessions Kiro { get; } = new(tool => new KiroSession((f, p, pr, ct, resume, events) =>
-        Agents[tool].Run(f, p, pr, ct, resume, events)))
+    public static KiroSessions Kiro { get; } = new(tool =>
+    {
+        // The session's own access (picked when it started) goes with each turn.
+        KiroSession? s = null;
+        s = new KiroSession((f, p, pr, ct, resume, events) => Agents[tool].Run(f, p, pr, ct, resume, events, s?.Access));
+        return s;
+    })
     {
         // Every session, sealed, until the user deletes it; the office's bookshelf lists them.
         History = new AgentHistory(System.IO.Path.Combine(Paths.Support, "agents")),

@@ -6,12 +6,6 @@
 
 <p align="center">AI agents at work in a notch at the top of the screen.</p>
 
-
-
-https://github.com/user-attachments/assets/024e6b18-0f3e-47b9-99da-2a521644863f
-
-
-
 Rest the pointer at the **top centre** of your main screen, or press `Alt+N`, and the
 notch opens into the Agent office. At rest it is a slim black island with your AI
 quotas and the agents at work, showing what each is doing, or nothing at all. Built with .NET 10 and WPF, for Windows 10 and 11.

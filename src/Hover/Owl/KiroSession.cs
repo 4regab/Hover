@@ -78,11 +78,14 @@ public sealed class KiroSession
     public string Key { get; private set; } = Guid.NewGuid().ToString("N");
     /// Deleted by the user: nothing about it is saved again.
     internal bool Deleted { get; set; }
+    /// The tool access picked when the session started (AgentOptions.WithAccess);
+    /// null keeps the tool's setting.
+    public string? Access { get; internal set; }
 
     /// The session as the history keeps it.
     public SavedSession Snapshot() => new(Key, Tool, Folder, Title, KiroId, Context,
         _turns.Select(t => new SavedTurn(t.Prompt, t.Images, t.Steps.ToList(), t.Result?.State, t.Result?.Text, t.StartedAt, t.WokeAt, t.EndedAt)).ToList(),
-        _now());
+        _now(), Access);
 
     /// A new session made to carry on a saved one: its turns, its folder and its
     /// tool's conversation id, so the next reply resumes that conversation. A turn that
@@ -95,6 +98,7 @@ public sealed class KiroSession
         Folder = s.Folder;
         KiroId = s.AcpId;
         Context = s.Context;
+        Access = s.Access;
         foreach (var t in s.Turns)
         {
             var turn = new KiroTurn(t.Prompt, t.Images) { StartedAt = t.StartedAt, WokeAt = t.WokeAt, EndedAt = t.EndedAt ?? t.StartedAt };
@@ -296,12 +300,13 @@ public sealed class KiroSessions
 
     public KiroSession? Start(string folder, string prompt, IReadOnlyList<string>? images = null) => Start(AgentTool.Kiro, folder, prompt, images);
 
-    public KiroSession? Start(AgentTool tool, string folder, string prompt, IReadOnlyList<string>? images = null)
+    public KiroSession? Start(AgentTool tool, string folder, string prompt, IReadOnlyList<string>? images = null, string? access = null)
     {
         if (!CanStart || !KiroRunner.UsableFolder(folder) || (string.IsNullOrWhiteSpace(prompt) && images is not { Count: > 0 })) return null;
         if (!FreeDesk()) return null;
         var s = _make(tool);
         s.Tool = tool;
+        s.Access = access;
         Seat(s);
         if (!s.Start(folder, prompt, images))
         {

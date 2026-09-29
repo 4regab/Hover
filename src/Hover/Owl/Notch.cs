@@ -7,6 +7,7 @@ using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
 using System.Windows.Media.Effects;
+using System.Windows.Media.Imaging;
 using System.Windows.Shapes;
 using System.Windows.Threading;
 using Hover.Core;
@@ -32,6 +33,9 @@ internal sealed class NotchShell : Canvas
         "RestWidth", typeof(double), typeof(NotchShell), new PropertyMetadata(0.0, (d, _) => ((NotchShell)d).Relayout()));
     private static readonly DependencyProperty RestHeightProperty = DependencyProperty.Register(
         "RestHeight", typeof(double), typeof(NotchShell), new PropertyMetadata(0.0, (d, _) => ((NotchShell)d).Relayout()));
+    /// How far the resting content has faded in after it changed, 0 to 1.
+    private static readonly DependencyProperty FadeProperty = DependencyProperty.Register(
+        "Fade", typeof(double), typeof(NotchShell), new PropertyMetadata(1.0, (d, _) => ((NotchShell)d).Relayout()));
 
     public double Openness
     {
@@ -56,6 +60,45 @@ internal sealed class NotchShell : Canvas
     private Size _rest, _open = new(1120, 440);
     private bool _opening, _greet, _sized;
     private Color? _glow;
+    // What the resting notch showed before it changed, as a picture fading out.
+    private readonly Image _ghost = new() { IsHitTestVisible = false, Stretch = Stretch.None, Visibility = Visibility.Hidden };
+    private double _ghostW;
+
+    /// The resting content is about to change (an agent starts or asks, a task ends,
+    /// the card opens). What shows now stays a moment as a picture and fades out, and
+    /// the new content fades in a beat later, while the shape springs to its new size.
+    /// Without it the words swapped at once inside a shape still on its way.
+    public void Crossfade()
+    {
+        if (Animator.Still || Openness > 0.01) return;
+        var w = Mini.ActualWidth;
+        var h = Mini.ActualHeight;
+        if (Mini.Visibility == Visibility.Visible && RestW >= 8 && w >= 1 && h >= 1)
+        {
+            var dpi = VisualTreeHelper.GetDpi(this);
+            var bmp = new RenderTargetBitmap((int)Math.Ceiling(w * dpi.DpiScaleX), (int)Math.Ceiling(h * dpi.DpiScaleY),
+                dpi.PixelsPerInchX, dpi.PixelsPerInchY, PixelFormats.Pbgra32);
+            // Drawn through a brush, so the picture doesn't carry the Mini's offset.
+            var dv = new DrawingVisual();
+            using (var c = dv.RenderOpen())
+                c.DrawRectangle(new VisualBrush(Mini) { Stretch = Stretch.None, AlignmentX = AlignmentX.Left, AlignmentY = AlignmentY.Top }, null, new Rect(0, 0, w, h));
+            bmp.Render(dv);
+            bmp.Freeze();
+            _ghost.Source = bmp;
+            _ghost.Width = _ghostW = w;
+            _ghost.Height = h;
+            _ghost.Visibility = Visibility.Visible;
+            var out_ = new DoubleAnimation(1, 0, TimeSpan.FromMilliseconds(170)) { EasingFunction = new QuadraticEase { EasingMode = EasingMode.EaseOut } };
+            out_.Completed += (_, _) => { _ghost.Visibility = Visibility.Hidden; _ghost.Source = null; };
+            _ghost.BeginAnimation(OpacityProperty, out_);
+        }
+        var fade = new DoubleAnimationUsingKeyFrames();
+        fade.KeyFrames.Add(new DiscreteDoubleKeyFrame(0, KeyTime.FromTimeSpan(TimeSpan.Zero)));
+        fade.KeyFrames.Add(new LinearDoubleKeyFrame(0, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(90))));
+        fade.KeyFrames.Add(new EasingDoubleKeyFrame(1, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(320)), new QuadraticEase { EasingMode = EasingMode.EaseOut }));
+        BeginAnimation(FadeProperty, fade);
+        Relayout();
+    }
 
     /// Show the greeting for this opening. Cleared when the opening ends.
     public bool Greet
@@ -80,6 +123,7 @@ internal sealed class NotchShell : Canvas
         _shape.Fill = _fill;
         Children.Add(_shape);
         Children.Add(Mini);
+        Children.Add(_ghost);
         Children.Add(ViewHost);
         Children.Add(Greeting);
         SizeChanged += (_, _) => Relayout();
@@ -124,8 +168,8 @@ internal sealed class NotchShell : Canvas
         else
         {
             // A little overshoot, as a spring settles.
-            var d = new Duration(TimeSpan.FromMilliseconds(rest.Height > RestH + 40 ? 520 : 440));
-            var ease = new BackEase { Amplitude = 0.28, EasingMode = EasingMode.EaseOut };
+            var d = new Duration(TimeSpan.FromMilliseconds(rest.Height > RestH + 40 ? 560 : 500));
+            var ease = new BackEase { Amplitude = 0.22, EasingMode = EasingMode.EaseOut };
             BeginAnimation(RestWidthProperty, new DoubleAnimation(rest.Width, d) { EasingFunction = ease });
             BeginAnimation(RestHeightProperty, new DoubleAnimation(rest.Height, d) { EasingFunction = ease });
         }
@@ -163,7 +207,9 @@ internal sealed class NotchShell : Canvas
         ViewHost.Height = _open.Height;
         SetLeft(ViewHost, cx - _open.Width / 2);
         ViewHost.Clip = Outline(w, h, r, 0, (_open.Width - w) / 2);
-        ViewHost.Opacity = Math.Clamp((t - 0.35) / 0.65, 0, 1);
+        // Opening, the office comes in once the shape is well on its way; closing, it
+        // goes first and the shape folds after it.
+        ViewHost.Opacity = _opening ? Math.Clamp((t - 0.35) / 0.65, 0, 1) : Math.Clamp((t - 0.55) / 0.45, 0, 1);
         ViewHost.Visibility = t <= 0.001 && !_opening ? Visibility.Hidden : Visibility.Visible;
         ViewHost.IsHitTestVisible = t >= 0.999;
 
@@ -173,8 +219,13 @@ internal sealed class NotchShell : Canvas
         Mini.Height = _rest.Height;
         SetLeft(Mini, cx - _rest.Width / 2);
         Mini.Clip = new RectangleGeometry(new Rect((_rest.Width - rest.Width) / 2, 0, rest.Width, rest.Height), rr, rr);
-        Mini.Opacity = Math.Clamp(1 - t * 3, 0, 1);
+        Mini.Opacity = Math.Clamp(1 - t * 3, 0, 1) * (double)GetValue(FadeProperty);
         Mini.Visibility = Mini.Opacity <= 0 ? Visibility.Hidden : Visibility.Visible;
+        if (_ghost.Visibility == Visibility.Visible)
+        {
+            SetLeft(_ghost, cx - _ghostW / 2);
+            _ghost.Clip = new RectangleGeometry(new Rect((_ghostW - rest.Width) / 2, 0, Math.Max(0, rest.Width), rest.Height), rr, rr);
+        }
 
         // The greeting sits low in the small notch, grows a little with it, and has
         // faded by the time the cards are in.
@@ -232,7 +283,7 @@ internal sealed class NotchHost : IDisposable
 {
     public enum Mode { Rest, Peek, Open }
 
-    private enum RestKind { None, Pill, Alert, Card }
+    private enum RestKind { None, Pill, Card }
 
     public string Device { get; }
     public Mode State { get; private set; } = Mode.Rest;
@@ -295,15 +346,11 @@ internal sealed class NotchHost : IDisposable
     private string _cardKey = "";
     private IntPtr _cardPrevious;
 
-    private readonly TextBlock _alertTitle = Ui.Text("", 13.5, Ui.White, FontWeights.SemiBold);
-    private readonly TextBlock _alertText = Ui.Text("", 11.5, Ui.WhiteDim);
-    private readonly StackPanel _alertBox = new();
-    private (string Title, string Text)? _alert;
 
     /// Heights of the resting shapes. Small on purpose: the notch at rest is a hint,
     /// not a panel — a slim island when there is something to show, and nothing when
     /// there is not. The user knows where it is.
-    private const double PillHeight = 32, PillPadLeft = 4, PillPadRight = 13, PillGap = 12;
+    private const double PillHeight = 32, PillPadLeft = 4, PillPadRight = 10, PillGap = 12;
     private static readonly TimeSpan Dwell = TimeSpan.FromMilliseconds(120);
     private static readonly TimeSpan LeaveGrace = TimeSpan.FromMilliseconds(350);
 
@@ -421,8 +468,7 @@ internal sealed class NotchHost : IDisposable
     {
         // Rounded up to a few pixels so a clock ticking from 1:11 to 1:12 does not
         // make the island twitch.
-        RestKind.Pill => new Size(Math.Ceiling((_pill.DesiredSize.Width + PillPadLeft + PillPadRight) / 4) * 4, PillHeight),
-        RestKind.Alert => new Size(Math.Clamp(Math.Max(_alertTitle.DesiredSize.Width, _alertText.DesiredSize.Width) + 40, 200, 420), 46),
+        RestKind.Pill => new Size(Math.Ceiling((_pill.DesiredSize.Width + PillPadLeft + PillPadRight) / 2) * 2, PillHeight),
         RestKind.Card => new Size(Math.Ceiling(_card.DesiredSize.Width), Math.Ceiling(_card.DesiredSize.Height)),
         _ => new Size(0, 0),
     };
@@ -437,16 +483,6 @@ internal sealed class NotchHost : IDisposable
         _pill.Margin = new Thickness(PillPadLeft, 0, 0, 0);
         m.Children.Add(_pill);
 
-        _alertTitle.HorizontalAlignment = HorizontalAlignment.Center;
-        _alertText.HorizontalAlignment = HorizontalAlignment.Center;
-        _alertText.MaxWidth = 380;
-        _alertText.Margin = new Thickness(0, 5, 0, 0);
-        _alertBox.Children.Add(_alertTitle);
-        _alertBox.Children.Add(_alertText);
-        _alertBox.HorizontalAlignment = HorizontalAlignment.Center;
-        _alertBox.VerticalAlignment = VerticalAlignment.Center;
-        AutomationProperties.SetAutomationId(_alertTitle, "NotchAlert");
-        m.Children.Add(_alertBox);
         m.Children.Add(_card);
     }
 
@@ -462,12 +498,6 @@ internal sealed class NotchHost : IDisposable
         // The row is a panel, which UI Automation does not see; the value is text.
         AutomationProperties.SetAutomationId(value, "NotchQuota" + char.ToUpperInvariant(id[0]) + id[1..]);
         return _quotaSegs[id] = (seg, mark, value);
-    }
-
-    public void ShowAlert((string Title, string Text)? alert)
-    {
-        _alert = alert;
-        UpdateRest();
     }
 
     private const string Work = "work", Asked = "ask", Ended = "done", Divider = "|";
@@ -494,28 +524,19 @@ internal sealed class NotchHost : IDisposable
         var quotas = Settings.NotchItems.Where(NotchItem.Quotas.Contains).ToList();
 
         var items = new List<string>();
-        if (_alert is null)
-        {
-            if (waiting.Count > 0) items.Add(Asked);
-            else if (working.Count > 0) items.Add(Work);
-            else if (OwlApp.KiroUnseen > 0 && OwlApp.KiroUnseenLast is not null) items.Add(Ended);
-            if (items.Count > 0 && quotas.Count > 0) items.Add(Divider);
-            items.AddRange(quotas);
-        }
+        if (waiting.Count > 0) items.Add(Asked);
+        else if (working.Count > 0) items.Add(Work);
+        else if (OwlApp.KiroUnseen > 0 && OwlApp.KiroUnseenLast is not null) items.Add(Ended);
+        if (items.Count > 0 && quotas.Count > 0) items.Add(Divider);
+        items.AddRange(quotas);
         if (waiting.Count == 0 && _cardOpen) CloseCard();
-        var kind = _alert is not null ? RestKind.Alert
-            : _cardOpen ? RestKind.Card
+        var kind = _cardOpen ? RestKind.Card
             : items.Count > 0 ? RestKind.Pill
             : RestKind.None;
+        // A new shape or new segments cross-fade; new words in the same segments rise in.
+        if (_kind != (RestKind)(-1) && State == Mode.Rest && (kind != _kind || (kind == RestKind.Pill && string.Join(",", items) != _pillKey)))
+            _shell.Crossfade();
 
-        if (kind == RestKind.Alert)
-        {
-            _alertTitle.Text = _alert!.Value.Title;
-            _alertText.Text = _alert.Value.Text;
-            _alertTitle.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
-            _alertText.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
-        }
-        _alertBox.Visibility = kind == RestKind.Alert ? Visibility.Visible : Visibility.Collapsed;
         _pill.Visibility = kind == RestKind.Pill ? Visibility.Visible : Visibility.Collapsed;
         _card.Visibility = kind == RestKind.Card ? Visibility.Visible : Visibility.Collapsed;
 
@@ -565,8 +586,11 @@ internal sealed class NotchHost : IDisposable
                 AutomationProperties.SetName(text, said);
                 text.ToolTip = said;
             }
-            // A child's new text does not invalidate the panel's own measure.
-            _pill.InvalidateMeasure();
+            // New text in a segment marks only that text for measuring; its row and the
+            // island would answer from their last measure, too small, and cut the words
+            // off (the island stays short until the next tick). So all of it is measured
+            // again.
+            Remeasure(_pill);
             _pill.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
         }
         else _pillKey = "";
@@ -583,6 +607,12 @@ internal sealed class NotchHost : IDisposable
         if (rest == _restApplied) return;
         _restApplied = rest;
         _shell.SetSizes(rest, _open);
+    }
+
+    private static void Remeasure(DependencyObject d)
+    {
+        if (d is UIElement e) e.InvalidateMeasure();
+        for (var i = 0; i < VisualTreeHelper.GetChildrenCount(d); i++) Remeasure(VisualTreeHelper.GetChild(d, i));
     }
 
     /// Amber while an agent asks, green or red for a moment when a task ends unseen;
@@ -915,7 +945,7 @@ internal sealed class NotchHost : IDisposable
             _window.Raise();
             _shell.Opening = true;
             if (Manager?.TakeGreeting() == true) Greet();
-            else Animate(1, 300, new CubicEase { EasingMode = EasingMode.EaseOut });
+            else Animate(1, 560, new BackEase { Amplitude = 0.16, EasingMode = EasingMode.EaseOut });
         }
         State = peek && State != Mode.Open ? Mode.Peek : Mode.Open;
         _outsideSince = null;
@@ -977,7 +1007,7 @@ internal sealed class NotchHost : IDisposable
         _window.SetAcceptsKeys(false);
         _shell.Opening = false;
         _shell.Greet = false;
-        Animate(0, 220, new CubicEase { EasingMode = EasingMode.EaseIn });
+        Animate(0, 340, new SineEase { EasingMode = EasingMode.EaseInOut });
         UpdateRest();
     }
 
@@ -1019,7 +1049,6 @@ public sealed class NotchManager : IDisposable
 {
     private readonly Dictionary<string, NotchHost> _hosts = new();
     private readonly DispatcherTimer _poll;
-    private readonly DispatcherTimer _alertEnd = new() { Interval = TimeSpan.FromSeconds(8) };
     private string _signature = "";
     private DateTime _lastDisplayCheck = DateTime.MinValue;
     private DashboardWindow? _dashboard;
@@ -1062,11 +1091,6 @@ public sealed class NotchManager : IDisposable
         OwlApp.OpenSettings = () => OpenDashboard(settings: true);
         OwlApp.ShowOffice = Toggle;
         Theme.Changed += OnTheme;
-        _alertEnd.Tick += (_, _) =>
-        {
-            _alertEnd.Stop();
-            foreach (var h in _hosts.Values) h.ShowAlert(null);
-        };
     }
 
     private void UpdateRest()
@@ -1139,15 +1163,6 @@ public sealed class NotchManager : IDisposable
         foreach (var h in _hosts.Values) h.Collapse();
     }
 
-    /// A few seconds of message in the notch — the timer ending, a reminder — so it
-    /// is seen even when Windows is holding notifications back.
-    public void Alert(string title, string text)
-    {
-        foreach (var h in _hosts.Values) h.ShowAlert((title, text));
-        _alertEnd.Stop();
-        _alertEnd.Start();
-    }
-
     public void OpenDashboard(bool settings = false)
     {
         if (_dashboard is null || !_dashboard.IsLoaded)
@@ -1172,7 +1187,6 @@ public sealed class NotchManager : IDisposable
         OwlApp.QuotasChanged -= UpdateRest;
         OwlApp.Kiro.Changed -= UpdateRest;
         _poll.Stop();
-        _alertEnd.Stop();
         _dashboard?.Close();
         foreach (var h in _hosts.Values) h.Dispose();
         _hosts.Clear();
@@ -1180,13 +1194,19 @@ public sealed class NotchManager : IDisposable
 }
 
 /// "Open app": the same office in an ordinary window, for when the notch is too
-/// small a place to work. Its title bar takes the panel's colour (Windows 11), so
-/// the bar and the window read as one surface.
+/// small a place to work. It draws its own title bar in the office's colour (logo,
+/// name, minimize, maximize, close), so the bar and the office read as one surface.
+/// WindowChrome keeps Windows' own dragging, snapping, resizing and shadow.
 public sealed class DashboardWindow : Window
 {
     public OfficeView View { get; private set; } = NewView();
 
     private static OfficeView NewView() => new(dashboard: true);
+
+    private const double BarHeight = 34;
+    private static readonly Color BarColor = Color.FromRgb(0x0B, 0x08, 0x10);
+    private readonly Grid _frame = new();
+    private readonly Button _max;
 
     public DashboardWindow()
     {
@@ -1196,9 +1216,73 @@ public sealed class DashboardWindow : Window
         MinWidth = 880;
         MinHeight = 480;
         WindowStartupLocation = WindowStartupLocation.CenterScreen;
-        Content = View;
+        Background = new SolidColorBrush(BarColor);
+        System.Windows.Shell.WindowChrome.SetWindowChrome(this, new System.Windows.Shell.WindowChrome
+        {
+            CaptionHeight = BarHeight,
+            ResizeBorderThickness = new Thickness(6),
+            GlassFrameThickness = new Thickness(0, 0, 0, 1),
+            CornerRadius = new CornerRadius(0),
+            UseAeroCaptionButtons = false,
+        });
+
+        var bar = new Grid { Height = BarHeight, Background = Background };
+        bar.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        bar.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        var logo = new Image
+        {
+            Source = new System.Windows.Media.Imaging.BitmapImage(new Uri("pack://application:,,,/Hover;component/Assets/hover-mark.png")),
+            Width = 16, Height = 16, Margin = new Thickness(12, 0, 8, 0), VerticalAlignment = VerticalAlignment.Center,
+        };
+        RenderOptions.SetBitmapScalingMode(logo, BitmapScalingMode.HighQuality);
+        var name = Ui.Text("Hover", 12, Ui.Frozen(Color.FromArgb(0xD9, 0xFF, 0xFF, 0xFF)), FontWeights.Medium);
+        name.VerticalAlignment = VerticalAlignment.Center;
+        var left = new StackPanel { Orientation = Orientation.Horizontal, Children = { logo, name } };
+        bar.Children.Add(left);
+
+        var buttons = new StackPanel { Orientation = Orientation.Horizontal };
+        buttons.Children.Add(Caption("\uE921", "Minimize", "OwlCaptionButton", () => WindowState = WindowState.Minimized));
+        _max = Caption("\uE922", "Maximize", "OwlCaptionButton",
+            () => WindowState = WindowState == WindowState.Maximized ? WindowState.Normal : WindowState.Maximized);
+        buttons.Children.Add(_max);
+        buttons.Children.Add(Caption("\uE8BB", "Close", "OwlCaptionClose", Close));
+        Grid.SetColumn(buttons, 1);
+        bar.Children.Add(buttons);
+
+        _frame.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        _frame.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+        _frame.Children.Add(bar);
+        Place(View);
+        Content = _frame;
         AutomationProperties.SetAutomationId(this, "HoverDashboard");
-        SourceInitialized += (_, _) => ApplyTheme();
+        StateChanged += (_, _) => OnState();
+    }
+
+    private Button Caption(string glyph, string name, string style, Action click)
+    {
+        var b = new Button { Content = glyph, Style = (Style)Application.Current.FindResource(style), ToolTip = name };
+        AutomationProperties.SetName(b, name);
+        System.Windows.Shell.WindowChrome.SetIsHitTestVisibleInChrome(b, true);
+        b.Click += (_, _) => click();
+        return b;
+    }
+
+    // Maximized, Windows lays the window a resize border past each screen edge; the
+    // padding keeps the bar and the office on the screen.
+    private void OnState()
+    {
+        var max = WindowState == WindowState.Maximized;
+        _frame.Margin = max ? SystemParameters.WindowResizeBorderThickness : new Thickness(0);
+        _max.Content = max ? "\uE923" : "\uE922";
+        _max.ToolTip = max ? "Restore" : "Maximize";
+        AutomationProperties.SetName(_max, (string)_max.ToolTip);
+    }
+
+    private void Place(OfficeView v)
+    {
+        if (_frame.Children.Count > 1) _frame.Children.RemoveAt(1);
+        Grid.SetRow(v, 1);
+        _frame.Children.Add(v);
     }
 
     /// Build the view again for a new appearance, on the page it was showing.
@@ -1206,23 +1290,7 @@ public sealed class DashboardWindow : Window
     {
         var settings = View.InSettings;
         View = NewView();
-        Content = View;
+        Place(View);
         if (settings) View.ShowSettings(SettingsPage.Last);
-        ApplyTheme();
-    }
-
-    private void ApplyTheme()
-    {
-        Background = new SolidColorBrush(Ui.Panel);
-        var hwnd = new WindowInteropHelper(this).Handle;
-        if (hwnd == IntPtr.Zero) return;
-        var dark = Theme.Dark ? 1 : 0;
-        Win32.DwmSetWindowAttribute(hwnd, Win32.DWMWA_USE_IMMERSIVE_DARK_MODE, ref dark, sizeof(int));
-        // COLORREF is 0x00BBGGRR. Older Windows ignores these and keeps its own bar.
-        var c = Ui.Panel;
-        var caption = c.R | (c.G << 8) | (c.B << 16);
-        Win32.DwmSetWindowAttribute(hwnd, Win32.DWMWA_CAPTION_COLOR, ref caption, sizeof(int));
-        var text = Theme.Dark ? 0x00FFFFFF : 0x00000000;
-        Win32.DwmSetWindowAttribute(hwnd, Win32.DWMWA_TEXT_COLOR, ref text, sizeof(int));
     }
 }

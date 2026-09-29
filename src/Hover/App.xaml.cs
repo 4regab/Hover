@@ -69,11 +69,9 @@ public partial class App : Application
             RegisterHotKeys();
 
             _tray = new TrayIcon();
-            OwlApp.Notify = (title, text) =>
-            {
-                _notch?.Alert(title, text);
-                _tray?.Notify(title, text);
-            };
+            // The notch shows an ending as its own island (the tool's logo, a badge and
+            // the task); Windows gets the words.
+            OwlApp.Notify = (title, text) => _tray?.Notify(title, text);
         }
         catch (Exception ex)
         {
