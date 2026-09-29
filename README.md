@@ -71,6 +71,13 @@ dotnet test .\Hover.slnx -c Release
 .\build.ps1 installer
 ```
 
+To publish a release, push a version tag such as `v2.0.1`. The CodeBuild GitHub
+workflow builds and tests the app on an AWS Windows runner, makes
+`Hover-Setup-2.0.1.exe`, and attaches it to a new GitHub release. Tags must use
+three or four numeric version parts. The runner is the `hover-release` CodeBuild
+project, defined in `infra/codebuild-runner.yml`. It needs a GitHub connection
+in AWS. This uses AWS build time instead of GitHub-hosted runner minutes.
+
 ## License
 
 MIT. See [LICENSE](LICENSE). 

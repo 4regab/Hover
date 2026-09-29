@@ -201,7 +201,7 @@ internal sealed class SettingsPage
     };
 
     /// A capsule of choices with the picked one raised, as an iOS segmented control.
-    private static Border Segments<T>(string idPrefix, IEnumerable<(T Value, string Label)> options, T current, Action<T> pick)
+    private static Border Segments<T>(string idPrefix, IEnumerable<(T Value, string Label)> options, T current, Action<T> pick, double minWidth = 58)
     {
         var group = idPrefix + Guid.NewGuid().ToString("N");
         var items = new List<RadioButton>();
@@ -210,7 +210,7 @@ internal sealed class SettingsPage
             var rb = new RadioButton
             {
                 Style = Ui.Style("OwlSegmentInk"), Content = label, GroupName = group,
-                IsChecked = EqualityComparer<T>.Default.Equals(value, current), MinWidth = 58,
+                IsChecked = EqualityComparer<T>.Default.Equals(value, current), MinWidth = minWidth,
             };
             AutomationProperties.SetAutomationId(rb, idPrefix + label);
             AutomationProperties.SetName(rb, label);
@@ -231,6 +231,14 @@ internal sealed class SettingsPage
             Row("Open on hover", "Off, only the shortcut or a click on the notch opens it — handy if browser tabs live up there.",
                 Switch("HoverOpens", "Open on hover", Settings.HoverOpensWorkspace, v => Settings.HoverOpensWorkspace = v)),
             Row("Notch shortcut", "Click, then press the keys. Include Ctrl, Alt, Shift or Win.", ShortcutField()),
+            Row("Tasks at once", "How many agents can work at the same time. Each one uses a few hundred MB of memory while it works.",
+                Segments("MaxRunning", Enumerable.Range(1, KiroSessions.MaxKept).Select(n => (n, n.ToString())), Settings.MaxRunning, v =>
+                {
+                    Settings.MaxRunning = v;
+                    OwlApp.Kiro.MaxRunning = v;
+                    // The office's Start button and its note follow at once.
+                    OwlApp.Kiro.RaiseChanged();
+                }, minWidth: 34)),
             Row("Quit Hover", "Stops every agent that is still working.",
                 Ui.Button("OwlLightButton", "Quit", "Quit", "Quit Hover", Hover.Services.Actions.Quit)));
         Footnote("The same office opens from the tray icon, and in its own window from a click on its name in the notch.");

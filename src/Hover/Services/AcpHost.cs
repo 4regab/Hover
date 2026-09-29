@@ -166,6 +166,8 @@ public sealed class AcpHost : IAgentRuntime
             events?.Report(new KiroEvent(SessionId: sid));
             _sessionOptions[sid] = await Configure(sid, offered ?? new(), o, ct);
 
+            // Started: from here the model has the prompt, and the notch says Thinking.
+            progress?.Report(KiroPhase.Thinking);
             var call = Call("session/prompt", new { sessionId = sid, prompt = new[] { new { type = "text", text = prompt.Trim() } } }, CancellationToken.None, null);
             var cancelled = Task.Delay(Timeout.Infinite, ct).ContinueWith(_ => { }, TaskScheduler.Default);
             using (ct.Register(() => _ = Notify("session/cancel", new { sessionId = sid })))
@@ -448,7 +450,7 @@ public sealed class AcpHost : IAgentRuntime
             // Answered on its own: the user may take minutes, and every other session's
             // news comes down this same pipe meanwhile.
             if (method == "session/request_permission")
-                _ = AnswerPermission(idValue, turn, Str(p, "sessionId"), p.Clone());
+                _ = AnswerPermission(idValue, turn, Str(p, "sessionId"), p.Clone(), Reviewed(turn, p));
             else
                 await Send(new { jsonrpc = "2.0", id = idValue, error = new { code = -32601, message = "Not supported by Hover." } });
             return;
@@ -477,10 +479,10 @@ public sealed class AcpHost : IAgentRuntime
         }
     }
 
-    private async Task AnswerPermission(JsonElement id, Turn? turn, string? sid, JsonElement p)
+    private async Task AnswerPermission(JsonElement id, Turn? turn, string? sid, JsonElement p, IReadOnlyList<(string Path, KiroStep? Step)>? reviewed)
     {
         object outcome;
-        try { outcome = await Permission(turn, sid, p); }
+        try { outcome = await Permission(turn, sid, p, reviewed); }
         catch (Exception e)
         {
             Log.Line($"acp {Name}: permission - {e.Message}");
@@ -493,7 +495,7 @@ public sealed class AcpHost : IAgentRuntime
     /// Read only allows reading and refuses the rest. Otherwise what the approval
     /// setting leaves alone is allowed, and the rest goes to the user, unless they
     /// trusted it earlier in the session. A stopped run withdraws the question.
-    private async Task<object> Permission(Turn? turn, string? sid, JsonElement p)
+    private async Task<object> Permission(Turn? turn, string? sid, JsonElement p, IReadOnlyList<(string Path, KiroStep? Step)>? reviewed)
     {
         object Cancelled() => new { outcome = "cancelled" };
         if (turn is null || !p.TryGetProperty("options", out var options) || options.ValueKind != JsonValueKind.Array)
@@ -510,14 +512,15 @@ public sealed class AcpHost : IAgentRuntime
         object Reject() => Selected(Pick("reject_once", "reject"));
 
         var call = p.TryGetProperty("toolCall", out var c) ? c : default;
-        var kind = Str(call, "kind") ?? "other";
+        var kind = reviewed is not null ? "edit" : Str(call, "kind") ?? "other";
         if (turn.Options.ReadOnly)
         {
             if (kind is "read" or "search" or "fetch" or "think") return Allow();
             turn.Refused = true;
             return Reject();
         }
-        var ask = Describe(call, kind, turn.Folder, out var outside);
+        var outside = false;
+        var ask = reviewed is not null ? Review(call, reviewed, turn.Folder, out outside) : Describe(call, kind, turn.Folder, out outside);
         if (!NeedsAsking(turn.Options.Approval, kind, outside)) return Allow();
         var trusted = sid is null ? null : _trusted.GetOrAdd(sid, _ => new());
         var key = Key(ask);
@@ -561,8 +564,8 @@ public sealed class AcpHost : IAgentRuntime
     };
 
     /// What "the same again" means for Trust: the kind, and the command, the file or
-    /// the title.
-    private static string Key(AgentAsk a) => a.Kind + ":" + (a.Command ?? a.Path ?? a.Title);
+    /// the title. A Kiro review of several files says "3 files"; its title names them.
+    private static string Key(AgentAsk a) => a.Kind + ":" + (a.Command ?? a.Path ?? a.Title) + (a.Title.StartsWith("Review changes: ", StringComparison.Ordinal) ? ":" + a.Title : "");
 
     internal static readonly System.Text.RegularExpressions.Regex Destructive = new(
         @"(^|[\s;&|(])(rm|rmdir|del|erase|rd|remove-item|format|mkfs|shutdown|git\s+(push|reset|clean|checkout\s+--))\b",
@@ -626,17 +629,7 @@ public sealed class AcpHost : IAgentRuntime
             }
 
         outside = false;
-        if (path is { Length: > 0 })
-        {
-            try
-            {
-                var full = Path.IsPathFullyQualified(path) ? Path.GetFullPath(path) : Path.GetFullPath(Path.Combine(folder, path));
-                var root = Path.GetFullPath(folder).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
-                if (full.StartsWith(root, StringComparison.OrdinalIgnoreCase)) path = full[root.Length..].Replace('\\', '/');
-                else outside = true;
-            }
-            catch (Exception e) when (e is ArgumentException or NotSupportedException or PathTooLongException) { }
-        }
+        if (path is { Length: > 0 }) path = InFolder(path, folder, ref outside);
 
         var danger = kind == "delete" || (command is not null && Destructive.IsMatch(command));
         var reason = kind switch
@@ -655,6 +648,59 @@ public sealed class AcpHost : IAgentRuntime
     }
 
     private static string Clip(string s, int max) => s.Length <= max ? s : s[..(max - 1)] + "…";
+
+    /// A path relative to the folder when it is inside it; outside is set when it isn't.
+    private static string InFolder(string path, string folder, ref bool outside)
+    {
+        try
+        {
+            var full = Path.IsPathFullyQualified(path) ? Path.GetFullPath(path) : Path.GetFullPath(Path.Combine(folder, path));
+            var root = Path.GetFullPath(folder).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
+            if (full.StartsWith(root, StringComparison.OrdinalIgnoreCase)) return full[root.Length..].Replace('\\', '/');
+            outside = true;
+        }
+        catch (Exception e) when (e is ArgumentException or NotSupportedException or PathTooLongException) { }
+        return path;
+    }
+
+    /// Kiro's "Review changes" (checked against kiro-cli 2, Sep 2026): with autopilot
+    /// off it asks once for the edits a turn made, as a toolCall with only that title,
+    /// and names the files in _meta.kiro.files, each with the edit's toolCallId. That
+    /// is an edit, and the steps already seen hold its change. Null for anything else.
+    /// Read here, on the read loop that writes the steps.
+    private IReadOnlyList<(string Path, KiroStep? Step)>? Reviewed(Turn? turn, JsonElement p)
+    {
+        if (Tool != AgentTool.Kiro || !p.TryGetProperty("_meta", out var meta) || meta.ValueKind != JsonValueKind.Object ||
+            !meta.TryGetProperty("kiro", out var kiro) || kiro.ValueKind != JsonValueKind.Object || Str(kiro, "type") != "turn_approval" ||
+            !kiro.TryGetProperty("files", out var files) || files.ValueKind != JsonValueKind.Array)
+            return null;
+        var list = new List<(string, KiroStep?)>();
+        foreach (var f in files.EnumerateArray())
+            if (Str(f, "path") is { Length: > 0 } path)
+                list.Add((path, Str(f, "toolCallId") is { } tid ? turn?.Stream.StepOf(tid) : null));
+        return list.Count > 0 ? list : null;
+    }
+
+    /// The edits of a Kiro "Review changes", told as one edit: the file (or how many),
+    /// the lines it changes and a few of them.
+    internal static AgentAsk Review(JsonElement call, IReadOnlyList<(string Path, KiroStep? Step)> files, string folder, out bool outside)
+    {
+        outside = false;
+        var paths = files.Select(f => f.Path).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        var shown = new List<string>();
+        foreach (var p in paths) shown.Add(InFolder(p, folder, ref outside));
+        var added = files.Sum(f => f.Step?.Added ?? 0);
+        var removed = files.Sum(f => f.Step?.Removed ?? 0);
+        var preview = string.Join("\n", files.Select(f => f.Step?.Diff).OfType<string>()).Split('\n').Where(l => l.Length > 0).Take(8).ToList();
+        var path = shown.Count == 1 ? shown[0] : $"{shown.Count} files";
+        var reason = outside ? "Edits a file outside the folder" : added + removed > 0 ? $"Changes {added + removed} line{(added + removed == 1 ? "" : "s")}" : "Edits a file";
+        if (shown.Count > 1) reason += $" in {shown.Count} files";
+        var id = Str(call, "toolCallId") is { Length: > 0 } tid ? tid : Guid.NewGuid().ToString("N");
+        // The title names every file, so trusting one review of three files doesn't
+        // trust any other three (Key).
+        return new AgentAsk(id, "edit", "Review changes: " + string.Join(", ", shown), null, path, preview.Count > 0 ? string.Join("\n", preview) : null,
+            added, removed, reason, false);
+    }
 
     /// The configOptions of a session/new, session/load or set_config_option answer.
     internal static List<AcpOption>? Options(JsonElement r)

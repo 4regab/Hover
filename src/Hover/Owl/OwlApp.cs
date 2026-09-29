@@ -53,6 +53,7 @@ public static class OwlApp
     {
         // Every session, sealed, until the user deletes it; the office's bookshelf lists them.
         History = new AgentHistory(System.IO.Path.Combine(Paths.Support, "agents")),
+        MaxRunning = Settings.MaxRunning,
     };
 
     /// Kiro tasks that ended while no Kiro page was in view. The resting notch keeps
@@ -118,6 +119,9 @@ public static class OwlApp
             var who = Services.Agents.Name(s.Tool);
             KiroUnseenTool = KiroUnseen == 1 || KiroUnseenTool == who ? who : null;
             KiroUnseenLast = (s.Tool, s.Title, r.State, s.Elapsed);
+            // The session's own Changed came before this, while the end was not yet
+            // unseen, so the notch drew nothing; it draws the end now.
+            Kiro.RaiseChanged();
             Notify?.Invoke((r.State switch
             {
                 Services.KiroState.Completed => $"{who} is done",

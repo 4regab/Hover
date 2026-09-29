@@ -299,12 +299,20 @@ public sealed class KiroSession
 
 /// Every Kiro session the page knows about, shared by the notch and the app window.
 /// Several run side by side, each its own kiro-cli in its own folder. Each of those
-/// takes a few hundred MB while it works, so only MaxRunning run at once, and only
-/// the last MaxKept are kept (one per desk in the office); the oldest finished one
-/// makes way for a new one.
+/// takes a few hundred MB while it works, so only MaxRunning run at once (the user's
+/// pick, one to MaxKept), and only the last MaxKept are kept (one per desk in the
+/// office); the oldest finished one makes way for a new one.
 public sealed class KiroSessions
 {
-    public const int MaxRunning = 3, MaxKept = 6;
+    public const int DefaultRunning = 3, MaxKept = 6;
+
+    /// How many run at once. A run already going is never stopped by a lower number.
+    public int MaxRunning
+    {
+        get => _maxRunning;
+        set => _maxRunning = Math.Clamp(value, 1, MaxKept);
+    }
+    private int _maxRunning = DefaultRunning;
 
     private readonly List<KiroSession> _all = new();
     private readonly Func<AgentTool, KiroSession> _make;
@@ -459,7 +467,7 @@ public static class AgentWords
             {
                 KiroState.Completed => "Done", KiroState.Failed => "Couldn’t finish", KiroState.Cancelled => "Stopped", _ => "Ready",
             }, "");
-        if (s.Phase == KiroPhase.Starting) return ("Waking up", "");
+        if (s.Phase == KiroPhase.Starting) return ("Starting", Agents.Name(s.Tool));
         var steps = s.Current?.Steps;
         var step = steps?.LastOrDefault(x => x.Status is "in_progress" or "pending");
         if (step is null && s.Phase is KiroPhase.Reading or KiroPhase.Searching or KiroPhase.Editing or KiroPhase.Running) step = steps?.LastOrDefault();
@@ -468,6 +476,9 @@ public static class AgentWords
             {
                 KiroPhase.Thinking => "Thinking", KiroPhase.Planning => "Making a plan", KiroPhase.Writing => "Writing it up", _ => "Working",
             }, "");
+        // An MCP tool: its server, then its name ("playwriter › execute").
+        if (step.Kind is "other" && Mcp(step.Title) is var (server, tool))
+            return server is null ? ("Using an MCP tool", "") : ($"{server} ›", tool);
         var verb = step.Kind switch
         {
             "read" => "Reading", "edit" => "Editing", "delete" => "Deleting", "move" => "Moving", "execute" => "Running",
@@ -478,8 +489,32 @@ public static class AgentWords
                 KiroPhase.Searching => "Searching", _ => "Working",
             },
         };
+        // A tool of the agent's own that says nothing of what it does: its name
+        // ("Update Session Information") rather than "Working".
+        if (verb == "Working" && Short(step.Target) is null && step.Title is { Length: > 0 } title && title != "Working")
+            return (title.Length > 32 ? title[..31] + "…" : title, "");
         return (verb, Short(step.Target) ?? "");
     }
+
+    private static readonly System.Text.RegularExpressions.Regex KiroMcp = new(@"^@([\w.-]+)/([\w.-]+)$");
+    private static readonly System.Text.RegularExpressions.Regex CursorMcp = new(@"^([\w.-]+):\s+([\w.-]+)$");
+
+    /// An MCP tool's server and name, from the title its agent gives the call: Kiro's
+    /// "@playwriter/execute", Cursor's "playwriter: execute". Cursor's "MCP: tool"
+    /// names neither: the server is null. Null when the title isn't an MCP tool's.
+    public static (string? Server, string Tool)? Mcp(string? title)
+    {
+        if (string.IsNullOrWhiteSpace(title)) return null;
+        var m = KiroMcp.Match(title.Trim());
+        if (!m.Success) m = CursorMcp.Match(title.Trim());
+        if (!m.Success) return null;
+        var server = m.Groups[1].Value;
+        return server.Equals("mcp", StringComparison.OrdinalIgnoreCase) ? (null, m.Groups[2].Value) : (server, m.Groups[2].Value);
+    }
+
+    /// A tool's name as the notch says it: "playwriter › execute" for an MCP tool,
+    /// otherwise the title the agent gave it.
+    public static string ToolName(string title) => Mcp(title) is var (server, tool) ? (server is null ? "an MCP tool" : $"{server} › {tool}") : title;
 
     /// A file's name, or a command's program and first word, short enough for the notch.
     public static string? Short(string? target)
@@ -506,7 +541,7 @@ public static class AgentWords
         "delete" => ("Wants to delete", Short(a.Path) ?? "files"),
         "move" => ("Wants to move", Short(a.Path) ?? "files"),
         "fetch" => ("Wants to go online", ""),
-        _ => ("Wants to use", a.Title),
+        _ => ("Wants to use", ToolName(a.Title)),
     };
 
     /// The question as its card's title.
@@ -518,7 +553,7 @@ public static class AgentWords
         "delete" => $"Wants to delete {Short(a.Path) ?? "files"}",
         "move" => $"Wants to move {Short(a.Path) ?? "files"}",
         "fetch" => "Wants to use the network",
-        _ => $"Wants to use {a.Title}",
+        _ => $"Wants to use {ToolName(a.Title)}",
     };
 
     /// The word on the button that allows it.
@@ -526,4 +561,14 @@ public static class AgentWords
     {
         "execute" => "Run", "edit" => "Allow edit", "delete" => "Delete", "move" => "Move", "question" => "Answer", _ => "Allow",
     };
+
+    /// Why it asks, in a few words, or "" when that only says again what the title
+    /// says ("Wants to run a command": "Runs a command"). Network, outside the folder,
+    /// what can't be taken back and how many lines change are kept.
+    public static string AskWhy(AgentAsk a)
+    {
+        var lines = a.Added + a.Removed > 0 && a.Kind != "edit" ? $"+{a.Added} −{a.Removed}" : "";
+        var reason = a.Reason is "Runs a command" or "Uses a tool" or "Edits a file" or "Deletes files" or "Moves or renames files" or "Uses the network" ? "" : a.Reason;
+        return reason.Length > 0 && lines.Length > 0 ? reason + " · " + lines : reason + lines;
+    }
 }

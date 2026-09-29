@@ -191,6 +191,9 @@ public sealed class KiroStream
     private readonly List<KiroEvent> _events = new();
     private readonly Dictionary<string, KiroStep> _steps = new();
 
+    /// A tool call seen so far, by its id. Not thread-safe: read it where Feed runs.
+    internal KiroStep? StepOf(string id) => _steps.TryGetValue(id, out var s) ? s : null;
+
     /// The steps, context and session id seen since the last call.
     public IReadOnlyList<KiroEvent> Drain()
     {

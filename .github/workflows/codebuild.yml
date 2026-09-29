@@ -1,0 +1,67 @@
+name: CodeBuild
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: codebuild-hover-release-${{ github.run_id }}-${{ github.run_attempt }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Check release version
+        shell: pwsh
+        run: |
+          if ($env:GITHUB_REF_NAME -notmatch '^v(?<version>\d+\.\d+\.\d+(\.\d+)?)$') {
+            throw 'Release tag must be v followed by three or four numeric version parts.'
+          }
+          Add-Content -Path $env:GITHUB_ENV -Value "RELEASE_VERSION=$($Matches.version)"
+
+      - name: Build office page
+        shell: pwsh
+        run: |
+          npm ci --prefix web/office
+          if ($LASTEXITCODE -ne 0) { throw 'npm ci failed' }
+          node web/office/build.mjs
+          if ($LASTEXITCODE -ne 0) { throw 'Office build failed' }
+
+      - name: Build and test
+        shell: pwsh
+        run: |
+          dotnet build .\Hover.slnx -c Release
+          if ($LASTEXITCODE -ne 0) { throw 'Build failed' }
+          dotnet test .\Hover.slnx -c Release --no-build
+          if ($LASTEXITCODE -ne 0) { throw 'Tests failed' }
+
+      - name: Install Inno Setup
+        shell: pwsh
+        run: |
+          $setup = Join-Path $env:RUNNER_TEMP 'innosetup-6.7.3.exe'
+          Invoke-WebRequest 'https://github.com/jrsoftware/issrc/releases/download/is-6_7_3/innosetup-6.7.3.exe' -OutFile $setup
+          $process = Start-Process $setup -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/SP-', '/ALLUSERS' -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw "Inno Setup install failed: $($process.ExitCode)" }
+
+      - name: Build installer
+        shell: pwsh
+        run: .\build.ps1 installer -Version $env:RELEASE_VERSION
+
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Hover ${{ env.RELEASE_VERSION }}
+          files: dist/Hover-Setup-${{ env.RELEASE_VERSION }}.exe
+          fail_on_unmatched_files: true
+          generate_release_notes: true
