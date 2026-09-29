@@ -18,6 +18,10 @@ hover-core = { path = "../../crates/hover-core" }
 hover-agents = { path = "../../crates/hover-agents" }
 hover-quota = { path = "../../crates/hover-quota" }
 hover-notch = { path = "../../crates/hover-notch" }
+# The office (its scene on wgpu) and the chat drawer's thread.
+hover-office = { path = "../../crates/hover-office" }
+hover-chat = { path = "../../crates/hover-chat" }
+serde_json = "1"
 # One process, one renderer: femtovg on wgpu (DirectComposition on Windows, as
 # notch-proto; Vulkan or GL on Linux), and the software renderer for headless shots.
 slint = { version = "=1.18.1", default-features = false, features = ["std", "compat-1-2", "backend-winit", "renderer-femtovg", "renderer-femtovg-wgpu", "unstable-wgpu-30", "renderer-software", "software-renderer-systemfonts", "accessibility", "unstable-winit-030"] }

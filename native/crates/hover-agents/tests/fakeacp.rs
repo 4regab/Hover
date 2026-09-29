@@ -245,6 +245,10 @@ fn an_idle_tool_comes_back_with_the_conversation() {
         host.run(dir, "first", None, &Cancel::new(), None, Some(e));
         let sid = events.lock().unwrap().iter().find_map(|e| e.session_id.clone()).unwrap();
         host.shutdown("idle");
+        // The reader thread notices the closed pipe a moment later; under load that
+        // can come after this line, so the test waits for it.
+        let t = Instant::now();
+        while host.alive() && t.elapsed() < Duration::from_secs(2) { std::thread::sleep(Duration::from_millis(10)); }
         assert!(!host.alive());
         let r = host.run(dir, "second", None, &Cancel::new(), Some(&sid), None);
         assert_eq!(r.state, KiroState::Completed);

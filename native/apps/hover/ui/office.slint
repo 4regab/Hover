@@ -1,11 +1,14 @@
-// Owl/OfficeView.cs: the office, with Settings laid over it from the gear and a back
-// button to return. The office itself is Phase 2's (the three.js scene in wgpu); until
-// then its place holds a stand-in with the page's top-right controls (music, settings,
-// and in the notch fold and open-in-a-window).
+// Owl/OfficeView.cs and web/office/page.html's UI around the scene: the office (the
+// native renderer's frame) with the name tags over the bots, the HUD, the new-task
+// circle, the panels (board, overview, history), the chat drawer, the toast, the prop
+// tooltip and the delete confirmation; Settings laid over it all from the gear.
 
 import { Pal, Fonts, Icon, Icons, PillButton } from "widgets.slint";
 import { SettingsPage, Side, Block, Opt } from "settings.slint";
 export { Side, Block, Opt }
+
+
+import "../../../../web/office/fonts/PixelifySans.ttf";
 
 // What Settings shows, set from Rust for each window that has an office.
 export global Page {
@@ -13,7 +16,6 @@ export global Page {
     in property <int> current;
     in property <[Block]> blocks;
     in property <bool> recording;
-    // The picker's menu: where, what, and which row asked.
     in property <bool> menu-open;
     in property <length> menu-x;
     in property <length> menu-y;
@@ -31,35 +33,336 @@ export global Page {
     callback chord(KeyEvent) -> bool;
 }
 
-// The page's controls and the office's state, for the stand-in.
+// A bot's name tag and its bubble. stage: 0 waking, 1 working, 2 done, 3 failed, 4 stopped.
+export struct TagData { id: int, x: length, y: length, name: string, color: color, tool: string, tool-color: color, text: string, stage: int, hot: bool }
+export struct ToolData { id: string, name: string, ready: bool, hint: string }
+// A panel row. kind: 0 heading (text, color, count), 1 card, 2 stats, 3 meter, 4 note, 5 search.
+export struct PanelRow { kind: int, text: string, sub: string, meta: string, color: color, stage: int, count: string, open: int, key: string, pct: float, desk: bool,
+    s1: string, s2: string, s3: string, s4: string }
+
 export global Office {
+    in property <image> scene;
+    in property <[TagData]> tags;
+    in property <string> hint;
+    in property <length> tip-x;
+    in property <length> tip-y;
     in property <bool> beats;
-    in property <string> summary: "The office is quiet.";
+    // 0 follows the clock, 1 night, 2 day.
+    in property <int> time-mode;
+    in property <string> summary;
+    // The new-task circle: 0 rest, 1 the logos, 2 the box.
+    in property <int> fab;
+    in property <[ToolData]> tools;
+    in property <int> new-tool;
+    in-out property <string> new-draft;
+    in property <string> new-folder: "Choose a folder";
+    in property <string> new-note;
+    in property <bool> new-go;
+    in property <string> toast;
+    in property <bool> toast-shown;
+    in property <int> panel;
+    in property <string> panel-title;
+    in property <string> panel-sub;
+    in property <[PanelRow]> rows;
+    in-out property <string> find;
+    in property <bool> confirm;
+    in property <string> confirm-text;
+    in property <bool> drawer;
+    in property <string> d-name;
+    in property <color> d-color;
+    in property <string> d-tool;
+    in property <color> d-tool-color;
+    in property <string> d-title;
+    in property <string> d-folder;
+    in property <float> d-ctx: -1;
+    in property <image> d-thread;
+    in property <bool> d-busy;
+    in property <string> d-placeholder;
+    in-out property <string> d-draft;
+    in-out property <length> d-thread-w;
+    in-out property <length> d-thread-h;
+    callback pointer(int, length, length);
+    callback wheel(length, length, length);
+    callback key(string);
     callback toggle-beats();
+    callback set-time(int);
+    callback open-history();
     callback open-settings();
     callback fold();
     callback open-app();
+    callback fab-main();
+    callback pick-tool(int);
+    callback new-go-clicked();
+    callback new-fold();
+    callback new-folder-clicked();
+    callback tag-clicked(int);
+    callback panel-close();
+    callback row-clicked(int);
+    callback row-delete(int);
+    callback find-edited(string);
+    callback confirm-yes();
+    callback confirm-no();
+    callback d-close();
+    callback d-send();
+    callback d-delete();
+    callback d-wheel(length);
 }
 
-// The page's glass buttons (#beats, the gear), 30 px round.
+// .glass: rgba(22,15,30,.72) over the scene blurred 18 px (backdrop-filter), which
+// Slint can't do: the office thread sends a blurred copy of each frame, and a glass
+// panel shows the part of it under itself.
+export global Backdrop {
+    in property <image> blurred;
+    in property <length> ox;
+    in property <length> oy;
+    in property <length> w;
+    in property <length> h;
+}
+
 component Glass inherits Rectangle {
+    border-radius: 13px;
+    clip: true;
+    Image {
+        x: Backdrop.ox - root.absolute-position.x;
+        y: Backdrop.oy - root.absolute-position.y;
+        width: Backdrop.w;
+        height: Backdrop.h;
+        source: Backdrop.blurred;
+        image-fit: fill;
+    }
+    Rectangle { background: #160f1eb8; border-radius: root.border-radius; }
+    background: transparent;
+    border-width: 1px;
+    border-color: #ffffff17;
+    drop-shadow-blur: 36px;
+    drop-shadow-offset-y: 12px;
+    drop-shadow-color: #00000066;
+}
+
+// One 34 × 32 button of a HUD group (.seg button).
+component SegButton inherits Rectangle {
     in property <string> icon;
     in property <string> id;
     in property <string> label;
     in property <bool> on;
+    in property <bool> gold: true;
     callback clicked;
-    width: 30px;
-    height: 30px;
-    border-radius: 15px;
-    background: ta.has-hover ? #ffffff2e : #ffffff1a;
+    width: 34px;
+    height: 32px;
+    border-radius: 10px;
+    background: on ? #ffffff1f : ta.has-hover ? #ffffff10 : transparent;
     accessible-role: button;
     accessible-id: id;
     accessible-label: label;
-    accessible-checkable: id == "beats";
+    accessible-checkable: true;
     accessible-checked: on;
     accessible-action-default => { clicked(); }
-    Icon { name: icon; size: 16px; tint: on ? #ffd27a : #f6f2ffcc; }
+    Icon { name: icon; size: 18px; tint: on && gold ? #ffd27a : ta.has-hover ? #f6f2ff : #f6f2ff9e; }
     ta := TouchArea { mouse-cursor: pointer; clicked => { clicked(); } }
+}
+
+// The page's own HUD paths that Lucide's set here lacks.
+global PagePaths {
+    out property <string> moon: "M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z";
+    out property <string> sun: "M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8Z M12 2v2 M12 20v2 M4.9 4.9l1.4 1.4 M17.7 17.7l1.4 1.4 M2 12h2 M20 12h2 M4.9 19.1l1.4-1.4 M17.7 6.3l1.4-1.4";
+    out property <string> history: "M3 12a9 9 0 1 0 3-6.7L3 8 M3 3v5h5 M12 7v5l3 2";
+    out property <string> plus: "M12 5v14 M5 12h14";
+    out property <string> up: "M12 19V5 M5 12l7-7 7 7";
+    out property <string> stop: "M8 5h8a3 3 0 0 1 3 3v8a3 3 0 0 1-3 3H8a3 3 0 0 1-3-3V8a3 3 0 0 1 3-3Z";
+    out property <string> bin: "M4 7h16 M10 11v6 M14 11v6 M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12 M9 7V4h6v3";
+    // The tools' marks (LobeHub, MIT; the marks belong to their owners), as main.js draws them.
+    out property <string> kiro: "M4.594 6.677C6.67-2.226 18.746-2.211 21.16 6.632c.353 1.297 1.725 7.582-1.673 13.747-1.545 2.797-5.841 5.49-6.99 1.883C8.6 25.477 3.315 24.1 5.789 18.609l-.318.143c-3.57 1.305-3.863-1.208-3.173-2.513.45-.84.727-1.335.937-1.897.353-.975.458-1.568.593-2.498.27-1.837.277-3.607.765-5.167z";
+    out property <string> codex: "M9.064 3.344a4.578 4.578 0 012.285-.312c1 .115 1.891.54 2.673 1.275a4.55 4.55 0 013.13.297 4.581 4.581 0 012.304 2.456c.209.51.313 1.041.315 1.595a4.24 4.24 0 01-.104 1.338c.594.607.988 1.33 1.183 2.17.289 1.425-.007 2.71-.887 3.854a4.548 4.548 0 01-2.337 1.554c-.191.551-.383 1.023-.74 1.494-.9 1.187-2.222 1.846-3.711 1.838-1.187-.006-2.239-.44-3.262-1.326-.388.125-.78.143-1.204.138a4.441 4.441 0 01-1.945-.466 4.544 4.544 0 01-1.61-1.335c-.152-.202-.303-.392-.414-.617a5.81 5.81 0 01-.37-.961 4.582 4.582 0 01-.035-2.402 4.467 4.467 0 01-1.034-1.651 3.896 3.896 0 01-.251-1.192 5.189 5.189 0 01.141-1.6c.337-1.112.982-1.985 1.933-2.618.212-.141.413-.251.601-.33.215-.089.43-.164.711-.293a4.51 4.51 0 01.829-1.615 4.535 4.535 0 011.837-1.388z";
+    out property <string> cursor: "M22.106 5.68L12.5.135a.998.998 0 00-.998 0L1.893 5.68a.84.84 0 00-.419.726v11.186c0 .3.16.577.42.727l9.607 5.547a.999.999 0 00.998 0l9.608-5.547a.84.84 0 00.42-.727V6.407a.84.84 0 00-.42-.726z";
+}
+
+component Logo inherits Rectangle {
+    in property <string> tool;
+    in property <bool> ready: true;
+    in property <length> mark: 22px;
+    border-radius: self.width / 2;
+    background: tool == "codex" ? white : tool == "cursor" ? #0d0d10 : #9046ff;
+    border-width: tool == "cursor" ? 1px : 0;
+    border-color: #ffffff24;
+    opacity: ready ? 1 : 0.55;
+    Path {
+        width: mark;
+        height: mark;
+        viewbox-width: 24;
+        viewbox-height: 24;
+        commands: tool == "codex" ? PagePaths.codex : tool == "cursor" ? PagePaths.cursor : PagePaths.kiro;
+        fill: tool == "codex" ? @linear-gradient(180deg, #b1a7ff 0%, #7a9dff 50%, #3941ff 100%) : tool == "cursor" ? #ececf0 : white;
+        stroke: transparent;
+    }
+}
+
+// .av: the bot's small face in its colour.
+component Face inherits Rectangle {
+    in property <color> c;
+    width: 22px;
+    height: 20px;
+    border-radius: 6px;
+    background: c;
+    Rectangle { x: 4px; y: 6px; width: parent.width - 8px; height: 8px; border-radius: 3px; background: #121018;
+        Rectangle { x: 3px; y: 2px; width: 2px; height: 4px; background: #aaf6ff; }
+        Rectangle { x: parent.width - 5px; y: 2px; width: 2px; height: 4px; background: #aaf6ff; }
+    }
+}
+
+component Tag inherits Rectangle {
+    in property <TagData> t;
+    callback clicked;
+    width: 0;
+    height: 0;
+    x: t.x;
+    y: t.y;
+    col := VerticalLayout {
+        x: -self.preferred-width / 2;
+        y: -self.preferred-height;
+        spacing: 4px;
+        alignment: end;
+        if t.text != "": HorizontalLayout {
+            alignment: center;
+            bub := Rectangle {
+                y: t.hot ? -2px : 0;
+                width: min(190px, bt.preferred-width + 20px);
+                height: bt.preferred-height + 11px;
+                animate y { duration: 200ms; }
+                border-radius: 10px;
+                background: t.stage == 4 ? transparent : t.stage == 2 ? #d9ffe6 : t.stage == 3 ? #ffe1de : #f3e8ff;
+                drop-shadow-blur: t.stage == 4 ? 0 : 14px;
+                drop-shadow-offset-y: 4px;
+                drop-shadow-color: #00000059;
+                bt := Text {
+                        x: 10px;
+                        y: 5px;
+                        width: min(170px, self.preferred-width);
+                        text: t.text;
+                        font-family: "Pixelify Sans";
+                        font-weight: 500;
+                        font-size: t.stage == 4 ? 14px : 12.5px;
+                        letter-spacing: t.stage == 4 ? 2.8px : 0;
+                        color: t.stage == 4 ? #c9c2e6 : t.stage == 2 ? #0d4a24 : t.stage == 3 ? #6a130d : #2a1640;
+                        overflow: elide;
+                }
+                // The bubble's tail.
+                if t.stage != 4: Rectangle { x: (parent.width - 10px) / 2; y: parent.height - 5px; width: 10px; height: 10px; background: parent.background; border-radius: 2px; transform-rotation: 45deg; }
+            }
+        }
+        HorizontalLayout {
+            alignment: center;
+            Rectangle {
+                border-radius: 7px;
+                background: t.hot ? t.color : #0a060eb8;
+                border-width: t.hot ? 2px : 1px;
+                border-color: t.hot ? #ffffffb3 : #ffffff14;
+                accessible-role: button;
+                accessible-label: t.name;
+                accessible-action-default => { clicked(); }
+                HorizontalLayout {
+                    padding-left: 6px;
+                    padding-right: 8px;
+                    padding-top: 2px;
+                    padding-bottom: 3px;
+                    spacing: 5px;
+                    VerticalLayout { alignment: center; Rectangle { width: 7px; height: 7px; border-radius: 2px; background: t.hot ? white : t.color; } }
+                    Text { text: t.name; font-family: "Pixelify Sans"; font-weight: 600; font-size: 12px; letter-spacing: 0.36px; color: white; vertical-alignment: center; }
+                    Rectangle {
+                        border-radius: 5px;
+                        background: t.tool-color.with-alpha(0.2);
+                        HorizontalLayout { padding-left: 5px; padding-right: 5px;
+                            Text { text: t.tool; font-size: 9.5px; font-weight: 600; letter-spacing: 0.3px; color: t.tool-color; vertical-alignment: center; } }
+                    }
+                }
+                TouchArea { mouse-cursor: pointer; clicked => { clicked(); } }
+            }
+        }
+    }
+}
+
+// The side panels' rows (.card, .col h4, .stats, .meter).
+component RowView inherits Rectangle {
+    in property <PanelRow> r;
+    callback clicked;
+    callback delete;
+    height: lay.preferred-height;
+    lay := VerticalLayout {
+        if r.kind == 0: HorizontalLayout {
+            padding-left: 4px;
+            padding-right: 4px;
+            padding-bottom: 8px;
+            padding-top: 6px;
+            spacing: 8px;
+            if r.color.alpha > 0: VerticalLayout { alignment: center; Rectangle { width: 8px; height: 8px; border-radius: 2px; background: r.color; } }
+            Text { text: r.text; font-family: "Pixelify Sans"; font-weight: 600; font-size: 12px; letter-spacing: 0.7px; color: #f6f2ff9e; horizontal-stretch: 1; }
+            Text { text: r.count; font-family: "Pixelify Sans"; font-weight: 600; font-size: 12px; color: #f6f2ff61; }
+        }
+        if r.kind == 1 || r.kind == 3: HorizontalLayout {
+            padding-bottom: 6px;
+            spacing: 4px;
+            card := Rectangle {
+                horizontal-stretch: 1;
+                border-radius: 12px;
+                border-width: 1px;
+                border-color: ta.has-hover ? #c4a2ff59 : #ffffff17;
+                background: ta.has-hover ? #ffffff17 : #ffffff0a;
+                accessible-role: button;
+                accessible-label: r.text;
+                accessible-action-default => { clicked(); }
+                HorizontalLayout {
+                    padding: 9px;
+                    padding-left: 10px;
+                    spacing: 10px;
+                    VerticalLayout { alignment: center; Face { c: r.color; } }
+                    VerticalLayout {
+                        horizontal-stretch: 1;
+                        spacing: 1px;
+                        Text { text: r.sub; font-size: 11.5px; font-weight: 600; color: r.stage == 2 ? #30d158 : r.stage == 3 ? #ff453a : r.stage <= 1 ? #c4a2ff : #f6f2ff9e; overflow: elide; }
+                        Text { text: r.text; font-size: 12.5px; color: #f6f2ff; wrap: word-wrap; max-height: 34px; overflow: elide; }
+                        if r.kind == 3: Rectangle { height: 5px; border-radius: 3px; background: #ffffff1a;
+                            Rectangle { x: 0; width: parent.width * clamp(r.pct / 100, 0, 1); border-radius: 3px; background: #c4a2ff; } }
+                        if r.meta != "": Text { text: r.meta; font-size: 11px; color: #f6f2ff61; overflow: elide; }
+                    }
+                    if r.kind == 3: VerticalLayout { alignment: center; Text { text: r.count; font-size: 11px; color: #f6f2ff61; } }
+                }
+                ta := TouchArea { mouse-cursor: pointer; clicked => { clicked(); } }
+            }
+            if r.key != "": VerticalLayout {
+                alignment: center;
+                Rectangle {
+                    width: 30px;
+                    height: 30px;
+                    border-radius: 9px;
+                    background: xa.has-hover ? #ffffff14 : transparent;
+                    accessible-role: button;
+                    accessible-label: "Delete " + r.text;
+                    accessible-action-default => { delete(); }
+                    Icon { name: PagePaths.bin; size: 15px; tint: xa.has-hover ? #f6f2ff : #f6f2ff61; }
+                    xa := TouchArea { mouse-cursor: pointer; clicked => { delete(); } }
+                }
+            }
+        }
+        if r.kind == 2: HorizontalLayout {
+            spacing: 8px;
+            padding-bottom: 16px;
+            for s[i] in [r.s1, r.s2, r.s3, r.s4]: Rectangle {
+                horizontal-stretch: 1;
+                border-radius: 12px;
+                background: #ffffff0a;
+                border-width: 1px;
+                border-color: #ffffff17;
+                VerticalLayout {
+                    padding: 10px;
+                    padding-left: 8px;
+                    padding-right: 8px;
+                    Text { text: s; font-family: "Pixelify Sans"; font-weight: 600; font-size: 22px; horizontal-alignment: center;
+                        color: i == 0 ? #c4a2ff : i == 1 ? #30d158 : i == 2 ? #ff453a : #8e8e93; }
+                    Text { text: ["Working", "Done", "Failed", "Stopped"][i]; font-size: 11px; color: #f6f2ff9e; horizontal-alignment: center; }
+                }
+            }
+        }
+        if r.kind == 4: Text { text: r.text; font-size: 12.5px; color: #f6f2ff61; wrap: word-wrap; }
+    }
 }
 
 export component OfficeView inherits Rectangle {
@@ -68,40 +371,352 @@ export component OfficeView inherits Rectangle {
     callback back();
     callback fold();
 
-    // The office's stand-in, inset 8 in the notch to keep inside the shape's curves.
+    // The office, inset 8 in the notch to keep inside the shape's curves.
     office := Rectangle {
         x: dashboard ? 0 : 8px;
         y: dashboard ? 0 : 8px;
         width: parent.width - (dashboard ? 0 : 16px);
         height: parent.height - (dashboard ? 0 : 16px);
         visible: !in-settings;
-        border-radius: dashboard ? 0 : 24px;
         clip: true;
-        background: @linear-gradient(180deg, #1d1428 0%, #120c18 100%);
-        Text {
-            x: 20px; y: 16px;
-            text: "Agent office";
-            color: #f6f2ff;
-            font-size: 14px;
-            font-weight: 600;
-            font-family: Fonts.display;
+        border-radius: 16px;
+        background: #07050a;
+        focus := FocusScope {
+            key-pressed(e) => {
+                if (e.text == Key.Escape) {
+                    if (Office.confirm) { Office.confirm-no(); return accept; }
+                    if (Office.fab != 0) { Office.new-fold(); return accept; }
+                    if (Office.drawer) { Office.d-close(); return accept; }
+                    if (Office.panel != 0) { Office.panel-close(); return accept; }
+                    root.fold();
+                    return accept;
+                }
+                Office.key(e.text);
+                accept
+            }
+        }
+        scene-img := Image {
+            width: 100%;
+            height: 100%;
+            init => { Backdrop.ox = self.absolute-position.x; Backdrop.oy = self.absolute-position.y; Backdrop.w = self.width; Backdrop.h = self.height; }
+            changed width => { Backdrop.w = self.width; Backdrop.ox = self.absolute-position.x; }
+            changed height => { Backdrop.h = self.height; Backdrop.oy = self.absolute-position.y; }
+            source: Office.scene;
+            image-fit: fill;
+            image-rendering: pixelated;
+            accessible-role: image;
+            accessible-label: Office.summary;
+        }
+        scene-ta := TouchArea {
+            mouse-cursor: Office.hint != "" ? pointer : default;
+            pointer-event(e) => {
+                if (e.kind == PointerEventKind.down && e.button == PointerEventButton.left) { focus.focus(); Office.pointer(1, self.mouse-x, self.mouse-y); }
+                if (e.kind == PointerEventKind.up && e.button == PointerEventButton.left) { Office.pointer(2, self.mouse-x, self.mouse-y); }
+            }
+            moved => { Office.pointer(0, self.mouse-x, self.mouse-y); }
+            double-clicked => { Office.pointer(3, self.mouse-x, self.mouse-y); }
+            scroll-event(e) => { Office.wheel(e.delta-y, self.mouse-x, self.mouse-y); accept }
+            changed has-hover => { if (!self.has-hover) { Office.pointer(4, 0, 0); } }
+        }
+        for t in Office.tags: Tag { t: t; clicked => { Office.tag-clicked(t.id); } }
+        if Office.hint != "": Rectangle {
+            x: Office.tip-x + 14px;
+            y: Office.tip-y + 16px;
+            width: tip.preferred-width + 18px;
+            height: tip.preferred-height + 8px;
+            border-radius: 8px;
+            background: #0a060ed9;
+            border-width: 1px;
+            border-color: #ffffff1a;
+            tip := Text { text: Office.hint; font-family: "Pixelify Sans"; font-weight: 600; font-size: 12px; color: #f6f2ff; }
+        }
+
+        // The brand: it opens the app window (in the notch), and says nothing in the window.
+        Glass {
+            x: 18px;
+            y: 16px;
+            width: brand.preferred-width;
+            height: brand.preferred-height;
+            border-radius: 14px;
             accessible-role: button;
-            accessible-id: "openApp";
+            accessible-id: "brand";
+            accessible-label: "Agent office";
+            accessible-action-default => { Office.open-app(); }
+            brand := HorizontalLayout {
+                padding-left: 8px;
+                padding-right: 14px;
+                padding-top: 7px;
+                padding-bottom: 7px;
+                spacing: 10px;
+                Rectangle { width: 30px; height: 28px; border-radius: 8px; background: #9046ff;
+                    Rectangle { x: 5px; y: 9px; width: 20px; height: 11px; border-radius: 4px; background: #121018;
+                        Rectangle { x: 4px; y: 3px; width: 3px; height: 5px; background: #aaf6ff; }
+                        Rectangle { x: 13px; y: 3px; width: 3px; height: 5px; background: #aaf6ff; } } }
+                VerticalLayout { alignment: center; Text { text: "Agent office"; font-family: "Pixelify Sans"; font-weight: 600; font-size: 14px; letter-spacing: 0.28px; color: #f6f2ff; } }
+            }
             TouchArea { enabled: !dashboard; mouse-cursor: pointer; clicked => { Office.open-app(); } }
         }
-        Text {
-            x: 20px; y: 40px;
-            text: Office.summary;
-            color: #f6f2ff99;
-            font-size: 12px;
-        }
+        // The HUD: time of day, the beats, history and settings, and close in the notch.
+        // Under the drawer and the panels (z-index 4 against their 5): only the part a
+        // drawer leaves free shows.
         HorizontalLayout {
-            x: parent.width - self.width - 14px;
-            y: 12px;
+            visible: (!Office.drawer && Office.panel == 0) || (parent.width - 12px - min(400px, parent.width - 24px) > self.x + self.preferred-width);
+            x: parent.width - self.preferred-width - 16px;
+            y: 16px;
+            height: 40px;
             spacing: 8px;
-            Glass { id: "beats"; label: "Chill beats"; icon: Icons.music; on: Office.beats; clicked => { Office.toggle-beats(); } }
-            Glass { id: "settings"; label: "Settings"; icon: Icons.settings; clicked => { Office.open-settings(); } }
-            if !dashboard: Glass { id: "fold"; label: "Close"; icon: Icons.close; clicked => { Office.fold(); } }
+            Glass { width: t3.preferred-width; t3 := HorizontalLayout { padding: 3px; spacing: 2px;
+                SegButton { id: "timeAuto"; label: "Follow the clock"; icon: Icons.clock; on: Office.time-mode == 0; clicked => { Office.set-time(0); } }
+                SegButton { id: "timeNight"; label: "Night"; icon: PagePaths.moon; on: Office.time-mode == 1; clicked => { Office.set-time(1); } }
+                SegButton { id: "timeDay"; label: "Day"; icon: PagePaths.sun; on: Office.time-mode == 2; clicked => { Office.set-time(2); } } } }
+            Glass { width: b1.preferred-width; b1 := HorizontalLayout { padding: 3px;
+                SegButton { id: "beats"; label: "Chill beats"; icon: Icons.music; on: Office.beats; clicked => { Office.toggle-beats(); } } } }
+            Glass { width: b2.preferred-width; b2 := HorizontalLayout { padding: 3px; spacing: 2px;
+                SegButton { id: "histBtn"; label: "Session history"; icon: PagePaths.history; on: Office.panel == 3; gold: false; clicked => { Office.open-history(); } }
+                SegButton { id: "setBtn"; label: "Settings"; icon: Icons.settings; clicked => { Office.open-settings(); } } } }
+            if !dashboard: Glass { width: b3.preferred-width; b3 := HorizontalLayout { padding: 3px;
+                SegButton { id: "closeBtn"; label: "Close"; icon: Icons.close; clicked => { root.fold(); } } } }
+        }
+
+        // The new-task circle, the tools' logos, the box.
+        Rectangle {
+            x: 14px;
+            y: parent.height - 58px;
+            width: 44px;
+            height: 44px;
+            if Office.fab != 2: Glass {
+                border-radius: 22px;
+                accessible-role: button;
+                accessible-id: "fabMain";
+                accessible-label: Office.fab == 1 ? "Close" : "New task";
+                accessible-action-default => { Office.fab-main(); }
+                Icon { name: Office.fab == 1 ? Icons.close : PagePaths.plus; size: 18px; tint: #f6f2ff; }
+                if Office.new-draft != "" && Office.fab == 0: Rectangle { x: 32px; y: 2px; width: 10px; height: 10px; border-radius: 5px; background: #c4a2ff; border-width: 2px; border-color: #140f1a; }
+                TouchArea { mouse-cursor: pointer; clicked => { Office.fab-main(); } }
+            }
+            for t[i] in Office.tools: Logo {
+                visible: Office.fab == 1;
+                x: 2px + 52px + i * 48px;
+                y: 2px;
+                width: 40px;
+                height: 40px;
+                tool: t.id;
+                ready: t.ready;
+                accessible-role: button;
+                accessible-label: t.ready ? t.name : t.name + ": " + t.hint;
+                accessible-action-default => { Office.pick-tool(i); }
+                TouchArea { mouse-cursor: pointer; clicked => { Office.pick-tool(i); } }
+            }
+        }
+        if Office.fab == 2: Glass {
+            x: 14px;
+            y: parent.height - self.height - 14px;
+            width: min(410px, parent.width - 52px);
+            height: nt.preferred-height;
+            border-radius: 20px;
+            accessible-role: groupbox;
+            accessible-id: "newtask";
+            accessible-label: "New task";
+            nt := VerticalLayout {
+                padding: 9px;
+                padding-right: 8px;
+                spacing: 6px;
+                HorizontalLayout {
+                    spacing: 8px;
+                    Logo { width: 30px; height: 30px; mark: 17px; tool: Office.tools[Office.new-tool].id;
+                        TouchArea { mouse-cursor: pointer; clicked => { Office.fab-main(); } } }
+                    ntext := TextInput {
+                        text <=> Office.new-draft;
+                        font-size: 13px;
+                        color: #f6f2ff;
+                        wrap: word-wrap;
+                        single-line: false;
+                        min-height: 40px;
+                        accessible-role: text-input;
+                        accessible-id: "nInput";
+                        accessible-label: "Task";
+                        key-pressed(e) => { if (e.text == "\n" && !e.modifiers.shift) { Office.new-go-clicked(); return accept; } reject }
+                        init => { self.focus(); }
+                    }
+                    Rectangle { width: 28px; height: 28px; border-radius: 9px; background: fa.has-hover ? #ffffff14 : transparent;
+                        Icon { name: Icons.chevron-down; size: 15px; tint: #f6f2ff9e; }
+                        fa := TouchArea { mouse-cursor: pointer; clicked => { Office.new-fold(); } } }
+                }
+                if Office.new-note != "": Text { text: Office.new-note; font-size: 11.5px; color: #ffb36b; wrap: word-wrap; }
+                HorizontalLayout {
+                    spacing: 6px;
+                    alignment: space-between;
+                    Rectangle { width: fl.preferred-width + 20px; height: 28px; border-radius: 14px; background: #ffffff0f;
+                        accessible-role: button; accessible-id: "nFolder"; accessible-label: Office.new-folder;
+                        fl := HorizontalLayout { padding-left: 10px; padding-right: 10px; spacing: 6px;
+                            VerticalLayout { alignment: center; Icon { name: Icons.folder; size: 13px; tint: #f6f2ff9e; } }
+                            Text { text: Office.new-folder; font-size: 12px; color: #f6f2ff; vertical-alignment: center; } }
+                        TouchArea { mouse-cursor: pointer; clicked => { Office.new-folder-clicked(); } } }
+                    Rectangle { width: 32px; height: 32px; border-radius: 16px; background: Office.new-go ? #9046ff : #ffffff14;
+                        accessible-role: button; accessible-id: "nGo"; accessible-label: "Start";
+                        Icon { name: PagePaths.up; size: 16px; tint: Office.new-go ? white : #f6f2ff61; }
+                        TouchArea { enabled: Office.new-go; mouse-cursor: pointer; clicked => { Office.new-go-clicked(); } } }
+                }
+            }
+        }
+
+        // A side panel: the board, the overview, the history.
+        if Office.panel != 0: Glass {
+            x: parent.width - self.width - (parent.width < 700px ? 8px : 12px);
+            y: 12px;
+            width: min(400px, parent.width - 24px);
+            height: parent.height - 24px;
+            border-radius: 20px;
+            accessible-role: groupbox;
+            accessible-id: "panel";
+            accessible-label: Office.panel-title;
+            VerticalLayout {
+                HorizontalLayout {
+                    padding: 14px;
+                    padding-bottom: 0;
+                    VerticalLayout {
+                        horizontal-stretch: 1;
+                        Text { text: Office.panel-title; font-family: "Pixelify Sans"; font-weight: 600; font-size: 15px; color: #f6f2ff; }
+                        Text { text: Office.panel-sub; font-size: 11.5px; color: #f6f2ff9e; }
+                    }
+                    Rectangle { width: 30px; height: 30px; border-radius: 10px; background: pc.has-hover ? #ffffff14 : transparent;
+                        accessible-role: button; accessible-id: "pClose"; accessible-label: "Close";
+                        Icon { name: Icons.close; size: 15px; tint: #f6f2ff9e; }
+                        pc := TouchArea { mouse-cursor: pointer; clicked => { Office.panel-close(); } } }
+                }
+                if Office.panel == 3: HorizontalLayout {
+                    padding-left: 12px; padding-right: 12px; padding-top: 12px;
+                    Rectangle { height: 32px; border-radius: 10px; border-width: 1px; border-color: #ffffff17; background: #00000040;
+                        find := TextInput { x: 10px; width: parent.width - 20px; text <=> Office.find; font-size: 12.5px; color: #f6f2ff; vertical-alignment: center;
+                            accessible-role: text-input; accessible-id: "hFind"; accessible-label: "Find a session"; edited => { Office.find-edited(self.text); } }
+                        if Office.find == "": Text { x: 10px; text: "Find a session"; font-size: 12.5px; color: #f6f2ff61; vertical-alignment: center; } }
+                }
+                Flickable {
+                    vertical-stretch: 1;
+                    content-height: list.preferred-height;
+                    list := VerticalLayout {
+                        padding: 12px;
+                        padding-top: 14px;
+                        for r[i] in Office.rows: RowView { r: r; clicked => { Office.row-clicked(i); } delete => { Office.row-delete(i); } }
+                    }
+                }
+            }
+        }
+
+        // The chat drawer.
+        if Office.drawer: Glass {
+            x: parent.width - self.width - 12px;
+            y: 12px;
+            width: min(400px, parent.width - 24px);
+            height: parent.height - 24px;
+            border-radius: 20px;
+            accessible-role: groupbox;
+            accessible-id: "drawer";
+            accessible-label: Office.d-name + ": " + Office.d-title;
+            VerticalLayout {
+                HorizontalLayout {
+                    padding-left: 14px;
+                    padding-right: 12px;
+                    padding-top: 14px;
+                    spacing: 12px;
+                    VerticalLayout { alignment: center; Face { c: Office.d-color; width: 40px; height: 36px; } }
+                    VerticalLayout {
+                        horizontal-stretch: 1;
+                        HorizontalLayout { spacing: 5px;
+                            Text { text: Office.d-name; font-family: "Pixelify Sans"; font-weight: 600; font-size: 15px; color: #f6f2ff; }
+                            VerticalLayout { alignment: center; Rectangle { border-radius: 5px; background: Office.d-tool-color.with-alpha(0.2); width: dt.preferred-width + 10px; height: 16px;
+                                dt := Text { text: Office.d-tool; font-size: 9.5px; font-weight: 600; color: Office.d-tool-color; } } }
+                            Rectangle { horizontal-stretch: 1; } }
+                        Text { text: Office.d-title; font-size: 13px; color: #f6f2ff; overflow: elide; }
+                        Text { text: Office.d-folder; font-family: "DejaVu Sans Mono"; font-size: 11px; color: #f6f2ff61; overflow: elide; }
+                    }
+                    Rectangle { width: 30px; height: 30px; border-radius: 10px; background: dd.has-hover ? #ffffff14 : transparent;
+                        accessible-role: button; accessible-id: "dDel"; accessible-label: "Delete this session";
+                        Icon { name: PagePaths.bin; size: 15px; tint: #f6f2ff9e; }
+                        dd := TouchArea { mouse-cursor: pointer; clicked => { Office.d-delete(); } } }
+                    Rectangle { width: 30px; height: 30px; border-radius: 10px; background: dc.has-hover ? #ffffff14 : transparent;
+                        accessible-role: button; accessible-id: "dClose"; accessible-label: "Close";
+                        Icon { name: Icons.close; size: 15px; tint: #f6f2ff9e; }
+                        dc := TouchArea { mouse-cursor: pointer; clicked => { Office.d-close(); } } }
+                }
+                thread := Rectangle {
+                    vertical-stretch: 1;
+                    init => { Office.d-thread-w = self.width; Office.d-thread-h = self.height; }
+                    changed width => { Office.d-thread-w = self.width; }
+                    changed height => { Office.d-thread-h = self.height; }
+                    Image { width: 100%; height: 100%; source: Office.d-thread; image-fit: fill; }
+                    TouchArea { scroll-event(e) => { Office.d-wheel(e.delta-y); accept } }
+                }
+                Rectangle {
+                    height: comp.preferred-height + 16px;
+                    Rectangle {
+                        x: 10px;
+                        y: 6px;
+                        width: parent.width - 20px;
+                        height: comp.preferred-height;
+                        border-radius: 18px;
+                        background: #00000052;
+                        border-width: 1px;
+                        border-color: input.has-focus ? #c4a2ff8c : #ffffff17;
+                        comp := HorizontalLayout {
+                            padding: 8px;
+                            padding-left: 12px;
+                            spacing: 6px;
+                            input := TextInput {
+                                text <=> Office.d-draft;
+                                font-size: 13px;
+                                color: #f6f2ff;
+                                wrap: word-wrap;
+                                single-line: false;
+                                min-height: 28px;
+                                vertical-alignment: center;
+                                accessible-role: text-input;
+                                accessible-id: "input";
+                                accessible-label: Office.d-placeholder;
+                                key-pressed(e) => { if (e.text == "\n" && !e.modifiers.shift) { Office.d-send(); return accept; } reject }
+                            }
+                            VerticalLayout { alignment: end;
+                                Rectangle { width: 32px; height: 32px; border-radius: 16px;
+                                    background: Office.d-draft != "" || Office.d-busy ? #9046ff : #ffffff14;
+                                    accessible-role: button; accessible-id: "send";
+                                    accessible-label: Office.d-draft == "" && Office.d-busy ? "Stop this run" : Office.d-busy ? "Queue this reply" : "Send";
+                                    Icon { name: Office.d-draft == "" && Office.d-busy ? PagePaths.stop : PagePaths.up; size: 16px; tint: white; }
+                                    TouchArea { mouse-cursor: pointer; clicked => { Office.d-send(); } } } }
+                        }
+                        if Office.d-draft == "": Text { x: 12px; y: 0; height: parent.height; text: Office.d-placeholder; font-size: 13px; color: #f6f2ff61; vertical-alignment: center; }
+                    }
+                }
+            }
+        }
+
+        if Office.toast-shown: Glass {
+            x: (parent.width - self.width) / 2;
+            y: 18px;
+            width: toast.preferred-width + 28px;
+            height: toast.preferred-height + 16px;
+            border-radius: 12px;
+            toast := Text { text: Office.toast; font-family: "Pixelify Sans"; font-weight: 600; font-size: 12.5px; color: #f6f2ff; accessible-role: text; accessible-id: "toast"; }
+        }
+        if Office.confirm: Rectangle {
+            TouchArea {}
+            Glass {
+                x: (parent.width - self.width) / 2;
+                y: (parent.height - self.height) / 2;
+                width: min(320px, parent.width - 32px);
+                height: cf.preferred-height;
+                border-radius: 16px;
+                accessible-role: groupbox;
+                accessible-id: "confirm";
+                cf := VerticalLayout {
+                    padding: 16px;
+                    spacing: 6px;
+                    Text { text: "Delete this session?"; font-family: "Pixelify Sans"; font-weight: 600; font-size: 14px; color: #f6f2ff; }
+                    Text { text: Office.confirm-text; font-size: 12.5px; color: #f6f2ff9e; wrap: word-wrap; }
+                    HorizontalLayout { alignment: end; spacing: 8px; padding-top: 8px;
+                        PillButton { id: "cfNo"; text: "Cancel"; bg: #ffffff0d; fg: #f6f2ff; font-size: 12.5px; bold-text: true; clicked => { Office.confirm-no(); } }
+                        PillButton { id: "cfYes"; text: "Delete"; bg: #ff453ad9; fg: white; font-size: 12.5px; bold-text: true; clicked => { Office.confirm-yes(); } } }
+                }
+            }
         }
     }
 
@@ -157,10 +772,7 @@ export component OfficeView inherits Rectangle {
         }
     }
 
-    // A context menu (Styles.xaml): the sheet, its edge, the picked item ticked.
-    if Page.menu-open: TouchArea {
-        clicked => { Page.menu-close(); }
-    }
+    if Page.menu-open: TouchArea { clicked => { Page.menu-close(); } }
     if Page.menu-open: Rectangle {
         x: min(Page.menu-x - root.absolute-position.x, root.width - self.width - 8px);
         y: min(Page.menu-y - root.absolute-position.y + 4px, root.height - self.height - 8px);

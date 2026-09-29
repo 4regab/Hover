@@ -1,0 +1,24 @@
+[package]
+name = "hover-office"
+description = "The Agent office (web/office/main.js) natively: the voxel room, the bots, the lights and shadows as three.js 0.170 draws them, on wgpu; the wall canvases; the camera and picking; the page's model of the sessions."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+hover-core = { path = "../hover-core" }
+# All in the tree already (through Slint and hover-chat): the GPU (the same wgpu as
+# Slint's), plain-old-data casts for its buffers, a way to wait on its futures, the 2D
+# canvases (tiny-skia) and their text (swash, as hover-chat shapes it).
+wgpu = { version = "30", default-features = false, features = ["wgsl", "std"] }
+bytemuck = { version = "1", features = ["derive"] }
+futures-lite = "2"
+tiny-skia = { version = "0.11", default-features = false, features = ["std", "simd"] }
+swash = "0.2.10"
+image = { version = "0.25", default-features = false, features = ["png"] }
+
+[target.'cfg(windows)'.dependencies]
+wgpu = { version = "30", default-features = false, features = ["wgsl", "std", "dx12"] }
+
+[target.'cfg(not(windows))'.dependencies]
+wgpu = { version = "30", default-features = false, features = ["wgsl", "std", "vulkan", "gles"] }

@@ -160,7 +160,46 @@ pub fn run(dir: &Path) {
     app.notch.set_greet(false);
     app.hover.seen();
     app.update_rest();
+    // The office: its thread renders, the frames are taken here (no event loop to post to).
+    app.office_follow();
+    let settle = |ms: u64| {
+        let t = std::time::Instant::now();
+        while t.elapsed() < Duration::from_millis(ms) {
+            slint::platform::update_timers_and_animations();
+            app.office_frame();
+            std::thread::sleep(Duration::from_millis(15));
+        }
+    };
+    app.office_push();
+    settle(3000);
     save(&notch, full, 1.0, desk, &dir.join("notch-open-office.png"));
+    let first = app.hover.sessions.all().first().map(|s| s.id);
+    if let Some(id) = first { app.open_session(id); }
+    settle(1500);
+    save(&notch, full, 1.0, desk, &dir.join("office-drawer.png"));
+    app.close_drawer();
+    app.open_panel(Some("board"));
+    settle(1200);
+    save(&notch, full, 1.0, desk, &dir.join("office-panel-board.png"));
+    app.open_panel(Some("tv"));
+    settle(1200);
+    save(&notch, full, 1.0, desk, &dir.join("office-panel-tv.png"));
+    app.open_panel(Some("history"));
+    settle(600);
+    save(&notch, full, 1.0, desk, &dir.join("office-panel-history.png"));
+    app.open_panel(None);
+    app.notch.global::<Office>().invoke_fab_main();
+    settle(600);
+    save(&notch, full, 1.0, desk, &dir.join("office-fab-pick.png"));
+    app.notch.global::<Office>().invoke_pick_tool(0);
+    app.notch.global::<Office>().set_new_draft("Add a dark mode to the settings page".into());
+    app.office_widgets();
+    settle(600);
+    save(&notch, full, 1.0, desk, &dir.join("office-fab-open.png"));
+    app.notch.global::<Office>().invoke_new_fold();
+    app.toast("In Hover this opens a folder picker.");
+    settle(300);
+    save(&notch, full, 1.0, desk, &dir.join("office-toast.png"));
     app.show_settings_in(0, Section::General);
     save(&notch, full, 1.0, desk, &dir.join("notch-open-settings.png"));
 

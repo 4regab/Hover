@@ -10,6 +10,7 @@
 
 mod icons;
 mod notch;
+mod office_ui;
 mod shots;
 mod view;
 #[cfg(windows)]
@@ -71,6 +72,7 @@ pub struct App {
     pub notify: RefCell<Option<NotifyFn>>,
     /// Headless: nothing is grabbed, placed or announced outside the process.
     pub headless: bool,
+    pub page: office_ui::Page,
 }
 
 /// Set by SIGTERM or SIGINT (a logout, a kill, Ctrl+C): the poll quits cleanly, so the
@@ -115,10 +117,11 @@ impl App {
             beats, beats_timer: Timer::default(), alert: RefCell::new(None), alert_timer: Timer::default(), anim_timer: Timer::default(),
             clock_timer: Timer::default(), clock_last: Cell::new(None), poll_timer: Timer::default(), quota_timer: Timer::default(),
             working: RefCell::new(None), done_count: Cell::new(0), had_focus: Cell::new(false), reported: RefCell::new(None),
-            warn: RefCell::new(None), hotkey: RefCell::new(None), tray_menu: RefCell::new(None), notify: RefCell::new(None), headless, hover,
+            warn: RefCell::new(None), hotkey: RefCell::new(None), tray_menu: RefCell::new(None), notify: RefCell::new(None), headless, hover, page: Default::default(),
         });
         APP.with(|a| *a.borrow_mut() = Some(app.clone()));
         wire_page!(app.notch, app, 0);
+        app.wire_office(app.notch.global::<Office>());
         app.wire_notch();
         app.theme_changed_quiet();
         {
@@ -133,7 +136,7 @@ impl App {
 
         // Hooks from other threads land on the UI thread.
         app.hover.on_quotas(|| ui_do(|a| { a.update_rest(); if a.pane.borrow().section == Section::Integrations { a.refresh_page(false); } }));
-        app.hover.on_sessions(|| ui_do(|a| a.update_rest()));
+        app.hover.on_sessions(|| ui_do(|a| { a.update_rest(); a.office_changed(); }));
         app.hover.on_notify(|t, b| { let (t, b) = (t.to_owned(), b.to_owned()); ui_do(move |a| a.announce(&t, &b)); });
         app.start_timers();
         app
@@ -256,6 +259,7 @@ impl App {
         let dash = self.dash.borrow().as_ref().is_some_and(|d| d.window().is_visible() && !minimized(d.window()));
         let on = open || dash;
         self.hover.set_watching(on);
+        self.office_follow();
         self.beats.follow(on);
         if self.beats.volume() != self.beats_target() { self.fade(); }
     }
@@ -353,6 +357,7 @@ impl App {
             hover_core::log::line("app window opened");
             let d = DashboardWindow::new().expect("the app window");
             wire_page!(d, self, 1);
+            self.wire_office(d.global::<Office>());
             let a = self.clone();
             d.on_back(move || { a.dash_settings.set(false); if let Some(d) = &*a.dash.borrow() { d.set_in_settings(false); } });
             let a = self.clone();
@@ -512,7 +517,7 @@ impl view::Host for App {
 
 /// The folder and file pickers: the system's own dialog (IFileDialog on Windows, the
 /// portal's FileChooser or zenity/kdialog on Linux).
-fn pick(folder: bool) -> Option<String> {
+pub fn pick(folder: bool) -> Option<String> {
     #[cfg(windows)]
     return win::pick(folder);
     #[cfg(not(windows))]
