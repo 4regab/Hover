@@ -27,6 +27,8 @@ public sealed class KiroTurn
     /// When Kiro first did something other than start up.
     public DateTime? WokeAt { get; internal set; }
     public DateTime? EndedAt { get; internal set; }
+    /// What the turn cost, in the tool's credits, when it says (Kiro does).
+    public double? Credits { get; internal set; }
 }
 
 /// One Kiro session: a folder, the first prompt, and every reply after it, each a
@@ -84,7 +86,7 @@ public sealed class KiroSession
 
     /// The session as the history keeps it.
     public SavedSession Snapshot() => new(Key, Tool, Folder, Title, KiroId, Context,
-        _turns.Select(t => new SavedTurn(t.Prompt, t.Images, t.Steps.ToList(), t.Result?.State, t.Result?.Text, t.StartedAt, t.WokeAt, t.EndedAt)).ToList(),
+        _turns.Select(t => new SavedTurn(t.Prompt, t.Images, t.Steps.ToList(), t.Result?.State, t.Result?.Text, t.StartedAt, t.WokeAt, t.EndedAt, t.Credits)).ToList(),
         _now(), Access);
 
     /// A new session made to carry on a saved one: its turns, its folder and its
@@ -101,7 +103,7 @@ public sealed class KiroSession
         Access = s.Access;
         foreach (var t in s.Turns)
         {
-            var turn = new KiroTurn(t.Prompt, t.Images) { StartedAt = t.StartedAt, WokeAt = t.WokeAt, EndedAt = t.EndedAt ?? t.StartedAt };
+            var turn = new KiroTurn(t.Prompt, t.Images) { StartedAt = t.StartedAt, WokeAt = t.WokeAt, EndedAt = t.EndedAt ?? t.StartedAt, Credits = t.Credits };
             turn.Steps.AddRange(t.Steps);
             turn.Result = new KiroResult(t.State ?? KiroState.Cancelled, t.Text ?? "Stopped when Hover closed.");
             _turns.Add(turn);
@@ -248,6 +250,7 @@ public sealed class KiroSession
         {
             if (e.SessionId is { } id) KiroId = id;
             if (e.Context is { } c) Context = c;
+            if (e.Credits is { } credits) turn.Credits = credits;
             if (e.Step is { } step)
             {
                 var i = turn.Steps.FindIndex(x => x.Id == step.Id);

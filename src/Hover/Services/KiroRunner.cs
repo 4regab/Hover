@@ -25,8 +25,9 @@ public sealed record KiroStep(string Id, string Kind, string Title, string? Targ
 
 /// Detail from a run as it goes, beside its phase: a step that started or ended, how
 /// full Kiro's context is (0 to 100), and Kiro's own session id, which lets a reply
-/// carry on the same conversation (kiro-cli chat --resume-id).
-public sealed record KiroEvent(KiroStep? Step = null, double? Context = null, string? SessionId = null);
+/// carry on the same conversation (kiro-cli chat --resume-id). Credits is what a turn
+/// cost, as Kiro says at its end.
+public sealed record KiroEvent(KiroStep? Step = null, double? Context = null, string? SessionId = null, double? Credits = null);
 
 /// How one agent's runs are set up, from its page in Settings. Null model or effort
 /// leaves the tool's own default. Read only refuses whatever would change a file or run
@@ -318,6 +319,17 @@ public sealed class KiroStream
                     kiro.TryGetProperty("contextUsage", out var usage) && usage.ValueKind == JsonValueKind.Object &&
                     usage.TryGetProperty("usagePercentage", out var pct) && pct.ValueKind == JsonValueKind.Number)
                     SetContext(pct.GetDouble());
+                // At a turn's end: {"_meta":{"kiro":{"kind":"turn_completion",
+                // "promptTurnSummaries":[{"unit":"credit","usage":0.087}]}}}.
+                if (meta.ValueKind == JsonValueKind.Object && meta.TryGetProperty("kiro", out var done) && done.ValueKind == JsonValueKind.Object &&
+                    Str(done, "kind") == "turn_completion" && done.TryGetProperty("promptTurnSummaries", out var sums) && sums.ValueKind == JsonValueKind.Array)
+                {
+                    double? credits = null;
+                    foreach (var sum in sums.EnumerateArray())
+                        if (Str(sum, "unit") == "credit" && sum.TryGetProperty("usage", out var use) && use.ValueKind == JsonValueKind.Number)
+                            credits = (credits ?? 0) + use.GetDouble();
+                    if (credits is { } spent) _events.Add(new KiroEvent(Credits: spent));
+                }
                 break;
         }
     }

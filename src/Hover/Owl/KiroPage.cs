@@ -573,6 +573,7 @@ internal sealed class KiroPage
                 t0 = Ms(t.StartedAt),
                 woke = t.WokeAt is { } w ? (w - t.StartedAt).TotalSeconds : (double?)null,
                 took = t.EndedAt is { } end ? (end - t.StartedAt).TotalMilliseconds : (double?)null,
+                credits = t.Credits,
             }).ToList(),
         };
     }

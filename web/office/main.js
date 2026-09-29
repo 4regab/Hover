@@ -811,6 +811,8 @@ function changesHTML(T) {
   return `<div class="chg"><div class="ch">${by.size} file${by.size === 1 ? '' : 's'} changed <span>+${a} −${d}</span></div>`
     + [...by].map(([k, v]) => `<div class="fr" title="${esc(v[2])}"><span>${esc(k)}</span><i>${pm(v[0], v[1])}</i></div>`).join('') + '</div>';
 }
+// What a turn cost: "0.09 credits", and "<0.01 credits" for less.
+const credits = n => { const s = n.toFixed(2); return n < 0.005 ? '<0.01 credits' : `${s} credit${s === '1.00' ? '' : 's'}`; };
 function renderDrawer() {
   const s = cur(); if (!s) return;
   const T = last(s), st = T.stage, x = toolOf(s), hide = x.hideSteps;
@@ -832,8 +834,10 @@ function renderDrawer() {
     if (T.answer && T.fresh) { fresh = true; T.fresh = false; }
     const ans = T.answer ? `<div><div class="who2">${badge(s.tool)}<b>${esc(s.b.name)}</b>${T.took != null ? `<span>· ${took(T.took)}</span>` : ''}</div><div class="ans md ${T.stage === 'failed' ? 'err' : ''}${fresh && lastTurn ? ' fresh' : ''}">${md(T.answer, s)}</div></div>` : '';
     const chg = T.answer && !hide ? changesHTML(T) : '';
+    // What the turn cost, under its answer, when the tool says (Kiro does).
+    const use = T.answer && T.credits != null ? `<div class="use" title="Kiro credits this turn used">${esc(credits(T.credits))}</div>` : '';
     const pics = T.images?.length ? `<div class="pics">${T.images.map(u => `<img src="${esc(u)}" alt="Attached image" loading="lazy">`).join('')}</div>` : '';
-    return `<div class="me">${pics}${esc(T.prompt)}${T.queued ? '<span class="q">Queued · sends when this run ends</span>' : ''}${T.t0 ? `<span class="when">${hm(T.t0)}</span>` : ''}</div>${steps}${now}${ans}${chg}`;
+    return `<div class="me">${pics}${esc(T.prompt)}${T.queued ? '<span class="q">Queued · sends when this run ends</span>' : ''}${T.t0 ? `<span class="when">${hm(T.t0)}</span>` : ''}</div>${steps}${now}${ans}${chg}${use}`;
   }).join('');
   // A code block in an answer gets its language and a Copy button.
   for (const pre of th.querySelectorAll('.ans pre')) {
@@ -850,6 +854,13 @@ function renderDrawer() {
 // Over the composer while a run goes: what the agent does now, for how long, and
 // Stop. Amber while it waits for the user.
 const day = ms => { const d = new Date(ms), n = new Date(); const k = (n - new Date(d.getFullYear(), d.getMonth(), d.getDate())) / 864e5; return k < 1 ? 'Today' : k < 2 ? 'Yesterday' : k < 7 ? 'This week' : d.toLocaleDateString(undefined, { month: 'long', year: 'numeric' }); };
+// A history row's date, as Mail gives it: the time today, then Yesterday, the
+// weekday this week, and the date before that (with the year when it isn't this one).
+const stamp = ms => {
+  const d = new Date(ms), n = new Date(), k = Math.round((new Date(n.getFullYear(), n.getMonth(), n.getDate()) - new Date(d.getFullYear(), d.getMonth(), d.getDate())) / 864e5);
+  return k < 1 ? d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }) : k < 2 ? 'Yesterday' : k < 7 ? d.toLocaleDateString(undefined, { weekday: 'short' })
+    : d.toLocaleDateString(undefined, d.getFullYear() === n.getFullYear() ? { month: 'short', day: 'numeric' } : { month: 'short', day: 'numeric', year: 'numeric' });
+};
 let historyFind = '';
 function renderPanel() {
   if (!panel) return;
@@ -862,9 +873,10 @@ function renderPanel() {
     const rows = list.map(h => {
       const head = day(h.at) !== at ? `<h4 class="sh">${esc(at = day(h.at))}</h4>` : '';
       const desk = sessions.some(s => s.key === h.key), tool = TOOLS[h.tool] ? h.tool : 'kiro';
-      const meta = [`<span class="hs st-${h.stage}"><i></i>${esc(WORD[h.stage] || h.stage)}</span>`, esc(ago(h.at)), `${h.turns} turn${h.turns === 1 ? '' : 's'}`, `<span class="hf" title="${esc(h.folder)}">${esc(short(h.folder))}</span>`];
+      const meta = [`<span class="hs st-${h.stage}"><i></i>${esc(WORD[h.stage] || h.stage)}</span>`, `${h.turns} turn${h.turns === 1 ? '' : 's'}`, `<span class="hf" title="${esc(h.folder)}">${esc(short(h.folder))}</span>`];
+      const when = new Date(h.at).toLocaleString(undefined, { dateStyle: 'full', timeStyle: 'short' });
       return head + `<div class="hrow"><button class="hr" data-key="${h.key}" title="${esc(h.title)}"><span class="lg ${tool}" role="img" aria-label="${TOOLS[tool][0]}">${logo(tool)}</span>`
-        + `<span class="ht"><b>${esc(h.title)}</b><span class="hm">${meta.join('<span class="dot">·</span>')}${desk ? '<span class="hat">At a desk</span>' : ''}</span></span></button>`
+        + `<span class="ht"><span class="h1"><b>${esc(h.title)}</b><time datetime="${new Date(h.at).toISOString()}" title="${esc(when)}">${esc(stamp(h.at))}</time></span><span class="hm">${meta.join('<span class="dot">·</span>')}${desk ? '<span class="hat">At a desk</span>' : ''}</span></span></button>`
         + `<button class="hx" data-del="${h.key}" aria-label="Delete ${esc(h.title)}" title="Delete"><svg viewBox="0 0 24 24"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V4h6v3"/></svg></button></div>`;
     }).join('');
     const find = body.querySelector('#hFind'), had = document.activeElement === find;

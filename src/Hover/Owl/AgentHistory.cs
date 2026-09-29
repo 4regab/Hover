@@ -6,9 +6,9 @@ using Hover.Services;
 
 namespace Hover.Owl;
 
-/// One turn as it is kept on disk.
+/// One turn as it is kept on disk. Credits is null for turns from before Hover kept it.
 public sealed record SavedTurn(string Prompt, IReadOnlyList<string> Images, IReadOnlyList<KiroStep> Steps, KiroState? State, string? Text,
-    DateTime StartedAt, DateTime? WokeAt, DateTime? EndedAt);
+    DateTime StartedAt, DateTime? WokeAt, DateTime? EndedAt, double? Credits = null);
 
 /// One session as it is kept on disk: enough to show it again and to carry on its
 /// conversation (AcpId is the tool's own session id, for session/load).
