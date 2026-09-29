@@ -175,8 +175,17 @@ carry a legacy `Noty` reference **only** in `Core/Paths.cs`, which migrates an o
   which takes the keyboard: Enter allows, Shift+Enter trusts, Esc denies; hovering
   doesn't open the office while one waits), over the bot's head in the office (it
   raises its hand), and at the end of its chat, where a reply counts as Deny. Trust
-  allows the same call for the rest of the session and picks the agent's own
-  allow-always. Read only: Kiro runs with autopilot off and Hover refuses its write
+  is Hover's, for the rest of the session: Hover answers the same call itself from
+  then on, and picks the tool's own allow-always only for Codex, where it too lasts
+  the session. Cursor's allow-always writes a lasting rule into the user's
+  `~/.cursor/cli-config.json`, and Kiro's can change a Kiro setting. How each tool
+  is made to ask (checked against their sources): Kiro, autopilot off (past its
+  built-in defaults every call asks); Codex, mode `workspace-write` for Ask first
+  (it asks to write outside the folder or go online; its sandbox lets the rest
+  run, which is Codex's call, not Hover's) and `read-only` for Ask always (every
+  write and command asks), never `agent`, whose own reviewer answers in the user's
+  place; Cursor asks anyway (Hover never passes `--force`), so Full is Hover
+  answering yes. Read only: Kiro runs with autopilot off and Hover refuses its write
   approvals; Cursor runs in Ask mode; Codex's read-only mode wrote files anyway on
   Windows (no sandbox), so it isn't offered. Stop sends `session/cancel`, and a tool
   that doesn't stop within 8 s is shut down if nothing else of it runs. Prompts go

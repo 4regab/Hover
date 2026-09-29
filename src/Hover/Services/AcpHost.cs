@@ -225,20 +225,30 @@ public sealed class AcpHost
         await Set(Find("model", "model"), o.Model);
         // An effort list can appear only once a model is picked (Kiro's does).
         await Set(Find("thought_level", "effortLevel", "reasoning_effort", "effort"), o.Effort);
-        // Asking needs the agent to ask: it has to be out of its own autopilot, and
-        // Permission() then answers what the settings don't want asked about.
+        // Asking needs the agent to ask Hover: each tool is put where it sends every
+        // call it would stop for as session/request_permission, and Hover's own rules
+        // (NeedsAsking) decide which of those reach the user. What each offers
+        // (checked against their sources, Sep 2026):
+        // - Kiro (v3): the autopilot option; off, everything past its built-in
+        //   defaults (workspace reads, read-only git) asks.
+        // - Codex (codex-acp): the mode option. agent-full-access never asks; "agent"
+        //   is Auto review, where Codex's own reviewer approves what it thinks safe and
+        //   Hover would rarely hear of it; workspace-write asks for writes outside the
+        //   folder and the network; read-only asks for every write and command. Ask
+        //   always takes read-only (Hover then allows reads itself), Ask first
+        //   workspace-write, as Codex's own "Auto" preset does.
+        // - Cursor (agent acp): asks unless started with --force; its modes are agent,
+        //   plan and ask. So it asks either way, and Full answers yes (Permission()).
         var asks = !o.ReadOnly && o.Approval != AgentApproval.Autopilot;
         switch (Tool)
         {
             case AgentTool.Kiro:
-                // Writes then wait for an approval, which Permission() answers.
                 await Set(Find(null, "autopilot"), o.ReadOnly || asks ? "off" : "on");
                 await Set(Find("mode", "mode"), o.Agent ?? "vibe");
                 break;
             case AgentTool.Codex:
-                var mode = Find("mode", "mode");
-                await Set(mode, o.ReadOnly ? "read-only" : !asks ? "agent-full-access"
-                    : new[] { "auto", "agent" }.FirstOrDefault(v => mode?.Has(v) == true));
+                await Set(Find("mode", "mode"), o.ReadOnly ? "read-only" : !asks ? "agent-full-access"
+                    : o.Approval == AgentApproval.Always ? "read-only" : "workspace-write");
                 break;
             default:
                 await Set(Find("mode", "mode"), o.ReadOnly ? "ask" : "agent");
@@ -508,12 +518,19 @@ public sealed class AcpHost
             case AskAnswer.Allow: return Allow();
             case AskAnswer.Trust:
                 trusted![key] = true;
-                return Selected(Pick("allow_always", "allow"));
+                return Selected(TrustOption());
             case AskAnswer.TrustAll:
                 trusted!["*"] = true;
-                return Selected(Pick("allow_always", "allow"));
+                return Selected(TrustOption());
             default: return Reject();
         }
+
+        // Trust lasts the session and is Hover's: Hover answers the same call itself
+        // from then on. The tool's own "always" is only picked where it too is for the
+        // session. Cursor's allow-always writes a lasting rule into the user's own
+        // ~/.cursor/cli-config.json, and Kiro's can change a Kiro setting
+        // (setting_key); a click in the notch must never do that.
+        string? TrustOption() => Tool == AgentTool.Codex ? Pick("allow_always", "allow") : Pick("allow_once", "allow");
     }
 
     /// Whether a tool call of this kind waits for the user under this setting.

@@ -522,6 +522,9 @@ internal sealed class SettingsPage
         rows.Add(Row("Tool access", access switch
             {
                 "read" => $"{name} can only read and search. It can’t change files or run commands.",
+                // Codex decides what to ask about itself in this mode: its sandbox lets
+                // commands inside the folder run, and asks to go past it.
+                "risky" when tool == AgentTool.Codex => "Codex asks in the notch before it writes outside the folder or goes online. Inside the folder its sandbox lets it edit and run commands.",
                 "risky" => $"{name} asks in the notch before it runs a command, deletes or moves files, goes online or touches anything outside the folder. Reading and editing in the folder go ahead.",
                 "always" => $"{name} asks in the notch before any change or command. Reading and searching go ahead.",
                 _ => $"{name} can edit files and run commands without asking.",

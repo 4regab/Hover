@@ -181,6 +181,9 @@ public sealed class AcpHostTests
         public string AskKind = "edit";
         public object? AskInput;
         public int Asked;
+        /// Offer the access options the real tools do: Kiro's autopilot and a mode
+        /// with each tool's values.
+        public bool Offer;
         /// The agent dies: its output closes, as when the process exits.
         public Action? Crash;
         private StreamWriter? _out;
@@ -213,6 +216,17 @@ public sealed class AcpHostTests
 
         private static readonly object[] Models = { new { value = "m1", name = "Model one" }, new { value = "m2", name = "Model two" } };
 
+        private static object Choice(string v) => new { value = v, name = v };
+        private static readonly object[] Access =
+        {
+            new { id = "autopilot", currentValue = "unset", options = new[] { Choice("on"), Choice("off") } },
+            new
+            {
+                id = "mode", category = "mode", currentValue = "x",
+                options = new[] { "vibe", "read-only", "workspace-write", "agent", "agent-full-access", "ask", "plan" }.Select(Choice).ToArray(),
+            },
+        };
+
         private async Task Serve(StreamReader r, StreamWriter w)
         {
             try
@@ -242,7 +256,11 @@ public sealed class AcpHostTests
                     {
                         case "initialize": result = new { protocolVersion = 1, agentCapabilities = new { loadSession = true } }; break;
                         case "session/new":
-                            result = new { sessionId = "s1", configOptions = new object[] { new { id = "model", category = "model", currentValue = "m1", options = Models } } };
+                            result = new
+                            {
+                                sessionId = "s1",
+                                configOptions = Offer ? Access : new object[] { new { id = "model", category = "model", currentValue = "m1", options = Models } },
+                            };
                             break;
                         case "session/load":
                             // It replays the conversation before it answers.
@@ -302,10 +320,10 @@ public sealed class AcpHostTests
         public List<string> Methods() { lock (Got) return Got.Select(g => g.Method).ToList(); }
     }
 
-    private (AcpHost Host, Fake Fake) Make(AgentOptions? o = null)
+    private (AcpHost Host, Fake Fake) Make(AgentOptions? o = null, AgentTool tool = AgentTool.Kiro)
     {
         var fake = new Fake();
-        return (new AcpHost(AgentTool.Kiro, () => o ?? AgentOptions.Default, fake.Connect), fake);
+        return (new AcpHost(tool, () => o ?? AgentOptions.Default, fake.Connect), fake);
     }
 
     [Test]
@@ -444,12 +462,51 @@ public sealed class AcpHostTests
             Assert.That(asks[0].Sid, Is.EqualTo("s1"));
             Assert.That(asks[0].Ask.Kind, Is.EqualTo("edit"));
             Assert.That(r.State, Is.EqualTo(KiroState.Completed));
-            Assert.That(trusted, Is.EqualTo("always"), "Trust picks the agent's own allow-always");
+            Assert.That(trusted, Is.EqualTo("yes"), "Trust is Hover's: Kiro's own allow-always can change a Kiro setting");
             Assert.That(again.State, Is.EqualTo(KiroState.Completed));
             Assert.That(fake.Asked, Is.EqualTo(2));
             Assert.That(asks, Has.Count.EqualTo(1), "the trusted call went ahead without asking again");
         });
         host.Shutdown();
+    }
+
+    [Test]
+    public async Task Only_Codexs_allow_always_is_picked_its_lasts_the_session_only()
+    {
+        foreach (var (tool, want) in new[] { (AgentTool.Codex, "always"), (AgentTool.Cursor, "yes") })
+        {
+            var (host, fake) = Make(new AgentOptions(Approval: AgentApproval.Always), tool);
+            fake.AskToEdit = true;
+            host.Asking = (_, _, _) => Task.FromResult(AskAnswer.Trust);
+            await host.Run(_dir, "change it", null, CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(15));
+            Assert.That(fake.PermissionAnswer, Is.EqualTo(want), tool.ToString());
+            host.Shutdown();
+        }
+    }
+
+    [Test]
+    public async Task Each_tool_is_put_where_it_asks()
+    {
+        async Task<List<string>> Sets(AgentTool tool, AgentOptions o)
+        {
+            var (host, fake) = Make(o, tool);
+            fake.Offer = true;
+            await host.Run(_dir, "go", null, CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(15));
+            host.Shutdown();
+            return fake.Got.Where(g => g.Method == "session/set_config_option")
+                .Select(g => g.Params.GetProperty("configId").GetString() + "=" + g.Params.GetProperty("value").GetString()).ToList();
+        }
+        var risky = new AgentOptions(Approval: AgentApproval.Risky);
+        var always = new AgentOptions(Approval: AgentApproval.Always);
+        Assert.Multiple(async () =>
+        {
+            Assert.That(await Sets(AgentTool.Kiro, risky), Does.Contain("autopilot=off"), "asking needs Kiro out of its autopilot");
+            Assert.That(await Sets(AgentTool.Kiro, AgentOptions.Default), Does.Contain("autopilot=on"));
+            Assert.That(await Sets(AgentTool.Codex, AgentOptions.Default), Does.Contain("mode=agent-full-access"));
+            Assert.That(await Sets(AgentTool.Codex, risky), Does.Contain("mode=workspace-write"), "not agent: Codex's own reviewer would answer for the user");
+            Assert.That(await Sets(AgentTool.Codex, always), Does.Contain("mode=read-only"));
+            Assert.That(await Sets(AgentTool.Cursor, risky), Does.Contain("mode=agent"));
+        });
     }
 
     [Test]
