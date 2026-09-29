@@ -287,7 +287,9 @@ internal sealed class NotchHost : IDisposable
     // they change, and how long it has been at it.
     private readonly MarkStack _stack = new() { VerticalAlignment = VerticalAlignment.Center };
     private readonly TextBlock _activity = Ui.Text("", 12.5, Ui.White, FontWeights.SemiBold);
-    private readonly TextBlock _timer = Ui.Text("", 11.5, Dim, FontWeights.Medium);
+    // The same size as the words: two sizes, each centred and snapped to whole pixels
+    // on its own, could sit a pixel off each other's line.
+    private readonly TextBlock _timer = Ui.Text("", 12.5, Dim, FontWeights.Medium);
     private readonly FrameworkElement _workSeg;
     private int _speaker, _ticks;
     private readonly DispatcherTimer _clock = new(DispatcherPriority.Normal) { Interval = TimeSpan.FromSeconds(1) };
@@ -302,7 +304,7 @@ internal sealed class NotchHost : IDisposable
     // A task ended and nobody has looked yet: its mark with a badge, and the task.
     private readonly LiveMark _doneMark = new() { Width = 18, Height = 18, TileSize = 18, VerticalAlignment = VerticalAlignment.Center };
     private readonly TextBlock _doneText = Ui.Text("", 12.5, Ui.White, FontWeights.SemiBold);
-    private readonly TextBlock _doneTook = Ui.Text("", 11.5, Dim, FontWeights.Medium);
+    private readonly TextBlock _doneTook = Ui.Text("", 12.5, Dim, FontWeights.Medium);
     private readonly FrameworkElement _doneSeg;
     private int _doneShown;
     /// The green or red glow of an ending lasts a moment; the words stay until seen.
@@ -773,7 +775,7 @@ internal sealed class NotchHost : IDisposable
                         Foreground = Ui.Frozen(line.StartsWith('+') ? Color.FromRgb(0x9D, 0xF0, 0xAE) : line.StartsWith('-') ? Color.FromRgb(0xFF, 0xAA, 0xA4) : Colors.White),
                     });
                 }
-            if (code.Inlines.Count == 0) code.Inlines.Add(new Run(a.Title));
+            if (code.Inlines.Count == 0) code.Inlines.Add(new Run(AgentWords.ToolName(a.Title)));
         }
         root.Children.Add(new Border
         {
@@ -782,11 +784,13 @@ internal sealed class NotchHost : IDisposable
             Padding = new Thickness(12, 9, 12, 10), Margin = new Thickness(0, 11, 0, 10), MaxHeight = 150, Child = code,
         });
 
-        var why = a.Reason + (a.Added + a.Removed > 0 && a.Kind != "edit" ? $" · +{a.Added} −{a.Removed}" : "");
-        root.Children.Add(Ui.Row(new Ellipse { Width = 6, Height = 6, Fill = Ui.Frozen(a.Danger ? Color.FromRgb(0xFF, 0x45, 0x3A) : Amber), VerticalAlignment = VerticalAlignment.Center },
-            Ui.Text(why, 11.5, Dim).Margin(8, 0)));
+        // Only when it says more than the title does.
+        var why = AgentWords.AskWhy(a);
+        if (why.Length > 0)
+            root.Children.Add(Ui.Row(new Ellipse { Width = 6, Height = 6, Fill = Ui.Frozen(a.Danger ? Color.FromRgb(0xFF, 0x45, 0x3A) : Amber), VerticalAlignment = VerticalAlignment.Center },
+                Ui.Text(why, 11.5, Dim).Margin(8, 0)));
 
-        var buttons = new DockPanel { Margin = new Thickness(0, 12, 0, 0), LastChildFill = false };
+        var buttons = new DockPanel { Margin = new Thickness(0, why.Length > 0 ? 12 : 2, 0, 0), LastChildFill = false };
         var deny = Pressable(Label("Deny", "Esc", Ui.White), "NotchCardDeny", "Deny", () => AnswerAsked(AskAnswer.Deny));
         DockPanel.SetDock(deny, Dock.Left);
         buttons.Children.Add(deny);
@@ -1202,6 +1206,8 @@ public sealed class DashboardWindow : Window
         Content = _frame;
         AutomationProperties.SetAutomationId(this, "HoverDashboard");
         StateChanged += (_, _) => OnState();
+        // Brought to the front, the office is seen: the ends the notch announced are too.
+        Activated += (_, _) => OwlApp.KiroSeen();
     }
 
     private Button Caption(string glyph, string name, string style, Action click)

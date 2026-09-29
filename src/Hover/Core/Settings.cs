@@ -24,6 +24,7 @@ public static class Settings
         public Appearance Appearance { get; set; } = Appearance.System;
         public SavedTheme? Theme { get; set; }
         public WorkspaceSize WorkspaceSize { get; set; }
+        public int MaxRunning { get; set; } = 3;
         public string? KiroFolder { get; set; }
         public bool KiroNoticeSeen { get; set; }
         public string? KiroModel { get; set; }
@@ -133,6 +134,13 @@ public static class Settings
     {
         get => M.WorkspaceSize;
         set { M.WorkspaceSize = value; Save(); }
+    }
+
+    /// How many agent tasks run at once, across every tool: one to six (the desks).
+    public static int MaxRunning
+    {
+        get => Math.Clamp(M.MaxRunning, 1, 6);
+        set { M.MaxRunning = Math.Clamp(value, 1, 6); Save(); }
     }
 
     public static void SetNotchItem(string id, bool on)

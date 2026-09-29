@@ -248,6 +248,8 @@ public sealed class OpenCodeHost : IAgentRuntime
         {
             await Send(HttpMethod.Post, $"/session/{Uri.EscapeDataString(turn.Sid)}/prompt_async", turn.Folder, body, turn.Token, SendTimeout);
             turn.Accepted = true;
+            // Started: the model has the prompt. Its own news may have come first.
+            if (turn.Phase == KiroPhase.Starting) turn.SetPhase(KiroPhase.Thinking);
             // It may have gone idle before the answer to the prompt came back.
             if (turn.IdleEarly) _ = Reconcile(turn, "idle while sending");
             return;

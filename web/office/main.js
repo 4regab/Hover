@@ -432,7 +432,7 @@ const cur = () => viewing || sessions.find(s => s.id === sel);
 const short = f => (f || '').split(/[\\/]/).pop();
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
 const ago = ms => { const m = Math.round((Date.now() - ms) / min); return m < 1 ? 'now' : m < 60 ? `${m} min ago` : m < 24 * 60 ? `${Math.round(m / 60)} h ago` : `${Math.round(m / 1440)} d ago`; };
-const WORD = { waking: 'Waking up', working: 'Working', waiting: 'Waiting for you', done: 'Done', failed: 'Couldn’t finish', stopped: 'Stopped' };
+const WORD = { waking: 'Starting', working: 'Working', waiting: 'Waiting for you', done: 'Done', failed: 'Couldn’t finish', stopped: 'Stopped' };
 
 function demo() {
   const F = 'B:\\hover';
@@ -882,7 +882,7 @@ function renderPanel() {
     }).join('')}</div>`;
   } else {
     $('#pTitle').textContent = 'Office overview';
-    $('#pSub').textContent = `Up to ${maxRunning} tasks run at once, across Kiro, Codex, Cursor and OpenCode`;
+    $('#pSub').textContent = `Up to ${maxRunning === 1 ? 'one task runs' : maxRunning + ' tasks run'} at once, across Kiro, Codex, Cursor and OpenCode`;
     const stats = [['Working', count(['waking', 'working', 'waiting']), 'var(--li)'], ['Done', count(['done']), 'var(--ok)'], ['Failed', count(['failed']), 'var(--bad)'], ['Stopped', count(['stopped']), 'var(--stop)']];
     body.innerHTML = `<div class="stats">${stats.map(([l, v, c]) => `<div style="--k:${c}"><b>${v}</b><span>${l}</span></div>`).join('')}</div>
       <h4 class="sh">Context used</h4>${sessions.map(s => `<button class="meter" data-open="${s.id}">${LOGO(s.b.css)}<span class="mt"><b>${esc(s.b.name)}</b><span>${esc(s.title)}</span><i><u style="width:${s.ctx ?? 0}%"></u></i></span><em>${s.ctx == null ? '—' : s.ctx + '%'}</em></button>`).join('') || '<p class="none">No sessions yet. Press + to give an agent a task.</p>'}`;
@@ -905,7 +905,7 @@ function askHTML(s, where) {
     : esc(a.path || a.title);
   return `<div class="askc ${where}${a.danger ? ' dz' : ''}" data-sid="${s.id}" data-ask="${esc(a.id)}" role="group" aria-label="${esc(a.title)}">`
     + `<div class="at">${badge(s.tool)}<b>${esc(a.title)}</b>${a.more ? `<em>+${a.more} more</em>` : ''}</div>`
-    + `<pre>${body}</pre><div class="ar"><i></i>${esc(a.reason)}</div>`
+    + `<pre>${body}</pre>${a.reason ? `<div class="ar"><i></i>${esc(a.reason)}</div>` : ''}`
     + `<div class="ab"><button data-ans="deny">Deny</button><span class="sp"></span><button data-ans="trust" title="Allow this again for the rest of the session">Trust</button>`
     + `<button data-ans="allow" class="${a.danger ? 'dz' : 'pri'}">${esc(a.allow || 'Allow')}</button></div></div>`;
 }
@@ -1165,7 +1165,7 @@ function renderNew() {
   $('#nAccess').title = `${ACCESS[acc][0]}: ${accessNote(acc, tool.id)} Click to change.`;
   $('#nAccess').setAttribute('aria-label', `Tool access: ${ACCESS[acc][0]}. Change`);
   // Said only when something stops the task from starting.
-  const why = !tool.ready ? tool.hint : !canStart ? `${maxRunning} tasks are running. Start another when one is done.` : full ? 'All six desks are busy. Stop or remove a session first.' : '';
+  const why = !tool.ready ? tool.hint : !canStart ? `${maxRunning === 1 ? '1 task is' : maxRunning + ' tasks are'} running. Start another when one is done.` : full ? 'All six desks are busy. Stop or remove a session first.' : '';
   $('#nNote').textContent = why; $('#nNote').hidden = !why;
   const draft = !!$('#nInput').value.trim() || attached.new.length > 0;
   $('#nGo').disabled = !tool.ready || !canStart || full || !newFolder || !draft;

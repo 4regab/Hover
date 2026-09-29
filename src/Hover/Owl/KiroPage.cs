@@ -37,9 +37,10 @@ internal sealed class KiroPage
     private static readonly HashSet<KiroPage> InView = new();
 
     /// A Kiro page is in view, so a task ending is seen happening and needs no alert.
-    // ponytail: a window behind other windows still counts as in view; only a
-    // minimised one does not.
-    public static bool Watching => InView.Any(p => Window.GetWindow(p._root) is not { WindowState: WindowState.Minimized });
+    /// The notch's page is in view only while the notch is open. The app window's
+    /// counts only while it is the window in front: left open behind other windows,
+    /// it hid every end from the notch.
+    public static bool Watching => InView.Any(p => Window.GetWindow(p._root) is { } w && (w is not DashboardWindow || w.IsActive));
 
     private const string Host = "hover.office";
     private static readonly JsonSerializerOptions Json = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
@@ -281,7 +282,7 @@ internal sealed class KiroPage
                 var access = Str(m, "access");
                 if (access is not ("full" or "risky" or "always" or "read") || (access == "read" && !Agents.ReadOnlyWorks(tool))) access = null;
                 if (Sessions.Start(tool, folder!, prompt, SaveImages(m), access) is null)
-                    Say("toast", Sessions.CanStart ? "Couldn’t start that task." : $"{KiroSessions.MaxRunning} tasks are running. Start another when one is done.");
+                    Say("toast", Sessions.CanStart ? "Couldn’t start that task." : $"{Busy()}. Start another when one is done.");
                 break;
             case "reply":
                 // A reply to a session in the history brings it back to a desk first.
@@ -291,7 +292,7 @@ internal sealed class KiroPage
                     if (session is null) { Say("toast", "Every desk is busy. Try again when a task is done."); break; }
                 }
                 if (session is not null && !Sessions.Reply(session, Str(m, "text") ?? "", SaveImages(m)))
-                    Say("toast", $"{KiroSessions.MaxRunning} tasks are running. Reply when one is done.");
+                    Say("toast", $"{Busy()}. Reply when one is done.");
                 break;
             case "stop":
                 session?.Stop();
@@ -434,7 +435,7 @@ internal sealed class KiroPage
             type = "state",
             window = _window,
             canStart = Sessions.CanStart,
-            maxRunning = KiroSessions.MaxRunning,
+            maxRunning = Sessions.MaxRunning,
             folder = KiroRunner.UsableFolder(Settings.KiroFolder) ? Settings.KiroFolder : null,
             tool = Agents.Id(Settings.AgentTool),
             // The session whose chat was open, so a page made again opens it again.
@@ -544,7 +545,7 @@ internal sealed class KiroPage
                 preview = a.Preview,
                 added = a.Added,
                 removed = a.Removed,
-                reason = a.Reason,
+                reason = AgentWords.AskWhy(a),
                 danger = a.Danger,
                 allow = AgentWords.AskAllow(a),
                 more = s.Asks.Count - 1,
@@ -577,6 +578,9 @@ internal sealed class KiroPage
     }
 
     private static long Ms(DateTime t) => t == default ? 0 : new DateTimeOffset(t).ToUnixTimeMilliseconds();
+
+    /// "3 tasks are running", or "1 task is running" when the cap is one.
+    private static string Busy() => Sessions.MaxRunning == 1 ? "1 task is running" : $"{Sessions.MaxRunning} tasks are running";
 
     private static string Stage(KiroState state, KiroPhase phase) => state switch
     {

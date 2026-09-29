@@ -345,7 +345,7 @@ public sealed class AcpHostTests
             Assert.That(fake.Methods().Count(x => x == "session/new"), Is.EqualTo(1), "the reply used the same session");
             Assert.That(fake.Starts, Is.EqualTo(1), "one process for both");
         });
-        lock (phases.Seen) Assert.That(phases.Seen, Is.EqualTo(new[] { KiroPhase.Starting, KiroPhase.Writing, KiroPhase.Reading, KiroPhase.Editing, KiroPhase.Writing }));
+        lock (phases.Seen) Assert.That(phases.Seen, Is.EqualTo(new[] { KiroPhase.Starting, KiroPhase.Thinking, KiroPhase.Writing, KiroPhase.Reading, KiroPhase.Editing, KiroPhase.Writing }));
         lock (events.Seen)
         {
             Assert.That(events.Seen.Any(e => e.SessionId == "s1"));
@@ -830,7 +830,7 @@ public sealed class KiroSessionsTests
         Assert.Multiple(() =>
         {
             Assert.That(new[] { a, b, c }, Has.None.Null);
-            Assert.That(k.Running, Is.EqualTo(KiroSessions.MaxRunning));
+            Assert.That(k.Running, Is.EqualTo(KiroSessions.DefaultRunning));
             Assert.That(k.Start(_folder, "four"), Is.Null, "no fourth kiro-cli while three work");
             Assert.That(k.Selected, Is.SameAs(c), "a new task is the one shown");
             Assert.That(k.All.Select(s => s.Prompt), Is.EqualTo(new[] { "one", "two", "three" }));

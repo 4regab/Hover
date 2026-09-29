@@ -15,6 +15,10 @@ Hover your cursor at the top centre of your screen to expand the notch into your
 <p align="center">
 <img width="707" height="185" alt="image" src="https://github.com/user-attachments/assets/9d1f4263-9013-4e48-bdf0-9df24934c681" />
 
+<p align="center">
+  <img src="assets/readme/office.jpg" alt="The Agent office: three agents at their desks, each with a note saying what it is doing">
+</p>
+
 ## Features
 
 - **Agent office**: pick a project folder, type a task, and Kiro, Codex or Cursor does it there in the background. Run up to three at once; each gets a bot at a desk in a little 3D office that shows how it's going. Answers show as formatted text with tables, code, images and flowcharts; every session is kept (encrypted) on the office's bookshelf, and a reply picks it back up.
@@ -71,6 +75,13 @@ dotnet test .\Hover.slnx -c Release
 # Windows installer (needs Inno Setup 6 or 7) in .\dist
 .\build.ps1 installer
 ```
+
+To publish a release, push a version tag such as `v2.0.1`. The CodeBuild GitHub
+workflow builds and tests the app on an AWS Windows runner, makes
+`Hover-Setup-2.0.1.exe`, and attaches it to a new GitHub release. Tags must use
+three or four numeric version parts. The runner is the `hover-release` CodeBuild
+project, defined in `infra/codebuild-runner.yml`. It needs a GitHub connection
+in AWS. This uses AWS build time instead of GitHub-hosted runner minutes.
 
 ## License
 
