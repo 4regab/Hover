@@ -26,7 +26,12 @@ struct Hooks {
 }
 
 #[derive(Default)]
-struct Unseen { count: usize, tool: Option<&'static str> }
+struct Unseen { count: usize, tool: Option<&'static str>, last: Option<UnseenEnd> }
+
+/// OwlApp.KiroUnseenLast: the latest end nobody saw, for the notch: which tool, the
+/// task, how it went and how long it took.
+#[derive(Clone, Debug, PartialEq)]
+pub struct UnseenEnd { pub tool: AgentTool, pub title: String, pub state: KiroState, pub took_secs: f64 }
 
 pub struct Hover {
     pub settings: Arc<Settings>,
@@ -70,6 +75,12 @@ impl Hover {
             Some(r) => r.clone(),
             None => runners.iter().find(|(t, _)| *t == tool).expect("a host per tool").1.runner(),
         }, history.clone());
+        for h in &hosts {
+            // A question goes to the session whose conversation it is, where the notch
+            // and the office show it. One nobody holds is turned down.
+            let (ks, tool) = (sessions.clone(), h.tool());
+            h.set_asking(Arc::new(move |sid, ask, ct, reply| ks.ask(tool, sid, ask, ct, reply)));
+        }
         let fire = |hooks: &Arc<Mutex<Hooks>>, pick: fn(&Hooks) -> &Vec<Hook>| {
             let list: Vec<Hook> = pick(&hooks.lock().unwrap()).clone();
             for f in list { f(); }
@@ -99,12 +110,16 @@ impl Hover {
     /// were the same one (OwlApp.KiroUnseen, KiroUnseenTool).
     pub fn unseen(&self) -> (usize, Option<&'static str>) { let u = self.unseen.lock().unwrap(); (u.count, u.tool) }
 
+    /// The latest of those ends (OwlApp.KiroUnseenLast).
+    pub fn unseen_last(&self) -> Option<UnseenEnd> { self.unseen.lock().unwrap().last.clone() }
+
     /// An office came into view: the ends it announced have been seen.
     pub fn seen(&self) {
         {
             let mut u = self.unseen.lock().unwrap();
             if u.count == 0 { return; }
             u.count = 0;
+            u.last = None;
         }
         self.sessions.raise_changed();
     }
@@ -118,6 +133,8 @@ impl Hover {
             let mut u = self.unseen.lock().unwrap();
             u.count += 1;
             u.tool = if u.count == 1 || u.tool == Some(who) { Some(who) } else { None };
+            let took = s.current().map_or(0.0, |t| t.ended_at.unwrap_or_else(|| self.sessions.now()).secs_since(&t.started_at));
+            u.last = Some(UnseenEnd { tool: s.tool, title: s.title(), state: r.state, took_secs: took });
         }
         let title = match r.state {
             KiroState::Completed => format!("{who} is done"),

@@ -95,6 +95,21 @@ fn codex_reads_the_newest_session_log() {
     assert_eq!(read::codex_in(&empty, now()).detail, "Codex hasn’t recorded any limits yet — use it once.");
 }
 
+/// A long session: its file was modified before a newer, shorter one, but its last
+/// event is the newest (Windows leaves an open file's modified time behind), so its
+/// limits are the ones read.
+#[test]
+fn codex_ranks_its_logs_by_their_last_event() {
+    let home = temp("codex-last");
+    let day = home.join("sessions").join("2026").join("09").join("26");
+    std::fs::create_dir_all(&day).unwrap();
+    let line = |used: f64, at: DateTime<Utc>| format!("{{\"timestamp\":\"{}\",\"type\":\"event_msg\",\"payload\":{{\"type\":\"token_count\",\"rate_limits\":{{\"primary\":{{\"used_percent\":{used},\"window_minutes\":300,\"resets_in_seconds\":3600}}}}}}}}\n", iso(at));
+    std::fs::write(day.join("rollout-long.jsonl"), line(70.0, now() - Duration::minutes(1))).unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    std::fs::write(day.join("rollout-short.jsonl"), line(10.0, now() - Duration::hours(3))).unwrap();
+    assert_eq!(read::codex_in(&home, now()).used, Some(70.0));
+}
+
 /// Convert.ToBase64String(...).TrimEnd('=').Replace('+', '-').Replace('/', '_')
 fn b64(s: &str) -> String {
     const A: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";

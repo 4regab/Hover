@@ -41,7 +41,7 @@ fn session(v: &Json) -> KiroSession {
         let text = r[1].as_str().unwrap();
         let last = i + 1 == rows.len() && !file.is_empty();
         KiroStep { id: format!("t{i}"), kind: kind.into(), title: if last { "Read File".into() } else { text.into() },
-            target: last.then(|| text.split_once(' ').unwrap().1.to_owned()), status: if r[2].is_null() { "completed" } else { "failed" }.into() }
+            target: last.then(|| text.split_once(' ').unwrap().1.to_owned()), status: if r[2].is_null() { "completed" } else { "failed" }.into(), ..Default::default() }
     }).collect();
     let stage = s(v, "stage");
     let mut turn = KiroTurn::new(s(t, "prompt"), vec![]);

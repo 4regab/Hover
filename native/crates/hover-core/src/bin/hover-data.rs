@@ -36,10 +36,11 @@ fn main() {
                 key: key.clone(), tool: AgentTool::Kiro, folder: project.to_string_lossy().into_owned(), title: "A long rich conversation".into(), acp_id: None, context: Some(42.0),
                 turns: (0..turns).map(|i| SavedTurn {
                     prompt: format!("Question {} about the rich fixture", i + 1), images: vec![],
-                    steps: vec![KiroStep { id: format!("t{i}"), kind: "read".into(), title: format!("Read src/file{i}.rs"), target: Some(format!("src/file{i}.rs")), status: "completed".into() }],
+                    steps: vec![KiroStep::new(&format!("t{i}"), "read", &format!("Read src/file{i}.rs"), Some(format!("src/file{i}.rs")), "completed")],
                     state: Some(KiroState::Completed), text: Some(answer.clone()), started_at: t(i), woke_at: Some(t(i)), ended_at: Some(t(i).add_secs(30.0)),
                 }).collect(),
                 updated: now,
+                access: None,
             };
             h.save(&s);
             h.flush();

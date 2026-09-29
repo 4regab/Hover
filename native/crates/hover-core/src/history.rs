@@ -24,7 +24,8 @@ pub struct SavedTurn {
     pub ended_at: Option<Stamp>,
 }
 
-/// SavedSession(Key, Tool, Folder, Title, AcpId, Context, Turns, Updated).
+/// SavedSession(Key, Tool, Folder, Title, AcpId, Context, Turns, Updated, Access).
+/// Access is the tool access picked when the session started (AgentOptions.with_access).
 #[derive(Clone, Debug, PartialEq)]
 pub struct SavedSession {
     pub key: String,
@@ -35,6 +36,7 @@ pub struct SavedSession {
     pub context: Option<f64>,
     pub turns: Vec<SavedTurn>,
     pub updated: Stamp,
+    pub access: Option<String>,
 }
 
 /// HistoryEntry(Key, Tool, Title, Folder, Updated, State, Turns).
@@ -97,6 +99,7 @@ impl SavedSession {
             ("Context", self.context.map_or(Json::Null, Json::double)),
             ("Turns", Json::Arr(self.turns.iter().map(SavedTurn::to_json).collect())),
             ("Updated", self.updated.to_json()),
+            ("Access", Json::opt_str_of(self.access.as_deref())),
         ])
     }
 
@@ -111,6 +114,7 @@ impl SavedSession {
             context: opt(v.get("Context"), Json::opt_f64)?.flatten(),
             turns: opt(v.get("Turns"), |t| Ok(t.opt_list(SavedTurn::from_json)?.unwrap_or_default()))?.unwrap_or_default(),
             updated: opt(v.get("Updated"), Stamp::from_json)?.unwrap_or(Stamp::DEFAULT),
+            access: opt_text(v.get("Access"))?,
         })
     }
 }
@@ -288,12 +292,12 @@ mod tests {
             key: key.into(), tool: AgentTool::Codex, folder: r"C:\hover".into(), title: "Fix the secret thing".into(), acp_id: Some("acp-1".into()),
             context: Some(3.37),
             turns: vec![SavedTurn {
-                prompt: "Fix the secret thing".into(), images: vec![], steps: vec![KiroStep { id: "r0".into(), kind: "read".into(), title: "Read File".into(),
-                    target: Some(r"C:\hover\src\a.ts".into()), status: "completed".into() }],
+                prompt: "Fix the secret thing".into(), images: vec![], steps: vec![KiroStep::new("r0", "read", "Read File", Some(r"C:\hover\src\a.ts".into()), "completed")],
                 state: Some(KiroState::Completed), text: Some("answer <b> & 'c'".into()), started_at: at("2026-09-28T16:44:07.1234567Z"),
                 woke_at: Some(at("2026-09-28T16:44:09.1234567Z")), ended_at: None,
             }],
             updated: at(updated),
+            access: None,
         }
     }
 
@@ -304,9 +308,9 @@ mod tests {
         let s = session("aaaa", "2026-09-28T16:45:00Z");
         assert_eq!(s.to_json().compact(), concat!(
             r#"{"Key":"aaaa","Tool":"Codex","Folder":"C:\\hover","Title":"Fix the secret thing","AcpId":"acp-1","Context":3.37,"#,
-            r#""Turns":[{"Prompt":"Fix the secret thing","Images":[],"Steps":[{"Id":"r0","Kind":"read","Title":"Read File","Target":"C:\\hover\\src\\a.ts","Status":"completed"}],"#,
+            r#""Turns":[{"Prompt":"Fix the secret thing","Images":[],"Steps":[{"Id":"r0","Kind":"read","Title":"Read File","Target":"C:\\hover\\src\\a.ts","Status":"completed","Added":0,"Removed":0,"Diff":null,"Output":null,"Exit":null,"Ms":null}],"#,
             r#""State":"Completed","Text":"answer \u003Cb\u003E \u0026 \u0027c\u0027","StartedAt":"2026-09-28T16:44:07.1234567Z","WokeAt":"2026-09-28T16:44:09.1234567Z","EndedAt":null}],"#,
-            r#""Updated":"2026-09-28T16:45:00Z"}"#));
+            r#""Updated":"2026-09-28T16:45:00Z","Access":null}"#));
         let back = SavedSession::from_json(&json::parse(&s.to_json().compact()).unwrap()).unwrap();
         assert_eq!(back, s);
     }

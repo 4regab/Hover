@@ -3,11 +3,12 @@
 //! test's Fake, line for line: what it answers and what it records.
 
 use hover_agents::acp::AcpHost;
+use hover_agents::ask::{AgentAsk, AskAnswer};
 use hover_agents::cancel::Cancel;
 use hover_agents::proc::Link;
 use hover_agents::stream::{KiroEvent, KiroPhase};
 use hover_core::json::{self, Json};
-use hover_core::model::{AcpOption, AgentOptions, AgentTool, KiroState};
+use hover_core::model::{AcpOption, AgentApproval, AgentOptions, AgentTool, KiroState};
 use std::io::{BufRead, BufReader, Write};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -19,6 +20,13 @@ struct FakeState {
     hang_prompt: bool,
     ask_to_edit: bool,
     permission_answer: Option<String>,
+    /// What the permission request asks for: its kind, and its raw input.
+    ask_kind: Option<String>,
+    ask_input: Option<String>,
+    asked: usize,
+    /// Offer the access options the real tools do: Kiro's autopilot and a mode with
+    /// each tool's values.
+    offer: bool,
     hanging: Option<i64>,
     model: String,
     out: Option<Arc<Mutex<Option<std::io::PipeWriter>>>>,
@@ -30,6 +38,12 @@ struct Fake(Arc<Mutex<FakeState>>);
 fn j(s: &str) -> Json { json::parse(s).unwrap() }
 
 fn models() -> &'static str { r#"[{"value":"m1","name":"Model one"},{"value":"m2","name":"Model two"}]"# }
+
+fn access() -> String {
+    let c = |v: &str| format!(r#"{{"value":"{v}","name":"{v}"}}"#);
+    let modes: Vec<String> = ["vibe", "read-only", "workspace-write", "agent", "agent-full-access", "ask", "plan"].iter().map(|v| c(v)).collect();
+    format!(r#"[{{"id":"autopilot","currentValue":"unset","options":[{},{}]}},{{"id":"mode","category":"mode","currentValue":"x","options":[{}]}}]"#, c("on"), c("off"), modes.join(","))
+}
 
 impl Fake {
     fn methods(&self) -> Vec<String> { self.0.lock().unwrap().got.iter().map(|g| g.0.clone()).collect() }
@@ -66,17 +80,22 @@ impl Fake {
             let method = m.get("method").and_then(Json::as_str).map(str::to_owned);
             let p = m.get("params").cloned().unwrap_or(Json::Null);
             let Some(method) = method else {
-                // The answer to a permission request.
-                let ans = m.get("result").and_then(|r| r.get("outcome")).and_then(|o| o.get("optionId")).and_then(Json::as_str).map(str::to_owned);
-                let h = { let mut g = self.0.lock().unwrap(); g.permission_answer = ans; g.hanging };
-                if let Some(h) = h { Self::say(&out, &format!(r#"{{"jsonrpc":"2.0","id":{h},"result":{{"stopReason":"cancelled"}}}}"#)); }
+                // The answer to a permission request: allowed, it finishes the turn.
+                let outcome = m.get("result").and_then(|r| r.get("outcome")).cloned().unwrap_or(Json::Null);
+                let ans = outcome.get("optionId").or_else(|| outcome.get("outcome")).and_then(Json::as_str).map(str::to_owned);
+                let h = { let mut g = self.0.lock().unwrap(); g.permission_answer = ans.clone(); g.hanging.take() };
+                if let Some(h) = h {
+                    let stop = if matches!(ans.as_deref(), Some("yes" | "always")) { "end_turn" } else { "cancelled" };
+                    Self::say(&out, &format!(r#"{{"jsonrpc":"2.0","id":{h},"result":{{"stopReason":"{stop}"}}}}"#));
+                }
                 continue;
             };
             self.0.lock().unwrap().got.push((method.clone(), p.clone()));
             let id = m.get("id").and_then(|i| i.i64().ok());
             let result: Option<String> = match method.as_str() {
                 "initialize" => Some(r#"{"protocolVersion":1,"agentCapabilities":{"loadSession":true}}"#.into()),
-                "session/new" => Some(format!(r#"{{"sessionId":"s1","configOptions":[{{"id":"model","category":"model","currentValue":"m1","options":{}}}]}}"#, models())),
+                "session/new" => Some(if self.0.lock().unwrap().offer { format!(r#"{{"sessionId":"s1","configOptions":{}}}"#, access()) }
+                    else { format!(r#"{{"sessionId":"s1","configOptions":[{{"id":"model","category":"model","currentValue":"m1","options":{}}}]}}"#, models()) }),
                 "session/load" => {
                     // It replays the conversation before it answers.
                     Self::update(&out, "s1", r#"{"sessionUpdate":"tool_call","toolCallId":"old","kind":"read","title":"Read","status":"completed"}"#);
@@ -95,8 +114,13 @@ impl Fake {
                     let sid = p.get("sessionId").and_then(Json::as_str).unwrap().to_owned();
                     let (ask, hang) = { let g = self.0.lock().unwrap(); (g.ask_to_edit, g.hang_prompt) };
                     if ask {
-                        self.0.lock().unwrap().hanging = id;
-                        Self::say(&out, &format!(r#"{{"jsonrpc":"2.0","id":900,"method":"session/request_permission","params":{{"sessionId":"{sid}","toolCall":{{"toolCallId":"e","kind":"edit","title":"Write"}},"options":[{{"optionId":"yes","name":"Accept","kind":"allow_once"}},{{"optionId":"no","name":"Reject","kind":"reject_once"}}]}}}}"#));
+                        let (kind, input) = {
+                            let mut g = self.0.lock().unwrap();
+                            g.hanging = id;
+                            g.asked += 1;
+                            (g.ask_kind.clone().unwrap_or_else(|| "edit".into()), g.ask_input.clone().unwrap_or_else(|| "{}".into()))
+                        };
+                        Self::say(&out, &format!(r#"{{"jsonrpc":"2.0","id":900,"method":"session/request_permission","params":{{"sessionId":"{sid}","toolCall":{{"toolCallId":"e","kind":"{kind}","title":"Write","rawInput":{input}}},"options":[{{"optionId":"yes","name":"Accept","kind":"allow_once"}},{{"optionId":"always","name":"Always","kind":"allow_always"}},{{"optionId":"no","name":"Reject","kind":"reject_once"}}]}}}}"#));
                         continue;
                     }
                     Self::update(&out, &sid, r#"{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"Let me look."}}"#);
@@ -119,11 +143,22 @@ fn dir(name: &str) -> String {
     d.to_string_lossy().into_owned()
 }
 
-fn make(o: AgentOptions) -> (AcpHost, Fake) {
+fn make(o: AgentOptions) -> (AcpHost, Fake) { make_for(o, AgentTool::Kiro) }
+
+fn make_for(o: AgentOptions, tool: AgentTool) -> (AcpHost, Fake) {
     let fake = Fake::default();
     let f = fake.clone();
-    (AcpHost::with_connect(AgentTool::Kiro, move || o.clone(), move || f.connect()), fake)
+    (AcpHost::with_connect(tool, move || o.clone(), move || f.connect()), fake)
 }
+
+fn asks(a: AgentApproval) -> AgentOptions { AgentOptions { approval: a, ..Default::default() } }
+
+/// host.Asking that answers at once.
+fn answering(host: &AcpHost, answer: AskAnswer, seen: Option<Arc<Mutex<Vec<(String, AgentAsk)>>>>) {
+    host.set_asking(Arc::new(move |sid, ask, _, reply| { if let Some(s) = &seen { s.lock().unwrap().push((sid.to_owned(), ask)); } reply(answer); }));
+}
+
+fn answer_of(f: &Fake) -> Option<String> { f.0.lock().unwrap().permission_answer.clone() }
 
 fn wait_for(f: impl Fn() -> bool) { let t = Instant::now(); while !f() && t.elapsed() < Duration::from_secs(5) { std::thread::sleep(Duration::from_millis(20)); } }
 
@@ -280,4 +315,133 @@ fn requests_hover_does_not_serve_are_refused() {
     writeln!(agent_writes, r#"{{"jsonrpc":"2.0","id":1,"error":{{"code":-32000,"message":"Authentication required"}}}}"#).unwrap();
     let r = run.join().unwrap();
     assert_eq!(r.text, "Cursor needs you to sign in. Sign in: run “cursor-agent login” in a terminal.");
+}
+
+#[test]
+fn autopilot_allows_without_asking() {
+    let d = dir("autopilot");
+    let (host, fake) = make(AgentOptions::default());
+    fake.set(|g| g.ask_to_edit = true);
+    let seen: Arc<Mutex<Vec<(String, AgentAsk)>>> = Default::default();
+    answering(&host, AskAnswer::Deny, Some(seen.clone()));
+    let r = host.run(&d, "change it", None, &Cancel::new(), None, None);
+    assert_eq!(answer_of(&fake).as_deref(), Some("yes"));
+    assert!(seen.lock().unwrap().is_empty());
+    assert_eq!(r.state, KiroState::Completed);
+    host.shutdown("test");
+}
+
+#[test]
+fn asking_waits_for_the_user_and_trust_holds_for_the_session() {
+    let d = dir("trust");
+    let (host, fake) = make(asks(AgentApproval::Always));
+    fake.set(|g| g.ask_to_edit = true);
+    let seen: Arc<Mutex<Vec<(String, AgentAsk)>>> = Default::default();
+    let held: Arc<Mutex<Option<Box<dyn FnOnce(AskAnswer) + Send>>>> = Default::default();
+    let (s2, h2) = (seen.clone(), held.clone());
+    host.set_asking(Arc::new(move |sid, ask, _, reply| { s2.lock().unwrap().push((sid.to_owned(), ask)); *h2.lock().unwrap() = Some(reply); }));
+    let (h, d2) = (host.clone(), d.clone());
+    let run = std::thread::spawn(move || h.run(&d2, "change it", None, &Cancel::new(), None, None));
+    wait_for(|| held.lock().unwrap().is_some());
+    std::thread::sleep(Duration::from_millis(100));
+    assert!(!run.is_finished(), "the turn waits for the answer");
+    (held.lock().unwrap().take().unwrap())(AskAnswer::Trust);
+    let r = run.join().unwrap();
+    let trusted = answer_of(&fake);
+    let again = host.run(&d, "and again", None, &Cancel::new(), Some("s1"), None);
+    let seen = seen.lock().unwrap();
+    assert_eq!((seen[0].0.as_str(), seen[0].1.kind.as_str()), ("s1", "edit"));
+    assert_eq!(r.state, KiroState::Completed);
+    assert_eq!(trusted.as_deref(), Some("yes"), "Trust is Hover's: Kiro's own allow-always can change a Kiro setting");
+    assert_eq!(again.state, KiroState::Completed);
+    assert_eq!(fake.0.lock().unwrap().asked, 2);
+    assert_eq!(seen.len(), 1, "the trusted call went ahead without asking again");
+    host.shutdown("test");
+}
+
+#[test]
+fn only_codexs_allow_always_is_picked_its_lasts_the_session_only() {
+    for (tool, want) in [(AgentTool::Codex, "always"), (AgentTool::Cursor, "yes")] {
+        let d = dir(&format!("always-{}", tool.id()));
+        let (host, fake) = make_for(asks(AgentApproval::Always), tool);
+        fake.set(|g| g.ask_to_edit = true);
+        answering(&host, AskAnswer::Trust, None);
+        host.run(&d, "change it", None, &Cancel::new(), None, None);
+        assert_eq!(answer_of(&fake).as_deref(), Some(want), "{tool:?}");
+        host.shutdown("test");
+    }
+}
+
+#[test]
+fn each_tool_is_put_where_it_asks() {
+    let sets = |tool: AgentTool, o: AgentOptions| -> Vec<String> {
+        let d = dir(&format!("sets-{}", tool.id()));
+        let (host, fake) = make_for(o, tool);
+        fake.set(|g| g.offer = true);
+        host.run(&d, "go", None, &Cancel::new(), None, None);
+        host.shutdown("test");
+        let g = fake.0.lock().unwrap();
+        g.got.iter().filter(|g| g.0 == "session/set_config_option")
+            .map(|g| format!("{}={}", g.1.get("configId").unwrap().as_str().unwrap(), g.1.get("value").unwrap().as_str().unwrap())).collect()
+    };
+    let (risky, always) = (asks(AgentApproval::Risky), asks(AgentApproval::Always));
+    assert!(sets(AgentTool::Kiro, risky.clone()).contains(&"autopilot=off".into()), "asking needs Kiro out of its autopilot");
+    assert!(sets(AgentTool::Kiro, AgentOptions::default()).contains(&"autopilot=on".into()));
+    assert!(sets(AgentTool::Codex, AgentOptions::default()).contains(&"mode=agent-full-access".into()));
+    assert!(sets(AgentTool::Codex, risky.clone()).contains(&"mode=workspace-write".into()), "not agent: Codex's own reviewer would answer for the user");
+    assert!(sets(AgentTool::Codex, always).contains(&"mode=read-only".into()));
+    assert!(sets(AgentTool::Cursor, risky).contains(&"mode=agent".into()));
+}
+
+#[test]
+fn a_denied_call_is_rejected() {
+    let d = dir("deny");
+    let (host, fake) = make(asks(AgentApproval::Always));
+    fake.set(|g| g.ask_to_edit = true);
+    answering(&host, AskAnswer::Deny, None);
+    let r = host.run(&d, "change it", None, &Cancel::new(), None, None);
+    assert_eq!(answer_of(&fake).as_deref(), Some("no"));
+    assert_ne!(r.state, KiroState::Completed);
+    host.shutdown("test");
+}
+
+#[test]
+fn risky_lets_edits_in_the_folder_go_and_asks_about_commands() {
+    let d = dir("risky");
+    let (host, fake) = make(asks(AgentApproval::Risky));
+    fake.set(|g| g.ask_to_edit = true);
+    let seen: Arc<Mutex<Vec<(String, AgentAsk)>>> = Default::default();
+    answering(&host, AskAnswer::Allow, Some(seen.clone()));
+    host.run(&d, "edit", None, &Cancel::new(), None, None);
+    let edit = seen.lock().unwrap().len();
+    fake.set(|g| { g.ask_kind = Some("execute".into()); g.ask_input = Some(r#"{"command":["bash","-lc","npm install three@0.171.0"]}"#.into()); });
+    let r = host.run(&d, "install", None, &Cancel::new(), Some("s1"), None);
+    let seen = seen.lock().unwrap();
+    let last = &seen.last().unwrap().1;
+    assert_eq!(edit, 0, "an edit inside the folder isn't asked about");
+    assert_eq!(last.command.as_deref(), Some("npm install three@0.171.0"));
+    assert!(last.reason.contains("network"), "{}", last.reason);
+    assert!(!last.danger);
+    assert_eq!(r.state, KiroState::Completed);
+    host.shutdown("test");
+}
+
+#[test]
+fn stopping_withdraws_the_question() {
+    let d = dir("withdraw");
+    let (host, fake) = make(asks(AgentApproval::Always));
+    fake.set(|g| g.ask_to_edit = true);
+    let held: Arc<Mutex<Vec<Box<dyn FnOnce(AskAnswer) + Send>>>> = Default::default();
+    let h2 = held.clone();
+    host.set_asking(Arc::new(move |_, _, _, reply| h2.lock().unwrap().push(reply)));
+    let ct = Cancel::new();
+    let (h, c2) = (host.clone(), ct.clone());
+    let run = std::thread::spawn(move || h.run(&d, "change it", None, &c2, None, None));
+    wait_for(|| !held.lock().unwrap().is_empty());
+    ct.cancel();
+    let r = run.join().unwrap();
+    wait_for(|| answer_of(&fake).is_some());
+    assert_eq!(r.state, KiroState::Cancelled);
+    assert_eq!(answer_of(&fake).as_deref(), Some("cancelled"));
+    host.shutdown("test");
 }

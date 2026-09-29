@@ -1,6 +1,8 @@
 //! KiroSessionTests, KiroSessionsTests and AgentHistoryTests (tests/Hover.Tests),
 //! ported: the shared run state with the runner stubbed out.
 
+use hover_agents::ask::{AgentAsk, AskAnswer};
+use hover_agents::cancel::Cancel;
 use hover_agents::session::{KiroSessions, RunArgs, RunTask, MAX_KEPT, MAX_RUNNING};
 use hover_agents::stream::{KiroEvent, KiroResult};
 use hover_core::crypto::Crypto;
@@ -238,4 +240,82 @@ fn delete_takes_a_session_out_of_the_office_and_the_history() {
     assert!(h.entries().is_empty());
     assert!(h.load(&s.key).is_none());
     assert!(k.saved(&s.key).is_none());
+}
+
+fn question(id: &str, kind: &str, command: Option<&str>, path: Option<&str>, reason: &str, danger: bool) -> AgentAsk {
+    AgentAsk { id: id.into(), kind: kind.into(), title: kind.into(), command: command.map(Into::into), path: path.map(Into::into), preview: None,
+        added: 0, removed: 0, reason: reason.into(), danger }
+}
+
+fn answered() -> (Arc<Mutex<Vec<AskAnswer>>>, impl Fn() -> Box<dyn FnOnce(AskAnswer) + Send>) {
+    let got: Arc<Mutex<Vec<AskAnswer>>> = Default::default();
+    let g = got.clone();
+    (got, move || { let g = g.clone(); Box::new(move |a| g.lock().unwrap().push(a)) as Box<dyn FnOnce(AskAnswer) + Send> })
+}
+
+/// KiroSessionTests.A_question_waits_for_its_answer_and_a_stop_turns_it_down. The
+/// question reaches the session through its tool and conversation id, as OwlApp's
+/// Asking hands it over.
+#[test]
+fn a_question_waits_for_its_answer_and_a_stop_turns_it_down() {
+    let f = folder("ask");
+    let (make, runs) = gated();
+    let k = KiroSessions::new(make, None);
+    let (idle, reply) = answered();
+    k.ask(AgentTool::Kiro, "sess_9", question("x", "edit", None, Some("a.cs"), "Edits a file", false), &Cancel::new(), reply());
+    assert_eq!(*idle.lock().unwrap(), [AskAnswer::Deny], "a session that isn't running has nothing to ask");
+    let s = k.start_as(AgentTool::Kiro, &f, "long", vec![], Some("always")).unwrap();
+    wait_for(|| runs.lock().unwrap().len() == 1 && k.get(s.id).unwrap().kiro_id.is_some());
+    let (got, reply) = answered();
+    let ct = Cancel::new();
+    k.ask(AgentTool::Codex, "sess_9", question("0", "execute", Some("ls"), None, "Runs a command", false), &ct, reply());
+    assert_eq!(*got.lock().unwrap(), [AskAnswer::Deny], "another tool's conversation isn't this session's");
+    got.lock().unwrap().clear();
+    k.ask(AgentTool::Kiro, "sess_9", question("1", "execute", Some("npm test"), None, "Runs a command", false), &ct, reply());
+    k.ask(AgentTool::Kiro, "sess_9", question("2", "delete", None, Some("old.snap"), "Deletes files", true), &ct, reply());
+    let now = k.get(s.id).unwrap();
+    assert!(now.waiting());
+    assert_eq!(now.asking().unwrap().id, "1", "oldest first");
+    assert_eq!(now.access.as_deref(), Some("always"));
+    assert!(!k.answer(s.id, "nope", AskAnswer::Allow));
+    assert!(k.answer(s.id, "1", AskAnswer::Trust));
+    assert_eq!(*got.lock().unwrap(), [AskAnswer::Trust]);
+    assert_eq!(k.get(s.id).unwrap().asking().unwrap().id, "2");
+    k.stop(s.id);
+    assert_eq!(*got.lock().unwrap(), [AskAnswer::Trust, AskAnswer::Deny]);
+    assert!(!k.get(s.id).unwrap().waiting());
+    wait_for(|| !k.get(s.id).unwrap().busy());
+}
+
+/// A question the run's own token withdraws (the run was stopped at the tool's end).
+#[test]
+fn a_withdrawn_question_is_denied_and_leaves_the_session() {
+    let f = folder("withdraw");
+    let (make, runs) = gated();
+    let k = KiroSessions::new(make, None);
+    let s = k.start(AgentTool::Kiro, &f, "long", vec![]).unwrap();
+    wait_for(|| runs.lock().unwrap().len() == 1 && k.get(s.id).unwrap().kiro_id.is_some());
+    let (got, reply) = answered();
+    let ct = Cancel::new();
+    k.ask(AgentTool::Kiro, "sess_9", question("1", "edit", None, Some("a.cs"), "Edits a file", false), &ct, reply());
+    ct.cancel();
+    assert_eq!(*got.lock().unwrap(), [AskAnswer::Deny]);
+    assert!(!k.get(s.id).unwrap().waiting());
+    finish(&runs, 0, KiroResult::new(KiroState::Completed, "done"));
+}
+
+/// KiroSessionTests.The_notch_says_the_file_or_the_command_not_the_path.
+#[test]
+fn the_notch_says_the_file_or_the_command_not_the_path() {
+    use hover_agents::words::*;
+    let run = question("r", "execute", Some("npm install three@0.171.0"), None, "Installs packages or uses the network", false);
+    let edit = AgentAsk { preview: Some("- a\n+ b".into()), added: 1, removed: 1, ..question("e", "edit", None, Some("src/auth/refresh.ts"), "Changes 2 lines", false) };
+    assert_eq!(short(Some(r"C:\Projects\Hover\src\Hover\Owl\Notch.cs")).as_deref(), Some("Notch.cs"));
+    assert_eq!(short(Some("src/auth/refresh.ts")).as_deref(), Some("refresh.ts"));
+    assert_eq!(short(Some(r"dotnet test .\Hover.slnx -c Release")).as_deref(), Some("dotnet test"));
+    assert_eq!(short(Some("  ")), None);
+    assert_eq!(ask_line(&run), ("Wants to run", "npm install".to_owned()));
+    assert_eq!(ask_title(&edit), "Wants to edit refresh.ts");
+    assert_eq!(ask_allow(&run), "Run");
+    assert_eq!(activity(&hover_agents::session::KiroSession::new(AgentTool::Kiro)), ("Ready", String::new()));
 }

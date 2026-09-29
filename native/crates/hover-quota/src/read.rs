@@ -64,6 +64,23 @@ pub fn codex_home() -> PathBuf { env_dir("CODEX_HOME").unwrap_or_else(|| home().
 
 pub fn codex(now: DateTime<Utc>) -> Reading { codex_in(&codex_home(), now) }
 
+/// Quota.LastEvent: when a Codex session log last had an event, the "timestamp" that
+/// starts its last line, read from the file's last 8 KB. None when it can't be read.
+fn last_event(path: &Path) -> Option<DateTime<Utc>> {
+    use std::io::{Seek, SeekFrom};
+    let mut f = std::fs::File::open(path).ok()?;
+    let len = f.metadata().ok()?.len();
+    let n = len.min(8192);
+    f.seek(SeekFrom::End(-(n as i64))).ok()?;
+    let mut buf = vec![0; n as usize];
+    f.read_exact(&mut buf).ok()?;
+    let tail = String::from_utf8_lossy(&buf);
+    const KEY: &str = "{\"timestamp\":\"";
+    let i = tail.rfind(KEY)? + KEY.len();
+    let end = tail[i..].find('"')?;
+    DateTime::parse_from_rfc3339(&tail[i..i + end]).ok().map(|t| t.with_timezone(&Utc))
+}
+
 fn rollouts(dir: &Path, out: &mut Vec<(std::time::SystemTime, PathBuf)>) -> std::io::Result<()> {
     for e in std::fs::read_dir(dir)? {
         let e = e?;
@@ -84,9 +101,13 @@ fn rollouts(dir: &Path, out: &mut Vec<(std::time::SystemTime, PathBuf)>) -> std:
 pub fn codex_in(home: &Path, now: DateTime<Utc>) -> Reading {
     let sessions = home.join("sessions");
     if !sessions.is_dir() { return Reading::fail("No Codex sessions on this PC yet."); }
-    // Walks every rollout file to find the newest; fine for thousands of sessions.
-    let mut files = vec![];
-    if let Err(e) = rollouts(&sessions, &mut files) { return Reading::fail(format!("Couldn’t read Codex’s logs: {e}")); }
+    let mut found = vec![];
+    if let Err(e) = rollouts(&sessions, &mut found) { return Reading::fail(format!("Couldn’t read Codex’s logs: {e}")); }
+    // Ranked by the time of each file's last event, not its modified time: Codex keeps
+    // a session's file open and Windows leaves the modified time at about when it was
+    // made, so a long session's new limits were skipped. Opens every rollout file for
+    // its last few KB; fine for thousands of sessions.
+    let mut files: Vec<(DateTime<Utc>, PathBuf)> = found.into_iter().map(|(m, f)| (last_event(&f).unwrap_or_else(|| DateTime::<Utc>::from(m)), f)).collect();
     // OrderByDescending is stable: equal times keep the walk's order.
     files.sort_by(|a, b| b.0.cmp(&a.0));
     for (_, f) in files.into_iter().take(8) {

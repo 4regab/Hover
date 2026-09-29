@@ -235,7 +235,7 @@ mod tests {
     use super::*;
 
     fn step(kind: &str, title: &str, target: Option<&str>, status: &str) -> KiroStep {
-        KiroStep { id: "x".into(), kind: kind.into(), title: title.into(), target: target.map(str::to_owned), status: status.into() }
+        KiroStep::new("x", kind, title, target.map(str::to_owned), status)
     }
 
     #[test]

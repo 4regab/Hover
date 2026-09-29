@@ -50,20 +50,52 @@ pub(crate) fn opt_text(v: Option<&Json>) -> Result<Option<String>> {
     Ok(v.map(Json::opt_str).transpose()?.flatten())
 }
 
-/// Services.KiroStep(Id, Kind, Title, Target, Status).
-#[derive(Clone, Debug, PartialEq)]
-pub struct KiroStep { pub id: String, pub kind: String, pub title: String, pub target: Option<String>, pub status: String }
+/// Services.KiroStep(Id, Kind, Title, Target, Status, Added, Removed, Diff, Output,
+/// Exit, Ms). An edit carries the lines it adds and removes and a short preview ("- old",
+/// "+ new", "  context"); a command the end of its output and its exit code; Ms is how
+/// long it took. The last six are optional in C#, so older files read without them.
+#[derive(Clone, Debug, PartialEq, Default)]
+pub struct KiroStep {
+    pub id: String, pub kind: String, pub title: String, pub target: Option<String>, pub status: String,
+    pub added: i32, pub removed: i32, pub diff: Option<String>, pub output: Option<String>, pub exit: Option<i32>, pub ms: Option<f64>,
+}
 
 impl KiroStep {
+    pub fn new(id: &str, kind: &str, title: &str, target: Option<String>, status: &str) -> KiroStep {
+        KiroStep { id: id.into(), kind: kind.into(), title: title.into(), target, status: status.into(), ..Default::default() }
+    }
+
     pub fn to_json(&self) -> Json {
         Json::obj(vec![("Id", Json::str(&self.id)), ("Kind", Json::str(&self.kind)), ("Title", Json::str(&self.title)),
-            ("Target", Json::opt_str_of(self.target.as_deref())), ("Status", Json::str(&self.status))])
+            ("Target", Json::opt_str_of(self.target.as_deref())), ("Status", Json::str(&self.status)),
+            ("Added", Json::int(self.added as i64)), ("Removed", Json::int(self.removed as i64)),
+            ("Diff", Json::opt_str_of(self.diff.as_deref())), ("Output", Json::opt_str_of(self.output.as_deref())),
+            ("Exit", self.exit.map_or(Json::Null, |e| Json::int(e as i64))), ("Ms", self.ms.map_or(Json::Null, Json::double))])
     }
     pub fn from_json(v: &Json) -> Result<KiroStep> {
         v.props()?;
+        let opt = |k: &str| -> Result<Option<&Json>> { Ok(v.get(k).filter(|x| !x.is_null())) };
         Ok(KiroStep { id: text(v.get("Id"))?, kind: text(v.get("Kind"))?, title: text(v.get("Title"))?, target: opt_text(v.get("Target"))?,
-            status: text(v.get("Status"))? })
+            status: text(v.get("Status"))?,
+            added: v.get("Added").map(Json::i32).transpose()?.unwrap_or(0), removed: v.get("Removed").map(Json::i32).transpose()?.unwrap_or(0),
+            diff: opt_text(v.get("Diff"))?, output: opt_text(v.get("Output"))?,
+            exit: opt("Exit")?.map(Json::i32).transpose()?, ms: opt("Ms")?.map(Json::f64).transpose()? })
     }
+}
+
+/// Services.AgentApproval: when an agent with full access stops to ask. Autopilot
+/// never asks (what 2.0 did, and the default). Risky asks for commands, deletes, moves,
+/// the network and anything outside the folder. Always asks before anything but
+/// reading and searching.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum AgentApproval { #[default] Autopilot, Risky, Always }
+
+impl AgentApproval {
+    pub const NAMES: [&'static str; 3] = ["Autopilot", "Risky", "Always"];
+    const ALL: [AgentApproval; 3] = [AgentApproval::Autopilot, AgentApproval::Risky, AgentApproval::Always];
+    pub fn from_index(i: usize) -> AgentApproval { Self::ALL[i] }
+    pub fn name(self) -> &'static str { Self::NAMES[self as usize] }
+    pub fn read(v: &Json) -> Result<AgentApproval> { Ok(v.enum_of(&Self::NAMES)?.map(Self::from_index).unwrap_or_default()) }
 }
 
 /// Services.AgentOptions. A property missing from the file takes the constructor's
@@ -77,19 +109,42 @@ pub struct AgentOptions {
     pub agent: Option<String>,
     pub require_mcp: bool,
     pub hide_steps: bool,
+    /// When the agent stops to ask the user first; read only overrules it.
+    pub approval: AgentApproval,
 }
 
 impl Default for AgentOptions {
-    fn default() -> Self { AgentOptions { model: None, effort: None, read_only: false, idle_minutes: 5, agent: None, require_mcp: false, hide_steps: false } }
+    fn default() -> Self { AgentOptions { model: None, effort: None, read_only: false, idle_minutes: 5, agent: None, require_mcp: false, hide_steps: false, approval: AgentApproval::Autopilot } }
 }
 
 impl AgentOptions {
     pub const IDLE_CHOICES: [i32; 2] = [5, 15];
 
+    /// AgentOptions.WithAccess: a session's own tool access, picked when it started
+    /// (full, risky, always or read). Anything else keeps the tool's setting.
+    pub fn with_access(&self, access: Option<&str>) -> AgentOptions {
+        let mut o = self.clone();
+        match access {
+            Some("full") => { o.read_only = false; o.approval = AgentApproval::Autopilot; }
+            Some("risky") => { o.read_only = false; o.approval = AgentApproval::Risky; }
+            Some("always") => { o.read_only = false; o.approval = AgentApproval::Always; }
+            Some("read") => o.read_only = true,
+            _ => {}
+        }
+        o
+    }
+
+    /// AgentOptions.AccessId: the id with_access takes for these options.
+    pub fn access_id(&self, read_only_works: bool) -> &'static str {
+        if self.read_only && read_only_works { return "read"; }
+        match self.approval { AgentApproval::Risky => "risky", AgentApproval::Always => "always", AgentApproval::Autopilot => "full" }
+    }
+
     pub fn to_json(&self) -> Json {
         Json::obj(vec![("Model", Json::opt_str_of(self.model.as_deref())), ("Effort", Json::opt_str_of(self.effort.as_deref())),
             ("ReadOnly", Json::Bool(self.read_only)), ("IdleMinutes", Json::int(self.idle_minutes as i64)),
-            ("Agent", Json::opt_str_of(self.agent.as_deref())), ("RequireMcp", Json::Bool(self.require_mcp)), ("HideSteps", Json::Bool(self.hide_steps))])
+            ("Agent", Json::opt_str_of(self.agent.as_deref())), ("RequireMcp", Json::Bool(self.require_mcp)), ("HideSteps", Json::Bool(self.hide_steps)),
+            ("Approval", Json::str(self.approval.name()))])
     }
 
     pub fn from_json(v: &Json) -> Result<AgentOptions> {
@@ -103,6 +158,7 @@ impl AgentOptions {
             agent: opt_text(v.get("Agent"))?,
             require_mcp: v.get("RequireMcp").map(Json::bool).transpose()?.unwrap_or(d.require_mcp),
             hide_steps: v.get("HideSteps").map(Json::bool).transpose()?.unwrap_or(d.hide_steps),
+            approval: v.get("Approval").map(AgentApproval::read).transpose()?.unwrap_or(d.approval),
         })
     }
 }

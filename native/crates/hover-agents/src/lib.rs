@@ -2,6 +2,7 @@
 //! Owl/KiroSession.cs and KiroPage's state: no UI, shared by every view.
 
 pub mod acp;
+pub mod ask;
 pub mod agents;
 pub mod cancel;
 pub mod proc;
@@ -9,6 +10,7 @@ pub mod session;
 pub mod state;
 pub mod stream;
 pub mod text;
+pub mod words;
 
 use std::path::Path;
 

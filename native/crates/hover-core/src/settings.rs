@@ -4,7 +4,7 @@
 //! flush forces them out. Keys an older build wrote are ignored and dropped.
 
 use crate::json::{self, Json, Result};
-use crate::model::{notch_item, opt_text, AcpOption, AgentOptions, AgentTool, Appearance, SavedTheme, WorkspaceSize};
+use crate::model::{notch_item, opt_text, AcpOption, AgentApproval, AgentOptions, AgentTool, Appearance, SavedTheme, WorkspaceSize};
 use crate::shortcut::Shortcut;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Condvar, Mutex, Weak};
@@ -27,6 +27,7 @@ pub struct Model {
     pub kiro_require_mcp: bool,
     pub kiro_idle_minutes: i32,
     pub kiro_hide_steps: bool,
+    pub kiro_approval: AgentApproval,
     /// Codex's and Cursor's settings, by tool id. Kiro's are the fields above.
     pub agents: Option<Vec<(String, Option<AgentOptions>)>>,
     /// What each tool last offered (models, efforts, modes), for its settings page.
@@ -40,7 +41,7 @@ impl Default for Model {
         Model {
             hover_opens_workspace: true, notch_items: None, appearance: Appearance::System, theme: None, workspace_size: WorkspaceSize::Default,
             kiro_folder: None, kiro_notice_seen: false, kiro_model: None, kiro_effort: Some("high".into()), kiro_agent: None,
-            kiro_read_only: false, kiro_require_mcp: false, kiro_idle_minutes: 5, kiro_hide_steps: false, agents: None, agent_offers: None,
+            kiro_read_only: false, kiro_require_mcp: false, kiro_idle_minutes: 5, kiro_hide_steps: false, kiro_approval: AgentApproval::Autopilot, agents: None, agent_offers: None,
             agent_tool: None, sc_workspace: Shortcut::DEFAULT,
         }
     }
@@ -68,6 +69,7 @@ impl Model {
             ("KiroRequireMcp", Json::Bool(self.kiro_require_mcp)),
             ("KiroIdleMinutes", Json::int(self.kiro_idle_minutes as i64)),
             ("KiroHideSteps", Json::Bool(self.kiro_hide_steps)),
+            ("KiroApproval", Json::str(self.kiro_approval.name())),
             ("Agents", self.agents.as_ref().map_or(Json::Null, |m| Json::Obj(m.iter().map(|(k, v)| (k.clone(), v.as_ref().map_or(Json::Null, AgentOptions::to_json))).collect()))),
             ("AgentOffers", self.agent_offers.as_ref().map_or(Json::Null, |m| Json::Obj(m.iter().map(|(k, v)| (k.clone(),
                 v.as_ref().map_or(Json::Null, |l| Json::Arr(l.iter().map(AcpOption::to_json).collect())))).collect()))),
@@ -97,6 +99,7 @@ impl Model {
                 "KiroRequireMcp" => m.kiro_require_mcp = b()?,
                 "KiroIdleMinutes" => m.kiro_idle_minutes = x.i32()?,
                 "KiroHideSteps" => m.kiro_hide_steps = b()?,
+                "KiroApproval" => m.kiro_approval = AgentApproval::read(x)?,
                 "Agents" => m.agents = x.opt_map(|o| if o.is_null() { Ok(None) } else { AgentOptions::from_json(o).map(Some) })?,
                 "AgentOffers" => m.agent_offers = x.opt_map(|l| l.opt_list(|o| if o.is_null() { Ok(None) } else { AcpOption::from_json(o).map(Some) })
                     .map(|l| l.map(|l| l.into_iter().flatten().collect())))?,
@@ -238,7 +241,7 @@ impl Settings {
         let m = self.m.lock().unwrap();
         if t == AgentTool::Kiro {
             return AgentOptions { model: m.kiro_model.clone(), effort: m.kiro_effort.clone(), read_only: m.kiro_read_only, idle_minutes: m.kiro_idle_minutes,
-                agent: m.kiro_agent.clone(), require_mcp: m.kiro_require_mcp, hide_steps: m.kiro_hide_steps };
+                agent: m.kiro_agent.clone(), require_mcp: m.kiro_require_mcp, hide_steps: m.kiro_hide_steps, approval: m.kiro_approval };
         }
         m.agents.as_ref().and_then(|a| a.iter().find(|(k, _)| k == t.id())).and_then(|(_, v)| v.clone()).unwrap_or_default()
     }
@@ -256,6 +259,7 @@ impl Settings {
                 m.kiro_require_mcp = v.require_mcp;
                 m.kiro_idle_minutes = v.idle_minutes;
                 m.kiro_hide_steps = v.hide_steps;
+                m.kiro_approval = v.approval;
             } else {
                 let v = AgentOptions { agent: None, require_mcp: false, ..v };
                 let a = m.agents.get_or_insert_with(Vec::new);
@@ -302,7 +306,38 @@ mod tests {
     /// A fresh Model as `JsonSerializer.Serialize(new Model(), Json)` writes it, derived
     /// from Settings.cs: WriteIndented, JsonStringEnumConverter, declaration order,
     /// nulls written, and Environment.NewLine (CRLF on Windows).
-    const DEFAULT_FILE: &str = "{\r\n  \"HoverOpensWorkspace\": true,\r\n  \"NotchItems\": null,\r\n  \"Appearance\": \"System\",\r\n  \"Theme\": null,\r\n  \"WorkspaceSize\": \"Default\",\r\n  \"KiroFolder\": null,\r\n  \"KiroNoticeSeen\": false,\r\n  \"KiroModel\": null,\r\n  \"KiroEffort\": \"high\",\r\n  \"KiroAgent\": null,\r\n  \"KiroReadOnly\": false,\r\n  \"KiroRequireMcp\": false,\r\n  \"KiroIdleMinutes\": 5,\r\n  \"KiroHideSteps\": false,\r\n  \"Agents\": null,\r\n  \"AgentOffers\": null,\r\n  \"AgentTool\": null,\r\n  \"ScWorkspace\": {\r\n    \"Key\": \"N\",\r\n    \"Modifiers\": \"Alt\"\r\n  }\r\n}";
+    /// SettingsTests.Each_agents_approval_is_kept_and_asking_is_opt_in, ported.
+    #[test]
+    fn each_agents_approval_is_kept_and_asking_is_opt_in() {
+        let dir = std::env::temp_dir().join(format!("hover-approval-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("settings.json");
+        let s = Settings::load(file.clone());
+        let kiro = s.agent_options(AgentTool::Kiro);
+        let codex = s.agent_options(AgentTool::Codex);
+        s.set_agent_options(AgentTool::Kiro, AgentOptions { approval: AgentApproval::Risky, ..kiro });
+        s.set_agent_options(AgentTool::Codex, AgentOptions { approval: AgentApproval::Always, ..codex });
+        s.flush();
+        let json = std::fs::read_to_string(&file).unwrap();
+        assert_eq!(s.agent_options(AgentTool::Kiro).approval, AgentApproval::Risky);
+        assert_eq!(s.agent_options(AgentTool::Codex).approval, AgentApproval::Always);
+        assert_eq!(AgentOptions::default().approval, AgentApproval::Autopilot, "asking is opt-in");
+        assert!(json.contains("\"KiroApproval\": \"Risky\""));
+        assert_eq!(Settings::load(file).agent_options(AgentTool::Codex).approval, AgentApproval::Always, "read back");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_sessions_access_overrides_the_tools_setting() {
+        let o = AgentOptions::default();
+        assert_eq!(o.with_access(Some("risky")).approval, AgentApproval::Risky);
+        assert!(o.with_access(Some("read")).read_only);
+        assert_eq!(o.with_access(Some("nonsense")), o);
+        assert_eq!(o.with_access(Some("always")).access_id(true), "always");
+        assert_eq!(AgentOptions { read_only: true, ..o.clone() }.access_id(false), "full", "read only that doesn't work isn't offered");
+    }
+
+    const DEFAULT_FILE: &str = "{\r\n  \"HoverOpensWorkspace\": true,\r\n  \"NotchItems\": null,\r\n  \"Appearance\": \"System\",\r\n  \"Theme\": null,\r\n  \"WorkspaceSize\": \"Default\",\r\n  \"KiroFolder\": null,\r\n  \"KiroNoticeSeen\": false,\r\n  \"KiroModel\": null,\r\n  \"KiroEffort\": \"high\",\r\n  \"KiroAgent\": null,\r\n  \"KiroReadOnly\": false,\r\n  \"KiroRequireMcp\": false,\r\n  \"KiroIdleMinutes\": 5,\r\n  \"KiroHideSteps\": false,\r\n  \"KiroApproval\": \"Autopilot\",\r\n  \"Agents\": null,\r\n  \"AgentOffers\": null,\r\n  \"AgentTool\": null,\r\n  \"ScWorkspace\": {\r\n    \"Key\": \"N\",\r\n    \"Modifiers\": \"Alt\"\r\n  }\r\n}";
 
     #[test]
     fn a_fresh_model_writes_as_system_text_json_writes_it() {
@@ -361,7 +396,7 @@ mod tests {
         let k = s.agent_options(AgentTool::Kiro);
         assert_eq!((k.model.as_deref(), k.effort.as_deref(), k.agent, k.idle_minutes), (Some("claude-opus-5.5"), Some("high"), None, 15));
         let text = s.model().to_json().indented("\n");
-        assert!(text.contains("  \"Agents\": {\n    \"codex\": {\n      \"Model\": null,\n      \"Effort\": null,\n      \"ReadOnly\": true,\n      \"IdleMinutes\": 5,\n      \"Agent\": null,\n      \"RequireMcp\": false,\n      \"HideSteps\": false\n    }\n  },"), "{text}");
+        assert!(text.contains("  \"Agents\": {\n    \"codex\": {\n      \"Model\": null,\n      \"Effort\": null,\n      \"ReadOnly\": true,\n      \"IdleMinutes\": 5,\n      \"Agent\": null,\n      \"RequireMcp\": false,\n      \"HideSteps\": false,\n      \"Approval\": \"Autopilot\"\n    }\n  },"), "{text}");
         let offers = vec![AcpOption { id: "model".into(), category: Some("model".into()), current: Some("a".into()),
             choices: vec![crate::model::AcpChoice { value: "a".into(), name: "A <1>".into() }] }];
         s.set_agent_offers(AgentTool::Kiro, &offers);

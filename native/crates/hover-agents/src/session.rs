@@ -4,7 +4,8 @@
 //! the UI thread; here the sessions sit behind one lock, runs go on threads of their
 //! own, and `changed` and `ended` are raised with the lock released, off any thread.
 
-use crate::cancel::Cancel;
+use crate::ask::{AgentAsk, AskAnswer};
+use crate::cancel::{Cancel, Registration};
 use crate::stream::{KiroEvent, KiroPhase, KiroResult};
 use hover_core::history::{AgentHistory, SavedSession, SavedTurn};
 use hover_core::model::{AgentTool, KiroState, KiroStep};
@@ -23,6 +24,8 @@ pub struct RunArgs {
     pub ct: Cancel,
     pub resume: Option<String>,
     pub events: Box<dyn Fn(KiroEvent) + Send + Sync>,
+    /// The session's own tool access (AgentOptions::with_access); None keeps the tool's.
+    pub access: Option<String>,
 }
 
 /// Runs one turn and blocks until it ends; a panic reads as a failure.
@@ -77,6 +80,10 @@ pub struct KiroSession {
     /// The session's lasting name, in the history.
     pub key: String,
     pub deleted: bool,
+    /// The tool access picked when the session started; None keeps the tool's setting.
+    pub access: Option<String>,
+    /// What the agent is waiting on the user for, oldest first.
+    pub asks: Vec<AgentAsk>,
 }
 
 /// String.Split('\n', RemoveEmptyEntries | TrimEntries).FirstOrDefault().
@@ -86,10 +93,13 @@ impl KiroSession {
     /// A new session with no turns (the C# constructor).
     pub fn new(tool: AgentTool) -> KiroSession {
         KiroSession { id: IDS.fetch_add(1, Ordering::SeqCst) + 1, tool, state: KiroState::Idle, phase: KiroPhase::Starting, folder: String::new(), turns: vec![],
-            kiro_id: None, context: None, seat: 0, bot: 0, key: hover_core::guid_n(), deleted: false }
+            kiro_id: None, context: None, seat: 0, bot: 0, key: hover_core::guid_n(), deleted: false, access: None, asks: vec![] }
     }
 
     pub fn busy(&self) -> bool { self.state == KiroState::Running }
+    /// The question in front: the oldest one waiting.
+    pub fn asking(&self) -> Option<&AgentAsk> { self.asks.first() }
+    pub fn waiting(&self) -> bool { !self.asks.is_empty() }
     /// The turn running now, or the last one that ran.
     pub fn current(&self) -> Option<&KiroTurn> { self.turns.iter().rev().find(|t| !t.queued) }
     pub fn prompt(&self) -> &str { self.turns.first().map_or("", |t| &t.prompt) }
@@ -106,6 +116,7 @@ impl KiroSession {
                 state: t.result.as_ref().map(|r| r.state), text: t.result.as_ref().map(|r| r.text.clone()), started_at: t.started_at, woke_at: t.woke_at,
                 ended_at: t.ended_at }).collect(),
             updated: now,
+            access: self.access.clone(),
         }
     }
 
@@ -118,6 +129,7 @@ impl KiroSession {
         self.folder = s.folder.clone();
         self.kiro_id = s.acp_id.clone();
         self.context = s.context;
+        self.access = s.access.clone();
         for t in &s.turns {
             let mut turn = KiroTurn::new(&t.prompt, t.images.clone());
             turn.started_at = t.started_at;
@@ -133,7 +145,23 @@ impl KiroSession {
 
 fn usable(text: &str, images: &[String]) -> bool { !text.trim().is_empty() || !images.is_empty() }
 
-struct Slot { s: KiroSession, cancel: Option<Cancel>, run: RunTask }
+type Reply = Box<dyn FnOnce(AskAnswer) + Send>;
+
+/// A question waiting: where its answer goes, and the stop that withdraws it.
+struct Pending { id: String, reply: Reply, _stop: Option<Registration> }
+
+struct Slot { s: KiroSession, cancel: Option<Cancel>, run: RunTask, asks: Vec<Pending> }
+
+impl Slot {
+    fn new(s: KiroSession, run: RunTask) -> Slot { Slot { s, cancel: None, run, asks: vec![] } }
+
+    /// KiroSession.DenyAll: every question it left has nobody to answer it now. The
+    /// replies go once the lock is released.
+    fn deny_all(&mut self) -> Vec<Reply> {
+        self.s.asks.clear();
+        self.asks.drain(..).map(|p| p.reply).collect()
+    }
+}
 
 struct Inner { all: Vec<Slot>, selected: Option<i32> }
 
@@ -214,7 +242,10 @@ impl KiroSessions {
 
     /// Starts a task. None, and nothing happens, when three run, the folder or prompt
     /// can't be used, or every desk is busy.
-    pub fn start(&self, tool: AgentTool, folder: &str, prompt: &str, images: Vec<String>) -> Option<KiroSession> {
+    pub fn start(&self, tool: AgentTool, folder: &str, prompt: &str, images: Vec<String>) -> Option<KiroSession> { self.start_as(tool, folder, prompt, images, None) }
+
+    /// start, with the session's own tool access (AgentOptions::with_access), kept in its history.
+    pub fn start_as(&self, tool: AgentTool, folder: &str, prompt: &str, images: Vec<String>, access: Option<&str>) -> Option<KiroSession> {
         let mut g = self.0.inner.lock().unwrap();
         let running = g.all.iter().filter(|x| x.s.busy()).count();
         if running >= MAX_RUNNING || !crate::usable_folder(Some(folder)) || !usable(prompt, &images) { return None; }
@@ -222,9 +253,10 @@ impl KiroSessions {
         let mut s = KiroSession::new(tool);
         Self::seat(&g, &mut s);
         s.folder = folder.into();
+        s.access = access.map(str::to_owned);
         s.turns.push(KiroTurn::new(prompt.trim(), images));
         let id = s.id;
-        g.all.push(Slot { s, cancel: None, run: (self.0.make)(tool) });
+        g.all.push(Slot::new(s, (self.0.make)(tool)));
         let begun = self.begin(&mut g, id);
         g.selected = Some(id);
         let snap = g.all.iter().find(|x| x.s.id == id).unwrap().s.clone();
@@ -248,7 +280,7 @@ impl KiroSessions {
         slot.s.state = KiroState::Running;
         let ct = Cancel::new();
         slot.cancel = Some(ct.clone());
-        let args_base = (slot.s.folder.clone(), slot.s.turns[ti].text(), slot.s.kiro_id.clone());
+        let args_base = (slot.s.folder.clone(), slot.s.turns[ti].text(), slot.s.kiro_id.clone(), slot.s.access.clone());
         let run = slot.run.clone();
         let me = Arc::downgrade(&self.0);
         Box::new(move || {
@@ -289,7 +321,7 @@ impl KiroSessions {
         s.restore(&saved);
         Self::seat(&g, &mut s);
         let snap = s.clone();
-        g.all.push(Slot { s, cancel: None, run: (self.0.make)(saved.tool) });
+        g.all.push(Slot::new(s, (self.0.make)(saved.tool)));
         drop(g);
         self.raise(vec![Note::Changed]);
         Some(snap)
@@ -333,10 +365,65 @@ impl KiroSessions {
         self.raise(vec![Note::Changed]);
     }
 
-    /// Stops the turn that runs; replies waiting behind it are not sent.
+    /// Stops the turn that runs; replies waiting behind it are not sent, and a
+    /// question it asked is turned down.
     pub fn stop(&self, id: i32) {
-        let c = self.0.inner.lock().unwrap().all.iter().find(|x| x.s.id == id && x.s.busy()).and_then(|x| x.cancel.clone());
+        let (c, denied) = {
+            let mut g = self.0.inner.lock().unwrap();
+            match g.all.iter_mut().find(|x| x.s.id == id && x.s.busy()) {
+                Some(x) => (x.cancel.clone(), x.deny_all()),
+                None => (None, vec![]),
+            }
+        };
+        let asked = !denied.is_empty();
+        for d in denied { d(AskAnswer::Deny); }
+        if asked { self.raise(vec![Note::Changed]); }
         if let Some(c) = c { c.cancel(); }
+    }
+
+    /// KiroSession.Ask: the agent of the session running conversation `sid` on `tool`
+    /// asks the user about a tool call. The answer goes to `reply` (off any thread);
+    /// with no such session running, or when `ct` is cancelled, it is Deny.
+    pub fn ask(&self, tool: AgentTool, sid: &str, ask: AgentAsk, ct: &Cancel, reply: Reply) {
+        let mut g = self.0.inner.lock().unwrap();
+        let Some(slot) = g.all.iter_mut().find(|x| x.s.tool == tool && x.s.kiro_id.as_deref() == Some(sid) && x.s.busy()) else {
+            drop(g);
+            reply(AskAnswer::Deny);
+            return;
+        };
+        hover_core::log::line(&format!("{} run {} asks: {} ({})", tool.id(), slot.s.id, ask.kind, ask.reason));
+        let (id, qid) = (slot.s.id, ask.id.clone());
+        slot.s.asks.push(ask);
+        slot.asks.push(Pending { id: qid.clone(), reply, _stop: None });
+        drop(g);
+        let me = Arc::downgrade(&self.0);
+        let q2 = qid.clone();
+        let reg = ct.on_cancel(move || { if let Some(sh) = me.upgrade() { KiroSessions(sh).answer(id, &q2, AskAnswer::Deny); } });
+        {
+            let mut g = self.0.inner.lock().unwrap();
+            match g.all.iter_mut().find(|x| x.s.id == id).and_then(|x| x.asks.iter_mut().find(|p| p.id == qid)) {
+                Some(p) => p._stop = Some(reg),
+                None => drop(reg),
+            }
+        }
+        self.raise(vec![Note::Changed]);
+    }
+
+    /// KiroSession.Answer: false when the session isn't waiting on that question.
+    pub fn answer(&self, id: i32, ask_id: &str, answer: AskAnswer) -> bool {
+        let reply = {
+            let mut g = self.0.inner.lock().unwrap();
+            let Some(slot) = g.all.iter_mut().find(|x| x.s.id == id) else { return false };
+            let Some(i) = slot.asks.iter().position(|p| p.id == ask_id) else { return false };
+            let p = slot.asks.remove(i);
+            slot.s.asks.retain(|a| a.id != ask_id);
+            // Dropped here, outside the token's own lock: the stop no longer withdraws it.
+            (p.reply, p._stop)
+        };
+        (reply.0)(answer);
+        drop(reply.1);
+        self.raise(vec![Note::Changed]);
+        true
     }
 
     pub fn stop_all(&self) {
@@ -361,7 +448,7 @@ fn with<R>(me: &Weak<Shared>, id: i32, f: impl FnOnce(&mut Slot, Stamp) -> R) ->
 }
 
 /// KiroSession.Go: one turn, on its own thread.
-fn go(me: Weak<Shared>, id: i32, ti: usize, run: RunTask, ct: Cancel, (folder, prompt, resume): (String, String, Option<String>)) {
+fn go(me: Weak<Shared>, id: i32, ti: usize, run: RunTask, ct: Cancel, (folder, prompt, resume, access): (String, String, Option<String>, Option<String>)) {
     let (m1, m2) = (me.clone(), me.clone());
     let progress = Box::new(move |p: KiroPhase| {
         if let Some((ks, true)) = with(&m1, id, |slot, now| {
@@ -382,14 +469,16 @@ fn go(me: Weak<Shared>, id: i32, ti: usize, run: RunTask, ct: Cancel, (folder, p
             }
         }) { ks.raise(vec![Note::Changed]); }
     });
-    let args = RunArgs { folder, prompt, progress, ct: ct.clone(), resume, events };
+    let args = RunArgs { folder, prompt, progress, ct: ct.clone(), resume, events, access };
     let mut r = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run(args))) {
         Ok(r) => r,
         Err(p) => KiroResult::new(KiroState::Failed, p.downcast_ref::<String>().cloned().or_else(|| p.downcast_ref::<&str>().map(|s| s.to_string())).unwrap_or_else(|| "The run failed.".into())),
     };
     if ct.is_cancelled() && r.state != KiroState::Completed { r.state = KiroState::Cancelled; }
-    let Some((ks, (snap, next))) = with(&me, id, |slot, now| {
+    let Some((ks, (snap, next, denied))) = with(&me, id, |slot, now| {
         slot.cancel = None;
+        // A question the run left behind has nobody to answer it now.
+        let denied = slot.deny_all();
         let t = &mut slot.s.turns[ti];
         t.result = Some(r.clone());
         t.ended_at = Some(now);
@@ -408,8 +497,9 @@ fn go(me: Weak<Shared>, id: i32, ti: usize, run: RunTask, ct: Cancel, (folder, p
             }
             next = false;
         }
-        (slot.s.clone(), next)
+        (slot.s.clone(), next, denied)
     }) else { return };
+    for d in denied { d(AskAnswer::Deny); }
     ks.save(&snap);
     ks.raise(vec![Note::Changed, Note::Ended(snap, r)]);
     if next {

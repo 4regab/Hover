@@ -58,6 +58,7 @@ pub struct KiroStream {
     plain: std::collections::VecDeque<String>,
     events: Vec<KiroEvent>,
     steps: std::collections::HashMap<String, KiroStep>,
+    began: std::collections::HashMap<String, std::time::Instant>,
     after_tool: bool,
     message: Option<String>,
     is_final: bool,
@@ -70,7 +71,7 @@ fn num(e: &Json, name: &str) -> Option<f64> { match e.get(name) { Some(v @ Json:
 impl KiroStream {
     pub fn new(name: &str) -> KiroStream {
         KiroStream { name: name.into(), phase: KiroPhase::Starting, final_text: None, stop_reason: None, error: None, interrupted: false, finished: false,
-            session_id: None, context: None, said: String::new(), plain: Default::default(), events: vec![], steps: Default::default(), after_tool: false,
+            session_id: None, context: None, said: String::new(), plain: Default::default(), events: vec![], steps: Default::default(), began: Default::default(), after_tool: false,
             message: None, is_final: false }
     }
 
@@ -167,29 +168,37 @@ impl KiroStream {
     }
 
     /// A tool call starts a step; its updates carry the status. The first one names it.
+    /// A tool call starts a step; its updates carry the status, and at the end the
+    /// change it made (ACP diff content) or what the command printed (rawOutput).
     fn step(&mut self, u: &Json) {
         let Some(id) = s(u, "toolCallId").filter(|i| !i.is_empty()) else { return };
-        let status = s(u, "status").unwrap_or("in_progress").to_owned();
-        let step = match self.steps.get(id) {
-            Some(known) => {
-                if known.status == status { return; }
-                KiroStep { status, title: s(u, "title").map_or_else(|| known.title.clone(), str::to_owned), ..known.clone() }
-            }
+        let status = s(u, "status");
+        let seen = self.steps.contains_key(id);
+        let known = match self.steps.get(id) {
+            Some(k) => k.clone(),
             None => {
-                let mut target = None;
-                if let Some(Json::Arr(locs)) = u.get("locations") {
-                    for l in locs { target = s(l, "path").map(str::to_owned); if target.is_some() { break; } }
-                }
-                if target.is_none() {
-                    if let Some(raw) = u.get("rawInput") {
-                        target = ["command", "path", "pattern", "query", "url"].iter().find_map(|k| s(raw, k)).map(str::to_owned);
-                    }
-                }
-                KiroStep { id: id.into(), kind: s(u, "kind").unwrap_or("other").into(), title: s(u, "title").unwrap_or("Working").into(), target, status }
+                self.began.insert(id.into(), std::time::Instant::now());
+                KiroStep::new(id, s(u, "kind").unwrap_or("other"), s(u, "title").unwrap_or("Working"), target(u), status.unwrap_or("in_progress"))
             }
         };
-        self.steps.insert(id.into(), step.clone());
-        self.events.push(KiroEvent { step: Some(step), ..Default::default() });
+        let mut next = KiroStep {
+            status: status.map_or_else(|| known.status.clone(), str::to_owned),
+            title: s(u, "title").map_or_else(|| known.title.clone(), str::to_owned),
+            target: known.target.clone().or_else(|| target(u)),
+            ..known.clone()
+        };
+        if let Some((added, removed, preview)) = diff_of(u) { next.added = added; next.removed = removed; next.diff = Some(preview); }
+        if next.kind == "execute" {
+            let (o, exit) = output_of(u);
+            if let Some(o) = o { next.output = Some(o); }
+            if exit.is_some() { next.exit = exit; }
+        }
+        if matches!(next.status.as_str(), "completed" | "failed") && known.ms.is_none() {
+            if let Some(t0) = self.began.get(id) { next.ms = Some(t0.elapsed().as_secs_f64() * 1000.0); }
+        }
+        if seen && next == known { return; }
+        self.steps.insert(id.into(), next.clone());
+        self.events.push(KiroEvent { step: Some(next), ..Default::default() });
     }
 
     fn append(&mut self, content: &Json) {
@@ -244,6 +253,84 @@ impl KiroStream {
 
 /// The event's name and payload: {"type": …, "data": {…}} and the like, or an object
 /// with one key: {"runFinished": {…}}.
+/// The file or command a tool call is about: its first location, else the input's
+/// command, path, file_path, pattern, query or url. An empty one is none.
+fn target(u: &Json) -> Option<String> {
+    let mut t = None;
+    if let Some(Json::Arr(locs)) = u.get("locations") {
+        for l in locs { t = s(l, "path").map(str::to_owned); if t.as_deref().is_some_and(|x| !x.is_empty()) { break; } }
+    }
+    if t.as_deref().is_none_or(str::is_empty) {
+        if let Some(raw) = u.get("rawInput") {
+            t = ["command", "path", "file_path", "pattern", "query", "url"].iter().find_map(|k| s(raw, k)).map(str::to_owned);
+        }
+    }
+    t.filter(|x| !x.is_empty())
+}
+
+fn lines_of(t: &str) -> Vec<String> { t.replace('\r', "").trim_end_matches('\n').split('\n').map(str::to_owned).collect() }
+
+/// KiroStream.DiffOf: the change in a tool call's diff content, lines added and
+/// removed, and the changed part with a line of context before it, up to a dozen lines.
+pub fn diff_of(u: &Json) -> Option<(i32, i32, String)> {
+    let Some(Json::Arr(content)) = u.get("content") else { return None };
+    let (mut added, mut removed) = (0usize, 0usize);
+    let mut lines: Vec<String> = vec![];
+    for item in content {
+        if s(item, "type") != Some("diff") { continue; }
+        let old = s(item, "oldText");
+        let new = s(item, "newText").unwrap_or("");
+        // Kiro sends an empty diff while the edit is still pending.
+        if old.is_none_or(str::is_empty) && new.is_empty() { continue; }
+        let a = match old { None | Some("") => vec![], Some(o) => lines_of(o) };
+        let bb = lines_of(new);
+        // What is the same at both ends is not the change.
+        let mut head = 0;
+        while head < a.len() && head < bb.len() && a[head] == bb[head] { head += 1; }
+        let mut tail = 0;
+        while tail < a.len() - head && tail < bb.len() - head && a[a.len() - tail - 1] == bb[bb.len() - tail - 1] { tail += 1; }
+        let gone = &a[head..a.len() - tail];
+        let came = &bb[head..bb.len() - tail];
+        removed += gone.len();
+        added += came.len();
+        if lines.len() >= 12 { continue; }
+        if head > 0 && !a[head - 1].trim().is_empty() { lines.push(format!("  {}", clip(a[head - 1].trim_end(), 160))); }
+        lines.extend(gone.iter().take(6).map(|x| format!("- {}", clip(x.trim_end(), 160))));
+        let room = 12 - lines.len().min(12);
+        lines.extend(came.iter().take(room).map(|x| format!("+ {}", clip(x.trim_end(), 160))));
+    }
+    if added + removed == 0 { return None; }
+    lines.truncate(12);
+    Some((added as i32, removed as i32, lines.join("\n")))
+}
+
+/// KiroStream.OutputOf: the end of what a command printed, and its exit code, from
+/// rawOutput: Kiro's {output, exitCode}, Codex's {formatted_output, exit_code}, or text.
+pub fn output_of(u: &Json) -> (Option<String>, Option<i32>) {
+    let mut exit = None;
+    let mut text: Option<String> = None;
+    match u.get("rawOutput") {
+        Some(Json::Str(t)) => text = Some(t.clone()),
+        Some(ro @ Json::Obj(_)) => {
+            text = ["formatted_output", "output", "aggregated_output", "stdout"].iter().find_map(|k| s(ro, k)).map(str::to_owned);
+            if let Some(err) = s(ro, "stderr").filter(|e| !e.is_empty()) {
+                text = Some(match text { Some(t) if !t.is_empty() => format!("{t}\n{err}"), _ => err.to_owned() });
+            }
+            for n in ["exitCode", "exit_code"] {
+                if let Some(v @ Json::Num(_)) = ro.get(n) { if let Ok(v) = v.i32() { exit = Some(v); } }
+            }
+        }
+        _ => {}
+    }
+    let Some(text) = text else { return (None, exit) };
+    let mut rows: Vec<String> = strip_ansi(&text).replace('\r', "").split('\n').map(|l| l.trim_end().to_owned()).collect();
+    while rows.last().is_some_and(String::is_empty) { rows.pop(); }
+    while rows.first().is_some_and(String::is_empty) { rows.remove(0); }
+    if rows.is_empty() { return (None, exit); }
+    let from = rows.len().saturating_sub(10);
+    (Some(rows[from..].iter().map(|l| clip(l, 200)).collect::<Vec<_>>().join("\n")), exit)
+}
+
 fn envelope(root: &Json) -> (&str, &Json) {
     for key in ["type", "event", "method"] {
         if let Some(name) = s(root, key) {
@@ -304,6 +391,28 @@ mod tests {
 
     /// What KiroStream makes of ACP updates (the cases KiroRunnerTests covers, derived
     /// from the C# source where no test pins them).
+    /// KiroStream.Step's details, from the C# (no C# test covers them): an edit's
+    /// counts and preview with its line of context, a command's output tail and exit
+    /// code, and a step that ends carries how long it took.
+    #[test]
+    fn a_step_carries_its_change_or_its_output() {
+        let mut k = KiroStream::new("Kiro");
+        k.feed(&update(r#"{"sessionUpdate":"tool_call","toolCallId":"e","kind":"edit","title":"Edit","status":"pending","content":[{"type":"diff","path":"a.rs","oldText":"","newText":""}]}"#));
+        k.feed(&update(r#"{"sessionUpdate":"tool_call_update","toolCallId":"e","status":"completed","content":[{"type":"diff","path":"a.rs","oldText":"fn a() {\n    one();\n}\n","newText":"fn a() {\n    two();\n    three();\n}\n"}]}"#));
+        k.feed(&update(r#"{"sessionUpdate":"tool_call","toolCallId":"x","kind":"execute","title":"Run","status":"in_progress","rawInput":{"command":"cargo test"}}"#));
+        k.feed(&update(r#"{"sessionUpdate":"tool_call_update","toolCallId":"x","status":"failed","rawOutput":{"formatted_output":"\n\u001b[32mok\u001b[0m\r\nFAILED   \n\n","exit_code":101}}"#));
+        let steps: Vec<KiroStep> = k.drain().into_iter().filter_map(|e| e.step).collect();
+        assert_eq!(steps[0].diff, None, "an empty pending diff is no change");
+        let e = &steps[1];
+        assert_eq!((e.added, e.removed, e.diff.as_deref()), (2, 1, Some("  fn a() {\n-     one();\n+     two();\n+     three();")));
+        assert!(e.ms.is_some());
+        let x = steps.last().unwrap();
+        assert_eq!((x.target.as_deref(), x.output.as_deref(), x.exit, x.status.as_str()), (Some("cargo test"), Some("ok\nFAILED"), Some(101), "failed"));
+        // The same update again is no news.
+        k.feed(&update(r#"{"sessionUpdate":"tool_call_update","toolCallId":"x","status":"failed"}"#));
+        assert!(k.drain().is_empty());
+    }
+
     #[test]
     fn reads_steps_phases_context_and_the_last_message() {
         let mut k = KiroStream::new("Codex");
