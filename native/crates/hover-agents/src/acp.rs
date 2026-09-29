@@ -320,6 +320,8 @@ impl Host {
                 set(&mut offered, f, Some(mode))?;
             }
             AgentTool::Cursor => { let f = find(&offered, Some("mode"), &["mode"]); set(&mut offered, f, Some(if o.read_only { "ask" } else { "agent" }))?; }
+            // OpenCode runs as its own server (opencode.rs), never as an ACP one.
+            AgentTool::OpenCode => {}
         }
         if !offered.is_empty() { self.raise_seen(&offered); }
         Ok(offered)
@@ -590,10 +592,10 @@ fn options(r: &Json) -> Option<Vec<AcpOption>> {
             for c in opts {
                 // Flat, or in named groups of their own.
                 if let Some(v) = s(c, "value") {
-                    choices.push(AcpChoice { value: v.into(), name: s(c, "name").unwrap_or(v).into() });
+                    choices.push(AcpChoice { value: v.into(), name: s(c, "name").unwrap_or(v).into(), levels: None });
                 } else if let Some(Json::Arr(inner)) = c.get("options") {
                     for g in inner {
-                        if let Some(v) = s(g, "value") { choices.push(AcpChoice { value: v.into(), name: s(g, "name").unwrap_or(v).into() }); }
+                        if let Some(v) = s(g, "value") { choices.push(AcpChoice { value: v.into(), name: s(g, "name").unwrap_or(v).into(), levels: None }); }
                     }
                 }
             }
@@ -612,7 +614,7 @@ mod tests {
         let r = json::parse(r#"{"configOptions":[{"id":"model","category":"model","currentValue":"a","options":[{"value":"a","name":"A"},{"group":"g","options":[{"value":"b"}]}]},{"category":"x"}]}"#).unwrap();
         let o = options(&r).unwrap();
         assert_eq!(o.len(), 1);
-        assert_eq!(o[0].choices, vec![AcpChoice { value: "a".into(), name: "A".into() }, AcpChoice { value: "b".into(), name: "b".into() }]);
+        assert_eq!(o[0].choices, vec![AcpChoice { value: "a".into(), name: "A".into(), levels: None }, AcpChoice { value: "b".into(), name: "b".into(), levels: None }]);
         assert!(options(&Json::Null).is_none());
     }
 }

@@ -67,22 +67,42 @@ fn offer(settings: &Settings, t: AgentTool, category: &str, ids: &[&str]) -> Opt
 }
 
 /// KiroPage.Models: what the tool offered, Kiro's own list before it has run; a
-/// Default that sends none comes first unless the first is the tool's "auto".
+/// Default that sends none comes first unless the first is the tool's "auto". A model
+/// with levels of its own (OpenCode's variants) carries them.
 pub fn models(settings: &Settings, t: AgentTool) -> Vec<(String, String)> {
-    let mut list: Vec<(String, String)> = match offer(settings, t, "model", &["model"]) {
-        Some(o) => o.choices.iter().map(|c| (c.value.clone(), c.name.clone())).collect(),
-        None if t == AgentTool::Kiro => crate::KIRO_MODELS.iter().map(|(a, b)| (a.to_string(), b.to_string())).collect(),
+    models_with_levels(settings, t).into_iter().map(|(a, b, _)| (a, b)).collect()
+}
+
+pub fn models_with_levels(settings: &Settings, t: AgentTool) -> Vec<(String, String, Option<Vec<String>>)> {
+    let mut list: Vec<(String, String, Option<Vec<String>>)> = match offer(settings, t, "model", &["model"]) {
+        Some(o) => o.choices.iter().map(|c| (c.value.clone(), c.name.clone(), c.levels.clone())).collect(),
+        None if t == AgentTool::Kiro => crate::KIRO_MODELS.iter().map(|(a, b)| (a.to_string(), b.to_string(), None)).collect(),
         None => vec![],
     };
-    if list.is_empty() || !(list[0].0 == "auto" || list[0].0.starts_with("default")) { list.insert(0, (String::new(), "Default".into())); }
+    if list.is_empty() || !(list[0].0 == "auto" || list[0].0.starts_with("default")) { list.insert(0, (String::new(), "Default".into(), None)); }
     list
+}
+
+/// The efforts the tool's effort option lists, and the one it has now.
+pub fn efforts(settings: &Settings, t: AgentTool) -> (Vec<String>, Option<String>) {
+    let e = offer(settings, t, "thought_level", &EFFORT_IDS);
+    (e.as_ref().map_or(vec![], |e| e.choices.iter().map(|c| c.value.clone()).collect()), e.and_then(|e| e.current))
+}
+
+/// effortsOf: the efforts for the picked model, its own levels (OpenCode's variants),
+/// or the tool's list when models don't carry any.
+pub fn efforts_of(models: &[(String, String, Option<Vec<String>>)], model: &str, tool_efforts: &[String]) -> Vec<String> {
+    let m = models.iter().find(|m| m.0 == model);
+    if m.is_some_and(|m| m.2.is_some()) || models.iter().any(|m| m.2.is_some()) { return m.and_then(|m| m.2.clone()).unwrap_or_default(); }
+    tool_efforts.to_vec()
 }
 
 fn tool(o: &Office, t: AgentTool) -> Json {
     let opts = o.settings.agent_options(t);
     let known = (o.ready)(t);
-    let models = models(o.settings, t);
+    let models = models_with_levels(o.settings, t);
     let effort = offer(o.settings, t, "thought_level", &EFFORT_IDS);
+    let caps = crate::runtime::caps(t);
     Json::obj(vec![
         ("id", st(t.id())),
         ("name", st(t.name())),
@@ -93,10 +113,15 @@ fn tool(o: &Office, t: AgentTool) -> Json {
         ("access", st(opts.access_id(crate::agents::read_only_works(t)))),
         ("readOnly", Json::Bool(crate::agents::read_only_works(t))),
         ("hideSteps", Json::Bool(opts.hide_steps)),
-        ("models", Json::Arr(models.iter().map(|(id, name)| Json::obj(vec![("id", st(id)), ("name", st(name))])).collect())),
+        // The composer's model and effort picks. A model with levels of its own
+        // (OpenCode's variants) takes those instead of the tool's efforts.
+        ("models", Json::Arr(models.iter().map(|(id, name, levels)| Json::obj(vec![("id", st(id)), ("name", st(name)),
+            ("levels", levels.as_ref().map_or(Json::Null, |l| Json::Arr(l.iter().map(|x| st(x)).collect())))])).collect())),
         ("model", opt(opts.model.as_deref().or(models.first().map(|m| m.0.as_str())))),
         ("efforts", Json::Arr(effort.as_ref().map_or(vec![], |e| e.choices.iter().map(|c| st(&c.value)).collect()))),
         ("effort", opt(opts.effort.as_deref().or(effort.as_ref().and_then(|e| e.current.as_deref())))),
+        ("effortLabel", st(caps.effort_label)),
+        ("questions", Json::Bool(caps.questions)),
     ])
 }
 
@@ -138,6 +163,12 @@ pub fn state_with(s: &KiroSession, files: &dyn Fn(&KiroSession) -> Option<String
                 ("preview", opt(a.preview.as_deref())), ("added", Json::int(a.added as i64)), ("removed", Json::int(a.removed as i64)),
                 ("reason", st(&a.reason)), ("danger", Json::Bool(a.danger)), ("allow", st(crate::words::ask_allow(a))),
                 ("more", Json::int(s.asks.len() as i64 - 1)),
+                // A question's own choices, which the office shows as buttons.
+                ("questions", a.questions.as_ref().map_or(Json::Null, |qs| Json::Arr(qs.iter().map(|q| Json::obj(vec![
+                    ("header", st(&q.header)), ("question", st(&q.question)),
+                    ("options", Json::Arr(q.options.iter().map(|(l, d)| Json::obj(vec![("label", st(l)), ("description", st(d))])).collect())),
+                    ("multiple", Json::Bool(q.multiple)), ("custom", Json::Bool(q.custom)),
+                ])).collect()))),
             ])
         })),
         ("pose", st(pose(s.phase))),

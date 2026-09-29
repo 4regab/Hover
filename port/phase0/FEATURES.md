@@ -60,7 +60,7 @@ Source references are to the C# app or the office page (`web/office`).
 | A6 | Idle shutdown (5/15 min), restart with `session/load` (replay muted) | AcpHost | port |
 | A7 | Sign-in/installation checks (status commands, 5-min cache, hints), MCP failure detection (Kiro) | Agents, AcpHost | port (Codex check run on Linux) |
 | A8 | Stream reading: phases, steps, context %, answer = last message after last tool | KiroStream | port |
-| A9 | Folder first; one-time full-access notice | KiroPage | port (notice setting and Settings row; the office's notice is Phase 2) |
+| A9 | Folder first; one-time full-access notice | KiroPage | port (the notice in place of the office until Got it, and its Settings row; Phase 7) |
 | A10 | End announcements (notch alert + tray balloon) unless the office is watched | OwlApp | port (alert + notification/balloon; Linux tested) |
 | A11 | Windows Job Object (`KILL_ON_JOB_CLOSE`), all tools shut down on quit | ChildJob | port (Linux: process group + watchdog, tested with kill -9; Windows pending) |
 

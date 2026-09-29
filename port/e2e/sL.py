@@ -29,11 +29,14 @@ try:
     im = Image.open(OUT + "/sL-0.png")
     # find the "Copy" chip: a light text on a small pill right of the code header; scan rows for the 'rust' header band
     print("clipboard before:", clipboard())
-    h.click(1467, 285); time.sleep(0.5)
+    # Where the drawer is: the notch's short office puts it 8 px in, 360 wide.
+    dx, dy, dw, dh = h.rect(h.find("drawer"))
+    print("drawer", (dx, dy, dw, dh))
+    h.click(dx + dw - 39, dy + 263); time.sleep(0.5)
     h.shot("sL-1"); cropd("sL-1")
     c = clipboard(); print("clipboard after:", repr(c))
     check("Copy puts the code on the clipboard", c and "println!" in c, repr(c))
-    h.click(1290, 201); time.sleep(1.5)
+    h.click(dx + 181, dy + 179); time.sleep(1.5)
     b = open(os.path.join(WORK, "browser.log")).read() if os.path.exists(os.path.join(WORK, "browser.log")) else ""
     check("a link opens in the browser", "https://example.com" in b, b)
 finally:

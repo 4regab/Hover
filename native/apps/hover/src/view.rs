@@ -276,7 +276,7 @@ pub fn picked_seg(h: &dyn Host, id: &str, i: usize) {
                 let o = st.agent_options(t);
                 let n = t.name();
                 let offers = st.agent_offers(t);
-                let new = if id == format!("{n}Effort") { pages::pick_effort(&o, &offers, i) }
+                let new = if id == format!("{n}Effort") { pages::pick_effort(t, &o, &offers, i) }
                     else if id == format!("{n}Tools") {
                         use hover_core::model::AgentApproval as A;
                         // Read only keeps the asking it had; the rest are full access.
@@ -299,6 +299,7 @@ pub fn menu_pick(h: &dyn Host, pane: &RefCell<Pane>, id: &str, i: usize) {
         let o = st.agent_options(t);
         let offers = st.agent_offers(t);
         if id == format!("{}Model", t.name()) { st.set_agent_options(t, pages::pick_model(t, &o, &offers, i)); }
+        if t == AgentTool::OpenCode && id == "OpenCodeAgent" { st.set_agent_options(t, pages::pick_opencode_agent(&o, &offers, i)); }
         if t == AgentTool::Kiro && id == "KiroAgent" {
             st.set_agent_options(t, pages::pick_agent(&o, &offers, &hover_agents::kiro_agents(st.kiro_folder().as_deref()), i));
         }

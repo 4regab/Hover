@@ -26,10 +26,14 @@ def check(name, ok, detail=""):
 
 
 class Hover:
-    def __init__(self, data, env=None, fresh=True, disp=":9"):
+    def __init__(self, data, env=None, fresh=True, disp=":9", notice=False):
         self.disp = disp
         if fresh and os.path.exists(data): shutil.rmtree(data)
         os.makedirs(data, exist_ok=True)
+        # The note before the first task (KiroPage.Notice) is its own scenario's; the
+        # rest start past it, as a user who has read it once.
+        if fresh and not notice:
+            with open(os.path.join(data, "settings.json"), "w", encoding="utf-8") as f: f.write('{\n  "KiroNoticeSeen": true\n}')
         os.makedirs(OUT, exist_ok=True)
         os.makedirs(os.path.join(PROJ, "src"), exist_ok=True)
         os.makedirs(os.path.join(WORK, "rt"), mode=0o700, exist_ok=True)

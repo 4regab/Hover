@@ -2,7 +2,7 @@
 //! processes, their sessions and history, the quota readings), the ends announced
 //! while nobody watches, and the orderly quit. No UI here: the views register hooks.
 
-use hover_agents::acp::AcpHost;
+use hover_agents::runtime::Runtime;
 use hover_agents::session::{KiroSession, KiroSessions, RunTask};
 use hover_agents::stream::KiroResult;
 use hover_agents::text;
@@ -36,7 +36,9 @@ pub struct UnseenEnd { pub tool: AgentTool, pub title: String, pub state: KiroSt
 pub struct Hover {
     pub settings: Arc<Settings>,
     pub history: Option<Arc<AgentHistory>>,
-    pub hosts: Vec<AcpHost>,
+    /// Each tool's runtime: an ACP server for Kiro, Codex and Cursor, OpenCode's own
+    /// server for OpenCode.
+    pub hosts: Vec<Runtime>,
     pub sessions: KiroSessions,
     pub quotas: Poller,
     unseen: Mutex<Unseen>,
@@ -48,21 +50,21 @@ pub struct Hover {
 
 impl Hover {
     /// The real thing: settings.json, the key and history in the data folder, one
-    /// ACP host per tool.
+    /// runtime per tool.
     pub fn start() -> Arc<Hover> {
         hover_core::paths::drop_planner(hover_core::paths::support());
         let settings = Settings::load(hover_core::paths::settings_file());
         let history = hover_core::crypto::global().map(|c| Arc::new(AgentHistory::new(hover_core::paths::agents(), c)));
         if history.is_none() { hover_core::log::line("no key this run: sessions aren't kept"); }
-        let hosts: Vec<AcpHost> = AgentTool::ALL.iter().map(|&t| {
+        let hosts: Vec<Runtime> = AgentTool::ALL.iter().map(|&t| {
             let s = settings.clone();
-            AcpHost::new(t, move || s.agent_options(t))
+            Runtime::new(t, move || s.agent_options(t))
         }).collect();
         Hover::with(settings, history, hosts, None, None)
     }
 
     /// With the parts given (tests hand in stand-in hosts and a reader).
-    pub fn with(settings: Arc<Settings>, history: Option<Arc<AgentHistory>>, hosts: Vec<AcpHost>, run: Option<RunTask>,
+    pub fn with(settings: Arc<Settings>, history: Option<Arc<AgentHistory>>, hosts: Vec<Runtime>, run: Option<RunTask>,
                 reader: Option<Reader>) -> Arc<Hover> {
         let hooks: Arc<Mutex<Hooks>> = Default::default();
         for h in &hosts {
@@ -70,7 +72,7 @@ impl Hover {
             let s = settings.clone();
             h.on_options_seen(move |tool, offers| s.set_agent_offers(tool, offers));
         }
-        let runners: Vec<(AgentTool, AcpHost)> = hosts.iter().map(|h| (h.tool(), h.clone())).collect();
+        let runners: Vec<(AgentTool, Runtime)> = hosts.iter().map(|h| (h.tool(), h.clone())).collect();
         let sessions = KiroSessions::new(move |tool| match &run {
             Some(r) => r.clone(),
             None => runners.iter().find(|(t, _)| *t == tool).expect("a host per tool").1.runner(),
@@ -80,6 +82,8 @@ impl Hover {
             // and the office show it. One nobody holds is turned down.
             let (ks, tool) = (sessions.clone(), h.tool());
             h.set_asking(Arc::new(move |sid, ask, ct, reply| ks.ask(tool, sid, ask, ct, reply)));
+            let ks = sessions.clone();
+            h.set_questioning(Arc::new(move |sid, ask, ct, reply| ks.ask_question(tool, sid, ask, ct, reply)));
         }
         let fire = |hooks: &Arc<Mutex<Hooks>>, pick: fn(&Hooks) -> &Vec<Hook>| {
             let list: Vec<Hook> = pick(&hooks.lock().unwrap()).clone();

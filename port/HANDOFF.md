@@ -3,7 +3,9 @@
 Last updated 2026-09-29, at the commit carrying this file. All phases are built on Linux;
 what is left is the Windows run, the open questions and the cutover. Phase 6
 (`port/phase6/REPORT.md`) ran every feature end to end under Xvfb and fixed the eleven UI
-bugs it found; `port/e2e/run.sh` keeps that run (55 checks).
+bugs it found; `port/e2e/run.sh` keeps that run. Phase 7 (`port/phase7/REPORT.md`) ported main's last
+commit, OpenCode (55111fc), fixed ten more differences from main's page, and grew the
+run to 79 checks.
 Read in this order: this file, `port/README.md`, `port/phase4/REPORT.md` (the cutover
 checklist), `port/phase2/REPORT.md`, `port/phase3/REPORT.md`, `port/phase1/REPORT.md` (the chat and notch prototypes),
 `AGENTS.md`. The prompt that sets the next session's work is `port/NEXT-PROMPT.md`.
@@ -148,7 +150,9 @@ cd .. && node port/phase2/capture-scene.mjs OUT && python3 port/phase2/compare.p
 python3 port/bench/measure-hover.py --runs 1 --append --out port/phase4/bench-linux.json   # ~7 min a run
 sh native/installer/package-linux.sh 0.9.0 /projects/sandbox/dist        # .deb + tarball
 dbus-run-session -- python3 port/phase4/atspi-dump.py out.txt           # under DISPLAY; hangs on quit
-port/e2e/run.sh [sA sB ...]    # end to end: Xvfb + AT-SPI + XTEST, fake-agent.py as the tools; 55 checks, ~9 min
+port/e2e/run.sh [sA sB ...]    # end to end: Xvfb + AT-SPI + XTEST, fake-agent.py and fake-opencode.py as the tools; 79 checks, ~12 min
+cargo run --release -p hover-agents --example opencode_live -- DIR "prompt" [model] [access]   # the real opencode (npm i -g opencode-ai)
+node port/phase7/capture-main.mjs OUT   # main's page (golden/page) with OpenCode and a question, for side by side
 ```
 (`pip install python-xlib pillow`; PyGObject comes with python3-gobject.)
 

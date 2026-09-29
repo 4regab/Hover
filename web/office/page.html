@@ -247,10 +247,11 @@ textarea::placeholder{color:var(--faint)}
 .lg{flex:none;display:grid;place-items:center;border:0;border-radius:50%;padding:0}
 .lg svg{fill:currentColor;stroke:none}
 .lg.kiro{background:#9046FF;color:#fff}.lg.codex{background:#fff}.lg.cursor{background:#0d0d10;color:#ececf0;box-shadow:0 0 0 1px rgba(255,255,255,.14)}
+.lg.opencode{background:#101012;color:#f4f4f6;box-shadow:0 0 0 1px rgba(255,255,255,.14)}
 .lg.off{filter:grayscale(1) brightness(.55)}
 #fabTools .lg{position:absolute;left:2px;bottom:2px;width:30px;height:30px;opacity:0;transform:scale(.4);box-shadow:0 6px 16px -6px rgba(0,0,0,.8);
   transition:transform .26s cubic-bezier(.25,1.2,.4,1),opacity .18s,box-shadow .15s;transition-delay:calc(var(--i)*30ms)}
-#fabTools .lg.cursor{box-shadow:0 0 0 1px rgba(255,255,255,.14),0 6px 16px -6px rgba(0,0,0,.8)}
+#fabTools .lg.cursor,#fabTools .lg.opencode{box-shadow:0 0 0 1px rgba(255,255,255,.14),0 6px 16px -6px rgba(0,0,0,.8)}
 #fabTools .lg svg{width:16px;height:16px}
 #fabTools .lg:hover,#fabTools .lg:focus-visible{outline:0;box-shadow:0 0 0 2px rgba(255,255,255,.85),0 6px 16px -6px rgba(0,0,0,.8)}
 #fab.s-pick #fabTools{pointer-events:auto}#fab.s-pick #fabTools .lg{opacity:1;transform:translateX(calc(40px + var(--i)*36px))}
@@ -296,6 +297,16 @@ textarea::placeholder{color:var(--faint)}
 .askc button.pri{background:#f5f5f7;color:#000}.askc button.pri:hover{background:#fff}.askc button.dz{background:#ff453a}
 .askc.chat{width:auto;background:rgba(255,179,64,.06);box-shadow:inset 0 0 0 1px rgba(255,179,64,.35);backdrop-filter:none}
 .askc.chat.dz{background:rgba(255,69,58,.06);box-shadow:inset 0 0 0 1px rgba(255,69,58,.4)}
+/* A question: its choices as buttons that toggle, then Answer or Skip. */
+.askc .qq{margin:8px 0 2px}.askc .qq p{margin:0 0 6px;font-size:12px;color:rgba(255,255,255,.86);white-space:pre-wrap}
+.askc .qh{font:600 10.5px var(--px);letter-spacing:.06em;text-transform:uppercase;color:#ffb340;margin-bottom:3px}
+.askc .qo{display:flex;flex-direction:column;gap:4px;margin-bottom:6px}
+.askc .qo button{height:auto;min-height:26px;padding:5px 9px;text-align:left;font-weight:500;display:flex;flex-direction:column;align-items:flex-start;gap:1px}
+.askc .qo button small{font-size:10.5px;font-weight:400;color:rgba(255,255,255,.55)}
+.askc .qo button[aria-pressed="true"]{background:rgba(255,179,64,.22);box-shadow:inset 0 0 0 1px rgba(255,179,64,.7)}
+.askc .qo input{width:100%;height:26px;padding:0 9px;border:0;border-radius:8px;background:rgba(0,0,0,.4);color:#fff;font:500 11.5px Inter,"Segoe UI",sans-serif}
+.askc .qo input:focus-visible{outline:2px solid #ffb340;outline-offset:1px}
+.askc .qq p.qline{max-height:2.9em;overflow:hidden}
 .card.st-waiting .ct b{color:#ffb340}
   background:#000;color:#fff;font:500 12.5px Inter,"Segoe UI Variable Text","Segoe UI",sans-serif;white-space:nowrap;box-shadow:0 10px 26px -10px rgba(0,0,0,.8);transition:box-shadow .4s}
 #toast{position:absolute;left:50%;top:18px;transform:translate(-50%,-12px);z-index:7;padding:8px 14px;border-radius:12px;font:600 12.5px var(--px);opacity:0;transition:.25s;pointer-events:none}

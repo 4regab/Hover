@@ -4,18 +4,19 @@
 
 use crate::json::{Json, JsonError, Result};
 
-/// Services.AgentTool.
+/// Services.AgentTool. New tools go at the end: the names are saved in settings and
+/// history.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum AgentTool { Kiro, Codex, Cursor }
+pub enum AgentTool { Kiro, Codex, Cursor, OpenCode }
 
 impl AgentTool {
-    pub const ALL: [AgentTool; 3] = [AgentTool::Kiro, AgentTool::Codex, AgentTool::Cursor];
-    const NAMES: [&'static str; 3] = ["Kiro", "Codex", "Cursor"];
+    pub const ALL: [AgentTool; 4] = [AgentTool::Kiro, AgentTool::Codex, AgentTool::Cursor, AgentTool::OpenCode];
+    const NAMES: [&'static str; 4] = ["Kiro", "Codex", "Cursor", "OpenCode"];
 
     /// Agents.Name: the enum's name.
     pub fn name(self) -> &'static str { Self::NAMES[self as usize] }
     /// Agents.Id: the name in lower case.
-    pub fn id(self) -> &'static str { ["kiro", "codex", "cursor"][self as usize] }
+    pub fn id(self) -> &'static str { ["kiro", "codex", "cursor", "opencode"][self as usize] }
     /// Agents.Parse: the exact id, or none.
     pub fn parse(id: Option<&str>) -> Option<AgentTool> { Self::ALL.into_iter().find(|t| Some(t.id()) == id) }
 
@@ -163,9 +164,15 @@ impl AgentOptions {
     }
 }
 
-/// Services.AcpChoice(Value, Name).
+/// Services.AcpChoice(Value, Name, Levels). Levels are the efforts this choice takes,
+/// where they differ by choice (OpenCode's variants belong to each model); none when
+/// the tool lists effort on its own.
 #[derive(Clone, Debug, PartialEq)]
-pub struct AcpChoice { pub value: String, pub name: String }
+pub struct AcpChoice { pub value: String, pub name: String, pub levels: Option<Vec<String>> }
+
+impl AcpChoice {
+    pub fn new(value: &str, name: &str) -> AcpChoice { AcpChoice { value: value.into(), name: name.into(), levels: None } }
+}
 
 /// Services.AcpOption(Id, Category, Current, Choices).
 #[derive(Clone, Debug, PartialEq)]
@@ -177,12 +184,17 @@ impl AcpOption {
     pub fn to_json(&self) -> Json {
         Json::obj(vec![("Id", Json::str(&self.id)), ("Category", Json::opt_str_of(self.category.as_deref())),
             ("Current", Json::opt_str_of(self.current.as_deref())),
-            ("Choices", Json::Arr(self.choices.iter().map(|c| Json::obj(vec![("Value", Json::str(&c.value)), ("Name", Json::str(&c.name))])).collect()))])
+            ("Choices", Json::Arr(self.choices.iter().map(|c| Json::obj(vec![("Value", Json::str(&c.value)), ("Name", Json::str(&c.name)),
+                ("Levels", c.levels.as_ref().map_or(Json::Null, |l| Json::Arr(l.iter().map(Json::str).collect())))])).collect()))])
     }
 
     pub fn from_json(v: &Json) -> Result<AcpOption> {
         v.props()?;
-        let choice = |c: &Json| -> Result<AcpChoice> { c.props()?; Ok(AcpChoice { value: text(c.get("Value"))?, name: text(c.get("Name"))? }) };
+        let choice = |c: &Json| -> Result<AcpChoice> {
+            c.props()?;
+            Ok(AcpChoice { value: text(c.get("Value"))?, name: text(c.get("Name"))?,
+                levels: c.get("Levels").map(|l| l.opt_list(|x| Ok(x.opt_str()?.unwrap_or_default()))).transpose()?.flatten() })
+        };
         Ok(AcpOption {
             id: text(v.get("Id"))?,
             category: opt_text(v.get("Category"))?,

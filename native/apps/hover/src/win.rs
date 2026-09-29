@@ -375,6 +375,25 @@ pub fn pick(folder: bool) -> Option<String> {
     }
 }
 
+/// An image to attach (the page's file input: PNG, JPEG, GIF, WebP).
+pub fn pick_image() -> Option<String> {
+    use windows::Win32::System::Com::{CoCreateInstance, CoInitializeEx, CoTaskMemFree, CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED};
+    use windows::Win32::UI::Shell::{FileOpenDialog, IFileOpenDialog, SIGDN_FILESYSPATH};
+    use windows::Win32::UI::Shell::Common::COMDLG_FILTERSPEC;
+    unsafe {
+        let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
+        let d: IFileOpenDialog = CoCreateInstance(&FileOpenDialog, None, CLSCTX_INPROC_SERVER).ok()?;
+        let specs = [COMDLG_FILTERSPEC { pszName: w!("Images"), pszSpec: w!("*.png;*.jpg;*.jpeg;*.gif;*.webp") }];
+        let _ = d.SetFileTypes(&specs);
+        d.Show(notch()).ok()?;
+        let item = d.GetResult().ok()?;
+        let p = item.GetDisplayName(SIGDN_FILESYSPATH).ok()?;
+        let s = p.to_string().ok();
+        CoTaskMemFree(Some(p.0 as *const _));
+        s
+    }
+}
+
 /// DashboardWindow.ApplyTheme: the title bar in the panel's colour, dark or light, so
 /// bar and window read as one surface. Older Windows ignores these and keeps its own.
 pub fn caption(window: &slint::Window, dark: bool, panel: u32) {

@@ -169,7 +169,7 @@ pub fn run(dir: &Path) {
     save(&notch, crop, 2.0, desk, &dir.join("notch-rest-working-2x.png"));
     let asker = hover.sessions.all().into_iter().find(|s| s.busy()).unwrap();
     let ask = hover_agents::ask::AgentAsk { id: "n1".into(), kind: "execute".into(), title: "Run".into(), command: Some("npm install three@0.171.0".into()), path: None,
-        preview: None, added: 0, removed: 0, reason: "Installs packages or uses the network".into(), danger: false };
+        preview: None, added: 0, removed: 0, reason: "Installs packages or uses the network".into(), danger: false, questions: None };
     hover.sessions.ask(asker.tool, asker.kiro_id.as_deref().unwrap_or(""), ask, &hover_agents::cancel::Cancel::new(), Box::new(|_| {}));
     app.update_rest();
     run_for(700);
@@ -198,6 +198,11 @@ pub fn run(dir: &Path) {
     };
     app.office_push();
     settle(3000);
+    // The note before the first task, in place of the office.
+    save(&notch, full, 1.0, desk, &dir.join("office-notice.png"));
+    hover.settings.set_kiro_notice_seen(true);
+    app.office_widgets();
+    settle(300);
     save(&notch, full, 1.0, desk, &dir.join("notch-open-office.png"));
     let first = app.hover.sessions.all().first().map(|s| s.id);
     if let Some(id) = first { app.open_session(id); }
@@ -245,7 +250,7 @@ pub fn run(dir: &Path) {
     if let Some(s3) = &s3 {
         let sid = hover.sessions.get(s3.id).and_then(|s| s.kiro_id).unwrap_or_default();
         let ask = hover_agents::ask::AgentAsk { id: "a1".into(), kind: "execute".into(), title: "Run".into(), command: Some("npm install three@0.171.0".into()), path: None,
-            preview: None, added: 0, removed: 0, reason: "Installs packages or uses the network".into(), danger: false };
+            preview: None, added: 0, removed: 0, reason: "Installs packages or uses the network".into(), danger: false, questions: None };
         hover.sessions.ask(AgentTool::Codex, &sid, ask, &hover_agents::cancel::Cancel::new(), Box::new(|_| {}));
     }
     app.office_push();
@@ -254,6 +259,49 @@ pub fn run(dir: &Path) {
     if let Some(s3) = &s3 { app.open_session(s3.id); }
     settle(1500);
     save(&notch, full, 1.0, desk, &dir.join("office-ask-chat.png"));
+    // OpenCode: its models with their own variants, and a question with its choices.
+    if let Some(s3) = &s3 { if let Some(q) = hover.sessions.get(s3.id).and_then(|s| s.asking().map(|q| q.id.clone())) { hover.sessions.answer(s3.id, &q, hover_agents::ask::AskAnswer::Deny); } }
+    app.close_drawer();
+    // Three run at most: the question's task ends, so OpenCode's can start.
+    *hold3.lock().unwrap() = false;
+    run_for(400);
+    let offers = hover_agents::opencode::offers(
+        &hover_core::json::parse(r#"{"providers":[{"id":"anthropic","name":"Anthropic","models":{"claude-sonnet-5":{"name":"Claude Sonnet 5","variants":{"high":{},"max":{}}},"claude-haiku-4.5":{"name":"Claude Haiku 4.5"}}},{"id":"opencode","name":"OpenCode Zen","models":{"big-pickle":{"name":"Big Pickle"}}}]}"#).unwrap(),
+        &hover_core::json::parse(r#"[{"name":"build","mode":"primary"},{"name":"plan","mode":"primary"}]"#).unwrap());
+    hover.settings.set_agent_offers(AgentTool::OpenCode, &offers);
+    hover.settings.set_agent_options(AgentTool::OpenCode, hover_core::model::AgentOptions { model: Some("anthropic/claude-sonnet-5".into()), effort: Some("max".into()), ..Default::default() });
+    let g = app.notch.global::<Office>();
+    g.invoke_fab_main();
+    settle(300);
+    save(&notch, full, 1.0, desk, &dir.join("office-fab-pick-opencode.png"));
+    g.invoke_pick_tool(3);
+    settle(300);
+    g.invoke_open_model(2, 330.0, (full.1 as f32) - 60.0);
+    settle(400);
+    save(&notch, full, 1.0, desk, &dir.join("office-model-menu-opencode.png"));
+    g.invoke_open_model(0, 0.0, 0.0);
+    g.invoke_new_fold();
+    let s4 = hover.sessions.start(AgentTool::OpenCode, &folder, "Set up the formatter", vec![]);
+    let t = std::time::Instant::now();
+    while t.elapsed() < Duration::from_secs(3) && s4.as_ref().and_then(|s| hover.sessions.get(s.id)).is_none_or(|s| s.kiro_id.is_none()) { std::thread::sleep(Duration::from_millis(10)); }
+    if let Some(s4) = &s4 {
+        use hover_agents::ask::{AgentAsk, AgentQuestion};
+        let sid = hover.sessions.get(s4.id).and_then(|s| s.kiro_id).unwrap_or_default();
+        let q = AgentQuestion { header: "Indent".into(), question: "Tabs or spaces?".into(), options: vec![("Tabs".into(), "Indent with tab characters".into()), ("Spaces".into(), String::new())], multiple: false, custom: true };
+        let ask = AgentAsk { id: "que_1".into(), kind: "question".into(), title: "Indent".into(), command: None, path: None, preview: None, added: 0, removed: 0,
+            reason: "Tabs or spaces?".into(), danger: false, questions: Some(vec![q]) };
+        hover.sessions.ask_question(AgentTool::OpenCode, &sid, ask, &hover_agents::cancel::Cancel::new(), Box::new(|_| {}));
+    }
+    app.office_push();
+    settle(2500);
+    save(&notch, full, 1.0, desk, &dir.join("office-question-over.png"));
+    if let Some(s4) = &s4 { app.open_session(s4.id); }
+    settle(1500);
+    save(&notch, full, 1.0, desk, &dir.join("office-question-chat.png"));
+    if let Some(s4) = &s4 { g.invoke_q_pick(s4.id, "que_1".into(), 0, "Tabs".into()); }
+    settle(600);
+    save(&notch, full, 1.0, desk, &dir.join("office-question-picked.png"));
+    app.close_drawer();
     // The finished chat, its timeline open, the edit's change and the command's output.
     if let Some(id) = first { app.open_session(id); }
     settle(600);

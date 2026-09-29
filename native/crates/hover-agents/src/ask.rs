@@ -24,7 +24,30 @@ pub struct AgentAsk {
     pub removed: i32,
     pub reason: String,
     pub danger: bool,
+    /// A question for the user to answer (kind "question"), not a tool call to allow.
+    pub questions: Option<Vec<AgentQuestion>>,
 }
+
+impl AgentAsk {
+    /// A question for the user to answer, not a tool call to allow.
+    pub fn is_question(&self) -> bool { self.questions.as_ref().is_some_and(|q| !q.is_empty()) }
+}
+
+/// One question an agent asks the user (OpenCode's question tool): a short header,
+/// the question, its choices (label, description), whether several may be picked, and
+/// whether the user may type an answer of their own.
+#[derive(Clone, Debug, PartialEq)]
+pub struct AgentQuestion {
+    pub header: String,
+    pub question: String,
+    pub options: Vec<(String, String)>,
+    pub multiple: bool,
+    pub custom: bool,
+}
+
+/// The answer to a question: each question's picked (or typed) labels, in order;
+/// none when the user skipped it or it was withdrawn.
+pub type Answers = Option<Vec<Vec<String>>>;
 
 /// The user's answer. Trust allows this one and the same again for the rest of the
 /// session; TrustAll allows everything the session asks from now on.
@@ -53,6 +76,13 @@ static PWSH: LazyLock<fancy_regex::Regex> = LazyLock::new(|| fancy_regex::Regex:
     r#"(?si)^"?[^"]*?(pwsh|powershell)(\.exe)?"?\s+(-NoProfile\s+)?-(Command|c)\s+(.+)$"#).unwrap());
 
 fn is_match(r: &fancy_regex::Regex, s: &str) -> bool { r.is_match(s).unwrap_or(false) }
+
+/// AcpHost.Destructive: a command that can delete or overwrite things.
+pub fn destructive(command: &str) -> bool { is_match(&DESTRUCTIVE, command) }
+/// AcpHost.Network: a command that installs packages or uses the network.
+pub fn network(command: &str) -> bool { is_match(&NETWORK, command) }
+/// Path.GetFullPath, lexically (no disk).
+pub fn full(p: &str) -> String { full_path(p) }
 
 fn s<'a>(e: &'a Json, name: &str) -> Option<&'a str> { e.get(name).and_then(Json::as_str) }
 
@@ -167,7 +197,7 @@ pub fn describe(call: &Json, kind: &str, folder: &str) -> (AgentAsk, bool) {
     let id = s(call, "toolCallId").filter(|t| !t.is_empty()).map_or_else(hover_core::guid_n, str::to_owned);
     let ask = AgentAsk {
         id, kind: kind.into(), title, command: command.filter(|c| !c.is_empty()).map(|c| clip(&c, 400)), path,
-        preview: (!preview.is_empty()).then(|| preview.join("\n")), added: added as i32, removed: removed as i32, reason, danger,
+        preview: (!preview.is_empty()).then(|| preview.join("\n")), added: added as i32, removed: removed as i32, reason, danger, questions: None,
     };
     (ask, outside)
 }

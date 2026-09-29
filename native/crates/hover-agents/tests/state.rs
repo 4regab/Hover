@@ -68,7 +68,7 @@ fn session(v: &Json) -> KiroSession {
 
 fn option(id: &str, category: &str, choices: &[(&str, &str)]) -> AcpOption {
     AcpOption { id: id.into(), category: Some(category.into()), current: None,
-        choices: choices.iter().map(|(v, n)| AcpChoice { value: v.to_string(), name: n.to_string() }).collect() }
+        choices: choices.iter().map(|(v, n)| AcpChoice { value: v.to_string(), name: n.to_string(), levels: None }).collect() }
 }
 
 #[test]
@@ -113,6 +113,22 @@ fn the_state_message_is_the_fixtures_bytes() {
     // A history row's stage is Stage(e.State, Working): a running entry reads
     // "working"; "waking" needs an Idle entry, which AgentHistory.Save never writes.
     want = want.replace(r#""at":1789949600000,"stage":"waking""#, r#""at":1789949600000,"stage":"working""#);
+    // 55111fc: each model carries its levels, each tool its effort label and whether it
+    // asks questions, and OpenCode is the fifth tool. The fixture predates them, so
+    // they are put in as KiroPage writes them.
+    let mut fxj = json::parse(&want).unwrap();
+    if let Some((_, Json::Arr(tools))) = match &mut fxj { Json::Obj(p) => p.iter_mut().find(|(k, _)| k == "tools"), _ => None } {
+        for t in tools.iter_mut() {
+            let Json::Obj(p) = t else { panic!() };
+            if let Some((_, Json::Arr(ms))) = p.iter_mut().find(|(k, _)| k == "models") {
+                for m in ms { if let Json::Obj(mp) = m { mp.push(("levels".into(), Json::Null)); } }
+            }
+            p.push(("effortLabel".into(), Json::str("Effort")));
+            p.push(("questions".into(), Json::Bool(false)));
+        }
+        tools.push(json::parse(r#"{"id":"opencode","name":"OpenCode","ready":true,"hint":"","access":"full","readOnly":true,"hideSteps":false,"models":[{"id":"","name":"Default","levels":null}],"model":"","efforts":[],"effort":null,"effortLabel":"Variant","questions":true}"#).unwrap());
+    }
+    want = fxj.compact();
     assert!(want.contains("\\u201C"), "non-ASCII escaped, as the default encoder does");
     if got != want {
         let at = got.bytes().zip(want.bytes()).position(|(a, b)| a != b).unwrap_or(got.len().min(want.len()));

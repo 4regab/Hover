@@ -65,6 +65,7 @@ pub fn short(target: Option<&str>) -> Option<String> {
 pub fn ask_line(a: &AgentAsk) -> (&'static str, String) {
     let or = |p: &Option<String>, d: &str| short(p.as_deref()).unwrap_or_else(|| d.into());
     match a.kind.as_str() {
+        "question" => ("Asks you", a.title.clone()),
         "execute" => ("Wants to run", or(&a.command, "a command")),
         "edit" => ("Wants to edit", or(&a.path, "a file")),
         "delete" => ("Wants to delete", or(&a.path, "files")),
@@ -78,6 +79,7 @@ pub fn ask_line(a: &AgentAsk) -> (&'static str, String) {
 pub fn ask_title(a: &AgentAsk) -> String {
     let p = |d: &str| short(a.path.as_deref()).unwrap_or_else(|| d.into());
     match a.kind.as_str() {
+        "question" => if a.questions.as_ref().is_some_and(|q| q.len() > 1) { format!("Asks you {} questions", a.questions.as_ref().unwrap().len()) } else { "Asks you a question".into() },
         "execute" => "Wants to run a command".into(),
         "edit" => format!("Wants to edit {}", p("a file")),
         "delete" => format!("Wants to delete {}", p("files")),
@@ -89,7 +91,7 @@ pub fn ask_title(a: &AgentAsk) -> String {
 
 /// The word on the button that allows it.
 pub fn ask_allow(a: &AgentAsk) -> &'static str {
-    match a.kind.as_str() { "execute" => "Run", "edit" => "Allow edit", "delete" => "Delete", "move" => "Move", _ => "Allow" }
+    match a.kind.as_str() { "execute" => "Run", "edit" => "Allow edit", "delete" => "Delete", "move" => "Move", "question" => "Answer", _ => "Allow" }
 }
 
 #[cfg(test)]

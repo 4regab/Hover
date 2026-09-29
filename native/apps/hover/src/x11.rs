@@ -253,3 +253,21 @@ pub fn pick(folder: bool) -> Option<String> {
     hover_core::log::line("no file picker (zenity or kdialog) on this desktop");
     None
 }
+
+/// An image to attach: zenity or kdialog, as pick() asks.
+pub fn pick_image() -> Option<String> {
+    let home = hover_core::platform::home().unwrap_or_default().to_string_lossy().into_owned();
+    let tries: Vec<(&str, Vec<String>)> = vec![
+        ("zenity", vec!["--file-selection".into(), "--title=Attach an image".into(), "--file-filter=Images | *.png *.jpg *.jpeg *.gif *.webp".into()]),
+        ("kdialog", vec!["--getopenfilename".into(), home, "Images (*.png *.jpg *.jpeg *.gif *.webp)".into()]),
+    ];
+    for (exe, args) in tries {
+        match std::process::Command::new(exe).args(&args).output() {
+            Ok(o) if o.status.success() => { let p = String::from_utf8_lossy(&o.stdout).trim().to_owned(); return (!p.is_empty()).then_some(p); }
+            Ok(_) => return None,
+            Err(_) => continue,
+        }
+    }
+    hover_core::log::line("no file picker (zenity or kdialog) on this desktop");
+    None
+}

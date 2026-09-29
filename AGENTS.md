@@ -10,9 +10,9 @@ NotchOwl for Mac). At rest it is a slim black island: the quotas the user switch
 (each the tool's own logo in its ring), the agents at work (their logos, what the one
 in front is doing, for how long), a question an agent is waiting on, or nothing.
 Hovering it, clicking it or `Alt+N` opens the **Agent office**, which fills the notch. The
-office hands tasks to Kiro, Codex or Cursor, which run headlessly, several at once,
+office hands tasks to Kiro, Codex, Cursor or OpenCode, which run headlessly, several at once,
 each in a chosen folder, as bots at desks in a voxel office. The office's menu (time
-of day, music, history, Settings) opens Settings over it (five sections: General, Integrations, Kiro, Codex, Cursor), with a
+of day, music, history, Settings) opens Settings over it (six sections: General, Integrations, Kiro, Codex, Cursor, OpenCode), with a
 back button.
 
 The only ordinary window is the dashboard: the same office in a window with Hover's
@@ -56,7 +56,8 @@ dashboard and exits. On Windows this uses the named mutex `Local\HoverRunningIns
 Headless: `hover --shots DIR` renders every view with the software renderer. On a
 real X display, `hover --selftest DIR` drives the notch and writes `report.json`.
 End to end on Linux: `port/e2e/run.sh` runs the real app under Xvfb with stand-in
-tools and clicks through every feature with real X input (55 checks).
+tools (and a stand-in `opencode serve`) and clicks through every feature with real X
+input (79 checks).
 
 ## Layout
 
@@ -66,7 +67,8 @@ native/crates/
                  crypto (AES-GCM; DPAPI / Secret Service key), history (sealed
                  agents/), images, single instance, palette and VS Code themes,
                  platform/{windows,linux}; bin/hover-data (data folders for tests)
-  hover-agents   ACP host, the tools (Kiro, Codex, Cursor), sessions, the office's
+  hover-agents   ACP host, OpenCode's server (opencode.rs, over its own http.rs), the
+                 runtime both sit behind, the tools (Kiro, Codex, Cursor, OpenCode), sessions, the office's
                  state message, KiroStream, process groups / Windows jobs
   hover-quota    the four quota readers
   hover-md, hover-diagram   md.js and diagram.js, byte for byte
@@ -143,6 +145,27 @@ port/            the port: reports per phase, benchmark procedure (frozen) and t
     An end shows in the island (the tool's logo with a badge, and the task) and as a
     system notification.
   - The tools die with Hover: a Windows job, or a process group with PDEATHSIG on Linux.
+- **OpenCode runs as its own server, as T3 Code runs it** (`hover-agents::opencode`).
+  One hidden `opencode serve --hostname=127.0.0.1 --port=0 --mdns=false` for all its
+  sessions, with a password made for that start (in its environment, sent as Basic
+  auth, never on a command line or in a URL) and `OPENCODE_ENABLE_QUESTION_TOOL=1`.
+  Hover speaks plain HTTP/1.1 to it over loopback (`http.rs`, no crate, no TLS) and
+  reads its event stream (`/event`). Every call names the session's folder
+  (`?directory=`). OpenCode keeps its own providers; model ids are "provider/model",
+  and effort is the model's own variants ("Variant" in the menus).
+  - A turn subscribes first, then sends `prompt_async` with a message id Hover makes;
+    only an idle after that message (or a busy for it) ends the turn. A dropped stream
+    reconnects and reads the state back; a prompt whose answer was lost is looked up by
+    its id, never sent twice. A resumed conversation it no longer has fails.
+  - Access is per-session permission rules; the agent's own last-word denies go after
+    Hover's, so Full never undoes one. Read only makes every change ask and Hover
+    refuses each. Approvals answer `once` (Trust is Hover's).
+  - Its question tool's questions show as choices over the bot's head (Skip, Answer…),
+    in the chat (the choices, one's own answer, Skip, Answer) and in the notch (Skip,
+    Review opens the chat). A reply in the chat answers a single question that takes
+    one's own words. `Runtime` (runtime.rs) is what the sessions see of either kind.
+- **The office's note before the first task** (`KiroNoticeSeen`) stands in place of the
+  office until Got it.
 - **Sessions are kept until the user deletes them.** The history is sealed with
   `note.key`: an index plus one file per session, written off the UI thread in order.
   The bookshelf and the history button list them. A reply to an old session gives it

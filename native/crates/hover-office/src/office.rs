@@ -648,8 +648,8 @@ impl Office {
             x.align = Align::Center;
             x.style("#3a3044"); x.font = pixel(16.0, true); x.text("The office is quiet", 120.0, 46.0);
             x.style("#5e5666"); x.font = inter(10.0);
-            x.text("Give Kiro, Codex or Cursor a task", 120.0, 72.0);
-            x.text("and a bot walks in to do it.", 120.0, 86.0);
+            x.text("Give Kiro, Codex, Cursor or OpenCode", 120.0, 72.0);
+            x.text("a task, and a bot walks in to do it.", 120.0, 86.0);
             x.align = Align::Start;
         }
         self.dirty[scene::TEX_BOARD] = true;

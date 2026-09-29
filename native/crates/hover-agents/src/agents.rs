@@ -29,7 +29,10 @@ fn user_bin(name: &str) -> Option<PathBuf> {
 pub fn find(name: &str) -> Option<PathBuf> { on_path(name).or_else(|| user_bin(name)) }
 
 
-/// The program that speaks ACP for the tool, or none when it isn't installed.
+/// The oldest OpenCode whose server API Hover was checked against (T3 Code's floor).
+pub const OPENCODE_MIN_VERSION: &str = "1.14.19";
+
+/// The program that runs the tool, or none when it isn't installed.
 pub fn exe(t: AgentTool) -> Option<PathBuf> {
     match t {
         AgentTool::Kiro => find("kiro-cli"),
@@ -38,7 +41,22 @@ pub fn exe(t: AgentTool) -> Option<PathBuf> {
         // Hover started before the install has the old PATH. Its "agent" alias is not
         // used: other tools (Grok) install an "agent" too.
         AgentTool::Cursor => cursor_shim().filter(|p| p.is_file()).or_else(|| find("cursor-agent")),
+        AgentTool::OpenCode => opencode_exe(),
     }
+}
+
+/// OpenCode's own exe. npm installs a .cmd shim that runs it on Windows; going to the
+/// exe it points at saves a cmd.exe per server and keeps the server Hover's direct
+/// child. On Linux its installer puts it in ~/.opencode/bin, which a desktop
+/// session's PATH often lacks (as ~/.local/bin).
+fn opencode_exe() -> Option<PathBuf> {
+    let found = find("opencode").or_else(|| {
+        if cfg!(windows) { return None; }
+        Some(crate::proc::home().join(".opencode/bin/opencode")).filter(|p| p.is_file())
+    })?;
+    if !found.extension().is_some_and(|e| e.eq_ignore_ascii_case("cmd")) { return Some(found); }
+    let exe = found.parent()?.join("node_modules").join("opencode-ai").join("bin").join("opencode.exe");
+    Some(if exe.is_file() { exe } else { found })
 }
 
 fn cursor_shim() -> Option<PathBuf> {
@@ -53,16 +71,20 @@ pub fn arguments(t: AgentTool) -> &'static [&'static str] {
         AgentTool::Kiro => &["acp", "--agent-engine", "v3", "--auth-method", "cli"],
         AgentTool::Codex => &[],
         AgentTool::Cursor => &["acp"],
+        // Local only: this address, a port the system picks, and never announced on
+        // the network (mDNS), whatever the user's opencode config says.
+        AgentTool::OpenCode => &["serve", "--hostname=127.0.0.1", "--port=0", "--mdns=false"],
     }
 }
 
 /// What it takes to install the tool, for the greyed-out choice.
-pub fn install_hint(t: AgentTool) -> &'static str {
+pub fn install_hint(t: AgentTool) -> String {
     match t {
-        AgentTool::Kiro => "Install kiro-cli from kiro.dev/cli.",
-        AgentTool::Codex => "Install Codex and its ACP adapter: npm i -g @openai/codex @agentclientprotocol/codex-acp",
-        AgentTool::Cursor if cfg!(windows) => "Install the Cursor CLI: irm 'https://cursor.com/install?win32=true' | iex",
-        AgentTool::Cursor => "Install the Cursor CLI: curl https://cursor.com/install -fsS | bash",
+        AgentTool::Kiro => "Install kiro-cli from kiro.dev/cli.".into(),
+        AgentTool::Codex => "Install Codex and its ACP adapter: npm i -g @openai/codex @agentclientprotocol/codex-acp".into(),
+        AgentTool::Cursor if cfg!(windows) => "Install the Cursor CLI: irm 'https://cursor.com/install?win32=true' | iex".into(),
+        AgentTool::Cursor => "Install the Cursor CLI: curl https://cursor.com/install -fsS | bash".into(),
+        AgentTool::OpenCode => format!("Install OpenCode {OPENCODE_MIN_VERSION} or newer from opencode.ai."),
     }
 }
 
@@ -71,11 +93,13 @@ pub fn sign_in_hint(t: AgentTool) -> &'static str {
         AgentTool::Kiro => "Sign in: run “kiro-cli login” in a terminal.",
         AgentTool::Codex => "Sign in: run “codex login” in a terminal.",
         AgentTool::Cursor => "Sign in: run “cursor-agent login” in a terminal.",
+        // OpenCode keeps its own providers: API keys, cloud sign-ins, local models.
+        AgentTool::OpenCode => "Add a model provider: run “opencode auth login”, or set one up in your opencode config.",
     }
 }
 
-/// Read only holds for Kiro (writes wait for an approval Hover refuses) and Cursor
-/// (Ask mode). Codex's read-only mode leans on a sandbox it doesn't have on Windows,
+/// Read only holds for Kiro (writes wait for an approval Hover refuses), Cursor
+/// (Ask mode) and OpenCode (session rules its server enforces). Codex's read-only mode leans on a sandbox it doesn't have on Windows,
 /// so there it wrote files anyway; on Linux it has one (Landlock), so it is offered.
 pub fn read_only_works(t: AgentTool) -> bool { t != AgentTool::Codex || !cfg!(windows) }
 
@@ -123,11 +147,25 @@ pub fn check(t: AgentTool, fresh: bool) -> AgentReady {
 }
 
 fn look(t: AgentTool) -> AgentReady {
-    let Some(exe) = exe(t) else { return AgentReady { installed: false, signed_in: false, hint: install_hint(t).into() } };
+    let Some(exe) = exe(t) else { return AgentReady { installed: false, signed_in: false, hint: install_hint(t) } };
+    if t == AgentTool::OpenCode {
+        // Having no sign-in doesn't mean it can't run: API keys in the environment and
+        // local models count too. The version is all that is checked here; a provider
+        // that can't answer shows up as the task's own error.
+        let (vc, vt) = ask(&exe, &["--version"]);
+        let version = vt.trim().split('\n').next_back().unwrap_or("").trim().to_owned();
+        let bad = |hint: String| AgentReady { installed: true, signed_in: false, hint };
+        return match (vc, parse_version(version.split('-').next().unwrap_or(""))) {
+            (0, Some(have)) if have < parse_version(OPENCODE_MIN_VERSION).unwrap() => bad(format!("OpenCode {version} is too old for Hover. {}", install_hint(t))),
+            (0, Some(_)) => AgentReady { installed: true, signed_in: true, hint: String::new() },
+            _ => bad(format!("Couldn’t read OpenCode’s version. {}", install_hint(t))),
+        };
+    }
     let (cmd, args): (Option<PathBuf>, &[&str]) = match t {
         AgentTool::Kiro => (Some(exe), &["whoami"]),
         AgentTool::Codex => (find("codex"), &["login", "status"]),
         AgentTool::Cursor => (Some(exe), &["status"]),
+        AgentTool::OpenCode => unreachable!(),
     };
     // The adapter can carry its own Codex; without the CLI there is nothing to ask.
     let Some(cmd) = cmd else { return AgentReady { installed: true, signed_in: true, hint: String::new() } };
@@ -153,5 +191,34 @@ pub fn ask(exe: &std::path::Path, args: &[&str]) -> (i32, String) {
     match g.wait_timeout(Duration::from_secs(20)) {
         None => { g.kill(); (-1, String::new()) }
         Some(code) => (code, strip_ansi(&format!("{}\n{}", o.join().unwrap_or_default(), e.join().unwrap_or_default()))),
+    }
+}
+
+/// System.Version.TryParse: two to four whole numbers between dots, none negative;
+/// the parts left out compare as lower (-1), as Version does.
+pub fn parse_version(s: &str) -> Option<[i64; 4]> {
+    let parts: Vec<&str> = s.trim().split('.').collect();
+    if !(2..=4).contains(&parts.len()) { return None; }
+    let mut v = [-1i64; 4];
+    for (i, p) in parts.iter().enumerate() {
+        let p = p.trim();
+        if p.is_empty() || !p.bytes().all(|b| b.is_ascii_digit()) { return None; }
+        v[i] = p.parse().ok()?;
+    }
+    Some(v)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn versions_compare_as_dotnet_does() {
+        assert!(parse_version("1.18.31").unwrap() > parse_version(OPENCODE_MIN_VERSION).unwrap());
+        assert!(parse_version("1.14.2").unwrap() < parse_version("1.14.19").unwrap());
+        assert!(parse_version("1.14").unwrap() < parse_version("1.14.0").unwrap());
+        assert_eq!(parse_version("1"), None);
+        assert_eq!(parse_version("v1.2.3"), None);
+        assert_eq!(parse_version("1.2.3.4.5"), None);
     }
 }

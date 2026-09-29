@@ -396,13 +396,15 @@ const min = 60e3, T0 = Date.now();
 const DONE_TEXT = 'Done. Settings now keeps the Kiro model and effort you pick, and the Kiro page reads them when a task starts.\n\nI changed Settings.cs only. The build is clean and all 81 tests pass.';
 let defaultFolder = host ? null : 'B:\\hover', canStart = true, maxRunning = 3;
 // The agent tools, in the picker's order. Hover says which are installed and signed in.
-const TOOLS = { kiro: ['Kiro', '#b48cff'], codex: ['Codex', '#3fd6a0'], cursor: ['Cursor', '#7cc0ff'] };
+const TOOLS = { kiro: ['Kiro', '#b48cff'], codex: ['Codex', '#3fd6a0'], cursor: ['Cursor', '#7cc0ff'], opencode: ['OpenCode', '#e8e8ec'] };
 // Each tool's own logo, only to show which tool is picked (from the MIT-licensed
 // LobeHub icon set; the marks belong to their owners).
 const LOGOS = {
   kiro: '<svg viewBox="0 0 24 24"><path fill-rule="evenodd" d="M4.594 6.677C6.67-2.226 18.746-2.211 21.16 6.632c.353 1.297 1.725 7.582-1.673 13.747-1.545 2.797-5.841 5.49-6.99 1.883C8.6 25.477 3.315 24.1 5.789 18.609l-.318.143c-3.57 1.305-3.863-1.208-3.173-2.513.45-.84.727-1.335.937-1.897.353-.975.458-1.568.593-2.498.27-1.837.277-3.607.765-5.167zm8.37.01a.92.92 0 00-.81.428c-.217.323-.33.825-.33 1.462 0 .705.15 1.89 1.14 1.89h.008c.757 0 1.214-.705 1.214-1.89 0-.622-.127-1.125-.367-1.455a1.014 1.014 0 00-.855-.435zm4.08 0a.92.92 0 00-.81.428c-.217.323-.33.825-.33 1.462 0 .705.15 1.89 1.14 1.89h.008c.757 0 1.215-.705 1.215-1.89 0-.622-.128-1.125-.368-1.455a1.014 1.014 0 00-.855-.435z"/></svg>',
   codex: '<svg viewBox="3 2.9 18 18.2"><defs><linearGradient id="cg$" x1="12" x2="12" y1="3" y2="21" gradientUnits="userSpaceOnUse"><stop stop-color="#B1A7FF"/><stop offset=".5" stop-color="#7A9DFF"/><stop offset="1" stop-color="#3941FF"/></linearGradient></defs><path fill="url(#cg$)" d="M9.064 3.344a4.578 4.578 0 012.285-.312c1 .115 1.891.54 2.673 1.275.01.01.024.017.037.021a.09.09 0 00.043 0 4.55 4.55 0 013.046.275l.047.022.116.057a4.581 4.581 0 012.188 2.399c.209.51.313 1.041.315 1.595a4.24 4.24 0 01-.134 1.223.123.123 0 00.03.115c.594.607.988 1.33 1.183 2.17.289 1.425-.007 2.71-.887 3.854l-.136.166a4.548 4.548 0 01-2.201 1.388.123.123 0 00-.081.076c-.191.551-.383 1.023-.74 1.494-.9 1.187-2.222 1.846-3.711 1.838-1.187-.006-2.239-.44-3.157-1.302a.107.107 0 00-.105-.024c-.388.125-.78.143-1.204.138a4.441 4.441 0 01-1.945-.466 4.544 4.544 0 01-1.61-1.335c-.152-.202-.303-.392-.414-.617a5.81 5.81 0 01-.37-.961 4.582 4.582 0 01-.014-2.298.124.124 0 00.006-.056.085.085 0 00-.027-.048 4.467 4.467 0 01-1.034-1.651 3.896 3.896 0 01-.251-1.192 5.189 5.189 0 01.141-1.6c.337-1.112.982-1.985 1.933-2.618.212-.141.413-.251.601-.33.215-.089.43-.164.646-.227a.098.098 0 00.065-.066 4.51 4.51 0 01.829-1.615 4.535 4.535 0 011.837-1.388zm3.482 10.565a.637.637 0 000 1.272h3.636a.637.637 0 100-1.272h-3.636zM8.462 9.23a.637.637 0 00-1.106.631l1.272 2.224-1.266 2.136a.636.636 0 101.095.649l1.454-2.455a.636.636 0 00.005-.64L8.462 9.23z"/></svg>',
   cursor: '<svg viewBox="0 0 24 24"><path fill-rule="evenodd" d="M22.106 5.68L12.5.135a.998.998 0 00-.998 0L1.893 5.68a.84.84 0 00-.419.726v11.186c0 .3.16.577.42.727l9.607 5.547a.999.999 0 00.998 0l9.608-5.547a.84.84 0 00.42-.727V6.407a.84.84 0 00-.42-.726zm-.603 1.176L12.228 22.92c-.063.108-.228.064-.228-.061V12.34a.59.59 0 00-.295-.51l-9.11-5.26c-.107-.062-.063-.228.062-.228h18.55c.264 0 .428.286.296.514z"/></svg>',
+  // OpenCode's hollow square, drawn for Hover in its style (the same as the notch's).
+  opencode: '<svg viewBox="0 0 24 24"><path fill-rule="evenodd" d="M4 2h16v20H4zM8 6v12h8V6zM8 12h8v6H8z"/></svg>',
 };
 // The gradient id has to be unique on the page, and the logo shows twice.
 let logoN = 0;
@@ -553,7 +555,15 @@ function doStop(s) {
 function doReply(text, images = []) {
   const s = cur(); if (!s || (!text && !images.length)) return;
   if (s.archived) { if (!host) return toast('In Hover this wakes the session.'); pendingKey = s.key; return host.postMessage({ type: 'reply', key: s.key, text, images }); }
-  // Replying to a question says no to it, and the words go to the agent instead.
+  // A reply while a question waits is its answer, in the user's own words, where the
+  // question takes one; replying to anything else it asked says no to it, and the
+  // words go to the agent instead.
+  if (s.ask?.questions) {
+    if (s.ask.questions.length === 1 && s.ask.questions[0].custom && !images.length) {
+      const p = picksOf(s.ask); p.sel[0] = []; p.text[0] = text; return sendAnswers(s, s.ask);
+    }
+    return toast('Answer the question above first, or skip it.');
+  }
   if (s.ask) answer(s, s.ask.id, 'deny');
   if (host) return host.postMessage({ type: 'reply', id: s.id, text, images });
   const wait = busy(s), T = { prompt: text, images, stage: 'waking', t0: Date.now(), steps: [], queued: wait };
@@ -631,7 +641,7 @@ function drawBoard() {
   if (!sessions.length) {
     x.textAlign = 'center'; x.fillStyle = '#3a3044'; x.font = 'bold 16px "Pixelify Sans", monospace'; x.fillText('The office is quiet', 120, 46);
     x.fillStyle = '#5e5666'; x.font = '10px Inter, "Segoe UI", sans-serif';
-    x.fillText('Give Kiro, Codex or Cursor a task', 120, 72); x.fillText('and a bot walks in to do it.', 120, 86);
+    x.fillText('Give Kiro, Codex, Cursor or OpenCode', 120, 72); x.fillText('a task, and a bot walks in to do it.', 120, 86);
     x.textAlign = 'start';
   }
   x.setTransform(1, 0, 0, 1, 0, 0);
@@ -812,6 +822,8 @@ function renderDrawer() {
   const ctx = $('#ctx'); ctx.hidden = s.ctx == null;
   if (s.ctx != null) { const tip = `${s.ctx}% of the context window used`; ctx.dataset.tip = tip; ctx.setAttribute('aria-label', tip); $('#ctxRing').style.setProperty('--p', s.ctx); $('#ctxPct').textContent = s.ctx + '%'; }
   const th = $('#thread'), keep = th.scrollHeight - th.scrollTop - th.clientHeight < 40;
+  // A typed answer to a question keeps its box's focus through the redraw.
+  const typing = th.contains(document.activeElement) ? document.activeElement.dataset?.qt : undefined;
   let fresh = false;
   th.innerHTML = s.turns.map((T, i) => {
     const lastTurn = T === last(s), liveTurn = lastTurn && (st === 'working' || st === 'waiting');
@@ -830,6 +842,7 @@ function renderDrawer() {
     pre.replaceWith(box); box.appendChild(pre);
   }
   if (keep || fresh) th.scrollTop = 1e9;
+  if (typing != null) { const box = th.querySelector(`[data-qt="${typing}"]`); if (box) { box.focus(); box.setSelectionRange(box.value.length, box.value.length); } }
   const b = busy(s);
   $('#input').placeholder = s.archived ? `Reply to wake ${x.name} and carry on…` : s.ask ? `Or tell ${s.b.name} what to do instead…` : b ? `Reply. ${s.b.name} reads it when this run ends` : `Reply to ${s.b.name}…`;
   $('#dDel').hidden = false; renderPill('#dModel', s.tool); syncSend();
@@ -869,7 +882,7 @@ function renderPanel() {
     }).join('')}</div>`;
   } else {
     $('#pTitle').textContent = 'Office overview';
-    $('#pSub').textContent = `Up to ${maxRunning} tasks run at once, across Kiro, Codex and Cursor`;
+    $('#pSub').textContent = `Up to ${maxRunning} tasks run at once, across Kiro, Codex, Cursor and OpenCode`;
     const stats = [['Working', count(['waking', 'working', 'waiting']), 'var(--li)'], ['Done', count(['done']), 'var(--ok)'], ['Failed', count(['failed']), 'var(--bad)'], ['Stopped', count(['stopped']), 'var(--stop)']];
     body.innerHTML = `<div class="stats">${stats.map(([l, v, c]) => `<div style="--k:${c}"><b>${v}</b><span>${l}</span></div>`).join('')}</div>
       <h4 class="sh">Context used</h4>${sessions.map(s => `<button class="meter" data-open="${s.id}">${LOGO(s.b.css)}<span class="mt"><b>${esc(s.b.name)}</b><span>${esc(s.title)}</span><i><u style="width:${s.ctx ?? 0}%"></u></i></span><em>${s.ctx == null ? '—' : s.ctx + '%'}</em></button>`).join('') || '<p class="none">No sessions yet. Press + to give an agent a task.</p>'}`;
@@ -886,6 +899,7 @@ function changed(s) {
 // of the session, Deny turns it down and the agent carries on without it.
 function askHTML(s, where) {
   const a = s.ask; if (!a) return '';
+  if (a.questions?.length) return questionHTML(s, a, where);
   const body = a.command ? `<span class="pr">$</span>${esc(a.command)}`
     : a.preview ? (a.path ? `<span class="pth">${esc(a.path)}</span>\n` : '') + a.preview.split('\n').map(l => `<span class="${l[0] === '+' ? 'a' : l[0] === '-' ? 'd' : ''}">${esc(l)}</span>`).join('\n')
     : esc(a.path || a.title);
@@ -914,6 +928,60 @@ addEventListener('click', e => {
   const b = e.target.closest('[data-ans]'); if (!b) return;
   const card = b.closest('.askc'), s = sessions.find(x => x.id === +card.dataset.sid);
   if (s?.ask && s.ask.id === card.dataset.ask) answer(s, s.ask.id, b.dataset.ans);
+});
+
+// ── What an agent asks the user (OpenCode's question tool) ──────────────
+// Its choices are buttons that toggle (one, or several where it allows), with a box
+// for an answer of one's own where it allows; the picks survive a redraw. Answer
+// sends them, Skip turns the question down, and the agent is told either way.
+const qPick = new Map();
+function picksOf(a) {
+  let p = qPick.get(a.id);
+  if (!p) { p = { sel: a.questions.map(() => []), text: a.questions.map(() => '') }; qPick.set(a.id, p); if (qPick.size > 20) qPick.delete(qPick.keys().next().value); }
+  return p;
+}
+function questionHTML(s, a, where) {
+  const p = picksOf(a);
+  // Over the head it stays small; the choices are in the chat, which Answer… opens.
+  if (where === 'over') return `<div class="askc over" data-sid="${s.id}" data-ask="${esc(a.id)}" role="group" aria-label="${esc(a.title)}">`
+    + `<div class="at">${badge(s.tool)}<b>${esc(a.title)}</b>${a.more ? `<em>+${a.more} more</em>` : ''}</div>`
+    + `<div class="qq"><div class="qh">${esc(a.questions[0].header)}</div><p class="qline">${esc(a.questions[0].question)}</p></div>`
+    + `<div class="ab"><button data-ans="deny">Skip</button><span class="sp"></span><button data-qopen class="pri">Answer…</button></div></div>`;
+  const qs = a.questions.map((q, qi) => `<div class="qq"><div class="qh">${esc(q.header)}</div><p>${esc(q.question)}</p>`
+    + `<div class="qo" role="group" aria-label="${esc(q.header)}${q.multiple ? ', pick any' : ', pick one'}">`
+    + q.options.map(o => `<button type="button" data-q="${qi}" data-opt="${esc(o.label)}" aria-pressed="${p.sel[qi].includes(o.label)}">${esc(o.label)}${o.description ? `<small>${esc(o.description)}</small>` : ''}</button>`).join('')
+    + (q.custom ? `<input type="text" data-qt="${qi}" maxlength="2000" placeholder="Or type your own answer" aria-label="Your own answer: ${esc(q.header)}" value="${esc(p.text[qi])}">` : '')
+    + '</div></div>').join('');
+  return `<div class="askc ${where}" data-sid="${s.id}" data-ask="${esc(a.id)}" role="group" aria-label="${esc(a.title)}">`
+    + `<div class="at">${badge(s.tool)}<b>${esc(a.title)}</b>${a.more ? `<em>+${a.more} more</em>` : ''}</div>${qs}`
+    + `<div class="ab"><button data-ans="deny" title="Don’t answer. ${esc(s.b?.name || 'The agent')} is told you skipped it.">Skip</button><span class="sp"></span><button data-qsend class="pri">Answer</button></div></div>`;
+}
+function sendAnswers(s, a) {
+  const p = picksOf(a), answers = a.questions.map((_, i) => [...p.sel[i], ...(p.text[i].trim() ? [p.text[i].trim()] : [])]);
+  if (answers.some(x => !x.length)) return toast(a.questions.length > 1 ? 'Answer each question first.' : 'Pick an answer first.');
+  qPick.delete(a.id);
+  if (host) { host.postMessage({ type: 'answer', id: s.id, ask: a.id, answers }); return; }
+  s.ask = null; const T = last(s); T.stage = 'working'; T.act = 'Thinking'; changed(s); play(s, T, 2);
+}
+addEventListener('click', e => {
+  const qo = e.target.closest('[data-qopen]'); if (qo) { const card = qo.closest('.askc'); return openSession(+card.dataset.sid); }
+  const opt = e.target.closest('[data-opt]'), go = e.target.closest('[data-qsend]'); if (!opt && !go) return;
+  const card = e.target.closest('.askc'), s = sessions.find(x => x.id === +card.dataset.sid), a = s?.ask;
+  if (!a?.questions || a.id !== card.dataset.ask) return;
+  if (go) return sendAnswers(s, a);
+  const qi = +opt.dataset.q, label = opt.dataset.opt, p = picksOf(a), sel = p.sel[qi];
+  p.sel[qi] = sel.includes(label) ? sel.filter(x => x !== label) : a.questions[qi].multiple ? [...sel, label] : [label];
+  // The same question shows over the bot's head and in its chat: both follow.
+  for (const b of document.querySelectorAll(`.askc[data-ask="${CSS.escape(a.id)}"] [data-q="${qi}"]`)) b.setAttribute('aria-pressed', p.sel[qi].includes(b.dataset.opt));
+});
+addEventListener('input', e => {
+  const t = e.target.closest?.('[data-qt]'); if (!t) return;
+  const card = t.closest('.askc'), s = sessions.find(x => x.id === +card.dataset.sid);
+  if (s?.ask?.questions && s.ask.id === card.dataset.ask) picksOf(s.ask).text[+t.dataset.qt] = t.value;
+});
+addEventListener('keydown', e => {
+  const t = e.target.closest?.('[data-qt]'); if (!t || e.key !== 'Enter') return;
+  e.preventDefault(); t.closest('.askc').querySelector('[data-qsend]')?.click();
 });
 
 const clockOf = t0 => { const n = Math.max(0, Math.floor((Date.now() - t0) / 1000)); return `${Math.floor(n / 60)}:${String(n % 60).padStart(2, '0')}`; };
@@ -1140,21 +1208,25 @@ $('#nPick').onchange = e => { addPics(e.target.files, 'new'); e.target.value = '
 // ── The model pill and its menu ─────────────────────────────────────────
 // The pick is the tool's default from then on, as in Settings, from its next turn.
 const EFFORT = e => e === 'xhigh' ? 'X-High' : e ? e[0].toUpperCase() + e.slice(1) : '';
+// The efforts for the tool's picked model: its own levels (OpenCode's variants), or
+// the tool's list when models don't carry any.
+const effortsOf = x => { const m = (x.models || []).find(m => m.id === (x.model || '')); return m?.levels || (x.models || []).some(m => m.levels) ? m?.levels || [] : x.efforts || []; };
 function renderPill(sel, toolId) {
   const x = tools.find(t => t.id === toolId) || tools[0], el = $(sel);
   const m = (x.models || []).find(m => m.id === (x.model || '')) || (x.models || [])[0];
+  const eff = effortsOf(x).includes(x.effort) ? x.effort : null;
   el.dataset.tool = x.id;
-  el.innerHTML = `<span>${esc(m?.name || 'Default')}</span>${x.efforts?.length && x.effort ? `<em>${esc(EFFORT(x.effort))}</em>` : ''}<svg viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></svg>`;
-  el.setAttribute('aria-label', `Model: ${m?.name || 'Default'}${x.effort ? ', ' + EFFORT(x.effort) : ''}. Change`);
+  el.innerHTML = `<span>${esc(m?.name || 'Default')}</span>${eff ? `<em>${esc(EFFORT(eff))}</em>` : ''}<svg viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></svg>`;
+  el.setAttribute('aria-label', `Model: ${m?.name || 'Default'}${eff ? ', ' + EFFORT(eff) : ''}. Change`);
   el.hidden = !(x.models || []).length;
 }
 let menuFor = null;
 function openMenu(pill) {
   const x = tools.find(t => t.id === pill.dataset.tool); if (!x) return;
   const menu = $('#mMenu'); menuFor = pill; pill.setAttribute('aria-expanded', 'true');
-  const cur = x.model || (x.models[0]?.id ?? '');
+  const cur = x.model || (x.models[0]?.id ?? ''), efforts = effortsOf(x);
   menu.innerHTML = `<h5>${esc(x.name)} model</h5>${x.models.map(m => `<button role="menuitemradio" aria-checked="${m.id === cur}" data-model="${esc(m.id)}">${esc(m.name)}</button>`).join('')}`
-    + (x.efforts?.length ? `<h5>Effort</h5><div class="eff" role="group">${x.efforts.map(e => `<button role="menuitemradio" aria-checked="${e === x.effort}" data-effort="${esc(e)}">${esc(EFFORT(e))}</button>`).join('')}</div>` : '')
+    + (efforts.length ? `<h5>${esc(x.effortLabel || 'Effort')}</h5><div class="eff" role="group">${efforts.map(e => `<button role="menuitemradio" aria-checked="${e === x.effort}" data-effort="${esc(e)}">${esc(EFFORT(e))}</button>`).join('')}</div>` : '')
     + `<p>Used by ${esc(x.name)} from its next turn.</p>`;
   menu.hidden = false;
   const r = pill.getBoundingClientRect(), o = view.getBoundingClientRect(), mh = Math.min(menu.scrollHeight, o.height - 20);
@@ -1250,6 +1322,8 @@ host?.addEventListener('message', e => {
   else if (m.type === 'transcript') showTranscript(m.session);
   else if (m.type === 'visible') { paused = !m.on; beats.follow(m.on); }
   else if (m.type === 'folder') { newFolder = m.text; renderNew(); $('#nInput').focus(); }
+  // The notch's Review on a question: its chat opens here.
+  else if (m.type === 'reveal') { if (sessions.some(s => s.id === m.id)) openSession(m.id); }
 });
 
 // Chill beats: a CC0 lofi loop (omfgdude, opengameart.org/node/94031), off until

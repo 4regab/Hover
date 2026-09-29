@@ -356,6 +356,7 @@ impl App {
                 ui.set_ask_verb(verb.into());
                 ui.set_ask_obj(obj.as_str().into());
                 ui.set_ask_mono(ask.command.is_some());
+                ui.set_ask_question(ask.is_question());
                 ui.set_ask_more(if *total > 1 { format!("+{}", total - 1).into() } else { "".into() });
                 glow = slint::Color::from_rgb_u8(0xff, 0xb3, 0x40);
                 let s = sessions.iter().find(|x| x.id == *session);
@@ -434,6 +435,14 @@ impl App {
     /// Shift+Enter trusts, Esc denies).
     pub fn open_card(self: &Rc<Self>) {
         if self.n.borrow().hover.state != State::Rest { return; }
+        // A question's choices are in the office, in its chat: Review opens it there.
+        if let Some((id, ask)) = self.card_ask.borrow().clone() {
+            if self.hover.sessions.get(id).and_then(|s| s.asks.iter().find(|a| a.id == ask).map(|a| a.is_question())).unwrap_or(false) {
+                self.open_session(id);
+                self.expand(false, true);
+                return;
+            }
+        }
         {
             let n = self.n.borrow();
             n.plat.remember_foreground();
@@ -696,6 +705,15 @@ pub fn pick(folder: bool) -> Option<String> {
     return win::pick(folder);
     #[cfg(not(windows))]
     return x11::pick(folder);
+}
+
+/// The image picker for + in the task box and the reply (the page's file input:
+/// PNG, JPEG, GIF, WebP).
+pub fn pick_image() -> Option<String> {
+    #[cfg(windows)]
+    return win::pick_image();
+    #[cfg(not(windows))]
+    return x11::pick_image();
 }
 
 // MARK: The page's localStorage (office.beats, office.view)

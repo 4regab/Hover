@@ -244,7 +244,7 @@ fn delete_takes_a_session_out_of_the_office_and_the_history() {
 
 fn question(id: &str, kind: &str, command: Option<&str>, path: Option<&str>, reason: &str, danger: bool) -> AgentAsk {
     AgentAsk { id: id.into(), kind: kind.into(), title: kind.into(), command: command.map(Into::into), path: path.map(Into::into), preview: None,
-        added: 0, removed: 0, reason: reason.into(), danger }
+        added: 0, removed: 0, reason: reason.into(), danger, questions: None }
 }
 
 fn answered() -> (Arc<Mutex<Vec<AskAnswer>>>, impl Fn() -> Box<dyn FnOnce(AskAnswer) + Send>) {

@@ -28,7 +28,7 @@ pub struct Model {
     pub kiro_idle_minutes: i32,
     pub kiro_hide_steps: bool,
     pub kiro_approval: AgentApproval,
-    /// Codex's and Cursor's settings, by tool id. Kiro's are the fields above.
+    /// Codex's, Cursor's and OpenCode's settings, by tool id. Kiro's are the fields above.
     pub agents: Option<Vec<(String, Option<AgentOptions>)>>,
     /// What each tool last offered (models, efforts, modes), for its settings page.
     pub agent_offers: Option<Vec<(String, Option<Vec<AcpOption>>)>>,
@@ -261,7 +261,9 @@ impl Settings {
                 m.kiro_hide_steps = v.hide_steps;
                 m.kiro_approval = v.approval;
             } else {
-                let v = AgentOptions { agent: None, require_mcp: false, ..v };
+                // An agent is Kiro's (the fields above) and OpenCode's (Build, Plan, the user's own).
+                let agent = if t == AgentTool::OpenCode { v.agent.clone() } else { None };
+                let v = AgentOptions { agent, require_mcp: false, ..v };
                 let a = m.agents.get_or_insert_with(Vec::new);
                 match a.iter_mut().find(|(k, _)| k == t.id()) { Some(slot) => slot.1 = Some(v), None => a.push((t.id().into(), Some(v))) }
             }
@@ -398,11 +400,20 @@ mod tests {
         let text = s.model().to_json().indented("\n");
         assert!(text.contains("  \"Agents\": {\n    \"codex\": {\n      \"Model\": null,\n      \"Effort\": null,\n      \"ReadOnly\": true,\n      \"IdleMinutes\": 5,\n      \"Agent\": null,\n      \"RequireMcp\": false,\n      \"HideSteps\": false,\n      \"Approval\": \"Autopilot\"\n    }\n  },"), "{text}");
         let offers = vec![AcpOption { id: "model".into(), category: Some("model".into()), current: Some("a".into()),
-            choices: vec![crate::model::AcpChoice { value: "a".into(), name: "A <1>".into() }] }];
+            choices: vec![crate::model::AcpChoice { value: "a".into(), name: "A <1>".into(), levels: None }] }];
         s.set_agent_offers(AgentTool::Kiro, &offers);
         assert_eq!(s.agent_offers(AgentTool::Kiro), offers);
         let text = s.model().to_json().indented("\n");
-        assert!(text.contains("\"AgentOffers\": {\n    \"kiro\": [\n      {\n        \"Id\": \"model\",\n        \"Category\": \"model\",\n        \"Current\": \"a\",\n        \"Choices\": [\n          {\n            \"Value\": \"a\",\n            \"Name\": \"A \\u003C1\\u003E\"\n          }\n        ]\n      }\n    ]\n  },"), "{text}");
+        assert!(text.contains("\"AgentOffers\": {\n    \"kiro\": [\n      {\n        \"Id\": \"model\",\n        \"Category\": \"model\",\n        \"Current\": \"a\",\n        \"Choices\": [\n          {\n            \"Value\": \"a\",\n            \"Name\": \"A \\u003C1\\u003E\",\n            \"Levels\": null\n          }\n        ]\n      }\n    ]\n  },"), "{text}");
+        // AcpChoice's Levels (from 55111fc): null for a tool that lists effort apart.
+        let with_levels = vec![AcpOption { id: "model".into(), category: Some("model".into()), current: None,
+            choices: vec![crate::model::AcpChoice { value: "p/m".into(), name: "M · P".into(), levels: Some(vec!["high".into(), "max".into()]) }] }];
+        s.set_agent_offers(AgentTool::OpenCode, &with_levels);
+        assert_eq!(s.agent_offers(AgentTool::OpenCode), with_levels);
+        assert!(s.model().to_json().indented("\n").contains("\"Levels\": [\n              \"high\",\n              \"max\"\n            ]"));
+        // OpenCode keeps its agent (Build, Plan, the user's own); Codex and Cursor don't.
+        s.set_agent_options(AgentTool::OpenCode, AgentOptions { agent: Some("plan".into()), require_mcp: true, ..Default::default() });
+        assert_eq!(s.agent_options(AgentTool::OpenCode), AgentOptions { agent: Some("plan".into()), ..Default::default() });
         s.set_agent_tool(AgentTool::Cursor);
         assert_eq!(s.agent_tool(), AgentTool::Cursor);
         // A file the model wrote reads back to the same model, and the same text.

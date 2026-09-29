@@ -11,12 +11,13 @@ use hover_core::model::AgentTool;
 use hover_office::bot::Stage;
 use hover_office::live::{In, Live};
 use hover_office::office::{Click, Time};
-use slint::{Color, ComponentHandle, Image, ModelRc, Rgba8Pixel, SharedPixelBuffer, SharedString};
+use slint::{Color, ComponentHandle, Image, Model, ModelRc, Rgba8Pixel, SharedPixelBuffer, SharedString, VecModel};
+use std::collections::HashMap;
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::time::Duration;
 
-const TOOLS: [(&str, &str, u32); 3] = [("kiro", "Kiro", 0xb48cff), ("codex", "Codex", 0x3fd6a0), ("cursor", "Cursor", 0x7cc0ff)];
+const TOOLS: [(&str, &str, u32); 4] = [("kiro", "Kiro", 0xb48cff), ("codex", "Codex", 0x3fd6a0), ("cursor", "Cursor", 0x7cc0ff), ("opencode", "OpenCode", 0xe8e8ec)];
 fn tool_color(id: &str) -> Color { let c = TOOLS.iter().find(|t| t.0 == id).map_or(0xb48cff, |t| t.2); Color::from_rgb_u8((c >> 16) as u8, (c >> 8) as u8, c as u8) }
 fn tool_name(id: &str) -> &'static str { TOOLS.iter().find(|t| t.0 == id).map_or("Kiro", |t| t.1) }
 fn s(v: impl AsRef<str>) -> SharedString { v.as_ref().into() }
@@ -36,7 +37,7 @@ pub struct Page {
     menu: Cell<bool>,
     access_menu: Cell<bool>,
     /// The access the new-task box picked, by tool, for the tasks it starts next.
-    new_access: RefCell<[Option<&'static str>; 3]>,
+    new_access: RefCell<[Option<&'static str>; 4]>,
     new_folder: RefCell<Option<String>>,
     time_mode: Cell<i32>,
     toast_timer: slint::Timer,
@@ -56,7 +57,24 @@ pub struct Page {
     shown: Cell<Option<bool>>,
     drop_timer: slint::Timer,
     view: Cell<Option<[f64; 3]>>,
+    /// qPick: what has been picked and typed for each question, by its ask's id, so a
+    /// redraw keeps it; and each question's rows, kept so their buttons stay (a model
+    /// made anew loses a press between down and up).
+    picks: RefCell<HashMap<String, Picks>>,
+    qmodels: RefCell<HashMap<String, QRows>>,
+    /// The model menu: 0 closed, 1 the drawer's pill, 2 the new-task box's.
+    model_menu: Cell<i32>,
+    /// Pictures attached to the reply (0) and the new task (1), as files in kiro-images.
+    attached: RefCell<[Vec<String>; 2]>,
+    thumbs: RefCell<HashMap<String, Image>>,
 }
+
+/// A question's rows, and each of its questions' choices.
+type QRows = (Rc<VecModel<QData>>, Vec<Rc<VecModel<QOpt>>>);
+
+/// One question's picks: the labels picked for each of its questions, and the words typed.
+#[derive(Clone, Default)]
+struct Picks { sel: Vec<Vec<String>>, text: Vec<String> }
 
 /// The drawer's thread, laid out and painted by hover-chat.
 /// answered: which turns had an answer at the last paint (None before the first).
@@ -66,10 +84,11 @@ fn fonts() -> Vec<Vec<u8>> { vec![hover_office::canvas::PIXELIFY.to_vec()] }
 
 impl Default for Page {
     fn default() -> Page {
-        Page { live: RefCell::new(None), size: Cell::new((0, 0)), open: Cell::new(None), panel: Cell::new(None), fab: Cell::new(0), new_tool: Cell::new(0), menu: Cell::new(false), access_menu: Cell::new(false), new_access: RefCell::new([None; 3]),
+        Page { live: RefCell::new(None), size: Cell::new((0, 0)), open: Cell::new(None), panel: Cell::new(None), fab: Cell::new(0), new_tool: Cell::new(0), menu: Cell::new(false), access_menu: Cell::new(false), new_access: RefCell::new([None; 4]),
             new_folder: RefCell::new(None), time_mode: Cell::new(0), toast_timer: Default::default(), push_timer: Default::default(), dirty: Cell::new(true),
             history_sent: Cell::new(usize::MAX), confirm_key: RefCell::new(None), last_state: RefCell::new(hover_core::json::Json::Null), thread: RefCell::new(None), turns: RefCell::new(vec![]), clock: Default::default(), copied: Default::default(),
-            rows_open: RefCell::new(vec![]), target: Cell::new(0), shown: Cell::new(None), drop_timer: Default::default(), view: Cell::new(None) }
+            rows_open: RefCell::new(vec![]), target: Cell::new(0), shown: Cell::new(None), drop_timer: Default::default(), view: Cell::new(None),
+            picks: Default::default(), qmodels: Default::default(), model_menu: Cell::new(0), attached: Default::default(), thumbs: Default::default() }
     }
 }
 
@@ -204,7 +223,7 @@ impl App {
             let all = self.hover.sessions.all();
             let tags: Vec<TagData> = out.tags.iter().map(|t| {
                 // renderAsks: the question over the head while the session waits.
-                let ask = all.iter().find(|x| x.id as i64 == t.id).and_then(|x| x.asking().map(|a| ask_data(a, x.asks.len())));
+                let ask = all.iter().find(|x| x.id as i64 == t.id).and_then(|x| x.asking().map(|a| self.ask_data(a, x.asks.len())));
                 TagData {
                     id: t.id as i32, x: t.x as f32, y: t.y as f32, name: s(t.name), color: Color::from_rgb_u8(t.color[0], t.color[1], t.color[2]),
                     tool: s(tool_name(&t.tool)), tool_color: tool_color(&t.tool), text: s(&t.text), stage: t.stage as i32, hot: t.hot,
@@ -305,9 +324,31 @@ impl App {
         let acc = self.new_access(nt);
         let access_opts: Vec<AccessOpt> = ACCESS.iter().filter(|(id, ..)| *id != "read" || hover_agents::agents::read_only_works(tool))
             .map(|(id, label, _)| AccessOpt { id: s(*id), label: s(*label), note: s(access_note(id, tool)), on: *id == acc }).collect();
+        // renderPill for the box's tool and the open chat's, and the menu of the one open.
+        let n_pill = self.pill(tool);
+        let d_pill = open.as_ref().map(|o| self.pill(o.tool));
+        let mm = match p.model_menu.get() { 1 => open.as_ref().map(|o| o.tool), 2 => Some(tool), _ => None };
+        let menu_rows = mm.map(|t| self.model_rows(t));
+        let notice = !self.hover.settings.kiro_notice_seen();
+        let shots: Vec<Vec<Image>> = p.attached.borrow().iter().map(|l| l.iter().map(|f| self.thumb(f)).collect()).collect();
         let acc_label = access_label(acc);
         let acc_tip = format!("{acc_label}: {} Click to change.", access_note(acc, tool));
         each!(self, |g| {
+            g.set_notice(notice);
+            g.set_n_model(s(&n_pill.0));
+            g.set_n_model_effort(s(&n_pill.1));
+            g.set_n_model_shown(n_pill.2);
+            if let Some(d) = &d_pill { g.set_d_model(s(&d.0)); g.set_d_model_effort(s(&d.1)); g.set_d_model_shown(d.2); }
+            g.set_model_menu(if menu_rows.is_some() { p.model_menu.get() } else { 0 });
+            if let Some((head, models, ehead, efforts, note)) = &menu_rows {
+                g.set_mm_head(s(head));
+                if let Some(m) = crate::view::sync(g.get_mm_models(), models) { g.set_mm_models(m); }
+                g.set_mm_effort_head(s(ehead));
+                if let Some(m) = crate::view::sync(g.get_mm_efforts(), efforts) { g.set_mm_efforts(m); }
+                g.set_mm_note(s(note));
+            }
+            if let Some(m) = crate::view::sync(g.get_d_shots(), &shots[0]) { g.set_d_shots(m); }
+            if let Some(m) = crate::view::sync(g.get_n_shots(), &shots[1]) { g.set_n_shots(m); }
             g.set_menu(menu);
             g.set_access_menu(access_menu);
             g.set_access_head(s(format!("{} may", tool.name()).to_uppercase()));
@@ -320,7 +361,7 @@ impl App {
             g.set_fab(fab);
             g.set_new_folder(s(folder.as_deref().map(hover_office::office::short).unwrap_or_else(|| "Choose a folder".into())));
             g.set_new_note(s(&note));
-            g.set_new_go(ready && can && !full && folder.is_some() && !g.get_new_draft().trim().is_empty());
+            g.set_new_go(ready && can && !full && folder.is_some() && (!g.get_new_draft().trim().is_empty() || !shots[1].is_empty()));
             g.set_time_mode(time_mode);
             g.set_beats(beats);
             g.set_summary(s(&summary));
@@ -343,7 +384,7 @@ impl App {
                 g.set_d_access_id(s(&access));
                 g.set_d_ctx(o.context.map_or(-1.0, |c| c.round_ties_even() as f32));
                 g.set_d_asking(o.waiting());
-                g.set_d_ask(o.asking().map(|a| ask_data(a, o.asks.len())).unwrap_or_default());
+                g.set_d_ask(o.asking().map(|a| self.ask_data(a, o.asks.len())).unwrap_or_default());
                 g.set_d_tool_color(tool_color(o.tool.id()));
                 g.set_d_title(s(o.title()));
                 g.set_d_folder(s(hover_office::office::short(&o.folder)));
@@ -396,7 +437,7 @@ impl App {
                     opens.push((Some(x.id as i64), None));
                 }
                 if sessions.is_empty() { rows.push(PanelRow { text: s("No sessions yet. Press + to give an agent a task."), ..row(4) }); opens.push((None, None)); }
-                ("Office overview".into(), "Up to 3 tasks run at once, across Kiro, Codex and Cursor".into(), rows, opens)
+                ("Office overview".into(), "Up to 3 tasks run at once, across Kiro, Codex, Cursor and OpenCode".into(), rows, opens)
             }
             Some(_) => {
                 let find = self.notch.global::<crate::ui::Office>().get_find().to_string().to_lowercase();
@@ -473,6 +514,7 @@ impl App {
     }
 
     pub fn wire_office(self: &Rc<Self>, g: crate::ui::Office) {
+        self.wire_office_more(&g);
         let a = self.clone();
         g.on_pointer(move |k, x, y| match k {
             0 => a.send(In::Pointer(Some((x as f64, y as f64)))),
@@ -510,13 +552,14 @@ impl App {
         g.on_new_go_clicked(move || {
             let text = each_draft(&a).trim().to_owned();
             let Some(folder) = a.page.new_folder.borrow().clone() else { return };
-            if text.is_empty() { return; }
+            let images = a.page.attached.borrow()[1].clone();
+            if text.is_empty() && images.is_empty() { return; }
             let tool = AgentTool::ALL[a.page.new_tool.get()];
             if !a.hover.settings.kiro_notice_seen() { a.hover.settings.set_kiro_notice_seen(true); }
             // The access picked in the new-task box, for this session only.
             let access = a.new_access(a.page.new_tool.get());
-            match a.hover.sessions.start_as(tool, &folder, &text, vec![], Some(access)) {
-                Some(_) => { each!(a, |g| g.set_new_draft(s(""))); a.page.fab.set(0); }
+            match a.hover.sessions.start_as(tool, &folder, &text, images, Some(access)) {
+                Some(_) => { each!(a, |g| g.set_new_draft(s(""))); a.page.attached.borrow_mut()[1].clear(); a.page.fab.set(0); }
                 None => a.toast("All six desks are busy. Stop or remove a session first."),
             }
             a.office_changed();
@@ -592,13 +635,28 @@ impl App {
         g.on_d_send(move || {
             let Some(id) = a.page.open.get() else { return };
             let text = each_reply(&a).trim().to_owned();
-            if text.is_empty() {
+            let images = a.page.attached.borrow()[0].clone();
+            if text.is_empty() && images.is_empty() {
                 if a.hover.sessions.get(id).is_some_and(|s| s.busy()) { a.hover.sessions.stop(id); }
                 return;
             }
-            // Replying to a question says no to it, and the words go to the agent instead.
-            if let Some(q) = a.hover.sessions.get(id).and_then(|s| s.asking().map(|q| q.id.clone())) { a.hover.sessions.answer(id, &q, AskAnswer::Deny); }
-            if !a.hover.sessions.reply(id, &text, vec![]) { a.toast("3 tasks are running. Reply when one is done."); return; }
+            // A reply while a question waits is its answer, in the user's own words, where
+            // the question takes one; replying to anything else it asked says no to it,
+            // and the words go to the agent instead.
+            if let Some(q) = a.hover.sessions.get(id).and_then(|s| s.asking().cloned()) {
+                if let Some(qs) = q.questions.as_ref().filter(|q| !q.is_empty()) {
+                    if qs.len() == 1 && qs[0].custom && images.is_empty() {
+                        a.page.picks.borrow_mut().insert(q.id.clone(), Picks { sel: vec![vec![]], text: vec![text.clone()] });
+                        if a.send_answers(id, &q) { each!(a, |g| g.set_d_draft(s(""))); }
+                        return;
+                    }
+                    a.toast("Answer the question above first, or skip it.");
+                    return;
+                }
+                a.hover.sessions.answer(id, &q.id, AskAnswer::Deny);
+            }
+            if !a.hover.sessions.reply(id, &text, images) { a.toast("3 tasks are running. Reply when one is done."); return; }
+            a.page.attached.borrow_mut()[0].clear();
             each!(a, |g| g.set_d_draft(s("")));
             if let Some(c) = &mut *a.page.thread.borrow_mut() { c.scroll = f32::MAX; }
             a.office_changed();
@@ -610,6 +668,188 @@ impl App {
         g.on_d_resized(move || { let a = a.clone(); slint::Timer::single_shot(Duration::ZERO, move || a.paint_thread()); });
         let a = self.clone();
         g.on_d_wheel(move |dy| { if let Some(c) = &mut *a.page.thread.borrow_mut() { c.scroll = (c.scroll - dy).max(0.0); } a.paint_thread(); });
+    }
+
+    fn wire_office_more(self: &Rc<Self>, g: &crate::ui::Office) {
+        let a = self.clone();
+        g.on_q_pick(move |id, ask, qi, label| {
+            let Some(id) = (if id < 0 { a.page.open.get() } else { Some(id) }) else { return };
+            let Some(q) = a.hover.sessions.get(id).and_then(|s| s.asking().cloned()).filter(|q| q.id == ask.as_str()) else { return };
+            let Some(qs) = q.questions.as_ref() else { return };
+            let (qi, label) = (qi as usize, label.to_string());
+            let Some(one) = qs.get(qi) else { return };
+            let mut picks = a.page.picks.borrow_mut();
+            let p = picks.entry(q.id.clone()).or_insert_with(|| Picks { sel: vec![vec![]; qs.len()], text: vec![String::new(); qs.len()] });
+            let sel = &mut p.sel[qi];
+            *sel = if sel.contains(&label) { sel.iter().filter(|x| **x != label).cloned().collect() } else if one.multiple { let mut v = sel.clone(); v.push(label); v } else { vec![label] };
+            drop(picks);
+            a.office_widgets();
+        });
+        let a = self.clone();
+        g.on_q_text(move |id, ask, qi, text| {
+            let Some(id) = (if id < 0 { a.page.open.get() } else { Some(id) }) else { return };
+            let Some(q) = a.hover.sessions.get(id).and_then(|s| s.asking().cloned()).filter(|q| q.id == ask.as_str()) else { return };
+            let n = q.questions.as_ref().map_or(0, Vec::len);
+            let mut picks = a.page.picks.borrow_mut();
+            let p = picks.entry(q.id.clone()).or_insert_with(|| Picks { sel: vec![vec![]; n], text: vec![String::new(); n] });
+            if let Some(t) = p.text.get_mut(qi as usize) { *t = text.to_string(); }
+        });
+        let a = self.clone();
+        g.on_q_send(move |id, ask| {
+            let Some(id) = (if id < 0 { a.page.open.get() } else { Some(id) }) else { return };
+            if let Some(q) = a.hover.sessions.get(id).and_then(|s| s.asking().cloned()).filter(|q| q.id == ask.as_str()) { a.send_answers(id, &q); }
+        });
+        let a = self.clone();
+        g.on_q_open(move |id| a.open_session(id));
+        let a = self.clone();
+        g.on_open_model(move |which, x, y| {
+            a.page.model_menu.set(which);
+            if which != 0 { a.page.access_menu.set(false); each!(a, |g| { g.set_model_x(x); g.set_model_y(y); }); }
+            a.office_widgets();
+        });
+        let a = self.clone();
+        g.on_pick_model(move |id| {
+            // The pick is the tool's default from then on, as in Settings, from its next turn.
+            if let Some(t) = a.menu_tool() {
+                let o = a.hover.settings.agent_options(t);
+                // Default is no model: an empty id would be sent as one (and OpenCode would
+                // look for a model called "").
+                a.hover.settings.set_agent_options(t, hover_core::model::AgentOptions { model: (!id.is_empty()).then(|| id.to_string()), ..o });
+            }
+            a.page.model_menu.set(0);
+            a.office_changed();
+            a.office_widgets();
+        });
+        let a = self.clone();
+        g.on_pick_effort(move |e| {
+            if let Some(t) = a.menu_tool() {
+                let o = a.hover.settings.agent_options(t);
+                a.hover.settings.set_agent_options(t, hover_core::model::AgentOptions { effort: Some(e.to_string()), ..o });
+            }
+            a.office_changed();
+            a.office_widgets();
+        });
+        let a = self.clone();
+        g.on_notice_ok(move || {
+            a.hover.settings.set_kiro_notice_seen(true);
+            // The other view (notch or app window) may be showing the note too.
+            a.hover.sessions.raise_changed();
+            a.office_widgets();
+        });
+        let a = self.clone();
+        g.on_attach(move |which| {
+            let k = if which == 1 { 0 } else { 1 };
+            if a.page.attached.borrow()[k].len() >= hover_core::images::MAX_IMAGES { a.toast("Four images at most."); return; }
+            let Some(file) = crate::pick_image() else { return };
+            match attach_file(&file) {
+                Ok(saved) => { a.page.attached.borrow_mut()[k].push(saved); }
+                Err(why) => a.toast(&why),
+            }
+            a.office_widgets();
+        });
+        let a = self.clone();
+        g.on_unattach(move |which, i| {
+            let k = if which == 1 { 0 } else { 1 };
+            let mut l = a.page.attached.borrow_mut();
+            if (i as usize) < l[k].len() { l[k].remove(i as usize); }
+            drop(l);
+            a.office_widgets();
+        });
+    }
+
+    /// The tool whose model menu is open.
+    fn menu_tool(&self) -> Option<AgentTool> {
+        match self.page.model_menu.get() {
+            1 => self.page.open.get().and_then(|id| self.hover.sessions.get(id)).map(|s| s.tool),
+            2 => Some(AgentTool::ALL[self.page.new_tool.get()]),
+            _ => None,
+        }
+    }
+
+    /// sendAnswers: each question's picks and typed words; every one needs one.
+    fn send_answers(self: &Rc<Self>, id: i32, q: &hover_agents::ask::AgentAsk) -> bool {
+        let n = q.questions.as_ref().map_or(0, Vec::len);
+        let p = self.page.picks.borrow().get(&q.id).cloned().unwrap_or(Picks { sel: vec![vec![]; n], text: vec![String::new(); n] });
+        let answers: Vec<Vec<String>> = (0..n).map(|i| {
+            let mut v = p.sel.get(i).cloned().unwrap_or_default();
+            if let Some(t) = p.text.get(i).map(|t| t.trim()).filter(|t| !t.is_empty()) { v.push(t.to_owned()); }
+            v
+        }).collect();
+        if answers.iter().any(Vec::is_empty) { self.toast(if n > 1 { "Answer each question first." } else { "Pick an answer first." }); return false; }
+        if let Some(s) = self.hover.sessions.get(id) { hover_core::log::line(&format!("{} run {}: answered a question from the office", s.tool.id(), s.id)); }
+        if !self.hover.sessions.answer_question(id, &q.id, answers) { self.toast("Pick an answer first."); return false; }
+        self.page.picks.borrow_mut().remove(&q.id);
+        self.page.qmodels.borrow_mut().remove(&q.id);
+        self.office_changed();
+        self.office_widgets();
+        true
+    }
+
+    /// renderPill: the model's name, its effort when the model (or tool) takes that one,
+    /// and whether the tool offers models at all.
+    fn pill(&self, t: AgentTool) -> (String, String, bool) {
+        let st = &self.hover.settings;
+        let models = hover_agents::state::models_with_levels(st, t);
+        let o = st.agent_options(t);
+        let (tool_efforts, now) = hover_agents::state::efforts(st, t);
+        let model = o.model.clone().or_else(|| models.first().map(|m| m.0.clone())).unwrap_or_default();
+        let m = models.iter().find(|m| m.0 == model).or(models.first());
+        let effort = o.effort.clone().or(now);
+        let eff = effort.filter(|e| hover_agents::state::efforts_of(&models, &model, &tool_efforts).contains(e)).map(|e| effort_word(&e)).unwrap_or_default();
+        (m.map_or("Default".into(), |m| m.1.clone()), eff, !models.is_empty())
+    }
+
+    /// openMenu's rows: the heading, the models, the effort's heading and choices, the note.
+    fn model_rows(&self, t: AgentTool) -> (String, Vec<MOpt>, String, Vec<MOpt>, String) {
+        let st = &self.hover.settings;
+        let models = hover_agents::state::models_with_levels(st, t);
+        let o = st.agent_options(t);
+        let (tool_efforts, now) = hover_agents::state::efforts(st, t);
+        let cur = o.model.clone().unwrap_or_else(|| models.first().map_or(String::new(), |m| m.0.clone()));
+        let model = o.model.clone().or_else(|| models.first().map(|m| m.0.clone())).unwrap_or_default();
+        let effort = o.effort.clone().or(now);
+        let efforts = hover_agents::state::efforts_of(&models, &model, &tool_efforts);
+        (format!("{} model", t.name()).to_uppercase(),
+            models.iter().map(|m| MOpt { id: s(&m.0), label: s(&m.1), on: m.0 == cur }).collect(),
+            hover_agents::runtime::caps(t).effort_label.to_uppercase(),
+            efforts.iter().map(|e| MOpt { id: s(e), label: s(effort_word(e)), on: effort.as_deref() == Some(e.as_str()) }).collect(),
+            format!("Used by {} from its next turn.", t.name()))
+    }
+
+    /// A picture's thumbnail, read once.
+    fn thumb(&self, file: &str) -> Image {
+        if let Some(i) = self.page.thumbs.borrow().get(file) { return i.clone(); }
+        let img = image::open(file).ok().map(|i| i.thumbnail(104, 104).to_rgba8()).map(|i| {
+            Image::from_rgba8(SharedPixelBuffer::<Rgba8Pixel>::clone_from_slice(i.as_raw(), i.width(), i.height()))
+        }).unwrap_or_default();
+        self.page.thumbs.borrow_mut().insert(file.to_owned(), img.clone());
+        img
+    }
+
+    /// A question as its card shows it; a question's rows are kept for its id.
+    fn ask_data(&self, a: &hover_agents::ask::AgentAsk, n: usize) -> AskData {
+        let mut d = AskData { id: s(&a.id), title: s(hover_agents::words::ask_title(a)), command: s(a.command.as_deref().unwrap_or("")), path: s(a.path.as_deref().unwrap_or("")),
+            preview: s(a.preview.as_deref().unwrap_or("")), reason: s(&a.reason), danger: a.danger, allow: s(hover_agents::words::ask_allow(a)), more: n as i32 - 1,
+            question: a.is_question(), qs: ModelRc::default() };
+        let Some(qs) = a.questions.as_ref().filter(|q| !q.is_empty()) else { return d };
+        let picks = self.page.picks.borrow().get(&a.id).cloned().unwrap_or_default();
+        let mut cache = self.page.qmodels.borrow_mut();
+        if cache.len() > 20 { cache.clear(); }
+        let (rows, opts) = cache.entry(a.id.clone()).or_insert_with(|| {
+            let opts: Vec<Rc<VecModel<QOpt>>> = qs.iter().map(|q| Rc::new(VecModel::from(q.options.iter().map(|(l, dsc)| QOpt { label: s(l), description: s(dsc), on: false }).collect::<Vec<_>>()))).collect();
+            let rows = Rc::new(VecModel::from(qs.iter().zip(&opts).enumerate().map(|(i, (q, o))| QData { header: s(q.header.to_uppercase()), question: s(&q.question), options: ModelRc::from(o.clone()),
+                multiple: q.multiple, custom: q.custom, text: s(picks.text.get(i).map_or("", String::as_str)) }).collect::<Vec<_>>()));
+            (rows, opts)
+        });
+        // The picks change in place: the same buttons, now pressed or not.
+        for (i, (q, o)) in qs.iter().zip(opts.iter()).enumerate() {
+            for (j, (l, _)) in q.options.iter().enumerate() {
+                let on = picks.sel.get(i).is_some_and(|x| x.contains(l));
+                if let Some(mut row) = o.row_data(j) { if row.on != on { row.on = on; o.set_row_data(j, row); } }
+            }
+        }
+        d.qs = ModelRc::from(rows.clone());
+        d
     }
 
     /// The open chat's thread and turns, for the screenshots.
@@ -690,10 +930,22 @@ pub fn access_note(id: &str, tool: AgentTool) -> &'static str {
     ACCESS.iter().find(|a| a.0 == id).map_or("", |a| a.2)
 }
 
-/// A question as its card shows it.
-fn ask_data(a: &hover_agents::ask::AgentAsk, n: usize) -> AskData {
-    AskData { id: s(&a.id), title: s(hover_agents::words::ask_title(a)), command: s(a.command.as_deref().unwrap_or("")), path: s(a.path.as_deref().unwrap_or("")),
-        preview: s(a.preview.as_deref().unwrap_or("")), reason: s(&a.reason), danger: a.danger, allow: s(hover_agents::words::ask_allow(a)), more: n as i32 - 1 }
+/// EFFORT: "X-High" for xhigh, else the word with a capital.
+fn effort_word(e: &str) -> String {
+    if e == "xhigh" { return "X-High".into(); }
+    let mut c = e.chars();
+    c.next().map_or(String::new(), |f| f.to_uppercase().collect::<String>() + c.as_str())
+}
+
+/// A picked picture, into kiro-images as a pasted one is (PNG, JPEG, GIF, WebP; 8 MiB).
+fn attach_file(file: &str) -> Result<String, String> {
+    let ext = std::path::Path::new(file).extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_default();
+    let kind = match ext.as_str() { "png" => "png", "jpg" | "jpeg" => "jpeg", "gif" => "gif", "webp" => "webp", _ => return Err("Only PNG, JPEG, GIF and WebP images.".into()) };
+    let bytes = std::fs::read(file).map_err(|e| format!("Couldn’t read that image: {e}"))?;
+    if bytes.len() > hover_core::images::MAX_IMAGE_BYTES { return Err("That image is over 8 MB.".into()); }
+    let url = format!("data:image/{kind};base64,{}", hover_agents::http::base64(&bytes));
+    let dir = hover_core::images::folder(hover_core::paths::support());
+    hover_core::images::save(&[hover_core::json::Json::str(url)], &dir).into_iter().next().map(|p| p.to_string_lossy().into_owned()).ok_or_else(|| "Couldn’t keep that image.".into())
 }
 
 /// ago(): "now", "5 min ago", "3 h ago", "2 d ago".

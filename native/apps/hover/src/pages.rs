@@ -1,4 +1,4 @@
-//! Owl/Pages.cs (SettingsPage): five sections, each a few headed groups of rows, a
+//! Owl/Pages.cs (SettingsPage): six sections, each a few headed groups of rows, a
 //! label on the left and its control on the right. Built here as data, row for row
 //! and string for string, with the C#'s automation ids; ui/settings.slint draws it.
 //! Where Windows is named and Linux differs, the Linux words are the nearest ones.
@@ -10,16 +10,18 @@ use hover_core::settings::Settings;
 use hover_quota::{item, Reading};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Section { General, Integrations, Kiro, Codex, Cursor }
+pub enum Section { General, Integrations, Kiro, Codex, Cursor, OpenCode }
 
 impl Section {
-    pub const ALL: [Section; 5] = [Section::General, Section::Integrations, Section::Kiro, Section::Codex, Section::Cursor];
-    pub fn title(self) -> &'static str { ["General", "Integrations", "Kiro", "Codex", "Cursor"][self as usize] }
+    pub const ALL: [Section; 6] = [Section::General, Section::Integrations, Section::Kiro, Section::Codex, Section::Cursor, Section::OpenCode];
+    pub fn title(self) -> &'static str { ["General", "Integrations", "Kiro", "Codex", "Cursor", "OpenCode"][self as usize] }
     /// The sidebar's icon and its tile's colour.
     pub fn glyph(self) -> (&'static str, Tint) {
-        [("settings", Tint::Gray), ("plug", Tint::Purple), ("ghost", Tint::Bot), ("terminal", Tint::Green), ("sparkles", Tint::Blue)][self as usize]
+        [("settings", Tint::Gray), ("plug", Tint::Purple), ("ghost", Tint::Bot), ("terminal", Tint::Green), ("sparkles", Tint::Blue), ("terminal", Tint::Gray)][self as usize]
     }
-    pub fn tool(self) -> AgentTool { match self { Section::Codex => AgentTool::Codex, Section::Cursor => AgentTool::Cursor, _ => AgentTool::Kiro } }
+    pub fn tool(self) -> AgentTool {
+        match self { Section::Codex => AgentTool::Codex, Section::Cursor => AgentTool::Cursor, Section::OpenCode => AgentTool::OpenCode, _ => AgentTool::Kiro }
+    }
 }
 
 /// The tile colours Pages.cs uses: the palette's accents, Ui.Gray, and the Kiro bot's purple.
@@ -254,22 +256,39 @@ fn agent(b: &mut Vec<Block>, section: Section, i: &Input) {
     let shown = models.iter().find(|m| m.0 == current).map_or(current.clone(), |m| m.1.clone());
     let model = Control::Picker { id: format!("{id}Model"), name: "Model".into(), shown, options: models.iter().map(|m| (m.1.clone(), m.0 == current)).collect() };
     let eff = effort_offer(&offers);
-    let levels: Vec<String> = eff.map(|x| x.choices.iter().map(|c| c.value.clone()).collect()).unwrap_or_default();
+    // OpenCode's variants belong to each model: only the picked model's are offered.
+    let per_model = tool == AgentTool::OpenCode;
+    let levels = effort_levels(tool, &o, &offers);
     let effort = if levels.is_empty() {
-        Control::Text(if tool == AgentTool::Cursor { "Part of the model" } else { "Set by the model" }.into())
+        Control::Text(if tool == AgentTool::Cursor { "Part of the model" } else if per_model { "None for this model" } else { "Set by the model" }.into())
     } else {
-        Control::Segments { id: format!("{id}Effort"), labels: levels.iter().map(|l| effort_label(l)).collect(), picked: effort_picked(&o, eff) as i32 }
+        let picked = o.effort.as_ref().and_then(|e| levels.iter().position(|l| l == e))
+            .or_else(|| eff.and_then(|x| x.current.as_ref()).and_then(|n| levels.iter().position(|l| l == n))).unwrap_or(0);
+        Control::Segments { id: format!("{id}Effort"), labels: levels.iter().map(|l| effort_label(l)).collect(), picked: picked as i32 }
     };
     let has_models = offer(&offers, "model", &["model"]).is_some();
     b.push(Block::Group(vec![
-        row("Model", Some(if has_models { format!("The first is {name}’s own choice for each task.") } else { format!("More models show here once {name} has run a task.") }), model, Lead::Tile("brain", Tint::Purple)),
-        row("Effort", Some(if levels.is_empty() {
+        row("Model", Some(if !has_models { format!("More models show here once {name} has run a task.") }
+            else if per_model { "Your OpenCode providers’ models: API keys, sign-ins and local models. Default is your opencode config’s.".into() }
+            else { format!("The first is {name}’s own choice for each task.") }), model, Lead::Tile("brain", Tint::Purple)),
+        row(hover_agents::runtime::caps(tool).effort_label, Some(if per_model {
+            if levels.is_empty() { "Pick a model with variants to choose one. Default leaves it to OpenCode.".into() } else { "The picked model’s own variants, from OpenCode.".into() }
+        } else if levels.is_empty() {
             if tool == AgentTool::Cursor { "Cursor’s models carry their effort in their name.".into() } else { "Shown once a task has run with a model that takes one.".into() }
         } else { "How long it thinks. Higher is slower and uses more of your plan.".into() }), effort, Lead::Tile("gauge", Tint::Orange)),
     ]));
 
     heading(b, "Tools and memory");
     let mut rows = vec![];
+    if tool == AgentTool::OpenCode {
+        let modes = opencode_agents(&offers);
+        let shown = match &o.agent { None => "Default".to_owned(), Some(a) => modes.iter().find(|m| &m.0 == a).map_or(a.clone(), |m| m.1.clone()) };
+        let mut options = vec![("Default".to_owned(), o.agent.is_none())];
+        options.extend(modes.iter().map(|m| (m.1.clone(), Some(&m.0) == o.agent.as_ref())));
+        rows.push(row("Agent", Some(if modes.is_empty() { "Build, Plan and your own agents show here once OpenCode has run a task.".into() }
+                else { "OpenCode’s agents, yours included. Plan can’t edit files by its own rules; it isn’t a sandbox.".into() }),
+            Control::Picker { id: "OpenCodeAgent".into(), name: "Agent".into(), shown, options }, Lead::Tile("bot", Tint::Blue)));
+    }
     if tool == AgentTool::Kiro {
         let modes = kiro_modes(&offers, &i.kiro_agents);
         let shown = match &o.agent { None => "Default".to_owned(), Some(a) => modes.iter().find(|m| &m.0 == a).map_or(a.clone(), |m| m.1.clone()) };
@@ -285,12 +304,14 @@ fn agent(b: &mut Vec<Block>, section: Section, i: &Input) {
     let mut labels = vec!["Full", "Ask first", "Ask always"];
     if ro { labels.push("Read only"); }
     let text = match access {
+        "read" if tool == AgentTool::OpenCode => "OpenCode can only read and search. Its server refuses every edit, command, subagent and anything outside the folder.".into(),
         "read" => format!("{name} can only read and search. It can’t change files or run commands."),
         // Codex decides what to ask about itself in this mode: its sandbox lets commands
         // inside the folder run, and asks to go past it.
         "risky" if tool == AgentTool::Codex => "Codex asks in the notch before it writes outside the folder or goes online. Inside the folder its sandbox lets it edit and run commands.".into(),
         "risky" => format!("{name} asks in the notch before it runs a command, deletes or moves files, goes online or touches anything outside the folder. Reading and editing in the folder go ahead."),
         "always" => format!("{name} asks in the notch before any change or command. Reading and searching go ahead."),
+        _ if tool == AgentTool::OpenCode => "OpenCode can edit files and run commands without asking. Deny rules in your OpenCode config still win, and it still asks when it repeats a tool call over and over.".into(),
         _ => format!("{name} can edit files and run commands without asking."),
     } + if ro { "" } else { " Read only isn’t offered, because Codex’s read-only mode needs a sandbox it doesn’t have on Windows." };
     let picked = ["full", "risky", "always", "read"].iter().position(|a| *a == access).unwrap_or(0) as i32;
@@ -309,6 +330,12 @@ fn agent(b: &mut Vec<Block>, section: Section, i: &Input) {
     b.push(Block::Group(rows));
 
     let args = agents::arguments(tool).join(" ");
+    if tool == AgentTool::OpenCode {
+        b.push(Block::Footnote("OpenCode runs in the background as its own server (\"opencode serve\"), one for all its tasks, on this PC only \
+            (127.0.0.1, with a password made for each start), with no terminal window. Your OpenCode providers, agents, skills and MCP servers \
+            work as they do in OpenCode. It uses about 0.5 to 1 GB while it runs, so it stops when idle. Changes apply to the next task.".into()));
+        return;
+    }
     if tool != AgentTool::Kiro {
         let exe = agents::exe(tool).and_then(|p| p.file_stem().map(|s| s.to_string_lossy().into_owned())).unwrap_or_else(|| tool.id().into());
         b.push(Block::Footnote(format!("{name} runs in the background as an ACP server (\"{}\"), one for all its tasks, with no terminal window. \
@@ -350,8 +377,27 @@ pub fn pick_agent(o: &AgentOptions, offers: &[AcpOption], folder_agents: &[Strin
     AgentOptions { agent: modes.get(index - 1).map(|m| m.0.clone()), ..o.clone() }
 }
 
-pub fn pick_effort(o: &AgentOptions, offers: &[AcpOption], index: usize) -> AgentOptions {
-    let v = effort_offer(offers).and_then(|x| x.choices.get(index)).map(|c| c.value.clone());
+/// The efforts Settings offers: the tool's own list, or for OpenCode the picked
+/// model's variants.
+pub fn effort_levels(tool: AgentTool, o: &AgentOptions, offers: &[AcpOption]) -> Vec<String> {
+    if tool == AgentTool::OpenCode {
+        return offer(offers, "model", &["model"]).and_then(|m| m.choices.iter().find(|c| Some(&c.value) == o.model.as_ref()).and_then(|c| c.levels.clone())).unwrap_or_default();
+    }
+    effort_offer(offers).map(|x| x.choices.iter().map(|c| c.value.clone()).collect()).unwrap_or_default()
+}
+
+/// OpenCode's agents (Build, Plan, the user's own), as it offered them.
+pub fn opencode_agents(offers: &[AcpOption]) -> Vec<(String, String)> {
+    offer(offers, "mode", &["mode"]).map(|o| o.choices.iter().map(|c| (c.value.clone(), c.name.clone())).collect()).unwrap_or_default()
+}
+
+pub fn pick_opencode_agent(o: &AgentOptions, offers: &[AcpOption], index: usize) -> AgentOptions {
+    if index == 0 { return AgentOptions { agent: None, ..o.clone() }; }
+    AgentOptions { agent: opencode_agents(offers).get(index - 1).map(|m| m.0.clone()), ..o.clone() }
+}
+
+pub fn pick_effort(tool: AgentTool, o: &AgentOptions, offers: &[AcpOption], index: usize) -> AgentOptions {
+    let v = effort_levels(tool, o, offers).get(index).cloned();
     AgentOptions { effort: v.or(o.effort.clone()), ..o.clone() }
 }
 
@@ -450,18 +496,51 @@ mod tests {
     fn picks_make_the_options_as_pages_does() {
         let o = AgentOptions::default();
         let offers = vec![AcpOption { id: "model".into(), category: Some("model".into()), current: None, choices: vec![
-            AcpChoice { value: "gpt-5".into(), name: "GPT-5".into() }, AcpChoice { value: "o3".into(), name: "o3".into() }] },
+            AcpChoice { value: "gpt-5".into(), name: "GPT-5".into(), levels: None }, AcpChoice { value: "o3".into(), name: "o3".into(), levels: None }] },
             AcpOption { id: "reasoning_effort".into(), category: None, current: Some("medium".into()), choices: vec![
-            AcpChoice { value: "low".into(), name: "Low".into() }, AcpChoice { value: "medium".into(), name: "Medium".into() }, AcpChoice { value: "xhigh".into(), name: "x".into() }] }];
+            AcpChoice { value: "low".into(), name: "Low".into(), levels: None }, AcpChoice { value: "medium".into(), name: "Medium".into(), levels: None }, AcpChoice { value: "xhigh".into(), name: "x".into(), levels: None }] }];
         // No auto of its own: "Default" (none sent) comes first.
         assert_eq!(models(AgentTool::Codex, &offers)[0], (String::new(), "Default".to_string()));
         assert_eq!(pick_model(AgentTool::Codex, &o, &offers, 2).model.as_deref(), Some("o3"));
         assert_eq!(pick_model(AgentTool::Codex, &o, &offers, 0).model, None);
         assert_eq!(effort_picked(&o, effort_offer(&offers)), 1);
-        assert_eq!(pick_effort(&o, &offers, 2).effort.as_deref(), Some("xhigh"));
+        assert_eq!(pick_effort(AgentTool::Codex, &o, &offers, 2).effort.as_deref(), Some("xhigh"));
         assert_eq!(effort_label("xhigh"), "X-High");
         assert_eq!(effort_label("low"), "Low");
         let modes = vec!["vibe".to_string(), "reviewer".to_string()];
         assert_eq!(pick_agent(&o, &[], &modes, 1).agent.as_deref(), Some("reviewer"));
+    }
+
+    /// Pages.cs's OpenCode page (55111fc): the model's own variants, its agents, its
+    /// access words and footnote.
+    #[test]
+    fn opencode_has_its_own_page() {
+        let s = settings();
+        let none = |_: &str| None;
+        let ready = |_| Some(AgentReady { installed: true, signed_in: true, hint: String::new() });
+        let i = input(&s, &[], &none, &ready);
+        let b0 = build(Section::OpenCode, &i);
+        let r0 = rows(&b0);
+        assert_eq!(r0[1].sub.as_deref(), Some("More models show here once OpenCode has run a task."));
+        assert_eq!((r0[2].label.as_str(), &r0[2].control), ("Variant", &Control::Text("None for this model".into())));
+        assert_eq!(r0[3].sub.as_deref(), Some("Build, Plan and your own agents show here once OpenCode has run a task."));
+        let offers = hover_agents::opencode::offers(
+            &hover_core::json::parse(r#"{"providers":[{"id":"p","name":"Prov","models":{"a":{"name":"A","variants":{"low":{},"high":{}}},"m":{"name":"M"}}}]}"#).unwrap(),
+            &hover_core::json::parse(r#"[{"name":"build","mode":"primary"},{"name":"plan","mode":"primary"}]"#).unwrap());
+        s.set_agent_offers(AgentTool::OpenCode, &offers);
+        s.set_agent_options(AgentTool::OpenCode, AgentOptions { model: Some("p/a".into()), effort: Some("high".into()), agent: Some("plan".into()), ..Default::default() });
+        let b = build(Section::OpenCode, &i);
+        let r = rows(&b);
+        let Control::Picker { shown, .. } = &r[1].control else { panic!() };
+        assert_eq!(shown, "A · Prov");
+        assert_eq!(r[2].control, Control::Segments { id: "OpenCodeEffort".into(), labels: vec!["Low".into(), "High".into()], picked: 1 });
+        let Control::Picker { id, shown, options, .. } = &r[3].control else { panic!() };
+        assert_eq!((id.as_str(), shown.as_str(), options.len()), ("OpenCodeAgent", "Plan", 3));
+        assert!(r[4].sub.as_deref().unwrap().starts_with("OpenCode can edit files and run commands without asking. Deny rules"));
+        assert!(matches!(b.last(), Some(Block::Footnote(f)) if f.contains("opencode serve") && f.contains("127.0.0.1")));
+        let o = s.agent_options(AgentTool::OpenCode);
+        assert_eq!(pick_effort(AgentTool::OpenCode, &o, &offers, 0).effort.as_deref(), Some("low"));
+        assert_eq!(pick_opencode_agent(&o, &offers, 1).agent.as_deref(), Some("build"));
+        assert_eq!(pick_opencode_agent(&o, &offers, 0).agent, None);
     }
 }

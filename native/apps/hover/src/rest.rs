@@ -153,7 +153,7 @@ mod tests {
         // A question takes the segment over, and the card only when asked for.
         let mut a = s.clone();
         a[0].asks.push(AgentAsk { id: "q".into(), kind: "execute".into(), title: "Run".into(), command: Some("npm i".into()), path: None, preview: None,
-            added: 0, removed: 0, reason: "r".into(), danger: false });
+            added: 0, removed: 0, reason: "r".into(), danger: false, questions: None });
         assert_eq!(island(&[], &none, &a, None, 0, now, false).key, "ask");
         assert_eq!(island(&[], &none, &a, None, 0, now, true).kind, Kind::Card);
         assert_eq!(island(&[], &none, &s, None, 0, now, true).kind, Kind::Pill, "no question, no card");

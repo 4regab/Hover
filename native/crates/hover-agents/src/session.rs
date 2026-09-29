@@ -4,7 +4,7 @@
 //! the UI thread; here the sessions sit behind one lock, runs go on threads of their
 //! own, and `changed` and `ended` are raised with the lock released, off any thread.
 
-use crate::ask::{AgentAsk, AskAnswer};
+use crate::ask::{AgentAsk, Answers, AskAnswer};
 use crate::cancel::{Cancel, Registration};
 use crate::stream::{KiroEvent, KiroPhase, KiroResult};
 use hover_core::history::{AgentHistory, SavedSession, SavedTurn};
@@ -146,9 +146,18 @@ impl KiroSession {
 fn usable(text: &str, images: &[String]) -> bool { !text.trim().is_empty() || !images.is_empty() }
 
 type Reply = Box<dyn FnOnce(AskAnswer) + Send>;
+type QuestionReply = Box<dyn FnOnce(Answers) + Send>;
+
+/// Where an answer goes: a tool call's Allow or Deny, or a question's picks.
+enum Answer { Call(Reply), Question(QuestionReply) }
+
+impl Answer {
+    /// Turned down (or withdrawn): Deny, or no answers.
+    fn deny(self) { match self { Answer::Call(f) => f(AskAnswer::Deny), Answer::Question(f) => f(None) } }
+}
 
 /// A question waiting: where its answer goes, and the stop that withdraws it.
-struct Pending { id: String, reply: Reply, _stop: Option<Registration> }
+struct Pending { id: String, reply: Answer, _stop: Option<Registration> }
 
 struct Slot { s: KiroSession, cancel: Option<Cancel>, run: RunTask, asks: Vec<Pending> }
 
@@ -157,7 +166,7 @@ impl Slot {
 
     /// KiroSession.DenyAll: every question it left has nobody to answer it now. The
     /// replies go once the lock is released.
-    fn deny_all(&mut self) -> Vec<Reply> {
+    fn deny_all(&mut self) -> Vec<Answer> {
         self.s.asks.clear();
         self.asks.drain(..).map(|p| p.reply).collect()
     }
@@ -376,7 +385,7 @@ impl KiroSessions {
             }
         };
         let asked = !denied.is_empty();
-        for d in denied { d(AskAnswer::Deny); }
+        for d in denied { d.deny(); }
         if asked { self.raise(vec![Note::Changed]); }
         if let Some(c) = c { c.cancel(); }
     }
@@ -384,11 +393,21 @@ impl KiroSessions {
     /// KiroSession.Ask: the agent of the session running conversation `sid` on `tool`
     /// asks the user about a tool call. The answer goes to `reply` (off any thread);
     /// with no such session running, or when `ct` is cancelled, it is Deny.
-    pub fn ask(&self, tool: AgentTool, sid: &str, ask: AgentAsk, ct: &Cancel, reply: Reply) {
+    pub fn ask(&self, tool: AgentTool, sid: &str, ask: AgentAsk, ct: &Cancel, reply: Reply) { self.hold(tool, sid, ask, ct, Answer::Call(reply)) }
+
+    /// KiroSession.AskQuestion: the agent asks the user a question (ask.questions). The
+    /// answer is each question's picked labels, in order; none when it was skipped,
+    /// withdrawn, or nobody holds it.
+    pub fn ask_question(&self, tool: AgentTool, sid: &str, ask: AgentAsk, ct: &Cancel, reply: QuestionReply) {
+        if !ask.is_question() { reply(None); return; }
+        self.hold(tool, sid, ask, ct, Answer::Question(reply))
+    }
+
+    fn hold(&self, tool: AgentTool, sid: &str, ask: AgentAsk, ct: &Cancel, reply: Answer) {
         let mut g = self.0.inner.lock().unwrap();
         let Some(slot) = g.all.iter_mut().find(|x| x.s.tool == tool && x.s.kiro_id.as_deref() == Some(sid) && x.s.busy()) else {
             drop(g);
-            reply(AskAnswer::Deny);
+            reply.deny();
             return;
         };
         hover_core::log::line(&format!("{} run {} asks: {} ({})", tool.id(), slot.s.id, ask.kind, ask.reason));
@@ -410,6 +429,7 @@ impl KiroSessions {
     }
 
     /// KiroSession.Answer: false when the session isn't waiting on that question.
+    /// Deny on a question skips it.
     pub fn answer(&self, id: i32, ask_id: &str, answer: AskAnswer) -> bool {
         let reply = {
             let mut g = self.0.inner.lock().unwrap();
@@ -420,7 +440,26 @@ impl KiroSessions {
             // Dropped here, outside the token's own lock: the stop no longer withdraws it.
             (p.reply, p._stop)
         };
-        (reply.0)(answer);
+        match reply.0 { Answer::Call(f) => f(answer), Answer::Question(f) => f(None) }
+        drop(reply.1);
+        self.raise(vec![Note::Changed]);
+        true
+    }
+
+    /// KiroSession.AnswerQuestion: the labels picked (or typed) for each of its
+    /// questions. False when it isn't waiting on that one, or the answers don't fit.
+    pub fn answer_question(&self, id: i32, ask_id: &str, picked: Vec<Vec<String>>) -> bool {
+        let reply = {
+            let mut g = self.0.inner.lock().unwrap();
+            let Some(slot) = g.all.iter_mut().find(|x| x.s.id == id) else { return false };
+            let Some(i) = slot.asks.iter().position(|p| p.id == ask_id && matches!(p.reply, Answer::Question(_))) else { return false };
+            let n = slot.s.asks.iter().find(|a| a.id == ask_id).and_then(|a| a.questions.as_ref()).map_or(0, Vec::len);
+            if picked.len() != n || picked.iter().all(Vec::is_empty) { return false; }
+            let p = slot.asks.remove(i);
+            slot.s.asks.retain(|a| a.id != ask_id);
+            (p.reply, p._stop)
+        };
+        if let Answer::Question(f) = reply.0 { f(Some(picked)); }
         drop(reply.1);
         self.raise(vec![Note::Changed]);
         true
@@ -499,7 +538,7 @@ fn go(me: Weak<Shared>, id: i32, ti: usize, run: RunTask, ct: Cancel, (folder, p
         }
         (slot.s.clone(), next, denied)
     }) else { return };
-    for d in denied { d(AskAnswer::Deny); }
+    for d in denied { d.deny(); }
     ks.save(&snap);
     ks.raise(vec![Note::Changed, Note::Ended(snap, r)]);
     if next {

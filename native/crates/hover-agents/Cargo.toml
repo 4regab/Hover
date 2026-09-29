@@ -1,6 +1,6 @@
 [package]
 name = "hover-agents"
-description = "The agents (Services/AcpHost.cs, KiroRunner.cs, Agents.cs, Owl/KiroSession.cs, KiroPage's state): ACP over stdio, the sessions, and the office's state message. No UI."
+description = "The agents (Services/AcpHost.cs, OpenCodeHost.cs, KiroRunner.cs, Agents.cs, Owl/KiroSession.cs, KiroPage's state): ACP over stdio, OpenCode's local server over HTTP, the sessions, and the office's state message. No UI."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -9,6 +9,8 @@ license.workspace = true
 hover-core = { path = "../hover-core" }
 # In the tree (hover-md): KiroText's patterns look behind, which regex can't.
 fancy-regex = { workspace = true }
+# In the tree (hover-core): OpenCode's server password and its message ids.
+getrandom = "0.3"
 
 [target.'cfg(unix)'.dependencies]
 # Already in the tree: kill(2) on the tool's process group, and PR_SET_PDEATHSIG.

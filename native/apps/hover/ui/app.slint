@@ -91,6 +91,9 @@ export component NotchWindow inherits Window {
     in property <string> ask-obj;
     in property <bool> ask-mono;
     in property <string> ask-more;
+    // The agent asks a question (OpenCode's question tool): Deny reads Skip, and Review
+    // opens its chat in the office, where its choices are.
+    in property <bool> ask-question;
     // Ended: the tool and its badge (1 done, 2 failed, 0 stopped), how it went, the task,
     // how long it took or "+2".
     in property <string> done-tool;
@@ -211,7 +214,7 @@ export component NotchWindow inherits Window {
                     Rectangle { width: 11px; }
                     VerticalLayout { alignment: center; Rectangle { width: 1px; height: 14px; background: #ffffff2e; } }
                     Rectangle { width: 10px; }
-                    VerticalLayout { alignment: center; Press { text: "Deny"; small: true; clicked => { root.deny(); } } }
+                    VerticalLayout { alignment: center; Press { text: root.ask-question ? "Skip" : "Deny"; small: true; clicked => { root.deny(); } } }
                     Rectangle { width: 6px; }
                     VerticalLayout { alignment: center; Press { text: "Review"; small: true; kind: 1; clicked => { root.review(); } } }
                     Rectangle { width: 3px; }
