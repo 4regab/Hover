@@ -42,6 +42,9 @@ pub struct Page {
     thread: RefCell<Option<Chat>>,
     rows_open: RefCell<Vec<(Option<i64>, Option<String>)>>,
     pub target: Cell<i32>,
+    shown: Cell<Option<bool>>,
+    drop_timer: slint::Timer,
+    view: Cell<Option<[f64; 3]>>,
 }
 
 /// The drawer's thread, laid out and painted by hover-chat.
@@ -54,7 +57,7 @@ impl Default for Page {
         Page { live: RefCell::new(None), size: Cell::new((0, 0)), open: Cell::new(None), panel: Cell::new(None), fab: Cell::new(0), new_tool: Cell::new(0),
             new_folder: RefCell::new(None), time_mode: Cell::new(0), toast_timer: Default::default(), push_timer: Default::default(), dirty: Cell::new(true),
             history_sent: Cell::new(usize::MAX), confirm_key: RefCell::new(None), last_state: RefCell::new(hover_core::json::Json::Null), thread: RefCell::new(None),
-            rows_open: RefCell::new(vec![]), target: Cell::new(0) }
+            rows_open: RefCell::new(vec![]), target: Cell::new(0), shown: Cell::new(None), drop_timer: Default::default(), view: Cell::new(None) }
     }
 }
 
@@ -89,7 +92,16 @@ impl App {
             let Some((w, h, _)) = want else { return };
             let still = !self.look.get().animations;
             let live = Live::start(w, h, still, || crate::ui_do(|a| a.office_frame()));
+            // The page made again: the camera where the user left it (office.view), and the
+            // chat that was open.
+            let view = p.view.get().or_else(|| crate::local_get("view").and_then(|v| {
+                let n: Vec<f64> = v.split(',').filter_map(|x| x.parse().ok()).collect();
+                (n.len() == 3 && n.iter().all(|x| x.is_finite())).then(|| [n[0], n[1], n[2]])
+            }));
+            if let Some(v) = view { live.send(In::View(v)); }
+            if let Some(id) = p.open.get() { live.send(In::Drawer(Some(id as i64))); }
             p.size.set((w, h));
+            p.shown.set(None);
             *p.live.borrow_mut() = Some(live);
             p.dirty.set(true);
             p.history_sent.set(usize::MAX);
@@ -100,7 +112,19 @@ impl App {
         }
         let live = p.live.borrow();
         let live = live.as_ref().unwrap();
-        live.send(In::Visible(want.is_some()));
+        // Only when it changes: every message to the page wakes it to full speed.
+        if p.shown.get() != Some(want.is_some()) {
+            p.shown.set(Some(want.is_some()));
+            live.send(In::Visible(want.is_some()));
+            // Hidden 30 s, the page is dropped (KiroPage's rule for its WebView2); shown
+            // again, it is made again at once.
+            if want.is_none() {
+                let a = self.clone();
+                p.drop_timer.start(slint::TimerMode::SingleShot, Duration::from_secs(30), move || a.office_drop());
+            } else {
+                p.drop_timer.stop();
+            }
+        }
         if let Some((w, h, which)) = want {
             p.target.set(which);
             if p.size.get() != (w, h) { p.size.set((w, h)); live.send(In::Resize(w, h)); }
@@ -108,6 +132,16 @@ impl App {
     }
 
     pub fn office_changed(&self) { self.page.dirty.set(true); }
+
+    /// The office thread goes, and its GPU memory with it.
+    fn office_drop(self: &Rc<Self>) {
+        let p = &self.page;
+        if p.shown.get() != Some(false) { return; }
+        p.push_timer.stop();
+        *p.live.borrow_mut() = None;
+        *p.thread.borrow_mut() = None;
+        hover_core::log::line("office dropped after 30 s hidden");
+    }
 
     /// KiroPage.Push: every session and what the page needs to show them.
     pub fn office_push(self: &Rc<Self>) {
@@ -134,12 +168,17 @@ impl App {
         let out = match &*self.page.live.borrow() { Some(l) => l.take(), None => return };
         if let Some(e) = &out.error { hover_core::log::line(&format!("office: {e}")); return; }
         if out.rgba.is_empty() && out.clicks.is_empty() { return; }
+        if !out.rgba.is_empty() { crate::bench::office_frame(); }
+        if !out.rgba.is_empty() && self.page.view.get() != Some(out.view) {
+            self.page.view.set(Some(out.view));
+            crate::local_set("view", &format!("{},{},{}", out.view[0], out.view[1], out.view[2]));
+        }
         if !out.rgba.is_empty() {
-            let rgb = hover_office::page::compose(&out.rgba, out.w as usize, out.h as usize, out.day);
+            let rgb = &out.rgb;
             let mut buf = SharedPixelBuffer::<Rgba8Pixel>::new(out.w, out.h);
             for (d, s) in buf.make_mut_slice().iter_mut().zip(rgb.chunks(3)) { *d = Rgba8Pixel { r: s[0], g: s[1], b: s[2], a: 255 }; }
             let img = Image::from_rgba8(buf);
-            let blurred = Image::from_rgba8(blur(&rgb, out.w as usize, out.h as usize));
+            let blurred = Image::from_rgba8(blur(rgb, out.w as usize, out.h as usize));
             let tags: Vec<TagData> = out.tags.iter().map(|t| TagData {
                 id: t.id as i32, x: t.x as f32, y: t.y as f32, name: s(t.name), color: Color::from_rgb_u8(t.color[0], t.color[1], t.color[2]),
                 tool: s(tool_name(&t.tool)), tool_color: tool_color(&t.tool), text: s(&t.text), stage: t.stage as i32, hot: t.hot,

@@ -9,6 +9,7 @@
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
 mod icons;
+mod bench;
 mod notch;
 mod office_ui;
 mod shots;
@@ -571,6 +572,7 @@ fn main() {
     hover_core::platform::watch_look(|| ui_do(|a| a.look_changed(hover_core::platform::look())));
     hover_core::log::line("started");
     #[cfg(not(windows))]
+    if std::env::var_os("HOVER_BENCH").is_some() { bench::listen(); }
     if let Some(dir) = selftest {
         let a = app.clone();
         Timer::single_shot(Duration::from_millis(500), move || selftest::start(a, std::path::PathBuf::from(dir)));
@@ -650,6 +652,7 @@ fn platform_start(hover: Arc<Hover>, look: Look, _selftest: bool) -> Rc<App> {
         win_cell.set(w);
         notch::layout(&a.notch, &mut a.n.borrow_mut(), view::argb(a.palette.borrow().panel));
         a.update_rest();
+        bench::visible();
     });
     std::mem::forget(find);
     // The shortcut, rebindable; a refusal is warned about once per chord.

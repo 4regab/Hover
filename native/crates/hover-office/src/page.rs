@@ -52,3 +52,36 @@ pub fn compose(frame: &[u8], w: usize, h: usize, day: bool) -> Vec<u8> {
     } }
     out
 }
+
+/// compose(), with what doesn't change from frame to frame (the background, the
+/// vignette, the corners and the border) worked out once per size and time of day.
+#[derive(Default)]
+pub struct Composer { key: (usize, usize, bool), under: Vec<[f32; 3]>, over: Vec<[f32; 4]> }
+
+impl Composer {
+    pub fn compose(&mut self, frame: &[u8], w: usize, h: usize, day: bool) -> Vec<u8> {
+        if self.key != (w, h, day) || self.under.is_empty() {
+            self.key = (w, h, day);
+            // Two layers from compose() itself: the page with a clear frame (the
+            // background), and with a white opaque one (what lies over the frame).
+            let clear = compose(&vec![0u8; w * h * 4], w, h, day);
+            let white = compose(&vec![255u8; w * h * 4], w, h, day);
+            self.under = clear.chunks(3).map(|c| [c[0] as f32, c[1] as f32, c[2] as f32]).collect();
+            // Over the frame everything is linear in it: out = frame * k + c; k from white − black-opaque.
+            let black = compose(&[0u8, 0, 0, 255].repeat(w * h), w, h, day);
+            self.over = white.chunks(3).zip(black.chunks(3)).map(|(a, b)| [(a[0] as f32 - b[0] as f32) / 255.0, b[0] as f32, b[1] as f32, b[2] as f32]).collect();
+        }
+        let mut out = Vec::with_capacity(w * h * 3);
+        for (i, p) in frame.chunks(4).enumerate() {
+            let a = p[3] as f32 / 255.0;
+            let (u, o) = (self.under[i], self.over[i]);
+            for k in 0..3 {
+                // The frame over its background, then what lies over both; the part of the
+                // background the frame lets through is under's, which already carries it.
+                let v = p[k] as f32 * o[0] + o[k + 1] * a + u[k] * (1.0 - a);
+                out.push(v.round().clamp(0.0, 255.0) as u8);
+            }
+        }
+        out
+    }
+}

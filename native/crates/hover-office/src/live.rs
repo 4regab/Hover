@@ -24,6 +24,8 @@ pub enum In {
     Drawer(Option<i64>),
     Panel(Option<&'static str>),
     Time(Option<Time>),
+    /// The user's camera, when the page is made again (office.view).
+    View([f64; 3]),
     Quit,
 }
 
@@ -41,6 +43,10 @@ pub struct Out {
     pub frames: u64,
     pub adapter: String,
     pub error: Option<String>,
+    /// The user's camera (office.view), kept by the app across a drop.
+    pub view: [f64; 3],
+    /// The page's picture: the frame over the background, with the vignette and border.
+    pub rgb: Vec<u8>,
 }
 
 pub struct Live { tx: Sender<In>, pub out: Arc<Mutex<Out>> }
@@ -81,6 +87,7 @@ fn run(rx: Receiver<In>, out: Arc<Mutex<Out>>, w: u32, h: u32, still: bool, wake
     let (mut visible, mut down, mut prev) = (true, None::<(f64, f64)>, (0.0, 0.0));
     let mut clicks = vec![];
     let mut time_check = Instant::now();
+    let mut page = crate::page::Composer::default();
     loop {
         // One frame's worth of waiting: 16 ms, as requestAnimationFrame.
         let msg = rx.recv_timeout(Duration::from_millis(if visible { 16 } else { 500 }));
@@ -119,6 +126,7 @@ fn run(rx: Receiver<In>, out: Arc<Mutex<Out>>, w: u32, h: u32, still: bool, wake
                 In::Visible(v) => visible = v,
                 In::Drawer(id) => { o.drawer_open = id.is_some(); o.sel = id; o.draw_tv(o.clock_t); }
                 In::Panel(p) => o.panel = p,
+                In::View(v) => { o.user = v; o.clamp_view(); o.cam = [v[0], 1.7, v[1], v[2]]; }
                 In::Time(t) => { o.manual_time = t; o.apply_time(t.unwrap_or(Office::auto_time(hour_now()))); }
             }
         }
@@ -133,9 +141,10 @@ fn run(rx: Receiver<In>, out: Arc<Mutex<Out>>, w: u32, h: u32, still: bool, wake
         last = now;
         if !o.frame(now, dt) && clicks.is_empty() { continue; }
         let rgba = r.render(&mut o);
+        let rgb = page.compose(&rgba, r.w as usize, r.h as usize, o.time == Time::Day);
         let hint = match o.hovered { Some(Hover::Prop(Prop::Clock)) => String::from("clock"), Some(Hover::Prop(p)) => o.hint(p).to_owned(), _ => String::new() };
         *out.lock().unwrap() = Out { rgba, w: r.w, h: r.h, tags: o.tags(), hovered: o.hovered, hint, pointer: o.pointer, clicks: std::mem::take(&mut clicks),
-            day: o.time == Time::Day, frames: o.frames, adapter: r.adapter_name.clone(), error: None };
+            day: o.time == Time::Day, frames: o.frames, adapter: r.adapter_name.clone(), error: None, view: o.user, rgb };
         wake();
     }
 }
