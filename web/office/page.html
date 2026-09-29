@@ -33,18 +33,15 @@ body[data-time=day] #office{background:radial-gradient(120% 90% at 50% 45%,#4a35
 .tag.hot .nm{background:var(--c,#9b6bff);box-shadow:0 0 0 2px rgba(255,255,255,.7),0 6px 20px rgba(0,0,0,.4)}
 .tag.hot .bub{transform:translateY(-2px)}
 /* HUD */
-.brand{position:absolute;left:18px;top:16px;z-index:3;display:flex;gap:10px;align-items:center;padding:7px 14px 7px 8px;border-radius:14px}
-.brand .av{width:30px;height:28px}
-button.brand{border:1px solid var(--line);text-align:left}.brand.still{pointer-events:none}
-.brand b{display:block;font:600 14px/1.1 var(--px);letter-spacing:.02em}.brand span{font-size:11.5px;color:var(--dim)}
 .hud{position:absolute;right:16px;top:16px;z-index:4;display:flex;gap:8px}
 .hud button{height:40px;border-radius:13px;display:grid;place-items:center;border:1px solid var(--line)}
 .hud svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
 .seg{display:flex;padding:3px;border-radius:13px;gap:2px}
 .seg button{width:34px;height:32px;border:0;border-radius:10px;background:transparent;color:var(--dim)}
 .seg button.on{background:rgba(255,255,255,.12);color:#ffd27a}
-#hudMenu{position:absolute;right:16px;top:64px;z-index:8;width:220px;padding:6px;border-radius:14px}#hudMenu h5{margin:4px 8px 6px;font:600 10.5px var(--px);letter-spacing:.06em;text-transform:uppercase;color:var(--faint)}
-#hudMenu .tseg{display:flex;gap:3px;padding:3px;margin:0 2px 6px;border-radius:10px;background:rgba(255,255,255,.05)}#hudMenu .tseg button{flex:1;height:26px;border:0;border-radius:8px;background:transparent;color:var(--dim);font:500 12px Inter,"Segoe UI",sans-serif}#hudMenu .tseg button.on{background:rgba(255,255,255,.14);color:#fff}
+#hudMenu{position:absolute;right:16px;top:64px;z-index:8;width:184px;padding:5px;border-radius:13px}
+#hudMenu .tseg{display:flex;gap:2px;padding:2px;margin:0 0 4px;border-radius:9px;background:rgba(255,255,255,.05)}#hudMenu .tseg button{flex:1;height:26px;border:0;border-radius:7px;background:transparent;color:var(--dim);display:grid;place-items:center}#hudMenu .tseg button:hover{color:#fff}#hudMenu .tseg button.on{background:rgba(255,255,255,.14);color:#fff}
+#hudMenu .tseg svg{width:15px;height:15px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
 #hudMenu>button{width:100%;display:flex;align-items:center;gap:9px;height:32px;padding:0 8px;border:0;border-radius:8px;background:transparent;text-align:left;font:500 12.5px Inter,"Segoe UI",sans-serif}#hudMenu>button:hover,#hudMenu button:focus-visible{background:rgba(255,255,255,.09);outline:0}#hudMenu>button svg{width:15px;height:15px;flex:none;fill:none;stroke:var(--dim);stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
 #menuBtn[aria-expanded="true"]{background:rgba(255,255,255,.12);color:#fff}
 @keyframes pulse{50%{opacity:.35}}
@@ -56,7 +53,6 @@ button.brand{border:1px solid var(--line);text-align:left}.brand.still{pointer-e
 .av::before{content:"";position:absolute;left:18%;right:18%;top:28%;bottom:24%;border-radius:4px;background:#121018}
 .av i{position:absolute;left:33%;top:40%;width:12%;height:22%;background:#aaf6ff;border-radius:1px;box-shadow:calc(var(--w,26px)*.22) 0 0 #aaf6ff}
 .av::after{content:"";position:absolute;right:26%;top:-18%;width:14%;height:20%;border-radius:2px;background:#ffd24a;box-shadow:0 0 6px #ffd24a}
-.brand .av{--w:30px}
 /* The session drawer. */
 #drawer{position:absolute;top:12px;right:12px;bottom:12px;width:min(400px,calc(100% - 24px));z-index:5;border-radius:20px;display:flex;flex-direction:column;transform:translateX(calc(100% + 24px));opacity:0;transition:transform .35s cubic-bezier(.2,.9,.25,1),opacity .25s;pointer-events:none}
 #drawer.open{transform:none;opacity:1;pointer-events:auto}
@@ -99,12 +95,12 @@ button.brand{border:1px solid var(--line);text-align:left}.brand.still{pointer-e
 .s .tx code{font:11.5px "Cascadia Code",Consolas,monospace;color:#f3f1f6;background:rgba(255,255,255,.06);padding:1px 6px;border-radius:5px}
 .s .r{display:flex;gap:5px;align-items:center;flex:none;font:500 10.5px/1 "Cascadia Code",Consolas,monospace;color:rgba(255,255,255,.38);white-space:nowrap}
 /* A turn's tool calls fold under one line: how long it worked, and what it did. */
-.sum{display:flex;align-items:center;gap:8px;min-width:0;height:30px;margin:0 -6px;padding:0 6px;border-radius:9px;font-size:12px;color:rgba(255,255,255,.5);cursor:pointer;user-select:none}
+.sum{display:flex;align-items:center;gap:8px;min-width:0;height:26px;margin:0 -6px;padding:0 6px;border-radius:8px;font-size:11px;color:rgba(255,255,255,.36);cursor:pointer;user-select:none}
 .sum:hover{background:rgba(255,255,255,.05)}.sum:focus-visible{outline:2px solid rgba(255,255,255,.5);outline-offset:1px}
 .sum .sw{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.sum b{color:#f3f1f6;font-weight:600}.sum .tm{font:500 11.5px "Cascadia Code",Consolas,monospace;font-variant-numeric:tabular-nums}
-.sum .dot{margin:0 6px;color:rgba(255,255,255,.25)}
-.sum .car{flex:none;width:12px;height:12px;fill:none;stroke:rgba(255,255,255,.4);stroke-width:2.4;stroke-linecap:round;stroke-linejoin:round;transition:transform .2s}
+.sum b{color:rgba(255,255,255,.5);font-weight:500}.sum:hover b{color:rgba(255,255,255,.72)}.sum .tm{font:500 10.5px "Cascadia Code",Consolas,monospace;font-variant-numeric:tabular-nums}
+.sum .dot{margin:0 5px;color:rgba(255,255,255,.2)}
+.sum .car{flex:none;width:11px;height:11px;fill:none;stroke:rgba(255,255,255,.3);stroke-width:2.4;stroke-linecap:round;stroke-linejoin:round;transition:transform .2s}
 .sum.open .car{transform:rotate(90deg)}
 .sum:not(.open)+.steps{display:none}.sum.open+.steps{margin-top:-4px}.steps.now{margin-top:-6px}.steps.now::before{display:none}
 .s .r .a,.s .r .okp{color:#5de37a}.s .r .d,.s .r .bad{color:#ff7b72}.s .r .okp{display:inline-flex;align-items:center;gap:4px}
@@ -141,16 +137,6 @@ button.brand{border:1px solid var(--line);text-align:left}.brand.still{pointer-e
 .cb .ch button{margin-left:auto;border:0;background:rgba(255,255,255,.06);border-radius:6px;font:500 10.5px Inter,"Segoe UI",sans-serif;color:rgba(255,255,255,.6);padding:2px 8px}
 .cb .ch button:hover{background:rgba(255,255,255,.12);color:#fff}
 .md .cb pre{margin:0;border:0;border-radius:0;background:none}
-/* The live strip over the composer: what the agent does now, for how long, and Stop. */
-#live{display:flex;align-items:center;gap:9px;margin:0 10px 6px;padding:6px 6px 6px 10px;border-radius:12px;background:rgba(255,196,107,.06);box-shadow:inset 0 0 0 1px rgba(255,196,107,.16);font-size:12px;color:rgba(255,255,255,.7);min-width:0}
-#live.ask{background:rgba(255,179,64,.1);box-shadow:inset 0 0 0 1px rgba(255,179,64,.4)}#live.ask .lw b{color:#ffd08a}
-#live .spin{flex:none;width:14px;height:14px;border-radius:50%;border:2px solid rgba(255,255,255,.12);border-top-color:var(--tc,#b48cff);animation:spin 1s linear infinite}
-#live.ask .spin{border-color:#ffb340;animation:pulse 1.6s ease-in-out infinite}
-@keyframes spin{to{transform:rotate(360deg)}}
-#live .lw{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}#live .lw b{color:#fff;font-weight:600}
-#live .tm{flex:none;font:500 11px "Cascadia Code",Consolas,monospace;color:rgba(255,255,255,.42);font-variant-numeric:tabular-nums}
-#live .stop{flex:none;height:24px;border-radius:7px;border:0;background:rgba(255,255,255,.09);font:600 11px Inter,"Segoe UI",sans-serif;padding:0 9px;display:flex;align-items:center;gap:6px}
-#live .stop:hover{background:rgba(255,255,255,.16)}#live .stop i{width:7px;height:7px;border-radius:2px;background:#fff}
 /* An agent's answer, as Markdown. */
 .ans{font-size:13.5px;line-height:1.65;color:#e9e7ec;overflow-wrap:anywhere}
 .ans.fresh{animation:rise .35s ease-out}
@@ -232,6 +218,8 @@ textarea::placeholder{color:var(--faint)}
 .clip svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round}
 .go{background:#f5f5f7;border-radius:10px}.go:hover{background:#fff}.go:active{transform:scale(.92)}.go:disabled{opacity:.3;cursor:default}
 .go svg{width:14px;height:14px;fill:none;stroke:#000;stroke-width:2.6;stroke-linecap:round;stroke-linejoin:round}
+/* While a run goes and the box is empty, the button stops the run. */
+.go .sq,.go.stop .up{display:none}.go.stop .sq{display:block}
 .shots{display:flex;gap:6px;flex-wrap:wrap;padding:3px 3px 6px}
 .shot{position:relative;width:52px;height:52px;border-radius:9px;overflow:hidden;background:#000;box-shadow:0 0 0 1px var(--line)}
 .shot img{width:100%;height:100%;object-fit:cover;display:block}
@@ -241,18 +229,18 @@ textarea::placeholder{color:var(--faint)}
 .me .pics img{width:72px;height:72px;object-fit:cover;border-radius:8px;display:block;cursor:zoom-in}
 #nShots{padding:6px 0 0}
 /* Music. */
-#beats.on{color:#ffd27a}
-#beats.on svg{animation:beat 1.5s ease-in-out infinite}
+#hudMenu #beats.on svg{stroke:#ffd27a;animation:beat 1.5s ease-in-out infinite}
+#beats.on::after{content:'On';margin-left:auto;font-size:11px;font-weight:600;color:#ffd27a}
 @keyframes beat{50%{transform:scale(1.12)}}
 [hidden]{display:none!important}
 /* New task: a circle at the bottom left. A click shows the agents' logos (the name
    only on hover); a pick grows the box out of the circle for that agent. */
 #fab{position:absolute;left:14px;bottom:14px;z-index:6}
-#fabMain{position:relative;width:44px;height:44px;border-radius:50%;display:grid;place-items:center;border:0;color:var(--ink);transition:transform .2s,opacity .15s}
-#fabMain svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:2.2;stroke-linecap:round;transition:transform .25s cubic-bezier(.3,1.3,.5,1)}
+#fabMain{position:relative;width:34px;height:34px;border-radius:50%;display:grid;place-items:center;border:0;color:var(--ink);transition:transform .2s,opacity .15s}
+#fabMain svg{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:2.2;stroke-linecap:round;transition:transform .25s cubic-bezier(.3,1.3,.5,1)}
 #fabMain:hover{background:rgba(40,31,50,.9)}
 #fab.s-pick #fabMain svg{transform:rotate(45deg)}
-#fabMain .draft{position:absolute;right:2px;top:2px;width:10px;height:10px;border-radius:50%;background:var(--li);box-shadow:0 0 0 2px #140f1a;display:none}
+#fabMain .draft{position:absolute;right:1px;top:1px;width:8px;height:8px;border-radius:50%;background:var(--li);box-shadow:0 0 0 2px #140f1a;display:none}
 #fab.draft.s-rest #fabMain .draft{display:block}
 #fab.s-open #fabMain{transform:scale(.5);opacity:0;pointer-events:none}
 #fabTools{position:absolute;left:0;bottom:0;pointer-events:none}
@@ -260,15 +248,15 @@ textarea::placeholder{color:var(--faint)}
 .lg svg{fill:currentColor;stroke:none}
 .lg.kiro{background:#9046FF;color:#fff}.lg.codex{background:#fff}.lg.cursor{background:#0d0d10;color:#ececf0;box-shadow:0 0 0 1px rgba(255,255,255,.14)}
 .lg.off{filter:grayscale(1) brightness(.55)}
-#fabTools .lg{position:absolute;left:2px;bottom:2px;width:40px;height:40px;opacity:0;transform:scale(.4);box-shadow:0 6px 16px -6px rgba(0,0,0,.8);
+#fabTools .lg{position:absolute;left:2px;bottom:2px;width:30px;height:30px;opacity:0;transform:scale(.4);box-shadow:0 6px 16px -6px rgba(0,0,0,.8);
   transition:transform .26s cubic-bezier(.25,1.2,.4,1),opacity .18s,box-shadow .15s;transition-delay:calc(var(--i)*30ms)}
 #fabTools .lg.cursor{box-shadow:0 0 0 1px rgba(255,255,255,.14),0 6px 16px -6px rgba(0,0,0,.8)}
-#fabTools .lg svg{width:22px;height:22px}
+#fabTools .lg svg{width:16px;height:16px}
 #fabTools .lg:hover,#fabTools .lg:focus-visible{outline:0;box-shadow:0 0 0 2px rgba(255,255,255,.85),0 6px 16px -6px rgba(0,0,0,.8)}
-#fab.s-pick #fabTools{pointer-events:auto}#fab.s-pick #fabTools .lg{opacity:1;transform:translateX(calc(52px + var(--i)*48px))}
+#fab.s-pick #fabTools{pointer-events:auto}#fab.s-pick #fabTools .lg{opacity:1;transform:translateX(calc(40px + var(--i)*36px))}
 .lg .tip{position:absolute;left:50%;bottom:calc(100% + 8px);transform:translate(-50%,3px);white-space:nowrap;font:600 11.5px Inter,"Segoe UI",sans-serif;padding:3px 8px;border-radius:7px;background:rgba(12,9,16,.92);box-shadow:0 0 0 1px var(--line);color:var(--ink);opacity:0;transition:.12s;pointer-events:none}
 .lg:hover .tip,.lg:focus-visible .tip{opacity:1;transform:translate(-50%,0)}.lg .tip em{font-style:normal;color:#ffb36b;font-weight:500}
-#newtask{position:absolute;left:0;bottom:0;width:min(410px,calc(100vw - 52px));border-radius:20px;padding:9px 8px 8px 9px;transform-origin:22px calc(100% - 22px);transform:scale(.12);opacity:0;pointer-events:none;transition:transform .3s cubic-bezier(.2,1,.3,1),opacity .16s}
+#newtask{position:absolute;left:0;bottom:0;width:min(410px,calc(100vw - 52px));border-radius:20px;padding:9px 8px 8px 9px;transform-origin:17px calc(100% - 17px);transform:scale(.12);opacity:0;pointer-events:none;transition:transform .3s cubic-bezier(.2,1,.3,1),opacity .16s}
 #fab.s-open #newtask{transform:none;opacity:1;pointer-events:auto}
 #newtask.over{box-shadow:0 0 0 2px rgba(196,162,255,.55)}
 .ntop{display:flex;align-items:flex-start;gap:9px}
@@ -320,7 +308,6 @@ body.host .tools,body.host .note{display:none}
 body.host #office{max-width:none;margin:0;height:100vh;min-height:0;border:0;border-radius:0;box-shadow:none}
 body.host.notch #office{border:0;border-radius:0}
 body.host.notch #office::before{content:"";position:absolute;inset:0 0 auto;height:44px;z-index:1;pointer-events:none;background:linear-gradient(rgba(0,0,0,.9),transparent)}
-.brand b{font:600 14px/1.1 var(--px);letter-spacing:.02em}
 #gl.drag{cursor:grabbing!important}
 .x{width:32px;height:32px;border-radius:10px;border:0;background:rgba(255,255,255,.06);display:grid;place-items:center;flex:none}
 .x svg{width:14px;height:14px;stroke:var(--dim);stroke-width:2.2;fill:none;stroke-linecap:round}
@@ -348,11 +335,10 @@ body.host.notch #office::before{content:"";position:absolute;inset:0 0 auto;heig
 /* The hover tip. */
 #tip{position:absolute;left:0;top:0;z-index:4;pointer-events:none;padding:4px 9px;border-radius:8px;background:rgba(10,6,14,.85);font:600 12px var(--px);white-space:nowrap;box-shadow:0 0 0 1px rgba(255,255,255,.1)}
 .note{max-width:1240px;margin:auto;padding:0 20px 24px;color:#6f6a7c;font-size:12px;line-height:1.6}
-@media (max-width:699px){.brand span{display:none}#drawer{top:auto;height:62%}#office.open #fab{display:none}}
+@media (max-width:699px){#drawer{top:auto;height:62%}#office.open #fab{display:none}}
 /* The notch opens the office short and wide (about 280 to 540 tall), so everything
    over the scene gets smaller and the chat gives its height to the thread. */
 @media (max-height:620px){
-.brand{left:10px;top:10px;padding:4px 10px 4px 5px;gap:7px;border-radius:11px}.brand .av{width:24px;height:22px;--w:24px}.brand b{font-size:12.5px}
 .hud{right:10px;top:10px;gap:6px}.hud button{height:32px;border-radius:10px}#hudMenu{right:10px;top:48px}
 .seg{padding:2px;border-radius:10px}.seg button{width:28px;height:28px;border-radius:8px}.hud .seg svg{width:15px;height:15px}
 #fab{left:10px;bottom:10px}
@@ -362,7 +348,7 @@ body.host.notch #office::before{content:"";position:absolute;inset:0 0 auto;heig
 #drawer .dt b{font-size:13px}#dTitle{font-size:12.5px}.dm{margin-top:1px;font-size:11px}
 .x,#dClose{width:26px;height:26px;border-radius:8px}
 #thread{padding:8px 12px 4px;gap:7px}
-.me{font-size:12.5px;padding:6px 10px}.ans{font-size:12.5px;line-height:1.55}#drawer .dh{padding:8px 8px 8px 10px;gap:9px}#dAv .lg{width:26px;height:26px;border-radius:8px}#dAv .lg svg{width:15px;height:15px}#dTitle{font-size:13px}.dmeta{margin-top:3px}.s{min-height:25px;font-size:12px}#live{margin:0 8px 5px;padding:4px 5px 4px 9px}
+.me{font-size:12.5px;padding:6px 10px}.ans{font-size:12.5px;line-height:1.55}#drawer .dh{padding:8px 8px 8px 10px;gap:9px}#dAv .lg{width:26px;height:26px;border-radius:8px}#dAv .lg svg{width:15px;height:15px}#dTitle{font-size:13px}.dmeta{margin-top:3px}.s{min-height:25px;font-size:12px}
 #nInput{height:40px;font-size:12.5px}.composer{padding:6px 6px 5px 9px;border-radius:15px}.cbar{margin-top:2px}
 #pBody{padding:10px 6px 10px 8px}.hfind{top:-10px}.stats{gap:6px;margin-bottom:10px}.stats div{padding:6px}.stats b{font-size:18px}
 #toast{top:10px;padding:6px 12px;font-size:12px}
@@ -375,9 +361,7 @@ body.host.notch #office::before{content:"";position:absolute;inset:0 0 auto;heig
 <div id="office">
   <canvas id="gl" aria-label="The agent office. Each bot is a session; click one to open it."></canvas>
   <div id="tags"></div>
-  <button class="brand glass" id="brand" title="Open in a window"><span class="av" style="--c:#9b6bff"><i></i></span><b>Agent office</b></button>
   <div class="hud">
-    <div class="seg glass"><button id="beats" aria-label="Chill beats" aria-pressed="false" title="Chill beats"><svg viewBox="0 0 24 24"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg></button></div>
     <div class="seg glass"><button id="menuBtn" aria-label="Menu" title="Menu" aria-haspopup="menu" aria-expanded="false"><svg viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button></div>
   </div>
   <!-- New task: one circle; a click shows the agents' logos, a pick opens the box. -->
@@ -395,11 +379,10 @@ body.host.notch #office::before{content:"";position:absolute;inset:0 0 auto;heig
   <aside id="drawer" class="glass" role="dialog" aria-label="Session" aria-hidden="true">
     <div class="dh"><span id="dAv"></span><div class="dt"><div id="dTitle"></div><div class="dmeta"><span class="chip" id="dFolder"></span><span class="chip" id="dAccess"></span><i id="ctx" class="chip" tabindex="0"><i id="ctxRing"></i><span id="ctxPct"></span></i></div></div><button id="dDel" class="x" aria-label="Delete this session" title="Delete this session"><svg viewBox="0 0 24 24"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V4h6v3"/></svg></button><button id="dClose" class="x" aria-label="Close"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button></div>
     <div id="thread" aria-live="polite"></div>
-    <div id="live" hidden></div>
-    <div class="composer" id="composer"><div class="shots" id="shots" hidden></div><textarea id="input" rows="1" aria-label="Reply"></textarea><div class="cbar"><button class="clip" id="attach" aria-label="Attach an image" title="Attach an image (or paste one)"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button><button class="mpill" id="dModel" aria-haspopup="menu" aria-expanded="false"></button><span class="sp"></span><button class="go" id="send" aria-label="Send" title="Send (Enter)"><svg viewBox="0 0 24 24"><path d="M12 19V5M5 12l7-7 7 7"/></svg></button></div><input type="file" id="pick" accept="image/png,image/jpeg,image/gif,image/webp" multiple hidden></div>
+    <div class="composer" id="composer"><div class="shots" id="shots" hidden></div><textarea id="input" rows="1" aria-label="Reply"></textarea><div class="cbar"><button class="clip" id="attach" aria-label="Attach an image" title="Attach an image (or paste one)"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button><button class="mpill" id="dModel" aria-haspopup="menu" aria-expanded="false"></button><span class="sp"></span><button class="go" id="send" aria-label="Send" title="Send (Enter)"><svg class="up" viewBox="0 0 24 24"><path d="M12 19V5M5 12l7-7 7 7"/></svg><svg class="sq" viewBox="0 0 24 24"><rect x="6.5" y="6.5" width="11" height="11" rx="2.5" fill="#000" stroke="none"/></svg></button></div><input type="file" id="pick" accept="image/png,image/jpeg,image/gif,image/webp" multiple hidden></div>
   </aside>
   <aside id="panel" class="glass" role="dialog" aria-label="Office" aria-hidden="true"><div class="dh"><div class="dt"><b id="pTitle"></b><span id="pSub"></span></div><button id="pClose" class="x" aria-label="Close"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button></div><div id="pBody"></div></aside>
-  <div id="hudMenu" class="glass" role="menu" aria-label="Menu" hidden><h5>Time of day</h5><div class="tseg" role="group" aria-label="Time of day"><button role="menuitemradio" data-time="auto">Auto</button><button role="menuitemradio" data-time="night">Night</button><button role="menuitemradio" data-time="day">Day</button></div><button role="menuitem" id="histBtn"><svg viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5M12 7v5l3 2"/></svg>Session history</button><button role="menuitem" id="setBtn"><svg viewBox="0 0 24 24"><path d="M12.2 2h-.4a2 2 0 0 0-2 2v.2a2 2 0 0 1-1 1.7l-.4.3a2 2 0 0 1-2 0l-.2-.1a2 2 0 0 0-2.7.7l-.2.4a2 2 0 0 0 .7 2.7l.2.1a2 2 0 0 1 1 1.7v.6a2 2 0 0 1-1 1.7l-.2.1a2 2 0 0 0-.7 2.7l.2.4a2 2 0 0 0 2.7.7l.2-.1a2 2 0 0 1 2 0l.4.3a2 2 0 0 1 1 1.7v.2a2 2 0 0 0 2 2h.4a2 2 0 0 0 2-2v-.2a2 2 0 0 1 1-1.7l.4-.3a2 2 0 0 1 2 0l.2.1a2 2 0 0 0 2.7-.7l.2-.4a2 2 0 0 0-.7-2.7l-.2-.1a2 2 0 0 1-1-1.7v-.6a2 2 0 0 1 1-1.7l.2-.1a2 2 0 0 0 .7-2.7l-.2-.4a2 2 0 0 0-2.7-.7l-.2.1a2 2 0 0 1-2 0l-.4-.3a2 2 0 0 1-1-1.7V4a2 2 0 0 0-2-2Z"/><circle cx="12" cy="12" r="3"/></svg>Settings</button></div>
+  <div id="hudMenu" class="glass" role="menu" aria-label="Menu" hidden><div class="tseg" role="group" aria-label="Time of day"><button role="menuitemradio" data-time="auto" aria-label="Time of day: follow the clock" title="Follow the clock"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="M12 4a8 8 0 0 0 0 16Z" fill="currentColor"/></svg></button><button role="menuitemradio" data-time="night" aria-label="Night" title="Night"><svg viewBox="0 0 24 24"><path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5Z"/></svg></button><button role="menuitemradio" data-time="day" aria-label="Day" title="Day"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg></button></div><button role="menuitemcheckbox" id="beats" aria-checked="false"><svg viewBox="0 0 24 24"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>Chill beats</button><button role="menuitem" id="histBtn"><svg viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5M12 7v5l3 2"/></svg>Session history</button><button role="menuitem" id="setBtn"><svg viewBox="0 0 24 24"><path d="M12.2 2h-.4a2 2 0 0 0-2 2v.2a2 2 0 0 1-1 1.7l-.4.3a2 2 0 0 1-2 0l-.2-.1a2 2 0 0 0-2.7.7l-.2.4a2 2 0 0 0 .7 2.7l.2.1a2 2 0 0 1 1 1.7v.6a2 2 0 0 1-1 1.7l-.2.1a2 2 0 0 0-.7 2.7l.2.4a2 2 0 0 0 2.7.7l.2-.1a2 2 0 0 1 2 0l.4.3a2 2 0 0 1 1 1.7v.2a2 2 0 0 0 2 2h.4a2 2 0 0 0 2-2v-.2a2 2 0 0 1 1-1.7l.4-.3a2 2 0 0 1 2 0l.2.1a2 2 0 0 0 2.7-.7l.2-.4a2 2 0 0 0-.7-2.7l-.2-.1a2 2 0 0 1-1-1.7v-.6a2 2 0 0 1 1-1.7l.2-.1a2 2 0 0 0 .7-2.7l-.2-.4a2 2 0 0 0-2.7-.7l-.2.1a2 2 0 0 1-2 0l-.4-.3a2 2 0 0 1-1-1.7V4a2 2 0 0 0-2-2Z"/><circle cx="12" cy="12" r="3"/></svg>Settings</button></div>
   <div id="mMenu" class="glass" role="menu" hidden></div>
   <div id="confirm" class="glass" role="alertdialog" aria-modal="true" aria-labelledby="cfTitle" hidden><b id="cfTitle"></b><span id="cfText"></span><div><button id="cfNo">Cancel</button><button id="cfYes">Delete</button></div></div>
   <div id="tip" hidden></div>

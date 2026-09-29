@@ -213,7 +213,8 @@ public sealed class AcpHost
             offered.FirstOrDefault(x => category is not null && x.Category == category) ?? offered.FirstOrDefault(x => ids.Contains(x.Id));
         async Task Set(AcpOption? option, string? value)
         {
-            if (option is null || value is null || option.Current == value || !option.Has(value)) return;
+            if (option is null || value is null || option.Current == value) return;
+            if (!option.Has(value)) { Log.Line($"acp {Name}: {option.Id}={value} isn't offered"); return; }
             try
             {
                 var r = await Call("session/set_config_option", new { sessionId = sid, configId = option.Id, value }, ct, TimeSpan.FromSeconds(30));
@@ -247,8 +248,13 @@ public sealed class AcpHost
                 await Set(Find("mode", "mode"), o.Agent ?? "vibe");
                 break;
             case AgentTool.Codex:
-                await Set(Find("mode", "mode"), o.ReadOnly ? "read-only" : !asks ? "agent-full-access"
-                    : o.Approval == AgentApproval.Always ? "read-only" : "workspace-write");
+                // codex-acp 1.13 dropped workspace-write, and its read-only became that
+                // preset ("Ask for approval": asks for outside the folder and the
+                // network). So Ask first takes whichever of the two is there.
+                var mode = Find("mode", "mode");
+                var askFirst = mode?.Has("workspace-write") == true ? "workspace-write" : "read-only";
+                await Set(mode, o.ReadOnly ? "read-only" : !asks ? "agent-full-access"
+                    : o.Approval == AgentApproval.Always ? "read-only" : askFirst);
                 break;
             default:
                 await Set(Find("mode", "mode"), o.ReadOnly ? "ask" : "agent");
@@ -576,7 +582,14 @@ public sealed class AcpHost
             // Codex sends ["bash", "-lc", "the command"]; the command is what matters.
             if (command is not null && System.Text.RegularExpressions.Regex.Match(command, @"^(ba|z|)sh\s+-l?c\s+(.+)$", System.Text.RegularExpressions.RegexOptions.Singleline) is { Success: true } sh)
                 command = sh.Groups[2].Value.Trim().Trim('\'', '"');
+            // On Windows it wraps it in "…\pwsh.exe" [-NoProfile] -Command "the command".
+            if (command is not null && System.Text.RegularExpressions.Regex.Match(command, @"^""?[^""]*?(pwsh|powershell)(\.exe)?""?\s+(-NoProfile\s+)?-(Command|c)\s+(.+)$",
+                    System.Text.RegularExpressions.RegexOptions.Singleline | System.Text.RegularExpressions.RegexOptions.IgnoreCase) is { Success: true } ps)
+                command = ps.Groups[5].Value.Trim().Trim('\'', '"');
         }
+        // Cursor's question carries no input; its title is the command, in backticks.
+        if (command is null && kind == "execute" && title.Length > 2 && title[0] == '`' && title[^1] == '`')
+            command = title[1..^1];
         string? path = null;
         if (call.ValueKind == JsonValueKind.Object && call.TryGetProperty("locations", out var locs) && locs.ValueKind == JsonValueKind.Array)
             foreach (var l in locs.EnumerateArray()) { path = Str(l, "path"); if (path is not null) break; }

@@ -287,10 +287,14 @@ internal sealed class KiroPage
             case "answer":
                 // The office answered what the agent asked: over its head, or in its chat.
                 if (session is not null && Str(m, "ask") is { } askId)
-                    session.Answer(askId, Str(m, "answer") switch
+                {
+                    var how = Str(m, "answer") switch
                     {
                         "allow" => AskAnswer.Allow, "trust" => AskAnswer.Trust, "trustAll" => AskAnswer.TrustAll, _ => AskAnswer.Deny,
-                    });
+                    };
+                    Log.Line($"{Agents.Id(session.Tool)} run {session.Id}: {how.ToString().ToLowerInvariant()} from the office");
+                    session.Answer(askId, how);
+                }
                 break;
             case "remove":
                 if (session is not null) Sessions.Dismiss(session);
@@ -337,9 +341,6 @@ internal sealed class KiroPage
                 break;
             case "fold":
                 OwlApp.Collapse?.Invoke();
-                break;
-            case "openApp":
-                OwlApp.OpenDashboard?.Invoke();
                 break;
         }
     }

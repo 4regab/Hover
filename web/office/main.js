@@ -478,8 +478,6 @@ function freeBot() { const used = new Set(sessions.map(s => s.bot)); const i = B
 
 // Hover's state: every session, its turns, and what the running one is doing.
 function fromHost(m) {
-  // In the app window the page has no close button, and its name opens nothing.
-  $('#brand').classList.toggle('still', !!m.window); $('#brand').tabIndex = m.window ? -1 : 0;
   // In the notch the office fills the shape, edge to edge.
   document.body.classList.toggle('notch', !m.window);
   canStart = m.canStart; maxRunning = m.maxRunning; if (m.tools) tools = m.tools; if (!toolPicked && m.tool) newTool = m.tool;
@@ -672,8 +670,6 @@ const ICON = {
 };
 // The live verb for a step that is still going: Edited → Editing.
 const VERB_ON = { Read: 'Reading', Edited: 'Editing', Ran: 'Running', Searched: 'Searching', Fetched: 'Fetching', Deleted: 'Deleting', Moved: 'Moving' };
-// Each tool's accent: its ring in the live strip.
-const ACC = { kiro: '#b48cff', codex: '#7A9DFF', cursor: '#ececf0' };
 const CARET = '<svg class="car" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></svg>';
 const CHECK = '<svg class="ckm" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg>';
 const FOLDER = '<svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/></svg>';
@@ -834,24 +830,12 @@ function renderDrawer() {
     pre.replaceWith(box); box.appendChild(pre);
   }
   if (keep || fresh) th.scrollTop = 1e9;
-  renderLive(s);
   const b = busy(s);
   $('#input').placeholder = s.archived ? `Reply to wake ${x.name} and carry on…` : s.ask ? `Or tell ${s.b.name} what to do instead…` : b ? `Reply. ${s.b.name} reads it when this run ends` : `Reply to ${s.b.name}…`;
   $('#dDel').hidden = false; renderPill('#dModel', s.tool); syncSend();
 }
 // Over the composer while a run goes: what the agent does now, for how long, and
 // Stop. Amber while it waits for the user.
-function renderLive(s) {
-  const el = $('#live'), on = !!s && !s.archived && busy(s);
-  el.hidden = !on; if (!on) return;
-  const T = last(s), asking = T.stage === 'waiting' && s.ask;
-  el.classList.toggle('ask', !!asking); el.style.setProperty('--tc', ACC[s.tool] || ACC.kiro);
-  const words = asking ? `<b>Waiting for you</b> · ${esc(s.ask.line || s.ask.title)}`
-    : T.stage === 'waking' ? '<b>Waking up</b>'
-    : !T.act || T.act === 'Thinking' ? '<b>Thinking</b>' : T.act === 'Writing' ? '<b>Writing it up</b>'
-    : `<b>${esc(T.act)}</b>${T.file ? ' ' + esc(short(T.file)) : ''}`;
-  el.innerHTML = `<span class="spin"></span><span class="lw">${words}</span><span class="tm" data-t0="${T.t0}">${clockOf(T.t0)}</span><button class="stop" type="button" aria-label="Stop this run" title="Stop this run"><i></i>Stop</button>`;
-}
 const day = ms => { const d = new Date(ms), n = new Date(); const k = (n - new Date(d.getFullYear(), d.getMonth(), d.getDate())) / 864e5; return k < 1 ? 'Today' : k < 2 ? 'Yesterday' : k < 7 ? 'This week' : d.toLocaleDateString(undefined, { month: 'long', year: 'numeric' }); };
 let historyFind = '';
 function renderPanel() {
@@ -933,7 +917,7 @@ addEventListener('click', e => {
 });
 
 const clockOf = t0 => { const n = Math.max(0, Math.floor((Date.now() - t0) / 1000)); return `${Math.floor(n / 60)}:${String(n % 60).padStart(2, '0')}`; };
-setInterval(() => { for (const lt of document.querySelectorAll('#live .tm, #thread .sum .tm')) lt.textContent = clockOf(+lt.dataset.t0); }, 1000);
+setInterval(() => { for (const lt of document.querySelectorAll('#thread .sum .tm')) lt.textContent = clockOf(+lt.dataset.t0); }, 1000);
 function openSession(id) {
   closePanel(true); fold();
   viewing = null; sel = id; drawerOpen = true; view.classList.add('open'); $('#drawer').classList.add('open'); $('#drawer').setAttribute('aria-hidden', 'false');
@@ -1029,7 +1013,6 @@ function copyText(text, btn) {
   const old = () => { const t = document.createElement('textarea'); t.value = text; document.body.appendChild(t); t.select(); document.execCommand('copy'); t.remove(); done(); };
   navigator.clipboard?.writeText(text).then(done, old) ?? old();
 }
-$('#live').addEventListener('click', e => { if (e.target.closest('.stop')) { const s = cur(); if (s) doStop(s); } });
 // Links open in the browser, through Hover.
 $('#thread').addEventListener('click', e => { const a = e.target.closest('a[href]'); if (!a) return; e.preventDefault(); if (host) host.postMessage({ type: 'link', url: a.href }); else open(a.href, '_blank', 'noopener'); });
 $('#dDel').onclick = () => { const s = cur(); if (s) askDelete(s); };
@@ -1081,15 +1064,17 @@ $('#pick').onchange = e => { addPics(e.target.files, 'reply'); e.target.value = 
 
 function syncSend() {
   const s = cur(), empty = !input.value.trim() && !attached.reply.length, b = $('#send');
-  b.disabled = empty;
-  // Stop is in the live strip; this button only sends, or queues while a run goes.
-  const label = s && !s.archived && busy(s) ? 'Queue this reply' : 'Send';
-  b.setAttribute('aria-label', label); b.title = label + ' (Enter)';
+  // While a run goes, an empty box makes this the Stop button; words in it queue a reply.
+  const running = !!s && !s.archived && busy(s), stop = running && empty;
+  b.disabled = empty && !stop; b.classList.toggle('stop', stop);
+  const label = stop ? 'Stop this run' : running ? 'Queue this reply' : 'Send';
+  b.setAttribute('aria-label', label); b.title = stop ? label : label + ' (Enter)';
 }
+function send() { const v = input.value.trim(), pics = attached.reply.splice(0); if (!v && !pics.length) return; input.value = ''; autosize(input); renderPics('reply'); doReply(v, pics); syncSend(); }
 input.addEventListener('input', () => { autosize(input); syncSend(); });
-input.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); $('#send').click(); } });
+input.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } });
 composer.addEventListener('mousedown', e => { if (!e.target.closest('button,textarea,img')) { e.preventDefault(); input.focus(); } });
-$('#send').onclick = () => { const v = input.value.trim(), pics = attached.reply.splice(0); if (!v && !pics.length) return; input.value = ''; autosize(input); renderPics('reply'); doReply(v, pics); };
+$('#send').onclick = () => { const s = cur(); if ($('#send').classList.contains('stop')) { if (s) doStop(s); } else send(); };
 
 // New task: the circle, the agents' logos, then the box for the one picked. The
 // folder and the model are the tool's own; each session keeps its folder.
@@ -1242,14 +1227,13 @@ function showTranscript(h) {
   viewing = s; sel = null; drawerOpen = true; view.classList.add('open'); $('#drawer').classList.add('open'); $('#drawer').setAttribute('aria-hidden', 'false');
   renderDrawer();
 }
-// The menu: time of day, the history and Settings.
+// The menu: time of day, music, the history and Settings.
 function closeHud() { $('#hudMenu').hidden = true; $('#menuBtn').setAttribute('aria-expanded', 'false'); }
 $('#menuBtn').onclick = e => { e.stopPropagation(); const m = $('#hudMenu'), open = m.hidden; m.hidden = !open; $('#menuBtn').setAttribute('aria-expanded', open); if (open) (m.querySelector('.tseg .on') || m.querySelector('button')).focus(); };
 addEventListener('pointerdown', e => { if (!e.target.closest('#hudMenu,#menuBtn')) closeHud(); });
 $('#hudMenu').addEventListener('keydown', e => { if (e.key === 'Escape') { e.stopPropagation(); closeHud(); $('#menuBtn').focus(); } });
 $('#histBtn').onclick = () => { closeHud(); panel === 'history' ? closePanel() : openPanel('history'); };
 $('#setBtn').onclick = () => { closeHud(); if (host) host.postMessage({ type: 'settings' }); else toast('In Hover this opens Settings.'); };
-$('#brand').onclick = () => host ? host.postMessage({ type: 'openApp' }) : toast('In Hover this opens the office in a window.');
 $('#nInput').addEventListener('input', renderNew);
 $('#nInput').addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); $('#nGo').click(); } });
 $('#nFolder').onclick = () => { if (host) host.postMessage({ type: 'pickFolder', folder: newFolder }); else toast('In Hover this opens a folder picker.'); };
@@ -1274,7 +1258,7 @@ const beats = (() => {
   const btn = $('#beats'); let audio = null, want = localStorage.getItem('office.beats') === 'on', seen = true, fade = 0;
   const ramp = to => { cancelAnimationFrame(fade); const step = () => { audio.volume = Math.max(0, Math.min(0.32, audio.volume + (to > audio.volume ? 0.02 : -0.03))); if (Math.abs(audio.volume - to) > 0.02) fade = requestAnimationFrame(step); else { audio.volume = to; if (!to) audio.pause(); } }; step(); };
   function sync() {
-    btn.classList.toggle('on', want); btn.setAttribute('aria-pressed', want); btn.title = want ? 'Chill beats: on' : 'Chill beats';
+    btn.classList.toggle('on', want); btn.setAttribute('aria-checked', want);
     if (want && seen) {
       if (!audio) { audio = new Audio('office-beats.ogg'); audio.loop = true; audio.volume = 0; audio.preload = 'auto'; }
       audio.play().then(() => ramp(0.32)).catch(() => { want = false; btn.classList.remove('on'); });

@@ -50,15 +50,8 @@ internal sealed class NotchShell : Canvas
     /// The workspace, always laid out at its full open size.
     public Border ViewHost { get; } = new();
 
-    /// "Welcome back", said while the notch opens.
-    public TextBlock Greeting { get; } = new()
-    {
-        Text = "Welcome back", FontFamily = Ui.Display, FontWeight = FontWeights.SemiBold, FontSize = 12,
-        Foreground = Ui.White, IsHitTestVisible = false,
-    };
-
     private Size _rest, _open = new(1120, 440);
-    private bool _opening, _greet, _sized;
+    private bool _opening, _sized;
     private Color? _glow;
     // What the resting notch showed before it changed, as a picture fading out.
     private readonly Image _ghost = new() { IsHitTestVisible = false, Stretch = Stretch.None, Visibility = Visibility.Hidden };
@@ -100,13 +93,6 @@ internal sealed class NotchShell : Canvas
         Relayout();
     }
 
-    /// Show the greeting for this opening. Cleared when the opening ends.
-    public bool Greet
-    {
-        get => _greet;
-        set { _greet = value; Relayout(); }
-    }
-
     /// Set while opening or open. The workspace must be visible — clipped to the
     /// still-tiny shape, and transparent — from the very first frame, because WPF
     /// will not give keyboard focus to an element that is hidden, and the shortcut
@@ -125,7 +111,6 @@ internal sealed class NotchShell : Canvas
         Children.Add(Mini);
         Children.Add(_ghost);
         Children.Add(ViewHost);
-        Children.Add(Greeting);
         SizeChanged += (_, _) => Relayout();
         ApplyTheme();
     }
@@ -226,19 +211,6 @@ internal sealed class NotchShell : Canvas
             SetLeft(_ghost, cx - _ghostW / 2);
             _ghost.Clip = new RectangleGeometry(new Rect((_ghostW - rest.Width) / 2, 0, Math.Max(0, rest.Width), rest.Height), rr, rr);
         }
-
-        // The greeting sits low in the small notch, grows a little with it, and has
-        // faded by the time the cards are in.
-        Greeting.Visibility = _greet ? Visibility.Visible : Visibility.Collapsed;
-        if (!_greet) return;
-        var size = 12 + 10 * Math.Clamp(t / 0.6, 0, 1);
-        if (Math.Abs(Greeting.FontSize - size) > 0.01) Greeting.FontSize = size;
-        Greeting.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
-        var gs = Greeting.DesiredSize;
-        var fits = w >= gs.Width + 24 && h >= gs.Height + 12;
-        Greeting.Opacity = fits ? Math.Clamp((0.6 - t) / 0.3, 0, 1) : 0;
-        SetLeft(Greeting, cx - gs.Width / 2);
-        SetTop(Greeting, Math.Max(4, Math.Min(h - gs.Height - 9, 64)));
     }
 
     /// A fully round island at rest, a card rounded as the open panel is, and a small
@@ -946,8 +918,7 @@ internal sealed class NotchHost : IDisposable
             _window.SetAcceptsKeys(true);
             _window.Raise();
             _shell.Opening = true;
-            if (Manager?.TakeGreeting() == true) Greet();
-            else Animate(1, 560, new BackEase { Amplitude = 0.16, EasingMode = EasingMode.EaseOut });
+            Animate(1, 560, new BackEase { Amplitude = 0.16, EasingMode = EasingMode.EaseOut });
         }
         State = peek && State != Mode.Open ? Mode.Peek : Mode.Open;
         _outsideSince = null;
@@ -955,21 +926,6 @@ internal sealed class NotchHost : IDisposable
         _window.Focus(foreground: true);
         // After the first layout pass, or the office is not in the tree yet.
         _window.Dispatcher.BeginInvoke(() => _view?.FocusOffice(), DispatcherPriority.Input);
-    }
-
-    /// The first opening after launch or a return to the PC: the notch grows a
-    /// little and says hello, then opens the rest of the way.
-    private void Greet()
-    {
-        _shell.Greet = true;
-        var a = new DoubleAnimationUsingKeyFrames();
-        a.KeyFrames.Add(new EasingDoubleKeyFrame(0.06, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(160)),
-            new CubicEase { EasingMode = EasingMode.EaseOut }));
-        a.KeyFrames.Add(new LinearDoubleKeyFrame(0.09, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(560))));
-        a.KeyFrames.Add(new EasingDoubleKeyFrame(1, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(940)),
-            new CubicEase { EasingMode = EasingMode.EaseOut }));
-        a.Completed += (_, _) => _shell.Greet = false;
-        _shell.BeginAnimation(NotchShell.OpennessProperty, a);
     }
 
     private OfficeView NewView()
@@ -1008,7 +964,6 @@ internal sealed class NotchHost : IDisposable
             Win32.SetForegroundWindow(_previous);
         _window.SetAcceptsKeys(false);
         _shell.Opening = false;
-        _shell.Greet = false;
         Animate(0, 340, new SineEase { EasingMode = EasingMode.EaseInOut });
         UpdateRest();
     }
@@ -1054,29 +1009,9 @@ public sealed class NotchManager : IDisposable
     private string _signature = "";
     private DateTime _lastDisplayCheck = DateTime.MinValue;
     private DashboardWindow? _dashboard;
-    private bool _greet = true;
-
-    internal bool TakeGreeting()
-    {
-        var g = _greet;
-        _greet = false;
-        return g;
-    }
-
-    private void OnPower(object? sender, Microsoft.Win32.PowerModeChangedEventArgs e)
-    {
-        if (e.Mode == Microsoft.Win32.PowerModes.Resume) _greet = true;
-    }
-
-    private void OnSession(object? sender, Microsoft.Win32.SessionSwitchEventArgs e)
-    {
-        if (e.Reason == Microsoft.Win32.SessionSwitchReason.SessionUnlock) _greet = true;
-    }
 
     public NotchManager()
     {
-        Microsoft.Win32.SystemEvents.PowerModeChanged += OnPower;
-        Microsoft.Win32.SystemEvents.SessionSwitch += OnSession;
         Rebuild(Screens.All());
         // Normal priority for the same reason as the workspace clock: at Background it
         // starved for seconds under UI Automation traffic and the notch stopped
@@ -1183,8 +1118,6 @@ public sealed class NotchManager : IDisposable
 
     public void Dispose()
     {
-        Microsoft.Win32.SystemEvents.PowerModeChanged -= OnPower;
-        Microsoft.Win32.SystemEvents.SessionSwitch -= OnSession;
         Theme.Changed -= OnTheme;
         OwlApp.QuotasChanged -= UpdateRest;
         OwlApp.Kiro.Changed -= UpdateRest;

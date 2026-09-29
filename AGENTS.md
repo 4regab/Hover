@@ -12,11 +12,11 @@ one in front is doing, for how long), a question an agent is waiting on, or noth
 Hovering it, clicking it or `Alt+N`
 opens the **Agent office**, which fills the notch: it hands tasks to Kiro, Codex or
 Cursor, which run headlessly, several at once, each in a chosen folder, as bots at
-desks in a three.js office. The office's menu (time of day, history, Settings) opens Settings over it (five
+desks in a three.js office. The office's menu (time of day, music, history, Settings) opens Settings over it (five
 sections: General, Integrations, Kiro, Codex, Cursor), with a back button.
 
-The only ordinary window is the dashboard (a click on the office's name in the
-notch, or a second launch of the exe), the same office in a normal window; the app
+The only ordinary window is the dashboard (the tray icon or its menu, or a second
+launch of the exe), the same office in a normal window; the app
 lives in the tray. (Sticky notes and the edge tray went in 1.1. The workspace
 (tasks, focus timer, notepad, events, screenshots, command buttons, Insights) went
 in 2.0; its `planner.dat` is deleted on first run, as the user chose. `note.key`
@@ -234,8 +234,8 @@ carry a legacy `Noty` reference **only** in `Core/Paths.cs`, which migrates an o
   10 fps when nothing happens (30 fps while a bot walks or works). Measured: WebView2
   itself is about 94 MB private working set; the office on top of a blank page adds
   about 16 MB, so the renderer is not the cost.
-- **The office has its own open-in-a-window.** In the notch the page's name opens the
-  app window (`openApp`). There is no close button: the notch folds when the pointer
+- **The office has no title or close button.** The app window opens from the tray.
+  The notch folds when the pointer
   leaves, on a click outside, or on Esc with nothing open in the page (`fold`).
 
 ## Conventions

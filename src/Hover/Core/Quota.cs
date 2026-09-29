@@ -105,11 +105,16 @@ public static class Quota
         if (!Directory.Exists(sessions)) return QuotaReading.Fail("No Codex sessions on this PC yet.");
         try
         {
-            // ponytail: walks every rollout file to find the newest; fine for thousands
-            // of sessions. If that ever gets slow, walk only the last few date folders.
+            // Ranked by the time of each file's last event, not its modified time:
+            // Codex keeps a session's file open and Windows leaves the modified time at
+            // about when it was made, so a long session's new limits were skipped.
+            // ponytail: opens every rollout file for its last few KB; fine for
+            // thousands of sessions. If that ever gets slow, walk only recent folders.
             var files = new DirectoryInfo(sessions)
                 .EnumerateFiles("rollout-*.jsonl", SearchOption.AllDirectories)
-                .OrderByDescending(f => f.LastWriteTimeUtc)
+                .Select(f => (File: f, Last: LastEvent(f.FullName)))
+                .OrderByDescending(x => x.Last ?? x.File.LastWriteTimeUtc)
+                .Select(x => x.File)
                 .Take(8);
             foreach (var f in files)
             {
@@ -127,6 +132,28 @@ public static class Quota
             return QuotaReading.Fail($"Couldn’t read Codex’s logs: {e.Message}");
         }
         return QuotaReading.Fail("Codex hasn’t recorded any limits yet — use it once.");
+    }
+
+    /// When a Codex session log last had an event: the "timestamp" that starts its
+    /// last line, read from the file's end. Null when it can't be read.
+    private static DateTime? LastEvent(string path)
+    {
+        try
+        {
+            using var s = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            var n = (int)Math.Min(s.Length, 8192);
+            s.Seek(-n, SeekOrigin.End);
+            var buf = new byte[n];
+            s.ReadExactly(buf);
+            var tail = System.Text.Encoding.UTF8.GetString(buf);
+            const string key = "{\"timestamp\":\"";
+            var i = tail.LastIndexOf(key, StringComparison.Ordinal);
+            if (i < 0) return null;
+            var end = tail.IndexOf('"', i + key.Length);
+            return end > 0 && DateTimeOffset.TryParse(tail.AsSpan(i + key.Length, end - i - key.Length), out var t) ? t.UtcDateTime : null;
+        }
+        catch (IOException) { return null; }
+        catch (UnauthorizedAccessException) { return null; }
     }
 
     /// One token_count event from a Codex session log. Its rate_limits carry the
