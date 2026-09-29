@@ -67,8 +67,11 @@ jobs:
           Add-Content -Path $env:GITHUB_ENV -Value "RUSTUP_TOOLCHAIN=$env:RUST_TOOLCHAIN"
           Add-Content -Path $env:GITHUB_PATH -Value $cargoBin
 
+      # build.ps1 test, but past a failing crate, so one run shows every failure.
       - name: Test
-        run: .\build.ps1 test
+        run: |
+          cargo test --manifest-path native/Cargo.toml --release --workspace --no-fail-fast
+          if ($LASTEXITCODE -ne 0) { throw 'cargo test failed' }
 
       - name: Install Inno Setup
         run: |

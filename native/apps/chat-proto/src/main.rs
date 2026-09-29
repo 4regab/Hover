@@ -1048,6 +1048,8 @@ mod tests {
     fn scrollbars_take_presses_drags_and_hover() {
         let mut app = App::new(turns(1, 1));
         // With animation effects on, a press heads for its target; the steps add up there.
+        // Set here: the machine's own setting is off on a server (CodeBuild's Windows).
+        app.motion = true;
         app.relayout(358.0, 271.0);
         app.scroll = 0.0;
         let (t0, tl) = app.bar(BarId::Thread).unwrap().thumb();
