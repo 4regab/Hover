@@ -6,13 +6,14 @@
 
 <p align="center">AI agents at work in a notch at the top of the screen.</p>
 
-Rest the pointer at the **top centre** of your main screen, or press `Alt+N`, and the
-notch opens into the Agent office. At rest it is a slim black island with your AI
-quotas and the agents at work, showing what each is doing, or nothing at all. Built with .NET 10 and WPF, for Windows 10 and 11.
+<p align="center"> Monitor and send tasks to your AI agents in a single hover. 
+Hover your cursor at the top centre of your screen to expand the notch into your Agent Office. At rest, it sits as a slim island quietly displaying your AI quotas and active agents..</p>
 
 <p align="center">
-  <img src="assets/readme/office.jpg" alt="The Agent office: three agents at their desks, each with a note saying what it is doing">
-</p>
+ <img width="1386" height="472" alt="image" src="https://github.com/user-attachments/assets/e64cc00b-96eb-4fed-8e3e-aa45390ba78e" />
+
+<p align="center">
+<img width="707" height="185" alt="image" src="https://github.com/user-attachments/assets/9d1f4263-9013-4e48-bdf0-9df24934c681" />
 
 ## Features
 
