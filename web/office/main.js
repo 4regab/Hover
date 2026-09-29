@@ -269,8 +269,8 @@ const VISOR = new THREE.MeshStandardMaterial({ color: 0x111018, roughness: 0.22,
 const hitMat = new THREE.MeshBasicMaterial({ visible: false });
 const ringGeo = new THREE.RingGeometry(0.42, 0.52, 40);
 const BOTS = [['Pip', 0x9b6bff], ['Juno', 0x2fc9b0], ['Moss', 0xff9a4a], ['Nova', 0xff6fae], ['Ada', 0x5aa8ff], ['Rue', 0xb4e04a]];
-const BULB = { waking: 0xffd24a, working: 0xc4a2ff, done: 0x4ade80, failed: 0xff5b52, stopped: 0x55505f };
-const SCREEN = { waking: [0x7fb8ff, 0.25], working: [0x7fb8ff, 0.6], done: [0x4ade80, 0.42], failed: [0xff5b52, 0.5], stopped: [0, 0] };
+const BULB = { waking: 0xffd24a, working: 0xc4a2ff, waiting: 0xffb340, done: 0x4ade80, failed: 0xff5b52, stopped: 0x55505f };
+const SCREEN = { waking: [0x7fb8ff, 0.25], working: [0x7fb8ff, 0.6], waiting: [0xffb340, 0.6], done: [0x4ade80, 0.42], failed: [0xff5b52, 0.5], stopped: [0, 0] };
 const hits = [];
 
 class Bot {
@@ -354,6 +354,8 @@ class Bot {
         if (this.since < 1.8) { aL = -3 + Math.sin(t * 13) * 0.3; aR = -3 - Math.sin(t * 13) * 0.3; sL = -0.3; sR = 0.3; lean = -0.1; hx = -0.2; }
         else { aL = aR = -2.75; sL = 0.6; sR = -0.6; lean = -0.2; hx = -0.12; hz = Math.sin(t * 0.7) * 0.06; }
         break;
+      // Asking the user: a hand up and waving, the bulb blinking amber.
+      case 'waiting': blinkBulb = true; aL = -1.4; aR = -2.95 + Math.sin(t * 6) * 0.22; sR = 0.35 + Math.sin(t * 6) * 0.12; lean = -0.06; hx = -0.12; break;
       case 'failed': eyes = 'sad'; blinkBulb = true; aL = aR = -1.5; lean = 0.25; hx = 0.35; break;
       case 'stopped': eyes = 'shut'; halo = 0; aL = aR = -1.55; lean = 0.45 + Math.sin(t * 1.6) * 0.02; hx = 0.42; hz = 0.1; break;
     }
@@ -408,13 +410,14 @@ const logo = id => (LOGOS[id] || LOGOS.kiro).replaceAll('cg$', 'cg' + logoN++);
 // The demo's own list, until Hover sends the real ones.
 let tools = Object.keys(TOOLS).map(id => ({ id, name: TOOLS[id][0], ready: true, hint: '', access: 'full tool access', models: [{ id: 'auto', name: 'Auto' }, { id: 'm1', name: 'GPT-6 Astra' }], model: 'm1', efforts: ['low', 'medium', 'high'], effort: 'high' })), newTool = 'kiro', toolPicked = false;
 const toolOf = s => tools.find(x => x.id === (s?.tool || 'kiro')) || tools[0];
-const badge = id => { const [n, c] = TOOLS[id] || TOOLS.kiro; return `<em class="tb" style="--t:${c}">${n}</em>`; };
+// The tool shows as its own logo, never its name (that is in the tooltip).
+const badge = id => `<span class="lg mini ${TOOLS[id] ? id : 'kiro'}" title="${(TOOLS[id] || TOOLS.kiro)[0]}" role="img" aria-label="${(TOOLS[id] || TOOLS.kiro)[0]}">${logo(id)}</span>`;
 let sessions = host ? [] : demo();
 if (!host) sessions.forEach((s, i) => s.tool = ['kiro', 'codex', 'kiro', 'cursor', 'codex'][i]);
 let nextId = 6, sel = null, drawerOpen = false, panel = null, newFolder = defaultFolder, firstState = true;
 const timers = {}, leaving = [];
 const last = s => { for (let i = s.turns.length - 1; i >= 0; i--) if (!s.turns[i].queued) return s.turns[i]; return s.turns[0]; };
-const busy = s => ['waking', 'working'].includes(last(s).stage);
+const busy = s => ['waking', 'working', 'waiting'].includes(last(s).stage);
 // viewing: a session from the history, shown in the chat without a desk. A reply to
 // it brings it back (pendingKey is the one waited for).
 let viewing = null, pendingKey = null, history = [];
@@ -424,7 +427,7 @@ const cur = () => viewing || sessions.find(s => s.id === sel);
 const short = f => (f || '').split(/[\\/]/).pop();
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
 const ago = ms => { const m = Math.round((Date.now() - ms) / min); return m < 1 ? 'now' : m < 60 ? `${m} min ago` : m < 24 * 60 ? `${Math.round(m / 60)} h ago` : `${Math.round(m / 1440)} d ago`; };
-const WORD = { waking: 'Waking up', working: 'Working', done: 'Done', failed: 'Couldn’t finish', stopped: 'Stopped' };
+const WORD = { waking: 'Waking up', working: 'Working', waiting: 'Waiting for you', done: 'Done', failed: 'Couldn’t finish', stopped: 'Stopped' };
 
 function demo() {
   const F = 'B:\\hover';
@@ -437,7 +440,9 @@ function demo() {
     { id: 3, bot: 2, desk: 3, title: 'Tests for the calendar reader', folder: F, ctx: 12, arrive: true, turns: [{ prompt: 'Write tests for Calendar.cs covering all-day events and repeating events.', stage: 'waking', t0: T0, steps: [], target: 'tests/Hover.Tests/CalendarTests.cs' }] },
     { id: 4, bot: 3, desk: 4, title: 'Upgrade three.js to 0.171', folder: 'B:\\site', ctx: 22, turns: [{ prompt: 'Upgrade three to 0.171 and fix anything that breaks.', stage: 'failed', t0: T0 - 2.3 * 60 * min, woke: 2.4, took: 48e3, steps: [['read', 'Read package.json'], ['run', 'Ran npm install three@0.171.0', 'failed']],
       answer: 'I couldn\'t finish. npm install stopped with a peer dependency conflict: @react-three/fiber 8 needs three 0.170 or older.\n\nReply "upgrade fiber too" and I will move both together.' }] },
-    { id: 5, bot: 4, desk: 2, title: 'Rename the Owl namespace', folder: F, ctx: 9, turns: [{ prompt: 'Rename the Hover.Owl namespace to Hover.Workspace everywhere.', stage: 'stopped', t0: T0 - 26 * 60 * min, woke: 2, took: 22e3, steps: [['search', 'Searched for "namespace Hover.Owl"']], answer: 'Stopped before any file was changed.' }] },
+    { id: 5, bot: 4, desk: 2, title: 'Upgrade the office to three.js 0.171', folder: 'B:\\site', ctx: 9,
+      ask: { id: 'a1', kind: 'execute', title: 'Wants to run a command', line: 'Wants to run npm install', command: 'npm install three@0.171.0', reason: 'Installs packages or uses the network', danger: false, allow: 'Run', more: 0 },
+      turns: [{ prompt: 'Upgrade three to 0.171 and fix anything that breaks.', stage: 'waiting', act: 'Running', file: 'npm install three@0.171.0', t0: T0 - 0.6 * min, woke: 2, steps: [['read', 'Read package.json'], ['run', 'Running npm install three@0.171.0']] }] },
   ];
 }
 
@@ -449,7 +454,7 @@ function spawn(s, walkIn) {
   if (walkIn) { s.b.place(DOOR.x, Z0 + 0.1, false); s.b.go(pathIn(d), () => { s.b.seated = true; s.b.sinceSeat = 0; }); }
   else s.b.place(d.seat + 0.05, d.z, true);
   const el = document.createElement('div'); el.className = 'tag';
-  el.innerHTML = `<div class="in"><div class="bub"><span></span></div><button class="nm" style="--c:${s.b.css}"><i></i>${name}${badge(s.tool)}</button></div>`;
+  el.innerHTML = `<div class="in"><div class="ask-slot"></div><div class="bub"><span></span></div><button class="nm" style="--c:${s.b.css}">${badge(s.tool)}${name}</button></div>`;
   el.querySelector('button').onclick = () => openSession(s.id);
   $('#tags').appendChild(el); s.tag = el; s.tagText = null; s.tagShown = 0;
 }
@@ -469,6 +474,8 @@ function freeBot() { const used = new Set(sessions.map(s => s.bot)); const i = B
 function fromHost(m) {
   // In the app window the page has no close button, and its name opens nothing.
   $('#closeSeg').hidden = !!m.window; $('#brand').classList.toggle('still', !!m.window); $('#brand').tabIndex = m.window ? -1 : 0;
+  // In the notch the office fills the shape, edge to edge, with the island at its top.
+  document.body.classList.toggle('notch', !m.window);
   canStart = m.canStart; maxRunning = m.maxRunning; if (m.tools) tools = m.tools; if (!toolPicked && m.tool) newTool = m.tool;
   if (m.history) history = m.history;
   defaultFolder = m.folder || null; if (!newFolder) newFolder = defaultFolder;
@@ -480,12 +487,12 @@ function fromHost(m) {
     Object.assign(turns[i], { act: h.act, pose: h.pose, file: h.file });
     let s = sessions.find(x => x.id === h.id);
     if (!s) {
-      s = { id: h.id, key: h.key, files: h.files, tool: h.tool, bot: h.bot, desk: h.seat, title: h.title, folder: h.folder, ctx: h.ctx, turns };
+      s = { id: h.id, key: h.key, files: h.files, tool: h.tool, bot: h.bot, desk: h.seat, title: h.title, folder: h.folder, ctx: h.ctx, ask: h.ask, turns };
       sessions.push(s); spawn(s, !firstState && last(s).stage === 'waking');
     } else {
       turns.forEach((t, k) => { const old = s.turns[k]; if (t.answer && !(old && old.answer)) t.fresh = !firstState; });
       if (last(s).stage === 'waking' && s.turns.length !== turns.length && s.b.seated) s.b.sinceSeat = 0;
-      Object.assign(s, { files: h.files, title: h.title, folder: h.folder, ctx: h.ctx, turns });
+      Object.assign(s, { files: h.files, title: h.title, folder: h.folder, ctx: h.ctx, ask: h.ask, turns });
     }
   }
   for (const s of [...sessions]) if (!seen.has(s.id)) retire(s);
@@ -534,7 +541,7 @@ function play(s, T, from = 0) {
 // ── What the user asks for ──────────────────────────────────────────────
 function doStop(s) {
   if (host) return host.postMessage({ type: 'stop', id: s.id });
-  clearTimeout(timers[s.id]); const T = last(s);
+  clearTimeout(timers[s.id]); const T = last(s); s.ask = null;
   if (busy(s)) { T.stage = 'stopped'; T.took = Date.now() - T.t0; T.answer = 'Stopped. Nothing after the last step above was changed.'; }
   s.turns.forEach(x => { if (x.queued) { x.queued = false; x.stage = 'stopped'; x.took = 0; x.steps = []; x.answer = 'Not sent: the run before it was stopped.'; } });
   changed(s);
@@ -542,6 +549,8 @@ function doStop(s) {
 function doReply(text, images = []) {
   const s = cur(); if (!s || (!text && !images.length)) return;
   if (s.archived) { if (!host) return toast('In Hover this wakes the session.'); pendingKey = s.key; return host.postMessage({ type: 'reply', key: s.key, text, images }); }
+  // Replying to a question says no to it, and the words go to the agent instead.
+  if (s.ask) answer(s, s.ask.id, 'deny');
   if (host) return host.postMessage({ type: 'reply', id: s.id, text, images });
   const wait = busy(s), T = { prompt: text, images, stage: 'waking', t0: Date.now(), steps: [], queued: wait };
   s.turns.push(T);
@@ -570,7 +579,7 @@ function drawTV(t) {
   x.font = 'bold 11px "Pixelify Sans", monospace'; x.textBaseline = 'top';
   x.fillStyle = '#9ad2ff'; x.fillText('AGENT OFFICE', 10, 8);
   x.fillStyle = '#2f5a8a'; x.fillRect(10, 22, 188, 1);
-  const rows = [['Working', count(['waking', 'working']), '#c4a2ff'], ['Done', count(['done']), '#4ade80'], ['Failed', count(['failed']), '#ff6b62'], ['Stopped', count(['stopped']), '#8a8fa0']];
+  const rows = [['Working', count(['waking', 'working', 'waiting']), '#c4a2ff'], ['Done', count(['done']), '#4ade80'], ['Failed', count(['failed']), '#ff6b62'], ['Stopped', count(['stopped']), '#8a8fa0']];
   rows.forEach(([l, v, c], i) => { x.fillStyle = '#6fa8d8'; x.fillText(l, 10, 30 + i * 14); x.fillStyle = c; x.fillText(String(v), 70, 30 + i * 14); for (let k = 0; k < v; k++) x.fillRect(86 + k * 8, 33 + i * 14, 6, 6); });
   const s = cur() || sessions.find(busy);
   if (s) {
@@ -582,7 +591,7 @@ function drawTV(t) {
   if ((t * 2 | 0) % 2) { x.fillStyle = '#9ad2ff'; x.fillRect(190, 8, 6, 10); }
   tex.needsUpdate = true;
 }
-const COLS = [['WAKING', '#f5b83d', ['waking']], ['DOING', '#9b6bff', ['working']], ['FINISHED', '#2fae66', ['done', 'failed', 'stopped']]];
+const COLS = [['WAKING', '#f5b83d', ['waking']], ['DOING', '#9b6bff', ['working', 'waiting']], ['FINISHED', '#2fae66', ['done', 'failed', 'stopped']]];
 // The canvas is twice the board's 240 x 140 grid, so the notes can carry a title.
 function fit(x, text, w) { if (x.measureText(text).width <= w) return text; while (text && x.measureText(text + '…').width > w) text = text.slice(0, -1); return text.trimEnd() + '…'; }
 function drawBoard() {
@@ -661,6 +670,8 @@ function bubbleFor(s) {
   if (b.path.length) return 'On my way…';
   switch (T.stage) {
     case 'waking': return 'Waking up…';
+    // The question shows over the head in place of the bubble.
+    case 'waiting': return '';
     case 'working': return T.act === 'Thinking' ? 'Thinking…' : T.act === 'Writing' ? 'Writing it up…' : T.file ? `${T.act} ${short(T.file)}` : `${T.act || 'Working'}…`;
     case 'done': return b.since < 6 ? 'Done! ✓' : '';
     case 'failed': return 'Couldn’t finish';
@@ -711,7 +722,8 @@ function renderDrawer() {
     }).join('');
     const open = opened.has(String(i)) || (liveTurn && !shut.has(String(i)));
     const work = steps ? `<details class="work" data-i="${i}"${open ? ' open' : ''}><summary>${T.steps.length} step${T.steps.length === 1 ? '' : 's'}${T.took != null ? ' · ' + took(T.took) : ''}</summary><div>${steps}</div></details>` : '';
-    const now = lastTurn && (st === 'waking' || st === 'working')
+    const now = lastTurn && st === 'waiting' && s.ask && !s.archived ? askHTML(s, 'chat')
+      : lastTurn && (st === 'waking' || st === 'working')
       ? `<div class="status"><span class="ic">${ICON.think}</span><span>${st === 'waking' ? 'Waking up…' : T.act === 'Writing' ? 'Writing it up…' : T.act && T.act !== 'Thinking' ? T.act + '…' : 'Thinking…'}</span></div>` : '';
     if (T.answer && T.fresh) { fresh = true; T.fresh = false; }
     const ans = T.answer ? `<div class="who">${LOGO(s.b.css)}<b>${esc(s.b.name)}</b>${T.took != null ? `<span>· ${took(T.took)}</span>` : ''}</div><div class="ans md ${T.stage === 'failed' ? 'err' : ''}${fresh && lastTurn ? ' fresh' : ''}">${md(T.answer, s)}</div>` : '';
@@ -720,7 +732,7 @@ function renderDrawer() {
   }).join('');
   if (keep || fresh) th.scrollTop = 1e9;
   const b = busy(s);
-  $('#input').placeholder = s.archived ? `Reply to wake ${toolOf(s).name} and carry on…` : b ? `Reply now, ${toolOf(s).name} reads it when this run ends` : `Reply to ${s.b.name}…`;
+  $('#input').placeholder = s.archived ? `Reply to wake ${toolOf(s).name} and carry on…` : s.ask ? `Or tell ${s.b.name} what to do instead…` : b ? `Reply now, ${toolOf(s).name} reads it when this run ends` : `Reply to ${s.b.name}…`;
   $('#dDel').hidden = false; renderPill('#dModel', s.tool); syncSend();
 }
 const day = ms => { const d = new Date(ms), n = new Date(); const k = (n - new Date(d.getFullYear(), d.getMonth(), d.getDate())) / 864e5; return k < 1 ? 'Today' : k < 2 ? 'Yesterday' : k < 7 ? 'This week' : d.toLocaleDateString(undefined, { month: 'long', year: 'numeric' }); };
@@ -749,20 +761,76 @@ function renderPanel() {
     body.innerHTML = `<div class="kanban">${COLS.map(([h, c, st]) => {
       const list = sessions.filter(s => st.includes(last(s).stage));
       return `<div class="col"><h4 style="--k:${c}">${h[0] + h.slice(1).toLowerCase()}<span>${list.length}</span></h4>${list.map(s => { const T = last(s);
-        return `<button class="card st-${T.stage}" data-open="${s.id}">${LOGO(s.b.css)}<span class="ct"><b>${esc(s.b.name)} · ${toolOf(s).name} · ${WORD[T.stage]}</b><span>${esc(s.title)}</span><em>${ago(T.t0)}${T.steps.length ? ` · ${T.steps.length} step${T.steps.length === 1 ? '' : 's'}` : ''}</em></span></button>`; }).join('') || '<p class="none">Nobody here</p>'}</div>`;
+        return `<button class="card st-${T.stage}" data-open="${s.id}">${LOGO(s.b.css)}<span class="ct"><b>${esc(s.b.name)}${badge(s.tool)} · ${WORD[T.stage]}</b><span>${esc(s.title)}</span><em>${ago(T.t0)}${T.steps.length ? ` · ${T.steps.length} step${T.steps.length === 1 ? '' : 's'}` : ''}</em></span></button>`; }).join('') || '<p class="none">Nobody here</p>'}</div>`;
     }).join('')}</div>`;
   } else {
     $('#pTitle').textContent = 'Office overview';
     $('#pSub').textContent = `Up to ${maxRunning} tasks run at once, across Kiro, Codex and Cursor`;
-    const stats = [['Working', count(['waking', 'working']), 'var(--li)'], ['Done', count(['done']), 'var(--ok)'], ['Failed', count(['failed']), 'var(--bad)'], ['Stopped', count(['stopped']), 'var(--stop)']];
+    const stats = [['Working', count(['waking', 'working', 'waiting']), 'var(--li)'], ['Done', count(['done']), 'var(--ok)'], ['Failed', count(['failed']), 'var(--bad)'], ['Stopped', count(['stopped']), 'var(--stop)']];
     body.innerHTML = `<div class="stats">${stats.map(([l, v, c]) => `<div style="--k:${c}"><b>${v}</b><span>${l}</span></div>`).join('')}</div>
       <h4 class="sh">Context used</h4>${sessions.map(s => `<button class="meter" data-open="${s.id}">${LOGO(s.b.css)}<span class="mt"><b>${esc(s.b.name)}</b><span>${esc(s.title)}</span><i><u style="width:${s.ctx ?? 0}%"></u></i></span><em>${s.ctx == null ? '—' : s.ctx + '%'}</em></button>`).join('') || '<p class="none">No sessions yet. Press + to give an agent a task.</p>'}`;
   }
 }
 function changed(s) {
-  drawBoard(); renderPanel();
+  drawBoard(); renderPanel(); renderAsks(); renderIsland();
   if (s && s.id === sel && drawerOpen) renderDrawer();
 }
+
+// ── What an agent asks before it acts ───────────────────────────────────
+// The question, as a card: over the bot's head in the room, or at the end of its
+// chat. Run (or Allow edit, Delete) allows it once, Trust allows it again for the rest
+// of the session, Deny turns it down and the agent carries on without it.
+function askHTML(s, where) {
+  const a = s.ask; if (!a) return '';
+  const body = a.command ? `<span class="pr">$</span>${esc(a.command)}`
+    : a.preview ? (a.path ? `<span class="pth">${esc(a.path)}</span>\n` : '') + a.preview.split('\n').map(l => `<span class="${l[0] === '+' ? 'a' : l[0] === '-' ? 'd' : ''}">${esc(l)}</span>`).join('\n')
+    : esc(a.path || a.title);
+  return `<div class="askc ${where}${a.danger ? ' dz' : ''}" data-sid="${s.id}" data-ask="${esc(a.id)}" role="group" aria-label="${esc(a.title)}">`
+    + `<div class="at">${badge(s.tool)}<b>${esc(a.title)}</b>${a.more ? `<em>+${a.more} more</em>` : ''}</div>`
+    + `<pre>${body}</pre><div class="ar"><i></i>${esc(a.reason)}</div>`
+    + `<div class="ab"><button data-ans="deny">Deny</button><span class="sp"></span><button data-ans="trust" title="Allow this again for the rest of the session">Trust</button>`
+    + `<button data-ans="allow" class="${a.danger ? 'dz' : 'pri'}">${esc(a.allow || 'Allow')}</button></div></div>`;
+}
+function answer(s, id, how) {
+  if (host) { host.postMessage({ type: 'answer', id: s.id, ask: id, answer: how }); return; }
+  // The demo: the bot gets on with it, or finds another way.
+  const T = last(s); s.ask = null;
+  if (how === 'deny') { T.stage = 'working'; T.act = 'Thinking'; changed(s); timers[s.id] = setTimeout(() => play(s, T, 5), 2500); return; }
+  T.stage = 'working'; T.act = 'Running'; changed(s); play(s, T, 4);
+}
+function renderAsks() {
+  for (const s of sessions) {
+    const slot = s.tag?.querySelector('.ask-slot'); if (!slot) continue;
+    const key = last(s).stage === 'waiting' && s.ask ? s.ask.id + (s.ask.more || 0) : '';
+    if (slot.dataset.key === key) continue;
+    slot.dataset.key = key; slot.innerHTML = key ? askHTML(s, 'over') : '';
+  }
+}
+addEventListener('click', e => {
+  const b = e.target.closest('[data-ans]'); if (!b) return;
+  const card = b.closest('.askc'), s = sessions.find(x => x.id === +card.dataset.sid);
+  if (s?.ask && s.ask.id === card.dataset.ask) answer(s, s.ask.id, b.dataset.ans);
+});
+
+// The island: in the notch, the resting notch stays at the top of the open office,
+// with the agents' logos, what the newest is doing and for how long; amber while one
+// asks. A click opens that session.
+function renderIsland() {
+  const el = $('#island'); if (!el) return;
+  const live = sessions.filter(busy), show = live.length > 0 && (!host || document.body.classList.contains('notch'));
+  el.hidden = !show; if (!show) return;
+  const asking = live.find(x => x.ask && last(x).stage === 'waiting'), s = asking || live[live.length - 1], T = last(s);
+  const words = asking ? `<span class="v">${esc(s.ask.line || s.ask.title)}</span>`
+    : T.stage === 'waking' ? '<span class="v">Waking up</span>'
+    : `<span class="v">${esc(T.act === 'Thinking' || !T.act ? 'Thinking' : T.act === 'Writing' ? 'Writing it up' : T.act)}</span>${T.file && T.act !== 'Thinking' && T.act !== 'Writing' ? ` <b>${esc(short(T.file))}</b>` : ''}`;
+  el.classList.toggle('ask', !!asking);
+  el.dataset.open = s.id; el.dataset.t0 = T.t0;
+  el.innerHTML = `<span class="marks">${live.map(x => badge(x.tool).replace('lg mini', 'lg mini' + (x === s ? ' on' : ''))).join('')}</span>${words}<span class="tm">${clockOf(T.t0)}</span>`;
+  el.setAttribute('aria-label', `${toolOf(s).name}: ${el.querySelector('.v')?.textContent || ''}. Open its chat`);
+}
+const clockOf = t0 => { const n = Math.max(0, Math.floor((Date.now() - t0) / 1000)); return `${Math.floor(n / 60)}:${String(n % 60).padStart(2, '0')}`; };
+setInterval(() => { const el = $('#island'); if (el && !el.hidden) el.querySelector('.tm').textContent = clockOf(+el.dataset.t0); }, 1000);
+$('#island')?.addEventListener('click', () => { const id = +$('#island').dataset.open; if (sessions.some(s => s.id === id)) openSession(id); });
 function openSession(id) {
   closePanel(true); fold();
   viewing = null; sel = id; drawerOpen = true; view.classList.add('open'); $('#drawer').classList.add('open'); $('#drawer').setAttribute('aria-hidden', 'false');

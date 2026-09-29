@@ -177,6 +177,13 @@ public sealed class AcpHostTests
         public int Starts;
         public bool HangPrompt, AskToEdit;
         public string? PermissionAnswer;
+        /// What the permission request asks for: its kind, and its raw input.
+        public string AskKind = "edit";
+        public object? AskInput;
+        public int Asked;
+        /// Offer the access options the real tools do: Kiro's autopilot and a mode
+        /// with each tool's values.
+        public bool Offer;
         /// The agent dies: its output closes, as when the process exits.
         public Action? Crash;
         private StreamWriter? _out;
@@ -209,6 +216,17 @@ public sealed class AcpHostTests
 
         private static readonly object[] Models = { new { value = "m1", name = "Model one" }, new { value = "m2", name = "Model two" } };
 
+        private static object Choice(string v) => new { value = v, name = v };
+        private static readonly object[] Access =
+        {
+            new { id = "autopilot", currentValue = "unset", options = new[] { Choice("on"), Choice("off") } },
+            new
+            {
+                id = "mode", category = "mode", currentValue = "x",
+                options = new[] { "vibe", "read-only", "workspace-write", "agent", "agent-full-access", "ask", "plan" }.Select(Choice).ToArray(),
+            },
+        };
+
         private async Task Serve(StreamReader r, StreamWriter w)
         {
             try
@@ -221,9 +239,14 @@ public sealed class AcpHostTests
                     var p = m.TryGetProperty("params", out var pp) ? pp.Clone() : default;
                     if (method is null)
                     {
-                        // The answer to a permission request.
-                        PermissionAnswer = m.GetProperty("result").GetProperty("outcome").GetProperty("optionId").GetString();
-                        if (_hanging is { } h) await Say(w, new { jsonrpc = "2.0", id = h, result = new { stopReason = "cancelled" } });
+                        // The answer to a permission request: allowed, it finishes the turn.
+                        var outcome = m.GetProperty("result").GetProperty("outcome");
+                        PermissionAnswer = outcome.TryGetProperty("optionId", out var opt) ? opt.GetString() : outcome.GetProperty("outcome").GetString();
+                        if (_hanging is { } h)
+                        {
+                            _hanging = null;
+                            await Say(w, new { jsonrpc = "2.0", id = h, result = new { stopReason = PermissionAnswer is "yes" or "always" ? "end_turn" : "cancelled" } });
+                        }
                         continue;
                     }
                     lock (Got) Got.Add((method, p));
@@ -233,7 +256,11 @@ public sealed class AcpHostTests
                     {
                         case "initialize": result = new { protocolVersion = 1, agentCapabilities = new { loadSession = true } }; break;
                         case "session/new":
-                            result = new { sessionId = "s1", configOptions = new object[] { new { id = "model", category = "model", currentValue = "m1", options = Models } } };
+                            result = new
+                            {
+                                sessionId = "s1",
+                                configOptions = Offer ? Access : new object[] { new { id = "model", category = "model", currentValue = "m1", options = Models } },
+                            };
                             break;
                         case "session/load":
                             // It replays the conversation before it answers.
@@ -259,13 +286,19 @@ public sealed class AcpHostTests
                             if (AskToEdit)
                             {
                                 _hanging = id;
+                                Interlocked.Increment(ref Asked);
                                 await Say(w, new
                                 {
                                     jsonrpc = "2.0", id = 900, method = "session/request_permission",
                                     @params = new
                                     {
-                                        sessionId = sid, toolCall = new { toolCallId = "e", kind = "edit", title = "Write" },
-                                        options = new object[] { new { optionId = "yes", name = "Accept", kind = "allow_once" }, new { optionId = "no", name = "Reject", kind = "reject_once" } },
+                                        sessionId = sid,
+                                        toolCall = new { toolCallId = "e", kind = AskKind, title = "Write", rawInput = AskInput ?? new { } },
+                                        options = new object[]
+                                        {
+                                            new { optionId = "yes", name = "Accept", kind = "allow_once" }, new { optionId = "always", name = "Always", kind = "allow_always" },
+                                            new { optionId = "no", name = "Reject", kind = "reject_once" },
+                                        },
                                     },
                                 });
                                 continue;
@@ -287,10 +320,10 @@ public sealed class AcpHostTests
         public List<string> Methods() { lock (Got) return Got.Select(g => g.Method).ToList(); }
     }
 
-    private (AcpHost Host, Fake Fake) Make(AgentOptions? o = null)
+    private (AcpHost Host, Fake Fake) Make(AgentOptions? o = null, AgentTool tool = AgentTool.Kiro)
     {
         var fake = new Fake();
-        return (new AcpHost(AgentTool.Kiro, () => o ?? AgentOptions.Default, fake.Connect), fake);
+        return (new AcpHost(tool, () => o ?? AgentOptions.Default, fake.Connect), fake);
     }
 
     [Test]
@@ -389,6 +422,169 @@ public sealed class AcpHostTests
             Assert.That(r.Text, Does.Contain("read only"));
         });
         host.Shutdown();
+    }
+
+    [Test]
+    public async Task Autopilot_allows_without_asking()
+    {
+        var (host, fake) = Make();
+        fake.AskToEdit = true;
+        var asked = 0;
+        host.Asking = (_, _, _) => { Interlocked.Increment(ref asked); return Task.FromResult(AskAnswer.Deny); };
+        var r = await host.Run(_dir, "change it", null, CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(15));
+        Assert.Multiple(() =>
+        {
+            Assert.That(fake.PermissionAnswer, Is.EqualTo("yes"));
+            Assert.That(asked, Is.Zero);
+            Assert.That(r.State, Is.EqualTo(KiroState.Completed));
+        });
+        host.Shutdown();
+    }
+
+    [Test]
+    public async Task Asking_waits_for_the_user_and_trust_holds_for_the_session()
+    {
+        var (host, fake) = Make(new AgentOptions(Approval: AgentApproval.Always));
+        fake.AskToEdit = true;
+        var asks = new List<(string Sid, AgentAsk Ask)>();
+        var answer = new TaskCompletionSource<AskAnswer>();
+        host.Asking = (sid, ask, _) => { lock (asks) asks.Add((sid, ask)); return answer.Task; };
+        var run = host.Run(_dir, "change it", null, CancellationToken.None);
+        while (fake.Asked == 0 || asks.Count == 0) await Task.Delay(20);
+        await Task.Delay(100);
+        Assert.That(run.IsCompleted, Is.False, "the turn waits for the answer");
+        answer.SetResult(AskAnswer.Trust);
+        var r = await run.WaitAsync(TimeSpan.FromSeconds(15));
+        var trusted = fake.PermissionAnswer;
+        var again = await host.Run(_dir, "and again", null, CancellationToken.None, "s1").WaitAsync(TimeSpan.FromSeconds(15));
+        Assert.Multiple(() =>
+        {
+            Assert.That(asks[0].Sid, Is.EqualTo("s1"));
+            Assert.That(asks[0].Ask.Kind, Is.EqualTo("edit"));
+            Assert.That(r.State, Is.EqualTo(KiroState.Completed));
+            Assert.That(trusted, Is.EqualTo("yes"), "Trust is Hover's: Kiro's own allow-always can change a Kiro setting");
+            Assert.That(again.State, Is.EqualTo(KiroState.Completed));
+            Assert.That(fake.Asked, Is.EqualTo(2));
+            Assert.That(asks, Has.Count.EqualTo(1), "the trusted call went ahead without asking again");
+        });
+        host.Shutdown();
+    }
+
+    [Test]
+    public async Task Only_Codexs_allow_always_is_picked_its_lasts_the_session_only()
+    {
+        foreach (var (tool, want) in new[] { (AgentTool.Codex, "always"), (AgentTool.Cursor, "yes") })
+        {
+            var (host, fake) = Make(new AgentOptions(Approval: AgentApproval.Always), tool);
+            fake.AskToEdit = true;
+            host.Asking = (_, _, _) => Task.FromResult(AskAnswer.Trust);
+            await host.Run(_dir, "change it", null, CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(15));
+            Assert.That(fake.PermissionAnswer, Is.EqualTo(want), tool.ToString());
+            host.Shutdown();
+        }
+    }
+
+    [Test]
+    public async Task Each_tool_is_put_where_it_asks()
+    {
+        async Task<List<string>> Sets(AgentTool tool, AgentOptions o)
+        {
+            var (host, fake) = Make(o, tool);
+            fake.Offer = true;
+            await host.Run(_dir, "go", null, CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(15));
+            host.Shutdown();
+            return fake.Got.Where(g => g.Method == "session/set_config_option")
+                .Select(g => g.Params.GetProperty("configId").GetString() + "=" + g.Params.GetProperty("value").GetString()).ToList();
+        }
+        var risky = new AgentOptions(Approval: AgentApproval.Risky);
+        var always = new AgentOptions(Approval: AgentApproval.Always);
+        Assert.Multiple(async () =>
+        {
+            Assert.That(await Sets(AgentTool.Kiro, risky), Does.Contain("autopilot=off"), "asking needs Kiro out of its autopilot");
+            Assert.That(await Sets(AgentTool.Kiro, AgentOptions.Default), Does.Contain("autopilot=on"));
+            Assert.That(await Sets(AgentTool.Codex, AgentOptions.Default), Does.Contain("mode=agent-full-access"));
+            Assert.That(await Sets(AgentTool.Codex, risky), Does.Contain("mode=workspace-write"), "not agent: Codex's own reviewer would answer for the user");
+            Assert.That(await Sets(AgentTool.Codex, always), Does.Contain("mode=read-only"));
+            Assert.That(await Sets(AgentTool.Cursor, risky), Does.Contain("mode=agent"));
+        });
+    }
+
+    [Test]
+    public async Task A_denied_call_is_rejected()
+    {
+        var (host, fake) = Make(new AgentOptions(Approval: AgentApproval.Always));
+        fake.AskToEdit = true;
+        host.Asking = (_, _, _) => Task.FromResult(AskAnswer.Deny);
+        var r = await host.Run(_dir, "change it", null, CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(15));
+        Assert.That(fake.PermissionAnswer, Is.EqualTo("no"));
+        Assert.That(r.State, Is.Not.EqualTo(KiroState.Completed));
+        host.Shutdown();
+    }
+
+    [Test]
+    public async Task Risky_lets_edits_in_the_folder_go_and_asks_about_commands()
+    {
+        var (host, fake) = Make(new AgentOptions(Approval: AgentApproval.Risky));
+        fake.AskToEdit = true;
+        AgentAsk? seen = null;
+        host.Asking = (_, ask, _) => { seen = ask; return Task.FromResult(AskAnswer.Allow); };
+        await host.Run(_dir, "edit", null, CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(15));
+        var edit = seen;
+        fake.AskKind = "execute";
+        fake.AskInput = new { command = new[] { "bash", "-lc", "npm install three@0.171.0" } };
+        var r = await host.Run(_dir, "install", null, CancellationToken.None, "s1").WaitAsync(TimeSpan.FromSeconds(15));
+        Assert.Multiple(() =>
+        {
+            Assert.That(edit, Is.Null, "an edit inside the folder isn't asked about");
+            Assert.That(seen?.Command, Is.EqualTo("npm install three@0.171.0"));
+            Assert.That(seen?.Reason, Does.Contain("network"));
+            Assert.That(seen?.Danger, Is.False);
+            Assert.That(r.State, Is.EqualTo(KiroState.Completed));
+        });
+        host.Shutdown();
+    }
+
+    [Test]
+    public async Task Stopping_withdraws_the_question()
+    {
+        var (host, fake) = Make(new AgentOptions(Approval: AgentApproval.Always));
+        fake.AskToEdit = true;
+        var asked = new TaskCompletionSource();
+        host.Asking = (_, _, _) => { asked.TrySetResult(); return new TaskCompletionSource<AskAnswer>().Task; };
+        using var cts = new CancellationTokenSource();
+        var run = host.Run(_dir, "change it", null, cts.Token);
+        await asked.Task.WaitAsync(TimeSpan.FromSeconds(15));
+        cts.Cancel();
+        var r = await run.WaitAsync(TimeSpan.FromSeconds(15));
+        for (var i = 0; i < 100 && fake.PermissionAnswer is null; i++) await Task.Delay(20);
+        Assert.That(r.State, Is.EqualTo(KiroState.Cancelled));
+        Assert.That(fake.PermissionAnswer, Is.EqualTo("cancelled"));
+        host.Shutdown();
+    }
+
+    [Test]
+    public void A_question_says_what_it_would_do()
+    {
+        using var del = JsonDocument.Parse("{\"toolCallId\":\"d\",\"kind\":\"execute\",\"title\":\"Shell\",\"rawInput\":{\"command\":\"rm -rf build\"}}");
+        var d = AcpHost.Describe(del.RootElement, "execute", _dir, out _);
+        var file = Path.Combine(_dir, "src", "a.cs").Replace("\\", "\\\\");
+        using var edit = JsonDocument.Parse("{\"kind\":\"edit\",\"title\":\"Edit\",\"content\":[{\"type\":\"diff\",\"path\":\"" + file + "\",\"oldText\":\"a\\nb\\nc\",\"newText\":\"a\\nB\\nc\\nd\"}]}");
+        var e = AcpHost.Describe(edit.RootElement, "edit", _dir, out var outside);
+        var elsewhere = Path.Combine(Path.GetTempPath(), "elsewhere.txt").Replace("\\", "\\\\");
+        using var far = JsonDocument.Parse("{\"kind\":\"edit\",\"locations\":[{\"path\":\"" + elsewhere + "\"}]}");
+        AcpHost.Describe(far.RootElement, "edit", _dir, out var farOut);
+        Assert.Multiple(() =>
+        {
+            Assert.That(d.Danger, Is.True);
+            Assert.That(d.Command, Is.EqualTo("rm -rf build"));
+            Assert.That(e.Path, Is.EqualTo("src/a.cs"));
+            Assert.That((e.Added, e.Removed), Is.EqualTo((2, 1)));
+            Assert.That(e.Preview, Is.EqualTo("- b\n+ B\n+ d"));
+            Assert.That(outside, Is.False);
+            Assert.That(farOut, Is.True);
+            Assert.That(AcpHost.NeedsAsking(AgentApproval.Risky, "edit", true), Is.True);
+            Assert.That(AcpHost.NeedsAsking(AgentApproval.Always, "read", false), Is.False);
+        });
     }
 
     [Test]
@@ -500,6 +696,52 @@ public sealed class KiroSessionTests
         s.Stop();
         await WaitFor(() => s.State != KiroState.Running);
         Assert.That(s.State, Is.EqualTo(KiroState.Cancelled), "a stopped run reads as stopped, however it ended");
+    }
+
+    [Test]
+    public async Task A_question_waits_for_its_answer_and_a_stop_turns_it_down()
+    {
+        var s = new KiroSession(async (_, _, _, ct, _, _) =>
+        {
+            await Task.Delay(Timeout.Infinite, ct).ContinueWith(_ => { });
+            return new KiroResult(KiroState.Cancelled, "stopped");
+        });
+        var idle = await new KiroSession().Ask(new AgentAsk("x", "edit", "Edit", null, "a.cs", null, 0, 0, "Edits a file", false));
+        s.Start(_folder, "long");
+        var first = s.Ask(new AgentAsk("1", "execute", "Run", "npm test", null, null, 0, 0, "Runs a command", false));
+        var second = s.Ask(new AgentAsk("2", "delete", "Delete", null, "old.snap", null, 0, 0, "Deletes files", true));
+        Assert.Multiple(() =>
+        {
+            Assert.That(idle, Is.EqualTo(AskAnswer.Deny), "a session that isn't running has nothing to ask");
+            Assert.That(s.Waiting, Is.True);
+            Assert.That(s.Asking?.Id, Is.EqualTo("1"), "oldest first");
+            Assert.That(s.Answer("nope", AskAnswer.Allow), Is.False);
+        });
+        Assert.That(s.Answer("1", AskAnswer.Trust), Is.True);
+        Assert.That(await first, Is.EqualTo(AskAnswer.Trust));
+        Assert.That(s.Asking?.Id, Is.EqualTo("2"));
+        s.Stop();
+        Assert.That(await second.WaitAsync(TimeSpan.FromSeconds(5)), Is.EqualTo(AskAnswer.Deny));
+        Assert.That(s.Waiting, Is.False);
+        await WaitFor(() => s.State != KiroState.Running);
+    }
+
+    [Test]
+    public void The_notch_says_the_file_or_the_command_not_the_path()
+    {
+        var run = new AgentAsk("r", "execute", "Shell", "npm install three@0.171.0", null, null, 0, 0, "Installs packages or uses the network", false);
+        var edit = new AgentAsk("e", "edit", "Edit", null, "src/auth/refresh.ts", "- a\n+ b", 1, 1, "Changes 2 lines", false);
+        Assert.Multiple(() =>
+        {
+            Assert.That(AgentWords.Short(@"C:\Projects\Hover\src\Hover\Owl\Notch.cs"), Is.EqualTo("Notch.cs"));
+            Assert.That(AgentWords.Short("src/auth/refresh.ts"), Is.EqualTo("refresh.ts"));
+            Assert.That(AgentWords.Short("dotnet test .\\Hover.slnx -c Release"), Is.EqualTo("dotnet test"));
+            Assert.That(AgentWords.Short("  "), Is.Null);
+            Assert.That(AgentWords.AskLine(run), Is.EqualTo(("Wants to run", "npm install")));
+            Assert.That(AgentWords.AskTitle(edit), Is.EqualTo("Wants to edit refresh.ts"));
+            Assert.That(AgentWords.AskAllow(run), Is.EqualTo("Run"));
+            Assert.That(AgentWords.Activity(new KiroSession()), Is.EqualTo(("Ready", "")));
+        });
     }
 
     [Test]

@@ -66,6 +66,33 @@ public sealed class SettingsTests
     }
 
     [Test]
+    public void Each_agents_approval_is_kept_and_asking_is_opt_in()
+    {
+        var kiro = Settings.AgentOptions(Services.AgentTool.Kiro);
+        var codex = Settings.AgentOptions(Services.AgentTool.Codex);
+        try
+        {
+            Settings.SetAgentOptions(Services.AgentTool.Kiro, kiro with { Approval = Services.AgentApproval.Risky });
+            Settings.SetAgentOptions(Services.AgentTool.Codex, codex with { Approval = Services.AgentApproval.Always });
+            Settings.Flush();
+            var json = File.ReadAllText(Paths.SettingsFile);
+            Assert.Multiple(() =>
+            {
+                Assert.That(Settings.AgentOptions(Services.AgentTool.Kiro).Approval, Is.EqualTo(Services.AgentApproval.Risky));
+                Assert.That(Settings.AgentOptions(Services.AgentTool.Codex).Approval, Is.EqualTo(Services.AgentApproval.Always));
+                Assert.That(new Services.AgentOptions().Approval, Is.EqualTo(Services.AgentApproval.Autopilot), "asking is opt-in");
+                Assert.That(json, Does.Contain("\"KiroApproval\": \"Risky\""));
+            });
+        }
+        finally
+        {
+            Settings.SetAgentOptions(Services.AgentTool.Kiro, kiro);
+            Settings.SetAgentOptions(Services.AgentTool.Codex, codex);
+            Settings.Flush();
+        }
+    }
+
+    [Test]
     public void The_old_planner_is_removed_and_the_key_the_history_needs_stays()
     {
         var key = Path.Combine(Paths.Support, "note.key");

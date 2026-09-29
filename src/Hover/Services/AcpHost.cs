@@ -72,12 +72,25 @@ public sealed class AcpHost
     /// Raised off the UI thread.
     public event Action<AgentTool, IReadOnlyList<AcpOption>>? OptionsSeen;
 
-    private sealed class Turn(KiroStream stream, IProgress<KiroPhase>? progress, IProgress<KiroEvent>? events, AgentOptions options)
+    /// Asks the user about a tool call the agent wants to make, for the ACP session
+    /// named first; the token ends when the run is stopped. Called off the UI thread.
+    /// Without it, whatever the settings say should be asked about is turned down.
+    public Func<string, AgentAsk, CancellationToken, Task<AskAnswer>>? Asking { get; set; }
+
+    /// What the user trusted for the rest of a session, by ACP session id: the keys of
+    /// tool calls (Key()), or "*" for everything.
+    private readonly ConcurrentDictionary<string, ConcurrentDictionary<string, bool>> _trusted = new();
+
+    private sealed class Turn(KiroStream stream, IProgress<KiroPhase>? progress, IProgress<KiroEvent>? events, AgentOptions options,
+        string folder, CancellationToken token)
     {
         public KiroStream Stream { get; } = stream;
         public IProgress<KiroPhase>? Progress { get; } = progress;
         public IProgress<KiroEvent>? Events { get; } = events;
         public AgentOptions Options { get; } = options;
+        public string Folder { get; } = folder;
+        /// Cancelled when the run is stopped, which also withdraws a question.
+        public CancellationToken Token { get; } = token;
         /// While a conversation is loaded back, the agent replays it; that isn't news.
         public volatile bool Muted;
         public volatile bool Refused;
@@ -105,7 +118,7 @@ public sealed class AcpHost
         var o = _options();
         Interlocked.Increment(ref _busy);
         _idle.Change(Timeout.Infinite, Timeout.Infinite);
-        var turn = new Turn(new KiroStream { Name = Name }, progress, events, o);
+        var turn = new Turn(new KiroStream { Name = Name }, progress, events, o, folder, ct);
         string? sid = null;
         try
         {
@@ -212,15 +225,30 @@ public sealed class AcpHost
         await Set(Find("model", "model"), o.Model);
         // An effort list can appear only once a model is picked (Kiro's does).
         await Set(Find("thought_level", "effortLevel", "reasoning_effort", "effort"), o.Effort);
+        // Asking needs the agent to ask Hover: each tool is put where it sends every
+        // call it would stop for as session/request_permission, and Hover's own rules
+        // (NeedsAsking) decide which of those reach the user. What each offers
+        // (checked against their sources, Sep 2026):
+        // - Kiro (v3): the autopilot option; off, everything past its built-in
+        //   defaults (workspace reads, read-only git) asks.
+        // - Codex (codex-acp): the mode option. agent-full-access never asks; "agent"
+        //   is Auto review, where Codex's own reviewer approves what it thinks safe and
+        //   Hover would rarely hear of it; workspace-write asks for writes outside the
+        //   folder and the network; read-only asks for every write and command. Ask
+        //   always takes read-only (Hover then allows reads itself), Ask first
+        //   workspace-write, as Codex's own "Auto" preset does.
+        // - Cursor (agent acp): asks unless started with --force; its modes are agent,
+        //   plan and ask. So it asks either way, and Full answers yes (Permission()).
+        var asks = !o.ReadOnly && o.Approval != AgentApproval.Autopilot;
         switch (Tool)
         {
             case AgentTool.Kiro:
-                // Writes then wait for an approval, which Refuse() turns down.
-                await Set(Find(null, "autopilot"), o.ReadOnly ? "off" : "on");
+                await Set(Find(null, "autopilot"), o.ReadOnly || asks ? "off" : "on");
                 await Set(Find("mode", "mode"), o.Agent ?? "vibe");
                 break;
             case AgentTool.Codex:
-                await Set(Find("mode", "mode"), o.ReadOnly ? "read-only" : "agent-full-access");
+                await Set(Find("mode", "mode"), o.ReadOnly ? "read-only" : !asks ? "agent-full-access"
+                    : o.Approval == AgentApproval.Always ? "read-only" : "workspace-write");
                 break;
             default:
                 await Set(Find("mode", "mode"), o.ReadOnly ? "ask" : "agent");
@@ -403,8 +431,10 @@ public sealed class AcpHost
         if (hasId)
         {
             var idValue = id.Clone();
+            // Answered on its own: the user may take minutes, and every other session's
+            // news comes down this same pipe meanwhile.
             if (method == "session/request_permission")
-                await Send(new { jsonrpc = "2.0", id = idValue, result = new { outcome = Permission(turn, p) } });
+                _ = AnswerPermission(idValue, turn, Str(p, "sessionId"), p.Clone());
             else
                 await Send(new { jsonrpc = "2.0", id = idValue, error = new { code = -32601, message = "Not supported by Hover." } });
             return;
@@ -433,19 +463,177 @@ public sealed class AcpHost
         }
     }
 
-    /// Full access allows what is asked; read only allows reading and refuses the rest.
-    private static object Permission(Turn? turn, JsonElement p)
+    private async Task AnswerPermission(JsonElement id, Turn? turn, string? sid, JsonElement p)
     {
-        if (turn is null || !p.TryGetProperty("options", out var options) || options.ValueKind != JsonValueKind.Array)
-            return new { outcome = "cancelled" };
-        var kind = p.TryGetProperty("toolCall", out var call) ? Str(call, "kind") : null;
-        var allow = !turn.Options.ReadOnly || kind is "read" or "search" or "fetch" or "think";
-        string? pick = null;
-        foreach (var o in options.EnumerateArray())
-            if ((Str(o, "kind") ?? "").StartsWith(allow ? "allow" : "reject", StringComparison.Ordinal)) { pick = Str(o, "optionId"); break; }
-        if (!allow) turn.Refused = true;
-        return pick is null ? new { outcome = "cancelled" } : new { outcome = "selected", optionId = pick };
+        object outcome;
+        try { outcome = await Permission(turn, sid, p); }
+        catch (Exception e)
+        {
+            Log.Line($"acp {Name}: permission - {e.Message}");
+            outcome = new { outcome = "cancelled" };
+        }
+        try { await Send(new { jsonrpc = "2.0", id, result = new { outcome } }); }
+        catch (AcpGone) { /* the run went with it */ }
     }
+
+    /// Read only allows reading and refuses the rest. Otherwise what the approval
+    /// setting leaves alone is allowed, and the rest goes to the user, unless they
+    /// trusted it earlier in the session. A stopped run withdraws the question.
+    private async Task<object> Permission(Turn? turn, string? sid, JsonElement p)
+    {
+        object Cancelled() => new { outcome = "cancelled" };
+        if (turn is null || !p.TryGetProperty("options", out var options) || options.ValueKind != JsonValueKind.Array)
+            return Cancelled();
+        string? Pick(params string[] kinds)
+        {
+            foreach (var k in kinds)
+                foreach (var o in options.EnumerateArray())
+                    if ((Str(o, "kind") ?? "").StartsWith(k, StringComparison.Ordinal) && Str(o, "optionId") is { } oid) return oid;
+            return null;
+        }
+        object Selected(string? option) => option is null ? Cancelled() : new { outcome = "selected", optionId = option };
+        object Allow() => Selected(Pick("allow_once", "allow"));
+        object Reject() => Selected(Pick("reject_once", "reject"));
+
+        var call = p.TryGetProperty("toolCall", out var c) ? c : default;
+        var kind = Str(call, "kind") ?? "other";
+        if (turn.Options.ReadOnly)
+        {
+            if (kind is "read" or "search" or "fetch" or "think") return Allow();
+            turn.Refused = true;
+            return Reject();
+        }
+        var ask = Describe(call, kind, turn.Folder, out var outside);
+        if (!NeedsAsking(turn.Options.Approval, kind, outside)) return Allow();
+        var trusted = sid is null ? null : _trusted.GetOrAdd(sid, _ => new());
+        var key = Key(ask);
+        if (trusted is not null && (trusted.ContainsKey("*") || trusted.ContainsKey(key))) return Allow();
+        if (Asking is not { } asking || sid is null) return Reject();
+
+        var answer = asking(sid, ask, turn.Token);
+        var stopped = Task.Delay(Timeout.Infinite, turn.Token).ContinueWith(_ => { }, TaskScheduler.Default);
+        if (await Task.WhenAny(answer, stopped) != answer || turn.Token.IsCancellationRequested) return Cancelled();
+        switch (await answer)
+        {
+            case AskAnswer.Allow: return Allow();
+            case AskAnswer.Trust:
+                trusted![key] = true;
+                return Selected(TrustOption());
+            case AskAnswer.TrustAll:
+                trusted!["*"] = true;
+                return Selected(TrustOption());
+            default: return Reject();
+        }
+
+        // Trust lasts the session and is Hover's: Hover answers the same call itself
+        // from then on. The tool's own "always" is only picked where it too is for the
+        // session. Cursor's allow-always writes a lasting rule into the user's own
+        // ~/.cursor/cli-config.json, and Kiro's can change a Kiro setting
+        // (setting_key); a click in the notch must never do that.
+        string? TrustOption() => Tool == AgentTool.Codex ? Pick("allow_always", "allow") : Pick("allow_once", "allow");
+    }
+
+    /// Whether a tool call of this kind waits for the user under this setting.
+    internal static bool NeedsAsking(AgentApproval approval, string kind, bool outside) => approval switch
+    {
+        AgentApproval.Autopilot => false,
+        AgentApproval.Risky => kind switch
+        {
+            "read" or "search" or "think" or "switch_mode" => false,
+            "edit" => outside,
+            _ => true,
+        },
+        _ => kind is not ("read" or "search" or "think" or "switch_mode"),
+    };
+
+    /// What "the same again" means for Trust: the kind, and the command, the file or
+    /// the title.
+    private static string Key(AgentAsk a) => a.Kind + ":" + (a.Command ?? a.Path ?? a.Title);
+
+    private static readonly System.Text.RegularExpressions.Regex Destructive = new(
+        @"(^|[\s;&|(])(rm|rmdir|del|erase|rd|remove-item|format|mkfs|shutdown|git\s+(push|reset|clean|checkout\s+--))\b",
+        System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+    private static readonly System.Text.RegularExpressions.Regex Network = new(
+        @"\b((npm|pnpm|yarn|bun|pip|pip3|uv|cargo|dotnet|nuget|gem|go)\s+(i|install|add|restore|get|update|upgrade)|curl|wget|invoke-webrequest|iwr|git\s+(push|pull|fetch|clone))\b",
+        System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+
+    /// The tool call as the user is asked about it. Outside is set when the file it
+    /// names is not in the folder the session works in.
+    internal static AgentAsk Describe(JsonElement call, string kind, string folder, out bool outside)
+    {
+        var title = Str(call, "title") is { Length: > 0 } t ? t : "Use a tool";
+        var raw = call.ValueKind == JsonValueKind.Object && call.TryGetProperty("rawInput", out var ri) ? ri : default;
+        string? command = null;
+        if (raw.ValueKind == JsonValueKind.Object)
+        {
+            foreach (var name in new[] { "command", "cmd" })
+                if (raw.TryGetProperty(name, out var cv))
+                {
+                    command = cv.ValueKind == JsonValueKind.String ? cv.GetString()
+                        : cv.ValueKind == JsonValueKind.Array ? string.Join(" ", cv.EnumerateArray().Where(x => x.ValueKind == JsonValueKind.String).Select(x => x.GetString())) : null;
+                    if (command is { Length: > 0 }) break;
+                }
+            // Codex sends ["bash", "-lc", "the command"]; the command is what matters.
+            if (command is not null && System.Text.RegularExpressions.Regex.Match(command, @"^(ba|z|)sh\s+-l?c\s+(.+)$", System.Text.RegularExpressions.RegexOptions.Singleline) is { Success: true } sh)
+                command = sh.Groups[2].Value.Trim().Trim('\'', '"');
+        }
+        string? path = null;
+        if (call.ValueKind == JsonValueKind.Object && call.TryGetProperty("locations", out var locs) && locs.ValueKind == JsonValueKind.Array)
+            foreach (var l in locs.EnumerateArray()) { path = Str(l, "path"); if (path is not null) break; }
+        path ??= Str(raw, "path") ?? Str(raw, "file_path") ?? Str(raw, "filePath");
+
+        // A change comes with its old and new text (ACP diff content).
+        var added = 0;
+        var removed = 0;
+        var preview = new List<string>();
+        if (call.ValueKind == JsonValueKind.Object && call.TryGetProperty("content", out var content) && content.ValueKind == JsonValueKind.Array)
+            foreach (var item in content.EnumerateArray())
+            {
+                if (Str(item, "type") != "diff") continue;
+                path ??= Str(item, "path");
+                var before = (Str(item, "oldText") ?? "").Replace("\r", "").Split('\n', StringSplitOptions.None).ToList();
+                var after = (Str(item, "newText") ?? "").Replace("\r", "").Split('\n', StringSplitOptions.None).ToList();
+                if (Str(item, "oldText") is null) before.Clear();
+                var gone = before.ToList();
+                foreach (var line in after) gone.Remove(line);
+                var came = after.ToList();
+                foreach (var line in before) came.Remove(line);
+                removed += gone.Count;
+                added += came.Count;
+                preview.AddRange(gone.Where(x => x.Trim().Length > 0).Take(3).Select(x => "- " + Clip(x.Trim(), 110)));
+                preview.AddRange(came.Where(x => x.Trim().Length > 0).Take(6 - Math.Min(3, preview.Count)).Select(x => "+ " + Clip(x.Trim(), 110)));
+            }
+
+        outside = false;
+        if (path is { Length: > 0 })
+        {
+            try
+            {
+                var full = Path.IsPathFullyQualified(path) ? Path.GetFullPath(path) : Path.GetFullPath(Path.Combine(folder, path));
+                var root = Path.GetFullPath(folder).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
+                if (full.StartsWith(root, StringComparison.OrdinalIgnoreCase)) path = full[root.Length..].Replace('\\', '/');
+                else outside = true;
+            }
+            catch (Exception e) when (e is ArgumentException or NotSupportedException or PathTooLongException) { }
+        }
+
+        var danger = kind == "delete" || (command is not null && Destructive.IsMatch(command));
+        var reason = kind switch
+        {
+            "execute" => danger ? "Can delete or overwrite things" : command is not null && Network.IsMatch(command) ? "Installs packages or uses the network" : "Runs a command",
+            "delete" => "Deletes files",
+            "move" => "Moves or renames files",
+            "fetch" => "Uses the network",
+            "edit" => outside ? "Edits a file outside the folder" : added + removed > 0 ? $"Changes {added + removed} line{(added + removed == 1 ? "" : "s")}" : "Edits a file",
+            _ => "Uses a tool",
+        };
+        if (outside && kind != "edit") reason += " · outside the folder";
+        var id = Str(call, "toolCallId") is { Length: > 0 } tid ? tid : Guid.NewGuid().ToString("N");
+        return new AgentAsk(id, kind, title, command is { Length: > 0 } ? Clip(command, 400) : null, path, preview.Count > 0 ? string.Join("\n", preview) : null,
+            added, removed, reason, danger);
+    }
+
+    private static string Clip(string s, int max) => s.Length <= max ? s : s[..(max - 1)] + "…";
 
     /// The configOptions of a session/new, session/load or set_config_option answer.
     internal static List<AcpOption>? Options(JsonElement r)

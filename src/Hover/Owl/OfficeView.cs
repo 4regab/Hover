@@ -17,8 +17,7 @@ public sealed class OfficeView : UserControl
         _dashboard = dashboard;
         FontFamily = Ui.Font;
         _office = new KiroPage(dashboard, () => ShowSettings(SettingsPage.Section.General));
-        // In the notch a small inset keeps the office inside the shape's curves.
-        _office.Root.Margin = dashboard ? new Thickness(0) : new Thickness(8);
+        // Edge to edge in the notch too: the notch's shape is the office's only frame.
         _root.Children.Add(_office.Root);
         Content = _root;
     }

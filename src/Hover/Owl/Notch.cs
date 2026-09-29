@@ -1,6 +1,7 @@
 using System.Windows;
 using System.Windows.Automation;
 using System.Windows.Controls;
+using System.Windows.Documents;
 using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
@@ -10,18 +11,27 @@ using System.Windows.Shapes;
 using System.Windows.Threading;
 using Hover.Core;
 using Hover.Interop;
+using Hover.Services;
 
 namespace Hover.Owl;
 
 /// The black notch shape and what is inside it. Openness 0 is the resting shape —
-/// a slim pill of glanceable items, or nothing — and 1 is the open
-/// workspace. The
-/// shape grows from one to the other and the workspace is revealed through it.
+/// a slim island of glanceable items, a question from an agent, or nothing — and 1
+/// is the open office. The shape grows from one to the other and the office is
+/// revealed through it. The office fills the shape edge to edge: the shape is its
+/// only frame.
 internal sealed class NotchShell : Canvas
 {
     public static readonly DependencyProperty OpennessProperty = DependencyProperty.Register(
         nameof(Openness), typeof(double), typeof(NotchShell),
         new PropertyMetadata(0.0, (d, _) => ((NotchShell)d).Relayout()));
+
+    /// The resting shape's size as drawn: it springs to each new size rather than
+    /// jumping, so the island breathes as its words change.
+    private static readonly DependencyProperty RestWidthProperty = DependencyProperty.Register(
+        "RestWidth", typeof(double), typeof(NotchShell), new PropertyMetadata(0.0, (d, _) => ((NotchShell)d).Relayout()));
+    private static readonly DependencyProperty RestHeightProperty = DependencyProperty.Register(
+        "RestHeight", typeof(double), typeof(NotchShell), new PropertyMetadata(0.0, (d, _) => ((NotchShell)d).Relayout()));
 
     public double Openness
     {
@@ -30,8 +40,6 @@ internal sealed class NotchShell : Canvas
     }
 
     private readonly Path _shape = new();
-    /// The faint line around the open panel, so it keeps its edge over dark windows.
-    private readonly Path _rim = new() { StrokeThickness = 1, IsHitTestVisible = false };
     private readonly SolidColorBrush _fill = new(Colors.Black);
     /// What the resting shape shows, centred in it.
     public Grid Mini { get; } = new();
@@ -46,7 +54,8 @@ internal sealed class NotchShell : Canvas
     };
 
     private Size _rest, _open = new(1120, 440);
-    private bool _opening, _greet;
+    private bool _opening, _greet, _sized;
+    private Color? _glow;
 
     /// Show the greeting for this opening. Cleared when the opening ends.
     public bool Greet
@@ -70,7 +79,6 @@ internal sealed class NotchShell : Canvas
         Background = null;
         _shape.Fill = _fill;
         Children.Add(_shape);
-        Children.Add(_rim);
         Children.Add(Mini);
         Children.Add(ViewHost);
         Children.Add(Greeting);
@@ -78,34 +86,64 @@ internal sealed class NotchShell : Canvas
         ApplyTheme();
     }
 
-    /// The panel's colour, edge and shadow for the current appearance. The resting
-    /// shape stays black either way.
+    /// The shadow under the shape: a soft one, or while resting a glow in a colour
+    /// that means something (amber: an agent is asking; green or red: a task ended).
     public void ApplyTheme()
     {
-        _rim.Stroke = Ui.PanelEdge;
-        _shape.Effect = new DropShadowEffect
-        {
-            BlurRadius = Theme.Dark ? 24 : 36, ShadowDepth = Theme.Dark ? 4 : 10, Direction = 270,
-            Opacity = Theme.Dark ? 0.5 : 0.22, RenderingBias = RenderingBias.Performance,
-        };
+        _shape.Effect = _glow is { } g
+            ? new DropShadowEffect { Color = g, BlurRadius = 26, ShadowDepth = 0, Opacity = 0.62, RenderingBias = RenderingBias.Performance }
+            : new DropShadowEffect
+            {
+                BlurRadius = Theme.Dark ? 24 : 36, ShadowDepth = Theme.Dark ? 4 : 10, Direction = 270,
+                Opacity = Theme.Dark ? 0.5 : 0.22, RenderingBias = RenderingBias.Performance,
+            };
         Relayout();
+    }
+
+    public void SetGlow(Color? glow)
+    {
+        if (_glow == glow) return;
+        _glow = glow;
+        ApplyTheme();
     }
 
     public void SetSizes(Size rest, Size open)
     {
+        // The first size is set, not sprung to: that is the window being made.
+        var first = !_sized;
+        _sized = true;
         _rest = rest;
         _open = open;
+        if (first || Animator.Still)
+        {
+            BeginAnimation(RestWidthProperty, null);
+            BeginAnimation(RestHeightProperty, null);
+            SetValue(RestWidthProperty, rest.Width);
+            SetValue(RestHeightProperty, rest.Height);
+        }
+        else
+        {
+            // A little overshoot, as a spring settles.
+            var d = new Duration(TimeSpan.FromMilliseconds(rest.Height > RestH + 40 ? 520 : 440));
+            var ease = new BackEase { Amplitude = 0.28, EasingMode = EasingMode.EaseOut };
+            BeginAnimation(RestWidthProperty, new DoubleAnimation(rest.Width, d) { EasingFunction = ease });
+            BeginAnimation(RestHeightProperty, new DoubleAnimation(rest.Height, d) { EasingFunction = ease });
+        }
         Relayout();
     }
+
+    private double RestW => (double)GetValue(RestWidthProperty);
+    private double RestH => (double)GetValue(RestHeightProperty);
 
     private static double Lerp(double a, double b, double t) => a + (b - a) * t;
 
     private void Relayout()
     {
         var t = Openness;
-        var w = Lerp(_rest.Width, _open.Width, t);
-        var h = Lerp(_rest.Height, _open.Height, t);
-        var (rr, re) = RestCorners(_rest);
+        var rest = new Size(Math.Max(0, RestW), Math.Max(0, RestH));
+        var w = Lerp(rest.Width, _open.Width, t);
+        var h = Lerp(rest.Height, _open.Height, t);
+        var (rr, re) = RestCorners(rest);
         var r = Lerp(rr, 32, t);
         var ear = Lerp(re, 10, t);
         var cx = ActualWidth / 2;
@@ -115,14 +153,11 @@ internal sealed class NotchShell : Canvas
         SetLeft(_shape, cx - w / 2);
 
         // Black while small, as a real notch is; the panel's own colour by the time
-        // the cards are in (the same black, in dark mode). Late enough that white
+        // the office is in (the same black, in dark mode). Late enough that white
         // text on the way out stays legible.
         var k = Math.Clamp((t - 0.2) / 0.6, 0, 1);
         k = k * k * (3 - 2 * k);
         _fill.Color = Mix(Colors.Black, Ui.Panel, k);
-        _rim.Data = Outline(w, h, r, ear, 0, closed: false);
-        _rim.Opacity = k;
-        SetLeft(_rim, cx - w / 2);
 
         ViewHost.Width = _open.Width;
         ViewHost.Height = _open.Height;
@@ -132,9 +167,12 @@ internal sealed class NotchShell : Canvas
         ViewHost.Visibility = t <= 0.001 && !_opening ? Visibility.Hidden : Visibility.Visible;
         ViewHost.IsHitTestVisible = t >= 0.999;
 
+        // Laid out at the size it is going to, and shown through the size it is: the
+        // words don't reflow while the shape springs.
         Mini.Width = _rest.Width;
         Mini.Height = _rest.Height;
         SetLeft(Mini, cx - _rest.Width / 2);
+        Mini.Clip = new RectangleGeometry(new Rect((_rest.Width - rest.Width) / 2, 0, rest.Width, rest.Height), rr, rr);
         Mini.Opacity = Math.Clamp(1 - t * 3, 0, 1);
         Mini.Visibility = Mini.Opacity <= 0 ? Visibility.Hidden : Visibility.Visible;
 
@@ -152,11 +190,12 @@ internal sealed class NotchShell : Canvas
         SetTop(Greeting, Math.Max(4, Math.Min(h - gs.Height - 9, 64)));
     }
 
-    /// A fully round pill at rest, with a small flare into the screen edge.
+    /// A fully round island at rest, a card rounded as the open panel is, and a small
+    /// flare into the screen edge either way.
     private static (double Radius, double Ear) RestCorners(Size s)
     {
-        var r = Math.Min(s.Height / 2, 14);
-        return (r, Math.Max(0, Math.Min(5, s.Height - r)));
+        var r = s.Height > 60 ? 24 : Math.Min(s.Height / 2, 16);
+        return (r, Math.Max(0, Math.Min(s.Height > 60 ? 10 : 7, s.Height - r)));
     }
 
     private static Color Mix(Color a, Color b, double k) => Color.FromArgb(
@@ -164,9 +203,8 @@ internal sealed class NotchShell : Canvas
         (byte)Math.Round(a.G + (b.G - a.G) * k), (byte)Math.Round(a.B + (b.B - a.B) * k));
 
     /// A notch: square top edge flush with the screen, rounded bottom corners, and a
-    /// concave flare where each side meets the top edge. x0 shifts it right. Open
-    /// (closed: false) it leaves out the top edge, for the rim.
-    private static Geometry Outline(double w, double h, double r, double ear, double x0, bool closed = true)
+    /// concave flare where each side meets the top edge. x0 shifts it right.
+    private static Geometry Outline(double w, double h, double r, double ear, double x0)
     {
         var g = new StreamGeometry();
         if (w < 1 || h < 1) { g.Freeze(); return g; }
@@ -174,7 +212,7 @@ internal sealed class NotchShell : Canvas
         ear = Math.Max(0, Math.Min(ear, h - r));
         using (var c = g.Open())
         {
-            c.BeginFigure(new Point(x0 - ear, 0), closed, closed);
+            c.BeginFigure(new Point(x0 - ear, 0), true, true);
             if (ear > 0) c.ArcTo(new Point(x0, ear), new Size(ear, ear), 0, false, SweepDirection.Clockwise, true, false);
             c.LineTo(new Point(x0, h - r), true, false);
             c.ArcTo(new Point(x0 + r, h), new Size(r, r), 0, false, SweepDirection.Counterclockwise, true, false);
@@ -194,7 +232,7 @@ internal sealed class NotchHost : IDisposable
 {
     public enum Mode { Rest, Peek, Open }
 
-    private enum RestKind { None, Pill, Alert }
+    private enum RestKind { None, Pill, Alert, Card }
 
     public string Device { get; }
     public Mode State { get; private set; } = Mode.Rest;
@@ -218,18 +256,44 @@ internal sealed class NotchHost : IDisposable
     private DateTime? _zoneSince, _outsideSince;
     private bool _armed = true;
 
-    // The resting pill: one segment per item, built once and updated in place.
+    // The resting island: one segment per item, built once and updated in place.
     private readonly StackPanel _pill = new() { Orientation = Orientation.Horizontal };
-    // Kiro on the resting notch: its bot at work beside what it's doing (the words
-    // slide in when they change), then a happy bot once a task has ended and nobody
-    // has looked yet.
-    private readonly TextBlock _kiroText = Ui.Text("", 12, Ui.White, FontWeights.SemiBold);
-    private readonly TextBlock _kiroDoneText = Ui.Text("", 12, Ui.White, FontWeights.SemiBold);
-    private readonly BotGlyph _kiroDoneBot = new() { Width = 17, Height = 17, Finished = true, VerticalAlignment = VerticalAlignment.Center };
-    private readonly FrameworkElement _kiroSeg, _kiroDoneSeg;
-    private int _kiroDoneShown;
-    private readonly Dictionary<string, (FrameworkElement Seg, Ring Ring, TextBlock Text)> _quotaSegs = new();
+
+    // The agents at work: their marks (the one spoken of in front, its ring turning),
+    // what it is doing now, a verb and a file or command whose words rise in when
+    // they change, and how long it has been at it.
+    private readonly MarkStack _stack = new() { VerticalAlignment = VerticalAlignment.Center };
+    private readonly TextBlock _activity = Ui.Text("", 12.5, Ui.White, FontWeights.SemiBold);
+    private readonly TextBlock _timer = Ui.Text("", 11.5, Dim, FontWeights.Medium);
+    private readonly FrameworkElement _workSeg;
+    private int _speaker, _ticks;
+    private readonly DispatcherTimer _clock = new(DispatcherPriority.Normal) { Interval = TimeSpan.FromSeconds(1) };
+
+    // An agent waiting on the user: its mark in a breathing amber ring, what it wants
+    // in a few words, Deny, and Review, which opens the card.
+    private readonly LiveMark _askMark = new() { Width = 26, Height = 26, Ring = LiveMark.Rings.Breathe, RingColor = Amber, VerticalAlignment = VerticalAlignment.Center };
+    private readonly TextBlock _askText = Ui.Text("", 12.5, Ui.White, FontWeights.SemiBold);
+    private readonly FrameworkElement _askSeg;
+    private (KiroSession Session, AgentAsk Ask)? _asked;
+
+    // A task ended and nobody has looked yet: its mark with a badge, and the task.
+    private readonly LiveMark _doneMark = new() { Width = 18, Height = 18, TileSize = 18, VerticalAlignment = VerticalAlignment.Center };
+    private readonly TextBlock _doneText = Ui.Text("", 12.5, Ui.White, FontWeights.SemiBold);
+    private readonly TextBlock _doneTook = Ui.Text("", 11.5, Dim, FontWeights.Medium);
+    private readonly FrameworkElement _doneSeg;
+    private int _doneShown;
+    /// The green or red glow of an ending lasts a moment; the words stay until seen.
+    private readonly DispatcherTimer _endGlow = new(DispatcherPriority.Normal) { Interval = TimeSpan.FromSeconds(6) };
+
+    private readonly Border _divider = new() { Width = 1, Height = 14, Background = Ui.Frozen(Color.FromArgb(0x2E, 0xFF, 0xFF, 0xFF)), VerticalAlignment = VerticalAlignment.Center };
+    private readonly Dictionary<string, (FrameworkElement Seg, LiveMark Mark, TextBlock Text)> _quotaSegs = new();
     private string _pillKey = "";
+
+    // The question in full, in the notch: open from Review, answered there.
+    private readonly Border _card = new() { Visibility = Visibility.Collapsed, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Top };
+    private bool _cardOpen;
+    private string _cardKey = "";
+    private IntPtr _cardPrevious;
 
     private readonly TextBlock _alertTitle = Ui.Text("", 13.5, Ui.White, FontWeights.SemiBold);
     private readonly TextBlock _alertText = Ui.Text("", 11.5, Ui.WhiteDim);
@@ -237,11 +301,16 @@ internal sealed class NotchHost : IDisposable
     private (string Title, string Text)? _alert;
 
     /// Heights of the resting shapes. Small on purpose: the notch at rest is a hint,
-    /// not a panel — a slim pill when there is something to show, and nothing when
+    /// not a panel — a slim island when there is something to show, and nothing when
     /// there is not. The user knows where it is.
-    private const double PillHeight = 24, PillPad = 12, PillGap = 12;
+    private const double PillHeight = 32, PillPadLeft = 4, PillPadRight = 13, PillGap = 12;
     private static readonly TimeSpan Dwell = TimeSpan.FromMilliseconds(120);
     private static readonly TimeSpan LeaveGrace = TimeSpan.FromMilliseconds(350);
+
+    private static readonly Color Amber = Color.FromRgb(0xFF, 0xB3, 0x40);
+    private static readonly Brush Dim = Ui.Frozen(Color.FromArgb(0x8C, 0xFF, 0xFF, 0xFF));
+    private static readonly Brush Faint = Ui.Frozen(Color.FromArgb(0x5C, 0xFF, 0xFF, 0xFF));
+    private static readonly FontFamily Mono = new("Cascadia Code, Cascadia Mono, Consolas, Courier New");
 
     public NotchHost(ScreenInfo screen)
     {
@@ -249,21 +318,42 @@ internal sealed class NotchHost : IDisposable
         _screen = screen;
         _window.Title = "Hover notch";
         AutomationProperties.SetAutomationId(_window, "HoverNotch");
-        AutomationProperties.SetAutomationId(_kiroText, "NotchKiro");
-        AutomationProperties.SetAutomationId(_kiroDoneText, "NotchKiroDone");
-        _kiroSeg = Ui.Row(new BotGlyph { Width = 17, Height = 17, Live = true, VerticalAlignment = VerticalAlignment.Center },
-            _kiroText.Margin(7, 0), new WorkDots { VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(3, 1, 0, 0) });
-        _kiroText.RenderTransform = new TranslateTransform();
-        _kiroDoneSeg = Ui.Row(_kiroDoneBot, _kiroDoneText.Margin(7, 0));
-        foreach (var t in new[] { _kiroText, _kiroDoneText }) t.VerticalAlignment = VerticalAlignment.Center;
+        AutomationProperties.SetAutomationId(_activity, "NotchKiro");
+        AutomationProperties.SetAutomationId(_doneText, "NotchKiroDone");
+        AutomationProperties.SetAutomationId(_askText, "NotchAsk");
+        foreach (var t in new[] { _timer, _doneTook }) t.Typography.NumeralAlignment = FontNumeralAlignment.Tabular;
+        _activity.RenderTransform = new TranslateTransform();
+        _activity.MaxWidth = 300;
+        _doneText.MaxWidth = 280;
+        _askText.MaxWidth = 260;
+        _workSeg = Ui.Row(_stack, _activity.Margin(9, 0), _timer.Margin(9, 0));
+        _askSeg = Ui.Row(_askMark, _askText.Margin(9, 0), Rule().Margin(11, 0),
+            Pressable(Ui.Text("Deny", 11.5, Ui.White, FontWeights.SemiBold), "NotchAskDeny", "Deny", () => AnswerAsked(AskAnswer.Deny), small: true).Margin(10, 0),
+            Pressable(Ui.Text("Review", 11.5, Ui.Black, FontWeights.SemiBold), "NotchAskReview", "Review", OpenCard, primary: true, small: true).Margin(6, 0, 3));
+        _doneSeg = Ui.Row(_doneMark, _doneText.Margin(9, 0), _doneTook.Margin(9, 0));
+        foreach (var t in new[] { _activity, _timer, _askText, _doneText, _doneTook }) t.VerticalAlignment = VerticalAlignment.Center;
+        _clock.Tick += (_, _) =>
+        {
+            // The speaker changes every three seconds when several are at work.
+            if (++_ticks % 3 == 0) _speaker++;
+            UpdateRest();
+        };
+        _endGlow.Tick += (_, _) => { _endGlow.Stop(); Glow(); };
         _window.Root.Children.Add(_shell);
         Theme.Changed += OnTheme;
 
         _window.SourceInitialized += (_, _) => _hwnd = new WindowInteropHelper(_window).Handle;
         _window.DpiChanged += (_, _) => _window.Dispatcher.BeginInvoke(Layout, DispatcherPriority.Background);
-        // Esc closes — unless something inside (a rename box, a popover) used it first.
         _window.KeyDown += (_, e) =>
         {
+            // The question's card has the keyboard while it is open.
+            if (State == Mode.Rest && _kind == RestKind.Card)
+            {
+                if (e.Key == Key.Enter) { e.Handled = true; AnswerAsked(Keyboard.Modifiers.HasFlag(ModifierKeys.Shift) ? AskAnswer.Trust : AskAnswer.Allow); }
+                else if (e.Key == Key.Escape) { e.Handled = true; AnswerAsked(AskAnswer.Deny); }
+                return;
+            }
+            // Esc closes — unless something inside (a rename box, a popover) used it first.
             if (e.Key != Key.Escape || State == Mode.Rest) return;
             e.Handled = true;
             Collapse();
@@ -276,6 +366,8 @@ internal sealed class NotchHost : IDisposable
         {
             if (State != Mode.Rest || _kind == RestKind.None) return;
             e.Handled = true;
+            // The card is answered where it is; a click on it elsewhere does nothing.
+            if (_kind == RestKind.Card) return;
             Manager?.OpenOn(this, focusInput: false);
         };
 
@@ -323,25 +415,26 @@ internal sealed class NotchHost : IDisposable
         var work = _screen.WorkDips;
         return new Size(Math.Min(w, work.Width - 24), Math.Min(h, work.Height - 24));
     }
-
     // MARK: Resting shape
 
     private Size RestSize => _kind switch
     {
         // Rounded up to a few pixels so a clock ticking from 1:11 to 1:12 does not
-        // make the pill twitch.
-        RestKind.Pill => new Size(Math.Ceiling((_pill.DesiredSize.Width + 2 * PillPad) / 4) * 4, PillHeight),
+        // make the island twitch.
+        RestKind.Pill => new Size(Math.Ceiling((_pill.DesiredSize.Width + PillPadLeft + PillPadRight) / 4) * 4, PillHeight),
         RestKind.Alert => new Size(Math.Clamp(Math.Max(_alertTitle.DesiredSize.Width, _alertText.DesiredSize.Width) + 40, 200, 420), 46),
+        RestKind.Card => new Size(Math.Ceiling(_card.DesiredSize.Width), Math.Ceiling(_card.DesiredSize.Height)),
         _ => new Size(0, 0),
     };
 
-    /// The resting notch holds a slim row of glanceable items, or a short message
-    /// spelled in dots.
+    /// The resting notch holds a slim row of glanceable items, a short message, or
+    /// an agent's question in full.
     private void BuildMini()
     {
         var m = _shell.Mini;
-        _pill.HorizontalAlignment = HorizontalAlignment.Center;
+        _pill.HorizontalAlignment = HorizontalAlignment.Left;
         _pill.VerticalAlignment = VerticalAlignment.Center;
+        _pill.Margin = new Thickness(PillPadLeft, 0, 0, 0);
         m.Children.Add(_pill);
 
         _alertTitle.HorizontalAlignment = HorizontalAlignment.Center;
@@ -354,23 +447,21 @@ internal sealed class NotchHost : IDisposable
         _alertBox.VerticalAlignment = VerticalAlignment.Center;
         AutomationProperties.SetAutomationId(_alertTitle, "NotchAlert");
         m.Children.Add(_alertBox);
+        m.Children.Add(_card);
     }
 
-    private (FrameworkElement Seg, Ring Ring, TextBlock Text) QuotaSeg(string id)
+    /// A quota: the tool's mark inside its ring, and the share used. No name; it is in
+    /// the tooltip and for UI Automation.
+    private (FrameworkElement Seg, LiveMark Mark, TextBlock Text) QuotaSeg(string id)
     {
         if (_quotaSegs.TryGetValue(id, out var q)) return q;
-        var ring = new Ring
-        {
-            Width = 11, Height = 11, VerticalAlignment = VerticalAlignment.Center,
-            TrackBrush = Ui.Frozen(Color.FromArgb(0x38, 0xFF, 0xFF, 0xFF)),
-        };
-        var name = Ui.Text(NotchItem.Short(id), 11.5, Ui.WhiteDim);
+        var mark = new LiveMark { Tool = id, Width = 24, Height = 24, TileSize = 14, Ring = LiveMark.Rings.Value, VerticalAlignment = VerticalAlignment.Center };
         var value = Ui.Text("—", 11.5, Ui.White, FontWeights.SemiBold);
         value.Typography.NumeralAlignment = FontNumeralAlignment.Tabular;
-        var seg = Ui.Row(ring, name.Margin(6, 0), value.Margin(4, 0));
+        var seg = Ui.Row(mark, value.Margin(5, 0));
         // The row is a panel, which UI Automation does not see; the value is text.
         AutomationProperties.SetAutomationId(value, "NotchQuota" + char.ToUpperInvariant(id[0]) + id[1..]);
-        return _quotaSegs[id] = (seg, ring, value);
+        return _quotaSegs[id] = (seg, mark, value);
     }
 
     public void ShowAlert((string Title, string Text)? alert)
@@ -379,30 +470,41 @@ internal sealed class NotchHost : IDisposable
         UpdateRest();
     }
 
-    /// Which items the pill shows right now: the quotas switched on, and Kiro, while a
-    /// task works and once one has ended unseen, until the office is looked at.
-    private List<string> PillItems()
-    {
-        var items = Settings.NotchItems.Where(NotchItem.Quotas.Contains).ToList();
-        if (OwlApp.Kiro.Running > 0) items.Add(KiroRun);
-        if (OwlApp.KiroUnseen > 0) items.Add(KiroDone);
-        return items;
-    }
-
-    private const string KiroRun = "kiro-run", KiroDone = "kiro-done";
+    private const string Work = "work", Asked = "ask", Ended = "done", Divider = "|";
 
     private FrameworkElement Segment(string id) => id switch
     {
-        KiroRun => _kiroSeg,
-        KiroDone => _kiroDoneSeg,
+        Work => _workSeg,
+        Asked => _askSeg,
+        Ended => _doneSeg,
+        Divider => _divider,
         _ => QuotaSeg(id).Seg,
     };
 
-    /// Pick the resting shape and refresh what it shows.
+    private static Border Rule() => new() { Width = 1, Height = 14, Background = Ui.Frozen(Color.FromArgb(0x2E, 0xFF, 0xFF, 0xFF)), VerticalAlignment = VerticalAlignment.Center };
+
+    /// Pick the resting shape and refresh what it shows. Most urgent first: an agent's
+    /// question, then the agents at work, then a task that ended unseen; the quotas
+    /// sit after them.
     public void UpdateRest()
     {
-        var items = _alert is null ? PillItems() : new List<string>();
+        var all = OwlApp.Kiro.All;
+        var waiting = all.Where(s => s.Waiting).ToList();
+        var working = all.Where(s => s.Busy && !s.Waiting).ToList();
+        var quotas = Settings.NotchItems.Where(NotchItem.Quotas.Contains).ToList();
+
+        var items = new List<string>();
+        if (_alert is null)
+        {
+            if (waiting.Count > 0) items.Add(Asked);
+            else if (working.Count > 0) items.Add(Work);
+            else if (OwlApp.KiroUnseen > 0 && OwlApp.KiroUnseenLast is not null) items.Add(Ended);
+            if (items.Count > 0 && quotas.Count > 0) items.Add(Divider);
+            items.AddRange(quotas);
+        }
+        if (waiting.Count == 0 && _cardOpen) CloseCard();
         var kind = _alert is not null ? RestKind.Alert
+            : _cardOpen ? RestKind.Card
             : items.Count > 0 ? RestKind.Pill
             : RestKind.None;
 
@@ -415,6 +517,20 @@ internal sealed class NotchHost : IDisposable
         }
         _alertBox.Visibility = kind == RestKind.Alert ? Visibility.Visible : Visibility.Collapsed;
         _pill.Visibility = kind == RestKind.Pill ? Visibility.Visible : Visibility.Collapsed;
+        _card.Visibility = kind == RestKind.Card ? Visibility.Visible : Visibility.Collapsed;
+
+        _asked = waiting.Count > 0 && waiting[0].Asking is { } first ? (waiting[0], first) : null;
+        if (kind == RestKind.Card && _asked is { } q)
+        {
+            var total = waiting.Sum(s => s.Asks.Count);
+            var key = $"{q.Session.Id}:{q.Ask.Id}:{total}";
+            if (key != _cardKey)
+            {
+                _cardKey = key;
+                _card.Child = Card(q.Session, q.Ask, total);
+            }
+            _card.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
+        }
 
         if (kind == RestKind.Pill)
         {
@@ -431,40 +547,23 @@ internal sealed class NotchHost : IDisposable
                     _pill.Children.Add(seg);
                 }
             }
-            if (items.Contains(KiroRun))
+            if (items.Contains(Work)) ShowWork(working);
+            if (items.Contains(Asked) && _asked is { } a) ShowAsk(a.Session, a.Ask, waiting.Sum(s => s.Asks.Count));
+            if (items.Contains(Ended)) ShowEnded();
+            else _doneShown = 0;
+            foreach (var id in quotas)
             {
-                // The newest task at work, and how many more are.
-                var all = OwlApp.Kiro.All.Where(s => s.Busy).ToList();
-                var text = Services.Agents.Name(all[^1].Tool) + " · " + KiroPage.Status(all[^1]) + (all.Count > 1 ? $" · {all.Count}" : "");
-                if (text != _kiroText.Text)
-                {
-                    _kiroText.Text = text;
-                    // The new words rise into place.
-                    if (!Animator.Still)
-                    {
-                        var d = new Duration(TimeSpan.FromMilliseconds(260));
-                        var ease = new System.Windows.Media.Animation.CubicEase { EasingMode = System.Windows.Media.Animation.EasingMode.EaseOut };
-                        _kiroText.BeginAnimation(UIElement.OpacityProperty, new System.Windows.Media.Animation.DoubleAnimation(0, 1, d));
-                        _kiroText.RenderTransform.BeginAnimation(TranslateTransform.YProperty, new System.Windows.Media.Animation.DoubleAnimation(6, 0, d) { EasingFunction = ease });
-                    }
-                }
-                AutomationProperties.SetName(_kiroText, _kiroText.Text);
-            }
-            if (items.Contains(KiroDone))
-            {
-                var n = OwlApp.KiroUnseen;
-                if (n != _kiroDoneShown) { _kiroDoneShown = n; _kiroDoneBot.Cheer(); }
-                var who = OwlApp.KiroUnseenTool;
-                _kiroDoneText.Text = n > 1 ? (who is null ? $"{n} tasks ended" : $"{n} {who} tasks ended") : $"{who ?? "A task"} ended";
-                AutomationProperties.SetName(_kiroDoneText, _kiroDoneText.Text);
-            }
-            foreach (var id in items.Where(NotchItem.Quotas.Contains))
-            {
-                var (_, ring, text) = QuotaSeg(id);
-                var reading = OwlApp.Quotas.TryGetValue(id, out var q) ? q.Reading : null;
-                ring.Value = reading?.Used;
-                text.Text = reading?.Used is { } u ? $"{u:0}%" : "—";
+                var (_, mark, text) = QuotaSeg(id);
+                var reading = OwlApp.Quotas.TryGetValue(id, out var r) ? r.Reading : null;
+                mark.Value = reading?.Used;
+                text.Inlines.Clear();
+                if (reading?.Used is { } u) { text.Inlines.Add(new Run($"{u:0}")); text.Inlines.Add(new Run("%") { Foreground = Faint, FontSize = 10.5 }); }
+                else text.Inlines.Add(new Run("—"));
                 text.Foreground = reading is null || reading.Ok ? Ui.White : Ui.WhiteDim;
+                var name = NotchItem.Short(id);
+                var said = reading?.Used is { } used ? $"{name} {used:0}% used" : $"{name} quota";
+                AutomationProperties.SetName(text, said);
+                text.ToolTip = said;
             }
             // A child's new text does not invalidate the panel's own measure.
             _pill.InvalidateMeasure();
@@ -472,7 +571,12 @@ internal sealed class NotchHost : IDisposable
         }
         else _pillKey = "";
 
+        // The clock runs while there is a timer to tick or a speaker to change.
+        if (working.Count > 0 || waiting.Count > 0) { if (!_clock.IsEnabled) _clock.Start(); }
+        else { _clock.Stop(); _ticks = 0; }
+
         _kind = kind;
+        Glow();
         // Settings → Workspace → Workspace size, or nothing: the comparison is cheap.
         if (OpenSize() != _open) { Layout(); _restApplied = RestSize; return; }
         var rest = RestSize;
@@ -481,6 +585,262 @@ internal sealed class NotchHost : IDisposable
         _shell.SetSizes(rest, _open);
     }
 
+    /// Amber while an agent asks, green or red for a moment when a task ends unseen;
+    /// only at rest.
+    private void Glow()
+    {
+        Color? glow = null;
+        if (State == Mode.Rest)
+        {
+            if (_kind == RestKind.Card || (_kind == RestKind.Pill && _pillKey.Contains(Asked))) glow = Amber;
+            else if (_kind == RestKind.Pill && _pillKey.Contains(Ended) && _endGlow.IsEnabled && OwlApp.KiroUnseenLast is { } last)
+                glow = last.State == KiroState.Completed ? Color.FromRgb(0x32, 0xD7, 0x4B) : last.State == KiroState.Failed ? Color.FromRgb(0xFF, 0x45, 0x3A) : null;
+        }
+        _shell.SetGlow(glow);
+    }
+
+    private void ShowWork(List<KiroSession> working)
+    {
+        var speaker = working[_speaker % working.Count];
+        _stack.Show(working.Select(s => Agents.Id(s.Tool)).ToList(), working.IndexOf(speaker));
+        var (verb, obj) = AgentWords.Activity(speaker);
+        SetActivity(_activity, $"{speaker.Id}:{verb}:{obj}", verb, obj);
+        _timer.Text = Clock(speaker.Elapsed);
+        var others = working.Count > 1 ? $", and {working.Count - 1} more at work" : "";
+        AutomationProperties.SetName(_activity, $"{Agents.Name(speaker.Tool)}: {verb} {obj}".Trim() + others);
+    }
+
+    private void ShowAsk(KiroSession s, AgentAsk a, int total)
+    {
+        _askMark.Tool = Agents.Id(s.Tool);
+        var (verb, obj) = AgentWords.AskLine(a);
+        _askText.Inlines.Clear();
+        _askText.Inlines.Add(new Run(verb) { Foreground = Dim, FontWeight = FontWeights.Medium });
+        if (obj.Length > 0) _askText.Inlines.Add(new Run(" " + obj) { FontFamily = a.Command is not null ? Mono : Ui.Font, FontSize = a.Command is not null ? 12 : 12.5 });
+        if (total > 1) _askText.Inlines.Add(new Run($"  +{total - 1}") { Foreground = Faint, FontWeight = FontWeights.Medium });
+        AutomationProperties.SetName(_askText, $"{Agents.Name(s.Tool)} {verb.ToLowerInvariant()} {obj}".Trim());
+    }
+
+    private void ShowEnded()
+    {
+        if (OwlApp.KiroUnseenLast is not { } last) return;
+        _doneMark.Tool = Agents.Id(last.Tool);
+        _doneMark.Badge = last.State switch
+        {
+            KiroState.Completed => LiveMark.Badges.Done,
+            KiroState.Failed => LiveMark.Badges.Failed,
+            _ => LiveMark.Badges.None,
+        };
+        var n = OwlApp.KiroUnseen;
+        var verb = last.State switch { KiroState.Completed => "Done", KiroState.Failed => "Couldn’t finish", _ => "Stopped" };
+        _doneText.Inlines.Clear();
+        _doneText.Inlines.Add(new Run(verb + " · ") { Foreground = Dim, FontWeight = FontWeights.Medium });
+        _doneText.Inlines.Add(new Run(last.Title.Length > 0 ? last.Title : "the task"));
+        _doneTook.Text = n > 1 ? $"+{n - 1}" : Took(last.Took);
+        if (n != _doneShown)
+        {
+            _doneShown = n;
+            Rise(_doneText);
+            _endGlow.Stop();
+            _endGlow.Start();
+        }
+        var who = OwlApp.KiroUnseenTool;
+        AutomationProperties.SetName(_doneText, n > 1 ? (who is null ? $"{n} tasks ended" : $"{n} {who} tasks ended") : $"{Agents.Name(last.Tool)} {verb.ToLowerInvariant()}: {last.Title}");
+    }
+
+    /// New words rise into place; the same words are left alone.
+    private static void SetActivity(TextBlock t, string key, string verb, string obj)
+    {
+        if (t.Tag as string == key) return;
+        t.Tag = key;
+        t.Inlines.Clear();
+        t.Inlines.Add(new Run(verb) { Foreground = Dim, FontWeight = FontWeights.Medium });
+        if (obj.Length > 0) t.Inlines.Add(new Run(" " + obj));
+        Rise(t);
+    }
+
+    private static void Rise(TextBlock t)
+    {
+        if (Animator.Still) return;
+        if (t.RenderTransform is not TranslateTransform) t.RenderTransform = new TranslateTransform();
+        var d = new Duration(TimeSpan.FromMilliseconds(320));
+        var ease = new CubicEase { EasingMode = EasingMode.EaseOut };
+        t.BeginAnimation(UIElement.OpacityProperty, new DoubleAnimation(0, 1, d));
+        t.RenderTransform.BeginAnimation(TranslateTransform.YProperty, new DoubleAnimation(7, 0, d) { EasingFunction = ease });
+    }
+
+    private static string Clock(TimeSpan t) => t.TotalHours >= 1 ? $"{(int)t.TotalHours}:{t.Minutes:00}:{t.Seconds:00}" : $"{(int)t.TotalMinutes}:{t.Seconds:00}";
+
+    private static string Took(TimeSpan t) => t.TotalSeconds < 60 ? $"{Math.Max(1, (int)Math.Round(t.TotalSeconds))} s"
+        : t.TotalMinutes < 60 ? $"{(int)t.TotalMinutes}m {t.Seconds:00}s" : $"{(int)t.TotalHours}h {t.Minutes:00}m";
+
+    // MARK: The question's card
+
+    /// Review: the question in full, in the notch, which takes the keyboard (Enter
+    /// allows, Shift+Enter trusts, Esc denies) until it is answered.
+    private void OpenCard()
+    {
+        if (_asked is null || State != Mode.Rest) return;
+        _cardOpen = true;
+        _cardKey = "";
+        _cardPrevious = Win32.GetForegroundWindow();
+        _window.SetAcceptsKeys(true);
+        _window.Focus(foreground: true);
+        UpdateRest();
+    }
+
+    private void CloseCard(bool giveBack = true)
+    {
+        if (!_cardOpen) return;
+        _cardOpen = false;
+        _cardKey = "";
+        _card.Child = null;
+        if (!giveBack || State != Mode.Rest) return;
+        // The keyboard goes back to whatever had it before Review.
+        if (_hwnd != IntPtr.Zero && Win32.GetForegroundWindow() == _hwnd &&
+            _cardPrevious != IntPtr.Zero && Win32.IsWindow(_cardPrevious))
+            Win32.SetForegroundWindow(_cardPrevious);
+        _window.SetAcceptsKeys(false);
+    }
+
+    private void AnswerAsked(AskAnswer answer)
+    {
+        if (_asked is not { } a) return;
+        Log.Line($"{Agents.Id(a.Session.Tool)} run {a.Session.Id}: {answer.ToString().ToLowerInvariant()} from the notch");
+        a.Session.Answer(a.Ask.Id, answer);
+        UpdateRest();
+    }
+
+    private FrameworkElement Card(KiroSession s, AgentAsk a, int total)
+    {
+        var root = new StackPanel { Width = 472, Margin = new Thickness(14, 12, 14, 14) };
+
+        var head = new DockPanel();
+        var mark = new LiveMark { Tool = Agents.Id(s.Tool), Width = 26, Height = 26, TileSize = 26, VerticalAlignment = VerticalAlignment.Center };
+        DockPanel.SetDock(mark, Dock.Left);
+        head.Children.Add(mark);
+        if (total > 1)
+        {
+            var count = new Border
+            {
+                Background = Ui.Frozen(Color.FromArgb(0x17, 0xFF, 0xFF, 0xFF)), CornerRadius = new CornerRadius(99),
+                Padding = new Thickness(8, 2, 8, 3), VerticalAlignment = VerticalAlignment.Center,
+                Child = Ui.Text($"1 of {total}", 11, Dim, FontWeights.SemiBold),
+            };
+            DockPanel.SetDock(count, Dock.Right);
+            head.Children.Add(count);
+        }
+        var titles = new StackPanel { Margin = new Thickness(10, 0, 8, 0), VerticalAlignment = VerticalAlignment.Center };
+        var title = Ui.Text(AgentWords.AskTitle(a), 13.5, Ui.White, FontWeights.SemiBold);
+        AutomationProperties.SetAutomationId(title, "NotchAskTitle");
+        titles.Children.Add(title);
+        var folder = System.IO.Path.GetFileName(s.Folder.TrimEnd('\\', '/'));
+        titles.Children.Add(Ui.Text($"{folder} · {s.Title}", 11.5, Dim).Margin(0, 1, 0, 0));
+        head.Children.Add(titles);
+        root.Children.Add(head);
+
+        var code = new TextBlock { FontFamily = Mono, FontSize = 12.5, Foreground = Ui.White, TextWrapping = TextWrapping.Wrap, LineHeight = 19 };
+        if (a.Command is { } cmd)
+        {
+            code.Inlines.Add(new Run("$  ") { Foreground = Ui.Frozen(Amber) });
+            code.Inlines.Add(new Run(cmd));
+        }
+        else
+        {
+            if (a.Path is { } path) code.Inlines.Add(new Run(path) { Foreground = a.Preview is null ? Ui.White : Dim, FontSize = a.Preview is null ? 12.5 : 11.5 });
+            if (a.Preview is { } preview)
+                foreach (var line in preview.Split('\n'))
+                {
+                    if (code.Inlines.Count > 0) code.Inlines.Add(new LineBreak());
+                    code.Inlines.Add(new Run(line)
+                    {
+                        FontSize = 11.5,
+                        Foreground = Ui.Frozen(line.StartsWith('+') ? Color.FromRgb(0x9D, 0xF0, 0xAE) : line.StartsWith('-') ? Color.FromRgb(0xFF, 0xAA, 0xA4) : Colors.White),
+                    });
+                }
+            if (code.Inlines.Count == 0) code.Inlines.Add(new Run(a.Title));
+        }
+        root.Children.Add(new Border
+        {
+            Background = Ui.Frozen(Color.FromRgb(0x0F, 0x0F, 0x12)), CornerRadius = new CornerRadius(12),
+            BorderBrush = Ui.Frozen(a.Danger ? Color.FromArgb(0x66, 0xFF, 0x45, 0x3A) : Color.FromArgb(0x17, 0xFF, 0xFF, 0xFF)), BorderThickness = new Thickness(1),
+            Padding = new Thickness(12, 9, 12, 10), Margin = new Thickness(0, 11, 0, 10), MaxHeight = 150, Child = code,
+        });
+
+        var why = a.Reason + (a.Added + a.Removed > 0 && a.Kind != "edit" ? $" · +{a.Added} −{a.Removed}" : "");
+        root.Children.Add(Ui.Row(new Ellipse { Width = 6, Height = 6, Fill = Ui.Frozen(a.Danger ? Color.FromRgb(0xFF, 0x45, 0x3A) : Amber), VerticalAlignment = VerticalAlignment.Center },
+            Ui.Text(why, 11.5, Dim).Margin(8, 0)));
+
+        var buttons = new DockPanel { Margin = new Thickness(0, 12, 0, 0), LastChildFill = false };
+        var deny = Pressable(Label("Deny", "Esc", Ui.White), "NotchCardDeny", "Deny", () => AnswerAsked(AskAnswer.Deny));
+        DockPanel.SetDock(deny, Dock.Left);
+        buttons.Children.Add(deny);
+        var go = AgentWords.AskAllow(a);
+        var allow = Pressable(Label(go, "Enter", a.Danger ? Ui.White : Ui.Black), "NotchCardAllow", go, () => AnswerAsked(AskAnswer.Allow), primary: !a.Danger, danger: a.Danger);
+        allow.Margin = new Thickness(8, 0, 0, 0);
+        Border? more = null;
+        more = Pressable(Ui.Icon(Ui.IcChevronDown, 11, Ui.White), "NotchCardTrustMore", "More ways to trust", () =>
+        {
+            var m = new ContextMenu();
+            m.Items.Add(Ui.MenuText("Trust this for the rest of the session", () => AnswerAsked(AskAnswer.Trust)));
+            m.Items.Add(Ui.MenuText("Allow everything this session", () => AnswerAsked(AskAnswer.TrustAll)));
+            Ui.Open(m, more!);
+        }, corners: new CornerRadius(0, 9, 9, 0));
+        more.Padding = new Thickness(8, 0, 8, 0);
+        var trust = Pressable(Label("Trust", "Shift+Enter", Ui.White), "NotchCardTrust", "Trust for the rest of the session", () => AnswerAsked(AskAnswer.Trust),
+            corners: new CornerRadius(9, 0, 0, 9));
+        trust.Margin = new Thickness(0, 0, 1, 0);
+        foreach (var b in new FrameworkElement[] { allow, more, trust })
+        {
+            DockPanel.SetDock(b, Dock.Right);
+            buttons.Children.Add(b);
+        }
+        root.Children.Add(buttons);
+        return root;
+    }
+
+    /// A button's words and the key that does the same.
+    private static FrameworkElement Label(string text, string key, Brush ink) => Ui.Row(
+        Ui.Text(text, 12.5, ink, FontWeights.SemiBold),
+        new Border
+        {
+            Margin = new Thickness(8, 0, 0, 0), Padding = new Thickness(5, 0, 5, 1), CornerRadius = new CornerRadius(5),
+            BorderThickness = new Thickness(1), VerticalAlignment = VerticalAlignment.Center,
+            BorderBrush = Ui.Frozen(ReferenceEquals(ink, Ui.Black) ? Color.FromArgb(0x29, 0, 0, 0) : Color.FromArgb(0x24, 0xFF, 0xFF, 0xFF)),
+            Child = new TextBlock { Text = key, FontFamily = Mono, FontSize = 10, Foreground = ink, Opacity = 0.7 },
+        });
+
+    /// A button drawn for the black notch: a rounded fill that brightens under the
+    /// pointer. It acts on release over it, and keeps the click from opening the office.
+    private static Border Pressable(FrameworkElement content, string id, string name, Action click,
+        bool primary = false, bool danger = false, bool small = false, CornerRadius? corners = null)
+    {
+        Color Of(bool hot) => primary ? (hot ? Colors.White : Color.FromRgb(0xF2, 0xF2, 0xF5))
+            : danger ? (hot ? Color.FromRgb(0xFF, 0x5B, 0x51) : Color.FromRgb(0xFF, 0x45, 0x3A))
+            : Color.FromArgb(hot ? (byte)0x2E : (byte)0x1C, 0xFF, 0xFF, 0xFF);
+        var fill = new SolidColorBrush(Of(false));
+        var b = new Border
+        {
+            Background = fill, CornerRadius = corners ?? new CornerRadius(small ? 7 : 9), Height = small ? 22 : 30,
+            Padding = new Thickness(small ? 9 : 12, 0, small ? 9 : 12, 0), Child = content, Cursor = Cursors.Hand,
+            VerticalAlignment = VerticalAlignment.Center, ToolTip = name,
+        };
+        content.VerticalAlignment = VerticalAlignment.Center;
+        if (content is TextBlock tb) { AutomationProperties.SetAutomationId(tb, id); AutomationProperties.SetName(tb, name); }
+        else AutomationProperties.SetName(content, name);
+        b.MouseEnter += (_, _) => fill.Color = Of(true);
+        b.MouseLeave += (_, _) => fill.Color = Of(false);
+        b.MouseLeftButtonDown += (_, e) => { e.Handled = true; b.CaptureMouse(); };
+        b.MouseLeftButtonUp += (_, e) =>
+        {
+            e.Handled = true;
+            if (!b.IsMouseCaptured) return;
+            b.ReleaseMouseCapture();
+            var p = e.GetPosition(b);
+            if (p.X >= 0 && p.Y >= 0 && p.X <= b.ActualWidth && p.Y <= b.ActualHeight) click();
+        };
+        return b;
+    }
     // MARK: Opening and closing
 
     /// Device-pixel rectangle the pointer wakes the notch from: the resting shape,
@@ -528,7 +888,8 @@ internal sealed class NotchHost : IDisposable
                 if (!inZone) { _zoneSince = null; _armed = true; return; }
                 // Arriving, not merely being there: a notch closed with Esc under a
                 // resting pointer must not spring straight back open.
-                if (!_armed || buttons || !Settings.HoverOpensWorkspace) return;
+                // A question waits to be answered here, not covered by the office.
+                if (!_armed || buttons || !Settings.HoverOpensWorkspace || _kind == RestKind.Card || _pillKey.Contains(Asked)) return;
                 _zoneSince ??= now;
                 if (now - _zoneSince >= Dwell) Manager?.OpenOn(this, focusInput: false, peek: true);
                 return;
@@ -545,6 +906,9 @@ internal sealed class NotchHost : IDisposable
     {
         if (State == Mode.Rest)
         {
+            // The office shows the question over the agent's head; the card goes.
+            if (_cardOpen) CloseCard(giveBack: false);
+            _shell.SetGlow(null);
             _previous = Win32.GetForegroundWindow();
             _view ??= NewView();
             _window.SetAcceptsKeys(true);
@@ -614,12 +978,22 @@ internal sealed class NotchHost : IDisposable
         _shell.Opening = false;
         _shell.Greet = false;
         Animate(0, 220, new CubicEase { EasingMode = EasingMode.EaseIn });
+        UpdateRest();
     }
 
     /// Focus left for another app: the notch closes. Our own popups, menus and
     /// dialogs (owned by this window) do not count.
     private void ClickedAway()
     {
+        // The question's card had the keyboard; clicking elsewhere folds it back to
+        // the amber island, still waiting.
+        if (State == Mode.Rest && _cardOpen)
+        {
+            CloseCard(giveBack: false);
+            _window.SetAcceptsKeys(false);
+            UpdateRest();
+            return;
+        }
         if (State == Mode.Rest) return;
         var fg = Win32.GetForegroundWindow();
         if (fg == _hwnd || (fg != IntPtr.Zero && Win32.GetAncestor(fg, Win32.GA_ROOTOWNER) == _hwnd)) return;

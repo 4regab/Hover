@@ -16,6 +16,23 @@ public static class OwlApp
             var host = new Services.AcpHost(t, () => Settings.AgentOptions(t));
             // What the tool offers (models, efforts) fills in its settings page.
             host.OptionsSeen += (tool, offers) => Dispatch(() => Settings.SetAgentOffers(tool, offers));
+            // A question goes to the session whose conversation it is, on the UI thread,
+            // where the notch and the office show it. One nobody holds is turned down.
+            host.Asking = (sid, ask, ct) =>
+            {
+                var answer = new TaskCompletionSource<Services.AskAnswer>(TaskCreationOptions.RunContinuationsAsynchronously);
+                var app = System.Windows.Application.Current;
+                if (app is null) { answer.SetResult(Services.AskAnswer.Deny); return answer.Task; }
+                app.Dispatcher.BeginInvoke(() =>
+                {
+                    // Kiro is made after Agents; by the time a tool asks, it is there.
+                    var s = Kiro?.All.FirstOrDefault(x => x.Tool == t && x.KiroId == sid && x.Busy);
+                    if (s is null) { answer.TrySetResult(Services.AskAnswer.Deny); return; }
+                    Log.Line($"{Services.Agents.Id(t)} run {s.Id} asks: {ask.Kind} ({ask.Reason})");
+                    s.Ask(ask, ct).ContinueWith(a => answer.TrySetResult(a.Result), TaskScheduler.Default);
+                });
+                return answer.Task;
+            };
             return host;
         });
 
@@ -34,11 +51,16 @@ public static class OwlApp
     /// The tool of those unseen ends, or null when they were different tools.
     public static string? KiroUnseenTool { get; private set; }
 
+    /// The latest of those ends, for the notch: which tool, the task, how it went and
+    /// how long it took.
+    public static (Services.AgentTool Tool, string Title, Services.KiroState State, TimeSpan Took)? KiroUnseenLast { get; private set; }
+
     /// A Kiro page came into view: the ends it announced have been seen.
     public static void KiroSeen()
     {
         if (KiroUnseen == 0) return;
         KiroUnseen = 0;
+        KiroUnseenLast = null;
         Kiro.RaiseChanged();
     }
 
@@ -84,6 +106,7 @@ public static class OwlApp
             KiroUnseen++;
             var who = Services.Agents.Name(s.Tool);
             KiroUnseenTool = KiroUnseen == 1 || KiroUnseenTool == who ? who : null;
+            KiroUnseenLast = (s.Tool, s.Title, r.State, s.Elapsed);
             Notify?.Invoke((r.State switch
             {
                 Services.KiroState.Completed => $"{who} is done",
