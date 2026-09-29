@@ -854,11 +854,12 @@ function renderDrawer() {
 // Over the composer while a run goes: what the agent does now, for how long, and
 // Stop. Amber while it waits for the user.
 const day = ms => { const d = new Date(ms), n = new Date(); const k = (n - new Date(d.getFullYear(), d.getMonth(), d.getDate())) / 864e5; return k < 1 ? 'Today' : k < 2 ? 'Yesterday' : k < 7 ? 'This week' : d.toLocaleDateString(undefined, { month: 'long', year: 'numeric' }); };
-// A history row's date, as Mail gives it: the time today, then Yesterday, the
-// weekday this week, and the date before that (with the year when it isn't this one).
+// A history row's date, beside the day heading over it: the time today and
+// yesterday, the weekday this week, and the date before that (with the year when it
+// isn't this one).
 const stamp = ms => {
   const d = new Date(ms), n = new Date(), k = Math.round((new Date(n.getFullYear(), n.getMonth(), n.getDate()) - new Date(d.getFullYear(), d.getMonth(), d.getDate())) / 864e5);
-  return k < 1 ? d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }) : k < 2 ? 'Yesterday' : k < 7 ? d.toLocaleDateString(undefined, { weekday: 'short' })
+  return k < 2 ? d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }) : k < 7 ? d.toLocaleDateString(undefined, { weekday: 'short' })
     : d.toLocaleDateString(undefined, d.getFullYear() === n.getFullYear() ? { month: 'short', day: 'numeric' } : { month: 'short', day: 'numeric', year: 'numeric' });
 };
 let historyFind = '';
