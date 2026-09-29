@@ -5,6 +5,7 @@
 
 use crate::ui::*;
 use crate::App;
+use hover_agents::ask::AskAnswer;
 use hover_agents::session::KiroSession;
 use hover_core::model::AgentTool;
 use hover_office::bot::Stage;
@@ -31,6 +32,11 @@ pub struct Page {
     pub panel: Cell<Option<&'static str>>,
     fab: Cell<i32>,
     new_tool: Cell<usize>,
+    /// The HUD's menu, and the new-task box's access menu, open.
+    menu: Cell<bool>,
+    access_menu: Cell<bool>,
+    /// The access the new-task box picked, by tool, for the tasks it starts next.
+    new_access: RefCell<[Option<&'static str>; 3]>,
     new_folder: RefCell<Option<String>>,
     time_mode: Cell<i32>,
     toast_timer: slint::Timer,
@@ -40,6 +46,11 @@ pub struct Page {
     confirm_key: RefCell<Option<(Option<i32>, Option<String>)>>,
     last_state: RefCell<hover_core::json::Json>,
     thread: RefCell<Option<Chat>>,
+    /// The open chat's turns as last laid out, for a click on the thread.
+    turns: RefCell<Vec<hover_chat::Turn>>,
+    /// The live turn's clock ticks once a second while a chat that runs is open.
+    clock: slint::Timer,
+    copied: slint::Timer,
     rows_open: RefCell<Vec<(Option<i64>, Option<String>)>>,
     pub target: Cell<i32>,
     shown: Cell<Option<bool>>,
@@ -54,9 +65,9 @@ fn fonts() -> Vec<Vec<u8>> { vec![hover_office::canvas::PIXELIFY.to_vec()] }
 
 impl Default for Page {
     fn default() -> Page {
-        Page { live: RefCell::new(None), size: Cell::new((0, 0)), open: Cell::new(None), panel: Cell::new(None), fab: Cell::new(0), new_tool: Cell::new(0),
+        Page { live: RefCell::new(None), size: Cell::new((0, 0)), open: Cell::new(None), panel: Cell::new(None), fab: Cell::new(0), new_tool: Cell::new(0), menu: Cell::new(false), access_menu: Cell::new(false), new_access: RefCell::new([None; 3]),
             new_folder: RefCell::new(None), time_mode: Cell::new(0), toast_timer: Default::default(), push_timer: Default::default(), dirty: Cell::new(true),
-            history_sent: Cell::new(usize::MAX), confirm_key: RefCell::new(None), last_state: RefCell::new(hover_core::json::Json::Null), thread: RefCell::new(None),
+            history_sent: Cell::new(usize::MAX), confirm_key: RefCell::new(None), last_state: RefCell::new(hover_core::json::Json::Null), thread: RefCell::new(None), turns: RefCell::new(vec![]), clock: Default::default(), copied: Default::default(),
             rows_open: RefCell::new(vec![]), target: Cell::new(0), shown: Cell::new(None), drop_timer: Default::default(), view: Cell::new(None) }
     }
 }
@@ -189,9 +200,15 @@ impl App {
             for (d, s) in buf.make_mut_slice().iter_mut().zip(rgb.chunks(3)) { *d = Rgba8Pixel { r: s[0], g: s[1], b: s[2], a: 255 }; }
             let img = Image::from_rgba8(buf);
             let blurred = Image::from_rgba8(blur(rgb, out.w as usize, out.h as usize));
-            let tags: Vec<TagData> = out.tags.iter().map(|t| TagData {
-                id: t.id as i32, x: t.x as f32, y: t.y as f32, name: s(t.name), color: Color::from_rgb_u8(t.color[0], t.color[1], t.color[2]),
-                tool: s(tool_name(&t.tool)), tool_color: tool_color(&t.tool), text: s(&t.text), stage: t.stage as i32, hot: t.hot,
+            let all = self.hover.sessions.all();
+            let tags: Vec<TagData> = out.tags.iter().map(|t| {
+                // renderAsks: the question over the head while the session waits.
+                let ask = all.iter().find(|x| x.id as i64 == t.id).and_then(|x| x.asking().map(|a| ask_data(a, x.asks.len())));
+                TagData {
+                    id: t.id as i32, x: t.x as f32, y: t.y as f32, name: s(t.name), color: Color::from_rgb_u8(t.color[0], t.color[1], t.color[2]),
+                    tool: s(tool_name(&t.tool)), tool_color: tool_color(&t.tool), text: s(&t.text), stage: t.stage as i32, hot: t.hot,
+                    tool_id: s(&t.tool), asking: ask.is_some(), ask: ask.unwrap_or_default(),
+                }
             }).collect();
             let hint = if out.hint == "clock" { full_date() } else { out.hint.clone() };
             let (tx, ty) = out.pointer.unwrap_or((0.0, 0.0));
@@ -283,7 +300,20 @@ impl App {
         let fab = p.fab.get();
         let time_mode = p.time_mode.get();
         let beats = self.beats.want();
+        let (menu, access_menu) = (p.menu.get(), p.access_menu.get());
+        let acc = self.new_access(nt);
+        let access_opts: Vec<AccessOpt> = ACCESS.iter().filter(|(id, ..)| *id != "read" || hover_agents::agents::read_only_works(tool))
+            .map(|(id, label, _)| AccessOpt { id: s(*id), label: s(*label), note: s(access_note(id, tool)), on: *id == acc }).collect();
+        let acc_label = access_label(acc);
+        let acc_tip = format!("{acc_label}: {} Click to change.", access_note(acc, tool));
         each!(self, |g| {
+            g.set_menu(menu);
+            g.set_access_menu(access_menu);
+            g.set_access_head(s(format!("{} may", tool.name()).to_uppercase()));
+            g.set_access_opts(ModelRc::new(VecModel::from(access_opts.clone())));
+            g.set_new_access(s(acc_label));
+            g.set_new_access_full(acc == "full");
+            g.set_new_access_tip(s(&acc_tip));
             g.set_tools(ModelRc::new(VecModel::from(tools.clone())));
             g.set_new_tool(nt as i32);
             g.set_fab(fab);
@@ -304,14 +334,28 @@ impl App {
                 g.set_d_name(s(hover_office::bot::BOTS[o.bot % 6].0));
                 g.set_d_color(Color::from_rgb_u8((c >> 16) as u8, (c >> 8) as u8, c as u8));
                 g.set_d_tool(s(o.tool.name()));
+                g.set_d_tool_id(s(o.tool.id()));
+                // The session's own tool access, or the tool's setting.
+                let access = o.access.clone().unwrap_or_else(|| hover_agents::state::tool_access(&self.hover.settings, o.tool).to_owned());
+                g.set_d_access(s(ACCESS.iter().find(|a| a.0 == access).map_or("", |a| a.1)));
+                g.set_d_access_note(s(if ACCESS.iter().any(|a| a.0 == access) { access_note(&access, o.tool) } else { "" }));
+                g.set_d_access_id(s(&access));
+                g.set_d_ctx(o.context.map_or(-1.0, |c| c.round_ties_even() as f32));
+                g.set_d_asking(o.waiting());
+                g.set_d_ask(o.asking().map(|a| ask_data(a, o.asks.len())).unwrap_or_default());
                 g.set_d_tool_color(tool_color(o.tool.id()));
                 g.set_d_title(s(o.title()));
-                g.set_d_folder(s(&o.folder));
+                g.set_d_folder(s(hover_office::office::short(&o.folder)));
                 g.set_d_busy(o.busy());
-                g.set_d_placeholder(s(if o.busy() { format!("Reply now, {} reads it when this run ends", o.tool.name()) } else { format!("Reply to {}…", hover_office::bot::BOTS[o.bot % 6].0) }));
+                let bot = hover_office::bot::BOTS[o.bot % 6].0;
+                g.set_d_placeholder(s(if o.waiting() { format!("Or tell {bot} what to do instead…") } else if o.busy() { format!("Reply. {bot} reads it when this run ends") } else { format!("Reply to {bot}…") }));
             }
         });
         if open.is_some() { self.paint_thread(); }
+        // "Working 0:12": the clock over a running turn moves on its own.
+        if open.as_ref().is_some_and(|o| o.busy()) {
+            if !p.clock.running() { let a = self.clone(); p.clock.start(slint::TimerMode::Repeated, Duration::from_secs(1), move || a.paint_thread()); }
+        } else { p.clock.stop(); }
     }
 
     fn panel_rows(&self, st: &hover_core::json::Json, sessions: &[KiroSession]) -> Panel {
@@ -323,7 +367,7 @@ impl App {
         let now = hover_core::time::Stamp::now().unix_ms() as f64;
         match self.page.panel.get() {
             Some("board") => {
-                for (h, c, st) in [("Waking", 0xf5b83du32, &[Stage::Waking][..]), ("Doing", 0x9b6bff, &[Stage::Working]), ("Finished", 0x2fae66, &[Stage::Done, Stage::Failed, Stage::Stopped])] {
+                for (h, c, st) in [("Waking", 0xf5b83du32, &[Stage::Waking][..]), ("Doing", 0x9b6bff, &[Stage::Working, Stage::Waiting]), ("Finished", 0x2fae66, &[Stage::Done, Stage::Failed, Stage::Stopped])] {
                     let list: Vec<&KiroSession> = sessions.iter().filter(|s| st.contains(&stage_of(s))).collect();
                     rows.push(PanelRow { text: s(h.to_uppercase()), color: Color::from_rgb_u8((c >> 16) as u8, (c >> 8) as u8, c as u8), count: s(list.len().to_string()), ..row(0) });
                     opens.push((None, None));
@@ -341,7 +385,7 @@ impl App {
             }
             Some("tv") => {
                 let n = |st: &[Stage]| sessions.iter().filter(|s| st.contains(&stage_of(s))).count().to_string();
-                rows.push(PanelRow { s1: s(n(&[Stage::Waking, Stage::Working])), s2: s(n(&[Stage::Done])), s3: s(n(&[Stage::Failed])), s4: s(n(&[Stage::Stopped])), ..row(2) });
+                rows.push(PanelRow { s1: s(n(&[Stage::Waking, Stage::Working, Stage::Waiting])), s2: s(n(&[Stage::Done])), s3: s(n(&[Stage::Failed])), s4: s(n(&[Stage::Stopped])), ..row(2) });
                 opens.push((None, None));
                 rows.push(PanelRow { text: s("CONTEXT USED"), color: Color::from_argb_u8(0, 0, 0, 0), ..row(0) });
                 opens.push((None, None));
@@ -365,9 +409,10 @@ impl App {
                     if d != at { at = d.clone(); rows.push(PanelRow { text: s(d.to_uppercase()), color: Color::from_argb_u8(0, 0, 0, 0), ..row(0) }); opens.push((None, None)); }
                     let desk = sessions.iter().any(|s| s.key == h.key);
                     let stage = Stage::parse(hover_agents::state::stage(h.state, hover_agents::stream::KiroPhase::Working));
-                    rows.push(PanelRow { sub: s(format!("{} · {}{}", stage.word(), h.tool.name(), if desk { " · at a desk" } else { "" })), text: s(&h.title),
-                        meta: s(format!("{} · {} turn{} · {}", ago(now - ms), h.turns, if h.turns == 1 { "" } else { "s" }, hover_office::office::short(&h.folder))),
-                        color: tool_color(h.tool.id()), stage: stage as i32, key: s(&h.key), desk, ..row(1) });
+                    // .hr: the tool's logo, the task, then how it went · when · turns · where.
+                    rows.push(PanelRow { sub: s(h.tool.id()), text: s(&h.title), meta: s(stage.word()),
+                        count: s(format!("{} · {} turn{} · {}", ago(now - ms), h.turns, if h.turns == 1 { "" } else { "s" }, hover_office::office::short(&h.folder))),
+                        stage: stage as i32, key: s(&h.key), desk, ..row(6) });
                     opens.push((None, Some(h.key.clone())));
                 }
                 if list.is_empty() { rows.push(PanelRow { text: s(if all.is_empty() { "Sessions you start are kept here. Open one to read it, reply to carry on." } else { "Nothing matches." }), ..row(4) }); opens.push((None, None)); }
@@ -383,7 +428,9 @@ impl App {
         let Some(sess) = self.hover.sessions.get(id) else { return };
         let files = |_: &KiroSession| None;
         let Ok(v) = serde_json::from_str::<serde_json::Value>(&hover_agents::state::state(&sess, &files).compact()) else { return };
-        let turns = hover_chat::state::turns(&v);
+        let now = hover_core::time::Stamp::now();
+        let off = hover_core::time::local_offset_min(now.ticks);
+        let turns = hover_chat::state::turns_at(&v, now.unix_ms() as f64, &|ms| hover_chat::state::hm(ms, off));
         let which = self.page.target.get();
         let dash = self.dash.borrow();
         let g = if which == 1 { dash.as_ref().map(|d| d.global::<crate::ui::Office>()) } else { Some(self.notch.global::<crate::ui::Office>()) };
@@ -391,9 +438,11 @@ impl App {
         // #drawer: min(400, W − 24) wide, the thread between its header (≈ 76) and the
         // composer (≈ 62).
         let (ow, oh) = self.page.size.get();
-        let w = (400.0f32).min(ow as f32 - 24.0);
-        let h = (oh as f32 - 24.0 - 76.0 - 62.0).max(40.0);
-        let _ = (g.get_d_thread_w(), g.get_d_thread_h());
+        // The thread's own box once Slint has laid it out (the question card over the
+        // composer takes some of it), else the estimate.
+        let (tw, th) = (g.get_d_thread_w(), g.get_d_thread_h());
+        let w = if tw > 0.0 { tw } else { (400.0f32).min(ow as f32 - 24.0) };
+        let h = if th > 0.0 { th } else { (oh as f32 - 24.0 - 76.0 - 62.0).max(40.0) };
         let mut chat = self.page.thread.borrow_mut();
         if chat.as_ref().is_none_or(|c| c.id != id) {
             let (name, c) = hover_office::bot::BOTS[sess.bot % 6];
@@ -402,7 +451,10 @@ impl App {
                 painter: hover_chat::Painter::new(&f, hover_chat::Images::none()), scroll: f32::MAX, width: 0.0, key: sess.key.clone() });
         }
         let c = chat.as_mut().unwrap();
+        c.thread.tool = sess.tool.id().into();
+        c.thread.view_h = h;
         c.thread.set(&turns, w);
+        *self.page.turns.borrow_mut() = turns;
         c.width = w;
         let max = (c.thread.height - h).max(0.0);
         c.scroll = c.scroll.clamp(0.0, max);
@@ -452,7 +504,9 @@ impl App {
             if text.is_empty() { return; }
             let tool = AgentTool::ALL[a.page.new_tool.get()];
             if !a.hover.settings.kiro_notice_seen() { a.hover.settings.set_kiro_notice_seen(true); }
-            match a.hover.sessions.start(tool, &folder, &text, vec![]) {
+            // The access picked in the new-task box, for this session only.
+            let access = a.new_access(a.page.new_tool.get());
+            match a.hover.sessions.start_as(tool, &folder, &text, vec![], Some(access)) {
                 Some(_) => { each!(a, |g| g.set_new_draft(s(""))); a.page.fab.set(0); }
                 None => a.toast("All six desks are busy. Stop or remove a session first."),
             }
@@ -501,6 +555,27 @@ impl App {
             }
         });
         let a = self.clone();
+        g.on_toggle_menu(move || { a.page.menu.set(!a.page.menu.get()); a.office_widgets(); });
+        let a = self.clone();
+        g.on_open_access(move || { a.page.access_menu.set(!a.page.access_menu.get()); a.office_widgets(); });
+        let a = self.clone();
+        g.on_pick_access(move |id| {
+            let id = ACCESS.iter().map(|a| a.0).find(|x| *x == id.as_str());
+            a.page.new_access.borrow_mut()[a.page.new_tool.get()] = id;
+            a.page.access_menu.set(false);
+            a.office_widgets();
+        });
+        let a = self.clone();
+        g.on_answer(move |id, ask, how| {
+            // The office answered what the agent asked: over its head, or in its chat (-1).
+            let Some(id) = (if id < 0 { a.page.open.get() } else { Some(id) }) else { return };
+            let answer = match how.as_str() { "allow" => AskAnswer::Allow, "trust" => AskAnswer::Trust, "trustAll" => AskAnswer::TrustAll, _ => AskAnswer::Deny };
+            if let Some(s) = a.hover.sessions.get(id) { hover_core::log::line(&format!("{} run {}: {:?} from the office", s.tool.id(), s.id, answer).to_lowercase()); }
+            a.hover.sessions.answer(id, &ask, answer);
+            a.office_changed();
+            a.office_widgets();
+        });
+        let a = self.clone();
         g.on_d_close(move || a.close_drawer());
         let a = self.clone();
         g.on_d_delete(move || { if let Some(s) = a.page.open.get().and_then(|id| a.hover.sessions.get(id)) { a.ask_delete(Some(s.id), None, &s.title(), s.busy()); } });
@@ -512,6 +587,8 @@ impl App {
                 if a.hover.sessions.get(id).is_some_and(|s| s.busy()) { a.hover.sessions.stop(id); }
                 return;
             }
+            // Replying to a question says no to it, and the words go to the agent instead.
+            if let Some(q) = a.hover.sessions.get(id).and_then(|s| s.asking().map(|q| q.id.clone())) { a.hover.sessions.answer(id, &q, AskAnswer::Deny); }
             if !a.hover.sessions.reply(id, &text, vec![]) { a.toast("3 tasks are running. Reply when one is done."); return; }
             each!(a, |g| g.set_d_draft(s("")));
             if let Some(c) = &mut *a.page.thread.borrow_mut() { c.scroll = f32::MAX; }
@@ -519,7 +596,54 @@ impl App {
             a.office_widgets();
         });
         let a = self.clone();
+        g.on_d_click(move |x, y| a.thread_click(x, y));
+        let a = self.clone();
+        g.on_d_resized(move || { let a = a.clone(); slint::Timer::single_shot(Duration::ZERO, move || a.paint_thread()); });
+        let a = self.clone();
         g.on_d_wheel(move |dy| { if let Some(c) = &mut *a.page.thread.borrow_mut() { c.scroll = (c.scroll - dy).max(0.0); } a.paint_thread(); });
+    }
+
+    /// The open chat's thread and turns, for the screenshots.
+    pub fn page_thread(&self) -> Option<std::cell::RefMut<'_, hover_chat::Thread>> {
+        std::cell::RefMut::filter_map(self.page.thread.borrow_mut(), |c| c.as_mut().map(|c| &mut c.thread)).ok()
+    }
+    pub fn page_turns(&self) -> Vec<hover_chat::Turn> { self.page.turns.borrow().clone() }
+
+    /// A click in the open chat's thread: a summary line folds or opens its timeline, a
+    /// step its change or output; Copy puts a code block on the clipboard; a link opens.
+    fn thread_click(self: &Rc<Self>, x: f32, y: f32) {
+        let hit = {
+            let chat = self.page.thread.borrow();
+            let Some(c) = chat.as_ref() else { return };
+            c.thread.hit(x, y + c.scroll)
+        };
+        let turns = self.page.turns.borrow().clone();
+        match hit {
+            hover_chat::Hit::Toggle(i) => { if let Some(c) = &mut *self.page.thread.borrow_mut() { c.thread.toggle_steps(&turns, i); } }
+            hover_chat::Hit::Act(i, hover_chat::doc::Act::Step(j, now)) => { if let Some(c) = &mut *self.page.thread.borrow_mut() { c.thread.toggle_step(&turns, i, j, now); } }
+            hover_chat::Hit::Act(_, hover_chat::doc::Act::Copy(text)) => {
+                if let Err(e) = arboard::Clipboard::new().and_then(|mut c| c.set_text(text.to_string())) { hover_core::log::line(&format!("clipboard: {e}")); }
+                if let Some(c) = &mut *self.page.thread.borrow_mut() { c.thread.set_copied(&turns, Some(text)); }
+                // "Copied" for 1.4 s, then Copy again.
+                let a = self.clone();
+                self.page.copied.start(slint::TimerMode::SingleShot, Duration::from_millis(1400), move || {
+                    let turns = a.page.turns.borrow().clone();
+                    if let Some(c) = &mut *a.page.thread.borrow_mut() { c.thread.set_copied(&turns, None); }
+                    a.paint_thread();
+                });
+            }
+            hover_chat::Hit::Link(url) => crate::open_url(&url),
+            _ => return,
+        }
+        self.paint_thread();
+    }
+
+    /// newAccessOf: the access the box picked for this tool, else the tool's setting; Read
+    /// only only where it works.
+    fn new_access(&self, i: usize) -> &'static str {
+        let t = AgentTool::ALL[i];
+        let a = self.page.new_access.borrow()[i].unwrap_or_else(|| hover_agents::state::tool_access(&self.hover.settings, t));
+        if a == "read" && !hover_agents::agents::read_only_works(t) { "full" } else { a }
     }
 
     fn ask_delete(self: &Rc<Self>, id: Option<i32>, key: Option<String>, title: &str, busy: bool) {
@@ -539,6 +663,28 @@ fn each_reply(a: &App) -> String {
     let n = a.notch.global::<crate::ui::Office>().get_d_draft().to_string();
     if !n.trim().is_empty() { return n; }
     a.dash.borrow().as_ref().map(|d| d.global::<crate::ui::Office>().get_d_draft().to_string()).unwrap_or_default()
+}
+
+/// main.js ACCESS: what a session may do on its own, picked when it starts.
+pub const ACCESS: [(&str, &str, &str); 4] = [
+    ("full", "Trust all", "Never asks. Edits, runs commands and goes online on its own."),
+    ("risky", "Ask first", "Asks before commands, deletes, the network and anything outside the folder."),
+    ("always", "Ask always", "Asks before every change and every command."),
+    ("read", "Read only", "Reads and searches. Changes nothing."),
+];
+
+fn access_label(id: &str) -> &'static str { ACCESS.iter().find(|a| a.0 == id).map_or("Trust all", |a| a.1) }
+
+/// accessNote: Codex's Ask first is its own preset, which lets the rest run.
+pub fn access_note(id: &str, tool: AgentTool) -> &'static str {
+    if tool == AgentTool::Codex && id == "risky" { return "Asks to write outside the folder or go online. Codex runs the rest."; }
+    ACCESS.iter().find(|a| a.0 == id).map_or("", |a| a.2)
+}
+
+/// A question as its card shows it.
+fn ask_data(a: &hover_agents::ask::AgentAsk, n: usize) -> AskData {
+    AskData { id: s(&a.id), title: s(hover_agents::words::ask_title(a)), command: s(a.command.as_deref().unwrap_or("")), path: s(a.path.as_deref().unwrap_or("")),
+        preview: s(a.preview.as_deref().unwrap_or("")), reason: s(&a.reason), danger: a.danger, allow: s(hover_agents::words::ask_allow(a)), more: n as i32 - 1 }
 }
 
 /// ago(): "now", "5 min ago", "3 h ago", "2 d ago".

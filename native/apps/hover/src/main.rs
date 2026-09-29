@@ -707,3 +707,13 @@ fn platform_start(hover: Arc<Hover>, look: Look, _selftest: bool) -> Rc<App> {
     *app.notify.borrow_mut() = Some(Box::new(|t, b| win::tray_notify(t, b)));
     app
 }
+
+/// A link in the chat opens in the browser, as KiroPage's `link` did (http(s) only:
+/// hover-md makes sure).
+pub fn open_url(url: &str) {
+    #[cfg(windows)]
+    let r = std::process::Command::new("rundll32").args(["url.dll,FileProtocolHandler", url]).spawn();
+    #[cfg(not(windows))]
+    let r = std::process::Command::new("xdg-open").arg(url).spawn();
+    if let Err(e) = r { hover_core::log::line(&format!("couldn't open {url}: {e}")); }
+}

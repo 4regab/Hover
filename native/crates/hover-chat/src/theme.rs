@@ -23,8 +23,9 @@ pub const FIGURE_BG: Rgba = a(0x000000, 0.25);
 pub const IMG_BG: Rgba = a(0xffffff, 0.04);
 pub const TH_BG: Rgba = a(0xffffff, 0.05);
 pub const QUOTE_BAR: Rgba = a(0xc4a2ff, 0.4);
-pub const YOU_BG: Rgba = a(0x9046ff, 0.24);
-pub const YOU_EDGE: Rgba = a(0xc4a2ff, 0.2);
+/// .me: graphite, not purple.
+pub const YOU_BG: Rgba = a(0x24212a, 1.0);
+pub const YOU_EDGE: Rgba = a(0xffffff, 0.06);
 /// Chromium's selection colour on a dark page (to be confirmed against a WebView2 capture).
 pub const SELECTION: Rgba = a(0x3390ff, 0.45);
 /// `.glass` over the office's dark room: rgba(22,15,30,.72) over #150c14, without the blur.

@@ -32,6 +32,9 @@ image = { version = "0.25", default-features = false, features = ["png", "ico"] 
 lewton = "0.10"
 cpal = "0.18"
 
+# In the tree (chat-proto): a code block's Copy in the chat puts its text on the clipboard.
+arboard = { version = "3.6", default-features = false }
+
 [target.'cfg(not(windows))'.dependencies]
 # Already in the tree (winit): the notch's X11 window (override-redirect, its input
 # shape), the global shortcut (XGrabKey) and the screenshots of the real screen.

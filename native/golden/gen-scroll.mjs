@@ -30,12 +30,15 @@ for (const name of ['rich', 'wide']) {
     const th = document.querySelector('#thread'), a = th.querySelector('.ans');
     // One turn: the fixture session's prompt and steps, this answer.
     a.innerHTML = h;
+    // renderDrawer: each code block in an answer gets its language and a Copy button.
+    for (const pre of a.querySelectorAll('pre')) { const box = document.createElement('div'); box.className = 'cb'; box.innerHTML = `<div class="ch">${pre.dataset.lang || 'code'}<button type="button" data-copy>Copy</button></div>`; pre.replaceWith(box); box.appendChild(pre); }
     const top = a.getBoundingClientRect().y;
-    const box = e => { const r = e.getBoundingClientRect(); return { y: +(r.y - top).toFixed(2), h: +r.height.toFixed(2), w: +r.width.toFixed(2), sw: e.scrollWidth, cw: e.clientWidth }; };
+    // A .cb's outline is the box; what scrolls is its pre.
+    const box = e => { const r = e.getBoundingClientRect(), s = e.classList.contains('cb') ? e.querySelector('pre') : e; return { y: +(r.y - top).toFixed(2), h: +r.height.toFixed(2), w: +r.width.toFixed(2), sw: s.scrollWidth, cw: s.clientWidth }; };
     return {
       thread: { cw: th.clientWidth, off: th.offsetWidth - th.clientWidth },
       answer: +a.getBoundingClientRect().height.toFixed(2),
-      boxes: [...a.querySelectorAll('pre, .table, figure')].map(box),
+      boxes: [...a.querySelectorAll('.cb, .table, figure')].map(box),
     };
   }, markdown(src, { image: u => u }));
 }

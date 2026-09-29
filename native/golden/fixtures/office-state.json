@@ -1,305 +1,390 @@
 {
- "now": 1790000000000,
- "state": {
-  "type": "state",
-  "window": false,
-  "canStart": true,
-  "maxRunning": 3,
-  "folder": "C:\\hover",
-  "tool": "kiro",
-  "open": null,
-  "tools": [
-   {
-    "id": "kiro",
-    "name": "Kiro",
-    "ready": true,
-    "hint": "",
-    "access": "full tool access",
-    "hideSteps": false,
-    "models": [
-     {
-      "id": "auto",
-      "name": "Auto"
-     },
-     {
-      "id": "claude-opus-5.5",
-      "name": "Claude Opus 5.5"
-     }
+  "now": 1790000000000,
+  "state": {
+    "type": "state",
+    "window": false,
+    "canStart": true,
+    "maxRunning": 3,
+    "folder": "C:\\hover",
+    "tool": "kiro",
+    "open": null,
+    "tools": [
+      {
+        "id": "kiro",
+        "name": "Kiro",
+        "ready": true,
+        "hint": "",
+        "access": "full",
+        "readOnly": true,
+        "hideSteps": false,
+        "models": [
+          {
+            "id": "auto",
+            "name": "Auto"
+          },
+          {
+            "id": "claude-opus-5.5",
+            "name": "Claude Opus 5.5"
+          }
+        ],
+        "model": "auto",
+        "efforts": [
+          "low",
+          "medium",
+          "high"
+        ],
+        "effort": "high"
+      },
+      {
+        "id": "codex",
+        "name": "Codex",
+        "ready": true,
+        "hint": "",
+        "access": "full",
+        "readOnly": true,
+        "hideSteps": false,
+        "models": [
+          {
+            "id": "",
+            "name": "Default"
+          },
+          {
+            "id": "gpt-5.6-sol",
+            "name": "GPT-5.6 Sol"
+          }
+        ],
+        "model": "",
+        "efforts": [],
+        "effort": null
+      },
+      {
+        "id": "cursor",
+        "name": "Cursor",
+        "ready": false,
+        "hint": "Sign in: run “cursor-agent login” in a terminal.",
+        "access": "read",
+        "readOnly": true,
+        "hideSteps": false,
+        "models": [],
+        "model": null,
+        "efforts": [],
+        "effort": null
+      }
     ],
-    "model": "auto",
-    "efforts": [
-     "low",
-     "medium",
-     "high"
+    "sessions": [
+      {
+        "id": 1,
+        "key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "files": null,
+        "tool": "kiro",
+        "bot": 0,
+        "seat": 0,
+        "title": "Add refresh token expiry",
+        "folder": "C:\\hover",
+        "ctx": 31,
+        "access": "full",
+        "stage": "working",
+        "act": "Reading",
+        "ask": null,
+        "pose": "Reading",
+        "file": "refresh.ts",
+        "turns": [
+          {
+            "prompt": "Refresh tokens never expire. Make them expire after 30 days and return 401 when one is used after that.",
+            "images": [],
+            "queued": false,
+            "stage": "working",
+            "steps": [
+              {
+                "k": "read",
+                "verb": "Read",
+                "name": "session.ts",
+                "dir": "src/auth",
+                "cmd": null,
+                "status": "completed",
+                "add": 0,
+                "del": 0,
+                "diff": null,
+                "out": null,
+                "exit": null,
+                "ms": null
+              },
+              {
+                "k": "read",
+                "verb": "Read",
+                "name": "refresh.ts",
+                "dir": "src/auth",
+                "cmd": null,
+                "status": "completed",
+                "add": 0,
+                "del": 0,
+                "diff": null,
+                "out": null,
+                "exit": null,
+                "ms": null
+              }
+            ],
+            "answer": "",
+            "t0": 1789999916000.0,
+            "woke": 2.3,
+            "took": null
+          }
+        ]
+      },
+      {
+        "id": 2,
+        "key": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "files": null,
+        "tool": "codex",
+        "bot": 1,
+        "seat": 1,
+        "title": "Fix the notch flicker on resize",
+        "folder": "C:\\hover",
+        "ctx": 48,
+        "access": "full",
+        "stage": "done",
+        "act": "Working",
+        "ask": null,
+        "pose": "Editing",
+        "file": "dotnet test",
+        "turns": [
+          {
+            "prompt": "The notch blinks when I change the workspace size in Settings. Find out why and fix it.",
+            "images": [],
+            "queued": false,
+            "stage": "done",
+            "steps": [
+              {
+                "k": "read",
+                "verb": "Read",
+                "name": "Notch.cs",
+                "dir": "src/Hover/Owl",
+                "cmd": null,
+                "status": "completed",
+                "add": 0,
+                "del": 0,
+                "diff": null,
+                "out": null,
+                "exit": null,
+                "ms": null
+              },
+              {
+                "k": "edit",
+                "verb": "Edited",
+                "name": "Notch.cs",
+                "dir": "src/Hover/Owl",
+                "cmd": null,
+                "status": "completed",
+                "add": 3,
+                "del": 1,
+                "diff": "  if (open) return;\n- Collapse();\n+ if (Pinned) return;\n+ Collapse();\n+ Log.Line(\"folded\");",
+                "out": null,
+                "exit": null,
+                "ms": 1400
+              },
+              {
+                "k": "run",
+                "verb": "Ran",
+                "name": null,
+                "dir": null,
+                "cmd": "dotnet test",
+                "status": "completed",
+                "add": 0,
+                "del": 0,
+                "diff": null,
+                "out": "Passed!  - Failed: 0, Passed: 81, Skipped: 0, Total: 81",
+                "exit": 0,
+                "ms": 21800
+              }
+            ],
+            "answer": "## What changed\n\nI moved the **token check** into `RefreshService` and made refresh tokens expire after _30 days_. Using an expired one now returns `401`, and ~~the old fallback~~ is gone.\n\nSee [the RFC](https://datatracker.ietf.org/doc/html/rfc6749#section-6) or https://example.com/docs/auth.\n\n### Files\n\n1. `src/auth/refresh.ts`: the expiry check\n2. `src/auth/session.ts`: passes the clock in\n   - so tests can move time\n   - without sleeping\n3. `tests/refresh.test.ts`\n\n- [x] Build is clean\n- [ ] Deploy to staging\n- [x] All 83 tests pass\n\n> The tokens in production were minted before this change,\n> so they get the full 30 days from **today**.\n\n| File | Lines | Status |\n|:-----|------:|:------:|\n| refresh.ts | +24 −3 | changed |\n| session.ts | +6 | changed |\n| refresh.test.ts | +61 | new |\n\n```ts\nexport function expired(t: Token, now = Date.now()): boolean {\n  return now - t.issuedAt > 30 * DAY; // 30 days\n}\n```\n\n```mermaid\nflowchart LR\n  A[Request] --> B{Token valid?}\n  B -->|yes| C(Serve)\n  B -->|expired| D[401]\n  D -.-> A\n```\n\n---\n\n![The flow](https://example.com/flow.png)\n\nThat's all. Reply \"ship it\" and I will open the PR.\n",
+            "t0": 1789998440000,
+            "woke": 2.1,
+            "took": 192000
+          }
+        ]
+      },
+      {
+        "id": 3,
+        "key": "cccccccccccccccccccccccccccccccc",
+        "files": null,
+        "tool": "kiro",
+        "bot": 2,
+        "seat": 3,
+        "title": "Tests for the settings reader",
+        "folder": "C:\\hover",
+        "ctx": 12,
+        "access": "full",
+        "stage": "waking",
+        "act": "Thinking",
+        "ask": null,
+        "pose": "Thinking",
+        "file": "",
+        "turns": [
+          {
+            "prompt": "Write tests for Settings.cs covering blank folders.",
+            "images": [],
+            "queued": false,
+            "stage": "waking",
+            "steps": [],
+            "answer": "",
+            "t0": 1790000000000,
+            "woke": null,
+            "took": null
+          }
+        ]
+      },
+      {
+        "id": 4,
+        "key": "dddddddddddddddddddddddddddddddd",
+        "files": null,
+        "tool": "cursor",
+        "bot": 3,
+        "seat": 4,
+        "title": "Upgrade three.js to 0.171",
+        "folder": "C:\\site",
+        "ctx": 22,
+        "access": "read",
+        "stage": "failed",
+        "act": "Working",
+        "ask": null,
+        "pose": "Editing",
+        "file": "npm install three@0.171.0",
+        "turns": [
+          {
+            "prompt": "Upgrade three to 0.171 and fix anything that breaks.",
+            "images": [],
+            "queued": false,
+            "stage": "failed",
+            "steps": [
+              {
+                "k": "read",
+                "verb": "Read",
+                "name": "package.json",
+                "dir": null,
+                "cmd": null,
+                "status": "completed",
+                "add": 0,
+                "del": 0,
+                "diff": null,
+                "out": null,
+                "exit": null,
+                "ms": null
+              },
+              {
+                "k": "run",
+                "verb": "Ran",
+                "name": null,
+                "dir": null,
+                "cmd": "npm install three@0.171.0",
+                "status": "failed",
+                "add": 0,
+                "del": 0,
+                "diff": null,
+                "out": "npm ERR! code ENOTFOUND\nnpm ERR! network request to https://registry.npmjs.org/three failed",
+                "exit": 1,
+                "ms": 6100
+              }
+            ],
+            "answer": "I couldn't finish. npm install stopped with a peer dependency conflict: @react-three/fiber 8 needs three 0.170 or older.\n\nReply \"upgrade fiber too\" and I will move both together.",
+            "t0": 1789991720000,
+            "woke": 2.4,
+            "took": 48000
+          }
+        ]
+      },
+      {
+        "id": 5,
+        "key": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "files": null,
+        "tool": "codex",
+        "bot": 4,
+        "seat": 2,
+        "title": "Rename the Owl namespace",
+        "folder": "C:\\hover",
+        "ctx": 9,
+        "access": "full",
+        "stage": "stopped",
+        "act": "Working",
+        "ask": null,
+        "pose": "Editing",
+        "file": "namespace Hover.Owl",
+        "turns": [
+          {
+            "prompt": "Rename the Hover.Owl namespace to Hover.Workspace everywhere.",
+            "images": [],
+            "queued": false,
+            "stage": "stopped",
+            "steps": [
+              {
+                "k": "search",
+                "verb": "Searched",
+                "name": null,
+                "dir": null,
+                "cmd": "namespace Hover.Owl",
+                "status": "completed",
+                "add": 0,
+                "del": 0,
+                "diff": null,
+                "out": null,
+                "exit": null,
+                "ms": null
+              }
+            ],
+            "answer": "Stopped before any file was changed.",
+            "t0": 1789906400000,
+            "woke": 2,
+            "took": 22000
+          }
+        ]
+      }
     ],
-    "effort": "high"
-   },
-   {
-    "id": "codex",
-    "name": "Codex",
-    "ready": true,
-    "hint": "",
-    "access": "full tool access",
-    "hideSteps": false,
-    "models": [
-     {
-      "id": "",
-      "name": "Default"
-     },
-     {
-      "id": "gpt-5.6-sol",
-      "name": "GPT-5.6 Sol"
-     }
-    ],
-    "model": "",
-    "efforts": [],
-    "effort": null
-   },
-   {
-    "id": "cursor",
-    "name": "Cursor",
-    "ready": false,
-    "hint": "Sign in: run “cursor-agent login” in a terminal.",
-    "access": "read only",
-    "hideSteps": false,
-    "models": [],
-    "model": null,
-    "efforts": [],
-    "effort": null
-   }
-  ],
-  "sessions": [
-   {
-    "id": 1,
-    "key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-    "files": null,
-    "tool": "kiro",
-    "bot": 0,
-    "seat": 0,
-    "title": "Add refresh token expiry",
-    "folder": "C:\\hover",
-    "ctx": 31,
-    "stage": "working",
-    "act": "Reading",
-    "pose": "Reading",
-    "file": "refresh.ts",
-    "turns": [
-     {
-      "prompt": "Refresh tokens never expire. Make them expire after 30 days and return 401 when one is used after that.",
-      "images": [],
-      "queued": false,
-      "stage": "working",
-      "steps": [
-       [
-        "read",
-        "Read src/auth/session.ts",
-        null
-       ],
-       [
-        "read",
-        "Read src/auth/refresh.ts",
-        null
-       ]
-      ],
-      "answer": "",
-      "t0": 1789999916000.0,
-      "woke": 2.3,
-      "took": null
-     }
+    "history": [
+      {
+        "key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "tool": "kiro",
+        "title": "Add refresh token expiry",
+        "folder": "C:\\hover",
+        "at": 1790000000000,
+        "stage": "working",
+        "turns": 1
+      },
+      {
+        "key": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "tool": "codex",
+        "title": "Fix the notch flicker on resize",
+        "folder": "C:\\hover",
+        "at": 1789974800000,
+        "stage": "done",
+        "turns": 1
+      },
+      {
+        "key": "cccccccccccccccccccccccccccccccc",
+        "tool": "kiro",
+        "title": "Tests for the settings reader",
+        "folder": "C:\\hover",
+        "at": 1789949600000,
+        "stage": "waking",
+        "turns": 1
+      },
+      {
+        "key": "dddddddddddddddddddddddddddddddd",
+        "tool": "cursor",
+        "title": "Upgrade three.js to 0.171",
+        "folder": "C:\\site",
+        "at": 1789924400000,
+        "stage": "failed",
+        "turns": 1
+      },
+      {
+        "key": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "tool": "codex",
+        "title": "Rename the Owl namespace",
+        "folder": "C:\\hover",
+        "at": 1789899200000,
+        "stage": "stopped",
+        "turns": 1
+      }
     ]
-   },
-   {
-    "id": 2,
-    "key": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-    "files": null,
-    "tool": "codex",
-    "bot": 1,
-    "seat": 1,
-    "title": "Fix the notch flicker on resize",
-    "folder": "C:\\hover",
-    "ctx": 48,
-    "stage": "done",
-    "act": "Working",
-    "pose": "Editing",
-    "file": "",
-    "turns": [
-     {
-      "prompt": "The notch blinks when I change the workspace size in Settings. Find out why and fix it.",
-      "images": [],
-      "queued": false,
-      "stage": "done",
-      "steps": [
-       [
-        "read",
-        "Read src/Hover/Owl/Notch.cs",
-        null
-       ],
-       [
-        "edit",
-        "Edited src/Hover/Owl/Notch.cs",
-        null
-       ],
-       [
-        "run",
-        "Ran dotnet test",
-        null
-       ]
-      ],
-      "answer": "## What changed\n\nI moved the **token check** into `RefreshService` and made refresh tokens expire after _30 days_. Using an expired one now returns `401`, and ~~the old fallback~~ is gone.\n\nSee [the RFC](https://datatracker.ietf.org/doc/html/rfc6749#section-6) or https://example.com/docs/auth.\n\n### Files\n\n1. `src/auth/refresh.ts`: the expiry check\n2. `src/auth/session.ts`: passes the clock in\n   - so tests can move time\n   - without sleeping\n3. `tests/refresh.test.ts`\n\n- [x] Build is clean\n- [ ] Deploy to staging\n- [x] All 83 tests pass\n\n> The tokens in production were minted before this change,\n> so they get the full 30 days from **today**.\n\n| File | Lines | Status |\n|:-----|------:|:------:|\n| refresh.ts | +24 −3 | changed |\n| session.ts | +6 | changed |\n| refresh.test.ts | +61 | new |\n\n```ts\nexport function expired(t: Token, now = Date.now()): boolean {\n  return now - t.issuedAt > 30 * DAY; // 30 days\n}\n```\n\n```mermaid\nflowchart LR\n  A[Request] --> B{Token valid?}\n  B -->|yes| C(Serve)\n  B -->|expired| D[401]\n  D -.-> A\n```\n\n---\n\n![The flow](https://example.com/flow.png)\n\nThat's all. Reply \"ship it\" and I will open the PR.\n",
-      "t0": 1789998440000,
-      "woke": 2.1,
-      "took": 192000
-     }
-    ]
-   },
-   {
-    "id": 3,
-    "key": "cccccccccccccccccccccccccccccccc",
-    "files": null,
-    "tool": "kiro",
-    "bot": 2,
-    "seat": 3,
-    "title": "Tests for the settings reader",
-    "folder": "C:\\hover",
-    "ctx": 12,
-    "stage": "waking",
-    "act": "Thinking",
-    "pose": "Thinking",
-    "file": "",
-    "turns": [
-     {
-      "prompt": "Write tests for Settings.cs covering blank folders.",
-      "images": [],
-      "queued": false,
-      "stage": "waking",
-      "steps": [],
-      "answer": "",
-      "t0": 1790000000000,
-      "woke": null,
-      "took": null
-     }
-    ]
-   },
-   {
-    "id": 4,
-    "key": "dddddddddddddddddddddddddddddddd",
-    "files": null,
-    "tool": "cursor",
-    "bot": 3,
-    "seat": 4,
-    "title": "Upgrade three.js to 0.171",
-    "folder": "C:\\site",
-    "ctx": 22,
-    "stage": "failed",
-    "act": "Working",
-    "pose": "Editing",
-    "file": "",
-    "turns": [
-     {
-      "prompt": "Upgrade three to 0.171 and fix anything that breaks.",
-      "images": [],
-      "queued": false,
-      "stage": "failed",
-      "steps": [
-       [
-        "read",
-        "Read package.json",
-        null
-       ],
-       [
-        "run",
-        "Ran npm install three@0.171.0",
-        "failed"
-       ]
-      ],
-      "answer": "I couldn't finish. npm install stopped with a peer dependency conflict: @react-three/fiber 8 needs three 0.170 or older.\n\nReply \"upgrade fiber too\" and I will move both together.",
-      "t0": 1789991720000,
-      "woke": 2.4,
-      "took": 48000
-     }
-    ]
-   },
-   {
-    "id": 5,
-    "key": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
-    "files": null,
-    "tool": "codex",
-    "bot": 4,
-    "seat": 2,
-    "title": "Rename the Owl namespace",
-    "folder": "C:\\hover",
-    "ctx": 9,
-    "stage": "stopped",
-    "act": "Working",
-    "pose": "Editing",
-    "file": "",
-    "turns": [
-     {
-      "prompt": "Rename the Hover.Owl namespace to Hover.Workspace everywhere.",
-      "images": [],
-      "queued": false,
-      "stage": "stopped",
-      "steps": [
-       [
-        "search",
-        "Searched for \"namespace Hover.Owl\"",
-        null
-       ]
-      ],
-      "answer": "Stopped before any file was changed.",
-      "t0": 1789906400000,
-      "woke": 2,
-      "took": 22000
-     }
-    ]
-   }
-  ],
-  "history": [
-   {
-    "key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-    "tool": "kiro",
-    "title": "Add refresh token expiry",
-    "folder": "C:\\hover",
-    "at": 1790000000000,
-    "stage": "working",
-    "turns": 1
-   },
-   {
-    "key": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-    "tool": "codex",
-    "title": "Fix the notch flicker on resize",
-    "folder": "C:\\hover",
-    "at": 1789974800000,
-    "stage": "done",
-    "turns": 1
-   },
-   {
-    "key": "cccccccccccccccccccccccccccccccc",
-    "tool": "kiro",
-    "title": "Tests for the settings reader",
-    "folder": "C:\\hover",
-    "at": 1789949600000,
-    "stage": "waking",
-    "turns": 1
-   },
-   {
-    "key": "dddddddddddddddddddddddddddddddd",
-    "tool": "cursor",
-    "title": "Upgrade three.js to 0.171",
-    "folder": "C:\\site",
-    "at": 1789924400000,
-    "stage": "failed",
-    "turns": 1
-   },
-   {
-    "key": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
-    "tool": "codex",
-    "title": "Rename the Owl namespace",
-    "folder": "C:\\hover",
-    "at": 1789899200000,
-    "stage": "stopped",
-    "turns": 1
-   }
-  ]
- }
+  }
 }

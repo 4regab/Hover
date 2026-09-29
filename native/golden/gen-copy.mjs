@@ -24,7 +24,7 @@ const out = {};
 for (const [name, k, open] of [['done-rich', 1], ['failed', 3], ['stopped', 4], ['failed-steps-open', 3, true], ['working-live', 0]]) {
   await p.evaluate(k => document.querySelectorAll('.tag .nm')[k].click(), k);
   await p.clock.runFor(600);
-  if (open) { await p.evaluate(() => document.querySelector('#thread details.work summary').click()); await p.clock.runFor(300); }
+  if (open) { await p.evaluate(() => document.querySelector('#thread .sum').click()); await p.clock.runFor(300); }
   out[name] = await p.evaluate(() => {
     const th = document.querySelector('#thread'), s = getSelection(), r = document.createRange();
     r.selectNodeContents(th); s.removeAllRanges(); s.addRange(r);
@@ -32,9 +32,10 @@ for (const [name, k, open] of [['done-rich', 1], ['failed', 3], ['stopped', 4], 
     // The answer alone, too (what a drag over just the reply copies).
     const ans = th.querySelector('.ans');
     if (ans) { r.selectNodeContents(ans); s.removeAllRanges(); s.addRange(r); }
-    // Where each step row sits, for the layout test (flex row, shrunk, ellipsis).
+    // Where each timeline row sits, for the layout test: its top in #thread's content
+    // and its height (the summary line, then the rows of an open timeline or the live one).
     const t = th.getBoundingClientRect();
-    const rows = [...th.querySelectorAll('details.work[open] > div > div')].map(d => { const b = d.getBoundingClientRect(); return [+(b.x - t.x).toFixed(2), +b.width.toFixed(2)]; });
+    const rows = [...th.querySelectorAll('.sum, .steps.now > .s, .sum.open + .steps > .s')].map(d => { const b = d.getBoundingClientRect(); return [+(b.y - t.y + th.scrollTop).toFixed(2), +b.height.toFixed(2)]; });
     return { thread: all, answer: ans ? s.toString() : '', rows };
   });
   await p.evaluate(() => document.querySelector('#dClose').click());
@@ -52,6 +53,8 @@ await p.evaluate(k => document.querySelectorAll('.tag .nm')[k].click(), 1);
 await p.clock.runFor(600);
 out.answers = await p.evaluate(([hs, png]) => hs.map(([src, h]) => {
   const a = document.querySelector('#thread .ans'); a.innerHTML = h;
+  // renderDrawer: each code block gets its language and a Copy button.
+  for (const pre of a.querySelectorAll('pre')) { const box = document.createElement('div'); box.className = 'cb'; box.innerHTML = `<div class="ch">${pre.dataset.lang || 'code'}<button type="button" data-copy>Copy</button></div>`; pre.replaceWith(box); box.appendChild(pre); }
   for (const i of a.querySelectorAll('img')) i.src = png;
   const s = getSelection(), r = document.createRange(); r.selectNodeContents(a); s.removeAllRanges(); s.addRange(r);
   return [src, s.toString()];

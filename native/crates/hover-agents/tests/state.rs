@@ -27,21 +27,24 @@ fn state_of(stage: &str) -> Option<KiroState> {
     match stage { "done" => Some(KiroState::Completed), "failed" => Some(KiroState::Failed), "stopped" => Some(KiroState::Cancelled), _ => None }
 }
 
-/// A session whose C#-rule rendering is the fixture's: rows become steps whose title
-/// is the row's text (no target), except the last step of a session with a file,
-/// whose target is the row's text after its verb.
+/// A session whose C#-rule rendering is the fixture's: each row becomes the step
+/// Row() writes it from (its kind from the icon, its title the verb, its target the
+/// file or the command), with its change, output, exit code and time.
 fn session(v: &Json) -> KiroSession {
     let t = &v.get("turns").unwrap().items().unwrap()[0];
     let t0 = Stamp::from_unix_ms(f(t, "t0").unwrap() as i64, Kind::Local);
     let rows = t.get("steps").unwrap().items().unwrap();
-    let file = s(v, "file");
+    let o = |r: &Json, k: &str| r.get(k).unwrap().opt_str().unwrap();
     let steps = rows.iter().enumerate().map(|(i, r)| {
-        let r = r.items().unwrap();
-        let kind = match r[0].as_str().unwrap() { "run" => "execute", k => k };
-        let text = r[1].as_str().unwrap();
-        let last = i + 1 == rows.len() && !file.is_empty();
-        KiroStep { id: format!("t{i}"), kind: kind.into(), title: if last { "Read File".into() } else { text.into() },
-            target: last.then(|| text.split_once(' ').unwrap().1.to_owned()), status: if r[2].is_null() { "completed" } else { "failed" }.into(), ..Default::default() }
+        let kind = match s(r, "k") { "run" => "execute", k => k };
+        let target = match (o(r, "dir"), o(r, "name"), o(r, "cmd")) {
+            (Some(d), Some(n), _) => Some(format!("{d}/{n}")),
+            (None, Some(n), _) => Some(n),
+            (_, _, c) => c,
+        };
+        KiroStep { id: format!("t{i}"), kind: kind.into(), title: s(r, "verb").into(), target, status: s(r, "status").into(),
+            added: r.get("add").unwrap().i32().unwrap(), removed: r.get("del").unwrap().i32().unwrap(), diff: o(r, "diff"), output: o(r, "out"),
+            exit: f(r, "exit").map(|e| e as i32), ms: f(r, "ms") }
     }).collect();
     let stage = s(v, "stage");
     let mut turn = KiroTurn::new(s(t, "prompt"), vec![]);

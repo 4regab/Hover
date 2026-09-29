@@ -105,10 +105,26 @@ pub fn run(dir: &Path) {
     // Sessions that work until told otherwise, and quotas at every level.
     let hold = Arc::new(std::sync::Mutex::new(true));
     let h2 = hold.clone();
+    // A third task holds on its own until the question in it has been shot.
+    let hold3 = Arc::new(std::sync::Mutex::new(true));
+    let h3 = hold3.clone();
+    let n = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let run: RunTask = Arc::new(move |a: RunArgs| {
+        use hover_agents::stream::KiroEvent;
+        use hover_core::model::KiroStep;
+        let k = n.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        (a.events)(KiroEvent { session_id: Some(format!("s{k}")), ..Default::default() });
         (a.progress)(hover_agents::stream::KiroPhase::Reading);
-        while *h2.lock().unwrap() && !a.ct.is_cancelled() { std::thread::sleep(Duration::from_millis(10)); }
-        KiroResult::new(KiroState::Completed, "## Imports tidied\n\nAll 14 files now sort their imports.")
+        // The steps a real turn reports: reads, an edit with its change, a command with its output.
+        let step = |id: &str, kind: &str, title: &str, target: &str| KiroStep::new(id, kind, title, Some(target.into()), "completed");
+        (a.events)(KiroEvent { step: Some(step("r1", "read", "Read", "src/app/imports.ts")), ..Default::default() });
+        (a.events)(KiroEvent { step: Some(step("r2", "read", "Read", "src/app/sort.ts")), ..Default::default() });
+        (a.events)(KiroEvent { step: Some(KiroStep { added: 3, removed: 1, ms: Some(1400.0),
+            diff: Some("  export function tidy(files) {\n- return files;\n+ return files\n+   .map(sortImports)\n+   .filter(Boolean);".into()), ..step("e1", "edit", "Edit", "src/app/imports.ts") }), ..Default::default() });
+        (a.events)(KiroEvent { step: Some(KiroStep { exit: Some(0), ms: Some(8200.0), output: Some("✓ 14 files sorted\nTests: 42 passed, 42 total".into()), ..step("x1", "execute", "Run", "npm test") }), ..Default::default() });
+        let hold = if a.prompt.contains("three") { &h3 } else { &h2 };
+        while *hold.lock().unwrap() && !a.ct.is_cancelled() { std::thread::sleep(Duration::from_millis(10)); }
+        KiroResult::new(KiroState::Completed, "## Imports tidied\n\nAll 14 files now sort their imports.\n\n```ts\nexport const tidy = (f) => f.map(sortImports);\n```")
     });
     let reader = Arc::new(|id: &str| match id {
         "claude" => hover_quota::Reading { used: Some(37.5), detail: "Max · 5h 18% · week 38% · resets 14:00".into() },
@@ -200,6 +216,44 @@ pub fn run(dir: &Path) {
     app.toast("In Hover this opens a folder picker.");
     settle(300);
     save(&notch, full, 1.0, desk, &dir.join("office-toast.png"));
+    // The menu (time of day, music, history, Settings), and the new task's access menu.
+    app.notch.global::<Office>().invoke_toggle_menu();
+    settle(300);
+    save(&notch, full, 1.0, desk, &dir.join("office-menu.png"));
+    app.notch.global::<Office>().invoke_toggle_menu();
+    app.notch.global::<Office>().invoke_fab_main();
+    app.notch.global::<Office>().invoke_pick_tool(1);
+    app.notch.global::<Office>().invoke_open_access();
+    settle(300);
+    save(&notch, full, 1.0, desk, &dir.join("office-access-menu.png"));
+    app.notch.global::<Office>().invoke_open_access();
+    app.notch.global::<Office>().invoke_new_fold();
+    // A question: an agent under Ask first wants to run a command.
+    let s3 = hover.sessions.start_as(AgentTool::Codex, &folder, "Upgrade three.js to 0.171", vec![], Some("risky"));
+    let t = std::time::Instant::now();
+    while t.elapsed() < Duration::from_secs(3) && s3.as_ref().and_then(|s| hover.sessions.get(s.id)).is_none_or(|s| s.kiro_id.is_none()) { std::thread::sleep(Duration::from_millis(10)); }
+    if let Some(s3) = &s3 {
+        let sid = hover.sessions.get(s3.id).and_then(|s| s.kiro_id).unwrap_or_default();
+        let ask = hover_agents::ask::AgentAsk { id: "a1".into(), kind: "execute".into(), title: "Run".into(), command: Some("npm install three@0.171.0".into()), path: None,
+            preview: None, added: 0, removed: 0, reason: "Installs packages or uses the network".into(), danger: false };
+        hover.sessions.ask(AgentTool::Codex, &sid, ask, &hover_agents::cancel::Cancel::new(), Box::new(|_| {}));
+    }
+    app.office_push();
+    settle(2500);
+    save(&notch, full, 1.0, desk, &dir.join("office-ask-over.png"));
+    if let Some(s3) = &s3 { app.open_session(s3.id); }
+    settle(1500);
+    save(&notch, full, 1.0, desk, &dir.join("office-ask-chat.png"));
+    // The finished chat, its timeline open, the edit's change and the command's output.
+    if let Some(id) = first { app.open_session(id); }
+    settle(600);
+    let turns = app.page_turns();
+    if let Some(mut c) = app.page_thread() { c.toggle_steps(&turns, 0); c.toggle_step(&turns, 0, 2, false); c.toggle_step(&turns, 0, 3, false); }
+    app.office_widgets();
+    settle(600);
+    save(&notch, full, 1.0, desk, &dir.join("office-drawer-timeline.png"));
+    app.close_drawer();
+    *hold3.lock().unwrap() = false;
     app.show_settings_in(0, Section::General);
     save(&notch, full, 1.0, desk, &dir.join("notch-open-settings.png"));
 

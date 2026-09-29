@@ -391,6 +391,8 @@ impl Office {
             Stage::Done => if s.b.since < 6.0 { "Done! ✓".into() } else { String::new() },
             Stage::Failed => "Couldn’t finish".into(),
             Stage::Stopped => "z z z".into(),
+            // The question shows over the head in place of the bubble.
+            Stage::Waiting => String::new(),
         }
     }
 
@@ -555,7 +557,7 @@ impl Office {
     }
 
     pub fn draw_tv(&mut self, t: f64) {
-        let rows = [("Working", self.count(&[Stage::Waking, Stage::Working]), "#c4a2ff"), ("Done", self.count(&[Stage::Done]), "#4ade80"),
+        let rows = [("Working", self.count(&[Stage::Waking, Stage::Working, Stage::Waiting]), "#c4a2ff"), ("Done", self.count(&[Stage::Done]), "#4ade80"),
             ("Failed", self.count(&[Stage::Failed]), "#ff6b62"), ("Stopped", self.count(&[Stage::Stopped]), "#8a8fa0")];
         let cur = self.tv_session().map(|s| {
             let what = if s.last().stage == Stage::Working { format!("{} {}", s.act.as_deref().unwrap_or(""), short(&s.file)).trim().to_owned() } else { s.last().stage.word().to_owned() };
@@ -597,7 +599,7 @@ impl Office {
     }
 
     pub fn draw_board(&mut self) {
-        const COLS: [(&str, &str, &[Stage]); 3] = [("WAKING", "#f5b83d", &[Stage::Waking]), ("DOING", "#9b6bff", &[Stage::Working]), ("FINISHED", "#2fae66", &[Stage::Done, Stage::Failed, Stage::Stopped])];
+        const COLS: [(&str, &str, &[Stage]); 3] = [("WAKING", "#f5b83d", &[Stage::Waking]), ("DOING", "#9b6bff", &[Stage::Working, Stage::Waiting]), ("FINISHED", "#2fae66", &[Stage::Done, Stage::Failed, Stage::Stopped])];
         let notes: Vec<(Stage, &'static str, [u8; 3], String)> = self.sessions.iter().map(|s| (s.last().stage, s.b.name, s.b.css, s.title.clone())).collect();
         let x = &mut self.canvases[scene::TEX_BOARD];
         *x = Canvas::new(480, 280);

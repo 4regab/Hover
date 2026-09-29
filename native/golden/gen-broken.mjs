@@ -34,6 +34,8 @@ const out = [];
 for (const src of CASES) {
   out.push({ src, ...await p.evaluate(async h => {
     const a = document.querySelector('#thread .ans'); a.innerHTML = h;
+    // renderDrawer: each code block in an answer gets its language and a Copy button.
+    for (const pre of a.querySelectorAll('pre')) { const box = document.createElement('div'); box.className = 'cb'; box.innerHTML = `<div class="ch">${pre.dataset.lang || 'code'}<button type="button" data-copy>Copy</button></div>`; pre.replaceWith(box); box.appendChild(pre); }
     await Promise.all([...a.querySelectorAll('img')].map(i => new Promise(r => { if (i.complete) r(); else { i.onerror = r; setTimeout(r, 2000); } })));
     await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
     const box = a.getBoundingClientRect();

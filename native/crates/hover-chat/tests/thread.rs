@@ -3,7 +3,7 @@
 use std::path::Path;
 use std::time::Instant;
 
-use hover_chat::{state, Hit, Painter, Pos, Shaper, Stage, Step, StepIcon, Thread, Turn, Unit};
+use hover_chat::{state, Hit, Painter, Pos, Shaper, Stage, Thread, Turn, Unit};
 
 fn fonts() -> Vec<Vec<u8>> {
     let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
@@ -18,7 +18,7 @@ fn rich() -> String {
 }
 
 fn turn(prompt: &str, answer: &str) -> Turn {
-    let step = |t: &str| Step { icon: StepIcon::Read, text: t.into(), tag: None };
+    let step = |t: &str| hover_chat::state::step(&serde_json::json!(["read", t]));
     Turn { steps: vec![step("Read a"), step("Read b"), step("Ran c")], took: Some("3 min".into()), answer: answer.into(), ..Turn::new(prompt) }
 }
 
@@ -33,6 +33,9 @@ fn fixture(k: usize) -> (Thread, Vec<Turn>) {
     let (name, color) = state::BOTS[s["bot"].as_u64().unwrap() as usize];
     let turns = state::turns(s);
     let mut th = Thread::new(Shaper::new(&fonts()), name, color);
+    th.tool = s["tool"].as_str().unwrap().into();
+    // #thread's client height in the page at 1104 x 424 (gen-copy.mjs's viewport).
+    th.view_h = 260.0;
     th.set(&turns, 358.0);
     (th, turns)
 }
@@ -49,12 +52,20 @@ fn a_select_all_copies_what_the_page_copies() {
 }
 
 #[test]
-fn the_step_list_is_open_while_it_runs_and_flips_on_a_click() {
-    let (th, _) = fixture(0);
-    assert!(th.sections[0].summary.is_some());
-    let texts: Vec<&str> = th.sections[0].frag.texts.iter().map(|t| t.text.as_str()).collect();
-    assert!(texts.contains(&"Reading src/auth/refresh.ts"), "the live step says what it is doing: {texts:?}");
-    assert!(th.sections[0].frag.texts.iter().any(|t| t.shimmer));
+fn a_running_turn_folds_to_its_line_and_a_click_opens_it() {
+    // The running turn is folded under "Working m:ss"; its steps have ended, so no step
+    // shows live under the line (as in the page: .steps.now needs one still going).
+    let (th, turns) = fixture(0);
+    assert!(turns[0].live && th.sections[0].summary.is_some());
+    assert!(!th.sections[0].frag.texts.iter().any(|t| t.shimmer));
+    // A step still going shows under the line, saying what it is doing.
+    let mut t = turns.clone();
+    t[0].steps.last_mut().unwrap().status = "in_progress".into();
+    let (mut th2, _) = fixture(0);
+    th2.set(&t, 358.0);
+    let texts: Vec<&str> = th2.sections[0].frag.texts.iter().map(|t| t.text.as_str()).collect();
+    assert!(texts.contains(&"Reading refresh.tssrc/auth"), "the live step says what it is doing: {texts:?}");
+    assert!(th2.sections[0].frag.texts.iter().any(|t| t.shimmer));
     let (mut th, turns) = fixture(3);
     let n = th.sections[0].frag.texts.len();
     let [x, y, _, h] = th.sections[0].summary.unwrap();
@@ -167,21 +178,25 @@ fn a_long_rich_conversation_stays_responsive() {
 
 #[test]
 fn step_rows_sit_where_the_page_puts_them() {
-    // copy.json's `rows`: each open step row's x and width in the page's #thread.
+    // copy.json's `rows`: the summary line and each timeline row, their top in #thread's
+    // content and their height.
     let want: serde_json::Value = serde_json::from_str(&golden("expected/copy.json")).unwrap();
-    for (name, k, open) in [("working-live", 0, false), ("failed-steps-open", 3, true)] {
+    for (name, k, open) in [("done-rich", 1, false), ("failed", 3, false), ("failed-steps-open", 3, true)] {
         let (mut th, turns) = fixture(k);
         if open { th.toggle_steps(&turns, 0); }
-        let xs: Vec<f32> = th.sections[0].frag.shapes.iter().filter_map(|s| match s {
-            hover_chat::doc::Shape::Svg { x, w, y, .. } if *w == 13.0 && *y > 60.0 && *y < 140.0 => Some(*x + 12.0),
+        let s = &th.sections[0];
+        let [_, sy, _, sh] = s.summary.unwrap();
+        let mut got = vec![(s.y + sy, sh)];
+        // The icon boxes (19 x 19) centre in their 25 px rows.
+        got.extend(s.frag.shapes.iter().filter_map(|x| match x {
+            hover_chat::doc::Shape::Rect { y, w, h, .. } if *w == 19.0 && *h == 19.0 => Some((s.y + y - 3.0, 25.0)),
             _ => None,
-        }).collect();
+        }));
         let rows = want[name]["rows"].as_array().unwrap();
-        let got: Vec<f32> = xs.iter().take(rows.len()).copied().collect();
-        let exp: Vec<f32> = rows.iter().map(|r| r[0].as_f64().unwrap() as f32).collect();
+        let exp: Vec<(f32, f32)> = rows.iter().map(|r| (r[0].as_f64().unwrap() as f32, r[1].as_f64().unwrap() as f32)).collect();
         eprintln!("{name}: rows at {got:?}, page {exp:?}");
         assert_eq!(got.len(), exp.len(), "{name}");
-        for (g, e) in got.iter().zip(&exp) { assert!((g - e).abs() <= 1.5, "{name}: {g} vs {e}"); }
+        for (g, e) in got.iter().zip(&exp) { assert!((g.0 - e.0).abs() <= 1.5 && (g.1 - e.1).abs() <= 0.5, "{name}: {g:?} vs {e:?}"); }
     }
 }
 
@@ -322,7 +337,7 @@ fn scrolling_boxes_are_laid_out_as_the_page_lays_them_out() {
         let f = &th.sections[0].frag;
         // The boxes' borders: pre, .table and figure are the 10 px rounded outlines.
         let boxes: Vec<(f32, f32)> = f.shapes.iter().filter_map(|s| match s {
-            hover_chat::doc::Shape::Rect { y, h, radius, stroke: Some(_), .. } if radius[0] == 10.0 => Some((*y, *h)),
+            hover_chat::doc::Shape::Rect { y, h, radius, stroke: Some(_), .. } if radius[0] == 10.0 || radius[0] == 12.0 => Some((*y, *h)),
             _ => None,
         }).collect();
         let page = w["boxes"].as_array().unwrap();
@@ -424,7 +439,8 @@ fn an_image_that_arrives_lays_out_only_its_section_again() {
     assert!(th.image_changed("https://e.x/p.png"));
     th.set(&turns, 358.0);
     assert_eq!(th.relayouts, n + 1, "only the section with the image");
-    assert!((th.sections[1].h - (h0 - 18.0 + 100.0)).abs() < 1.0, "{} vs {h0}", th.sections[1].h);
+    // The broken image took its alt text's line (12.5 px at .ans's 1.55); now it is 100 tall.
+    assert!((th.sections[1].h - (h0 - 19.375 + 100.0)).abs() < 1.0, "{} vs {h0}", th.sections[1].h);
     let mut p = Painter::new(&fonts(), images);
     let px = p.paint(&th, 0.0, 358, th.height as u32, 1.0, hover_chat::theme::DRAWER_BG);
     let (x, y) = (12 + 100, (th.sections[1].y + th.sections[1].h - 50.0) as u32);

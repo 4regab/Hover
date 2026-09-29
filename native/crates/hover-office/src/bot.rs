@@ -8,17 +8,18 @@ use crate::scene::{Blend, Geo, Graph, Hit, Mat, ROOT};
 pub const BOTS: [(&str, u32); 6] = [("Pip", 0x9b6bff), ("Juno", 0x2fc9b0), ("Moss", 0xff9a4a), ("Nova", 0xff6fae), ("Ada", 0x5aa8ff), ("Rue", 0xb4e04a)];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Stage { Waking, Working, Done, Failed, Stopped }
+/// Waiting: the agent asks the user first (its hand up, the bulb blinking amber).
+pub enum Stage { Waking, Working, Done, Failed, Stopped, Waiting }
 
 impl Stage {
     pub fn parse(s: &str) -> Stage {
-        match s { "working" => Stage::Working, "done" => Stage::Done, "failed" => Stage::Failed, "stopped" => Stage::Stopped, _ => Stage::Waking }
+        match s { "working" => Stage::Working, "done" => Stage::Done, "failed" => Stage::Failed, "stopped" => Stage::Stopped, "waiting" => Stage::Waiting, _ => Stage::Waking }
     }
-    pub fn bulb(self) -> u32 { [0xffd24a, 0xc4a2ff, 0x4ade80, 0xff5b52, 0x55505f][self as usize] }
+    pub fn bulb(self) -> u32 { [0xffd24a, 0xc4a2ff, 0x4ade80, 0xff5b52, 0x55505f, 0xffb340][self as usize] }
     /// SCREEN: the desk screen's light on the bot's face.
-    pub fn screen(self) -> (u32, f64) { [(0x7fb8ff, 0.25), (0x7fb8ff, 0.6), (0x4ade80, 0.42), (0xff5b52, 0.5), (0, 0.0)][self as usize] }
-    pub fn word(self) -> &'static str { ["Waking up", "Working", "Done", "Couldn’t finish", "Stopped"][self as usize] }
-    pub fn busy(self) -> bool { matches!(self, Stage::Waking | Stage::Working) }
+    pub fn screen(self) -> (u32, f64) { [(0x7fb8ff, 0.25), (0x7fb8ff, 0.6), (0x4ade80, 0.42), (0xff5b52, 0.5), (0, 0.0), (0xffb340, 0.6)][self as usize] }
+    pub fn word(self) -> &'static str { ["Waking up", "Working", "Done", "Couldn’t finish", "Stopped", "Waiting for you"][self as usize] }
+    pub fn busy(self) -> bool { matches!(self, Stage::Waking | Stage::Working | Stage::Waiting) }
 }
 
 #[derive(Clone, Copy, Default)]
@@ -206,6 +207,8 @@ impl Bot {
                     if self.since < 1.8 { q.al = -3.0 + (t * 13.0).sin() * 0.3; q.ar = -3.0 - (t * 13.0).sin() * 0.3; q.sl = -0.3; q.sr = 0.3; q.lean = -0.1; q.hx = -0.2; }
                     else { q.al = -2.75; q.ar = -2.75; q.sl = 0.6; q.sr = -0.6; q.lean = -0.2; q.hx = -0.12; q.hz = (t * 0.7).sin() * 0.06; }
                 }
+                // Asking the user: a hand up and waving, the bulb blinking amber.
+                Stage::Waiting => { blink_bulb = true; q.al = -1.4; q.ar = -2.95 + (t * 6.0).sin() * 0.22; q.sr = 0.35 + (t * 6.0).sin() * 0.12; q.lean = -0.06; q.hx = -0.12; }
                 Stage::Failed => { eyes = "sad"; blink_bulb = true; q.al = -1.5; q.ar = -1.5; q.lean = 0.25; q.hx = 0.35; }
                 Stage::Stopped => { eyes = "shut"; halo = 0.0; q.al = -1.55; q.ar = -1.55; q.lean = 0.45 + (t * 1.6).sin() * 0.02; q.hx = 0.42; q.hz = 0.1; }
             }

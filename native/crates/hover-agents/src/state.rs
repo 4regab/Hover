@@ -43,15 +43,18 @@ pub fn push(o: &Office, sessions: &[KiroSession]) -> Json {
         ("tool", st(o.settings.agent_tool().id())),
         ("open", o.open.map_or(Json::Null, |i| Json::int(i as i64))),
         ("tools", Json::Arr(AgentTool::ALL.iter().map(|&t| tool(o, t)).collect())),
-        ("sessions", Json::Arr(sessions.iter().map(|s| state(s, o.files)).collect())),
+        ("sessions", Json::Arr(sessions.iter().map(|s| state_with(s, o.files, Some(tool_access(o.settings, s.tool)))).collect())),
         ("history", o.history.as_ref().map_or(Json::Null, |h| Json::Arr(h.iter().map(history_row).collect()))),
     ])
 }
 
 /// {type: "transcript", session}: one saved session, whole, for the chat to show.
-pub fn transcript(s: &KiroSession, files: &dyn Fn(&KiroSession) -> Option<String>) -> Json {
-    Json::obj(vec![("type", st("transcript")), ("session", state(s, files))])
+pub fn transcript(s: &KiroSession, files: &dyn Fn(&KiroSession) -> Option<String>, settings: &Settings) -> Json {
+    Json::obj(vec![("type", st("transcript")), ("session", state_with(s, files, Some(tool_access(settings, s.tool))))])
 }
+
+/// The tool's own setting as an access id (AgentOptions.AccessId).
+pub fn tool_access(settings: &Settings, t: AgentTool) -> &'static str { settings.agent_options(t).access_id(crate::agents::read_only_works(t)) }
 
 /// {type, text}: a toast, a picked folder (KiroPage.Say).
 pub fn say(kind: &str, text: &str) -> Json { Json::obj(vec![("type", st(kind)), ("text", st(text))]) }
@@ -86,7 +89,9 @@ fn tool(o: &Office, t: AgentTool) -> Json {
         // Unknown until checked; the picker offers it meanwhile.
         ("ready", Json::Bool(known.as_ref().is_none_or(AgentReady::ok))),
         ("hint", st(known.as_ref().map_or("", |k| k.hint.as_str()))),
-        ("access", st(if opts.read_only && crate::agents::read_only_works(t) { "read only" } else { "full tool access" })),
+        // The tool access a new task starts with, unless the box picks another.
+        ("access", st(opts.access_id(crate::agents::read_only_works(t)))),
+        ("readOnly", Json::Bool(crate::agents::read_only_works(t))),
         ("hideSteps", Json::Bool(opts.hide_steps)),
         ("models", Json::Arr(models.iter().map(|(id, name)| Json::obj(vec![("id", st(id)), ("name", st(name))])).collect())),
         ("model", opt(opts.model.as_deref().or(models.first().map(|m| m.0.as_str())))),
@@ -102,9 +107,13 @@ fn history_row(e: &HistoryEntry) -> Json {
     ])
 }
 
-/// One session as the office draws it.
-pub fn state(s: &KiroSession, files: &dyn Fn(&KiroSession) -> Option<String>) -> Json {
+/// One session as the office draws it. `access` is the tool's setting as an access
+/// id, for a session that picked none.
+pub fn state(s: &KiroSession, files: &dyn Fn(&KiroSession) -> Option<String>) -> Json { state_with(s, files, None) }
+
+pub fn state_with(s: &KiroSession, files: &dyn Fn(&KiroSession) -> Option<String>, tool_access: Option<&str>) -> Json {
     let last = s.current().and_then(|t| t.steps.last());
+    let waiting = s.waiting();
     Json::obj(vec![
         ("id", Json::int(s.id as i64)),
         ("key", st(&s.key)),
@@ -116,15 +125,28 @@ pub fn state(s: &KiroSession, files: &dyn Fn(&KiroSession) -> Option<String>) ->
         ("folder", st(&s.folder)),
         // (int?)Math.Round(c): to even at the half, as .NET rounds.
         ("ctx", s.context.map_or(Json::Null, |c| Json::int(c.round_ties_even() as i64))),
-        ("stage", st(stage(s.state, s.phase))),
+        // The session's own tool access, or the tool's setting.
+        ("access", st(s.access.as_deref().or(tool_access).unwrap_or("full"))),
+        ("stage", st(if waiting { "waiting" } else { stage(s.state, s.phase) })),
         ("act", st(act(s.phase))),
+        // What the agent is waiting on the user for, and how many more are behind it.
+        ("ask", s.asking().map_or(Json::Null, |a| {
+            let (verb, obj) = crate::words::ask_line(a);
+            Json::obj(vec![
+                ("id", st(&a.id)), ("kind", st(&a.kind)), ("title", st(&crate::words::ask_title(a))),
+                ("line", st(format!("{verb} {obj}").trim())), ("command", opt(a.command.as_deref())), ("path", opt(a.path.as_deref())),
+                ("preview", opt(a.preview.as_deref())), ("added", Json::int(a.added as i64)), ("removed", Json::int(a.removed as i64)),
+                ("reason", st(&a.reason)), ("danger", Json::Bool(a.danger)), ("allow", st(crate::words::ask_allow(a))),
+                ("more", Json::int(s.asks.len() as i64 - 1)),
+            ])
+        })),
         ("pose", st(pose(s.phase))),
         ("file", st(&last.and_then(|l| short(l.target.as_deref())).unwrap_or_default())),
         ("turns", Json::Arr(s.turns.iter().map(|t| {
             let stage_of = match (&t.result, t.queued) {
                 (Some(r), _) => stage(r.state, KiroPhase::Working),
                 (None, true) => "queued",
-                (None, false) => stage(s.state, s.phase),
+                (None, false) => if waiting { "waiting" } else { stage(s.state, s.phase) },
             };
             Json::obj(vec![
                 ("prompt", st(&t.prompt)),
@@ -177,7 +199,9 @@ pub fn pose(p: KiroPhase) -> &'static str {
     }
 }
 
-/// A step as the page lists it: [icon, line, "failed" or null].
+/// A step as the chat's timeline shows it: its kind's icon, a verb, and the file (its
+/// name bright, its folder dim) or the command it was about, with the change it made or
+/// what the command printed, and how it went.
 pub fn row(x: &KiroStep, folder: &str) -> Json {
     let icon = match x.kind.as_str() { "read" => "read", "edit" | "delete" | "move" => "edit", "execute" => "run", "search" | "fetch" => "search", _ => "think" };
     let verb = match x.kind.as_str() {
@@ -185,11 +209,21 @@ pub fn row(x: &KiroStep, folder: &str) -> Json {
         "execute" => Some("Ran"), "search" => Some("Searched"), "fetch" => Some("Fetched"), _ => None,
     };
     let target = relative(x.target.as_deref(), folder);
-    let text = match (verb, &target) {
-        (Some(v), Some(t)) => format!("{v} {t}"),
-        (_, t) => format!("{}{}", x.title, t.as_ref().map_or(String::new(), |t| format!(" {t}"))),
-    };
-    Json::Arr(vec![st(icon), st(&text), if x.status == "failed" { st("failed") } else { Json::Null }])
+    let (mut name, mut dir, mut cmd) = (None, None, None);
+    if matches!(x.kind.as_str(), "execute" | "search") {
+        cmd = target.clone().or_else(|| verb.map(|_| x.title.clone()));
+    } else if let (Some(t), true) = (&target, matches!(x.kind.as_str(), "read" | "edit" | "delete" | "move")) {
+        let t = t.replace('\\', "/");
+        match t.rfind('/') { None => name = Some(t), Some(i) => { name = Some(t[i + 1..].to_owned()); dir = Some(t[..i].to_owned()); } }
+    } else if target.is_some() {
+        cmd = target;
+    }
+    Json::obj(vec![
+        ("k", st(icon)), ("verb", st(verb.unwrap_or(&x.title))), ("name", opt(name.as_deref())), ("dir", opt(dir.as_deref())), ("cmd", opt(cmd.as_deref())),
+        ("status", st(&x.status)), ("add", Json::int(x.added as i64)), ("del", Json::int(x.removed as i64)),
+        ("diff", opt(x.diff.as_deref())), ("out", opt(x.output.as_deref())), ("exit", x.exit.map_or(Json::Null, |e| Json::int(e as i64))),
+        ("ms", x.ms.map_or(Json::Null, Json::double)),
+    ])
 }
 
 /// The target inside the folder, relative to it with forward slashes; one line, 90
@@ -242,10 +276,10 @@ mod tests {
     fn rows_lines_and_tags_as_kiro_page_writes_them() {
         let dir = if cfg!(windows) { r"C:\p" } else { "/p" };
         let inside = if cfg!(windows) { r"c:\P\src\a.ts" } else { "/p/src/a.ts" };
-        assert_eq!(row(&step("read", "Read File", Some(inside), "completed"), dir).compact(), r#"["read","Read src/a.ts",null]"#);
-        assert_eq!(row(&step("execute", "Run", Some("npm\ntest"), "failed"), dir).compact(), r#"["run","Ran npm test","failed"]"#);
-        assert_eq!(row(&step("think", "Planning", Some("x"), "completed"), dir).compact(), r#"["think","Planning x",null]"#);
-        assert_eq!(row(&step("other", "Working", None, "completed"), dir).compact(), r#"["think","Working",null]"#);
+        assert_eq!(row(&step("read", "Read File", Some(inside), "completed"), dir).compact(), r#"{"k":"read","verb":"Read","name":"a.ts","dir":"src","cmd":null,"status":"completed","add":0,"del":0,"diff":null,"out":null,"exit":null,"ms":null}"#);
+        assert_eq!(row(&step("execute", "Run", Some("npm\ntest"), "failed"), dir).compact(), r#"{"k":"run","verb":"Ran","name":null,"dir":null,"cmd":"npm test","status":"failed","add":0,"del":0,"diff":null,"out":null,"exit":null,"ms":null}"#);
+        assert_eq!(row(&step("think", "Planning", Some("x"), "completed"), dir).compact(), r#"{"k":"think","verb":"Planning","name":null,"dir":null,"cmd":"x","status":"completed","add":0,"del":0,"diff":null,"out":null,"exit":null,"ms":null}"#);
+        assert_eq!(row(&step("other", "Working", None, "completed"), dir).compact(), r#"{"k":"think","verb":"Working","name":null,"dir":null,"cmd":null,"status":"completed","add":0,"del":0,"diff":null,"out":null,"exit":null,"ms":null}"#);
         assert_eq!(relative(Some(&"a".repeat(95)), dir).unwrap(), format!("{}…", "a".repeat(89)));
         assert_eq!(short(Some("npm run test -- --watch=false")), Some("npm run test -- --watch=fal…".into()));
         assert_eq!(short(Some("src/auth/refresh.ts")), Some("refresh.ts".into()));
