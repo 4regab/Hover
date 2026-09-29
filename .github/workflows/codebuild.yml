@@ -67,6 +67,24 @@ jobs:
           Add-Content -Path $env:GITHUB_ENV -Value "RUSTUP_TOOLCHAIN=$env:RUST_TOOLCHAIN"
           Add-Content -Path $env:GITHUB_PATH -Value $cargoBin
 
+      # Server Core has almost no fonts (Lucida Console and a few bitmap ones), so the
+      # chat's text laid out empty. The first faces its font lists name are put in:
+      # Inter (the repo's, first in the sans list) and Cascadia Code (first in the mono
+      # list; OFL, from Microsoft's release).
+      - name: Install fonts
+        run: |
+          $zip = Join-Path $env:RUNNER_TEMP 'cascadia.zip'
+          Invoke-WebRequest 'https://github.com/microsoft/cascadia-code/releases/download/v2407.24/CascadiaCode-2407.24.zip' -OutFile $zip
+          Expand-Archive $zip (Join-Path $env:RUNNER_TEMP 'cascadia') -Force
+          $files = @(Get-ChildItem native\apps\hover\assets\Inter-*.ttf) + @(Get-ChildItem (Join-Path $env:RUNNER_TEMP 'cascadia\ttf\static\CascadiaCode-*.ttf'))
+          if ($files.Count -lt 5) { throw "Expected the Inter and Cascadia Code files, found $($files.Count)" }
+          $key = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Fonts'
+          foreach ($f in $files) {
+            Copy-Item $f.FullName (Join-Path $env:windir 'Fonts') -Force
+            New-ItemProperty -Path $key -Name "$($f.BaseName) (TrueType)" -Value $f.Name -PropertyType String -Force | Out-Null
+          }
+          Write-Host "Installed $($files.Count) fonts"
+
       # build.ps1 test, but past a failing crate, so one run shows every failure.
       - name: Test
         run: |
