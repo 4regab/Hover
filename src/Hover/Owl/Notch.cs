@@ -350,7 +350,7 @@ internal sealed class NotchHost : IDisposable
     /// Heights of the resting shapes. Small on purpose: the notch at rest is a hint,
     /// not a panel — a slim island when there is something to show, and nothing when
     /// there is not. The user knows where it is.
-    private const double PillHeight = 32, PillPadLeft = 4, PillPadRight = 10, PillGap = 12;
+    private const double PillHeight = 32, PillPadLeft = 4, PillPadRight = 7, PillGap = 12;
     private static readonly TimeSpan Dwell = TimeSpan.FromMilliseconds(120);
     private static readonly TimeSpan LeaveGrace = TimeSpan.FromMilliseconds(350);
 
@@ -468,7 +468,9 @@ internal sealed class NotchHost : IDisposable
     {
         // Rounded up to a few pixels so a clock ticking from 1:11 to 1:12 does not
         // make the island twitch.
-        RestKind.Pill => new Size(Math.Ceiling((_pill.DesiredSize.Width + PillPadLeft + PillPadRight) / 2) * 2, PillHeight),
+        // DesiredSize already holds the row's left margin (PillPadLeft); adding it
+        // again left that much extra room after the last item.
+        RestKind.Pill => new Size(Math.Ceiling((_pill.DesiredSize.Width + PillPadRight) / 2) * 2, PillHeight),
         RestKind.Card => new Size(Math.Ceiling(_card.DesiredSize.Width), Math.Ceiling(_card.DesiredSize.Height)),
         _ => new Size(0, 0),
     };
