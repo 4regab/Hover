@@ -43,6 +43,10 @@ sudo make install           # PREFIX=/usr/local; DESTDIR= for staging
 make package                # .deb and tarball in dist/
 ```
 
+A `v*` tag (three numbers, e.g. `v3.0.0`) runs `.github/workflows/codebuild.yml` on the
+`hover-release` CodeBuild project: tests and installers on Windows and Linux (Ubuntu
+22.04), published together as a GitHub pre-release.
+
 The cross-check that Windows code still compiles, from Linux:
 `cargo check --manifest-path native/Cargo.toml --release --workspace --all-targets --target x86_64-pc-windows-msvc`.
 
