@@ -1,0 +1,408 @@
+{
+ "runs": [
+  {
+   "S1": {
+    "startup_ms": 187.0,
+    "private_ws_mb": 91.7,
+    "private_commit_mb": 47.3,
+    "handles": 16,
+    "cpu_s": 0,
+    "providers_ws_mb": 0.0,
+    "providers": 0
+   },
+   "S2": {
+    "private_ws_mb": 179.9,
+    "private_commit_mb": 124.4,
+    "handles": 16,
+    "cpu_s": 0.05,
+    "providers_ws_mb": 0.0,
+    "providers": 0,
+    "office_frames": 0,
+    "p50_ms": 0.0,
+    "p95_ms": 0.0,
+    "p99_ms": 0.0,
+    "notch_frames": 101
+   },
+   "idle_settled": {
+    "cpu_s_per_60s": 0.29,
+    "presents_per_s": 0.0
+   },
+   "S3": {
+    "reopen_ms": 691.6,
+    "private_ws_mb": 379.1,
+    "private_commit_mb": 298.0,
+    "handles": 18,
+    "cpu_s": 27.12,
+    "providers_ws_mb": 0.0,
+    "providers": 0,
+    "office_frames": 93,
+    "p50_ms": 101.5,
+    "p95_ms": 117.3,
+    "p99_ms": 117.9,
+    "notch_frames": 502
+   },
+   "idle_office": {
+    "cpu_s_per_60s": 178.86,
+    "office_frames_per_s": 9.27
+   },
+   "S4": {
+    "open_ms": 281.5,
+    "private_ws_mb": 408.9,
+    "private_commit_mb": 323.1,
+    "handles": 18,
+    "cpu_s": 34.44,
+    "providers_ws_mb": 0.0,
+    "providers": 0,
+    "office_frames": 89,
+    "p50_ms": 113.7,
+    "p95_ms": 116.4,
+    "p99_ms": 117.2,
+    "notch_frames": 1896
+   },
+   "S5": {
+    "started": "2,3,4",
+    "during": {
+     "private_ws_mb": 409.3,
+     "private_commit_mb": 323.9,
+     "handles": 22,
+     "cpu_s": 55.0,
+     "providers_ws_mb": 4.7,
+     "providers": 2
+    },
+    "frames_during": {
+     "office_frames": 141,
+     "p50_ms": 72.0,
+     "p95_ms": 88.0,
+     "p99_ms": 102.8,
+     "notch_frames": 2301
+    },
+    "after": {
+     "private_ws_mb": 409.5,
+     "private_commit_mb": 324.2,
+     "handles": 22,
+     "cpu_s": 36.86,
+     "providers_ws_mb": 4.7,
+     "providers": 2
+    }
+   },
+   "S6": {
+    "reopen_ms_median": 121.19999999999999,
+    "reopen_ms_max": 280.2,
+    "after": {
+     "private_ws_mb": 428.6,
+     "private_commit_mb": 343.4,
+     "handles": 22,
+     "cpu_s": 37.49,
+     "providers_ws_mb": 4.7,
+     "providers": 2
+    },
+    "growth_vs_S3_mb": 49.5
+   }
+  },
+  {
+   "S1": {
+    "startup_ms": 188.8,
+    "private_ws_mb": 91.7,
+    "private_commit_mb": 47.6,
+    "handles": 16,
+    "cpu_s": 0,
+    "providers_ws_mb": 0.0,
+    "providers": 0
+   },
+   "S2": {
+    "private_ws_mb": 181.3,
+    "private_commit_mb": 126.1,
+    "handles": 16,
+    "cpu_s": 0.05,
+    "providers_ws_mb": 0.0,
+    "providers": 0,
+    "office_frames": 0,
+    "p50_ms": 0.0,
+    "p95_ms": 0.0,
+    "p99_ms": 0.0,
+    "notch_frames": 102
+   },
+   "idle_settled": {
+    "cpu_s_per_60s": 0.31,
+    "presents_per_s": 0.0
+   },
+   "S3": {
+    "reopen_ms": 684.3,
+    "private_ws_mb": 376.6,
+    "private_commit_mb": 296.0,
+    "handles": 18,
+    "cpu_s": 27.0,
+    "providers_ws_mb": 0.0,
+    "providers": 0,
+    "office_frames": 92,
+    "p50_ms": 111.8,
+    "p95_ms": 117.5,
+    "p99_ms": 118.4,
+    "notch_frames": 500
+   },
+   "idle_office": {
+    "cpu_s_per_60s": 181.0,
+    "office_frames_per_s": 9.37
+   },
+   "S4": {
+    "open_ms": 270.4,
+    "private_ws_mb": 409.0,
+    "private_commit_mb": 323.9,
+    "handles": 18,
+    "cpu_s": 34.32,
+    "providers_ws_mb": 0.0,
+    "providers": 0,
+    "office_frames": 88,
+    "p50_ms": 113.9,
+    "p95_ms": 116.5,
+    "p99_ms": 117.0,
+    "notch_frames": 1908
+   },
+   "S5": {
+    "started": "2,3,4",
+    "during": {
+     "private_ws_mb": 409.4,
+     "private_commit_mb": 324.7,
+     "handles": 22,
+     "cpu_s": 55.46,
+     "providers_ws_mb": 4.8,
+     "providers": 2
+    },
+    "frames_during": {
+     "office_frames": 137,
+     "p50_ms": 74.3,
+     "p95_ms": 90.2,
+     "p99_ms": 101.5,
+     "notch_frames": 2324
+    },
+    "after": {
+     "private_ws_mb": 409.8,
+     "private_commit_mb": 325.0,
+     "handles": 22,
+     "cpu_s": 37.2,
+     "providers_ws_mb": 4.8,
+     "providers": 2
+    }
+   },
+   "S6": {
+    "reopen_ms_median": 122.85,
+    "reopen_ms_max": 278.8,
+    "after": {
+     "private_ws_mb": 422.1,
+     "private_commit_mb": 336.6,
+     "handles": 22,
+     "cpu_s": 38.02,
+     "providers_ws_mb": 4.8,
+     "providers": 2
+    },
+    "growth_vs_S3_mb": 45.5
+   }
+  },
+  {
+   "S1": {
+    "startup_ms": 190.2,
+    "private_ws_mb": 92.9,
+    "private_commit_mb": 47.3,
+    "handles": 16,
+    "cpu_s": 0,
+    "providers_ws_mb": 0.0,
+    "providers": 0
+   },
+   "S2": {
+    "private_ws_mb": 173.4,
+    "private_commit_mb": 116.6,
+    "handles": 16,
+    "cpu_s": 0.05,
+    "providers_ws_mb": 0.0,
+    "providers": 0,
+    "office_frames": 0,
+    "p50_ms": 0.0,
+    "p95_ms": 0.0,
+    "p99_ms": 0.0,
+    "notch_frames": 99
+   },
+   "idle_settled": {
+    "cpu_s_per_60s": 0.3,
+    "presents_per_s": 0.0
+   },
+   "S3": {
+    "reopen_ms": 695.5,
+    "private_ws_mb": 378.1,
+    "private_commit_mb": 296.0,
+    "handles": 18,
+    "cpu_s": 26.97,
+    "providers_ws_mb": 0.0,
+    "providers": 0,
+    "office_frames": 92,
+    "p50_ms": 104.8,
+    "p95_ms": 117.4,
+    "p99_ms": 117.8,
+    "notch_frames": 498
+   },
+   "idle_office": {
+    "cpu_s_per_60s": 180.08,
+    "office_frames_per_s": 9.32
+   },
+   "S4": {
+    "open_ms": 267.8,
+    "private_ws_mb": 410.2,
+    "private_commit_mb": 323.0,
+    "handles": 18,
+    "cpu_s": 33.86,
+    "providers_ws_mb": 0.0,
+    "providers": 0,
+    "office_frames": 89,
+    "p50_ms": 114.1,
+    "p95_ms": 115.4,
+    "p99_ms": 117.1,
+    "notch_frames": 1898
+   },
+   "S5": {
+    "started": "2,3,4",
+    "during": {
+     "private_ws_mb": 409.7,
+     "private_commit_mb": 323.8,
+     "handles": 22,
+     "cpu_s": 54.83,
+     "providers_ws_mb": 4.7,
+     "providers": 2
+    },
+    "frames_during": {
+     "office_frames": 139,
+     "p50_ms": 73.4,
+     "p95_ms": 86.5,
+     "p99_ms": 92.2,
+     "notch_frames": 2309
+    },
+    "after": {
+     "private_ws_mb": 410.7,
+     "private_commit_mb": 323.9,
+     "handles": 22,
+     "cpu_s": 36.82,
+     "providers_ws_mb": 4.7,
+     "providers": 2
+    }
+   },
+   "S6": {
+    "reopen_ms_median": 99.05000000000001,
+    "reopen_ms_max": 280.2,
+    "after": {
+     "private_ws_mb": 428.7,
+     "private_commit_mb": 342.0,
+     "handles": 22,
+     "cpu_s": 38.13,
+     "providers_ws_mb": 4.7,
+     "providers": 2
+    },
+    "growth_vs_S3_mb": 50.6
+   }
+  }
+ ],
+ "median": {
+  "S1": {
+   "startup_ms": 188.8,
+   "private_ws_mb": 91.7,
+   "private_commit_mb": 47.3,
+   "handles": 16,
+   "cpu_s": 0,
+   "providers_ws_mb": 0.0,
+   "providers": 0
+  },
+  "S2": {
+   "private_ws_mb": 179.9,
+   "private_commit_mb": 124.4,
+   "handles": 16,
+   "cpu_s": 0.05,
+   "providers_ws_mb": 0.0,
+   "providers": 0,
+   "office_frames": 0,
+   "p50_ms": 0.0,
+   "p95_ms": 0.0,
+   "p99_ms": 0.0,
+   "notch_frames": 101
+  },
+  "idle_settled": {
+   "cpu_s_per_60s": 0.3,
+   "presents_per_s": 0.0
+  },
+  "S3": {
+   "reopen_ms": 691.6,
+   "private_ws_mb": 378.1,
+   "private_commit_mb": 296.0,
+   "handles": 18,
+   "cpu_s": 27.0,
+   "providers_ws_mb": 0.0,
+   "providers": 0,
+   "office_frames": 92,
+   "p50_ms": 104.8,
+   "p95_ms": 117.4,
+   "p99_ms": 117.9,
+   "notch_frames": 500
+  },
+  "idle_office": {
+   "cpu_s_per_60s": 180.08,
+   "office_frames_per_s": 9.32
+  },
+  "S4": {
+   "open_ms": 270.4,
+   "private_ws_mb": 409.0,
+   "private_commit_mb": 323.1,
+   "handles": 18,
+   "cpu_s": 34.32,
+   "providers_ws_mb": 0.0,
+   "providers": 0,
+   "office_frames": 89,
+   "p50_ms": 113.9,
+   "p95_ms": 116.4,
+   "p99_ms": 117.1,
+   "notch_frames": 1898
+  },
+  "S5": {
+   "started": "2,3,4",
+   "during": {
+    "private_ws_mb": 409.4,
+    "private_commit_mb": 323.9,
+    "handles": 22,
+    "cpu_s": 55.0,
+    "providers_ws_mb": 4.7,
+    "providers": 2
+   },
+   "frames_during": {
+    "office_frames": 139,
+    "p50_ms": 73.4,
+    "p95_ms": 88.0,
+    "p99_ms": 101.5,
+    "notch_frames": 2309
+   },
+   "after": {
+    "private_ws_mb": 409.8,
+    "private_commit_mb": 324.2,
+    "handles": 22,
+    "cpu_s": 36.86,
+    "providers_ws_mb": 4.7,
+    "providers": 2
+   }
+  },
+  "S6": {
+   "reopen_ms_median": 121.2,
+   "reopen_ms_max": 280.2,
+   "after": {
+    "private_ws_mb": 428.6,
+    "private_commit_mb": 342.0,
+    "handles": 22,
+    "cpu_s": 38.02,
+    "providers_ws_mb": 4.7,
+    "providers": 2
+   },
+   "growth_vs_S3_mb": 49.5
+  }
+ },
+ "host": [
+  "Linux",
+  "ip-10-137-42-237.us-east-1.compute.internal",
+  "6.1.186-228.374.amzn2023.x86_64",
+  "#1 SMP PREEMPT_DYNAMIC Mon Sep  7 10:16:03 UTC 2026",
+  "x86_64"
+ ],
+ "quick": false
+}

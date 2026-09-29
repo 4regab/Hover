@@ -140,7 +140,17 @@ impl App {
         p.push_timer.stop();
         *p.live.borrow_mut() = None;
         *p.thread.borrow_mut() = None;
+        // The last frame and its blurred copy would otherwise stay in the globals.
+        let clear = |g: crate::ui::Office| { g.set_scene(Image::default()); g.set_tags(ModelRc::default()); };
+        clear(self.notch.global::<crate::ui::Office>());
+        self.notch.global::<crate::ui::Backdrop>().set_blurred(Image::default());
+        if let Some(d) = &*self.dash.borrow() { clear(d.global::<crate::ui::Office>()); d.global::<crate::ui::Backdrop>().set_blurred(Image::default()); }
         hover_core::log::line("office dropped after 30 s hidden");
+        // glibc keeps what the office thread freed (its arena, the software GPU's
+        // buffers) mapped; the drop is for the memory, so give it back once the thread
+        // has gone.
+        #[cfg(target_os = "linux")]
+        slint::Timer::single_shot(Duration::from_secs(2), || unsafe { libc::malloc_trim(0); });
     }
 
     /// KiroPage.Push: every session and what the page needs to show them.
