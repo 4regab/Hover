@@ -883,18 +883,32 @@ fn platform_start(hover: Arc<Hover>, look: Look, _selftest: bool) -> Rc<App> {
 fn platform_start(hover: Arc<Hover>, look: Look, _selftest: bool) -> Rc<App> {
     let app = App::new(hover, Box::new(win::Plat::default()), look, false);
     let _ = app.notch.show();
-    if let Some(h) = win::hwnd_of(app.notch.window()) {
+    notch::layout(&app.notch, &mut app.n.borrow_mut(), view::argb(app.palette.borrow().panel));
+    *app.hotkey.borrow_mut() = Some(Box::new(|sc| { win::clear_hotkeys(); win::register_hotkey(sc) }));
+    win::set_tray_menu(app.menu());
+    *app.tray_menu.borrow_mut() = Some(Box::new(win::set_tray_menu));
+    *app.notify.borrow_mut() = Some(Box::new(|t, b| win::tray_notify(t, b)));
+    // winit makes its windows once the event loop runs, so the notch has no handle yet.
+    // Without one it was never placed (it sat off screen), had no tray icon, and the
+    // shortcut always failed. The handle is picked up from the loop, as on X11.
+    let a = app.clone();
+    let find = Rc::new(Timer::default());
+    let f2 = find.clone();
+    let tries = Cell::new(0u32);
+    find.start(TimerMode::Repeated, Duration::from_millis(10), move || {
+        tries.set(tries.get() + 1);
+        let Some(h) = win::hwnd_of(a.notch.window()) else { return };
+        f2.stop();
+        hover_core::log::line(&format!("notch window ready (try {})", tries.get()));
         win::disable_transitions(h);
         win::hook(h, || {});
         win::set_notch(h);
-    }
-    notch::layout(&app.notch, &mut app.n.borrow_mut(), view::argb(app.palette.borrow().panel));
-    *app.hotkey.borrow_mut() = Some(Box::new(|sc| { win::clear_hotkeys(); win::register_hotkey(sc) }));
-    app.register_hotkeys();
-    win::set_tray_menu(app.menu());
-    win::tray_start();
-    *app.tray_menu.borrow_mut() = Some(Box::new(win::set_tray_menu));
-    *app.notify.borrow_mut() = Some(Box::new(|t, b| win::tray_notify(t, b)));
+        notch::layout(&a.notch, &mut a.n.borrow_mut(), view::argb(a.palette.borrow().panel));
+        a.update_rest();
+        a.register_hotkeys();
+        win::tray_start();
+    });
+    std::mem::forget(find);
     app
 }
 
