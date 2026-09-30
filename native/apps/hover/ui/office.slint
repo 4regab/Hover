@@ -59,6 +59,9 @@ export struct PanelRow { kind: int, text: string, sub: string, meta: string, col
     s1: string, s2: string, s3: string, s4: string }
 
 export global Office {
+    // The office's items are made (office_ui: false once the office is dropped after 30 s
+    // hidden, so the renderer lets go of what it kept for them; true when it is made again).
+    in property <bool> built: true;
     in property <image> scene;
     in property <[TagData]> tags;
     in property <string> hint;
@@ -163,6 +166,9 @@ export global Office {
     // + attaches a picture to the box (2) or the reply (1); × takes one off.
     callback attach(int);
     callback unattach(int, int);
+    // Ctrl+V in the box (2) or the reply (1): true when the clipboard held a picture and
+    // it was attached (the box then doesn't paste); false lets the text be pasted.
+    callback paste-image(int) -> bool;
     callback set-time(int);
     callback open-history();
     callback open-settings();
@@ -188,6 +194,11 @@ export global Office {
     callback d-wheel(length);
     // A click in the thread (its summary lines, step blocks, Copy, links).
     callback d-click(length, length);
+    // The pointer in the thread (0 press, 1 move while pressed, 2 release; Shift held): a
+    // text selection.
+    callback d-pointer(int, length, length, bool);
+    // Ctrl+C: true when the thread had text selected and it was copied.
+    callback d-copy() -> bool;
     // The thread's box changed size (the question card came or went): paint it again.
     callback d-resized();
 }
@@ -904,7 +915,8 @@ export component OfficeView inherits Rectangle {
     // Esc steps back one layer: the page's keydown on the document, which sees it
     // whichever field has the keyboard (the task box, the reply, the search).
     public function escape() {
-        if (in-settings) { root.fold(); return; }
+        // The app window has nothing to fold: there Esc takes Settings back to its office.
+        if (in-settings) { if (dashboard) { root.back(); } else { root.fold(); } return; }
         if (Office.confirm) { Office.confirm-no(); return; }
         if (Office.model-menu != 0) { Office.open-model(0, 0, 0); return; }
         if (Office.access-menu) { Office.open-access(); return; }
@@ -942,6 +954,7 @@ export component OfficeView inherits Rectangle {
         focus := FocusScope {
             key-pressed(e) => {
                 if (e.text == Key.Escape) { root.escape(); return accept; }
+                if (e.modifiers.control && (e.text == "c" || e.text == "C") && Office.d-copy()) { return accept; }
                 Office.key(e.text);
                 accept
             }
@@ -1116,7 +1129,11 @@ export component OfficeView inherits Rectangle {
                             accessible-id: "nInput";
                             accessible-label: "Task";
                             edited => { Office.new-draft-edited(); }
-                            key-pressed(e) => { if (e.text == "\n" && !e.modifiers.shift) { Office.new-go-clicked(); return accept; } reject }
+                            key-pressed(e) => {
+                                if (e.text == "\n" && !e.modifiers.shift) { Office.new-go-clicked(); return accept; }
+                                if (e.modifiers.control && (e.text == "v" || e.text == "V") && Office.paste-image(2)) { return accept; }
+                                reject
+                            }
                             init => { self.focus(); }
                         }
                         if Office.new-draft == "": Text { y: 4px; text: "What should " + Office.tools[Office.new-tool].name + " do? Paste an image to show it.";
@@ -1293,7 +1310,15 @@ export component OfficeView inherits Rectangle {
                     changed width => { Office.d-thread-w = self.width; }
                     changed height => { Office.d-thread-h = self.height; Office.d-resized(); }
                     Image { width: 100%; height: 100%; source: Office.d-thread; image-fit: fill; }
-                    TouchArea { scroll-event(e) => { Office.d-wheel(e.delta-y); accept } clicked => { Office.d-click(self.mouse-x, self.mouse-y); } }
+                    TouchArea {
+                        scroll-event(e) => { Office.d-wheel(e.delta-y); accept }
+                        clicked => { Office.d-click(self.mouse-x, self.mouse-y); }
+                        pointer-event(e) => {
+                            if (e.button == PointerEventButton.left && e.kind == PointerEventKind.down) { Office.d-pointer(0, self.mouse-x, self.mouse-y, e.modifiers.shift); }
+                            if (e.button == PointerEventButton.left && e.kind == PointerEventKind.up) { Office.d-pointer(2, self.mouse-x, self.mouse-y, false); }
+                        }
+                        moved => { if (self.pressed) { Office.d-pointer(1, self.mouse-x, self.mouse-y, false); } }
+                    }
                 }
                 // The question at the end of the chat (askHTML(s, 'chat')): kept in view
                 // over the composer while the agent waits.
@@ -1335,7 +1360,13 @@ export component OfficeView inherits Rectangle {
                                     accessible-role: text-input;
                                     accessible-id: "input";
                                     accessible-label: Office.d-placeholder;
-                                    key-pressed(e) => { if (e.text == "\n" && !e.modifiers.shift) { Office.d-send(); return accept; } reject }
+                                    key-pressed(e) => {
+                                        if (e.text == "\n" && !e.modifiers.shift) { Office.d-send(); return accept; }
+                                        if (e.modifiers.control && (e.text == "v" || e.text == "V") && Office.paste-image(1)) { return accept; }
+                                        // Nothing selected in the box: Ctrl+C copies what is selected in the thread.
+                                        if (e.modifiers.control && (e.text == "c" || e.text == "C") && self.anchor-position-byte-offset == self.cursor-position-byte-offset && Office.d-copy()) { return accept; }
+                                        reject
+                                    }
                                 }
                                 if Office.d-draft == "": Text { x: 2px; y: 3px; text: Office.d-placeholder; font-size: 13px; color: #f6f2ff61; overflow: elide; width: parent.width - 4px; }
                             }

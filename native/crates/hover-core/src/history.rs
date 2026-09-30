@@ -183,16 +183,59 @@ impl AgentHistory {
         let mut g = self.index.lock().unwrap();
         if g.is_none() {
             let mut list = vec![];
+            let mut whole = true;
             if self.index_file().exists() {
                 let r = std::fs::read(self.index_file()).map_err(|e| e.to_string()).and_then(|b| {
                     let v = json::parse(&self.crypto.open(&b)).map_err(|e| e.to_string())?;
                     Ok(v.opt_list(HistoryEntry::from_json).map_err(|e| e.to_string())?.unwrap_or_default())
                 });
-                match r { Ok(l) => list = l, Err(e) => crate::log::line(&format!("agent history: index unreadable - {e}")) }
+                match r {
+                    Ok(l) => list = l,
+                    Err(e) => {
+                        // The index is only a summary of the session files: read them
+                        // instead. The unreadable one is set aside, not written over.
+                        crate::log::line(&format!("agent history: index unreadable - {e}; rebuilding it from the session files"));
+                        let _ = std::fs::rename(self.index_file(), self.dir.join(format!("index-{}.bad", crate::guid_n())));
+                        whole = false;
+                    }
+                }
+            }
+            // A session whose file was written but not yet its line in the index (Hover
+            // ended between the two) is found again from its file: one newer than the
+            // index, or any when there was no index to go by.
+            let since = if whole { std::fs::metadata(self.index_file()).and_then(|m| m.modified()).ok() } else { None };
+            let found = self.missing_from(&list, since);
+            if !found.is_empty() {
+                crate::log::line(&format!("agent history: {} session(s) found that the index didn't list", found.len()));
+                list.extend(found);
+                whole = false;
+            }
+            if !whole {
+                let index = Json::Arr(list.iter().map(HistoryEntry::to_json).collect()).compact();
+                let (c, idx) = (self.crypto.clone(), self.index_file());
+                self.write(Box::new(move || seal(&c, &idx, &index)));
             }
             *g = Some(list);
         }
         f(g.as_mut().unwrap())
+    }
+
+    /// The entries of the session files that `list` doesn't have, of those changed after
+    /// `since` (files that can't be opened with this key are left alone).
+    fn missing_from(&self, list: &[HistoryEntry], since: Option<std::time::SystemTime>) -> Vec<HistoryEntry> {
+        let Ok(dir) = std::fs::read_dir(&self.dir) else { return vec![] };
+        let mut out = vec![];
+        for e in dir.flatten() {
+            let name = e.file_name().to_string_lossy().into_owned();
+            let Some(key) = name.strip_suffix(".dat") else { continue };
+            if key == "index" || !plain(key) || list.iter().any(|x| x.key == key) { continue; }
+            if let Some(t) = since { if e.metadata().and_then(|m| m.modified()).is_ok_and(|m| m <= t) { continue; } }
+            let Ok(b) = std::fs::read(e.path()) else { continue };
+            let Ok(v) = json::parse(&self.crypto.open(&b)) else { continue };
+            let Ok(s) = SavedSession::from_json(&v) else { continue };
+            if s.key == key { out.push(entry_of(&s)); }
+        }
+        out
     }
 
     /// Newest first (a stable sort, as OrderByDescending is).
@@ -205,8 +248,7 @@ impl AgentHistory {
     /// Saves a session: its file, and its line in the index. The entry's state is the
     /// last turn's that has one, else Running.
     pub fn save(&self, s: &SavedSession) {
-        let state = s.turns.iter().rev().find_map(|t| t.state).unwrap_or(KiroState::Running);
-        let entry = HistoryEntry { key: s.key.clone(), tool: s.tool, title: s.title.clone(), folder: s.folder.clone(), updated: s.updated, state, turns: s.turns.len() as i32 };
+        let entry = entry_of(s);
         let body = s.to_json().compact();
         let file = self.file_of(&s.key);
         self.with_index(|list| {
@@ -266,6 +308,12 @@ impl AgentHistory {
         });
         let _ = self.tx.lock().unwrap().send(job);
     }
+}
+
+/// A session's line in the index. Its state is the last turn's that has one, else Running.
+fn entry_of(s: &SavedSession) -> HistoryEntry {
+    let state = s.turns.iter().rev().find_map(|t| t.state).unwrap_or(KiroState::Running);
+    HistoryEntry { key: s.key.clone(), tool: s.tool, title: s.title.clone(), folder: s.folder.clone(), updated: s.updated, state, turns: s.turns.len() as i32 }
 }
 
 fn seal(c: &Crypto, file: &Path, json: &str) -> std::io::Result<()> {
@@ -349,6 +397,53 @@ mod tests {
         assert_eq!(n.load(std::sync::atomic::Ordering::SeqCst), 3);
         // Another key opens nothing, and says so in the log rather than failing.
         assert!(AgentHistory::new(d, Arc::new(Crypto::with_key([4; 32]))).entries().is_empty());
+    }
+
+    /// A damaged index loses nothing: it is set aside and made again from the session
+    /// files, and the next save keeps every session, not only the new one.
+    #[test]
+    fn an_unreadable_index_is_rebuilt_from_the_session_files() {
+        let d = dir("rebuild");
+        let c = Arc::new(Crypto::with_key([3; 32]));
+        let h = AgentHistory::new(d.clone(), c.clone());
+        h.save(&session("aaaa", "2026-09-28T16:45:00Z"));
+        h.save(&session("bbbb", "2026-09-28T17:45:00Z"));
+        h.flush();
+        std::fs::write(d.join("index.dat"), b"not sealed at all, a torn write").unwrap();
+        let again = AgentHistory::new(d.clone(), c.clone());
+        let keys = |h: &AgentHistory| { let mut k: Vec<String> = h.entries().into_iter().map(|e| e.key).collect(); k.sort(); k };
+        assert_eq!(keys(&again), ["aaaa", "bbbb"]);
+        again.save(&session("cccc", "2026-09-28T18:45:00Z"));
+        again.flush();
+        assert_eq!(keys(&AgentHistory::new(d.clone(), c.clone())), ["aaaa", "bbbb", "cccc"]);
+        assert_eq!(AgentHistory::new(d.clone(), c.clone()).load("bbbb").unwrap(), session("bbbb", "2026-09-28T17:45:00Z"));
+        // The damaged index is kept beside it, not thrown away.
+        assert!(std::fs::read_dir(&d).unwrap().flatten().any(|e| e.file_name().to_string_lossy().ends_with(".bad")));
+    }
+
+    /// Hover ended after a session's file was written but before its index line: the
+    /// session is still listed next time.
+    #[test]
+    fn a_session_file_the_index_missed_is_listed_again() {
+        let d = dir("missed");
+        let c = Arc::new(Crypto::with_key([3; 32]));
+        let h = AgentHistory::new(d.clone(), c.clone());
+        h.save(&session("aaaa", "2026-09-28T16:45:00Z"));
+        h.flush();
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        let s = session("bbbb", "2026-09-28T17:45:00Z");
+        seal(&c, &d.join("bbbb.dat"), &s.to_json().compact()).unwrap();
+        // A file of another key, and one that isn't a session, are left alone.
+        std::fs::write(d.join("cccc.dat"), Crypto::with_key([9; 32]).seal("{}")).unwrap();
+        std::fs::write(d.join("notes.txt"), b"x").unwrap();
+        let again = AgentHistory::new(d.clone(), c.clone());
+        let e = again.entries();
+        assert_eq!(e.iter().map(|x| x.key.as_str()).collect::<Vec<_>>(), ["bbbb", "aaaa"]);
+        assert_eq!((e[0].state, e[0].turns, e[0].title.as_str()), (KiroState::Completed, 1, "Fix the secret thing"));
+        again.flush();
+        // Written back, so the next start reads it from the index.
+        assert_eq!(AgentHistory::new(d.clone(), c.clone()).entries().len(), 2);
+        assert!(d.join("cccc.dat").exists());
     }
 
     #[test]

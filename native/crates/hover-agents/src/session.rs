@@ -86,6 +86,9 @@ pub struct KiroSession {
     pub access: Option<String>,
     /// What the agent is waiting on the user for, oldest first.
     pub asks: Vec<AgentAsk>,
+    /// Goes up with every change to the session: a view that drew it at this number
+    /// needn't copy or lay it out again.
+    pub rev: u64,
 }
 
 /// String.Split('\n', RemoveEmptyEntries | TrimEntries).FirstOrDefault().
@@ -95,7 +98,23 @@ impl KiroSession {
     /// A new session with no turns (the C# constructor).
     pub fn new(tool: AgentTool) -> KiroSession {
         KiroSession { id: IDS.fetch_add(1, Ordering::SeqCst) + 1, tool, state: KiroState::Idle, phase: KiroPhase::Starting, folder: String::new(), turns: vec![],
-            kiro_id: None, context: None, seat: 0, bot: 0, key: hover_core::guid_n(), deleted: false, access: None, asks: vec![] }
+            kiro_id: None, context: None, seat: 0, bot: 0, key: hover_core::guid_n(), deleted: false, access: None, asks: vec![], rev: 0 }
+    }
+
+    /// A copy without what only the chat reads: the answers' text, and the steps'
+    /// changes and output. What the notch, the desks and the panels draw is all there.
+    pub fn light(&self) -> KiroSession {
+        KiroSession {
+            turns: self.turns.iter().map(|t| KiroTurn {
+                prompt: t.prompt.clone(), images: t.images.clone(),
+                steps: t.steps.iter().map(|x| KiroStep { id: x.id.clone(), kind: x.kind.clone(), title: x.title.clone(), target: x.target.clone(), status: x.status.clone(),
+                    added: x.added, removed: x.removed, diff: None, output: None, exit: x.exit, ms: x.ms }).collect(),
+                result: t.result.as_ref().map(|r| KiroResult { state: r.state, text: String::new(), exit_code: r.exit_code }),
+                queued: t.queued, started_at: t.started_at, woke_at: t.woke_at, ended_at: t.ended_at, credits: t.credits,
+            }).collect(),
+            folder: self.folder.clone(), kiro_id: self.kiro_id.clone(), key: self.key.clone(), access: self.access.clone(), asks: self.asks.clone(),
+            ..*self
+        }
     }
 
     pub fn busy(&self) -> bool { self.state == KiroState::Running }
@@ -171,6 +190,7 @@ impl Slot {
     /// replies go once the lock is released.
     fn deny_all(&mut self) -> Vec<Answer> {
         self.s.asks.clear();
+        self.s.rev += 1;
         self.asks.drain(..).map(|p| p.reply).collect()
     }
 }
@@ -226,7 +246,12 @@ impl KiroSessions {
 
     /// Oldest first.
     pub fn all(&self) -> Vec<KiroSession> { self.0.inner.lock().unwrap().all.iter().map(|x| x.s.clone()).collect() }
+    /// Oldest first, each without its answers' text and its steps' changes and output
+    /// (KiroSession::light): for what redraws often, the notch, the desks, the panels.
+    pub fn all_light(&self) -> Vec<KiroSession> { self.0.inner.lock().unwrap().all.iter().map(|x| x.s.light()).collect() }
     pub fn get(&self, id: i32) -> Option<KiroSession> { self.0.inner.lock().unwrap().all.iter().find(|x| x.s.id == id).map(|x| x.s.clone()) }
+    /// The session's change number (KiroSession::rev) and whether it runs, without copying it.
+    pub fn rev(&self, id: i32) -> Option<(u64, bool)> { self.0.inner.lock().unwrap().all.iter().find(|x| x.s.id == id).map(|x| (x.s.rev, x.s.busy())) }
     /// The question in front of each session that waits, and how many it has waiting:
     /// what the office draws over the bots' heads, without copying every transcript.
     pub fn asking_now(&self) -> Vec<(i32, AgentAsk, usize)> {
@@ -295,6 +320,7 @@ impl KiroSessions {
         t.started_at = now;
         slot.s.phase = KiroPhase::Starting;
         slot.s.state = KiroState::Running;
+        slot.s.rev += 1;
         let ct = Cancel::new();
         slot.cancel = Some(ct.clone());
         let args_base = (slot.s.folder.clone(), slot.s.turns[ti].text(), slot.s.kiro_id.clone(), slot.s.access.clone());
@@ -318,6 +344,7 @@ impl KiroSessions {
         t.queued = slot.s.busy();
         let queued = t.queued;
         slot.s.turns.push(t);
+        slot.s.rev += 1;
         let begun = if queued { None } else { Some(self.begin(&mut g, id)) };
         let snap = g.all.iter().find(|x| x.s.id == id).unwrap().s.clone();
         drop(g);
@@ -421,6 +448,7 @@ impl KiroSessions {
         hover_core::log::line(&format!("{} run {} asks: {} ({})", tool.id(), slot.s.id, ask.kind, ask.reason));
         let (id, qid) = (slot.s.id, ask.id.clone());
         slot.s.asks.push(ask);
+        slot.s.rev += 1;
         slot.asks.push(Pending { id: qid.clone(), reply, _stop: None });
         drop(g);
         let me = Arc::downgrade(&self.0);
@@ -445,6 +473,7 @@ impl KiroSessions {
             let Some(i) = slot.asks.iter().position(|p| p.id == ask_id) else { return false };
             let p = slot.asks.remove(i);
             slot.s.asks.retain(|a| a.id != ask_id);
+            slot.s.rev += 1;
             // Dropped here, outside the token's own lock: the stop no longer withdraws it.
             (p.reply, p._stop)
         };
@@ -465,6 +494,7 @@ impl KiroSessions {
             if picked.len() != n || picked.iter().all(Vec::is_empty) { return false; }
             let p = slot.asks.remove(i);
             slot.s.asks.retain(|a| a.id != ask_id);
+            slot.s.rev += 1;
             (p.reply, p._stop)
         };
         if let Answer::Question(f) = reply.0 { f(Some(picked)); }
@@ -489,6 +519,7 @@ fn with<R>(me: &Weak<Shared>, id: i32, f: impl FnOnce(&mut Slot, Stamp) -> R) ->
     let r = {
         let mut g = ks.0.inner.lock().unwrap();
         let slot = g.all.iter_mut().find(|x| x.s.id == id)?;
+        slot.s.rev += 1;
         f(slot, now)
     };
     Some((ks, r))

@@ -1,0 +1,28 @@
+# Profiling build: where the resting notch's memory goes once a quota shows in it (heap,
+# the shared GPU device's allocator, and each allocation of 256 KiB or more with its stack).
+launch
+expect "bench visible" 30 as startup
+sleep 5
+send heap
+expect "bench heap" 5
+send gpu full
+expect "bench gpu" 5
+send heap-trace 262144
+expect "bench ok" 5
+send quota kiro on
+expect "bench ok" 5
+sleep 15
+send heap
+expect "bench heap" 5
+send gpu full
+expect "bench gpu" 5
+send quota kiro off
+expect "bench ok" 5
+sleep 5
+send heap
+expect "bench heap" 5
+send gpu full
+expect "bench gpu" 5
+send heap-trace 0
+expect "bench ok" 5
+quit 30

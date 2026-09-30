@@ -1,0 +1,22 @@
+# What one quota switched on costs the resting notch, with nothing but `quota` (so a
+# build from before until-quota and gpu runs it too): off, Kiro's on, off again.
+launch
+expect "bench visible" 30 as startup
+sleep 5
+mark rest-nothing
+sleep 15
+regions regions-rest-nothing.txt
+send quota kiro on
+expect "bench ok" 5
+sleep 15
+mark rest-kiro-quota
+sleep 15
+regions regions-rest-kiro-quota.txt
+send quota kiro off
+expect "bench ok" 5
+sleep 5
+mark rest-nothing-again
+sleep 15
+regions regions-rest-nothing-again.txt
+mark -
+quit 30

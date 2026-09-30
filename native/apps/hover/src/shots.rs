@@ -144,6 +144,10 @@ pub fn run(dir: &Path) {
         (a.events)(KiroEvent { step: Some(KiroStep { exit: Some(0), ms: Some(8200.0), output: Some("✓ 14 files sorted\nTests: 42 passed, 42 total".into()), ..step("x1", "execute", "Run", "npm test") }), ..Default::default() });
         // What the turn cost, as Kiro says at its end (the chat shows it under the answer).
         (a.events)(KiroEvent { credits: Some(0.087), ..Default::default() });
+        // A picture's answer: an image from the session's own folder, under its words.
+        if a.prompt.contains("mock-up") {
+            return KiroResult::new(KiroState::Completed, "## Chart restyled\n\nThe bars follow your mock-up now:\n\n![The new chart](chart.png)\n\nColours come from the theme.");
+        }
         let hold = if a.prompt.contains("three") { &h3 } else { &h2 };
         while *hold.lock().unwrap() && !a.ct.is_cancelled() { std::thread::sleep(Duration::from_millis(10)); }
         KiroResult::new(KiroState::Completed, "## Imports tidied\n\nAll 14 files now sort their imports.\n\n```ts\nexport const tidy = (f) => f.map(sortImports);\n```")
@@ -338,6 +342,52 @@ pub fn run(dir: &Path) {
     settle(600);
     save(&notch, full, 1.0, desk, &dir.join("office-drawer-timeline.png"));
     app.close_drawer();
+    // Pictures in the chat: one attached to the prompt (kiro-images, as a paste or + keeps
+    // it), and one in the answer from the session's folder. A desk is freed for it first.
+    if let Some(s4) = &s4 { hover.sessions.stop(s4.id); }
+    run_for(400);
+    let png = |w: u32, h: u32, f: &dyn Fn(u32, u32) -> [u8; 3]| {
+        let img = image::RgbImage::from_fn(w, h, |x, y| image::Rgb(f(x, y)));
+        let mut b = std::io::Cursor::new(vec![]);
+        img.write_to(&mut b, image::ImageFormat::Png).unwrap();
+        b.into_inner()
+    };
+    let mock = png(320, 200, &|x, y| if (40..280).contains(&x) && y > 200 - (x % 80) * 2 { [0x8f, 0x5c, 0xff] } else { [0xf4, 0xf1, 0xea] });
+    std::fs::write(data.join("project").join("chart.png"), png(480, 240, &|x, y| if x % 96 > 16 && y > 240 - (x / 96 + 1) * 40 { [0x2f, 0xc9, 0xb0] } else { [0x1a, 0x12, 0x20] })).unwrap();
+    let url = format!("data:image/png;base64,{}", hover_agents::http::base64(&mock));
+    let pics: Vec<String> = hover_core::images::save(&[hover_core::json::Json::str(url)], &hover_core::images::folder(hover_core::paths::support()))
+        .into_iter().map(|p| p.to_string_lossy().into_owned()).collect();
+    if let Some(s5) = hover.sessions.start(AgentTool::Kiro, &folder, "Restyle the chart like this mock-up", pics) {
+        run_for(600);
+        app.open_session(s5.id);
+        settle(600);
+        // Headless there is no event loop for the loader's word to come through: its
+        // arrivals are told here once the files have been read.
+        run_for(800);
+        let urls: Vec<String> = app.page_thread().map(|t| t.sections.iter().flat_map(|s| s.images.clone()).collect()).unwrap_or_default();
+        app.image_arrived("");
+        for u in &urls { app.image_arrived(u); }
+        settle(800);
+        save(&notch, full, 1.0, desk, &dir.join("office-chat-images.png"));
+        // The top: the prompt with its picture.
+        app.notch.global::<Office>().invoke_d_wheel(4000.0);
+        settle(400);
+        save(&notch, full, 1.0, desk, &dir.join("office-chat-images-prompt.png"));
+        // A selection made as the pointer makes it: a triple click on the answer's first
+        // paragraph selects it (drawn in the selection colour).
+        let at = app.page_thread().and_then(|t| t.sections.iter().find_map(|s| s.answer_at.map(|(ti, _, _)| (s.y, s.frag.texts[ti].y))));
+        let scroll = app.page_scroll();
+        if let Some((sy, ty)) = at {
+            let g = app.notch.global::<Office>();
+            let (x, y) = (60.0, sy + ty + 6.0 - scroll);
+            for k in 0..3 { g.invoke_d_pointer(0, x, y, false); if k < 2 { g.invoke_d_pointer(2, x, y, false); } }
+            g.invoke_d_pointer(2, x, y, false);
+            settle(300);
+            save(&notch, full, 1.0, desk, &dir.join("office-chat-selection.png"));
+            println!("selected: {:?}", app.page_thread().map(|t| t.selected_text()).unwrap_or_default());
+        }
+        app.close_drawer();
+    }
     *hold3.lock().unwrap() = false;
     app.show_settings_in(0, Section::General);
     save(&notch, full, 1.0, desk, &dir.join("notch-open-settings.png"));

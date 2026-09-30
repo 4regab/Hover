@@ -1,0 +1,22 @@
+# What allocates big blocks when a long rich chat opens (a profiling build with debug
+# info: bench heap-trace; the stacks go to hover-stderr.log).
+launch
+expect "bench visible" 30 as startup
+send unfold
+expect "bench reopen" 30 as first-office
+sleep 3
+send task kiro @ - a long answer [seconds:3] [bytes:400000]
+expect "bench task" 5
+send until-idle 60
+expect "bench idle" 65
+sleep 2
+send heap-trace 131072
+expect "bench ok" 5
+send chat 1
+expect "bench ok" 5
+sleep 4
+send heap-trace 0
+expect "bench ok" 5
+send heap
+expect "bench heap" 5
+quit 30
