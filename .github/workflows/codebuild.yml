@@ -1,5 +1,8 @@
-name: Release Builds
+name: CodeBuild
 
+# A v* tag builds, tests and packages the native (Rust) Hover on Windows and Linux, and
+# publishes the installers as a pre-release. The jobs run on the hover-release CodeBuild
+# project (a Windows Server 2022 container); the Linux jobs override its image to Ubuntu.
 on:
   push:
     tags:
@@ -9,12 +12,16 @@ permissions:
   contents: write
 
 env:
+  # Pinned: the toolchain the port is built and tested with (rust-version is 1.89).
   RUST_TOOLCHAIN: '1.94.1'
   CARGO_TERM_COLOR: never
 
 jobs:
   windows:
-    runs-on: blacksmith-4vcpu-windows-2025
+    # Each job needs its own label, or CodeBuild may hand one job the other's runner.
+    runs-on:
+      - codebuild-hover-release-${{ github.run_id }}-${{ github.run_attempt }}
+      - windows-installer
     defaults:
       run:
         shell: pwsh
@@ -23,54 +30,62 @@ jobs:
 
       - name: Check release version
         run: |
-          if ($env:GITHUB_REF_NAME -notmatch '^v(?\d+\.\d+\.\d+)$') {
+          if ($env:GITHUB_REF_NAME -notmatch '^v(?<version>\d+\.\d+\.\d+)$') {
             throw 'Release tag must be v followed by three numeric version parts, for example v3.0.0.'
           }
-          Add-Content -Path \(env:GITHUB_ENV -Value "RELEASE_VERSION=\)($Matches.version)"
+          Add-Content -Path $env:GITHUB_ENV -Value "RELEASE_VERSION=$($Matches.version)"
 
-      # Blacksmith Windows runners already come with VS Build Tools 2022 pre-installed.
-      # This check ensures it's present and only attempts install if missing.
+      # Rust on Windows links with MSVC. Install its build tools only if the image lacks them.
       - name: Install Visual Studio Build Tools
         run: |
-          \(vswhere = Join-Path\){env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
-          if ((Test-Path \(vswhere) -and (&\)vswhere -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath)) {
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
+          if ((Test-Path $vswhere) -and (& $vswhere -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath)) {
             Write-Host 'MSVC build tools already installed'
             exit 0
           }
-          \(setup = Join-Path\)env:RUNNER_TEMP 'vs_buildtools.exe'
+          $setup = Join-Path $env:RUNNER_TEMP 'vs_buildtools.exe'
           Invoke-WebRequest 'https://aka.ms/vs/17/release/vs_buildtools.exe' -OutFile $setup
-          \(process = Start-Process\)setup -ArgumentList '--quiet', '--wait', '--norestart', '--nocache',
+          $process = Start-Process $setup -ArgumentList '--quiet', '--wait', '--norestart', '--nocache',
             '--add', 'Microsoft.VisualStudio.Workload.VCTools', '--includeRecommended' -Wait -PassThru
-          if (\(process.ExitCode -notin 0, 3010) { throw "Build tools install failed:\)($process.ExitCode)" }
+          # 3010: installed, a restart is suggested. Not needed for building.
+          if ($process.ExitCode -notin 0, 3010) { throw "Build tools install failed: $($process.ExitCode)" }
 
       - name: Install Rust
         run: |
-          \(cargoBin = Join-Path\)env:USERPROFILE '.cargo\bin'
+          $cargoBin = Join-Path $env:USERPROFILE '.cargo\bin'
           if (-not (Test-Path (Join-Path $cargoBin 'rustup.exe'))) {
-            \(init = Join-Path\)env:RUNNER_TEMP 'rustup-init.exe'
+            $init = Join-Path $env:RUNNER_TEMP 'rustup-init.exe'
             Invoke-WebRequest 'https://static.rust-lang.org/rustup/dist/x86_64-pc-windows-msvc/rustup-init.exe' -OutFile $init
             & $init -y --profile minimal --default-toolchain none
             if ($LASTEXITCODE -ne 0) { throw 'rustup install failed' }
           }
-          & (Join-Path \(cargoBin 'rustup.exe') toolchain install\)env:RUST_TOOLCHAIN --profile minimal --no-self-update
+          # The image has its own rustup. Letting it update itself here broke the rustup
+          # call after it, so it doesn't; RUSTUP_TOOLCHAIN picks the toolchain instead of
+          # changing the image's default.
+          & (Join-Path $cargoBin 'rustup.exe') toolchain install $env:RUST_TOOLCHAIN --profile minimal --no-self-update
           if ($LASTEXITCODE -ne 0) { throw 'rustup toolchain install failed' }
-          Add-Content -Path \(env:GITHUB_ENV -Value "RUSTUP_TOOLCHAIN=\)env:RUST_TOOLCHAIN"
-          Add-Content -Path \(env:GITHUB_PATH -Value\)cargoBin
+          Add-Content -Path $env:GITHUB_ENV -Value "RUSTUP_TOOLCHAIN=$env:RUST_TOOLCHAIN"
+          Add-Content -Path $env:GITHUB_PATH -Value $cargoBin
 
+      # Server Core has almost no fonts (Lucida Console and a few bitmap ones), so the
+      # chat's text laid out empty. The first faces its font lists name are put in:
+      # Inter (the repo's, first in the sans list) and Cascadia Code (first in the mono
+      # list; OFL, from Microsoft's release).
       - name: Install fonts
         run: |
-          \(zip = Join-Path\)env:RUNNER_TEMP 'cascadia.zip'
+          $zip = Join-Path $env:RUNNER_TEMP 'cascadia.zip'
           Invoke-WebRequest 'https://github.com/microsoft/cascadia-code/releases/download/v2407.24/CascadiaCode-2407.24.zip' -OutFile $zip
-          Expand-Archive \(zip (Join-Path\)env:RUNNER_TEMP 'cascadia') -Force
-          \(files = @(Get-ChildItem native\apps\hover\assets\Inter-*.ttf) + @(Get-ChildItem (Join-Path\)env:RUNNER_TEMP 'cascadia\ttf\static\CascadiaCode-*.ttf'))
-          if (\(files.Count -lt 5) { throw "Expected the Inter and Cascadia Code files, found\)($files.Count)" }
+          Expand-Archive $zip (Join-Path $env:RUNNER_TEMP 'cascadia') -Force
+          $files = @(Get-ChildItem native\apps\hover\assets\Inter-*.ttf) + @(Get-ChildItem (Join-Path $env:RUNNER_TEMP 'cascadia\ttf\static\CascadiaCode-*.ttf'))
+          if ($files.Count -lt 5) { throw "Expected the Inter and Cascadia Code files, found $($files.Count)" }
           $key = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Fonts'
-          foreach (\(f in\)files) {
-            Copy-Item \(f.FullName (Join-Path\)env:windir 'Fonts') -Force
-            New-ItemProperty -Path \(key -Name "\)(\(f.BaseName) (TrueType)" -Value\)f.Name -PropertyType String -Force | Out-Null
+          foreach ($f in $files) {
+            Copy-Item $f.FullName (Join-Path $env:windir 'Fonts') -Force
+            New-ItemProperty -Path $key -Name "$($f.BaseName) (TrueType)" -Value $f.Name -PropertyType String -Force | Out-Null
           }
-          Write-Host "Installed \((\)files.Count) fonts"
+          Write-Host "Installed $($files.Count) fonts"
 
+      # build.ps1 test, but past a failing crate, so one run shows every failure.
       - name: Test
         run: |
           cargo test --manifest-path native/Cargo.toml --release --workspace --no-fail-fast
@@ -78,10 +93,10 @@ jobs:
 
       - name: Install Inno Setup
         run: |
-          \(setup = Join-Path\)env:RUNNER_TEMP 'innosetup-6.7.3.exe'
+          $setup = Join-Path $env:RUNNER_TEMP 'innosetup-6.7.3.exe'
           Invoke-WebRequest 'https://github.com/jrsoftware/issrc/releases/download/is-6_7_3/innosetup-6.7.3.exe' -OutFile $setup
-          \(process = Start-Process\)setup -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/SP-', '/ALLUSERS' -Wait -PassThru
-          if (\(process.ExitCode -ne 0) { throw "Inno Setup install failed:\)($process.ExitCode)" }
+          $process = Start-Process $setup -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/SP-', '/ALLUSERS' -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw "Inno Setup install failed: $($process.ExitCode)" }
 
       - name: Build installer
         run: .\build.ps1 installer -Version $env:RELEASE_VERSION
@@ -93,8 +108,11 @@ jobs:
           if-no-files-found: error
 
   linux:
-    # Matched to Ubuntu 22.04 so glibc compatibility matches 22.04+ systems
-    runs-on: blacksmith-4vcpu-ubuntu-2204
+    runs-on:
+      - codebuild-hover-release-${{ github.run_id }}-${{ github.run_attempt }}
+      # Ubuntu 22.04 (glibc 2.35), so the build runs on 22.04 and newer.
+      - image:ubuntu-7.0
+      - linux-installer
     defaults:
       run:
         shell: bash
@@ -103,13 +121,17 @@ jobs:
 
       - name: Check release version
         run: |
-          [[ "\(GITHUB_REF_NAME" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)\) ]] || { echo 'Release tag must be v followed by three numeric version parts, for example v3.0.0.' >&2; exit 1; }
-          echo "RELEASE_VERSION=\({BASH_REMATCH[1]}" >> "\)GITHUB_ENV"
+          [[ "$GITHUB_REF_NAME" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)$ ]] || { echo 'Release tag must be v followed by three numeric version parts, for example v3.0.0.' >&2; exit 1; }
+          echo "RELEASE_VERSION=${BASH_REMATCH[1]}" >> "$GITHUB_ENV"
 
       - name: Install system libraries
         run: |
-          sudo apt-get update
-          sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+          SUDO=; [ "$(id -u)" -eq 0 ] || SUDO=sudo
+          $SUDO apt-get update
+          # Build: fontconfig and FreeType (fonts), ALSA (music), xkbcommon (keyboard).
+          # Tests: DejaVu (the chat goldens were measured in it), and dbus, GNOME Keyring
+          # and Python's GLib (the tests that need them skip without).
+          $SUDO env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
             build-essential pkg-config libfontconfig1-dev libfreetype-dev libasound2-dev \
             libxkbcommon-dev libxkbcommon-x11-dev fonts-dejavu-core \
             dbus gnome-keyring python3-gi
@@ -118,14 +140,15 @@ jobs:
         run: |
           if ! command -v rustup >/dev/null; then
             curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain none
-            export PATH="\(HOME/.cargo/bin:\)PATH"
-            echo "\(HOME/.cargo/bin" >> "\)GITHUB_PATH"
+            export PATH="$HOME/.cargo/bin:$PATH"
+            echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
           fi
           rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
           rustup default "$RUST_TOOLCHAIN"
 
       - name: Test
         env:
+          # The headless GPU tests need it (AGENTS.md).
           XDG_RUNTIME_DIR: ${{ runner.temp }}/xdg
         run: |
           mkdir -p -m 700 "$XDG_RUNTIME_DIR"
@@ -142,51 +165,13 @@ jobs:
             dist/hover-${{ env.RELEASE_VERSION }}-linux-x86_64.tar.gz
           if-no-files-found: error
 
-  macos:
-    # Apple Silicon M4 (ARM64)
-    runs-on: blacksmith-6vcpu-macos-latest
-    defaults:
-      run:
-        shell: bash
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Check release version
-        run: |
-          [[ "\(GITHUB_REF_NAME" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)\) ]] || { echo 'Release tag must be v followed by three numeric version parts, for example v3.0.0.' >&2; exit 1; }
-          echo "RELEASE_VERSION=\({BASH_REMATCH[1]}" >> "\)GITHUB_ENV"
-
-      - name: Install Rust
-        run: |
-          if ! command -v rustup >/dev/null; then
-            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain none
-            echo "\(HOME/.cargo/bin" >> "\)GITHUB_PATH"
-          fi
-          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
-          rustup default "$RUST_TOOLCHAIN"
-
-      - name: Test
-        run: |
-          cargo test --manifest-path native/Cargo.toml --release --workspace --no-fail-fast
-
-      # Replace this with your macOS packaging command (e.g., cargo bundle, dmgbuild, make macos)
-      - name: Build macOS installer / bundle
-        run: |
-          make package-macos VERSION="$RELEASE_VERSION" || cargo build --release --manifest-path native/Cargo.toml
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: macos
-          path: |
-            dist/*.dmg
-            dist/*.zip
-            dist/*.tar.gz
-          if-no-files-found: warn
-
   release:
-    needs: [windows, linux, macos]
-    # Smallest Linux runner for lightweight asset publishing
-    runs-on: blacksmith-2vcpu-ubuntu-2404
+    # One job publishes, so the two builds never race to create the release.
+    needs: [windows, linux]
+    runs-on:
+      - codebuild-hover-release-${{ github.run_id }}-${{ github.run_attempt }}
+      - image:ubuntu-7.0
+      - publish-release
     steps:
       - uses: actions/download-artifact@v4
         with:
@@ -197,6 +182,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           name: Hover ${{ github.ref_name }} (native, pre-release)
+          # A pre-release is never "Latest": 2.x downloads stay where they are.
           prerelease: true
           files: dist/*
           fail_on_unmatched_files: true
