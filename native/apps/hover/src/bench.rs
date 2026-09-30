@@ -55,6 +55,30 @@ pub mod heap {
         PEAK.fetch_max(live, Relaxed);
         COUNT.fetch_add(1, Relaxed);
         BYTES.fetch_add(n as u64, Relaxed);
+        trace(n);
+    }
+
+    /// `heap-trace N`: every allocation of N bytes or more is written to stderr with the
+    /// stack that made it (0: off). For finding what makes a peak; symbols need a build
+    /// with debug info (docs/development/profiling.md).
+    pub static TRACE: AtomicU64 = AtomicU64::new(0);
+    std::thread_local! { static IN: std::cell::Cell<bool> = const { std::cell::Cell::new(false) }; }
+
+    fn trace(n: usize) {
+        let min = TRACE.load(Relaxed);
+        if min == 0 || (n as u64) < min { return; }
+        IN.with(|g| {
+            if g.replace(true) { return; }
+            let bt = std::backtrace::Backtrace::force_capture().to_string();
+            // The functions past the allocator's own, short: the first of Hover's and
+            // its crates' frames (std's, core's and alloc's left out).
+            let frames: Vec<String> = bt.lines().map(str::trim).filter(|l| !l.starts_with("at ") && l.contains(": "))
+                .map(|l| l.split_once(": ").map_or(l, |x| x.1).to_owned())
+                .filter(|l| !l.starts_with("std::") && !l.starts_with("core::") && !l.starts_with("alloc::") && !l.contains("bench::heap") && !l.starts_with("hashbrown::"))
+                .take(10).collect();
+            eprintln!("heap-trace {n} {}", frames.join(" | "));
+            g.set(false);
+        });
     }
 
     unsafe impl<A: GlobalAlloc> GlobalAlloc for Counting<A> {
@@ -75,17 +99,42 @@ pub mod heap {
 }
 
 /// Prints `bench <what>` once `done` holds, checked every 100 ms, or `bench <what>-timeout`.
+/// Each check is a one-shot timer that schedules the next, so nothing outlives the wait
+/// (a repeated timer holding itself was never freed, in the process being measured).
 fn until(what: &'static str, secs: f64, done: impl Fn(&std::rc::Rc<crate::App>) -> Option<String> + 'static) {
-    let t0 = Instant::now();
-    let timer = std::rc::Rc::new(slint::Timer::default());
-    let t2 = timer.clone();
-    timer.start(slint::TimerMode::Repeated, Duration::from_millis(100), move || {
-        let a = crate::APP.with(|a| a.borrow().clone());
-        let Some(a) = a else { return };
-        if let Some(extra) = done(&a) { println!("bench {what} {extra}"); t2.stop(); }
-        else if t0.elapsed().as_secs_f64() > secs { println!("bench {what}-timeout"); t2.stop(); }
-    });
-    std::mem::forget(timer);
+    type Done = std::rc::Rc<dyn Fn(&std::rc::Rc<crate::App>) -> Option<String>>;
+    fn check(what: &'static str, t0: Instant, secs: f64, done: Done) {
+        slint::Timer::single_shot(Duration::from_millis(100), move || {
+            let Some(a) = crate::APP.with(|a| a.borrow().clone()) else { return };
+            if let Some(extra) = done(&a) { println!("bench {what} {extra}"); }
+            else if t0.elapsed().as_secs_f64() > secs { println!("bench {what}-timeout"); }
+            else { check(what, t0, secs, done); }
+        });
+    }
+    check(what, Instant::now(), secs, std::rc::Rc::new(done));
+}
+
+/// `bench gpu allocated A reserved R blocks N sizes S,S,…`, or `bench gpu none` where no
+/// device is shared (Linux, the headless shots) or the backend keeps no report.
+fn gpu_line(full: bool) -> String {
+    let Some((device, _)) = hover_office::render::shared() else { return "bench gpu none".into() };
+    let _ = device.poll(slint::wgpu_30::wgpu::PollType::Poll);
+    match device.generate_allocator_report() {
+        Some(r) => {
+            let mut line = format!("bench gpu allocated {} reserved {} blocks {} sizes {}", r.total_allocated_bytes, r.total_reserved_bytes, r.blocks.len(),
+                r.blocks.iter().map(|b| b.size.to_string()).collect::<Vec<_>>().join(","));
+            // `gpu full`: every live allocation too, by its label, largest first.
+            if full {
+                let mut by: std::collections::BTreeMap<String, (u64, usize)> = Default::default();
+                for a in &r.allocations { let e = by.entry(if a.name.is_empty() { "--".into() } else { a.name.clone() }).or_default(); e.0 += a.size; e.1 += 1; }
+                let mut v: Vec<_> = by.into_iter().collect();
+                v.sort_by(|a, b| b.1 .0.cmp(&a.1 .0));
+                line += &format!(" allocations {}", v.iter().map(|(n, (s, c))| format!("{}={s}x{c}", n.replace(' ', "_"))).collect::<Vec<_>>().join(";"));
+            }
+            line
+        }
+        None => "bench gpu none".into(),
+    }
 }
 
 fn tool_of(s: &str) -> hover_core::model::AgentTool {
@@ -123,6 +172,15 @@ pub fn listen() {
                     }
                 }
                 "chat" => { if let Some(id) = parts.get(1).and_then(|v| v.parse().ok()) { a.open_session(id); } else { a.close_drawer(); } println!("bench ok"); }
+                // chat-last: the newest session's chat; chat-nth N: the Nth kept one's (from
+                // the oldest, wrapping), for scripts that can't know the ids.
+                "chat-last" | "chat-nth" => {
+                    let all = a.hover.sessions.all_light();
+                    let n: usize = parts.get(1).and_then(|v| v.parse().ok()).unwrap_or(0);
+                    let pick = if cmd == "chat-last" { all.last() } else if all.is_empty() { None } else { all.get(n % all.len()) };
+                    if let Some(s) = pick { a.open_session(s.id); }
+                    println!("bench ok");
+                }
                 "scroll" => { let dy: f32 = parts.get(1).and_then(|v| v.parse().ok()).unwrap_or(0.0); a.notch.global::<crate::ui::Office>().invoke_d_wheel(dy); println!("bench ok"); }
                 "start" => {
                     let folder = parts.get(1).cloned().unwrap_or_default();
@@ -161,6 +219,35 @@ pub fn listen() {
                         s.turns.iter().map(|t| t.result.as_ref().map_or(0, |r| r.text.len())).sum::<usize>(), s.asks.len())).collect();
                     println!("bench sessions {} {}", all.len(), rows.join(" "));
                 }
+                // said ID: the end of that session's last answer, on one line (a run's check
+                // of what the agent was told, e.g. the choice a question got).
+                "said" => {
+                    let id: i32 = parts.get(1).and_then(|v| v.parse().ok()).unwrap_or(-1);
+                    let text = a.hover.sessions.get(id).and_then(|s| s.turns.last().and_then(|t| t.result.as_ref().map(|r| r.text.clone()))).unwrap_or_default();
+                    let head: String = text.chars().take(160).collect();
+                    // Quotes as ' : a scenario's quoted words can't hold a ".
+                    println!("bench said {id} {}", head.replace(['\r', '\n'], " ").replace('"', "'"));
+                }
+                // drag X0 Y0 X1 Y1 [N]: a press (N clicks, default 1), a move and a release in
+                // the open chat's thread, through the pointer's own callbacks; prints what is
+                // selected. copy: Ctrl+C's, then what the clipboard holds.
+                "drag" => {
+                    let v: Vec<f32> = parts[1..].iter().filter_map(|x| x.parse().ok()).collect();
+                    if v.len() >= 4 {
+                        let g = a.notch.global::<crate::ui::Office>();
+                        for _ in 1..(v.get(4).copied().unwrap_or(1.0) as i32).max(1) { g.invoke_d_pointer(0, v[0], v[1], false); g.invoke_d_pointer(2, v[0], v[1], false); }
+                        g.invoke_d_pointer(0, v[0], v[1], false);
+                        g.invoke_d_pointer(1, v[2], v[3], false);
+                        g.invoke_d_pointer(2, v[2], v[3], false);
+                    }
+                    let t = a.page_thread().map(|t| t.selected_text()).unwrap_or_default();
+                    println!("bench selected {}", t.replace(['\r', '\n'], " "));
+                }
+                "copy" => {
+                    let ok = a.notch.global::<crate::ui::Office>().invoke_d_copy();
+                    let got = arboard::Clipboard::new().and_then(|mut c| c.get_text()).unwrap_or_default();
+                    println!("bench copy {ok} {}", got.replace(['\r', '\n'], " "));
+                }
                 "until-idle" => {
                     let secs: f64 = parts.get(1).and_then(|v| v.parse().ok()).unwrap_or(60.0);
                     until("idle", secs, |a| (a.hover.sessions.running() == 0).then(String::new));
@@ -170,14 +257,27 @@ pub fn listen() {
                     until("asking", secs, |a| a.hover.sessions.all().iter().find_map(|s| s.asking().map(|q| format!("{} {} {}", s.id, q.id, q.kind))));
                 }
                 // answer ID allow|trust|trustAll|deny: the question in front of that session.
-                "answer" => {
-                    let id: i32 = parts.get(1).and_then(|v| v.parse().ok()).unwrap_or(-1);
-                    let how = match parts.get(2).map_or("deny", String::as_str) { "allow" => hover_agents::ask::AskAnswer::Allow, "trust" => hover_agents::ask::AskAnswer::Trust,
+                // answer-front HOW: the one in front of whichever session waits first.
+                "answer" | "answer-front" => {
+                    let (id, how) = if cmd == "answer-front" {
+                        (a.hover.sessions.asking_now().first().map_or(-1, |x| x.0), parts.get(1))
+                    } else { (parts.get(1).and_then(|v| v.parse().ok()).unwrap_or(-1), parts.get(2)) };
+                    let how = match how.map_or("deny", String::as_str) { "allow" => hover_agents::ask::AskAnswer::Allow, "trust" => hover_agents::ask::AskAnswer::Trust,
                         "trustAll" => hover_agents::ask::AskAnswer::TrustAll, _ => hover_agents::ask::AskAnswer::Deny };
                     let q = a.hover.sessions.get(id).and_then(|s| s.asking().map(|q| q.id.clone()));
                     let ok = q.is_some_and(|q| a.hover.sessions.answer(id, &q, how));
                     a.office_changed();
                     println!("bench answer {ok}");
+                }
+                // pick ID LABEL…: the question in front of that session, answered with one
+                // label (its choice, or one's own words), as a click on a choice does.
+                "pick" => {
+                    let id: i32 = parts.get(1).and_then(|v| v.parse().ok()).unwrap_or(-1);
+                    let label = parts.get(2..).map(|p| p.join(" ")).unwrap_or_default();
+                    let q = a.hover.sessions.get(id).and_then(|s| s.asking().filter(|q| q.is_question()).map(|q| (q.id.clone(), q.questions.as_ref().map_or(0, Vec::len))));
+                    let ok = q.is_some_and(|(q, n)| a.hover.sessions.answer_question(id, &q, vec![vec![label.clone()]; n]));
+                    a.office_changed();
+                    println!("bench pick {ok}");
                 }
                 "settings" => { a.show_settings_in(0, hover_app::pages::Section::ALL[parts.get(1).and_then(|v| v.parse().ok()).unwrap_or(0)]); println!("bench ok"); }
                 "back" => { a.notch_settings.set(false); a.notch.set_in_settings(false); println!("bench ok"); }
@@ -195,6 +295,12 @@ pub fn listen() {
                     println!("bench ok");
                 }
                 "office" => println!("bench office live {} shown {:?}", a.page.live.borrow().is_some(), a.page.open.get()),
+                // until-quota ID SECS: waits for that quota's reading; prints its level and words.
+                "until-quota" => {
+                    let id = parts.get(1).cloned().unwrap_or_default();
+                    let secs: f64 = parts.get(2).and_then(|v| v.parse().ok()).unwrap_or(30.0);
+                    until("quota", secs, move |a| a.hover.quotas.reading(&id).map(|r| format!("{id} {:?} {}", r.used, r.detail)));
+                }
                 // size 0..3: Settings → Office size (Small, Default, Large, Extra large).
                 "size" => {
                     let i: usize = parts.get(1).and_then(|v| v.parse().ok()).unwrap_or(1).min(3);
@@ -222,6 +328,11 @@ pub fn listen() {
                 "heap" => println!("{}", heap::line()),
                 #[cfg(feature = "profiling")]
                 "heap-reset" => { heap::reset_peak(); println!("bench ok"); }
+                #[cfg(feature = "profiling")]
+                "heap-trace" => { heap::TRACE.store(parts.get(1).and_then(|v| v.parse().ok()).unwrap_or(0), std::sync::atomic::Ordering::Relaxed); println!("bench ok"); }
+                // The shared GPU device's own allocator (Windows): what it has handed out
+                // and what it holds from the driver, and its blocks (bytes each).
+                "gpu" => println!("{}", gpu_line(parts.get(1).is_some_and(|x| x == "full"))),
                 "quit" => { let _ = slint::quit_event_loop(); }
                 _ => println!("bench unknown"),
             });

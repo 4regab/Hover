@@ -13,6 +13,7 @@ mod icons;
 mod bench;
 mod notch;
 mod office_ui;
+mod net;
 mod shots;
 mod view;
 #[cfg(windows)]
@@ -342,7 +343,7 @@ impl App {
         let hv = &self.hover;
         let on = hv.settings.notch_items();
         let reading = |id: &str| hv.quotas.reading(id);
-        let sessions = hv.sessions.all();
+        let sessions = hv.sessions.all_light();
         let unseen = hv.unseen_last().map(|u| hover_app::rest::Unseen { count: hv.unseen().0, tool: u.tool, state: u.state, title: u.title, took_secs: u.took_secs });
         let isl = hover_app::rest::island(&on, &reading, &sessions, unseen, self.speaker.get(), hv.sessions.now(), self.card.get());
         // No question left: the card goes, and the keyboard goes back.

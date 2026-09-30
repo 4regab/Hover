@@ -15,7 +15,7 @@ use slint::{Color, ComponentHandle, Image, Model, ModelRc, Rgba8Pixel, SharedPix
 use std::collections::HashMap;
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 const TOOLS: [(&str, &str, u32); 4] = [("kiro", "Kiro", 0xb48cff), ("codex", "Codex", 0x3fd6a0), ("cursor", "Cursor", 0x7cc0ff), ("opencode", "OpenCode", 0xe8e8ec)];
 fn tool_color(id: &str) -> Color { let c = TOOLS.iter().find(|t| t.0 == id).map_or(0xb48cff, |t| t.2); Color::from_rgb_u8((c >> 16) as u8, (c >> 8) as u8, c as u8) }
@@ -43,7 +43,8 @@ pub struct Page {
     toast_timer: slint::Timer,
     push_timer: slint::Timer,
     dirty: Cell<bool>,
-    history_sent: Cell<usize>,
+    /// A tool whose status is being looked up (office_push), by AgentTool::ALL's order.
+    checking: Cell<[bool; 4]>,
     confirm_key: RefCell<Option<(Option<i32>, Option<String>)>>,
     thread: RefCell<Option<Chat>>,
     /// The open chat's turns as last laid out, for a click on the thread.
@@ -75,6 +76,8 @@ pub struct Page {
     /// The frame as RGBA, for the texture, kept between frames.
     #[cfg(windows)]
     scratch: RefCell<Vec<u8>>,
+    /// The glass panels' blurred copy of the frame, and its working buffers.
+    blur: RefCell<Blur>,
 }
 
 /// A question's rows, and each of its questions' choices.
@@ -86,7 +89,50 @@ struct Picks { sel: Vec<Vec<String>>, text: Vec<String> }
 
 /// The drawer's thread, laid out and painted by hover-chat.
 /// answered: which turns had an answer at the last paint (None before the first).
-struct Chat { id: i32, thread: hover_chat::Thread, painter: hover_chat::Painter, scroll: f32, width: f32, key: String, answered: Option<Vec<bool>> }
+/// laid: the session's change number and clock second its turns were read at, the
+/// thread's width and height then (None: not yet).
+struct Chat { id: i32, thread: hover_chat::Thread, painter: hover_chat::Painter, scroll: f32, width: f32, key: String, answered: Option<Vec<bool>>, laid: Option<(u64, i64, f32, f32)>, sel: Sel }
+
+/// A text selection being made in the thread with the pointer (chat-proto's): where it
+/// began, by what unit a double or triple click grows it, and the click count.
+struct Sel {
+    anchor: Option<hover_chat::Pos>,
+    unit: hover_chat::Unit,
+    unit_anchor: (hover_chat::Pos, hover_chat::Pos, hover_chat::Tail),
+    dragging: bool,
+    last: Option<(Instant, f32, f32)>,
+    clicks: u32,
+}
+
+impl Default for Sel {
+    fn default() -> Self {
+        let p = hover_chat::Pos { section: 0, text: 0, byte: 0 };
+        Sel { anchor: None, unit: hover_chat::Unit::Char, unit_anchor: (p, p, hover_chat::Tail::None), dragging: false, last: None, clicks: 0 }
+    }
+}
+
+impl Sel {
+    /// 1, 2, 3…: a press within the system's double-click time and distance of the last.
+    fn press(&mut self, x: f32, y: f32) -> u32 {
+        let (time, (w, h)) = double_click();
+        let near = self.last.is_some_and(|(t, lx, ly)| t.elapsed() <= time && (x - lx).abs() <= w / 2.0 && (y - ly).abs() <= h / 2.0);
+        self.clicks = if near { self.clicks + 1 } else { 1 };
+        self.last = Some((Instant::now(), x, y));
+        self.clicks
+    }
+}
+
+/// GetDoubleClickTime and SM_CXDOUBLECLK / SM_CYDOUBLECLK (as chat-proto reads them).
+#[cfg(windows)]
+fn double_click() -> (Duration, (f32, f32)) {
+    use windows::Win32::UI::Input::KeyboardAndMouse::GetDoubleClickTime;
+    use windows::Win32::UI::WindowsAndMessaging::{GetSystemMetrics, SM_CXDOUBLECLK, SM_CYDOUBLECLK};
+    unsafe { (Duration::from_millis(GetDoubleClickTime() as u64), (GetSystemMetrics(SM_CXDOUBLECLK) as f32, GetSystemMetrics(SM_CYDOUBLECLK) as f32)) }
+}
+
+/// GTK's and Qt's defaults (400 ms, 5 px): X11 has no setting of its own.
+#[cfg(not(windows))]
+fn double_click() -> (Duration, (f32, f32)) { (Duration::from_millis(400), (10.0, 10.0)) }
 
 fn fonts() -> Vec<Vec<u8>> { vec![hover_office::canvas::PIXELIFY.to_vec()] }
 
@@ -94,11 +140,11 @@ impl Default for Page {
     fn default() -> Page {
         Page { live: RefCell::new(None), size: Cell::new((0, 0)), open: Cell::new(None), panel: Cell::new(None), fab: Cell::new(0), new_tool: Cell::new(0), menu: Cell::new(false), access_menu: Cell::new(false), new_access: RefCell::new([None; 4]),
             new_folder: RefCell::new(None), time_mode: Cell::new(0), toast_timer: Default::default(), push_timer: Default::default(), dirty: Cell::new(true),
-            history_sent: Cell::new(usize::MAX), confirm_key: RefCell::new(None), thread: RefCell::new(None), turns: RefCell::new(vec![]), clock: Default::default(), copied: Default::default(),
+            checking: Cell::new([false; 4]), confirm_key: RefCell::new(None), thread: RefCell::new(None), turns: RefCell::new(vec![]), clock: Default::default(), copied: Default::default(),
             rows_open: RefCell::new(vec![]), target: Cell::new(0), shown: Cell::new(None), drop_timer: Default::default(), view: Cell::new(None),
             picks: Default::default(), qmodels: Default::default(), model_menu: Cell::new(0), attached: Default::default(), thumbs: Default::default(),
             #[cfg(windows)] gpu: Default::default(),
-            #[cfg(windows)] scratch: Default::default() }
+            #[cfg(windows)] scratch: Default::default(), blur: Default::default() }
     }
 }
 
@@ -131,6 +177,8 @@ impl App {
         let p = &self.page;
         if p.live.borrow().is_none() {
             let Some((w, h, _)) = want else { return };
+            // The office's items, gone since it was dropped, are made again.
+            each!(self, |g| g.set_built(true));
             let still = !self.look.get().animations;
             let live = Live::start(w, h, still, || crate::ui_do(|a| a.office_frame()));
             // The page made again: the camera where the user left it (office.view), and the
@@ -140,12 +188,16 @@ impl App {
                 (n.len() == 3 && n.iter().all(|x| x.is_finite())).then(|| [n[0], n[1], n[2]])
             }));
             if let Some(v) = view { live.send(In::View(v)); }
+            // The time of day picked in the menu (office.time), which the scene made again
+            // doesn't know: it would follow the clock while the menu still said Night.
+            let tm = match p.time_mode.get() { 0 => match crate::local_get("time").as_deref() { Some("night") => 1, Some("day") => 2, _ => 0 }, m => m };
+            p.time_mode.set(tm);
+            if tm != 0 { live.send(In::Time(Some(if tm == 1 { Time::Night } else { Time::Day }))); }
             if let Some(id) = p.open.get() { live.send(In::Drawer(Some(id as i64))); }
             p.size.set((w, h));
             p.shown.set(None);
             *p.live.borrow_mut() = Some(live);
             p.dirty.set(true);
-            p.history_sent.set(usize::MAX);
             self.office_push();
             let a = self.clone();
             // KiroPage's push timer: at most every 120 ms, when something changed.
@@ -182,12 +234,20 @@ impl App {
         *p.live.borrow_mut() = None;
         *p.thread.borrow_mut() = None;
         // The last frame and its blurred copy would otherwise stay in the globals.
-        let clear = |g: crate::ui::Office| { g.set_scene(Image::default()); g.set_tags(ModelRc::default()); };
+        let clear = |g: crate::ui::Office| { g.set_scene(Image::default()); g.set_tags(ModelRc::default()); g.set_d_thread(Image::default()); g.set_built(false); };
         clear(self.notch.global::<crate::ui::Office>());
         self.notch.global::<crate::ui::Backdrop>().set_blurred(Image::default());
         if let Some(d) = &*self.dash.borrow() { clear(d.global::<crate::ui::Office>()); d.global::<crate::ui::Backdrop>().set_blurred(Image::default()); }
+        // The office's items go when the window next draws (a minimised app window's go
+        // when it is shown again).
+        self.notch.window().request_redraw();
         #[cfg(windows)]
         { *p.gpu.borrow_mut() = Default::default(); *p.scratch.borrow_mut() = Vec::new(); }
+        *p.blur.borrow_mut() = Blur::default();
+        // The chat's copy of the open session's turns (made again when it is drawn), and
+        // the thumbnails (read again from their files).
+        *p.turns.borrow_mut() = Vec::new();
+        p.thumbs.borrow_mut().clear();
         hover_core::log::line("office dropped after 30 s hidden");
         crate::bench::dropped();
         // glibc keeps what the office thread freed (its arena, the software GPU's
@@ -206,22 +266,31 @@ impl App {
         });
     }
 
-    /// KiroPage.Push: every session and what the page needs to show them.
+    /// KiroPage.Push: every session and what the page needs to show them. The office
+    /// thread reads the desks from it (who sits where, each turn's stage and step count),
+    /// never the answers, the steps' changes and output, or the history: those stay out.
     pub fn office_push(self: &Rc<Self>) {
         let p = &self.page;
         p.dirty.set(false);
         let hv = &self.hover;
-        let sessions = hv.sessions.all();
+        let sessions = hv.sessions.all_light();
         let folder = hv.settings.kiro_folder().filter(|f| hover_agents::usable_folder(Some(f)));
-        let entries = hv.history.as_ref().map(|h| h.entries()).unwrap_or_default();
-        let history = (entries.len() != p.history_sent.get()).then(|| { p.history_sent.set(entries.len()); entries.clone() });
         let ready = |t: AgentTool| hover_agents::agents::known(t);
         let files = |_: &KiroSession| None;
-        let o = hover_agents::state::Office { window: p.target.get() == 1, open: p.open.get(), settings: &hv.settings, folder: folder.clone(), history, ready: &ready, files: &files };
+        let o = hover_agents::state::Office { window: p.target.get() == 1, open: p.open.get(), settings: &hv.settings, folder: folder.clone(), history: None, ready: &ready, files: &files };
         let msg = hover_agents::state::push(&o, &sessions);
         if let Some(l) = &*p.live.borrow() { l.send(In::State(msg)); }
         if p.new_folder.borrow().is_none() { *p.new_folder.borrow_mut() = folder; }
-        for t in AgentTool::ALL { if hover_agents::agents::known(t).is_none() { std::thread::spawn(move || { hover_agents::agents::check(t, false); crate::ui_do(|a| a.office_changed()); }); } }
+        // Each tool's status is looked up once (agents::check keeps it five minutes); a
+        // push every 120 ms used to start another thread for it until the first answered.
+        for (i, t) in AgentTool::ALL.into_iter().enumerate() {
+            if hover_agents::agents::known(t).is_none() && !p.checking.get()[i] {
+                let mut c = p.checking.get();
+                c[i] = true;
+                p.checking.set(c);
+                std::thread::spawn(move || { hover_agents::agents::check(t, false); crate::ui_do(move |a| { let mut c = a.page.checking.get(); c[i] = false; a.page.checking.set(c); a.office_changed(); }); });
+            }
+        }
         self.office_widgets();
     }
 
@@ -276,7 +345,7 @@ impl App {
                 Click::Panel(p) => self.open_panel(Some(p)),
                 Click::Toast(_) => self.toast(&full_date()),
                 Click::NewTask => { self.close_drawer(); self.open_panel(None); self.page.fab.set(1); self.office_widgets(); }
-                Click::Time(t) => { self.page.time_mode.set(if t == Time::Night { 1 } else { 2 }); self.office_widgets(); }
+                Click::Time(t) => { self.page.time_mode.set(if t == Time::Night { 1 } else { 2 }); crate::local_set("time", if t == Time::Night { "night" } else { "day" }); self.office_widgets(); }
                 Click::Fold => self.collapse(),
                 Click::Nothing => {
                     if self.page.fab.get() != 0 { self.page.fab.set(0); self.office_widgets(); }
@@ -291,7 +360,8 @@ impl App {
     /// place where the windows share the office's GPU device (Windows), else new pixel
     /// buffers.
     fn frame_images(&self, rgb: &[u8], w: u32, h: u32) -> (Image, Image) {
-        let small = blur(rgb, w as usize, h as usize);
+        let mut b = self.page.blur.borrow_mut();
+        blur(rgb, w as usize, h as usize, &mut b);
         #[cfg(windows)]
         if let Some((device, queue)) = hover_office::render::shared() {
             let mut scratch = self.page.scratch.borrow_mut();
@@ -299,14 +369,14 @@ impl App {
             scratch.reserve(w as usize * h as usize * 4);
             for p in rgb.chunks(3) { scratch.extend_from_slice(&[p[0], p[1], p[2], 255]); }
             let mut gpu = self.page.gpu.borrow_mut();
-            let [a, b] = &mut *gpu;
-            if let (Some(a), Some(b)) = (upload(&device, &queue, a, w, h, &scratch), upload(&device, &queue, b, small.width(), small.height(), small.as_bytes())) {
-                return (a, b);
+            let [a, bl] = &mut *gpu;
+            if let (Some(a), Some(bl)) = (upload(&device, &queue, a, w, h, &scratch), upload(&device, &queue, bl, b.w, b.h, &b.out)) {
+                return (a, bl);
             }
         }
         let mut buf = SharedPixelBuffer::<Rgba8Pixel>::new(w, h);
         for (d, s) in buf.make_mut_slice().iter_mut().zip(rgb.chunks(3)) { *d = Rgba8Pixel { r: s[0], g: s[1], b: s[2], a: 255 }; }
-        (Image::from_rgba8(buf), Image::from_rgba8(small))
+        (Image::from_rgba8(buf), Image::from_rgba8(SharedPixelBuffer::<Rgba8Pixel>::clone_from_slice(&b.out, b.w, b.h)))
     }
 
     pub fn toast(self: &Rc<Self>, text: &str) {
@@ -344,7 +414,7 @@ impl App {
     /// Everything around the scene, from the state and the page's own state.
     pub fn office_widgets(self: &Rc<Self>) {
         let p = &self.page;
-        let sessions = self.hover.sessions.all();
+        let sessions = self.hover.sessions.all_light();
         let tools: Vec<ToolData> = AgentTool::ALL.iter().map(|&t| {
             let r = hover_agents::agents::known(t);
             ToolData { id: s(t.id()), name: s(t.name()), ready: r.as_ref().is_none_or(|r| r.ok()), hint: s(r.map(|r| r.hint).unwrap_or_default()) }
@@ -507,15 +577,25 @@ impl App {
         }
     }
 
+    /// An image the open chat asked for is in (or failed): the sections showing it in an
+    /// answer are laid out again, now that its size is known; a prompt's thumbnail (a fixed
+    /// square) is only painted again.
+    pub fn image_arrived(self: &Rc<Self>, url: &str) {
+        let open = self.page.thread.borrow_mut().as_mut().is_some_and(|c| {
+            if c.thread.image_changed(url) { c.laid = None; }
+            true
+        });
+        if open { self.paint_thread(); }
+    }
+
     /// The open session's thread, as the drawer shows it (renderDrawer, through hover-chat).
     fn paint_thread(self: &Rc<Self>) {
         let Some(id) = self.page.open.get() else { return };
-        let Some(sess) = self.hover.sessions.get(id) else { return };
-        let files = |_: &KiroSession| None;
-        let Ok(v) = serde_json::from_str::<serde_json::Value>(&hover_agents::state::state(&sess, &files).compact()) else { return };
+        let Some((rev, busy)) = self.hover.sessions.rev(id) else { return };
         let now = hover_core::time::Stamp::now();
-        let off = hover_core::time::local_offset_min(now.ticks);
-        let turns = hover_chat::state::turns_at(&v, now.unix_ms() as f64, &|ms| hover_chat::state::hm(ms, off));
+        // A running turn's clock ("Working 0:12") moves each second; nothing else does
+        // unless the session changed.
+        let second = if busy { now.unix_ms().div_euclid(1000) } else { 0 };
         let which = self.page.target.get();
         let dash = self.dash.borrow();
         let g = if which == 1 { dash.as_ref().map(|d| d.global::<crate::ui::Office>()) } else { Some(self.notch.global::<crate::ui::Office>()) };
@@ -529,27 +609,45 @@ impl App {
         let w = if tw > 0.0 { tw } else { (400.0f32).min(ow as f32 - 24.0) };
         let h = if th > 0.0 { th } else { (oh as f32 - 24.0 - 76.0 - 62.0).max(40.0) };
         let mut chat = self.page.thread.borrow_mut();
-        if chat.as_ref().is_none_or(|c| c.id != id) {
-            let (name, c) = hover_office::bot::BOTS[sess.bot % 6];
-            let f = fonts();
-            *chat = Some(Chat { id, thread: hover_chat::Thread::new(hover_chat::Shaper::new(&f), name, [(c >> 16) as u8, (c >> 8) as u8, c as u8, 255]),
-                painter: hover_chat::Painter::new(&f, hover_chat::Images::none()), scroll: f32::MAX, width: 0.0, key: sess.key.clone(), answered: None });
+        let same = chat.as_ref().is_some_and(|c| c.id == id && c.laid == Some((rev, second, w, h)));
+        if !same {
+            // Only now is the whole session copied and read: a scroll, a click or a redraw
+            // of an unchanged chat paints what is laid out already.
+            let Some(sess) = self.hover.sessions.get(id) else { return };
+            let files = |s: &KiroSession| crate::net::files_host(&s.key, &s.folder);
+            let v = to_serde(&hover_agents::state::state(&sess, &files));
+            let off = hover_core::time::local_offset_min(now.ticks);
+            let turns = hover_chat::state::turns_at(&v, now.unix_ms() as f64, &|ms| hover_chat::state::hm(ms, off));
+            if chat.as_ref().is_none_or(|c| c.id != id) {
+                let (name, c) = hover_office::bot::BOTS[sess.bot % 6];
+                let f = fonts();
+                let mut thread = hover_chat::Thread::new(hover_chat::Shaper::new(&f), name, [(c >> 16) as u8, (c >> 8) as u8, c as u8, 255]);
+                // Prompts' pictures, and an answer's from the web or the session's folder,
+                // loaded off the UI thread into a cache the layout and the painter share.
+                let images = crate::net::images();
+                thread.use_images(images.clone());
+                let (host, folder) = (files(&sess), sess.folder.clone());
+                thread.image_rule = Box::new(move |src| hover_md::image::image_for(&hover_md::image::Session { files: host.as_deref(), folder: &folder }, src));
+                *chat = Some(Chat { id, thread, painter: hover_chat::Painter::new(&f, images), scroll: f32::MAX, width: 0.0, key: sess.key.clone(), answered: None, laid: None, sel: Sel::default() });
+            }
+            let c = chat.as_mut().unwrap();
+            // renderDrawer: #thread keeps to the bottom when it was within 40 px of it, and
+            // jumps there when an answer is new since the last state (never on the first).
+            let was_near = c.thread.height - c.scroll - c.thread.view_h < 40.0;
+            let answered: Vec<bool> = turns.iter().map(|t| !t.answer.is_empty()).collect();
+            let fresh = c.answered.replace(answered.clone()).is_some_and(|before| answered.iter().enumerate().any(|(k, &a)| a && !before.get(k).copied().unwrap_or(false)));
+            c.thread.tool = sess.tool.id().into();
+            c.thread.view_h = h;
+            c.thread.set(&turns, w);
+            if was_near || fresh { c.scroll = f32::MAX; }
+            *self.page.turns.borrow_mut() = turns;
+            c.width = w;
+            c.laid = Some((rev, second, w, h));
         }
         let c = chat.as_mut().unwrap();
-        // renderDrawer: #thread keeps to the bottom when it was within 40 px of it, and
-        // jumps there when an answer is new since the last state (never on the first).
-        let was_near = c.thread.height - c.scroll - c.thread.view_h < 40.0;
-        let now: Vec<bool> = turns.iter().map(|t| !t.answer.is_empty()).collect();
-        let fresh = c.answered.replace(now.clone()).is_some_and(|before| now.iter().enumerate().any(|(k, &a)| a && !before.get(k).copied().unwrap_or(false)));
-        c.thread.tool = sess.tool.id().into();
-        c.thread.view_h = h;
-        c.thread.set(&turns, w);
-        if was_near || fresh { c.scroll = f32::MAX; }
-        *self.page.turns.borrow_mut() = turns;
-        c.width = w;
         let max = (c.thread.height - h).max(0.0);
         c.scroll = c.scroll.clamp(0.0, max);
-        let k = if which == 1 { self.dash.borrow().as_ref().map_or(1.0, |d| d.window().scale_factor()) } else { self.notch.window().scale_factor() };
+        let k = if which == 1 { dash.as_ref().map_or(1.0, |d| d.window().scale_factor()) } else { self.notch.window().scale_factor() };
         let px = c.painter.paint(&c.thread, c.scroll, (w * k).round() as u32, (h * k).round() as u32, k, [0, 0, 0, 0]);
         let img = Image::from_rgba8_premultiplied(SharedPixelBuffer::clone_from_slice(px.data(), px.width(), px.height()));
         g.set_d_thread(img);
@@ -594,10 +692,15 @@ impl App {
         let a = self.clone();
         g.on_new_go_clicked(move || {
             let text = each_draft(&a).trim().to_owned();
-            let Some(folder) = a.page.new_folder.borrow().clone() else { return };
             let images = a.page.attached.borrow()[1].clone();
             if text.is_empty() && images.is_empty() { return; }
             let tool = AgentTool::ALL[a.page.new_tool.get()];
+            // Enter starts it too, past the Start button's own gate: what keeps the button
+            // off is said here instead of nothing happening.
+            if let Some(r) = hover_agents::agents::known(tool).filter(|r| !r.ok()) { a.toast(&r.hint); return; }
+            let folder = a.page.new_folder.borrow().clone().filter(|f| hover_agents::usable_folder(Some(f)));
+            let Some(folder) = folder else { a.toast(&format!("Choose a folder for {} to work in first.", tool.name())); return };
+            if !a.hover.sessions.can_start() { a.toast("3 tasks are running. Start another when one is done."); return; }
             if !a.hover.settings.kiro_notice_seen() { a.hover.settings.set_kiro_notice_seen(true); }
             // The access picked in the new-task box, for this session only.
             let access = a.new_access(a.page.new_tool.get());
@@ -644,7 +747,6 @@ impl App {
                 let key = key.or_else(|| id.and_then(|i| a.hover.sessions.get(i)).map(|s| s.key.clone()));
                 if let Some(key) = key { a.hover.sessions.delete(&key); if let Some(h) = &a.hover.history { h.delete(&key); } }
                 if id.is_some() && id == a.page.open.get() { a.close_drawer(); }
-                a.page.history_sent.set(usize::MAX);
                 a.office_changed();
                 a.office_widgets();
             }
@@ -707,6 +809,16 @@ impl App {
         });
         let a = self.clone();
         g.on_d_click(move |x, y| a.thread_click(x, y));
+        let a = self.clone();
+        g.on_d_pointer(move |kind, x, y, shift| a.thread_pointer(kind, x, y, shift));
+        let a = self.clone();
+        g.on_d_copy(move || {
+            // Ctrl+C with text selected in the thread: that text, as the page copied it.
+            let text = a.page.thread.borrow().as_ref().map(|c| c.thread.selected_text()).unwrap_or_default();
+            if text.is_empty() { return false; }
+            if let Err(e) = arboard::Clipboard::new().and_then(|mut c| c.set_text(text)) { hover_core::log::line(&format!("clipboard: {e}")); }
+            true
+        });
         let a = self.clone();
         g.on_d_resized(move || { let a = a.clone(); slint::Timer::single_shot(Duration::ZERO, move || a.paint_thread()); });
         let a = self.clone();
@@ -789,6 +901,20 @@ impl App {
                 Err(why) => a.toast(&why),
             }
             a.office_widgets();
+        });
+        let a = self.clone();
+        g.on_paste_image(move |which| {
+            // The page's paste handler: a picture on the clipboard is attached; anything
+            // else is left to the box, which pastes the text.
+            let Ok(img) = arboard::Clipboard::new().and_then(|mut c| c.get_image()) else { return false };
+            let k = if which == 1 { 0 } else { 1 };
+            if a.page.attached.borrow()[k].len() >= hover_core::images::MAX_IMAGES { a.toast("Four images at most."); return true; }
+            match attach_pixels(img.width as u32, img.height as u32, img.bytes.into_owned()) {
+                Ok(saved) => a.page.attached.borrow_mut()[k].push(saved),
+                Err(why) => a.toast(&why),
+            }
+            a.office_widgets();
+            true
         });
         let a = self.clone();
         g.on_unattach(move |which, i| {
@@ -900,6 +1026,46 @@ impl App {
         std::cell::RefMut::filter_map(self.page.thread.borrow_mut(), |c| c.as_mut().map(|c| &mut c.thread)).ok()
     }
     pub fn page_turns(&self) -> Vec<hover_chat::Turn> { self.page.turns.borrow().clone() }
+    pub fn page_scroll(&self) -> f32 { self.page.thread.borrow().as_ref().map_or(0.0, |c| c.scroll) }
+
+    /// The pointer in the open chat's thread (0 press, 1 move while pressed, 2 release):
+    /// a press on text starts a selection (a double click the word and the spaces after
+    /// it, as WebView2 on Windows; a third the paragraph), a drag grows it by that unit,
+    /// Shift+press extends it; a press elsewhere clears it. Links, summaries and Copy are
+    /// the click's (thread_click).
+    fn thread_pointer(self: &Rc<Self>, kind: i32, x: f32, y: f32, shift: bool) {
+        use hover_chat::{Hit, Pos, Unit};
+        {
+            let mut chat = self.page.thread.borrow_mut();
+            let Some(c) = chat.as_mut() else { return };
+            let yy = y + c.scroll;
+            let n = if kind == 0 { c.sel.press(x, y) } else { 0 };
+            let (th, s) = (&mut c.thread, &mut c.sel);
+            match (kind, th.hit(x, yy)) {
+                (0, Hit::Text(p)) if shift || n == 1 => {
+                    if shift { if let Some(an) = s.anchor { th.select(an, p); } } else { s.anchor = Some(p); th.select(p, p); }
+                    s.unit = Unit::Char;
+                    s.dragging = true;
+                }
+                (0, Hit::Text(p)) => {
+                    s.unit = if n == 2 { Unit::Word } else { Unit::Para };
+                    let (a0, mut a1, tail) = th.unit_at(p, s.unit);
+                    if n == 2 { a1 = th.trailing_space(a1); }
+                    s.unit_anchor = (a0, a1, tail);
+                    s.anchor = Some(a0);
+                    th.select_units(s.unit_anchor, p, s.unit);
+                    s.dragging = true;
+                }
+                (0, Hit::Link(_) | Hit::Toggle(_) | Hit::Act(..)) => return,
+                (0, _) => { let p0 = Pos { section: 0, text: 0, byte: 0 }; th.select(p0, p0); s.anchor = None; }
+                (1, Hit::Text(p)) if s.dragging && s.unit != Unit::Char => th.select_units(s.unit_anchor, p, s.unit),
+                (1, Hit::Text(p)) if s.dragging => { if let Some(an) = s.anchor { th.select(an, p); } }
+                (2, _) => { s.dragging = false; return; }
+                _ => return,
+            }
+        }
+        self.paint_thread();
+    }
 
     /// A click in the open chat's thread: a summary line folds or opens its timeline, a
     /// step its change or output; Copy puts a code block on the clipboard; a link opens.
@@ -986,9 +1152,54 @@ fn attach_file(file: &str) -> Result<String, String> {
     let kind = match ext.as_str() { "png" => "png", "jpg" | "jpeg" => "jpeg", "gif" => "gif", "webp" => "webp", _ => return Err("Only PNG, JPEG, GIF and WebP images.".into()) };
     let bytes = std::fs::read(file).map_err(|e| format!("Couldn’t read that image: {e}"))?;
     if bytes.len() > hover_core::images::MAX_IMAGE_BYTES { return Err("That image is over 8 MB.".into()); }
-    let url = format!("data:image/{kind};base64,{}", hover_agents::http::base64(&bytes));
+    keep_image(kind, &bytes)
+}
+
+/// Into kiro-images, named as KiroPage.SaveImages names them: the file's path.
+fn keep_image(kind: &str, bytes: &[u8]) -> Result<String, String> {
+    let url = format!("data:image/{kind};base64,{}", hover_agents::http::base64(bytes));
     let dir = hover_core::images::folder(hover_core::paths::support());
     hover_core::images::save(&[hover_core::json::Json::str(url)], &dir).into_iter().next().map(|p| p.to_string_lossy().into_owned()).ok_or_else(|| "Couldn’t keep that image.".into())
+}
+
+/// A pasted picture (the clipboard's bitmap, which Chromium handed the page as a PNG), as
+/// main.js shrink() sent it: the long side at most 2000 px, PNG, else JPEG 90 when that
+/// is still over the 8 MiB a picture may be.
+fn attach_pixels(w: u32, h: u32, rgba: Vec<u8>) -> Result<String, String> {
+    let (kind, bytes) = pasted_picture(w, h, rgba)?;
+    keep_image(kind, &bytes)
+}
+
+/// attach_pixels' picture: its kind and bytes.
+fn pasted_picture(w: u32, h: u32, rgba: Vec<u8>) -> Result<(&'static str, Vec<u8>), String> {
+    let img = image::RgbaImage::from_raw(w, h, rgba).ok_or("That picture couldn’t be read.")?;
+    let k = (2000.0 / w.max(h).max(1) as f64).min(1.0);
+    let img = if k < 1.0 {
+        image::imageops::resize(&img, ((w as f64 * k).round() as u32).max(1), ((h as f64 * k).round() as u32).max(1), image::imageops::FilterType::Triangle)
+    } else { img };
+    let mut png = std::io::Cursor::new(vec![]);
+    img.write_to(&mut png, image::ImageFormat::Png).map_err(|e| format!("That picture couldn’t be kept: {e}"))?;
+    if png.get_ref().len() <= hover_core::images::MAX_IMAGE_BYTES { return Ok(("png", png.into_inner())); }
+    // JPEG has no alpha: transparent pixels come out black, as a canvas's toDataURL.
+    let rgb = image::DynamicImage::ImageRgba8(img).to_rgb8();
+    let mut jpg = std::io::Cursor::new(vec![]);
+    image::codecs::jpeg::JpegEncoder::new_with_quality(&mut jpg, 90).encode_image(&rgb).map_err(|e| format!("That picture couldn’t be kept: {e}"))?;
+    Ok(("jpeg", jpg.into_inner()))
+}
+
+/// hover-core's JSON as serde's, directly: the chat reads the session's state as the
+/// page did, without writing it out as text and parsing it back.
+fn to_serde(j: &hover_core::json::Json) -> serde_json::Value {
+    use hover_core::json::Json;
+    use serde_json::Value;
+    match j {
+        Json::Null => Value::Null,
+        Json::Bool(b) => Value::Bool(*b),
+        Json::Num(n) => n.parse::<serde_json::Number>().map_or(Value::Null, Value::Number),
+        Json::Str(s) => Value::String(s.clone()),
+        Json::Arr(a) => Value::Array(a.iter().map(to_serde).collect()),
+        Json::Obj(o) => Value::Object(o.iter().map(|(k, v)| (k.clone(), to_serde(v))).collect()),
+    }
 }
 
 /// ago(): "now", "5 min ago", "3 h ago", "2 d ago".
@@ -1063,10 +1274,14 @@ fn upload(device: &slint::wgpu_30::wgpu::Device, queue: &slint::wgpu_30::wgpu::Q
 
 /// backdrop-filter: blur(18px) saturate(1.4), at a quarter of the size (a blur that
 /// wide loses nothing at that scale): three box passes each way make it near Gaussian
-/// (sigma 18 px is a box of about 17 px at full size, 4 at a quarter).
-fn blur(rgb: &[u8], w: usize, h: usize) -> SharedPixelBuffer<Rgba8Pixel> {
+/// (sigma 18 px is a box of about 17 px at full size, 4 at a quarter). Into `b.out`
+/// (RGBA, b.w x b.h), with buffers kept between frames: new ones for every frame were a
+/// quarter of a MB each time.
+fn blur(rgb: &[u8], w: usize, h: usize, b: &mut Blur) {
     let (sw, sh) = (w.div_ceil(4), h.div_ceil(4));
-    let mut small = vec![[0f32; 3]; sw * sh];
+    let small = &mut b.small;
+    small.clear();
+    small.resize(sw * sh, [0f32; 3]);
     for y in 0..sh { for x in 0..sw {
         let mut acc = [0f32; 3];
         let mut n = 0.0;
@@ -1081,29 +1296,97 @@ fn blur(rgb: &[u8], w: usize, h: usize) -> SharedPixelBuffer<Rgba8Pixel> {
     let r = 2i64;
     for _ in 0..3 {
         for horizontal in [true, false] {
-            let src = small.clone();
-            for y in 0..sh { for x in 0..sw {
-                let mut acc = [0f32; 3];
-                for d in -r..=r {
-                    let (px, py) = if horizontal { ((x as i64 + d).clamp(0, sw as i64 - 1) as usize, y) } else { (x, (y as i64 + d).clamp(0, sh as i64 - 1) as usize) };
-                    for k in 0..3 { acc[k] += src[py * sw + px][k]; }
+            // Each row (or column) is read from a copy of itself, so the pass can write in place.
+            let (lines, len) = if horizontal { (sh, sw) } else { (sw, sh) };
+            let at = |line: usize, i: usize| if horizontal { line * sw + i } else { i * sw + line };
+            for line in 0..lines {
+                b.line.clear();
+                b.line.extend((0..len).map(|i| small[at(line, i)]));
+                for i in 0..len {
+                    let mut acc = [0f32; 3];
+                    for d in -r..=r {
+                        let s = b.line[(i as i64 + d).clamp(0, len as i64 - 1) as usize];
+                        for k in 0..3 { acc[k] += s[k]; }
+                    }
+                    small[at(line, i)] = acc.map(|v| v / (2 * r + 1) as f32);
                 }
-                small[y * sw + x] = acc.map(|v| v / (2 * r + 1) as f32);
-            } }
+            }
         }
     }
-    let mut out = SharedPixelBuffer::<Rgba8Pixel>::new(sw as u32, sh as u32);
-    for (d, s) in out.make_mut_slice().iter_mut().zip(&small) {
+    b.out.clear();
+    b.out.reserve(sw * sh * 4);
+    for s in small.iter() {
         // saturate(1.4), with the filter's luminance weights.
         let l = 0.2126 * s[0] + 0.7152 * s[1] + 0.0722 * s[2];
         let c = s.map(|v| (l + (v - l) * 1.4).clamp(0.0, 255.0) as u8);
-        *d = Rgba8Pixel { r: c[0], g: c[1], b: c[2], a: 255 };
+        b.out.extend_from_slice(&[c[0], c[1], c[2], 255]);
     }
-    out
+    (b.w, b.h) = (sw as u32, sh as u32);
 }
+
+/// blur's working buffers and its result, kept between frames.
+#[derive(Default)]
+struct Blur { small: Vec<[f32; 3]>, line: Vec<[f32; 3]>, out: Vec<u8>, w: u32, h: u32 }
 
 #[cfg(test)]
 mod tests {
+    /// A pasted picture goes as a PNG when it fits, its long side cut to 2000 px; one
+    /// that is still over 8 MiB as a PNG (noise doesn't compress) goes as a JPEG.
+    #[test]
+    fn a_pasted_picture_is_kept_as_the_page_sent_it() {
+        let (kind, b) = super::pasted_picture(3000, 1200, vec![200; 3000 * 1200 * 4]).unwrap();
+        let d = image::load_from_memory(&b).unwrap();
+        assert_eq!((kind, d.width(), d.height()), ("png", 2000, 800));
+        let mut x: u32 = 1;
+        let noise: Vec<u8> = (0..1900 * 1900 * 4).map(|_| { x ^= x << 13; x ^= x >> 17; x ^= x << 5; x as u8 }).collect();
+        let (kind, b) = super::pasted_picture(1900, 1900, noise).unwrap();
+        assert_eq!(kind, "jpeg");
+        assert!(b.len() <= hover_core::images::MAX_IMAGE_BYTES);
+        assert!(super::pasted_picture(10, 10, vec![0; 7]).is_err(), "too few bytes for the size");
+    }
+
+    /// The blur with its buffers kept between frames gives the very bytes the one that
+    /// made new ones each frame gave (that one, as it was, is the reference here).
+    #[test]
+    fn the_kept_buffer_blur_is_the_old_blur_byte_for_byte() {
+        fn old(rgb: &[u8], w: usize, h: usize) -> Vec<u8> {
+            let (sw, sh) = (w.div_ceil(4), h.div_ceil(4));
+            let mut small = vec![[0f32; 3]; sw * sh];
+            for y in 0..sh { for x in 0..sw {
+                let mut acc = [0f32; 3];
+                let mut n = 0.0;
+                for dy in 0..4 { for dx in 0..4 {
+                    let (px, py) = ((x * 4 + dx).min(w - 1), (y * 4 + dy).min(h - 1));
+                    let i = (py * w + px) * 3;
+                    for k in 0..3 { acc[k] += rgb[i + k] as f32; }
+                    n += 1.0;
+                } }
+                small[y * sw + x] = acc.map(|v| v / n);
+            } }
+            let r = 2i64;
+            for _ in 0..3 { for horizontal in [true, false] {
+                let src = small.clone();
+                for y in 0..sh { for x in 0..sw {
+                    let mut acc = [0f32; 3];
+                    for d in -r..=r {
+                        let (px, py) = if horizontal { ((x as i64 + d).clamp(0, sw as i64 - 1) as usize, y) } else { (x, (y as i64 + d).clamp(0, sh as i64 - 1) as usize) };
+                        for k in 0..3 { acc[k] += src[py * sw + px][k]; }
+                    }
+                    small[y * sw + x] = acc.map(|v| v / (2 * r + 1) as f32);
+                } }
+            } }
+            small.iter().flat_map(|s| { let l = 0.2126 * s[0] + 0.7152 * s[1] + 0.0722 * s[2]; let c = s.map(|v| (l + (v - l) * 1.4).clamp(0.0, 255.0) as u8); [c[0], c[1], c[2], 255] }).collect()
+        }
+        let mut b = super::Blur::default();
+        let mut seed = 7u32;
+        for (w, h) in [(1104, 424), (37, 5), (1, 1), (824, 324)] {
+            let rgb: Vec<u8> = (0..w * h * 3).map(|_| { seed = seed.wrapping_mul(1_103_515_245).wrapping_add(12345); (seed >> 16) as u8 }).collect();
+            super::blur(&rgb, w, h, &mut b);
+            assert_eq!((b.w as usize, b.h as usize), (w.div_ceil(4), h.div_ceil(4)));
+            assert!(b.out == old(&rgb, w, h), "{w}x{h}");
+        }
+    }
+
     /// A history row's date: the time today and yesterday, the weekday this week, then
     /// the date, with the year only when it isn't this one.
     #[test]

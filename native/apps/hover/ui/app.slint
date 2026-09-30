@@ -127,7 +127,11 @@ export component NotchWindow inherits Window {
     callback back();
     callback fold();
     // The shortcut opened the notch: the keyboard goes to what is showing (FocusOffice).
-    public function focus-view() { keys.focus(); }
+    // The view is made only while the office is (Office.built), so it may not be there
+    // yet: it takes the keyboard when it is made, or at once when it is.
+    in-out property <bool> focus-wanted;
+    in-out property <int> focus-asks;
+    public function focus-view() { root.focus-wanted = true; root.focus-asks += 1; }
 
     title: "Hover notch";
     no-frame: true;
@@ -349,8 +353,11 @@ export component NotchWindow inherits Window {
         }
     }
 
-    // ViewHost: laid out at the open size, clipped by the growing shape.
-    Rectangle {
+    // ViewHost: laid out at the open size, clipped by the growing shape. Made only while
+    // the office is: once it is dropped (30 s hidden) its items go, and the renderer's
+    // layers, stencils and textures kept for them with them. (Inside the hidden host an
+    // `if` is never looked at again, so the condition sits out here.)
+    if Office.built: Rectangle {
         x: root.shape-x;
         y: 0;
         width: root.shape-w;
@@ -360,6 +367,9 @@ export component NotchWindow inherits Window {
         border-bottom-right-radius: root.shape-r;
         visible: root.view-visible;
         keys := FocusScope {
+            property <int> asks: root.focus-asks;
+            changed asks => { if (root.focus-wanted) { root.focus-wanted = false; self.focus(); } }
+            init => { if (root.focus-wanted) { root.focus-wanted = false; self.focus(); } }
             key-pressed(e) => {
                 if (e.text == Key.Escape) { view.escape(); return accept; }
                 reject
@@ -445,7 +455,7 @@ export component DashboardWindow inherits Window {
             vertical-stretch: 1;
             // In the app window the office sits on the panel's colour (right in light mode).
             background: Pal.panel;
-            FocusScope {
+            if Office.built: FocusScope {
                 focus-on-click: false;
                 key-pressed(e) => {
                     if (e.text == Key.Escape) { dv.escape(); return accept; }
