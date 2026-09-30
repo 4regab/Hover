@@ -2072,6 +2072,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "hover-measure"
+version = "3.0.0"
+dependencies = [
+ "hover-core",
+ "image",
+ "libc",
+ "windows",
+]
+
+[[package]]
 name = "hover-notch"
 version = "3.0.0"
 

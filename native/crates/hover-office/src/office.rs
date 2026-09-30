@@ -85,6 +85,8 @@ pub struct Office {
     r: Rng,
     pub sessions: Vec<Session>,
     leaving: Vec<(Bot, usize)>,
+    /// Bots that walked out, hidden, for the next session with their name.
+    spare: Vec<Bot>,
     first_state: bool,
     pub time: Time,
     pub manual_time: Option<Time>,
@@ -134,7 +136,7 @@ impl Office {
         }
         let canvases = vec![Canvas::new(128, 96), Canvas::new(208, 118), Canvas::new(480, 280), Canvas::new(96, 44), Canvas::new(4, 64), Canvas::new(64, 64)];
         let mut o = Office {
-            g, room, r, sessions: vec![], leaving: vec![], first_state: true, time: Time::Night, manual_time: None,
+            g, room, r, sessions: vec![], leaving: vec![], spare: vec![], first_state: true, time: Time::Night, manual_time: None,
             w, h, aspect: w / h, cam: [0.0, 1.7, 0.0, 1.0], cam_to: [0.0, 1.7, 0.0, 1.0], user: [0.0, 0.0, 1.0],
             sel: None, drawer_open: false, viewing: false, panel: None, dragging: false, pointer: None, hovered: None, still,
             clock_t: 0.0, tv_at: -1, clock_at: -1, lively: true, poked: 0.0, now_ms: 0.0, shadow_at: -1.0, shadow_dirty: true,
@@ -231,7 +233,11 @@ impl Office {
                 let bot = h.get("bot").and_then(|x| x.i64().ok()).unwrap_or(0) as usize;
                 let desk = h.get("seat").and_then(|x| x.i64().ok()).unwrap_or(0) as usize % DESKS.len();
                 let (name, color) = BOTS[bot % BOTS.len()];
-                let mut b = Bot::new(&mut self.g, &mut self.r, name, color, self.sessions.len());
+                let index = self.sessions.len();
+                let mut b = match self.spare.iter().position(|b| b.name == name) {
+                    Some(i) => self.spare.swap_remove(i).renew(&mut self.g, &mut self.r, index),
+                    None => Bot::new(&mut self.g, &mut self.r, name, color, index),
+                };
                 let walk_in = !self.first_state && turns.iter().rev().find(|t| !t.queued).unwrap_or(&turns[0]).stage == Stage::Waking;
                 if walk_in { b.place(DOOR.0, Z0 + 0.1, false); b.go(Self::path_in(desk), Arrive::Sit); } else { b.place(seat(desk) + 0.05, DESKS[desk].1, true); }
                 let sess = Session { id, key: s("key"), tool: s("tool"), bot, desk, title: s("title"), folder: s("folder"), ctx, turns, act, pose, file, b, tag_text: String::new(), tag_shown: 0.0 };
@@ -418,7 +424,8 @@ impl Office {
         for (i, (b, _)) in self.leaving.iter_mut().enumerate() {
             if b.step(&mut self.g, step, still) == Some(Arrive::Gone) { b.dispose(&mut self.g); gone.push(i); }
         }
-        for i in gone.into_iter().rev() { self.leaving.remove(i); }
+        // Gone: kept hidden, and used again for the next session with its name.
+        for i in gone.into_iter().rev() { let (b, _) = self.leaving.remove(i); self.spare.push(b); }
         // The door swings open while a bot is near it.
         let near = self.sessions.iter().map(|s| &s.b).chain(self.leaving.iter().map(|l| &l.0)).any(|b| (b.x - DOOR.0).hypot(b.z - Z0) < 1.5);
         let dr = self.g.nodes[self.room.door].r.y;

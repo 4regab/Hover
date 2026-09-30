@@ -251,9 +251,31 @@ impl Bot {
 
     pub fn walking(&self) -> bool { !self.path.is_empty() }
 
-    /// dispose(): hidden and out of the raycast; the nodes stay (a new bot makes new ones).
+    /// dispose(): hidden and out of the raycast; the nodes stay, for `renew`.
     pub fn dispose(&self, g: &mut Graph) {
         g.nodes[self.root].visible = false;
         g.nodes[self.hit].hit = None;
+    }
+
+    /// A bot that left, back as a new one of the same name: its nodes are used again
+    /// (every step sets what they show), so the scene doesn't grow with each session the
+    /// office sees. The random draw is the one `new` makes.
+    pub fn renew(mut self, g: &mut Graph, r: &mut Rng, index: usize) -> Bot {
+        self.t = r.next() * 10.0;
+        self.since = 0.0;
+        self.since_seat = 99.0;
+        self.stage = Stage::Waking;
+        self.act = None;
+        (self.x, self.z, self.face, self.yaw) = (0.0, 0.0, 0.0, 0.0);
+        self.path.clear();
+        self.seated = false;
+        self.arrive = None;
+        (self.sit, self.walk, self.phase) = (0.0, 0.0, 0.0);
+        self.hot = false;
+        self.p = Pose::default();
+        self.ring_opacity = 0.0;
+        g.nodes[self.root].visible = true;
+        g.nodes[self.hit].hit = Some(Hit::Bot(index));
+        self
     }
 }

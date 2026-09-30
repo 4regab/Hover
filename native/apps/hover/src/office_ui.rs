@@ -45,7 +45,6 @@ pub struct Page {
     dirty: Cell<bool>,
     history_sent: Cell<usize>,
     confirm_key: RefCell<Option<(Option<i32>, Option<String>)>>,
-    last_state: RefCell<hover_core::json::Json>,
     thread: RefCell<Option<Chat>>,
     /// The open chat's turns as last laid out, for a click on the thread.
     turns: RefCell<Vec<hover_chat::Turn>>,
@@ -67,6 +66,15 @@ pub struct Page {
     /// Pictures attached to the reply (0) and the new task (1), as files in kiro-images.
     attached: RefCell<[Vec<String>; 2]>,
     thumbs: RefCell<HashMap<String, Image>>,
+    /// The frame and its blurred copy as textures of their own on the windows' GPU
+    /// device (Windows, where the office shares it): written in place each frame, so
+    /// the windows draw them as they are. A new image each frame made each window
+    /// upload a texture of its own for it, per element that shows it, every time it drew.
+    #[cfg(windows)]
+    gpu: RefCell<[Option<(slint::wgpu_30::wgpu::Texture, Image)>; 2]>,
+    /// The frame as RGBA, for the texture, kept between frames.
+    #[cfg(windows)]
+    scratch: RefCell<Vec<u8>>,
 }
 
 /// A question's rows, and each of its questions' choices.
@@ -86,9 +94,11 @@ impl Default for Page {
     fn default() -> Page {
         Page { live: RefCell::new(None), size: Cell::new((0, 0)), open: Cell::new(None), panel: Cell::new(None), fab: Cell::new(0), new_tool: Cell::new(0), menu: Cell::new(false), access_menu: Cell::new(false), new_access: RefCell::new([None; 4]),
             new_folder: RefCell::new(None), time_mode: Cell::new(0), toast_timer: Default::default(), push_timer: Default::default(), dirty: Cell::new(true),
-            history_sent: Cell::new(usize::MAX), confirm_key: RefCell::new(None), last_state: RefCell::new(hover_core::json::Json::Null), thread: RefCell::new(None), turns: RefCell::new(vec![]), clock: Default::default(), copied: Default::default(),
+            history_sent: Cell::new(usize::MAX), confirm_key: RefCell::new(None), thread: RefCell::new(None), turns: RefCell::new(vec![]), clock: Default::default(), copied: Default::default(),
             rows_open: RefCell::new(vec![]), target: Cell::new(0), shown: Cell::new(None), drop_timer: Default::default(), view: Cell::new(None),
-            picks: Default::default(), qmodels: Default::default(), model_menu: Cell::new(0), attached: Default::default(), thumbs: Default::default() }
+            picks: Default::default(), qmodels: Default::default(), model_menu: Cell::new(0), attached: Default::default(), thumbs: Default::default(),
+            #[cfg(windows)] gpu: Default::default(),
+            #[cfg(windows)] scratch: Default::default() }
     }
 }
 
@@ -176,7 +186,10 @@ impl App {
         clear(self.notch.global::<crate::ui::Office>());
         self.notch.global::<crate::ui::Backdrop>().set_blurred(Image::default());
         if let Some(d) = &*self.dash.borrow() { clear(d.global::<crate::ui::Office>()); d.global::<crate::ui::Backdrop>().set_blurred(Image::default()); }
+        #[cfg(windows)]
+        { *p.gpu.borrow_mut() = Default::default(); *p.scratch.borrow_mut() = Vec::new(); }
         hover_core::log::line("office dropped after 30 s hidden");
+        crate::bench::dropped();
         // glibc keeps what the office thread freed (its arena, the software GPU's
         // buffers) mapped; the drop is for the memory, so give it back once the thread
         // has gone.
@@ -206,8 +219,7 @@ impl App {
         let files = |_: &KiroSession| None;
         let o = hover_agents::state::Office { window: p.target.get() == 1, open: p.open.get(), settings: &hv.settings, folder: folder.clone(), history, ready: &ready, files: &files };
         let msg = hover_agents::state::push(&o, &sessions);
-        if let Some(l) = &*p.live.borrow() { l.send(In::State(msg.clone())); }
-        *p.last_state.borrow_mut() = msg;
+        if let Some(l) = &*p.live.borrow() { l.send(In::State(msg)); }
         if p.new_folder.borrow().is_none() { *p.new_folder.borrow_mut() = folder; }
         for t in AgentTool::ALL { if hover_agents::agents::known(t).is_none() { std::thread::spawn(move || { hover_agents::agents::check(t, false); crate::ui_do(|a| a.office_changed()); }); } }
         self.office_widgets();
@@ -217,22 +229,21 @@ impl App {
     pub fn office_frame(self: &Rc<Self>) {
         let out = match &*self.page.live.borrow() { Some(l) => l.take(), None => return };
         if let Some(e) = &out.error { hover_core::log::line(&format!("office: {e}")); return; }
-        if out.rgba.is_empty() && out.clicks.is_empty() { return; }
-        if !out.rgba.is_empty() { crate::bench::office_frame(); }
-        if !out.rgba.is_empty() && self.page.view.get() != Some(out.view) {
+        let fresh = !out.rgb.is_empty();
+        if !fresh && out.clicks.is_empty() { return; }
+        if fresh { crate::bench::office_frame(); }
+        if fresh && self.page.view.get() != Some(out.view) {
             self.page.view.set(Some(out.view));
             crate::local_set("view", &format!("{},{},{}", out.view[0], out.view[1], out.view[2]));
         }
-        if !out.rgba.is_empty() {
-            let rgb = &out.rgb;
-            let mut buf = SharedPixelBuffer::<Rgba8Pixel>::new(out.w, out.h);
-            for (d, s) in buf.make_mut_slice().iter_mut().zip(rgb.chunks(3)) { *d = Rgba8Pixel { r: s[0], g: s[1], b: s[2], a: 255 }; }
-            let img = Image::from_rgba8(buf);
-            let blurred = Image::from_rgba8(blur(rgb, out.w as usize, out.h as usize));
-            let all = self.hover.sessions.all();
+        let mut out = out;
+        if fresh {
+            let (img, blurred) = self.frame_images(&out.rgb, out.w, out.h);
+            if let Some(l) = &*self.page.live.borrow() { l.recycle(std::mem::take(&mut out.rgb)); }
+            // renderAsks: the question over the head while the session waits.
+            let asking = self.hover.sessions.asking_now();
             let tags: Vec<TagData> = out.tags.iter().map(|t| {
-                // renderAsks: the question over the head while the session waits.
-                let ask = all.iter().find(|x| x.id as i64 == t.id).and_then(|x| x.asking().map(|a| self.ask_data(a, x.asks.len())));
+                let ask = asking.iter().find(|x| x.0 as i64 == t.id).map(|(_, a, n)| self.ask_data(a, *n));
                 TagData {
                     id: t.id as i32, x: t.x as f32, y: t.y as f32, name: s(t.name), color: Color::from_rgb_u8(t.color[0], t.color[1], t.color[2]),
                     tool: s(tool_name(&t.tool)), tool_color: tool_color(&t.tool), text: s(&t.text), stage: t.stage as i32, hot: t.hot,
@@ -249,11 +260,14 @@ impl App {
                 g.set_tip_x(tx as f32);
                 g.set_tip_y(ty as f32);
             };
+            // A texture written in place is the same image as before: the window is told
+            // to draw it again.
             if which == 1 {
-                if let Some(d) = &*self.dash.borrow() { set(d.global::<crate::ui::Office>()); d.global::<crate::ui::Backdrop>().set_blurred(blurred); }
+                if let Some(d) = &*self.dash.borrow() { set(d.global::<crate::ui::Office>()); d.global::<crate::ui::Backdrop>().set_blurred(blurred); d.window().request_redraw(); }
             } else {
                 set(self.notch.global::<crate::ui::Office>());
                 self.notch.global::<crate::ui::Backdrop>().set_blurred(blurred);
+                self.notch.window().request_redraw();
             }
         }
         for c in out.clicks {
@@ -271,6 +285,28 @@ impl App {
                 }
             }
         }
+    }
+
+    /// The frame and its blurred copy as images for the windows: textures written in
+    /// place where the windows share the office's GPU device (Windows), else new pixel
+    /// buffers.
+    fn frame_images(&self, rgb: &[u8], w: u32, h: u32) -> (Image, Image) {
+        let small = blur(rgb, w as usize, h as usize);
+        #[cfg(windows)]
+        if let Some((device, queue)) = hover_office::render::shared() {
+            let mut scratch = self.page.scratch.borrow_mut();
+            scratch.clear();
+            scratch.reserve(w as usize * h as usize * 4);
+            for p in rgb.chunks(3) { scratch.extend_from_slice(&[p[0], p[1], p[2], 255]); }
+            let mut gpu = self.page.gpu.borrow_mut();
+            let [a, b] = &mut *gpu;
+            if let (Some(a), Some(b)) = (upload(&device, &queue, a, w, h, &scratch), upload(&device, &queue, b, small.width(), small.height(), small.as_bytes())) {
+                return (a, b);
+            }
+        }
+        let mut buf = SharedPixelBuffer::<Rgba8Pixel>::new(w, h);
+        for (d, s) in buf.make_mut_slice().iter_mut().zip(rgb.chunks(3)) { *d = Rgba8Pixel { r: s[0], g: s[1], b: s[2], a: 255 }; }
+        (Image::from_rgba8(buf), Image::from_rgba8(small))
     }
 
     pub fn toast(self: &Rc<Self>, text: &str) {
@@ -308,7 +344,6 @@ impl App {
     /// Everything around the scene, from the state and the page's own state.
     pub fn office_widgets(self: &Rc<Self>) {
         let p = &self.page;
-        let st = p.last_state.borrow().clone();
         let sessions = self.hover.sessions.all();
         let tools: Vec<ToolData> = AgentTool::ALL.iter().map(|&t| {
             let r = hover_agents::agents::known(t);
@@ -322,7 +357,7 @@ impl App {
         let can = self.hover.sessions.can_start();
         let note = if !ready { hover_agents::agents::known(tool).map(|r| r.hint).unwrap_or_default() } else if !can { "3 tasks are running. Start another when one is done.".into() } else if full { "All six desks are busy. Stop or remove a session first.".into() } else { String::new() };
         // The panel's rows.
-        let (title, sub, rows, opens) = self.panel_rows(&st, &sessions);
+        let (title, sub, rows, opens) = self.panel_rows(&sessions);
         *p.rows_open.borrow_mut() = opens;
         let open = p.open.get().and_then(|id| sessions.iter().find(|s| s.id == id).cloned());
         let summary = if sessions.is_empty() { "The office is quiet.".to_owned() } else { format!("{} session{} in the office", sessions.len(), if sessions.len() == 1 { "" } else { "s" }) };
@@ -409,7 +444,7 @@ impl App {
         } else { p.clock.stop(); }
     }
 
-    fn panel_rows(&self, st: &hover_core::json::Json, sessions: &[KiroSession]) -> Panel {
+    fn panel_rows(&self, sessions: &[KiroSession]) -> Panel {
         let mut rows = vec![];
         let mut opens = vec![];
         let stage_of = |s: &KiroSession| Stage::parse(hover_agents::state::stage(s.state, s.phase));
@@ -452,7 +487,6 @@ impl App {
                 let find = self.notch.global::<crate::ui::Office>().get_find().to_string().to_lowercase();
                 let all = self.hover.history.as_ref().map(|h| h.entries()).unwrap_or_default();
                 let list: Vec<_> = all.iter().filter(|h| find.is_empty() || format!("{} {} {}", h.title, h.folder, h.tool.id()).to_lowercase().contains(&find)).collect();
-                let _ = st;
                 let mut at = String::new();
                 for h in &list {
                     let ms = h.updated.unix_ms() as f64;
@@ -1004,6 +1038,27 @@ pub fn full_date() -> String {
     let months = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
     let r = secs.rem_euclid(86400);
     format!("{wd} {d} {} {y} at {:02}:{:02}:{:02}", months[mo - 1], r / 3600, r / 60 % 60, r % 60)
+}
+
+/// RGBA pixels into a texture of the slot's, made (and wrapped as an image) when there
+/// is none of that size yet.
+#[cfg(windows)]
+fn upload(device: &slint::wgpu_30::wgpu::Device, queue: &slint::wgpu_30::wgpu::Queue, slot: &mut Option<(slint::wgpu_30::wgpu::Texture, Image)>, w: u32, h: u32, rgba: &[u8]) -> Option<Image> {
+    use slint::wgpu_30::wgpu;
+    if slot.as_ref().is_none_or(|(t, _)| (t.width(), t.height()) != (w, h)) {
+        let t = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("office frame"), size: wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 }, mip_level_count: 1, sample_count: 1,
+            dimension: wgpu::TextureDimension::D2, format: wgpu::TextureFormat::Rgba8Unorm,
+            // Slint takes a texture it can also render to.
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_DST, view_formats: &[],
+        });
+        let img = match Image::try_from(t.clone()) { Ok(i) => i, Err(e) => { hover_core::log::line(&format!("office texture: {e}")); return None; } };
+        *slot = Some((t, img));
+    }
+    let (t, img) = slot.as_ref()?;
+    queue.write_texture(wgpu::TexelCopyTextureInfo { texture: t, mip_level: 0, origin: wgpu::Origin3d::ZERO, aspect: wgpu::TextureAspect::All }, rgba,
+        wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(w * 4), rows_per_image: Some(h) }, wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 });
+    Some(img.clone())
 }
 
 /// backdrop-filter: blur(18px) saturate(1.4), at a quarter of the size (a blur that

@@ -1,0 +1,154 @@
+# The memory scenarios, one run (tools/hover-measure run --script …/memory.hms).
+# Needs: KiroFolder in settings.json set to a disposable folder ("@" below), fake-agent as kiro-cli/codex-acp first on
+# PATH (--path-first), a fresh --data folder whose settings.json has KiroNoticeSeen.
+# Each `mark` starts a scenario; it ends at the next one.
+
+launch
+expect "bench visible" 30 as startup
+mark collapsed-fresh
+sleep 20
+regions regions-collapsed-fresh.txt
+
+send unfold
+expect "bench reopen" 20 as first-office
+mark office-open-default
+sleep 12
+regions regions-office-open.txt
+send frames 10
+expect "bench frames" 5
+
+send size 0
+expect "bench size" 5
+sleep 3
+mark office-open-small
+sleep 10
+send size 2
+expect "bench size" 5
+sleep 3
+mark office-open-large
+sleep 10
+send size 3
+expect "bench size" 5
+sleep 3
+mark office-open-xlarge
+sleep 10
+send size 1
+expect "bench size" 5
+sleep 3
+
+# One agent at work, then three at once across two tools (the limit), plus a fourth.
+send task kiro @ - one agent [seconds:25]
+expect "bench task" 5
+sleep 3
+mark agent-1
+sleep 15
+send until-idle 40
+expect "bench idle" 45
+send task kiro @ - first of three [seconds:25]
+expect "bench task" 5
+send task codex @ - second of three [seconds:25]
+expect "bench task" 5
+send task kiro @ - third of three [seconds:25]
+expect "bench task" 5
+send task codex @ - a fourth waits [seconds:5]
+expect "bench task none" 5
+sleep 3
+mark agents-3-mixed
+sleep 15
+send frames 10
+expect "bench frames" 5
+send until-idle 40
+expect "bench idle" 45
+
+# A long streamed answer with tables, code and a flowchart, its chat open.
+send task kiro @ - a long answer [seconds:4] [bytes:400000]
+expect "bench task" 5
+mark long-stream
+send until-idle 60
+expect "bench idle" 65
+send sessions
+expect "bench sessions" 5
+send chat 5
+expect "bench ok" 5
+sleep 2
+mark chat-rich-open
+sleep 8
+send scroll -3000
+expect "bench ok" 5
+send scroll -3000
+expect "bench ok" 5
+sleep 4
+send chat
+expect "bench ok" 5
+
+# A permission waiting.
+send task kiro @ risky - asks first [ask:execute:npm install left-pad] [seconds:2]
+expect "bench task" 5
+send until-ask 20
+expect "bench asking" 25
+mark pending-permission
+sleep 10
+send answer 6 deny
+expect "bench answer" 5
+send until-idle 20
+expect "bench idle" 25
+
+send settings 0
+expect "bench ok" 5
+mark settings-over-office
+sleep 10
+send back
+expect "bench ok" 5
+send history
+expect "bench ok" 5
+mark history-panel
+sleep 8
+
+send dash
+expect "bench ok" 5
+sleep 3
+mark dashboard-open
+sleep 10
+send dash-min
+expect "bench ok" 5
+sleep 2
+mark dashboard-minimized
+sleep 8
+send dash-restore
+expect "bench ok" 5
+sleep 2
+send dash-close
+expect "bench ok" 5
+
+# Hidden, while a task goes on: before and after the office is dropped (30 s).
+send task kiro @ - works while hidden [seconds:70]
+expect "bench task" 5
+send fold
+expect "bench folded" 5
+sleep 2
+mark hidden-before-drop
+expect "bench dropped" 40
+sleep 2
+mark hidden-after-drop
+sleep 15
+regions regions-hidden-after-drop.txt
+send unfold
+expect "bench reopen" 20 as reopen-after-drop
+sleep 3
+send fold
+expect "bench folded" 5
+sleep 2
+send unfold
+expect "bench reopen" 20 as reopen-warm
+sleep 2
+send stopall
+expect "bench ok" 5
+send fold
+expect "bench folded" 5
+expect "bench dropped" 40
+sleep 3
+mark collapsed-after-use
+sleep 20
+regions regions-collapsed-after-use.txt
+mark -
+quit 30

@@ -1,0 +1,18 @@
+# Long holds at the key states, for looking inside the process from outside
+# (hover-measure regions --pid, a heap snapshot) while it waits. Timings in markers.csv.
+launch
+expect "bench visible" 30 as startup
+mark collapsed-fresh
+sleep 40
+send unfold
+expect "bench reopen" 20 as first-office
+mark office-open-default
+sleep 40
+send fold
+expect "bench folded" 5
+expect "bench dropped" 40
+sleep 5
+mark collapsed-after-drop
+sleep 40
+mark -
+quit 30

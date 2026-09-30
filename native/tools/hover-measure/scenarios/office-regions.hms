@@ -1,0 +1,24 @@
+# office.hms with a region breakdown at each state (regions-*.txt in the run folder).
+launch
+expect "bench visible" 30 as startup
+mark collapsed-fresh
+sleep 12
+regions regions-collapsed.txt
+mark -
+send unfold
+expect "bench reopen" 20 as first-office
+sleep 3
+mark office-open-idle
+sleep 12
+regions regions-open.txt
+sleep 10
+mark -
+send fold
+expect "bench folded" 5
+expect "bench dropped" 40
+sleep 3
+mark collapsed-after-drop
+sleep 10
+regions regions-dropped.txt
+mark -
+quit 30

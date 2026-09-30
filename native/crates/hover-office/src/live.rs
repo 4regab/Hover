@@ -31,13 +31,14 @@ pub enum In {
 
 #[derive(Clone, Default)]
 pub struct Out {
-    pub rgba: Vec<u8>,
     pub w: u32,
     pub h: u32,
     pub tags: Vec<Tag>,
     pub hovered: Option<Hover>,
     pub hint: String,
     pub pointer: Option<(f64, f64)>,
+    /// Every click since the UI last took a frame, oldest first (a frame the UI hadn't
+    /// taken yet is replaced by the next, but its clicks carry over).
     pub clicks: Vec<Click>,
     pub day: bool,
     pub frames: u64,
@@ -46,23 +47,27 @@ pub struct Out {
     /// The user's camera (office.view), kept by the app across a drop.
     pub view: [f64; 3],
     /// The page's picture: the frame over the background, with the vignette and border.
+    /// Empty when only clicks came. Hand it back with `Live::recycle` once drawn.
     pub rgb: Vec<u8>,
 }
 
-pub struct Live { tx: Sender<In>, pub out: Arc<Mutex<Out>> }
+pub struct Live { tx: Sender<In>, pub out: Arc<Mutex<Out>>, spare: Arc<Mutex<Vec<u8>>> }
 
 impl Live {
     /// `wake` is called (off the UI thread) when a new frame is waiting.
     pub fn start(w: u32, h: u32, still: bool, wake: impl Fn() + Send + 'static) -> Live {
         let (tx, rx) = channel();
         let out: Arc<Mutex<Out>> = Default::default();
-        let o2 = out.clone();
-        std::thread::Builder::new().name("office".into()).spawn(move || run(rx, o2, w, h, still, wake)).expect("the office's thread");
-        Live { tx, out }
+        let spare: Arc<Mutex<Vec<u8>>> = Default::default();
+        let (o2, s2) = (out.clone(), spare.clone());
+        std::thread::Builder::new().name("office".into()).spawn(move || run(rx, o2, s2, w, h, still, wake)).expect("the office's thread");
+        Live { tx, out, spare }
     }
 
     pub fn send(&self, m: In) { let _ = self.tx.send(m); }
     pub fn take(&self) -> Out { std::mem::take(&mut *self.out.lock().unwrap()) }
+    /// A frame's picture, drawn: its buffer is used again for a later frame.
+    pub fn recycle(&self, rgb: Vec<u8>) { if rgb.capacity() > 0 { *self.spare.lock().unwrap() = rgb; } }
 }
 
 impl Drop for Live {
@@ -75,7 +80,7 @@ fn hour_now() -> i64 {
     secs.rem_euclid(86400) / 3600
 }
 
-fn run(rx: Receiver<In>, out: Arc<Mutex<Out>>, w: u32, h: u32, still: bool, wake: impl Fn()) {
+fn run(rx: Receiver<In>, out: Arc<Mutex<Out>>, spare: Arc<Mutex<Vec<u8>>>, w: u32, h: u32, still: bool, wake: impl Fn()) {
     let mut o = Office::new(w as f64, h as f64, still);
     let mut r = match Renderer::new(w, h) {
         Ok(r) => r,
@@ -88,6 +93,8 @@ fn run(rx: Receiver<In>, out: Arc<Mutex<Out>>, w: u32, h: u32, still: bool, wake
     let mut clicks = vec![];
     let mut time_check = Instant::now();
     let mut page = crate::page::Composer::default();
+    // The frame as read back, kept between frames.
+    let mut rgba: Vec<u8> = vec![];
     loop {
         // One frame's worth of waiting: 16 ms, as requestAnimationFrame.
         let msg = rx.recv_timeout(Duration::from_millis(if visible { 16 } else { 500 }));
@@ -140,11 +147,19 @@ fn run(rx: Receiver<In>, out: Arc<Mutex<Out>>, w: u32, h: u32, still: bool, wake
         let dt = now - last;
         last = now;
         if !o.frame(now, dt) && clicks.is_empty() { continue; }
-        let rgba = r.render(&mut o);
-        let rgb = page.compose(&rgba, r.w as usize, r.h as usize, o.time == Time::Day);
+        r.render_into(&mut o, &mut rgba);
+        // The buffer the UI gave back, or a new one.
+        let mut rgb = std::mem::take(&mut *spare.lock().unwrap());
+        page.compose_into(&rgba, r.w as usize, r.h as usize, o.time == Time::Day, &mut rgb);
         let hint = match o.hovered { Some(Hover::Prop(Prop::Clock)) => String::from("clock"), Some(Hover::Prop(p)) => o.hint(p).to_owned(), _ => String::new() };
-        *out.lock().unwrap() = Out { rgba, w: r.w, h: r.h, tags: o.tags(), hovered: o.hovered, hint, pointer: o.pointer, clicks: std::mem::take(&mut clicks),
-            day: o.time == Time::Day, frames: o.frames, adapter: r.adapter_name.clone(), error: None, view: o.user, rgb };
+        let mut g = out.lock().unwrap();
+        // A frame the UI hasn't taken yet: its picture is replaced, its clicks are not.
+        let mut all = std::mem::take(&mut g.clicks);
+        all.append(&mut clicks);
+        let old = std::mem::replace(&mut *g, Out { w: r.w, h: r.h, tags: o.tags(), hovered: o.hovered, hint, pointer: o.pointer, clicks: all,
+            day: o.time == Time::Day, frames: o.frames, adapter: r.adapter_name.clone(), error: None, view: o.user, rgb });
+        drop(g);
+        if old.rgb.capacity() > 0 { let mut s = spare.lock().unwrap(); if s.capacity() == 0 { *s = old.rgb; } }
         wake();
     }
 }

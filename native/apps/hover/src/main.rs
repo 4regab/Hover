@@ -25,9 +25,17 @@ mod selftest;
 pub mod ui { slint::include_modules!(); }
 
 // See Cargo.toml: freed memory goes back to Windows.
-#[cfg(windows)]
+#[cfg(all(windows, not(feature = "profiling")))]
 #[global_allocator]
 static ALLOC: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
+// Profiling builds count every allocation (bench.rs, `heap`), over the same allocator.
+#[cfg(all(windows, feature = "profiling"))]
+#[global_allocator]
+static ALLOC: bench::heap::Counting<mimalloc::MiMalloc> = bench::heap::Counting(mimalloc::MiMalloc);
+#[cfg(all(not(windows), feature = "profiling"))]
+#[global_allocator]
+static ALLOC: bench::heap::Counting<std::alloc::System> = bench::heap::Counting(std::alloc::System);
 
 use hover_app::app::Hover;
 use hover_app::music::Beats;
@@ -106,6 +114,24 @@ fn on_signals() {
 /// The notch's frames drawn (the self-test's idle check).
 pub static FRAMES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
+#[cfg(windows)]
+thread_local! {
+    static GPU_HOLD: RefCell<Option<std::sync::MutexGuard<'static, ()>>> = const { RefCell::new(None) };
+}
+
+/// Keeps the office from submitting GPU work until the event loop comes round again
+/// (hover_office::render::gate says why): called before anything that can set a
+/// window's surface up again (a resize, a redraw, showing or minimising a window).
+pub fn hold_gpu() {
+    #[cfg(windows)]
+    GPU_HOLD.with(|h| {
+        // Only the windows' shared device has the two meet (not the headless shots).
+        if h.borrow().is_some() || hover_office::render::shared().is_none() { return; }
+        *h.borrow_mut() = Some(hover_office::render::gate());
+        Timer::single_shot(Duration::ZERO, || GPU_HOLD.with(|h| { h.borrow_mut().take(); }));
+    });
+}
+
 thread_local! {
     pub static APP: RefCell<Option<Rc<App>>> = const { RefCell::new(None) };
 }
@@ -175,6 +201,7 @@ impl App {
             use slint::winit_030::{winit::event::{ElementState, WindowEvent}, EventResult, WinitWindowAccessor};
             let w = Rc::downgrade(self);
             self.notch.window().on_winit_window_event(move |_, e| {
+                if matches!(e, WindowEvent::Resized(_) | WindowEvent::ScaleFactorChanged { .. } | WindowEvent::RedrawRequested | WindowEvent::Occluded(_)) { crate::hold_gpu(); }
                 if let (WindowEvent::MouseInput { state: ElementState::Pressed, .. }, Some(a)) = (e, w.upgrade()) {
                     if let Ok(mut n) = a.n.try_borrow_mut() { if n.hover.state == State::Peek { n.hover.opened(false); } }
                 }
@@ -527,13 +554,15 @@ impl App {
             {
                 use slint::winit_030::{winit, WinitWindowAccessor};
                 let w = d.as_weak();
-                d.on_minimize(move || { if let Some(d) = w.upgrade() { d.window().set_minimized(true); } });
+                d.on_minimize(move || { if let Some(d) = w.upgrade() { crate::hold_gpu(); d.window().set_minimized(true); } });
                 let w = d.as_weak();
-                d.on_maximize(move || { if let Some(d) = w.upgrade() { let m = !d.window().is_maximized(); d.window().set_maximized(m); d.set_is_maximized(m); } });
+                d.on_maximize(move || { if let Some(d) = w.upgrade() { crate::hold_gpu(); let m = !d.window().is_maximized(); d.window().set_maximized(m); d.set_is_maximized(m); } });
                 // Maximized by the system too (a double-click or a snap the desktop does):
                 // the caption's glyph and the resize border follow the window.
                 let w = d.as_weak();
                 d.window().on_winit_window_event(move |_, e| {
+                    use winit::event::WindowEvent as E;
+                    if matches!(e, E::Resized(_) | E::ScaleFactorChanged { .. } | E::RedrawRequested | E::Occluded(_)) { crate::hold_gpu(); }
                     if let (winit::event::WindowEvent::Resized(_), Some(d)) = (e, w.upgrade()) { d.set_is_maximized(d.window().is_maximized()); }
                     slint::winit_030::EventResult::Propagate
                 });
@@ -562,6 +591,7 @@ impl App {
         }
         if settings { self.show_settings_in(1, Section::General); }
         if let Some(d) = &*self.dash.borrow() {
+            hold_gpu();
             let _ = d.show();
         }
         self.collapse();
@@ -656,6 +686,7 @@ impl App {
         w.set_message(message.into());
         let a = self.clone();
         w.on_ok(move || { if let Some(w) = a.warn.borrow_mut().take() { let _ = w.hide(); } });
+        hold_gpu();
         let _ = w.show();
         *self.warn.borrow_mut() = Some(w);
     }
@@ -770,8 +801,7 @@ fn main() {
     let app = platform_start(hover.clone(), look, selftest.is_some());
     hover_core::platform::watch_look(|| ui_do(|a| a.look_changed(hover_core::platform::look())));
     hover_core::log::line("started");
-    #[cfg(not(windows))]
-    if std::env::var_os("HOVER_BENCH").is_some() { bench::listen(); }
+    if bench::active() { bench::listen(); }
     #[cfg(not(windows))]
     if let Some(dir) = selftest {
         let a = app.clone();
@@ -959,6 +989,7 @@ fn platform_start(hover: Arc<Hover>, look: Look, _selftest: bool) -> Rc<App> {
         a.update_rest();
         a.register_hotkeys();
         win::tray_start();
+        bench::visible();
     });
     std::mem::forget(find);
     app

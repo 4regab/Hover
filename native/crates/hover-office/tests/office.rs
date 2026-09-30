@@ -116,3 +116,40 @@ fn the_camera_keeps_to_its_limits_and_the_pace_drops_when_idle() {
     // 10 s at 10 fps; on a 16 ms clock a 100 ms gap takes 7 ticks, so about 89.
     assert!((80..=101).contains(&late), "{late} frames in 10 s");
 }
+
+/// Sessions come and go all day in an office that stays open: a bot that walked out is
+/// used again for the next session with its name, so the scene stops growing once each
+/// name has had its bot, and the new one still walks in and sits down.
+#[test]
+fn bots_that_left_are_used_again() {
+    let (state, _) = fixture();
+    let mut o = office();
+    let with_id = |id: i64| {
+        let mut s = state.clone();
+        if let Json::Obj(p) = &mut s {
+            for (k, v) in p.iter_mut() {
+                if k == "sessions" {
+                    if let Json::Arr(list) = v {
+                        let mut n = list[2].clone();
+                        if let Json::Obj(q) = &mut n { for (k, v) in q.iter_mut() { match k.as_str() { "id" => *v = Json::int(id), "seat" => *v = Json::int(5), "bot" => *v = Json::int(5), _ => {} } } }
+                        list.push(n);
+                    }
+                }
+            }
+        }
+        s
+    };
+    let mut t = 400;
+    let mut run = |o: &mut Office, n: usize| { for _ in 0..n { o.frame(t as f64 * 16.0, 16.0); t += 1; } };
+    let mut sizes = vec![];
+    for id in 100..106 {
+        o.state(&with_id(id));
+        run(&mut o, 700);
+        let b = o.sessions.iter().find(|s| s.id == id).unwrap();
+        assert!(b.b.seated && !b.b.walking(), "session {id} sat down");
+        o.state(&state);
+        run(&mut o, 700);
+        sizes.push(o.g.nodes.len());
+    }
+    assert!(sizes.windows(2).all(|w| w[0] == w[1]), "the scene grew: {sizes:?}");
+}

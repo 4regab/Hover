@@ -227,6 +227,11 @@ impl KiroSessions {
     /// Oldest first.
     pub fn all(&self) -> Vec<KiroSession> { self.0.inner.lock().unwrap().all.iter().map(|x| x.s.clone()).collect() }
     pub fn get(&self, id: i32) -> Option<KiroSession> { self.0.inner.lock().unwrap().all.iter().find(|x| x.s.id == id).map(|x| x.s.clone()) }
+    /// The question in front of each session that waits, and how many it has waiting:
+    /// what the office draws over the bots' heads, without copying every transcript.
+    pub fn asking_now(&self) -> Vec<(i32, AgentAsk, usize)> {
+        self.0.inner.lock().unwrap().all.iter().filter_map(|x| x.s.asking().map(|a| (x.s.id, a.clone(), x.s.asks.len()))).collect()
+    }
     pub fn running(&self) -> usize { self.0.inner.lock().unwrap().all.iter().filter(|x| x.s.busy()).count() }
     pub fn can_start(&self) -> bool { self.running() < MAX_RUNNING }
     /// The session the office last opened.

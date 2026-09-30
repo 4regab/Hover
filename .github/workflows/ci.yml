@@ -1,0 +1,106 @@
+name: CI
+
+# Contributor checks for the native (Rust) Hover on GitHub's own runners: the tests on
+# Windows and Linux, the Windows compile check from Linux, and the headless screenshots.
+# No secrets and no agent accounts: agent runs use the repo's fake-agent. Releases are
+# codebuild.yml's (maintainers only).
+on:
+  push:
+    branches: ['rust-port/**']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: never
+
+jobs:
+  windows:
+    runs-on: windows-2022
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+      # rust-toolchain.toml picks the version; rustup is on the runner.
+      - name: Toolchain
+        run: rustup show active-toolchain
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: native
+      - name: Test
+        run: cargo test --manifest-path native/Cargo.toml --release --workspace --no-fail-fast
+      - name: Headless screenshots
+        run: |
+          cargo build --manifest-path native/Cargo.toml --release -p hover
+          $env:HOVER_DATA_DIR = Join-Path $env:RUNNER_TEMP 'hover-data'
+          .\native\target\release\hover.exe --shots (Join-Path $env:RUNNER_TEMP 'shots') | Out-Host
+          $n = (Get-ChildItem (Join-Path $env:RUNNER_TEMP 'shots') -Filter *.png).Count
+          if ($n -eq 0) { throw 'no screenshots were written' }
+          Write-Host "$n screenshots"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: shots-windows
+          path: ${{ runner.temp }}/shots/*.png
+          if-no-files-found: error
+
+  linux:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: System libraries
+        run: |
+          sudo apt-get update
+          # Build: fontconfig, FreeType, ALSA, xkbcommon. Tests: DejaVu (the chat goldens),
+          # dbus, GNOME Keyring and Python's GLib (the D-Bus tests skip without them).
+          sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            build-essential pkg-config libfontconfig1-dev libfreetype-dev libasound2-dev \
+            libxkbcommon-dev libxkbcommon-x11-dev fonts-dejavu-core \
+            dbus gnome-keyring python3-gi mesa-vulkan-drivers
+      - name: Toolchain
+        run: rustup show active-toolchain
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: native
+      - name: Test
+        env:
+          XDG_RUNTIME_DIR: ${{ runner.temp }}/xdg
+        run: |
+          mkdir -p -m 700 "$XDG_RUNTIME_DIR"
+          cargo test --manifest-path native/Cargo.toml --release --workspace --no-fail-fast
+      - name: Headless screenshots
+        env:
+          XDG_RUNTIME_DIR: ${{ runner.temp }}/xdg
+          HOVER_DATA_DIR: ${{ runner.temp }}/hover-data
+        run: |
+          cargo build --manifest-path native/Cargo.toml --release -p hover
+          ./native/target/release/hover --shots "$RUNNER_TEMP/shots"
+          ls "$RUNNER_TEMP/shots"/*.png > /dev/null
+      - uses: actions/upload-artifact@v4
+        with:
+          name: shots-linux
+          path: ${{ runner.temp }}/shots/*.png
+          if-no-files-found: error
+
+  windows-check-from-linux:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: System libraries
+        run: |
+          sudo apt-get update
+          sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            build-essential pkg-config libfontconfig1-dev libfreetype-dev libasound2-dev libxkbcommon-dev libxkbcommon-x11-dev
+      - name: Windows target
+        run: rustup target add x86_64-pc-windows-msvc
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: native
+      - name: cargo check for Windows
+        run: cargo check --manifest-path native/Cargo.toml --release --workspace --all-targets --target x86_64-pc-windows-msvc

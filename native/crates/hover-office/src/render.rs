@@ -115,7 +115,13 @@ pub struct Renderer {
     tex_groups: Vec<wgpu::BindGroup>, textures: Vec<wgpu::Texture>,
     pipes: HashMap<(u8, u8, bool, bool), wgpu::RenderPipeline>,
     shadow_pipe: wgpu::RenderPipeline,
+    shader: wgpu::ShaderModule,
+    layout: wgpu::PipelineLayout,
     meshes: HashMap<String, Mesh>,
+    /// Each node's mesh name, by node (a node's geometry never changes once made).
+    keys: Vec<Option<String>>,
+    /// The frame's per-draw uniforms, kept for the next frame.
+    draws: Vec<DrawU>,
     readback: wgpu::Buffer,
     pub adapter_name: String,
 }
@@ -137,6 +143,20 @@ pub fn share_device(device: wgpu::Device, queue: wgpu::Queue, adapter_name: Stri
 pub fn flush_shared() {
     if let Some((d, _, _)) = SHARED.get() { let _ = d.poll(wgpu::PollType::wait_indefinitely()); }
 }
+
+/// The windows' device and queue, when the app shares one (Windows): the app puts the
+/// office's frame into a texture of its own on it, which the windows draw as it is.
+pub fn shared() -> Option<(wgpu::Device, wgpu::Queue)> { SHARED.get().map(|(d, q, _)| (d.clone(), q.clone())) }
+
+/// Held while the office submits work, and by the app while a window's surface may be
+/// set up again. On the shared device those two must not meet: wgpu waits for the queue
+/// to go idle before it sets a surface up, and finds it busy again if the office thread
+/// submitted meanwhile. That was an error wgpu panics on (Hover closed when the app
+/// window was minimised or restored while the office drew), and letting it pass left
+/// the window drawing at a size its surface didn't have.
+static GATE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+pub fn gate() -> std::sync::MutexGuard<'static, ()> { GATE.lock().unwrap_or_else(|e| e.into_inner()) }
 
 impl Renderer {
     /// The app's shared device when there is one; else a device of its own (Vulkan or GL
@@ -205,29 +225,11 @@ impl Renderer {
             textures.push(t);
         }
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor { label: None, bind_group_layouts: &[Some(&g0_layout), Some(&g1_layout), Some(&g2_layout)], immediate_size: 0 });
-        let vbl = wgpu::VertexBufferLayout { array_stride: std::mem::size_of::<Vertex>() as u64, step_mode: wgpu::VertexStepMode::Vertex,
-            attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3, 2 => Float32x3, 3 => Float32x2] };
-        let mut pipes = HashMap::new();
-        // (blend 0 opaque / 1 normal / 2 additive, topology 0 triangles / 1 points, depth write, double sided)
-        for blend in 0..3u8 { for topo in 0..2u8 { for dw in [false, true] { for double in [false, true] {
-            let b = match blend {
-                0 => None,
-                1 => Some(wgpu::BlendState { color: wgpu::BlendComponent { src_factor: wgpu::BlendFactor::SrcAlpha, dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha, operation: wgpu::BlendOperation::Add },
-                    alpha: wgpu::BlendComponent { src_factor: wgpu::BlendFactor::One, dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha, operation: wgpu::BlendOperation::Add } }),
-                _ => Some(wgpu::BlendState { color: wgpu::BlendComponent { src_factor: wgpu::BlendFactor::SrcAlpha, dst_factor: wgpu::BlendFactor::One, operation: wgpu::BlendOperation::Add },
-                    alpha: wgpu::BlendComponent { src_factor: wgpu::BlendFactor::SrcAlpha, dst_factor: wgpu::BlendFactor::One, operation: wgpu::BlendOperation::Add } }),
-            };
-            let p = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: None, layout: Some(&layout),
-                vertex: wgpu::VertexState { module: &shader, entry_point: Some("vs"), buffers: &[Some(vbl.clone())], compilation_options: Default::default() },
-                fragment: Some(wgpu::FragmentState { module: &shader, entry_point: Some("fs"), targets: &[Some(wgpu::ColorTargetState { format: FMT, blend: b, write_mask: wgpu::ColorWrites::ALL })], compilation_options: Default::default() }),
-                primitive: wgpu::PrimitiveState { topology: if topo == 1 { wgpu::PrimitiveTopology::PointList } else { wgpu::PrimitiveTopology::TriangleList },
-                    cull_mode: if double || topo == 1 { None } else { Some(wgpu::Face::Back) }, front_face: wgpu::FrontFace::Ccw, ..Default::default() },
-                depth_stencil: Some(wgpu::DepthStencilState { format: DEPTH, depth_write_enabled: Some(dw), depth_compare: Some(wgpu::CompareFunction::LessEqual), stencil: Default::default(), bias: Default::default() }),
-                multisample: Default::default(), multiview_mask: None, cache: None,
-            });
-            pipes.insert((blend, topo, dw, double), p);
-        } } } }
+        let vbl = vertex_layout();
+        // The draw pipelines are made on first use: of the 24 (blend, topology, depth
+        // write, sides) kinds only a few are drawn, and each one the GPU driver compiles
+        // keeps memory of its own.
+        let pipes = HashMap::new();
         // Shadows: back faces into the depth map (three's shadowSide for FrontSide materials).
         let shadow_pipe = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("shadow"), layout: Some(&layout),
@@ -238,7 +240,7 @@ impl Renderer {
             multisample: Default::default(), multiview_mask: None, cache: None,
         });
         let readback = device.create_buffer(&wgpu::BufferDescriptor { label: None, size: (align(w * 4) * h) as u64, usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ, mapped_at_creation: false });
-        let r = Renderer { device, queue, w, h, color, depth, shadow, frame_buf, draw_buf, g0, g0_shadow, g1, g1_layout, tex_groups, textures, pipes, shadow_pipe, meshes: HashMap::new(), readback, adapter_name };
+        let r = Renderer { device, queue, w, h, color, depth, shadow, frame_buf, draw_buf, g0, g0_shadow, g1, g1_layout, tex_groups, textures, pipes, shadow_pipe, shader, layout, meshes: HashMap::new(), keys: vec![], draws: vec![], readback, adapter_name };
         // glowTex: white, alpha from 1 at the centre through .4 at 35 % to 0 at the edge.
         let mut gc = crate::canvas::Canvas::new(64, 64);
         gc.gradient_r(32.0, 32.0, 32.0, &[(0.0, [1.0, 1.0, 1.0, 1.0]), (0.35, [1.0, 1.0, 1.0, 0.4]), (1.0, [1.0, 1.0, 1.0, 0.0])]);
@@ -279,6 +281,13 @@ impl Renderer {
     /// Renders the office into the frame and reads it back: RGBA8, premultiplied (the
     /// canvas's own alpha), top row first.
     pub fn render(&mut self, o: &mut Office) -> Vec<u8> {
+        let mut out = Vec::new();
+        self.render_into(o, &mut out);
+        out
+    }
+
+    /// render, into a buffer the caller keeps between frames.
+    pub fn render_into(&mut self, o: &mut Office, out: &mut Vec<u8>) {
         for (i, c) in o.canvases.iter().enumerate() {
             if o.dirty[i] { self.upload(i, c.w as u32, c.h as u32, &c.rgba()); o.dirty[i] = false; }
         }
@@ -315,8 +324,10 @@ impl Renderer {
             list.push(D { node: i, depth: c.z, trans: m.transparent() });
         }
         list.sort_by(|a, b| a.trans.cmp(&b.trans).then(if a.trans { b.depth.total_cmp(&a.depth) } else { std::cmp::Ordering::Equal }));
-        let mut draws: Vec<DrawU> = vec![];
-        let merged = o.g.merged.clone();
+        let mut draws = std::mem::take(&mut self.draws);
+        draws.clear();
+        let merged = &o.g.merged;
+        if self.keys.len() < o.g.nodes.len() { self.keys.resize(o.g.nodes.len(), None); }
         for d in &list {
             let n = &o.g.nodes[d.node];
             let (geo, m) = n.draw.as_ref().unwrap();
@@ -332,11 +343,16 @@ impl Renderer {
                 Mat::Points { color, opacity } => ([color.0, color.1, color.2, *opacity], [4.0, 0.0, 0.0, 1.0], [0.0; 4]),
             };
             draws.push(DrawU { model: model.f32(), normal: M4(t).f32(), color: color.map(|x| x as f32), params: params.map(|x| x as f32), flags: flags.map(|x| x as f32), _pad: [0.0; 20] });
-            let key = match geo { Geo::Merged(i) => format!("m{i}"), Geo::Quad(_) | Geo::Points(_) => format!("n{}", d.node), other => format!("{other:?}") };
-            self.mesh(key, geo, &merged);
+            // A node's geometry is set once, when it is made: its mesh's name is worked out
+            // once too, not formatted again every frame.
+            if self.keys[d.node].is_none() { self.keys[d.node] = Some(match geo { Geo::Merged(i) => format!("m{i}"), Geo::Quad(_) | Geo::Points(_) => format!("n{}", d.node), other => format!("{other:?}") }); }
+            let key = self.keys[d.node].as_deref().unwrap();
+            if !self.meshes.contains_key(key) { let key = key.to_owned(); self.mesh(key, geo, merged); }
+            let (pk, _) = kind(geo, m);
+            if !self.pipes.contains_key(&pk) { let p = pipeline(&self.device, &self.shader, &self.layout, pk); self.pipes.insert(pk, p); }
         }
-        let bytes: Vec<u8> = draws.iter().flat_map(|d| bytemuck::bytes_of(d).to_vec()).collect();
-        self.queue.write_buffer(&self.draw_buf, 0, &bytes);
+        self.queue.write_buffer(&self.draw_buf, 0, bytemuck::cast_slice(&draws));
+        self.draws = draws;
 
         let mut enc = self.device.create_command_encoder(&Default::default());
         if o.shadow_dirty {
@@ -350,10 +366,9 @@ impl Renderer {
             pass.set_bind_group(2, &self.tex_groups[7], &[]);
             for (k, d) in list.iter().enumerate() {
                 let n = &o.g.nodes[d.node];
-                let (geo, m) = n.draw.as_ref().unwrap();
+                let (_, m) = n.draw.as_ref().unwrap();
                 if !n.cast || !matches!(m, Mat::Std { .. }) { continue; }
-                let key = match geo { Geo::Merged(i) => format!("m{i}"), other => format!("{other:?}") };
-                let mesh = &self.meshes[&key];
+                let mesh = &self.meshes[self.keys[d.node].as_deref().unwrap()];
                 pass.set_bind_group(1, &self.g1, &[(k as u64 * DRAW_SIZE) as u32]);
                 pass.set_vertex_buffer(0, mesh.vb.slice(..));
                 pass.set_index_buffer(mesh.ib.slice(..), wgpu::IndexFormat::Uint32);
@@ -371,16 +386,9 @@ impl Renderer {
             for (k, d) in list.iter().enumerate() {
                 let n = &o.g.nodes[d.node];
                 let (geo, m) = n.draw.as_ref().unwrap();
-                let (blend, dw, double, tex) = match m {
-                    Mat::Std { .. } => (0u8, true, false, 7),
-                    Mat::Basic { blend, depth_write, double, tex, .. } => (if m.transparent() { if *blend == Blend::Additive { 2 } else { 1 } } else { 0 }, *depth_write, *double, tex.unwrap_or(7)),
-                    Mat::Glow { .. } => (2, false, false, 6),
-                    Mat::Points { .. } => (2, false, false, 7),
-                };
-                let topo = u8::from(matches!(geo, Geo::Points(_)));
-                let key = match geo { Geo::Merged(i) => format!("m{i}"), Geo::Quad(_) | Geo::Points(_) => format!("n{}", d.node), other => format!("{other:?}") };
-                let mesh = &self.meshes[&key];
-                pass.set_pipeline(&self.pipes[&(blend, topo, dw, double)]);
+                let (pk, tex) = kind(geo, m);
+                let mesh = &self.meshes[self.keys[d.node].as_deref().unwrap()];
+                pass.set_pipeline(&self.pipes[&pk]);
                 pass.set_bind_group(1, &self.g1, &[(k as u64 * DRAW_SIZE) as u32]);
                 pass.set_bind_group(2, &self.tex_groups[tex], &[]);
                 pass.set_vertex_buffer(0, mesh.vb.slice(..));
@@ -392,21 +400,57 @@ impl Renderer {
         enc.copy_texture_to_buffer(wgpu::TexelCopyTextureInfo { texture: &self.color, mip_level: 0, origin: wgpu::Origin3d::ZERO, aspect: wgpu::TextureAspect::All },
             wgpu::TexelCopyBufferInfo { buffer: &self.readback, layout: wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(row), rows_per_image: Some(self.h) } },
             wgpu::Extent3d { width: self.w, height: self.h, depth_or_array_layers: 1 });
-        self.queue.submit([enc.finish()]);
+        { let _g = gate(); self.queue.submit([enc.finish()]); }
         let slice = self.readback.slice(..);
         slice.map_async(wgpu::MapMode::Read, |_| {});
         let _ = self.device.poll(wgpu::PollType::wait_indefinitely());
         let data = slice.get_mapped_range().expect("the frame maps");
-        let mut out = Vec::with_capacity((self.w * self.h * 4) as usize);
+        out.clear();
+        out.reserve((self.w * self.h * 4) as usize);
         for y in 0..self.h as usize { out.extend_from_slice(&data[y * row as usize..y * row as usize + self.w as usize * 4]); }
         drop(data);
         self.readback.unmap();
         let _ = &self.g1_layout;
-        out
     }
 }
 
 fn align(n: u32) -> u32 { n.div_ceil(256) * 256 }
+
+fn vertex_layout() -> wgpu::VertexBufferLayout<'static> {
+    const ATTRS: [wgpu::VertexAttribute; 4] = wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3, 2 => Float32x3, 3 => Float32x2];
+    wgpu::VertexBufferLayout { array_stride: std::mem::size_of::<Vertex>() as u64, step_mode: wgpu::VertexStepMode::Vertex, attributes: &ATTRS }
+}
+
+/// A draw's pipeline kind: (blend 0 opaque / 1 normal / 2 additive, topology 0
+/// triangles / 1 points, depth write, double sided), and its texture.
+fn kind(geo: &Geo, m: &Mat) -> ((u8, u8, bool, bool), usize) {
+    let (blend, dw, double, tex) = match m {
+        Mat::Std { .. } => (0u8, true, false, 7),
+        Mat::Basic { blend, depth_write, double, tex, .. } => (if m.transparent() { if *blend == Blend::Additive { 2 } else { 1 } } else { 0 }, *depth_write, *double, tex.unwrap_or(7)),
+        Mat::Glow { .. } => (2, false, false, 6),
+        Mat::Points { .. } => (2, false, false, 7),
+    };
+    ((blend, u8::from(matches!(geo, Geo::Points(_))), dw, double), tex)
+}
+
+fn pipeline(device: &wgpu::Device, shader: &wgpu::ShaderModule, layout: &wgpu::PipelineLayout, (blend, topo, dw, double): (u8, u8, bool, bool)) -> wgpu::RenderPipeline {
+    let b = match blend {
+        0 => None,
+        1 => Some(wgpu::BlendState { color: wgpu::BlendComponent { src_factor: wgpu::BlendFactor::SrcAlpha, dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha, operation: wgpu::BlendOperation::Add },
+            alpha: wgpu::BlendComponent { src_factor: wgpu::BlendFactor::One, dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha, operation: wgpu::BlendOperation::Add } }),
+        _ => Some(wgpu::BlendState { color: wgpu::BlendComponent { src_factor: wgpu::BlendFactor::SrcAlpha, dst_factor: wgpu::BlendFactor::One, operation: wgpu::BlendOperation::Add },
+            alpha: wgpu::BlendComponent { src_factor: wgpu::BlendFactor::SrcAlpha, dst_factor: wgpu::BlendFactor::One, operation: wgpu::BlendOperation::Add } }),
+    };
+    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: None, layout: Some(layout),
+        vertex: wgpu::VertexState { module: shader, entry_point: Some("vs"), buffers: &[Some(vertex_layout())], compilation_options: Default::default() },
+        fragment: Some(wgpu::FragmentState { module: shader, entry_point: Some("fs"), targets: &[Some(wgpu::ColorTargetState { format: FMT, blend: b, write_mask: wgpu::ColorWrites::ALL })], compilation_options: Default::default() }),
+        primitive: wgpu::PrimitiveState { topology: if topo == 1 { wgpu::PrimitiveTopology::PointList } else { wgpu::PrimitiveTopology::TriangleList },
+            cull_mode: if double || topo == 1 { None } else { Some(wgpu::Face::Back) }, front_face: wgpu::FrontFace::Ccw, ..Default::default() },
+        depth_stencil: Some(wgpu::DepthStencilState { format: DEPTH, depth_write_enabled: Some(dw), depth_compare: Some(wgpu::CompareFunction::LessEqual), stencil: Default::default(), bias: Default::default() }),
+        multisample: Default::default(), multiview_mask: None, cache: None,
+    })
+}
 
 /// The frame over the page's background (#office), as the eye sees it: straight RGB.
 pub fn over(rgba: &[u8], bg: [u8; 3]) -> Vec<u8> {

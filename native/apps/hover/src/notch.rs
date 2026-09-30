@@ -125,6 +125,7 @@ pub fn layout(ui: &NotchWindow, n: &mut Notch, panel: slint::Color) {
     n.win = placement(work, scale, n.open_size);
     ui.set_open_w(n.open_size.0 as f32);
     ui.set_open_h(n.open_size.1 as f32);
+    crate::hold_gpu();
     ui.window().set_size(slint::PhysicalSize::new(n.win.width() as u32, n.win.height() as u32));
     n.plat.place(n.win);
     n.signature = n.plat.signature();

@@ -1,0 +1,33 @@
+# Screenshots of the real screen at the main states, for before/after comparison.
+launch
+expect "bench visible" 30 as startup
+sleep 3
+shot rest.png
+send unfold
+expect "bench reopen" 20
+sleep 6
+shot office.png
+send task kiro @ - look at the tests [seconds:40]
+expect "bench task" 5
+sleep 8
+shot office-agent.png
+send chat 1
+expect "bench ok" 5
+sleep 2
+shot chat.png
+send chat
+expect "bench ok" 5
+send history
+expect "bench ok" 5
+sleep 2
+shot history.png
+send settings 0
+expect "bench ok" 5
+sleep 2
+shot settings.png
+send back
+expect "bench ok" 5
+send stopall
+expect "bench ok" 5
+sleep 2
+quit 30

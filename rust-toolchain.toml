@@ -1,0 +1,5 @@
+# The toolchain Hover is built, tested and released with (codebuild.yml's
+# RUST_TOOLCHAIN). The oldest that builds it is native/Cargo.toml's rust-version.
+[toolchain]
+channel = "1.94.1"
+profile = "minimal"
