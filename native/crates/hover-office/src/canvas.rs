@@ -9,7 +9,7 @@ use swash::shape::ShapeContext;
 use swash::zeno::{Format, Vector};
 use swash::FontRef;
 
-pub const PIXELIFY: &[u8] = include_bytes!("../../../../web/office/fonts/PixelifySans.ttf");
+pub const PIXELIFY: &[u8] = include_bytes!("../../../apps/hover/assets/PixelifySans.ttf");
 pub const INTER: &[u8] = include_bytes!("../../../apps/hover/assets/Inter-Regular.ttf");
 
 #[derive(Clone, Copy, Debug, PartialEq)]

@@ -142,6 +142,8 @@ pub fn run(dir: &Path) {
         (a.events)(KiroEvent { step: Some(KiroStep { added: 3, removed: 1, ms: Some(1400.0),
             diff: Some("  export function tidy(files) {\n- return files;\n+ return files\n+   .map(sortImports)\n+   .filter(Boolean);".into()), ..step("e1", "edit", "Edit", "src/app/imports.ts") }), ..Default::default() });
         (a.events)(KiroEvent { step: Some(KiroStep { exit: Some(0), ms: Some(8200.0), output: Some("✓ 14 files sorted\nTests: 42 passed, 42 total".into()), ..step("x1", "execute", "Run", "npm test") }), ..Default::default() });
+        // What the turn cost, as Kiro says at its end (the chat shows it under the answer).
+        (a.events)(KiroEvent { credits: Some(0.087), ..Default::default() });
         let hold = if a.prompt.contains("three") { &h3 } else { &h2 };
         while *hold.lock().unwrap() && !a.ct.is_cancelled() { std::thread::sleep(Duration::from_millis(10)); }
         KiroResult::new(KiroState::Completed, "## Imports tidied\n\nAll 14 files now sort their imports.\n\n```ts\nexport const tidy = (f) => f.map(sortImports);\n```")
@@ -152,7 +154,9 @@ pub fn run(dir: &Path) {
         "codex" => hover_quota::Reading::fail("Codex hasn’t recorded any limits yet — use it once."),
         _ => hover_quota::Reading { used: Some(95.0), detail: "Pro · 95% of plan · resets 3 Oct".into() },
     });
-    let hover = hover_app::app::Hover::with(settings, None, vec![], Some(run), Some(reader));
+    // Kept in the history, so its panel has rows (with their dates) to show.
+    let history = hover_core::crypto::global().map(|c| Arc::new(hover_core::history::AgentHistory::new(hover_core::paths::agents(), c)));
+    let hover = hover_app::app::Hover::with(settings, history, vec![], Some(run), Some(reader));
     let app = App::new(hover.clone(), Box::new(Plain), Look { dark: true, animations: true }, true);
     // The software renderer doesn't clip to rounded corners: the glass's blurred copy
     // of the scene would show as a square behind each rounded panel.
@@ -351,6 +355,11 @@ pub fn run(dir: &Path) {
             let name = format!("settings-{}-{tag}.png", s.title().to_lowercase());
             save(&dash, (1200, 620), 1.0, [0, 0, 0], &dir.join(name));
         }
+    }
+    // Narrow, as a small office leaves it: the long lines wrap beside the wide controls.
+    for s in Section::ALL {
+        app.show_settings_in(1, s);
+        save(&dash, (840, 620), 1.0, [0, 0, 0], &dir.join(format!("settings-{}-narrow.png", s.title().to_lowercase())));
     }
     // A VS Code theme (Dark+ as its files say), and the model picker open.
     let t = hover_core::model::SavedTheme { name: "Dark+".into(), dark: true, colors: [("editor.background", "#1e1e1e"), ("foreground", "#cccccc"),

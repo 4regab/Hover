@@ -45,11 +45,13 @@ pub struct KiroTurn {
     /// When the agent first did something other than start up.
     pub woke_at: Option<Stamp>,
     pub ended_at: Option<Stamp>,
+    /// What the turn cost, in the tool's credits, when it says (Kiro does).
+    pub credits: Option<f64>,
 }
 
 impl KiroTurn {
     pub fn new(prompt: &str, images: Vec<String>) -> KiroTurn {
-        KiroTurn { prompt: prompt.into(), images, steps: vec![], result: None, queued: false, started_at: Stamp::DEFAULT, woke_at: None, ended_at: None }
+        KiroTurn { prompt: prompt.into(), images, steps: vec![], result: None, queued: false, started_at: Stamp::DEFAULT, woke_at: None, ended_at: None, credits: None }
     }
 
     /// What the agent is sent: the prompt, then the pictures' paths for it to look at.
@@ -114,7 +116,7 @@ impl KiroSession {
             key: self.key.clone(), tool: self.tool, folder: self.folder.clone(), title: self.title(), acp_id: self.kiro_id.clone(), context: self.context,
             turns: self.turns.iter().map(|t| SavedTurn { prompt: t.prompt.clone(), images: t.images.clone(), steps: t.steps.clone(),
                 state: t.result.as_ref().map(|r| r.state), text: t.result.as_ref().map(|r| r.text.clone()), started_at: t.started_at, woke_at: t.woke_at,
-                ended_at: t.ended_at }).collect(),
+                ended_at: t.ended_at, credits: t.credits }).collect(),
             updated: now,
             access: self.access.clone(),
         }
@@ -135,6 +137,7 @@ impl KiroSession {
             turn.started_at = t.started_at;
             turn.woke_at = t.woke_at;
             turn.ended_at = Some(t.ended_at.unwrap_or(t.started_at));
+            turn.credits = t.credits;
             turn.steps = t.steps.clone();
             turn.result = Some(KiroResult::new(t.state.unwrap_or(KiroState::Cancelled), t.text.clone().unwrap_or_else(|| "Stopped when Hover closed.".into())));
             self.turns.push(turn);
@@ -501,6 +504,7 @@ fn go(me: Weak<Shared>, id: i32, ti: usize, run: RunTask, ct: Cancel, (folder, p
         if let Some((ks, ())) = with(&m2, id, |slot, now| {
             if let Some(i) = e.session_id { slot.s.kiro_id = Some(i); }
             if let Some(c) = e.context { slot.s.context = Some(c); }
+            if let Some(c) = e.credits { slot.s.turns[ti].credits = Some(c); }
             if let Some(step) = e.step {
                 let t = &mut slot.s.turns[ti];
                 match t.steps.iter().position(|x| x.id == step.id) { Some(i) => t.steps[i] = step, None => t.steps.push(step) }

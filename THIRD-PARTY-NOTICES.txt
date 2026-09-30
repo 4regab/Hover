@@ -99,7 +99,7 @@ FROM, OUT OF THE USE OR INABILITY TO USE THE FONT SOFTWARE OR FROM
 OTHER DEALINGS IN THE FONT SOFTWARE.
 
 ========================================================================
-Lucide icons (src/Hover/Owl/Icons.cs), version 1.48.0
+Lucide icons (native/apps/hover/ui/icons.slint), version 1.48.0
 https://lucide.dev
 ========================================================================
 
@@ -148,7 +148,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 ========================================================================
-Pixelify Sans font (inlined in src/Hover/Assets/kiro-office.html)
+Pixelify Sans font (native/apps/hover/assets/PixelifySans.ttf)
 https://github.com/google/fonts/tree/main/ofl/pixelifysans
 ========================================================================
 
@@ -247,14 +247,14 @@ FROM, OUT OF THE USE OR INABILITY TO USE THE FONT SOFTWARE OR FROM
 OTHER DEALINGS IN THE FONT SOFTWARE.
 
 ========================================================================
-"Lofi Hip Hop Loop" by omfgdude (src/Hover/Assets/office-beats.ogg)
+"Lofi Hip Hop Loop" by omfgdude (native/apps/hover/assets/office-beats.ogg)
 https://opengameart.org/content/lofi-hip-hop-loop
 ========================================================================
 
 Released under CC0 1.0 (public domain dedication).
 
 ========================================================================
-three.js (inlined in src/Hover/Assets/kiro-office.html), MIT licence
+three.js (its shading, ported in native/crates/hover-office/src/office.wgsl), MIT licence
 https://github.com/mrdoob/three.js
 ========================================================================
 
@@ -284,7 +284,7 @@ THE SOFTWARE.
 
 --------------------------------------------------------------------------------
 
-Lobe Icons (the Kiro, Codex and Cursor logos in web/office/main.js)
+Lobe Icons (the Kiro, Codex and Cursor logos in native/apps/hover/ui/marks.slint and office.slint)
 https://github.com/lobehub/lobe-icons
 The logos are trademarks of their owners and are used only to name each tool.
 

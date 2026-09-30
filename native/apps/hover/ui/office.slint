@@ -10,7 +10,7 @@ import { BotGlyph } from "bot.slint";
 export { Side, Block, Opt }
 
 
-import "../../../../web/office/fonts/PixelifySans.ttf";
+import "../assets/PixelifySans.ttf";
 
 // What Settings shows, set from Rust for each window that has an office.
 export global Page {
@@ -54,7 +54,7 @@ export struct TagData { id: int, x: length, y: length, name: string, color: colo
 export struct AccessOpt { id: string, label: string, note: string, on: bool }
 export struct ToolData { id: string, name: string, ready: bool, hint: string }
 // A panel row. kind: 0 heading (text, color, count), 1 card, 2 stats, 3 meter, 4 note, 5 search,
-// 6 a history row (tool in sub, stage word in meta, the rest in count).
+// 6 a history row (tool in sub, stage word in meta, its date in s1, the rest in count).
 export struct PanelRow { kind: int, text: string, sub: string, meta: string, color: color, stage: int, count: string, open: int, key: string, pct: float, desk: bool,
     s1: string, s2: string, s3: string, s4: string }
 
@@ -332,34 +332,43 @@ component Logo inherits Rectangle {
     in property <length> mark: 22px;
     in property <length> radius: self.width / 2;
     property <bool> codex: tool == "codex";
+    // Kiro's mark as an image: femtovg fills a Path this small in a few straight cuts,
+    // which ran its eyes into one bar. The SVG is drawn at the size it shows.
+    property <bool> kiro: !(codex || tool == "cursor" || tool == "opencode");
     border-radius: radius;
     // .lg.off: grayscale(1) brightness(.55), worked out for each tile and mark.
     background: !ready ? (codex ? #8c8c8c : tool == "cursor" ? #070708 : tool == "opencode" ? #09090a : #363636)
         : codex ? white : tool == "cursor" ? #0d0d10 : tool == "opencode" ? #101012 : #9046ff;
     border-width: tool == "cursor" || tool == "opencode" ? 1px : 0;
     border-color: #ffffff24;
-    Path {
+    if kiro: Image {
+        width: mark;
+        height: mark;
+        source: @image-url("../assets/kiro.svg");
+        colorize: ready ? white : #8c8c8c;
+    }
+    if !kiro: Path {
         width: mark;
         height: mark;
         viewbox-x: codex ? 3 : 0;
         viewbox-y: codex ? 2.9 : 0;
         viewbox-width: codex ? 18 : 24;
         viewbox-height: codex ? 18.2 : 24;
-        commands: codex ? MarkPaths.codex : tool == "cursor" ? MarkPaths.cursor : tool == "opencode" ? MarkPaths.opencode : MarkPaths.kiro;
+        commands: codex ? MarkPaths.codex : tool == "cursor" ? MarkPaths.cursor : MarkPaths.opencode;
         fill-rule: codex ? nonzero : evenodd;
-        fill: !ready ? (codex ? #565656 : tool == "cursor" ? #828283 : tool == "opencode" ? #868687 : #8c8c8c)
-            : codex ? @linear-gradient(180deg, #b1a7ff 0%, #7a9dff 50%, #3941ff 100%) : tool == "cursor" ? #ececf0 : tool == "opencode" ? #f4f4f6 : white;
+        fill: !ready ? (codex ? #565656 : tool == "cursor" ? #828283 : #868687)
+            : codex ? @linear-gradient(180deg, #b1a7ff 0%, #7a9dff 50%, #3941ff 100%) : tool == "cursor" ? #ececf0 : #f4f4f6;
         stroke: transparent;
     }
-    // Kiro's eyes and Codex's prompt again, in the tile's colour (see MarkPaths).
-    if codex || !(tool == "cursor" || tool == "opencode"): Path {
+    // Codex's prompt again, in the tile's colour (see MarkPaths).
+    if codex: Path {
         width: mark;
         height: mark;
-        viewbox-x: codex ? 3 : 0;
-        viewbox-y: codex ? 2.9 : 0;
-        viewbox-width: codex ? 18 : 24;
-        viewbox-height: codex ? 18.2 : 24;
-        commands: codex ? MarkPaths.codex-glyph : MarkPaths.kiro-eyes;
+        viewbox-x: 3;
+        viewbox-y: 2.9;
+        viewbox-width: 18;
+        viewbox-height: 18.2;
+        commands: MarkPaths.codex-glyph;
         fill: root.background;
         stroke: transparent;
     }
@@ -722,14 +731,18 @@ component RowView inherits Rectangle {
             accessible-action-default => { clicked(); }
             HorizontalLayout {
                 padding: 8px;
-                padding-right: 40px;
+                padding-right: 10px;
                 spacing: 11px;
                 VerticalLayout { alignment: center; Logo { width: 30px; height: 30px; radius: 9px; mark: r.sub == "codex" ? 21px : 17px; tool: r.sub; } }
                 VerticalLayout {
                     horizontal-stretch: 1;
                     alignment: center;
                     spacing: 3px;
-                    Text { text: r.text; font-size: 13px; font-weight: 500; color: #f6f2ff; overflow: elide; }
+                    // .h1: the title, and its date at the right; the bin takes the date's place on hover.
+                    HorizontalLayout { spacing: 8px;
+                        Text { text: r.text; font-size: 13px; font-weight: 500; color: #f6f2ff; overflow: elide; horizontal-stretch: 1; }
+                        Text { text: r.s1; font-size: 11.5px; color: #f6f2ff61; vertical-alignment: center; opacity: ha.has-hover || xa2.has-hover ? 0 : 1; }
+                    }
                     HorizontalLayout { spacing: 5px;
                         VerticalLayout { alignment: center; Rectangle { width: 6px; height: 6px; border-radius: 3px;
                             background: r.stage == 2 ? #30d158 : r.stage == 3 ? #ff453a : r.stage == 5 ? #ffb340 : r.stage <= 1 ? #b48cff : #8e8e93; } }
@@ -743,10 +756,10 @@ component RowView inherits Rectangle {
             ha := TouchArea { mouse-cursor: pointer; clicked => { clicked(); } }
             Rectangle {
                 opacity: ha.has-hover || xa2.has-hover ? 1 : 0;
-                x: parent.width - 34px;
-                y: (parent.height - 28px) / 2;
-                width: 28px;
-                height: 28px;
+                x: parent.width - 32px;
+                y: 5px;
+                width: 26px;
+                height: 24px;
                 border-radius: 8px;
                 background: xa2.has-hover ? #ff453a24 : transparent;
                 accessible-role: button;

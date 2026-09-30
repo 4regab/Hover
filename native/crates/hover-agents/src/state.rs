@@ -190,6 +190,7 @@ pub fn state_with(s: &KiroSession, files: &dyn Fn(&KiroSession) -> Option<String
                 ("t0", Json::int(ms(t.started_at))),
                 ("woke", t.woke_at.map_or(Json::Null, |w| Json::double(w.secs_since(&t.started_at)))),
                 ("took", t.ended_at.map_or(Json::Null, |e| Json::double(e.secs_since(&t.started_at) * 1000.0))),
+                ("credits", t.credits.map_or(Json::Null, Json::double)),
             ])
         }).collect())),
     ])

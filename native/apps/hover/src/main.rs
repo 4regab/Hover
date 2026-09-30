@@ -24,6 +24,11 @@ mod selftest;
 
 pub mod ui { slint::include_modules!(); }
 
+// See Cargo.toml: freed memory goes back to Windows.
+#[cfg(windows)]
+#[global_allocator]
+static ALLOC: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 use hover_app::app::Hover;
 use hover_app::music::Beats;
 use hover_app::pages::{self, Section};
@@ -794,11 +799,18 @@ fn select_backend() {
     #[cfg(windows)]
     let sel = {
         use slint::wgpu_30::{wgpu, WGPUConfiguration, WGPUSettings};
-        let mut s = WGPUSettings::default();
-        s.backends = wgpu::Backends::DX12;
-        s.backend_options.dx12.presentation_system = wgpu::wgt::Dx12SwapchainKind::DxgiFromVisual;
-        s.power_preference = wgpu::PowerPreference::LowPower;
-        slint::BackendSelector::new().backend_name("winit".into()).renderer_name("femtovg-wgpu".into()).require_wgpu_30(WGPUConfiguration::Automatic(s))
+        let config = match shared_gpu() {
+            Ok(c) => c,
+            Err(e) => {
+                hover_core::log::line(&format!("shared GPU device: {e}; each window makes its own"));
+                let mut s = WGPUSettings::default();
+                s.backends = wgpu::Backends::DX12;
+                s.backend_options.dx12.presentation_system = wgpu::wgt::Dx12SwapchainKind::DxgiFromVisual;
+                s.power_preference = wgpu::PowerPreference::LowPower;
+                WGPUConfiguration::Automatic(s)
+            }
+        };
+        slint::BackendSelector::new().backend_name("winit".into()).renderer_name("femtovg-wgpu".into()).require_wgpu_30(config)
     };
     #[cfg(not(windows))]
     let sel = slint::BackendSelector::new().backend_name("winit".into())
@@ -823,6 +835,46 @@ fn select_backend() {
         a
     });
     if let Err(e) = sel.select() { hover_core::log::line(&format!("renderer: {e}")); }
+}
+
+/// One GPU device for every window and the office. Left to Slint, each window made its
+/// own (the app window added 100 to 200 MB), and the office a further one of its own.
+#[cfg(windows)]
+fn shared_gpu() -> Result<slint::wgpu_30::WGPUConfiguration, String> {
+    use slint::wgpu_30::{wgpu, WGPUConfiguration};
+    let instance = wgpu::Instance::new({
+        let mut d = wgpu::InstanceDescriptor::new_without_display_handle();
+        d.backends = wgpu::Backends::DX12;
+        d.backend_options.dx12.presentation_system = wgpu::wgt::Dx12SwapchainKind::DxgiFromVisual;
+        d
+    });
+    // The card that drives the main display, where the notch is. Left to "low power",
+    // wgpu picked the integrated GPU on a PC whose screens hang off the discrete one:
+    // every frame then crossed between the cards, and the integrated GPU's textures live
+    // in system memory, which counts against Hover.
+    let primary = win::primary_display_adapter();
+    let adapters = futures_lite::future::block_on(instance.enumerate_adapters(wgpu::Backends::DX12));
+    let adapter = match adapters.into_iter().find(|a| primary.as_deref() == Some(a.get_info().name.as_str())) {
+        Some(a) => a,
+        None => futures_lite::future::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions { power_preference: wgpu::PowerPreference::LowPower, ..Default::default() }))
+            .map_err(|e| format!("no GPU adapter: {e}"))?,
+    };
+    let mut limits = wgpu::Limits::default().using_resolution(adapter.limits());
+    // wgpu sizes DX12's descriptor heap from this. The default, a million, is 30 MB per
+    // device; Hover's windows and the office bind a few hundred at a time.
+    limits.max_non_sampler_bindings = 1 << 16;
+    let (device, queue) = futures_lite::future::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+        label: Some("hover"), required_limits: limits,
+        // Small blocks. The allocator keeps the last block of each kind for good and grows
+        // them up to 64 MB (MemoryUsage); anything bigger than a block gets memory of its
+        // own, which goes back as soon as it is freed.
+        memory_hints: wgpu::MemoryHints::Manual { suballocated_device_memory_block_size: (2 << 20)..(8 << 20) },
+        ..Default::default()
+    })).map_err(|e| e.to_string())?;
+    let info = adapter.get_info();
+    hover_core::log::line(&format!("GPU: {} ({:?})", info.name, info.backend));
+    hover_office::render::share_device(device.clone(), queue.clone(), format!("{} ({:?})", info.name, info.backend));
+    Ok(WGPUConfiguration::Manual { instance, adapter, device, queue })
 }
 
 #[cfg(not(windows))]

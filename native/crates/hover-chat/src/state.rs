@@ -23,6 +23,12 @@ pub fn clock(ms: f64) -> String {
     format!("{}:{:02}", n / 60, n % 60)
 }
 
+/// main.js `credits`: what a turn cost, "0.09 credits", and "<0.01 credits" for less.
+pub fn credits(n: f64) -> String {
+    let s = format!("{n:.2}");
+    if n < 0.005 { "<0.01 credits".into() } else { format!("{s} credit{}", if s == "1.00" { "" } else { "s" }) }
+}
+
 fn stage(s: &str) -> Stage {
     match s { "waking" | "queued" => Stage::Waking, "working" | "waiting" => Stage::Working, "done" => Stage::Done, "failed" => Stage::Failed, _ => Stage::Stopped }
 }
@@ -73,6 +79,7 @@ pub fn turns_at(session: &Value, now: f64, hm: &dyn Fn(f64) -> String) -> Vec<Tu
             steps: t["steps"].as_array().map(|a| a.iter().map(step).collect()).unwrap_or_default(),
             took: t["took"].as_f64().map(took),
             took_ms: t["took"].as_f64(),
+            credits: t["credits"].as_f64().map(credits),
             stage: stage(st),
             live,
             clock: if live { clock(now - t0) } else { String::new() },

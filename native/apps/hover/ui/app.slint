@@ -67,6 +67,8 @@ export component NotchWindow inherits Window {
     in property <float> mini-opacity: 1;
     in property <float> view-opacity;
     in property <bool> view-visible;
+    // The shape's shadow: off while it opens or closes (notch.rs says why).
+    in property <bool> shadow-on: true;
     in property <float> openness;
     in property <length> open-w: 1120px;
     in property <length> open-h: 440px;
@@ -148,7 +150,7 @@ export component NotchWindow inherits Window {
         background: black;
         drop-shadow-blur: root.glow.alpha > 0 ? 26px : Pal.dark ? 24px : 36px;
         drop-shadow-offset-y: root.glow.alpha > 0 ? 0 : Pal.dark ? 4px : 10px;
-        drop-shadow-color: root.glow.alpha > 0 ? root.glow.with-alpha(0.62) : Pal.dark ? #00000080 : #00000038;
+        drop-shadow-color: !root.shadow-on ? transparent : root.glow.alpha > 0 ? root.glow.with-alpha(0.62) : Pal.dark ? #00000080 : #00000038;
     }
     Path {
         y: 0;

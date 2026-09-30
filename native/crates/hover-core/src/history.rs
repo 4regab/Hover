@@ -11,7 +11,8 @@ use std::path::{Path, PathBuf};
 use std::sync::{mpsc, Arc, Condvar, Mutex};
 use std::time::Duration;
 
-/// SavedTurn(Prompt, Images, Steps, State, Text, StartedAt, WokeAt, EndedAt).
+/// SavedTurn(Prompt, Images, Steps, State, Text, StartedAt, WokeAt, EndedAt, Credits).
+/// Credits is None for turns from before Hover kept it.
 #[derive(Clone, Debug, PartialEq)]
 pub struct SavedTurn {
     pub prompt: String,
@@ -22,6 +23,7 @@ pub struct SavedTurn {
     pub started_at: Stamp,
     pub woke_at: Option<Stamp>,
     pub ended_at: Option<Stamp>,
+    pub credits: Option<f64>,
 }
 
 /// SavedSession(Key, Tool, Folder, Title, AcpId, Context, Turns, Updated, Access).
@@ -68,6 +70,7 @@ impl SavedTurn {
             ("StartedAt", self.started_at.to_json()),
             ("WokeAt", self.woke_at.map_or(Json::Null, |t| t.to_json())),
             ("EndedAt", self.ended_at.map_or(Json::Null, |t| t.to_json())),
+            ("Credits", self.credits.map_or(Json::Null, Json::double)),
         ])
     }
 
@@ -84,6 +87,7 @@ impl SavedTurn {
             started_at: opt(v.get("StartedAt"), Stamp::from_json)?.unwrap_or(Stamp::DEFAULT),
             woke_at: opt(v.get("WokeAt"), Stamp::opt_from_json)?.flatten(),
             ended_at: opt(v.get("EndedAt"), Stamp::opt_from_json)?.flatten(),
+            credits: opt(v.get("Credits"), Json::opt_f64)?.flatten(),
         })
     }
 }
@@ -294,7 +298,7 @@ mod tests {
             turns: vec![SavedTurn {
                 prompt: "Fix the secret thing".into(), images: vec![], steps: vec![KiroStep::new("r0", "read", "Read File", Some(r"C:\hover\src\a.ts".into()), "completed")],
                 state: Some(KiroState::Completed), text: Some("answer <b> & 'c'".into()), started_at: at("2026-09-28T16:44:07.1234567Z"),
-                woke_at: Some(at("2026-09-28T16:44:09.1234567Z")), ended_at: None,
+                woke_at: Some(at("2026-09-28T16:44:09.1234567Z")), ended_at: None, credits: Some(0.087),
             }],
             updated: at(updated),
             access: None,
@@ -309,7 +313,7 @@ mod tests {
         assert_eq!(s.to_json().compact(), concat!(
             r#"{"Key":"aaaa","Tool":"Codex","Folder":"C:\\hover","Title":"Fix the secret thing","AcpId":"acp-1","Context":3.37,"#,
             r#""Turns":[{"Prompt":"Fix the secret thing","Images":[],"Steps":[{"Id":"r0","Kind":"read","Title":"Read File","Target":"C:\\hover\\src\\a.ts","Status":"completed","Added":0,"Removed":0,"Diff":null,"Output":null,"Exit":null,"Ms":null}],"#,
-            r#""State":"Completed","Text":"answer \u003Cb\u003E \u0026 \u0027c\u0027","StartedAt":"2026-09-28T16:44:07.1234567Z","WokeAt":"2026-09-28T16:44:09.1234567Z","EndedAt":null}],"#,
+            r#""State":"Completed","Text":"answer \u003Cb\u003E \u0026 \u0027c\u0027","StartedAt":"2026-09-28T16:44:07.1234567Z","WokeAt":"2026-09-28T16:44:09.1234567Z","EndedAt":null,"Credits":0.087}],"#,
             r#""Updated":"2026-09-28T16:45:00Z","Access":null}"#));
         let back = SavedSession::from_json(&json::parse(&s.to_json().compact()).unwrap()).unwrap();
         assert_eq!(back, s);

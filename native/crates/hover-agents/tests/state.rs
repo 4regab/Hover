@@ -132,6 +132,15 @@ fn the_state_message_is_the_fixtures_bytes() {
         }
         tools.push(json::parse(r#"{"id":"opencode","name":"OpenCode","ready":true,"hint":"","access":"full","readOnly":true,"hideSteps":false,"models":[{"id":"","name":"Default","levels":null}],"model":"","efforts":[],"effort":null,"effortLabel":"Variant","questions":true}"#).unwrap());
     }
+    // 6c1cdb9: each turn says what it cost (null until the tool says), after "took".
+    if let Some((_, Json::Arr(ss))) = match &mut fxj { Json::Obj(p) => p.iter_mut().find(|(k, _)| k == "sessions"), _ => None } {
+        for s in ss.iter_mut() {
+            let Json::Obj(p) = s else { panic!() };
+            if let Some((_, Json::Arr(ts))) = p.iter_mut().find(|(k, _)| k == "turns") {
+                for t in ts { if let Json::Obj(tp) = t { tp.push(("credits".into(), Json::Null)); } }
+            }
+        }
+    }
     want = fxj.compact();
     assert!(want.contains("\\u201C"), "non-ASCII escaped, as the default encoder does");
     if got != want {

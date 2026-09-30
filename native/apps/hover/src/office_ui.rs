@@ -182,6 +182,15 @@ impl App {
         // has gone.
         #[cfg(target_os = "linux")]
         slint::Timer::single_shot(Duration::from_secs(2), || unsafe { libc::malloc_trim(0); });
+        // Windows: the office draws on the windows' GPU device, which frees the office's
+        // textures and buffers only when it is next polled. mimalloc then gives back the
+        // pages the office freed: it purges only while it allocates, and a resting notch
+        // hardly does.
+        #[cfg(windows)]
+        slint::Timer::single_shot(Duration::from_secs(2), || {
+            hover_office::render::flush_shared();
+            unsafe { libmimalloc_sys::mi_collect(true) };
+        });
     }
 
     /// KiroPage.Push: every session and what the page needs to show them.
@@ -451,9 +460,9 @@ impl App {
                     if d != at { at = d.clone(); rows.push(PanelRow { text: s(d.to_uppercase()), color: Color::from_argb_u8(0, 0, 0, 0), ..row(0) }); opens.push((None, None)); }
                     let desk = sessions.iter().any(|s| s.key == h.key);
                     let stage = Stage::parse(hover_agents::state::stage(h.state, hover_agents::stream::KiroPhase::Working));
-                    // .hr: the tool's logo, the task, then how it went · when · turns · where.
-                    rows.push(PanelRow { sub: s(h.tool.id()), text: s(&h.title), meta: s(stage.word()),
-                        count: s(format!("{} · {} turn{} · {}", ago(now - ms), h.turns, if h.turns == 1 { "" } else { "s" }, hover_office::office::short(&h.folder))),
+                    // .hr: the tool's logo, the task and its date, then how it went · turns · where.
+                    rows.push(PanelRow { sub: s(h.tool.id()), text: s(&h.title), meta: s(stage.word()), s1: s(stamp(now, ms)),
+                        count: s(format!("{} turn{} · {}", h.turns, if h.turns == 1 { "" } else { "s" }, hover_office::office::short(&h.folder))),
                         stage: stage as i32, key: s(&h.key), desk, ..row(6) });
                     opens.push((None, Some(h.key.clone())));
                 }
@@ -966,6 +975,24 @@ fn day(now: f64, ms: f64) -> String {
     }
 }
 
+/// stamp(): a history row's date, beside the day heading over it: the time today and
+/// yesterday ("1:47 PM"), the weekday this week ("Mon"), and the date before that
+/// ("Sep 12"), with the year when it isn't this one ("Sep 12, 2025").
+fn stamp(now: f64, ms: f64) -> String {
+    use hover_core::time::{local_offset_min, Kind, Stamp};
+    let off = |t: f64| local_offset_min(Stamp::from_unix_ms(t as i64, Kind::Utc).ticks);
+    let local_day = |t: f64| ((t + off(t) as f64 * 60e3) / 864e5).floor() as i64;
+    let (d, n) = (local_day(ms), local_day(now));
+    let k = n - d;
+    if k < 2 { return hover_chat::state::hm(ms, off(ms)); }
+    if k < 7 { return ["Thu", "Fri", "Sat", "Sun", "Mon", "Tue", "Wed"][d.rem_euclid(7) as usize].into(); }
+    let iso = |day: i64| Stamp::from_unix_ms(day * 86_400_000, Kind::Utc).iso();
+    let (st, year_now) = (iso(d), iso(n)[0..4].to_owned());
+    let (y, mo, dd) = (&st[0..4], st[5..7].parse::<usize>().unwrap_or(1), st[8..10].trim_start_matches('0'));
+    let m = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"][mo - 1];
+    if y == year_now { format!("{m} {dd}") } else { format!("{m} {dd}, {y}") }
+}
+
 /// The clock's tooltip: the long local date and time.
 pub fn full_date() -> String {
     let t = hover_core::time::Stamp::now();
@@ -1018,4 +1045,23 @@ fn blur(rgb: &[u8], w: usize, h: usize) -> SharedPixelBuffer<Rgba8Pixel> {
         *d = Rgba8Pixel { r: c[0], g: c[1], b: c[2], a: 255 };
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    /// A history row's date: the time today and yesterday, the weekday this week, then
+    /// the date, with the year only when it isn't this one.
+    #[test]
+    fn a_history_rows_date_as_the_page_gives_it() {
+        // Noon local on Wednesday 30 September 2026 (a day kept clear of any DST change).
+        let off = hover_core::time::local_offset_min(hover_core::time::Stamp::from_unix_ms(1_790_726_400_000, hover_core::time::Kind::Utc).ticks) as f64 * 60e3;
+        let now = 1_790_726_400_000.0 - off + 12.0 * 3600e3;
+        let day = 864e5;
+        let today = super::stamp(now, now - 2.0 * 3600e3);
+        assert!(today.ends_with(" AM") && today.starts_with("10:"), "{today}");
+        assert_eq!(super::stamp(now, now - day), "12:00 PM");
+        assert_eq!(super::stamp(now, now - 3.0 * day), "Sun");
+        assert_eq!(super::stamp(now, now - 20.0 * day), "Sep 10");
+        assert_eq!(super::stamp(now, now - 400.0 * day), "Aug 26, 2025");
+    }
 }

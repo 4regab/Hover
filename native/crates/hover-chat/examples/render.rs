@@ -8,7 +8,7 @@ fn fonts(repo: &Path) -> Vec<Vec<u8>> {
     for f in [] as [&str; 0] {
         v.push(std::fs::read(repo.join(format!("native/apps/hover/assets/{f}.ttf"))).unwrap());
     }
-    v.push(std::fs::read(repo.join("web/office/fonts/PixelifySans.ttf")).unwrap());
+    v.push(std::fs::read(repo.join("native/apps/hover/assets/PixelifySans.ttf")).unwrap());
     v
 }
 

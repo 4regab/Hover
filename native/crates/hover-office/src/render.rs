@@ -123,14 +123,36 @@ pub struct Renderer {
 const FMT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 const DEPTH: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 
+/// The device the app's windows draw with, when the app shares it (Windows). Each GPU
+/// device costs tens of MB of its own (driver state, descriptor heaps), and a device of
+/// the office's own also woke Vulkan and OpenGL on every graphics card.
+static SHARED: std::sync::OnceLock<(wgpu::Device, wgpu::Queue, String)> = std::sync::OnceLock::new();
+
+pub fn share_device(device: wgpu::Device, queue: wgpu::Queue, adapter_name: String) {
+    let _ = SHARED.set((device, queue, adapter_name));
+}
+
+/// Frees what was dropped on the shared device. wgpu does that only when the device is
+/// polled, and a resting notch draws nothing that would poll it.
+pub fn flush_shared() {
+    if let Some((d, _, _)) = SHARED.get() { let _ = d.poll(wgpu::PollType::wait_indefinitely()); }
+}
+
 impl Renderer {
-    /// A device of its own (Vulkan or GL on Linux, DX12 on Windows), low power.
+    /// The app's shared device when there is one; else a device of its own (Vulkan or GL
+    /// on Linux, DX12 on Windows), low power.
     pub fn new(w: u32, h: u32) -> Result<Renderer, String> {
-        let instance = wgpu::Instance::new({ let mut d = wgpu::InstanceDescriptor::new_without_display_handle(); d.backends = wgpu::Backends::PRIMARY | wgpu::Backends::GL; d });
-        let adapter = futures_lite::future::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions { power_preference: wgpu::PowerPreference::LowPower, ..Default::default() }))
-            .map_err(|e| format!("no GPU adapter: {e}"))?;
-        let adapter_name = format!("{} ({:?})", adapter.get_info().name, adapter.get_info().backend);
-        let (device, queue) = futures_lite::future::block_on(adapter.request_device(&wgpu::DeviceDescriptor { label: Some("office"), ..Default::default() })).map_err(|e| e.to_string())?;
+        let (device, queue, adapter_name) = match SHARED.get() {
+            Some((d, q, n)) => (d.clone(), q.clone(), n.clone()),
+            None => {
+                let instance = wgpu::Instance::new({ let mut d = wgpu::InstanceDescriptor::new_without_display_handle(); d.backends = wgpu::Backends::PRIMARY | wgpu::Backends::GL; d });
+                let adapter = futures_lite::future::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions { power_preference: wgpu::PowerPreference::LowPower, ..Default::default() }))
+                    .map_err(|e| format!("no GPU adapter: {e}"))?;
+                let adapter_name = format!("{} ({:?})", adapter.get_info().name, adapter.get_info().backend);
+                let (device, queue) = futures_lite::future::block_on(adapter.request_device(&wgpu::DeviceDescriptor { label: Some("office"), ..Default::default() })).map_err(|e| e.to_string())?;
+                (device, queue, adapter_name)
+            }
+        };
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some("office"), source: wgpu::ShaderSource::Wgsl(include_str!("office.wgsl").into()) });
         let tex = |d: &wgpu::Device, w: u32, h: u32, f: wgpu::TextureFormat, u: wgpu::TextureUsages| d.create_texture(&wgpu::TextureDescriptor {
             label: None, size: wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 }, mip_level_count: 1, sample_count: 1, dimension: wgpu::TextureDimension::D2, format: f, usage: u, view_formats: &[] });

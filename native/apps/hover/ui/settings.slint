@@ -109,7 +109,9 @@ component RowView inherits Rectangle {
     callback open-picker(string, length, length);
     callback record;
     callback chord(KeyEvent) -> bool;
-    min-height: 42px;
+    // Its own height, so the page's layout takes it as it is: measured from outside, a
+    // row came out short and the rows were squeezed to fit.
+    height: max(42px, layout.preferred-height);
     opacity: r.enabled ? 1 : 0.4;
     layout := HorizontalLayout {
         padding-left: 12px;
@@ -210,7 +212,10 @@ export component SettingsPage inherits Rectangle {
             padding-right: 14px;
             padding-top: 6px;
             padding-bottom: 18px;
+            // A repeated cell measures its wrapped lines at its one-line width (Slint
+            // 1.18), so each block is told the width it gets: the column less its padding.
             for b in blocks: VerticalLayout {
+                preferred-width: pane.visible-width - 28px;
                 if b.kind == 0: Text { text: b.text; font-size: 20px; font-weight: 600; font-family: Fonts.display; color: Pal.ink; accessible-role: text; }
                 if b.kind == 0: Rectangle { height: 14px; }
                 if b.kind == 1: HorizontalLayout {

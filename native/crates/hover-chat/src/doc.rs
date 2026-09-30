@@ -792,6 +792,8 @@ pub struct Turn {
     pub steps: Vec<Step>,
     pub took: Option<String>,
     pub took_ms: Option<f64>,
+    /// What the turn cost ("0.09 credits"), when the tool says.
+    pub credits: Option<String>,
     pub stage: Stage,
     /// The turn running now (working, or waiting on the user).
     pub live: bool,
@@ -805,7 +807,7 @@ pub struct Turn {
 
 impl Turn {
     pub fn new(prompt: &str) -> Self {
-        Turn { prompt: prompt.into(), images: vec![], queued: false, steps: vec![], took: None, took_ms: None, stage: Stage::Done, live: false,
+        Turn { prompt: prompt.into(), images: vec![], queued: false, steps: vec![], took: None, took_ms: None, credits: None, stage: Stage::Done, live: false,
             clock: String::new(), when: String::new(), status: None, answer: String::new() }
     }
 }
@@ -1166,6 +1168,14 @@ impl Thread {
             frag.append(b.frag, inset, y);
             y += b.h;
             if !self.hide_steps { y += self.changes(&mut frag, t, y, w); }
+            // .use: what the turn cost, under the answer, when the tool says (Kiro does).
+            if let Some(c) = &t.credits {
+                let mut u = self.line(c, Look { size: 11.0, color: [255, 255, 255, 97], ..look }, None);
+                u.y = y + theme::THREAD_GAP - 6.0;
+                y = u.y + u.layout.height();
+                frag.text(u);
+                frag.copy.push(Tok::Req(1));
+            }
         }
         (frag, y, summary, answer_tok, images, answer_at)
     }

@@ -94,6 +94,11 @@ pub fn shape(ui: &NotchWindow, n: &Notch, panel: slint::Color) {
     ui.set_shape_w(f.w as f32);
     ui.set_shape_h(f.h as f32);
     ui.set_shape_r(f.r as f32);
+    // Slint keeps a blurred image of the shadow for each size it is drawn at (up to 16),
+    // and in the notch each one was office-sized with a stencil of its own: drawn all
+    // through the opening and closing, that was about 70 MB of the GPU's, kept for good.
+    // So the shadow shows at rest and once fully open, not while the shape grows.
+    ui.set_shadow_on(t <= 0.001 || !n.open.animating(n.now()));
     // Black while small, as a real notch is; the panel's own colour by the time the
     // cards are in.
     let k = f.fill_mix as f32;

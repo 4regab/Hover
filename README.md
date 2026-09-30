@@ -10,6 +10,9 @@
 
 https://github.com/user-attachments/assets/024e6b18-0f3e-47b9-99da-2a521644863f
 
+<p align="center">
+  <img src="assets/readme/office.jpg" alt="The Agent office: three agents at their desks, each with a note saying what it is doing">
+</p>
 
 
 Rest the pointer at the **top centre** of your main screen, or press `Alt+N`, and the
@@ -24,6 +27,15 @@ any agent at work, or nothing at all. Built in Rust with Slint and wgpu, for Win
 - **AI quotas**: Claude Code, Kiro, Codex and Cursor usage on the notch, each as its own logo in a ring.
 - **Settings in the office**: the gear opens it; each agent has its own page for model, effort and tool access.
 - **Themes**: Hover light or dark, or any VS Code theme on your PC.
+
+| | |
+|:---:|:---:|
+| <img src="assets/readme/new-task.jpg" alt="Starting a task: prompt, folder, access and model in one box"> | <img src="assets/readme/approval.jpg" alt="An agent asks to change a file, with Deny, Trust and Allow buttons"> |
+| Start a task | Approve a change |
+| <img src="assets/readme/answer.jpg" alt="A finished answer with a table, code and a flowchart"> | <img src="assets/readme/history.jpg" alt="Session history listing past tasks"> |
+| Read the answer | Pick up a past session |
+
+<sub>Screenshots use sample tasks and answers.</sub>
 
 ## Install
 

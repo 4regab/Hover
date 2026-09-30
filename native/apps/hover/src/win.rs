@@ -219,6 +219,20 @@ pub fn register_hotkey(sc: &hover_core::shortcut::Shortcut) -> bool {
     }
 }
 
+/// The name of the graphics card driving the main display ("NVIDIA GeForce GTX 1060
+/// 6GB"), as DXGI names the same adapter.
+pub fn primary_display_adapter() -> Option<String> {
+    for i in 0.. {
+        let mut d = DISPLAY_DEVICEW { cb: std::mem::size_of::<DISPLAY_DEVICEW>() as u32, ..Default::default() };
+        if !unsafe { EnumDisplayDevicesW(PCWSTR::null(), i, &mut d, 0) }.as_bool() { return None; }
+        if d.StateFlags & DISPLAY_DEVICE_PRIMARY_DEVICE == DISPLAY_DEVICE_PRIMARY_DEVICE {
+            let n = d.DeviceString.iter().position(|&c| c == 0).unwrap_or(d.DeviceString.len());
+            return Some(String::from_utf16_lossy(&d.DeviceString[..n]));
+        }
+    }
+    None
+}
+
 pub fn clear_hotkeys() {
     if let Some(h) = notch() { unsafe { let _ = UnregisterHotKey(Some(h), HOTKEY_ID); } }
 }

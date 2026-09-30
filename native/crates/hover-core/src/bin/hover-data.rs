@@ -37,7 +37,7 @@ fn main() {
                 turns: (0..turns).map(|i| SavedTurn {
                     prompt: format!("Question {} about the rich fixture", i + 1), images: vec![],
                     steps: vec![KiroStep::new(&format!("t{i}"), "read", &format!("Read src/file{i}.rs"), Some(format!("src/file{i}.rs")), "completed")],
-                    state: Some(KiroState::Completed), text: Some(answer.clone()), started_at: t(i), woke_at: Some(t(i)), ended_at: Some(t(i).add_secs(30.0)),
+                    state: Some(KiroState::Completed), text: Some(answer.clone()), started_at: t(i), woke_at: Some(t(i)), ended_at: Some(t(i).add_secs(30.0)), credits: None,
                 }).collect(),
                 updated: now,
                 access: None,

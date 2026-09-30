@@ -18,9 +18,10 @@ impl KiroResult {
 }
 
 /// Detail from a run as it goes: a step that started or ended, the context (0 to
-/// 100), the tool's session id.
+/// 100), the tool's session id, and what a turn cost in the tool's credits, as Kiro
+/// says at its end.
 #[derive(Clone, Debug, PartialEq, Default)]
-pub struct KiroEvent { pub step: Option<KiroStep>, pub context: Option<f64>, pub session_id: Option<String> }
+pub struct KiroEvent { pub step: Option<KiroStep>, pub context: Option<f64>, pub session_id: Option<String>, pub credits: Option<f64> }
 
 /// UTF-16 length, as C# counts a string.
 pub(crate) fn units(s: &str) -> usize { s.encode_utf16().count() }
@@ -151,9 +152,15 @@ impl KiroStream {
             }
             Some("session_info_update") => {
                 // {"_meta":{"kiro":{"contextUsage":{"usagePercentage":3.37}}}}
-                let pct = u.get("_meta").filter(|m| matches!(m, Json::Obj(_))).and_then(|m| m.get("kiro")).filter(|k| matches!(k, Json::Obj(_)))
-                    .and_then(|k| k.get("contextUsage")).filter(|c| matches!(c, Json::Obj(_))).and_then(|c| num(c, "usagePercentage"));
+                let kiro = u.get("_meta").filter(|m| matches!(m, Json::Obj(_))).and_then(|m| m.get("kiro")).filter(|k| matches!(k, Json::Obj(_)));
+                let pct = kiro.and_then(|k| k.get("contextUsage")).filter(|c| matches!(c, Json::Obj(_))).and_then(|c| num(c, "usagePercentage"));
                 if let Some(p) = pct { self.set_context(p); }
+                // At a turn's end: {"_meta":{"kiro":{"kind":"turn_completion",
+                // "promptTurnSummaries":[{"unit":"credit","usage":0.087}]}}}.
+                if let Some(Json::Arr(sums)) = kiro.filter(|k| s(k, "kind") == Some("turn_completion")).and_then(|k| k.get("promptTurnSummaries")) {
+                    let credits = sums.iter().filter(|x| s(x, "unit") == Some("credit")).filter_map(|x| num(x, "usage")).reduce(|a, b| a + b);
+                    if let Some(spent) = credits { self.events.push(KiroEvent { credits: Some(spent), ..Default::default() }); }
+                }
             }
             _ => {}
         }
@@ -451,6 +458,9 @@ mod tests {
         assert_eq!(k.said(), "FG");
         k.feed(&update(r#"{"sessionUpdate":"session_info_update","_meta":{"kiro":{"contextUsage":{"usagePercentage":3.37}}}}"#));
         assert_eq!(k.context, Some(3.37));
+        k.drain();
+        k.feed(&update(r#"{"sessionUpdate":"session_info_update","_meta":{"kiro":{"kind":"turn_completion","promptTurnSummaries":[{"unit":"credit","usage":0.087},{"unit":"token","usage":900},{"unit":"credit","usage":0.013}]}}}"#));
+        assert_eq!(k.drain().iter().filter_map(|e| e.credits).map(|c| (c * 1000.0).round()).collect::<Vec<_>>(), vec![100.0]);
     }
 
     #[test]

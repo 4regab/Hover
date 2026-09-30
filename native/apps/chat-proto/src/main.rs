@@ -46,7 +46,7 @@ fn read(rel_src: &str, rel_dist: &str) -> Vec<u8> {
 }
 
 fn fonts() -> Vec<Vec<u8>> {
-    vec![read("web/office/fonts/PixelifySans.ttf", "fonts/PixelifySans.ttf")]
+    vec![read("native/apps/hover/assets/PixelifySans.ttf", "fonts/PixelifySans.ttf")]
 }
 
 fn rich() -> String {

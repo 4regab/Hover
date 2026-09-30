@@ -9,7 +9,7 @@ fn fonts() -> Vec<Vec<u8>> {
     let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
     let mut v: Vec<Vec<u8>> = ([] as [&str; 0]).iter()
         .map(|f| std::fs::read(repo.join(format!("native/apps/hover/assets/{f}.ttf"))).unwrap()).collect();
-    v.push(std::fs::read(repo.join("web/office/fonts/PixelifySans.ttf")).unwrap());
+    v.push(std::fs::read(repo.join("native/apps/hover/assets/PixelifySans.ttf")).unwrap());
     v
 }
 

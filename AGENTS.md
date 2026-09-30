@@ -20,8 +20,7 @@ own title bar. It opens from the tray, or a second launch. The app
 lives in the tray.
 
 Up to 2.x Hover was a .NET/WPF app with the office as a web page in WebView2. 3.0 is
-a port of it, made line by line; `port/` holds the port's reports and evidence. The
-port reads everything 2.x left on users' machines: `%APPDATA%\Hover` (and the old
+a port of it, made line by line. It reads everything 2.x left on users' machines: `%APPDATA%\Hover` (and the old
 `Noty` folder's move), the DPAPI `note.key`, `settings.json`, `agents/*.dat`.
 
 ## Build, test, run
@@ -59,9 +58,6 @@ dashboard and exits. On Windows this uses the named mutex `Local\HoverRunningIns
 
 Headless: `hover --shots DIR` renders every view with the software renderer. On a
 real X display, `hover --selftest DIR` drives the notch and writes `report.json`.
-End to end on Linux: `port/e2e/run.sh` runs the real app under Xvfb with stand-in
-tools (and a stand-in `opencode serve`) and clicks through every feature with real X
-input (79 checks).
 
 ## Layout
 
@@ -85,14 +81,10 @@ native/apps/
                  notch (notch.rs, x11.rs, win.rs), office UI (office_ui.rs), music,
                  bench.rs (HOVER_BENCH), selftest, shots; ui/*.slint; assets/
   chat-proto, notch-proto   the port's prototypes
-native/golden/   fixtures and expected outputs; page/kiro-office.html (the 2.x page,
-                 which the gen-*.mjs generators and capture scripts run in Chromium)
+native/golden/   fixtures and expected outputs (made from the 2.x page)
 native/installer/  Hover.iss (Windows), package-linux.sh
-web/office/      the 2.x office page's source (main.js, md.js, diagram.js); build.mjs
-                 writes native/golden/page/kiro-office.html
 assets/          hover.png (the logo), make-icon.py (writes the app's hover.ico and
-                 hover-mark.png), the README's pictures
-port/            the port: reports per phase, benchmark procedure (frozen) and tools
+                 hover-mark.png), the README's pictures (readme/)
 ```
 
 ## How it works (the parts that surprise people)
@@ -195,12 +187,11 @@ port/            the port: reports per phase, benchmark procedure (frozen) and t
   Windows `cargo check` above green. For UI changes, render it (`hover --shots`), since
   a green build is not proof the pixels are right.
 - Don't commit `target/`, `publish/` or `dist/`.
-- `port/phase0/BENCHMARK.md` is frozen.
 
 ## Gotchas
 
 - **Line endings are CRLF** (`.gitattributes`), except the scripts run through `#!`
-  or `sh` (`port/bench/*.py`, `native/installer/*.sh`, `Makefile`), which are LF.
+  or `sh` (`native/installer/*.sh`, `Makefile`), which are LF.
 - **`bin/` is git-ignored** at any depth: `native/crates/hover-core/src/bin/hover-data.rs`
   is tracked with `git add -f`.
 - **`str_replace` on files with `—` (em dash) and non-ASCII** can be finicky; anchor
