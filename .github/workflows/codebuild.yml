@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   release:
-    runs-on: blacksmith-4vcpu-windows-2025
+    runs-on: codebuild-hover-release-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
       - uses: actions/checkout@v4
 
