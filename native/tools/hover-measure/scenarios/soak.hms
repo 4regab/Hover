@@ -1,0 +1,82 @@
+# Soak, about 80 minutes. First 60 minutes mixed: every two minutes a new task (Kiro or
+# Codex, a rich streamed answer, sometimes asking first), its chat read, the history,
+# Settings and the app window, the office hidden past its cleanup now and then. Then 20
+# minutes of a fixed workload that adds nothing to the history (the same six chats opened,
+# scrolled and closed, the office dropped and made again), to tell growth from history.
+launch
+expect "bench visible" 30 as startup
+send unfold
+expect "bench reopen" 20
+sleep 3
+mark soak-mixed
+repeat 30
+send task kiro @ - soak kiro [seconds:6] [bytes:60000]
+expect "bench task" 5
+send until-idle 40
+expect "bench idle" 45
+send task codex @ risky - soak codex asks [ask:execute:npm test] [seconds:3]
+expect "bench task" 5
+send until-ask 20
+expect "bench asking" 25
+send answer-front allow
+expect "bench answer" 5
+send until-idle 30
+expect "bench idle" 35
+send chat-last
+expect "bench ok" 5
+send scroll -4000
+expect "bench ok" 5
+sleep 5
+send history
+expect "bench ok" 5
+sleep 3
+send settings 1
+expect "bench ok" 5
+sleep 3
+send back
+expect "bench ok" 5
+send dash
+expect "bench ok" 5
+sleep 5
+send dash-close
+expect "bench ok" 5
+sleep 20
+# Hidden past the cleanup, then back.
+send fold
+expect "bench folded" 5
+expect "bench dropped" 40
+sleep 5
+send unfold
+expect "bench reopen" 20 as soak-reopen-after-drop
+sleep 3
+end
+mark soak-fixed
+repeat 20
+repeat 6
+send chat-nth ${i}
+expect "bench ok" 5
+send scroll -3000
+expect "bench ok" 5
+sleep 2
+end
+send chat
+expect "bench ok" 5
+send history
+expect "bench ok" 5
+sleep 3
+send fold
+expect "bench folded" 5
+expect "bench dropped" 40
+sleep 3
+send unfold
+expect "bench reopen" 20 as soak-fixed-reopen
+sleep 3
+end
+send fold
+expect "bench folded" 5
+expect "bench dropped" 40
+sleep 3
+mark soak-end-collapsed
+sleep 20
+mark -
+quit 30

@@ -14,7 +14,10 @@
 //!                delete removes it; the answer says what was allowed or denied
 //!   [crash]      exits halfway; [hang] ignores session/cancel; [garbage] sends broken
 //!                and split lines; [stderr:N] writes N KB to stderr
-//!   [question]   not an ACP feature; ignored (OpenCode's questions have their own fake)
+//!   [question]   not an ACP feature; ignored (OpenCode's are fake-opencode's)
+//!
+//! `chat --no-interactive /usage` prints a Kiro usage bar (the Kiro quota's read), and
+//! FAKEACP_LOG=FILE appends every line Hover sends.
 
 use hover_core::json::{self, Json};
 use std::collections::HashMap;
@@ -209,10 +212,22 @@ fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     if args.iter().any(|a| a == "--version") { println!("fake-agent 1.0.0"); return; }
     if args.iter().any(|a| matches!(a.as_str(), "whoami" | "status" | "login")) { println!("Logged in as fake@example.com"); return; }
+    // The Kiro quota's read (kiro-cli chat --no-interactive /usage): the bar kiro-cli
+    // prints, after FAKEACP_USAGE_MS (default 0) as the real one takes seconds.
+    if args.iter().any(|a| a == "/usage") {
+        if let Some(ms) = std::env::var("FAKEACP_USAGE_MS").ok().and_then(|v| v.parse().ok()) { std::thread::sleep(Duration::from_millis(ms)); }
+        println!("\u{2503}  | KIRO FREE \u{2503}\n\u{2503} Monthly credits: \u{2503}\n\u{2503} \u{2588}\u{2588}\u{2588}\u{2588} 42% (resets on 10/01) \u{2503}\n\u{2503} (21.00 of 50 covered in plan) \u{2503}");
+        return;
+    }
+    // FAKEACP_LOG=FILE: every line Hover sends, for a run's checks (prompts over stdin,
+    // cancels, which methods).
+    let log = std::env::var_os("FAKEACP_LOG").and_then(|p| std::fs::OpenOptions::new().create(true).append(true).open(p).ok());
+    let log = Mutex::new(log);
     let a = Arc::new(Agent { out: Out(Mutex::new(std::io::stdout())), ids: AtomicU64::new(0), sessions: Default::default(), cancel: Default::default(), pending: Default::default() });
     for line in std::io::stdin().lock().lines() {
         let Ok(line) = line else { break };
         if line.trim().is_empty() { continue; }
+        if let Some(f) = &mut *log.lock().unwrap() { let _ = writeln!(f, "{} {line}", std::process::id()); }
         a.handle(&line);
     }
 }
