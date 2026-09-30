@@ -8,16 +8,9 @@
 
 
 
-https://github.com/user-attachments/assets/024e6b18-0f3e-47b9-99da-2a521644863f
-
-<p align="center">
-  <img src="assets/readme/office.jpg" alt="The Agent office: three agents at their desks, each with a note saying what it is doing">
-</p>
+https://github.com/user-attachments/assets/8c7b498f-4b31-4d88-8861-74a28c711347
 
 
-Rest the pointer at the **top centre** of your main screen, or press `Alt+N`, and the
-notch opens into the Agent office. At rest it is a slim pill with your AI quotas and
-any agent at work, or nothing at all. Built in Rust with Slint and wgpu, for Windows 10 and 11 and Linux (X11, or XWayland on Wayland desktops).
 
 ## Features
 
