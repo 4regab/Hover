@@ -9,7 +9,9 @@ license.workspace = true
 hover-md = { path = "../hover-md" }
 parley = { version = "0.11", default-features = false, features = ["std", "system"] }
 swash = "0.2.10"
-resvg = { version = "0.48", default-features = false, features = ["text", "system-fonts"] }
+# memmap-fonts: the system's font files are mapped, not read into memory, when their
+# faces are listed and when a flowchart's text is drawn (memmap2 is in the tree already).
+resvg = { version = "0.48", default-features = false, features = ["text", "system-fonts", "memmap-fonts"] }
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
 serde_json = "1"
 # Already in the tree through parley; used directly for double-click words with the

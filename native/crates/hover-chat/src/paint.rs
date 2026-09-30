@@ -5,6 +5,7 @@
 //! streamed chunk costs one viewport of drawing.
 
 use std::collections::HashMap;
+use std::rc::Rc;
 use std::sync::Arc;
 
 use parley::PositionedLayoutItem;
@@ -43,14 +44,30 @@ pub struct Painter {
     pub images: crate::images::Shared,
     /// Chromium's broken-image icon at 100 % and 200 %.
     broken: [Pixmap; 2],
-    svgs: HashMap<(usize, u32), Option<Pixmap>>,
-    fontdb: Arc<usvg::fontdb::Database>,
+    /// Rasterised SVGs by their text and drawn width. Keyed by the text, not the Rc's
+    /// address: a laid-out-again thread frees its strings and the next can land at the
+    /// same address, which drew one step's icon for another (a run step with an edit's
+    /// pencil) and added entries at every layout.
+    svgs: HashMap<(Rc<str>, u32), Option<Pixmap>>,
+    /// The painter's own fonts, and the database made from them and the system's the
+    /// first time a flowchart is drawn (most chats have none).
+    font_files: Vec<Vec<u8>>,
+    fontdb: Option<Arc<usvg::fontdb::Database>>,
     /// Painted frames, for the benchmark.
     pub frames: u64,
     /// Seconds, for the live step's shimmer (a 2 s loop, as `@keyframes flow`).
     pub time: f32,
     /// The scrollbar whose thumb is under the pointer (it darkens).
     pub hover: Option<BarId>,
+}
+
+/// The system's fonts, looked up once per process. load_system_fonts reads every font
+/// file there is to list its faces (over 130 files, some tens of MB each, on Windows):
+/// done for every chat opened, that was hundreds of MB read and a peak the size of the
+/// largest file each time.
+fn system_fonts() -> &'static usvg::fontdb::Database {
+    static DB: std::sync::OnceLock<usvg::fontdb::Database> = std::sync::OnceLock::new();
+    DB.get_or_init(|| { let mut db = usvg::fontdb::Database::new(); db.load_system_fonts(); db })
 }
 
 // page.html's `.flow` rules, with its CSS variables resolved (usvg reads no `:not()`).
@@ -63,9 +80,18 @@ text{fill:#f6f2ff;text-anchor:middle}.e{fill:none;stroke:rgba(246,242,255,.62);s
 
 impl Painter {
     pub fn new(font_files: &[Vec<u8>], images: crate::images::Shared) -> Self {
+        let icon = |b: &[u8]| Pixmap::decode_png(b).expect("broken_image.png");
+        let broken = [icon(include_bytes!("../assets/broken_image_100.png")), icon(include_bytes!("../assets/broken_image_200.png"))];
+        Painter { scaler: ScaleContext::new(), glyphs: HashMap::new(), images, broken, svgs: HashMap::new(), font_files: font_files.to_vec(), fontdb: None, frames: 0, time: 0.0, hover: None }
+    }
+
+    /// The fonts a flowchart's text is drawn with: the painter's own, then the system's,
+    /// made the first time one is drawn.
+    fn fontdb(&mut self) -> Arc<usvg::fontdb::Database> {
+        if let Some(db) = &self.fontdb { return db.clone(); }
         let mut db = usvg::fontdb::Database::new();
-        for f in font_files { db.load_font_data(f.clone()); }
-        db.load_system_fonts();
+        for f in &self.font_files { db.load_font_data(f.clone()); }
+        for face in system_fonts().faces() { db.push_face_info(face.clone()); }
         // `sans-serif` as the browser resolves it on each system.
         for fam in ["Segoe UI", "Noto Sans", "DejaVu Sans"] {
             if db.faces().any(|f| f.families.iter().any(|(n, _)| n == fam)) {
@@ -73,9 +99,9 @@ impl Painter {
                 break;
             }
         }
-        let icon = |b: &[u8]| Pixmap::decode_png(b).expect("broken_image.png");
-        let broken = [icon(include_bytes!("../assets/broken_image_100.png")), icon(include_bytes!("../assets/broken_image_200.png"))];
-        Painter { scaler: ScaleContext::new(), glyphs: HashMap::new(), images, broken, svgs: HashMap::new(), fontdb: Arc::new(db), frames: 0, time: 0.0, hover: None }
+        let db = Arc::new(db);
+        self.fontdb = Some(db.clone());
+        db
     }
 
     /// Paints `th` from `scroll` (thread px) into a w x h device-pixel buffer.
@@ -260,9 +286,9 @@ impl Painter {
                 }
             }
             Shape::Svg { x, y, w, h, svg } => {
-                let key = (svg.as_ptr() as usize, (w * k).to_bits());
+                let key = (svg.clone(), (w * k).to_bits());
                 if !self.svgs.contains_key(&key) {
-                    let opts = usvg::Options { fontdb: self.fontdb.clone(), font_family: "sans-serif".into(), ..Default::default() };
+                    let opts = usvg::Options { fontdb: self.fontdb(), font_family: "sans-serif".into(), ..Default::default() };
                     let src = svg.replacen("><defs>", &format!("><style>{FLOW_CSS}</style><defs>"), 1);
                     let r = usvg::Tree::from_str(&src, &opts).ok().and_then(|tree| {
                         let (pw, ph) = ((w * k).ceil() as u32, (h * k).ceil() as u32);
@@ -271,7 +297,7 @@ impl Painter {
                         resvg::render(&tree, Transform::from_scale(pw as f32 / s.width(), ph as f32 / s.height()), &mut p.as_mut());
                         Some(p)
                     });
-                    self.svgs.insert(key, r);
+                    self.svgs.insert(key.clone(), r);
                 }
                 if let Some(Some(p)) = self.svgs.get(&key) {
                     px.draw_pixmap(((ox + x) * k).round() as i32, ((dy + y) * k).round() as i32, p.as_ref(), &tiny_skia::PixmapPaint::default(), Transform::identity(), None);

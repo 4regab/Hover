@@ -484,3 +484,29 @@ fn a_fresh_answer_fades_in_and_a_relayout_ends_it() {
     th.set(&turns, 358.0);
     assert_eq!(th.fresh, None);
 }
+
+/// A painter kept across layouts (the drawer keeps one per chat) draws what a new one
+/// draws. Its SVG cache was keyed by the string's address: a relayout freed the icons'
+/// strings, the next landed at the same address, and a run step got an edit's pencil.
+#[test]
+fn a_kept_painter_draws_each_steps_own_icon_after_a_relayout() {
+    let f = fonts();
+    let with = |k: &str| {
+        let step = |t: &str| state::step(&serde_json::json!([k, t]));
+        vec![Turn { steps: vec![step("Did a"), step("Did b")], took: Some("3 min".into()), answer: "Done.".into(), ..Turn::new("Go") }]
+    };
+    let mut kept = Painter::new(&f, hover_chat::Images::none());
+    for round in 0..6 {
+        for k in ["edit", "run", "read", "search"] {
+            let turns = with(k);
+            let mut th = Thread::new(Shaper::new(&f), "Pip", [143, 92, 255, 255]);
+            th.set(&turns, 358.0);
+            th.toggle_steps(&turns, 0);
+            th.set(&turns, 358.0);
+            let h = th.height as u32;
+            let a = kept.paint(&th, 0.0, 358, h, 1.0, hover_chat::theme::DRAWER_BG);
+            let b = Painter::new(&f, hover_chat::Images::none()).paint(&th, 0.0, 358, h, 1.0, hover_chat::theme::DRAWER_BG);
+            assert!(a.data() == b.data(), "{k} steps, round {round}: the kept painter drew something else");
+        }
+    }
+}
