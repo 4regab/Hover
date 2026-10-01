@@ -334,12 +334,15 @@ impl App {
         self.watching_changed();
     }
 
-    /// KiroPage.Watching: the open notch, or an app window that isn't minimised.
+    /// KiroPage.Watching: the open notch, or an app window that isn't minimised. An end
+    /// counts as seen only where someone is looking: the open notch, or the app window
+    /// with the focus. One behind other windows still draws, but its ends go to the notch.
     fn watching_changed(self: &Rc<Self>) {
         let open = self.n.borrow().hover.state != State::Rest;
         let dash = self.dash.borrow().as_ref().is_some_and(|d| d.window().is_visible() && !minimized(d.window()));
         let on = open || dash;
-        self.hover.set_watching(on);
+        let looking = open || (dash && self.dash.borrow().as_ref().is_some_and(|d| focused(d.window())));
+        self.hover.set_watching(looking);
         self.office_follow();
         self.beats.follow(on);
         if self.beats.volume() != self.beats_target() { self.fade(); }
@@ -578,10 +581,14 @@ impl App {
                 // Maximized by the system too (a double-click or a snap the desktop does):
                 // the caption's glyph and the resize border follow the window.
                 let w = d.as_weak();
+                let a = self.clone();
                 d.window().on_winit_window_event(move |_, e| {
                     use winit::event::WindowEvent as E;
                     if matches!(e, E::Resized(_) | E::ScaleFactorChanged { .. } | E::RedrawRequested | E::Occluded(_)) { crate::hold_gpu(); }
                     if let (winit::event::WindowEvent::Resized(_), Some(d)) = (e, w.upgrade()) { d.set_is_maximized(d.window().is_maximized()); }
+                    // In view or not follows the focus: an end while it sits behind other
+                    // windows goes to the notch.
+                    if matches!(e, E::Focused(_)) { let a = a.clone(); Timer::single_shot(Duration::ZERO, move || a.watching_changed()); }
                     slint::winit_030::EventResult::Propagate
                 });
                 let w = d.as_weak();
@@ -730,6 +737,11 @@ impl App {
 fn minimized(w: &slint::Window) -> bool {
     use slint::winit_030::WinitWindowAccessor;
     w.with_winit_window(|ww| ww.is_minimized().unwrap_or(false)).unwrap_or(false)
+}
+
+fn focused(w: &slint::Window) -> bool {
+    use slint::winit_030::WinitWindowAccessor;
+    w.with_winit_window(|ww| ww.has_focus()).unwrap_or(false)
 }
 
 impl view::Host for App {
