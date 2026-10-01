@@ -4,7 +4,7 @@
 //! settings.json beside the 2.x keys; 2.x ignores keys it doesn't know.
 
 use crate::json::{Json, JsonError, Result};
-use crate::model::{opt_text, text};
+use crate::model::{opt_text, text, AgentTool};
 use crate::shortcut::{Key, Modifiers, Shortcut};
 use std::path::{Path, PathBuf};
 
@@ -155,6 +155,9 @@ pub struct VoiceSettings {
     pub cleanup_model: Option<String>,
     /// Custom's base URL (…/v1).
     pub cleanup_base: Option<String>,
+    /// The agent voice starts tasks with; None follows the new-task box's tool (as it did
+    /// before this was a setting).
+    pub agent: Option<AgentTool>,
 }
 
 impl VoiceSettings {
@@ -165,7 +168,7 @@ impl VoiceSettings {
 impl Default for VoiceSettings {
     fn default() -> Self {
         VoiceSettings { enabled: false, shortcut: Self::SHORTCUT, microphone: None, speech: SpeechMode::Cloud, local: None, model: TRANSCRIBE_MODELS[0].0.into(), cleanup: false,
-            cleanup_provider: CleanupProvider::Gemini, cleanup_model: None, cleanup_base: None }
+            cleanup_provider: CleanupProvider::Gemini, cleanup_model: None, cleanup_base: None, agent: None }
     }
 }
 
@@ -174,7 +177,8 @@ impl VoiceSettings {
         Json::obj(vec![("Enabled", Json::Bool(self.enabled)), ("Shortcut", self.shortcut.to_json()), ("Microphone", Json::opt_str_of(self.microphone.as_deref())),
             ("Speech", Json::str(self.speech.id())), ("Local", self.local.as_ref().map(LocalModel::to_json).unwrap_or(Json::Null)),
             ("Model", Json::str(&self.model)), ("Cleanup", Json::Bool(self.cleanup)), ("CleanupProvider", Json::str(self.cleanup_provider.name())),
-            ("CleanupModel", Json::opt_str_of(self.cleanup_model.as_deref())), ("CleanupBase", Json::opt_str_of(self.cleanup_base.as_deref()))])
+            ("CleanupModel", Json::opt_str_of(self.cleanup_model.as_deref())), ("CleanupBase", Json::opt_str_of(self.cleanup_base.as_deref())),
+            ("Agent", Json::opt_str_of(self.agent.map(AgentTool::id)))])
     }
 
     pub fn from_json(v: &Json) -> Result<VoiceSettings> {
@@ -198,6 +202,8 @@ impl VoiceSettings {
             },
             cleanup_model: opt_text(v.get("CleanupModel"))?.map(|m| m.trim().to_owned()).filter(|m| !m.is_empty()),
             cleanup_base: opt_text(v.get("CleanupBase"))?.map(|m| m.trim().to_owned()).filter(|m| !m.is_empty()),
+            // An id this build doesn't know follows the new-task tool.
+            agent: AgentTool::parse(opt_text(v.get("Agent"))?.as_deref()),
         })
     }
 }
@@ -269,6 +275,19 @@ mod tests {
         let l = VoiceSettings { speech: SpeechMode::Local, local: Some(LocalModel { id: "phonon-2".into(), version: "x".into(), folder: "/p".into() }), ..v.clone() };
         assert_eq!(VoiceSettings::from_json(&l.to_json()).unwrap(), l);
         assert_eq!(Workspace::from_json(&Workspace::default().to_json()).unwrap(), Workspace::default());
+    }
+
+    #[test]
+    fn voice_agent_round_trips_and_absent_follows_the_new_task_tool() {
+        let v = VoiceSettings { agent: Some(AgentTool::OpenCode), ..VoiceSettings::default() };
+        let j = v.to_json();
+        assert_eq!(j.get("Agent").and_then(|a| a.opt_str().ok().flatten()), Some("opencode".to_string()));
+        assert_eq!(VoiceSettings::from_json(&j).unwrap(), v);
+        let none = VoiceSettings::default();
+        assert_eq!(VoiceSettings::from_json(&none.to_json()).unwrap().agent, None);
+        for old in [r#"{"Enabled":true}"#, r#"{"Agent":null}"#, r#"{"Agent":"someday"}"#] {
+            assert_eq!(VoiceSettings::from_json(&crate::json::parse(old).unwrap()).unwrap().agent, None, "{old}");
+        }
     }
 
     #[test]

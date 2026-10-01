@@ -362,7 +362,7 @@ pub fn pressed(h: &dyn Host, pane: &RefCell<Pane>, id: &str) {
             }
         },
         "VoiceShortcut" => { record_as(pane, true); }
-        "VoiceAgent" => { let s = Section::of(st.agent_tool()); let mut p = pane.borrow_mut(); p.section = s; p.project = None; }
+        "VoiceAgent" => { let s = Section::of(st.voice().agent.unwrap_or_else(|| st.agent_tool())); let mut p = pane.borrow_mut(); p.section = s; p.project = None; }
         "VoiceWorkspace" => { let mut p = pane.borrow_mut(); p.section = Section::Projects; p.project = None; }
         _ if id.starts_with("Project.") => pane.borrow_mut().project = Some(id["Project.".len()..].into()),
         _ if id.ends_with("Recheck") => { h.recheck(tool_of(&id[..id.len() - "Recheck".len()]), true); }
@@ -429,6 +429,8 @@ pub fn menu_pick(h: &dyn Host, pane: &RefCell<Pane>, id: &str, i: usize) {
             h.action("voice.changed");
         }
         "VoiceModel" => { st.set_voice(VoiceSettings { model: TRANSCRIBE_MODELS[i.min(TRANSCRIBE_MODELS.len() - 1)].0.into(), ..st.voice() }); h.action("voice.changed"); }
+        // Voice's own default agent from then on; the new-task box keeps its own.
+        "VoiceAgentTool" => { if let Some(&t) = AgentTool::ALL.get(i) { st.set_voice(VoiceSettings { agent: Some(t), ..st.voice() }); } }
         _ => {}
     }
     for t in AgentTool::ALL {

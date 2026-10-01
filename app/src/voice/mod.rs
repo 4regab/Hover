@@ -213,6 +213,9 @@ impl Voice {
         match &st.stage { Stage::Preview(p) => !p.trial, Stage::Editing(p) => !p.trial && !st.checking, _ => false }
     }
 
+    /// The agent this interaction uses now (the default, or one picked for it).
+    pub fn tool(&self) -> Option<AgentTool> { self.st.lock().unwrap().run.as_ref().map(|r| r.tool) }
+
     /// Called from any thread when the stage changes (and while recording or counting
     /// down, ten to twenty times a second).
     pub fn on_change(&self, f: impl Fn() + Send + Sync + 'static) { self.listeners.lock().unwrap().push(Arc::new(f)); }
@@ -262,9 +265,11 @@ impl Voice {
             }
             st.id += 1;
             let ws = self.settings.default_workspace();
+            let voice = self.settings.voice();
+            let tool = voice.agent.unwrap_or_else(|| self.settings.agent_tool());
             st.run = Some(Run {
-                trial, voice: self.settings.voice(), projects: self.settings.projects().into_iter().filter(|p| p.voice).collect(), workspace: ws,
-                tool: self.settings.agent_tool(), released: Default::default(), cancel: Default::default(), ct: Cancel::new(),
+                trial, voice, projects: self.settings.projects().into_iter().filter(|p| p.voice).collect(), workspace: ws,
+                tool, released: Default::default(), cancel: Default::default(), ct: Cancel::new(),
                 text: String::new(), heard: String::new(), cleanup_note: None, review: false, target: None, resume: Resume::Record,
             });
             st.stage = Stage::Recording { level: 0.0, secs: 0.0 };
@@ -375,6 +380,37 @@ impl Voice {
         self.notify();
         self.spawn("voice-route", move |v| v.resolve(id));
     }
+
+    /// Another agent (or its model, just picked) for this task only, from the preview:
+    /// the countdown stops for good and Start is needed, as after an edit. The target
+    /// stays as shown, so nothing is routed again; the default agent is left alone.
+    pub fn change_agent(&self, tool: AgentTool) {
+        let model = self.settings.agent_options(tool).model.unwrap_or_default();
+        {
+            let mut st = self.st.lock().unwrap();
+            let p = match &st.stage { Stage::Preview(p) | Stage::Editing(p) if p.id == st.id => p.clone(), _ => return };
+            let Some(r) = st.run.as_mut() else { return };
+            r.tool = tool;
+            st.deadline = None;
+            st.stage = Stage::Editing(Preview { tool, model, countdown: None, ..p });
+        }
+        self.notify();
+    }
+
+    /// Stops the countdown for good (a menu on the card opened): Start is needed after.
+    pub fn hold(&self) {
+        {
+            let mut st = self.st.lock().unwrap();
+            let p = match &st.stage { Stage::Preview(p) if p.id == st.id && st.run.is_some() => p.clone(), _ => return };
+            st.deadline = None;
+            st.stage = Stage::Editing(Preview { countdown: None, ..p });
+        }
+        self.notify();
+    }
+
+    /// The agents a task could go to now: installed and signed in. Blocks (each tool's
+    /// status command, kept five minutes); call it off the UI thread.
+    pub fn ready_tools(&self) -> Vec<AgentTool> { AgentTool::ALL.into_iter().filter(|t| (self.hooks.available)(*t)).collect() }
 
     /// Retry on an error card: routing again, or back to the preview (Start needed, never
     /// resent on its own); after a recording or transcription error, to Idle, to speak again.
@@ -502,7 +538,7 @@ impl Voice {
         let Some(r) = self.copy(id) else { return };
         self.with_run(id, |x| x.resume = Resume::Route);
         if !r.trial && !(self.hooks.available)(r.tool) {
-            let tools = AgentTool::ALL.into_iter().filter(|t| (self.hooks.available)(*t)).collect();
+            let tools = self.ready_tools();
             self.set(id, Stage::ChooseAgent(Pending { id, text: r.text.clone(), tools }));
             return;
         }
@@ -597,7 +633,8 @@ impl Voice {
         let Stage::Editing(old) = &st.stage else { return };
         match built {
             Ok(p) => {
-                st.stage = Stage::Editing(p);
+                // An agent picked on the card while this was routed stays picked.
+                st.stage = Stage::Editing(Preview { tool: old.tool, model: old.model.clone(), ..p });
                 st.checking = false;
                 if let (Some(run), Some(t)) = (st.run.as_mut(), target) { run.target = Some(t); }
             }
@@ -615,7 +652,7 @@ impl Voice {
         let Some(r) = self.copy(id) else { return };
         let keep = |v: &Voice, m: String| v.fail(id, m, true, Some(p.task.clone()), Resume::Preview(p.clone()));
         if !(self.hooks.available)(p.tool) {
-            let tools = AgentTool::ALL.into_iter().filter(|t| (self.hooks.available)(*t)).collect();
+            let tools = self.ready_tools();
             self.set(id, Stage::ChooseAgent(Pending { id, text: p.task.clone(), tools }));
             return;
         }

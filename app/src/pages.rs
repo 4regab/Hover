@@ -328,7 +328,7 @@ fn access_segments(id: &str, access: &str) -> Control {
 fn target_access(access: &str, tool: AgentTool) -> String {
     let name = tool.name();
     match access {
-        "read" if !agents::read_only_works(tool) => format!("{name} has no read only mode on this computer. Pick another access, or another default agent for new tasks."),
+        "read" if !agents::read_only_works(tool) => format!("{name} has no read only mode on this computer. Pick another access, or another agent in Settings → Voice."),
         "read" => format!("{name} can only read and search here."),
         "always" => format!("{name} asks in the notch before any change or command."),
         "risky" if tool == AgentTool::Codex => "Codex asks in the notch before it writes outside the folder or goes online.".into(),
@@ -361,7 +361,7 @@ pub fn letter(p: &Project) -> Lead {
 
 fn projects(b: &mut Vec<Block>, i: &Input) {
     let s = i.settings;
-    let tool = s.agent_tool();
+    let tool = s.voice().agent.unwrap_or_else(|| s.agent_tool());
     if let Some(p) = i.project.as_deref().and_then(|id| s.project(id)) { return project(b, &p, tool); }
     b.push(Block::Lead("Folders voice may start tasks in. When you talk to Hover, it picks one from this list.".into()));
     heading(b, "Projects");
@@ -486,17 +486,21 @@ fn voice(b: &mut Vec<Block>, i: &Input) {
     b.push(Block::Footnote(format!("With cleanup on, the transcript (never the audio) is sent to {} with your key.", if custom { "the address above" } else { p.name() })));
 
     heading(b, "Starting tasks");
-    let tool = s.agent_tool();
+    let tool = v.agent.unwrap_or_else(|| s.agent_tool());
     let o = s.agent_options(tool);
     let m = models(tool, &s.agent_offers(tool));
     let current = o.model.clone().unwrap_or_else(|| m[0].0.clone());
     let model = m.iter().find(|x| x.0 == current).map_or(current.clone(), |x| x.1.clone());
-    let mut sub = "Every voice task uses the agent and model the office picks for new tasks.".to_owned();
+    let mut sub = if v.agent.is_some() { "Voice tasks start with this agent. The card lets you pick another for one task." }
+        else { "Voice tasks start with the agent the office picked for its last new task. Pick one to keep it." }.to_owned();
     if let Some(r) = (i.ready)(tool).filter(|r| !r.ok()) { sub += &format!(" {} isn’t ready: {} Voice will ask you to pick another.", tool.name(), r.hint); }
     let w = s.default_workspace();
     let place = w.path().map_or_else(|| "No home folder".to_owned(), |p| p.to_string_lossy().into_owned());
     b.push(Block::Group(vec![
-        row("Agent", Some(sub), Control::Button { id: "VoiceAgent".into(), name: format!("Open {} settings", tool.name()), text: format!("{} · {model}", tool.name()), enabled: true }, Lead::None),
+        row("Agent", Some(sub), Control::Picker { id: "VoiceAgentTool".into(), name: "Voice agent".into(), shown: tool.name().into(),
+            options: AgentTool::ALL.iter().map(|t| (t.name().to_owned(), *t == tool)).collect() }, Lead::None),
+        row("Model", Some(format!("The model, effort and access are {}’s own settings.", tool.name())),
+            Control::Button { id: "VoiceAgent".into(), name: format!("Open {} settings", tool.name()), text: format!("{} · {model}", tool.name()), enabled: true }, Lead::None),
         row("Default workspace", Some(format!("{place} · {}", access_label(&w.access))),
             Control::Button { id: "VoiceWorkspace".into(), name: "Open Projects".into(), text: "Projects…".into(), enabled: true }, Lead::None),
     ]));
@@ -836,7 +840,7 @@ mod tests {
         i.has_secret = &has;
         let cloud = build(Section::Voice, &i);
         let v = ids(&cloud);
-        for id in ["VoiceEnabled", "VoiceShortcut", "VoiceMicrophone", "VoiceSpeechLocal (Phonon)", "VoiceGroqKey", "groq.check", "VoiceModel", "VoiceCleanup", "VoiceCleanupKey", "VoiceAgent", "voice.try"] {
+        for id in ["VoiceEnabled", "VoiceShortcut", "VoiceMicrophone", "VoiceSpeechLocal (Phonon)", "VoiceGroqKey", "groq.check", "VoiceModel", "VoiceCleanup", "VoiceCleanupKey", "VoiceAgentTool", "VoiceAgent", "voice.try"] {
             assert!(v.contains(&id.to_string()), "{id} in {v:?}");
         }
         let key = rows(&cloud).into_iter().find(|r| r.control.id() == Some("VoiceGroqKey")).unwrap();

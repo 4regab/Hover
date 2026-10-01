@@ -50,6 +50,11 @@ pub struct Ui {
     look: RefCell<Option<(String, (slint::SharedString, slint::SharedString, slint::Color, bool))>>,
     /// A stage to draw instead of Voice's (the shots).
     pub shot: RefCell<Option<Stage>>,
+    /// The preview's open menu (0 none, 1 the agents, 2 the model) and the interaction
+    /// it was opened for: another interaction finds it closed.
+    pub menu: Cell<(i32, u64)>,
+    /// The agents ready for that interaction, once checked (off the UI thread).
+    pub ready: RefCell<Option<(u64, Vec<AgentTool>)>>,
     /// The stage last written to the log.
     logged: Cell<Option<std::mem::Discriminant<Stage>>>,
     pub hold: RefCell<Option<HoldFn>>,
@@ -242,6 +247,7 @@ impl App {
         if kind != 0 && kind == self.voice_ui.kind.get() {
             if let Some(c) = card { self.notch.set_voice(c); }
             if let Stage::Recording { level, .. } = stage { self.notch.set_voice_level(level); }
+            self.voice_menu_draw(&stage);
             return;
         }
         self.update_rest();
@@ -291,7 +297,8 @@ impl App {
             Stage::ChooseAgent(p) => {
                 c.kind = 4;
                 c.heard = s(&p.text);
-                let t = self.hover.settings.agent_tool();
+                let st = &self.hover.settings;
+                let t = self.voice.tool().unwrap_or_else(|| st.voice().agent.unwrap_or_else(|| st.agent_tool()));
                 c.words = s(if p.tools.is_empty() { format!("{} isn’t ready, and no other agent is. Set one up in Settings.", t.name()) }
                     else { format!("{} isn’t ready. Pick an agent for this task.", t.name()) });
                 c.settings = p.tools.is_empty();
@@ -339,24 +346,79 @@ impl App {
         });
         (c.folder, c.letter, c.tint, c.home) = look;
         c.tool = s(p.tool.id());
-        let models = pages::models(p.tool, &st.agent_offers(p.tool));
-        let model = models.iter().find(|m| m.0 == p.model).map_or_else(|| if p.model.is_empty() { "Default".to_owned() } else { p.model.clone() }, |m| m.1.clone());
-        c.agent = s(format!("{} · {model}", p.tool.name()));
+        c.agent = s(p.tool.name());
+        c.model = s(model_name(st, p.tool));
         c.access = s(pages::access_label(&p.access));
         c.full = p.access == "full";
         c.task = s(&p.task);
         c.ring = p.countdown.map_or(-1.0, |l| (l / hover_app::voice::COUNTDOWN.as_secs_f32() * 100.0).clamp(0.0, 100.0));
     }
 
-    pub fn voice_tools(stage: &Stage) -> Vec<VoiceTool> {
+    /// The stage drawn: Voice's, or the one a shot set.
+    fn shown(&self) -> Stage { self.voice_ui.shot.borrow().clone().unwrap_or_else(|| self.voice.stage()) }
+
+    /// The agents the card lists: ChooseAgent's, or the open agent menu's (the one in use
+    /// while the rest are checked).
+    fn voice_tools(&self, stage: &Stage) -> Vec<VoiceTool> {
+        let row = |t: &AgentTool| VoiceTool { id: s(t.id()), name: s(t.name()) };
         match stage {
-            Stage::ChooseAgent(p) => p.tools.iter().map(|t| VoiceTool { id: s(t.id()), name: s(t.name()) }).collect(),
+            Stage::ChooseAgent(p) => p.tools.iter().map(row).collect(),
+            Stage::Preview(p) | Stage::Editing(p) if self.voice_ui.menu.get() == (1, p.id) => match &*self.voice_ui.ready.borrow() {
+                Some((id, l)) if *id == p.id => l.iter().map(row).collect(),
+                _ => vec![row(&p.tool)],
+            },
             _ => vec![],
         }
     }
 
-    /// The stage drawn: Voice's, or the one a shot set.
-    fn shown(&self) -> Stage { self.voice_ui.shot.borrow().clone().unwrap_or_else(|| self.voice.stage()) }
+    /// The preview a menu can be open on: one counting down or stopped, not a trial.
+    fn menu_preview(&self, stage: &Stage) -> Option<Preview> {
+        match stage { Stage::Preview(p) | Stage::Editing(p) if !p.trial => Some(p.clone()), _ => None }
+    }
+
+    /// The card's menu as it is now; one for an interaction gone (or a card past its
+    /// preview) is closed.
+    fn voice_menu_draw(&self, stage: &Stage) {
+        let p = self.menu_preview(stage);
+        let (which, id) = self.voice_ui.menu.get();
+        let which = match &p { Some(p) if id == p.id => which, _ => { self.voice_ui.menu.set((0, 0)); 0 } };
+        let n = &self.notch;
+        n.set_voice_menu(which);
+        if let Some(m) = view::sync(n.get_voice_tools(), &self.voice_tools(stage)) { n.set_voice_tools(m); }
+        let (mut head, mut models, mut effort_head, mut efforts, mut note) = (String::new(), vec![], String::new(), vec![], String::new());
+        match (which, &p) {
+            (1, Some(p)) => {
+                head = "AGENT FOR THIS TASK".into();
+                let checked = self.voice_ui.ready.borrow().as_ref().is_some_and(|r| r.0 == p.id);
+                note = if checked { "Agents that are installed and signed in. The default is in Settings → Voice." } else { "Checking which agents are ready…" }.into();
+            }
+            (2, Some(p)) => (head, models, effort_head, efforts, note) = model_rows(&self.hover.settings, p.tool),
+            _ => {}
+        }
+        n.set_voice_menu_head(s(head));
+        n.set_voice_menu_note(s(note));
+        n.set_voice_mm_effort_head(s(effort_head));
+        if let Some(m) = view::sync(n.get_voice_mm_models(), &models) { n.set_voice_mm_models(m); }
+        if let Some(m) = view::sync(n.get_voice_mm_efforts(), &efforts) { n.set_voice_mm_efforts(m); }
+    }
+
+    /// Opens a menu on the preview (0 closes it). Opening stops the countdown for good,
+    /// so it can't start the task mid-choice; the agents are checked off the UI thread.
+    fn voice_open_menu(self: &Rc<Self>, which: i32) {
+        let stage = self.shown();
+        let Some(p) = self.menu_preview(&stage) else { self.voice_ui.menu.set((0, 0)); return self.voice_menu_draw(&stage); };
+        self.voice_ui.menu.set((which, p.id));
+        if which != 0 { self.voice.hold(); }
+        let checked = self.voice_ui.ready.borrow().as_ref().is_some_and(|r| r.0 == p.id);
+        if which == 1 && !checked && self.voice_ui.shot.borrow().is_none() {
+            let (v, id) = (self.voice.clone(), p.id);
+            std::thread::spawn(move || {
+                let tools = v.ready_tools();
+                ui_do(move |a| { *a.voice_ui.ready.borrow_mut() = Some((id, tools)); a.voice_menu_draw(&a.shown()); });
+            });
+        }
+        self.voice_menu_draw(&self.shown());
+    }
 
     /// update_rest's part: the card for the stage now, drawn; its kind (0: none).
     pub fn voice_draw(&self) -> i32 {
@@ -365,7 +427,7 @@ impl App {
         let kind = card.as_ref().map_or(0, |c| c.kind);
         if let Some(c) = card { self.notch.set_voice(c); }
         self.notch.set_voice_level(if let Stage::Recording { level, .. } = stage { level } else { 0.0 });
-        if let Some(m) = view::sync(self.notch.get_voice_tools(), &App::voice_tools(&stage)) { self.notch.set_voice_tools(m); }
+        self.voice_menu_draw(&stage);
         self.voice_ui.kind.set(kind);
         kind
     }
@@ -383,7 +445,40 @@ impl App {
         let a = self.clone();
         self.notch.on_voice_retry(move || a.voice.retry());
         let a = self.clone();
-        self.notch.on_voice_pick(move |id| { if let Some(t) = AgentTool::parse(Some(&id)) { a.voice.choose_agent(t); } });
+        self.notch.on_voice_pick(move |id| {
+            let Some(t) = AgentTool::parse(Some(&id)) else { return };
+            // ChooseAgent's pick; otherwise the preview's agent menu, for this task only.
+            if matches!(a.shown(), Stage::ChooseAgent(_)) {
+                a.voice.choose_agent(t);
+            } else {
+                a.voice_ui.menu.set((0, 0));
+                a.voice.change_agent(t);
+                a.voice_menu_draw(&a.shown());
+            }
+        });
+        let a = self.clone();
+        self.notch.on_voice_open_menu(move |which| a.voice_open_menu(which));
+        // The model and effort picks are the tool's own from then on, as the office's
+        // new-task box writes them ("Used by … from its next turn").
+        let a = self.clone();
+        self.notch.on_voice_pick_model(move |id| {
+            let Some(p) = a.menu_preview(&a.shown()) else { return };
+            let o = a.hover.settings.agent_options(p.tool);
+            // Default is no model: an empty id would be sent as one.
+            a.hover.settings.set_agent_options(p.tool, AgentOptions { model: (!id.is_empty()).then(|| id.to_string()), ..o });
+            a.voice_ui.menu.set((0, 0));
+            a.voice.change_agent(p.tool);
+            a.voice_menu_draw(&a.shown());
+            a.update_rest();
+        });
+        let a = self.clone();
+        self.notch.on_voice_pick_effort(move |e| {
+            let Some(p) = a.menu_preview(&a.shown()) else { return };
+            let o = a.hover.settings.agent_options(p.tool);
+            a.hover.settings.set_agent_options(p.tool, AgentOptions { effort: Some(e.to_string()), ..o });
+            a.voice.hold();
+            a.voice_menu_draw(&a.shown());
+        });
         let a = self.clone();
         self.notch.on_voice_settings(move || {
             a.voice_ui.hold_error.borrow_mut().take();

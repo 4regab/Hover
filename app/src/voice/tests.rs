@@ -274,3 +274,59 @@ fn a_press_while_busy_keeps_the_current_one() {
     assert_eq!(h.opens.load(Ordering::SeqCst), 1);
     h.v.cancel();
 }
+
+#[test]
+fn another_agent_on_the_card_stops_the_countdown_and_start_uses_it_once() {
+    let h = harness("go to demo and fix the footer", Opt { countdown: Duration::from_millis(300), ..Opt::default() });
+    let p = say(&h, false);
+    assert_eq!(p.tool, AgentTool::Kiro);
+    h.v.change_agent(AgentTool::Codex);
+    let Stage::Editing(e) = h.v.stage() else { panic!("{:?}", h.v.stage()) };
+    assert_eq!((e.tool, e.countdown, e.target_name.as_str(), e.task.as_str()), (AgentTool::Codex, None, "demo", "fix the footer"), "the target isn't routed again");
+    assert!(h.v.can_start(), "nothing to check: Start works at once");
+    std::thread::sleep(Duration::from_millis(600));
+    assert!(h.starts.lock().unwrap().is_empty(), "the countdown never fires after a change");
+    h.v.start_now();
+    h.v.start_now();
+    wait(&h.v, |s| matches!(s, Stage::Started { .. }));
+    std::thread::sleep(Duration::from_millis(100));
+    let starts = h.starts.lock().unwrap();
+    assert_eq!(starts.len(), 1, "one dispatch");
+    assert_eq!(starts[0].0, AgentTool::Codex);
+    assert_eq!((h.settings.agent_tool(), h.settings.voice().agent), (AgentTool::Kiro, None), "the defaults are left as they were");
+}
+
+#[test]
+fn hold_stops_the_countdown_before_it_ends() {
+    let h = harness("go to demo and fix the footer", Opt { countdown: Duration::from_millis(300), ..Opt::default() });
+    say(&h, false);
+    h.v.hold();
+    assert!(matches!(h.v.stage(), Stage::Editing(Preview { countdown: None, tool: AgentTool::Kiro, .. })));
+    std::thread::sleep(Duration::from_millis(600));
+    assert!(h.starts.lock().unwrap().is_empty(), "no start when the countdown would have ended");
+    assert!(h.v.can_start());
+    h.v.cancel();
+}
+
+#[test]
+fn a_change_after_cancel_is_ignored() {
+    let h = harness("go to demo and fix the footer", Opt::default());
+    say(&h, false);
+    h.v.cancel();
+    h.v.change_agent(AgentTool::Codex);
+    h.v.hold();
+    assert_eq!(h.v.stage(), Stage::Cancelled);
+    assert!(h.starts.lock().unwrap().is_empty());
+}
+
+#[test]
+fn voice_uses_its_own_default_agent_or_else_the_new_task_tool() {
+    let h = harness("go to demo and fix the footer", Opt::default());
+    h.settings.set_voice(VoiceSettings { agent: Some(AgentTool::Cursor), ..h.settings.voice() });
+    assert_eq!(say(&h, false).tool, AgentTool::Cursor);
+    h.v.cancel();
+    h.settings.set_voice(VoiceSettings { agent: None, ..h.settings.voice() });
+    h.settings.set_agent_tool(AgentTool::OpenCode);
+    assert_eq!(say(&h, false).tool, AgentTool::OpenCode);
+    h.v.cancel();
+}

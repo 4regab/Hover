@@ -3,7 +3,7 @@
 
 import { Pal, Fonts, Icon, Icons, PillButton, Ring } from "widgets.slint";
 import { LiveMark, MarkStack, StackMark, Mark, Arc } from "marks.slint";
-import { OfficeView, Page, Office, Backdrop, Side, Block, Opt, TagData, ToolData, PanelRow } from "office.slint";
+import { OfficeView, Page, Office, Backdrop, Side, Block, Opt, TagData, ToolData, PanelRow, MOpt } from "office.slint";
 export { Pal, Page, Office, Backdrop, Side, Block, Opt, TagData, ToolData, PanelRow, StackMark }
 
 // A quota on the island: its ring, the number and whether it has a % after it, and
@@ -19,11 +19,12 @@ export struct CardData { tool: string, title: string, sub: string, count: string
 // Voice's card in the notch (voice_ui.rs). kind: 1 listening, 2 working on what was
 // said, 3 the preview (counting down, edited, starting), 4 pick an agent, 5 started,
 // 6 cancelled, 7 an error. words: the line it shows; sub: the one under it (the time
-// while listening). ring: the countdown left, 0 to 100, or -1.
+// while listening). ring: the countdown left, 0 to 100, or -1. agent: the tool's name,
+// model: its model's (the pill names only the model, as the new-task box's).
 export struct VoiceCard {
     kind: int, words: string, sub: string, heard: string, note: string,
     target: string, folder: string, letter: string, tint: color, home: bool,
-    tool: string, agent: string, access: string, full: bool, task: string,
+    tool: string, agent: string, model: string, access: string, full: bool, task: string,
     ring: float, start: string, can-start: bool, starting: bool, retry: bool, settings: bool,
 }
 export struct VoiceTool { id: string, name: string }
@@ -85,6 +86,47 @@ component VPick inherits Rectangle {
     height: 28px;
     border-radius: 9px;
     background: amber ? #ffb34014 : #ffffff0f;
+}
+
+// The preview's menu rows (the office's MenuRow): an agent with its logo, a model (a
+// check on the picked one), or an effort in its row (seg).
+component VRow inherits Rectangle {
+    in property <string> label;
+    in property <string> tool;
+    in property <bool> on;
+    in property <bool> seg;
+    callback clicked;
+    height: seg ? 26px : max(28px, rt.preferred-height + 12px);
+    border-radius: 8px;
+    background: seg ? (on ? #9046ff59 : ta.has-hover ? #ffffff17 : #ffffff0d) : ta.has-hover ? #ffffff17 : transparent;
+    accessible-role: list-item;
+    accessible-label: label;
+    accessible-checkable: true;
+    accessible-checked: on;
+    accessible-action-default => { clicked(); }
+    HorizontalLayout {
+        padding-left: seg ? 0 : 8px;
+        padding-right: seg ? 0 : 8px;
+        spacing: 8px;
+        if tool != "": VerticalLayout { alignment: center; Mark { tool: root.tool; width: 16px; height: 16px; } }
+        rt := Text { text: label; font-size: seg ? 11.5px : 12.5px; color: #f6f2ff; vertical-alignment: center; horizontal-alignment: seg ? center : left;
+            wrap: word-wrap; horizontal-stretch: 1; }
+        if on && !seg: VerticalLayout { alignment: center; Icon { name: Icons.check; size: 12px; tint: #c4a2ff; } }
+    }
+    ta := TouchArea { mouse-cursor: pointer; clicked => { root.clicked(); } }
+}
+
+// A pick on the preview that opens its menu (the agent, the model): a chevron after it.
+component VMenuPick inherits VPick {
+    in property <bool> open;
+    in property <bool> enabled: true;
+    callback clicked;
+    background: (ta.has-hover && enabled) || open ? #ffffff1c : #ffffff0f;
+    opacity: enabled ? 1 : 0.55;
+    accessible-role: button;
+    accessible-enabled: enabled;
+    accessible-action-default => { if (enabled) { clicked(); } }
+    ta := TouchArea { enabled: root.enabled; mouse-cursor: pointer; clicked => { root.clicked(); } }
 }
 
 // .Pressable: 0 plain, 1 primary (light), 2 danger (red). small is the island's.
@@ -203,6 +245,17 @@ export component NotchWindow inherits Window {
     callback voice-retry();
     callback voice-pick(string);
     callback voice-settings();
+    // The preview's menu (voice_ui.rs): 0 none, 1 the agents ready for this task (in
+    // voice-tools), 2 the model, then its effort or variant, as the new-task box's.
+    in property <int> voice-menu;
+    in property <string> voice-menu-head;
+    in property <string> voice-menu-note;
+    in property <[MOpt]> voice-mm-models;
+    in property <string> voice-mm-effort-head;
+    in property <[MOpt]> voice-mm-efforts;
+    callback voice-open-menu(int);
+    callback voice-pick-model(string);
+    callback voice-pick-effort(string);
     public function focus-voice() { voice-keys.focus(); }
     callback deny();
     callback review();
@@ -447,7 +500,8 @@ export component NotchWindow inherits Window {
                 accessible-id: "NotchVoice";
                 accessible-label: "Voice";
                 key-pressed(e) => {
-                    if (e.text == Key.Escape) { root.voice-cancel(); return accept; }
+                    // An open menu closes first; then Esc cancels.
+                    if (e.text == Key.Escape) { if (root.voice-menu != 0) { root.voice-open-menu(0); } else { root.voice-cancel(); } return accept; }
                     if (e.text == Key.Return && !e.modifiers.shift && root.voice.kind == 3 && root.voice.can-start) { root.voice-start(); return accept; }
                     reject
                 }
@@ -553,16 +607,36 @@ export component NotchWindow inherits Window {
                                 Text { text: root.voice.folder; font-family: "DejaVu Sans Mono"; font-size: 10.5px; color: #f6f2ff61; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; }
                             }
                         }
-                        VPick {
-                            max-width: 180px;
-                            accessible-role: text;
-                            accessible-label: "Agent: " + root.voice.agent;
+                        // The agent and its model, for this task: each opens its menu (and
+                        // stops the countdown, so it can't start mid-choice).
+                        VMenuPick {
+                            open: root.voice-menu == 1;
+                            enabled: !root.voice.starting;
+                            accessible-label: "Agent: " + root.voice.agent + ". Change";
+                            accessible-id: "NotchVoiceAgent";
+                            clicked => { root.voice-open-menu(root.voice-menu == 1 ? 0 : 1); }
                             HorizontalLayout {
                                 padding-left: 6px;
-                                padding-right: 9px;
-                                spacing: 7px;
+                                padding-right: 8px;
+                                spacing: 6px;
                                 VerticalLayout { alignment: center; Mark { tool: root.voice.tool; width: 16px; height: 16px; } }
-                                Text { text: root.voice.agent; font-size: 12px; color: white; vertical-alignment: center; overflow: elide; }
+                                Text { text: root.voice.agent; font-size: 12px; color: white; vertical-alignment: center; }
+                                VerticalLayout { alignment: center; Icon { name: Icons.chevron-down; size: 11px; tint: #f6f2ff9e; } }
+                            }
+                        }
+                        VMenuPick {
+                            max-width: 150px;
+                            open: root.voice-menu == 2;
+                            enabled: !root.voice.starting;
+                            accessible-label: "Model: " + root.voice.model + ". Change";
+                            accessible-id: "NotchVoiceModel";
+                            clicked => { root.voice-open-menu(root.voice-menu == 2 ? 0 : 2); }
+                            HorizontalLayout {
+                                padding-left: 9px;
+                                padding-right: 8px;
+                                spacing: 5px;
+                                Text { text: root.voice.model; font-size: 12px; color: white; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; }
+                                VerticalLayout { alignment: center; Icon { name: Icons.chevron-down; size: 11px; tint: #f6f2ff9e; } }
                             }
                         }
                         VPick {
@@ -575,6 +649,37 @@ export component NotchWindow inherits Window {
                                 spacing: 6px;
                                 VerticalLayout { alignment: center; Icon { name: Icons.shield; size: 11px; tint: root.voice.full ? #ffc46b : #f6f2ff9e; } }
                                 Text { text: root.voice.access; font-size: 12px; color: root.voice.full ? #ffc46b : white; vertical-alignment: center; }
+                            }
+                        }
+                    }
+                    // The open menu, under the picks (the office's #mMenu, in the card): the
+                    // agents ready for this task, or the model, then its effort or variant.
+                    if root.voice.kind == 3 && root.voice-menu != 0: Rectangle {
+                        height: min(vmm.preferred-height, 168px);
+                        border-radius: 12px;
+                        background: #ffffff0a;
+                        border-width: 1px;
+                        border-color: #ffffff14;
+                        accessible-role: list;
+                        accessible-id: "NotchVoiceMenu";
+                        accessible-label: root.voice-menu-head;
+                        Flickable {
+                            width: parent.width;
+                            height: parent.height;
+                            content-height: vmm.preferred-height;
+                            vmm := VerticalLayout {
+                                width: parent.width;
+                                padding: 6px;
+                                Text { text: root.voice-menu-head; font-family: "Pixelify Sans"; font-weight: 600; font-size: 10.5px; letter-spacing: 0.63px; color: #f6f2ff61;
+                                    height: self.preferred-height + 10px; vertical-alignment: center; x: 8px; }
+                                for t in root.voice-tools: VRow { label: t.name; tool: t.id; on: t.id == root.voice.tool; clicked => { root.voice-pick(t.id); } }
+                                for m in root.voice-mm-models: VRow { label: m.label; on: m.on; clicked => { root.voice-pick-model(m.id); } }
+                                if root.voice-mm-efforts.length > 0: Text { text: root.voice-mm-effort-head; font-family: "Pixelify Sans"; font-weight: 600; font-size: 10.5px;
+                                    letter-spacing: 0.63px; color: #f6f2ff61; height: self.preferred-height + 10px; vertical-alignment: center; x: 8px; }
+                                if root.voice-mm-efforts.length > 0: HorizontalLayout { padding-left: 4px; padding-right: 4px; padding-bottom: 4px; padding-top: 2px; spacing: 3px;
+                                    for e in root.voice-mm-efforts: VRow { seg: true; label: e.label; on: e.on; horizontal-stretch: 1; clicked => { root.voice-pick-effort(e.id); } } }
+                                HorizontalLayout { padding-left: 8px; padding-right: 8px; padding-top: 4px; padding-bottom: 3px;
+                                    Text { text: root.voice-menu-note; font-size: 11px; color: #f6f2ff61; wrap: word-wrap; } }
                             }
                         }
                     }
