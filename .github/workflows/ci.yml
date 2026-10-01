@@ -96,8 +96,14 @@ jobs:
         run: |
           sudo apt-get update
           sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-            build-essential pkg-config libfontconfig1-dev libfreetype-dev libasound2-dev libxkbcommon-dev libxkbcommon-x11-dev \
-            clang lld llvm
+            build-essential pkg-config libfontconfig1-dev libfreetype-dev libasound2-dev libxkbcommon-dev libxkbcommon-x11-dev
+      # Microsoft's current CRT headers refuse clang older than 19, and 22.04 has 14:
+      # clang-cl, lld-link and llvm-lib 19 come from LLVM's own apt repository.
+      - name: Clang 19
+        run: |
+          wget -q https://apt.llvm.org/llvm.sh
+          sudo bash llvm.sh 19
+          echo /usr/lib/llvm-19/bin >> "$GITHUB_PATH"
       - name: Windows target
         run: rustup target add x86_64-pc-windows-msvc
       # mimalloc's C is built even by a check, and MSVC's lib.exe isn't on Linux:
