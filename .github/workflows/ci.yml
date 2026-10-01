@@ -96,11 +96,17 @@ jobs:
         run: |
           sudo apt-get update
           sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-            build-essential pkg-config libfontconfig1-dev libfreetype-dev libasound2-dev libxkbcommon-dev libxkbcommon-x11-dev
+            build-essential pkg-config libfontconfig1-dev libfreetype-dev libasound2-dev libxkbcommon-dev libxkbcommon-x11-dev \
+            clang lld llvm
       - name: Windows target
         run: rustup target add x86_64-pc-windows-msvc
+      # mimalloc's C is built even by a check, and MSVC's lib.exe isn't on Linux:
+      # cargo-xwin compiles it with clang-cl against Microsoft's CRT and SDK headers.
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-xwin
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: native
       - name: cargo check for Windows
-        run: cargo check --manifest-path native/Cargo.toml --release --workspace --all-targets --target x86_64-pc-windows-msvc
+        run: cargo xwin check --manifest-path native/Cargo.toml --release --workspace --all-targets --target x86_64-pc-windows-msvc
