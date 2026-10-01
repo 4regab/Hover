@@ -8,6 +8,8 @@ name: CI
 on:
   push:
     branches: ['rust-port/**']
+    # Docs-only pushes don't rebuild. (Path filters don't apply to tags.)
+    paths-ignore: ['**.md', 'docs/**', 'assets/readme/**']
     tags: ['v*']
   pull_request:
   workflow_dispatch:
