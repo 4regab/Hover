@@ -33,8 +33,8 @@ office still runs, and the tools show as not installed. The tests use a stand-in
 ## Build and run
 
 ```powershell
-.\build.ps1                  # debug build: native\target\debug\hoverai.exe
-.\build.ps1 release          # release build: native\target\release\hoverai.exe
+.\build.ps1                  # debug build: target\debug\hoverai.exe
+.\build.ps1 release          # release build: target\release\hoverai.exe
 .\build.ps1 release run      # build, then start it
 .\build.ps1 publish          # publish\hoverai.exe, with LICENSE and the notices
 .\build.ps1 installer        # dist\Hover-Setup-<version>.exe (needs Inno Setup)
@@ -55,7 +55,7 @@ history:
 
 ```powershell
 $env:HOVER_DATA_DIR = "$env:TEMP\hover-dev"
-.\native\target\release\hoverai.exe
+.\target\release\hoverai.exe
 ```
 
 ## Test
@@ -63,7 +63,7 @@ $env:HOVER_DATA_DIR = "$env:TEMP\hover-dev"
 ```powershell
 .\build.ps1 test
 # the same as:
-cargo test --manifest-path native/Cargo.toml --release --workspace
+cargo test --release --workspace
 ```
 
 Three layout tests in `hover-chat` compare text widths measured in Linux Chromium
@@ -73,7 +73,7 @@ with DejaVu Sans; they skip on Windows. The D-Bus tests (`look.rs`,
 Render every view headless with the software renderer (no GPU, no desktop needed):
 
 ```powershell
-.\native\target\release\hoverai.exe --shots $env:TEMP\hover-shots
+.\target\release\hoverai.exe --shots $env:TEMP\hover-shots
 ```
 
 Real input and memory checks run against the release app with
@@ -87,7 +87,7 @@ Real input and memory checks run against the release app with
 - A release build has no console (it is a Windows GUI app). Start it from a terminal
   with its output piped (for example `| Out-Host`) to see panics on stderr.
 - Debug builds (`.\build.ps1 run`) keep symbols. For a debugger, open
-  `native\target\debug\hoverai.exe` in Visual Studio or WinDbg.
+  `target\debug\hoverai.exe` in Visual Studio or WinDbg.
 - `RUST_BACKTRACE=1` prints a backtrace on a panic. Release builds use
   `panic = "abort"` and strip symbols, so use a debug build for backtraces.
 
@@ -98,5 +98,5 @@ Real input and memory checks run against the release app with
   `main.rs`), on the adapter that drives the main display.
 - Allocator: mimalloc, so freed memory goes back to Windows.
 - Tray and notifications, the shortcut (`RegisterHotKey`), the notch window's
-  click-through and focus rules: `apps/hover/src/win.rs`.
+  click-through and focus rules: `app/src/win.rs`.
 - Codex's Read only mode isn't offered: Codex has no sandbox on Windows.

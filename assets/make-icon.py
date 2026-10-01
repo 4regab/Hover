@@ -1,4 +1,4 @@
-"""Writes Hover's icon, native/apps/hover/assets/hover.ico, and the header's hover-mark.png
+"""Writes Hover's icon, app/assets/hover.ico, and the header's hover-mark.png
 from the logo in assets/hover.png.
 
     python assets/make-icon.py        (needs Pillow: pip install pillow)
@@ -76,9 +76,9 @@ def mark(logo):
 
 if __name__ == "__main__":
     logo = Image.open(ROOT / "assets" / "hover.png").convert("RGB")
-    ico_path = ROOT / "native" / "apps" / "hover" / "assets" / "hover.ico"
+    ico_path = ROOT / "app" / "assets" / "hover.ico"
     ico_path.write_bytes(ico([logo.convert("RGBA").resize((s, s), Image.Resampling.LANCZOS) for s in SIZES]))
-    mark_path = ROOT / "native" / "apps" / "hover" / "assets" / "hover-mark.png"
+    mark_path = ROOT / "app" / "assets" / "hover-mark.png"
     mark(logo).save(mark_path, optimize=True)
 
     # Read it back: every size is there, and the large frame is still the logo

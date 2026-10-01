@@ -1,6 +1,6 @@
 # Architecture
 
-Hover is one Rust workspace in `native/`. One binary (`hoverai`, installed as `hover`
+Hover is one Rust workspace at the repository root. One binary (`hoverai`, installed as `hover`
 on Linux) holds the whole product. The crates keep the parts that have no window apart
 from the parts that do, so most of the logic builds and tests anywhere.
 
@@ -15,7 +15,7 @@ files. What differs per OS is a thin layer of adapters, picked at compile time w
 flowchart TB
     subgraph UI["Frontend: shared"]
         slint["ui/*.slint<br/>(notch, office, Settings, chat drawer)"]
-        glue["apps/hover glue<br/>main.rs, office_ui.rs, view.rs, pages.rs, voice_ui.rs"]
+        glue["app/ glue<br/>main.rs, office_ui.rs, view.rs, pages.rs, voice_ui.rs"]
     end
 
     subgraph Backend["Backend: shared, no window"]
@@ -54,19 +54,19 @@ flowchart TB
     agents -. "cfg per OS" .-> l4
 ```
 
-The Slint files are compiled into Rust at build time (`apps/hover/build.rs` runs
+The Slint files are compiled into Rust at build time (`app/build.rs` runs
 `slint_build::compile("ui/app.slint")`), so there is no UI file to ship and no
 interpreter at run time. The same markup draws on both OSes; only the renderer under it
 differs (see [Frames](#the-offices-frames-and-their-lifetime)).
 
 ## How the crates depend on each other
 
-Arrows point at what a crate uses. Nothing in `crates/` depends on `apps/`, and no
+Arrows point at what a crate uses. Nothing in `crates/` depends on `app/`, and no
 backend crate depends on Slint.
 
 ```mermaid
 flowchart LR
-    hover["apps/hover<br/>(hoverai)"]
+    hover["app<br/>(hoverai)"]
     agents[hover-agents]
     core[hover-core]
     quota[hover-quota]
@@ -98,21 +98,21 @@ wrapper script and in how the result is packaged.
 
 ```mermaid
 flowchart TB
-    src["native/ workspace<br/>crates + apps/hover + ui/*.slint"]
+    src["workspace at the root<br/>crates + app + ui/*.slint"]
 
     subgraph WinB["Windows: build.ps1"]
         wc["cargo build --release -p hover<br/>(MSVC toolchain)"]
-        wexe["native/target/release/hoverai.exe"]
+        wexe["target/release/hoverai.exe"]
         wpub["publish/<br/>hoverai.exe, LICENSE, THIRD-PARTY-NOTICES.txt"]
-        wiss["Inno Setup (ISCC) + native/installer/Hover.iss"]
+        wiss["Inno Setup (ISCC) + packaging/windows/Hover.iss"]
         wout["dist/Hover-Setup-version.exe"]
         wc --> wexe -->|"build.ps1 publish"| wpub -->|"build.ps1 installer"| wiss --> wout
     end
 
     subgraph LinB["Linux: Makefile"]
         lc["cargo build --release -p hover<br/>(gcc, fontconfig, ALSA, xkbcommon)"]
-        lexe["native/target/release/hoverai"]
-        lpkg["native/installer/package-linux.sh"]
+        lexe["target/release/hoverai"]
+        lpkg["packaging/linux/package-linux.sh"]
         ldeb["dist/hover_version_amd64.deb"]
         ltar["dist/hover-version-linux-x86_64.tar.gz"]
         linst["make install<br/>PREFIX/bin/hover + icon + .desktop"]
@@ -127,7 +127,7 @@ flowchart TB
 - The binary carries its fonts, icons, music and the Phonon locks and check sample
   (`include_bytes!` / `include_str!`), so the installers ship one executable plus the
   licence files.
-- The version is `native/Cargo.toml`'s `[workspace.package] version`. `build.ps1`,
+- The version is `Cargo.toml`'s `[workspace.package] version`. `build.ps1`,
   the Makefile, the installers and `hoverai --version` all read it from there.
 - The Rust toolchain is pinned in `rust-toolchain.toml` at the repo root.
 
@@ -155,7 +155,7 @@ flowchart LR
     rel["release job (tag only)<br/>GitHub pre-release with the .exe, .deb, .tar.gz"]
 ```
 
-A tag whose version doesn't match `native/Cargo.toml` fails before anything builds. A
+A tag whose version doesn't match `Cargo.toml` fails before anything builds. A
 failing test on either OS means nothing is published. Pushes that only touch Markdown,
 `docs/` or the README's pictures don't run CI.
 
@@ -199,13 +199,13 @@ when Hover does.
 | `crates/hover-chat` | The chat thread: layout per message (cached), selection, copy, images, and a CPU painter. | No |
 | `crates/hover-notch` | The notch's geometry, animation and hover rules. | No |
 | `crates/hover-office` | The office: scene, bots, wall canvases, camera, picking and pacing (`office.rs`, `scene.rs`, `bot.rs`), the wgpu renderer (`render.rs`, `office.wgsl`), the page's background and vignette (`page.rs`), and its own thread (`live.rs`). | No (renders offscreen) |
-| `apps/hover` | The product: `main.rs` (windows, renderer, timers), `office_ui.rs` (the office UI around the scene), `view.rs` and `pages.rs` (Settings), `notch.rs` with `win.rs` / `x11.rs` (placing, focus, click-through), tray (`sni.rs` on Linux, `win.rs` on Windows), voice (`speech.rs`, `voice/`, `phonon.rs`, `voice_ui.rs`), `music.rs`, `bench.rs` (the measurement channel), `shots.rs`, `selftest.rs`, and the Slint UI in `ui/*.slint`. | Yes |
+| `app` | The product: `main.rs` (windows, renderer, timers), `office_ui.rs` (the office UI around the scene), `view.rs` and `pages.rs` (Settings), `notch.rs` with `win.rs` / `x11.rs` (placing, focus, click-through), tray (`sni.rs` on Linux, `win.rs` on Windows), voice (`speech.rs`, `voice/`, `phonon.rs`, `voice_ui.rs`), `music.rs`, `bench.rs` (the measurement channel), `shots.rs`, `selftest.rs`, and the Slint UI in `ui/*.slint`. | Yes |
 | `tools/notch-proto` | The port's Windows notch prototype. Not shipped; kept for `notch-proto --selftest`, the only notch self-test on Windows (the app's `--selftest` is X11 only). | Yes |
 | `tools/hover-measure` | Dev tools, not shipped: the external memory sampler, the scenario runner, the summary, and `fake-agent`. See [profiling.md](profiling.md). | No |
 
 ## Boundaries
 
-- **UI thread.** Slint's event loop runs everything in `apps/hover`. Other threads
+- **UI thread.** Slint's event loop runs everything in `app`. Other threads
   reach it only through `ui_do` (`main.rs`), which posts a closure to the loop.
 - **Runtime.** `hover_app::app::Hover` (`app.rs`) is the shared state: settings,
   history, one `Runtime` per tool, the sessions, the quota poller. It has no UI; views
@@ -491,7 +491,7 @@ Check `cfg(not(windows))` branches carefully: they are the Linux path.
 ## Where to change things
 
 - **A setting.** Add it to `hover-core/src/settings.rs` (keep the JSON names and
-  their order: 2.x reads the same file). Show it in `apps/hover/src/pages.rs`, and
+  their order: 2.x reads the same file). Show it in `app/src/pages.rs`, and
   handle its click in `view.rs` (`toggled`, `pressed`, `picked_seg`, `menu_pick`).
 - **Something in the office UI.** `ui/office.slint` for the look;
   `office_ui.rs` (`wire_office`, `office_widgets`) for what it shows and does.

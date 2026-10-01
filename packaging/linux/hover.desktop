@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Hover
+Comment=Agent office in a notch at the top of the screen
+Exec=@EXEC@
+Icon=hover
+Terminal=false
+Categories=Development;Utility;
+StartupWMClass=hover

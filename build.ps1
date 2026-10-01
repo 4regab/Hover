@@ -1,12 +1,12 @@
 <#
-  Hover for Windows — build helper (the native build: Rust, in .\native).
+  Hover for Windows — build helper (the native build: Rust, from the repo root).
 
     .\build.ps1              debug build
     .\build.ps1 release      optimised build
     .\build.ps1 release run  build, then relaunch
     .\build.ps1 test         the workspace's tests
     .\build.ps1 publish      hoverai.exe in .\publish
-    .\build.ps1 installer    Inno Setup installer in .\dist (the version in native\Cargo.toml)
+    .\build.ps1 installer    Inno Setup installer in .\dist (the version in Cargo.toml)
     .\build.ps1 installer -Version 3.0.1
 
   Needs Rust (winget install Rustlang.Rustup) with the MSVC build tools.
@@ -18,10 +18,9 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$native = Join-Path $PSScriptRoot "native"
-$manifest = Join-Path $native "Cargo.toml"
+$manifest = Join-Path $PSScriptRoot "Cargo.toml"
 $publishDir = Join-Path $PSScriptRoot "publish"
-$installerScript = Join-Path $native "installer\Hover.iss"
+$installerScript = Join-Path $PSScriptRoot "packaging\windows\Hover.iss"
 $distDir = Join-Path $PSScriptRoot "dist"
 
 if ((-not [string]::IsNullOrWhiteSpace($Version)) -and
@@ -44,7 +43,7 @@ function Build-Hover([string]$profile) {
     & cargo @cargoArgs
     $ErrorActionPreference = "Stop"
     if ($LASTEXITCODE -ne 0) { throw "cargo build failed" }
-    return (Join-Path $native "target\$profile\hoverai.exe")
+    return (Join-Path $PSScriptRoot "target\$profile\hoverai.exe")
 }
 
 function Publish-Hover {
@@ -58,7 +57,7 @@ function Publish-Hover {
 function Get-ProjectVersion {
     if (-not [string]::IsNullOrWhiteSpace($Version)) { return $Version }
     $line = Select-String -Path $manifest -Pattern '^version = "(.+)"' | Select-Object -First 1
-    if (-not $line) { throw "Could not read the version from native\Cargo.toml" }
+    if (-not $line) { throw "Could not read the version from Cargo.toml" }
     return $line.Matches[0].Groups[1].Value
 }
 

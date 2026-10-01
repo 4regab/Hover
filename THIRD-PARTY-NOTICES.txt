@@ -1,7 +1,7 @@
 Hover includes the following third-party works.
 
 ========================================================================
-Inter font (native/apps/hover/assets), version 4.1
+Inter font (app/assets), version 4.1
 https://github.com/rsms/inter
 ========================================================================
 
@@ -99,7 +99,7 @@ FROM, OUT OF THE USE OR INABILITY TO USE THE FONT SOFTWARE OR FROM
 OTHER DEALINGS IN THE FONT SOFTWARE.
 
 ========================================================================
-Lucide icons (native/apps/hover/ui/icons.slint), version 1.48.0
+Lucide icons (app/ui/icons.slint), version 1.48.0
 https://lucide.dev
 ========================================================================
 
@@ -148,7 +148,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 ========================================================================
-Pixelify Sans font (native/apps/hover/assets/PixelifySans.ttf)
+Pixelify Sans font (app/assets/PixelifySans.ttf)
 https://github.com/google/fonts/tree/main/ofl/pixelifysans
 ========================================================================
 
@@ -247,14 +247,14 @@ FROM, OUT OF THE USE OR INABILITY TO USE THE FONT SOFTWARE OR FROM
 OTHER DEALINGS IN THE FONT SOFTWARE.
 
 ========================================================================
-"Lofi Hip Hop Loop" by omfgdude (native/apps/hover/assets/office-beats.ogg)
+"Lofi Hip Hop Loop" by omfgdude (app/assets/office-beats.ogg)
 https://opengameart.org/content/lofi-hip-hop-loop
 ========================================================================
 
 Released under CC0 1.0 (public domain dedication).
 
 ========================================================================
-three.js (its shading, ported in native/crates/hover-office/src/office.wgsl), MIT licence
+three.js (its shading, ported in crates/hover-office/src/office.wgsl), MIT licence
 https://github.com/mrdoob/three.js
 ========================================================================
 
@@ -284,7 +284,7 @@ THE SOFTWARE.
 
 --------------------------------------------------------------------------------
 
-Lobe Icons (the Kiro, Codex and Cursor logos in native/apps/hover/ui/marks.slint and office.slint)
+Lobe Icons (the Kiro, Codex and Cursor logos in app/ui/marks.slint and office.slint)
 https://github.com/lobehub/lobe-icons
 The logos are trademarks of their owners and are used only to name each tool.
 
@@ -310,7 +310,7 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
-Chromium broken-image icon (native/crates/hover-chat/assets/broken_image_*.png)
+Chromium broken-image icon (crates/hover-chat/assets/broken_image_*.png)
 https://chromium.googlesource.com/chromium/src/+/main/third_party/blink/public/default_100_percent/blink/
 Copyright 2015 The Chromium Authors. BSD-style licence:
 https://chromium.googlesource.com/chromium/src/+/main/LICENSE

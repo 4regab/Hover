@@ -5,10 +5,10 @@ Three layers, from fastest to closest to what users run, then a manual voice che
 ## 1. Unit and golden tests
 
 ```powershell
-cargo test --manifest-path native/Cargo.toml --release --workspace
+cargo test --release --workspace
 ```
 
-`native/golden/` holds fixtures and outputs made from the 2.x page (Markdown, flowcharts,
+`tests/golden/` holds fixtures and outputs made from the 2.x page (Markdown, flowcharts,
 the chat's copy and layout). `hover-agents`' tests drive the ACP host and the OpenCode host
 against in-process fakes. The three layout goldens that compare text widths were measured
 with DejaVu Sans on Linux, so they skip on Windows.
@@ -16,11 +16,11 @@ with DejaVu Sans on Linux, so they skip on Windows.
 Voice, Phonon, routing and Pause have their own tests in the same run. To run one part:
 
 ```powershell
-cargo test --manifest-path native/Cargo.toml --release -p hover --lib voice::    # the voice flow, capture, WAV, Groq, cleanup
-cargo test --manifest-path native/Cargo.toml --release -p hover --lib phonon::   # setup, checks, repair, remove (a fake Python)
-cargo test --manifest-path native/Cargo.toml --release -p hover-agents --lib route::
-cargo test --manifest-path native/Cargo.toml --release -p hover-agents --test sessions   # Pause, the queue, an unconfirmed stop
-cargo test --manifest-path native/Cargo.toml --release -p hover-core                     # projects, secrets, the new settings keys
+cargo test --release -p hover --lib voice::    # the voice flow, capture, WAV, Groq, cleanup
+cargo test --release -p hover --lib phonon::   # setup, checks, repair, remove (a fake Python)
+cargo test --release -p hover-agents --lib route::
+cargo test --release -p hover-agents --test sessions   # Pause, the queue, an unconfirmed stop
+cargo test --release -p hover-core                     # projects, secrets, the new settings keys
 ```
 
 - `voice::tests` drives `Voice` with a fake engine, microphone and agent: the countdown
@@ -37,10 +37,10 @@ Two voice tests are ignored because they need real things:
 
 ```powershell
 # A real microphone, for two seconds
-cargo test --manifest-path native/Cargo.toml --release -p hover --lib voice::audio -- --ignored
+cargo test --release -p hover --lib voice::audio -- --ignored
 # Phonon for real: downloads, installs and checks it, transcribes the sample, then a cancel
 $env:PHONON_LIVE_DIR = "$env:TEMP\hover-phonon-live"   # the default; a Ready install there is reused
-cargo test --manifest-path native/Cargo.toml --release -p hover --lib phonon::tests::live_install -- --ignored --nocapture
+cargo test --release -p hover --lib phonon::tests::live_install -- --ignored --nocapture
 ```
 
 `live_install` downloads the pinned runtime, wheels and model (about 420 MB on Windows,
@@ -49,8 +49,8 @@ transcribes another 16 kHz mono WAV.
 
 ## 2. The release app with fake tools
 
-`native/tools/hover-measure` (not shipped) runs the release app with `HOVER_BENCH=1`, sends it
-commands on stdin (`native/apps/hover/src/bench.rs`), and samples its process tree. Each run
+`tools/hover-measure` (not shipped) runs the release app with `HOVER_BENCH=1`, sends it
+commands on stdin (`app/src/bench.rs`), and samples its process tree. Each run
 gets fresh app data and a project folder whose name has a space and a `ü` in it. The real
 tools are replaced by stand-ins placed first on `PATH`:
 
@@ -64,8 +64,8 @@ tools are replaced by stand-ins placed first on `PATH`:
   prompt went twice and that every call named its folder.
 
 ```powershell
-cargo build --manifest-path native/Cargo.toml --release -p hover -p hover-measure
-.\native\tools\hover-measure\run-memory.ps1 -Exe native\target\release\hoverai.exe -Out out\oc -Runs 1 -Script opencode.hms -Env "FAKE_OPENCODE_LOG=$PWD\out\oc.log"
+cargo build --release -p hover -p hover-measure
+.\tools\hover-measure\run-memory.ps1 -Exe target\release\hoverai.exe -Out out\oc -Runs 1 -Script opencode.hms -Env "FAKE_OPENCODE_LOG=$PWD\out\oc.log"
 ```
 
 | Scenario (`scenarios/`) | What it checks |
@@ -94,7 +94,7 @@ the same twice (the camera may still be moving, and the clock shows the real tim
 the side panel between builds:
 
 ```powershell
-.\native\tools\hover-measure\compare-shots.ps1 -A shots-before -B shots-after -Region 792,8,360,424 -Filter office-*.png
+.\tools\hover-measure\compare-shots.ps1 -A shots-before -B shots-after -Region 792,8,360,424 -Filter office-*.png
 ```
 
 Settings shots compare whole.
@@ -128,7 +128,7 @@ needs a logged-on desktop, a microphone and speakers, and a Ready Phonon install
    workspace to a test folder with Ask first access.
 4. Hold Ctrl+Alt+Space for about 2 s in silence. Expected: Listening, then "Nothing was
    heard…" with Retry, and no session. Esc closes the card.
-5. Hold it while `native/apps/hover/assets/phonon/check.wav` plays from the speakers.
+5. Hold it while `app/assets/phonon/check.wav` plays from the speakers.
    Expected: Listening, Loading (about 25 s, Phonon's start), Resolving, the preview with
    "Open the notes folder and add a list of the open tasks.", the default workspace, Kiro
    and Ask first, a 3 s countdown, then Started.

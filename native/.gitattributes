@@ -1,2 +1,0 @@
-# Golden files are compared byte for byte with what the Rust ports write, on every OS.
-golden/** -text

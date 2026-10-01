@@ -42,16 +42,16 @@ sudo make install           # PREFIX=/usr/local; DESTDIR= for staging
 make package                # .deb and tarball in dist/
 ```
 
-A `v*` tag (three numbers, e.g. `v3.1.0`, matching `native/Cargo.toml`) runs
+A `v*` tag (three numbers, e.g. `v3.1.0`, matching `Cargo.toml`) runs
 `.github/workflows/ci.yml`'s tests on Windows and Linux (Ubuntu 22.04), then builds the
 installers from that build and publishes them together as a GitHub pre-release.
 
 The cross-check that Windows code still compiles, from Linux (mimalloc's C needs
 clang-cl 19 or newer, which `cargo-xwin` drives with Microsoft's headers):
-`cargo xwin check --manifest-path native/Cargo.toml --release --workspace --all-targets --target x86_64-pc-windows-msvc`.
+`cargo xwin check --release --workspace --all-targets --target x86_64-pc-windows-msvc`.
 CI doesn't run it: its Windows job builds on Windows.
 
-The version is `native/Cargo.toml`'s `[workspace.package] version`; the installers
+The version is `Cargo.toml`'s `[workspace.package] version`; the installers
 and `hover --version` read it from there.
 
 Only one copy of Hover runs at a time. A second launch opens the running copy's
@@ -64,7 +64,7 @@ real X display, `hover --selftest DIR` drives the notch and writes `report.json`
 ## Layout
 
 ```
-native/crates/
+crates/
   hover-core     paths (+ the Noty move), settings.json (System.Text.Json's bytes),
                  crypto (AES-GCM; DPAPI / Secret Service key), history (sealed
                  agents/), images, single instance, palette and VS Code themes,
@@ -81,17 +81,17 @@ native/crates/
   hover-notch    notch geometry, animation, hover rules
   hover-office   the office: scene, bots, wall canvases, camera, picking, pacing,
                  three.js 0.170's shading in office.wgsl; its own thread (live.rs)
-native/apps/
-  hover          the product: app, Settings (pages.rs), tray (sni.rs / win.rs),
-                 notch (notch.rs, x11.rs, win.rs), office UI (office_ui.rs), music,
-                 bench.rs (HOVER_BENCH), selftest, shots; voice (speech.rs, voice/,
-                 voice_ui.rs), Phonon's setup and engine (phonon.rs, assets/phonon/);
-                 ui/*.slint; assets/
-native/tools/
+app/             the product (crate `hover`, binary hoverai): app, Settings (pages.rs),
+                 tray (sni.rs / win.rs), notch (notch.rs, x11.rs, win.rs), office UI
+                 (office_ui.rs), music, bench.rs (HOVER_BENCH), selftest, shots; voice
+                 (speech.rs, voice/, voice_ui.rs), Phonon's setup and engine (phonon.rs,
+                 assets/phonon/); ui/*.slint; assets/
+tools/
   hover-measure  memory sampler, scenario runner, fake-agent (not shipped)
   notch-proto    the port's Windows notch prototype, kept for its --selftest (not shipped)
-native/golden/   fixtures and expected outputs (made from the 2.x page)
-native/installer/  Hover.iss (Windows), package-linux.sh
+tests/golden/   fixtures and expected outputs (made from the 2.x page)
+packaging/       windows/Hover.iss; linux/package-linux.sh and hover.desktop (the one
+                 .desktop file the .deb and make install both use)
 assets/          hover.png (the logo), make-icon.py (writes the app's hover.ico and
                  hover-mark.png), the README's pictures (readme/)
 ```
@@ -216,8 +216,8 @@ assets/          hover.png (the logo), make-icon.py (writes the app's hover.ico 
 ## Gotchas
 
 - **Line endings are CRLF** (`.gitattributes`), except the scripts run through `#!`
-  or `sh` (`native/installer/*.sh`, `Makefile`), which are LF.
-- **`bin/` is git-ignored** at any depth: `native/crates/hover-core/src/bin/hover-data.rs`
+  or `sh` (`packaging/linux/*`, `Makefile`), which are LF.
+- **`bin/` is git-ignored** at any depth: `crates/hover-core/src/bin/hover-data.rs`
   is tracked with `git add -f`.
 - **`str_replace` on files with `—` (em dash) and non-ASCII** can be finicky; anchor
   on unique ASCII lines.

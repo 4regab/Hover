@@ -1,7 +1,7 @@
 name: CI
 
 # The native (Rust) Hover on GitHub's own runners: one job per platform runs the tests
-# and the headless screenshots. On a v* tag (three numbers, matching native/Cargo.toml)
+# and the headless screenshots. On a v* tag (three numbers, matching Cargo.toml)
 # the same jobs then build the installers from the build they just tested, and
 # `release` publishes them together as a pre-release. No secrets and no agent
 # accounts: agent runs use the repo's fake-agent.
@@ -39,22 +39,20 @@ jobs:
           if ($env:GITHUB_REF_NAME -notmatch '^v(?<version>\d+\.\d+\.\d+)$') {
             throw 'Release tag must be v followed by three numeric version parts, for example v3.1.0.'
           }
-          $crate = (Select-String -Path native\Cargo.toml -Pattern '^version = "(.+)"').Matches[0].Groups[1].Value
-          if ($crate -ne $Matches.version) { throw "The tag is $env:GITHUB_REF_NAME but native/Cargo.toml says $crate." }
+          $crate = (Select-String -Path Cargo.toml -Pattern '^version = "(.+)"').Matches[0].Groups[1].Value
+          if ($crate -ne $Matches.version) { throw "The tag is $env:GITHUB_REF_NAME but Cargo.toml says $crate." }
           Add-Content -Path $env:GITHUB_ENV -Value "RELEASE_VERSION=$($Matches.version)"
       # rust-toolchain.toml picks the version; rustup and MSVC are on the runner.
       - name: Toolchain
         run: rustup show active-toolchain
       - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: native
       - name: Test
-        run: cargo test --manifest-path native/Cargo.toml --release --workspace --no-fail-fast
+        run: cargo test --release --workspace --no-fail-fast
       - name: Headless screenshots
         run: |
-          cargo build --manifest-path native/Cargo.toml --release -p hover
+          cargo build --release -p hover
           $env:HOVER_DATA_DIR = Join-Path $env:RUNNER_TEMP 'hover-data'
-          .\native\target\release\hoverai.exe --shots (Join-Path $env:RUNNER_TEMP 'shots') | Out-Host
+          .\target\release\hoverai.exe --shots (Join-Path $env:RUNNER_TEMP 'shots') | Out-Host
           $n = (Get-ChildItem (Join-Path $env:RUNNER_TEMP 'shots') -Filter *.png).Count
           if ($n -eq 0) { throw 'no screenshots were written' }
           Write-Host "$n screenshots"
@@ -98,21 +96,19 @@ jobs:
       - name: Toolchain
         run: rustup show active-toolchain
       - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: native
       - name: Test
         env:
           XDG_RUNTIME_DIR: ${{ runner.temp }}/xdg
         run: |
           mkdir -p -m 700 "$XDG_RUNTIME_DIR"
-          cargo test --manifest-path native/Cargo.toml --release --workspace --no-fail-fast
+          cargo test --release --workspace --no-fail-fast
       - name: Headless screenshots
         env:
           XDG_RUNTIME_DIR: ${{ runner.temp }}/xdg
           HOVER_DATA_DIR: ${{ runner.temp }}/hover-data
         run: |
-          cargo build --manifest-path native/Cargo.toml --release -p hover
-          ./native/target/release/hoverai --shots "$RUNNER_TEMP/shots"
+          cargo build --release -p hover
+          ./target/release/hoverai --shots "$RUNNER_TEMP/shots"
           ls "$RUNNER_TEMP/shots"/*.png > /dev/null
       - uses: actions/upload-artifact@v4
         with:

@@ -1,13 +1,16 @@
 # Normalise line endings so the repo is consistent across machines.
 * text=auto eol=crlf
 
-# Binary assets — never touch their bytes.
+# Binary assets - never touch their bytes.
 *.ico binary
 *.png binary
 *.gif binary
 *.stickies binary
 *.wav binary
 
-# Run through sh on Linux: a CR at a line's end breaks them.
-native/installer/*.sh text eol=lf
+# Golden files are compared byte for byte with what the Rust ports write, on every OS.
+tests/golden/** -text
+
+# Run through sh on Linux, or read by Linux tools: a CR at a line's end breaks them.
+packaging/linux/* text eol=lf
 Makefile text eol=lf

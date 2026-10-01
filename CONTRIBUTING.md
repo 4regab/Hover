@@ -40,7 +40,7 @@ Hover fits together, then [testing.md](docs/development/testing.md) and
    # Linux
    make                         # release build
    make test                    # every test in the workspace
-   ./native/target/release/hoverai
+   ./target/release/hoverai
    ```
 
 Only one copy of Hover runs at a time. Quit an installed Hover before you start your
@@ -64,7 +64,7 @@ you install a new build, and a fork changes only when you pull upstream into it.
 - One problem per pull request. Touch only what the change needs.
 - Match the style around your change. Comments say why, not what.
 - A new crate needs its reason written in its `Cargo.toml`.
-- Line endings are CRLF, except `Makefile` and `native/installer/*.sh` (LF). The
+- Line endings are CRLF, except `Makefile` and `packaging/linux/*` (LF). The
   `.gitattributes` file handles this.
 - Don't commit `target/`, `publish/`, `dist/` or `evidence/` output.
 
@@ -72,10 +72,10 @@ you install a new build, and a fork changes only when you pull upstream into it.
 
 Run what applies to your change and say what you ran in the pull request:
 
-- `cargo test --manifest-path native/Cargo.toml --release --workspace` on your
+- `cargo test --release --workspace` on your
   platform.
 - On Linux, if you changed Windows code, the Windows compile check:
-  `cargo xwin check --manifest-path native/Cargo.toml --release --workspace --all-targets --target x86_64-pc-windows-msvc`
+  `cargo xwin check --release --workspace --all-targets --target x86_64-pc-windows-msvc`
   (needs `rustup target add x86_64-pc-windows-msvc`, `cargo install cargo-xwin` and
   clang 19 or newer). CI checks Windows on Windows, so you can also leave it to CI.
 - For UI changes: render it with `hover --shots DIR` and look at the pictures. A

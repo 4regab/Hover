@@ -26,10 +26,10 @@ and together with Hover (`tree private`).
 
 ```powershell
 # Windows, a logged-on session
-.\native\tools\hover-measure\run-memory.ps1 -Exe native\target\release\hoverai.exe -Out out\after -Runs 3
+.\tools\hover-measure\run-memory.ps1 -Exe target\release\hoverai.exe -Out out\after -Runs 3
 # The same, when the shell is in session 0 (SSM/SSH): the app runs in the console session through PsExec
-.\native\tools\hover-measure\run-console.ps1 -PsExec C:\tools\PsExec64.exe -Exe ... -Out ... -Runs 3 -Env SLINT_WGPU_CPU=1
-.\native\target\release\hover-measure.exe summarize out\before\run1 out\before\run2 out\before\run3 --md before.md
+.\tools\hover-measure\run-console.ps1 -PsExec C:\tools\PsExec64.exe -Exe ... -Out ... -Runs 3 -Env SLINT_WGPU_CPU=1
+.\target\release\hover-measure.exe summarize out\before\run1 out\before\run2 out\before\run3 --md before.md
 ```
 
 `SLINT_WGPU_CPU=1` is needed only where the only adapter is WARP (a VM with no GPU). Label
@@ -58,7 +58,7 @@ A profiling build counts every allocation, and keeps line tables for stacks:
 
 ```powershell
 $env:CARGO_PROFILE_RELEASE_STRIP="none"; $env:CARGO_PROFILE_RELEASE_DEBUG="line-tables-only"
-cargo build --manifest-path native/Cargo.toml --release -p hover --features profiling --target-dir target-prof
+cargo build --release -p hover --features profiling --target-dir target-prof
 ```
 
 Bench commands (profiling build unless noted):
