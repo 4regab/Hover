@@ -437,3 +437,41 @@ fn blit(px: &mut Pixmap, x: i32, y: i32, m: &Mask, c: Rgba, clip: Option<[i32; 4
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use parley::{FontContext, FontFamily, FontWeight, LayoutContext, StyleProperty};
+
+    /// A variable font draws its weights from one file, told apart only by the axis
+    /// coordinates: a bold glyph cached first was drawn again for the regular text.
+    #[test]
+    fn regular_after_bold_is_regular() {
+        let pix = std::fs::read(concat!(env!("CARGO_MANIFEST_DIR"), "/../../app/assets/PixelifySans.ttf")).unwrap();
+        let mut fonts = FontContext::new();
+        fonts.collection.register_fonts(pix.clone().into(), None);
+        let mut lcx = LayoutContext::<crate::doc::Ink>::new();
+        let mut boxed = |w: f32| {
+            let mut b = lcx.ranged_builder(&mut fonts, "Do", 1.0, true);
+            b.push_default(StyleProperty::FontFamily(FontFamily::Source("Pixelify Sans".into())));
+            b.push_default(StyleProperty::FontSize(20.0));
+            b.push_default(StyleProperty::FontWeight(FontWeight::new(w)));
+            b.push_default(StyleProperty::Brush(crate::doc::Ink { color: theme::INK, code: false }));
+            let mut layout = b.build("Do");
+            layout.break_all_lines(None);
+            TextBox { layout, x: 0.0, y: 0.0, text: String::new(), links: vec![], clip: None, shimmer: false, cell: false, scroller: None }
+        };
+        let (regular, bold) = (boxed(400.0), boxed(700.0));
+        let draw = |p: &mut Painter, t: &TextBox| {
+            let mut px = Pixmap::new(80, 40).unwrap();
+            p.text(&mut px, t, 4.0, 4.0, 1.0, 0.0);
+            px
+        };
+        let mut fresh = Painter::new(&[pix.clone()], crate::images::Images::none());
+        let mut used = Painter::new(&[pix], crate::images::Images::none());
+        let want = draw(&mut fresh, &regular);
+        let b = draw(&mut used, &bold);
+        assert!(b.data() != want.data(), "the weights should differ");
+        assert!(draw(&mut used, &regular).data() == want.data(), "regular text drawn with the bold glyphs");
+    }
+}
