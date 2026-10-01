@@ -38,12 +38,33 @@ pub fn activity(s: &KiroSession) -> (&'static str, String) {
     let verb = match step.kind.as_str() {
         "read" => "Reading", "edit" => "Editing", "delete" => "Deleting", "move" => "Moving", "execute" => "Running",
         "search" => "Searching", "fetch" => "Fetching", "think" => "Thinking",
-        _ => match tool_phase(Some(&step.kind), Some(&step.title)) {
-            Some(KiroPhase::Reading) => "Reading", Some(KiroPhase::Editing) => "Editing", Some(KiroPhase::Running) => "Running",
-            Some(KiroPhase::Searching) => "Searching", _ => "Working",
-        },
+        _ => {
+            if let Some(name) = mcp_name(&step.title) { return ("Using", clip_to(&name, 28)); }
+            match tool_phase(Some(&step.kind), Some(&step.title)) {
+                Some(KiroPhase::Reading) => "Reading", Some(KiroPhase::Editing) => "Editing", Some(KiroPhase::Running) => "Running",
+                Some(KiroPhase::Searching) => "Searching",
+                _ => {
+                    // The tool's own title says more than "Working" ("Loaded skill: unslop",
+                    // "Serve the mockup on localhost"); a many-line one is a message, not a name.
+                    let t = step.title.trim();
+                    if !t.is_empty() && t != "Working" && !t.contains('\n') { return ("Working on", clip_to(t, 28)); }
+                    "Working"
+                }
+            }
+        }
     };
     (verb, short(step.target.as_deref()).unwrap_or_default())
+}
+
+/// An MCP tool call's name from its title, as "server: tool": Kiro titles one
+/// "@playwriter/execute" (seen in a real history); Cursor "MCP: tool" (its forum's report).
+pub(crate) fn mcp_name(title: &str) -> Option<String> {
+    let t = title.trim();
+    if let Some((server, tool)) = t.strip_prefix('@').and_then(|r| r.split_once('/')) {
+        let plain = |x: &str| !x.is_empty() && !x.contains(char::is_whitespace);
+        return (plain(server) && plain(tool)).then(|| format!("{server}: {tool}"));
+    }
+    t.strip_prefix("MCP: ").map(str::trim).filter(|x| !x.is_empty()).map(str::to_owned)
 }
 
 /// A file's name, or a command's program and first word, short enough for the notch.

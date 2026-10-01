@@ -2,6 +2,7 @@
 //! (port/phase3/RUN-ON-WINDOWS.md) and the benchmark's history fixture.
 //!   hover-data write <data> <project> <turns> <answer.md>   settings, key, one sealed session; prints its key
 //!   hover-data dump <data>                                   what the folder holds, read by the port
+//!   hover-data steps <data> [n]                              the newest n sessions' steps (read only)
 //!   hover-data where                                         the data folder Hover would use
 
 use hover_core::crypto::Crypto;
@@ -59,6 +60,31 @@ fn main() {
             }
         }
         Some("where") => println!("{}", hover_core::paths::support().display()),
-        _ => { eprintln!("hover-data write <data> <project> <turns> <answer.md> | dump <data> | where"); std::process::exit(2); }
+        // What the tools reported as steps, newest sessions first: kind, title, target and
+        // status only (never prompts or answers), to see how a tool names its calls.
+        // Read only: the key and the session files are opened directly, so no key is
+        // made and no index rebuilt (AgentHistory and load_or_create can write both).
+        Some("steps") if a.len() >= 3 => {
+            use hover_core::crypto::KeyGuard;
+            let data = PathBuf::from(&a[2]);
+            let stored = std::fs::read(data.join("note.key")).expect("note.key");
+            let raw = hover_core::platform::SystemKeyGuard::default().unwrap(&stored).expect("note.key unwraps");
+            let crypto = Crypto::with_key(raw.try_into().expect("a 32-byte key"));
+            let n: usize = a.get(3).and_then(|x| x.parse().ok()).unwrap_or(5);
+            let mut all: Vec<SavedSession> = std::fs::read_dir(data.join("agents")).expect("the agents folder").flatten()
+                .filter(|e| e.file_name().to_string_lossy().ends_with(".dat") && e.file_name() != "index.dat")
+                .filter_map(|e| std::fs::read(e.path()).ok())
+                .filter_map(|b| hover_core::json::parse(&crypto.open(&b)).ok())
+                .filter_map(|v| SavedSession::from_json(&v).ok())
+                .collect();
+            all.sort_by(|x, y| y.updated.cmp(&x.updated));
+            for s in all.into_iter().take(n) {
+                println!("{} {}", s.tool.name(), s.updated.iso());
+                for st in s.turns.iter().flat_map(|t| &t.steps) {
+                    println!("  [{}] {:?} target={:?} {}", st.kind, st.title, st.target.as_deref().map(|t| t.chars().take(60).collect::<String>()), st.status);
+                }
+            }
+        }
+        _ => { eprintln!("hover-data write <data> <project> <turns> <answer.md> | dump <data> | steps <data> [sessions] | where"); std::process::exit(2); }
     }
 }

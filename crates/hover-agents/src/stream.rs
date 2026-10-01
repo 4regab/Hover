@@ -480,11 +480,18 @@ pub fn tool_phase(kind: Option<&str>, title: Option<&str>) -> Option<KiroPhase> 
     }
     let t = title.unwrap_or("").to_lowercase();
     if t.is_empty() { return kind.map(|_| KiroPhase::Working); }
-    let has = |ks: &[&str]| ks.iter().any(|k| t.contains(k));
-    Some(if has(&["read"]) { KiroPhase::Reading }
-        else if has(&["write", "edit", "replace", "creat"]) { KiroPhase::Editing }
-        else if has(&["grep", "glob", "search", "find", "fetch"]) { KiroPhase::Searching }
-        else if has(&["shell", "bash", "command", "run"]) { KiroPhase::Running }
+    // An MCP tool is only itself: Kiro titles it "@playwriter/execute", whose
+    // "playwriter" held "write" and read as Editing.
+    if crate::words::mcp_name(&t).is_some() { return Some(KiroPhase::Working); }
+    // Whole words, so a name that only contains one ("playwriter", "rerun") isn't it.
+    let words: Vec<&str> = t.split(|c: char| !c.is_alphanumeric()).filter(|w| !w.is_empty()).collect();
+    let has = |ks: &[&str]| words.iter().any(|w| ks.contains(w));
+    // "Create" is a write only of a file or a folder; an MCP's create_entities isn't.
+    let creates = has(&["create", "creates", "creating"]) && has(&["file", "files", "folder", "directory"]);
+    Some(if has(&["read", "reads", "reading"]) { KiroPhase::Reading }
+        else if creates || has(&["write", "writes", "writing", "edit", "edits", "editing", "replace", "replacing"]) { KiroPhase::Editing }
+        else if has(&["grep", "glob", "search", "searching", "find", "finding", "fetch", "fetching"]) { KiroPhase::Searching }
+        else if has(&["shell", "bash", "command", "run", "runs", "running"]) { KiroPhase::Running }
         else { KiroPhase::Working })
 }
 
@@ -594,6 +601,16 @@ mod tests {
         assert_eq!(tool_phase(None, Some("Grep files")), Some(KiroPhase::Searching));
         assert_eq!(tool_phase(None, Some("Create file")), Some(KiroPhase::Editing));
         assert_eq!(tool_phase(Some("x"), Some("Bash")), Some(KiroPhase::Running));
+        // Titles Kiro gave kind "other" steps in a real history.
+        assert_eq!(tool_phase(Some("other"), Some("@playwriter/execute")), Some(KiroPhase::Working));
+        assert_eq!(tool_phase(Some("other"), Some("Read File")), Some(KiroPhase::Reading));
+        assert_eq!(tool_phase(Some("other"), Some("Write File")), Some(KiroPhase::Editing));
+        assert_eq!(tool_phase(Some("other"), Some("Loaded skill: unslop")), Some(KiroPhase::Working));
+        assert_eq!(tool_phase(Some("other"), Some("Update Session Information")), Some(KiroPhase::Working));
+        // A word inside a name is not that word.
+        assert_eq!(tool_phase(Some("other"), Some("browser_type")), Some(KiroPhase::Working));
+        assert_eq!(tool_phase(Some("other"), Some("create_entities")), Some(KiroPhase::Working));
+        assert_eq!(tool_phase(Some("other"), Some("Rerun the build")), Some(KiroPhase::Working));
     }
 
     /// Reasoning the tool sends is kept, in order among the tool calls, as one thought
