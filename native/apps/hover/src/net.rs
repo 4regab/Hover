@@ -34,8 +34,6 @@ const WORKERS: usize = 2;
 pub struct Net {
     state: Arc<Mutex<HashMap<String, St>>>,
     jobs: mpsc::Sender<String>,
-    /// Virtual host name to folder.
-    hosts: Hosts,
 }
 
 type Hosts = Arc<Mutex<HashMap<String, PathBuf>>>;
@@ -92,7 +90,7 @@ impl Net {
                 arrived(url);
             });
         }
-        Net { state, jobs, hosts }
+        Net { state, jobs }
     }
 
     /// What there is for a URL; the first ask starts its load. Bytes are given once.
@@ -184,8 +182,9 @@ mod tests {
         std::fs::write(dir.join("docs/a b.png"), b"LOCAL").unwrap();
         let (tx, rx) = mpsc::channel();
         let tx = Mutex::new(tx);
-        let net = Net::new(Default::default(), move |u| { tx.lock().unwrap().send(u).unwrap(); });
-        net.hosts.lock().unwrap().insert("fabc123def456.hover".into(), dir.clone());
+        let hosts: Hosts = Default::default();
+        hosts.lock().unwrap().insert("fabc123def456.hover".into(), dir.clone());
+        let net = Net::new(hosts, move |u| { tx.lock().unwrap().send(u).unwrap(); });
         let urls = [format!("http://127.0.0.1:{port}/ok.png"), format!("http://127.0.0.1:{port}/missing.png"),
             "https://fabc123def456.hover/docs/a%20b.png".to_string(), "https://fabc123def456.hover/docs/%2e%2e/%2e%2e/etc/passwd".to_string(),
             "https://f000000000000.hover/x.png".to_string()];

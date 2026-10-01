@@ -37,7 +37,11 @@ function Build-Hover([string]$profile) {
     Stop-Hover
     $cargoArgs = @("build", "--manifest-path", $manifest, "-p", "hover")
     if ($profile -eq "release") { $cargoArgs += "--release" }
+    # Cargo writes its progress to stderr; Windows PowerShell turns that into a
+    # terminating error under "Stop" whenever the output is redirected (a log, CI).
+    $ErrorActionPreference = "Continue"
     & cargo @cargoArgs
+    $ErrorActionPreference = "Stop"
     if ($LASTEXITCODE -ne 0) { throw "cargo build failed" }
     return (Join-Path $native "target\$profile\hover.exe")
 }

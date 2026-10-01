@@ -826,7 +826,6 @@ fn main() {
 /// One renderer for the process: femtovg on wgpu through DirectComposition on Windows
 /// (per-pixel alpha in the notch), femtovg on OpenGL elsewhere (an ARGB visual on X11).
 fn select_backend() {
-    use slint::winit_030::winit;
     #[cfg(windows)]
     let sel = {
         use slint::wgpu_30::{wgpu, WGPUConfiguration, WGPUSettings};
@@ -846,7 +845,20 @@ fn select_backend() {
     #[cfg(not(windows))]
     let sel = slint::BackendSelector::new().backend_name("winit".into())
         .renderer_name(std::env::var("HOVER_RENDERER").unwrap_or_else(|_| "femtovg".into()));
-    let sel = sel.with_winit_window_attributes_hook(|a: winit::window::WindowAttributes| {
+    let sel = sel.with_winit_window_attributes_hook(notch_attributes);
+    if let Err(e) = sel.select() {
+        hover_core::log::line(&format!("renderer: {e}"));
+        // Whatever renderer is left, the notch keeps its window: without the hook it is an
+        // ordinary one (activating, opaque, in the taskbar).
+        let any = slint::BackendSelector::new().backend_name("winit".into()).with_winit_window_attributes_hook(notch_attributes);
+        if let Err(e) = any.select() { hover_core::log::line(&format!("renderer fallback: {e}")); }
+    }
+}
+
+/// The notch's window, for whichever renderer Slint ends up with.
+fn notch_attributes(a: slint::winit_030::winit::window::WindowAttributes) -> slint::winit_030::winit::window::WindowAttributes {
+    use slint::winit_030::winit;
+    {
         // Only the notch, which is the first window made: the app window and the warning
         // are ordinary ones. (The title isn't set yet when winit asks.)
         static FIRST: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
@@ -864,8 +876,7 @@ fn select_backend() {
             a.with_override_redirect(true).with_x11_window_type(vec![WindowType::Dock]).with_name("hover", "Hover")
         };
         a
-    });
-    if let Err(e) = sel.select() { hover_core::log::line(&format!("renderer: {e}")); }
+    }
 }
 
 /// One GPU device for every window and the office. Left to Slint, each window made its
@@ -904,6 +915,13 @@ fn shared_gpu() -> Result<slint::wgpu_30::WGPUConfiguration, String> {
     })).map_err(|e| e.to_string())?;
     let info = adapter.get_info();
     hover_core::log::line(&format!("GPU: {} ({:?})", info.name, info.backend));
+    // A machine with no GPU (a VM, many RDP hosts) has only WARP. Slint's selector then
+    // refuses wgpu unless this is set, and falls back to a plain window: the notch lost
+    // its class, its no-activate style and its transparency, and showed in the taskbar.
+    // The device is ours and works on WARP, so let Slint use it.
+    if info.device_type == wgpu::DeviceType::Cpu && std::env::var_os("SLINT_WGPU_CPU").is_none() {
+        std::env::set_var("SLINT_WGPU_CPU", "1");
+    }
     hover_office::render::share_device(device.clone(), queue.clone(), format!("{} ({:?})", info.name, info.backend));
     Ok(WGPUConfiguration::Manual { instance, adapter, device, queue })
 }

@@ -1314,7 +1314,9 @@ export component OfficeView inherits Rectangle {
                         scroll-event(e) => { Office.d-wheel(e.delta-y); accept }
                         clicked => { Office.d-click(self.mouse-x, self.mouse-y); }
                         pointer-event(e) => {
-                            if (e.button == PointerEventButton.left && e.kind == PointerEventKind.down) { Office.d-pointer(0, self.mouse-x, self.mouse-y, e.modifiers.shift); }
+                            // A press in the thread takes the keys from the reply box, as a click on
+                            // the page's text blurred its textarea: Ctrl+C then copies the selection.
+                            if (e.button == PointerEventButton.left && e.kind == PointerEventKind.down) { focus.focus(); Office.d-pointer(0, self.mouse-x, self.mouse-y, e.modifiers.shift); }
                             if (e.button == PointerEventButton.left && e.kind == PointerEventKind.up) { Office.d-pointer(2, self.mouse-x, self.mouse-y, false); }
                         }
                         moved => { if (self.pressed) { Office.d-pointer(1, self.mouse-x, self.mouse-y, false); } }

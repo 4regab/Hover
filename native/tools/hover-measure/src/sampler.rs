@@ -12,14 +12,14 @@ pub const HEADER: &str = "unix_ms,pid,ppid,depth,name,private,resident,private_r
 
 pub fn now_ms() -> u128 { std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() }
 
-pub struct Sampler { stop: Arc<AtomicBool>, thread: Option<std::thread::JoinHandle<()>>, pub root: Arc<AtomicU32>, pub seen: Arc<std::sync::Mutex<Vec<(u32, String)>>> }
+pub struct Sampler { stop: Arc<AtomicBool>, thread: Option<std::thread::JoinHandle<()>>, pub root: Arc<AtomicU32>, pub seen: Arc<std::sync::Mutex<Vec<(u32, String, u64)>>> }
 
 impl Sampler {
     /// Samples `root` (0 waits for one to be set) into `out` every `every`.
     pub fn start(out: std::path::PathBuf, every: Duration, root: u32) -> Sampler {
         let stop = Arc::new(AtomicBool::new(false));
         let root = Arc::new(AtomicU32::new(root));
-        let seen: Arc<std::sync::Mutex<Vec<(u32, String)>>> = Default::default();
+        let seen: Arc<std::sync::Mutex<Vec<(u32, String, u64)>>> = Default::default();
         let (s, r, sn) = (stop.clone(), root.clone(), seen.clone());
         let thread = std::thread::Builder::new().name("sampler".into()).spawn(move || {
             let mut f = std::io::BufWriter::new(std::fs::File::create(&out).expect("the samples file"));
@@ -37,7 +37,7 @@ impl Sampler {
                         if !procs::counters(&mut p) { continue; }
                         {
                             let mut sn = sn.lock().unwrap();
-                            if !sn.iter().any(|(q, _)| *q == p.pid) { sn.push((p.pid, p.name.clone())); }
+                            if !sn.iter().any(|(q, _, s)| *q == p.pid && *s == p.started) { sn.push((p.pid, p.name.clone(), p.started)); }
                         }
                         let gp = gm.get(&p.pid).copied();
                         let (gd, gs) = gp.map_or((String::new(), String::new()), |x| (x.dedicated.to_string(), x.shared.to_string()));

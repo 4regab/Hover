@@ -298,7 +298,8 @@ fn run(args: &[String]) -> Result<(), String> {
                     std::thread::sleep(Duration::from_millis(3000));
                     let now = procs::list();
                     let seen = samp.seen.lock().unwrap().clone();
-                    let left: Vec<String> = seen.iter().filter(|(p, name)| now.iter().any(|q| q.pid == *p && &q.name == name)).map(|(p, n)| format!("{n}:{p}")).collect();
+                    // The start time too: Windows hands a freed id straight to a new process (the host's own conhost took one of ours), and that is not one of Hover's left behind.
+                    let left: Vec<String> = seen.iter().filter(|(p, name, s)| now.iter().any(|q| q.pid == *p && &q.name == name && (q.started == *s || q.started == 0 || *s == 0))).map(|(p, n, _)| format!("{n}:{p}")).collect();
                     mk.put("orphans", &format!("{} {}", left.len(), left.join(" ")));
                     if !left.is_empty() && st[0] == "quit" { return Err(format!("{at}: left running after exit: {}", left.join(" "))); }
                     samp.seen.lock().unwrap().clear();
