@@ -153,6 +153,8 @@ pub fn state_with(s: &KiroSession, files: &dyn Fn(&KiroSession) -> Option<String
         // The session's own tool access, or the tool's setting.
         ("access", st(s.access.as_deref().or(tool_access).unwrap_or("full"))),
         ("stage", st(if waiting { "waiting" } else { stage(s.state, s.phase) })),
+        // Asked to stop or pause, and the tool hasn't said it has.
+        ("stopping", Json::Bool(s.stopping)),
         ("act", st(act(s.phase))),
         // What the agent is waiting on the user for, and how many more are behind it.
         ("ask", s.asking().map_or(Json::Null, |a| {
@@ -235,6 +237,14 @@ pub fn pose(p: KiroPhase) -> &'static str {
 /// name bright, its folder dim) or the command it was about, with the change it made or
 /// what the command printed, and how it went.
 pub fn row(x: &KiroStep, folder: &str) -> Json {
+    // Reasoning the tool exposed, and a subagent (OpenCode's task tool): their own rows.
+    if x.kind == "thought" || x.kind == "agent" {
+        return Json::obj(vec![
+            ("k", st(if x.kind == "thought" { "thought" } else { "agent" })), ("verb", st(&x.title)), ("name", Json::Null), ("dir", Json::Null),
+            ("cmd", opt(x.target.as_deref())), ("status", st(&x.status)), ("add", Json::int(0)), ("del", Json::int(0)), ("diff", Json::Null),
+            ("out", opt(x.output.as_deref())), ("exit", Json::Null), ("ms", x.ms.map_or(Json::Null, Json::double)),
+        ]);
+    }
     let icon = match x.kind.as_str() { "read" => "read", "edit" | "delete" | "move" => "edit", "execute" => "run", "search" | "fetch" => "search", _ => "think" };
     let verb = match x.kind.as_str() {
         "read" => Some("Read"), "edit" => Some("Edited"), "delete" => Some("Deleted"), "move" => Some("Moved"),

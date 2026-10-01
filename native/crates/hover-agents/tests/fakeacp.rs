@@ -205,7 +205,11 @@ fn a_turn_and_a_reply() {
         assert_eq!(r.text, rich().trim(), "the answer comes back whole, escapes and all");
         let ev = events.lock().unwrap();
         let sid = ev.iter().find_map(|e| e.session_id.clone()).unwrap();
-        let steps: Vec<(String, String, String, Option<String>)> = ev.iter().filter_map(|e| e.step.as_ref())
+        // The reasoning it sent is kept too, as thoughts between the tool calls.
+        let order: Vec<&str> = ev.iter().filter_map(|e| e.step.as_ref()).filter(|s| s.status == "completed").map(|s| s.kind.as_str()).collect();
+        assert_eq!(order, ["thought", "read", "thought", "thought", "search", "thought"]);
+        assert!(ev.iter().filter_map(|e| e.step.as_ref()).filter(|s| s.kind == "thought" && s.status == "completed").all(|s| s.output.as_deref().is_some_and(|o| o.starts_with("thinking")) && s.ms.is_some()));
+        let steps: Vec<(String, String, String, Option<String>)> = ev.iter().filter_map(|e| e.step.as_ref()).filter(|s| s.kind != "thought")
             .map(|s| (s.id.clone(), s.kind.clone(), s.status.clone(), s.target.clone())).collect();
         assert_eq!(steps, [
             ("t0".into(), "read".into(), "in_progress".into(), Some("src/file0.cs".into())),
@@ -288,7 +292,7 @@ fn a_queued_reply_follows_in_the_same_conversation() {
         while k.get(s.id).unwrap().turns.iter().any(|t| t.result.is_none()) && t.elapsed() < Duration::from_secs(20) { std::thread::sleep(Duration::from_millis(10)); }
         let s = k.get(s.id).unwrap();
         assert_eq!(s.turns.iter().map(|t| t.result.as_ref().unwrap().text.as_str()).collect::<Vec<_>>(), ["Done. Nothing needed changing."; 2]);
-        assert_eq!(s.turns[0].steps.len(), 1, "one tool call in half a second");
+        assert_eq!(s.turns[0].steps.iter().filter(|x| x.kind != "thought").count(), 1, "one tool call in half a second");
         assert!(s.turns[0].woke_at.is_some());
         assert!(!offered.load(std::sync::atomic::Ordering::SeqCst));
     });

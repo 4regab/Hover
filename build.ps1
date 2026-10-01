@@ -5,7 +5,7 @@
     .\build.ps1 release      optimised build
     .\build.ps1 release run  build, then relaunch
     .\build.ps1 test         the workspace's tests
-    .\build.ps1 publish      Hover.exe in .\publish
+    .\build.ps1 publish      hoverai.exe in .\publish
     .\build.ps1 installer    Inno Setup installer in .\dist (the version in native\Cargo.toml)
     .\build.ps1 installer -Version 3.0.1
 
@@ -30,7 +30,8 @@ if ((-not [string]::IsNullOrWhiteSpace($Version)) -and
 }
 
 function Stop-Hover {
-    Get-Process Hover -ErrorAction SilentlyContinue | Stop-Process -Force
+    # Hover: an install from before the rename, which would hold the single-instance lock.
+    Get-Process hoverai, Hover -ErrorAction SilentlyContinue | Stop-Process -Force
 }
 
 function Build-Hover([string]$profile) {
@@ -43,14 +44,13 @@ function Build-Hover([string]$profile) {
     & cargo @cargoArgs
     $ErrorActionPreference = "Stop"
     if ($LASTEXITCODE -ne 0) { throw "cargo build failed" }
-    return (Join-Path $native "target\$profile\hover.exe")
+    return (Join-Path $native "target\$profile\hoverai.exe")
 }
 
 function Publish-Hover {
     $exe = Build-Hover "release"
     New-Item -ItemType Directory -Path $publishDir -Force | Out-Null
-    # Hover.exe, as the C# build named it: shortcuts and the Run value point there.
-    Copy-Item $exe (Join-Path $publishDir "Hover.exe") -Force
+    Copy-Item $exe $publishDir -Force
     Copy-Item (Join-Path $PSScriptRoot "LICENSE") $publishDir -Force
     Copy-Item (Join-Path $PSScriptRoot "THIRD-PARTY-NOTICES.txt") $publishDir -Force
 }
@@ -83,7 +83,7 @@ function Find-InnoCompiler {
 switch ($Mode.ToLower()) {
     "publish" {
         Publish-Hover
-        Write-Host "publish\Hover.exe"
+        Write-Host "publish\hoverai.exe"
     }
     "installer" {
         Publish-Hover

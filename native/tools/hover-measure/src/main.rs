@@ -1,7 +1,7 @@
 //! hover-measure: Hover's memory and timing measured from outside the process.
 //!
 //!   hover-measure sample --pid PID --out samples.csv [--interval-ms 250] [--seconds N]
-//!   hover-measure run --exe hover.exe --script S.hms --out DIR [--data DIR] [--interval-ms 250]
+//!   hover-measure run --exe hoverai.exe --script S.hms --out DIR [--data DIR] [--interval-ms 250]
 //!                     [--env K=V]... [--var K=V]... [--path-first DIR]
 //!   hover-measure summarize DIR... [--md out.md]
 //!   hover-measure elements --pid PID        (Windows: the named controls UI Automation sees)

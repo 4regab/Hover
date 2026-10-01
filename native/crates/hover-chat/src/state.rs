@@ -86,6 +86,8 @@ pub fn turns_at(session: &Value, now: f64, hm: &dyn Fn(f64) -> String) -> Vec<Tu
             when: if t0 > 0.0 { hm(t0) } else { String::new() },
             status: None,
             answer: t["answer"].as_str().unwrap_or("").into(),
+            waiting: live && st == "waiting",
+            stopping: i == last && live && session["stopping"].as_bool().unwrap_or(false),
         }
     }).collect()
 }

@@ -16,6 +16,7 @@ mod office_ui;
 mod net;
 mod shots;
 mod view;
+mod voice_ui;
 #[cfg(windows)]
 mod win;
 #[cfg(not(windows))]
@@ -96,6 +97,10 @@ pub struct App {
     /// Headless: nothing is grabbed, placed or announced outside the process.
     pub headless: bool,
     pub page: office_ui::Page,
+    /// Local speech's setup and engine, and the voice flow (voice_ui.rs).
+    pub phonon: Arc<hover_app::phonon::Phonon>,
+    pub voice: Arc<hover_app::voice::Voice>,
+    pub voice_ui: voice_ui::Ui,
 }
 
 /// Set by SIGTERM or SIGINT (a logout, a kill, Ctrl+C): the poll quits cleanly, so the
@@ -151,6 +156,7 @@ impl App {
     pub fn new(hover: Arc<Hover>, plat: Box<dyn notch::Plat>, look: Look, headless: bool) -> Rc<App> {
         let notch = NotchWindow::new().expect("the notch window");
         let beats = Beats::new(local_get("beats").as_deref() == Some("on"));
+        let (voice_ui, phonon, voice) = voice_ui::make(&hover);
         let app = Rc::new(App {
             n: RefCell::new(Notch::new(plat)),
             notch, dash: RefCell::new(None), pane: RefCell::new(Pane::default()), last_blocks: RefCell::new(vec![]),
@@ -159,11 +165,14 @@ impl App {
             clock_timer: Timer::default(), clock_last: Cell::new(None), poll_timer: Timer::default(), quota_timer: Timer::default(),
             had_focus: Cell::new(false), reported: RefCell::new(None),
             warn: RefCell::new(None), hotkey: RefCell::new(None), tray_menu: RefCell::new(None), notify: RefCell::new(None), headless, hover, page: Default::default(),
+            phonon, voice, voice_ui,
         });
         APP.with(|a| *a.borrow_mut() = Some(app.clone()));
         wire_page!(app.notch, app, 0);
         app.wire_office(app.notch.global::<Office>());
         app.wire_notch();
+        app.wire_voice();
+        app.voice_start();
         app.theme_changed_quiet();
         {
             let mut n = app.n.borrow_mut();
@@ -205,6 +214,9 @@ impl App {
                 if matches!(e, WindowEvent::Resized(_) | WindowEvent::ScaleFactorChanged { .. } | WindowEvent::RedrawRequested | WindowEvent::Occluded(_)) { crate::hold_gpu(); }
                 if let (WindowEvent::MouseInput { state: ElementState::Pressed, .. }, Some(a)) = (e, w.upgrade()) {
                     if let Ok(mut n) = a.n.try_borrow_mut() { if n.hover.state == State::Peek { n.hover.opened(false); } }
+                    // A click in voice's card when the keyboard is elsewhere brings it here.
+                    let a2 = a.clone();
+                    Timer::single_shot(Duration::ZERO, move || a2.voice_clicked());
                 }
                 EventResult::Propagate
             });
@@ -349,7 +361,9 @@ impl App {
         // No question left: the card goes, and the keyboard goes back.
         if self.card.get() && !matches!(isl.seg, Seg::Ask { .. }) { self.close_card(true); return; }
         let ui = &self.notch;
-        let kind = match isl.kind { Kind::None => 0, Kind::Pill => 1, Kind::Card => 2 };
+        // Voice's card, while an interaction shows, in place of the island.
+        let vkind = self.voice_draw();
+        let kind = if vkind != 0 { 3 } else { match isl.kind { Kind::None => 0, Kind::Pill => 1, Kind::Card => 2 } };
         let motion = self.look.get().animations;
         let at_rest = self.n.borrow().hover.state == State::Rest;
         let (words, ends) = match &isl.seg {
@@ -436,9 +450,11 @@ impl App {
                 }
             }
         }
+        if vkind != 0 { glow = if ui.get_voice_busy() { slint::Color::from_rgb_u8(0xff, 0xb3, 0x40) } else { clear }; }
         if at_rest { ui.set_glow(glow); }
         *self.island.borrow_mut() = (kind, isl.key.clone(), words, ends);
-        self.n.borrow_mut().asking = matches!(isl.seg, Seg::Ask { .. });
+        // A question waits, or voice's card is up: hovering doesn't open the office.
+        self.n.borrow_mut().asking = matches!(isl.seg, Seg::Ask { .. }) || vkind != 0;
         // The 1 s clock runs while someone works or asks.
         let busy = matches!(isl.seg, Seg::Work { .. } | Seg::Ask { .. });
         if busy && !self.second_timer.running() {
@@ -461,7 +477,8 @@ impl App {
         };
         notch::shape(ui, &self.n.borrow(), view::argb(self.palette.borrow().panel));
         if changed { self.animate(); }
-        self.clock(busy);
+        // Voice's working spinner turns on the same clock.
+        self.clock(busy || vkind == 2);
     }
 
     /// OpenCard: the question grows into a card that takes the keyboard (Enter allows,
@@ -600,6 +617,8 @@ impl App {
     }
 
     pub fn refresh_page(self: &Rc<Self>, top: bool) {
+        // The Voice page, opened: its microphones are looked up again.
+        if top && self.pane.borrow().section == Section::Voice { self.load_mics(); }
         let bs = view::build(&**self, &mut self.pane.borrow_mut());
         let p = self.palette.borrow().clone();
         let slint_blocks = view::blocks(&bs, &p);
@@ -733,6 +752,9 @@ impl view::Host for App {
     fn recheck(&self, tool: hover_core::model::AgentTool, fresh: bool) {
         std::thread::spawn(move || { hover_agents::agents::check(tool, fresh); ui_do(|a| a.refresh_page(false)); });
     }
+    fn action(&self, id: &str) {
+        APP.with(|a| if let Some(a) = a.borrow().clone() { a.voice_action(id); });
+    }
 }
 
 /// The folder and file pickers: the system's own dialog (IFileDialog on Windows, the
@@ -814,6 +836,8 @@ fn main() {
     if selftest.is_some() { hover_core::log::line("--selftest: not in the Windows build yet; run notch-proto --selftest"); }
     let _ = slint::run_event_loop_until_quit();
     hover_core::log::line("quitting");
+    // A recording or a local transcription stops first (and Phonon's helper with it).
+    app.voice_quit();
     // Stop the agents before anything is torn down; then the history and the settings.
     app.hover.shutdown();
     app.beats.toggle(false);
@@ -961,6 +985,13 @@ fn platform_start(hover: Arc<Hover>, look: Look, _selftest: bool) -> Rc<App> {
     let g = grab.clone();
     *app.hotkey.borrow_mut() = Some(Box::new(move |sc| { g.clear(); g.register(sc) }));
     app.register_hotkeys();
+    // Hold to talk, on the shortcut's event thread: handed to the UI thread.
+    let g = grab.clone();
+    *app.voice_ui.hold.borrow_mut() = Some(Box::new(move |sc| match sc {
+        Some(sc) => g.register_hold(sc, || ui_do(|a| a.voice_press(false)), || ui_do(|a| a.voice.release())),
+        None => { g.clear_hold(); Ok(()) }
+    }));
+    app.register_voice();
     // The tray and its notifications (StatusNotifierItem); none when no tray host runs.
     let icon = hover_app::sni::icon_pixmaps(include_bytes!("../assets/hover.ico"));
     match hover_app::sni::Tray::start(None, icon, app.menu(), |e| ui_do(move |a| match e {
@@ -986,6 +1017,12 @@ fn platform_start(hover: Arc<Hover>, look: Look, _selftest: bool) -> Rc<App> {
     let _ = app.notch.show();
     notch::layout(&app.notch, &mut app.n.borrow_mut(), view::argb(app.palette.borrow().panel));
     *app.hotkey.borrow_mut() = Some(Box::new(|sc| { win::clear_hotkeys(); win::register_hotkey(sc) }));
+    // Hold to talk: the press and release come on the UI thread, inside the notch
+    // window's message handler, so they are handed on to run after it.
+    *app.voice_ui.hold.borrow_mut() = Some(Box::new(|sc| match sc {
+        Some(sc) => win::register_hold(sc, || ui_do(|a| a.voice_press(false)), || ui_do(|a| a.voice.release())),
+        None => { win::clear_hold(); Ok(()) }
+    }));
     win::set_tray_menu(app.menu());
     *app.tray_menu.borrow_mut() = Some(Box::new(win::set_tray_menu));
     *app.notify.borrow_mut() = Some(Box::new(|t, b| win::tray_notify(t, b)));
@@ -1007,6 +1044,7 @@ fn platform_start(hover: Arc<Hover>, look: Look, _selftest: bool) -> Rc<App> {
         notch::layout(&a.notch, &mut a.n.borrow_mut(), view::argb(a.palette.borrow().panel));
         a.update_rest();
         a.register_hotkeys();
+        a.register_voice();
         win::tray_start();
         bench::visible();
     });

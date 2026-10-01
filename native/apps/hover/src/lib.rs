@@ -6,6 +6,9 @@ pub mod app;
 pub mod keys;
 pub mod music;
 pub mod pages;
+pub mod phonon;
 pub mod rest;
+pub mod speech;
+pub mod voice;
 #[cfg(not(windows))]
 pub mod sni;

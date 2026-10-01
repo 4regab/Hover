@@ -26,7 +26,7 @@ and together with Hover (`tree private`).
 
 ```powershell
 # Windows, a logged-on session
-.\native\tools\hover-measure\run-memory.ps1 -Exe native\target\release\hover.exe -Out out\after -Runs 3
+.\native\tools\hover-measure\run-memory.ps1 -Exe native\target\release\hoverai.exe -Out out\after -Runs 3
 # The same, when the shell is in session 0 (SSM/SSH): the app runs in the console session through PsExec
 .\native\tools\hover-measure\run-console.ps1 -PsExec C:\tools\PsExec64.exe -Exe ... -Out ... -Runs 3 -Env SLINT_WGPU_CPU=1
 .\native\target\release\hover-measure.exe summarize out\before\run1 out\before\run2 out\before\run3 --md before.md
@@ -39,6 +39,18 @@ of each scenario, and the median of the runs' medians.
 
 Scenarios: `memory.hms` (everything), `office.hms` (resting, open, dropped: a short A/B),
 `quota-probe.hms` (one quota switched on while at rest), `gpu.hms`, `peak.hms`, `heap.hms`.
+
+### Voice
+
+Measure Cloud and Local separately. Local's helper (Phonon's Python) is a child of
+Hover, so `tools private` and `tree private` include it. Report its working set too:
+its 304 MB plane cache is memory-mapped (`evidence/voice-chat/phonon-proto.md`), not
+private commit. Measure idle with voice on, each stage, and after start, cancel, an
+error and unload (the helper gone, no orphans). The recipe is in
+`evidence/voice-chat/memory/HOWTO.md`, with what a voice run still needs (bench
+commands and a fixed WAV in place of the microphone). Cloud runs use a fake Groq on
+this computer through `HOVER_GROQ_BASE` (only `http://127.0.0.1:PORT` is taken). A
+measurement is in progress; its results go beside the HOWTO, and none are here yet.
 
 ## Where memory goes
 

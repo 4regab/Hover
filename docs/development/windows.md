@@ -33,14 +33,18 @@ office still runs, and the tools show as not installed. The tests use a stand-in
 ## Build and run
 
 ```powershell
-.\build.ps1                  # debug build: native\target\debug\hover.exe
-.\build.ps1 release          # release build: native\target\release\hover.exe
+.\build.ps1                  # debug build: native\target\debug\hoverai.exe
+.\build.ps1 release          # release build: native\target\release\hoverai.exe
 .\build.ps1 release run      # build, then start it
-.\build.ps1 publish          # publish\Hover.exe, with LICENSE and the notices
+.\build.ps1 publish          # publish\hoverai.exe, with LICENSE and the notices
 .\build.ps1 installer        # dist\Hover-Setup-<version>.exe (needs Inno Setup)
 ```
 
-`build.ps1` stops a running `Hover.exe` before it builds, so the file isn't locked.
+`build.ps1` stops a running `hoverai.exe` (or an older `Hover.exe`) before it builds, so the file isn't locked.
+
+The exe is `hoverai.exe`, not 2.x's `Hover.exe`: Discord's game list matches any path
+ending in `hover/hover.exe` (Hover: Revolt of Gamers), and the install folder is
+`Programs\Hover`. The installer deletes the old exe and moves a Run value that points at it.
 
 Only one Hover runs at a time (the named mutex `Local\HoverRunningInstance`). A second
 launch opens the first one's window and exits. Quit an installed Hover from its tray
@@ -51,7 +55,7 @@ history:
 
 ```powershell
 $env:HOVER_DATA_DIR = "$env:TEMP\hover-dev"
-.\native\target\release\hover.exe
+.\native\target\release\hoverai.exe
 ```
 
 ## Test
@@ -69,7 +73,7 @@ with DejaVu Sans; they skip on Windows. The D-Bus tests (`look.rs`,
 Render every view headless with the software renderer (no GPU, no desktop needed):
 
 ```powershell
-.\native\target\release\hover.exe --shots $env:TEMP\hover-shots
+.\native\target\release\hoverai.exe --shots $env:TEMP\hover-shots
 ```
 
 Real input and memory checks run against the release app with
@@ -83,7 +87,7 @@ Real input and memory checks run against the release app with
 - A release build has no console (it is a Windows GUI app). Start it from a terminal
   with its output piped (for example `| Out-Host`) to see panics on stderr.
 - Debug builds (`.\build.ps1 run`) keep symbols. For a debugger, open
-  `native\target\debug\hover.exe` in Visual Studio or WinDbg.
+  `native\target\debug\hoverai.exe` in Visual Studio or WinDbg.
 - `RUST_BACKTRACE=1` prints a backtrace on a panic. Release builds use
   `panic = "abort"` and strip symbols, so use a debug build for backtraces.
 

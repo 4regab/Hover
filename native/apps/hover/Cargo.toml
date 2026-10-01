@@ -9,8 +9,10 @@ license.workspace = true
 name = "hover_app"
 path = "src/lib.rs"
 
+# hoverai, not hover: Discord's game list matches any path ending in hover/hover.exe
+# (Hover: Revolt of Gamers), and the install folder is Programs\Hover.
 [[bin]]
-name = "hover"
+name = "hoverai"
 path = "src/main.rs"
 
 [dependencies]
@@ -37,6 +39,12 @@ cpal = "0.18"
 # In the tree (chat-proto): a code block's Copy in the chat puts its text on the clipboard,
 # and a pasted picture (image-data) is attached to the task or the reply.
 arboard = { version = "3.6", default-features = false, features = ["image-data"] }
+# Already in the tree: Local speech (phonon.rs) unpacks its managed Python's .tar.gz.
+flate2 = "1"
+tar = "0.4"
+# New crate (pure Rust): every file Local speech downloads is checked against its
+# pinned SHA-256, and nothing in the tree hashes SHA-256 on Windows (ring is Linux only).
+sha2 = "0.10"
 
 [target.'cfg(not(windows))'.dependencies]
 # In the tree (hover-quota): the chat's web images, fetched as WebView2 fetched them for

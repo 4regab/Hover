@@ -130,6 +130,8 @@ impl AgentOptions {
             Some("risky") => { o.read_only = false; o.approval = AgentApproval::Risky; }
             Some("always") => { o.read_only = false; o.approval = AgentApproval::Always; }
             Some("read") => o.read_only = true,
+            // Voice's routing turn: read only, and Hover turns down every request.
+            Some("none") => o.read_only = true,
             _ => {}
         }
         o

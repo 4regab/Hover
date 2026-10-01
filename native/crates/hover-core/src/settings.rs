@@ -5,6 +5,7 @@
 
 use crate::json::{self, Json, Result};
 use crate::model::{notch_item, opt_text, AcpOption, AgentApproval, AgentOptions, AgentTool, Appearance, SavedTheme, WorkspaceSize};
+use crate::projects::{Project, VoiceSettings, Workspace};
 use crate::shortcut::Shortcut;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Condvar, Mutex, Weak};
@@ -34,6 +35,11 @@ pub struct Model {
     pub agent_offers: Option<Vec<(String, Option<Vec<AcpOption>>)>>,
     pub agent_tool: Option<String>,
     pub sc_workspace: Shortcut,
+    /// The registered projects, voice's settings and its default workspace (new in 3.x;
+    /// null in a file from before them).
+    pub projects: Option<Vec<Project>>,
+    pub voice: Option<VoiceSettings>,
+    pub default_workspace: Option<Workspace>,
 }
 
 impl Default for Model {
@@ -42,7 +48,7 @@ impl Default for Model {
             hover_opens_workspace: true, notch_items: None, appearance: Appearance::System, theme: None, workspace_size: WorkspaceSize::Default,
             kiro_folder: None, kiro_notice_seen: false, kiro_model: None, kiro_effort: Some("high".into()), kiro_agent: None,
             kiro_read_only: false, kiro_require_mcp: false, kiro_idle_minutes: 5, kiro_hide_steps: false, kiro_approval: AgentApproval::Autopilot, agents: None, agent_offers: None,
-            agent_tool: None, sc_workspace: Shortcut::DEFAULT,
+            agent_tool: None, sc_workspace: Shortcut::DEFAULT, projects: None, voice: None, default_workspace: None,
         }
     }
 }
@@ -75,6 +81,9 @@ impl Model {
                 v.as_ref().map_or(Json::Null, |l| Json::Arr(l.iter().map(AcpOption::to_json).collect())))).collect()))),
             ("AgentTool", s(&self.agent_tool)),
             ("ScWorkspace", self.sc_workspace.to_json()),
+            ("Projects", self.projects.as_ref().map_or(Json::Null, |l| Json::Arr(l.iter().map(Project::to_json).collect()))),
+            ("Voice", self.voice.as_ref().map_or(Json::Null, VoiceSettings::to_json)),
+            ("DefaultWorkspace", self.default_workspace.as_ref().map_or(Json::Null, Workspace::to_json)),
         ])
     }
 
@@ -107,6 +116,9 @@ impl Model {
                 // A null shortcut would leave C# with none at all (and a crash where
                 // it is read); here it is unset, as a cleared shortcut is.
                 "ScWorkspace" => m.sc_workspace = if x.is_null() { Shortcut::default() } else { Shortcut::from_json(x)? },
+                "Projects" => m.projects = x.opt_list(Project::from_json)?,
+                "Voice" => m.voice = if x.is_null() { None } else { Some(VoiceSettings::from_json(x)?) },
+                "DefaultWorkspace" => m.default_workspace = if x.is_null() { None } else { Some(Workspace::from_json(x)?) },
                 _ => {}
             }
         }
@@ -182,7 +194,12 @@ impl Settings {
 
     fn write(&self) {
         let text = self.m.lock().unwrap().text();
-        if let Err(e) = std::fs::write(&self.file, text) { crate::log::line(&format!("settings save failed — {e}")); }
+        // A temporary file, then a rename over the old one: a crash mid-write never
+        // leaves half a settings.json (which would read as all the defaults).
+        let tmp = self.file.with_extension("json.tmp");
+        if let Err(e) = std::fs::write(&tmp, text).and_then(|_| std::fs::rename(&tmp, &self.file)) {
+            crate::log::line(&format!("settings save failed — {e}"));
+        }
     }
 
     fn change(&self, f: impl FnOnce(&mut Model)) {
@@ -298,6 +315,56 @@ impl Settings {
     pub fn set_launch_at_login(&self, on: bool) {
         if let Err(e) = self.autostart.set(on) { crate::log::line(&format!("launch-at-login toggle failed — {e}")); }
     }
+
+    /// The registered projects, in the order they were added.
+    pub fn projects(&self) -> Vec<Project> { self.m.lock().unwrap().projects.clone().unwrap_or_default() }
+
+    pub fn project(&self, id: &str) -> Option<Project> { self.projects().into_iter().find(|p| p.id == id) }
+
+    /// Registers a folder. Err when it can't be used, or is already registered (by
+    /// whatever path it was written).
+    pub fn add_project(&self, folder: &str) -> std::result::Result<Project, String> {
+        let resolved = crate::projects::resolve_folder(folder)?;
+        let f = resolved.to_string_lossy().into_owned();
+        if let Some(p) = self.projects().into_iter().find(|p| crate::projects::same_folder(&p.folder, &f)) {
+            return Err(format!("That folder is already registered as “{}”.", p.name));
+        }
+        let name = resolved.file_name().map(|n| n.to_string_lossy().into_owned()).filter(|n| !n.is_empty()).unwrap_or_else(|| f.clone());
+        let p = Project::new(&name, &f);
+        let added = p.clone();
+        self.change(|m| m.projects.get_or_insert_with(Vec::new).push(p));
+        Ok(added)
+    }
+
+    /// Changes a project in place (its id stays). Err for a folder another project has
+    /// or that can't be used; a blank name keeps the old one.
+    pub fn update_project(&self, p: Project) -> std::result::Result<(), String> {
+        let old = self.project(&p.id).ok_or("That project isn’t registered any more.")?;
+        let mut p = p;
+        if p.name.trim().is_empty() { p.name = old.name.clone(); }
+        p.name = p.name.trim().to_owned();
+        if !crate::projects::same_folder(&old.folder, &p.folder) {
+            let f = crate::projects::resolve_folder(&p.folder)?.to_string_lossy().into_owned();
+            if let Some(o) = self.projects().into_iter().find(|o| o.id != p.id && crate::projects::same_folder(&o.folder, &f)) {
+                return Err(format!("That folder is already registered as “{}”.", o.name));
+            }
+            p.folder = f;
+        }
+        let mut seen: Vec<String> = vec![];
+        p.aliases.retain(|a| { let k = a.trim().to_lowercase(); let keep = !k.is_empty() && !seen.contains(&k); seen.push(k); keep });
+        if !crate::projects::ACCESS_IDS.contains(&p.access.as_str()) { p.access = old.access; }
+        self.change(|m| if let Some(slot) = m.projects.get_or_insert_with(Vec::new).iter_mut().find(|x| x.id == p.id) { *slot = p; });
+        Ok(())
+    }
+
+    /// Forgets a project: its folder, its files and its sessions are left as they are.
+    pub fn remove_project(&self, id: &str) { self.change(|m| if let Some(l) = &mut m.projects { l.retain(|p| p.id != id); }) }
+
+    pub fn voice(&self) -> VoiceSettings { self.m.lock().unwrap().voice.clone().unwrap_or_default() }
+    pub fn set_voice(&self, v: VoiceSettings) { self.change(|m| m.voice = Some(v)) }
+
+    pub fn default_workspace(&self) -> Workspace { self.m.lock().unwrap().default_workspace.clone().unwrap_or_default() }
+    pub fn set_default_workspace(&self, w: Workspace) { self.change(|m| m.default_workspace = Some(w)) }
 }
 
 #[cfg(test)]
@@ -339,7 +406,36 @@ mod tests {
         assert_eq!(AgentOptions { read_only: true, ..o.clone() }.access_id(false), "full", "read only that doesn't work isn't offered");
     }
 
-    const DEFAULT_FILE: &str = "{\r\n  \"HoverOpensWorkspace\": true,\r\n  \"NotchItems\": null,\r\n  \"Appearance\": \"System\",\r\n  \"Theme\": null,\r\n  \"WorkspaceSize\": \"Default\",\r\n  \"KiroFolder\": null,\r\n  \"KiroNoticeSeen\": false,\r\n  \"KiroModel\": null,\r\n  \"KiroEffort\": \"high\",\r\n  \"KiroAgent\": null,\r\n  \"KiroReadOnly\": false,\r\n  \"KiroRequireMcp\": false,\r\n  \"KiroIdleMinutes\": 5,\r\n  \"KiroHideSteps\": false,\r\n  \"KiroApproval\": \"Autopilot\",\r\n  \"Agents\": null,\r\n  \"AgentOffers\": null,\r\n  \"AgentTool\": null,\r\n  \"ScWorkspace\": {\r\n    \"Key\": \"N\",\r\n    \"Modifiers\": \"Alt\"\r\n  }\r\n}";
+    const DEFAULT_FILE: &str = "{\r\n  \"HoverOpensWorkspace\": true,\r\n  \"NotchItems\": null,\r\n  \"Appearance\": \"System\",\r\n  \"Theme\": null,\r\n  \"WorkspaceSize\": \"Default\",\r\n  \"KiroFolder\": null,\r\n  \"KiroNoticeSeen\": false,\r\n  \"KiroModel\": null,\r\n  \"KiroEffort\": \"high\",\r\n  \"KiroAgent\": null,\r\n  \"KiroReadOnly\": false,\r\n  \"KiroRequireMcp\": false,\r\n  \"KiroIdleMinutes\": 5,\r\n  \"KiroHideSteps\": false,\r\n  \"KiroApproval\": \"Autopilot\",\r\n  \"Agents\": null,\r\n  \"AgentOffers\": null,\r\n  \"AgentTool\": null,\r\n  \"ScWorkspace\": {\r\n    \"Key\": \"N\",\r\n    \"Modifiers\": \"Alt\"\r\n  },\r\n  \"Projects\": null,\r\n  \"Voice\": null,\r\n  \"DefaultWorkspace\": null\r\n}";
+
+    /// A 3.0 file from before projects and voice reads with them off and empty, and
+    /// writes them back only as nulls until they are used.
+    #[test]
+    fn projects_and_voice_are_new_keys_an_older_file_lacks() {
+        let f = temp("migrate");
+        let old = DEFAULT_FILE.replace(",\r\n  \"Projects\": null,\r\n  \"Voice\": null,\r\n  \"DefaultWorkspace\": null", "");
+        std::fs::write(&f, &old).unwrap();
+        let s = Settings::load(f.clone());
+        assert_eq!(s.model(), Model::default());
+        assert!(s.projects().is_empty() && !s.voice().enabled);
+        assert_eq!(s.default_workspace().access, "risky");
+        let dir = f.parent().unwrap().join("Proj ü");
+        std::fs::create_dir_all(&dir).unwrap();
+        let p = s.add_project(&dir.to_string_lossy()).unwrap();
+        assert_eq!((p.name.as_str(), p.access.as_str(), p.voice), ("Proj ü", "risky", true));
+        let again = format!("{}{}", dir.to_string_lossy(), std::path::MAIN_SEPARATOR);
+        assert!(s.add_project(&again).unwrap_err().contains("already registered"));
+        s.update_project(Project { aliases: vec!["one".into(), "One ".into(), "".into()], access: "bogus".into(), name: "  ".into(), ..p.clone() }).unwrap();
+        let u = s.project(&p.id).unwrap();
+        assert_eq!((u.name.as_str(), u.aliases.len(), u.access.as_str()), ("Proj ü", 1, "risky"));
+        s.flush();
+        let back = Settings::load(f.clone());
+        assert_eq!(back.projects(), s.projects());
+        back.remove_project(&p.id);
+        assert!(back.projects().is_empty());
+        assert!(dir.is_dir(), "forgetting a project leaves its folder");
+        assert!(!f.with_extension("json.tmp").exists(), "the write replaced the file whole");
+    }
 
     #[test]
     fn a_fresh_model_writes_as_system_text_json_writes_it() {

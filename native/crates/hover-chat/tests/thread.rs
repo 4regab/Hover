@@ -47,7 +47,10 @@ fn a_select_all_copies_what_the_page_copies() {
         let (mut th, turns) = fixture(k);
         if open { th.toggle_steps(&turns, 0); }
         th.select_all();
-        assert_eq!(th.selected_text(), want[name]["thread"].as_str().unwrap(), "{name}");
+        // On purpose since the page: how long the run took moved from beside the bot's
+        // name ("· 3m 12s") to the answer's stamp, which is drawn, not copied.
+        let page = want[name]["thread"].as_str().unwrap().split('\n').filter(|l| !l.starts_with("· ")).collect::<Vec<_>>().join("\n");
+        assert_eq!(th.selected_text(), page, "{name}");
     }
 }
 
@@ -509,4 +512,50 @@ fn a_kept_painter_draws_each_steps_own_icon_after_a_relayout() {
             assert!(a.data() == b.data(), "{k} steps, round {round}: the kept painter drew something else");
         }
     }
+}
+
+/// The new rows say only what the tool said: a change's line numbers come from its
+/// header (none without one), long changes fold after eight lines, subagents fold
+/// after four, a thought's text is selectable, code is coloured but copies the same.
+#[test]
+fn thoughts_subagents_changes_and_code_show_only_what_the_tool_said() {
+    use hover_chat::doc::{numbered, Act};
+    assert_eq!(numbered("@@ -40 +41 @@\n  a\n- b\n+ B\n  c"),
+        vec![(Some(41), Some("  a".into())), (Some(41), Some("- b".into())), (Some(42), Some("+ B".into())), (Some(43), Some("  c".into()))]);
+    assert!(numbered("  a\n- b\n+ B").iter().all(|(n, _)| n.is_none()), "no header, no numbers");
+    assert_eq!(numbered("@@ -1 +1 @@\n+ a\n@@ -9 +10 @@\n+ b")[1], (None, None), "a gap between two parts");
+    let code = "fn main() { let n = 42; } // done";
+    let hl = hover_chat::doc::highlight("rust", code);
+    let at = |w: &str| hl.iter().find(|(r, ..)| &code[r.clone()] == w).map(|x| x.1);
+    assert_eq!(at("fn"), Some([0xc4, 0xa2, 0xff, 255]));
+    assert_eq!(at("main"), Some([0x7a, 0xd7, 0xff, 255]));
+    assert_eq!(at("42"), Some([0xff, 0xc4, 0x6b, 255]));
+    assert!(hover_chat::doc::highlight("klingon", code).is_empty());
+
+    let st = |v: serde_json::Value| state::step(&v);
+    let diff = std::iter::once("@@ -40 +40 @@".to_string()).chain((0..12).map(|i| format!("+ line {i}"))).collect::<Vec<_>>().join("\n");
+    let mut steps = vec![
+        st(serde_json::json!({"k": "thought", "verb": "Thinking", "status": "completed", "out": "First I read `win.rs`.", "ms": 14200.0})),
+        st(serde_json::json!({"k": "edit", "verb": "Edited", "name": "win.rs", "dir": "src", "status": "completed", "add": 12, "del": 0, "diff": diff})),
+    ];
+    for i in 0..6 { steps.push(st(serde_json::json!({"k": "agent", "verb": format!("Look at part {i}"), "cmd": "explore", "status": "completed", "out": "Found it.", "ms": 12000.0}))); }
+    let turns = vec![Turn { steps, answer: "Done.\n\n```rust\nfn main() {}\n```".into(), took: Some("2m 41s".into()), ..Turn::new("Go") }];
+    let mut th = Thread::new(Shaper::new(&fonts()), "Juno", [47, 201, 176, 255]);
+    th.set(&turns, 358.0);
+    let hits = |th: &Thread| th.sections[0].frag.hits.iter().map(|h| h.1.clone()).collect::<Vec<_>>();
+    assert!(hits(&th).contains(&Act::OpenDiff(1)), "the changed file opens its change");
+    assert!(hits(&th).contains(&Act::Retry), "the newest finished turn has Retry");
+    let y = th.open_diff(&turns, 0, 1).unwrap();
+    assert!(y > th.sections[0].summary.unwrap()[1]);
+    assert!(hits(&th).contains(&Act::Flag(1, 0)), "twelve lines fold after eight");
+    assert!(hits(&th).contains(&Act::Flag(2, 1)), "six subagents fold after four");
+    th.toggle_step(&turns, 0, 0, false);
+    th.select_all();
+    let all = th.selected_text();
+    assert!(all.contains("First I read win.rs."), "the thought is selectable: {all}");
+    assert!(all.contains("+ line 7") && !all.contains("+ line 8"), "eight lines until asked");
+    assert!(all.contains("fn main() {}"));
+    th.toggle_flag(&turns, 0, 1, 0);
+    th.select_all();
+    assert!(th.selected_text().contains("+ line 11"), "all of it once asked");
 }

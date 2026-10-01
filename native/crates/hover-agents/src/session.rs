@@ -86,6 +86,8 @@ pub struct KiroSession {
     pub access: Option<String>,
     /// What the agent is waiting on the user for, oldest first.
     pub asks: Vec<AgentAsk>,
+    /// Asked to stop or pause; the turn hasn't ended yet (the tool hasn't said).
+    pub stopping: bool,
     /// Goes up with every change to the session: a view that drew it at this number
     /// needn't copy or lay it out again.
     pub rev: u64,
@@ -98,7 +100,7 @@ impl KiroSession {
     /// A new session with no turns (the C# constructor).
     pub fn new(tool: AgentTool) -> KiroSession {
         KiroSession { id: IDS.fetch_add(1, Ordering::SeqCst) + 1, tool, state: KiroState::Idle, phase: KiroPhase::Starting, folder: String::new(), turns: vec![],
-            kiro_id: None, context: None, seat: 0, bot: 0, key: hover_core::guid_n(), deleted: false, access: None, asks: vec![], rev: 0 }
+            kiro_id: None, context: None, seat: 0, bot: 0, key: hover_core::guid_n(), deleted: false, access: None, asks: vec![], stopping: false, rev: 0 }
     }
 
     /// A copy without what only the chat reads: the answers' text, and the steps'
@@ -109,7 +111,7 @@ impl KiroSession {
                 prompt: t.prompt.clone(), images: t.images.clone(),
                 steps: t.steps.iter().map(|x| KiroStep { id: x.id.clone(), kind: x.kind.clone(), title: x.title.clone(), target: x.target.clone(), status: x.status.clone(),
                     added: x.added, removed: x.removed, diff: None, output: None, exit: x.exit, ms: x.ms }).collect(),
-                result: t.result.as_ref().map(|r| KiroResult { state: r.state, text: String::new(), exit_code: r.exit_code }),
+                result: t.result.as_ref().map(|r| KiroResult { state: r.state, text: String::new(), exit_code: r.exit_code, unconfirmed: r.unconfirmed }),
                 queued: t.queued, started_at: t.started_at, woke_at: t.woke_at, ended_at: t.ended_at, credits: t.credits,
             }).collect(),
             folder: self.folder.clone(), kiro_id: self.kiro_id.clone(), key: self.key.clone(), access: self.access.clone(), asks: self.asks.clone(),
@@ -181,10 +183,11 @@ impl Answer {
 /// A question waiting: where its answer goes, and the stop that withdraws it.
 struct Pending { id: String, reply: Answer, _stop: Option<Registration> }
 
-struct Slot { s: KiroSession, cancel: Option<Cancel>, run: RunTask, asks: Vec<Pending> }
+/// pausing: the turn was cancelled by Pause, so the replies queued behind it go once it ends.
+struct Slot { s: KiroSession, cancel: Option<Cancel>, run: RunTask, asks: Vec<Pending>, pausing: bool }
 
 impl Slot {
-    fn new(s: KiroSession, run: RunTask) -> Slot { Slot { s, cancel: None, run, asks: vec![] } }
+    fn new(s: KiroSession, run: RunTask) -> Slot { Slot { s, cancel: None, run, asks: vec![], pausing: false } }
 
     /// KiroSession.DenyAll: every question it left has nobody to answer it now. The
     /// replies go once the lock is released.
@@ -341,11 +344,12 @@ impl KiroSessions {
         if !slot.s.busy() && running >= MAX_RUNNING { return false; }
         if slot.s.state == KiroState::Idle || !usable(text, &images) { return false; }
         let mut t = KiroTurn::new(text.trim(), images);
-        t.queued = slot.s.busy();
-        let queued = t.queued;
+        // Replies left queued (behind a stop that wasn't confirmed) go first, in order.
+        let start_now = !slot.s.busy();
+        t.queued = slot.s.busy() || slot.s.turns.iter().any(|t| t.queued);
         slot.s.turns.push(t);
         slot.s.rev += 1;
-        let begun = if queued { None } else { Some(self.begin(&mut g, id)) };
+        let begun = if start_now { Some(self.begin(&mut g, id)) } else { None };
         let snap = g.all.iter().find(|x| x.s.id == id).unwrap().s.clone();
         drop(g);
         self.raise(vec![Note::Changed]);
@@ -411,18 +415,47 @@ impl KiroSessions {
 
     /// Stops the turn that runs; replies waiting behind it are not sent, and a
     /// question it asked is turned down.
-    pub fn stop(&self, id: i32) {
-        let (c, denied) = {
+    pub fn stop(&self, id: i32) { self.halt(id, false); }
+
+    /// Pause: the turn that runs is cancelled through the tool, the conversation stays,
+    /// and once the tool says the turn has ended the next queued reply goes, once. With
+    /// none queued the session waits; a later reply carries on the conversation. False
+    /// when nothing runs.
+    pub fn pause(&self, id: i32) -> bool { self.halt(id, true) }
+
+    fn halt(&self, id: i32, pausing: bool) -> bool {
+        let (c, denied, found) = {
             let mut g = self.0.inner.lock().unwrap();
             match g.all.iter_mut().find(|x| x.s.id == id && x.s.busy()) {
-                Some(x) => (x.cancel.clone(), x.deny_all()),
-                None => (None, vec![]),
+                Some(x) => {
+                    x.pausing |= pausing;
+                    x.s.stopping = true;
+                    x.s.rev += 1;
+                    (x.cancel.clone(), x.deny_all(), true)
+                }
+                None => (None, vec![], false),
             }
         };
-        let asked = !denied.is_empty();
         for d in denied { d.deny(); }
-        if asked { self.raise(vec![Note::Changed]); }
+        if found { self.raise(vec![Note::Changed]); }
         if let Some(c) = c { c.cancel(); }
+        found
+    }
+
+    /// A queued reply taken back before it was sent. False when turn `index` isn't a
+    /// queued one of that session.
+    pub fn cancel_queued(&self, id: i32, index: usize) -> bool {
+        let snap = {
+            let mut g = self.0.inner.lock().unwrap();
+            let Some(slot) = g.all.iter_mut().find(|x| x.s.id == id) else { return false };
+            if !slot.s.turns.get(index).is_some_and(|t| t.queued) { return false; }
+            slot.s.turns.remove(index);
+            slot.s.rev += 1;
+            slot.s.clone()
+        };
+        self.save(&snap);
+        self.raise(vec![Note::Changed]);
+        true
     }
 
     /// KiroSession.Ask: the agent of the session running conversation `sid` on `tool`
@@ -553,9 +586,11 @@ fn go(me: Weak<Shared>, id: i32, ti: usize, run: RunTask, ct: Cancel, (folder, p
         Ok(r) => r,
         Err(p) => KiroResult::new(KiroState::Failed, p.downcast_ref::<String>().cloned().or_else(|| p.downcast_ref::<&str>().map(|s| s.to_string())).unwrap_or_else(|| "The run failed.".into())),
     };
-    if ct.is_cancelled() && r.state != KiroState::Completed { r.state = KiroState::Cancelled; }
+    if ct.is_cancelled() && r.state != KiroState::Completed && !r.unconfirmed { r.state = KiroState::Cancelled; }
     let Some((ks, (snap, next, denied))) = with(&me, id, |slot, now| {
         slot.cancel = None;
+        let pausing = std::mem::take(&mut slot.pausing);
+        slot.s.stopping = false;
         // A question the run left behind has nobody to answer it now.
         let denied = slot.deny_all();
         let t = &mut slot.s.turns[ti];
@@ -565,9 +600,13 @@ fn go(me: Weak<Shared>, id: i32, ti: usize, run: RunTask, ct: Cancel, (folder, p
         let secs = now.secs_since(&slot.s.turns[ti].started_at);
         hover_core::log::line(&format!("{} run {} turn {} {} after {:.0}s (exit {})", slot.s.tool.id(), slot.s.id, ti + 1, slot.s.state.name().to_lowercase(), secs,
             r.exit_code.map_or("-".into(), |c| c.to_string())));
-        // A stop drops the replies that were waiting; otherwise the next one goes.
+        // A stop drops the replies that were waiting; a pause sends the next one, once the
+        // tool has said the turn ended. A stop the tool never confirmed sends nothing:
+        // what it was doing may still go on (a pause keeps them queued, a stop drops them).
         let mut next = slot.s.turns.iter().any(|t| t.queued);
-        if next && r.state == KiroState::Cancelled {
+        if next && r.unconfirmed && pausing {
+            next = false;
+        } else if next && !pausing && (r.state == KiroState::Cancelled || r.unconfirmed) {
             for q in slot.s.turns.iter_mut().filter(|t| t.queued) {
                 q.queued = false;
                 q.started_at = now;

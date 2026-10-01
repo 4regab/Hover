@@ -49,8 +49,8 @@ pub struct Page {
     thread: RefCell<Option<Chat>>,
     /// The open chat's turns as last laid out, for a click on the thread.
     turns: RefCell<Vec<hover_chat::Turn>>,
-    /// The live turn's clock ticks once a second while a chat that runs is open.
-    clock: slint::Timer,
+    /// Each chat's unsent reply and its pictures, kept while another chat is open.
+    drafts: RefCell<HashMap<i32, (String, Vec<String>)>>,
     copied: slint::Timer,
     rows_open: RefCell<Vec<(Option<i64>, Option<String>)>>,
     pub target: Cell<i32>,
@@ -88,10 +88,9 @@ type QRows = (Rc<VecModel<QData>>, Vec<Rc<VecModel<QOpt>>>);
 struct Picks { sel: Vec<Vec<String>>, text: Vec<String> }
 
 /// The drawer's thread, laid out and painted by hover-chat.
-/// answered: which turns had an answer at the last paint (None before the first).
 /// laid: the session's change number and clock second its turns were read at, the
 /// thread's width and height then (None: not yet).
-struct Chat { id: i32, thread: hover_chat::Thread, painter: hover_chat::Painter, scroll: f32, width: f32, key: String, answered: Option<Vec<bool>>, laid: Option<(u64, i64, f32, f32)>, sel: Sel }
+struct Chat { id: i32, thread: hover_chat::Thread, painter: hover_chat::Painter, scroll: f32, width: f32, key: String, laid: Option<(u64, i64, f32, f32)>, sel: Sel }
 
 /// A text selection being made in the thread with the pointer (chat-proto's): where it
 /// began, by what unit a double or triple click grows it, and the click count.
@@ -140,7 +139,7 @@ impl Default for Page {
     fn default() -> Page {
         Page { live: RefCell::new(None), size: Cell::new((0, 0)), open: Cell::new(None), panel: Cell::new(None), fab: Cell::new(0), new_tool: Cell::new(0), menu: Cell::new(false), access_menu: Cell::new(false), new_access: RefCell::new([None; 4]),
             new_folder: RefCell::new(None), time_mode: Cell::new(0), toast_timer: Default::default(), push_timer: Default::default(), dirty: Cell::new(true),
-            checking: Cell::new([false; 4]), confirm_key: RefCell::new(None), thread: RefCell::new(None), turns: RefCell::new(vec![]), clock: Default::default(), copied: Default::default(),
+            checking: Cell::new([false; 4]), confirm_key: RefCell::new(None), thread: RefCell::new(None), turns: RefCell::new(vec![]), drafts: Default::default(), copied: Default::default(),
             rows_open: RefCell::new(vec![]), target: Cell::new(0), shown: Cell::new(None), drop_timer: Default::default(), view: Cell::new(None),
             picks: Default::default(), qmodels: Default::default(), model_menu: Cell::new(0), attached: Default::default(), thumbs: Default::default(),
             #[cfg(windows)] gpu: Default::default(),
@@ -391,17 +390,41 @@ impl App {
         self.page.fab.set(0);
         self.page.panel.set(None);
         self.send(In::Panel(None));
+        self.keep_draft();
         self.page.open.set(Some(id));
         self.send(In::Drawer(Some(id as i64)));
         *self.page.thread.borrow_mut() = None;
+        // This chat's own draft, never another's.
+        let (text, pics) = self.page.drafts.borrow_mut().remove(&id).unwrap_or_default();
+        self.page.attached.borrow_mut()[0] = pics;
+        each!(self, |g| { g.set_d_draft(s(&text)); g.set_d_compose(false); });
         self.office_widgets();
     }
 
     pub fn close_drawer(self: &Rc<Self>) {
+        self.keep_draft();
         self.page.open.set(None);
         self.send(In::Drawer(None));
         *self.page.thread.borrow_mut() = None;
+        each!(self, |g| { g.set_d_draft(s("")); g.set_d_compose(false); });
         self.office_widgets();
+    }
+
+    /// The folder in front in the office: the open chat's, else the new-task box's
+    /// while it shows (voice's active project).
+    pub fn selected_folder(&self) -> Option<String> {
+        if let Some(id) = self.page.open.get() { return self.hover.sessions.get(id).map(|s| s.folder); }
+        if self.page.fab.get() == 0 { return None; }
+        self.page.new_folder.borrow().clone()
+    }
+
+    /// The open chat's reply, kept for when it opens again.
+    fn keep_draft(&self) {
+        let Some(id) = self.page.open.get() else { return };
+        let text = each_reply(self);
+        let pics = std::mem::take(&mut self.page.attached.borrow_mut()[0]);
+        if text.trim().is_empty() && pics.is_empty() { self.page.drafts.borrow_mut().remove(&id); }
+        else { self.page.drafts.borrow_mut().insert(id, (text, pics)); }
     }
 
     pub fn open_panel(self: &Rc<Self>, p: Option<&'static str>) {
@@ -503,15 +526,14 @@ impl App {
                 g.set_d_title(s(o.title()));
                 g.set_d_folder(s(hover_office::office::short(&o.folder)));
                 g.set_d_busy(o.busy());
+                g.set_d_stopping(o.stopping);
                 let bot = hover_office::bot::BOTS[o.bot % 6].0;
-                g.set_d_placeholder(s(if o.waiting() { format!("Or tell {bot} what to do instead…") } else if o.busy() { format!("Reply. {bot} reads it when this run ends") } else { format!("Reply to {bot}…") }));
+                // A reply never answers what the agent asked: while it waits, it queues too.
+                g.set_d_placeholder(s(if o.busy() { "Queue a reply".to_owned() } else { format!("Reply to {bot}") }));
+                g.set_d_reply_label(s(format!("Reply to {bot}")));
             }
         });
         if open.is_some() { self.paint_thread(); }
-        // "Working 0:12": the clock over a running turn moves on its own.
-        if open.as_ref().is_some_and(|o| o.busy()) {
-            if !p.clock.running() { let a = self.clone(); p.clock.start(slint::TimerMode::Repeated, Duration::from_secs(1), move || a.paint_thread()); }
-        } else { p.clock.stop(); }
     }
 
     fn panel_rows(&self, sessions: &[KiroSession]) -> Panel {
@@ -591,11 +613,11 @@ impl App {
     /// The open session's thread, as the drawer shows it (renderDrawer, through hover-chat).
     fn paint_thread(self: &Rc<Self>) {
         let Some(id) = self.page.open.get() else { return };
-        let Some((rev, busy)) = self.hover.sessions.rev(id) else { return };
+        let Some((rev, _busy)) = self.hover.sessions.rev(id) else { return };
         let now = hover_core::time::Stamp::now();
-        // A running turn's clock ("Working 0:12") moves each second; nothing else does
-        // unless the session changed.
-        let second = if busy { now.unix_ms().div_euclid(1000) } else { 0 };
+        // Nothing in the thread moves with the clock: it is laid out again only when the
+        // session changed.
+        let second = 0;
         let which = self.page.target.get();
         let dash = self.dash.borrow();
         let g = if which == 1 { dash.as_ref().map(|d| d.global::<crate::ui::Office>()) } else { Some(self.notch.global::<crate::ui::Office>()) };
@@ -628,18 +650,18 @@ impl App {
                 thread.use_images(images.clone());
                 let (host, folder) = (files(&sess), sess.folder.clone());
                 thread.image_rule = Box::new(move |src| hover_md::image::image_for(&hover_md::image::Session { files: host.as_deref(), folder: &folder }, src));
-                *chat = Some(Chat { id, thread, painter: hover_chat::Painter::new(&f, images), scroll: f32::MAX, width: 0.0, key: sess.key.clone(), answered: None, laid: None, sel: Sel::default() });
+                *chat = Some(Chat { id, thread, painter: hover_chat::Painter::new(&f, images), scroll: f32::MAX, width: 0.0, key: sess.key.clone(), laid: None, sel: Sel::default() });
             }
             let c = chat.as_mut().unwrap();
-            // renderDrawer: #thread keeps to the bottom when it was within 40 px of it, and
-            // jumps there when an answer is new since the last state (never on the first).
+            // Follows the bottom only when it was there (within 40 px): reading older
+            // turns never jumps, a new answer or not.
             let was_near = c.thread.height - c.scroll - c.thread.view_h < 40.0;
-            let answered: Vec<bool> = turns.iter().map(|t| !t.answer.is_empty()).collect();
-            let fresh = c.answered.replace(answered.clone()).is_some_and(|before| answered.iter().enumerate().any(|(k, &a)| a && !before.get(k).copied().unwrap_or(false)));
             c.thread.tool = sess.tool.id().into();
             c.thread.view_h = h;
+            // Room under the last turn for the reply circle over the thread's corner.
+            c.thread.extra_bottom = 40.0;
             c.thread.set(&turns, w);
-            if was_near || fresh { c.scroll = f32::MAX; }
+            if was_near { c.scroll = f32::MAX; }
             *self.page.turns.borrow_mut() = turns;
             c.width = w;
             c.laid = Some((rev, second, w, h));
@@ -647,6 +669,8 @@ impl App {
         let c = chat.as_mut().unwrap();
         let max = (c.thread.height - h).max(0.0);
         c.scroll = c.scroll.clamp(0.0, max);
+        // .jump: "Latest" once the reader is well above the end.
+        g.set_d_jump(max - c.scroll > 160.0);
         let k = if which == 1 { dash.as_ref().map_or(1.0, |d| d.window().scale_factor()) } else { self.notch.window().scale_factor() };
         let px = c.painter.paint(&c.thread, c.scroll, (w * k).round() as u32, (h * k).round() as u32, k, [0, 0, 0, 0]);
         let img = Image::from_rgba8_premultiplied(SharedPixelBuffer::clone_from_slice(px.data(), px.width(), px.height()));
@@ -782,31 +806,36 @@ impl App {
             let text = each_reply(&a).trim().to_owned();
             let images = a.page.attached.borrow()[0].clone();
             if text.is_empty() && images.is_empty() {
-                if a.hover.sessions.get(id).is_some_and(|s| s.busy()) { a.hover.sessions.stop(id); }
+                // Pause, not Stop: the tool cancels the turn, the conversation stays, and
+                // the next queued reply goes once it says the turn has ended.
+                if a.hover.sessions.get(id).is_some_and(|s| s.busy() && !s.stopping) { a.hover.sessions.pause(id); a.office_widgets(); }
                 return;
             }
             // A reply while a question waits is its answer, in the user's own words, where
-            // the question takes one; replying to anything else it asked says no to it,
-            // and the words go to the agent instead.
+            // the question takes one. A permission it asked is left for its own buttons:
+            // the reply is queued behind it and never says yes or no to it.
             if let Some(q) = a.hover.sessions.get(id).and_then(|s| s.asking().cloned()) {
                 if let Some(qs) = q.questions.as_ref().filter(|q| !q.is_empty()) {
                     if qs.len() == 1 && qs[0].custom && images.is_empty() {
                         a.page.picks.borrow_mut().insert(q.id.clone(), Picks { sel: vec![vec![]], text: vec![text.clone()] });
-                        if a.send_answers(id, &q) { each!(a, |g| g.set_d_draft(s(""))); }
+                        if a.send_answers(id, &q) { each!(a, |g| { g.set_d_draft(s("")); g.set_d_compose(false); }); }
                         return;
                     }
                     a.toast("Answer the question above first, or skip it.");
                     return;
                 }
-                a.hover.sessions.answer(id, &q.id, AskAnswer::Deny);
             }
             if !a.hover.sessions.reply(id, &text, images) { a.toast("3 tasks are running. Reply when one is done."); return; }
             a.page.attached.borrow_mut()[0].clear();
-            each!(a, |g| g.set_d_draft(s("")));
+            a.page.drafts.borrow_mut().remove(&id);
+            // Sending closes the box; the thread shows the reply at its end.
+            each!(a, |g| { g.set_d_draft(s("")); g.set_d_compose(false); });
             if let Some(c) = &mut *a.page.thread.borrow_mut() { c.scroll = f32::MAX; }
             a.office_changed();
             a.office_widgets();
         });
+        let a = self.clone();
+        g.on_d_latest(move || { if let Some(c) = &mut *a.page.thread.borrow_mut() { c.scroll = f32::MAX; } a.paint_thread(); });
         let a = self.clone();
         g.on_d_click(move |x, y| a.thread_click(x, y));
         let a = self.clone();
@@ -823,6 +852,16 @@ impl App {
         g.on_d_resized(move || { let a = a.clone(); slint::Timer::single_shot(Duration::ZERO, move || a.paint_thread()); });
         let a = self.clone();
         g.on_d_wheel(move |dy| { if let Some(c) = &mut *a.page.thread.borrow_mut() { c.scroll = (c.scroll - dy).max(0.0); } a.paint_thread(); });
+        let a = self.clone();
+        g.on_d_type(move |t| {
+            // One printable character (not a control, nor one of Slint's keys, which are
+            // private-use characters): the reply box opens with it written.
+            let mut cs = t.chars();
+            let (Some(c), None) = (cs.next(), cs.next()) else { return false };
+            if c.is_control() || ('\u{e000}'..='\u{f8ff}').contains(&c) || a.page.open.get().is_none() { return false; }
+            each!(a, |g| { let d = g.get_d_draft(); g.set_d_draft(s(format!("{d}{c}"))); g.set_d_compose(true); });
+            true
+        });
     }
 
     fn wire_office_more(self: &Rc<Self>, g: &crate::ui::Office) {
@@ -1079,6 +1118,27 @@ impl App {
         match hit {
             hover_chat::Hit::Toggle(i) => { if let Some(c) = &mut *self.page.thread.borrow_mut() { c.thread.toggle_steps(&turns, i); } }
             hover_chat::Hit::Act(i, hover_chat::doc::Act::Step(j, now)) => { if let Some(c) = &mut *self.page.thread.borrow_mut() { c.thread.toggle_step(&turns, i, j, now); } }
+            hover_chat::Hit::Act(i, hover_chat::doc::Act::Flag(j, k)) => { if let Some(c) = &mut *self.page.thread.borrow_mut() { c.thread.toggle_flag(&turns, i, j, k); } }
+            hover_chat::Hit::Act(i, hover_chat::doc::Act::OpenDiff(j)) => {
+                // The change opens in the timeline, its row near the top of the view.
+                if let Some(c) = &mut *self.page.thread.borrow_mut() { if let Some(y) = c.thread.open_diff(&turns, i, j) { c.scroll = (y - 36.0).max(0.0); } }
+            }
+            hover_chat::Hit::Act(i, hover_chat::doc::Act::Retry) => {
+                // The newest turn's prompt again, as a reply; never while one is in flight.
+                let Some(id) = self.page.open.get() else { return };
+                let Some(sess) = self.hover.sessions.get(id).filter(|s| !s.busy() && !s.turns.iter().any(|t| t.queued)) else { return };
+                let Some(t) = sess.turns.get(i).filter(|_| i + 1 == sess.turns.len()) else { return };
+                if !self.hover.sessions.reply(id, &t.prompt, t.images.clone()) { self.toast("3 tasks are running. Retry when one is done."); return; }
+                if let Some(c) = &mut *self.page.thread.borrow_mut() { c.scroll = f32::MAX; }
+                self.office_changed();
+                self.office_widgets();
+                return;
+            }
+            hover_chat::Hit::Act(i, hover_chat::doc::Act::Cancel) => {
+                let Some(id) = self.page.open.get() else { return };
+                if self.hover.sessions.cancel_queued(id, i) { self.office_changed(); self.office_widgets(); }
+                return;
+            }
             hover_chat::Hit::Act(_, hover_chat::doc::Act::Copy(text)) => {
                 if let Err(e) = arboard::Clipboard::new().and_then(|mut c| c.set_text(text.to_string())) { hover_core::log::line(&format!("clipboard: {e}")); }
                 if let Some(c) = &mut *self.page.thread.borrow_mut() { c.thread.set_copied(&turns, Some(text)); }

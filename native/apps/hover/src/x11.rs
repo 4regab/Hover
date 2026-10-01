@@ -165,13 +165,47 @@ impl Plat for X {
 
 /// XGrabKey on the root window, for the chord with and without Caps Lock and Num Lock
 /// (which X counts as modifiers). Another client holding the chord makes the grab fail
-/// with BadAccess: the counterpart of RegisterHotKey refusing.
-pub struct Grab { conn: Arc<RustConnection>, root: u32, held: Mutex<Vec<(u8, u16)>> }
+/// with BadAccess: the counterpart of RegisterHotKey refusing. Voice's hold-to-talk
+/// chord is grabbed the same way and kept apart (`hold`).
+pub struct Grab { conn: Arc<RustConnection>, root: u32, held: Mutex<Vec<(u8, u16)>>, hold: Arc<Mutex<Option<Hold>>> }
+
+/// The hold-to-talk chord: its key and modifiers, whether it is down (and which press,
+/// so a stale release check does nothing), and what to call.
+struct Hold { code: u8, mods: u16, down: bool, press: u64, pressed: Arc<dyn Fn() + Send + Sync>, released: Arc<dyn Fn() + Send + Sync> }
 
 const LOCKS: [u16; 4] = [0, 0x2 /* Lock */, 0x10 /* Mod2: Num Lock */, 0x12];
 
+/// Any reply, unread: the XKB requests below have no x11rb type without its xkb feature.
+struct Raw;
+impl x11rb::x11_utils::TryParse for Raw {
+    fn try_parse(v: &[u8]) -> Result<(Self, &[u8]), x11rb::errors::ParseError> { Ok((Raw, &v[v.len()..])) }
+}
+
+/// XkbSetDetectableAutoRepeat: a held key then sends one press and one release, not a
+/// release and press per repeat, so holding the chord reads as holding it. Sent as raw
+/// requests (XkbUseExtension, XkbPerClientFlags) because x11rb's xkb module isn't built.
+fn detectable_repeat(c: &RustConnection) -> Result<(), String> {
+    use x11rb::connection::RequestConnection;
+    use std::io::IoSlice;
+    let ext = c.extension_information("XKEYBOARD").map_err(|e| e.to_string())?.ok_or("the X server has no XKB")?;
+    let op = ext.major_opcode;
+    let mut use_ext = vec![op, 0];
+    use_ext.extend_from_slice(&2u16.to_ne_bytes());
+    use_ext.extend_from_slice(&1u16.to_ne_bytes());
+    use_ext.extend_from_slice(&0u16.to_ne_bytes());
+    c.send_request_with_reply::<Raw>(&[IoSlice::new(&use_ext)], vec![]).map_err(|e| e.to_string())?.reply().map_err(|e| format!("{e:?}"))?;
+    // deviceSpec XkbUseCoreKbd, change and value XkbPCF_DetectableAutoRepeatMask, no controls.
+    let mut pcf = vec![op, 21];
+    pcf.extend_from_slice(&7u16.to_ne_bytes());
+    pcf.extend_from_slice(&0x0100u16.to_ne_bytes());
+    pcf.extend_from_slice(&0u16.to_ne_bytes());
+    for v in [1u32, 1, 0, 0, 0] { pcf.extend_from_slice(&v.to_ne_bytes()); }
+    c.send_request_with_reply::<Raw>(&[IoSlice::new(&pcf)], vec![]).map_err(|e| e.to_string())?.reply().map_err(|e| format!("{e:?}"))?;
+    Ok(())
+}
+
 impl Grab {
-    pub fn new(conn: Arc<RustConnection>, root: u32) -> Arc<Grab> { Arc::new(Grab { conn, root, held: Mutex::new(vec![]) }) }
+    pub fn new(conn: Arc<RustConnection>, root: u32) -> Arc<Grab> { Arc::new(Grab { conn, root, held: Mutex::new(vec![]), hold: Default::default() }) }
 
     fn keycode(&self, keysym: u32) -> Option<u8> {
         let s = self.conn.setup();
@@ -219,12 +253,87 @@ impl Grab {
                 Ok(x11rb::protocol::Event::KeyPress(e)) => {
                     let held = me.held.lock().unwrap().clone();
                     let state = u16::from(e.state) & !0x12;
+                    if me.hold_press(e.detail, state) { continue; }
                     if held.iter().any(|(c, m)| *c == e.detail && *m == state) { pressed(); }
                 }
+                // While the chord is held the keyboard is ours (the grab), so any key
+                // coming up, its own or a modifier, ends it.
+                Ok(x11rb::protocol::Event::KeyRelease(_)) => me.hold_up(None),
                 Ok(_) => {}
                 Err(_) => return,
             }
         }).expect("a thread for the shortcut");
+    }
+
+    /// Voice's hold-to-talk chord: `pressed` when it goes down, `released` when it or a
+    /// modifier comes up, both called on the shortcut's event thread (pass closures that
+    /// hand over to the UI thread, as `listen`'s caller does). Repeats are filtered (XKB's
+    /// detectable auto-repeat, and the chord's own down state); a release that never
+    /// arrives (another client took the keyboard) is caught by reading the key's state
+    /// every 50 ms while it is down. Needs `listen` running. Err names the conflict.
+    pub fn register_hold(self: &Arc<Grab>, sc: &Shortcut, pressed: impl Fn() + Send + Sync + 'static, released: impl Fn() + Send + Sync + 'static) -> Result<(), String> {
+        self.clear_hold();
+        if !sc.is_set() { return Ok(()); }
+        let code = hover_app::keys::keysym(sc.key).and_then(|k| self.keycode(k)).ok_or_else(|| format!("{} has no key on this keyboard.", sc.label()))?;
+        let mut mods = 0u16;
+        if sc.modifiers.has(Modifiers::SHIFT) { mods |= 0x1; }
+        if sc.modifiers.has(Modifiers::CONTROL) { mods |= 0x4; }
+        if sc.modifiers.has(Modifiers::ALT) { mods |= 0x8; }
+        if sc.modifiers.has(Modifiers::WINDOWS) { mods |= 0x40; }
+        // X lets a client grab its own chord twice without a word; Windows wouldn't.
+        if self.held.lock().unwrap().contains(&(code, mods)) { return Err(format!("{} is Hover’s shortcut for the office.", sc.label())); }
+        detectable_repeat(&self.conn).map_err(|e| format!("Hold-to-talk can’t tell a held key from a repeated one on this X server ({e})."))?;
+        for (i, l) in LOCKS.iter().enumerate() {
+            let r = self.conn.grab_key(true, self.root, xproto::ModMask::from(mods | l), code, xproto::GrabMode::ASYNC, xproto::GrabMode::ASYNC)
+                .map_err(|e| e.to_string()).and_then(|c| c.check().map_err(|e| format!("{e:?}")));
+            if let Err(e) = r {
+                hover_core::log::line(&format!("voice hotkey {} could not be registered ({e})", sc.label()));
+                for l in &LOCKS[..i] { let _ = self.conn.ungrab_key(code, self.root, xproto::ModMask::from(mods | l)); }
+                let _ = self.conn.flush();
+                return Err(format!("{} is already in use by another app.", sc.label()));
+            }
+        }
+        *self.hold.lock().unwrap() = Some(Hold { code, mods, down: false, press: 0, pressed: Arc::new(pressed), released: Arc::new(released) });
+        Ok(())
+    }
+
+    /// Lets go of the voice chord; one held now is released first, so no recording is left running.
+    pub fn clear_hold(&self) {
+        let Some(h) = self.hold.lock().unwrap().take() else { return };
+        for l in LOCKS { let _ = self.conn.ungrab_key(h.code, self.root, xproto::ModMask::from(h.mods | l)); }
+        let _ = self.conn.flush();
+        if h.down { (h.released)(); }
+    }
+
+    /// A press of the voice chord: the first one calls `pressed` and starts the release
+    /// check; repeats do nothing. False when it isn't the voice chord.
+    fn hold_press(self: &Arc<Grab>, code: u8, state: u16) -> bool {
+        let mut g = self.hold.lock().unwrap();
+        let Some(h) = g.as_mut().filter(|h| h.code == code && h.mods == state) else { return false };
+        if h.down { return true; }
+        h.down = true;
+        h.press += 1;
+        let (f, press) = (h.pressed.clone(), h.press);
+        drop(g);
+        f();
+        let me = self.clone();
+        let _ = std::thread::Builder::new().name("hotkey-hold".into()).spawn(move || loop {
+            std::thread::sleep(std::time::Duration::from_millis(50));
+            if me.hold.lock().unwrap().as_ref().is_none_or(|h| !h.down || h.press != press) { return; }
+            let up = me.conn.query_keymap().ok().and_then(|c| c.reply().ok()).is_none_or(|k| k.keys[code as usize / 8] & (1 << (code % 8)) == 0);
+            if up { me.hold_up(Some(press)); return; }
+        });
+        true
+    }
+
+    /// The chord came up (any press, or only that one): `released`, once.
+    fn hold_up(&self, press: Option<u64>) {
+        let mut g = self.hold.lock().unwrap();
+        let Some(h) = g.as_mut().filter(|h| h.down && press.is_none_or(|p| p == h.press)) else { return };
+        h.down = false;
+        let f = h.released.clone();
+        drop(g);
+        f();
     }
 }
 

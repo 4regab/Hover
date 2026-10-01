@@ -3,7 +3,7 @@
   agent standing in for Kiro, Codex and Cursor. Each run gets a fresh data folder and
   project folder under -Out; nothing of the user's own Hover data is read or written.
 
-    .\native\tools\hover-measure\run-memory.ps1 -Exe native\target\release\hover.exe -Out evidence\memory\after -Runs 3
+    .\native\tools\hover-measure\run-memory.ps1 -Exe native\target\release\hoverai.exe -Out evidence\memory\after -Runs 3
     .\native\tools\hover-measure\run-memory.ps1 -Exe ... -Script office.hms -Runs 5
     .\native\tools\hover-measure\run-memory.ps1 -Exe ... -Env SLINT_WGPU_CPU=1   (a machine whose only adapter is WARP)
 
@@ -29,7 +29,7 @@ $bin = if ($Tools) { (Resolve-Path $Tools).Path } else { Join-Path $root "native
 $measure = Join-Path $bin "hover-measure.exe"
 $fake = Join-Path $bin "fake-agent.exe"
 if (-not (Test-Path $measure) -or -not (Test-Path $fake)) { throw "Build the tools first: cargo build --manifest-path native/Cargo.toml --release -p hover-measure" }
-if (Get-Process Hover -ErrorAction SilentlyContinue) { throw "Hover is running; quit it first (it holds the single-instance lock)." }
+if (Get-Process hoverai, Hover -ErrorAction SilentlyContinue) { throw "Hover is running; quit it first (it holds the single-instance lock)." }
 $Exe = (Resolve-Path $Exe).Path
 New-Item -ItemType Directory -Force -Path $Out | Out-Null
 $Out = (Resolve-Path $Out).Path

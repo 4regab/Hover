@@ -2,7 +2,7 @@
 // dashboard (DashboardWindow) and the shortcut's warning (App.ShowHotKeyWarning).
 
 import { Pal, Fonts, Icon, Icons, PillButton, Ring } from "widgets.slint";
-import { LiveMark, MarkStack, StackMark } from "marks.slint";
+import { LiveMark, MarkStack, StackMark, Mark, Arc } from "marks.slint";
 import { OfficeView, Page, Office, Backdrop, Side, Block, Opt, TagData, ToolData, PanelRow } from "office.slint";
 export { Pal, Page, Office, Backdrop, Side, Block, Opt, TagData, ToolData, PanelRow, StackMark }
 
@@ -15,6 +15,77 @@ export struct QuotaItem { id: string, name: string, ring: float, value: string, 
 // A line of a change: 1 added, -1 removed, 0 context.
 export struct PreviewLine { text: string, kind: int }
 export struct CardData { tool: string, title: string, sub: string, count: string, command: string, path: string, preview: [PreviewLine], reason: string, danger: bool, allow: string }
+
+// Voice's card in the notch (voice_ui.rs). kind: 1 listening, 2 working on what was
+// said, 3 the preview (counting down, edited, starting), 4 pick an agent, 5 started,
+// 6 cancelled, 7 an error. words: the line it shows; sub: the one under it (the time
+// while listening). ring: the countdown left, 0 to 100, or -1.
+export struct VoiceCard {
+    kind: int, words: string, sub: string, heard: string, note: string,
+    target: string, folder: string, letter: string, tint: color, home: bool,
+    tool: string, agent: string, access: string, full: bool, task: string,
+    ring: float, start: string, can-start: bool, starting: bool, retry: bool, settings: bool,
+}
+export struct VoiceTool { id: string, name: string }
+
+// A key's name on a voice button (the mockup's kbd): mono and faint.
+component Kbd inherits Text { font-family: "DejaVu Sans Mono"; font-size: 10px; font-weight: 600; opacity: 0.5; vertical-alignment: center; }
+
+// The voice card's buttons (.nbtn): 28 high, radius 9. The light one is Start, with
+// the countdown's ring in it.
+component VBtn inherits Rectangle {
+    in property <string> text;
+    in property <string> key;
+    in property <bool> light;
+    in property <bool> enabled: true;
+    in property <float> ring: -1;
+    callback clicked;
+    property <color> ink: light ? #131116 : white;
+    height: 28px;
+    min-width: row.preferred-width;
+    border-radius: 9px;
+    background: light ? (ta.has-hover && enabled ? #ffffff : #f6f2ff) : (ta.has-hover ? #ffffff1c : #ffffff10);
+    opacity: enabled ? 1 : 0.55;
+    accessible-role: button;
+    accessible-label: text;
+    accessible-enabled: enabled;
+    accessible-action-default => { if (enabled) { clicked(); } }
+    HorizontalLayout {
+        alignment: center;
+        row := HorizontalLayout {
+            padding-left: 12px;
+            padding-right: 12px;
+            spacing: 6px;
+            if root.ring >= 0: VerticalLayout { alignment: center; Ring { width: 16px; height: 16px; value: root.ring; stroke: 2.5px; track: #13111633; tint: #131116; } }
+            Text { text: root.text; font-size: 12px; font-weight: 600; color: ink; vertical-alignment: center; }
+            if root.key != "": Kbd { text: root.key; color: ink; }
+        }
+    }
+    ta := TouchArea { enabled: root.enabled; mouse-cursor: pointer; clicked => { root.clicked(); } }
+}
+
+// The Esc chip (.esc): closes or cancels when clicked.
+component EscChip inherits Rectangle {
+    callback clicked;
+    width: et.preferred-width + 12px;
+    height: et.preferred-height + 2px;
+    border-radius: 5px;
+    border-width: 1px;
+    border-color: ta.has-hover ? #ffffff47 : #ffffff24;
+    accessible-role: button;
+    accessible-label: "Cancel (Esc)";
+    accessible-action-default => { clicked(); }
+    et := Text { text: "Esc"; font-size: 10.5px; color: #f6f2ff61; }
+    ta := TouchArea { mouse-cursor: pointer; clicked => { root.clicked(); } }
+}
+
+// .npick: the target, the agent or the access on the card, 28 high.
+component VPick inherits Rectangle {
+    in property <bool> amber;
+    height: 28px;
+    border-radius: 9px;
+    background: amber ? #ffb34014 : #ffffff0f;
+}
 
 // .Pressable: 0 plain, 1 primary (light), 2 danger (red). small is the island's.
 component Press inherits Rectangle {
@@ -116,6 +187,23 @@ export component NotchWindow inherits Window {
     out property <length> pill-width: pill.preferred-width;
     out property <length> card-w: 500px;
     out property <length> card-h: card-l.preferred-height + 26px;
+    // Voice's card (rest-kind 3): what it shows, the microphone's level (0 to 1) while
+    // listening, the agents to pick from, and a press turned away as busy.
+    in property <VoiceCard> voice;
+    in property <float> voice-level;
+    in property <[VoiceTool]> voice-tools;
+    in property <bool> voice-busy;
+    out property <length> voice-w: root.voice.kind == 1 || root.voice.kind == 2 ? 440px : root.voice.kind == 5 || root.voice.kind == 6 ? 330px
+        : root.voice.kind == 7 ? 420px : 460px;
+    out property <length> voice-h: root.voice.kind == 1 || root.voice.kind == 2 ? 52px : root.voice.kind == 5 || root.voice.kind == 6 ? 34px
+        : root.voice.kind == 7 ? max(58px, ve.preferred-height) : vc.preferred-height;
+    callback voice-start();
+    callback voice-cancel();
+    callback voice-edit(string);
+    callback voice-retry();
+    callback voice-pick(string);
+    callback voice-settings();
+    public function focus-voice() { voice-keys.focus(); }
     callback deny();
     callback review();
     // The card's answer: allow, trust, trustAll or deny.
@@ -348,6 +436,260 @@ export component NotchWindow inherits Window {
                         Rectangle { width: 8px; }
                         Press { text: root.card.allow; key: "Enter"; kind: root.card.danger ? 2 : 1; clicked => { root.answer("allow"); } }
                     }
+                }
+            }
+            // Voice's card (the mockup's notch steps): listening, working on it, the
+            // preview with its countdown, an agent to pick, started, cancelled, an error.
+            // Esc cancels the voice interaction only; Enter starts once Start can.
+            voice-keys := FocusScope {
+                visible: root.rest-kind == 3;
+                accessible-role: groupbox;
+                accessible-id: "NotchVoice";
+                accessible-label: "Voice";
+                key-pressed(e) => {
+                    if (e.text == Key.Escape) { root.voice-cancel(); return accept; }
+                    if (e.text == Key.Return && !e.modifiers.shift && root.voice.kind == 3 && root.voice.can-start) { root.voice-start(); return accept; }
+                    reject
+                }
+                // .nlisten: the mic swells a little with the voice's level; while Hover
+                // works on what was said a ring goes round it.
+                if root.voice.kind == 1 || root.voice.kind == 2: HorizontalLayout {
+                    x: 0;
+                    y: 0;
+                    width: 440px;
+                    height: 52px;
+                    padding-left: 14px;
+                    padding-right: 14px;
+                    spacing: 11px;
+                    VerticalLayout { alignment: center; Rectangle {
+                        width: 26px;
+                        height: 26px;
+                        property <float> k: root.voice.kind == 1 ? 1 + 0.35 * min(1, root.voice-level) : 1;
+                        Rectangle {
+                            width: 26px * parent.k;
+                            height: 26px * parent.k;
+                            border-radius: self.width / 2;
+                            background: #ffffff1c;
+                            animate width, height { duration: Pal.motion ? 90ms : 0ms; }
+                        }
+                        Icon { name: Icons.mic; size: 13px; tint: white; }
+                        if root.voice.kind == 2: Path {
+                            x: -2px; y: -2px; width: 30px; height: 30px; viewbox-width: 30; viewbox-height: 30;
+                            commands: Arc.of(15, 14, mod(Clock.t * 313, 360) * 1deg, 100deg);
+                            stroke: #c4a2ff; stroke-width: 2px; stroke-line-cap: round; fill: transparent;
+                        }
+                    } }
+                    Text {
+                        text: root.voice.words;
+                        font-size: 13px;
+                        color: root.voice.kind == 1 ? #f6f2ff61 : #f6f2ffd9;
+                        vertical-alignment: center;
+                        horizontal-stretch: 1;
+                        overflow: elide;
+                        accessible-role: text;
+                        accessible-id: "NotchVoiceStage";
+                        accessible-label: root.voice.words + " " + root.voice.sub;
+                    }
+                    if root.voice.sub != "": Text { text: root.voice.sub; font-size: 11.5px; font-weight: 500; color: #f6f2ff61; vertical-alignment: center; }
+                    VerticalLayout { alignment: center; EscChip { clicked => { root.voice-cancel(); } } }
+                }
+                // .ncard: what was heard, the target, the agent and the access, the task
+                // (edit it to stop the countdown), Start with its ring, and Cancel.
+                vc := VerticalLayout {
+                    x: 0;
+                    y: 0;
+                    width: 460px;
+                    height: self.preferred-height;
+                    visible: root.voice.kind == 3 || root.voice.kind == 4;
+                    padding-left: 14px;
+                    padding-right: 14px;
+                    padding-top: 12px;
+                    padding-bottom: 12px;
+                    spacing: 9px;
+                    HorizontalLayout {
+                        spacing: 7px;
+                        VerticalLayout { alignment: center; Icon { name: Icons.mic; size: 12px; tint: #c4a2ff; } }
+                        Text { text: "“" + root.voice.heard + "”"; font-size: 11.5px; font-italic: true; color: #f6f2ff61; overflow: elide; horizontal-stretch: 1;
+                            vertical-alignment: center; accessible-role: text; accessible-label: "Heard: " + root.voice.heard; }
+                    }
+                    if root.voice.kind == 4: Text { text: root.voice.words; font-size: 12.5px; color: white; wrap: word-wrap; accessible-role: text; }
+                    if root.voice.kind == 4: HorizontalLayout {
+                        spacing: 6px;
+                        alignment: start;
+                        for t in root.voice-tools: VPick {
+                            accessible-role: button;
+                            accessible-label: "Use " + t.name + " for this task";
+                            accessible-action-default => { root.voice-pick(t.id); }
+                            background: pta.has-hover ? #ffffff1f : #ffffff0f;
+                            HorizontalLayout {
+                                padding-left: 6px;
+                                padding-right: 10px;
+                                spacing: 7px;
+                                VerticalLayout { alignment: center; Mark { tool: t.id; width: 16px; height: 16px; } }
+                                Text { text: t.name; font-size: 12px; color: white; vertical-alignment: center; }
+                            }
+                            pta := TouchArea { mouse-cursor: pointer; clicked => { root.voice-pick(t.id); } }
+                        }
+                    }
+                    if root.voice.kind == 3: HorizontalLayout {
+                        spacing: 6px;
+                        alignment: start;
+                        // The target: the project's letter tile, or the home of the default workspace.
+                        VPick {
+                            max-width: 190px;
+                            accessible-role: text;
+                            accessible-label: "Folder: " + root.voice.target + ", " + root.voice.folder;
+                            HorizontalLayout {
+                                padding-left: 5px;
+                                padding-right: 9px;
+                                spacing: 7px;
+                                VerticalLayout { alignment: center; Rectangle {
+                                    width: 18px; height: 18px; border-radius: 5px;
+                                    background: root.voice.home ? #ffffff1c : root.voice.tint;
+                                    if !root.voice.home: Text { text: root.voice.letter; font-size: 9.5px; font-weight: 700; color: white; }
+                                    if root.voice.home: Icon { name: Icons.home; size: 11px; tint: white; }
+                                } }
+                                Text { text: root.voice.target; font-size: 12px; color: white; vertical-alignment: center; overflow: elide; }
+                                Text { text: root.voice.folder; font-family: "DejaVu Sans Mono"; font-size: 10.5px; color: #f6f2ff61; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; }
+                            }
+                        }
+                        VPick {
+                            max-width: 180px;
+                            accessible-role: text;
+                            accessible-label: "Agent: " + root.voice.agent;
+                            HorizontalLayout {
+                                padding-left: 6px;
+                                padding-right: 9px;
+                                spacing: 7px;
+                                VerticalLayout { alignment: center; Mark { tool: root.voice.tool; width: 16px; height: 16px; } }
+                                Text { text: root.voice.agent; font-size: 12px; color: white; vertical-alignment: center; overflow: elide; }
+                            }
+                        }
+                        VPick {
+                            amber: root.voice.full;
+                            accessible-role: text;
+                            accessible-label: "Access: " + root.voice.access;
+                            HorizontalLayout {
+                                padding-left: 8px;
+                                padding-right: 9px;
+                                spacing: 6px;
+                                VerticalLayout { alignment: center; Icon { name: Icons.shield; size: 11px; tint: root.voice.full ? #ffc46b : #f6f2ff9e; } }
+                                Text { text: root.voice.access; font-size: 12px; color: root.voice.full ? #ffc46b : white; vertical-alignment: center; }
+                            }
+                        }
+                    }
+                    if root.voice.note != "": Text { text: root.voice.note; font-size: 11px; color: #f6f2ff9e; wrap: word-wrap; accessible-role: text; }
+                    // .ntask: four lines, then it scrolls. Focusing it stops the countdown.
+                    if root.voice.kind == 3: Rectangle {
+                        height: min(tin.preferred-height, 80px) + 18px;
+                        border-radius: 10px;
+                        background: #ffffff08;
+                        border-width: 1px;
+                        border-color: tin.has-focus ? #c4a2ff8c : #ffffff12;
+                        TouchArea { mouse-cursor: text; clicked => { tin.focus(); } }
+                        Flickable {
+                            x: 10px;
+                            y: 9px;
+                            width: parent.width - 20px;
+                            height: parent.height - 18px;
+                            content-height: tin.preferred-height;
+                            tin := TextInput {
+                                width: parent.width;
+                                text: root.voice.task;
+                                font-size: 13px;
+                                color: white;
+                                selection-background-color: #c4a2ff66;
+                                wrap: word-wrap;
+                                single-line: false;
+                                read-only: root.voice.starting;
+                                accessible-role: text-input;
+                                accessible-id: "NotchVoiceTask";
+                                accessible-label: "Task";
+                                // Voice's edited task comes back the same; a rebuild never undoes typing.
+                                property <string> given: root.voice.task;
+                                changed given => { if (!self.has-focus) { self.text = self.given; } }
+                                changed has-focus => { if (self.has-focus && root.voice.ring >= 0) { root.voice-edit(self.text); } }
+                                edited => { root.voice-edit(self.text); }
+                                key-pressed(e) => {
+                                    // Enter starts once the edit has been checked (not while an IME composes);
+                                    // Shift+Enter is a new line.
+                                    if (e.text == "\n" && !e.modifiers.shift && self.preedit-text == "") { if (root.voice.can-start) { root.voice-start(); } return accept; }
+                                    reject
+                                }
+                            }
+                        }
+                    }
+                    HorizontalLayout {
+                        spacing: 6px;
+                        if root.voice.kind == 3: VBtn {
+                            horizontal-stretch: 1;
+                            light: true;
+                            text: root.voice.start;
+                            key: "Enter";
+                            ring: root.voice.ring;
+                            enabled: root.voice.can-start;
+                            clicked => { root.voice-start(); }
+                        }
+                        if root.voice.kind == 4: Rectangle { horizontal-stretch: 1; }
+                        if root.voice.kind == 4 && root.voice.settings: VBtn { text: "Settings"; clicked => { root.voice-settings(); } }
+                        VBtn { text: "Cancel"; key: "Esc"; enabled: !root.voice.starting; clicked => { root.voice-cancel(); } }
+                    }
+                }
+                // .nstart: the tool's logo, the task, and where it started.
+                if root.voice.kind == 5 || root.voice.kind == 6: HorizontalLayout {
+                    x: 0;
+                    y: 0;
+                    width: 330px;
+                    height: 34px;
+                    padding-left: 14px;
+                    padding-right: 14px;
+                    spacing: 9px;
+                    accessible-role: text;
+                    accessible-id: "NotchVoiceDone";
+                    accessible-label: root.voice.words + ". " + root.voice.sub;
+                    if root.voice.kind == 5: VerticalLayout { alignment: center; Mark { tool: root.voice.tool; width: 16px; height: 16px; } }
+                    Text { text: root.voice.words; font-size: 12px; color: white; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; }
+                    HorizontalLayout {
+                        spacing: 4px;
+                        if root.voice.kind == 5: VerticalLayout { alignment: center; Icon { name: Icons.check; size: 11px; tint: #4ade80; } }
+                        Text { text: root.voice.sub; font-size: 12px; color: root.voice.kind == 5 ? #4ade80 : #f6f2ff61; vertical-alignment: center; }
+                    }
+                }
+                // .nnone: what went wrong, what was kept, and Retry (or Settings).
+                ve := HorizontalLayout {
+                    x: 0;
+                    y: 0;
+                    width: 420px;
+                    height: root.voice-h;
+                    visible: root.voice.kind == 7;
+                    padding-left: 14px;
+                    padding-right: 14px;
+                    padding-top: 10px;
+                    padding-bottom: 10px;
+                    spacing: 11px;
+                    VerticalLayout { alignment: center; Rectangle {
+                        width: 26px; height: 26px; border-radius: 13px; background: #ffffff1c;
+                        Icon { name: Icons.warning; size: 13px; tint: #ff6b62; }
+                    } }
+                    VerticalLayout {
+                        alignment: center;
+                        horizontal-stretch: 1;
+                        spacing: 1px;
+                        Text { text: root.voice.words; font-size: 12.5px; color: white; wrap: word-wrap; accessible-role: text; accessible-id: "NotchVoiceError"; }
+                        Text { text: root.voice.sub; font-size: 11px; color: #f6f2ff61; overflow: elide; }
+                    }
+                    if root.voice.retry || root.voice.settings: VerticalLayout { alignment: center; Rectangle {
+                        height: 26px;
+                        width: bt.preferred-width + 20px;
+                        border-radius: 8px;
+                        background: bta.has-hover ? #ffffff1f : #ffffff12;
+                        accessible-role: button;
+                        accessible-label: bt.text;
+                        accessible-action-default => { if (root.voice.retry) { root.voice-retry(); } else { root.voice-settings(); } }
+                        bt := Text { text: root.voice.retry ? "Retry" : "Settings"; font-size: 11.5px; font-weight: 600; color: white; }
+                        bta := TouchArea { mouse-cursor: pointer; clicked => { if (root.voice.retry) { root.voice-retry(); } else { root.voice-settings(); } } }
+                    } }
+                    VerticalLayout { alignment: center; EscChip { clicked => { root.voice-cancel(); } } }
                 }
             }
         }

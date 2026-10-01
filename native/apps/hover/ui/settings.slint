@@ -1,18 +1,21 @@
 // Owl/Pages.cs's SettingsPage, drawn from the blocks pages.rs builds: a 196 px sidebar
 // card of the five sections beside one scrolling pane of grouped rows.
 
-import { Pal, Fonts, Icon, Icons, PillButton, Switch, Segments, Ring, Tile } from "widgets.slint";
+import { Pal, Fonts, Icon, Icons, PillButton, Switch, Segments, Ring, Tile, TextField, HoldButton } from "widgets.slint";
 import { ScrollView } from "std-widgets.slint";
 
 export struct Opt { label: string, on: bool }
+export struct Btn { id: string, text: string, red: bool }
 
-// One row. control: 0 none, 1 switch, 2 button, 3 shortcut, 4 segments, 5 picker, 6 text.
-// lead: 0 none, 1 tile, 2 ring.
+// One row. control: 0 none, 1 switch, 2 button, 3 shortcut, 4 segments, 5 picker, 6 text,
+// 7 text box, 8 badges and buttons (open: the row opens that id), 9 hold button.
+// lead: 0 none, 1 tile, 2 ring, 3 letter tile. progress: 0..1 under the sub, -1 none.
 export struct RowData {
     label: string, sub: string, sub-id: string, enabled: bool,
     control: int, id: string, name: string, text: string, on: bool, button-enabled: bool,
     labels: [string], longest: string, picked: int, options: [Opt],
     lead: int, icon: string, tint: color, ring: float,
+    placeholder: string, secret: bool, badges: [Opt], buttons: [Btn], open: string, progress: float, letter: string,
 }
 
 export struct TileData {
@@ -21,7 +24,8 @@ export struct TileData {
     green: color, orange: color, red: color, purple: color, teal: color,
 }
 
-// kind: 0 title, 1 heading, 2 group, 3 footnote, 4 tiles, 5 link.
+// kind: 0 title (first: a lead line follows), 1 heading, 2 group, 3 footnote, 4 tiles,
+// 5 link, 6 lead line.
 export struct Block {
     kind: int, text: string, first: bool, rows: [RowData], tiles: [TileData],
     id: string, name: string, icon: string, dim: bool, status: string,
@@ -113,6 +117,22 @@ component RowView inherits Rectangle {
     // row came out short and the rows were squeezed to fit.
     height: max(42px, layout.preferred-height);
     opacity: r.enabled ? 1 : 0.4;
+    // A row that opens a page (a project): all of it is the button, behind its contents.
+    if r.open != "": Rectangle {
+        width: 100%;
+        height: 100%;
+        background: ota.has-hover ? Pal.ink.with-alpha(0.03) : transparent;
+        accessible-role: button;
+        accessible-id: r.open;
+        accessible-label: r.label;
+        accessible-action-default => { pressed(r.open); }
+        ota := TouchArea { mouse-cursor: pointer; clicked => { pressed(r.open); } }
+        ofs := FocusScope {
+            focus-on-click: false;
+            key-pressed(e) => { if (e.text == " " || e.text == "\n") { pressed(r.open); return accept; } reject }
+        }
+        Rectangle { border-radius: 8px; border-width: ofs.has-focus ? 2px : 0; border-color: Pal.blue.with-alpha(0.7); }
+    }
     layout := HorizontalLayout {
         padding-left: 12px;
         padding-right: 12px;
@@ -121,25 +141,50 @@ component RowView inherits Rectangle {
         spacing: 0;
         if r.lead == 1: VerticalLayout { alignment: center; padding-right: 10px; Tile { icon: r.icon; tint: r.tint; } }
         if r.lead == 2: VerticalLayout { alignment: center; padding-left: 2px; padding-right: 12px; Ring { width: 20px; height: 20px; stroke: 2.5px; value: r.ring; } }
+        if r.lead == 3: VerticalLayout {
+            alignment: center;
+            padding-right: 10px;
+            Rectangle {
+                width: 24px;
+                height: 24px;
+                border-radius: 7px;
+                background: r.tint;
+                Text { text: r.letter; color: white; font-size: 12px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
+            }
+        }
         VerticalLayout {
             alignment: center;
             horizontal-stretch: 1;
             spacing: 2px;
             Text { text: r.label; font-size: 13px; color: Pal.ink; overflow: elide; }
             if r.sub != "": Sub { text: r.sub; accessible-id: r.sub-id; }
+            if r.progress >= 0: VerticalLayout {
+                padding-top: 4px;
+                Rectangle {
+                    height: 4px;
+                    border-radius: 2px;
+                    background: Pal.wash-strong;
+                    accessible-role: progress-indicator;
+                    accessible-value: round(r.progress * 100) + "%";
+                    Rectangle { x: 0; width: parent.width * r.progress; border-radius: 2px; background: Pal.blue; }
+                }
+            }
         }
         if r.control != 0: VerticalLayout {
             alignment: center;
             padding-left: 12px;
+            // As wide as its control: a row without a sub line would hand it the slack.
+            horizontal-stretch: 0;
             if r.control == 1: Switch { id: r.id; label: r.name; on: r.on; enabled: r.enabled; toggled(v) => { toggled(r.id, v); } }
             if r.control == 2: PillButton { id: r.id; label: r.name; text: r.text; enabled: r.enabled && r.button-enabled; clicked => { pressed(r.id); } }
             if r.control == 3: shortcut := PillButton {
-                id: "WorkspaceShortcut";
-                label: "Notch shortcut";
+                id: r.id;
+                label: r.name;
                 text: r.text;
                 min-width: 96px;
                 bold-text: true;
-                clicked => { record(); keys.focus(); }
+                // The notch's records through record(); any other shortcut asks by its id.
+                clicked => { if (r.id == "WorkspaceShortcut") { record(); } else { pressed(r.id); } keys.focus(); }
                 keys := FocusScope {
                     // Over the button: the click starts recording and focuses it.
                     focus-on-click: false;
@@ -160,6 +205,64 @@ component RowView inherits Rectangle {
                 clicked => { open-picker(r.id, self.absolute-position.x, self.absolute-position.y + self.height); }
             }
             if r.control == 6: Text { text: r.text; font-size: 12.5px; color: Pal.ink-dim; }
+            // A box's new value comes back as "{id}\u{1f}{value}" through pressed (the
+            // page's one string callback); a key's Remove sends an empty value.
+            if r.control == 7: HorizontalLayout {
+                spacing: 8px;
+                TextField {
+                    id: r.id;
+                    label: r.name;
+                    value: r.text;
+                    placeholder: r.placeholder;
+                    secret: r.secret;
+                    enabled: r.enabled;
+                    commit(v) => { pressed(r.id + "\u{1f}" + v); }
+                }
+                if r.secret && r.on: PillButton {
+                    id: r.id + "Remove";
+                    label: "Remove key";
+                    text: "Remove key";
+                    bg: transparent;
+                    fg: Pal.red;
+                    pad-x: 4px;
+                    pad-y: 3px;
+                    font-size: 12.5px;
+                    clicked => { pressed(r.id + "\u{1f}"); }
+                }
+            }
+            if r.control == 8: HorizontalLayout {
+                spacing: 6px;
+                for g in r.badges: VerticalLayout {
+                    alignment: center;
+                    Rectangle {
+                        height: 20px;
+                        width: bt.preferred-width + 14px;
+                        border-radius: 5px;
+                        background: g.on ? #ff9f0a26 : Pal.ink.with-alpha(0.07);
+                        bt := Text { text: g.label; font-size: 11px; color: g.on ? #ffb340 : Pal.ink-dim; }
+                    }
+                }
+                for btn in r.buttons: PillButton {
+                    id: btn.id;
+                    text: btn.text;
+                    fg: btn.red ? Pal.red : Pal.ink;
+                    pad-x: 10px;
+                    pad-y: 3px;
+                    font-size: 12.5px;
+                    enabled: r.enabled;
+                    clicked => { pressed(btn.id); }
+                }
+                if r.open != "": VerticalLayout { alignment: center; padding-left: 2px; Icon { name: Icons.chevron-right; size: 12px; tint: Pal.ink-faint; } }
+            }
+            if r.control == 9: HoldButton {
+                id: r.id;
+                label: r.name;
+                text: r.text;
+                icon: r.icon;
+                enabled: r.enabled;
+                press => { pressed(r.id + ".press"); }
+                release => { pressed(r.id + ".release"); }
+            }
         }
     }
 }
@@ -217,7 +320,11 @@ export component SettingsPage inherits Rectangle {
             for b in blocks: VerticalLayout {
                 preferred-width: pane.visible-width - 28px;
                 if b.kind == 0: Text { text: b.text; font-size: 20px; font-weight: 600; font-family: Fonts.display; color: Pal.ink; accessible-role: text; }
-                if b.kind == 0: Rectangle { height: 14px; }
+                if b.kind == 0: Rectangle { height: b.first ? 4px : 14px; }
+                if b.kind == 6: HorizontalLayout {
+                    padding-bottom: 14px;
+                    Text { text: b.text; font-size: 12px; color: Pal.ink-dim; wrap: word-wrap; }
+                }
                 if b.kind == 1: HorizontalLayout {
                     padding-left: 12px;
                     padding-top: b.first ? 4px : 10px;
@@ -229,6 +336,8 @@ export component SettingsPage inherits Rectangle {
                     Rectangle {
                         border-radius: 12px;
                         background: Pal.surface;
+                        // A whole-row button's hover stays inside the rounded corners.
+                        clip: true;
                         VerticalLayout {
                             for r[i] in b.rows: VerticalLayout {
                                 if i > 0: HorizontalLayout { padding-left: 12px; Rectangle { height: 1px; background: Pal.separator; } }

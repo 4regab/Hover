@@ -79,7 +79,7 @@ export global Accent {
 
 // An arc of the ring round (c, c) of radius r, from angle a0 (0 at 12 o'clock) sweeping
 // clockwise, as SVG path commands.
-global Arc {
+export global Arc {
     public pure function of(c: float, r: float, a0: angle, sweep: angle) -> string {
         return "M " + (c + r * sin(a0)) + " " + (c - r * cos(a0)) + " A " + r + " " + r + " 0 " + (sweep > 180deg ? "1" : "0") + " 1 "
             + (c + r * sin(a0 + sweep)) + " " + (c - r * cos(a0 + sweep));

@@ -1,6 +1,8 @@
 ; Inno Setup script for Hover.
-; The same AppId, folder, exe name and Run value as the C# (2.x) installer had, so
-; installing 3.x over a 2.x install replaces it in place (and uninstalls as one product).
+; The same AppId, folder and Run value as the C# (2.x) installer had, so installing 3.x
+; over a 2.x install replaces it in place (and uninstalls as one product). The exe is
+; hoverai.exe, not 2.x's Hover.exe: Discord's game list matches any path ending in
+; hover/hover.exe (Hover: Revolt of Gamers) and showed Hover as that game.
 ;   .\build.ps1 installer   (iscc /DMyAppVersion=<version> /DExeDir=<publish> /O<dir> native\installer\Hover.iss)
 ; build.ps1 installer passes the version from native/Cargo.toml. Needs Inno Setup 6 or 7.
 
@@ -12,7 +14,9 @@
 #endif
 
 #define MyAppName "Hover"
-#define MyAppExe "Hover.exe"
+#define MyAppExe "hoverai.exe"
+; What an install from before the rename left (2.x, or 3.x before it).
+#define OldAppExe "Hover.exe"
 #define MyAppPublisher "Hover"
 
 [Setup]
@@ -36,9 +40,11 @@ ArchitecturesInstallIn64BitMode=x64compatible
 ArchitecturesAllowed=x64compatible
 CloseApplications=yes
 
+[InstallDelete]
+; The old exe, so Discord stops seeing it (CloseApplications closes it if it runs).
+Type: files; Name: "{app}\{#OldAppExe}"
+
 [Files]
-; build.ps1 publish copies cargo's hover.exe to publish\Hover.exe, the C# build's name, so
-; shortcuts and the Run value an earlier install wrote still point at it.
 Source: "{#ExeDir}\{#MyAppExe}"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\..\LICENSE"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\..\THIRD-PARTY-NOTICES.txt"; DestDir: "{app}"; Flags: ignoreversion
@@ -55,7 +61,20 @@ Name: "startup"; Description: "Start {#MyAppName} when Windows starts"
 Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; \
   ValueName: "{#MyAppName}"; ValueData: """{app}\{#MyAppExe}"""; \
   Flags: uninsdeletevalue; Tasks: startup
+; Launch at login switched on in Settings points at the old exe, which is gone now.
+Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; \
+  ValueName: "{#MyAppName}"; ValueData: """{app}\{#MyAppExe}"""; \
+  Tasks: not startup; Check: RunsOldExe
 
 [Run]
 Filename: "{app}\{#MyAppExe}"; Description: "Launch {#MyAppName}"; \
   Flags: nowait postinstall skipifsilent
+
+[Code]
+function RunsOldExe: Boolean;
+var
+  Value: String;
+begin
+  Result := RegQueryStringValue(HKCU, 'Software\Microsoft\Windows\CurrentVersion\Run', '{#MyAppName}', Value)
+    and (CompareText(Value, '"' + ExpandConstant('{app}\{#OldAppExe}') + '"') = 0);
+end;

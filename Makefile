@@ -6,7 +6,9 @@
 #   make uninstall
 VERSION := $(shell sed -n 's/^version = "\(.*\)"/\1/p' native/Cargo.toml | head -1)
 PREFIX ?= /usr/local
-BIN := native/target/release/hover
+# Installed as hover: Discord's rename (hoverai) is a Windows matter, and autostart
+# entries and StartupWMClass (the binary's name) already say hover.
+BIN := native/target/release/hoverai
 
 .PHONY: all build test package install uninstall version
 

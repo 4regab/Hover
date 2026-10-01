@@ -40,7 +40,7 @@ jobs:
         run: |
           cargo build --manifest-path native/Cargo.toml --release -p hover
           $env:HOVER_DATA_DIR = Join-Path $env:RUNNER_TEMP 'hover-data'
-          .\native\target\release\hover.exe --shots (Join-Path $env:RUNNER_TEMP 'shots') | Out-Host
+          .\native\target\release\hoverai.exe --shots (Join-Path $env:RUNNER_TEMP 'shots') | Out-Host
           $n = (Get-ChildItem (Join-Path $env:RUNNER_TEMP 'shots') -Filter *.png).Count
           if ($n -eq 0) { throw 'no screenshots were written' }
           Write-Host "$n screenshots"
@@ -80,7 +80,7 @@ jobs:
           HOVER_DATA_DIR: ${{ runner.temp }}/hover-data
         run: |
           cargo build --manifest-path native/Cargo.toml --release -p hover
-          ./native/target/release/hover --shots "$RUNNER_TEMP/shots"
+          ./native/target/release/hoverai --shots "$RUNNER_TEMP/shots"
           ls "$RUNNER_TEMP/shots"/*.png > /dev/null
       - uses: actions/upload-artifact@v4
         with:

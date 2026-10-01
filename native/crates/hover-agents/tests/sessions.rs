@@ -57,7 +57,7 @@ fn a_run_goes_from_running_to_completed() {
     assert_eq!(s.state, KiroState::Running);
     wait_for(|| runs.lock().unwrap().len() == 1);
     assert_eq!(runs.lock().unwrap()[0].prompt, "Write the changelog");
-    finish(&runs, 0, KiroResult { state: KiroState::Completed, text: "Wrote it.".into(), exit_code: Some(0) });
+    finish(&runs, 0, KiroResult { state: KiroState::Completed, text: "Wrote it.".into(), exit_code: Some(0), unconfirmed: false });
     wait_for(|| !k.get(s.id).unwrap().busy());
     let s = k.get(s.id).unwrap();
     assert_eq!((s.state, s.result().unwrap().text.as_str(), s.title().as_str()), (KiroState::Completed, "Wrote it.", "Write the changelog"));
@@ -82,7 +82,7 @@ fn stop_cancels_the_run_and_a_runner_that_panics_fails() {
         Arc::new(|a: RunArgs| {
             if a.prompt == "boom" { panic!("boom"); }
             while !a.ct.is_cancelled() { std::thread::sleep(Duration::from_millis(5)); }
-            KiroResult { state: KiroState::Failed, text: "killed".into(), exit_code: Some(-1) }
+            KiroResult { state: KiroState::Failed, text: "killed".into(), exit_code: Some(-1), unconfirmed: false }
         })
     }, None);
     let s = k.start(AgentTool::Kiro, &f, "long", vec![]).unwrap();
@@ -318,4 +318,89 @@ fn the_notch_says_the_file_or_the_command_not_the_path() {
     assert_eq!(ask_title(&edit), "Wants to edit refresh.ts");
     assert_eq!(ask_allow(&run), "Run");
     assert_eq!(activity(&hover_agents::session::KiroSession::new(AgentTool::Kiro)), ("Ready", String::new()));
+}
+
+/// A run that ends only when the test says, even after a cancel: what a tool that takes
+/// its time to confirm a stop looks like.
+fn slow_to_stop() -> (impl Fn(AgentTool) -> RunTask + Send + Sync + 'static, Arc<Mutex<Vec<(String, Cancel, Sender<KiroResult>)>>>) {
+    let runs: Arc<Mutex<Vec<(String, Cancel, Sender<KiroResult>)>>> = Default::default();
+    let r = runs.clone();
+    let make = move |_| -> RunTask {
+        let r = r.clone();
+        Arc::new(move |a: RunArgs| {
+            let (tx, rx) = channel();
+            (a.events)(KiroEvent { session_id: Some("sess_p".into()), ..Default::default() });
+            r.lock().unwrap().push((a.prompt.clone(), a.ct.clone(), tx));
+            rx.recv().unwrap()
+        })
+    };
+    (make, runs)
+}
+
+/// Pause cancels the run through the tool, keeps the conversation, and sends the next
+/// queued reply exactly once, only after the tool has said the turn ended.
+#[test]
+fn pause_sends_the_next_queued_reply_once_the_stop_is_confirmed() {
+    let f = folder("pause");
+    let (make, runs) = slow_to_stop();
+    let k = KiroSessions::new(make, None);
+    let s = k.start(AgentTool::Codex, &f, "first", vec![]).unwrap();
+    wait_for(|| k.get(s.id).unwrap().kiro_id.is_some());
+    assert!(k.reply(s.id, "second", vec![]) && k.reply(s.id, "third", vec![]));
+    assert!(k.pause(s.id));
+    assert!(runs.lock().unwrap()[0].1.is_cancelled(), "the tool was asked to stop");
+    let now = k.get(s.id).unwrap();
+    assert!(now.busy() && now.stopping, "not stopped until the tool says so");
+    std::thread::sleep(Duration::from_millis(100));
+    assert_eq!(runs.lock().unwrap().len(), 1, "nothing new starts while the stop is unresolved");
+    let _ = runs.lock().unwrap()[0].2.send(KiroResult::new(KiroState::Cancelled, "Partial answer"));
+    wait_for(|| runs.lock().unwrap().len() == 2);
+    std::thread::sleep(Duration::from_millis(100));
+    assert_eq!(runs.lock().unwrap().iter().map(|r| r.0.as_str()).collect::<Vec<_>>(), ["first", "second"], "the next one, once");
+    let now = k.get(s.id).unwrap();
+    assert_eq!(now.turns[0].result.as_ref().unwrap().text, "Partial answer", "what it said so far is kept");
+    assert!(now.turns[2].queued && !now.stopping);
+    let _ = runs.lock().unwrap()[1].2.send(KiroResult::new(KiroState::Completed, "two"));
+    wait_for(|| runs.lock().unwrap().len() == 3);
+    let _ = runs.lock().unwrap()[2].2.send(KiroResult::new(KiroState::Completed, "three"));
+    wait_for(|| !k.get(s.id).unwrap().busy());
+    // Nothing queued: a pause leaves the session idle, its conversation intact.
+    assert!(k.reply(s.id, "fourth", vec![]));
+    wait_for(|| runs.lock().unwrap().len() == 4);
+    k.pause(s.id);
+    let _ = runs.lock().unwrap()[3].2.send(KiroResult::new(KiroState::Cancelled, ""));
+    wait_for(|| !k.get(s.id).unwrap().busy());
+    std::thread::sleep(Duration::from_millis(50));
+    assert_eq!(runs.lock().unwrap().len(), 4);
+    assert_eq!(k.get(s.id).unwrap().kiro_id.as_deref(), Some("sess_p"), "a later reply carries on the same conversation");
+}
+
+/// A stop the tool never confirmed: nothing queued goes behind it (a pause keeps them
+/// queued, to go with the next reply); a queued reply can be taken back.
+#[test]
+fn an_unconfirmed_stop_sends_nothing_and_queued_replies_can_be_cancelled() {
+    let f = folder("unconfirmed");
+    let (make, runs) = slow_to_stop();
+    let k = KiroSessions::new(make, None);
+    let s = k.start(AgentTool::Kiro, &f, "first", vec![]).unwrap();
+    wait_for(|| runs.lock().unwrap().len() == 1);
+    k.reply(s.id, "second", vec![]);
+    k.reply(s.id, "third", vec![]);
+    assert!(k.cancel_queued(s.id, 1), "the first queued one taken back");
+    assert!(!k.cancel_queued(s.id, 0), "a turn that runs isn't a queued one");
+    assert_eq!(k.get(s.id).unwrap().turns.iter().map(|t| t.prompt.as_str()).collect::<Vec<_>>(), ["first", "third"]);
+    k.pause(s.id);
+    let _ = runs.lock().unwrap()[0].2.send(KiroResult { unconfirmed: true, ..KiroResult::new(KiroState::Failed, "Kiro didn’t confirm it stopped.") });
+    wait_for(|| !k.get(s.id).unwrap().busy());
+    std::thread::sleep(Duration::from_millis(100));
+    let now = k.get(s.id).unwrap();
+    assert_eq!(runs.lock().unwrap().len(), 1, "nothing sent behind an unconfirmed stop");
+    assert_eq!((now.state, now.turns[1].queued), (KiroState::Failed, true), "said as it is, the reply still queued");
+    assert!(k.reply(s.id, "fourth", vec![]));
+    wait_for(|| runs.lock().unwrap().len() == 2);
+    assert_eq!(runs.lock().unwrap()[1].0, "third", "the queued one goes first, in order");
+    let _ = runs.lock().unwrap()[1].2.send(KiroResult::new(KiroState::Completed, "3"));
+    wait_for(|| runs.lock().unwrap().len() == 3);
+    assert_eq!(runs.lock().unwrap()[2].0, "fourth");
+    let _ = runs.lock().unwrap()[2].2.send(KiroResult::new(KiroState::Completed, "4"));
 }

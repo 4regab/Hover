@@ -10,6 +10,8 @@ pub mod model;
 pub mod palette;
 pub mod paths;
 pub mod platform;
+pub mod projects;
+pub mod secrets;
 pub mod settings;
 pub mod shortcut;
 pub mod single;

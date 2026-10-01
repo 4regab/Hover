@@ -8,6 +8,7 @@ pub mod cancel;
 pub mod http;
 pub mod opencode;
 pub mod proc;
+pub mod route;
 pub mod runtime;
 pub mod session;
 pub mod state;

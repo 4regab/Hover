@@ -8,6 +8,7 @@ use hover_app::pages::{self, Block as B, Control, Lead, Section, Tint};
 use hover_core::model::{AgentTool, SavedTheme};
 use hover_core::palette::{InstalledTheme, Palette};
 use hover_core::platform::Autostart;
+use hover_core::projects::{resolve_folder, CleanupProvider, Project, SpeechMode, VoiceSettings, Workspace, ACCESS_IDS, GROQ_SECRET, TRANSCRIBE_MODELS};
 use slint::{Color, ModelRc, SharedString, VecModel};
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -39,16 +40,34 @@ pub type OpenMenu = (String, Vec<(String, bool)>, f32, f32);
 pub struct Pane {
     pub section: Section,
     pub recording: bool,
+    /// The voice shortcut is the one recording, not the notch's.
+    pub recording_voice: bool,
     /// The shortcut field's words while recording ("Press keys…", the modifier hint).
     pub field: Option<String>,
     pub import_status: String,
     pub menu: Option<OpenMenu>,
     /// Palette.Installed with each theme read, once per run (as the C#'s Lazy).
     pub installed: Option<Rc<Vec<(InstalledTheme, SavedTheme)>>>,
+    /// The project open in Projects (its id).
+    pub project: Option<String>,
+    /// The last action's message, by the id of its control (pages::Input::note).
+    pub note: Option<(String, String)>,
+    /// What the running app knows about voice; the app sets it and calls refresh.
+    pub live: pages::Live,
 }
 
 impl Default for Pane {
-    fn default() -> Self { Pane { section: Section::General, recording: false, field: None, import_status: String::new(), menu: None, installed: None } }
+    fn default() -> Self {
+        Pane { section: Section::General, recording: false, recording_voice: false, field: None, import_status: String::new(), menu: None, installed: None,
+            project: None, note: None, live: pages::Live::default() }
+    }
+}
+
+/// The one secret store this run (keys kept only in memory live in it): Settings and
+/// the voice flow must share it.
+pub fn secrets() -> std::sync::Arc<hover_core::secrets::Secrets> {
+    static S: std::sync::OnceLock<std::sync::Arc<hover_core::secrets::Secrets>> = std::sync::OnceLock::new();
+    S.get_or_init(|| std::sync::Arc::new(hover_core::secrets::Secrets::system())).clone()
 }
 
 pub fn installed(p: &mut Pane) -> Rc<Vec<(InstalledTheme, SavedTheme)>> {
@@ -57,12 +76,13 @@ pub fn installed(p: &mut Pane) -> Rc<Vec<(InstalledTheme, SavedTheme)>> {
     }).clone()
 }
 
-fn tint(t: Tint, p: &Palette) -> Color {
+pub(crate) fn tint(t: Tint, p: &Palette) -> Color {
     match t {
         Tint::Gray => Color::from_rgb_u8(0x8e, 0x8e, 0x93),
         Tint::Bot => Color::from_rgb_u8(0x9b, 0x6b, 0xff),
         Tint::Purple => argb(p.purple), Tint::Green => argb(p.green), Tint::Blue => argb(p.blue),
         Tint::Orange => argb(p.orange), Tint::Teal => argb(p.teal),
+        Tint::Pink => Color::from_rgb_u8(0xff, 0x37, 0x5f),
     }
 }
 
@@ -105,10 +125,12 @@ pub fn sync_blocks(cur: ModelRc<Block>, v: Vec<Block>) -> Option<ModelRc<Block>>
 
 /// pages.rs's blocks as Slint's.
 pub fn blocks(bs: &[B], p: &Palette) -> Vec<Block> {
-    bs.iter().map(|b| {
+    bs.iter().enumerate().map(|(k, b)| {
         let mut o = Block::default();
         match b {
-            B::Title(t) => { o.kind = 0; o.text = s(t); }
+            // A title with a lead line under it sits close to it (first).
+            B::Title(t) => { o.kind = 0; o.text = s(t); o.first = matches!(bs.get(k + 1), Some(B::Lead(_))); }
+            B::Lead(t) => { o.kind = 6; o.text = s(t); }
             B::Heading(t, first) => { o.kind = 1; o.text = s(t); o.first = *first; }
             B::Footnote(t) => { o.kind = 3; o.text = s(t); }
             B::Link { id, name, icon, text, dim, status } => {
@@ -126,15 +148,17 @@ pub fn blocks(bs: &[B], p: &Palette) -> Vec<Block> {
             B::Group(rows) => {
                 o.kind = 2;
                 o.rows = model(rows.iter().map(|r| {
-                    let mut d = RowData { label: s(&r.label), sub: s(r.sub.as_deref().unwrap_or("")), sub_id: s(r.sub_id.as_deref().unwrap_or("")), enabled: r.enabled, button_enabled: true, ring: -1.0, picked: -1, ..Default::default() };
+                    let mut d = RowData { label: s(&r.label), sub: s(r.sub.as_deref().unwrap_or("")), sub_id: s(r.sub_id.as_deref().unwrap_or("")), enabled: r.enabled, button_enabled: true, ring: -1.0, picked: -1,
+                        progress: r.progress.unwrap_or(-1.0), ..Default::default() };
                     match &r.control {
                         Control::None => d.control = 0,
                         Control::Switch { id, name, on } => { d.control = 1; d.id = s(id); d.name = s(name); d.on = *on; }
                         Control::Button { id, name, text, enabled } => { d.control = 2; d.id = s(id); d.name = s(name); d.text = s(text); d.button_enabled = *enabled; }
-                        Control::Shortcut { text } => { d.control = 3; d.text = s(text); }
+                        Control::Shortcut { id, name, text } => { d.control = 3; d.id = s(id); d.name = s(name); d.text = s(text); }
                         Control::Segments { id, labels, picked } => {
                             d.control = 4; d.id = s(id); d.picked = *picked;
-                            d.longest = s(labels.iter().max_by_key(|l| l.chars().count()).cloned().unwrap_or_default());
+                            // Segments are as wide as the widest label; capitals count for more.
+                            d.longest = s(labels.iter().max_by_key(|l| l.chars().map(|c| if c.is_uppercase() { 3 } else { 2 }).sum::<usize>()).cloned().unwrap_or_default());
                             d.labels = model(labels.iter().map(s).collect());
                         }
                         Control::Picker { id, name, shown, options } => {
@@ -142,11 +166,21 @@ pub fn blocks(bs: &[B], p: &Palette) -> Vec<Block> {
                             d.options = model(options.iter().map(|(l, on)| Opt { label: s(l), on: *on }).collect());
                         }
                         Control::Text(t) => { d.control = 6; d.text = s(t); }
+                        Control::Field { id, name, value, placeholder, secret, on } => {
+                            d.control = 7; d.id = s(id); d.name = s(name); d.text = s(value); d.placeholder = s(placeholder); d.secret = *secret; d.on = *on;
+                        }
+                        Control::Chips { badges, buttons, open } => {
+                            d.control = 8; d.open = s(open.as_deref().unwrap_or(""));
+                            d.badges = model(badges.iter().map(|(t, warn)| Opt { label: s(t), on: *warn }).collect());
+                            d.buttons = model(buttons.iter().map(|(id, t, red)| Btn { id: s(id), text: s(t), red: *red }).collect());
+                        }
+                        Control::Hold { id, name, text } => { d.control = 9; d.id = s(id); d.name = s(name); d.text = s(text); d.icon = s(icon_path("mic")); }
                     }
                     match &r.lead {
                         Lead::None => d.lead = 0,
                         Lead::Tile(icon, t) => { d.lead = 1; d.icon = s(icon_path(icon)); d.tint = tint(*t, p); }
                         Lead::Ring(v) => { d.lead = 2; d.ring = v.map_or(-1.0, |x| x as f32); }
+                        Lead::Letter(l, t) => { d.lead = 3; d.letter = s(l); d.tint = tint(*t, p); }
                     }
                     d
                 }).collect());
@@ -156,8 +190,10 @@ pub fn blocks(bs: &[B], p: &Palette) -> Vec<Block> {
     }).collect()
 }
 
-/// An icon's path data from icons.slint's table, by its Lucide name.
+/// An icon's path data from icons.slint's table, by its Lucide name; the mic (Voice's
+/// tile) is the mockup's, which that table lacks.
 pub fn icon_path(name: &str) -> String {
+    if name == "mic" { return "M 12 2 a 3 3 0 0 0 -3 3 v 6 a 3 3 0 0 0 6 0 V 5 a 3 3 0 0 0 -3 -3 Z M 5 11 a 7 7 0 0 0 14 0 M 12 18 v 4".into(); }
     crate::icons::path(name).to_owned()
 }
 
@@ -183,14 +219,30 @@ pub trait Host {
     fn refresh(&self);
     /// A tool's status check finished off the UI thread: rebuild if still showing it.
     fn recheck(&self, tool: AgentTool, fresh: bool);
+    /// What Settings can't do on its own, by action id (the app implements it):
+    ///   "phonon.download" / "phonon.retry": Phonon::download(); "phonon.cancel": cancel();
+    ///   "phonon.repair": repair(); "phonon.remove": remove(), an Err shown in the card.
+    ///   "voice.try.press" / "voice.try.release": Voice::press(true) / release().
+    ///   "groq.check": Voice::check_groq with secrets()'s GROQ_SECRET, off the UI thread,
+    ///     its answer in pane.live.groq_check ("Checking…" first).
+    ///   "voice.shortcut": the voice shortcut changed: take it again, a refusal in
+    ///     pane.live.shortcut_error.
+    ///   "voice.changed": the voice settings changed (on/off, mode, microphone, model,
+    ///     cleanup): take or let go of the shortcut, stop Phonon's helper when Local
+    ///     was left or voice switched off.
+    /// Then fill pane.live and refresh.
+    fn action(&self, id: &str) { let _ = id; }
 }
 
 pub fn build(h: &dyn Host, pane: &mut Pane) -> Vec<B> {
     let hv = h.hover();
     let installed = installed(pane);
-    let field = pane.field.clone().unwrap_or_else(|| hv.settings.sc_workspace().label());
+    let field = if pane.recording_voice { None } else { pane.field.clone() }.unwrap_or_else(|| hv.settings.sc_workspace().label());
+    let voice_field = if pane.recording_voice { pane.field.clone() } else { None }.unwrap_or_else(|| hv.settings.voice().shortcut.label());
     let reading = |id: &str| hv.quotas.reading(id);
     let ready = |t: AgentTool| hover_agents::agents::known(t);
+    let store = secrets();
+    let has_secret = |n: &str| store.has(n);
     let input = pages::Input {
         settings: &hv.settings,
         launch_at_login: hover_core::platform::SystemAutostart.enabled(),
@@ -201,14 +253,21 @@ pub fn build(h: &dyn Host, pane: &mut Pane) -> Vec<B> {
         system_dark: h.system_dark(),
         import_status: pane.import_status.clone(),
         kiro_agents: hover_agents::kiro_agents(hv.settings.kiro_folder().as_deref()),
+        voice_shortcut: voice_field,
+        has_secret: &has_secret,
+        secrets_kept: store.persistent(),
+        project: pane.project.clone(),
+        note: pane.note.clone(),
+        live: &pane.live,
     };
     pages::build(pane.section, &input)
 }
 
 /// What a click in Settings does; the page is rebuilt after each.
-pub fn toggled(h: &dyn Host, id: &str, on: bool) {
+pub fn toggled(h: &dyn Host, pane: &RefCell<Pane>, id: &str, on: bool) {
     let hv = h.hover();
     let st = &hv.settings;
+    pane.borrow_mut().note = None;
     match id {
         "LaunchAtLogin" => {
             if let Err(e) = hover_core::platform::SystemAutostart.set(on) { hover_core::log::line(&format!("launch at login: {e}")); }
@@ -226,6 +285,9 @@ pub fn toggled(h: &dyn Host, id: &str, on: bool) {
             let t = tool_of(&id[..id.len() - "ShowSteps".len()]);
             st.set_agent_options(t, hover_core::model::AgentOptions { hide_steps: !on, ..st.agent_options(t) });
         }
+        "VoiceEnabled" => { st.set_voice(VoiceSettings { enabled: on, ..st.voice() }); h.action("voice.changed"); }
+        "VoiceCleanup" => { st.set_voice(VoiceSettings { cleanup: on, ..st.voice() }); h.action("voice.changed"); }
+        "ProjectVoice" => edit_project(h, pane, id, |p| p.voice = on),
         _ => {}
     }
     h.refresh();
@@ -233,8 +295,48 @@ pub fn toggled(h: &dyn Host, id: &str, on: bool) {
 
 fn tool_of(name: &str) -> AgentTool { AgentTool::ALL.into_iter().find(|t| t.name() == name).unwrap_or(AgentTool::Kiro) }
 
+fn note(pane: &RefCell<Pane>, id: &str, text: String) { pane.borrow_mut().note = Some((id.into(), text)); }
+
+/// Changes the open project; a refusal (a folder another project has) shows under the
+/// control that asked.
+fn edit_project(h: &dyn Host, pane: &RefCell<Pane>, id: &str, f: impl FnOnce(&mut Project)) {
+    let st = &h.hover().settings;
+    let open = pane.borrow().project.clone();
+    let Some(mut p) = open.and_then(|x| st.project(&x)) else { return };
+    f(&mut p);
+    if let Err(e) = st.update_project(p) { note(pane, id, e); }
+}
+
+/// A text box's new value (Enter or focus out). A key's box sends an empty value only
+/// from Remove key.
+fn edited(h: &dyn Host, pane: &RefCell<Pane>, id: &str, v: &str) {
+    let st = &h.hover().settings;
+    let text = || Some(v.trim().to_owned()).filter(|t| !t.is_empty());
+    match id {
+        "ProjectName" => edit_project(h, pane, id, |p| p.name = v.into()),
+        "ProjectAliases" => edit_project(h, pane, id, |p| p.aliases = v.split(',').map(|a| a.trim().to_owned()).filter(|a| !a.is_empty()).collect()),
+        "VoiceCleanupModel" => { st.set_voice(VoiceSettings { cleanup_model: text(), ..st.voice() }); h.action("voice.changed"); }
+        "VoiceCleanupBase" => match text() {
+            Some(b) if !(b.starts_with("https://") || b.starts_with("http://")) => note(pane, id, "Use the full address, starting with https://.".into()),
+            b => { st.set_voice(VoiceSettings { cleanup_base: b.map(|b| b.trim_end_matches('/').to_owned()), ..st.voice() }); h.action("voice.changed"); }
+        },
+        "VoiceGroqKey" | "VoiceCleanupKey" => {
+            let name = if id == "VoiceGroqKey" { GROQ_SECRET } else { st.voice().cleanup_provider.secret() };
+            // The error never holds the key (Secrets::set's promise).
+            if let Err(e) = secrets().set(name, Some(v)) { note(pane, id, e); }
+            // The last check's answer was about the old key.
+            if id == "VoiceGroqKey" { pane.borrow_mut().live.groq_check = None; }
+        }
+        _ => {}
+    }
+}
+
 pub fn pressed(h: &dyn Host, pane: &RefCell<Pane>, id: &str) {
     let hv = h.hover();
+    let st = &hv.settings;
+    pane.borrow_mut().note = None;
+    // A text box's commit comes as "{id}\u{1f}{value}": the page's one string callback.
+    if let Some((field, value)) = id.split_once('\u{1f}') { edited(h, pane, field, value); h.refresh(); return; }
     match id {
         "Quit" => { h.quit(); return; }
         "RefreshQuotas" => hv.refresh_quotas(true),
@@ -248,7 +350,23 @@ pub fn pressed(h: &dyn Host, pane: &RefCell<Pane>, id: &str) {
         }
         "SettingsKiroFolder" => { if let Some(f) = h.choose_folder() { hv.settings.set_kiro_folder(Some(&f)); } }
         "KiroNoticeAgain" => { hv.settings.set_kiro_notice_seen(false); hv.sessions.raise_changed(); }
+        "ProjectAdd" => if let Some(f) = h.choose_folder() { if let Err(e) = st.add_project(&f) { note(pane, id, e); } },
+        "ProjectBack" => pane.borrow_mut().project = None,
+        "ProjectFolder" => if let Some(f) = h.choose_folder() { edit_project(h, pane, id, |p| p.folder = f); },
+        // Only the entry goes: the folder, its sessions and any run are left alone.
+        "ProjectRemove" => { let open = pane.borrow_mut().project.take(); if let Some(x) = open { st.remove_project(&x); } }
+        "DefaultFolder" => if let Some(f) = h.choose_folder() {
+            match resolve_folder(&f) {
+                Ok(r) => st.set_default_workspace(Workspace { folder: Some(r.to_string_lossy().into_owned()), ..st.default_workspace() }),
+                Err(e) => note(pane, id, e),
+            }
+        },
+        "VoiceShortcut" => { record_as(pane, true); }
+        "VoiceAgent" => { let s = Section::of(st.agent_tool()); let mut p = pane.borrow_mut(); p.section = s; p.project = None; }
+        "VoiceWorkspace" => { let mut p = pane.borrow_mut(); p.section = Section::Projects; p.project = None; }
+        _ if id.starts_with("Project.") => pane.borrow_mut().project = Some(id["Project.".len()..].into()),
         _ if id.ends_with("Recheck") => { h.recheck(tool_of(&id[..id.len() - "Recheck".len()]), true); }
+        _ if id.starts_with("phonon.") || id.starts_with("voice.") || id == "groq.check" => h.action(id),
         _ => {}
     }
     h.refresh();
@@ -267,12 +385,17 @@ pub fn tile(h: &dyn Host, pane: &RefCell<Pane>, id: &str) {
     if let Some((_, t)) = inst.iter().find(|(s, _)| format!("Theme{}", s.label) == id) { apply_theme(h, pane, Some(t.clone())); }
 }
 
-pub fn picked_seg(h: &dyn Host, id: &str, i: usize) {
+pub fn picked_seg(h: &dyn Host, pane: &RefCell<Pane>, id: &str, i: usize) {
     let hv = h.hover();
     let st = &hv.settings;
+    pane.borrow_mut().note = None;
     match id {
         "WorkspaceSize" => { st.set_workspace_size(pages::SIZES[i].0); h.settings_changed(); }
         "Appearance" => { st.set_theme(None); st.set_appearance(pages::APPEARANCES[i].0); h.theme_changed(); }
+        "VoiceSpeech" => { st.set_voice(VoiceSettings { speech: SpeechMode::ALL[i], ..st.voice() }); h.action("voice.changed"); }
+        "VoiceCleanupProvider" => { st.set_voice(VoiceSettings { cleanup_provider: CleanupProvider::ALL[i], ..st.voice() }); h.action("voice.changed"); }
+        "DefaultAccess" => st.set_default_workspace(Workspace { access: ACCESS_IDS[i].into(), ..st.default_workspace() }),
+        "ProjectAccess" => edit_project(h, pane, id, |p| p.access = ACCESS_IDS[i].into()),
         _ => {
             for t in AgentTool::ALL {
                 let o = st.agent_options(t);
@@ -297,6 +420,17 @@ pub fn picked_seg(h: &dyn Host, id: &str, i: usize) {
 pub fn menu_pick(h: &dyn Host, pane: &RefCell<Pane>, id: &str, i: usize) {
     pane.borrow_mut().menu = None;
     let st = &h.hover().settings;
+    match id {
+        // 0 is the system default; past the devices is a saved one not plugged in now.
+        "VoiceMicrophone" => {
+            let v = st.voice();
+            let m = if i == 0 { None } else { pane.borrow().live.mics.get(i - 1).cloned().or(v.microphone.clone()) };
+            st.set_voice(VoiceSettings { microphone: m, ..v });
+            h.action("voice.changed");
+        }
+        "VoiceModel" => { st.set_voice(VoiceSettings { model: TRANSCRIBE_MODELS[i.min(TRANSCRIBE_MODELS.len() - 1)].0.into(), ..st.voice() }); h.action("voice.changed"); }
+        _ => {}
+    }
     for t in AgentTool::ALL {
         let o = st.agent_options(t);
         let offers = st.agent_offers(t);
@@ -311,10 +445,14 @@ pub fn menu_pick(h: &dyn Host, pane: &RefCell<Pane>, id: &str, i: usize) {
 
 /// The shortcut field: click to record, then a chord (ShortcutField).
 pub fn record(h: &dyn Host, pane: &RefCell<Pane>) {
-    let mut p = pane.borrow_mut();
-    if p.recording { p.recording = false; p.field = None; } else { p.recording = true; p.field = Some("Press keys…".into()); }
-    drop(p);
+    record_as(pane, false);
     h.refresh();
+}
+
+/// Starts recording the notch's shortcut or the voice one; stops either.
+fn record_as(pane: &RefCell<Pane>, voice: bool) {
+    let mut p = pane.borrow_mut();
+    if p.recording { p.recording = false; p.field = None; } else { p.recording = true; p.recording_voice = voice; p.field = Some("Press keys…".into()); }
 }
 
 pub fn chord(h: &dyn Host, pane: &RefCell<Pane>, text: &str, m: hover_core::shortcut::Modifiers) -> bool {
@@ -325,10 +463,22 @@ pub fn chord(h: &dyn Host, pane: &RefCell<Pane>, text: &str, m: hover_core::shor
         Recorded::Stop => { let mut p = pane.borrow_mut(); p.recording = false; p.field = None; }
         Recorded::Chord(sc) => {
             let st = &h.hover().settings;
-            let changed = sc != st.sc_workspace();
-            if changed { st.set_sc_workspace(sc); }
-            { let mut p = pane.borrow_mut(); p.recording = false; p.field = None; }
-            if changed { h.shortcut_changed(); }
+            let voice = pane.borrow().recording_voice;
+            let mut v = st.voice();
+            // One chord can't be both: the system gives it to whichever takes it first.
+            if sc == if voice { st.sc_workspace() } else { v.shortcut } {
+                pane.borrow_mut().field = Some(if voice { "Used by the notch" } else { "Used by Voice" }.into());
+            } else if voice {
+                let changed = sc != v.shortcut;
+                if changed { v.shortcut = sc; st.set_voice(v); }
+                { let mut p = pane.borrow_mut(); p.recording = false; p.field = None; }
+                if changed { h.action("voice.shortcut"); }
+            } else {
+                let changed = sc != st.sc_workspace();
+                if changed { st.set_sc_workspace(sc); }
+                { let mut p = pane.borrow_mut(); p.recording = false; p.field = None; }
+                if changed { h.shortcut_changed(); }
+            }
         }
     }
     h.refresh();
@@ -377,13 +527,16 @@ macro_rules! wire_page {
     ($w:expr, $app:expr, $which:expr) => {{
         let g = $w.global::<crate::ui::Page>();
         let a = $app.clone();
-        g.on_section(move |i| { a.pane.borrow_mut().section = hover_app::pages::Section::ALL[i as usize]; a.pane.borrow_mut().menu = None; a.refresh_page(true); });
+        g.on_section(move |i| {
+            { let mut p = a.pane.borrow_mut(); p.section = hover_app::pages::Section::ALL[i as usize]; p.menu = None; p.project = None; p.note = None; }
+            a.refresh_page(true);
+        });
         let a = $app.clone();
-        g.on_toggled(move |id, on| crate::view::toggled(&*a, &id, on));
+        g.on_toggled(move |id, on| crate::view::toggled(&*a, &a.pane, &id, on));
         let a = $app.clone();
         g.on_pressed(move |id| crate::view::pressed(&*a, &a.pane, &id));
         let a = $app.clone();
-        g.on_picked_seg(move |id, i| crate::view::picked_seg(&*a, &id, i as usize));
+        g.on_picked_seg(move |id, i| crate::view::picked_seg(&*a, &a.pane, &id, i as usize));
         let a = $app.clone();
         g.on_open_picker(move |id, x, y| {
             let opts = crate::view::picker_options(&a.last_blocks.borrow(), &id);

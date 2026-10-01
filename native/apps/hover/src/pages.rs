@@ -6,27 +6,33 @@
 use hover_agents::agents::{self, AgentReady};
 use hover_core::model::{AcpOption, AgentOptions, AgentTool, Appearance, SavedTheme, WorkspaceSize};
 use hover_core::palette::{InstalledTheme, Palette};
+use hover_core::projects::{resolve_folder, CleanupProvider, Project, SpeechMode, ACCESS_IDS, GROQ_SECRET, TRANSCRIBE_MODELS};
 use hover_core::settings::Settings;
 use hover_quota::{item, Reading};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Section { General, Integrations, Kiro, Codex, Cursor, OpenCode }
+pub enum Section { General, Integrations, Projects, Voice, Kiro, Codex, Cursor, OpenCode }
 
 impl Section {
-    pub const ALL: [Section; 6] = [Section::General, Section::Integrations, Section::Kiro, Section::Codex, Section::Cursor, Section::OpenCode];
-    pub fn title(self) -> &'static str { ["General", "Integrations", "Kiro", "Codex", "Cursor", "OpenCode"][self as usize] }
+    pub const ALL: [Section; 8] = [Section::General, Section::Integrations, Section::Projects, Section::Voice, Section::Kiro, Section::Codex, Section::Cursor, Section::OpenCode];
+    pub fn title(self) -> &'static str { ["General", "Integrations", "Projects", "Voice", "Kiro", "Codex", "Cursor", "OpenCode"][self as usize] }
     /// The sidebar's icon and its tile's colour.
     pub fn glyph(self) -> (&'static str, Tint) {
-        [("settings", Tint::Gray), ("plug", Tint::Purple), ("ghost", Tint::Bot), ("terminal", Tint::Green), ("sparkles", Tint::Blue), ("terminal", Tint::Gray)][self as usize]
+        [("settings", Tint::Gray), ("plug", Tint::Purple), ("folder", Tint::Orange), ("mic", Tint::Pink), ("ghost", Tint::Bot), ("terminal", Tint::Green), ("sparkles", Tint::Blue), ("terminal", Tint::Gray)][self as usize]
+    }
+    /// The section of a tool's own page.
+    pub fn of(tool: AgentTool) -> Section {
+        match tool { AgentTool::Codex => Section::Codex, AgentTool::Cursor => Section::Cursor, AgentTool::OpenCode => Section::OpenCode, _ => Section::Kiro }
     }
     pub fn tool(self) -> AgentTool {
         match self { Section::Codex => AgentTool::Codex, Section::Cursor => AgentTool::Cursor, Section::OpenCode => AgentTool::OpenCode, _ => AgentTool::Kiro }
     }
 }
 
-/// The tile colours Pages.cs uses: the palette's accents, Ui.Gray, and the Kiro bot's purple.
+/// The tile colours Pages.cs uses: the palette's accents, Ui.Gray, and the Kiro bot's
+/// purple; Pink is the mockup's Voice tile.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Tint { Gray, Purple, Bot, Green, Blue, Orange, Teal }
+pub enum Tint { Gray, Purple, Bot, Green, Blue, Orange, Teal, Pink }
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Control {
@@ -34,22 +40,44 @@ pub enum Control {
     Switch { id: String, name: String, on: bool },
     /// A grey pill (OwlLightButton) with its text.
     Button { id: String, name: String, text: String, enabled: bool },
-    /// The shortcut field: shows the shortcut, records the next chord.
-    Shortcut { text: String },
+    /// A shortcut field: shows the shortcut, records the next chord. The notch's is
+    /// "WorkspaceShortcut".
+    Shortcut { id: String, name: String, text: String },
     Segments { id: String, labels: Vec<String>, picked: i32 },
     /// A button showing the current choice that opens a menu of them.
     Picker { id: String, name: String, shown: String, options: Vec<(String, bool)> },
     Text(String),
+    /// A one-line text box, saved on Enter or when it loses focus. A secret one is
+    /// masked and always starts empty (the placeholder says whether a key is kept);
+    /// `on` is whether one is, which offers Remove key.
+    Field { id: String, name: String, value: String, placeholder: String, secret: bool, on: bool },
+    /// Badges (warn: amber), then buttons (id, text, red). With `open`, the whole row is
+    /// a button to that id, with a chevron at its end.
+    Chips { badges: Vec<(String, bool)>, buttons: Vec<(String, String, bool)>, open: Option<String> },
+    /// A button that acts while held: "{id}.press" on the press, "{id}.release" on the release.
+    Hold { id: String, name: String, text: String },
+}
+
+impl Control {
+    /// The id the row's own control answers to.
+    pub fn id(&self) -> Option<&str> {
+        match self {
+            Control::Switch { id, .. } | Control::Button { id, .. } | Control::Shortcut { id, .. } | Control::Segments { id, .. }
+            | Control::Picker { id, .. } | Control::Field { id, .. } | Control::Hold { id, .. } => Some(id),
+            Control::Chips { open, .. } => open.as_deref(),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub enum Lead { None, Tile(&'static str, Tint), Ring(Option<f64>) }
+pub enum Lead { None, Tile(&'static str, Tint), Ring(Option<f64>), Letter(String, Tint) }
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct Row { pub label: String, pub sub: Option<String>, pub control: Control, pub lead: Lead, pub enabled: bool, pub sub_id: Option<String> }
+pub struct Row { pub label: String, pub sub: Option<String>, pub control: Control, pub lead: Lead, pub enabled: bool, pub sub_id: Option<String>, pub progress: Option<f32> }
 
 fn row(label: impl Into<String>, sub: Option<String>, control: Control, lead: Lead) -> Row {
-    Row { label: label.into(), sub, control, lead, enabled: true, sub_id: None }
+    Row { label: label.into(), sub, control, lead, enabled: true, sub_id: None, progress: None }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -65,6 +93,64 @@ pub enum Block {
     Tiles(Vec<Tile>),
     /// An accent link with its icon (Import…, Refresh…), dim or not, and a status line.
     Link { id: String, name: String, icon: &'static str, text: String, dim: bool, status: String },
+    /// The line under a page's title (the mockup's lead).
+    Lead(String),
+}
+
+/// What only the running app knows about voice, filled in by it (the Phonon card, Try
+/// it, the microphones, a check's answer). Kept in view::Pane; Default shows each part
+/// as not known yet.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Live {
+    pub phonon: Option<PhononCard>,
+    pub voice_try: Option<TryCard>,
+    /// Input devices by name; the system default is offered on its own.
+    pub mics: Vec<String>,
+    /// Why the voice shortcut couldn't be taken (another app holds it).
+    pub shortcut_error: Option<String>,
+    /// Check key's answer: "Checking…", "The key works.", or what Groq said.
+    pub groq_check: Option<String>,
+}
+
+/// The local model's card.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct PhononCard {
+    /// "Phonon-2".
+    pub model: String,
+    /// "Not installed", "Downloading", "Verifying…", "Installing…", "Ready", "Cancelled",
+    /// "Failed", "Can’t run on this computer".
+    pub state: String,
+    /// Bytes so far and the total (None when no truthful total is known), while downloading.
+    pub progress: Option<(u64, Option<u64>)>,
+    /// The facts below it, label and value: version, download, installed, runtime, folder.
+    pub facts: Vec<(String, String)>,
+    pub actions: Vec<PhononAction>,
+    /// What failed, or why this computer can't run it.
+    pub error: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PhononAction { Download, Cancel, Retry, Repair, Remove }
+
+impl PhononAction {
+    pub fn id(self) -> &'static str { ["phonon.download", "phonon.cancel", "phonon.retry", "phonon.repair", "phonon.remove"][self as usize] }
+    pub fn label(self) -> &'static str { ["Download", "Cancel", "Retry", "Repair", "Remove"][self as usize] }
+}
+
+/// Try it's result so far.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct TryCard {
+    /// The stage: "Listening… 2 s", "Transcribing…", "Done".
+    pub status: String,
+    /// What came of it, label and value: Heard, Cleaned up, Folder, Agent, Access, Task.
+    pub lines: Vec<(String, String)>,
+    pub error: Option<String>,
+}
+
+/// 1.5 MB, 164 MB, 2.1 GB: sizes as the cards show them.
+pub fn size(bytes: u64) -> String {
+    let mb = bytes as f64 / 1_000_000.0;
+    if mb >= 1000.0 { format!("{:.1} GB", mb / 1000.0) } else if mb >= 10.0 { format!("{mb:.0} MB") } else { format!("{mb:.1} MB") }
 }
 
 /// What a page is built from, beyond the settings.
@@ -79,6 +165,18 @@ pub struct Input<'a> {
     pub system_dark: bool,
     pub import_status: String,
     pub kiro_agents: Vec<String>,
+    /// The voice shortcut field's text, as `shortcut` is the notch's.
+    pub voice_shortcut: String,
+    /// Whether the secret store holds a key by that name.
+    pub has_secret: &'a dyn Fn(&str) -> bool,
+    /// Keys set now are kept across restarts (Hover's own key is there).
+    pub secrets_kept: bool,
+    /// The project whose page is open in Projects; None is the list.
+    pub project: Option<String>,
+    /// What the last action said, by the id of the control it is about (a refused
+    /// folder, a key that couldn't be saved): shown under that row.
+    pub note: Option<(String, String)>,
+    pub live: &'a Live,
 }
 
 const WIN: bool = cfg!(windows);
@@ -97,7 +195,21 @@ pub fn build(section: Section, i: &Input) -> Vec<Block> {
             heading(&mut b, "AI quotas");
             quotas(&mut b, i);
         }
+        Section::Projects => projects(&mut b, i),
+        Section::Voice => voice(&mut b, i),
         _ => agent(&mut b, section, i),
+    }
+    // The last action's message goes under the row (or beside the link) it is about.
+    if let Some((id, text)) = &i.note {
+        for x in &mut b {
+            match x {
+                Block::Group(rows) => for r in rows.iter_mut().filter(|r| r.control.id() == Some(id.as_str())) {
+                    r.sub = Some(match &r.sub { Some(s) => format!("{s}\n{text}"), None => text.clone() });
+                },
+                Block::Link { id: l, status, .. } if l == id => *status = text.clone(),
+                _ => {}
+            }
+        }
     }
     b
 }
@@ -122,7 +234,7 @@ fn general(b: &mut Vec<Block>, i: &Input) {
         row("Open on hover", Some("Off, only the shortcut or a click on the notch opens it — handy if browser tabs live up there.".into()),
             switch("HoverOpens", "Open on hover", s.hover_opens_workspace()), Lead::None),
         row("Notch shortcut", Some(if WIN { "Click, then press the keys. Include Ctrl, Alt, Shift or Win." } else { "Click, then press the keys. Include Ctrl, Alt, Shift or Super." }.into()),
-            Control::Shortcut { text: i.shortcut.clone() }, Lead::None),
+            Control::Shortcut { id: "WorkspaceShortcut".into(), name: "Notch shortcut".into(), text: i.shortcut.clone() }, Lead::None),
         row("Quit Hover", Some("Stops every agent that is still working.".into()),
             Control::Button { id: "Quit".into(), name: "Quit Hover".into(), text: "Quit".into(), enabled: true }, Lead::None),
     ]));
@@ -200,6 +312,204 @@ fn quotas(b: &mut Vec<Block>, i: &Input) {
     b.push(Block::Link { id: "RefreshQuotas".into(), name: "Refresh quotas now".into(), icon: "refresh", text: "Refresh quotas now".into(), dim: true, status: String::new() });
     b.push(Block::Footnote("Quotas are read every five minutes: Kiro from \"kiro-cli /usage\", Codex from its own session logs, \
         Cursor from cursor.com and Claude Code from api.anthropic.com, each with the sign-in that tool already keeps. Nothing else is sent.".into()));
+}
+
+/// The access a project or the default workspace has: ACCESS_IDS, worded as the tool pages word them.
+pub const ACCESS_LABELS: [&str; 4] = ["Full", "Ask first", "Ask always", "Read only"];
+
+pub fn access_label(id: &str) -> &'static str { ACCESS_IDS.iter().position(|a| *a == id).map_or(ACCESS_LABELS[1], |p| ACCESS_LABELS[p]) }
+
+fn access_segments(id: &str, access: &str) -> Control {
+    segments(id, &ACCESS_LABELS, ACCESS_IDS.iter().position(|a| *a == access).map_or(-1, |p| p as i32))
+}
+
+/// What a target's access means for the agent voice starts there (the default one).
+/// What a tool can't do is said, never widened.
+fn target_access(access: &str, tool: AgentTool) -> String {
+    let name = tool.name();
+    match access {
+        "read" if !agents::read_only_works(tool) => format!("{name} has no read only mode on this computer. Pick another access, or another default agent for new tasks."),
+        "read" => format!("{name} can only read and search here."),
+        "always" => format!("{name} asks in the notch before any change or command."),
+        "risky" if tool == AgentTool::Codex => "Codex asks in the notch before it writes outside the folder or goes online.".into(),
+        "risky" => format!("{name} asks in the notch before commands, deletes, the network or anything outside the folder."),
+        _ => format!("{name} edits files and runs commands here without asking."),
+    }
+}
+
+fn field(id: &str, name: &str, value: &str, placeholder: &str) -> Control {
+    Control::Field { id: id.into(), name: name.into(), value: value.into(), placeholder: placeholder.into(), secret: false, on: false }
+}
+
+/// A key's box: empty, its placeholder saying whether one is kept.
+fn secret(id: &str, name: &str, name_in_store: &str, i: &Input) -> Control {
+    let has = (i.has_secret)(name_in_store);
+    let placeholder = if !has { "Not set" } else if i.secrets_kept { "Saved" } else { "Kept this run only" };
+    Control::Field { id: id.into(), name: name.into(), value: String::new(), placeholder: placeholder.into(), secret: true, on: has }
+}
+
+fn key_note(i: &Input, text: &str) -> String {
+    if i.secrets_kept { text.into() } else { format!("{text} Hover can’t keep keys on this computer right now, so one set now lasts until Hover quits.") }
+}
+
+/// A project's tile: its first letter on a colour of its own (by its id, so it keeps it).
+pub fn letter(p: &Project) -> Lead {
+    const TINTS: [Tint; 6] = [Tint::Bot, Tint::Teal, Tint::Pink, Tint::Blue, Tint::Orange, Tint::Green];
+    let k = p.id.bytes().map(usize::from).sum::<usize>() % TINTS.len();
+    Lead::Letter(p.name.chars().next().map(|c| c.to_uppercase().collect()).unwrap_or_default(), TINTS[k])
+}
+
+fn projects(b: &mut Vec<Block>, i: &Input) {
+    let s = i.settings;
+    let tool = s.agent_tool();
+    if let Some(p) = i.project.as_deref().and_then(|id| s.project(id)) { return project(b, &p, tool); }
+    b.push(Block::Lead("Folders voice may start tasks in. When you talk to Hover, it picks one from this list.".into()));
+    heading(b, "Projects");
+    let rows: Vec<Row> = s.projects().iter().map(|p| {
+        let sub = match resolve_folder(&p.folder) {
+            Err(e) => e,
+            Ok(_) => match p.aliases.first() { Some(a) => format!("{} · say “{a}”", p.folder), None => p.folder.clone() },
+        };
+        let badges = vec![(if p.voice { "Voice" } else { "Voice off" }.to_owned(), false), (access_label(&p.access).to_owned(), p.access == "full")];
+        row(&p.name, Some(sub), Control::Chips { badges, buttons: vec![], open: Some(format!("Project.{}", p.id)) }, letter(p))
+    }).collect();
+    if !rows.is_empty() { b.push(Block::Group(rows)); }
+    b.push(Block::Link { id: "ProjectAdd".into(), name: "Add a project".into(), icon: "add", text: "Add a project…".into(), dim: false, status: String::new() });
+    b.push(Block::Footnote("Being on this list doesn’t mean Full access: each project keeps its own. Wherever voice starts a task, it uses the default agent and model (see Voice).".into()));
+    heading(b, "Default workspace");
+    let w = s.default_workspace();
+    let sub = match w.path() {
+        None => "No home folder was found. Choose a folder.".to_owned(),
+        Some(p) if p.is_dir() => p.to_string_lossy().into_owned(),
+        Some(p) => format!("{} · made when first needed", p.display()),
+    };
+    b.push(Block::Group(vec![
+        row("Location", Some(sub), Control::Button { id: "DefaultFolder".into(), name: "Change the default workspace".into(), text: "Change…".into(), enabled: true }, Lead::Tile("home", Tint::Gray)),
+        row("Tool access", Some(target_access(&w.access, tool)), access_segments("DefaultAccess", &w.access), Lead::Tile("shield", Tint::Green)),
+    ]));
+    b.push(Block::Footnote("When what you say names no project here, or isn’t clear, the task starts in the default workspace.".into()));
+}
+
+fn project(b: &mut Vec<Block>, p: &Project, tool: AgentTool) {
+    b[0] = Block::Link { id: "ProjectBack".into(), name: "Back to Projects".into(), icon: "chevron-left", text: "Projects".into(), dim: false, status: String::new() };
+    b.push(Block::Title(p.name.clone()));
+    let folder = match resolve_folder(&p.folder) { Ok(_) => p.folder.clone(), Err(e) => e };
+    b.push(Block::Group(vec![
+        row("Name", None, field("ProjectName", "Name", &p.name, "A name to say"), Lead::None),
+        row("Folder", Some(folder), Control::Button { id: "ProjectFolder".into(), name: "Change the project’s folder".into(), text: "Change…".into(), enabled: true }, Lead::None),
+    ]));
+    heading(b, "Voice");
+    b.push(Block::Group(vec![
+        row("Also called", Some("Saying any of these finds this project. Separate them with commas.".into()), field("ProjectAliases", "Also called", &p.aliases.join(", "), "the site, website"), Lead::None),
+        row("Voice can start tasks here", Some("Off: voice skips this project.".into()), switch("ProjectVoice", "Voice can start tasks here", p.voice), Lead::None),
+    ]));
+    heading(b, "Access");
+    b.push(Block::Group(vec![row("Tool access", Some(target_access(&p.access, tool)), access_segments("ProjectAccess", &p.access), Lead::None)]));
+    b.push(Block::Group(vec![row("Remove from projects", None,
+        Control::Chips { badges: vec![], buttons: vec![("ProjectRemove".into(), "Remove".into(), true)], open: None }, Lead::None)]));
+    b.push(Block::Footnote("Removing it only takes it off this list. Its folder, files, history and any task still running stay as they are.".into()));
+}
+
+fn voice(b: &mut Vec<Block>, i: &Input) {
+    let s = i.settings;
+    let v = s.voice();
+    let local = v.speech == SpeechMode::Local;
+    b.push(Block::Lead("Talk to Hover from anywhere. The notch listens while you hold the shortcut.".into()));
+    let mut mics = vec![("System default".to_owned(), v.microphone.is_none())];
+    mics.extend(i.live.mics.iter().map(|m| (m.clone(), v.microphone.as_ref() == Some(m))));
+    // A saved device that isn't plugged in now still shows as the one picked.
+    if let Some(m) = v.microphone.as_ref().filter(|m| !i.live.mics.contains(m)) { mics.push((m.clone(), true)); }
+    b.push(Block::Group(vec![
+        row("Voice control", None, switch("VoiceEnabled", "Voice control", v.enabled), Lead::None),
+        row("Shortcut", Some(i.live.shortcut_error.clone().unwrap_or_else(|| "Hold it to talk, let go to finish. Up to ten minutes.".into())),
+            Control::Shortcut { id: "VoiceShortcut".into(), name: "Voice shortcut".into(), text: i.voice_shortcut.clone() }, Lead::None),
+        row("Microphone", None, Control::Picker { id: "VoiceMicrophone".into(), name: "Microphone".into(),
+            shown: v.microphone.clone().unwrap_or_else(|| "System default".into()), options: mics }, Lead::None),
+    ]));
+
+    heading(b, "Speech recognition");
+    let mut language = row("Language", None, Control::Text(if local { "English only" } else { "Detected automatically" }.into()), Lead::None);
+    language.enabled = !local;
+    let mut rows = vec![
+        row("Speech recognition", Some(if local { "Speech recognition stays on this computer. English only. For other languages, choose Cloud (Groq)." }
+            else { "Audio is sent to Groq. Language is detected automatically." }.into()),
+            segments("VoiceSpeech", &SpeechMode::ALL.map(|m| m.label()), SpeechMode::ALL.iter().position(|m| *m == v.speech).map_or(-1, |p| p as i32)), Lead::None),
+        language,
+    ];
+    if !local {
+        rows.push(row("Groq API key", Some(key_note(i, "Your own key, from console.groq.com.")), secret("VoiceGroqKey", "Groq API key", GROQ_SECRET, i), Lead::None));
+        rows.push(row("Check the key", Some(i.live.groq_check.clone().unwrap_or_else(|| "Asks Groq whether the key works.".into())),
+            Control::Button { id: "groq.check".into(), name: "Check the Groq key".into(), text: "Check key".into(), enabled: (i.has_secret)(GROQ_SECRET) }, Lead::None));
+        let shown = TRANSCRIBE_MODELS.iter().find(|m| m.0 == v.model).map_or(v.model.clone(), |m| m.1.into());
+        rows.push(row("Model", None, Control::Picker { id: "VoiceModel".into(), name: "Model".into(), shown,
+            options: TRANSCRIBE_MODELS.iter().map(|m| (m.1.to_owned(), m.0 == v.model)).collect() }, Lead::None));
+    }
+    b.push(Block::Group(rows));
+    if local {
+        let english = vec![("English only".to_owned(), false)];
+        let mut rows = vec![];
+        match &i.live.phonon {
+            None => rows.push(row("Phonon-2", Some("Checking…".into()), Control::Chips { badges: english, buttons: vec![], open: None }, Lead::Tile("cpu", Tint::Teal))),
+            Some(c) => {
+                let mut sub = c.state.clone();
+                match c.progress {
+                    Some((d, Some(t))) => sub += &format!(" · {} of {}", size(d), size(t)),
+                    Some((d, None)) => sub += &format!(" · {}", size(d)),
+                    None => {}
+                }
+                if let Some(e) = &c.error { sub += &format!("\n{e}"); }
+                let buttons = c.actions.iter().map(|a| (a.id().to_owned(), a.label().to_owned(), *a == PhononAction::Remove)).collect();
+                let mut r = row(&c.model, Some(sub), Control::Chips { badges: english, buttons, open: None }, Lead::Tile("cpu", Tint::Teal));
+                r.progress = c.progress.and_then(|(d, t)| t.filter(|t| *t > 0).map(|t| (d as f64 / t as f64).min(1.0) as f32));
+                rows.push(r);
+                // A long value (the folder) wraps under its label; a short one sits on the right.
+                rows.extend(c.facts.iter().map(|(l, v)| if v.chars().count() > 40 { row(l, Some(v.clone()), Control::None, Lead::None) } else { row(l, None, Control::Text(v.clone()), Lead::None) }));
+            }
+        }
+        b.push(Block::Group(rows));
+    }
+
+    heading(b, "Cleanup");
+    let p = v.cleanup_provider;
+    let custom = p == CleanupProvider::Custom;
+    let mut rows = vec![
+        row("Clean up the text", Some("Fixes punctuation, grammar and filler words, in the language you spoke. If it fails, the original text is used.".into()),
+            switch("VoiceCleanup", "Clean up the text", v.cleanup), Lead::None),
+        row("Service", None, segments("VoiceCleanupProvider", &CleanupProvider::ALL.map(|c| c.name()), p as i32), Lead::None),
+        row("Model", None, field("VoiceCleanupModel", "Cleanup model", v.cleanup_model.as_deref().unwrap_or(""), "The service’s model id"), Lead::None),
+        row("API key", Some(key_note(i, &format!("Your own {} key.", if custom { "service’s" } else { p.name() }))), secret("VoiceCleanupKey", "Cleanup API key", p.secret(), i), Lead::None),
+    ];
+    if custom {
+        rows.push(row("Base URL", Some("An OpenAI-compatible API, ending in /v1.".into()), field("VoiceCleanupBase", "Base URL", v.cleanup_base.as_deref().unwrap_or(""), "https://…/v1"), Lead::None));
+    }
+    b.push(Block::Group(rows));
+    b.push(Block::Footnote(format!("With cleanup on, the transcript (never the audio) is sent to {} with your key.", if custom { "the address above" } else { p.name() })));
+
+    heading(b, "Starting tasks");
+    let tool = s.agent_tool();
+    let o = s.agent_options(tool);
+    let m = models(tool, &s.agent_offers(tool));
+    let current = o.model.clone().unwrap_or_else(|| m[0].0.clone());
+    let model = m.iter().find(|x| x.0 == current).map_or(current.clone(), |x| x.1.clone());
+    let mut sub = "Every voice task uses the agent and model the office picks for new tasks.".to_owned();
+    if let Some(r) = (i.ready)(tool).filter(|r| !r.ok()) { sub += &format!(" {} isn’t ready: {} Voice will ask you to pick another.", tool.name(), r.hint); }
+    let w = s.default_workspace();
+    let place = w.path().map_or_else(|| "No home folder".to_owned(), |p| p.to_string_lossy().into_owned());
+    b.push(Block::Group(vec![
+        row("Agent", Some(sub), Control::Button { id: "VoiceAgent".into(), name: format!("Open {} settings", tool.name()), text: format!("{} · {model}", tool.name()), enabled: true }, Lead::None),
+        row("Default workspace", Some(format!("{place} · {}", access_label(&w.access))),
+            Control::Button { id: "VoiceWorkspace".into(), name: "Open Projects".into(), text: "Projects…".into(), enabled: true }, Lead::None),
+    ]));
+
+    heading(b, "Try it");
+    let t = i.live.voice_try.as_ref();
+    let sub = t.and_then(|t| t.error.clone().or_else(|| Some(t.status.clone()).filter(|x| !x.is_empty())))
+        .unwrap_or_else(|| "Hold the button and speak. It shows what voice would start; nothing starts and no files are touched.".into());
+    let mut rows = vec![row("Try it", Some(sub), Control::Hold { id: "voice.try".into(), name: "Hold to try voice".into(), text: "Hold to talk".into() }, Lead::None)];
+    if let Some(t) = t { rows.extend(t.lines.iter().map(|(l, v)| row(l, Some(v.clone()), Control::None, Lead::None))); }
+    b.push(Block::Group(rows));
+    b.push(Block::Footnote("Hold the shortcut, say what to do (“in Hover, fix the notch blink”) and let go. A card shows the folder, agent, access and task, \
+        and starts it after 3 seconds. Enter starts it now, editing the task stops the countdown, and Esc cancels.".into()));
 }
 
 fn offer<'a>(offers: &'a [AcpOption], category: &str, ids: &[&str]) -> Option<&'a AcpOption> {
@@ -407,7 +717,10 @@ mod tests {
     use hover_core::model::AcpChoice;
 
     fn input<'a>(s: &'a Settings, installed: &'a [(InstalledTheme, SavedTheme)], reading: &'a dyn Fn(&str) -> Option<Reading>, ready: &'a dyn Fn(AgentTool) -> Option<AgentReady>) -> Input<'a> {
-        Input { settings: s, launch_at_login: false, shortcut: s.sc_workspace().label(), reading, ready, installed, system_dark: true, import_status: String::new(), kiro_agents: vec!["reviewer".into()] }
+        static LIVE: std::sync::OnceLock<Live> = std::sync::OnceLock::new();
+        fn no(_: &str) -> bool { false }
+        Input { settings: s, launch_at_login: false, shortcut: s.sc_workspace().label(), reading, ready, installed, system_dark: true, import_status: String::new(), kiro_agents: vec!["reviewer".into()],
+            voice_shortcut: s.voice().shortcut.label(), has_secret: &no, secrets_kept: true, project: None, note: None, live: LIVE.get_or_init(Live::default) }
     }
 
     fn settings() -> std::sync::Arc<Settings> {
@@ -422,9 +735,10 @@ mod tests {
         let mut v = vec![];
         for r in rows(b) {
             match &r.control {
-                Control::Switch { id, .. } | Control::Button { id, .. } | Control::Picker { id, .. } => v.push(id.clone()),
+                Control::Switch { id, .. } | Control::Button { id, .. } | Control::Picker { id, .. } | Control::Field { id, .. } | Control::Hold { id, .. } => v.push(id.clone()),
                 Control::Segments { id, labels, .. } => v.extend(labels.iter().map(|l| format!("{id}{l}"))),
-                Control::Shortcut { .. } => v.push("WorkspaceShortcut".into()),
+                Control::Shortcut { id, .. } => v.push(id.clone()),
+                Control::Chips { buttons, open, .. } => { v.extend(open.clone()); v.extend(buttons.iter().map(|b| b.0.clone())); }
                 _ => {}
             }
             if let Some(s) = &r.sub_id { v.push(s.clone()); }
@@ -490,6 +804,54 @@ mod tests {
         assert_eq!((shown.as_str(), options[0].0.as_str(), options.len()), ("Auto", "Auto", 14));
         assert!(matches!(&k[0], Block::Title(t) if t == "Kiro"));
         assert!(k.contains(&Block::Heading("TOOLS AND MEMORY".into(), false)));
+    }
+
+    /// Projects (the list, a project's page) and Voice (Cloud, then Local with Phonon
+    /// downloading); a key's box never shows the key.
+    #[test]
+    fn projects_and_voice_pages() {
+        use hover_core::projects::VoiceSettings;
+        let s = settings();
+        let none = |_: &str| None;
+        let ready = |_| Some(AgentReady { installed: true, signed_in: true, hint: String::new() });
+        let live = Live { phonon: Some(PhononCard { model: "Phonon-2".into(), state: "Downloading".into(), progress: Some((41_000_000, Some(164_000_000))),
+            facts: vec![("Version".into(), "phonon-2".into())], actions: vec![PhononAction::Cancel], error: None }), ..Default::default() };
+        let has = |n: &str| n == GROQ_SECRET;
+        let mut i = input(&s, &[], &none, &ready);
+        let d = std::env::temp_dir().join(format!("hover-pages-proj-{}", hover_core::guid_n()));
+        std::fs::create_dir_all(&d).unwrap();
+        let p = s.add_project(&d.to_string_lossy()).unwrap();
+        assert!(s.add_project(&format!("{}{}", d.display(), std::path::MAIN_SEPARATOR)).is_err(), "one folder is registered once");
+        let list = build(Section::Projects, &i);
+        let v = ids(&list);
+        for id in [format!("Project.{}", p.id), "ProjectAdd".into(), "DefaultFolder".into(), "DefaultAccessAsk first".into()] { assert!(v.contains(&id), "{id} in {v:?}"); }
+        assert_eq!(rows(&list)[0].control, Control::Chips { badges: vec![("Voice".into(), false), ("Ask first".into(), false)], buttons: vec![], open: Some(format!("Project.{}", p.id)) });
+        i.project = Some(p.id.clone());
+        let page = build(Section::Projects, &i);
+        assert!(matches!(&page[0], Block::Link { id, .. } if id == "ProjectBack"));
+        let v = ids(&page);
+        for id in ["ProjectName", "ProjectFolder", "ProjectAliases", "ProjectVoice", "ProjectAccessRead only", "ProjectRemove"] { assert!(v.contains(&id.to_string()), "{id} in {v:?}"); }
+        i.project = None;
+
+        i.has_secret = &has;
+        let cloud = build(Section::Voice, &i);
+        let v = ids(&cloud);
+        for id in ["VoiceEnabled", "VoiceShortcut", "VoiceMicrophone", "VoiceSpeechLocal (Phonon)", "VoiceGroqKey", "groq.check", "VoiceModel", "VoiceCleanup", "VoiceCleanupKey", "VoiceAgent", "voice.try"] {
+            assert!(v.contains(&id.to_string()), "{id} in {v:?}");
+        }
+        let key = rows(&cloud).into_iter().find(|r| r.control.id() == Some("VoiceGroqKey")).unwrap();
+        assert_eq!(key.control, Control::Field { id: "VoiceGroqKey".into(), name: "Groq API key".into(), value: String::new(), placeholder: "Saved".into(), secret: true, on: true });
+        s.set_voice(VoiceSettings { speech: SpeechMode::Local, ..s.voice() });
+        i.live = &live;
+        let local = build(Section::Voice, &i);
+        let r = rows(&local);
+        assert!(!ids(&local).contains(&"VoiceGroqKey".to_string()), "no Groq key asked for in Local");
+        assert!(!r.iter().find(|r| r.label == "Language").unwrap().enabled);
+        let card = r.iter().find(|r| r.label == "Phonon-2").unwrap();
+        assert_eq!(card.sub.as_deref(), Some("Downloading · 41 MB of 164 MB"));
+        assert_eq!(card.progress, Some(0.25));
+        assert_eq!(card.control, Control::Chips { badges: vec![("English only".into(), false)], buttons: vec![("phonon.cancel".into(), "Cancel".into(), false)], open: None });
+        let _ = std::fs::remove_dir_all(&d);
     }
 
     #[test]

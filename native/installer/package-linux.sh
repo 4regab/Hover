@@ -9,7 +9,8 @@
 set -eu
 VERSION=${1:-$(sed -n 's/^version = "\(.*\)"/\1/p' native/Cargo.toml | head -1)}
 OUT=${2:-dist}
-BIN=native/target/release/hover
+# Installed as hover (see the Makefile).
+BIN=native/target/release/hoverai
 [ -x "$BIN" ] || { echo "build $BIN first" >&2; exit 1; }
 mkdir -p "$OUT"
 OUT=$(cd "$OUT" && pwd)

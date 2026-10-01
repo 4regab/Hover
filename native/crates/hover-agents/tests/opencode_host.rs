@@ -583,3 +583,39 @@ fn history_keeps_opencodes_session_and_old_tools_read_as_before() {
     tools.sort_by_key(|t| *t as usize);
     assert_eq!(tools, [AgentTool::Cursor, AgentTool::OpenCode]);
 }
+
+/// OpenCode's reasoning parts are kept as thoughts (their deltas and then the whole part,
+/// once), and a task tool call as a subagent with its kind, what it was asked and found.
+#[test]
+fn reasoning_and_subagents_come_through_as_they_are_sent() {
+    let (f, d) = (Fake::new(), dir());
+    f.on_prompt(|f, sid, mid| {
+        let am = format!("msg_zz{}", &mid[6..]);
+        user(f, sid, mid);
+        status(f, sid, "busy");
+        f.ev(format!(r#"{{"type":"message.updated","properties":{{"sessionID":"{sid}","info":{{"id":"{am}","parentID":"{mid}","role":"assistant","sessionID":"{sid}"}}}}}}"#));
+        f.ev(format!(r#"{{"type":"message.part.updated","properties":{{"sessionID":"{sid}","part":{{"id":"prt_r1","messageID":"{am}","sessionID":"{sid}","type":"reasoning","text":"","time":{{"start":1000}}}}}}}}"#));
+        f.ev(format!(r#"{{"type":"message.part.delta","properties":{{"sessionID":"{sid}","messageID":"{am}","partID":"prt_r1","field":"text","delta":"Let me "}}}}"#));
+        f.ev(format!(r#"{{"type":"message.part.updated","properties":{{"sessionID":"{sid}","part":{{"id":"prt_r1","messageID":"{am}","sessionID":"{sid}","type":"reasoning","text":"Let me think.","time":{{"start":1000,"end":3500}}}}}}}}"#));
+        f.ev(format!(r#"{{"type":"message.part.updated","properties":{{"sessionID":"{sid}","part":{{"id":"prt_k1","messageID":"{am}","sessionID":"{sid}","type":"tool","tool":"task","callID":"call_k","state":{{"status":"completed","input":{{"description":"Scout the code","subagent_type":"explore","prompt":"look"}},"output":"Found it.","title":"Scout the code"}}}}}}}}"#));
+        f.ev(format!(r#"{{"type":"message.part.updated","properties":{{"sessionID":"{sid}","part":{{"id":"prt_x1","messageID":"{am}","sessionID":"{sid}","type":"text","text":"Done"}}}}}}"#));
+        status(f, sid, "idle");
+    });
+    let (r, seen) = run(&host(&f, AgentOptions::default()), &d, &Cancel::new(), None);
+    assert_eq!((r.state, r.text.as_str()), (KiroState::Completed, "Done"));
+    let seen = seen.lock().unwrap();
+    let last = |id: &str| seen.iter().rev().find_map(|e| e.step.clone().filter(|s| s.id == id)).unwrap();
+    let t = last("prt_r1");
+    assert_eq!((t.kind.as_str(), t.status.as_str(), t.output.as_deref(), t.ms), ("thought", "completed", Some("Let me think."), Some(2500.0)));
+    let k = last("call_k");
+    assert_eq!((k.kind.as_str(), k.title.as_str(), k.target.as_deref(), k.output.as_deref()), ("agent", "Scout the code", Some("explore"), Some("Found it.")));
+    let order: Vec<String> = seen.iter().filter_map(|e| e.step.as_ref().map(|s| s.id.clone())).fold(vec![], |mut v, id| { if !v.contains(&id) { v.push(id); } v });
+    assert_eq!(order, ["prt_r1", "call_k"], "in the order they happened");
+}
+
+#[test]
+fn a_unified_patch_gives_its_real_line_numbers() {
+    let (a, r, d) = hover_agents::opencode::unified("--- a/x.rs\n+++ b/x.rs\n@@ -41,3 +41,4 @@ fn x\n fn place() {\n-    old();\n+    one();\n+    two();\n }\n").unwrap();
+    assert_eq!((a, r), (2, 1));
+    assert_eq!(d, "@@ -41 +41 @@\n  fn place() {\n-     old();\n+     one();\n+     two();\n  }");
+}

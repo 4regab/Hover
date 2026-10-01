@@ -174,6 +174,7 @@ fn notch() -> Option<HWND> { let v = NOTCH.load(Ordering::SeqCst); (v != 0).then
 unsafe extern "system" fn subclass(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM, _id: usize, _data: usize) -> LRESULT {
     match msg {
         WM_HOTKEY if wp.0 as i32 == HOTKEY_ID => { push(Msg::Hotkey); return LRESULT(0); }
+        WM_HOTKEY if wp.0 as i32 == VOICE_ID => { hold_down(); return LRESULT(0); }
         WM_ACTIVATE if (wp.0 & 0xFFFF) as u32 == WA_INACTIVE => push(Msg::Deactivated),
         WM_POWERBROADCAST if wp.0 as u32 == PBT_APMRESUMEAUTOMATIC => push(Msg::Greet),
         WM_WTSSESSION_CHANGE if wp.0 as u32 == WTS_SESSION_UNLOCK => push(Msg::Greet),
@@ -235,6 +236,70 @@ pub fn primary_display_adapter() -> Option<String> {
 
 pub fn clear_hotkeys() {
     if let Some(h) = notch() { unsafe { let _ = UnregisterHotKey(Some(h), HOTKEY_ID); } }
+}
+
+// MARK: Hold to talk
+
+/// Voice's chord, apart from the office's (HOTKEY_ID): each is taken and let go alone.
+pub const VOICE_ID: i32 = 2;
+
+/// The held chord: its key, its modifiers (each one of up to two keys: either Windows
+/// key), what to call, and the poll that watches for the release.
+struct Hold { vk: u16, mods: Vec<[u16; 2]>, pressed: Box<dyn Fn()>, released: Box<dyn Fn()>, poll: slint::Timer }
+
+thread_local! {
+    static HOLD: std::cell::RefCell<Option<std::rc::Rc<Hold>>> = const { std::cell::RefCell::new(None) };
+}
+
+/// WM_HOTKEY for the voice chord. Windows says nothing of the release, so from here the
+/// keys are polled until the chord's key or one of its modifiers is up.
+fn hold_down() {
+    let Some(h) = HOLD.with(|x| x.borrow().clone()) else { return };
+    // Already held: a repeat (MOD_NOREPEAT should have stopped it).
+    if h.poll.running() { return; }
+    (h.pressed)();
+    let w = std::rc::Rc::downgrade(&h);
+    h.poll.start(slint::TimerMode::Repeated, std::time::Duration::from_millis(30), move || {
+        let Some(h) = w.upgrade() else { return };
+        let down = |k: u16| unsafe { GetAsyncKeyState(k as i32) } as u16 & 0x8000 != 0;
+        if down(h.vk) && h.mods.iter().all(|m| m.iter().any(|k| down(*k))) { return; }
+        h.poll.stop();
+        (h.released)();
+    });
+}
+
+/// Voice's hold-to-talk chord: `pressed` when it goes down, `released` when its key or
+/// a modifier comes up, both on the UI thread (the notch window's). The release is
+/// polled every 30 ms, so one Windows never reports (the lock screen, a secure desktop)
+/// still ends the recording. Err names the conflict. Taking a chord lets go of the last.
+pub fn register_hold(sc: &hover_core::shortcut::Shortcut, pressed: impl Fn() + 'static, released: impl Fn() + 'static) -> Result<(), String> {
+    use hover_core::shortcut::Modifiers;
+    clear_hold();
+    if !sc.is_set() { return Ok(()); }
+    let h = notch().ok_or("The notch window isn’t ready yet.")?;
+    let vk = hover_app::keys::vk(sc.key).ok_or_else(|| format!("{} has no key Windows can register.", sc.label()))?;
+    let (mut mods, mut keys) = (MOD_NOREPEAT, vec![]);
+    if sc.modifiers.has(Modifiers::CONTROL) { mods |= MOD_CONTROL; keys.push([VK_CONTROL.0; 2]); }
+    if sc.modifiers.has(Modifiers::ALT) { mods |= MOD_ALT; keys.push([VK_MENU.0; 2]); }
+    if sc.modifiers.has(Modifiers::SHIFT) { mods |= MOD_SHIFT; keys.push([VK_SHIFT.0; 2]); }
+    if sc.modifiers.has(Modifiers::WINDOWS) { mods |= MOD_WIN; keys.push([VK_LWIN.0, VK_RWIN.0]); }
+    if let Err(e) = unsafe { RegisterHotKey(Some(h), VOICE_ID, mods, vk as u32) } {
+        let code = e.code().0 & 0xFFFF;
+        hover_core::log::line(&format!("voice hotkey {} could not be registered (Win32 error {code})", sc.label()));
+        // ERROR_HOTKEY_ALREADY_REGISTERED
+        return Err(if code == 1409 { format!("{} is already in use by another app, by Windows or by Hover’s own shortcut.", sc.label()) }
+            else { format!("{} couldn’t be registered (Windows error {code}).", sc.label()) });
+    }
+    HOLD.with(|x| *x.borrow_mut() = Some(std::rc::Rc::new(Hold { vk, mods: keys, pressed: Box::new(pressed), released: Box::new(released), poll: slint::Timer::default() })));
+    Ok(())
+}
+
+/// Lets go of the voice chord; one held now is released first, so no recording is left running.
+pub fn clear_hold() {
+    if let Some(h) = HOLD.with(|x| x.borrow_mut().take()) {
+        if h.poll.running() { h.poll.stop(); (h.released)(); }
+    }
+    if let Some(h) = notch() { unsafe { let _ = UnregisterHotKey(Some(h), VOICE_ID); } }
 }
 
 // MARK: The tray icon

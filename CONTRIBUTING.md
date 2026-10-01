@@ -38,7 +38,7 @@ platform guides, the architecture, and how to test and measure.
    # Linux
    make                         # release build
    make test                    # every test in the workspace
-   ./native/target/release/hover
+   ./native/target/release/hoverai
    ```
 
 Only one copy of Hover runs at a time. Quit an installed Hover before you start your

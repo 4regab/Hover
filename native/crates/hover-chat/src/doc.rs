@@ -79,6 +79,13 @@ impl Shape {
             Shape::Line { pts, .. } => for p in pts { p.0 += dx; p.1 += dy; },
         }
     }
+    pub fn top(&self) -> f32 {
+        match self {
+            Shape::Rect { y, .. } | Shape::Image { y, .. } | Shape::Svg { y, .. } | Shape::Broken { y, .. } => *y,
+            Shape::Glow { y, r, .. } => y - r,
+            Shape::Line { pts, .. } => pts.iter().fold(f32::MAX, |m, p| m.min(p.1)),
+        }
+    }
     pub fn bottom(&self) -> f32 {
         match self {
             Shape::Rect { y, h, .. } | Shape::Image { y, h, .. } | Shape::Svg { y, h, .. } => y + h,
@@ -468,7 +475,10 @@ impl Md<'_> {
                 let ((sa, sd), (ca, cd)) = (line(self.sh, look), line(self.sh, code));
                 let lh = sa.max(ca) + sd.max(cd);
                 let look = Look { lh: lh / 11.5, ..code };
-                let spans = [Span::Text { text: text.clone(), marks: Default::default(), link: None, color: None, family: Some(theme::MONO), size: None, weight: None }];
+                // The fence's word: a language, or a file name (its extension says the language).
+                let info = lang.as_deref().unwrap_or("");
+                let file = info.contains('.').then_some(info);
+                let spans = colored(info, text);
                 let (layout, t, _) = self.sh.text(&spans, look, None, Alignment::Start);
                 // Where the taller line puts the code's baseline, against where the strut does.
                 let dy = sa.max(ca) - layout.lines().next().map_or(sa.max(ca), |l| l.metrics().baseline);
@@ -490,8 +500,10 @@ impl Md<'_> {
                 if over { frag.scrollers.push(Scroller { clip, content, shapes: vec![] }); }
                 frag.shapes.insert(0, Shape::Rect { x: 0.0, y: 0.0, w, h, radius: [12.0; 4], fill: Some([9, 8, 11, 255]), stroke: Some(([255, 255, 255, 20], 1.0)) });
                 frag.shapes.insert(1, rect(1.0, 1.0 + HEAD, w - 2.0, 1.0, 0.0, Some([255, 255, 255, 15])));
-                // Drawn, not in the copy text: the header isn't part of the code.
-                let l = Look { size: 11.0, lh: 1.2, color: [255, 255, 255, 107], weight: 500.0, family: theme::SANS };
+                // Drawn, not in the copy text: the header isn't part of the code. A file
+                // name (hover-md keeps the fence's first word, which may be one) is mono.
+                let l = if file.is_some() { Look { size: 11.0, lh: 1.2, color: [255, 255, 255, 158], weight: 400.0, family: theme::MONO } }
+                    else { Look { size: 11.0, lh: 1.2, color: [255, 255, 255, 107], weight: 500.0, family: theme::SANS } };
                 let lang = lang.as_deref().unwrap_or("code");
                 let (lay, _, _) = self.sh.text(&[plain(lang, None)], l, None, Alignment::Start);
                 let ly = 1.0 + (HEAD - lay.height()) / 2.0;
@@ -691,18 +703,109 @@ fn svg_size(svg: &str) -> (f32, f32) {
     (num("width"), num("height"))
 }
 
+/// A code block's text as coloured runs (the mockup's .kw .fn .tp .nu .cm, and strings).
+/// The text is the same, only coloured: copies and widths don't change.
+fn colored(info: &str, text: &str) -> Vec<Span> {
+    let run = |t: &str, color: Option<Rgba>, em: bool| Span::Text { text: t.into(), marks: hover_md::Marks { em, ..Default::default() }, link: None, color, family: Some(theme::MONO), size: None, weight: None };
+    let mut out = vec![];
+    let mut at = 0;
+    for (r, c, em) in highlight(info, text) {
+        if r.start > at { out.push(run(&text[at..r.start], None, false)); }
+        out.push(run(&text[r.clone()], Some(c), em));
+        at = r.end;
+    }
+    if at < text.len() || out.is_empty() { out.push(run(&text[at..], None, false)); }
+    out
+}
+
+/// A small tokenizer for the common languages, picked by the fence's language or a
+/// file's extension: keywords, calls, capitalised types, numbers, strings, comments.
+/// ponytail: a lexer per language would get every case (raw strings, nested comments,
+/// heredocs); this gets the common ones, and an unknown language stays plain.
+pub fn highlight(info: &str, text: &str) -> Vec<(Range<usize>, Rgba, bool)> {
+    const KW: Rgba = [0xc4, 0xa2, 0xff, 255];
+    const FN: Rgba = [0x7a, 0xd7, 0xff, 255];
+    const CM: Rgba = [0x6d, 0x65, 0x77, 255];
+    const NU: Rgba = [0xff, 0xc4, 0x6b, 255];
+    const TP: Rgba = [0xff, 0xd2, 0x7a, 255];
+    const ST: Rgba = [0xb8, 0xf5, 0xc9, 255];
+    let lang = info.rsplit('.').next().unwrap_or(info).to_ascii_lowercase();
+    // (keywords, line comment, block comments, types are Capitalised, ' starts a string)
+    let (kws, line, block, types, quote): (&[&str], &str, bool, bool, bool) = match lang.as_str() {
+        "rust" | "rs" => (&["as", "async", "await", "break", "const", "continue", "crate", "dyn", "else", "enum", "extern", "false", "fn", "for", "if", "impl", "in", "let", "loop", "match", "mod", "move", "mut", "pub", "ref", "return", "self", "Self", "static", "struct", "super", "trait", "true", "type", "unsafe", "use", "where", "while"], "//", true, true, false),
+        "js" | "jsx" | "ts" | "tsx" | "javascript" | "typescript" | "mjs" | "cjs" => (&["as", "async", "await", "break", "case", "catch", "class", "const", "continue", "default", "delete", "do", "else", "enum", "export", "extends", "false", "finally", "for", "from", "function", "if", "implements", "import", "in", "instanceof", "interface", "let", "new", "null", "of", "readonly", "return", "super", "switch", "this", "throw", "true", "try", "type", "typeof", "undefined", "var", "void", "while", "yield"], "//", true, true, true),
+        "py" | "python" => (&["and", "as", "assert", "async", "await", "break", "class", "continue", "def", "del", "elif", "else", "except", "False", "finally", "for", "from", "global", "if", "import", "in", "is", "lambda", "None", "nonlocal", "not", "or", "pass", "raise", "return", "self", "True", "try", "while", "with", "yield"], "#", false, true, true),
+        "go" => (&["break", "case", "chan", "const", "continue", "default", "defer", "else", "fallthrough", "false", "for", "func", "go", "goto", "if", "import", "interface", "map", "nil", "package", "range", "return", "select", "struct", "switch", "true", "type", "var"], "//", true, true, false),
+        "c" | "h" | "cpp" | "cc" | "hpp" | "cs" | "csharp" | "java" | "kt" | "kotlin" | "swift" => (&["auto", "bool", "break", "case", "catch", "char", "class", "const", "continue", "default", "do", "double", "else", "enum", "extends", "extern", "false", "final", "float", "for", "fun", "func", "if", "implements", "import", "int", "interface", "let", "long", "namespace", "new", "null", "nullptr", "override", "package", "private", "protected", "public", "return", "short", "sizeof", "static", "string", "struct", "switch", "this", "throw", "true", "try", "typedef", "unsigned", "using", "val", "var", "virtual", "void", "while"], "//", true, true, false),
+        "sh" | "bash" | "zsh" | "shell" | "console" => (&["case", "do", "done", "echo", "elif", "else", "esac", "exit", "export", "fi", "for", "function", "if", "in", "local", "return", "then", "until", "while"], "#", false, false, true),
+        "ps1" | "powershell" | "pwsh" => (&["catch", "else", "elseif", "finally", "for", "foreach", "function", "if", "param", "return", "switch", "throw", "try", "while"], "#", false, false, true),
+        "json" | "jsonc" => (&["false", "null", "true"], "//", true, false, false),
+        "toml" | "yaml" | "yml" | "ini" => (&["false", "true"], "#", false, false, true),
+        "sql" => (&["and", "as", "by", "create", "delete", "from", "group", "insert", "into", "join", "limit", "not", "null", "on", "or", "order", "select", "set", "table", "update", "values", "where"], "--", true, false, true),
+        "css" | "scss" => (&[], "", true, false, true),
+        _ => return vec![],
+    };
+    let b = text.as_bytes();
+    let ident = |c: u8| c.is_ascii_alphanumeric() || c == b'_' || c == b'$';
+    let mut out = vec![];
+    let mut i = 0;
+    while i < b.len() {
+        let c = b[i];
+        let rest = &text[i..];
+        let line_end = |from: usize| text[from..].find('\n').map_or(text.len(), |k| from + k);
+        if !line.is_empty() && rest.starts_with(line) && (line != "#" || i == 0 || b[i - 1].is_ascii_whitespace()) {
+            let e = line_end(i);
+            out.push((i..e, CM, true));
+            i = e;
+        } else if block && rest.starts_with("/*") {
+            let e = text[i + 2..].find("*/").map_or(text.len(), |k| i + 2 + k + 2);
+            out.push((i..e, CM, true));
+            i = e;
+        } else if c == b'"' || c == b'`' || (c == b'\'' && (quote || b.get(i + 2) == Some(&b'\'') || b.get(i + 1) == Some(&b'\\'))) {
+            // To the closing quote on the line (a backtick's may be lines on).
+            let mut e = i + 1;
+            while e < b.len() && b[e] != c && (c == b'`' || b[e] != b'\n') { e += if b[e] == b'\\' { 2 } else { 1 }; }
+            let e = (e + 1).min(b.len());
+            out.push((i..e, ST, false));
+            i = e;
+        } else if c.is_ascii_digit() && (i == 0 || !ident(b[i - 1])) {
+            let mut e = i;
+            while e < b.len() && (ident(b[e]) || b[e] == b'.') && !(b[e] == b'.' && b.get(e + 1) == Some(&b'.')) { e += 1; }
+            out.push((i..e, NU, false));
+            i = e;
+        } else if ident(c) && !c.is_ascii_digit() {
+            let mut e = i;
+            while e < b.len() && ident(b[e]) { e += 1; }
+            let w = &text[i..e];
+            let kw = if lang == "sql" { kws.iter().any(|k| k.eq_ignore_ascii_case(w)) } else { kws.contains(&w) };
+            let call = text[e..].trim_start_matches([' ', '\t']).starts_with('(');
+            if kw { out.push((i..e, KW, false)); }
+            else if call { out.push((i..e, FN, false)); }
+            else if types && c.is_ascii_uppercase() && w.len() > 1 { out.push((i..e, TP, false)); }
+            i = e;
+        } else {
+            i += rest.chars().next().map_or(1, char::len_utf8);
+        }
+    }
+    // A quote or comment cut inside a character never happens (all marks are ASCII), but
+    // an escape at the very end can step past it.
+    out.retain(|(r, ..)| r.end <= text.len() && text.is_char_boundary(r.start) && text.is_char_boundary(r.end));
+    out
+}
+
 // ---- the thread ------------------------------------------------------------------
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Stage { Waking, Working, Done, Failed, Stopped }
 
-/// A step's icon (main.js ICON): the host sends one of these per step.
+/// A step's icon (main.js ICON): the host sends one of these per step. Thought is the
+/// reasoning the tool exposed; Agent a subagent it started (OpenCode's task tool).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
-pub enum StepIcon { Read, Edit, Run, Search, #[default] Think }
+pub enum StepIcon { Read, Edit, Run, Search, #[default] Think, Thought, Agent }
 
 impl StepIcon {
     pub fn parse(s: &str) -> Self {
-        match s { "read" => Self::Read, "edit" => Self::Edit, "run" => Self::Run, "search" => Self::Search, _ => Self::Think }
+        match s { "read" => Self::Read, "edit" => Self::Edit, "run" => Self::Run, "search" => Self::Search, "thought" => Self::Thought, "agent" => Self::Agent, _ => Self::Think }
     }
     fn path(self) -> &'static str {
         match self {
@@ -710,9 +813,32 @@ impl StepIcon {
             Self::Edit => r#"<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/>"#,
             Self::Run => r#"<path d="m4 17 6-5-6-5"/><path d="M12 19h8"/>"#,
             Self::Search => r#"<circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>"#,
-            Self::Think => r#"<path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12.7V16h8v-1.3A7 7 0 0 0 12 2Z"/>"#,
+            Self::Think | Self::Thought => r#"<path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12.7V16h8v-1.3A7 7 0 0 0 12 2Z"/>"#,
+            Self::Agent => r#"<rect x="3" y="3" width="7" height="7" rx="2"/><rect x="14" y="3" width="7" height="7" rx="2"/><rect x="14" y="14" width="7" height="7" rx="2"/><path d="M6.5 10v4a3 3 0 0 0 3 3H14"/>"#,
         }
     }
+}
+
+/// An icon on the 24-unit grid from its path, round caps and joins.
+fn path_svg(path: &str, color: Rgba, size: f32, stroke: f32) -> Rc<str> {
+    format!(r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="{size}" height="{size}" fill="none" stroke="rgb({},{},{})" stroke-opacity="{}" stroke-width="{stroke}" stroke-linecap="round" stroke-linejoin="round">{path}</svg>"#,
+        color[0], color[1], color[2], color[3] as f32 / 255.0).into()
+}
+
+const COPY_ICON: &str = r#"<rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/>"#;
+const CHECK_ICON: &str = r#"<path d="M20 6 9 17l-5-5"/>"#;
+const RETRY_ICON: &str = r#"<path d="M3 12a9 9 0 0 1 15.5-6.3L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-15.5 6.3L3 16"/><path d="M3 21v-5h5"/>"#;
+
+/// A subagent's state dot (.sd): spinning while it runs (drawn still: the thread is
+/// painted when it changes, not on a clock), a check when done, a cross when it failed.
+/// (OpenCode reports a subagent waiting for a slot as running, so there is no queued dot.)
+fn state_dot(status: &str) -> Rc<str> {
+    let body = match status {
+        "completed" => r##"<circle cx="7" cy="7" r="7" fill="#4ade80" fill-opacity=".12"/><path d="M4.4 7.2 6.2 9l3.4-3.6" fill="none" stroke="#4ade80" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>"##,
+        "failed" => r##"<circle cx="7" cy="7" r="7" fill="#ff6b62" fill-opacity=".14"/><path d="m5 5 4 4M9 5 5 9" fill="none" stroke="#ff6b62" stroke-width="1.6" stroke-linecap="round"/>"##,
+        _ => r##"<circle cx="7" cy="7" r="6.25" fill="none" stroke="#c4a2ff" stroke-opacity=".2" stroke-width="1.5"/><path d="M7 .75A6.25 6.25 0 0 1 13.25 7" fill="none" stroke="#c4a2ff" stroke-width="1.5" stroke-linecap="round"/>"##,
+    };
+    format!(r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 14 14" width="14" height="14">{body}</svg>"#).into()
 }
 
 /// `.s > .n svg`: a step's icon on the 24-unit grid, round caps and joins.
@@ -764,6 +890,9 @@ pub struct Step {
 
 impl Step {
     fn ended(&self) -> bool { self.status == "completed" || self.status == "failed" }
+    /// A change or a command's output to open under the row (a thought's text and a
+    /// subagent's result are drawn their own way).
+    fn has_block(&self) -> bool { !matches!(self.kind, StepIcon::Thought | StepIcon::Agent) && (self.diff.is_some() || self.out.is_some()) }
 }
 
 /// main.js VERB_ON: the live verb for a step that is still going.
@@ -780,6 +909,40 @@ fn cmd_short(c: &str) -> String {
     let mut s = std::iter::once(head).chain(w.iter().skip(1).take(1).copied()).collect::<Vec<_>>().join(" ");
     if w.len() > 2 { s.push_str(" …"); }
     s
+}
+
+/// "18s", "1m 05s": a thought's measured time, as its folded label says it.
+fn secs(ms: f64) -> String {
+    let s = ((ms / 1000.0).round() as i64).max(1);
+    if s < 60 { format!("{s}s") } else { format!("{}m {:02}s", s / 60, s % 60) }
+}
+
+/// A step's change as its lines, each with the file's line number when the change says
+/// where it is ("@@ -old +new @@" before its lines; hover-agents writes one only when it
+/// knows): a removed line has its old number, the others their new one. None for a line
+/// is a gap between two parts of the change. With no header, no numbers.
+pub fn numbered(diff: &str) -> Vec<(Option<i64>, Option<String>)> {
+    let (mut old, mut new, mut hunks) = (0i64, 0i64, 0);
+    let mut out = vec![];
+    for l in diff.split('\n') {
+        if let Some(h) = l.strip_prefix("@@ ") {
+            let n: Vec<i64> = h.split_whitespace().take(2).filter_map(|p| p.trim_start_matches(['-', '+']).split(',').next()?.parse().ok()).collect();
+            if n.len() == 2 {
+                (old, new) = (n[0], n[1]);
+                hunks += 1;
+                if hunks > 1 { out.push((None, None)); }
+                continue;
+            }
+        }
+        let bump = |k: &mut i64| (hunks > 0).then(|| { *k += 1; *k - 1 });
+        let n = match l.chars().next() {
+            Some('+') => bump(&mut new),
+            Some('-') => bump(&mut old),
+            _ => { if hunks > 0 { old += 1; } bump(&mut new) }
+        };
+        out.push((n, Some(l.to_owned())));
+    }
+    out
 }
 
 /// One turn as the office shows it.
@@ -803,22 +966,35 @@ pub struct Turn {
     pub when: String,
     pub status: Option<String>,
     pub answer: String,
+    /// The live turn waits on the user (a question, a permission).
+    pub waiting: bool,
+    /// Asked to stop or pause, and the tool hasn't said it has yet.
+    pub stopping: bool,
 }
 
 impl Turn {
     pub fn new(prompt: &str) -> Self {
         Turn { prompt: prompt.into(), images: vec![], queued: false, steps: vec![], took: None, took_ms: None, credits: None, stage: Stage::Done, live: false,
-            clock: String::new(), when: String::new(), status: None, answer: String::new() }
+            clock: String::new(), when: String::new(), status: None, answer: String::new(), waiting: false, stopping: false }
     }
 }
 
 /// What a click on a drawn control does.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Act {
-    /// A code block's Copy: its text.
+    /// A Copy button: what it copies (a code block, a diff, an answer, a message).
     Copy(Rc<str>),
     /// A step with a change or output opens or folds: (step index, the "now" row).
     Step(usize, bool),
+    /// One of a step's own switches: (step index, which). 0 shows all of a long change,
+    /// output or thought; 1 the subagents past the fourth; 2 + k subagent k's result.
+    Flag(usize, u32),
+    /// A file under the answer: its change opens in the timeline (its step's index).
+    OpenDiff(usize),
+    /// The newest turn's Retry: its prompt goes again.
+    Retry,
+    /// A queued reply taken back.
+    Cancel,
 }
 
 pub struct Section {
@@ -834,7 +1010,7 @@ pub struct Section {
     /// The answer's images, and whether one of them changed since it was laid out.
     pub images: Vec<String>,
     stale: bool,
-    key: (Turn, u32, bool, bool, u32),
+    key: (Turn, u32, bool, bool, u32, bool, u64),
 }
 
 pub struct Thread {
@@ -876,6 +1052,12 @@ pub struct Thread {
     pub hscroll: std::collections::HashMap<(usize, usize), f32>,
     /// `.ans.fresh`: the section whose answer just arrived, and when (the painter's clock).
     pub fresh: Option<(usize, f32)>,
+    /// The steps' own switches the user flipped (see [`Act::Flag`]), by (session, turn, step, which).
+    pub flags: std::collections::HashSet<(u64, usize, usize, u32)>,
+    /// Room kept under the last turn (the reply circle sits over the thread's corner).
+    pub extra_bottom: f32,
+    /// Images a thought uses, gathered while its turn is laid out.
+    pending_images: Vec<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -944,7 +1126,37 @@ impl Thread {
     pub fn new(sh: Shaper, who: &str, color: Rgba) -> Self {
         Thread { sh, width: 360.0, who: who.into(), color, sections: vec![], height: 0.0, selection: None, tail: Tail::None,
             image_state: Box::new(|_| ImageState::Broken), image_rule: Box::new(|s| if s.starts_with("http") { Some(s.into()) } else { None }),
-            steps_user: Default::default(), session: 0, hide_steps: false, tool: "kiro".into(), step_user: Default::default(), copied: None, view_h: f32::INFINITY, sum_h: 26.0, relayouts: 0, hscroll: Default::default(), fresh: None }
+            steps_user: Default::default(), session: 0, hide_steps: false, tool: "kiro".into(), step_user: Default::default(), copied: None, view_h: f32::INFINITY, sum_h: 26.0, relayouts: 0, hscroll: Default::default(), fresh: None,
+            flags: Default::default(), extra_bottom: 0.0, pending_images: vec![] }
+    }
+
+    fn flag(&self, i: usize, j: usize, k: u32) -> bool { self.flags.contains(&(self.session, i, j, k)) }
+
+    /// A step's switch flipped (a long change shown whole, more subagents, one's result).
+    pub fn toggle_flag(&mut self, turns: &[Turn], section: usize, j: usize, k: u32) {
+        let key = (self.session, section, j, k);
+        if !self.flags.remove(&key) { self.flags.insert(key); }
+        let w = self.width;
+        self.set(turns, w);
+    }
+
+    /// A file under the answer was clicked: the timeline opens on its change. Returns
+    /// where its row is now, in thread coordinates.
+    pub fn open_diff(&mut self, turns: &[Turn], section: usize, j: usize) -> Option<f32> {
+        self.steps_user.insert((self.session, section), true);
+        self.step_user.insert((self.session, section, j, false), true);
+        let w = self.width;
+        self.set(turns, w);
+        let s = self.sections.get(section)?;
+        s.frag.hits.iter().find(|(_, a)| *a == Act::Step(j, false)).map(|(r, _)| s.y + r[1])
+    }
+
+    /// Whether a step's block (change, output, thought) shows when the user hasn't said:
+    /// a thought while it streams; while the turn runs, its latest change or output.
+    fn step_default_open(t: &Turn, j: usize, now: bool) -> bool {
+        let x = &t.steps[j];
+        if x.kind == StepIcon::Thought { return !x.ended(); }
+        !now && t.live && t.steps.iter().rposition(Step::has_block) == Some(j)
     }
 
     /// Whether turn i's timeline is open: the user's choice, else folded (a running turn
@@ -963,8 +1175,7 @@ impl Thread {
 
     /// A click on a step with a change or output: its block opens or folds.
     pub fn toggle_step(&mut self, turns: &[Turn], section: usize, j: usize, now: bool) {
-        let t = &turns[section];
-        let default = !now && t.live && t.steps.iter().rposition(|x| x.diff.is_some() || x.out.is_some()) == Some(j);
+        let default = Self::step_default_open(&turns[section], j, now);
         let k = (self.session, section, j, now);
         let open = self.step_user.get(&k).copied().unwrap_or(default);
         self.step_user.insert(k, !open);
@@ -1004,14 +1215,17 @@ impl Thread {
             let live = t.live;
             let open = self.steps_open(i, live);
             let user: Vec<((usize, bool), bool)> = self.step_user.iter().filter(|(k, _)| k.0 == self.session && k.1 == i).map(|(k, v)| ((k.2, k.3), *v)).collect();
-            let key = (t.clone(), wkey, open, live, user.len() as u32 + user.iter().map(|((j, n), v)| (*j as u32) * 4 + (*n as u32) * 2 + *v as u32).sum::<u32>() + self.sum_h.to_bits());
+            // The step switches for this turn, and whether it is the newest (its Retry).
+            let flags = self.flags.iter().filter(|k| k.0 == self.session && k.1 == i).fold(0u64, |h, k| h.wrapping_add(((k.2 as u64) << 20 | k.3 as u64).wrapping_mul(0x9e37_79b9_7f4a_7c15)));
+            let last = i + 1 == turns.len();
+            let key = (t.clone(), wkey, open, live, user.len() as u32 + user.iter().map(|((j, n), v)| (*j as u32) * 4 + (*n as u32) * 2 + *v as u32).sum::<u32>() + self.sum_h.to_bits(), last, flags);
             let reuse = old.get_mut(i).and_then(|o| o.take_if(|s| s.key == key && !s.stale));
             let mut s = match reuse {
                 Some(s) => s,
                 None => {
                     self.relayouts += 1;
                     self.hscroll.retain(|k, _| k.0 != i);
-                    let (frag, h, summary, answer_tok, images, answer_at) = self.turn(t, i, width - pl - pr, open, live);
+                    let (frag, h, summary, answer_tok, images, answer_at) = self.turn(t, i, width - pl - pr, open, live, last);
                     // A re-render drops .fresh (main.js consumes the flag), so the fade stops.
                     if self.fresh.is_some_and(|f| f.0 == i) { self.fresh = None; }
                     Section { y: 0.0, h, frag, summary, answer_tok, answer_at, images, stale: false, key }
@@ -1022,7 +1236,7 @@ impl Thread {
             y += s.h;
             self.sections.push(s);
         }
-        self.height = y + pb;
+        self.height = y + pb + self.extra_bottom;
         if let Some((a, f)) = self.selection {
             if a.section >= self.sections.len() || f.section >= self.sections.len() { self.selection = None; }
         }
@@ -1036,8 +1250,9 @@ impl Thread {
     // One turn, as flex items with the thread's gap: what the user said, the timeline under
     // its summary line (and the step going on now), then the answer and what it changed.
     #[allow(clippy::type_complexity)]
-    fn turn(&mut self, t: &Turn, ti: usize, w: f32, open: bool, live: bool) -> (Frag, f32, Option<[f32; 4]>, Option<usize>, Vec<String>, Option<(usize, usize, usize)>) {
+    fn turn(&mut self, t: &Turn, ti: usize, w: f32, open: bool, live: bool, last: bool) -> (Frag, f32, Option<[f32; 4]>, Option<usize>, Vec<String>, Option<(usize, usize, usize)>) {
         let mut images = vec![];
+        self.pending_images.clear();
         let mut answer_at = None;
         let mut frag = Frag::default();
         let mut summary = None;
@@ -1053,9 +1268,13 @@ impl Thread {
         let pics = t.images.len();
         if pics > 0 { tw = tw.max(((pics.min(per_row)) as f32 * 77.0 - 5.0).min(maxw)); }
         let q = t.queued.then(|| self.line("Queued · sends when this run ends", Look { size: 11.0, color: [0xff, 0xc4, 0x6b, 255], weight: 600.0, lh: 1.5, ..look }, Some(maxw)));
-        if let Some(q) = &q { tw = tw.max(q.layout.calculate_content_widths().max.min(maxw).ceil()); }
+        // .qd's Cancel, at the queued line's end: drawn, not copied.
+        let cancel = t.queued.then(|| { let mut c = self.line("Cancel", Look { size: 11.0, color: [0xf6, 0xf2, 0xff, 200], weight: 600.0, lh: 1.5, ..look }, None); c.text.clear(); c });
+        let cancel_w = cancel.as_ref().map_or(0.0, |c| c.layout.width() + 12.0);
+        if let Some(q) = &q { tw = tw.max((q.layout.calculate_content_widths().max + cancel_w).min(maxw).ceil()); }
         let when = (!t.when.is_empty()).then(|| self.line(&t.when, Look { size: 10.5, color: [255, 255, 255, 89], lh: 1.5, ..look }, None));
-        if let Some(wb) = &when { tw = tw.max(wb.layout.width().ceil().min(maxw)); }
+        // Copy, at the left of the time line (24 px less the bubble's padding).
+        if let Some(wb) = &when { tw = tw.max((wb.layout.width() + 22.0).ceil().min(maxw)); }
         layout.break_all_lines(Some(tw));
         layout.align(Alignment::Start, AlignmentOptions::default());
         let pics_h = if pics > 0 { pics.div_ceil(per_row) as f32 * 77.0 } else { 0.0 };
@@ -1078,6 +1297,13 @@ impl Thread {
             q.x = bx + 11.0;
             q.y = yy + 3.0;
             yy = q.y + q.layout.height();
+            if let Some(mut c) = cancel {
+                c.x = bx + bw - 11.0 - c.layout.width();
+                c.y = q.y;
+                frag.shapes.push(Shape::Rect { x: c.x - 5.0, y: c.y - 1.0, w: c.layout.width() + 10.0, h: c.layout.height() + 2.0, radius: [6.0; 4], fill: Some([255, 255, 255, 16]), stroke: None });
+                frag.hits.push(([c.x - 6.0, c.y - 4.0, c.layout.width() + 12.0, c.layout.height() + 8.0], Act::Cancel));
+                frag.texts.push(c);
+            }
             frag.text(q);
         }
         if let Some(mut wb) = when {
@@ -1085,6 +1311,12 @@ impl Thread {
             frag.copy.push(Tok::Req(1));
             wb.x = bx + bw - 11.0 - wb.layout.width();
             wb.y = yy + 2.0;
+            // The message's Copy, at the line's left.
+            let done = self.copied.as_deref() == Some(t.prompt.as_str());
+            let ih = wb.layout.height();
+            frag.shapes.push(Shape::Svg { x: bx + 11.0, y: wb.y + (ih - 12.0) / 2.0, w: 12.0, h: 12.0,
+                svg: path_svg(if done { CHECK_ICON } else { COPY_ICON }, if done { [0x4a, 0xde, 0x80, 255] } else { [255, 255, 255, 120] }, 12.0, 2.0) });
+            frag.hits.push(([bx + 5.0, wb.y - 3.0, 24.0, ih + 6.0], Act::Copy(t.prompt.as_str().into())));
             frag.text(wb);
         }
         frag.copy.push(Tok::Req(1));
@@ -1097,20 +1329,25 @@ impl Thread {
             let files: std::collections::BTreeSet<String> = t.steps.iter().filter(|x| x.kind == StepIcon::Edit)
                 .map(|x| x.name.clone().or_else(|| x.cmd.clone()).unwrap_or_else(|| x.verb.clone())).collect();
             let mut bits = vec![];
+            // How long it thought, as the tool's thoughts measured it (the run's own time
+            // is said once, under the answer), then what it did.
+            let thought_ms: f64 = t.steps.iter().filter(|x| x.kind == StepIcon::Thought).filter_map(|x| x.ms).sum();
+            if !live && thought_ms > 0.0 { bits.push(format!("Thought for {}", secs(thought_ms))); }
             if n(StepIcon::Read) > 0 { bits.push(format!("{} read", n(StepIcon::Read))); }
             if !files.is_empty() { bits.push(format!("{} file{} edited", files.len(), if files.len() == 1 { "" } else { "s" })); }
             if n(StepIcon::Run) > 0 { bits.push(format!("{} run", n(StepIcon::Run))); }
+            if n(StepIcon::Agent) > 0 { bits.push(format!("{} subagent{}", n(StepIcon::Agent), if n(StepIcon::Agent) == 1 { "" } else { "s" })); }
             let faint = [255, 255, 255, 92];
             let mut spans = vec![];
-            if live {
-                spans.push(Span::Text { text: "Working ".into(), marks: Default::default(), link: None, color: Some([255, 255, 255, 128]), family: None, size: None, weight: Some(500.0) });
-                spans.push(Span::Text { text: t.clock.clone(), marks: Default::default(), link: None, color: Some([255, 255, 255, 128]), family: Some(theme::MONO), size: Some(10.5), weight: Some(500.0) });
-            } else {
-                let took = t.took_ms.map(crate::state::took).unwrap_or_else(|| "—".into());
-                spans.push(Span::Text { text: format!("Worked {took}"), marks: Default::default(), link: None, color: Some([255, 255, 255, 128]), family: None, size: None, weight: Some(500.0) });
+            // No clock here: the bot and the steps say what it does now.
+            let head = if t.stopping { Some("Stopping…") } else if live && t.waiting { Some("Waiting on you") } else if live { Some("Working") }
+                else if t.stage == Stage::Stopped { Some("Stopped") } else if bits.is_empty() { Some("Worked") } else { None };
+            if let Some(h) = head {
+                let c = if t.waiting && !t.stopping { [0xff, 0xc4, 0x6b, 230] } else { [255, 255, 255, 128] };
+                spans.push(Span::Text { text: h.into(), marks: Default::default(), link: None, color: Some(c), family: None, size: None, weight: Some(500.0) });
             }
-            for bit in &bits {
-                spans.push(Span::Text { text: "  ·  ".into(), marks: Default::default(), link: None, color: Some([255, 255, 255, 51]), family: None, size: None, weight: None });
+            for (k, bit) in bits.iter().enumerate() {
+                if head.is_some() || k > 0 { spans.push(Span::Text { text: "  ·  ".into(), marks: Default::default(), link: None, color: Some([255, 255, 255, 51]), family: None, size: None, weight: None }); }
                 spans.push(plain(bit, None));
             }
             let (lay, st, _) = self.sh.text(&spans, Look { size: 11.0, lh: 1.5, color: faint, ..look }, None, Alignment::Start);
@@ -1127,11 +1364,17 @@ impl Thread {
                 y += theme::THREAD_GAP - 4.0;
                 y += self.timeline(&mut frag, t, ti, y, w, live);
             } else if live && t.steps.last().is_some_and(|x| !x.ended()) {
-                // .steps.now: only the step it is on, under the line.
+                // .steps.now: only the step it is on, under the line (the subagents it
+                // runs as their one list).
                 y += theme::THREAD_GAP - 6.0;
                 let j = t.steps.len() - 1;
-                let op = self.step_user.get(&(self.session, ti, j, true)).copied().unwrap_or(false);
-                y += self.step_row(&mut frag, &t.steps[j], j, true, y, w, true, op);
+                if t.steps[j].kind == StepIcon::Agent {
+                    let s = t.steps.iter().rposition(|x| x.kind != StepIcon::Agent).map_or(0, |k| k + 1);
+                    y += self.agents(&mut frag, t, ti, s, j, y, w);
+                } else {
+                    let op = self.step_user.get(&(self.session, ti, j, true)).copied().unwrap_or(Self::step_default_open(t, j, true));
+                    y += self.step_row(&mut frag, &t.steps[j], ti, j, true, y, w, true, op);
+                }
             }
         }
         if !t.answer.is_empty() {
@@ -1142,16 +1385,8 @@ impl Thread {
             frag.shapes.push(Shape::Svg { x: 0.0, y: y + (h - 16.0) / 2.0, w: 16.0, h: 16.0, svg: logo_svg(&self.tool) });
             name.x = 23.0;
             name.y = y + (h - name.layout.height()) / 2.0;
-            let nx = 23.0 + name.layout.width() + 7.0;
             frag.text(name);
             frag.copy.push(Tok::Req(1));
-            if let Some(took) = &t.took {
-                let mut tb = self.line(&format!("· {took}"), Look { size: 12.0, lh: 1.5, color: [255, 255, 255, 97], ..look }, None);
-                tb.x = nx;
-                tb.y = y + (h - tb.layout.height()) / 2.0;
-                frag.text(tb);
-                frag.copy.push(Tok::Req(1));
-            }
             y += h + 6.0;
             // .ans.err: border-left 2px, padding-left 10px.
             let failed = t.stage == Stage::Failed;
@@ -1167,16 +1402,46 @@ impl Thread {
             answer_at = Some((frag.texts.len(), frag.shapes.len(), frag.scrollers.len()));
             frag.append(b.frag, inset, y);
             y += b.h;
+            // What its Copy takes: the answer as a select-all inside it copies it.
+            let whole = {
+                let mut c = Copier::default();
+                for tok in &frag.copy[answer_tok.unwrap()..] { match tok { Tok::Text(k) => c.text(&frag.texts[*k].text), t => c.tok(t) } }
+                c.finish()
+            };
             if !self.hide_steps { y += self.changes(&mut frag, t, y, w); }
-            // .use: what the turn cost, under the answer, when the tool says (Kiro does).
-            if let Some(c) = &t.credits {
-                let mut u = self.line(c, Look { size: 11.0, color: [255, 255, 255, 97], ..look }, None);
-                u.y = y + theme::THREAD_GAP - 6.0;
-                y = u.y + u.layout.height();
-                frag.text(u);
-                frag.copy.push(Tok::Req(1));
+            // .acts: Copy, Retry on the newest turn once it has ended, then how long the
+            // run took and what it cost, when the tool says (unknown is left out, not 0).
+            if !live && !t.queued {
+                y += 4.0;
+                let row_h = 24.0;
+                let mut x = -5.0;
+                let label = Look { size: 11.0, lh: 1.2, color: [0xf6, 0xf2, 0xff, 158], weight: 400.0, family: theme::SANS };
+                let done = self.copied.as_deref() == Some(whole.as_str());
+                let mut buttons = vec![(if done { CHECK_ICON } else { COPY_ICON }, if done { "Copied" } else { "Copy" }, Act::Copy(whole.as_str().into()))];
+                if last && t.stage != Stage::Waking { buttons.push((RETRY_ICON, "Retry", Act::Retry)); }
+                for (icon, word, act) in buttons {
+                    let mut tb = self.line(word, if word == "Copied" { Look { color: [0x4a, 0xde, 0x80, 255], ..label } } else { label }, None);
+                    tb.text.clear();
+                    let bw = 5.0 + 13.0 + 4.0 + tb.layout.width() + 5.0;
+                    frag.shapes.push(Shape::Svg { x: x + 5.0, y: y + (row_h - 13.0) / 2.0, w: 13.0, h: 13.0, svg: path_svg(icon, if word == "Copied" { [0x4a, 0xde, 0x80, 255] } else { [0xf6, 0xf2, 0xff, 158] }, 13.0, 2.0) });
+                    tb.x = x + 22.0;
+                    tb.y = y + (row_h - tb.layout.height()) / 2.0;
+                    frag.texts.push(tb);
+                    frag.hits.push(([x, y, bw, row_h], act));
+                    x += bw + 2.0;
+                }
+                let meta: Vec<&str> = [t.took.as_deref(), t.credits.as_deref()].into_iter().flatten().collect();
+                if !meta.is_empty() {
+                    let mut m = self.line(&meta.join(" · "), Look { color: [0xf6, 0xf2, 0xff, 97], ..label }, None);
+                    m.text.clear();
+                    m.x = x + 6.0;
+                    m.y = y + (row_h - m.layout.height()) / 2.0;
+                    frag.texts.push(m);
+                }
+                y += row_h;
             }
         }
+        images.extend(std::mem::take(&mut self.pending_images));
         (frag, y, summary, answer_tok, images, answer_at)
     }
 
@@ -1186,12 +1451,19 @@ impl Thread {
     fn timeline(&mut self, frag: &mut Frag, t: &Turn, ti: usize, y0: f32, w: f32, live: bool) -> f32 {
         let list = &t.steps;
         let is_live = |j: usize| live && j + 1 == list.len() && !list[j].ended();
-        let last_blk = if live { list.iter().rposition(|x| x.diff.is_some() || x.out.is_some()) } else { None };
-        let line_at = frag.shapes.len();
         let mut y = y0;
+        let line_at = frag.shapes.len();
         let mut j = 0;
         while j < list.len() {
             let x = &list[j];
+            // Subagents started one after another: one list.
+            if x.kind == StepIcon::Agent {
+                let mut e = j;
+                while e + 1 < list.len() && list[e + 1].kind == StepIcon::Agent { e += 1; }
+                y += self.agents(frag, t, ti, j, e, y, w);
+                j = e + 1;
+                continue;
+            }
             if x.kind == StepIcon::Read && x.name.is_some() && !is_live(j) && x.status != "failed" {
                 let mut e = j;
                 while e + 1 < list.len() && list[e + 1].kind == StepIcon::Read && list[e + 1].name.is_some() && !is_live(e + 1) && list[e + 1].status != "failed" { e += 1; }
@@ -1199,7 +1471,7 @@ impl Thread {
                 for s in &list[j..=e] { let n = s.name.clone().unwrap(); if !names.contains(&n) { names.push(n); } }
                 if names.len() > 1 {
                     let row = Step { kind: StepIcon::Read, verb: "Read".into(), name: Some(format!("{} files", names.len())), status: "completed".into(), ..Step::default() };
-                    y += self.step_row(frag, &row, usize::MAX, false, y, w, false, false);
+                    y += self.step_row(frag, &row, ti, usize::MAX, false, y, w, false, false);
                     // .fchips: the names, mono 11 px, wrapping, 28 px in.
                     let (mut cx, mut cy) = (28.0, y + 1.0);
                     for n in &names {
@@ -1218,8 +1490,8 @@ impl Thread {
                     continue;
                 }
             }
-            let open = self.step_user.get(&(self.session, ti, j, false)).copied().unwrap_or(Some(j) == last_blk);
-            y += self.step_row(frag, x, j, false, y, w, is_live(j), open);
+            let open = self.step_user.get(&(self.session, ti, j, false)).copied().unwrap_or(Self::step_default_open(t, j, false));
+            y += self.step_row(frag, x, ti, j, false, y, w, is_live(j), open);
             j += 1;
         }
         // .steps::before: the thin line under the icons, 12 px in from each end.
@@ -1231,7 +1503,8 @@ impl Thread {
     /// command, and on the right the counts, how it went and how long it took; a step
     /// with a change or output opens to show it. Returns its height, block and all.
     #[allow(clippy::too_many_arguments)]
-    fn step_row(&mut self, frag: &mut Frag, x: &Step, j: usize, now: bool, y: f32, w: f32, live: bool, open: bool) -> f32 {
+    fn step_row(&mut self, frag: &mut Frag, x: &Step, ti: usize, j: usize, now: bool, y: f32, w: f32, live: bool, open: bool) -> f32 {
+        if x.kind == StepIcon::Thought { return self.thought_row(frag, x, ti, j, now, y, w, open); }
         let verb = if live { verb_on(&x.verb).to_owned() } else { x.verb.clone() };
         let fail = x.status == "failed";
         let row_h = 25.0;
@@ -1264,7 +1537,7 @@ impl Thread {
         else if x.kind == StepIcon::Run && x.exit.is_some_and(|e| e != 0) { parts.push((format!("exit {}", x.exit.unwrap()), red)); }
         else if let Some(tag) = &x.tag { parts.push((format!("✓ {tag}"), green)); }
         if x.ms.is_some_and(|m| m >= 1000.0) { parts.push((crate::state::took(x.ms.unwrap()), mono.color)); }
-        let blk = x.diff.is_some() || x.out.is_some();
+        let blk = x.has_block();
         let mut rx = w - 4.0;
         if blk { rx -= 12.0; frag.shapes.push(caret(rx, y + (row_h - 12.0) / 2.0, 12.0, [255, 255, 255, 89], open)); rx -= 5.0; }
         // Laid out right to left, copied left to right after the row's text (the grid's
@@ -1281,7 +1554,7 @@ impl Thread {
         right.reverse();
         // .n: the icon in its box, coloured by kind.
         let ic = if fail { red } else { match x.kind { StepIcon::Edit => [0xc9, 0xa8, 0xff, 255], StepIcon::Run => [0xff, 0xc4, 0x6b, 255], StepIcon::Search => [0x6f, 0xd6, 0xc9, 255],
-            StepIcon::Read => [0x8f, 0xb6, 0xff, 255], StepIcon::Think => [255, 255, 255, 115] } };
+            StepIcon::Read => [0x8f, 0xb6, 0xff, 255], StepIcon::Think => [255, 255, 255, 115], StepIcon::Thought | StepIcon::Agent => [0xc4, 0xa2, 0xff, 255] } };
         let (iy, edge) = (y + (row_h - 19.0) / 2.0, if live { [255, 196, 107, 128] } else { [255, 255, 255, 20] });
         if live { frag.shapes.push(Shape::Glow { x: 9.5, y: iy + 9.5, r: 12.0, color: [255, 196, 107, 64] }); }
         frag.shapes.push(Shape::Rect { x: 0.0, y: iy, w: 19.0, h: 19.0, radius: [6.0; 4], fill: Some([0x1c, 0x1a, 0x20, 255]), stroke: Some((edge, 1.0)) });
@@ -1312,75 +1585,323 @@ impl Thread {
         }
         if blk && j != usize::MAX { frag.hits.push(([-4.0, y, w + 8.0, row_h], Act::Step(j, now))); }
         let mut h = row_h;
-        if blk && open { h += self.block(frag, x, y + row_h, w); }
+        if blk && open { h += self.block(frag, x, ti, j, y + row_h, w); }
         h
     }
 
-    /// .blk: an edit's change (+ and − lines on their tints) or a command's output under
-    /// a Terminal header with its exit code; 180 px at most. Returns its height with margins.
-    fn block(&mut self, frag: &mut Frag, x: &Step, y: f32, w: f32) -> f32 {
+    /// .box: an edit's change (its file, the +/− counts, Copy; the file's line numbers when
+    /// the diff names them, never made up) or a command's output (the command, its exit
+    /// code when the tool said it, how long it took). Eight lines, then "Show N more
+    /// lines"; all of what was kept once asked. Returns its height with margins.
+    #[allow(clippy::too_many_arguments)]
+    fn block(&mut self, frag: &mut Frag, x: &Step, ti: usize, j: usize, y: f32, w: f32) -> f32 {
+        const HEAD: f32 = 28.0;
         let (bx, bw) = (28.0, w - 28.0);
-        let mono = Look { size: 11.0, lh: 1.6, color: [255, 255, 255, 184], weight: 400.0, family: theme::MONO };
-        let y0 = y + 2.0;
+        let y0 = y + 4.0;
         let at = frag.shapes.len();
-        let mut cy = y0 + 1.0;
-        let mut rows: Vec<(String, Rgba, Option<Rgba>)> = vec![];
+        let (green, red) = ([0x4a, 0xde, 0x80, 255], [0xff, 0x6b, 0x62, 255]);
+        let head = Look { size: 11.0, lh: 1.3, color: [0xf6, 0xf2, 0xff, 158], weight: 400.0, family: theme::MONO };
+        let small = Look { size: 11.0, lh: 1.3, color: [0xf6, 0xf2, 0xff, 97], weight: 500.0, family: theme::SANS };
+        let mono = Look { size: 11.5, lh: 1.6, color: [0xf6, 0xf2, 0xff, 214], weight: 400.0, family: theme::MONO };
+        // (line number, text, colour, tint, a note of Hover's own)
+        let mut rows: Vec<(Option<i64>, String, Rgba, Option<Rgba>, bool)> = vec![];
+        let mut right: Vec<(String, Rgba, Option<Rgba>)> = vec![];
+        let title;
+        let mut copy = None;
         if let Some(d) = &x.diff {
-            for l in d.split('\n') {
+            title = match (&x.dir, &x.name) { (Some(d), Some(n)) => format!("{d}/{n}"), (None, Some(n)) => n.clone(), _ => x.cmd.clone().unwrap_or_default() };
+            let mut text = vec![];
+            for (n, l) in numbered(d) {
+                let Some(l) = l else { rows.push((None, "⋯".into(), [0xf6, 0xf2, 0xff, 72], None, false)); continue };
+                text.push(l.clone());
                 match l.chars().next() {
-                    Some('+') => rows.push((l.into(), [0xa6, 0xf0, 0xb6, 255], Some([50, 215, 75, 23]))),
-                    Some('-') => rows.push((l.into(), [0xff, 0xb0, 0xaa, 255], Some([255, 69, 58, 23]))),
-                    _ => rows.push((l.into(), [255, 255, 255, 102], None)),
+                    Some('+') => rows.push((n, l, [0xb8, 0xf5, 0xc9, 255], Some([0x4a, 0xde, 0x80, 0x14]), false)),
+                    Some('-') => rows.push((n, l, [0xff, 0xc2, 0xbd, 255], Some([0xff, 0x6b, 0x62, 0x14]), false)),
+                    _ => rows.push((n, if l.is_empty() { " ".into() } else { l }, mono.color, None, false)),
                 }
             }
-        } else if let Some(o) = &x.out {
-            // .bh: "Terminal" and the exit code, green for 0.
-            let mut hd = self.line("Terminal", Look { size: 10.5, lh: 1.3, color: [255, 255, 255, 115], weight: 500.0, family: theme::SANS }, None);
-            hd.x = bx + 9.0;
-            hd.y = cy + 4.0;
-            let hh = hd.layout.height() + 8.0;
-            hd.text.clear();
-            frag.texts.push(hd);
-            if let Some(e) = x.exit {
-                let mut ex = self.line(&format!("exit {e}"), Look { size: 10.5, lh: 1.3, color: if e == 0 { [0x5d, 0xe3, 0x7a, 255] } else { [0xff, 0x7b, 0x72, 255] }, weight: 500.0, family: theme::MONO }, None);
-                ex.x = bx + bw - 9.0 - ex.layout.width();
-                ex.y = cy + 4.0;
-                ex.text.clear();
-                frag.texts.push(ex);
+            if x.add != 0 { right.push((format!("+{}", x.add), green, None)); }
+            if x.del != 0 { right.push((format!("−{}", x.del), red, None)); }
+            copy = Some(Rc::<str>::from(text.join("\n")));
+        } else {
+            let o = x.out.as_deref().unwrap_or("");
+            title = x.cmd.as_ref().map_or_else(String::new, |c| format!("$ {c}"));
+            for (k, l) in o.split('\n').enumerate() {
+                // What hover-agents cut from a long output, said as its own first line.
+                let note = k == 0 && l.starts_with("… ") && l.ends_with("not kept");
+                rows.push((None, if l.is_empty() { " ".into() } else { l.into() }, if note { [0xf6, 0xf2, 0xff, 97] } else { mono.color }, None, note));
             }
-            frag.shapes.push(rect(bx + 1.0, cy + hh, bw - 2.0, 1.0, 0.0, Some([255, 255, 255, 15])));
-            cy += hh + 1.0;
-            if let Some(c) = &x.cmd { rows.push((format!("$ {c}"), [0xff, 0xc4, 0x6b, 255], None)); }
-            for l in o.split('\n') { rows.push((if l.is_empty() { " ".into() } else { l.into() }, mono.color, None)); }
+            // Unknown is not success: no exit code, no green.
+            match x.exit {
+                Some(e) => right.push((format!("exit {e}"), if e == 0 { green } else { red }, Some(if e == 0 { [0x4a, 0xde, 0x80, 0x1a] } else { [0xff, 0x6b, 0x62, 0x1a] }))),
+                None if x.status == "failed" => right.push(("failed".into(), red, Some([0xff, 0x6b, 0x62, 0x1a]))),
+                None => {}
+            }
+            if let Some(ms) = x.ms.filter(|m| *m >= 1000.0) { right.push((crate::state::took(ms), small.color, None)); }
         }
-        cy += 6.0;
-        let clip_top = cy;
-        let max = y0 + 180.0;
-        for (text, color, bg) in rows {
-            if cy >= max { break; }
-            let mut tb = self.line(&text, Look { color, ..mono }, None);
-            let h = tb.layout.height();
-            if let Some(bg) = bg { frag.shapes.push(rect(bx + 1.0, cy, bw - 2.0, h, 0.0, Some(bg))); }
+        // .bh: the title, the counts or exit code, Copy.
+        let hy = y0 + 1.0;
+        let mut rx = bx + bw - 8.0;
+        if let Some(c) = &copy {
+            let done = self.copied.as_deref() == Some(&**c);
+            let mut tb = self.line(if done { "Copied" } else { "Copy" }, Look { color: if done { green } else { [0xf6, 0xf2, 0xff, 158] }, ..small }, None);
+            tb.text.clear();
+            let cw = tb.layout.width() + 13.0 + 4.0 + 10.0;
+            rx -= cw;
+            frag.shapes.push(Shape::Svg { x: rx + 5.0, y: hy + (HEAD - 12.0) / 2.0, w: 12.0, h: 12.0, svg: path_svg(if done { CHECK_ICON } else { COPY_ICON }, if done { green } else { [0xf6, 0xf2, 0xff, 158] }, 12.0, 2.0) });
+            tb.x = rx + 21.0;
+            tb.y = hy + (HEAD - tb.layout.height()) / 2.0;
+            frag.texts.push(tb);
+            frag.hits.push(([rx, hy + 2.0, cw, HEAD - 4.0], Act::Copy(c.clone())));
+            rx -= 6.0;
+        }
+        for (p, c, bg) in right.iter().rev() {
+            let mut tb = self.line(p, Look { color: *c, weight: if bg.is_some() { 600.0 } else { 500.0 }, size: 10.5, ..small }, None);
+            tb.text.clear();
+            let pad = if bg.is_some() { 6.0 } else { 0.0 };
+            rx -= tb.layout.width() + pad;
+            tb.x = rx;
+            tb.y = hy + (HEAD - tb.layout.height()) / 2.0;
+            if let Some(bg) = bg { frag.shapes.push(Shape::Rect { x: rx - 6.0, y: tb.y - 1.5, w: tb.layout.width() + 12.0, h: tb.layout.height() + 3.0, radius: [5.0; 4], fill: Some(*bg), stroke: None }); }
+            frag.texts.push(tb);
+            rx -= 6.0 + pad;
+        }
+        if !title.is_empty() {
+            let mut tb = self.line(&title, head, None);
+            tb.text.clear();
             tb.x = bx + 10.0;
-            tb.y = cy;
-            tb.clip = Some([bx + 1.0, clip_top, bw - 2.0, max - clip_top]);
+            tb.y = hy + (HEAD - tb.layout.height()) / 2.0;
+            tb.clip = Some([bx + 10.0, hy, (rx - bx - 14.0).max(0.0), HEAD]);
+            frag.texts.push(tb);
+        }
+        frag.shapes.push(rect(bx + 1.0, hy + HEAD, bw - 2.0, 1.0, 0.0, Some([255, 255, 255, 12])));
+        // pre: 8 px above and below; a 22 px gutter when the lines are numbered.
+        let numbered = rows.iter().any(|r| r.0.is_some());
+        let tx = bx + 12.0 + if numbered { 32.0 } else { 0.0 };
+        let total = rows.len();
+        let full = self.flag(ti, j, 0);
+        let shown = if total > 8 && !full { 8 } else { total };
+        let mut cy = hy + HEAD + 1.0 + 8.0;
+        let clip_top = cy;
+        for (n, text, color, bg, note) in rows.into_iter().take(shown) {
+            let (lay, t, _) = self.sh.text(&[Span::Text { text, marks: hover_md::Marks { em: note, ..Default::default() }, link: None, color: Some(color), family: None, size: None, weight: None }], mono, None, Alignment::Start);
+            let h = lay.height();
+            if let Some(bg) = bg { frag.shapes.push(rect(bx + 1.0, cy, bw - 2.0, h, 0.0, Some(bg))); }
+            if let Some(n) = n {
+                let g = match bg { Some(b) if b[0] == 0x4a => [0x4a, 0xde, 0x80, 153], Some(_) => [0xff, 0x6b, 0x62, 153], None => [0xf6, 0xf2, 0xff, 46] };
+                let mut gb = self.line(&n.to_string(), Look { color: g, ..mono }, None);
+                gb.text.clear();
+                gb.x = bx + 12.0 + 22.0 - gb.layout.width();
+                gb.y = cy;
+                frag.texts.push(gb);
+            }
+            let tb = TextBox { layout: lay, x: tx, y: cy, text: t, links: vec![], clip: Some([bx + 1.0, clip_top, bw - 2.0, 1.0e6]), shimmer: false, cell: false, scroller: None };
             frag.text(tb);
             frag.copy.push(Tok::Req(1));
             cy += h;
         }
-        let bottom = (cy + 6.0).min(max);
-        frag.shapes.insert(at, Shape::Rect { x: bx, y: y0, w: bw, h: bottom - y0 + 1.0, radius: [10.0; 4], fill: Some([9, 8, 11, 255]), stroke: Some(([255, 255, 255, 18], 1.0)) });
-        bottom + 1.0 - y + 6.0
+        cy += 8.0;
+        if total > 8 {
+            // .fold: the rest of what was kept, or fold it again.
+            frag.shapes.push(rect(bx + 1.0, cy, bw - 2.0, 1.0, 0.0, Some([255, 255, 255, 10])));
+            let mut tb = self.line(&if full { "Fold".to_string() } else { format!("Show {} more line{}", total - 8, if total == 9 { "" } else { "s" }) }, small, None);
+            tb.text.clear();
+            tb.x = bx + 12.0;
+            tb.y = cy + 1.0 + (24.0 - tb.layout.height()) / 2.0;
+            frag.texts.push(tb);
+            frag.hits.push(([bx, cy, bw, 25.0], Act::Flag(j, 0)));
+            cy += 25.0;
+        }
+        frag.shapes.insert(at, Shape::Rect { x: bx, y: y0, w: bw, h: cy - y0 + 1.0, radius: [9.0; 4], fill: Some([0x0a, 0x09, 0x0c, 255]), stroke: Some(([255, 255, 255, 16], 1.0)) });
+        cy + 1.0 - y + 4.0
+    }
+
+    /// A thought: the bulb, "Thinking…" while it streams (its text under it, the newest
+    /// lines in view) or "Thought for 14s" and its first words once done, which opens to
+    /// all of it. Only what the tool exposed, selectable and copied like the rest.
+    #[allow(clippy::too_many_arguments)]
+    fn thought_row(&mut self, frag: &mut Frag, x: &Step, ti: usize, j: usize, now: bool, y: f32, w: f32, open: bool) -> f32 {
+        let row_h = 25.0;
+        let live = !x.ended();
+        let text = x.out.as_deref().unwrap_or("").trim();
+        let lilac = [0xc4, 0xa2, 0xff, 255];
+        let iy = y + (row_h - 19.0) / 2.0;
+        frag.shapes.push(Shape::Rect { x: 0.0, y: iy, w: 19.0, h: 19.0, radius: [6.0; 4], fill: Some([0x1c, 0x1a, 0x20, 255]), stroke: Some((if live { [0xc4, 0xa2, 0xff, 128] } else { [255, 255, 255, 20] }, 1.0)) });
+        frag.shapes.push(Shape::Svg { x: 4.0, y: iy + 4.0, w: 11.0, h: 11.0, svg: icon_svg(StepIcon::Thought, lilac, 11.0, 2.2) });
+        let base = Look { size: 12.0, lh: 1.3, color: [255, 255, 255, 148], weight: 400.0, family: theme::SANS };
+        let label = if live { "Thinking…".to_string() } else { x.ms.map_or("Thought".into(), |ms| format!("Thought for {}", secs(ms))) };
+        let mut spans = vec![Span::Text { text: label, marks: Default::default(), link: None, color: Some([0xf3, 0xf1, 0xf6, 255]), family: None, size: None, weight: Some(500.0) }];
+        if !live && !open && !text.is_empty() {
+            let words: Vec<&str> = text.split_whitespace().take(8).collect();
+            spans.push(Span::Gap(8.0));
+            spans.push(Span::Text { text: format!("{}…", words.join(" ").trim_end_matches(['.', ',', ':'])), marks: Default::default(), link: None, color: Some([255, 255, 255, 82]), family: None, size: Some(11.5), weight: None });
+        }
+        let (lay, _, _) = self.sh.text(&spans, base, None, Alignment::Start);
+        let tx = 28.0;
+        let rx = if text.is_empty() { w - 4.0 } else { w - 4.0 - 12.0 - 5.0 };
+        if !text.is_empty() { frag.shapes.push(caret(w - 16.0, y + (row_h - 12.0) / 2.0, 12.0, [255, 255, 255, 89], open)); }
+        // Drawn: the label isn't the thought.
+        frag.texts.push(TextBox { layout: lay, x: tx, y: y + (row_h - 15.6) / 2.0, text: String::new(), links: vec![], clip: Some([tx, y, (rx - tx).max(0.0), row_h]), shimmer: live, cell: false, scroller: None });
+        if !text.is_empty() { frag.hits.push(([-4.0, y, w + 8.0, row_h], Act::Step(j, now))); }
+        let mut h = row_h;
+        if open && !text.is_empty() {
+            // .th .body: a 2 px rule, 10 px in, 12.5/1.6. While it streams, the newest
+            // 168 px show (the label stays above them) until "Show all of it".
+            let (bx, bw) = (tx + 12.0, w - tx - 12.0);
+            let blocks = hover_md::parse(text, Some(&*self.image_rule));
+            let state = &*self.image_state;
+            let mut md = Md { sh: &mut self.sh, image_state: state, used: vec![], copied: self.copied.clone() };
+            let b = md.blocks(&blocks, Look { size: 12.5, lh: 1.6, color: [0xcf, 0xc6, 0xdc, 255], weight: 400.0, family: theme::SANS }, bw, true);
+            self.pending_images.extend(md.used);
+            let full = self.flag(ti, j, 0);
+            let top = y + row_h + 2.0;
+            let cap = live && !full && b.h > 168.0;
+            let shown = if cap { 168.0 } else { b.h };
+            let mut body = b.frag;
+            if cap {
+                body.shift(0.0, shown - b.h);
+                for t in &mut body.texts {
+                    let [cx, cy, cw, ch] = t.clip.unwrap_or([-bx, f32::MIN / 4.0, w + bx, f32::MAX / 2.0]);
+                    let (a, z) = (cy.max(0.0), (cy + ch).min(shown));
+                    t.clip = Some([cx, a, cw, (z - a).max(0.0)]);
+                }
+                body.shapes.retain(|s| s.top() >= 0.0);
+            }
+            frag.shapes.push(rect(tx, top, 2.0, shown + 4.0, 0.0, Some([0xc4, 0xa2, 0xff, 0x33])));
+            frag.append(body, bx, top + 2.0);
+            frag.copy.push(Tok::Req(1));
+            h += shown + 8.0;
+            if live && (cap || full) {
+                let mut m = self.line(if full { "Show less" } else { "Show all of it" }, Look { size: 11.0, lh: 1.4, color: lilac, weight: 500.0, family: theme::SANS }, None);
+                m.text.clear();
+                m.x = bx;
+                m.y = y + h;
+                frag.hits.push(([bx - 4.0, m.y - 2.0, m.layout.width() + 8.0, m.layout.height() + 4.0], Act::Flag(j, 0)));
+                h += m.layout.height() + 4.0;
+                frag.texts.push(m);
+            }
+        }
+        h
+    }
+
+    /// The subagents a turn started one after another (OpenCode's task tool), as one
+    /// compact list (.sa): how many and how they stand, then a row each with its state,
+    /// its kind, what it was asked and, once done, how long it took; four show, the rest
+    /// behind "Show N more". A row with a result opens to it. Returns its height.
+    #[allow(clippy::too_many_arguments)]
+    fn agents(&mut self, frag: &mut Frag, t: &Turn, ti: usize, s: usize, e: usize, y: f32, w: f32) -> f32 {
+        let list = &t.steps[s..=e];
+        let row_h = 25.0;
+        let iy = y + (row_h - 19.0) / 2.0;
+        let lilac = [0xc4, 0xa2, 0xff, 255];
+        let running = list.iter().filter(|x| !x.ended()).count();
+        let done = list.iter().filter(|x| x.status == "completed").count();
+        let failed = list.iter().filter(|x| x.status == "failed").count();
+        let live = running > 0;
+        frag.shapes.push(Shape::Rect { x: 0.0, y: iy, w: 19.0, h: 19.0, radius: [6.0; 4], fill: Some([0x1c, 0x1a, 0x20, 255]), stroke: Some((if live { [0xc4, 0xa2, 0xff, 128] } else { [255, 255, 255, 20] }, 1.0)) });
+        frag.shapes.push(Shape::Svg { x: 4.0, y: iy + 4.0, w: 11.0, h: 11.0, svg: icon_svg(StepIcon::Agent, lilac, 11.0, 2.2) });
+        let base = Look { size: 12.0, lh: 1.3, color: [255, 255, 255, 148], weight: 400.0, family: theme::SANS };
+        let n = list.len();
+        let sub = if running > 0 { format!("{running} of {n} running") } else if failed > 0 { format!("{done} done · {failed} failed") } else { format!("{done} done") };
+        let spans = [Span::Text { text: "Subagents".into(), marks: Default::default(), link: None, color: Some([0xf3, 0xf1, 0xf6, 255]), family: None, size: None, weight: Some(500.0) },
+            Span::Gap(7.0), Span::Text { text: sub, marks: Default::default(), link: None, color: Some([255, 255, 255, 97]), family: None, size: Some(11.5), weight: None }];
+        let (lay, _, _) = self.sh.text(&spans, base, None, Alignment::Start);
+        frag.texts.push(TextBox { layout: lay, x: 28.0, y: y + (row_h - 15.6) / 2.0, text: String::new(), links: vec![], clip: None, shimmer: live, cell: false, scroller: None });
+        // The list, 28 px in.
+        let (bx, bw) = (28.0, w - 28.0);
+        let y0 = y + row_h + 3.0;
+        let at = frag.shapes.len();
+        let small = Look { size: 11.0, lh: 1.3, color: [0xf6, 0xf2, 0xff, 97], weight: 400.0, family: theme::SANS };
+        // .sh: "6 subagents", then the counts.
+        let mut hx = bx + 9.0;
+        let mut cy = y0 + 1.0;
+        let head_h = 22.0;
+        let mut bits: Vec<(String, Rgba, f32)> = vec![(format!("{n} subagent{}", if n == 1 { "" } else { "s" }), [0xf6, 0xf2, 0xff, 158], 600.0)];
+        if running > 0 { bits.push((format!("{running} running"), small.color, 400.0)); }
+        if done > 0 { bits.push((format!("{done} done"), small.color, 400.0)); }
+        if failed > 0 { bits.push((format!("{failed} failed"), [0xff, 0x6b, 0x62, 255], 400.0)); }
+        for (b, c, wt) in bits {
+            let mut tb = self.line(&b, Look { color: c, weight: wt, ..small }, None);
+            tb.text.clear();
+            tb.x = hx;
+            tb.y = cy + (head_h - tb.layout.height()) / 2.0;
+            hx += tb.layout.width() + 10.0;
+            frag.texts.push(tb);
+        }
+        cy += head_h;
+        frag.shapes.push(rect(bx + 1.0, cy, bw - 2.0, 1.0, 0.0, Some([255, 255, 255, 10])));
+        cy += 1.0;
+        let more = self.flag(ti, s, 1);
+        let shown = if n > 4 && !more { 4 } else { n };
+        for (k, x) in list.iter().enumerate().take(shown) {
+            if k > 0 { frag.shapes.push(rect(bx + 1.0, cy, bw - 2.0, 1.0, 0.0, Some([255, 255, 255, 8]))); }
+            let rh = 26.0;
+            frag.shapes.push(Shape::Svg { x: bx + 9.0, y: cy + (rh - 14.0) / 2.0, w: 14.0, h: 14.0, svg: state_dot(&x.status) });
+            let mut rx = bx + bw - 9.0;
+            if let Some(ms) = x.ms.filter(|_| x.ended()) {
+                let mut tb = self.line(&crate::state::clock(ms), small, None);
+                tb.text.clear();
+                rx -= tb.layout.width();
+                tb.x = rx;
+                tb.y = cy + (rh - tb.layout.height()) / 2.0;
+                frag.texts.push(tb);
+                rx -= 8.0;
+            }
+            let mut lx = bx + 9.0 + 14.0 + 8.0;
+            // .ty: the kind it was started as (explore, general…).
+            if let Some(kind) = x.cmd.as_deref().filter(|k| !k.is_empty()) {
+                let mut tb = self.line(kind, Look { size: 10.5, lh: 1.3, color: [0xf6, 0xf2, 0xff, 158], weight: 400.0, family: theme::MONO }, None);
+                let kw = tb.layout.width() + 10.0;
+                frag.shapes.push(Shape::Rect { x: lx, y: cy + (rh - 16.0) / 2.0, w: kw, h: 16.0, radius: [5.0; 4], fill: Some([255, 255, 255, 13]), stroke: None });
+                tb.x = lx + 5.0;
+                tb.y = cy + (rh - tb.layout.height()) / 2.0;
+                lx += kw + 8.0;
+                frag.text(tb);
+            }
+            let title = if x.verb.is_empty() { "Subagent".to_string() } else { x.verb.clone() };
+            let mut tb = self.line(&title, Look { size: 12.0, lh: 1.3, color: if x.status == "failed" { [0xff, 0x9b, 0x94, 255] } else { [0xf6, 0xf2, 0xff, 158] }, weight: 400.0, family: theme::SANS }, None);
+            tb.x = lx;
+            tb.y = cy + (rh - tb.layout.height()) / 2.0;
+            tb.clip = Some([lx, cy, (rx - lx).max(0.0), rh]);
+            tb.shimmer = !x.ended();
+            frag.text(tb);
+            frag.copy.push(Tok::Req(1));
+            let res = x.out.as_deref().map(str::trim).filter(|r| !r.is_empty());
+            if res.is_some() { frag.hits.push(([bx, cy, bw, rh], Act::Flag(s, 2 + k as u32))); }
+            cy += rh;
+            if let (Some(r), true) = (res, self.flag(ti, s, 2 + k as u32)) {
+                // .res: what it found, under its row.
+                let (lay, txt, _) = self.sh.text(&[plain(r, None)], Look { size: 11.5, lh: 1.5, ..small }, Some(bw - 31.0 - 9.0), Alignment::Start);
+                let h = lay.height();
+                frag.text(TextBox { layout: lay, x: bx + 31.0, y: cy + 1.0, text: txt, links: vec![], clip: None, shimmer: false, cell: false, scroller: None });
+                frag.copy.push(Tok::Req(1));
+                cy += h + 7.0;
+            }
+        }
+        if n > 4 {
+            frag.shapes.push(rect(bx + 1.0, cy, bw - 2.0, 1.0, 0.0, Some([255, 255, 255, 8])));
+            let mut tb = self.line(&if more { "Show less".to_string() } else { format!("Show {} more", n - 4) }, small, None);
+            tb.text.clear();
+            tb.x = bx + 9.0;
+            tb.y = cy + 1.0 + (22.0 - tb.layout.height()) / 2.0;
+            frag.texts.push(tb);
+            frag.hits.push(([bx, cy, bw, 23.0], Act::Flag(s, 1)));
+            cy += 23.0;
+        }
+        frag.shapes.insert(at, Shape::Rect { x: bx, y: y0, w: bw, h: cy - y0 + 1.0, radius: [10.0; 4], fill: Some([255, 255, 255, 5]), stroke: Some(([255, 255, 255, 16], 1.0)) });
+        cy + 1.0 + 4.0 - y
     }
 
     /// changesHTML: what a finished turn changed, file by file, with its +/− counts.
     fn changes(&mut self, frag: &mut Frag, t: &Turn, y: f32, w: f32) -> f32 {
-        let mut by: Vec<(String, i32, i32)> = vec![];
-        for x in &t.steps {
+        let mut by: Vec<(String, i32, i32, Option<usize>)> = vec![];
+        for (j, x) in t.steps.iter().enumerate() {
             if x.kind != StepIcon::Edit || x.name.is_none() || (x.add == 0 && x.del == 0) { continue; }
             let dir = x.dir.as_deref().unwrap_or("").rsplit('/').next().unwrap_or("");
             let k = format!("{}{}", if dir.is_empty() { String::new() } else { format!("{dir}/") }, x.name.as_deref().unwrap());
-            match by.iter_mut().find(|v| v.0 == k) { Some(v) => { v.1 += x.add; v.2 += x.del; } None => by.push((k, x.add, x.del)) }
+            // Only this turn's own edits: a click opens the newest change of the file.
+            let d = x.diff.is_some().then_some(j);
+            match by.iter_mut().find(|v| v.0 == k) { Some(v) => { v.1 += x.add; v.2 += x.del; v.3 = d.or(v.3); } None => by.push((k, x.add, x.del, d)) }
         }
         if by.is_empty() { return 0.0; }
         let (a, d): (i32, i32) = (by.iter().map(|v| v.1).sum(), by.iter().map(|v| v.2).sum());
@@ -1402,10 +1923,11 @@ impl Thread {
         frag.shapes.push(rect(1.0, y0 + hh, w - 2.0, 1.0, 0.0, Some([255, 255, 255, 15])));
         let mut cy = y0 + hh + 1.0;
         let mono = Look { size: 11.5, lh: 1.3, color: [255, 255, 255, 191], weight: 400.0, family: theme::MONO };
-        for (k, (name, add, del)) in by.iter().enumerate() {
+        for (k, (name, add, del, step)) in by.iter().enumerate() {
             if k > 0 { frag.shapes.push(rect(1.0, cy, w - 2.0, 1.0, 0.0, Some([255, 255, 255, 10]))); }
             let mut tb = self.line(name, mono, None);
             let rh = tb.layout.height() + 10.0;
+            if let Some(j) = step { frag.hits.push(([0.0, cy, w, rh], Act::OpenDiff(*j))); }
             tb.x = 11.0;
             tb.y = cy + 5.0;
             let mut rx = w - 11.0;
@@ -1494,9 +2016,13 @@ impl Thread {
         for (p, t, sy) in self.texts() {
             if t.text.is_empty() { continue; }
             let off = self.offset(p.section, t);
-            // What a scrolling box hides can't be clicked.
+            // What a scrolling box hides can't be clicked, nor what a clip cuts off.
             if let (Some([cx, cy, cw, ch]), Some(_)) = (t.clip, t.scroller) {
                 if x < cx || x >= cx + cw || y < sy + cy || y >= sy + cy + ch { continue; }
+            }
+            if let (Some([_, cy, _, ch]), None) = (t.clip, t.scroller) {
+                let (top, bot) = (sy + t.y, sy + t.y + t.layout.height());
+                if y >= top && y < bot && (y < sy + cy || y >= sy + cy + ch) { continue; }
             }
             let (lx, ly) = (x - t.x + off, y - sy - t.y);
             let h = t.layout.height();

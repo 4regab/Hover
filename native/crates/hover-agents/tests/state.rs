@@ -136,6 +136,8 @@ fn the_state_message_is_the_fixtures_bytes() {
     if let Some((_, Json::Arr(ss))) = match &mut fxj { Json::Obj(p) => p.iter_mut().find(|(k, _)| k == "sessions"), _ => None } {
         for s in ss.iter_mut() {
             let Json::Obj(p) = s else { panic!() };
+            // Pause and Stop: whether the tool has yet to say the turn ended, after "stage".
+            if let Some(i) = p.iter().position(|(k, _)| k == "stage") { p.insert(i + 1, ("stopping".into(), Json::Bool(false))); }
             if let Some((_, Json::Arr(ts))) = p.iter_mut().find(|(k, _)| k == "turns") {
                 for t in ts { if let Json::Obj(tp) = t { tp.push(("credits".into(), Json::Null)); } }
             }

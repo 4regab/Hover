@@ -41,6 +41,8 @@ pub struct Hover {
     pub hosts: Vec<Runtime>,
     pub sessions: KiroSessions,
     pub quotas: Poller,
+    /// The tests' stand-in for every tool's runner (None: each host's own).
+    run: Option<RunTask>,
     unseen: Mutex<Unseen>,
     /// KiroPage.Watching: an office is in view (the open notch, or the app window
     /// not minimised), so an end is seen as it happens and not announced.
@@ -73,7 +75,8 @@ impl Hover {
             h.on_options_seen(move |tool, offers| s.set_agent_offers(tool, offers));
         }
         let runners: Vec<(AgentTool, Runtime)> = hosts.iter().map(|h| (h.tool(), h.clone())).collect();
-        let sessions = KiroSessions::new(move |tool| match &run {
+        let run2 = run.clone();
+        let sessions = KiroSessions::new(move |tool| match &run2 {
             Some(r) => r.clone(),
             None => runners.iter().find(|(t, _)| *t == tool).expect("a host per tool").1.runner(),
         }, history.clone());
@@ -93,7 +96,7 @@ impl Hover {
         let is_on = { let s = settings.clone(); Arc::new(move |id: &str| s.has_notch_item(id)) };
         let changed: Arc<dyn Fn() + Send + Sync> = Arc::new(move || fire(&qh, |h| &h.quotas));
         let quotas = match reader { Some(r) => Poller::new(r, is_on, changed), None => Poller::system(is_on, changed) };
-        let me = Arc::new(Hover { settings, history, hosts, sessions, quotas, unseen: Default::default(), watching: AtomicBool::new(false), hooks });
+        let me = Arc::new(Hover { settings, history, hosts, sessions, quotas, run, unseen: Default::default(), watching: AtomicBool::new(false), hooks });
         let sh = me.hooks.clone();
         me.sessions.on_changed(move || fire(&sh, |h| &h.sessions));
         let weak = Arc::downgrade(&me);
@@ -148,6 +151,12 @@ impl Hover {
         let body = text::first_line(&text::plain(&r.text));
         let notify = self.hooks.lock().unwrap().notify.clone();
         if let Some(n) = notify { n(&title, &body); }
+    }
+
+    /// The tool's runner as the sessions use it, for voice's routing turn (which sets
+    /// its own access, "none").
+    pub fn runner(&self, tool: AgentTool) -> Option<RunTask> {
+        self.run.clone().or_else(|| self.hosts.iter().find(|h| h.tool() == tool).map(Runtime::runner))
     }
 
     /// RefreshQuotas: on the 30 s tick, or forced from Settings.

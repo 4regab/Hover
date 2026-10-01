@@ -323,3 +323,116 @@ export component Tile inherits Rectangle {
     background: tint;
     Icon { name: icon; size: 14px; tint: white; }
 }
+
+// A one-line text box (the mockup's grey field): saved on Enter or when it loses focus,
+// Esc puts the saved value back. A secret one is masked and starts empty, so a saved key
+// never comes back on screen; its placeholder says whether one is kept. The IME's own
+// composing is TextInput's: Enter while composing goes to the IME, not here.
+export component TextField inherits Rectangle {
+    in property <string> id;
+    in property <string> label;
+    // The setting's value. Typing replaces the box's text, not this.
+    in property <string> value;
+    in property <string> placeholder;
+    in property <bool> secret;
+    in property <bool> enabled: true;
+    callback commit(string);
+    width: 220px;
+    height: 26px;
+    border-radius: 6px;
+    background: Pal.wash;
+    opacity: enabled ? 1 : 0.4;
+    // Saves a change, then shows what the settings kept (trimmed, or nothing for a key):
+    // the page is rebuilt inside commit, so value is already the new one.
+    function done() {
+        if (input.text != value) { commit(input.text); }
+        input.text = value;
+    }
+    // A rebuild while typing leaves the typing alone.
+    changed value => { if (!input.has-focus) { input.text = value; } }
+    if input.text == "" && !input.has-focus: Text {
+        x: 8px;
+        width: parent.width - 16px;
+        height: parent.height;
+        text: placeholder;
+        font-size: 12.5px;
+        color: Pal.ink-faint;
+        vertical-alignment: center;
+        overflow: elide;
+    }
+    input := TextInput {
+        x: 8px;
+        width: parent.width - 16px;
+        height: parent.height;
+        text: value;
+        single-line: true;
+        vertical-alignment: center;
+        font-size: 12.5px;
+        color: Pal.ink;
+        selection-background-color: Pal.blue.with-alpha(0.45);
+        input-type: secret ? InputType.password : InputType.text;
+        enabled: enabled;
+        accessible-id: id;
+        accessible-label: label;
+        accepted => { done(); }
+        changed has-focus => { if (!self.has-focus) { done(); } }
+        key-pressed(e) => {
+            if (e.text == Key.Escape) { self.text = value; self.clear-focus(); return accept; }
+            reject
+        }
+    }
+    Rectangle {
+        border-radius: 6px;
+        border-width: input.has-focus ? 2px : 0;
+        border-color: Pal.blue.with-alpha(0.7);
+    }
+}
+
+// A button that acts while held, by pointer or Space: press as it goes down, release as
+// it comes up (or the pointer is taken away). The mic on its pink circle (the mockup's).
+export component HoldButton inherits Rectangle {
+    in property <string> id;
+    in property <string> label;
+    in property <string> text;
+    in property <string> icon;
+    in property <bool> enabled: true;
+    callback press;
+    callback release;
+    property <bool> key-held;
+    property <bool> held: ta.pressed || key-held;
+    changed held => { if (held) { press(); } else { release(); } }
+    accessible-role: button;
+    accessible-id: id;
+    accessible-label: label;
+    accessible-enabled: enabled;
+    height: 28px;
+    min-width: row.preferred-width;
+    border-radius: 14px;
+    background: held ? #ff375f40 : Pal.fill;
+    opacity: enabled ? 1 : 0.35;
+    row := HorizontalLayout {
+        padding-left: 4px;
+        padding-right: 12px;
+        spacing: 7px;
+        VerticalLayout {
+            alignment: center;
+            Rectangle {
+                width: 20px;
+                height: 20px;
+                border-radius: 10px;
+                background: #ff375f;
+                Icon { name: icon; size: 11px; tint: white; }
+            }
+        }
+        Text { text: held ? "Listening…" : text; font-size: 12.5px; font-weight: 500; color: Pal.ink; vertical-alignment: center; }
+    }
+    ta := TouchArea { enabled: enabled; mouse-cursor: pointer; }
+    fs := FocusScope {
+        enabled: enabled;
+        focus-on-click: false;
+        key-pressed(e) => { if (e.text == " ") { key-held = true; return accept; } reject }
+        key-released(e) => { if (e.text == " ") { key-held = false; return accept; } reject }
+        focus-changed-event => { if (!self.has-focus) { key-held = false; } }
+    }
+    FocusRing { w: root.width; h: root.height; shown: fs.has-focus; }
+}

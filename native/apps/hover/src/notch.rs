@@ -138,6 +138,8 @@ pub fn rest_of(ui: &NotchWindow, kind: i32) -> (f64, f64) {
         // The island's items start 4 in.
         1 => hover_notch::rest_size(Rest::Pill(4.0 + ui.get_pill_width() as f64)),
         2 => hover_notch::rest_size(Rest::Card(ui.get_card_w() as f64, ui.get_card_h() as f64)),
+        // Voice's card, as it measures.
+        3 => hover_notch::rest_size(Rest::Card(ui.get_voice_w() as f64, ui.get_voice_h() as f64)),
         _ => hover_notch::rest_size(Rest::None),
     }
 }

@@ -11,10 +11,15 @@ pub enum KiroPhase { Starting, Thinking, Planning, Reading, Searching, Editing, 
 
 /// How a run ended: the answer when it completed, a readable reason otherwise.
 #[derive(Clone, Debug, PartialEq)]
-pub struct KiroResult { pub state: KiroState, pub text: String, pub exit_code: Option<i32> }
+pub struct KiroResult {
+    pub state: KiroState, pub text: String, pub exit_code: Option<i32>,
+    /// Asked to stop, the tool never said it had: what it was doing may still go on, so
+    /// nothing queued behind it is sent.
+    pub unconfirmed: bool,
+}
 
 impl KiroResult {
-    pub fn new(state: KiroState, text: impl Into<String>) -> KiroResult { KiroResult { state, text: text.into(), exit_code: None } }
+    pub fn new(state: KiroState, text: impl Into<String>) -> KiroResult { KiroResult { state, text: text.into(), exit_code: None, unconfirmed: false } }
 }
 
 /// Detail from a run as it goes: a step that started or ended, the context (0 to
@@ -63,6 +68,24 @@ pub struct KiroStream {
     after_tool: bool,
     message: Option<String>,
     is_final: bool,
+    /// The reasoning being said now (a "thought" step's id), and when it was last sent on.
+    thought: Option<String>,
+    thoughts: usize,
+    thought_sent: Option<std::time::Instant>,
+}
+
+/// A thought step's text is kept to this many bytes; past it the step says so.
+const THOUGHT_LIMIT: usize = 256 * 1024;
+/// Streaming reasoning is passed on at most this often (each pass copies the step).
+const THOUGHT_EVERY: std::time::Duration = std::time::Duration::from_millis(80);
+
+/// A content block's text (ACP's ContentBlock, or a list of them).
+fn content_text(c: Option<&Json>) -> String {
+    match c {
+        Some(Json::Arr(parts)) => parts.iter().map(|p| content_text(Some(p))).collect(),
+        Some(c) => s(c, "text").unwrap_or("").to_owned(),
+        None => String::new(),
+    }
 }
 
 fn s<'a>(e: &'a Json, name: &str) -> Option<&'a str> { e.get(name).and_then(Json::as_str) }
@@ -73,8 +96,55 @@ impl KiroStream {
     pub fn new(name: &str) -> KiroStream {
         KiroStream { name: name.into(), phase: KiroPhase::Starting, final_text: None, stop_reason: None, error: None, interrupted: false, finished: false,
             session_id: None, context: None, said: String::new(), plain: Default::default(), events: vec![], steps: Default::default(), began: Default::default(), after_tool: false,
-            message: None, is_final: false }
+            message: None, is_final: false, thought: None, thoughts: 0, thought_sent: None }
     }
+
+    /// The reasoning the tool exposed (agent_thought_chunk), as a "thought" step whose
+    /// output is the text: one step from its first chunk until the agent does something
+    /// else, in its place among the tool calls. Only what the tool sends; nothing is
+    /// made up from the answer.
+    fn think(&mut self, text: &str) {
+        if self.thought.is_none() && text.trim().is_empty() { return; }
+        let id = match &self.thought {
+            Some(id) => id.clone(),
+            None => {
+                self.thoughts += 1;
+                let id = format!("hover-thought-{}", self.thoughts);
+                self.began.insert(id.clone(), std::time::Instant::now());
+                self.steps.insert(id.clone(), KiroStep { output: Some(String::new()), ..KiroStep::new(&id, "thought", "Thinking", None, "in_progress") });
+                self.thought = Some(id.clone());
+                self.thought_sent = None;
+                id
+            }
+        };
+        let step = self.steps.get_mut(&id).unwrap();
+        let out = step.output.get_or_insert_with(String::new);
+        if out.len() < THOUGHT_LIMIT {
+            let room = THOUGHT_LIMIT - out.len();
+            let mut cut = text.len().min(room);
+            while !text.is_char_boundary(cut) { cut -= 1; }
+            out.push_str(&text[..cut]);
+            if cut < text.len() { out.push_str("\n\n[Hover keeps the first 256 KB of a thought; the rest wasn’t saved.]"); }
+        }
+        if self.thought_sent.is_none_or(|t| t.elapsed() >= THOUGHT_EVERY) {
+            self.thought_sent = Some(std::time::Instant::now());
+            self.events.push(KiroEvent { step: Some(step.clone()), ..Default::default() });
+        }
+    }
+
+    /// The agent moved on: the thought is done, with how long it took.
+    fn close_thought(&mut self) {
+        let Some(id) = self.thought.take() else { return };
+        let ms = self.began.get(&id).map(|t| t.elapsed().as_secs_f64() * 1000.0);
+        if let Some(step) = self.steps.get_mut(&id) {
+            step.status = "completed".into();
+            step.ms = ms;
+            self.events.push(KiroEvent { step: Some(step.clone()), ..Default::default() });
+        }
+    }
+
+    /// The turn is over: a thought still open ends here.
+    pub fn end(&mut self) { self.close_thought(); }
 
     /// The steps, context and session id seen since the last call.
     pub fn drain(&mut self) -> Vec<KiroEvent> { std::mem::take(&mut self.events) }
@@ -122,7 +192,11 @@ impl KiroStream {
     }
 
     fn update(&mut self, u: &Json) {
-        match s(u, "sessionUpdate") {
+        let kind = s(u, "sessionUpdate");
+        if !matches!(kind, Some("agent_thought_chunk" | "usage_update" | "session_info_update" | "config_option_update" | "available_commands_update" | "current_mode_update")) {
+            self.close_thought();
+        }
+        match kind {
             Some("agent_message_chunk") => {
                 // Text after a tool call, or under a new message id, is a new message;
                 // the answer is the last one (Codex says a warning first).
@@ -143,7 +217,11 @@ impl KiroStream {
                     if size > 0.0 { self.set_context(used * 100.0 / size); }
                 }
             }
-            Some("agent_thought_chunk") => self.phase = KiroPhase::Thinking,
+            Some("agent_thought_chunk") => {
+                self.phase = KiroPhase::Thinking;
+                let t = content_text(u.get("content"));
+                self.think(&t);
+            }
             Some("plan") => self.phase = KiroPhase::Planning,
             Some("tool_call" | "tool_call_update" | "tool_call_chunk") => {
                 if let Some(p) = tool_phase(s(u, "kind"), s(u, "title")) { self.phase = p; }
@@ -232,7 +310,7 @@ impl KiroStream {
     /// The run's result once the tool is done.
     pub fn outcome(&self, exit_code: i32, cancelled: bool, stderr: &str) -> KiroResult {
         let said = clip(self.final_text.as_deref().unwrap_or(&self.said).trim(), 20000);
-        let r = |state, text: String| KiroResult { state, text, exit_code: Some(exit_code) };
+        let r = |state, text: String| KiroResult { state, text, exit_code: Some(exit_code), unconfirmed: false };
         let name = &self.name;
         if cancelled || self.interrupted {
             return r(KiroState::Cancelled, if !said.is_empty() { said } else { format!("Stopped before {name} finished.") });
@@ -278,9 +356,17 @@ fn target(u: &Json) -> Option<String> {
 fn lines_of(t: &str) -> Vec<String> { t.replace('\r', "").trim_end_matches('\n').split('\n').map(str::to_owned).collect() }
 
 /// KiroStream.DiffOf: the change in a tool call's diff content, lines added and
-/// removed, and the changed part with a line of context before it, up to a dozen lines.
+/// removed, and the changed part with a line of context before it (up to PREVIEW
+/// lines). When the line numbers are known (the call's location names its line, or
+/// the file is new) the part starts with "@@ -old +new @@", the numbers of its first
+/// line; a tool that sends only the replaced snippet gives none, and none are made up.
 pub fn diff_of(u: &Json) -> Option<(i32, i32, String)> {
+    const PREVIEW: usize = 400;
     let Some(Json::Arr(content)) = u.get("content") else { return None };
+    let at_line = match u.get("locations") {
+        Some(Json::Arr(l)) => l.iter().find_map(|x| match x.get("line") { Some(v @ Json::Num(_)) => v.i64().ok().filter(|n| *n >= 1), _ => None }),
+        _ => None,
+    };
     let (mut added, mut removed) = (0usize, 0usize);
     let mut lines: Vec<String> = vec![];
     for item in content {
@@ -300,16 +386,25 @@ pub fn diff_of(u: &Json) -> Option<(i32, i32, String)> {
         let came = &bb[head..bb.len() - tail];
         removed += gone.len();
         added += came.len();
-        if lines.len() >= 12 { continue; }
-        if head > 0 && !a[head - 1].trim().is_empty() { lines.push(format!("  {}", clip(a[head - 1].trim_end(), 160))); }
-        lines.extend(gone.iter().take(6).map(|x| format!("- {}", clip(x.trim_end(), 160))));
-        let room = 12 - lines.len().min(12);
+        if lines.len() >= PREVIEW { continue; }
+        let ctx = head > 0 && !a[head - 1].trim().is_empty();
+        let base = if a.is_empty() { Some(1) } else { at_line };
+        if let Some(b) = base {
+            let first = b + head as i64 - ctx as i64;
+            lines.push(format!("@@ -{first} +{first} @@"));
+        }
+        if ctx { lines.push(format!("  {}", clip(a[head - 1].trim_end(), 160))); }
+        lines.extend(gone.iter().take(PREVIEW / 2).map(|x| format!("- {}", clip(x.trim_end(), 160))));
+        let room = PREVIEW - lines.len().min(PREVIEW);
         lines.extend(came.iter().take(room).map(|x| format!("+ {}", clip(x.trim_end(), 160))));
     }
     if added + removed == 0 { return None; }
-    lines.truncate(12);
+    lines.truncate(PREVIEW);
     Some((added as i32, removed as i32, lines.join("\n")))
 }
+
+/// How many lines of a command's output a step keeps (its end).
+pub const OUTPUT_LINES: usize = 400;
 
 /// KiroStream.OutputOf: the end of what a command printed, and its exit code, from
 /// rawOutput: Kiro's {output, exitCode}, Codex's {formatted_output, exit_code}, or text.
@@ -334,8 +429,11 @@ pub fn output_of(u: &Json) -> (Option<String>, Option<i32>) {
     while rows.last().is_some_and(String::is_empty) { rows.pop(); }
     while rows.first().is_some_and(String::is_empty) { rows.remove(0); }
     if rows.is_empty() { return (None, exit); }
-    let from = rows.len().saturating_sub(10);
-    (Some(rows[from..].iter().map(|l| clip(l, 200)).collect::<Vec<_>>().join("\n")), exit)
+    let from = rows.len().saturating_sub(OUTPUT_LINES);
+    let mut kept: Vec<String> = rows[from..].iter().map(|l| clip(l, 200)).collect();
+    // What was cut is said, so the fold never claims it shows everything.
+    if from > 0 { kept.insert(0, format!("… {from} earlier line{} not kept", if from == 1 { "" } else { "s" })); }
+    (Some(kept.join("\n")), exit)
 }
 
 fn envelope(root: &Json) -> (&str, &Json) {
@@ -424,7 +522,9 @@ mod tests {
     fn reads_steps_phases_context_and_the_last_message() {
         let mut k = KiroStream::new("Codex");
         assert_eq!(k.feed(&update(r#"{"sessionUpdate":"agent_thought_chunk","content":{"type":"text","text":"hm"}}"#)), Some(KiroPhase::Thinking));
-        assert_eq!(k.drain(), vec![KiroEvent { session_id: Some("s1".into()), ..Default::default() }]);
+        let first = k.drain();
+        assert_eq!(first.iter().filter_map(|e| e.step.as_ref()).map(|s| (s.kind.as_str(), s.output.as_deref())).collect::<Vec<_>>(), vec![("thought", Some("hm"))]);
+        assert_eq!(first.iter().filter_map(|e| e.session_id.clone()).collect::<Vec<_>>(), vec!["s1".to_string()]);
         k.feed(&update(r#"{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"Warning first. "}}"#));
         assert_eq!(k.feed(&update(r#"{"sessionUpdate":"tool_call","toolCallId":"t0","kind":"read","title":"Read","status":"in_progress","locations":[{"path":"src/a.cs"}]}"#)), Some(KiroPhase::Reading));
         k.feed(&update(r#"{"sessionUpdate":"tool_call_update","toolCallId":"t0","status":"in_progress"}"#));
@@ -435,7 +535,7 @@ mod tests {
         k.feed(&update(r#"{"sessionUpdate":"usage_update","used":3000,"size":200000}"#));
         k.feed(&update(r#"{"sessionUpdate":"agent_message_chunk","content":[{"type":"text","text":"The "},{"type":"text","text":"answer."}]}"#));
         let ev = k.drain();
-        let steps: Vec<_> = ev.iter().filter_map(|e| e.step.as_ref()).map(|s| (s.id.as_str(), s.title.as_str(), s.status.as_str(), s.target.as_deref(), s.kind.as_str())).collect();
+        let steps: Vec<_> = ev.iter().filter_map(|e| e.step.as_ref()).filter(|s| s.kind != "thought").map(|s| (s.id.as_str(), s.title.as_str(), s.status.as_str(), s.target.as_deref(), s.kind.as_str())).collect();
         assert_eq!(steps, [("t0", "Read", "in_progress", Some("src/a.cs"), "read"), ("t0", "Read a.cs", "completed", Some("src/a.cs"), "read"),
             ("t1", "Run shell", "in_progress", Some("npm test"), "other")]);
         let ctx: Vec<f64> = ev.iter().filter_map(|e| e.context).collect();
@@ -494,6 +594,41 @@ mod tests {
         assert_eq!(tool_phase(None, Some("Grep files")), Some(KiroPhase::Searching));
         assert_eq!(tool_phase(None, Some("Create file")), Some(KiroPhase::Editing));
         assert_eq!(tool_phase(Some("x"), Some("Bash")), Some(KiroPhase::Running));
+    }
+
+    /// Reasoning the tool sends is kept, in order among the tool calls, as one thought
+    /// per run of chunks, closed when the agent does something else, with its time.
+    #[test]
+    fn thoughts_are_kept_in_order_and_closed_by_what_follows() {
+        let mut k = KiroStream::new("Kiro");
+        let th = |t: &str| update(&format!(r#"{{"sessionUpdate":"agent_thought_chunk","content":{{"type":"text","text":"{t}"}}}}"#));
+        k.feed(&th(" "));
+        assert!(k.drain().iter().all(|e| e.step.is_none()), "blank reasoning starts no thought");
+        k.feed(&th("First "));
+        k.feed(&th("idea."));
+        k.feed(&update(r#"{"sessionUpdate":"tool_call","toolCallId":"r","kind":"read","title":"Read","status":"in_progress"}"#));
+        k.feed(&th("Second."));
+        k.feed(&update(r#"{"sessionUpdate":"usage_update","used":1,"size":10}"#));
+        k.feed(&th(" More."));
+        k.end();
+        let mut last: Vec<KiroStep> = vec![];
+        for e in k.drain() { if let Some(s) = e.step { match last.iter().position(|x| x.id == s.id) { Some(i) => last[i] = s, None => last.push(s) } } }
+        let got: Vec<_> = last.iter().map(|s| (s.kind.as_str(), s.status.as_str(), s.output.as_deref())).collect();
+        assert_eq!(got, vec![("thought", "completed", Some("First idea.")), ("read", "in_progress", None), ("thought", "completed", Some("Second. More."))]);
+        assert!(last[0].ms.is_some() && last[2].ms.is_some());
+    }
+
+    #[test]
+    fn a_diff_says_its_line_numbers_only_when_it_knows_them() {
+        let call = |loc: &str, old: &str| json::parse(&format!(r#"{{"locations":[{loc}],"content":[{{"type":"diff","path":"a","oldText":{old},"newText":"a\nB\nc\n"}}]}}"#)).unwrap();
+        assert_eq!(diff_of(&call(r#"{"path":"a","line":40}"#, r#""a\nb\nc\n""#)).unwrap().2, "@@ -40 +40 @@\n  a\n- b\n+ B");
+        assert_eq!(diff_of(&call(r#"{"path":"a"}"#, r#""a\nb\nc\n""#)).unwrap().2, "  a\n- b\n+ B", "a snippet's own numbers aren't the file's");
+        assert!(diff_of(&call(r#"{"path":"a"}"#, "null")).unwrap().2.starts_with("@@ -1 +1 @@\n+ a"), "a new file starts at 1");
+        let long: String = (0..450).map(|i| format!("line {i}\\n")).collect();
+        let (o, _) = output_of(&json::parse(&format!(r#"{{"rawOutput":"{long}"}}"#)).unwrap());
+        let o = o.unwrap();
+        assert!(o.starts_with("… 50 earlier lines not kept\nline 50"));
+        assert_eq!(o.lines().count(), OUTPUT_LINES + 1);
     }
 
     #[test]

@@ -49,6 +49,9 @@ struct Turn {
     muted: AtomicBool,
     refused: AtomicBool,
     mcp_failed: Mutex<Option<String>>,
+    /// Access "none": every request the agent makes is turned down, reading too (voice's
+    /// routing turn, which only reads what it is sent).
+    deny_all: bool,
 }
 
 struct Live {
@@ -154,9 +157,12 @@ impl Host {
         self.busy.fetch_add(1, Ordering::SeqCst);
         self.idle.fetch_add(1, Ordering::SeqCst);
         let turn = Arc::new(Turn { stream: Mutex::new(KiroStream::new(name)), progress, events, options: o.clone(), folder: folder.into(), token: ct.clone(), muted: AtomicBool::new(false),
-            refused: AtomicBool::new(false), mcp_failed: Mutex::new(None) });
+            refused: AtomicBool::new(false), mcp_failed: Mutex::new(None), deny_all: access == Some("none") });
         let mut sid: Option<String> = None;
         let r = self.turn(folder, prompt, ct, resume, &o, &turn, &mut sid);
+        // A thought still open when the turn ends (however it ends) ends with it.
+        let last = { let mut st = turn.stream.lock().unwrap(); st.end(); st.drain() };
+        if let Some(f) = &turn.events { for e in last { f(e); } }
         let result = match r {
             Ok(r) => r,
             Err(CallErr::Cancelled) => self.finish(&turn, Some("cancelled"), true),
@@ -229,8 +235,12 @@ impl Host {
                     Ok(Msg::CancelAsked) => continue,
                     Err(_) => {
                         // It didn't stop when asked. Only this run is using it: end it.
-                        if self.busy.load(Ordering::SeqCst) == 1 { self.shutdown("didn't stop when asked"); }
-                        return Ok(self.finish(turn, Some("cancelled"), true));
+                        if self.busy.load(Ordering::SeqCst) == 1 { self.shutdown("didn't stop when asked"); return Ok(self.finish(turn, Some("cancelled"), true)); }
+                        // Others share the process, so it stays up, and this turn may
+                        // still be going: said as it is, never as stopped.
+                        hover_core::log::line(&format!("acp {name}: {id} didn't confirm the stop within 8 s"));
+                        return Ok(KiroResult { unconfirmed: true, ..KiroResult::new(KiroState::Failed,
+                            format!("{name} didn’t confirm it stopped. It may still be working on this; nothing queued was sent.")) });
                     }
                 },
                 Err(_) => break Err(CallErr::Gone(format!("{name} stopped."))),
@@ -342,6 +352,7 @@ impl Host {
 
         let call = p.get("toolCall").cloned().unwrap_or(Json::Null);
         let kind = s(&call, "kind").unwrap_or("other").to_owned();
+        if turn.deny_all { turn.refused.store(true, Ordering::SeqCst); return reject(); }
         if turn.options.read_only {
             if matches!(kind.as_str(), "read" | "search" | "fetch" | "think") { return allow(); }
             turn.refused.store(true, Ordering::SeqCst);

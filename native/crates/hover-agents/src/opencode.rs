@@ -132,6 +132,10 @@ struct Turn {
     said: Mutex<Said>,
     phase: Mutex<KiroPhase>,
     context: Mutex<Option<f64>>,
+    /// Access "none" (voice's routing turn): every request is turned down, reading too.
+    deny_all: bool,
+    /// When each streaming thought was last passed on.
+    thought_sent: Mutex<HashMap<String, Instant>>,
 }
 
 impl Turn {
@@ -252,6 +256,7 @@ impl Host {
             refused: AtomicBool::new(false), idle_early: AtomicBool::new(false), connects: AtomicBool::new(false),
             error: Mutex::new(None), retry: Mutex::new(None), last_event: Mutex::new(Instant::now()), idle_confirms: AtomicUsize::new(0),
             open: Default::default(), resolved: Default::default(), said: Default::default(), phase: Mutex::new(KiroPhase::Starting), context: Mutex::new(None),
+            deny_all: access == Some("none"), thought_sent: Default::default(),
         });
         let mut pump: Option<std::thread::JoinHandle<()>> = None;
         let r = match self.turn(prompt, ct, resume, &o, &turn, &mut pump) {
@@ -291,7 +296,7 @@ impl Host {
             }
         }
         let default_agent = match &agent { Some(a) => a.clone(), None => s(Some(&self.get("/config", Some(folder), Some(ct), None)?), "default_agent").unwrap_or("build").to_owned() };
-        let rules = rules(o, &agents, &default_agent);
+        let rules = if turn.deny_all { Json::Arr(vec![Json::obj(vec![("permission", st("*")), ("pattern", st("*")), ("action", st("ask"))])]) } else { rules(o, &agents, &default_agent) };
 
         if let Some(r) = resume.filter(|r| !r.is_empty()) {
             if self.stuck.lock().unwrap().contains(r) {
@@ -407,8 +412,10 @@ impl Host {
             self.stuck.lock().unwrap().insert(sid.clone());
             log(&format!("{sid} didn't stop within {:.0}s", self.t.stop_grace.as_secs_f64()));
             // Only this run uses the server: end it, and with it the run.
-            if self.busy.load(Ordering::SeqCst) == 1 { self.end(None, "didn't stop when asked", "OpenCode stopped."); }
-            turn.done.set(turn.stopped());
+            if self.busy.load(Ordering::SeqCst) == 1 { self.end(None, "didn't stop when asked", "OpenCode stopped."); turn.done.set(turn.stopped()); return; }
+            // The server goes on for the others, and this conversation may too.
+            turn.done.set(KiroResult { unconfirmed: true, ..KiroResult::new(KiroState::Failed,
+                "OpenCode didn’t confirm it stopped. It may still be working on this; nothing queued was sent.") });
         }
     }
 
@@ -542,8 +549,15 @@ impl Host {
                 let (Some(pid), Some(delta)) = (s(Some(p), "partID"), s(Some(p), "delta").filter(|d| !d.is_empty())) else { return };
                 {
                     let mut g = turn.said.lock().unwrap();
-                    let Some(t) = g.text.get_mut(pid) else { return };
-                    t.push_str(delta);
+                    if let Some(t) = g.text.get_mut(pid) { t.push_str(delta); }
+                    else if let Some(x) = g.steps.get_mut(pid).filter(|x| x.kind == "thought") {
+                        // A reasoning part streaming in: its thought grows.
+                        x.output.get_or_insert_with(String::new).push_str(delta);
+                        let step = x.clone();
+                        drop(g);
+                        self.thought_out(turn, step, false);
+                        return;
+                    } else { return; }
                 }
                 turn.set_phase(KiroPhase::Writing);
             }
@@ -599,11 +613,50 @@ impl Host {
                 }
                 turn.set_phase(KiroPhase::Writing);
             }
-            Some("reasoning") => turn.set_phase(KiroPhase::Thinking),
+            Some("reasoning") => { turn.set_phase(KiroPhase::Thinking); self.reasoning(turn, part); }
             Some("tool") => self.tool_part(turn, part),
             Some("step-finish") => { if let Some(t @ Json::Obj(_)) = part.get("tokens") { self.tokens(turn, t, None); } }
             _ => {}
         }
+    }
+
+    /// OpenCode's reasoning part (the text its provider exposes) as a thought step, in
+    /// its place among the tool calls; done once the part has an end time.
+    fn reasoning(&self, turn: &Turn, part: &Json) {
+        let Some(id) = s(Some(part), "id") else { return };
+        let text = s(Some(part), "text").unwrap_or("");
+        let time = part.get("time");
+        let (start, end) = (num(time, "start"), num(time, "end"));
+        let step = {
+            let mut g = turn.said.lock().unwrap();
+            if !g.steps.contains_key(id) && text.trim().is_empty() && end.is_some() { return; }
+            if !g.began.contains_key(id) { g.began.insert(id.into(), Instant::now()); }
+            let known = g.steps.get(id).cloned();
+            let mut x = known.clone().unwrap_or_else(|| KiroStep::new(id, "thought", "Thinking", None, "in_progress"));
+            // The whole part replaces what its deltas built.
+            if !text.is_empty() || x.output.is_none() { x.output = Some(text.into()); }
+            if end.is_some() {
+                x.status = "completed".into();
+                x.ms = match (start, end) { (Some(a), Some(b)) if b >= a => Some(b - a), _ => g.began.get(id).map(|t| t.elapsed().as_secs_f64() * 1000.0) };
+            }
+            if known.as_ref() == Some(&x) { return; }
+            g.steps.insert(id.into(), x.clone());
+            x
+        };
+        let done = step.status == "completed";
+        self.thought_out(turn, step, done);
+    }
+
+    /// Passes a thought on: at once when it ends, else at most every 80 ms (each pass
+    /// copies its text).
+    fn thought_out(&self, turn: &Turn, step: KiroStep, now: bool) {
+        {
+            let mut sent = turn.thought_sent.lock().unwrap();
+            let due = now || sent.get(&step.id).is_none_or(|t| t.elapsed() >= Duration::from_millis(80));
+            if !due { return; }
+            sent.insert(step.id.clone(), Instant::now());
+        }
+        if let Some(e) = &turn.events { e(KiroEvent { step: Some(step), ..Default::default() }); }
     }
 
     fn tool_part(&self, turn: &Turn, part: &Json) {
@@ -625,7 +678,18 @@ impl Host {
             };
             let mut next = KiroStep { status: status.into(), title: title.clone(), target: known.target.clone().or(target), ..known.clone() };
             if kind == "edit" {
-                if let Some((a, r, d)) = input.and_then(change) { next.added = a; next.removed = r; next.diff = Some(d); }
+                // OpenCode's own patch has the file's real line numbers; the input's
+                // strings are only the snippet.
+                let patch = s(state.and_then(|x| x.get("metadata")), "diff").and_then(unified);
+                if let Some((a, r, d)) = patch.or_else(|| input.and_then(change)) { next.added = a; next.removed = r; next.diff = Some(d); }
+            }
+            if kind == "agent" {
+                // A subagent (the task tool): what it was asked, its kind, and what it found.
+                next.title = s(input, "description").filter(|d| !d.is_empty()).map_or(title.clone(), str::to_owned);
+                next.target = s(input, "subagent_type").map(str::to_owned).or(next.target);
+                if status != "in_progress" {
+                    if let Some(out) = s(state, "output").or_else(|| s(state, "error")) { next.output = Some(clip_to(out.trim(), 4000)); }
+                }
             }
             if kind == "execute" && status != "in_progress" {
                 if let Some(out) = s(state, "output").or_else(|| s(state, "error")) {
@@ -792,7 +856,11 @@ impl Host {
         let mut message: Option<&str> = None;
         let trusted = self.trusted.lock().unwrap().get(&sid).is_some_and(|t| t.contains("*") || t.contains(&key));
         let asking = self.asking.lock().unwrap().clone();
-        let reply = if turn.options.read_only {
+        let reply = if turn.deny_all {
+            message = Some("Hover's voice routing doesn't use tools.");
+            turn.refused.store(true, Ordering::SeqCst);
+            "reject"
+        } else if turn.options.read_only {
             message = Some("Hover has OpenCode set to read only.");
             turn.refused.store(true, Ordering::SeqCst);
             "reject"
@@ -1116,8 +1184,28 @@ pub fn kind_of(tool: &str) -> &'static str {
         "glob" | "grep" | "list" | "codesearch" => "search",
         "webfetch" | "websearch" => "fetch",
         "todowrite" | "todoread" => "think",
+        "task" => "agent",
         _ => "other",
     }
+}
+
+/// A unified diff (OpenCode's edit metadata) as a step's preview: each hunk's
+/// "@@ -old +new @@" (the numbers of its first line), then its lines as "- ", "+ "
+/// and "  ", up to 400; and the lines added and removed.
+pub fn unified(diff: &str) -> Option<(i32, i32, String)> {
+    let (mut added, mut removed, mut out) = (0i32, 0i32, Vec::<String>::new());
+    let mut in_hunk = false;
+    for l in diff.replace('\r', "").split('\n') {
+        if let Some(h) = l.strip_prefix("@@ ") {
+            let nums: Vec<i64> = h.split_whitespace().take(2).filter_map(|p| p.trim_start_matches(['-', '+']).split(',').next()?.parse().ok()).collect();
+            if nums.len() == 2 { out.push(format!("@@ -{} +{} @@", nums[0], nums[1])); in_hunk = true; }
+            continue;
+        }
+        if !in_hunk || l.starts_with("+++") || l.starts_with("---") || l.starts_with('\\') { continue; }
+        let (tag, rest) = match l.chars().next() { Some('+') => { added += 1; ("+ ", &l[1..]) } Some('-') => { removed += 1; ("- ", &l[1..]) } Some(' ') => ("  ", &l[1..]), _ => continue };
+        if out.len() < 400 { out.push(format!("{tag}{}", clip_to(rest.trim_end(), 160))); }
+    }
+    (added + removed > 0).then(|| (added, removed, out.join("\n")))
 }
 
 /// An edit's lines added and removed, from its old and new text.

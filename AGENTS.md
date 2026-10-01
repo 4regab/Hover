@@ -12,7 +12,7 @@ in front is doing, for how long), a question an agent is waiting on, or nothing.
 Hovering it, clicking it or `Alt+N` opens the **Agent office**, which fills the notch. The
 office hands tasks to Kiro, Codex, Cursor or OpenCode, which run headlessly, several at once,
 each in a chosen folder, as bots at desks in a voxel office. The office's menu (time
-of day, music, history, Settings) opens Settings over it (six sections: General, Integrations, Kiro, Codex, Cursor, OpenCode), with a
+of day, music, history, Settings) opens Settings over it (eight sections: General, Integrations, Projects, Voice, Kiro, Codex, Cursor, OpenCode), with a
 back button.
 
 The only ordinary window is the dashboard: the same office in a window with Hover's
@@ -31,7 +31,7 @@ From the repo root.
 # Windows (PowerShell)
 .\build.ps1 release run     # build and launch
 .\build.ps1 test            # cargo test --release --workspace
-.\build.ps1 publish         # publish\Hover.exe
+.\build.ps1 publish         # publish\hoverai.exe
 .\build.ps1 installer       # dist\Hover-Setup-<version>.exe (Inno Setup 6 or 7)
 ```
 
@@ -66,10 +66,13 @@ native/crates/
   hover-core     paths (+ the Noty move), settings.json (System.Text.Json's bytes),
                  crypto (AES-GCM; DPAPI / Secret Service key), history (sealed
                  agents/), images, single instance, palette and VS Code themes,
-                 platform/{windows,linux}; bin/hover-data (data folders for tests)
+                 platform/{windows,linux}; bin/hover-data (data folders for tests);
+                 projects.rs (projects, default workspace, voice settings),
+                 secrets.rs (API keys sealed in secrets.dat)
   hover-agents   ACP host, OpenCode's server (opencode.rs, over its own http.rs), the
                  runtime both sit behind, the tools (Kiro, Codex, Cursor, OpenCode), sessions, the office's
-                 state message, KiroStream, process groups / Windows jobs
+                 state message, KiroStream, process groups / Windows jobs; route.rs
+                 (voice's project routing)
   hover-quota    the four quota readers
   hover-md, hover-diagram   md.js and diagram.js, byte for byte
   hover-chat     the chat thread: layout, selection, copy, images, painter
@@ -79,7 +82,9 @@ native/crates/
 native/apps/
   hover          the product: app, Settings (pages.rs), tray (sni.rs / win.rs),
                  notch (notch.rs, x11.rs, win.rs), office UI (office_ui.rs), music,
-                 bench.rs (HOVER_BENCH), selftest, shots; ui/*.slint; assets/
+                 bench.rs (HOVER_BENCH), selftest, shots; voice (speech.rs, voice/,
+                 voice_ui.rs), Phonon's setup and engine (phonon.rs, assets/phonon/);
+                 ui/*.slint; assets/
   chat-proto, notch-proto   the port's prototypes
 native/golden/   fixtures and expected outputs (made from the 2.x page)
 native/installer/  Hover.iss (Windows), package-linux.sh
@@ -129,13 +134,17 @@ assets/          hover.png (the logo), make-icon.py (writes the app's hover.ico 
     `session/request_permission` is answered off the read loop: what the setting leaves
     alone is allowed, the rest goes to the user (`KiroSessions::ask`), shown in the
     notch (an amber island, Review opens a card: Enter allows, Shift+Enter trusts, Esc
-    denies), over the bot's head and in its chat, where a reply counts as Deny. Trust
+    denies), over the bot's head and in its chat. A reply never answers it; it is
+    queued behind it. Trust
     is Hover's, for the session; only Codex's own allow-always is used (Cursor's writes
     a lasting rule, Kiro's can change a setting). Codex: `workspace-write` (or its
     renamed `read-only`) for Ask first, `read-only` for Ask always, never `agent`.
   - Read only: Kiro runs with autopilot off and its write approvals are refused;
     Cursor runs in Ask mode.
-  - Stop sends `session/cancel`. A tool that doesn't stop within 8 s is shut down.
+  - Stop sends `session/cancel`. A tool that doesn't stop within 8 s is shut down when
+    no other turn uses it; otherwise the stop is marked unconfirmed and nothing queued
+    is sent. Pause cancels the turn the same way, keeps the conversation, and sends the
+    next queued reply once the tool says the turn ended.
   - Prompts go over stdin, never on a command line.
   - Up to three sessions run at once across all tools, and the newest six are kept.
     An end shows in the island (the tool's logo with a badge, and the task) and as a
@@ -167,7 +176,19 @@ assets/          hover.png (the logo), make-icon.py (writes the app's hover.ico 
   The bookshelf and the history button list them. A reply to an old session gives it
   a desk again.
 - **A new task starts from one circle** at the office's bottom left: tool logos, then
-  a box for the picked tool. A draft is kept and marked with a dot.
+  a box for the picked tool. A draft is kept and marked with a dot. The box's pill shows
+  the model, and the effort only when the tool listed efforts in its last run.
+- **Voice** (`voice/`, off until switched on in Settings → Voice). Hold Ctrl+Alt+Space
+  (rebindable), speak, let go. Speech is Local (Phonon, on this computer, English only)
+  or Cloud (Groq, the user's key), read once per recording; Hover never falls back from
+  one to the other. Optional cleanup tidies the text. Routing matches registered
+  voice projects by their words; only what is left unclear goes to the default agent
+  in a turn with access `none`, and anything unclear goes to the default workspace
+  (home + `Hover`). A preview shows the task, folder, agent and access, then starts a new
+  chat after 3 s. The agent is always the one picked in the new-task circle. Phonon
+  (Python, CPU PyTorch, the model; about 1.5–1.8 GB installed) is downloaded only from
+  Settings, into `<data>/phonon/`. Keys are sealed in `secrets.dat`, never in
+  `settings.json`.
 - **Answers are Markdown, drawn without a library** (`hover-md`, `hover-diagram`).
   Everything the agent wrote is escaped, and Mermaid flowcharts are laid out natively.
 - **The office renders on its own thread with its own wgpu device** (DX12 on Windows,

@@ -5,7 +5,7 @@
   can't make its surface there, the shortcut can't be registered (error 1459), and a
   non-interactive logon may have no DPAPI key. The console session has DWM.
 
-    .\native\tools\hover-measure\run-console.ps1 -PsExec C:\tools\PsExec64.exe -Exe native\target\release\hover.exe -Out evidence\memory\x -Script memory.hms -Runs 3
+    .\native\tools\hover-measure\run-console.ps1 -PsExec C:\tools\PsExec64.exe -Exe native\target\release\hoverai.exe -Out evidence\memory\x -Script memory.hms -Runs 3
 
   Measurements from here are labelled "console session, SYSTEM": no user is logged on,
   so the input desktop is the logon screen and real pointer input doesn't reach Hover.
