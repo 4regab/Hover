@@ -43,8 +43,8 @@ make package                # .deb and tarball in dist/
 ```
 
 A `v*` tag (three numbers, e.g. `v3.1.0`, matching `native/Cargo.toml`) runs
-`.github/workflows/release.yml` on GitHub's runners: installers on Windows and Linux
-(Ubuntu 22.04), published together as a GitHub pre-release. The tests are `ci.yml`'s.
+`.github/workflows/ci.yml`'s tests on Windows and Linux (Ubuntu 22.04), then builds the
+installers from that build and publishes them together as a GitHub pre-release.
 
 The cross-check that Windows code still compiles, from Linux:
 `cargo check --manifest-path native/Cargo.toml --release --workspace --all-targets --target x86_64-pc-windows-msvc`.

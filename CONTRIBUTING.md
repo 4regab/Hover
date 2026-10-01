@@ -102,6 +102,6 @@ Fill in the template. In short:
 
 ## Releases
 
-Releases are made by the maintainers. A `v*` tag runs `.github/workflows/release.yml`
-on GitHub's own runners. Forks don't need it: `.\build.ps1 installer` and
+Releases are made by the maintainers. A `v*` tag runs `.github/workflows/ci.yml`,
+which publishes the installers once the tests pass. Forks don't need it: `.\build.ps1 installer` and
 `make package` build the same installers locally.

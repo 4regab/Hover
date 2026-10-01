@@ -1,12 +1,14 @@
 name: CI
 
-# Contributor checks for the native (Rust) Hover on GitHub's own runners: the tests on
-# Windows and Linux, the Windows compile check from Linux, and the headless screenshots.
-# No secrets and no agent accounts: agent runs use the repo's fake-agent. Releases are
-# release.yml's (a v* tag).
+# The native (Rust) Hover on GitHub's own runners: one job per platform runs the tests
+# and the headless screenshots. On a v* tag (three numbers, matching native/Cargo.toml)
+# the same jobs then build the installers from the build they just tested, and
+# `release` publishes them together as a pre-release. No secrets and no agent
+# accounts: agent runs use the repo's fake-agent.
 on:
   push:
     branches: ['rust-port/**']
+    tags: ['v*']
   pull_request:
   workflow_dispatch:
 
@@ -19,6 +21,7 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: never
+  RELEASE: ${{ startsWith(github.ref, 'refs/tags/v') }}
 
 jobs:
   windows:
@@ -28,7 +31,16 @@ jobs:
         shell: pwsh
     steps:
       - uses: actions/checkout@v4
-      # rust-toolchain.toml picks the version; rustup is on the runner.
+      - name: Check release version
+        if: env.RELEASE == 'true'
+        run: |
+          if ($env:GITHUB_REF_NAME -notmatch '^v(?<version>\d+\.\d+\.\d+)$') {
+            throw 'Release tag must be v followed by three numeric version parts, for example v3.1.0.'
+          }
+          $crate = (Select-String -Path native\Cargo.toml -Pattern '^version = "(.+)"').Matches[0].Groups[1].Value
+          if ($crate -ne $Matches.version) { throw "The tag is $env:GITHUB_REF_NAME but native/Cargo.toml says $crate." }
+          Add-Content -Path $env:GITHUB_ENV -Value "RELEASE_VERSION=$($Matches.version)"
+      # rust-toolchain.toml picks the version; rustup and MSVC are on the runner.
       - name: Toolchain
         run: rustup show active-toolchain
       - uses: Swatinem/rust-cache@v2
@@ -49,11 +61,29 @@ jobs:
           name: shots-windows
           path: ${{ runner.temp }}/shots/*.png
           if-no-files-found: error
+      # build.ps1 finds Inno Setup 6 or 7; installed only when the image lacks it.
+      - name: Build installer
+        if: env.RELEASE == 'true'
+        run: |
+          if (-not (Test-Path "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe")) { choco install innosetup --no-progress -y }
+          .\build.ps1 installer -Version $env:RELEASE_VERSION
+      - uses: actions/upload-artifact@v4
+        if: env.RELEASE == 'true'
+        with:
+          name: installer-windows
+          path: dist/Hover-Setup-${{ env.RELEASE_VERSION }}.exe
+          if-no-files-found: error
 
   linux:
+    # Ubuntu 22.04 (glibc 2.35), so the packages run on 22.04 and newer.
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
+      - name: Check release version
+        if: env.RELEASE == 'true'
+        run: |
+          [[ "$GITHUB_REF_NAME" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)$ ]] || { echo 'Release tag must be v followed by three numeric version parts, for example v3.1.0.' >&2; exit 1; }
+          echo "RELEASE_VERSION=${BASH_REMATCH[1]}" >> "$GITHUB_ENV"
       - name: System libraries
         run: |
           sudo apt-get update
@@ -87,32 +117,37 @@ jobs:
           name: shots-linux
           path: ${{ runner.temp }}/shots/*.png
           if-no-files-found: error
+      - name: Build packages
+        if: env.RELEASE == 'true'
+        run: make package VERSION="$RELEASE_VERSION"
+      - uses: actions/upload-artifact@v4
+        if: env.RELEASE == 'true'
+        with:
+          name: installer-linux
+          path: |
+            dist/hover_${{ env.RELEASE_VERSION }}_amd64.deb
+            dist/hover-${{ env.RELEASE_VERSION }}-linux-x86_64.tar.gz
+          if-no-files-found: error
 
-  windows-check-from-linux:
+  release:
+    # One job publishes, so the two builds never race to create the release.
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [windows, linux]
     runs-on: ubuntu-22.04
+    permissions:
+      contents: write
     steps:
-      - uses: actions/checkout@v4
-      - name: System libraries
-        run: |
-          sudo apt-get update
-          sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-            build-essential pkg-config libfontconfig1-dev libfreetype-dev libasound2-dev libxkbcommon-dev libxkbcommon-x11-dev
-      # Microsoft's current CRT headers refuse clang older than 19, and 22.04 has 14:
-      # clang-cl, lld-link and llvm-lib 19 come from LLVM's own apt repository.
-      - name: Clang 19
-        run: |
-          wget -q https://apt.llvm.org/llvm.sh
-          sudo bash llvm.sh 19
-          echo /usr/lib/llvm-19/bin >> "$GITHUB_PATH"
-      - name: Windows target
-        run: rustup target add x86_64-pc-windows-msvc
-      # mimalloc's C is built even by a check, and MSVC's lib.exe isn't on Linux:
-      # cargo-xwin compiles it with clang-cl against Microsoft's CRT and SDK headers.
-      - uses: taiki-e/install-action@v2
+      - uses: actions/download-artifact@v4
         with:
-          tool: cargo-xwin
-      - uses: Swatinem/rust-cache@v2
+          pattern: installer-*
+          path: dist
+          merge-multiple: true
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v2
         with:
-          workspaces: native
-      - name: cargo check for Windows
-        run: cargo xwin check --manifest-path native/Cargo.toml --release --workspace --all-targets --target x86_64-pc-windows-msvc
+          name: Hover ${{ github.ref_name }} (native, pre-release)
+          # A pre-release is never "Latest": 2.x downloads stay where they are.
+          prerelease: true
+          files: dist/*
+          fail_on_unmatched_files: true
+          generate_release_notes: true
