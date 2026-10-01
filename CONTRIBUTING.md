@@ -4,8 +4,9 @@ Hover is built and tested on Windows and Linux. You can fork it, build it, test 
 send changes without access to the maintainers' release machines, secrets or paid
 agent accounts.
 
-Start with [docs/development/README.md](docs/development/README.md). It links the
-platform guides, the architecture, and how to test and measure.
+Start with [docs/development/architecture.md](docs/development/architecture.md) for how
+Hover fits together, then [testing.md](docs/development/testing.md) and
+[profiling.md](docs/development/profiling.md) for how to test and measure.
 
 ## Fork and build
 
@@ -25,8 +26,9 @@ platform guides, the architecture, and how to test and measure.
    git switch -c my-change upstream/rust-port/phase-0-1
    ```
 
-3. Set up your platform: [Windows](docs/development/windows.md) or
-   [Linux](docs/development/linux.md). Then, from the repository root:
+3. Set up your platform: [Windows](docs/development/windows.md), or on Linux the
+   packages in the README's [Build from source](README.md#build-from-source). Then,
+   from the repository root:
 
    ```powershell
    # Windows
@@ -72,9 +74,10 @@ Run what applies to your change and say what you ran in the pull request:
 
 - `cargo test --manifest-path native/Cargo.toml --release --workspace` on your
   platform.
-- On Linux, the Windows compile check:
-  `cargo check --manifest-path native/Cargo.toml --release --workspace --all-targets --target x86_64-pc-windows-msvc`
-  (needs `rustup target add x86_64-pc-windows-msvc`).
+- On Linux, if you changed Windows code, the Windows compile check:
+  `cargo xwin check --manifest-path native/Cargo.toml --release --workspace --all-targets --target x86_64-pc-windows-msvc`
+  (needs `rustup target add x86_64-pc-windows-msvc`, `cargo install cargo-xwin` and
+  clang 19 or newer). CI checks Windows on Windows, so you can also leave it to CI.
 - For UI changes: render it with `hover --shots DIR` and look at the pictures. A
   green build doesn't prove the pixels are right. On Linux with X11, also run
   `hover --selftest DIR`.

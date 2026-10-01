@@ -181,6 +181,14 @@ There is no account, server or analytics.
 Requires Rust 1.89 or newer. On Windows, install the MSVC build tools as well. The
 toolchain Hover is tested with is pinned in `rust-toolchain.toml`.
 
+On Ubuntu or Debian, the build needs these packages (the tests also use
+`fonts-dejavu-core dbus gnome-keyring python3-gi`):
+
+```sh
+sudo apt install build-essential pkg-config libfontconfig1-dev libfreetype-dev \
+  libasound2-dev libxkbcommon-dev libxkbcommon-x11-dev
+```
+
 ```powershell
 # Windows
 .\build.ps1 release run      # build and run

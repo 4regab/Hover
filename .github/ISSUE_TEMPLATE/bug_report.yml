@@ -1,0 +1,66 @@
+name: Bug report
+description: Something in Hover doesn't work as it should.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. Security problems go to [private reporting](https://github.com/4regab/Hover/security/advisories/new), not here.
+        Never paste an API key or a real session.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: And what you expected instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open the office
+        2. ...
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Hover version
+      description: From `hoverai --version` (Linux `hover --version`), or the installer's name.
+      placeholder: 3.1.0
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: OS
+      options:
+        - Windows 11
+        - Windows 10
+        - Linux (X11)
+        - Linux (Wayland)
+    validations:
+      required: true
+  - type: dropdown
+    id: agent
+    attributes:
+      label: Agent involved
+      multiple: true
+      options:
+        - None
+        - Kiro
+        - Codex
+        - Cursor
+        - OpenCode
+  - type: input
+    id: gpu
+    attributes:
+      label: GPU
+      description: For drawing problems in the notch or the office.
+  - type: textarea
+    id: log
+    attributes:
+      label: hover.log
+      description: The lines around the problem, from `hover.log` in the data folder (`%APPDATA%\Hover`, Linux `~/.local/share/Hover`). Check it holds nothing private.
+      render: text

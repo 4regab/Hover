@@ -11,7 +11,7 @@
 <!-- What you ran, on which OS and GPU, and the result. -->
 
 - [ ] `cargo test --manifest-path native/Cargo.toml --release --workspace` (OS: )
-- [ ] Windows compile check from Linux, if you worked on Linux
+- [ ] Windows compile check (`cargo xwin check`, see CONTRIBUTING.md), if you changed Windows code on Linux
 - [ ] `hover --shots` or a screenshot, for UI changes
 - [ ] fake-agent or real-agent run, for agent, permission or storage changes
 
