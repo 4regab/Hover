@@ -1,8 +1,194 @@
 # Architecture
 
-Hover is one Rust workspace in `native/`. One binary (`hover`) holds the whole
-product. The crates keep the parts that have no window apart from the parts that do,
-so most of the logic builds and tests anywhere.
+Hover is one Rust workspace in `native/`. One binary (`hoverai`, installed as `hover`
+on Linux) holds the whole product. The crates keep the parts that have no window apart
+from the parts that do, so most of the logic builds and tests anywhere.
+
+## The big picture
+
+The same code builds for Windows and Linux. Nearly all of it is shared: the backend
+crates have no window and no OS calls of their own, and the UI is one set of Slint
+files. What differs per OS is a thin layer of adapters, picked at compile time with
+`cfg(windows)` / `cfg(not(windows))`.
+
+```mermaid
+flowchart TB
+    subgraph UI["Frontend: shared"]
+        slint["ui/*.slint<br/>(notch, office, Settings, chat drawer)"]
+        glue["apps/hover glue<br/>main.rs, office_ui.rs, view.rs, pages.rs, voice_ui.rs"]
+    end
+
+    subgraph Backend["Backend: shared, no window"]
+        core["hover-core<br/>paths, settings, crypto, history, secrets, projects"]
+        agents["hover-agents<br/>ACP host, OpenCode server, sessions, routing"]
+        quota["hover-quota<br/>Claude Code, Kiro, Codex, Cursor"]
+        chat["hover-chat<br/>thread layout and CPU painter"]
+        md["hover-md + hover-diagram<br/>Markdown, Mermaid"]
+        notch["hover-notch<br/>geometry, animation, hover rules"]
+        office["hover-office<br/>3D scene on wgpu, its own thread"]
+        voice["voice/, speech.rs, phonon.rs<br/>capture, Groq, Phonon, cleanup"]
+    end
+
+    subgraph Win["Windows adapters"]
+        w1["win.rs: notch window, tray, RegisterHotKey, hold-to-talk"]
+        w2["platform/windows.rs: DPAPI, autostart, dark mode"]
+        w3["proc.rs: Job objects"]
+        w4["femtovg on wgpu (DX12), mimalloc"]
+    end
+
+    subgraph Lin["Linux adapters"]
+        l1["x11.rs: override-redirect window, XShape, XGrabKey"]
+        l2["sni.rs: tray and notifications over D-Bus"]
+        l3["platform/linux.rs: Secret Service, XDG"]
+        l4["proc.rs: process groups, PDEATHSIG"]
+        l5["femtovg on OpenGL"]
+    end
+
+    slint --> glue
+    glue --> Backend
+    glue -- "cfg(windows)" --> Win
+    glue -- "cfg(not(windows))" --> Lin
+    core -. "cfg per OS" .-> w2
+    core -. "cfg per OS" .-> l3
+    agents -. "cfg per OS" .-> w3
+    agents -. "cfg per OS" .-> l4
+```
+
+The Slint files are compiled into Rust at build time (`apps/hover/build.rs` runs
+`slint_build::compile("ui/app.slint")`), so there is no UI file to ship and no
+interpreter at run time. The same markup draws on both OSes; only the renderer under it
+differs (see [Frames](#the-offices-frames-and-their-lifetime)).
+
+## How the crates depend on each other
+
+Arrows point at what a crate uses. Nothing in `crates/` depends on `apps/`, and no
+backend crate depends on Slint.
+
+```mermaid
+flowchart LR
+    hover["apps/hover<br/>(hoverai)"]
+    agents[hover-agents]
+    core[hover-core]
+    quota[hover-quota]
+    chat[hover-chat]
+    md[hover-md]
+    diagram[hover-diagram]
+    notch[hover-notch]
+    office[hover-office]
+    measure["tools/hover-measure"]
+    cproto["apps/chat-proto"]
+    nproto["apps/notch-proto"]
+
+    hover --> agents & chat & core & md & notch & office & quota
+    quota --> agents & core
+    agents --> core
+    office --> core
+    chat --> md
+    md --> diagram
+    measure --> core
+    cproto --> agents & chat & core & md
+    nproto --> notch
+```
+
+`hover-core` is the floor: everything that stores or reads the user's data goes
+through it. `hover-diagram` and `hover-notch` depend on nothing in the workspace.
+
+## How the builds work
+
+Both platforms run the same Cargo build of the same workspace. They differ in the
+wrapper script and in how the result is packaged.
+
+```mermaid
+flowchart TB
+    src["native/ workspace<br/>crates + apps/hover + ui/*.slint"]
+
+    subgraph WinB["Windows: build.ps1"]
+        wc["cargo build --release -p hover<br/>(MSVC toolchain)"]
+        wexe["native/target/release/hoverai.exe"]
+        wpub["publish/<br/>hoverai.exe, LICENSE, THIRD-PARTY-NOTICES.txt"]
+        wiss["Inno Setup (ISCC) + native/installer/Hover.iss"]
+        wout["dist/Hover-Setup-version.exe"]
+        wc --> wexe -->|"build.ps1 publish"| wpub -->|"build.ps1 installer"| wiss --> wout
+    end
+
+    subgraph LinB["Linux: Makefile"]
+        lc["cargo build --release -p hover<br/>(gcc, fontconfig, ALSA, xkbcommon)"]
+        lexe["native/target/release/hoverai"]
+        lpkg["native/installer/package-linux.sh"]
+        ldeb["dist/hover_version_amd64.deb"]
+        ltar["dist/hover-version-linux-x86_64.tar.gz"]
+        linst["make install<br/>PREFIX/bin/hover + icon + .desktop"]
+        lc --> lexe -->|"make package"| lpkg --> ldeb & ltar
+        lexe -->|"make install"| linst
+    end
+
+    src --> wc
+    src --> lc
+```
+
+- The binary carries its fonts, icons, music and the Phonon locks and check sample
+  (`include_bytes!` / `include_str!`), so the installers ship one executable plus the
+  licence files.
+- The version is `native/Cargo.toml`'s `[workspace.package] version`. `build.ps1`,
+  the Makefile, the installers and `hoverai --version` all read it from there.
+- The Rust toolchain is pinned in `rust-toolchain.toml` at the repo root.
+
+### CI and releases
+
+`.github/workflows/ci.yml` runs on GitHub's own runners. One job per OS does the whole
+check, and on a `v*` tag the same job builds the installers from the build it just
+tested.
+
+```mermaid
+flowchart LR
+    push["push to rust-port/**<br/>or a pull request"] --> wj & lj
+    tag["push of tag vX.Y.Z"] --> wj & lj
+
+    subgraph wj["windows job (windows-2022)"]
+        wt["cargo test --workspace"] --> ws["hoverai --shots"] --> wi["tag only:<br/>build.ps1 installer"]
+    end
+
+    subgraph lj["linux job (ubuntu-22.04)"]
+        lt["cargo test --workspace"] --> ls["hoverai --shots"] --> lp["tag only:<br/>make package"]
+    end
+
+    wi --> rel
+    lp --> rel
+    rel["release job (tag only)<br/>GitHub pre-release with the .exe, .deb, .tar.gz"]
+```
+
+A tag whose version doesn't match `native/Cargo.toml` fails before anything builds. A
+failing test on either OS means nothing is published. Pushes that only touch Markdown,
+`docs/` or the README's pictures don't run CI.
+
+## What runs at run time
+
+One process. The UI thread owns every window; the heavy work runs on threads of its own
+and reaches the UI only through `ui_do`. The agents are child processes.
+
+```mermaid
+flowchart LR
+    subgraph P["hoverai process"]
+        ui["UI thread<br/>Slint event loop, notch, office UI, Settings"]
+        rt["Hover (app.rs)<br/>settings, history, sessions, quota poller"]
+        turns["one thread per running turn"]
+        off["office thread<br/>wgpu scene"]
+        vw["voice threads<br/>capture, transcribe, route, countdown"]
+        ui <-->|"ui_do / hooks"| rt
+        rt --> turns
+        ui <--> off
+        ui <--> vw
+    end
+
+    turns -->|"JSON-RPC over stdio"| acp["kiro-cli acp, codex-acp, cursor-agent acp"]
+    turns -->|"HTTP on 127.0.0.1"| oc["opencode serve"]
+    vw -->|"one run per recording"| ph["Phonon helper<br/>(managed Python + fermion)"]
+    vw -->|"HTTPS"| groq["Groq, cleanup service"]
+    rt --> disk[("data folder<br/>settings.json, agents/, secrets.dat")]
+```
+
+The child processes sit in a Windows job object or a Linux process group, so they stop
+when Hover does.
 
 ## Crates
 
