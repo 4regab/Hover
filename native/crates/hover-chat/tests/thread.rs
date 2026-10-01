@@ -200,7 +200,17 @@ fn step_rows_sit_where_the_page_puts_them() {
         let exp: Vec<(f32, f32)> = rows.iter().map(|r| (r[0].as_f64().unwrap() as f32, r[1].as_f64().unwrap() as f32)).collect();
         eprintln!("{name}: rows at {got:?}, page {exp:?}");
         assert_eq!(got.len(), exp.len(), "{name}");
-        for (g, e) in got.iter().zip(&exp) { assert!((g.0 - e.0).abs() <= 1.5 && (g.1 - e.1).abs() <= 0.5, "{name}: {g:?} vs {e:?}"); }
+        // The summary flex-shrinks (26 down to 16.5) when the thread overflows its view.
+        // The answer's actions row (Copy, Retry, the run's time) is new since the 2.x
+        // page these were measured in, so a turn that fitted there may now shrink it:
+        // its top must still match, and its height stay inside the page's own range.
+        let (g, e) = (got[0], exp[0]);
+        assert!((g.0 - e.0).abs() <= 1.5 && (16.5..=26.0).contains(&g.1), "{name} summary: {g:?} vs {e:?}");
+        // The rows sit where the page puts them under the summary.
+        for (r, x) in got.iter().zip(&exp).skip(1) {
+            let (rg, re) = (r.0 - (g.0 + g.1), x.0 - (e.0 + e.1));
+            assert!((rg - re).abs() <= 1.5 && (r.1 - x.1).abs() <= 0.5, "{name}: {r:?} vs {x:?}");
+        }
     }
 }
 
