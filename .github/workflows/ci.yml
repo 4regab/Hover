@@ -3,7 +3,7 @@ name: CI
 # Contributor checks for the native (Rust) Hover on GitHub's own runners: the tests on
 # Windows and Linux, the Windows compile check from Linux, and the headless screenshots.
 # No secrets and no agent accounts: agent runs use the repo's fake-agent. Releases are
-# codebuild.yml's (maintainers only).
+# release.yml's (a v* tag).
 on:
   push:
     branches: ['rust-port/**']
