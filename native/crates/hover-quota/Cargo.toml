@@ -21,7 +21,7 @@ chrono = { version = "0.4", default-features = false, features = ["std", "clock"
 # (raw-dylib), so nothing is compiled or linked for MSVC here.
 [target.'cfg(not(windows))'.dependencies]
 libsqlite3-sys = { version = "0.38", features = ["bundled"] }
-# cursor.com and api.anthropic.com, as chat-proto fetches images: rustls here.
+# cursor.com and api.anthropic.com, as the chat fetches images (apps/hover net.rs): rustls here.
 ureq = "3"
 
 [target.'cfg(windows)'.dependencies]

@@ -774,23 +774,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "chat-proto"
-version = "3.1.0"
-dependencies = [
- "arboard",
- "hover-agents",
- "hover-chat",
- "hover-core",
- "hover-md",
- "image",
- "serde_json",
- "slint",
- "slint-build",
- "ureq",
- "windows",
-]
-
-[[package]]
 name = "chrono"
 version = "0.4.45"
 source = "registry+https://github.com/rust-lang/crates.io-index"

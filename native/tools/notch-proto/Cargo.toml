@@ -1,6 +1,6 @@
 [package]
 name = "notch-proto"
-description = "Phase 1A prototype: the Windows notch window on Slint + winit + wgpu (DX12 through DirectComposition)."
+description = "The Windows notch window on Slint + winit + wgpu (DX12 through DirectComposition), from the port's Phase 1A. Not shipped: kept for its --selftest, Hover's only notch self-test on Windows."
 version.workspace = true
 edition.workspace = true
 license.workspace = true

@@ -76,8 +76,7 @@ flowchart LR
     notch[hover-notch]
     office[hover-office]
     measure["tools/hover-measure"]
-    cproto["apps/chat-proto"]
-    nproto["apps/notch-proto"]
+    nproto["tools/notch-proto"]
 
     hover --> agents & chat & core & md & notch & office & quota
     quota --> agents & core
@@ -86,7 +85,6 @@ flowchart LR
     chat --> md
     md --> diagram
     measure --> core
-    cproto --> agents & chat & core & md
     nproto --> notch
 ```
 
@@ -202,7 +200,7 @@ when Hover does.
 | `crates/hover-notch` | The notch's geometry, animation and hover rules. | No |
 | `crates/hover-office` | The office: scene, bots, wall canvases, camera, picking and pacing (`office.rs`, `scene.rs`, `bot.rs`), the wgpu renderer (`render.rs`, `office.wgsl`), the page's background and vignette (`page.rs`), and its own thread (`live.rs`). | No (renders offscreen) |
 | `apps/hover` | The product: `main.rs` (windows, renderer, timers), `office_ui.rs` (the office UI around the scene), `view.rs` and `pages.rs` (Settings), `notch.rs` with `win.rs` / `x11.rs` (placing, focus, click-through), tray (`sni.rs` on Linux, `win.rs` on Windows), voice (`speech.rs`, `voice/`, `phonon.rs`, `voice_ui.rs`), `music.rs`, `bench.rs` (the measurement channel), `shots.rs`, `selftest.rs`, and the Slint UI in `ui/*.slint`. | Yes |
-| `apps/chat-proto`, `apps/notch-proto` | Prototypes from the port. Not shipped. | Yes |
+| `tools/notch-proto` | The port's Windows notch prototype. Not shipped; kept for `notch-proto --selftest`, the only notch self-test on Windows (the app's `--selftest` is X11 only). | Yes |
 | `tools/hover-measure` | Dev tools, not shipped: the external memory sampler, the scenario runner, the summary, and `fake-agent`. See [profiling.md](profiling.md). | No |
 
 ## Boundaries

@@ -1,7 +1,7 @@
 //! The notch's geometry and behaviour, from `src/Hover/Owl/Notch.cs`, with no windowing:
 //! sizes and placement, the outline (square top, concave ears, round bottom corners),
 //! the openness animation, the hover state machine and the hit region. The Windows layer
-//! (`apps/notch-proto/src/win.rs`) applies it to a real window.
+//! (`tools/notch-proto/src/win.rs`) applies it to a real window.
 
 /// DIP padding around the open shape inside the window (the shadow lives there).
 pub const PAD: f64 = 40.0;

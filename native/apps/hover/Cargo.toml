@@ -36,8 +36,8 @@ image = { version = "0.25", default-features = false, features = ["png", "ico", 
 lewton = "0.10"
 cpal = "0.18"
 
-# In the tree (chat-proto): a code block's Copy in the chat puts its text on the clipboard,
-# and a pasted picture (image-data) is attached to the task or the reply.
+# A code block's Copy in the chat puts its text on the clipboard, and a pasted picture
+# (image-data) is attached to the task or the reply.
 arboard = { version = "3.6", default-features = false, features = ["image-data"] }
 # Already in the tree: Local speech (phonon.rs) unpacks its managed Python's .tar.gz.
 flate2 = "1"

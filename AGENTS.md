@@ -87,7 +87,9 @@ native/apps/
                  bench.rs (HOVER_BENCH), selftest, shots; voice (speech.rs, voice/,
                  voice_ui.rs), Phonon's setup and engine (phonon.rs, assets/phonon/);
                  ui/*.slint; assets/
-  chat-proto, notch-proto   the port's prototypes
+native/tools/
+  hover-measure  memory sampler, scenario runner, fake-agent (not shipped)
+  notch-proto    the port's Windows notch prototype, kept for its --selftest (not shipped)
 native/golden/   fixtures and expected outputs (made from the 2.x page)
 native/installer/  Hover.iss (Windows), package-linux.sh
 assets/          hover.png (the logo), make-icon.py (writes the app's hover.ico and
