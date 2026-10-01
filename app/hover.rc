@@ -1,0 +1,3 @@
+// hoverai.exe's own icon, so Explorer, the Start menu, the desktop shortcut and the
+// taskbar show Hover's logo, not Windows' blank program icon (build.rs links it in).
+1 ICON "assets/hover.ico"

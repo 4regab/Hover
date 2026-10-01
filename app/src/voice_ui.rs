@@ -8,7 +8,7 @@ use hover_app::app::Hover;
 use hover_app::pages::{self, PhononAction, PhononCard, Section, TryCard};
 use hover_app::phonon::{Install, Phonon};
 use hover_app::voice::{Hooks, Preview, Stage, Voice};
-use hover_core::model::{AgentTool, KiroState};
+use hover_core::model::{AgentOptions, AgentTool, KiroState};
 use hover_core::projects::{self, SpeechMode, GROQ_SECRET};
 use hover_core::shortcut::Shortcut;
 use hover_notch::State;
@@ -347,7 +347,8 @@ impl App {
         (c.folder, c.letter, c.tint, c.home) = look;
         c.tool = s(p.tool.id());
         c.agent = s(p.tool.name());
-        c.model = s(model_name(st, p.tool));
+        // The office's pill: the model's name ("Default" when the tool lists none).
+        c.model = s(self.pill(p.tool).0);
         c.access = s(pages::access_label(&p.access));
         c.full = p.access == "full";
         c.task = s(&p.task);
@@ -392,7 +393,7 @@ impl App {
                 let checked = self.voice_ui.ready.borrow().as_ref().is_some_and(|r| r.0 == p.id);
                 note = if checked { "Agents that are installed and signed in. The default is in Settings → Voice." } else { "Checking which agents are ready…" }.into();
             }
-            (2, Some(p)) => (head, models, effort_head, efforts, note) = model_rows(&self.hover.settings, p.tool),
+            (2, Some(p)) => (head, models, effort_head, efforts, note) = self.model_rows(p.tool),
             _ => {}
         }
         n.set_voice_menu_head(s(head));

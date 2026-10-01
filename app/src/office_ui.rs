@@ -995,7 +995,7 @@ impl App {
 
     /// renderPill: the model's name, its effort when the model (or tool) takes that one,
     /// and whether the tool offers models at all.
-    fn pill(&self, t: AgentTool) -> (String, String, bool) {
+    pub(crate) fn pill(&self, t: AgentTool) -> (String, String, bool) {
         let st = &self.hover.settings;
         let models = hover_agents::state::models_with_levels(st, t);
         let o = st.agent_options(t);
@@ -1008,7 +1008,7 @@ impl App {
     }
 
     /// openMenu's rows: the heading, the models, the effort's heading and choices, the note.
-    fn model_rows(&self, t: AgentTool) -> (String, Vec<MOpt>, String, Vec<MOpt>, String) {
+    pub(crate) fn model_rows(&self, t: AgentTool) -> (String, Vec<MOpt>, String, Vec<MOpt>, String) {
         let st = &self.hover.settings;
         let models = hover_agents::state::models_with_levels(st, t);
         let o = st.agent_options(t);

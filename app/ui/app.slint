@@ -868,6 +868,8 @@ export component DashboardWindow inherits Window {
     callback drag();
     callback resize(int);
     title: "Hover";
+    // The taskbar's and Alt+Tab's icon while the dashboard shows.
+    icon: @image-url("../assets/hover-mark.png");
     no-frame: true;
     preferred-width: 1200px;
     preferred-height: 620px;

@@ -143,11 +143,11 @@ flowchart LR
     tag["push of tag vX.Y.Z"] --> wj & lj
 
     subgraph wj["windows job (windows-2022)"]
-        wt["cargo test --workspace"] --> ws["hoverai --shots"] --> wi["tag only:<br/>build.ps1 installer"]
+        wt["cargo test --workspace"] --> wi["tag only:<br/>build.ps1 installer"]
     end
 
     subgraph lj["linux job (ubuntu-22.04)"]
-        lt["cargo test --workspace"] --> ls["hoverai --shots"] --> lp["tag only:<br/>make package"]
+        lt["cargo test --workspace"] --> lp["tag only:<br/>make package"]
     end
 
     wi --> rel

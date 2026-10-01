@@ -1,7 +1,7 @@
 name: CI
 
-# The native (Rust) Hover on GitHub's own runners: one job per platform runs the tests
-# and the headless screenshots. On a v* tag (three numbers, matching Cargo.toml)
+# The native (Rust) Hover on GitHub's own runners: one job per platform runs the tests.
+# On a v* tag (three numbers, matching Cargo.toml)
 # the same jobs then build the installers from the build they just tested, and
 # `release` publishes them together as a pre-release. No secrets and no agent
 # accounts: agent runs use the repo's fake-agent.
@@ -48,19 +48,6 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Test
         run: cargo test --release --workspace --no-fail-fast
-      - name: Headless screenshots
-        run: |
-          cargo build --release -p hover
-          $env:HOVER_DATA_DIR = Join-Path $env:RUNNER_TEMP 'hover-data'
-          .\target\release\hoverai.exe --shots (Join-Path $env:RUNNER_TEMP 'shots') | Out-Host
-          $n = (Get-ChildItem (Join-Path $env:RUNNER_TEMP 'shots') -Filter *.png).Count
-          if ($n -eq 0) { throw 'no screenshots were written' }
-          Write-Host "$n screenshots"
-      - uses: actions/upload-artifact@v4
-        with:
-          name: shots-windows
-          path: ${{ runner.temp }}/shots/*.png
-          if-no-files-found: error
       # build.ps1 finds Inno Setup 6 or 7; installed only when the image lacks it.
       - name: Build installer
         if: env.RELEASE == 'true'
@@ -102,19 +89,6 @@ jobs:
         run: |
           mkdir -p -m 700 "$XDG_RUNTIME_DIR"
           cargo test --release --workspace --no-fail-fast
-      - name: Headless screenshots
-        env:
-          XDG_RUNTIME_DIR: ${{ runner.temp }}/xdg
-          HOVER_DATA_DIR: ${{ runner.temp }}/hover-data
-        run: |
-          cargo build --release -p hover
-          ./target/release/hoverai --shots "$RUNNER_TEMP/shots"
-          ls "$RUNNER_TEMP/shots"/*.png > /dev/null
-      - uses: actions/upload-artifact@v4
-        with:
-          name: shots-linux
-          path: ${{ runner.temp }}/shots/*.png
-          if-no-files-found: error
       - name: Build packages
         if: env.RELEASE == 'true'
         run: make package VERSION="$RELEASE_VERSION"

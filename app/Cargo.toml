@@ -82,6 +82,9 @@ windows = { version = "0.62", features = [
 
 [build-dependencies]
 slint-build = "=1.18.1"
+# New crate: compiles hover.rc (the exe's icon) with the SDK's rc.exe, or llvm-rc
+# under cargo-xwin. Without it the exe, its shortcuts and the taskbar show a blank icon.
+embed-resource = "=3.0.11"
 
 [features]
 # Heap counting for tools/hover-measure (bench.rs `heap`); never in a release you ship.

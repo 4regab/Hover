@@ -212,7 +212,7 @@ works for people and AI agents changing it.
 ## Contributing
 
 Issues and pull requests are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) first. Every
-pull request runs the tests and headless screenshots on Windows and Linux.
+pull request runs the tests on Windows and Linux.
 
 ## License
 
