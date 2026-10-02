@@ -334,7 +334,7 @@ exit($? & 127 ? 128 + ($? & 127) : $? >> 8);
         var sockets = new List<string> { temp };
         if (OperatingSystem.IsMacOS() && Settings.ComputerUse) sockets.Add(CuaSocket);
         // Hover's browser: the relay the agent's tool starts talks to Hover over this one socket.
-        if (BrowserTool.Available && Settings.AgentBrowser) sockets.Add(BrowserTool.SocketPath);
+        if (BrowserTool.Available && Settings.AgentBrowser || Spaces.Wanted) sockets.Add(BrowserTool.SocketPath);
         var file = Path.Combine(dir, $"{Agents.Id(tool)}.json");
         File.WriteAllText(file, Config(tool, folders, temp, sockets));
         if (!OperatingSystem.IsWindows()) File.SetUnixFileMode(file, UnixFileMode.UserRead | UnixFileMode.UserWrite);

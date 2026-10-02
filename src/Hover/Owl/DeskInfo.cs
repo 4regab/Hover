@@ -79,8 +79,14 @@ public static class DeskInfo
     /// done ("Clicked", "Typed") and on what (the text typed, the key, the app).
     internal static (string Did, string? On) ScreenAction(KiroStep x)
     {
-        var tool = ScreenVerb.Match(x.Title ?? "") is { Success: true } m ? m.Value.ToLowerInvariant() : "";
-        var app = Field(x.Input, "app_name", "appName", "name", "bundle_id");
+        // A Cua Space's tools are computer_* (computer_type, computer_key, computer_launch…);
+        // Cua Driver's on the user's desktop are type_text, press_key, launch_app.
+        var title = Regex.Replace(x.Title ?? "", @"computer_(type|key|launch|hotkey|move_cursor|get_window|get_accessibility_tree)\b", c => c.Groups[1].Value switch
+        {
+            "type" => "type_text", "key" => "press_key", "launch" => "launch_app", "get_window" => "get_window_state", "get_accessibility_tree" => "get_window_state", var v => v,
+        });
+        var tool = ScreenVerb.Match(title) is { Success: true } m ? m.Value.ToLowerInvariant() : "";
+        var app = Field(x.Input, "app_name", "appName", "name", "app", "bundle_id");
         string? Cut(string? t) => t is null ? null : t.Length > 60 ? t[..59] + "…" : t;
         return tool switch
         {

@@ -54,6 +54,7 @@
     <Compile Remove="Services/Sandbox.cs" />
     <Compile Remove="Services/BrowserTool.cs" />
     <Compile Remove="Services/GitHubCli.cs" />
+    <Compile Remove="Services/Spaces.cs" />
     <Compile Remove="Owl/KiroSession.cs" />
     <Compile Remove="Owl/AgentHistory.cs" />
     <Compile Remove="Owl/DeskInfo.cs" />

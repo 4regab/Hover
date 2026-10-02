@@ -568,6 +568,24 @@ body.host.notch #office::before{content:"";position:absolute;inset:0 0 auto;heig
 /* Bigger: the desktop takes most of the office, as a remote desktop window would. */
 #panel.big{width:min(1100px,calc(100% - 24px))}#panel.big .dbody{container-type:size}#panel.big .vm{height:100%}#panel.big .vmbar,#panel.big .vmscreen{width:min(100cqw,calc((100cqh - 120px) * 1512 / 982));align-self:center}
 .s.k-screen>.n{color:#c4a2ff}
+#bigBtn svg{width:15px;height:15px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}#bigBtn:hover{color:#fff}
+/* The agent's Cua Space: the host lays its viewer over .spbox. */
+.vm.sp .spbox{background:#0b0a0f}.sl.bad{background:rgba(255,69,58,.14);color:#ff9a92}.sl.bad i{background:#ff453a}
+.spmsg{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:7px;padding:20px;text-align:center}
+.spmsg>svg{width:30px;height:30px;fill:none;stroke:#c4a2ff;stroke-width:1.6}.spmsg b{font:600 14px Inter,"Segoe UI",sans-serif}.spmsg span{max-width:380px;font-size:12px;line-height:1.5;color:var(--dim)}.spmsg .pbtn{margin-top:6px}
+.spbar{display:block;width:220px;height:5px;border-radius:3px;background:rgba(255,255,255,.08);overflow:hidden;margin-top:6px}.spbar i{display:block;height:100%;background:#9b6bff;border-radius:3px;transition:width .4s}
+.spdemo{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;background:linear-gradient(135deg,#1d2b64,#7a3e8f 55%,#f8a978);color:#fff}.spdemo b{font:600 16px Inter,sans-serif}.spdemo span{font-size:12px;opacity:.85}
+.sphint{display:flex;align-items:center;gap:7px;margin:-2px 2px 0;font-size:11.5px;color:var(--faint)}.sphint svg{width:12px;height:12px;fill:none;stroke:currentColor;stroke-width:2}
+/* An app or files dragged onto the notch: the agents' desktops as drop targets. */
+#tdrop{position:absolute;inset:12px;z-index:12;border-radius:20px;padding:18px;display:flex;flex-direction:column;gap:14px;background:rgba(16,14,20,.94);box-shadow:0 0 0 1px rgba(196,162,255,.35),0 30px 60px -20px rgba(0,0,0,.8);animation:rise .18s ease-out}
+.tdh{display:flex;gap:12px;align-items:flex-start}.tdh>svg{flex:none;width:26px;height:26px;fill:none;stroke:#c4a2ff;stroke-width:1.7}.tdh b{display:block;font:600 15px Inter,"Segoe UI",sans-serif}.tdh span{font-size:12px;color:var(--dim)}
+.tdt{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:10px}
+.tdtile{display:flex;flex-direction:column;gap:3px;padding:12px;border-radius:14px;background:rgba(255,255,255,.04);box-shadow:inset 0 0 0 1px rgba(255,255,255,.07);transition:transform .12s,background .12s,box-shadow .12s}
+.tdtile.on{transform:scale(1.03);background:color-mix(in srgb,var(--c) 22%,rgba(255,255,255,.05));box-shadow:inset 0 0 0 2px var(--c),0 10px 26px -12px var(--c)}
+.tdtile.sent{animation:pulse .6s 2}
+.tdmon{display:grid;place-items:center;height:70px;margin-bottom:6px;border-radius:9px;background:radial-gradient(circle at 50% 40%,color-mix(in srgb,var(--c) 40%,transparent),#0b0a0f 75%);box-shadow:inset 0 0 0 1px rgba(255,255,255,.08)}.tdmon .lg.mini{width:22px;height:22px}
+.tdtile b{font:600 13px Inter,"Segoe UI",sans-serif}.tdtile>span{font-size:11.5px;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.tdtile em{font:500 10.5px Inter,sans-serif;font-style:normal;color:var(--faint)}
+.tdnone{margin:0;font-size:12.5px;color:var(--dim)}
 .sacc{display:flex;flex-direction:column;gap:3px;padding:10px 12px;border-radius:10px;background:rgba(255,196,107,.08);color:#ffd59a;font-size:12px}.sacc b{font-weight:600}.sacc .pbtn{align-self:flex-start;margin-top:6px}
 .kanban{display:flex;flex-direction:column;gap:14px}
 .col h4,.sh{display:flex;align-items:center;gap:8px;margin:0 4px 8px;font:600 12px var(--px);letter-spacing:.06em;text-transform:uppercase;color:var(--dim)}
@@ -617,6 +635,7 @@ body.host.notch #office::before{content:"";position:absolute;inset:0 0 auto;heig
   <canvas id="gl" aria-label="The agent office. Each bot is a session; click one to open it."></canvas>
   <div id="tags"></div>
   <div class="hud">
+    <div class="seg glass"><button id="bigBtn" aria-label="Open Hover in a window" title="Open Hover in a window"></button></div>
     <div class="seg glass"><button id="menuBtn" aria-label="Menu" title="Menu: time of day, music, history and Settings" aria-haspopup="menu" aria-expanded="false"><svg viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button></div>
   </div>
   <!-- New task: one circle; a click shows the agents' logos, a pick opens the box. -->
@@ -643,6 +662,7 @@ body.host.notch #office::before{content:"";position:absolute;inset:0 0 auto;heig
   <!-- A desk's menu: what its agent has open, as T3 Code's panel launcher. -->
   <div id="deskMenu" role="menu" hidden></div>
   <div id="deskSub" role="menu" aria-label="Pages" hidden></div>
+  <div id="tdrop" class="glass" role="dialog" aria-label="Send to an agent’s desktop" hidden></div>
   <div id="confirm" class="glass" role="alertdialog" aria-modal="true" aria-labelledby="cfTitle" hidden><b id="cfTitle"></b><span id="cfText"></span><div><button id="cfNo">Cancel</button><button id="cfYes">Delete</button></div></div>
   <div id="tip" hidden></div>
   <div id="toast" class="glass"></div>

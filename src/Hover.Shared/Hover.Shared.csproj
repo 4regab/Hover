@@ -22,6 +22,7 @@
     <Compile Include="../Hover/Services/Sandbox.cs" Link="Services/Sandbox.cs" />
     <Compile Include="../Hover/Services/BrowserTool.cs" Link="Services/BrowserTool.cs" />
     <Compile Include="../Hover/Services/GitHubCli.cs" Link="Services/GitHubCli.cs" />
+    <Compile Include="../Hover/Services/Spaces.cs" Link="Services/Spaces.cs" />
     <Compile Include="../Hover/Owl/KiroSession.cs" Link="Owl/KiroSession.cs" />
     <Compile Include="../Hover/Owl/AgentHistory.cs" Link="Owl/AgentHistory.cs" />
     <Compile Include="../Hover/Owl/DeskInfo.cs" Link="Owl/DeskInfo.cs" />

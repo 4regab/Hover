@@ -330,6 +330,30 @@ carry a legacy `Noty` reference **only** in `Core/Paths.cs`, which migrates an o
   (`Owl/ScreenFeed.cs` on Windows, `macos/Sources/Screen.swift` with ScreenCaptureKit
   and Hover's own Screen Recording grant on a Mac). In a browser, `?desk=<id>[:<tab>]`
   opens it with demo data.
+- **Each agent can have a desktop of its own: a Cua Space.** `Services/Spaces.cs` (no
+  WPF), on with Settings → Computer Use → Give each agent a desktop (macOS 26+, Apple
+  silicon; `Settings.AgentSpaces`, image `SpaceImage` macos or linux). It drives Cua's
+  `cua` CLI: `spaces create <image> --name hover-<key>` before the session's first run
+  (`Spaces.Ensure`, its progress as `space` in the state), `spaces stop` when the
+  session is removed or Hover quits, `spaces delete` with the session. The agent's
+  computer use then goes to its Space, never the user's screen: `cua mcp --sandbox
+  local:hover-<key> --permissions computer:…` (no shell, no Spaces admin), which Hover
+  runs itself outside the agents' sandbox and joins to the agent over the browser's
+  relay and socket (`BrowserTool.Bridge`, server `cua-space`); host Cua Driver is not
+  given then. The Screen panel shows Cua's own interactive viewer (`cua sb view
+  --no-open`), laid over the panel's `.spbox` by the host (`SpaceViewers`, it refuses
+  to be framed); a click in it is the user stepping in. An app window dragged to the
+  notch (`TeleportDrag`: the window under the pointer moving, via CGWindowList), or
+  files and apps from Finder or the Dock (`NotchDropView`), open the office on the
+  agents' desktops (`#tdrop`); a drop sends `teleport` (`cua teleport push --app
+  <bundle> --sandbox <space>`, Cua's own consent and Touch ID) or `spaceFiles`
+  (`send_file` to its Downloads). One-click setup runs Cua's installer
+  (`--select cli,spaces --no-onboarding`), `cua runtime setup lume` and a first create
+  to download the image. A Mac runs two macOS Spaces at most.
+- **The office opens in a window.** The button at its top right: from the notch it
+  folds the notch and opens the dashboard window (big, full-size content) with the
+  same chat or desk panel open (`{type:'window', open}` → `restore`); in the window it
+  toggles full screen.
 - **Agents get Hover's browser, as T3 Code's get its preview.** `Services/BrowserTool.cs`
   (no WPF) is an MCP server (`hover-browser`: browser_open, snapshot, click, type,
   press, scroll, screenshot, evaluate, wait, console, back, reload) given to every

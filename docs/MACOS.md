@@ -198,8 +198,10 @@ screen feed with the packaged backend, a stand-in agent (`tests/macos/e2e/fake-a
 and a stand-in `gh`, against a local test site: a task from the circle, an approval,
 two subagents and their helpers, the desk card, the agent driving Hover's browser over
 its MCP relay, the agent's desktop (apps, activity, Control's input as Hover maps it),
-the answer, every desk panel, Create pull request (a real push to a local remote) and a
-reply from the card. No window is made and the harness never activates; it writes only
+the answer, every desk panel, Create pull request (a real push to a local remote), a
+reply from the card, the window button, and agent desktops through a stand-in `cua`
+(a Space made before the run, the agent's computer use reaching it over the relay,
+the viewer laid over the panel, an app and files dropped on the notch, deletion). No window is made and the harness never activates; it writes only
 to its temp folder (`sandbox-exec`), reaches only localhost, and touches no real app.
 Screenshots of each step are kept in that folder.
 

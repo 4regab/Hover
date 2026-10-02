@@ -61,7 +61,8 @@ public static class ComputerUse
     /// the guard (see Guard), so an agent's computer use never takes the user's pointer,
     /// keyboard or focus.
     public static IReadOnlyList<McpServer> Servers() =>
-        Settings.ComputerUse && Exe() is { } exe ? new[] { Server(exe) } : Array.Empty<McpServer>();
+        // An agent with a desktop of its own (Services.Spaces) never drives the user's.
+        Settings.ComputerUse && !Spaces.Wanted && Exe() is { } exe ? new[] { Server(exe) } : Array.Empty<McpServer>();
 
     private const string Perl = "/usr/bin/perl";
     /// Where the guard is written: Hover's own folder, which the sandbox lets the agent

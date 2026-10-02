@@ -47,6 +47,9 @@ public static class Settings
         public bool? Sandbox { get; set; }
         /// Null (never set) is on: agents get Hover's browser where the host has one.
         public bool? AgentBrowser { get; set; }
+        /// Each agent gets a Cua Space of its own (Services.Spaces); "macos" or "linux".
+        public bool AgentSpaces { get; set; }
+        public string? SpaceImage { get; set; }
 
         // Option-N on a Mac. Alt+N here also means "Insert" in Office and "File name"
         // in file dialogs; while Hover runs, it opens the notch instead.
@@ -216,6 +219,22 @@ public static class Settings
     {
         get => M.AgentBrowser ?? true;
         set { M.AgentBrowser = value; Save(); }
+    }
+
+    /// Each agent session gets a desktop of its own, a Cua Space, in place of the
+    /// user's screen (Services.Spaces). Off until switched on; a tool picks it up from
+    /// its next session.
+    public static bool AgentSpaces
+    {
+        get => M.AgentSpaces;
+        set { M.AgentSpaces = value; Save(); }
+    }
+
+    /// The image a new Space starts from: "macos" (a VM, two at most) or "linux".
+    public static string SpaceImage
+    {
+        get => M.SpaceImage == "linux" ? "linux" : "macos";
+        set { M.SpaceImage = value == "linux" ? "linux" : "macos"; Save(); }
     }
 
     /// How an agent's runs are set up (Settings → Kiro, Codex, Cursor). Read when a

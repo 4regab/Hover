@@ -152,7 +152,7 @@ public sealed class AcpHost : IAgentRuntime
         // sandbox (no Launch Services there), so Hover does, outside it.
         if (Sandbox.Wanted && Settings.ComputerUse) await ComputerUse.EnsureDaemon();
         var o = _options().WithAccess(access);
-        var servers = _mcp().Concat(BrowserTool.Servers(Tool, tag)).ToList();
+        var servers = _mcp().Concat(BrowserTool.Servers(Tool, tag)).Concat(Spaces.Servers(Tool, tag)).ToList();
         var mcp = ComputerUse.Signature(servers);
         // A session's MCP servers are fixed when it is made or loaded. A reply to one
         // made with others (computer use switched since) loads it again in a fresh

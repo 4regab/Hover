@@ -138,6 +138,24 @@ public sealed class BrowserAndGitHubTests
         Assert.That(Said("cua-driver: type_text", "{\"pid\":1,\"text\":\"Ada\"}"), Is.EqualTo("Typed|“Ada”"));
         Assert.That(Said("cua-driver/hotkey", "{\"pid\":1,\"keys\":[\"cmd\",\"s\"]}"), Is.EqualTo("Pressed|cmd+s"));
         Assert.That(Said("cua-driver/get_window_state", "{\"pid\":1}"), Is.EqualTo("Read the window|"));
+        // A Cua Space's own tool names.
+        Assert.That(Said("mcp__cua-space__computer_type", "{\"text\":\"Ada\"}"), Is.EqualTo("Typed|“Ada”"));
+        Assert.That(Said("mcp__cua-space__computer_key", "{\"key\":\"return\"}"), Is.EqualTo("Pressed|return"));
+        Assert.That(Said("mcp__cua-space__computer_launch", "{\"app\":\"Safari\"}"), Is.EqualTo("Opened|Safari"));
+        Assert.That(Said("mcp__cua-space__computer_screenshot", "{}"), Is.EqualTo("Looked at the screen|"));
+    }
+
+    [Test]
+    public void Each_session_has_its_own_space_and_the_list_is_read_loosely()
+    {
+        Assert.That(Spaces.NameOf("3F9a2b7c4d5e6f"), Is.EqualTo("hover-3f9a2b7c4d"));
+        Assert.That(Spaces.IdOf("abc"), Is.EqualTo("local:hover-abc"));
+        var list = Spaces.ParseList("note: signed out\n[{\"id\":\"local:hover-1\",\"name\":\"hover-1\",\"os\":\"macos\",\"power_state\":\"running\"},{\"id\":\"local:x\",\"power_state\":\"stopped\"}]");
+        Assert.That(list.Select(x => (x.Id, x.Name, x.Running)), Is.EqualTo(new[] { ("local:hover-1", "hover-1", true), ("local:x", "x", false) }));
+        Assert.That(Spaces.ParseList("{\"spaces\":[{\"id\":\"local:a\",\"name\":\"a\"}]}"), Has.Count.EqualTo(1));
+        Assert.That(Spaces.ParseList("not json"), Is.Empty);
+        // The agent's tools in its Space: computer use, never its shell or Spaces' admin.
+        Assert.That(Spaces.Permissions, Does.Contain("computer:click").And.Not.Contain("shell").And.Not.Contain("spaces:"));
     }
 
     [Test]

@@ -87,6 +87,33 @@ public static class BrowserTool
         }
     }
 
+    /// Another MCP server Hover runs itself for a session (a Cua Space's `cua mcp`),
+    /// reached by the sandboxed tool over the same relay and socket: the handler gets
+    /// the name it was registered under, the agent's lines and the way back.
+    public delegate Task Handler(string name, StreamReader fromAgent, Stream toAgent);
+    private static readonly ConcurrentDictionary<string, (string Name, Handler Run)> Bridges = new();
+    private static readonly ConcurrentDictionary<string, string> BridgeTokens = new();
+
+    public static IReadOnlyList<McpServer> Bridge(string name, string server, Handler run)
+    {
+        if (OperatingSystem.IsWindows() || !File.Exists(Perl)) return Array.Empty<McpServer>();
+        try
+        {
+            Listen();
+            Directory.CreateDirectory(Dir);
+            var relay = Path.Combine(Dir, "relay.pl");
+            if (!File.Exists(relay) || File.ReadAllText(relay) != Relay) File.WriteAllText(relay, Relay);
+            var token = BridgeTokens.GetOrAdd(name, _ => Convert.ToHexString(RandomNumberGenerator.GetBytes(16)).ToLowerInvariant());
+            Bridges[token] = (name, run);
+            return new[] { new McpServer(server, Perl, new[] { relay, SocketPath, token }) };
+        }
+        catch (Exception e) when (e is IOException or SocketException or UnauthorizedAccessException)
+        {
+            Log.Line($"bridge: couldn't listen - {e.Message}");
+            return Array.Empty<McpServer>();
+        }
+    }
+
     /// The tool's MCP command joins its stdio to the socket, after its token line.
     internal const string Relay = """
 #!/usr/bin/perl
@@ -183,7 +210,9 @@ while ($sel->count) {
         try
         {
             var hello = await reader.ReadLineAsync();
-            if (hello is null || !hello.StartsWith("HELLO ", StringComparison.Ordinal) || !Tags.TryGetValue(hello[6..].Trim(), out var tag)) return;
+            if (hello is null || !hello.StartsWith("HELLO ", StringComparison.Ordinal)) return;
+            if (Bridges.TryGetValue(hello[6..].Trim(), out var bridge)) { await bridge.Run(bridge.Name, reader, stream); return; }
+            if (!Tags.TryGetValue(hello[6..].Trim(), out var tag)) return;
             while (await reader.ReadLineAsync() is { } line)
             {
                 if (line.Length == 0 || line.Length > 4 * 1024 * 1024) continue;

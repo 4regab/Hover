@@ -15,7 +15,7 @@ mkdir -p "$BOX/bin" "$BOX/data" "$BOX/tmp"
 # The harness: Hover's own Swift (OfficeHost, AgentBrowser, Screen) with E2E.swift as main.
 cp "$HERE/E2E.swift" "$BOX/main.swift"
 xcrun swiftc -swift-version 5 -target "$(uname -m)-apple-macos14.0" -framework AppKit -framework WebKit -framework ScreenCaptureKit -framework Security \
-  "$BOX/main.swift" "$ROOT/macos/Sources/OfficeHost.swift" "$ROOT/macos/Sources/AgentBrowser.swift" "$ROOT/macos/Sources/Screen.swift" -o "$BOX/e2e"
+  "$BOX/main.swift" "$ROOT/macos/Sources/OfficeHost.swift" "$ROOT/macos/Sources/AgentBrowser.swift" "$ROOT/macos/Sources/Screen.swift" "$ROOT/macos/Sources/Spaces.swift" -o "$BOX/e2e"
 # A project the agent works in: a git repository with a remote of its own.
 P="$BOX/project"; mkdir -p "$P"; printf '<form>\n</form>\n' > "$P/login.html"
 export GIT_CONFIG_GLOBAL="$BOX/gitconfig" GIT_CONFIG_NOSYSTEM=1
@@ -25,6 +25,7 @@ git -C "$P" init -q; git -C "$P" add -A; git -C "$P" commit -qm init; git -C "$P
 # The stand-ins: Codex's ACP adapter (the agent), codex (signed in) and gh (signed in;
 # no pull request until one is made).
 cp "$HERE/fake-agent.py" "$BOX/bin/codex-acp"; chmod +x "$BOX/bin/codex-acp"
+cp "$HERE/fake-cua.py" "$BOX/bin/cua"; chmod +x "$BOX/bin/cua"
 printf '#!/bin/sh\necho "Logged in using ChatGPT (e2e)"\n' > "$BOX/bin/codex"; chmod +x "$BOX/bin/codex"
 cat > "$BOX/bin/gh" <<GH
 #!/bin/sh

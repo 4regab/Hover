@@ -80,7 +80,12 @@ internal sealed class Backend
         {
             KiroSession? session = null;
             // The session's key names it to the MCP servers made for it (Hover's browser).
-            session = new KiroSession((f, p, pr, ct, resume, events) => runtimes[tool].Run(f, p, pr, ct, resume, events, session?.Access, session?.Key));
+            session = new KiroSession(async (f, p, pr, ct, resume, events) =>
+            {
+                // Its own desktop (a Cua Space) is made or started before it starts.
+                if (Spaces.Wanted && session?.Key is { } key) { pr?.Report(KiroPhase.Starting); await Spaces.Ensure(key, ct); }
+                return await runtimes[tool].Run(f, p, pr, ct, resume, events, session?.Access, session?.Key);
+            });
             return session;
         }) { History = new AgentHistory(Path.Combine(Paths.Support, "agents")), MaxRunning = Settings.MaxRunning };
         foreach (var (tool, runtime) in runtimes)
@@ -107,6 +112,7 @@ internal sealed class Backend
             return found.Task;
         };
         GitHubCli.Changed += () => loop.Post(_ => { if (!closing) SendGitHub(); }, null);
+        Spaces.Changed += () => loop.Post(_ => { if (!closing) { SendSpaces(); Push(); } }, null);
         AgentSetup.Changed += _ => loop.Post(_ => Push(), null);
         ComputerUse.Changed += () => loop.Post(_ => { if (!closing) SendComputerUse(); }, null);
         sessions.Changed += Push;
@@ -171,8 +177,8 @@ internal sealed class Backend
                 }
                 else s.Answer(askId, Str(m, "answer") switch { "allow" => AskAnswer.Allow, "trust" => AskAnswer.Trust, "trustAll" => AskAnswer.TrustAll, _ => AskAnswer.Deny });
                 break;
-            case "delete": if ((s?.Key ?? Str(m, "key")) is { } deleteKey) sessions.Delete(deleteKey); break;
-            case "remove": if (s is not null) sessions.Dismiss(s); break;
+            case "delete": if ((s?.Key ?? Str(m, "key")) is { } deleteKey) { sessions.Delete(deleteKey); _ = Spaces.Delete(deleteKey); } break;
+            case "remove": if (s is not null) { _ = Spaces.Stop(s.Key); sessions.Dismiss(s); } break;
             case "history":
                 if (Str(m, "key") is { } historyKey && sessions.Saved(historyKey) is { } saved)
                 { var view = new KiroSession(); view.Restore(saved); Send(new { type = "transcript", session = state.Session(view) }); }
@@ -200,6 +206,39 @@ internal sealed class Backend
                     type = "deskAction", id = actionId, what = action,
                     data = t.IsCompletedSuccessfully ? t.Result : new { error = t.Exception?.GetBaseException().Message ?? "That didn’t work." },
                 }), TaskScheduler.Default);
+                break;
+            // The session's own desktop (a Cua Space): its live viewer, an app teleported
+            // into it from the notch, files dropped on it.
+            case "spaceView":
+                if (s is null) break;
+                var viewId = s.Id;
+                // Opening the panel makes or starts the Space when the session has none running.
+                if (Spaces.Wanted && Spaces.StateOf(s.Key) is null or { Phase: "failed" or "stopped" }) { var k2 = s.Key; _ = Task.Run(() => Spaces.Ensure(k2, CancellationToken.None)); }
+                _ = Spaces.Viewer(s.Key).ContinueWith(t => Send(new { type = "space", id = viewId, data = t.IsCompletedSuccessfully ? t.Result : new { error = "The desktop’s viewer didn’t open." } }), TaskScheduler.Default);
+                break;
+            case "teleport":
+                if (s is null || Str(m, "app") is not { } app) break;
+                var (tpId, tpTitle) = (s.Id, s.Title);
+                Send(new { type = "teleport", id = tpId, phase = "sending", app, line = $"Sending {app} to its desktop…" });
+                _ = Spaces.Teleport(s.Key, app, line => Send(new { type = "teleport", id = tpId, phase = "sending", app, line })).ContinueWith(t => Send(new
+                {
+                    type = "teleport", id = tpId, app, phase = "done",
+                    data = t.IsCompletedSuccessfully ? t.Result : new { error = "The app didn’t go." },
+                }), TaskScheduler.Default);
+                break;
+            case "spaceFiles":
+                if (s is null || !m.TryGetProperty("paths", out var fp) || fp.ValueKind != JsonValueKind.Array) break;
+                var filesId = s.Id;
+                _ = Spaces.SendFiles(s.Key, fp.EnumerateArray().Select(x => x.GetString() ?? "").Where(x => x.Length > 0).ToList())
+                    .ContinueWith(t => Send(new { type = "teleport", id = filesId, phase = "done", app = "files", data = t.IsCompletedSuccessfully ? t.Result : new { error = "The files didn’t go." } }), TaskScheduler.Default);
+                break;
+            case "spaces":
+                switch (Str(m, "step"))
+                {
+                    case "setup": _ = Spaces.RunSetup(); break;
+                    case "cancel": Spaces.Cancel(); break;
+                    default: SendSpaces(); _ = Spaces.Check(fresh: true); break;
+                }
                 break;
             // The GitHub CLI: what is known, a fresh check, and its one-click setup.
             case "gh":
@@ -240,6 +279,17 @@ internal sealed class Backend
             case "shutdown": Shutdown(); loop.Complete(); break;
         }
     }
+    private static void SendSpaces()
+    {
+        var k = Spaces.Known;
+        var p = Spaces.Setup;
+        Send(new
+        {
+            type = "spaces", on = Settings.AgentSpaces, image = Settings.SpaceImage, supported = Spaces.Supported, @checked = k is not null,
+            installed = k?.Installed ?? false, ready = k?.Ready ?? false, version = k?.Version, hint = k?.Hint ?? "", running = k?.Running ?? 0,
+            step = p.Step, line = p.Line, fraction = p.Fraction, error = p.Error, busy = Spaces.Busy,
+        });
+    }
     private static void SendGitHub()
     {
         var s = GitHubCli.Known;
@@ -254,6 +304,7 @@ internal sealed class Backend
     {
         type = "preferences", maxRunning = Settings.MaxRunning, hover = Settings.HoverOpensWorkspace,
         noticeSeen = Settings.KiroNoticeSeen, quotaItems = Settings.NotchItems, computerUse = Settings.ComputerUse, sandbox = Settings.Sandbox, agentBrowser = Settings.AgentBrowser,
+        agentSpaces = Settings.AgentSpaces, spaceImage = Settings.SpaceImage, spacesSupported = Spaces.Supported,
         tools = Agents.All.Select(t => new { id = Agents.Id(t), access = Settings.AgentOptions(t).AccessId(true), idle = Settings.AgentOptions(t).IdleMinutes, hideSteps = Settings.AgentOptions(t).HideSteps })
     });
     /// Cua Driver as Settings → Computer Use shows it: installed, its grants, and a
@@ -288,6 +339,8 @@ internal sealed class Backend
             Settings.Sandbox = box.GetBoolean();
             _ = Check();
         }
+        if (m.TryGetProperty("agentSpaces", out var spaces) && spaces.ValueKind is JsonValueKind.True or JsonValueKind.False) { Settings.AgentSpaces = spaces.GetBoolean(); _ = Spaces.Check(fresh: true); }
+        if (Str(m, "spaceImage") is { } image) Settings.SpaceImage = image;
         // Each session gets it from its next run (BrowserTool).
         if (m.TryGetProperty("agentBrowser", out var browser) && browser.ValueKind is JsonValueKind.True or JsonValueKind.False) Settings.AgentBrowser = browser.GetBoolean();
         if (m.TryGetProperty("quotaItems", out var items)) Settings.NotchItems = items.EnumerateArray().Select(x => x.GetString() ?? "").Where(NotchItem.Quotas.Contains).ToList();
@@ -349,7 +402,10 @@ internal sealed class Backend
     public void Shutdown()
     {
         if (closing) return; closing = true;
-        quotaTimer.Dispose(); BrowserTool.Stop(); sessions.StopAll(); foreach (var runtime in runtimes.Values) runtime.Shutdown("Hover quit");
+        quotaTimer.Dispose(); BrowserTool.Stop(); sessions.StopAll();
+        // The agents' desktops are turned off with Hover (their disks stay); a few
+        // seconds at most, so quitting never hangs on them.
+        if (Spaces.Wanted) Task.WaitAll(sessions.All.Select(x => Spaces.Stop(x.Key)).ToArray(), TimeSpan.FromSeconds(6)); foreach (var runtime in runtimes.Values) runtime.Shutdown("Hover quit");
         sessions.History?.Flush(); Settings.Flush();
     }
 }

@@ -13,6 +13,21 @@ import Speech
 struct ToolPrefs: Equatable { var access = "full"; var idle = 5; var hideSteps = false }
 
 /// Cua Driver, as the backend's computerUse message reports it.
+/// Cua Spaces, the agents' own desktops, as the backend's spaces message reports them.
+struct SpacesStatus: Equatable {
+    var on = false, supported = true, checked = false, installed = false, ready = false, busy = false
+    var image = "macos", version = "", hint = "", line = "", running = 0
+    var step: String?, error: String?, fraction: Double?
+    init() {}
+    init(_ m: [String: Any]) {
+        on = m["on"] as? Bool ?? false; supported = m["supported"] as? Bool ?? true; checked = m["checked"] as? Bool ?? false
+        installed = m["installed"] as? Bool ?? false; ready = m["ready"] as? Bool ?? false; busy = m["busy"] as? Bool ?? false
+        image = m["image"] as? String ?? "macos"; version = m["version"] as? String ?? ""; hint = m["hint"] as? String ?? ""
+        line = m["line"] as? String ?? ""; running = m["running"] as? Int ?? 0
+        step = m["step"] as? String; error = m["error"] as? String; fraction = (m["fraction"] as? NSNumber)?.doubleValue
+    }
+}
+
 struct CuaStatus: Equatable {
     var checked = false, installed = false, ready = false, busy = false, canGrant = true
     var version = "", permissions = "unknown", hint = "", installHint = "", line = ""
@@ -103,6 +118,7 @@ final class SettingsModel: ObservableObject {
     @Published var computerUse = false
     @Published var sandbox = true
     @Published var agentBrowser = true
+    @Published var spaces = SpacesStatus()
     @Published var cua = CuaStatus()
     @Published var maxRunning = 3
     @Published var quotaItems: [String] = []
@@ -182,6 +198,10 @@ final class SettingsModel: ObservableObject {
     func checkComputerUse() { send(["type": "computerUse"]) }
     func cuaSetup(_ step: String) { send(["type": "computerUseSetup", "step": step]) }
     func receiveComputerUse(_ m: [String: Any]) { let next = CuaStatus(m); if next != cua { cua = next } }
+    func receiveSpaces(_ m: [String: Any]) { let next = SpacesStatus(m); if next != spaces { spaces = next } }
+    func setSpaces(_ on: Bool) { spaces.on = on; request(["type": "saveSettings", "agentSpaces": on]); send(["type": "spaces"]) }
+    func setSpaceImage(_ image: String) { spaces.image = image; request(["type": "saveSettings", "spaceImage": image]); send(["type": "spaces"]) }
+    func spacesSetup(_ step: String) { send(["type": "spaces", "step": step]) }
     func setQuota(_ id: String, _ on: Bool) {
         var items = quotaItems.filter { $0 != id }
         if on { items.append(id) }
@@ -493,6 +513,43 @@ private struct ComputerUsePage: View {
                     .foregroundStyle(.secondary)
             }
             Section {
+                let sp = model.spaces
+                Toggle(isOn: Binding(get: { sp.on }, set: { model.setSpaces($0) })) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Give each agent a desktop of its own")
+                        Text("A Cua Space per agent: a VM that it uses for computer use instead of your screen. You watch it live in the desk’s Screen panel and can step in at any time. Drag an app or files onto the notch to send them to an agent’s desktop.")
+                            .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                .toggleStyle(.switch).disabled(!sp.supported)
+                if sp.on || !sp.supported {
+                    Picker("Desktop", selection: Binding(get: { sp.image }, set: { model.setSpaceImage($0) })) {
+                        Text("macOS (two at a time, 8 GB of memory each)").tag("macos")
+                        Text("Linux (needs Docker or Colima)").tag("linux")
+                    }
+                    HStack(spacing: 12) {
+                        Image(systemName: "macwindow.on.rectangle").font(.system(size: 22)).foregroundStyle(.tint).frame(width: 32)
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("Cua Spaces").font(.headline)
+                            HStack(spacing: 5) {
+                                if sp.busy || !sp.checked { ProgressView().controlSize(.mini) }
+                                else if sp.ready { Image(systemName: "checkmark.circle.fill").foregroundStyle(.green) }
+                                else { Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange) }
+                                Text(sp.busy ? sp.line : sp.error ?? (sp.ready ? "Ready\(sp.version.isEmpty ? "" : " · \(sp.version)")\(sp.running > 0 ? " · \(sp.running) running" : "")" : sp.hint))
+                                    .font(.callout).foregroundStyle(.secondary).lineLimit(2)
+                            }
+                            if sp.busy, let f = sp.fraction { ProgressView(value: f).frame(maxWidth: 260) }
+                        }
+                        Spacer()
+                        if sp.busy { Button("Cancel") { model.spacesSetup("cancel") } }
+                        else if sp.supported && !sp.ready { Button(sp.installed ? "Prepare" : "Set up") { model.spacesSetup("setup") }.buttonStyle(.borderedProminent) }
+                    }
+                }
+            } footer: {
+                Text("Spaces run on this Mac and are free; nothing goes through Cua’s servers. The first setup installs Cua’s app and command-line tool and downloads the desktop image once (macOS is about 23 GB). Each agent’s desktop is made when its task starts, turned off when you remove it and deleted with the session. Needs macOS 26 or later on Apple silicon.")
+                    .foregroundStyle(.secondary)
+            }
+            Section {
                 Toggle(isOn: Binding(get: { model.agentBrowser }, set: { model.setAgentBrowser($0) })) {
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Give agents Hover's browser")
@@ -540,7 +597,7 @@ private struct ComputerUsePage: View {
             }
         }
         .formStyle(.grouped)
-        .onAppear { model.checkComputerUse() }
+        .onAppear { model.checkComputerUse(); model.send(["type": "spaces"]) }
     }
 }
 

@@ -562,6 +562,9 @@ let defaultFolder = host ? null : 'B:\\hover', canStart = true, maxRunning = 3;
 // The host has a browser of its own (the Mac's), which the agents drive and the desk's
 // Browser panel shows; otherwise the panel is an iframe.
 let hostBrowser = false;
+// Each agent has a desktop of its own (a Cua Space) the Screen panel shows; the office is
+// in its own window rather than the notch.
+let spacesOn = !host, inWindow = false;
 // The agent tools, in the picker's order. Hover says which are installed and signed in.
 const TOOLS = { kiro: ['Kiro', '#b48cff'], codex: ['Codex', '#3fd6a0'], cursor: ['Cursor', '#7cc0ff'], opencode: ['OpenCode', '#e8e8ec'] };
 // Each tool's own logo, only to show which tool is picked (from the MIT-licensed
@@ -604,7 +607,7 @@ const WORD = { waking: 'Starting', working: 'Working', waiting: 'Waiting for you
 function demo() {
   const F = 'B:\\hover';
   return [
-    { id: 1, bot: 0, desk: 0, title: 'Add refresh token expiry', folder: F, ctx: 31, apps: { pids: [5150], bundles: ['dev.example.demo'], names: ['Demo'] }, turns: [{ prompt: 'Refresh tokens never expire. Make them expire after 30 days and return 401 when one is used after that.', stage: 'working', act: 'Reading', file: 'src/auth/refresh.ts', target: 'src/auth/refresh.ts', t0: T0 - 1.4 * min, woke: 2.3,
+    { id: 1, bot: 0, desk: 0, title: 'Add refresh token expiry', folder: F, ctx: 31, space: { phase: 'ready', line: 'Its desktop is ready.' }, apps: { pids: [5150], bundles: ['dev.example.demo'], names: ['Demo'] }, turns: [{ prompt: 'Refresh tokens never expire. Make them expire after 30 days and return 401 when one is used after that.', stage: 'working', act: 'Reading', file: 'src/auth/refresh.ts', target: 'src/auth/refresh.ts', t0: T0 - 1.4 * min, woke: 2.3,
       steps: [['read', 'Read src/auth/session.ts'], ['read', 'Read src/auth/refresh.ts'], { k: 'web', verb: 'Opened', cmd: 'http://localhost:5173/login', status: 'completed', ms: 1200 },
         { k: 'screen', verb: 'Opened', cmd: 'Demo', status: 'completed' }, { k: 'screen', verb: 'Clicked', cmd: 'Name', status: 'completed' }, { k: 'screen', verb: 'Typed', cmd: '“Ada”', status: 'completed' },
         { k: 'agent', verb: 'Subagent', agent: 'explore', cmd: 'Find every caller of refresh()', status: 'in_progress' }, { k: 'agent', verb: 'Subagent', agent: 'test-writer', cmd: 'Write tests for expired tokens', status: 'in_progress' }], final: 'Done. Refresh tokens now expire after 30 days, and using an expired one returns 401.\n\nI changed refresh.ts and added two tests. All 83 tests pass.' }] },
@@ -654,7 +657,7 @@ function freeBot() { const used = new Set(sessions.map(s => s.bot)); const i = B
 function fromHost(m) {
   // In the notch the office fills the shape, edge to edge.
   document.body.classList.toggle('notch', !m.window);
-  canStart = m.canStart; maxRunning = m.maxRunning; hostBrowser = !!m.browser; if (m.tools) tools = m.tools; if (!toolPicked && m.tool) newTool = m.tool;
+  canStart = m.canStart; maxRunning = m.maxRunning; hostBrowser = !!m.browser; spacesOn = !!m.spaces; inWindow = !!m.window; syncBig(); if (m.tools) tools = m.tools; if (!toolPicked && m.tool) newTool = m.tool;
   if (m.history) history = m.history;
   defaultFolder = m.folder || null; if (!newFolder) newFolder = defaultFolder;
   const seen = new Set();
@@ -665,12 +668,12 @@ function fromHost(m) {
     Object.assign(turns[i], { act: h.act, pose: h.pose, file: h.file });
     let s = sessions.find(x => x.id === h.id);
     if (!s) {
-      s = { id: h.id, key: h.key, files: h.files, tool: h.tool, bot: h.bot, desk: h.seat, title: h.title, folder: h.folder, ctx: h.ctx, ask: h.ask, access: h.access, testing: h.testing, browsing: h.browsing, apps: h.apps, turns };
+      s = { id: h.id, key: h.key, files: h.files, tool: h.tool, bot: h.bot, desk: h.seat, title: h.title, folder: h.folder, ctx: h.ctx, ask: h.ask, access: h.access, testing: h.testing, browsing: h.browsing, apps: h.apps, space: h.space, turns };
       sessions.push(s); spawn(s, !firstState && last(s).stage === 'waking');
     } else {
       turns.forEach((t, k) => { const old = s.turns[k]; if (t.answer && !(old && old.answer)) t.fresh = !firstState; });
       if (last(s).stage === 'waking' && s.turns.length !== turns.length && s.b.seated) s.b.sinceSeat = 0;
-      Object.assign(s, { files: h.files, title: h.title, folder: h.folder, ctx: h.ctx, ask: h.ask, access: h.access, testing: h.testing, browsing: h.browsing, apps: h.apps, turns });
+      Object.assign(s, { files: h.files, title: h.title, folder: h.folder, ctx: h.ctx, ask: h.ask, access: h.access, testing: h.testing, browsing: h.browsing, apps: h.apps, space: h.space, turns });
     }
   }
   for (const s of [...sessions]) if (!seen.has(s.id)) retire(s);
@@ -904,7 +907,7 @@ function bubbleFor(s) {
     // The question shows over the head in place of the bubble.
     case 'waiting': return '';
     case 'working': { const n = minis.filter(m => m.s === s && !m.leaving).length; if (n) return n === 1 ? 'My helper’s on it…' : `${n} helpers on it…`; }
-      return T.act === 'Thinking' ? 'Thinking…' : T.act === 'Writing' ? 'Writing it up…' : T.file ? `${T.act} ${short(T.file)}` : `${T.act || 'Working'}…`;
+      return T.act === 'Thinking' ? 'Thinking…' : T.act === 'Writing' ? 'Writing it up…' : T.file && T.act ? `${T.act} ${short(T.file)}` : `${T.act || 'Working'}…`;
     case 'done': return b.since < 6 ? 'Done! ✓' : '';
     case 'failed': return 'Couldn’t finish';
     default: return 'z z z';
@@ -1121,7 +1124,7 @@ function renderPanel() {
 }
 function changed(s) {
   // The desk's panel asks Hover again (throttled), rather than redrawing from nothing.
-  if (panel === 'desk') { if (!s || s.id === desk?.id) { deskDirty = true; screenPulse(); } }
+  if (panel === 'desk') { if (!s || s.id === desk?.id) { deskDirty = true; screenPulse(); if (desk?.ui.tab === 'screen') renderDesk(); } }
   if (deskMenuFor != null && (!s || s.id === deskMenuFor)) renderDeskMenu();
   drawBoard(); if (panel !== 'desk') renderPanel(); renderAsks();
   if (s && s.id === sel && drawerOpen) renderDrawer();
@@ -1795,6 +1798,7 @@ function openDesk(id, tab, opts = {}) {
 // The panel goes, or shows something else: the screen stops, the page in the browser goes.
 function leaveDesk() {
   if (!desk) return;
+  if (host && spacePlaced !== 'none') { host.postMessage({ type: 'spaceOverlay', id: +spacePlaced.split('|')[0], rect: null }); spacePlaced = 'none'; }
   desk.ui.control = false; desk.ui.big = false; desk.ui.replay = null; $('#panel').classList.remove('big');
   desk = null; deskHTML = ''; screenPulse(); placeBrowser();
   const body = $('#pBody'); body.classList.remove('desk'); body.innerHTML = '';
@@ -1813,7 +1817,7 @@ function renderDesk() {
   // (Not data-tab or data-file: the clicks inside look for those.)
   if (el.dataset.view !== tab || el.dataset.shows !== (ui.file || '')) { el.dataset.view = tab; el.dataset.shows = ui.file || ''; el.innerHTML = ''; deskHTML = ''; body.scrollTop = 0; }
   if (tab === 'browser') return renderBrowser(s, el);
-  if (tab === 'screen') return renderScreen(s, el);
+  if (tab === 'screen') return spacesOn ? renderSpace(s, el) : renderScreen(s, el);
   const html = tab === 'terminal' ? D.terminalHTML(deskGet(s, 'terminal'), bot)
     : tab === 'files' ? (ui.file ? D.fileHTML(deskGet(s, 'file', ui.file), ui.file) : D.filesHTML(deskGet(s, 'files'), ui, bot))
     : tab === 'diff' ? D.diffHTML(deskGet(s, 'diff'), ui)
@@ -1917,7 +1921,8 @@ const scr = { image: null, live: false, access: true, w: 0, h: 0, fps: 0, frames
 let scrWant = null, scrFor = null, demoScr = 0;
 const scrLive = s => s.testing || desk.ui.watch || desk.ui.control;
 function screenPulse(renew) {
-  const s = !paused && panel === 'desk' && desk?.ui.tab === 'screen' ? deskOf() : null;
+  // An agent with a desktop of its own: never a capture of the user's screen.
+  const s = !paused && !spacesOn && panel === 'desk' && desk?.ui.tab === 'screen' ? deskOf() : null;
   if (s && scrFor !== s.id) { scrFor = s.id; Object.assign(scr, { image: null, frames: [], times: [], fps: 0 }); }
   const want = s ? (scrLive(s) ? 'live' : 'still') + '|' + JSON.stringify(s.apps || null) : null;
   if (!want) { if (scrWant) { scrWant = null; host?.postMessage({ type: 'screen', on: false }); clearInterval(demoScr); demoScr = 0; } return; }
@@ -1977,6 +1982,98 @@ function renderScreen(s, el) {
   if (src && img.getAttribute('src') !== src) img.src = src;
   img.alt = `${s.b.name}’s desktop${p.live ? ', live' : ''}`;
 }
+// ── The agent's own desktop: a Cua Space ────────────────────────────────
+// Its live viewer is Cua's own, laid over the panel's box by the host (placeSpace); it
+// is interactive, so a click in it is the user stepping into the agent's desktop.
+// Until the Space is up, the box says how it is getting on. Opening the panel makes the
+// Space if the session has none yet.
+const spaceView = {};
+function onSpace(m) {
+  spaceView[m.id] = { ...m.data, at: Date.now() };
+  const s = deskOf(); if (s?.id === m.id && desk.ui.tab === 'screen') renderDesk();
+}
+function askSpace(s, force) {
+  const v = spaceView[s.id];
+  if (!force && v && (v.url || Date.now() - v.at < 4000)) return;
+  spaceView[s.id] = { ...(v || {}), at: Date.now() };
+  if (host) host.postMessage({ type: 'spaceView', id: s.id });
+  else setTimeout(() => onSpace({ id: s.id, data: s.space?.phase === 'ready' || !s.space ? { phase: 'ready', url: 'about:blank' } : s.space }), 200);
+}
+function renderSpace(s, el) {
+  const sp = s.space || { phase: 'none' }, v = spaceView[s.id] || {};
+  if (sp.phase === 'ready' && !v.url) askSpace(s);
+  if (sp.phase !== 'ready' && sp.phase !== 'failed' && !v.at) askSpace(s, true);
+  const html = D.spaceHTML(s.b.name, sp, v, screenActions(s), !!desk.ui.big, !host);
+  if (el.dataset.h !== html) { el.dataset.h = html; el.innerHTML = html; }
+  placeSpace();
+}
+let spacePlaced = 'none';
+function placeSpace() {
+  if (!host) return;
+  const s = deskOf();
+  let id = null, r = null, url = '';
+  if (s && spacesOn && !paused && panel === 'desk' && desk.ui.tab === 'screen' && spaceView[s.id]?.url) {
+    const b = $('#pBody .spbox')?.getBoundingClientRect(), over = deskMenuFor != null || !$('#confirm').hidden || !$('#mMenu').hidden || !$('#hudMenu').hidden || drawerOpen || !$('#tdrop').hidden;
+    if (b && !over && b.width > 40 && b.height > 40) { id = s.id; url = spaceView[s.id].url; r = { x: b.left, y: b.top, w: b.width, h: b.height, vw: innerWidth }; }
+  }
+  const key = id == null ? 'none' : [id, url, r.x, r.y, r.w, r.h].map(x => typeof x === 'number' ? Math.round(x) : x).join('|');
+  if (key === spacePlaced) return;
+  const was = spacePlaced === 'none' ? null : +spacePlaced.split('|')[0];
+  spacePlaced = key;
+  if (was != null && was !== id) host.postMessage({ type: 'spaceOverlay', id: was, rect: null });
+  if (id != null) host.postMessage({ type: 'spaceOverlay', id, url, rect: r });
+}
+setInterval(placeSpace, 120);
+queueMicrotask(() => syncBig());
+// The office in a window, and full screen: carries what is open there.
+function syncBig() {
+  const b = $('#bigBtn'); if (!b) return;
+  b.innerHTML = D.ICONS.grow;
+  b.title = inWindow ? 'Full screen' : 'Open Hover in a window, for the browser, desktops and more room';
+  b.setAttribute('aria-label', inWindow ? 'Full screen' : 'Open Hover in a window');
+}
+$('#bigBtn').onclick = () => {
+  const open = panel === 'desk' && desk ? { desk: desk.id, tab: desk.ui.tab } : drawerOpen && cur() && !viewing ? { chat: cur().id } : {};
+  if (host) host.postMessage({ type: 'window', open });
+  else toast('In Hover this opens the office in its own window.');
+};
+function onRestore(m) {
+  if (m.desk != null && sessions.some(s => s.id === m.desk)) openDesk(m.desk, m.tab || 'browser');
+  else if (m.chat != null && sessions.some(s => s.id === m.chat)) openSession(m.chat);
+}
+
+// ── An app or files dragged onto the notch: the agents' desktops as drop targets ──
+let tdrag = null;
+function onTeleportDrag(m) {
+  const box = $('#tdrop');
+  if (m.phase === 'cancel') { tdrag = null; box.hidden = true; return; }
+  const k = innerWidth / (m.vw || innerWidth), x = m.x * k, y = m.y * k;
+  if (m.phase === 'start' || !tdrag) {
+    tdrag = { app: m.app, bundle: m.bundle, files: m.files || [] };
+    closeDeskMenu(); closeHud();
+    box.innerHTML = D.dropHTML(tdrag, sessions.map(s => ({ id: s.id, name: s.b.name, css: s.b.css, title: s.title, tool: s.tool, space: s.space, badge: badge(s.tool) })), spacesOn);
+    box.hidden = false;
+  }
+  const hit = document.elementsFromPoint(x, y).find(e => e.matches?.('#tdrop [data-tdrop]'));
+  box.querySelectorAll('[data-tdrop]').forEach(t => t.classList.toggle('on', t === hit));
+  if (m.phase !== 'drop') return;
+  const d = tdrag; tdrag = null;
+  setTimeout(() => { box.hidden = true; }, hit ? 900 : 200);
+  if (!hit) return;
+  const s = sessions.find(x => x.id === +hit.dataset.tdrop); if (!s) return;
+  hit.classList.add('sent');
+  if (!spacesOn) { toast('Turn on agent desktops in Settings → Computer Use first.'); return; }
+  if (d.files.length) { host?.postMessage({ type: 'spaceFiles', id: s.id, paths: d.files }); toast(`Sending ${d.app} to ${s.b.name}’s desktop…`); }
+  else if (d.bundle) { host?.postMessage({ type: 'teleport', id: s.id, app: d.bundle }); toast(`Sending ${d.app} to ${s.b.name}’s desktop…`); }
+  else toast(`Hover couldn’t tell which app that is.`);
+}
+function onTeleport(m) {
+  const s = sessions.find(x => x.id === m.id), who = s ? `${s.b.name}’s desktop` : 'the desktop';
+  if (m.phase !== 'done') return;
+  const n = m.data?.sent ?? 0;
+  toast(m.data?.error ? m.data.error : m.app === 'files' ? `Sent ${n} item${n === 1 ? '' : 's'} to the Downloads on ${who}.` : `${m.app} is on ${who}.`);
+}
+
 // Take control: clicks, keys and the wheel on the desktop go to the agent's apps.
 function bindScreen(el) {
   const box = el.querySelector('.vmscreen');
@@ -2042,7 +2139,8 @@ $('#pBody').addEventListener('click', e => {
   const gc = t.closest('[data-ghcopy]'); if (gc) { copyText(gc.dataset.ghcopy, gc); return; }
   if (t.closest('[data-watch]')) { ui.watch = !ui.watch; screenPulse(); renderDesk(); return; }
   if (t.closest('[data-vmcontrol]')) { ui.control = !ui.control; ui.replay = null; screenPulse(); renderDesk(); if (ui.control) $('#pBody .vmscreen')?.focus({ preventScroll: true }); return; }
-  if (t.closest('[data-vmbig]')) { ui.big = !ui.big; $('#panel').classList.toggle('big', ui.big); return; }
+  if (t.closest('[data-vmbig]')) { ui.big = !ui.big; $('#panel').classList.toggle('big', ui.big); renderDesk(); return; }
+  if (t.closest('[data-spretry]')) { const s = deskOf(); if (s) { spaceView[s.id] = null; s.space = { phase: 'starting', line: 'Starting its desktop…' }; askSpace(s, true); renderDesk(); } return; }
   if (t.closest('[data-vmlive]')) { ui.replay = null; renderDesk(); return; }
   const at = t.closest('[data-vmat]'); if (at) { const tt = +at.dataset.vmat, f = scr.frames; if (f.length) { let i = f.findIndex(x => x.t >= tt); if (i < 0) i = f.length - 1; ui.replay = i; ui.control = false; renderDesk(); } return; }
   if (t.closest('[data-saccess]')) { host?.postMessage({ type: 'screenAccess' }); return; }
@@ -2197,6 +2295,10 @@ host?.addEventListener('message', e => {
   else if (m.type === 'screen') onScreen(m);
   else if (m.type === 'agentBrowser') onAgentBrowser(m);
   else if (m.type === 'screenInput') onScreenInput(m);
+  else if (m.type === 'space') onSpace(m);
+  else if (m.type === 'teleportDrag') onTeleportDrag(m);
+  else if (m.type === 'teleport') onTeleport(m);
+  else if (m.type === 'restore') onRestore(m);
   else if (m.type === 'gh') onGh(m);
   else if (m.type === 'deskAction') onDeskAction(m);
   else if (m.type === 'folder') { newFolder = m.text; renderNew(); $('#nInput').focus(); }
@@ -2341,6 +2443,7 @@ if (host && window.hoverE2E) window.__office = {
   openDeskMenu: id => openDeskMenu(sessions.find(x => x.id === id), 420, 260),
   openDesk: (id, tab) => openDesk(id, tab),
   openSession: id => openSession(id),
+  spaces: () => spacesOn,
   // A page without a window gets no animation frames: the harness turns the clock.
   tick: (n = 1) => { for (let i = 0; i < n; i++) { e2eNow = Math.max(e2eNow + 34, performance.now()); frame(e2eNow); } },
 };
@@ -2349,6 +2452,7 @@ var e2eNow = 0;
 // steps, for screenshots of states that otherwise pass in seconds.
 if (!host && /[?&]debug\b/.test(location.search)) window.__office = {
   gh: m => onGh(m),
+  drag: m => onTeleportDrag(m),
   hold(id, stage, steps, extra = {}) { const s = sessions.find(x => x.id === id); clearTimeout(timers[s.id]); const T = last(s); Object.assign(T, { stage, steps, answer: '' }); Object.assign(s, extra); changed(s); },
 };
 if (Q.has('open')) openSession(+Q.get('open'));

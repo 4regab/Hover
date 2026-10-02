@@ -86,13 +86,19 @@ def work(prompt_id):
         if r.get('isError'): note('FAILED', tool, text)
         time.sleep(2.0)
     b.p.stdin.close()
-    # 4. Computer use, as steps only: the screen panel's activity and its apps.
-    for n, (title, inp, outp) in enumerate([('cua-driver/launch_app', {'bundle_id': 'dev.hover.e2e.demo', 'name': 'Demo'}, {'pid': 4242, 'window_id': 7}),
-                                             ('cua-driver/click', {'pid': 4242, 'window_id': 7, 'x': 120, 'y': 80}, 'clicked'),
-                                             ('cua-driver/type_text', {'pid': 4242, 'window_id': 7, 'text': 'Ada'}, 'typed')]):
-        call(f'cua-{n}', 'other', title, 'in_progress', inp)
-        time.sleep(1.2)
-        call(f'cua-{n}', 'other', title, 'completed', raw_out=outp)
+    # 4. Computer use on its own desktop (a Cua Space), through the server Hover gave it.
+    cs = next((s for s in servers if s['name'] == 'cua-space'), None)
+    if cs is None: note('NO SPACE SERVER')
+    else:
+        c = Mcp(cs)
+        note('space tools', [t['name'] for t in c.ask('tools/list', {})['result']['tools']])
+        for n, (tool, args) in enumerate([('computer_screenshot', {}), ('computer_click', {'x': 120, 'y': 80}), ('computer_type', {'text': 'Ada'})]):
+            tid = f'cua-{n}'
+            call(tid, 'other', 'mcp__cua-space__' + tool, 'in_progress', args)
+            r, text = c.tool(tool, args)
+            call(tid, 'other', 'mcp__cua-space__' + tool, 'failed' if r.get('isError') else 'completed', raw_out=text)
+            time.sleep(1.2)
+        c.p.stdin.close()
     time.sleep(float(os.environ.get('HOVER_E2E_HOLD', '6')) / 2)
     # 5. An edit, then the answer.
     with open(os.path.join(cwd, 'login.html'), 'a') as f: f.write('<!-- signed in -->\n')

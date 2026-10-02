@@ -7,7 +7,7 @@ internal sealed class OfficeState(KiroSessions sessions, IReadOnlyDictionary<Age
 {
     public object Snapshot() => new
     {
-        type = "state", canStart = sessions.CanStart, maxRunning = sessions.MaxRunning,
+        type = "state", canStart = sessions.CanStart, maxRunning = sessions.MaxRunning, spaces = Spaces.Wanted,
         folder = Settings.KiroFolder, tool = Agents.Id(Settings.AgentTool),
         tools = Agents.All.Select(t => new
         {
@@ -93,6 +93,8 @@ internal sealed class OfficeState(KiroSessions sessions, IReadOnlyDictionary<Age
             file = lastStep is null ? "" : Short(lastStep.Target) ?? "",
             // Computer use among its last steps: the desk's screen panel goes live.
             testing = DeskInfo.Testing(s),
+            // Its own desktop (a Cua Space), when agents have them: how it is getting on.
+            space = Spaces.Wanted ? (Spaces.StateOf(s.Key) is { } sp ? new { phase = sp.Phase, line = sp.Line, fraction = sp.Fraction, error = sp.Error } : new { phase = "none", line = "", fraction = (double?)null, error = (string?)null }) : null,
             // Hover's browser among its last steps: the desk's Browser row says so.
             browsing = DeskInfo.Browsing(s),
             // The apps its computer use opened: the screen shows only these over the desktop.

@@ -19,7 +19,8 @@ func check(_ ok: Bool, _ what: String) { checks += 1; print(ok ? "ok: \(what)" :
 
 @MainActor
 final class Harness {
-    let backend = BackendPipe(), browsers = AgentBrowsers(), screen = ScreenFeed()
+    let backend = BackendPipe(), browsers = AgentBrowsers(), screen = ScreenFeed(), spaces = SpaceViewers()
+    var windowAsks: [[String: Any]] = []
     var office: Office!
     var latest: [String: Any]?, seen: [[String: Any]] = [], links: [String] = [], inputs: [[String: Any]] = []
 
@@ -48,6 +49,16 @@ final class Harness {
         case "ready": backend.send(m)
         case "fold", "settings", "setup": break
         case "link": links.append(m["url"] as? String ?? "")
+        case "window": windowAsks.append(m)
+        case "spaceOverlay":
+            guard let id = (m["id"] as? NSNumber)?.intValue, let web = office?.web else { return }
+            var rect: CGRect?
+            if let r = m["rect"] as? [String: Any], let x = (r["x"] as? NSNumber)?.doubleValue, let y = (r["y"] as? NSNumber)?.doubleValue,
+               let w = (r["w"] as? NSNumber)?.doubleValue, let h = (r["h"] as? NSNumber)?.doubleValue {
+                let k = (r["vw"] as? NSNumber).map { web.bounds.width / CGFloat(max(1, $0.doubleValue)) } ?? 1
+                rect = CGRect(x: x * k, y: y * k, width: w * k, height: h * k)
+            }
+            spaces.show(id, url: m["url"] as? String ?? "", rect: rect, in: web)
         case "screen": screen.ask(on: m["on"] as? Bool ?? false, live: m["live"] as? Bool ?? false, apps: m["apps"] as? [String: Any])
         case "screenInput":
             // Recorded and mapped, never sent: the E2E run touches no real app.
@@ -130,7 +141,7 @@ final class Harness {
     func run() async {
         turnClock()
         check(await until("the office loads and Hover's state reaches it", 60) { await truthy("window.__office && document.querySelector('canvas')") && latest != nil }, "the office loads with the real backend")
-        backend.send(["type": "saveSettings", "noticeSeen": true, "computerUse": false, "tools": [["id": "codex", "access": "risky"]]])
+        backend.send(["type": "saveSettings", "noticeSeen": true, "computerUse": true, "agentSpaces": true, "spaceImage": "macos", "tools": [["id": "codex", "access": "risky"]]])
         check(await until("Codex is ready", 40) { await truthy("document.querySelectorAll('#fabTools [data-tool]').length > 0") }, "the agents' picker lists Codex")
         await shot("office")
 
@@ -187,46 +198,52 @@ final class Harness {
         check(await truthy("document.querySelector('#bAddr').value.includes('index.html')"), "the address bar shows the agent's page")
         await shot("browser")
 
-        // Computer use: the screen panel is the agent's desktop, its apps, its activity.
+        // Its own desktop: a Cua Space, made before its run, driven over the relay.
+        let cuaLog = { (try? String(contentsOf: root.appendingPathComponent("cua.log"), encoding: .utf8)) ?? "" }
+        check(cuaLog().contains("spaces create macos:26 --name hover-"), "the session's Space was made before its run (cua spaces create)")
         await js("window.__office.openDesk(\(sid), 'screen')")
-        check(await until("the agent's app shows on its desktop", 40) { ((await session())["apps"] as? [String: Any]) != nil }, "the app the agent opened is the desktop's (from its steps)")
-        check(await until("the activity lists what it did", 20) { (await js("document.querySelectorAll('#pBody .vmrow').length") as? Int ?? 0) >= 2 }, "the activity lists its clicks and typing")
-        check((await text("#pBody .vmapps")).contains("Demo"), "the desktop names the agent's app, Demo")
-        check(await until("a desktop frame arrives", 15) { await truthy("document.querySelector('#scrImg')?.getAttribute('src')") }, "the desktop shows (the desktop picture without Screen Recording)")
-        _ = await until("all three computer-use steps", 15) { (await self.text("#pBody .vmtl")).contains("Typed") }
-        let rows = await text("#pBody .vmtl")
-        check(rows.contains("Typed") && rows.contains("Clicked") && rows.contains("Opened"), "the activity reads Opened, Clicked and Typed")
-        await shot("screen")
-        // The frame itself: only the desktop and the agent's apps, never the user's windows.
-        if let src = await js("document.querySelector('#scrImg').getAttribute('src')") as? String, let comma = src.firstIndex(of: ","),
-           let data = Data(base64Encoded: String(src[src.index(after: comma)...])) { try? data.write(to: root.appendingPathComponent("screen-frame.jpg")) }
-        let ctl = await truthy("!document.querySelector('[data-vmcontrol]').disabled")
-        check(ctl, "Control is offered once the agent has an app")
-        if ctl {
-            _ = await click("[data-vmcontrol]")
-            await js("(() => { const b = document.querySelector('#pBody .vmscreen'), r = b.getBoundingClientRect(); b.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: r.left + r.width * .4, clientY: r.top + r.height * .3, button: 0 })); })()")
-            await js("(() => { const b = document.querySelector('#pBody .vmscreen'); for (const k of 'hi') b.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true })); b.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })); })()")
-            check(await until("the control input reaches the host", 5) { self.inputs.count >= 3 }, "control sends a click, the typed text and Enter to the host")
-            let kinds = inputs.map { $0["kind"] as? String ?? "" }
-            check(kinds.starts(with: ["click"]) && kinds.contains("type") && kinds.contains("key"), "they arrive as click, type and key: \(kinds)")
-            if let click = inputs.first, let x = (click["x"] as? NSNumber)?.doubleValue, let y = (click["y"] as? NSNumber)?.doubleValue {
-                check(abs(x - 0.4) < 0.05 && abs(y - 0.3) < 0.05, "the click is where it was made on the desktop (\(x), \(y))")
-                // Mapped as Hover maps it, onto a stand-in window of the agent's app.
-                var apps = ScreenFeed.Apps(); apps.pids = [4242]
-                let display = CGRect(x: 0, y: 0, width: 1512, height: 982)
-                let target = ScreenControl.Target(pid: 4242, window: 7, frame: CGRect(x: 400, y: 200, width: 800, height: 600))
-                if let call = ScreenControl.call(click, apps: apps, display: display, scale: 2, targets: [target]) {
-                    check(call.tool == "click" && call.args["pid"] as? Int == 4242 && call.args["window_id"] as? Int == 7, "it becomes a Cua click on that app's window")
-                    check(abs((call.args["x"] as? Double ?? 0) - ((0.4 * 1512 - 400) * 2).rounded()) < 2, "in window-local screenshot pixels")
-                } else { check(false, "the click maps to the agent's window") }
-                let outside = ScreenControl.call(["kind": "click", "x": 0.02, "y": 0.02], apps: apps, display: display, scale: 2, targets: [target])
-                check(outside == nil, "a click outside the agent's apps goes nowhere")
-                let typed = ScreenControl.call(["kind": "type", "text": "hi"], apps: apps, display: display, scale: 2, targets: [target])
-                check(typed?.tool == "type_text" && typed?.args["text"] as? String == "hi", "typing goes to the agent's window as type_text")
-            }
-            await js("document.querySelector('#pBody .vmscreen').dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))")
-            check(await truthy("!document.querySelector('#pBody .vm').classList.contains('ctl')"), "Esc gives control back")
+        check(await until("the Space's viewer opens over the panel", 30) { self.office.web.subviews.contains { ($0 as? WKWebView)?.url?.path.hasPrefix("/viewer") == true } }, "Cua's live viewer is laid over the Screen panel")
+        if let v = office.web.subviews.compactMap({ $0 as? WKWebView }).first(where: { $0.url?.path.hasPrefix("/viewer") == true }) {
+            let box = await js("JSON.stringify(document.querySelector('#pBody .spbox').getBoundingClientRect())") as? String ?? ""
+            print("viewer frame \(v.frame) over box \(box)")
+            check(v.frame.width > 300 && office.web.bounds.contains(v.frame.insetBy(dx: 2, dy: 2)), "the viewer fills the panel's box, inside the office")
+            _ = await until("the viewer page loads", 10) { ((try? await v.evaluateJavaScript("document.body?.innerText || ''")) as? String ?? "").contains("FAKE SPACE VIEWER") }
+            let said = (try? await v.evaluateJavaScript("document.body.innerText")) as? String ?? ""
+            check(said.contains("ticket ok"), "the viewer got its ticket (its address is the Space's own)")
+            if let img = try? await v.takeSnapshot(configuration: WKSnapshotConfiguration()), let tiff = img.tiffRepresentation, let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) { try? png.write(to: root.appendingPathComponent("shot-space-viewer.png")) }
         }
+        check(!(await truthy("document.querySelector('#scrImg')")), "nothing of the user's own screen is captured or shown")
+        check(await until("its desktop activity", 30) { (await self.text("#pBody .vmtl")).contains("Typed") }, "the activity lists what it did on its desktop")
+        let rows = await text("#pBody .vmtl")
+        check(rows.contains("Clicked") && rows.contains("Typed"), "the activity reads Clicked and Typed")
+        check(await until("its calls reached the Space", 10) { cuaLog().contains("call local:hover-") && cuaLog().contains("computer_click") }, "the agent's computer use went to its own Space, through Hover's relay to cua mcp")
+        await shot("screen")
+
+        // An app dragged onto the notch: the agents' desktops open as drop targets.
+        office.deliver(["type": "teleportDrag", "phase": "start", "app": "Google Chrome", "bundle": "com.google.Chrome", "files": [], "x": 300, "y": 120, "vw": 1300])
+        check(await until("the drop targets show", 5) { await self.truthy("!document.querySelector('#tdrop').hidden && document.querySelector('#tdrop [data-tdrop]')") }, "dragging an app to the notch shows the agents' desktops")
+        await shot("teleport-drop")
+        let tile = await js("JSON.stringify(document.querySelector('#tdrop [data-tdrop=\"\(sid)\"]').getBoundingClientRect())") as? String ?? "{}"
+        if let d = tile.data(using: .utf8), let r = try? JSONSerialization.jsonObject(with: d) as? [String: Double], let x = r["x"], let y = r["y"] {
+            office.deliver(["type": "teleportDrag", "phase": "over", "app": "Google Chrome", "bundle": "com.google.Chrome", "files": [], "x": x + 30, "y": y + 30, "vw": 1300])
+            check(await until("the tile under the pointer lights", 3) { await self.truthy("document.querySelector('#tdrop [data-tdrop=\"\(sid)\"]').classList.contains('on')") }, "the agent's tile lights under the pointer")
+            office.deliver(["type": "teleportDrag", "phase": "drop", "app": "Google Chrome", "bundle": "com.google.Chrome", "files": [], "x": x + 30, "y": y + 30, "vw": 1300])
+            check(await until("the app is sent", 15) { cuaLog().contains("teleport push --app com.google.Chrome --sandbox local:hover-") }, "dropping it teleports the app into that agent's Space (cua teleport push)")
+            check(await until("the office says so", 10) { (await self.text("#toast")).contains("is on") }, "the office says the app is on the agent's desktop: \(await text("#toast"))")
+            // Files dropped the same way land in its Downloads.
+            let file = root.appendingPathComponent("project/login.html").path
+            office.deliver(["type": "teleportDrag", "phase": "start", "app": "login.html", "files": [file], "x": 300, "y": 120, "vw": 1300])
+            office.deliver(["type": "teleportDrag", "phase": "drop", "app": "login.html", "files": [file], "x": x + 30, "y": y + 30, "vw": 1300])
+            check(await until("the file is sent", 15) { cuaLog().contains("send_file") && cuaLog().contains("login.html") }, "dropped files go to the agent's Space (send_file)")
+        } else { check(false, "the agent's tile is there") }
+
+        // Control mapping on the user's own desktop (the fallback without Spaces), as Hover maps it.
+        var apps = ScreenFeed.Apps(); apps.pids = [4242]
+        let display = CGRect(x: 0, y: 0, width: 1512, height: 982)
+        let target = ScreenControl.Target(pid: 4242, window: 7, frame: CGRect(x: 400, y: 200, width: 800, height: 600))
+        let mapped = ScreenControl.call(["kind": "click", "x": 0.4, "y": 0.3], apps: apps, display: display, scale: 2, targets: [target])
+        check(mapped?.tool == "click" && mapped?.args["window_id"] as? Int == 7, "without Spaces, Control still maps to the agent's own window only")
+        check(ScreenControl.call(["kind": "click", "x": 0.02, "y": 0.02], apps: apps, display: display, scale: 2, targets: [target]) == nil, "and a click outside its apps goes nowhere")
 
         // The answer, in the chat.
         check(await until("the run ends", 60) { (await session())["stage"] as? String == "done" }, "the run finishes")
@@ -236,6 +253,13 @@ final class Harness {
         check(await truthy("document.querySelector('#thread .ans table')"), "the answer's table is drawn")
         check(await truthy("document.querySelector('#thread .s.k-web') || document.querySelector('#thread .sum')"), "the browser steps are in the chat's timeline")
         await shot("chat")
+
+        // The full-screen button: from the notch, the office in a window, with what is open.
+        await js("window.__office.openDesk(\(sid), 'browser')")
+        try? await Task.sleep(nanoseconds: 300_000_000)
+        check(await truthy("document.querySelector('#bigBtn svg')"), "the office has its full-screen button at the top right")
+        _ = await click("#bigBtn")
+        check(await until("the window message", 5) { self.windowAsks.contains { ($0["open"] as? [String: Any])?["tab"] as? String == "browser" } }, "it asks for the window, carrying the open desk and tab")
 
         // The desk's other panels.
         for (tab, has) in [("terminal", "npm run dev"), ("files", "login.html"), ("diff", "signed in"), ("agents", "explore")] {
@@ -264,6 +288,10 @@ final class Harness {
             return turns.count == 2 && (turns.last?["answer"] as? String ?? "").contains("Signed in")
         }, "a reply from the desk card gets its answer")
         await shot("after-reply")
+
+        // Deleting the session deletes its desktop too.
+        if let key = (latest?["sessions"] as? [[String: Any]])?.first?["key"] as? String { backend.send(["type": "delete", "key": key]) }
+        check(await until("its Space is deleted", 15) { cuaLog().contains("spaces delete local:hover-") }, "deleting the session deletes its Space")
     }
 }
 

@@ -8,6 +8,8 @@ DEST="${HOVER_APP_OUTPUT:-$ROOT/dist/macos-$RID/Hover.app}"
 DOTNET="${HOVER_DOTNET:-${DOTNET_ROOT:-$HOME/.dotnet}/dotnet}"
 [[ -x "$DOTNET" ]] || DOTNET="$(command -v dotnet)"
 mkdir -p "$(dirname "$DEST")"
+# Spotlight leaves the build folder alone, so a build is never listed as a second Hover.
+touch "$(dirname "$DEST")/.metadata_never_index"
 STAGE="$(mktemp -d "$(dirname "$DEST")/.hover-build.XXXXXX")"
 trap 'rm -rf "$STAGE"' EXIT
 APP="$STAGE/Hover.app"

@@ -187,11 +187,14 @@ final class Office: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
     }
     func userContentController(_ controller: WKUserContentController, didReceive event: WKScriptMessage) {
         guard event.frameInfo.isMainFrame, event.frameInfo.request.url?.scheme == "hover", event.frameInfo.request.url?.host == "office", var m = event.body as? [String: Any] else { return }
-        if m["type"] as? String == "ready" { ready = true; if let lastState { deliver(lastState) } }
+        if m["type"] as? String == "ready" { ready = true; if let lastState { deliver(lastState) }; let held = pending; pending.removeAll(); for h in held { deliver(h) } }
         // Which office asked: the desk's browser shows in that one.
         m["dashboard"] = dashboard
         message?(m)
     }
+    /// A message for once the page has loaded (a window's office made just now).
+    var pending: [[String: Any]] = []
+    func later(_ m: [String: Any]) { if ready { deliver(m) } else { pending.append(m) } }
     func deliver(_ incoming: [String: Any]) {
         var m = incoming
         if m["type"] as? String == "state" {
