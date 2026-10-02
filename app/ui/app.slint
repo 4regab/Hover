@@ -235,7 +235,12 @@ export component NotchWindow inherits Window {
     in property <float> voice-level;
     in property <[VoiceTool]> voice-tools;
     in property <bool> voice-busy;
-    out property <length> voice-w: root.voice.kind == 1 || root.voice.kind == 2 ? 440px : root.voice.kind == 5 || root.voice.kind == 6 ? 330px
+    // The one-line cards (listening, working on what was said, started, cancelled) are
+    // only as wide as their own line: the fixed 440 and 330 left most of the island
+    // empty. The old widths stay as the most they may take, so a long line still elides
+    // and no card grows past what it used to be.
+    out property <length> voice-w: root.voice.kind == 1 || root.voice.kind == 2 ? min(440px, vl.preferred-width)
+        : root.voice.kind == 5 || root.voice.kind == 6 ? min(330px, vs.preferred-width)
         : root.voice.kind == 7 ? 420px : 460px;
     out property <length> voice-h: root.voice.kind == 1 || root.voice.kind == 2 ? 52px : root.voice.kind == 5 || root.voice.kind == 6 ? 34px
         : root.voice.kind == 7 ? max(58px, ve.preferred-height) : vc.preferred-height;
@@ -505,13 +510,18 @@ export component NotchWindow inherits Window {
                     if (e.text == Key.Return && !e.modifiers.shift && root.voice.kind == 3 && root.voice.can-start) { root.voice-start(); return accept; }
                     reject
                 }
+                // The widest the listening time gets ("10:00", the ten-minute cap),
+                // measured but never drawn and never in a layout: the time's cell is held
+                // at this, so the card doesn't change width as the digits do.
+                vclock := Text { x: 0; y: 0; width: 0; height: 0; visible: false; text: "10:00"; font-size: 11.5px; font-weight: 500; }
                 // .nlisten: the mic swells a little with the voice's level; while Hover
                 // works on what was said a ring goes round it.
-                if root.voice.kind == 1 || root.voice.kind == 2: HorizontalLayout {
+                vl := HorizontalLayout {
                     x: 0;
                     y: 0;
-                    width: 440px;
+                    width: root.voice-w;
                     height: 52px;
+                    visible: root.voice.kind == 1 || root.voice.kind == 2;
                     padding-left: 14px;
                     padding-right: 14px;
                     spacing: 11px;
@@ -544,7 +554,8 @@ export component NotchWindow inherits Window {
                         accessible-id: "NotchVoiceStage";
                         accessible-label: root.voice.words + " " + root.voice.sub;
                     }
-                    if root.voice.sub != "": Text { text: root.voice.sub; font-size: 11.5px; font-weight: 500; color: #f6f2ff61; vertical-alignment: center; }
+                    if root.voice.sub != "": Text { text: root.voice.sub; font-size: 11.5px; font-weight: 500; color: #f6f2ff61; vertical-alignment: center;
+                        min-width: vclock.preferred-width; horizontal-alignment: right; }
                     VerticalLayout { alignment: center; EscChip { clicked => { root.voice-cancel(); } } }
                 }
                 // .ncard: what was heard, the target, the agent and the access, the task
@@ -741,11 +752,12 @@ export component NotchWindow inherits Window {
                     }
                 }
                 // .nstart: the tool's logo, the task, and where it started.
-                if root.voice.kind == 5 || root.voice.kind == 6: HorizontalLayout {
+                vs := HorizontalLayout {
                     x: 0;
                     y: 0;
-                    width: 330px;
+                    width: root.voice-w;
                     height: 34px;
+                    visible: root.voice.kind == 5 || root.voice.kind == 6;
                     padding-left: 14px;
                     padding-right: 14px;
                     spacing: 9px;
