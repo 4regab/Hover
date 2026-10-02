@@ -5,6 +5,10 @@ What changed in each Hover release. Versions follow [Semantic Versioning](https:
 
 ## [Unreleased]
 
+### Changed
+
+- Releases are built and published on AWS CodeBuild, with no GitHub Actions.
+
 ## [3.1.1] - 2026-10-02
 
 ### Fixed

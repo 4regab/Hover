@@ -42,10 +42,13 @@ sudo make install           # PREFIX=/usr/local; DESTDIR= for staging
 make package                # .deb and tarball in dist/
 ```
 
-A push to `rust-port/phase-0-1` whose `Cargo.toml` version has no tag yet, or a `v*` tag
-(matching it), runs `.github/workflows/ci.yml`'s tests on Windows and Linux (Ubuntu 22.04)
-on AWS CodeBuild, then builds the installers from that build, tags the commit and
-publishes them together as a GitHub pre-release. Raising the version releases it.
+CI and releases run on AWS CodeBuild only, with no GitHub Actions: the `hover-ci` project
+(`infra/codebuild.yml`), started by its own GitHub webhook, runs one batch per push or pull
+request. Windows (`ci/buildspec-windows.yml`) and Linux (`ci/buildspec-linux.yml`, Ubuntu
+22.04) test in parallel; `ci/buildspec-release.yml` runs once both pass. A push to
+`rust-port/phase-0-1` whose `Cargo.toml` version has no tag yet, or a `v*` tag (matching
+it), is a release: the same builds make the installers, and the release build tags the
+commit and publishes them together as a GitHub pre-release. Raising the version releases it.
 
 The cross-check that Windows code still compiles, from Linux (mimalloc's C needs
 clang-cl 19 or newer, which `cargo-xwin` drives with Microsoft's headers):
@@ -91,8 +94,9 @@ tools/
   hover-measure  memory sampler, scenario runner, fake-agent (not shipped)
   notch-proto    the port's Windows notch prototype, kept for its --selftest (not shipped)
 tests/golden/   fixtures and expected outputs (made from the 2.x page)
-infra/           codebuild-runner.yml: the CodeBuild project CI runs on (and its 72 GB
-                 Windows fleet, off by default)
+ci/              the CodeBuild buildspecs (windows, linux, release) and the scripts they run
+infra/           codebuild.yml: the CodeBuild project CI runs on, its webhook, roles, cache
+                 and installer bucket (and its 72 GB Windows fleet, off by default)
 packaging/       windows/Hover.iss; linux/package-linux.sh and hover.desktop (the one
                  .desktop file the .deb and make install both use)
 assets/          hover.png (the logo), make-icon.py (writes the app's hover.ico and

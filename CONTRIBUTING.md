@@ -86,9 +86,10 @@ Run what applies to your change and say what you ran in the pull request:
 - For memory or speed changes: before and after numbers from
   [profiling.md](docs/development/profiling.md), on the same machine and settings.
 
-The CI workflow (`.github/workflows/ci.yml`) runs the tests on Windows and Linux for
-every pull request. Its jobs run on AWS CodeBuild (`infra/codebuild-runner.yml`), with the fake agent: no secrets,
-and no agent accounts.
+CI runs the tests on Windows and Linux for every pull request, on AWS CodeBuild
+(`ci/`, `infra/codebuild.yml`), with the fake agent: no agent accounts. The pull request
+shows the result. A pull request from a fork starts CI only once a maintainer has read it
+and commented `/codebuild_run(<commit>)`.
 
 ## Pull requests
 
@@ -106,6 +107,6 @@ Fill in the template. In short:
 ## Releases
 
 Releases are made by the maintainers: a push to `rust-port/phase-0-1` that raises
-`Cargo.toml`'s version (or a `v*` tag) runs `.github/workflows/ci.yml`, which publishes the
+`Cargo.toml`'s version (or a `v*` tag) makes CI on AWS CodeBuild publish the
 installers once the tests pass. Forks don't need it: `.\build.ps1 installer` and
 `make package` build the same installers locally.

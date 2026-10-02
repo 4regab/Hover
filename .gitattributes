@@ -14,3 +14,4 @@ tests/golden/** -text
 # Run through sh on Linux, or read by Linux tools: a CR at a line's end breaks them.
 packaging/linux/* text eol=lf
 Makefile text eol=lf
+ci/*.sh text eol=lf

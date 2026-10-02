@@ -1,0 +1,21 @@
+# The Windows build of the CI batch (the graph is in infra/codebuild.yml). The work is in
+# ci/windows.ps1, run with PowerShell 7. CodeBuild's own shell here is Windows PowerShell,
+# which doesn't fail a command on a program's exit code, so the line passes it on.
+version: 0.2
+
+phases:
+  build:
+    commands:
+      - pwsh -NoProfile -NonInteractive -ExecutionPolicy Bypass -File ci/windows.ps1; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+# Kept in the CI bucket: Cargo's downloads (its home has a fixed path, see the script)
+# and target/. A key is saved once and never updated, so it names what makes the compiled
+# crates go stale: the lock file and the toolchain. A new key starts from an earlier one.
+cache:
+  key: cargo-windows-$(codebuild-hash-files Cargo.lock rust-toolchain.toml)
+  fallback-keys:
+    - cargo-windows-
+  paths:
+    - C:/cargo-home/registry/**/*
+    - C:/cargo-home/git/**/*
+    - target/**/*
