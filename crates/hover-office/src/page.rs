@@ -86,6 +86,199 @@ impl Composer {
     }
 }
 
+
+/// How many frames the office keeps textures for. One is being drawn into, one may be
+/// waiting for the UI to take it, and each window that shows the office holds the one it
+/// last handed to Slint (the notch and the app window, so two): four is the most that can
+/// be in use at once, so the office never has to wait for a slot.
+pub const SLOTS: usize = 4;
+
+/// The number of uniform slices in `Gpu::uni`, one per pass kind.
+const PASSES: u64 = 5;
+/// wgpu's default `min_uniform_buffer_offset_alignment`.
+const SLICE: u64 = 256;
+
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+struct PassU {
+    size: [f32; 2],
+    dir: [i32; 2],
+    bg: [[f32; 4]; 3],
+    bg_at: [f32; 4],
+    vig: [[f32; 4]; 3],
+    vig_at: [f32; 4],
+}
+
+// page.wgsl's `U`, which naga lays out at the same offsets: size 0, dir 8, bg 16, bg_at
+// 64, vig 80, vig_at 128. A field added or reordered on one side only would read the
+// background's colours from the wrong bytes, which no compiler would catch.
+const _: () = assert!(std::mem::size_of::<PassU>() == 144);
+
+/// One frame's two finished pictures, which Slint samples as they are.
+struct Slot {
+    page: wgpu::Texture,
+    glass: wgpu::Texture,
+    page_view: wgpu::TextureView,
+    glass_view: wgpu::TextureView,
+    /// The blur's first pass reads this slot's own composed picture.
+    down: wgpu::BindGroup,
+}
+
+/// compose() and the glass blur as GPU passes, into textures Slint draws directly: no
+/// readback, no CPU composition, no upload. Everything that depends only on the size is
+/// made once here and used again every frame.
+pub struct Gpu {
+    compose: wgpu::RenderPipeline,
+    down: wgpu::RenderPipeline,
+    boxp: wgpu::RenderPipeline,
+    sat: wgpu::RenderPipeline,
+    uni: wgpu::Buffer,
+    slots: Vec<Slot>,
+    ping_view: wgpu::TextureView,
+    pong_view: wgpu::TextureView,
+    /// The scene the renderer drew, which the compose pass reads.
+    scene: wgpu::BindGroup,
+    ping: wgpu::BindGroup,
+    pong: wgpu::BindGroup,
+    w: u32,
+    h: u32,
+    day: bool,
+}
+
+const PAGE_FMT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
+/// The blur's working pair. The CPU blur keeps full float precision through all seven
+/// passes; 8-bit intermediates would quantise at each one.
+const WORK_FMT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
+
+impl Gpu {
+    /// `scene` is the renderer's colour target, at `w` x `h`.
+    pub fn new(device: &wgpu::Device, queue: &wgpu::Queue, scene: &wgpu::TextureView, w: u32, h: u32, day: bool) -> Gpu {
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some("page"), source: wgpu::ShaderSource::Wgsl(include_str!("page.wgsl").into()) });
+        let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("page"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry { binding: 0, visibility: wgpu::ShaderStages::FRAGMENT, ty: wgpu::BindingType::Texture { sample_type: wgpu::TextureSampleType::Float { filterable: true }, view_dimension: wgpu::TextureViewDimension::D2, multisampled: false }, count: None },
+                wgpu::BindGroupLayoutEntry { binding: 1, visibility: wgpu::ShaderStages::FRAGMENT, ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Uniform, has_dynamic_offset: true, min_binding_size: wgpu::BufferSize::new(std::mem::size_of::<PassU>() as u64) }, count: None },
+            ],
+        });
+        let pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor { label: Some("page"), bind_group_layouts: &[Some(&layout)], immediate_size: 0 });
+        let pipe = |name: &str, entry: &str, fmt: wgpu::TextureFormat| device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some(name), layout: Some(&pl),
+            vertex: wgpu::VertexState { module: &shader, entry_point: Some("vs"), buffers: &[], compilation_options: Default::default() },
+            fragment: Some(wgpu::FragmentState { module: &shader, entry_point: Some(entry), targets: &[Some(wgpu::ColorTargetState { format: fmt, blend: None, write_mask: wgpu::ColorWrites::ALL })], compilation_options: Default::default() }),
+            primitive: wgpu::PrimitiveState { cull_mode: None, ..Default::default() },
+            depth_stencil: None, multisample: Default::default(), multiview_mask: None, cache: None,
+        });
+        let uni = device.create_buffer(&wgpu::BufferDescriptor { label: Some("page"), size: SLICE * PASSES, usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST, mapped_at_creation: false });
+        let tex = |label: &str, tw: u32, th: u32, f: wgpu::TextureFormat| device.create_texture(&wgpu::TextureDescriptor {
+            label: Some(label), size: wgpu::Extent3d { width: tw, height: th, depth_or_array_layers: 1 }, mip_level_count: 1, sample_count: 1,
+            dimension: wgpu::TextureDimension::D2, format: f,
+            // Slint takes a texture it can sample and also render to. COPY_SRC is for
+            // explicit captures and checks (a screenshot, the composition compared with
+            // compose()'s own bytes), never for the normal path.
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC, view_formats: &[],
+        });
+        let (sw, sh) = (w.div_ceil(4).max(1), h.div_ceil(4).max(1));
+        let bind = |label: &str, v: &wgpu::TextureView| device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some(label), layout: &layout,
+            entries: &[
+                wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(v) },
+                wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding { buffer: &uni, offset: 0, size: wgpu::BufferSize::new(std::mem::size_of::<PassU>() as u64) }) },
+            ],
+        });
+        let slots = (0..SLOTS).map(|i| {
+            let page = tex(&format!("office page {i}"), w, h, PAGE_FMT);
+            let glass = tex(&format!("office glass {i}"), sw, sh, PAGE_FMT);
+            let page_view = page.create_view(&Default::default());
+            let glass_view = glass.create_view(&Default::default());
+            let down = bind("page down", &page_view);
+            Slot { page, glass, page_view, glass_view, down }
+        }).collect();
+        let ping = tex("office blur a", sw, sh, WORK_FMT);
+        let pong = tex("office blur b", sw, sh, WORK_FMT);
+        let ping_view = ping.create_view(&Default::default());
+        let pong_view = pong.create_view(&Default::default());
+        let g = Gpu {
+            compose: pipe("page compose", "fs_compose", PAGE_FMT),
+            down: pipe("page down", "fs_down", WORK_FMT),
+            boxp: pipe("page box", "fs_box", WORK_FMT),
+            sat: pipe("page saturate", "fs_sat", PAGE_FMT),
+            scene: bind("page scene", scene),
+            ping: bind("page blur a", &ping_view),
+            pong: bind("page blur b", &pong_view),
+            uni, slots, ping_view, pong_view, w, h, day,
+        };
+        g.write_uni(queue, day);
+        g
+    }
+
+    /// The five passes' uniforms. Only the background's stops change after this (the time
+    /// of day), so it is written again only then.
+    fn write_uni(&self, queue: &wgpu::Queue, day: bool) {
+        let stops = if day { ["#4a3530", "#241815", "#0e0a09"] } else { ["#2a1824", "#150c14", "#07050a"] };
+        let bg = stops.map(|s| css(s).map(|v| v as f32));
+        let bg_at = if day { [0.0, 0.6, 1.0, 0.0] } else { [0.0, 0.55, 1.0, 0.0] };
+        let vig = [[0.0; 4], [0.0; 4], [0.0, 0.0, 0.0, 0.45]];
+        let vig_at = [0.0, 0.6, 1.0, 0.0];
+        let (sw, sh) = (self.w.div_ceil(4).max(1) as f32, self.h.div_ceil(4).max(1) as f32);
+        let base = PassU { size: [self.w as f32, self.h as f32], dir: [0, 0], bg, bg_at, vig, vig_at };
+        let small = PassU { size: [sw, sh], ..base };
+        let passes = [
+            base,
+            small,
+            PassU { dir: [1, 0], ..small },
+            PassU { dir: [0, 1], ..small },
+            small,
+        ];
+        for (i, p) in passes.iter().enumerate() {
+            queue.write_buffer(&self.uni, i as u64 * SLICE, bytemuck::bytes_of(p));
+        }
+    }
+
+    /// The time of day, when it changed: only the background's stops differ.
+    pub fn sync(&mut self, queue: &wgpu::Queue, day: bool) {
+        if self.day != day {
+            self.day = day;
+            self.write_uni(queue, day);
+        }
+    }
+
+    pub fn size(&self) -> (u32, u32) { (self.w, self.h) }
+
+    /// Each slot's two textures, for the app to hand to Slint.
+    pub fn textures(&self) -> Vec<(wgpu::Texture, wgpu::Texture)> {
+        self.slots.iter().map(|s| (s.page.clone(), s.glass.clone())).collect()
+    }
+
+    /// The page over the scene the renderer just drew, and the glass blur, into `slot`.
+    /// Encoded into the caller's encoder, so it goes with the scene in one submission.
+    pub fn encode(&self, enc: &mut wgpu::CommandEncoder, slot: usize) {
+        let s = &self.slots[slot];
+        // The background, the scene over it, the vignette over both.
+        pass(enc, "page", &s.page_view, &self.compose, &self.scene, 0);
+        // The glass blur, at a quarter of the size: three box passes each way, then
+        // saturate, exactly as blur() does them on the CPU.
+        pass(enc, "page blur down", &self.ping_view, &self.down, &s.down, 1);
+        for _ in 0..3 {
+            pass(enc, "page blur across", &self.pong_view, &self.boxp, &self.ping, 2);
+            pass(enc, "page blur down", &self.ping_view, &self.boxp, &self.pong, 3);
+        }
+        pass(enc, "page glass", &s.glass_view, &self.sat, &self.ping, 4);
+    }
+}
+
+/// One fullscreen pass. Every pixel of the target is written, so nothing is loaded.
+fn pass(enc: &mut wgpu::CommandEncoder, label: &str, dst: &wgpu::TextureView, pipe: &wgpu::RenderPipeline, bind: &wgpu::BindGroup, slice: u32) {
+    let mut p = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
+        label: Some(label),
+        color_attachments: &[Some(wgpu::RenderPassColorAttachment { view: dst, resolve_target: None, depth_slice: None, ops: wgpu::Operations { load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT), store: wgpu::StoreOp::Store } })],
+        depth_stencil_attachment: None, timestamp_writes: None, occlusion_query_set: None, multiview_mask: None,
+    });
+    p.set_pipeline(pipe);
+    p.set_bind_group(0, bind, &[slice * SLICE as u32]);
+    p.draw(0..3, 0..1);
+}
+
 #[cfg(test)]
 mod tests {
     /// The byte tables give what the float ones did, pixel for pixel.

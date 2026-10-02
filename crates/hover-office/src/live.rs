@@ -7,6 +7,7 @@
 use crate::office::{Click, Hover, Office, Prop, Tag, Time};
 use crate::render::Renderer;
 use hover_core::json::Json;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{channel, Receiver, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -26,7 +27,18 @@ pub enum In {
     Time(Option<Time>),
     /// The user's camera, when the page is made again (office.view).
     View([f64; 3]),
+    /// Slint would not take the office's textures: go back to reading frames back and
+    /// composing them on the CPU, rather than show nothing.
+    NoGpu,
     Quit,
+}
+
+/// The slots' textures and which set they belong to. The set changes when the office is
+/// resized, so the app knows the images it made are for the old size.
+#[derive(Default)]
+pub struct Slots {
+    pub gen: u64,
+    pub tex: Vec<(wgpu::Texture, wgpu::Texture)>,
 }
 
 #[derive(Clone, Default)]
@@ -47,11 +59,21 @@ pub struct Out {
     /// The user's camera (office.view), kept by the app across a drop.
     pub view: [f64; 3],
     /// The page's picture: the frame over the background, with the vignette and border.
-    /// Empty when only clicks came. Hand it back with `Live::recycle` once drawn.
+    /// Empty when only clicks came, and on the GPU path (`slot` carries it instead).
+    /// Hand it back with `Live::recycle` once drawn.
     pub rgb: Vec<u8>,
+    /// The GPU path: which slot holds this frame, and which set of slots it is from.
+    /// Hand it back with `Live::release` once a later frame has reached Slint.
+    pub slot: Option<(u64, usize)>,
 }
 
-pub struct Live { tx: Sender<In>, pub out: Arc<Mutex<Out>>, spare: Arc<Mutex<Vec<u8>>> }
+pub struct Live {
+    tx: Sender<In>,
+    pub out: Arc<Mutex<Out>>,
+    spare: Arc<Mutex<Vec<u8>>>,
+    slots: Arc<Mutex<Slots>>,
+    freed: Arc<Mutex<Vec<(u64, usize)>>>,
+}
 
 impl Live {
     /// `wake` is called (off the UI thread) when a new frame is waiting.
@@ -59,15 +81,29 @@ impl Live {
         let (tx, rx) = channel();
         let out: Arc<Mutex<Out>> = Default::default();
         let spare: Arc<Mutex<Vec<u8>>> = Default::default();
-        let (o2, s2) = (out.clone(), spare.clone());
-        std::thread::Builder::new().name("office".into()).spawn(move || run(rx, o2, s2, w, h, still, wake)).expect("the office's thread");
-        Live { tx, out, spare }
+        let slots: Arc<Mutex<Slots>> = Default::default();
+        let freed: Arc<Mutex<Vec<(u64, usize)>>> = Default::default();
+        let (o2, s2, sl2, f2) = (out.clone(), spare.clone(), slots.clone(), freed.clone());
+        std::thread::Builder::new().name("office".into()).spawn(move || run(rx, o2, s2, sl2, f2, w, h, still, wake)).expect("the office's thread");
+        Live { tx, out, spare, slots, freed }
     }
 
     pub fn send(&self, m: In) { let _ = self.tx.send(m); }
     pub fn take(&self) -> Out { std::mem::take(&mut *self.out.lock().unwrap()) }
     /// A frame's picture, drawn: its buffer is used again for a later frame.
     pub fn recycle(&self, rgb: Vec<u8>) { if rgb.capacity() > 0 { *self.spare.lock().unwrap() = rgb; } }
+
+    /// Every slot's page and glass texture, and which set they are. Empty when the office
+    /// reads its frames back instead.
+    pub fn slot_textures(&self) -> (u64, Vec<(wgpu::Texture, wgpu::Texture)>) {
+        let s = self.slots.lock().unwrap();
+        (s.gen, s.tex.clone())
+    }
+
+    /// A slot no window shows any more: the office may draw into it again. Nothing is
+    /// drawn into it until this is called, so a texture Slint still samples is never
+    /// written over.
+    pub fn release(&self, gen: u64, slot: usize) { self.freed.lock().unwrap().push((gen, slot)); }
 }
 
 impl Drop for Live {
@@ -80,7 +116,8 @@ fn hour_now() -> i64 {
     secs.rem_euclid(86400) / 3600
 }
 
-fn run(rx: Receiver<In>, out: Arc<Mutex<Out>>, spare: Arc<Mutex<Vec<u8>>>, w: u32, h: u32, still: bool, wake: impl Fn()) {
+#[allow(clippy::too_many_arguments)]
+fn run(rx: Receiver<In>, out: Arc<Mutex<Out>>, spare: Arc<Mutex<Vec<u8>>>, slots: Arc<Mutex<Slots>>, freed: Arc<Mutex<Vec<(u64, usize)>>>, w: u32, h: u32, still: bool, wake: impl Fn()) {
     let mut o = Office::new(w as f64, h as f64, still);
     let mut r = match Renderer::new(w, h) {
         Ok(r) => r,
@@ -94,6 +131,23 @@ fn run(rx: Receiver<In>, out: Arc<Mutex<Out>>, spare: Arc<Mutex<Vec<u8>>>, w: u3
     let px = |n: u32| ((n as f64 * scale).round() as u32).max(1);
     if scale != 1.0 { r.resize(px(w), px(h)); }
     o.apply_time(Office::auto_time(hour_now()));
+    // The frame stays on the GPU when the app shares its device with the office, so the
+    // windows can draw the office's own textures (Windows). Elsewhere, and when
+    // HOVER_OFFICE_READBACK is set to measure the two against each other, the frame is
+    // read back and composed on the CPU.
+    let mut gen = 0u64;
+    let mut gpu = (r.shared && std::env::var_os("HOVER_OFFICE_READBACK").is_none()).then(|| {
+        let g = crate::page::Gpu::new(&r.device, &r.queue, &r.color_view(), r.w, r.h, o.time == Time::Day);
+        gen = 1;
+        *slots.lock().unwrap() = Slots { gen, tex: g.textures() };
+        g
+    });
+    hover_core::log::line(if gpu.is_some() { "office: the frame and its composition stay on the GPU" } else { "office: the frame is read back and composed on the CPU" });
+    // The slots nothing shows. One is drawn into, one may wait for the UI, and each
+    // window that shows the office holds the one it last handed to Slint.
+    let mut free: Vec<usize> = (0..crate::page::SLOTS).collect();
+    // The last frame's own time on the GPU, measured without waiting for it.
+    let gpu_us = Arc::new(AtomicU64::new(0));
     let t0 = Instant::now();
     let mut last = 0.0;
     // A frame isn't started before this: the device gets twice a frame's own time to
@@ -117,7 +171,30 @@ fn run(rx: Receiver<In>, out: Arc<Mutex<Out>>, spare: Arc<Mutex<Vec<u8>>>, w: u3
             match m {
                 In::Quit => return,
                 In::State(j) => o.state(&j),
-                In::Resize(w, h) => { if w > 0 && h > 0 { o.resize(w as f64, h as f64); r.resize(px(w), px(h)); } }
+                In::Resize(w, h) => {
+                    if w > 0 && h > 0 {
+                        o.resize(w as f64, h as f64);
+                        r.resize(px(w), px(h));
+                        // The slots are the frame's size, so a new size needs new ones. The
+                        // old textures stay alive while the windows still show them, and the
+                        // new set's number tells the app its images are for the old size.
+                        if let Some(g) = gpu.as_mut() {
+                            if g.size() != (r.w, r.h) {
+                                *g = crate::page::Gpu::new(&r.device, &r.queue, &r.color_view(), r.w, r.h, o.time == Time::Day);
+                                gen += 1;
+                                *slots.lock().unwrap() = Slots { gen, tex: g.textures() };
+                                free = (0..crate::page::SLOTS).collect();
+                                freed.lock().unwrap().clear();
+                            }
+                        }
+                    }
+                }
+                In::NoGpu => {
+                    if gpu.take().is_some() {
+                        hover_core::log::line("office: Slint would not take the office's textures; reading frames back instead");
+                        *slots.lock().unwrap() = Slots::default();
+                    }
+                }
                 In::Pointer(p) => {
                     if let (Some(d), Some(p)) = (down, p) {
                         if !o.dragging && (p.0 - d.0).hypot(p.1 - d.1) > 6.0 && !o.drawer_open && o.panel.is_none() { o.dragging = true; }
@@ -160,19 +237,41 @@ fn run(rx: Receiver<In>, out: Arc<Mutex<Out>>, spare: Arc<Mutex<Vec<u8>>>, w: u3
         let dt = now - last;
         last = now;
         if !o.frame(now, dt) && clicks.is_empty() { continue; }
-        let spent = Instant::now();
-        r.render_into(&mut o, &mut rgba);
-        // The buffer the UI gave back, or a new one.
-        let mut rgb = std::mem::take(&mut *spare.lock().unwrap());
-        page.compose_into(&rgba, r.w as usize, r.h as usize, o.time == Time::Day, &mut rgb);
-        rest_until = Instant::now() + spent.elapsed() * 2;
+        let mut rgb = Vec::new();
+        let mut slot_out = None;
+        if let Some(g) = gpu.as_mut() {
+            // Slots the windows have finished with.
+            for (gn, i) in freed.lock().unwrap().drain(..) { if gn == gen && !free.contains(&i) { free.push(i); } }
+            // Nothing free: the UI is behind, so this frame is dropped rather than drawn
+            // over a texture a window still shows. The clicks wait for the next one.
+            let Some(slot) = free.pop() else { continue };
+            g.sync(&r.queue, o.time == Time::Day);
+            let spent = Instant::now();
+            r.render_gpu(&mut o, g, slot);
+            // Resting the device still needs the frame's cost, and nothing waits for the
+            // GPU here: the time is taken when the work reports done, which happens as the
+            // windows' own drawing polls the device.
+            let us = gpu_us.clone();
+            r.queue.on_submitted_work_done(move || us.store(spent.elapsed().as_micros() as u64, Ordering::Relaxed));
+            rest_until = Instant::now() + Duration::from_micros(gpu_us.load(Ordering::Relaxed)) * 2;
+            slot_out = Some((gen, slot));
+        } else {
+            let spent = Instant::now();
+            r.render_into(&mut o, &mut rgba);
+            // The buffer the UI gave back, or a new one.
+            rgb = std::mem::take(&mut *spare.lock().unwrap());
+            page.compose_into(&rgba, r.w as usize, r.h as usize, o.time == Time::Day, &mut rgb);
+            rest_until = Instant::now() + spent.elapsed() * 2;
+        }
         let hint = match o.hovered { Some(Hover::Prop(Prop::Clock)) => String::from("clock"), Some(Hover::Prop(p)) => o.hint(p).to_owned(), _ => String::new() };
         let mut g = out.lock().unwrap();
-        // A frame the UI hasn't taken yet: its picture is replaced, its clicks are not.
+        // A frame the UI hasn't taken yet: its picture is replaced, its clicks are not,
+        // and its slot goes back (no window ever saw it).
         let mut all = std::mem::take(&mut g.clicks);
         all.append(&mut clicks);
+        if let Some((gn, prev)) = g.slot { if gn == gen && Some(prev) != slot_out.map(|(_, s)| s) && !free.contains(&prev) { free.push(prev); } }
         let old = std::mem::replace(&mut *g, Out { w: r.w, h: r.h, tags: o.tags(), hovered: o.hovered, hint, pointer: o.pointer, clicks: all,
-            day: o.time == Time::Day, frames: o.frames, adapter: r.adapter_name.clone(), error: None, view: o.user, rgb });
+            day: o.time == Time::Day, frames: o.frames, adapter: r.adapter_name.clone(), error: None, view: o.user, rgb, slot: slot_out });
         drop(g);
         if old.rgb.capacity() > 0 { let mut s = spare.lock().unwrap(); if s.capacity() == 0 { *s = old.rgb; } }
         wake();

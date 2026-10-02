@@ -76,9 +76,20 @@ pub struct Page {
     /// The frame as RGBA, for the texture, kept between frames.
     #[cfg(windows)]
     scratch: RefCell<Vec<u8>>,
+    /// The office's own slot textures as Slint images, when the frame stays on the GPU:
+    /// made once per slot, and again only when a resize gives the office new ones.
+    #[cfg(windows)]
+    slots: RefCell<SlotImages>,
     /// The glass panels' blurred copy of the frame, and its working buffers.
     blur: RefCell<Blur>,
 }
+
+/// The office's slots as images, and which slot each window last showed (0 the notch, 1
+/// the app window). A window holds its slot until it is given another, so the office
+/// never draws over a texture a window still shows.
+#[cfg(windows)]
+#[derive(Default)]
+struct SlotImages { gen: u64, img: Vec<(Image, Image)>, held: [Option<usize>; 2] }
 
 /// A question's rows, and each of its questions' choices.
 type QRows = (Rc<VecModel<QData>>, Vec<Rc<VecModel<QOpt>>>);
@@ -143,7 +154,8 @@ impl Default for Page {
             rows_open: RefCell::new(vec![]), target: Cell::new(0), shown: Cell::new(None), drop_timer: Default::default(), view: Cell::new(None),
             picks: Default::default(), qmodels: Default::default(), model_menu: Cell::new(0), attached: Default::default(), thumbs: Default::default(),
             #[cfg(windows)] gpu: Default::default(),
-            #[cfg(windows)] scratch: Default::default(), blur: Default::default() }
+            #[cfg(windows)] scratch: Default::default(),
+            #[cfg(windows)] slots: Default::default(), blur: Default::default() }
     }
 }
 
@@ -241,7 +253,7 @@ impl App {
         // when it is shown again).
         self.notch.window().request_redraw();
         #[cfg(windows)]
-        { *p.gpu.borrow_mut() = Default::default(); *p.scratch.borrow_mut() = Vec::new(); }
+        { *p.gpu.borrow_mut() = Default::default(); *p.scratch.borrow_mut() = Vec::new(); *p.slots.borrow_mut() = Default::default(); }
         *p.blur.borrow_mut() = Blur::default();
         // The chat's copy of the open session's turns (made again when it is drawn), and
         // the thumbnails (read again from their files).
@@ -297,7 +309,7 @@ impl App {
     pub fn office_frame(self: &Rc<Self>) {
         let out = match &*self.page.live.borrow() { Some(l) => l.take(), None => return };
         if let Some(e) = &out.error { hover_core::log::line(&format!("office: {e}")); return; }
-        let fresh = !out.rgb.is_empty();
+        let fresh = !out.rgb.is_empty() || out.slot.is_some();
         if !fresh && out.clicks.is_empty() { return; }
         if fresh { crate::bench::office_frame(); }
         if fresh && self.page.view.get() != Some(out.view) {
@@ -305,9 +317,19 @@ impl App {
             crate::local_set("view", &format!("{},{},{}", out.view[0], out.view[1], out.view[2]));
         }
         let mut out = out;
-        if fresh {
-            let (img, blurred) = self.frame_images(&out.rgb, out.w, out.h);
-            if let Some(l) = &*self.page.live.borrow() { l.recycle(std::mem::take(&mut out.rgb)); }
+        // The office's own textures when the frame stayed on the GPU, else the picture it
+        // read back. A slot whose textures Slint won't take leaves the office to read
+        // frames back from now on, and this frame only brings its clicks.
+        let images = match (fresh, out.slot) {
+            (false, _) => None,
+            (true, Some((gen, i))) => self.slot_images(gen, i),
+            (true, None) => {
+                let im = self.frame_images(&out.rgb, out.w, out.h);
+                if let Some(l) = &*self.page.live.borrow() { l.recycle(std::mem::take(&mut out.rgb)); }
+                Some(im)
+            }
+        };
+        if let Some((img, blurred)) = images {
             // renderAsks: the question over the head while the session waits.
             let asking = self.hover.sessions.asking_now();
             let tags: Vec<TagData> = out.tags.iter().map(|t| {
@@ -337,6 +359,11 @@ impl App {
                 self.notch.global::<crate::ui::Backdrop>().set_blurred(blurred);
                 self.notch.window().request_redraw();
             }
+            // This window now shows this slot; the one it showed before is free. Slint has
+            // the new images, so no drawing it does from here on reads the old textures,
+            // and any draw it already sent runs before the office's next write to them
+            // (both go to the one shared queue, in order).
+            if let Some((gen, i)) = out.slot { self.hold_slot(gen, i, which); }
         }
         for c in out.clicks {
             match c {
@@ -354,6 +381,57 @@ impl App {
             }
         }
     }
+
+    /// A slot's page and glass textures as Slint images. The images are made once per set
+    /// of slots, not per frame: the office draws into the very textures the windows
+    /// sample, so nothing is copied here at all.
+    #[cfg(windows)]
+    fn slot_images(&self, gen: u64, i: usize) -> Option<(Image, Image)> {
+        let live = self.page.live.borrow();
+        let live = live.as_ref()?;
+        let mut s = self.page.slots.borrow_mut();
+        if s.gen != gen {
+            let (have, tex) = live.slot_textures();
+            // The office has moved on to another set already; this frame's slot is gone.
+            if have != gen { return None; }
+            let mut img = Vec::with_capacity(tex.len());
+            for (page, glass) in tex {
+                match (Image::try_from(page), Image::try_from(glass)) {
+                    (Ok(a), Ok(b)) => img.push((a, b)),
+                    (a, b) => {
+                        let e = a.err().map(|e| e.to_string()).or_else(|| b.err().map(|e| e.to_string())).unwrap_or_default();
+                        hover_core::log::line(&format!("office texture: {e}"));
+                        live.send(In::NoGpu);
+                        *s = SlotImages::default();
+                        return None;
+                    }
+                }
+            }
+            *s = SlotImages { gen, img, held: [None; 2] };
+        }
+        s.img.get(i).cloned()
+    }
+
+    /// Never on Linux: Slint draws there with OpenGL, which cannot sample the office's
+    /// wgpu texture, so the office reads its frames back and this is never reached.
+    #[cfg(not(windows))]
+    fn slot_images(&self, _gen: u64, _i: usize) -> Option<(Image, Image)> { None }
+
+    /// This window now shows slot `i`: the slot it showed before is handed back.
+    #[cfg(windows)]
+    fn hold_slot(&self, gen: u64, i: usize, which: i32) {
+        let mut s = self.page.slots.borrow_mut();
+        if s.gen != gen { return; }
+        let w = (which == 1) as usize;
+        let prev = s.held[w].replace(i);
+        drop(s);
+        if let (Some(prev), Some(l)) = (prev, &*self.page.live.borrow()) {
+            if prev != i { l.release(gen, prev); }
+        }
+    }
+
+    #[cfg(not(windows))]
+    fn hold_slot(&self, _gen: u64, _i: usize, _which: i32) {}
 
     /// The frame and its blurred copy as images for the windows: textures written in
     /// place where the windows share the office's GPU device (Windows), else new pixel
