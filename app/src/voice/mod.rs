@@ -167,7 +167,8 @@ pub struct Voice {
 pub(crate) fn agent(limit: Duration) -> ureq::Agent {
     let cfg = ureq::Agent::config_builder();
     #[cfg(windows)]
-    let cfg = cfg.tls_config(ureq::tls::TlsConfig::builder().provider(ureq::tls::TlsProvider::NativeTls).build());
+    let cfg = cfg.tls_config(ureq::tls::TlsConfig::builder().provider(ureq::tls::TlsProvider::NativeTls)
+        .root_certs(ureq::tls::RootCerts::PlatformVerifier).build());
     cfg.timeout_global(Some(limit)).timeout_connect(Some(limit.min(Duration::from_secs(10)))).http_status_as_error(false).build().into()
 }
 

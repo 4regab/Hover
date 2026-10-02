@@ -131,7 +131,8 @@ pub fn codex_in(home: &Path, now: DateTime<Utc>) -> Reading {
 fn agent() -> ureq::Agent {
     let cfg = ureq::Agent::config_builder();
     #[cfg(windows)]
-    let cfg = cfg.tls_config(ureq::tls::TlsConfig::builder().provider(ureq::tls::TlsProvider::NativeTls).build());
+    let cfg = cfg.tls_config(ureq::tls::TlsConfig::builder().provider(ureq::tls::TlsProvider::NativeTls)
+        .root_certs(ureq::tls::RootCerts::PlatformVerifier).build());
     // HttpClient's 15 s timeout; statuses are the caller's to read.
     cfg.timeout_global(Some(Duration::from_secs(15))).http_status_as_error(false).build().into()
 }

@@ -127,10 +127,16 @@ pub struct Renderer {
     /// The adapter is the CPU (WARP, llvmpipe): every pixel costs CPU time, so the
     /// office draws fewer of them (live.rs).
     pub software: bool,
+    /// The device is the app's, shared with its windows (Windows). Only then can the
+    /// office hand Slint a texture instead of reading the frame back.
+    pub shared: bool,
 }
 
 const FMT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 const DEPTH: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
+/// The scene's target: drawn into, read back on the CPU path, and sampled by the page's
+/// composition passes on the GPU one.
+const COLOR_USAGE: wgpu::TextureUsages = wgpu::TextureUsages::RENDER_ATTACHMENT.union(wgpu::TextureUsages::COPY_SRC).union(wgpu::TextureUsages::TEXTURE_BINDING);
 
 /// The device the app's windows draw with, when the app shares it (Windows). Each GPU
 /// device costs tens of MB of its own (driver state, descriptor heaps), and a device of
@@ -166,6 +172,7 @@ impl Renderer {
     /// The app's shared device when there is one; else a device of its own (Vulkan or GL
     /// on Linux, DX12 on Windows), low power.
     pub fn new(w: u32, h: u32) -> Result<Renderer, String> {
+        let shared = SHARED.get().is_some();
         let (device, queue, adapter_name, software) = match SHARED.get() {
             Some((d, q, n, s)) => (d.clone(), q.clone(), n.clone(), *s),
             None => {
@@ -180,7 +187,7 @@ impl Renderer {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some("office"), source: wgpu::ShaderSource::Wgsl(include_str!("office.wgsl").into()) });
         let tex = |d: &wgpu::Device, w: u32, h: u32, f: wgpu::TextureFormat, u: wgpu::TextureUsages| d.create_texture(&wgpu::TextureDescriptor {
             label: None, size: wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 }, mip_level_count: 1, sample_count: 1, dimension: wgpu::TextureDimension::D2, format: f, usage: u, view_formats: &[] });
-        let color = tex(&device, w, h, FMT, wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC);
+        let color = tex(&device, w, h, FMT, COLOR_USAGE);
         let depth = tex(&device, w, h, DEPTH, wgpu::TextureUsages::RENDER_ATTACHMENT);
         let shadow = tex(&device, SHADOW, SHADOW, DEPTH, wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING);
         let frame_buf = device.create_buffer(&wgpu::BufferDescriptor { label: None, size: std::mem::size_of::<FrameU>() as u64, usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST, mapped_at_creation: false });
@@ -244,7 +251,7 @@ impl Renderer {
             multisample: Default::default(), multiview_mask: None, cache: None,
         });
         let readback = device.create_buffer(&wgpu::BufferDescriptor { label: None, size: (align(w * 4) * h) as u64, usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ, mapped_at_creation: false });
-        let r = Renderer { device, queue, w, h, color, depth, shadow, frame_buf, draw_buf, g0, g0_shadow, g1, g1_layout, tex_groups, textures, pipes, shadow_pipe, shader, layout, meshes: HashMap::new(), keys: vec![], draws: vec![], readback, adapter_name, software };
+        let r = Renderer { device, queue, w, h, color, depth, shadow, frame_buf, draw_buf, g0, g0_shadow, g1, g1_layout, tex_groups, textures, pipes, shadow_pipe, shader, layout, meshes: HashMap::new(), keys: vec![], draws: vec![], readback, adapter_name, software, shared };
         // glowTex: white, alpha from 1 at the centre through .4 at 35 % to 0 at the edge.
         let mut gc = crate::canvas::Canvas::new(64, 64);
         gc.gradient_r(32.0, 32.0, 32.0, &[(0.0, [1.0, 1.0, 1.0, 1.0]), (0.35, [1.0, 1.0, 1.0, 0.4]), (1.0, [1.0, 1.0, 1.0, 0.0])]);
@@ -263,7 +270,7 @@ impl Renderer {
         if (w, h) == (self.w, self.h) || w == 0 || h == 0 { return; }
         let d = &self.device;
         let tex = |f: wgpu::TextureFormat, u: wgpu::TextureUsages| d.create_texture(&wgpu::TextureDescriptor { label: None, size: wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 }, mip_level_count: 1, sample_count: 1, dimension: wgpu::TextureDimension::D2, format: f, usage: u, view_formats: &[] });
-        self.color = tex(FMT, wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC);
+        self.color = tex(FMT, COLOR_USAGE);
         self.depth = tex(DEPTH, wgpu::TextureUsages::RENDER_ATTACHMENT);
         self.readback = d.create_buffer(&wgpu::BufferDescriptor { label: None, size: (align(w * 4) * h) as u64, usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ, mapped_at_creation: false });
         self.w = w;
@@ -292,6 +299,40 @@ impl Renderer {
 
     /// render, into a buffer the caller keeps between frames.
     pub fn render_into(&mut self, o: &mut Office, out: &mut Vec<u8>) {
+        let mut enc = self.encode(o);
+        let row = align(self.w * 4);
+        enc.copy_texture_to_buffer(wgpu::TexelCopyTextureInfo { texture: &self.color, mip_level: 0, origin: wgpu::Origin3d::ZERO, aspect: wgpu::TextureAspect::All },
+            wgpu::TexelCopyBufferInfo { buffer: &self.readback, layout: wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(row), rows_per_image: Some(self.h) } },
+            wgpu::Extent3d { width: self.w, height: self.h, depth_or_array_layers: 1 });
+        { let _g = gate(); self.queue.submit([enc.finish()]); }
+        let slice = self.readback.slice(..);
+        slice.map_async(wgpu::MapMode::Read, |_| {});
+        let _ = self.device.poll(wgpu::PollType::wait_indefinitely());
+        let data = slice.get_mapped_range().expect("the frame maps");
+        out.clear();
+        out.reserve((self.w * self.h * 4) as usize);
+        for y in 0..self.h as usize { out.extend_from_slice(&data[y * row as usize..y * row as usize + self.w as usize * 4]); }
+        drop(data);
+        self.readback.unmap();
+        let _ = &self.g1_layout;
+    }
+
+    /// The scene, then the page's composition and the glass blur, all on the GPU and into
+    /// `slot`'s textures: nothing is read back and nothing waits for the GPU here. The
+    /// scene's own target is sampled by the compose pass, so both go in one submission.
+    pub fn render_gpu(&mut self, o: &mut Office, gpu: &crate::page::Gpu, slot: usize) {
+        let mut enc = self.encode(o);
+        gpu.encode(&mut enc, slot);
+        let _g = gate();
+        self.queue.submit([enc.finish()]);
+    }
+
+    /// The scene's view, for the page's compose pass. Made again after a resize.
+    pub fn color_view(&self) -> wgpu::TextureView { self.color.create_view(&Default::default()) }
+
+    /// The shadow map (only when something moved), then the opaque draws, then the
+    /// transparent ones back to front, into the colour target. Nothing is submitted.
+    fn encode(&mut self, o: &mut Office) -> wgpu::CommandEncoder {
         for (i, c) in o.canvases.iter().enumerate() {
             if o.dirty[i] { self.upload(i, c.w as u32, c.h as u32, &c.rgba()); o.dirty[i] = false; }
         }
@@ -400,21 +441,8 @@ impl Renderer {
                 pass.draw_indexed(0..mesh.n, 0, 0..1);
             }
         }
-        let row = align(self.w * 4);
-        enc.copy_texture_to_buffer(wgpu::TexelCopyTextureInfo { texture: &self.color, mip_level: 0, origin: wgpu::Origin3d::ZERO, aspect: wgpu::TextureAspect::All },
-            wgpu::TexelCopyBufferInfo { buffer: &self.readback, layout: wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(row), rows_per_image: Some(self.h) } },
-            wgpu::Extent3d { width: self.w, height: self.h, depth_or_array_layers: 1 });
-        { let _g = gate(); self.queue.submit([enc.finish()]); }
-        let slice = self.readback.slice(..);
-        slice.map_async(wgpu::MapMode::Read, |_| {});
-        let _ = self.device.poll(wgpu::PollType::wait_indefinitely());
-        let data = slice.get_mapped_range().expect("the frame maps");
-        out.clear();
-        out.reserve((self.w * self.h * 4) as usize);
-        for y in 0..self.h as usize { out.extend_from_slice(&data[y * row as usize..y * row as usize + self.w as usize * 4]); }
-        drop(data);
-        self.readback.unmap();
         let _ = &self.g1_layout;
+        enc
     }
 }
 
