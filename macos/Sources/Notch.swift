@@ -234,8 +234,16 @@ final class Notch: NSObject {
     /// Clicks go to the shape only; everywhere else falls through to what is beneath.
     /// While files are dragged over it, the whole window takes the drop.
     var takesDrops = false { didSet { if takesDrops { window.ignoresMouseEvents = false } } }
+    /// While an app is dragged to Cua's notch, Hover's steps out of sight and out of the way.
+    var stepAside = false {
+        didSet {
+            guard stepAside != oldValue else { return }
+            NSAnimationContext.runAnimationGroup { c in c.duration = 0.15; window.animator().alphaValue = stepAside ? 0 : 1 }
+            if stepAside { window.ignoresMouseEvents = true }
+        }
+    }
     func track(_ point: CGPoint) {
-        if takesDrops { return }
+        if takesDrops || stepAside { return }
         let inside = contains(point)
         if window.ignoresMouseEvents == inside { window.ignoresMouseEvents = !inside }
     }

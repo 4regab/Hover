@@ -30,6 +30,11 @@ if a[:2] in (['spaces', 'start'], ['spaces', 'stop']):
     vm(a[2].split(':')[-1], {'status': 'running' if a[1] == 'start' else 'stopped'})
     print(json.dumps({'space': a[2], 'state': 'running' if a[1] == 'start' else 'stopped'})); sys.exit(0)
 if a[:2] == ['spaces', 'delete']: save([x for x in load() if x['id'] != a[2]]); vm(a[2].split(':')[-1], None); sys.exit(0)
+if a[:2] == ['spaces', 'add']:
+    s = load()
+    for x in s:
+        if x['id'] == a[2]: x['name'] = a[a.index('--name') + 1]
+    save(s); sys.exit(0)
 if a[:2] == ['sb', 'exec']: print('/Users/lume'); sys.exit(0)
 if a[:2] == ['sb', 'cp']: print('copied', file=log, flush=True); sys.exit(0)
 if a[:2] == ['runtime', 'setup']: sys.exit(0)

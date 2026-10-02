@@ -254,6 +254,15 @@ final class Harness {
             check(seen.map(\.0) == ["start", "over", "drop"] && seen.allSatisfy { $0.1 == "com.google.Chrome" }, "a window dragged to the notch opens it and drops there, naming the app: \(seen.map(\.0))")
         }
 
+        // An app goes to Cua's own notch when it runs; files stay with Hover's.
+        let app = TeleportDrag.Drag(app: "Google Chrome", bundle: "com.google.Chrome", files: [], pid: 4242)
+        let files = TeleportDrag.Drag(app: "login.html", bundle: nil, files: [URL(fileURLWithPath: "/tmp/x")], pid: nil)
+        check(TeleportDrag.handOff(app, spacesOn: true, cuaRunning: true), "an app dragged to the notch opens Cua's Spaces, not Hover")
+        check(!TeleportDrag.handOff(files, spacesOn: true, cuaRunning: true), "files dragged to the notch still drop on Hover's project desktops")
+        check(!TeleportDrag.handOff(app, spacesOn: true, cuaRunning: false), "without Cua Spaces running, Hover's notch takes the app")
+        check(!TeleportDrag.handOff(app, spacesOn: false, cuaRunning: true), "with agent desktops off, the drag is not handed to Cua")
+        check(cuaLog().contains("spaces add local:hover-project-") && cuaLog().contains("--name project · Hover"), "the desktop is named for its project in Cua's list (cua spaces add --name)")
+
         // An app dragged onto the notch: the agents' desktops open as drop targets.
         office.deliver(["type": "teleportDrag", "phase": "start", "app": "Google Chrome", "bundle": "com.google.Chrome", "files": [], "x": 300, "y": 120, "vw": 1300])
         check(await until("the drop targets show", 5) { await self.truthy("!document.querySelector('#tdrop').hidden && document.querySelector('#tdrop [data-tdrop]')") }, "dragging an app to the notch shows the agents' desktops")

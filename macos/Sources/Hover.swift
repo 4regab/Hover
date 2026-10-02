@@ -14,7 +14,7 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate {
     let screen = ScreenFeed()
     let browsers = AgentBrowsers()
     let spaceViewers = SpaceViewers(), teleport = TeleportDrag()
-    var dropView: NotchDropView?, dragging: TeleportDrag.Drag?
+    var dropView: NotchDropView?, dragging: TeleportDrag.Drag?, handedOff = false, cuaOpenedAt = Date.distantPast
     var resources: URL!, dataFolder: URL!, notch: Notch!, office: Office!, dashboardOffice: Office?, dashboard: NSWindow?, settings: SettingsWindow!
     var menuBar: MenuBar?, poll: Timer?, clock: Timer?, hotKey: EventHotKeyRef?, hotHandler: EventHandlerRef?
     var voice: VoiceController?, voiceKey: EventHotKeyRef?, escapeKey: EventHotKeyRef?, voiceHeld = false
@@ -171,6 +171,20 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// send what was dropped to the desktop under it.
     func dragPhase(_ phase: String, _ p: CGPoint) {
         guard let d = dragging else { return }
+        // An app goes to Cua's own notch: Hover's steps aside for the whole drag.
+        if phase == "start" { handedOff = TeleportDrag.handOff(d, spacesOn: latest?["spaces"] as? Bool == true, cuaRunning: TeleportDrag.cuaRunning) }
+        if handedOff {
+            switch phase {
+            case "start": notch.stepAside = true
+            case "drop", "cancel":
+                handedOff = false; dragging = nil
+                // Not opened under the pointer when it comes back: only once it has left.
+                hoverNeedsExit = true
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in self?.notch.stepAside = false }
+            default: break
+            }
+            return
+        }
         var m: [String: Any] = ["type": "teleportDrag", "phase": phase, "app": d.app, "files": d.files.map(\.path)]
         if let b = d.bundle { m["bundle"] = b }
         m.merge(pagePoint(p)) { $1 }
@@ -493,6 +507,7 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate {
         case "initialized": settings.model.request(["type": "getSettings"])
         case "state":
             latest = m
+            keepCuaSpaces()
             let ids = Set((m["sessions"] as? [[String: Any]] ?? []).compactMap { ($0["id"] as? NSNumber)?.intValue })
             browsers.keep(ids)
             spaceViewers.keep(Set((m["sessions"] as? [[String: Any]] ?? []).compactMap { ($0["space"] as? [String: Any])?["name"] as? String }))
@@ -586,6 +601,18 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let alert = NSAlert(); alert.messageText = "Hover could not start"; alert.informativeText = text; alert.runModal(); NSApp.terminate(nil)
     }
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool { if !smoke { showDashboard() }; return false }
+    /// Cua Spaces runs in the background while agents have desktops, so its notch can
+    /// take an app dragged to it. Never brought to the front; tried once a minute.
+    func keepCuaSpaces() {
+        guard !smoke, latest?["spaces"] as? Bool == true, !TeleportDrag.cuaRunning, Date().timeIntervalSince(cuaOpenedAt) > 60,
+              let url = TeleportDrag.cuaInstalled else { return }
+        cuaOpenedAt = Date()
+        let c = NSWorkspace.OpenConfiguration(); c.activates = false; c.hides = true; c.addsToRecentItems = false
+        NSWorkspace.shared.openApplication(at: url, configuration: c) { _, error in
+            if let error { FileHandle.standardError.write(Data("Cua Spaces didn't open: \(error.localizedDescription)\n".utf8)) }
+        }
+    }
+
     /// The projects' desktops are turned off as Hover quits, by a cua of their own that
     /// outlives Hover (a VM takes a while to stop), so none is left holding memory.
     func stopSpaces() {

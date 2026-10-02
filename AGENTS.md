@@ -351,7 +351,11 @@ carry a legacy `Noty` reference **only** in `Core/Paths.cs`, which migrates an o
   agent's actions on it; a click in it is the user stepping in. An app window dragged to the
   notch (`TeleportDrag`: the window under the pointer moving, via CGWindowList), or
   files and apps from Finder or the Dock (`NotchDropView`), open the office on the
-  agents' desktops (`#tdrop`); a drop sends `teleport` (`cua teleport push --app
+  agents' desktops (`#tdrop`), except that an app (its window, or the app from Finder
+  or the Dock) goes to Cua Spaces' own notch when it runs (`TeleportDrag.handOff`:
+  Hover's notch steps aside for the drag; Hover keeps Cua Spaces running in the
+  background and names each desktop "<project> · Hover" in Cua's list with `cua spaces
+  add --name`); a drop on Hover's notch sends `teleport` (`cua teleport push --app
   <bundle> --sandbox <space>`, Cua's own consent and Touch ID) or `spaceFiles`
   (`send_file` to its Downloads). One-click setup runs Cua's installer
   (`--select cli,spaces --no-onboarding`), `cua runtime setup lume` and a first create

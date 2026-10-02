@@ -127,6 +127,16 @@ final class TeleportDrag {
 
     private func send(_ name: String, _ p: CGPoint, _ d: Drag) { lastSent = p; lastAt = Date(); phase?(name, p, d) }
 
+    /// Whether a drag goes to Cua's own notch rather than Hover's: an app (its window,
+    /// or the app from Finder or the Dock), with agent desktops on and Cua Spaces
+    /// running. Its notch shows the Spaces and teleports the app with its own consent.
+    /// Plain files still drop on Hover's notch, onto a project's desktop.
+    static func handOff(_ d: Drag, spacesOn: Bool, cuaRunning: Bool) -> Bool { spacesOn && cuaRunning && d.bundle != nil }
+
+    static let cuaBundle = "com.trycua.spaces.macos"
+    static var cuaRunning: Bool { !NSRunningApplication.runningApplications(withBundleIdentifier: cuaBundle).isEmpty }
+    static var cuaInstalled: URL? { NSWorkspace.shared.urlForApplication(withBundleIdentifier: cuaBundle) }
+
     /// The top ordinary window of another app under a point (screen points, bottom left).
     static func window(at p: CGPoint) -> (id: CGWindowID, pid: pid_t, frame: CGRect)? {
         let top = (NSScreen.screens.first?.frame.maxY ?? 0) - p.y

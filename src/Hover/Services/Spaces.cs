@@ -93,6 +93,16 @@ public static class Spaces
         return "hover-" + (slug.Length > 0 ? slug + "-" : "") + hash;
     }
     public static string IdFor(string folder) => "local:" + NameFor(folder);
+    /// The name Cua's own notch and list show for a project's desktop, set once it is up
+    /// (Cua names it after the guest's hostname otherwise).
+    private static readonly ConcurrentDictionary<string, bool> Named = new();
+    private static async Task Name(string cua, string folder)
+    {
+        if (!Named.TryAdd(NameFor(folder), true)) return;
+        var (code, text) = await Run(cua, TimeSpan.FromSeconds(30), "spaces", "add", IdFor(folder), "--name", Title(folder) + " · Hover");
+        if (code != 0) { Named.TryRemove(NameFor(folder), out _); Log.Line($"spaces: couldn't name {NameFor(folder)}: {Line(text)}"); }
+    }
+
     /// The project's name as the desktop shows it.
     public static string Title(string folder) => Path.GetFileName(Path.TrimEndingDirectorySeparator(folder)) is { Length: > 0 } n ? n : folder;
 
@@ -251,7 +261,7 @@ public static class Spaces
             var known = lc == 0 && ParseList(lt).Any(x => x.Id == "local:" + name || x.Name == name);
             if (vm is { Exists: true, Running: true } || vm is null && known)
             {
-                Set(key, new("ready", "The project’s desktop is ready.", 1, null)); return null;
+                Set(key, new("ready", "The project’s desktop is ready.", 1, null)); await Name(cua, folder); return null;
             }
             if (vm is { Exists: true } || known)
             {
@@ -265,7 +275,7 @@ public static class Spaces
                 Set(key, new("starting", "Starting the project’s desktop…", null, null));
                 var (sc, st) = await Run(cua, TimeSpan.FromMinutes(4), "spaces", "start", "local:" + name, "--json");
                 if (sc != 0) { var why = Explain(Line(st) ?? "The desktop didn’t start."); Set(key, new("failed", "", null, why)); return why; }
-                Set(key, new("ready", "The project’s desktop is ready.", 1, null)); return null;
+                Set(key, new("ready", "The project’s desktop is ready.", 1, null)); await Name(cua, folder); return null;
             }
             Set(key, new("creating", "Making the project’s desktop…", 0, null));
             string? error = null;
@@ -282,7 +292,7 @@ public static class Spaces
                 }
             }
             catch (SetupError e) { error = e.Message; }
-            if (error is null) { Set(key, new("ready", "The project’s desktop is ready.", 1, null)); return null; }
+            if (error is null) { Set(key, new("ready", "The project’s desktop is ready.", 1, null)); await Name(cua, folder); return null; }
             error = Explain(error);
             Set(key, new("failed", "", null, error));
             return error;
