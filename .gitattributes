@@ -12,3 +12,4 @@
 *.swift text eol=lf
 *.c text eol=lf
 *.m4a binary
+*.py text eol=lf
