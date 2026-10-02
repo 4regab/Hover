@@ -533,13 +533,41 @@ body.host.notch #office::before{content:"";position:absolute;inset:0 0 auto;heig
 .bview iframe{flex:1;width:100%;min-height:240px;border:0;border-radius:10px;background:#fff}
 .bnote{margin:0 4px;font-size:11px;color:var(--faint)}
 /* Screen: the desktop, or the screen live. */
-.scr{display:flex;flex-direction:column;gap:8px}
-.sbar{display:flex;align-items:center;gap:8px}.sbar .sp{flex:1}
-.sl{display:inline-flex;align-items:center;gap:6px;height:22px;padding:0 9px;border-radius:11px;background:rgba(255,255,255,.07);font:600 11.5px Inter,"Segoe UI",sans-serif;color:var(--dim)}
-.sl i{width:7px;height:7px;border-radius:50%;background:rgba(255,255,255,.4)}.sl.on{background:rgba(255,69,58,.16);color:#ffb3ad}.sl.on i{background:#ff453a;box-shadow:0 0 6px #ff453a;animation:pulse 1.2s infinite}
-.sframe{position:relative;border-radius:10px;overflow:hidden;background:#000;box-shadow:inset 0 0 0 1px rgba(255,255,255,.08);aspect-ratio:16/10}
-.sframe img{display:block;width:100%;height:100%;object-fit:contain}.sframe.none img{display:none}.sframe>span{position:absolute;inset:0;display:grid;place-items:center}
-.snote{margin:0 4px;font-size:11.5px;color:var(--faint)}
+/* The agent's desktop, as a remote desktop viewer: a window bar, the screen, and its activity. */
+.vm{display:flex;flex-direction:column;gap:10px;min-height:0}
+.vmbar{flex:none;box-sizing:border-box;display:flex;align-items:center;gap:8px;height:34px;padding:0 6px 0 10px;border-radius:11px 11px 0 0;background:linear-gradient(180deg,#232027,#1b181f);box-shadow:inset 0 0 0 1px rgba(255,255,255,.07);margin-bottom:-10px;position:relative;z-index:1}
+.vmbar .sp{flex:1}.vmdots{display:flex;gap:6px;margin-right:4px}.vmdots i{width:10px;height:10px;border-radius:50%;background:#ff5f57}.vmdots i:nth-child(2){background:#febc2e}.vmdots i:nth-child(3){background:#28c840}
+.vmt{display:flex;align-items:baseline;gap:8px;min-width:0;white-space:nowrap;overflow:hidden}.vmt b{font:600 12.5px Inter,"Segoe UI",sans-serif}.vmt em{font:500 11px "Cascadia Code",Consolas,monospace;font-style:normal;color:var(--faint)}
+.sl{display:inline-flex;align-items:center;gap:6px;height:22px;padding:0 9px;border-radius:11px;background:rgba(255,255,255,.07);font:600 11px Inter,"Segoe UI",sans-serif;color:var(--dim);white-space:nowrap;font-variant-numeric:tabular-nums}
+.sl i{width:7px;height:7px;border-radius:50%;background:rgba(255,255,255,.4)}.sl i.spin{width:9px;height:9px;background:none;border-width:1.5px}.sl.on{background:rgba(255,69,58,.16);color:#ffb3ad}.sl.on i{background:#ff453a;box-shadow:0 0 6px #ff453a;animation:pulse 1.2s infinite}
+.sl.rp{background:rgba(124,192,255,.14);color:#a9d6ff}.sl.rp i{background:#7cc0ff}
+.vmb{display:inline-flex;align-items:center;gap:6px;height:26px;padding:0 10px;border:0;border-radius:8px;background:rgba(255,255,255,.06);color:#ececf0;font:600 11.5px Inter,"Segoe UI",sans-serif;white-space:nowrap}
+.vmb:hover{background:rgba(255,255,255,.12)}.vmb:disabled{opacity:.4;cursor:default}.vmb svg{width:13px;height:13px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}.vmb.ic{width:28px;padding:0;justify-content:center}
+.vmb.on{background:#f5f5f7;color:#0b0a0f}.vmb[data-vmcontrol].on{background:#9b6bff;color:#fff}
+.vmscreen{position:relative;flex:none;aspect-ratio:1512/982;border-radius:0 0 11px 11px;overflow:hidden;background:#000;box-shadow:inset 0 0 0 1px rgba(255,255,255,.08),0 14px 30px -18px rgba(0,0,0,.9);outline:0;user-select:none}
+.vm.live .vmscreen{box-shadow:inset 0 0 0 1px rgba(255,69,58,.35),0 14px 30px -18px rgba(0,0,0,.9)}
+.vm.ctl .vmscreen{box-shadow:0 0 0 2px #9b6bff,0 0 24px -6px #9b6bff;cursor:crosshair}
+.vmscreen img{display:block;width:100%;height:100%;object-fit:contain;-webkit-user-drag:none}.vmscreen img:not([src]){visibility:hidden}
+.vmover{position:absolute;inset:0;pointer-events:none}.vmover>*{pointer-events:auto}
+.vmload{position:absolute;inset:0;display:grid;place-items:center}
+.vmcap{position:absolute;left:50%;bottom:14px;transform:translateX(-50%);display:flex;align-items:center;gap:7px;max-width:80%;padding:6px 12px;border-radius:99px;background:rgba(12,10,16,.82);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);box-shadow:0 0 0 1px rgba(255,255,255,.1);font:500 12px Inter,"Segoe UI",sans-serif;color:#fff;white-space:nowrap;overflow:hidden;animation:rise .25s ease-out;pointer-events:none}
+.vmcap i{flex:none;width:7px;height:7px;border-radius:50%;background:#9b6bff;box-shadow:0 0 8px #9b6bff}.vmcap span{color:rgba(255,255,255,.7);overflow:hidden;text-overflow:ellipsis}
+.vmempty{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;padding:20px;text-align:center;background:radial-gradient(circle,rgba(0,0,0,.45),rgba(0,0,0,.15) 70%);pointer-events:none}
+.vmempty svg{width:28px;height:28px;fill:none;stroke:#fff;stroke-width:1.6;opacity:.85}.vmempty b{font:600 14px Inter,"Segoe UI",sans-serif;color:#fff;text-shadow:0 1px 6px rgba(0,0,0,.6)}.vmempty span{max-width:360px;font-size:12px;line-height:1.5;color:rgba(255,255,255,.8);text-shadow:0 1px 6px rgba(0,0,0,.6)}
+.vmctl{position:absolute;left:10px;top:10px;display:flex;align-items:center;gap:7px;padding:5px 10px;border-radius:9px;background:rgba(155,107,255,.9);color:#fff;font:600 11.5px Inter,"Segoe UI",sans-serif;pointer-events:none}.vmctl svg{width:13px;height:13px;fill:#fff;stroke:#fff}.vmctl kbd{font:600 10.5px Inter,sans-serif;padding:0 5px;border-radius:4px;background:rgba(255,255,255,.25)}
+.vmlive{position:absolute;right:10px;top:10px;display:flex;align-items:center;gap:6px;height:28px;padding:0 11px;border:0;border-radius:9px;background:#f5f5f7;color:#0b0a0f;font:600 11.5px Inter,"Segoe UI",sans-serif}.vmlive svg{width:13px;height:13px;fill:none;stroke:currentColor;stroke-width:2.2}
+.vmrip{position:absolute;width:0;height:0;pointer-events:none}.vmrip.go::after{content:"";position:absolute;left:-14px;top:-14px;width:28px;height:28px;border-radius:50%;border:2px solid #c4a2ff;animation:rip .5s ease-out forwards}
+@keyframes rip{from{transform:scale(.3);opacity:1}to{transform:scale(1.6);opacity:0}}
+.vmapps{display:flex;align-items:center;gap:6px;flex-wrap:wrap;font-size:11px;color:var(--faint)}.vmapps em{display:inline-flex;align-items:center;gap:5px;height:20px;padding:0 8px;border-radius:6px;background:rgba(255,255,255,.055);color:#ececf0;font-style:normal;font-weight:500}.vmapps em i{width:6px;height:6px;border-radius:50%;background:#30d158}
+.vmtl .sh{margin:4px 2px 6px}.vmtl .sh span{color:var(--faint);font-weight:500}
+.vmscrub{display:flex;align-items:center;gap:8px;margin:0 2px 6px;font:500 10.5px "Cascadia Code",Consolas,monospace;color:var(--faint);font-variant-numeric:tabular-nums}.vmscrub input{flex:1;accent-color:#9b6bff}
+.vmrow{width:100%;display:grid;grid-template-columns:68px 8px auto minmax(0,1fr) auto;align-items:center;gap:8px;min-height:26px;padding:0 6px;border:0;border-radius:7px;background:transparent;text-align:left;font-size:12px;color:rgba(255,255,255,.6)}
+.vmrow:hover{background:rgba(255,255,255,.05)}.vmrow time{font:500 10.5px "Cascadia Code",Consolas,monospace;color:var(--faint);font-variant-numeric:tabular-nums}
+.vmrow i{width:7px;height:7px;border-radius:50%;background:#9b6bff}.vmrow.run i{background:#ffc46b;animation:pulse 1.2s infinite}.vmrow.bad i{background:#ff7b72}.vmrow b{color:#f3f1f6;font-weight:500}
+.vmrow span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.vmrow em{font-style:normal;font:600 10px Inter,sans-serif;color:#ffc46b}
+/* Bigger: the desktop takes most of the office, as a remote desktop window would. */
+#panel.big{width:min(1100px,calc(100% - 24px))}#panel.big .dbody{container-type:size}#panel.big .vm{height:100%}#panel.big .vmbar,#panel.big .vmscreen{width:min(100cqw,calc((100cqh - 120px) * 1512 / 982));align-self:center}
+.s.k-screen>.n{color:#c4a2ff}
 .sacc{display:flex;flex-direction:column;gap:3px;padding:10px 12px;border-radius:10px;background:rgba(255,196,107,.08);color:#ffd59a;font-size:12px}.sacc b{font-weight:600}.sacc .pbtn{align-self:flex-start;margin-top:6px}
 .kanban{display:flex;flex-direction:column;gap:14px}
 .col h4,.sh{display:flex;align-items:center;gap:8px;margin:0 4px 8px;font:600 12px var(--px);letter-spacing:.06em;text-transform:uppercase;color:var(--dim)}

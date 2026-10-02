@@ -31,6 +31,10 @@ export const ICONS = {
   github: svg('<path d="M15 22v-4a4.8 4.8 0 0 0-1-3.5c3 0 6-2 6-5.5.08-1.25-.27-2.48-1-3.5.28-1.15.28-2.35 0-3.5 0 0-1 0-3 1.5-2.64-.5-5.36-.5-8 0C6 2 5 2 5 2c-.3 1.15-.3 2.35 0 3.5A5.4 5.4 0 0 0 4 9c0 3.5 3 5.5 6 5.5-.39.49-.68 1.05-.85 1.65S8.93 17.38 9 18v4"/><path d="M9 18c-4.51 2-5-2-7-2"/>'),
   check: svg('<path d="M20 6 9 17l-5-5"/>'),
   copy: svg('<rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/>'),
+  pointer: svg('<path d="M4 4l7 17 2.5-7.5L21 11Z"/>'),
+  eye: svg('<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/>'),
+  grow: svg('<path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/>'),
+  shrink: svg('<path d="M4 14h6v6M20 10h-6V4M14 10l7-7M3 21l7-7"/>'),
 };
 
 // The menu's rows, in T3 Code's order and with its letters. Screen is the Device row.
@@ -52,7 +56,7 @@ export function availability(p, s, steps) {
     // Open even without one: the panel sets up gh, or opens a pull request.
     pr: [p ? p.git : true, p ? 'Not a Git repository.' : wait],
     linked: [(p?.linked ?? 0) > 0, p ? 'No pull requests mentioned in this session.' : wait],
-    agents: [(p?.agents ?? 0) > 0, p ? 'No subagents in this session.' : wait],
+    agents: [(p?.agents ?? 0) > 0 || steps.some(x => x.k === 'agent'), 'No subagents in this session.'],
     screen: [true, ''],
   };
 }
@@ -67,8 +71,13 @@ export function tileDetail(id, p, s, browser, pages) {
     case 'diff': return p?.add || p?.del ? `+${num(p.add)} −${num(p.del)}` : p?.changed ? `${num(p.changed)} file${p.changed === 1 ? '' : 's'}` : 'Clean';
     case 'pr': return !p ? '…' : p.pr ? `#${p.pr.number} ${p.pr.isDraft ? 'draft' : p.pr.state}` : !p.git ? 'No repository' : !p.gh ? 'Set up GitHub' : !p.ghAuth ? 'Sign in' : 'Open one';
     case 'linked': return p?.linked ? n(p.linked, 'mentioned', 'mentioned') : 'None';
-    case 'agents': return p?.running ? `${num(p.running)} working` : p?.agents ? n(p.agents, 'subagent', 'subagents') : 'None yet';
-    case 'screen': return s.testing ? 'Live' : s.apps ? 'Desktop + its apps' : 'Desktop';
+    case 'agents': {
+      // What the page knows from the steps, until Hover's probe is back.
+      const own = s.turns.flatMap(t => t.steps || []).filter(x => (Array.isArray(x) ? x[0] : x.k) === 'agent');
+      const running = Math.max(p?.running ?? 0, own.filter(x => x.status === 'in_progress').length), all = Math.max(p?.agents ?? 0, own.length);
+      return running ? `${num(running)} working` : all ? n(all, 'subagent', 'subagents') : 'None yet';
+    }
+    case 'screen': return s.testing ? 'Live now' : s.apps ? `${(s.apps.names?.length || s.apps.pids?.length || 1)} app${(s.apps.names?.length || s.apps.pids?.length || 1) === 1 ? '' : 's'} open` : 'Its desktop';
   }
   return '';
 }
@@ -297,17 +306,42 @@ export function browserEmptyHTML(bot) {
 export const KINDS = KIND;
 export const pageLabel = label;
 
-// ── Screen ──────────────────────────────────────────────────────────────
-export function screenHTML(sc, bot, testing, mac, apps) {
-  const live = sc.live, denied = mac && sc.access === false;
-  const theirs = apps ? `the apps ${bot} opened` : `no apps yet: ${bot} hasn’t opened any`;
-  // Without Screen Recording it can't go live, so it says so rather than wait. Your own
-  // windows never show: only the desktop and the apps the agent opened.
-  const note = live ? (testing ? `${bot} is testing with computer use, live: your desktop with ${theirs}. Your own windows aren’t shown.` : `Live: your desktop with ${theirs}. Your own windows aren’t shown.`)
-    : testing ? (denied ? `${bot} is using the computer now. Allow Screen Recording above to watch it live.` : 'Going live…')
-    : `Your desktop with ${theirs}, never your own windows. It goes live while ${bot} uses computer use.`;
-  const ask = denied ? `<div class="sacc"><b>Hover needs Screen Recording to show the screen</b><span>Allow Hover in System Settings → Privacy &amp; Security → Screen Recording, then quit and reopen Hover.</span><button class="pbtn" data-saccess>Allow…</button></div>` : '';
-  return `<div class="scr"><div class="sbar"><span class="sl${live ? ' on' : ''}"><i></i>${live ? 'Live' : 'Desktop'}</span><span class="sp"></span>`
-    + `<button class="pbtn sm" data-watch aria-pressed="${!!sc.watch}">${sc.watch ? 'Stop watching' : 'Watch live'}</button></div>${ask}`
-    + `<div class="sframe${sc.image ? '' : ' none'}"><img id="scrImg" alt="${live ? 'The screen, live' : 'The desktop'}"${sc.image ? ` src="${sc.image}"` : ''}>${sc.image ? '' : '<span><i class="spin"></i></span>'}</div><p class="snote">${esc(note)}</p></div>`;
+// ── Screen: the agent's desktop ─────────────────────────────────────────
+// It looks and works like a cloud agent's remote desktop (Cursor's VMs) without being
+// one: the user's own desktop picture with only the apps the agent opened on it, live
+// while it tests, with what it did as captions and a timeline that replays what the
+// panel saw. Control sends the user's clicks and keys to those apps through Cua
+// Driver, in the background, so the user's own pointer and focus never move.
+const tclock = t => new Date(t).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit', second: '2-digit' });
+
+/// The viewer's frame: built once per open; its parts are filled by screenParts.
+export function screenHTML(bot) {
+  return `<div class="vm"><div class="vmbar"></div><div class="vmscreen" data-vmscreen tabindex="0" aria-label="${esc(bot)}’s desktop"><img id="scrImg" alt="" draggable="false"><div class="vmover"></div><i class="vmrip"></i></div><div class="vmfoot"></div></div>`;
+}
+
+/// What changes as frames and steps come: the bar, the overlay and the footer.
+export function screenParts(sc, o) {
+  const { bot, testing, mac, apps, actions, watch, control, big, replay, frames, canControl } = o;
+  const live = sc.live && replay == null, denied = mac && sc.access === false;
+  const appNames = apps?.names?.length ? apps.names : apps?.bundles?.length ? apps.bundles.map(b => b.split('.').pop()) : apps?.pids?.length ? [`${apps.pids.length} app${apps.pids.length === 1 ? '' : 's'}`] : [];
+  const status = replay != null ? `<span class="sl rp"><i></i>Replay · ${esc(tclock(frames[replay].t))}</span>`
+    : live ? `<span class="sl on"><i></i>Live${sc.fps ? ` · ${sc.fps} fps` : ''}</span>` : testing && !denied ? '<span class="sl"><i class="spin"></i>Connecting…</span>' : '<span class="sl"><i></i>Idle</span>';
+  const size = sc.w && sc.h ? `${sc.w} × ${sc.h}` : '';
+  const bar = `<span class="vmdots" aria-hidden="true"><i></i><i></i><i></i></span><span class="vmt"><b>${esc(bot)}’s desktop</b>${size ? `<em>${esc(size)}</em>` : ''}</span>${status}<span class="sp"></span>`
+    + `<button class="vmb${control ? ' on' : ''}" data-vmcontrol aria-pressed="${!!control}"${canControl ? '' : ` disabled title="${esc(mac ? `Control works once ${bot} has opened an app` : 'Control needs the Mac app and Cua Driver')}"`} title="Click and type in ${esc(bot)}’s apps, in the background">${ICONS.pointer}${control ? 'Controlling' : 'Control'}</button>`
+    + `<button class="vmb${watch ? ' on' : ''}" data-watch aria-pressed="${!!watch}" title="${watch ? 'Stop the live view' : 'Watch it live'}">${ICONS.eye}${watch ? 'Watching' : 'Watch live'}</button>`
+    + `<button class="vmb ic" data-vmbig aria-pressed="${!!big}" aria-label="${big ? 'Smaller' : 'Bigger'}" title="${big ? 'Smaller (F)' : 'Bigger (F)'}">${big ? ICONS.shrink : ICONS.grow}</button>`;
+  const last = actions[0];
+  // The newest thing it did, as a caption over the desktop, a while after it did it.
+  const cap = last && (testing || Date.now() - last.t < 8000) && replay == null ? `<div class="vmcap"><i></i><b>${esc(last.verb)}</b>${last.cmd ? `<span>${esc(last.cmd)}</span>` : ''}</div>` : '';
+  const empty = !apps && replay == null ? `<div class="vmempty">${ICONS.screen}<b>${esc(bot)} hasn’t opened an app yet</b><span>This is your desktop picture. The apps ${esc(bot)} opens with computer use show here, and nothing of yours ever does.</span></div>` : '';
+  const ctl = control ? `<div class="vmctl">${ICONS.pointer}You’re in control. Clicks and keys go to ${esc(bot)}’s apps in the background. <kbd>Esc</kbd> to stop</div>` : '';
+  const back = replay != null ? `<button class="vmlive" data-vmlive>${ICONS.fwd}Back to live</button>` : '';
+  const ask = denied ? `<div class="sacc"><b>Hover needs Screen Recording to show the agent’s desktop live</b><span>Allow Hover in System Settings → Privacy &amp; Security → Screen Recording, then quit and reopen Hover.</span><button class="pbtn" data-saccess>Allow…</button></div>` : '';
+  const over = cap + empty + ctl + back + (sc.image ? '' : '<span class="vmload"><i class="spin"></i></span>');
+  const chips = appNames.length ? `<div class="vmapps"><span>On this desktop</span>${appNames.slice(0, 6).map(n => `<em><i></i>${esc(n)}</em>`).join('')}</div>` : '';
+  const slider = frames.length > 1 ? `<div class="vmscrub"><span>${esc(tclock(frames[0].t))}</span><input type="range" data-vmscrub min="0" max="${frames.length - 1}" value="${replay ?? frames.length - 1}" aria-label="Replay what the panel showed"><span>${replay == null ? 'Now' : esc(tclock(frames[replay].t))}</span></div>` : '';
+  const rows = actions.slice(0, 40).map((x, i) => `<button class="vmrow${x.status === 'failed' ? ' bad' : ''}${x.status === 'in_progress' ? ' run' : ''}" data-vmat="${x.t}" title="${esc(frames.length ? 'Replay from here' : x.verb)}"><time>${esc(tclock(x.t))}</time><i></i><b>${esc(x.verb)}</b>${x.cmd ? `<span>${esc(x.cmd)}</span>` : ''}${i === 0 && testing ? '<em>now</em>' : ''}</button>`).join('');
+  const foot = ask + chips + `<div class="vmtl"><h4 class="sh">Activity <span>${actions.length}</span></h4>${slider}${rows || `<p class="none">What ${esc(bot)} does on its desktop shows here as it happens.</p>`}</div>`;
+  return { bar, over, foot, live };
 }

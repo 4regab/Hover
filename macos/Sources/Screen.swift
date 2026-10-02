@@ -30,7 +30,10 @@ final class ScreenFeed: @unchecked Sendable {
         }
         func has(_ app: SCRunningApplication?) -> Bool {
             guard let app else { return false }
-            return pids.contains(Int(app.processID)) || bundles.contains(app.bundleIdentifier.lowercased()) || names.contains(app.applicationName.lowercased())
+            return has(pid: Int(app.processID), bundle: app.bundleIdentifier, name: app.applicationName)
+        }
+        func has(pid: Int, bundle: String?, name: String?) -> Bool {
+            pids.contains(pid) || bundle.map { bundles.contains($0.lowercased()) } == true || name.map { names.contains($0.lowercased()) } == true
         }
     }
     private static let width: CGFloat = 1280
@@ -47,7 +50,9 @@ final class ScreenFeed: @unchecked Sendable {
         self.live = live; self.apps = apps
         if timer == nil {
             stillSent = false
-            timer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] _ in self?.tick() }
+            // Live, as many frames as a capture allows, up to eight a second: it should
+            // feel like watching a remote desktop, not a slideshow.
+            timer = Timer.scheduledTimer(withTimeInterval: 0.125, repeats: true) { [weak self] _ in self?.tick() }
         }
         tick()
     }
@@ -97,7 +102,8 @@ final class ScreenFeed: @unchecked Sendable {
     }
 
     private func send(_ image: String, live: Bool) {
-        deliver?(["type": "screen", "image": image, "live": live, "access": access])
+        let size = CGDisplayBounds(CGMainDisplayID()).size
+        deliver?(["type": "screen", "image": image, "live": live, "access": access, "w": Int(size.width), "h": Int(size.height)])
     }
 
     /// The main display through ScreenCaptureKit: the desktop's own windows (the
@@ -113,24 +119,32 @@ final class ScreenFeed: @unchecked Sendable {
             let config = SCStreamConfiguration()
             let k = min(1, width / CGFloat(max(display.width, 1)))
             config.width = Int(CGFloat(display.width) * k); config.height = Int(CGFloat(display.height) * k)
-            config.showsCursor = cursor && !apps.none
+            // Never the user's own pointer: the agent's is Cua's overlay, shown with its windows.
+            config.showsCursor = false
             let image = try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: config)
-            return jpeg(image, quality: apps.none ? 0.82 : 0.6)
+            return jpeg(image, quality: cursor ? 0.55 : 0.82)
         } catch { return nil }
     }
 
-    /// The windows the panel may show: the desktop's, and the agent's apps' ordinary
-    /// windows (their menus and sheets too), on the main display.
+    /// The windows the panel may show: the desktop's, the agent's apps' (their menus and
+    /// sheets too), and Cua Driver's agent cursor over them, on the main display.
     static func shown(_ all: [SCWindow], apps: Apps, display: CGRect) -> [SCWindow] {
-        let desktop = Int(CGWindowLevelForKey(.desktopIconWindow))
+        // The desktop picture is at the desktop level or below it; Finder's icons are up
+        // to the icon level. Window Manager (Stage Manager) keeps a full-screen layer in
+        // between that draws black, so the band is taken by owner, not as a whole.
+        let picture = Int(CGWindowLevelForKey(.desktopWindow)), icons = Int(CGWindowLevelForKey(.desktopIconWindow))
         let me = ProcessInfo.processInfo.processIdentifier
         return all.filter { w in
             guard w.frame.intersects(display) else { return false }
-            if w.windowLayer <= desktop { return true }
+            if w.windowLayer <= picture - 1 && w.owningApplication?.bundleIdentifier != nil && w.owningApplication?.bundleIdentifier != "" { return true }
+            if w.windowLayer <= icons && w.owningApplication?.bundleIdentifier == "com.apple.finder" { return true }
+            if w.windowLayer <= icons { return false }
             guard let app = w.owningApplication, app.processID != me else { return false }
+            if !apps.none && app.bundleIdentifier.lowercased().hasPrefix(cuaBundle) { return true }
             return apps.has(app)
         }
     }
+    static let cuaBundle = "com.trycua"
 
     /// The desktop picture's file, drawn to fill the main display as macOS does.
     static func wallpaper() -> String? {
@@ -151,5 +165,102 @@ final class ScreenFeed: @unchecked Sendable {
     static func jpeg(_ image: CGImage, quality: Double) -> String? {
         guard let data = NSBitmapImageRep(cgImage: image).representation(using: .jpeg, properties: [.compressionFactor: quality]) else { return nil }
         return "data:image/jpeg;base64," + data.base64EncodedString()
+    }
+}
+
+
+/// Take control, as on Cursor's agent desktops, without a VM: the user's clicks, typing
+/// and scrolling in the screen panel go to the agent's own apps through Cua Driver, in
+/// the background (no pointer moved, no focus taken, nothing fronted). Only windows of
+/// the apps the agent opened can be reached; a click anywhere else does nothing.
+enum ScreenControl {
+    /// One window on the main display that input may go to.
+    struct Target: Equatable { let pid: Int; let window: Int; let frame: CGRect }
+
+    /// The agent's windows on screen, front to back, in points from the main display's
+    /// top left (CGWindowList's own space).
+    static func targets(_ apps: ScreenFeed.Apps) -> [Target] {
+        guard !apps.none, let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] else { return [] }
+        return list.compactMap { w in
+            guard (w[kCGWindowLayer as String] as? Int) == 0, let pid = w[kCGWindowOwnerPID as String] as? Int, let id = w[kCGWindowNumber as String] as? Int,
+                  let b = w[kCGWindowBounds as String] as? [String: Any], let frame = CGRect(dictionaryRepresentation: b as CFDictionary), frame.width > 20 else { return nil }
+            let app = NSRunningApplication(processIdentifier: pid_t(pid))
+            guard apps.has(pid: pid, bundle: app?.bundleIdentifier, name: (w[kCGWindowOwnerName as String] as? String) ?? app?.localizedName) else { return nil }
+            return Target(pid: pid, window: id, frame: frame)
+        }
+    }
+
+    /// The front-most target under a point (points from the display's top left).
+    static func hit(_ point: CGPoint, in targets: [Target]) -> Target? { targets.first { $0.frame.contains(point) } }
+
+    /// The Cua Driver call for one input, or nil when it has nowhere to go. x and y
+    /// are the panel's 0…1 across and down the main display.
+    static func call(_ m: [String: Any], apps: ScreenFeed.Apps, display: CGRect, scale: CGFloat, targets: [Target]) -> (tool: String, args: [String: Any])? {
+        let kind = m["kind"] as? String ?? ""
+        let fx = (m["x"] as? NSNumber)?.doubleValue, fy = (m["y"] as? NSNumber)?.doubleValue
+        let point = fx.flatMap { x in fy.map { CGPoint(x: display.minX + x * display.width, y: display.minY + $0 * display.height) } }
+        // Typing goes to the window last clicked, else the front-most of the agent's.
+        let target = point.flatMap { hit($0, in: targets) } ?? ((m["pid"] as? NSNumber).flatMap { p in targets.first { $0.pid == p.intValue } }) ?? (point == nil ? targets.first : nil)
+        guard let t = target else { return nil }
+        var a: [String: Any] = ["pid": t.pid, "window_id": t.window]
+        // Window-local screenshot pixels: Cua undoes the Retina scale itself.
+        if let p = point { a["x"] = Double((p.x - t.frame.minX) * scale).rounded(); a["y"] = Double((p.y - t.frame.minY) * scale).rounded() }
+        switch kind {
+        case "click":
+            guard point != nil else { return nil }
+            if (m["count"] as? NSNumber)?.intValue == 2 { return ("double_click", a) }
+            if m["button"] as? String == "right" { return ("right_click", a) }
+            return ("click", a)
+        case "scroll":
+            let dy = (m["dy"] as? NSNumber)?.doubleValue ?? 0
+            a["direction"] = dy < 0 ? "up" : "down"; a["amount"] = max(1, min(15, Int(abs(dy) / 40)))
+            return ("scroll", a)
+        case "type":
+            guard let text = m["text"] as? String, !text.isEmpty, text.count <= 2000 else { return nil }
+            a.removeValue(forKey: "x"); a.removeValue(forKey: "y"); a["text"] = text
+            return ("type_text", a)
+        case "key":
+            guard let key = m["key"] as? String, allowedKeys.contains(key) else { return nil }
+            a.removeValue(forKey: "x"); a.removeValue(forKey: "y"); a["key"] = key
+            if let mods = m["modifiers"] as? [String], !mods.isEmpty {
+                let ok = mods.filter { ["cmd", "shift", "option", "ctrl"].contains($0) }
+                return ("hotkey", ["pid": t.pid, "window_id": t.window, "keys": ok + [key]])
+            }
+            return ("press_key", a)
+        default: return nil
+        }
+    }
+    static let allowedKeys: Set<String> = Set(["return", "tab", "escape", "delete", "space", "up", "down", "left", "right", "home", "end", "pageup", "pagedown"])
+        .union("abcdefghijklmnopqrstuvwxyz0123456789".map(String.init))
+
+    /// Runs `cua-driver call <tool> <json>` off the main thread; done gets an error, or nil.
+    static func send(_ tool: String, _ args: [String: Any], exe: String, done: @escaping (String?) -> Void) {
+        DispatchQueue.global(qos: .userInitiated).async {
+            let p = Process()
+            p.executableURL = URL(fileURLWithPath: exe)
+            let json = (try? JSONSerialization.data(withJSONObject: args)).flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
+            p.arguments = ["call", tool, json]
+            let out = Pipe(); p.standardOutput = out; p.standardError = out; p.standardInput = FileHandle.nullDevice
+            var failure: String?
+            do {
+                try p.run()
+                let deadline = Date().addingTimeInterval(15)
+                while p.isRunning && Date() < deadline { usleep(20_000) }
+                if p.isRunning { p.terminate(); failure = "Cua Driver didn’t answer." }
+                else if p.terminationStatus != 0 {
+                    let text = String(decoding: out.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+                    failure = text.split(separator: "\n").last.map(String.init) ?? "Cua Driver refused it."
+                }
+            } catch { failure = "Cua Driver isn’t installed." }
+            DispatchQueue.main.async { done(failure) }
+        }
+    }
+
+    /// cua-driver, where its installers put it (Hover's PATH is the login shell's).
+    static func exe() -> String? {
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        let path = (ProcessInfo.processInfo.environment["PATH"] ?? "").split(separator: ":").map { "\($0)/cua-driver" }
+        return (path + ["\(home)/.local/bin/cua-driver", "/Applications/CuaDriver.app/Contents/MacOS/cua-driver", "/opt/homebrew/bin/cua-driver"])
+            .first { FileManager.default.isExecutableFile(atPath: $0) }
     }
 }

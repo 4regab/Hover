@@ -604,8 +604,9 @@ const WORD = { waking: 'Starting', working: 'Working', waiting: 'Waiting for you
 function demo() {
   const F = 'B:\\hover';
   return [
-    { id: 1, bot: 0, desk: 0, title: 'Add refresh token expiry', folder: F, ctx: 31, turns: [{ prompt: 'Refresh tokens never expire. Make them expire after 30 days and return 401 when one is used after that.', stage: 'working', act: 'Reading', file: 'src/auth/refresh.ts', target: 'src/auth/refresh.ts', t0: T0 - 1.4 * min, woke: 2.3,
+    { id: 1, bot: 0, desk: 0, title: 'Add refresh token expiry', folder: F, ctx: 31, apps: { pids: [5150], bundles: ['dev.example.demo'], names: ['Demo'] }, turns: [{ prompt: 'Refresh tokens never expire. Make them expire after 30 days and return 401 when one is used after that.', stage: 'working', act: 'Reading', file: 'src/auth/refresh.ts', target: 'src/auth/refresh.ts', t0: T0 - 1.4 * min, woke: 2.3,
       steps: [['read', 'Read src/auth/session.ts'], ['read', 'Read src/auth/refresh.ts'], { k: 'web', verb: 'Opened', cmd: 'http://localhost:5173/login', status: 'completed', ms: 1200 },
+        { k: 'screen', verb: 'Opened', cmd: 'Demo', status: 'completed' }, { k: 'screen', verb: 'Clicked', cmd: 'Name', status: 'completed' }, { k: 'screen', verb: 'Typed', cmd: '“Ada”', status: 'completed' },
         { k: 'agent', verb: 'Subagent', agent: 'explore', cmd: 'Find every caller of refresh()', status: 'in_progress' }, { k: 'agent', verb: 'Subagent', agent: 'test-writer', cmd: 'Write tests for expired tokens', status: 'in_progress' }], final: 'Done. Refresh tokens now expire after 30 days, and using an expired one returns 401.\n\nI changed refresh.ts and added two tests. All 83 tests pass.' }] },
     { id: 2, bot: 1, desk: 1, title: 'Fix the notch flicker on resize', folder: F, ctx: 48, turns: [{ prompt: 'The notch blinks when I change the workspace size in Settings. Find out why and fix it.', stage: 'done', t0: T0 - 26 * min, woke: 2.1, took: 3 * min + 12e3,
       steps: [{ k: 'read', verb: 'Read', name: 'Notch.cs', dir: 'src/Hover/Owl', status: 'completed' }, { k: 'read', verb: 'Read', name: 'HostWindow.cs', dir: 'src/Hover/Interop', status: 'completed' },
@@ -856,6 +857,7 @@ const ICON = {
   think: '<svg viewBox="0 0 24 24"><path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12.7V16h8v-1.3A7 7 0 0 0 12 2Z"/></svg>',
   thought: '<svg viewBox="0 0 24 24"><path d="M12 3a6 6 0 0 0-6 6c0 1.2.3 2.2.9 3.1C5.2 12.6 4 14 4 15.7 4 17.5 5.5 19 7.3 19H17a4 4 0 0 0 .6-8A6 6 0 0 0 12 3Z"/></svg>',
   agent: '<svg viewBox="0 0 24 24"><rect x="5" y="8" width="14" height="11" rx="3"/><path d="M12 8V4M9 13h.01M15 13h.01"/></svg>',
+  screen: '<svg viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>',
   web: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></svg>',
 };
 const CHAT = '<svg viewBox="0 0 24 24"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.4A8 8 0 1 1 21 12Z"/><path d="M8.5 12h.01M12 12h.01M15.5 12h.01"/></svg>';
@@ -1783,6 +1785,8 @@ function openDesk(id, tab, opts = {}) {
   const ui = uiOf(id);
   if (opts.url) { ui.url = opts.url; ui.picked = true; }
   if (desk && desk.id !== id) leaveDesk();
+  if (tab !== 'screen') { ui.control = false; ui.replay = null; ui.big = false; }
+  $('#panel').classList.toggle('big', !!ui.big && tab === 'screen');
   ui.tab = tab; desk = { id, ui };
   if (tab === 'pr' && host) host.postMessage({ type: 'gh' });
   if (panel !== 'desk') openPanel('desk'); else renderDesk();
@@ -1791,6 +1795,7 @@ function openDesk(id, tab, opts = {}) {
 // The panel goes, or shows something else: the screen stops, the page in the browser goes.
 function leaveDesk() {
   if (!desk) return;
+  desk.ui.control = false; desk.ui.big = false; desk.ui.replay = null; $('#panel').classList.remove('big');
   desk = null; deskHTML = ''; screenPulse(); placeBrowser();
   const body = $('#pBody'); body.classList.remove('desk'); body.innerHTML = '';
 }
@@ -1870,7 +1875,7 @@ function placeBrowser() {
   if (s && !paused && panel === 'desk' && desk.ui.tab === 'browser' && agentTabs[s.id]?.url) {
     const v = $('#pBody .bview'), over = deskMenuFor != null || !$('#confirm').hidden || !$('#mMenu').hidden || !$('#hudMenu').hidden || drawerOpen;
     const b = v?.getBoundingClientRect();
-    if (b && !over && b.width > 40 && b.height > 40) { id = s.id; r = { x: b.left, y: b.top, w: b.width, h: b.height }; }
+    if (b && !over && b.width > 40 && b.height > 40) { id = s.id; r = { x: b.left, y: b.top, w: b.width, h: b.height, vw: innerWidth, vh: innerHeight }; }
   }
   const key = id == null ? 'none' : [id, r.x, r.y, r.w, r.h].map(Math.round).join('|');
   if (key === placed) return;
@@ -1902,36 +1907,123 @@ function onDeskAction(m) {
   const s = deskOf(); if (s?.id === m.id) { if (m.data?.ok) deskFetch(true); renderDesk(); }
 }
 
-// ── The screen ──────────────────────────────────────────────────────────
-// Live while the agent tests (computer use), or when the user watches; otherwise the
-// desktop as it is with no app open. Hover is asked again every 3 s while the tab
-// shows, and stops on its own when it isn't.
-const scr = { image: null, live: false, access: true };
-let scrWant = null, scrKey = '', demoScr = 0;
+// ── The screen: the agent's desktop ────────────────────────────────────
+// Live while the agent tests (computer use), or when the user watches or takes
+// control; otherwise a still of the agent's desktop (the desktop picture, and the apps
+// it opened). Hover is asked again every 3 s while the tab shows, and stops on its own
+// when it isn't. The page keeps what it was shown, a frame a second for the last few
+// minutes, so the timeline can replay it.
+const scr = { image: null, live: false, access: true, w: 0, h: 0, fps: 0, frames: [], times: [] };
+let scrWant = null, scrFor = null, demoScr = 0;
+const scrLive = s => s.testing || desk.ui.watch || desk.ui.control;
 function screenPulse(renew) {
   const s = !paused && panel === 'desk' && desk?.ui.tab === 'screen' ? deskOf() : null;
-  const want = s ? (s.testing || desk.ui.watch ? 'live' : 'still') + '|' + JSON.stringify(s.apps || null) : null;
+  if (s && scrFor !== s.id) { scrFor = s.id; Object.assign(scr, { image: null, frames: [], times: [], fps: 0 }); }
+  const want = s ? (scrLive(s) ? 'live' : 'still') + '|' + JSON.stringify(s.apps || null) : null;
   if (!want) { if (scrWant) { scrWant = null; host?.postMessage({ type: 'screen', on: false }); clearInterval(demoScr); demoScr = 0; } return; }
   const changedWant = want !== scrWant; scrWant = want;
   if (!changedWant && !renew) return;
   // Only the desktop and the apps the agent opened: never the user's own windows.
   if (host) host.postMessage({ type: 'screen', on: true, live: want.startsWith('live'), apps: s.apps || null });
-  else if (changedWant) { clearInterval(demoScr); demoScr = 0; onScreen({ image: demoFrame(false), live: false, access: true }); if (want.startsWith('live')) demoScr = setInterval(() => onScreen({ image: demoFrame(true), live: true, access: true }), 250); }
+  else if (changedWant) {
+    clearInterval(demoScr); demoScr = 0;
+    const apps = !!s.apps;
+    onScreen({ image: demoFrame(false, apps), live: false, access: true, w: 1512, h: 982 });
+    if (want.startsWith('live')) demoScr = setInterval(() => onScreen({ image: demoFrame(true, apps), live: true, access: true, w: 1512, h: 982 }), 125);
+  }
   if (changedWant && s) renderDesk();
 }
 setInterval(() => screenPulse(true), 3000);
 function onScreen(m) {
-  if (m.image) scr.image = m.image;
+  const now = Date.now();
+  if (m.image) {
+    scr.image = m.image;
+    // Frames a second, for the last 3 s: the bar's rate.
+    scr.times.push(now); while (scr.times.length && now - scr.times[0] > 3000) scr.times.shift();
+    scr.fps = m.live ? Math.round(scr.times.length / Math.min(3, Math.max(1, (now - scr.times[0]) / 1000 || 1))) : 0;
+    const f = scr.frames, lastF = f[f.length - 1];
+    if (!lastF || now - lastF.t >= 1000) { f.push({ t: now, image: m.image }); if (f.length > 240) f.shift(); }
+  }
+  if (m.w) { scr.w = m.w; scr.h = m.h; }
   scr.live = !!m.live && !!m.image; scr.access = m.access !== false;
   const s = deskOf(); if (s && desk.ui.tab === 'screen') renderScreen(s, $('#pBody .dbody'));
 }
+// When the page first saw each computer-use step: the activity's times, and where in
+// the replay each one is.
+const seenAt = new Map();
+function screenActions(s) {
+  const out = [];
+  s.turns.forEach((T, ti) => (T.steps || []).forEach((x, j) => {
+    const y = stepOf(x); if (y.k !== 'screen') return;
+    const k = `${s.id}:${ti}:${j}`; if (!seenAt.has(k)) seenAt.set(k, Date.now());
+    out.push({ ...y, t: seenAt.get(k) });
+  }));
+  return out.reverse();
+}
 function renderScreen(s, el) {
   if (!el) return;
-  const key = [scr.live, scr.access, desk.ui.watch, !!s.testing, !!scr.image, s.b.name, !!s.apps].join('|');
-  if (key !== scrKey || !el.querySelector('#scrImg')) { scrKey = key; el.innerHTML = D.screenHTML({ ...scr, watch: desk.ui.watch }, s.b.name, !!s.testing, RETINA, !!s.apps); return; }
-  const img = el.querySelector('#scrImg'); if (scr.image && img.getAttribute('src') !== scr.image) img.src = scr.image;
+  const ui = desk.ui;
+  if (!el.querySelector('.vm')) { el.innerHTML = D.screenHTML(s.b.name); bindScreen(el); }
+  if (ui.replay != null && ui.replay >= scr.frames.length) ui.replay = null;
+  const p = D.screenParts(scr, { bot: s.b.name, testing: !!s.testing, mac: RETINA, apps: s.apps, actions: screenActions(s), watch: ui.watch, control: ui.control, big: ui.big,
+    replay: ui.replay, frames: scr.frames, canControl: (!host || hostBrowser) && !!s.apps });
+  const set = (sel, html) => { const n = el.querySelector(sel); if (n.dataset.h !== html) { n.innerHTML = html; n.dataset.h = html; } };
+  set('.vmbar', p.bar); set('.vmover', p.over);
+  // The footer keeps the scrubber under the user's thumb.
+  if (!document.activeElement?.matches?.('[data-vmscrub]')) set('.vmfoot', p.foot);
+  el.querySelector('.vm').classList.toggle('live', p.live);
+  el.querySelector('.vm').classList.toggle('ctl', !!ui.control);
+  const img = el.querySelector('#scrImg'), src = ui.replay != null ? scr.frames[ui.replay].image : scr.image;
+  if (src && img.getAttribute('src') !== src) img.src = src;
+  img.alt = `${s.b.name}’s desktop${p.live ? ', live' : ''}`;
 }
-
+// Take control: clicks, keys and the wheel on the desktop go to the agent's apps.
+function bindScreen(el) {
+  const box = el.querySelector('.vmscreen');
+  // Where in the display (0…1) the pointer is, inside the picture as drawn.
+  const at = e => {
+    const img = box.querySelector('#scrImg'), r = img.getBoundingClientRect(), k = (img.naturalWidth || 16) / (img.naturalHeight || 10);
+    let w = r.width, h = r.width / k; if (h > r.height) { h = r.height; w = h * k; }
+    const x = (e.clientX - r.left - (r.width - w) / 2) / w, y = (e.clientY - r.top - (r.height - h) / 2) / h;
+    return x >= 0 && x <= 1 && y >= 0 && y <= 1 ? { x, y, px: e.clientX - box.getBoundingClientRect().left, py: e.clientY - box.getBoundingClientRect().top } : null;
+  };
+  const input = m => {
+    const s = deskOf(); if (!s || !desk.ui.control) return;
+    if (host) host.postMessage({ type: 'screenInput', apps: s.apps || null, ...m });
+    else if (m.kind === 'click' && !demoTold) { demoTold = true; toast(`In Hover this clicks in ${s.b.name}’s app, in the background.`); }
+  };
+  let downAt = 0, typed = '', typeT = 0;
+  box.addEventListener('pointerdown', e => {
+    if (!desk?.ui.control) return;
+    const p = at(e); if (!p) return;
+    e.preventDefault(); box.focus({ preventScroll: true });
+    const rip = box.querySelector('.vmrip'); rip.style.left = p.px + 'px'; rip.style.top = p.py + 'px'; rip.classList.remove('go'); void rip.offsetWidth; rip.classList.add('go');
+    const dbl = Date.now() - downAt < 350; downAt = Date.now();
+    input({ kind: 'click', x: p.x, y: p.y, count: dbl ? 2 : 1, button: e.button === 2 ? 'right' : 'left' });
+  });
+  box.addEventListener('contextmenu', e => { if (desk?.ui.control) e.preventDefault(); });
+  let wheelT = 0, wheelDy = 0;
+  box.addEventListener('wheel', e => {
+    if (!desk?.ui.control) return;
+    const p = at(e); if (!p) return; e.preventDefault();
+    wheelDy += e.deltaY; clearTimeout(wheelT);
+    wheelT = setTimeout(() => { input({ kind: 'scroll', x: p.x, y: p.y, dy: wheelDy }); wheelDy = 0; }, 120);
+  }, { passive: false });
+  const KEYS = { Enter: 'return', Tab: 'tab', Backspace: 'delete', ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right', Home: 'home', End: 'end', PageUp: 'pageup', PageDown: 'pagedown' };
+  const flush = () => { if (typed) { input({ kind: 'type', text: typed }); typed = ''; } };
+  box.addEventListener('keydown', e => {
+    if (!desk?.ui.control) return;
+    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); flush(); desk.ui.control = false; screenPulse(); renderDesk(); return; }
+    const mods = [e.metaKey && 'cmd', e.ctrlKey && 'ctrl', e.altKey && 'option'].filter(Boolean);
+    e.preventDefault(); e.stopPropagation();
+    if (!mods.length && e.key.length === 1) { typed += e.key; clearTimeout(typeT); typeT = setTimeout(flush, 250); return; }
+    flush();
+    const key = KEYS[e.key] || (e.key.length === 1 ? e.key.toLowerCase() : null);
+    if (key) input({ kind: 'key', key, modifiers: e.shiftKey && mods.length ? [...mods, 'shift'] : mods });
+  });
+}
+let demoTold = false;
+function onScreenInput(m) { if (m.error) toast(m.error); }
 // ── What the panel's controls do ────────────────────────────────────────
 $('#pBody').addEventListener('click', e => {
   if (panel !== 'desk' || !desk) return;
@@ -1949,10 +2041,14 @@ $('#pBody').addEventListener('click', e => {
   const g = t.closest('[data-gh]'); if (g) { if (host) host.postMessage({ type: 'gh', step: g.dataset.gh }); else demoGh(g.dataset.gh); return; }
   const gc = t.closest('[data-ghcopy]'); if (gc) { copyText(gc.dataset.ghcopy, gc); return; }
   if (t.closest('[data-watch]')) { ui.watch = !ui.watch; screenPulse(); renderDesk(); return; }
+  if (t.closest('[data-vmcontrol]')) { ui.control = !ui.control; ui.replay = null; screenPulse(); renderDesk(); if (ui.control) $('#pBody .vmscreen')?.focus({ preventScroll: true }); return; }
+  if (t.closest('[data-vmbig]')) { ui.big = !ui.big; $('#panel').classList.toggle('big', ui.big); return; }
+  if (t.closest('[data-vmlive]')) { ui.replay = null; renderDesk(); return; }
+  const at = t.closest('[data-vmat]'); if (at) { const tt = +at.dataset.vmat, f = scr.frames; if (f.length) { let i = f.findIndex(x => x.t >= tt); if (i < 0) i = f.length - 1; ui.replay = i; ui.control = false; renderDesk(); } return; }
   if (t.closest('[data-saccess]')) { host?.postMessage({ type: 'screenAccess' }); return; }
 });
 $('#pBody').addEventListener('submit', e => {
-  if (!e.target.matches('[data-baddr]') || !desk) return;
+  if (!desk || !e.target.matches('[data-baddr],[data-prform]')) return;
   e.preventDefault();
   if (e.target.matches('[data-prform]')) return createPr(e.target);
   const url = D.normalizeUrl($('#bAddr').value);
@@ -1971,6 +2067,7 @@ function createPr(form) {
   else setTimeout(() => onDeskAction({ id: s.id, what: 'prCreate', data: { ok: true, url: 'https://github.com/example/hover/pull/43', steps: ['Pushed'] } }), 900);
 }
 $('#pBody').addEventListener('input', e => {
+  if (e.target.matches('[data-vmscrub]') && desk) { const i = +e.target.value; desk.ui.replay = i >= scr.frames.length - 1 ? null : i; desk.ui.control = false; renderDesk(); return; }
   if (e.target.id === 'fFind' && desk) { desk.ui.find = e.target.value; renderDesk(); }
   // The pull request form keeps what is typed, for when it is drawn again.
   const f = e.target.closest?.('[data-prform]'); if (f && desk && e.target.name) (desk.ui.prForm ||= {})[e.target.name] = e.target.type === 'checkbox' ? e.target.checked : e.target.value;
@@ -1978,6 +2075,7 @@ $('#pBody').addEventListener('input', e => {
 // The letters switch surfaces while the desk's panel shows, as in T3 Code.
 addEventListener('keydown', e => {
   if (panel !== 'desk' || !desk || deskMenuFor != null || e.metaKey || e.ctrlKey || e.altKey || e.target.closest?.('input,textarea,select,[contenteditable]')) return;
+  if (desk.ui.tab === 'screen' && e.key.toLowerCase() === 'f') { e.preventDefault(); desk.ui.big = !desk.ui.big; $('#panel').classList.toggle('big', desk.ui.big); renderDesk(); return; }
   const f = D.SURFACES.find(x => x[2].toLowerCase() === e.key.toLowerCase());
   if (f) { e.preventDefault(); pickSurface(f[0]); }
 });
@@ -2017,20 +2115,27 @@ function demoGh(step) {
   setTimeout(() => { onGh({ checked: true, installed: true, signedIn: true, user: 'octocat' }); const s = deskOf(); if (s) { deskCache.delete(deskKey(s.id, 'pr')); deskAsk(s, 'pr'); } }, 4200);
 }
 // A made-up desktop, and on it a window the demo agent is testing, with its pointer.
-function demoFrame(live) {
-  const c = document.createElement('canvas'); c.width = 1280; c.height = 800; const x = c.getContext('2d');
-  const g = x.createLinearGradient(0, 0, 1280, 800); g.addColorStop(0, '#1d2b64'); g.addColorStop(0.55, '#7a3e8f'); g.addColorStop(1, '#f8a978'); x.fillStyle = g; x.fillRect(0, 0, 1280, 800);
-  x.fillStyle = 'rgba(255,255,255,.18)'; x.fillRect(0, 0, 1280, 24); x.fillStyle = '#fff'; x.font = '600 13px Inter, sans-serif'; x.fillText(new Date().toLocaleTimeString(), 1160, 17);
-  for (let i = 0; i < 3; i++) { x.fillStyle = 'rgba(255,255,255,.85)'; x.fillRect(1200, 60 + i * 90, 48, 40); x.fillStyle = '#fff'; x.fillText(['Projects', 'Notes', 'Demo'][i], 1196, 120 + i * 90); }
-  if (live) {
+function demoFrame(live, apps = true) {
+  const c = document.createElement('canvas'); c.width = 1512; c.height = 982; const x = c.getContext('2d');
+  const g = x.createLinearGradient(0, 0, 1512, 982); g.addColorStop(0, '#1d2b64'); g.addColorStop(0.55, '#7a3e8f'); g.addColorStop(1, '#f8a978'); x.fillStyle = g; x.fillRect(0, 0, 1512, 982);
+  x.font = '600 13px Inter, sans-serif';
+  for (let i = 0; i < 3; i++) { x.fillStyle = 'rgba(255,255,255,.85)'; x.fillRect(1420, 50 + i * 90, 48, 40); x.fillStyle = '#fff'; x.fillText(['Projects', 'Notes', 'Demo'][i], 1416, 110 + i * 90); }
+  if (apps) {
     const t = Date.now() / 1000;
-    x.fillStyle = 'rgba(20,20,26,.95)'; x.fillRect(220, 140, 720, 460); x.fillStyle = '#2b2b33'; x.fillRect(220, 140, 720, 34);
-    x.fillStyle = '#ff5f57'; x.beginPath(); x.arc(242, 157, 6, 0, TAU); x.fill(); x.fillStyle = '#febc2e'; x.beginPath(); x.arc(262, 157, 6, 0, TAU); x.fill(); x.fillStyle = '#28c840'; x.beginPath(); x.arc(282, 157, 6, 0, TAU); x.fill();
-    x.fillStyle = '#e8e8ee'; x.fillText('localhost:5173', 540, 162); x.fillStyle = '#9046FF'; x.fillRect(300, 260, 160 + 60 * Math.sin(t), 44); x.fillStyle = '#fff'; x.fillText('Sign in', 330, 288);
-    const px = 380 + Math.cos(t * 1.3) * 120, py = 300 + Math.sin(t * 1.7) * 80;
-    x.fillStyle = '#fff'; x.strokeStyle = '#000'; x.lineWidth = 1.5; x.beginPath(); x.moveTo(px, py); x.lineTo(px, py + 22); x.lineTo(px + 6, py + 16); x.lineTo(px + 15, py + 16); x.closePath(); x.fill(); x.stroke();
+    x.fillStyle = 'rgba(250,250,252,.98)'; x.fillRect(260, 150, 860, 560); x.fillStyle = '#e9e9ee'; x.fillRect(260, 150, 860, 38);
+    [['#ff5f57', 284], ['#febc2e', 304], ['#28c840', 324]].forEach(([c2, cx]) => { x.fillStyle = c2; x.beginPath(); x.arc(cx, 169, 6, 0, TAU); x.fill(); });
+    x.fillStyle = '#555'; x.fillText('Demo — localhost:5173', 610, 174);
+    x.fillStyle = '#1d1d1f'; x.font = '700 30px Inter, sans-serif'; x.fillText('Sign in', 340, 270); x.font = '15px Inter, sans-serif'; x.fillStyle = '#6e6e73'; x.fillText('Name', 340, 320);
+    x.strokeStyle = '#c7c7cc'; x.lineWidth = 1.5; x.strokeRect(340, 332, 360, 40); x.fillStyle = '#1d1d1f'; x.fillText(live ? 'Ada' + ((t % 1) < 0.5 ? '|' : '') : '', 352, 358);
+    x.fillStyle = '#9046FF'; x.fillRect(340, 400, 140, 44); x.fillStyle = '#fff'; x.font = '600 15px Inter, sans-serif'; x.fillText('Sign in', 382, 428);
+    if (live) {
+      // Cua's agent cursor: its own, not the user's, gliding between the fields.
+      const k = (Math.sin(t * 0.9) + 1) / 2, px = 420 + k * 20, py = 352 + k * 70;
+      x.fillStyle = '#9b6bff'; x.strokeStyle = '#fff'; x.lineWidth = 2; x.beginPath(); x.moveTo(px, py); x.lineTo(px, py + 24); x.lineTo(px + 7, py + 17); x.lineTo(px + 17, py + 17); x.closePath(); x.fill(); x.stroke();
+      x.fillStyle = 'rgba(155,107,255,.25)'; x.beginPath(); x.arc(px, py, 16 + 6 * Math.sin(t * 6), 0, TAU); x.fill();
+    }
   }
-  return c.toDataURL('image/jpeg', 0.8);
+  return c.toDataURL('image/jpeg', 0.82);
 }
 
 // ── Deleting a session, after asking ────────────────────────────────────
@@ -2091,6 +2196,7 @@ host?.addEventListener('message', e => {
   else if (m.type === 'desk') onDesk(m);
   else if (m.type === 'screen') onScreen(m);
   else if (m.type === 'agentBrowser') onAgentBrowser(m);
+  else if (m.type === 'screenInput') onScreenInput(m);
   else if (m.type === 'gh') onGh(m);
   else if (m.type === 'deskAction') onDeskAction(m);
   else if (m.type === 'folder') { newFolder = m.text; renderNew(); $('#nInput').focus(); }
@@ -2226,6 +2332,19 @@ for (const s of sessions) spawn(s, !!s.arrive);
 setTime(Q.get('time') ?? manualTime);
 drawBoard(); drawClock(0); clampView(); renderTools(); renderNew();
 if (!host) { play(sessions[0], last(sessions[0]), 3); play(sessions[2], last(sessions[2])); }
+// The background E2E harness's hook (tests/macos/e2e): only when it sets hoverE2E
+// before the page loads; Hover itself never does.
+if (host && window.hoverE2E) window.__office = {
+  state: () => ({ panel, deskMenu: deskMenuFor, drawerOpen, tab: desk?.ui.tab ?? null,
+    sessions: sessions.map(s => ({ id: s.id, stage: last(s).stage, testing: !!s.testing, browsing: !!s.browsing, apps: s.apps || null,
+      minis: minis.filter(m => m.s === s && !m.leaving).length, steps: (last(s).steps || []).map(x => stepOf(x).k) })) }),
+  openDeskMenu: id => openDeskMenu(sessions.find(x => x.id === id), 420, 260),
+  openDesk: (id, tab) => openDesk(id, tab),
+  openSession: id => openSession(id),
+  // A page without a window gets no animation frames: the harness turns the clock.
+  tick: (n = 1) => { for (let i = 0; i < n; i++) { e2eNow = Math.max(e2eNow + 34, performance.now()); frame(e2eNow); } },
+};
+var e2eNow = 0;
 // The demo's test hook (?debug, never in Hover): a session held in a stage with given
 // steps, for screenshots of states that otherwise pass in seconds.
 if (!host && /[?&]debug\b/.test(location.search)) window.__office = {

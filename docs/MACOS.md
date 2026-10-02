@@ -186,6 +186,23 @@ executed by the local sandbox suite. Physical notch, multiple-monitor, fullscree
 login-item and notification permission behavior still need normal release QA on
 representative Macs. These integrations are skipped by the isolated smoke test.
 
+## End-to-end run, in the background
+
+```sh
+scripts/sandbox.sh -- scripts/build-macos.sh
+tests/macos/e2e/run.sh "$PWD/dist/macos-osx-arm64/Hover.app"
+```
+
+It drives the real office page, its bridge (`OfficeHost.swift`), Hover's browser and the
+screen feed with the packaged backend, a stand-in agent (`tests/macos/e2e/fake-agent.py`)
+and a stand-in `gh`, against a local test site: a task from the circle, an approval,
+two subagents and their helpers, the desk card, the agent driving Hover's browser over
+its MCP relay, the agent's desktop (apps, activity, Control's input as Hover maps it),
+the answer, every desk panel, Create pull request (a real push to a local remote) and a
+reply from the card. No window is made and the harness never activates; it writes only
+to its temp folder (`sandbox-exec`), reaches only localhost, and touches no real app.
+Screenshots of each step are kept in that folder.
+
 ## Architecture
 
 - `src/Hover.Shared`: portable engine plus a Windows target for the existing WPF

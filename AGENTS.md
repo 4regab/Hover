@@ -315,11 +315,18 @@ carry a legacy `Noty` reference **only** in `Core/Paths.cs`, which migrates an o
   no pull request for the branch it offers Create pull request (`DeskInfo.CreatePr`:
   optional new branch and commit, push, `gh pr create`; never while the agent runs,
   branch names checked so they can't be options). Screen is the main display, but
-  never the user's own windows: the desktop plus only the windows of the apps the
-  agent's computer use opened or acted on (`DeskInfo.Apps`: pids, bundle ids and
-  names from its steps, sent as `apps` in the state and in `{type:'screen'}`), a
-  still at rest, live at 4 fps while the session's last steps are computer use
-  (`testing` in the state) or the user watches; `{type:'screen'}` is renewed every 3 s and stops itself after 8 s
+  never the user's own windows: the agent's desktop, viewed like a cloud agent's remote
+  desktop without a VM. It is the desktop picture (Window Manager's own layer under
+  the desktop level, which is not Stage Manager's black one) plus only the windows of
+  the apps the agent's computer use opened or acted on (`DeskInfo.Apps`: pids, bundle
+  ids and names from its steps, sent as `apps` in the state and in `{type:'screen'}`)
+  and Cua's agent cursor, never the user's pointer; a still at rest, live at up to
+  8 fps while the session's last steps are computer use (`testing`), the user watches
+  or takes control. Computer-use steps come as `k: 'screen'` rows (`DeskInfo.ScreenAction`)
+  for captions and an activity timeline, and the page keeps a frame a second to replay.
+  Control (`{type:'screenInput'}`, `ScreenControl` in Screen.swift) sends the user's
+  clicks, typing, keys and wheel to the agent's own windows only, through `cua-driver
+  call` in the background; `{type:'screen'}` is renewed every 3 s and stops itself after 8 s
   (`Owl/ScreenFeed.cs` on Windows, `macos/Sources/Screen.swift` with ScreenCaptureKit
   and Hover's own Screen Recording grant on a Mac). In a browser, `?desk=<id>[:<tab>]`
   opens it with demo data.
@@ -424,5 +431,7 @@ carry a legacy `Noty` reference **only** in `Core/Paths.cs`, which migrates an o
 - **UI Automation can't see a `Border` or a `Panel`.** Give E2E hooks to a
   control or a `TextBlock`, or give the element an automation peer. The office itself
   is a web page: UI Automation sees only the WebView2, so drive it over DevTools.
+- **The Mac's E2E run is `tests/macos/e2e/run.sh`** (see docs/MACOS.md): windowless,
+  in the background, against the packaged backend with stand-in agent and gh.
 - **The E2E suite (`tests/Hover.E2E`) still drives the 1.x workspace** and fails
   against 2.0 until it is rewritten for the office.

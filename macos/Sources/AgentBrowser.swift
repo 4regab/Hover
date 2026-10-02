@@ -305,8 +305,11 @@ final class AgentTab: NSObject, WKNavigationDelegate, WKUIDelegate {
       const t = String(a[fields] || '').trim().toLowerCase();
       if (!t) throw new Error('Name the element: a ref from browser_snapshot, a selector, or its text.');
       const all = [...document.querySelectorAll(ACT)].filter(visible);
-      el = all.find(e => nameOf(e).toLowerCase() === t) || all.find(e => nameOf(e).toLowerCase().includes(t));
+      // A field asked for by its label is the field, not the label around it.
+      const pool = fields === 'label' ? all.filter(e => field(e) || e.isContentEditable || e.tagName === 'LABEL') : all;
+      el = pool.find(e => nameOf(e).toLowerCase() === t) || pool.find(e => nameOf(e).toLowerCase().includes(t));
       if (!el) throw new Error(`Nothing on the page is called “${a[fields]}”.`);
+      if (el.tagName === 'LABEL') el = el.control || el.querySelector('input,textarea,select') || el;
       return el;
     };
     const describe = el => { const r = el.getAttribute('data-hover-ref'); const n = nameOf(el).slice(0, 60); return `${r ? `[${r}] ` : ''}${(el.getAttribute('role') || el.tagName).toLowerCase()}${n ? ` “${n}”` : ''}`; };

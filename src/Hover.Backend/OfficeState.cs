@@ -182,6 +182,9 @@ internal sealed class OfficeState(KiroSessions sessions, IReadOnlyDictionary<Age
             };
             return new { k = "web", verb = said, cmd = on is { Length: > 90 } ? on[..89] + "…" : on, status = x.Status, @out = x.Output, ms = x.Ms };
         }
+        // Computer use: what it did on the agent's desktop, for the screen panel's activity.
+        if (DeskInfo.IsScreen(x) && DeskInfo.ScreenAction(x) is var (did, what))
+            return new { k = "screen", verb = did, cmd = what, status = x.Status, @out = x.Output is { Length: > 600 } o ? o[..600] + "…" : x.Output, ms = x.Ms };
         var icon = x.Kind switch { "read" => "read", "edit" or "delete" or "move" => "edit", "execute" => "run", "search" or "fetch" => "search", _ => "think" };
         var verb = x.Kind switch
         {
