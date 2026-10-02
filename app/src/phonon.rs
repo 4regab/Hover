@@ -703,7 +703,8 @@ impl Speech for Local {
 fn agent() -> ureq::Agent {
     let cfg = ureq::Agent::config_builder();
     #[cfg(windows)]
-    let cfg = cfg.tls_config(ureq::tls::TlsConfig::builder().provider(ureq::tls::TlsProvider::NativeTls).build());
+    let cfg = cfg.tls_config(ureq::tls::TlsConfig::builder().provider(ureq::tls::TlsProvider::NativeTls)
+        .root_certs(ureq::tls::RootCerts::PlatformVerifier).build());
     // No overall limit: a 200 MB wheel on a slow line is fine. A body that stalls for
     // an hour is not.
     cfg.timeout_connect(Some(Duration::from_secs(30))).timeout_recv_response(Some(Duration::from_secs(60)))

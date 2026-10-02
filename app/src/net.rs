@@ -77,7 +77,8 @@ impl Net {
         let arrived = Arc::new(arrived);
         let cfg = ureq::Agent::config_builder();
         #[cfg(windows)]
-        let cfg = cfg.tls_config(ureq::tls::TlsConfig::builder().provider(ureq::tls::TlsProvider::NativeTls).build());
+        let cfg = cfg.tls_config(ureq::tls::TlsConfig::builder().provider(ureq::tls::TlsProvider::NativeTls)
+            .root_certs(ureq::tls::RootCerts::PlatformVerifier).build());
         let agent: ureq::Agent = cfg.timeout_global(Some(Duration::from_secs(30))).http_status_as_error(true).build().into();
         for _ in 0..WORKERS {
             let (rx, state, hosts, arrived, agent) = (rx.clone(), state.clone(), hosts.clone(), arrived.clone(), agent.clone());
