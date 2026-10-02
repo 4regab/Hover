@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/4regab/Hover/actions/workflows/ci.yml"><img src="https://github.com/4regab/Hover/actions/workflows/ci.yml/badge.svg?branch=rust-port/phase-0-1" alt="CI"></a>
+  <a href="https://github.com/4regab/Hover/actions/workflows/ci.yml"><img src="https://github.com/4regab/Hover/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI"></a>
   <a href="https://github.com/4regab/Hover/releases"><img src="https://img.shields.io/github/v/release/4regab/Hover?include_prereleases&label=release" alt="Latest release"></a>
   <img src="https://img.shields.io/badge/platform-Windows%20%7C%20Linux-informational" alt="Windows and Linux">
   <img src="https://img.shields.io/badge/built%20with-Rust%20%2B%20Slint-orange" alt="Rust and Slint">

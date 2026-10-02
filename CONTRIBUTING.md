@@ -18,12 +18,12 @@ Hover fits together, then [testing.md](docs/development/testing.md) and
    git remote add upstream https://github.com/4regab/Hover.git
    ```
 
-2. Pick the base branch. The native (Rust) Hover is on `rust-port/phase-0-1`; `main`
+2. Pick the base branch. The native (Rust) Hover is on `main`; `dotnet`
    still holds 2.x (.NET). Branch from the one your change is for:
 
    ```sh
    git fetch upstream
-   git switch -c my-change upstream/rust-port/phase-0-1
+   git switch -c my-change upstream/main
    ```
 
 3. Set up your platform: [Windows](docs/development/windows.md), or on Linux the
@@ -53,7 +53,7 @@ its own: set `HOVER_DATA_DIR` to an empty folder before you start it.
 
 ```sh
 git fetch upstream
-git rebase upstream/rust-port/phase-0-1     # or: git merge upstream/rust-port/phase-0-1
+git rebase upstream/main     # or: git merge upstream/main
 ```
 
 Then build again. Nothing updates on its own. An installed Hover changes only when
@@ -105,7 +105,7 @@ Fill in the template. In short:
 
 ## Releases
 
-Releases are made by the maintainers: a push to `rust-port/phase-0-1` that raises
+Releases are made by the maintainers: a push to `main` that raises
 `Cargo.toml`'s version (or a `v*` tag) runs `.github/workflows/ci.yml`, which publishes the
 installers once the tests pass. Forks don't need it: `.\build.ps1 installer` and
 `make package` build the same installers locally.

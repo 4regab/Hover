@@ -139,8 +139,8 @@ tested.
 
 ```mermaid
 flowchart LR
-    push["push to rust-port/**<br/>or a pull request"] --> wj & lj
-    tag["push of tag vX.Y.Z, or of a new<br/>Cargo.toml version to rust-port/phase-0-1"] --> wj & lj
+    push["push to main or rust-port/**<br/>or a pull request"] --> wj & lj
+    tag["push of tag vX.Y.Z, or of a new<br/>Cargo.toml version to main"] --> wj & lj
 
     subgraph wj["windows job (CodeBuild Windows Server 2022)"]
         wt["cargo test --workspace"] --> wi["release only:<br/>build.ps1 installer"]

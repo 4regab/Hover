@@ -42,7 +42,7 @@ sudo make install           # PREFIX=/usr/local; DESTDIR= for staging
 make package                # .deb and tarball in dist/
 ```
 
-A push to `rust-port/phase-0-1` whose `Cargo.toml` version has no tag yet, or a `v*` tag
+A push to `main` whose `Cargo.toml` version has no tag yet, or a `v*` tag
 (matching it), runs `.github/workflows/ci.yml`'s tests on Windows and Linux (Ubuntu 22.04)
 on AWS CodeBuild, then builds the installers from that build, tags the commit and
 publishes them together as a GitHub pre-release. Raising the version releases it.

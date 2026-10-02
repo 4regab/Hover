@@ -1,9 +1,9 @@
 name: CI
 
 # Every job runs on AWS CodeBuild (the hover-release project, infra/codebuild-runner.yml),
-# none on GitHub's own runners. A push to rust-port/** or a pull request runs the tests on
-# Windows and Linux. A release: a v* tag (matching Cargo.toml), or a push to
-# rust-port/phase-0-1 whose Cargo.toml version has no tag yet. The same jobs then build the
+# none on GitHub's own runners. A push to main or rust-port/**, or a pull request, runs the
+# tests on Windows and Linux. A release: a v* tag (matching Cargo.toml), or a push to
+# main whose Cargo.toml version has no tag yet. The same jobs then build the
 # installers from what they just tested, and `release` tags the commit and publishes
 # them together as a pre-release.
 # No secrets and no agent accounts: agent runs use the repo's fake-agent.
@@ -13,7 +13,7 @@ name: CI
 # template's 72 GB reserved fleet instead, once it is deployed (it costs while it runs).
 on:
   push:
-    branches: ['rust-port/**']
+    branches: ['main', 'rust-port/**']
     # Docs-only pushes don't rebuild. (Path filters don't apply to tags.)
     paths-ignore: ['**.md', 'docs/**', 'assets/readme/**']
     tags: ['v*']
@@ -45,7 +45,7 @@ jobs:
         shell: pwsh
     steps:
       - uses: actions/checkout@v4
-      # A release: a v* tag, or a push to rust-port/phase-0-1 whose Cargo.toml version
+      # A release: a v* tag, or a push to main whose Cargo.toml version
       # has no tag yet (so raising the version is what releases it).
       - name: Release?
         id: rel
@@ -55,7 +55,7 @@ jobs:
           if ($env:GITHUB_REF -like 'refs/tags/v*') {
             if ($env:GITHUB_REF_NAME -ne "v$crate") { throw "The tag is $env:GITHUB_REF_NAME but Cargo.toml says $crate." }
             $release = $true
-          } elseif ($env:GITHUB_EVENT_NAME -eq 'push' -and $env:GITHUB_REF_NAME -eq 'rust-port/phase-0-1') {
+          } elseif ($env:GITHUB_EVENT_NAME -eq 'push' -and $env:GITHUB_REF_NAME -eq 'main') {
             $tagged = git ls-remote --tags origin "refs/tags/v$crate"
             if ($LASTEXITCODE -ne 0) { throw "couldn't list the tags" }
             $release = -not $tagged
@@ -155,7 +155,7 @@ jobs:
           if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
             [[ "$GITHUB_REF_NAME" == "v$crate" ]] || { echo "The tag is $GITHUB_REF_NAME but Cargo.toml says $crate." >&2; exit 1; }
             release=true
-          elif [[ "$GITHUB_EVENT_NAME" == push && "$GITHUB_REF_NAME" == rust-port/phase-0-1 ]]; then
+          elif [[ "$GITHUB_EVENT_NAME" == push && "$GITHUB_REF_NAME" == main ]]; then
             [[ -z "$(git ls-remote --tags origin "refs/tags/v$crate")" ]] && release=true
           fi
           echo "version $crate, release: $release"
