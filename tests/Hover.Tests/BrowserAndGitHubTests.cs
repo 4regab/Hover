@@ -162,6 +162,15 @@ public sealed class BrowserAndGitHubTests
         Assert.That(list.Select(x => (x.Id, x.Name, x.Running)), Is.EqualTo(new[] { ("local:hover-1", "hover-1", true), ("local:x", "x", false) }));
         Assert.That(Spaces.ParseList("{\"spaces\":[{\"id\":\"local:a\",\"name\":\"a\"}]}"), Has.Count.EqualTo(1));
         Assert.That(Spaces.ParseList("not json"), Is.Empty);
+        // What cua 0.2 prints: telemetry notice, then the list, with no power state.
+        var real = Spaces.ParseList("Cua collects anonymous usage data…\n{\"relay_error\":null,\"spaces\":[{\"id\":\"local:hover-hover-9a332d\",\"name\":\"Apple-Virtual-Machine-1.local\",\"os\":\"macos\",\"kind\":\"vm\"}]}");
+        Assert.That(real.Single().Id, Is.EqualTo("local:hover-hover-9a332d"));
+        // Lume knows whether it is on, and its size.
+        var vm = Spaces.ParseVm("{\"name\":\"hover-hover-9a332d\",\"status\":\"stopped\",\"cpuCount\":2,\"memorySize\":4294967296,\"display\":\"1024x768\"}");
+        Assert.That(vm, Is.EqualTo(new Spaces.VmInfo(true, false, 2, 4, "1024x768")));
+        Assert.That(Spaces.ParseVm("[{\"status\":\"running\",\"cpuCount\":4,\"memorySize\":8589934592}]")!.Running, Is.True);
+        var size = Spaces.Target();
+        Assert.That(size.Cpus, Is.InRange(2, 6)); Assert.That(size.MemoryGb, Is.InRange(4, 8)); Assert.That(size.Display, Is.EqualTo("1280x800"));
         // The agent's tools in its Space: computer use, never its shell or Spaces' admin.
         Assert.That(Spaces.Permissions, Does.Contain("computer:click").And.Not.Contain("shell").And.Not.Contain("spaces:"));
     }

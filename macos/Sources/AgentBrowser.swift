@@ -113,6 +113,8 @@ final class AgentTab: NSObject, WKNavigationDelegate, WKUIDelegate {
         config.websiteDataStore = .nonPersistent()
         config.preferences.javaScriptCanOpenWindowsAutomatically = false
         config.applicationNameForUserAgent = "Hover"
+        // Smooth while the user watches the agent, though Hover is never the active app.
+        config.preferences.inactiveSchedulingPolicy = .none
         config.userContentController.addUserScript(WKUserScript(source: AgentTab.consoleHook, injectionTime: .atDocumentStart, forMainFrameOnly: true))
         web = WKWebView(frame: CGRect(origin: .zero, size: AgentTab.size), configuration: config)
         super.init()

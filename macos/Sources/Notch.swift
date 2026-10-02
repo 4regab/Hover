@@ -232,7 +232,10 @@ final class Notch: NSObject {
     }
 
     /// Clicks go to the shape only; everywhere else falls through to what is beneath.
+    /// While files are dragged over it, the whole window takes the drop.
+    var takesDrops = false { didSet { if takesDrops { window.ignoresMouseEvents = false } } }
     func track(_ point: CGPoint) {
+        if takesDrops { return }
         let inside = contains(point)
         if window.ignoresMouseEvents == inside { window.ignoresMouseEvents = !inside }
     }

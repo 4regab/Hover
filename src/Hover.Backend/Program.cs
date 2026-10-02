@@ -55,7 +55,8 @@ internal sealed class Backend
     private readonly Dictionary<AgentTool, IAgentRuntime> runtimes;
     private readonly KiroSessions sessions;
     private readonly OfficeState state;
-    private readonly Timer quotaTimer;
+    private readonly Timer quotaTimer, idleTimer;
+    private readonly Dictionary<string, DateTime> spaceBusy = new();
     private readonly Dictionary<string, object> quotas = new();
     private bool checking, pushing, closing, readingQuotas;
     private TaskCompletionSource<string?>? claudeCredentials;
@@ -120,6 +121,9 @@ internal sealed class Backend
         // The tool and outcome let the native island show the tool's logo with a badge.
         sessions.Ended += (s, r) => Send(new { type = "ended", title = $"{Agents.Name(s.Tool)}: {s.Title}", text = r.State.ToString(), tool = Agents.Id(s.Tool), task = s.Title, ok = r.State == KiroState.Completed });
         quotaTimer = new Timer(_ => loop.Post(_ => _ = RefreshQuotas(), null), null, TimeSpan.FromMinutes(5), TimeSpan.FromMinutes(5));
+        // A project's desktop holds 8 GB while on: off after 15 minutes with none of its
+        // agents at work (its next task, or opening its Screen panel, starts it again).
+        idleTimer = new Timer(_ => loop.Post(_ => StopIdleSpaces(), null), null, TimeSpan.FromMinutes(1), TimeSpan.FromMinutes(1));
         Send(new { type = "initialized", version = 1 });
     }
     private Task<T> Ask<T>(AgentTool tool, string sid, T fallback, Func<KiroSession, Task<T>> ask)
@@ -228,6 +232,7 @@ internal sealed class Backend
             case "spaceView":
                 if (s is null) break;
                 var viewId = s.Id;
+                spaceBusy[Spaces.NameFor(s.Folder)] = DateTime.UtcNow;
                 // Opening the panel makes or starts the Space when the session has none running.
                 if (Spaces.Wanted && Spaces.StateOf(s.Folder) is null or { Phase: "failed" or "stopped" }) { var k2 = s.Folder; _ = Task.Run(() => Spaces.Ensure(k2, CancellationToken.None)); }
                 _ = Spaces.Viewer(s.Folder).ContinueWith(t => Send(new { type = "space", id = viewId, data = t.IsCompletedSuccessfully ? t.Result : new { error = "The desktop’s viewer didn’t open." } }), TaskScheduler.Default);
@@ -293,6 +298,20 @@ internal sealed class Backend
                 Push(); break;
             case "claudeCredentials": claudeCredentials?.TrySetResult(Str(m, "json")); break;
             case "shutdown": Shutdown(); loop.Complete(); break;
+        }
+    }
+    private void StopIdleSpaces()
+    {
+        if (closing || !Spaces.Wanted) return;
+        var now = DateTime.UtcNow;
+        foreach (var g in sessions.All.GroupBy(x => Spaces.NameFor(x.Folder)))
+        {
+            if (g.Any(x => x.Busy) || !spaceBusy.ContainsKey(g.Key)) { spaceBusy[g.Key] = now; continue; }
+            if (now - spaceBusy[g.Key] > TimeSpan.FromMinutes(15) && Spaces.StateOf(g.First().Folder) is { Phase: "ready" })
+            {
+                spaceBusy[g.Key] = now;
+                _ = Spaces.Stop(g.First().Folder);
+            }
         }
     }
     private static bool SameFolder(string a, string b) => Spaces.NameFor(a) == Spaces.NameFor(b);
@@ -422,10 +441,9 @@ internal sealed class Backend
     public void Shutdown()
     {
         if (closing) return; closing = true;
-        quotaTimer.Dispose(); BrowserTool.Stop(); sessions.StopAll();
-        // The agents' desktops are turned off with Hover (their disks stay); a few
-        // seconds at most, so quitting never hangs on them.
-        if (Spaces.Wanted) Task.WaitAll(sessions.All.Select(x => x.Folder).Distinct(StringComparer.OrdinalIgnoreCase).Select(Spaces.Stop).ToArray(), TimeSpan.FromSeconds(6)); foreach (var runtime in runtimes.Values) runtime.Shutdown("Hover quit");
+        quotaTimer.Dispose(); idleTimer.Dispose(); BrowserTool.Stop(); sessions.StopAll();
+        // The desktops are turned off by the Mac host as Hover quits (a VM takes a while
+        // to stop, and this process is about to end); nothing waits on them here. foreach (var runtime in runtimes.Values) runtime.Shutdown("Hover quit");
         sessions.History?.Flush(); Settings.Flush();
     }
 }

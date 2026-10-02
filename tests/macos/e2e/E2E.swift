@@ -201,6 +201,8 @@ final class Harness {
         // Its own desktop: a Cua Space, made before its run, driven over the relay.
         let cuaLog = { (try? String(contentsOf: root.appendingPathComponent("cua.log"), encoding: .utf8)) ?? "" }
         check(cuaLog().contains("spaces create macos:26 --name hover-project-"), "the project's Space was made before the run (cua spaces create, named for the folder)")
+        check(cuaLog().range(of: #"--cpus [2-6] --memory-mb (4096|6144|8192)"#, options: .regularExpression) != nil, "it is made with room to be smooth (cores and memory for this Mac)")
+        check(cuaLog().contains("--display 1280x800"), "and a screen size that's sharp in the panel (lume set --display)")
         await js("window.__office.openDesk(\(sid), 'screen')")
         check(await until("the Space's viewer opens over the panel", 30) { self.office.web.subviews.contains { ($0 as? WKWebView)?.url?.path.hasPrefix("/viewer") == true } }, "Cua's live viewer is laid over the Screen panel")
         if let v = office.web.subviews.compactMap({ $0 as? WKWebView }).first(where: { $0.url?.path.hasPrefix("/viewer") == true }) {
@@ -219,6 +221,39 @@ final class Harness {
         check(await until("its calls reached the Space", 10) { cuaLog().contains("call local:hover-") && cuaLog().contains("computer_click") }, "the agent's computer use went to its own Space, through Hover's relay to cua mcp")
         await shot("screen")
 
+        // The viewer link is kept: the panel opened again shows the same live view.
+        await js("window.__office.openDesk(\(sid), 'terminal')"); try? await Task.sleep(nanoseconds: 400_000_000)
+        await js("window.__office.openDesk(\(sid), 'screen')"); try? await Task.sleep(nanoseconds: 1_500_000_000)
+        check(cuaLog().components(separatedBy: "sb view").count - 1 == 1, "opening the Screen panel again reuses the live view (one cua sb view)")
+
+        // Dragging is polled, so window drags the window server moves itself are seen.
+        do {
+            let drag = TeleportDrag()
+            var frame = CGRect(x: 300, y: 300, width: 800, height: 600)
+            drag.windowAt = { _ in (id: 77, pid: 4242, frame: CGRect(x: 300, y: 300, width: 800, height: 600)) }
+            drag.frameOf = { _ in frame }
+            drag.appOf = { _ in ("Google Chrome", "com.google.Chrome") }
+            drag.near = { p in p.y > 950 }
+            var seen: [(String, String?)] = []
+            drag.phase = { ph, _, d in seen.append((ph, d.bundle)) }
+            drag.poll(CGPoint(x: 600, y: 600), buttons: 1)                       // pressed on its title bar
+            drag.poll(CGPoint(x: 600, y: 600), buttons: 0)                       // a click: nothing
+            check(seen.isEmpty, "a click on a window is not a drag")
+            drag.poll(CGPoint(x: 600, y: 600), buttons: 1)
+            frame.size.width += 40; drag.poll(CGPoint(x: 640, y: 600), buttons: 1) // a resize: nothing
+            check(seen.isEmpty, "resizing a window is not a drag to the notch")
+            drag.poll(CGPoint(x: 640, y: 600), buttons: 0)
+            frame = CGRect(x: 300, y: 300, width: 800, height: 600)
+            drag.poll(CGPoint(x: 600, y: 600), buttons: 1)
+            frame.origin.y += 200; drag.poll(CGPoint(x: 600, y: 800), buttons: 1)  // moving, not near yet
+            check(seen.isEmpty, "a window moved about the screen doesn't open the notch")
+            frame.origin.y += 160; drag.poll(CGPoint(x: 700, y: 970), buttons: 1)  // at the notch
+            try? await Task.sleep(nanoseconds: 50_000_000)
+            drag.poll(CGPoint(x: 720, y: 975), buttons: 1)
+            drag.poll(CGPoint(x: 720, y: 975), buttons: 0)                       // let go there
+            check(seen.map(\.0) == ["start", "over", "drop"] && seen.allSatisfy { $0.1 == "com.google.Chrome" }, "a window dragged to the notch opens it and drops there, naming the app: \(seen.map(\.0))")
+        }
+
         // An app dragged onto the notch: the agents' desktops open as drop targets.
         office.deliver(["type": "teleportDrag", "phase": "start", "app": "Google Chrome", "bundle": "com.google.Chrome", "files": [], "x": 300, "y": 120, "vw": 1300])
         check(await until("the drop targets show", 5) { await self.truthy("!document.querySelector('#tdrop').hidden && document.querySelector('#tdrop [data-tdrop]')") }, "dragging an app to the notch shows the agents' desktops")
@@ -234,7 +269,7 @@ final class Harness {
             let file = root.appendingPathComponent("project/login.html").path
             office.deliver(["type": "teleportDrag", "phase": "start", "app": "login.html", "files": [file], "x": 300, "y": 120, "vw": 1300])
             office.deliver(["type": "teleportDrag", "phase": "drop", "app": "login.html", "files": [file], "x": x + 30, "y": y + 30, "vw": 1300])
-            check(await until("the file is sent", 15) { cuaLog().contains("send_file") && cuaLog().contains("login.html") }, "dropped files go to the agent's Space (send_file)")
+            check(await until("the file is sent", 15) { cuaLog().contains("sb cp") && cuaLog().contains("login.html local:hover-") && cuaLog().contains(":/Users/lume/Downloads/login.html") }, "dropped files go to the desktop's Downloads (cua sb cp)")
         } else { check(false, "the agent's tile is there") }
 
         // Control mapping on the user's own desktop (the fallback without Spaces), as Hover maps it.
@@ -289,12 +324,22 @@ final class Harness {
         }, "a reply from the desk card gets its answer")
         await shot("after-reply")
 
+        // The desktop was turned off and left small: the next task sizes it, then starts it.
+        let vms = root.appendingPathComponent("vms.json")
+        if var v = (try? JSONSerialization.jsonObject(with: Data(contentsOf: vms))) as? [String: [String: Any]], let n = v.keys.first {
+            v[n]?["status"] = "stopped"; v[n]?["cpuCount"] = 2; v[n]?["memorySize"] = 4 << 30
+            try? JSONSerialization.data(withJSONObject: v).write(to: vms)
+        }
         // A second agent in the same project works on the same desktop.
         backend.send(["type": "new", "tool": "codex", "folder": project, "prompt": "Also check sign-out", "access": "risky"])
         let both: () -> [[String: Any]] = { self.latest?["sessions"] as? [[String: Any]] ?? [] }
         check(await until("the second agent finishes", 60) { both().count == 2 && both().allSatisfy { $0["stage"] as? String == "done" } }, "a second agent in the same project runs and finishes")
         let creates = cuaLog().components(separatedBy: "spaces create").count - 1
         check(creates == 1, "it reuses the project's desktop: one Space made for both agents (\(creates))")
+        let log2 = cuaLog()
+        if let set = log2.range(of: "lume set hover-project-", options: .backwards), let start = log2.range(of: "spaces start local:hover-project-", options: .backwards) {
+            check(set.lowerBound < start.lowerBound && log2[set.lowerBound...].contains("--cpu"), "the desktop that was off is given its room back, then started")
+        } else { check(false, "the desktop that was off is sized and started (lume set, then spaces start)") }
         let names = Set(both().compactMap { ($0["space"] as? [String: Any])?["name"] as? String })
         check(names.count == 1, "both agents' desks name the same desktop: \(names)")
         let mates = both().map { (($0["space"] as? [String: Any])?["with"] as? [Any])?.count ?? 0 }

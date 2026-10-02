@@ -23,6 +23,8 @@ final class SpaceViewers: NSObject, WKNavigationDelegate, WKUIDelegate {
                 let config = WKWebViewConfiguration()
                 config.websiteDataStore = .nonPersistent()
                 config.mediaTypesRequiringUserActionForPlayback = []
+                // A live desktop: never throttled for Hover not being the active app.
+                config.preferences.inactiveSchedulingPolicy = .none
                 let web = WKWebView(frame: .zero, configuration: config)
                 web.navigationDelegate = self; web.uiDelegate = self
                 web.setValue(false, forKey: "drawsBackground")
@@ -56,61 +58,74 @@ final class SpaceViewers: NSObject, WKNavigationDelegate, WKUIDelegate {
 }
 
 /// An app's window dragged onto the notch, or files and apps dragged from Finder or the
-/// Dock: the notch opens on the agents' desktops and a drop sends it to one, as Cua's
-/// own notch does. A window drag is told apart from a click or a resize by watching the
-/// window under the pointer move (its bounds through CGWindowList, no permission
-/// needed); a Finder drag by the drag pasteboard changing. Nothing is sent until the
-/// drop lands on an agent's desktop.
+/// Dock: the notch opens on the projects' desktops and a drop sends it to one, as Cua's
+/// own notch does. It is polled, not hooked: a window dragged by its title bar is moved
+/// by the window server itself, and no app (nor an event monitor) sees those drags. So
+/// while the left button is held (pressedMouseButtons, no permission needed) it watches
+/// the window that was under the pointer move (CGWindowList, its bounds only), and the
+/// drag pasteboard for files; the drop is the button coming up over the notch.
 final class TeleportDrag {
     struct Drag { var app: String; var bundle: String?; var files: [URL]; var pid: pid_t? }
-    /// Called with "start", "over", "drop" or "cancel", where the pointer is (screen
-    /// points), and what is dragged.
+    /// "start", "over", "drop" or "cancel", where the pointer is (screen points), and what.
     var phase: ((String, CGPoint, Drag) -> Void)?
     /// Whether a point is close enough to the notch to start.
     var near: ((CGPoint) -> Bool)?
-    private var candidate: (id: CGWindowID, pid: pid_t, frame: CGRect, start: CGPoint)?
-    private var drag: Drag?, active = false, pasteboard = 0
-    private var monitors: [Any] = []
+    private var held = false, active = false, pasteboard = 0
+    private var candidate: (id: CGWindowID, pid: pid_t, frame: CGRect)?
+    private var drag: Drag?, lastSent = CGPoint(x: -1, y: -1), lastAt = Date.distantPast, lastPoint = CGPoint.zero
+    /// The window under a point and a window's bounds now (CGWindowList; swapped in tests).
+    var windowAt: (CGPoint) -> (id: CGWindowID, pid: pid_t, frame: CGRect)? = TeleportDrag.window(at:)
+    var frameOf: (CGWindowID) -> CGRect? = TeleportDrag.frame(of:)
+    var appOf: (pid_t) -> (name: String?, bundle: String?) = { let a = NSRunningApplication(processIdentifier: $0); return (a?.localizedName, a?.bundleIdentifier) }
 
-    func start() {
-        monitors.append(NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown]) { [weak self] _ in self?.down(NSEvent.mouseLocation) } as Any)
-        monitors.append(NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDragged]) { [weak self] _ in self?.moved(NSEvent.mouseLocation) } as Any)
-        monitors.append(NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseUp]) { [weak self] _ in self?.up(NSEvent.mouseLocation) } as Any)
+    /// Called with the pointer every poll (and on pointer events), cheap when idle.
+    func poll(_ p: CGPoint, buttons: Int) {
+        let down = buttons & 1 != 0
+        if down && !held { pressed(p) }
+        held = down
+        if down { moved(p) } else if active || drag != nil { released() }
     }
 
-    /// The drop view saw the drag end over the notch: the drop is done there.
+    /// The drop view took a Finder drop: the drag is over.
     func finishedByDropView() { active = false; drag = nil; candidate = nil }
+    var dragging: Bool { active }
 
-    private func down(_ p: CGPoint) {
+    private func pressed(_ p: CGPoint) {
         pasteboard = NSPasteboard(name: .drag).changeCount
-        candidate = nil; drag = nil; active = false
-        guard let w = Self.window(at: p) else { return }
-        candidate = (w.id, w.pid, w.frame, p)
+        drag = nil; active = false
+        candidate = windowAt(p)
     }
 
     private func moved(_ p: CGPoint) {
+        lastPoint = p
         if drag == nil {
-            if let c = candidate, let now = Self.frame(of: c.id), now.size == c.frame.size, abs(now.minX - c.frame.minX) + abs(now.minY - c.frame.minY) > 6 {
+            if let c = candidate, let now = frameOf(c.id), now.size == c.frame.size, abs(now.minX - c.frame.minX) + abs(now.minY - c.frame.minY) > 6 {
                 // The window itself moves with the pointer: a window drag.
-                let app = NSRunningApplication(processIdentifier: c.pid)
-                drag = Drag(app: app?.localizedName ?? "the app", bundle: app?.bundleIdentifier, files: [], pid: c.pid)
-            } else if NSPasteboard(name: .drag).changeCount != pasteboard, let urls = NSPasteboard(name: .drag).readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL], !urls.isEmpty {
-                // Files, or an app from Finder or the Dock.
-                let apps = urls.filter { $0.pathExtension == "app" }
-                let bundle = apps.count == 1 && urls.count == 1 ? Bundle(url: apps[0])?.bundleIdentifier : nil
-                drag = Drag(app: bundle != nil ? apps[0].deletingPathExtension().lastPathComponent : urls.count == 1 ? urls[0].lastPathComponent : "\(urls.count) items", bundle: bundle, files: bundle == nil ? urls : [], pid: nil)
+                let app = appOf(c.pid)
+                drag = Drag(app: app.name ?? "the app", bundle: app.bundle, files: [], pid: c.pid)
+            } else if NSPasteboard(name: .drag).changeCount != pasteboard {
+                pasteboard = NSPasteboard(name: .drag).changeCount
+                if let urls = NSPasteboard(name: .drag).readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL], !urls.isEmpty {
+                    // Files, or an app from Finder or the Dock.
+                    let apps = urls.filter { $0.pathExtension == "app" }
+                    let bundle = apps.count == 1 && urls.count == 1 ? Bundle(url: apps[0])?.bundleIdentifier : nil
+                    drag = Drag(app: bundle != nil ? apps[0].deletingPathExtension().lastPathComponent : urls.count == 1 ? urls[0].lastPathComponent : "\(urls.count) items", bundle: bundle, files: bundle == nil ? urls : [], pid: nil)
+                }
             }
         }
         guard let d = drag else { return }
-        if !active, near?(p) == true { active = true; phase?("start", p, d) }
-        else if active { phase?("over", p, d) }
+        if !active { if near?(p) == true { active = true; send("start", p, d) }; return }
+        // Followed at up to 30 a second, and only when it moved.
+        if Date().timeIntervalSince(lastAt) >= 0.033 && hypot(p.x - lastSent.x, p.y - lastSent.y) >= 2 { send("over", p, d) }
     }
 
-    private func up(_ p: CGPoint) {
-        defer { candidate = nil; drag = nil; active = false }
+    private func released() {
+        defer { drag = nil; active = false; candidate = nil }
         guard active, let d = drag else { return }
-        phase?("drop", p, d)
+        send("drop", lastPoint, d)
     }
+
+    private func send(_ name: String, _ p: CGPoint, _ d: Drag) { lastSent = p; lastAt = Date(); phase?(name, p, d) }
 
     /// The top ordinary window of another app under a point (screen points, bottom left).
     static func window(at p: CGPoint) -> (id: CGWindowID, pid: pid_t, frame: CGRect)? {

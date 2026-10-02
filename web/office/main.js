@@ -2385,7 +2385,10 @@ function frame(now) {
   const calm = !lively && now - pokedAt > 1500;
   // The Mac host runs at the display's rate (60 or 120 Hz) while something moves, so
   // walks and camera moves are smooth; idle stays at 10 fps there too.
-  if (acc < (calm ? (still ? 1 : 1 / 10) : RETINA ? 1 / 121 : 1 / 31)) return;
+  // A live view (the agent's desktop or browser) laid over the panel: the room behind
+  // it needs only a few frames, and the view gets the machine.
+  const covered = spacePlaced !== 'none' || placed !== 'none';
+  if (acc < (calm ? (still ? 1 : 1 / 10) : covered ? 1 / 12 : RETINA ? 1 / 121 : 1 / 31)) return;
   const step = acc; acc = 0; clockT += step;
   for (const s of sessions) { s.b.sync(last(s).stage, poseOf(last(s))); s.b.step(step); }
   for (const l of leaving) l.b.step(step);

@@ -136,13 +136,13 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate {
             return self.notch.contains(p, margin: 24) || (p.y >= s.maxY - 8 && abs(p.x - s.midX) < 320)
         }
         teleport.phase = { [weak self] phase, p, drag in self?.dragging = drag; self?.dragPhase(phase, p) }
-        teleport.start()
         NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
             guard let self, self.notch.expanded, !self.notch.contains(NSEvent.mouseLocation) else { return }
             self.expand(false)
         }
     }
     func pollPointer(at point: NSPoint, buttons: Int) {
+        teleport.poll(point, buttons: buttons)
         notch.track(point)
         voice?.panel.track(point)
         // Settings in front keeps the notch shut, so the office never covers it.
@@ -159,7 +159,7 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 expand(true); openedByHover = true
             }
         } else if inside { lastInside = Date() }
-        else if openedByHover && !notch.window.isKeyWindow && Date().timeIntervalSince(lastInside) > 0.35 { expand(false) }
+        else if openedByHover && !notch.window.isKeyWindow && !teleport.dragging && dragging == nil && Date().timeIntervalSince(lastInside) > 0.35 { expand(false) }
     }
     /// Where a screen point is in the notch's office, in its view's points (the page
     /// scales them to CSS pixels with vw).
@@ -179,11 +179,20 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate {
             if !notch.expanded { expand(true) }
             // A Finder or Dock drag drops on the drop view, not the page's own web view.
             dropView?.isHidden = d.pid != nil
+            notch.takesDrops = d.pid == nil
             office.deliver(m)
         case "over": office.deliver(m)
         case "drop":
-            // Finder drags are dropped by the drop view; a window drag ends here.
-            if d.pid != nil { office.deliver(m) } else { return }
+            // Finder drags are dropped by the drop view; a window drag ends here. A Finder
+            // drag let go anywhere else is called off.
+            if d.pid != nil { office.deliver(m) }
+            else {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
+                    guard let self, self.dragging != nil else { return }
+                    self.office.deliver(["type": "teleportDrag", "phase": "cancel"]); self.endDrag()
+                }
+                return
+            }
             endDrag()
         default: office.deliver(m); endDrag()
         }
@@ -199,7 +208,7 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate {
         teleport.finishedByDropView(); endDrag()
     }
     func endDrag() {
-        dropView?.isHidden = true; dragging = nil
+        dropView?.isHidden = true; dragging = nil; notch.takesDrops = false
         // The result shows a moment in the office, then it folds unless the user stays.
         DispatchQueue.main.asyncAfter(deadline: .now() + 2.2) { [weak self] in
             guard let self, self.notch.expanded, !self.notch.window.isKeyWindow, !self.notch.contains(NSEvent.mouseLocation, margin: 14) else { return }
@@ -577,7 +586,19 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let alert = NSAlert(); alert.messageText = "Hover could not start"; alert.informativeText = text; alert.runModal(); NSApp.terminate(nil)
     }
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool { if !smoke { showDashboard() }; return false }
-    func applicationWillTerminate(_ note: Notification) { poll?.invalidate(); clock?.invalidate(); if let hotKey { UnregisterEventHotKey(hotKey) }; if let voiceKey { UnregisterEventHotKey(voiceKey) }; holdEscape(false); voice?.cancel(); backend.stop() }
+    /// The projects' desktops are turned off as Hover quits, by a cua of their own that
+    /// outlives Hover (a VM takes a while to stop), so none is left holding memory.
+    func stopSpaces() {
+        guard !smoke, let cua = ["\(NSHomeDirectory())/.local/bin/cua", "/usr/local/bin/cua", "/opt/homebrew/bin/cua"].first(where: { FileManager.default.isExecutableFile(atPath: $0) }) else { return }
+        let names = Set((latest?["sessions"] as? [[String: Any]] ?? []).compactMap { ($0["space"] as? [String: Any]).flatMap { $0["phase"] as? String == "ready" ? $0["name"] as? String : nil } })
+        for n in names {
+            let p = Process(); p.executableURL = URL(fileURLWithPath: cua); p.arguments = ["spaces", "stop", "local:" + n]
+            var env = ProcessInfo.processInfo.environment; env["CUA_TELEMETRY"] = "0"; p.environment = env
+            p.standardInput = FileHandle.nullDevice; p.standardOutput = FileHandle.nullDevice; p.standardError = FileHandle.nullDevice
+            try? p.run()
+        }
+    }
+    func applicationWillTerminate(_ note: Notification) { stopSpaces(); poll?.invalidate(); clock?.invalidate(); if let hotKey { UnregisterEventHotKey(hotKey) }; if let voiceKey { UnregisterEventHotKey(voiceKey) }; holdEscape(false); voice?.cancel(); backend.stop() }
 }
 
 let app = NSApplication.shared

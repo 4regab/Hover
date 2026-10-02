@@ -36,6 +36,48 @@ public static class Spaces
     /// The cua CLI, from PATH or where its installer puts it.
     public static string? Exe() => Quota.OnPath("cua") ?? new[] { Path.Combine(Home, ".local", "bin", "cua"), "/usr/local/bin/cua", "/opt/homebrew/bin/cua" }.FirstOrDefault(File.Exists);
 
+    /// Lume, which runs the macOS VMs: the source of truth for whether one is on, and
+    /// how it is sized. Cua's own list has no power state for local VMs.
+    public static string? LumeExe() => Quota.OnPath("lume") ?? new[] { Path.Combine(Home, ".local", "bin", "lume"), Path.Combine(Home, ".local", "share", "lume", "lume.app", "Contents", "MacOS", "lume") }.FirstOrDefault(File.Exists);
+
+    /// What a desktop is given, from this Mac's size: enough to be smooth, leaving the
+    /// user most of their machine. Cua's default (2 cores, 4 GB, 1024×768) is sluggish
+    /// for macOS 26 and blurry in the panel.
+    public sealed record Size(int Cpus, int MemoryGb, string Display);
+    public static Size Target()
+    {
+        var gb = (int)(GC.GetGCMemoryInfo().TotalAvailableMemoryBytes / (1L << 30));
+        var cores = Environment.ProcessorCount;
+        return new(Math.Clamp(cores / 3, 2, 6), gb >= 24 ? 8 : gb >= 16 ? 6 : 4, "1280x800");
+    }
+
+    public sealed record VmInfo(bool Exists, bool Running, int Cpus, int MemoryGb, string? Display);
+    /// A local VM as Lume sees it (status running/stopped, its size); null when Lume
+    /// isn't there or doesn't know it.
+    internal static async Task<VmInfo?> Vm(string name)
+    {
+        if (LumeExe() is not { } lume) return null;
+        var (code, text) = await Run(lume, TimeSpan.FromSeconds(15), "get", name, "--format", "json");
+        if (code != 0) return text.Contains("not found", StringComparison.OrdinalIgnoreCase) ? new VmInfo(false, false, 0, 0, null) : null;
+        return ParseVm(text);
+    }
+    internal static VmInfo? ParseVm(string json)
+    {
+        var start = json.IndexOfAny(new[] { '{', '[' });
+        if (start < 0) return null;
+        try
+        {
+            using var d = JsonDocument.Parse(json[start..]);
+            var e = d.RootElement.ValueKind == JsonValueKind.Array ? d.RootElement.EnumerateArray().FirstOrDefault() : d.RootElement;
+            if (e.ValueKind != JsonValueKind.Object) return null;
+            var status = (S(e, "status") ?? "").ToLowerInvariant();
+            var cpu = e.TryGetProperty("cpuCount", out var c) && c.TryGetInt32(out var ci) ? ci : 0;
+            var mem = e.TryGetProperty("memorySize", out var m) && m.TryGetInt64(out var mi) ? (int)(mi / (1L << 30)) : 0;
+            return new(true, status is "running" or "booting" or "starting", cpu, mem, S(e, "display"));
+        }
+        catch (JsonException) { return null; }
+    }
+
     /// The image a new Space starts from: the macOS VM (two at most on a Mac) or Linux.
     public static string Image => Settings.SpaceImage == "linux" ? "linux" : OperatingSystem.IsMacOS() ? "macos:26" : "linux";
 
@@ -70,6 +112,17 @@ public static class Spaces
     public static Status? Known { get { lock (Lock) return _known?.Value; } }
     public static bool Busy { get { lock (Lock) return _setup is not null; } }
     private static void Report(Progress p) { lock (Lock) _progress = p; Changed?.Invoke(); }
+
+    // Progress comes many times a second while an image downloads; the office is told at
+    // most four times a second, which is all a progress bar needs.
+    private static Timer? _notify;
+    private static int _pending;
+    private static void Notify()
+    {
+        if (Interlocked.Exchange(ref _pending, 1) == 1) return;
+        _notify ??= new Timer(_ => { Interlocked.Exchange(ref _pending, 0); Changed?.Invoke(); });
+        _notify.Change(250, Timeout.Infinite);
+    }
 
     public static async Task<Status> Check(bool fresh = false)
     {
@@ -169,7 +222,14 @@ public static class Spaces
     // Each Space by name, and the folder it is for (the bridge only knows the name).
     private static readonly ConcurrentDictionary<string, string> Folders = new();
     public static SpaceState? StateOf(string folder) => States.TryGetValue(NameFor(folder), out var s) ? s : null;
-    private static void Set(string folder, SpaceState s) { States[NameFor(folder)] = s; Changed?.Invoke(); }
+    private static void Set(string folder, SpaceState s)
+    {
+        var name = NameFor(folder);
+        var phaseChanged = !States.TryGetValue(name, out var was) || was.Phase != s.Phase;
+        States[name] = s;
+        // A new phase at once; progress within one, a few times a second.
+        if (phaseChanged) Changed?.Invoke(); else Notify();
+    }
 
     /// The project's Space, made or started before an agent's run, with progress. Two
     /// agents starting together wait for one create. Returns null when it is ready;
@@ -184,14 +244,27 @@ public static class Spaces
         try
         {
             var name = NameFor(folder);
+            var size = Target();
+            // Lume knows whether the VM is on; Cua's list only knows it was made.
+            var vm = await Vm(name);
             var (lc, lt) = await Run(cua, TimeSpan.FromSeconds(30), "spaces", "ls", "--json");
-            var mine = lc == 0 ? ParseList(lt).FirstOrDefault(x => x.Name == name || x.Id == "local:" + name) : null;
-            if (mine is { Running: true }) { Set(key, new("ready", "The project’s desktop is ready.", 1, null)); return null; }
-            if (mine is not null)
+            var known = lc == 0 && ParseList(lt).Any(x => x.Id == "local:" + name || x.Name == name);
+            if (vm is { Exists: true, Running: true } || vm is null && known)
             {
+                Set(key, new("ready", "The project’s desktop is ready.", 1, null)); return null;
+            }
+            if (vm is { Exists: true } || known)
+            {
+                // Off: sized up first if Cua made it small (only while it is off).
+                if (vm is { Exists: true } v && (v.Cpus < size.Cpus || v.MemoryGb < size.MemoryGb || v.Display != size.Display) && LumeExe() is { } lume)
+                {
+                    Set(key, new("starting", "Giving the desktop more room…", null, null));
+                    var (zc, zt) = await Run(lume, TimeSpan.FromMinutes(2), "set", name, "--cpu", size.Cpus.ToString(), "--memory", size.MemoryGb + "GB", "--display", size.Display);
+                    if (zc != 0) Log.Line($"spaces: couldn't size {name}: {Line(zt)}");
+                }
                 Set(key, new("starting", "Starting the project’s desktop…", null, null));
-                var (sc, st) = await Run(cua, TimeSpan.FromMinutes(3), "spaces", "start", mine.Id, "--json");
-                if (sc != 0) { Set(key, new("failed", "", null, Line(st) ?? "The desktop didn’t start.")); return Line(st); }
+                var (sc, st) = await Run(cua, TimeSpan.FromMinutes(4), "spaces", "start", "local:" + name, "--json");
+                if (sc != 0) { var why = Explain(Line(st) ?? "The desktop didn’t start."); Set(key, new("failed", "", null, why)); return why; }
                 Set(key, new("ready", "The project’s desktop is ready.", 1, null)); return null;
             }
             Set(key, new("creating", "Making the project’s desktop…", 0, null));
@@ -199,35 +272,59 @@ public static class Spaces
             try
             {
                 await Stream(cua, TimeSpan.FromMinutes(ImagePulled() ? 10 : 60), ct, f => Set(key, new("creating", f.Line, f.Fraction, null)),
-                    "spaces", "create", Image, "--name", name, "--json");
+                    "spaces", "create", Image, "--name", name, "--cpus", size.Cpus.ToString(), "--memory-mb", (size.MemoryGb * 1024).ToString(), "--json");
+                // The screen size isn't a create option: set while it is first off.
+                if (LumeExe() is { } lume && (await Vm(name))?.Display != size.Display)
+                {
+                    await Run(cua, TimeSpan.FromMinutes(2), "spaces", "stop", "local:" + name);
+                    await Run(lume, TimeSpan.FromMinutes(2), "set", name, "--display", size.Display);
+                    await Run(cua, TimeSpan.FromMinutes(4), "spaces", "start", "local:" + name, "--json");
+                }
             }
             catch (SetupError e) { error = e.Message; }
             if (error is null) { Set(key, new("ready", "The project’s desktop is ready.", 1, null)); return null; }
-            // A Mac runs two macOS VMs at most: say so plainly.
-            if (error.Contains("limit", StringComparison.OrdinalIgnoreCase))
-                error = "This Mac already runs two macOS desktops (Apple’s limit). Stop another agent’s desktop, or use Linux desktops in Settings.";
+            error = Explain(error);
             Set(key, new("failed", "", null, error));
             return error;
         }
         finally { gate.Release(); }
     }
 
+    private static string Explain(string error) =>
+        // A Mac runs two macOS VMs at most: say so plainly.
+        error.Contains("limit", StringComparison.OrdinalIgnoreCase) ? "This Mac already runs two macOS desktops (Apple’s limit). Remove the agents of another project to free one."
+        : error.Contains("insufficient", StringComparison.OrdinalIgnoreCase) || error.Contains("memory", StringComparison.OrdinalIgnoreCase) ? "There isn’t enough free memory or disk for the desktop right now."
+        : error;
+
     /// Off when no agent of the project is left in the office; deleted with the
     /// project's last session (the backend decides when).
-    public static Task Stop(string folder) => Wanted && Exe() is { } cua ? Task.Run(async () => { await Run(cua, TimeSpan.FromMinutes(2), "spaces", "stop", IdFor(folder)); Set(folder, new("stopped", "The desktop is off. The project’s next task starts it again.", null, null)); }) : Task.CompletedTask;
+    public static Task Stop(string folder) => Wanted && Exe() is { } cua ? Task.Run(async () =>
+    {
+        Viewers.TryRemove(NameFor(folder), out _);
+        await Run(cua, TimeSpan.FromMinutes(2), "spaces", "stop", IdFor(folder));
+        Set(folder, new("stopped", "The desktop is off. The project’s next task starts it again.", null, null));
+    }) : Task.CompletedTask;
     public static Task Delete(string folder) => Exe() is { } cua ? Task.Run(async () => { await Run(cua, TimeSpan.FromMinutes(3), "spaces", "delete", IdFor(folder), "--force"); States.TryRemove(NameFor(folder), out _); Changed?.Invoke(); }) : Task.CompletedTask;
 
     /// The live viewer of the session's Space: Cua's own HTML5 viewer, interactive (the
     /// user can step in), with dropped files going to the Space's Downloads.
+    // Each desktop's viewer link, kept while its ticket lasts: opening the panel again (or
+    // another agent's of the same project) shows the same live view, not a reload.
+    private static readonly ConcurrentDictionary<string, (string Url, DateTime Until)> Viewers = new();
+
     public static async Task<object> Viewer(string key)
     {
         if (Exe() is not { } cua) return new { error = "Cua Spaces isn’t installed." };
+        if (Viewers.TryGetValue(NameFor(key), out var cached) && cached.Until > DateTime.UtcNow && StateOf(key) is { Phase: "ready" }) return new { phase = "ready", url = cached.Url };
+        // On first: the viewer of a desktop that is off never loads.
+        if (StateOf(key) is not { Phase: "creating" or "starting" } && await Ensure(key, CancellationToken.None) is { } why) return new { phase = "failed", error = why };
         if (StateOf(key) is { Phase: not "ready" } st) return new { phase = st.Phase, line = st.Line, fraction = st.Fraction, error = st.Error };
-        var (code, text) = await Run(cua, TimeSpan.FromSeconds(30), "sb", "view", IdFor(key), "--no-open");
+        var (code, text) = await Run(cua, TimeSpan.FromSeconds(45), "sb", "view", IdFor(key), "--no-open", "--ttl", "12h");
         var url = Regex.Match(text, @"https?://[^\s""']+/viewer/#[^\s""']+").Value;
         if (code != 0 || url.Length == 0) return new { error = Line(text) ?? "The desktop’s viewer didn’t open." };
         if (!Uri.TryCreate(url, UriKind.Absolute, out var u) || u.Host is not ("127.0.0.1" or "localhost" or "[::1]") && !u.Host.StartsWith("192.168.", StringComparison.Ordinal) && !u.Host.StartsWith("10.", StringComparison.Ordinal))
             return new { error = "The viewer isn’t on this Mac." };
+        Viewers[NameFor(key)] = (url, DateTime.UtcNow.AddHours(11));
         return new { phase = "ready", url };
     }
 
@@ -238,9 +335,13 @@ public static class Spaces
         if (Exe() is not { } cua) return new { error = "Cua Spaces isn’t installed." };
         if (string.IsNullOrWhiteSpace(app) || app.StartsWith('-') || app.Length > 200) return new { error = "That app can’t be sent." };
         if (await Ensure(key, CancellationToken.None) is { } why) return new { error = why };
+        // Teleport's consent (and Touch ID for sign-ins) is shown by Cua's own app; it is
+        // opened in the background if it isn't running, never brought to the front.
+        if (OperatingSystem.IsMacOS() && !Sandbox.Inside) await Run("/usr/bin/open", TimeSpan.FromSeconds(15), "-g", "-j", "-b", "com.trycua.spaces.macos");
         try
         {
-            await Stream(cua, TimeSpan.FromMinutes(10), CancellationToken.None, f => progress?.Invoke(f.Line), "teleport", "push", "--app", app, "--sandbox", IdFor(key), "--progress");
+            progress?.Invoke("Approve it in Cua’s window if it asks…");
+            await Stream(cua, TimeSpan.FromMinutes(10), CancellationToken.None, f => progress?.Invoke(f.Line.StartsWith("progress ") ? "Sending… " + f.Line[9..].Replace(' ', '/') : f.Line), "teleport", "push", "--app", app, "--sandbox", IdFor(key), "--scope", "tabs", "--progress");
             return new { ok = true };
         }
         catch (SetupError e)
@@ -252,17 +353,37 @@ public static class Spaces
         }
     }
 
-    /// Files dropped on an agent's desktop in the notch: to its Space's Downloads.
+    /// Files dropped on a project's desktop in the notch: to its Downloads, through
+    /// `cua sb cp` (folders file by file, at most 500 files).
+    private static readonly ConcurrentDictionary<string, string> Homes = new();
     public static async Task<object> SendFiles(string key, IReadOnlyList<string> paths)
     {
         if (Exe() is not { } cua) return new { error = "Cua Spaces isn’t installed." };
         if (await Ensure(key, CancellationToken.None) is { } why) return new { error = why };
-        var sent = 0;
+        var id = IdFor(key);
+        if (!Homes.TryGetValue(id, out var home))
+        {
+            var (hc, ht) = await Run(cua, TimeSpan.FromSeconds(30), "sb", "exec", id, "echo", "$HOME");
+            home = hc == 0 ? ht.Replace("\r", "").Split('\n').Select(l => l.Trim()).LastOrDefault(l => l.StartsWith('/')) ?? "" : "";
+            if (home.Length == 0) return new { error = "The desktop didn’t answer." };
+            Homes[id] = home;
+        }
+        var files = new List<(string From, string To)>();
         foreach (var p in paths.Take(20))
         {
-            if (!(File.Exists(p) || Directory.Exists(p))) continue;
-            var r = await McpCall(cua, IdFor(key), "send_file", new { space = IdFor(key), path = p });
-            if (r is null) return new { error = "The files didn’t go.", sent };
+            if (File.Exists(p)) files.Add((p, Path.GetFileName(p)));
+            else if (Directory.Exists(p))
+            {
+                var root = Path.GetDirectoryName(Path.TrimEndingDirectorySeparator(p)) ?? p;
+                foreach (var f in Directory.EnumerateFiles(p, "*", new EnumerationOptions { RecurseSubdirectories = true, IgnoreInaccessible = true, AttributesToSkip = FileAttributes.ReparsePoint | FileAttributes.Hidden }).Take(500 - files.Count))
+                    files.Add((f, Path.GetRelativePath(root, f).Replace('\\', '/')));
+            }
+        }
+        var sent = 0;
+        foreach (var (from, to) in files)
+        {
+            var (code, text) = await Run(cua, TimeSpan.FromMinutes(5), "sb", "cp", from, $"{id}:{home}/Downloads/{to}");
+            if (code != 0) return new { error = Line(text) ?? "The files didn’t go.", sent };
             sent++;
         }
         return new { ok = true, sent };
@@ -311,36 +432,6 @@ public static class Spaces
         catch (IOException) { }
         finally { try { if (!p.HasExited) p.Kill(entireProcessTree: true); } catch { } }
         await up;
-    }
-
-    /// One tool call through `cua mcp` (Hover's own, for send_file).
-    private static async Task<JsonElement?> McpCall(string cua, string space, string tool, object args)
-    {
-        var psi = Quota.Hidden(cua, "mcp", "--sandbox", space, "--permissions", "spaces:send_file");
-        psi.Environment["CUA_TELEMETRY"] = "0";
-        using var p = new Process { StartInfo = psi };
-        try
-        {
-            p.Start();
-            async Task<JsonElement?> Ask(int id, string method, object prms)
-            {
-                await p.StandardInput.WriteLineAsync(JsonSerializer.Serialize(new { jsonrpc = "2.0", id, method, @params = prms }));
-                await p.StandardInput.FlushAsync();
-                while (await p.StandardOutput.ReadLineAsync().WaitAsync(TimeSpan.FromMinutes(5)) is { } line)
-                {
-                    using var d = JsonDocument.Parse(line);
-                    if (d.RootElement.TryGetProperty("id", out var i) && i.TryGetInt32(out var got) && got == id)
-                        return d.RootElement.TryGetProperty("result", out var r) ? r.Clone() : null;
-                }
-                return null;
-            }
-            if (await Ask(1, "initialize", new { protocolVersion = "2025-06-18", capabilities = new { }, clientInfo = new { name = "hover", version = "1" } }) is null) return null;
-            await p.StandardInput.WriteLineAsync("{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\"}");
-            var r = await Ask(2, "tools/call", new { name = tool, arguments = args });
-            return r is { } x && !(x.TryGetProperty("isError", out var e) && e.ValueKind == JsonValueKind.True) ? x : null;
-        }
-        catch (Exception e) when (e is IOException or TimeoutException or JsonException or InvalidOperationException) { return null; }
-        finally { try { if (!p.HasExited) p.Kill(entireProcessTree: true); } catch { } }
     }
 
     // MARK: Running cua

@@ -7,21 +7,31 @@ root = os.environ['HOVER_E2E_ROOT']; state = root + '/spaces.json'; log = open(r
 print(' '.join(sys.argv[1:]), file=log, flush=True)
 def load(): return json.load(open(state)) if os.path.exists(state) else []
 def save(x): json.dump(x, open(state, 'w'))
+# Lume's side: each VM's status and size, as `lume get` reports them.
+vms = root + '/vms.json'
+def vm(name, change):
+    v = json.load(open(vms)) if os.path.exists(vms) else {}
+    if change is None: v.pop(name, None)
+    else: v.setdefault(name, {'name': name}).update(change)
+    json.dump(v, open(vms, 'w'))
 a = sys.argv[1:]
 if a[:1] == ['--version']: print('cua 0.3.0'); sys.exit(0)
+if a[:2] == ['spaces', 'ls']: print(json.dumps({'relay_error': None, 'spaces': load()})); sys.exit(0)
 if a[:2] == ['spaces', 'ls']: print(json.dumps(load())); sys.exit(0)
 if a[:2] == ['spaces', 'create']:
     name = a[a.index('--name') + 1]
+    assert '--cpus' in a and '--memory-mb' in a, a
     for ph, f in [('pulling', 0.3), ('creating', 0.7), ('booting', 0.9), ('ready', 1.0)]:
         print(json.dumps({'phase': ph, 'fraction': f}), flush=True); time.sleep(0.4)
-    s = [x for x in load() if x['name'] != name] + [{'id': 'local:' + name, 'name': name, 'os': 'macos', 'power_state': 'running', 'phase': 'ready'}]
-    save(s); sys.exit(0)
+    # As the real one: no power state in the list, and the guest's hostname as its name.
+    s = [x for x in load() if x['id'] != 'local:' + name] + [{'id': 'local:' + name, 'name': 'Apple-Virtual-Machine-1.local', 'os': 'macos'}]
+    save(s); vm(name, {'status': 'running', 'cpuCount': int(a[a.index('--cpus') + 1]), 'memorySize': int(a[a.index('--memory-mb') + 1]) << 20, 'display': '1024x768'}); sys.exit(0)
 if a[:2] in (['spaces', 'start'], ['spaces', 'stop']):
-    s = load()
-    for x in s:
-        if x['id'] == a[2]: x['power_state'] = 'running' if a[1] == 'start' else 'stopped'
-    save(s); print(json.dumps({'space': a[2], 'state': 'running' if a[1] == 'start' else 'stopped'})); sys.exit(0)
-if a[:2] == ['spaces', 'delete']: save([x for x in load() if x['id'] != a[2]]); sys.exit(0)
+    vm(a[2].split(':')[-1], {'status': 'running' if a[1] == 'start' else 'stopped'})
+    print(json.dumps({'space': a[2], 'state': 'running' if a[1] == 'start' else 'stopped'})); sys.exit(0)
+if a[:2] == ['spaces', 'delete']: save([x for x in load() if x['id'] != a[2]]); vm(a[2].split(':')[-1], None); sys.exit(0)
+if a[:2] == ['sb', 'exec']: print('/Users/lume'); sys.exit(0)
+if a[:2] == ['sb', 'cp']: print('copied', file=log, flush=True); sys.exit(0)
 if a[:2] == ['runtime', 'setup']: sys.exit(0)
 if a[:2] == ['sb', 'view']: print('Viewer for %s: %s/viewer/#ticket=e2e-ticket&files=%%2Fhome' % (a[2], os.environ['HOVER_E2E_SITE'])); sys.exit(0)
 if a[:2] == ['teleport', 'push']:

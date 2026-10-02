@@ -165,6 +165,10 @@ final class Office: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
         files = LocalFiles(resources: resources, dataFolder: dataFolder)
         let config = WKWebViewConfiguration()
         if smoke { config.websiteDataStore = .nonPersistent() }
+        // The notch never makes Hover the active app, and WebKit throttles the pages of an
+        // inactive app's windows, which made the office and its live views stutter. Hover
+        // pauses the page itself whenever it is out of sight ({type:'visible'}).
+        config.preferences.inactiveSchedulingPolicy = .none
         config.setURLSchemeHandler(files, forURLScheme: "hover")
         let bridge = """
         (() => {

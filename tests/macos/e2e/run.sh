@@ -26,6 +26,7 @@ git -C "$P" init -q; git -C "$P" add -A; git -C "$P" commit -qm init; git -C "$P
 # no pull request until one is made).
 cp "$HERE/fake-agent.py" "$BOX/bin/codex-acp"; chmod +x "$BOX/bin/codex-acp"
 cp "$HERE/fake-cua.py" "$BOX/bin/cua"; chmod +x "$BOX/bin/cua"
+cp "$HERE/fake-lume.py" "$BOX/bin/lume"; chmod +x "$BOX/bin/lume"
 printf '#!/bin/sh\necho "Logged in using ChatGPT (e2e)"\n' > "$BOX/bin/codex"; chmod +x "$BOX/bin/codex"
 cat > "$BOX/bin/gh" <<GH
 #!/bin/sh
