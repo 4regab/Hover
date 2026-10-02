@@ -5,6 +5,12 @@ What changed in each Hover release. Versions follow [Semantic Versioning](https:
 
 ## [Unreleased]
 
+### Fixed
+
+- A long prompt is all reachable in the new-task box and the chat's reply box: the box grows
+  to its height, then scrolls inside (the wheel, or the caret kept in view), with a thin bar
+  showing there is more. Dictated words land at the end, in view.
+
 ## [3.3.0] - 2026-10-02
 
 ### Added

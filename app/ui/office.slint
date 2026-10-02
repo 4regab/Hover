@@ -145,6 +145,8 @@ export global Office {
     // "Reply to Juno": the reply circle's name.
     in property <string> d-reply-label;
     in-out property <string> d-draft;
+    // Raised after words are put into the draft from outside (dictation): the caret goes to its end.
+    in property <int> d-draft-to-end;
     // The reply box is open (else just its circle at the thread's corner).
     in-out property <bool> d-compose;
     // The pointer is over the chat: voice's shortcut then writes into its open reply box.
@@ -232,6 +234,32 @@ export global Backdrop {
     // Off in the headless shots: the software renderer doesn't clip to rounded
     // corners, so the blurred frame would show as a square behind each glass.
     in property <bool> live: true;
+}
+
+// A text box that scrolls inside (the task, the reply): where it scrolls to so the
+// caret at `c` (its top) stays in view, a line being about 1.45 of the font size.
+global Caret {
+    public pure function follow(y: length, h: length, c: length, font: length) -> length {
+        if (c + y < 0) { return -c; }
+        if (c + font * 1.45 + y > h) { return min(0px, h - c - font * 1.45); }
+        y
+    }
+}
+
+// The thin bar beside a text box that scrolls, so a long prompt shows there is more of it.
+component InputThumb inherits Rectangle {
+    in property <length> f-height;
+    in property <length> f-content;
+    in property <length> f-y;
+    width: 3px;
+    visible: self.f-content > self.f-height + 1px;
+    thumb := Rectangle {
+        width: 3px;
+        border-radius: 1.5px;
+        background: #ffffff38;
+        height: max(14px, root.f-height * (root.f-height / max(1px, root.f-content)));
+        y: (root.f-height - self.height) * (-root.f-y / max(1px, root.f-content - root.f-height));
+    }
 }
 
 component Glass inherits Rectangle {
@@ -1167,27 +1195,36 @@ export component OfficeView inherits Rectangle {
                         Logo { width: 30px; height: 30px; mark: 17px; tool: Office.tools[Office.new-tool].id;
                             accessible-role: button; accessible-id: "nWho"; accessible-label: Office.tools[Office.new-tool].name + ". Change agent";
                             TouchArea { mouse-cursor: pointer; clicked => { Office.fab-main(); } } } }
+                    // The task grows with what is written, up to a cap, then scrolls inside
+                    // (the wheel, or the caret kept in view) so a long prompt is all reachable.
                     Rectangle {
-                        height: compact ? 40px : 44px;
-                        ntext := TextInput {
+                        height: max(compact ? 40px : 44px, min(compact ? 100px : 140px, ntext.preferred-height + 4px));
+                        nfl := Flickable {
                             y: 4px;
                             height: parent.height - 4px;
-                            text <=> Office.new-draft;
-                            font-size: compact ? 12.5px : 13.5px;
-                            color: #f6f2ff;
-                            wrap: word-wrap;
-                            single-line: false;
-                            accessible-role: text-input;
-                            accessible-id: "nInput";
-                            accessible-label: "Task";
-                            edited => { Office.new-draft-edited(); }
-                            key-pressed(e) => {
-                                if (e.text == "\n" && !e.modifiers.shift) { Office.new-go-clicked(); return accept; }
-                                if (e.modifiers.control && (e.text == "v" || e.text == "V") && Office.paste-image(2)) { return accept; }
-                                reject
+                            interactive: false;
+                            content-height: max(self.height, ntext.preferred-height);
+                            ntext := TextInput {
+                                width: parent.width;
+                                text <=> Office.new-draft;
+                                font-size: compact ? 12.5px : 13.5px;
+                                color: #f6f2ff;
+                                wrap: word-wrap;
+                                single-line: false;
+                                accessible-role: text-input;
+                                accessible-id: "nInput";
+                                accessible-label: "Task";
+                                edited => { Office.new-draft-edited(); }
+                                cursor-position-changed(c) => { nfl.content-y = Caret.follow(nfl.content-y, nfl.height, c.y, self.font-size); }
+                                key-pressed(e) => {
+                                    if (e.text == "\n" && !e.modifiers.shift) { Office.new-go-clicked(); return accept; }
+                                    if (e.modifiers.control && (e.text == "v" || e.text == "V") && Office.paste-image(2)) { return accept; }
+                                    reject
+                                }
+                                init => { self.focus(); }
                             }
-                            init => { self.focus(); }
                         }
+                        InputThumb { x: parent.width + 2px; y: nfl.y; height: nfl.height; f-height: nfl.height; f-content: nfl.content-height; f-y: nfl.content-y; }
                         if Office.new-draft == "": Text { y: 4px; text: "What should " + Office.tools[Office.new-tool].name + " do? Paste an image to show it.";
                             font-size: compact ? 12.5px : 13.5px; color: #f6f2ff61; wrap: word-wrap; vertical-alignment: top; }
                     }
@@ -1477,32 +1514,44 @@ export component OfficeView inherits Rectangle {
                             padding-top: 7px;
                             padding-bottom: 6px;
                             if Office.d-shots.length > 0: Shots { shots: Office.d-shots; which: 1; padding: 3px; padding-bottom: 6px; }
+                            // Past 140 px the reply scrolls inside, the caret kept in view.
                             Rectangle {
                                 height: max(24px, min(140px, input.preferred-height + 6px));
-                                input := TextInput {
+                                dfl := Flickable {
                                     x: 2px;
                                     y: 3px;
                                     width: parent.width - 4px;
-                                    text <=> Office.d-draft;
-                                    font-size: 13px;
-                                    color: #f6f2ff;
-                                    wrap: word-wrap;
-                                    single-line: false;
-                                    accessible-role: text-input;
-                                    accessible-id: "input";
-                                    accessible-label: Office.d-reply-label;
-                                    // Opened by a click or a typed character: the keys go here, after what is written.
-                                    init => { self.focus(); self.set-selection-offsets(2147483647, 2147483647); }
-                                    key-pressed(e) => {
-                                        // Enter sends (not while an IME is composing: its Enter takes the word);
-                                        // Shift+Enter is a new line.
-                                        if (e.text == "\n" && !e.modifiers.shift && self.preedit-text == "") { Office.d-send(); return accept; }
-                                        if (e.modifiers.control && (e.text == "v" || e.text == "V") && Office.paste-image(1)) { return accept; }
-                                        // Nothing selected in the box: Ctrl+C copies what is selected in the thread.
-                                        if (e.modifiers.control && (e.text == "c" || e.text == "C") && self.anchor-position-byte-offset == self.cursor-position-byte-offset && Office.d-copy()) { return accept; }
-                                        reject
+                                    height: parent.height - 3px;
+                                    interactive: false;
+                                    content-height: max(self.height, input.preferred-height + 3px);
+                                    input := TextInput {
+                                        width: parent.width;
+                                        text <=> Office.d-draft;
+                                        // Words put in from outside (dictation): the caret goes after them, in view.
+                                        property <int> to-end: Office.d-draft-to-end;
+                                        changed to-end => { self.set-selection-offsets(2147483647, 2147483647); }
+                                        cursor-position-changed(c) => { dfl.content-y = Caret.follow(dfl.content-y, dfl.height, c.y, self.font-size); }
+                                        font-size: 13px;
+                                        color: #f6f2ff;
+                                        wrap: word-wrap;
+                                        single-line: false;
+                                        accessible-role: text-input;
+                                        accessible-id: "input";
+                                        accessible-label: Office.d-reply-label;
+                                        // Opened by a click or a typed character: the keys go here, after what is written.
+                                        init => { self.focus(); self.set-selection-offsets(2147483647, 2147483647); }
+                                        key-pressed(e) => {
+                                            // Enter sends (not while an IME is composing: its Enter takes the word);
+                                            // Shift+Enter is a new line.
+                                            if (e.text == "\n" && !e.modifiers.shift && self.preedit-text == "") { Office.d-send(); return accept; }
+                                            if (e.modifiers.control && (e.text == "v" || e.text == "V") && Office.paste-image(1)) { return accept; }
+                                            // Nothing selected in the box: Ctrl+C copies what is selected in the thread.
+                                            if (e.modifiers.control && (e.text == "c" || e.text == "C") && self.anchor-position-byte-offset == self.cursor-position-byte-offset && Office.d-copy()) { return accept; }
+                                            reject
+                                        }
                                     }
                                 }
+                                InputThumb { x: parent.width + 1px; y: dfl.y; height: dfl.height; f-height: dfl.height; f-content: dfl.content-height; f-y: dfl.content-y; }
                                 if Office.d-draft == "" && input.preedit-text == "": Text { x: 2px; y: 3px; text: Office.d-placeholder; font-size: 13px; color: #f6f2ff61; overflow: elide; width: parent.width - 4px; }
                             }
                             Rectangle { height: 3px; }

@@ -175,6 +175,22 @@ fn chat_fixture(a: &RunArgs, hold: &Arc<std::sync::Mutex<bool>>) -> Option<KiroR
     }
 }
 
+/// A key, with Ctrl held or not, as the keyboard sends it to the focused box.
+fn key(w: &Rc<MinimalSoftwareWindow>, ctrl: bool, k: slint::platform::Key) {
+    use slint::platform::{Key, WindowEvent as E};
+    use slint::platform::WindowAdapter as _;
+    if ctrl { w.window().dispatch_event(E::KeyPressed { text: Key::Control.into() }); }
+    w.window().dispatch_event(E::KeyPressed { text: k.into() });
+    w.window().dispatch_event(E::KeyReleased { text: k.into() });
+    if ctrl { w.window().dispatch_event(E::KeyReleased { text: Key::Control.into() }); }
+}
+
+/// A prompt of a dozen lines, its first and last words marked, for the boxes that must scroll.
+const LONG_PROMPT: &str = concat!("FIRST LINE: the notch blinks when it opens on my second monitor. Steps: plug in a 150 % monitor, open the office, close it, open it again. ",
+    "Expected: no blink. Seen: one blink per open, only on that monitor. Look at src/win.rs where the window is placed and at the DPI change handler, ",
+    "and at notch.rs where the openness animates. Keep the resting island's size. Add a test that opens the notch twice on a scaled monitor and ",
+    "counts the resizes. Don't touch the office's renderer. When done, run the tests and tell me what changed and why. LAST WORDS HERE");
+
 fn run_for(ms: u64) {
     let t = std::time::Instant::now();
     while t.elapsed() < Duration::from_millis(ms) {
@@ -296,6 +312,15 @@ fn chat_shots(app: &Rc<App>, hover: &Arc<hover_app::app::Hover>, dir: &Path, fol
             g.set_d_hover(false);
             g.set_d_compose(true);
         }
+        // A prompt longer than the box: it scrolls inside, the caret kept in view (put in
+        // from outside, the caret goes to its end; Ctrl+Home goes back to the top).
+        g.set_d_draft(LONG_PROMPT.into());
+        g.set_d_draft_to_end(g.get_d_draft_to_end() + 1);
+        settle(300);
+        shot("reply-long-end");
+        key(&notch, true, slint::platform::Key::Home);
+        settle(300);
+        shot("reply-long-top");
         g.set_d_draft("".into());
         settle(300);
         shot("reply-pause");
@@ -625,6 +650,15 @@ pub fn run(dir: &Path) {
     app.office_widgets();
     settle(600);
     save(&notch, full, 1.0, desk, &dir.join("office-fab-open.png"));
+    // A long task: the box grows to its cap, then scrolls with the caret (Ctrl+End).
+    app.notch.global::<Office>().set_new_draft(LONG_PROMPT.into());
+    settle(300);
+    save(&notch, full, 1.0, desk, &dir.join("office-fab-long-prompt-top.png"));
+    key(&notch, true, slint::platform::Key::End);
+    settle(300);
+    save(&notch, full, 1.0, desk, &dir.join("office-fab-long-prompt-end.png"));
+    app.notch.global::<Office>().set_new_draft("Add a dark mode to the settings page".into());
+    settle(300);
     // A long model name with its effort: Start must stay inside the box.
     let kiro = hover.settings.agent_options(AgentTool::Kiro);
     hover.settings.set_agent_options(AgentTool::Kiro, hover_core::model::AgentOptions { model: Some("claude-sonnet-4.6".into()), effort: Some("high".into()), ..kiro.clone() });
