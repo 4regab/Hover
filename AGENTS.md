@@ -348,18 +348,21 @@ carry a legacy `Noty` reference **only** in `Core/Paths.cs`, which migrates an o
   given then. The Screen panel shows Cua's own interactive viewer (`cua sb view
   --no-open`), one per project's desktop, laid over the panel's `.spbox` by the host
   (`SpaceViewers`, keyed by the Space's name; it refuses to be framed), with every
-  agent's actions on it; a click in it is the user stepping in. An app window dragged to the
-  notch (`TeleportDrag`: the window under the pointer moving, via CGWindowList), or
+  agent's actions on it; a click in it is the user stepping in. The backend serves it
+  through a loopback port joined to the VM's (`Spaces.Local`): on the VM's own address
+  the page isn't a secure context and the viewer falls back to PNG frames; on
+  127.0.0.1 it streams video. An app window dragged to the notch (`TeleportDrag`: the
+  window under the pointer moving, via CGWindowList; only regular apps' windows, since
+  Cua Driver keeps an invisible full-screen overlay that would otherwise be picked), or
   files and apps from Finder or the Dock (`NotchDropView`), open the office on the
-  agents' desktops (`#tdrop`), except that an app (its window, or the app from Finder
-  or the Dock) goes to Cua Spaces' own notch when it runs (`TeleportDrag.handOff`:
-  Hover's notch steps aside for the drag; Hover keeps Cua Spaces running in the
-  background and names each desktop "<project> · Hover" in Cua's list with `cua spaces
-  add --name`); a drop on Hover's notch sends `teleport` (`cua teleport push --app
-  <bundle> --sandbox <space>`, Cua's own consent and Touch ID) or `spaceFiles`
-  (`send_file` to its Downloads). One-click setup runs Cua's installer
-  (`--select cli,spaces --no-onboarding`), `cua runtime setup lume` and a first create
-  to download the image. A Mac runs two macOS Spaces at most.
+  projects' desktops (`#tdrop`, with a tile for the default project when no session
+  uses it); a drop sends `teleport` (`Spaces.SendApp`: the bundle zipped with ditto,
+  no extended attributes, `cua sb cp` into the desktop's Downloads, then `cua sb exec`
+  unzips it into /Applications and opens it; only the app, never its data) or
+  `spaceFiles` (`cua sb cp` to its Downloads). Cua's own Spaces app is not used (its
+  teleport ships only with it). One-click setup runs Cua's installer (`--cli-only
+  --no-onboarding`), `cua runtime setup lume` and a first create to download the
+  image. A Mac runs two macOS Spaces at most.
 - **The office opens in a window.** The button at its top right: from the notch it
   folds the notch and opens the dashboard window (big, full-size content) with the
   same chat or desk panel open (`{type:'window', open}` → `restore`); in the window it

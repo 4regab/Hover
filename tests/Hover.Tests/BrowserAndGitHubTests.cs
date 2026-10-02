@@ -170,9 +170,18 @@ public sealed class BrowserAndGitHubTests
         Assert.That(vm, Is.EqualTo(new Spaces.VmInfo(true, false, 2, 4, "1024x768")));
         Assert.That(Spaces.ParseVm("[{\"status\":\"running\",\"cpuCount\":4,\"memorySize\":8589934592}]")!.Running, Is.True);
         var size = Spaces.Target();
-        Assert.That(size.Cpus, Is.InRange(2, 6)); Assert.That(size.MemoryGb, Is.InRange(4, 8)); Assert.That(size.Display, Is.EqualTo("1280x800"));
+        Assert.That(size.Cpus, Is.InRange(2, 6)); Assert.That(size.MemoryGb, Is.InRange(4, 8)); 
         // The agent's tools in its Space: computer use, never its shell or Spaces' admin.
         Assert.That(Spaces.Permissions, Does.Contain("computer:click").And.Not.Contain("shell").And.Not.Contain("spaces:"));
+    }
+
+    [Test]
+    public void An_app_is_unpacked_and_opened_with_every_name_quoted()
+    {
+        var script = Spaces.InstallScript("/Users/lume/Downloads/.hover-x.zip", "It's; rm -rf ~.app");
+        Assert.That(script, Does.Contain("a='It'\\''s; rm -rf ~.app'"), "a quote in a name can't end the string");
+        Assert.That(script, Does.Contain("/usr/bin/ditto -x -k \"$z\" \"$d\""));
+        Assert.That(script, Does.EndWith("/usr/bin/open \"$d/$a\""));
     }
 
     [Test]

@@ -65,7 +65,7 @@ final class SpaceViewers: NSObject, WKNavigationDelegate, WKUIDelegate {
 /// the window that was under the pointer move (CGWindowList, its bounds only), and the
 /// drag pasteboard for files; the drop is the button coming up over the notch.
 final class TeleportDrag {
-    struct Drag { var app: String; var bundle: String?; var files: [URL]; var pid: pid_t? }
+    struct Drag { var app: String; var bundle: String?; var path: String?; var files: [URL]; var pid: pid_t? }
     /// "start", "over", "drop" or "cancel", where the pointer is (screen points), and what.
     var phase: ((String, CGPoint, Drag) -> Void)?
     /// Whether a point is close enough to the notch to start.
@@ -76,7 +76,7 @@ final class TeleportDrag {
     /// The window under a point and a window's bounds now (CGWindowList; swapped in tests).
     var windowAt: (CGPoint) -> (id: CGWindowID, pid: pid_t, frame: CGRect)? = TeleportDrag.window(at:)
     var frameOf: (CGWindowID) -> CGRect? = TeleportDrag.frame(of:)
-    var appOf: (pid_t) -> (name: String?, bundle: String?) = { let a = NSRunningApplication(processIdentifier: $0); return (a?.localizedName, a?.bundleIdentifier) }
+    var appOf: (pid_t) -> (name: String?, bundle: String?, path: String?) = { let a = NSRunningApplication(processIdentifier: $0); return (a?.localizedName, a?.bundleIdentifier, a?.bundleURL?.path) }
 
     /// Called with the pointer every poll (and on pointer events), cheap when idle.
     func poll(_ p: CGPoint, buttons: Int) {
@@ -102,14 +102,14 @@ final class TeleportDrag {
             if let c = candidate, let now = frameOf(c.id), now.size == c.frame.size, abs(now.minX - c.frame.minX) + abs(now.minY - c.frame.minY) > 6 {
                 // The window itself moves with the pointer: a window drag.
                 let app = appOf(c.pid)
-                drag = Drag(app: app.name ?? "the app", bundle: app.bundle, files: [], pid: c.pid)
+                drag = Drag(app: app.name ?? "the app", bundle: app.bundle, path: app.path, files: [], pid: c.pid)
             } else if NSPasteboard(name: .drag).changeCount != pasteboard {
                 pasteboard = NSPasteboard(name: .drag).changeCount
                 if let urls = NSPasteboard(name: .drag).readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL], !urls.isEmpty {
                     // Files, or an app from Finder or the Dock.
                     let apps = urls.filter { $0.pathExtension == "app" }
                     let bundle = apps.count == 1 && urls.count == 1 ? Bundle(url: apps[0])?.bundleIdentifier : nil
-                    drag = Drag(app: bundle != nil ? apps[0].deletingPathExtension().lastPathComponent : urls.count == 1 ? urls[0].lastPathComponent : "\(urls.count) items", bundle: bundle, files: bundle == nil ? urls : [], pid: nil)
+                    drag = Drag(app: bundle != nil ? apps[0].deletingPathExtension().lastPathComponent : urls.count == 1 ? urls[0].lastPathComponent : "\(urls.count) items", bundle: bundle, path: bundle != nil ? apps[0].path : nil, files: bundle == nil ? urls : [], pid: nil)
                 }
             }
         }
@@ -127,16 +127,6 @@ final class TeleportDrag {
 
     private func send(_ name: String, _ p: CGPoint, _ d: Drag) { lastSent = p; lastAt = Date(); phase?(name, p, d) }
 
-    /// Whether a drag goes to Cua's own notch rather than Hover's: an app (its window,
-    /// or the app from Finder or the Dock), with agent desktops on and Cua Spaces
-    /// running. Its notch shows the Spaces and teleports the app with its own consent.
-    /// Plain files still drop on Hover's notch, onto a project's desktop.
-    static func handOff(_ d: Drag, spacesOn: Bool, cuaRunning: Bool) -> Bool { spacesOn && cuaRunning && d.bundle != nil }
-
-    static let cuaBundle = "com.trycua.spaces.macos"
-    static var cuaRunning: Bool { !NSRunningApplication.runningApplications(withBundleIdentifier: cuaBundle).isEmpty }
-    static var cuaInstalled: URL? { NSWorkspace.shared.urlForApplication(withBundleIdentifier: cuaBundle) }
-
     /// The top ordinary window of another app under a point (screen points, bottom left).
     static func window(at p: CGPoint) -> (id: CGWindowID, pid: pid_t, frame: CGRect)? {
         let top = (NSScreen.screens.first?.frame.maxY ?? 0) - p.y
@@ -146,10 +136,14 @@ final class TeleportDrag {
             guard (w[kCGWindowLayer as String] as? Int) == 0, let pid = w[kCGWindowOwnerPID as String] as? pid_t, pid != me,
                   let b = w[kCGWindowBounds as String] as? [String: Any], let f = CGRect(dictionaryRepresentation: b as CFDictionary),
                   let id = w[kCGWindowNumber as String] as? CGWindowID, f.contains(CGPoint(x: p.x, y: top)) else { continue }
+            // Only an ordinary app's window: background helpers keep invisible overlays
+            // over the whole screen (Cua Driver's agent cursor is one), which never move.
+            guard isApp(pid), (w[kCGWindowAlpha as String] as? Double ?? 1) > 0.05 else { continue }
             return (id, pid, f)
         }
         return nil
     }
+    static func isApp(_ pid: pid_t) -> Bool { NSRunningApplication(processIdentifier: pid)?.activationPolicy == .regular }
     static func frame(of id: CGWindowID) -> CGRect? {
         guard let w = (CGWindowListCopyWindowInfo([.optionIncludingWindow], id) as? [[String: Any]])?.first, let b = w[kCGWindowBounds as String] as? [String: Any] else { return nil }
         return CGRect(dictionaryRepresentation: b as CFDictionary)

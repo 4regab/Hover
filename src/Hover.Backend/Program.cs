@@ -238,19 +238,22 @@ internal sealed class Backend
                 _ = Spaces.Viewer(s.Folder).ContinueWith(t => Send(new { type = "space", id = viewId, data = t.IsCompletedSuccessfully ? t.Result : new { error = "The desktop’s viewer didn’t open." } }), TaskScheduler.Default);
                 break;
             case "teleport":
-                if (s is null || Str(m, "app") is not { } app) break;
-                var (tpId, tpTitle) = (s.Id, s.Title);
-                Send(new { type = "teleport", id = tpId, phase = "sending", app, line = $"Sending {app} to its desktop…" });
-                _ = Spaces.Teleport(s.Folder, app, line => Send(new { type = "teleport", id = tpId, phase = "sending", app, line })).ContinueWith(t => Send(new
+                // To a session's project, or (no agent at work yet) to a project folder.
+                var tpFolder = s?.Folder ?? (KiroRunner.UsableFolder(Str(m, "folder")) ? Str(m, "folder") : null);
+                if (tpFolder is null || Str(m, "path") is not { } appPath) break;
+                var (tpId, appName) = (s?.Id ?? 0, Str(m, "app") ?? Path.GetFileNameWithoutExtension(appPath));
+                Send(new { type = "teleport", id = tpId, phase = "sending", app = appName, line = $"Sending {appName}…" });
+                _ = Spaces.SendApp(tpFolder, appPath, line => Send(new { type = "teleport", id = tpId, phase = "sending", app = appName, line })).ContinueWith(t => Send(new
                 {
-                    type = "teleport", id = tpId, app, phase = "done",
+                    type = "teleport", id = tpId, app = appName, phase = "done",
                     data = t.IsCompletedSuccessfully ? t.Result : new { error = "The app didn’t go." },
                 }), TaskScheduler.Default);
                 break;
             case "spaceFiles":
-                if (s is null || !m.TryGetProperty("paths", out var fp) || fp.ValueKind != JsonValueKind.Array) break;
-                var filesId = s.Id;
-                _ = Spaces.SendFiles(s.Folder, fp.EnumerateArray().Select(x => x.GetString() ?? "").Where(x => x.Length > 0).ToList())
+                var sfFolder = s?.Folder ?? (KiroRunner.UsableFolder(Str(m, "folder")) ? Str(m, "folder") : null);
+                if (sfFolder is null || !m.TryGetProperty("paths", out var fp) || fp.ValueKind != JsonValueKind.Array) break;
+                var filesId = s?.Id ?? 0;
+                _ = Spaces.SendFiles(sfFolder, fp.EnumerateArray().Select(x => x.GetString() ?? "").Where(x => x.Length > 0).ToList())
                     .ContinueWith(t => Send(new { type = "teleport", id = filesId, phase = "done", app = "files", data = t.IsCompletedSuccessfully ? t.Result : new { error = "The files didn’t go." } }), TaskScheduler.Default);
                 break;
             case "spaces":

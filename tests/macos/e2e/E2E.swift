@@ -202,7 +202,6 @@ final class Harness {
         let cuaLog = { (try? String(contentsOf: root.appendingPathComponent("cua.log"), encoding: .utf8)) ?? "" }
         check(cuaLog().contains("spaces create macos:26 --name hover-project-"), "the project's Space was made before the run (cua spaces create, named for the folder)")
         check(cuaLog().range(of: #"--cpus [2-6] --memory-mb (4096|6144|8192)"#, options: .regularExpression) != nil, "it is made with room to be smooth (cores and memory for this Mac)")
-        check(cuaLog().contains("--display 1280x800"), "and a screen size that's sharp in the panel (lume set --display)")
         await js("window.__office.openDesk(\(sid), 'screen')")
         check(await until("the Space's viewer opens over the panel", 30) { self.office.web.subviews.contains { ($0 as? WKWebView)?.url?.path.hasPrefix("/viewer") == true } }, "Cua's live viewer is laid over the Screen panel")
         if let v = office.web.subviews.compactMap({ $0 as? WKWebView }).first(where: { $0.url?.path.hasPrefix("/viewer") == true }) {
@@ -232,7 +231,7 @@ final class Harness {
             var frame = CGRect(x: 300, y: 300, width: 800, height: 600)
             drag.windowAt = { _ in (id: 77, pid: 4242, frame: CGRect(x: 300, y: 300, width: 800, height: 600)) }
             drag.frameOf = { _ in frame }
-            drag.appOf = { _ in ("Google Chrome", "com.google.Chrome") }
+            drag.appOf = { _ in ("Google Chrome", "com.google.Chrome", "/Applications/Google Chrome.app") }
             drag.near = { p in p.y > 950 }
             var seen: [(String, String?)] = []
             drag.phase = { ph, _, d in seen.append((ph, d.bundle)) }
@@ -254,26 +253,22 @@ final class Harness {
             check(seen.map(\.0) == ["start", "over", "drop"] && seen.allSatisfy { $0.1 == "com.google.Chrome" }, "a window dragged to the notch opens it and drops there, naming the app: \(seen.map(\.0))")
         }
 
-        // An app goes to Cua's own notch when it runs; files stay with Hover's.
-        let app = TeleportDrag.Drag(app: "Google Chrome", bundle: "com.google.Chrome", files: [], pid: 4242)
-        let files = TeleportDrag.Drag(app: "login.html", bundle: nil, files: [URL(fileURLWithPath: "/tmp/x")], pid: nil)
-        check(TeleportDrag.handOff(app, spacesOn: true, cuaRunning: true), "an app dragged to the notch opens Cua's Spaces, not Hover")
-        check(!TeleportDrag.handOff(files, spacesOn: true, cuaRunning: true), "files dragged to the notch still drop on Hover's project desktops")
-        check(!TeleportDrag.handOff(app, spacesOn: true, cuaRunning: false), "without Cua Spaces running, Hover's notch takes the app")
-        check(!TeleportDrag.handOff(app, spacesOn: false, cuaRunning: true), "with agent desktops off, the drag is not handed to Cua")
-        check(cuaLog().contains("spaces add local:hover-project-") && cuaLog().contains("--name project · Hover"), "the desktop is named for its project in Cua's list (cua spaces add --name)")
-
         // An app dragged onto the notch: the agents' desktops open as drop targets.
-        office.deliver(["type": "teleportDrag", "phase": "start", "app": "Google Chrome", "bundle": "com.google.Chrome", "files": [], "x": 300, "y": 120, "vw": 1300])
+        // A small app of the test's own, so nothing of the user's is copied anywhere.
+        let testApp = root.appendingPathComponent("Tiny.app")
+        try? FileManager.default.createDirectory(at: testApp.appendingPathComponent("Contents/MacOS"), withIntermediateDirectories: true)
+        try? Data("#!/bin/sh\n".utf8).write(to: testApp.appendingPathComponent("Contents/MacOS/Tiny"))
+        office.deliver(["type": "teleportDrag", "phase": "start", "app": "Tiny", "bundle": "dev.hover.tiny", "path": testApp.path, "files": [], "x": 300, "y": 120, "vw": 1300])
         check(await until("the drop targets show", 5) { await self.truthy("!document.querySelector('#tdrop').hidden && document.querySelector('#tdrop [data-tdrop]')") }, "dragging an app to the notch shows the agents' desktops")
         await shot("teleport-drop")
         let tile = await js("JSON.stringify(document.querySelector('#tdrop [data-tdrop=\"\(sid)\"]').getBoundingClientRect())") as? String ?? "{}"
         if let d = tile.data(using: .utf8), let r = try? JSONSerialization.jsonObject(with: d) as? [String: Double], let x = r["x"], let y = r["y"] {
-            office.deliver(["type": "teleportDrag", "phase": "over", "app": "Google Chrome", "bundle": "com.google.Chrome", "files": [], "x": x + 30, "y": y + 30, "vw": 1300])
+            office.deliver(["type": "teleportDrag", "phase": "over", "app": "Tiny", "bundle": "dev.hover.tiny", "path": testApp.path, "files": [], "x": x + 30, "y": y + 30, "vw": 1300])
             check(await until("the tile under the pointer lights", 3) { await self.truthy("document.querySelector('#tdrop [data-tdrop=\"\(sid)\"]').classList.contains('on')") }, "the agent's tile lights under the pointer")
-            office.deliver(["type": "teleportDrag", "phase": "drop", "app": "Google Chrome", "bundle": "com.google.Chrome", "files": [], "x": x + 30, "y": y + 30, "vw": 1300])
-            check(await until("the app is sent", 15) { cuaLog().contains("teleport push --app com.google.Chrome --sandbox local:hover-") }, "dropping it teleports the app into that agent's Space (cua teleport push)")
-            check(await until("the office says so", 10) { (await self.text("#toast")).contains("is on") }, "the office says the app is on the agent's desktop: \(await text("#toast"))")
+            office.deliver(["type": "teleportDrag", "phase": "drop", "app": "Tiny", "bundle": "dev.hover.tiny", "path": testApp.path, "files": [], "x": x + 30, "y": y + 30, "vw": 1300])
+            check(await until("the app is sent", 20) { cuaLog().contains(":/Users/lume/Downloads/.hover-hover-app-") && cuaLog().contains("sb exec local:hover-project-") && cuaLog().contains("Tiny.app") }, "dropping it copies the app into the project's desktop and opens it there (cua sb cp, sb exec)")
+            check(!cuaLog().contains("teleport"), "without Cua's own app: no teleport, no Cua Spaces")
+            check(await until("the office says so", 10) { (await self.text("#toast")).contains("Tiny is on") }, "the office says the app is on the desktop: \(await text("#toast"))")
             // Files dropped the same way land in its Downloads.
             let file = root.appendingPathComponent("project/login.html").path
             office.deliver(["type": "teleportDrag", "phase": "start", "app": "login.html", "files": [file], "x": 300, "y": 120, "vw": 1300])

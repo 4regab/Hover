@@ -15,8 +15,9 @@ namespace Hover.Services;
 /// create|start|stop|delete` for the Space, `cua mcp --sandbox <space>` as the
 /// session's computer-use MCP server (run by Hover outside the agents' sandbox and
 /// joined to the agent over the same socket as Hover's browser), `cua sb view` for the
-/// live viewer the Screen panel shows, and `cua teleport push` for an app dragged onto
-/// the notch. Spaces are local and free; nothing goes through Cua's relay. A project's
+/// live viewer the Screen panel shows, and `cua sb cp`/`sb exec` for an app or files
+/// dragged onto the notch. Only the CLI and Lume are used, never Cua's own app: the
+/// desktops are Hover's. Spaces are local and free; nothing goes through Cua's relay. A project's
 /// Space is made when its first agent's run starts (a clone, about 25 s, once the image
 /// is on the Mac), stopped when no agent of that project is left in the office, and
 /// deleted with the project's last session. No WPF.
@@ -48,7 +49,7 @@ public static class Spaces
     {
         var gb = (int)(GC.GetGCMemoryInfo().TotalAvailableMemoryBytes / (1L << 30));
         var cores = Environment.ProcessorCount;
-        return new(Math.Clamp(cores / 3, 2, 6), gb >= 24 ? 8 : gb >= 16 ? 6 : 4, "1280x800");
+        return new(Math.Clamp(cores / 3, 2, 6), gb >= 24 ? 8 : gb >= 16 ? 6 : 4, "1024x768");
     }
 
     public sealed record VmInfo(bool Exists, bool Running, int Cpus, int MemoryGb, string? Display);
@@ -93,16 +94,6 @@ public static class Spaces
         return "hover-" + (slug.Length > 0 ? slug + "-" : "") + hash;
     }
     public static string IdFor(string folder) => "local:" + NameFor(folder);
-    /// The name Cua's own notch and list show for a project's desktop, set once it is up
-    /// (Cua names it after the guest's hostname otherwise).
-    private static readonly ConcurrentDictionary<string, bool> Named = new();
-    private static async Task Name(string cua, string folder)
-    {
-        if (!Named.TryAdd(NameFor(folder), true)) return;
-        var (code, text) = await Run(cua, TimeSpan.FromSeconds(30), "spaces", "add", IdFor(folder), "--name", Title(folder) + " · Hover");
-        if (code != 0) { Named.TryRemove(NameFor(folder), out _); Log.Line($"spaces: couldn't name {NameFor(folder)}: {Line(text)}"); }
-    }
-
     /// The project's name as the desktop shows it.
     public static string Title(string folder) => Path.GetFileName(Path.TrimEndingDirectorySeparator(folder)) is { Length: > 0 } n ? n : folder;
 
@@ -139,7 +130,7 @@ public static class Spaces
         lock (Lock) if (!fresh && _known is { } k && DateTime.UtcNow - k.At < TimeSpan.FromMinutes(1)) return k.Value;
         Status s;
         if (!Supported) s = new(false, false, null, "Agent desktops need Cua Spaces, which needs macOS 26 or later on Apple silicon.", 0);
-        else if (Exe() is not { } cua) s = new(false, false, null, "Install Cua Spaces to give each agent a desktop of its own.", 0);
+        else if (Exe() is not { } cua) s = new(false, false, null, "Set up Cua’s desktop tools to give each agent a desktop of its own.", 0);
         else
         {
             var (vc, vt) = await Run(cua, TimeSpan.FromSeconds(20), "--version");
@@ -172,9 +163,10 @@ public static class Spaces
             if (!Supported) throw new SetupError("Agent desktops need macOS 26 or later on Apple silicon.");
             if (Exe() is null)
             {
-                Report(new("installing", "Installing Cua Spaces…", null, null));
+                // Only Cua's command-line tool: the desktops live in Hover, never in an app of Cua's.
+                Report(new("installing", "Installing Cua’s desktop tools…", null, null));
                 await Stream("/bin/bash", TimeSpan.FromMinutes(15), cts.Token, null, "-c",
-                    "set -o pipefail; curl -fsSL https://cua.ai/install.sh | sh -s -- --yes --select cli,spaces --no-onboarding");
+                    "set -o pipefail; curl -fsSL https://cua.ai/install.sh | sh -s -- --cli-only --yes --no-onboarding");
                 if (Exe() is null) throw new SetupError("The installer finished, but cua still isn’t found.");
             }
             var cua = Exe()!;
@@ -261,21 +253,21 @@ public static class Spaces
             var known = lc == 0 && ParseList(lt).Any(x => x.Id == "local:" + name || x.Name == name);
             if (vm is { Exists: true, Running: true } || vm is null && known)
             {
-                Set(key, new("ready", "The project’s desktop is ready.", 1, null)); await Name(cua, folder); return null;
+                Set(key, new("ready", "The project’s desktop is ready.", 1, null)); return null;
             }
             if (vm is { Exists: true } || known)
             {
                 // Off: sized up first if Cua made it small (only while it is off).
-                if (vm is { Exists: true } v && (v.Cpus < size.Cpus || v.MemoryGb < size.MemoryGb || v.Display != size.Display) && LumeExe() is { } lume)
+                if (vm is { Exists: true } v && (v.Cpus < size.Cpus || v.MemoryGb < size.MemoryGb) && LumeExe() is { } lume)
                 {
                     Set(key, new("starting", "Giving the desktop more room…", null, null));
-                    var (zc, zt) = await Run(lume, TimeSpan.FromMinutes(2), "set", name, "--cpu", size.Cpus.ToString(), "--memory", size.MemoryGb + "GB", "--display", size.Display);
+                    var (zc, zt) = await Run(lume, TimeSpan.FromMinutes(2), "set", name, "--cpu", size.Cpus.ToString(), "--memory", size.MemoryGb + "GB");
                     if (zc != 0) Log.Line($"spaces: couldn't size {name}: {Line(zt)}");
                 }
                 Set(key, new("starting", "Starting the project’s desktop…", null, null));
                 var (sc, st) = await Run(cua, TimeSpan.FromMinutes(4), "spaces", "start", "local:" + name, "--json");
                 if (sc != 0) { var why = Explain(Line(st) ?? "The desktop didn’t start."); Set(key, new("failed", "", null, why)); return why; }
-                Set(key, new("ready", "The project’s desktop is ready.", 1, null)); await Name(cua, folder); return null;
+                Set(key, new("ready", "The project’s desktop is ready.", 1, null)); return null;
             }
             Set(key, new("creating", "Making the project’s desktop…", 0, null));
             string? error = null;
@@ -283,16 +275,9 @@ public static class Spaces
             {
                 await Stream(cua, TimeSpan.FromMinutes(ImagePulled() ? 10 : 60), ct, f => Set(key, new("creating", f.Line, f.Fraction, null)),
                     "spaces", "create", Image, "--name", name, "--cpus", size.Cpus.ToString(), "--memory-mb", (size.MemoryGb * 1024).ToString(), "--json");
-                // The screen size isn't a create option: set while it is first off.
-                if (LumeExe() is { } lume && (await Vm(name))?.Display != size.Display)
-                {
-                    await Run(cua, TimeSpan.FromMinutes(2), "spaces", "stop", "local:" + name);
-                    await Run(lume, TimeSpan.FromMinutes(2), "set", name, "--display", size.Display);
-                    await Run(cua, TimeSpan.FromMinutes(4), "spaces", "start", "local:" + name, "--json");
-                }
             }
             catch (SetupError e) { error = e.Message; }
-            if (error is null) { Set(key, new("ready", "The project’s desktop is ready.", 1, null)); await Name(cua, folder); return null; }
+            if (error is null) { Set(key, new("ready", "The project’s desktop is ready.", 1, null)); return null; }
             error = Explain(error);
             Set(key, new("failed", "", null, error));
             return error;
@@ -324,7 +309,7 @@ public static class Spaces
 
     public static async Task<object> Viewer(string key)
     {
-        if (Exe() is not { } cua) return new { error = "Cua Spaces isn’t installed." };
+        if (Exe() is not { } cua) return new { error = "Cua’s desktop tools aren’t installed." };
         if (Viewers.TryGetValue(NameFor(key), out var cached) && cached.Until > DateTime.UtcNow && StateOf(key) is { Phase: "ready" }) return new { phase = "ready", url = cached.Url };
         // On first: the viewer of a desktop that is off never loads.
         if (StateOf(key) is not { Phase: "creating" or "starting" } && await Ensure(key, CancellationToken.None) is { } why) return new { phase = "failed", error = why };
@@ -334,33 +319,102 @@ public static class Spaces
         if (code != 0 || url.Length == 0) return new { error = Line(text) ?? "The desktop’s viewer didn’t open." };
         if (!Uri.TryCreate(url, UriKind.Absolute, out var u) || u.Host is not ("127.0.0.1" or "localhost" or "[::1]") && !u.Host.StartsWith("192.168.", StringComparison.Ordinal) && !u.Host.StartsWith("10.", StringComparison.Ordinal))
             return new { error = "The viewer isn’t on this Mac." };
+        // On the VM's own address the page isn't a secure context, and the viewer falls
+        // back to PNG frames (no video, no audio, no clipboard); through localhost it streams.
+        if (u.Host is not ("127.0.0.1" or "localhost" or "[::1]") && await Local(u.Host, u.Port) is { } port)
+            url = new UriBuilder(u) { Host = "127.0.0.1", Port = port }.Uri.AbsoluteUri;
         Viewers[NameFor(key)] = (url, DateTime.UtcNow.AddHours(11));
         return new { phase = "ready", url };
     }
 
-    /// An app dragged onto the notch, into the session's Space: Cua's teleport (its
-    /// tabs and profile; sign-ins only after the user approves with Touch ID).
-    public static async Task<object> Teleport(string key, string app, Action<string>? progress)
+    // One loopback port per desktop's viewer, joined byte for byte to the VM's (HTTP and
+    // its WebSocket alike); only this Mac can reach it, and the viewer still needs its ticket.
+    private static readonly ConcurrentDictionary<string, Task<int?>> Forwards = new();
+    private static Task<int?> Local(string host, int port) => Forwards.GetOrAdd($"{host}:{port}", key => Task.Run<int?>(() =>
     {
-        if (Exe() is not { } cua) return new { error = "Cua Spaces isn’t installed." };
-        if (string.IsNullOrWhiteSpace(app) || app.StartsWith('-') || app.Length > 200) return new { error = "That app can’t be sent." };
-        if (await Ensure(key, CancellationToken.None) is { } why) return new { error = why };
-        // Teleport's consent (and Touch ID for sign-ins) is shown by Cua's own app; it is
-        // opened in the background if it isn't running, never brought to the front.
-        if (OperatingSystem.IsMacOS() && !Sandbox.Inside) await Run("/usr/bin/open", TimeSpan.FromSeconds(15), "-g", "-j", "-b", "com.trycua.spaces.macos");
         try
         {
-            progress?.Invoke("Approve it in Cua’s window if it asks…");
-            await Stream(cua, TimeSpan.FromMinutes(10), CancellationToken.None, f => progress?.Invoke(f.Line.StartsWith("progress ") ? "Sending… " + f.Line[9..].Replace(' ', '/') : f.Line), "teleport", "push", "--app", app, "--sandbox", IdFor(key), "--scope", "tabs", "--progress");
-            return new { ok = true };
+            var listener = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0);
+            listener.Start();
+            _ = Task.Run(async () =>
+            {
+                while (true)
+                {
+                    var client = await listener.AcceptTcpClientAsync();
+                    _ = Task.Run(async () =>
+                    {
+                        using var c = client;
+                        try
+                        {
+                            using var vm = new System.Net.Sockets.TcpClient { NoDelay = true };
+                            c.NoDelay = true;
+                            await vm.ConnectAsync(host, port).WaitAsync(TimeSpan.FromSeconds(10));
+                            var a = c.GetStream(); var b = vm.GetStream();
+                            await Task.WhenAny(a.CopyToAsync(b), b.CopyToAsync(a));
+                        }
+                        catch (Exception) { }
+                    });
+                }
+            });
+            return ((System.Net.IPEndPoint)listener.LocalEndpoint).Port;
         }
-        catch (SetupError e)
+        catch (Exception e) { Log.Line("viewer forward: " + e.Message); Forwards.TryRemove(key, out var _gone); return null; }
+    }));
+
+    /// An app dragged onto the notch, onto a project's desktop: Hover copies the app
+    /// itself into the desktop (a zip of the bundle, through `cua sb cp`) and opens it
+    /// there. Only the app goes, never its data or the user's sign-ins. (Cua's teleport,
+    /// which moves sessions, ships only in Cua's own app, which Hover doesn't use.)
+    public const long AppLimit = 4L << 30;
+    public static async Task<object> SendApp(string key, string appPath, Action<string>? progress)
+    {
+        if (Exe() is not { } cua) return new { error = "Cua’s desktop tools aren’t installed." };
+        var app = Path.TrimEndingDirectorySeparator(appPath ?? "");
+        if (!app.EndsWith(".app", StringComparison.OrdinalIgnoreCase) || !Directory.Exists(app) || app.Contains('\0')) return new { error = "That isn’t an app Hover can send." };
+        var name = Path.GetFileName(app);
+        long size = 0;
+        foreach (var f in Directory.EnumerateFiles(app, "*", new EnumerationOptions { RecurseSubdirectories = true, IgnoreInaccessible = true, AttributesToSkip = FileAttributes.ReparsePoint }))
+            if ((size += new FileInfo(f).Length) > AppLimit) return new { error = $"{name} is over 4 GB, too big to copy into the desktop." };
+        progress?.Invoke("Starting the desktop…");
+        if (await Ensure(key, CancellationToken.None) is { } why) return new { error = why };
+        var id = IdFor(key);
+        var home = await HomeOf(cua, id);
+        if (home is null) return new { error = "The desktop didn’t answer." };
+        var zip = Path.Combine(Path.GetTempPath(), "hover-app-" + Guid.NewGuid().ToString("N")[..8] + ".zip");
+        try
         {
-            var m = e.Message;
-            if (m.Contains("unsupported", StringComparison.OrdinalIgnoreCase) || m.Contains("no provider", StringComparison.OrdinalIgnoreCase))
-                m = $"Cua can’t teleport {app} yet. It moves Chrome, Firefox, Slack, Discord, WhatsApp and a few others.";
-            return new { error = m };
+            progress?.Invoke($"Packing {name}…");
+            // No extended attributes: a quarantine flag would stop it opening there.
+            var (zc, zt) = await Run("/usr/bin/ditto", TimeSpan.FromMinutes(10), "-c", "-k", "--keepParent", "--norsrc", "--noextattr", app, zip);
+            if (zc != 0) return new { error = Line(zt) ?? $"{name} couldn’t be packed." };
+            progress?.Invoke($"Copying {name} ({size / (1 << 20)} MB)…");
+            var guestZip = $"{home}/Downloads/.hover-{Path.GetFileName(zip)}";
+            var (cc, ct) = await Run(cua, TimeSpan.FromMinutes(20), "sb", "cp", zip, $"{id}:{guestZip}");
+            if (cc != 0) return new { error = Line(ct) ?? $"{name} couldn’t be copied." };
+            progress?.Invoke($"Opening {name}…");
+            var (ec, et) = await Run(cua, TimeSpan.FromMinutes(5), "sb", "exec", id, InstallScript(guestZip, name));
+            if (ec != 0) return new { error = et.Contains("-10825") ? $"{name} needs a newer macOS than the desktop runs." : Line(et) ?? $"{name} didn’t open in the desktop." };
+            return new { ok = true, app = Path.GetFileNameWithoutExtension(name) };
         }
+        finally { try { File.Delete(zip); } catch { } }
+    }
+
+    /// The guest's side: unpack into /Applications (or ~/Applications), replacing an
+    /// older copy, and open it. Every name is single-quoted, so none is read as shell.
+    internal static string InstallScript(string guestZip, string appName)
+    {
+        static string Q(string v) => "'" + v.Replace("'", "'\\''") + "'";
+        return $"set -e; z={Q(guestZip)}; a={Q(appName)}; d=/Applications; [ -w \"$d\" ] || {{ d=\"$HOME/Applications\"; mkdir -p \"$d\"; }}; "
+            + "rm -rf \"$d/$a\"; /usr/bin/ditto -x -k \"$z\" \"$d\"; rm -f \"$z\"; /usr/bin/open \"$d/$a\"";
+    }
+
+    private static async Task<string?> HomeOf(string cua, string id)
+    {
+        if (Homes.TryGetValue(id, out var h)) return h;
+        var (hc, ht) = await Run(cua, TimeSpan.FromSeconds(30), "sb", "exec", id, "echo $HOME");
+        var home = hc == 0 ? ht.Replace("\r", "").Split('\n').Select(l => l.Trim()).LastOrDefault(l => l.StartsWith('/')) : null;
+        if (home is not null) Homes[id] = home;
+        return home;
     }
 
     /// Files dropped on a project's desktop in the notch: to its Downloads, through
@@ -368,16 +422,11 @@ public static class Spaces
     private static readonly ConcurrentDictionary<string, string> Homes = new();
     public static async Task<object> SendFiles(string key, IReadOnlyList<string> paths)
     {
-        if (Exe() is not { } cua) return new { error = "Cua Spaces isn’t installed." };
+        if (Exe() is not { } cua) return new { error = "Cua’s desktop tools aren’t installed." };
         if (await Ensure(key, CancellationToken.None) is { } why) return new { error = why };
         var id = IdFor(key);
-        if (!Homes.TryGetValue(id, out var home))
-        {
-            var (hc, ht) = await Run(cua, TimeSpan.FromSeconds(30), "sb", "exec", id, "echo", "$HOME");
-            home = hc == 0 ? ht.Replace("\r", "").Split('\n').Select(l => l.Trim()).LastOrDefault(l => l.StartsWith('/')) ?? "" : "";
-            if (home.Length == 0) return new { error = "The desktop didn’t answer." };
-            Homes[id] = home;
-        }
+        var home = await HomeOf(cua, id);
+        if (home is null) return new { error = "The desktop didn’t answer." };
         var files = new List<(string From, string To)>();
         foreach (var p in paths.Take(20))
         {

@@ -2055,7 +2055,7 @@ function onTeleportDrag(m) {
   if (m.phase === 'cancel') { tdrag = null; box.hidden = true; return; }
   const k = innerWidth / (m.vw || innerWidth), x = m.x * k, y = m.y * k;
   if (m.phase === 'start' || !tdrag) {
-    tdrag = { app: m.app, bundle: m.bundle, files: m.files || [] };
+    tdrag = { app: m.app, bundle: m.bundle, path: m.path, files: m.files || [] };
     closeDeskMenu(); closeHud();
     // One target per project's desktop, with the agents that share it.
     const desks = new Map();
@@ -2064,6 +2064,9 @@ function onTeleportDrag(m) {
       if (!desks.has(k)) desks.set(k, { id: s.id, project: s.space?.project || short(s.folder) || 'Project', space: s.space, agents: [] });
       desks.get(k).agents.push({ name: s.b.name, css: s.b.css, badge: badge(s.tool) });
     }
+    // The project new tasks start in has its desktop too, before any agent is at work.
+    if (spacesOn && defaultFolder && !sessions.some(s => s.folder && s.folder.replace(/[\\/]+$/, '').toLowerCase() === defaultFolder.replace(/[\\/]+$/, '').toLowerCase()))
+      desks.set('f:' + defaultFolder, { id: 'f', folder: defaultFolder, project: short(defaultFolder) || 'Project', space: null, agents: [] });
     box.innerHTML = D.dropHTML(tdrag, [...desks.values()], spacesOn);
     box.hidden = false;
   }
@@ -2073,16 +2076,19 @@ function onTeleportDrag(m) {
   const d = tdrag; tdrag = null;
   setTimeout(() => { box.hidden = true; }, hit ? 900 : 200);
   if (!hit) return;
-  const s = sessions.find(x => x.id === +hit.dataset.tdrop); if (!s) return;
+  const own = hit.dataset.tdrop === 'f';
+  const s = own ? null : sessions.find(x => x.id === +hit.dataset.tdrop); if (!own && !s) return;
   hit.classList.add('sent');
-  const where = s.space?.project ? `the ${s.space.project} desktop` : `${s.b.name}’s desktop`;
+  const where = own ? `the ${short(defaultFolder)} desktop` : s.space?.project ? `the ${s.space.project} desktop` : `${s.b.name}’s desktop`;
+  const to = own ? { folder: defaultFolder } : { id: s.id };
   if (!spacesOn) { toast('Turn on agent desktops in Settings → Computer Use first.'); return; }
-  if (d.files.length) { host?.postMessage({ type: 'spaceFiles', id: s.id, paths: d.files }); toast(`Sending ${d.app} to ${where}…`); }
-  else if (d.bundle) { host?.postMessage({ type: 'teleport', id: s.id, app: d.bundle }); toast(`Sending ${d.app} to ${where}…`); }
+  if (d.files.length) { host?.postMessage({ type: 'spaceFiles', ...to, paths: d.files }); toast(`Sending ${d.app} to ${where}…`); }
+  else if (d.path) { host?.postMessage({ type: 'teleport', ...to, app: d.app, path: d.path }); toast(`Sending ${d.app} to ${where}…`); }
   else toast(`Hover couldn’t tell which app that is.`);
 }
 function onTeleport(m) {
-  const s = sessions.find(x => x.id === m.id), who = s?.space?.project ? `the ${s.space.project} desktop` : s ? `${s.b.name}’s desktop` : 'the desktop';
+  const s = sessions.find(x => x.id === m.id), who = s?.space?.project ? `the ${s.space.project} desktop` : s ? `${s.b.name}’s desktop` : defaultFolder ? `the ${short(defaultFolder)} desktop` : 'the desktop';
+  if (m.phase === 'sending') { if (m.line) toast(m.line); return; }
   if (m.phase !== 'done') return;
   const n = m.data?.sent ?? 0;
   toast(m.data?.error ? m.data.error : m.app === 'files' ? `Sent ${n} item${n === 1 ? '' : 's'} to the Downloads on ${who}.` : `${m.app} is on ${who}.`);

@@ -546,7 +546,7 @@ private struct ComputerUsePage: View {
                     }
                 }
             } footer: {
-                Text("A desktop is not your own macOS: it is a separate macOS 26 virtual machine (Apple’s Virtualization, through Cua’s Lume), or a Linux container, with none of your apps, files or sign-ins until you send them. Spaces run on this Mac and are free; nothing goes through Cua’s servers. The first setup installs Cua’s app and command-line tool and downloads the desktop image once (macOS is about 23 GB); each project’s desktop is then a quick copy of it. It is made when the project’s first task starts, turned off when none of its agents is left in the office, and deleted with the project’s last session. Needs macOS 26 or later on Apple silicon.")
+                Text("A desktop is not your own macOS: it is a separate macOS 26 virtual machine (Apple’s Virtualization, through Cua’s Lume), or a Linux container, with none of your apps, files or sign-ins until you send them. Spaces run on this Mac and are free; nothing goes through Cua’s servers. The first setup installs Cua’s command-line tool (not its app) and downloads the desktop image once (macOS is about 23 GB); each project’s desktop is then a quick copy of it. It is made when the project’s first task starts, turned off when none of its agents is left in the office, and deleted with the project’s last session. Needs macOS 26 or later on Apple silicon.")
                     .foregroundStyle(.secondary)
             }
             Section {

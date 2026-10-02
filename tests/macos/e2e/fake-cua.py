@@ -35,12 +35,14 @@ if a[:2] == ['spaces', 'add']:
     for x in s:
         if x['id'] == a[2]: x['name'] = a[a.index('--name') + 1]
     save(s); sys.exit(0)
-if a[:2] == ['sb', 'exec']: print('/Users/lume'); sys.exit(0)
+if a[:2] == ['sb', 'exec']:
+    print('exec', a[3][:300], file=log, flush=True)
+    print('/Users/lume'); sys.exit(0)
 if a[:2] == ['sb', 'cp']: print('copied', file=log, flush=True); sys.exit(0)
 if a[:2] == ['runtime', 'setup']: sys.exit(0)
 if a[:2] == ['sb', 'view']: print('Viewer for %s: %s/viewer/#ticket=e2e-ticket&files=%%2Fhome' % (a[2], os.environ['HOVER_E2E_SITE'])); sys.exit(0)
-if a[:2] == ['teleport', 'push']:
-    print('1 3', flush=True); time.sleep(0.3); print('3 3', flush=True); sys.exit(0)
+if a[:1] == ['teleport']:
+    print('cua: unsupported: teleport ships with Cua Spaces', file=sys.stderr); sys.exit(2)
 if a[:1] == ['mcp']:
     space = a[a.index('--sandbox') + 1] if '--sandbox' in a else ''
     tools = [{'name': n, 'description': n, 'inputSchema': {'type': 'object'}} for n in ['computer_screenshot', 'computer_click', 'computer_type', 'send_file']]
