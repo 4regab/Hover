@@ -154,6 +154,9 @@ pub struct AgentHistory {
     tx: Mutex<mpsc::Sender<Job>>,
     pending: Arc<(Mutex<usize>, Condvar)>,
     changed: Mutex<Vec<Box<dyn Fn() + Send + Sync>>>,
+    /// The keys deleted this run. A turn that ends as its session is deleted saves it
+    /// after the delete, which put it back in the history; keys are never used again.
+    gone: Mutex<std::collections::HashSet<String>>,
 }
 
 impl AgentHistory {
@@ -169,7 +172,7 @@ impl AgentHistory {
                 cv.notify_all();
             }
         }).expect("a thread for the history");
-        AgentHistory { dir, crypto, index: Mutex::new(None), tx: Mutex::new(tx), pending, changed: Mutex::new(vec![]) }
+        AgentHistory { dir, crypto, index: Mutex::new(None), tx: Mutex::new(tx), pending, changed: Mutex::new(vec![]), gone: Mutex::new(Default::default()) }
     }
 
     fn index_file(&self) -> PathBuf { self.dir.join("index.dat") }
@@ -251,14 +254,17 @@ impl AgentHistory {
         let entry = entry_of(s);
         let body = s.to_json().compact();
         let file = self.file_of(&s.key);
-        self.with_index(|list| {
+        let saved = self.with_index(|list| {
+            // Checked under the index's lock, which delete takes too.
+            if self.gone.lock().unwrap().contains(&s.key) { return false; }
             list.retain(|e| e.key != s.key);
             list.push(entry);
             let index = Json::Arr(list.iter().map(HistoryEntry::to_json).collect()).compact();
             let (c, idx) = (self.crypto.clone(), self.index_file());
             self.write(Box::new(move || { seal(&c, &file, &body)?; seal(&c, &idx, &index) }));
+            true
         });
-        self.raise();
+        if saved { self.raise(); }
     }
 
     /// A session's whole record, or none when it is gone or can't be read.
@@ -279,6 +285,7 @@ impl AgentHistory {
         if !plain(key) { return; }
         let file = self.file_of(key);
         let went = self.with_index(|list| {
+            self.gone.lock().unwrap().insert(key.to_owned());
             let before = list.len();
             list.retain(|e| e.key != key);
             if before == list.len() && !file.exists() { return false; }
