@@ -108,7 +108,9 @@ levels, after its first run.
 ## Voice
 
 Hold a shortcut, say a task, let go. Hover shows what it heard, the folder, the agent and
-its access, then starts a **new chat** after a three-second countdown. Voice is off until
+its access, then starts a **new chat** after a five-second countdown (Settings → Voice → Start on
+its own: Off, 3, 5 or 10 s). With a chat open and its reply box open, hold the shortcut with
+the pointer over the chat to dictate into the reply instead. Voice is off until
 you switch it on in Settings → Voice.
 
 1. **Add projects** (Settings → Projects). Pick a folder, and add the other names you might

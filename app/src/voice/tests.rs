@@ -39,6 +39,7 @@ impl audio::Source for FakeSrc {
     fn finish(self: Box<Self>) -> Vec<i16> { (0..self.n.get()).map(|i| ((i as f32 * 0.3).sin() * 3000.0) as i16).collect() }
 }
 
+/// countdown: ZERO is Settings' own (VoiceSettings::countdown).
 struct Opt { mode: SpeechMode, local_ready: bool, countdown: Duration, max: usize, step: usize, delay: Duration, available: fn(AgentTool) -> bool }
 
 impl Default for Opt {
@@ -81,7 +82,7 @@ fn harness(text: &str, o: Opt) -> H {
     let v = Voice::build(settings.clone(), secrets, local.clone(), hooks,
         Box::new(move |k: &str, _: &str| { assert_eq!(k, "gsk_test"); c2.fetch_add(1, Ordering::SeqCst); sp2.clone() as Arc<dyn Speech> }),
         Box::new(move |_: Option<&str>, max: usize| { o2.fetch_add(1, Ordering::SeqCst); Ok(Box::new(FakeSrc { n: Cell::new(0), step, max }) as Box<dyn audio::Source>) }),
-        o.countdown, o.max);
+        (!o.countdown.is_zero()).then_some(o.countdown), o.max);
     H { v, settings, starts, cloud, opens, speech, local, dir }
 }
 
@@ -329,4 +330,43 @@ fn voice_uses_its_own_default_agent_or_else_the_new_task_tool() {
     h.settings.set_agent_tool(AgentTool::OpenCode);
     assert_eq!(say(&h, false).tool, AgentTool::OpenCode);
     h.v.cancel();
+}
+
+#[test]
+fn the_countdown_is_settings_own_and_off_waits_for_start() {
+    let h = harness("go to demo and fix the footer", Opt { countdown: Duration::ZERO, ..Opt::default() });
+    let p = say(&h, false);
+    assert!(p.countdown.is_some_and(|c| c > 4.0 && c <= 5.0), "five seconds by default: {:?}", p.countdown);
+    assert_eq!(h.v.countdown_total(), Duration::from_secs(5));
+    h.v.cancel();
+    h.v.dismiss();
+    h.settings.set_voice(VoiceSettings { countdown: 0, ..h.settings.voice() });
+    h.v.press(false);
+    wait(&h.v, |s| matches!(s, Stage::Recording { .. }));
+    h.v.release();
+    let e = match wait(&h.v, |s| matches!(s, Stage::Editing(_) | Stage::Preview(_))) { Stage::Editing(p) => p, s => panic!("Off counts down: {s:?}") };
+    assert_eq!(e.countdown, None);
+    std::thread::sleep(Duration::from_millis(200));
+    assert!(h.starts.lock().unwrap().is_empty(), "nothing starts on its own");
+    assert!(h.v.can_start());
+    h.v.start_now();
+    wait(&h.v, |s| matches!(s, Stage::Started { .. }));
+    assert_eq!(h.starts.lock().unwrap().len(), 1);
+}
+
+#[test]
+fn dictation_gives_the_words_and_starts_nothing() {
+    let h = harness("go to demo and fix the footer", Opt::default());
+    h.v.dictate();
+    wait(&h.v, |s| matches!(s, Stage::Recording { .. }));
+    h.v.release();
+    let s = wait(&h.v, |s| matches!(s, Stage::Dictated(_)));
+    assert_eq!(s, Stage::Dictated("go to demo and fix the footer".into()), "the words as heard, not routed into a task");
+    std::thread::sleep(Duration::from_millis(100));
+    assert!(h.starts.lock().unwrap().is_empty());
+    // Dismissed, the next press is a fresh one.
+    h.v.dismiss();
+    assert_eq!(h.v.stage(), Stage::Idle);
+    let p = say(&h, false);
+    assert_eq!(p.task, "fix the footer");
 }

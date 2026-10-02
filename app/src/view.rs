@@ -393,6 +393,7 @@ pub fn picked_seg(h: &dyn Host, pane: &RefCell<Pane>, id: &str, i: usize) {
         "Appearance" => { st.set_theme(None); st.set_appearance(pages::APPEARANCES[i].0); h.theme_changed(); }
         "VoiceSpeech" => { st.set_voice(VoiceSettings { speech: SpeechMode::ALL[i], ..st.voice() }); h.action("voice.changed"); }
         "VoiceCleanupProvider" => { st.set_voice(VoiceSettings { cleanup_provider: CleanupProvider::ALL[i], ..st.voice() }); h.action("voice.changed"); }
+        "VoiceCountdown" => if let Some(&n) = VoiceSettings::COUNTDOWNS.get(i) { st.set_voice(VoiceSettings { countdown: n, ..st.voice() }); h.action("voice.changed"); },
         "DefaultAccess" => st.set_default_workspace(Workspace { access: ACCESS_IDS[i].into(), ..st.default_workspace() }),
         "ProjectAccess" => edit_project(h, pane, id, |p| p.access = ACCESS_IDS[i].into()),
         _ => {

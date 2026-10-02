@@ -5,6 +5,24 @@ What changed in each Hover release. Versions follow [Semantic Versioning](https:
 
 ## [Unreleased]
 
+### Added
+
+- Voice dictation into a chat: with the chat's reply box open and the pointer over the chat,
+  the voice shortcut writes what you say into the reply instead of starting a task.
+- Settings → Voice → Start on its own: how long the voice card counts down before it starts
+  the task (Off, 3, 5 or 10 s). It is 5 s now, up from a fixed 3 s.
+
+### Fixed
+
+- The chat shows a tool's whole command, a size smaller, wrapped when it is long, instead of
+  its program and first word.
+- The notch's office has smooth corners: on a light desktop its edge showed white steps.
+- Settings' section list scrolls when the office is too short for it (a Small office hid
+  Claude Code).
+- A long folder name in the chat's header no longer pushes Delete and Close out of it.
+- CI's tests build about a third faster (a ci profile without LTO), and pull requests reuse
+  main's build cache.
+
 ## [3.2.0] - 2026-10-02
 
 ### Added

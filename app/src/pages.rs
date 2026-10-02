@@ -6,7 +6,7 @@
 use hover_agents::agents::{self, AgentReady};
 use hover_core::model::{AcpOption, AgentOptions, AgentTool, Appearance, SavedTheme, WorkspaceSize};
 use hover_core::palette::{InstalledTheme, Palette};
-use hover_core::projects::{resolve_folder, CleanupProvider, Project, SpeechMode, ACCESS_IDS, GROQ_SECRET, TRANSCRIBE_MODELS};
+use hover_core::projects::{resolve_folder, CleanupProvider, Project, SpeechMode, VoiceSettings, ACCESS_IDS, GROQ_SECRET, TRANSCRIBE_MODELS};
 use hover_core::settings::Settings;
 use hover_quota::{item, Reading};
 
@@ -496,11 +496,16 @@ fn voice(b: &mut Vec<Block>, i: &Input) {
     if let Some(r) = (i.ready)(tool).filter(|r| !r.ok()) { sub += &format!(" {} isn’t ready: {} Voice will ask you to pick another.", tool.name(), r.hint); }
     let w = s.default_workspace();
     let place = w.path().map_or_else(|| "No home folder".to_owned(), |p| p.to_string_lossy().into_owned());
+    let labels = VoiceSettings::COUNTDOWNS.map(|n| if n == 0 { "Off".to_owned() } else { format!("{n} s") });
+    let at = VoiceSettings::COUNTDOWNS.iter().position(|n| *n == v.countdown).map_or(-1, |k| k as i32);
+    let wait = if v.countdown == 0 { "The card waits for Start (or Enter).".to_owned() }
+        else { format!("The card starts the task {} after it shows it, unless you edit it first.", secs_words(v.countdown)) };
     b.push(Block::Group(vec![
         row("Agent", Some(sub), Control::Picker { id: "VoiceAgentTool".into(), name: "Voice agent".into(), shown: tool.name().into(),
             options: AgentTool::ALL.iter().map(|t| (t.name().to_owned(), *t == tool)).collect() }, Lead::None),
         row("Model", Some(format!("The model, effort and access are {}’s own settings.", tool.name())),
             Control::Button { id: "VoiceAgent".into(), name: format!("Open {} settings", tool.name()), text: format!("{} · {model}", tool.name()), enabled: true }, Lead::None),
+        row("Start on its own", Some(wait), segments("VoiceCountdown", &labels.each_ref().map(String::as_str), at), Lead::None),
         row("Default workspace", Some(format!("{place} · {}", access_label(&w.access))),
             Control::Button { id: "VoiceWorkspace".into(), name: "Open Projects".into(), text: "Projects…".into(), enabled: true }, Lead::None),
     ]));
@@ -512,9 +517,14 @@ fn voice(b: &mut Vec<Block>, i: &Input) {
     let mut rows = vec![row("Try it", Some(sub), Control::Hold { id: "voice.try".into(), name: "Hold to try voice".into(), text: "Hold to talk".into() }, Lead::None)];
     if let Some(t) = t { rows.extend(t.lines.iter().map(|(l, v)| row(l, Some(v.clone()), Control::None, Lead::None))); }
     b.push(Block::Group(rows));
-    b.push(Block::Footnote("Hold the shortcut, say what to do (“in Hover, fix the notch blink”) and let go. A card shows the folder, agent, access and task, \
-        and starts it after 3 seconds. Enter starts it now, editing the task stops the countdown, and Esc cancels.".into()));
+    let start = match v.countdown { 0 => "and waits for Start".to_owned(), n => format!("and starts it after {}", secs_words(n)) };
+    b.push(Block::Footnote(format!("Hold the shortcut, say what to do (“in Hover, fix the notch blink”) and let go. A card shows the folder, agent, access and task, \
+        {start}. Enter starts it now, editing the task stops the countdown, and Esc cancels. With a chat open in the office and its reply box open, \
+        hold the shortcut with the pointer over the chat to write into the reply instead.")));
 }
+
+/// "5 seconds", "1 second".
+fn secs_words(n: u32) -> String { format!("{n} second{}", if n == 1 { "" } else { "s" }) }
 
 fn offer<'a>(offers: &'a [AcpOption], category: &str, ids: &[&str]) -> Option<&'a AcpOption> {
     offers.iter().find(|x| x.category.as_deref() == Some(category)).or_else(|| offers.iter().find(|x| ids.contains(&x.id.as_str())))
@@ -923,6 +933,29 @@ mod tests {
 
     /// Claude Code's page: its models with each one's efforts (Default's first), its
     /// read only, and how it runs.
+    #[test]
+    fn voice_starts_after_five_seconds_until_set_otherwise() {
+        let s = settings();
+        let none = |_: &str| None;
+        let ready = |_| Some(AgentReady { installed: true, signed_in: true, hint: String::new() });
+        let row = |s: &Settings| {
+            let i = input(s, &[], &none, &ready);
+            let b = build(Section::Voice, &i);
+            let r = rows(&b).into_iter().find(|r| r.label == "Start on its own").cloned().expect("the countdown's row");
+            let foot = b.iter().rev().find_map(|x| if let Block::Footnote(f) = x { Some(f.clone()) } else { None }).unwrap();
+            (r, foot)
+        };
+        let (r, foot) = row(&s);
+        let labels = vec!["Off".to_string(), "3 s".into(), "5 s".into(), "10 s".into()];
+        assert_eq!(r.control, Control::Segments { id: "VoiceCountdown".into(), labels: labels.clone(), picked: 2 });
+        assert!(foot.contains("starts it after 5 seconds") && foot.contains("reply"), "{foot}");
+        s.set_voice(VoiceSettings { countdown: 0, ..s.voice() });
+        let (r, foot) = row(&s);
+        assert_eq!(r.control, Control::Segments { id: "VoiceCountdown".into(), labels, picked: 0 });
+        assert_eq!(r.sub.as_deref(), Some("The card waits for Start (or Enter)."));
+        assert!(foot.contains("waits for Start"), "{foot}");
+    }
+
     #[test]
     fn claude_code_has_its_own_page() {
         let s = settings();

@@ -48,8 +48,10 @@ fn a_select_all_copies_what_the_page_copies() {
         if open { th.toggle_steps(&turns, 0); }
         th.select_all();
         // On purpose since the page: how long the run took moved from beside the bot's
-        // name ("· 3m 12s") to the answer's stamp, which is drawn, not copied.
-        let page = want[name]["thread"].as_str().unwrap().split('\n').filter(|l| !l.starts_with("· ")).collect::<Vec<_>>().join("\n");
+        // name ("· 3m 12s") to the answer's stamp, which is drawn, not copied. And a
+        // command shows whole, not the page's program and first word ("npm install …").
+        let page = want[name]["thread"].as_str().unwrap().split('\n').filter(|l| !l.starts_with("· ")).collect::<Vec<_>>().join("\n")
+            .replace("Ran npm install …", "Ran npm install three@0.171.0");
         assert_eq!(th.selected_text(), page, "{name}");
     }
 }

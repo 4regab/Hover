@@ -29,6 +29,10 @@ pub struct Ui {
     trial: Cell<bool>,
     /// The notch took the keyboard for this interaction (and gives it back after).
     focus: Cell<bool>,
+    /// The interaction is dictation into the open chat's reply box: no card, its words go there.
+    dictating: Cell<bool>,
+    /// Clears what dictation said under the reply box (a failure stays a moment).
+    dictate_timer: Timer,
     /// The project open in the office when the interaction began (its id).
     active: Arc<Mutex<Option<String>>>,
     /// A change is on its way to the UI thread: the rest wait for it (recording says
@@ -172,7 +176,17 @@ impl App {
         // A Try it's result waits in Settings until the next press: the shortcut's press
         // replaces it rather than being turned away as busy.
         if !trial && self.voice_ui.trial.get() && matches!(stage, Stage::Preview(_)) { self.voice.cancel(); }
-        let fresh = matches!(self.voice.stage(), Stage::Idle | Stage::Started { .. } | Stage::Cancelled | Stage::Error { .. });
+        let fresh = matches!(self.voice.stage(), Stage::Idle | Stage::Started { .. } | Stage::Dictated(_) | Stage::Cancelled | Stage::Error { .. });
+        // Over an open chat with its reply box open, the words go into the reply: the office
+        // stays open and nothing is routed or started.
+        if !trial && fresh && self.dictation_here() {
+            self.voice_ui.trial.set(false);
+            self.voice_ui.dictating.set(true);
+            self.voice_ui.dictate_timer.stop();
+            self.voice_ui.hold_error.borrow_mut().take();
+            self.voice.dictate();
+            return;
+        }
         if fresh {
             self.voice_ui.trial.set(trial);
             *self.voice_ui.active.lock().unwrap() = self.active_project();
@@ -196,6 +210,50 @@ impl App {
         self.voice.press(trial);
     }
 
+    /// Dictation's place: an office in view (the open notch's or the app window's, not
+    /// under Settings) whose chat has its reply box open, with the pointer over that chat.
+    pub(crate) fn dictation_here(&self) -> bool {
+        let ready = |g: Office| g.get_drawer() && g.get_d_compose() && g.get_d_hover();
+        let notch = (self.n.borrow().hover.state != State::Rest || self.headless) && !self.notch_settings.get() && ready(self.notch.global::<Office>());
+        notch || self.dash.borrow().as_ref().is_some_and(|d| d.window().is_visible() && !self.dash_settings.get() && ready(d.global::<Office>()))
+    }
+
+    /// A dictation stage as if Voice had reached it (the shots, which have no microphone).
+    pub(crate) fn dictation_shot(self: &Rc<Self>, stage: &Stage) { self.voice_ui.dictating.set(true); self.dictation_changed(stage); }
+
+    /// Dictation's stages, under the reply box; its words, once heard, written into it.
+    fn dictation_changed(self: &Rc<Self>, stage: &Stage) {
+        let say = |t: &str| { self.notch.global::<Office>().set_d_voice(s(t)); if let Some(d) = &*self.dash.borrow() { d.global::<Office>().set_d_voice(s(t)); } };
+        match stage {
+            Stage::Recording { .. } => say("Listening…"),
+            Stage::Loading | Stage::Transcribing | Stage::Cleaning => say("Writing it down…"),
+            Stage::Dictated(text) => {
+                let put = |g: Office| {
+                    let d = g.get_d_draft();
+                    let gap = if d.is_empty() || d.ends_with(char::is_whitespace) { "" } else { " " };
+                    g.set_d_draft(s(format!("{d}{gap}{text}")));
+                    g.set_d_compose(true);
+                };
+                put(self.notch.global::<Office>());
+                if let Some(d) = &*self.dash.borrow() { put(d.global::<Office>()); }
+                say("");
+                self.voice_ui.dictating.set(false);
+                self.voice.dismiss();
+            }
+            Stage::Error { message, .. } => {
+                say(message);
+                let a = self.clone();
+                self.voice_ui.dictate_timer.start(TimerMode::SingleShot, Duration::from_secs(5), move || {
+                    if !a.voice_ui.dictating.get() { a.notch.global::<Office>().set_d_voice(s("")); if let Some(d) = &*a.dash.borrow() { d.global::<Office>().set_d_voice(s("")); } }
+                });
+                self.voice_ui.dictating.set(false);
+                self.voice.dismiss();
+            }
+            Stage::Idle | Stage::Cancelled => { say(""); self.voice_ui.dictating.set(false); self.voice.dismiss(); }
+            _ => {}
+        }
+    }
+
     /// The registered, voice-enabled project whose folder is the chat open in the office
     /// (or the new-task box's folder), if any.
     fn active_project(&self) -> Option<String> {
@@ -215,6 +273,7 @@ impl App {
         if let Some(b) = self.voice.busy_since() {
             if self.voice_ui.busy_seen.replace(Some(b)) != Some(b) { self.flash_busy(); }
         }
+        if self.voice_ui.dictating.get() { return self.dictation_changed(&stage); }
         if self.voice_ui.trial.get() {
             let t = try_card(&stage, &self.hover.settings);
             if self.pane.borrow().live.voice_try != t {
@@ -352,7 +411,9 @@ impl App {
         c.access = s(pages::access_label(&p.access));
         c.full = p.access == "full";
         c.task = s(&p.task);
-        c.ring = p.countdown.map_or(-1.0, |l| (l / hover_app::voice::COUNTDOWN.as_secs_f32() * 100.0).clamp(0.0, 100.0));
+        // What is left of the countdown the preview started with (a shot's has none: Settings').
+        let total = match self.voice.countdown_total().as_secs_f32() { t if t > 0.0 => t, _ => st.voice().countdown.max(1) as f32 };
+        c.ring = p.countdown.map_or(-1.0, |l| (l / total * 100.0).clamp(0.0, 100.0));
     }
 
     /// The stage drawn: Voice's, or the one a shot set.

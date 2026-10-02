@@ -253,7 +253,7 @@ pub fn row(x: &KiroStep, folder: &str) -> Json {
     let target = relative(x.target.as_deref(), folder);
     let (mut name, mut dir, mut cmd) = (None, None, None);
     if matches!(x.kind.as_str(), "execute" | "search") {
-        cmd = target.clone().or_else(|| verb.map(|_| x.title.clone()));
+        cmd = relative_whole(x.target.as_deref(), folder).or_else(|| verb.map(|_| x.title.clone()));
     } else if let (Some(t), true) = (&target, matches!(x.kind.as_str(), "read" | "edit" | "delete" | "move")) {
         let t = t.replace('\\', "/");
         match t.rfind('/') { None => name = Some(t), Some(i) => { name = Some(t[i + 1..].to_owned()); dir = Some(t[..i].to_owned()); } }
@@ -273,6 +273,11 @@ pub fn row(x: &KiroStep, folder: &str) -> Json {
 /// C#'s backslash root could never match a path, so a target there was never made
 /// relative; the port compares with the platform's own separator instead.
 pub fn relative(target: Option<&str>, folder: &str) -> Option<String> {
+    relative_whole(target, folder).map(|t| if units(&t) > 90 { format!("{}…", head_units(&t, 89)) } else { t })
+}
+
+/// `relative`, never cut: a command or pattern the chat shows whole (it wraps there).
+fn relative_whole(target: Option<&str>, folder: &str) -> Option<String> {
     let t0 = target.filter(|t| !t.trim().is_empty())?;
     let mut t = t0.trim().replace('\n', " ");
     if cfg!(windows) {
@@ -285,7 +290,7 @@ pub fn relative(target: Option<&str>, folder: &str) -> Option<String> {
         let root = format!("{}/", folder.trim_end_matches('/'));
         if root.len() > 1 { if let Some(rest) = t.strip_prefix(&root) { t = rest.to_owned(); } }
     }
-    Some(if units(&t) > 90 { format!("{}…", head_units(&t, 89)) } else { t })
+    Some(t)
 }
 
 /// The file a step was about, or its command cut short.
@@ -323,6 +328,9 @@ mod tests {
         assert_eq!(row(&step("think", "Planning", Some("x"), "completed"), dir).compact(), r#"{"k":"think","verb":"Planning","name":null,"dir":null,"cmd":"x","status":"completed","add":0,"del":0,"diff":null,"out":null,"exit":null,"ms":null}"#);
         assert_eq!(row(&step("other", "Working", None, "completed"), dir).compact(), r#"{"k":"think","verb":"Working","name":null,"dir":null,"cmd":null,"status":"completed","add":0,"del":0,"diff":null,"out":null,"exit":null,"ms":null}"#);
         assert_eq!(relative(Some(&"a".repeat(95)), dir).unwrap(), format!("{}…", "a".repeat(89)));
+        // A command reaches the chat whole; the chat wraps it.
+        let long = format!("cargo test {}", "x".repeat(120));
+        assert_eq!(row(&step("execute", "Run", Some(&long), "completed"), dir).get("cmd").and_then(|c| c.as_str()), Some(long.as_str()));
         assert_eq!(short(Some("npm run test -- --watch=false")), Some("npm run test -- --watch=fal…".into()));
         assert_eq!(short(Some("src/auth/refresh.ts")), Some("refresh.ts".into()));
         assert_eq!(escape_data("a b+é.png"), "a%20b%2B%C3%A9.png");
