@@ -62,4 +62,6 @@ fn reads_edits_runs_and_searches_are_unchanged() {
     assert_eq!(says("execute", "Rerun the build", Some("cargo build --release")), ("Running", "cargo build".to_owned()));
     assert_eq!(says("search", "Grep Search", Some("tool_phase")), ("Searching", "tool_phase".to_owned()));
     assert_eq!(says("fetch", "Fetch URL", Some("https://example.com/docs")), ("Fetching", "docs".to_owned()));
+    // A reasoning step is kind "thought" (stream.rs), not "think".
+    assert_eq!(says("thought", "Thinking", None), ("Thinking", String::new()));
 }

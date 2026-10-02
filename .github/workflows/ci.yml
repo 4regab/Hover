@@ -1,19 +1,14 @@
 name: CI
 
-# Every job runs on AWS CodeBuild (the hover-release project, infra/codebuild-runner.yml),
-# none on GitHub's own runners. A push to rust-port/** or a pull request runs the tests on
-# Windows and Linux. A release: a v* tag (matching Cargo.toml), or a push to
-# rust-port/phase-0-1 whose Cargo.toml version has no tag yet. The same jobs then build the
+# The native (Rust) Hover on GitHub's own runners. A push to main or rust-port/**, or a
+# pull request, runs the tests on Windows and Linux. A release: a v* tag (matching Cargo.toml), or a push to
+# main whose Cargo.toml version has no tag yet. The same jobs then build the
 # installers from what they just tested, and `release` tags the commit and publishes
-# them together as a pre-release.
+# them together as the Latest release.
 # No secrets and no agent accounts: agent runs use the repo's fake-agent.
-#
-# Sizes: Linux runs on BUILD_GENERAL1_XLARGE (36 vCPUs, 72 GB). Windows on demand goes
-# up to BUILD_GENERAL1_LARGE; the repository variable HOVER_WINDOWS_FLEET names the
-# template's 72 GB reserved fleet instead, once it is deployed (it costs while it runs).
 on:
   push:
-    branches: ['rust-port/**']
+    branches: ['main', 'rust-port/**']
     # Docs-only pushes don't rebuild. (Path filters don't apply to tags.)
     paths-ignore: ['**.md', 'docs/**', 'assets/readme/**']
     tags: ['v*']
@@ -32,11 +27,7 @@ env:
 
 jobs:
   windows:
-    # Each job needs its own label, or CodeBuild may hand one job the other's runner.
-    runs-on:
-      - codebuild-hover-release-${{ github.run_id }}-${{ github.run_attempt }}
-      - ${{ vars.HOVER_WINDOWS_FLEET != '' && format('fleet:{0}', vars.HOVER_WINDOWS_FLEET) || 'instance-size:large' }}
-      - windows-ci
+    runs-on: windows-2022
     outputs:
       release: ${{ steps.rel.outputs.release }}
       version: ${{ steps.rel.outputs.version }}
@@ -45,7 +36,7 @@ jobs:
         shell: pwsh
     steps:
       - uses: actions/checkout@v4
-      # A release: a v* tag, or a push to rust-port/phase-0-1 whose Cargo.toml version
+      # A release: a v* tag, or a push to main whose Cargo.toml version
       # has no tag yet (so raising the version is what releases it).
       - name: Release?
         id: rel
@@ -55,7 +46,7 @@ jobs:
           if ($env:GITHUB_REF -like 'refs/tags/v*') {
             if ($env:GITHUB_REF_NAME -ne "v$crate") { throw "The tag is $env:GITHUB_REF_NAME but Cargo.toml says $crate." }
             $release = $true
-          } elseif ($env:GITHUB_EVENT_NAME -eq 'push' -and $env:GITHUB_REF_NAME -eq 'rust-port/phase-0-1') {
+          } elseif ($env:GITHUB_EVENT_NAME -eq 'push' -and $env:GITHUB_REF_NAME -eq 'main') {
             $tagged = git ls-remote --tags origin "refs/tags/v$crate"
             if ($LASTEXITCODE -ne 0) { throw "couldn't list the tags" }
             $release = -not $tagged
@@ -95,8 +86,8 @@ jobs:
           # cargo installs rust-toolchain.toml's version the first time it runs.
           & (Join-Path $cargoBin 'cargo.exe') --version
           if ($LASTEXITCODE -ne 0) { throw 'rustup toolchain install failed' }
-      # Server Core has almost no fonts, so the chat's text laid out empty. The first faces
-      # its font lists name go in: Inter (the repo's) and Cascadia Code (OFL, Microsoft's).
+      # The chat's tests lay out text in the first faces its font lists name: Inter (the
+      # repo's) and Cascadia Code (OFL, Microsoft's). The runner may lack them.
       - name: Fonts
         run: |
           $zip = Join-Path $env:RUNNER_TEMP 'cascadia.zip'
@@ -132,12 +123,8 @@ jobs:
           if-no-files-found: error
 
   linux:
-    runs-on:
-      - codebuild-hover-release-${{ github.run_id }}-${{ github.run_attempt }}
-      # Ubuntu 22.04 (glibc 2.35), so the packages run on 22.04 and newer.
-      - image:ubuntu-7.0
-      - instance-size:xlarge
-      - linux-ci
+    # Ubuntu 22.04 (glibc 2.35), so the packages run on 22.04 and newer.
+    runs-on: ubuntu-22.04
     outputs:
       release: ${{ steps.rel.outputs.release }}
     defaults:
@@ -155,7 +142,7 @@ jobs:
           if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
             [[ "$GITHUB_REF_NAME" == "v$crate" ]] || { echo "The tag is $GITHUB_REF_NAME but Cargo.toml says $crate." >&2; exit 1; }
             release=true
-          elif [[ "$GITHUB_EVENT_NAME" == push && "$GITHUB_REF_NAME" == rust-port/phase-0-1 ]]; then
+          elif [[ "$GITHUB_EVENT_NAME" == push && "$GITHUB_REF_NAME" == main ]]; then
             [[ -z "$(git ls-remote --tags origin "refs/tags/v$crate")" ]] && release=true
           fi
           echo "version $crate, release: $release"
@@ -203,11 +190,7 @@ jobs:
     # One job publishes, so the two builds never race to create the release.
     if: needs.windows.outputs.release == 'true' && needs.linux.outputs.release == 'true'
     needs: [windows, linux]
-    runs-on:
-      - codebuild-hover-release-${{ github.run_id }}-${{ github.run_attempt }}
-      - image:ubuntu-7.0
-      - instance-size:small
-      - publish-release
+    runs-on: ubuntu-22.04
     permissions:
       contents: write
     steps:
@@ -222,9 +205,10 @@ jobs:
           # The tag is made here when a push released (on a tag push it is that tag).
           tag_name: v${{ needs.windows.outputs.version }}
           target_commitish: ${{ github.sha }}
-          name: Hover v${{ needs.windows.outputs.version }} (native, pre-release)
-          # A pre-release is never "Latest": 2.x downloads stay where they are.
-          prerelease: true
+          name: Hover v${{ needs.windows.outputs.version }}
+          # The Rust port is main now, so each release is the Latest one.
+          prerelease: false
+          make_latest: true
           files: dist/*
           fail_on_unmatched_files: true
           generate_release_notes: true

@@ -1273,8 +1273,10 @@ export component OfficeView inherits Rectangle {
                     VerticalLayout {
                         horizontal-stretch: 1;
                         alignment: center;
-                        Text { text: Office.panel-title; font-size: 14px; font-weight: 600; letter-spacing: -0.14px; color: #f6f2ff; }
-                        Text { text: Office.panel-sub; font-size: 11.5px; color: #f6f2ff61; }
+                        // Elide: a long note ("Up to 3 tasks run at once, across…") set the
+                        // row's smallest width, which pushed Close off the panel's edge.
+                        Text { text: Office.panel-title; font-size: 14px; font-weight: 600; letter-spacing: -0.14px; color: #f6f2ff; overflow: elide; }
+                        Text { text: Office.panel-sub; font-size: 11.5px; color: #f6f2ff61; overflow: elide; }
                     }
                     VerticalLayout { alignment: center; XButton { id: "pClose"; label: "Close"; icon: Icons.close; small: compact; clicked => { Office.panel-close(); } } }
                 }

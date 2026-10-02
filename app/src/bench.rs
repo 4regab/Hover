@@ -333,6 +333,16 @@ pub fn listen() {
                 // The shared GPU device's own allocator (Windows): what it has handed out
                 // and what it holds from the driver, and its blocks (bytes each).
                 "gpu" => println!("{}", gpu_line(parts.get(1).is_some_and(|x| x == "full"))),
+                // The notch window as its own renderer draws it (the GPU one, unlike
+                // --shots), into a PNG: a check of the pixels on a machine with no screen.
+                "snap" => {
+                    let file = parts.get(1).cloned().unwrap_or_else(|| "notch.png".into());
+                    let r = a.notch.window().take_snapshot().map_err(|e| e.to_string()).and_then(|b| {
+                        image::RgbaImage::from_raw(b.width(), b.height(), b.as_bytes().to_vec()).ok_or_else(|| "size".to_string())?
+                            .save(&file).map_err(|e| e.to_string())
+                    });
+                    println!("bench snap {}", r.err().unwrap_or_else(|| "ok".into()));
+                }
                 "quit" => { let _ = slint::quit_event_loop(); }
                 _ => println!("bench unknown"),
             });
