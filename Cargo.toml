@@ -4,6 +4,8 @@
 [workspace]
 resolver = "2"
 members = ["app", "crates/*", "tools/*"]
+# vendor/femtovg is a dependency through the patch below, not a member.
+exclude = ["vendor/femtovg"]
 
 [workspace.package]
 version = "3.1.1"
@@ -22,3 +24,9 @@ lto = "thin"
 codegen-units = 4
 panic = "abort"
 strip = "symbols"
+
+[patch.crates-io]
+# femtovg 0.27.0 (Slint's renderer on wgpu), with its shader's texture reads behind a
+# branch: on WARP (the software D3D12 of GPU-less VMs and RDP hosts) upstream's took every
+# core and 3.5 s to open the office. See vendor/femtovg/HOVER.md.
+femtovg = { path = "vendor/femtovg" }
