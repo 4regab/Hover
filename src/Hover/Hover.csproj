@@ -38,7 +38,27 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.12" />
+    <ProjectReference Include="../Hover.Shared/Hover.Shared.csproj" />
+    <Compile Remove="Core/Paths.cs" />
+    <Compile Remove="Core/Log.cs" />
+    <Compile Remove="Core/Quota.cs" />
+    <Compile Remove="Core/Layout.cs" />
+    <Compile Remove="Core/Palette.cs" />
+    <Compile Remove="Core/Crypto.cs" />
+    <Compile Remove="Core/Settings.cs" />
+    <Compile Remove="Services/Agents.cs" />
+    <Compile Remove="Services/KiroRunner.cs" />
+    <Compile Remove="Services/AcpHost.cs" />
+    <Compile Remove="Services/OpenCodeHost.cs" />
+    <Compile Remove="Services/ComputerUse.cs" />
+    <Compile Remove="Services/Sandbox.cs" />
+    <Compile Remove="Services/BrowserTool.cs" />
+    <Compile Remove="Services/GitHubCli.cs" />
+    <Compile Remove="Owl/KiroSession.cs" />
+    <Compile Remove="Owl/AgentHistory.cs" />
+    <Compile Remove="Owl/DeskInfo.cs" />
+    <Compile Remove="Core/Shortcut.cs" />
+
     <!-- The Kiro page's office is a web page (web/office) shown in WebView2. -->
     <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.4191.47" />
   </ItemGroup>

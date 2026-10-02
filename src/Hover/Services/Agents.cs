@@ -73,7 +73,7 @@ public static class Agents
     {
         AgentTool.Kiro => "Install kiro-cli from kiro.dev/cli.",
         AgentTool.Codex => "Install Codex and its ACP adapter: npm i -g @openai/codex @agentclientprotocol/codex-acp",
-        AgentTool.Cursor => "Install the Cursor CLI: irm 'https://cursor.com/install?win32=true' | iex",
+        AgentTool.Cursor => OperatingSystem.IsWindows() ? "Install the Cursor CLI: irm 'https://cursor.com/install?win32=true' | iex" : "Install the Cursor CLI from cursor.com/docs/cli.",
         AgentTool.OpenCode => $"Install OpenCode {OpenCodeMinVersion} or newer from opencode.ai.",
         _ => "",
     };
@@ -127,6 +127,9 @@ public static class Agents
     private static async Task<AgentReady> Look(AgentTool t)
     {
         if (Exe(t) is not { } exe) return new(false, false, InstallHint(t));
+        // The sandbox it runs in is part of what it needs installed (one-click setup
+        // installs it with the tool).
+        if (Sandbox.Missing() is { } sandbox) return new(false, false, sandbox);
         if (t == AgentTool.OpenCode)
         {
             // Having no sign-in doesn't mean it can't run: API keys in the environment

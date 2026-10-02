@@ -271,26 +271,16 @@ public sealed class KiroSession
         turn.EndedAt = _now();
         State = r.State;
         Core.Log.Line($"{Tool.ToString().ToLowerInvariant()} run {Id} turn {_turns.IndexOf(turn) + 1} {r.State.ToString().ToLowerInvariant()} after {Elapsed.TotalSeconds:0}s (exit {r.ExitCode?.ToString() ?? "-"})");
-        // A stop drops the replies that were waiting; otherwise the next one goes.
+        // The next reply waiting goes, after a stop too: stopping a run with replies
+        // queued behind it pauses this one and moves on to them (a second stop ends those).
         var next = _turns.FirstOrDefault(t => t.Queued);
-        if (next is not null && r.State == KiroState.Cancelled)
-        {
-            foreach (var q in _turns.Where(t => t.Queued).ToList())
-            {
-                q.Queued = false;
-                q.StartedAt = _now();
-                q.EndedAt = q.StartedAt;
-                q.Result = new KiroResult(KiroState.Cancelled, "Not sent: the run before it was stopped.");
-            }
-            next = null;
-        }
         Changed?.Invoke();
         Ended?.Invoke(r);
         if (next is not null) Begin(next);
     }
 
-    /// Stop the turn that runs. Kiro and whatever it started are killed, and replies
-    /// waiting behind it are not sent.
+    /// Stop the turn that runs. Kiro and whatever it started are killed; the next reply
+    /// waiting behind it, if any, starts.
     public void Stop()
     {
         if (!Busy) return;

@@ -198,7 +198,7 @@ public static class Quota
 
     public static async Task<QuotaReading> Cursor(CancellationToken ct)
     {
-        var db = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+        var db = Path.Combine(OperatingSystem.IsMacOS() ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Library", "Application Support") : Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
             "Cursor", "User", "globalStorage", "state.vscdb");
         if (!File.Exists(db)) return QuotaReading.Fail("Cursor isn’t installed, or hasn’t been signed in to.");
         string? token;
@@ -322,15 +322,15 @@ public static class Quota
     /// file; it asks api.anthropic.com/api/oauth/usage (undocumented, found by the
     /// community) with its own sign-in. Hover asks the same way, read-only: it never
     /// refreshes that sign-in, which would rotate Claude Code's tokens underneath it.
-    public static async Task<QuotaReading> Claude(DateTime now, CancellationToken ct)
+    public static async Task<QuotaReading> Claude(DateTime now, CancellationToken ct, string? nativeCredentials = null)
     {
         var home = Environment.GetEnvironmentVariable("CLAUDE_CONFIG_DIR");
         if (string.IsNullOrWhiteSpace(home))
             home = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".claude");
         var file = Path.Combine(home, ".credentials.json");
-        if (!File.Exists(file)) return QuotaReading.Fail("Sign in to Claude Code with a Claude plan (Pro or Max) first.");
+        if (nativeCredentials is null && !File.Exists(file)) return QuotaReading.Fail(OperatingSystem.IsMacOS() ? "Claude Code credentials are unavailable. Sign in and allow Hover to read the Claude Code Keychain entry." : "Sign in to Claude Code with a Claude plan (Pro or Max) first.");
         (string? Token, DateTime? Expires, string? Plan) sign;
-        try { sign = ClaudeSignIn(File.ReadAllText(file)); }
+        try { sign = ClaudeSignIn(nativeCredentials ?? File.ReadAllText(file)); }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return QuotaReading.Fail($"Couldn’t read Claude Code’s sign-in: {e.Message}"); }
         if (sign.Token is null) return QuotaReading.Fail("Sign in to Claude Code with a Claude plan (Pro or Max) first.");
         if (sign.Expires is { } exp && exp <= now.ToUniversalTime().AddSeconds(60))

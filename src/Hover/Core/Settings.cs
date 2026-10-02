@@ -1,9 +1,11 @@
 using System.IO;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+#if WINDOWS
 using System.Windows.Input;
 using System.Windows.Threading;
 using Microsoft.Win32;
+#endif
 
 namespace Hover.Core;
 
@@ -40,10 +42,17 @@ public static class Settings
         /// What each tool last offered (models, efforts, modes), for its settings page.
         public Dictionary<string, List<Services.AcpOption>>? AgentOffers { get; set; }
         public string? AgentTool { get; set; }
+        public bool ComputerUse { get; set; }
+        /// Null (never set) is on: agents start sandboxed unless switched off.
+        public bool? Sandbox { get; set; }
+        /// Null (never set) is on: agents get Hover's browser where the host has one.
+        public bool? AgentBrowser { get; set; }
 
         // Option-N on a Mac. Alt+N here also means "Insert" in Office and "File name"
         // in file dialogs; while Hover runs, it opens the notch instead.
+#if WINDOWS
         public Shortcut ScWorkspace { get; set; } = new(ModifierKeys.Alt, Key.N);
+#endif
     }
 
     private static readonly JsonSerializerOptions Json = new()
@@ -71,6 +80,7 @@ public static class Settings
         return new Model();
     }
 
+#if WINDOWS
     private static DispatcherTimer? _writeBack;
 
     /// Every setter calls this, several at a time — so the write itself waits for the value to settle. Flush() forces it
@@ -96,6 +106,17 @@ public static class Settings
             Log.Line($"settings save failed — {e.Message}");
         }
     }
+
+#else
+    // The helper serializes settings on its event loop; persist atomically.
+    public static void Save() => Flush();
+    public static void Flush()
+    {
+        var temp = Paths.SettingsFile + ".tmp";
+        File.WriteAllText(temp, JsonSerializer.Serialize(M, Json));
+        File.Move(temp, Paths.SettingsFile, overwrite: true);
+    }
+#endif
 
     /// Resting the pointer on the notch opens it. Off, it takes the
     /// shortcut or a click — the top edge is where maximised browsers keep their tabs.
@@ -150,7 +171,9 @@ public static class Settings
         NotchItems = set.ToList();
     }
 
+#if WINDOWS
     public static Shortcut ScWorkspace { get => M.ScWorkspace; set { M.ScWorkspace = value; Save(); } }
+#endif
 
     /// The project folder the Kiro page last ran in, as picked. It is kept even when
     /// it has gone missing; Services.KiroRunner.UsableFolder decides whether it can
@@ -166,6 +189,33 @@ public static class Settings
     {
         get => M.KiroNoticeSeen;
         set { M.KiroNoticeSeen = value; Save(); }
+    }
+
+    /// Agents get Cua Driver as an MCP server, so they can see and drive apps in the
+    /// background (Services.ComputerUse). Off until switched on; it reaches every tool
+    /// from its next session.
+    public static bool ComputerUse
+    {
+        get => M.ComputerUse;
+        set { M.ComputerUse = value; Save(); }
+    }
+
+    /// Agents run inside Anthropic's sandbox-runtime (Services.Sandbox): writes only
+    /// to their folders, no window server or Apple Events, the network to an allowlist.
+    /// On unless switched off; a tool picks it up when it next starts.
+    public static bool Sandbox
+    {
+        get => M.Sandbox ?? true;
+        set { M.Sandbox = value; Save(); }
+    }
+
+    /// Agents get Hover's built-in browser as an MCP server (Services.BrowserTool),
+    /// where the host has one. On unless switched off; a tool picks it up from its
+    /// next session.
+    public static bool AgentBrowser
+    {
+        get => M.AgentBrowser ?? true;
+        set { M.AgentBrowser = value; Save(); }
     }
 
     /// How an agent's runs are set up (Settings → Kiro, Codex, Cursor). Read when a
@@ -222,6 +272,7 @@ public static class Settings
         set { M.AgentTool = Services.Agents.Id(value); Save(); }
     }
 
+#if WINDOWS
     // MARK: Launch at login — HKCU Run, no elevation needed
 
     private const string RunKey = @"Software\Microsoft\Windows\CurrentVersion\Run";
@@ -258,4 +309,5 @@ public static class Settings
             }
         }
     }
+#endif
 }

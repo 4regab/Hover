@@ -320,10 +320,68 @@ public sealed class AcpHostTests
         public List<string> Methods() { lock (Got) return Got.Select(g => g.Method).ToList(); }
     }
 
-    private (AcpHost Host, Fake Fake) Make(AgentOptions? o = null, AgentTool tool = AgentTool.Kiro)
+    private (AcpHost Host, Fake Fake) Make(AgentOptions? o = null, AgentTool tool = AgentTool.Kiro, Func<IReadOnlyList<McpServer>>? mcp = null)
     {
         var fake = new Fake();
-        return (new AcpHost(tool, () => o ?? AgentOptions.Default, fake.Connect), fake);
+        return (new AcpHost(tool, () => o ?? AgentOptions.Default, fake.Connect, mcp ?? (() => Array.Empty<McpServer>())), fake);
+    }
+
+    private static readonly McpServer Cua = new(ComputerUse.ServerName, "/opt/cua/cua-driver", new[] { "mcp" });
+
+    [Test]
+    public async Task Computer_use_hands_each_new_session_cua_drivers_mcp_server_over_stdio()
+    {
+        var (host, fake) = Make(mcp: () => new[] { Cua });
+        var r = await host.Run(_dir, "Open the app and check the title", null, CancellationToken.None);
+        var servers = fake.Got.First(g => g.Method == "session/new").Params.GetProperty("mcpServers");
+        Assert.Multiple(() =>
+        {
+            Assert.That(r.State, Is.EqualTo(KiroState.Completed));
+            Assert.That(servers.GetArrayLength(), Is.EqualTo(1));
+            Assert.That(servers[0].GetProperty("name").GetString(), Is.EqualTo("cua-driver"));
+            Assert.That(servers[0].GetProperty("command").GetString(), Is.EqualTo("/opt/cua/cua-driver"));
+            Assert.That(servers[0].GetProperty("args").EnumerateArray().Select(a => a.GetString()), Is.EqualTo(new[] { "mcp" }));
+            // ACP requires env, even empty, as a list of name/value pairs.
+            Assert.That(servers[0].GetProperty("env").ValueKind, Is.EqualTo(JsonValueKind.Array));
+        });
+        host.Shutdown();
+    }
+
+    [Test]
+    public async Task Without_computer_use_a_session_gets_no_mcp_servers()
+    {
+        var (host, fake) = Make();
+        await host.Run(_dir, "Go", null, CancellationToken.None);
+        Assert.That(fake.Got.First(g => g.Method == "session/new").Params.GetProperty("mcpServers").GetArrayLength(), Is.Zero);
+        host.Shutdown();
+    }
+
+    [Test]
+    public async Task A_reply_after_computer_use_was_switched_on_loads_the_conversation_again_with_it()
+    {
+        IReadOnlyList<McpServer> now = Array.Empty<McpServer>();
+        var (host, fake) = Make(mcp: () => now);
+        await host.Run(_dir, "Go", null, CancellationToken.None);
+        // The same set: the live session carries on in the same process.
+        await host.Run(_dir, "More", null, CancellationToken.None, "s1");
+        Assert.That(fake.Starts, Is.EqualTo(1));
+
+        now = new[] { Cua };
+        var r = await host.Run(_dir, "Now click through it", null, CancellationToken.None, "s1");
+        var load = fake.Got.Last(g => g.Method == "session/load").Params;
+        Assert.Multiple(() =>
+        {
+            Assert.That(r.State, Is.EqualTo(KiroState.Completed));
+            Assert.That(fake.Starts, Is.EqualTo(2), "restarted, as nothing else ran");
+            Assert.That(load.GetProperty("sessionId").GetString(), Is.EqualTo("s1"));
+            Assert.That(load.GetProperty("mcpServers")[0].GetProperty("name").GetString(), Is.EqualTo("cua-driver"));
+            Assert.That(fake.Methods().Count(m => m == "session/new"), Is.EqualTo(1), "the same conversation, not a new one");
+        });
+
+        // And a reply with the set unchanged doesn't restart it again.
+        await host.Run(_dir, "Thanks", null, CancellationToken.None, "s1");
+        Assert.That(fake.Starts, Is.EqualTo(2));
+        host.Shutdown();
     }
 
     [Test]
@@ -781,9 +839,43 @@ public sealed class KiroSessionTests
         s.Reply("third");
         s.Stop();
         runs[1].Done.SetResult(new KiroResult(KiroState.Failed, "killed", -1));
+        // A stop with a reply waiting pauses this turn and sends the next one.
+        await WaitFor(() => runs.Count == 3);
+        Assert.Multiple(() =>
+        {
+            Assert.That(s.Turns[1].Result!.State, Is.EqualTo(KiroState.Cancelled), "the stopped turn ends as stopped");
+            Assert.That(runs[2].Prompt, Is.EqualTo("third"), "the waiting reply goes next");
+            Assert.That(s.Busy && !s.Turns.Last().Queued, Is.True);
+        });
+        // A second stop, with nothing waiting, ends it.
+        s.Stop();
+        runs[2].Done.SetResult(new KiroResult(KiroState.Failed, "killed", -1));
         await WaitFor(() => !s.Busy);
-        Assert.That(s.Turns.Last().Result!.State, Is.EqualTo(KiroState.Cancelled), "a stop drops the waiting reply");
-        Assert.That(runs, Has.Count.EqualTo(2));
+        Assert.That(s.Turns.Last().Result!.State, Is.EqualTo(KiroState.Cancelled));
+        Assert.That(runs, Has.Count.EqualTo(3));
+    }
+
+    [Test]
+    public void ThoughtsBecomeOneStepPerStretchOfThinking()
+    {
+        var k = new KiroStream();
+        string Chunk(string kind, string text) => "{\"jsonrpc\":\"2.0\",\"method\":\"session/update\",\"params\":{\"sessionId\":\"s\",\"update\":{\"sessionUpdate\":\"" + kind + "\",\"content\":{\"type\":\"text\",\"text\":\"" + text + "\"}}}}";
+        k.Feed(Chunk("agent_thought_chunk", "Look at the tests "));
+        k.Feed(Chunk("agent_thought_chunk", "first."));
+        k.Feed(Chunk("agent_message_chunk", "Done."));
+        k.Feed(Chunk("agent_thought_chunk", "Second idea."));
+        var steps = k.Drain().Where(e => e.Step is not null).Select(e => e.Step!).ToList();
+        var last = steps.GroupBy(x => x.Id).Select(g => g.Last()).ToList();
+        Assert.Multiple(() =>
+        {
+            Assert.That(last, Has.Count.EqualTo(2), "one step per stretch between messages and tool calls");
+            Assert.That(last[0].Kind, Is.EqualTo("thought"));
+            Assert.That(last[0].Output, Is.EqualTo("Look at the tests first."));
+            Assert.That(last[0].Status, Is.EqualTo("completed"), "the answer ends the thought");
+            Assert.That(last[1].Output, Is.EqualTo("Second idea."));
+            Assert.That(last[1].Status, Is.EqualTo("in_progress"));
+            Assert.That(k.Said, Is.EqualTo("Done."), "a thought is never part of the answer");
+        });
     }
 
     internal static async Task WaitFor(Func<bool> done)

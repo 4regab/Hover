@@ -30,6 +30,7 @@ public sealed class AgentHistory
     private readonly object _lock = new();
     private List<HistoryEntry>? _index;
     private Task _writes = Task.CompletedTask;
+    private readonly HashSet<string> _deleted = new();
 
     public AgentHistory(string dir) => _dir = dir;
 
@@ -65,6 +66,9 @@ public sealed class AgentHistory
         string index;
         lock (_lock)
         {
+            // A turn's last save can come just after its session was deleted; it
+            // mustn't bring it back. Keys are never reused.
+            if (_deleted.Contains(s.Key)) return;
             var list = Index();
             list.RemoveAll(e => e.Key == s.Key);
             list.Add(entry);
@@ -90,6 +94,7 @@ public sealed class AgentHistory
         string index;
         lock (_lock)
         {
+            _deleted.Add(key);
             if (Index().RemoveAll(e => e.Key == key) == 0 && !File.Exists(FileOf(key))) return;
             index = JsonSerializer.Serialize(Index(), Json);
         }

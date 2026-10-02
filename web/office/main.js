@@ -4,6 +4,7 @@
 // each bot is a handful of boxes. Built by build.mjs into one kiro-page.html.
 import * as THREE from 'three';
 import { markdown } from './md.js';
+import * as D from './desk.js';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 
 const $ = s => document.querySelector(s), TAU = Math.PI * 2;
@@ -16,10 +17,13 @@ const angTo = (a, b, k, dt) => { const d = ((b - a + Math.PI) % TAU + TAU) % TAU
 
 // ── Renderer and camera ─────────────────────────────────────────────────
 const view = $('#office'), canvas = $('#gl');
-// Pixel art needs no smoothing: one pixel per CSS pixel and no antialiasing look the
-// same and keep the frame buffers a quarter of the size.
-const renderer = new THREE.WebGLRenderer({ canvas, antialias: false, alpha: true, powerPreference: 'low-power' });
-renderer.setPixelRatio(1);
+// On Windows, one pixel per CSS pixel and no antialiasing: they look the same there
+// and keep the frame buffers a quarter of the size. The Mac host (window.hoverHost)
+// is on Retina displays, where a 1x canvas is visibly soft, so it draws at the
+// display's density (up to 2x) with antialiasing; an M-series GPU doesn't notice.
+const RETINA = !!window.hoverHost;
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: RETINA, alpha: true, powerPreference: RETINA ? 'high-performance' : 'low-power' });
+renderer.setPixelRatio(RETINA ? Math.min(2, window.devicePixelRatio || 1) : 1);
 renderer.setClearColor(0, 0);
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.shadowMap.enabled = true;
@@ -33,7 +37,12 @@ const ISO = new THREE.Vector3(1, 0.86, 1).normalize().multiplyScalar(40);
 const RIGHT = new THREE.Vector3(1, 0, -1).normalize();
 const cam = { x: 0, y: 1.7, z: 0, zoom: 1 }, camTo = { ...cam };
 let aspect = 1, W = 1, H = 1;
-function resize() { W = view.clientWidth; H = view.clientHeight; renderer.setSize(W, H, false); aspect = W / H; }
+function resize() {
+  W = view.clientWidth; H = view.clientHeight;
+  // Moving between a Retina and a 1x display changes the density.
+  if (RETINA) renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
+  renderer.setSize(W, H, false); aspect = W / H;
+}
 function halfWidth(zoom) { return Math.max(6.2 * aspect, 9.2) / zoom; }
 function placeCamera() {
   const t = new THREE.Vector3(cam.x, cam.y, cam.z);
@@ -63,6 +72,14 @@ function glow(color, size, opacity = 1) {
   const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTex, color, opacity, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending }));
   s.scale.setScalar(size); return s;
 }
+// Light thrown on a wall: a soft patch lying on the wall itself. A camera-facing sprite
+// there cut into the wall along a hard line (half of it was behind the wall), which
+// slid about as the view moved.
+function wallGlow(color, w, h, opacity = 1) {
+  const m = new THREE.Mesh(new THREE.PlaneGeometry(w, h), new THREE.MeshBasicMaterial({ map: glowTex, color, opacity, transparent: true, depthWrite: false,
+    blending: THREE.AdditiveBlending, toneMapped: false, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 }));
+  m.renderOrder = 1; return m;
+}
 function pixelCanvas(w, h) {
   const c = document.createElement('canvas'); c.width = w; c.height = h;
   const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.magFilter = THREE.NearestFilter; t.minFilter = THREE.LinearFilter; t.generateMipmaps = false;
@@ -79,26 +96,26 @@ const RW = 14, RD = 11, WH = 4, X0 = -7, Z0 = -5.5;
 const walls = new Vox(), room = new Vox();
 room.box(X0 - 0.3, -0.7, Z0 - 0.3, RW + 0.3, 0.6, RD + 0.3, 0x1c1215, 0);
 for (let i = 0; i < RW; i++) for (let k = 0; k < RD; k++) room.box(X0 + i, -0.1, Z0 + k, 1, 0.1, 1, (i + k) % 2 ? 0x5a3c34 : 0x48302b, 0.05);
-room.box(X0 - 0.3, -0.7, Z0 - 0.3 + RD + 0.3 - 0.02, RW + 0.3, 0.6, 0.02, 0x140c0f, 0);
+room.box(X0 - 0.3, -0.7, Z0 + RD - 0.02, RW + 0.3, 0.6, 0.024, 0x140c0f, 0);
 // Walls: planks above a darker wainscot, a rail, a cap and a baseboard.
 for (let x = 0; x < RW; x += 0.5) walls.box(X0 + x, -0.7, Z0 - 0.3, 0.5, WH + 0.7, 0.3, (x * 2) % 2 ? 0x6e4643 : 0x684240, 0.03);
 for (let z = 0; z < RD; z += 0.5) walls.box(X0 - 0.3, -0.7, Z0 + z, 0.3, WH + 0.7, 0.5, (z * 2) % 2 ? 0x633e3c : 0x5e3a38, 0.03);
 walls.box(X0 - 0.3, -0.7, Z0 - 0.3, 0.3, WH + 0.7, 0.3, 0x5e3a38, 0);
-walls.box(X0, 0, Z0, RW, 1.15, 0.035, 0x4b2f2c, 0.02).box(X0, 0, Z0, 0.035, 1.15, RD, 0x462b29, 0.02);
-walls.box(X0, 1.15, Z0, RW, 0.07, 0.06, 0x80564d, 0).box(X0, 1.15, Z0, 0.06, 0.07, RD, 0x7a524a, 0);
-walls.box(X0, 0, Z0, RW, 0.16, 0.07, 0x33201d, 0).box(X0, 0, Z0, 0.07, 0.16, RD, 0x301e1b, 0);
-walls.box(X0 - 0.3, WH, Z0 - 0.3, RW + 0.3, 0.1, 0.3, 0x8d5f57, 0).box(X0 - 0.3, WH, Z0 - 0.3, 0.3, 0.1, RD + 0.3, 0x86594f, 0);
-walls.box(X0 - 0.3, -0.7, Z0 + RD - 0.02, 0.3, WH + 0.8, 0.02, 0x3a2422, 0).box(X0 + RW - 0.02, -0.7, Z0 - 0.3, 0.02, WH + 0.8, 0.3, 0x3a2422, 0);
+walls.box(X0, 0, Z0, RW, 1.15, 0.035, 0x4b2f2c, 0.02).box(X0, 0, Z0 + 0.035, 0.035, 1.15, RD - 0.035, 0x462b29, 0.02);
+walls.box(X0, 1.15, Z0, RW, 0.07, 0.06, 0x80564d, 0).box(X0, 1.15, Z0 + 0.06, 0.06, 0.07, RD - 0.06, 0x7a524a, 0);
+walls.box(X0, 0, Z0, RW, 0.16, 0.07, 0x33201d, 0).box(X0, 0, Z0 + 0.07, 0.07, 0.16, RD - 0.07, 0x301e1b, 0);
+walls.box(X0 - 0.3, WH, Z0 - 0.3, RW + 0.3, 0.1, 0.3, 0x8d5f57, 0).box(X0 - 0.3, WH, Z0, 0.3, 0.1, RD, 0x86594f, 0);
+walls.box(X0 - 0.303, -0.7, Z0 + RD - 0.02, 0.306, WH + 0.804, 0.024, 0x3a2422, 0).box(X0 + RW - 0.02, -0.7, Z0 - 0.303, 0.024, WH + 0.804, 0.306, 0x3a2422, 0);
 
 // Door on the back wall; the bots come in and leave through it. The panel swings.
 const DOOR = { x: -5.65, z: Z0 + 0.35 };
-walls.box(-6.3, 0, Z0, 1.3, 2.42, 0.08, 0x2c1b17, 0).box(-6.2, 0, Z0 + 0.01, 1.1, 2.3, 0.08, 0x0b0708, 0);
+walls.box(-6.3, 0, Z0, 1.3, 2.42, 0.08, 0x2c1b17, 0).box(-6.2, 0, Z0 + 0.01, 1.1, 2.3, 0.075, 0x0b0708, 0);
 const doorV = new Vox();
-doorV.box(0, 0, 0, 1.1, 2.3, 0.07, 0x5c3b2b, 0.02).box(0.14, 1.28, 0.07, 0.82, 0.82, 0.02, 0x6b4633, 0).box(0.14, 0.24, 0.07, 0.82, 0.86, 0.02, 0x6b4633, 0).box(0.9, 1.05, 0.07, 0.08, 0.08, 0.06, 0xe0ab4c, 0);
-const door = pivot(scene, -6.2, 0, Z0 + 0.02); door.add(doorV.mesh());
+doorV.box(0, 0, 0, 1.1, 2.27, 0.07, 0x5c3b2b, 0.02).box(0.14, 1.28, 0.07, 0.82, 0.82, 0.02, 0x6b4633, 0).box(0.14, 0.24, 0.07, 0.82, 0.86, 0.02, 0x6b4633, 0).box(0.9, 1.05, 0.07, 0.08, 0.08, 0.06, 0xe0ab4c, 0);
+const door = pivot(scene, -6.2, 0.03, Z0 + 0.095); door.add(doorV.mesh(false));
 room.box(-6.35, 0, Z0 + 0.12, 1.4, 0.02, 0.75, 0x6f3b2a, 0.02).box(-6.2, 0.02, Z0 + 0.22, 1.1, 0.005, 0.55, 0x8a4c34, 0);
 const exitLamp = box(scene, 0.34, 0.12, 0.08, DOOR.x, 2.62, Z0 + 0.05, new THREE.MeshBasicMaterial({ color: 0xffb35c, toneMapped: false }), false);
-const exitGlow = glow(0xffa24a, 1.4, 0.55); exitGlow.position.set(DOOR.x, 2.62, Z0 + 0.2); scene.add(exitGlow);
+const exitGlow = wallGlow(0xffa24a, 1.5, 1.1, 0.55); exitGlow.position.set(DOOR.x, 2.64, Z0 + 0.004); scene.add(exitGlow);
 
 // Window with curtains; the sky behind it is a small pixel canvas.
 walls.box(0.1, 3.25, Z0, 2.8, 0.12, 0.12, 0x3a2620, 0).box(-0.05, 1.22, Z0, 3.1, 0.12, 0.26, 0x4a3026, 0)
@@ -113,7 +130,7 @@ const skyPane = screen(sky.t, 2.56, 1.9); skyPane.position.set(1.5, 2.3, Z0 + 0.
 walls.box(4.1, 1.62, Z0, 2.6, 1.52, 0.1, 0x0c0b10, 0);
 const tv = pixelCanvas(208, 118);
 const tvPane = screen(tv.t, 2.44, 1.38); tvPane.position.set(5.4, 2.38, Z0 + 0.105); scene.add(tvPane);
-const tvGlow = glow(0x5aa8ff, 3.6, 0.22); tvGlow.position.set(5.4, 2.3, Z0 + 0.6); scene.add(tvGlow);
+const tvGlow = wallGlow(0x5aa8ff, 3.9, 2.6, 0.32); tvGlow.position.set(5.4, 2.38, Z0 + 0.004); scene.add(tvGlow);
 room.box(4.3, 0, Z0 + 0.02, 2.2, 0.55, 0.5, 0x4c3028).box(4.25, 0.55, Z0 + 0.02, 2.3, 0.05, 0.54, 0x5e3c30, 0)
   .box(4.45, 0.12, Z0 + 0.52, 0.9, 0.34, 0.01, 0x3c261f, 0).box(5.45, 0.12, Z0 + 0.52, 0.9, 0.34, 0.01, 0x3c261f, 0)
   .box(4.45, 0.6, Z0 + 0.12, 0.26, 0.42, 0.26, 0x22212a).box(6.1, 0.6, Z0 + 0.1, 0.24, 0.1, 0.3, 0xc8a24a).box(6.12, 0.7, Z0 + 0.1, 0.2, 0.08, 0.3, 0x5a7aa0);
@@ -129,7 +146,7 @@ const coffeeLed = glow(0x7ee0ff, 0.35, 0.9); coffeeLed.position.set(-4.24, 1.29,
 const steam = [0, 1, 2].map(i => { const s = glow(0xffffff, 0.2, 0.25); scene.add(s); return s; });
 
 // Left wall: bookcase, the session board, the clock, a painting over the sofa.
-room.box(X0, 0, -4.3, 0.46, 2.42, 0.06, 0x4a2e24).box(X0, 0, -2.76, 0.46, 2.42, 0.06, 0x4a2e24).box(X0, 0, -4.3, 0.05, 2.42, 1.6, 0x3a241c, 0);
+room.box(X0, 0, -4.3, 0.46, 2.44, 0.06, 0x4a2e24).box(X0, 0, -2.76, 0.46, 2.44, 0.06, 0x4a2e24).box(X0, 0, -4.3, 0.05, 2.42, 1.6, 0x3a241c, 0);
 const BOOKS = [0x8a3b2e, 0xc9a24a, 0x4a6b4a, 0x7b5aa6, 0xd07a3a, 0x3a5a8a, 0xb8b0a0, 0x9a4a5a];
 for (const y of [0, 0.6, 1.2, 1.8, 2.36]) {
   room.box(X0, y, -4.26, 0.46, 0.06, 1.52, 0x55352a, 0.02);
@@ -137,16 +154,20 @@ for (const y of [0, 0.6, 1.2, 1.8, 2.36]) {
   for (let z = -4.2; z < -2.9;) { const w = 0.06 + R() * 0.07, h = 0.26 + R() * 0.2; if (z + w > -2.82) break; room.box(X0 + 0.06, y + 0.06, z, 0.32 + R() * 0.06, Math.min(h, 0.5), w, BOOKS[R() * BOOKS.length | 0], 0.06); z += w + (R() < 0.12 ? 0.08 : 0.006); }
 }
 walls.box(X0, 1.46, -2.2, 0.07, 1.74, 3, 0x3a2620, 0);
-const board = pixelCanvas(480, 280);
+// The board carries words: on Retina it gets four canvas pixels per grid unit and
+// smooth magnification, so its notes read as sharp as the page around it.
+const BOARD_K = RETINA ? 4 : 2;
+const board = pixelCanvas(240 * BOARD_K, 140 * BOARD_K);
+if (RETINA) { board.t.magFilter = THREE.LinearFilter; board.t.anisotropy = 4; }
 const boardPane = screen(board.t, 2.84, 1.6); boardPane.rotation.y = Math.PI / 2; boardPane.position.set(X0 + 0.075, 2.33, -0.7); scene.add(boardPane);
 walls.box(X0, 2.42, 1.22, 0.09, 0.6, 1.16, 0x0f0d12, 0);
 const clock = pixelCanvas(96, 44);
 const clockPane = screen(clock.t, 1.04, 0.48); clockPane.rotation.y = Math.PI / 2; clockPane.position.set(X0 + 0.095, 2.72, 1.8); scene.add(clockPane);
-const clockGlow = glow(0xff7a2a, 1.6, 0.35); clockGlow.position.set(X0 + 0.3, 2.72, 1.8); scene.add(clockGlow);
+const clockGlow = wallGlow(0xff7a2a, 1.9, 1.15, 0.35); clockGlow.rotation.y = Math.PI / 2; clockGlow.position.set(X0 + 0.004, 2.72, 1.8); scene.add(clockGlow);
 walls.box(X0, 1.6, 3.55, 0.06, 1.02, 1.42, 0x2e1c18, 0).box(X0 + 0.06, 1.68, 3.63, 0.01, 0.86, 1.26, 0x41628f, 0)
   .box(X0 + 0.07, 1.68, 3.63, 0.01, 0.3, 1.26, 0x3f6a44, 0).box(X0 + 0.075, 1.9, 3.75, 0.01, 0.3, 0.5, 0x5a7a5a, 0)
-  .box(X0 + 0.075, 1.95, 4.2, 0.01, 0.42, 0.55, 0x6a8a6a, 0).box(X0 + 0.08, 2.24, 4.45, 0.01, 0.13, 0.13, 0xffd070, 0)
-  .box(X0 + 0.075, 2.28, 4.3, 0.01, 0.09, 0.3, 0xe8f0ff, 0);
+  .box(X0 + 0.078, 1.95, 4.2, 0.01, 0.42, 0.55, 0x6a8a6a, 0).box(X0 + 0.08, 2.24, 4.45, 0.01, 0.13, 0.13, 0xffd070, 0)
+  .box(X0 + 0.085, 2.28, 4.3, 0.01, 0.09, 0.3, 0xe8f0ff, 0);
 
 // Lounge: sofa, coffee table, rug and a floor lamp.
 room.box(-6.8, 0, 2.95, 2.8, 0.02, 2.5, 0x6f4430, 0.02).box(-6.5, 0.02, 3.25, 2.2, 0.01, 1.9, 0x8a5a3c, 0.02);
@@ -198,7 +219,7 @@ for (const d of DESKS) {
   const g = glow(0x7fb8ff, 1.3, 0); g.position.set(x - 0.22, 1.02, z); scene.add(g); deskGlows.push(g);
 }
 
-scene.add(walls.mesh(false), room.mesh(true));
+const roomMesh = room.mesh(true); scene.add(walls.mesh(false), roomMesh);
 
 // A little robot vacuum doing laps at the front.
 const vac = new THREE.Group(); scene.add(vac);
@@ -216,8 +237,8 @@ function quad(pts, tex) {
   g.setAttribute('uv', new THREE.Float32BufferAttribute([0, 1, 1, 1, 1, 0, 0, 0], 2)); g.setIndex([0, 3, 1, 1, 3, 2]);
   return new THREE.Mesh(g, new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide, toneMapped: false }));
 }
-const patch = quad([[0.3, 0.02, Z0 + 1.2], [2.9, 0.02, Z0 + 1.2], [3.9, 0.02, Z0 + 3.7], [1.3, 0.02, Z0 + 3.7]], patchTex);
-const beam = quad([[0.2, 3.25, Z0 + 0.02], [2.8, 3.25, Z0 + 0.02], [3.9, 0.02, Z0 + 3.7], [1.3, 0.02, Z0 + 3.7]], beamTex);
+const patch = quad([[0.3, 0.03, Z0 + 1.2], [2.9, 0.03, Z0 + 1.2], [3.9, 0.03, Z0 + 3.7], [1.3, 0.03, Z0 + 3.7]], patchTex);
+const beam = quad([[0.2, 3.25, Z0 + 0.02], [2.8, 3.25, Z0 + 0.02], [3.9, 0.03, Z0 + 3.7], [1.3, 0.03, Z0 + 3.7]], beamTex);
 scene.add(patch, beam);
 const dust = (() => { const r = rng(4), n = 46, p = new Float32Array(n * 3); for (let i = 0; i < n; i++) { const f = r(); p[i * 3] = 0.4 + r() * 2.4 + f * 1.1; p[i * 3 + 1] = 3.1 * (1 - f) + r() * 0.3; p[i * 3 + 2] = Z0 + 0.3 + f * 3.2; }
   const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.BufferAttribute(p, 3));
@@ -226,7 +247,7 @@ const dust = (() => { const r = rng(4), n = 46, p = new Float32Array(n * 3); for
 // ── Lights and time of day ──────────────────────────────────────────────
 const hemi = new THREE.HemisphereLight(); scene.add(hemi);
 const sun = new THREE.DirectionalLight(); sun.position.set(-1.5, 10, -12); sun.target.position.set(1.5, 0, 1.5); scene.add(sun, sun.target);
-sun.castShadow = true; sun.shadow.mapSize.set(1536, 1536); Object.assign(sun.shadow.camera, { left: -12, right: 12, top: 12, bottom: -12, near: 1, far: 40 });
+sun.castShadow = true; sun.shadow.mapSize.set(RETINA ? 3072 : 1536, RETINA ? 3072 : 1536); Object.assign(sun.shadow.camera, { left: -12, right: 12, top: 12, bottom: -12, near: 1, far: 40 });
 sun.shadow.bias = -0.0004; sun.shadow.normalBias = 0.03;
 const fill = new THREE.DirectionalLight(); fill.position.set(8, 6, 10); scene.add(fill);
 const floorLamp = new THREE.PointLight(0xffa860, 0, 5, 1.5); floorLamp.position.set(-6.5, 1.6, 2.8); scene.add(floorLamp);
@@ -378,10 +399,153 @@ class Bot {
     const on = !blinkBulb || Math.sin(t * 9) > -0.2;
     this.bulbMat.color.set(bulb).multiplyScalar(on ? 1 : 0.35);
     this.halo.material.color.set(bulb); this.halo.material.opacity = on ? halo : 0.05;
-    this.ring.position.y = 0.02 - this.root.position.y;
+    this.ring.position.y = 0.035 - this.root.position.y;
     this.ring.material.opacity = ease(this.ring.material.opacity, this.hot ? 0.95 : 0, 12, dt); this.ring.visible = this.ring.material.opacity > 0.02;
   }
   dispose() { scene.remove(this.root); this.mats.forEach(m => m.dispose()); hits.splice(hits.indexOf(this.hit), 1); }
+}
+
+// ── Helpers: a session's subagents ──────────────────────────────────────
+// While a session has subagents out, each is a small bot around its desk doing
+// paperwork: writing on a clipboard, stamping it, turning the page and handing a sheet
+// in to the desk's tray. They hop out of the session's bot and back into it when done.
+// Each is the session bot's colour turned round the hue wheel, with its own eye colour
+// and a cap, so they read as its team and not as sessions of their own (they can't be
+// clicked; the desk and the bot still can).
+const MINI = 0.46, MINI_HUE = [0.5, 0.17, -0.17, 0.33], MINI_EYE = [0xffe08a, 0xaaf6ff, 0xc8ffb0, 0xffc8ea];
+// Where they stand, from the desk's centre: on the camera's sides of it, clear of the
+// chair and of the walk between the rows.
+const MINI_SPOTS = [[0.72, -0.36], [0.72, 0.42], [0.06, 1.08], [-0.62, 1.02]];
+const PAPER = new THREE.MeshStandardMaterial({ color: 0xf4efe4, roughness: 0.9 });
+const CLIPBOARD = new THREE.MeshStandardMaterial({ color: 0x8a5a34, roughness: 0.8 });
+const CLIP = new THREE.MeshStandardMaterial({ color: 0x9aa0aa, roughness: 0.35, metalness: 0.6 });
+const PENCIL = new THREE.MeshStandardMaterial({ color: 0xf2c14a, roughness: 0.6 });
+const INK = new THREE.MeshBasicMaterial({ color: 0xd8443a });
+// What a helper does, in turn, and for how long (s). Each starts at a different point.
+const DUTIES = [['write', 2.6], ['stamp', 1.6], ['write', 2.2], ['flip', 0.9], ['write', 1.8], ['file', 1.5]];
+const smooth = f => f * f * (3 - 2 * f);
+const minis = [], sheets = [];
+
+class Mini {
+  constructor(s, slot) {
+    this.s = s; this.slot = slot; this.t = R() * 10; this.out = 0; this.leaving = false; this.gone = false;
+    this.duty = slot * 2 % DUTIES.length; this.dutyT = 0; this.tossed = false;
+    this.P = { lean: 0, hx: 0, hy: 0, aL: 0, aR: 0, sL: 0, sR: 0, leg: 0 };
+    const hsl = {}; new THREE.Color(s.b.color).getHSL(hsl);
+    const color = new THREE.Color().setHSL((hsl.h + MINI_HUE[slot] + 1) % 1, Math.min(1, hsl.s * 0.9), Math.min(0.7, hsl.l + 0.06));
+    const main = new THREE.MeshStandardMaterial({ color, roughness: 0.5 });
+    const dark = new THREE.MeshStandardMaterial({ color: color.clone().multiplyScalar(0.5), roughness: 0.6 });
+    const pale = new THREE.MeshStandardMaterial({ color: color.clone().lerp(new THREE.Color(0xffffff), 0.45), roughness: 0.45 });
+    this.eyeMat = new THREE.MeshBasicMaterial({ color: MINI_EYE[slot], toneMapped: false });
+    this.mats = [main, dark, pale, this.eyeMat];
+    this.root = new THREE.Group(); this.root.scale.setScalar(0.001); scene.add(this.root);
+    const hips = pivot(this.root, 0, 0.24, 0);
+    this.legs = [-1, 1].map(k => { const p = pivot(hips, k * 0.1, 0, 0); box(p, 0.13, 0.2, 0.15, 0, -0.1, 0, dark); box(p, 0.15, 0.06, 0.21, 0, -0.21, 0.03, pale); return p; });
+    this.upper = pivot(hips, 0, 0, 0);
+    box(this.upper, 0.42, 0.3, 0.3, 0, 0.15, 0, dark); box(this.upper, 0.22, 0.13, 0.02, 0, 0.17, 0.155, pale);
+    this.head = pivot(this.upper, 0, 0.3, 0);
+    box(this.head, 0.58, 0.44, 0.48, 0, 0.22, 0, main);
+    box(this.head, 0.46, 0.28, 0.02, 0, 0.21, 0.245, VISOR, false);
+    [-1, 1].forEach(k => { box(this.head, 0.07, 0.2, 0.22, k * 0.315, 0.22, 0, dark); box(this.head, 0.075, 0.11, 0.01, k * 0.1, 0.21, 0.258, this.eyeMat, false); });
+    // The cap and its brim.
+    box(this.head, 0.62, 0.07, 0.52, 0, 0.47, 0, pale); box(this.head, 0.46, 0.03, 0.16, 0, 0.455, 0.32, pale);
+    box(this.head, 0.03, 0.12, 0.03, -0.14, 0.56, -0.08, dark); box(this.head, 0.08, 0.08, 0.08, -0.14, 0.65, -0.08, this.eyeMat, false);
+    this.arms = [-1, 1].map(k => { const p = pivot(this.upper, k * 0.27, 0.27, 0); box(p, 0.1, 0.22, 0.12, 0, -0.1, 0, main); box(p, 0.11, 0.07, 0.13, 0, -0.23, 0, pale); return p; });
+    this.pencil = box(this.arms[1], 0.035, 0.035, 0.18, 0, -0.26, 0.07, PENCIL);
+    this.stamp = pivot(this.arms[1], 0, -0.29, 0.02);
+    box(this.stamp, 0.05, 0.1, 0.05, 0, 0, 0, dark); box(this.stamp, 0.12, 0.04, 0.12, 0, -0.06, 0, INK);
+    // The clipboard is held against the chest, tilted up towards the face. Its top
+    // sheet takes the stamp's mark and turns over the clip, leaving a clean one.
+    this.board = pivot(this.upper, 0, 0.13, 0.27); this.board.rotation.x = -0.55;
+    box(this.board, 0.34, 0.02, 0.42, 0, 0, 0, CLIPBOARD);
+    box(this.board, 0.3, 0.012, 0.36, 0, 0.016, -0.01, PAPER);
+    box(this.board, 0.13, 0.035, 0.05, 0, 0.026, 0.19, CLIP);
+    this.page = pivot(this.board, 0, 0.025, 0.17);
+    box(this.page, 0.3, 0.006, 0.36, 0, 0, -0.18, PAPER);
+    this.mark = box(this.page, 0.09, 0.004, 0.07, 0.05, 0.005, -0.24, INK, false); this.mark.visible = false;
+    this.yaw = 0;
+  }
+  // Where it stands, and where it hops from and back to: just in front of the bot.
+  spot() { const d = DESKS[this.s.desk], [ox, oz] = MINI_SPOTS[this.slot]; return [d.x + ox, d.z + oz, d]; }
+  step(dt) {
+    this.t += dt; const t = this.t, P = this.P, b = this.s.b;
+    this.out = still ? (this.leaving ? 0 : 1) : Math.max(0, Math.min(1, this.out + dt / 0.6 * (this.leaving ? -1 : 1)));
+    if (this.leaving && this.out <= 0) { this.gone = true; return; }
+    const [px, pz, d] = this.spot(), bx = b.x + 0.32, bz = b.z, f = smooth(this.out), hop = this.out < 1;
+    this.root.position.set(bx + (px - bx) * f, Math.sin(Math.PI * this.out) * 0.42, bz + (pz - bz) * f);
+    this.root.scale.setScalar(MINI * Math.max(0.001, Math.min(1, this.out * 1.8)));
+    const desk = Math.atan2(d.x - px, Math.max(d.z - 0.6, Math.min(d.z + 0.6, pz)) - pz);
+    // At work it turns three-quarters to the room (the camera looks from +x, +z), so
+    // its clipboard, pencil and stamp show rather than its back.
+    const work = Math.PI / 4 + (this.slot % 2 ? 0.55 : -0.55);
+    const face = !hop ? work : this.leaving ? Math.atan2(bx - px, bz - pz) : Math.atan2(px - bx, pz - bz);
+    this.yaw = this.out < 0.05 && !this.leaving ? face : angTo(this.yaw, face, 10, dt);
+
+    let lean = 0, hx = 0.28, hy = 0, aL = -1.0, aR = -1.15, sL = 0.35, sR = -0.3, leg = 0, name = 'write';
+    if (hop) { aL = aR = -2.7; sL = -0.3; sR = 0.3; hx = -0.15; leg = -0.6 * Math.sin(Math.PI * this.out); }
+    else {
+      this.dutyT += dt;
+      let [n, len] = DUTIES[this.duty];
+      if (this.dutyT >= len) {
+        // A new page after the turn, and a fresh hand-in after a file.
+        if (n === 'flip') { this.page.rotation.x = 0; this.mark.visible = false; }
+        this.duty = (this.duty + 1) % DUTIES.length; this.dutyT = 0; this.tossed = false; [n, len] = DUTIES[this.duty];
+      }
+      name = n; const u = this.dutyT, w = still ? 0 : 1;
+      if (n === 'write') { aR = -1.15 + Math.sin(t * 16) * 0.07 * w; sR = -0.32 + Math.sin(t * 6.5) * 0.09 * w; hy = Math.sin(t * 0.8) * 0.08 * w; }
+      else if (n === 'stamp') {
+        // Up, down hard, a beat on the paper; twice.
+        const c = (u / 0.8) % 1;
+        aR = c < 0.55 ? -1.1 - smooth(c / 0.55) * 1.1 : c < 0.68 ? -2.2 + (c - 0.55) / 0.13 * 1.15 : -1.05;
+        sR = -0.34; lean = c >= 0.68 && c < 0.8 ? 0.06 : 0; hx = 0.34;
+        if (c >= 0.68) this.mark.visible = true;
+      }
+      else if (n === 'flip') { aR = -1.7; sR = -0.4; hx = 0.18; this.page.rotation.x = smooth(Math.min(1, u / (len * 0.75))) * Math.PI; }
+      else if (n === 'file') {
+        // Lifts the board, sends the top sheet to the desk's tray, and bows a little.
+        aL = -1.45; aR = -1.6; hx = 0.05; lean = u > 0.5 && u < 1.1 ? -0.08 : 0;
+        if (!this.tossed && u > 0.35) { this.tossed = true; if (!still) toss(this.board.getWorldPosition(new THREE.Vector3()), new THREE.Vector3(d.x + 0.03, 0.77, d.z + 0.47)); }
+      }
+      leg = Math.max(0, Math.sin(t * 2.2 + this.slot)) * 0.12 * w;
+    }
+    const k = still ? 30 : 14;
+    for (const [n, v] of Object.entries({ lean, hx, hy, aL, aR, sL, sR, leg })) P[n] = ease(P[n], v, k, dt);
+    this.root.rotation.y = this.yaw;
+    this.root.position.y += !hop && !still ? Math.sin(t * 3 + this.slot) * 0.008 : 0;
+    this.legs[0].rotation.x = P.leg; this.legs[1].rotation.x = hop ? P.leg : -P.leg * 0.3;
+    this.upper.rotation.x = P.lean; this.head.rotation.set(P.hx, P.hy, 0);
+    this.arms[0].rotation.set(P.aL, 0, P.sL); this.arms[1].rotation.set(P.aR, 0, P.sR);
+    // The clipboard comes out once it has landed, and goes away before it hops back.
+    this.board.visible = !hop; this.pencil.visible = !hop && name !== 'stamp'; this.stamp.visible = !hop && name === 'stamp';
+    this.eyeMat.color.set(MINI_EYE[this.slot]).multiplyScalar((t % 4.1) < 0.12 ? 0.3 : 1);
+  }
+  dispose() { scene.remove(this.root); this.mats.forEach(m => m.dispose()); }
+}
+// A sheet on its way from a clipboard to the desk's tray, in an arc.
+function toss(from, to) { const m = new THREE.Mesh(unit, PAPER); m.scale.set(0.13, 0.006, 0.16); m.castShadow = true; scene.add(m); sheets.push({ m, from, to, t: 0 }); }
+function stepSheets(dt) {
+  for (let i = sheets.length - 1; i >= 0; i--) {
+    const p = sheets[i]; p.t += dt / 0.7; const f = Math.min(1, p.t);
+    p.m.position.lerpVectors(p.from, p.to, f); p.m.position.y += Math.sin(Math.PI * f) * 0.35;
+    p.m.rotation.set(Math.sin(f * 9) * 0.4 * (1 - f), f * 4, 0);
+    // It lies on the pile a moment, then is part of it.
+    if (p.t >= 1.4) { scene.remove(p.m); sheets.splice(i, 1); }
+  }
+}
+// The subagents a session has out now: its live turn's subagent steps not yet ended,
+// once its bot is at its desk.
+function subagentsOut(s) {
+  if (!busy(s) || !s.b.seated || s.b.path.length) return 0;
+  return Math.min(MINI_SPOTS.length, (last(s).steps || []).map(stepOf).filter(x => x.k === 'agent' && !ended(x)).length);
+}
+function syncMinis(s) {
+  const mine = minis.filter(m => m.s === s && !m.leaving), want = subagentsOut(s);
+  mine.slice(want).forEach(m => m.leaving = true);
+  for (let n = mine.length; n < want; n++) {
+    const used = new Set(minis.filter(m => m.s === s).map(m => m.slot)), slot = MINI_SPOTS.findIndex((_, i) => !used.has(i));
+    if (slot < 0) break;
+    minis.push(new Mini(s, slot));
+  }
 }
 
 
@@ -390,11 +554,14 @@ class Bot {
 // In Hover the page is shown in WebView2: the sessions come from Hover as state
 // messages, and what the user asks for goes back as messages. Opened on its own in
 // a browser it plays with demo sessions instead, so the design can be looked at.
-const host = window.chrome?.webview || null;
+const host = window.hoverHost || window.chrome?.webview || null;
 if (host) document.body.classList.add('host');
 const min = 60e3, T0 = Date.now();
 const DONE_TEXT = 'Done. Settings now keeps the Kiro model and effort you pick, and the Kiro page reads them when a task starts.\n\nI changed Settings.cs only. The build is clean and all 81 tests pass.';
 let defaultFolder = host ? null : 'B:\\hover', canStart = true, maxRunning = 3;
+// The host has a browser of its own (the Mac's), which the agents drive and the desk's
+// Browser panel shows; otherwise the panel is an iframe.
+let hostBrowser = false;
 // The agent tools, in the picker's order. Hover says which are installed and signed in.
 const TOOLS = { kiro: ['Kiro', '#b48cff'], codex: ['Codex', '#3fd6a0'], cursor: ['Cursor', '#7cc0ff'], opencode: ['OpenCode', '#e8e8ec'] };
 // Each tool's own logo, only to show which tool is picked (from the MIT-licensed
@@ -438,7 +605,8 @@ function demo() {
   const F = 'B:\\hover';
   return [
     { id: 1, bot: 0, desk: 0, title: 'Add refresh token expiry', folder: F, ctx: 31, turns: [{ prompt: 'Refresh tokens never expire. Make them expire after 30 days and return 401 when one is used after that.', stage: 'working', act: 'Reading', file: 'src/auth/refresh.ts', target: 'src/auth/refresh.ts', t0: T0 - 1.4 * min, woke: 2.3,
-      steps: [['read', 'Read src/auth/session.ts'], ['read', 'Read src/auth/refresh.ts']], final: 'Done. Refresh tokens now expire after 30 days, and using an expired one returns 401.\n\nI changed refresh.ts and added two tests. All 83 tests pass.' }] },
+      steps: [['read', 'Read src/auth/session.ts'], ['read', 'Read src/auth/refresh.ts'], { k: 'web', verb: 'Opened', cmd: 'http://localhost:5173/login', status: 'completed', ms: 1200 },
+        { k: 'agent', verb: 'Subagent', agent: 'explore', cmd: 'Find every caller of refresh()', status: 'in_progress' }, { k: 'agent', verb: 'Subagent', agent: 'test-writer', cmd: 'Write tests for expired tokens', status: 'in_progress' }], final: 'Done. Refresh tokens now expire after 30 days, and using an expired one returns 401.\n\nI changed refresh.ts and added two tests. All 83 tests pass.' }] },
     { id: 2, bot: 1, desk: 1, title: 'Fix the notch flicker on resize', folder: F, ctx: 48, turns: [{ prompt: 'The notch blinks when I change the workspace size in Settings. Find out why and fix it.', stage: 'done', t0: T0 - 26 * min, woke: 2.1, took: 3 * min + 12e3,
       steps: [{ k: 'read', verb: 'Read', name: 'Notch.cs', dir: 'src/Hover/Owl', status: 'completed' }, { k: 'read', verb: 'Read', name: 'HostWindow.cs', dir: 'src/Hover/Interop', status: 'completed' },
         { k: 'search', verb: 'Searched', cmd: 'SetWindowPos(', status: 'completed' },
@@ -471,8 +639,11 @@ const poseOf = T => T.pose || T.act;
 function retire(s) {
   clearTimeout(timers[s.id]); sessions = sessions.filter(x => x !== s); s.tag.remove();
   const b = s.b, d = DESKS[s.desk]; b.sync('done', null); b.hot = false; leaving.push({ b, desk: s.desk });
+  minis.forEach(m => { if (m.s === s) m.leaving = true; });
   b.go(pathOut(d), () => { b.dispose(); leaving.splice(leaving.findIndex(l => l.b === b), 1); });
   if (sel === s.id) closeDrawer();
+  if (deskMenuFor === s.id) closeDeskMenu();
+  if (desk?.id === s.id) closePanel();
   changed();
 }
 function freeDesk() { const used = new Set([...sessions.map(s => s.desk), ...leaving.map(l => l.desk)]); return DESKS.findIndex((_, i) => !used.has(i)); }
@@ -482,7 +653,7 @@ function freeBot() { const used = new Set(sessions.map(s => s.bot)); const i = B
 function fromHost(m) {
   // In the notch the office fills the shape, edge to edge.
   document.body.classList.toggle('notch', !m.window);
-  canStart = m.canStart; maxRunning = m.maxRunning; if (m.tools) tools = m.tools; if (!toolPicked && m.tool) newTool = m.tool;
+  canStart = m.canStart; maxRunning = m.maxRunning; hostBrowser = !!m.browser; if (m.tools) tools = m.tools; if (!toolPicked && m.tool) newTool = m.tool;
   if (m.history) history = m.history;
   defaultFolder = m.folder || null; if (!newFolder) newFolder = defaultFolder;
   const seen = new Set();
@@ -493,12 +664,12 @@ function fromHost(m) {
     Object.assign(turns[i], { act: h.act, pose: h.pose, file: h.file });
     let s = sessions.find(x => x.id === h.id);
     if (!s) {
-      s = { id: h.id, key: h.key, files: h.files, tool: h.tool, bot: h.bot, desk: h.seat, title: h.title, folder: h.folder, ctx: h.ctx, ask: h.ask, access: h.access, turns };
+      s = { id: h.id, key: h.key, files: h.files, tool: h.tool, bot: h.bot, desk: h.seat, title: h.title, folder: h.folder, ctx: h.ctx, ask: h.ask, access: h.access, testing: h.testing, browsing: h.browsing, apps: h.apps, turns };
       sessions.push(s); spawn(s, !firstState && last(s).stage === 'waking');
     } else {
       turns.forEach((t, k) => { const old = s.turns[k]; if (t.answer && !(old && old.answer)) t.fresh = !firstState; });
       if (last(s).stage === 'waking' && s.turns.length !== turns.length && s.b.seated) s.b.sinceSeat = 0;
-      Object.assign(s, { files: h.files, title: h.title, folder: h.folder, ctx: h.ctx, ask: h.ask, access: h.access, turns });
+      Object.assign(s, { files: h.files, title: h.title, folder: h.folder, ctx: h.ctx, ask: h.ask, access: h.access, testing: h.testing, browsing: h.browsing, apps: h.apps, turns });
     }
   }
   for (const s of [...sessions]) if (!seen.has(s.id)) retire(s);
@@ -517,6 +688,9 @@ function script(T) {
   const f = T.target || 'src/Hover/Core/Settings.cs';
   return [{ stage: 'waking', ms: 800 }, { stage: 'working', act: 'Thinking', ms: 2600 },
     { stage: 'working', act: 'Reading', ms: 3000, file: f, step: ['read', 'Read ' + f] },
+    // Two subagents at once, so the helpers at the desk show.
+    { stage: 'working', act: 'Thinking', ms: 9000, steps: [{ k: 'agent', verb: 'Subagent', agent: 'explore', cmd: 'Find every place Settings is read', status: 'in_progress' },
+      { k: 'agent', verb: 'Subagent', agent: 'reviewer', cmd: 'Check the tests that cover it', status: 'in_progress' }] },
     { stage: 'working', act: 'Editing', ms: 4200, file: f, step: ['edit', 'Edited ' + f, '+14 −2'] },
     { stage: 'working', act: 'Running', ms: 3400, file: 'dotnet test', step: ['run', 'Ran dotnet test', '81 passed'] }, { stage: 'done' }];
 }
@@ -531,7 +705,8 @@ function play(s, T, from = 0) {
     if (T.stage === 'waking' && k > 0 && (!s.b.seated || s.b.path.length || s.b.sinceSeat < 1.9)) { timers[s.id] = setTimeout(next, 200); return; }
     const S = steps[k++];
     if (S.stage === 'working' && T.stage === 'waking') T.woke = (Date.now() - T.t0) / 1000;
-    T.stage = S.stage; T.act = S.act || null; if (S.file) T.file = S.file; if (S.step) T.steps.push(S.step);
+    for (const x of T.steps) if (x.k === 'agent' && x.status === 'in_progress') Object.assign(x, { status: 'completed', ms: 9000, out: 'Found four places; all of them read through Settings.Load.' });
+    T.stage = S.stage; T.act = S.act || null; if (S.file) T.file = S.file; if (S.step) T.steps.push(S.step); if (S.steps) T.steps.push(...S.steps.map(x => ({ ...x })));
     if (S.stage === 'done') {
       T.took = Date.now() - T.t0; s.ctx = Math.min(90, s.ctx + 6); T.answer = T.final || DONE_TEXT; T.fresh = true;
       changed(s);
@@ -552,19 +727,18 @@ function doStop(s) {
   s.turns.forEach(x => { if (x.queued) { x.queued = false; x.stage = 'stopped'; x.took = 0; x.steps = []; x.answer = 'Not sent: the run before it was stopped.'; } });
   changed(s);
 }
-function doReply(text, images = []) {
-  const s = cur(); if (!s || (!text && !images.length)) return;
+function doReply(text, images = [], s = cur()) {
+  if (!s || (!text && !images.length)) return;
   if (s.archived) { if (!host) return toast('In Hover this wakes the session.'); pendingKey = s.key; return host.postMessage({ type: 'reply', key: s.key, text, images }); }
   // A reply while a question waits is its answer, in the user's own words, where the
-  // question takes one; replying to anything else it asked says no to it, and the
-  // words go to the agent instead.
+  // question takes one. A reply while it asks to run something leaves that request
+  // for its own buttons and waits behind it.
   if (s.ask?.questions) {
     if (s.ask.questions.length === 1 && s.ask.questions[0].custom && !images.length) {
       const p = picksOf(s.ask); p.sel[0] = []; p.text[0] = text; return sendAnswers(s, s.ask);
     }
     return toast('Answer the question above first, or skip it.');
   }
-  if (s.ask) answer(s, s.ask.id, 'deny');
   if (host) return host.postMessage({ type: 'reply', id: s.id, text, images });
   const wait = busy(s), T = { prompt: text, images, stage: 'waking', t0: Date.now(), steps: [], queued: wait };
   s.turns.push(T);
@@ -610,7 +784,7 @@ const COLS = [['WAKING', '#f5b83d', ['waking']], ['DOING', '#9b6bff', ['working'
 function fit(x, text, w) { if (x.measureText(text).width <= w) return text; while (text && x.measureText(text + '…').width > w) text = text.slice(0, -1); return text.trimEnd() + '…'; }
 function drawBoard() {
   const { x, t } = board;
-  x.setTransform(2, 0, 0, 2, 0, 0);
+  x.setTransform(BOARD_K, 0, 0, BOARD_K, 0, 0);
   x.fillStyle = '#e9e3d6'; x.fillRect(0, 0, 240, 140); x.fillStyle = '#d6cebd'; x.fillRect(0, 132, 240, 8);
   x.textBaseline = 'top';
   COLS.forEach(([h, c, st], i) => {
@@ -668,6 +842,9 @@ const PROPS = [
   { hint: () => 'Session history', at: [X0 + 0.25, 1.21, -3.53, 0.5, 2.42, 1.6], go: () => openPanel('history') },
 ];
 for (const p of PROPS) { const [x, y, z, w, h, d] = p.at; p.hit = box(scene, w, h, d, x, y, z, hitMat, false); p.hit.userData.prop = p; hits.push(p.hit); }
+// Each desk opens its menu (the bot on its chair opens the chat). The box covers the
+// desk and its monitor and stops short of the chair, so the two never overlap.
+DESKS.forEach((d, i) => { const h = box(scene, 0.78, 1.36, 1.66, d.x + 0.08, 0.68, d.z, hitMat, false); h.userData.desk = i; hits.push(h); });
 
 // ── Page UI: tags over the bots, the dock, the drawer and the panels ────
 const LOGO = c => `<span class="av" style="--c:${c}"><i></i></span>`;
@@ -677,9 +854,34 @@ const ICON = {
   run: '<svg viewBox="0 0 24 24"><path d="m4 17 6-5-6-5"/><path d="M12 19h8"/></svg>',
   search: '<svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>',
   think: '<svg viewBox="0 0 24 24"><path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12.7V16h8v-1.3A7 7 0 0 0 12 2Z"/></svg>',
+  thought: '<svg viewBox="0 0 24 24"><path d="M12 3a6 6 0 0 0-6 6c0 1.2.3 2.2.9 3.1C5.2 12.6 4 14 4 15.7 4 17.5 5.5 19 7.3 19H17a4 4 0 0 0 .6-8A6 6 0 0 0 12 3Z"/></svg>',
+  agent: '<svg viewBox="0 0 24 24"><rect x="5" y="8" width="14" height="11" rx="3"/><path d="M12 8V4M9 13h.01M15 13h.01"/></svg>',
+  web: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></svg>',
 };
+const CHAT = '<svg viewBox="0 0 24 24"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.4A8 8 0 1 1 21 12Z"/><path d="M8.5 12h.01M12 12h.01M15.5 12h.01"/></svg>';
+const COPY = '<svg viewBox="0 0 24 24"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>';
+const RETRY = '<svg viewBox="0 0 24 24"><path d="M3 12a9 9 0 0 1 15.5-6.3L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-15.5 6.3L3 16"/><path d="M3 21v-5h5"/></svg>';
+// What a Copy button takes, by its id: filled as the thread is drawn.
+const copies = new Map(); let copyN = 0;
+const copyBtn = (text, label = 'Copy') => { const id = ++copyN; copies.set(id, text); return `<button class="cp" data-cp="${id}" title="${label}" aria-label="${label}">${COPY}</button>`; };
+// A change as rows, with the file's line numbers where the diff names them (a unified
+// diff's @@ headers); Hover's own previews carry none, and none are made up.
+function diffRows(diff) {
+  let o = null, n = null;
+  const hunk = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/;
+  const numbered = diff.split('\n').some(l => hunk.test(l));
+  return diff.split('\n').map(l => {
+    const h = hunk.exec(l);
+    if (h) { o = +h[1]; n = +h[2]; return `<span class="h"><i></i><i></i>${esc(l)}</span>`; }
+    const k = l[0] === '+' ? 'a' : l[0] === '-' ? 'd' : 'c';
+    const gut = numbered ? `<i>${k !== 'a' && o != null ? o++ : ''}</i><i>${k !== 'd' && n != null ? n++ : ''}</i>` : '';
+    return `<span class="${k}">${gut}${esc(l) || ' '}</span>`;
+  }).join('');
+}
 // The live verb for a step that is still going: Edited → Editing.
-const VERB_ON = { Read: 'Reading', Edited: 'Editing', Ran: 'Running', Searched: 'Searching', Fetched: 'Fetching', Deleted: 'Deleting', Moved: 'Moving' };
+const VERB_ON = { Read: 'Reading', Edited: 'Editing', Ran: 'Running', Searched: 'Searching', Fetched: 'Fetching', Deleted: 'Deleting', Moved: 'Moving',
+  Opened: 'Opening', Clicked: 'Clicking', Typed: 'Typing', Pressed: 'Pressing', Scrolled: 'Scrolling', 'Read the page': 'Reading the page', 'Took a screenshot': 'Taking a screenshot',
+  'Ran a script on the page': 'Running a script on the page', 'Waited for': 'Waiting for', 'Read the console': 'Reading the console', 'Went back': 'Going back', 'Reloaded the page': 'Reloading the page' };
 const CARET = '<svg class="car" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></svg>';
 const CHECK = '<svg class="ckm" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg>';
 const FOLDER = '<svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/></svg>';
@@ -699,7 +901,8 @@ function bubbleFor(s) {
     case 'waking': return 'Waking up…';
     // The question shows over the head in place of the bubble.
     case 'waiting': return '';
-    case 'working': return T.act === 'Thinking' ? 'Thinking…' : T.act === 'Writing' ? 'Writing it up…' : T.file ? `${T.act} ${short(T.file)}` : `${T.act || 'Working'}…`;
+    case 'working': { const n = minis.filter(m => m.s === s && !m.leaving).length; if (n) return n === 1 ? 'My helper’s on it…' : `${n} helpers on it…`; }
+      return T.act === 'Thinking' ? 'Thinking…' : T.act === 'Writing' ? 'Writing it up…' : T.file ? `${T.act} ${short(T.file)}` : `${T.act || 'Working'}…`;
     case 'done': return b.since < 6 ? 'Done! ✓' : '';
     case 'failed': return 'Couldn’t finish';
     default: return 'z z z';
@@ -722,10 +925,11 @@ function imageFor(s) {
     let q = src.replace(/^file:\/+/i, '').replace(/\\/g, '/');
     try { q = decodeURIComponent(q); } catch {}
     const root = (s.folder || '').replace(/\\/g, '/').replace(/\/+$/, '') + '/';
+    if (q.startsWith('/') && root.startsWith('/')) { if (!q.startsWith(root)) return null; q = q.slice(root.length); }
     if (/^[a-z]:\//i.test(q)) { if (!q.toLowerCase().startsWith(root.toLowerCase())) return null; q = q.slice(root.length); }
     q = q.replace(/^\.\//, '');
     if (q.startsWith('/') || q.split('/').includes('..')) return null;
-    return `https://${s.files}/` + q.split('/').map(encodeURIComponent).join('/');
+    return (s.files.includes('://') ? s.files : `https://${s.files}/`) + q.split('/').map(encodeURIComponent).join('/');
   };
 }
 const took = ms => ms == null ? '' : ms < 60e3 ? `${Math.max(1, Math.round(ms / 1000))} s` : ms < 3600e3 ? `${Math.floor(ms / 60e3)}m ${String(Math.round(ms % 60e3 / 1000) % 60).padStart(2, '0')}s` : `${Math.floor(ms / 3600e3)}h ${String(Math.floor(ms % 3600e3 / 60e3)).padStart(2, '0')}m`;
@@ -747,18 +951,25 @@ function stepOf(x) {
 // Which step blocks the user opened or closed, by session, turn and step.
 const stepOpen = new Map(), turnOpen = new Map();
 function stepRow(x, key, live, open) {
-  const verb = live ? VERB_ON[x.verb] || x.verb : x.verb, fail = x.status === 'failed';
-  const body = x.name ? `${esc(verb)} <b>${esc(x.name)}</b>${x.dir ? `<span class="pth">${esc(x.dir)}</span>` : ''}`
-    : x.cmd ? `${esc(verb)} <code>${esc(x.k === 'run' ? cmdShort(x.cmd) : x.cmd.length > 48 ? x.cmd.slice(0, 47) + '…' : x.cmd)}</code>`
+  const verb = live ? (x.k === 'thought' ? 'Thinking' : VERB_ON[x.verb] || x.verb) : x.verb, fail = x.status === 'failed';
+  const body = x.k === 'agent' ? `${esc(live ? 'Subagent working' : verb)}${x.agent ? ` <b>${esc(x.agent)}</b>` : ''}${x.cmd ? `<span class="pth">${esc(x.cmd.length > 70 ? x.cmd.slice(0, 69) + '…' : x.cmd)}</span>` : ''}`
+    : x.k === 'thought' ? `${live ? `<b>${esc(verb)}</b>` : esc(verb)}${x.out ? `<span class="pth">${esc(x.out.replace(/\s+/g, ' ').slice(0, 90))}</span>` : ''}`
+    : x.name ? `${esc(verb)} <b>${esc(x.name)}</b>${x.dir ? `<span class="pth">${esc(x.dir)}</span>` : ''}`
+    : x.cmd ? `${esc(verb)} <code>${esc(x.k === 'run' ? cmdShort(x.cmd) : x.k === 'web' ? D.pageLabel(x.cmd).slice(0, 48) : x.cmd.length > 48 ? x.cmd.slice(0, 47) + '…' : x.cmd)}</code>`
     : live ? `<b>${esc(verb)}</b>` : esc(verb);
   const r = [];
   if (x.add || x.del) r.push(`<span class="a">+${x.add || 0}</span><span class="d">−${x.del || 0}</span>`);
   if (fail) r.push('<span class="bad">failed</span>');
   else if (x.k === 'run' && x.exit) r.push(`<span class="bad">exit ${x.exit}</span>`);
+  else if (x.k === 'agent' && !live && x.status === 'completed') r.push(`<span class="okp">${CHECK} done</span>`);
   else if (x.tag) r.push(`<span class="okp">${CHECK} ${esc(x.tag)}</span>`);
   if (x.ms >= 1000) r.push(`<span>${took(x.ms)}</span>`);
-  const blk = x.diff ? `<div class="blk"><pre>${x.diff.split('\n').map(l => `<span class="${l[0] === '+' ? 'a' : l[0] === '-' ? 'd' : 'c'}">${esc(l)}</span>`).join('')}</pre></div>`
-    : x.out ? `<div class="blk"><div class="bh">Terminal${x.exit != null ? `<span class="ex${x.exit ? ' bad' : ''}">exit ${x.exit}</span>` : ''}</div><pre>${x.cmd ? `<span class="pr">$ ${esc(x.cmd)}</span>` : ''}${x.out.split('\n').map(l => `<span>${esc(l) || ' '}</span>`).join('')}</pre></div>` : '';
+  const numbered = x.diff && /^@@ /m.test(x.diff);
+  const blk = x.diff ? `<div class="blk${numbered ? ' num' : ''}"><div class="bh">${esc([x.dir, x.name].filter(Boolean).join('/') || 'Change')}${x.add || x.del ? `<span class="pm"><span class="a">+${x.add || 0}</span> <span class="d">−${x.del || 0}</span></span>` : ''}${copyBtn(x.diff, 'Copy the change')}</div><pre>${diffRows(x.diff)}</pre></div>`
+    : x.k === 'thought' && x.out ? `<div class="blk th"><div class="tt">${esc(x.out)}</div></div>`
+    : x.k === 'agent' && x.out ? `<div class="blk th"><div class="bh">What it came back with${copyBtn(x.out)}</div><div class="tt">${esc(x.out)}</div></div>`
+    // Unknown is not success: no exit code, no green.
+    : x.out ? `<div class="blk"><div class="bh">Terminal${x.exit != null ? `<span class="ex${x.exit ? ' bad' : ''}">exit ${x.exit}</span>` : ''}${copyBtn((x.cmd ? '$ ' + x.cmd + '\n' : '') + x.out, 'Copy the output')}</div><pre>${x.cmd ? `<span class="pr">$ ${esc(x.cmd)}</span>` : ''}${x.out.split('\n').map(l => `<span>${esc(l) || ' '}</span>`).join('')}</pre></div>` : '';
   const tip = x.cmd || [x.dir, x.name].filter(Boolean).join('/') || verb;
   return `<div class="s k-${x.k || 'think'}${fail ? ' fail' : ''}${live ? ' live' : ''}${blk ? ' exp' : ''}${blk && open ? ' open' : ''}" data-s="${key}" title="${esc(tip)}"${blk ? ` role="button" tabindex="0" aria-expanded="${!!open}"` : ''}>`
     + `<span class="n">${ICON[x.k] || ICON.think}</span><span class="tx">${body}</span><span class="r">${r.join('')}${blk ? CARET : ''}</span></div>${blk}`;
@@ -789,7 +1000,7 @@ function stepsHTML(s, T, ti, liveTurn) {
   // Over the timeline, one line: how long it worked and what it did. A finished turn
   // folds to it; the one running stays open. A click opens or folds it.
   const n = k => list.filter(x => x.k === k).length, files = new Set(list.filter(x => x.k === 'edit').map(x => x.name || x.cmd || x.verb)).size;
-  const bits = [n('read') && `${n('read')} read`, files && `${files} file${files === 1 ? '' : 's'} edited`, n('run') && `${n('run')} run`].filter(Boolean);
+  const bits = [n('read') && `${n('read')} read`, files && `${files} file${files === 1 ? '' : 's'} edited`, n('run') && `${n('run')} run`, n('agent') && `${n('agent')} subagent${n('agent') === 1 ? '' : 's'}`].filter(Boolean);
   const key = `${id}:${ti}`, open = turnOpen.has(key) && turnOpen.get(key);
   // As in Codex: steps fold away once done. While the turn runs, only the step it
   // is on shows under the line; the rest are one click away.
@@ -827,17 +1038,21 @@ function renderDrawer() {
   // A typed answer to a question keeps its box's focus through the redraw.
   const typing = th.contains(document.activeElement) ? document.activeElement.dataset?.qt : undefined;
   let fresh = false;
+  copies.clear();
   th.innerHTML = s.turns.map((T, i) => {
     const lastTurn = T === last(s), liveTurn = lastTurn && (st === 'working' || st === 'waiting');
     const steps = hide ? '' : stepsHTML(s, T, i, liveTurn);
     const now = lastTurn && st === 'waiting' && s.ask && !s.archived ? askHTML(s, 'chat') : '';
     if (T.answer && T.fresh) { fresh = true; T.fresh = false; }
-    const ans = T.answer ? `<div><div class="who2">${badge(s.tool)}<b>${esc(s.b.name)}</b>${T.took != null ? `<span>· ${took(T.took)}</span>` : ''}</div><div class="ans md ${T.stage === 'failed' ? 'err' : ''}${fresh && lastTurn ? ' fresh' : ''}">${md(T.answer, s)}</div></div>` : '';
+    // Under an answer: Copy, Retry on the newest turn once it has ended, and when it finished.
+    const retry = lastTurn && !s.archived && !busy(s) && T.prompt ? `<button class="act" data-retry="${i}" title="Send this message again">${RETRY}<span>Retry</span></button>` : '';
+    const acts = T.answer ? `<div class="acts"><button class="act" data-cp="${(copies.set(++copyN, T.answer), copyN)}" title="Copy the answer">${COPY}<span>Copy</span></button>${retry}${T.t0 && T.took != null ? `<span class="at">${hm(T.t0 + T.took)}</span>` : ''}</div>` : '';
+    const ans = T.answer ? `<div><div class="who2">${badge(s.tool)}<b>${esc(s.b.name)}</b>${T.took != null ? `<span>· ${took(T.took)}</span>` : ''}</div><div class="ans md ${T.stage === 'failed' ? 'err' : ''}${fresh && lastTurn ? ' fresh' : ''}">${md(T.answer, s)}</div>${acts}</div>` : '';
     const chg = T.answer && !hide ? changesHTML(T) : '';
     // What the turn cost, under its answer, when the tool says (Kiro does).
     const use = T.answer && T.credits != null ? `<div class="use" title="Kiro credits this turn used">${esc(credits(T.credits))}</div>` : '';
     const pics = T.images?.length ? `<div class="pics">${T.images.map(u => `<img src="${esc(u)}" alt="Attached image" loading="lazy">`).join('')}</div>` : '';
-    return `<div class="me">${pics}${esc(T.prompt)}${T.queued ? '<span class="q">Queued · sends when this run ends</span>' : ''}${T.t0 ? `<span class="when">${hm(T.t0)}</span>` : ''}</div>${steps}${now}${ans}${chg}${use}`;
+    return `<div class="me">${T.prompt ? copyBtn(T.prompt, 'Copy the message') : ''}${pics}${esc(T.prompt)}${T.queued ? '<span class="q">Queued · sends when this run ends</span>' : ''}${T.t0 ? `<span class="when">${hm(T.t0)}</span>` : ''}</div>${steps}${now}${ans}${chg}${use}`;
   }).join('');
   // A code block in an answer gets its language and a Copy button.
   for (const pre of th.querySelectorAll('.ans pre')) {
@@ -865,6 +1080,7 @@ const stamp = ms => {
 let historyFind = '';
 function renderPanel() {
   if (!panel) return;
+  if (panel === 'desk') return renderDesk();
   const body = $('#pBody');
   if (panel === 'history') {
     $('#pTitle').textContent = 'Session history';
@@ -895,14 +1111,17 @@ function renderPanel() {
     }).join('')}</div>`;
   } else {
     $('#pTitle').textContent = 'Office overview';
-    $('#pSub').textContent = `Up to ${maxRunning === 1 ? 'one task runs' : maxRunning + ' tasks run'} at once, across Kiro, Codex, Cursor and OpenCode`;
+    $('#pSub').textContent = `Up to ${maxRunning === 1 ? 'one task runs' : maxRunning + ' tasks run'} at once, across ${tools.map(t => t.name).join(', ').replace(/, ([^,]*)$/, ' and $1')}`;
     const stats = [['Working', count(['waking', 'working', 'waiting']), 'var(--li)'], ['Done', count(['done']), 'var(--ok)'], ['Failed', count(['failed']), 'var(--bad)'], ['Stopped', count(['stopped']), 'var(--stop)']];
     body.innerHTML = `<div class="stats">${stats.map(([l, v, c]) => `<div style="--k:${c}"><b>${v}</b><span>${l}</span></div>`).join('')}</div>
       <h4 class="sh">Context used</h4>${sessions.map(s => `<button class="meter" data-open="${s.id}">${LOGO(s.b.css)}<span class="mt"><b>${esc(s.b.name)}</b><span>${esc(s.title)}</span><i><u style="width:${s.ctx ?? 0}%"></u></i></span><em>${s.ctx == null ? '—' : s.ctx + '%'}</em></button>`).join('') || '<p class="none">No sessions yet. Press + to give an agent a task.</p>'}`;
   }
 }
 function changed(s) {
-  drawBoard(); renderPanel(); renderAsks();
+  // The desk's panel asks Hover again (throttled), rather than redrawing from nothing.
+  if (panel === 'desk') { if (!s || s.id === desk?.id) { deskDirty = true; screenPulse(); } }
+  if (deskMenuFor != null && (!s || s.id === deskMenuFor)) renderDeskMenu();
+  drawBoard(); if (panel !== 'desk') renderPanel(); renderAsks();
   if (s && s.id === sel && drawerOpen) renderDrawer();
 }
 
@@ -998,7 +1217,7 @@ addEventListener('keydown', e => {
 });
 
 const clockOf = t0 => { const n = Math.max(0, Math.floor((Date.now() - t0) / 1000)); return `${Math.floor(n / 60)}:${String(n % 60).padStart(2, '0')}`; };
-setInterval(() => { for (const lt of document.querySelectorAll('#thread .sum .tm')) lt.textContent = clockOf(+lt.dataset.t0); }, 1000);
+setInterval(() => { for (const lt of document.querySelectorAll('#thread .sum .tm, #deskMenu .tm')) lt.textContent = clockOf(+lt.dataset.t0); }, 1000);
 function openSession(id) {
   closePanel(true); fold();
   viewing = null; sel = id; drawerOpen = true; view.classList.add('open'); $('#drawer').classList.add('open'); $('#drawer').setAttribute('aria-hidden', 'false');
@@ -1009,9 +1228,12 @@ function closeDrawer() { if (drawerOpen && !viewing) host?.postMessage({ type: '
 function openPanel(kind) {
   if (drawerOpen) closeDrawer();
   fold();
-  panel = kind; view.classList.add('open'); $('#panel').classList.add('open'); $('#panel').setAttribute('aria-hidden', 'false'); renderPanel();
+  if (kind !== 'desk') leaveDesk();
+  panel = kind; view.classList.add('open'); $('#panel').classList.add('open'); $('#panel').classList.toggle('wide', kind === 'desk'); $('#panel').setAttribute('aria-hidden', 'false');
+  $('#pBody').classList.toggle('desk', kind === 'desk'); if (kind !== 'desk') $('#pBody').innerHTML = '';
+  renderPanel();
 }
-function closePanel(keepOpen) { if (!panel) return; panel = null; $('#panel').classList.remove('open'); $('#panel').setAttribute('aria-hidden', 'true'); if (!keepOpen) view.classList.remove('open'); }
+function closePanel(keepOpen) { if (!panel) return; leaveDesk(); panel = null; $('#panel').classList.remove('open'); $('#panel').setAttribute('aria-hidden', 'true'); if (!keepOpen) view.classList.remove('open'); }
 let toastTimer;
 function toast(text) { const t = $('#toast'); t.textContent = text; t.classList.add('show'); clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('show'), 2800); }
 
@@ -1040,8 +1262,9 @@ canvas.addEventListener('wheel', e => {
 // ── Pointer and keys ────────────────────────────────────────────────────
 const ray = new THREE.Raycaster(), ndc = new THREE.Vector2();
 let pointer = null, hovered = null, down = null, dragging = false, px0 = 0, py0 = 0;
+const pointAt = e => { const r = canvas.getBoundingClientRect(); pointer = [(e.clientX - r.left) / r.width * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1, e.clientX - r.left, e.clientY - r.top]; };
 canvas.addEventListener('pointermove', e => {
-  const r = canvas.getBoundingClientRect(); pointer = [(e.clientX - r.left) / r.width * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1, e.clientX - r.left, e.clientY - r.top];
+  pointAt(e);
   if (down && !drawerOpen && !panel) {
     if (!dragging && Math.hypot(e.clientX - down[0], e.clientY - down[1]) > 6) { dragging = true; canvas.setPointerCapture(e.pointerId); canvas.classList.add('drag'); }
     if (dragging) { const g = overFloor(e.clientX - px0, -(e.clientY - py0), userView.zoom); userView.x -= g.x; userView.z -= g.z; clampView(); }
@@ -1053,23 +1276,51 @@ canvas.addEventListener('pointerdown', e => { down = [e.clientX, e.clientY]; px0
 canvas.addEventListener('pointerup', e => {
   const was = dragging; dragging = false; down = null; canvas.classList.remove('drag');
   if (was) return;
+  // What is under the click itself: a tap can come with no move before it.
+  pointAt(e); pick();
   if (hovered?.bot) { const s = sessions.find(x => x.b === hovered.bot); if (s) openSession(s.id); }
+  else if (hovered?.desk != null) { const s = sessions.find(x => x.desk === hovered.desk); if (s) openDeskMenu(s, e.clientX, e.clientY); }
   else if (hovered?.prop) hovered.prop.go();
   else if (fab !== 'rest') fold();
   else if (drawerOpen) closeDrawer(); else if (panel) closePanel();
 });
 canvas.addEventListener('dblclick', () => { if (!hovered && !drawerOpen && !panel) resetView(); });
+// The bot's own boxes (not its hit box or ring), for telling it apart from the desk
+// in front of it: seen from the camera, a seated bot is behind its monitor, so its
+// hit box and the desk's overlap, and the nearer box isn't what the pointer is on.
+const botParts = b => { const out = []; b.root.traverse(o => { if (o.isMesh && o !== b.hit && o !== b.ring) out.push(o); }); return out; };
 function pick() {
   let hit = null;
-  if (pointer && !dragging) { ndc.set(pointer[0], pointer[1]); ray.setFromCamera(ndc, camera); const o = ray.intersectObjects(hits, false)[0]?.object;
-    if (o?.userData.bot && sessions.some(s => s.b === o.userData.bot)) hit = { bot: o.userData.bot }; else if (o?.userData.prop) hit = { prop: o.userData.prop }; }
-  const same = hit?.bot === hovered?.bot && hit?.prop === hovered?.prop;
+  if (pointer && !dragging) { ndc.set(pointer[0], pointer[1]); ray.setFromCamera(ndc, camera);
+    const found = ray.intersectObjects(hits, false).map(x => x.object);
+    const bot = found.find(o => o.userData.bot && sessions.some(s => s.b === o.userData.bot))?.userData.bot;
+    const deskHit = found.find(o => o.userData.desk != null && sessions.some(s => s.desk === o.userData.desk));
+    const first = found[0];
+    if (bot && deskHit) {
+      // Both: whichever surface is really under the pointer, the bot's body or the room's.
+      const v = ray.intersectObjects([roomMesh, ...botParts(bot)], false)[0]?.object;
+      hit = v && v !== roomMesh ? { bot } : { desk: deskHit.userData.desk };
+    } else if (bot && (first?.userData.bot || !first?.userData.prop)) hit = { bot };
+    else if (first?.userData.prop) hit = { prop: first.userData.prop };
+    // Only a desk with a session at it opens a menu.
+    else if (deskHit) hit = { desk: deskHit.userData.desk }; }
+  const same = hit?.bot === hovered?.bot && hit?.prop === hovered?.prop && hit?.desk === hovered?.desk;
   if (!same) { hovered = hit; canvas.style.cursor = hit ? 'pointer' : ''; }
-  for (const s of sessions) { s.b.hot = s.b === hovered?.bot || (drawerOpen && s.id === sel); s.tag.classList.toggle('hot', s.b.hot); }
+  for (const s of sessions) { s.b.hot = s.b === hovered?.bot || s.desk === hovered?.desk || (drawerOpen && s.id === sel) || (panel === 'desk' && desk?.id === s.id); s.tag.classList.toggle('hot', s.b.hot); }
   for (const p of PROPS) p.pane?.material.color.setScalar(p === hovered?.prop ? 1.35 : 1);
-  const tip = $('#tip');
-  if (hovered?.prop && pointer) { tip.textContent = hovered.prop.hint(); tip.style.transform = `translate(${pointer[2] + 14}px,${pointer[3] + 16}px)`; tip.hidden = false; }
-  else tip.hidden = true;
+  const tip = $('#tip'), atDesk = hovered?.desk != null && sessions.find(s => s.desk === hovered.desk), atBot = hovered?.bot && sessions.find(s => s.b === hovered.bot);
+  const want = !pointer || deskMenuFor != null || drawerOpen && atBot && sel === atBot.id ? ''
+    : atBot ? `chat:${atBot.id}` : atDesk ? `desk:${atDesk.id}` : hovered?.prop ? 'prop:' + hovered.prop.hint() : '';
+  if (want) {
+    if (tip.dataset.k !== want) {
+      tip.dataset.k = want;
+      tip.innerHTML = atBot ? `<i style="--c:${atBot.b.css}">${CHAT}</i>Chat with <b>${esc(atBot.b.name)}</b>`
+        : atDesk ? `<i style="--c:${atDesk.b.css}">${D.ICONS.screen}</i><b>${esc(atDesk.b.name)}’s desk</b><span>Browser, terminal, files, screen…</span>`
+        : esc(hovered.prop.hint());
+      tip.className = atBot ? 'bot' : atDesk ? 'desk' : '';
+    }
+    tip.style.transform = `translate(${pointer[2] + 14}px,${pointer[3] + 16}px)`; tip.hidden = false;
+  } else { tip.hidden = true; tip.dataset.k = ''; }
 }
 $('#pBody').addEventListener('click', e => {
   const b = e.target.closest('[data-open]'); if (b) return openSession(+b.dataset.open);
@@ -1087,10 +1338,16 @@ function toggleStep(row) {
 $('#thread').addEventListener('click', e => {
   const row = e.target.closest('.s.exp,.sum'); if (row) return toggleStep(row);
   const c = e.target.closest('[data-copy]'); if (c) return copyText(c.closest('.cb').querySelector('pre').textContent, c);
+  const cp = e.target.closest('[data-cp]'); if (cp) { e.stopPropagation(); return copyText(copies.get(+cp.dataset.cp) ?? '', cp); }
+  const rt = e.target.closest('[data-retry]'); if (rt) { const s = cur(), T = s?.turns[+rt.dataset.retry]; if (T?.prompt) doReply(T.prompt); }
 }, true);
 $('#thread').addEventListener('keydown', e => { const row = e.target.closest?.('.s.exp,.sum'); if (row && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); toggleStep(row); } });
 function copyText(text, btn) {
-  const done = () => { btn.textContent = 'Copied'; setTimeout(() => { btn.textContent = 'Copy'; }, 1400); };
+  // Text buttons say Copied; icon buttons turn green for a moment.
+  const done = () => {
+    if (btn.matches('.cp,.act')) { btn.classList.add('ok'); setTimeout(() => btn.classList.remove('ok'), 1400); return; }
+    btn.textContent = 'Copied'; setTimeout(() => { btn.textContent = 'Copy'; }, 1400);
+  };
   const old = () => { const t = document.createElement('textarea'); t.value = text; document.body.appendChild(t); t.select(); document.execCommand('copy'); t.remove(); done(); };
   navigator.clipboard?.writeText(text).then(done, old) ?? old();
 }
@@ -1148,7 +1405,8 @@ function syncSend() {
   // While a run goes, an empty box makes this the Stop button; words in it queue a reply.
   const running = !!s && !s.archived && busy(s), stop = running && empty;
   b.disabled = empty && !stop; b.classList.toggle('stop', stop);
-  const label = stop ? 'Stop this run' : running ? 'Queue this reply' : 'Send';
+  const queued = !!s && s.turns.some(t => t.queued);
+  const label = stop ? (queued ? 'Stop this reply and send the next one' : 'Stop this run') : running ? 'Queue this reply' : 'Send';
   b.setAttribute('aria-label', label); b.title = stop ? label : label + ' (Enter)';
 }
 function send() { const v = input.value.trim(), pics = attached.reply.splice(0); if (!v && !pics.length) return; input.value = ''; autosize(input); renderPics('reply'); doReply(v, pics); syncSend(); }
@@ -1202,7 +1460,8 @@ $('#fabMain').onclick = () => fab === 'pick' ? fold() : openNew();
 $('#fabTools').onclick = e => {
   const b = e.target.closest('[data-tool]'); if (!b) return;
   const x = tools.find(t => t.id === b.dataset.tool);
-  if (!x.ready) return toast(x.hint);
+  // A tool that isn't ready opens its one-click setup where the host has one.
+  if (!x.ready) { if (x.canSetup && host) { host.postMessage({ type: 'setup', tool: x.id, open: true }); return; } return toast(x.hint); }
   newTool = x.id; toolPicked = true; setFab('open');
 };
 $('#fabTools').addEventListener('keydown', e => {
@@ -1221,9 +1480,10 @@ $('#nPick').onchange = e => { addPics(e.target.files, 'new'); e.target.value = '
 // ── The model pill and its menu ─────────────────────────────────────────
 // The pick is the tool's default from then on, as in Settings, from its next turn.
 const EFFORT = e => e === 'xhigh' ? 'X-High' : e ? e[0].toUpperCase() + e.slice(1) : '';
-// The efforts for the tool's picked model: its own levels (OpenCode's variants), or
-// the tool's list when models don't carry any.
-const effortsOf = x => { const m = (x.models || []).find(m => m.id === (x.model || '')); return m?.levels || (x.models || []).some(m => m.levels) ? m?.levels || [] : x.efforts || []; };
+// The efforts a model takes: its own levels (OpenCode's variants), or the tool's list
+// when models don't carry any.
+const effortsFor = (x, id) => { const ms = x.models || [], m = ms.find(m => m.id === id); return ms.some(m => m.levels) ? m?.levels || [] : x.efforts || []; };
+const effortsOf = x => effortsFor(x, x.model || '');
 function renderPill(sel, toolId) {
   const x = tools.find(t => t.id === toolId) || tools[0], el = $(sel);
   const m = (x.models || []).find(m => m.id === (x.model || '')) || (x.models || [])[0];
@@ -1237,17 +1497,50 @@ let menuFor = null;
 function openMenu(pill) {
   const x = tools.find(t => t.id === pill.dataset.tool); if (!x) return;
   const menu = $('#mMenu'); menuFor = pill; pill.setAttribute('aria-expanded', 'true');
-  const cur = x.model || (x.models[0]?.id ?? ''), efforts = effortsOf(x);
-  menu.innerHTML = `<h5>${esc(x.name)} model</h5>${x.models.map(m => `<button role="menuitemradio" aria-checked="${m.id === cur}" data-model="${esc(m.id)}">${esc(m.name)}</button>`).join('')}`
-    + (efforts.length ? `<h5>${esc(x.effortLabel || 'Effort')}</h5><div class="eff" role="group">${efforts.map(e => `<button role="menuitemradio" aria-checked="${e === x.effort}" data-effort="${esc(e)}">${esc(EFFORT(e))}</button>`).join('')}</div>` : '')
-    + `<p>Used by ${esc(x.name)} from its next turn.</p>`;
+  const cur = x.model || (x.models[0]?.id ?? '');
+  // As in Cursor: a model that takes an effort has a chevron, and its efforts open to
+  // the side on hover (or ArrowRight). The picked model shows its effort.
+  menu.innerHTML = `<h5>${esc(x.name)} model</h5>` + x.models.map(m => {
+    const lv = effortsFor(x, m.id), eff = m.id === cur && lv.includes(x.effort) ? x.effort : null;
+    return `<button role="menuitemradio" class="mrow" aria-checked="${m.id === cur}" data-model="${esc(m.id)}"${lv.length ? ' aria-haspopup="menu" aria-expanded="false"' : ''}><span>${esc(m.name)}</span>${eff ? `<em>${esc(EFFORT(eff))}</em>` : ''}${lv.length ? '<svg viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></svg>' : ''}</button>`;
+  }).join('') + `<p>Used by ${esc(x.name)} from its next turn.</p>`;
   menu.hidden = false;
   const r = pill.getBoundingClientRect(), o = view.getBoundingClientRect(), mh = Math.min(menu.scrollHeight, o.height - 20);
   menu.style.left = Math.max(8, Math.min(r.left - o.left, o.width - 258)) + 'px';
   menu.style.top = Math.max(8, r.top - o.top - mh - 6) + 'px';
   (menu.querySelector('[aria-checked="true"]') || menu.querySelector('button'))?.focus();
 }
-function closeMenu() { if (!menuFor) return; $('#mMenu').hidden = true; menuFor.setAttribute('aria-expanded', 'false'); menuFor.focus(); menuFor = null; }
+function closeMenu() { if (!menuFor) return; closeSub(); $('#mMenu').hidden = true; menuFor.setAttribute('aria-expanded', 'false'); menuFor.focus(); menuFor = null; }
+// The efforts of one model, beside the menu: to its right, or its left where the office
+// has no room, with the first level level with the model's row.
+let subFor = null, subTimer = 0;
+function openSub(row, focus) {
+  clearTimeout(subTimer);
+  const x = tools.find(t => t.id === menuFor?.dataset.tool), sub = $('#mSub');
+  if (!x || row === subFor) { if (x && focus) (sub.querySelector('[aria-checked="true"]') || sub.querySelector('button'))?.focus(); return; }
+  closeSub();
+  const lv = effortsFor(x, row.dataset.model); if (!lv.length) return;
+  subFor = row; row.setAttribute('aria-expanded', 'true'); row.classList.add('open');
+  sub.setAttribute('aria-label', `${row.querySelector('span').textContent} ${x.effortLabel || 'Effort'}`);
+  sub.innerHTML = `<h5>${esc(x.effortLabel || 'Effort')}</h5>` + lv.map(e => `<button role="menuitemradio" aria-checked="${e === x.effort}" data-effort="${esc(e)}">${esc(EFFORT(e))}</button>`).join('');
+  sub.hidden = false;
+  const m = $('#mMenu').getBoundingClientRect(), r = row.getBoundingClientRect(), o = view.getBoundingClientRect(), w = sub.offsetWidth, h = sub.offsetHeight;
+  let left = m.right - o.left + 4;
+  if (left + w > o.width - 8) left = Math.max(8, m.left - o.left - w - 4);
+  sub.style.left = left + 'px';
+  sub.style.top = Math.max(8, Math.min(r.top - o.top - sub.querySelector('button').offsetTop, o.height - h - 8)) + 'px';
+  if (focus) (sub.querySelector('[aria-checked="true"]') || sub.querySelector('button'))?.focus();
+}
+function closeSub() {
+  clearTimeout(subTimer); if (!subFor) return;
+  $('#mSub').hidden = true; subFor.setAttribute('aria-expanded', 'false'); subFor.classList.remove('open'); subFor = null;
+}
+// The model and effort picked, kept as the tool's default.
+function pickModel(x, model, effort) {
+  x.model = model; x.effort = effort;
+  host?.postMessage({ type: 'setModel', tool: x.id, model: x.model, effort: x.effort || null });
+  renderPill('#' + menuFor.id, x.id); closeMenu();
+}
 for (const id of ['#dModel', '#nModel']) $(id).onclick = e => { e.stopPropagation(); menuFor === $(id) ? closeMenu() : (closeMenu(), openMenu($(id))); };
 // The new task's tool access: Trust all never asks; the rest ask more, or change nothing.
 function openAccess(pill) {
@@ -1266,18 +1559,479 @@ $('#nAccess').onclick = e => { e.stopPropagation(); menuFor === $('#nAccess') ? 
 $('#mMenu').addEventListener('click', e => {
   const b = e.target.closest('button'); if (!b || !menuFor) return;
   if (b.dataset.access) { newAccess[newTool] = b.dataset.access; closeMenu(); renderNew(); return; }
+  // A model on its own keeps the effort, which applies where the model takes it.
   const x = tools.find(t => t.id === menuFor.dataset.tool);
-  if (b.dataset.model != null) x.model = b.dataset.model; else if (b.dataset.effort) x.effort = b.dataset.effort;
-  host?.postMessage({ type: 'setModel', tool: x.id, model: x.model, effort: x.effort || null });
-  const pill = menuFor; renderPill('#' + pill.id, x.id);
-  if (b.dataset.model != null) closeMenu(); else openMenu(pill);
+  if (b.dataset.model != null) pickModel(x, b.dataset.model, x.effort);
 });
+// A short wait before another row's efforts replace the open ones, so the pointer can
+// cross a row or two on its way over to them.
+$('#mMenu').addEventListener('pointerover', e => {
+  const row = e.target.closest('.mrow'); if (!row) return;
+  clearTimeout(subTimer);
+  if (row !== subFor) subTimer = setTimeout(() => openSub(row), subFor ? 160 : 60);
+});
+$('#mMenu').addEventListener('scroll', closeSub);
+$('#mSub').addEventListener('pointerenter', () => clearTimeout(subTimer));
+$('#mSub').addEventListener('click', e => {
+  const b = e.target.closest('button'); if (!b || !subFor || !menuFor) return;
+  pickModel(tools.find(t => t.id === menuFor.dataset.tool), subFor.dataset.model, b.dataset.effort);
+});
+// Arrows move within a list; Right opens a model's efforts and Left (or Esc) goes back.
+const arrows = (e, list) => {
+  const items = [...list.querySelectorAll('button')], i = items.indexOf(document.activeElement);
+  if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return false;
+  e.preventDefault(); items[(i + (e.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length]?.focus();
+  return true;
+};
 $('#mMenu').addEventListener('keydown', e => {
-  const items = [...$('#mMenu').querySelectorAll('button')], i = items.indexOf(document.activeElement);
-  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); items[(i + (e.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length]?.focus(); }
-  else if (e.key === 'Escape') { e.stopPropagation(); closeMenu(); }
+  if (arrows(e, $('#mMenu'))) closeSub();
+  else if (e.key === 'ArrowRight' && document.activeElement?.matches('.mrow[aria-haspopup]')) { e.preventDefault(); openSub(document.activeElement, true); }
+  else if (e.key === 'Escape') { e.stopPropagation(); subFor ? closeSub() : closeMenu(); }
 });
-addEventListener('pointerdown', e => { if (menuFor && !e.target.closest('#mMenu,.mpill,#nAccess')) closeMenu(); });
+$('#mSub').addEventListener('keydown', e => {
+  if (arrows(e, $('#mSub'))) return;
+  if (e.key === 'ArrowLeft' || e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); const row = subFor; closeSub(); row?.focus(); }
+});
+addEventListener('pointerdown', e => { if (menuFor && !e.target.closest('#mMenu,#mSub,.mpill,#nAccess')) closeMenu(); });
+
+// ── The desk: T3 Code's panel launcher, for one session ─────────────────
+// A click on a desk opens its menu (Browser, Terminal, Files, Diff, Pull request,
+// Linked pull requests, Agents, Screen), each with its letter. A row opens the wide
+// side panel on that surface, with the others as tabs along its top. The data comes
+// from Hover ({type:'desk', what}), asked again while the session changes; the
+// screen comes as frames ({type:'screen'}) while its tab shows.
+let deskMenuFor = null, deskSubOpen = false, desk = null, deskDirty = false, deskHTML = '';
+const probes = {}, deskUI = {}, deskCache = new Map(), deskAt = {}, deskInflight = {};
+const deskKey = (id, what, arg) => `${id}|${what}|${arg ?? ''}`;
+const deskGet = (s, what, arg) => deskCache.get(deskKey(s.id, what, arg));
+const deskSteps = s => s.turns.flatMap(t => (t.steps || []).map(stepOf));
+const deskOf = () => desk && sessions.find(x => x.id === desk.id);
+const uiOf = id => deskUI[id] ||= { tab: 'browser', url: null, file: null, find: '', open: new Set(), diffOpen: new Map(), agentOpen: new Set(), watch: false };
+const availOf = s => D.availability(probes[s.id], s, deskSteps(s));
+const clampTo = (v, a, b) => Math.max(a, Math.min(b, v));
+
+function deskAsk(s, what, arg) {
+  const k = deskKey(s.id, what, arg); deskAt[k] = Date.now(); deskInflight[k] = Date.now();
+  if (host) host.postMessage({ type: 'desk', id: s.id, what, arg });
+  else setTimeout(() => onDesk({ id: s.id, what, arg, data: demoDesk(s, what, arg) }), 150);
+}
+function onDesk(m) {
+  const k = deskKey(m.id, m.what, m.arg); delete deskInflight[k];
+  deskCache.set(k, m.data);
+  if (m.what === 'probe') { probes[m.id] = m.data; if (deskMenuFor === m.id) renderDeskMenu(); }
+  if (m.what === 'browser' && deskSubOpen && deskMenuFor === m.id) openDeskSub();
+  const s = deskOf();
+  if (s?.id === m.id) {
+    // The browser opens on the newest local server the agent started, if any.
+    if (m.what === 'browser' && !desk.ui.url && !desk.ui.picked) { const p = m.data?.pages?.find(x => x.local) || m.data?.pages?.[0]; if (p) desk.ui.url = p.url; }
+    renderDesk();
+  }
+}
+// How often a surface is asked again while its session changes (ms); git and gh less.
+const PERIOD = { terminal: 700, agents: 700, browser: 1500, files: 3000, file: 4000, diff: 2500, pr: 30000, linked: 30000, probe: 4000 };
+function deskFetch(force) {
+  const s = deskOf(); if (!s || paused) return;
+  const ui = desk.ui, what = ui.tab === 'files' && ui.file ? 'file' : ui.tab, arg = what === 'file' ? ui.file : undefined;
+  const due = (w, a, f) => {
+    const k = deskKey(s.id, w, a), age = Date.now() - (deskAt[k] || 0);
+    if (deskInflight[k] && Date.now() - deskInflight[k] < 15000) return;
+    if ((f && age > 400) || (deskDirty && age > PERIOD[w]) || age > (busy(s) ? Math.max(PERIOD[w], 6000) : 60000)) deskAsk(s, w, a);
+  };
+  if (what !== 'screen') due(what, arg, force);
+  if (what === 'browser' || force) due('probe', undefined, force);
+  deskDirty = false;
+}
+setInterval(() => deskFetch(false), 500);
+
+function openDeskMenu(s, x, y) {
+  closeMenu(); closeHud(); fold(); closeDeskSub();
+  deskMenuFor = s.id; const m = $('#deskMenu'); m.dataset.for = ''; renderDeskMenu();
+  const o = view.getBoundingClientRect(); m.hidden = false;
+  m.style.left = clampTo(x - o.left + 6, 8, o.width - m.offsetWidth - 8) + 'px';
+  m.style.top = clampTo(y - o.top - 12, 8, o.height - m.offsetHeight - 8) + 'px';
+  // It grows from where the click was.
+  m.style.setProperty('--ox', `${x - o.left - parseFloat(m.style.left)}px`); m.style.setProperty('--oy', `${y - o.top - parseFloat(m.style.top)}px`);
+  m.style.animation = 'none'; void m.offsetWidth; m.style.animation = '';
+  (m.querySelector('.dtile:not([aria-disabled="true"])') || m.querySelector('.dtile'))?.focus();
+  deskAsk(s, 'probe'); deskAsk(s, 'browser');
+}
+// The desk as a card, in the chat's style: who works here and on what (the chat's
+// header), what it does now (the chat's live step, or the answer it gave), its eight
+// surfaces as tiles with what each holds, and a reply box. Built once per open; the
+// parts redraw in place, so a reply being typed keeps its text and focus.
+function renderDeskMenu() {
+  const s = sessions.find(x => x.id === deskMenuFor); if (!s) return closeDeskMenu();
+  const m = $('#deskMenu'), x = toolOf(s);
+  if (m.dataset.for !== String(s.id)) {
+    m.dataset.for = String(s.id);
+    m.innerHTML = '<div class="dhd"></div><div class="dnow"></div><div class="dtiles" role="group" aria-label="Surfaces"></div>'
+      + `<div class="dcomp composer"><textarea id="dmInput" rows="1" aria-label="Reply"></textarea><button class="go" id="dmGo" aria-label="Send"><svg class="up" viewBox="0 0 24 24"><path d="M12 19V5M5 12l7-7 7 7"/></svg><svg class="sq" viewBox="0 0 24 24"><rect x="6.5" y="6.5" width="11" height="11" rx="2.5" fill="#000" stroke="none"/></svg></button></div>`
+      + `<button role="menuitem" class="dchat" data-chat>${CHAT}<span></span><kbd>↵</kbd></button>`;
+  }
+  m.setAttribute('aria-label', `${s.b.name}’s desk`);
+  m.style.setProperty('--c', s.b.css);
+  const T = last(s), st = T.stage, p = probes[s.id], av = availOf(s), b = busy(s);
+  const focus = document.activeElement?.closest?.('#deskMenu [data-surface]')?.dataset.surface;
+  const what = { waking: 'Waking up', working: 'Working', waiting: 'Waiting for you', done: 'Done', failed: 'Couldn’t finish', stopped: 'Stopped', queued: 'Queued' }[st] || '';
+  const clock = b && T.t0 ? ` <span class="tm" data-t0="${T.t0}">${clockOf(T.t0)}</span>` : T.took != null ? ` · ${took(T.took)}` : '';
+  const ac = ACCESS[s.access];
+  const head = `<span class="dav"><span class="lg ${TOOLS[s.tool] ? s.tool : 'kiro'}" role="img" aria-label="${esc(x.name)}" title="${esc(x.name)}">${logo(s.tool)}</span><i class="dot st-${st}"></i></span>`
+    + `<div class="dtt"><b>${esc(s.b.name)}’s desk</b><span class="dtl" title="${esc(s.title)}">${esc(s.title)}</span>`
+    + `<div class="dmeta"><span class="chip dst st-${st}">${esc(what)}${clock}</span>${s.folder ? `<span class="chip" title="${esc(s.folder)}">${FOLDER}<span>${esc(short(s.folder))}</span></span>` : ''}${ac ? `<span class="chip ${s.access}" title="${esc(accessNote(s.access, s.tool))}">${SHIELD}${esc(ac[0])}</span>` : ''}${s.ctx != null ? `<span class="chip" title="${s.ctx}% of the context window used">${s.ctx}%</span>` : ''}</div></div>`;
+  const hd = m.querySelector('.dhd'); if (hd.dataset.h !== head) { hd.innerHTML = head; hd.dataset.h = head; }
+  // What it is doing: its last steps as the chat shows them, the helpers it has out,
+  // the question it waits on, or what it answered.
+  const list = (T.steps || []).map(stepOf), helpers = minis.filter(n => n.s === s && !n.leaving);
+  let now = '';
+  if (st === 'waiting' && s.ask) now = `<div class="dask"><b>${esc(s.ask.title || 'A question for you')}</b>${s.ask.line ? `<span>${esc(s.ask.line)}</span>` : ''}<button class="pbtn sm" data-chat>Review</button></div>`;
+  else if (b) {
+    const rows = list.slice(-3).map((y, j, a) => stepRow(y, `dm:${s.id}:${list.length - a.length + j}`, j === a.length - 1 && !ended(y), false)).join('');
+    now = rows ? `<div class="steps">${rows}</div>` : `<p class="dline">${esc(bubbleFor(s) || 'Getting started…')}</p>`;
+    if (helpers.length) now += `<p class="dhelp">${helpers.map(n => `<i style="--h:#${n.mats[0].color.getHexString()}"></i>`).join('')}${helpers.length === 1 ? 'A helper is' : `${helpers.length} helpers are`} on subagent tasks at the desk</p>`;
+  } else if (T.answer) {
+    const plain = T.answer.replace(/```[\s\S]*?```/g, ' ').replace(/[#*_`>|\-]+/g, ' ').replace(/\[(.*?)\]\(.*?\)/g, '$1').replace(/\s+/g, ' ').trim();
+    const edits = new Set(list.filter(y => y.k === 'edit').map(y => y.name)).size;
+    now = `<div class="dans${st === 'failed' ? ' err' : ''}">${esc(plain.length > 220 ? plain.slice(0, 219) + '…' : plain)}</div><p class="dline">${[`${list.length} step${list.length === 1 ? '' : 's'}`, edits && `${edits} file${edits === 1 ? '' : 's'} edited`].filter(Boolean).join(' · ')}</p>`;
+  } else now = `<p class="dline">${esc(bubbleFor(s) || 'Nothing yet.')}</p>`;
+  const nw = m.querySelector('.dnow'); if (nw.dataset.h !== now) { nw.innerHTML = now; nw.dataset.h = now; }
+  const tiles = D.SURFACES.map(([id, name, key]) => {
+    const [ok, why] = av[id], n = id === 'agents' ? p?.running || 0 : 0;
+    const live = id === 'screen' && s.testing || id === 'browser' && s.browsing;
+    return `<button role="menuitem" class="dtile${live ? ' live' : ''}" data-surface="${id}" aria-keyshortcuts="${key}"${ok ? '' : ` aria-disabled="true" title="${esc(why)}"`}>`
+      + `<span class="di">${D.ICONS[id]}${n ? `<b class="bdg">${n}</b>` : ''}${live ? '<i class="lv"></i>' : ''}</span><kbd>${key}</kbd><span class="dl">${esc(name)}</span><span class="dd">${esc(ok ? D.tileDetail(id, p, s, agentTabs[s.id], deskGet(s, 'browser')?.pages) : why)}</span></button>`;
+  }).join('');
+  const tl = m.querySelector('.dtiles'); if (tl.dataset.h !== tiles) { tl.innerHTML = tiles; tl.dataset.h = tiles; }
+  const inp = $('#dmInput');
+  inp.placeholder = s.archived ? `Reply to wake ${x.name}…` : s.ask ? `Or tell ${s.b.name} what to do instead…` : b ? `Reply. ${s.b.name} reads it after this run` : `Reply to ${s.b.name}…`;
+  syncDeskSend();
+  m.querySelector('.dchat span').textContent = `Open the chat with ${s.b.name}`;
+  if (focus && !m.contains(document.activeElement)) m.querySelector(`[data-surface="${focus}"]`)?.focus();
+}
+// One round button, as the chat's: sends what is typed, or stops the run when empty.
+function syncDeskSend() {
+  const s = sessions.find(x => x.id === deskMenuFor), g = $('#dmGo'); if (!s || !g) return;
+  const stop = busy(s) && !$('#dmInput').value.trim();
+  g.classList.toggle('stop', stop); g.setAttribute('aria-label', stop ? 'Stop' : 'Send'); g.title = stop ? 'Stop the run' : 'Send (Enter)';
+  g.disabled = !stop && !$('#dmInput').value.trim();
+}
+function deskSend() {
+  const s = sessions.find(x => x.id === deskMenuFor); if (!s) return;
+  const v = $('#dmInput').value.trim();
+  if (!v) { if (busy(s)) doStop(s); return; }
+  doReply(v, [], s); $('#dmInput').value = ''; autosize($('#dmInput')); syncDeskSend();
+  toast(busy(s) ? `${s.b.name} reads it after this run.` : `Sent to ${s.b.name}.`);
+}
+function closeDeskMenu() { if (deskMenuFor == null) return; closeDeskSub(); deskMenuFor = null; $('#deskMenu').hidden = true; }
+// The pages the agent opened, beside the Browser row, as T3 Code's profiles are.
+function openDeskSub(focus) {
+  const s = sessions.find(x => x.id === deskMenuFor), pages = s && deskGet(s, 'browser')?.pages; if (!pages?.length) return;
+  const sub = $('#deskSub'), row = $('#deskMenu [data-surface="browser"]');
+  sub.innerHTML = `<h5>Pages ${esc(s.b.name)} opened</h5>` + pages.slice(0, 12).map(p => `<button role="menuitem" data-url="${esc(p.url)}" title="${esc(p.url)}">${p.kind === 'server' ? D.ICONS.server : D.ICONS.browser}<span>${esc(p.kind === 'fetch' && p.title ? p.title : D.pageLabel(p.url))}</span><em>${esc(D.KINDS[p.kind] || '')}</em></button>`).join('');
+  sub.hidden = false; deskSubOpen = true; row?.setAttribute('aria-expanded', 'true'); row?.classList.add('open');
+  const m = $('#deskMenu').getBoundingClientRect(), r = row.getBoundingClientRect(), o = view.getBoundingClientRect();
+  let left = m.right - o.left + 4; if (left + sub.offsetWidth > o.width - 8) left = Math.max(8, m.left - o.left - sub.offsetWidth - 4);
+  sub.style.left = left + 'px'; sub.style.top = clampTo(r.top - o.top - 6, 8, o.height - sub.offsetHeight - 8) + 'px';
+  if (focus) sub.querySelector('button')?.focus();
+}
+function closeDeskSub() { if (!deskSubOpen) return; deskSubOpen = false; $('#deskSub').hidden = true; const row = $('#deskMenu [data-surface="browser"]'); row?.setAttribute('aria-expanded', 'false'); row?.classList.remove('open'); }
+function pickSurface(id) {
+  const s = sessions.find(x => x.id === (deskMenuFor ?? desk?.id)); if (!s) return;
+  const [ok, why] = availOf(s)[id];
+  if (!ok) { toast(why); return; }
+  if (id === 'pr' && host) host.postMessage({ type: 'gh' });
+  openDesk(s.id, id);
+}
+$('#deskMenu').addEventListener('click', e => {
+  if (e.target.closest('[data-chat]')) { const id = deskMenuFor; closeDeskMenu(); return openSession(id); }
+  if (e.target.closest('#dmGo')) return deskSend();
+  if (e.target.closest('.dcomp')) { $('#dmInput').focus(); return; }
+  const b = e.target.closest('.dtile'); if (b) pickSurface(b.dataset.surface);
+});
+$('#deskMenu').addEventListener('input', e => { if (e.target.id === 'dmInput') { autosize(e.target); syncDeskSend(); } });
+$('#deskSub').addEventListener('click', e => { const b = e.target.closest('[data-url]'); if (!b) return; const id = deskMenuFor; closeDeskMenu(); openDesk(id, 'browser', { url: b.dataset.url }); });
+$('#deskMenu').addEventListener('keydown', e => {
+  if (e.target.id === 'dmInput') {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); deskSend(); }
+    else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeDeskMenu(); }
+    e.stopPropagation(); return;
+  }
+  if (e.metaKey || e.ctrlKey || e.altKey) return;
+  const f = D.SURFACES.find(x => x[2].toLowerCase() === e.key.toLowerCase());
+  if (f) { e.preventDefault(); e.stopPropagation(); pickSurface(f[0]); return; }
+  if (e.key === 'Enter' && !document.activeElement?.closest('.dtile,button')) { e.preventDefault(); const id = deskMenuFor; closeDeskMenu(); openSession(id); return; }
+  // The tiles are a grid of four: arrows move across and down.
+  const tiles = [...$('#deskMenu').querySelectorAll('.dtile')], i = tiles.indexOf(document.activeElement);
+  const step = { ArrowRight: 1, ArrowLeft: -1, ArrowDown: 4, ArrowUp: -4 }[e.key];
+  if (step != null && i >= 0) {
+    e.preventDefault(); closeDeskSub();
+    const j = i + step;
+    if (j >= tiles.length) $('#dmInput').focus(); else if (j >= 0) tiles[j].focus();
+    return;
+  }
+  if (step != null) { e.preventDefault(); (e.key === 'ArrowUp' ? tiles[tiles.length - 1] : tiles[0])?.focus(); return; }
+  if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeDeskMenu(); }
+});
+$('#deskSub').addEventListener('keydown', e => {
+  if (arrows(e, $('#deskSub'))) return;
+  if (e.key === 'ArrowLeft' || e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeDeskSub(); $('#deskMenu [data-surface="browser"]')?.focus(); }
+});
+addEventListener('pointerdown', e => { if (deskMenuFor != null && !e.target.closest('#deskMenu,#deskSub')) closeDeskMenu(); });
+
+function openDesk(id, tab, opts = {}) {
+  closeDeskMenu();
+  const s = sessions.find(x => x.id === id); if (!s) return;
+  const ui = uiOf(id);
+  if (opts.url) { ui.url = opts.url; ui.picked = true; }
+  if (desk && desk.id !== id) leaveDesk();
+  ui.tab = tab; desk = { id, ui };
+  if (tab === 'pr' && host) host.postMessage({ type: 'gh' });
+  if (panel !== 'desk') openPanel('desk'); else renderDesk();
+  deskFetch(true); screenPulse();
+}
+// The panel goes, or shows something else: the screen stops, the page in the browser goes.
+function leaveDesk() {
+  if (!desk) return;
+  desk = null; deskHTML = ''; screenPulse(); placeBrowser();
+  const body = $('#pBody'); body.classList.remove('desk'); body.innerHTML = '';
+}
+function renderDesk() {
+  const s = deskOf(); if (!s) { closePanel(); return; }
+  const ui = desk.ui, tab = ui.tab, name = D.SURFACES.find(x => x[0] === tab)[1], bot = s.b.name;
+  $('#pTitle').textContent = tab === 'files' && ui.file ? ui.file.split('/').pop() : name;
+  $('#pSub').textContent = `${bot} · ${s.title}`;
+  const body = $('#pBody'); body.classList.add('desk');
+  if (!body.querySelector(':scope > .dtabs')) { body.innerHTML = '<div class="dtabs" role="tablist" aria-label="Desk"></div><div class="dbody"></div>'; deskHTML = ''; }
+  const av = availOf(s), p = probes[s.id];
+  const tabs = D.SURFACES.map(([id, nm, key]) => `<button role="tab" data-tab="${id}" aria-selected="${id === tab}" aria-label="${esc(nm)}" title="${esc(nm)} (${key})${av[id][0] ? '' : ' · ' + esc(av[id][1])}"${av[id][0] ? '' : ' aria-disabled="true"'}>${D.ICONS[id]}${id === 'agents' && p?.running ? `<b class="bdg">${p.running}</b>` : ''}${id === 'screen' && s.testing ? '<b class="rec"></b>' : ''}</button>`).join('');
+  const tabsEl = body.querySelector('.dtabs'); if (tabsEl.dataset.h !== tabs) { tabsEl.innerHTML = tabs; tabsEl.dataset.h = tabs; }
+  const el = body.querySelector('.dbody');
+  // (Not data-tab or data-file: the clicks inside look for those.)
+  if (el.dataset.view !== tab || el.dataset.shows !== (ui.file || '')) { el.dataset.view = tab; el.dataset.shows = ui.file || ''; el.innerHTML = ''; deskHTML = ''; body.scrollTop = 0; }
+  if (tab === 'browser') return renderBrowser(s, el);
+  if (tab === 'screen') return renderScreen(s, el);
+  const html = tab === 'terminal' ? D.terminalHTML(deskGet(s, 'terminal'), bot)
+    : tab === 'files' ? (ui.file ? D.fileHTML(deskGet(s, 'file', ui.file), ui.file) : D.filesHTML(deskGet(s, 'files'), ui, bot))
+    : tab === 'diff' ? D.diffHTML(deskGet(s, 'diff'), ui)
+    : tab === 'pr' ? D.prHTML(deskGet(s, 'pr'), t => md(t, s), gh, ui)
+    : tab === 'linked' ? D.linkedHTML(deskGet(s, 'linked'))
+    : D.agentsHTML(deskGet(s, 'agents'), ui);
+  if (html === deskHTML) return;
+  // A pull request being written isn't redrawn under the user's typing.
+  if (tab === 'pr' && document.activeElement?.closest?.('#pBody [data-prform]') && !ui.prDirty) return;
+  ui.prDirty = false;
+  const atEnd = body.scrollHeight - body.scrollTop - body.clientHeight < 40, top = body.scrollTop, findHad = document.activeElement?.id === 'fFind';
+  deskHTML = html; el.innerHTML = html;
+  // The terminal follows its newest output while the user is at its end.
+  body.scrollTop = tab === 'terminal' && (atEnd || !top) ? 1e9 : top;
+  if (findHad) { const f = $('#fFind'); f?.focus(); f?.setSelectionRange(f.value.length, f.value.length); }
+}
+// The bar redraws as the pages change; the page itself only when its address does, so
+// an app the user is looking at isn't reloaded under them.
+function renderBrowser(s, el) {
+  const ui = desk.ui;
+  if (!el.querySelector('.bwrap')) el.innerHTML = '<div class="bwrap"><div class="bbar"></div><div class="bview"></div></div>';
+  const tab = agentTabs[s.id];
+  const bar = hostBrowser ? D.nativeBarHTML(deskGet(s, 'browser'), tab, ui.url, s.b.name, s.browsing) : D.browserBarHTML(deskGet(s, 'browser'), ui.url, s.b.name), barEl = el.querySelector('.bbar');
+  if (barEl.dataset.h !== bar && document.activeElement?.id !== 'bAddr') { barEl.innerHTML = bar; barEl.dataset.h = bar; }
+  const v = el.querySelector('.bview');
+  if (hostBrowser) {
+    // Hover's own browser, the one the agent drives, is laid over this box by the host
+    // (placeBrowser). The newest local server opens in it if nothing has yet.
+    if (!tab?.url && ui.url && ui.sent !== ui.url) { ui.sent = ui.url; host.postMessage({ type: 'browserGo', id: s.id, url: ui.url }); }
+    const inner = tab?.url ? '<div class="bnat"><i class="spin"></i></div>' : `<div class="bnat">${D.browserEmptyHTML(s.b.name)}</div>`;
+    if (v.dataset.url !== 'native' || v.dataset.h !== inner) { v.dataset.url = 'native'; v.dataset.h = inner; v.innerHTML = inner; }
+    placeBrowser();
+    return;
+  }
+  if (v.dataset.url === (ui.url || '')) return;
+  v.dataset.url = ui.url || '';
+  if (!ui.url) { v.innerHTML = D.browserEmptyHTML(s.b.name); return; }
+  const local = /^http:\/\/(localhost|127\.0\.0\.1)(:|\/|$)/i.test(ui.url);
+  // Sandboxed: scripts run, but it can't reach the office, open windows or move the page.
+  v.innerHTML = `<iframe sandbox="allow-scripts allow-forms allow-same-origin" referrerpolicy="no-referrer" src="${esc(ui.url)}" title="${esc(D.pageLabel(ui.url))}"></iframe>`
+    + (local ? '<p class="bnote">Nothing showing? The server may have stopped; its output is in the terminal.</p>' : '<p class="bnote">Some sites won’t show inside Hover. The arrow above opens it in your browser.</p>');
+}
+
+// Hover's browser, by session, as the host reports it: its address, title, loading.
+const agentTabs = {};
+function onAgentBrowser(m) {
+  agentTabs[m.id] = m;
+  const s = deskOf();
+  if (s?.id === m.id && desk.ui.tab === 'browser') renderDesk();
+  if (deskMenuFor === m.id) renderDeskMenu();
+}
+// Where the host lays the browser: over the Browser panel's page box while it shows
+// and nothing of the office covers it; nowhere otherwise. Checked often, sent on change.
+let placed = 'none';
+function placeBrowser() {
+  if (!host || !hostBrowser) return;
+  const s = deskOf();
+  let id = null, r = null;
+  if (s && !paused && panel === 'desk' && desk.ui.tab === 'browser' && agentTabs[s.id]?.url) {
+    const v = $('#pBody .bview'), over = deskMenuFor != null || !$('#confirm').hidden || !$('#mMenu').hidden || !$('#hudMenu').hidden || drawerOpen;
+    const b = v?.getBoundingClientRect();
+    if (b && !over && b.width > 40 && b.height > 40) { id = s.id; r = { x: b.left, y: b.top, w: b.width, h: b.height }; }
+  }
+  const key = id == null ? 'none' : [id, r.x, r.y, r.w, r.h].map(Math.round).join('|');
+  if (key === placed) return;
+  const was = placed === 'none' ? null : +placed.split('|')[0];
+  placed = key;
+  if (was != null && was !== id) host.postMessage({ type: 'browserView', id: was, rect: null });
+  if (id != null) host.postMessage({ type: 'browserView', id, rect: r });
+}
+setInterval(placeBrowser, 120);
+// The user's address or a picked page: in Hover's browser, or the iframe.
+function browse(url) {
+  const s = deskOf(); if (!s) return;
+  desk.ui.url = url; desk.ui.picked = true;
+  if (hostBrowser) { desk.ui.sent = url; host.postMessage({ type: 'browserGo', id: s.id, url }); }
+  renderDesk();
+}
+
+// ── GitHub: the CLI's setup, and pull requests made here ─────────────────
+let gh = null;
+function onGh(m) {
+  const was = gh; gh = m;
+  // Signed in just now: the panels read again.
+  if (m.signedIn && was && !was.signedIn) for (const k of [...deskCache.keys()]) if (/\|(pr|linked|probe)\|/.test(k)) { deskCache.delete(k); delete deskAt[k]; }
+  const s = deskOf(); if (s && desk.ui.tab === 'pr') { desk.ui.prDirty = true; if (m.signedIn && was && !was.signedIn) deskFetch(true); renderDesk(); }
+}
+function onDeskAction(m) {
+  const ui = uiOf(m.id); ui.prBusy = false; ui.prResult = m.data; ui.prDirty = true;
+  if (m.data?.ok) { for (const w of ['pr', 'probe', 'linked', 'diff', 'files']) { const k = deskKey(m.id, w); deskCache.delete(k); delete deskAt[k]; } if (m.data.url) toast('Pull request opened.'); }
+  const s = deskOf(); if (s?.id === m.id) { if (m.data?.ok) deskFetch(true); renderDesk(); }
+}
+
+// ── The screen ──────────────────────────────────────────────────────────
+// Live while the agent tests (computer use), or when the user watches; otherwise the
+// desktop as it is with no app open. Hover is asked again every 3 s while the tab
+// shows, and stops on its own when it isn't.
+const scr = { image: null, live: false, access: true };
+let scrWant = null, scrKey = '', demoScr = 0;
+function screenPulse(renew) {
+  const s = !paused && panel === 'desk' && desk?.ui.tab === 'screen' ? deskOf() : null;
+  const want = s ? (s.testing || desk.ui.watch ? 'live' : 'still') + '|' + JSON.stringify(s.apps || null) : null;
+  if (!want) { if (scrWant) { scrWant = null; host?.postMessage({ type: 'screen', on: false }); clearInterval(demoScr); demoScr = 0; } return; }
+  const changedWant = want !== scrWant; scrWant = want;
+  if (!changedWant && !renew) return;
+  // Only the desktop and the apps the agent opened: never the user's own windows.
+  if (host) host.postMessage({ type: 'screen', on: true, live: want.startsWith('live'), apps: s.apps || null });
+  else if (changedWant) { clearInterval(demoScr); demoScr = 0; onScreen({ image: demoFrame(false), live: false, access: true }); if (want.startsWith('live')) demoScr = setInterval(() => onScreen({ image: demoFrame(true), live: true, access: true }), 250); }
+  if (changedWant && s) renderDesk();
+}
+setInterval(() => screenPulse(true), 3000);
+function onScreen(m) {
+  if (m.image) scr.image = m.image;
+  scr.live = !!m.live && !!m.image; scr.access = m.access !== false;
+  const s = deskOf(); if (s && desk.ui.tab === 'screen') renderScreen(s, $('#pBody .dbody'));
+}
+function renderScreen(s, el) {
+  if (!el) return;
+  const key = [scr.live, scr.access, desk.ui.watch, !!s.testing, !!scr.image, s.b.name, !!s.apps].join('|');
+  if (key !== scrKey || !el.querySelector('#scrImg')) { scrKey = key; el.innerHTML = D.screenHTML({ ...scr, watch: desk.ui.watch }, s.b.name, !!s.testing, RETINA, !!s.apps); return; }
+  const img = el.querySelector('#scrImg'); if (scr.image && img.getAttribute('src') !== scr.image) img.src = scr.image;
+}
+
+// ── What the panel's controls do ────────────────────────────────────────
+$('#pBody').addEventListener('click', e => {
+  if (panel !== 'desk' || !desk) return;
+  const ui = desk.ui, t = e.target;
+  const tab = t.closest('[data-tab]'); if (tab) return pickSurface(tab.dataset.tab);
+  const ext = t.closest('[data-ext]'); if (ext) { const url = ext.dataset.ext; if (url) host ? host.postMessage({ type: 'link', url }) : open(url, '_blank', 'noopener'); return; }
+  const f = t.closest('[data-file]'); if (f) { ui.file = f.dataset.file; renderDesk(); deskFetch(true); return; }
+  if (t.closest('[data-fback]')) { ui.file = null; renderDesk(); deskFetch(true); return; }
+  const dir = t.closest('[data-dir]'); if (dir) { const p = dir.dataset.dir; ui.open.has(p) ? ui.open.delete(p) : ui.open.add(p); renderDesk(); return; }
+  const df = t.closest('[data-df]'); if (df) { ui.diffOpen.set(df.dataset.df, df.getAttribute('aria-expanded') !== 'true'); renderDesk(); return; }
+  const sa = t.closest('[data-sa]'); if (sa) { const id = sa.dataset.sa; ui.agentOpen.has(id) ? ui.agentOpen.delete(id) : ui.agentOpen.add(id); renderDesk(); return; }
+  const u = t.closest('[data-url]'); if (u) { browse(u.dataset.url); return; }
+  if (t.closest('[data-breload]')) { const fr = $('#pBody iframe'); if (fr) fr.src = fr.src; return; }
+  const nav = t.closest('[data-bnav]'); if (nav) { host?.postMessage({ type: 'browserNav', id: desk.id, what: nav.dataset.bnav }); return; }
+  const g = t.closest('[data-gh]'); if (g) { if (host) host.postMessage({ type: 'gh', step: g.dataset.gh }); else demoGh(g.dataset.gh); return; }
+  const gc = t.closest('[data-ghcopy]'); if (gc) { copyText(gc.dataset.ghcopy, gc); return; }
+  if (t.closest('[data-watch]')) { ui.watch = !ui.watch; screenPulse(); renderDesk(); return; }
+  if (t.closest('[data-saccess]')) { host?.postMessage({ type: 'screenAccess' }); return; }
+});
+$('#pBody').addEventListener('submit', e => {
+  if (!e.target.matches('[data-baddr]') || !desk) return;
+  e.preventDefault();
+  if (e.target.matches('[data-prform]')) return createPr(e.target);
+  const url = D.normalizeUrl($('#bAddr').value);
+  if (!url) { toast('Type a web address, like localhost:3000.'); return; }
+  $('#bAddr').blur(); browse(url);
+});
+// Create pull request: what the form says, to Hover, which pushes and opens it.
+function createPr(form) {
+  const s = deskOf(); if (!s) return;
+  const ui = desk.ui, f = new FormData(form);
+  const args = { title: String(f.get('title') || '').trim(), body: String(f.get('body') || ''), branch: String(f.get('branch') || '').trim(), base: String(f.get('base') || '').trim(), draft: f.get('draft') === 'on', commit: f.get('commit') === 'on' };
+  if (!args.title) { toast('Give the pull request a title.'); return; }
+  Object.assign(ui.prForm ||= {}, args);
+  ui.prBusy = true; ui.prResult = null; ui.prDirty = true; document.activeElement?.blur(); renderDesk();
+  if (host) host.postMessage({ type: 'deskAction', id: s.id, what: 'prCreate', args });
+  else setTimeout(() => onDeskAction({ id: s.id, what: 'prCreate', data: { ok: true, url: 'https://github.com/example/hover/pull/43', steps: ['Pushed'] } }), 900);
+}
+$('#pBody').addEventListener('input', e => {
+  if (e.target.id === 'fFind' && desk) { desk.ui.find = e.target.value; renderDesk(); }
+  // The pull request form keeps what is typed, for when it is drawn again.
+  const f = e.target.closest?.('[data-prform]'); if (f && desk && e.target.name) (desk.ui.prForm ||= {})[e.target.name] = e.target.type === 'checkbox' ? e.target.checked : e.target.value;
+});
+// The letters switch surfaces while the desk's panel shows, as in T3 Code.
+addEventListener('keydown', e => {
+  if (panel !== 'desk' || !desk || deskMenuFor != null || e.metaKey || e.ctrlKey || e.altKey || e.target.closest?.('input,textarea,select,[contenteditable]')) return;
+  const f = D.SURFACES.find(x => x[2].toLowerCase() === e.key.toLowerCase());
+  if (f) { e.preventDefault(); pickSurface(f[0]); }
+});
+
+// ── The demo's desk, so a browser shows every surface ───────────────────
+function demoDesk(s, what, arg) {
+  const steps = deskSteps(s), runs = steps.filter(x => x.k === 'run');
+  const pages = [{ url: 'http://localhost:5173/', kind: 'server', local: true, status: 'completed' }, { url: 'https://threejs.org/docs/', kind: 'fetch', local: false, title: 'three.js docs', status: 'completed' }];
+  const tree = ['README.md', 'package.json', 'src/auth/refresh.ts', 'src/auth/session.ts', 'src/Hover/Owl/Notch.cs', 'src/Hover/Interop/HostWindow.cs', 'src/Hover/Core/Settings.cs', 'tests/Hover.Tests/CalendarTests.cs', 'web/office/main.js', 'web/office/desk.js'];
+  switch (what) {
+    case 'probe': return { folder: true, git: true, branch: 'fix/notch-flicker', changed: 3, gh: true, pr: { number: 42, title: s.title, state: 'open', isDraft: false }, commands: runs.length + 1, agents: 2, running: busy(s) ? 1 : 0, pages: pages.length, linked: 2 };
+    case 'browser': return { pages };
+    case 'terminal': return { commands: [{ cmd: 'npm run dev', status: 'completed', exit: 0, ms: 1800, out: '  VITE v6.0.7  ready in 412 ms\n\n  ➜  Local:   http://localhost:5173/\n  ➜  Network: use --host to expose' },
+      ...runs.map(x => ({ cmd: x.cmd, status: x.status, exit: x.exit ?? (x.status === 'failed' ? 1 : 0), ms: x.ms, out: x.out || (x.status === 'failed' ? 'npm ERR! ERESOLVE could not resolve\nnpm ERR! peer three@"<=0.170" from @react-three/fiber@8.17.10' : 'Passed!  - Failed: 0, Passed: 81, Skipped: 0') }))] };
+    case 'agents': return { running: busy(s) ? 1 : 0, agents: [{ id: 'a1', name: 'explore', task: 'Find where the notch is resized', prompt: 'Look through src/Hover/Owl and list every place the notch window changes size or position.', status: 'completed', ms: 21400, out: 'Notch.cs: Layout() sets Width, then Left.\nHostWindow.cs: PlaceDevice() moves and sizes in one SetWindowPos.' },
+      { id: 'a2', name: 'test-runner', task: 'Run the tests after the fix', prompt: 'Run dotnet test and report failures.', status: busy(s) ? 'in_progress' : 'completed', ms: busy(s) ? null : 14000, out: busy(s) ? null : 'All 81 tests pass.' }] };
+    case 'files': return { git: true, branch: 'fix/notch-flicker', more: false, tree,
+      changed: [{ path: 'src/Hover/Owl/Notch.cs', status: 'M', add: 2, del: 1 }, { path: 'web/office/desk.js', status: '?', add: 0, del: 0 }, { path: 'src/auth/refresh.ts', status: 'M', add: 14, del: 2 }],
+      touched: [{ path: 'src/Hover/Owl/Notch.cs', read: 2, edit: 1 }, { path: 'src/Hover/Interop/HostWindow.cs', read: 1, edit: 0 }] };
+    case 'file': return { path: arg, size: 1480, text: `// ${arg}\nnamespace Hover.Owl;\n\ninternal sealed class Notch\n{\n    private void Layout()\n    {\n        _window.PlaceDevice(x, top, w, h);\n        // size and place in one call\n    }\n}\n` };
+    case 'diff': return { git: true, branch: 'fix/notch-flicker', files: [
+      { path: 'src/Hover/Owl/Notch.cs', status: 'M', add: 2, del: 1, patch: '@@ -40,6 +40,7 @@ internal sealed class Notch\n     private void Layout()\n     {\n-        _window.Width = w; _window.Left = x;\n+        _window.PlaceDevice(x, top, w, h);\n+        // size and place in one call\n     }\n }' },
+      { path: 'web/office/desk.js', status: 'A', add: 3, del: 0, patch: '@@ -0,0 +1,3 @@\n+// The desk menu\'s panels.\n+export const SURFACES = [];\n+export const ICONS = {};' }] };
+    case 'pr': if (s.id === 1) return gh?.signedIn ? { none: true, error: 'This branch has no pull request yet.', create: { branch: 'fix/refresh-expiry', base: 'main', onDefault: false, ahead: 2, changed: 3, title: s.title, body: 'Refresh tokens now expire after 30 days.', busy: false } } : { setup: gh?.installed ? 'signin' : 'install', error: 'Set up the GitHub CLI.' };
+      return { number: 42, title: s.title, state: 'open', isDraft: false, url: 'https://github.com/example/hover/pull/42', head: 'fix/notch-flicker', base: 'main', additions: 16, deletions: 3, changedFiles: 3, author: 'pip-bot', review: 'REVIEW_REQUIRED', comments: 2, pass: 5, fail: 0, pending: 1, skip: 1,
+      checks: [{ name: 'build (windows-latest)', state: 'pass' }, { name: 'build (macos-14)', state: 'pass' }, { name: 'test', state: 'pending' }, { name: 'lint', state: 'pass' }],
+      body: 'The notch window was **resized and moved in two calls**, so for one frame it had the new size at the old place.\n\n- Size and position go through one `SetWindowPos`.\n- Build clean, 81/81 tests pass.' };
+    case 'linked': return { gh: true, prs: [{ url: 'https://github.com/example/hover/pull/42', repo: 'example/hover', number: 42, title: s.title, state: 'open', additions: 16, deletions: 3, head: 'fix/notch-flicker' }, { url: 'https://github.com/example/hover/pull/37', repo: 'example/hover', number: 37, title: 'Office: desk lamps follow the time of day', state: 'merged', additions: 40, deletions: 12 }] };
+  }
+  return { error: 'Unknown panel.' };
+}
+// The demo's GitHub CLI setup: install, a code to enter, then signed in.
+function demoGh(step) {
+  if (step === 'cancel') return onGh({ checked: true, installed: !!gh?.installed, signedIn: false });
+  onGh({ checked: true, installed: false, busy: true, step: 'installing', line: 'Installing the GitHub CLI…' });
+  setTimeout(() => onGh({ checked: true, installed: true, busy: true, step: 'signing-in', line: 'Enter the code at github.com/login/device, then come back.', code: 'H0VR-2026', url: 'https://github.com/login/device' }), 1200);
+  setTimeout(() => { onGh({ checked: true, installed: true, signedIn: true, user: 'octocat' }); const s = deskOf(); if (s) { deskCache.delete(deskKey(s.id, 'pr')); deskAsk(s, 'pr'); } }, 4200);
+}
+// A made-up desktop, and on it a window the demo agent is testing, with its pointer.
+function demoFrame(live) {
+  const c = document.createElement('canvas'); c.width = 1280; c.height = 800; const x = c.getContext('2d');
+  const g = x.createLinearGradient(0, 0, 1280, 800); g.addColorStop(0, '#1d2b64'); g.addColorStop(0.55, '#7a3e8f'); g.addColorStop(1, '#f8a978'); x.fillStyle = g; x.fillRect(0, 0, 1280, 800);
+  x.fillStyle = 'rgba(255,255,255,.18)'; x.fillRect(0, 0, 1280, 24); x.fillStyle = '#fff'; x.font = '600 13px Inter, sans-serif'; x.fillText(new Date().toLocaleTimeString(), 1160, 17);
+  for (let i = 0; i < 3; i++) { x.fillStyle = 'rgba(255,255,255,.85)'; x.fillRect(1200, 60 + i * 90, 48, 40); x.fillStyle = '#fff'; x.fillText(['Projects', 'Notes', 'Demo'][i], 1196, 120 + i * 90); }
+  if (live) {
+    const t = Date.now() / 1000;
+    x.fillStyle = 'rgba(20,20,26,.95)'; x.fillRect(220, 140, 720, 460); x.fillStyle = '#2b2b33'; x.fillRect(220, 140, 720, 34);
+    x.fillStyle = '#ff5f57'; x.beginPath(); x.arc(242, 157, 6, 0, TAU); x.fill(); x.fillStyle = '#febc2e'; x.beginPath(); x.arc(262, 157, 6, 0, TAU); x.fill(); x.fillStyle = '#28c840'; x.beginPath(); x.arc(282, 157, 6, 0, TAU); x.fill();
+    x.fillStyle = '#e8e8ee'; x.fillText('localhost:5173', 540, 162); x.fillStyle = '#9046FF'; x.fillRect(300, 260, 160 + 60 * Math.sin(t), 44); x.fillStyle = '#fff'; x.fillText('Sign in', 330, 288);
+    const px = 380 + Math.cos(t * 1.3) * 120, py = 300 + Math.sin(t * 1.7) * 80;
+    x.fillStyle = '#fff'; x.strokeStyle = '#000'; x.lineWidth = 1.5; x.beginPath(); x.moveTo(px, py); x.lineTo(px, py + 22); x.lineTo(px + 6, py + 16); x.lineTo(px + 15, py + 16); x.closePath(); x.fill(); x.stroke();
+  }
+  return c.toDataURL('image/jpeg', 0.8);
+}
 
 // ── Deleting a session, after asking ────────────────────────────────────
 let confirmAction = null;
@@ -1333,7 +2087,12 @@ host?.addEventListener('message', e => {
   if (m.type === 'state') fromHost(m);
   else if (m.type === 'toast') toast(m.text);
   else if (m.type === 'transcript') showTranscript(m.session);
-  else if (m.type === 'visible') { paused = !m.on; beats.follow(m.on); }
+  else if (m.type === 'visible') { paused = !m.on; beats.follow(m.on); screenPulse(); }
+  else if (m.type === 'desk') onDesk(m);
+  else if (m.type === 'screen') onScreen(m);
+  else if (m.type === 'agentBrowser') onAgentBrowser(m);
+  else if (m.type === 'gh') onGh(m);
+  else if (m.type === 'deskAction') onDeskAction(m);
   else if (m.type === 'folder') { newFolder = m.text; renderNew(); $('#nInput').focus(); }
   // The notch's Review on a question: its chat opens here.
   else if (m.type === 'reveal') { if (sessions.some(s => s.id === m.id)) openSession(m.id); }
@@ -1347,7 +2106,7 @@ const beats = (() => {
   function sync() {
     btn.classList.toggle('on', want); btn.setAttribute('aria-checked', want);
     if (want && seen) {
-      if (!audio) { audio = new Audio('office-beats.ogg'); audio.loop = true; audio.volume = 0; audio.preload = 'auto'; }
+      if (!audio) { audio = new Audio(window.hoverHost ? 'office-beats.m4a' : 'office-beats.ogg'); audio.loop = true; audio.volume = 0; audio.preload = 'auto'; }
       audio.play().then(() => ramp(0.32)).catch(() => { want = false; btn.classList.remove('on'); });
     } else if (audio && !audio.paused) ramp(0);
   }
@@ -1402,10 +2161,15 @@ function frame(now) {
   // pointer is about); otherwise the room only idles, at 10 fps, or not at all when
   // motion is off.
   const calm = !lively && now - pokedAt > 1500;
-  if (acc < (calm ? (still ? 1 : 1 / 10) : 1 / 31)) return;
+  // The Mac host runs at the display's rate (60 or 120 Hz) while something moves, so
+  // walks and camera moves are smooth; idle stays at 10 fps there too.
+  if (acc < (calm ? (still ? 1 : 1 / 10) : RETINA ? 1 / 121 : 1 / 31)) return;
   const step = acc; acc = 0; clockT += step;
   for (const s of sessions) { s.b.sync(last(s).stage, poseOf(last(s))); s.b.step(step); }
   for (const l of leaving) l.b.step(step);
+  for (const s of sessions) syncMinis(s);
+  for (let i = minis.length - 1; i >= 0; i--) { const m = minis[i]; m.step(step); if (m.gone) { m.dispose(); minis.splice(i, 1); } }
+  stepSheets(step);
   // The door swings open while a bot is near it.
   const near = [...sessions.map(s => s.b), ...leaving.map(l => l.b)].some(b => Math.hypot(b.x - DOOR.x, b.z - Z0) < 1.5);
   door.rotation.y = ease(door.rotation.y, near ? -1.3 : 0, 6, step);
@@ -1421,10 +2185,13 @@ function frame(now) {
   }
   // Camera: where the user put it; or close on the open session's bot, or on the
   // board or the TV, left of the side panel.
-  const s = drawerOpen && !viewing && cur(), side = W < 700 ? 0 : Math.min(424, W * 0.42) / 2;
+  // The desk's panel is wider; the camera keeps its bot in view beside it.
+  const dk = panel === 'desk' && desk && sessions.find(x => x.id === desk.id);
+  const s = drawerOpen && !viewing && cur(), side = W < 700 ? 0 : (dk ? Math.min(720, W - 24) : Math.min(424, W * 0.42)) / 2;
   const aim = (x, y, z, zoom) => { const off = side * 2 * halfWidth(zoom) / W; Object.assign(camTo, { x: x + RIGHT.x * off, y, z: z + RIGHT.z * off, zoom }); };
   if (s) aim(s.b.x, 0.9, s.b.z, W < 700 ? 1.3 : 1.45);
-  else if (panel) aim(...FOCUS[panel]);
+  else if (dk) aim(dk.b.x + 0.3, 0.9, dk.b.z, W < 700 ? 1.3 : 1.6);
+  else if (panel && FOCUS[panel]) aim(...FOCUS[panel]);
   else Object.assign(camTo, { x: userView.x, y: 1.7, z: userView.z, zoom: userView.zoom });
   for (const k of ['x', 'y', 'z', 'zoom']) cam[k] = ease(cam[k], camTo[k], still || dragging ? 60 : 5, step);
   placeCamera();
@@ -1445,10 +2212,10 @@ function frame(now) {
   if ((clockT * 2 | 0) !== clockAt) { clockAt = clockT * 2 | 0; drawClock(clockT); }
   // The shadow map is the costly pass: every frame while a bot walks, ten times a
   // second otherwise (a bot's bob, the vacuum), and at once after a change of light.
-  const walking = leaving.length > 0 || sessions.some(s => s.b.path.length);
+  const walking = leaving.length > 0 || sessions.some(s => s.b.path.length) || sheets.length > 0 || minis.some(m => m.out < 1);
   if (walking || shadowDirty || clockT - shadowAt >= 0.1) { renderer.shadowMap.needsUpdate = true; shadowAt = clockT; shadowDirty = false; }
   renderer.render(scene, camera);
-  lively = walking || sessions.some(s => busy(s) || s.b.since < 2 || s.tagShown < (s.tagText?.length ?? 0)) || dragging ||
+  lively = walking || minis.length > 0 || sessions.some(s => busy(s) || s.b.since < 2 || s.tagShown < (s.tagText?.length ?? 0)) || dragging ||
     Math.abs(door.rotation.y - (near ? -1.3 : 0)) > 0.01 || ['x', 'y', 'z', 'zoom'].some(k => Math.abs(cam[k] - camTo[k]) > 0.002);
   window.FRAMES = ++frames;
 }
@@ -1459,9 +2226,30 @@ for (const s of sessions) spawn(s, !!s.arrive);
 setTime(Q.get('time') ?? manualTime);
 drawBoard(); drawClock(0); clampView(); renderTools(); renderNew();
 if (!host) { play(sessions[0], last(sessions[0]), 3); play(sessions[2], last(sessions[2])); }
+// The demo's test hook (?debug, never in Hover): a session held in a stage with given
+// steps, for screenshots of states that otherwise pass in seconds.
+if (!host && /[?&]debug\b/.test(location.search)) window.__office = {
+  gh: m => onGh(m),
+  hold(id, stage, steps, extra = {}) { const s = sessions.find(x => x.id === id); clearTimeout(timers[s.id]); const T = last(s); Object.assign(T, { stage, steps, answer: '' }); Object.assign(s, extra); changed(s); },
+};
 if (Q.has('open')) openSession(+Q.get('open'));
 if (Q.has('panel')) openPanel(Q.get('panel'));
 if (Q.has('f')) document.querySelector(`#force [data-f="${Q.get('f')}"]`)?.click();
+// Preview only: where a desk is on screen, and ?desk=<id> (its menu) or ?desk=<id>:<surface>.
+if (!host) {
+  window.DESK_AT = i => { placeCamera(); camera.updateMatrixWorld(); const r = canvas.getBoundingClientRect(), p = new THREE.Vector3(DESKS[i].x + 0.1, 0.75, DESKS[i].z).project(camera); return [r.left + (p.x + 1) / 2 * r.width, r.top + (1 - p.y) / 2 * r.height]; };
+  if (Q.has('desk')) setTimeout(() => {
+    const [id, tab] = Q.get('desk').split(':'), s = sessions.find(x => x.id === +id); if (!s) return;
+    if (tab) openDesk(s.id, tab); else openDeskMenu(s, ...window.DESK_AT(s.desk));
+  }, 300);
+  // ?hover=bot:<id> or desk:<id>: the pointer resting there, to look at the hover.
+  window.BOT_AT = id => { placeCamera(); camera.updateMatrixWorld(); const b = sessions.find(x => x.id === id).b, r = canvas.getBoundingClientRect(), p = new THREE.Vector3(b.root.position.x, 1.05, b.root.position.z).project(camera); return [r.left + (p.x + 1) / 2 * r.width, r.top + (1 - p.y) / 2 * r.height]; };
+  if (Q.has('hover')) setTimeout(() => {
+    const [what, id] = Q.get('hover').split(':'), s = sessions.find(x => x.id === +id); if (!s) return;
+    const [x, y] = what === 'bot' ? window.BOT_AT(s.id) : window.DESK_AT(s.desk);
+    canvas.dispatchEvent(new PointerEvent('pointermove', { clientX: x, clientY: y, bubbles: true }));
+  }, 1500);
+}
 document.fonts?.ready.then(() => { drawBoard(); drawClock(clockT); drawTV(clockT); });
 requestAnimationFrame(frame);
 host?.postMessage({ type: 'ready' });

@@ -15,7 +15,9 @@ public static class Crypto
     private const int NonceSize = 12;   // AesGcm.NonceByteSizes.MaxSize
     private const int TagSize = 16;     // AesGcm.TagByteSizes.MaxSize
 
-    private static readonly byte[] KeyBytes = LoadOrCreateKey();
+#if WINDOWS
+    private static byte[] KeyBytes => StoredKey.Value;
+    private static readonly Lazy<byte[]> StoredKey = new(LoadOrCreateKey);
 
     private static byte[] LoadOrCreateKey()
     {
@@ -45,6 +47,16 @@ public static class Crypto
         }
         return key;
     }
+
+#else
+    private static byte[]? _key;
+    private static byte[] KeyBytes => _key ?? throw new InvalidOperationException("The native host must supply the Keychain key before opening history.");
+    public static void InitializeKey(byte[] key)
+    {
+        if (key.Length != 32 || _key is not null) throw new InvalidOperationException("Invalid or repeated history key initialization.");
+        _key = key.ToArray();
+    }
+#endif
 
     /// nonce ‖ ciphertext ‖ tag, so one blob round-trips through SQLite.
     public static byte[] Seal(string text)

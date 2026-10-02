@@ -6,3 +6,8 @@ obj/
 publish/
 dist/
 TestResults/
+# scripts/sandbox.sh: caches, temp files and Hover data of sandboxed runs.
+.sandbox/
+
+web/office/node_modules/
+__pycache__/

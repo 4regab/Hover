@@ -1,0 +1,34 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFrameworks>net10.0;net10.0-windows10.0.17763.0</TargetFrameworks>
+    <Nullable>enable</Nullable><ImplicitUsings>enable</ImplicitUsings>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <UseWPF Condition="$(TargetFramework.Contains('-windows'))">true</UseWPF>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../Hover/Core/Paths.cs" Link="Core/Paths.cs" />
+    <Compile Include="../Hover/Core/Log.cs" Link="Core/Log.cs" />
+    <Compile Include="../Hover/Core/Quota.cs" Link="Core/Quota.cs" />
+    <Compile Include="../Hover/Core/Layout.cs" Link="Core/Layout.cs" />
+    <Compile Include="../Hover/Core/Palette.cs" Link="Core/Palette.cs" />
+    <Compile Include="../Hover/Core/Crypto.cs" Link="Core/Crypto.cs" />
+    <Compile Include="../Hover/Core/Settings.cs" Link="Core/Settings.cs" />
+    <Compile Include="../Hover/Services/Agents.cs" Link="Services/Agents.cs" />
+    <Compile Include="../Hover/Services/AgentSetup.cs" Link="Services/AgentSetup.cs" />
+    <Compile Include="../Hover/Services/KiroRunner.cs" Link="Services/KiroRunner.cs" />
+    <Compile Include="../Hover/Services/AcpHost.cs" Link="Services/AcpHost.cs" />
+    <Compile Include="../Hover/Services/OpenCodeHost.cs" Link="Services/OpenCodeHost.cs" />
+    <Compile Include="../Hover/Services/ComputerUse.cs" Link="Services/ComputerUse.cs" />
+    <Compile Include="../Hover/Services/Sandbox.cs" Link="Services/Sandbox.cs" />
+    <Compile Include="../Hover/Services/BrowserTool.cs" Link="Services/BrowserTool.cs" />
+    <Compile Include="../Hover/Services/GitHubCli.cs" Link="Services/GitHubCli.cs" />
+    <Compile Include="../Hover/Owl/KiroSession.cs" Link="Owl/KiroSession.cs" />
+    <Compile Include="../Hover/Owl/AgentHistory.cs" Link="Owl/AgentHistory.cs" />
+    <Compile Include="../Hover/Owl/DeskInfo.cs" Link="Owl/DeskInfo.cs" />
+    <Compile Include="../Hover/Core/Shortcut.cs" Link="Core/Shortcut.cs" Condition="$(TargetFramework.Contains('-windows'))" />
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.12" />
+    <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="10.0.0" />
+    <InternalsVisibleTo Include="Hover.Tests" /><InternalsVisibleTo Include="Hover.Portable.Tests" />
+    <InternalsVisibleTo Include="Hover.Backend" /><InternalsVisibleTo Include="Hover" />
+  </ItemGroup>
+</Project>

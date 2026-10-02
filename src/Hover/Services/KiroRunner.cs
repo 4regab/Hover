@@ -20,8 +20,12 @@ public sealed record KiroResult(KiroState State, string Text, int? ExitCode = nu
 /// (in_progress, completed, failed). An edit carries how many lines it adds and
 /// removes and a short preview of the change ("- old", "+ new", "  context"); a
 /// command carries the end of its output and its exit code. Ms is how long it took.
+/// Input (the call's raw input as JSON) and Log (a longer end of what it printed or
+/// returned) are for the desk's panels, which the host serves on request; the state
+/// the office gets every change leaves them out.
 public sealed record KiroStep(string Id, string Kind, string Title, string? Target, string Status,
-    int Added = 0, int Removed = 0, string? Diff = null, string? Output = null, int? Exit = null, double? Ms = null);
+    int Added = 0, int Removed = 0, string? Diff = null, string? Output = null, int? Exit = null, double? Ms = null,
+    string? Input = null, string? Log = null);
 
 /// Detail from a run as it goes, beside its phase: a step that started or ended, how
 /// full Kiro's context is (0 to 100), and Kiro's own session id, which lets a reply
@@ -106,9 +110,10 @@ public interface IAgentRuntime
     /// Asks the user a question the agent has (AgentAsk.Questions). The answer is each
     /// question's picked labels, in order; null when the user skipped it.
     Func<string, AgentAsk, CancellationToken, Task<IReadOnlyList<IReadOnlyList<string>>?>>? Questioning { get; set; }
-    /// Runs one turn: a new conversation, or the one resume names. Never throws.
+    /// Runs one turn: a new conversation, or the one resume names. Never throws. Tag
+    /// names the Hover session (its key), for the MCP servers made for it (BrowserTool).
     Task<KiroResult> Run(string folder, string prompt, IProgress<KiroPhase>? progress, CancellationToken ct,
-        string? resume = null, IProgress<KiroEvent>? events = null, string? access = null);
+        string? resume = null, IProgress<KiroEvent>? events = null, string? access = null, string? tag = null);
     /// End the tool's process now. Runs still going fail; the next one starts it again.
     void Shutdown(string why = "shut down");
 }
@@ -127,6 +132,14 @@ public static class KiroRunner
         ("gpt-5.6-luna", "GPT-5.6 Luna"), ("deepseek-3.2", "DeepSeek 3.2"), ("minimax-m2.5", "MiniMax M2.5"),
         ("glm-5", "GLM-5"), ("qwen3-coder-next", "Qwen3 Coder Next"),
     };
+
+    /// Settings → Kiro's and Codex's efforts until a run has listed the tool's own.
+    /// These tools expose a reasoning-effort / thought-level option, but only after a
+    /// turn reports it (Kiro's appears once a model is picked), so the picker would be
+    /// empty before the first run. This seeds it, the way Models seeds the model list;
+    /// a real run's offer replaces it. Cursor carries effort in the model name and
+    /// OpenCode in its per-model variants, so neither takes this.
+    public static readonly IReadOnlyList<string> Efforts = new[] { "low", "medium", "high", "xhigh" };
 
     // Names from files on disk are only offered when they are plain.
     private static bool Plain(string? s) => !string.IsNullOrEmpty(s) && s.All(c => char.IsAsciiLetterOrDigit(c) || c is '-' or '_' or '.');
@@ -287,6 +300,7 @@ public sealed class KiroStream
                 // Codex marks its answer (final_answer) apart from what it says first.
                 var final = u.TryGetProperty("_meta", out var cm) && cm.ValueKind == JsonValueKind.Object &&
                             cm.TryGetProperty("codex", out var cx) && Str(cx, "phase") == "final_answer";
+                EndThought();
                 if (_afterTool || (mid is not null && _message is not null && mid != _message) || (final && !_final)) { _said.Clear(); _afterTool = false; }
                 _final |= final;
                 if (mid is not null) _message = mid;
@@ -301,6 +315,7 @@ public sealed class KiroStream
                 break;
             case "agent_thought_chunk":
                 Phase = KiroPhase.Thinking;
+                if (u.TryGetProperty("content", out var tc)) Thought(tc);
                 break;
             case "plan":
                 Phase = KiroPhase.Planning;
@@ -308,6 +323,7 @@ public sealed class KiroStream
             case "tool_call":
             case "tool_call_update":
             case "tool_call_chunk":
+                EndThought();
                 if (ToolPhase(Str(u, "kind"), Str(u, "title")) is { } phase) Phase = phase;
                 if (_said.Length > 0) _afterTool = true;
                 Step(u);
@@ -346,6 +362,49 @@ public sealed class KiroStream
 
     private readonly Dictionary<string, DateTime> _began = new();
 
+    // The reasoning a tool shows (ACP agent_thought_chunk) is a step of its own, kind
+    // "thought", its text in Output: one per stretch of thinking between the calls.
+    private readonly System.Text.StringBuilder _thinking = new();
+    private string? _thoughtId;
+    private int _thoughts, _thoughtShown;
+    private DateTime _thoughtAt;
+    private const int ThoughtLimit = 6000;
+
+    private void Thought(JsonElement content)
+    {
+        var text = new System.Text.StringBuilder();
+        void Collect(JsonElement c)
+        {
+            if (c.ValueKind == JsonValueKind.Array) foreach (var p in c.EnumerateArray()) Collect(p);
+            else if (Str(c, "text") is { } t) text.Append(t);
+        }
+        Collect(content);
+        if (text.Length == 0) return;
+        if (_thoughtId is null) { _thoughtId = $"thought-{++_thoughts}"; _thinking.Clear(); _thoughtShown = 0; _thoughtAt = DateTime.UtcNow; }
+        if (_thinking.Length < ThoughtLimit) _thinking.Append(text);
+        // Chunks come a few words at a time; the page hears of it every so often.
+        if (_thinking.Length - _thoughtShown >= 160 || _thoughtShown == 0) EmitThought("in_progress");
+    }
+
+    private void EndThought()
+    {
+        if (_thoughtId is null) return;
+        EmitThought("completed");
+        _thoughtId = null;
+    }
+
+    private void EmitThought(string status)
+    {
+        var text = _thinking.ToString().Trim();
+        if (text.Length == 0 || _thoughtId is null) return;
+        if (text.Length >= ThoughtLimit) text += "…";
+        _thoughtShown = _thinking.Length;
+        var step = new KiroStep(_thoughtId, "thought", "Thought", null, status, Output: text,
+            Ms: status == "completed" ? (DateTime.UtcNow - _thoughtAt).TotalMilliseconds : null);
+        _steps[_thoughtId] = step;
+        _events.Add(new KiroEvent(Step: step));
+    }
+
     /// A tool call starts a step; its updates carry the status, and at the end the
     /// change it made (ACP diff content) or what the command printed (rawOutput).
     private void Step(JsonElement u)
@@ -364,6 +423,8 @@ public sealed class KiroStream
             if (OutputOf(u, out var exit) is { } o) next = next with { Output = o };
             if (exit is not null) next = next with { Exit = exit };
         }
+        if (InputOf(u) is { } input) next = next with { Input = input };
+        if (LogOf(u, next.Kind) is { } log) next = next with { Log = log };
         if (next.Status is "completed" or "failed" && known.Ms is null && _began.TryGetValue(id, out var t0))
             next = next with { Ms = (DateTime.UtcNow - t0).TotalMilliseconds };
         if (_steps.ContainsKey(id) && next == known) return;
@@ -437,6 +498,64 @@ public sealed class KiroStream
         while (rows.Count > 0 && rows[^1].Length == 0) rows.RemoveAt(rows.Count - 1);
         while (rows.Count > 0 && rows[0].Length == 0) rows.RemoveAt(0);
         return rows.Count == 0 ? null : string.Join("\n", rows.TakeLast(10).Select(l => Clip(l, 200)));
+    }
+
+    internal const int InputLimit = 4000, LogLimit = 16 * 1024;
+
+    /// A tool call's raw input, as compact JSON, cut to InputLimit: the desk's panels
+    /// read a subagent's task, a URL or a computer-use action from it.
+    internal static string? InputOf(JsonElement u)
+    {
+        if (!u.TryGetProperty("rawInput", out var raw) || raw.ValueKind is not (JsonValueKind.Object or JsonValueKind.Array or JsonValueKind.String)) return null;
+        var text = raw.ValueKind == JsonValueKind.String ? raw.GetString() ?? "" : raw.GetRawText();
+        if (text is "" or "{}" or "[]") return null;
+        return text.Length > InputLimit ? text[..InputLimit] : text;
+    }
+
+    /// The longer end of what a tool call printed or returned, for the desk's
+    /// terminal and agents panels: a command's output, or the text a subagent, a
+    /// fetch or an MCP tool gave back. Reads and edits are left out (their output is
+    /// the file itself). Kept to the last LogLimit characters.
+    internal static string? LogOf(JsonElement u, string kind)
+    {
+        if (kind is "read" or "edit" or "delete" or "move") return null;
+        string? text = null;
+        if (u.TryGetProperty("rawOutput", out var ro))
+        {
+            if (ro.ValueKind == JsonValueKind.String) text = ro.GetString();
+            else if (ro.ValueKind == JsonValueKind.Object)
+            {
+                text = Str(ro, "formatted_output") ?? Str(ro, "output") ?? Str(ro, "aggregated_output") ?? Str(ro, "stdout") ?? Str(ro, "result") ?? Str(ro, "text");
+                if (Str(ro, "stderr") is { Length: > 0 } err) text = text is { Length: > 0 } ? text + "\n" + err : err;
+            }
+        }
+        if (text is null && u.TryGetProperty("content", out var content) && content.ValueKind == JsonValueKind.Array)
+        {
+            var sb = new StringBuilder();
+            foreach (var item in content.EnumerateArray())
+            {
+                // ACP: {type:"content", content:{type:"text", text}}, or a terminal's text.
+                var inner = item.TryGetProperty("content", out var c) ? c : item;
+                if (Str(inner, "type") == "text" && Str(inner, "text") is { Length: > 0 } t) { if (sb.Length > 0) sb.Append('\n'); sb.Append(t); }
+            }
+            if (sb.Length > 0) text = sb.ToString();
+        }
+        return Tail(text);
+    }
+
+    /// Text without escape codes or carriage returns, trimmed, and cut to its last
+    /// LogLimit characters at a line start.
+    internal static string? Tail(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return null;
+        var clean = Quota.StripAnsi(text).Replace("\r\n", "\n").Replace('\r', '\n').Trim('\n');
+        if (clean.Length > LogLimit)
+        {
+            clean = clean[^LogLimit..];
+            var nl = clean.IndexOf('\n');
+            if (nl is > 0 and < 400) clean = clean[(nl + 1)..];
+        }
+        return clean.Length == 0 ? null : clean;
     }
 
     private void AppendText(JsonElement content)

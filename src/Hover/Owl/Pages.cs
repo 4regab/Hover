@@ -79,8 +79,8 @@ internal sealed class SettingsPage
         grid.Children.Add(sidebar);
         Grid.SetColumn(pane, 1);
         grid.Children.Add(pane);
-        grid.Loaded += (_, _) => OwlApp.QuotasChanged += OnQuotas;
-        grid.Unloaded += (_, _) => OwlApp.QuotasChanged -= OnQuotas;
+        grid.Loaded += (_, _) => { OwlApp.QuotasChanged += OnQuotas; ComputerUse.Changed += OnComputerUse; };
+        grid.Unloaded += (_, _) => { OwlApp.QuotasChanged -= OnQuotas; ComputerUse.Changed -= OnComputerUse; };
         Root = grid;
         Show(start, anchor);
     }
@@ -107,6 +107,8 @@ internal sealed class SettingsPage
             case Section.Integrations:
                 Heading("AI quotas");
                 Quotas();
+                Heading("Computer use");
+                ComputerUseRows();
                 break;
             default:
                 Agent(section);
@@ -422,6 +424,62 @@ internal sealed class SettingsPage
         RefreshQuotaRows();
     }
 
+    // Cua Driver's row, updated in place as a check or an install reports back.
+    private TextBlock? _cuaText;
+    private Button? _cuaButton;
+
+    /// Computer use: the switch that hands every agent Cua Driver's MCP server, and
+    /// the driver's own state with its one button (install, or check again).
+    private void ComputerUseRows()
+    {
+        var on = Switch("ComputerUse", "Let agents see and use apps", Settings.ComputerUse, v =>
+        {
+            Settings.ComputerUse = v;
+            if (v) _ = ComputerUse.Check(fresh: true);
+            Show(Section.Integrations);
+        });
+        var driver = Row("Cua Driver", "Checking…", null, Tile(Ui.IcTarget, Ui.Teal));
+        _cuaText = (TextBlock)((StackPanel)((Grid)driver).Children[1]).Children[1];
+        AutomationProperties.SetAutomationId(_cuaText, "ComputerUseStatus");
+        _cuaButton = Ui.Button("OwlLightButton", "Check again", "ComputerUseAction", "Cua Driver", () =>
+        {
+            var s = ComputerUse.Known;
+            if (ComputerUse.Busy) ComputerUse.Cancel();
+            else if (s is { Installed: false }) _ = ComputerUse.Install();
+            else _ = ComputerUse.Check(fresh: true);
+        });
+        _cuaButton.VerticalAlignment = VerticalAlignment.Center;
+        _cuaButton.Margin = new Thickness(12, 0, 0, 0);
+        Grid.SetColumn(_cuaButton, 2);
+        ((Grid)driver).Children.Add(_cuaButton);
+        Group(
+            Row("Let agents see and use apps", "Each agent gets Cua Driver's tools, so it can open the app it built, click through it and check what it shows. " +
+                "It works in the background: your pointer doesn't move and the app you're in keeps the keyboard.", on, Tile(Ui.IcView, Ui.Purple)),
+            driver);
+        Footnote("Every action follows each agent's tool access: Ask first asks in the notch before it clicks or types, and Read only turns them down. " +
+                 "New tasks get it at once; a running agent from its next idle restart. Cua Driver is open source (MIT, " + ComputerUse.Repo + "); " +
+                 "Hover never passes its approval-bypass flags.");
+        RefreshComputerUse();
+        if (ComputerUse.Known is null) _ = ComputerUse.Check();
+    }
+
+    private void OnComputerUse() => _owner.Dispatcher.BeginInvoke(() => { if (_current == Section.Integrations) RefreshComputerUse(); });
+
+    private void RefreshComputerUse()
+    {
+        if (_cuaText is null || _cuaButton is null) return;
+        var s = ComputerUse.Known;
+        var p = ComputerUse.Setup;
+        _cuaText.Text = ComputerUse.Busy ? (p.Line.Length > 0 ? p.Line : "Installing…")
+            : p.Error is { Length: > 0 } e ? e
+            : s is null ? "Checking…"
+            : !s.Installed ? "Not installed. Hover installs it with Cua's own installer."
+            : s.Permissions == "granted" ? "Ready" + (s.Version.Length > 0 ? " · " + s.Version : "")
+            : s.Hint;
+        _cuaButton.Content = ComputerUse.Busy ? "Cancel" : s is { Installed: false } ? "Install" : "Check again";
+        _cuaButton.IsEnabled = s is not null || ComputerUse.Busy;
+    }
+
     /// One notch item's row: its switch turns the item on and off.
     private FrameworkElement ItemRow(string id, string sub, FrameworkElement lead) =>
         Row(NotchItem.Title(id), sub,
@@ -505,6 +563,9 @@ internal sealed class SettingsPage
         // OpenCode's variants belong to each model: only the picked model's are offered.
         var perModel = tool == AgentTool.OpenCode;
         if (perModel) levels = Offer("model", "model")?.Choices.FirstOrDefault(c => c.Value == o.Model)?.Levels?.ToList() ?? new();
+        // Kiro and Codex take a reasoning effort, but only report it after a run; seed
+        // it from KiroRunner.Efforts so it can be picked before then (as Models does).
+        else if (levels.Count == 0 && tool is AgentTool.Kiro or AgentTool.Codex) levels = KiroRunner.Efforts.ToList();
         var effortName = OwlApp.Agents[tool].Caps.EffortLabel;
         FrameworkElement effort = levels.Count == 0
             ? Ui.Text(tool == AgentTool.Cursor ? "Part of the model" : perModel ? "None for this model" : "Set by the model", 12.5, Ui.InkDim)
@@ -518,7 +579,7 @@ internal sealed class SettingsPage
             Row(effortName, perModel
                     ? levels.Count == 0 ? "Pick a model with variants to choose one. Default leaves it to OpenCode." : "The picked model’s own variants, from OpenCode."
                     : levels.Count == 0
-                    ? tool == AgentTool.Cursor ? "Cursor’s models carry their effort in their name." : "Shown once a task has run with a model that takes one."
+                    ? "Cursor’s models carry their effort in their name."
                     : "How long it thinks. Higher is slower and uses more of your plan.", effort, Tile(Ui.IcGauge, Ui.Orange)));
 
         Heading("Tools and memory");

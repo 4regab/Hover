@@ -79,12 +79,14 @@ internal sealed class KiroPage
         {
             if (Sessions.History is { } h && !_historyHooked) { _historyHooked = true; h.Changed += () => _historyVersion++; }
             Sessions.Changed += OnChanged;
+            GitHubCli.Changed += OnGitHub;
             Live.Add(this);
             Build();
         };
         _root.Unloaded += (_, _) =>
         {
             Sessions.Changed -= OnChanged;
+            GitHubCli.Changed -= OnGitHub;
             Live.Remove(this);
             InView.Remove(this);
             _push.Stop();
@@ -209,6 +211,8 @@ internal sealed class KiroPage
         _ready = false;
         _mapped.Clear();
         _historySent = 0;
+        _screen?.Dispose();
+        _screen = null;
         if (_web is null) return;
         var web = _web;
         _web = null;
@@ -355,6 +359,28 @@ internal sealed class KiroPage
             case "close":
                 _open = null;
                 break;
+            case "desk":
+                // The desk menu's panels: read now, posted when git or gh are done.
+                if (session is not null) _ = Desk(session, Str(m, "what"), Str(m, "arg"));
+                break;
+            case "screen":
+                // The desk's screen panel: the desktop, or the screen live while an agent tests.
+                _screen ??= new ScreenFeed(json => _web?.CoreWebView2?.PostWebMessageAsJson(json));
+                _screen.Ask(m.TryGetProperty("on", out var on) && on.ValueKind == JsonValueKind.True,
+                    m.TryGetProperty("live", out var live) && live.ValueKind == JsonValueKind.True);
+                break;
+            // The Pull request tab: the GitHub CLI's one-click setup, and Create pull request.
+            case "gh":
+                switch (Str(m, "step"))
+                {
+                    case "setup": _ = GitHubCli.Run(); break;
+                    case "cancel": GitHubCli.Cancel(); break;
+                    default: SendGitHub(); _ = GitHubCli.Check(fresh: true); break;
+                }
+                break;
+            case "deskAction":
+                if (session is not null && Str(m, "what") == "prCreate") _ = CreatePr(session, m.TryGetProperty("args", out var prArgs) ? prArgs.Clone() : default);
+                break;
             case "pickFolder":
                 if (PickFolder(Str(m, "folder")) is { } picked) Say("folder", picked);
                 break;
@@ -365,6 +391,38 @@ internal sealed class KiroPage
                 OwlApp.Collapse?.Invoke();
                 break;
         }
+    }
+
+    private ScreenFeed? _screen;
+
+    private async Task Desk(KiroSession s, string? what, string? arg)
+    {
+        object data;
+        try { data = await DeskInfo.Answer(s, what, arg); }
+        catch (Exception e) { data = new { error = e.Message }; }
+        _web?.CoreWebView2?.PostWebMessageAsJson(JsonSerializer.Serialize(new { type = "desk", id = s.Id, what, arg, data }, Json));
+    }
+
+    private async Task CreatePr(KiroSession s, JsonElement args)
+    {
+        object data;
+        try { data = await DeskInfo.CreatePr(s, args); }
+        catch (Exception e) { data = new { error = e.Message }; }
+        _web?.CoreWebView2?.PostWebMessageAsJson(JsonSerializer.Serialize(new { type = "deskAction", id = s.Id, what = "prCreate", data }, Json));
+    }
+
+    // Raised off the UI thread while a setup runs.
+    private void OnGitHub() => _root.Dispatcher.BeginInvoke(SendGitHub);
+
+    private void SendGitHub()
+    {
+        var k = GitHubCli.Known;
+        var p = GitHubCli.Setup;
+        _web?.CoreWebView2?.PostWebMessageAsJson(JsonSerializer.Serialize(new
+        {
+            type = "gh", @checked = k is not null, installed = k?.Installed ?? false, signedIn = k?.SignedIn ?? false, user = k?.User, version = k?.Version,
+            step = p.Step, line = p.Line, code = p.Code, error = p.Error, busy = GitHubCli.Busy, url = GitHubCli.DeviceUrl,
+        }, Json));
     }
 
     private void Say(string type, string text) =>
@@ -456,7 +514,7 @@ internal sealed class KiroPage
                 // (OpenCode's variants) takes those instead of the tool's efforts.
                 models = Models(t).Select(x => new { id = x.Id, name = x.Name, levels = x.Levels }).ToList(),
                 model = Settings.AgentOptions(t).Model ?? Models(t).FirstOrDefault().Id,
-                efforts = Offer(t, "thought_level", "effortLevel", "reasoning_effort", "effort")?.Choices.Select(c => c.Value).ToList() ?? new List<string>(),
+                efforts = Efforts(t),
                 effort = Settings.AgentOptions(t).Effort ?? Offer(t, "thought_level", "effortLevel", "reasoning_effort", "effort")?.Current,
                 effortLabel = OwlApp.Agents[t].Caps.EffortLabel,
                 questions = OwlApp.Agents[t].Caps.Questions,
@@ -473,6 +531,17 @@ internal sealed class KiroPage
     {
         var offers = Settings.AgentOffers(t);
         return offers.FirstOrDefault(x => x.Category == category) ?? offers.FirstOrDefault(x => ids.Contains(x.Id));
+    }
+
+    /// The efforts the composer offers for a tool with a flat effort list (Kiro, Codex):
+    /// what the tool reported last, or a seeded fallback before it has run, so the pill
+    /// can pick one from the start. OpenCode's belong to each model (sent as levels) and
+    /// Cursor's live in the model name, so neither is seeded here.
+    private static List<string> Efforts(AgentTool t)
+    {
+        var reported = Offer(t, "thought_level", "effortLevel", "reasoning_effort", "effort")?.Choices.Select(c => c.Value).ToList();
+        if (reported is { Count: > 0 }) return reported;
+        return t is AgentTool.Kiro or AgentTool.Codex ? KiroRunner.Efforts.ToList() : new List<string>();
     }
 
     /// The models the composer offers; the first, when it isn't the tool's own
@@ -561,6 +630,8 @@ internal sealed class KiroPage
             } : null,
             pose = Pose(s.Phase),
             file = lastStep is null ? "" : Short(lastStep.Target) ?? "",
+            // Computer use among its last steps: the desk's screen panel goes live.
+            testing = DeskInfo.Testing(s),
             turns = s.Turns.Select(t => new
             {
                 prompt = t.Prompt,

@@ -6,3 +6,9 @@
 *.png binary
 *.gif binary
 *.stickies binary
+
+# Unix entry points and native source must remain usable after a fresh checkout.
+*.sh text eol=lf
+*.swift text eol=lf
+*.c text eol=lf
+*.m4a binary

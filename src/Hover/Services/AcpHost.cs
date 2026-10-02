@@ -50,17 +50,26 @@ public sealed class AcpHost : IAgentRuntime
     private readonly ConcurrentDictionary<long, TaskCompletionSource<JsonElement>> _pending = new();
     private readonly ConcurrentDictionary<string, Turn> _turns = new();
     private readonly ConcurrentDictionary<string, List<AcpOption>> _sessionOptions = new();
+    // The MCP servers each live session was given (ComputerUse.Signature).
+    private readonly ConcurrentDictionary<string, string> _sessionMcp = new();
+    private readonly Func<IReadOnlyList<McpServer>> _mcp;
     private readonly Timer _idle;
     private AcpLink? _link;
+    // The folders its process was sandboxed for; null when it wasn't (or isn't Hover's own).
+    private IReadOnlyList<string>? _boxFolders;
+    private bool _ownLaunch;
     private bool _canLoad;
     private long _ids;
     private int _busy;
 
-    public AcpHost(AgentTool tool, Func<AgentOptions> options, Func<AcpLink?>? connect = null)
+    /// mcp names the MCP servers each new or loaded session gets (Cua Driver, when
+    /// computer use is on); read at the start of every run.
+    public AcpHost(AgentTool tool, Func<AgentOptions> options, Func<AcpLink?>? connect = null, Func<IReadOnlyList<McpServer>>? mcp = null)
     {
         Tool = tool;
         _options = options;
         _connect = connect ?? Launch;
+        _mcp = mcp ?? ComputerUse.Servers;
         _idle = new Timer(_ => { if (Volatile.Read(ref _busy) == 0) Shutdown("idle"); });
     }
 
@@ -119,11 +128,37 @@ public sealed class AcpHost : IAgentRuntime
     /// asks the agent to stop (session/cancel); one that doesn't within a few seconds
     /// is left, or shut down when nothing else of its runs.
     public async Task<KiroResult> Run(string folder, string prompt, IProgress<KiroPhase>? progress, CancellationToken ct,
-        string? resume = null, IProgress<KiroEvent>? events = null, string? access = null)
+        string? resume = null, IProgress<KiroEvent>? events = null, string? access = null, string? tag = null)
     {
         if (!KiroRunner.UsableFolder(folder)) return new(KiroState.Failed, "That folder isn’t there any more. Choose another one.");
         if (string.IsNullOrWhiteSpace(prompt)) return new(KiroState.Failed, $"Tell {Name} what to do first.");
+        // A sandboxed tool reaches only the folders it started with, and the sandbox
+        // switched on or off applies from its next start: one that no longer fits is
+        // started again when nothing of it runs. Busy in other folders, it can't take
+        // this one yet.
+        Sandbox.Remember(folder);
+        if (_link is not null && _ownLaunch)
+        {
+            var box = _boxFolders;
+            var outside = box is not null && !Sandbox.Covers(box, folder);
+            if (outside || (box is not null) != Sandbox.Wanted)
+            {
+                if (Volatile.Read(ref _busy) == 0) Shutdown("its sandbox changed");
+                else if (outside)
+                    return new(KiroState.Failed, $"{Name} is working on a task in another folder, and its sandbox reaches only the folders it started with. Start this one when that task is done.");
+            }
+        }
+        // The agent's cua-driver can't start CuaDriver's daemon from inside the
+        // sandbox (no Launch Services there), so Hover does, outside it.
+        if (Sandbox.Wanted && Settings.ComputerUse) await ComputerUse.EnsureDaemon();
         var o = _options().WithAccess(access);
+        var servers = _mcp().Concat(BrowserTool.Servers(Tool, tag)).ToList();
+        var mcp = ComputerUse.Signature(servers);
+        // A session's MCP servers are fixed when it is made or loaded. A reply to one
+        // made with others (computer use switched since) loads it again in a fresh
+        // process, when nothing else of this tool runs; otherwise it carries on as is.
+        if (resume is { Length: > 0 } && _canLoad && _sessionMcp.TryGetValue(resume, out var had) && had != mcp && Volatile.Read(ref _busy) == 0)
+            Shutdown("its MCP servers changed");
         Interlocked.Increment(ref _busy);
         _idle.Change(Timeout.Infinite, Timeout.Infinite);
         var turn = new Turn(new KiroStream { Name = Name }, progress, events, o, folder, ct);
@@ -144,9 +179,10 @@ public sealed class AcpHost : IAgentRuntime
                 _turns[resume] = turn;
                 try
                 {
-                    var r = await Call("session/load", new { sessionId = resume, cwd = folder, mcpServers = Array.Empty<object>() }, ct, TimeSpan.FromMinutes(2));
+                    var r = await Call("session/load", new { sessionId = resume, cwd = folder, mcpServers = ComputerUse.Acp(servers) }, ct, TimeSpan.FromMinutes(2));
                     sid = resume;
                     offered = Options(r);
+                    _sessionMcp[sid] = mcp;
                 }
                 catch (AcpError e)
                 {
@@ -158,9 +194,10 @@ public sealed class AcpHost : IAgentRuntime
             }
             if (sid is null)
             {
-                var r = await Call("session/new", new { cwd = folder, mcpServers = Array.Empty<object>() }, ct, TimeSpan.FromMinutes(2));
+                var r = await Call("session/new", new { cwd = folder, mcpServers = ComputerUse.Acp(servers) }, ct, TimeSpan.FromMinutes(2));
                 sid = Str(r, "sessionId") ?? throw new AcpError(0, $"{Name} didn’t start a session.");
                 offered = Options(r);
+                _sessionMcp[sid] = mcp;
             }
             _turns[sid] = turn;
             events?.Report(new KiroEvent(SessionId: sid));
@@ -281,12 +318,17 @@ public sealed class AcpHost : IAgentRuntime
         if (Agents.Exe(Tool) is not { } exe) return null;
         var psi = Quota.Hidden(exe, Agents.Arguments(Tool));
         psi.WorkingDirectory = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        // In the sandbox, for the folders its sessions use (Services.Sandbox).
+        var folders = Sandbox.Folders();
+        psi = Sandbox.Wrap(psi, Tool, folders);
+        _boxFolders = Sandbox.Wanted ? folders : null;
+        _ownLaunch = true;
         var p = new Process { StartInfo = psi, EnableRaisingEvents = true };
         p.Start();
         // In a job that closes with Hover, so the tool and everything it started go
         // too, even when Hover is killed rather than quit (they were left running).
         ChildJob.Add(p);
-        Log.Line($"acp {Name}: started (pid {p.Id})");
+        Log.Line($"acp {Name}: started (pid {p.Id}){(_boxFolders is null ? "" : " in the sandbox")}");
         var tail = new StringBuilder();
         _ = Task.Run(async () =>
         {
@@ -322,6 +364,7 @@ public sealed class AcpHost : IAgentRuntime
             if (link is null) throw new AcpError(0, $"{Name} isn’t installed. {Agents.InstallHint(Tool)}");
             _link = link;
             _sessionOptions.Clear();
+            _sessionMcp.Clear();
             _ = Task.Run(() => Read(link));
             try
             {
@@ -351,6 +394,7 @@ public sealed class AcpHost : IAgentRuntime
         _idle.Change(Timeout.Infinite, Timeout.Infinite);
         Log.Line($"acp {Name}: {why}");
         _sessionOptions.Clear();
+        _sessionMcp.Clear();
         Fail(new AcpGone($"{Name} stopped."));
         link.Kill();
     }
@@ -360,6 +404,7 @@ public sealed class AcpHost : IAgentRuntime
         if (!ReferenceEquals(Interlocked.CompareExchange(ref _link, null, link), link)) return;
         _idle.Change(Timeout.Infinite, Timeout.Infinite);
         _sessionOptions.Clear();
+        _sessionMcp.Clear();
         var why = Quota.StripAnsi(link.Errors()).Split('\n').Select(l => l.Trim()).Where(l => l.Length > 0).TakeLast(2).ToList();
         Log.Line($"acp {Name}: exited - {string.Join(" / ", why)}");
         Fail(new AcpGone($"{Name} stopped unexpectedly." + (why.Count > 0 ? " " + string.Join("\n", why) : "")));

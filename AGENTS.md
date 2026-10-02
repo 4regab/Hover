@@ -12,7 +12,8 @@ one in front is doing, for how long), a question an agent is waiting on, or noth
 Hovering it, clicking it or `Alt+N`
 opens the **Agent office**, which fills the notch: it hands tasks to Kiro, Codex,
 Cursor or OpenCode, which run headlessly, several at once, each in a chosen folder, as bots at
-desks in a three.js office. The office's menu (time of day, music, history, Settings) opens Settings over it (six
+desks in a three.js office, and, with computer use on, can drive apps in the background
+through Cua Driver. The office's menu (time of day, music, history, Settings) opens Settings over it (six
 sections: General, Integrations, Kiro, Codex, Cursor, OpenCode), with a back button.
 
 The only ordinary window is the dashboard (the tray icon or its menu, or a second
@@ -75,7 +76,8 @@ src/Hover/
                IAgentRuntime (in KiroRunner.cs: what the sessions see of a tool),
                AcpHost (one tool running as an ACP server, shared by its sessions,
                stopped when idle), OpenCodeHost (OpenCode's own server, the same
-               way), KiroRunner (KiroStream, which reads ACP session updates,
+               way), ComputerUse (Cua Driver as the sessions' MCP server: lookup,
+               status, install and grant), KiroRunner (KiroStream, which reads ACP session updates,
                the shared result types, and Kiro's fallback model list). No WPF.
   Owl/         OwlApp (shared state, quota polling), Notch (the top-centre host, on
                the main display only, and the dashboard window), OfficeView (the
@@ -201,6 +203,56 @@ carry a legacy `Noty` reference **only** in `Core/Paths.cs`, which migrates an o
   kills them with Hover, so a killed or crashed Hover leaves none behind. Install and sign-in are
   checked with each tool's own status command (kept five minutes); a tool that
   fails is greyed in the office with what to do.
+- **Agents run in a sandbox: Anthropic's sandbox-runtime (srt).** `Services/Sandbox.cs`
+  (no WPF). On a Mac or Linux every tool's process (`AcpHost`, `OpenCodeHost`) starts
+  as `srt --settings <Support>/sandbox/<tool>.json -- /usr/bin/env TMPDIR=… <tool>`:
+  writes only to its sessions' folders, its own state and caches, and a short temp
+  folder (`/private/tmp/claude/hover-<tool>`, the only place Unix sockets work, besides
+  CuaDriver's); no reading keys, mail, messages, browsers', other apps' or Hover's own
+  data; no window server and no Apple Events, so nothing it runs can draw a window,
+  take focus or launch or script an app; the network through srt's proxy to the
+  tool's service, package registries, GitHub and the hosts in
+  `<Support>/sandbox/allowed-domains.txt`. The folders are fixed at start: a session in
+  another one restarts an idle tool, and fails with a reason while it is busy. The
+  keychain folder stays readable (Cursor keeps its sign-in there). macOS's trustd is
+  in reach (`enableWeakerNetworkIsolation`): without it .NET, Go and Security-framework
+  TLS can't verify certificates. MSBuild's worker nodes use sockets in /tmp it can't
+  allow, so builds in it stay in one process. srt 0.0.78 and ripgrep are part of what
+  a tool needs installed (`Agents.Check`, one-click setup); Settings → General → Run
+  agents in a sandbox switches it off. Never nested (`HOVER_SANDBOXED=1`). Not on
+  Windows: srt's Windows alpha runs as another account that can't reach tools
+  installed for the user. Agent work on this repo goes through `scripts/sandbox.sh`
+  the same way (see `.kiro/steering/sandbox.md`); `scripts/test-macos.sh` run there
+  skips its on-screen app smokes. Under srt each tool runs through `Sandbox.Relay` (a
+  perl relay with blocking pipes): srt hands the tool non-blocking stdio, and a write
+  over 64 KB (Cua's tool list is 67 KB) failed with EAGAIN and killed Kiro.
+- **Computer use is Cua Driver, handed to the agents as an MCP server.**
+  `Services/ComputerUse.cs` (no WPF). Off until `Settings.ComputerUse` is switched on
+  (Settings → Integrations here, Settings → Computer Use on a Mac); then every new ACP
+  session gets `cua-driver mcp` in `session/new` and `session/load` (`mcpServers`,
+  stdio, with ACP's required empty `env` list), and OpenCode gets it as a local MCP
+  server in `OPENCODE_CONFIG_CONTENT` (inline config, so no opencode.json is written).
+  Hover never drives anything itself and never passes Cua's `--dangerously-bypass-
+  approvals`: each click or keystroke is a tool call under the session's access (Ask
+  first asks in the notch, Read only refuses it). Where perl is (Mac, Linux) the server
+  is `perl <Support>/cua/guard.pl cua-driver mcp` (`ComputerUse.Guard`, readable but not
+  writable in the sandbox), which keeps computer use out of the user's way: input only
+  to a named app, in the background (foreground becomes background and leaves the tool
+  list), and no desktop-scope input, `bring_to_front`, window moves, `kill_app`,
+  clipboard, replays or Cua settings. A session's MCP servers are fixed when
+  it is made or loaded, and OpenCode reads them at startup, so after a switch the tool
+  is restarted before its next run when nothing else of it runs (`AcpHost` then loads
+  the conversation back with the new set; `ComputerUse.Signature` tells them apart).
+  `cua-driver` is looked up on PATH, then where its installers put it
+  (`~/.local/bin`, `/Applications/CuaDriver.app`, `%LOCALAPPDATA%\Programs\Cua\cua-driver\bin`).
+  On a Mac the Accessibility and Screen Recording grants belong to CuaDriver.app: the
+  first `cua-driver mcp` starts its daemon in the background through LaunchServices and
+  proxies through it. Inside the sandbox it can't (no Launch Services there), so Hover
+  starts the daemon first (`ComputerUse.EnsureDaemon`) and the sandbox lets the agent's
+  cua-driver reach its one socket (`~/Library/Caches/cua-driver/cua-driver.sock`). `cua-driver permissions status --json` only answers through that
+  daemon (it reports "unknown" otherwise, and the check starts it when computer use is
+  on); `permissions grant` asks for them. Install and grant run Cua's own commands
+  (`ComputerUse.Install`, `Grant`). Checked against cua-driver 0.31.0.
 - **OpenCode runs as its own server, as T3 Code runs it.** `OpenCodeHost` starts one
   hidden `opencode serve --hostname=127.0.0.1 --port=0 --mdns=false` for all its
   sessions, with a password made for that start (in its environment, sent as Basic
@@ -236,6 +288,78 @@ carry a legacy `Noty` reference **only** in `Core/Paths.cs`, which migrates an o
   model, send). Esc, the chevron or a click on the office folds it back; a draft is
   kept and marked with a dot. There is no dock: the wall board lists the sessions
   as notes (bot and title), or says the office is quiet.
+- **A desk opens a card in the chat's style.** A click on a desk with a session at it
+  (the bot itself still opens the chat) shows the chat's header (tool, title, stage
+  and clock, folder, access, context), what it does now (its last steps as the chat
+  draws them, the helpers it has out, the question it waits on, or its answer), the
+  eight surfaces as tiles (Browser, Terminal, Files, Diff, Pull request, Linked pull
+  requests, Agents and Screen, T3 Code's Device), each with its letter and what it
+  holds, greyed with a reason where there's nothing, and a reply box (Enter sends,
+  the round button stops a run when empty). The card is built once per open and its
+  parts redraw in place, so a reply being typed survives state updates. The pick raycasts the
+  bot's own boxes against the room, so a seated bot behind its monitor still opens the
+  chat and the desk around it the menu; hovering shows a small tip ("Chat with X" or
+  "X's desk"). A row opens the wide
+  side panel with the eight as tabs (`web/office/desk.js` builds them, escaping
+  everything). The page asks `{type:'desk', what}` and the host answers from
+  `Owl/DeskInfo.cs` (no WPF; shared by `KiroPage` and `Hover.Backend`): terminal,
+  subagents (a `subagent_type`-style input) and pages (fetches, URLs in inputs, local
+  servers in output) come from the steps, which keep a call's raw input and a longer
+  output (`KiroStep.Input`, `Log`) that the state message leaves out; files, diff and
+  PRs run git and gh hidden, with optional locks off, timeouts and caps, and a file is
+  read only inside the session's folder (links followed). On a Mac the Browser panel
+  is Hover's own browser (below), laid over the panel by the host; elsewhere it is a
+  sandboxed iframe. The Pull request tab sets up the GitHub CLI in one click
+  (`Services/GitHubCli.cs`: Homebrew or the official release into ~/.local/bin,
+  winget on Windows; then gh's device-code sign-in and `gh auth setup-git`), and with
+  no pull request for the branch it offers Create pull request (`DeskInfo.CreatePr`:
+  optional new branch and commit, push, `gh pr create`; never while the agent runs,
+  branch names checked so they can't be options). Screen is the main display, but
+  never the user's own windows: the desktop plus only the windows of the apps the
+  agent's computer use opened or acted on (`DeskInfo.Apps`: pids, bundle ids and
+  names from its steps, sent as `apps` in the state and in `{type:'screen'}`), a
+  still at rest, live at 4 fps while the session's last steps are computer use
+  (`testing` in the state) or the user watches; `{type:'screen'}` is renewed every 3 s and stops itself after 8 s
+  (`Owl/ScreenFeed.cs` on Windows, `macos/Sources/Screen.swift` with ScreenCaptureKit
+  and Hover's own Screen Recording grant on a Mac). In a browser, `?desk=<id>[:<tab>]`
+  opens it with demo data.
+- **Agents get Hover's browser, as T3 Code's get its preview.** `Services/BrowserTool.cs`
+  (no WPF) is an MCP server (`hover-browser`: browser_open, snapshot, click, type,
+  press, scroll, screenshot, evaluate, wait, console, back, reload) given to every
+  session where the host has a browser (the Mac app; Settings → Computer Use switches
+  it off). The agent's tool starts `perl <Support>/browser/relay.pl <socket> <token>`
+  inside its sandbox, which joins its stdio to one Unix socket in srt's temp folder
+  (`hover-browser-<user>/b.sock`, the only socket path srt is told to allow for it);
+  the token names the session (its key; OpenCode's one server says "opencode" and
+  gets the session at work). Calls go to the host as `{type:'browser'}` and come back
+  as `browserResult`. `macos/Sources/AgentBrowser.swift` keeps one WKWebView per
+  session with its own non-persistent store (no cookies of the user's), http(s)
+  only, no window at all until the Browser panel shows it (1280×800 then), and lays
+  it over the panel's page box (`browserView` with the box's rect, sent by the page
+  whenever it moves or something covers it). Snapshots number interactive elements
+  `[ref]` via a `data-hover-ref` attribute; screenshots are JPEG at one pixel per
+  point. It runs outside the agents' sandbox, so it reaches any website: a deliberate
+  hole, and each call still goes through the session's access. Its steps show as
+  `k: 'web'` rows and never count as computer use (`DeskInfo.IsScreen`).
+- **Voice tasks are the Mac's own (`macos/Sources/Voice.swift`, `VoicePanel.swift`).**
+  Control-Option-Space is a Carbon hot key with press and release: held, it listens until
+  let go; tapped, hands-free until pressed again; Esc is taken as a hot key only while
+  listening (the panel doesn't have the keyboard then). The window server gives keys
+  straight to a Hover panel that has the keyboard (the notch's office, the dashboard,
+  Settings), where the hot key never fires, so a local key monitor catches the same keys
+  there (`App.voicePress` keeps a press from counting twice). Speech is on device: SpeechAnalyzer
+  + SpeechTranscriber on macOS 26+, SFSpeechRecognizer before. The card is a
+  non-activating panel that takes the keyboard without activating Hover (Spotlight's
+  way); clicks reach only the card (`VoicePanel.track`, fed by the pointer poll). It sends
+  the office's own `new` and `reply` messages, so the backend's checks apply; a `toast`
+  within 3 s of a voice start is shown on the card. Projects and voice settings live in
+  UserDefaults (`voice.*`). The Info.plist carries the microphone and speech usage strings
+  and the app is signed with `macos/app.entitlements` (audio input, for the hardened runtime).
+- **Thoughts and subagents are steps.** `KiroStream` turns `agent_thought_chunk` into one
+  `thought` step per stretch of thinking (text in Output, capped); `OfficeState.Row` sends
+  it as `k: 'thought'` and a subagent call (`DeskInfo.IsSubagent`) as `k: 'agent'`. A stop
+  with replies queued moves on to the next one (`KiroSession.Go`); a reply never denies a
+  pending approval.
 - **Answers are Markdown, drawn without a library.** `md.js` escapes everything
   the agent wrote and emits only its own tags, so an answer can't inject HTML or
   script. Links go to the browser through Hover (`link`), web images load
@@ -285,7 +409,7 @@ carry a legacy `Noty` reference **only** in `Core/Paths.cs`, which migrates an o
   have no WPF, so their tests also run on Linux or macOS by linking those two
   files into a plain `net10.0` NUnit project. The same goes for the agents: link
   `Core/Quota.cs`, `Core/Log.cs`, `Core/Paths.cs`, `Services/KiroRunner.cs`,
-  `Services/Agents.cs`, `Services/AcpHost.cs` and `Owl/KiroSession.cs` with
+  `Services/Agents.cs`, `Services/AcpHost.cs`, `Services/ComputerUse.cs` and `Owl/KiroSession.cs` with
   `KiroRunnerTests.cs` and `TestEnvironment.cs` (its stand-in ACP agent talks over
   in-memory pipes). `TestEnvironment` redirects the data folder to a temp path via
   `HOVER_DATA_DIR`. `OpenCodeHostTests.cs` runs OpenCode against a stand-in

@@ -24,6 +24,7 @@ Hover your cursor at the top centre of your screen to expand the notch into your
 - **Agent office**: pick a project folder, type a task, and Kiro, Codex or Cursor does it there in the background. Run up to three at once; each gets a bot at a desk in a little 3D office that shows how it's going. Answers show as formatted text with tables, code, images and flowcharts; every session is kept (encrypted) on the office's bookshelf, and a reply picks it back up.
 - **One button to start**: the circle at the bottom left shows each agent's logo; pick one and type.
 - **Ask before acting**: set an agent to ask first, and the notch shows what it wants to run or change. Run, Trust or Deny it right there, or over the agent's head in the office.
+- **Computer use**: switch it on and every agent can open the app it built, click through it and check what it shows, through [Cua Driver](https://github.com/trycua/cua) (open source, MIT). It works in the background: your pointer doesn't move and your app keeps the keyboard. Settings installs the driver and, on a Mac, asks for its Accessibility and Screen Recording.
 - **AI quotas**: Claude Code, Kiro, Codex and Cursor usage on the notch, each as its own logo in a ring.
 - **Settings in the office**: the gear opens it; each agent has its own page for model, effort and tool access.
 - **Themes**: Hover light or dark, or any VS Code theme on your PC.
@@ -42,6 +43,20 @@ Hover your cursor at the top centre of your screen to expand the notch into your
 Download the latest `Hover-Setup-*.exe` from Releases and run it, or build it
 yourself (below).
 
+## macOS
+
+A native macOS host is available in this repository. Its `.app` bundles the runtime
+and office assets; users do not need .NET or Node installed. Agent tools and sign-in
+remain separate. See [macOS build, install, sandbox testing and release instructions](docs/MACOS.md).
+
+```sh
+./scripts/build-macos.sh
+./scripts/test-macos.sh
+```
+
+Local builds are ad hoc signed. Public releases require Developer ID signing and
+Apple notarization through `scripts/package-macos.sh`.
+
 ## Privacy
 
 Everything lives in `%APPDATA%\Hover`. The agents' sessions are kept in `agents\`,
@@ -57,6 +72,14 @@ The Agent office runs Kiro (`kiro-cli acp`), Codex (`codex-acp`) or Cursor
 files and run commands there without asking, so choose a folder under version
 control, or set them to ask first (Settings → the agent → Tool access). Hover explains this the first time you open the page. Each tool stays
 running for 5 or 15 idle minutes (Settings), then stops until you reply.
+
+Computer use is off until you switch it on (Settings → Integrations on Windows,
+Settings → Computer Use on a Mac). Then each agent is given `cua-driver mcp` as an MCP
+server, and its clicks and keystrokes follow the agent's tool access like any other
+tool: Ask first asks in the notch, Read only turns them down. Hover never passes Cua's
+approval-bypass flags. On a Mac the Accessibility and Screen Recording grants go to
+CuaDriver.app, not to Hover. Cua Driver keeps its own settings, including its own
+telemetry (`cua-driver telemetry`).
 
 ## Build
 

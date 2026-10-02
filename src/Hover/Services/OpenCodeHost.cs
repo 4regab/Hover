@@ -52,13 +52,26 @@ public sealed class OpenCodeHost : IAgentRuntime
     private OpenCodeLink? _link;
     private HttpClient? _http;
     private int _busy;
+    private readonly Func<IReadOnlyList<McpServer>> _mcp;
+    // The MCP servers the running server was started with (ComputerUse.Signature).
+    private string? _mcpStarted;
+    // The folders its server was sandboxed for; null when it wasn't (or isn't Hover's own).
+    private IReadOnlyList<string>? _boxFolders;
+    private bool _ownLaunch;
 
-    public OpenCodeHost(Func<AgentOptions> options, Func<CancellationToken, Task<OpenCodeLink?>>? connect = null)
+    /// mcp names the MCP servers the server is started with (Cua Driver, when computer
+    /// use is on). OpenCode reads them at startup, so a change restarts it once idle.
+    public OpenCodeHost(Func<AgentOptions> options, Func<CancellationToken, Task<OpenCodeLink?>>? connect = null, Func<IReadOnlyList<McpServer>>? mcp = null)
     {
         _options = options;
         _connect = connect ?? Launch;
+        _mcp = mcp ?? ComputerUse.Servers;
         _idle = new Timer(_ => { if (Volatile.Read(ref _busy) == 0) Shutdown("idle"); });
     }
+
+    // One server for all its sessions, so one browser server too: it answers for the
+    // OpenCode session at work (BrowserTool's "opencode" tag).
+    private IReadOnlyList<McpServer> Servers() => _mcp().Concat(BrowserTool.Servers(AgentTool.OpenCode, "opencode")).ToList();
 
     public AgentTool Tool => AgentTool.OpenCode;
     private const string Name = "OpenCode";
@@ -137,11 +150,29 @@ public sealed class OpenCodeHost : IAgentRuntime
     // MARK: A run
 
     public async Task<KiroResult> Run(string folder, string prompt, IProgress<KiroPhase>? progress, CancellationToken ct,
-        string? resume = null, IProgress<KiroEvent>? events = null, string? access = null)
+        string? resume = null, IProgress<KiroEvent>? events = null, string? access = null, string? tag = null)
     {
         if (!KiroRunner.UsableFolder(folder)) return new(KiroState.Failed, "That folder isn’t there any more. Choose another one.");
         if (string.IsNullOrWhiteSpace(prompt)) return new(KiroState.Failed, $"Tell {Name} what to do first.");
         var o = _options().WithAccess(access);
+        // A server started with other MCP servers (computer use switched since) is
+        // started again, when nothing of it runs; OpenCode keeps the conversations.
+        if (_link is not null && _mcpStarted != ComputerUse.Signature(Servers()) && Volatile.Read(ref _busy) == 0)
+            Shutdown("its MCP servers changed");
+        // As in AcpHost: a sandboxed server reaches only the folders it started with.
+        Sandbox.Remember(folder);
+        if (_link is not null && _ownLaunch)
+        {
+            var box = _boxFolders;
+            var outside = box is not null && !Sandbox.Covers(box, folder);
+            if (outside || (box is not null) != Sandbox.Wanted)
+            {
+                if (Volatile.Read(ref _busy) == 0) Shutdown("its sandbox changed");
+                else if (outside)
+                    return new(KiroState.Failed, $"{Name} is working on a task in another folder, and its sandbox reaches only the folders it started with. Start this one when that task is done.");
+            }
+        }
+        if (Sandbox.Wanted && Settings.ComputerUse) await ComputerUse.EnsureDaemon();
         Interlocked.Increment(ref _busy);
         _idle.Change(Timeout.Infinite, Timeout.Infinite);
         var turn = new Turn(folder, o, progress, events, ct);
@@ -670,6 +701,9 @@ public sealed class OpenCodeHost : IAgentRuntime
                 if (output is not null) next = next with { Output = KiroStream.OutputOf(JsonDocument.Parse(JsonSerializer.Serialize(new { rawOutput = output })).RootElement, out _) };
                 if (Num(state?["metadata"], "exit") is { } exit) next = next with { Exit = (int)exit };
             }
+            // For the desk's panels: the call's input, and what it gave back.
+            if (input is { Count: > 0 }) { var raw = input.ToJsonString(); next = next with { Input = raw.Length > KiroStream.InputLimit ? raw[..KiroStream.InputLimit] : raw }; }
+            if (kind is not ("read" or "edit") && status != "in_progress" && KiroStream.Tail(Str(state, "output") ?? Str(state, "error")) is { } log) next = next with { Log = log };
             if (status != "in_progress" && known.Ms is null && turn.Began.TryGetValue(call, out var t0)) next = next with { Ms = (DateTime.UtcNow - t0).TotalMilliseconds };
             if (turn.Steps.ContainsKey(call) && next == known) return;
             turn.Steps[call] = next;
@@ -980,6 +1014,16 @@ public sealed class OpenCodeHost : IAgentRuntime
         psi.Environment["OPENCODE_SERVER_PASSWORD"] = password;
         // The question tool, which Hover answers in the notch and the office.
         psi.Environment["OPENCODE_ENABLE_QUESTION_TOOL"] = "1";
+        // Hover's MCP servers (Cua Driver for computer use), as inline config over the
+        // user's and the project's, so no opencode.json is written.
+        if (ComputerUse.OpenCodeConfig(Servers(), Environment.GetEnvironmentVariable("OPENCODE_CONFIG_CONTENT")) is { } inline)
+            psi.Environment["OPENCODE_CONFIG_CONTENT"] = inline;
+        // In the sandbox, for the folders its sessions use (Services.Sandbox). Hover
+        // reaches the server from outside it, on this PC's loopback.
+        var folders = Sandbox.Folders();
+        psi = Sandbox.Wrap(psi, AgentTool.OpenCode, folders);
+        _boxFolders = Sandbox.Wanted ? folders : null;
+        _ownLaunch = true;
         var p = new Process { StartInfo = psi, EnableRaisingEvents = true };
         p.Start();
         // In the job that closes with Hover: the server, its MCP servers and whatever
@@ -1036,6 +1080,8 @@ public sealed class OpenCodeHost : IAgentRuntime
         {
             if (_link is not null) return;
             OpenCodeLink? link;
+            // Read before the start, so the server and what it is said to have agree.
+            var mcp = ComputerUse.Signature(Servers());
             try { link = await _connect(ct); }
             catch (Exception e) when (e is System.ComponentModel.Win32Exception or IOException or InvalidOperationException)
             {
@@ -1047,6 +1093,7 @@ public sealed class OpenCodeHost : IAgentRuntime
                 Convert.ToBase64String(Encoding.UTF8.GetBytes("opencode:" + link.Password)));
             _link = link;
             _http = http;
+            _mcpStarted = mcp;
             _inventory.Clear();
             _ = link.Exited.ContinueWith(_ => Gone(link), TaskScheduler.Default);
             try

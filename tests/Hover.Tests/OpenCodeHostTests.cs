@@ -41,7 +41,25 @@ public sealed class OpenCodeHostTests
     }
 
     private OpenCodeHost Host(AgentOptions? o = null) =>
-        new(() => o ?? AgentOptions.Default, _ => Task.FromResult<OpenCodeLink?>(new OpenCodeLink(_fake.Url, Fake.Password, () => { })));
+        new(() => o ?? AgentOptions.Default, _ => Task.FromResult<OpenCodeLink?>(new OpenCodeLink(_fake.Url, Fake.Password, () => { })), () => Array.Empty<McpServer>());
+
+    [Test]
+    public async Task Switching_computer_use_restarts_the_idle_server_so_it_loads_the_new_mcp_servers()
+    {
+        _fake.OnPrompt = (sid, mid, _) => Reply(_fake, sid, mid);
+        IReadOnlyList<McpServer> now = Array.Empty<McpServer>();
+        var starts = 0;
+        var host = new OpenCodeHost(() => AgentOptions.Default,
+            _ => { starts++; return Task.FromResult<OpenCodeLink?>(new OpenCodeLink(_fake.Url, Fake.Password, () => { })); }, () => now);
+        Assert.That((await Within(host.Run(_dir, "One", null, CancellationToken.None))).State, Is.EqualTo(KiroState.Completed));
+        Assert.That((await Within(host.Run(_dir, "Two", null, CancellationToken.None))).State, Is.EqualTo(KiroState.Completed));
+        Assert.That(starts, Is.EqualTo(1), "the same servers: one start");
+
+        now = new[] { new McpServer(ComputerUse.ServerName, "/opt/cua/cua-driver", new[] { "mcp" }) };
+        Assert.That((await Within(host.Run(_dir, "Three", null, CancellationToken.None))).State, Is.EqualTo(KiroState.Completed));
+        Assert.That(starts, Is.EqualTo(2), "started again with computer use");
+        host.Shutdown();
+    }
 
     /// A run that hangs fails the test instead of the whole suite.
     private static Task<KiroResult> Within(Task<KiroResult> run) => run.WaitAsync(TimeSpan.FromSeconds(20));
