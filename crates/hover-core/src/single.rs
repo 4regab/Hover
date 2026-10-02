@@ -2,7 +2,8 @@
 //! to open its window, then exits. Windows uses the C# app's own names
 //! (Local\HoverRunningInstance, Local\HoverShowApp), so the two builds also keep out
 //! of each other's way. Linux holds a lock on hover.lock in $XDG_RUNTIME_DIR and
-//! listens on hover.sock beside it; the lock goes with the process, however it ends.
+//! listens on hover.sock beside it; macOS does the same in $TMPDIR (it has no
+//! $XDG_RUNTIME_DIR). The lock goes with the process, however it ends.
 
 pub enum Claim {
     /// This is the only copy; keep the value alive for as long as the app runs.
@@ -24,6 +25,11 @@ pub fn claim(on_show: impl Fn(Option<String>) + Send + 'static) -> std::io::Resu
 pub fn claim_named(name: &str, on_show: impl Fn(Option<String>) + Send + 'static) -> std::io::Result<Claim> {
     imp::claim(name, Box::new(on_show))
 }
+
+/// Room in a Unix socket's path (sun_path is 104 bytes on macOS, 108 on Linux, with the
+/// NUL): a folder whose path leaves too little for the file is passed over.
+#[cfg_attr(windows, allow(dead_code))]
+fn socket_fits(dir: &std::path::Path, file: &str) -> bool { dir.as_os_str().len() + 1 + file.len() < 100 }
 
 #[cfg(windows)]
 mod imp {
@@ -86,20 +92,37 @@ mod imp {
         fn drop(&mut self) { let _ = std::fs::remove_file(&self.sock); }
     }
 
-    /// $XDG_RUNTIME_DIR (this user's, 0700), else a 0700 folder of this user's in /tmp.
-    fn runtime_dir() -> std::io::Result<PathBuf> {
-        if let Some(d) = std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from).filter(|d| d.is_absolute() && d.is_dir()) { return Ok(d); }
+    /// This user's id: the owner of /proc/self on Linux, of the home folder on macOS.
+    fn uid() -> u32 {
+        use std::os::unix::fs::MetadataExt;
+        let of = if cfg!(target_os = "linux") { Some(PathBuf::from("/proc/self")) } else { std::env::var_os("HOME").map(PathBuf::from) };
+        of.and_then(|p| std::fs::metadata(p).ok()).map(|m| m.uid()).unwrap_or(0)
+    }
+
+    /// Where the lock and the socket live, for this user alone: $XDG_RUNTIME_DIR (0700 by
+    /// the spec) where there is one; on macOS, which has none, $TMPDIR (a per-user 0700
+    /// folder under /var/folders) when the socket's path fits in it; else a 0700 folder
+    /// of this user's in /tmp.
+    fn runtime_dir(sock: &str) -> std::io::Result<PathBuf> {
         use std::os::unix::fs::{MetadataExt, PermissionsExt};
-        let uid = std::fs::metadata("/proc/self").map(|m| m.uid()).unwrap_or(0);
-        let d = std::env::temp_dir().join(format!("hover-{uid}"));
+        if let Some(d) = std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from).filter(|d| d.is_absolute() && d.is_dir()) { return Ok(d); }
+        let uid = uid();
+        let mine = |d: &std::path::Path| std::fs::metadata(d).is_ok_and(|m| m.is_dir() && m.uid() == uid && m.permissions().mode() & 0o077 == 0);
+        if cfg!(target_os = "macos") {
+            if let Some(d) = std::env::var_os("TMPDIR").map(PathBuf::from).filter(|d| d.is_absolute() && mine(d) && super::socket_fits(d, sock)) { return Ok(d); }
+        }
+        let base = if cfg!(target_os = "macos") { PathBuf::from("/tmp") } else { std::env::temp_dir() };
+        let d = base.join(format!("hover-{uid}"));
         std::fs::create_dir_all(&d)?;
         std::fs::set_permissions(&d, std::fs::Permissions::from_mode(0o700))?;
+        // A folder someone else made first is not ours to put a lock in.
+        if !mine(&d) { return Err(std::io::Error::new(std::io::ErrorKind::PermissionDenied, format!("{} belongs to someone else", d.display()))); }
         Ok(d)
     }
 
     pub fn claim(name: &str, on_show: Box<dyn Fn(Option<String>) + Send>) -> std::io::Result<Claim> {
-        let dir = runtime_dir()?;
         let low = name.to_lowercase();
+        let dir = runtime_dir(&format!("{low}.sock"))?;
         let lock = std::fs::OpenOptions::new().create(true).truncate(false).write(true).open(dir.join(format!("{low}.lock")))?;
         let sock = dir.join(format!("{low}.sock"));
         if lock.try_lock().is_err() {
@@ -129,6 +152,14 @@ mod imp {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_socket_path_must_fit_sun_path() {
+        let long = std::path::PathBuf::from(format!("/{}", "d".repeat(90)));
+        assert!(socket_fits(std::path::Path::new("/var/folders/zz/zyxvpxvq6csfxvn_n0000000000000/T"), "hover.sock"));
+        assert!(!socket_fits(&long, "hover.sock"));
+        assert!(socket_fits(std::path::Path::new("/tmp/hover-501"), "hovertest123456.sock"));
+    }
 
     #[test]
     fn a_second_claim_asks_the_first_to_show() {

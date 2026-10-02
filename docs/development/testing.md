@@ -152,3 +152,20 @@ agent, and giving the keyboard back to the previous app. Results of the last run
 
 The same tests run on Linux (`make test`). For voice on Linux (the build, X11
 hold-to-talk, the microphone, Phonon), see `evidence/voice-chat/linux.md`.
+
+## macOS
+
+CI only compiles it (`cargo check --workspace --all-targets --locked` on macos-15); no
+test runs there. On a Mac `cargo test --release --workspace` is the same command as
+elsewhere, but it has not been run yet. Two tests only run on a Mac
+(`hover-core/tests/keychain.rs`, which skips if the login Keychain can't be written to),
+and the Unix-only tests of the sandbox's relay, Cua's guard and the browser socket skip
+themselves without `perl` or `python3`.
+
+From Windows, `rustup target add aarch64-apple-darwin`, then
+`cargo check --target aarch64-apple-darwin -p hover-core -p hover-agents -p hover-office --all-targets`
+type-checks the Mac code. `hover` and `hover-quota` pull in C build steps (`ring`), which
+need a Mac's compiler and SDK; their check is the CI job.
+
+To see the Mac UI from Windows or Linux, `hover --shots` renders the views, including the
+Integrations page as a Mac shows it. That is a picture of the layout, not a test of the notch.

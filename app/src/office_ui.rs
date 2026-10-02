@@ -31,11 +31,11 @@ pub struct Page {
     size: Cell<(u32, u32)>,
     pub open: Cell<Option<i32>>,
     pub panel: Cell<Option<&'static str>>,
-    fab: Cell<i32>,
+    pub(crate) fab: Cell<i32>,
     new_tool: Cell<usize>,
     /// The HUD's menu, and the new-task box's access menu, open.
-    menu: Cell<bool>,
-    access_menu: Cell<bool>,
+    pub(crate) menu: Cell<bool>,
+    pub(crate) access_menu: Cell<bool>,
     /// The access the new-task box picked, by tool, for the tasks it starts next.
     new_access: RefCell<[Option<&'static str>; AgentTool::ALL.len()]>,
     new_folder: RefCell<Option<String>>,
@@ -67,7 +67,7 @@ pub struct Page {
     picks: RefCell<HashMap<String, Picks>>,
     qmodels: RefCell<HashMap<String, QRows>>,
     /// The model menu: 0 closed, 1 the drawer's pill, 2 the new-task box's.
-    model_menu: Cell<i32>,
+    pub(crate) model_menu: Cell<i32>,
     /// Pictures attached to the reply (0) and the new task (1), as files in kiro-images.
     attached: RefCell<[Vec<String>; 2]>,
     thumbs: RefCell<HashMap<String, Image>>,
@@ -86,6 +86,8 @@ pub struct Page {
     slots: RefCell<SlotImages>,
     /// The glass panels' blurred copy of the frame, and its working buffers.
     blur: RefCell<Blur>,
+    /// The desk card and the desk panel (desk_ui.rs).
+    pub desk: crate::desk_ui::DeskUi,
 }
 
 /// The office's slots as images, and which slot each window last showed (0 the notch, 1
@@ -144,7 +146,8 @@ fn double_click() -> (Duration, (f32, f32)) {
     unsafe { (Duration::from_millis(GetDoubleClickTime() as u64), (GetSystemMetrics(SM_CXDOUBLECLK) as f32, GetSystemMetrics(SM_CYDOUBLECLK) as f32)) }
 }
 
-/// GTK's and Qt's defaults (400 ms, 5 px): X11 has no setting of its own.
+/// GTK's and Qt's defaults (400 ms, 5 px): X11 has no setting of its own, and on a Mac this
+/// stands for the system's.
 #[cfg(not(windows))]
 fn double_click() -> (Duration, (f32, f32)) { (Duration::from_millis(400), (10.0, 10.0)) }
 
@@ -159,7 +162,7 @@ impl Default for Page {
             picks: Default::default(), qmodels: Default::default(), model_menu: Cell::new(0), attached: Default::default(), thumbs: Default::default(),
             #[cfg(windows)] gpu: Default::default(),
             #[cfg(windows)] scratch: Default::default(),
-            #[cfg(windows)] slots: Default::default(), blur: Default::default() }
+            #[cfg(windows)] slots: Default::default(), blur: Default::default(), desk: Default::default() }
     }
 }
 
@@ -182,7 +185,9 @@ impl App {
             }
         }
         let n = self.n.borrow();
-        (n.hover.state != hover_notch::State::Rest || self.headless).then(|| ((n.open_size.0 - 16.0) as u32, (n.open_size.1 - 16.0) as u32, 0))
+        // Below a Mac's camera housing, when the notch has one.
+        let below = n.hw.filter(|h| h.real).map_or(0.0, |h| h.height);
+        (n.hover.state != hover_notch::State::Rest || self.headless).then(|| ((n.open_size.0 - 16.0) as u32, (n.open_size.1 - 16.0 - below).max(1.0) as u32, 0))
     }
 
     /// Starts the office thread the first time an office is seen, and tells it whether
@@ -239,13 +244,14 @@ impl App {
         }
     }
 
-    pub fn office_changed(&self) { self.page.dirty.set(true); }
+    pub fn office_changed(&self) { self.page.dirty.set(true); self.desk_session_changed(); }
 
     /// The office thread goes, and its GPU memory with it.
     fn office_drop(self: &Rc<Self>) {
         let p = &self.page;
         if p.shown.get() != Some(false) { return; }
         p.push_timer.stop();
+        self.desk_leave();
         *p.live.borrow_mut() = None;
         *p.thread.borrow_mut() = None;
         // The last frame and its blurred copy would otherwise stay in the globals.
@@ -347,7 +353,24 @@ impl App {
             let hint = if out.hint == "clock" { full_date() } else { out.hint.clone() };
             let (tx, ty) = out.pointer.unwrap_or((0.0, 0.0));
             let which = self.page.target.get();
+            // The tip over a bot ("Chat with Juno") or a desk with a session at it ("Juno’s desk"):
+            // not while a desk card is open, nor over the bot whose chat is open.
+            let over = {
+                let find = |id: i64| out.tags.iter().find(|t| t.id == id).map(|t| (t.name, Color::from_rgb_u8(t.color[0], t.color[1], t.color[2])));
+                let none = (0, "", Color::default());
+                if self.page.desk.card.get().is_some() { none } else {
+                    match out.hovered {
+                        Some(hover_office::office::Hover::Bot(id)) if self.page.open.get() != Some(id as i32) => find(id).map_or(none, |(n, c)| (1, n, c)),
+                        Some(hover_office::office::Hover::Desk(id)) => find(id).map_or(none, |(n, c)| (2, n, c)),
+                        _ => none,
+                    }
+                }
+            };
+            self.desk_note_helpers(&out.tags);
             let set = |g: crate::ui::Office| {
+                g.set_over_kind(over.0);
+                g.set_over_name(s(over.1));
+                g.set_over_color(over.2);
                 g.set_scene(img.clone());
                 if let Some(m) = crate::view::sync(g.get_tags(), &tags) { g.set_tags(m); }
                 g.set_hint(s(&hint));
@@ -372,9 +395,10 @@ impl App {
         for c in out.clicks {
             match c {
                 Click::Open(id) => self.open_session(id as i32),
+                Click::Desk(id, x, y) => self.desk_open_card(id as i32, x as f32, y as f32),
                 Click::Panel(p) => self.open_panel(Some(p)),
                 Click::Toast(_) => self.toast(&full_date()),
-                Click::NewTask => { self.close_drawer(); self.open_panel(None); self.page.fab.set(1); self.office_widgets(); }
+                Click::NewTask => { self.desk_leave(); self.close_drawer(); self.open_panel(None); self.page.fab.set(1); self.office_widgets(); }
                 Click::Time(t) => { self.page.time_mode.set(if t == Time::Night { 1 } else { 2 }); crate::local_set("time", if t == Time::Night { "night" } else { "day" }); self.office_widgets(); }
                 Click::Fold => self.collapse(),
                 Click::Nothing => {
@@ -416,8 +440,9 @@ impl App {
         s.img.get(i).cloned()
     }
 
-    /// Never on Linux: Slint draws there with OpenGL, which cannot sample the office's
-    /// wgpu texture, so the office reads its frames back and this is never reached.
+    /// Only on Windows, where Slint and the office share one DX12 device. On Linux Slint draws
+    /// with OpenGL, which cannot sample the office's wgpu texture, and on a Mac the office's
+    /// frames are read back as well, so this is never reached there.
     #[cfg(not(windows))]
     fn slot_images(&self, _gen: u64, _i: usize) -> Option<(Image, Image)> { None }
 
@@ -466,9 +491,10 @@ impl App {
         self.page.toast_timer.start(slint::TimerMode::SingleShot, Duration::from_millis(2800), move || each!(a, |g| g.set_toast_shown(false)));
     }
 
-    fn send(&self, m: In) { if let Some(l) = &*self.page.live.borrow() { l.send(m); } }
+    pub(crate) fn send(&self, m: In) { if let Some(l) = &*self.page.live.borrow() { l.send(m); } }
 
     pub fn open_session(self: &Rc<Self>, id: i32) {
+        self.desk_leave();
         self.page.fab.set(0);
         self.page.panel.set(None);
         self.send(In::Panel(None));
@@ -510,7 +536,7 @@ impl App {
     }
 
     pub fn open_panel(self: &Rc<Self>, p: Option<&'static str>) {
-        if p.is_some() { self.page.open.set(None); self.send(In::Drawer(None)); self.page.fab.set(0); }
+        if p.is_some() { self.desk_leave(); self.page.open.set(None); self.send(In::Drawer(None)); self.page.fab.set(0); }
         self.page.panel.set(p);
         self.send(In::Panel(p));
         self.office_widgets();
@@ -617,6 +643,7 @@ impl App {
             }
         });
         if open.is_some() { self.paint_thread(); }
+        self.desk_sync();
     }
 
     fn panel_rows(&self, sessions: &[KiroSession]) -> Panel {
@@ -787,7 +814,7 @@ impl App {
         let a = self.clone();
         g.on_open_history(move || { let open = a.page.panel.get() == Some("history"); a.open_panel(if open { None } else { Some("history") }); });
         let a = self.clone();
-        g.on_fab_main(move || { let f = a.page.fab.get(); a.close_drawer(); a.page.panel.set(None); a.send(In::Panel(None)); a.page.fab.set(if f == 1 { 0 } else { 1 }); a.office_widgets(); });
+        g.on_fab_main(move || { let f = a.page.fab.get(); a.desk_leave(); a.close_drawer(); a.page.panel.set(None); a.send(In::Panel(None)); a.page.fab.set(if f == 1 { 0 } else { 1 }); a.office_widgets(); });
         let a = self.clone();
         g.on_pick_tool(move |i| {
             let t = AgentTool::ALL[i as usize];
@@ -861,7 +888,7 @@ impl App {
             if let Some((id, to)) = rewind { a.rewind(id, to); return; }
             if let Some((id, key)) = k {
                 let key = key.or_else(|| id.and_then(|i| a.hover.sessions.get(i)).map(|s| s.key.clone()));
-                if let Some(key) = key { a.hover.sessions.delete(&key); if let Some(h) = &a.hover.history { h.delete(&key); } }
+                if let Some(key) = key { a.hover.sessions.delete(&key); hover_agents::desk::forget_apps(&key); if let Some(h) = &a.hover.history { h.delete(&key); } }
                 if id.is_some() && id == a.page.open.get() { a.close_drawer(); }
                 a.office_changed();
                 a.office_widgets();
@@ -1348,7 +1375,7 @@ pub const ACCESS: [(&str, &str, &str); 4] = [
     ("read", "Read only", "Reads and searches. Changes nothing."),
 ];
 
-fn access_label(id: &str) -> &'static str { ACCESS.iter().find(|a| a.0 == id).map_or("Trust all", |a| a.1) }
+pub(crate) fn access_label(id: &str) -> &'static str { ACCESS.iter().find(|a| a.0 == id).map_or("Trust all", |a| a.1) }
 
 /// accessNote: Codex's Ask first is its own preset, which lets the rest run.
 pub fn access_note(id: &str, tool: AgentTool) -> &'static str {

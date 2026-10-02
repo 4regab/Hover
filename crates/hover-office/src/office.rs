@@ -8,11 +8,14 @@ use crate::bot::{Arrive, Bot, Stage, BOTS};
 use crate::canvas::{inter, pixel, Align, Baseline, Canvas};
 use crate::js::{ease, floor_i, Rng};
 use crate::m::{v3, Rgb, M4, V3};
-use crate::scene::{self, seat, Graph, Hit, Mat, Room, DESKS, DOOR, X0, Z0};
+use crate::mini::{Crew, MINI_SPOTS};
+use crate::scene::{self, seat, Geo, Graph, Hit, Mat, Room, DESKS, DOOR, X0, Z0};
 use hover_core::json::Json;
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct Turn { pub prompt: String, pub stage: Stage, pub act: Option<String>, pub file: String, pub steps: usize, pub queued: bool, pub t0: f64, pub took: Option<f64> }
+pub struct Turn { pub prompt: String, pub stage: Stage, pub act: Option<String>, pub file: String, pub steps: usize, pub queued: bool, pub t0: f64, pub took: Option<f64>,
+    /// The subagent steps of the turn not yet completed or failed (the helpers it has out).
+    pub agents: usize }
 
 pub struct Session {
     pub id: i64,
@@ -37,6 +40,14 @@ impl Session {
     pub fn last(&self) -> &Turn { self.turns.iter().rev().find(|t| !t.queued).unwrap_or(&self.turns[0]) }
     pub fn busy(&self) -> bool { self.last().stage.busy() }
     fn pose_of(&self) -> Option<&str> { self.pose.as_deref().or(self.act.as_deref()) }
+
+    /// subagentsOut: the helpers the session has out now. Its live turn's subagents not yet
+    /// ended, once its bot is at its desk and at work; at most as many as there are places
+    /// to stand around the desk.
+    pub fn subagents_out(&self) -> usize {
+        if !self.busy() || !self.b.seated || self.b.walking() { return 0; }
+        self.last().agents.min(MINI_SPOTS.len())
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -73,11 +84,12 @@ pub const PROPS: [(Prop, [f64; 6]); 6] = [
 
 /// What the pointer is over.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub enum Hover { Bot(i64), Prop(Prop) }
+pub enum Hover { Bot(i64), Prop(Prop), Desk(i64) }
 
 /// What a click asks the host (the page's postMessage) or the page itself to do.
 #[derive(Clone, Debug, PartialEq)]
-pub enum Click { Open(i64), Panel(&'static str), Toast(String), NewTask, Time(Time), Fold, Nothing }
+/// Desk: a desk with a session at it was clicked, where (in the office's own coordinates).
+pub enum Click { Open(i64), Desk(i64, f64, f64), Panel(&'static str), Toast(String), NewTask, Time(Time), Fold, Nothing }
 
 pub struct Office {
     pub g: Graph,
@@ -87,6 +99,8 @@ pub struct Office {
     leaving: Vec<(Bot, usize)>,
     /// Bots that walked out, hidden, for the next session with their name.
     spare: Vec<Bot>,
+    /// The helpers (subagents) at the desks, and the sheets they hand in.
+    pub crew: Crew,
     first_state: bool,
     pub time: Time,
     pub manual_time: Option<Time>,
@@ -96,6 +110,8 @@ pub struct Office {
     /// The drawer's open session, or a panel ('board', 'tv', 'history'): the camera aims there.
     pub sel: Option<i64>,
     pub drawer_open: bool,
+    /// The session whose desk card or desk panel is open: its bot shows as hot.
+    pub desk_open: Option<i64>,
     pub viewing: bool,
     pub panel: Option<&'static str>,
     pub dragging: bool,
@@ -118,6 +134,18 @@ pub struct Office {
     pub wall_clock: Box<dyn Fn() -> (f64, i64) + Send>,
 }
 
+/// Where a ray (origin `o`, direction `d`) enters the box `lo..hi`, if it meets it.
+fn slab(o: V3, d: V3, lo: V3, hi: V3) -> Option<f64> {
+    let (mut t0, mut t1) = (f64::NEG_INFINITY, f64::INFINITY);
+    for (oo, dd, l, h) in [(o.x, d.x, lo.x, hi.x), (o.y, d.y, lo.y, hi.y), (o.z, d.z, lo.z, hi.z)] {
+        if dd.abs() < 1e-12 { if oo < l || oo > h { t1 = -1.0; } continue; }
+        let (u, v) = ((l - oo) / dd, (h - oo) / dd);
+        t0 = t0.max(u.min(v));
+        t1 = t1.min(u.max(v));
+    }
+    (t1 >= t0.max(0.0)).then_some(t0)
+}
+
 pub const ISO: V3 = v3(0.5932, 0.5102, 0.5932);
 const RIGHT: V3 = v3(std::f64::consts::FRAC_1_SQRT_2, 0.0, -std::f64::consts::FRAC_1_SQRT_2);
 const FWD: V3 = v3(-std::f64::consts::FRAC_1_SQRT_2, 0.0, -std::f64::consts::FRAC_1_SQRT_2);
@@ -134,11 +162,17 @@ impl Office {
             g.nodes[n].s = v3(at[3], at[4], at[5]);
             g.nodes[n].hit = Some(Hit::Prop(i));
         }
+        // A desk's hit box (main.js: box(scene, 0.78, 1.36, 1.66, d.x + 0.08, 0.68, d.z, hitMat)).
+        for (i, &(dx, dz)) in DESKS.iter().enumerate() {
+            let n = g.add(scene::ROOT, v3(dx + 0.08, 0.68, dz));
+            g.nodes[n].s = v3(0.78, 1.36, 1.66);
+            g.nodes[n].hit = Some(Hit::Desk(i));
+        }
         let canvases = vec![Canvas::new(128, 96), Canvas::new(208, 118), Canvas::new(480, 280), Canvas::new(96, 44), Canvas::new(4, 64), Canvas::new(64, 64)];
         let mut o = Office {
-            g, room, r, sessions: vec![], leaving: vec![], spare: vec![], first_state: true, time: Time::Night, manual_time: None,
+            g, room, r, sessions: vec![], leaving: vec![], spare: vec![], crew: Crew::default(), first_state: true, time: Time::Night, manual_time: None,
             w, h, aspect: w / h, cam: [0.0, 1.7, 0.0, 1.0], cam_to: [0.0, 1.7, 0.0, 1.0], user: [0.0, 0.0, 1.0],
-            sel: None, drawer_open: false, viewing: false, panel: None, dragging: false, pointer: None, hovered: None, still,
+            sel: None, drawer_open: false, desk_open: None, viewing: false, panel: None, dragging: false, pointer: None, hovered: None, still,
             clock_t: 0.0, tv_at: -1, clock_at: -1, lively: true, poked: 0.0, now_ms: 0.0, shadow_at: -1.0, shadow_dirty: true,
             dirty: [true; 6], canvases, frames: 0, acc: 0.0,
             wall_clock: Box::new(|| {
@@ -214,6 +248,9 @@ impl Office {
                 queued: t.get("queued").is_some_and(|q| *q == Json::Bool(true)),
                 t0: t.get("t0").and_then(|x| x.f64().ok()).filter(|v| *v != 0.0).unwrap_or(now),
                 took: t.get("took").and_then(|x| x.f64().ok()),
+                // The chat's own rule: a subagent's row (k "agent") is out until it is completed or failed.
+                agents: t.get("steps").and_then(|x| x.items().ok()).map_or(0, |v| v.iter().filter(|x|
+                    x.get("k").and_then(Json::as_str) == Some("agent") && !matches!(x.get("status").and_then(Json::as_str), Some("completed" | "failed"))).count()),
             }).collect();
             if turns.is_empty() { continue; }
             let (act, pose, file) = (h.get("act").and_then(Json::as_str).map(str::to_owned), h.get("pose").and_then(Json::as_str).map(str::to_owned), s("file"));
@@ -263,6 +300,7 @@ impl Office {
         b.hot = false;
         b.go(Self::path_out(s.desk), Arrive::Gone);
         self.leaving.push((b, s.desk));
+        self.crew.leave(id);
         if self.sel == Some(id) { self.drawer_open = false; self.sel = None; }
     }
 
@@ -317,7 +355,8 @@ impl Office {
         };
         self.hovered = hit;
         let (drawer, sel) = (self.drawer_open, self.sel);
-        for s in &mut self.sessions { s.b.hot = hit == Some(Hover::Bot(s.id)) || (drawer && Some(s.id) == sel); }
+        let desk = self.desk_open;
+        for s in &mut self.sessions { s.b.hot = hit == Some(Hover::Bot(s.id)) || hit == Some(Hover::Desk(s.id)) || (drawer && Some(s.id) == sel) || desk == Some(s.id); }
         let panes = [self.room.tv, self.room.board, self.room.clock, self.room.sky];
         for (k, p) in [Prop::Tv, Prop::Board, Prop::Clock, Prop::Window].iter().enumerate() {
             let on = hit == Some(Hover::Prop(*p));
@@ -334,34 +373,74 @@ impl Office {
         let dir = b.sub(a).norm();
         let world = self.g.world();
         let shown = self.g.shown();
-        let mut best: Option<(f64, Hover)> = None;
+        // Every hit box the ray goes through, with where it enters (Raycaster's `found`).
+        let mut found: Vec<(f64, Hover)> = vec![];
         for (i, n) in self.g.nodes.iter().enumerate() {
             let Some(h) = n.hit else { continue };
             if !shown[i] { continue; }
             let m = world[i].inverse();
-            let (o, d) = (m.point(a), m.dir(dir));
-            // The unit box, -0.5..0.5.
-            let (mut t0, mut t1) = (f64::NEG_INFINITY, f64::INFINITY);
-            for (oo, dd) in [(o.x, d.x), (o.y, d.y), (o.z, d.z)] {
-                if dd.abs() < 1e-12 { if oo.abs() > 0.5 { t1 = -1.0; } continue; }
-                let (u, v) = ((-0.5 - oo) / dd, (0.5 - oo) / dd);
-                t0 = t0.max(u.min(v));
-                t1 = t1.min(u.max(v));
-            }
-            if t1 < t0.max(0.0) { continue; }
+            let Some(t0) = slab(m.point(a), m.dir(dir), v3(-0.5, -0.5, -0.5), v3(0.5, 0.5, 0.5)) else { continue };
             let hv = match h {
                 Hit::Prop(k) => Hover::Prop(PROPS[k].0),
+                // Only a desk with a session at it.
+                Hit::Desk(k) => match self.sessions.iter().find(|s| s.desk == k) { Some(s) => Hover::Desk(s.id), None => continue },
                 Hit::Bot(_) => match self.sessions.iter().find(|s| s.b.hit == i) { Some(s) => Hover::Bot(s.id), None => continue },
             };
-            if best.is_none_or(|(bt, _)| t0 < bt) { best = Some((t0, hv)); }
+            found.push((t0, hv));
         }
-        best.map(|b| b.1)
+        found.sort_by(|x, y| x.0.total_cmp(&y.0));
+        let bot = found.iter().find_map(|f| if let Hover::Bot(id) = f.1 { Some(id) } else { None });
+        let desk = found.iter().find_map(|f| if let Hover::Desk(id) = f.1 { Some(id) } else { None });
+        let first = found.first().map(|f| f.1);
+        match (bot, desk) {
+            // Both: whichever surface is really under the pointer, the bot's body or the
+            // room's. Seen from the camera a seated bot is behind its monitor, so its hit
+            // box and the desk's overlap, and the nearer box isn't what the pointer is on.
+            (Some(b), Some(d)) => {
+                let s = self.sessions.iter().find(|s| s.id == b)?;
+                Some(if self.body_in_front(s, a, dir, &world, &shown) { Hover::Bot(b) } else { Hover::Desk(d) })
+            }
+            (Some(b), None) if !matches!(first, Some(Hover::Prop(_))) => Some(Hover::Bot(b)),
+            _ if matches!(first, Some(Hover::Prop(_))) => first,
+            (_, Some(d)) => Some(Hover::Desk(d)),
+            _ => first,
+        }
+    }
+
+    /// Whether the ray meets the bot's own boxes before the room's (its desk, chair and the
+    /// rest of the room's merged boxes): main.js botParts against roomMesh.
+    fn body_in_front(&self, s: &Session, a: V3, dir: V3, world: &[M4], shown: &[bool]) -> bool {
+        let mut body = f64::INFINITY;
+        let mut room = f64::INFINITY;
+        for (i, n) in self.g.nodes.iter().enumerate() {
+            let Some((geo, _)) = &n.draw else { continue };
+            if !shown[i] { continue; }
+            let m = world[i].inverse();
+            let (o, d) = (m.point(a), m.dir(dir));
+            match geo {
+                Geo::Unit if self.under(i, s.b.root) => { if let Some(t) = slab(o, d, v3(-0.5, -0.5, -0.5), v3(0.5, 0.5, 0.5)) { body = body.min(t); } }
+                Geo::Merged(k) => for b in &self.g.merged[*k] {
+                    if let Some(t) = slab(o, d, v3(b.x, b.y, b.z), v3(b.x + b.w, b.y + b.h, b.z + b.d)) { room = room.min(t); }
+                },
+                _ => {}
+            }
+        }
+        body < room
+    }
+
+    /// Whether node `i` is `root` or inside it.
+    fn under(&self, mut i: usize, root: usize) -> bool {
+        loop {
+            if i == root { return true; }
+            match self.g.nodes[i].parent { Some(p) => i = p, None => return false }
+        }
     }
 
     /// pointerup without a drag: what the page does.
     pub fn click(&mut self) -> Click {
         match self.hovered {
             Some(Hover::Bot(id)) => Click::Open(id),
+            Some(Hover::Desk(id)) => { let (x, y) = self.pointer.unwrap_or((0.0, 0.0)); Click::Desk(id, x, y) }
             Some(Hover::Prop(Prop::Tv)) => Click::Panel("tv"),
             Some(Hover::Prop(Prop::Board)) => Click::Panel("board"),
             Some(Hover::Prop(Prop::Shelf)) => Click::Panel("history"),
@@ -426,6 +505,14 @@ impl Office {
         }
         // Gone: kept hidden, and used again for the next session with its name.
         for i in gone.into_iter().rev() { let (b, _) = self.leaving.remove(i); self.spare.push(b); }
+        // The helpers: as many at each busy desk as its session has subagents out.
+        for i in 0..self.sessions.len() {
+            let s = &self.sessions[i];
+            let (id, desk, color, want) = (s.id, s.desk, s.b.color, s.subagents_out());
+            self.crew.sync(&mut self.g, &mut self.r, id, desk, color, want);
+        }
+        let sessions = &self.sessions;
+        self.crew.step(&mut self.g, step, still, |id| sessions.iter().find(|s| s.id == id).map(|s| (s.b.x, s.b.z)));
         // The door swings open while a bot is near it.
         let near = self.sessions.iter().map(|s| &s.b).chain(self.leaving.iter().map(|l| &l.0)).any(|b| (b.x - DOOR.0).hypot(b.z - Z0) < 1.5);
         let dr = self.g.nodes[self.room.door].r.y;
@@ -474,10 +561,10 @@ impl Office {
         }
         if floor_i(self.clock_t * 4.0) != self.tv_at { self.tv_at = floor_i(self.clock_t * 4.0); let t = self.clock_t; self.draw_tv(t); }
         if floor_i(self.clock_t * 2.0) != self.clock_at { self.clock_at = floor_i(self.clock_t * 2.0); self.draw_clock(); }
-        let walking = !self.leaving.is_empty() || self.sessions.iter().any(|s| s.b.walking());
+        let walking = !self.leaving.is_empty() || self.sessions.iter().any(|s| s.b.walking()) || self.crew.moving();
         if walking || self.shadow_dirty || self.clock_t - self.shadow_at >= 0.1 { self.shadow_at = self.clock_t; self.shadow_dirty = true; }
         let door_moving = (self.g.nodes[self.room.door].r.y - if near { -1.3 } else { 0.0 }).abs() > 0.01;
-        self.lively = walking || self.dragging || door_moving
+        self.lively = walking || self.dragging || door_moving || self.crew.any()
             || self.sessions.iter().any(|s| s.busy() || s.b.since < 2.0 || s.tag_shown < s.tag_text.chars().count() as f64)
             || (0..4).any(|i| (self.cam[i] - self.cam_to[i]).abs() > 0.002);
         self.frames += 1;
@@ -492,7 +579,7 @@ impl Office {
             let p = vp.point(s.b.head3(&self.g));
             let n = if self.still { usize::MAX } else { s.tag_shown as usize };
             Tag { id: s.id, x: (p.x + 1.0) / 2.0 * self.w, y: (1.0 - p.y) / 2.0 * self.h, name: s.b.name, color: s.b.css, tool: s.tool.clone(),
-                text: s.tag_text.chars().take(n).collect(), stage: s.last().stage, hot: s.b.hot }
+                text: s.tag_text.chars().take(n).collect(), stage: s.last().stage, hot: s.b.hot, helpers: self.crew.colors(s.id) }
         }).collect()
     }
 
@@ -681,7 +768,9 @@ impl Office {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct Tag { pub id: i64, pub x: f64, pub y: f64, pub name: &'static str, pub color: [u8; 3], pub tool: String, pub text: String, pub stage: Stage, pub hot: bool }
+pub struct Tag { pub id: i64, pub x: f64, pub y: f64, pub name: &'static str, pub color: [u8; 3], pub tool: String, pub text: String, pub stage: Stage, pub hot: bool,
+    /// The main colour of each helper the session has out (its subagents at the desk), for the desk card.
+    pub helpers: Vec<[u8; 3]> }
 
 /// short(f): the last part of a path.
 pub fn short(f: &str) -> String { f.rsplit(['\\', '/']).next().unwrap_or("").to_owned() }

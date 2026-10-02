@@ -18,6 +18,8 @@ pub fn from_slint(text: &str) -> Option<Key> {
     let mut cs = text.chars();
     let c = cs.next()?;
     if cs.next().is_some() { return None; }
+    // A Mac's Option types another character; the letter under it is the key.
+    let c = if cfg!(target_os = "macos") { mac_option_letter(c).unwrap_or(c) } else { c };
     let v: u16 = match c {
         'a'..='z' => A + (c as u16 - 'a' as u16),
         'A'..='Z' => A + (c as u16 - 'A' as u16),
@@ -34,6 +36,38 @@ pub fn from_slint(text: &str) -> Option<Key> {
         _ => return None,
     };
     Some(Key(v))
+}
+
+/// On a Mac, Option changes what a letter types: Option-P is "π", not "p". The recorder is
+/// told the character, so this is the letter under it on a US keyboard (Option-E, I, N and
+/// U are dead keys that type nothing until the next press; `from_physical` is the way to
+/// record those).
+pub fn mac_option_letter(c: char) -> Option<char> {
+    Some(match c {
+        'å' => 'a', '∫' => 'b', 'ç' => 'c', '∂' => 'd', 'ƒ' => 'f', '©' => 'g', '˙' => 'h', '∆' => 'j', '˚' => 'k', '¬' => 'l',
+        'µ' => 'm', 'ø' => 'o', 'π' => 'p', 'œ' => 'q', '®' => 'r', 'ß' => 's', '†' => 't', '√' => 'v', '∑' => 'w', '≈' => 'x',
+        '¥' => 'y', 'Ω' => 'z',
+        _ => return None,
+    })
+}
+
+/// A key by its position on the keyboard, named as winit names a `KeyCode` ("KeyN",
+/// "Digit5", "F10", "Space", "Enter", "ArrowLeft"...): what is under the finger whatever the
+/// modifiers or the layout make of it. Mac Option-N types a dead key, which `from_slint`
+/// never sees; this does.
+pub fn from_physical(name: &str) -> Option<Key> {
+    if let Some(l) = name.strip_prefix("Key").filter(|l| l.len() == 1) { return Key::letter(l.chars().next()?); }
+    if let Some(d) = name.strip_prefix("Digit").filter(|d| d.len() == 1) { return Key::digit(d.parse().ok()?); }
+    if let Some(n) = name.strip_prefix('F').and_then(|n| n.parse::<u8>().ok()) { return Key::function(n); }
+    if let Some(n) = name.strip_prefix("Numpad").and_then(|n| n.parse::<u16>().ok()).filter(|n| *n < 10) { return Some(Key(74 + n)); }
+    Some(Key(match name {
+        "Backspace" => 2, "Tab" => 3, "Enter" | "NumpadEnter" => 6, "Escape" => 13, "Space" => 18,
+        "PageUp" => 19, "PageDown" => 20, "End" => 21, "Home" => 22, "ArrowLeft" => 23, "ArrowUp" => 24, "ArrowRight" => 25, "ArrowDown" => 26,
+        "Insert" => 31, "Delete" => 32,
+        "Semicolon" => 140, "Equal" => 141, "Comma" => 142, "Minus" => 143, "Period" => 144, "Slash" => 145, "Backquote" => 146,
+        "BracketLeft" => 149, "Backslash" => 150, "BracketRight" => 151, "Quote" => 152,
+        _ => return None,
+    }))
 }
 
 /// Slint's own modifier keys (Shift, Control, Alt, AltGr, Meta and their right-hand
@@ -56,10 +90,16 @@ pub fn modifiers(alt: bool, control: bool, shift: bool, meta: bool) -> Modifiers
 #[derive(Debug, PartialEq)]
 pub enum Recorded { Stop, Wait, NeedModifier, Chord(Shortcut) }
 
-pub fn record(text: &str, m: Modifiers) -> Recorded {
+pub fn record(text: &str, m: Modifiers) -> Recorded { record_at(text, None, m) }
+
+/// `record`, told the key by its position too (winit's `KeyCode`, as `from_physical` names
+/// it): on a Mac the character under Option can be a dead key that types nothing, and the
+/// position still says which key it was.
+pub fn record_at(text: &str, physical: Option<&str>, m: Modifiers) -> Recorded {
     if text == "\u{1b}" { return Recorded::Stop; }
     if is_modifier(text) { return Recorded::Wait; }
-    let Some(key) = from_slint(text) else { return Recorded::Wait };
+    let by_position = || physical.filter(|_| cfg!(target_os = "macos")).and_then(from_physical);
+    let Some(key) = from_slint(text).or_else(by_position) else { return Recorded::Wait };
     // A global shortcut without a modifier would take an ordinary typing key away
     // from every application on the desktop.
     if m == Modifiers::NONE { return Recorded::NeedModifier; }
@@ -111,6 +151,15 @@ mod tests {
     use super::*;
 
     #[test]
+    fn a_dead_key_is_recorded_by_its_position_on_a_mac_only() {
+        let opt = Modifiers::ALT;
+        let n = Key::letter('n');
+        if cfg!(target_os = "macos") { assert_eq!(record_at("", Some("KeyN"), opt), Recorded::Chord(Shortcut { key: n.unwrap(), modifiers: opt })); }
+        else { assert_eq!(record_at("", Some("KeyN"), opt), Recorded::Wait); }
+        assert_eq!(record_at("\u{1b}", Some("KeyN"), opt), Recorded::Stop);
+    }
+
+    #[test]
     fn a_chord_is_recorded_as_pages_records_it() {
         let alt = modifiers(true, false, false, false);
         assert_eq!(record("n", alt), Recorded::Chord(Shortcut::DEFAULT));
@@ -123,6 +172,25 @@ mod tests {
         assert_eq!(s.label(), "Ctrl+Shift+F10");
         assert_eq!(from_slint("!"), Some(Key(35)));
         assert_eq!(from_slint("ab"), None);
+    }
+
+    #[test]
+    fn a_mac_keyboard_is_read_by_the_key_not_what_option_makes_of_it() {
+        assert_eq!(mac_option_letter('π'), Some('p'));
+        assert_eq!(mac_option_letter('ø'), Some('o'));
+        assert_eq!(mac_option_letter('p'), None);
+        // By position, as winit names it.
+        assert_eq!(from_physical("KeyN"), Some(Key::N));
+        assert_eq!(from_physical("Digit0"), Some(Key(34)));
+        assert_eq!(from_physical("F10"), Some(Key(99)));
+        assert_eq!(from_physical("Space"), Some(Key(18)));
+        assert_eq!(from_physical("Numpad7"), Some(Key(81)));
+        assert_eq!(from_physical("ArrowLeft"), Some(Key(23)));
+        assert_eq!(from_physical("Backquote"), Some(Key(146)));
+        assert_eq!(from_physical("ShiftLeft"), None);
+        assert_eq!(from_physical("KeyÄ"), None);
+        // Every key by position is one the shortcut can grab.
+        for n in ["KeyA", "KeyZ", "Digit9", "F1", "F12", "Enter", "Escape", "Tab", "Comma"] { assert!(vk(from_physical(n).unwrap()).is_some(), "{n}"); }
     }
 
     /// VirtualKeyFromKey's table (winuser.h's VK_ values) and the X keysyms (keysymdef.h).

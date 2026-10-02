@@ -54,12 +54,15 @@ pub struct Pane {
     pub note: Option<(String, String)>,
     /// What the running app knows about voice; the app sets it and calls refresh.
     pub live: pages::Live,
+    /// The key under the finger, by position (winit's `KeyCode`), while a shortcut records
+    /// on a Mac: Option-N types a dead key that the character alone can't name.
+    pub physical: Option<String>,
 }
 
 impl Default for Pane {
     fn default() -> Self {
         Pane { section: Section::General, recording: false, recording_voice: false, field: None, import_status: String::new(), menu: None, installed: None,
-            project: None, note: None, live: pages::Live::default() }
+            project: None, note: None, live: pages::Live::default(), physical: None }
     }
 }
 
@@ -287,6 +290,10 @@ pub fn toggled(h: &dyn Host, pane: &RefCell<Pane>, id: &str, on: bool) {
         "VoiceEnabled" => { st.set_voice(VoiceSettings { enabled: on, ..st.voice() }); h.action("voice.changed"); }
         "VoiceCleanup" => { st.set_voice(VoiceSettings { cleanup: on, ..st.voice() }); h.action("voice.changed"); }
         "ProjectVoice" => edit_project(h, pane, id, |p| p.voice = on),
+        // The agents' extras (Settings → Integrations): read when a tool starts.
+        "ComputerUse" => { st.set_computer_use(on); if on { h.action("integ.look"); } }
+        "Sandbox" => { st.set_sandbox(on); h.action("integ.look"); }
+        "AgentBrowser" => st.set_agent_browser(on),
         _ => {}
     }
     h.refresh();
@@ -365,7 +372,7 @@ pub fn pressed(h: &dyn Host, pane: &RefCell<Pane>, id: &str) {
         "VoiceWorkspace" => { let mut p = pane.borrow_mut(); p.section = Section::Projects; p.project = None; }
         _ if id.starts_with("Project.") => pane.borrow_mut().project = Some(id["Project.".len()..].into()),
         _ if id.ends_with("Recheck") => { h.recheck(tool_of(&id[..id.len() - "Recheck".len()]), true); }
-        _ if id.starts_with("phonon.") || id.starts_with("voice.") || id == "groq.check" => h.action(id),
+        _ if id.starts_with("phonon.") || id.starts_with("voice.") || id.starts_with("integ.") || id == "groq.check" => h.action(id),
         _ => {}
     }
     h.refresh();
@@ -459,9 +466,10 @@ fn record_as(pane: &RefCell<Pane>, voice: bool) {
 
 pub fn chord(h: &dyn Host, pane: &RefCell<Pane>, text: &str, m: hover_core::shortcut::Modifiers) -> bool {
     if !pane.borrow().recording { return false; }
-    match keys::record(text, m) {
+    let physical = pane.borrow_mut().physical.take();
+    match keys::record_at(text, physical.as_deref(), m) {
         Recorded::Wait => return true,
-        Recorded::NeedModifier => { pane.borrow_mut().field = Some(if cfg!(windows) { "Add Ctrl, Alt, Shift or Win" } else { "Add Ctrl, Alt, Shift or Super" }.into()); }
+        Recorded::NeedModifier => { pane.borrow_mut().field = Some(if cfg!(windows) { "Add Ctrl, Alt, Shift or Win" } else if cfg!(target_os = "macos") { "Add ⌃, ⌥, ⇧ or ⌘" } else { "Add Ctrl, Alt, Shift or Super" }.into()); }
         Recorded::Stop => { let mut p = pane.borrow_mut(); p.recording = false; p.field = None; }
         Recorded::Chord(sc) => {
             let st = &h.hover().settings;
@@ -570,3 +578,71 @@ macro_rules! wire_page {
     }};
 }
 pub(crate) use wire_page;
+
+// MARK: Integrations (Settings → Integrations, and each agent's setup row)
+
+impl crate::App {
+    /// What Settings' buttons ask of Cua Driver and the tools' installers; the work runs off
+    /// the UI thread and reports through the modules' change hooks.
+    pub fn integ_action(self: &Rc<Self>, id: &str) {
+        use hover_agents::{computer_use as cu, setup};
+        self.integ_wire();
+        match id {
+            "integ.look" => { self.integ_look(true); return; }
+            "integ.cua.install" => { std::thread::spawn(cu::install); }
+            "integ.cua.grant" => { std::thread::spawn(cu::grant); }
+            "integ.cua.cancel" => cu::cancel(),
+            _ => {
+                if let Some(t) = id.strip_prefix("integ.setup.").and_then(|x| AgentTool::ALL.into_iter().find(|t| t.id() == x)) { std::thread::spawn(move || setup::run(t, None)); }
+                else if let Some(t) = id.strip_prefix("integ.setupcancel.").and_then(|x| AgentTool::ALL.into_iter().find(|t| t.id() == x)) { setup::cancel(t); }
+            }
+        }
+        self.integ_sync();
+    }
+
+    /// The change hooks, once.
+    fn integ_wire(self: &Rc<Self>) {
+        static ONCE: std::sync::Once = std::sync::Once::new();
+        ONCE.call_once(|| {
+            hover_agents::computer_use::on_change(|| crate::ui_do(|a| a.integ_sync()));
+            hover_agents::setup::on_change(|_| crate::ui_do(|a| a.integ_sync()));
+        });
+    }
+
+    /// Asks (off the UI thread) whether Cua Driver is there and what the sandbox lacks.
+    pub fn integ_look(self: &Rc<Self>, fresh: bool) {
+        // The screenshots show what they are handed.
+        if self.headless { return; }
+        self.integ_wire();
+        self.integ_sync();
+        std::thread::spawn(move || {
+            hover_agents::computer_use::check(fresh);
+            crate::ui_do(|a| a.integ_sync());
+        });
+    }
+
+    /// Publishes what the modules know now to the pages.
+    pub fn integ_sync(self: &Rc<Self>) {
+        use hover_agents::{computer_use as cu, sandbox, setup};
+        let p = cu::setup();
+        let busy = cu::busy();
+        let cua = cu::known().map(|s| pages::Cua { installed: s.installed, version: s.version, permissions: s.permissions.to_owned(), hint: s.hint, busy, line: p.line.clone(), error: p.error.clone() })
+            .or_else(|| busy.then(|| pages::Cua { busy, line: p.line.clone(), ..Default::default() }));
+        let setups = AgentTool::ALL.into_iter().map(|t| { let s = setup::of(t); (t, pages::SetupCard { busy: setup::busy(t), line: s.line, error: s.error }) }).collect();
+        let missing = if self.hover.settings.sandbox() && sandbox::supported() { sandbox::missing() } else { None };
+        {
+            let mut pane = self.pane.borrow_mut();
+            pane.live.integ = pages::Integ { caps: pages::Caps::here(), cua, setup: setups, sandbox_missing: missing };
+        }
+        let section = self.pane.borrow().section;
+        if matches!(section, Section::Integrations | Section::Kiro | Section::Codex | Section::Cursor | Section::OpenCode | Section::Claude) { self.refresh_page(false); }
+    }
+}
+#[cfg(target_os = "macos")]
+impl crate::App {
+    /// While a shortcut records: the key under the finger by its position (Option-N is a dead key).
+    pub fn note_physical(&self, e: &slint::winit_030::winit::event::KeyEvent) {
+        use slint::winit_030::winit::keyboard::PhysicalKey;
+        if let (PhysicalKey::Code(c), Ok(mut p)) = (e.physical_key, self.pane.try_borrow_mut()) { if p.recording { p.physical = Some(format!("{c:?}")); } }
+    }
+}

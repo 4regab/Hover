@@ -129,4 +129,30 @@ impl Rgb {
         [b(self.0), b(self.1), b(self.2)]
     }
     pub fn f32(self) -> [f32; 3] { [self.0 as f32, self.1 as f32, self.2 as f32] }
+
+    /// Color.getHSL, in the linear working space (three.js does not convert for it).
+    pub fn hsl(self) -> (f64, f64, f64) {
+        let (r, g, b) = (self.0, self.1, self.2);
+        let (max, min) = (r.max(g).max(b), r.min(g).min(b));
+        let l = (min + max) / 2.0;
+        if min == max { return (0.0, 0.0, l); }
+        let d = max - min;
+        let s = if l <= 0.5 { d / (max + min) } else { d / (2.0 - max - min) };
+        let h = if max == r { (g - b) / d + if g < b { 6.0 } else { 0.0 } } else if max == g { (b - r) / d + 2.0 } else { (r - g) / d + 4.0 };
+        (h / 6.0, s, l)
+    }
+
+    /// Color.setHSL (linear): the hue wraps, the saturation and lightness are clamped.
+    pub fn from_hsl(h: f64, s: f64, l: f64) -> Rgb {
+        let (h, s, l) = (h.rem_euclid(1.0), s.clamp(0.0, 1.0), l.clamp(0.0, 1.0));
+        if s == 0.0 { return Rgb(l, l, l); }
+        let p = if l <= 0.5 { l * (1.0 + s) } else { l + s - l * s };
+        let q = 2.0 * l - p;
+        let f = |mut t: f64| {
+            if t < 0.0 { t += 1.0; }
+            if t > 1.0 { t -= 1.0; }
+            if t < 1.0 / 6.0 { q + (p - q) * 6.0 * t } else if t < 0.5 { p } else if t < 2.0 / 3.0 { q + (p - q) * 6.0 * (2.0 / 3.0 - t) } else { q }
+        };
+        Rgb(f(h + 1.0 / 3.0), f(h), f(h - 1.0 / 3.0))
+    }
 }

@@ -1,9 +1,12 @@
 //! Starting a tool as a hidden child (Quota.Hidden, AcpHost.Launch) and making sure
 //! it and everything it starts goes with Hover (ChildJob). Windows: a job object per
 //! tool, set to kill on close, so a killed or crashed Hover leaves none behind.
-//! Linux: the tool leads a process group of its own (setsid), dies with Hover
-//! (PR_SET_PDEATHSIG), and a small watchdog shell kills the whole group when
-//! Hover's end of its pipe closes, however Hover ended.
+//! Linux and macOS: the tool leads a process group of its own (setsid), and a small
+//! watchdog shell kills the whole group when Hover's end of its pipe closes, however
+//! Hover ended. Linux also sets PR_SET_PDEATHSIG; macOS has no such thing, so the
+//! watchdog alone covers it. (A Hover killed in the few milliseconds between the tool's
+//! start and the watchdog's leaves the tool running; the getppid check in `prepare`
+//! only catches a Hover gone before the exec.)
 
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
@@ -208,8 +211,11 @@ mod imp {
                 // A group of its own: a kill of the group reaches whatever the tool starts,
                 // and Ctrl+C in Hover's terminal doesn't.
                 if libc::setsid() < 0 { return Err(std::io::Error::last_os_error()); }
+                // Linux only: macOS has no PDEATHSIG, and there the group's watchdog
+                // (Group::attach) is what ends the tool when Hover goes.
+                #[cfg(target_os = "linux")]
                 libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL);
-                // Hover died between the fork and the prctl.
+                // Hover died between the fork and the prctl (or, on macOS, before exec).
                 if libc::getppid() != parent { libc::_exit(1); }
                 Ok(())
             });

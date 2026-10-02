@@ -1,42 +1,56 @@
 //! One scalar out of an SQLite file, opened read-only, as Microsoft.Data.Sqlite's
 //! ExecuteScalar gives it. Linux uses the SQLite that libsqlite3-sys builds in; Windows
-//! calls the winsqlite3.dll that ships with Windows 10 and 11.
+//! calls the winsqlite3.dll that ships with Windows 10 and 11, and macOS the libsqlite3
+//! that ships with it (nothing is compiled for either).
 
 use std::ffi::{c_int, CStr, CString};
-#[cfg(windows)]
+#[cfg(not(target_os = "linux"))]
 use std::ffi::{c_char, c_void};
 
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
 use libsqlite3_sys::sqlite3;
 
-#[cfg(windows)]
+#[cfg(not(target_os = "linux"))]
 #[allow(non_camel_case_types)]
 pub enum sqlite3 {}
-#[cfg(windows)]
+#[cfg(not(target_os = "linux"))]
 #[allow(non_camel_case_types)]
 pub enum sqlite3_stmt {}
 
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
 use libsqlite3_sys::{sqlite3_busy_timeout, sqlite3_close, sqlite3_column_blob, sqlite3_column_bytes, sqlite3_column_text,
     sqlite3_column_type, sqlite3_errmsg, sqlite3_exec, sqlite3_finalize, sqlite3_open_v2, sqlite3_prepare_v2, sqlite3_step};
 
+/// The calls `scalar` and `exec` make, declared once for the two OSes that ship a SQLite
+/// of their own; each is given its library and ABI below.
+#[cfg(not(target_os = "linux"))]
+macro_rules! system_sqlite {
+    ($(#[$lib:meta])* $abi:literal) => {
+        $(#[$lib])*
+        extern $abi {
+            fn sqlite3_open_v2(filename: *const c_char, db: *mut *mut sqlite3, flags: c_int, vfs: *const c_char) -> c_int;
+            fn sqlite3_busy_timeout(db: *mut sqlite3, ms: c_int) -> c_int;
+            fn sqlite3_prepare_v2(db: *mut sqlite3, sql: *const c_char, n: c_int, stmt: *mut *mut sqlite3_stmt, tail: *mut *const c_char) -> c_int;
+            fn sqlite3_step(stmt: *mut sqlite3_stmt) -> c_int;
+            fn sqlite3_column_type(stmt: *mut sqlite3_stmt, col: c_int) -> c_int;
+            fn sqlite3_column_text(stmt: *mut sqlite3_stmt, col: c_int) -> *const u8;
+            fn sqlite3_column_blob(stmt: *mut sqlite3_stmt, col: c_int) -> *const c_void;
+            fn sqlite3_column_bytes(stmt: *mut sqlite3_stmt, col: c_int) -> c_int;
+            fn sqlite3_finalize(stmt: *mut sqlite3_stmt) -> c_int;
+            fn sqlite3_close(db: *mut sqlite3) -> c_int;
+            fn sqlite3_errmsg(db: *mut sqlite3) -> *const c_char;
+            fn sqlite3_exec(db: *mut sqlite3, sql: *const c_char, cb: Option<unsafe extern "C" fn(*mut c_void, c_int, *mut *mut c_char, *mut *mut c_char) -> c_int>, arg: *mut c_void, err: *mut *mut c_char) -> c_int;
+        }
+    };
+}
+
 // raw-dylib: no import library is needed to build, so the MSVC check cross-compiles.
 #[cfg(windows)]
-#[link(name = "winsqlite3", kind = "raw-dylib")]
-extern "system" {
-    fn sqlite3_open_v2(filename: *const c_char, db: *mut *mut sqlite3, flags: c_int, vfs: *const c_char) -> c_int;
-    fn sqlite3_busy_timeout(db: *mut sqlite3, ms: c_int) -> c_int;
-    fn sqlite3_prepare_v2(db: *mut sqlite3, sql: *const c_char, n: c_int, stmt: *mut *mut sqlite3_stmt, tail: *mut *const c_char) -> c_int;
-    fn sqlite3_step(stmt: *mut sqlite3_stmt) -> c_int;
-    fn sqlite3_column_type(stmt: *mut sqlite3_stmt, col: c_int) -> c_int;
-    fn sqlite3_column_text(stmt: *mut sqlite3_stmt, col: c_int) -> *const u8;
-    fn sqlite3_column_blob(stmt: *mut sqlite3_stmt, col: c_int) -> *const c_void;
-    fn sqlite3_column_bytes(stmt: *mut sqlite3_stmt, col: c_int) -> c_int;
-    fn sqlite3_finalize(stmt: *mut sqlite3_stmt) -> c_int;
-    fn sqlite3_close(db: *mut sqlite3) -> c_int;
-    fn sqlite3_errmsg(db: *mut sqlite3) -> *const c_char;
-    fn sqlite3_exec(db: *mut sqlite3, sql: *const c_char, cb: Option<unsafe extern "C" fn(*mut c_void, c_int, *mut *mut c_char, *mut *mut c_char) -> c_int>, arg: *mut c_void, err: *mut *mut c_char) -> c_int;
-}
+system_sqlite!(#[link(name = "winsqlite3", kind = "raw-dylib")] "system");
+
+// /usr/lib/libsqlite3.dylib, which every Mac has (the SDK links it through its .tbd).
+#[cfg(target_os = "macos")]
+system_sqlite!(#[link(name = "sqlite3")] "C");
 
 const SQLITE_OPEN_READONLY: c_int = 0x1;
 const SQLITE_OPEN_READWRITE: c_int = 0x2;

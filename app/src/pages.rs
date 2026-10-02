@@ -110,6 +110,55 @@ pub struct Live {
     pub shortcut_error: Option<String>,
     /// Check key's answer: "Checking…", "The key works.", or what Groq said.
     pub groq_check: Option<String>,
+    /// Computer use, the sandbox and each agent's one-click setup, as they are now.
+    pub integ: Integ,
+}
+
+/// What this system can run of the agents' extras; what it can't is switched off, with a note.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Caps { pub sandbox: bool, pub browser: bool, pub setup: bool, pub mac: bool, pub linux: bool }
+
+impl Caps {
+    pub fn here() -> Caps {
+        Caps { sandbox: agents_sandbox::supported(), browser: hover_agents::browser::supported(), setup: hover_agents::setup::supported(),
+            mac: cfg!(target_os = "macos"), linux: cfg!(target_os = "linux") }
+    }
+}
+
+impl Default for Caps { fn default() -> Caps { Caps::here() } }
+
+use hover_agents::sandbox as agents_sandbox;
+
+/// Cua Driver, as Settings shows it: installed, its grants, and a setup going.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Cua {
+    pub installed: bool,
+    pub version: String,
+    /// "granted", "partial", "denied" or "unknown".
+    pub permissions: String,
+    pub hint: String,
+    /// Installing or granting: the line it says, and what failed.
+    pub busy: bool,
+    pub line: String,
+    pub error: Option<String>,
+}
+
+/// A tool's one-click setup now.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct SetupCard { pub busy: bool, pub line: String, pub error: Option<String> }
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Integ {
+    pub caps: Caps,
+    /// None until the first look (off the UI thread).
+    pub cua: Option<Cua>,
+    pub setup: Vec<(AgentTool, SetupCard)>,
+    /// What the sandbox lacks (srt, ripgrep…), when it is on and can't start yet.
+    pub sandbox_missing: Option<String>,
+}
+
+impl Integ {
+    fn setup_of(&self, t: AgentTool) -> SetupCard { self.setup.iter().find(|s| s.0 == t).map(|s| s.1.clone()).unwrap_or_default() }
 }
 
 /// The local model's card.
@@ -180,6 +229,7 @@ pub struct Input<'a> {
 }
 
 const WIN: bool = cfg!(windows);
+const MAC: bool = cfg!(target_os = "macos");
 
 pub fn build(section: Section, i: &Input) -> Vec<Block> {
     let mut b = vec![Block::Title(section.title().into())];
@@ -194,6 +244,8 @@ pub fn build(section: Section, i: &Input) -> Vec<Block> {
         Section::Integrations => {
             heading(&mut b, "AI quotas");
             quotas(&mut b, i);
+            heading(&mut b, "Agents");
+            extras(&mut b, i);
         }
         Section::Projects => projects(&mut b, i),
         Section::Voice => voice(&mut b, i),
@@ -233,7 +285,7 @@ fn general(b: &mut Vec<Block>, i: &Input) {
             switch("LaunchAtLogin", "Launch at login", i.launch_at_login), Lead::None),
         row("Open on hover", Some("Off, only the shortcut or a click on the notch opens it — handy if browser tabs live up there.".into()),
             switch("HoverOpens", "Open on hover", s.hover_opens_workspace()), Lead::None),
-        row("Notch shortcut", Some(if WIN { "Click, then press the keys. Include Ctrl, Alt, Shift or Win." } else { "Click, then press the keys. Include Ctrl, Alt, Shift or Super." }.into()),
+        row("Notch shortcut", Some(if WIN { "Click, then press the keys. Include Ctrl, Alt, Shift or Win." } else if MAC { "Click, then press the keys. Include ⌃ Control, ⌥ Option, ⇧ Shift or ⌘ Command." } else { "Click, then press the keys. Include Ctrl, Alt, Shift or Super." }.into()),
             Control::Shortcut { id: "WorkspaceShortcut".into(), name: "Notch shortcut".into(), text: i.shortcut.clone() }, Lead::None),
         row("Quit Hover", Some("Stops every agent that is still working.".into()),
             Control::Button { id: "Quit".into(), name: "Quit Hover".into(), text: "Quit".into(), enabled: true }, Lead::None),
@@ -304,14 +356,70 @@ fn quotas(b: &mut Vec<Block>, i: &Input) {
         let on = i.settings.has_notch_item(id);
         // Built with "Reading..." (three dots) and filled in at once, as the C# does.
         let (ring, text) = quota_status(on, id, (i.reading)(id).as_ref());
-        let mut r = row(item::title(id), Some(text), switch(&format!("NotchItem{id}"), item::title(id), on), Lead::Ring(ring));
+        let name = if cfg!(target_os = "macos") { format!("Show {} in the menu bar", item::title(id)) } else { item::title(id).to_owned() };
+        let mut r = row(item::title(id), Some(text), switch(&format!("NotchItem{id}"), &name, on), Lead::Ring(ring));
         r.sub_id = Some(format!("QuotaStatus{id}"));
         rows.push(r);
     }
     b.push(Block::Group(rows));
     b.push(Block::Link { id: "RefreshQuotas".into(), name: "Refresh quotas now".into(), icon: "refresh", text: "Refresh quotas now".into(), dim: true, status: String::new() });
+    if cfg!(target_os = "macos") { b.push(Block::Footnote(crate::mac::notes::QUOTAS_IN_MENU_BAR.into())); }
     b.push(Block::Footnote("Quotas are read every five minutes: Kiro from \"kiro-cli /usage\", Codex from its own session logs, \
         Cursor from cursor.com and Claude Code from api.anthropic.com, each with the sign-in that tool already keeps. Nothing else is sent.".into()));
+}
+
+/// What a Cua Driver status says, as the row under its switch.
+pub fn cua_line(c: Option<&Cua>) -> String {
+    let Some(c) = c else { return "Checking…".into() };
+    if c.busy { return if c.line.is_empty() { "Working…".into() } else { c.line.clone() }; }
+    if let Some(e) = &c.error { return e.clone(); }
+    if !c.installed { return if c.hint.is_empty() { "Not installed. Hover installs it with Cua’s own installer.".into() } else { format!("Not installed. {}", c.hint) }; }
+    let v = if c.version.is_empty() { "Cua Driver".to_owned() } else { format!("Cua Driver {}", c.version) };
+    match c.permissions.as_str() {
+        "granted" => format!("{v} · Accessibility and Screen Recording are granted."),
+        "partial" => format!("{v} · {}", if c.hint.is_empty() { "Screen Recording isn’t granted." } else { c.hint.as_str() }),
+        "denied" | "unknown" if cfg!(target_os = "macos") => format!("{v} · {}", if c.hint.is_empty() { "Hover can’t see whether it has its permissions yet." } else { c.hint.as_str() }),
+        _ => v,
+    }
+}
+
+/// Computer use, the sandbox and the agent browser: each a switch, off with its note where
+/// this system can't run it.
+fn extras(b: &mut Vec<Block>, i: &Input) {
+    let s = i.settings;
+    let n = &i.live.integ;
+    let caps = n.caps;
+    // Computer use.
+    let on = s.computer_use();
+    let mut sub = "Each agent gets Cua Driver’s tools, so it can open the app it built, click through it and check what it shows.".to_owned();
+    if caps.linux { sub += &format!("\n{}", hover_agents::computer_use::LINUX_NOTE); }
+    let mut rows = vec![row("Computer use", Some(sub), switch("ComputerUse", "Computer use", on), Lead::Tile("sparkles", Tint::Purple))];
+    if on {
+        let cua = n.cua.as_ref();
+        let busy = cua.is_some_and(|c| c.busy);
+        let mut buttons = vec![];
+        if busy { buttons.push(("integ.cua.cancel".to_owned(), "Cancel".to_owned(), false)); }
+        else if let Some(c) = cua {
+            if !c.installed { buttons.push(("integ.cua.install".to_owned(), "Install".to_owned(), false)); }
+            else if caps.mac && !matches!(c.permissions.as_str(), "granted") { buttons.push(("integ.cua.grant".to_owned(), "Grant access…".to_owned(), false)); }
+        }
+        let badges = match cua { Some(c) if c.installed && c.permissions != "unknown" && !busy => vec![(if matches!(c.permissions.as_str(), "granted" | "partial") { "Ready" } else { "Needs access" }.to_owned(), c.permissions != "granted")], _ => vec![] };
+        rows.push(row("Cua Driver", Some(cua_line(cua)), Control::Chips { badges, buttons, open: None }, Lead::Tile("cpu", Tint::Teal)));
+    }
+    // The sandbox.
+    let mut sub = "Agents change only the folders they work in, can’t open windows or control your apps, and reach only their own service, package registries and GitHub. Computer use still works in the background.".to_owned();
+    let mut sb = row("Sandbox", None, switch("Sandbox", "Run agents in a sandbox", caps.sandbox && s.sandbox()), Lead::Tile("shield", Tint::Green));
+    if !caps.sandbox { sub = format!("{}\n{sub}", hover_agents::sandbox::UNSUPPORTED); sb.enabled = false; }
+    else if s.sandbox() { if let Some(m) = &n.sandbox_missing { sub += &format!("\n{m}"); } }
+    sb.sub = Some(sub);
+    rows.push(sb);
+    // The agent browser.
+    let mut sub = "Lets the agents open pages in Hover’s own browser, which shows in the desk’s Browser panel. It has no cookies or sign-ins of yours and opens web pages only. It runs outside the sandbox, so it can reach any website; each step follows the agent’s tool access like any other tool.".to_owned();
+    let mut br = row("Agent browser", None, switch("AgentBrowser", "Agent browser", caps.browser && s.agent_browser()), Lead::Tile("globe", Tint::Blue));
+    if !caps.browser { sub = format!("{}\n{sub}", hover_agents::browser::UNSUPPORTED); br.enabled = false; }
+    br.sub = Some(sub);
+    rows.push(br);
+    b.push(Block::Group(rows));
 }
 
 /// The access a project or the default workspace has: ACCESS_IDS, worded as the tool pages word them.
@@ -431,8 +539,8 @@ fn voice(b: &mut Vec<Block>, i: &Input) {
     let mut language = row("Language", None, Control::Text(if local { "English only" } else { "Detected automatically" }.into()), Lead::None);
     language.enabled = !local;
     let mut rows = vec![
-        row("Speech recognition", Some(if local { "Speech recognition stays on this computer. English only. For other languages, choose Cloud (Groq)." }
-            else { "Audio is sent to Groq. Language is detected automatically." }.into()),
+        row("Speech recognition", Some(if local { match crate::phonon::local_note() { Some(n) => n.to_owned(), None => "Speech recognition stays on this computer. English only. For other languages, choose Cloud (Groq).".to_owned() } }
+            else { "Audio is sent to Groq. Language is detected automatically.".to_owned() }),
             segments("VoiceSpeech", &SpeechMode::ALL.map(|m| m.label()), SpeechMode::ALL.iter().position(|m| *m == v.speech).map_or(-1, |p| p as i32)), Lead::None),
         language,
     ];
@@ -570,8 +678,10 @@ fn agent(b: &mut Vec<Block>, section: Section, i: &Input) {
     let ready = (i.ready)(tool);
     let status = match &ready { None => "Checking…".to_owned(), Some(r) if r.ok() => "Installed and signed in.".into(), Some(r) => r.hint.clone() };
     let bad = ready.as_ref().is_some_and(|r| !r.ok());
-    b.push(Block::Group(vec![row(name, Some(status), Control::Button { id: format!("{id}Recheck"), name: format!("Check {name} again"), text: "Check again".into(), enabled: true },
-        Lead::Tile(if bad { "bell" } else { "done" }, if bad { Tint::Orange } else { Tint::Green }))]));
+    let mut first = vec![row(name, Some(status), Control::Button { id: format!("{id}Recheck"), name: format!("Check {name} again"), text: "Check again".into(), enabled: true },
+        Lead::Tile(if bad { "bell" } else { "done" }, if bad { Tint::Orange } else { Tint::Green }))];
+    first.extend(setup_row(tool, ready.as_ref(), i));
+    b.push(Block::Group(first));
     let usable = !bad;
 
     heading(b, "Model");
@@ -688,6 +798,25 @@ fn agent(b: &mut Vec<Block>, section: Section, i: &Input) {
         tasks, with no terminal window. Prompts go to it on its input, never on a command line. Changes apply to the next task.")));
 }
 
+/// One click installs a tool with its maker's own installer and opens its sign-in (a Mac's);
+/// off, with why, where the system can't do it. None where the tool is ready already.
+fn setup_row(tool: AgentTool, ready: Option<&AgentReady>, i: &Input) -> Option<Row> {
+    let name = tool.name();
+    let n = &i.live.integ;
+    let card = n.setup_of(tool);
+    let what = format!("Installs {name} if it is missing, with its maker’s own installer, then opens its sign-in.");
+    if !n.caps.setup {
+        let mut r = row("Set up", Some(format!("{}\n{what}", hover_agents::setup::UNSUPPORTED)),
+            Control::Button { id: format!("integ.setup.{}", tool.id()), name: format!("Set up {name}"), text: "Set up".into(), enabled: false }, Lead::Tile("plug", Tint::Blue));
+        r.enabled = false;
+        return Some(r);
+    }
+    if ready.is_some_and(|r| r.ok()) && !card.busy && card.error.is_none() { return None; }
+    let (text, id) = if card.busy { ("Cancel", format!("integ.setupcancel.{}", tool.id())) } else { ("Set up", format!("integ.setup.{}", tool.id())) };
+    let sub = if card.busy { if card.line.is_empty() { "Setting up…".to_owned() } else { card.line.clone() } } else if let Some(e) = &card.error { e.clone() } else { what };
+    Some(row("Set up", Some(sub), Control::Button { id, name: format!("{text} {name}"), text: text.into(), enabled: true }, Lead::Tile("plug", Tint::Blue)))
+}
+
 /// Kiro's agents: its own modes when it offered them, else the agents in the folder.
 pub fn kiro_modes(offers: &[AcpOption], folder_agents: &[String]) -> Vec<(String, String)> {
     match offer(offers, "mode", &["mode"]) {
@@ -754,7 +883,10 @@ mod tests {
         Settings::load(d.join("settings.json"))
     }
 
-    fn rows(b: &[Block]) -> Vec<&Row> { b.iter().filter_map(|x| if let Block::Group(r) = x { Some(r) } else { None }).flatten().collect() }
+    fn rows_all(b: &[Block]) -> Vec<&Row> { b.iter().filter_map(|x| if let Block::Group(r) = x { Some(r) } else { None }).flatten().collect() }
+
+    /// The rows of the page, less the one-click setup row every agent page has (its own tests look at it).
+    fn rows(b: &[Block]) -> Vec<&Row> { rows_all(b).into_iter().filter(|r| r.label != "Set up").collect() }
 
     fn ids(b: &[Block]) -> Vec<String> {
         let mut v = vec![];
@@ -987,5 +1119,146 @@ mod tests {
         let o = AgentOptions::default();
         assert_eq!(pick_effort(AgentTool::Claude, &o, &offers, 2).effort.as_deref(), Some("xhigh"));
         assert_eq!(pick_model(AgentTool::Claude, &o, &offers, 0).model, None, "Default sends no model");
+    }
+
+    // MARK: Integrations
+
+    fn with_live<'a>(s: &'a Settings, live: &'a Live, ready: &'a dyn Fn(AgentTool) -> Option<AgentReady>) -> Input<'a> {
+        fn no(_: &str) -> bool { false }
+        static NONE: fn(&str) -> Option<Reading> = |_| None;
+        Input { settings: s, launch_at_login: false, shortcut: s.sc_workspace().label(), reading: &NONE, ready, installed: &[], system_dark: true, import_status: String::new(), kiro_agents: vec![],
+            voice_shortcut: s.voice().shortcut.label(), has_secret: &no, secrets_kept: true, project: None, note: None, live }
+    }
+
+    fn row_of<'a>(b: &'a [Block], label: &str) -> Option<&'a Row> { rows_all(b).into_iter().find(|r| r.label == label) }
+
+    fn on_a(mac: bool) -> Caps { Caps { sandbox: mac, browser: mac, setup: mac, mac, linux: false } }
+
+    #[test]
+    fn computer_use_the_sandbox_and_the_agent_browser_are_switches_in_integrations() {
+        let s = settings();
+        s.set_computer_use(true);
+        let live = Live { integ: Integ { caps: on_a(true), ..Default::default() }, ..Default::default() };
+        let ready = |_| None;
+        let b = build(Section::Integrations, &with_live(&s, &live, &ready));
+        for (label, id, on) in [("Computer use", "ComputerUse", true), ("Sandbox", "Sandbox", true), ("Agent browser", "AgentBrowser", true)] {
+            let r = row_of(&b, label).unwrap_or_else(|| panic!("{label} in {:?}", rows(&b).iter().map(|r| &r.label).collect::<Vec<_>>()));
+            assert!(matches!(&r.control, Control::Switch { id: i, on: o, .. } if i == id && *o == on), "{label}: {:?}", r.control);
+            assert!(r.enabled, "{label} is on where the system runs it");
+        }
+        // Set off, they read off.
+        s.set_sandbox(false);
+        s.set_agent_browser(false);
+        let b = build(Section::Integrations, &with_live(&s, &live, &ready));
+        assert!(matches!(&row_of(&b, "Sandbox").unwrap().control, Control::Switch { on: false, .. }));
+        assert!(matches!(&row_of(&b, "Agent browser").unwrap().control, Control::Switch { on: false, .. }));
+    }
+
+    #[test]
+    fn what_the_system_cannot_run_is_switched_off_with_its_note() {
+        let s = settings();
+        // Set on, and still off where it can't run.
+        s.set_sandbox(true);
+        s.set_agent_browser(true);
+        let live = Live { integ: Integ { caps: on_a(false), ..Default::default() }, ..Default::default() };
+        let ready = |_| None;
+        let b = build(Section::Integrations, &with_live(&s, &live, &ready));
+        let sb = row_of(&b, "Sandbox").unwrap();
+        assert!(!sb.enabled && matches!(&sb.control, Control::Switch { on: false, .. }));
+        assert!(sb.sub.as_deref().unwrap().starts_with("The sandbox needs macOS or Linux."), "{:?}", sb.sub);
+        let br = row_of(&b, "Agent browser").unwrap();
+        assert!(!br.enabled && matches!(&br.control, Control::Switch { on: false, .. }));
+        assert!(br.sub.as_deref().unwrap().starts_with("Agent browser needs macOS."), "{:?}", br.sub);
+        // Computer use runs everywhere; on Linux it says its support is a pre-release.
+        let cu = row_of(&b, "Computer use").unwrap();
+        assert!(cu.enabled);
+        let linux = Live { integ: Integ { caps: Caps { linux: true, ..on_a(false) }, ..Default::default() }, ..Default::default() };
+        let b = build(Section::Integrations, &with_live(&s, &linux, &ready));
+        assert!(row_of(&b, "Computer use").unwrap().sub.as_deref().unwrap().contains("still a pre-release"));
+    }
+
+    #[test]
+    fn the_sandbox_says_what_it_lacks_when_it_is_on() {
+        let s = settings();
+        let missing = "Hover runs agents in a sandbox, which isn’t set up yet: npm install -g @anthropic-ai/sandbox-runtime@0.0.78.";
+        let live = Live { integ: Integ { caps: on_a(true), sandbox_missing: Some(missing.into()), ..Default::default() }, ..Default::default() };
+        let ready = |_| None;
+        let b = build(Section::Integrations, &with_live(&s, &live, &ready));
+        assert!(row_of(&b, "Sandbox").unwrap().sub.as_deref().unwrap().ends_with(missing));
+        s.set_sandbox(false);
+        let b = build(Section::Integrations, &with_live(&s, &live, &ready));
+        assert!(!row_of(&b, "Sandbox").unwrap().sub.as_deref().unwrap().contains("isn’t set up yet"), "off: nothing to set up");
+    }
+
+    #[test]
+    fn cua_driver_offers_install_cancel_or_grant_as_it_stands() {
+        let s = settings();
+        let ready = |_| None;
+        let buttons = |live: &Live, s: &Settings| -> Vec<String> {
+            let b = build(Section::Integrations, &with_live(s, live, &ready));
+            match &row_of(&b, "Cua Driver").map(|r| &r.control) { Some(Control::Chips { buttons, .. }) => buttons.iter().map(|b| b.0.clone()).collect(), _ => vec!["(no row)".into()] }
+        };
+        let mk = |c: Option<Cua>, mac: bool| Live { integ: Integ { caps: on_a(mac), cua: c, ..Default::default() }, ..Default::default() };
+        // Off: no card at all.
+        assert_eq!(buttons(&mk(None, true), &s), ["(no row)"]);
+        s.set_computer_use(true);
+        assert!(buttons(&mk(None, true), &s).is_empty(), "checking: nothing to press yet");
+        assert_eq!(buttons(&mk(Some(Cua::default()), true), &s), ["integ.cua.install"]);
+        assert_eq!(buttons(&mk(Some(Cua { busy: true, ..Default::default() }), true), &s), ["integ.cua.cancel"]);
+        let partial = Cua { installed: true, permissions: "partial".into(), ..Default::default() };
+        assert_eq!(buttons(&mk(Some(partial.clone()), true), &s), ["integ.cua.grant"]);
+        assert!(buttons(&mk(Some(partial), false), &s).is_empty(), "nothing to grant off a Mac");
+        assert!(buttons(&mk(Some(Cua { installed: true, permissions: "granted".into(), ..Default::default() }), true), &s).is_empty());
+    }
+
+    #[test]
+    fn cua_drivers_line_says_what_is_true() {
+        assert_eq!(cua_line(None), "Checking…");
+        assert!(cua_line(Some(&Cua::default())).starts_with("Not installed."));
+        assert_eq!(cua_line(Some(&Cua { busy: true, line: "Installing Cua Driver…".into(), ..Default::default() })), "Installing Cua Driver…");
+        assert_eq!(cua_line(Some(&Cua { error: Some("The installer failed.".into()), ..Default::default() })), "The installer failed.");
+        let ok = Cua { installed: true, version: "0.3.1".into(), permissions: "granted".into(), ..Default::default() };
+        assert_eq!(cua_line(Some(&ok)), "Cua Driver 0.3.1 · Accessibility and Screen Recording are granted.");
+    }
+
+    #[test]
+    fn each_agent_page_has_its_setup_row_on_a_mac_and_a_note_elsewhere() {
+        let s = settings();
+        let not_ready = |_| Some(AgentReady { installed: false, signed_in: false, hint: "Install kiro-cli.".into() });
+        let all_ready = |_| Some(AgentReady { installed: true, signed_in: true, hint: String::new() });
+        let setup_row = |live: &Live, ready: &dyn Fn(AgentTool) -> Option<AgentReady>| -> Option<Row> {
+            let b = build(Section::Kiro, &with_live(&s, live, ready));
+            row_of(&b, "Set up").cloned()
+        };
+        // Elsewhere: off, with the note, on every agent's page.
+        let off = Live { integ: Integ { caps: on_a(false), ..Default::default() }, ..Default::default() };
+        let r = setup_row(&off, &all_ready).expect("the row shows even for a tool that is ready");
+        assert!(!r.enabled && r.sub.as_deref().unwrap().starts_with("One-click setup is available on macOS."), "{:?}", r.sub);
+        for t in AgentTool::ALL {
+            let b = build(Section::of(t), &with_live(&s, &off, &all_ready));
+            assert!(row_of(&b, "Set up").is_some_and(|r| !r.enabled), "{t:?}");
+        }
+        // On a Mac: a button while the tool isn't ready, Cancel while it goes, the error after, nothing when ready.
+        let mac = Live { integ: Integ { caps: on_a(true), ..Default::default() }, ..Default::default() };
+        let r = setup_row(&mac, &not_ready).unwrap();
+        assert!(r.enabled && matches!(&r.control, Control::Button { id, text, enabled: true, .. } if id == "integ.setup.kiro" && text == "Set up"));
+        let going = Live { integ: Integ { caps: on_a(true), setup: vec![(AgentTool::Kiro, SetupCard { busy: true, line: "Installing kiro-cli…".into(), error: None })], ..Default::default() }, ..Default::default() };
+        let r = setup_row(&going, &not_ready).unwrap();
+        assert!(matches!(&r.control, Control::Button { id, text, .. } if id == "integ.setupcancel.kiro" && text == "Cancel") && r.sub.as_deref() == Some("Installing kiro-cli…"));
+        let failed = Live { integ: Integ { caps: on_a(true), setup: vec![(AgentTool::Kiro, SetupCard { busy: false, line: String::new(), error: Some("The installer exited with 1.".into()) })], ..Default::default() }, ..Default::default() };
+        assert_eq!(setup_row(&failed, &all_ready).unwrap().sub.as_deref(), Some("The installer exited with 1."));
+        assert!(setup_row(&mac, &all_ready).is_none(), "ready: nothing to set up");
+    }
+
+    #[test]
+    fn local_speech_says_why_it_is_off_on_a_mac() {
+        let s = settings();
+        s.set_voice(VoiceSettings { speech: SpeechMode::Local, ..s.voice() });
+        let ready = |_| None;
+        let live = Live::default();
+        let b = build(Section::Voice, &with_live(&s, &live, &ready));
+        let r = row_of(&b, "Speech recognition").unwrap();
+        let sub = r.sub.as_deref().unwrap();
+        assert_eq!(sub.contains("isn't available on macOS") || sub.contains("isn’t available on macOS"), cfg!(target_os = "macos"), "{sub}");
     }
 }

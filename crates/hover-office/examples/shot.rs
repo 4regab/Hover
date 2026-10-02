@@ -1,6 +1,6 @@
 //! The office rendered headless, as port/bench/capture-office.mjs captures the page:
 //! the fixture's state at its fixed clock, 1104 × 424, night or day, settled 6 s.
-//!   cargo run --release -p hover-office --example shot -- out.png [night|day] [--empty] [--zoom] [--frames N]
+//!   cargo run --release -p hover-office --example shot -- out.png [night|day] [--empty] [--zoom] [--helpers N] [--frames N]
 
 use hover_office::office::{Office, Time};
 use hover_office::render::Renderer;
@@ -24,6 +24,23 @@ fn main() {
     let mut state = fx.get("state").unwrap().clone();
     if args.iter().any(|a| a == "--empty") { if let hover_core::json::Json::Obj(p) = &mut state { for (k, v) in p { if k == "sessions" { *v = hover_core::json::Json::Arr(vec![]); } } } }
     o.state(&state);
+    // --helpers N: the working session has N subagents out (its newest turn's steps are N
+    // running subagent rows), so its helpers stand at the desk.
+    if let Some(n) = args.iter().position(|a| a == "--helpers").and_then(|i| args.get(i + 1)).and_then(|v| v.parse::<usize>().ok()) {
+        use hover_core::json::Json;
+        let rows = Json::Arr((0..n).map(|_| Json::obj(vec![("k", Json::str("agent")), ("verb", Json::str("Subagent")), ("status", Json::str("in_progress"))])).collect());
+        let mut s = state.clone();
+        if let Json::Obj(p) = &mut s {
+            if let Some((_, Json::Arr(list))) = p.iter_mut().find(|(k, _)| k == "sessions") {
+                if let Some(Json::Obj(q)) = list.first_mut() {
+                    if let Some((_, Json::Arr(turns))) = q.iter_mut().find(|(k, _)| k == "turns") {
+                        if let Some(Json::Obj(t)) = turns.last_mut() { if let Some(x) = t.iter_mut().find(|(k, _)| k == "steps") { x.1 = rows; } }
+                    }
+                }
+            }
+        }
+        o.state(&s);
+    }
     if args.iter().any(|a| a == "--zoom") { o.zoom_by(1.6, 0.0, 0.0); }
     let frames: usize = args.iter().position(|a| a == "--frames").and_then(|i| args.get(i + 1)).and_then(|v| v.parse().ok()).unwrap_or(375);
     // requestAnimationFrame at 60 Hz under Playwright's clock: 6 s.

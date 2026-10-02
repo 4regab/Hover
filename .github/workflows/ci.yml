@@ -1,10 +1,11 @@
 name: CI
 
 # The native (Rust) Hover on GitHub's own runners. A push to main or rust-port/**, or a
-# pull request, runs the tests on Windows and Linux. A release: a v* tag (matching Cargo.toml), or a push to
+# pull request, runs the tests on Windows and Linux, and compiles on macOS. A release:
+# a v* tag (matching Cargo.toml), or a push to
 # main whose Cargo.toml version has no tag yet. The same jobs then build the
 # installers from what they just tested, and `release` tags the commit and publishes
-# them together as the Latest release.
+# them together as the Latest release (macOS has no installer yet).
 # No secrets and no agent accounts: agent runs use the repo's fake-agent.
 on:
   push:
@@ -192,6 +193,34 @@ jobs:
             dist/hover_${{ env.RELEASE_VERSION }}_amd64.deb
             dist/hover-${{ env.RELEASE_VERSION }}-linux-x86_64.tar.gz
           if-no-files-found: error
+
+  macos:
+    # Apple Silicon. A compile check only: no tests, no package. The runner has no
+    # display, Keychain or permission prompts to run Hover on, so this job's one promise is
+    # that the Mac code (app/src/mac, platform/macos.rs) builds.
+    # `release` doesn't wait for it: the installers are Windows and Linux, and a Mac
+    # build that breaks shows on the pull request, where it is fixed before merging.
+    runs-on: macos-15
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - name: Toolchain
+        run: |
+          if ! command -v rustup >/dev/null; then
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain none
+            echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+            export PATH="$HOME/.cargo/bin:$PATH"
+          fi
+          # cargo installs rust-toolchain.toml's version the first time it runs.
+          cargo --version
+      - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      # --locked: a change that needs a new Cargo.lock fails here instead of being made.
+      - name: Check
+        run: cargo check --workspace --all-targets --locked
 
   release:
     # One job publishes, so the two builds never race to create the release.

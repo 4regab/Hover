@@ -4,20 +4,27 @@ Guidance for humans and AI agents working in this repository.
 
 ## What Hover is
 
-A desktop app for Windows and Linux (Rust, Slint, wgpu), version 3. It has one
+A desktop app for Windows, Linux and macOS (Rust, Slint, wgpu), version 3. It has one
 surface a hover away: **the notch** at the top centre of the main display (after
 NotchOwl for Mac). At rest it is a slim black island: the quotas the user switched on
 (each the tool's own logo in its ring), the agents at work (their logos, what the one
 in front is doing, for how long), a question an agent is waiting on, or nothing.
-Hovering it, clicking it or `Alt+N` opens the **Agent office**, which fills the notch. The
+Hovering it, clicking it or `Alt+N` (Option-N on a Mac) opens the **Agent office**, which fills the notch. The
 office hands tasks to Kiro, Codex, Cursor, OpenCode or Claude Code, which run headlessly, several at once,
-each in a chosen folder, as bots at desks in a voxel office. The office's menu (time
+each in a chosen folder, as bots at desks in a voxel office. A click on a desk opens its
+**desk card** (what the agent is doing, and panels for its terminal, files, diff, pull
+request, browser and screen). The office's menu (time
 of day, music, history, Settings) opens Settings over it (nine sections: General, Integrations, Projects, Voice, Kiro, Codex, Cursor, OpenCode, Claude Code), with a
 back button.
 
 The only ordinary window is the dashboard: the same office in a window with Hover's
-own title bar. It opens from the tray, or a second launch. The app
+own title bar (the system's on a Mac). It opens from the tray (the menu bar on a Mac), or a second launch. The app
 lives in the tray.
+
+On a Mac the usage rings are status items in the menu bar instead of the island (the
+camera housing leaves no room), and a Mac without a notch gets a notch-sized pill. The macOS
+port follows Arz's (@Entourage397) macOS v1.0, which was Swift and C#; here it is the same
+Rust app, with `platform/macos.rs` and `app/src/mac/` for what differs.
 
 Up to 2.x Hover was a .NET/WPF app with the office as a web page in WebView2. 3.0 is
 a port of it, made line by line. It reads everything 2.x left on users' machines: `%APPDATA%\Hover` (and the old
@@ -42,25 +49,39 @@ sudo make install           # PREFIX=/usr/local; DESTDIR= for staging
 make package                # .deb and tarball in dist/
 ```
 
+```sh
+# macOS (Apple Silicon or Intel; Xcode's command line tools, Rust from rust-toolchain.toml)
+cargo build --release -p hover          # target/release/hoverai
+sh packaging/macos/bundle.sh            # dist/Hover.app around it (not signed)
+```
+
 A push to `main` whose `Cargo.toml` version has no tag yet, or a `v*` tag
 (matching it), runs `.github/workflows/ci.yml`'s tests on Windows and Linux (Ubuntu 22.04)
 on GitHub's runners, then builds the installers from that build, tags the commit and
 publishes them together as the Latest GitHub release. Raising the version releases it.
+A `macos` job (macos-15, Apple Silicon) only runs `cargo check --workspace --all-targets
+--locked`, on pull requests too: there is no Mac package and no test run on a Mac, and
+`release` doesn't wait for it.
 
 The cross-check that Windows code still compiles, from Linux (mimalloc's C needs
 clang-cl 19 or newer, which `cargo-xwin` drives with Microsoft's headers):
 `cargo xwin check --release --workspace --all-targets --target x86_64-pc-windows-msvc`.
-CI doesn't run it: its Windows job builds on Windows.
+CI doesn't run it: its Windows job builds on Windows. The macOS code type-checks from
+Windows with `rustup target add aarch64-apple-darwin` and `cargo check --target
+aarch64-apple-darwin -p hover-agents -p hover-office` (the crates with a C build step,
+`hover`, `hover-quota`, need a Mac's compiler and SDK; the `macos` job is their check).
 
 The version is `Cargo.toml`'s `[workspace.package] version`; the installers
 and `hover --version` read it from there.
 
 Only one copy of Hover runs at a time. A second launch opens the running copy's
 dashboard and exits. On Windows this uses the named mutex `Local\HoverRunningInstance`
-(the same name 2.x used); on Linux, a lock in `$XDG_RUNTIME_DIR`.
+(the same name 2.x used); on Linux, a lock in `$XDG_RUNTIME_DIR`; on a Mac, a lock and a
+socket in `$TMPDIR` (else `/tmp/hover-<uid>`).
 
 Headless: `hover --shots DIR` renders every view with the software renderer. On a
 real X display, `hover --selftest DIR` drives the notch and writes `report.json`.
+On a Mac, `hoverai --settings <page>` opens Settings on a page (for example `integrations`).
 
 ## Layout
 
@@ -69,31 +90,45 @@ crates/
   hover-core     paths (+ the Noty move), settings.json (System.Text.Json's bytes),
                  crypto (AES-GCM; DPAPI / Secret Service key), history (sealed
                  agents/), images, single instance, palette and VS Code themes,
-                 platform/{windows,linux}; bin/hover-data (data folders for tests);
+                 platform/{windows,linux,macos} (macos.rs compiles everywhere, so its
+                 Keychain / LaunchAgent / `defaults` logic is tested on Windows);
+                 bin/hover-data (data folders for tests);
                  projects.rs (projects, default workspace, voice settings),
                  secrets.rs (API keys sealed in secrets.dat)
   hover-agents   ACP host, checkpoints (checkpoint.rs), OpenCode's server (opencode.rs, over its own http.rs), Claude
                  Code's SDK mode (claude.rs), the runtime they sit behind, the tools (Kiro,
                  Codex, Cursor, OpenCode, Claude Code), sessions, the office's
                  state message, KiroStream, process groups / Windows jobs; route.rs
-                 (voice's project routing)
+                 (voice's project routing); sandbox.rs (srt), computer_use.rs (Cua
+                 Driver), browser.rs (the agent browser's MCP server and socket),
+                 setup.rs (one-click agent install and sign-in), github.rs (gh: status,
+                 install, sign-in), desk.rs (what the desk card and its panels read:
+                 git, gh, terminal, files, diff, pull requests, subagents, pages)
   hover-quota    the four quota readers
   hover-md, hover-diagram   md.js and diagram.js, byte for byte
   hover-chat     the chat thread: layout, selection, copy, images, painter
   hover-notch    notch geometry, animation, hover rules
-  hover-office   the office: scene, bots, wall canvases, camera, picking, pacing,
-                 three.js 0.170's shading in office.wgsl; its own thread (live.rs)
+  hover-office   the office: scene, bots, helpers (mini.rs: subagents as small bots at
+                 their parent's desk), wall canvases, camera, picking (bots and desks),
+                 pacing, three.js 0.170's shading in office.wgsl; its own thread (live.rs)
 app/             the product (crate `hover`, binary hoverai): app, Settings (pages.rs),
                  tray (sni.rs / win.rs), notch (notch.rs, x11.rs, win.rs), office UI
-                 (office_ui.rs), music, bench.rs (HOVER_BENCH), selftest, shots; voice
+                 (office_ui.rs), desk card and panel (desk_ui.rs, ui/desk.slint), music,
+                 bench.rs (HOVER_BENCH), selftest, shots; voice
                  (speech.rs, voice/, voice_ui.rs), Phonon's setup and engine (phonon.rs,
                  assets/phonon/); ui/*.slint; assets/
+                 mac/ (macOS: menu bar and status items, hot keys, the notch window's
+                 class, geometry, login-shell environment; the pure parts build and are
+                 tested everywhere, the AppKit parts and plat.rs only on a Mac);
+                 screen.rs (the Screen panel's capture, all three OSes);
+                 browser_host.rs (the agent browser's WKWebView on a Mac)
 tools/
   hover-measure  memory sampler, scenario runner, fake-agent, fake-opencode, fake-anthropic (not shipped)
   notch-proto    the port's Windows notch prototype, kept for its --selftest (not shipped)
 tests/golden/   fixtures and expected outputs (made from the 2.x page)
 packaging/       windows/Hover.iss; linux/package-linux.sh and hover.desktop (the one
-                 .desktop file the .deb and make install both use)
+                 .desktop file the .deb and make install both use); macos/bundle.sh and
+                 Info.plist (a local Hover.app, not signed)
 assets/          hover.png (the logo), make-icon.py (writes the app's hover.ico and
                  hover-mark.png), the README's pictures (readme/)
 ```
@@ -104,8 +139,23 @@ assets/          hover.png (the logo), make-icon.py (writes the app's hover.ico 
   topmost and `WS_EX_NOACTIVATE`, with the bit taken off while the office is open.
   On X11 it is an override-redirect dock window with an ARGB visual and an XShape
   input region. On Wayland desktops Hover runs through XWayland (`HOVER_WAYLAND`
-  opts out).
-- **The pointer is polled, not hooked**, every 50 ms.
+  opts out). On a Mac it is an NSWindow at status level 25 on all Spaces, and
+  the window's class is swapped for a subclass of winit's whose `canBecomeKeyWindow` is
+  false while the notch rests (true once the office opens); a click on it never
+  activates Hover. Mouse events pass through except over the shape.
+- **The Mac's notch and menu bar** (`app/src/mac/`). The housing comes from
+  `safeAreaInsets` and `auxiliaryTopLeftArea` / `TopRightArea` of the built-in display
+  (else the first; a Mac without a notch gets a 180-pt pill), as `Notch.hw`. The island
+  puts its items in wings either side of the housing, and the office starts below it.
+  Usage is not in the island on a Mac: each reader switched on is a status item in the
+  menu bar (its logo in a ring, and the percentage), and all open one menu (`mac::menu`,
+  built as data so it is tested on every OS). The shortcuts are Carbon hot keys (Option-N,
+  Control-Option-Space) plus a local key monitor, because the window server gives keys
+  to the Hover window that has the keyboard and the hot key never fires there. The
+  shortcut recorder takes the physical key (Option changes the letter and makes dead
+  keys). An app started from Finder has a bare PATH, so the login shell's environment
+  (`$SHELL -ilc`) is merged in before any agent starts (`mac::shell_env`).
+- **The pointer is polled, not hooked**, every 50 ms (on a Mac, `NSEvent.mouseLocation`).
 - **One full-size, click-through window on the main display.** The shape grows from
   its resting size to the office by animating one openness value. The window never
   resizes (that made it blink), except when the office size changes in Settings.
@@ -232,13 +282,83 @@ assets/          hover.png (the logo), make-icon.py (writes the app's hover.ico 
   remembers the removed turns, so its next message carries one note that the folder and chat
   went back (before the very first message it starts a new conversation). The folder as it
   was just before a restore is kept in the store (`undo_tree`). Deleting a chat deletes its
-  store. **Retry** is the older button: the newest prompt again, files untouched.- **Answers are Markdown, drawn without a library** (`hover-md`, `hover-diagram`).
+  store. **Retry** is the older button: the newest prompt again, files untouched.
+- **The sandbox** (`hover-agents::sandbox`, Settings → Integrations, on by default). Each
+  tool is started under Anthropic's sandbox-runtime (`srt`, pinned in `sandbox::VERSION`):
+  sandbox-exec on a Mac, bubblewrap on Linux. It writes only to the folders its sessions
+  work in, its own state and caches, and temp; keys, keychains, mail and other apps' data
+  can't be read; there is no window server and no Apple Events; the network goes through
+  srt's proxy to the tool's service, package registries and GitHub (more in
+  `<data>/sandbox/allowed-domains.txt`). The folders are fixed when the tool starts, so a session in
+  another folder gets the tool started again (when nothing of it runs). The settings file
+  for srt is text built by pure functions (`config`, `srt_args`) that the tests run on every OS.
+  If `srt`, `rg` (and on Linux `bwrap`, `socat`) is missing, or Hover is already inside a
+  sandbox (`HOVER_SANDBOXED=1`), the tool starts as before and `hover.log` says why;
+  Settings shows what is missing (`sandbox::missing()`). Off on Windows: srt's Windows
+  support can't reach tools installed for the user.
+- **Computer use** (`computer_use.rs`, off until switched on). Hands every agent Cua
+  Driver's MCP server (`cua-driver mcp`), which drives other apps in the background.
+  Where perl exists it starts behind Hover's guard, which turns foreground input into
+  background input and refuses desktop-wide input, raising a window, the clipboard and the
+  like, with a note the agent reads. Cua's tools are MCP calls, so Ask first and Read only
+  treat them as any other. Settings installs CuaDriver and asks it for Accessibility and
+  Screen Recording (the grants go to CuaDriver, not Hover). Full use is macOS; the Linux
+  build of Cua is a pre-release (the switch says so).
+- **The agent browser** (`browser.rs` + `app/src/browser_host.rs`, macOS only). Each agent
+  gets a browser MCP server (12 tools: open, snapshot, click, type, …) that talks over a
+  user-only Unix socket (0600, in a 0700 folder, with a token sent in the server's
+  environment, never on a command line) to Hover, which drives a WKWebView per session.
+  The page is shown in the desk card's Browser tab. OpenCode has one server for all its
+  sessions, so its calls go to the session at work.
+- **Setting an agent up** (`setup.rs`, macOS). The "Set up" row on an agent's page installs
+  what is missing with the maker's own installer and then runs the tool's sign-in in a
+  Terminal window; Hover never sees the credentials.
+- **The desk card** (`desk_ui.rs`, `ui/desk.slint`; data from `hover-agents::desk`). A click
+  on a desk with a session opens a card where you clicked: the last steps, the question
+  the agent waits on, or the answer, a reply box, and eight tiles that open a wide panel:
+  Terminal, Files, Diff, Agents, Linked PRs, Pull request, Browser, Screen. Every git and
+  gh call blocks, so it runs on a worker; lists are windowed from Rust and only the rows
+  on screen reach Slint. Files shown stay inside the session's folder (links followed).
+  A tile the OS can't run is disabled with its reason (`TileContext.off`).
+- **The pull request tab** sets up the GitHub CLI in one click (`github.rs`): install with
+  winget or Homebrew where there is one (else a hint: Hover never uses sudo), then
+  `gh auth login` with the device code shown to copy and the page to open. Create pull
+  request can commit, make a branch, push and open the PR; it is disabled with the reason
+  while the agent runs.
+- **Subagent helpers** (`hover-office::mini`). A subagent at work (kind `agent`, or a Kiro
+  or Codex step titled like one, `state::is_subagent`) shows as up to four small recoloured
+  bots beside its parent's desk, which hop out and back and file sheets at the tray. They
+  keep the office at 30 fps while they exist; the card says how many are out.
+- **The Screen panel** (`screen.rs`) is a still of the desktop, and about twice a second
+  while computer use runs, the windows of the apps the agent used (PrintWindow on Windows,
+  X11 on Linux, `CGWindowListCreateImageFromArray` on a Mac, which needs Hover's own
+  Screen Recording grant).
+- **Answers are Markdown, drawn without a library** (`hover-md`, `hover-diagram`).
   Everything the agent wrote is escaped, and Mermaid flowcharts are laid out natively.
 - **The office renders on its own thread with its own wgpu device** (DX12 on Windows,
-  Vulkan or GL on Linux). The frame is composited on the CPU into the Slint view.
+  Vulkan or GL on Linux, Metal on a Mac). The frame is composited on the CPU into the Slint view.
   - It redraws the shadow map only when something moved.
   - It runs at 30 fps while a bot walks or works, 10 fps when idle, 1 fps with
     animations off, and draws nothing while hidden.
+
+## What each OS can't run
+
+A feature the OS can't run is switched off in Settings (or its desk tile) with the reason
+beside it, never hidden. The notes are constants next to the code (`sandbox::UNSUPPORTED`,
+`browser::UNSUPPORTED`, `setup::UNSUPPORTED`, `mac::notes`).
+
+| Feature | Windows | Linux | macOS | Why |
+|---|---|---|---|---|
+| Notch, office, desk card, panels (Terminal, Files, Diff, Agents, PRs) | yes | yes | yes | |
+| Sandbox | off: "The sandbox needs macOS or Linux." | yes, if `srt`, `rg`, `bwrap`, `socat` are there | yes, if `srt` and `rg` are there | srt's Windows support can't reach tools installed for the user |
+| Agent browser, Browser tab | off: "Agent browser needs macOS." | off, same note | yes | the page is a WKWebView |
+| One-click agent setup | off: "One-click setup is available on macOS." | same | yes | the installers and sign-in scripts are written for a Mac |
+| Computer use | yes, if Cua Driver is installed; no guard without perl | pre-release Cua (the switch says so) | yes | Cua Driver is built for macOS |
+| Screen panel capture | yes (PrintWindow) | X11 only | yes, with Screen Recording | |
+| GitHub CLI one-click install | winget | hint only | Homebrew, else hint | no sudo, no release download (no TLS in `hover-agents`) |
+| Local speech (Phonon) | yes | yes | off: "Local speech isn’t available on macOS yet; use Cloud (Groq)." | Phonon's runtime isn't built for a Mac |
+| Usage in the island | yes | yes | in the menu bar instead | the camera housing |
+| Tray | yes | yes (D-Bus) | menu bar | |
 
 ## Conventions
 
@@ -249,8 +369,13 @@ assets/          hover.png (the logo), make-icon.py (writes the app's hover.ico 
   `Cargo.toml`.
 - Verify by running the real thing: `cargo test --release --workspace` clean, and the
   Windows `cargo check` above green. For UI changes, render it (`hover --shots`), since
-  a green build is not proof the pixels are right.
+  a green build is not proof the pixels are right. Nothing of the macOS behaviour has been
+  run by the people who wrote it (see docs/MACOS.md): say what you ran and what you didn't.
 - Don't commit `target/`, `publish/` or `dist/`.
+- `cfg(not(windows))` used to mean Linux. Say `target_os = "linux"` for X11, D-Bus, the
+  Secret Service, XDG, prctl and ALSA, and give a Mac its own path or an honest "not on
+  macOS" branch. Logic that only runs on a Mac (argument lists, parsing, text) goes in
+  functions compiled everywhere, so the Windows tests cover it.
 
 ## Gotchas
 
@@ -260,7 +385,12 @@ assets/          hover.png (the logo), make-icon.py (writes the app's hover.ico 
   is tracked with `git add -f`.
 - **`str_replace` on files with `—` (em dash) and non-ASCII** can be finicky; anchor
   on unique ASCII lines.
-- **One renderer per process**: femtovg (GL) on Linux, femtovg-wgpu DX12 on Windows.
+- **One renderer per process**: femtovg (GL) on Linux, femtovg-wgpu DX12 on Windows,
+  femtovg-wgpu Metal on a Mac (one wgpu device shared with the office).
+- **A Mac app started from Finder has no shell PATH.** Anything that looks for a tool
+  (`agents::find`, `on_path`) sees the login shell's PATH only after `mac::shell_env` ran.
+- **`Shortcut::label()` reads ⌥N on a Mac**, not Alt+N; tests that want the Windows text
+  use `label_for(false)`.
 - **Headless GPU runs** need `XDG_RUNTIME_DIR` set.
 - **The chat's layout goldens** (`hover-chat`'s `thread.rs`) were measured in Linux
   Chromium with DejaVu Sans, so the three that compare text widths skip on Windows.

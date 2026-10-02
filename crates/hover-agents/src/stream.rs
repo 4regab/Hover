@@ -278,6 +278,9 @@ impl KiroStream {
             if let Some(o) = o { next.output = Some(o); }
             if exit.is_some() { next.exit = exit; }
         }
+        // For the desk's panels: the call's input, and the longer end of what it gave back.
+        if let Some(input) = input_of(u) { next.input = Some(input); }
+        if let Some(log) = log_of(u, &next.kind) { next.log = Some(log); }
         if matches!(next.status.as_str(), "completed" | "failed") && known.ms.is_none() {
             if let Some(t0) = self.began.get(id) { next.ms = Some(t0.elapsed().as_secs_f64() * 1000.0); }
         }
@@ -434,6 +437,75 @@ pub fn output_of(u: &Json) -> (Option<String>, Option<i32>) {
     // What was cut is said, so the fold never claims it shows everything.
     if from > 0 { kept.insert(0, format!("… {from} earlier line{} not kept", if from == 1 { "" } else { "s" })); }
     (Some(kept.join("\n")), exit)
+}
+
+/// The longest raw input a step keeps (KiroStream.InputLimit), and the longest end of what
+/// a call printed (LogLimit), in UTF-16 units as the C# counts.
+pub const INPUT_LIMIT: usize = 4000;
+pub const LOG_LIMIT: usize = 16 * 1024;
+
+/// KiroStream.InputOf: a tool call's rawInput as compact JSON, cut to INPUT_LIMIT: the
+/// desk's panels read a subagent's task, a URL or a computer-use action from it.
+pub fn input_of(u: &Json) -> Option<String> {
+    let text = match u.get("rawInput")? {
+        Json::Str(t) => t.clone(),
+        raw @ (Json::Obj(_) | Json::Arr(_)) => raw.compact(),
+        _ => return None,
+    };
+    if matches!(text.as_str(), "" | "{}" | "[]") { return None; }
+    Some(head_units(&text, INPUT_LIMIT).to_owned())
+}
+
+/// KiroStream.LogOf: the longer end of what a tool call printed or returned, for the desk's
+/// terminal and agents panels: a command's output, or the text a subagent, a fetch or an MCP
+/// tool gave back. Reads and edits are left out (their output is the file itself).
+pub fn log_of(u: &Json, kind: &str) -> Option<String> {
+    if matches!(kind, "read" | "edit" | "delete" | "move") { return None; }
+    let mut text: Option<String> = None;
+    match u.get("rawOutput") {
+        Some(Json::Str(t)) => text = Some(t.clone()),
+        Some(ro @ Json::Obj(_)) => {
+            text = ["formatted_output", "output", "aggregated_output", "stdout", "result", "text"].iter().find_map(|k| s(ro, k)).map(str::to_owned);
+            if let Some(err) = s(ro, "stderr").filter(|e| !e.is_empty()) {
+                text = Some(match text { Some(t) if !t.is_empty() => format!("{t}\n{err}"), _ => err.to_owned() });
+            }
+        }
+        _ => {}
+    }
+    if text.is_none() {
+        if let Some(Json::Arr(content)) = u.get("content") {
+            // ACP: {type:"content", content:{type:"text", text}}, or a terminal's text.
+            let mut all = String::new();
+            for item in content {
+                let inner = item.get("content").unwrap_or(item);
+                if s(inner, "type") == Some("text") {
+                    if let Some(t) = s(inner, "text").filter(|t| !t.is_empty()) { if !all.is_empty() { all.push('\n'); } all.push_str(t); }
+                }
+            }
+            if !all.is_empty() { text = Some(all); }
+        }
+    }
+    tail(text.as_deref())
+}
+
+/// KiroStream.Tail: text without escape codes or carriage returns, trimmed, and cut to its
+/// last LOG_LIMIT units at a line start.
+pub fn tail(text: Option<&str>) -> Option<String> {
+    let text = text.filter(|t| !t.trim().is_empty())?;
+    let plain = strip_ansi(text).replace("\r\n", "\n").replace('\r', "\n");
+    let mut clean = plain.trim_matches('\n');
+    let n = units(clean);
+    if n > LOG_LIMIT {
+        let (mut skip, mut at) = (n - LOG_LIMIT, 0);
+        for (i, c) in clean.char_indices() {
+            if skip == 0 { at = i; break; }
+            skip = skip.saturating_sub(c.len_utf16());
+            at = i + c.len_utf8();
+        }
+        clean = &clean[at..];
+        if let Some(nl) = clean.find('\n').filter(|nl| *nl > 0 && *nl < 400) { clean = &clean[nl + 1..]; }
+    }
+    (!clean.is_empty()).then(|| clean.to_owned())
 }
 
 fn envelope(root: &Json) -> (&str, &Json) {
@@ -654,5 +726,38 @@ mod tests {
         let chunk = "é".repeat(40_000);
         for _ in 0..2 { k.feed(&update(&format!(r#"{{"sessionUpdate":"agent_message_chunk","content":{{"type":"text","text":"{chunk}"}}}}"#))); }
         assert_eq!(units(k.said()), 64 * 1024);
+    }
+
+    /// KiroStream.InputOf / LogOf: a step keeps its call's input and the longer end of what
+    /// it printed, for the desk's panels; a read's or an edit's output is the file itself.
+    #[test]
+    fn a_step_keeps_its_input_and_the_end_of_its_output_for_the_desk() {
+        let mut k = KiroStream::new("Kiro");
+        k.feed(&update(r#"{"sessionUpdate":"tool_call","toolCallId":"a","kind":"other","title":"Task","status":"in_progress","rawInput":{"subagent_type":"explore","description":"Find callers","prompt":"Look for refresh()"}}"#));
+        k.feed(&update(r#"{"sessionUpdate":"tool_call_update","toolCallId":"a","status":"completed","content":[{"type":"content","content":{"type":"text","text":"Three callers.\u001b[0m"}}]}"#));
+        k.feed(&update(r#"{"sessionUpdate":"tool_call","toolCallId":"r","kind":"read","title":"Read","status":"completed","rawInput":{"path":"a.rs"},"rawOutput":"fn a() {}"}"#));
+        k.feed(&update(r#"{"sessionUpdate":"tool_call","toolCallId":"n","kind":"other","title":"Noop","status":"completed","rawInput":{}}"#));
+        let mut last: Vec<KiroStep> = vec![];
+        for e in k.drain() { if let Some(s) = e.step { match last.iter().position(|x| x.id == s.id) { Some(i) => last[i] = s, None => last.push(s) } } }
+        let (a, r, n) = (&last[0], &last[1], &last[2]);
+        assert_eq!(a.input.as_deref(), Some(r#"{"subagent_type":"explore","description":"Find callers","prompt":"Look for refresh()"}"#));
+        assert_eq!(a.log.as_deref(), Some("Three callers."), "escape codes are gone");
+        assert!(crate::state::is_subagent(a), "the input names it a subagent whatever the tool is called");
+        assert_eq!((r.input.is_some(), r.log.as_deref()), (true, None), "a read's output is the file");
+        assert_eq!((n.input.as_deref(), n.log.as_deref()), (None, None), "an empty input is none");
+    }
+
+    #[test]
+    fn a_long_log_keeps_its_end_from_a_line_start_and_an_input_its_head() {
+        let long: String = (0..4000).map(|i| format!("line {i}\n")).collect();
+        let log = tail(Some(&long)).unwrap();
+        assert!(units(&log) <= LOG_LIMIT && log.ends_with("line 3999") && log.starts_with("line "), "{}", &log[..20]);
+        assert_eq!(tail(Some("  \r\n ")), None);
+        assert_eq!(tail(Some("a\r\nb\rc\n")).as_deref(), Some("a\nb\nc"));
+        let big = json::parse(&format!(r#"{{"rawInput":"{}"}}"#, "x".repeat(5000))).unwrap();
+        assert_eq!(units(&input_of(&big).unwrap()), INPUT_LIMIT);
+        assert_eq!(input_of(&json::parse(r#"{"rawInput":5}"#).unwrap()), None);
+        let out = json::parse(r#"{"rawOutput":{"stdout":"ok","stderr":"warn"}}"#).unwrap();
+        assert_eq!(log_of(&out, "execute").as_deref(), Some("ok\nwarn"));
     }
 }

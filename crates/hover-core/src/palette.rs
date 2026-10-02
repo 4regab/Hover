@@ -190,7 +190,8 @@ pub fn read(path: &Path, label: Option<&str>, dark: Option<bool>) -> Option<Save
 
 /// Where each editor keeps its extensions: the user's own first, then each editor's
 /// built-in ones. Windows: the C#'s list. Linux: the same user folders, then where the
-/// editors' .deb, .rpm, tarball and snap packages put their built-in extensions.
+/// editors' .deb, .rpm, tarball and snap packages put their built-in extensions. macOS:
+/// the same user folders, then inside the editors' .app bundles.
 pub fn roots() -> Vec<(&'static str, PathBuf)> {
     let home = crate::platform::home().unwrap_or_default();
     let mut r = vec![
@@ -208,11 +209,25 @@ pub fn roots() -> Vec<(&'static str, PathBuf)> {
         r.push(("Cursor", app(local.join("Programs").join("cursor"))));
         r.push(("Kiro", app(local.join("Programs").join("Kiro"))));
         r.push(("Windsurf", app(local.join("Programs").join("Windsurf"))));
+    } else if cfg!(target_os = "macos") {
+        r.extend(macos_builtin(&home));
     } else {
         for (from, dir) in [("VS Code", "/usr/share/code"), ("VS Code", "/opt/visual-studio-code"), ("VS Code", "/snap/code/current/usr/share/code"),
             ("Cursor", "/usr/share/cursor"), ("Cursor", "/opt/cursor"), ("Kiro", "/usr/share/kiro"), ("Kiro", "/opt/kiro"),
             ("Windsurf", "/usr/share/windsurf"), ("Windsurf", "/opt/windsurf")] {
             r.push((from, app(PathBuf::from(dir))));
+        }
+    }
+    r
+}
+
+/// macOS: each editor is an .app bundle, in /Applications or in the user's own
+/// ~/Applications, with its built-in extensions inside it.
+pub fn macos_builtin(home: &Path) -> Vec<(&'static str, PathBuf)> {
+    let mut r = vec![];
+    for (from, bundle) in [("VS Code", "Visual Studio Code.app"), ("Cursor", "Cursor.app"), ("Kiro", "Kiro.app"), ("Windsurf", "Windsurf.app")] {
+        for apps in [PathBuf::from("/Applications"), home.join("Applications")] {
+            r.push((from, apps.join(bundle).join("Contents").join("Resources").join("app").join("extensions")));
         }
     }
     r
@@ -351,6 +366,17 @@ pub fn resolve(theme: Option<&SavedTheme>, appearance: crate::model::Appearance,
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// On a Mac the editors are .app bundles; the built-in themes are inside them.
+    #[test]
+    fn macos_looks_inside_the_editors_app_bundles() {
+        let r = macos_builtin(Path::new("/Users/u"));
+        assert_eq!(r.len(), 8);
+        assert_eq!(r[0], ("VS Code", PathBuf::from("/Applications/Visual Studio Code.app/Contents/Resources/app/extensions")));
+        assert_eq!(r[1], ("VS Code", PathBuf::from("/Users/u/Applications/Visual Studio Code.app/Contents/Resources/app/extensions")));
+        assert!(r.iter().any(|(from, p)| *from == "Cursor" && p.starts_with("/Applications/Cursor.app")));
+        assert!(r.iter().any(|(from, p)| *from == "Windsurf" && p.starts_with("/Users/u/Applications/Windsurf.app")));
+    }
 
     fn theme(dark: bool, colors: &[(&str, &str)]) -> SavedTheme {
         SavedTheme { name: "T".into(), dark, colors: colors.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect() }

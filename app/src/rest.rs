@@ -106,7 +106,9 @@ pub fn level(used: f64) -> Level { if used < 70.0 { Level::Green } else if used 
 /// A menu: items with their tick (None: not a checkbox), None for a separator.
 pub type Menu = Vec<Option<(String, Option<bool>)>>;
 
-/// The tray icon's menu (Actions.BuildMainMenu), top to bottom.
+/// The tray icon's menu (Actions.BuildMainMenu), top to bottom. Windows' and the Linux tray's;
+/// a Mac's menu bar has the richer one of `mac::menu::build` (the usage readings, the agents
+/// at work, Open on Hover...), and the usage rings instead of the notch's quotas.
 pub fn tray_menu(shortcut: &str, launch_at_login: bool) -> Menu {
     vec![
         Some((format!("Open Agent Office  {shortcut}"), None)),

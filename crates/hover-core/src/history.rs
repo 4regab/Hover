@@ -478,6 +478,40 @@ mod tests {
         assert!(d.join("cccc.dat").exists());
     }
 
+    /// A turn's last save can come just after its session was deleted; it mustn't bring
+    /// it back (Arz's AgentHistory._deleted). Keys are never used again.
+    #[test]
+    fn a_save_that_arrives_after_the_delete_does_not_bring_the_session_back() {
+        let d = dir("deleted");
+        let c = Arc::new(Crypto::with_key([3; 32]));
+        let h = AgentHistory::new(d.clone(), c.clone());
+        let n = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let n2 = n.clone();
+        h.on_changed(move || { n2.fetch_add(1, std::sync::atomic::Ordering::SeqCst); });
+        h.save(&session("aaaa", "2026-09-28T16:45:00Z"));
+        h.save(&session("bbbb", "2026-09-28T17:45:00Z"));
+        h.delete("aaaa");
+        // The turn that was ending saves its session once more, after the delete.
+        h.save(&session("aaaa", "2026-09-28T18:45:00Z"));
+        h.flush();
+        let keys = |h: &AgentHistory| h.entries().into_iter().map(|e| e.key).collect::<Vec<_>>();
+        assert_eq!(keys(&h), ["bbbb"]);
+        assert!(h.load("aaaa").is_none(), "no file for it either");
+        assert!(!d.join("aaaa.dat").exists());
+        // Two saves and one delete raised the change; the late save raised nothing.
+        assert_eq!(n.load(std::sync::atomic::Ordering::SeqCst), 3);
+        // Nor does it come back on the next start; the others are untouched.
+        let again = AgentHistory::new(d.clone(), c);
+        assert_eq!(keys(&again), ["bbbb"]);
+        assert!(again.load("bbbb").is_some());
+        // A delete of a key that was never saved still keeps it out.
+        h.delete("cccc");
+        h.save(&session("cccc", "2026-09-28T19:45:00Z"));
+        h.flush();
+        assert_eq!(keys(&h), ["bbbb"]);
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
     #[test]
     fn a_key_that_isnt_hovers_never_becomes_a_path() {
         let h = AgentHistory::new(dir("plain"), Arc::new(Crypto::with_key([3; 32])));

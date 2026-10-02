@@ -135,12 +135,12 @@ flowchart TB
 
 `.github/workflows/ci.yml` runs on GitHub's own runners. One job per OS does the whole
 check, and on a `v*` tag the same job builds the installers from the build it just
-tested.
+tested. A third job compiles the workspace on macOS and does nothing else.
 
 ```mermaid
 flowchart LR
-    push["push to main or rust-port/**<br/>or a pull request"] --> wj & lj
-    tag["push of tag vX.Y.Z, or of a new<br/>Cargo.toml version to main"] --> wj & lj
+    push["push to main or rust-port/**<br/>or a pull request"] --> wj & lj & mj
+    tag["push of tag vX.Y.Z, or of a new<br/>Cargo.toml version to main"] --> wj & lj & mj
 
     subgraph wj["windows job (windows-2022)"]
         wt["cargo test --workspace"] --> wi["release only:<br/>build.ps1 installer"]
@@ -150,13 +150,20 @@ flowchart LR
         lt["cargo test --workspace"] --> lp["release only:<br/>make package"]
     end
 
+    subgraph mj["macos job (macos-15, Apple Silicon)"]
+        mc["cargo check --workspace<br/>--all-targets --locked"]
+    end
+
     wi --> rel
     lp --> rel
     rel["release job (release only)<br/>tags the commit; Latest GitHub release with the .exe, .deb, .tar.gz"]
 ```
 
 A tag whose version doesn't match `Cargo.toml` fails before anything builds. A
-failing test on either OS means nothing is published. Pushes that only touch Markdown,
+failing test on either OS means nothing is published. The macOS job doesn't gate the
+release: it has no package to wait for, and it runs no tests (nothing has been run on a
+Mac yet; see `docs/MACOS.md`). It does fail a pull request whose Mac code doesn't compile.
+Pushes that only touch Markdown,
 `docs/` or the README's pictures don't run CI.
 
 ## What runs at run time
@@ -499,8 +506,31 @@ the real tools.
 | Single instance | Named mutex `Local\HoverRunningInstance` | Lock file in `$XDG_RUNTIME_DIR` |
 | Allocator | mimalloc (freed pages go back to Windows) | glibc malloc, `malloc_trim` after the office drops |
 
-Keep OS code behind `cfg(windows)` or `cfg(target_os = "linux")` in these files.
-Check `cfg(not(windows))` branches carefully: they are the Linux path.
+Keep OS code behind `cfg(windows)`, `cfg(target_os = "linux")` or `cfg(target_os = "macos")`
+in these files. Check `cfg(not(windows))` branches carefully: they used to mean Linux and
+now also reach a Mac. X11, D-Bus, the Secret Service, XDG and ALSA are Linux-only.
+What can be worked out without the OS (the Mac menu, the notch's geometry, key names, the
+Keychain and LaunchAgent logic, the sandbox's settings text) is in functions compiled on
+every OS, so the Windows tests cover it.
+
+### macOS
+
+| Concern | macOS |
+|---|---|
+| Notch window | `app/src/mac/` and `plat.rs`: an NSWindow at status level 25 on all Spaces; its class is swapped for a subclass of winit's whose `canBecomeKeyWindow` is false while the notch rests; the hardware notch comes from `safeAreaInsets` and the auxiliary areas (`Notch.hw`) |
+| Renderer | femtovg on wgpu (Metal), one device shared with the office |
+| Usage, tray | status items in the menu bar (`mac::status`, `mac::menu`, `mac::bar`); usage isn't in the island |
+| Shortcut | Carbon `RegisterEventHotKey`, plus a local key monitor for the windows that hold the keyboard |
+| Voice hold-to-talk | the hot key's press and release |
+| Microphone | cpal on CoreAudio (the system asks the first time) |
+| Key storage | the login Keychain (service `Hover`), named by a marker in `note.key` |
+| Child processes | own process group and a `/bin/sh` watchdog (no `PDEATHSIG`) |
+| Single instance | Lock and socket in `$TMPDIR`, else `/tmp/hover-<uid>` |
+| Dark mode, reduced motion | `defaults read`, polled every 3 s |
+| Launch at Login | `~/Library/LaunchAgents/dev.hover.desktop.plist` |
+| Agent browser | `browser_host.rs`: a WKWebView per session, driven over `browser.rs`'s socket |
+| Screen panel | `screen.rs`: `CGWindowListCreateImageFromArray` |
+| Allocator | system malloc |
 
 ## Where to change things
 

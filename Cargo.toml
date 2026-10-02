@@ -1,6 +1,6 @@
-# Hover, the native app. The backend crates build and test on any OS; the Windows and
-# Linux code is behind cfg(windows) / cfg(not(windows)). See
-# docs/development/architecture.md.
+# Hover, the native app. The backend crates build and test on any OS; the Windows, Linux
+# and macOS code is behind cfg(windows), cfg(target_os = "linux") and cfg(target_os = "macos").
+# See docs/development/architecture.md.
 [workspace]
 resolver = "2"
 members = ["app", "crates/*", "tools/*"]

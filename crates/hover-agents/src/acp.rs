@@ -9,7 +9,9 @@
 use crate::agents;
 use crate::ask::{self, AgentAsk, AskAnswer};
 use crate::cancel::Cancel;
+use crate::computer_use::{self, McpServer};
 use crate::proc::{strip_ansi, Link};
+use crate::sandbox::{self, Boxed, Fit};
 use crate::stream::{KiroEvent, KiroPhase, KiroResult, KiroStream};
 use hover_core::json::{self, Json};
 use hover_core::model::{AcpChoice, AcpOption, AgentApproval, AgentOptions, AgentTool, KiroState, KiroStep};
@@ -24,6 +26,14 @@ pub type Progress = Box<dyn Fn(KiroPhase) + Send + Sync>;
 pub type Events = Box<dyn Fn(KiroEvent) + Send + Sync>;
 type Connect = Box<dyn Fn() -> std::io::Result<Option<Link>> + Send + Sync>;
 type Seen = Box<dyn Fn(AgentTool, &[AcpOption]) + Send + Sync>;
+/// The MCP servers a new or loaded session gets, for the Hover session (its key) it is
+/// made for: Cua Driver's when computer use is on, Hover's browser where there is one.
+pub type McpFn = Arc<dyn Fn(Option<&str>) -> Vec<McpServer> + Send + Sync>;
+
+/// The servers a session gets unless a host is given others.
+pub fn default_mcp(tool: AgentTool) -> McpFn {
+    Arc::new(move |tag| { let mut all = computer_use::servers(); all.extend(crate::browser::servers(tool, tag)); all })
+}
 /// AcpHost.Asking: asks the user about a tool call for the ACP session named first;
 /// the token ends when the run is stopped. The answer goes to the reply, from any thread.
 pub type Asking = Arc<dyn Fn(&str, AgentAsk, &Cancel, Box<dyn FnOnce(AskAnswer) + Send>) + Send + Sync>;
@@ -81,6 +91,12 @@ struct Host {
     /// What the user trusted for the rest of a session, by ACP session id: the keys of
     /// tool calls (ask::key), or "*" for everything.
     trusted: Mutex<HashMap<String, HashSet<String>>>,
+    /// The MCP servers each live session was given (computer_use::signature), by ACP
+    /// session id; cleared with the process.
+    session_mcp: Mutex<HashMap<String, String>>,
+    mcp: Mutex<McpFn>,
+    /// How the process was sandboxed (sandbox.rs); untouched for a process Hover didn't start.
+    boxed: Arc<Boxed>,
 }
 
 #[derive(Clone)]
@@ -93,21 +109,32 @@ fn st(v: &str) -> Json { Json::str(v) }
 impl AcpHost {
     /// The tool as Agents finds and starts it.
     pub fn new(tool: AgentTool, options: impl Fn() -> AgentOptions + Send + Sync + 'static) -> AcpHost {
-        AcpHost::with_connect(tool, options, move || match agents::exe(tool) {
+        let boxed = Arc::new(Boxed::default());
+        let b = boxed.clone();
+        // In the sandbox, for the folders its sessions use (sandbox.rs), when it is wanted.
+        AcpHost::build(tool, options, Box::new(move || match agents::exe(tool) {
             None => Ok(None),
-            Some(exe) => crate::proc::launch(&exe, agents::arguments(tool), &[]).map(Some),
-        })
+            Some(exe) => sandbox::launch(tool, &exe, agents::arguments(tool), &[], None, Some(&b)).map(Some),
+        }), boxed)
     }
 
     pub fn with_connect(tool: AgentTool, options: impl Fn() -> AgentOptions + Send + Sync + 'static,
         connect: impl Fn() -> std::io::Result<Option<Link>> + Send + Sync + 'static) -> AcpHost {
+        AcpHost::build(tool, options, Box::new(connect), Arc::new(Boxed::default()))
+    }
+
+    fn build(tool: AgentTool, options: impl Fn() -> AgentOptions + Send + Sync + 'static, connect: Connect, boxed: Arc<Boxed>) -> AcpHost {
         AcpHost(Arc::new(Host {
-            tool, options: Box::new(options), connect: Box::new(connect), gate: Mutex::new(()), link: Mutex::new(None), gens: AtomicU64::new(0),
+            tool, options: Box::new(options), connect, gate: Mutex::new(()), link: Mutex::new(None), gens: AtomicU64::new(0),
             pending: Mutex::new(HashMap::new()), turns: Mutex::new(HashMap::new()), session_options: Mutex::new(HashMap::new()),
             can_load: AtomicBool::new(false), ids: AtomicI64::new(0), busy: AtomicUsize::new(0), idle: AtomicU64::new(0), seen: Mutex::new(vec![]),
-            asking: Mutex::new(None), trusted: Mutex::new(HashMap::new()),
+            asking: Mutex::new(None), trusted: Mutex::new(HashMap::new()), session_mcp: Mutex::new(HashMap::new()), mcp: Mutex::new(default_mcp(tool)), boxed,
         }))
     }
+
+    /// The MCP servers each new or loaded session gets, read at the start of every run
+    /// (the default: Cua Driver's when computer use is on, and Hover's browser).
+    pub fn set_mcp(&self, f: impl Fn(Option<&str>) -> Vec<McpServer> + Send + Sync + 'static) { *self.0.mcp.lock().unwrap() = Arc::new(f); }
 
     pub fn tool(&self) -> AgentTool { self.0.tool }
 
@@ -123,13 +150,20 @@ impl AcpHost {
     /// agent to stop (session/cancel); one that doesn't within 8 s is left, or shut
     /// down when nothing else of it runs. Blocks: run it off the UI thread.
     pub fn run(&self, folder: &str, prompt: &str, progress: Option<Progress>, ct: &Cancel, resume: Option<&str>, events: Option<Events>) -> KiroResult {
-        self.0.run(folder, prompt, progress, ct, resume, events, None)
+        self.0.run(folder, prompt, progress, ct, resume, events, None, None)
     }
 
     /// run, with the session's own tool access (AgentOptions::with_access).
     #[allow(clippy::too_many_arguments)]
     pub fn run_as(&self, folder: &str, prompt: &str, progress: Option<Progress>, ct: &Cancel, resume: Option<&str>, events: Option<Events>, access: Option<&str>) -> KiroResult {
-        self.0.run(folder, prompt, progress, ct, resume, events, access)
+        self.0.run(folder, prompt, progress, ct, resume, events, access, None)
+    }
+
+    /// run_as, naming the Hover session (its key) the run is for: the tag Hover's browser
+    /// server is made for (AcpHost.Run's tag).
+    #[allow(clippy::too_many_arguments)]
+    pub fn run_tagged(&self, folder: &str, prompt: &str, progress: Option<Progress>, ct: &Cancel, resume: Option<&str>, events: Option<Events>, access: Option<&str>, tag: Option<&str>) -> KiroResult {
+        self.0.run(folder, prompt, progress, ct, resume, events, access, tag)
     }
 
     /// Where a question goes. Without one, whatever the settings say should be asked
@@ -142,7 +176,7 @@ impl AcpHost {
     /// The session's runner for this tool (OwlApp.Kiro's make: Agents[tool].Run).
     pub fn runner(&self) -> crate::session::RunTask {
         let h = self.clone();
-        Arc::new(move |a: crate::session::RunArgs| h.run_as(&a.folder, &a.prompt, Some(a.progress), &a.ct, a.resume.as_deref(), Some(a.events), a.access.as_deref()))
+        Arc::new(move |a: crate::session::RunArgs| { let tag = crate::runtime::tag_of(&a); h.run_tagged(&a.folder, &a.prompt, Some(a.progress), &a.ct, a.resume.as_deref(), Some(a.events), a.access.as_deref(), tag.as_deref()) })
     }
 }
 
@@ -150,17 +184,41 @@ impl Host {
     fn name(&self) -> &'static str { self.tool.name() }
 
     #[allow(clippy::too_many_arguments)]
-    fn run(self: &Arc<Self>, folder: &str, prompt: &str, progress: Option<Progress>, ct: &Cancel, resume: Option<&str>, events: Option<Events>, access: Option<&str>) -> KiroResult {
+    fn run(self: &Arc<Self>, folder: &str, prompt: &str, progress: Option<Progress>, ct: &Cancel, resume: Option<&str>, events: Option<Events>, access: Option<&str>, tag: Option<&str>) -> KiroResult {
         let name = self.name();
         if !crate::usable_folder(Some(folder)) { return KiroResult::new(KiroState::Failed, "That folder isn’t there any more. Choose another one."); }
         if prompt.trim().is_empty() { return KiroResult::new(KiroState::Failed, format!("Tell {name} what to do first.")); }
+        // A sandboxed tool reaches only the folders it started with, and the sandbox
+        // switched on or off applies from its next start: one that no longer fits is
+        // started again when nothing of it runs. Busy in other folders, it can't take
+        // this one yet.
+        sandbox::remember(folder);
+        if self.link.lock().unwrap().is_some() {
+            match self.boxed.fit(folder, self.busy.load(Ordering::SeqCst) > 0, sandbox::active()) {
+                Fit::Fits => {}
+                Fit::Restart => self.shutdown("its sandbox changed"),
+                Fit::Outside => return KiroResult::new(KiroState::Failed, sandbox::outside_message(name)),
+            }
+        }
+        // The agent's cua-driver can't start CuaDriver's daemon from inside the sandbox
+        // (no Launch Services there), so Hover does, outside it.
+        if sandbox::wanted() && crate::agents::toggles().computer_use { computer_use::ensure_daemon(); }
         let o = (self.options)().with_access(access);
+        let servers = (self.mcp.lock().unwrap().clone())(tag);
+        let mcp = (computer_use::acp(&servers), computer_use::signature(&servers));
+        // A session's MCP servers are fixed when it is made or loaded. A reply to one made
+        // with others (computer use switched since) loads it again in a fresh process,
+        // when nothing else of this tool runs; otherwise it carries on as is.
+        if let Some(r) = resume.filter(|r| !r.is_empty()) {
+            let had = self.session_mcp.lock().unwrap().get(r).cloned();
+            if self.can_load.load(Ordering::SeqCst) && had.is_some_and(|h| h != mcp.1) && self.busy.load(Ordering::SeqCst) == 0 { self.shutdown("its MCP servers changed"); }
+        }
         self.busy.fetch_add(1, Ordering::SeqCst);
         self.idle.fetch_add(1, Ordering::SeqCst);
         let turn = Arc::new(Turn { stream: Mutex::new(KiroStream::new(name)), progress, events, options: o.clone(), folder: folder.into(), token: ct.clone(), muted: AtomicBool::new(false),
             refused: AtomicBool::new(false), mcp_failed: Mutex::new(vec![]), deny_all: access == Some("none") });
         let mut sid: Option<String> = None;
-        let r = self.turn(folder, prompt, ct, resume, &o, &turn, &mut sid);
+        let r = self.turn(folder, prompt, ct, resume, &o, &turn, &mut sid, &mcp);
         // A thought still open when the turn ends (however it ends) ends with it.
         let last = { let mut st = turn.stream.lock().unwrap(); st.end(); st.drain() };
         if let Some(f) = &turn.events { for e in last { f(e); } }
@@ -185,7 +243,7 @@ impl Host {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn turn(self: &Arc<Self>, folder: &str, prompt: &str, ct: &Cancel, resume: Option<&str>, o: &AgentOptions, turn: &Arc<Turn>, sid: &mut Option<String>)
+    fn turn(self: &Arc<Self>, folder: &str, prompt: &str, ct: &Cancel, resume: Option<&str>, o: &AgentOptions, turn: &Arc<Turn>, sid: &mut Option<String>, mcp: &(Json, String))
         -> Result<KiroResult, CallErr> {
         let name = self.name();
         if let Some(p) = &turn.progress { p(KiroPhase::Starting); }
@@ -199,9 +257,9 @@ impl Host {
             } else if self.can_load.load(Ordering::SeqCst) {
                 turn.muted.store(true, Ordering::SeqCst);
                 self.turns.lock().unwrap().insert(r.into(), turn.clone());
-                let params = o_(vec![("sessionId", st(r)), ("cwd", st(folder)), ("mcpServers", Json::Arr(vec![]))]);
+                let params = o_(vec![("sessionId", st(r)), ("cwd", st(folder)), ("mcpServers", mcp.0.clone())]);
                 match self.call("session/load", params, Some(ct), Some(Duration::from_secs(120))) {
-                    Ok(res) => { *sid = Some(r.into()); offered = options(&res); }
+                    Ok(res) => { *sid = Some(r.into()); offered = options(&res); self.session_mcp.lock().unwrap().insert(r.into(), mcp.1.clone()); }
                     Err(CallErr::Acp(m)) => {
                         // Gone from the agent's own history: carry on in a new conversation.
                         hover_core::log::line(&format!("acp {name}: couldn't load {r} - {m}"));
@@ -213,8 +271,9 @@ impl Host {
             }
         }
         if sid.is_none() {
-            let res = self.call("session/new", o_(vec![("cwd", st(folder)), ("mcpServers", Json::Arr(vec![]))]), Some(ct), Some(Duration::from_secs(120)))?;
+            let res = self.call("session/new", o_(vec![("cwd", st(folder)), ("mcpServers", mcp.0.clone())]), Some(ct), Some(Duration::from_secs(120)))?;
             *sid = Some(s(&res, "sessionId").ok_or_else(|| CallErr::Acp(format!("{name} didn’t start a session.")))?.to_owned());
+            self.session_mcp.lock().unwrap().insert(sid.clone().unwrap(), mcp.1.clone());
             offered = options(&res);
         }
         let id = sid.clone().unwrap();
@@ -411,6 +470,7 @@ impl Host {
         let live = Arc::new(Live { gen, writer: Mutex::new(to_agent), kill, errors });
         *self.link.lock().unwrap() = Some(live);
         self.session_options.lock().unwrap().clear();
+        self.session_mcp.lock().unwrap().clear();
         let me: Weak<Host> = Arc::downgrade(self);
         std::thread::Builder::new().name(format!("acp-{}", self.tool.id())).spawn(move || read(me, from_agent, gen)).expect("a reader thread");
         let init = o_(vec![
@@ -435,6 +495,7 @@ impl Host {
         // Cleared and failed before the link's lock goes: once it does, the next process
         // can start, and its calls and options must not go with this one.
         self.session_options.lock().unwrap().clear();
+        self.session_mcp.lock().unwrap().clear();
         self.fail(CallErr::Gone(format!("{} stopped.", self.name())));
         drop(l);
         hover_core::log::line(&format!("acp {}: {why}", self.name()));
@@ -454,6 +515,7 @@ impl Host {
             // As in shutdown: under the lock, or a process started meanwhile (a reply
             // right after an idle shutdown) had its calls failed by this one's exit.
             self.session_options.lock().unwrap().clear();
+            self.session_mcp.lock().unwrap().clear();
             self.fail(CallErr::Gone(format!("{} stopped unexpectedly.{tail}", self.name())));
             (link, why)
         };

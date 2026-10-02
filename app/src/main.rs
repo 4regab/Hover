@@ -4,7 +4,7 @@
 //!   hover                 run
 //!   hover --version       print the version (Cargo.toml's)
 //!   hover --shots DIR     render every view headless (software renderer) into DIR
-//!   hover --selftest DIR  run on the real display, drive it, and write report.json
+//!   hover --selftest DIR  run on the real display, drive it, and write report.json (X11)
 
 // A window for the app, not a console, on Windows.
 #![cfg_attr(windows, windows_subsystem = "windows")]
@@ -12,6 +12,7 @@
 mod icons;
 mod bench;
 mod notch;
+mod desk_ui;
 mod office_ui;
 mod net;
 mod shots;
@@ -19,10 +20,16 @@ mod view;
 mod voice_ui;
 #[cfg(windows)]
 mod win;
-#[cfg(not(windows))]
+// The notch on X11, and the self-test that drives it on a real display.
+#[cfg(target_os = "linux")]
 mod x11;
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
 mod selftest;
+// The notch on macOS: the window, the pointer and the keyboard it gives up (lives with the
+// rest of the Mac code, in mac/, because it is part of that port).
+#[cfg(target_os = "macos")]
+#[path = "mac/plat.rs"]
+mod macplat;
 
 pub mod ui { slint::include_modules!(); }
 
@@ -94,6 +101,9 @@ pub struct App {
     pub hotkey: RefCell<Option<HotkeyFn>>,
     pub tray_menu: RefCell<Option<MenuFn>>,
     pub notify: RefCell<Option<NotifyFn>>,
+    /// The menu bar's status items (macOS): the usage rings and the menu.
+    #[cfg(target_os = "macos")]
+    pub bar: RefCell<Option<Rc<hover_app::mac::status::StatusBar>>>,
     /// Headless: nothing is grabbed, placed or announced outside the process.
     pub headless: bool,
     pub page: office_ui::Page,
@@ -164,12 +174,15 @@ impl App {
             beats, beats_timer: Timer::default(), island: RefCell::new((-1, String::new(), String::new(), 0)), card: Cell::new(false), card_ask: RefCell::new(None), second_timer: Timer::default(), ticks: Cell::new(0), speaker: Cell::new(0), end_glow: Timer::default(), anim_timer: Timer::default(),
             clock_timer: Timer::default(), clock_last: Cell::new(None), poll_timer: Timer::default(), quota_timer: Timer::default(),
             had_focus: Cell::new(false), reported: RefCell::new(None),
-            warn: RefCell::new(None), hotkey: RefCell::new(None), tray_menu: RefCell::new(None), notify: RefCell::new(None), headless, hover, page: Default::default(),
+            warn: RefCell::new(None), hotkey: RefCell::new(None), tray_menu: RefCell::new(None), notify: RefCell::new(None),
+            #[cfg(target_os = "macos")] bar: RefCell::new(None),
+            headless, hover, page: Default::default(),
             phonon, voice, voice_ui,
         });
         APP.with(|a| *a.borrow_mut() = Some(app.clone()));
         wire_page!(app.notch, app, 0);
         app.wire_office(app.notch.global::<Office>());
+        app.desk_wire(app.notch.global::<Desk>());
         app.wire_notch();
         app.wire_voice();
         app.voice_start();
@@ -212,6 +225,8 @@ impl App {
             let w = Rc::downgrade(self);
             self.notch.window().on_winit_window_event(move |_, e| {
                 if matches!(e, WindowEvent::Resized(_) | WindowEvent::ScaleFactorChanged { .. } | WindowEvent::RedrawRequested | WindowEvent::Occluded(_)) { crate::hold_gpu(); }
+                #[cfg(target_os = "macos")]
+                if let (WindowEvent::KeyboardInput { event, .. }, Some(a)) = (e, w.upgrade()) { a.note_physical(event); }
                 if let (WindowEvent::MouseInput { state: ElementState::Pressed, .. }, Some(a)) = (e, w.upgrade()) {
                     if let Ok(mut n) = a.n.try_borrow_mut() { if n.hover.state == State::Peek { n.hover.opened(false); } }
                     // A click in voice's card when the keyboard is elsewhere brings it here.
@@ -320,6 +335,9 @@ impl App {
             if n.last_display_check.elapsed() > Duration::from_secs(2) {
                 n.last_display_check = Instant::now();
                 if !self.headless && n.hover.state == State::Rest { n.plat.raise(); }
+                // The menu bar follows the wallpaper's light or dark, not the app's.
+                #[cfg(target_os = "macos")]
+                if let Some(b) = &*self.bar.borrow() { b.refresh_appearance(); }
                 n.plat.signature() != n.signature
             } else { false }
         };
@@ -357,10 +375,12 @@ impl App {
         use hover_core::model::KiroState;
         let hv = &self.hover;
         let on = hv.settings.notch_items();
+        // On a Mac the usage rings are in the menu bar, not in the notch (docs/MACOS.md).
+        let notch_on: Vec<&str> = if cfg!(target_os = "macos") { vec![] } else { on.clone() };
         let reading = |id: &str| hv.quotas.reading(id);
         let sessions = hv.sessions.all_light();
         let unseen = hv.unseen_last().map(|u| hover_app::rest::Unseen { count: hv.unseen().0, tool: u.tool, state: u.state, title: u.title, took_secs: u.took_secs });
-        let isl = hover_app::rest::island(&on, &reading, &sessions, unseen, self.speaker.get(), hv.sessions.now(), self.card.get());
+        let isl = hover_app::rest::island(&notch_on, &reading, &sessions, unseen, self.speaker.get(), hv.sessions.now(), self.card.get());
         // No question left: the card goes, and the keyboard goes back.
         if self.card.get() && !matches!(isl.seg, Seg::Ask { .. }) { self.close_card(true); return; }
         let ui = &self.notch;
@@ -482,6 +502,8 @@ impl App {
         if changed { self.animate(); }
         // Voice's working spinner turns on the same clock.
         self.clock(busy || vkind == 2);
+        #[cfg(target_os = "macos")]
+        self.update_menu_bar(&on, &sessions);
     }
 
     /// OpenCard: the question grows into a card that takes the keyboard (Enter allows,
@@ -567,8 +589,12 @@ impl App {
         if self.dash.borrow().is_none() {
             hover_core::log::line("app window opened");
             let d = DashboardWindow::new().expect("the app window");
+            // A Mac's window has its own title bar, with its traffic lights, and its own edges.
+            #[cfg(target_os = "macos")]
+            d.set_native_frame(true);
             wire_page!(d, self, 1);
             self.wire_office(d.global::<Office>());
+            self.desk_wire(d.global::<Desk>());
             let a = self.clone();
             d.on_back(move || { a.dash_settings.set(false); if let Some(d) = &*a.dash.borrow() { d.set_in_settings(false); } });
             // The title bar's own buttons and drag, through winit.
@@ -585,6 +611,8 @@ impl App {
                 d.window().on_winit_window_event(move |_, e| {
                     use winit::event::WindowEvent as E;
                     if matches!(e, E::Resized(_) | E::ScaleFactorChanged { .. } | E::RedrawRequested | E::Occluded(_)) { crate::hold_gpu(); }
+                    #[cfg(target_os = "macos")]
+                    if let E::KeyboardInput { event, .. } = e { a.note_physical(event); }
                     if let (winit::event::WindowEvent::Resized(_), Some(d)) = (e, w.upgrade()) { d.set_is_maximized(d.window().is_maximized()); }
                     // In view or not follows the focus: an end while it sits behind other
                     // windows goes to the notch.
@@ -615,6 +643,9 @@ impl App {
             self.refresh_page(false);
         }
         if settings { self.show_settings_in(1, Section::General); }
+        // A Mac app with no Dock icon isn't active until asked: the window would open behind.
+        #[cfg(target_os = "macos")]
+        if let Some(mtm) = objc2::MainThreadMarker::new() { hover_app::mac::cocoa::activate(mtm); }
         if let Some(d) = &*self.dash.borrow() {
             hold_gpu();
             let _ = d.show();
@@ -626,6 +657,8 @@ impl App {
     pub fn refresh_page(self: &Rc<Self>, top: bool) {
         // The Voice page, opened: its microphones are looked up again.
         if top && self.pane.borrow().section == Section::Voice { self.load_mics(); }
+        // The Integrations and the agents' pages, opened: Cua Driver, the sandbox and the tools' setup are looked up.
+        if top && matches!(self.pane.borrow().section, Section::Integrations) { self.integ_look(false); }
         let bs = view::build(&**self, &mut self.pane.borrow_mut());
         let p = self.palette.borrow().clone();
         let slint_blocks = view::blocks(&bs, &p);
@@ -650,6 +683,62 @@ impl App {
             5 => self.open_dashboard(true),
             6 => view::Host::quit(&**self),
             _ => {}
+        }
+    }
+
+    /// The menu bar (macOS): the usage rings of the readers switched on, and the menu with
+    /// their details, the agents at work and Hover's actions.
+    #[cfg(target_os = "macos")]
+    fn update_menu_bar(self: &Rc<Self>, on: &[&str], sessions: &[hover_agents::session::KiroSession]) {
+        use hover_app::mac::{menu, status};
+        use hover_quota::item;
+        let Some(bar) = self.bar.borrow().clone() else { return };
+        let hv = &self.hover;
+        let readers: Vec<(String, String, bool)> = item::QUOTAS.iter().map(|id| (id.to_string(), item::short(id).to_string(), on.contains(id))).collect();
+        let (mut rows, mut rings) = (vec![], vec![]);
+        for id in item::QUOTAS.iter().filter(|id| on.contains(id)) {
+            let r = hv.quotas.reading(id);
+            let percent = menu::percent(r.as_ref().map(|r| (r.ok(), r.used)));
+            let used = r.as_ref().filter(|r| r.ok()).and_then(|r| r.used);
+            let detail = r.as_ref().map_or_else(String::new, |r| r.detail.clone());
+            let name = item::short(id).to_string();
+            rings.push(status::Ring { id: id.to_string(), used, percent: percent.clone(), tip: format!("{name}: {}", if detail.is_empty() { "Reading…" } else { &detail }) });
+            rows.push(menu::QuotaRow { id: id.to_string(), name, percent, detail, used });
+        }
+        let working: Vec<menu::Working> = sessions.iter().filter(|s| s.busy() || s.waiting()).map(|s| menu::Working {
+            id: s.id, tool: s.tool.id().to_string(), title: s.title(),
+            what: if s.waiting() { "Needs your approval".into() } else { let (verb, obj) = hover_agents::words::activity(s); format!("{verb} {obj}").trim().to_string() },
+        }).collect();
+        let keys = hv.settings.sc_workspace().label();
+        let entries = menu::build(&menu::Inputs {
+            readers: &readers, rows: &rows, working: &working, office_keys: &keys, voice_on: hv.settings.voice().enabled,
+            hover_opens: hv.settings.hover_opens_workspace(), login: hover_core::platform::SystemAutostart.enabled(), reading: false,
+        });
+        bar.set(entries, rings);
+    }
+
+    /// A click in the menu bar's menu.
+    #[cfg(target_os = "macos")]
+    pub fn mac_act(self: &Rc<Self>, act: hover_app::mac::menu::Act) {
+        use hover_app::mac::menu::Act;
+        let st = &self.hover.settings;
+        match act {
+            Act::Office => self.toggle(),
+            Act::Window => self.open_dashboard(false),
+            // Start a Voice Task: a tap, which listens hands-free until the next press.
+            Act::Voice => { self.voice_press(false); self.voice.release(); }
+            Act::HoverOpens => { st.set_hover_opens_workspace(!st.hover_opens_workspace()); view::Host::settings_changed(&**self); self.refresh_page(false); }
+            Act::Login => self.menu_item(3),
+            Act::Settings => self.open_dashboard(true),
+            Act::Refresh | Act::Reread => self.hover.refresh_quotas(true),
+            Act::Quit => view::Host::quit(&**self),
+            Act::ToggleQuota(id) => {
+                st.set_notch_item(&id, !st.has_notch_item(&id));
+                self.hover.refresh_quotas(false);
+                self.update_rest();
+                self.refresh_page(false);
+            }
+            Act::Session(id) => { self.open_session(id); self.expand(false, true); }
         }
     }
 
@@ -704,7 +793,7 @@ impl App {
     }
 
     fn hotkey_warning(self: &Rc<Self>, label: &str) {
-        let who = if cfg!(windows) { "Windows has reserved it" } else { "The desktop has reserved it" };
+        let who = if cfg!(windows) { "Windows has reserved it" } else if cfg!(target_os = "macos") { "macOS has reserved it" } else { "The desktop has reserved it" };
         let message = format!("Hover couldn't register the notch shortcut, {label}.\n\n{who} or another app is already using it. Choose a different shortcut in Settings → General.");
         hover_core::log::line(&message.replace('\n', " "));
         if self.headless { return; }
@@ -765,7 +854,7 @@ impl view::Host for App {
         std::thread::spawn(move || { hover_agents::agents::check(tool, fresh); ui_do(|a| a.refresh_page(false)); });
     }
     fn action(&self, id: &str) {
-        APP.with(|a| if let Some(a) = a.borrow().clone() { a.voice_action(id); });
+        APP.with(|a| if let Some(a) = a.borrow().clone() { if id.starts_with("integ.") { a.integ_action(id); } else { a.voice_action(id); } });
     }
 }
 
@@ -774,8 +863,14 @@ impl view::Host for App {
 pub fn pick(folder: bool) -> Option<String> {
     #[cfg(windows)]
     return win::pick(folder);
-    #[cfg(not(windows))]
+    #[cfg(target_os = "linux")]
     return x11::pick(folder);
+    #[cfg(target_os = "macos")]
+    return objc2::MainThreadMarker::new().and_then(|mtm| if folder {
+        hover_app::mac::cocoa::pick(mtm, true, "Choose the folder the agent works in", &[])
+    } else {
+        hover_app::mac::cocoa::pick(mtm, false, "Import a VS Code theme file", &["json"])
+    });
 }
 
 /// The image picker for + in the task box and the reply (the page's file input:
@@ -783,8 +878,10 @@ pub fn pick(folder: bool) -> Option<String> {
 pub fn pick_image() -> Option<String> {
     #[cfg(windows)]
     return win::pick_image();
-    #[cfg(not(windows))]
+    #[cfg(target_os = "linux")]
     return x11::pick_image();
+    #[cfg(target_os = "macos")]
+    return objc2::MainThreadMarker::new().and_then(|mtm| hover_app::mac::cocoa::pick(mtm, false, "Attach an image", &["png", "jpg", "jpeg", "gif", "webp"]));
 }
 
 // MARK: The page's localStorage (office.beats, office.view)
@@ -821,12 +918,15 @@ fn main() {
         Err(e) => { hover_core::log::line(&format!("single instance: {e}")); return; }
     };
 
-    #[cfg(not(windows))]
+    #[cfg(target_os = "linux")]
     {
         // No layer-shell in winit: on Wayland the notch runs through XWayland, where an
         // override-redirect window can sit at the top centre (see the report).
         if std::env::var_os("HOVER_WAYLAND").is_none() { std::env::remove_var("WAYLAND_DISPLAY"); }
     }
+    // Before anything starts an agent: a Finder launch has launchd's minimal PATH.
+    #[cfg(target_os = "macos")]
+    mac_environment();
     select_backend();
     #[cfg(not(windows))]
     on_signals();
@@ -837,15 +937,23 @@ fn main() {
     hover_core::platform::watch_look(|| ui_do(|a| a.look_changed(hover_core::platform::look())));
     hover_core::log::line("started");
     if bench::active() { bench::listen(); }
-    #[cfg(not(windows))]
+    // `open -a Hover --args --settings voice` opens Settings on that page (the Mac app's).
+    #[cfg(target_os = "macos")]
+    if let Some(i) = args.iter().position(|a| a == "--settings") {
+        let name = args.get(i + 1).map(|s| s.to_lowercase()).unwrap_or_default();
+        let section = Section::ALL.iter().copied().find(|s| s.title().to_lowercase().replace(' ', "-") == name || (name == "usage" && *s == Section::Integrations)).unwrap_or(Section::General);
+        let a = app.clone();
+        Timer::single_shot(Duration::from_millis(500), move || { a.open_dashboard(true); a.show_settings_in(1, section); });
+    }
+    #[cfg(target_os = "linux")]
     if let Some(dir) = selftest {
         let a = app.clone();
         Timer::single_shot(Duration::from_millis(500), move || selftest::start(a, std::path::PathBuf::from(dir)));
     }
     // The product's self-test drives X11; on Windows the notch's is notch-proto's for now
-    // (RUN-ON-WINDOWS, 3C).
-    #[cfg(windows)]
-    if selftest.is_some() { hover_core::log::line("--selftest: not in the Windows build yet; run notch-proto --selftest"); }
+    // (RUN-ON-WINDOWS, 3C), and macOS has none yet.
+    #[cfg(not(target_os = "linux"))]
+    if selftest.is_some() { hover_core::log::line("--selftest: only the X11 build has one; run notch-proto --selftest on Windows"); }
     let _ = slint::run_event_loop_until_quit();
     hover_core::log::line("quitting");
     // A recording or a local transcription stops first (and Phonon's helper with it).
@@ -855,12 +963,18 @@ fn main() {
     app.beats.toggle(false);
     #[cfg(windows)]
     win::tray_stop();
+    #[cfg(target_os = "macos")]
+    {
+        hover_app::mac::hotkey::stop();
+        hover_app::browser_host::uninstall();
+    }
     APP.with(|a| a.borrow_mut().take());
     hover_core::log::line("quit: tools shut down, history and settings flushed");
 }
 
 /// One renderer for the process: femtovg on wgpu through DirectComposition on Windows
-/// (per-pixel alpha in the notch), femtovg on OpenGL elsewhere (an ARGB visual on X11).
+/// (per-pixel alpha in the notch), femtovg on wgpu through Metal on macOS, femtovg on
+/// OpenGL on Linux (an ARGB visual on X11).
 fn select_backend() {
     #[cfg(windows)]
     let sel = {
@@ -878,7 +992,30 @@ fn select_backend() {
         };
         slint::BackendSelector::new().backend_name("winit".into()).renderer_name("femtovg-wgpu".into()).require_wgpu_30(config)
     };
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
+    let sel = {
+        use slint::winit_030::{winit, EventLoopBuilder, SlintEvent};
+        use slint::wgpu_30::{wgpu, WGPUConfiguration, WGPUSettings};
+        let config = match shared_gpu() {
+            Ok(c) => c,
+            Err(e) => {
+                hover_core::log::line(&format!("shared GPU device: {e}; each window makes its own"));
+                let mut s = WGPUSettings::default();
+                s.backends = wgpu::Backends::METAL;
+                s.power_preference = wgpu::PowerPreference::LowPower;
+                WGPUConfiguration::Automatic(s)
+            }
+        };
+        // No Dock icon and no menu bar of its own, and no stealing the focus at launch: the
+        // notch is a thing that hovers over the screen, not an app in front.
+        let mut lp: EventLoopBuilder = winit::event_loop::EventLoop::<SlintEvent>::with_user_event();
+        {
+            use winit::platform::macos::{ActivationPolicy, EventLoopBuilderExtMacOS};
+            lp.with_activation_policy(ActivationPolicy::Accessory).with_default_menu(false).with_activate_ignoring_other_apps(false);
+        }
+        slint::BackendSelector::new().backend_name("winit".into()).renderer_name("femtovg-wgpu".into()).require_wgpu_30(config).with_winit_event_loop_builder(lp)
+    };
+    #[cfg(target_os = "linux")]
     let sel = slint::BackendSelector::new().backend_name("winit".into())
         .renderer_name(std::env::var("HOVER_RENDERER").unwrap_or_else(|_| "femtovg".into()));
     let sel = sel.with_winit_window_attributes_hook(notch_attributes);
@@ -906,10 +1043,17 @@ fn notch_attributes(a: slint::winit_030::winit::window::WindowAttributes) -> sli
             use winit::platform::windows::WindowAttributesExtWindows;
             a.with_no_redirection_bitmap(true).with_skip_taskbar(true).with_undecorated_shadow(false).with_class_name("HoverNotch")
         };
-        #[cfg(not(windows))]
+        #[cfg(target_os = "linux")]
         let a = {
             use winit::platform::x11::{WindowAttributesExtX11, WindowType};
             a.with_override_redirect(true).with_x11_window_type(vec![WindowType::Dock]).with_name("hover", "Hover")
+        };
+        // The level, the Spaces and the keyboard are set on the NSWindow itself once it
+        // exists (mac/plat.rs); here it is only kept from drawing a shadow.
+        #[cfg(target_os = "macos")]
+        let a = {
+            use winit::platform::macos::WindowAttributesExtMacOS;
+            a.with_has_shadow(false).with_movable_by_window_background(false)
         };
         a
     }
@@ -962,7 +1106,41 @@ fn shared_gpu() -> Result<slint::wgpu_30::WGPUConfiguration, String> {
     Ok(WGPUConfiguration::Manual { instance, adapter, device, queue })
 }
 
-#[cfg(not(windows))]
+/// One Metal device for every window and the office, as Windows shares its DX12 one: the
+/// office draws on it (hover-office's `share_device`) and so does Slint. Low power: the
+/// integrated GPU of a MacBook with two.
+#[cfg(target_os = "macos")]
+fn shared_gpu() -> Result<slint::wgpu_30::WGPUConfiguration, String> {
+    use slint::wgpu_30::{wgpu, WGPUConfiguration};
+    let instance = wgpu::Instance::new({
+        let mut d = wgpu::InstanceDescriptor::new_without_display_handle();
+        d.backends = wgpu::Backends::METAL;
+        d
+    });
+    let adapter = futures_lite::future::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions { power_preference: wgpu::PowerPreference::LowPower, ..Default::default() }))
+        .map_err(|e| format!("no GPU adapter: {e}"))?;
+    let limits = wgpu::Limits::default().using_resolution(adapter.limits());
+    let (device, queue) = futures_lite::future::block_on(adapter.request_device(&wgpu::DeviceDescriptor { label: Some("hover"), required_limits: limits, ..Default::default() }))
+        .map_err(|e| e.to_string())?;
+    let info = adapter.get_info();
+    hover_core::log::line(&format!("GPU: {} ({:?})", info.name, info.backend));
+    hover_office::render::share_device(device.clone(), queue.clone(), format!("{} ({:?})", info.name, info.backend), info.device_type == wgpu::DeviceType::Cpu);
+    Ok(WGPUConfiguration::Manual { instance, adapter, device, queue })
+}
+
+/// Before anything starts an agent: the login shell's PATH and friends go into Hover's own
+/// environment, so every tool it runs finds what a terminal would (ShellEnvironment.swift).
+#[cfg(target_os = "macos")]
+fn mac_environment() {
+    use std::collections::HashMap;
+    let started = Instant::now();
+    let base: HashMap<String, String> = std::env::vars().collect();
+    let env = hover_app::mac::shell_env::resolve(&base);
+    for (k, v) in &env { if base.get(k) != Some(v) { std::env::set_var(k, v); } }
+    hover_core::log::line(&format!("shell environment read in {} ms", started.elapsed().as_millis()));
+}
+
+#[cfg(target_os = "linux")]
 fn platform_start(hover: Arc<Hover>, look: Look, _selftest: bool) -> Rc<App> {
     let Some((conn, root, size)) = x11::connect() else {
         hover_core::log::line("no X display: the notch is a plain window");
@@ -1068,12 +1246,87 @@ fn platform_start(hover: Arc<Hover>, look: Look, _selftest: bool) -> Rc<App> {
     app
 }
 
+#[cfg(target_os = "macos")]
+fn platform_start(hover: Arc<Hover>, look: Look, _selftest: bool) -> Rc<App> {
+    use hover_app::mac::{cocoa, hotkey, keycodes, menu::Act, status::StatusBar};
+    let Some(mtm) = objc2::MainThreadMarker::new() else {
+        hover_core::log::line("not on the main thread: the notch is a plain window");
+        return App::new(hover, Box::new(shots::Plain), look, false);
+    };
+    cocoa::accessory(mtm);
+    let plat = macplat::Mac::new(mtm);
+    let win_cell = plat.win.clone();
+    let app = App::new(hover, Box::new(plat), look, false);
+    let _ = app.notch.window().set_rendering_notifier(|s, _| {
+        if matches!(s, slint::RenderingState::AfterRendering) { FRAMES.fetch_add(1, std::sync::atomic::Ordering::Relaxed); }
+    });
+    let _ = app.notch.show();
+    // The menu bar: the usage rings, and the menu. A click is handled once the menu has closed.
+    *app.bar.borrow_mut() = Some(StatusBar::new(mtm, |act: Act| ui_do(move |a| a.mac_act(act))));
+    // Settings changes refresh the page; the menu's ticks (Launch at Login) follow.
+    *app.tray_menu.borrow_mut() = Some(Box::new(|_| ui_do(|a| a.update_rest())));
+    // Option-N: the shortcut, rebindable; a refusal is warned about once per chord.
+    *app.hotkey.borrow_mut() = Some(Box::new(|sc| {
+        let Some(code) = keycodes::keycode(sc.key) else { hover_core::log::line(&format!("hotkey {} has no key on a Mac keyboard", sc.label())); return false };
+        hotkey::unregister(1);
+        if !sc.is_set() { return true; }
+        match hotkey::register(1, code, keycodes::carbon_mask(sc.modifiers), keycodes::ns_mask(sc.modifiers), false, std::sync::Arc::new(|down| if down { ui_do(|a| a.toggle()) })) {
+            Ok(()) => true,
+            Err(e) => { hover_core::log::line(&format!("hotkey {}: {}", sc.label(), hotkey::refusal(e, &sc.label()))); false }
+        }
+    }));
+    // Hold to talk (Control-Option-Space): the press and the release are told the UI thread.
+    *app.voice_ui.hold.borrow_mut() = Some(Box::new(|sc| match sc {
+        Some(sc) => {
+            let code = keycodes::keycode(sc.key).ok_or_else(|| format!("{} has no key on a Mac keyboard.", sc.label()))?;
+            hotkey::register(2, code, keycodes::carbon_mask(sc.modifiers), keycodes::ns_mask(sc.modifiers), true,
+                std::sync::Arc::new(|down| if down { ui_do(|a| a.voice_press(false)) } else { ui_do(|a| a.voice.release()) }))
+                .map_err(|e| hotkey::refusal(e, &sc.label()))
+        }
+        None => { hotkey::unregister(2); Ok(()) }
+    }));
+    *app.notify.borrow_mut() = Some(Box::new(|t, b| cocoa::notify(t, b)));
+    // Hover's own browser: a WKWebView per session, which the agents drive through the MCP
+    // server. OpenCode has one server for all its sessions: its calls are for the one at work.
+    hover_app::browser_host::install();
+    let h = app.hover.clone();
+    hover_app::browser_host::set_resolver(move || h.sessions.all_light().into_iter().find(|s| s.tool == hover_core::model::AgentTool::OpenCode && s.busy()).map(|s| s.key));
+    // winit makes its windows once the event loop runs: the notch's NSWindow is picked up
+    // from there, as on X11, and given its level, its Spaces and its no-key class.
+    let a = app.clone();
+    let find = Rc::new(Timer::default());
+    let f2 = find.clone();
+    find.start(TimerMode::Repeated, Duration::from_millis(10), move || {
+        let Some(w) = macplat::window_of(a.notch.window()) else { return };
+        f2.stop();
+        macplat::configure(&w);
+        *win_cell.borrow_mut() = Some(w);
+        notch::layout(&a.notch, &mut a.n.borrow_mut(), view::argb(a.palette.borrow().panel));
+        a.update_rest();
+        a.register_hotkeys();
+        a.register_voice();
+        bench::visible();
+        // The window was made off screen, where it had no display to take a scale from:
+        // lay it out again once AppKit has settled it on the notch's.
+        let a2 = a.clone();
+        Timer::single_shot(Duration::from_millis(400), move || {
+            notch::layout(&a2.notch, &mut a2.n.borrow_mut(), view::argb(a2.palette.borrow().panel));
+            a2.update_rest();
+        });
+    });
+    std::mem::forget(find);
+    app
+}
+
 /// A link in the chat opens in the browser, as KiroPage's `link` did (http(s) only:
 /// hover-md makes sure).
 pub fn open_url(url: &str) {
     #[cfg(windows)]
     let r = std::process::Command::new("rundll32").args(["url.dll,FileProtocolHandler", url]).spawn();
-    #[cfg(not(windows))]
+    #[cfg(target_os = "linux")]
     let r = std::process::Command::new("xdg-open").arg(url).spawn();
+    // `open` takes the address as an argument, never through a shell.
+    #[cfg(target_os = "macos")]
+    let r = std::process::Command::new("/usr/bin/open").arg(url).spawn();
     if let Err(e) = r { hover_core::log::line(&format!("couldn't open {url}: {e}")); }
 }

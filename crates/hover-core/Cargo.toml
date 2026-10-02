@@ -27,9 +27,17 @@ chrono = { version = "0.4", default-features = false, features = ["std", "clock"
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.62", features = ["Win32_Foundation", "Win32_Security_Cryptography", "Win32_UI_Shell", "Win32_System_Com", "Win32_System_Registry", "Win32_System_Threading", "Win32_Security", "Win32_UI_WindowsAndMessaging"] }
 
-[target.'cfg(unix)'.dependencies]
-# Already in the tree (accesskit_unix): the Secret Service over D-Bus, for note.key.
+[target.'cfg(target_os = "linux")'.dependencies]
+# Already in the tree (accesskit_unix): the Secret Service over D-Bus, for note.key, and
+# the settings portal, for the look. Linux only: macOS has the Keychain, below.
 zbus = { version = "5", default-features = false, features = ["async-io", "blocking-api"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+# In Cargo.lock already (native-tls' macOS backend): Security.framework's bindings,
+# pure Rust, for note.key in the login Keychain and for Claude Code's sign-in. A secret
+# must not go through the `security` command line, where ps shows it. Pinned to the
+# locked version.
+security-framework = { version = "=3.7.0", default-features = false }
 
 [dev-dependencies]
 serde_json = "1"

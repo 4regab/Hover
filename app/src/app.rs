@@ -74,6 +74,10 @@ impl Hover {
             let s = settings.clone();
             h.on_options_seen(move |tool, offers| s.set_agent_offers(tool, offers));
         }
+        // Computer use, the sandbox and the agent browser (Settings → Integrations) are read at
+        // every tool start.
+        let st = settings.clone();
+        hover_agents::agents::set_toggles(move || hover_agents::agents::Toggles { computer_use: st.computer_use(), sandbox: st.sandbox(), agent_browser: st.agent_browser(), folder: st.kiro_folder() });
         let runners: Vec<(AgentTool, Runtime)> = hosts.iter().map(|h| (h.tool(), h.clone())).collect();
         let run2 = run.clone();
         let sessions = KiroSessions::new(move |tool| match &run2 {
@@ -177,6 +181,8 @@ impl Hover {
     pub fn shutdown(&self) {
         self.sessions.stop_all();
         for h in &self.hosts { h.shutdown("Hover quit"); }
+        // The agent browser's socket and its relay (a Mac's).
+        hover_agents::browser::stop();
         if let Some(h) = &self.history { h.flush(); }
         self.settings.flush();
     }

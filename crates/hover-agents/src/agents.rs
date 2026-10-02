@@ -32,6 +32,35 @@ pub fn find(name: &str) -> Option<PathBuf> { on_path(name).or_else(|| user_bin(n
 /// The oldest OpenCode whose server API Hover was checked against (T3 Code's floor).
 pub const OPENCODE_MIN_VERSION: &str = "1.14.19";
 
+/// What the macOS build's settings say about the agent integrations, read whenever a
+/// tool starts or a session is made: computer use (off until switched on), the sandbox
+/// and Hover's agent browser (on until switched off), and the folder new tasks start in
+/// (Settings.KiroFolder; the sandbox opens it for the next start).
+#[derive(Clone, Debug, PartialEq)]
+pub struct Toggles { pub computer_use: bool, pub sandbox: bool, pub agent_browser: bool, pub folder: Option<String> }
+
+impl Default for Toggles {
+    /// Settings' own defaults, for a host that never gave any.
+    fn default() -> Self { Toggles { computer_use: false, sandbox: true, agent_browser: true, folder: None } }
+}
+
+type TogglesFn = Box<dyn Fn() -> Toggles + Send + Sync>;
+
+fn toggles_fn() -> &'static Mutex<Option<std::sync::Arc<TogglesFn>>> {
+    static T: OnceLock<Mutex<Option<std::sync::Arc<TogglesFn>>>> = OnceLock::new();
+    T.get_or_init(Default::default)
+}
+
+/// Where the toggles come from: the app hands in a reader of its settings (hover-core's
+/// `Settings::computer_use`, `sandbox`, `agent_browser` and `kiro_folder`).
+pub fn set_toggles(f: impl Fn() -> Toggles + Send + Sync + 'static) { *toggles_fn().lock().unwrap() = Some(std::sync::Arc::new(Box::new(f))); }
+
+/// The toggles now: the app's, or Settings' defaults when none were given.
+pub fn toggles() -> Toggles {
+    let f = toggles_fn().lock().unwrap().clone();
+    f.map_or_else(Toggles::default, |f| f())
+}
+
 /// The program that runs the tool, or none when it isn't installed.
 pub fn exe(t: AgentTool) -> Option<PathBuf> {
     match t {

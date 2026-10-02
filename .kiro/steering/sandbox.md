@@ -1,48 +1,51 @@
-# Run code in the sandbox, out of the user's way
+# Run code out of the user's way, and know Hover's own sandbox
 
-The user's Mac is in daily use (Microsoft Office and other apps). Earlier agent work
-there got in the way: a near-invisible test window that swallowed clicks, Hover
-launched for smoke tests, apps registered with LaunchServices, builds using every core.
-So code runs only inside Anthropic's sandbox-runtime (srt), through
-`scripts/sandbox.sh`.
+The user's Mac is in daily use (Microsoft Office and other apps). Earlier agent work there
+got in the way: a near-invisible test window that swallowed clicks, Hover launched for
+smoke tests, apps registered with LaunchServices, builds using every core. These rules keep
+that from happening again while Hover gains macOS support in Rust.
 
-## The sandbox
+## Hover's sandbox (the feature)
 
-`scripts/sandbox.sh -- <command> [args...]` runs a command on this checkout under srt,
-at background priority (efficiency cores, throttled disk I/O). Inside it:
+`crates/hover-agents/src/sandbox.rs` starts every agent tool under Anthropic's
+sandbox-runtime (`srt`, version `sandbox::VERSION`): sandbox-exec with a generated profile
+on a Mac, bubblewrap on Linux. It is on by default (Settings → Integrations → Sandbox) and
+off on Windows, with the note "The sandbox needs macOS or Linux." Inside it:
 
-- Writes go only to this checkout (never its `.git` or `.kiro`), srt's temp folder
-  `/private/tmp/claude/hover` and the user's own macOS temp folder (Apple's tools
-  ignore TMPDIR). Caches and Hover's data folder live in `.sandbox/` (git-ignored,
-  not indexed by Spotlight).
-- Unix sockets only inside that temp folder. MSBuild's worker nodes can't connect,
-  so `scripts/sandbox.sh -- dotnet build …` adds `-m:1` itself; scripts that call
-  dotnet pass `$HOVER_DOTNET_ARGS`.
-- SSH and cloud keys, keychains, mail, other apps' data and the user's documents are
-  unreadable (only this checkout is readable in `~/Documents`).
-- No window server and no Apple Events: nothing can open a window, take focus, or
-  launch or script an app.
-- The network goes through srt's proxy, to package registries and GitHub only.
-  `HOVER_SANDBOX_DOMAINS="a.com,*.b.com"` adds hosts; `--offline` allows none.
+- Writes go only to the folders the tool's sessions work in, the tool's own state and
+  caches, and temp. The folders are fixed when the tool starts, so a session in another
+  folder gets the tool started again when nothing of it runs.
+- Keys, keychains, mail, messages, browsers' data and other apps' data (Office's included)
+  can't be read, nor Hover's own.
+- No window server and no Apple Events: nothing can open a window, take focus, or launch
+  or script an app.
+- The network goes only through srt's proxy, to the tool's own service, package registries
+  and GitHub, plus the hosts in `<data>/sandbox/allowed-domains.txt`.
+- Computer use still works: Cua Driver's daemon runs outside the sandbox, and the agent's
+  `cua-driver` reaches it over one Unix socket.
 
-`scripts/sandbox.sh check` proves each of those holds. Run it once per session before
-other work; if any line says FAIL, stop and tell the user.
+If `srt` or `rg` (on Linux also `bwrap` and `socat`) is missing, or Hover is already inside
+a sandbox (`HOVER_SANDBOXED=1`), the tool starts unsandboxed and `hover.log` says why; the
+settings page shows what is missing. The settings text and the argument list are built by
+plain functions (`config`, `srt_args`, `plan`) that the tests run on every OS
+(`crates/hover-agents/tests/sandbox.rs`). A change there needs a test there.
 
-## Rules
+## Working on this repo on the user's Mac
 
-- Run every build, test, script, package install and code check through
-  `scripts/sandbox.sh -- …`: `dotnet build`, `dotnet test`, `npm ci`,
-  `node web/office/build.mjs`, `scripts/build-macos.sh`, `scripts/test-macos.sh`
-  (it sees `HOVER_SRT=1` and skips its on-screen app smokes), and anything else that
-  executes code.
-- On the host itself, only: reading and searching files, editing with the editor
-  tools, read-only git (`status`, `diff`, `log`), `scripts/sandbox.sh`, and web lookups.
-- Never on the host: open a window (even transparent or off screen), launch or
-  `open` an app, start a browser, take focus, run `lsregister`, `tccutil`,
-  `defaults write`, `osascript`, or kill anything you didn't start, or install
-  software. Ask the user first if one of these is truly needed.
-- Checks that need a screen (rendering the office, Hover's UI smoke tests) can't run
-  in the sandbox. Say so and ask the user before running one outside it.
-- If srt is missing or `check` fails, stop and tell the user. Don't fall back to the host.
-- Installing the user's own copy of Hover (`/Applications/Hover.app`) is for them to
-  ask for; a build stays in the checkout for them.
+- Edit, read and search files, read-only git (`status`, `diff`, `log`), and run builds and
+  tests that need no screen: `cargo check`, `cargo clippy`, `cargo test`. If `srt` is
+  installed, run them under it with the settings `sandbox::config` writes, at low priority
+  (`nice`), and ask before raising the limits.
+- Never on the host: open a window (even transparent or off screen), run or `open`
+  `hoverai` or `Hover.app`, start a browser, take focus, run `lsregister`, `tccutil`,
+  `defaults write` or `osascript`, kill anything you didn't start, or install software.
+  Ask the user first if one is truly needed.
+- `hoverai --shots` draws with the software renderer and opens no window, but it is for
+  Windows and Linux; on a Mac ask first.
+- Anything that needs a screen (the notch, the menu bar, the WKWebView, the permission
+  prompts) can't be checked in a sandbox. Say that it was not run, and ask the user before
+  running it outside one.
+- Installing the user's own copy (`/Applications/Hover.app`) is for them to ask for: a build
+  stays in the checkout (`dist/Hover.app`).
+- If `srt` is missing, say so. Don't fall back to running things on the host that the
+  rules above forbid.

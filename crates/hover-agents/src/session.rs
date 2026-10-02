@@ -36,6 +36,9 @@ pub struct RunArgs {
     pub events: Box<dyn Fn(KiroEvent) + Send + Sync>,
     /// The session's own tool access (AgentOptions::with_access); None keeps the tool's.
     pub access: Option<String>,
+    /// The session's key: what the agent browser's server is tagged with, so its calls
+    /// reach this session's browser. None for a run that is no session's (voice's routing).
+    pub tag: Option<String>,
 }
 
 /// Runs one turn and blocks until it ends; a panic reads as a failure.
@@ -124,7 +127,9 @@ impl KiroSession {
             turns: self.turns.iter().map(|t| KiroTurn {
                 prompt: t.prompt.clone(), images: t.images.clone(),
                 steps: t.steps.iter().map(|x| KiroStep { id: x.id.clone(), kind: x.kind.clone(), title: x.title.clone(), target: x.target.clone(), status: x.status.clone(),
-                    added: x.added, removed: x.removed, diff: None, output: None, exit: x.exit, ms: x.ms }).collect(),
+                    added: x.added, removed: x.removed, diff: None, output: None, exit: x.exit, ms: x.ms,
+                    // Only a subagent's input (its name is in it); the rest is for the desk's panels, which read the whole session.
+                    input: x.input.clone().filter(|_| crate::state::is_subagent(x)), log: None }).collect(),
                 result: t.result.as_ref().map(|r| KiroResult { state: r.state, text: String::new(), exit_code: r.exit_code, unconfirmed: r.unconfirmed }),
                 queued: t.queued, started_at: t.started_at, woke_at: t.woke_at, ended_at: t.ended_at, credits: t.credits,
                 before: t.before.clone(), after: t.after.clone(),
@@ -656,7 +661,8 @@ fn go(me: Weak<Shared>, id: i32, ti: usize, run: RunTask, ct: Cancel, cp: Option
             }
         }) { ks.raise(vec![Note::Changed]); }
     });
-    let args = RunArgs { folder, prompt, progress, ct: ct.clone(), resume, events, access };
+    let tag = me.upgrade().and_then(|sh| sh.inner.lock().unwrap().all.iter().find(|x| x.s.id == id).map(|x| x.s.key.clone()));
+    let args = RunArgs { folder, prompt, progress, ct: ct.clone(), resume, events, access, tag };
     let mut r = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run(args))) {
         Ok(r) => r,
         Err(p) => KiroResult::new(KiroState::Failed, p.downcast_ref::<String>().cloned().or_else(|| p.downcast_ref::<&str>().map(|s| s.to_string())).unwrap_or_else(|| "The run failed.".into())),

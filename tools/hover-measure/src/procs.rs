@@ -124,3 +124,12 @@ mod imp {
         true
     }
 }
+
+/// The memory counters are read from /proc or the Windows APIs; a Mac has neither here, so the
+/// tool compiles there (CI checks the whole workspace) and sees no processes.
+#[cfg(not(any(windows, target_os = "linux")))]
+mod imp {
+    use super::Proc;
+    pub fn list() -> Vec<Proc> { vec![] }
+    pub fn counters(_: &mut Proc) -> bool { false }
+}

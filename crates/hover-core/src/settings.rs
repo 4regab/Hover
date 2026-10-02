@@ -35,6 +35,15 @@ pub struct Model {
     /// What each tool last offered (models, efforts, modes), for its settings page.
     pub agent_offers: Option<Vec<(String, Option<Vec<AcpOption>>)>>,
     pub agent_tool: Option<String>,
+    /// Agents get Cua Driver's MCP server (macOS build, Services/ComputerUse.cs). Off
+    /// until switched on; written only once it is on.
+    pub computer_use: bool,
+    /// Agents run inside srt (Services/Sandbox.cs). None (never set) is on; written only
+    /// once it has been set.
+    pub sandbox: Option<bool>,
+    /// Agents get Hover's own browser as an MCP server, where the host has one
+    /// (Services/BrowserTool.cs). None (never set) is on; written only once set.
+    pub agent_browser: Option<bool>,
     pub sc_workspace: Shortcut,
     /// The registered projects, voice's settings and its default workspace (new in 3.x;
     /// null in a file from before them).
@@ -49,7 +58,7 @@ impl Default for Model {
             hover_opens_workspace: true, notch_items: None, appearance: Appearance::System, theme: None, workspace_size: WorkspaceSize::Default,
             kiro_folder: None, kiro_notice_seen: false, kiro_model: None, kiro_effort: Some("high".into()), kiro_agent: None,
             kiro_read_only: false, kiro_require_mcp: false, kiro_idle_minutes: 5, kiro_hide_steps: false, kiro_approval: AgentApproval::Autopilot, agents: None, agent_offers: None,
-            agent_tool: None, sc_workspace: Shortcut::DEFAULT, projects: None, voice: None, default_workspace: None,
+            agent_tool: None, computer_use: false, sandbox: None, agent_browser: None, sc_workspace: Shortcut::DEFAULT, projects: None, voice: None, default_workspace: None,
         }
     }
 }
@@ -61,7 +70,15 @@ fn enum_or<T>(v: &Json, names: &[&str], make: fn(usize) -> T, default: T) -> Res
 impl Model {
     pub fn to_json(&self) -> Json {
         let s = |v: &Option<String>| Json::opt_str_of(v.as_deref());
-        Json::obj(vec![
+        // The three toggles the macOS build added come after AgentTool (as Settings.cs
+        // declares them) and are written only once set, so a file that never used them
+        // stays as 3.x wrote it.
+        let toggles: Vec<(&str, Json)> = [
+            self.computer_use.then_some(("ComputerUse", Json::Bool(true))),
+            self.sandbox.map(|v| ("Sandbox", Json::Bool(v))),
+            self.agent_browser.map(|v| ("AgentBrowser", Json::Bool(v))),
+        ].into_iter().flatten().collect();
+        let mut props = vec![
             ("HoverOpensWorkspace", Json::Bool(self.hover_opens_workspace)),
             ("NotchItems", self.notch_items.as_ref().map_or(Json::Null, |l| Json::Arr(l.iter().map(s).collect()))),
             ("Appearance", Json::str(Appearance::NAMES[self.appearance as usize])),
@@ -85,7 +102,10 @@ impl Model {
             ("Projects", self.projects.as_ref().map_or(Json::Null, |l| Json::Arr(l.iter().map(Project::to_json).collect()))),
             ("Voice", self.voice.as_ref().map_or(Json::Null, VoiceSettings::to_json)),
             ("DefaultWorkspace", self.default_workspace.as_ref().map_or(Json::Null, Workspace::to_json)),
-        ])
+        ];
+        let at = props.iter().position(|(k, _)| *k == "ScWorkspace").unwrap_or(props.len());
+        props.splice(at..at, toggles);
+        Json::obj(props)
     }
 
     /// Deserialize<Model>: the defaults, then each property the file names, in file
@@ -114,6 +134,9 @@ impl Model {
                 "AgentOffers" => m.agent_offers = x.opt_map(|l| l.opt_list(|o| if o.is_null() { Ok(None) } else { AcpOption::from_json(o).map(Some) })
                     .map(|l| l.map(|l| l.into_iter().flatten().collect())))?,
                 "AgentTool" => m.agent_tool = opt_text(Some(x))?,
+                "ComputerUse" => m.computer_use = b()?,
+                "Sandbox" => m.sandbox = if x.is_null() { None } else { Some(b()?) },
+                "AgentBrowser" => m.agent_browser = if x.is_null() { None } else { Some(b()?) },
                 // A null shortcut would leave C# with none at all (and a crash where
                 // it is read); here it is unset, as a cleared shortcut is.
                 "ScWorkspace" => m.sc_workspace = if x.is_null() { Shortcut::default() } else { Shortcut::from_json(x)? },
@@ -311,6 +334,23 @@ impl Settings {
     pub fn agent_tool(&self) -> AgentTool { AgentTool::parse(self.m.lock().unwrap().agent_tool.as_deref()).unwrap_or(AgentTool::Kiro) }
     pub fn set_agent_tool(&self, t: AgentTool) { self.change(|m| m.agent_tool = Some(t.id().into())) }
 
+    /// Agents get Cua Driver as an MCP server, to see and drive apps in the background
+    /// (hover-agents::computer_use). Off until switched on; it reaches every tool from
+    /// its next session.
+    pub fn computer_use(&self) -> bool { self.m.lock().unwrap().computer_use }
+    pub fn set_computer_use(&self, v: bool) { self.change(|m| m.computer_use = v) }
+
+    /// Agents run inside Anthropic's sandbox-runtime (hover-agents::sandbox). On unless
+    /// switched off; a tool picks it up when it next starts.
+    pub fn sandbox(&self) -> bool { self.m.lock().unwrap().sandbox.unwrap_or(true) }
+    pub fn set_sandbox(&self, v: bool) { self.change(|m| m.sandbox = Some(v)) }
+
+    /// Agents get Hover's own browser as an MCP server, where the host has one
+    /// (hover-agents::browser). On unless switched off; a tool picks it up from its next
+    /// session.
+    pub fn agent_browser(&self) -> bool { self.m.lock().unwrap().agent_browser.unwrap_or(true) }
+    pub fn set_agent_browser(&self, v: bool) { self.change(|m| m.agent_browser = Some(v)) }
+
     /// Launch at login: outside settings.json, in the platform's own place.
     pub fn launch_at_login(&self) -> bool { self.autostart.enabled() }
     pub fn set_launch_at_login(&self, on: bool) {
@@ -442,6 +482,29 @@ mod tests {
     fn a_fresh_model_writes_as_system_text_json_writes_it() {
         assert_eq!(Model::default().to_json().indented("\r\n"), DEFAULT_FILE);
         assert_eq!(Model::from_json(&json::parse(DEFAULT_FILE).unwrap()).unwrap(), Model::default());
+    }
+
+    /// The macOS build's three toggles: computer use is off, the sandbox and the agent
+    /// browser are on until set; none is written until it has been, in Settings.cs' order.
+    #[test]
+    fn the_integration_toggles_are_written_only_once_set() {
+        let s = Settings::load(temp("toggles"));
+        assert!(!s.computer_use() && s.sandbox() && s.agent_browser());
+        assert_eq!(s.model().text(), Model::default().text(), "unset: the file is as 3.x wrote it");
+        s.set_sandbox(false);
+        s.set_computer_use(true);
+        s.set_agent_browser(true);
+        s.flush();
+        let text = std::fs::read_to_string(&s.file).unwrap();
+        let at = |k: &str| text.find(k).unwrap_or_else(|| panic!("{k} in {text}"));
+        assert!(text.contains("\"ComputerUse\": true") && text.contains("\"Sandbox\": false") && text.contains("\"AgentBrowser\": true"));
+        assert!(at("\"AgentTool\"") < at("\"ComputerUse\"") && at("\"ComputerUse\"") < at("\"Sandbox\"") && at("\"Sandbox\"") < at("\"AgentBrowser\"") && at("\"AgentBrowser\"") < at("\"ScWorkspace\""));
+        let back = Settings::load(s.file.clone());
+        assert!(back.computer_use() && !back.sandbox() && back.agent_browser());
+        // 2.x's macOS file wrote Sandbox and AgentBrowser as null when never set.
+        std::fs::write(&s.file, "{\"ComputerUse\": false, \"Sandbox\": null, \"AgentBrowser\": null}").unwrap();
+        let old = Settings::load(s.file.clone());
+        assert!(!old.computer_use() && old.sandbox() && old.agent_browser());
     }
 
     fn temp(name: &str) -> PathBuf {

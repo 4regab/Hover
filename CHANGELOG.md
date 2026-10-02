@@ -16,6 +16,49 @@ What changed in each Hover release. Versions follow [Semantic Versioning](https:
   that message and sends it again. Both ask first and only work while nothing runs, and the
   agent is told once that its folder and chat went back. Needs Git installed; deleting a
   session deletes its checkpoints.
+- macOS support, from Arz's (@Entourage397) macOS v1.0, which was written in Swift and C#
+  for 2.x and is ported here to the Rust app. It is a local build for now (CI compiles it,
+  there is no package); nothing of it has been run on a Mac yet.
+  - The notch over the camera housing (a pill on a Mac without one): the island puts its
+    items in wings either side of the housing and the office starts below it. Usage moves to
+    status items in the menu bar, each a logo in a ring with the percentage, and one menu for
+    them, the agents at work, the office, Launch at Login, Settings and Quit. Option-N and
+    Control-Option-Space work as global hot keys, and the shortcut recorder reads the physical
+    key, since Option changes the letter. A click on the resting notch never takes focus.
+  - Data in `~/Library/Application Support/Hover`, with the history key in the login
+    Keychain (and a history made by the first Swift build is adopted), single instance,
+    Launch at Login, light and dark, VS Code themes from `/Applications`, Claude Code's and
+    Cursor's quotas from the Keychain and Application Support, and Hover's environment taken
+    from the login shell so agents in Homebrew's folders are found. Local speech is off on a Mac,
+    with a note, until Phonon has a Mac runtime; Cloud (Groq) works.
+- The desk card. Click a desk to open a card at the click: what the agent is doing, the
+  question it waits on or its answer, a reply box, and eight tiles that open a panel:
+  Terminal, Files (search, tree, file view), Diff, Agents, Linked pull requests, the
+  branch's Pull request (with its checks), Browser and Screen. Hovering a bot or desk says
+  which it is.
+- Pull requests from the desk card. Hover sets up the GitHub CLI in one click (winget on
+  Windows, Homebrew on a Mac, else the command to run; the sign-in shows its device code
+  with Copy and Open), and Create pull request can commit the changes, make a branch,
+  push and open the pull request.
+- Helpers: a subagent at work shows as a small bot beside its parent's desk, which
+  files sheets at the tray.
+- A sandbox for agents (Settings → Integrations, on by default on a Mac and Linux). Each
+  tool runs under Anthropic's sandbox-runtime: it writes only to its folders, can't read
+  keys, mail or other apps' data, opens no windows, and reaches only the hosts it needs. If
+  `srt` isn't installed the tools start as before, and Settings says what is missing.
+- Computer use (off until switched on). Agents get Cua Driver, which operates other apps in
+  the background behind a guard that keeps it off your pointer and focus. Settings installs
+  it and asks for its permissions.
+- The agent browser (macOS). Agents get a browser they can open, read, click and type in,
+  shown in the desk card's Browser tab, which takes an address and has back, forward and
+  reload.
+- The Screen tab shows the desktop, and live the apps the agent is using while computer use
+  runs (on a Mac it asks for Screen Recording).
+- One-click agent setup (macOS): a Set up row on each agent's page installs what is
+  missing with the maker's own installer and opens the sign-in.
+- Features an OS can't run are off with the reason beside them (the sandbox on Windows, the
+  agent browser and setup off a Mac, local speech on a Mac).
+- CI compiles the workspace on macOS (`cargo check`, on pull requests too).
 
 ### Fixed
 

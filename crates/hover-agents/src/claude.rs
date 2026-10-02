@@ -16,10 +16,11 @@
 //! user. Read only switches off its edit and command tools (a deny beats any allow rule
 //! in the user's settings) and refuses whatever else would change something.
 
-use crate::acp::{Asking, Events, Progress};
+use crate::acp::{default_mcp, Asking, Events, McpFn, Progress};
 use crate::agents;
 use crate::ask::{self, AgentAsk, AgentQuestion, Answers, AskAnswer};
 use crate::cancel::Cancel;
+use crate::computer_use;
 use crate::opencode::Questioning;
 use crate::proc::{strip_ansi, Link};
 use crate::stream::{KiroEvent, KiroPhase, KiroResult, KiroStream};
@@ -78,6 +79,26 @@ pub fn launch_args(s: &Setup, resume: Option<&str>) -> Vec<String> {
     a.push("--setting-sources=user,project,local".into());
     if let Some(r) = resume { a.push(format!("--resume={r}")); }
     a
+}
+
+/// Where the MCP configs Hover hands Claude Code are written: its own folder, which the
+/// sandbox lets the tool read but not write. A file, not the command line: the config
+/// carries the session's browser token.
+pub fn mcp_dir() -> std::path::PathBuf { hover_core::paths::support().join("mcp") }
+
+/// Writes `--mcp-config`'s file for a session (its tag; one file for an untagged start),
+/// readable by the user only, replaced whole: its path.
+fn mcp_file(tag: Option<&str>, config: &str) -> std::io::Result<String> {
+    let dir = mcp_dir();
+    std::fs::create_dir_all(&dir)?;
+    let name: String = tag.unwrap_or("none").chars().filter(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_')).take(64).collect();
+    let file = dir.join(format!("claude-{name}.json"));
+    let tmp = dir.join(format!("claude-{name}.json.tmp"));
+    std::fs::write(&tmp, config)?;
+    #[cfg(unix)]
+    { use std::os::unix::fs::PermissionsExt; std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600))?; }
+    std::fs::rename(&tmp, &file)?;
+    Ok(file.to_string_lossy().into_owned())
 }
 
 fn s<'a>(e: &'a Json, k: &str) -> Option<&'a str> { e.get(k).and_then(Json::as_str) }
@@ -223,6 +244,8 @@ impl Turn {
 struct Proc {
     gen: u64,
     setup: Setup,
+    /// The MCP servers it was started with (computer_use::signature).
+    mcp: String,
     writer: Mutex<Box<dyn Write + Send>>,
     kill: Box<dyn Fn() + Send + Sync>,
     errors: Box<dyn Fn() -> String + Send + Sync>,
@@ -292,6 +315,9 @@ struct Host {
     seen: Mutex<Vec<Seen>>,
     asking: Mutex<Option<Asking>>,
     questioning: Mutex<Option<Questioning>>,
+    /// The MCP servers each conversation's process is handed (--mcp-config): computer use's
+    /// and Hover's browser.
+    mcp: Mutex<McpFn>,
 }
 
 /// Claude Code's runtime: shared by every Claude Code session, one process per conversation.
@@ -309,7 +335,9 @@ impl ClaudeHost {
             None => Ok(None),
             Some(exe) => {
                 let args: Vec<&str> = args.iter().map(String::as_str).collect();
-                crate::proc::launch_in(&exe, &args, &[], std::path::Path::new(folder)).map(Some)
+                // In the sandbox when it is wanted (sandbox.rs): started in the session's
+                // folder, which the sandbox opens for it.
+                crate::sandbox::launch(AgentTool::Claude, &exe, &args, &[], Some(std::path::Path::new(folder)), None).map(Some)
             }
         }, Timeouts::default())
     }
@@ -319,9 +347,13 @@ impl ClaudeHost {
         connect: impl Fn(&str, &[String]) -> std::io::Result<Option<Link>> + Send + Sync + 'static, t: Timeouts) -> ClaudeHost {
         ClaudeHost(Arc::new(Host {
             options: Box::new(options), connect: Box::new(connect), t, procs: Mutex::new(vec![]), gens: AtomicU64::new(0), trusted: Default::default(),
-            models: Mutex::new(vec![]), seen: Mutex::new(vec![]), asking: Mutex::new(None), questioning: Mutex::new(None),
+            models: Mutex::new(vec![]), seen: Mutex::new(vec![]), asking: Mutex::new(None), questioning: Mutex::new(None), mcp: Mutex::new(default_mcp(AgentTool::Claude)),
         }))
     }
+
+    /// The MCP servers each conversation's process is handed, read as it starts (the
+    /// default: Cua Driver's when computer use is on, and Hover's browser).
+    pub fn set_mcp(&self, f: impl Fn(Option<&str>) -> Vec<computer_use::McpServer> + Send + Sync + 'static) { *self.0.mcp.lock().unwrap() = Arc::new(f); }
 
     pub fn tool(&self) -> AgentTool { AgentTool::Claude }
     /// Some conversation's process is up.
@@ -342,12 +374,19 @@ impl ClaudeHost {
     /// Blocks: run it off the UI thread.
     #[allow(clippy::too_many_arguments)]
     pub fn run(&self, folder: &str, prompt: &str, progress: Option<Progress>, ct: &Cancel, resume: Option<&str>, events: Option<Events>, access: Option<&str>) -> KiroResult {
-        self.0.run(folder, prompt, progress, ct, resume, events, access)
+        self.0.run(folder, prompt, progress, ct, resume, events, access, None)
+    }
+
+    /// run, naming the Hover session (its key) the run is for: the tag Hover's browser
+    /// server is made for.
+    #[allow(clippy::too_many_arguments)]
+    pub fn run_tagged(&self, folder: &str, prompt: &str, progress: Option<Progress>, ct: &Cancel, resume: Option<&str>, events: Option<Events>, access: Option<&str>, tag: Option<&str>) -> KiroResult {
+        self.0.run(folder, prompt, progress, ct, resume, events, access, tag)
     }
 
     pub fn runner(&self) -> crate::session::RunTask {
         let h = self.clone();
-        Arc::new(move |a: crate::session::RunArgs| h.run(&a.folder, &a.prompt, Some(a.progress), &a.ct, a.resume.as_deref(), Some(a.events), a.access.as_deref()))
+        Arc::new(move |a: crate::session::RunArgs| { let tag = crate::runtime::tag_of(&a); h.run_tagged(&a.folder, &a.prompt, Some(a.progress), &a.ct, a.resume.as_deref(), Some(a.events), a.access.as_deref(), tag.as_deref()) })
     }
 }
 
@@ -356,9 +395,12 @@ const LOST: &str = "*Claude Code no longer had the earlier conversation, so this
 
 impl Host {
     #[allow(clippy::too_many_arguments)]
-    fn run(self: &Arc<Self>, folder: &str, prompt: &str, progress: Option<Progress>, ct: &Cancel, resume: Option<&str>, events: Option<Events>, access: Option<&str>) -> KiroResult {
+    fn run(self: &Arc<Self>, folder: &str, prompt: &str, progress: Option<Progress>, ct: &Cancel, resume: Option<&str>, events: Option<Events>, access: Option<&str>, tag: Option<&str>) -> KiroResult {
         if !crate::usable_folder(Some(folder)) { return KiroResult::new(KiroState::Failed, "That folder isn’t there any more. Choose another one."); }
         if prompt.trim().is_empty() { return KiroResult::new(KiroState::Failed, format!("Tell {NAME} what to do first.")); }
+        // The sandbox of the process this run starts opens this folder.
+        crate::sandbox::remember(folder);
+        if crate::sandbox::wanted() && crate::agents::toggles().computer_use { computer_use::ensure_daemon(); }
         let o = (self.options)().with_access(access);
         let turn = Arc::new(Turn {
             stream: Mutex::new(KiroStream::new(NAME)), progress, events, options: o.clone(), folder: folder.into(), token: ct.clone(), deny_all: access == Some("none"),
@@ -366,7 +408,7 @@ impl Host {
             message: Mutex::new(String::new()), calls: Default::default(),
         });
         if let Some(p) = &turn.progress { p(KiroPhase::Starting); }
-        let r = self.turn(&turn, prompt, resume, &o);
+        let r = self.turn(&turn, prompt, resume, &o, tag);
         // A thought still open when the turn ends (however it ends) ends with it.
         let last = { let mut k = turn.stream.lock().unwrap(); k.end(); k.drain() };
         if let Some(f) = &turn.events { for e in last { f(e); } }
@@ -383,10 +425,11 @@ impl Host {
         Setup { folder: folder.into(), mode, tools, model: o.model.clone().filter(|m| !m.is_empty() && m != "default"), effort }
     }
 
-    fn turn(self: &Arc<Self>, turn: &Arc<Turn>, prompt: &str, resume: Option<&str>, o: &AgentOptions) -> KiroResult {
+    fn turn(self: &Arc<Self>, turn: &Arc<Turn>, prompt: &str, resume: Option<&str>, o: &AgentOptions, tag: Option<&str>) -> KiroResult {
         let setup = self.setup(&turn.folder, o, turn.deny_all);
         let ct = turn.token.clone();
-        let (proc, lost) = match self.take(&setup, resume, &ct) {
+        let servers = (self.mcp.lock().unwrap().clone())(tag);
+        let (proc, lost) = match self.take(&setup, resume, &ct, &servers, tag) {
             Ok(x) => x,
             Err(_) if ct.is_cancelled() => return turn.stopped(),
             Err(m) => return KiroResult::new(KiroState::Failed, explain(&m)),
@@ -421,17 +464,19 @@ impl Host {
     /// The conversation's process: the one it already has when it was started the same
     /// way, else a new one (with --resume when there is a conversation to carry on).
     /// True with it when that conversation was gone, so a new one began.
-    fn take(self: &Arc<Self>, setup: &Setup, resume: Option<&str>, ct: &Cancel) -> Result<(Arc<Proc>, bool), String> {
+    fn take(self: &Arc<Self>, setup: &Setup, resume: Option<&str>, ct: &Cancel, servers: &[computer_use::McpServer], tag: Option<&str>) -> Result<(Arc<Proc>, bool), String> {
         let resume = resume.filter(|r| !r.is_empty());
+        let mcp = computer_use::signature(servers);
         {
             let mut procs = self.procs.lock().unwrap();
             procs.retain(|p| !p.dead.load(Ordering::SeqCst));
             if let Some(r) = resume {
                 if let Some(i) = procs.iter().position(|p| p.sid.lock().unwrap().as_deref() == Some(r)) {
                     let p = procs[i].clone();
-                    if p.setup == *setup && p.turn.lock().unwrap().is_none() { return Ok((p, false)); }
-                    // Started another way (a new model, effort or access): this one goes,
-                    // and the conversation carries on in a process started as asked.
+                    if p.setup == *setup && p.mcp == mcp && p.turn.lock().unwrap().is_none() { return Ok((p, false)); }
+                    // Started another way (a new model, effort or access, or MCP servers
+                    // switched since): this one goes, and the conversation carries on in a
+                    // process started as asked.
                     procs.remove(i);
                     p.end("restarted with new settings");
                 }
@@ -442,18 +487,24 @@ impl Host {
                 procs.remove(i).end("making room for another conversation");
             }
         }
-        match self.start(setup, resume, ct) {
+        match self.start(setup, resume, ct, servers, tag) {
             Err(m) if resume.is_some() && m.contains("No conversation found") => {
                 log(&format!("{} is gone; a new conversation", resume.unwrap()));
-                self.start(setup, None, ct).map(|p| (p, true))
+                self.start(setup, None, ct, servers, tag).map(|p| (p, true))
             }
             r => r.map(|p| (p, false)),
         }
     }
 
-    fn start(self: &Arc<Self>, setup: &Setup, resume: Option<&str>, ct: &Cancel) -> Result<Arc<Proc>, String> {
+    fn start(self: &Arc<Self>, setup: &Setup, resume: Option<&str>, ct: &Cancel, servers: &[computer_use::McpServer], tag: Option<&str>) -> Result<Arc<Proc>, String> {
         if ct.is_cancelled() { return Err("cancelled".into()); }
-        let args = launch_args(setup, resume);
+        let mut args = launch_args(setup, resume);
+        if let Some(config) = computer_use::claude_config(servers) {
+            match mcp_file(tag, &config) {
+                Ok(f) => args.extend(["--mcp-config".into(), f]),
+                Err(e) => log(&format!("couldn’t write its MCP servers ({e}); it starts without them")),
+            }
+        }
         let link = match (self.connect)(&setup.folder, &args) {
             Err(e) => return Err(format!("{NAME} couldn’t start: {e}")),
             Ok(None) => return Err(format!("{NAME} isn’t installed. {}", agents::install_hint(AgentTool::Claude))),
@@ -461,7 +512,7 @@ impl Host {
         };
         let Link { to_agent, from_agent, kill, errors } = link;
         let proc = Arc::new(Proc {
-            gen: self.gens.fetch_add(1, Ordering::SeqCst) + 1, setup: setup.clone(), writer: Mutex::new(to_agent), kill, errors,
+            gen: self.gens.fetch_add(1, Ordering::SeqCst) + 1, setup: setup.clone(), mcp: computer_use::signature(servers), writer: Mutex::new(to_agent), kill, errors,
             sid: Mutex::new(resume.map(str::to_owned)), turn: Mutex::new(None), pending: Default::default(), open: Default::default(),
             ids: AtomicU64::new(0), uses: AtomicU64::new(0), used: Mutex::new(Instant::now()), dead: AtomicBool::new(false),
         });

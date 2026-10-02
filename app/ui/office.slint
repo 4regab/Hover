@@ -7,6 +7,7 @@ import { Pal, Fonts, Icon, Icons, PillButton } from "widgets.slint";
 import { SettingsPage, Side, Block, Opt } from "settings.slint";
 import { MarkPaths } from "marks.slint";
 import { BotGlyph } from "bot.slint";
+import { Desk, DeskBody, DeskTiles, DeskIcons, DButton } from "desk.slint";
 export { Side, Block, Opt }
 
 
@@ -67,6 +68,11 @@ export global Office {
     in property <string> hint;
     in property <length> tip-x;
     in property <length> tip-y;
+    // What the pointer is over besides a prop: 1 a bot ("Chat with Juno"), 2 a desk with a
+    // session at it ("Juno’s desk"); its name and colour.
+    in property <int> over-kind;
+    in property <string> over-name;
+    in property <color> over-color;
     in property <bool> beats;
     // 0 follows the clock, 1 night, 2 day.
     in property <int> time-mode;
@@ -969,6 +975,179 @@ component MenuRow inherits Rectangle {
     ta := TouchArea { mouse-cursor: pointer; clicked => { root.clicked(); } }
 }
 
+// The desk as a card, in the chat's style: who works here and on what (the chat's header),
+// what it does now (its last steps, the question it waits on, or the answer it gave), its
+// eight surfaces as tiles with what each holds, a reply box and the chat (#deskMenu).
+component DeskCard inherits Rectangle {
+    in property <length> max-w;
+    in property <length> max-h;
+    width: min(436px, max-w);
+    height: min(col.preferred-height, max-h);
+    border-radius: 16px;
+    background: #140f18f7;
+    border-width: 1px;
+    border-color: #ffffff1a;
+    drop-shadow-blur: 40px;
+    drop-shadow-offset-y: 18px;
+    drop-shadow-color: #000000bf;
+    clip: true;
+    accessible-role: groupbox;
+    accessible-id: "deskCard";
+    accessible-label: Desk.c-name + "’s desk";
+    // The bot's colour, washed over the top.
+    Rectangle { height: 64px; background: @linear-gradient(180deg, Desk.c-color.with-alpha(0.2) 0%, Desk.c-color.with-alpha(0) 100%); }
+    TouchArea { scroll-event(e) => { accept } }
+    keys := FocusScope {
+        init => { self.focus(); }
+        key-pressed(e) => {
+            if (e.text == Key.Escape) { Desk.card-close(); return accept; }
+            if (e.text == "\n") { Desk.card-chat(); return accept; }
+            if (!e.modifiers.control && !e.modifiers.alt && !e.modifiers.meta && Desk.card-key(e.text)) { return accept; }
+            reject
+        }
+        col := VerticalLayout {
+            padding: 8px;
+            // .dhd: the tool's logo with a dot for how it goes, the desk's name, the task, chips.
+            HorizontalLayout {
+                padding: 4px;
+                padding-bottom: 10px;
+                spacing: 11px;
+                VerticalLayout { alignment: start;
+                    Rectangle { width: 34px; height: 34px;
+                        Logo { width: 34px; height: 34px; radius: 10px; mark: Desk.c-tool-id == "codex" ? 22px : 19px; tool: Desk.c-tool-id;
+                            accessible-role: image; accessible-label: Desk.c-tool; }
+                        Rectangle { x: 25px; y: 25px; width: 10px; height: 10px; border-radius: 5px; border-width: 2px; border-color: #17141b;
+                            background: Desk.c-stage <= 1 ? #c4a2ff : Desk.c-stage == 2 ? #30d158 : Desk.c-stage == 3 ? #ff453a : Desk.c-stage == 5 ? #ffb340 : #8e8e93; }
+                    } }
+                VerticalLayout {
+                    horizontal-stretch: 1;
+                    spacing: 2px;
+                    Text { text: (Desk.c-name + "’s desk").to-uppercase(); font-family: "Pixelify Sans"; font-weight: 600; font-size: 11.5px; letter-spacing: 0.7px;
+                        color: Desk.c-color.mix(white, 0.45); overflow: elide; }
+                    Text { text: Desk.c-title; font-size: 13.5px; font-weight: 600; color: white; overflow: elide; accessible-role: text; accessible-id: "deskTitle"; }
+                    Rectangle { height: 2px; }
+                    HorizontalLayout { spacing: 5px; alignment: start;
+                        Chip { text: Desk.c-clock != "" ? Desk.c-what + " · " + Desk.c-clock : Desk.c-what;
+                            fg: Desk.c-stage <= 1 ? #d9c4ff : Desk.c-stage == 2 ? #7ee59a : Desk.c-stage == 3 ? #ff9a92 : Desk.c-stage == 5 ? #ffc46b : #ffffff99;
+                            bg: Desk.c-stage <= 1 ? #9b6bff24 : Desk.c-stage == 2 ? #30d1581a : Desk.c-stage == 3 ? #ff453a1f : Desk.c-stage == 5 ? #ffb3401f : #ffffff0e; }
+                        if Desk.c-folder != "": Chip { icon: PagePaths.folder; text: Desk.c-folder; shrink: true; }
+                        if Desk.c-access != "": Chip { icon: PagePaths.shield; text: Desk.c-access; tip: Desk.c-access-note;
+                            fg: Desk.c-access-id == "full" ? #ffc46b : #ffffff99; bg: Desk.c-access-id == "full" ? #ffb34017 : #ffffff0e; }
+                        if Desk.c-ctx >= 0: Chip { text: Desk.c-ctx + "%"; tip: Desk.c-ctx + "% of the context window used"; }
+                    }
+                }
+            }
+            // .dnow: its last steps, the question, or the answer.
+            Rectangle {
+                vertical-stretch: 0;
+                height: now.preferred-height;
+                border-radius: 12px;
+                background: #ffffff08;
+                border-width: 1px;
+                border-color: #ffffff0d;
+                now := VerticalLayout {
+                    padding: 8px;
+                    padding-top: 7px;
+                    padding-bottom: 7px;
+                    spacing: 2px;
+                    if Desk.c-asking: VerticalLayout { spacing: 2px;
+                        Text { text: Desk.c-ask-title; font-size: 12px; font-weight: 600; color: #ffd59a; overflow: elide; }
+                        if Desk.c-ask-line != "": Text { text: Desk.c-ask-line; font-size: 12px; color: #ffd59abf; overflow: elide; }
+                        HorizontalLayout { padding-top: 5px; alignment: start; DButton { id: "deskReview"; small: true; text: "Review"; clicked => { Desk.card-chat(); } } } }
+                    if !Desk.c-asking: VerticalLayout {
+                        for s in Desk.c-steps: Rectangle {
+                            height: 24px;
+                            HorizontalLayout { spacing: 8px; padding-left: 2px;
+                                VerticalLayout { alignment: center;
+                                    Rectangle { width: 20px; height: 20px; border-radius: 6px; background: s.color.with-alpha(0.14); border-width: s.live ? 1px : 0; border-color: #ffc46b80;
+                                        Icon { name: DeskIcons.step(s.icon); size: 12px; tint: s.fail ? #ff7b72 : s.color; } } }
+                                Text { text: s.name; font-size: 12px; font-weight: 600; color: s.fail ? #ff9a92 : #f3f1f6; vertical-alignment: center; }
+                                Text { text: s.text; font-family: "DejaVu Sans Mono"; font-size: 11px; color: #ffffff8c; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; }
+                            }
+                        }
+                    }
+                    if !Desk.c-asking && Desk.c-steps.length == 0 && Desk.c-answer == "": Text { text: Desk.c-line; font-size: 12px; color: #f6f2ff9e; wrap: word-wrap; max-height: 36px; overflow: elide; }
+                    if !Desk.c-asking && Desk.c-steps.length == 0 && Desk.c-answer != "": Text { text: Desk.c-answer; font-size: 12.5px; color: Desk.c-answer-err ? #ffb0aa : #e9e7ec;
+                        wrap: word-wrap; max-height: 56px; overflow: elide; }
+                    if !Desk.c-asking && Desk.c-steps.length == 0 && Desk.c-answer != "" && Desk.c-meta != "": Text { text: Desk.c-meta; font-size: 12px; color: #f6f2ff9e; }
+                    if Desk.c-helpers.length > 0: HorizontalLayout { padding-top: 4px; spacing: 4px; alignment: start;
+                        for c in Desk.c-helpers: VerticalLayout { alignment: center; Rectangle { width: 12px; height: 11px; border-radius: 3px; background: c; } }
+                        Text { text: " " + Desk.c-helpers-text; font-size: 11.5px; color: #ffffff80; vertical-alignment: center; overflow: elide; } }
+                }
+            }
+            Rectangle { height: 8px; }
+            DeskTiles { }
+            Rectangle { height: 8px; }
+            // .dcomp: the reply, and the round button that sends it or stops the run.
+            Rectangle {
+                height: dcomp.preferred-height;
+                border-radius: 13px;
+                background: #1b181f;
+                border-width: 1px;
+                border-color: dinput.has-focus ? #c4a2ff8c : #ffffff14;
+                dcomp := HorizontalLayout {
+                    padding-left: 10px; padding-right: 5px; padding-top: 5px; padding-bottom: 5px; spacing: 6px;
+                    Rectangle {
+                        horizontal-stretch: 1;
+                        height: max(28px, min(96px, dinput.preferred-height + 6px));
+                        dfl2 := Flickable {
+                            width: parent.width;
+                            height: parent.height;
+                            interactive: false;
+                            content-height: max(self.height, dinput.preferred-height + 3px);
+                            dinput := TextInput {
+                                y: 4px;
+                                width: parent.width;
+                                text <=> Desk.c-draft;
+                                wrap: word-wrap;
+                                single-line: false;
+                                font-size: 12.5px;
+                                color: #f6f2ff;
+                                accessible-role: text-input;
+                                accessible-id: "deskInput";
+                                accessible-label: Desk.c-placeholder;
+                                cursor-position-changed(c) => { dfl2.content-y = Caret.follow(dfl2.content-y, dfl2.height, c.y, self.font-size); }
+                                key-pressed(e) => {
+                                    if (e.text == "\n" && !e.modifiers.shift && self.preedit-text == "") { Desk.card-send(); return accept; }
+                                    if (e.text == Key.Escape) { Desk.card-close(); return accept; }
+                                    reject
+                                }
+                            }
+                        }
+                        if Desk.c-draft == "" && dinput.preedit-text == "": Text { y: 4px; width: parent.width; text: Desk.c-placeholder; font-size: 12.5px; color: #f6f2ff61; overflow: elide; }
+                    }
+                    VerticalLayout { alignment: end;
+                        GoButton { id: "deskSend"; round: true;
+                            property <bool> empty: Desk.c-draft == "";
+                            enabled: !self.empty || (Desk.c-busy && !Desk.c-stopping);
+                            stop: self.empty && Desk.c-busy;
+                            label: self.empty && Desk.c-busy ? "Stop the run" : "Send";
+                            clicked => { Desk.card-send(); } } }
+                }
+            }
+            Rectangle { height: 6px; }
+            // The chat itself.
+            Rectangle {
+                height: 32px;
+                border-radius: 10px;
+                background: cta.has-hover ? Desk.c-color.with-alpha(0.32) : Desk.c-color.with-alpha(0.2);
+                border-width: 1px;
+                border-color: Desk.c-color.with-alpha(0.35);
+                accessible-role: button;
+                accessible-id: "deskChat";
+                accessible-label: Desk.c-chat-label;
+                accessible-action-default => { Desk.card-chat(); }
+                HorizontalLayout { padding-left: 10px; padding-right: 10px; spacing: 10px;
+                    VerticalLayout { alignment: center; Icon { name: DeskIcons.chat; size: 16px; tint: white; } }
+                    Text { text: Desk.c-chat-label; font-size: 12.5px; font-weight: 600; color: white; vertical-alignment: center; horizontal-stretch: 1; overflow: elide; }
+                    VerticalLayout { alignment: center; Icon { name: DeskIcons.enter; size: 13px; tint: #ffffff8c; } }
+                }
+                cta := TouchArea { mouse-cursor: pointer; clicked => { Desk.card-chat(); } }
+            }
+        }
+    }
+}
+
 export component OfficeView inherits Rectangle {
     in property <bool> dashboard;
     in property <bool> in-settings;
@@ -984,6 +1163,7 @@ export component OfficeView inherits Rectangle {
         // The app window has nothing to fold: there Esc takes Settings back to its office.
         if (in-settings) { if (dashboard) { root.back(); } else { root.fold(); } return; }
         if (Office.confirm) { Office.confirm-no(); return; }
+        if (Desk.card) { Desk.card-close(); return; }
         if (Office.model-menu != 0) { Office.open-model(0, 0, 0); return; }
         if (Office.access-menu) { Office.open-access(); return; }
         if (Office.menu) { Office.toggle-menu(); return; }
@@ -991,6 +1171,7 @@ export component OfficeView inherits Rectangle {
         // The reply box closes first, and keeps what was written.
         if (Office.drawer && Office.d-compose) { Office.d-compose = false; focus.focus(); return; }
         if (Office.drawer) { Office.d-close(); return; }
+        if (Desk.panel) { Desk.panel-close(); return; }
         if (Office.panel != 0) { Office.panel-close(); return; }
         root.fold();
     }
@@ -1013,12 +1194,16 @@ export component OfficeView inherits Rectangle {
         // #drawer and #panel: 12 px from the edges and up to 400 wide; 8 and 360 short.
         property <length> side-gap: compact ? 8px : 12px;
         property <length> side-w: min(compact ? 360px : 400px, self.width - 2 * side-gap);
+        // The desk's panel is wider: its tabs are the eight surfaces.
+        property <length> desk-w: min(720px, self.width - 2 * side-gap);
+        property <bool> desk-now: Desk.card || Desk.panel;
         changed fab-now => { if (self.fab-now == 0 && !Office.drawer) { focus.focus(); } }
         changed drawer-now => { if (!self.drawer-now && Office.fab == 0) { focus.focus(); } }
         changed panel-now => { if (Office.fab == 0) { focus.focus(); } }
         changed confirm-now => { if (!self.confirm-now && Office.fab == 0) { focus.focus(); } }
         changed menu-now => { if (!self.menu-now && Office.fab == 0) { focus.focus(); } }
         changed settings-now => { if (!self.settings-now) { focus.focus(); } }
+        changed desk-now => { if (!self.desk-now && Office.fab == 0) { focus.focus(); } }
         focus := FocusScope {
             key-pressed(e) => {
                 if (e.text == Key.Escape) { root.escape(); return accept; }
@@ -1057,6 +1242,33 @@ export component OfficeView inherits Rectangle {
         // body.host.notch #office::before: the top 44 px fade into the notch's black.
         if !root.dashboard: Rectangle { y: 0; height: 44px; background: @linear-gradient(180deg, #000000e6 0%, #00000000 100%); }
         for t in Office.tags: Tag { t: t; clicked => { Office.tag-clicked(t.id); } }
+        // The tip over a bot or a desk with a session at it.
+        if Office.over-kind != 0: Rectangle {
+            x: min(Office.tip-x + 14px, parent.width - self.width - 6px);
+            y: Office.tip-y + 16px;
+            width: ov.preferred-width;
+            height: 30px;
+            border-radius: 10px;
+            background: #0e0a12e0;
+            border-width: 1px;
+            border-color: #ffffff1a;
+            drop-shadow-blur: 22px;
+            drop-shadow-offset-y: 8px;
+            drop-shadow-color: #000000b3;
+            accessible-role: text;
+            accessible-label: Office.over-kind == 1 ? "Chat with " + Office.over-name : Office.over-name + "’s desk";
+            ov := HorizontalLayout {
+                padding-left: 6px;
+                padding-right: 11px;
+                spacing: 7px;
+                VerticalLayout { alignment: center;
+                    Rectangle { width: 20px; height: 20px; border-radius: 6px; background: Office.over-color.with-alpha(0.3);
+                        Icon { name: Office.over-kind == 1 ? DeskIcons.chat : DeskIcons.screen; size: 13px; tint: white; } } }
+                if Office.over-kind == 1: Text { text: "Chat with"; font-size: 12px; color: #f6f2ff9e; vertical-alignment: center; }
+                Text { text: Office.over-kind == 1 ? Office.over-name : Office.over-name + "’s desk"; font-size: 12px; font-weight: 600; color: white; vertical-alignment: center; }
+                if Office.over-kind == 2: Text { text: "Browser, terminal, files, screen…"; font-size: 11px; color: #f6f2ff61; vertical-alignment: center; }
+            }
+        }
         if Office.hint != "": Rectangle {
             x: Office.tip-x + 14px;
             y: Office.tip-y + 16px;
@@ -1072,7 +1284,7 @@ export component OfficeView inherits Rectangle {
         // The HUD: one menu button. Under the drawer and the panels (z-index 4 against
         // their 5): only the part a drawer leaves free shows.
         Glass {
-            visible: (!Office.drawer && Office.panel == 0) || (parent.width - side-gap - side-w > self.x + self.width);
+            visible: (!Office.drawer && Office.panel == 0 && !Desk.panel) || (parent.width - side-gap - (Desk.panel ? desk-w : side-w) > self.x + self.width);
             x: parent.width - self.width - (compact ? 10px : 16px);
             y: compact ? 10px : 16px;
             width: mb.preferred-width;
@@ -1589,6 +1801,44 @@ export component OfficeView inherits Rectangle {
             }
         }
 
+        // The desk's panel: wider than the others, its surfaces as tabs along the top.
+        if Desk.panel: Graphite {
+            x: parent.width - self.width - side-gap;
+            y: side-gap;
+            width: desk-w;
+            height: parent.height - 2 * side-gap;
+            border-radius: compact ? 16px : 20px;
+            accessible-role: groupbox;
+            accessible-id: "deskPanel";
+            accessible-label: Desk.p-title;
+            VerticalLayout {
+                HorizontalLayout {
+                    vertical-stretch: 0;
+                    padding-left: 14px;
+                    padding-right: 10px;
+                    padding-top: 12px;
+                    padding-bottom: 11px;
+                    VerticalLayout {
+                        horizontal-stretch: 1;
+                        alignment: center;
+                        Text { text: Desk.p-title; font-size: 14px; font-weight: 600; letter-spacing: -0.14px; color: #f6f2ff; overflow: elide; accessible-role: text; accessible-id: "pTitle"; }
+                        Text { text: Desk.p-sub; font-size: 11.5px; color: #f6f2ff61; overflow: elide; }
+                    }
+                    VerticalLayout { alignment: center; XButton { id: "deskClose"; label: "Close"; icon: Icons.close; small: compact; clicked => { Desk.panel-close(); } } }
+                }
+                Rectangle { height: 1px; background: #ffffff0f; }
+                DeskBody { vertical-stretch: 1; }
+            }
+        }
+
+        // The desk's card, where the desk was clicked; a click elsewhere puts it away.
+        if Desk.card: TouchArea { clicked => { Desk.card-close(); } }
+        if Desk.card: DeskCard {
+            max-w: parent.width - 16px;
+            max-h: parent.height - 16px;
+            x: max(8px, min(Desk.card-x + 6px, parent.width - self.width - 8px));
+            y: max(8px, min(Desk.card-y - 12px, parent.height - self.height - 8px));
+        }
         // #mMenu for a model pill: the tool's models, then its efforts (or the model's own
         // variants), then from when the pick holds. Above the pill, kept in the office.
         if Office.model-menu != 0: TouchArea { clicked => { Office.open-model(0, 0, 0); } }

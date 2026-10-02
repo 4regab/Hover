@@ -170,7 +170,7 @@ pub fn gate() -> std::sync::MutexGuard<'static, ()> { GATE.lock().unwrap_or_else
 
 impl Renderer {
     /// The app's shared device when there is one; else a device of its own (Vulkan or GL
-    /// on Linux, DX12 on Windows), low power.
+    /// on Linux, DX12 on Windows, Metal on macOS), low power.
     pub fn new(w: u32, h: u32) -> Result<Renderer, String> {
         let shared = SHARED.get().is_some();
         let (device, queue, adapter_name, software) = match SHARED.get() {
@@ -369,6 +369,10 @@ impl Renderer {
             list.push(D { node: i, depth: c.z, trans: m.transparent() });
         }
         list.sort_by(|a, b| a.trans.cmp(&b.trans).then(if a.trans { b.depth.total_cmp(&a.depth) } else { std::cmp::Ordering::Equal }));
+        // The draw buffer holds MAX_DRAWS; with every desk's helpers out the room is well
+        // under it, but a scene that grew past it drops the last (transparent) draws
+        // rather than write out of the buffer.
+        list.truncate(MAX_DRAWS as usize);
         let mut draws = std::mem::take(&mut self.draws);
         draws.clear();
         let merged = &o.g.merged;

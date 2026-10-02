@@ -1,6 +1,6 @@
 # Contributing to Hover
 
-Hover is built and tested on Windows and Linux. You can fork it, build it, test it and
+Hover is built and tested on Windows and Linux, and compiled on macOS. You can fork it, build it, test it and
 send changes without access to the maintainers' release machines, secrets or paid
 agent accounts.
 
