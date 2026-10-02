@@ -5,6 +5,20 @@ What changed in each Hover release. Versions follow [Semantic Versioning](https:
 
 ## [Unreleased]
 
+## [3.1.1] - 2026-10-02
+
+### Fixed
+
+- Regular text in the chat no longer shows some letters in bold.
+- Thoughts and tool runs stay open while the agent works and fold when it is done; your
+  own fold or unfold is kept. The Copy button is gone from your own messages.
+- A Kiro MCP server that doesn't start no longer ends the task; the chat says which one.
+  The "Require MCP servers" switch is gone.
+- The office is much lighter on a computer with no GPU (a VM or a remote desktop): it
+  draws at half size there, and never asks for frames faster than the computer makes them.
+- Hover's own icon on the exe, its shortcuts and the taskbar, instead of Windows' blank one.
+- A session deleted just as its task ended could come back in the history.
+
 ## [3.1.0] - 2026-10-01
 
 ### Added
@@ -42,6 +56,7 @@ What changed in each Hover release. Versions follow [Semantic Versioning](https:
   everything 2.x left: the data folder, the key, `settings.json` and the sessions.
 - The Windows executable is `hoverai.exe`.
 
-[Unreleased]: https://github.com/4regab/Hover/compare/v3.1.0...HEAD
+[Unreleased]: https://github.com/4regab/Hover/compare/v3.1.1...HEAD
+[3.1.1]: https://github.com/4regab/Hover/compare/v3.1.0...v3.1.1
 [3.1.0]: https://github.com/4regab/Hover/compare/v3.0.0...v3.1.0
 [3.0.0]: https://github.com/4regab/Hover/releases/tag/v3.0.0

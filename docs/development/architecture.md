@@ -140,19 +140,19 @@ tested.
 ```mermaid
 flowchart LR
     push["push to rust-port/**<br/>or a pull request"] --> wj & lj
-    tag["push of tag vX.Y.Z"] --> wj & lj
+    tag["push of tag vX.Y.Z, or of a new<br/>Cargo.toml version to rust-port/phase-0-1"] --> wj & lj
 
     subgraph wj["windows job (CodeBuild Windows Server 2022)"]
-        wt["cargo test --workspace"] --> wi["tag only:<br/>build.ps1 installer"]
+        wt["cargo test --workspace"] --> wi["release only:<br/>build.ps1 installer"]
     end
 
     subgraph lj["linux job (CodeBuild Ubuntu 22.04, 72 GB)"]
-        lt["cargo test --workspace"] --> lp["tag only:<br/>make package"]
+        lt["cargo test --workspace"] --> lp["release only:<br/>make package"]
     end
 
     wi --> rel
     lp --> rel
-    rel["release job (tag only)<br/>GitHub pre-release with the .exe, .deb, .tar.gz"]
+    rel["release job (release only)<br/>tags the commit; GitHub pre-release with the .exe, .deb, .tar.gz"]
 ```
 
 A tag whose version doesn't match `Cargo.toml` fails before anything builds. A

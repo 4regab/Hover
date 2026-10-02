@@ -42,9 +42,10 @@ sudo make install           # PREFIX=/usr/local; DESTDIR= for staging
 make package                # .deb and tarball in dist/
 ```
 
-A `v*` tag (three numbers, e.g. `v3.1.0`, matching `Cargo.toml`) runs
-`.github/workflows/ci.yml`'s tests on Windows and Linux (Ubuntu 22.04), then builds the
-installers from that build and publishes them together as a GitHub pre-release.
+A push to `rust-port/phase-0-1` whose `Cargo.toml` version has no tag yet, or a `v*` tag
+(matching it), runs `.github/workflows/ci.yml`'s tests on Windows and Linux (Ubuntu 22.04)
+on AWS CodeBuild, then builds the installers from that build, tags the commit and
+publishes them together as a GitHub pre-release. Raising the version releases it.
 
 The cross-check that Windows code still compiles, from Linux (mimalloc's C needs
 clang-cl 19 or newer, which `cargo-xwin` drives with Microsoft's headers):

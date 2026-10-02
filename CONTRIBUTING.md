@@ -105,6 +105,7 @@ Fill in the template. In short:
 
 ## Releases
 
-Releases are made by the maintainers. A `v*` tag runs `.github/workflows/ci.yml`,
-which publishes the installers once the tests pass. Forks don't need it: `.\build.ps1 installer` and
+Releases are made by the maintainers: a push to `rust-port/phase-0-1` that raises
+`Cargo.toml`'s version (or a `v*` tag) runs `.github/workflows/ci.yml`, which publishes the
+installers once the tests pass. Forks don't need it: `.\build.ps1 installer` and
 `make package` build the same installers locally.
