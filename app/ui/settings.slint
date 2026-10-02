@@ -290,14 +290,33 @@ export component SettingsPage inherits Rectangle {
         height: parent.height - 10px;
         border-radius: 22px;
         background: Pal.surface;
-        VerticalLayout {
-            padding: 8px;
-            alignment: start;
-            for s[i] in sections: SidebarItem {
-                item: s;
-                id: "Section" + s.title;
-                picked: i == current;
-                clicked => { section(i); }
+        clip: true;
+        // Nine sections don't fit a Small office (or a short window): the list scrolls.
+        side := ScrollView {
+            width: parent.width;
+            height: parent.height;
+            content-width: self.visible-width;
+            content-height: list.preferred-height;
+            // The picked section stays in view (opened from elsewhere, it may be below).
+            function reveal() {
+                let top = 8px + current * 34px;
+                if (top + 34px + 8px > -self.content-y + self.visible-height) { self.content-y = min(0px, self.visible-height - top - 34px - 8px); }
+                if (top - 8px < -self.content-y) { self.content-y = min(0px, 8px - top); }
+            }
+            property <int> at: current;
+            changed at => { self.reveal(); }
+            changed visible-height => { self.reveal(); }
+            init => { self.reveal(); }
+            list := VerticalLayout {
+                width: side.visible-width;
+                padding: 8px;
+                alignment: start;
+                for s[i] in sections: SidebarItem {
+                    item: s;
+                    id: "Section" + s.title;
+                    picked: i == current;
+                    clicked => { section(i); }
+                }
             }
         }
     }

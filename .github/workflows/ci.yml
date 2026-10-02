@@ -100,10 +100,15 @@ jobs:
             Copy-Item $f.FullName (Join-Path $env:windir 'Fonts') -Force
             New-ItemProperty -Path $key -Name "$($f.BaseName) (TrueType)" -Value $f.Name -PropertyType String -Force | Out-Null
           }
+      # Saved only from main (a pull request restores main's), so PRs don't push it out
+      # of the repo's cache space; without it the job builds ~350 crates from scratch.
       - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      # The ci profile (Cargo.toml): release's optimisation, built about a third faster.
       - name: Test
         run: |
-          cargo test --release --workspace --no-fail-fast
+          cargo test --profile ci --workspace --no-fail-fast
           if ($LASTEXITCODE -ne 0) { throw 'cargo test failed' }
       - name: Build installer
         if: env.RELEASE == 'true'
@@ -168,12 +173,14 @@ jobs:
           # cargo installs rust-toolchain.toml's version the first time it runs.
           cargo --version
       - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Test
         env:
           XDG_RUNTIME_DIR: ${{ runner.temp }}/xdg
         run: |
           mkdir -p -m 700 "$XDG_RUNTIME_DIR"
-          cargo test --release --workspace --no-fail-fast
+          cargo test --profile ci --workspace --no-fail-fast
       - name: Build packages
         if: env.RELEASE == 'true'
         run: make package VERSION="$RELEASE_VERSION"

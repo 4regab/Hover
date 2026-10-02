@@ -158,17 +158,22 @@ pub struct VoiceSettings {
     /// The agent voice starts tasks with; None follows the new-task box's tool (as it did
     /// before this was a setting).
     pub agent: Option<AgentTool>,
+    /// Seconds the preview counts down before it starts the task; 0 waits for Start.
+    pub countdown: u32,
 }
 
 impl VoiceSettings {
     /// Ctrl+Alt+Space, the mockup's.
     pub const SHORTCUT: Shortcut = Shortcut { key: Key(18), modifiers: Modifiers(Modifiers::CONTROL.0 | Modifiers::ALT.0) };
+    /// The countdowns Settings offers (0 is Off), and the default.
+    pub const COUNTDOWNS: [u32; 4] = [0, 3, 5, 10];
+    pub const COUNTDOWN: u32 = 5;
 }
 
 impl Default for VoiceSettings {
     fn default() -> Self {
         VoiceSettings { enabled: false, shortcut: Self::SHORTCUT, microphone: None, speech: SpeechMode::Cloud, local: None, model: TRANSCRIBE_MODELS[0].0.into(), cleanup: false,
-            cleanup_provider: CleanupProvider::Gemini, cleanup_model: None, cleanup_base: None, agent: None }
+            cleanup_provider: CleanupProvider::Gemini, cleanup_model: None, cleanup_base: None, agent: None, countdown: Self::COUNTDOWN }
     }
 }
 
@@ -178,7 +183,7 @@ impl VoiceSettings {
             ("Speech", Json::str(self.speech.id())), ("Local", self.local.as_ref().map(LocalModel::to_json).unwrap_or(Json::Null)),
             ("Model", Json::str(&self.model)), ("Cleanup", Json::Bool(self.cleanup)), ("CleanupProvider", Json::str(self.cleanup_provider.name())),
             ("CleanupModel", Json::opt_str_of(self.cleanup_model.as_deref())), ("CleanupBase", Json::opt_str_of(self.cleanup_base.as_deref())),
-            ("Agent", Json::opt_str_of(self.agent.map(AgentTool::id)))])
+            ("Agent", Json::opt_str_of(self.agent.map(AgentTool::id))), ("Countdown", Json::int(self.countdown as i64))])
     }
 
     pub fn from_json(v: &Json) -> Result<VoiceSettings> {
@@ -204,6 +209,8 @@ impl VoiceSettings {
             cleanup_base: opt_text(v.get("CleanupBase"))?.map(|m| m.trim().to_owned()).filter(|m| !m.is_empty()),
             // An id this build doesn't know follows the new-task tool.
             agent: AgentTool::parse(opt_text(v.get("Agent"))?.as_deref()),
+            // Settings before this had none (3 s, fixed): the new default. A minute at most.
+            countdown: match v.get("Countdown") { Some(n @ Json::Num(_)) => n.i64().ok().filter(|n| (0..=60).contains(n)).map_or(d.countdown, |n| n as u32), _ => d.countdown },
         })
     }
 }
@@ -275,6 +282,20 @@ mod tests {
         let l = VoiceSettings { speech: SpeechMode::Local, local: Some(LocalModel { id: "phonon-2".into(), version: "x".into(), folder: "/p".into() }), ..v.clone() };
         assert_eq!(VoiceSettings::from_json(&l.to_json()).unwrap(), l);
         assert_eq!(Workspace::from_json(&Workspace::default().to_json()).unwrap(), Workspace::default());
+    }
+
+    #[test]
+    fn the_countdown_is_five_seconds_until_set_and_round_trips() {
+        let d = VoiceSettings::default();
+        assert_eq!(d.countdown, 5);
+        for n in VoiceSettings::COUNTDOWNS {
+            let v = VoiceSettings { countdown: n, ..d.clone() };
+            assert_eq!(VoiceSettings::from_json(&v.to_json()).unwrap().countdown, n);
+        }
+        // Settings from before it was a setting, and nonsense, get the default.
+        for old in [r#"{"Enabled":true}"#, r#"{"Countdown":-1}"#, r#"{"Countdown":600}"#, r#"{"Countdown":"5"}"#] {
+            assert_eq!(VoiceSettings::from_json(&crate::json::parse(old).unwrap()).unwrap().countdown, 5, "{old}");
+        }
     }
 
     #[test]

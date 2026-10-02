@@ -136,7 +136,7 @@ fn chat_fixture(a: &RunArgs, hold: &Arc<std::sync::Mutex<bool>>) -> Option<KiroR
             let (add, del) = (diff.lines().filter(|l| l.starts_with('+')).count() as i32, diff.lines().filter(|l| l.starts_with('-')).count() as i32);
             ev(KiroStep { added: add, removed: del, ms: Some(900.0), diff: Some(diff.into()), ..st("e1", "edit", "Edit", Some("apps/hover/src/win.rs"), "completed") });
             let out = std::iter::once("… 74 earlier lines not kept".to_string()).chain((0..10).map(|i| format!("test geometry::case_{i:02} ... ok"))).chain(["".into(), "test result: ok. 81 passed; 0 failed; 0 ignored".into()]).collect::<Vec<_>>().join("\n");
-            ev(KiroStep { exit: Some(0), ms: Some(4100.0), output: Some(out), ..st("x1", "execute", "Run", Some("cargo test --release -p hover-notch"), "completed") });
+            ev(KiroStep { exit: Some(0), ms: Some(4100.0), output: Some(out), ..st("x1", "execute", "Run", Some("cargo test --release -p hover-notch --test geometry -- --test-threads=1 second_monitor_places_once_at_its_own_dpi"), "completed") });
             ev(KiroStep { added: 2, removed: 1, diff: Some("@@ -118 +118 @@\n  fn open(&mut self) {\n-     self.place();\n+     self.dpi_ready();\n+     self.place();\n  }".into()), ..st("e2", "edit", "Edit", Some("apps/hover/src/notch.rs"), "completed") });
             (a.events)(KiroEvent { credits: Some(0.12), ..Default::default() });
             done("Found it. On a second monitor the notch was placed **before** Windows knew that monitor's scale, so it got resized once on every open. That resize is the blink.\n\n### What changed\n\n- `place()` reads the monitor's DPI first, then sizes the window *once*.\n- The resize message is ignored while the notch opens.\n\n```win.rs\n// Read the scale first: placing then rescaling is the blink.\nfn monitor_dpi(m: HMONITOR) -> u32 {\n    let (mut x, mut y) = (96, 96);\n    unsafe { GetDpiForMonitor(m, MDT_EFFECTIVE_DPI, &mut x, &mut y) };\n    x\n}\n```\n\n| Monitor | Scale | Blinks before | After |\n|---|---|--:|--:|\n| Main | 100% | 0 | 0 |\n| Second | 150% | 1 per open | 0 |\n\n> **Note** · A monitor plugged in while the notch is open still needs one resize.\n\n- [x] Second monitor at 150%\n- [ ] A monitor plugged in while open")
@@ -237,6 +237,11 @@ fn chat_shots(app: &Rc<App>, hover: &Arc<hover_app::app::Hover>, dir: &Path, fol
         // on its change, its output and a thought.
         open(rich);
         shot("done");
+        // A long folder name: its chip gives way, the header's Delete and Close stay whole.
+        g.set_d_folder("a-really-long-project-folder-name-that-goes-on-and-on-and-on".into());
+        settle(200);
+        shot("long-folder");
+        app.office_widgets();
         top();
         shot("done-top");
         with(&|c, t| { c.toggle_steps(t, 0); c.toggle_step(t, 0, 4, false); });
@@ -248,6 +253,10 @@ fn chat_shots(app: &Rc<App>, hover: &Arc<hover_app::app::Hover>, dir: &Path, fol
         with(&|c, t| { c.toggle_step(t, 0, 0, false); c.toggle_step(t, 0, 5, false); c.toggle_step(t, 0, 4, false); c.toggle_flag(t, 0, 4, 0); });
         top();
         shot("done-diff-full");
+        // The long command alone: its row and its output's header wrap it.
+        with(&|c, t| { c.toggle_flag(t, 0, 4, 0); c.toggle_step(t, 0, 4, false); c.toggle_step(t, 0, 5, false); });
+        top();
+        shot("done-command");
         open(long);
         shot("long");
         top();
@@ -267,6 +276,26 @@ fn chat_shots(app: &Rc<App>, hover: &Arc<hover_app::app::Hover>, dir: &Path, fol
         g.set_d_compose(true);
         settle(300);
         shot("reply-open");
+        // Voice over the open reply box writes into it (dictation), and only there.
+        if tag == "default" {
+            g.set_d_hover(true);
+            assert!(app.dictation_here(), "an open reply box under the pointer takes dictation");
+            app.dictation_shot(&hover_app::voice::Stage::Recording { level: 0.4, secs: 1.0 });
+            settle(300);
+            shot("dictating");
+            app.dictation_shot(&hover_app::voice::Stage::Dictated("and check monitor 3 too".into()));
+            settle(300);
+            shot("dictated");
+            assert_eq!(g.get_d_draft().as_str(), "use rcWork for the top bar and check monitor 3 too", "written after the draft");
+            assert_eq!(g.get_d_voice().as_str(), "");
+            g.set_d_hover(false);
+            assert!(!app.dictation_here(), "not with the pointer elsewhere");
+            g.set_d_compose(false);
+            g.set_d_hover(true);
+            assert!(!app.dictation_here(), "not with the reply box closed");
+            g.set_d_hover(false);
+            g.set_d_compose(true);
+        }
         g.set_d_draft("".into());
         settle(300);
         shot("reply-pause");
@@ -757,6 +786,19 @@ pub fn run(dir: &Path) {
     chat_shots(&app, &hover, dir, &folder, &hold, &hold_c);
     app.show_settings_in(0, Section::General);
     save(&notch, full, 1.0, desk, &dir.join("notch-open-settings.png"));
+    // A Small office: the nine sections are taller than its sidebar, which scrolls.
+    hover.settings.set_workspace_size(hover_core::model::WorkspaceSize::Small);
+    view::Host::settings_changed(&*app);
+    app.office_follow();
+    run_for(800);
+    app.show_settings_in(0, Section::Claude);
+    run_for(400);
+    let small = { let n = app.n.borrow(); (n.win.width() as u32, n.win.height() as u32) };
+    save(&notch, small, 1.0, desk, &dir.join("notch-open-settings-small.png"));
+    hover.settings.set_workspace_size(hover_core::model::WorkspaceSize::Default);
+    view::Host::settings_changed(&*app);
+    app.office_follow();
+    run_for(800);
 
     // Settings in the app window, every section, dark and light.
     app.open_dashboard(true);

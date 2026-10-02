@@ -213,7 +213,9 @@ assets/          hover.png (the logo), make-icon.py (writes the app's hover.ico 
   voice projects by their words; only what is left unclear goes to the default agent
   in a turn with access `none`, and anything unclear goes to the default workspace
   (home + `Hover`). A preview shows the task, folder, agent and access, then starts a new
-  chat after 3 s. The agent is always the one picked in the new-task circle. Phonon
+  chat after the countdown (Settings → Voice, 5 s by default; Off waits for Start). The agent is
+  always the one picked in the new-task circle. Over an open chat whose reply box is open,
+  the shortcut dictates instead: the words go into the reply (Stage::Dictated), nothing is routed. Phonon
   (Python, CPU PyTorch, the model; about 1.5–1.8 GB installed) is downloaded only from
   Settings, into `<data>/phonon/`. Keys are sealed in `secrets.dat`, never in
   `settings.json`.

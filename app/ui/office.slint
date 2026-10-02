@@ -147,6 +147,10 @@ export global Office {
     in-out property <string> d-draft;
     // The reply box is open (else just its circle at the thread's corner).
     in-out property <bool> d-compose;
+    // The pointer is over the chat: voice's shortcut then writes into its open reply box.
+    in-out property <bool> d-hover;
+    // What dictation into the reply box is doing (Listening, Transcribing), or nothing.
+    in property <string> d-voice;
     // "Latest": the reader is well above the end of the thread.
     in property <bool> d-jump;
     in-out property <length> d-thread-w;
@@ -295,8 +299,13 @@ component Chip inherits Rectangle {
     in property <color> fg: #ffffff99;
     in property <color> bg: #ffffff0e;
     in property <string> tip;
+    // A long folder gives way (elided) so the header's buttons keep their place.
+    in property <bool> shrink;
     height: 20px;
-    width: cl.preferred-width;
+    preferred-width: cl.preferred-width;
+    min-width: shrink ? min(cl.preferred-width, 48px) : cl.preferred-width;
+    max-width: cl.preferred-width;
+    clip: true;
     border-radius: 6px;
     background: bg;
     accessible-role: AccessibleRole.text;
@@ -1319,6 +1328,10 @@ export component OfficeView inherits Rectangle {
             accessible-role: groupbox;
             accessible-id: "drawer";
             accessible-label: Office.d-name + ": " + Office.d-title;
+            // Only to know the pointer is over the chat (an ancestor's has-hover holds over its children).
+            dh := TouchArea {
+            init => { Office.d-hover = false; }
+            changed has-hover => { Office.d-hover = self.has-hover; }
             VerticalLayout {
                 // .dh: the tool's logo, the task, and its folder, access and context; delete, close.
                 HorizontalLayout {
@@ -1336,7 +1349,7 @@ export component OfficeView inherits Rectangle {
                         Text { text: Office.d-title; font-size: compact ? 13px : 14px; font-weight: 600; letter-spacing: -0.14px; color: #f6f2ff; overflow: elide; accessible-role: text; accessible-id: "dTitle"; }
                         Rectangle { height: compact ? 3px : 5px; }
                         HorizontalLayout { spacing: 5px; alignment: start;
-                            if Office.d-folder != "": Chip { icon: PagePaths.folder; text: Office.d-folder; }
+                            if Office.d-folder != "": Chip { icon: PagePaths.folder; text: Office.d-folder; shrink: true; }
                             if Office.d-access != "": Chip { icon: PagePaths.shield; text: Office.d-access; tip: Office.d-access-note;
                                 fg: Office.d-access-id == "full" ? #ffc46b : #ffffff99; bg: Office.d-access-id == "full" ? #ffb34017 : #ffffff0e; }
                             if Office.d-ctx >= 0: Rectangle { height: 20px; width: cx.preferred-width; border-radius: 6px; background: #ffffff0e;
@@ -1500,6 +1513,7 @@ export component OfficeView inherits Rectangle {
                                     clicked(x, y) => { Office.open-model(Office.model-menu == 1 ? 0 : 1, x, y); } }
                                 Rectangle { horizontal-stretch: 1; }
                                 // Not confirmed yet: the tool hasn't said the run stopped.
+                                if Office.d-voice != "": Text { text: Office.d-voice; font-size: 11.5px; color: #ff8fa3; vertical-alignment: center; overflow: elide; accessible-role: text; accessible-id: "dVoice"; }
                                 if Office.d-stopping: Text { text: "Stopping…"; font-size: 11.5px; color: #ffc46b; vertical-alignment: center; accessible-role: text; }
                                 Rectangle { width: 26px; height: 28px;
                                     accessible-role: button; accessible-id: "hideBtn"; accessible-label: "Hide. Keeps your draft";
@@ -1518,6 +1532,7 @@ export component OfficeView inherits Rectangle {
                         }
                     }
                 }
+            }
             }
         }
 

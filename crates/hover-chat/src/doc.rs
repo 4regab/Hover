@@ -321,7 +321,7 @@ impl Shaper {
             if let Some(f) = family { b.push(StyleProperty::FontFamily(FontFamily::Source((*f).into())), r.clone()); }
             if marks.code {
                 b.push(StyleProperty::FontFamily(FontFamily::Source(theme::MONO.into())), r.clone());
-                b.push(StyleProperty::FontSize(12.0), r.clone());
+                b.push(StyleProperty::FontSize(size.unwrap_or(12.0)), r.clone());
             }
             if let Some(l) = link {
                 color = theme::LI;
@@ -898,17 +898,6 @@ impl Step {
 /// main.js VERB_ON: the live verb for a step that is still going.
 fn verb_on(v: &str) -> &str {
     match v { "Read" => "Reading", "Edited" => "Editing", "Ran" => "Running", "Searched" => "Searching", "Fetched" => "Fetching", "Deleted" => "Deleting", "Moved" => "Moving", v => v }
-}
-
-/// main.js cmdShort: a command's program (its file name) and first argument.
-fn cmd_short(c: &str) -> String {
-    let w: Vec<&str> = c.split_whitespace().collect();
-    let Some(first) = w.first() else { return String::new() };
-    let head = first.trim_matches(['"', '\'']);
-    let head = head.rsplit(['\\', '/']).next().unwrap_or(head);
-    let mut s = std::iter::once(head).chain(w.iter().skip(1).take(1).copied()).collect::<Vec<_>>().join(" ");
-    if w.len() > 2 { s.push_str(" …"); }
-    s
 }
 
 /// "18s", "1m 05s": a thought's measured time, as its folded label says it.
@@ -1518,10 +1507,11 @@ impl Thread {
                 spans.push(Span::Text { text: d.clone(), marks: Default::default(), link: None, color: Some([255, 255, 255, 82]), family: Some(theme::MONO), size: Some(11.0), weight: None });
             }
         } else if let Some(c) = &x.cmd {
-            let shown = if x.kind == StepIcon::Run { cmd_short(c) } else if c.encode_utf16().count() > 48 { format!("{}…", c.chars().take(47).collect::<String>()) } else { c.clone() };
+            // The whole command (or pattern, or URL), a size under the row's words, wrapped
+            // under the verb when it doesn't fit: cut short, it can't be checked.
             spans.push(plain(&format!("{verb} "), None));
             let m = hover_md::Marks { code: true, ..Default::default() };
-            spans.push(Span::Text { text: shown, marks: m, link: None, color: bright, family: None, size: None, weight: None });
+            spans.push(Span::Text { text: c.clone(), marks: m, link: None, color: bright, family: None, size: Some(11.0), weight: None });
         } else if live {
             spans.push(Span::Text { text: verb.clone(), marks: Default::default(), link: None, color: bright, family: None, size: None, weight: Some(500.0) });
         } else {
@@ -1558,11 +1548,14 @@ impl Thread {
         if live { frag.shapes.push(Shape::Glow { x: 9.5, y: iy + 9.5, r: 12.0, color: [255, 196, 107, 64] }); }
         frag.shapes.push(Shape::Rect { x: 0.0, y: iy, w: 19.0, h: 19.0, radius: [6.0; 4], fill: Some([0x1c, 0x1a, 0x20, 255]), stroke: Some((edge, 1.0)) });
         frag.shapes.push(Shape::Svg { x: 4.0, y: iy + 4.0, w: 11.0, h: 11.0, svg: icon_svg(x.kind, ic, 11.0, 2.2) });
-        let (lay, st, _) = self.sh.text(&spans, base, None, Alignment::Start);
         let tx = 28.0;
         let avail = (rx - tx).max(0.0);
+        let wrap = x.name.is_none() && x.cmd.is_some();
+        let (lay, st, _) = self.sh.text(&spans, base, wrap.then_some(avail), Alignment::Start);
         let mut tb = TextBox { layout: lay, x: tx, y: y + (row_h - 15.6) / 2.0, text: st, links: vec![], clip: None, shimmer: live, cell: false, scroller: None };
-        if tb.layout.width() > avail + 0.01 {
+        // A wrapped command makes the row taller; the icon and the right side stay on its first line.
+        let full_h = if wrap { row_h.max(tb.layout.height() + (row_h - 15.6)) } else { row_h };
+        if !wrap && tb.layout.width() > avail + 0.01 {
             // text-overflow: ellipsis: cut at a cluster that leaves room for "…".
             let ell = self.line("…", base, None);
             let ew = ell.layout.width();
@@ -1582,9 +1575,9 @@ impl Thread {
             frag.text(t);
             if !(counts == 2 && k == 0) { frag.copy.push(Tok::Req(1)); }
         }
-        if blk && j != usize::MAX { frag.hits.push(([-4.0, y, w + 8.0, row_h], Act::Step(j, now))); }
-        let mut h = row_h;
-        if blk && open { h += self.block(frag, x, ti, j, y + row_h, w); }
+        if blk && j != usize::MAX { frag.hits.push(([-4.0, y, w + 8.0, full_h], Act::Step(j, now))); }
+        let mut h = full_h;
+        if blk && open { h += self.block(frag, x, ti, j, y + full_h, w); }
         h
     }
 
@@ -1599,7 +1592,7 @@ impl Thread {
         let y0 = y + 4.0;
         let at = frag.shapes.len();
         let (green, red) = ([0x4a, 0xde, 0x80, 255], [0xff, 0x6b, 0x62, 255]);
-        let head = Look { size: 11.0, lh: 1.3, color: [0xf6, 0xf2, 0xff, 158], weight: 400.0, family: theme::MONO };
+        let head = Look { size: 10.5, lh: 1.3, color: [0xf6, 0xf2, 0xff, 158], weight: 400.0, family: theme::MONO };
         let small = Look { size: 11.0, lh: 1.3, color: [0xf6, 0xf2, 0xff, 97], weight: 500.0, family: theme::SANS };
         let mono = Look { size: 11.5, lh: 1.6, color: [0xf6, 0xf2, 0xff, 214], weight: 400.0, family: theme::MONO };
         // (line number, text, colour, tint, a note of Hover's own)
@@ -1665,22 +1658,28 @@ impl Thread {
             frag.texts.push(tb);
             rx -= 6.0 + pad;
         }
+        let mut head_h = HEAD;
         if !title.is_empty() {
-            let mut tb = self.line(&title, head, None);
+            // A command wraps to all of it (the counts and Copy keep to its first line); a
+            // file's path keeps to one line.
+            let wrap = x.diff.is_none();
+            let tw = (rx - bx - 14.0).max(0.0);
+            let mut tb = self.line(&title, head, wrap.then_some(tw));
             tb.text.clear();
             tb.x = bx + 10.0;
-            tb.y = hy + (HEAD - tb.layout.height()) / 2.0;
-            tb.clip = Some([bx + 10.0, hy, (rx - bx - 14.0).max(0.0), HEAD]);
+            tb.y = hy + (HEAD - head.size * head.lh) / 2.0;
+            if wrap { head_h = HEAD.max(tb.layout.height() + (HEAD - head.size * head.lh)); }
+            else { tb.clip = Some([bx + 10.0, hy, tw, HEAD]); }
             frag.texts.push(tb);
         }
-        frag.shapes.push(rect(bx + 1.0, hy + HEAD, bw - 2.0, 1.0, 0.0, Some([255, 255, 255, 12])));
+        frag.shapes.push(rect(bx + 1.0, hy + head_h, bw - 2.0, 1.0, 0.0, Some([255, 255, 255, 12])));
         // pre: 8 px above and below; a 22 px gutter when the lines are numbered.
         let numbered = rows.iter().any(|r| r.0.is_some());
         let tx = bx + 12.0 + if numbered { 32.0 } else { 0.0 };
         let total = rows.len();
         let full = self.flag(ti, j, 0);
         let shown = if total > 8 && !full { 8 } else { total };
-        let mut cy = hy + HEAD + 1.0 + 8.0;
+        let mut cy = hy + head_h + 1.0 + 8.0;
         let clip_top = cy;
         for (n, text, color, bg, note) in rows.into_iter().take(shown) {
             let (lay, t, _) = self.sh.text(&[Span::Text { text, marks: hover_md::Marks { em: note, ..Default::default() }, link: None, color: Some(color), family: None, size: None, weight: None }], mono, None, Alignment::Start);

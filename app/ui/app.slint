@@ -848,6 +848,21 @@ export component NotchWindow inherits Window {
             }
         }
     }
+    // The clip above cuts the office's corners pixel by pixel (no smoothing on the GPU), so
+    // over a light desktop its edge showed as white steps. A thin black edge drawn over it
+    // is smoothed, and hides them.
+    if Office.built: Rectangle {
+        x: root.shape-x - 0.5px;
+        y: -2px;
+        width: root.shape-w + 1px;
+        height: root.shape-h + 2.5px;
+        visible: root.view-visible;
+        opacity: root.view-opacity;
+        border-bottom-left-radius: root.shape-r + 0.5px;
+        border-bottom-right-radius: root.shape-r + 0.5px;
+        border-width: 1.5px;
+        border-color: black;
+    }
 
 }
 

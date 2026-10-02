@@ -26,8 +26,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 use std::time::{Duration, Instant};
 
-/// The preview's countdown.
-pub const COUNTDOWN: Duration = Duration::from_secs(3);
 /// How long the default agent gets to say which project a request is for.
 const ROUTE_LIMIT: Duration = Duration::from_secs(60);
 /// An edit is routed again once typing pauses this long.
@@ -53,6 +51,8 @@ pub enum Stage {
     Editing(Preview),
     Starting(Preview),
     Started { session: i32, folder: String },
+    /// Dictation: the words for the chat's reply box (the UI writes them in, then dismisses).
+    Dictated(String),
     Cancelled,
     Error { message: String, retry: bool, transcript: Option<String> },
 }
@@ -117,6 +117,8 @@ enum Resume { Record, Route, Preview(Preview) }
 /// One interaction: what was read at the press, and how far it got.
 struct Run {
     trial: bool,
+    /// Dictation into the open chat's reply box: no routing, no preview, no task.
+    dictate: bool,
     voice: VoiceSettings,
     /// The voice-enabled projects and the default workspace, at the press.
     projects: Vec<Project>,
@@ -141,6 +143,8 @@ struct St {
     stage: Stage,
     id: u64,
     deadline: Option<Instant>,
+    /// The countdown the preview started with (Settings → Voice), for its ring.
+    total: Duration,
     /// An edit not routed yet (or that failed to): Start waits.
     checking: bool,
     edit: u64,
@@ -156,7 +160,8 @@ pub struct Voice {
     hooks: Hooks,
     cloud: Cloud,
     open: audio::Open,
-    countdown: Duration,
+    /// A test's own countdown; None is Settings' (VoiceSettings::countdown).
+    countdown: Option<Duration>,
     max: usize,
     st: Mutex<St>,
     listeners: Mutex<Vec<Arc<dyn Fn() + Send + Sync>>>,
@@ -183,14 +188,14 @@ fn audible(s: &[i16]) -> bool {
 impl Voice {
     pub fn new<L: Local + 'static>(settings: Arc<Settings>, secrets: Arc<Secrets>, phonon: Arc<L>, hooks: Hooks) -> Arc<Voice> {
         wav::sweep();
-        Voice::build(settings, secrets, phonon, hooks, Box::new(|k: &str, m: &str| Arc::new(groq::Groq::new(k, m)) as Arc<dyn Speech>), Box::new(audio::open), COUNTDOWN, audio::MAX_SAMPLES)
+        Voice::build(settings, secrets, phonon, hooks, Box::new(|k: &str, m: &str| Arc::new(groq::Groq::new(k, m)) as Arc<dyn Speech>), Box::new(audio::open), None, audio::MAX_SAMPLES)
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn build(settings: Arc<Settings>, secrets: Arc<Secrets>, local: Arc<dyn Local>, hooks: Hooks, cloud: Cloud, open: audio::Open, countdown: Duration, max: usize) -> Arc<Voice> {
+    fn build(settings: Arc<Settings>, secrets: Arc<Secrets>, local: Arc<dyn Local>, hooks: Hooks, cloud: Cloud, open: audio::Open, countdown: Option<Duration>, max: usize) -> Arc<Voice> {
         Arc::new_cyclic(|me| Voice {
             me: me.clone(), settings, secrets, local, hooks, cloud, open, countdown, max,
-            st: Mutex::new(St { stage: Stage::Idle, id: 0, deadline: None, checking: false, edit: 0, busy: None, run: None }),
+            st: Mutex::new(St { stage: Stage::Idle, id: 0, deadline: None, total: Duration::ZERO, checking: false, edit: 0, busy: None, run: None }),
             listeners: Mutex::new(vec![]),
         })
     }
@@ -203,6 +208,9 @@ impl Voice {
             (s, _) => s.clone(),
         }
     }
+
+    /// How long the preview counts down in all (its ring is what is left of it).
+    pub fn countdown_total(&self) -> Duration { self.st.lock().unwrap().total }
 
     /// When a press was last turned away because one was in progress (the notch flashes).
     pub fn busy_since(&self) -> Option<Instant> { self.st.lock().unwrap().busy }
@@ -255,10 +263,16 @@ impl Voice {
 
     /// The shortcut went down (or Try it). While one is in progress it is kept and the
     /// press only flashes busy.
-    pub fn press(&self, trial: bool) {
+    pub fn press(&self, trial: bool) { self.begin(trial, false) }
+
+    /// The shortcut went down over an open chat's reply box: what is said is written
+    /// there (Stage::Dictated), never routed or started.
+    pub fn dictate(&self) { self.begin(false, true) }
+
+    fn begin(&self, trial: bool, dictate: bool) {
         {
             let mut st = self.st.lock().unwrap();
-            if !matches!(st.stage, Stage::Idle | Stage::Started { .. } | Stage::Cancelled | Stage::Error { .. }) {
+            if !matches!(st.stage, Stage::Idle | Stage::Started { .. } | Stage::Dictated(_) | Stage::Cancelled | Stage::Error { .. }) {
                 st.busy = Some(Instant::now());
                 drop(st);
                 self.notify();
@@ -269,7 +283,7 @@ impl Voice {
             let voice = self.settings.voice();
             let tool = voice.agent.unwrap_or_else(|| self.settings.agent_tool());
             st.run = Some(Run {
-                trial, voice, projects: self.settings.projects().into_iter().filter(|p| p.voice).collect(), workspace: ws,
+                trial, dictate, voice, projects: self.settings.projects().into_iter().filter(|p| p.voice).collect(), workspace: ws,
                 tool, released: Default::default(), cancel: Default::default(), ct: Cancel::new(),
                 text: String::new(), heard: String::new(), cleanup_note: None, review: false, target: None, resume: Resume::Record,
             });
@@ -295,7 +309,7 @@ impl Voice {
         let mut st = self.st.lock().unwrap();
         match st.stage {
             Stage::Idle | Stage::Starting(_) => return,
-            Stage::Started { .. } | Stage::Cancelled | Stage::Error { .. } => { drop(st); return self.dismiss(); }
+            Stage::Started { .. } | Stage::Dictated(_) | Stage::Cancelled | Stage::Error { .. } => { drop(st); return self.dismiss(); }
             _ => {}
         }
         st.id += 1;
@@ -306,10 +320,10 @@ impl Voice {
         self.notify();
     }
 
-    /// Closes a Started, Cancelled or Error card.
+    /// Closes a Started, Dictated, Cancelled or Error card.
     pub fn dismiss(&self) {
         let mut st = self.st.lock().unwrap();
-        if !matches!(st.stage, Stage::Started { .. } | Stage::Cancelled | Stage::Error { .. }) { return; }
+        if !matches!(st.stage, Stage::Started { .. } | Stage::Dictated(_) | Stage::Cancelled | Stage::Error { .. }) { return; }
         st.stage = Stage::Idle;
         st.run = None;
         drop(st);
@@ -446,7 +460,7 @@ impl Voice {
     // MARK: The worker
 
     fn record(&self, id: u64) {
-        let Some((voice, released, cancel)) = self.with_run(id, |r| (r.voice.clone(), r.released.clone(), r.cancel.clone())) else { return };
+        let Some((voice, released, cancel, dictate)) = self.with_run(id, |r| (r.voice.clone(), r.released.clone(), r.cancel.clone(), r.dictate)) else { return };
         // The engine first: a mode that isn't set up says so before anything is recorded.
         let (engine, local): (Arc<dyn Speech>, bool) = match voice.speech {
             SpeechMode::Cloud => match self.secrets.get(projects::GROQ_SECRET) {
@@ -498,6 +512,7 @@ impl Voice {
             }
         } else { (heard.clone(), None) };
         if cancel.load(Ordering::Relaxed) { return; }
+        if dictate { self.set(id, Stage::Dictated(text)); return; }
         if self.with_run(id, |r| { r.text = text.clone(); r.heard = text; r.cleanup_note = note.map(str::to_owned); r.review = t.truncated; }).is_none() { return; }
         if self.set(id, Stage::Resolving) { self.resolve(id); }
     }
@@ -555,12 +570,16 @@ impl Voice {
         if st.id != id { return; }
         let Some(run) = st.run.as_mut() else { return };
         run.target = Some(target);
+        let total = self.countdown.unwrap_or(Duration::from_secs(run.voice.countdown as u64));
         // A trial never counts down; a cut-short transcript waits for a look and a Start.
         let count = !r.trial && !r.review;
         st.checking = false;
+        // Off (0 s): the preview waits for Start, as after an edit.
+        let count = count && !total.is_zero();
         if count {
-            st.deadline = Some(Instant::now() + self.countdown);
-            st.stage = Stage::Preview(Preview { countdown: Some(self.countdown.as_secs_f32()), ..p });
+            st.total = total;
+            st.deadline = Some(Instant::now() + total);
+            st.stage = Stage::Preview(Preview { countdown: Some(total.as_secs_f32()), ..p });
         } else {
             st.deadline = None;
             st.stage = if r.trial { Stage::Preview(p) } else { Stage::Editing(p) };
@@ -607,7 +626,9 @@ impl Voice {
     /// else got there first).
     fn tick(&self, id: u64) {
         self.spawn("voice-countdown", move |v| loop {
-            std::thread::sleep(Duration::from_millis(100).min(v.countdown));
+            // Read before the sleep: a guard in its argument would be held through it.
+            let total = v.st.lock().unwrap().total;
+            std::thread::sleep(Duration::from_millis(100).min(total));
             let due = {
                 let st = v.st.lock().unwrap();
                 match (&st.stage, st.deadline) {
