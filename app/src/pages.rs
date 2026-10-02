@@ -11,21 +11,21 @@ use hover_core::settings::Settings;
 use hover_quota::{item, Reading};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Section { General, Integrations, Projects, Voice, Kiro, Codex, Cursor, OpenCode }
+pub enum Section { General, Integrations, Projects, Voice, Kiro, Codex, Cursor, OpenCode, Claude }
 
 impl Section {
-    pub const ALL: [Section; 8] = [Section::General, Section::Integrations, Section::Projects, Section::Voice, Section::Kiro, Section::Codex, Section::Cursor, Section::OpenCode];
-    pub fn title(self) -> &'static str { ["General", "Integrations", "Projects", "Voice", "Kiro", "Codex", "Cursor", "OpenCode"][self as usize] }
+    pub const ALL: [Section; 9] = [Section::General, Section::Integrations, Section::Projects, Section::Voice, Section::Kiro, Section::Codex, Section::Cursor, Section::OpenCode, Section::Claude];
+    pub fn title(self) -> &'static str { ["General", "Integrations", "Projects", "Voice", "Kiro", "Codex", "Cursor", "OpenCode", "Claude Code"][self as usize] }
     /// The sidebar's icon and its tile's colour.
     pub fn glyph(self) -> (&'static str, Tint) {
-        [("settings", Tint::Gray), ("plug", Tint::Purple), ("folder", Tint::Orange), ("mic", Tint::Pink), ("ghost", Tint::Bot), ("terminal", Tint::Green), ("sparkles", Tint::Blue), ("terminal", Tint::Gray)][self as usize]
+        [("settings", Tint::Gray), ("plug", Tint::Purple), ("folder", Tint::Orange), ("mic", Tint::Pink), ("ghost", Tint::Bot), ("terminal", Tint::Green), ("sparkles", Tint::Blue), ("terminal", Tint::Gray), ("sparkles", Tint::Orange)][self as usize]
     }
     /// The section of a tool's own page.
     pub fn of(tool: AgentTool) -> Section {
-        match tool { AgentTool::Codex => Section::Codex, AgentTool::Cursor => Section::Cursor, AgentTool::OpenCode => Section::OpenCode, _ => Section::Kiro }
+        match tool { AgentTool::Codex => Section::Codex, AgentTool::Cursor => Section::Cursor, AgentTool::OpenCode => Section::OpenCode, AgentTool::Claude => Section::Claude, AgentTool::Kiro => Section::Kiro }
     }
     pub fn tool(self) -> AgentTool {
-        match self { Section::Codex => AgentTool::Codex, Section::Cursor => AgentTool::Cursor, Section::OpenCode => AgentTool::OpenCode, _ => AgentTool::Kiro }
+        match self { Section::Codex => AgentTool::Codex, Section::Cursor => AgentTool::Cursor, Section::OpenCode => AgentTool::OpenCode, Section::Claude => AgentTool::Claude, _ => AgentTool::Kiro }
     }
 }
 
@@ -570,8 +570,8 @@ fn agent(b: &mut Vec<Block>, section: Section, i: &Input) {
     let shown = models.iter().find(|m| m.0 == current).map_or(current.clone(), |m| m.1.clone());
     let model = Control::Picker { id: format!("{id}Model"), name: "Model".into(), shown, options: models.iter().map(|m| (m.1.clone(), m.0 == current)).collect() };
     let eff = effort_offer(&offers);
-    // OpenCode's variants belong to each model: only the picked model's are offered.
-    let per_model = tool == AgentTool::OpenCode;
+    // OpenCode's variants and Claude Code's efforts belong to each model: only the picked model's are offered.
+    let per_model = hover_agents::runtime::per_model_effort(tool);
     let levels = effort_levels(tool, &o, &offers);
     let effort = if levels.is_empty() {
         Control::Text(if tool == AgentTool::Cursor { "Part of the model" } else if per_model { "None for this model" } else { "Set by the model" }.into())
@@ -583,12 +583,15 @@ fn agent(b: &mut Vec<Block>, section: Section, i: &Input) {
     let has_models = offer(&offers, "model", &["model"]).is_some();
     b.push(Block::Group(vec![
         row("Model", Some(if !has_models { format!("More models show here once {name} has run a task.") }
-            else if per_model { "Your OpenCode providers’ models: API keys, sign-ins and local models. Default is your opencode config’s.".into() }
+            else if tool == AgentTool::OpenCode { "Your OpenCode providers’ models: API keys, sign-ins and local models. Default is your opencode config’s.".into() }
+            else if tool == AgentTool::Claude { "Claude Code’s own models, as your plan or key offers them. Default is its recommended one.".into() }
             else { format!("The first is {name}’s own choice for each task.") }), model, Lead::Tile("brain", Tint::Purple)),
-        row(hover_agents::runtime::caps(tool).effort_label, Some(if per_model {
+        row(hover_agents::runtime::caps(tool).effort_label, Some(if tool == AgentTool::OpenCode {
             if levels.is_empty() { "Pick a model with variants to choose one. Default leaves it to OpenCode.".into() } else { "The picked model’s own variants, from OpenCode.".into() }
         } else if levels.is_empty() {
-            if tool == AgentTool::Cursor { "Cursor’s models carry their effort in their name.".into() } else { "Shown once a task has run with a model that takes one.".into() }
+            if tool == AgentTool::Cursor { "Cursor’s models carry their effort in their name.".into() }
+            else if per_model && has_models { "This model takes no effort setting.".into() }
+            else { "Shown once a task has run with a model that takes one.".into() }
         } else { "How long it thinks. Higher is slower and uses more of your plan.".into() }), effort, Lead::Tile("gauge", Tint::Orange)),
     ]));
 
@@ -619,13 +622,16 @@ fn agent(b: &mut Vec<Block>, section: Section, i: &Input) {
     if ro { labels.push("Read only"); }
     let text = match access {
         "read" if tool == AgentTool::OpenCode => "OpenCode can only read and search. Its server refuses every edit, command, subagent and anything outside the folder.".into(),
+        "read" if tool == AgentTool::Claude => "Claude Code can only read and search. Its edit and command tools are switched off, and Hover refuses anything else that would change something.".into(),
         "read" => format!("{name} can only read and search. It can’t change files or run commands."),
         // Codex decides what to ask about itself in this mode: its sandbox lets commands
         // inside the folder run, and asks to go past it.
         "risky" if tool == AgentTool::Codex => "Codex asks in the notch before it writes outside the folder or goes online. Inside the folder its sandbox lets it edit and run commands.".into(),
+        "risky" if tool == AgentTool::Claude => "Claude Code asks in the notch before it runs a command that changes something, deletes or moves files, goes online or touches anything outside the folder. Reading, editing in the folder and commands it knows only read go ahead.".into(),
         "risky" => format!("{name} asks in the notch before it runs a command, deletes or moves files, goes online or touches anything outside the folder. Reading and editing in the folder go ahead."),
         "always" => format!("{name} asks in the notch before any change or command. Reading and searching go ahead."),
         _ if tool == AgentTool::OpenCode => "OpenCode can edit files and run commands without asking. Deny rules in your OpenCode config still win, and it still asks when it repeats a tool call over and over.".into(),
+        _ if tool == AgentTool::Claude => "Claude Code can edit files and run commands without asking. A question it has for you still shows in the notch.".into(),
         _ => format!("{name} can edit files and run commands without asking."),
     } + if ro { "" } else { " Read only isn’t offered, because Codex’s read-only mode needs a sandbox it doesn’t have on Windows." };
     let picked = ["full", "risky", "always", "read"].iter().position(|a| *a == access).unwrap_or(0) as i32;
@@ -644,6 +650,12 @@ fn agent(b: &mut Vec<Block>, section: Section, i: &Input) {
         b.push(Block::Footnote("OpenCode runs in the background as its own server (\"opencode serve\"), one for all its tasks, on this PC only \
             (127.0.0.1, with a password made for each start), with no terminal window. Your OpenCode providers, agents, skills and MCP servers \
             work as they do in OpenCode. It uses about 0.5 to 1 GB while it runs, so it stops when idle. Changes apply to the next task.".into()));
+        return;
+    }
+    if tool == AgentTool::Claude {
+        b.push(Block::Footnote("Claude Code runs in the background in its SDK mode (\"claude --output-format stream-json\"), one process for each \
+            conversation in its folder (up to 3 at once), with no terminal window. Your CLAUDE.md, settings, hooks, skills and MCP servers apply \
+            as they do in Claude Code. Prompts go to it on its input, never on a command line. Changes apply to the next task.".into()));
         return;
     }
     if tool != AgentTool::Kiro {
@@ -687,11 +699,14 @@ pub fn pick_agent(o: &AgentOptions, offers: &[AcpOption], folder_agents: &[Strin
     AgentOptions { agent: modes.get(index - 1).map(|m| m.0.clone()), ..o.clone() }
 }
 
-/// The efforts Settings offers: the tool's own list, or for OpenCode the picked
-/// model's variants.
+/// The efforts Settings offers: the tool's own list, or for OpenCode and Claude Code
+/// the picked model's own (Claude Code's Default is its first model).
 pub fn effort_levels(tool: AgentTool, o: &AgentOptions, offers: &[AcpOption]) -> Vec<String> {
-    if tool == AgentTool::OpenCode {
-        return offer(offers, "model", &["model"]).and_then(|m| m.choices.iter().find(|c| Some(&c.value) == o.model.as_ref()).and_then(|c| c.levels.clone())).unwrap_or_default();
+    if hover_agents::runtime::per_model_effort(tool) {
+        let Some(m) = offer(offers, "model", &["model"]) else { return vec![] };
+        let picked = m.choices.iter().find(|c| Some(&c.value) == o.model.as_ref())
+            .or_else(|| m.choices.first().filter(|_| o.model.is_none() && tool == AgentTool::Claude));
+        return picked.and_then(|c| c.levels.clone()).unwrap_or_default();
     }
     effort_offer(offers).map(|x| x.choices.iter().map(|c| c.value.clone()).collect()).unwrap_or_default()
 }
@@ -904,5 +919,40 @@ mod tests {
         assert_eq!(pick_effort(AgentTool::OpenCode, &o, &offers, 0).effort.as_deref(), Some("low"));
         assert_eq!(pick_opencode_agent(&o, &offers, 1).agent.as_deref(), Some("build"));
         assert_eq!(pick_opencode_agent(&o, &offers, 0).agent, None);
+    }
+
+    /// Claude Code's page: its models with each one's efforts (Default's first), its
+    /// read only, and how it runs.
+    #[test]
+    fn claude_code_has_its_own_page() {
+        let s = settings();
+        let none = |_: &str| None;
+        let ready = |_| Some(AgentReady { installed: true, signed_in: true, hint: String::new() });
+        let i = input(&s, &[], &none, &ready);
+        assert_eq!((Section::of(AgentTool::Claude), Section::Claude.tool(), Section::Claude.title()), (Section::Claude, AgentTool::Claude, "Claude Code"));
+        let b0 = build(Section::Claude, &i);
+        let r0 = rows(&b0);
+        assert_eq!(r0[1].sub.as_deref(), Some("More models show here once Claude Code has run a task."));
+        assert_eq!((r0[2].label.as_str(), &r0[2].control), ("Effort", &Control::Text("None for this model".into())));
+        let levels = |l: &[&str]| Some(l.iter().map(|x| x.to_string()).collect());
+        let offers = vec![AcpOption { id: "model".into(), category: Some("model".into()), current: None, choices: vec![
+            AcpChoice { value: "default".into(), name: "Default (recommended)".into(), levels: levels(&["low", "high", "xhigh"]) },
+            AcpChoice { value: "haiku".into(), name: "Haiku".into(), levels: levels(&[]) }] }];
+        s.set_agent_offers(AgentTool::Claude, &offers);
+        s.set_agent_options(AgentTool::Claude, AgentOptions { read_only: true, ..Default::default() });
+        let b = build(Section::Claude, &i);
+        let r = rows(&b);
+        let Control::Picker { shown, options, .. } = &r[1].control else { panic!() };
+        assert_eq!((shown.as_str(), options.len()), ("Default (recommended)", 2), "Default is its own first model, not one Hover adds");
+        assert_eq!(r[2].control, Control::Segments { id: "Claude CodeEffort".into(), labels: vec!["Low".into(), "High".into(), "X-High".into()], picked: 0 });
+        assert!(r[3].sub.as_deref().unwrap().starts_with("Claude Code can only read and search. Its edit and command tools are switched off"));
+        assert!(matches!(b.last(), Some(Block::Footnote(f)) if f.contains("stream-json") && f.contains("CLAUDE.md")));
+        s.set_agent_options(AgentTool::Claude, AgentOptions { model: Some("haiku".into()), ..Default::default() });
+        let b = build(Section::Claude, &i);
+        let r = rows(&b);
+        assert_eq!((&r[2].control, r[2].sub.as_deref()), (&Control::Text("None for this model".into()), Some("This model takes no effort setting.")));
+        let o = AgentOptions::default();
+        assert_eq!(pick_effort(AgentTool::Claude, &o, &offers, 2).effort.as_deref(), Some("xhigh"));
+        assert_eq!(pick_model(AgentTool::Claude, &o, &offers, 0).model, None, "Default sends no model");
     }
 }

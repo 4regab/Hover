@@ -10,9 +10,9 @@ NotchOwl for Mac). At rest it is a slim black island: the quotas the user switch
 (each the tool's own logo in its ring), the agents at work (their logos, what the one
 in front is doing, for how long), a question an agent is waiting on, or nothing.
 Hovering it, clicking it or `Alt+N` opens the **Agent office**, which fills the notch. The
-office hands tasks to Kiro, Codex, Cursor or OpenCode, which run headlessly, several at once,
+office hands tasks to Kiro, Codex, Cursor, OpenCode or Claude Code, which run headlessly, several at once,
 each in a chosen folder, as bots at desks in a voxel office. The office's menu (time
-of day, music, history, Settings) opens Settings over it (eight sections: General, Integrations, Projects, Voice, Kiro, Codex, Cursor, OpenCode), with a
+of day, music, history, Settings) opens Settings over it (nine sections: General, Integrations, Projects, Voice, Kiro, Codex, Cursor, OpenCode, Claude Code), with a
 back button.
 
 The only ordinary window is the dashboard: the same office in a window with Hover's
@@ -72,8 +72,9 @@ crates/
                  platform/{windows,linux}; bin/hover-data (data folders for tests);
                  projects.rs (projects, default workspace, voice settings),
                  secrets.rs (API keys sealed in secrets.dat)
-  hover-agents   ACP host, OpenCode's server (opencode.rs, over its own http.rs), the
-                 runtime both sit behind, the tools (Kiro, Codex, Cursor, OpenCode), sessions, the office's
+  hover-agents   ACP host, OpenCode's server (opencode.rs, over its own http.rs), Claude
+                 Code's SDK mode (claude.rs), the runtime they sit behind, the tools (Kiro,
+                 Codex, Cursor, OpenCode, Claude Code), sessions, the office's
                  state message, KiroStream, process groups / Windows jobs; route.rs
                  (voice's project routing)
   hover-quota    the four quota readers
@@ -88,7 +89,7 @@ app/             the product (crate `hover`, binary hoverai): app, Settings (pag
                  (speech.rs, voice/, voice_ui.rs), Phonon's setup and engine (phonon.rs,
                  assets/phonon/); ui/*.slint; assets/
 tools/
-  hover-measure  memory sampler, scenario runner, fake-agent (not shipped)
+  hover-measure  memory sampler, scenario runner, fake-agent, fake-opencode, fake-anthropic (not shipped)
   notch-proto    the port's Windows notch prototype, kept for its --selftest (not shipped)
 tests/golden/   fixtures and expected outputs (made from the 2.x page)
 infra/           codebuild-runner.yml: the CodeBuild project CI runs on (and its 72 GB
@@ -175,7 +176,29 @@ assets/          hover.png (the logo), make-icon.py (writes the app's hover.ico 
   - Its question tool's questions show as choices over the bot's head (Skip, Answer…),
     in the chat (the choices, one's own answer, Skip, Answer) and in the notch (Skip,
     Review opens the chat). A reply in the chat answers a single question that takes
-    one's own words. `Runtime` (runtime.rs) is what the sessions see of either kind.
+    one's own words. `Runtime` (runtime.rs) is what the sessions see of every kind.
+- **Claude Code runs in its Agent SDK mode, as T3 Code runs it** (`hover-agents::claude`):
+  `claude --output-format stream-json --verbose --input-format stream-json
+  --permission-prompt-tool stdio --include-partial-messages`, JSON lines both ways and
+  its control protocol, which is what `@anthropic-ai/claude-agent-sdk`'s `query()` starts.
+  One hidden process per conversation (as the SDK runs one per query), started in the
+  session's folder (it has no `--cwd`), kept for its replies, and shut down after the
+  idle time; at most three are kept, the least recently used idle one goes first. A reply
+  after that starts it again with `--resume=ID`; one it no longer has starts a new
+  conversation and says so under the answer. `--setting-sources=user,project,local`, so
+  the user's CLAUDE.md, permissions, hooks and MCP servers apply.
+  - Hover sends `initialize` (its models, each with its efforts, fill Settings) and
+    `interrupt` (Stop; one that hasn't ended the turn in 8 s has its process ended).
+    Every `can_use_tool` is Hover's to answer, on its own thread.
+  - Access: Full is `bypassPermissions`. Ask first and Ask always are its `default`
+    mode, where everything past its own read-only checks asks Hover, and
+    `ask::needs_asking` decides what reaches the user. Read only is `--disallowedTools`
+    for its edit and command tools, the rest refused; voice's routing turn (access
+    `none`) gets `--tools ""`. Trust is Hover's: its own suggestions would write a rule
+    into the user's settings.
+  - AskUserQuestion shows as OpenCode's questions do; the answers go back by each
+    question's own text (as Claude Code looks them up). What it says (partial messages,
+    tool calls and results, thinking) is put into ACP's shapes and read by `KiroStream`.
 - **The office's note before the first task** (`KiroNoticeSeen`) stands in place of the
   office until Got it.
 - **Sessions are kept until the user deletes them.** The history is sealed with

@@ -42,7 +42,18 @@ pub fn exe(t: AgentTool) -> Option<PathBuf> {
         // used: other tools (Grok) install an "agent" too.
         AgentTool::Cursor => cursor_shim().filter(|p| p.is_file()).or_else(|| find("cursor-agent")),
         AgentTool::OpenCode => opencode_exe(),
+        AgentTool::Claude => claude_exe(),
     }
+}
+
+/// Claude Code's native installer puts it in ~/.local/bin on Windows too, and says the
+/// folder may not be on PATH; npm's global install is a claude.cmd shim on PATH, and
+/// the older local install ~/.claude/local/claude.
+fn claude_exe() -> Option<PathBuf> {
+    let home = crate::proc::home();
+    let native = home.join(".local").join("bin").join(if cfg!(windows) { "claude.exe" } else { "claude" });
+    find("claude").or_else(|| Some(native).filter(|p| p.is_file()))
+        .or_else(|| Some(home.join(".claude").join("local").join(if cfg!(windows) { "claude.exe" } else { "claude" })).filter(|p| p.is_file()))
 }
 
 /// OpenCode's own exe. npm installs a .cmd shim that runs it on Windows; going to the
@@ -74,6 +85,10 @@ pub fn arguments(t: AgentTool) -> &'static [&'static str] {
         // Local only: this address, a port the system picks, and never announced on
         // the network (mDNS), whatever the user's opencode config says.
         AgentTool::OpenCode => &["serve", "--hostname=127.0.0.1", "--port=0", "--mdns=false"],
+        // The Agent SDK's own way of running it (T3 Code's): streamed JSON both ways and
+        // its control protocol on stdio, so every permission comes to Hover. The rest
+        // (access, model, effort, resume) is added per conversation (claude::launch_args).
+        AgentTool::Claude => &["--output-format", "stream-json", "--verbose", "--input-format", "stream-json", "--permission-prompt-tool", "stdio", "--include-partial-messages"],
     }
 }
 
@@ -85,6 +100,8 @@ pub fn install_hint(t: AgentTool) -> String {
         AgentTool::Cursor if cfg!(windows) => "Install the Cursor CLI: irm 'https://cursor.com/install?win32=true' | iex".into(),
         AgentTool::Cursor => "Install the Cursor CLI: curl https://cursor.com/install -fsS | bash".into(),
         AgentTool::OpenCode => format!("Install OpenCode {OPENCODE_MIN_VERSION} or newer from opencode.ai."),
+        AgentTool::Claude if cfg!(windows) => "Install Claude Code: irm https://claude.ai/install.ps1 | iex".into(),
+        AgentTool::Claude => "Install Claude Code: curl -fsSL https://claude.ai/install.sh | bash".into(),
     }
 }
 
@@ -95,6 +112,9 @@ pub fn sign_in_hint(t: AgentTool) -> &'static str {
         AgentTool::Cursor => "Sign in: run “cursor-agent login” in a terminal.",
         // OpenCode keeps its own providers: API keys, cloud sign-ins, local models.
         AgentTool::OpenCode => "Add a model provider: run “opencode auth login”, or set one up in your opencode config.",
+        // An API key in its environment, Bedrock or Vertex count as signed in too (its
+        // auth status says so).
+        AgentTool::Claude => "Sign in: run “claude auth login” in a terminal.",
     }
 }
 
@@ -165,6 +185,8 @@ fn look(t: AgentTool) -> AgentReady {
         AgentTool::Kiro => (Some(exe), &["whoami"]),
         AgentTool::Codex => (find("codex"), &["login", "status"]),
         AgentTool::Cursor => (Some(exe), &["status"]),
+        // Exit 0 and {"loggedIn": true} when signed in, 1 when not.
+        AgentTool::Claude => (Some(exe), &["auth", "status"]),
         AgentTool::OpenCode => unreachable!(),
     };
     // The adapter can carry its own Codex; without the CLI there is nothing to ask.

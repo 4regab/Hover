@@ -7,16 +7,17 @@ use crate::json::{Json, JsonError, Result};
 /// Services.AgentTool. New tools go at the end: the names are saved in settings and
 /// history.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum AgentTool { Kiro, Codex, Cursor, OpenCode }
+pub enum AgentTool { Kiro, Codex, Cursor, OpenCode, Claude }
 
 impl AgentTool {
-    pub const ALL: [AgentTool; 4] = [AgentTool::Kiro, AgentTool::Codex, AgentTool::Cursor, AgentTool::OpenCode];
-    const NAMES: [&'static str; 4] = ["Kiro", "Codex", "Cursor", "OpenCode"];
+    pub const ALL: [AgentTool; 5] = [AgentTool::Kiro, AgentTool::Codex, AgentTool::Cursor, AgentTool::OpenCode, AgentTool::Claude];
+    // Claude Code is new in 3.x, so its saved name can be its product's (2.x never wrote one).
+    const NAMES: [&'static str; 5] = ["Kiro", "Codex", "Cursor", "OpenCode", "Claude Code"];
 
     /// Agents.Name: the enum's name.
     pub fn name(self) -> &'static str { Self::NAMES[self as usize] }
     /// Agents.Id: the name in lower case.
-    pub fn id(self) -> &'static str { ["kiro", "codex", "cursor", "opencode"][self as usize] }
+    pub fn id(self) -> &'static str { ["kiro", "codex", "cursor", "opencode", "claude"][self as usize] }
     /// Agents.Parse: the exact id, or none.
     pub fn parse(id: Option<&str>) -> Option<AgentTool> { Self::ALL.into_iter().find(|t| Some(t.id()) == id) }
 

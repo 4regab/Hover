@@ -6,7 +6,7 @@
 
 <p align="center">
   AI coding agents at work in a notch at the top of your screen.<br>
-  Hand a task to Kiro, Codex, Cursor or OpenCode by typing or speaking, and watch it get done.
+  Hand a task to Kiro, Codex, Cursor, OpenCode or Claude Code by typing or speaking, and watch it get done.
 </p>
 
 <p align="center">
@@ -86,6 +86,7 @@ Hover drives the agents you already have. Install and sign in to at least one:
 | Codex | `codex-acp` |
 | Cursor | `cursor-agent` |
 | OpenCode | `opencode` |
+| Claude Code | `claude` (signed in, or an API key, Bedrock or Vertex) |
 
 The office shows which agents it found, and how to install or sign in to the rest.
 
@@ -165,7 +166,8 @@ There is no account, server or analytics.
   Cleanup gets the text, never the audio. The recording is deleted after it is turned into
   text.
 - **Agents** run as hidden child processes in the folder you choose, and stop with Hover.
-  OpenCode's server listens on 127.0.0.1 only, with a password made for each start. Each
+  OpenCode's server listens on 127.0.0.1 only, with a password made for each start. Claude
+  Code runs as one process per conversation, in its folder, with your own Claude Code settings. Each
   agent stops after 5 or 15 idle minutes (Settings) and starts again when you reply.
 
 ## Platform support

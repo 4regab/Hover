@@ -53,6 +53,7 @@ body:
         - Codex
         - Cursor
         - OpenCode
+        - Claude Code
   - type: input
     id: gpu
     attributes:

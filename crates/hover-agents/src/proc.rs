@@ -137,9 +137,15 @@ impl Drop for Group {
 pub fn launch(exe: &Path, args: &[&str], env: &[(String, String)]) -> std::io::Result<Link> { launch_grouped(exe, args, env).map(|(l, _)| l) }
 
 /// launch, with the group handed back too (a test kills the tool from outside).
-pub fn launch_grouped(exe: &Path, args: &[&str], env: &[(String, String)]) -> std::io::Result<(Link, Arc<Group>)> {
+pub fn launch_grouped(exe: &Path, args: &[&str], env: &[(String, String)]) -> std::io::Result<(Link, Arc<Group>)> { launch_at(exe, args, env, &home()) }
+
+/// launch, started in a folder of its own: Claude Code takes its project from the folder
+/// it starts in (it has no --cwd).
+pub fn launch_in(exe: &Path, args: &[&str], env: &[(String, String)], dir: &Path) -> std::io::Result<Link> { launch_at(exe, args, env, dir).map(|(l, _)| l) }
+
+fn launch_at(exe: &Path, args: &[&str], env: &[(String, String)], dir: &Path) -> std::io::Result<(Link, Arc<Group>)> {
     let mut cmd = hidden(exe, args);
-    cmd.current_dir(home());
+    cmd.current_dir(dir);
     for (k, v) in env { cmd.env(k, v); }
     let group = Arc::new(Group::spawn(cmd)?);
     let (stdin, stdout, stderr) = group.take_pipes();

@@ -360,13 +360,14 @@ component Logo inherits Rectangle {
     in property <length> mark: 22px;
     in property <length> radius: self.width / 2;
     property <bool> codex: tool == "codex";
+    property <bool> claude: tool == "claude";
     // Kiro's mark as an image: femtovg fills a Path this small in a few straight cuts,
     // which ran its eyes into one bar. The SVG is drawn at the size it shows.
-    property <bool> kiro: !(codex || tool == "cursor" || tool == "opencode");
+    property <bool> kiro: !(codex || claude || tool == "cursor" || tool == "opencode");
     border-radius: radius;
     // .lg.off: grayscale(1) brightness(.55), worked out for each tile and mark.
-    background: !ready ? (codex ? #8c8c8c : tool == "cursor" ? #070708 : tool == "opencode" ? #09090a : #363636)
-        : codex ? white : tool == "cursor" ? #0d0d10 : tool == "opencode" ? #101012 : #9046ff;
+    background: !ready ? (codex ? #8c8c8c : tool == "cursor" ? #070708 : tool == "opencode" ? #09090a : claude ? #4a4a4a : #363636)
+        : codex ? white : tool == "cursor" ? #0d0d10 : tool == "opencode" ? #101012 : claude ? #d97757 : #9046ff;
     border-width: tool == "cursor" || tool == "opencode" ? 1px : 0;
     border-color: #ffffff24;
     if kiro: Image {
@@ -376,16 +377,17 @@ component Logo inherits Rectangle {
         colorize: ready ? white : #8c8c8c;
     }
     if !kiro: Path {
-        width: mark;
-        height: mark;
+        // Claude's spark fills its whole grid, so it is drawn a little smaller (Marks' pad).
+        width: claude ? mark * 0.82 : mark;
+        height: claude ? mark * 0.82 : mark;
         viewbox-x: codex ? 3 : 0;
         viewbox-y: codex ? 2.9 : 0;
         viewbox-width: codex ? 18 : 24;
         viewbox-height: codex ? 18.2 : 24;
-        commands: codex ? MarkPaths.codex : tool == "cursor" ? MarkPaths.cursor : MarkPaths.opencode;
-        fill-rule: codex ? nonzero : evenodd;
-        fill: !ready ? (codex ? #565656 : tool == "cursor" ? #828283 : #868687)
-            : codex ? @linear-gradient(180deg, #b1a7ff 0%, #7a9dff 50%, #3941ff 100%) : tool == "cursor" ? #ececf0 : #f4f4f6;
+        commands: codex ? MarkPaths.codex : tool == "cursor" ? MarkPaths.cursor : claude ? MarkPaths.claude : MarkPaths.opencode;
+        fill-rule: codex || claude ? nonzero : evenodd;
+        fill: !ready ? (codex ? #565656 : tool == "cursor" ? #828283 : claude ? #9a9a9a : #868687)
+            : codex ? @linear-gradient(180deg, #b1a7ff 0%, #7a9dff 50%, #3941ff 100%) : tool == "cursor" ? #ececf0 : claude ? white : #f4f4f6;
         stroke: transparent;
     }
     // Codex's prompt again, in the tile's colour (see MarkPaths).
@@ -1608,7 +1610,7 @@ export component OfficeView inherits Rectangle {
                         Text { text: "Before an agent starts"; font-family: Fonts.display; font-size: 19px; font-weight: 600; color: Pal.ink;
                             accessible-role: text; accessible-id: "KiroNotice"; }
                         Rectangle { height: 8px; }
-                        Text { text: "Kiro, Codex, Cursor and OpenCode work on their own here, with full access to their tools. They can edit files and run commands in the project folder you choose, without stopping to ask.";
+                        Text { text: "Kiro, Codex, Cursor, OpenCode and Claude Code work on their own here, with full access to their tools. They can edit files and run commands in the project folder you choose, without stopping to ask.";
                             font-size: 13.5px; color: Pal.ink; wrap: word-wrap; }
                         Rectangle { height: 6px; }
                         Text { text: "So pick the folder with care, and keep it under version control, so you can look over what changed and undo it if you need to. In Settings each can be made to ask first, in the notch, or (all but Codex) only read. OpenCode's own deny rules always hold.";

@@ -5,6 +5,14 @@ What changed in each Hover release. Versions follow [Semantic Versioning](https:
 
 ## [Unreleased]
 
+### Added
+
+- Claude Code as a fifth agent in the office, run as T3 Code runs it: the `claude` CLI in its
+  Agent SDK mode, one hidden process per conversation in its folder. Full, Ask first, Ask
+  always and Read only all hold; its questions (AskUserQuestion) show over the bot, in the chat
+  and in the notch; Stop interrupts it; a reply after it went idle picks the conversation back
+  up. Settings has a Claude Code page with its own models and each model's efforts.
+
 ## [3.1.1] - 2026-10-02
 
 ### Fixed
