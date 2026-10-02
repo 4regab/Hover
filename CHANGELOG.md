@@ -64,7 +64,8 @@ What changed in each Hover release. Versions follow [Semantic Versioning](https:
   everything 2.x left: the data folder, the key, `settings.json` and the sessions.
 - The Windows executable is `hoverai.exe`.
 
-[Unreleased]: https://github.com/4regab/Hover/compare/v3.1.1...HEAD
+[Unreleased]: https://github.com/4regab/Hover/compare/v3.2.0...HEAD
+[3.2.0]: https://github.com/4regab/Hover/compare/v3.1.1...v3.2.0
 [3.1.1]: https://github.com/4regab/Hover/compare/v3.1.0...v3.1.1
 [3.1.0]: https://github.com/4regab/Hover/compare/v3.0.0...v3.1.0
 [3.0.0]: https://github.com/4regab/Hover/releases/tag/v3.0.0
