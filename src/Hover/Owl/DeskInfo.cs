@@ -72,6 +72,36 @@ public static class DeskInfo
         return x.Kind is "other" or "execute" && ScreenTool.IsMatch(title);
     }
 
+    private static readonly Regex ScreenVerb = new(@"(double_click|right_click|left_click|click|type_text|press_key|hotkey|scroll|drag|move_(?:mouse|cursor)|launch_app|open_app|screenshot|get_window_state|get_desktop_state|list_apps|list_windows|set_value|zoom|invoke_menu)",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+
+    /// A computer-use step in words, as the screen panel's activity lists it: what was
+    /// done ("Clicked", "Typed") and on what (the text typed, the key, the app).
+    internal static (string Did, string? On) ScreenAction(KiroStep x)
+    {
+        var tool = ScreenVerb.Match(x.Title ?? "") is { Success: true } m ? m.Value.ToLowerInvariant() : "";
+        var app = Field(x.Input, "app_name", "appName", "name", "bundle_id");
+        string? Cut(string? t) => t is null ? null : t.Length > 60 ? t[..59] + "…" : t;
+        return tool switch
+        {
+            "click" or "left_click" => ("Clicked", Cut(Field(x.Input, "label", "element_label", "text")) ?? (Number(x.Input, "x") is { } cx && Number(x.Input, "y") is { } cy ? $"at {cx}, {cy}" : app)),
+            "double_click" => ("Double-clicked", app),
+            "right_click" => ("Right-clicked", app),
+            "type_text" or "set_value" => ("Typed", Cut(Field(x.Input, "text", "value") is { } t ? $"“{t}”" : null)),
+            "press_key" => ("Pressed", Field(x.Input, "key")),
+            "hotkey" => ("Pressed", x.Input is { } j && j.Contains("keys") ? Cut(Regex.Match(j, @"""keys""\s*:\s*\[([^\]]*)\]").Groups[1].Value.Replace("\"", "").Replace(",", "+")) : null),
+            "scroll" => ("Scrolled", Field(x.Input, "direction")),
+            "drag" => ("Dragged", app),
+            "move_mouse" or "move_cursor" => ("Moved the cursor", null),
+            "launch_app" or "open_app" => ("Opened", app ?? Field(x.Input, "bundle_id")),
+            "screenshot" or "get_desktop_state" or "zoom" => ("Looked at the screen", app),
+            "get_window_state" => ("Read the window", app),
+            "list_apps" or "list_windows" => ("Listed the apps", null),
+            "invoke_menu" => ("Used a menu", Cut(Field(x.Input, "path"))),
+            _ => ("Used the computer", Cut(x.Title)),
+        };
+    }
+
     /// The agent is testing on the screen now: it runs, and computer use is among its
     /// last few steps. The screen panel then shows the screen live.
     public static bool Testing(KiroSession s) => s.Busy && s.Current is { } t && t.Steps.TakeLast(3).Any(IsScreen);

@@ -1,0 +1,652 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Agent office</title>
+<style>
+/*FONT*/
+:root{--p:#9046FF;--li:#C4A2FF;--ok:#30d158;--bad:#ff453a;--stop:#8e8e93;--ink:#f6f2ff;--dim:rgba(246,242,255,.62);--faint:rgba(246,242,255,.38);--line:rgba(255,255,255,.09);--glass:rgba(22,15,30,.72);--px:"Pixelify Sans","Cascadia Code",Consolas,monospace}
+*{box-sizing:border-box;font-variant-ligatures:none}
+body{margin:0;font-variant-ligatures:none;background:#07050a;color:var(--ink);font:14px/1.5 Inter,"Segoe UI Variable Text","Segoe UI",system-ui,sans-serif;-webkit-font-smoothing:antialiased}
+button{font:inherit;color:inherit;cursor:pointer}
+svg{display:block}
+.tools{display:flex;flex-wrap:wrap;gap:6px;align-items:center;padding:12px 16px 0;max-width:1240px;margin:auto;color:#8a8499;font-size:12px}
+.tools b{font-weight:600;letter-spacing:.08em;font-size:10.5px;margin:0 6px 0 10px}
+.tools button{background:#17131c;border:1px solid #2a2433;border-radius:99px;padding:5px 12px;font-size:12px;color:#d9d4e6}
+.tools button:hover{border-color:#5b44a0}.tools button.on,.tools .play{background:var(--p);border-color:var(--li);color:#fff}
+/* The Kiro page as it sits under Hover's workspace header. */
+#office{position:relative;max-width:1240px;margin:12px auto 10px;height:min(700px,calc(100vh - 90px));min-height:480px;border-radius:22px;overflow:hidden;border:1px solid rgba(255,190,150,.16);
+  background:radial-gradient(120% 90% at 50% 45%,#2a1824 0%,#150c14 55%,#07050a 100%);box-shadow:0 30px 80px rgba(0,0,0,.5)}
+body[data-time=day] #office{background:radial-gradient(120% 90% at 50% 45%,#4a3530 0%,#241815 60%,#0e0a09 100%)}
+#office::after{content:"";position:absolute;inset:0;pointer-events:none;background:radial-gradient(130% 100% at 50% 50%,transparent 60%,rgba(0,0,0,.45))}
+#gl{position:absolute;inset:0;width:100%;height:100%;touch-action:none}
+.glass{background:var(--glass);backdrop-filter:blur(18px) saturate(1.4);-webkit-backdrop-filter:blur(18px) saturate(1.4);border:1px solid var(--line);box-shadow:inset 0 1px 0 rgba(255,255,255,.08),0 12px 36px rgba(0,0,0,.4)}
+/* Name tags and speech bubbles over the bots. */
+#tags{position:absolute;inset:0;pointer-events:none;z-index:2}
+.tag{position:absolute;left:0;top:0;will-change:transform}
+.tag .in{position:absolute;left:0;bottom:0;transform:translateX(-50%);display:flex;flex-direction:column;align-items:center;gap:4px}
+.bub{position:relative;max-width:240px;padding:6px 11px 7px;border-radius:12px;background:rgba(14,10,18,.9);color:#fff;font:500 12px/1.25 Inter,"Segoe UI Variable Text","Segoe UI",sans-serif;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;box-shadow:0 0 0 1px rgba(255,255,255,.1),0 10px 24px rgba(0,0,0,.45);transition:transform .2s}
+.bub::after{content:"";position:absolute;left:50%;bottom:-5px;width:10px;height:10px;background:inherit;transform:translateX(-50%) rotate(45deg);border-radius:2px}
+.bub span::after{content:"";display:inline-block;width:0}
+.st-done .bub{background:rgba(10,30,18,.92);color:#b8f5c9;box-shadow:0 0 0 1px rgba(74,222,128,.35),0 10px 24px rgba(0,0,0,.45)}.st-failed .bub{background:rgba(40,10,10,.92);color:#ffb3ad;box-shadow:0 0 0 1px rgba(255,91,82,.35),0 10px 24px rgba(0,0,0,.45)}
+.st-stopped .bub{background:transparent;box-shadow:none;color:#c9c2e6;font-size:14px;letter-spacing:.2em;animation:zz 2.4s ease-in-out infinite}
+.st-stopped .bub::after{display:none}
+@keyframes zz{50%{transform:translateY(-4px);opacity:.6}}
+.nm{pointer-events:auto;display:flex;align-items:center;gap:5px;padding:2px 8px 3px 3px;border-radius:7px;border:0;background:rgba(10,6,14,.72);color:#fff;font:600 12px/1.2 var(--px);letter-spacing:.03em;box-shadow:0 0 0 1px rgba(255,255,255,.08)}
+.tag.hot .nm{background:var(--c,#9b6bff);box-shadow:0 0 0 2px rgba(255,255,255,.7),0 6px 20px rgba(0,0,0,.4)}
+.tag.hot .bub{transform:translateY(-2px)}
+/* HUD */
+.hud{position:absolute;right:16px;top:16px;z-index:4;display:flex;gap:8px}
+.hud button{height:40px;border-radius:13px;display:grid;place-items:center;border:1px solid var(--line)}
+.hud svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.seg{display:flex;padding:3px;border-radius:13px;gap:2px}
+.seg button{width:34px;height:32px;border:0;border-radius:10px;background:transparent;color:var(--dim)}
+.seg button.on{background:rgba(255,255,255,.12);color:#ffd27a}
+#hudMenu{position:absolute;right:16px;top:64px;z-index:8;width:184px;padding:5px;border-radius:13px}
+#hudMenu .tseg{display:flex;gap:2px;padding:2px;margin:0 0 4px;border-radius:9px;background:rgba(255,255,255,.05)}#hudMenu .tseg button{flex:1;height:26px;border:0;border-radius:7px;background:transparent;color:var(--dim);display:grid;place-items:center}#hudMenu .tseg button:hover{color:#fff}#hudMenu .tseg button.on{background:rgba(255,255,255,.14);color:#fff}
+#hudMenu .tseg svg{width:15px;height:15px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+#hudMenu>button{width:100%;display:flex;align-items:center;gap:9px;height:32px;padding:0 8px;border:0;border-radius:8px;background:transparent;text-align:left;font:500 12.5px Inter,"Segoe UI",sans-serif}#hudMenu>button:hover,#hudMenu button:focus-visible{background:rgba(255,255,255,.09);outline:0}#hudMenu>button svg{width:15px;height:15px;flex:none;fill:none;stroke:var(--dim);stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+#menuBtn[aria-expanded="true"]{background:rgba(255,255,255,.12);color:#fff}
+@keyframes pulse{50%{opacity:.35}}
+.nm:focus-visible,.hud button:focus-visible,#drawer button:focus-visible,#fab button:focus-visible{outline:2px solid var(--li);outline-offset:2px}
+.ct{min-width:0;display:flex;flex-direction:column;line-height:1.2}
+.ct b{font:600 12px var(--px)}.ct span{font-size:11px;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:130px}
+/* The mascot as a small avatar: a boxy head with a visor and two eyes. */
+.av{--c:#9b6bff;flex:none;display:inline-block;vertical-align:middle;position:relative;width:26px;height:24px;border-radius:7px;background:var(--c);box-shadow:inset 0 -3px 0 rgba(0,0,0,.18),inset 0 2px 0 rgba(255,255,255,.3)}
+.av::before{content:"";position:absolute;left:18%;right:18%;top:28%;bottom:24%;border-radius:4px;background:#121018}
+.av i{position:absolute;left:33%;top:40%;width:12%;height:22%;background:#aaf6ff;border-radius:1px;box-shadow:calc(var(--w,26px)*.22) 0 0 #aaf6ff}
+.av::after{content:"";position:absolute;right:26%;top:-18%;width:14%;height:20%;border-radius:2px;background:#ffd24a;box-shadow:0 0 6px #ffd24a}
+/* The session drawer. */
+#drawer{position:absolute;top:12px;right:12px;bottom:12px;width:min(400px,calc(100% - 24px));z-index:5;border-radius:20px;display:flex;flex-direction:column;transform:translateX(calc(100% + 24px));opacity:0;transition:transform .35s cubic-bezier(.2,.9,.25,1),opacity .25s;pointer-events:none}
+#drawer.open{transform:none;opacity:1;pointer-events:auto}
+.dh{display:flex;gap:12px;align-items:center;padding:14px 12px 0 14px}
+.dh .av{width:40px;height:36px;border-radius:10px;--w:40px}
+.dt{flex:1;min-width:0;line-height:1.25}.dt>b{display:block;font:600 16px var(--px)}
+/* The chat: a neutral graphite drawer. The tool shows through its logo only. */
+#drawer{background:linear-gradient(180deg,rgba(19,17,22,.97),rgba(13,12,15,.98));border-color:rgba(255,255,255,.08);box-shadow:0 30px 60px -24px rgba(0,0,0,.7),inset 0 1px 0 rgba(255,255,255,.05);overflow:hidden}
+#drawer .dh{gap:11px;padding:12px 10px 11px 12px;border-bottom:1px solid rgba(255,255,255,.06)}
+#dAv .lg{width:30px;height:30px;border-radius:9px}#dAv .lg svg{width:18px;height:18px}#dAv .lg.codex svg{width:22px;height:22px}
+#dTitle{font:600 14px/1.3 Inter,"Segoe UI",sans-serif;letter-spacing:-.01em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.dmeta{display:flex;gap:5px;margin-top:5px;align-items:center;min-width:0;overflow:hidden}
+.chip{display:inline-flex;align-items:center;gap:5px;height:20px;padding:0 7px;border-radius:6px;background:rgba(255,255,255,.055);color:rgba(255,255,255,.6);font:500 11px Inter,"Segoe UI",sans-serif;white-space:nowrap;flex:none;font-style:normal}
+.chip svg{width:11px;height:11px;flex:none;fill:none;stroke:currentColor;stroke-width:2;stroke-linejoin:round}
+#dFolder{flex:0 1 auto;min-width:0;max-width:40%}#dFolder span{overflow:hidden;text-overflow:ellipsis}
+#dAccess.full{color:#ffc46b;background:rgba(255,179,64,.09)}
+/* The context used; the sentence shows on hover or focus. */
+#ctx{position:relative;cursor:help;outline:none}
+#ctx:focus-visible{box-shadow:0 0 0 2px var(--li)}
+#ctx::after{content:attr(data-tip);position:absolute;right:0;top:calc(100% + 6px);transform:translateY(-3px);padding:4px 9px;border-radius:8px;background:rgba(10,6,14,.95);box-shadow:0 0 0 1px rgba(255,255,255,.12);color:var(--ink);font:500 11.5px Inter,"Segoe UI",sans-serif;white-space:nowrap;opacity:0;pointer-events:none;transition:.15s;z-index:9}
+#ctx:hover::after,#ctx:focus::after{opacity:1;transform:none}
+#dClose{width:32px;height:32px;border-radius:10px;border:0;background:rgba(255,255,255,.06);display:grid;place-items:center}
+#dClose svg{width:14px;height:14px;stroke:var(--dim);stroke-width:2.2;fill:none;stroke-linecap:round}
+#ctxRing{--p:30;flex:none;width:11px;height:11px;border-radius:50%;background:conic-gradient(rgba(255,255,255,.75) calc(var(--p)*1%),rgba(255,255,255,.14) 0);-webkit-mask:radial-gradient(circle,transparent 2.8px,#000 3.3px);mask:radial-gradient(circle,transparent 2.8px,#000 3.3px)}
+@keyframes flow{to{background-position:-200% 0}}
+#thread{flex:1;overflow:auto;padding:14px 14px 8px;display:flex;flex-direction:column;gap:12px;scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.12) transparent;min-height:0}
+/* What the user said. */
+.me{align-self:flex-end;max-width:86%;background:#24212a;border:1px solid rgba(255,255,255,.06);padding:8px 12px;border-radius:16px 16px 5px 16px;font-size:13px;line-height:1.5;color:#f1eff4;white-space:pre-wrap;overflow-wrap:anywhere}
+.me .when{display:block;font-size:10.5px;color:rgba(255,255,255,.35);margin-top:2px;text-align:right}
+.q{display:block;margin-top:3px;font-size:11px;color:#ffc46b;font-weight:600}
+/* The timeline: one row per tool call, on a thin line. */
+.steps{position:relative;display:flex;flex-direction:column}
+.steps::before{content:"";position:absolute;left:9px;top:12px;bottom:12px;width:1px;background:rgba(255,255,255,.08)}
+.s{position:relative;display:grid;grid-template-columns:19px minmax(0,1fr) auto;gap:9px;align-items:center;min-height:28px;padding-right:4px;font-size:12.5px;color:rgba(255,255,255,.58);border-radius:8px}
+.s>.n{width:19px;height:19px;border-radius:6px;background:#1c1a20;box-shadow:inset 0 0 0 1px rgba(255,255,255,.08);display:grid;place-items:center;color:rgba(255,255,255,.55);z-index:1}
+.s>.n svg{width:11px;height:11px;fill:none;stroke:currentColor;stroke-width:2.2;stroke-linecap:round;stroke-linejoin:round}
+.s .tx{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.s .tx b{color:#f3f1f6;font-weight:500}
+.s .tx .pth{color:rgba(255,255,255,.32);font:11px "Cascadia Code",Consolas,monospace;margin-left:6px}
+.s .tx code{font:11.5px "Cascadia Code",Consolas,monospace;color:#f3f1f6;background:rgba(255,255,255,.06);padding:1px 6px;border-radius:5px}
+.s .r{display:flex;gap:5px;align-items:center;flex:none;font:500 10.5px/1 "Cascadia Code",Consolas,monospace;color:rgba(255,255,255,.38);white-space:nowrap}
+/* A turn's tool calls fold under one line: how long it worked, and what it did. */
+.sum{display:flex;align-items:center;gap:8px;min-width:0;height:26px;margin:0 -6px;padding:0 6px;border-radius:8px;font-size:11px;color:rgba(255,255,255,.36);cursor:pointer;user-select:none}
+.sum:hover{background:rgba(255,255,255,.05)}.sum:focus-visible{outline:2px solid rgba(255,255,255,.5);outline-offset:1px}
+.sum .sw{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sum b{color:rgba(255,255,255,.5);font-weight:500}.sum:hover b{color:rgba(255,255,255,.72)}.sum .tm{font:500 10.5px "Cascadia Code",Consolas,monospace;font-variant-numeric:tabular-nums}
+.sum .dot{margin:0 5px;color:rgba(255,255,255,.2)}
+.sum .car{flex:none;width:11px;height:11px;fill:none;stroke:rgba(255,255,255,.3);stroke-width:2.4;stroke-linecap:round;stroke-linejoin:round;transition:transform .2s}
+.sum.open .car{transform:rotate(90deg)}
+.sum:not(.open)+.steps{display:none}.sum.open+.steps{margin-top:-4px}.steps.now{margin-top:-6px}.steps.now::before{display:none}
+.s .r .a,.s .r .okp{color:#5de37a}.s .r .d,.s .r .bad{color:#ff7b72}.s .r .okp{display:inline-flex;align-items:center;gap:4px}
+.s.k-edit>.n{color:#c9a8ff}.s.k-run>.n{color:#ffc46b}.s.k-search>.n{color:#6fd6c9}.s.k-read>.n{color:#8fb6ff}.s.k-think>.n{color:rgba(255,255,255,.45)}.s.k-thought>.n,.s.k-agent>.n{color:#c4a2ff}.s.k-thought .tx .pth{font:italic 11.5px Inter,"Segoe UI",sans-serif}.s.k-agent .tx .pth{font-family:Inter,"Segoe UI",sans-serif}
+.s.fail>.n{color:#ff7b72}
+.s.live .tx b,.s.live .tx code{background:linear-gradient(90deg,#f3f1f6 38%,rgba(255,255,255,.35) 50%,#f3f1f6 62%);background-size:260% 100%;-webkit-background-clip:text;background-clip:text;color:transparent;animation:shim 2.4s linear infinite}
+.s.live>.n{box-shadow:inset 0 0 0 1px rgba(255,196,107,.5),0 0 12px rgba(255,196,107,.25)}
+@keyframes shim{from{background-position:130% 0}to{background-position:-130% 0}}
+.s.exp{cursor:pointer}.s.exp:hover{background:rgba(255,255,255,.035)}
+.s .car{width:12px;height:12px;fill:none;stroke:rgba(255,255,255,.35);stroke-width:2.4;stroke-linecap:round;stroke-linejoin:round;transition:transform .2s}
+.s.open .car{transform:rotate(90deg)}
+.ckm{width:11px;height:11px;fill:none;stroke:currentColor;stroke-width:3;stroke-linecap:round;stroke-linejoin:round;margin-right:-2px}
+.fchips{display:flex;gap:4px;flex-wrap:wrap;margin:1px 0 5px 28px}
+.fchips span{font:11px "Cascadia Code",Consolas,monospace;color:rgba(255,255,255,.7);background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.06);padding:0 7px;border-radius:6px;line-height:18px}
+/* An edit's change, a command's output. */
+.blk{margin:2px 0 6px 28px;border-radius:10px;overflow:hidden;border:1px solid rgba(255,255,255,.07);background:#09080b;font:11px/1.6 "Cascadia Code",Consolas,monospace}
+.s:not(.open)+.blk{display:none}
+.blk .bh{display:flex;align-items:center;gap:8px;padding:4px 9px;border-bottom:1px solid rgba(255,255,255,.06);color:rgba(255,255,255,.45);font:500 10.5px Inter,"Segoe UI",sans-serif}
+.blk .bh .ex{margin-left:auto;font:500 10.5px "Cascadia Code",Consolas,monospace;color:#5de37a}.blk .bh .ex.bad{color:#ff7b72}
+.blk pre{font:inherit;margin:0;padding:6px 0;color:rgba(255,255,255,.72);white-space:pre;overflow:auto;max-height:180px;scrollbar-width:thin}
+.blk pre>span{display:block;padding:0 10px;min-width:max-content}
+.blk.num pre>span{padding-left:0}.blk.num pre>span>i{display:inline-block;width:34px;padding-right:8px;text-align:right;font-style:normal;color:rgba(255,255,255,.22);user-select:none}
+.blk pre>.h{color:#8fb6ff;background:rgba(143,182,255,.06)}
+.blk .bh .pm{font:500 10.5px "Cascadia Code",Consolas,monospace}.blk .bh .pm .a{color:#5de37a}.blk .bh .pm .d{color:#ff7b72}
+.blk .bh .cp{margin-left:auto}.blk .bh .ex+.cp,.blk .bh .pm+.cp{margin-left:4px}.blk .bh .ex{margin-left:auto}.blk .bh .pm{margin-left:auto}
+.blk.th{font:12px/1.55 Inter,"Segoe UI",sans-serif;background:rgba(255,255,255,.025)}.blk.th .tt{padding:7px 11px;color:rgba(255,255,255,.62);white-space:pre-wrap;max-height:220px;overflow:auto;scrollbar-width:thin}
+.cp{border:0;background:transparent;width:22px;height:20px;border-radius:6px;display:inline-grid;place-items:center;color:rgba(255,255,255,.4);cursor:pointer;padding:0}
+.cp:hover{background:rgba(255,255,255,.1);color:#fff}.cp svg,.act svg{width:12px;height:12px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.cp.ok,.act.ok{color:#5de37a}
+.me{position:relative}.me>.cp{position:absolute;left:-28px;top:4px;opacity:0;transition:opacity .15s}.me:hover>.cp,.me>.cp:focus-visible{opacity:1}
+.acts{display:flex;align-items:center;gap:2px;margin:6px 0 0 -6px}.act{border:0;background:transparent;display:flex;align-items:center;gap:5px;height:24px;padding:0 7px;border-radius:7px;color:rgba(255,255,255,.42);font:500 11.5px Inter,"Segoe UI",sans-serif;cursor:pointer}
+.act:hover{background:rgba(255,255,255,.07);color:#fff}.acts .at{margin-left:6px;font-size:11px;color:rgba(255,255,255,.3);font-variant-numeric:tabular-nums}.blk pre>.a{background:rgba(50,215,75,.09);color:#a6f0b6}.blk pre>.d{background:rgba(255,69,58,.09);color:#ffb0aa}.blk pre>.c{color:rgba(255,255,255,.4)}.blk pre>.pr{color:#ffc46b}
+/* What the agent answered, and what the turn changed. */
+.who2{display:flex;align-items:center;gap:7px;font-size:12px;color:rgba(255,255,255,.38);margin-bottom:6px}.who2 b{color:#f3f1f6;font-weight:600}.who2 .lg.mini{margin:0}
+.use{margin-top:-6px;font-size:11px;color:rgba(255,255,255,.38);font-variant-numeric:tabular-nums}
+.chg{border:1px solid rgba(255,255,255,.08);border-radius:12px;overflow:hidden;background:rgba(255,255,255,.02)}
+.chg .ch{display:flex;align-items:center;gap:8px;padding:7px 11px;font:600 12px Inter,"Segoe UI",sans-serif;border-bottom:1px solid rgba(255,255,255,.06)}
+.chg .ch span{color:rgba(255,255,255,.4);font-weight:500}
+.chg .fr{display:flex;align-items:center;gap:8px;padding:5px 11px;font:11.5px "Cascadia Code",Consolas,monospace;color:rgba(255,255,255,.75);min-width:0}
+.chg .fr>span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.chg .fr+.fr{border-top:1px solid rgba(255,255,255,.04)}
+.chg .fr i{font-style:normal;margin-left:auto;display:flex;gap:6px;flex:none}.chg .fr .a{color:#5de37a}.chg .fr .d{color:#ff7b72}
+/* A code block in an answer: its language and Copy. */
+.cb{border:1px solid rgba(255,255,255,.08);border-radius:12px;overflow:hidden;background:#09080b;margin:2px 0 10px}
+.cb .ch{display:flex;align-items:center;padding:5px 7px 5px 11px;font:500 11px Inter,"Segoe UI",sans-serif;color:rgba(255,255,255,.42);border-bottom:1px solid rgba(255,255,255,.06)}
+.cb .ch button{margin-left:auto;border:0;background:rgba(255,255,255,.06);border-radius:6px;font:500 10.5px Inter,"Segoe UI",sans-serif;color:rgba(255,255,255,.6);padding:2px 8px}
+.cb .ch button:hover{background:rgba(255,255,255,.12);color:#fff}
+.md .cb pre{margin:0;border:0;border-radius:0;background:none}
+/* An agent's answer, as Markdown. */
+.ans{font-size:13.5px;line-height:1.65;color:#e9e7ec;overflow-wrap:anywhere}
+.ans.fresh{animation:rise .35s ease-out}
+@keyframes rise{from{opacity:0;transform:translateY(4px)}}
+.md>*:first-child{margin-top:0}.md>*:last-child{margin-bottom:0}
+.md p,.md ul,.md ol,.md blockquote,.md pre,.md .table,.md figure{margin:0 0 9px}
+.md h3,.md h4,.md h5,.md h6{margin:12px 0 6px;line-height:1.3}.md h3{font-size:15px}.md h4{font-size:14px}.md h5,.md h6{font-size:13px;color:var(--dim)}
+.md ul,.md ol{padding-left:20px}.md li{margin:2px 0}.md li::marker{color:var(--faint)}
+.md a{color:var(--li);text-decoration:underline;text-decoration-color:rgba(196,162,255,.4);text-underline-offset:2px;cursor:pointer}
+.md code{font:12px "Cascadia Code",Consolas,monospace;background:rgba(255,255,255,.08);padding:1px 5px;border-radius:5px}
+.md pre{position:relative;background:rgba(0,0,0,.35);border:1px solid var(--line);border-radius:10px;padding:10px 12px;overflow:auto;scrollbar-width:thin}
+.md pre code{background:none;padding:0;font-size:11.5px;line-height:1.55;white-space:pre}
+.md blockquote{border-left:3px solid rgba(196,162,255,.4);padding:2px 0 2px 10px;color:var(--dim)}
+.md hr{border:0;border-top:1px solid var(--line);margin:12px 0}
+.md img{max-width:100%;max-height:320px;border-radius:9px;display:block;margin:4px 0;background:rgba(255,255,255,.04)}
+.md .table{overflow:auto;border:1px solid var(--line);border-radius:10px}
+.md table{border-collapse:collapse;width:100%;font-size:12px}.md th,.md td{padding:6px 9px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}
+.md th{background:rgba(255,255,255,.05);font-weight:600}.md tr:last-child td{border-bottom:0}
+.md .task{display:inline-block;width:12px;height:12px;border-radius:3px;border:1.5px solid var(--faint);margin-right:6px;vertical-align:-1px}.md .task.done{background:var(--ok);border-color:var(--ok)}
+.md li:has(>.task){list-style:none;margin-left:-16px}
+.md figure.diagram{overflow:auto;padding:10px;background:rgba(0,0,0,.25);border:1px solid var(--line);border-radius:10px}
+.flow{max-width:100%;height:auto;display:block;margin:auto;font:12px Inter,"Segoe UI",sans-serif}
+.flow .n>:not(text){fill:rgba(144,70,255,.18);stroke:var(--li);stroke-width:1.2}.flow .n.diamond>:not(text){fill:rgba(255,154,74,.14);stroke:#ffb36b}
+.flow text{fill:var(--ink);text-anchor:middle}.flow .e{fill:none;stroke:var(--dim);stroke-width:1.4}.flow .e.dot{stroke-dasharray:4 3}.flow .e.thick{stroke-width:2.6}
+.flow marker path{fill:var(--dim)}.flow .el rect{fill:#1a1220;stroke:var(--line)}.flow .el text{fill:var(--dim);font-size:11px}
+/* Steps fold away under a one-line summary. */
+.ans.err{border-left:2px solid var(--bad);padding-left:10px}
+textarea{resize:none;border:0;outline:0;background:transparent;color:var(--ink);font:inherit;font-size:13px}
+textarea::placeholder{color:var(--faint)}
+/* The composer: the text, then a bar with +, the model, and one round button that
+   sends, or stops the run when there is nothing to send. */
+.composer{margin:6px 10px 10px;background:#1b181e;border:1px solid rgba(255,255,255,.08);border-radius:16px;padding:8px 8px 7px 10px;transition:border-color .15s,box-shadow .15s;cursor:text}
+.cbar{display:flex;align-items:center;gap:4px;margin-top:4px}.cbar .sp{flex:1}
+.mpill{flex:0 1 auto;min-width:44px;height:28px;max-width:62%;display:flex;align-items:center;gap:5px;padding:0 9px;border:0;border-radius:99px;background:transparent;color:var(--ink);font-size:12.5px;font-weight:600;white-space:nowrap;overflow:hidden}
+.mpill:hover,.mpill[aria-expanded="true"]{background:rgba(255,255,255,.08)}.mpill span{overflow:hidden;text-overflow:ellipsis}.mpill em{font-style:normal;color:var(--dim);font-weight:500}
+.mpill svg{width:12px;height:12px;flex:none;fill:none;stroke:var(--dim);stroke-width:2.4;stroke-linecap:round;stroke-linejoin:round}
+#mMenu{position:absolute;z-index:8;width:250px;max-height:min(360px,calc(100% - 20px));overflow:auto;border-radius:14px;padding:6px;scrollbar-width:thin}
+#mSub{position:absolute;z-index:8;min-width:136px;max-width:200px;border-radius:12px;padding:6px}
+#mMenu h5,#mSub h5{margin:6px 8px 4px;font:600 10.5px var(--px);letter-spacing:.06em;text-transform:uppercase;color:var(--faint)}
+#mMenu button,#mSub button{width:100%;display:flex;align-items:center;gap:8px;padding:6px 8px;border:0;border-radius:8px;background:transparent;text-align:left;font-size:12.5px}
+#mMenu button:hover,#mMenu button:focus-visible,#mMenu .mrow.open,#mSub button:hover,#mSub button:focus-visible{background:rgba(255,255,255,.09);outline:0}
+#mMenu button[aria-checked="true"]::after,#mSub button[aria-checked="true"]::after{content:"";margin-left:auto;width:8px;height:4px;flex:none;border:solid var(--li);border-width:0 0 2px 2px;transform:rotate(-45deg) translateY(-2px)}
+/* A model row: its name, the picked effort, the check, then the chevron to its efforts. */
+#mMenu .mrow span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}#mMenu .mrow em{font-style:normal;font-size:11.5px;color:var(--dim)}
+#mMenu .mrow svg{order:1;width:12px;height:12px;flex:none;fill:none;stroke:var(--dim);stroke-width:2.4;stroke-linecap:round;stroke-linejoin:round}
+#mMenu p{margin:4px 8px 3px;font-size:11px;color:var(--faint)}
+#confirm{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);z-index:9;width:min(320px,calc(100% - 32px));padding:16px;border-radius:16px;display:flex;flex-direction:column;gap:6px}
+#confirm b{font:600 14px var(--px)}#confirm span{font-size:12.5px;color:var(--dim)}#confirm div{display:flex;gap:8px;justify-content:flex-end;margin-top:8px}
+#confirm button{height:32px;padding:0 14px;border-radius:10px;border:1px solid var(--line);background:rgba(255,255,255,.05);font-weight:600;font-size:12.5px}#cfYes{background:rgba(255,69,58,.85)!important;border-color:transparent!important;color:#fff}
+/* History, on the bookshelf. */
+/* History, on the bookshelf: one row per session. The tool's logo, the task on one
+   line, and under it how it went, when, how long and where. Delete shows on hover. */
+.hfind{position:sticky;top:-14px;z-index:1;display:flex;align-items:center;gap:8px;height:34px;margin:-2px 0 6px;padding:0 10px;border-radius:10px;background:#1b181e;box-shadow:0 0 0 1px rgba(255,255,255,.07),0 10px 14px -6px rgba(13,12,15,.95);cursor:text}
+.hfind:focus-within{box-shadow:0 0 0 1px rgba(255,255,255,.22),0 10px 14px -6px rgba(13,12,15,.95)}
+.hfind svg{width:14px;height:14px;flex:none;fill:none;stroke:var(--faint);stroke-width:2;stroke-linecap:round}
+#hFind,#fFind{flex:1;min-width:0;height:100%;border:0;background:none;color:var(--ink);font:inherit;font-size:12.5px;outline:0}#hFind::placeholder,#fFind::placeholder{color:var(--faint)}
+#hFind::-webkit-search-cancel-button,#fFind::-webkit-search-cancel-button{filter:invert(1) opacity(.5)}
+#panel .sh{margin:14px 6px 4px;font:600 10.5px/1 Inter,"Segoe UI",sans-serif;letter-spacing:.08em;color:var(--faint)}
+.hrow{position:relative}
+.hr{width:100%;display:flex;align-items:center;gap:11px;min-width:0;padding:8px 10px 8px 8px;border:0;border-radius:10px;background:transparent;text-align:left;color:var(--ink)}
+.hr:hover,.hrow:focus-within .hr{background:rgba(255,255,255,.05)}.hr:focus-visible{outline:2px solid rgba(255,255,255,.5);outline-offset:-2px}
+.hr .lg{width:30px;height:30px;border-radius:9px}.hr .lg svg{width:17px;height:17px}.hr .lg.codex svg{width:21px;height:21px}
+.ht{flex:1;min-width:0;display:flex;flex-direction:column;gap:3px}
+.ht b{font:500 13px/1.3 Inter,"Segoe UI",sans-serif;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* The title, and its date at the right; the bin takes the date's place on hover. */
+.h1{display:flex;align-items:baseline;gap:8px;min-width:0}.h1 b{flex:1;min-width:0}
+.h1 time{flex:none;font-size:11.5px;color:var(--faint);font-variant-numeric:tabular-nums}
+.hrow:hover .h1 time,.hrow:focus-within .h1 time{visibility:hidden}
+.hm{display:flex;align-items:center;min-width:0;font-size:11.5px;line-height:1.3;color:var(--faint);white-space:nowrap}
+.hm .dot{margin:0 5px;color:rgba(255,255,255,.2)}.hm .hf{min-width:0;overflow:hidden;text-overflow:ellipsis}
+.hs{display:inline-flex;align-items:center;gap:5px;flex:none;color:var(--dim)}.hs i{width:6px;height:6px;border-radius:50%;background:var(--stop)}
+.hs.st-done i{background:var(--ok)}.hs.st-failed i{background:var(--bad)}.hs.st-working i,.hs.st-waking i{background:#b48cff}.hs.st-waiting i{background:#ffb340}
+.hat{flex:none;margin-left:8px;padding:0 6px;border-radius:5px;line-height:17px;font-size:10.5px;font-weight:500;color:#d8c6ff;background:rgba(180,140,255,.14)}
+.hx{position:absolute;right:6px;top:5px;width:26px;height:24px;border:0;border-radius:8px;background:transparent;display:grid;place-items:center;opacity:0;transition:opacity .12s,background .12s}
+.hx svg{width:14px;height:14px;fill:none;stroke:var(--dim);stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.hrow:hover .hx,.hrow:focus-within .hx{opacity:1}.hx:hover{background:rgba(255,69,58,.14)}.hx:hover svg{stroke:#ff7b72}.hx:focus-visible{outline:2px solid rgba(255,255,255,.5)}
+/* The side panel: the same graphite as the chat. */
+#panel{background:linear-gradient(180deg,rgba(19,17,22,.97),rgba(13,12,15,.98));border-color:rgba(255,255,255,.08);overflow:hidden}
+#panel .dh{padding:12px 10px 11px 14px;border-bottom:1px solid rgba(255,255,255,.06)}
+#panel .dt b{font:600 14px/1.3 Inter,"Segoe UI",sans-serif;letter-spacing:-.01em}#pSub{display:block;margin-top:2px;font-size:11.5px;color:var(--faint)}
+.composer:hover{border-color:rgba(255,255,255,.15)}
+.composer:focus-within,.composer.over{border-color:rgba(196,162,255,.55);box-shadow:0 0 0 3px rgba(144,70,255,.15)}
+.crow{display:flex;align-items:flex-end;gap:4px}
+#input,#nInput{display:block;width:100%;min-width:0;height:28px;max-height:140px;padding:3px 2px;line-height:22px}
+.clip,.go{flex:none;width:30px;height:30px;border:0;border-radius:50%;display:grid;place-items:center;transition:background .15s,opacity .15s,transform .1s}
+.clip{background:transparent;color:var(--faint)}.clip:hover{background:rgba(255,255,255,.08);color:var(--ink)}
+.clip svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round}
+.go{background:#f5f5f7;border-radius:10px}.go:hover{background:#fff}.go:active{transform:scale(.92)}.go:disabled{opacity:.3;cursor:default}
+.go svg{width:14px;height:14px;fill:none;stroke:#000;stroke-width:2.6;stroke-linecap:round;stroke-linejoin:round}
+/* While a run goes and the box is empty, the button stops the run. */
+.go .sq,.go.stop .up{display:none}.go.stop .sq{display:block}
+.shots{display:flex;gap:6px;flex-wrap:wrap;padding:3px 3px 6px}
+.shot{position:relative;width:52px;height:52px;border-radius:9px;overflow:hidden;background:#000;box-shadow:0 0 0 1px var(--line)}
+.shot img{width:100%;height:100%;object-fit:cover;display:block}
+.shot button{position:absolute;right:3px;top:3px;width:18px;height:18px;border:0;border-radius:50%;background:rgba(0,0,0,.7);display:grid;place-items:center;padding:0}
+.shot button svg{width:9px;height:9px;stroke:#fff;stroke-width:3;fill:none;stroke-linecap:round}
+.me .pics{display:flex;gap:5px;flex-wrap:wrap;margin-bottom:5px}
+.me .pics img{width:72px;height:72px;object-fit:cover;border-radius:8px;display:block;cursor:zoom-in}
+#nShots{padding:6px 0 0}
+/* Music. */
+#hudMenu #beats.on svg{stroke:#ffd27a;animation:beat 1.5s ease-in-out infinite}
+#beats.on::after{content:'On';margin-left:auto;font-size:11px;font-weight:600;color:#ffd27a}
+@keyframes beat{50%{transform:scale(1.12)}}
+[hidden]{display:none!important}
+/* New task: a circle at the bottom left. A click shows the agents' logos (the name
+   only on hover); a pick grows the box out of the circle for that agent. */
+#fab{position:absolute;left:14px;bottom:14px;z-index:6}
+#fabMain{position:relative;width:34px;height:34px;border-radius:50%;display:grid;place-items:center;border:0;color:var(--ink);transition:transform .2s,opacity .15s}
+#fabMain svg{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:2.2;stroke-linecap:round;transition:transform .25s cubic-bezier(.3,1.3,.5,1)}
+#fabMain:hover{background:rgba(40,31,50,.9)}
+#fab.s-pick #fabMain svg{transform:rotate(45deg)}
+#fabMain .draft{position:absolute;right:1px;top:1px;width:8px;height:8px;border-radius:50%;background:var(--li);box-shadow:0 0 0 2px #140f1a;display:none}
+#fab.draft.s-rest #fabMain .draft{display:block}
+#fab.s-open #fabMain{transform:scale(.5);opacity:0;pointer-events:none}
+#fabTools{position:absolute;left:0;bottom:0;pointer-events:none}
+.lg{flex:none;display:grid;place-items:center;border:0;border-radius:50%;padding:0}
+.lg svg{fill:currentColor;stroke:none}
+.lg.kiro{background:#9046FF;color:#fff}.lg.codex{background:#fff}.lg.cursor{background:#0d0d10;color:#ececf0;box-shadow:0 0 0 1px rgba(255,255,255,.14)}
+.lg.opencode{background:#101012;color:#f4f4f6;box-shadow:0 0 0 1px rgba(255,255,255,.14)}
+.lg.off{filter:grayscale(1) brightness(.55)}
+#fabTools .lg{position:absolute;left:2px;bottom:2px;width:30px;height:30px;opacity:0;transform:scale(.4);box-shadow:0 6px 16px -6px rgba(0,0,0,.8);
+  transition:transform .26s cubic-bezier(.25,1.2,.4,1),opacity .18s,box-shadow .15s;transition-delay:calc(var(--i)*30ms)}
+#fabTools .lg.cursor,#fabTools .lg.opencode{box-shadow:0 0 0 1px rgba(255,255,255,.14),0 6px 16px -6px rgba(0,0,0,.8)}
+#fabTools .lg svg{width:16px;height:16px}
+#fabTools .lg:hover,#fabTools .lg:focus-visible{outline:0;box-shadow:0 0 0 2px rgba(255,255,255,.85),0 6px 16px -6px rgba(0,0,0,.8)}
+#fab.s-pick #fabTools{pointer-events:auto}#fab.s-pick #fabTools .lg{opacity:1;transform:translateX(calc(40px + var(--i)*36px))}
+.lg .tip{position:absolute;left:50%;bottom:calc(100% + 8px);transform:translate(-50%,3px);white-space:nowrap;font:600 11.5px Inter,"Segoe UI",sans-serif;padding:3px 8px;border-radius:7px;background:rgba(12,9,16,.92);box-shadow:0 0 0 1px var(--line);color:var(--ink);opacity:0;transition:.12s;pointer-events:none}
+.lg:hover .tip,.lg:focus-visible .tip{opacity:1;transform:translate(-50%,0)}.lg .tip em{font-style:normal;color:#ffb36b;font-weight:500}
+#newtask{position:absolute;left:0;bottom:0;width:min(410px,calc(100vw - 52px));border-radius:20px;padding:9px 8px 8px 9px;transform-origin:17px calc(100% - 17px);transform:scale(.12);opacity:0;pointer-events:none;transition:transform .3s cubic-bezier(.2,1,.3,1),opacity .16s}
+#fab.s-open #newtask{transform:none;opacity:1;pointer-events:auto}
+#newtask.over{box-shadow:0 0 0 2px rgba(196,162,255,.55)}
+.ntop{display:flex;align-items:flex-start;gap:9px}
+#nWho{width:30px;height:30px}#nWho svg{width:17px;height:17px}
+#nInput{flex:1;height:44px;font-size:13.5px;padding-top:4px}
+#newtask .cbar{margin-top:4px}
+.fchip{flex:0 1 auto;min-width:0;max-width:40%;height:28px;display:flex;align-items:center;gap:6px;padding:0 9px;border:0;border-radius:9px;background:transparent;color:var(--dim);font:11.5px "Cascadia Code",Consolas,monospace}
+.fchip:hover{background:rgba(255,255,255,.07);color:var(--ink)}
+.fchip.acc{flex:none;max-width:none}.mpill{flex-shrink:2}
+.fchip span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.fchip svg{width:14px;height:14px;flex:none;fill:none;stroke:currentColor;stroke-width:2;stroke-linejoin:round}
+.fchip.none{color:#ffb36b}
+.fchip.acc{max-width:30%;font:500 11.5px Inter,"Segoe UI",sans-serif}.fchip.acc.full{color:#ffc46b}
+#mMenu .acc-opt{align-items:flex-start;padding:7px 8px}#mMenu .acc-opt>span{display:flex;flex-direction:column;gap:1px;min-width:0}
+#mMenu .acc-opt b{font-weight:600;font-size:12.5px}#mMenu .acc-opt em{font-style:normal;font-size:11px;line-height:1.35;color:var(--faint);white-space:normal}
+#mMenu .acc-opt[aria-checked="true"]::after{flex:none;margin-top:5px}
+#nNote{margin:4px 6px 0;font-size:11px;color:var(--faint)}
+#nGo:disabled{opacity:.3;cursor:default}
+/* The tool as its own small logo, on name tags and in the chat. */
+.lg.mini{display:inline-grid;vertical-align:-3px;width:16px;height:16px;border-radius:5px;margin:0 0 0 6px;flex:none}
+.lg.mini svg{width:11px;height:11px}.lg.mini.kiro svg{width:12px;height:12px}
+.nm .lg.mini{width:15px;height:15px;border-radius:4px;margin:0}
+.tag.hot .nm .lg.mini{box-shadow:0 0 0 1px rgba(255,255,255,.6)}
+/* A question over the bot's head, or at the end of its chat. */
+.askc{pointer-events:auto;position:relative;width:272px;padding:10px;border-radius:14px;background:rgba(14,10,18,.95);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);
+  box-shadow:0 0 0 1px rgba(255,179,64,.5),0 0 34px rgba(255,179,64,.2),0 14px 30px rgba(0,0,0,.55);font:500 12px/1.4 Inter,"Segoe UI",sans-serif;color:#fff;text-align:left;animation:rise .3s ease-out}
+.askc.over{margin-bottom:6px}
+.askc.over::after{content:"";position:absolute;left:50%;bottom:-5px;width:10px;height:10px;background:inherit;transform:translateX(-50%) rotate(45deg);border-radius:2px;box-shadow:1px 1px 0 rgba(255,179,64,.5)}
+.askc .at{display:flex;align-items:center;gap:7px;font-size:12.5px}.askc .at .lg.mini{margin:0}.askc .at b{font-weight:600;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.askc .at em{margin-left:auto;font-style:normal;font-size:10.5px;color:rgba(255,255,255,.45);white-space:nowrap}
+.askc pre{margin:8px 0 7px;padding:7px 9px;border-radius:9px;background:rgba(0,0,0,.45);font:11.5px/1.5 "Cascadia Code",Consolas,monospace;white-space:pre-wrap;word-break:break-all;max-height:120px;overflow:auto;scrollbar-width:thin}
+.askc pre .pr{color:#ffb340;margin-right:8px;user-select:none}.askc pre .a{color:#9df0ae}.askc pre .d{color:#ffaaa4}.askc pre .pth{color:rgba(255,255,255,.5)}
+.askc .ar{display:flex;align-items:center;gap:7px;font-size:11px;color:rgba(255,255,255,.58);margin-bottom:9px}.askc .ar i{flex:none;width:6px;height:6px;border-radius:50%;background:#ffb340}
+.askc.dz{box-shadow:0 0 0 1px rgba(255,69,58,.55),0 0 34px rgba(255,69,58,.18),0 14px 30px rgba(0,0,0,.55)}.askc.dz .ar i{background:#ff453a}
+.askc .ab{display:flex;gap:6px;align-items:center}.askc .ab .sp{flex:1}.askc pre+.ab{margin-top:9px}
+.askc button{height:26px;padding:0 10px;border:0;border-radius:8px;background:rgba(255,255,255,.1);color:#fff;font:600 11.5px Inter,"Segoe UI",sans-serif}
+.askc button:hover{background:rgba(255,255,255,.17)}.askc button:focus-visible{outline:2px solid #ffb340;outline-offset:1px}
+.askc button.pri{background:#f5f5f7;color:#000}.askc button.pri:hover{background:#fff}.askc button.dz{background:#ff453a}
+.askc.chat{width:auto;background:rgba(255,179,64,.06);box-shadow:inset 0 0 0 1px rgba(255,179,64,.35);backdrop-filter:none}
+.askc.chat.dz{background:rgba(255,69,58,.06);box-shadow:inset 0 0 0 1px rgba(255,69,58,.4)}
+/* A question: its choices as buttons that toggle, then Answer or Skip. */
+.askc .qq{margin:8px 0 2px}.askc .qq p{margin:0 0 6px;font-size:12px;color:rgba(255,255,255,.86);white-space:pre-wrap}
+.askc .qh{font:600 10.5px var(--px);letter-spacing:.06em;text-transform:uppercase;color:#ffb340;margin-bottom:3px}
+.askc .qo{display:flex;flex-direction:column;gap:4px;margin-bottom:6px}
+.askc .qo button{height:auto;min-height:26px;padding:5px 9px;text-align:left;font-weight:500;display:flex;flex-direction:column;align-items:flex-start;gap:1px}
+.askc .qo button small{font-size:10.5px;font-weight:400;color:rgba(255,255,255,.55)}
+.askc .qo button[aria-pressed="true"]{background:rgba(255,179,64,.22);box-shadow:inset 0 0 0 1px rgba(255,179,64,.7)}
+.askc .qo input{width:100%;height:26px;padding:0 9px;border:0;border-radius:8px;background:rgba(0,0,0,.4);color:#fff;font:500 11.5px Inter,"Segoe UI",sans-serif}
+.askc .qo input:focus-visible{outline:2px solid #ffb340;outline-offset:1px}
+.askc .qq p.qline{max-height:2.9em;overflow:hidden}
+.card.st-waiting .ct b{color:#ffb340}
+  background:#000;color:#fff;font:500 12.5px Inter,"Segoe UI Variable Text","Segoe UI",sans-serif;white-space:nowrap;box-shadow:0 10px 26px -10px rgba(0,0,0,.8);transition:box-shadow .4s}
+#toast{position:absolute;left:50%;top:18px;transform:translate(-50%,-12px);z-index:7;padding:8px 14px;border-radius:12px;font:600 12.5px var(--px);opacity:0;transition:.25s;pointer-events:none}
+#toast.show{opacity:1;transform:translate(-50%,0)}
+/* Hidden, not just see-through: its backdrop blur drew a band across the top even at opacity 0. */
+#toast:not(.show){visibility:hidden;transition:opacity .25s,transform .25s,visibility 0s .25s}
+/* Inside Hover the office is the whole page. */
+body.host{background:transparent;overflow:hidden}
+body.host .tools,body.host .note{display:none}
+body.host #office{max-width:none;margin:0;height:100vh;min-height:0;border:0;border-radius:0;box-shadow:none}
+body.host.notch #office{border:0;border-radius:0}
+body.host.notch #office::before{content:"";position:absolute;inset:0 0 auto;height:44px;z-index:1;pointer-events:none;background:linear-gradient(rgba(0,0,0,.9),transparent)}
+#gl.drag{cursor:grabbing!important}
+.x{width:32px;height:32px;border-radius:10px;border:0;background:rgba(255,255,255,.06);display:grid;place-items:center;flex:none}
+.x svg{width:14px;height:14px;stroke:var(--dim);stroke-width:2.2;fill:none;stroke-linecap:round}
+.x:hover{background:rgba(255,255,255,.12)}
+/* The board and the TV open a side panel. */
+#panel{position:absolute;top:12px;right:12px;bottom:12px;width:min(400px,calc(100% - 24px));z-index:5;border-radius:20px;display:flex;flex-direction:column;transform:translateX(calc(100% + 24px));opacity:0;transition:transform .35s cubic-bezier(.2,.9,.25,1),opacity .25s;pointer-events:none}
+#panel.open{transform:none;opacity:1;pointer-events:auto}
+#pBody{flex:1;overflow:auto;padding:14px 8px 12px 10px;scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.14) transparent;scrollbar-gutter:stable}
+/* The desk's menu, drawn as T3 Code draws its launcher: a dark sheet, a line icon,
+   the surface, and its letter at the right. */
+#deskMenu,#deskSub{position:absolute;z-index:9;border-radius:14px;padding:5px;background:rgba(18,17,20,.97);border:1px solid rgba(255,255,255,.1);box-shadow:0 18px 40px -8px rgba(0,0,0,.75),inset 0 1px 0 rgba(255,255,255,.05);backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px)}
+#deskMenu{width:272px;padding:6px;border-radius:16px;background:linear-gradient(180deg,rgba(28,24,34,.96),rgba(16,14,19,.97));transform-origin:var(--ox,0) var(--oy,0);animation:dpop .2s cubic-bezier(.2,.9,.3,1.25)}
+@keyframes dpop{from{opacity:0;transform:scale(.92) translateY(-4px)}}
+#deskMenu::before{content:"";position:absolute;inset:0;border-radius:inherit;pointer-events:none;background:radial-gradient(120% 60% at 0 0,color-mix(in srgb,var(--c,#9046ff) 22%,transparent),transparent 60%)}
+#deskMenu .dhd{position:relative;display:flex;align-items:center;gap:11px;padding:7px 8px 9px}
+#deskMenu .dmon{flex:none;position:relative;width:38px;height:30px;border-radius:7px;background:#0b0a0f;border:2px solid #24212b;box-shadow:0 0 0 1px rgba(255,255,255,.05),0 4px 14px -4px var(--c,#9046ff)}
+#deskMenu .dmon::after{content:"";position:absolute;left:50%;bottom:-7px;width:10px;height:4px;margin-left:-5px;border-radius:0 0 3px 3px;background:#24212b}
+#deskMenu .dscr{position:absolute;inset:2px;border-radius:4px;display:grid;place-items:center;background:radial-gradient(circle at 50% 40%,color-mix(in srgb,var(--c,#9046ff) 45%,transparent),transparent 75%)}
+#deskMenu .dmon.st-working .dscr{animation:pulse 1.6s infinite}#deskMenu .dmon.st-waiting{border-color:#5a4520}
+#deskMenu .dscr .lg.mini{margin:0;width:16px;height:16px}
+#deskMenu .dtt{min-width:0;display:flex;flex-direction:column;gap:1px}
+#deskMenu .dtt b{font:600 12.5px var(--px);letter-spacing:.03em;color:#fff}
+#deskMenu .dtt>span{display:flex;align-items:center;gap:6px;font:12px Inter,"Segoe UI",sans-serif;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#deskMenu .dot{flex:none;width:7px;height:7px;border-radius:50%;background:var(--stop)}#deskMenu .dot.st-working,#deskMenu .dot.st-waking{background:var(--li);box-shadow:0 0 6px var(--li)}#deskMenu .dot.st-waiting{background:#ffb340;box-shadow:0 0 6px #ffb340}#deskMenu .dot.st-done{background:var(--ok)}#deskMenu .dot.st-failed{background:var(--bad)}
+#deskMenu .dgrp{position:relative;padding:3px 0;border-top:1px solid rgba(255,255,255,.06)}
+#deskMenu .dlive{display:flex;align-items:center;gap:5px;margin-right:4px;padding:1px 7px;border-radius:99px;background:rgba(255,69,58,.14);color:#ff8a80;font:600 10.5px Inter,"Segoe UI",sans-serif}#deskMenu .dlive i{width:6px;height:6px;border-radius:50%;background:#ff453a;box-shadow:0 0 6px #ff453a;animation:pulse 1.2s infinite}
+#deskMenu .dchat{position:relative;width:100%;margin-top:3px;display:flex;align-items:center;gap:10px;height:36px;padding:0 10px;border:0;border-radius:10px;background:color-mix(in srgb,var(--c,#9046ff) 20%,rgba(255,255,255,.04));color:#fff;font:600 13px Inter,"Segoe UI",sans-serif;text-align:left;box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--c,#9046ff) 35%,transparent)}
+#deskMenu .dchat:hover,#deskMenu .dchat:focus-visible{background:color-mix(in srgb,var(--c,#9046ff) 32%,rgba(255,255,255,.05));outline:0}
+#deskMenu .dchat svg{width:17px;height:17px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}#deskMenu .dchat span{flex:1}#deskMenu .dchat kbd{font:500 12px Inter,sans-serif;color:rgba(255,255,255,.55)}
+#deskMenu .drow{width:100%;display:flex;align-items:center;gap:11px;height:34px;padding:0 10px;border:0;border-radius:9px;background:transparent;text-align:left;font:500 13.5px Inter,"Segoe UI",sans-serif;color:#ececf0}
+#deskMenu .drow:hover,#deskMenu .drow:focus-visible,#deskMenu .drow.open{background:rgba(255,255,255,.08);outline:0}
+#deskMenu .drow[aria-disabled="true"]{color:rgba(236,236,240,.38);cursor:default}#deskMenu .drow[aria-disabled="true"]:hover{background:rgba(255,255,255,.03)}
+#deskMenu .di{position:relative;flex:none;display:grid;place-items:center;width:18px;height:18px}
+#deskMenu .di svg,#deskSub svg{width:17px;height:17px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;opacity:.9}
+#deskMenu .dl{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#deskMenu kbd{font:500 12.5px Inter,"Segoe UI",sans-serif;color:rgba(236,236,240,.42);min-width:12px;text-align:center}
+#deskMenu .dch{display:grid;place-items:center;width:14px;margin-left:-3px}#deskMenu .dch svg{width:13px;height:13px;fill:none;stroke:rgba(236,236,240,.6);stroke-width:2.2;stroke-linecap:round;stroke-linejoin:round}#deskMenu .dch.off svg{stroke:rgba(236,236,240,.2)}
+/* The desk as a card, in the chat's style: header, what it does now, eight tiles, a reply box. */
+#deskMenu{width:min(436px,calc(100% - 16px));max-height:calc(100% - 16px);overflow:auto;scrollbar-width:none;padding:8px}
+#deskMenu .dhd{gap:11px;padding:4px 4px 10px;align-items:flex-start}
+#deskMenu .dav{position:relative;flex:none}#deskMenu .dav .lg{width:34px;height:34px;border-radius:10px;box-shadow:0 0 0 1px rgba(255,255,255,.06),0 6px 16px -6px var(--c,#9046ff)}#deskMenu .dav .lg svg{width:19px;height:19px}
+#deskMenu .dav>.dot{position:absolute;right:-2px;bottom:-2px;width:10px;height:10px;border:2px solid #17141b}
+#deskMenu .dtt{flex:1;gap:2px}#deskMenu .dtt b{font:600 11.5px var(--px);letter-spacing:.06em;text-transform:uppercase;color:color-mix(in srgb,var(--c,#9046ff) 55%,#fff)}
+#deskMenu .dtl{font:600 13.5px/1.3 Inter,"Segoe UI",sans-serif;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#deskMenu .dmeta{margin-top:4px;flex-wrap:wrap;row-gap:4px}#deskMenu .chip{height:19px;font-size:10.5px}#deskMenu .chip>span{max-width:110px;overflow:hidden;text-overflow:ellipsis}
+#deskMenu .chip.full{color:#ffc46b;background:rgba(255,179,64,.09)}
+#deskMenu .dst.st-working,#deskMenu .dst.st-waking{color:#d9c4ff;background:rgba(155,107,255,.14)}#deskMenu .dst.st-waiting{color:#ffc46b;background:rgba(255,179,64,.12)}#deskMenu .dst.st-done{color:#7ee59a;background:rgba(48,209,88,.1)}#deskMenu .dst.st-failed{color:#ff9a92;background:rgba(255,69,58,.12)}
+#deskMenu .dst .tm{font:500 10.5px "Cascadia Code",Consolas,monospace;font-variant-numeric:tabular-nums;opacity:.8}
+#deskMenu .dnow{position:relative;margin:0 0 8px;padding:7px 8px;border-radius:12px;background:rgba(255,255,255,.03);box-shadow:inset 0 0 0 1px rgba(255,255,255,.05)}
+#deskMenu .dnow:empty{display:none}#deskMenu .dnow .steps::before{left:9px}#deskMenu .dnow .s{min-height:24px;font-size:12px}#deskMenu .dnow .blk{display:none}#deskMenu .dnow .s .car{display:none}
+#deskMenu .dline{margin:0;font-size:12px;color:var(--dim)}#deskMenu .dans{font-size:12.5px;line-height:1.5;color:#e9e7ec;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;margin-bottom:4px}#deskMenu .dans.err{color:#ffb0aa}
+#deskMenu .dhelp{display:flex;align-items:center;gap:4px;margin:6px 0 0;font-size:11.5px;color:rgba(255,255,255,.5)}
+#deskMenu .dhelp i{width:12px;height:11px;border-radius:3px;background:var(--h);box-shadow:inset 0 -2px 0 rgba(0,0,0,.2);animation:pulse 1.4s infinite}#deskMenu .dhelp i:last-of-type{margin-right:4px}
+#deskMenu .dask{display:flex;flex-direction:column;gap:2px;font-size:12px;color:#ffd59a}#deskMenu .dask b{font-weight:600}#deskMenu .dask span{color:rgba(255,213,154,.75);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}#deskMenu .dask .pbtn{align-self:flex-start;margin-top:6px}
+#deskMenu .dtiles{position:relative;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:5px}
+#deskMenu .dtile{position:relative;display:flex;flex-direction:column;align-items:flex-start;gap:2px;min-width:0;padding:8px 8px 7px;border:0;border-radius:11px;background:rgba(255,255,255,.045);box-shadow:inset 0 0 0 1px rgba(255,255,255,.05);text-align:left;color:#ececf0;transition:background .12s,transform .1s}
+#deskMenu .dtile:hover,#deskMenu .dtile:focus-visible,#deskMenu .dtile.open{background:color-mix(in srgb,var(--c,#9046ff) 16%,rgba(255,255,255,.06));box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--c,#9046ff) 35%,transparent);outline:0}
+#deskMenu .dtile:active{transform:scale(.97)}
+#deskMenu .dtile[aria-disabled="true"]{color:rgba(236,236,240,.38);cursor:default}#deskMenu .dtile[aria-disabled="true"]:hover{background:rgba(255,255,255,.03);box-shadow:inset 0 0 0 1px rgba(255,255,255,.04)}
+#deskMenu .dtile .di{width:20px;height:20px;margin-bottom:3px}#deskMenu .dtile .di svg{width:16px;height:16px}
+#deskMenu .dtile .dl{font:600 12px Inter,"Segoe UI",sans-serif;width:100%}
+#deskMenu .dtile .dd{width:100%;font:500 10.5px Inter,"Segoe UI",sans-serif;color:rgba(236,236,240,.45);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#deskMenu .dtile kbd{position:absolute;top:6px;right:7px;font-size:10.5px;color:rgba(236,236,240,.3)}
+#deskMenu .dtile.live{box-shadow:inset 0 0 0 1px rgba(255,69,58,.35)}#deskMenu .dtile .lv{position:absolute;left:15px;top:-1px;width:6px;height:6px;border-radius:50%;background:#ff453a;box-shadow:0 0 6px #ff453a;animation:pulse 1.2s infinite}
+#deskMenu .dtile .bdg{position:absolute;left:12px;top:-5px}
+#deskMenu .dcomp{display:flex;align-items:flex-end;gap:6px;margin:8px 0 6px;padding:5px 5px 5px 10px;border-radius:13px}
+#deskMenu .dcomp textarea{flex:1;height:28px;max-height:96px;padding:5px 0;font-size:12.5px;line-height:18px}
+#deskMenu .dcomp .go{width:28px;height:28px;border-radius:9px}#deskMenu .dcomp .go svg{width:14px;height:14px;fill:none;stroke:#000;stroke-width:2.4;stroke-linecap:round;stroke-linejoin:round}
+#deskMenu .dchat{margin-top:0;height:32px;font-size:12.5px}
+/* Hover's browser steps in the chat. */
+.s.k-web>.n{color:#7cc0ff}
+/* Hover's own browser, laid over this box by the host; behind it, what shows until it is. */
+.bview .bnat{flex:1;min-height:240px;display:grid;place-items:center;border-radius:10px;background:#0d0c10;box-shadow:inset 0 0 0 1px rgba(255,255,255,.06)}
+.bnow{display:flex;align-items:center;gap:7px;padding:0 4px;font-size:11.5px;color:#9fd0ff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.bnow i{flex:none;width:7px;height:7px;border-radius:50%;background:#7cc0ff;box-shadow:0 0 6px #7cc0ff;animation:pulse 1.2s infinite}.bnow.bad{color:#ff9a92}
+.baddr .bi .spin{width:12px;height:12px}
+/* GitHub CLI setup and Create pull request, in the Pull request tab. */
+.ghs,.prf{display:flex;flex-direction:column;gap:10px;padding:12px;border-radius:12px;background:rgba(255,255,255,.03);box-shadow:inset 0 0 0 1px rgba(255,255,255,.06)}
+.ghh{display:flex;gap:12px;align-items:flex-start}.ghh>svg{flex:none;width:26px;height:26px;fill:none;stroke:#fff;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;margin-top:2px}
+.ghh div{display:flex;flex-direction:column;gap:3px}.ghh b{font:600 14px Inter,"Segoe UI",sans-serif}.ghh span{font-size:12px;line-height:1.5;color:var(--dim)}
+.ghcode{display:flex;flex-direction:column;align-items:flex-start;gap:4px;padding:10px 12px;border-radius:10px;background:rgba(124,192,255,.08);box-shadow:inset 0 0 0 1px rgba(124,192,255,.2)}
+.ghcode>span{font-size:11px;color:#9fd0ff}.ghcode b{font:600 22px/1.2 "Cascadia Code",Consolas,monospace;letter-spacing:.12em;color:#fff;user-select:all}.ghcode div{display:flex;gap:6px;flex-wrap:wrap}.ghcode .pbtn{margin-top:4px}
+.ghline{display:flex;align-items:center;gap:8px;margin:0;font-size:12px;color:var(--dim)}.gherr{margin:0;padding:7px 10px;border-radius:8px;background:rgba(255,69,58,.1);color:#ffb0aa;font-size:12px;line-height:1.5}.gherr span{color:rgba(255,176,170,.7)}
+.ghb{display:flex;align-items:center;gap:10px;flex-wrap:wrap}.ghb .pbtn{margin:0}.ghb>span{font-size:11.5px;color:var(--faint)}
+.pbtn.pri{background:#f5f5f7;color:#0b0a0f;border-color:transparent}.pbtn.pri:hover{background:#fff}.pbtn:disabled{opacity:.45;cursor:default}.pbtn .spin{width:11px;height:11px;border-color:rgba(0,0,0,.2);border-top-color:#000}
+.prf .prt{display:flex}.prw{margin:-4px 0 0;font-size:12px;color:var(--dim)}.prw b{color:#ececf0;font-weight:600}
+.prf label{display:flex;flex-direction:column;gap:4px;font-size:11px;color:var(--faint)}
+.prf input:not([type=checkbox]),.prf textarea{width:100%;box-sizing:border-box;padding:7px 10px;border:0;border-radius:9px;background:#1b181e;box-shadow:0 0 0 1px rgba(255,255,255,.08);color:var(--ink);font:13px Inter,"Segoe UI",sans-serif;outline:0}
+.prf textarea{resize:vertical;min-height:80px;font-size:12.5px;line-height:1.5}.prf input:focus,.prf textarea:focus{box-shadow:0 0 0 1px rgba(196,162,255,.55),0 0 0 3px rgba(144,70,255,.15)}
+.prrow{display:flex;gap:8px}.prrow label{flex:1;min-width:0}
+.prf .prck{flex-direction:row;align-items:center;gap:8px;font-size:12.5px;color:#ececf0;cursor:pointer}.prck input{accent-color:#9b6bff}
+.prok{display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:9px;background:rgba(48,209,88,.1);color:#7ee59a;font-size:12.5px}.prok svg{width:15px;height:15px;fill:none;stroke:currentColor;stroke-width:2.4}.prok .pbtn{margin:0 0 0 auto}
+.bdg{position:absolute;right:-8px;top:-6px;min-width:14px;height:14px;padding:0 3px;border-radius:7px;background:#3b82f6;color:#fff;font:600 9px/14px Inter,"Segoe UI",sans-serif;text-align:center}
+#deskSub{min-width:220px;max-width:300px}
+#deskSub h5{margin:6px 9px 4px;font:600 10.5px var(--px);letter-spacing:.06em;text-transform:uppercase;color:var(--faint)}
+#deskSub button{width:100%;display:flex;align-items:center;gap:9px;height:32px;padding:0 9px;border:0;border-radius:8px;background:transparent;text-align:left;font-size:12.5px;color:#ececf0}
+#deskSub button:hover,#deskSub button:focus-visible{background:rgba(255,255,255,.08);outline:0}
+#deskSub button span{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}#deskSub em{font-style:normal;font-size:11px;color:var(--faint)}
+/* The desk's panel: wider than the others, its surfaces as tabs along the top. */
+#panel.wide{width:min(720px,calc(100% - 24px))}
+#pBody.desk{display:flex;flex-direction:column;padding:0 8px 12px 10px}
+.dtabs{position:sticky;top:0;z-index:2;display:flex;gap:2px;padding:8px 0 8px;margin-bottom:6px;background:linear-gradient(rgba(16,14,18,1) 80%,rgba(16,14,18,0))}
+.dtabs button{position:relative;flex:1;height:30px;border:0;border-radius:8px;background:transparent;color:var(--dim);display:grid;place-items:center}
+.dtabs button svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.dtabs button:hover{background:rgba(255,255,255,.06);color:var(--ink)}.dtabs button[aria-selected="true"]{background:rgba(255,255,255,.1);color:#fff}
+.dtabs button[aria-disabled="true"]{color:rgba(246,242,255,.22)}.dtabs button:focus-visible{outline:2px solid rgba(255,255,255,.5);outline-offset:-2px}
+.dtabs .bdg{right:calc(50% - 16px);top:1px}.dtabs .rec{position:absolute;right:calc(50% - 13px);top:5px;width:7px;height:7px;border-radius:50%;background:#ff453a;box-shadow:0 0 6px #ff453a;animation:pulse 1.2s infinite}
+.dbody{flex:1;min-height:0;display:flex;flex-direction:column;font-size:12.5px}
+.dempty{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;min-height:220px;padding:20px;text-align:center;color:var(--faint)}
+.dempty svg{width:26px;height:26px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;margin-bottom:4px}
+.dempty b{font:600 13px Inter,"Segoe UI",sans-serif;color:var(--dim)}.dempty span{max-width:340px;font-size:12px;line-height:1.45}
+.spin{display:inline-block;width:12px;height:12px;border-radius:50%;border:2px solid rgba(255,255,255,.18);border-top-color:rgba(255,255,255,.75);animation:spin .8s linear infinite;vertical-align:-2px}
+@keyframes spin{to{transform:rotate(360deg)}}
+.dbody .note{margin:0 4px 8px;padding:7px 10px;border-radius:8px;background:rgba(255,196,107,.08);color:#ffd59a;font-size:11.5px}
+.dbody .none{margin:6px 6px;color:var(--faint);font-size:12px}
+.dbody .sh span{color:var(--faint);font-weight:500}
+.dbody .chip.br{gap:5px;font-family:"Cascadia Code",Consolas,monospace}.dbody .chip.br svg{width:11px;height:11px;fill:none;stroke:currentColor;stroke-width:2}
+.dbody .a{color:#5de37a}.dbody .d{color:#ff7b72}
+.dsum{display:flex;align-items:center;gap:8px;margin:0 4px 10px;font-size:12px;color:var(--dim)}.dsum b{color:var(--ink);font-weight:600}.dsum .live{color:#7cb7ff}
+/* Terminal: each command, its output, how it ended. */
+.term{display:flex;flex-direction:column;gap:8px;padding-bottom:6px}
+.tcmd{border-radius:10px;background:#0b0a0d;box-shadow:inset 0 0 0 1px rgba(255,255,255,.07);overflow:hidden}
+.tcmd .th{display:flex;align-items:center;gap:8px;min-width:0;padding:7px 10px;background:rgba(255,255,255,.035);font:12px "Cascadia Code",Consolas,monospace}
+.tcmd .th .pr{color:#5de37a;flex:none}.tcmd .th code{flex:1;min-width:0;color:#f3f1f6;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tst{flex:none;font:500 10.5px "Cascadia Code",Consolas,monospace;color:rgba(255,255,255,.4)}.tst.ok{color:#5de37a}.tst.bad{color:#ff7b72}.tst.run{color:#ffc46b;display:flex;gap:6px;align-items:center}.tst .spin{width:10px;height:10px;border-width:1.5px}
+.tcmd pre{margin:0;padding:8px 10px 10px;max-height:320px;overflow:auto;font:11.5px/1.5 "Cascadia Code",Consolas,monospace;color:#d6d3dc;white-space:pre-wrap;overflow-wrap:anywhere}
+.tcmd pre.none{color:rgba(255,255,255,.3)}.tcmd.run{box-shadow:inset 0 0 0 1px rgba(255,196,107,.35)}
+/* Files: changed, looked at, and the whole folder as a tree. */
+.dbody .hfind{top:42px}
+.frow,.trow{width:100%;display:flex;align-items:center;gap:8px;min-width:0;height:30px;padding:0 8px;border:0;border-radius:8px;background:transparent;text-align:left;color:var(--ink);font-size:12.5px}
+.frow:hover,.trow:hover{background:rgba(255,255,255,.05)}.frow:focus-visible,.trow:focus-visible{outline:2px solid rgba(255,255,255,.45);outline-offset:-2px}
+.frow svg,.trow svg{width:14px;height:14px;flex:none;fill:none;stroke:var(--faint);stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.frow .fn,.fbar .fn{flex:1;min-width:0;display:flex;align-items:baseline;gap:7px;white-space:nowrap;overflow:hidden}.fn b{font-weight:500;overflow:hidden;text-overflow:ellipsis}.fn i{font-style:normal;font:11px "Cascadia Code",Consolas,monospace;color:var(--faint);overflow:hidden;text-overflow:ellipsis}
+.frow.gone b{text-decoration:line-through;color:var(--dim)}
+.fr{flex:none;display:flex;align-items:center;gap:6px;font:500 11px "Cascadia Code",Consolas,monospace;color:var(--faint)}
+.fr em{font-style:normal;padding:0 6px;border-radius:5px;line-height:17px;background:rgba(255,255,255,.06);font-family:Inter,"Segoe UI",sans-serif;font-size:10.5px}.fr em.ed{background:rgba(196,162,255,.14);color:#d8c6ff}
+.fst{display:inline-grid;place-items:center;width:17px;height:17px;border-radius:5px;font:700 10px Inter,"Segoe UI",sans-serif;background:rgba(255,196,107,.15);color:#ffc46b}
+.fst.stA,.fst.stU{background:rgba(93,227,122,.14);color:#5de37a}.fst.stD{background:rgba(255,123,114,.14);color:#ff7b72}.fst.stR{background:rgba(124,183,255,.14);color:#7cb7ff}
+.tree{padding-bottom:4px}.trow{height:26px;padding-left:calc(8px + var(--d)*14px);font-size:12px;color:#dcd8e4}
+.trow>i{width:12px;flex:none}.trow.dir>svg:first-child{width:12px;height:12px;stroke-width:2.4;transition:transform .15s}.trow.dir.open>svg:first-child{transform:rotate(90deg)}
+.trow span{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.trow.hot span{color:#ffd59a}
+.fbar{position:sticky;top:46px;z-index:1;display:flex;align-items:center;gap:8px;padding:0 2px 8px;background:rgb(15,14,17)}.fbar .x{width:28px;height:28px}.fbar em{font-style:normal;font-size:11px;color:var(--faint)}
+.code,.hunks{border-radius:10px;background:#0b0a0d;box-shadow:inset 0 0 0 1px rgba(255,255,255,.07);overflow:auto}
+.code pre{margin:0;padding:8px 0;counter-reset:ln;font:11.5px/1.55 "Cascadia Code",Consolas,monospace;color:#d6d3dc}
+.code pre span{display:block;padding:0 12px 0 0;white-space:pre}.code pre span::before{counter-increment:ln;content:counter(ln);display:inline-block;width:44px;margin-right:12px;padding-right:8px;text-align:right;color:rgba(255,255,255,.22);user-select:none}
+/* Diff: a file per block, folded or open, with both sides' line numbers. */
+.dfile{margin-bottom:8px;border-radius:10px;overflow:hidden;box-shadow:inset 0 0 0 1px rgba(255,255,255,.07);background:#0f0e11}
+.dfh{width:100%;display:flex;align-items:center;gap:8px;min-width:0;height:34px;padding:0 10px;border:0;background:rgba(255,255,255,.035);text-align:left;color:var(--ink)}
+.dfh>svg{width:12px;height:12px;flex:none;fill:none;stroke:var(--faint);stroke-width:2.4;stroke-linecap:round;stroke-linejoin:round;transition:transform .15s}.dfile.open .dfh>svg{transform:rotate(90deg)}
+.dfh .dp{flex:1;min-width:0;font:12px "Cascadia Code",Consolas,monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;direction:rtl;text-align:left}
+.dfile .hunks{border-radius:0;box-shadow:none}.dfile .none{padding:6px 10px}
+.hunks table{width:100%;border-collapse:collapse;font:11.5px/1.5 "Cascadia Code",Consolas,monospace}
+.hunks td{padding:0 8px;white-space:pre;vertical-align:top}.hunks td:nth-child(-n+2){width:1%;min-width:34px;text-align:right;color:rgba(255,255,255,.22);user-select:none;padding:0 6px}
+.hunks td:nth-child(3){color:#d6d3dc;width:100%}
+.hunks tr.a{background:rgba(46,160,67,.15)}.hunks tr.a td:nth-child(3){color:#aff5b4}.hunks tr.d{background:rgba(248,81,73,.13)}.hunks tr.d td:nth-child(3){color:#ffc1bc}
+.hunks tr.hk td,.hunks tr.more td{text-align:left;width:auto}.hunks tr.hk td{padding:4px 10px;background:rgba(124,183,255,.07);color:#8fb6ff}.hunks tr.more td{padding:6px 10px;color:var(--faint);white-space:normal}
+/* Pull requests. */
+.prc{padding:12px 12px 14px;border-radius:12px;background:rgba(255,255,255,.035);box-shadow:inset 0 0 0 1px rgba(255,255,255,.07)}
+.prt{display:flex;align-items:center;gap:8px}.prn{font:500 12px "Cascadia Code",Consolas,monospace;color:var(--faint)}
+.prc h3{margin:8px 0 8px;font:600 15px/1.35 Inter,"Segoe UI",sans-serif;letter-spacing:-.01em}
+.prm{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;font-size:11.5px;color:var(--dim)}.prm .rv{color:#ffc46b}.prm .rv.APPROVED{color:#5de37a}.prm .rv.CHANGES_REQUESTED{color:#ff7b72}
+.prs{display:inline-flex;align-items:center;gap:5px;height:22px;padding:0 9px 0 7px;border-radius:11px;font:600 11.5px Inter,"Segoe UI",sans-serif;background:rgba(255,255,255,.08);color:var(--dim);flex:none}
+.prs svg{width:12px;height:12px;fill:none;stroke:currentColor;stroke-width:2.2;stroke-linecap:round}
+.prs.op{background:rgba(46,160,67,.2);color:#5de37a}.prs.dr{background:rgba(255,255,255,.1);color:#c9c5d1}.prs.mg{background:rgba(163,113,247,.2);color:#c9a8ff}.prs.cl{background:rgba(248,81,73,.18);color:#ff7b72}
+.pbtn{display:inline-flex;align-items:center;gap:7px;height:30px;margin-top:12px;padding:0 12px;border:1px solid rgba(255,255,255,.12);border-radius:9px;background:rgba(255,255,255,.06);font:600 12px Inter,"Segoe UI",sans-serif}
+.pbtn:hover{background:rgba(255,255,255,.12)}.pbtn svg{width:13px;height:13px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}.pbtn.sm{height:26px;margin:0;font-size:11.5px}
+.pbtn[aria-pressed="true"]{background:rgba(255,69,58,.18);border-color:rgba(255,69,58,.4);color:#ffb3ad}
+.checks{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin:14px 4px 6px;font-size:12px;color:var(--dim)}.checks b{color:var(--ink);font-weight:600}.checks .ok{color:#5de37a}.checks .bad{color:#ff7b72}.checks .pend{color:#ffc46b}
+.clist{display:flex;flex-direction:column}.crow{display:flex;align-items:center;gap:8px;height:26px;padding:0 8px;border:0;border-radius:7px;background:transparent;text-align:left;font-size:12px;color:#dcd8e4}
+.crow:not([disabled]):hover{background:rgba(255,255,255,.05)}.crow[disabled]{cursor:default}.crow i{width:8px;height:8px;border-radius:50%;background:#ffc46b;flex:none}.crow.pass i{background:#5de37a}.crow.fail i{background:#ff7b72}.crow.skip i{background:rgba(255,255,255,.25)}
+.prb{padding:0 6px;font-size:13px;line-height:1.55}
+.lrow{width:100%;display:flex;align-items:center;gap:10px;min-width:0;padding:8px 10px;border:0;border-radius:10px;background:transparent;text-align:left;color:var(--ink)}
+.lrow:hover{background:rgba(255,255,255,.05)}.lrow>svg{width:13px;height:13px;flex:none;fill:none;stroke:var(--faint);stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.lt{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}.lt b{font-weight:500;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.lt i{font-style:normal;font-size:11.5px;color:var(--faint);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* Subagents. */
+.sag{margin-bottom:6px;border-radius:10px;background:rgba(255,255,255,.03);box-shadow:inset 0 0 0 1px rgba(255,255,255,.06)}
+.sah{width:100%;display:flex;align-items:center;gap:10px;min-width:0;padding:9px 10px;border:0;background:transparent;text-align:left;color:var(--ink)}
+.sah>svg{width:12px;height:12px;flex:none;fill:none;stroke:var(--faint);stroke-width:2.4;stroke-linecap:round;transition:transform .15s}.sag.open .sah>svg{transform:rotate(90deg)}
+.sag .dot{width:8px;height:8px;border-radius:50%;flex:none;background:#5de37a}.sag.run .dot{background:#7cb7ff;animation:pulse 1.2s infinite}.sag.bad .dot{background:#ff7b72}
+.sab{padding:0 12px 10px 28px}.sab h5{margin:2px 0 4px;font:600 10.5px Inter,"Segoe UI",sans-serif;letter-spacing:.06em;text-transform:uppercase;color:var(--faint)}
+.sab pre{margin:0;padding:8px 10px;max-height:260px;overflow:auto;border-radius:8px;background:#0b0a0d;font:11.5px/1.5 "Cascadia Code",Consolas,monospace;color:#d6d3dc;white-space:pre-wrap;overflow-wrap:anywhere}
+/* Browser: the address, the pages the agent opened, and the page itself. */
+.bwrap{flex:1;min-height:0;display:flex;flex-direction:column;gap:8px}
+.baddr{display:flex;align-items:center;gap:6px;height:36px;padding:0 4px 0 10px;border-radius:10px;background:#1b181e;box-shadow:0 0 0 1px rgba(255,255,255,.08)}
+.baddr:focus-within{box-shadow:0 0 0 1px rgba(255,255,255,.25)}.baddr .bi svg{width:14px;height:14px;fill:none;stroke:var(--faint);stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round}
+#bAddr{flex:1;min-width:0;height:100%;border:0;background:none;color:var(--ink);font:12.5px "Cascadia Code",Consolas,monospace;outline:0}#bAddr::placeholder{color:var(--faint);font-family:Inter,"Segoe UI",sans-serif}
+.baddr .x{width:28px;height:28px;background:transparent}.baddr .x:disabled{opacity:.3;cursor:default}
+.bpages{display:flex;gap:6px;overflow-x:auto;padding:0 0 2px;scrollbar-width:none}
+.bp{flex:none;display:flex;align-items:center;gap:6px;max-width:220px;height:26px;padding:0 10px;border:0;border-radius:13px;background:rgba(255,255,255,.06);font-size:11.5px;color:var(--dim)}
+.bp svg{width:12px;height:12px;flex:none;fill:none;stroke:currentColor;stroke-width:1.9}.bp span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.bp:hover{color:var(--ink)}.bp.on{background:rgba(255,255,255,.14);color:#fff}
+.bview{flex:1;min-height:260px;display:flex;flex-direction:column;gap:6px}
+.bview iframe{flex:1;width:100%;min-height:240px;border:0;border-radius:10px;background:#fff}
+.bnote{margin:0 4px;font-size:11px;color:var(--faint)}
+/* Screen: the desktop, or the screen live. */
+/* The agent's desktop, as a remote desktop viewer: a window bar, the screen, and its activity. */
+.vm{display:flex;flex-direction:column;gap:10px;min-height:0}
+.vmbar{flex:none;box-sizing:border-box;display:flex;align-items:center;gap:8px;height:34px;padding:0 6px 0 10px;border-radius:11px 11px 0 0;background:linear-gradient(180deg,#232027,#1b181f);box-shadow:inset 0 0 0 1px rgba(255,255,255,.07);margin-bottom:-10px;position:relative;z-index:1}
+.vmbar .sp{flex:1}.vmdots{display:flex;gap:6px;margin-right:4px}.vmdots i{width:10px;height:10px;border-radius:50%;background:#ff5f57}.vmdots i:nth-child(2){background:#febc2e}.vmdots i:nth-child(3){background:#28c840}
+.vmt{display:flex;align-items:baseline;gap:8px;min-width:0;white-space:nowrap;overflow:hidden}.vmt b{font:600 12.5px Inter,"Segoe UI",sans-serif}.vmt em{font:500 11px "Cascadia Code",Consolas,monospace;font-style:normal;color:var(--faint)}
+.sl{display:inline-flex;align-items:center;gap:6px;height:22px;padding:0 9px;border-radius:11px;background:rgba(255,255,255,.07);font:600 11px Inter,"Segoe UI",sans-serif;color:var(--dim);white-space:nowrap;font-variant-numeric:tabular-nums}
+.sl i{width:7px;height:7px;border-radius:50%;background:rgba(255,255,255,.4)}.sl i.spin{width:9px;height:9px;background:none;border-width:1.5px}.sl.on{background:rgba(255,69,58,.16);color:#ffb3ad}.sl.on i{background:#ff453a;box-shadow:0 0 6px #ff453a;animation:pulse 1.2s infinite}
+.sl.rp{background:rgba(124,192,255,.14);color:#a9d6ff}.sl.rp i{background:#7cc0ff}
+.vmb{display:inline-flex;align-items:center;gap:6px;height:26px;padding:0 10px;border:0;border-radius:8px;background:rgba(255,255,255,.06);color:#ececf0;font:600 11.5px Inter,"Segoe UI",sans-serif;white-space:nowrap}
+.vmb:hover{background:rgba(255,255,255,.12)}.vmb:disabled{opacity:.4;cursor:default}.vmb svg{width:13px;height:13px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}.vmb.ic{width:28px;padding:0;justify-content:center}
+.vmb.on{background:#f5f5f7;color:#0b0a0f}.vmb[data-vmcontrol].on{background:#9b6bff;color:#fff}
+.vmscreen{position:relative;flex:none;aspect-ratio:1512/982;border-radius:0 0 11px 11px;overflow:hidden;background:#000;box-shadow:inset 0 0 0 1px rgba(255,255,255,.08),0 14px 30px -18px rgba(0,0,0,.9);outline:0;user-select:none}
+.vm.live .vmscreen{box-shadow:inset 0 0 0 1px rgba(255,69,58,.35),0 14px 30px -18px rgba(0,0,0,.9)}
+.vm.ctl .vmscreen{box-shadow:0 0 0 2px #9b6bff,0 0 24px -6px #9b6bff;cursor:crosshair}
+.vmscreen img{display:block;width:100%;height:100%;object-fit:contain;-webkit-user-drag:none}.vmscreen img:not([src]){visibility:hidden}
+.vmover{position:absolute;inset:0;pointer-events:none}.vmover>*{pointer-events:auto}
+.vmload{position:absolute;inset:0;display:grid;place-items:center}
+.vmcap{position:absolute;left:50%;bottom:14px;transform:translateX(-50%);display:flex;align-items:center;gap:7px;max-width:80%;padding:6px 12px;border-radius:99px;background:rgba(12,10,16,.82);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);box-shadow:0 0 0 1px rgba(255,255,255,.1);font:500 12px Inter,"Segoe UI",sans-serif;color:#fff;white-space:nowrap;overflow:hidden;animation:rise .25s ease-out;pointer-events:none}
+.vmcap i{flex:none;width:7px;height:7px;border-radius:50%;background:#9b6bff;box-shadow:0 0 8px #9b6bff}.vmcap span{color:rgba(255,255,255,.7);overflow:hidden;text-overflow:ellipsis}
+.vmempty{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;padding:20px;text-align:center;background:radial-gradient(circle,rgba(0,0,0,.45),rgba(0,0,0,.15) 70%);pointer-events:none}
+.vmempty svg{width:28px;height:28px;fill:none;stroke:#fff;stroke-width:1.6;opacity:.85}.vmempty b{font:600 14px Inter,"Segoe UI",sans-serif;color:#fff;text-shadow:0 1px 6px rgba(0,0,0,.6)}.vmempty span{max-width:360px;font-size:12px;line-height:1.5;color:rgba(255,255,255,.8);text-shadow:0 1px 6px rgba(0,0,0,.6)}
+.vmctl{position:absolute;left:10px;top:10px;display:flex;align-items:center;gap:7px;padding:5px 10px;border-radius:9px;background:rgba(155,107,255,.9);color:#fff;font:600 11.5px Inter,"Segoe UI",sans-serif;pointer-events:none}.vmctl svg{width:13px;height:13px;fill:#fff;stroke:#fff}.vmctl kbd{font:600 10.5px Inter,sans-serif;padding:0 5px;border-radius:4px;background:rgba(255,255,255,.25)}
+.vmlive{position:absolute;right:10px;top:10px;display:flex;align-items:center;gap:6px;height:28px;padding:0 11px;border:0;border-radius:9px;background:#f5f5f7;color:#0b0a0f;font:600 11.5px Inter,"Segoe UI",sans-serif}.vmlive svg{width:13px;height:13px;fill:none;stroke:currentColor;stroke-width:2.2}
+.vmrip{position:absolute;width:0;height:0;pointer-events:none}.vmrip.go::after{content:"";position:absolute;left:-14px;top:-14px;width:28px;height:28px;border-radius:50%;border:2px solid #c4a2ff;animation:rip .5s ease-out forwards}
+@keyframes rip{from{transform:scale(.3);opacity:1}to{transform:scale(1.6);opacity:0}}
+.vmapps{display:flex;align-items:center;gap:6px;flex-wrap:wrap;font-size:11px;color:var(--faint)}.vmapps em{display:inline-flex;align-items:center;gap:5px;height:20px;padding:0 8px;border-radius:6px;background:rgba(255,255,255,.055);color:#ececf0;font-style:normal;font-weight:500}.vmapps em i{width:6px;height:6px;border-radius:50%;background:#30d158}
+.vmtl .sh{margin:4px 2px 6px}.vmtl .sh span{color:var(--faint);font-weight:500}
+.vmscrub{display:flex;align-items:center;gap:8px;margin:0 2px 6px;font:500 10.5px "Cascadia Code",Consolas,monospace;color:var(--faint);font-variant-numeric:tabular-nums}.vmscrub input{flex:1;accent-color:#9b6bff}
+.vmrow{width:100%;display:grid;grid-template-columns:68px 8px auto minmax(0,1fr) auto;align-items:center;gap:8px;min-height:26px;padding:0 6px;border:0;border-radius:7px;background:transparent;text-align:left;font-size:12px;color:rgba(255,255,255,.6)}
+.vmrow:hover{background:rgba(255,255,255,.05)}.vmrow time{font:500 10.5px "Cascadia Code",Consolas,monospace;color:var(--faint);font-variant-numeric:tabular-nums}
+.vmrow i{width:7px;height:7px;border-radius:50%;background:#9b6bff}.vmrow.run i{background:#ffc46b;animation:pulse 1.2s infinite}.vmrow.bad i{background:#ff7b72}.vmrow b{color:#f3f1f6;font-weight:500}
+.vmrow span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.vmrow em{font-style:normal;font:600 10px Inter,sans-serif;color:#ffc46b}
+/* Bigger: the desktop takes most of the office, as a remote desktop window would. */
+#panel.big{width:min(1100px,calc(100% - 24px))}#panel.big .dbody{container-type:size}#panel.big .vm{height:100%}#panel.big .vmbar,#panel.big .vmscreen{width:min(100cqw,calc((100cqh - 120px) * 1512 / 982));align-self:center}
+.s.k-screen>.n{color:#c4a2ff}
+.sacc{display:flex;flex-direction:column;gap:3px;padding:10px 12px;border-radius:10px;background:rgba(255,196,107,.08);color:#ffd59a;font-size:12px}.sacc b{font-weight:600}.sacc .pbtn{align-self:flex-start;margin-top:6px}
+.kanban{display:flex;flex-direction:column;gap:14px}
+.col h4,.sh{display:flex;align-items:center;gap:8px;margin:0 4px 8px;font:600 12px var(--px);letter-spacing:.06em;text-transform:uppercase;color:var(--dim)}
+.col h4::before{content:"";width:8px;height:8px;border-radius:2px;background:var(--k)}
+.col h4 span{margin-left:auto;color:var(--faint)}
+.card,.meter{width:100%;display:flex;gap:10px;align-items:center;text-align:left;padding:9px 10px;margin-bottom:6px;border-radius:12px;border:1px solid var(--line);background:rgba(255,255,255,.04)}
+.card:hover,.meter:hover{background:rgba(255,255,255,.09);border-color:rgba(196,162,255,.35)}
+.card .ct span{max-width:none;white-space:normal;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;color:var(--ink);font-size:12.5px;margin-top:1px}
+.card .ct b{font-size:11.5px;color:var(--dim)}.card em,.meter em{font-style:normal;font-size:11px;color:var(--faint)}
+.card.st-done .ct b{color:var(--ok)}.card.st-failed .ct b{color:var(--bad)}.card.st-working .ct b,.card.st-waking .ct b{color:var(--li)}
+.none{margin:2px 6px 4px;font-size:12px;color:var(--faint)}
+.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:16px}
+.stats div{padding:10px 8px;border-radius:12px;background:rgba(255,255,255,.04);border:1px solid var(--line);text-align:center}
+.stats b{display:block;font:600 22px var(--px);color:var(--k)}.stats span{font-size:11px;color:var(--dim)}
+.mt{flex:1;min-width:0;display:flex;flex-direction:column;gap:3px}
+.mt b{font:600 12px var(--px)}.mt span{font-size:11.5px;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.mt i{height:4px;border-radius:2px;background:rgba(255,255,255,.1);overflow:hidden}.mt u{display:block;height:100%;background:linear-gradient(90deg,var(--li),var(--p))}
+/* The hover tip. */
+#tip{position:absolute;left:0;top:0;z-index:4;pointer-events:none;display:flex;align-items:center;gap:7px;padding:5px 10px;border-radius:10px;background:rgba(14,10,18,.88);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);font:500 12px Inter,"Segoe UI",sans-serif;color:var(--dim);white-space:nowrap;box-shadow:0 0 0 1px rgba(255,255,255,.1),0 8px 22px -6px rgba(0,0,0,.7)}
+#tip b{color:#fff;font-weight:600}#tip i{display:grid;place-items:center;width:20px;height:20px;margin-left:-4px;border-radius:6px;background:color-mix(in srgb,var(--c,#9046ff) 30%,transparent);color:#fff}
+#tip i svg{width:13px;height:13px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}#tip.desk{flex-wrap:wrap;column-gap:7px}#tip.desk span{font-size:11px;color:var(--faint)}
+.note{max-width:1240px;margin:auto;padding:0 20px 24px;color:#6f6a7c;font-size:12px;line-height:1.6}
+@media (max-width:699px){#drawer{top:auto;height:62%}#office.open #fab{display:none}}
+/* The notch opens the office short and wide (about 280 to 540 tall), so everything
+   over the scene gets smaller and the chat gives its height to the thread. */
+@media (max-height:620px){
+.hud{right:10px;top:10px;gap:6px}.hud button{height:32px;border-radius:10px}#hudMenu{right:10px;top:48px}
+.seg{padding:2px;border-radius:10px}.seg button{width:28px;height:28px;border-radius:8px}.hud .seg svg{width:15px;height:15px}
+#fab{left:10px;bottom:10px}
+.ct b{font-size:11px}.ct span{font-size:10.5px;max-width:110px}
+#drawer,#panel{top:8px;right:8px;bottom:8px;width:min(360px,calc(100% - 16px));border-radius:16px}
+.dh{gap:9px;padding:9px 8px 0 10px}.dh .av{width:28px;height:26px;border-radius:8px;--w:28px}
+#drawer .dt b{font-size:13px}#dTitle{font-size:12.5px}.dm{margin-top:1px;font-size:11px}
+.x,#dClose{width:26px;height:26px;border-radius:8px}
+#thread{padding:8px 12px 4px;gap:7px}
+.me{font-size:12.5px;padding:6px 10px}.ans{font-size:12.5px;line-height:1.55}#drawer .dh{padding:8px 8px 8px 10px;gap:9px}#dAv .lg{width:26px;height:26px;border-radius:8px}#dAv .lg svg{width:15px;height:15px}#dTitle{font-size:13px}.dmeta{margin-top:3px}.s{min-height:25px;font-size:12px}
+#nInput{height:40px;font-size:12.5px}.composer{padding:6px 6px 5px 9px;border-radius:15px}.cbar{margin-top:2px}
+#pBody{padding:10px 6px 10px 8px}.hfind{top:-10px}.stats{gap:6px;margin-bottom:10px}.stats div{padding:6px}.stats b{font-size:18px}
+#toast{top:10px;padding:6px 12px;font-size:12px}
+.askc.over{width:240px;padding:8px}.askc.over pre{max-height:58px;margin:6px 0 5px}.askc.over .ar{margin-bottom:7px}.askc.over button{height:24px}
+}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+</style></head><body data-time="night">
+<script>if (window.chrome && chrome.webview) document.body.classList.add('host');</script>
+<div class="tools" id="force"><b>TIME</b><button data-time="night">Night</button><button data-time="day">Day</button><b>SHOW</b></div>
+<div id="office">
+  <canvas id="gl" aria-label="The agent office. Each bot is a session; click one to open it."></canvas>
+  <div id="tags"></div>
+  <div class="hud">
+    <div class="seg glass"><button id="menuBtn" aria-label="Menu" title="Menu: time of day, music, history and Settings" aria-haspopup="menu" aria-expanded="false"><svg viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button></div>
+  </div>
+  <!-- New task: one circle; a click shows the agents' logos, a pick opens the box. -->
+  <div id="fab" class="s-rest">
+    <button id="fabMain" class="glass" aria-label="New task" title="New task" aria-haspopup="menu" aria-expanded="false"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg><i class="draft"></i></button>
+    <div id="fabTools" role="menu" aria-label="Choose an agent"></div>
+    <div id="newtask" class="glass" role="dialog" aria-label="New task" aria-hidden="true">
+      <div class="ntop"><button id="nWho" class="lg" aria-label="Change agent" title="Change agent"></button><textarea id="nInput" rows="2" aria-label="Task"></textarea><button id="nFold" class="x" aria-label="Fold" title="Fold (Esc)"><svg viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></svg></button></div>
+      <div class="shots" id="nShots" hidden></div>
+      <div class="cbar"><button class="clip" id="nAttach" aria-label="Attach an image" title="Attach an image (or paste one)"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button><button id="nFolder" class="fchip"><svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/></svg><span id="nFolderText"></span></button><button id="nAccess" class="fchip acc" aria-haspopup="menu" aria-expanded="false"><svg viewBox="0 0 24 24"><path d="M12 3 5 6v5c0 4.4 3 8.3 7 9.5 4-1.2 7-5.1 7-9.5V6Z"/></svg><span id="nAccessText"></span></button><span class="sp"></span><button class="mpill" id="nModel" aria-haspopup="menu" aria-expanded="false"></button><button class="go" id="nGo" aria-label="Start" title="Start (Enter)"><svg viewBox="0 0 24 24"><path d="M12 19V5M5 12l7-7 7 7"/></svg></button></div>
+      <div id="nNote" hidden></div>
+      <input type="file" id="nPick" accept="image/png,image/jpeg,image/gif,image/webp" multiple hidden>
+    </div>
+  </div>
+  <aside id="drawer" class="glass" role="dialog" aria-label="Session" aria-hidden="true">
+    <div class="dh"><span id="dAv"></span><div class="dt"><div id="dTitle"></div><div class="dmeta"><span class="chip" id="dFolder"></span><span class="chip" id="dAccess"></span><i id="ctx" class="chip" tabindex="0"><i id="ctxRing"></i><span id="ctxPct"></span></i></div></div><button id="dDel" class="x" aria-label="Delete this session" title="Delete this session"><svg viewBox="0 0 24 24"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V4h6v3"/></svg></button><button id="dClose" class="x" aria-label="Close"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button></div>
+    <div id="thread" aria-live="polite"></div>
+    <div class="composer" id="composer"><div class="shots" id="shots" hidden></div><textarea id="input" rows="1" aria-label="Reply"></textarea><div class="cbar"><button class="clip" id="attach" aria-label="Attach an image" title="Attach an image (or paste one)"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button><button class="mpill" id="dModel" aria-haspopup="menu" aria-expanded="false"></button><span class="sp"></span><button class="go" id="send" aria-label="Send" title="Send (Enter)"><svg class="up" viewBox="0 0 24 24"><path d="M12 19V5M5 12l7-7 7 7"/></svg><svg class="sq" viewBox="0 0 24 24"><rect x="6.5" y="6.5" width="11" height="11" rx="2.5" fill="#000" stroke="none"/></svg></button></div><input type="file" id="pick" accept="image/png,image/jpeg,image/gif,image/webp" multiple hidden></div>
+  </aside>
+  <aside id="panel" class="glass" role="dialog" aria-label="Office" aria-hidden="true"><div class="dh"><div class="dt"><b id="pTitle"></b><span id="pSub"></span></div><button id="pClose" class="x" aria-label="Close"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button></div><div id="pBody"></div></aside>
+  <div id="hudMenu" class="glass" role="menu" aria-label="Menu" hidden><div class="tseg" role="group" aria-label="Time of day"><button role="menuitemradio" data-time="auto" aria-label="Time of day: follow the clock" title="Follow the clock"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="M12 4a8 8 0 0 0 0 16Z" fill="currentColor"/></svg></button><button role="menuitemradio" data-time="night" aria-label="Night" title="Night"><svg viewBox="0 0 24 24"><path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5Z"/></svg></button><button role="menuitemradio" data-time="day" aria-label="Day" title="Day"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg></button></div><button role="menuitemcheckbox" id="beats" aria-checked="false"><svg viewBox="0 0 24 24"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>Chill beats</button><button role="menuitem" id="histBtn"><svg viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5M12 7v5l3 2"/></svg>Session history</button><button role="menuitem" id="setBtn"><svg viewBox="0 0 24 24"><path d="M12.2 2h-.4a2 2 0 0 0-2 2v.2a2 2 0 0 1-1 1.7l-.4.3a2 2 0 0 1-2 0l-.2-.1a2 2 0 0 0-2.7.7l-.2.4a2 2 0 0 0 .7 2.7l.2.1a2 2 0 0 1 1 1.7v.6a2 2 0 0 1-1 1.7l-.2.1a2 2 0 0 0-.7 2.7l.2.4a2 2 0 0 0 2.7.7l.2-.1a2 2 0 0 1 2 0l.4.3a2 2 0 0 1 1 1.7v.2a2 2 0 0 0 2 2h.4a2 2 0 0 0 2-2v-.2a2 2 0 0 1 1-1.7l.4-.3a2 2 0 0 1 2 0l.2.1a2 2 0 0 0 2.7-.7l.2-.4a2 2 0 0 0-.7-2.7l-.2-.1a2 2 0 0 1-1-1.7v-.6a2 2 0 0 1 1-1.7l.2-.1a2 2 0 0 0 .7-2.7l-.2-.4a2 2 0 0 0-2.7-.7l-.2.1a2 2 0 0 1-2 0l-.4-.3a2 2 0 0 1-1-1.7V4a2 2 0 0 0-2-2Z"/><circle cx="12" cy="12" r="3"/></svg>Settings</button></div>
+  <div id="mMenu" class="glass" role="menu" hidden></div>
+  <div id="mSub" class="glass" role="menu" hidden></div>
+  <!-- A desk's menu: what its agent has open, as T3 Code's panel launcher. -->
+  <div id="deskMenu" role="menu" hidden></div>
+  <div id="deskSub" role="menu" aria-label="Pages" hidden></div>
+  <div id="confirm" class="glass" role="alertdialog" aria-modal="true" aria-labelledby="cfTitle" hidden><b id="cfTitle"></b><span id="cfText"></span><div><button id="cfNo">Cancel</button><button id="cfYes">Delete</button></div></div>
+  <div id="tip" hidden></div>
+  <div id="toast" class="glass"></div>
+</div>
+<div class="note">Preview only. Click a bot to open its session; reply in the box. The circle at the bottom left starts a task: pick an agent's logo, then type. Drag to move around, scroll to zoom; the TV, the board, the bookshelf, the clock, the window and the door can be clicked. The buttons above force the open session into any stage. Sessions are demo data here; in Hover they come from the agents. Font: Pixelify Sans (OFL).</div>
+<script>/*APP*/</script>
+</body></html>

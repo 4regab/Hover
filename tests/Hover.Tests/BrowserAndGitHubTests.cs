@@ -130,6 +130,17 @@ public sealed class BrowserAndGitHubTests
     }
 
     [Test]
+    public void Computer_use_steps_read_as_what_was_done_on_the_desktop()
+    {
+        string Said(string title, string input) => DeskInfo.ScreenAction(new KiroStep("1", "other", title, null, "completed", Input: input)) is var (d, o) ? $"{d}|{o}" : "";
+        Assert.That(Said("cua-driver/launch_app", "{\"bundle_id\":\"dev.demo\",\"name\":\"Demo\"}"), Is.EqualTo("Opened|Demo"));
+        Assert.That(Said("mcp__cua-driver__click", "{\"pid\":1,\"x\":120,\"y\":80}"), Is.EqualTo("Clicked|at 120, 80"));
+        Assert.That(Said("cua-driver: type_text", "{\"pid\":1,\"text\":\"Ada\"}"), Is.EqualTo("Typed|“Ada”"));
+        Assert.That(Said("cua-driver/hotkey", "{\"pid\":1,\"keys\":[\"cmd\",\"s\"]}"), Is.EqualTo("Pressed|cmd+s"));
+        Assert.That(Said("cua-driver/get_window_state", "{\"pid\":1}"), Is.EqualTo("Read the window|"));
+    }
+
+    [Test]
     public void A_wrong_token_gets_nothing()
     {
         Assert.That(BrowserTool.Servers(AgentTool.Codex, "x"), Is.Empty, "no host browser, no server");
