@@ -232,6 +232,7 @@ impl App {
                     let d = g.get_d_draft();
                     let gap = if d.is_empty() || d.ends_with(char::is_whitespace) { "" } else { " " };
                     g.set_d_draft(s(format!("{d}{gap}{text}")));
+                    g.set_d_draft_to_end(g.get_d_draft_to_end().wrapping_add(1));
                     g.set_d_compose(true);
                 };
                 put(self.notch.global::<Office>());

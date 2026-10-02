@@ -281,6 +281,35 @@ pub fn listen() {
                 }
                 "settings" => { a.show_settings_in(0, hover_app::pages::Section::ALL[parts.get(1).and_then(|v| v.parse().ok()).unwrap_or(0)]); println!("bench ok"); }
                 "back" => { a.notch_settings.set(false); a.notch.set_in_settings(false); println!("bench ok"); }
+                // "draft new|reply TEXT…": a prompt in the new-task box (opened with the first
+                // tool) or in the open chat's reply box, the caret after it.
+                "draft" => {
+                    let g = a.notch.global::<crate::ui::Office>();
+                    let text: slint::SharedString = parts.get(2..).map(|p| p.join(" ")).unwrap_or_default().into();
+                    if parts.get(1).is_some_and(|w| w == "new") {
+                        if g.get_fab() != 2 { if g.get_fab() == 0 { g.invoke_fab_main(); } g.invoke_pick_tool(0); }
+                        g.set_new_draft(text);
+                    } else {
+                        g.set_d_compose(true);
+                        g.set_d_draft(text);
+                        g.set_d_draft_to_end(g.get_d_draft_to_end().wrapping_add(1));
+                    }
+                    a.office_widgets();
+                    println!("bench ok");
+                }
+                // "key [ctrl+]home|end": as the keyboard sends it to the focused box.
+                "key" => {
+                    use slint::platform::{Key, WindowEvent as E};
+                    let k = parts.get(1).map_or("", String::as_str);
+                    let ctrl = k.starts_with("ctrl+");
+                    let key = if k.ends_with("home") { Key::Home } else { Key::End };
+                    let w = a.notch.window();
+                    if ctrl { w.dispatch_event(E::KeyPressed { text: Key::Control.into() }); }
+                    w.dispatch_event(E::KeyPressed { text: key.into() });
+                    w.dispatch_event(E::KeyReleased { text: key.into() });
+                    if ctrl { w.dispatch_event(E::KeyReleased { text: Key::Control.into() }); }
+                    println!("bench ok");
+                }
                 "dash" => { a.open_dashboard(false); println!("bench ok"); }
                 "dash-close" => { if let Some(d) = a.dash.borrow_mut().take() { let _ = d.hide(); } a.dash_settings.set(false); a.watching_changed(); println!("bench ok"); }
                 "dash-min" => { if let Some(d) = &*a.dash.borrow() { crate::hold_gpu(); d.window().set_minimized(true); } println!("bench ok"); }
