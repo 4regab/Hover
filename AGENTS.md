@@ -330,19 +330,25 @@ carry a legacy `Noty` reference **only** in `Core/Paths.cs`, which migrates an o
   (`Owl/ScreenFeed.cs` on Windows, `macos/Sources/Screen.swift` with ScreenCaptureKit
   and Hover's own Screen Recording grant on a Mac). In a browser, `?desk=<id>[:<tab>]`
   opens it with demo data.
-- **Each agent can have a desktop of its own: a Cua Space.** `Services/Spaces.cs` (no
-  WPF), on with Settings → Computer Use → Give each agent a desktop (macOS 26+, Apple
-  silicon; `Settings.AgentSpaces`, image `SpaceImage` macos or linux). It drives Cua's
-  `cua` CLI: `spaces create <image> --name hover-<key>` before the session's first run
-  (`Spaces.Ensure`, its progress as `space` in the state), `spaces stop` when the
-  session is removed or Hover quits, `spaces delete` with the session. The agent's
-  computer use then goes to its Space, never the user's screen: `cua mcp --sandbox
-  local:hover-<key> --permissions computer:…` (no shell, no Spaces admin), which Hover
+- **Agents get a desktop of their own: one Cua Space per project.** `Services/Spaces.cs`
+  (no WPF), on with Settings → Computer Use → Give agents a desktop (macOS 26+, Apple
+  silicon; `Settings.AgentSpaces`, image `SpaceImage` macos or linux). A desktop is a
+  separate VM (macOS 26 through Lume, or a Linux container), never the user's own
+  macOS. The agents working in one folder share its Space (`Spaces.NameFor(folder)`:
+  `hover-<folder name>-<hash of the path>`), each with its own cursor in it. It drives
+  Cua's `cua` CLI: `spaces create <image> --name <that name>` before the project's
+  first run (`Spaces.Ensure`, one create for agents starting together; its progress
+  as `space` in the state, with the agents it is shared `with`), `spaces stop` when no
+  agent of the project is left in the office or Hover quits, `spaces delete` with the
+  project's last session, live or in the history. The agents' computer use goes to
+  it, never the user's screen: `cua mcp --sandbox local:<name> --permissions
+  computer:…` (no shell, no Spaces admin), which Hover
   runs itself outside the agents' sandbox and joins to the agent over the browser's
   relay and socket (`BrowserTool.Bridge`, server `cua-space`); host Cua Driver is not
   given then. The Screen panel shows Cua's own interactive viewer (`cua sb view
-  --no-open`), laid over the panel's `.spbox` by the host (`SpaceViewers`, it refuses
-  to be framed); a click in it is the user stepping in. An app window dragged to the
+  --no-open`), one per project's desktop, laid over the panel's `.spbox` by the host
+  (`SpaceViewers`, keyed by the Space's name; it refuses to be framed), with every
+  agent's actions on it; a click in it is the user stepping in. An app window dragged to the
   notch (`TeleportDrag`: the window under the pointer moving, via CGWindowList), or
   files and apps from Finder or the Dock (`NotchDropView`), open the office on the
   agents' desktops (`#tdrop`); a drop sends `teleport` (`cua teleport push --app

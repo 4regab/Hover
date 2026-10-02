@@ -12,7 +12,8 @@ out_lock = threading.Lock()
 def send(m):
     with out_lock:
         sys.stdout.write(json.dumps(m) + '\n'); sys.stdout.flush()
-def up(u): send({'jsonrpc': '2.0', 'method': 'session/update', 'params': {'sessionId': 'e2e-session', 'update': u}})
+sid = 'e2e-session-0'; made = 0
+def up(u): send({'jsonrpc': '2.0', 'method': 'session/update', 'params': {'sessionId': sid, 'update': u}})
 def call(tid, kind, title, status, raw_in=None, raw_out=None, **extra):
     u = {'sessionUpdate': 'tool_call' if status == 'in_progress' else 'tool_call_update', 'toolCallId': tid, 'kind': kind, 'title': title, 'status': status}
     if raw_in is not None: u['rawInput'] = raw_in
@@ -54,7 +55,7 @@ def work(prompt_id):
         send({'jsonrpc': '2.0', 'id': prompt_id, 'result': {'stopReason': 'end_turn'}}); return
     # 1. A command that asks first (the session is set to Ask first).
     ev = threading.Event(); waiting['ev'] = ev
-    send({'jsonrpc': '2.0', 'id': 900, 'method': 'session/request_permission', 'params': {'sessionId': 'e2e-session',
+    send({'jsonrpc': '2.0', 'id': 900, 'method': 'session/request_permission', 'params': {'sessionId': sid,
         'toolCall': {'toolCallId': 'run-1', 'kind': 'execute', 'title': 'npm run dev', 'rawInput': {'command': 'npm run dev'}},
         'options': [{'optionId': 'yes', 'name': 'Allow', 'kind': 'allow_once'}, {'optionId': 'no', 'name': 'Deny', 'kind': 'reject_once'}]}})
     ev.wait(120)
@@ -114,16 +115,17 @@ def safe(ident):
         say('The stand-in agent crashed: ' + str(e)); send({'jsonrpc': '2.0', 'id': ident, 'result': {'stopReason': 'end_turn'}})
 
 def main():
-  global servers, folder
+  global servers, folder, sid, made
   for line in sys.stdin:
       m = json.loads(line); method = m.get('method'); ident = m.get('id'); p = m.get('params', {})
       if method is None and ident == 900:
           permission['outcome'] = m.get('result', {}).get('outcome', {}).get('optionId'); waiting['ev'].set(); continue
       if method == 'initialize': result = {'protocolVersion': 1, 'agentCapabilities': {'loadSession': True}}
       elif method == 'session/new':
-          servers = p.get('mcpServers') or []; folder = p.get('cwd') or folder; note('mcpServers', json.dumps(servers)); result = {'sessionId': 'e2e-session'}
-      elif method == 'session/load': servers = p.get('mcpServers') or servers; result = {}
+          servers = p.get('mcpServers') or []; folder = p.get('cwd') or folder; made += 1; sid = f'e2e-session-{made}'; note('mcpServers', json.dumps(servers)); result = {'sessionId': sid}
+      elif method == 'session/load': servers = p.get('mcpServers') or servers; sid = p.get('sessionId', sid); result = {}
       elif method == 'session/prompt':
+          sid = p.get('sessionId', sid)
           threading.Thread(target=safe, args=(ident,), daemon=True).start(); continue
       elif method == 'session/cancel': continue
       else: result = {}

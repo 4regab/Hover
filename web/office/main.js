@@ -607,7 +607,7 @@ const WORD = { waking: 'Starting', working: 'Working', waiting: 'Waiting for you
 function demo() {
   const F = 'B:\\hover';
   return [
-    { id: 1, bot: 0, desk: 0, title: 'Add refresh token expiry', folder: F, ctx: 31, space: { phase: 'ready', line: 'Its desktop is ready.' }, apps: { pids: [5150], bundles: ['dev.example.demo'], names: ['Demo'] }, turns: [{ prompt: 'Refresh tokens never expire. Make them expire after 30 days and return 401 when one is used after that.', stage: 'working', act: 'Reading', file: 'src/auth/refresh.ts', target: 'src/auth/refresh.ts', t0: T0 - 1.4 * min, woke: 2.3,
+    { id: 1, bot: 0, desk: 0, title: 'Add refresh token expiry', folder: F, ctx: 31, space: { name: 'hover-hover-1a2b3c', project: 'hover', phase: 'ready', line: 'The project’s desktop is ready.', with: [2, 3] }, apps: { pids: [5150], bundles: ['dev.example.demo'], names: ['Demo'] }, turns: [{ prompt: 'Refresh tokens never expire. Make them expire after 30 days and return 401 when one is used after that.', stage: 'working', act: 'Reading', file: 'src/auth/refresh.ts', target: 'src/auth/refresh.ts', t0: T0 - 1.4 * min, woke: 2.3,
       steps: [['read', 'Read src/auth/session.ts'], ['read', 'Read src/auth/refresh.ts'], { k: 'web', verb: 'Opened', cmd: 'http://localhost:5173/login', status: 'completed', ms: 1200 },
         { k: 'screen', verb: 'Opened', cmd: 'Demo', status: 'completed' }, { k: 'screen', verb: 'Clicked', cmd: 'Name', status: 'completed' }, { k: 'screen', verb: 'Typed', cmd: '“Ada”', status: 'completed' },
         { k: 'agent', verb: 'Subagent', agent: 'explore', cmd: 'Find every caller of refresh()', status: 'in_progress' }, { k: 'agent', verb: 'Subagent', agent: 'test-writer', cmd: 'Write tests for expired tokens', status: 'in_progress' }], final: 'Done. Refresh tokens now expire after 30 days, and using an expired one returns 401.\n\nI changed refresh.ts and added two tests. All 83 tests pass.' }] },
@@ -1798,7 +1798,7 @@ function openDesk(id, tab, opts = {}) {
 // The panel goes, or shows something else: the screen stops, the page in the browser goes.
 function leaveDesk() {
   if (!desk) return;
-  if (host && spacePlaced !== 'none') { host.postMessage({ type: 'spaceOverlay', id: +spacePlaced.split('|')[0], rect: null }); spacePlaced = 'none'; }
+  if (host && spacePlaced !== 'none') { host.postMessage({ type: 'spaceOverlay', space: spacePlaced.split('|')[0], rect: null }); spacePlaced = 'none'; }
   desk.ui.control = false; desk.ui.big = false; desk.ui.replay = null; $('#panel').classList.remove('big');
   desk = null; deskHTML = ''; screenPulse(); placeBrowser();
   const body = $('#pBody'); body.classList.remove('desk'); body.innerHTML = '';
@@ -1982,28 +1982,34 @@ function renderScreen(s, el) {
   if (src && img.getAttribute('src') !== src) img.src = src;
   img.alt = `${s.b.name}’s desktop${p.live ? ', live' : ''}`;
 }
-// ── The agent's own desktop: a Cua Space ────────────────────────────────
-// Its live viewer is Cua's own, laid over the panel's box by the host (placeSpace); it
-// is interactive, so a click in it is the user stepping into the agent's desktop.
-// Until the Space is up, the box says how it is getting on. Opening the panel makes the
-// Space if the session has none yet.
+// ── The project's desktop: a Cua Space ──────────────────────────────────
+// The agents working in one folder share one desktop, each with its own cursor. Its
+// live viewer is Cua's own, laid over the panel's box by the host (placeSpace); it is
+// interactive, so a click in it is the user stepping in. Until the Space is up, the
+// box says how it is getting on. Opening the panel makes it if the project has none.
 const spaceView = {};
+const spaceOf = s => (host && s.space?.name) || (s.folder ? 'f:' + s.folder.replace(/[\\/]+$/, '').toLowerCase() : `s${s.id}`);
 function onSpace(m) {
-  spaceView[m.id] = { ...m.data, at: Date.now() };
-  const s = deskOf(); if (s?.id === m.id && desk.ui.tab === 'screen') renderDesk();
+  const of = sessions.find(x => x.id === m.id); if (!of) return;
+  spaceView[spaceOf(of)] = { ...m.data, at: Date.now() };
+  const s = deskOf(); if (s && spaceOf(s) === spaceOf(of) && desk.ui.tab === 'screen') renderDesk();
 }
 function askSpace(s, force) {
-  const v = spaceView[s.id];
+  const v = spaceView[spaceOf(s)];
   if (!force && v && (v.url || Date.now() - v.at < 4000)) return;
-  spaceView[s.id] = { ...(v || {}), at: Date.now() };
+  spaceView[spaceOf(s)] = { ...(v || {}), at: Date.now() };
   if (host) host.postMessage({ type: 'spaceView', id: s.id });
   else setTimeout(() => onSpace({ id: s.id, data: s.space?.phase === 'ready' || !s.space ? { phase: 'ready', url: 'about:blank' } : s.space }), 200);
 }
 function renderSpace(s, el) {
-  const sp = s.space || { phase: 'none' }, v = spaceView[s.id] || {};
+  const sp = s.space || { phase: 'none' }, v = spaceView[spaceOf(s)] || {};
+  const mates = (sp.with || []).map(id => sessions.find(x => x.id === id)?.b.name).filter(Boolean);
   if (sp.phase === 'ready' && !v.url) askSpace(s);
   if (sp.phase !== 'ready' && sp.phase !== 'failed' && !v.at) askSpace(s, true);
-  const html = D.spaceHTML(s.b.name, sp, v, screenActions(s), !!desk.ui.big, !host);
+  // Its activity: what every agent of the project did on the shared desktop.
+  const acts = [s, ...(sp.with || []).map(id => sessions.find(x => x.id === id)).filter(Boolean)]
+    .flatMap(x => screenActions(x).map(a => ({ ...a, who: x === s || !mates.length ? '' : x.b.name }))).sort((a, b) => b.t - a.t);
+  const html = D.spaceHTML(s.b.name, sp, v, acts, !!desk.ui.big, !host, mates);
   if (el.dataset.h !== html) { el.dataset.h = html; el.innerHTML = html; }
   placeSpace();
 }
@@ -2012,16 +2018,16 @@ function placeSpace() {
   if (!host) return;
   const s = deskOf();
   let id = null, r = null, url = '';
-  if (s && spacesOn && !paused && panel === 'desk' && desk.ui.tab === 'screen' && spaceView[s.id]?.url) {
+  if (s && spacesOn && !paused && panel === 'desk' && desk.ui.tab === 'screen' && spaceView[spaceOf(s)]?.url) {
     const b = $('#pBody .spbox')?.getBoundingClientRect(), over = deskMenuFor != null || !$('#confirm').hidden || !$('#mMenu').hidden || !$('#hudMenu').hidden || drawerOpen || !$('#tdrop').hidden;
-    if (b && !over && b.width > 40 && b.height > 40) { id = s.id; url = spaceView[s.id].url; r = { x: b.left, y: b.top, w: b.width, h: b.height, vw: innerWidth }; }
+    if (b && !over && b.width > 40 && b.height > 40) { id = spaceOf(s); url = spaceView[id].url; r = { x: b.left, y: b.top, w: b.width, h: b.height, vw: innerWidth }; }
   }
   const key = id == null ? 'none' : [id, url, r.x, r.y, r.w, r.h].map(x => typeof x === 'number' ? Math.round(x) : x).join('|');
   if (key === spacePlaced) return;
-  const was = spacePlaced === 'none' ? null : +spacePlaced.split('|')[0];
+  const was = spacePlaced === 'none' ? null : spacePlaced.split('|')[0];
   spacePlaced = key;
-  if (was != null && was !== id) host.postMessage({ type: 'spaceOverlay', id: was, rect: null });
-  if (id != null) host.postMessage({ type: 'spaceOverlay', id, url, rect: r });
+  if (was != null && was !== id) host.postMessage({ type: 'spaceOverlay', space: was, rect: null });
+  if (id != null) host.postMessage({ type: 'spaceOverlay', space: id, url, rect: r });
 }
 setInterval(placeSpace, 120);
 queueMicrotask(() => syncBig());
@@ -2051,7 +2057,14 @@ function onTeleportDrag(m) {
   if (m.phase === 'start' || !tdrag) {
     tdrag = { app: m.app, bundle: m.bundle, files: m.files || [] };
     closeDeskMenu(); closeHud();
-    box.innerHTML = D.dropHTML(tdrag, sessions.map(s => ({ id: s.id, name: s.b.name, css: s.b.css, title: s.title, tool: s.tool, space: s.space, badge: badge(s.tool) })), spacesOn);
+    // One target per project's desktop, with the agents that share it.
+    const desks = new Map();
+    for (const s of sessions) {
+      const k = spacesOn ? spaceOf(s) : `s${s.id}`;
+      if (!desks.has(k)) desks.set(k, { id: s.id, project: s.space?.project || short(s.folder) || 'Project', space: s.space, agents: [] });
+      desks.get(k).agents.push({ name: s.b.name, css: s.b.css, badge: badge(s.tool) });
+    }
+    box.innerHTML = D.dropHTML(tdrag, [...desks.values()], spacesOn);
     box.hidden = false;
   }
   const hit = document.elementsFromPoint(x, y).find(e => e.matches?.('#tdrop [data-tdrop]'));
@@ -2062,13 +2075,14 @@ function onTeleportDrag(m) {
   if (!hit) return;
   const s = sessions.find(x => x.id === +hit.dataset.tdrop); if (!s) return;
   hit.classList.add('sent');
+  const where = s.space?.project ? `the ${s.space.project} desktop` : `${s.b.name}’s desktop`;
   if (!spacesOn) { toast('Turn on agent desktops in Settings → Computer Use first.'); return; }
-  if (d.files.length) { host?.postMessage({ type: 'spaceFiles', id: s.id, paths: d.files }); toast(`Sending ${d.app} to ${s.b.name}’s desktop…`); }
-  else if (d.bundle) { host?.postMessage({ type: 'teleport', id: s.id, app: d.bundle }); toast(`Sending ${d.app} to ${s.b.name}’s desktop…`); }
+  if (d.files.length) { host?.postMessage({ type: 'spaceFiles', id: s.id, paths: d.files }); toast(`Sending ${d.app} to ${where}…`); }
+  else if (d.bundle) { host?.postMessage({ type: 'teleport', id: s.id, app: d.bundle }); toast(`Sending ${d.app} to ${where}…`); }
   else toast(`Hover couldn’t tell which app that is.`);
 }
 function onTeleport(m) {
-  const s = sessions.find(x => x.id === m.id), who = s ? `${s.b.name}’s desktop` : 'the desktop';
+  const s = sessions.find(x => x.id === m.id), who = s?.space?.project ? `the ${s.space.project} desktop` : s ? `${s.b.name}’s desktop` : 'the desktop';
   if (m.phase !== 'done') return;
   const n = m.data?.sent ?? 0;
   toast(m.data?.error ? m.data.error : m.app === 'files' ? `Sent ${n} item${n === 1 ? '' : 's'} to the Downloads on ${who}.` : `${m.app} is on ${who}.`);
@@ -2140,7 +2154,7 @@ $('#pBody').addEventListener('click', e => {
   if (t.closest('[data-watch]')) { ui.watch = !ui.watch; screenPulse(); renderDesk(); return; }
   if (t.closest('[data-vmcontrol]')) { ui.control = !ui.control; ui.replay = null; screenPulse(); renderDesk(); if (ui.control) $('#pBody .vmscreen')?.focus({ preventScroll: true }); return; }
   if (t.closest('[data-vmbig]')) { ui.big = !ui.big; $('#panel').classList.toggle('big', ui.big); renderDesk(); return; }
-  if (t.closest('[data-spretry]')) { const s = deskOf(); if (s) { spaceView[s.id] = null; s.space = { phase: 'starting', line: 'Starting its desktop…' }; askSpace(s, true); renderDesk(); } return; }
+  if (t.closest('[data-spretry]')) { const s = deskOf(); if (s) { spaceView[spaceOf(s)] = null; s.space = { phase: 'starting', line: 'Starting its desktop…' }; askSpace(s, true); renderDesk(); } return; }
   if (t.closest('[data-vmlive]')) { ui.replay = null; renderDesk(); return; }
   const at = t.closest('[data-vmat]'); if (at) { const tt = +at.dataset.vmat, f = scr.frames; if (f.length) { let i = f.findIndex(x => x.t >= tt); if (i < 0) i = f.length - 1; ui.replay = i; ui.control = false; renderDesk(); } return; }
   if (t.closest('[data-saccess]')) { host?.postMessage({ type: 'screenAccess' }); return; }

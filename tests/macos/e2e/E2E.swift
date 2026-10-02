@@ -51,7 +51,7 @@ final class Harness {
         case "link": links.append(m["url"] as? String ?? "")
         case "window": windowAsks.append(m)
         case "spaceOverlay":
-            guard let id = (m["id"] as? NSNumber)?.intValue, let web = office?.web else { return }
+            guard let id = m["space"] as? String, let web = office?.web else { return }
             var rect: CGRect?
             if let r = m["rect"] as? [String: Any], let x = (r["x"] as? NSNumber)?.doubleValue, let y = (r["y"] as? NSNumber)?.doubleValue,
                let w = (r["w"] as? NSNumber)?.doubleValue, let h = (r["h"] as? NSNumber)?.doubleValue {
@@ -200,7 +200,7 @@ final class Harness {
 
         // Its own desktop: a Cua Space, made before its run, driven over the relay.
         let cuaLog = { (try? String(contentsOf: root.appendingPathComponent("cua.log"), encoding: .utf8)) ?? "" }
-        check(cuaLog().contains("spaces create macos:26 --name hover-"), "the session's Space was made before its run (cua spaces create)")
+        check(cuaLog().contains("spaces create macos:26 --name hover-project-"), "the project's Space was made before the run (cua spaces create, named for the folder)")
         await js("window.__office.openDesk(\(sid), 'screen')")
         check(await until("the Space's viewer opens over the panel", 30) { self.office.web.subviews.contains { ($0 as? WKWebView)?.url?.path.hasPrefix("/viewer") == true } }, "Cua's live viewer is laid over the Screen panel")
         if let v = office.web.subviews.compactMap({ $0 as? WKWebView }).first(where: { $0.url?.path.hasPrefix("/viewer") == true }) {
@@ -289,9 +289,30 @@ final class Harness {
         }, "a reply from the desk card gets its answer")
         await shot("after-reply")
 
-        // Deleting the session deletes its desktop too.
-        if let key = (latest?["sessions"] as? [[String: Any]])?.first?["key"] as? String { backend.send(["type": "delete", "key": key]) }
-        check(await until("its Space is deleted", 15) { cuaLog().contains("spaces delete local:hover-") }, "deleting the session deletes its Space")
+        // A second agent in the same project works on the same desktop.
+        backend.send(["type": "new", "tool": "codex", "folder": project, "prompt": "Also check sign-out", "access": "risky"])
+        let both: () -> [[String: Any]] = { self.latest?["sessions"] as? [[String: Any]] ?? [] }
+        check(await until("the second agent finishes", 60) { both().count == 2 && both().allSatisfy { $0["stage"] as? String == "done" } }, "a second agent in the same project runs and finishes")
+        let creates = cuaLog().components(separatedBy: "spaces create").count - 1
+        check(creates == 1, "it reuses the project's desktop: one Space made for both agents (\(creates))")
+        let names = Set(both().compactMap { ($0["space"] as? [String: Any])?["name"] as? String })
+        check(names.count == 1, "both agents' desks name the same desktop: \(names)")
+        let mates = both().map { (($0["space"] as? [String: Any])?["with"] as? [Any])?.count ?? 0 }
+        check(mates == [1, 1], "each knows it shares the desktop with the other")
+        let servers = (try? String(contentsOf: root.appendingPathComponent("agent.log"), encoding: .utf8))?.components(separatedBy: "\n").filter { $0.hasPrefix("mcpServers") } ?? []
+        let tokens = servers.map { line -> String in (line.range(of: #"cua-space"[^\]]*\]"#, options: .regularExpression).map { String(line[$0]) } ?? "") }
+        check(tokens.count == 2 && tokens[0] == tokens[1] && !tokens[0].isEmpty, "both sessions were handed the same desktop server")
+        await js("window.__office.openDesk(\(both().last?["id"] as? Int ?? 0), 'screen')")
+        check(await until("the shared badge", 10) { (await self.text("#pBody .spwith")).contains("Shared with") }, "the Screen panel says the desktop is shared: \(await text("#pBody .spwith"))")
+        await shot("shared-desktop")
+
+        // The project's desktop goes with its last session, not before.
+        let keys = both().compactMap { $0["key"] as? String }
+        backend.send(["type": "delete", "key": keys[0]])
+        try? await Task.sleep(nanoseconds: 3_000_000_000)
+        check(!cuaLog().contains("spaces delete"), "deleting one of the project's sessions keeps the desktop")
+        backend.send(["type": "delete", "key": keys[1]])
+        check(await until("its Space is deleted", 15) { cuaLog().contains("spaces delete local:hover-") }, "deleting the project's last session deletes its desktop")
     }
 }
 

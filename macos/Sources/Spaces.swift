@@ -5,14 +5,15 @@ import WebKit
 /// its Screen panel, and an app or files dragged onto the notch sent to a desktop.
 
 /// Cua's own HTML5 viewer for a Space (it refuses to be framed, so it can't live in the
-/// office page): one web view per session, laid over the panel's screen box while it
+/// office page): one web view per project's desktop (its agents share it), laid over the
+/// Screen panel's box while it
 /// shows, and given back to no window otherwise. It is interactive: a click or key in
 /// it is the user stepping into the agent's desktop, never their own screen. Its own
 /// non-persistent store; it may load only from the Space's viewer address.
 final class SpaceViewers: NSObject, WKNavigationDelegate, WKUIDelegate {
-    private var views: [Int: (web: WKWebView, url: String)] = [:]
+    private var views: [String: (web: WKWebView, url: String)] = [:]
 
-    func show(_ id: Int, url: String, rect: CGRect?, in office: WKWebView) {
+    func show(_ id: String, url: String, rect: CGRect?, in office: WKWebView) {
         MainActor.assumeIsolated {
             for (k, v) in views where k != id && v.web.superview === office { v.web.removeFromSuperview() }
             guard let rect, rect.width > 40, rect.height > 40, let u = URL(string: url), ["http", "https"].contains(u.scheme ?? "") else { views[id]?.web.removeFromSuperview(); return }
@@ -36,7 +37,7 @@ final class SpaceViewers: NSObject, WKNavigationDelegate, WKUIDelegate {
     }
 
     func detach(from office: WKWebView) { MainActor.assumeIsolated { for v in views.values where v.web.superview === office { v.web.removeFromSuperview() } } }
-    func keep(_ ids: Set<Int>) { MainActor.assumeIsolated { for (k, v) in views where !ids.contains(k) { v.web.removeFromSuperview(); views[k] = nil } } }
+    func keep(_ ids: Set<String>) { MainActor.assumeIsolated { for (k, v) in views where !ids.contains(k) { v.web.removeFromSuperview(); views[k] = nil } } }
 
     // The viewer stays on its own address; links out go to the user's browser.
     func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {

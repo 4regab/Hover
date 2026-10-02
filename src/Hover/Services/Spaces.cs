@@ -9,16 +9,17 @@ using Hover.Core;
 
 namespace Hover.Services;
 
-/// Each agent session's own desktop: a Cua Space (spaces.cua.ai), a VM or container of
-/// its own that the agent drives and the user watches and steps into, instead of the
-/// user's own screen. Hover goes through Cua's own `cua` CLI (MIT): `cua spaces
+/// Each project's own desktop: a Cua Space (spaces.cua.ai), a VM or container that the
+/// agents working in that folder share (each with its own cursor), and the user watches
+/// and steps into, instead of the user's own screen. Hover goes through Cua's own `cua` CLI (MIT): `cua spaces
 /// create|start|stop|delete` for the Space, `cua mcp --sandbox <space>` as the
 /// session's computer-use MCP server (run by Hover outside the agents' sandbox and
 /// joined to the agent over the same socket as Hover's browser), `cua sb view` for the
 /// live viewer the Screen panel shows, and `cua teleport push` for an app dragged onto
-/// the notch. Spaces are local and free; nothing goes through Cua's relay. The Space
-/// is made when the session's first run starts (a clone, about 25 s, once the image
-/// is on the Mac), stopped when the session is retired and deleted with it. No WPF.
+/// the notch. Spaces are local and free; nothing goes through Cua's relay. A project's
+/// Space is made when its first agent's run starts (a clone, about 25 s, once the image
+/// is on the Mac), stopped when no agent of that project is left in the office, and
+/// deleted with the project's last session. No WPF.
 public static class Spaces
 {
     public const string ServerName = "cua-space";
@@ -38,9 +39,20 @@ public static class Spaces
     /// The image a new Space starts from: the macOS VM (two at most on a Mac) or Linux.
     public static string Image => Settings.SpaceImage == "linux" ? "linux" : OperatingSystem.IsMacOS() ? "macos:26" : "linux";
 
-    /// The Space a session works in: "local:hover-" and the first 10 of its key.
-    public static string NameOf(string key) { var k = Regex.Replace(key.ToLowerInvariant(), "[^a-z0-9]", ""); return "hover-" + (k.Length > 10 ? k[..10] : k.Length > 0 ? k : "session"); }
-    public static string IdOf(string key) => "local:" + NameOf(key);
+    /// The Space a project's agents share: "hover-", the folder's name and a short hash
+    /// of its full path, so two folders called "app" get two desktops.
+    public static string NameFor(string folder)
+    {
+        var full = Path.TrimEndingDirectorySeparator(Path.GetFullPath(folder));
+        if (!OperatingSystem.IsLinux()) full = full.ToLowerInvariant();
+        var hash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(full)))[..6].ToLowerInvariant();
+        var slug = Regex.Replace(Path.GetFileName(full).ToLowerInvariant(), "[^a-z0-9]+", "-").Trim('-');
+        if (slug.Length > 20) slug = slug[..20].TrimEnd('-');
+        return "hover-" + (slug.Length > 0 ? slug + "-" : "") + hash;
+    }
+    public static string IdFor(string folder) => "local:" + NameFor(folder);
+    /// The project's name as the desktop shows it.
+    public static string Title(string folder) => Path.GetFileName(Path.TrimEndingDirectorySeparator(folder)) is { Length: > 0 } n ? n : folder;
 
     // MARK: Status and setup
 
@@ -154,30 +166,35 @@ public static class Spaces
     public sealed record SpaceState(string Phase, string Line, double? Fraction, string? Error);
     private static readonly ConcurrentDictionary<string, SpaceState> States = new();
     private static readonly ConcurrentDictionary<string, SemaphoreSlim> Gates = new();
-    public static SpaceState? StateOf(string key) => States.TryGetValue(key, out var s) ? s : null;
-    private static void Set(string key, SpaceState s) { States[key] = s; Changed?.Invoke(); }
+    // Each Space by name, and the folder it is for (the bridge only knows the name).
+    private static readonly ConcurrentDictionary<string, string> Folders = new();
+    public static SpaceState? StateOf(string folder) => States.TryGetValue(NameFor(folder), out var s) ? s : null;
+    private static void Set(string folder, SpaceState s) { States[NameFor(folder)] = s; Changed?.Invoke(); }
 
-    /// The session's Space, made or started before its run, with progress. Returns
-    /// null when it is ready; else why not (the run then goes on without a desktop).
-    public static async Task<string?> Ensure(string key, CancellationToken ct)
+    /// The project's Space, made or started before an agent's run, with progress. Two
+    /// agents starting together wait for one create. Returns null when it is ready;
+    /// else why not (the run then goes on without a desktop).
+    public static async Task<string?> Ensure(string folder, CancellationToken ct)
     {
         if (!Wanted || Exe() is not { } cua) return "Agent desktops are off.";
-        var gate = Gates.GetOrAdd(key, _ => new SemaphoreSlim(1, 1));
+        var key = folder;
+        Folders[NameFor(folder)] = folder;
+        var gate = Gates.GetOrAdd(NameFor(folder), _ => new SemaphoreSlim(1, 1));
         await gate.WaitAsync(ct);
         try
         {
-            var name = NameOf(key);
+            var name = NameFor(folder);
             var (lc, lt) = await Run(cua, TimeSpan.FromSeconds(30), "spaces", "ls", "--json");
             var mine = lc == 0 ? ParseList(lt).FirstOrDefault(x => x.Name == name || x.Id == "local:" + name) : null;
-            if (mine is { Running: true }) { Set(key, new("ready", "Its desktop is ready.", 1, null)); return null; }
+            if (mine is { Running: true }) { Set(key, new("ready", "The project’s desktop is ready.", 1, null)); return null; }
             if (mine is not null)
             {
-                Set(key, new("starting", "Starting its desktop…", null, null));
+                Set(key, new("starting", "Starting the project’s desktop…", null, null));
                 var (sc, st) = await Run(cua, TimeSpan.FromMinutes(3), "spaces", "start", mine.Id, "--json");
-                if (sc != 0) { Set(key, new("failed", "", null, Line(st) ?? "Its desktop didn’t start.")); return Line(st); }
-                Set(key, new("ready", "Its desktop is ready.", 1, null)); return null;
+                if (sc != 0) { Set(key, new("failed", "", null, Line(st) ?? "The desktop didn’t start.")); return Line(st); }
+                Set(key, new("ready", "The project’s desktop is ready.", 1, null)); return null;
             }
-            Set(key, new("creating", "Making its desktop…", 0, null));
+            Set(key, new("creating", "Making the project’s desktop…", 0, null));
             string? error = null;
             try
             {
@@ -185,7 +202,7 @@ public static class Spaces
                     "spaces", "create", Image, "--name", name, "--json");
             }
             catch (SetupError e) { error = e.Message; }
-            if (error is null) { Set(key, new("ready", "Its desktop is ready.", 1, null)); return null; }
+            if (error is null) { Set(key, new("ready", "The project’s desktop is ready.", 1, null)); return null; }
             // A Mac runs two macOS VMs at most: say so plainly.
             if (error.Contains("limit", StringComparison.OrdinalIgnoreCase))
                 error = "This Mac already runs two macOS desktops (Apple’s limit). Stop another agent’s desktop, or use Linux desktops in Settings.";
@@ -195,9 +212,10 @@ public static class Spaces
         finally { gate.Release(); }
     }
 
-    /// Off when the session is done with it for now; deleted with the session.
-    public static Task Stop(string key) => Wanted && Exe() is { } cua ? Task.Run(async () => { await Run(cua, TimeSpan.FromMinutes(2), "spaces", "stop", IdOf(key)); Set(key, new("stopped", "Its desktop is off. A reply starts it again.", null, null)); }) : Task.CompletedTask;
-    public static Task Delete(string key) => Exe() is { } cua ? Task.Run(async () => { await Run(cua, TimeSpan.FromMinutes(3), "spaces", "delete", IdOf(key), "--force"); States.TryRemove(key, out _); Changed?.Invoke(); }) : Task.CompletedTask;
+    /// Off when no agent of the project is left in the office; deleted with the
+    /// project's last session (the backend decides when).
+    public static Task Stop(string folder) => Wanted && Exe() is { } cua ? Task.Run(async () => { await Run(cua, TimeSpan.FromMinutes(2), "spaces", "stop", IdFor(folder)); Set(folder, new("stopped", "The desktop is off. The project’s next task starts it again.", null, null)); }) : Task.CompletedTask;
+    public static Task Delete(string folder) => Exe() is { } cua ? Task.Run(async () => { await Run(cua, TimeSpan.FromMinutes(3), "spaces", "delete", IdFor(folder), "--force"); States.TryRemove(NameFor(folder), out _); Changed?.Invoke(); }) : Task.CompletedTask;
 
     /// The live viewer of the session's Space: Cua's own HTML5 viewer, interactive (the
     /// user can step in), with dropped files going to the Space's Downloads.
@@ -205,7 +223,7 @@ public static class Spaces
     {
         if (Exe() is not { } cua) return new { error = "Cua Spaces isn’t installed." };
         if (StateOf(key) is { Phase: not "ready" } st) return new { phase = st.Phase, line = st.Line, fraction = st.Fraction, error = st.Error };
-        var (code, text) = await Run(cua, TimeSpan.FromSeconds(30), "sb", "view", IdOf(key), "--no-open");
+        var (code, text) = await Run(cua, TimeSpan.FromSeconds(30), "sb", "view", IdFor(key), "--no-open");
         var url = Regex.Match(text, @"https?://[^\s""']+/viewer/#[^\s""']+").Value;
         if (code != 0 || url.Length == 0) return new { error = Line(text) ?? "The desktop’s viewer didn’t open." };
         if (!Uri.TryCreate(url, UriKind.Absolute, out var u) || u.Host is not ("127.0.0.1" or "localhost" or "[::1]") && !u.Host.StartsWith("192.168.", StringComparison.Ordinal) && !u.Host.StartsWith("10.", StringComparison.Ordinal))
@@ -222,7 +240,7 @@ public static class Spaces
         if (await Ensure(key, CancellationToken.None) is { } why) return new { error = why };
         try
         {
-            await Stream(cua, TimeSpan.FromMinutes(10), CancellationToken.None, f => progress?.Invoke(f.Line), "teleport", "push", "--app", app, "--sandbox", IdOf(key), "--progress");
+            await Stream(cua, TimeSpan.FromMinutes(10), CancellationToken.None, f => progress?.Invoke(f.Line), "teleport", "push", "--app", app, "--sandbox", IdFor(key), "--progress");
             return new { ok = true };
         }
         catch (SetupError e)
@@ -243,7 +261,7 @@ public static class Spaces
         foreach (var p in paths.Take(20))
         {
             if (!(File.Exists(p) || Directory.Exists(p))) continue;
-            var r = await McpCall(cua, IdOf(key), "send_file", new { space = IdOf(key), path = p });
+            var r = await McpCall(cua, IdFor(key), "send_file", new { space = IdFor(key), path = p });
             if (r is null) return new { error = "The files didn’t go.", sent };
             sent++;
         }
@@ -254,10 +272,13 @@ public static class Spaces
 
     /// The MCP server a session's tool gets: Hover's relay (as for its browser) to a
     /// `cua mcp` Hover runs for that session's Space, outside the agents' sandbox.
-    public static IReadOnlyList<McpServer> Servers(AgentTool tool, string? tag)
+    /// The project's Space for a run in that folder: every agent there gets the same
+    /// one, each with its own cursor in it.
+    public static IReadOnlyList<McpServer> Servers(string folder)
     {
-        if (!Wanted || string.IsNullOrEmpty(tag) || tag == "opencode" || Exe() is null) return Array.Empty<McpServer>();
-        return BrowserTool.Bridge("space:" + tag, ServerName, Serve);
+        if (!Wanted || string.IsNullOrEmpty(folder) || Exe() is null) return Array.Empty<McpServer>();
+        Folders[NameFor(folder)] = folder;
+        return BrowserTool.Bridge("space:" + NameFor(folder), ServerName, Serve);
     }
 
     /// Computer use inside the Space, and its files; never its shell (the agent has its
@@ -266,10 +287,10 @@ public static class Spaces
 
     private static async Task Serve(string token, StreamReader fromAgent, Stream toAgent)
     {
-        var key = token["space:".Length..];
+        if (!Folders.TryGetValue(token["space:".Length..], out var key)) return;
         if (await Ensure(key, CancellationToken.None) is { } why) Log.Line($"spaces: {key}: {why}");
         if (Exe() is not { } cua) return;
-        var psi = Quota.Hidden(cua, "mcp", "--sandbox", IdOf(key), "--permissions", Permissions);
+        var psi = Quota.Hidden(cua, "mcp", "--sandbox", IdFor(key), "--permissions", Permissions);
         psi.Environment["CUA_TELEMETRY"] = "0";
         psi.StandardOutputEncoding = new UTF8Encoding(false);
         using var p = new Process { StartInfo = psi };

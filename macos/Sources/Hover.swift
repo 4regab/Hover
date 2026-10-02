@@ -420,7 +420,7 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate {
             openDashboard(then: restore)
         // The agent's own desktop (a Cua Space): its viewer over the Screen panel.
         case "spaceOverlay":
-            guard let id = (m["id"] as? NSNumber)?.intValue else { return }
+            guard let id = m["space"] as? String else { return }
             let web = m["dashboard"] as? Bool == true ? dashboardOffice?.web : office.web
             guard let web else { return }
             var rect: CGRect?
@@ -485,7 +485,8 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate {
         case "state":
             latest = m
             let ids = Set((m["sessions"] as? [[String: Any]] ?? []).compactMap { ($0["id"] as? NSNumber)?.intValue })
-            browsers.keep(ids); spaceViewers.keep(ids)
+            browsers.keep(ids)
+            spaceViewers.keep(Set((m["sessions"] as? [[String: Any]] ?? []).compactMap { ($0["space"] as? [String: Any])?["name"] as? String }))
             office.deliver(m); dashboardOffice?.deliver(m)
             settings.model.receiveState(m)
             voice?.state = m

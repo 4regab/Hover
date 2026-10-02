@@ -83,7 +83,7 @@ internal sealed class Backend
             session = new KiroSession(async (f, p, pr, ct, resume, events) =>
             {
                 // Its own desktop (a Cua Space) is made or started before it starts.
-                if (Spaces.Wanted && session?.Key is { } key) { pr?.Report(KiroPhase.Starting); await Spaces.Ensure(key, ct); }
+                if (Spaces.Wanted) { pr?.Report(KiroPhase.Starting); await Spaces.Ensure(f, ct); }
                 return await runtimes[tool].Run(f, p, pr, ct, resume, events, session?.Access, session?.Key);
             });
             return session;
@@ -177,8 +177,24 @@ internal sealed class Backend
                 }
                 else s.Answer(askId, Str(m, "answer") switch { "allow" => AskAnswer.Allow, "trust" => AskAnswer.Trust, "trustAll" => AskAnswer.TrustAll, _ => AskAnswer.Deny });
                 break;
-            case "delete": if ((s?.Key ?? Str(m, "key")) is { } deleteKey) { sessions.Delete(deleteKey); _ = Spaces.Delete(deleteKey); } break;
-            case "remove": if (s is not null) { _ = Spaces.Stop(s.Key); sessions.Dismiss(s); } break;
+            case "delete":
+                if ((s?.Key ?? Str(m, "key")) is { } deleteKey)
+                {
+                    var gone = s?.Folder ?? sessions.History?.Entries.FirstOrDefault(e => e.Key == deleteKey)?.Folder;
+                    sessions.Delete(deleteKey);
+                    // A project's desktop goes with its last session, in the office or the history.
+                    if (gone is not null && !UsesFolder(gone)) _ = Spaces.Delete(gone);
+                }
+                break;
+            case "remove":
+                if (s is not null)
+                {
+                    var project = s.Folder;
+                    sessions.Dismiss(s);
+                    // Off once no agent of the project is left in the office.
+                    if (!sessions.All.Any(x => SameFolder(x.Folder, project))) _ = Spaces.Stop(project);
+                }
+                break;
             case "history":
                 if (Str(m, "key") is { } historyKey && sessions.Saved(historyKey) is { } saved)
                 { var view = new KiroSession(); view.Restore(saved); Send(new { type = "transcript", session = state.Session(view) }); }
@@ -213,14 +229,14 @@ internal sealed class Backend
                 if (s is null) break;
                 var viewId = s.Id;
                 // Opening the panel makes or starts the Space when the session has none running.
-                if (Spaces.Wanted && Spaces.StateOf(s.Key) is null or { Phase: "failed" or "stopped" }) { var k2 = s.Key; _ = Task.Run(() => Spaces.Ensure(k2, CancellationToken.None)); }
-                _ = Spaces.Viewer(s.Key).ContinueWith(t => Send(new { type = "space", id = viewId, data = t.IsCompletedSuccessfully ? t.Result : new { error = "The desktop’s viewer didn’t open." } }), TaskScheduler.Default);
+                if (Spaces.Wanted && Spaces.StateOf(s.Folder) is null or { Phase: "failed" or "stopped" }) { var k2 = s.Folder; _ = Task.Run(() => Spaces.Ensure(k2, CancellationToken.None)); }
+                _ = Spaces.Viewer(s.Folder).ContinueWith(t => Send(new { type = "space", id = viewId, data = t.IsCompletedSuccessfully ? t.Result : new { error = "The desktop’s viewer didn’t open." } }), TaskScheduler.Default);
                 break;
             case "teleport":
                 if (s is null || Str(m, "app") is not { } app) break;
                 var (tpId, tpTitle) = (s.Id, s.Title);
                 Send(new { type = "teleport", id = tpId, phase = "sending", app, line = $"Sending {app} to its desktop…" });
-                _ = Spaces.Teleport(s.Key, app, line => Send(new { type = "teleport", id = tpId, phase = "sending", app, line })).ContinueWith(t => Send(new
+                _ = Spaces.Teleport(s.Folder, app, line => Send(new { type = "teleport", id = tpId, phase = "sending", app, line })).ContinueWith(t => Send(new
                 {
                     type = "teleport", id = tpId, app, phase = "done",
                     data = t.IsCompletedSuccessfully ? t.Result : new { error = "The app didn’t go." },
@@ -229,7 +245,7 @@ internal sealed class Backend
             case "spaceFiles":
                 if (s is null || !m.TryGetProperty("paths", out var fp) || fp.ValueKind != JsonValueKind.Array) break;
                 var filesId = s.Id;
-                _ = Spaces.SendFiles(s.Key, fp.EnumerateArray().Select(x => x.GetString() ?? "").Where(x => x.Length > 0).ToList())
+                _ = Spaces.SendFiles(s.Folder, fp.EnumerateArray().Select(x => x.GetString() ?? "").Where(x => x.Length > 0).ToList())
                     .ContinueWith(t => Send(new { type = "teleport", id = filesId, phase = "done", app = "files", data = t.IsCompletedSuccessfully ? t.Result : new { error = "The files didn’t go." } }), TaskScheduler.Default);
                 break;
             case "spaces":
@@ -279,6 +295,10 @@ internal sealed class Backend
             case "shutdown": Shutdown(); loop.Complete(); break;
         }
     }
+    private static bool SameFolder(string a, string b) => Spaces.NameFor(a) == Spaces.NameFor(b);
+    /// Any session of this project left, in the office or the history.
+    private bool UsesFolder(string folder) => sessions.All.Any(x => SameFolder(x.Folder, folder))
+        || (sessions.History?.Entries ?? Array.Empty<HistoryEntry>()).Any(e => SameFolder(e.Folder, folder));
     private static void SendSpaces()
     {
         var k = Spaces.Known;
@@ -405,7 +425,7 @@ internal sealed class Backend
         quotaTimer.Dispose(); BrowserTool.Stop(); sessions.StopAll();
         // The agents' desktops are turned off with Hover (their disks stay); a few
         // seconds at most, so quitting never hangs on them.
-        if (Spaces.Wanted) Task.WaitAll(sessions.All.Select(x => Spaces.Stop(x.Key)).ToArray(), TimeSpan.FromSeconds(6)); foreach (var runtime in runtimes.Values) runtime.Shutdown("Hover quit");
+        if (Spaces.Wanted) Task.WaitAll(sessions.All.Select(x => x.Folder).Distinct(StringComparer.OrdinalIgnoreCase).Select(Spaces.Stop).ToArray(), TimeSpan.FromSeconds(6)); foreach (var runtime in runtimes.Values) runtime.Shutdown("Hover quit");
         sessions.History?.Flush(); Settings.Flush();
     }
 }

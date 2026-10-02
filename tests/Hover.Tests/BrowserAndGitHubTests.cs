@@ -146,10 +146,18 @@ public sealed class BrowserAndGitHubTests
     }
 
     [Test]
-    public void Each_session_has_its_own_space_and_the_list_is_read_loosely()
+    public void Each_project_has_its_own_space_and_the_list_is_read_loosely()
     {
-        Assert.That(Spaces.NameOf("3F9a2b7c4d5e6f"), Is.EqualTo("hover-3f9a2b7c4d"));
-        Assert.That(Spaces.IdOf("abc"), Is.EqualTo("local:hover-abc"));
+        // One desktop per project: the same folder (however it is written) gives one Space,
+        // two folders with the same name give two.
+        var app = Path.Combine(_dir, "My App");
+        var other = Path.Combine(_dir, "x", "My App");
+        Assert.That(Spaces.NameFor(app), Does.Match("^hover-my-app-[0-9a-f]{6}$"));
+        Assert.That(Spaces.NameFor(app + Path.DirectorySeparatorChar), Is.EqualTo(Spaces.NameFor(app)));
+        Assert.That(Spaces.NameFor(Path.Combine(_dir, "x", "..", "My App")), Is.EqualTo(Spaces.NameFor(app)));
+        Assert.That(Spaces.NameFor(other), Is.Not.EqualTo(Spaces.NameFor(app)));
+        Assert.That(Spaces.IdFor(app), Is.EqualTo("local:" + Spaces.NameFor(app)));
+        Assert.That(Spaces.Title(app), Is.EqualTo("My App"));
         var list = Spaces.ParseList("note: signed out\n[{\"id\":\"local:hover-1\",\"name\":\"hover-1\",\"os\":\"macos\",\"power_state\":\"running\"},{\"id\":\"local:x\",\"power_state\":\"stopped\"}]");
         Assert.That(list.Select(x => (x.Id, x.Name, x.Running)), Is.EqualTo(new[] { ("local:hover-1", "hover-1", true), ("local:x", "x", false) }));
         Assert.That(Spaces.ParseList("{\"spaces\":[{\"id\":\"local:a\",\"name\":\"a\"}]}"), Has.Count.EqualTo(1));

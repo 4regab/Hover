@@ -77,7 +77,7 @@ export function tileDetail(id, p, s, browser, pages) {
       const running = Math.max(p?.running ?? 0, own.filter(x => x.status === 'in_progress').length), all = Math.max(p?.agents ?? 0, own.length);
       return running ? `${num(running)} working` : all ? n(all, 'subagent', 'subagents') : 'None yet';
     }
-    case 'screen': if (s.space) return { ready: s.testing ? 'Live now' : 'Its desktop', creating: 'Making its desktop…', starting: 'Starting…', stopped: 'Off', failed: 'Couldn’t start', none: 'Its own desktop' }[s.space.phase] || 'Its desktop';
+    case 'screen': if (s.space) return s.space.with?.length && s.space.phase === 'ready' ? `Shared · ${s.space.with.length + 1} agents` : { ready: s.testing ? 'Live now' : `${s.space.project || 'Project'} desktop`, creating: 'Making its desktop…', starting: 'Starting…', stopped: 'Off', failed: 'Couldn’t start', none: 'Its own desktop' }[s.space.phase] || 'Its desktop';
       return s.testing ? 'Live now' : s.apps ? `${(s.apps.names?.length || s.apps.pids?.length || 1)} app${(s.apps.names?.length || s.apps.pids?.length || 1) === 1 ? '' : 's'} open` : 'Its desktop';
   }
   return '';
@@ -351,27 +351,29 @@ export function screenParts(sc, o) {
 // ── The agent's own desktop: a Cua Space ────────────────────────────────
 /// The Screen panel when each agent has a Space: a bar, the box the host lays Cua's
 /// live viewer over (or how the Space is getting on), and what the agent did on it.
-export function spaceHTML(bot, sp, v, actions, big, demo) {
+export function spaceHTML(bot, sp, v, actions, big, demo, mates = []) {
+  const title = sp.project ? `${sp.project} desktop` : `${bot}’s desktop`;
+  const shared = mates.length ? `<span class="spwith" title="The agents in this project share this desktop, each with its own cursor">Shared with ${esc(mates.length < 3 ? mates.join(' and ') : `${mates.slice(0, 2).join(', ')} and ${mates.length - 2} more`)}</span>` : '';
   const phase = sp.phase === 'ready' && v.url ? 'live' : sp.phase === 'failed' || v.error ? 'failed' : sp.phase === 'stopped' ? 'stopped' : sp.phase === 'ready' ? 'opening' : sp.phase === 'none' ? 'creating' : sp.phase;
   const status = phase === 'live' ? '<span class="sl on"><i></i>Live</span>' : phase === 'failed' ? '<span class="sl bad"><i></i>Not running</span>' : phase === 'stopped' ? '<span class="sl"><i></i>Off</span>' : '<span class="sl"><i class="spin"></i>Starting</span>';
-  const bar = `<div class="vmbar"><span class="vmdots" aria-hidden="true"><i></i><i></i><i></i></span><span class="vmt"><b>${esc(bot)}’s desktop</b><em>Cua Space</em></span>${status}<span class="sp"></span>`
+  const bar = `<div class="vmbar"><span class="vmdots" aria-hidden="true"><i></i><i></i><i></i></span><span class="vmt"><b>${esc(title)}</b><em>Cua Space</em></span>${status}${shared}<span class="sp"></span>`
     + (v.url && !demo ? `<button class="vmb" data-ext="${esc(v.url)}" title="Open this desktop in your browser">${ICONS.ext}Open</button>` : '')
     + `<button class="vmb ic" data-vmbig aria-pressed="${!!big}" aria-label="${big ? 'Smaller' : 'Bigger'}" title="${big ? 'Smaller (F)' : 'Bigger (F)'}">${big ? ICONS.shrink : ICONS.grow}</button></div>`;
   const pct = sp.fraction != null ? Math.round(sp.fraction * 100) : null;
-  const inside = phase === 'live' ? (demo ? `<div class="spdemo"><b>${esc(bot)}’s desktop</b><span>In Hover this is the agent’s Cua Space, live. Click into it to take over.</span></div>` : '')
-    : phase === 'failed' ? `<div class="spmsg">${ICONS.screen}<b>${esc(bot)}’s desktop didn’t start</b><span>${esc(v.error || sp.error || 'Cua Spaces didn’t answer.')}</span><button class="pbtn" data-spretry>Try again</button></div>`
-    : phase === 'stopped' ? `<div class="spmsg">${ICONS.screen}<b>Its desktop is off</b><span>It turns back on with ${esc(bot)}’s next task, or now.</span><button class="pbtn" data-spretry>Turn it on</button></div>`
-    : `<div class="spmsg">${ICONS.screen}<b>${phase === 'opening' ? 'Opening the viewer…' : `Getting ${esc(bot)}’s desktop ready…`}</b><span>${esc(sp.line || 'A desktop of its own, so it never uses yours.')}</span>${pct != null ? `<i class="spbar"><i style="width:${pct}%"></i></i>` : '<i class="spin"></i>'}</div>`;
+  const inside = phase === 'live' ? (demo ? `<div class="spdemo"><b>${esc(title)}</b><span>In Hover this is the project’s Cua Space, live${mates.length ? `, shared by ${esc([bot, ...mates].slice(0, -1).join(', '))} and ${esc(mates[mates.length - 1])}` : ''}. Click into it to take over.</span></div>` : '')
+    : phase === 'failed' ? `<div class="spmsg">${ICONS.screen}<b>The ${esc(sp.project || '')} desktop didn’t start</b><span>${esc(v.error || sp.error || 'Cua Spaces didn’t answer.')}</span><button class="pbtn" data-spretry>Try again</button></div>`
+    : phase === 'stopped' ? `<div class="spmsg">${ICONS.screen}<b>The desktop is off</b><span>It turns back on with the project’s next task, or now.</span><button class="pbtn" data-spretry>Turn it on</button></div>`
+    : `<div class="spmsg">${ICONS.screen}<b>${phase === 'opening' ? 'Opening the viewer…' : `Getting the ${esc(sp.project || 'project’s')} desktop ready…`}</b><span>${esc(sp.line || 'One desktop for the project’s agents, so they never use yours.')}</span>${pct != null ? `<i class="spbar"><i style="width:${pct}%"></i></i>` : '<i class="spin"></i>'}</div>`;
   const hint = `<p class="sphint">${ICONS.pointer}Click into it to take over · drag an app window or files onto the notch to send them here</p>`;
-  const rows = actions.slice(0, 40).map((x, i) => `<div class="vmrow${x.status === 'failed' ? ' bad' : ''}${x.status === 'in_progress' ? ' run' : ''}"><time>${esc(new Date(x.t).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit', second: '2-digit' }))}</time><i></i><b>${esc(x.verb)}</b>${x.cmd ? `<span>${esc(x.cmd)}</span>` : ''}${i === 0 && x.status === 'in_progress' ? '<em>now</em>' : ''}</div>`).join('');
+  const rows = actions.slice(0, 40).map((x, i) => `<div class="vmrow${x.status === 'failed' ? ' bad' : ''}${x.status === 'in_progress' ? ' run' : ''}"><time>${esc(new Date(x.t).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit', second: '2-digit' }))}</time><i></i>${x.who ? `<u>${esc(x.who)}</u>` : ''}<b>${esc(x.verb)}</b>${x.cmd ? `<span>${esc(x.cmd)}</span>` : ''}${i === 0 && x.status === 'in_progress' ? '<em>now</em>' : ''}</div>`).join('');
   return `<div class="vm sp${phase === 'live' ? ' live' : ''}">${bar}<div class="vmscreen spbox">${inside}</div>${phase === 'live' ? hint : ''}<div class="vmtl"><h4 class="sh">Activity <span>${actions.length}</span></h4>${rows || `<p class="none">What ${esc(bot)} does on its desktop shows here as it happens.</p>`}</div></div>`;
 }
 
-/// The notch while an app or files are dragged onto it: each agent's desktop as a
-/// drop target.
-export function dropHTML(d, agents, on) {
+/// The notch while an app or files are dragged onto it: each project's desktop as a
+/// drop target, with the agents that share it.
+export function dropHTML(d, desks, on) {
   const what = d.files.length ? (d.files.length === 1 ? d.app : `${d.files.length} items`) : d.app;
-  const head = `<div class="tdh">${ICONS.screen}<div><b>Send ${esc(what)} to an agent’s desktop</b><span>${on ? (d.files.length ? 'Drop on an agent: the files land in its Downloads.' : 'Drop on an agent: Cua moves the app with its tabs and profile. Sign-ins ask for Touch ID first.') : 'Agent desktops are off. Turn them on in Settings → Computer Use.'}</span></div></div>`;
-  if (!agents.length) return head + '<p class="tdnone">No agents yet. Start a task, and its agent gets a desktop of its own.</p>';
-  return head + `<div class="tdt">${agents.map(a => `<div class="tdtile" data-tdrop="${a.id}" style="--c:${a.css}"><span class="tdmon"><i>${a.badge}</i></span><b>${esc(a.name)}</b><span>${esc(a.title)}</span><em>${esc({ ready: 'Desktop ready', creating: 'Making its desktop', starting: 'Starting', stopped: 'Off: starts on drop', failed: 'Didn’t start', none: 'Made on drop' }[a.space?.phase || 'none'] || '')}</em></div>`).join('')}</div>`;
+  const head = `<div class="tdh">${ICONS.screen}<div><b>Send ${esc(what)} to a project’s desktop</b><span>${on ? (d.files.length ? 'Drop on a desktop: the files land in its Downloads, for every agent working there.' : 'Drop on a desktop: Cua moves the app with its tabs and profile. Sign-ins ask for Touch ID first.') : 'Agent desktops are off. Turn them on in Settings → Computer Use.'}</span></div></div>`;
+  if (!desks.length) return head + '<p class="tdnone">No agents yet. Start a task, and its project gets a desktop its agents share.</p>';
+  return head + `<div class="tdt">${desks.map(k => `<div class="tdtile" data-tdrop="${k.id}" style="--c:${k.agents[0].css}"><span class="tdmon">${k.agents.map(a => `<i>${a.badge}</i>`).join('')}</span><b>${esc(k.project)}</b><span>${esc(k.agents.map(a => a.name).join(', '))}</span><em>${esc({ ready: 'Desktop ready', creating: 'Making its desktop', starting: 'Starting', stopped: 'Off: starts on drop', failed: 'Didn’t start', none: 'Made on drop' }[k.space?.phase || 'none'] || '')}</em></div>`).join('')}</div>`;
 }

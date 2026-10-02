@@ -94,7 +94,14 @@ internal sealed class OfficeState(KiroSessions sessions, IReadOnlyDictionary<Age
             // Computer use among its last steps: the desk's screen panel goes live.
             testing = DeskInfo.Testing(s),
             // Its own desktop (a Cua Space), when agents have them: how it is getting on.
-            space = Spaces.Wanted ? (Spaces.StateOf(s.Key) is { } sp ? new { phase = sp.Phase, line = sp.Line, fraction = sp.Fraction, error = sp.Error } : new { phase = "none", line = "", fraction = (double?)null, error = (string?)null }) : null,
+            // The project's desktop (a Cua Space) it shares with the other agents in its folder.
+            space = Spaces.Wanted ? new
+            {
+                name = Spaces.NameFor(s.Folder), project = Spaces.Title(s.Folder),
+                phase = Spaces.StateOf(s.Folder)?.Phase ?? "none", line = Spaces.StateOf(s.Folder)?.Line ?? "",
+                fraction = Spaces.StateOf(s.Folder)?.Fraction, error = Spaces.StateOf(s.Folder)?.Error,
+                with = sessions.All.Where(x => x != s && Spaces.NameFor(x.Folder) == Spaces.NameFor(s.Folder)).Select(x => x.Id).ToList(),
+            } : null,
             // Hover's browser among its last steps: the desk's Browser row says so.
             browsing = DeskInfo.Browsing(s),
             // The apps its computer use opened: the screen shows only these over the desktop.

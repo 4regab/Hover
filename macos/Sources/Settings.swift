@@ -516,15 +516,15 @@ private struct ComputerUsePage: View {
                 let sp = model.spaces
                 Toggle(isOn: Binding(get: { sp.on }, set: { model.setSpaces($0) })) {
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("Give each agent a desktop of its own")
-                        Text("A Cua Space per agent: a VM that it uses for computer use instead of your screen. You watch it live in the desk’s Screen panel and can step in at any time. Drag an app or files onto the notch to send them to an agent’s desktop.")
+                        Text("Give agents a desktop of their own")
+                        Text("One Cua Space per project: a separate computer that the agents working in that folder share for computer use, each with its own cursor, instead of your screen. You watch it live in a desk’s Screen panel and can step in at any time. Drag an app or files onto the notch to send them to a project’s desktop.")
                             .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                     }
                 }
                 .toggleStyle(.switch).disabled(!sp.supported)
                 if sp.on || !sp.supported {
                     Picker("Desktop", selection: Binding(get: { sp.image }, set: { model.setSpaceImage($0) })) {
-                        Text("macOS (two at a time, 8 GB of memory each)").tag("macos")
+                        Text("macOS (two projects at a time, 8 GB of memory each)").tag("macos")
                         Text("Linux (needs Docker or Colima)").tag("linux")
                     }
                     HStack(spacing: 12) {
@@ -546,7 +546,7 @@ private struct ComputerUsePage: View {
                     }
                 }
             } footer: {
-                Text("Spaces run on this Mac and are free; nothing goes through Cua’s servers. The first setup installs Cua’s app and command-line tool and downloads the desktop image once (macOS is about 23 GB). Each agent’s desktop is made when its task starts, turned off when you remove it and deleted with the session. Needs macOS 26 or later on Apple silicon.")
+                Text("A desktop is not your own macOS: it is a separate macOS 26 virtual machine (Apple’s Virtualization, through Cua’s Lume), or a Linux container, with none of your apps, files or sign-ins until you send them. Spaces run on this Mac and are free; nothing goes through Cua’s servers. The first setup installs Cua’s app and command-line tool and downloads the desktop image once (macOS is about 23 GB); each project’s desktop is then a quick copy of it. It is made when the project’s first task starts, turned off when none of its agents is left in the office, and deleted with the project’s last session. Needs macOS 26 or later on Apple silicon.")
                     .foregroundStyle(.secondary)
             }
             Section {
