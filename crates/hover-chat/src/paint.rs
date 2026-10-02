@@ -18,10 +18,15 @@ use crate::doc::{Shape, TextBox, Thread};
 use crate::scroll::{Bar, BarId, THICK};
 use crate::theme::{self, Rgba};
 
-#[derive(Hash, PartialEq, Eq, Clone, Copy)]
+#[derive(Hash, PartialEq, Eq, Clone)]
 struct GlyphKey {
     font: u64,
     index: u32,
+    /// The run's axis positions. A variable font (Pixelify Sans, Segoe UI Variable,
+    /// Cascadia Code) draws all its weights from one file, and fontique asks for bold
+    /// through the wght axis, not by emboldening: without them the first weight a glyph
+    /// was drawn in was reused for every other, so regular text got bold letters.
+    coords: Rc<[i16]>,
     glyph: u32,
     size: u32,
     sub: u8,
@@ -338,14 +343,15 @@ impl Painter {
             let synth = r.synthesis();
             let skew = synth.skew().is_some();
             let bold = synth.embolden();
-            let coords: Vec<i16> = r.normalized_coords().to_vec();
+            // Shared by the keys of the run's glyphs, so each takes no copy.
+            let coords: Rc<[i16]> = r.normalized_coords().into();
             let mut scaler = self.scaler.builder(fref).size(size).hint(false).normalized_coords(coords.iter()).build();
             let c = style.brush.color;
             for g in run.positioned_glyphs() {
                 let gx = (x + g.x) * k;
                 let gy = ((y + g.y) * k).round();
                 let sub = ((gx.fract() * 4.0) as u8).min(3);
-                let key = GlyphKey { font: font.data.id(), index: font.index, glyph: g.id, size: size.to_bits(), sub, skew, bold };
+                let key = GlyphKey { font: font.data.id(), index: font.index, coords: coords.clone(), glyph: g.id, size: size.to_bits(), sub, skew, bold };
                 let mask = self.glyphs.entry(key).or_insert_with(|| {
                     let mut rnd = Render::new(&[Source::Outline]);
                     rnd.format(Format::Alpha).offset(Vector::new(sub as f32 / 4.0, 0.0));
