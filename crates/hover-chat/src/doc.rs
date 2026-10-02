@@ -982,7 +982,7 @@ impl Turn {
 /// What a click on a drawn control does.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Act {
-    /// A Copy button: what it copies (a code block, a diff, an answer, a message).
+    /// A Copy button: what it copies (a code block, a diff, an answer).
     Copy(Rc<str>),
     /// A step with a change or output opens or folds: (step index, the "now" row).
     Step(usize, bool),
@@ -1152,11 +1152,16 @@ impl Thread {
     }
 
     /// Whether a step's block (change, output, thought) shows when the user hasn't said:
-    /// a thought while it streams; while the turn runs, its latest change or output.
-    fn step_default_open(t: &Turn, j: usize, now: bool) -> bool {
-        let x = &t.steps[j];
-        if x.kind == StepIcon::Thought { return !x.ended(); }
-        !now && t.live && t.steps.iter().rposition(Step::has_block) == Some(j)
+    /// open while its turn runs, so what the agent is doing stays in view, and folded once
+    /// the turn has ended, when the answer is what matters.
+    fn step_default_open(t: &Turn) -> bool { t.live }
+
+    /// Whether a step's block is open: the user's own choice wins, during the turn and
+    /// after it. The "now" row and the timeline's row show the same block, so a choice
+    /// made on one holds on the other until the user says otherwise there.
+    fn step_open(&self, t: &Turn, ti: usize, j: usize, now: bool) -> bool {
+        let user = |n: bool| self.step_user.get(&(self.session, ti, j, n)).copied();
+        user(now).or_else(|| user(!now)).unwrap_or(Self::step_default_open(t))
     }
 
     /// Whether turn i's timeline is open: the user's choice, else folded (a running turn
@@ -1175,10 +1180,8 @@ impl Thread {
 
     /// A click on a step with a change or output: its block opens or folds.
     pub fn toggle_step(&mut self, turns: &[Turn], section: usize, j: usize, now: bool) {
-        let default = Self::step_default_open(&turns[section], j, now);
-        let k = (self.session, section, j, now);
-        let open = self.step_user.get(&k).copied().unwrap_or(default);
-        self.step_user.insert(k, !open);
+        let open = self.step_open(&turns[section], section, j, now);
+        self.step_user.insert((self.session, section, j, now), !open);
         let w = self.width;
         self.set(turns, w);
     }
@@ -1273,8 +1276,8 @@ impl Thread {
         let cancel_w = cancel.as_ref().map_or(0.0, |c| c.layout.width() + 12.0);
         if let Some(q) = &q { tw = tw.max((q.layout.calculate_content_widths().max + cancel_w).min(maxw).ceil()); }
         let when = (!t.when.is_empty()).then(|| self.line(&t.when, Look { size: 10.5, color: [255, 255, 255, 89], lh: 1.5, ..look }, None));
-        // Copy, at the left of the time line (24 px less the bubble's padding).
-        if let Some(wb) = &when { tw = tw.max((wb.layout.width() + 22.0).ceil().min(maxw)); }
+        // The time sits at the bubble's right, so a short message widens to hold it.
+        if let Some(wb) = &when { tw = tw.max(wb.layout.width().ceil().min(maxw)); }
         layout.break_all_lines(Some(tw));
         layout.align(Alignment::Start, AlignmentOptions::default());
         let pics_h = if pics > 0 { pics.div_ceil(per_row) as f32 * 77.0 } else { 0.0 };
@@ -1311,12 +1314,8 @@ impl Thread {
             frag.copy.push(Tok::Req(1));
             wb.x = bx + bw - 11.0 - wb.layout.width();
             wb.y = yy + 2.0;
-            // The message's Copy, at the line's left.
-            let done = self.copied.as_deref() == Some(t.prompt.as_str());
-            let ih = wb.layout.height();
-            frag.shapes.push(Shape::Svg { x: bx + 11.0, y: wb.y + (ih - 12.0) / 2.0, w: 12.0, h: 12.0,
-                svg: path_svg(if done { CHECK_ICON } else { COPY_ICON }, if done { [0x4a, 0xde, 0x80, 255] } else { [255, 255, 255, 120] }, 12.0, 2.0) });
-            frag.hits.push(([bx + 5.0, wb.y - 3.0, 24.0, ih + 6.0], Act::Copy(t.prompt.as_str().into())));
+            // No Copy under one's own message: the user wrote it, and a selection still
+            // copies it.
             frag.text(wb);
         }
         frag.copy.push(Tok::Req(1));
@@ -1372,7 +1371,7 @@ impl Thread {
                     let s = t.steps.iter().rposition(|x| x.kind != StepIcon::Agent).map_or(0, |k| k + 1);
                     y += self.agents(&mut frag, t, ti, s, j, y, w);
                 } else {
-                    let op = self.step_user.get(&(self.session, ti, j, true)).copied().unwrap_or(Self::step_default_open(t, j, true));
+                    let op = self.step_open(t, ti, j, true);
                     y += self.step_row(&mut frag, &t.steps[j], ti, j, true, y, w, true, op);
                 }
             }
@@ -1447,7 +1446,7 @@ impl Thread {
 
     /// stepsHTML: the timeline, one row per tool call on a thin line. Files read one
     /// after another fold into one row with their names under it. While the turn runs,
-    /// its latest change or output is open. Returns its height.
+    /// its changes, outputs and thoughts are open. Returns its height.
     fn timeline(&mut self, frag: &mut Frag, t: &Turn, ti: usize, y0: f32, w: f32, live: bool) -> f32 {
         let list = &t.steps;
         let is_live = |j: usize| live && j + 1 == list.len() && !list[j].ended();
@@ -1490,7 +1489,7 @@ impl Thread {
                     continue;
                 }
             }
-            let open = self.step_user.get(&(self.session, ti, j, false)).copied().unwrap_or(Self::step_default_open(t, j, false));
+            let open = self.step_open(t, ti, j, false);
             y += self.step_row(frag, x, ti, j, false, y, w, is_live(j), open);
             j += 1;
         }
