@@ -1,4 +1,4 @@
-# Weekly pull requests for outdated Cargo crates. Crates pinned with
+# Weekly pull requests for outdated Cargo crates and GitHub Actions. Crates pinned with
 # "=" in a Cargo.toml (slint, mimalloc) are left alone: they move only on purpose.
 version: 2
 updates:
@@ -16,3 +16,10 @@ updates:
       - dependency-name: slint-build
       - dependency-name: mimalloc
       - dependency-name: libmimalloc-sys
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ['*']

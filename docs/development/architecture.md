@@ -133,95 +133,31 @@ flowchart TB
 
 ### CI and releases
 
-CI runs on AWS CodeBuild only; there are no GitHub Actions. The `hover-ci` project
-(`infra/codebuild.yml`) has its own GitHub webhook, and each push or pull request starts
-one batch build of three builds. The Windows and Linux builds run in parallel and each does
-the whole check. On a release, the same build then makes the installers from what it just
-tested. The release build waits for both. The commit and the pull request show the
-batch's one pass or fail.
+`.github/workflows/ci.yml` runs on AWS CodeBuild, as CodeBuild-hosted runners of the `hover-release` project (`infra/codebuild-runner.yml`). One job per OS does the whole
+check, and on a `v*` tag the same job builds the installers from the build it just
+tested.
 
 ```mermaid
 flowchart LR
-    push["push to rust-port/**<br/>or a pull request"] --> wb & lb
-    tag["push of tag vX.Y.Z, or of a new<br/>Cargo.toml version to rust-port/phase-0-1"] --> wb & lb
+    push["push to rust-port/**<br/>or a pull request"] --> wj & lj
+    tag["push of tag vX.Y.Z, or of a new<br/>Cargo.toml version to rust-port/phase-0-1"] --> wj & lj
 
-    subgraph batch["one CodeBuild batch build (hover-ci)"]
-        subgraph wb["windows (Windows Server 2022)"]
-            wt["cargo test --workspace"] --> wi["release only:<br/>build.ps1 installer"]
-        end
-
-        subgraph lb["linux (Ubuntu 22.04, 72 GB)"]
-            lt["cargo test --workspace"] --> lp["release only:<br/>make package"]
-        end
-
-        rel["release (after both pass)<br/>tags the commit; GitHub pre-release with the .exe, .deb, .tar.gz"]
+    subgraph wj["windows job (CodeBuild Windows Server 2022)"]
+        wt["cargo test --workspace"] --> wi["release only:<br/>build.ps1 installer"]
     end
 
-    wi -->|"S3 bucket"| rel
-    lp -->|"S3 bucket"| rel
+    subgraph lj["linux job (CodeBuild Ubuntu 22.04, 72 GB)"]
+        lt["cargo test --workspace"] --> lp["release only:<br/>make package"]
+    end
+
+    wi --> rel
+    lp --> rel
+    rel["release job (release only)<br/>tags the commit; GitHub pre-release with the .exe, .deb, .tar.gz"]
 ```
 
-- Each build's steps are in `ci/`: `windows.ps1`, `linux.sh` and `release.sh`, run by
-  the three `buildspec-*.yml` files. The graph of the three is in the template.
-- A tag whose version doesn't match `Cargo.toml` fails before anything builds. A
-  failing test on either OS means nothing is published.
-- Pushes that only touch Markdown, `docs/` or the README's pictures don't run CI. Tags
-  always do.
-- The Windows and Linux builds hand their installers to the release build through the
-  CI bucket (`installers/<batch>/`, deleted after 14 days).
-- The bucket also keeps each OS's Cargo cache (Cargo's downloaded crates and `target/`).
-  Its key is the hash of `Cargo.lock` and `rust-toolchain.toml`.
-- Linux builds on `BUILD_GENERAL1_XLARGE` (36 vCPUs, 72 GB). Windows builds on demand on
-  `BUILD_GENERAL1_LARGE`, the largest on-demand Windows size, or on the template's 72 GB
-  reserved fleet when it is on.
-- A pull request from a fork waits until a maintainer comments `/codebuild_run(<commit>)`.
-  Its builds run with the project's role, which can read the release token, so read its
-  `ci/` changes first.
-
-#### Deploying CI
-
-The stack is made by hand once, and again whenever `infra/codebuild.yml` changes.
-Nothing in CI deploys it.
-
-1. Make the release token: a fine-grained GitHub token for `4regab/Hover` with
-   Contents: Read and write. Keep it in Secrets Manager as plain text, in the same
-   region as the stack:
-
-   ```sh
-   aws secretsmanager create-secret --name hover/github-release-token --secret-string '<token>'
-   ```
-
-   A new token later: `aws secretsmanager put-secret-value` with the same name.
-2. Deploy the stack. `GitHubConnectionArn` is an AWS CodeConnections connection to
-   GitHub that can see the repo:
-
-   ```sh
-   aws cloudformation deploy --stack-name hover-codebuild-runner \
-     --template-file infra/codebuild.yml --capabilities CAPABILITY_IAM \
-     --parameter-overrides GitHubConnectionArn=<connection ARN>
-   ```
-
-   The other parameters: `GitHubTokenSecretName` (default `hover/github-release-token`;
-   `ci/buildspec-release.yml` names it too, so change both together), `WindowsFleet`
-   (`false`) and `WindowsFleetCapacity` (`1`).
-3. CodeBuild makes the repository's webhook itself when it makes the project. Check it
-   under the repo's Settings → Webhooks. If the stack fails to make it, the connection's
-   GitHub App may lack the webhook permission: accept its requested permissions under
-   GitHub's Settings → Applications, then deploy again.
-4. The Windows fleet: deploy again with `WindowsFleet=true` added to the parameters. It
-   is billed for as long as its machines run, builds or not. `WindowsFleet=false` deletes
-   it and puts Windows back on demand.
-5. The README's CI badge. Its picture's address:
-
-   ```sh
-   aws codebuild batch-get-projects --names hover-ci --query 'projects[0].badge.badgeRequestUrl'
-   ```
-
-   Add it to the README's row of badges, linked to the project in the CodeBuild console.
-
-The stack replaces the old `hover-release` project, whose builds ran as GitHub Actions
-runners. Updating that stack in place deletes the old project, its webhook and its log
-group.
+A tag whose version doesn't match `Cargo.toml` fails before anything builds. A
+failing test on either OS means nothing is published. Pushes that only touch Markdown,
+`docs/` or the README's pictures don't run CI.
 
 ## What runs at run time
 

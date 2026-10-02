@@ -1,0 +1,117 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >-
+  The CodeBuild project that runs all of Hover's CI (.github/workflows/ci.yml) as
+  CodeBuild-hosted GitHub Actions runners, and, optionally, a 72 GB Windows fleet.
+
+Parameters:
+  GitHubConnectionArn:
+    Type: String
+    Description: Existing AWS CodeConnections connection to GitHub.
+  WindowsFleet:
+    Type: String
+    AllowedValues: ['false', 'true']
+    Default: 'false'
+    Description: >-
+      Make the reserved Windows fleet (36 vCPUs, 72 GB). Reserved capacity is billed while
+      its machines run, builds or not. Then set the repository variable
+      HOVER_WINDOWS_FLEET to hover-windows-72gb so the Windows job uses it.
+  WindowsFleetCapacity:
+    Type: Number
+    Default: 1
+    MinValue: 0
+    Description: Machines the Windows fleet keeps; builds past them go on demand.
+
+Conditions:
+  MakeWindowsFleet: !Equals [!Ref WindowsFleet, 'true']
+
+Resources:
+  BuildLogs:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /aws/codebuild/hover-release
+      RetentionInDays: 14
+
+  BuildRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codebuild.amazonaws.com
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+              ArnEquals:
+                aws:SourceArn: !Sub arn:aws:codebuild:${AWS::Region}:${AWS::AccountId}:project/hover-release
+      Policies:
+        - PolicyName: hover-release-build
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !Sub arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/hover-release:*
+              - Effect: Allow
+                Action:
+                  - codeconnections:GetConnection
+                  - codeconnections:GetConnectionToken
+                  - codeconnections:UseConnection
+                Resource: !Ref GitHubConnectionArn
+
+  WindowsBuildFleet:
+    Type: AWS::CodeBuild::Fleet
+    Condition: MakeWindowsFleet
+    Properties:
+      Name: hover-windows-72gb
+      EnvironmentType: WINDOWS_SERVER_2022_CONTAINER
+      ComputeType: ATTRIBUTE_BASED_COMPUTE
+      ComputeConfiguration:
+        vCpu: 36
+        memory: 72
+        disk: 256
+        machineType: GENERAL
+      BaseCapacity: !Ref WindowsFleetCapacity
+      OverflowBehavior: ON_DEMAND
+
+  BuildProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: hover-release
+      Description: Runs Hover's CI and release jobs from GitHub Actions.
+      ServiceRole: !GetAtt BuildRole.Arn
+      TimeoutInMinutes: 120
+      Artifacts:
+        Type: NO_ARTIFACTS
+      Source:
+        Type: GITHUB
+        Location: https://github.com/4regab/Hover.git
+        Auth:
+          Type: CODECONNECTIONS
+          Resource: !Ref GitHubConnectionArn
+      # The Windows default; each job picks its own size (and the Linux jobs their
+      # image) through its runs-on labels.
+      Environment:
+        Type: WINDOWS_SERVER_2022_CONTAINER
+        Image: aws/codebuild/windows-base:2022-1.0
+        ComputeType: BUILD_GENERAL1_LARGE
+      LogsConfig:
+        CloudWatchLogs:
+          Status: ENABLED
+          GroupName: !Ref BuildLogs
+      Triggers:
+        Webhook: true
+        FilterGroups:
+          - - Type: EVENT
+              Pattern: WORKFLOW_JOB_QUEUED
+
+Outputs:
+  ProjectName:
+    Value: !Ref BuildProject
+  WindowsFleetName:
+    Condition: MakeWindowsFleet
+    Value: hover-windows-72gb
