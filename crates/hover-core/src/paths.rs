@@ -1,6 +1,6 @@
 //! Core/Paths.cs: everything Hover owns lives in one folder. On Windows that is
 //! %APPDATA%\Hover; on Linux $XDG_DATA_HOME/Hover (~/.local/share/Hover). HOVER_DATA_DIR
-//! overrides both.
+//! overrides both, and a test without it gets a temporary folder of its own.
 
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
@@ -32,9 +32,28 @@ static SUPPORT: OnceLock<PathBuf> = OnceLock::new();
 /// static initialiser does.
 pub fn support() -> &'static Path {
     SUPPORT.get_or_init(|| {
-        resolve(std::env::var_os("HOVER_DATA_DIR").as_deref(), crate::platform::app_data())
+        let overridden = std::env::var_os("HOVER_DATA_DIR").or_else(test_data_dir);
+        resolve(overridden.as_deref(), crate::platform::app_data())
             .unwrap_or_else(|e| panic!("Hover couldn't make its data folder: {e}"))
     })
+}
+
+/// A test's own data folder, one per process, so no test in the workspace writes the
+/// user's log, settings or key. cfg(test) alone isn't enough: the app's tests, the
+/// agents' and every integration test link this crate as a plain library. So the test
+/// binary is recognised by where cargo puts it.
+fn test_data_dir() -> Option<std::ffi::OsString> {
+    let under_test = cfg!(test) || std::env::current_exe().is_ok_and(|exe| is_test_binary(&exe));
+    under_test.then(|| std::env::temp_dir().join(format!("hover-test-data-{}", std::process::id())).into_os_string())
+}
+
+/// Cargo builds every test binary as deps/<crate>-<16 hex digits>; Hover itself runs as
+/// hoverai, from the install folder or target/<profile>.
+pub fn is_test_binary(exe: &Path) -> bool {
+    let in_deps = exe.parent().and_then(Path::file_name).is_some_and(|n| n == "deps");
+    let hashed = exe.file_stem().and_then(|s| s.to_str()).and_then(|s| s.rsplit_once('-'))
+        .is_some_and(|(name, hash)| !name.is_empty() && hash.len() == 16 && hash.bytes().all(|b| b.is_ascii_hexdigit()));
+    in_deps && hashed
 }
 
 pub fn key() -> PathBuf { support().join("note.key") }
@@ -122,6 +141,18 @@ mod tests {
         assert_eq!(lexical_full_path(Path::new("../x/./y"), cwd), Path::new("/home/u/x/y"));
         assert_eq!(lexical_full_path(Path::new("/../../a"), cwd), Path::new("/a"));
         assert_eq!(lexical_full_path(Path::new("d/"), cwd).to_string_lossy(), "/home/u/work/d/");
+    }
+
+    #[test]
+    fn test_binaries_are_known_by_where_cargo_puts_them() {
+        assert!(is_test_binary(Path::new("target/release/deps/hover_app-0123456789abcdef.exe")));
+        assert!(is_test_binary(Path::new("/w/target/x86_64-pc-windows-msvc/release/deps/tray-fedcba9876543210")));
+        assert!(!is_test_binary(Path::new("target/release/hoverai.exe")));
+        assert!(!is_test_binary(Path::new("C:/Users/u/AppData/Local/Programs/Hover/hoverai.exe")));
+        assert!(!is_test_binary(Path::new("target/release/deps/hoverai.exe")));
+        assert!(!is_test_binary(Path::new("deps/-0123456789abcdef")));
+        // This very binary is one.
+        assert!(is_test_binary(&std::env::current_exe().unwrap()));
     }
 
     #[test]
