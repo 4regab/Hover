@@ -20,3 +20,4 @@ Makefile text eol=lf
 *.swift text eol=lf
 *.c text eol=lf
 *.m4a binary
+*.py text eol=lf
