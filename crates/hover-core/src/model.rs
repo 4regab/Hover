@@ -108,6 +108,9 @@ pub struct AgentOptions {
     pub read_only: bool,
     pub idle_minutes: i32,
     pub agent: Option<String>,
+    /// Ignored: an MCP server that doesn't start no longer ends the turn
+    /// (the chat says which one). Still read and written, so the settings.json files
+    /// that have it read and save as before.
     pub require_mcp: bool,
     pub hide_steps: bool,
     /// When the agent stops to ask the user first; read only overrules it.

@@ -275,7 +275,6 @@ pub fn toggled(h: &dyn Host, pane: &RefCell<Pane>, id: &str, on: bool) {
         // The notch reads it from its own copy (n.hover_opens): pass it on now, not at
         // the next restart or size change.
         "HoverOpens" => { st.set_hover_opens_workspace(on); h.settings_changed(); }
-        "KiroRequireMcp" => st.set_agent_options(AgentTool::Kiro, hover_core::model::AgentOptions { require_mcp: on, ..st.agent_options(AgentTool::Kiro) }),
         _ if id.starts_with("NotchItem") => {
             st.set_notch_item(&id["NotchItem".len()..], on);
             h.settings_changed();

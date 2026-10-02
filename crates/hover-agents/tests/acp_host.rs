@@ -29,6 +29,8 @@ struct FakeState {
     offer: bool,
     hanging: Option<i64>,
     model: String,
+    /// MCP servers it reports as failed (_kiro/mcp/status) as the prompt starts.
+    mcp_failed: Vec<String>,
     out: Option<Arc<Mutex<Option<std::io::PipeWriter>>>>,
 }
 
@@ -113,6 +115,15 @@ impl Fake {
                 "session/prompt" => {
                     let sid = p.get("sessionId").and_then(Json::as_str).unwrap().to_owned();
                     let (ask, hang) = { let g = self.0.lock().unwrap(); (g.ask_to_edit, g.hang_prompt) };
+                    let failed = self.0.lock().unwrap().mcp_failed.clone();
+                    if !failed.is_empty() {
+                        // Every server, the working one too, and the same report twice.
+                        let mut servers: Vec<String> = failed.iter().map(|n| format!(r#"{{"name":"{n}","status":"failed"}}"#)).collect();
+                        servers.push(r#"{"name":"fine","status":"running"}"#.into());
+                        let m = format!(r#"{{"jsonrpc":"2.0","method":"_kiro/mcp/status","params":{{"sessionId":"{sid}","servers":[{}]}}}}"#, servers.join(","));
+                        Self::say(&out, &m);
+                        Self::say(&out, &m);
+                    }
                     if ask {
                         let (kind, input) = {
                             let mut g = self.0.lock().unwrap();
@@ -231,6 +242,30 @@ fn a_tool_that_dies_fails_its_run_and_the_next_run_starts_it_again() {
     assert!(host.alive());
     host.shutdown("test");
     assert!(!host.alive());
+}
+
+#[test]
+fn an_mcp_server_that_does_not_start_is_said_and_the_turn_goes_on() {
+    let d = dir("mcp");
+    // On, as a 2.x settings.json may have it: ignored now.
+    let (host, fake) = make(AgentOptions { require_mcp: true, ..Default::default() });
+    fake.set(|g| g.mcp_failed = vec!["playwriter".into()]);
+    let (_, events, _, e) = recorders();
+    let r = host.run(&d, "go", None, &Cancel::new(), None, Some(e));
+    assert_eq!(r.state, KiroState::Completed);
+    assert_eq!(r.text, "Renamed it.\n\nMCP server `playwriter` didn’t start, so its tools weren’t available.");
+    assert!(!fake.methods().contains(&"session/cancel".to_string()), "the turn isn't stopped for it");
+    let mcp: Vec<(String, String, String)> = events.lock().unwrap().iter().filter_map(|e| e.step.as_ref()).filter(|s| s.id.starts_with("hover-mcp-"))
+        .map(|s| (s.kind.clone(), s.title.clone(), s.status.clone())).collect();
+    assert_eq!(mcp, [("other".to_string(), "Started MCP server playwriter".to_string(), "failed".to_string())], "one step, though it was reported twice");
+    // Each turn says what was reported during it.
+    fake.set(|g| g.mcp_failed = vec![]);
+    let again = host.run(&d, "and again", None, &Cancel::new(), Some("s1"), None);
+    assert_eq!(again.text, "Renamed it.");
+    fake.set(|g| g.mcp_failed = vec!["a".into(), "b".into()]);
+    let both = host.run(&d, "both", None, &Cancel::new(), Some("s1"), None);
+    assert!(both.text.ends_with("MCP servers `a`, `b` didn’t start, so their tools weren’t available."), "{}", both.text);
+    host.shutdown("test");
 }
 
 #[test]

@@ -25,6 +25,7 @@ pub struct Model {
     pub kiro_effort: Option<String>,
     pub kiro_agent: Option<String>,
     pub kiro_read_only: bool,
+    /// Ignored, as AgentOptions::require_mcp is; kept so users' files still read.
     pub kiro_require_mcp: bool,
     pub kiro_idle_minutes: i32,
     pub kiro_hide_steps: bool,

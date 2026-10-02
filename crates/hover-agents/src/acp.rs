@@ -12,7 +12,7 @@ use crate::cancel::Cancel;
 use crate::proc::{strip_ansi, Link};
 use crate::stream::{KiroEvent, KiroPhase, KiroResult, KiroStream};
 use hover_core::json::{self, Json};
-use hover_core::model::{AcpChoice, AcpOption, AgentApproval, AgentOptions, AgentTool, KiroState};
+use hover_core::model::{AcpChoice, AcpOption, AgentApproval, AgentOptions, AgentTool, KiroState, KiroStep};
 use std::collections::{HashMap, HashSet};
 use std::io::{BufRead, BufReader, Write};
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, AtomicUsize, Ordering};
@@ -48,7 +48,8 @@ struct Turn {
     /// While a conversation is loaded back, the agent replays it; that isn't news.
     muted: AtomicBool,
     refused: AtomicBool,
-    mcp_failed: Mutex<Option<String>>,
+    /// The MCP servers the agent said didn't start this turn, in the order it said so.
+    mcp_failed: Mutex<Vec<String>>,
     /// Access "none": every request the agent makes is turned down, reading too (voice's
     /// routing turn, which only reads what it is sent).
     deny_all: bool,
@@ -157,18 +158,22 @@ impl Host {
         self.busy.fetch_add(1, Ordering::SeqCst);
         self.idle.fetch_add(1, Ordering::SeqCst);
         let turn = Arc::new(Turn { stream: Mutex::new(KiroStream::new(name)), progress, events, options: o.clone(), folder: folder.into(), token: ct.clone(), muted: AtomicBool::new(false),
-            refused: AtomicBool::new(false), mcp_failed: Mutex::new(None), deny_all: access == Some("none") });
+            refused: AtomicBool::new(false), mcp_failed: Mutex::new(vec![]), deny_all: access == Some("none") });
         let mut sid: Option<String> = None;
         let r = self.turn(folder, prompt, ct, resume, &o, &turn, &mut sid);
         // A thought still open when the turn ends (however it ends) ends with it.
         let last = { let mut st = turn.stream.lock().unwrap(); st.end(); st.drain() };
         if let Some(f) = &turn.events { for e in last { f(e); } }
-        let result = match r {
+        let mut result = match r {
             Ok(r) => r,
             Err(CallErr::Cancelled) => self.finish(&turn, Some("cancelled"), true),
             Err(CallErr::Acp(m)) => KiroResult::new(KiroState::Failed, self.explain(&m)),
             Err(CallErr::Gone(m)) => if ct.is_cancelled() { self.finish(&turn, Some("cancelled"), true) } else { KiroResult::new(KiroState::Failed, m) },
         };
+        // Said under the answer too, however the turn ended: the step sits in a timeline
+        // that is folded by default (or hidden, by a setting), and a missing server's
+        // tools can be why the answer is what it is.
+        if let Some(note) = mcp_note(&turn.mcp_failed.lock().unwrap()) { result.text = format!("{}\n\n{note}", result.text.trim_end()); }
         if let Some(sid) = &sid {
             let mut t = self.turns.lock().unwrap();
             if t.get(sid).is_some_and(|x| Arc::ptr_eq(x, &turn)) { t.remove(sid); }
@@ -251,9 +256,6 @@ impl Host {
 
     fn finish(&self, t: &Turn, stop_reason: Option<&str>, cancelled: bool) -> KiroResult {
         let name = self.name();
-        if let Some(server) = t.mcp_failed.lock().unwrap().clone() {
-            return KiroResult::new(KiroState::Failed, format!("An MCP server {name} depends on ({server}) didn’t start."));
-        }
         let stream = t.stream.lock().unwrap();
         let said = stream.said().trim().to_owned();
         if stop_reason == Some("cancelled") && !cancelled && t.refused.load(Ordering::SeqCst) {
@@ -548,6 +550,12 @@ impl Host {
             }
             return;
         }
+        // Read even while a loaded conversation's replay is muted: servers start with
+        // the session, and one that didn't is news about this turn, not the past.
+        if method == "_kiro/mcp/status" {
+            if let Some(t) = &turn { self.mcp_status(t, &p); }
+            return;
+        }
         let Some(turn) = turn.filter(|t| !t.muted.load(Ordering::SeqCst)) else { return };
         match method {
             "session/update" => {
@@ -563,22 +571,41 @@ impl Host {
                     }
                 }
             }
-            "_kiro/mcp/status" if turn.options.require_mcp => {
-                if let Some(Json::Arr(servers)) = p.get("servers") {
-                    for sv in servers {
-                        if matches!(s(sv, "status"), Some("failed" | "error")) && turn.mcp_failed.lock().unwrap().is_none() {
-                            *turn.mcp_failed.lock().unwrap() = Some(s(sv, "name").unwrap_or("one").to_owned());
-                            self.notify("session/cancel", o_(vec![("sessionId", st(psid.as_deref().unwrap_or("")))]));
-                        }
-                    }
-                }
-            }
             _ => {}
+        }
+    }
+
+    /// An MCP server that didn't start is said in the chat, as a failed step, and the
+    /// turn goes on. 2.x could end the turn for it (KiroRequireMcp), which threw away a
+    /// task that may never have needed that server.
+    fn mcp_status(&self, turn: &Turn, p: &Json) {
+        let Some(Json::Arr(servers)) = p.get("servers") else { return };
+        for sv in servers {
+            if !matches!(s(sv, "status"), Some("failed" | "error")) { continue; }
+            let server = s(sv, "name").filter(|n| !n.trim().is_empty()).unwrap_or("unnamed").trim().to_owned();
+            {
+                // Kiro may report every server again on each change: one step per server.
+                let mut failed = turn.mcp_failed.lock().unwrap();
+                if failed.contains(&server) { continue; }
+                failed.push(server.clone());
+            }
+            hover_core::log::line(&format!("acp {}: MCP server {server} didn't start", self.name()));
+            let step = KiroStep::new(&format!("hover-mcp-{server}"), "other", &format!("Started MCP server {server}"), None, "failed");
+            if let Some(f) = &turn.events { f(KiroEvent { step: Some(step), ..Default::default() }); }
         }
     }
 }
 
 fn o_(props: Vec<(&str, Json)>) -> Json { o(props) }
+
+/// The line under the answer naming the MCP servers that didn't start, if any. Names
+/// are code, so one with Markdown in it ("my_server") reads as it is.
+fn mcp_note(failed: &[String]) -> Option<String> {
+    if failed.is_empty() { return None; }
+    let names = failed.iter().map(|n| format!("`{n}`")).collect::<Vec<_>>().join(", ");
+    Some(if failed.len() == 1 { format!("MCP server {names} didn’t start, so its tools weren’t available.") }
+        else { format!("MCP servers {names} didn’t start, so their tools weren’t available.") })
+}
 
 /// Lines as StreamReader.ReadLine splits them (\n, \r\n or \r), bad UTF-8 replaced.
 fn read(me: Weak<Host>, from: Box<dyn std::io::Read + Send>, gen: u64) {

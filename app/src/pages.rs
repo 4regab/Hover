@@ -630,10 +630,6 @@ fn agent(b: &mut Vec<Block>, section: Section, i: &Input) {
     } + if ro { "" } else { " Read only isn’t offered, because Codex’s read-only mode needs a sandbox it doesn’t have on Windows." };
     let picked = ["full", "risky", "always", "read"].iter().position(|a| *a == access).unwrap_or(0) as i32;
     rows.push(row("Tool access", Some(text), segments(&format!("{id}Tools"), &labels, picked), Lead::Tile("shield", Tint::Green)));
-    if tool == AgentTool::Kiro {
-        rows.push(row("Require MCP servers", Some("Stop the task when one of the agent’s MCP servers doesn’t start.".into()),
-            switch("KiroRequireMcp", "Require MCP servers", o.require_mcp), Lead::Tile("plug", Tint::Teal)));
-    }
     rows.push(row("Show the tools it runs", Some(if o.hide_steps { format!("The chat shows only what you asked and {name}’s answers. The steps are still kept.") } else { format!("The chat lists each file {name} reads or edits and each command it runs.") }),
         switch(&format!("{id}ShowSteps"), "Show the tools it runs", !o.hide_steps), Lead::Tile("lines", Tint::Blue)));
     let idle: Vec<String> = AgentOptions::IDLE_CHOICES.iter().map(|m| format!("{m} min")).collect();
@@ -771,7 +767,7 @@ mod tests {
         }
         assert!(q.contains(&"RefreshQuotas".to_string()));
         let k = ids(&build(Section::Kiro, &i));
-        for id in ["KiroRecheck", "KiroModel", "KiroAgent", "KiroToolsFull", "KiroToolsRead only", "KiroRequireMcp", "KiroShowSteps", "KiroIdle5 min", "KiroIdle15 min", "SettingsKiroFolder", "KiroNoticeAgain"] {
+        for id in ["KiroRecheck", "KiroModel", "KiroAgent", "KiroToolsFull", "KiroToolsRead only", "KiroShowSteps", "KiroIdle5 min", "KiroIdle15 min", "SettingsKiroFolder", "KiroNoticeAgain"] {
             assert!(k.contains(&id.to_string()), "{id} in {k:?}");
         }
         let c = ids(&build(Section::Codex, &i));
