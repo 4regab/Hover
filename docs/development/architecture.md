@@ -133,7 +133,7 @@ flowchart TB
 
 ### CI and releases
 
-`.github/workflows/ci.yml` runs on AWS CodeBuild, as CodeBuild-hosted runners of the `hover-release` project (`infra/codebuild-runner.yml`). One job per OS does the whole
+`.github/workflows/ci.yml` runs on GitHub's own runners. One job per OS does the whole
 check, and on a `v*` tag the same job builds the installers from the build it just
 tested.
 
@@ -142,11 +142,11 @@ flowchart LR
     push["push to main or rust-port/**<br/>or a pull request"] --> wj & lj
     tag["push of tag vX.Y.Z, or of a new<br/>Cargo.toml version to main"] --> wj & lj
 
-    subgraph wj["windows job (CodeBuild Windows Server 2022)"]
+    subgraph wj["windows job (windows-2022)"]
         wt["cargo test --workspace"] --> wi["release only:<br/>build.ps1 installer"]
     end
 
-    subgraph lj["linux job (CodeBuild Ubuntu 22.04, 72 GB)"]
+    subgraph lj["linux job (ubuntu-22.04)"]
         lt["cargo test --workspace"] --> lp["release only:<br/>make package"]
     end
 

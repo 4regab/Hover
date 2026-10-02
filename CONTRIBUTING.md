@@ -87,7 +87,7 @@ Run what applies to your change and say what you ran in the pull request:
   [profiling.md](docs/development/profiling.md), on the same machine and settings.
 
 The CI workflow (`.github/workflows/ci.yml`) runs the tests on Windows and Linux for
-every pull request. Its jobs run on AWS CodeBuild (`infra/codebuild-runner.yml`), with the fake agent: no secrets,
+every pull request. It uses only GitHub's own runners and the fake agent: no secrets,
 and no agent accounts.
 
 ## Pull requests
