@@ -86,9 +86,20 @@ fn run(rx: Receiver<In>, out: Arc<Mutex<Out>>, spare: Arc<Mutex<Vec<u8>>>, w: u3
         Ok(r) => r,
         Err(e) => { out.lock().unwrap().error = Some(e); wake(); return; }
     };
+    // On the CPU adapter (WARP on a VM or an RDP host with no GPU) a full-size frame
+    // took about 75 ms of every core, and the windows draw on the same device: the
+    // office at half size costs a quarter of that, and is shown scaled up (pixelated,
+    // as the voxels are).
+    let scale = if r.software { 0.5 } else { 1.0 };
+    let px = |n: u32| ((n as f64 * scale).round() as u32).max(1);
+    if scale != 1.0 { r.resize(px(w), px(h)); }
     o.apply_time(Office::auto_time(hour_now()));
     let t0 = Instant::now();
     let mut last = 0.0;
+    // A frame isn't started before this: the device gets twice a frame's own time to
+    // itself after each one, so a slow one (WARP, an old GPU) is never asked for more
+    // than it can draw, which left the windows waiting behind the office's frames.
+    let mut rest_until = Instant::now();
     let (mut visible, mut down, mut prev) = (true, None::<(f64, f64)>, (0.0, 0.0));
     let mut clicks = vec![];
     let mut time_check = Instant::now();
@@ -106,7 +117,7 @@ fn run(rx: Receiver<In>, out: Arc<Mutex<Out>>, spare: Arc<Mutex<Vec<u8>>>, w: u3
             match m {
                 In::Quit => return,
                 In::State(j) => o.state(&j),
-                In::Resize(w, h) => { if w > 0 && h > 0 { o.resize(w as f64, h as f64); r.resize(w, h); } }
+                In::Resize(w, h) => { if w > 0 && h > 0 { o.resize(w as f64, h as f64); r.resize(px(w), px(h)); } }
                 In::Pointer(p) => {
                     if let (Some(d), Some(p)) = (down, p) {
                         if !o.dragging && (p.0 - d.0).hypot(p.1 - d.1) > 6.0 && !o.drawer_open && o.panel.is_none() { o.dragging = true; }
@@ -143,14 +154,18 @@ fn run(rx: Receiver<In>, out: Arc<Mutex<Out>>, spare: Arc<Mutex<Vec<u8>>>, w: u3
             if o.manual_time.is_none() { let t = Office::auto_time(hour_now()); if t != o.time { o.apply_time(t); } }
         }
         if !visible { last = t0.elapsed().as_secs_f64() * 1000.0; continue; }
+        // Resting the device: the time waited is added to the next frame's step.
+        if Instant::now() < rest_until && clicks.is_empty() { continue; }
         let now = t0.elapsed().as_secs_f64() * 1000.0;
         let dt = now - last;
         last = now;
         if !o.frame(now, dt) && clicks.is_empty() { continue; }
+        let spent = Instant::now();
         r.render_into(&mut o, &mut rgba);
         // The buffer the UI gave back, or a new one.
         let mut rgb = std::mem::take(&mut *spare.lock().unwrap());
         page.compose_into(&rgba, r.w as usize, r.h as usize, o.time == Time::Day, &mut rgb);
+        rest_until = Instant::now() + spent.elapsed() * 2;
         let hint = match o.hovered { Some(Hover::Prop(Prop::Clock)) => String::from("clock"), Some(Hover::Prop(p)) => o.hint(p).to_owned(), _ => String::new() };
         let mut g = out.lock().unwrap();
         // A frame the UI hasn't taken yet: its picture is replaced, its clicks are not.

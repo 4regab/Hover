@@ -124,6 +124,9 @@ pub struct Renderer {
     draws: Vec<DrawU>,
     readback: wgpu::Buffer,
     pub adapter_name: String,
+    /// The adapter is the CPU (WARP, llvmpipe): every pixel costs CPU time, so the
+    /// office draws fewer of them (live.rs).
+    pub software: bool,
 }
 
 const FMT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
@@ -132,21 +135,22 @@ const DEPTH: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 /// The device the app's windows draw with, when the app shares it (Windows). Each GPU
 /// device costs tens of MB of its own (driver state, descriptor heaps), and a device of
 /// the office's own also woke Vulkan and OpenGL on every graphics card.
-static SHARED: std::sync::OnceLock<(wgpu::Device, wgpu::Queue, String)> = std::sync::OnceLock::new();
+static SHARED: std::sync::OnceLock<(wgpu::Device, wgpu::Queue, String, bool)> = std::sync::OnceLock::new();
 
-pub fn share_device(device: wgpu::Device, queue: wgpu::Queue, adapter_name: String) {
-    let _ = SHARED.set((device, queue, adapter_name));
+/// `software`: the device is on the CPU adapter (DeviceType::Cpu).
+pub fn share_device(device: wgpu::Device, queue: wgpu::Queue, adapter_name: String, software: bool) {
+    let _ = SHARED.set((device, queue, adapter_name, software));
 }
 
 /// Frees what was dropped on the shared device. wgpu does that only when the device is
 /// polled, and a resting notch draws nothing that would poll it.
 pub fn flush_shared() {
-    if let Some((d, _, _)) = SHARED.get() { let _ = d.poll(wgpu::PollType::wait_indefinitely()); }
+    if let Some((d, _, _, _)) = SHARED.get() { let _ = d.poll(wgpu::PollType::wait_indefinitely()); }
 }
 
 /// The windows' device and queue, when the app shares one (Windows): the app puts the
 /// office's frame into a texture of its own on it, which the windows draw as it is.
-pub fn shared() -> Option<(wgpu::Device, wgpu::Queue)> { SHARED.get().map(|(d, q, _)| (d.clone(), q.clone())) }
+pub fn shared() -> Option<(wgpu::Device, wgpu::Queue)> { SHARED.get().map(|(d, q, _, _)| (d.clone(), q.clone())) }
 
 /// Held while the office submits work, and by the app while a window's surface may be
 /// set up again. On the shared device those two must not meet: wgpu waits for the queue
@@ -162,15 +166,15 @@ impl Renderer {
     /// The app's shared device when there is one; else a device of its own (Vulkan or GL
     /// on Linux, DX12 on Windows), low power.
     pub fn new(w: u32, h: u32) -> Result<Renderer, String> {
-        let (device, queue, adapter_name) = match SHARED.get() {
-            Some((d, q, n)) => (d.clone(), q.clone(), n.clone()),
+        let (device, queue, adapter_name, software) = match SHARED.get() {
+            Some((d, q, n, s)) => (d.clone(), q.clone(), n.clone(), *s),
             None => {
                 let instance = wgpu::Instance::new({ let mut d = wgpu::InstanceDescriptor::new_without_display_handle(); d.backends = wgpu::Backends::PRIMARY | wgpu::Backends::GL; d });
                 let adapter = futures_lite::future::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions { power_preference: wgpu::PowerPreference::LowPower, ..Default::default() }))
                     .map_err(|e| format!("no GPU adapter: {e}"))?;
                 let adapter_name = format!("{} ({:?})", adapter.get_info().name, adapter.get_info().backend);
                 let (device, queue) = futures_lite::future::block_on(adapter.request_device(&wgpu::DeviceDescriptor { label: Some("office"), ..Default::default() })).map_err(|e| e.to_string())?;
-                (device, queue, adapter_name)
+                (device, queue, adapter_name, adapter.get_info().device_type == wgpu::DeviceType::Cpu)
             }
         };
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some("office"), source: wgpu::ShaderSource::Wgsl(include_str!("office.wgsl").into()) });
@@ -240,7 +244,7 @@ impl Renderer {
             multisample: Default::default(), multiview_mask: None, cache: None,
         });
         let readback = device.create_buffer(&wgpu::BufferDescriptor { label: None, size: (align(w * 4) * h) as u64, usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ, mapped_at_creation: false });
-        let r = Renderer { device, queue, w, h, color, depth, shadow, frame_buf, draw_buf, g0, g0_shadow, g1, g1_layout, tex_groups, textures, pipes, shadow_pipe, shader, layout, meshes: HashMap::new(), keys: vec![], draws: vec![], readback, adapter_name };
+        let r = Renderer { device, queue, w, h, color, depth, shadow, frame_buf, draw_buf, g0, g0_shadow, g1, g1_layout, tex_groups, textures, pipes, shadow_pipe, shader, layout, meshes: HashMap::new(), keys: vec![], draws: vec![], readback, adapter_name, software };
         // glowTex: white, alpha from 1 at the centre through .4 at 35 % to 0 at the edge.
         let mut gc = crate::canvas::Canvas::new(64, 64);
         gc.gradient_r(32.0, 32.0, 32.0, &[(0.0, [1.0, 1.0, 1.0, 1.0]), (0.35, [1.0, 1.0, 1.0, 0.4]), (1.0, [1.0, 1.0, 1.0, 0.0])]);

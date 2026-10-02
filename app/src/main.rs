@@ -958,7 +958,7 @@ fn shared_gpu() -> Result<slint::wgpu_30::WGPUConfiguration, String> {
     if info.device_type == wgpu::DeviceType::Cpu && std::env::var_os("SLINT_WGPU_CPU").is_none() {
         std::env::set_var("SLINT_WGPU_CPU", "1");
     }
-    hover_office::render::share_device(device.clone(), queue.clone(), format!("{} ({:?})", info.name, info.backend));
+    hover_office::render::share_device(device.clone(), queue.clone(), format!("{} ({:?})", info.name, info.backend), info.device_type == wgpu::DeviceType::Cpu);
     Ok(WGPUConfiguration::Manual { instance, adapter, device, queue })
 }
 
@@ -1026,6 +1026,10 @@ fn platform_start(hover: Arc<Hover>, look: Look, _selftest: bool) -> Rc<App> {
 #[cfg(windows)]
 fn platform_start(hover: Arc<Hover>, look: Look, _selftest: bool) -> Rc<App> {
     let app = App::new(hover, Box::new(win::Plat::default()), look, false);
+    // The notch's own frames, for the bench's `frames` (as on X11).
+    let _ = app.notch.window().set_rendering_notifier(|s, _| {
+        if matches!(s, slint::RenderingState::AfterRendering) { FRAMES.fetch_add(1, std::sync::atomic::Ordering::Relaxed); }
+    });
     let _ = app.notch.show();
     notch::layout(&app.notch, &mut app.n.borrow_mut(), view::argb(app.palette.borrow().panel));
     *app.hotkey.borrow_mut() = Some(Box::new(|sc| { win::clear_hotkeys(); win::register_hotkey(sc) }));
