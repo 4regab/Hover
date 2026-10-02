@@ -5,15 +5,8 @@ What changed in each Hover release. Versions follow [Semantic Versioning](https:
 
 ## [Unreleased]
 
-## [3.2.0] - 2026-10-02
-
 ### Added
 
-- Claude Code as a fifth agent in the office, run as T3 Code runs it: the `claude` CLI in its
-  Agent SDK mode, one hidden process per conversation in its folder. Full, Ask first, Ask
-  always and Read only all hold; its questions (AskUserQuestion) show over the bot, in the chat
-  and in the notch; Stop interrupts it; a reply after it went idle picks the conversation back
-  up. Settings has a Claude Code page with its own models and each model's efforts.
 - Voice dictation into a chat: with the chat's reply box open and the pointer over the chat,
   the voice shortcut writes what you say into the reply instead of starting a task.
 - Settings → Voice → Start on its own: how long the voice card counts down before it starts
@@ -29,6 +22,16 @@ What changed in each Hover release. Versions follow [Semantic Versioning](https:
 - A long folder name in the chat's header no longer pushes Delete and Close out of it.
 - CI's tests build about a third faster (a ci profile without LTO), and pull requests reuse
   main's build cache.
+
+## [3.2.0] - 2026-10-02
+
+### Added
+
+- Claude Code as a fifth agent in the office, run as T3 Code runs it: the `claude` CLI in its
+  Agent SDK mode, one hidden process per conversation in its folder. Full, Ask first, Ask
+  always and Read only all hold; its questions (AskUserQuestion) show over the bot, in the chat
+  and in the notch; Stop interrupts it; a reply after it went idle picks the conversation back
+  up. Settings has a Claude Code page with its own models and each model's efforts.
 
 ### Changed
 
