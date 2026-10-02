@@ -5,6 +5,8 @@ What changed in each Hover release. Versions follow [Semantic Versioning](https:
 
 ## [Unreleased]
 
+## [3.3.1] - 2026-10-02
+
 ### Fixed
 
 - A long prompt is all reachable in the new-task box and the chat's reply box: the box grows
@@ -108,7 +110,8 @@ What changed in each Hover release. Versions follow [Semantic Versioning](https:
   everything 2.x left: the data folder, the key, `settings.json` and the sessions.
 - The Windows executable is `hoverai.exe`.
 
-[Unreleased]: https://github.com/4regab/Hover/compare/v3.3.0...HEAD
+[Unreleased]: https://github.com/4regab/Hover/compare/v3.3.1...HEAD
+[3.3.1]: https://github.com/4regab/Hover/compare/v3.3.0...v3.3.1
 [3.3.0]: https://github.com/4regab/Hover/compare/v3.2.0...v3.3.0
 [3.2.0]: https://github.com/4regab/Hover/compare/v3.1.1...v3.2.0
 [3.1.1]: https://github.com/4regab/Hover/compare/v3.1.0...v3.1.1
