@@ -1,0 +1,108 @@
+# Claude Code end to end through the app: the real `claude` CLI (Hover finds it on PATH or
+# in ~/.local/bin), pointed at fake-anthropic instead of Anthropic's API. Start
+# fake-anthropic first and hand its address to Hover:
+#   start target\release\fake-anthropic.exe 18770
+#   run-memory.ps1 ... -Script claude.hms -Env "ANTHROPIC_BASE_URL=http://127.0.0.1:18770,ANTHROPIC_API_KEY=sk-fake"
+# Session ids count from 1 in a fresh data folder.
+
+launch
+expect "bench visible" 30 as startup
+send unfold
+expect "bench reopen" 20 as first-office
+sleep 2
+
+# 1: a plain turn, Full access: its own process in the folder, in SDK mode.
+send task claude @ - plain turn [think]
+expect "bench task 1" 10
+mark claude-turn
+send until-idle 60
+expect "bench idle" 65
+send said 1
+expect "bench said 1 Done. Answered by fake-anthropic." 5
+
+# 2: a file written with Full access: no question.
+send task claude @ - writes one [write:from-claude.txt]
+expect "bench task 2" 5
+send until-idle 60
+expect "bench idle" 65
+send said 2
+expect "bench said 2 Done. Write went through." 5
+
+# 3: AskUserQuestion: a choice picked in the office.
+send task claude @ - asks one [question]
+expect "bench task 3" 5
+send until-ask 60
+expect "bench asking 3" 65
+mark claude-question
+sleep 3
+send pick 3 Tabs
+expect "bench pick true" 5
+send until-idle 30
+expect "bench idle" 35
+send said 3
+expect "bench said 3 Done. answered: Your questions have been answered: 'Tabs or spaces?'='Tabs'" 5
+
+# 4: Ask first: a command waits for the user, who allows it. (One Claude Code itself
+# judges read-only, as Write-Output, runs without asking anyone.)
+send task claude @ risky - runs one [run:New-Item -ItemType Directory made]
+expect "bench task 4" 5
+send until-ask 60
+expect "bench asking 4" 65
+mark claude-permission
+sleep 3
+send answer 4 allow
+expect "bench answer true" 5
+send until-idle 30
+expect "bench idle" 35
+send said 4
+expect "bench said 4 Done. PowerShell went through." 5
+
+# 5: denied.
+send task claude @ risky - runs another [run:Remove-Item -Recurse build]
+expect "bench task 5" 5
+send until-ask 60
+expect "bench asking 5" 65
+send answer 5 deny
+expect "bench answer true" 5
+send until-idle 30
+expect "bench idle" 35
+send said 5
+expect "bench said 5 Done. PowerShell was refused: The user declined this." 5
+
+# 6: Read only: the write is refused by Claude Code itself (its edit tools are off).
+send task claude @ read - tries to write [write:nope.txt]
+expect "bench task 6" 5
+send until-idle 60
+expect "bench idle" 65
+send said 6
+expect "bench said 6 Done. Write was refused" 5
+
+# 7: a reply to 1, in the same conversation.
+send reply 1 and once more
+expect "bench reply true" 5
+send until-idle 30
+expect "bench idle" 35
+send said 1
+expect "bench said 1 Done. Answered by fake-anthropic." 5
+
+# 8: Stop halfway through a long answer.
+send task claude @ - a long one [seconds:20]
+expect "bench task 7" 5
+sleep 6
+send stop 7
+expect "bench ok" 5
+send until-idle 20
+expect "bench idle" 25
+
+# 9: the API fails: a readable failure.
+send task claude @ - fails [fail]
+expect "bench task 8" 5
+send until-idle 60
+expect "bench idle" 65
+send said 8
+expect "bench said 8 API Error: 400 fake-anthropic: this turn fails" 5
+
+send sessions
+expect "bench sessions" 5
+mark -
+quit 30

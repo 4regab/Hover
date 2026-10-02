@@ -681,6 +681,23 @@ pub fn run(dir: &Path) {
     settle(600);
     save(&notch, full, 1.0, desk, &dir.join("office-question-picked.png"));
     app.close_drawer();
+    // Claude Code: picked in the circle, its models with each one's efforts.
+    let levels = |l: &[&str]| Some(l.iter().map(|x| x.to_string()).collect());
+    hover.settings.set_agent_offers(AgentTool::Claude, &[hover_core::model::AcpOption { id: "model".into(), category: Some("model".into()), current: None, choices: vec![
+        hover_core::model::AcpChoice { value: "default".into(), name: "Default (recommended)".into(), levels: levels(&["low", "medium", "high", "xhigh", "max"]) },
+        hover_core::model::AcpChoice { value: "sonnet".into(), name: "Sonnet".into(), levels: levels(&["low", "medium", "high", "xhigh", "max"]) },
+        hover_core::model::AcpChoice { value: "haiku".into(), name: "Haiku".into(), levels: levels(&[]) }] }]);
+    hover.settings.set_agent_options(AgentTool::Claude, hover_core::model::AgentOptions { effort: Some("high".into()), ..Default::default() });
+    g.invoke_fab_main();
+    settle(300);
+    g.invoke_pick_tool(4);
+    settle(300);
+    save(&notch, full, 1.0, desk, &dir.join("office-fab-claude.png"));
+    g.invoke_open_model(2, 330.0, (full.1 as f32) - 60.0);
+    settle(400);
+    save(&notch, full, 1.0, desk, &dir.join("office-model-menu-claude.png"));
+    g.invoke_open_model(0, 0.0, 0.0);
+    g.invoke_new_fold();
     // The finished chat, its timeline open, the edit's change and the command's output.
     if let Some(id) = first { app.open_session(id); }
     settle(600);
@@ -751,14 +768,14 @@ pub fn run(dir: &Path) {
         view::Host::theme_changed(&*app);
         for s in Section::ALL {
             app.show_settings_in(1, s);
-            let name = format!("settings-{}-{tag}.png", s.title().to_lowercase());
+            let name = format!("settings-{}-{tag}.png", s.title().to_lowercase().replace(' ', "-"));
             save(&dash, (1200, 620), 1.0, [0, 0, 0], &dir.join(name));
         }
     }
     // Narrow, as a small office leaves it: the long lines wrap beside the wide controls.
     for s in Section::ALL {
         app.show_settings_in(1, s);
-        save(&dash, (840, 620), 1.0, [0, 0, 0], &dir.join(format!("settings-{}-narrow.png", s.title().to_lowercase())));
+        save(&dash, (840, 620), 1.0, [0, 0, 0], &dir.join(format!("settings-{}-narrow.png", s.title().to_lowercase().replace(' ', "-"))));
     }
     settings_voice_shots(&app, &hover, dir, &data);
     // A VS Code theme (Dark+ as its files say), and the model picker open.

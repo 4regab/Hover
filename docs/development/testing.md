@@ -62,14 +62,22 @@ tools are replaced by stand-ins placed first on `PATH`:
   `[drop]` (the event stream closes halfway), `[lose]` (the prompt's response is lost) and
   `[fail]`. With `FAKE_OPENCODE_LOG=FILE` it logs every request, so a run can check that no
   prompt went twice and that every call named its folder.
+- `fake-anthropic` is the Anthropic Messages API, for the real Claude Code (`claude`, on PATH or
+  in `~/.local/bin`): start it on a port and give Hover `ANTHROPIC_BASE_URL` and any
+  `ANTHROPIC_API_KEY`. Its directives are `[write:NAME]`, `[run:CMD]`, `[question]`,
+  `[think]`, `[seconds:N]` and `[fail]`; `FAKE_ANTHROPIC_LOG=FILE` logs each request (how many
+  tools it carried shows read only at work).
 
 ```powershell
 cargo build --release -p hover -p hover-measure
 .\tools\hover-measure\run-memory.ps1 -Exe target\release\hoverai.exe -Out out\oc -Runs 1 -Script opencode.hms -Env "FAKE_OPENCODE_LOG=$PWD\out\oc.log"
+Start-Process target\release\fake-anthropic.exe 18770
+.\tools\hover-measure\run-memory.ps1 -Exe target\release\hoverai.exe -Out out\cc -Runs 1 -Script claude.hms -Env "ANTHROPIC_BASE_URL=http://127.0.0.1:18770,ANTHROPIC_API_KEY=sk-fake"
 ```
 
 | Scenario (`scenarios/`) | What it checks |
 |---|---|
+| `claude.hms` | Claude Code end to end, the real CLI against `fake-anthropic`: a turn; a file written; a question picked; a command allowed, then denied (Ask first); a write refused (Read only); a reply; Stop; an API failure. |
 | `opencode.hms` | OpenCode end to end: a turn; a question picked, then skipped; a command allowed, then denied; a dropped stream; a lost prompt; a failure; a reply. Each is checked through `said ID`, which prints the answer's start. |
 | `quota.hms` | Each quota on, then all of them: Kiro's read through `/usage`, the rest failing with readable messages. `FAKEACP_USAGE_MS` makes the read take as long as the real one. |
 | `memory.hms` | Every memory scenario in one run (see profiling.md). |

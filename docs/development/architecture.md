@@ -20,7 +20,7 @@ flowchart TB
 
     subgraph Backend["Backend: shared, no window"]
         core["hover-core<br/>paths, settings, crypto, history, secrets, projects"]
-        agents["hover-agents<br/>ACP host, OpenCode server, sessions, routing"]
+        agents["hover-agents<br/>ACP host, OpenCode server, Claude Code, sessions, routing"]
         quota["hover-quota<br/>Claude Code, Kiro, Codex, Cursor"]
         chat["hover-chat<br/>thread layout and CPU painter"]
         md["hover-md + hover-diagram<br/>Markdown, Mermaid"]
@@ -180,6 +180,7 @@ flowchart LR
 
     turns -->|"JSON-RPC over stdio"| acp["kiro-cli acp, codex-acp, cursor-agent acp"]
     turns -->|"HTTP on 127.0.0.1"| oc["opencode serve"]
+    turns -->|"stream-json over stdio, one per conversation"| cc["claude (Agent SDK mode)"]
     vw -->|"one run per recording"| ph["Phonon helper<br/>(managed Python + fermion)"]
     vw -->|"HTTPS"| groq["Groq, cleanup service"]
     rt --> disk[("data folder<br/>settings.json, agents/, secrets.dat")]
@@ -193,7 +194,7 @@ when Hover does.
 | Crate | What it owns | Window? |
 |---|---|---|
 | `crates/hover-core` | The data folder (`paths.rs`, the old `Noty` move), `settings.json` (`settings.rs`, the exact bytes 2.x wrote), the key and encryption (`crypto.rs`: AES-GCM, key kept by DPAPI or the Secret Service), the sealed session history (`history.rs`), API keys sealed in `secrets.dat` (`secrets.rs`), projects, the default workspace and the voice settings (`projects.rs`), images, the single-instance lock (`single.rs`), colours and VS Code themes (`palette.rs`), and the OS adapters (`platform/windows.rs`, `platform/linux.rs`). | No |
-| `crates/hover-agents` | Running the agents: the ACP host (`acp.rs`, JSON-RPC over stdio for Kiro, Codex and Cursor), OpenCode's local server (`opencode.rs` over `http.rs`), the `Runtime` both sit behind (`runtime.rs`), the sessions and their limits (`session.rs`), permission questions (`ask.rs`), voice's project routing (`route.rs`), the office's state message (`state.rs`), process groups and Windows jobs (`proc.rs`). | No |
+| `crates/hover-agents` | Running the agents: the ACP host (`acp.rs`, JSON-RPC over stdio for Kiro, Codex and Cursor), OpenCode's local server (`opencode.rs` over `http.rs`), Claude Code in its Agent SDK mode (`claude.rs`), the `Runtime` they sit behind (`runtime.rs`), the sessions and their limits (`session.rs`), permission questions (`ask.rs`), voice's project routing (`route.rs`), the office's state message (`state.rs`), process groups and Windows jobs (`proc.rs`). | No |
 | `crates/hover-quota` | The four quota readers (Claude Code, Kiro, Codex, Cursor) and their five-minute schedule. | No |
 | `crates/hover-md`, `crates/hover-diagram` | Markdown and Mermaid flowcharts, the same output as 2.x's `md.js` and `diagram.js`. | No |
 | `crates/hover-chat` | The chat thread: layout per message (cached), selection, copy, images, and a CPU painter. | No |
@@ -201,7 +202,7 @@ when Hover does.
 | `crates/hover-office` | The office: scene, bots, wall canvases, camera, picking and pacing (`office.rs`, `scene.rs`, `bot.rs`), the wgpu renderer (`render.rs`, `office.wgsl`), the page's background and vignette (`page.rs`), and its own thread (`live.rs`). | No (renders offscreen) |
 | `app` | The product: `main.rs` (windows, renderer, timers), `office_ui.rs` (the office UI around the scene), `view.rs` and `pages.rs` (Settings), `notch.rs` with `win.rs` / `x11.rs` (placing, focus, click-through), tray (`sni.rs` on Linux, `win.rs` on Windows), voice (`speech.rs`, `voice/`, `phonon.rs`, `voice_ui.rs`), `music.rs`, `bench.rs` (the measurement channel), `shots.rs`, `selftest.rs`, and the Slint UI in `ui/*.slint`. | Yes |
 | `tools/notch-proto` | The port's Windows notch prototype. Not shipped; kept for `notch-proto --selftest`, the only notch self-test on Windows (the app's `--selftest` is X11 only). | Yes |
-| `tools/hover-measure` | Dev tools, not shipped: the external memory sampler, the scenario runner, the summary, and `fake-agent`. See [profiling.md](profiling.md). | No |
+| `tools/hover-measure` | Dev tools, not shipped: the external memory sampler, the scenario runner, the summary, `fake-agent`, `fake-opencode` and `fake-anthropic` (a stand-in Anthropic API for the real Claude Code). See [profiling.md](profiling.md). | No |
 
 ## Boundaries
 
@@ -231,7 +232,10 @@ when Hover does.
    `session/new` or `session/load`, sets model, effort and access, then
    `session/prompt`. For OpenCode it is `opencode.rs`: one `opencode serve` on
    127.0.0.1 with a password made for that start, `prompt_async`, and its event stream.
-5. Updates (`session/update`, OpenCode events) become `KiroEvent`s and phases. The
+   For Claude Code it is `claude.rs`: a `claude` process per conversation, started in
+   its folder in the Agent SDK's stream-json mode, `initialize`, then the prompt as a
+   user message on its stdin.
+5. Updates (`session/update`, OpenCode events, Claude Code's messages) become `KiroEvent`s and phases. The
    session changes, `changed` fires, and the UI marks the office dirty.
 6. A permission request (`session/request_permission`) is answered off the read loop:
    `ask.rs` decides what the access setting allows. The rest goes to
@@ -427,7 +431,7 @@ Measured sizes and times are in `evidence/voice-chat/phonon-proto.md`.
 ## What each provider exposes
 
 What Hover reads from each tool. Kiro, Codex and Cursor speak ACP (`acp.rs`, `stream.rs`);
-OpenCode is its own server (`opencode.rs`).
+OpenCode is its own server (`opencode.rs`); Claude Code runs in its SDK mode (`claude.rs`).
 
 | | Kiro, Codex, Cursor (ACP) | OpenCode |
 |---|---|---|
@@ -439,6 +443,16 @@ OpenCode is its own server (`opencode.rs`).
 | Usage | Context %: ACP `usage_update` (used / size), Kiro's `_meta.kiro.contextUsage`. Credits per turn: Kiro's `turn_completion` summary | Context %: the last request's tokens over the model's window |
 | Diffs | `diff` content (old and new text); line numbers only from the call's location or a new file | Its edit's unified diff, with the file's line numbers |
 | Tool output | `rawOutput`, the last 400 lines; exit code when given (`exitCode`, `exit_code`) | The command's output; exit code when given |
+
+Claude Code (`claude.rs`) in the same terms: reasoning is its thinking blocks (streamed
+as `thinking_delta`) as a thought; a subagent's `Task` call is an `agent` step, and the
+subagent's own messages (`parent_tool_use_id` set) stay out of the answer; cancellation is
+the `interrupt` control request, then its process ended after 8 s; permissions are its
+`can_use_tool` requests (Full is `bypassPermissions`); read only switches off its edit and
+command tools; context % is the last answer's tokens over the model's window (the result's
+`modelUsage`); diffs are its `structuredPatch` hunks with their line numbers; tool output is
+`tool_use_result.stdout`/`stderr`. Checked against Claude Code 2.1.287 through
+`fake-anthropic`; with a real model only by the maintainer, not in CI.
 
 Observed: written down in the code as seen from the real tool. Kiro sends an empty diff
 while an edit is pending. Kiro's context and credit payloads are the shapes quoted in

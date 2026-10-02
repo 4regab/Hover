@@ -39,5 +39,5 @@ You should get a first answer within a week.
 ## Out of scope
 
 - What an agent does inside its folder with Full access. That is what Full allows.
-- Problems in the agents themselves (Kiro, Codex, Cursor, OpenCode) or in Groq,
+- Problems in the agents themselves (Kiro, Codex, Cursor, OpenCode, Claude Code) or in Groq,
   Gemini or OpenAI. Report those to their makers.

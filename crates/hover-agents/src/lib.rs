@@ -5,6 +5,7 @@ pub mod acp;
 pub mod ask;
 pub mod agents;
 pub mod cancel;
+pub mod claude;
 pub mod http;
 pub mod opencode;
 pub mod proc;

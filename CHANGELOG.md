@@ -5,23 +5,13 @@ What changed in each Hover release. Versions follow [Semantic Versioning](https:
 
 ## [Unreleased]
 
-## [3.2.0] - 2026-10-02
+### Added
 
-### Changed
-
-- The open office is lighter on Windows: its frames stay on the GPU instead of being
-  copied through the CPU each frame.
-- Voice's one-line notch cards are only as wide as their text.
-- Releases are now the Latest release on GitHub, and the Rust app is the repo's `main`
-  branch (2.x is on `dotnet`).
-
-### Fixed
-
-- HTTPS on Windows uses the system's certificates, so Groq, chat images, the Phonon
-  download and the quota reads no longer fail with "unable to find any user-specified
-  roots".
-- The office overview's note no longer pushes the Close button off the panel.
-- The notch says "Thinking" for a thinking agent, not "Working on Thinking".
+- Claude Code as a fifth agent in the office, run as T3 Code runs it: the `claude` CLI in its
+  Agent SDK mode, one hidden process per conversation in its folder. Full, Ask first, Ask
+  always and Read only all hold; its questions (AskUserQuestion) show over the bot, in the chat
+  and in the notch; Stop interrupts it; a reply after it went idle picks the conversation back
+  up. Settings has a Claude Code page with its own models and each model's efforts.
 
 ## [3.1.1] - 2026-10-02
 

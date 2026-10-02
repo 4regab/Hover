@@ -21,6 +21,11 @@ name = "fake-opencode"
 path = "src/fake_opencode.rs"
 test = false
 
+[[bin]]
+name = "fake-anthropic"
+path = "src/fake_anthropic.rs"
+test = false
+
 [dependencies]
 # The JSON the fake agent speaks and the runner reads.
 hover-core = { path = "../../crates/hover-core" }

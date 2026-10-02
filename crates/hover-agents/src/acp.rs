@@ -332,8 +332,8 @@ impl Host {
                 set(&mut offered, f, Some(mode))?;
             }
             AgentTool::Cursor => { let f = find(&offered, Some("mode"), &["mode"]); set(&mut offered, f, Some(if o.read_only { "ask" } else { "agent" }))?; }
-            // OpenCode runs as its own server (opencode.rs), never as an ACP one.
-            AgentTool::OpenCode => {}
+            // OpenCode and Claude Code run their own ways (opencode.rs, claude.rs), never as ACP servers.
+            AgentTool::OpenCode | AgentTool::Claude => {}
         }
         if !offered.is_empty() { self.raise_seen(&offered); }
         Ok(offered)

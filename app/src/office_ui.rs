@@ -17,7 +17,7 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
-const TOOLS: [(&str, &str, u32); 4] = [("kiro", "Kiro", 0xb48cff), ("codex", "Codex", 0x3fd6a0), ("cursor", "Cursor", 0x7cc0ff), ("opencode", "OpenCode", 0xe8e8ec)];
+const TOOLS: [(&str, &str, u32); 5] = [("kiro", "Kiro", 0xb48cff), ("codex", "Codex", 0x3fd6a0), ("cursor", "Cursor", 0x7cc0ff), ("opencode", "OpenCode", 0xe8e8ec), ("claude", "Claude Code", 0xd97757)];
 fn tool_color(id: &str) -> Color { let c = TOOLS.iter().find(|t| t.0 == id).map_or(0xb48cff, |t| t.2); Color::from_rgb_u8((c >> 16) as u8, (c >> 8) as u8, c as u8) }
 fn tool_name(id: &str) -> &'static str { TOOLS.iter().find(|t| t.0 == id).map_or("Kiro", |t| t.1) }
 fn s(v: impl AsRef<str>) -> SharedString { v.as_ref().into() }
@@ -37,14 +37,14 @@ pub struct Page {
     menu: Cell<bool>,
     access_menu: Cell<bool>,
     /// The access the new-task box picked, by tool, for the tasks it starts next.
-    new_access: RefCell<[Option<&'static str>; 4]>,
+    new_access: RefCell<[Option<&'static str>; AgentTool::ALL.len()]>,
     new_folder: RefCell<Option<String>>,
     time_mode: Cell<i32>,
     toast_timer: slint::Timer,
     push_timer: slint::Timer,
     dirty: Cell<bool>,
     /// A tool whose status is being looked up (office_push), by AgentTool::ALL's order.
-    checking: Cell<[bool; 4]>,
+    checking: Cell<[bool; AgentTool::ALL.len()]>,
     confirm_key: RefCell<Option<(Option<i32>, Option<String>)>>,
     thread: RefCell<Option<Chat>>,
     /// The open chat's turns as last laid out, for a click on the thread.
@@ -148,9 +148,9 @@ fn fonts() -> Vec<Vec<u8>> { vec![hover_office::canvas::PIXELIFY.to_vec()] }
 
 impl Default for Page {
     fn default() -> Page {
-        Page { live: RefCell::new(None), size: Cell::new((0, 0)), open: Cell::new(None), panel: Cell::new(None), fab: Cell::new(0), new_tool: Cell::new(0), menu: Cell::new(false), access_menu: Cell::new(false), new_access: RefCell::new([None; 4]),
+        Page { live: RefCell::new(None), size: Cell::new((0, 0)), open: Cell::new(None), panel: Cell::new(None), fab: Cell::new(0), new_tool: Cell::new(0), menu: Cell::new(false), access_menu: Cell::new(false), new_access: RefCell::new([None; AgentTool::ALL.len()]),
             new_folder: RefCell::new(None), time_mode: Cell::new(0), toast_timer: Default::default(), push_timer: Default::default(), dirty: Cell::new(true),
-            checking: Cell::new([false; 4]), confirm_key: RefCell::new(None), thread: RefCell::new(None), turns: RefCell::new(vec![]), drafts: Default::default(), copied: Default::default(),
+            checking: Cell::new([false; AgentTool::ALL.len()]), confirm_key: RefCell::new(None), thread: RefCell::new(None), turns: RefCell::new(vec![]), drafts: Default::default(), copied: Default::default(),
             rows_open: RefCell::new(vec![]), target: Cell::new(0), shown: Cell::new(None), drop_timer: Default::default(), view: Cell::new(None),
             picks: Default::default(), qmodels: Default::default(), model_menu: Cell::new(0), attached: Default::default(), thumbs: Default::default(),
             #[cfg(windows)] gpu: Default::default(),
@@ -651,7 +651,7 @@ impl App {
                     opens.push((Some(x.id as i64), None));
                 }
                 if sessions.is_empty() { rows.push(PanelRow { text: s("No sessions yet. Press + to give an agent a task."), ..row(4) }); opens.push((None, None)); }
-                ("Office overview".into(), "Up to 3 tasks run at once, across Kiro, Codex, Cursor and OpenCode".into(), rows, opens)
+                ("Office overview".into(), "Up to 3 tasks run at once, across Kiro, Codex, Cursor, OpenCode and Claude Code".into(), rows, opens)
             }
             Some(_) => {
                 let find = self.notch.global::<crate::ui::Office>().get_find().to_string().to_lowercase();
