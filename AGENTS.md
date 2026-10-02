@@ -90,6 +90,8 @@ tools/
   hover-measure  memory sampler, scenario runner, fake-agent (not shipped)
   notch-proto    the port's Windows notch prototype, kept for its --selftest (not shipped)
 tests/golden/   fixtures and expected outputs (made from the 2.x page)
+infra/           codebuild-runner.yml: the CodeBuild project CI runs on (and its 72 GB
+                 Windows fleet, off by default)
 packaging/       windows/Hover.iss; linux/package-linux.sh and hover.desktop (the one
                  .desktop file the .deb and make install both use)
 assets/          hover.png (the logo), make-icon.py (writes the app's hover.ico and

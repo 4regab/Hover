@@ -1,10 +1,14 @@
 name: CI
 
-# The native (Rust) Hover on GitHub's own runners: one job per platform runs the tests.
-# On a v* tag (three numbers, matching Cargo.toml)
-# the same jobs then build the installers from the build they just tested, and
-# `release` publishes them together as a pre-release. No secrets and no agent
-# accounts: agent runs use the repo's fake-agent.
+# Every job runs on AWS CodeBuild (the hover-release project, infra/codebuild-runner.yml),
+# none on GitHub's own runners. A push to rust-port/** or a pull request runs the tests on
+# Windows and Linux; a v* tag (three numbers, matching Cargo.toml) then builds the
+# installers from that build and `release` publishes them together as a pre-release.
+# No secrets and no agent accounts: agent runs use the repo's fake-agent.
+#
+# Sizes: Linux runs on BUILD_GENERAL1_XLARGE (36 vCPUs, 72 GB). Windows on demand goes
+# up to BUILD_GENERAL1_LARGE; the repository variable HOVER_WINDOWS_FLEET names the
+# template's 72 GB reserved fleet instead, once it is deployed (it costs while it runs).
 on:
   push:
     branches: ['rust-port/**']
@@ -27,7 +31,11 @@ env:
 
 jobs:
   windows:
-    runs-on: windows-2022
+    # Each job needs its own label, or CodeBuild may hand one job the other's runner.
+    runs-on:
+      - codebuild-hover-release-${{ github.run_id }}-${{ github.run_attempt }}
+      - ${{ vars.HOVER_WINDOWS_FLEET != '' && format('fleet:{0}', vars.HOVER_WINDOWS_FLEET) || 'instance-size:large' }}
+      - windows-ci
     defaults:
       run:
         shell: pwsh
@@ -42,17 +50,64 @@ jobs:
           $crate = (Select-String -Path Cargo.toml -Pattern '^version = "(.+)"').Matches[0].Groups[1].Value
           if ($crate -ne $Matches.version) { throw "The tag is $env:GITHUB_REF_NAME but Cargo.toml says $crate." }
           Add-Content -Path $env:GITHUB_ENV -Value "RELEASE_VERSION=$($Matches.version)"
-      # rust-toolchain.toml picks the version; rustup and MSVC are on the runner.
+      # Rust on Windows links with MSVC. Its build tools go in only if the image lacks them.
+      - name: Visual Studio Build Tools
+        run: |
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
+          if ((Test-Path $vswhere) -and (& $vswhere -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath)) {
+            Write-Host 'MSVC build tools already installed'
+            exit 0
+          }
+          $setup = Join-Path $env:RUNNER_TEMP 'vs_buildtools.exe'
+          Invoke-WebRequest 'https://aka.ms/vs/17/release/vs_buildtools.exe' -OutFile $setup
+          $process = Start-Process $setup -ArgumentList '--quiet', '--wait', '--norestart', '--nocache',
+            '--add', 'Microsoft.VisualStudio.Workload.VCTools', '--includeRecommended' -Wait -PassThru
+          # 3010: installed, a restart is suggested. Not needed for building.
+          if ($process.ExitCode -notin 0, 3010) { throw "Build tools install failed: $($process.ExitCode)" }
+      # rust-toolchain.toml picks the version. The image's own rustup isn't let update
+      # itself: that broke the rustup call after it.
       - name: Toolchain
-        run: rustup show active-toolchain
+        run: |
+          $cargoBin = Join-Path $env:USERPROFILE '.cargo\bin'
+          if (-not (Test-Path (Join-Path $cargoBin 'rustup.exe'))) {
+            $init = Join-Path $env:RUNNER_TEMP 'rustup-init.exe'
+            Invoke-WebRequest 'https://static.rust-lang.org/rustup/dist/x86_64-pc-windows-msvc/rustup-init.exe' -OutFile $init
+            & $init -y --profile minimal --default-toolchain none
+            if ($LASTEXITCODE -ne 0) { throw 'rustup install failed' }
+          }
+          Add-Content -Path $env:GITHUB_PATH -Value $cargoBin
+          & (Join-Path $cargoBin 'rustup.exe') set auto-self-update disable
+          # cargo installs rust-toolchain.toml's version the first time it runs.
+          & (Join-Path $cargoBin 'cargo.exe') --version
+          if ($LASTEXITCODE -ne 0) { throw 'rustup toolchain install failed' }
+      # Server Core has almost no fonts, so the chat's text laid out empty. The first faces
+      # its font lists name go in: Inter (the repo's) and Cascadia Code (OFL, Microsoft's).
+      - name: Fonts
+        run: |
+          $zip = Join-Path $env:RUNNER_TEMP 'cascadia.zip'
+          Invoke-WebRequest 'https://github.com/microsoft/cascadia-code/releases/download/v2407.24/CascadiaCode-2407.24.zip' -OutFile $zip
+          Expand-Archive $zip (Join-Path $env:RUNNER_TEMP 'cascadia') -Force
+          $files = @(Get-ChildItem app\assets\Inter-*.ttf) + @(Get-ChildItem (Join-Path $env:RUNNER_TEMP 'cascadia\ttf\static\CascadiaCode-*.ttf'))
+          if ($files.Count -lt 5) { throw "Expected the Inter and Cascadia Code files, found $($files.Count)" }
+          $key = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Fonts'
+          foreach ($f in $files) {
+            Copy-Item $f.FullName (Join-Path $env:windir 'Fonts') -Force
+            New-ItemProperty -Path $key -Name "$($f.BaseName) (TrueType)" -Value $f.Name -PropertyType String -Force | Out-Null
+          }
       - uses: Swatinem/rust-cache@v2
       - name: Test
-        run: cargo test --release --workspace --no-fail-fast
-      # build.ps1 finds Inno Setup 6 or 7; installed only when the image lacks it.
+        run: |
+          cargo test --release --workspace --no-fail-fast
+          if ($LASTEXITCODE -ne 0) { throw 'cargo test failed' }
       - name: Build installer
         if: env.RELEASE == 'true'
         run: |
-          if (-not (Test-Path "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe")) { choco install innosetup --no-progress -y }
+          if (-not (Test-Path "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe")) {
+            $setup = Join-Path $env:RUNNER_TEMP 'innosetup-6.7.3.exe'
+            Invoke-WebRequest 'https://github.com/jrsoftware/issrc/releases/download/is-6_7_3/innosetup-6.7.3.exe' -OutFile $setup
+            $process = Start-Process $setup -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/SP-', '/ALLUSERS' -Wait -PassThru
+            if ($process.ExitCode -ne 0) { throw "Inno Setup install failed: $($process.ExitCode)" }
+          }
           .\build.ps1 installer -Version $env:RELEASE_VERSION
       - uses: actions/upload-artifact@v4
         if: env.RELEASE == 'true'
@@ -62,8 +117,15 @@ jobs:
           if-no-files-found: error
 
   linux:
-    # Ubuntu 22.04 (glibc 2.35), so the packages run on 22.04 and newer.
-    runs-on: ubuntu-22.04
+    runs-on:
+      - codebuild-hover-release-${{ github.run_id }}-${{ github.run_attempt }}
+      # Ubuntu 22.04 (glibc 2.35), so the packages run on 22.04 and newer.
+      - image:ubuntu-7.0
+      - instance-size:xlarge
+      - linux-ci
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v4
       - name: Check release version
@@ -73,15 +135,23 @@ jobs:
           echo "RELEASE_VERSION=${BASH_REMATCH[1]}" >> "$GITHUB_ENV"
       - name: System libraries
         run: |
-          sudo apt-get update
+          SUDO=; [ "$(id -u)" -eq 0 ] || SUDO=sudo
+          $SUDO apt-get update
           # Build: fontconfig, FreeType, ALSA, xkbcommon. Tests: DejaVu (the chat goldens),
           # dbus, GNOME Keyring and Python's GLib (the D-Bus tests skip without them).
-          sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+          $SUDO env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
             build-essential pkg-config libfontconfig1-dev libfreetype-dev libasound2-dev \
             libxkbcommon-dev libxkbcommon-x11-dev fonts-dejavu-core \
             dbus gnome-keyring python3-gi mesa-vulkan-drivers
       - name: Toolchain
-        run: rustup show active-toolchain
+        run: |
+          if ! command -v rustup >/dev/null; then
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain none
+            echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+            export PATH="$HOME/.cargo/bin:$PATH"
+          fi
+          # cargo installs rust-toolchain.toml's version the first time it runs.
+          cargo --version
       - uses: Swatinem/rust-cache@v2
       - name: Test
         env:
@@ -105,7 +175,11 @@ jobs:
     # One job publishes, so the two builds never race to create the release.
     if: startsWith(github.ref, 'refs/tags/v')
     needs: [windows, linux]
-    runs-on: ubuntu-22.04
+    runs-on:
+      - codebuild-hover-release-${{ github.run_id }}-${{ github.run_attempt }}
+      - image:ubuntu-7.0
+      - instance-size:small
+      - publish-release
     permissions:
       contents: write
     steps:
