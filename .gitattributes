@@ -14,3 +14,9 @@ tests/golden/** -text
 # Run through sh on Linux, or read by Linux tools: a CR at a line's end breaks them.
 packaging/linux/* text eol=lf
 Makefile text eol=lf
+
+# Unix entry points and native source must remain usable after a fresh checkout.
+*.sh text eol=lf
+*.swift text eol=lf
+*.c text eol=lf
+*.m4a binary

@@ -9,3 +9,8 @@ dist/
 TestResults/
 evidence/
 target-prof/
+# scripts/sandbox.sh: caches, temp files and Hover data of sandboxed runs.
+.sandbox/
+
+web/office/node_modules/
+__pycache__/
