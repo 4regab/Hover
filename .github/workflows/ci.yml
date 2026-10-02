@@ -149,7 +149,8 @@ jobs:
       - name: Release?
         id: rel
         run: |
-          crate=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n1)
+          # Cargo.toml has CRLF line endings: the CR isn't part of the version.
+          crate=$(tr -d '\r' < Cargo.toml | sed -n 's/^version = "\(.*\)"/\1/p' | head -n1)
           release=false
           if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
             [[ "$GITHUB_REF_NAME" == "v$crate" ]] || { echo "The tag is $GITHUB_REF_NAME but Cargo.toml says $crate." >&2; exit 1; }
