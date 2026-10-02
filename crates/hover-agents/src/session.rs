@@ -6,6 +6,7 @@
 
 use crate::ask::{AgentAsk, Answers, AskAnswer};
 use crate::cancel::{Cancel, Registration};
+use crate::checkpoint::Checkpoints;
 use crate::stream::{KiroEvent, KiroPhase, KiroResult};
 use hover_core::history::{AgentHistory, SavedSession, SavedTurn};
 use hover_core::model::{AgentTool, KiroState, KiroStep};
@@ -15,6 +16,15 @@ use std::sync::{Arc, Mutex, Weak};
 
 pub const MAX_RUNNING: usize = 3;
 pub const MAX_KEPT: usize = 6;
+
+/// Where KiroSessions::rewind puts a chat back to.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Rewind {
+    /// To just after the answer to turn N: the folder as that turn left it, the turns after it gone.
+    After(usize),
+    /// To just before turn N, which is sent again at once: the folder as it was before it ran.
+    Before(usize),
+}
 
 /// What a run gets: KiroSession.RunTask's arguments.
 pub struct RunArgs {
@@ -47,11 +57,15 @@ pub struct KiroTurn {
     pub ended_at: Option<Stamp>,
     /// What the turn cost, in the tool's credits, when it says (Kiro does).
     pub credits: Option<f64>,
+    /// The project folder's checkpoints (checkpoint.rs) from before the turn ran and from after it;
+    /// None where none could be taken (no git, a folder too broad, too slow).
+    pub before: Option<String>,
+    pub after: Option<String>,
 }
 
 impl KiroTurn {
     pub fn new(prompt: &str, images: Vec<String>) -> KiroTurn {
-        KiroTurn { prompt: prompt.into(), images, steps: vec![], result: None, queued: false, started_at: Stamp::DEFAULT, woke_at: None, ended_at: None, credits: None }
+        KiroTurn { prompt: prompt.into(), images, steps: vec![], result: None, queued: false, started_at: Stamp::DEFAULT, woke_at: None, ended_at: None, credits: None, before: None, after: None }
     }
 
     /// What the agent is sent: the prompt, then the pictures' paths for it to look at.
@@ -113,6 +127,7 @@ impl KiroSession {
                     added: x.added, removed: x.removed, diff: None, output: None, exit: x.exit, ms: x.ms }).collect(),
                 result: t.result.as_ref().map(|r| KiroResult { state: r.state, text: String::new(), exit_code: r.exit_code, unconfirmed: r.unconfirmed }),
                 queued: t.queued, started_at: t.started_at, woke_at: t.woke_at, ended_at: t.ended_at, credits: t.credits,
+                before: t.before.clone(), after: t.after.clone(),
             }).collect(),
             folder: self.folder.clone(), kiro_id: self.kiro_id.clone(), key: self.key.clone(), access: self.access.clone(), asks: self.asks.clone(),
             ..*self
@@ -137,7 +152,7 @@ impl KiroSession {
             key: self.key.clone(), tool: self.tool, folder: self.folder.clone(), title: self.title(), acp_id: self.kiro_id.clone(), context: self.context,
             turns: self.turns.iter().map(|t| SavedTurn { prompt: t.prompt.clone(), images: t.images.clone(), steps: t.steps.clone(),
                 state: t.result.as_ref().map(|r| r.state), text: t.result.as_ref().map(|r| r.text.clone()), started_at: t.started_at, woke_at: t.woke_at,
-                ended_at: t.ended_at, credits: t.credits }).collect(),
+                ended_at: t.ended_at, credits: t.credits, before: t.before.clone(), after: t.after.clone() }).collect(),
             updated: now,
             access: self.access.clone(),
         }
@@ -159,6 +174,8 @@ impl KiroSession {
             turn.woke_at = t.woke_at;
             turn.ended_at = Some(t.ended_at.unwrap_or(t.started_at));
             turn.credits = t.credits;
+            turn.before = t.before.clone();
+            turn.after = t.after.clone();
             turn.steps = t.steps.clone();
             turn.result = Some(KiroResult::new(t.state.unwrap_or(KiroState::Cancelled), t.text.clone().unwrap_or_else(|| "Stopped when Hover closed.".into())));
             self.turns.push(turn);
@@ -184,10 +201,10 @@ impl Answer {
 struct Pending { id: String, reply: Answer, _stop: Option<Registration> }
 
 /// pausing: the turn was cancelled by Pause, so the replies queued behind it go once it ends.
-struct Slot { s: KiroSession, cancel: Option<Cancel>, run: RunTask, asks: Vec<Pending>, pausing: bool }
+struct Slot { s: KiroSession, cancel: Option<Cancel>, run: RunTask, asks: Vec<Pending>, pausing: bool, note: Option<String> }
 
 impl Slot {
-    fn new(s: KiroSession, run: RunTask) -> Slot { Slot { s, cancel: None, run, asks: vec![], pausing: false } }
+    fn new(s: KiroSession, run: RunTask) -> Slot { Slot { s, cancel: None, run, asks: vec![], pausing: false, note: None } }
 
     /// KiroSession.DenyAll: every question it left has nobody to answer it now. The
     /// replies go once the lock is released.
@@ -210,6 +227,7 @@ struct Shared {
     now: Box<dyn Fn() -> Stamp + Send + Sync>,
     changed: Mutex<Vec<Changed>>,
     ended: Mutex<Vec<Ended>>,
+    checkpoints: Mutex<Option<Arc<Checkpoints>>>,
 }
 
 /// Every session the office knows about, shared by the notch and the app window.
@@ -227,10 +245,13 @@ impl KiroSessions {
     pub fn with_clock(make: impl Fn(AgentTool) -> RunTask + Send + Sync + 'static, history: Option<Arc<AgentHistory>>,
         now: impl Fn() -> Stamp + Send + Sync + 'static) -> KiroSessions {
         KiroSessions(Arc::new(Shared { inner: Mutex::new(Inner { all: vec![], selected: None }), make: Box::new(make), history, now: Box::new(now),
-            changed: Mutex::new(vec![]), ended: Mutex::new(vec![]) }))
+            changed: Mutex::new(vec![]), ended: Mutex::new(vec![]), checkpoints: Mutex::new(None) }))
     }
 
     pub fn history(&self) -> Option<&Arc<AgentHistory>> { self.0.history.as_ref() }
+    /// Keep the project folder before and after every turn from now on (checkpoint.rs).
+    pub fn set_checkpoints(&self, c: Arc<Checkpoints>) { *self.0.checkpoints.lock().unwrap() = Some(c); }
+    pub fn checkpoints(&self) -> Option<Arc<Checkpoints>> { self.0.checkpoints.lock().unwrap().clone() }
     pub fn now(&self) -> Stamp { (self.0.now)() }
 
     /// Any session changed, or one came or went. Off any thread.
@@ -326,11 +347,15 @@ impl KiroSessions {
         slot.s.rev += 1;
         let ct = Cancel::new();
         slot.cancel = Some(ct.clone());
-        let args_base = (slot.s.folder.clone(), slot.s.turns[ti].text(), slot.s.kiro_id.clone(), slot.s.access.clone());
+        // After a rewind the agent is told once that its folder and chat went back.
+        let mut prompt = slot.s.turns[ti].text();
+        if let Some(n) = slot.note.take() { prompt = format!("{n}\n\n{prompt}"); }
+        let cp = self.checkpoints().map(|c| (c, slot.s.key.clone()));
+        let args_base = (slot.s.folder.clone(), prompt, slot.s.kiro_id.clone(), slot.s.access.clone());
         let run = slot.run.clone();
         let me = Arc::downgrade(&self.0);
         Box::new(move || {
-            std::thread::Builder::new().name("agent-turn".into()).spawn(move || go(me, id, ti, run, ct, args_base)).expect("a thread for the turn");
+            std::thread::Builder::new().name("agent-turn".into()).spawn(move || go(me, id, ti, run, ct, cp, args_base)).expect("a thread for the turn");
         })
     }
 
@@ -358,6 +383,51 @@ impl KiroSessions {
         true
     }
 
+    /// Puts a chat back to a checkpoint: the project folder as it was there (checkpoint.rs),
+    /// and the turns after it gone. Never while a run or a queued reply exists (the agent
+    /// could be writing). `Before` sends that turn's message again at once. The agent, which
+    /// still remembers everything, is told once with its next message that the folder and
+    /// the chat went back; before the very first message it starts a new conversation.
+    pub fn rewind(&self, id: i32, to: Rewind) -> Result<(), String> {
+        let cp = self.checkpoints().ok_or("Checkpoints need git. Install it, then start a new chat.")?;
+        let (key, folder, tree, keep, prompt, images) = {
+            let g = self.0.inner.lock().unwrap();
+            let slot = g.all.iter().find(|x| x.s.id == id).ok_or("That chat isn't here.")?;
+            if slot.s.busy() || slot.s.turns.iter().any(|t| t.queued) { return Err("Stop the run first.".into()); }
+            let (i, after) = match to { Rewind::After(i) => (i, true), Rewind::Before(i) => (i, false) };
+            let t = slot.s.turns.get(i).ok_or("That message isn't here.")?;
+            let tree = if after { &t.after } else { &t.before }.clone().ok_or("No checkpoint was kept there.")?;
+            if !after && g.all.iter().filter(|x| x.s.busy()).count() >= MAX_RUNNING { return Err("3 tasks are running. Try again when one is done.".into()); }
+            (slot.s.key.clone(), slot.s.folder.clone(), tree, if after { i + 1 } else { i }, t.prompt.clone(), t.images.clone())
+        };
+        // Files first, off the lock: a big folder takes a while, and the chat stays as it is until it worked.
+        cp.restore(&key, &folder, &tree)?;
+        let snap = {
+            let mut g = self.0.inner.lock().unwrap();
+            let slot = g.all.iter_mut().find(|x| x.s.id == id).ok_or("That chat was deleted.")?;
+            if slot.s.busy() { return Err("A run started while the files were put back.".into()); }
+            slot.s.turns.truncate(keep);
+            slot.s.state = slot.s.turns.last().and_then(|t| t.result.as_ref()).map_or(slot.s.state, |r| r.state);
+            slot.s.asks.clear();
+            slot.s.rev += 1;
+            if keep == 0 {
+                slot.s.kiro_id = None;
+                slot.s.context = None;
+                slot.note = None;
+            } else {
+                let what = crate::stream::clip_to(first_line(&slot.s.turns[keep - 1].prompt), 80);
+                slot.note = Some(match to {
+                    Rewind::After(_) => format!("[Hover] The project's files were just put back to how they were right after your reply to “{what}”. Everything that changed after that point was undone, and the later messages were removed from this chat. Carry on from here and don't rely on that later work."),
+                    Rewind::Before(_) => "[Hover] The project's files were just put back to how they were before the next message, and your earlier attempt at it (and anything after it) was undone and removed from this chat. Start it afresh.".to_owned(),
+                });
+            }
+            slot.s.clone()
+        };
+        self.save(&snap);
+        self.raise(vec![Note::Changed]);
+        if matches!(to, Rewind::Before(_)) && !self.reply(id, &prompt, images) { return Err("The files are back, but the message couldn't be sent again.".into()); }
+        Ok(())
+    }
     /// The session a history entry is, at a desk: the one already there, or the saved
     /// one brought back to a free desk. None when it can't be read or every desk is busy.
     pub fn wake(&self, key: &str) -> Option<KiroSession> {
@@ -410,6 +480,7 @@ impl KiroSessions {
         }
         drop(g);
         if let Some(h) = &self.0.history { h.delete(key); }
+        if let Some(c) = self.checkpoints() { c.delete(key); }
         self.raise(vec![Note::Changed]);
     }
 
@@ -559,7 +630,11 @@ fn with<R>(me: &Weak<Shared>, id: i32, f: impl FnOnce(&mut Slot, Stamp) -> R) ->
 }
 
 /// KiroSession.Go: one turn, on its own thread.
-fn go(me: Weak<Shared>, id: i32, ti: usize, run: RunTask, ct: Cancel, (folder, prompt, resume, access): (String, String, Option<String>, Option<String>)) {
+fn go(me: Weak<Shared>, id: i32, ti: usize, run: RunTask, ct: Cancel, cp: Option<(Arc<Checkpoints>, String)>, (folder, prompt, resume, access): (String, String, Option<String>, Option<String>)) {
+    // The folder as it is before the agent touches it (and again after, below).
+    let before = cp.as_ref().and_then(|(c, key)| c.snapshot(key, &folder));
+    if before.is_some() { let b = before.clone(); with(&me, id, move |slot, _| slot.s.turns[ti].before = b); }
+    let kept_folder = folder.clone();
     let (m1, m2) = (me.clone(), me.clone());
     let progress = Box::new(move |p: KiroPhase| {
         if let Some((ks, true)) = with(&m1, id, |slot, now| {
@@ -587,8 +662,10 @@ fn go(me: Weak<Shared>, id: i32, ti: usize, run: RunTask, ct: Cancel, (folder, p
         Err(p) => KiroResult::new(KiroState::Failed, p.downcast_ref::<String>().cloned().or_else(|| p.downcast_ref::<&str>().map(|s| s.to_string())).unwrap_or_else(|| "The run failed.".into())),
     };
     if ct.is_cancelled() && r.state != KiroState::Completed && !r.unconfirmed { r.state = KiroState::Cancelled; }
+    let after = if before.is_some() { cp.as_ref().and_then(|(c, key)| c.snapshot(key, &kept_folder)) } else { None };
     let Some((ks, (snap, next, denied))) = with(&me, id, |slot, now| {
         slot.cancel = None;
+        slot.s.turns[ti].after = after;
         let pausing = std::mem::take(&mut slot.pausing);
         slot.s.stopping = false;
         // A question the run left behind has nobody to answer it now.

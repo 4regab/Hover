@@ -48,6 +48,7 @@ them up later.
 | **Readable answers** | Headings, tables, checklists, images and flowcharts. Code is colour-coded, and diffs have line numbers. Command output shows the real exit code. |
 | **Honest activity** | The chat shows only the thinking, subagents and changes the agent actually reports. Nothing is made up. |
 | **Ask before acting** | Set a tool or a task to ask first. Approve, trust or deny each request in the notch, over the bot, or in the chat. |
+| **Checkpoints** | Each turn keeps the project folder as it was. **Restore** puts the files and the chat back to an earlier answer; **Try again** goes back to before a message and sends it again. Needs Git installed. |
 | **Reply, queue, pause** | Replies sent during a run wait their turn. Pause stops the current answer, and the next queued reply starts once the agent confirms. |
 | **Voice** | Hold `Ctrl+Alt+Space`, say a task, let go. Speech is turned into text on your computer (Phonon) or by Groq. |
 | **Projects** | Register the folders voice may work in, the other names you call them by, and each folder's own tool access. |
@@ -167,6 +168,7 @@ There is no account, server or analytics.
 - **Voice data.** Cloud sends the audio to Groq; Local keeps recognition on your computer.
   Cleanup gets the text, never the audio. The recording is deleted after it is turned into
   text.
+- **Checkpoints** are copies of the files in your project folder (what its `.gitignore` leaves out is not copied), kept in a Git store in the data folder (`checkpoints`), unencrypted like the files themselves. Deleting a session deletes its copies.
 - **Agents** run as hidden child processes in the folder you choose, and stop with Hover.
   OpenCode's server listens on 127.0.0.1 only, with a password made for each start. Claude
   Code runs as one process per conversation, in its folder, with your own Claude Code settings. Each

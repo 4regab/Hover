@@ -72,7 +72,7 @@ crates/
                  platform/{windows,linux}; bin/hover-data (data folders for tests);
                  projects.rs (projects, default workspace, voice settings),
                  secrets.rs (API keys sealed in secrets.dat)
-  hover-agents   ACP host, OpenCode's server (opencode.rs, over its own http.rs), Claude
+  hover-agents   ACP host, checkpoints (checkpoint.rs), OpenCode's server (opencode.rs, over its own http.rs), Claude
                  Code's SDK mode (claude.rs), the runtime they sit behind, the tools (Kiro,
                  Codex, Cursor, OpenCode, Claude Code), sessions, the office's
                  state message, KiroStream, process groups / Windows jobs; route.rs
@@ -219,7 +219,20 @@ assets/          hover.png (the logo), make-icon.py (writes the app's hover.ico 
   (Python, CPU PyTorch, the model; about 1.5–1.8 GB installed) is downloaded only from
   Settings, into `<data>/phonon/`. Keys are sealed in `secrets.dat`, never in
   `settings.json`.
-- **Answers are Markdown, drawn without a library** (`hover-md`, `hover-diagram`).
+- **Checkpoints** (`hover-agents::checkpoint`). Before and after every turn Hover keeps the
+  project folder in a shadow git store of its own, `<data>/checkpoints/<session key>.git`,
+  with the project as its work tree: the project's own `.git` is never read or written,
+  `.gitignore` decides what is left out, and a checkpoint is a tree id (saved in the
+  history as `CheckpointBefore` / `CheckpointAfter` on the turn). Needs `git` on PATH;
+  without it there are none. A whole drive or the home folder is refused, and a folder that
+  takes over 90 s is given up on for that chat. **Restore** (under an earlier answer) puts
+  the folder and the chat back to just after that answer; **Try again** (under any answer)
+  puts them back to before that message and sends it again (`KiroSessions::rewind`,
+  `Rewind::{After, Before}`). Both ask first, and only when nothing runs. The agent still
+  remembers the removed turns, so its next message carries one note that the folder and chat
+  went back (before the very first message it starts a new conversation). The folder as it
+  was just before a restore is kept in the store (`undo_tree`). Deleting a chat deletes its
+  store. **Retry** is the older button: the newest prompt again, files untouched.- **Answers are Markdown, drawn without a library** (`hover-md`, `hover-diagram`).
   Everything the agent wrote is escaped, and Mermaid flowcharts are laid out natively.
 - **The office renders on its own thread with its own wgpu device** (DX12 on Windows,
   Vulkan or GL on Linux). The frame is composited on the CPU into the Slint view.

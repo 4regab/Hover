@@ -297,7 +297,17 @@ pub fn listen() {
                     a.office_widgets();
                     println!("bench ok");
                 }
-                // "key [ctrl+]home|end": as the keyboard sends it to the focused box.
+                // "ls DIR": the names in that folder (not .git), sorted, comma-separated.
+                "ls" => {
+                    let mut names: Vec<String> = std::fs::read_dir(parts.get(1).map_or(".", String::as_str)).map(|d| d.flatten().map(|e| e.file_name().to_string_lossy().into_owned()).filter(|n| n != ".git").collect()).unwrap_or_default();
+                    names.sort();
+                    println!("bench ls {}", names.join(","));
+                }                // "act restore|try N": click that button under turn N of the open chat; "confirm": its card's Yes.
+                "act" => {
+                    let n: usize = parts.get(2).and_then(|v| v.parse().ok()).unwrap_or(0);
+                    println!("bench act {}", a.bench_act(parts.get(1).map_or("", String::as_str), n));
+                }
+                "confirm" => { a.notch.global::<crate::ui::Office>().invoke_confirm_yes(); println!("bench confirmed"); }                // "key [ctrl+]home|end": as the keyboard sends it to the focused box.
                 "key" => {
                     use slint::platform::{Key, WindowEvent as E};
                     let k = parts.get(1).map_or("", String::as_str);

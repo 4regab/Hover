@@ -80,6 +80,9 @@ impl Hover {
             Some(r) => r.clone(),
             None => runners.iter().find(|(t, _)| *t == tool).expect("a host per tool").1.runner(),
         }, history.clone());
+        // Chats keep the project folder before and after each turn, so they can go back to it;
+        // without git there are none, and nothing else changes.
+        if let Some(c) = hover_agents::checkpoint::Checkpoints::new(hover_core::paths::support().join("checkpoints")) { sessions.set_checkpoints(Arc::new(c)); }
         for h in &hosts {
             // A question goes to the session whose conversation it is, where the notch
             // and the office show it. One nobody holds is turned down.

@@ -121,6 +121,8 @@ export global Office {
     in-out property <string> find;
     in property <bool> confirm;
     in property <string> confirm-text;
+    in property <string> confirm-title: "Delete this session?";
+    in property <string> confirm-ok: "Delete";
     in property <bool> drawer;
     in property <string> d-name;
     in property <color> d-color;
@@ -1637,11 +1639,11 @@ export component OfficeView inherits Rectangle {
                 cf := VerticalLayout {
                     padding: 16px;
                     spacing: 6px;
-                    Text { text: "Delete this session?"; font-family: "Pixelify Sans"; font-weight: 600; font-size: 14px; color: #f6f2ff; }
+                    Text { text: Office.confirm-title; font-family: "Pixelify Sans"; font-weight: 600; font-size: 14px; color: #f6f2ff; }
                     Text { text: Office.confirm-text; font-size: 12.5px; color: #f6f2ff9e; wrap: word-wrap; }
                     HorizontalLayout { alignment: end; spacing: 8px; padding-top: 8px;
                         PillButton { id: "cfNo"; text: "Cancel"; bg: #ffffff0d; fg: #f6f2ff; font-size: 12.5px; bold-text: true; clicked => { Office.confirm-no(); } }
-                        PillButton { id: "cfYes"; text: "Delete"; bg: #ff453ad9; fg: white; font-size: 12.5px; bold-text: true; clicked => { Office.confirm-yes(); } } }
+                        PillButton { id: "cfYes"; text: Office.confirm-ok; bg: #ff453ad9; fg: white; font-size: 12.5px; bold-text: true; clicked => { Office.confirm-yes(); } } }
                 }
             }
         }

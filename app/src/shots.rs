@@ -253,7 +253,16 @@ fn chat_shots(app: &Rc<App>, hover: &Arc<hover_app::app::Hover>, dir: &Path, fol
         // on its change, its output and a thought.
         open(rich);
         shot("done");
-        // A long folder name: its chip gives way, the header's Delete and Close stay whole.
+        // The question Restore and Try again ask before they touch the folder.
+        g.set_confirm_title("Restore to here?".into());
+        g.set_confirm_ok("Restore".into());
+        g.set_confirm_text("The files in “project” go back to how they were after this answer, and the 2 messages after it leave this chat. Changes made since, by the agent or by you, are undone.".into());
+        g.set_confirm(true);
+        settle(300);
+        shot("rewind-confirm");
+        g.set_confirm(false);
+        g.set_confirm_title("Delete this session?".into());
+        g.set_confirm_ok("Delete".into());        // A long folder name: its chip gives way, the header's Delete and Close stay whole.
         g.set_d_folder("a-really-long-project-folder-name-that-goes-on-and-on-and-on".into());
         settle(200);
         shot("long-folder");

@@ -826,6 +826,8 @@ fn path_svg(path: &str, color: Rgba, size: f32, stroke: f32) -> Rc<str> {
 }
 
 const COPY_ICON: &str = r#"<rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/>"#;
+const UNDO_ICON: &str = r#"<path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 5.5 5.5a5.5 5.5 0 0 1-5.5 5.5H11"/>"#;
+const TRY_ICON: &str = r#"<path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/>"#;
 const CHECK_ICON: &str = r#"<path d="M20 6 9 17l-5-5"/>"#;
 const RETRY_ICON: &str = r#"<path d="M3 12a9 9 0 0 1 15.5-6.3L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-15.5 6.3L3 16"/><path d="M3 21v-5h5"/>"#;
 
@@ -959,12 +961,17 @@ pub struct Turn {
     pub waiting: bool,
     /// Asked to stop or pause, and the tool hasn't said it has yet.
     pub stopping: bool,
+    /// Its acts row offers Restore (the chat and the folder back to just after this answer)
+    /// and Try again (the folder back to before this message, which goes again): a checkpoint
+    /// was kept there and nothing runs.
+    pub restore: bool,
+    pub again: bool,
 }
 
 impl Turn {
     pub fn new(prompt: &str) -> Self {
         Turn { prompt: prompt.into(), images: vec![], queued: false, steps: vec![], took: None, took_ms: None, credits: None, stage: Stage::Done, live: false,
-            clock: String::new(), when: String::new(), status: None, answer: String::new(), waiting: false, stopping: false }
+            clock: String::new(), when: String::new(), status: None, answer: String::new(), waiting: false, stopping: false, restore: false, again: false }
     }
 }
 
@@ -982,6 +989,10 @@ pub enum Act {
     OpenDiff(usize),
     /// The newest turn's Retry: its prompt goes again.
     Retry,
+    /// Restore: back to just after this turn's answer.
+    Restore,
+    /// Try again: back to just before this turn's message, which goes again.
+    TryAgain,
     /// A queued reply taken back.
     Cancel,
 }
@@ -1407,6 +1418,8 @@ impl Thread {
                 let done = self.copied.as_deref() == Some(whole.as_str());
                 let mut buttons = vec![(if done { CHECK_ICON } else { COPY_ICON }, if done { "Copied" } else { "Copy" }, Act::Copy(whole.as_str().into()))];
                 if last && t.stage != Stage::Waking { buttons.push((RETRY_ICON, "Retry", Act::Retry)); }
+                if t.restore { buttons.push((UNDO_ICON, "Restore", Act::Restore)); }
+                if t.again { buttons.push((TRY_ICON, "Try again", Act::TryAgain)); }
                 for (icon, word, act) in buttons {
                     let mut tb = self.line(word, if word == "Copied" { Look { color: [0x4a, 0xde, 0x80, 255], ..label } } else { label }, None);
                     tb.text.clear();

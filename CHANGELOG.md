@@ -5,6 +5,18 @@ What changed in each Hover release. Versions follow [Semantic Versioning](https:
 
 ## [Unreleased]
 
+## [3.4.0] - 2026-10-02
+
+### Added
+
+- Checkpoints in the chat. Hover keeps the project folder before and after every turn (in a
+  Git store of its own in the data folder; your project's own Git is never touched, and
+  what its .gitignore leaves out is left out). Under an answer, **Restore** puts the files
+  and the chat back to just after that answer, and **Try again** puts them back to before
+  that message and sends it again. Both ask first and only work while nothing runs, and the
+  agent is told once that its folder and chat went back. Needs Git installed; deleting a
+  session deletes its checkpoints.
+
 ## [3.3.1] - 2026-10-02
 
 ### Fixed
@@ -110,7 +122,8 @@ What changed in each Hover release. Versions follow [Semantic Versioning](https:
   everything 2.x left: the data folder, the key, `settings.json` and the sessions.
 - The Windows executable is `hoverai.exe`.
 
-[Unreleased]: https://github.com/4regab/Hover/compare/v3.3.1...HEAD
+[Unreleased]: https://github.com/4regab/Hover/compare/v3.4.0...HEAD
+[3.4.0]: https://github.com/4regab/Hover/compare/v3.3.1...v3.4.0
 [3.3.1]: https://github.com/4regab/Hover/compare/v3.3.0...v3.3.1
 [3.3.0]: https://github.com/4regab/Hover/compare/v3.2.0...v3.3.0
 [3.2.0]: https://github.com/4regab/Hover/compare/v3.1.1...v3.2.0
