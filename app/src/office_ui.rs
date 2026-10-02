@@ -561,6 +561,7 @@ impl App {
             g.set_model_menu(if menu_rows.is_some() { p.model_menu.get() } else { 0 });
             if let Some((head, models, ehead, efforts, note)) = &menu_rows {
                 g.set_mm_head(s(head));
+                g.set_mm_cur(models.iter().position(|m| m.on).unwrap_or(0) as i32);
                 if let Some(m) = crate::view::sync(g.get_mm_models(), models) { g.set_mm_models(m); }
                 g.set_mm_effort_head(s(ehead));
                 if let Some(m) = crate::view::sync(g.get_mm_efforts(), efforts) { g.set_mm_efforts(m); }

@@ -100,6 +100,8 @@ export global Office {
     in property <length> model-y;
     in property <string> mm-head;
     in property <[MOpt]> mm-models;
+    // Which of them is the picked one (the list opens on it).
+    in property <int> mm-cur;
     in property <string> mm-effort-head;
     in property <[MOpt]> mm-efforts;
     in property <string> mm-note;
@@ -1594,27 +1596,39 @@ export component OfficeView inherits Rectangle {
             x: max(8px, min(Office.model-x - root.absolute-position.x, parent.width - 258px));
             y: max(8px, Office.model-y - root.absolute-position.y - self.height - 6px);
             width: 250px;
-            height: min(mmc.preferred-height, 360px, parent.height - 20px);
+            height: min(mmc.preferred-height, parent.height - 20px);
             border-radius: 14px;
             accessible-role: list;
             accessible-id: "mMenu";
-            Flickable {
-                width: parent.width;
-                height: parent.height;
-                content-height: mmc.preferred-height;
-                mmc := VerticalLayout {
-                    width: 250px;
-                    padding: 6px;
-                    Text { text: Office.mm-head; font-family: "Pixelify Sans"; font-weight: 600; font-size: 10.5px; letter-spacing: 0.63px; color: #f6f2ff61;
-                        height: self.preferred-height + 10px; vertical-alignment: center; x: 8px; }
-                    for m in Office.mm-models: MenuRow { o: m; clicked => { Office.pick-model(m.id); } }
-                    if Office.mm-efforts.length > 0: Text { text: Office.mm-effort-head; font-family: "Pixelify Sans"; font-weight: 600; font-size: 10.5px; letter-spacing: 0.63px; color: #f6f2ff61;
-                        height: self.preferred-height + 10px; vertical-alignment: center; x: 8px; }
-                    if Office.mm-efforts.length > 0: HorizontalLayout { padding-left: 4px; padding-right: 4px; padding-bottom: 4px; padding-top: 2px; spacing: 3px;
-                        for e in Office.mm-efforts: MenuRow { seg: true; o: e; horizontal-stretch: 1; clicked => { Office.pick-effort(e.id); } } }
-                    HorizontalLayout { padding-left: 8px; padding-right: 8px; padding-top: 4px; padding-bottom: 3px;
-                        Text { text: Office.mm-note; font-size: 11px; color: #f6f2ff61; wrap: word-wrap; } }
+            mmc := VerticalLayout {
+                width: 250px;
+                padding: 6px;
+                Text { text: Office.mm-head; font-family: "Pixelify Sans"; font-weight: 600; font-size: 10.5px; letter-spacing: 0.63px; color: #f6f2ff61;
+                    height: self.preferred-height + 10px; vertical-alignment: center; x: 8px; }
+                // The models scroll inside a box of their own, with a bar, so a long list (Codex's
+                // can be) is reachable and the efforts below it always stay in view. The box
+                // opens on the picked model.
+                Rectangle {
+                    height: min(mml.preferred-height, max(84px, root.height - 20px - 170px));
+                    mmf := Flickable {
+                        width: parent.width;
+                        height: parent.height;
+                        content-height: mml.preferred-height;
+                        // A binding, so it is the first position only: a scroll by the user replaces it.
+                        content-y: -min(max(0px, Office.mm-cur * 28px - (self.height - 28px) / 2), max(0px, self.content-height - self.height));
+                        mml := VerticalLayout {
+                            width: parent.width;
+                            for m in Office.mm-models: MenuRow { o: m; clicked => { Office.pick-model(m.id); } }
+                        }
+                    }
+                    InputThumb { x: parent.width - 4px; y: 0px; height: parent.height; f-height: mmf.height; f-content: mmf.content-height; f-y: mmf.content-y; }
                 }
+                if Office.mm-efforts.length > 0: Text { text: Office.mm-effort-head; font-family: "Pixelify Sans"; font-weight: 600; font-size: 10.5px; letter-spacing: 0.63px; color: #f6f2ff61;
+                    height: self.preferred-height + 10px; vertical-alignment: center; x: 8px; }
+                if Office.mm-efforts.length > 0: HorizontalLayout { padding-left: 4px; padding-right: 4px; padding-bottom: 4px; padding-top: 2px; spacing: 3px;
+                    for e in Office.mm-efforts: MenuRow { seg: true; o: e; horizontal-stretch: 1; clicked => { Office.pick-effort(e.id); } } }
+                HorizontalLayout { padding-left: 8px; padding-right: 8px; padding-top: 4px; padding-bottom: 3px;
+                    Text { text: Office.mm-note; font-size: 11px; color: #f6f2ff61; wrap: word-wrap; } }
             }
         }
 

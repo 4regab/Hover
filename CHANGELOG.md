@@ -17,6 +17,13 @@ What changed in each Hover release. Versions follow [Semantic Versioning](https:
   agent is told once that its folder and chat went back. Needs Git installed; deleting a
   session deletes its checkpoints.
 
+### Fixed
+
+- The model menu in the office showed only the first models of a long list (Codex's can
+  have a dozen or more), with no sign of the rest: the last ones, and the effort choices
+  under them, were cut off. The models now scroll inside a box of their own with a bar, the
+  menu opens on the picked model, and the effort choices and the note stay in view.
+
 ## [3.3.1] - 2026-10-02
 
 ### Fixed

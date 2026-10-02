@@ -731,6 +731,23 @@ pub fn run(dir: &Path) {
     settle(400);
     save(&notch, full, 1.0, desk, &dir.join("office-model-menu-opencode.png"));
     g.invoke_open_model(0, 0.0, 0.0);
+    // A long model list (Codex's model/list gives one), the last model picked: the menu scrolls to it,
+    // shows a bar, and the efforts stay in view. Then the shorter list again.
+    let codex: Vec<hover_core::model::AcpChoice> = ["GPT-5.6 Sol", "GPT-5.6 Terra", "GPT-5.6 Luna", "GPT-5.5", "GPT-5.5 Mini", "GPT-5.4", "GPT-5.3 Codex", "GPT-5.3 Codex Spark", "GPT-5.2", "GPT-5.1 Codex Max", "GPT-5.1 Codex", "GPT-5.1 Mini", "GPT-5", "GPT-6.1 Sol"]
+        .iter().map(|n| hover_core::model::AcpChoice::new(&n.to_lowercase().replace(' ', "-"), n)).collect();
+    hover.settings.set_agent_offers(AgentTool::Kiro, &[hover_core::model::AcpOption { id: "model".into(), category: Some("model".into()), current: Some("gpt-6.1-sol".into()), choices: codex.clone() },
+        hover_core::model::AcpOption { id: "reasoning_effort".into(), category: Some("thought_level".into()), current: Some("medium".into()),
+            choices: ["low", "medium", "high", "xhigh"].iter().map(|e| hover_core::model::AcpChoice::new(e, e)).collect() }]);
+    hover.settings.set_agent_options(AgentTool::Kiro, hover_core::model::AgentOptions { model: Some("gpt-6.1-sol".into()), effort: Some("high".into()), ..Default::default() });
+    g.invoke_pick_tool(0);
+    settle(300);
+    g.invoke_open_model(2, 330.0, (full.1 as f32) - 60.0);
+    settle(400);
+    save(&notch, full, 1.0, desk, &dir.join("office-model-menu-long.png"));
+    g.invoke_open_model(0, 0.0, 0.0);
+    hover.settings.set_agent_offers(AgentTool::Kiro, &[]);
+    hover.settings.set_agent_options(AgentTool::Kiro, Default::default());
+    g.invoke_pick_tool(3);
     g.invoke_new_fold();
     let s4 = hover.sessions.start(AgentTool::OpenCode, &folder, "Set up the formatter", vec![]);
     let t = std::time::Instant::now();
@@ -875,6 +892,9 @@ pub fn run(dir: &Path) {
     app.pane.borrow_mut().menu = Some(("KiroModel".into(), view::picker_options(&app.last_blocks.borrow(), "KiroModel"), 760.0, 180.0));
     app.refresh_page(false);
     save(&dash, (1200, 620), 1.0, [0, 0, 0], &dir.join("settings-kiro-model-menu.png"));
-    hover.shutdown();
+    app.show_settings_in(1, Section::Codex);
+    app.pane.borrow_mut().menu = Some(("CodexModel".into(), view::picker_options(&app.last_blocks.borrow(), "CodexModel"), 760.0, 180.0));
+    app.refresh_page(false);
+    save(&dash, (1200, 620), 1.0, [0, 0, 0], &dir.join("settings-codex-model-menu.png"));    hover.shutdown();
     let _ = std::fs::remove_dir_all(&data);
 }
