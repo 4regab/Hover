@@ -33,7 +33,7 @@ Parameters:
     Type: Number
     Default: 1
     MinValue: 0
-    Description: Machines the Windows fleet keeps running; builds past them go on demand.
+    Description: Machines the Windows fleet keeps running; builds past them wait for one.
 
 Conditions:
   MakeWindowsFleet: !Equals [!Ref WindowsFleet, 'true']
@@ -187,6 +187,14 @@ Resources:
                 Resource:
                   - !Sub arn:aws:codebuild:${AWS::Region}:${AWS::AccountId}:project/hover-ci
                   - !If [MakeWindowsFleet, !Ref WindowsBuildFleet, !Ref AWS::NoValue]
+              # The batch's final pass or fail goes to GitHub as this role. Without
+              # it, the commit kept showing the "pending" the batch started with.
+              - Effect: Allow
+                Action:
+                  - codeconnections:GetConnection
+                  - codeconnections:GetConnectionToken
+                  - codeconnections:UseConnection
+                Resource: !Ref GitHubConnectionArn
 
   WindowsBuildFleet:
     Type: AWS::CodeBuild::Fleet
@@ -201,7 +209,9 @@ Resources:
         disk: 256
         machineType: GENERAL
       BaseCapacity: !Ref WindowsFleetCapacity
-      OverflowBehavior: ON_DEMAND
+      # Builds past the fleet's machines wait for one rather than run on demand,
+      # where Windows tops out at 8 vCPUs and 16 GB.
+      OverflowBehavior: QUEUE
 
   BuildProject:
     Type: AWS::CodeBuild::Project
@@ -255,16 +265,17 @@ Resources:
                   env:
                     type: LINUX_CONTAINER
                     image: aws/codebuild/standard:7.0
-                    compute-type: BUILD_GENERAL1_SMALL
+                    compute-type: BUILD_GENERAL1_XLARGE
           - WindowsCompute: !If
               - MakeWindowsFleet
-              - 'fleet: hover-windows-72gb'
+              - !Sub 'fleet: ${WindowsBuildFleet}'
               - 'compute-type: BUILD_GENERAL1_LARGE'
-      # The defaults; each build of the batch sets its own machine.
+      # The defaults; each build of the batch sets its own machine. CodeBuild also
+      # uses these for the batch's own step that reads the graph.
       Environment:
         Type: LINUX_CONTAINER
         Image: aws/codebuild/standard:7.0
-        ComputeType: BUILD_GENERAL1_SMALL
+        ComputeType: BUILD_GENERAL1_XLARGE
         EnvironmentVariables:
           - Name: HOVER_CI_BUCKET
             Type: PLAINTEXT
