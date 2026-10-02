@@ -152,7 +152,7 @@ flowchart LR
 
     wi --> rel
     lp --> rel
-    rel["release job (release only)<br/>tags the commit; GitHub pre-release with the .exe, .deb, .tar.gz"]
+    rel["release job (release only)<br/>tags the commit; Latest GitHub release with the .exe, .deb, .tar.gz"]
 ```
 
 A tag whose version doesn't match `Cargo.toml` fails before anything builds. A

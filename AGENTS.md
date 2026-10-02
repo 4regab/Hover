@@ -45,7 +45,7 @@ make package                # .deb and tarball in dist/
 A push to `main` whose `Cargo.toml` version has no tag yet, or a `v*` tag
 (matching it), runs `.github/workflows/ci.yml`'s tests on Windows and Linux (Ubuntu 22.04)
 on AWS CodeBuild, then builds the installers from that build, tags the commit and
-publishes them together as a GitHub pre-release. Raising the version releases it.
+publishes them together as the Latest GitHub release. Raising the version releases it.
 
 The cross-check that Windows code still compiles, from Linux (mimalloc's C needs
 clang-cl 19 or newer, which `cargo-xwin` drives with Microsoft's headers):
