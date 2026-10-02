@@ -37,7 +37,9 @@ pub fn activity(s: &KiroSession) -> (&'static str, String) {
     };
     let verb = match step.kind.as_str() {
         "read" => "Reading", "edit" => "Editing", "delete" => "Deleting", "move" => "Moving", "execute" => "Running",
-        "search" => "Searching", "fetch" => "Fetching", "think" => "Thinking",
+        // "thought" is what a reasoning step is called (stream.rs); without it the notch
+        // read its title and said "Working on Thinking".
+        "search" => "Searching", "fetch" => "Fetching", "think" | "thought" => "Thinking",
         _ => {
             if let Some(name) = mcp_name(&step.title) { return ("Using", clip_to(&name, 28)); }
             match tool_phase(Some(&step.kind), Some(&step.title)) {
