@@ -5,6 +5,16 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[lib]
+# No doc tests here: rustdoc built and ran an empty set on every test run.
+doctest = false
+
+# Tracked with git add -f (bin/ is ignored); no tests of its own.
+[[bin]]
+name = "hover-data"
+path = "src/bin/hover-data.rs"
+test = false
+
 [dependencies]
 # AES-256-GCM, as Core/Crypto.cs seals with AesGcm. Pure Rust, so it cross-compiles for
 # MSVC without the ring/cc trouble noted in chat-proto (no AES-GCM crate was in the tree).

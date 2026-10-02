@@ -8,6 +8,8 @@ license.workspace = true
 [lib]
 name = "hover_app"
 path = "src/lib.rs"
+# No doc tests here: rustdoc built and ran an empty set on every test run.
+doctest = false
 
 # hoverai, not hover: Discord's game list matches any path ending in hover/hover.exe
 # (Hover: Revolt of Gamers), and the install folder is Programs\Hover.

@@ -4,3 +4,7 @@ description = "The notch's geometry, animation and hover rules (Notch.cs), with 
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+
+[lib]
+# No doc tests here: rustdoc built and ran an empty set on every test run.
+doctest = false

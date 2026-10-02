@@ -5,6 +5,10 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[lib]
+# No doc tests here: rustdoc built and ran an empty set on every test run.
+doctest = false
+
 [dependencies]
 hover-core = { path = "../hover-core" }
 # All in the tree already (through Slint and hover-chat): the GPU (the same wgpu as

@@ -9,14 +9,17 @@ publish = false
 [[bin]]
 name = "hover-measure"
 path = "src/main.rs"
+test = false
 
 [[bin]]
 name = "fake-agent"
 path = "src/fake_agent.rs"
+test = false
 
 [[bin]]
 name = "fake-opencode"
 path = "src/fake_opencode.rs"
+test = false
 
 [dependencies]
 # The JSON the fake agent speaks and the runner reads.

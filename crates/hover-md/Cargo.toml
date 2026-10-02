@@ -5,6 +5,10 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[lib]
+# No doc tests here: rustdoc built and ran an empty set on every test run.
+doctest = false
+
 [dependencies]
 fancy-regex.workspace = true
 hover-diagram = { path = "../hover-diagram" }
