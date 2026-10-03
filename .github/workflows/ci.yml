@@ -6,7 +6,7 @@ name: CI
 # a v* tag (matching Cargo.toml), or a push to
 # main whose Cargo.toml version has no tag yet. The same jobs then build the
 # installers from what they just tested, and `release` tags the commit and publishes
-# them together as the Latest release (macOS has no installer yet: its job is a check).
+# them together as the Latest release, with the Mac app in disk images (signed ad hoc).
 # No secrets and no agent accounts: agent runs use the repo's fake-agent.
 on:
   push:
@@ -196,21 +196,35 @@ jobs:
           if-no-files-found: error
 
   macos:
-    # Apple Silicon. A compile check, not a release: no tests (the runner has no display,
-    # Keychain or permission prompts to run Hover on), no installer. The Mac app is the
-    # Swift UI in macos/ with the web office (web/office), on the Rust backend
-    # (crates/hover-backend) that Windows and Linux share. This job's promise is that
-    # the backend crates and the Swift app compile, and Hover.app is made and signed
-    # (ad hoc). The app is uploaded as a workflow artifact only, never to the release.
-    # `release` doesn't wait for it: a Mac build that breaks shows on the pull request,
-    # where it is fixed before merging.
+    # Apple Silicon runner. No tests (the runner has no display, Keychain or permission
+    # prompts to run Hover on). The Mac app is the Swift UI in macos/ with the web office
+    # (web/office), on the Rust backend (crates/hover-backend) that Windows and Linux
+    # share. Every run checks the backend crates and makes Hover.app (signed ad hoc); a
+    # release also makes it for Intel and puts both in disk images on the release.
     runs-on: macos-15
     timeout-minutes: 60
+    outputs:
+      release: ${{ steps.rel.outputs.release }}
     defaults:
       run:
         shell: bash
     steps:
       - uses: actions/checkout@v4
+      # The same choice as the Windows job's.
+      - name: Release?
+        id: rel
+        run: |
+          crate=$(tr -d '\r' < Cargo.toml | sed -n 's/^version = "\(.*\)"/\1/p' | head -n1)
+          release=false
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            [[ "$GITHUB_REF_NAME" == "v$crate" ]] || { echo "The tag is $GITHUB_REF_NAME but Cargo.toml says $crate." >&2; exit 1; }
+            release=true
+          elif [[ "$GITHUB_EVENT_NAME" == push && "$GITHUB_REF_NAME" == main ]]; then
+            [[ -z "$(git ls-remote --tags origin "refs/tags/v$crate")" ]] && release=true
+          fi
+          echo "version $crate, release: $release"
+          { echo "RELEASE=$release"; echo "RELEASE_VERSION=$crate"; } >> "$GITHUB_ENV"
+          echo "release=$release" >> "$GITHUB_OUTPUT"
       # Voice uses macOS 26's SpeechAnalyzer, which needs the macOS 26 SDK: the newest
       # Xcode 26 on the image (its default is older). Without one the build goes on, and
       # Voice.swift compiles only the older recognizer (#if compiler(>=6.2)).
@@ -259,10 +273,42 @@ jobs:
           path: dist/Hover-osx-arm64-development.zip
           retention-days: 7
           if-no-files-found: error
+      # A release (or a run started by hand, to try the packaging) builds Intel too: Rust and
+      # Swift cross-compile on the Apple Silicon runner.
+      - name: Hover.app (Intel)
+        if: env.RELEASE == 'true' || github.event_name == 'workflow_dispatch'
+        env:
+          HOVER_ARCH: x64
+          HOVER_CARGO_ARGS: --locked
+        run: ./scripts/build-macos.sh
+      # A disk image per arch: Hover.app beside a link to /Applications, to drag across.
+      # hdiutil on the runners is sometimes "busy" for a moment, so it is tried again.
+      - name: Disk images
+        if: env.RELEASE == 'true' || github.event_name == 'workflow_dispatch'
+        run: |
+          for rid in arm64 x64; do
+            stage=$(mktemp -d)
+            ditto "dist/macos-osx-$rid/Hover.app" "$stage/Hover.app"
+            ln -s /Applications "$stage/Applications"
+            out="dist/Hover-$RELEASE_VERSION-macos-$rid.dmg"
+            for try in 1 2 3 4 5; do
+              hdiutil create -volname Hover -srcfolder "$stage" -ov -format UDZO "$out" && break
+              [[ $try == 5 ]] && exit 1; sleep 5
+            done
+            hdiutil verify "$out"
+          done
+      - uses: actions/upload-artifact@v4
+        if: env.RELEASE == 'true' || github.event_name == 'workflow_dispatch'
+        with:
+          name: installer-macos
+          path: |
+            dist/Hover-${{ env.RELEASE_VERSION }}-macos-arm64.dmg
+            dist/Hover-${{ env.RELEASE_VERSION }}-macos-x64.dmg
+          if-no-files-found: error
   release:
-    # One job publishes, so the two builds never race to create the release.
-    if: needs.windows.outputs.release == 'true' && needs.linux.outputs.release == 'true'
-    needs: [windows, linux]
+    # One job publishes, so the builds never race to create the release.
+    if: needs.windows.outputs.release == 'true' && needs.linux.outputs.release == 'true' && needs.macos.outputs.release == 'true'
+    needs: [windows, linux, macos]
     runs-on: ubuntu-22.04
     permissions:
       contents: write
@@ -285,3 +331,6 @@ jobs:
           files: dist/*
           fail_on_unmatched_files: true
           generate_release_notes: true
+          # The Mac app is signed ad hoc, not with a Developer ID, so macOS asks once.
+          body: |
+            **macOS:** download `Hover-${{ needs.windows.outputs.version }}-macos-arm64.dmg` (Apple silicon) or `-macos-x64.dmg` (Intel), open it and drag Hover to Applications. The app isn't notarized yet, so the first time, open it with right-click → Open (or System Settings → Privacy & Security → Open Anyway).

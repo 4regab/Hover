@@ -10,7 +10,8 @@ and Linux only.
 
 **Status: it builds, and nobody has run it on a Mac yet.** CI compiles the backend crates on
 Apple Silicon (`cargo check`), builds `hover-backend`, and builds and signs (ad hoc)
-`Hover.app` from the Swift sources, and uploads it as a workflow artifact. CI runs no test
+`Hover.app` from the Swift sources, and uploads it as a workflow artifact; a release puts it on
+the release page as a disk image for Apple silicon and one for Intel. CI runs no test
 on a Mac. `scripts/test-macos.sh` and `tests/macos/e2e/run.sh` (below) are written to run
 one, in the background, and the pure parts of the Rust (the Keychain and LaunchAgent
 logic, the sandbox's settings) are tested on Windows.
@@ -38,8 +39,9 @@ the Microphone, and lists Screen Recording and notifications, only for such an a
 have a small main menu with Settings, Quit and the Edit commands, which the office's text
 boxes need). The bundle's `Info.plist` is written by the build script, with the version from
 `Cargo.toml`. Local builds are not notarized; `scripts/package-macos.sh` signs with a
-Developer ID (`HOVER_SIGN_IDENTITY`) and notarizes. There is no release package yet, and CI
-makes none.
+Developer ID (`HOVER_SIGN_IDENTITY`) and notarizes. The release's disk images are signed ad
+hoc, so macOS asks once: right-click → Open, or System Settings → Privacy & Security → Open
+Anyway.
 
 Tests: `scripts/test-macos.sh` (see the end-to-end section below for its sibling). It builds
 in a disposable copy and runs the cargo tests of `hover-backend`, `hover-core`,

@@ -80,7 +80,7 @@ Download the latest build from [Releases](https://github.com/4regab/Hover/releas
 | Windows 10/11 (x64) | `Hover-Setup-<version>.exe`. It installs over a 2.x install in place and keeps your data. |
 | Ubuntu 22.04+ and Debian-based (x64) | `hover_<version>_amd64.deb` |
 | Other Linux (x64) | `hover-<version>-linux-x86_64.tar.gz`, or [build from source](#build-from-source) |
-| macOS 14+ (Apple Silicon or Intel) | [Build from source](#build-from-source) for now; there is no release package yet. See [docs/MACOS.md](docs/MACOS.md). |
+| macOS 14+ (Apple Silicon or Intel) | `Hover-<version>-macos-arm64.dmg` (Apple silicon) or `Hover-<version>-macos-x64.dmg` (Intel). Open it and drag Hover to Applications. It isn't notarized yet, so open it the first time with right-click → Open. See [docs/MACOS.md](docs/MACOS.md). |
 
 Hover then lives in the tray (the menu bar on a Mac). Only one copy runs at a time: starting it again opens the
 dashboard of the copy that is already running.
@@ -231,7 +231,7 @@ There is no account, server or analytics.
 | Computer use | off | off | off | ✓ |
 | Agent desktops (Cua Spaces) | off | off | off | ✓ on macOS 26+, Apple silicon |
 | Desk card, helpers, Pull request tab | ✓ | ✓ | ✓ | ✓ |
-| Release package | installer | .deb, tarball | .deb, tarball | none yet |
+| Release package | installer | .deb, tarball | .deb, tarball | disk image (signed ad hoc) |
 
 Where a feature is off, its switch says why. The Mac app is new and hasn't been run on a Mac yet, so the macOS
 column is what the code is written to do and what builds, not something tested: see
@@ -273,8 +273,8 @@ scripts/build-macos.sh             # dist/macos-osx-arm64/Hover.app, signed ad h
 
 The Mac app is Swift (`macos/`) around the web office (`web/office/`), on the Rust backend
 `crates/hover-backend`; `scripts/build-macos.sh` builds all three into `Hover.app` (`HOVER_ARCH=x64`
-for Intel). The Mac build is for now a local one: CI builds and signs it ad hoc and keeps it as
-a workflow artifact, runs none of its tests, and makes no release package.
+for Intel). CI builds and signs it ad hoc and puts it on each release as a disk image for
+Apple silicon and one for Intel; it runs none of its tests, and the app isn't notarized yet.
 [docs/MACOS.md](docs/MACOS.md) has the permissions it asks for.
 
 Developer documentation is in [`docs/development`](docs/development): architecture,

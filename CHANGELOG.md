@@ -5,6 +5,14 @@ What changed in each Hover release. Versions follow [Semantic Versioning](https:
 
 ## [Unreleased]
 
+## [3.4.1] - 2026-10-03
+
+### Added
+
+- A Mac download on the release page: `Hover-<version>-macos-arm64.dmg` (Apple silicon) and
+  `-macos-x64.dmg` (Intel). Open it and drag Hover to Applications. It is signed ad hoc, not
+  notarized yet, so open it the first time with right-click → Open.
+
 ## [3.4.0] - 2026-10-02
 
 ### Added

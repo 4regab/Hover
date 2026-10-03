@@ -160,9 +160,9 @@ flowchart LR
 ```
 
 A tag whose version doesn't match `Cargo.toml` fails before anything builds. A
-failing test on either OS means nothing is published. The macOS job doesn't gate the
-release: it has no package to wait for, and it runs no tests (nothing has been run on a
-Mac yet; see `docs/MACOS.md`). It does fail a pull request whose Mac code doesn't compile.
+failing test on either OS means nothing is published. The release waits for the macOS
+job too, which builds the disk images (Apple silicon and Intel). It runs no tests (nothing has
+been run on a Mac yet; see `docs/MACOS.md`), and fails a pull request whose Mac code doesn't compile.
 Pushes that only touch Markdown,
 `docs/` or the README's pictures don't run CI.
 

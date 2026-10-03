@@ -66,8 +66,8 @@ publishes them together as the Latest GitHub release. Raising the version releas
 A `macos` job (macos-15, Apple Silicon) runs `cargo check` on every crate but `hover`,
 `notch-proto` and `hover-measure`, builds `hover-backend`, then runs `scripts/build-macos.sh`
 and uploads the ad-hoc-signed `Hover.app` as a workflow artifact, on pull requests too.
-It runs no tests (no display on the runner), there is no release package for a Mac, and
-`release` doesn't wait for it. `scripts/package-macos.sh` signs with a Developer ID and
+It runs no tests (no display on the runner). A release also builds Intel and puts both in
+disk images (`Hover-<version>-macos-arm64.dmg`, `-x64.dmg`), and `release` waits for them. `scripts/package-macos.sh` signs with a Developer ID and
 notarizes.
 
 The cross-check that Windows code still compiles, from Linux (mimalloc's C needs
