@@ -75,6 +75,8 @@ APP_SIGN_ARGS=("${SIGN_ARGS[@]}")
 if [[ "$IDENTITY" == - ]]; then APP_SIGN_ARGS+=(-r='designated => identifier "dev.hover.desktop"'); fi
 # A missing or non-Mach-O backend must stop the build, not leave an unsigned helper.
 file "$RES/backend/hover-backend" | grep -q 'Mach-O' || { echo 'The backend is not a Mach-O binary' >&2; exit 66; }
+# The Rust backend needs no entitlements (the C# one had allow-jit); its file is an empty
+# dict, so it is signed the same way. No comments in it: AMFI's plist parser refuses them.
 codesign "${SIGN_ARGS[@]}" --entitlements "$ROOT/macos/backend.entitlements" "$RES/backend/hover-backend"
 codesign "${SIGN_ARGS[@]}" "$RES/hover-guardian"
 codesign "${APP_SIGN_ARGS[@]}" --identifier dev.hover.desktop "$APP/Contents/MacOS/Hover"

@@ -22,3 +22,5 @@ Makefile text eol=lf
 *.c text eol=lf
 *.m4a binary
 *.py text eol=lf
+# codesign's plist parser (AMFI) is strict: entitlements stay LF, as Xcode writes them.
+*.entitlements text eol=lf
