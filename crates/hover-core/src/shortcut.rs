@@ -136,14 +136,16 @@ impl Shortcut {
         Ok(s)
     }
 
-    /// Shortcut.ToString: "Ctrl+Alt+Shift+Win+Key", or an em dash when unset.
-    pub fn label(&self) -> String {
+    /// Shortcut.ToString: "Ctrl+Alt+Shift+Win+Key", or an em dash when unset. On a Mac
+    /// the same bits are Control, Option, Shift and Command (⌃⌥⇧⌘), written as macOS does.
+    pub fn label(&self) -> String { self.label_for(cfg!(target_os = "macos")) }
+
+    pub fn label_for(&self, mac: bool) -> String {
         if !self.is_set() { return "—".into(); }
         let mut parts = vec![];
-        if self.modifiers.has(Modifiers::CONTROL) { parts.push("Ctrl".to_string()); }
-        if self.modifiers.has(Modifiers::ALT) { parts.push("Alt".into()); }
-        if self.modifiers.has(Modifiers::SHIFT) { parts.push("Shift".into()); }
-        if self.modifiers.has(Modifiers::WINDOWS) { parts.push("Win".into()); }
+        let mods: [(Modifiers, &str, &str); 4] =
+            [(Modifiers::CONTROL, "Ctrl", "⌃"), (Modifiers::ALT, "Alt", "⌥"), (Modifiers::SHIFT, "Shift", "⇧"), (Modifiers::WINDOWS, "Win", "⌘")];
+        for (m, win, mac_symbol) in mods { if self.modifiers.has(m) { parts.push(if mac { mac_symbol } else { win }.to_string()); } }
         parts.push(match self.key.name() {
             Some("Back") => "Backspace".into(),
             Some("Escape") => "Esc".into(),
@@ -156,7 +158,7 @@ impl Shortcut {
             Some(n) => n.into(),
             None => self.key.0.to_string(),
         });
-        parts.join("+")
+        if mac { parts.concat() } else { parts.join("+") }
     }
 }
 
@@ -182,8 +184,21 @@ mod tests {
 
     #[test]
     fn labels_as_shortcut_to_string() {
-        assert_eq!(Shortcut::DEFAULT.label(), "Alt+N");
-        assert_eq!(Shortcut { key: Key::BACK, modifiers: Modifiers::WINDOWS | Modifiers::CONTROL }.label(), "Ctrl+Win+Backspace");
+        assert_eq!(Shortcut::DEFAULT.label_for(false), "Alt+N");
+        assert_eq!(Shortcut { key: Key::BACK, modifiers: Modifiers::WINDOWS | Modifiers::CONTROL }.label_for(false), "Ctrl+Win+Backspace");
         assert_eq!(Shortcut::default().label(), "—");
+        // Off a Mac, label() is the Windows text.
+        if !cfg!(target_os = "macos") { assert_eq!(Shortcut::DEFAULT.label(), "Alt+N"); }
+    }
+
+    /// The same bits on a Mac: Alt is Option, Windows is Command.
+    #[test]
+    fn labels_in_macos_symbols() {
+        assert_eq!(Shortcut::DEFAULT.label_for(true), "⌥N");
+        let voice = Shortcut { key: Key::from_name("Space").unwrap(), modifiers: Modifiers::CONTROL | Modifiers::ALT };
+        assert_eq!((voice.label_for(true), voice.label_for(false)), ("⌃⌥Space".to_string(), "Ctrl+Alt+Space".to_string()));
+        let all = Shortcut { key: Key::ESCAPE, modifiers: Modifiers::WINDOWS | Modifiers::SHIFT | Modifiers::ALT | Modifiers::CONTROL };
+        assert_eq!(all.label_for(true), "⌃⌥⇧⌘Esc");
+        assert_eq!(Shortcut::default().label_for(true), "—");
     }
 }

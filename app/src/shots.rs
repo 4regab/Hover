@@ -253,7 +253,16 @@ fn chat_shots(app: &Rc<App>, hover: &Arc<hover_app::app::Hover>, dir: &Path, fol
         // on its change, its output and a thought.
         open(rich);
         shot("done");
-        // A long folder name: its chip gives way, the header's Delete and Close stay whole.
+        // The question Restore and Try again ask before they touch the folder.
+        g.set_confirm_title("Restore to here?".into());
+        g.set_confirm_ok("Restore".into());
+        g.set_confirm_text("The files in “project” go back to how they were after this answer, and the 2 messages after it leave this chat. Changes made since, by the agent or by you, are undone.".into());
+        g.set_confirm(true);
+        settle(300);
+        shot("rewind-confirm");
+        g.set_confirm(false);
+        g.set_confirm_title("Delete this session?".into());
+        g.set_confirm_ok("Delete".into());        // A long folder name: its chip gives way, the header's Delete and Close stay whole.
         g.set_d_folder("a-really-long-project-folder-name-that-goes-on-and-on-and-on".into());
         settle(200);
         shot("long-folder");
@@ -346,6 +355,295 @@ fn chat_shots(app: &Rc<App>, hover: &Arc<hover_app::app::Hover>, dir: &Path, fol
     run_for(600);
 }
 
+/// The desk card's sessions: a turn with the steps a real one reports (commands with their
+/// output, a failed one, a dev server, a page fetched, two subagents), held while it "works".
+fn desk_fixture(a: &RunArgs, hold: &Arc<std::sync::Mutex<bool>>) -> Option<KiroResult> {
+    use hover_agents::stream::KiroEvent;
+    use hover_core::model::KiroStep;
+    let p = a.prompt.as_str();
+    if !p.starts_with("Desk fixture") { return None; }
+    let ev = |s: KiroStep| (a.events)(KiroEvent { step: Some(s), ..Default::default() });
+    let st = |id: &str, kind: &str, title: &str, target: &str, status: &str| KiroStep::new(id, kind, title, Some(target.into()), status);
+    ev(KiroStep { ms: Some(900.0), ..st("r1", "read", "Read", "src/refresh.ts", "completed") });
+    ev(KiroStep { added: 12, removed: 3, ms: Some(1400.0), diff: Some("  export function refresh(view) {\n-   view.draw();\n+   if (!view.dirty) return;\n+   view.draw();".into()), ..st("e1", "edit", "Edit", "src/refresh.ts", "completed") });
+    ev(KiroStep { exit: Some(0), ms: Some(8200.0), output: Some("> hover@1.0.0 test\n> vitest run\n\n ✓ src/refresh.test.ts (6)\n ✓ src/view.test.ts (14)\n\n Test Files  2 passed (2)\n      Tests  20 passed (20)".into()), ..st("x1", "execute", "Run", "npm test", "completed") });
+    ev(KiroStep { exit: Some(101), ms: Some(2100.0), output: Some("error[E0308]: mismatched types\n --> src/lib.rs:41:9\n  |\n41 |     let n: usize = view.rows();\n  |            -----   ^^^^^^^^^^^ expected `usize`, found `i32`\n\nerror: could not compile `hover` due to 1 previous error".into()), ..st("x2", "execute", "Run", "cargo check -p hover", "failed") });
+    ev(KiroStep { output: Some("\n  VITE v5.4.0  ready in 312 ms\n\n  ➜  Local:   http://localhost:5173/\n  ➜  Network: use --host to expose".into()), ..st("x3", "execute", "Run", "npm run dev", "completed") });
+    ev(KiroStep { ..st("f1", "fetch", "Fetched", "https://docs.rs/slint/latest/slint/", "completed") });
+    if p.contains("busy") {
+        ev(st("a1", "agent", "Subagent", "Find every caller of refresh()", "in_progress"));
+        ev(st("a2", "agent", "Subagent", "Check the tests for refresh()", "in_progress"));
+        ev(st("x4", "execute", "Run", "cargo build --release -p hover", "in_progress"));
+        while *hold.lock().unwrap() && !a.ct.is_cancelled() { std::thread::sleep(Duration::from_millis(10)); }
+        return Some(KiroResult::new(KiroState::Completed, "Done."));
+    }
+    ev(KiroStep { ms: Some(41_000.0), output: Some("Three callers: view.rs:88, panel.rs:12 and the tests. All of them pass a dirty view already.".into()), ..st("a1", "agent", "Subagent", "Find every caller of refresh()", "completed") });
+    ev(KiroStep { ms: Some(9_000.0), output: Some("The tests cover refresh() with a clean view and a dirty one.".into()), ..st("a2", "agent", "Subagent", "Check the tests for refresh()", "completed") });
+    Some(KiroResult::new(KiroState::Completed, "## Refresh skips clean views\n\n`refresh()` now returns early when the view isn't dirty, so the panel stops redrawing on every poll. The change is in `src/refresh.ts`, and `npm test` passes (20 tests).\n\nIt also fixes the flicker reported in https://github.com/4regab/Hover/pull/42."))
+}
+
+/// A desk's data for the panel's tabs, as git and gh would read it, with no git and no gh.
+fn desk_sample(app: &Rc<App>, id: i32) {
+    use crate::desk_ui::Got;
+    use hover_agents::desk as d;
+    let patch = "@@ -8,7 +8,9 @@ export class View {\n   private rows: Row[] = [];\n   dirty = false;\n \n-  refresh() {\n-    this.draw();\n+  refresh() {\n+    if (!this.dirty) return;\n+    this.draw();\n+    this.dirty = false;\n   }\n \n   draw() {\n@@ -40,3 +42,4 @@ export class View {\n   mark() {\n     this.dirty = true;\n+    this.rows.length = 0;\n   }";
+    let file = |p: &str, st: char, add: i32, del: i32| d::FileDiff { path: p.into(), old: None, status: st, add, del, binary: false, patch: patch.into() };
+    let diff = d::Diff { git: true, partial: false, branch: Some("feat/refresh".into()), truncated: false, error: None, files: vec![
+        file("src/refresh.ts", 'M', 5, 2), file("src/view.test.ts", 'A', 24, 0),
+        d::FileDiff { path: "assets/logo.png".into(), old: None, status: 'A', add: 0, del: 0, binary: true, patch: String::new() }] };
+    let changed = |p: &str, st: char, add: i32, del: i32| d::ChangedFile { path: p.into(), status: st, old: None, add, del };
+    let files = d::Files { git: true, branch: Some("feat/refresh".into()), changed: vec![changed("src/refresh.ts", 'M', 5, 2), changed("src/view.test.ts", 'A', 24, 0), changed("notes/old.md", 'D', 0, 9)],
+        touched: vec![d::Touched { path: "src/refresh.ts".into(), read: 2, edit: 1 }, d::Touched { path: "src/view.ts".into(), read: 1, edit: 0 }, d::Touched { path: "package.json".into(), read: 1, edit: 0 }],
+        tree: ["README.md", "package.json", "src/app.ts", "src/refresh.ts", "src/view.ts", "src/view.test.ts", "src/ui/panel.ts", "src/ui/theme.ts", "notes/old.md", "assets/logo.png"].iter().map(|s| s.to_string()).collect(), more: false, error: None };
+    let probe = d::Probe { folder: true, git_installed: true, git: true, branch: Some("feat/refresh".into()), changed: 3, add: 29, del: 11, gh: true, gh_auth: true, gh_user: Some("arz".into()),
+        commands: 4, agents: 2, running: 2, pages: 2, linked: 1, ..Default::default() };
+    let linked = d::Linked { gh: true, prs: vec![
+        d::LinkedPr { url: "https://github.com/4regab/Hover/pull/42".into(), repo: "4regab/Hover".into(), number: 42, title: Some("Fix the flicker on refresh".into()), state: Some("merged".into()), is_draft: false, additions: 31, deletions: 7, head: Some("fix/flicker".into()), error: None },
+        d::LinkedPr { url: "https://github.com/4regab/Hover/pull/57".into(), repo: "4regab/Hover".into(), number: 57, title: Some("Redraw the panel only when it changed".into()), state: Some("open".into()), is_draft: true, additions: 12, deletions: 3, head: Some("feat/refresh".into()), error: None },
+        d::LinkedPr { url: "https://github.com/trycua/cua/pull/9".into(), repo: "trycua/cua".into(), number: 9, title: None, state: None, is_draft: false, additions: 0, deletions: 0, head: None, error: Some("gh can’t see it".into()) }] };
+    app.desk_put(id, "probe", Got::Probe(probe));
+    app.desk_put(id, "files", Got::Files(files));
+    app.desk_put(id, "diff", Got::Diff(diff));
+    app.desk_put(id, "linked", Got::Linked(linked));
+}
+
+/// The desk card and the desk panel: a busy desk with two helpers out, the card on it and on
+/// a finished one, every tab with sample data (no git, no gh, no network), the pull request
+/// tab's setup and form, and the tip over a desk. Files: desk-*.png.
+fn desk_shots(app: &Rc<App>, hover: &Arc<hover_app::app::Hover>, dir: &Path, folder: &str, hold: &Arc<std::sync::Mutex<bool>>) {
+    use crate::desk_ui::Got;
+    use hover_agents::desk as d;
+    let notch = adapter(0);
+    let desk = [0x3a, 0x4a, 0x5e];
+    let settle = |ms: u64| {
+        let t = std::time::Instant::now();
+        while t.elapsed() < Duration::from_millis(ms) {
+            slint::platform::update_timers_and_animations();
+            app.office_frame();
+            std::thread::sleep(Duration::from_millis(15));
+        }
+    };
+    let until = |f: &dyn Fn() -> bool| { let t = std::time::Instant::now(); while t.elapsed() < Duration::from_secs(5) && !f() { std::thread::sleep(Duration::from_millis(10)); } };
+    // A large office, for the wide panel; the sessions of the earlier shots go.
+    hover.settings.set_workspace_size(hover_core::model::WorkspaceSize::Large);
+    view::Host::settings_changed(&**app);
+    for s in hover.sessions.all() { hover.sessions.delete(&s.key); }
+    run_for(500);
+    app.close_drawer();
+    app.open_panel(None);
+    let busy = hover.sessions.start(AgentTool::Kiro, folder, "Desk fixture busy: make refresh() skip views that are clean", vec![]).map(|s| s.id);
+    let done = hover.sessions.start(AgentTool::Codex, folder, "Desk fixture done: open a pull request for the refresh change", vec![]).map(|s| s.id);
+    for id in [busy, done].into_iter().flatten() { until(&|| hover.sessions.get(id).is_some_and(|s| s.kiro_id.is_some() && s.turns.first().is_some_and(|t| t.steps.len() >= 6))); }
+    let (busy, done) = (busy.unwrap_or(0), done.unwrap_or(0));
+    app.office_follow();
+    app.office_push();
+    // The bots walk in and sit down; the busy one's subagents come out as helpers.
+    settle(6000);
+    let full = { let n = app.n.borrow(); (n.win.width() as u32, n.win.height() as u32) };
+    let shot = |name: &str| save_office(&notch, full, &dir.join(name));
+    shot("desk-helpers.png");
+    let at = |id: i32| app.desk_tag_at(id).unwrap_or((400.0, 200.0));
+    // The tip over a bot, and over a desk with a session at it.
+    let g = app.notch.global::<Office>();
+    let (bx, by) = at(busy);
+    g.set_tip_x(bx + 30.0);
+    g.set_tip_y(by + 60.0);
+    g.set_over_name("Pip".into());
+    g.set_over_color(slint::Color::from_rgb_u8(0x9b, 0x6b, 0xff));
+    g.set_over_kind(1);
+    shot("desk-tip-bot.png");
+    g.set_over_kind(2);
+    shot("desk-tip-desk.png");
+    g.set_over_kind(0);
+    // The card, on the busy desk: its live steps, the helpers out, the eight tiles.
+    desk_sample(app, busy);
+    desk_sample(app, done);
+    app.desk_shot_card(busy, bx + 40.0, by + 20.0);
+    settle(700);
+    shot("desk-card-working.png");
+    // The same with a reply typed.
+    app.notch.global::<Desk>().set_c_draft("Also keep the dirty flag in the tests".into());
+    settle(300);
+    shot("desk-card-working-reply.png");
+    app.notch.global::<Desk>().set_c_draft("".into());
+    // The finished desk: the answer it gave, in a line or so.
+    app.desk_close_card();
+    let (dx, dy) = at(done);
+    app.desk_shot_card(done, dx + 40.0, dy + 20.0);
+    settle(700);
+    shot("desk-card-done.png");
+    // A question the agent waits on, in place of the steps.
+    let sid = hover.sessions.get(busy).and_then(|s| s.kiro_id).unwrap_or_default();
+    let ask = hover_agents::ask::AgentAsk { id: "d1".into(), kind: "execute".into(), title: "Run".into(), command: Some("cargo build --release -p hover".into()), path: None,
+        preview: None, added: 0, removed: 0, reason: "Builds the project".into(), danger: false, questions: None };
+    hover.sessions.ask(AgentTool::Kiro, &sid, ask, &hover_agents::cancel::Cancel::new(), Box::new(|_| {}));
+    app.desk_close_card();
+    app.desk_shot_card(busy, bx + 40.0, by + 20.0);
+    settle(500);
+    shot("desk-card-asking.png");
+    hover.sessions.answer(busy, "d1", hover_agents::ask::AskAnswer::Deny);
+    app.desk_close_card();
+    // A question with choices (OpenCode, Claude Code): Skip and Answer… in place of the three.
+    let question = hover_agents::ask::AgentAsk { id: "d2".into(), kind: "question".into(), title: "Question".into(), command: None, path: None, preview: None, added: 0, removed: 0,
+        reason: String::new(), danger: false, questions: Some(vec![hover_agents::ask::AgentQuestion { header: "Scope".into(), question: "Should refresh() also skip views that are hidden, or only clean ones?".into(),
+            options: vec![("Only clean ones".into(), "Keep the change small".into()), ("Hidden too".into(), "Also check visibility".into())], multiple: false, custom: true }]) };
+    hover.sessions.ask(AgentTool::Kiro, &sid, question, &hover_agents::cancel::Cancel::new(), Box::new(|_| {}));
+    app.desk_shot_card(busy, bx + 40.0, by + 20.0);
+    settle(500);
+    shot("desk-card-question.png");
+    hover.sessions.answer(busy, "d2", hover_agents::ask::AskAnswer::Deny);
+    app.desk_close_card();
+    // The panel, tab by tab, on the finished desk (its session is idle, so Create is open).
+    let tab = |name: &str, file: &str| { app.desk_shot_open(done, name); settle(700); shot(file); };
+    tab("terminal", "desk-tab-terminal.png");
+    tab("files", "desk-tab-files.png");
+    app.notch.global::<Desk>().invoke_act("dir:src".into());
+    app.notch.global::<Desk>().invoke_act("dir:src/ui".into());
+    settle(300);
+    shot("desk-tab-files-tree.png");
+    app.notch.global::<Desk>().invoke_find_edited("view".into());
+    settle(300);
+    shot("desk-tab-files-find.png");
+    app.notch.global::<Desk>().invoke_find_edited("".into());
+    // A file opens, with its numbers (the sample's text is a long one, to scroll).
+    let text: String = (1..=300).map(|i| if i % 7 == 0 { format!("  // line {i}: refresh() draws the rows\n") } else { format!("export const row{i} = (view: View) => view.rows[{i}];\n") }).collect();
+    app.notch.global::<Desk>().invoke_act("file:src/refresh.ts".into());
+    app.desk_put(done, "file", Got::File("src/refresh.ts".into(), d::FileView::Text { path: "src/refresh.ts".into(), text, truncated: false, size: 14_900 }));
+    settle(500);
+    shot("desk-tab-file.png");
+    app.notch.global::<Desk>().invoke_scrolled(2000.0, 300.0);
+    settle(300);
+    shot("desk-tab-file-scrolled.png");
+    app.notch.global::<Desk>().invoke_act("fback".into());
+    tab("diff", "desk-tab-diff.png");
+    // Pull request: the branch's own, with its checks.
+    let pr = d::PrDetail { number: 57, title: "Redraw the panel only when it changed".into(), state: "open".into(), is_draft: true, url: "https://github.com/4regab/Hover/pull/57".into(), head: "feat/refresh".into(), base: "main".into(),
+        additions: 29, deletions: 11, changed_files: 3, body: "`refresh()` returns early when the view isn't dirty, so the panel stops redrawing on every poll.\n\nFixes the flicker from #42. The tests cover a clean view and a dirty one.".into(),
+        author: Some("arz".into()), review: Some("REVIEW_REQUIRED".into()), updated_at: None, comments: 2, pass: 3, fail: 1, pending: 1, skip: 0,
+        checks: vec![d::Check { name: "build (ubuntu)".into(), state: "pass".into(), url: Some("https://github.com/x".into()) }, d::Check { name: "build (windows)".into(), state: "pass".into(), url: Some("https://github.com/x".into()) },
+            d::Check { name: "test".into(), state: "fail".into(), url: Some("https://github.com/x".into()) }, d::Check { name: "lint".into(), state: "pass".into(), url: None }, d::Check { name: "deploy preview".into(), state: "pending".into(), url: None }] };
+    app.desk_put(done, "pr", Got::Pr(d::PrPanel::Open(Box::new(pr))));
+    tab("pr", "desk-tab-pr.png");
+    // The GitHub CLI's setup: one button; then its one-time code, with Copy and Open.
+    app.desk_put(done, "pr", Got::Pr(d::PrPanel::Setup { need: d::Setup::Install, message: "Set up the GitHub CLI.".into() }));
+    settle(300);
+    let g = app.notch.global::<Desk>();
+    g.set_gh_can_start(true);
+    g.set_gh_hint("".into());
+    settle(300);
+    shot("desk-tab-pr-setup.png");
+    g.set_gh_title("Sign in to GitHub".into());
+    g.set_gh_text("gh is installed. Sign in once with your browser, and Hover can show this branch’s pull request and open new ones.".into());
+    g.set_gh_code("A1B2-C3D4".into());
+    g.set_gh_busy(true);
+    g.set_gh_line("Waiting for you to approve it on github.com…".into());
+    g.set_gh_url("https://github.com/login/device".into());
+    settle(300);
+    shot("desk-tab-pr-code.png");
+    g.set_gh_busy(false);
+    g.set_gh_code("".into());
+    g.set_gh_error("Sign-in didn’t finish: the code expired. Try again.".into());
+    g.set_gh_button("Sign in with GitHub".into());
+    settle(300);
+    shot("desk-tab-pr-setup-failed.png");
+    // Create pull request, on a finished desk: the form from the session's title and answer.
+    let create = d::CreateInfo { branch: Some("main".into()), base: "main".into(), on_default: true, suggest: Some("hover/refresh-skips-clean-views".into()), ahead: 0, changed: 3,
+        title: "Refresh skips views that are clean".into(), body: "`refresh()` now returns early when the view isn't dirty, so the panel stops redrawing on every poll.\n\nChanges: src/refresh.ts, src/view.test.ts.".into(), busy: false };
+    app.desk_put(done, "pr", Got::Pr(d::PrPanel::NoPr { message: "This branch has no pull request yet.".into(), create: create.clone() }));
+    settle(500);
+    shot("desk-tab-pr-create.png");
+    app.desk_shot_result(done, true, None);
+    settle(300);
+    shot("desk-tab-pr-creating.png");
+    app.desk_shot_result(done, false, Some(d::CreatePrResult { ok: false, url: None, error: Some("Couldn’t push: the remote rejected it (protected branch).".into()), steps: vec!["made the branch hover/refresh-skips-clean-views".into(), "committed 3 files".into()] }));
+    settle(300);
+    shot("desk-tab-pr-create-failed.png");
+    app.desk_shot_result(done, false, Some(d::CreatePrResult { ok: true, url: Some("https://github.com/4regab/Hover/pull/58".into()), error: None, steps: vec![] }));
+    settle(300);
+    shot("desk-tab-pr-create-done.png");
+    app.desk_shot_result(done, false, None);
+    // The same form while the agent works in the folder: Create is off, and says why.
+    app.desk_put(busy, "pr", Got::Pr(d::PrPanel::NoPr { message: "This branch has no pull request yet.".into(), create: d::CreateInfo { busy: true, ..create } }));
+    app.desk_shot_open(busy, "pr");
+    settle(600);
+    shot("desk-tab-pr-create-busy.png");
+    tab("linked", "desk-tab-linked.png");
+    tab("agents", "desk-tab-agents.png");
+    app.notch.global::<Desk>().invoke_act(format!("sa:{}", "a1").into());
+    settle(400);
+    shot("desk-tab-agents-open.png");
+    tab("browser", "desk-tab-browser.png");
+    // Screen: the desktop with the agent's apps, as a Mac shows it with its grant.
+    let frame = image::RgbaImage::from_fn(1280, 800, |x, y| {
+        let inside = (260..1020).contains(&x) && (120..700).contains(&y);
+        let bar = inside && y < 150;
+        if bar { image::Rgba([0x2a, 0x2a, 0x30, 255]) } else if inside { image::Rgba([0xf4, 0xf1, 0xea, 255]) } else { image::Rgba([(0x30 + y / 20) as u8, (0x40 + x / 30) as u8, 0x7a, 255]) }
+    });
+    app.desk_shot_open(done, "screen");
+    app.desk_shot_frame(frame, false);
+    settle(500);
+    shot("desk-tab-screen.png");
+    // Everything off: Create's state cleared, the panel put away, the sessions let go.
+    app.desk_close_panel();
+    *hold.lock().unwrap() = false;
+    run_for(400);
+    hover.settings.set_workspace_size(hover_core::model::WorkspaceSize::Default);
+    view::Host::settings_changed(&**app);
+    settle(600);
+    let _ = desk;
+}
+
+/// Settings → Integrations with Computer use on, in each state of Cua Driver, and as a Mac
+/// would show it (every switch on); and an agent's page with its one-click setup. Headless
+/// there is no Cua Driver to ask, so each state is handed in.
+fn settings_integrations_shots(app: &Rc<App>, hover: &Arc<hover_app::app::Hover>, dir: &Path) {
+    use hover_app::pages::{Caps, Cua, Integ, SetupCard};
+    let dash = adapter(1);
+    let mac = Caps { sandbox: true, browser: true, setup: true, computer_use: true, mac: true };
+    // Computer use is a Mac's: its own states are shown with it on, wherever the shots run.
+    let cu_on = Caps { computer_use: true, ..Caps::here() };
+    hover.settings.set_theme(None);
+    hover.settings.set_appearance(Appearance::Dark);
+    view::Host::theme_changed(&**app);
+    let show = |name: &str, integ: Integ| {
+        app.pane.borrow_mut().live.integ = integ;
+        app.show_settings_in(1, Section::Integrations);
+        save(&dash, (1200, 720), 1.0, [0, 0, 0], &dir.join(name));
+    };
+    hover.settings.set_computer_use(true);
+    let cua = |c: Cua| Integ { caps: cu_on, cua: Some(c), ..Default::default() };
+    // What this system shows: off with its note where it isn't a Mac.
+    show("settings-integrations-computer-use-here.png", Integ::default());
+    show("settings-integrations-cua-checking.png", Integ { caps: cu_on, ..Default::default() });
+    show("settings-integrations-cua-missing.png", cua(Cua { hint: "Install Cua Driver: /bin/bash -c \"$(curl -fsSL https://cua.ai/driver/install.sh)\"".into(), ..Default::default() }));
+    show("settings-integrations-cua-installing.png", cua(Cua { busy: true, line: "Installing Cua Driver…".into(), ..Default::default() }));
+    show("settings-integrations-cua-ready.png", cua(Cua { installed: true, version: "0.3.1".into(), permissions: "granted".into(), ..Default::default() }));
+    // As a Mac shows it: Computer use needs its grants, the sandbox lacks srt, the browser is on.
+    hover.settings.set_sandbox(true);
+    show("settings-integrations-as-on-a-mac.png", Integ { caps: mac, cua: Some(Cua { installed: true, version: "0.3.1".into(), permissions: "partial".into(),
+        hint: "Screen Recording isn’t granted to CuaDriver, so agents can read and act on windows but not see them.".into(), ..Default::default() }),
+        sandbox_missing: Some("Hover runs agents in a sandbox, which isn’t set up yet: npm install -g @anthropic-ai/sandbox-runtime@0.0.78, then brew install ripgrep. (Or turn the sandbox off in Settings.)".into()), setup: vec![] });
+    hover.settings.set_computer_use(false);
+    // An agent's page: its setup off here with the note, and as a Mac shows it, going.
+    app.pane.borrow_mut().live.integ = Integ::default();
+    app.show_settings_in(1, Section::Kiro);
+    save(&dash, (1200, 720), 1.0, [0, 0, 0], &dir.join("settings-kiro-setup-off.png"));
+    app.pane.borrow_mut().live.integ = Integ { caps: mac, setup: vec![(AgentTool::Kiro, SetupCard { busy: true, line: "Installing kiro-cli…".into(), error: None })], ..Default::default() };
+    app.show_settings_in(1, Section::Kiro);
+    save(&dash, (1200, 720), 1.0, [0, 0, 0], &dir.join("settings-kiro-setup-going.png"));
+    app.pane.borrow_mut().live.integ = Integ { caps: mac, setup: vec![(AgentTool::Kiro, SetupCard { busy: false, line: String::new(), error: Some("Couldn’t install kiro-cli: the installer exited with 1.".into()) })], ..Default::default() };
+    app.show_settings_in(1, Section::Kiro);
+    save(&dash, (1200, 720), 1.0, [0, 0, 0], &dir.join("settings-kiro-setup-failed.png"));
+    app.pane.borrow_mut().live.integ = Integ::default();
+    // Kiro's auto compact: off (the switch alone), then on at 70 % with its choice.
+    app.show_settings_in(1, Section::Kiro);
+    save(&dash, (1200, 1000), 1.0, [0, 0, 0], &dir.join("settings-kiro-compact-off.png"));
+    hover.settings.set_kiro_auto_compact(true);
+    hover.settings.set_kiro_compact_at(70);
+    app.show_settings_in(1, Section::Kiro);
+    save(&dash, (1200, 1000), 1.0, [0, 0, 0], &dir.join("settings-kiro-compact-on.png"));
+    hover.settings.set_kiro_auto_compact(false);
+}
 /// A voice preview as Voice makes one, for the shots.
 fn preview(folder: &str, target: &str, note: Option<&str>, task: &str, countdown: Option<f32>, access: &str) -> hover_app::voice::Preview {
     hover_app::voice::Preview {
@@ -518,6 +816,9 @@ pub fn run(dir: &Path) {
     // The chat's own fixtures (thinking, subagents, a question) hold until shot.
     let hold_c = Arc::new(std::sync::Mutex::new(true));
     let hc = hold_c.clone();
+    // The desk card's sessions work until told otherwise.
+    let hold_d = Arc::new(std::sync::Mutex::new(true));
+    let hd = hold_d.clone();
     let n = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let run: RunTask = Arc::new(move |a: RunArgs| {
         use hover_agents::stream::KiroEvent;
@@ -526,6 +827,7 @@ pub fn run(dir: &Path) {
         (a.events)(KiroEvent { session_id: Some(format!("s{k}")), ..Default::default() });
         (a.progress)(hover_agents::stream::KiroPhase::Reading);
         if let Some(r) = chat_fixture(&a, &hc) { return r; }
+        if let Some(r) = desk_fixture(&a, &hd) { return r; }
         // The steps a real turn reports: reads, an edit with its change, a command with its output.
         let step = |id: &str, kind: &str, title: &str, target: &str| KiroStep::new(id, kind, title, Some(target.into()), "completed");
         (a.events)(KiroEvent { step: Some(step("r1", "read", "Read", "src/app/imports.ts")), ..Default::default() });
@@ -722,6 +1024,23 @@ pub fn run(dir: &Path) {
     settle(400);
     save(&notch, full, 1.0, desk, &dir.join("office-model-menu-opencode.png"));
     g.invoke_open_model(0, 0.0, 0.0);
+    // A long model list (Codex's model/list gives one), the last model picked: the menu scrolls to it,
+    // shows a bar, and the efforts stay in view. Then the shorter list again.
+    let codex: Vec<hover_core::model::AcpChoice> = ["GPT-5.6 Sol", "GPT-5.6 Terra", "GPT-5.6 Luna", "GPT-5.5", "GPT-5.5 Mini", "GPT-5.4", "GPT-5.3 Codex", "GPT-5.3 Codex Spark", "GPT-5.2", "GPT-5.1 Codex Max", "GPT-5.1 Codex", "GPT-5.1 Mini", "GPT-5", "GPT-6.1 Sol"]
+        .iter().map(|n| hover_core::model::AcpChoice::new(&n.to_lowercase().replace(' ', "-"), n)).collect();
+    hover.settings.set_agent_offers(AgentTool::Kiro, &[hover_core::model::AcpOption { id: "model".into(), category: Some("model".into()), current: Some("gpt-6.1-sol".into()), choices: codex.clone() },
+        hover_core::model::AcpOption { id: "reasoning_effort".into(), category: Some("thought_level".into()), current: Some("medium".into()),
+            choices: ["low", "medium", "high", "xhigh"].iter().map(|e| hover_core::model::AcpChoice::new(e, e)).collect() }]);
+    hover.settings.set_agent_options(AgentTool::Kiro, hover_core::model::AgentOptions { model: Some("gpt-6.1-sol".into()), effort: Some("high".into()), ..Default::default() });
+    g.invoke_pick_tool(0);
+    settle(300);
+    g.invoke_open_model(2, 330.0, (full.1 as f32) - 60.0);
+    settle(400);
+    save(&notch, full, 1.0, desk, &dir.join("office-model-menu-long.png"));
+    g.invoke_open_model(0, 0.0, 0.0);
+    hover.settings.set_agent_offers(AgentTool::Kiro, &[]);
+    hover.settings.set_agent_options(AgentTool::Kiro, Default::default());
+    g.invoke_pick_tool(3);
     g.invoke_new_fold();
     let s4 = hover.sessions.start(AgentTool::OpenCode, &folder, "Set up the formatter", vec![]);
     let t = std::time::Instant::now();
@@ -818,6 +1137,7 @@ pub fn run(dir: &Path) {
     }
     *hold3.lock().unwrap() = false;
     chat_shots(&app, &hover, dir, &folder, &hold, &hold_c);
+    desk_shots(&app, &hover, dir, &folder, &hold_d);
     app.show_settings_in(0, Section::General);
     save(&notch, full, 1.0, desk, &dir.join("notch-open-settings.png"));
     // A Small office: the nine sections are taller than its sidebar, which scrolls.
@@ -854,6 +1174,7 @@ pub fn run(dir: &Path) {
         save(&dash, (840, 620), 1.0, [0, 0, 0], &dir.join(format!("settings-{}-narrow.png", s.title().to_lowercase().replace(' ', "-"))));
     }
     settings_voice_shots(&app, &hover, dir, &data);
+    settings_integrations_shots(&app, &hover, dir);
     // A VS Code theme (Dark+ as its files say), and the model picker open.
     let t = hover_core::model::SavedTheme { name: "Dark+".into(), dark: true, colors: [("editor.background", "#1e1e1e"), ("foreground", "#cccccc"),
         ("sideBar.background", "#181818"), ("button.background", "#0e639c"), ("terminal.ansiRed", "#cd3131"), ("terminal.ansiYellow", "#e5e510"),
@@ -866,6 +1187,9 @@ pub fn run(dir: &Path) {
     app.pane.borrow_mut().menu = Some(("KiroModel".into(), view::picker_options(&app.last_blocks.borrow(), "KiroModel"), 760.0, 180.0));
     app.refresh_page(false);
     save(&dash, (1200, 620), 1.0, [0, 0, 0], &dir.join("settings-kiro-model-menu.png"));
-    hover.shutdown();
+    app.show_settings_in(1, Section::Codex);
+    app.pane.borrow_mut().menu = Some(("CodexModel".into(), view::picker_options(&app.last_blocks.borrow(), "CodexModel"), 760.0, 180.0));
+    app.refresh_page(false);
+    save(&dash, (1200, 620), 1.0, [0, 0, 0], &dir.join("settings-codex-model-menu.png"));    hover.shutdown();
     let _ = std::fs::remove_dir_all(&data);
 }

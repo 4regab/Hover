@@ -1,6 +1,7 @@
 //! Core/Paths.cs: everything Hover owns lives in one folder. On Windows that is
-//! %APPDATA%\Hover; on Linux $XDG_DATA_HOME/Hover (~/.local/share/Hover). HOVER_DATA_DIR
-//! overrides both, and a test without it gets a temporary folder of its own.
+//! %APPDATA%\Hover; on Linux $XDG_DATA_HOME/Hover (~/.local/share/Hover); on macOS
+//! ~/Library/Application Support/Hover. HOVER_DATA_DIR overrides them all, and a test
+//! without it gets a temporary folder of its own.
 
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
@@ -16,7 +17,8 @@ pub fn resolve(overridden: Option<&std::ffi::OsStr>, app_data: Option<PathBuf>) 
     let dir = base.join("Hover");
     // The app used to be called Noty. An existing install's settings and key come
     // across the first time the renamed build runs, only when there is an old folder
-    // and no new one yet. There was never a Linux Noty, so there it never fires.
+    // and no new one yet. There was never a Linux Noty, so there it never fires (the
+    // C# build did the same on macOS, where the move is harmless).
     let legacy = base.join("Noty");
     if !dir.is_dir() && legacy.is_dir() {
         // Not the log: logging needs this very folder.

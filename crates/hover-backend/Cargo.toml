@@ -1,0 +1,24 @@
+[package]
+name = "hover-backend"
+description = "The agent backend the Mac app's Swift UI starts (src/Hover.Backend's Program.cs and OfficeState.cs, in Rust): hover-core, hover-agents and hover-quota behind JSON lines on stdin and stdout, with the state the web office reads. It replaces the C# backend, so every OS shares one. Not linked into the Slint app."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+# No doc tests here: rustdoc built and ran an empty set on every test run.
+doctest = false
+
+[[bin]]
+name = "hover-backend"
+path = "src/main.rs"
+
+[dependencies]
+hover-core = { path = "../hover-core" }
+hover-agents = { path = "../hover-agents" }
+hover-quota = { path = "../hover-quota" }
+# In the tree (hover-md, hover-agents): the computer-use step words (DeskInfo.ScreenVerb) and
+# the hotkey's key list are read with the C#'s own patterns.
+fancy-regex = { workspace = true }
+# In the tree (hover-quota): the quota readers take the time as a DateTime<Utc>.
+chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }

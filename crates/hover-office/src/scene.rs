@@ -62,7 +62,7 @@ pub struct Node {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub enum Hit { Bot(usize), Prop(usize) }
+pub enum Hit { Bot(usize), Prop(usize), Desk(usize) }
 
 #[derive(Default)]
 pub struct Graph { pub nodes: Vec<Node>, pub merged: Vec<Vec<VBox>> }
@@ -102,6 +102,14 @@ impl Graph {
     }
 
     pub fn local(&self, i: usize) -> M4 { let n = &self.nodes[i]; M4::trs(n.p, n.r, n.s) }
+
+    /// matrixWorld of one node (getWorldPosition's matrix), without working out the rest.
+    pub fn world_at(&self, i: usize) -> M4 {
+        let mut m = self.local(i);
+        let mut up = self.nodes[i].parent;
+        while let Some(p) = up { m = self.local(p).mul(&m); up = self.nodes[p].parent; }
+        m
+    }
 
     /// matrixWorld of every node, parents before children (they are added so).
     pub fn world(&self) -> Vec<M4> {

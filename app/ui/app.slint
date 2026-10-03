@@ -4,7 +4,8 @@
 import { Pal, Fonts, Icon, Icons, PillButton, Ring } from "widgets.slint";
 import { LiveMark, MarkStack, StackMark, Mark, Arc } from "marks.slint";
 import { OfficeView, Page, Office, Backdrop, Side, Block, Opt, TagData, ToolData, PanelRow, MOpt } from "office.slint";
-export { Pal, Page, Office, Backdrop, Side, Block, Opt, TagData, ToolData, PanelRow, StackMark }
+import { Desk, DTile, DStep, DTab, DPage, DRow } from "desk.slint";
+export { Pal, Page, Office, Backdrop, Side, Block, Opt, TagData, ToolData, PanelRow, StackMark, Desk, DTile, DStep, DTab, DPage, DRow }
 
 // A quota on the island: its ring, the number and whether it has a % after it, and
 // whether it is the dim one of a failed read.
@@ -187,6 +188,10 @@ export component NotchWindow inherits Window {
     in property <length> open-h: 440px;
     in property <length> rest-w;
     in property <length> rest-h;
+    // The camera housing of a Mac's notch (0 elsewhere): the island leaves room for it between its
+    // two sides, and the office starts below it.
+    in property <length> hw-w;
+    in property <length> hw-h;
     // The resting shape: 0 nothing, 1 the island, 2 the question's card.
     in property <int> rest-kind;
     in property <[QuotaItem]> quotas;
@@ -347,6 +352,7 @@ export component NotchWindow inherits Window {
                 // A question: the tool's breathing mark, what it wants, Deny and Review.
                 if root.seg == 1: HorizontalLayout {
                     VerticalLayout { alignment: center; LiveMark { width: 26px; height: 26px; tool: root.ask-tool; ring: 3; ring-color: #ffb340; t: Clock.t; } }
+                    Rectangle { width: root.hw-w; }
                     Rectangle { width: 9px; }
                     Text {
                         max-width: 260px;
@@ -374,6 +380,7 @@ export component NotchWindow inherits Window {
                 // At work: the stack, what the one in front is doing, and for how long.
                 if root.seg == 2: HorizontalLayout {
                     VerticalLayout { alignment: center; MarkStack { marks: root.stack; n: root.stack-n; t: Clock.t; } }
+                    Rectangle { width: root.hw-w; }
                     Rectangle { width: 9px; }
                     HorizontalLayout {
                         max-width: 300px;
@@ -393,6 +400,7 @@ export component NotchWindow inherits Window {
                 // An end nobody has seen: the tool with its badge, how it went, the task.
                 if root.seg == 3: HorizontalLayout {
                     VerticalLayout { alignment: center; LiveMark { width: 18px; height: 18px; tile: 18px; tool: root.done-tool; ring: 0; badge: root.done-badge; } }
+                    Rectangle { width: root.hw-w; }
                     Rectangle { width: 9px; }
                     HorizontalLayout {
                         max-width: 280px;
@@ -835,9 +843,9 @@ export component NotchWindow inherits Window {
             }
             Rectangle {
                 x: (root.shape-w - root.open-w) / 2;
-                y: 0;
+                y: root.hw-h;
                 width: root.open-w;
-                height: root.open-h;
+                height: root.open-h - root.hw-h;
                 opacity: root.view-opacity;
                 view := OfficeView {
                     dashboard: false;
@@ -886,6 +894,8 @@ component Caption inherits Rectangle {
 export component DashboardWindow inherits Window {
     in property <bool> in-settings;
     in property <bool> is-maximized;
+    // The system's own title bar and edges (a Mac's), in place of Hover's.
+    in property <bool> native-frame;
     callback back();
     callback minimize();
     callback maximize();
@@ -897,7 +907,7 @@ export component DashboardWindow inherits Window {
     title: "Hover";
     // The taskbar's and Alt+Tab's icon while the dashboard shows.
     icon: @image-url("../assets/hover-mark.png");
-    no-frame: true;
+    no-frame: !root.native-frame;
     preferred-width: 1200px;
     preferred-height: 620px;
     min-width: 880px;
@@ -909,7 +919,7 @@ export component DashboardWindow inherits Window {
     VerticalLayout {
         // Hover's own title bar: the logo and name, then minimize, maximize, close. The
         // office fills the window under it, edge to edge.
-        Rectangle {
+        if !root.native-frame: Rectangle {
             height: 34px;
             background: #0b0810;
             TouchArea {
@@ -946,7 +956,7 @@ export component DashboardWindow inherits Window {
         }
     }
     // The resize border, 6 px, where the frame used to be.
-    if !root.is-maximized: Rectangle {
+    if !root.is-maximized && !root.native-frame: Rectangle {
         for e in [{ k: 1, x: 6px, y: 0, w: root.width - 12px, h: 4px }, { k: 2, x: 6px, y: root.height - 6px, w: root.width - 12px, h: 6px },
                   { k: 3, x: 0, y: 6px, w: 6px, h: root.height - 12px }, { k: 4, x: root.width - 6px, y: 6px, w: 6px, h: root.height - 12px },
                   { k: 5, x: 0, y: 0, w: 6px, h: 6px }, { k: 6, x: root.width - 6px, y: 0, w: 6px, h: 6px },

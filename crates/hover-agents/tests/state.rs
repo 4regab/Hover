@@ -44,7 +44,7 @@ fn session(v: &Json) -> KiroSession {
         };
         KiroStep { id: format!("t{i}"), kind: kind.into(), title: s(r, "verb").into(), target, status: s(r, "status").into(),
             added: r.get("add").unwrap().i32().unwrap(), removed: r.get("del").unwrap().i32().unwrap(), diff: o(r, "diff"), output: o(r, "out"),
-            exit: f(r, "exit").map(|e| e as i32), ms: f(r, "ms") }
+            exit: f(r, "exit").map(|e| e as i32), ms: f(r, "ms"), input: None, log: None }
     }).collect();
     let stage = s(v, "stage");
     let mut turn = KiroTurn::new(s(t, "prompt"), vec![]);
@@ -152,3 +152,50 @@ fn the_state_message_is_the_fixtures_bytes() {
         panic!("differs at {at}:\n got  …{}\n want …{}", &got[at.saturating_sub(80)..(at + 80).min(got.len())], &want[at.saturating_sub(80)..(at + 80).min(want.len())]);
     }
 }
+
+
+// MARK: Subagents (the office's helpers)
+
+fn step(id: &str, kind: &str, title: &str, status: &str) -> KiroStep { KiroStep::new(id, kind, title, None, status) }
+
+#[test]
+fn a_step_that_hands_work_to_a_subagent_is_told_by_kind_or_title() {
+    use hover_agents::state::is_subagent;
+    assert!(is_subagent(&step("a", "agent", "Explore the repo", "in_progress")));
+    for t in ["use_subagent", "Spawn_Agent", "Delegating to a sub-agent", "Running subagents", "delegate the tests", "Using use_subagent now"] {
+        assert!(is_subagent(&step("b", "other", t, "in_progress")), "{t}");
+        assert!(is_subagent(&step("c", "think", t, "in_progress")), "{t}");
+    }
+    // Word boundaries, as the regex has them; only "other" and "think" are read by title.
+    for t in ["Read the subagentless file", "Delegated", "undelegate", "agents", "Write File", ""] {
+        assert!(!is_subagent(&step("d", "other", t, "in_progress")), "{t}");
+    }
+    assert!(!is_subagent(&step("e", "read", "use_subagent", "in_progress")));
+    assert!(!is_subagent(&step("f", "execute", "spawn_agent", "in_progress")));
+}
+
+#[test]
+fn the_state_message_carries_each_running_subagent_as_an_agent_row() {
+    use hover_agents::state::{state, subagents_out};
+    let mut k = KiroSession::new(AgentTool::Kiro);
+    k.state = KiroState::Running;
+    k.phase = KiroPhase::Working;
+    let mut turn = KiroTurn::new("Check the tests", vec![]);
+    turn.steps = vec![step("1", "read", "Read", "completed"), step("2", "agent", "Find every caller", "in_progress"), step("3", "other", "use_subagent", "in_progress"),
+        step("4", "agent", "Write tests", "completed"), step("5", "agent", "Review", "failed"), step("6", "agent", "Lint", "pending")];
+    k.turns = vec![turn];
+    // Two in progress and one pending are out; the completed and the failed are back.
+    assert_eq!(subagents_out(&k), 3);
+    let m = state(&k, &|_| None);
+    let rows = m.get("turns").unwrap().items().unwrap()[0].get("steps").unwrap().items().unwrap();
+    let got: Vec<(&str, &str)> = rows.iter().map(|r| (s(r, "k"), s(r, "status"))).collect();
+    assert_eq!(got, [("read", "completed"), ("agent", "in_progress"), ("agent", "in_progress"), ("agent", "completed"), ("agent", "failed"), ("agent", "pending")]);
+    // The message has the same shape with or without subagents: nothing is added to it,
+    // and the office counts what the rows say (the agent rows not yet completed or failed).
+    assert!(m.get("subagents").is_none());
+    // Only the live turn counts: a session whose newest turn has none has none out.
+    k.turns.push(KiroTurn::new("Thanks", vec![]));
+    assert_eq!(subagents_out(&k), 0);
+    assert_eq!(subagents_out(&KiroSession::new(AgentTool::Codex)), 0);
+}
+

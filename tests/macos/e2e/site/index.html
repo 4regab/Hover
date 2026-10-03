@@ -1,0 +1,10 @@
+<!doctype html><html><head><title>Hover test page</title></head><body>
+<h1>Sign in</h1><p>Welcome to the demo.</p>
+<form id="f" onsubmit="event.preventDefault(); document.getElementById('out').textContent = 'Hello, ' + document.getElementById('name').value + '!'; console.log('submitted', document.getElementById('name').value);">
+<label>Name <input id="name" name="name" placeholder="Your name"></label>
+<button type="submit">Sign in</button></form>
+<p id="out"></p>
+<button onclick="document.getElementById('out').textContent = 'Clicked!'; console.warn('clicked')">Press me</button>
+<a href="page2.html">Next page</a>
+<div style="height:3000px"></div><p>Bottom of the page</p>
+</body></html>

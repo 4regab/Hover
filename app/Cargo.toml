@@ -1,6 +1,6 @@
 [package]
 name = "hover"
-description = "Hover, native: the notch, the office, Settings, the tray and the shortcut (App.xaml.cs, Owl/*, Services/TrayIcon, Interop/*), on Windows and Linux."
+description = "Hover, native: the notch, the office, Settings, the tray and the shortcut (App.xaml.cs, Owl/*, Services/TrayIcon, Interop/*), on Windows and Linux (the Mac app is macos/, Swift)."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -34,7 +34,8 @@ slint = { version = "=1.18.1", default-features = false, features = ["std", "com
 image = { version = "0.25", default-features = false, features = ["png", "ico", "jpeg"] }
 # The office's music (office-beats.ogg), which the page played through <audio>.
 # New crates: an Ogg Vorbis decoder in pure Rust, and the system's audio output
-# (WASAPI on Windows, ALSA, which PipeWire and PulseAudio serve, on Linux).
+# (WASAPI on Windows, ALSA, which PipeWire and PulseAudio serve, on Linux), which also
+# records the microphone for voice.
 lewton = "0.10"
 cpal = "0.18"
 
@@ -52,15 +53,17 @@ sha2 = "0.10"
 # In the tree (hover-quota): the chat's web images, fetched as WebView2 fetched them for
 # 2.x's page. rustls here.
 ureq = "3"
+# Already in the tree (winit): the X window behind winit's.
+raw-window-handle = "0.6"
+libc = "0.2"
+
+[target.'cfg(target_os = "linux")'.dependencies]
 # Already in the tree (winit): the notch's X11 window (override-redirect, its input
 # shape), the global shortcut (XGrabKey) and the screenshots of the real screen.
 x11rb = { version = "0.13", features = ["shape", "randr", "xtest"] }
-# Already in the tree (winit): the X window behind winit's.
-raw-window-handle = "0.6"
 # Already in the tree: the tray (StatusNotifierItem), notifications, and the portal's
 # global shortcut on Wayland. With its object server, which the tray needs.
 zbus = { version = "5", default-features = false, features = ["async-io", "blocking-api"] }
-libc = "0.2"
 # In the tree (zbus): the tray menu's node type is serialised as D-Bus asks.
 serde = { version = "1", features = ["derive"] }
 
@@ -80,6 +83,8 @@ windows = { version = "0.62", features = [
     "Win32_UI_HiDpi", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_Shell", "Win32_System_Threading",
     "Win32_System_LibraryLoader", "Win32_System_Power", "Win32_System_RemoteDesktop", "Win32_System_Com",
     "Win32_UI_Controls_Dialogs", "Win32_UI_Shell_Common",
+    # PrintWindow: the screen panel's capture of the agent's own windows (screen.rs).
+    "Win32_Storage_Xps",
 ] }
 
 [build-dependencies]

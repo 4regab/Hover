@@ -12,6 +12,13 @@ use std::time::Instant;
 pub const SHADOW_BLUR: f64 = 24.0;
 pub const SHADOW_DEPTH: f64 = 4.0;
 
+/// The camera housing on a Mac (NSScreen's safe-area insets and the two strips of menu bar
+/// either side of it), in points; or, with `real` false, the notch-sized pill a screen
+/// without one gets. The office's strip beside it and the island's wings are laid out
+/// from it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct HwNotch { pub width: f64, pub height: f64, pub real: bool }
+
 /// What differs per platform: Win32 (win.rs), X11 (x11.rs), or nothing (a plain window).
 pub trait Plat {
     /// The primary display's work area in device pixels, and its scale.
@@ -33,6 +40,8 @@ pub trait Plat {
     fn set_hit(&self, over: bool, shape: (f64, f64, f64, f64), scale: f64);
     /// Focus went to something that isn't ours (the click-away rule).
     fn foreground_is_ours(&self) -> bool;
+    /// The hardware notch under the window, on a Mac; none elsewhere.
+    fn hardware_notch(&self) -> Option<HwNotch> { None }
 }
 
 pub struct Notch {
@@ -58,6 +67,8 @@ pub struct Notch {
     pub anim: bool,
     pub hover_opens: bool,
     pub popover: bool,
+    /// The camera housing under the window (macOS), as of the last layout.
+    pub hw: Option<HwNotch>,
 }
 
 impl Notch {
@@ -66,7 +77,7 @@ impl Notch {
             plat, hover: Hover::default(), open: Openness::default(), rest_anim: RestAnim::default(), still: false, asking: false, rest_kind: 0,
             open_size: (1120.0, 440.0), size: OfficeSize::Default, scale: 1.0, work: Rect { left: 0, top: 0, right: 1920, bottom: 1080 },
             win: Rect { left: 0, top: 0, right: 1, bottom: 1 }, t0: Instant::now(), over: false, signature: String::new(),
-            last_display_check: Instant::now(), anim: false, hover_opens: true, popover: false,
+            last_display_check: Instant::now(), anim: false, hover_opens: true, popover: false, hw: None,
         }
     }
 
@@ -120,11 +131,16 @@ pub fn layout(ui: &NotchWindow, n: &mut Notch, panel: slint::Color) {
     let (work, scale) = n.plat.primary();
     n.work = work;
     n.scale = scale;
+    n.hw = n.plat.hardware_notch();
     let work_dips = (work.width() as f64 / scale, work.height() as f64 / scale);
     n.open_size = open_size(n.size, work_dips);
     n.win = placement(work, scale, n.open_size);
     ui.set_open_w(n.open_size.0 as f32);
     ui.set_open_h(n.open_size.1 as f32);
+    // A Mac's camera housing: the island's two sides, and the office below it.
+    let hw = n.hw.filter(|h| h.real);
+    ui.set_hw_w(hw.map_or(0.0, |h| h.width as f32));
+    ui.set_hw_h(hw.map_or(0.0, |h| h.height as f32));
     crate::hold_gpu();
     ui.window().set_size(slint::PhysicalSize::new(n.win.width() as u32, n.win.height() as u32));
     n.plat.place(n.win);

@@ -211,6 +211,32 @@ fn credentials(dir: &std::path::Path, expires_ms: i64) -> PathBuf {
     f
 }
 
+/// A Mac's sign-in comes from the Keychain as the same JSON text, not a file.
+#[test]
+fn claude_reads_a_sign_in_handed_over_as_text() {
+    let later = (Utc::now() + Duration::hours(1)).timestamp_millis();
+    let json = format!("{{\"claudeAiOauth\":{{\"accessToken\":\"tok\",\"expiresAt\":{later},\"subscriptionType\":\"max\"}}}}");
+    let (url, req) = serve(200, "{\"five_hour\":{\"utilization\":40,\"resets_at\":null}}");
+    let r = read::claude_with(&json, &url, Utc::now());
+    assert_eq!(r.used, Some(40.0), "{}", r.detail);
+    assert!(req.join().unwrap().to_lowercase().contains("authorization: bearer tok"));
+    assert_eq!(read::claude_with("{}", "http://127.0.0.1:9/", Utc::now()).detail, "Sign in to Claude Code with a Claude plan (Pro or Max) first.");
+    assert_eq!(read::claude_with("not json", "http://127.0.0.1:9/", Utc::now()).detail, "Sign in to Claude Code with a Claude plan (Pro or Max) first.");
+    assert_eq!(read::CLAUDE_KEYCHAIN_SERVICE, "Claude Code-credentials");
+}
+
+/// Cursor's database is under Electron's settings folder: %APPDATA% on Windows,
+/// ~/Library/Application Support on a Mac, ~/.config on Linux.
+#[test]
+fn cursor_keeps_its_state_under_the_electron_settings_folder() {
+    assert_eq!(read::cursor_db_under(std::path::Path::new("/Users/u/Library/Application Support")),
+        PathBuf::from("/Users/u/Library/Application Support").join("Cursor").join("User").join("globalStorage").join("state.vscdb"));
+    if cfg!(target_os = "macos") {
+        let db = read::cursor_db().unwrap();
+        assert!(db.to_string_lossy().contains("Library/Application Support/Cursor/User/globalStorage/state.vscdb"), "{db:?}");
+    }
+}
+
 #[test]
 fn claude_asks_with_its_own_sign_in_and_explains_refusals() {
     let dir = temp("claude");

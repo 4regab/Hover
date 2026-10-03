@@ -1,7 +1,8 @@
 //! Core/Crypto.cs: AES-256-GCM over what Hover seals, framed nonce ‖ ciphertext ‖ tag
 //! (12 + n + 16 bytes, no associated data). The key is 32 random bytes kept in
 //! note.key, wrapped by the platform's KeyGuard: DPAPI (current user) on Windows,
-//! the Secret Service or a 0600 file on Linux.
+//! the Secret Service or a 0600 file on Linux, the login Keychain or a 0600 file on
+//! macOS.
 
 use aes_gcm::aead::AeadInPlace;
 use aes_gcm::{Aes256Gcm, KeyInit, Nonce, Tag};
@@ -30,6 +31,11 @@ impl KeyError {
 pub trait KeyGuard {
     fn wrap(&self, key: &[u8]) -> Result<Vec<u8>, String>;
     fn unwrap(&self, stored: &[u8]) -> Result<Vec<u8>, KeyError>;
+    /// The key an earlier build left in the platform's own store, for a history that
+    /// has no note.key beside it (macOS: the first native build kept it in the Keychain
+    /// itself). Ok(None) when there is none; an Err that is transient when the store
+    /// can't be asked now.
+    fn inherited(&self) -> Result<Option<Vec<u8>>, KeyError> { Ok(None) }
 }
 
 pub struct Crypto { key: [u8; 32] }
@@ -58,8 +64,21 @@ impl Crypto {
                 Err(e) => set_aside(file, &e.reason)?,
             }
         }
+        // A history with no note.key beside it was sealed by a key an earlier build kept
+        // elsewhere: a new one would leave that history unreadable (and never destroy it).
         let mut key = [0u8; 32];
-        getrandom::fill(&mut key).expect("the system has no randomness");
+        let history = file.parent().is_some_and(|d| d.join("agents").join("index.dat").exists());
+        match if history { guard.inherited() } else { Ok(None) } {
+            Ok(Some(k)) if k.len() == 32 => {
+                key.copy_from_slice(&k);
+                crate::log::line("note.key is missing; carrying on with the key the history was sealed with");
+            }
+            Ok(_) => getrandom::fill(&mut key).expect("the system has no randomness"),
+            Err(e) => {
+                crate::log::line(&format!("key lookup failed — {}; no history this run, trying again next start", e.reason));
+                return None;
+            }
+        }
         match guard.wrap(&key).and_then(|w| write_private(file, &w).map_err(|e| e.to_string())) {
             Ok(()) => Some(Crypto { key }),
             Err(e) => { crate::log::line(&format!("key write failed — {e}; no history this run")); None }
@@ -135,9 +154,30 @@ pub fn global() -> Option<Arc<Crypto>> {
     GLOBAL.get_or_init(|| Crypto::load_or_create(&crate::paths::key(), &crate::platform::SystemKeyGuard::default()).map(Arc::new)).clone()
 }
 
+/// Crypto.InitializeKey: the key a host supplies (the Mac app's, from its Keychain),
+/// used in place of note.key for the whole run. Once, 32 bytes, and before anything
+/// asked for the key: a repeated or late call, or a key of another length, is refused and
+/// changes nothing.
+pub fn use_host_key(key: &[u8]) -> Result<(), String> {
+    let key: [u8; 32] = key.try_into().map_err(|_| "Invalid or repeated history key initialization.".to_owned())?;
+    GLOBAL.set(Some(Arc::new(Crypto::with_key(key)))).map_err(|_| "Invalid or repeated history key initialization.".to_owned())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A host's key is taken once, 32 bytes, and then it is Hover's key. This test owns
+    /// the process's key (the other tests here never call `global`).
+    #[test]
+    fn the_hosts_key_is_taken_once() {
+        assert!(use_host_key(&[1; 31]).is_err());
+        assert!(use_host_key(&[]).is_err());
+        assert!(use_host_key(&[9; 32]).is_ok());
+        let sealed = global().expect("the host's key").seal("x");
+        assert_eq!(Crypto::with_key([9; 32]).open(&sealed), "x");
+        assert!(use_host_key(&[9; 32]).is_err(), "not twice");
+    }
 
     /// NIST SP 800-38D / the GCM spec's test case 14 (256-bit zero key, zero IV, one
     /// zero block): the framing puts its IV, ciphertext and tag end to end.
@@ -211,6 +251,42 @@ mod tests {
             assert!(aside(&d).iter().any(|a| a == bad), "the old one kept beside it");
             for e in std::fs::read_dir(&d).unwrap().flatten() { if e.file_name() != "note.key" { std::fs::remove_file(e.path()).unwrap(); } }
         }
+    }
+
+    #[test]
+    fn a_history_without_its_note_key_keeps_the_key_an_earlier_build_left() {
+        /// The earlier build's key, or a store that can't be asked.
+        struct Earlier(Result<Option<Vec<u8>>, KeyError>);
+        impl KeyGuard for Earlier {
+            fn wrap(&self, key: &[u8]) -> Result<Vec<u8>, String> { Plain.wrap(key) }
+            fn unwrap(&self, s: &[u8]) -> Result<Vec<u8>, KeyError> { Plain.unwrap(s) }
+            fn inherited(&self) -> Result<Option<Vec<u8>>, KeyError> { self.0.clone() }
+        }
+        let old = Crypto::with_key([4; 32]).seal("history");
+        // No history yet: the earlier key is not asked for, a new one is made.
+        let d = dir("inherit-none");
+        let fresh = Crypto::load_or_create(&d.join("note.key"), &Earlier(Ok(Some(vec![4; 32])))).unwrap();
+        assert_eq!(fresh.open(&old), "");
+        // A history: its key is carried on with, and written back the usual way.
+        let d = dir("inherit");
+        std::fs::create_dir_all(d.join("agents")).unwrap();
+        std::fs::write(d.join("agents/index.dat"), &old).unwrap();
+        let c = Crypto::load_or_create(&d.join("note.key"), &Earlier(Ok(Some(vec![4; 32])))).unwrap();
+        assert_eq!(c.open(&old), "history");
+        assert_eq!(Crypto::load_or_create(&d.join("note.key"), &Plain).unwrap().open(&old), "history");
+        // No earlier key, or one that isn't 32 bytes: a new key, as before.
+        for none in [Ok(None), Ok(Some(vec![1; 5]))] {
+            let d = dir("inherit-new");
+            std::fs::create_dir_all(d.join("agents")).unwrap();
+            std::fs::write(d.join("agents/index.dat"), &old).unwrap();
+            assert!(Crypto::load_or_create(&d.join("note.key"), &Earlier(none)).is_some());
+        }
+        // The store can't be asked now: no key this run, and no note.key written.
+        let d = dir("inherit-later");
+        std::fs::create_dir_all(d.join("agents")).unwrap();
+        std::fs::write(d.join("agents/index.dat"), &old).unwrap();
+        assert!(Crypto::load_or_create(&d.join("note.key"), &Earlier(Err(KeyError::not_now("locked")))).is_none());
+        assert!(!d.join("note.key").exists());
     }
 
     #[test]

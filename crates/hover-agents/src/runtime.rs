@@ -5,7 +5,7 @@
 use crate::acp::{AcpHost, Asking};
 use crate::claude::ClaudeHost;
 use crate::opencode::{OpenCodeHost, Questioning};
-use crate::session::RunTask;
+use crate::session::{RunArgs, RunTask};
 use hover_core::model::{AcpOption, AgentTool};
 
 /// AgentCaps: what a tool can really do, so the office only shows what works.
@@ -27,6 +27,12 @@ pub fn caps(t: AgentTool) -> AgentCaps {
 /// Whether a tool's efforts belong to each model (its offered models carry their
 /// levels) rather than being one list for all of them.
 pub fn per_model_effort(t: AgentTool) -> bool { matches!(t, AgentTool::OpenCode | AgentTool::Claude) }
+
+/// The Hover session (its key) a run is for: the tag Hover's browser server is made for,
+/// so the agent's browser calls reach that session's page. A run that is no session's (voice's
+/// routing turn) has none, and the browser is not offered to it; OpenCode's one server passes
+/// its own tag.
+pub(crate) fn tag_of(a: &RunArgs) -> Option<String> { a.tag.clone() }
 
 #[derive(Clone)]
 pub enum Runtime { Acp(AcpHost), OpenCode(OpenCodeHost), Claude(ClaudeHost) }

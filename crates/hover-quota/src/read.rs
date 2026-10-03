@@ -1,7 +1,9 @@
 //! The readers: Quota.Kiro, Codex, Cursor and Claude, which touch kiro-cli, the disk
 //! and the network. Each blocks; OwlApp ran them off the UI thread, and so does
 //! `schedule`. The Windows locations are the C#'s; the Linux ones are where the same
-//! tools keep the same files there (see the report).
+//! tools keep the same files there (see the report); on a Mac Cursor's and Codex's
+//! files are where Electron and Codex put them, and Claude Code's sign-in is in the
+//! login Keychain.
 
 use crate::sqlite::{self, Scalar};
 use crate::*;
@@ -59,7 +61,7 @@ pub fn kiro_with(exe: &Path, args: &[&str], limit: Duration) -> Reading {
 
 // MARK: Codex
 
-/// CODEX_HOME, else ~/.codex (the same on Windows and Linux).
+/// CODEX_HOME, else ~/.codex (the same on Windows, Linux and macOS).
 pub fn codex_home() -> PathBuf { env_dir("CODEX_HOME").unwrap_or_else(|| home().join(".codex")) }
 
 pub fn codex(now: DateTime<Utc>) -> Reading { codex_in(&codex_home(), now) }
@@ -152,14 +154,18 @@ fn get(url: &str, headers: &[(&str, &str)]) -> Result<(u16, String), ()> {
 // MARK: Cursor
 
 /// Where Cursor (an Electron app) keeps its state: %APPDATA%\Cursor on Windows,
-/// $XDG_CONFIG_HOME/Cursor (~/.config/Cursor) on Linux.
+/// ~/Library/Application Support/Cursor on a Mac, $XDG_CONFIG_HOME/Cursor
+/// (~/.config/Cursor) on Linux.
 pub fn cursor_db() -> Option<PathBuf> {
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "macos"))]
     let base = hover_core::platform::app_data();
-    #[cfg(not(windows))]
+    #[cfg(not(any(windows, target_os = "macos")))]
     let base = env_dir("XDG_CONFIG_HOME").filter(|p| p.is_absolute()).or_else(|| Some(home().join(".config")));
-    base.map(|b| b.join("Cursor").join("User").join("globalStorage").join("state.vscdb"))
+    base.map(|b| cursor_db_under(&b))
 }
+
+/// Cursor's state database under the folder its Electron shell keeps settings in.
+pub fn cursor_db_under(base: &Path) -> PathBuf { base.join("Cursor").join("User").join("globalStorage").join("state.vscdb") }
 
 pub const CURSOR_URL: &str = "https://cursor.com/api/usage-summary";
 
@@ -206,25 +212,58 @@ pub fn cursor_at(db: &Path, url: &str, now: DateTime<Utc>) -> Reading {
 
 // MARK: Claude Code
 
-/// CLAUDE_CONFIG_DIR, else ~/.claude (the same on Windows and Linux).
+/// CLAUDE_CONFIG_DIR, else ~/.claude (the same on Windows, Linux and macOS).
 pub fn claude_home() -> PathBuf { env_dir("CLAUDE_CONFIG_DIR").unwrap_or_else(|| home().join(".claude")) }
 
 pub const CLAUDE_URL: &str = "https://api.anthropic.com/api/oauth/usage";
 
-pub fn claude(now: DateTime<Utc>) -> Reading { claude_at(&claude_home().join(".credentials.json"), CLAUDE_URL, now) }
+const CLAUDE_SIGN_IN: &str = "Sign in to Claude Code with a Claude plan (Pro or Max) first.";
+
+/// What the quota says on a Mac when neither the Keychain nor the file gives a sign-in.
+pub const CLAUDE_KEYCHAIN_MISSING: &str = "Claude Code credentials are unavailable. Sign in and allow Hover to read the Claude Code Keychain entry.";
+
+/// The Keychain item Claude Code keeps its sign-in in on a Mac: a generic password of
+/// this service, whose value is the text .credentials.json holds elsewhere.
+pub const CLAUDE_KEYCHAIN_SERVICE: &str = "Claude Code-credentials";
+
+/// Claude Code's sign-in from the login Keychain (macOS; the user is asked to allow it
+/// once). Ok(None) where there is no Keychain or no such item. Read-only.
+fn claude_keychain() -> Result<Option<String>, String> {
+    #[cfg(target_os = "macos")]
+    { hover_core::platform::keychain_find(CLAUDE_KEYCHAIN_SERVICE).map(|found| found.map(|b| hover_core::json::text_of(&b))) }
+    #[cfg(not(target_os = "macos"))]
+    { Ok(None) }
+}
+
+/// On a Mac Claude Code keeps its sign-in in the Keychain, and the file is the
+/// fallback; elsewhere it is the file.
+pub fn claude(now: DateTime<Utc>) -> Reading {
+    let file = claude_home().join(".credentials.json");
+    match claude_keychain() {
+        Ok(Some(text)) => return claude_with(&text, CLAUDE_URL, now),
+        Ok(None) => {}
+        Err(e) => hover_core::log::line(&format!("claude: the Keychain wouldn't give Claude Code's sign-in - {e}")),
+    }
+    if cfg!(target_os = "macos") && !file.is_file() { return Reading::fail(CLAUDE_KEYCHAIN_MISSING); }
+    claude_at(&file, CLAUDE_URL, now)
+}
 
 /// Claude Code's plan limits, as its /usage shows them, asked of api.anthropic.com with
 /// its own sign-in, read-only: the sign-in is never refreshed, which would rotate
 /// Claude Code's tokens underneath it.
 pub fn claude_at(file: &Path, url: &str, now: DateTime<Utc>) -> Reading {
-    const SIGN_IN: &str = "Sign in to Claude Code with a Claude plan (Pro or Max) first.";
-    if !file.is_file() { return Reading::fail(SIGN_IN); }
+    if !file.is_file() { return Reading::fail(CLAUDE_SIGN_IN); }
     let text = match std::fs::read(file) {
         Ok(b) => hover_core::json::text_of(&b),
         Err(e) => return Reading::fail(format!("Couldn’t read Claude Code’s sign-in: {e}")),
     };
-    let sign = claude_sign_in(&text);
-    let Some(token) = sign.token else { return Reading::fail(SIGN_IN) };
+    claude_with(&text, url, now)
+}
+
+/// claude_at, with the sign-in's JSON already in hand (from the file or the Keychain).
+pub fn claude_with(credentials: &str, url: &str, now: DateTime<Utc>) -> Reading {
+    let sign = claude_sign_in(credentials);
+    let Some(token) = sign.token else { return Reading::fail(CLAUDE_SIGN_IN) };
     if sign.expires.is_some_and(|exp| exp <= now + chrono::Duration::seconds(60)) {
         return Reading::fail("Claude Code’s sign-in has expired — run claude to renew it.");
     }

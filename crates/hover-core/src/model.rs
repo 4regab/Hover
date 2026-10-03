@@ -55,11 +55,15 @@ pub(crate) fn opt_text(v: Option<&Json>) -> Result<Option<String>> {
 /// Services.KiroStep(Id, Kind, Title, Target, Status, Added, Removed, Diff, Output,
 /// Exit, Ms). An edit carries the lines it adds and removes and a short preview ("- old",
 /// "+ new", "  context"); a command the end of its output and its exit code; Ms is how
-/// long it took. The last six are optional in C#, so older files read without them.
+/// long it took. The last six are optional in C#, so older files read without them. Input
+/// (the call's raw input as JSON, cut) and Log (the longer end of what it printed) are the
+/// macOS build's, for the desk's panels; they are written only when a step has them, so a
+/// file that never did stays as it was.
 #[derive(Clone, Debug, PartialEq, Default)]
 pub struct KiroStep {
     pub id: String, pub kind: String, pub title: String, pub target: Option<String>, pub status: String,
     pub added: i32, pub removed: i32, pub diff: Option<String>, pub output: Option<String>, pub exit: Option<i32>, pub ms: Option<f64>,
+    pub input: Option<String>, pub log: Option<String>,
 }
 
 impl KiroStep {
@@ -68,11 +72,14 @@ impl KiroStep {
     }
 
     pub fn to_json(&self) -> Json {
-        Json::obj(vec![("Id", Json::str(&self.id)), ("Kind", Json::str(&self.kind)), ("Title", Json::str(&self.title)),
+        let mut props = vec![("Id", Json::str(&self.id)), ("Kind", Json::str(&self.kind)), ("Title", Json::str(&self.title)),
             ("Target", Json::opt_str_of(self.target.as_deref())), ("Status", Json::str(&self.status)),
             ("Added", Json::int(self.added as i64)), ("Removed", Json::int(self.removed as i64)),
             ("Diff", Json::opt_str_of(self.diff.as_deref())), ("Output", Json::opt_str_of(self.output.as_deref())),
-            ("Exit", self.exit.map_or(Json::Null, |e| Json::int(e as i64))), ("Ms", self.ms.map_or(Json::Null, Json::double))])
+            ("Exit", self.exit.map_or(Json::Null, |e| Json::int(e as i64))), ("Ms", self.ms.map_or(Json::Null, Json::double))];
+        if let Some(i) = &self.input { props.push(("Input", Json::str(i))); }
+        if let Some(l) = &self.log { props.push(("Log", Json::str(l))); }
+        Json::obj(props)
     }
     pub fn from_json(v: &Json) -> Result<KiroStep> {
         v.props()?;
@@ -81,7 +88,8 @@ impl KiroStep {
             status: text(v.get("Status"))?,
             added: v.get("Added").map(Json::i32).transpose()?.unwrap_or(0), removed: v.get("Removed").map(Json::i32).transpose()?.unwrap_or(0),
             diff: opt_text(v.get("Diff"))?, output: opt_text(v.get("Output"))?,
-            exit: opt("Exit")?.map(Json::i32).transpose()?, ms: opt("Ms")?.map(Json::f64).transpose()? })
+            exit: opt("Exit")?.map(Json::i32).transpose()?, ms: opt("Ms")?.map(Json::f64).transpose()?,
+            input: opt_text(v.get("Input"))?, log: opt_text(v.get("Log"))? })
     }
 }
 
@@ -264,5 +272,26 @@ pub mod notch_item {
     /// The name beside a quota on the notch.
     pub fn short(id: &str) -> &'static str {
         match id { CLAUDE => "Claude", KIRO => "Kiro", CODEX => "Codex", _ => "Cursor" }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Input and Log are the macOS build's: written only when a step has them, so a file
+    /// that never did is byte for byte what 3.x wrote, and either kind of file reads.
+    #[test]
+    fn a_steps_input_and_log_are_written_only_when_it_has_them() {
+        let plain = KiroStep::new("1", "execute", "Run", Some("ls".into()), "completed");
+        let text = plain.to_json().compact();
+        assert!(!text.contains("Input") && !text.contains("Log"), "{text}");
+        assert_eq!(KiroStep::from_json(&crate::json::parse(&text).unwrap()).unwrap(), plain);
+        let kept = KiroStep { input: Some("{\"command\":\"ls\"}".into()), log: Some("a\nb".into()), ..plain.clone() };
+        let back = KiroStep::from_json(&crate::json::parse(&kept.to_json().compact()).unwrap()).unwrap();
+        assert_eq!(back, kept);
+        // 2.x's macOS build wrote them as null when a step had none.
+        let old = KiroStep::from_json(&crate::json::parse(&text.replace("}", ",\"Input\":null,\"Log\":null}")).unwrap()).unwrap();
+        assert_eq!(old, plain);
     }
 }

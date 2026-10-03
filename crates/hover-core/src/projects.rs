@@ -244,13 +244,24 @@ fn plain(p: PathBuf) -> PathBuf {
 fn plain(p: PathBuf) -> PathBuf { p }
 
 /// The same folder: their resolved paths are equal, any case on Windows (where the
-/// file system ignores it), exactly on Linux. A folder that can't be resolved is
-/// compared by its text.
+/// file system ignores it), exactly on Linux. On a Mac the default volume ignores case
+/// too, so two spellings count as one when they are the same folder on disk. A folder
+/// that can't be resolved is compared by its text.
 pub fn same_folder(a: &str, b: &str) -> bool {
     let r = |p: &str| resolve_folder(p).map(|x| x.to_string_lossy().into_owned()).unwrap_or_else(|_| p.trim().trim_end_matches(['\\', '/']).to_owned());
     let (x, y) = (r(a), r(b));
-    if cfg!(windows) { x.to_lowercase() == y.to_lowercase() } else { x == y }
+    if cfg!(windows) { return x.to_lowercase() == y.to_lowercase(); }
+    x == y || same_inode(&x, &y)
 }
+
+/// The same device and inode: one folder, however its path is spelled.
+#[cfg(target_os = "macos")]
+fn same_inode(x: &str, y: &str) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    match (std::fs::metadata(x), std::fs::metadata(y)) { (Ok(a), Ok(b)) => a.dev() == b.dev() && a.ino() == b.ino(), _ => false }
+}
+#[cfg(not(target_os = "macos"))]
+fn same_inode(_: &str, _: &str) -> bool { false }
 
 /// The default workspace made when first needed (never a repository, only the folder).
 pub fn ensure_folder(p: &Path) -> std::result::Result<PathBuf, String> {
@@ -320,7 +331,9 @@ mod tests {
         assert!(resolve_folder(&s).is_ok());
         assert!(same_folder(&s, &format!("{s}{}", std::path::MAIN_SEPARATOR)));
         assert!(same_folder(&s, &base.join("Dir with space").join("..").join("Dir with space").to_string_lossy()));
-        if cfg!(windows) { assert!(same_folder(&s, &s.to_uppercase())); } else { assert!(!same_folder(&s, &s.to_uppercase())); }
+        // Windows ignores case; so does a Mac's default volume, when the upper-cased path is still there.
+        let ignores_case = cfg!(windows) || (cfg!(target_os = "macos") && std::fs::metadata(s.to_uppercase()).is_ok());
+        assert_eq!(same_folder(&s, &s.to_uppercase()), ignores_case);
         #[cfg(unix)]
         {
             let link = base.join("link");

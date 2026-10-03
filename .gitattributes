@@ -7,6 +7,7 @@
 *.gif binary
 *.stickies binary
 *.wav binary
+*.ttf binary
 
 # Golden files are compared byte for byte with what the Rust ports write, on every OS.
 tests/golden/** -text
@@ -14,3 +15,12 @@ tests/golden/** -text
 # Run through sh on Linux, or read by Linux tools: a CR at a line's end breaks them.
 packaging/linux/* text eol=lf
 Makefile text eol=lf
+
+# Unix entry points and native source must remain usable after a fresh checkout.
+*.sh text eol=lf
+*.swift text eol=lf
+*.c text eol=lf
+*.m4a binary
+*.py text eol=lf
+# codesign's plist parser (AMFI) is strict: entitlements stay LF, as Xcode writes them.
+*.entitlements text eol=lf

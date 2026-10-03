@@ -152,3 +152,28 @@ agent, and giving the keyboard back to the previous app. Results of the last run
 
 The same tests run on Linux (`make test`). For voice on Linux (the build, X11
 hold-to-talk, the microphone, Phonon), see `evidence/voice-chat/linux.md`.
+
+## macOS
+
+CI (macos-15) runs `cargo check` on every crate but `hover`, `notch-proto` and
+`hover-measure` (the Slint app is Windows and Linux only), builds `hover-backend`, and
+builds and signs (ad hoc) `Hover.app` with `scripts/build-macos.sh`; no tests run there.
+On a Mac, `scripts/test-macos.sh` builds a disposable copy of the checkout and runs the
+cargo tests of `hover-backend`, `hover-core`, `hover-agents`, `hover-quota`, `hover-md` and
+`hover-diagram` under `sandbox-exec` (or inside srt, when started through
+`scripts/sandbox.sh`), then `tests/macos/backend-smoke.py` against the packaged backend,
+and, outside srt, the app's own `--smoke-test` (it opens the notch and office, so it needs
+a screen). `tests/macos/e2e/run.sh <Hover.app>` is the end-to-end run with stand-in agents,
+`gh`, `cua` and `lume`; see [MACOS.md](../MACOS.md). None of these has been run by CI. Two
+tests only run on a Mac (`hover-core/tests/keychain.rs`, which skips if the login Keychain
+can't be written to), and the Unix-only tests of the sandbox's relay, Cua's guard and the
+browser socket skip themselves without `perl` or `python3`.
+
+From Windows, `rustup target add aarch64-apple-darwin`, then
+`cargo check --target aarch64-apple-darwin -p hover-core -p hover-agents -p hover-office --all-targets`
+type-checks the Mac code the backend uses. `hover-quota` pulls in a C build step (`ring`),
+which needs a Mac's compiler and SDK; its check is the CI job. `hover` refuses to compile
+on a Mac, and the Swift app is checked only by building it on a Mac.
+
+There is no way to see the Mac UI from Windows or Linux: `hover --shots` renders the Slint
+app's views, not the Swift app's or the web office's.

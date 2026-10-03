@@ -20,11 +20,14 @@ chrono = { version = "0.4", default-features = false, features = ["std", "clock"
 
 # Cursor's token is in its SQLite database (state.vscdb), as Microsoft.Data.Sqlite read
 # it. New crate: nothing in the tree reads SQLite. Only its C library is used, through
-# the eight calls in sqlite.rs. Linux builds SQLite in (an AppImage can't count on a
-# system libsqlite3); Windows calls the winsqlite3.dll that Windows 10 and 11 ship
-# (raw-dylib), so nothing is compiled or linked for MSVC here.
-[target.'cfg(not(windows))'.dependencies]
+# the calls in sqlite.rs. Linux builds SQLite in (an AppImage can't count on a system
+# libsqlite3); Windows calls the winsqlite3.dll that Windows 10 and 11 ship (raw-dylib),
+# and macOS the libsqlite3 every Mac has (a plain link against the SDK's .tbd), so
+# nothing is compiled or linked for MSVC or macOS here.
+[target.'cfg(target_os = "linux")'.dependencies]
 libsqlite3-sys = { version = "0.38", features = ["bundled"] }
+
+[target.'cfg(not(windows))'.dependencies]
 # cursor.com and api.anthropic.com, as the chat fetches images (app/src/net.rs): rustls here.
 ureq = "3"
 

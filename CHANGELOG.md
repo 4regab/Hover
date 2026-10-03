@@ -5,10 +5,66 @@ What changed in each Hover release. Versions follow [Semantic Versioning](https:
 
 ## [Unreleased]
 
+## [3.4.0] - 2026-10-02
+
+### Added
+
+- Checkpoints in the chat. Hover keeps the project folder before and after every turn (in a
+  Git store of its own in the data folder; your project's own Git is never touched, and
+  what its .gitignore leaves out is left out). Under an answer, **Restore** puts the files
+  and the chat back to just after that answer, and **Try again** puts them back to before
+  that message and sends it again. Both ask first and only work while nothing runs, and the
+  agent is told once that its folder and chat went back. Needs Git installed; deleting a
+  session deletes its checkpoints.
+- macOS support, from Arz's (@Entourage397) macOS v1.0. The Mac app is a Swift UI (`macos/`):
+  the notch around the camera housing, usage in the menu bar, Settings and Apple's speech
+  recognizer for voice, around the web office (`web/office/`), on the Rust backend
+  (`crates/hover-backend`, which replaces the C# one). CI builds and signs it ad hoc; there is
+  no package yet, and nothing of it has been run on a Mac.
+- Agent desktops (macOS 26 or later on Apple silicon, off until switched on): each project
+  gets a Cua Space, a macOS VM its agents work in instead of your screen. Drag an app or
+  files onto the notch to send them there. Windows and Linux show the switch off with its
+  note.
+- The desk card. Click a desk to open a card at the click: what the agent is doing, the
+  question it waits on or its answer, a reply box, and eight tiles that open a panel:
+  Terminal, Files (search, tree, file view), Diff, Agents, Linked pull requests, the
+  branch's Pull request (with its checks), Browser and Screen. Hovering a bot or desk says
+  which it is.
+- Pull requests from the desk card. Hover sets up the GitHub CLI in one click (winget on
+  Windows, Homebrew on a Mac, else the command to run; the sign-in shows its device code
+  with Copy and Open), and Create pull request can commit the changes, make a branch,
+  push and open the pull request.
+- Helpers: a subagent at work shows as a small bot beside its parent's desk, which
+  files sheets at the tray.
+- A sandbox for agents (Settings → Integrations, on by default on a Mac and Linux). Each
+  tool runs under Anthropic's sandbox-runtime: it writes only to its folders, can't read
+  keys, mail or other apps' data, opens no windows, and reaches only the hosts it needs. If
+  `srt` isn't installed the tools start as before, and Settings says what is missing.
+- Computer use (macOS, off until switched on). Agents get Cua Driver, which operates other apps in
+  the background behind a guard that keeps it off your pointer and focus. Settings installs
+  it and asks for its permissions.
+- The agent browser (macOS). Agents get a browser they can open, read, click and type in,
+  shown in the desk card's Browser tab, which takes an address and has back, forward and
+  reload.
+- The Screen tab shows the desktop, and live the apps the agent is using while computer use
+  runs (on a Mac it asks for Screen Recording).
+- One-click agent setup (macOS): a Set up row on each agent's page installs what is
+  missing with the maker's own installer and opens the sign-in.
+- Features an OS can't run are off with the reason beside them (the sandbox on Windows, the
+  agent browser, setup, computer use and agent desktops off a Mac, local speech on a Mac).
+- CI builds the Mac app on macOS (the backend crates, then Hover.app), on pull requests too.
+
 ### Changed
 
 - A new logo, the blue ninja, in the app icon, the tray, the title bar, the Linux icon and the
   README.
+
+### Fixed
+
+- The model menu in the office showed only the first models of a long list (Codex's can
+  have a dozen or more), with no sign of the rest: the last ones, and the effort choices
+  under them, were cut off. The models now scroll inside a box of their own with a bar, the
+  menu opens on the picked model, and the effort choices and the note stay in view.
 
 ## [3.3.1] - 2026-10-02
 
@@ -115,7 +171,8 @@ What changed in each Hover release. Versions follow [Semantic Versioning](https:
   everything 2.x left: the data folder, the key, `settings.json` and the sessions.
 - The Windows executable is `hoverai.exe`.
 
-[Unreleased]: https://github.com/4regab/Hover/compare/v3.3.1...HEAD
+[Unreleased]: https://github.com/4regab/Hover/compare/v3.4.0...HEAD
+[3.4.0]: https://github.com/4regab/Hover/compare/v3.3.1...v3.4.0
 [3.3.1]: https://github.com/4regab/Hover/compare/v3.3.0...v3.3.1
 [3.3.0]: https://github.com/4regab/Hover/compare/v3.2.0...v3.3.0
 [3.2.0]: https://github.com/4regab/Hover/compare/v3.1.1...v3.2.0

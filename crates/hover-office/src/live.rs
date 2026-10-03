@@ -24,6 +24,8 @@ pub enum In {
     Visible(bool),
     Drawer(Option<i64>),
     Panel(Option<&'static str>),
+    /// The session whose desk card or panel is open (its bot shows as hot).
+    DeskSel(Option<i64>),
     Time(Option<Time>),
     /// The user's camera, when the page is made again (office.view).
     View([f64; 3]),
@@ -221,6 +223,7 @@ fn run(rx: Receiver<In>, out: Arc<Mutex<Out>>, spare: Arc<Mutex<Vec<u8>>>, slots
                 In::Visible(v) => visible = v,
                 In::Drawer(id) => { o.drawer_open = id.is_some(); o.sel = id; o.draw_tv(o.clock_t); }
                 In::Panel(p) => o.panel = p,
+                In::DeskSel(id) => o.desk_open = id,
                 In::View(v) => { o.user = v; o.clamp_view(); o.cam = [v[0], 1.7, v[1], v[2]]; }
                 In::Time(t) => { o.manual_time = t; o.apply_time(t.unwrap_or(Office::auto_time(hour_now()))); }
             }

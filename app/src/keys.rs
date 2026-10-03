@@ -66,6 +66,10 @@ pub fn record(text: &str, m: Modifiers) -> Recorded {
     Recorded::Chord(Shortcut { key, modifiers: m })
 }
 
+/// view.rs still passes the key's position (the Mac build needed it for a dead key); here the
+/// character is all there is.
+pub fn record_at(text: &str, _physical: Option<&str>, m: Modifiers) -> Recorded { record(text, m) }
+
 /// KeyInterop.VirtualKeyFromKey for the keys a shortcut can hold; None has no mapping
 /// (HotKeys.Register then says so and fails).
 pub fn vk(k: Key) -> Option<u16> {

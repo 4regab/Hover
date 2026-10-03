@@ -135,12 +135,12 @@ flowchart TB
 
 `.github/workflows/ci.yml` runs on GitHub's own runners. One job per OS does the whole
 check, and on a `v*` tag the same job builds the installers from the build it just
-tested.
+tested. A third job compiles the workspace on macOS and does nothing else.
 
 ```mermaid
 flowchart LR
-    push["push to main or rust-port/**<br/>or a pull request"] --> wj & lj
-    tag["push of tag vX.Y.Z, or of a new<br/>Cargo.toml version to main"] --> wj & lj
+    push["push to main or rust-port/**<br/>or a pull request"] --> wj & lj & mj
+    tag["push of tag vX.Y.Z, or of a new<br/>Cargo.toml version to main"] --> wj & lj & mj
 
     subgraph wj["windows job (windows-2022)"]
         wt["cargo test --workspace"] --> wi["release only:<br/>build.ps1 installer"]
@@ -150,13 +150,20 @@ flowchart LR
         lt["cargo test --workspace"] --> lp["release only:<br/>make package"]
     end
 
+    subgraph mj["macos job (macos-15, Apple Silicon)"]
+        mc["cargo check --workspace<br/>--all-targets --locked"]
+    end
+
     wi --> rel
     lp --> rel
     rel["release job (release only)<br/>tags the commit; Latest GitHub release with the .exe, .deb, .tar.gz"]
 ```
 
 A tag whose version doesn't match `Cargo.toml` fails before anything builds. A
-failing test on either OS means nothing is published. Pushes that only touch Markdown,
+failing test on either OS means nothing is published. The macOS job doesn't gate the
+release: it has no package to wait for, and it runs no tests (nothing has been run on a
+Mac yet; see `docs/MACOS.md`). It does fail a pull request whose Mac code doesn't compile.
+Pushes that only touch Markdown,
 `docs/` or the README's pictures don't run CI.
 
 ## What runs at run time
@@ -499,8 +506,37 @@ the real tools.
 | Single instance | Named mutex `Local\HoverRunningInstance` | Lock file in `$XDG_RUNTIME_DIR` |
 | Allocator | mimalloc (freed pages go back to Windows) | glibc malloc, `malloc_trim` after the office drops |
 
-Keep OS code behind `cfg(windows)` or `cfg(target_os = "linux")` in these files.
-Check `cfg(not(windows))` branches carefully: they are the Linux path.
+Keep OS code behind `cfg(windows)`, `cfg(target_os = "linux")` or `cfg(target_os = "macos")`
+in these files. Check `cfg(not(windows))` branches carefully: they used to mean Linux and
+now also reach a Mac. X11, D-Bus, the Secret Service, XDG and ALSA are Linux-only.
+What can be worked out without the OS (the Keychain and LaunchAgent logic in `hover-core`,
+the sandbox's settings text) is in functions compiled on
+every OS, so the Windows tests cover it.
+
+### macOS
+
+The Mac app is not the Slint app (`hover` refuses to compile on a Mac). It is Swift in
+`macos/Sources` (notch, menu bar, Settings, voice) around the web office (`web/office/`,
+in a WKWebView), and it starts `hover-backend` (`crates/hover-backend`) through
+`hover-guardian`, speaking JSON lines on stdin and stdout. `scripts/build-macos.sh` makes
+`Hover.app` from the three.
+
+| Concern | macOS |
+|---|---|
+| Notch window | `Notch.swift`: an `NSPanel` (non-activating) at `.statusBar` level (25) on all Spaces whose `canBecomeKey` is false while the notch rests; the hardware notch comes from `safeAreaInsets` and the auxiliary areas (`NotchGeometry`) |
+| Renderer | the office is the web page (three.js) in a WKWebView |
+| Usage, tray | one status item in the menu bar with the usage rings and one menu (`MenuBar.swift`); usage isn't in the island |
+| Shortcut | Carbon `RegisterEventHotKey`, plus a local key monitor for the windows that hold the keyboard (`Hover.swift`) |
+| Voice hold-to-talk | the hot key's press and release |
+| Microphone | `AVAudioEngine`, then Apple's speech recognizer (`Voice.swift`); the system asks the first time |
+| Key storage | the login Keychain (service `dev.hover.history`), read by the Swift app and handed to the backend at `initialize` |
+| Child processes | `guardian.c` stops the backend and what is left when the app's pipe closes; the tools lead a process group each with a watchdog (no `PDEATHSIG`) |
+| Single instance | none in the Swift app |
+| Dark mode | the menu bar item redraws when its `effectiveAppearance` changes |
+| Launch at Login | `SMAppService.mainApp` |
+| Agent browser | `AgentBrowser.swift`: a WKWebView per session, driven by `browser.rs`'s calls, relayed by `hover-backend`'s `browser_host.rs` |
+| Screen panel | `Screen.swift`: ScreenCaptureKit |
+| Allocator | system malloc |
 
 ## Where to change things
 

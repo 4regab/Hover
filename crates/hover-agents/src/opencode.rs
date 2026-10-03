@@ -22,8 +22,10 @@ use crate::acp::{Asking, Events, Progress};
 use crate::agents;
 use crate::ask::{self, AgentAsk, AgentQuestion, Answers, AskAnswer};
 use crate::cancel::Cancel;
+use crate::computer_use::{self, McpServer};
 use crate::http::{escape_data, Client, HttpErr};
 use crate::proc::strip_ansi;
+use crate::sandbox::{self, Boxed, Fit};
 use crate::stream::{clip_to, head_units, tool_phase, units, KiroEvent, KiroPhase, KiroResult};
 use hover_core::json::{self, Json};
 use hover_core::model::{AcpChoice, AcpOption, AgentApproval, AgentOptions, AgentTool, KiroState, KiroStep};
@@ -192,6 +194,23 @@ struct Host {
     asking: Mutex<Option<Asking>>,
     questioning: Mutex<Option<Questioning>>,
     reconciling: Mutex<()>,
+    /// The MCP servers the server is handed at its start (computer use's, Hover's browser):
+    /// OpenCode reads them at startup, so a change restarts it once idle.
+    mcp: Arc<Mutex<McpNow>>,
+    mcp_started: Mutex<Option<String>>,
+    /// How the server was sandboxed (sandbox.rs); untouched for one Hover didn't start.
+    boxed: Arc<Boxed>,
+}
+
+/// The MCP servers OpenCode's one server gets now.
+pub type McpNow = Arc<dyn Fn() -> Vec<McpServer> + Send + Sync>;
+
+/// One server for all its sessions, so one browser server too: it answers for the
+/// OpenCode session at work (Hover's browser tag "opencode"). A project's desktop
+/// (spaces.rs) is per folder and the server is fixed at its start, so OpenCode gets none,
+/// and no computer use at all while agent desktops are on (computer_use::servers).
+fn default_mcp() -> McpNow {
+    Arc::new(|| { let mut all = computer_use::servers(); all.extend(crate::browser::servers(AgentTool::OpenCode, Some("opencode"))); all })
 }
 
 /// OpenCode's runtime: shared by every OpenCode session.
@@ -201,20 +220,26 @@ pub struct OpenCodeHost(Arc<Host>);
 impl OpenCodeHost {
     /// OpenCode as Agents finds and starts it.
     pub fn new(options: impl Fn() -> AgentOptions + Send + Sync + 'static) -> OpenCodeHost {
-        OpenCodeHost::build(options, Box::new(launch), Timeouts::default())
+        let (boxed, mcp) = (Arc::new(Boxed::default()), Arc::new(Mutex::new(default_mcp())));
+        let (b, m) = (boxed.clone(), mcp.clone());
+        OpenCodeHost::build(options, Box::new(move |ct, t| { let servers = (m.lock().unwrap().clone())(); launch(ct, t, &b, &servers) }), Timeouts::default(), boxed, mcp)
     }
 
     /// With the server given (tests hand in a stand-in), and shorter waits.
     pub fn with_connect(options: impl Fn() -> AgentOptions + Send + Sync + 'static, connect: impl Fn() -> Option<OpenCodeLink> + Send + Sync + 'static, t: Timeouts) -> OpenCodeHost {
-        OpenCodeHost::build(options, Box::new(move |_, _| Ok(connect())), t)
+        OpenCodeHost::build(options, Box::new(move |_, _| Ok(connect())), t, Arc::new(Boxed::default()), Arc::new(Mutex::new(default_mcp())))
     }
 
-    fn build(options: impl Fn() -> AgentOptions + Send + Sync + 'static, connect: Connect, t: Timeouts) -> OpenCodeHost {
+    /// The MCP servers the server is started with, read at the start of every run (the
+    /// default: Cua Driver's when computer use is on, and Hover's browser).
+    pub fn set_mcp(&self, f: impl Fn() -> Vec<McpServer> + Send + Sync + 'static) { *self.0.mcp.lock().unwrap() = Arc::new(f); }
+
+    fn build(options: impl Fn() -> AgentOptions + Send + Sync + 'static, connect: Connect, t: Timeouts, boxed: Arc<Boxed>, mcp: Arc<Mutex<McpNow>>) -> OpenCodeHost {
         OpenCodeHost(Arc::new(Host {
             options: Box::new(options), connect, t, gate: Mutex::new(()), live: Mutex::new(None), gens: AtomicU64::new(0), turns: Default::default(),
             trusted: Default::default(), inventory: Default::default(), stuck: Default::default(), last_model: Default::default(),
             busy: AtomicUsize::new(0), idle: AtomicU64::new(0), seen: Mutex::new(vec![]), asking: Mutex::new(None), questioning: Mutex::new(None),
-            reconciling: Mutex::new(()),
+            reconciling: Mutex::new(()), mcp, mcp_started: Mutex::new(None), boxed,
         }))
     }
 
@@ -247,6 +272,22 @@ impl Host {
         if !crate::usable_folder(Some(folder)) { return KiroResult::new(KiroState::Failed, "That folder isn’t there any more. Choose another one."); }
         if prompt.trim().is_empty() { return KiroResult::new(KiroState::Failed, format!("Tell {NAME} what to do first.")); }
         let o = (self.options)().with_access(access);
+        // A server started with other MCP servers (computer use switched since) is
+        // started again, when nothing of it runs; OpenCode keeps the conversations.
+        if self.live.lock().unwrap().is_some() && self.busy.load(Ordering::SeqCst) == 0
+            && self.mcp_started.lock().unwrap().as_deref() != Some(computer_use::signature(&self.servers()).as_str()) {
+            self.end(None, "its MCP servers changed", "OpenCode stopped.");
+        }
+        // As in AcpHost: a sandboxed server reaches only the folders it started with.
+        sandbox::remember(folder);
+        if self.live.lock().unwrap().is_some() {
+            match self.boxed.fit(folder, self.busy.load(Ordering::SeqCst) > 0, sandbox::active()) {
+                Fit::Fits => {}
+                Fit::Restart => self.end(None, "its sandbox changed", "OpenCode stopped."),
+                Fit::Outside => return KiroResult::new(KiroState::Failed, sandbox::outside_message(NAME)),
+            }
+        }
+        if sandbox::wanted() && crate::agents::toggles().computer_use { computer_use::ensure_daemon(); }
         self.busy.fetch_add(1, Ordering::SeqCst);
         self.idle.fetch_add(1, Ordering::SeqCst);
         let turn = Arc::new(Turn {
@@ -697,6 +738,11 @@ impl Host {
                 }
                 if let Some(exit) = num(state.and_then(|x| x.get("metadata")), "exit") { next.exit = Some(exit as i32); }
             }
+            // For the desk's panels: the call's input, and what it gave back.
+            if let Some(i) = input.filter(|i| matches!(i, Json::Obj(p) if !p.is_empty())) { next.input = Some(crate::stream::head_units(&i.compact(), crate::stream::INPUT_LIMIT).to_owned()); }
+            if !matches!(kind, "read" | "edit") && status != "in_progress" {
+                if let Some(log) = crate::stream::tail(s(state, "output").or_else(|| s(state, "error"))) { next.log = Some(log); }
+            }
             if status != "in_progress" && known.ms.is_none() {
                 if let Some(t0) = g.began.get(call) { next.ms = Some(t0.elapsed().as_secs_f64() * 1000.0); }
             }
@@ -922,15 +968,21 @@ impl Host {
 
     // MARK: The process
 
+    /// The MCP servers the server would be started with now.
+    fn servers(&self) -> Vec<McpServer> { (self.mcp.lock().unwrap().clone())() }
+
     fn start(self: &Arc<Self>, ct: &Cancel) -> Result<(), OcErr> {
         let _g = self.gate.lock().unwrap();
         if ct.is_cancelled() { return Err(OcErr::Cancelled); }
         if self.live.lock().unwrap().is_some() { return Ok(()); }
+        // Read before the start, so the server and what it is said to have agree.
+        let mcp = computer_use::signature(&self.servers());
         let link = (self.connect)(ct, &self.t)?.ok_or_else(|| OcErr::Oc(None, format!("OpenCode isn’t installed. {}", agents::install_hint(AgentTool::OpenCode))))?;
         let client = Client::new(&link.url, "opencode", &link.password).ok_or_else(|| OcErr::Oc(None, format!("OpenCode listened on {}, which Hover can’t reach.", link.url)))?;
         let gen = self.gens.fetch_add(1, Ordering::SeqCst) + 1;
         let OpenCodeLink { url: at, kill, errors, exited, .. } = link;
         *self.live.lock().unwrap() = Some(Arc::new(Live { gen, client, kill, errors }));
+        *self.mcp_started.lock().unwrap() = Some(mcp);
         self.inventory.lock().unwrap().clear();
         if let Some(rx) = exited {
             let me = Arc::downgrade(self);
@@ -1310,16 +1362,26 @@ pub fn new_message_id() -> String {
 
 /// OpenCodeHost.Launch: "opencode serve" hidden, in the group that goes with Hover, its
 /// URL read from what it prints ("listening on http://127.0.0.1:port").
-fn launch(ct: &Cancel, t: &Timeouts) -> Result<Option<OpenCodeLink>, OcErr> {
+fn launch(ct: &Cancel, t: &Timeouts, boxed: &Boxed, servers: &[McpServer]) -> Result<Option<OpenCodeLink>, OcErr> {
     let Some(exe) = agents::exe(AgentTool::OpenCode) else { return Ok(None) };
     let mut pw = [0u8; 24];
     getrandom::fill(&mut pw).expect("the system has no randomness");
     let password: String = pw.iter().map(|b| format!("{b:02X}")).collect();
-    let mut cmd = crate::proc::hidden(&exe, agents::arguments(AgentTool::OpenCode));
+    // In the sandbox, for the folders its sessions use (sandbox.rs), when it is wanted.
+    // Hover reaches the server from outside it, on this PC's loopback.
+    let folders = sandbox::folders();
+    let start = sandbox::plan(AgentTool::OpenCode, &exe, agents::arguments(AgentTool::OpenCode), &[], &folders);
+    boxed.started(start.boxed.then_some(folders));
+    let args: Vec<&str> = start.args.iter().map(String::as_str).collect();
+    let mut cmd = crate::proc::hidden(&start.exe, &args);
     cmd.current_dir(crate::proc::home());
+    for (k, v) in &start.env { cmd.env(k, v); }
     cmd.env("OPENCODE_SERVER_PASSWORD", &password);
     // The question tool, which Hover answers in the notch and the office.
     cmd.env("OPENCODE_ENABLE_QUESTION_TOOL", "1");
+    // Hover's MCP servers (Cua Driver for computer use, Hover's browser), as inline config
+    // over the user's and the project's, so no opencode.json is written.
+    if let Some(inline) = computer_use::opencode_config(servers, std::env::var("OPENCODE_CONFIG_CONTENT").ok().as_deref()) { cmd.env("OPENCODE_CONFIG_CONTENT", inline); }
     let g = Arc::new(crate::proc::Group::spawn(cmd).map_err(|e| OcErr::Oc(None, format!("OpenCode couldn’t start: {e}")))?);
     let (stdin, stdout, stderr) = g.take_pipes();
     drop(stdin);

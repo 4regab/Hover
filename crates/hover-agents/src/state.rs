@@ -233,12 +233,36 @@ pub fn pose(p: KiroPhase) -> &'static str {
     }
 }
 
+/// A call that hands work to a subagent (DeskInfo.IsSubagent): Claude Code's and
+/// OpenCode's task tool arrive as kind "agent"; Codex's spawn_agent and Kiro's subagent
+/// tool come as "other" or "think" with the name in the title; and a subagent_type (or
+/// its like) in the call's raw input says so whatever the call is named.
+pub fn is_subagent(x: &KiroStep) -> bool {
+    x.kind == "agent" || crate::desk::field(x.input.as_deref(), &crate::desk::AGENT_KEYS).is_some()
+        || (matches!(x.kind.as_str(), "other" | "think") && title_hands_off(&x.title))
+}
+
+/// AgentTitle: \b(sub-?agents?|use_subagent|spawn_agent|delegat(e|ing))\b, any case.
+fn title_hands_off(title: &str) -> bool {
+    let t = title.to_lowercase();
+    let word = |c: char| c.is_alphanumeric() || c == '_';
+    ["subagents", "subagent", "sub-agents", "sub-agent", "use_subagent", "spawn_agent", "delegating", "delegate"].iter().any(|w| {
+        t.match_indices(w).any(|(i, _)| !t[..i].chars().next_back().is_some_and(word) && !t[i + w.len()..].chars().next().is_some_and(word))
+    })
+}
+
+/// The subagents the session's live turn has out: its subagent steps not yet completed
+/// or failed. The office shows each as a helper at the desk while the bot is at work.
+pub fn subagents_out(s: &KiroSession) -> usize {
+    s.current().map_or(0, |t| t.steps.iter().filter(|x| is_subagent(x) && !matches!(x.status.as_str(), "completed" | "failed")).count())
+}
+
 /// A step as the chat's timeline shows it: its kind's icon, a verb, and the file (its
 /// name bright, its folder dim) or the command it was about, with the change it made or
 /// what the command printed, and how it went.
 pub fn row(x: &KiroStep, folder: &str) -> Json {
     // Reasoning the tool exposed, and a subagent (OpenCode's task tool): their own rows.
-    if x.kind == "thought" || x.kind == "agent" {
+    if x.kind == "thought" || is_subagent(x) {
         return Json::obj(vec![
             ("k", st(if x.kind == "thought" { "thought" } else { "agent" })), ("verb", st(&x.title)), ("name", Json::Null), ("dir", Json::Null),
             ("cmd", opt(x.target.as_deref())), ("status", st(&x.status)), ("add", Json::int(0)), ("del", Json::int(0)), ("diff", Json::Null),

@@ -24,5 +24,9 @@ image = { version = "0.25", default-features = false, features = ["png"] }
 [target.'cfg(windows)'.dependencies]
 wgpu = { version = "30", default-features = false, features = ["wgsl", "std", "dx12"] }
 
-[target.'cfg(not(windows))'.dependencies]
+[target.'cfg(not(any(windows, target_os = "macos")))'.dependencies]
 wgpu = { version = "30", default-features = false, features = ["wgsl", "std", "vulkan", "gles"] }
+
+# macOS draws through Metal (wgpu's PRIMARY backends include it); no Vulkan or GL there.
+[target.'cfg(target_os = "macos")'.dependencies]
+wgpu = { version = "30", default-features = false, features = ["wgsl", "std", "metal"] }

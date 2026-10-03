@@ -46,7 +46,10 @@ fn a_click_on_a_bot_opens_its_session_and_props_do_their_thing() {
         // Just under the tag: the bot's head.
         o.pointer = Some((s.x, s.y + 12.0));
         o.pick();
-        assert_eq!(o.click(), Click::Open(s.id), "{}", s.name);
+        // A sleeping bot's head is down on its desk: under its tag is only air over the
+        // desk, where neither surface is under the pointer, and main.js gives that to the desk.
+        let want = if s.stage == Stage::Stopped { Click::Desk(s.id, s.x, s.y + 12.0) } else { Click::Open(s.id) };
+        assert_eq!(o.click(), want, "{}", s.name);
     }
     // The TV and the window, through their hit boxes.
     let (view, proj) = o.camera();
@@ -63,6 +66,38 @@ fn a_click_on_a_bot_opens_its_session_and_props_do_their_thing() {
     assert_eq!(o.click(), Click::Nothing);
 }
 
+#[test]
+fn a_click_on_a_desk_with_a_session_opens_its_card_and_the_bot_still_wins_over_its_desk() {
+    let mut o = office();
+    let (view, proj) = o.camera();
+    let at = |x: f64, y: f64, z: f64| { let p = proj.mul(&view).point(hover_office::m::v3(x, y, z)); ((p.x + 1.0) / 2.0 * 1104.0, (1.0 - p.y) / 2.0 * 424.0) };
+    let seated: Vec<_> = o.sessions.iter().map(|s| (s.id, s.desk)).collect();
+    for (id, desk) in seated {
+        let (dx, dz) = DESKS[desk];
+        // The monitor is in front of the seated bot seen from the camera: both hit boxes
+        // are under the pointer, and the room's surface is what it is on.
+        o.pointer = Some(at(dx + 0.11, 1.1, dz));
+        o.pick();
+        assert_eq!(o.hovered, Some(hover_office::office::Hover::Desk(id)), "desk {desk}: the monitor");
+        let p = o.pointer.unwrap();
+        assert_eq!(o.click(), Click::Desk(id, p.0, p.1));
+        // The bot's own head, over its desk's box.
+        let head = o.tags().into_iter().find(|t| t.id == id).unwrap();
+        if head.stage != Stage::Stopped {
+            o.pointer = Some((head.x, head.y + 12.0));
+            o.pick();
+            assert_eq!(o.click(), Click::Open(id), "desk {desk}: the head");
+        }
+    }
+    // A desk nobody sits at is just the room.
+    let free = (0..6).find(|d| !o.sessions.iter().any(|s| s.desk == *d)).unwrap_or(6);
+    if free < 6 {
+        let (dx, dz) = DESKS[free];
+        o.pointer = Some(at(dx + 0.11, 1.1, dz));
+        o.pick();
+        assert_eq!(o.click(), Click::Nothing);
+    }
+}
 #[test]
 fn a_new_session_walks_in_and_a_gone_one_walks_out() {
     let (state, _) = fixture();

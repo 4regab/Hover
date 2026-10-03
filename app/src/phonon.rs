@@ -194,6 +194,10 @@ fn triple() -> Option<&'static str> {
     }
 }
 
+/// Why Local speech is off on this OS, for Settings to show beside its choice: none on
+/// Windows and Linux (Settings → Voice asks; pages.rs can drop the call).
+pub fn local_note() -> Option<&'static str> { None }
+
 /// Why this device can't run Phonon, known before anything is downloaded.
 fn unsupported() -> Option<String> {
     if triple().is_none() {

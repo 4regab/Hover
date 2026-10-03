@@ -31,11 +31,11 @@ pub struct Page {
     size: Cell<(u32, u32)>,
     pub open: Cell<Option<i32>>,
     pub panel: Cell<Option<&'static str>>,
-    fab: Cell<i32>,
+    pub(crate) fab: Cell<i32>,
     new_tool: Cell<usize>,
     /// The HUD's menu, and the new-task box's access menu, open.
-    menu: Cell<bool>,
-    access_menu: Cell<bool>,
+    pub(crate) menu: Cell<bool>,
+    pub(crate) access_menu: Cell<bool>,
     /// The access the new-task box picked, by tool, for the tasks it starts next.
     new_access: RefCell<[Option<&'static str>; AgentTool::ALL.len()]>,
     new_folder: RefCell<Option<String>>,
@@ -46,6 +46,10 @@ pub struct Page {
     /// A tool whose status is being looked up (office_push), by AgentTool::ALL's order.
     checking: Cell<[bool; AgentTool::ALL.len()]>,
     confirm_key: RefCell<Option<(Option<i32>, Option<String>)>>,
+    /// The question on the card is a rewind (a chat and its folder going back), not a delete.
+    confirm_rewind: RefCell<Option<(i32, hover_agents::session::Rewind)>>,
+    /// A rewind is putting the files back: another click waits.
+    rewinding: Cell<bool>,
     thread: RefCell<Option<Chat>>,
     /// The open chat's turns as last laid out, for a click on the thread.
     turns: RefCell<Vec<hover_chat::Turn>>,
@@ -63,7 +67,7 @@ pub struct Page {
     picks: RefCell<HashMap<String, Picks>>,
     qmodels: RefCell<HashMap<String, QRows>>,
     /// The model menu: 0 closed, 1 the drawer's pill, 2 the new-task box's.
-    model_menu: Cell<i32>,
+    pub(crate) model_menu: Cell<i32>,
     /// Pictures attached to the reply (0) and the new task (1), as files in kiro-images.
     attached: RefCell<[Vec<String>; 2]>,
     thumbs: RefCell<HashMap<String, Image>>,
@@ -82,6 +86,8 @@ pub struct Page {
     slots: RefCell<SlotImages>,
     /// The glass panels' blurred copy of the frame, and its working buffers.
     blur: RefCell<Blur>,
+    /// The desk card and the desk panel (desk_ui.rs).
+    pub desk: crate::desk_ui::DeskUi,
 }
 
 /// The office's slots as images, and which slot each window last showed (0 the notch, 1
@@ -140,7 +146,8 @@ fn double_click() -> (Duration, (f32, f32)) {
     unsafe { (Duration::from_millis(GetDoubleClickTime() as u64), (GetSystemMetrics(SM_CXDOUBLECLK) as f32, GetSystemMetrics(SM_CYDOUBLECLK) as f32)) }
 }
 
-/// GTK's and Qt's defaults (400 ms, 5 px): X11 has no setting of its own.
+/// GTK's and Qt's defaults (400 ms, 5 px): X11 has no setting of its own, and on a Mac this
+/// stands for the system's.
 #[cfg(not(windows))]
 fn double_click() -> (Duration, (f32, f32)) { (Duration::from_millis(400), (10.0, 10.0)) }
 
@@ -150,12 +157,12 @@ impl Default for Page {
     fn default() -> Page {
         Page { live: RefCell::new(None), size: Cell::new((0, 0)), open: Cell::new(None), panel: Cell::new(None), fab: Cell::new(0), new_tool: Cell::new(0), menu: Cell::new(false), access_menu: Cell::new(false), new_access: RefCell::new([None; AgentTool::ALL.len()]),
             new_folder: RefCell::new(None), time_mode: Cell::new(0), toast_timer: Default::default(), push_timer: Default::default(), dirty: Cell::new(true),
-            checking: Cell::new([false; AgentTool::ALL.len()]), confirm_key: RefCell::new(None), thread: RefCell::new(None), turns: RefCell::new(vec![]), drafts: Default::default(), copied: Default::default(),
+            checking: Cell::new([false; AgentTool::ALL.len()]), confirm_key: RefCell::new(None), confirm_rewind: RefCell::new(None), rewinding: Cell::new(false), thread: RefCell::new(None), turns: RefCell::new(vec![]), drafts: Default::default(), copied: Default::default(),
             rows_open: RefCell::new(vec![]), target: Cell::new(0), shown: Cell::new(None), drop_timer: Default::default(), view: Cell::new(None),
             picks: Default::default(), qmodels: Default::default(), model_menu: Cell::new(0), attached: Default::default(), thumbs: Default::default(),
             #[cfg(windows)] gpu: Default::default(),
             #[cfg(windows)] scratch: Default::default(),
-            #[cfg(windows)] slots: Default::default(), blur: Default::default() }
+            #[cfg(windows)] slots: Default::default(), blur: Default::default(), desk: Default::default() }
     }
 }
 
@@ -178,7 +185,9 @@ impl App {
             }
         }
         let n = self.n.borrow();
-        (n.hover.state != hover_notch::State::Rest || self.headless).then(|| ((n.open_size.0 - 16.0) as u32, (n.open_size.1 - 16.0) as u32, 0))
+        // Below a Mac's camera housing, when the notch has one.
+        let below = n.hw.filter(|h| h.real).map_or(0.0, |h| h.height);
+        (n.hover.state != hover_notch::State::Rest || self.headless).then(|| ((n.open_size.0 - 16.0) as u32, (n.open_size.1 - 16.0 - below).max(1.0) as u32, 0))
     }
 
     /// Starts the office thread the first time an office is seen, and tells it whether
@@ -235,13 +244,14 @@ impl App {
         }
     }
 
-    pub fn office_changed(&self) { self.page.dirty.set(true); }
+    pub fn office_changed(&self) { self.page.dirty.set(true); self.desk_session_changed(); }
 
     /// The office thread goes, and its GPU memory with it.
     fn office_drop(self: &Rc<Self>) {
         let p = &self.page;
         if p.shown.get() != Some(false) { return; }
         p.push_timer.stop();
+        self.desk_leave();
         *p.live.borrow_mut() = None;
         *p.thread.borrow_mut() = None;
         // The last frame and its blurred copy would otherwise stay in the globals.
@@ -332,8 +342,11 @@ impl App {
         if let Some((img, blurred)) = images {
             // renderAsks: the question over the head while the session waits.
             let asking = self.hover.sessions.asking_now();
+            // The card of a bot that asks shows the question itself, with the same buttons:
+            // its bubble over the head would sit half under the card.
+            let card = self.page.desk.card.get();
             let tags: Vec<TagData> = out.tags.iter().map(|t| {
-                let ask = asking.iter().find(|x| x.0 as i64 == t.id).map(|(_, a, n)| self.ask_data(a, *n));
+                let ask = asking.iter().find(|x| x.0 as i64 == t.id && card != Some(x.0)).map(|(_, a, n)| self.ask_data(a, *n));
                 TagData {
                     id: t.id as i32, x: t.x as f32, y: t.y as f32, name: s(t.name), color: Color::from_rgb_u8(t.color[0], t.color[1], t.color[2]),
                     tool: s(tool_name(&t.tool)), tool_color: tool_color(&t.tool), text: s(&t.text), stage: t.stage as i32, hot: t.hot,
@@ -343,7 +356,24 @@ impl App {
             let hint = if out.hint == "clock" { full_date() } else { out.hint.clone() };
             let (tx, ty) = out.pointer.unwrap_or((0.0, 0.0));
             let which = self.page.target.get();
+            // The tip over a bot ("Chat with Juno") or a desk with a session at it ("Juno’s desk"):
+            // not while a desk card is open, nor over the bot whose chat is open.
+            let over = {
+                let find = |id: i64| out.tags.iter().find(|t| t.id == id).map(|t| (t.name, Color::from_rgb_u8(t.color[0], t.color[1], t.color[2])));
+                let none = (0, "", Color::default());
+                if self.page.desk.card.get().is_some() { none } else {
+                    match out.hovered {
+                        Some(hover_office::office::Hover::Bot(id)) if self.page.open.get() != Some(id as i32) => find(id).map_or(none, |(n, c)| (1, n, c)),
+                        Some(hover_office::office::Hover::Desk(id)) => find(id).map_or(none, |(n, c)| (2, n, c)),
+                        _ => none,
+                    }
+                }
+            };
+            self.desk_note_helpers(&out.tags);
             let set = |g: crate::ui::Office| {
+                g.set_over_kind(over.0);
+                g.set_over_name(s(over.1));
+                g.set_over_color(over.2);
                 g.set_scene(img.clone());
                 if let Some(m) = crate::view::sync(g.get_tags(), &tags) { g.set_tags(m); }
                 g.set_hint(s(&hint));
@@ -368,9 +398,10 @@ impl App {
         for c in out.clicks {
             match c {
                 Click::Open(id) => self.open_session(id as i32),
+                Click::Desk(id, x, y) => self.desk_open_card(id as i32, x as f32, y as f32),
                 Click::Panel(p) => self.open_panel(Some(p)),
                 Click::Toast(_) => self.toast(&full_date()),
-                Click::NewTask => { self.close_drawer(); self.open_panel(None); self.page.fab.set(1); self.office_widgets(); }
+                Click::NewTask => { self.desk_leave(); self.close_drawer(); self.open_panel(None); self.page.fab.set(1); self.office_widgets(); }
                 Click::Time(t) => { self.page.time_mode.set(if t == Time::Night { 1 } else { 2 }); crate::local_set("time", if t == Time::Night { "night" } else { "day" }); self.office_widgets(); }
                 Click::Fold => self.collapse(),
                 Click::Nothing => {
@@ -412,8 +443,9 @@ impl App {
         s.img.get(i).cloned()
     }
 
-    /// Never on Linux: Slint draws there with OpenGL, which cannot sample the office's
-    /// wgpu texture, so the office reads its frames back and this is never reached.
+    /// Only on Windows, where Slint and the office share one DX12 device. On Linux Slint draws
+    /// with OpenGL, which cannot sample the office's wgpu texture, and on a Mac the office's
+    /// frames are read back as well, so this is never reached there.
     #[cfg(not(windows))]
     fn slot_images(&self, _gen: u64, _i: usize) -> Option<(Image, Image)> { None }
 
@@ -462,9 +494,10 @@ impl App {
         self.page.toast_timer.start(slint::TimerMode::SingleShot, Duration::from_millis(2800), move || each!(a, |g| g.set_toast_shown(false)));
     }
 
-    fn send(&self, m: In) { if let Some(l) = &*self.page.live.borrow() { l.send(m); } }
+    pub(crate) fn send(&self, m: In) { if let Some(l) = &*self.page.live.borrow() { l.send(m); } }
 
     pub fn open_session(self: &Rc<Self>, id: i32) {
+        self.desk_leave();
         self.page.fab.set(0);
         self.page.panel.set(None);
         self.send(In::Panel(None));
@@ -506,7 +539,7 @@ impl App {
     }
 
     pub fn open_panel(self: &Rc<Self>, p: Option<&'static str>) {
-        if p.is_some() { self.page.open.set(None); self.send(In::Drawer(None)); self.page.fab.set(0); }
+        if p.is_some() { self.desk_leave(); self.page.open.set(None); self.send(In::Drawer(None)); self.page.fab.set(0); }
         self.page.panel.set(p);
         self.send(In::Panel(p));
         self.office_widgets();
@@ -557,6 +590,7 @@ impl App {
             g.set_model_menu(if menu_rows.is_some() { p.model_menu.get() } else { 0 });
             if let Some((head, models, ehead, efforts, note)) = &menu_rows {
                 g.set_mm_head(s(head));
+                g.set_mm_cur(models.iter().position(|m| m.on).unwrap_or(0) as i32);
                 if let Some(m) = crate::view::sync(g.get_mm_models(), models) { g.set_mm_models(m); }
                 g.set_mm_effort_head(s(ehead));
                 if let Some(m) = crate::view::sync(g.get_mm_efforts(), efforts) { g.set_mm_efforts(m); }
@@ -612,6 +646,7 @@ impl App {
             }
         });
         if open.is_some() { self.paint_thread(); }
+        self.desk_sync();
     }
 
     fn panel_rows(&self, sessions: &[KiroSession]) -> Panel {
@@ -717,7 +752,14 @@ impl App {
             let files = |s: &KiroSession| crate::net::files_host(&s.key, &s.folder);
             let v = to_serde(&hover_agents::state::state(&sess, &files));
             let off = hover_core::time::local_offset_min(now.ticks);
-            let turns = hover_chat::state::turns_at(&v, now.unix_ms() as f64, &|ms| hover_chat::state::hm(ms, off));
+            let mut turns = hover_chat::state::turns_at(&v, now.unix_ms() as f64, &|ms| hover_chat::state::hm(ms, off));
+            // Checkpoints offer themselves where one was kept and nothing runs (the agent could be writing).
+            let quiet = !sess.busy() && !sess.turns.iter().any(|t| t.queued);
+            let n = sess.turns.len();
+            for (i, (t, k)) in turns.iter_mut().zip(&sess.turns).enumerate() {
+                t.again = quiet && k.before.is_some();
+                t.restore = quiet && i + 1 < n && k.after.is_some();
+            }
             if chat.as_ref().is_none_or(|c| c.id != id) {
                 let (name, c) = hover_office::bot::BOTS[sess.bot % 6];
                 let f = fonts();
@@ -775,7 +817,7 @@ impl App {
         let a = self.clone();
         g.on_open_history(move || { let open = a.page.panel.get() == Some("history"); a.open_panel(if open { None } else { Some("history") }); });
         let a = self.clone();
-        g.on_fab_main(move || { let f = a.page.fab.get(); a.close_drawer(); a.page.panel.set(None); a.send(In::Panel(None)); a.page.fab.set(if f == 1 { 0 } else { 1 }); a.office_widgets(); });
+        g.on_fab_main(move || { let f = a.page.fab.get(); a.desk_leave(); a.close_drawer(); a.page.panel.set(None); a.send(In::Panel(None)); a.page.fab.set(if f == 1 { 0 } else { 1 }); a.office_widgets(); });
         let a = self.clone();
         g.on_pick_tool(move |i| {
             let t = AgentTool::ALL[i as usize];
@@ -840,14 +882,16 @@ impl App {
         let a = self.clone();
         g.on_find_edited(move |t| { each!(a, |g| g.set_find(t.clone())); a.office_widgets(); });
         let a = self.clone();
-        g.on_confirm_no(move || { *a.page.confirm_key.borrow_mut() = None; each!(a, |g| g.set_confirm(false)); });
+        g.on_confirm_no(move || { *a.page.confirm_key.borrow_mut() = None; *a.page.confirm_rewind.borrow_mut() = None; each!(a, |g| g.set_confirm(false)); });
         let a = self.clone();
         g.on_confirm_yes(move || {
             let k = a.page.confirm_key.borrow_mut().take();
+            let rewind = a.page.confirm_rewind.borrow_mut().take();
             each!(a, |g| g.set_confirm(false));
+            if let Some((id, to)) = rewind { a.rewind(id, to); return; }
             if let Some((id, key)) = k {
                 let key = key.or_else(|| id.and_then(|i| a.hover.sessions.get(i)).map(|s| s.key.clone()));
-                if let Some(key) = key { a.hover.sessions.delete(&key); if let Some(h) = &a.hover.history { h.delete(&key); } }
+                if let Some(key) = key { a.hover.sessions.delete(&key); hover_agents::desk::forget_apps(&key); if let Some(h) = &a.hover.history { h.delete(&key); } }
                 if id.is_some() && id == a.page.open.get() { a.close_drawer(); }
                 a.office_changed();
                 a.office_widgets();
@@ -1212,6 +1256,8 @@ impl App {
                 self.office_widgets();
                 return;
             }
+            hover_chat::Hit::Act(i, hover_chat::doc::Act::Restore) => { self.ask_rewind(hover_agents::session::Rewind::After(i)); return; }
+            hover_chat::Hit::Act(i, hover_chat::doc::Act::TryAgain) => { self.ask_rewind(hover_agents::session::Rewind::Before(i)); return; }
             hover_chat::Hit::Act(i, hover_chat::doc::Act::Cancel) => {
                 let Some(id) = self.page.open.get() else { return };
                 if self.hover.sessions.cancel_queued(id, i) { self.office_changed(); self.office_widgets(); }
@@ -1234,6 +1280,22 @@ impl App {
         self.paint_thread();
     }
 
+    /// The bench's click on a painted act of the open chat's turn `turn` (`restore` or
+    /// `try`): where the button is drawn, through the same handler the pointer uses.
+    pub(crate) fn bench_act(self: &Rc<Self>, which: &str, turn: usize) -> bool {
+        let want = if which == "restore" { hover_chat::doc::Act::Restore } else { hover_chat::doc::Act::TryAgain };
+        let at = {
+            let mut chat = self.page.thread.borrow_mut();
+            let Some(c) = chat.as_mut() else { return false };
+            let Some(s) = c.thread.sections.get(turn) else { return false };
+            let Some((r, _)) = s.frag.hits.iter().find(|(_, a)| *a == want) else { return false };
+            let (x, ty) = (r[0] + r[2] / 2.0 + hover_chat::theme::THREAD_PAD[3], s.y + r[1] + r[3] / 2.0);
+            c.scroll = (ty - 100.0).max(0.0);
+            (x, ty - c.scroll)
+        };
+        self.thread_click(at.0, at.1);
+        true
+    }
     /// newAccessOf: the access the box picked for this tool, else the tool's setting; Read
     /// only only where it works.
     fn new_access(&self, i: usize) -> &'static str {
@@ -1244,8 +1306,55 @@ impl App {
 
     fn ask_delete(self: &Rc<Self>, id: Option<i32>, key: Option<String>, title: &str, busy: bool) {
         *self.page.confirm_key.borrow_mut() = Some((id, key));
+        *self.page.confirm_rewind.borrow_mut() = None;
         let text = format!("“{title}” goes from the office and the history{}. This can’t be undone.", if busy { ", and its run is stopped" } else { "" });
-        each!(self, |g| { g.set_confirm_text(s(&text)); g.set_confirm(true); });
+        each!(self, |g| { g.set_confirm_title(s("Delete this session?")); g.set_confirm_ok(s("Delete")); g.set_confirm_text(s(&text)); g.set_confirm(true); });
+    }
+
+    /// Restore and Try again change the project's files, so they ask first.
+    fn ask_rewind(self: &Rc<Self>, to: hover_agents::session::Rewind) {
+        use hover_agents::session::Rewind;
+        let Some(id) = self.page.open.get() else { return };
+        let Some(sess) = self.hover.sessions.get(id) else { return };
+        if sess.busy() { self.toast("Stop the run first."); return; }
+        if self.page.rewinding.get() { return; }
+        let folder = std::path::Path::new(&sess.folder).file_name().map_or(sess.folder.clone(), |f| f.to_string_lossy().into_owned());
+        let (Rewind::After(i) | Rewind::Before(i)) = to;
+        let later = sess.turns.len().saturating_sub(i + 1);
+        let leave = |n: usize| if n == 1 { "1 message after it leaves".to_owned() } else { format!("{n} messages after it leave") };
+        let (title, yes, text) = match to {
+            Rewind::After(_) => ("Restore to here?", "Restore",
+                format!("The files in “{folder}” go back to how they were after this answer, and the {} this chat. Changes made since, by the agent or by you, are undone.", leave(later))),
+            Rewind::Before(_) => ("Try again from here?", "Try again",
+                format!("The files in “{folder}” go back to how they were before this message, and it is sent again.{} Changes made since, by the agent or by you, are undone.",
+                    if later == 0 { String::new() } else { format!(" The {} this chat.", leave(later)) })),
+        };
+        *self.page.confirm_rewind.borrow_mut() = Some((id, to));
+        *self.page.confirm_key.borrow_mut() = None;
+        each!(self, |g| { g.set_confirm_title(s(title)); g.set_confirm_ok(s(yes)); g.set_confirm_text(s(&text)); g.set_confirm(true); });
+    }
+
+    /// Puts the chat and its folder back (the files take a moment in a big folder, so off
+    /// the UI thread), then shows the chat as it is.
+    fn rewind(self: &Rc<Self>, id: i32, to: hover_agents::session::Rewind) {
+        if self.page.rewinding.replace(true) { return; }
+        self.toast("Putting the files back…");
+        let sessions = self.hover.sessions.clone();
+        std::thread::spawn(move || {
+            let r = sessions.rewind(id, to);
+            crate::ui_do(move |a| {
+                a.page.rewinding.set(false);
+                match r {
+                    Ok(()) => {
+                        a.toast(if matches!(to, hover_agents::session::Rewind::Before(_)) { "Files put back. Sending it again." } else { "Files and chat put back." });
+                        if let Some(c) = &mut *a.page.thread.borrow_mut() { c.scroll = f32::MAX; }
+                    }
+                    Err(e) => a.toast(&e),
+                }
+                a.office_changed();
+                a.office_widgets();
+            });
+        });
     }
 }
 
@@ -1269,7 +1378,7 @@ pub const ACCESS: [(&str, &str, &str); 4] = [
     ("read", "Read only", "Reads and searches. Changes nothing."),
 ];
 
-fn access_label(id: &str) -> &'static str { ACCESS.iter().find(|a| a.0 == id).map_or("Trust all", |a| a.1) }
+pub(crate) fn access_label(id: &str) -> &'static str { ACCESS.iter().find(|a| a.0 == id).map_or("Trust all", |a| a.1) }
 
 /// accessNote: Codex's Ask first is its own preset, which lets the rest run.
 pub fn access_note(id: &str, tool: AgentTool) -> &'static str {

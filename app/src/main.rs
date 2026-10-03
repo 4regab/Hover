@@ -4,14 +4,19 @@
 //!   hover                 run
 //!   hover --version       print the version (Cargo.toml's)
 //!   hover --shots DIR     render every view headless (software renderer) into DIR
-//!   hover --selftest DIR  run on the real display, drive it, and write report.json
+//!   hover --selftest DIR  run on the real display, drive it, and write report.json (X11)
 
 // A window for the app, not a console, on Windows.
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
+// The Mac app is macos/ (Swift) on the hover-backend crate; this one is Windows and Linux.
+#[cfg(target_os = "macos")]
+compile_error!("hoverai is the Windows and Linux app; on macOS build macos/ (Swift) with scripts/build-macos.sh, on crates/hover-backend.");
+
 mod icons;
 mod bench;
 mod notch;
+mod desk_ui;
 mod office_ui;
 mod net;
 mod shots;
@@ -19,9 +24,10 @@ mod view;
 mod voice_ui;
 #[cfg(windows)]
 mod win;
-#[cfg(not(windows))]
+// The notch on X11, and the self-test that drives it on a real display.
+#[cfg(target_os = "linux")]
 mod x11;
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
 mod selftest;
 
 pub mod ui { slint::include_modules!(); }
@@ -164,12 +170,14 @@ impl App {
             beats, beats_timer: Timer::default(), island: RefCell::new((-1, String::new(), String::new(), 0)), card: Cell::new(false), card_ask: RefCell::new(None), second_timer: Timer::default(), ticks: Cell::new(0), speaker: Cell::new(0), end_glow: Timer::default(), anim_timer: Timer::default(),
             clock_timer: Timer::default(), clock_last: Cell::new(None), poll_timer: Timer::default(), quota_timer: Timer::default(),
             had_focus: Cell::new(false), reported: RefCell::new(None),
-            warn: RefCell::new(None), hotkey: RefCell::new(None), tray_menu: RefCell::new(None), notify: RefCell::new(None), headless, hover, page: Default::default(),
+            warn: RefCell::new(None), hotkey: RefCell::new(None), tray_menu: RefCell::new(None), notify: RefCell::new(None),
+            headless, hover, page: Default::default(),
             phonon, voice, voice_ui,
         });
         APP.with(|a| *a.borrow_mut() = Some(app.clone()));
         wire_page!(app.notch, app, 0);
         app.wire_office(app.notch.global::<Office>());
+        app.desk_wire(app.notch.global::<Desk>());
         app.wire_notch();
         app.wire_voice();
         app.voice_start();
@@ -413,10 +421,10 @@ impl App {
                 let folder = s.map(|s| hover_office::office::short(&s.folder)).unwrap_or_default();
                 let lines: Vec<PreviewLine> = ask.preview.as_deref().unwrap_or("").lines().map(|l| PreviewLine { text: l.into(),
                     kind: if l.starts_with('+') { 1 } else if l.starts_with('-') { -1 } else { 0 } }).collect();
-                let why = format!("{}{}", ask.reason, if ask.added + ask.removed > 0 && ask.kind != "edit" { format!(" · +{} −{}", ask.added, ask.removed) } else { String::new() });
+                let why = format!("{}{}", ask.reason, if ask.added + ask.removed > 0 && ask.kind != "edit" { format!(" Â· +{} âˆ’{}", ask.added, ask.removed) } else { String::new() });
                 ui.set_card(CardData {
                     tool: tool.id().into(), title: hover_agents::words::ask_title(ask).into(),
-                    sub: format!("{folder} · {}", s.map(|s| s.title()).unwrap_or_default()).into(),
+                    sub: format!("{folder} Â· {}", s.map(|s| s.title()).unwrap_or_default()).into(),
                     count: if *total > 1 { format!("1 of {total}").into() } else { "".into() },
                     command: ask.command.clone().unwrap_or_default().into(),
                     path: ask.path.clone().or_else(|| (ask.preview.is_none()).then(|| ask.title.clone())).unwrap_or_default().into(),
@@ -440,7 +448,7 @@ impl App {
                 ui.set_seg(3);
                 ui.set_done_tool(tool.id().into());
                 ui.set_done_badge(match state { KiroState::Completed => 1, KiroState::Failed => 2, _ => 0 });
-                ui.set_done_verb(match state { KiroState::Completed => "Done", KiroState::Failed => "Couldn’t finish", _ => "Stopped" }.into());
+                ui.set_done_verb(match state { KiroState::Completed => "Done", KiroState::Failed => "Couldnâ€™t finish", _ => "Stopped" }.into());
                 ui.set_done_title(if title.is_empty() { "the task".into() } else { title.as_str().into() });
                 ui.set_done_took(if *count > 1 { format!("+{}", count - 1).into() } else { hover_app::rest::took(*took_secs).into() });
                 // A new end glows 6 s, green done, red failed; a stop doesn't.
@@ -569,6 +577,7 @@ impl App {
             let d = DashboardWindow::new().expect("the app window");
             wire_page!(d, self, 1);
             self.wire_office(d.global::<Office>());
+            self.desk_wire(d.global::<Desk>());
             let a = self.clone();
             d.on_back(move || { a.dash_settings.set(false); if let Some(d) = &*a.dash.borrow() { d.set_in_settings(false); } });
             // The title bar's own buttons and drag, through winit.
@@ -626,6 +635,8 @@ impl App {
     pub fn refresh_page(self: &Rc<Self>, top: bool) {
         // The Voice page, opened: its microphones are looked up again.
         if top && self.pane.borrow().section == Section::Voice { self.load_mics(); }
+        // The Integrations and the agents' pages, opened: Cua Driver, the sandbox and the tools' setup are looked up.
+        if top && matches!(self.pane.borrow().section, Section::Integrations) { self.integ_look(false); }
         let bs = view::build(&**self, &mut self.pane.borrow_mut());
         let p = self.palette.borrow().clone();
         let slint_blocks = view::blocks(&bs, &p);
@@ -705,7 +716,7 @@ impl App {
 
     fn hotkey_warning(self: &Rc<Self>, label: &str) {
         let who = if cfg!(windows) { "Windows has reserved it" } else { "The desktop has reserved it" };
-        let message = format!("Hover couldn't register the notch shortcut, {label}.\n\n{who} or another app is already using it. Choose a different shortcut in Settings → General.");
+        let message = format!("Hover couldn't register the notch shortcut, {label}.\n\n{who} or another app is already using it. Choose a different shortcut in Settings â†’ General.");
         hover_core::log::line(&message.replace('\n', " "));
         if self.headless { return; }
         let w = WarningWindow::new().expect("the warning");
@@ -765,7 +776,7 @@ impl view::Host for App {
         std::thread::spawn(move || { hover_agents::agents::check(tool, fresh); ui_do(|a| a.refresh_page(false)); });
     }
     fn action(&self, id: &str) {
-        APP.with(|a| if let Some(a) = a.borrow().clone() { a.voice_action(id); });
+        APP.with(|a| if let Some(a) = a.borrow().clone() { if id.starts_with("integ.") { a.integ_action(id); } else { a.voice_action(id); } });
     }
 }
 
@@ -774,7 +785,7 @@ impl view::Host for App {
 pub fn pick(folder: bool) -> Option<String> {
     #[cfg(windows)]
     return win::pick(folder);
-    #[cfg(not(windows))]
+    #[cfg(target_os = "linux")]
     return x11::pick(folder);
 }
 
@@ -783,7 +794,7 @@ pub fn pick(folder: bool) -> Option<String> {
 pub fn pick_image() -> Option<String> {
     #[cfg(windows)]
     return win::pick_image();
-    #[cfg(not(windows))]
+    #[cfg(target_os = "linux")]
     return x11::pick_image();
 }
 
@@ -821,7 +832,7 @@ fn main() {
         Err(e) => { hover_core::log::line(&format!("single instance: {e}")); return; }
     };
 
-    #[cfg(not(windows))]
+    #[cfg(target_os = "linux")]
     {
         // No layer-shell in winit: on Wayland the notch runs through XWayland, where an
         // override-redirect window can sit at the top centre (see the report).
@@ -837,15 +848,15 @@ fn main() {
     hover_core::platform::watch_look(|| ui_do(|a| a.look_changed(hover_core::platform::look())));
     hover_core::log::line("started");
     if bench::active() { bench::listen(); }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "linux")]
     if let Some(dir) = selftest {
         let a = app.clone();
         Timer::single_shot(Duration::from_millis(500), move || selftest::start(a, std::path::PathBuf::from(dir)));
     }
     // The product's self-test drives X11; on Windows the notch's is notch-proto's for now
     // (RUN-ON-WINDOWS, 3C).
-    #[cfg(windows)]
-    if selftest.is_some() { hover_core::log::line("--selftest: not in the Windows build yet; run notch-proto --selftest"); }
+    #[cfg(not(target_os = "linux"))]
+    if selftest.is_some() { hover_core::log::line("--selftest: only the X11 build has one; run notch-proto --selftest on Windows"); }
     let _ = slint::run_event_loop_until_quit();
     hover_core::log::line("quitting");
     // A recording or a local transcription stops first (and Phonon's helper with it).
@@ -860,7 +871,7 @@ fn main() {
 }
 
 /// One renderer for the process: femtovg on wgpu through DirectComposition on Windows
-/// (per-pixel alpha in the notch), femtovg on OpenGL elsewhere (an ARGB visual on X11).
+/// (per-pixel alpha in the notch), femtovg on OpenGL on Linux (an ARGB visual on X11).
 fn select_backend() {
     #[cfg(windows)]
     let sel = {
@@ -878,7 +889,7 @@ fn select_backend() {
         };
         slint::BackendSelector::new().backend_name("winit".into()).renderer_name("femtovg-wgpu".into()).require_wgpu_30(config)
     };
-    #[cfg(not(windows))]
+    #[cfg(target_os = "linux")]
     let sel = slint::BackendSelector::new().backend_name("winit".into())
         .renderer_name(std::env::var("HOVER_RENDERER").unwrap_or_else(|_| "femtovg".into()));
     let sel = sel.with_winit_window_attributes_hook(notch_attributes);
@@ -906,7 +917,7 @@ fn notch_attributes(a: slint::winit_030::winit::window::WindowAttributes) -> sli
             use winit::platform::windows::WindowAttributesExtWindows;
             a.with_no_redirection_bitmap(true).with_skip_taskbar(true).with_undecorated_shadow(false).with_class_name("HoverNotch")
         };
-        #[cfg(not(windows))]
+        #[cfg(target_os = "linux")]
         let a = {
             use winit::platform::x11::{WindowAttributesExtX11, WindowType};
             a.with_override_redirect(true).with_x11_window_type(vec![WindowType::Dock]).with_name("hover", "Hover")
@@ -962,7 +973,7 @@ fn shared_gpu() -> Result<slint::wgpu_30::WGPUConfiguration, String> {
     Ok(WGPUConfiguration::Manual { instance, adapter, device, queue })
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
 fn platform_start(hover: Arc<Hover>, look: Look, _selftest: bool) -> Rc<App> {
     let Some((conn, root, size)) = x11::connect() else {
         hover_core::log::line("no X display: the notch is a plain window");
@@ -1068,12 +1079,13 @@ fn platform_start(hover: Arc<Hover>, look: Look, _selftest: bool) -> Rc<App> {
     app
 }
 
+
 /// A link in the chat opens in the browser, as KiroPage's `link` did (http(s) only:
 /// hover-md makes sure).
 pub fn open_url(url: &str) {
     #[cfg(windows)]
     let r = std::process::Command::new("rundll32").args(["url.dll,FileProtocolHandler", url]).spawn();
-    #[cfg(not(windows))]
+    #[cfg(target_os = "linux")]
     let r = std::process::Command::new("xdg-open").arg(url).spawn();
     if let Err(e) = r { hover_core::log::line(&format!("couldn't open {url}: {e}")); }
 }

@@ -12,6 +12,7 @@ pub mod canvas;
 pub mod js;
 pub mod live;
 pub mod m;
+pub mod mini;
 pub mod office;
 pub mod page;
 pub mod render;
