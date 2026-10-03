@@ -52,12 +52,12 @@ final class MenuBar: NSObject, NSMenuDelegate {
             return
         }
         let font = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .medium)
+        let quotas = self.quotas
         let texts = shown.map { NSAttributedString(string: Self.percent(quotas[$0]), attributes: [.font: font]) }
         let ring: CGFloat = 16, gap: CGFloat = 4, between: CGFloat = 8
         let width = zip(shown, texts).reduce(CGFloat(0)) { $0 + ring + gap + ceil($1.1.size().width) } + between * CGFloat(shown.count - 1)
         let size = CGSize(width: ceil(width), height: 18)
         let label = isDark ? NSColor.white : NSColor.black
-        let quotas = self.quotas
         let image = NSImage(size: size, flipped: false) { _ in
             guard let cg = NSGraphicsContext.current?.cgContext else { return false }
             var x: CGFloat = 0

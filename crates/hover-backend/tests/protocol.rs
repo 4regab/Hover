@@ -113,8 +113,12 @@ impl Sandbox {
 
     fn start_with(&self, env: &[(&str, &str)]) -> Run {
         let home = self.root.join("home");
-        let system = std::env::var("SystemRoot").map(|s| format!("{s}\\System32")).unwrap_or_else(|_| "/usr/bin:/bin".into());
-        let path = std::env::join_paths([self.bin(), PathBuf::from(system)]).unwrap();
+        // PATH's own separator can't be inside one entry: each system folder is its own.
+        let system: Vec<PathBuf> = match std::env::var("SystemRoot") {
+            Ok(s) => vec![PathBuf::from(format!("{s}\\System32"))],
+            Err(_) => vec![PathBuf::from("/usr/bin"), PathBuf::from("/bin")],
+        };
+        let path = std::env::join_paths(std::iter::once(self.bin()).chain(system)).unwrap();
         let mut c = Command::new(env!("CARGO_BIN_EXE_hover-backend"));
         c.env("HOVER_DATA_DIR", self.data()).env("PATH", path).env("USERPROFILE", &home).env("HOME", &home)
             .env("LOCALAPPDATA", home.join("local")).env("APPDATA", home.join("roaming")).env("XDG_RUNTIME_DIR", &home).env_remove("CODEX_HOME").env_remove("CLAUDE_CONFIG_DIR");
