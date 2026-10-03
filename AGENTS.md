@@ -153,8 +153,8 @@ tests/macos/    backend-smoke.py, SettingsSmoke.swift, e2e/ (run.sh, E2E.swift, 
                  agent, cua, lume and site)
 packaging/       windows/Hover.iss; linux/package-linux.sh and hover.desktop (the one
                  .desktop file the .deb and make install both use)
-assets/          hover.png (the logo), make-icon.py (writes the app's hover.ico and
-                 hover-mark.png), the README's pictures (readme/)
+assets/          hover.svg (the logo), make-icon.py (writes hover.png and
+                 the app's hover.ico and hover-mark.png), the README's pictures (readme/)
 ```
 
 ## How it works (the parts that surprise people)
