@@ -66,12 +66,16 @@ fn on_hands_out_cua_drivers_mcp_command_from_path() {
     let exe = e.driver();
     ON.store(true, Ordering::SeqCst);
     let servers = computer_use::servers();
+    if !computer_use::supported() {
+        // The setting and a cua-driver on PATH change nothing where Cua isn't offered.
+        assert!(servers.is_empty());
+        return;
+    }
     assert_eq!(servers.len(), 1);
     let s = &servers[0];
     assert_eq!(s.name, "cua-driver");
-    if cfg!(windows) || !std::path::Path::new("/usr/bin/perl").is_file() {
-        // (PATHEXT's ".EXE" is upper case; the file is the same.)
-        assert!(s.command.eq_ignore_ascii_case(&exe), "{} vs {exe}", s.command);
+    if !std::path::Path::new("/usr/bin/perl").is_file() {
+        assert_eq!(s.command, exe);
         assert_eq!(s.args, vec!["mcp"]);
         return;
     }
@@ -181,10 +185,26 @@ fn ready_needs_it_installed_and_at_least_accessibility() {
 
 #[test]
 fn where_it_runs_and_what_is_said() {
-    assert!(computer_use::supported());
-    assert_eq!(computer_use::note(), if cfg!(target_os = "linux") { Some("Cua Driver’s Linux support is still a pre-release.") } else { None });
+    assert_eq!(computer_use::supported(), cfg!(target_os = "macos"));
+    assert_eq!(computer_use::UNSUPPORTED, "Computer use needs macOS.");
     assert_eq!(computer_use::can_grant(), cfg!(target_os = "macos"));
     assert!(computer_use::install_hint().starts_with("Install Cua Driver: "));
+}
+
+/// Where Cua isn't offered a cua-driver on PATH is neither asked nor installed over: the
+/// status says so, and Install reports the note. (On a Mac this would run the real thing.)
+#[test]
+fn where_it_is_not_offered_it_is_never_run_or_installed() {
+    if computer_use::supported() { return; }
+    let e = Env::new("unsupported");
+    e.driver();
+    ON.store(true, Ordering::SeqCst);
+    let s = computer_use::check(true);
+    assert_eq!((s.installed, s.permissions, s.hint.as_str()), (false, "unknown", computer_use::UNSUPPORTED));
+    assert!(!s.ready() && s.version.is_empty());
+    computer_use::install();
+    assert_eq!(computer_use::setup().error.as_deref(), Some(computer_use::UNSUPPORTED));
+    assert!(!computer_use::busy());
 }
 
 /// The guard against a stand-in cua-driver that echoes what reaches it: foreground becomes

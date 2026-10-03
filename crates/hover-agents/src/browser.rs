@@ -18,6 +18,9 @@
 //!
 //! Unlike the C# relay, the token comes to the relay in its environment (the MCP
 //! server's env), not on its command line.
+//!
+//! The same socket and relay reach other MCP servers Hover runs itself for a session
+//! (`bridge`, under a token of its own): a project's Cua Space is one (spaces.rs).
 
 use crate::agents::toggles;
 use crate::computer_use::McpServer;
@@ -287,22 +290,70 @@ while ($sel->count) {
 "###;
 
 #[derive(Default)]
-struct Registry { by_tag: std::collections::HashMap<String, String>, by_token: std::collections::HashMap<String, String> }
+#[cfg_attr(not(unix), allow(dead_code))]
+struct Registry {
+    by_tag: std::collections::HashMap<String, String>,
+    by_token: std::collections::HashMap<String, String>,
+    /// Other MCP servers Hover runs itself (see `bridge`): a token to the name it was made
+    /// for and the code that serves it, and the name back to its token.
+    bridges: std::collections::HashMap<String, (String, Bridged)>,
+    bridge_tokens: std::collections::HashMap<String, String>,
+}
 
 static REGISTRY: Mutex<Option<Registry>> = Mutex::new(None);
+
+fn token_bytes() -> String {
+    let mut b = [0u8; 16];
+    getrandom::fill(&mut b).expect("the system has no randomness");
+    b.iter().map(|x| format!("{x:02x}")).collect()
+}
 
 /// The token the relay of a session's tool sends first; the same for the same tag.
 pub fn register(tag: &str) -> String {
     let mut g = REGISTRY.lock().unwrap();
     let r = g.get_or_insert_with(Registry::default);
     if let Some(t) = r.by_tag.get(tag) { return t.clone(); }
-    let mut b = [0u8; 16];
-    getrandom::fill(&mut b).expect("the system has no randomness");
-    let token: String = b.iter().map(|x| format!("{x:02x}")).collect();
+    let token = token_bytes();
     r.by_tag.insert(tag.into(), token.clone());
     r.by_token.insert(token.clone(), tag.into());
     token
 }
+
+/// What serves a bridged MCP server once its relay has said hello: the name it was made
+/// for, what the agent writes (its lines) and where to write back. Runs on a thread of
+/// its own and returns when the agent's side is done.
+pub type Bridged = Arc<dyn Fn(&str, Box<dyn std::io::BufRead + Send>, Box<dyn std::io::Write + Send>) + Send + Sync>;
+
+/// Another MCP server Hover runs itself for a session (a Cua Space's `cua mcp`), reached by
+/// the sandboxed tool over the same relay and socket as the browser's, under a token of its
+/// own that stands for `name`. None where there is no socket or no perl (not a Unix).
+#[cfg(not(unix))]
+pub fn bridge(_name: &str, _server: &str, _run: Bridged) -> Vec<McpServer> { vec![] }
+
+/// The bridge registered under a token, if there is one.
+#[cfg(unix)]
+fn bridge_of(token: &str) -> Option<(String, Bridged)> { REGISTRY.lock().unwrap().as_ref().and_then(|r| r.bridges.get(token).cloned()) }
+
+#[cfg(unix)]
+pub fn bridge(name: &str, server: &str, run: Bridged) -> Vec<McpServer> {
+    if !std::path::Path::new(PERL).is_file() { return vec![]; }
+    match unix::start() {
+        Ok(relay) => {
+            let token = {
+                let mut g = REGISTRY.lock().unwrap();
+                let r = g.get_or_insert_with(Registry::default);
+                let token = r.bridge_tokens.entry(name.into()).or_insert_with(token_bytes).clone();
+                r.bridges.insert(token.clone(), (name.into(), run));
+                token
+            };
+            let mut s = McpServer::new(server, PERL, &[&relay.to_string_lossy(), &socket_path().to_string_lossy()]);
+            s.env.push(("HOVER_BROWSER_TOKEN".into(), token));
+            vec![s]
+        }
+        Err(e) => { hover_core::log::line(&format!("bridge: couldn't listen - {e}")); vec![] }
+    }
+}
+
 
 /// The tag a token was made for.
 #[cfg(unix)]
@@ -424,7 +475,14 @@ mod unix {
         let Ok(write) = client.try_clone() else { return };
         let mut reader = BufReader::new(client);
         let Ok(Some(hello)) = line(&mut reader) else { return };
-        let Some(tag) = hello.strip_prefix("HELLO ").and_then(|t| tag_of(t.trim())) else { return };
+        let Some(token) = hello.strip_prefix("HELLO ").map(str::trim) else { return };
+        // Another server Hover runs for the session: the rest of the connection is its.
+        if let Some((name, run)) = bridge_of(token) {
+            let _ = reader.get_ref().set_read_timeout(None);
+            run(&name, Box::new(reader), Box::new(write));
+            return;
+        }
+        let Some(tag) = tag_of(token) else { return };
         let _ = reader.get_ref().set_read_timeout(None);
         let write = Arc::new(Mutex::new(write));
         while let Ok(Some(text)) = line(&mut reader) {

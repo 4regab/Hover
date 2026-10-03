@@ -11,32 +11,34 @@ IN_SRT="${HOVER_SANDBOXED:-0}"
 if [[ "$IN_SRT" == 1 ]]; then SANDBOX="$(mktemp -d "${TMPDIR%/}/hover-sandbox.XXXXXX")"; SHORT_TMP="$SANDBOX/t/"
 else SANDBOX="$(mktemp -d /private/tmp/hover-sandbox.XXXXXX)"; SHORT_TMP="$SANDBOX/tmp/"; fi
 printf 'Sandbox: %s\n' "$SANDBOX"
-mkdir -p "$SANDBOX/repo" "$SANDBOX/tmp" "$SHORT_TMP" "$SANDBOX/data" "$SANDBOX/cli" "$SANDBOX/nuget" "$SANDBOX/fake-bin"
+mkdir -p "$SANDBOX/repo" "$SANDBOX/tmp" "$SHORT_TMP" "$SANDBOX/data" "$SANDBOX/cli" "$SANDBOX/fake-bin"
 # srt refuses writes to any .git/config, so under it the copy has no .git of its own
 # and git reads the checkout's, read-only.
 if [[ "$IN_SRT" == 1 ]]; then COPY_GIT=(--exclude .git); REPO_GIT="$ROOT/.git"; else COPY_GIT=(); REPO_GIT="$SANDBOX/repo/.git"; fi
-rsync -a --exclude node_modules --exclude bin --exclude obj --exclude dist --exclude publish --exclude .sandbox ${COPY_GIT[@]+"${COPY_GIT[@]}"} "$ROOT/" "$SANDBOX/repo/"
-# Under srt MSBuild can't reach the sockets its worker nodes use (/tmp/MSBuild<pid>),
-# so it builds in one process (build-macos.sh reads HOVER_DOTNET_ARGS too).
-if [[ "$IN_SRT" == 1 ]]; then export HOVER_DOTNET_ARGS="-m:1"; else export HOVER_DOTNET_ARGS=""; fi
-DOTNET="${HOVER_DOTNET:-${DOTNET_ROOT:-$HOME/.dotnet}/dotnet}"
-[[ -x "$DOTNET" ]] || DOTNET="$(command -v dotnet)"
-SDK_DIR="$(/usr/bin/python3 -c 'from pathlib import Path; import sys; print(Path(sys.argv[1]).resolve().parent)' "$DOTNET")"
-# Copy the SDK too, so sandboxed test hosts need no access to personal directories.
-cp -cR "$SDK_DIR" "$SANDBOX/dotnet"
-DOTNET="$SANDBOX/dotnet/dotnet"
-SDK_DIR="$SANDBOX/dotnet"
-export DOTNET_ROOT="$SDK_DIR"
-export HOVER_SANDBOX_ROOT="$SANDBOX" HOVER_DATA_DIR="$SANDBOX/data" TMPDIR="$SHORT_TMP"
-export DOTNET_CLI_HOME="$SANDBOX/cli" NUGET_PACKAGES="$SANDBOX/nuget" DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_SKIP_FIRST_TIME_EXPERIENCE=1 DOTNET_GENERATE_ASPNET_CERTIFICATE=false
-export DOTNET_EnableDiagnostics=0 DOTNET_CLI_WORKLOAD_UPDATE_NOTIFY_DISABLE=true
+# Anchored: crates/hover-core/src/bin is source. The build output (target/) is made in the copy.
+rsync -a --exclude node_modules --exclude /target --exclude /dist --exclude /publish --exclude /.sandbox ${COPY_GIT[@]+"${COPY_GIT[@]}"} "$ROOT/" "$SANDBOX/repo/"
+# cargo builds in the copy (so test binaries find their fixtures there), with the user's own
+# toolchain and registry cache; only the test binaries run under the sandbox below.
+export HOVER_SANDBOX_ROOT="$SANDBOX" HOVER_DATA_DIR="$SANDBOX/data" TMPDIR="$SHORT_TMP" CARGO_TARGET_DIR="$SANDBOX/target"
 export npm_config_cache="$SANDBOX/npm-cache" CFFIXED_USER_HOME="$SANDBOX/cli"
 # Hover itself must not wrap its agents in a second sandbox inside this one.
 export HOVER_SANDBOXED=1
-# Restore/build may download packages, but do not execute tests or launch agents.
-"$DOTNET" build "$SANDBOX/repo/tests/Hover.Portable.Tests/Hover.Portable.Tests.csproj" -c Release --nologo $HOVER_DOTNET_ARGS
+# Restore/build may download packages, but do not execute tests or launch agents. The
+# backend and the crates it stands on: their test binaries are built here and listed as
+# "<crate folder> <executable>" lines, then run below under the sandbox.
+TEST_CRATES=(-p hover-backend -p hover-core -p hover-agents -p hover-quota -p hover-md -p hover-diagram)
+cargo test --manifest-path "$SANDBOX/repo/Cargo.toml" "${TEST_CRATES[@]}" --no-run --message-format=json \
+  | /usr/bin/python3 -c '
+import json, os, sys
+for line in sys.stdin:
+    try: m = json.loads(line)
+    except ValueError: continue
+    if m.get("reason") == "compiler-artifact" and m.get("profile", {}).get("test") and m.get("executable"):
+        print(os.path.dirname(m["manifest_path"]), m["executable"])
+' > "$SANDBOX/test-binaries.txt"
+[[ -s "$SANDBOX/test-binaries.txt" ]] || { echo 'cargo listed no test binaries' >&2; exit 1; }
 export HOVER_SETTINGS_TESTS=1
-export HOVER_APP_OUTPUT="$SANDBOX/build/Hover.app" HOVER_DOTNET="$DOTNET"
+export HOVER_APP_OUTPUT="$SANDBOX/build/Hover.app"
 # Build helper takes its source root from git; use the copied checkout's git context.
 GIT_DIR="$REPO_GIT" GIT_WORK_TREE="$SANDBOX/repo" "$SANDBOX/repo/scripts/build-macos.sh"
 cat > "$SANDBOX/test.sb" <<PROFILE
@@ -45,7 +47,6 @@ cat > "$SANDBOX/test.sb" <<PROFILE
 (deny file-write*)
 (allow file-write* (subpath "$SANDBOX") (literal "/dev/null") (literal "/dev/tty"))
 (deny file-read* (subpath "/Users") (subpath "/Library/Keychains"))
-(allow file-read* (subpath "$SDK_DIR"))
 (deny network*)
 (allow network* (local ip "localhost:*") (remote ip "localhost:*"))
 PROFILE
@@ -68,13 +69,16 @@ if sandbox_run /bin/sh -c 'echo forbidden > "$1"' sh "$CANARY" 2>"$SANDBOX/denia
   echo 'Sandbox write boundary failed; tests were not run.' >&2; exit 1
 fi
 [[ ! -e "$CANARY" ]] || { echo 'Unexpected sandbox probe file' >&2; exit 1; }
-sandbox_run "$DOTNET" test "$SANDBOX/repo/tests/Hover.Portable.Tests/Hover.Portable.Tests.csproj" -c Release --no-build --no-restore --logger "trx;LogFileName=portable.trx" --results-directory "$SANDBOX/results" --nologo
+# fd 3: a test binary must not read the list from stdin.
+while read -r CRATE_DIR TEST_BIN <&3; do
+  sandbox_run /bin/sh -c 'cd "$1" && exec "$2" --test-threads=1' sh "$CRATE_DIR" "$TEST_BIN"
+done 3< "$SANDBOX/test-binaries.txt"
 export PATH="$SANDBOX/fake-bin:/usr/bin:/bin"
 sandbox_run /usr/bin/python3 "$SANDBOX/repo/tests/macos/backend-smoke.py" "$HOVER_APP_OUTPUT" "$SANDBOX"
 if [[ "$IN_SRT" == 1 ]]; then
   # The app smokes draw Hover's notch and office on the user's screen; srt has no
   # window server to give them, and they'd be in the user's way if it had.
-  echo 'App smokes skipped in srt (they need the screen). Build, portable tests and the packaged backend passed.'
+  echo 'App smokes skipped in srt (they need the screen). Build, the backend tests and the packaged backend passed.'
   printf 'All sandboxed checks passed. Reports: %s\n' "$SANDBOX"
   exit 0
 fi

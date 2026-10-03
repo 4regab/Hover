@@ -1,11 +1,12 @@
 name: CI
 
 # The native (Rust) Hover on GitHub's own runners. A push to main or rust-port/**, or a
-# pull request, runs the tests on Windows and Linux, and compiles on macOS. A release:
+# pull request, runs the tests on Windows and Linux, and builds the Mac app on macOS (a
+# compile check). A release:
 # a v* tag (matching Cargo.toml), or a push to
 # main whose Cargo.toml version has no tag yet. The same jobs then build the
 # installers from what they just tested, and `release` tags the commit and publishes
-# them together as the Latest release (macOS has no installer yet).
+# them together as the Latest release (macOS has no installer yet: its job is a check).
 # No secrets and no agent accounts: agent runs use the repo's fake-agent.
 on:
   push:
@@ -195,12 +196,16 @@ jobs:
           if-no-files-found: error
 
   macos:
-    # Apple Silicon. A compile check only: no tests, no package. The runner has no
-    # display, Keychain or permission prompts to run Hover on, so this job's one promise is
-    # that the Mac code (app/src/mac, platform/macos.rs) builds.
-    # `release` doesn't wait for it: the installers are Windows and Linux, and a Mac
-    # build that breaks shows on the pull request, where it is fixed before merging.
+    # Apple Silicon. A compile check, not a release: no tests (the runner has no display,
+    # Keychain or permission prompts to run Hover on), no installer. The Mac app is the
+    # Swift UI in macos/ with the web office (web/office), on the Rust backend
+    # (crates/hover-backend) that Windows and Linux share. This job's promise is that
+    # the backend crates and the Swift app compile, and Hover.app is made and signed
+    # (ad hoc). The app is uploaded as a workflow artifact only, never to the release.
+    # `release` doesn't wait for it: a Mac build that breaks shows on the pull request,
+    # where it is fixed before merging.
     runs-on: macos-15
+    timeout-minutes: 60
     defaults:
       run:
         shell: bash
@@ -218,10 +223,34 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
-      # --locked: a change that needs a new Cargo.lock fails here instead of being made.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: web/office/package-lock.json
+      # Every crate that targets macOS: not the Slint app (`hover`, Windows and Linux
+      # only) nor notch-proto (a Windows prototype) and hover-measure (its Windows and
+      # Linux scenarios). --locked: a change that needs a new Cargo.lock fails here
+      # instead of being made.
       - name: Check
-        run: cargo check --workspace --all-targets --locked
-
+        run: cargo check --workspace --exclude hover --exclude notch-proto --exclude hover-measure --all-targets --locked
+      # The target is named, as build-macos.sh builds it, so the app's build below reuses this.
+      - name: Backend
+        run: cargo build --release -p hover-backend --target aarch64-apple-darwin --locked
+      # npm ci and the office page, the Swift app, the backend (above), the guardian,
+      # Info.plist (the version from Cargo.toml) and an ad hoc signature.
+      - name: Hover.app
+        env:
+          HOVER_CARGO_ARGS: --locked
+        run: |
+          ./scripts/build-macos.sh
+          ditto -c -k --keepParent dist/macos-osx-arm64/Hover.app dist/Hover-osx-arm64-development.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Hover-macOS-development
+          path: dist/Hover-osx-arm64-development.zip
+          retention-days: 7
+          if-no-files-found: error
   release:
     # One job publishes, so the two builds never race to create the release.
     if: needs.windows.outputs.release == 'true' && needs.linux.outputs.release == 'true'

@@ -494,7 +494,7 @@ fn boxed_start(tool: AgentTool, exe: &Path, args: &[&str], env: &[(String, Strin
     let t = toggles();
     if ctx.macos && t.computer_use { sockets.push(cua_socket(&ctx)); }
     // Hover's browser: the relay the agent's tool starts talks to Hover over this one socket.
-    if crate::browser::available() && t.agent_browser { sockets.push(crate::browser::socket_path().to_string_lossy().into_owned()); }
+    if crate::browser::available() && t.agent_browser || crate::spaces::wanted() { sockets.push(crate::browser::socket_path().to_string_lossy().into_owned()); }
     let file = dir.join(format!("{}.json", tool.id()));
     write_private(&file, &config(tool, folders, &temp_s, &sockets, &extra(), &ctx))?;
     let relay = if Path::new(PERL).is_file() {

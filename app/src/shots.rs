@@ -589,7 +589,9 @@ fn desk_shots(app: &Rc<App>, hover: &Arc<hover_app::app::Hover>, dir: &Path, fol
 fn settings_integrations_shots(app: &Rc<App>, hover: &Arc<hover_app::app::Hover>, dir: &Path) {
     use hover_app::pages::{Caps, Cua, Integ, SetupCard};
     let dash = adapter(1);
-    let mac = Caps { sandbox: true, browser: true, setup: true, mac: true, linux: false };
+    let mac = Caps { sandbox: true, browser: true, setup: true, computer_use: true, mac: true };
+    // Computer use is a Mac's: its own states are shown with it on, wherever the shots run.
+    let cu_on = Caps { computer_use: true, ..Caps::here() };
     hover.settings.set_theme(None);
     hover.settings.set_appearance(Appearance::Dark);
     view::Host::theme_changed(&**app);
@@ -599,9 +601,11 @@ fn settings_integrations_shots(app: &Rc<App>, hover: &Arc<hover_app::app::Hover>
         save(&dash, (1200, 720), 1.0, [0, 0, 0], &dir.join(name));
     };
     hover.settings.set_computer_use(true);
-    let cua = |c: Cua| Integ { cua: Some(c), ..Default::default() };
-    show("settings-integrations-cua-checking.png", Integ::default());
-    show("settings-integrations-cua-missing.png", cua(Cua { hint: "Install Cua Driver: irm https://cua.ai/driver/install.ps1 | iex".into(), ..Default::default() }));
+    let cua = |c: Cua| Integ { caps: cu_on, cua: Some(c), ..Default::default() };
+    // What this system shows: off with its note where it isn't a Mac.
+    show("settings-integrations-computer-use-here.png", Integ::default());
+    show("settings-integrations-cua-checking.png", Integ { caps: cu_on, ..Default::default() });
+    show("settings-integrations-cua-missing.png", cua(Cua { hint: "Install Cua Driver: /bin/bash -c \"$(curl -fsSL https://cua.ai/driver/install.sh)\"".into(), ..Default::default() }));
     show("settings-integrations-cua-installing.png", cua(Cua { busy: true, line: "Installing Cua Driver…".into(), ..Default::default() }));
     show("settings-integrations-cua-ready.png", cua(Cua { installed: true, version: "0.3.1".into(), permissions: "granted".into(), ..Default::default() }));
     // As a Mac shows it: Computer use needs its grants, the sandbox lacks srt, the browser is on.
@@ -621,6 +625,14 @@ fn settings_integrations_shots(app: &Rc<App>, hover: &Arc<hover_app::app::Hover>
     app.show_settings_in(1, Section::Kiro);
     save(&dash, (1200, 720), 1.0, [0, 0, 0], &dir.join("settings-kiro-setup-failed.png"));
     app.pane.borrow_mut().live.integ = Integ::default();
+    // Kiro's auto compact: off (the switch alone), then on at 70 % with its choice.
+    app.show_settings_in(1, Section::Kiro);
+    save(&dash, (1200, 1000), 1.0, [0, 0, 0], &dir.join("settings-kiro-compact-off.png"));
+    hover.settings.set_kiro_auto_compact(true);
+    hover.settings.set_kiro_compact_at(70);
+    app.show_settings_in(1, Section::Kiro);
+    save(&dash, (1200, 1000), 1.0, [0, 0, 0], &dir.join("settings-kiro-compact-on.png"));
+    hover.settings.set_kiro_auto_compact(false);
 }
 /// A voice preview as Voice makes one, for the shots.
 fn preview(folder: &str, target: &str, note: Option<&str>, task: &str, countdown: Option<f32>, access: &str) -> hover_app::voice::Preview {

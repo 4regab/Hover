@@ -1,9 +1,9 @@
 //! macOS: ~/Library/Application Support (where the C# build kept its data there too),
 //! the login Keychain for note.key with a 0600 file when there is none, a LaunchAgent
-//! for launch at login, and `defaults` for the look.
+//! for launch at login. The look (dark or light) is the Swift app's, so there is none here.
 //!
 //! This file is compiled on every OS, so the parts that don't need macOS (the plist
-//! text, `defaults`' output, the key marker, the guard over a stand-in Keychain) are
+//! text, the key marker, the guard over a stand-in Keychain) are
 //! tested on Windows and Linux too. Only macOS re-exports it as `platform::*`; only
 //! the calls into Security.framework are behind `target_os = "macos"`.
 
@@ -240,57 +240,6 @@ impl super::Autostart for SystemAutostart {
     }
 }
 
-// MARK: The look: dark or light, and whether things may move
-
-/// What Theme.SystemDark and Animator.Still read on Windows: the appearance (System
-/// Settings → Appearance) and "Reduce motion" (Accessibility → Display).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Look { pub dark: bool, pub animations: bool }
-
-/// `defaults read -g AppleInterfaceStyle` prints "Dark" in dark mode; in light mode the
-/// key does not exist and `defaults` fails (None here).
-pub fn parse_dark(out: Option<&str>) -> bool { out.is_some_and(|s| s.trim().eq_ignore_ascii_case("dark")) }
-
-/// `defaults read com.apple.universalaccess reduceMotion`: 1 or 0 (a missing key: None).
-pub fn parse_reduce_motion(out: Option<&str>) -> Option<bool> {
-    match out?.trim().to_ascii_lowercase().as_str() { "1" | "true" | "yes" => Some(true), "0" | "false" | "no" => Some(false), _ => None }
-}
-
-/// `defaults read <domain> <key>`'s output, or None when it fails (no such key).
-fn defaults(domain: &str, key: &str) -> Option<String> {
-    let o = std::process::Command::new("/usr/bin/defaults").args(["read", domain, key])
-        .stdin(std::process::Stdio::null()).stderr(std::process::Stdio::null()).output().ok()?;
-    o.status.success().then(|| String::from_utf8_lossy(&o.stdout).into_owned())
-}
-
-/// With nothing to go by: light, and animations on, as Windows' missing values mean.
-pub fn look() -> Look {
-    let dark = parse_dark(defaults("-g", "AppleInterfaceStyle").as_deref());
-    let reduce = parse_reduce_motion(defaults("com.apple.universalaccess", "reduceMotion").as_deref()).unwrap_or(false);
-    Look { dark, animations: !reduce }
-}
-
-/// The other platforms' look_on reads a given bus; macOS has none.
-pub fn look_on(_bus: Option<&str>) -> Look { look() }
-
-/// Calls `changed` whenever the look may have changed, on a thread of its own, by
-/// reading it again every three seconds. The system's own signal (the distributed
-/// notification AppleInterfaceThemeChangedNotification) needs an Objective-C binding
-/// and a run loop on some thread, neither of which this crate has; two `defaults`
-/// reads cost a few milliseconds, and a theme switch a few seconds late is not seen.
-pub fn watch_look(changed: impl Fn() + Send + 'static) {
-    std::thread::Builder::new().name("look".into()).spawn(move || {
-        let mut last = look();
-        loop {
-            std::thread::sleep(std::time::Duration::from_secs(3));
-            let now = look();
-            if now != last { last = now; changed(); }
-        }
-    }).expect("a thread to watch the look");
-}
-
-pub fn watch_look_on(_bus: Option<String>, changed: impl Fn() + Send + 'static) { watch_look(changed) }
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -404,17 +353,6 @@ mod tests {
         set_agent(&dir, "dev.hover.test", None).unwrap();
         assert!(!agent_enabled(&dir, "dev.hover.test"));
         let _ = std::fs::remove_dir_all(dir.parent().unwrap());
-    }
-
-    #[test]
-    fn defaults_output_is_read_as_the_system_prints_it() {
-        assert!(parse_dark(Some("Dark\n")));
-        assert!(!parse_dark(Some("Light")));
-        assert!(!parse_dark(None), "no AppleInterfaceStyle key is light mode");
-        assert_eq!(parse_reduce_motion(Some("1\n")), Some(true));
-        assert_eq!(parse_reduce_motion(Some("0\n")), Some(false));
-        assert_eq!(parse_reduce_motion(Some("")), None);
-        assert_eq!(parse_reduce_motion(None), None);
     }
 
     #[test]

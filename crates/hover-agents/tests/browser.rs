@@ -273,6 +273,38 @@ mod socket {
     }
 
     #[test]
+    fn another_server_hover_runs_is_reached_over_the_same_socket_by_a_token_of_its_own() {
+        if !std::path::Path::new("/usr/bin/perl").is_file() { eprintln!("needs perl"); return; }
+        let _w = With::new();
+        let (sock, relay) = listening("bridge");
+        // What the server does with a connection: each line back, with the name it was made for.
+        let run: browser::Bridged = std::sync::Arc::new(|name: &str, mut from: Box<dyn BufRead + Send>, mut to: Box<dyn Write + Send>| {
+            let mut l = String::new();
+            while from.read_line(&mut l).unwrap_or(0) > 0 {
+                let _ = writeln!(to, "{name}: {}", l.trim_end());
+                l.clear();
+            }
+        });
+        let servers = browser::bridge("space:demo", "cua-space", run.clone());
+        assert_eq!(servers.len(), 1);
+        let s = &servers[0];
+        assert_eq!((s.name.as_str(), s.command.as_str()), ("cua-space", "/usr/bin/perl"));
+        assert_eq!(s.args, [relay.to_string_lossy(), sock.to_string_lossy()], "the relay and the socket, no token on a command line");
+        let token = s.env.iter().find(|(k, _)| k == "HOVER_BROWSER_TOKEN").map(|(_, v)| v.clone()).expect("the token is in its environment");
+        assert_eq!(token.len(), 32);
+        assert_eq!(browser::bridge("space:demo", "cua-space", run.clone())[0].env, s.env, "the same name keeps its token");
+        assert_ne!(browser::bridge("space:other", "cua-space", run)[0].env, s.env);
+
+        let mut c = UnixStream::connect(&sock).unwrap();
+        writeln!(c, "HELLO {token}").unwrap();
+        writeln!(c, "hello there").unwrap();
+        let mut l = String::new();
+        BufReader::new(c.try_clone().unwrap()).read_line(&mut l).unwrap();
+        assert_eq!(l, "space:demo: hello there\n");
+        cleanup(sock.parent().unwrap());
+    }
+
+    #[test]
     fn the_agents_relay_joins_its_stdio_to_the_socket() {
         if !std::path::Path::new("/usr/bin/perl").is_file() { eprintln!("needs perl"); return; }
         let w = With::new();

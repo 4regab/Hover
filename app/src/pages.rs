@@ -116,12 +116,12 @@ pub struct Live {
 
 /// What this system can run of the agents' extras; what it can't is switched off, with a note.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Caps { pub sandbox: bool, pub browser: bool, pub setup: bool, pub mac: bool, pub linux: bool }
+pub struct Caps { pub sandbox: bool, pub browser: bool, pub setup: bool, pub computer_use: bool, pub mac: bool }
 
 impl Caps {
     pub fn here() -> Caps {
         Caps { sandbox: agents_sandbox::supported(), browser: hover_agents::browser::supported(), setup: hover_agents::setup::supported(),
-            mac: cfg!(target_os = "macos"), linux: cfg!(target_os = "linux") }
+            computer_use: hover_agents::computer_use::supported(), mac: cfg!(target_os = "macos") }
     }
 }
 
@@ -390,10 +390,13 @@ fn extras(b: &mut Vec<Block>, i: &Input) {
     let n = &i.live.integ;
     let caps = n.caps;
     // Computer use.
-    let on = s.computer_use();
+    // Off where it can’t run, whatever the setting says (then no Cua Driver row either).
+    let on = caps.computer_use && s.computer_use();
     let mut sub = "Each agent gets Cua Driver’s tools, so it can open the app it built, click through it and check what it shows.".to_owned();
-    if caps.linux { sub += &format!("\n{}", hover_agents::computer_use::LINUX_NOTE); }
-    let mut rows = vec![row("Computer use", Some(sub), switch("ComputerUse", "Computer use", on), Lead::Tile("sparkles", Tint::Purple))];
+    let mut cu = row("Computer use", None, switch("ComputerUse", "Computer use", on), Lead::Tile("sparkles", Tint::Purple));
+    if !caps.computer_use { sub = format!("{}\n{sub}", hover_agents::computer_use::UNSUPPORTED); cu.enabled = false; }
+    cu.sub = Some(sub);
+    let mut rows = vec![cu];
     if on {
         let cua = n.cua.as_ref();
         let busy = cua.is_some_and(|c| c.busy);
@@ -406,6 +409,13 @@ fn extras(b: &mut Vec<Block>, i: &Input) {
         let badges = match cua { Some(c) if c.installed && c.permissions != "unknown" && !busy => vec![(if matches!(c.permissions.as_str(), "granted" | "partial") { "Ready" } else { "Needs access" }.to_owned(), c.permissions != "granted")], _ => vec![] };
         rows.push(row("Cua Driver", Some(cua_line(cua)), Control::Chips { badges, buttons, open: None }, Lead::Tile("cpu", Tint::Teal)));
     }
+    // Agent desktops (Cua Spaces): the Mac app's (its Swift Settings switch them on), so
+    // here the switch is only shown off, with why.
+    let mut sub = "Each project gets its own desktop, a macOS VM its agents work in instead of your screen. Drag an app or files onto the notch to send them there.".to_owned();
+    sub = format!("{}\n{sub}", if caps.mac { "Agent desktops are switched on in Hover for Mac." } else { hover_agents::spaces::UNSUPPORTED });
+    let mut ad = row("Agent desktops", Some(sub), switch("AgentSpaces", "Agent desktops", false), Lead::Tile("cpu", Tint::Purple));
+    ad.enabled = false;
+    rows.push(ad);
     // The sandbox.
     let mut sub = "Agents change only the folders they work in, can’t open windows or control your apps, and reach only their own service, package registries and GitHub. Computer use still works in the background.".to_owned();
     let mut sb = row("Sandbox", None, switch("Sandbox", "Run agents in a sandbox", caps.sandbox && s.sandbox()), Lead::Tile("shield", Tint::Green));
@@ -762,6 +772,7 @@ fn agent(b: &mut Vec<Block>, section: Section, i: &Input) {
     rows.push(row("Keep it running", Some(format!("How long {name} stays open with nothing to do. A reply after that starts it again and picks the conversation back up.")),
         Control::Segments { id: format!("{id}Idle"), labels: idle, picked: AgentOptions::IDLE_CHOICES.iter().position(|m| *m == o.idle_minutes).map_or(-1, |p| p as i32) },
         Lead::Tile("clock", Tint::Gray)));
+    if tool == AgentTool::Kiro { rows.extend(compact_rows(&i.settings)); }
     for r in &mut rows { r.enabled = usable; }
     b.push(Block::Group(rows));
 
@@ -796,6 +807,38 @@ fn agent(b: &mut Vec<Block>, section: Section, i: &Input) {
     ]));
     b.push(Block::Footnote(format!("Kiro runs in the background as an ACP server (\"kiro-cli {args}\"), one for all its \
         tasks, with no terminal window. Prompts go to it on its input, never on a command line. Changes apply to the next task.")));
+}
+
+/// Kiro's auto compact: the shares of the context window to choose from (settings.json
+/// keeps the number).
+pub const COMPACT_AT: [u8; 5] = [50, 60, 70, 80, 90];
+
+/// The switch, and once it is on, the share that calls for it. Kiro only compacts by itself at 100 %.
+fn compact_rows(s: &Settings) -> Vec<Row> {
+    let on = s.kiro_auto_compact();
+    let mut rows = vec![row("Compact automatically", Some("Before the next reply, Hover asks Kiro to compact once its context is this full. Kiro compacts by itself only when it is full.".into()),
+        switch("KiroAutoCompact", "Compact automatically", on), Lead::Tile("brain", Tint::Teal))];
+    if on {
+        let at = s.kiro_compact_at();
+        let labels: Vec<String> = COMPACT_AT.iter().map(|p| format!("{p} %")).collect();
+        rows.push(row("Compact at", Some(format!("{at} % of the context window.")),
+            Control::Segments { id: "KiroCompactAt".into(), labels, picked: COMPACT_AT.iter().position(|p| *p == at).map_or(-1, |p| p as i32) }, Lead::Tile("gauge", Tint::Teal)));
+    }
+    rows
+}
+
+/// The switch was clicked: true when `id` was auto compact's.
+pub fn set_compact(s: &Settings, id: &str, on: bool) -> bool {
+    if id != "KiroAutoCompact" { return false; }
+    s.set_kiro_auto_compact(on);
+    true
+}
+
+/// A share was picked (its index in COMPACT_AT): true when `id` was auto compact's.
+pub fn pick_compact_at(s: &Settings, id: &str, index: usize) -> bool {
+    if id != "KiroCompactAt" { return false; }
+    if let Some(p) = COMPACT_AT.get(index) { s.set_kiro_compact_at(*p); }
+    true
 }
 
 /// One click installs a tool with its maker's own installer and opens its sign-in (a Mac's);
@@ -904,6 +947,32 @@ mod tests {
             match x { Block::Tiles(t) => v.extend(t.iter().map(|t| t.id.clone())), Block::Link { id, .. } => v.push(id.clone()), _ => {} }
         }
         v
+    }
+
+    /// Kiro's auto compact: a switch, off; its share appears once it is on, and a click
+    /// reaches settings.json. No other tool has it.
+    #[test]
+    fn kiros_page_has_auto_compact_off_until_switched_on() {
+        let s = settings();
+        let none = |_: &str| None;
+        let ready = |_| Some(AgentReady { installed: true, signed_in: true, hint: String::new() });
+        let i = input(&s, &[], &none, &ready);
+        let k = build(Section::Kiro, &i);
+        let row = rows(&k).into_iter().find(|r| r.label == "Compact automatically").expect("the switch");
+        assert!(matches!(&row.control, Control::Switch { id, on: false, .. } if id == "KiroAutoCompact"));
+        assert_eq!(row.sub.as_deref(), Some("Before the next reply, Hover asks Kiro to compact once its context is this full. Kiro compacts by itself only when it is full."));
+        assert!(!ids(&k).iter().any(|x| x.starts_with("KiroCompactAt")), "the share waits for the switch");
+        assert!(set_compact(&s, "KiroAutoCompact", true) && s.kiro_auto_compact());
+        let k = build(Section::Kiro, &i);
+        let at = rows(&k).into_iter().find(|r| r.label == "Compact at").expect("the share");
+        assert!(matches!(&at.control, Control::Segments { id, labels, picked: 3 } if id == "KiroCompactAt" && labels == &["50 %", "60 %", "70 %", "80 %", "90 %"]));
+        assert!(pick_compact_at(&s, "KiroCompactAt", 1) && s.kiro_compact_at() == 60);
+        let k = build(Section::Kiro, &i);
+        assert!(matches!(&rows(&k).into_iter().find(|r| r.label == "Compact at").unwrap().control, Control::Segments { picked: 1, .. }));
+        assert!(!set_compact(&s, "Sandbox", true) && !pick_compact_at(&s, "KiroIdle", 0));
+        for other in [Section::Codex, Section::Cursor, Section::OpenCode, Section::Claude] {
+            assert!(!ids(&build(other, &i)).iter().any(|x| x.contains("Compact")), "{other:?}");
+        }
     }
 
     /// Every automation id SCREENS.md lists for Settings, section by section.
@@ -1132,7 +1201,7 @@ mod tests {
 
     fn row_of<'a>(b: &'a [Block], label: &str) -> Option<&'a Row> { rows_all(b).into_iter().find(|r| r.label == label) }
 
-    fn on_a(mac: bool) -> Caps { Caps { sandbox: mac, browser: mac, setup: mac, mac, linux: false } }
+    fn on_a(mac: bool) -> Caps { Caps { sandbox: mac, browser: mac, setup: mac, computer_use: mac, mac } }
 
     #[test]
     fn computer_use_the_sandbox_and_the_agent_browser_are_switches_in_integrations() {
@@ -1169,12 +1238,17 @@ mod tests {
         let br = row_of(&b, "Agent browser").unwrap();
         assert!(!br.enabled && matches!(&br.control, Control::Switch { on: false, .. }));
         assert!(br.sub.as_deref().unwrap().starts_with("Agent browser needs macOS."), "{:?}", br.sub);
-        // Computer use runs everywhere; on Linux it says its support is a pre-release.
+        // Computer use is a Mac’s: set on, it reads off with its note and shows no Cua Driver row.
+        s.set_computer_use(true);
+        let b = build(Section::Integrations, &with_live(&s, &live, &ready));
         let cu = row_of(&b, "Computer use").unwrap();
-        assert!(cu.enabled);
-        let linux = Live { integ: Integ { caps: Caps { linux: true, ..on_a(false) }, ..Default::default() }, ..Default::default() };
-        let b = build(Section::Integrations, &with_live(&s, &linux, &ready));
-        assert!(row_of(&b, "Computer use").unwrap().sub.as_deref().unwrap().contains("still a pre-release"));
+        assert!(!cu.enabled && matches!(&cu.control, Control::Switch { on: false, .. }));
+        assert!(cu.sub.as_deref().unwrap().starts_with("Computer use needs macOS.\nEach agent gets"), "{:?}", cu.sub);
+        assert!(row_of(&b, "Cua Driver").is_none());
+        // Agent desktops are the Mac's too: off, with its note.
+        let ad = row_of(&b, "Agent desktops").unwrap();
+        assert!(!ad.enabled && matches!(&ad.control, Control::Switch { on: false, .. }));
+        assert!(ad.sub.as_deref().unwrap().starts_with("Agent desktops need macOS 26 or later on Apple silicon.\n"), "{:?}", ad.sub);
     }
 
     #[test]
@@ -1207,7 +1281,7 @@ mod tests {
         assert_eq!(buttons(&mk(Some(Cua { busy: true, ..Default::default() }), true), &s), ["integ.cua.cancel"]);
         let partial = Cua { installed: true, permissions: "partial".into(), ..Default::default() };
         assert_eq!(buttons(&mk(Some(partial.clone()), true), &s), ["integ.cua.grant"]);
-        assert!(buttons(&mk(Some(partial), false), &s).is_empty(), "nothing to grant off a Mac");
+        assert_eq!(buttons(&mk(Some(partial), false), &s), ["(no row)"], "no Cua Driver off a Mac");
         assert!(buttons(&mk(Some(Cua { installed: true, permissions: "granted".into(), ..Default::default() }), true), &s).is_empty());
     }
 

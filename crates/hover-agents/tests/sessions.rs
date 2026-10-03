@@ -132,6 +132,24 @@ fn images_go_to_the_agent_as_paths_after_the_prompt() {
 }
 
 #[test]
+fn the_host_can_raise_or_lower_the_cap() {
+    // The Mac's Settings offers 1 to 6 at once (Settings.MaxRunning).
+    let f = folder("cap-set");
+    let (make, runs) = gated();
+    let k = KiroSessions::new(make, None);
+    assert_eq!(k.max_running(), MAX_RUNNING);
+    k.set_max_running(99);
+    assert_eq!(k.max_running(), MAX_KEPT, "never more than are kept");
+    k.set_max_running(4);
+    for (i, t) in [AgentTool::Kiro, AgentTool::Codex, AgentTool::Cursor, AgentTool::Kiro].into_iter().enumerate() { assert!(k.start(t, &f, &format!("t{i}"), vec![]).is_some(), "task {i}"); }
+    assert!(!k.can_start() && k.start(AgentTool::Codex, &f, "five", vec![]).is_none());
+    wait_for(|| runs.lock().unwrap().len() == 4);
+    k.set_max_running(0);
+    assert_eq!(k.max_running(), 1);
+    k.stop_all();
+}
+
+#[test]
 fn tasks_run_side_by_side_up_to_the_cap_across_tools() {
     let f = folder("cap");
     let (make, runs) = gated();

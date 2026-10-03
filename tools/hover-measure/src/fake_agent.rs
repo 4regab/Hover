@@ -15,6 +15,9 @@
 //!   [crash]      exits halfway; [hang] ignores session/cancel; [garbage] sends broken
 //!                and split lines; [stderr:N] writes N KB to stderr
 //!   [question]   not an ACP feature; ignored (OpenCode's are fake-opencode's)
+//!   [context:N]  reports N % of the context window used when the turn ends, as Kiro does
+//!                (default FAKEACP_CONTEXT, else none). `_kiro/session/compact` is Kiro's
+//!                compaction (FAKEACP_COMPACT_SECONDS, FAKEACP_COMPACT_TO)
 //!
 //! `chat --no-interactive /usage` prints a Kiro usage bar (the Kiro quota's read), and
 //! FAKEACP_LOG=FILE appends every line Hover sends.
@@ -169,7 +172,27 @@ impl Agent {
             }
         }
         self.cancel.lock().unwrap().remove(&sid);
+        // Kiro's report after a turn: {"_meta":{"kiro":{"contextUsage":{"usagePercentage":N}}}}.
+        let ctx = num("context", "FAKEACP_CONTEXT", -1.0);
+        if !cancelled && ctx >= 0.0 { self.context(&sid, ctx); }
         self.reply(&id, obj(vec![("stopReason", st(if cancelled { "cancelled" } else { "end_turn" }))]));
+    }
+
+    fn context(&self, sid: &str, pct: f64) {
+        let kiro = obj(vec![("contextUsage", obj(vec![("usagePercentage", Json::double(pct))]))]);
+        self.out.line(&update(sid, obj(vec![("sessionUpdate", st("session_info_update")), ("_meta", obj(vec![("kiro", kiro)]))])));
+    }
+
+    /// Kiro's `_kiro/session/compact`: it summarises the conversation (a model call, so it
+    /// takes FAKEACP_COMPACT_SECONDS, default 0), says so in a session_info_update, and
+    /// answers {"success":true}. FAKEACP_COMPACT_TO=N also reports the context as N % after.
+    fn compact(&self, id: Json, sid: String) {
+        let secs = std::env::var("FAKEACP_COMPACT_SECONDS").ok().and_then(|v| v.parse::<f64>().ok()).unwrap_or(0.0);
+        std::thread::sleep(Duration::from_secs_f64(secs));
+        let summary = obj(vec![("status", st("success")), ("summary", obj(vec![("conversationSummary", st("## Overview\nA short conversation.")), ("truncated", Json::Bool(false))]))]);
+        self.out.line(&update(&sid, obj(vec![("sessionUpdate", st("session_info_update")), ("_meta", obj(vec![("kiro", obj(vec![("summarization", summary)]))]))])));
+        if let Some(p) = std::env::var("FAKEACP_COMPACT_TO").ok().and_then(|v| v.parse::<f64>().ok()) { self.context(&sid, p); }
+        self.reply(&id, obj(vec![("success", Json::Bool(true))]));
     }
 
     fn handle(self: &Arc<Self>, line: &str) {
@@ -202,6 +225,10 @@ impl Agent {
             }
             (Some("session/cancel"), _) => { if let Some(f) = self.cancel.lock().unwrap().get(&sid()) { f.store(true, Ordering::SeqCst); } }
             (Some("session/set_config_option"), Some(id)) => self.reply(&id, obj(vec![("configOptions", Json::Arr(vec![]))])),
+            (Some("_kiro/session/compact"), Some(id)) => {
+                let (s, me) = (sid(), self.clone());
+                std::thread::spawn(move || me.compact(id, s));
+            }
             (Some(_), Some(id)) => self.error(&id, "Method not found"),
             _ => {}
         }

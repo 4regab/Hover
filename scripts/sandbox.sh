@@ -9,7 +9,7 @@
 #   - can't reach the window server or send Apple Events: no windows, no focus taken,
 #     no apps launched or scripted (srt's macOS profile allows neither);
 #   - the network only through srt's proxy, to package registries and GitHub, with
-#     macOS's certificate service (trustd) in reach, without which .NET, Go and
+#     macOS's certificate service (trustd) in reach, without which Go and
 #     Security-framework TLS can't verify a certificate
 #     (HOVER_SANDBOX_DOMAINS="a.com,*.b.com" adds more; --offline allows none);
 #   - background QoS (taskpolicy -b): efficiency cores and throttled disk I/O.
@@ -34,10 +34,10 @@ case "${1:-}" in
 esac
 [[ "$MODE" == check || $# -gt 0 ]] || usage
 
-mkdir -p "$BOX"/{cache,nuget,npm,dotnet-cli,hover-data}
+mkdir -p "$BOX"/{cache,cargo,npm,hover-data}
 # Temp files go in srt's own /tmp/claude, which it lets sandboxed commands write: a
-# path short enough for Unix sockets (104 bytes), which MSBuild and the compiler
-# server use between their processes. Sockets work there and nowhere else.
+# path short enough for Unix sockets (104 bytes), which the compilers use between
+# their processes. Sockets work there and nowhere else.
 TMP="/private/tmp/claude/hover"
 mkdir -p "$TMP"
 # Apple's tools (sips, iconutil, xcrun) write to the per-user temp folder whatever
@@ -46,7 +46,7 @@ DARWIN_TMP="$(getconf DARWIN_USER_TEMP_DIR 2>/dev/null || true)"
 # Spotlight leaves it alone, so nothing built here (Hover.app) is registered as an app.
 touch "$BOX/.metadata_never_index"
 
-DOMAINS='"api.nuget.org","*.nuget.org","registry.npmjs.org","*.npmjs.org","github.com","*.github.com","*.githubusercontent.com","localhost"'
+DOMAINS='"crates.io","*.crates.io","static.rust-lang.org","registry.npmjs.org","*.npmjs.org","github.com","*.github.com","*.githubusercontent.com","localhost"'
 if [[ -n "${HOVER_SANDBOX_DOMAINS:-}" ]]; then
   IFS=',' read -ra EXTRA <<< "$HOVER_SANDBOX_DOMAINS"
   for d in "${EXTRA[@]}"; do [[ "$d" =~ ^[A-Za-z0-9*.:-]+$ ]] && DOMAINS+=",\"$d\""; done
@@ -72,24 +72,15 @@ cat > "$BOX/srt-settings.json" <<JSON
 JSON
 
 # Tools keep their state here, not in the user's home.
-export TMPDIR="$TMP/" DOTNET_CLI_HOME="$BOX/dotnet-cli" NUGET_PACKAGES="$BOX/nuget" \
+# cargo's registry cache goes in the checkout; the toolchain (rustup) is read from where
+# it is, so the one rust-toolchain.toml names must already be installed.
+export TMPDIR="$TMP/" CARGO_HOME="$BOX/cargo" RUSTUP_HOME="${RUSTUP_HOME:-$HOME/.rustup}" \
   npm_config_cache="$BOX/npm" XDG_CACHE_HOME="$BOX/cache" CLANG_MODULE_CACHE_PATH="$BOX/cache/clang" \
-  HOVER_DATA_DIR="$BOX/hover-data" HOVER_SANDBOXED=1 DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_NOLOGO=1 \
-  DOTNET_SKIP_FIRST_TIME_EXPERIENCE=1 DOTNET_GENERATE_ASPNET_CERTIFICATE=false DOTNET_EnableDiagnostics=0 \
-  HOMEBREW_NO_AUTO_UPDATE=1 GIT_OPTIONAL_LOCKS=0 \
-  MSBUILDDISABLENODEREUSE=1 DOTNET_CLI_USE_MSBUILD_SERVER=0 UseSharedCompilation=false
+  HOVER_DATA_DIR="$BOX/hover-data" HOVER_SANDBOXED=1 \
+  HOMEBREW_NO_AUTO_UPDATE=1 GIT_OPTIONAL_LOCKS=0
 cd "$ROOT"
 # srt points TMPDIR at its own /tmp/claude; ours goes back on inside.
 run() { exec /usr/sbin/taskpolicy -b /usr/bin/nice -n 10 "$SRT" --settings "$BOX/srt-settings.json" -- /usr/bin/env TMPDIR="$TMPDIR" "$@"; }
-
-# MSBuild's worker nodes talk over sockets it puts at /tmp/MSBuild<pid>, outside
-# anything srt can allow without opening every socket in /tmp (ssh-agent's among
-# them), so a dotnet build here stays in one process: -m:1 goes on dotnet's build
-# verbs, and scripts that run dotnet themselves get it from a Directory.Build.rsp in
-# their own copy (scripts/test-macos.sh writes one).
-if [[ "$MODE" == run && "$(basename "$1")" == dotnet && "${2:-}" =~ ^(build|test|publish|pack|msbuild|run|restore)$ ]]; then
-  set -- "$1" "$2" -m:1 "${@:3}"
-fi
 
 if [[ "$MODE" == check ]]; then
   # Each probe must be refused; the script fails loudly if one gets through.
@@ -105,7 +96,7 @@ if [[ "$MODE" == check ]]; then
     # nothing, and then no window can be drawn and no focus taken.
     if /usr/bin/python3 -c "import ctypes,sys; cg=ctypes.CDLL(\"/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics\"); cg.CGSessionCopyCurrentDictionary.restype=ctypes.c_void_p; sys.exit(0 if cg.CGSessionCopyCurrentDictionary() else 1)" 2>/dev/null; then echo "FAIL: reached the window server"; fail=1; else echo "ok: the window server is out of reach (no windows, no focus)"; fi
     if /usr/bin/curl -s -m 8 -o /dev/null https://example.com; then echo "FAIL: reached example.com"; fail=1; else echo "ok: the network is limited to the allowlist"; fi
-    if /usr/bin/curl -s -m 15 -o /dev/null https://api.nuget.org/v3/index.json; then echo "ok: allowed registries are reachable"; else echo "note: api.nuget.org unreachable (offline?)"; fi
+    if /usr/bin/curl -s -m 15 -o /dev/null https://index.crates.io/config.json; then echo "ok: allowed registries are reachable"; else echo "note: index.crates.io unreachable (offline?)"; fi
     echo x > "$2/.sandbox/probe" && rm "$2/.sandbox/probe" && echo "ok: the checkout is writable"
     exit $fail' probe "$PROBE" "$ROOT"
   status=$?

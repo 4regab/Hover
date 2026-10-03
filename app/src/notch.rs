@@ -19,8 +19,7 @@ pub const SHADOW_DEPTH: f64 = 4.0;
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct HwNotch { pub width: f64, pub height: f64, pub real: bool }
 
-/// What differs per platform: Win32 (win.rs), X11 (x11.rs), AppKit (mac/plat.rs), or
-/// nothing (a plain window).
+/// What differs per platform: Win32 (win.rs), X11 (x11.rs), or nothing (a plain window).
 pub trait Plat {
     /// The primary display's work area in device pixels, and its scale.
     fn primary(&self) -> (Rect, f64);

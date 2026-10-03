@@ -2,8 +2,7 @@
 //! switched on, remembered, faded in to 0.32 and out, and silent while no office is
 //! in view. The page played it through <audio>; here it is decoded as it plays (Ogg
 //! Vorbis, lewton) into the system's output (cpal), and the device is let go while
-//! silent, so a quiet Hover holds no audio stream. The same code plays through CoreAudio on a
-//! Mac.
+//! silent, so a quiet Hover holds no audio stream.
 
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};

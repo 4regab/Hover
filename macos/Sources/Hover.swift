@@ -13,6 +13,8 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate {
     let backend = BackendPipe()
     let screen = ScreenFeed()
     let browsers = AgentBrowsers()
+    let spaceViewers = SpaceViewers(), teleport = TeleportDrag()
+    var dropView: NotchDropView?, dragging: TeleportDrag.Drag?
     var resources: URL!, dataFolder: URL!, notch: Notch!, office: Office!, dashboardOffice: Office?, dashboard: NSWindow?, settings: SettingsWindow!
     var menuBar: MenuBar?, poll: Timer?, clock: Timer?, hotKey: EventHotKeyRef?, hotHandler: EventHandlerRef?
     var voice: VoiceController?, voiceKey: EventHotKeyRef?, escapeKey: EventHotKeyRef?, voiceHeld = false
@@ -77,6 +79,13 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate {
         office = Office(resources: resources, dataFolder: dataFolder, dashboard: false)
         office.message = { [weak self] m in self?.handle(m) }
         notch.attach(office.web)
+        // Over the open office while Finder or Dock drags pass: it takes their drop.
+        if let content = notch.window.contentView {
+            let drop = NotchDropView(frame: content.bounds); drop.autoresizingMask = [.width, .height]
+            content.addSubview(drop); dropView = drop
+            drop.hovering = { [weak self] p in self?.dragPhase("over", p) }
+            drop.dropped = { [weak self] p, urls in self?.dropped(at: p, urls: urls) }
+        }
         notch.island.onClick = { [weak self] in self?.expand(true, keyboard: true) }
         notch.island.onAnswer = { [weak self] answer in self?.answerFromNotch(answer) }
         if smoke { notch.setOpen(true, animated: false) }
@@ -120,12 +129,20 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate {
             }
             return event
         }
+        // An app or files dragged to the notch: the agents' desktops open as drop targets.
+        teleport.near = { [weak self] p in
+            guard let self else { return false }
+            let s = self.notch.window.screen?.frame ?? NSScreen.main?.frame ?? .zero
+            return self.notch.contains(p, margin: 24) || (p.y >= s.maxY - 8 && abs(p.x - s.midX) < 320)
+        }
+        teleport.phase = { [weak self] phase, p, drag in self?.dragging = drag; self?.dragPhase(phase, p) }
         NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
             guard let self, self.notch.expanded, !self.notch.contains(NSEvent.mouseLocation) else { return }
             self.expand(false)
         }
     }
     func pollPointer(at point: NSPoint, buttons: Int) {
+        teleport.poll(point, buttons: buttons)
         notch.track(point)
         voice?.panel.track(point)
         // Settings in front keeps the notch shut, so the office never covers it.
@@ -142,8 +159,65 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 expand(true); openedByHover = true
             }
         } else if inside { lastInside = Date() }
-        else if openedByHover && !notch.window.isKeyWindow && Date().timeIntervalSince(lastInside) > 0.35 { expand(false) }
+        else if openedByHover && !notch.window.isKeyWindow && !teleport.dragging && dragging == nil && Date().timeIntervalSince(lastInside) > 0.35 { expand(false) }
     }
+    /// Where a screen point is in the notch's office, in its view's points (the page
+    /// scales them to CSS pixels with vw).
+    func pagePoint(_ p: CGPoint) -> [String: Any] {
+        let web = office.web, local = web.convert(notch.window.convertPoint(fromScreen: p), from: nil)
+        return ["x": local.x, "y": web.isFlipped ? local.y : web.bounds.height - local.y, "vw": web.bounds.width]
+    }
+    /// A drag over the notch: open it on the agents' desktops, follow the pointer, and
+    /// send what was dropped to the desktop under it.
+    func dragPhase(_ phase: String, _ p: CGPoint) {
+        guard let d = dragging else { return }
+        var m: [String: Any] = ["type": "teleportDrag", "phase": phase, "app": d.app, "files": d.files.map(\.path)]
+        if let b = d.bundle { m["bundle"] = b }
+        if let p = d.path { m["path"] = p }
+        m.merge(pagePoint(p)) { $1 }
+        switch phase {
+        case "start":
+            if !notch.expanded { expand(true) }
+            // A Finder or Dock drag drops on the drop view, not the page's own web view.
+            dropView?.isHidden = d.pid != nil
+            notch.takesDrops = d.pid == nil
+            office.deliver(m)
+        case "over": office.deliver(m)
+        case "drop":
+            // Finder drags are dropped by the drop view; a window drag ends here. A Finder
+            // drag let go anywhere else is called off.
+            if d.pid != nil { office.deliver(m) }
+            else {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
+                    guard let self, self.dragging != nil else { return }
+                    self.office.deliver(["type": "teleportDrag", "phase": "cancel"]); self.endDrag()
+                }
+                return
+            }
+            endDrag()
+        default: office.deliver(m); endDrag()
+        }
+    }
+    func dropped(at p: CGPoint, urls: [URL]) {
+        if var d = dragging, d.pid == nil {
+            if d.files.isEmpty && d.bundle == nil { d.files = urls }
+            dragging = d; dragPhase("over", p)
+            var m: [String: Any] = ["type": "teleportDrag", "phase": "drop", "app": d.app, "files": d.files.map(\.path)]
+            if let b = d.bundle { m["bundle"] = b }
+            if let p = d.path { m["path"] = p }
+            m.merge(pagePoint(p)) { $1 }; office.deliver(m)
+        }
+        teleport.finishedByDropView(); endDrag()
+    }
+    func endDrag() {
+        dropView?.isHidden = true; dragging = nil; notch.takesDrops = false
+        // The result shows a moment in the office, then it folds unless the user stays.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.2) { [weak self] in
+            guard let self, self.notch.expanded, !self.notch.window.isKeyWindow, !self.notch.contains(NSEvent.mouseLocation, margin: 14) else { return }
+            self.expand(false)
+        }
+    }
+
     func expand(_ on: Bool, keyboard: Bool = false, restoreFocus: Bool = true) {
         guard !on || settings?.window.isKeyWindow != true else { return }
         guard notch.expanded != on else { if on && keyboard { openedByHover = false; focusOffice() }; return }
@@ -153,7 +227,7 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate {
         office.deliver(["type": "visible", "on": on]); lastInside = Date()
         if on && keyboard { focusOffice() }
         if !on {
-            browsers.detach(from: office.web)
+            browsers.detach(from: office.web); spaceViewers.detach(from: office.web)
             // Folded under the pointer (Esc, Option-N): don't reopen until it leaves.
             if notch.contains(NSEvent.mouseLocation, margin: 4) { hoverNeedsExit = true }
             notch.window.resignKey(); notch.track(NSEvent.mouseLocation)
@@ -276,18 +350,26 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
     @objc func startVoice() { voice?.keyDown(); voice?.keyUp() }
     @objc func toggleOffice() { expand(!notch.expanded, keyboard: true) }
-    @objc func showDashboard() {
+    @objc func showDashboard() { openDashboard(then: nil) }
+    /// The office in a window of its own, bigger than the notch: what was open there
+    /// (a chat, a desk's panel) opens again in it.
+    func openDashboard(then restore: [String: Any]?) {
         if dashboard == nil {
-            let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1120, height: 760), styleMask: [.titled, .closable, .resizable, .miniaturizable], backing: .buffered, defer: false)
+            let area = NSScreen.main?.visibleFrame ?? CGRect(x: 0, y: 0, width: 1440, height: 900)
+            let size = CGSize(width: min(1480, area.width * 0.86), height: min(940, area.height * 0.88))
+            let w = NSWindow(contentRect: NSRect(origin: .zero, size: size), styleMask: [.titled, .closable, .resizable, .miniaturizable, .fullSizeContentView], backing: .buffered, defer: false)
+            w.titlebarAppearsTransparent = true; w.titleVisibility = .hidden; w.collectionBehavior.insert(.fullScreenPrimary)
+            w.minSize = CGSize(width: 900, height: 600)
             w.title = "Hover — Agent Office"; w.isReleasedWhenClosed = false; w.delegate = self; w.center()
             let view = Office(resources: resources, dataFolder: dataFolder, dashboard: true); view.message = { [weak self] m in self?.handle(m) }
             w.contentView = view.web; dashboardOffice = view; dashboard = w
             if let latest { view.deliver(latest) }
         }
+        if let restore { dashboardOffice?.later(restore) }
         dashboardOffice?.deliver(["type": "visible", "on": true]); NSApp.activate(ignoringOtherApps: true); dashboard?.makeKeyAndOrderFront(nil)
     }
     func windowWillClose(_ notification: Notification) {
-        if let web = dashboardOffice?.web { browsers.detach(from: web) }
+        if let web = dashboardOffice?.web { browsers.detach(from: web); spaceViewers.detach(from: web) }
         dashboardOffice?.deliver(["type": "visible", "on": false])
     }
     @objc func showSettings() { presentSettings(nil) }
@@ -338,6 +420,27 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate {
             // A tool the office greyed out: its page, with the one-click button.
             if let id = m["tool"] as? String { if !smoke { presentSettings(.tool(id)) } }
         case "fold": expand(false)
+        // The full-screen button: from the notch, the office in a big window, with what
+        // was open; in the window, full screen and back.
+        case "window":
+            guard !smoke else { return }
+            if m["dashboard"] as? Bool == true { dashboard?.toggleFullScreen(nil); return }
+            expand(false, restoreFocus: false)
+            var restore: [String: Any] = ["type": "restore"]
+            if let open = m["open"] as? [String: Any] { restore.merge(open) { $1 } }
+            openDashboard(then: restore)
+        // The agent's own desktop (a Cua Space): its viewer over the Screen panel.
+        case "spaceOverlay":
+            guard let id = m["space"] as? String else { return }
+            let web = m["dashboard"] as? Bool == true ? dashboardOffice?.web : office.web
+            guard let web else { return }
+            var rect: CGRect?
+            if let r = m["rect"] as? [String: Any], let x = (r["x"] as? NSNumber)?.doubleValue, let y = (r["y"] as? NSNumber)?.doubleValue,
+               let w = (r["w"] as? NSNumber)?.doubleValue, let h = (r["h"] as? NSNumber)?.doubleValue {
+                let k = (r["vw"] as? NSNumber).map { web.bounds.width / CGFloat(max(1, $0.doubleValue)) } ?? 1
+                rect = CGRect(x: x * k, y: y * k, width: w * k, height: h * k)
+            }
+            spaceViewers.show(id, url: m["url"] as? String ?? "", rect: smoke ? nil : rect, in: web)
         case "pickFolder":
             guard !smoke else { return }
             let picker = NSOpenPanel(); picker.canChooseDirectories = true; picker.canChooseFiles = false; picker.allowsMultipleSelection = false; picker.title = "Choose the folder the agent works in"
@@ -392,7 +495,9 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate {
         case "initialized": settings.model.request(["type": "getSettings"])
         case "state":
             latest = m
-            browsers.keep(Set((m["sessions"] as? [[String: Any]] ?? []).compactMap { ($0["id"] as? NSNumber)?.intValue }))
+            let ids = Set((m["sessions"] as? [[String: Any]] ?? []).compactMap { ($0["id"] as? NSNumber)?.intValue })
+            browsers.keep(ids)
+            spaceViewers.keep(Set((m["sessions"] as? [[String: Any]] ?? []).compactMap { ($0["space"] as? [String: Any])?["name"] as? String }))
             office.deliver(m); dashboardOffice?.deliver(m)
             settings.model.receiveState(m)
             voice?.state = m
@@ -401,6 +506,8 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate {
             receivePreferences(m)
         case "computerUse":
             settings.model.receiveComputerUse(m)
+        case "spaces":
+            settings.model.receiveSpaces(m)
         // An agent's call to Hover's browser (BrowserTool in the backend).
         case "browser": browsers.handle(m)
         case "quotas":
@@ -481,7 +588,19 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let alert = NSAlert(); alert.messageText = "Hover could not start"; alert.informativeText = text; alert.runModal(); NSApp.terminate(nil)
     }
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool { if !smoke { showDashboard() }; return false }
-    func applicationWillTerminate(_ note: Notification) { poll?.invalidate(); clock?.invalidate(); if let hotKey { UnregisterEventHotKey(hotKey) }; if let voiceKey { UnregisterEventHotKey(voiceKey) }; holdEscape(false); voice?.cancel(); backend.stop() }
+    /// The projects' desktops are turned off as Hover quits, by a cua of their own that
+    /// outlives Hover (a VM takes a while to stop), so none is left holding memory.
+    func stopSpaces() {
+        guard !smoke, let cua = ["\(NSHomeDirectory())/.local/bin/cua", "/usr/local/bin/cua", "/opt/homebrew/bin/cua"].first(where: { FileManager.default.isExecutableFile(atPath: $0) }) else { return }
+        let names = Set((latest?["sessions"] as? [[String: Any]] ?? []).compactMap { ($0["space"] as? [String: Any]).flatMap { $0["phase"] as? String == "ready" ? $0["name"] as? String : nil } })
+        for n in names {
+            let p = Process(); p.executableURL = URL(fileURLWithPath: cua); p.arguments = ["spaces", "stop", "local:" + n]
+            var env = ProcessInfo.processInfo.environment; env["CUA_TELEMETRY"] = "0"; p.environment = env
+            p.standardInput = FileHandle.nullDevice; p.standardOutput = FileHandle.nullDevice; p.standardError = FileHandle.nullDevice
+            try? p.run()
+        }
+    }
+    func applicationWillTerminate(_ note: Notification) { stopSpaces(); poll?.invalidate(); clock?.invalidate(); if let hotKey { UnregisterEventHotKey(hotKey) }; if let voiceKey { UnregisterEventHotKey(voiceKey) }; holdEscape(false); voice?.cancel(); backend.stop() }
 }
 
 let app = NSApplication.shared

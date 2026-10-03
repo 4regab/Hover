@@ -12,9 +12,11 @@
 //! talks through it, so they are given once, to CuaDriver, with `permissions grant`.
 //! Install and grant run the maker's own commands.
 //!
-//! Cua Driver runs on macOS and Windows, and on Linux as a pre-release (its docs); the
-//! guard that keeps it out of the user's way needs perl, so it is for the first and the
-//! last.
+//! Hover offers it on macOS only. Cua Driver is built for the Mac (on Windows it has no
+//! guard, and on Linux it is a pre-release), the guard that keeps it out of the user's way
+//! needs perl, and the user decided to keep Cua to the Mac. Elsewhere the switch is off with
+//! UNSUPPORTED beside it, no session is given the server, and nothing here installs or
+//! runs cua-driver.
 
 use crate::agents::{ask, toggles};
 use crate::cancel::Cancel;
@@ -27,14 +29,11 @@ use std::time::{Duration, Instant};
 
 pub const SERVER_NAME: &str = "cua-driver";
 pub const REPO: &str = "github.com/trycua/cua";
-/// Shown beside the switch on Linux, where Cua Driver's backend is a pre-release.
-pub const LINUX_NOTE: &str = "Cua Driver’s Linux support is still a pre-release.";
+/// Shown beside the switch, and as the status, where computer use can't run.
+pub const UNSUPPORTED: &str = "Computer use needs macOS.";
 
-/// Computer use runs on every OS Hover does; see the module note for Linux.
-pub fn supported() -> bool { true }
-
-/// A caution to show beside the switch, or none.
-pub fn note() -> Option<&'static str> { cfg!(target_os = "linux").then_some(LINUX_NOTE) }
+/// Computer use is a Mac's; see the module note.
+pub fn supported() -> bool { cfg!(target_os = "macos") }
 
 /// An MCP server a session is given, started over stdio by the tool itself: its name,
 /// command, arguments and environment.
@@ -49,8 +48,8 @@ impl McpServer {
 
 /// What Hover knows of Cua Driver: installed or not, its version, and (on a Mac) whether
 /// CuaDriver.app has the Accessibility and Screen Recording grants it needs. Permissions
-/// is "granted", "partial" (Accessibility only), "missing" or "unknown"; always "granted"
-/// where there are none to give (Windows, Linux).
+/// is "granted", "partial" (Accessibility only), "missing" or "unknown"; where computer use
+/// isn't offered it is not installed, "unknown", and the hint is UNSUPPORTED.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Status { pub installed: bool, pub version: String, pub permissions: &'static str, pub hint: String }
 
@@ -63,22 +62,21 @@ impl Status {
 pub fn exe() -> Option<PathBuf> { on_path("cua-driver").or_else(|| fallbacks().into_iter().find(|p| p.is_file())) }
 
 fn fallbacks() -> Vec<PathBuf> {
-    if cfg!(windows) {
-        return std::env::var_os("LOCALAPPDATA").map(|l| PathBuf::from(l).join("Programs").join("Cua").join("cua-driver").join("bin").join("cua-driver.exe")).into_iter().collect();
-    }
     let mut v = vec![home().join(".local").join("bin").join("cua-driver")];
     if cfg!(target_os = "macos") { v.push(PathBuf::from("/Applications/CuaDriver.app/Contents/MacOS/cua-driver")); }
     v
 }
 
 /// The MCP servers a new session gets now: Cua Driver's, when computer use is on and it
-/// is installed; otherwise none. Where perl is (a Mac, Linux) it runs behind the guard
-/// (see GUARD), so an agent's computer use never takes the user's pointer, keyboard or
-/// focus.
+/// is installed; otherwise none, whatever the setting says where it isn't offered. Where
+/// perl is it runs behind the guard (see GUARD), so an agent's computer use never takes the
+/// user's pointer, keyboard or focus.
 pub fn servers() -> Vec<McpServer> {
-    if !toggles().computer_use { return vec![]; }
+    if !supported() { return vec![]; }
+    // An agent with a desktop of its own (spaces.rs) never drives the user's.
+    if !toggles().computer_use || crate::spaces::wanted() { return vec![]; }
     let Some(exe) = exe() else { return vec![] };
-    let guard = if cfg!(windows) || !Path::new(PERL).is_file() { None } else {
+    let guard = if !Path::new(PERL).is_file() { None } else {
         match write_guard() {
             Ok(g) => Some(g),
             // Unguarded computer use would reach the user's pointer: none at all instead.
@@ -320,10 +318,7 @@ pub fn claude_config(servers: &[McpServer]) -> Option<String> {
     Some(Json::obj(vec![("mcpServers", Json::Obj(all))]).compact())
 }
 
-pub fn install_hint() -> &'static str {
-    if cfg!(windows) { "Install Cua Driver: irm https://cua.ai/driver/install.ps1 | iex" }
-    else { "Install Cua Driver: /bin/bash -c \"$(curl -fsSL https://cua.ai/driver/install.sh)\"" }
-}
+pub fn install_hint() -> &'static str { "Install Cua Driver: /bin/bash -c \"$(curl -fsSL https://cua.ai/driver/install.sh)\"" }
 
 // MARK: Status
 
@@ -371,11 +366,12 @@ pub fn check(fresh: bool) -> Status {
 }
 
 fn look() -> Status {
+    // Nothing is run where computer use isn't offered: a cua-driver found on PATH is not asked.
+    if !supported() { return Status { installed: false, version: String::new(), permissions: "unknown", hint: UNSUPPORTED.into() }; }
     let Some(exe) = exe() else { return Status { installed: false, version: String::new(), permissions: "unknown", hint: install_hint().into() } };
     let (vc, vt) = ask(&exe, &["--version"]);
     let version = if vc == 0 { vt.trim().split('\n').next_back().unwrap_or("").trim().to_owned() } else { String::new() };
     let status = |permissions, hint: &str| Status { installed: true, version: version.clone(), permissions, hint: hint.into() };
-    if !cfg!(target_os = "macos") { return status("granted", ""); }
     let mut perms = permissions(&exe);
     // Only a running daemon can answer for CuaDriver.app. With computer use on, it is
     // started (in the background, as cua-driver itself does) so the answer is real
@@ -455,18 +451,15 @@ fn report(p: Progress) { *PROGRESS.lock().unwrap() = p; changed(); }
 pub fn cancel() { if let Some(c) = RUNNING.lock().unwrap().as_ref() { c.cancel(); } }
 
 /// Installs Cua Driver with its maker's installer (CuaDriver.app in /Applications and
-/// cua-driver in ~/.local/bin on a Mac; %LOCALAPPDATA%\Programs\Cua on Windows), then, on
-/// a Mac, asks for its grants. Blocks until done; it runs only when the user asks.
+/// cua-driver in ~/.local/bin), then asks for its grants. Blocks until done; it runs only
+/// when the user asks, and never where computer use isn't offered.
 pub fn install() {
     go("installing", "Installing Cua Driver…", |ct| {
-        let (exe, args): (&str, &[&str]) = if cfg!(windows) {
-            ("powershell.exe", &["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", "irm https://cua.ai/driver/install.ps1 | iex"])
-        } else {
-            // Its PATH line isn't added to the user's shell files: ~/.local/bin is on
-            // Hover's PATH already, and the tools find cua-driver through Hover.
-            ("/bin/bash", &["-c", "set -o pipefail; curl -fsSL https://cua.ai/driver/install.sh | bash -s -- --no-modify-path"])
-        };
-        step("installing", Path::new(exe), args, Duration::from_secs(600), "Couldn’t install Cua Driver", ct)?;
+        if !supported() { return Err(StepError::Failed(UNSUPPORTED.into())); }
+        // Its PATH line isn't added to the user's shell files: ~/.local/bin is on
+        // Hover's PATH already, and the tools find cua-driver through Hover.
+        let args = ["-c", "set -o pipefail; curl -fsSL https://cua.ai/driver/install.sh | bash -s -- --no-modify-path"];
+        step("installing", Path::new("/bin/bash"), &args, Duration::from_secs(600), "Couldn’t install Cua Driver", ct)?;
         let s = check(true);
         if !s.installed { return Err(StepError::Failed(format!("The installer finished, but cua-driver still isn’t found. {}", install_hint()))); }
         if can_grant() && !matches!(s.permissions, "granted" | "partial") { grant_steps(ct)?; }

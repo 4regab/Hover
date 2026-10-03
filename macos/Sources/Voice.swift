@@ -198,7 +198,7 @@ final class AnalyzerDictation: DictationImpl {
         // The names the router listens for ("Ask Kiro to …", "Tell Pip …"), which the
         // model otherwise hears as other words ("Piro").
         let context = AnalysisContext()
-        context.contextualStrings[.general] = ["Kiro", "Codex", "Cursor", "OpenCode", "Hover"] + VoiceRoute.bots
+        context.contextualStrings[.general] = ["Kiro", "Codex", "Cursor", "OpenCode", "Claude Code", "Hover"] + VoiceRoute.bots
         try? await analyzer.setContext(context)
         let (stream, continuation) = AsyncStream<AnalyzerInput>.makeStream(bufferingPolicy: .bufferingNewest(256))
         input = continuation
@@ -277,7 +277,7 @@ private final class LegacyDictation: DictationImpl {
         request.shouldReportPartialResults = true
         request.addsPunctuation = true
         request.taskHint = .dictation
-        request.contextualStrings = ["Kiro", "Codex", "Cursor", "OpenCode", "Hover"] + VoiceRoute.bots
+        request.contextualStrings = ["Kiro", "Codex", "Cursor", "OpenCode", "Claude Code", "Hover"] + VoiceRoute.bots
         if recognizer.supportsOnDeviceRecognition { request.requiresOnDeviceRecognition = true }
         self.request = request
         let heard = self.heard

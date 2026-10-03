@@ -194,13 +194,12 @@ fn triple() -> Option<&'static str> {
     }
 }
 
-/// Why Local speech is off on this OS, for Settings to show beside its choice: on a Mac
-/// there is no build of the runtime pinned (no wheels, no measured install), so Cloud it is.
-pub fn local_note() -> Option<&'static str> { cfg!(target_os = "macos").then_some(crate::mac::notes::LOCAL_SPEECH) }
+/// Why Local speech is off on this OS, for Settings to show beside its choice: none on
+/// Windows and Linux (Settings → Voice asks; pages.rs can drop the call).
+pub fn local_note() -> Option<&'static str> { None }
 
 /// Why this device can't run Phonon, known before anything is downloaded.
 fn unsupported() -> Option<String> {
-    if let Some(note) = local_note() { return Some(note.into()); }
     if triple().is_none() {
         return Some(format!("Local speech runs on Windows x64 and on Linux (x64 or arm64), not {} {}.", std::env::consts::OS, std::env::consts::ARCH));
     }
@@ -767,17 +766,6 @@ mod tests {
     use std::sync::atomic::AtomicU64;
 
     fn sha(b: &[u8]) -> String { let mut h = Sha256::new(); h.update(b); hex(h) }
-
-    /// A Mac has no pinned runtime: Local is off there with a note, and Cloud is the way.
-    #[test]
-    fn local_speech_is_off_on_a_mac_with_a_note() {
-        assert_eq!(local_note().is_some(), cfg!(target_os = "macos"));
-        assert_eq!(crate::mac::notes::LOCAL_SPEECH, "Local speech isn’t available on macOS yet; use Cloud (Groq).");
-        if cfg!(target_os = "macos") {
-            assert_eq!(unsupported().as_deref(), Some(crate::mac::notes::LOCAL_SPEECH));
-            assert!(triple().is_none());
-        }
-    }
 
     /// Serves fixed files over plain HTTP; `slow` sleeps between 16 KB chunks.
     struct Server { port: u16, hits: Arc<AtomicU64> }

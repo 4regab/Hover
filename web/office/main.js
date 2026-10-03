@@ -562,8 +562,11 @@ let defaultFolder = host ? null : 'B:\\hover', canStart = true, maxRunning = 3;
 // The host has a browser of its own (the Mac's), which the agents drive and the desk's
 // Browser panel shows; otherwise the panel is an iframe.
 let hostBrowser = false;
+// Each agent has a desktop of its own (a Cua Space) the Screen panel shows; the office is
+// in its own window rather than the notch.
+let spacesOn = !host, inWindow = false;
 // The agent tools, in the picker's order. Hover says which are installed and signed in.
-const TOOLS = { kiro: ['Kiro', '#b48cff'], codex: ['Codex', '#3fd6a0'], cursor: ['Cursor', '#7cc0ff'], opencode: ['OpenCode', '#e8e8ec'] };
+const TOOLS = { kiro: ['Kiro', '#b48cff'], codex: ['Codex', '#3fd6a0'], cursor: ['Cursor', '#7cc0ff'], opencode: ['OpenCode', '#e8e8ec'], claude: ['Claude Code', '#d97757'] };
 // Each tool's own logo, only to show which tool is picked (from the MIT-licensed
 // LobeHub icon set; the marks belong to their owners).
 const LOGOS = {
@@ -572,6 +575,8 @@ const LOGOS = {
   cursor: '<svg viewBox="0 0 24 24"><path fill-rule="evenodd" d="M22.106 5.68L12.5.135a.998.998 0 00-.998 0L1.893 5.68a.84.84 0 00-.419.726v11.186c0 .3.16.577.42.727l9.607 5.547a.999.999 0 00.998 0l9.608-5.547a.84.84 0 00.42-.727V6.407a.84.84 0 00-.42-.726zm-.603 1.176L12.228 22.92c-.063.108-.228.064-.228-.061V12.34a.59.59 0 00-.295-.51l-9.11-5.26c-.107-.062-.063-.228.062-.228h18.55c.264 0 .428.286.296.514z"/></svg>',
   // OpenCode's hollow square, drawn for Hover in its style (the same as the notch's).
   opencode: '<svg viewBox="0 0 24 24"><path fill-rule="evenodd" d="M4 2h16v20H4zM8 6v12h8V6zM8 12h8v6H8z"/></svg>',
+  // Claude Code's spark (LobeHub Icons, as the Rust app's marks.slint has it), on Anthropic's clay tile.
+  claude: '<svg viewBox="0 0 24 24"><path d="M4.709,15.955 L9.429,13.308 L9.509,13.078 L9.429,12.95 L9.2,12.95 L8.41,12.902 L5.712,12.829 L3.373,12.732 L1.107,12.61 L0.536,12.489 L0,11.784 L0.055,11.432 L0.535,11.111 L1.221,11.171 L2.741,11.274 L5.019,11.432 L6.671,11.529 L9.12,11.784 L9.509,11.784 L9.564,11.627 L9.43,11.529 L9.327,11.432 L6.969,9.836 L4.417,8.148 L3.081,7.176 L2.357,6.685 L1.993,6.223 L1.835,5.215 L2.491,4.493 L3.372,4.553 L3.597,4.614 L4.49,5.3 L6.398,6.776 L8.889,8.609 L9.254,8.913 L9.399,8.81 L9.418,8.737 L9.254,8.463 L7.899,6.017 L6.453,3.527 L5.809,2.495 L5.639,1.876 C5.574,1.638 5.539,1.393 5.535,1.147 L6.283,0.134 L6.696,0 L7.692,0.134 L8.112,0.498 L8.732,1.912 L9.734,4.141 L11.289,7.171 L11.745,8.069 L11.988,8.901 L12.079,9.156 L12.237,9.156 L12.237,9.01 L12.365,7.304 L12.602,5.209 L12.832,2.514 L12.912,1.754 L13.288,0.844 L14.035,0.352 L14.619,0.632 L15.099,1.317 L15.032,1.761 L14.746,3.612 L14.187,6.515 L13.823,8.457 L14.035,8.457 L14.278,8.215 L15.263,6.909 L16.915,4.845 L17.645,4.025 L18.495,3.121 L19.042,2.69 L20.075,2.69 L20.835,3.819 L20.495,4.985 L19.431,6.332 L18.55,7.474 L17.286,9.174 L16.496,10.534 L16.569,10.644 L16.757,10.624 L19.613,10.018 L21.156,9.738 L22.997,9.423 L23.83,9.811 L23.921,10.206 L23.593,11.013 L21.624,11.499 L19.315,11.961 L15.876,12.774 L15.834,12.804 L15.883,12.865 L17.432,13.011 L18.094,13.047 L19.716,13.047 L22.736,13.272 L23.526,13.794 L24,14.432 L23.921,14.917 L22.706,15.537 L21.066,15.148 L17.237,14.238 L15.925,13.909 L15.743,13.909 L15.743,14.019 L16.836,15.087 L18.842,16.897 L21.351,19.227 L21.478,19.805 L21.156,20.26 L20.816,20.211 L18.611,18.554 L17.76,17.807 L15.834,16.187 L15.706,16.187 L15.706,16.357 L16.15,17.006 L18.495,20.527 L18.617,21.607 L18.447,21.96 L17.839,22.173 L17.171,22.051 L15.797,20.126 L14.382,17.959 L13.239,16.016 L13.099,16.096 L12.425,23.35 L12.109,23.72 L11.38,24 L10.773,23.539 L10.451,22.792 L10.773,21.316 L11.162,19.392 L11.477,17.862 L11.763,15.962 L11.933,15.33 L11.921,15.288 L11.781,15.306 L10.347,17.273 L8.167,20.218 L6.441,22.063 L6.027,22.227 L5.31,21.857 L5.377,21.195 L5.778,20.606 L8.166,17.57 L9.606,15.688 L10.536,14.602 L10.53,14.444 L10.475,14.444 L4.132,18.56 L3.002,18.706 L2.515,18.25 L2.576,17.504 L2.807,17.261 L4.715,15.949 L4.709,15.955 L4.709,15.955 Z"/></svg>',
 };
 // The gradient id has to be unique on the page, and the logo shows twice.
 let logoN = 0;
@@ -604,7 +609,7 @@ const WORD = { waking: 'Starting', working: 'Working', waiting: 'Waiting for you
 function demo() {
   const F = 'B:\\hover';
   return [
-    { id: 1, bot: 0, desk: 0, title: 'Add refresh token expiry', folder: F, ctx: 31, apps: { pids: [5150], bundles: ['dev.example.demo'], names: ['Demo'] }, turns: [{ prompt: 'Refresh tokens never expire. Make them expire after 30 days and return 401 when one is used after that.', stage: 'working', act: 'Reading', file: 'src/auth/refresh.ts', target: 'src/auth/refresh.ts', t0: T0 - 1.4 * min, woke: 2.3,
+    { id: 1, bot: 0, desk: 0, title: 'Add refresh token expiry', folder: F, ctx: 31, space: { name: 'hover-hover-1a2b3c', project: 'hover', phase: 'ready', line: 'The project’s desktop is ready.', with: [2, 3] }, apps: { pids: [5150], bundles: ['dev.example.demo'], names: ['Demo'] }, turns: [{ prompt: 'Refresh tokens never expire. Make them expire after 30 days and return 401 when one is used after that.', stage: 'working', act: 'Reading', file: 'src/auth/refresh.ts', target: 'src/auth/refresh.ts', t0: T0 - 1.4 * min, woke: 2.3,
       steps: [['read', 'Read src/auth/session.ts'], ['read', 'Read src/auth/refresh.ts'], { k: 'web', verb: 'Opened', cmd: 'http://localhost:5173/login', status: 'completed', ms: 1200 },
         { k: 'screen', verb: 'Opened', cmd: 'Demo', status: 'completed' }, { k: 'screen', verb: 'Clicked', cmd: 'Name', status: 'completed' }, { k: 'screen', verb: 'Typed', cmd: '“Ada”', status: 'completed' },
         { k: 'agent', verb: 'Subagent', agent: 'explore', cmd: 'Find every caller of refresh()', status: 'in_progress' }, { k: 'agent', verb: 'Subagent', agent: 'test-writer', cmd: 'Write tests for expired tokens', status: 'in_progress' }], final: 'Done. Refresh tokens now expire after 30 days, and using an expired one returns 401.\n\nI changed refresh.ts and added two tests. All 83 tests pass.' }] },
@@ -654,7 +659,7 @@ function freeBot() { const used = new Set(sessions.map(s => s.bot)); const i = B
 function fromHost(m) {
   // In the notch the office fills the shape, edge to edge.
   document.body.classList.toggle('notch', !m.window);
-  canStart = m.canStart; maxRunning = m.maxRunning; hostBrowser = !!m.browser; if (m.tools) tools = m.tools; if (!toolPicked && m.tool) newTool = m.tool;
+  canStart = m.canStart; maxRunning = m.maxRunning; hostBrowser = !!m.browser; spacesOn = !!m.spaces; inWindow = !!m.window; syncBig(); if (m.tools) tools = m.tools; if (!toolPicked && m.tool) newTool = m.tool;
   if (m.history) history = m.history;
   defaultFolder = m.folder || null; if (!newFolder) newFolder = defaultFolder;
   const seen = new Set();
@@ -665,12 +670,12 @@ function fromHost(m) {
     Object.assign(turns[i], { act: h.act, pose: h.pose, file: h.file });
     let s = sessions.find(x => x.id === h.id);
     if (!s) {
-      s = { id: h.id, key: h.key, files: h.files, tool: h.tool, bot: h.bot, desk: h.seat, title: h.title, folder: h.folder, ctx: h.ctx, ask: h.ask, access: h.access, testing: h.testing, browsing: h.browsing, apps: h.apps, turns };
+      s = { id: h.id, key: h.key, files: h.files, tool: h.tool, bot: h.bot, desk: h.seat, title: h.title, folder: h.folder, ctx: h.ctx, ask: h.ask, access: h.access, testing: h.testing, browsing: h.browsing, apps: h.apps, space: h.space, turns };
       sessions.push(s); spawn(s, !firstState && last(s).stage === 'waking');
     } else {
       turns.forEach((t, k) => { const old = s.turns[k]; if (t.answer && !(old && old.answer)) t.fresh = !firstState; });
       if (last(s).stage === 'waking' && s.turns.length !== turns.length && s.b.seated) s.b.sinceSeat = 0;
-      Object.assign(s, { files: h.files, title: h.title, folder: h.folder, ctx: h.ctx, ask: h.ask, access: h.access, testing: h.testing, browsing: h.browsing, apps: h.apps, turns });
+      Object.assign(s, { files: h.files, title: h.title, folder: h.folder, ctx: h.ctx, ask: h.ask, access: h.access, testing: h.testing, browsing: h.browsing, apps: h.apps, space: h.space, turns });
     }
   }
   for (const s of [...sessions]) if (!seen.has(s.id)) retire(s);
@@ -862,6 +867,7 @@ const ICON = {
 };
 const CHAT = '<svg viewBox="0 0 24 24"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.4A8 8 0 1 1 21 12Z"/><path d="M8.5 12h.01M12 12h.01M15.5 12h.01"/></svg>';
 const COPY = '<svg viewBox="0 0 24 24"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>';
+const UNDO = '<svg viewBox="0 0 24 24"><path d="M3 7v6h6"/><path d="M21 17a9 9 0 0 0-15-6.7L3 13"/></svg>';
 const RETRY = '<svg viewBox="0 0 24 24"><path d="M3 12a9 9 0 0 1 15.5-6.3L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-15.5 6.3L3 16"/><path d="M3 21v-5h5"/></svg>';
 // What a Copy button takes, by its id: filled as the thread is drawn.
 const copies = new Map(); let copyN = 0;
@@ -904,7 +910,7 @@ function bubbleFor(s) {
     // The question shows over the head in place of the bubble.
     case 'waiting': return '';
     case 'working': { const n = minis.filter(m => m.s === s && !m.leaving).length; if (n) return n === 1 ? 'My helper’s on it…' : `${n} helpers on it…`; }
-      return T.act === 'Thinking' ? 'Thinking…' : T.act === 'Writing' ? 'Writing it up…' : T.file ? `${T.act} ${short(T.file)}` : `${T.act || 'Working'}…`;
+      return T.act === 'Thinking' ? 'Thinking…' : T.act === 'Writing' ? 'Writing it up…' : T.file && T.act ? `${T.act} ${short(T.file)}` : `${T.act || 'Working'}…`;
     case 'done': return b.since < 6 ? 'Done! ✓' : '';
     case 'failed': return 'Couldn’t finish';
     default: return 'z z z';
@@ -1048,7 +1054,10 @@ function renderDrawer() {
     if (T.answer && T.fresh) { fresh = true; T.fresh = false; }
     // Under an answer: Copy, Retry on the newest turn once it has ended, and when it finished.
     const retry = lastTurn && !s.archived && !busy(s) && T.prompt ? `<button class="act" data-retry="${i}" title="Send this message again">${RETRY}<span>Retry</span></button>` : '';
-    const acts = T.answer ? `<div class="acts"><button class="act" data-cp="${(copies.set(++copyN, T.answer), copyN)}" title="Copy the answer">${COPY}<span>Copy</span></button>${retry}${T.t0 && T.took != null ? `<span class="at">${hm(T.t0 + T.took)}</span>` : ''}</div>` : '';
+    // The backend offers these on a turn when it kept the folder as it was before it (restore)
+    // or can run it again (again); the host does the work and sends the state back.
+    const chk = s.archived || busy(s) ? '' : (T.restore ? `<button class="act" data-restore="${i}" title="${esc(typeof T.restore === 'string' ? T.restore : 'Put the files back as they were before this turn')}">${UNDO}<span>Restore</span></button>` : '') + (T.again ? `<button class="act" data-again="${i}" title="Run this turn again">${RETRY}<span>Try again</span></button>` : '');
+    const acts = T.answer ? `<div class="acts"><button class="act" data-cp="${(copies.set(++copyN, T.answer), copyN)}" title="Copy the answer">${COPY}<span>Copy</span></button>${retry}${chk}${T.t0 && T.took != null ? `<span class="at">${hm(T.t0 + T.took)}</span>` : ''}</div>` : '';
     const ans = T.answer ? `<div><div class="who2">${badge(s.tool)}<b>${esc(s.b.name)}</b>${T.took != null ? `<span>· ${took(T.took)}</span>` : ''}</div><div class="ans md ${T.stage === 'failed' ? 'err' : ''}${fresh && lastTurn ? ' fresh' : ''}">${md(T.answer, s)}</div>${acts}</div>` : '';
     const chg = T.answer && !hide ? changesHTML(T) : '';
     // What the turn cost, under its answer, when the tool says (Kiro does).
@@ -1121,7 +1130,7 @@ function renderPanel() {
 }
 function changed(s) {
   // The desk's panel asks Hover again (throttled), rather than redrawing from nothing.
-  if (panel === 'desk') { if (!s || s.id === desk?.id) { deskDirty = true; screenPulse(); } }
+  if (panel === 'desk') { if (!s || s.id === desk?.id) { deskDirty = true; screenPulse(); if (desk?.ui.tab === 'screen') renderDesk(); } }
   if (deskMenuFor != null && (!s || s.id === deskMenuFor)) renderDeskMenu();
   drawBoard(); if (panel !== 'desk') renderPanel(); renderAsks();
   if (s && s.id === sel && drawerOpen) renderDrawer();
@@ -1342,6 +1351,8 @@ $('#thread').addEventListener('click', e => {
   const c = e.target.closest('[data-copy]'); if (c) return copyText(c.closest('.cb').querySelector('pre').textContent, c);
   const cp = e.target.closest('[data-cp]'); if (cp) { e.stopPropagation(); return copyText(copies.get(+cp.dataset.cp) ?? '', cp); }
   const rt = e.target.closest('[data-retry]'); if (rt) { const s = cur(), T = s?.turns[+rt.dataset.retry]; if (T?.prompt) doReply(T.prompt); }
+  const ck = e.target.closest('[data-restore],[data-again]');
+  if (ck) { const s = cur(); if (!host) return toast('In Hover this works on the real session.'); if (s) askRewind(s, ck.dataset.restore != null, +(ck.dataset.restore ?? ck.dataset.again)); }
 }, true);
 $('#thread').addEventListener('keydown', e => { const row = e.target.closest?.('.s.exp,.sum'); if (row && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); toggleStep(row); } });
 function copyText(text, btn) {
@@ -1795,6 +1806,7 @@ function openDesk(id, tab, opts = {}) {
 // The panel goes, or shows something else: the screen stops, the page in the browser goes.
 function leaveDesk() {
   if (!desk) return;
+  if (host && spacePlaced !== 'none') { host.postMessage({ type: 'spaceOverlay', space: spacePlaced.split('|')[0], rect: null }); spacePlaced = 'none'; }
   desk.ui.control = false; desk.ui.big = false; desk.ui.replay = null; $('#panel').classList.remove('big');
   desk = null; deskHTML = ''; screenPulse(); placeBrowser();
   const body = $('#pBody'); body.classList.remove('desk'); body.innerHTML = '';
@@ -1813,7 +1825,7 @@ function renderDesk() {
   // (Not data-tab or data-file: the clicks inside look for those.)
   if (el.dataset.view !== tab || el.dataset.shows !== (ui.file || '')) { el.dataset.view = tab; el.dataset.shows = ui.file || ''; el.innerHTML = ''; deskHTML = ''; body.scrollTop = 0; }
   if (tab === 'browser') return renderBrowser(s, el);
-  if (tab === 'screen') return renderScreen(s, el);
+  if (tab === 'screen') return spacesOn ? renderSpace(s, el) : renderScreen(s, el);
   const html = tab === 'terminal' ? D.terminalHTML(deskGet(s, 'terminal'), bot)
     : tab === 'files' ? (ui.file ? D.fileHTML(deskGet(s, 'file', ui.file), ui.file) : D.filesHTML(deskGet(s, 'files'), ui, bot))
     : tab === 'diff' ? D.diffHTML(deskGet(s, 'diff'), ui)
@@ -1917,7 +1929,8 @@ const scr = { image: null, live: false, access: true, w: 0, h: 0, fps: 0, frames
 let scrWant = null, scrFor = null, demoScr = 0;
 const scrLive = s => s.testing || desk.ui.watch || desk.ui.control;
 function screenPulse(renew) {
-  const s = !paused && panel === 'desk' && desk?.ui.tab === 'screen' ? deskOf() : null;
+  // An agent with a desktop of its own: never a capture of the user's screen.
+  const s = !paused && !spacesOn && panel === 'desk' && desk?.ui.tab === 'screen' ? deskOf() : null;
   if (s && scrFor !== s.id) { scrFor = s.id; Object.assign(scr, { image: null, frames: [], times: [], fps: 0 }); }
   const want = s ? (scrLive(s) ? 'live' : 'still') + '|' + JSON.stringify(s.apps || null) : null;
   if (!want) { if (scrWant) { scrWant = null; host?.postMessage({ type: 'screen', on: false }); clearInterval(demoScr); demoScr = 0; } return; }
@@ -1977,6 +1990,118 @@ function renderScreen(s, el) {
   if (src && img.getAttribute('src') !== src) img.src = src;
   img.alt = `${s.b.name}’s desktop${p.live ? ', live' : ''}`;
 }
+// ── The project's desktop: a Cua Space ──────────────────────────────────
+// The agents working in one folder share one desktop, each with its own cursor. Its
+// live viewer is Cua's own, laid over the panel's box by the host (placeSpace); it is
+// interactive, so a click in it is the user stepping in. Until the Space is up, the
+// box says how it is getting on. Opening the panel makes it if the project has none.
+const spaceView = {};
+const spaceOf = s => (host && s.space?.name) || (s.folder ? 'f:' + s.folder.replace(/[\\/]+$/, '').toLowerCase() : `s${s.id}`);
+function onSpace(m) {
+  const of = sessions.find(x => x.id === m.id); if (!of) return;
+  spaceView[spaceOf(of)] = { ...m.data, at: Date.now() };
+  const s = deskOf(); if (s && spaceOf(s) === spaceOf(of) && desk.ui.tab === 'screen') renderDesk();
+}
+function askSpace(s, force) {
+  const v = spaceView[spaceOf(s)];
+  if (!force && v && (v.url || Date.now() - v.at < 4000)) return;
+  spaceView[spaceOf(s)] = { ...(v || {}), at: Date.now() };
+  if (host) host.postMessage({ type: 'spaceView', id: s.id });
+  else setTimeout(() => onSpace({ id: s.id, data: s.space?.phase === 'ready' || !s.space ? { phase: 'ready', url: 'about:blank' } : s.space }), 200);
+}
+function renderSpace(s, el) {
+  const sp = s.space || { phase: 'none' }, v = spaceView[spaceOf(s)] || {};
+  const mates = (sp.with || []).map(id => sessions.find(x => x.id === id)?.b.name).filter(Boolean);
+  if (sp.phase === 'ready' && !v.url) askSpace(s);
+  if (sp.phase !== 'ready' && sp.phase !== 'failed' && !v.at) askSpace(s, true);
+  // Its activity: what every agent of the project did on the shared desktop.
+  const acts = [s, ...(sp.with || []).map(id => sessions.find(x => x.id === id)).filter(Boolean)]
+    .flatMap(x => screenActions(x).map(a => ({ ...a, who: x === s || !mates.length ? '' : x.b.name }))).sort((a, b) => b.t - a.t);
+  const html = D.spaceHTML(s.b.name, sp, v, acts, !!desk.ui.big, !host, mates);
+  if (el.dataset.h !== html) { el.dataset.h = html; el.innerHTML = html; }
+  placeSpace();
+}
+let spacePlaced = 'none';
+function placeSpace() {
+  if (!host) return;
+  const s = deskOf();
+  let id = null, r = null, url = '';
+  if (s && spacesOn && !paused && panel === 'desk' && desk.ui.tab === 'screen' && spaceView[spaceOf(s)]?.url) {
+    const b = $('#pBody .spbox')?.getBoundingClientRect(), over = deskMenuFor != null || !$('#confirm').hidden || !$('#mMenu').hidden || !$('#hudMenu').hidden || drawerOpen || !$('#tdrop').hidden;
+    if (b && !over && b.width > 40 && b.height > 40) { id = spaceOf(s); url = spaceView[id].url; r = { x: b.left, y: b.top, w: b.width, h: b.height, vw: innerWidth }; }
+  }
+  const key = id == null ? 'none' : [id, url, r.x, r.y, r.w, r.h].map(x => typeof x === 'number' ? Math.round(x) : x).join('|');
+  if (key === spacePlaced) return;
+  const was = spacePlaced === 'none' ? null : spacePlaced.split('|')[0];
+  spacePlaced = key;
+  if (was != null && was !== id) host.postMessage({ type: 'spaceOverlay', space: was, rect: null });
+  if (id != null) host.postMessage({ type: 'spaceOverlay', space: id, url, rect: r });
+}
+setInterval(placeSpace, 120);
+queueMicrotask(() => syncBig());
+// The office in a window, and full screen: carries what is open there.
+function syncBig() {
+  const b = $('#bigBtn'); if (!b) return;
+  b.innerHTML = D.ICONS.grow;
+  b.title = inWindow ? 'Full screen' : 'Open Hover in a window, for the browser, desktops and more room';
+  b.setAttribute('aria-label', inWindow ? 'Full screen' : 'Open Hover in a window');
+}
+$('#bigBtn').onclick = () => {
+  const open = panel === 'desk' && desk ? { desk: desk.id, tab: desk.ui.tab } : drawerOpen && cur() && !viewing ? { chat: cur().id } : {};
+  if (host) host.postMessage({ type: 'window', open });
+  else toast('In Hover this opens the office in its own window.');
+};
+function onRestore(m) {
+  if (m.desk != null && sessions.some(s => s.id === m.desk)) openDesk(m.desk, m.tab || 'browser');
+  else if (m.chat != null && sessions.some(s => s.id === m.chat)) openSession(m.chat);
+}
+
+// ── An app or files dragged onto the notch: the agents' desktops as drop targets ──
+let tdrag = null;
+function onTeleportDrag(m) {
+  const box = $('#tdrop');
+  if (m.phase === 'cancel') { tdrag = null; box.hidden = true; return; }
+  const k = innerWidth / (m.vw || innerWidth), x = m.x * k, y = m.y * k;
+  if (m.phase === 'start' || !tdrag) {
+    tdrag = { app: m.app, bundle: m.bundle, path: m.path, files: m.files || [] };
+    closeDeskMenu(); closeHud();
+    // One target per project's desktop, with the agents that share it.
+    const desks = new Map();
+    for (const s of sessions) {
+      const k = spacesOn ? spaceOf(s) : `s${s.id}`;
+      if (!desks.has(k)) desks.set(k, { id: s.id, project: s.space?.project || short(s.folder) || 'Project', space: s.space, agents: [] });
+      desks.get(k).agents.push({ name: s.b.name, css: s.b.css, badge: badge(s.tool) });
+    }
+    // The project new tasks start in has its desktop too, before any agent is at work.
+    if (spacesOn && defaultFolder && !sessions.some(s => s.folder && s.folder.replace(/[\\/]+$/, '').toLowerCase() === defaultFolder.replace(/[\\/]+$/, '').toLowerCase()))
+      desks.set('f:' + defaultFolder, { id: 'f', folder: defaultFolder, project: short(defaultFolder) || 'Project', space: null, agents: [] });
+    box.innerHTML = D.dropHTML(tdrag, [...desks.values()], spacesOn);
+    box.hidden = false;
+  }
+  const hit = document.elementsFromPoint(x, y).find(e => e.matches?.('#tdrop [data-tdrop]'));
+  box.querySelectorAll('[data-tdrop]').forEach(t => t.classList.toggle('on', t === hit));
+  if (m.phase !== 'drop') return;
+  const d = tdrag; tdrag = null;
+  setTimeout(() => { box.hidden = true; }, hit ? 900 : 200);
+  if (!hit) return;
+  const own = hit.dataset.tdrop === 'f';
+  const s = own ? null : sessions.find(x => x.id === +hit.dataset.tdrop); if (!own && !s) return;
+  hit.classList.add('sent');
+  const where = own ? `the ${short(defaultFolder)} desktop` : s.space?.project ? `the ${s.space.project} desktop` : `${s.b.name}’s desktop`;
+  const to = own ? { folder: defaultFolder } : { id: s.id };
+  if (!spacesOn) { toast('Turn on agent desktops in Settings → Computer Use first.'); return; }
+  if (d.files.length) { host?.postMessage({ type: 'spaceFiles', ...to, paths: d.files }); toast(`Sending ${d.app} to ${where}…`); }
+  else if (d.path) { host?.postMessage({ type: 'teleport', ...to, app: d.app, path: d.path }); toast(`Sending ${d.app} to ${where}…`); }
+  else toast(`Hover couldn’t tell which app that is.`);
+}
+function onTeleport(m) {
+  const s = sessions.find(x => x.id === m.id), who = s?.space?.project ? `the ${s.space.project} desktop` : s ? `${s.b.name}’s desktop` : defaultFolder ? `the ${short(defaultFolder)} desktop` : 'the desktop';
+  if (m.phase === 'sending') { if (m.line) toast(m.line); return; }
+  if (m.phase !== 'done') return;
+  const n = m.data?.sent ?? 0;
+  toast(m.data?.error ? m.data.error : m.app === 'files' ? `Sent ${n} item${n === 1 ? '' : 's'} to the Downloads on ${who}.` : `${m.app} is on ${who}.`);
+}
+
 // Take control: clicks, keys and the wheel on the desktop go to the agent's apps.
 function bindScreen(el) {
   const box = el.querySelector('.vmscreen');
@@ -2042,7 +2167,8 @@ $('#pBody').addEventListener('click', e => {
   const gc = t.closest('[data-ghcopy]'); if (gc) { copyText(gc.dataset.ghcopy, gc); return; }
   if (t.closest('[data-watch]')) { ui.watch = !ui.watch; screenPulse(); renderDesk(); return; }
   if (t.closest('[data-vmcontrol]')) { ui.control = !ui.control; ui.replay = null; screenPulse(); renderDesk(); if (ui.control) $('#pBody .vmscreen')?.focus({ preventScroll: true }); return; }
-  if (t.closest('[data-vmbig]')) { ui.big = !ui.big; $('#panel').classList.toggle('big', ui.big); return; }
+  if (t.closest('[data-vmbig]')) { ui.big = !ui.big; $('#panel').classList.toggle('big', ui.big); renderDesk(); return; }
+  if (t.closest('[data-spretry]')) { const s = deskOf(); if (s) { spaceView[spaceOf(s)] = null; s.space = { phase: 'starting', line: 'Starting its desktop…' }; askSpace(s, true); renderDesk(); } return; }
   if (t.closest('[data-vmlive]')) { ui.replay = null; renderDesk(); return; }
   const at = t.closest('[data-vmat]'); if (at) { const tt = +at.dataset.vmat, f = scr.frames; if (f.length) { let i = f.findIndex(x => x.t >= tt); if (i < 0) i = f.length - 1; ui.replay = i; ui.control = false; renderDesk(); } return; }
   if (t.closest('[data-saccess]')) { host?.postMessage({ type: 'screenAccess' }); return; }
@@ -2140,8 +2266,19 @@ function demoFrame(live, apps = true) {
 
 // ── Deleting a session, after asking ────────────────────────────────────
 let confirmAction = null;
+// Restore and Try again change the project folder: both ask first, as the native office does.
+function askRewind(s, restore, turn) {
+  $('#cfTitle').textContent = restore ? 'Restore to this answer?' : 'Try this message again?';
+  $('#cfText').textContent = restore
+    ? 'The folder and the chat go back to just after this answer. The folder as it is now is kept in the checkpoint store.'
+    : 'The folder and the chat go back to before this message, and it is sent again. The folder as it is now is kept in the checkpoint store.';
+  $('#cfYes').textContent = restore ? 'Restore' : 'Try again';
+  confirmAction = () => host.postMessage({ type: restore ? 'restore' : 'again', id: s.id, turn });
+  $('#confirm').hidden = false; $('#cfNo').focus();
+}
 function askDelete(s) {
   $('#cfTitle').textContent = 'Delete this session?';
+  $('#cfYes').textContent = 'Delete';
   $('#cfText').textContent = `“${s.title}” goes from the office and the history${busy(s) ? ', and its run is stopped' : ''}. This can’t be undone.`;
   confirmAction = () => {
     if (host) host.postMessage({ type: 'delete', ...(s.archived ? { key: s.key } : { id: s.id }) });
@@ -2197,6 +2334,10 @@ host?.addEventListener('message', e => {
   else if (m.type === 'screen') onScreen(m);
   else if (m.type === 'agentBrowser') onAgentBrowser(m);
   else if (m.type === 'screenInput') onScreenInput(m);
+  else if (m.type === 'space') onSpace(m);
+  else if (m.type === 'teleportDrag') onTeleportDrag(m);
+  else if (m.type === 'teleport') onTeleport(m);
+  else if (m.type === 'restore') onRestore(m);
   else if (m.type === 'gh') onGh(m);
   else if (m.type === 'deskAction') onDeskAction(m);
   else if (m.type === 'folder') { newFolder = m.text; renderNew(); $('#nInput').focus(); }
@@ -2269,7 +2410,10 @@ function frame(now) {
   const calm = !lively && now - pokedAt > 1500;
   // The Mac host runs at the display's rate (60 or 120 Hz) while something moves, so
   // walks and camera moves are smooth; idle stays at 10 fps there too.
-  if (acc < (calm ? (still ? 1 : 1 / 10) : RETINA ? 1 / 121 : 1 / 31)) return;
+  // A live view (the agent's desktop or browser) laid over the panel: the room behind
+  // it needs only a few frames, and the view gets the machine.
+  const covered = spacePlaced !== 'none' || placed !== 'none';
+  if (acc < (calm ? (still ? 1 : 1 / 10) : covered ? 1 / 12 : RETINA ? 1 / 121 : 1 / 31)) return;
   const step = acc; acc = 0; clockT += step;
   for (const s of sessions) { s.b.sync(last(s).stage, poseOf(last(s))); s.b.step(step); }
   for (const l of leaving) l.b.step(step);
@@ -2341,6 +2485,7 @@ if (host && window.hoverE2E) window.__office = {
   openDeskMenu: id => openDeskMenu(sessions.find(x => x.id === id), 420, 260),
   openDesk: (id, tab) => openDesk(id, tab),
   openSession: id => openSession(id),
+  spaces: () => spacesOn,
   // A page without a window gets no animation frames: the harness turns the clock.
   tick: (n = 1) => { for (let i = 0; i < n; i++) { e2eNow = Math.max(e2eNow + 34, performance.now()); frame(e2eNow); } },
 };
@@ -2349,6 +2494,7 @@ var e2eNow = 0;
 // steps, for screenshots of states that otherwise pass in seconds.
 if (!host && /[?&]debug\b/.test(location.search)) window.__office = {
   gh: m => onGh(m),
+  drag: m => onTeleportDrag(m),
   hold(id, stage, steps, extra = {}) { const s = sessions.find(x => x.id === id); clearTimeout(timers[s.id]); const T = last(s); Object.assign(T, { stage, steps, answer: '' }); Object.assign(s, extra); changed(s); },
 };
 if (Q.has('open')) openSession(+Q.get('open'));

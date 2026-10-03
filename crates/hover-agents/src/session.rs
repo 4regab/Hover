@@ -11,7 +11,7 @@ use crate::stream::{KiroEvent, KiroPhase, KiroResult};
 use hover_core::history::{AgentHistory, SavedSession, SavedTurn};
 use hover_core::model::{AgentTool, KiroState, KiroStep};
 use hover_core::time::Stamp;
-use std::sync::atomic::{AtomicI32, Ordering};
+use std::sync::atomic::{AtomicI32, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 
 pub const MAX_RUNNING: usize = 3;
@@ -206,10 +206,14 @@ impl Answer {
 struct Pending { id: String, reply: Answer, _stop: Option<Registration> }
 
 /// pausing: the turn was cancelled by Pause, so the replies queued behind it go once it ends.
-struct Slot { s: KiroSession, cancel: Option<Cancel>, run: RunTask, asks: Vec<Pending>, pausing: bool, note: Option<String> }
+/// usage: Kiro's last reported context (percent) that no compaction has answered yet.
+struct Slot { s: KiroSession, cancel: Option<Cancel>, run: RunTask, asks: Vec<Pending>, pausing: bool, note: Option<String>, usage: Option<f64> }
 
 impl Slot {
-    fn new(s: KiroSession, run: RunTask) -> Slot { Slot { s, cancel: None, run, asks: vec![], pausing: false, note: None } }
+    fn new(s: KiroSession, run: RunTask) -> Slot {
+        let usage = s.context.filter(|_| s.tool == AgentTool::Kiro);
+        Slot { s, cancel: None, run, asks: vec![], pausing: false, note: None, usage }
+    }
 
     /// KiroSession.DenyAll: every question it left has nobody to answer it now. The
     /// replies go once the lock is released.
@@ -233,6 +237,10 @@ struct Shared {
     changed: Mutex<Vec<Changed>>,
     ended: Mutex<Vec<Ended>>,
     checkpoints: Mutex<Option<Arc<Checkpoints>>>,
+    /// Where auto compact's percent comes from (None while it is off); without one, settings.json.
+    compact: Mutex<Option<Arc<dyn Fn() -> Option<u8> + Send + Sync>>>,
+    /// How many run at once: MAX_RUNNING, unless the host says otherwise (the Mac's Settings).
+    limit: AtomicUsize,
 }
 
 /// Every session the office knows about, shared by the notch and the app window.
@@ -250,8 +258,13 @@ impl KiroSessions {
     pub fn with_clock(make: impl Fn(AgentTool) -> RunTask + Send + Sync + 'static, history: Option<Arc<AgentHistory>>,
         now: impl Fn() -> Stamp + Send + Sync + 'static) -> KiroSessions {
         KiroSessions(Arc::new(Shared { inner: Mutex::new(Inner { all: vec![], selected: None }), make: Box::new(make), history, now: Box::new(now),
-            changed: Mutex::new(vec![]), ended: Mutex::new(vec![]), checkpoints: Mutex::new(None) }))
+            changed: Mutex::new(vec![]), ended: Mutex::new(vec![]), checkpoints: Mutex::new(None), compact: Mutex::new(None), limit: AtomicUsize::new(MAX_RUNNING) }))
     }
+
+    /// Kiro's auto compact: `at` says, at each prompt, the context percent that calls for a
+    /// `/compact` first, or None while it is off. Without one the setting is read from
+    /// settings.json at each prompt.
+    pub fn set_auto_compact(&self, at: impl Fn() -> Option<u8> + Send + Sync + 'static) { *self.0.compact.lock().unwrap() = Some(Arc::new(at)); }
 
     pub fn history(&self) -> Option<&Arc<AgentHistory>> { self.0.history.as_ref() }
     /// Keep the project folder before and after every turn from now on (checkpoint.rs).
@@ -287,7 +300,10 @@ impl KiroSessions {
         self.0.inner.lock().unwrap().all.iter().filter_map(|x| x.s.asking().map(|a| (x.s.id, a.clone(), x.s.asks.len()))).collect()
     }
     pub fn running(&self) -> usize { self.0.inner.lock().unwrap().all.iter().filter(|x| x.s.busy()).count() }
-    pub fn can_start(&self) -> bool { self.running() < MAX_RUNNING }
+    pub fn can_start(&self) -> bool { self.running() < self.max_running() }
+    /// How many tasks run at once (Settings.MaxRunning on a Mac: 1 to MAX_KEPT).
+    pub fn max_running(&self) -> usize { self.0.limit.load(Ordering::SeqCst) }
+    pub fn set_max_running(&self, n: usize) { self.0.limit.store(n.clamp(1, MAX_KEPT), Ordering::SeqCst); }
     /// The session the office last opened.
     pub fn selected(&self) -> Option<i32> { self.0.inner.lock().unwrap().selected }
 
@@ -319,7 +335,7 @@ impl KiroSessions {
     pub fn start_as(&self, tool: AgentTool, folder: &str, prompt: &str, images: Vec<String>, access: Option<&str>) -> Option<KiroSession> {
         let mut g = self.0.inner.lock().unwrap();
         let running = g.all.iter().filter(|x| x.s.busy()).count();
-        if running >= MAX_RUNNING || !crate::usable_folder(Some(folder)) || !usable(prompt, &images) { return None; }
+        if running >= self.max_running() || !crate::usable_folder(Some(folder)) || !usable(prompt, &images) { return None; }
         if !Self::free_desk(&mut g) { return None; }
         let mut s = KiroSession::new(tool);
         Self::seat(&g, &mut s);
@@ -371,7 +387,7 @@ impl KiroSessions {
         let mut g = self.0.inner.lock().unwrap();
         let running = g.all.iter().filter(|x| x.s.busy()).count();
         let Some(slot) = g.all.iter_mut().find(|x| x.s.id == id) else { return false };
-        if !slot.s.busy() && running >= MAX_RUNNING { return false; }
+        if !slot.s.busy() && running >= self.max_running() { return false; }
         if slot.s.state == KiroState::Idle || !usable(text, &images) { return false; }
         let mut t = KiroTurn::new(text.trim(), images);
         // Replies left queued (behind a stop that wasn't confirmed) go first, in order.
@@ -402,7 +418,7 @@ impl KiroSessions {
             let (i, after) = match to { Rewind::After(i) => (i, true), Rewind::Before(i) => (i, false) };
             let t = slot.s.turns.get(i).ok_or("That message isn't here.")?;
             let tree = if after { &t.after } else { &t.before }.clone().ok_or("No checkpoint was kept there.")?;
-            if !after && g.all.iter().filter(|x| x.s.busy()).count() >= MAX_RUNNING { return Err("3 tasks are running. Try again when one is done.".into()); }
+            if !after && g.all.iter().filter(|x| x.s.busy()).count() >= self.max_running() { return Err(format!("{} running. Try again when one is done.", match self.max_running() { 1 => "1 task is".to_owned(), n => format!("{n} tasks are") })); }
             (slot.s.key.clone(), slot.s.folder.clone(), tree, if after { i + 1 } else { i }, t.prompt.clone(), t.images.clone())
         };
         // Files first, off the lock: a big folder takes a while, and the chat stays as it is until it worked.
@@ -418,6 +434,7 @@ impl KiroSessions {
             if keep == 0 {
                 slot.s.kiro_id = None;
                 slot.s.context = None;
+                slot.usage = None;
                 slot.note = None;
             } else {
                 let what = crate::stream::clip_to(first_line(&slot.s.turns[keep - 1].prompt), 80);
@@ -634,6 +651,88 @@ fn with<R>(me: &Weak<Shared>, id: i32, f: impl FnOnce(&mut Slot, Stamp) -> R) ->
     Some((ks, r))
 }
 
+/// The step auto compact leaves in the turn it ran before.
+const COMPACT_STEP: &str = "hover-compact";
+
+/// What the compaction step says. `said` is Kiro's answer to /compact.
+pub fn compact_title(usage: f64, state: Option<KiroState>, said: &str) -> String {
+    let full = format!("{usage:.0}% full");
+    match state {
+        None => format!("Compacting the conversation ({full})"),
+        Some(KiroState::Completed) if said.to_lowercase().contains("nothing to compact") => format!("Nothing to compact yet (the context is {full})"),
+        Some(KiroState::Completed) => format!("Compacted the conversation (it was {full})"),
+        Some(KiroState::Failed) => format!("Couldn't compact the conversation (it was {full})"),
+        Some(_) => format!("Stopped while compacting the conversation ({full})"),
+    }
+}
+
+/// The percent the setting asks for now: the app's reader, else settings.json.
+fn compact_at(sh: &Shared) -> Option<u8> {
+    let f = sh.compact.lock().unwrap().clone();
+    match f { Some(f) => f(), None => hover_core::settings::load_model(&hover_core::paths::settings_file()).auto_compact() }
+}
+
+/// Kiro's last reported context when it calls for a compaction before this prompt: the
+/// setting is on and the context is at or past its percent. Taking it is what keeps
+/// a session from compacting twice in a row: only a new report from a turn of its own
+/// asks for the next one.
+fn due_compact(me: &Weak<Shared>, id: i32) -> Option<f64> {
+    let sh = me.upgrade()?;
+    {
+        let g = sh.inner.lock().unwrap();
+        let slot = g.all.iter().find(|x| x.s.id == id)?;
+        if slot.s.tool != AgentTool::Kiro || slot.usage.is_none() { return None; }
+    }
+    let at = compact_at(&sh)?;
+    let mut g = sh.inner.lock().unwrap();
+    let slot = g.all.iter_mut().find(|x| x.s.id == id)?;
+    let used = slot.usage.filter(|u| *u >= at as f64)?;
+    slot.usage = None;
+    Some(used)
+}
+
+/// Kiro only: with auto compact on and the context past its percent, a compaction
+/// (a run of exactly `/compact`, which acp.rs sends as Kiro's `_kiro/session/compact`) goes
+/// first and shows in the turn as one quiet step. Access is the session's own: compacting
+/// changes no files. Some(result) when the compaction was stopped, which stops the turn too;
+/// one that failed is only said, and the reply goes on.
+#[allow(clippy::too_many_arguments)]
+fn compact_first(me: &Weak<Shared>, id: i32, ti: usize, run: &RunTask, folder: &str, resume: &Option<String>, access: &Option<String>,
+    tag: &Option<String>, ct: &Cancel) -> Option<KiroResult> {
+    let used = due_compact(me, id)?;
+    let put = |title: String, status: &str, ms: Option<f64>, said: Option<String>| {
+        let step = KiroStep { ms, output: said, ..KiroStep::new(COMPACT_STEP, "other", &title, None, status) };
+        if let Some((ks, ())) = with(me, id, |slot, now| {
+            let t = &mut slot.s.turns[ti];
+            match t.steps.iter().position(|x| x.id == step.id) { Some(i) => t.steps[i] = step, None => t.steps.push(step) }
+            if t.woke_at.is_none() { t.woke_at = Some(now); }
+        }) { ks.raise(vec![Note::Changed]); }
+    };
+    put(compact_title(used, None, ""), "in_progress", None, None);
+    let m = me.clone();
+    // What it reports is shown, but is no new report to compact on: that comes from the reply.
+    let events = Box::new(move |e: KiroEvent| {
+        if let Some((ks, ())) = with(&m, id, |slot, _| {
+            if let Some(i) = e.session_id { slot.s.kiro_id = Some(i); }
+            if let Some(c) = e.context { slot.s.context = Some(c); }
+        }) { ks.raise(vec![Note::Changed]); }
+    });
+    let began = std::time::Instant::now();
+    let args = RunArgs { folder: folder.into(), prompt: crate::acp::COMPACT_PROMPT.into(), progress: Box::new(|_| {}), ct: ct.clone(), resume: resume.clone(), events, access: access.clone(), tag: tag.clone() };
+    let r = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run(args))) {
+        Ok(r) => r,
+        Err(_) => KiroResult::new(KiroState::Failed, "The compaction failed."),
+    };
+    let ms = Some(began.elapsed().as_secs_f64() * 1000.0);
+    let stopped = ct.is_cancelled() || r.unconfirmed || r.state == KiroState::Cancelled;
+    let state = if stopped { KiroState::Cancelled } else { r.state };
+    hover_core::log::line(&format!("kiro run {id} compact at {used:.0}%: {}", state.name().to_lowercase()));
+    // Kiro's own words are kept with the step (not drawn for this kind of step).
+    put(compact_title(used, Some(state), &r.text), if state == KiroState::Completed { "completed" } else { "failed" }, ms,
+        Some(crate::stream::clip(r.text.trim(), 2000)).filter(|t| !t.is_empty()));
+    stopped.then_some(r)
+}
+
 /// KiroSession.Go: one turn, on its own thread.
 fn go(me: Weak<Shared>, id: i32, ti: usize, run: RunTask, ct: Cancel, cp: Option<(Arc<Checkpoints>, String)>, (folder, prompt, resume, access): (String, String, Option<String>, Option<String>)) {
     // The folder as it is before the agent touches it (and again after, below).
@@ -652,7 +751,7 @@ fn go(me: Weak<Shared>, id: i32, ti: usize, run: RunTask, ct: Cancel, cp: Option
     let events = Box::new(move |e: KiroEvent| {
         if let Some((ks, ())) = with(&m2, id, |slot, now| {
             if let Some(i) = e.session_id { slot.s.kiro_id = Some(i); }
-            if let Some(c) = e.context { slot.s.context = Some(c); }
+            if let Some(c) = e.context { slot.s.context = Some(c); slot.usage = Some(c); }
             if let Some(c) = e.credits { slot.s.turns[ti].credits = Some(c); }
             if let Some(step) = e.step {
                 let t = &mut slot.s.turns[ti];
@@ -662,10 +761,14 @@ fn go(me: Weak<Shared>, id: i32, ti: usize, run: RunTask, ct: Cancel, cp: Option
         }) { ks.raise(vec![Note::Changed]); }
     });
     let tag = me.upgrade().and_then(|sh| sh.inner.lock().unwrap().all.iter().find(|x| x.s.id == id).map(|x| x.s.key.clone()));
+    let stopped = compact_first(&me, id, ti, &run, &folder, &resume, &access, &tag, &ct);
     let args = RunArgs { folder, prompt, progress, ct: ct.clone(), resume, events, access, tag };
-    let mut r = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run(args))) {
-        Ok(r) => r,
-        Err(p) => KiroResult::new(KiroState::Failed, p.downcast_ref::<String>().cloned().or_else(|| p.downcast_ref::<&str>().map(|s| s.to_string())).unwrap_or_else(|| "The run failed.".into())),
+    let mut r = match stopped {
+        Some(r) => r,
+        None => match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run(args))) {
+            Ok(r) => r,
+            Err(p) => KiroResult::new(KiroState::Failed, p.downcast_ref::<String>().cloned().or_else(|| p.downcast_ref::<&str>().map(|s| s.to_string())).unwrap_or_else(|| "The run failed.".into())),
+        },
     };
     if ct.is_cancelled() && r.state != KiroState::Completed && !r.unconfirmed { r.state = KiroState::Cancelled; }
     let after = if before.is_some() { cp.as_ref().and_then(|(c, key)| c.snapshot(key, &kept_folder)) } else { None };

@@ -614,14 +614,9 @@ impl App {
         let a = self.clone();
         g.on_b_go(move |t| a.desk_browser_go(t.as_str()));
         let a = self.clone();
-        g.on_b_nav(move |w| a.desk_browser_nav(w.as_str()));
-        let a = self.clone();
         g.on_b_page(move |u| a.desk_browser_page(u.as_str()));
         let a = self.clone();
-        g.on_b_area(move |x, y, w, h| a.desk_browser_area(x, y, w, h));
-        let a = self.clone();
         g.on_s_watch_toggle(move || { a.desk_prefs(|p| p.watch = !p.watch); a.desk_changed(); a.desk_sync(); a.desk_screen_tick(); });
-        g.on_s_allow(|| hover_app::screen::request_access());
         let a = self.clone();
         g.on_gh_start(move || { gh::shared().start(); a.desk_sync(); });
         let a = self.clone();
@@ -642,7 +637,6 @@ impl App {
         if !self.page.desk.wired.replace(true) {
             // gh's status and progress change on its own threads.
             gh::shared().on_changed(|| crate::ui_do(|a| a.desk_sync()));
-            hover_app::browser_host::on_change(|_| crate::ui_do(|a| a.desk_sync()));
         }
     }
 
@@ -712,7 +706,7 @@ impl App {
         // The panel takes the chat's and the other panels' place.
         if self.page.open.get().is_some() { self.close_drawer(); }
         if self.page.panel.get().is_some() { self.open_panel(None); }
-        if let Some((old, _)) = d.panel.get() { if old != id { self.desk_leave_tab(old); } }
+        if let Some((old, _)) = d.panel.get() { if old != id { self.desk_leave_tab(); } }
         d.panel.set(Some((id, tab)));
         self.desk_prefs(|p| p.tab = tab);
         self.desk_select(Some(id));
@@ -731,8 +725,8 @@ impl App {
 
     pub fn desk_close_panel(self: &Rc<Self>) {
         let d = &self.page.desk;
-        let Some((id, _)) = d.panel.replace(None) else { return };
-        self.desk_leave_tab(id);
+        if d.panel.replace(None).is_none() { return; }
+        self.desk_leave_tab();
         if d.card.get().is_none() { self.desk_select(None); }
         self.desk_timer();
         self.office_widgets();
@@ -743,14 +737,13 @@ impl App {
         let d = &self.page.desk;
         if d.card.get().is_none() && d.panel.get().is_none() { return; }
         d.card.set(None);
-        if let Some((id, _)) = d.panel.replace(None) { self.desk_leave_tab(id); }
+        if d.panel.replace(None).is_some() { self.desk_leave_tab(); }
         self.desk_select(None);
         self.desk_timer();
     }
 
-    /// The browser laid over the panel goes, and the screen stops.
-    fn desk_leave_tab(&self, id: i32) {
-        if let Some(key) = self.hover.sessions.get(id).map(|s| s.key) { hover_app::browser_host::park(&key); }
+    /// The screen stops.
+    fn desk_leave_tab(&self) {
         self.page.desk.screen_still.set(false);
     }
 
@@ -760,7 +753,7 @@ impl App {
         let snap = self.desk_snap(&sess);
         let tiles = self.desk_tiles(id, &snap);
         if let Some(t) = tiles.get(tab).filter(|t| !t.enabled) { self.toast(&t.reason); return; }
-        if tab != cur { self.desk_leave_tab(id); }
+        if tab != cur { self.desk_leave_tab(); }
         self.desk_open(id, tab);
     }
 
@@ -996,7 +989,7 @@ impl App {
             g.set_tab(tab as i32);
             if let Some(m) = crate::view::sync(g.get_tabs(), &tabs) { g.set_tabs(m); }
         });
-        self.desk_tab_props(id, tab, &sess, &snap, name);
+        self.desk_tab_props(id, tab, &snap, name);
         self.desk_window();
     }
 
@@ -1092,7 +1085,7 @@ impl App {
     }
 
     /// The tab's own controls: the browser's bar, the screen, the pull request's setup and form.
-    fn desk_tab_props(self: &Rc<Self>, id: i32, tab: usize, sess: &KiroSession, snap: &d::Snap, bot: &str) {
+    fn desk_tab_props(self: &Rc<Self>, id: i32, tab: usize, snap: &d::Snap, bot: &str) {
         let d = &self.page.desk;
         let prefs = d.prefs.borrow();
         let p = prefs.get(&id);
@@ -1103,22 +1096,18 @@ impl App {
         match TABS[tab] {
             "browser" => {
                 let pages = d::pages(snap);
-                let native = hover_app::browser_host::supported();
-                let state = hover_app::browser_host::state(&sess.key);
-                let url = state.as_ref().map(|t| t.url.clone()).filter(|u| !u.is_empty()).or_else(|| p.and_then(|p| p.url.clone())).or_else(|| pages.iter().find(|x| x.local).or(pages.first()).map(|x| x.url.clone())).unwrap_or_default();
+                let url = p.and_then(|p| p.url.clone()).or_else(|| pages.iter().find(|x| x.local).or(pages.first()).map(|x| x.url.clone())).unwrap_or_default();
                 let model: Vec<DPage> = pages.iter().take(12).map(|x| DPage { url: s(&x.url), label: s(if x.kind == d::PageKind::Fetch { x.title.clone().unwrap_or_else(|| d::label(&x.url)) } else { d::label(&x.url) }),
                     server: x.kind == d::PageKind::Server, on: x.url == url, tip: s(format!("{}: {}", x.kind.label(), x.url)) }).collect();
-                let using = if snap.browsing() { format!("{bot} is using this browser{}", state.as_ref().filter(|t| !t.title.is_empty()).map_or(String::new(), |t| format!(" · {}", t.title))) } else { String::new() };
                 each_desk!(self, |g| {
-                    g.set_b_native(native);
+                    g.set_b_native(false);
                     g.set_b_url(s(&url));
-                    g.set_b_can_back(state.as_ref().is_some_and(|t| t.can_back));
-                    g.set_b_can_forward(state.as_ref().is_some_and(|t| t.can_forward));
-                    g.set_b_loading(state.as_ref().is_some_and(|t| t.loading));
-                    g.set_b_using(s(&using));
-                    g.set_b_error(s(state.as_ref().and_then(|t| t.error.clone()).unwrap_or_default()));
-                    g.set_b_note(s(if native { format!("Pages {bot} opens, and the local servers it starts, show here. Type an address above to look at one.") }
-                        else { format!("{} Pages {bot} opened are listed above; the address opens in your own browser.", hover_app::browser_host::note().unwrap_or("Agent browser needs macOS.")) }));
+                    g.set_b_can_back(false);
+                    g.set_b_can_forward(false);
+                    g.set_b_loading(false);
+                    g.set_b_using(s(""));
+                    g.set_b_error(s(""));
+                    g.set_b_note(s(format!("{} Pages {bot} opened are listed above; the address opens in your own browser.", hover_agents::browser::note().unwrap_or("Agent browser needs macOS."))));
                     if let Some(m) = crate::view::sync(g.get_b_pages(), &model) { g.set_b_pages(m); }
                 });
             }
@@ -1128,16 +1117,16 @@ impl App {
                 let live = supported && (p.is_some_and(|p| p.watch) || testing);
                 let apps = d::apps(snap).is_some();
                 let theirs = if apps { format!("the apps {bot} opened") } else { format!("no apps yet: {bot} hasn’t opened any") };
-                let denied = cfg!(target_os = "macos") && !hover_app::screen::access();
                 let note = if !supported { hover_app::screen::note().unwrap_or("").to_owned() }
                     else if live { if testing { format!("{bot} is testing with computer use, live: your desktop with {theirs}. Your own windows aren’t shown.") } else { format!("Live: your desktop with {theirs}. Your own windows aren’t shown.") } }
-                    else if testing { if denied { format!("{bot} is using the computer now. Allow Screen Recording above to watch it live.") } else { "Going live…".to_owned() } }
+                    else if testing { "Going live…".to_owned() }
+                    else if !hover_agents::computer_use::supported() { format!("Your desktop with {theirs}, never your own windows.") }
                     else { format!("Your desktop with {theirs}, never your own windows. It goes live while {bot} uses computer use.") };
                 each_desk!(self, |g| {
                     g.set_s_supported(supported);
                     g.set_s_live(live);
                     g.set_s_watch(p.is_some_and(|p| p.watch));
-                    g.set_s_denied(denied);
+                    g.set_s_denied(false);
                     g.set_s_note(s(&note));
                 });
             }
@@ -1281,45 +1270,24 @@ impl App {
 
     // MARK: Browser
 
-    fn desk_key(&self) -> Option<(i32, String)> {
-        let id = self.page.desk.panel.get()?.0;
-        Some((id, self.hover.sessions.get(id)?.key))
-    }
-
     fn desk_browser_go(self: &Rc<Self>, text: &str) {
-        let Some((id, key)) = self.desk_key() else { return };
-        let Some(url) = hover_app::browser_host::normalize(text) else {
-            self.toast(hover_app::browser_host::BAD_ADDRESS);
+        let Some(id) = self.page.desk.panel.get().map(|p| p.0) else { return };
+        let Some(url) = normalize(text) else {
+            self.toast(BAD_ADDRESS);
             return;
         };
         self.desk_prefs_for(id, |p| { p.url = Some(url.clone()); p.picked = true; });
-        if hover_app::browser_host::supported() { hover_app::browser_host::go(&key, &url); } else { crate::open_url(&url); }
+        crate::open_url(&url);
         self.desk_changed();
         self.desk_sync();
-    }
-
-    fn desk_browser_nav(self: &Rc<Self>, what: &str) {
-        if let Some((_, key)) = self.desk_key() { hover_app::browser_host::nav(&key, what); }
     }
 
     fn desk_browser_page(self: &Rc<Self>, url: &str) {
-        let Some((id, key)) = self.desk_key() else { return };
+        let Some(id) = self.page.desk.panel.get().map(|p| p.0) else { return };
         self.desk_prefs_for(id, |p| { p.url = Some(url.to_owned()); p.picked = true; });
-        if hover_app::browser_host::supported() { hover_app::browser_host::go(&key, url); } else { crate::open_url(url); }
+        crate::open_url(url);
         self.desk_changed();
         self.desk_sync();
-    }
-
-    /// Where Hover's own browser is laid over the panel: on a Mac its web view goes there.
-    #[allow(unused_variables)]
-    fn desk_browser_area(self: &Rc<Self>, x: f32, y: f32, w: f32, h: f32) {
-        #[cfg(target_os = "macos")]
-        {
-            let Some((_, key)) = self.desk_key() else { return };
-            if self.page.desk.panel.get().is_none_or(|p| TABS[p.1] != "browser") || w < 1.0 || h < 1.0 { hover_app::browser_host::park(&key); return; }
-            let win = if self.page.target.get() == 1 { self.dash.borrow().as_ref().and_then(|d| crate::macplat::window_of(d.window())) } else { crate::macplat::window_of(self.notch.window()) };
-            if let Some(win) = win { hover_app::browser_host::show(&key, (x as f64, y as f64, w as f64, h as f64), &win); }
-        }
     }
 
     // MARK: Screen
@@ -1386,9 +1354,62 @@ impl App {
     pub fn desk_tag_at(&self, id: i32) -> Option<(f32, f32)> { self.page.desk.tags.borrow().get(&(id as i64)).copied() }
 }
 
+// MARK: The address box
+
+/// What the address box says when the text isn't an address.
+const BAD_ADDRESS: &str = "Give an http(s) address, like localhost:3000 or https://example.com.";
+
+/// What an address box takes: http(s) URLs, and "localhost:3000" and the like
+/// (AgentTab.normalize in the Mac app). None when it isn't an address.
+fn normalize(text: &str) -> Option<String> {
+    let t = text.trim();
+    if t.is_empty() { return None; }
+    let has_scheme = t.split_once("://").is_some_and(|(s, _)| s.chars().next().is_some_and(|c| c.is_ascii_alphabetic()) && s.chars().all(|c| c.is_ascii_alphanumeric() || "+.-".contains(c)));
+    let full = if has_scheme {
+        t.to_owned()
+    } else {
+        let lower = t.to_ascii_lowercase();
+        let local = ["localhost", "127.", "0.0.0.0", "[::1]"].iter().any(|p| lower.starts_with(p));
+        format!("{}://{t}", if local { "http" } else { "https" })
+    };
+    let (scheme, rest) = full.split_once("://")?;
+    if !["http", "https"].contains(&scheme.to_ascii_lowercase().as_str()) { return None; }
+    // A host, and a port if there is one: what is before the path, the query and the
+    // fragment, without any user info.
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
+    let hostport = authority.rsplit('@').next().unwrap_or("");
+    let (host, port) = if let Some(v6) = hostport.strip_prefix('[') {
+        let (h, after) = v6.split_once(']')?;
+        if !after.is_empty() && !after.starts_with(':') { return None; }
+        (h, after.strip_prefix(':'))
+    } else {
+        match hostport.rsplit_once(':') { Some((h, p)) => (h, Some(p)), None => (hostport, None) }
+    };
+    let port_ok = port.is_none_or(|p| !p.is_empty() && p.len() <= 5 && p.bytes().all(|b| b.is_ascii_digit()));
+    if host.is_empty() || !port_ok || full.chars().any(|c| c.is_whitespace() || c.is_control()) { return None; }
+    Some(full)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_address_is_made_from_what_was_typed() {
+        assert_eq!(normalize("localhost:3000").as_deref(), Some("http://localhost:3000"));
+        assert_eq!(normalize("  127.0.0.1:8080/app ").as_deref(), Some("http://127.0.0.1:8080/app"));
+        assert_eq!(normalize("[::1]:5173").as_deref(), Some("http://[::1]:5173"));
+        assert_eq!(normalize("example.com/a?b=c").as_deref(), Some("https://example.com/a?b=c"));
+        assert_eq!(normalize("HTTP://Example.com").as_deref(), Some("HTTP://Example.com"));
+        assert_eq!(normalize("https://user@host.dev:8443/x").as_deref(), Some("https://user@host.dev:8443/x"));
+    }
+
+    #[test]
+    fn only_http_and_https_pages_open() {
+        for bad in ["", "   ", "file:///etc/passwd", "javascript:alert(1)", "ftp://example.com", "data:text/html,hi", "http://", "https:///path", "http://exa mple.com", "about:blank"] {
+            assert_eq!(normalize(bad), None, "{bad:?}");
+        }
+    }
 
     fn files(paths: &[&str]) -> Vec<String> { paths.iter().map(|p| p.to_string()).collect() }
 

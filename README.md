@@ -52,7 +52,8 @@ them up later.
 | **Desk card** | Click a desk to see what its agent is doing, reply to it, or open its terminal, files, diff, agents, linked pull requests and the branch's pull request. The pull request tab can set up the GitHub CLI and open a pull request for you. |
 | **Helpers** | A subagent at work shows as a small bot beside its parent's desk. |
 | **Sandbox** | On a Mac or Linux, agents run inside Anthropic's sandbox-runtime: they write only to their folders, can't read your keys or other apps' data, and reach only the hosts they need. Needs `srt`; Settings → Integrations says what is missing. |
-| **Computer use** | Off until you switch it on. Agents drive other apps in the background through Cua Driver, without moving your pointer or taking focus. macOS first; Settings installs it and asks for its permissions. |
+| **Computer use** | macOS only, and off until you switch it on. Agents drive other apps in the background through Cua Driver, without moving your pointer or taking focus. Settings installs it and asks for its permissions. |
+| **Agent desktops** | macOS 26 or later on Apple silicon, off until you switch it on. Each project gets its own Cua Space, a macOS VM its agents work in instead of your screen. Drag an app or files onto the notch to send them there. |
 | **Agent browser** | macOS. Agents get a browser they can open pages in, read, click and type in; you see it in the desk card's Browser tab. |
 | **Agent setup** | macOS. One click installs an agent with its maker's own installer and opens its sign-in. |
 | **Reply, queue, pause** | Replies sent during a run wait their turn. Pause stops the current answer, and the next queued reply starts once the agent confirms. |
@@ -140,12 +141,12 @@ you switch it on in Settings → Voice.
    Hover never switches between the two on its own.
 4. **Cleanup (optional).** Gemini, OpenAI or any OpenAI-compatible service, with your key
    and model, fixes punctuation and filler words. If it fails, the original text is used.
-5. **Talk.** Hold `Ctrl+Alt+Space` (on a Mac, Control-Option-Space; you can change it), speak, and let go. Edit the task to
+5. **Talk.** Hold `Ctrl+Alt+Space` (on a Mac, Control-Option-Space, which is fixed; elsewhere you can change it), speak, and let go. Edit the task to
    stop the countdown, then press Start. Esc cancels. Settings → Voice → Try it shows what
    would start, without starting anything.
 
-On a Mac, **Local (Phonon)** is off for now (the card says so): use **Cloud (Groq)**. macOS
-asks for the Microphone the first time Hover listens.
+On a Mac, voice is Apple's speech recognizer on the Mac instead (no Phonon, Groq or cleanup).
+macOS asks for the Microphone and Speech Recognition the first time Hover listens.
 
 ### Local speech requirements
 
@@ -175,8 +176,8 @@ which go to CuaDriver, not to Hover.
   tool call: asked about, or refused.
 - The desk card's **Screen** tab shows the agent's apps live (on a Mac this needs Hover's own
   Screen Recording permission; the tab has an **Allow…** button).
-- It is built for macOS. On Linux Cua is a pre-release, and the switch says so. On Windows it
-  works if Cua Driver is installed, but without the guard.
+- It is for macOS only. On Windows and Linux the switch is off, and says "Computer use needs
+  macOS."
 
 ## Privacy and security
 
@@ -223,15 +224,16 @@ There is no account, server or analytics.
 | Notch, office, Settings | ✓ | ✓ | ✓ through XWayland | ✓ around the camera notch (unverified on a Mac) |
 | Quotas | on the notch | on the notch | on the notch | in the menu bar |
 | Global shortcuts (`Alt+N`, voice) | ✓ | ✓ | Only while an XWayland window has focus | ✓ (Option-N, Control-Option-Space) |
-| Local speech (Phonon) | ✓ | ✓ (arm64 not tested yet) | ✓ | off, use Cloud (Groq) |
+| Local speech (Phonon) | ✓ | ✓ (arm64 not tested yet) | ✓ | off, Apple's on-device recognizer instead |
 | Sandbox | off | ✓ | ✓ | ✓ |
 | Agent browser and Browser tab | off | off | off | ✓ |
 | One-click agent setup | off | off | off | ✓ |
-| Computer use | ✓ (without the guard) | pre-release Cua | pre-release Cua | ✓ |
+| Computer use | off | off | off | ✓ |
+| Agent desktops (Cua Spaces) | off | off | off | ✓ on macOS 26+, Apple silicon |
 | Desk card, helpers, Pull request tab | ✓ | ✓ | ✓ | ✓ |
 | Release package | installer | .deb, tarball | .deb, tarball | none yet |
 
-Where a feature is off, its switch says why. The Rust port hasn't been run on a Mac yet, so the macOS
+Where a feature is off, its switch says why. The Mac app is new and hasn't been run on a Mac yet, so the macOS
 column is what the code is written to do and what builds, not something tested: see
 [docs/MACOS.md](docs/MACOS.md).
 
@@ -265,13 +267,15 @@ make package                 # .deb and tarball in dist/
 ```
 
 ```sh
-# macOS (needs Xcode's command line tools: xcode-select --install)
-cargo build --release -p hover     # target/release/hoverai
-sh packaging/macos/bundle.sh       # dist/Hover.app, not signed
+# macOS (needs Xcode's command line tools: xcode-select --install; Node for the office page)
+scripts/build-macos.sh             # dist/macos-osx-arm64/Hover.app, signed ad hoc
 ```
 
-The Mac build is for now a local one: CI only checks that it compiles, and makes no
-package. [docs/MACOS.md](docs/MACOS.md) has the permissions it asks for.
+The Mac app is Swift (`macos/`) around the web office (`web/office/`), on the Rust backend
+`crates/hover-backend`; `scripts/build-macos.sh` builds all three into `Hover.app` (`HOVER_ARCH=x64`
+for Intel). The Mac build is for now a local one: CI builds and signs it ad hoc and keeps it as
+a workflow artifact, runs none of its tests, and makes no release package.
+[docs/MACOS.md](docs/MACOS.md) has the permissions it asks for.
 
 Developer documentation is in [`docs/development`](docs/development): architecture,
 testing, profiling and Windows notes. [`AGENTS.md`](AGENTS.md) summarises how the app
@@ -280,7 +284,7 @@ works for people and AI agents changing it.
 ## Contributing
 
 Issues and pull requests are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) first. Every
-pull request runs the tests on Windows and Linux, and a compile check on macOS.
+pull request runs the tests on Windows and Linux, and builds the Mac app on macOS.
 
 The macOS support builds on Arz's ([@Entourage397](https://github.com/Entourage397)) macOS
 v1.0 for Hover 2.x, which was Swift and C#.

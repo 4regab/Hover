@@ -12,6 +12,30 @@ import Speech
 
 struct ToolPrefs: Equatable { var access = "full"; var idle = 5; var hideSteps = false }
 
+/// Cua Spaces, the agents' own desktops, as the backend's spaces message reports them.
+struct SpacesStatus: Equatable {
+    var on = false, supported = true, checked = false, installed = false, ready = false, busy = false
+    var image = "macos", version = "", hint = "", line = "", running = 0
+    var step: String?, error: String?, fraction: Double?
+    init() {}
+    init(_ m: [String: Any]) {
+        on = m["on"] as? Bool ?? false; supported = m["supported"] as? Bool ?? true; checked = m["checked"] as? Bool ?? false
+        installed = m["installed"] as? Bool ?? false; ready = m["ready"] as? Bool ?? false; busy = m["busy"] as? Bool ?? false
+        image = m["image"] as? String ?? "macos"; version = m["version"] as? String ?? ""; hint = m["hint"] as? String ?? ""
+        line = m["line"] as? String ?? ""; running = m["running"] as? Int ?? 0
+        step = m["step"] as? String; error = m["error"] as? String; fraction = (m["fraction"] as? NSNumber)?.doubleValue
+    }
+
+    /// The one line under "Cua Spaces": progress, the last error, Ready, or what is missing.
+    func statusLine(unsupported: String) -> String {
+        if busy { return line }
+        if let error { return error }
+        if ready { return "Ready" + (version.isEmpty ? "" : " · \(version)") + (running > 0 ? " · \(running) running" : "") }
+        if !supported && hint.isEmpty { return unsupported }
+        return hint
+    }
+}
+
 /// Cua Driver, as the backend's computerUse message reports it.
 struct CuaStatus: Equatable {
     var checked = false, installed = false, ready = false, busy = false, canGrant = true
@@ -103,6 +127,10 @@ final class SettingsModel: ObservableObject {
     @Published var computerUse = false
     @Published var sandbox = true
     @Published var agentBrowser = true
+    /// Kiro compacts a long conversation by itself once it fills this share of its context window.
+    @Published var kiroAutoCompact = false
+    @Published var kiroCompactAt = 80
+    @Published var spaces = SpacesStatus()
     @Published var cua = CuaStatus()
     @Published var maxRunning = 3
     @Published var quotaItems: [String] = []
@@ -127,7 +155,7 @@ final class SettingsModel: ObservableObject {
     private(set) var outstanding = 0
     private(set) var hasPreferences = false
 
-    static let order = ["codex", "kiro", "cursor", "opencode"]
+    static let order = ["codex", "kiro", "cursor", "opencode", "claude"]
     static let defaultTools = order.map { ToolStatus(id: $0, name: Marks.name($0)) }
 
     init() {
@@ -151,6 +179,10 @@ final class SettingsModel: ObservableObject {
         computerUse = m["computerUse"] as? Bool ?? false
         sandbox = m["sandbox"] as? Bool ?? true
         agentBrowser = m["agentBrowser"] as? Bool ?? true
+        // The backend says in the preferences whether this Mac can host agent desktops, so the switch is right before the Spaces message comes.
+        if let ok = m["spacesSupported"] as? Bool { spaces.supported = ok }
+        kiroAutoCompact = m["kiroAutoCompact"] as? Bool ?? false
+        kiroCompactAt = m["kiroCompactAt"] as? Int ?? 80
         var p: [String: ToolPrefs] = [:]
         for t in m["tools"] as? [[String: Any]] ?? [] {
             guard let id = t["id"] as? String else { continue }
@@ -178,10 +210,16 @@ final class SettingsModel: ObservableObject {
     func setComputerUse(_ on: Bool) { computerUse = on; request(["type": "saveSettings", "computerUse": on]) }
     func setAgentBrowser(_ on: Bool) { agentBrowser = on; request(["type": "saveSettings", "agentBrowser": on]) }
     func setSandbox(_ on: Bool) { sandbox = on; request(["type": "saveSettings", "sandbox": on]) }
+    func setKiroAutoCompact(_ on: Bool) { kiroAutoCompact = on; request(["type": "saveSettings", "kiroAutoCompact": on]) }
+    func setKiroCompactAt(_ n: Int) { kiroCompactAt = n; request(["type": "saveSettings", "kiroCompactAt": n]) }
     /// Asks the backend for Cua Driver's state (it answers with what it knows, then checks again).
     func checkComputerUse() { send(["type": "computerUse"]) }
     func cuaSetup(_ step: String) { send(["type": "computerUseSetup", "step": step]) }
     func receiveComputerUse(_ m: [String: Any]) { let next = CuaStatus(m); if next != cua { cua = next } }
+    func receiveSpaces(_ m: [String: Any]) { let next = SpacesStatus(m); if next != spaces { spaces = next } }
+    func setSpaces(_ on: Bool) { spaces.on = on; request(["type": "saveSettings", "agentSpaces": on]); send(["type": "spaces"]) }
+    func setSpaceImage(_ image: String) { spaces.image = image; request(["type": "saveSettings", "spaceImage": image]); send(["type": "spaces"]) }
+    func spacesSetup(_ step: String) { send(["type": "spaces", "step": step]) }
     func setQuota(_ id: String, _ on: Bool) {
         var items = quotaItems.filter { $0 != id }
         if on { items.append(id) }
@@ -475,6 +513,8 @@ private struct UsagePage: View {
 
 /// Cua Driver for the agents: on or off, installed, and CuaDriver's grants.
 private struct ComputerUsePage: View {
+    /// hover_agents::spaces::UNSUPPORTED, for the moment before the backend's own line arrives.
+    static let spacesUnsupported = "Agent desktops need macOS 26 or later on Apple silicon."
     @ObservedObject var model: SettingsModel
     var body: some View {
         let c = model.cua
@@ -490,6 +530,43 @@ private struct ComputerUsePage: View {
                 .toggleStyle(.switch)
             } footer: {
                 Text("It works in the background: your pointer doesn't move and the app you're in keeps the keyboard. Every action still follows each agent's tool access: Ask first asks in the notch before it clicks or types, and Read only turns them down. New tasks get it at once; a running agent from its next idle restart.")
+                    .foregroundStyle(.secondary)
+            }
+            Section {
+                let sp = model.spaces
+                Toggle(isOn: Binding(get: { sp.on }, set: { model.setSpaces($0) })) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Give agents a desktop of their own")
+                        Text("One Cua Space per project: a separate computer that the agents working in that folder share for computer use, each with its own cursor, instead of your screen. You watch it live in a desk’s Screen panel and can step in at any time. Drag an app or files onto the notch to send them to a project’s desktop.")
+                            .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                .toggleStyle(.switch).disabled(!sp.supported)
+                if sp.on || !sp.supported {
+                    Picker("Desktop", selection: Binding(get: { sp.image }, set: { model.setSpaceImage($0) })) {
+                        Text("macOS (two projects at a time, 8 GB of memory each)").tag("macos")
+                        Text("Linux (needs Docker or Colima)").tag("linux")
+                    }
+                    HStack(spacing: 12) {
+                        Image(systemName: "macwindow.on.rectangle").font(.system(size: 22)).foregroundStyle(.tint).frame(width: 32)
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("Cua Spaces").font(.headline)
+                            HStack(spacing: 5) {
+                                if sp.busy || (!sp.checked && sp.supported) { ProgressView().controlSize(.mini) }
+                                else if sp.ready { Image(systemName: "checkmark.circle.fill").foregroundStyle(.green) }
+                                else { Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange) }
+                                Text(sp.statusLine(unsupported: Self.spacesUnsupported))
+                                    .font(.callout).foregroundStyle(.secondary).lineLimit(2)
+                            }
+                            if sp.busy, let f = sp.fraction { ProgressView(value: f).frame(maxWidth: 260) }
+                        }
+                        Spacer()
+                        if sp.busy { Button("Cancel") { model.spacesSetup("cancel") } }
+                        else if sp.supported && !sp.ready { Button(sp.installed ? "Prepare" : "Set up") { model.spacesSetup("setup") }.buttonStyle(.borderedProminent) }
+                    }
+                }
+            } footer: {
+                Text("A desktop is not your own macOS: it is a separate macOS 26 virtual machine (Apple’s Virtualization, through Cua’s Lume), or a Linux container, with none of your apps, files or sign-ins until you send them. Spaces run on this Mac and are free; nothing goes through Cua’s servers. The first setup installs Cua’s command-line tool (not its app) and downloads the desktop image once (macOS is about 23 GB); each project’s desktop is then a quick copy of it. It is made when the project’s first task starts, turned off when none of its agents is left in the office, and deleted with the project’s last session. Needs macOS 26 or later on Apple silicon.")
                     .foregroundStyle(.secondary)
             }
             Section {
@@ -540,7 +617,7 @@ private struct ComputerUsePage: View {
             }
         }
         .formStyle(.grouped)
-        .onAppear { model.checkComputerUse() }
+        .onAppear { model.checkComputerUse(); model.send(["type": "spaces"]) }
     }
 }
 
@@ -583,6 +660,19 @@ private struct ToolPage: View {
                 Toggle("Hide the tools it runs from the chat", isOn: Binding(get: { p.hideSteps }, set: { v in model.setPref(id) { $0.hideSteps = v } }))
             } header: { Text("Tasks") } footer: {
                 Text("Model and effort are picked in the office, on the new task's model pill.").foregroundStyle(.secondary)
+            }
+            if id == "kiro" {
+                Section {
+                    Toggle("Compact automatically", isOn: Binding(get: { model.kiroAutoCompact }, set: { model.setKiroAutoCompact($0) }))
+                        .toggleStyle(.switch)
+                    Picker("at", selection: Binding(get: { model.kiroCompactAt }, set: { model.setKiroCompactAt($0) })) {
+                        ForEach([50, 60, 70, 80, 90], id: \.self) { Text("\($0)% of the context window").tag($0) }
+                    }
+                    .disabled(!model.kiroAutoCompact)
+                } header: { Text("Context") } footer: {
+                    Text("A long conversation is summarised by Kiro before the next reply, so it keeps going instead of running out of room. Off by default.")
+                        .foregroundStyle(.secondary)
+                }
             }
         }
         .formStyle(.grouped)

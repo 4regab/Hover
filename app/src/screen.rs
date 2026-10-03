@@ -1,29 +1,25 @@
-//! The desk's Screen panel (Owl/ScreenFeed.cs on Windows, Screen.swift on a Mac): the
+//! The desk's Screen panel (Owl/ScreenFeed.cs on Windows): the
 //! main display as the agent has it, never the user's own work. It is the desktop (the
-//! wallpaper, and on a Mac the desktop's icons) with only the windows of the apps the
+//! wallpaper) with only the windows of the apps the
 //! agent's computer use opened or acted on over it (their process ids, from its steps),
 //! so the user's open apps never show. The desk asks for a frame while the panel shows,
 //! four a second while the agent tests, and a still at rest.
 //!
-//! - macOS: the windows the window server lists (CGWindowListCopyWindowInfo), the
-//!   desktop's own and the agent's apps' on the main display, drawn together by
-//!   CGWindowListCreateImageFromArray; without Screen Recording the picture is the
-//!   desktop's wallpaper (`access`, `request_access`). Screen.swift used ScreenCaptureKit,
-//!   which is block-and-async objects on top of this; the window list does the same filter.
 //! - Windows: each window of those processes through PrintWindow, over the wallpaper.
 //! - Linux (X11): the `_NET_WM_PID` windows of those processes, over a plain desktop.
 //!   Not on Wayland.
 //!
-//! The choosing (`shown`), the fitting (`fit`) and the encoding are plain and tested on
-//! every OS; the capture is each OS's.
+//! The fitting (`fit`) and the encoding are plain and tested on every OS; the capture is
+//! each OS's. (The Mac app's panel is macos/Sources/Screen.swift.)
 
 use image::{imageops, Rgb, RgbImage, RgbaImage};
 
-/// The width the panel is sent at (Screen.swift's `width`).
+/// The width the panel is sent at.
 pub const WIDTH: u32 = 1280;
 
-/// The apps whose windows may show: by process id, by bundle id (macOS), by name. What a
-/// session's computer-use steps add up to (`hover_agents::desk::AgentApps`).
+/// The apps whose windows may show. Only the process ids are used here; the bundle ids and
+/// names are what a session's computer-use steps add up to (`hover_agents::desk::AgentApps`),
+/// which the Mac app resolves itself.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Apps {
     pub pids: Vec<u32>,
@@ -34,30 +30,6 @@ pub struct Apps {
 impl Apps {
     pub fn from_pids(pids: &[u32]) -> Apps { Apps { pids: pids.to_vec(), ..Default::default() } }
     pub fn none(&self) -> bool { self.pids.is_empty() && self.bundles.is_empty() && self.names.is_empty() }
-}
-
-/// One window on screen: its owner, its layer (desktop pictures and icons are below 0 on a
-/// Mac) and its rectangle, y down from the top of the main display.
-#[derive(Clone, Debug, PartialEq)]
-pub struct Win {
-    pub id: u64,
-    pub pid: u32,
-    pub layer: i64,
-    pub x: f64,
-    pub y: f64,
-    pub w: f64,
-    pub h: f64,
-}
-
-impl Win {
-    fn touches(&self, d: (f64, f64, f64, f64)) -> bool { self.x < d.0 + d.2 && self.x + self.w > d.0 && self.y < d.1 + d.3 && self.y + self.h > d.1 }
-}
-
-/// Screen.shown: the windows the panel may show. The desktop's (layer at or below
-/// `desktop`) and the ordinary windows of the agent's apps, on the display `(x, y, w, h)`;
-/// never Hover's own (`me`) nor anyone else's.
-pub fn shown(all: &[Win], pids: &[u32], display: (f64, f64, f64, f64), desktop: i64, me: u32) -> Vec<Win> {
-    all.iter().filter(|w| w.touches(display) && (w.layer <= desktop || (w.pid != me && pids.contains(&w.pid)))).cloned().collect()
 }
 
 /// `size` scaled down to fit `max`, keeping its shape; never scaled up, never empty.
@@ -108,173 +80,19 @@ pub fn paste(canvas: &mut RgbaImage, win: &RgbaImage, x: i64, y: i64) {
 pub fn supported() -> bool { imp::supported() }
 
 /// Why it can't, for the panel to say; none where it can.
-pub fn note() -> Option<&'static str> { (!supported()).then_some("The screen panel needs Windows, macOS or a Linux desktop on X11.") }
-
-/// Whether Hover may read other apps' windows (macOS: System Settings → Privacy & Security
-/// → Screen Recording); true where there is no such grant.
-pub fn access() -> bool { imp::access() }
-
-/// Asks for it once (macOS); after that the system only says no, so its page in System
-/// Settings opens instead. A grant takes effect after Hover is quit and opened again.
-pub fn request_access() { imp::request_access() }
+pub fn note() -> Option<&'static str> { (!supported()).then_some("The screen panel needs Windows or a Linux desktop on X11.") }
 
 /// A frame of the main display with only the windows of `pids`' processes over the desktop,
 /// scaled to fit `max`. Never any other window. Blocks for a moment: call it off the UI
-/// thread. Err says why there is no frame (no access, no windows, no display); the caller
+/// thread. Err says why there is no frame (no display); the caller
 /// keeps the last one.
 pub fn capture(pids: &[u32], max: (u32, u32)) -> Result<RgbaImage, String> { capture_apps(&Apps::from_pids(pids), max) }
 
-/// `capture`, for apps named by process id, bundle id or name (a Mac resolves the last two).
+/// `capture`, for the apps as a session's steps name them (their process ids are used).
 pub fn capture_apps(apps: &Apps, max: (u32, u32)) -> Result<RgbaImage, String> { imp::capture(apps, max).map(|i| scaled(i, max)) }
 
 /// The desktop alone (the panel at rest): the wallpaper, scaled to fit `max`.
 pub fn desktop(max: (u32, u32)) -> Result<RgbaImage, String> { imp::desktop().map(|i| scaled(i, max)) }
-
-// MARK: macOS
-
-#[cfg(target_os = "macos")]
-mod imp {
-    use super::*;
-    use objc2::rc::Retained;
-    use objc2::runtime::AnyObject;
-    use objc2_app_kit::NSWorkspace;
-    use objc2_foundation::{ns_string, NSArray, NSDictionary, NSNumber, NSString};
-    use std::ffi::c_void;
-
-    #[repr(C)]
-    #[derive(Clone, Copy, Default)]
-    struct CGRect { x: f64, y: f64, w: f64, h: f64 }
-
-    #[link(name = "CoreGraphics", kind = "framework")]
-    extern "C" {
-        fn CGPreflightScreenCaptureAccess() -> bool;
-        fn CGRequestScreenCaptureAccess() -> bool;
-        fn CGMainDisplayID() -> u32;
-        fn CGDisplayBounds(display: u32) -> CGRect;
-        fn CGWindowListCopyWindowInfo(option: u32, relative_to: u32) -> *mut c_void;
-        fn CGWindowLevelForKey(key: i32) -> i32;
-        fn CGImageGetWidth(image: *const c_void) -> usize;
-        fn CGImageGetHeight(image: *const c_void) -> usize;
-        fn CGImageRelease(image: *const c_void);
-        fn CGColorSpaceCreateDeviceRGB() -> *mut c_void;
-        fn CGColorSpaceRelease(space: *mut c_void);
-        fn CGBitmapContextCreate(data: *mut c_void, w: usize, h: usize, bits: usize, row: usize, space: *mut c_void, info: u32) -> *mut c_void;
-        fn CGContextDrawImage(ctx: *mut c_void, rect: CGRect, image: *const c_void);
-        fn CGContextRelease(ctx: *mut c_void);
-    }
-
-    /// kCGWindowListOptionOnScreenOnly.
-    const ON_SCREEN: u32 = 1;
-    /// kCGDesktopIconWindowLevelKey: windows at or below it are the desktop's.
-    const DESKTOP_ICON_KEY: i32 = 18;
-    /// kCGWindowImageNominalResolution: one pixel to the point.
-    const NOMINAL: u32 = 1 << 4;
-    /// kCGImageAlphaPremultipliedLast: RGBA bytes.
-    const RGBA: u32 = 1;
-
-    pub fn supported() -> bool { true }
-    pub fn access() -> bool { unsafe { CGPreflightScreenCaptureAccess() } }
-
-    pub fn request_access() {
-        if unsafe { CGRequestScreenCaptureAccess() } { return; }
-        let _ = std::process::Command::new("/usr/bin/open").arg("x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture").spawn();
-    }
-
-    fn number(d: &NSDictionary<NSString, AnyObject>, key: &NSString) -> Option<f64> {
-        d.objectForKey(key).and_then(|o| o.downcast::<NSNumber>().ok()).map(|n| n.doubleValue())
-    }
-
-    /// The on-screen windows, front to back, as CGWindowListCopyWindowInfo lists them.
-    fn windows() -> Vec<Win> {
-        let raw = unsafe { CGWindowListCopyWindowInfo(ON_SCREEN, 0) };
-        // A CFArray of CFDictionary is an NSArray of NSDictionary (toll-free); the call is a "Copy": ours.
-        let Some(list) = (unsafe { Retained::from_raw(raw as *mut NSArray<NSDictionary<NSString, AnyObject>>) }) else { return vec![] };
-        list.iter().filter_map(|d| {
-            let bounds = d.objectForKey(ns_string!("kCGWindowBounds")).and_then(|o| o.downcast::<NSDictionary>().ok())?;
-            // SAFETY: the window server's bounds are a dictionary of string keys to numbers.
-            let bounds: Retained<NSDictionary<NSString, AnyObject>> = unsafe { Retained::cast_unchecked(bounds) };
-            Some(Win {
-                id: number(&d, ns_string!("kCGWindowNumber"))? as u64,
-                pid: number(&d, ns_string!("kCGWindowOwnerPID"))? as u32,
-                layer: number(&d, ns_string!("kCGWindowLayer")).unwrap_or(0.0) as i64,
-                x: number(&bounds, ns_string!("X"))?, y: number(&bounds, ns_string!("Y"))?,
-                w: number(&bounds, ns_string!("Width"))?, h: number(&bounds, ns_string!("Height"))?,
-            })
-        }).collect()
-    }
-
-    /// The pids of the apps named by pid, bundle id or name (compared without case).
-    fn resolve(apps: &Apps) -> Vec<u32> {
-        let mut pids = apps.pids.clone();
-        if !apps.bundles.is_empty() || !apps.names.is_empty() {
-            let lower = |v: &Vec<String>| v.iter().map(|s| s.to_lowercase()).collect::<Vec<_>>();
-            let (bundles, names) = (lower(&apps.bundles), lower(&apps.names));
-            for a in NSWorkspace::sharedWorkspace().runningApplications().iter() {
-                let b = a.bundleIdentifier().map(|s| s.to_string().to_lowercase()).unwrap_or_default();
-                let n = a.localizedName().map(|s| s.to_string().to_lowercase()).unwrap_or_default();
-                if (!b.is_empty() && bundles.contains(&b)) || (!n.is_empty() && names.contains(&n)) { pids.push(a.processIdentifier() as u32); }
-            }
-        }
-        pids.retain(|p| *p > 1);
-        pids.sort_unstable();
-        pids.dedup();
-        pids
-    }
-
-    /// The window server's picture of exactly those windows, as RGBA.
-    fn draw(display: CGRect, ids: &[u64]) -> Result<RgbaImage, String> {
-        // CGWindowListCreateImageFromArray is deprecated in favour of ScreenCaptureKit and
-        // looked up by name: a system that no longer has it says so instead of failing to start.
-        type Create = unsafe extern "C" fn(CGRect, *const c_void, u32) -> *const c_void;
-        let sym = unsafe { libc::dlsym(libc::RTLD_DEFAULT, c"CGWindowListCreateImageFromArray".as_ptr()) };
-        if sym.is_null() { return Err("This macOS no longer has the window capture Hover uses.".into()); }
-        let create: Create = unsafe { std::mem::transmute(sym) };
-        let numbers: Vec<Retained<NSNumber>> = ids.iter().map(|i| NSNumber::new_i32(*i as i32)).collect();
-        let array = NSArray::from_retained_slice(&numbers);
-        let img = unsafe { create(display, Retained::as_ptr(&array).cast(), NOMINAL) };
-        if img.is_null() { return Err("The screen couldn’t be read.".into()); }
-        let (w, h) = unsafe { (CGImageGetWidth(img), CGImageGetHeight(img)) };
-        let mut buf = vec![0u8; w * h * 4];
-        unsafe {
-            let space = CGColorSpaceCreateDeviceRGB();
-            let ctx = CGBitmapContextCreate(buf.as_mut_ptr().cast(), w, h, 8, w * 4, space, RGBA);
-            if !ctx.is_null() { CGContextDrawImage(ctx, CGRect { x: 0.0, y: 0.0, w: w as f64, h: h as f64 }, img); CGContextRelease(ctx); }
-            CGColorSpaceRelease(space);
-            CGImageRelease(img);
-        }
-        // Premultiplied over an opaque desktop is as good as straight; alpha is made opaque.
-        for p in buf.chunks_exact_mut(4) { p[3] = 255; }
-        RgbaImage::from_raw(w as u32, h as u32, buf).ok_or_else(|| "The screen couldn’t be read.".into())
-    }
-
-    pub fn capture(apps: &Apps, _max: (u32, u32)) -> Result<RgbaImage, String> {
-        if !access() { return desktop(); }
-        let d = unsafe { CGDisplayBounds(CGMainDisplayID()) };
-        let display = (d.x, d.y, d.w, d.h);
-        let desktop_level = unsafe { CGWindowLevelForKey(DESKTOP_ICON_KEY) } as i64;
-        let me = std::process::id();
-        let list = windows();
-        let pids = resolve(apps);
-        let picked = shown(&list, &pids, display, desktop_level, me);
-        if picked.is_empty() { return desktop(); }
-        let ids: Vec<u64> = picked.iter().map(|w| w.id).collect();
-        draw(d, &ids)
-    }
-
-    /// The desktop picture's file, drawn to fill the main display as macOS does.
-    pub fn desktop() -> Result<RgbaImage, String> {
-        use objc2_app_kit::NSScreen;
-        let mtm = objc2::MainThreadMarker::new();
-        let d = unsafe { CGDisplayBounds(CGMainDisplayID()) };
-        let size = (d.w.max(1.0) as u32, d.h.max(1.0) as u32);
-        // Off the main thread the screen can't be asked for; the plain desktop then.
-        let path = mtm.and_then(|m| NSScreen::mainScreen(m)).and_then(|s| NSWorkspace::sharedWorkspace().desktopImageURLForScreen(&s)).and_then(|u| u.path()).map(|p| p.to_string());
-        if let Some(p) = path {
-            if let Ok(img) = image::open(&p) { return Ok(cover(&img.to_rgba8(), size)); }
-        }
-        Ok(plain(size, [0x1c, 0x1c, 0x1e]))
-    }
-}
 
 // MARK: Windows
 
@@ -289,8 +107,6 @@ mod imp {
     use windows::Win32::UI::WindowsAndMessaging::*;
 
     pub fn supported() -> bool { true }
-    pub fn access() -> bool { true }
-    pub fn request_access() {}
 
     fn screen() -> (u32, u32) { unsafe { (GetSystemMetrics(SM_CXSCREEN).max(1) as u32, GetSystemMetrics(SM_CYSCREEN).max(1) as u32) } }
 
@@ -375,8 +191,6 @@ mod imp {
     use x11rb::protocol::xproto::{AtomEnum, ConnectionExt as _, ImageFormat, MapState};
 
     pub fn supported() -> bool { std::env::var_os("DISPLAY").is_some() }
-    pub fn access() -> bool { true }
-    pub fn request_access() {}
 
     /// A plain desktop: X draws no wallpaper of its own that a client can read back.
     pub fn desktop() -> Result<RgbaImage, String> {
@@ -412,12 +226,10 @@ mod imp {
     }
 }
 
-#[cfg(not(any(target_os = "macos", windows, target_os = "linux")))]
+#[cfg(not(any(windows, target_os = "linux")))]
 mod imp {
     use super::*;
     pub fn supported() -> bool { false }
-    pub fn access() -> bool { false }
-    pub fn request_access() {}
     pub fn desktop() -> Result<RgbaImage, String> { Err("The screen panel isn’t available here.".into()) }
     pub fn capture(_: &Apps, _: (u32, u32)) -> Result<RgbaImage, String> { desktop() }
 }
@@ -425,29 +237,6 @@ mod imp {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn win(id: u64, pid: u32, layer: i64, x: f64, y: f64, w: f64, h: f64) -> Win { Win { id, pid, layer, x, y, w, h } }
-
-    /// Screen.shown: the desktop's windows and the agent's apps', never the user's or Hover's.
-    #[test]
-    fn only_the_desktop_and_the_agents_apps_show() {
-        let display = (0.0, 0.0, 1512.0, 982.0);
-        let desktop = -2_147_483_608;
-        let all = vec![
-            win(1, 500, 0, 100.0, 100.0, 400.0, 300.0),     // the agent's app
-            win(2, 777, 0, 0.0, 0.0, 1512.0, 982.0),        // the user's browser, full screen
-            win(3, 42, 25, 600.0, 0.0, 300.0, 32.0),        // Hover's own notch
-            win(4, 123, desktop, 0.0, 0.0, 1512.0, 982.0),  // the wallpaper
-            win(5, 123, desktop + 5, 50.0, 50.0, 64.0, 64.0), // a desktop icon
-            win(6, 500, 0, 3000.0, 0.0, 400.0, 300.0),      // the agent's app, on another display
-            win(7, 42, 0, 10.0, 10.0, 100.0, 100.0),        // Hover's dashboard
-        ];
-        let ids: Vec<u64> = shown(&all, &[500, 42], display, desktop + 20, 42).iter().map(|w| w.id).collect();
-        assert_eq!(ids, [1, 4, 5], "the agent's window, the wallpaper and its icon");
-        // No apps: the desktop alone.
-        let ids: Vec<u64> = shown(&all, &[], display, desktop + 20, 42).iter().map(|w| w.id).collect();
-        assert_eq!(ids, [4, 5]);
-    }
 
     #[test]
     fn frames_fit_without_growing_or_distorting() {

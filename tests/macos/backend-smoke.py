@@ -67,7 +67,7 @@ cua.chmod(0o700)
 env = dict(os.environ, PATH=str(root/'fake-bin')+':/usr/bin:/bin', HOVER_DATA_DIR=str(root/'integration-data'))
 key = base64.b64encode(bytes(range(32))).decode()
 def launch():
- p=subprocess.Popen([str(app/'Contents/Resources/hover-guardian'),str(app/'Contents/Resources/backend/Hover.Backend')],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,env=env)
+ p=subprocess.Popen([str(app/'Contents/Resources/hover-guardian'),str(app/'Contents/Resources/backend/hover-backend')],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,env=env)
  q=queue.Queue()
  def read():
   for line in p.stdout:
@@ -94,9 +94,11 @@ try:
  send({'type':'saveSettings','noticeSeen':False,'hover':True})
  first=until(lambda m:m.get('type')=='preferences')
  assert first['noticeSeen'] is False and first['computerUse'] is False,first
- send({'type':'saveSettings','noticeSeen':True,'hover':False,'maxRunning':4,'quotaItems':[],'computerUse':True,'tools':[{'id':'codex','access':'always','idle':15,'hideSteps':True}]})
+ assert first['kiroAutoCompact'] is False and first['kiroCompactAt']==80,first
+ send({'type':'saveSettings','noticeSeen':True,'hover':False,'maxRunning':4,'quotaItems':[],'computerUse':True,'kiroAutoCompact':True,'kiroCompactAt':60,'tools':[{'id':'codex','access':'always','idle':15,'hideSteps':True}]})
  preferences=until(lambda m:m.get('type')=='preferences')
  assert preferences['noticeSeen'] is True and preferences['hover'] is False and preferences['maxRunning']==4 and preferences['computerUse'] is True,preferences
+ assert preferences['kiroAutoCompact'] is True and preferences['kiroCompactAt']==60,preferences
  send({'type':'computerUse'})
  cu=until(lambda m:m.get('type')=='computerUse' and m['checked'])
  assert cu['on'] and cu['installed'] and cu['ready'] and cu['permissions']=='granted' and cu['version']=='cua-driver 0.0.0-sandbox',cu
@@ -134,7 +136,7 @@ try:
  send({'type':'shutdown'});p.wait(timeout=15);assert p.returncode==0
  raw=b''.join(f.read_bytes() for f in (root/'integration-data/agents').glob('*.dat'))
  assert b'Sandbox secret' not in raw
- bad=subprocess.run([str(app/'Contents/Resources/hover-guardian'),str(app/'Contents/Resources/backend/Hover.Backend')],input=json.dumps({'type':'initialize','key':base64.b64encode(bytes([255])*32).decode()})+'\n',capture_output=True,text=True,env=env,timeout=15)
+ bad=subprocess.run([str(app/'Contents/Resources/hover-guardian'),str(app/'Contents/Resources/backend/hover-backend')],input=json.dumps({'type':'initialize','key':base64.b64encode(bytes([255])*32).decode()})+'\n',capture_output=True,text=True,env=env,timeout=15)
  assert 'backendFailure' in bad.stdout and 'cannot decrypt' in bad.stdout,bad.stdout
  assert raw==b''.join(f.read_bytes() for f in (root/'integration-data/agents').glob('*.dat'))
  p,send,until=launch()

@@ -509,27 +509,33 @@ the real tools.
 Keep OS code behind `cfg(windows)`, `cfg(target_os = "linux")` or `cfg(target_os = "macos")`
 in these files. Check `cfg(not(windows))` branches carefully: they used to mean Linux and
 now also reach a Mac. X11, D-Bus, the Secret Service, XDG and ALSA are Linux-only.
-What can be worked out without the OS (the Mac menu, the notch's geometry, key names, the
-Keychain and LaunchAgent logic, the sandbox's settings text) is in functions compiled on
+What can be worked out without the OS (the Keychain and LaunchAgent logic in `hover-core`,
+the sandbox's settings text) is in functions compiled on
 every OS, so the Windows tests cover it.
 
 ### macOS
 
+The Mac app is not the Slint app (`hover` refuses to compile on a Mac). It is Swift in
+`macos/Sources` (notch, menu bar, Settings, voice) around the web office (`web/office/`,
+in a WKWebView), and it starts `hover-backend` (`crates/hover-backend`) through
+`hover-guardian`, speaking JSON lines on stdin and stdout. `scripts/build-macos.sh` makes
+`Hover.app` from the three.
+
 | Concern | macOS |
 |---|---|
-| Notch window | `app/src/mac/` and `plat.rs`: an NSWindow at status level 25 on all Spaces; its class is swapped for a subclass of winit's whose `canBecomeKeyWindow` is false while the notch rests; the hardware notch comes from `safeAreaInsets` and the auxiliary areas (`Notch.hw`) |
-| Renderer | femtovg on wgpu (Metal), one device shared with the office |
-| Usage, tray | status items in the menu bar (`mac::status`, `mac::menu`, `mac::bar`); usage isn't in the island |
-| Shortcut | Carbon `RegisterEventHotKey`, plus a local key monitor for the windows that hold the keyboard |
+| Notch window | `Notch.swift`: an `NSPanel` (non-activating) at `.statusBar` level (25) on all Spaces whose `canBecomeKey` is false while the notch rests; the hardware notch comes from `safeAreaInsets` and the auxiliary areas (`NotchGeometry`) |
+| Renderer | the office is the web page (three.js) in a WKWebView |
+| Usage, tray | one status item in the menu bar with the usage rings and one menu (`MenuBar.swift`); usage isn't in the island |
+| Shortcut | Carbon `RegisterEventHotKey`, plus a local key monitor for the windows that hold the keyboard (`Hover.swift`) |
 | Voice hold-to-talk | the hot key's press and release |
-| Microphone | cpal on CoreAudio (the system asks the first time) |
-| Key storage | the login Keychain (service `Hover`), named by a marker in `note.key` |
-| Child processes | own process group and a `/bin/sh` watchdog (no `PDEATHSIG`) |
-| Single instance | Lock and socket in `$TMPDIR`, else `/tmp/hover-<uid>` |
-| Dark mode, reduced motion | `defaults read`, polled every 3 s |
-| Launch at Login | `~/Library/LaunchAgents/dev.hover.desktop.plist` |
-| Agent browser | `browser_host.rs`: a WKWebView per session, driven over `browser.rs`'s socket |
-| Screen panel | `screen.rs`: `CGWindowListCreateImageFromArray` |
+| Microphone | `AVAudioEngine`, then Apple's speech recognizer (`Voice.swift`); the system asks the first time |
+| Key storage | the login Keychain (service `dev.hover.history`), read by the Swift app and handed to the backend at `initialize` |
+| Child processes | `guardian.c` stops the backend and what is left when the app's pipe closes; the tools lead a process group each with a watchdog (no `PDEATHSIG`) |
+| Single instance | none in the Swift app |
+| Dark mode | the menu bar item redraws when its `effectiveAppearance` changes |
+| Launch at Login | `SMAppService.mainApp` |
+| Agent browser | `AgentBrowser.swift`: a WKWebView per session, driven by `browser.rs`'s calls, relayed by `hover-backend`'s `browser_host.rs` |
+| Screen panel | `Screen.swift`: ScreenCaptureKit |
 | Allocator | system malloc |
 
 ## Where to change things

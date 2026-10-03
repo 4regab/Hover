@@ -428,7 +428,10 @@ impl Host {
     fn turn(self: &Arc<Self>, turn: &Arc<Turn>, prompt: &str, resume: Option<&str>, o: &AgentOptions, tag: Option<&str>) -> KiroResult {
         let setup = self.setup(&turn.folder, o, turn.deny_all);
         let ct = turn.token.clone();
-        let servers = (self.mcp.lock().unwrap().clone())(tag);
+        let mut servers = (self.mcp.lock().unwrap().clone())(tag);
+        // The project's desktop for a session's run (not a routing turn, which has no tag):
+        // every agent in that folder is given the same one.
+        if tag.is_some() { servers.extend(crate::spaces::servers(&turn.folder)); }
         let (proc, lost) = match self.take(&setup, resume, &ct, &servers, tag) {
             Ok(x) => x,
             Err(_) if ct.is_cancelled() => return turn.stopped(),

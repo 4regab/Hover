@@ -22,6 +22,10 @@ use std::sync::mpsc::{self, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
 
+/// The prompt that stands for Kiro's compaction: a Kiro turn with exactly this text is
+/// sent as `_kiro/session/compact` (session.rs's auto compact; a reply of `/compact` too).
+pub const COMPACT_PROMPT: &str = "/compact";
+
 pub type Progress = Box<dyn Fn(KiroPhase) + Send + Sync>;
 pub type Events = Box<dyn Fn(KiroEvent) + Send + Sync>;
 type Connect = Box<dyn Fn() -> std::io::Result<Option<Link>> + Send + Sync>;
@@ -204,8 +208,12 @@ impl Host {
         // (no Launch Services there), so Hover does, outside it.
         if sandbox::wanted() && crate::agents::toggles().computer_use { computer_use::ensure_daemon(); }
         let o = (self.options)().with_access(access);
-        let servers = (self.mcp.lock().unwrap().clone())(tag);
+        let mut servers = (self.mcp.lock().unwrap().clone())(tag);
+        // The project's desktop, for a session's run (not the routing turn that has none):
+        // every agent in that folder is given the same one.
+        if tag.is_some() { servers.extend(crate::spaces::servers(folder)); }
         let mcp = (computer_use::acp(&servers), computer_use::signature(&servers));
+
         // A session's MCP servers are fixed when it is made or loaded. A reply to one made
         // with others (computer use switched since) loads it again in a fresh process,
         // when nothing else of this tool runs; otherwise it carries on as is.
@@ -281,6 +289,15 @@ impl Host {
         if let Some(e) = &turn.events { e(KiroEvent { session_id: Some(id.clone()), ..Default::default() }); }
         let configured = self.configure(&id, offered.unwrap_or_default(), o, ct)?;
         self.session_options.lock().unwrap().insert(id.clone(), configured);
+
+        // Kiro's auto compact (session.rs) sends this in place of a reply. Kiro answers a
+        // /compact prompt as a chat message (its model says it can't run the command), so the
+        // compaction is its own request, which summarises the conversation and answers success.
+        if self.tool == AgentTool::Kiro && prompt.trim() == COMPACT_PROMPT {
+            let res = self.call("_kiro/session/compact", o_(vec![("sessionId", st(&id))]), Some(ct), None)?;
+            return Ok(if matches!(res.get("success"), Some(Json::Bool(false))) { KiroResult::new(KiroState::Failed, format!("{name} couldn’t compact the conversation.")) }
+                else { KiroResult::new(KiroState::Completed, "Compacted the conversation.") });
+        }
 
         let params = o_(vec![("sessionId", st(&id)), ("prompt", Json::Arr(vec![o_(vec![("type", st("text")), ("text", st(prompt.trim()))])]))]);
         let (call, rx) = self.begin_call("session/prompt", params)?;

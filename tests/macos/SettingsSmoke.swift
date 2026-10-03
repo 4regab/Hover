@@ -36,6 +36,14 @@ extension App {
         settled["tools"] = [["id": "kiro", "access": "always", "idle": 15, "hideSteps": false]]
         try require(model.receive(settled) && model.outstanding == 0, "the newest reply was not applied")
         try require(model.pref("kiro").idle == 15 && !model.hover, "settled reply")
+        // Kiro's auto compact: off at 80 % until switched on, sent flat, kept over its reply.
+        try require(!model.kiroAutoCompact && model.kiroCompactAt == 80, "auto compact default")
+        sent.removeAll()
+        model.setKiroAutoCompact(true); model.setKiroCompactAt(60)
+        try require(sent.count == 2 && sent[0]["kiroAutoCompact"] as? Bool == true && sent[1]["kiroCompactAt"] as? Int == 60, "auto compact payload: \(sent)")
+        var compact = settled; compact["kiroAutoCompact"] = true; compact["kiroCompactAt"] = 60
+        while model.outstanding > 1 { model.receive(fixture) }
+        try require(model.receive(compact) && model.kiroAutoCompact && model.kiroCompactAt == 60, "auto compact reply")
         // Replies nobody asked for don't reopen or bounce the window.
         window.close()
         for _ in 0..<10 { receivePreferences(fixture, allowPrompt: true) }

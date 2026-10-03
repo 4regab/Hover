@@ -102,6 +102,13 @@ impl Group {
 
     pub fn pid(&self) -> Option<u32> { self.child.lock().unwrap().as_ref().map(Child::id) }
 
+    /// The command ended on its own and what it started is meant to outlive it (`cua
+    /// spaces start` may leave Lume's VM or daemon behind): the group is let go, not killed.
+    pub fn release(self) {
+        let me = std::mem::ManuallyDrop::new(self);
+        me.imp.release();
+    }
+
     pub fn take_pipes(&self) -> (Option<std::process::ChildStdin>, Option<std::process::ChildStdout>, Option<std::process::ChildStderr>) {
         let mut g = self.child.lock().unwrap();
         let c = g.as_mut().unwrap();
@@ -248,6 +255,15 @@ mod imp {
             }
             unsafe { libc::kill(-self.pgid, libc::SIGKILL); }
         }
+
+        /// The watchdog goes (killed before its stdin closes, so it never kills the group).
+        pub fn release(&self) {
+            if let Some((mut c, i)) = self.watchdog.lock().unwrap().take() {
+                let _ = c.kill();
+                drop(i);
+                std::thread::spawn(move || { let _ = c.wait(); });
+            }
+        }
     }
 }
 
@@ -290,6 +306,9 @@ mod imp {
         pub fn kill(&self) {
             unsafe { let _ = TerminateJobObject(HANDLE(self.job as *mut _), 1); }
         }
+
+        /// The job stays open (it ends with Hover); only a Mac's Spaces release a group.
+        pub fn release(&self) {}
     }
 
     impl Drop for Group {

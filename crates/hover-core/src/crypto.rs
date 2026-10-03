@@ -154,9 +154,30 @@ pub fn global() -> Option<Arc<Crypto>> {
     GLOBAL.get_or_init(|| Crypto::load_or_create(&crate::paths::key(), &crate::platform::SystemKeyGuard::default()).map(Arc::new)).clone()
 }
 
+/// Crypto.InitializeKey: the key a host supplies (the Mac app's, from its Keychain),
+/// used in place of note.key for the whole run. Once, 32 bytes, and before anything
+/// asked for the key: a repeated or late call, or a key of another length, is refused and
+/// changes nothing.
+pub fn use_host_key(key: &[u8]) -> Result<(), String> {
+    let key: [u8; 32] = key.try_into().map_err(|_| "Invalid or repeated history key initialization.".to_owned())?;
+    GLOBAL.set(Some(Arc::new(Crypto::with_key(key)))).map_err(|_| "Invalid or repeated history key initialization.".to_owned())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A host's key is taken once, 32 bytes, and then it is Hover's key. This test owns
+    /// the process's key (the other tests here never call `global`).
+    #[test]
+    fn the_hosts_key_is_taken_once() {
+        assert!(use_host_key(&[1; 31]).is_err());
+        assert!(use_host_key(&[]).is_err());
+        assert!(use_host_key(&[9; 32]).is_ok());
+        let sealed = global().expect("the host's key").seal("x");
+        assert_eq!(Crypto::with_key([9; 32]).open(&sealed), "x");
+        assert!(use_host_key(&[9; 32]).is_err(), "not twice");
+    }
 
     /// NIST SP 800-38D / the GCM spec's test case 14 (256-bit zero key, zero IV, one
     /// zero block): the framing puts its IV, ciphertext and tag end to end.

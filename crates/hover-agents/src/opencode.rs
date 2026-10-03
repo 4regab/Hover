@@ -206,7 +206,9 @@ struct Host {
 pub type McpNow = Arc<dyn Fn() -> Vec<McpServer> + Send + Sync>;
 
 /// One server for all its sessions, so one browser server too: it answers for the
-/// OpenCode session at work (Hover's browser tag "opencode").
+/// OpenCode session at work (Hover's browser tag "opencode"). A project's desktop
+/// (spaces.rs) is per folder and the server is fixed at its start, so OpenCode gets none,
+/// and no computer use at all while agent desktops are on (computer_use::servers).
 fn default_mcp() -> McpNow {
     Arc::new(|| { let mut all = computer_use::servers(); all.extend(crate::browser::servers(AgentTool::OpenCode, Some("opencode"))); all })
 }

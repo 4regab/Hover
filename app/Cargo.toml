@@ -1,6 +1,6 @@
 [package]
 name = "hover"
-description = "Hover, native: the notch, the office, Settings, the tray and the shortcut (App.xaml.cs, Owl/*, Services/TrayIcon, Interop/*), on Windows, Linux and macOS."
+description = "Hover, native: the notch, the office, Settings, the tray and the shortcut (App.xaml.cs, Owl/*, Services/TrayIcon, Interop/*), on Windows and Linux (the Mac app is macos/, Swift)."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -29,35 +29,31 @@ hover-chat = { path = "../crates/hover-chat" }
 hover-md = { path = "../crates/hover-md" }
 serde_json = "1"
 # One process, one renderer: femtovg on wgpu (DirectComposition on Windows, as
-# notch-proto; Metal on macOS; Vulkan or GL on Linux), and the software renderer for headless shots.
+# notch-proto; Vulkan or GL on Linux), and the software renderer for headless shots.
 slint = { version = "=1.18.1", default-features = false, features = ["std", "compat-1-2", "backend-winit", "renderer-femtovg", "renderer-femtovg-wgpu", "unstable-wgpu-30", "renderer-software", "software-renderer-systemfonts", "accessibility", "unstable-winit-030"] }
 image = { version = "0.25", default-features = false, features = ["png", "ico", "jpeg"] }
 # The office's music (office-beats.ogg), which the page played through <audio>.
 # New crates: an Ogg Vorbis decoder in pure Rust, and the system's audio output
-# (WASAPI on Windows, ALSA, which PipeWire and PulseAudio serve, on Linux, CoreAudio on macOS,
-# which also records the microphone for voice).
+# (WASAPI on Windows, ALSA, which PipeWire and PulseAudio serve, on Linux), which also
+# records the microphone for voice.
 lewton = "0.10"
 cpal = "0.18"
 
 # A code block's Copy in the chat puts its text on the clipboard, and a pasted picture
 # (image-data) is attached to the task or the reply.
 arboard = { version = "3.6", default-features = false, features = ["image-data"] }
-# In the tree (hover-office): the menu bar's usage rings on macOS are drawn with it (mac/bar.rs),
-# as pixels the system shows; the drawing is the same code on every OS, so its tests run everywhere.
-tiny-skia = { version = "0.11", default-features = false, features = ["std", "simd"] }
 # Already in the tree: Local speech (phonon.rs) unpacks its managed Python's .tar.gz.
 flate2 = "1"
 tar = "0.4"
 # New crate (pure Rust): every file Local speech downloads is checked against its
-# pinned SHA-256, and nothing in the tree hashes SHA-256 on Windows (ring is there on Linux and macOS only).
+# pinned SHA-256, and nothing in the tree hashes SHA-256 on Windows (ring is Linux only).
 sha2 = "0.10"
 
 [target.'cfg(not(windows))'.dependencies]
 # In the tree (hover-quota): the chat's web images, fetched as WebView2 fetched them for
-# 2.x's page. rustls here (Linux and macOS).
+# 2.x's page. rustls here.
 ureq = "3"
-# Already in the tree (winit): the window behind winit's, X11's on Linux (the notch's
-# override-redirect window) and AppKit's on macOS (its NSView, and so its NSWindow).
+# Already in the tree (winit): the X window behind winit's.
 raw-window-handle = "0.6"
 libc = "0.2"
 
@@ -70,39 +66,6 @@ x11rb = { version = "0.13", features = ["shape", "randr", "xtest"] }
 zbus = { version = "5", default-features = false, features = ["async-io", "blocking-api"] }
 # In the tree (zbus): the tray menu's node type is serialised as D-Bus asks.
 serde = { version = "1", features = ["derive"] }
-
-# macOS: AppKit from Rust, with no Swift and no C to build. All of these are in the tree
-# already (winit, arboard and cpal use the 0.6 family), pinned to the versions the lock holds.
-# objc2-web-kit is the one addition: the agent browser is a WKWebView (browser_host.rs).
-[target.'cfg(target_os = "macos")'.dependencies]
-# The runtime: messages to Objective-C objects, and the class the notch's window is given
-# so it never takes the keyboard while it rests.
-objc2 = "=0.6.4"
-# NSWindow (level, Spaces, click-through), NSScreen (the notch's size), NSStatusItem (the
-# usage rings and the menu), NSEvent (the pointer), NSOpenPanel, NSWorkspace. Only the
-# classes used are switched on: the defaults are all of AppKit, which would add CloudKit,
-# CoreData and more to the tree and to the build.
-objc2-app-kit = { version = "=0.3.2", default-features = false, features = [
-    "std", "bitflags", "block2", "NSAppearance", "NSApplication", "NSBitmapImageRep", "NSButton", "NSCell", "NSColor", "NSControl",
-    "NSEvent", "NSFont", "NSImage", "NSImageRep", "NSMenu", "NSMenuItem", "NSOpenPanel", "NSPanel", "NSResponder", "NSRunningApplication",
-    "NSSavePanel", "NSScreen", "NSStatusBar", "NSStatusBarButton", "NSStatusItem", "NSView", "NSWindow", "NSWorkspace",
-    "NSGraphics", "NSFontDescriptor", "objc2-core-foundation", "libc",
-] }
-objc2-foundation = { version = "=0.3.2", default-features = false, features = [
-    "std", "block2", "NSArray", "NSBundle", "NSData", "NSDictionary", "NSError", "NSGeometry", "NSObject", "NSString", "NSURL",
-    "NSURLRequest", "NSURLResponse", "NSUserNotification", "NSValue", "objc2-core-foundation",
-] }
-# WKWebView: Hover's agent browser, one per session (browser_host.rs). CGWindowList, the screen
-# panel's capture (screen.rs), is called straight from CoreGraphics, with no binding crate.
-objc2-web-kit = { version = "=0.3.2", default-features = false, features = [
-    "std", "block2", "objc2-app-kit", "WKContentWorld", "WKFrameInfo", "WKNavigation", "WKNavigationAction", "WKNavigationDelegate",
-    "WKNavigationResponse", "WKPreferences", "WKSnapshotConfiguration", "WKUIDelegate", "WKUserContentController", "WKUserScript",
-    "WKWebView", "WKWebViewConfiguration", "WKWebsiteDataStore", "WKWindowFeatures", "objc2-core-foundation",
-] }
-# The callbacks AppKit and WebKit take are blocks.
-block2 = "=0.6.2"
-# In the tree (hover-office): waits on wgpu's futures when the shared Metal device is made.
-futures-lite = "2"
 
 [target.'cfg(windows)'.dependencies]
 # In the tree (hover-quota): the chat's web images, through schannel and the system's

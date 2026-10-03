@@ -54,7 +54,7 @@ final class BackendPipe {
     /// same tools a terminal does. Messages sent before the start are kept in order.
     func start(resources: URL, dataFolder: URL, key: Data, env baseEnv: [String: String]) throws {
         process.executableURL = resources.appendingPathComponent("hover-guardian")
-        process.arguments = [resources.appendingPathComponent("backend/Hover.Backend").path]
+        process.arguments = [resources.appendingPathComponent("backend/hover-backend").path]
         var env = baseEnv
         env["HOVER_DATA_DIR"] = dataFolder.path
         process.environment = env; process.standardInput = input; process.standardOutput = output; process.standardError = errors
@@ -165,6 +165,10 @@ final class Office: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
         files = LocalFiles(resources: resources, dataFolder: dataFolder)
         let config = WKWebViewConfiguration()
         if smoke { config.websiteDataStore = .nonPersistent() }
+        // The notch never makes Hover the active app, and WebKit throttles the pages of an
+        // inactive app's windows, which made the office and its live views stutter. Hover
+        // pauses the page itself whenever it is out of sight ({type:'visible'}).
+        config.preferences.inactiveSchedulingPolicy = .none
         config.setURLSchemeHandler(files, forURLScheme: "hover")
         let bridge = """
         (() => {
@@ -187,11 +191,14 @@ final class Office: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
     }
     func userContentController(_ controller: WKUserContentController, didReceive event: WKScriptMessage) {
         guard event.frameInfo.isMainFrame, event.frameInfo.request.url?.scheme == "hover", event.frameInfo.request.url?.host == "office", var m = event.body as? [String: Any] else { return }
-        if m["type"] as? String == "ready" { ready = true; if let lastState { deliver(lastState) } }
+        if m["type"] as? String == "ready" { ready = true; if let lastState { deliver(lastState) }; let held = pending; pending.removeAll(); for h in held { deliver(h) } }
         // Which office asked: the desk's browser shows in that one.
         m["dashboard"] = dashboard
         message?(m)
     }
+    /// A message for once the page has loaded (a window's office made just now).
+    var pending: [[String: Any]] = []
+    func later(_ m: [String: Any]) { if ready { deliver(m) } else { pending.append(m) } }
     func deliver(_ incoming: [String: Any]) {
         var m = incoming
         if m["type"] as? String == "state" {
