@@ -3,18 +3,19 @@
 
 import { Pal, Fonts, Icon, Icons, PillButton, Switch, Segments, Ring, Tile, TextField, HoldButton } from "widgets.slint";
 import { ScrollView } from "std-widgets.slint";
+import { Mark } from "marks.slint";
 
 export struct Opt { label: string, on: bool }
 export struct Btn { id: string, text: string, red: bool }
 
 // One row. control: 0 none, 1 switch, 2 button, 3 shortcut, 4 segments, 5 picker, 6 text,
 // 7 text box, 8 badges and buttons (open: the row opens that id), 9 hold button.
-// lead: 0 none, 1 tile, 2 ring, 3 letter tile. progress: 0..1 under the sub, -1 none.
+// lead: 0 none, 1 tile, 2 ring, 3 letter tile, 4 a tool's own mark (tool). progress: 0..1 under the sub, -1 none.
 export struct RowData {
     label: string, sub: string, sub-id: string, enabled: bool,
     control: int, id: string, name: string, text: string, on: bool, button-enabled: bool,
     labels: [string], longest: string, picked: int, options: [Opt],
-    lead: int, icon: string, tint: color, ring: float,
+    lead: int, icon: string, tint: color, ring: float, tool: string,
     placeholder: string, secret: bool, badges: [Opt], buttons: [Btn], open: string, progress: float, letter: string,
 }
 
@@ -31,7 +32,7 @@ export struct Block {
     id: string, name: string, icon: string, dim: bool, status: string,
 }
 
-export struct Side { title: string, icon: string, tint: color }
+export struct Side { title: string, icon: string, tint: color, tool: string }
 
 // Ui.Text's 11.5 px dim line, wrapped.
 component Sub inherits Text {
@@ -60,7 +61,8 @@ component SidebarItem inherits Rectangle {
         padding-top: 5px;
         padding-bottom: 5px;
         spacing: 10px;
-        Tile { icon: item.icon; tint: item.tint; }
+        if item.tool == "": Tile { icon: item.icon; tint: item.tint; }
+        if item.tool != "": Mark { tool: item.tool; width: 24px; height: 24px; }
         Text { text: item.title; font-size: 13px; color: picked ? white : Pal.ink; vertical-alignment: center; }
     }
     ta := TouchArea { mouse-cursor: pointer; clicked => { clicked(); } }
@@ -152,6 +154,7 @@ component RowView inherits Rectangle {
                 Text { text: r.letter; color: white; font-size: 12px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
             }
         }
+        if r.lead == 4: VerticalLayout { alignment: center; padding-right: 10px; Mark { tool: r.tool; width: 24px; height: 24px; } }
         VerticalLayout {
             alignment: center;
             horizontal-stretch: 1;

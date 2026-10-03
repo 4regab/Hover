@@ -1053,7 +1053,8 @@ function renderDrawer() {
     const now = lastTurn && st === 'waiting' && s.ask && !s.archived ? askHTML(s, 'chat') : '';
     if (T.answer && T.fresh) { fresh = true; T.fresh = false; }
     // Under an answer: Copy, Retry on the newest turn once it has ended, and when it finished.
-    const retry = lastTurn && !s.archived && !busy(s) && T.prompt ? `<button class="act" data-retry="${i}" title="Send this message again">${RETRY}<span>Retry</span></button>` : '';
+    // Try again (the folder goes back too) takes Retry's place; never both.
+    const retry = lastTurn && !s.archived && !busy(s) && T.prompt && !T.again ? `<button class="act" data-retry="${i}" title="Send this message again">${RETRY}<span>Retry</span></button>` : '';
     // The backend offers these on a turn when it kept the folder as it was before it (restore)
     // or can run it again (again); the host does the work and sends the state back.
     const chk = s.archived || busy(s) ? '' : (T.restore ? `<button class="act" data-restore="${i}" title="${esc(typeof T.restore === 'string' ? T.restore : 'Put the files back as they were before this turn')}">${UNDO}<span>Restore</span></button>` : '') + (T.again ? `<button class="act" data-again="${i}" title="Run this turn again">${RETRY}<span>Try again</span></button>` : '');

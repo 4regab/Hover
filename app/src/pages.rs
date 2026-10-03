@@ -20,6 +20,11 @@ impl Section {
     pub fn glyph(self) -> (&'static str, Tint) {
         [("settings", Tint::Gray), ("plug", Tint::Purple), ("folder", Tint::Orange), ("mic", Tint::Pink), ("ghost", Tint::Bot), ("terminal", Tint::Green), ("sparkles", Tint::Blue), ("terminal", Tint::Gray), ("sparkles", Tint::Orange)][self as usize]
     }
+    /// A tool's page shows the tool's own mark (the office's, ui/marks.slint) in place of a
+    /// glyph: Claude's spark on its clay tile, Cursor's cube, Codex's, OpenCode's, Kiro's ghost.
+    pub fn mark(self) -> Option<&'static str> {
+        matches!(self, Section::Kiro | Section::Codex | Section::Cursor | Section::OpenCode | Section::Claude).then(|| self.tool().id())
+    }
     /// The section of a tool's own page.
     pub fn of(tool: AgentTool) -> Section {
         match tool { AgentTool::Codex => Section::Codex, AgentTool::Cursor => Section::Cursor, AgentTool::OpenCode => Section::OpenCode, AgentTool::Claude => Section::Claude, AgentTool::Kiro => Section::Kiro }
@@ -71,7 +76,8 @@ impl Control {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub enum Lead { None, Tile(&'static str, Tint), Ring(Option<f64>), Letter(String, Tint) }
+/// Mark: a tool's own mark, by its id.
+pub enum Lead { None, Tile(&'static str, Tint), Ring(Option<f64>), Letter(String, Tint), Mark(&'static str) }
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Row { pub label: String, pub sub: Option<String>, pub control: Control, pub lead: Lead, pub enabled: bool, pub sub_id: Option<String>, pub progress: Option<f32> }
@@ -689,7 +695,7 @@ fn agent(b: &mut Vec<Block>, section: Section, i: &Input) {
     let status = match &ready { None => "Checking…".to_owned(), Some(r) if r.ok() => "Installed and signed in.".into(), Some(r) => r.hint.clone() };
     let bad = ready.as_ref().is_some_and(|r| !r.ok());
     let mut first = vec![row(name, Some(status), Control::Button { id: format!("{id}Recheck"), name: format!("Check {name} again"), text: "Check again".into(), enabled: true },
-        Lead::Tile(if bad { "bell" } else { "done" }, if bad { Tint::Orange } else { Tint::Green }))];
+        Lead::Mark(tool.id()))];
     first.extend(setup_row(tool, ready.as_ref(), i));
     b.push(Block::Group(first));
     let usable = !bad;
@@ -1016,10 +1022,10 @@ mod tests {
         assert_eq!(r[2].lead, Lead::Ring(Some(37.5)));
         assert_eq!(r[0].sub.as_deref(), Some("Needs Claude Code signed in with a Pro or Max plan."));
         assert_eq!(quota_status(true, "kiro", None).1, "Reading…");
-        // Not ready: the hint, a bell, and the rest greyed.
+        // Not ready: the hint under the tool's own mark, and the rest greyed.
         let c = build(Section::Cursor, &i);
         let r = rows(&c);
-        assert_eq!((r[0].sub.as_deref(), &r[0].lead), (Some("Install the Cursor CLI."), &Lead::Tile("bell", Tint::Orange)));
+        assert_eq!((r[0].sub.as_deref(), &r[0].lead), (Some("Install the Cursor CLI."), &Lead::Mark("cursor")));
         assert!(r[3..].iter().all(|x| !x.enabled));
         assert_eq!(r[2].control, Control::Text("Part of the model".into()));
         // Kiro before any run: its own list with Auto first, "Checking…" until known.

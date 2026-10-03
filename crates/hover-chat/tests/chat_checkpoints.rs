@@ -36,7 +36,7 @@ fn restore_and_try_again_sit_in_the_acts_row_after_copy_and_retry() {
     let th = thread(&[turn("First.", true, true), turn("Second.", false, true)]);
     let kinds = |i| acts(&th, i).into_iter().map(|(a, _)| match a { Act::Copy(_) => "Copy", Act::Retry => "Retry", Act::Restore => "Restore", Act::TryAgain => "Try again", _ => "?" }).collect::<Vec<_>>();
     assert_eq!(kinds(0), ["Copy", "Restore", "Try again"], "an earlier answer: no Retry, that is the newest turn's");
-    assert_eq!(kinds(1), ["Copy", "Retry", "Try again"], "the newest: nothing to go back from, but Try again");
+    assert_eq!(kinds(1), ["Copy", "Try again"], "the newest: Try again in place of Retry, never both");
     // In a row, left to right, each inside the thread's width and not on top of the next.
     for i in 0..2 {
         let a = acts(&th, i);

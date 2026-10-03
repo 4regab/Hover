@@ -184,6 +184,7 @@ pub fn blocks(bs: &[B], p: &Palette) -> Vec<Block> {
                         Lead::Tile(icon, t) => { d.lead = 1; d.icon = s(icon_path(icon)); d.tint = tint(*t, p); }
                         Lead::Ring(v) => { d.lead = 2; d.ring = v.map_or(-1.0, |x| x as f32); }
                         Lead::Letter(l, t) => { d.lead = 3; d.letter = s(l); d.tint = tint(*t, p); }
+                        Lead::Mark(tool) => { d.lead = 4; d.tool = s(tool); }
                     }
                     d
                 }).collect());
@@ -203,7 +204,7 @@ pub fn icon_path(name: &str) -> String {
 pub fn sections(p: &Palette) -> Vec<Side> {
     Section::ALL.iter().map(|x| {
         let (icon, t) = x.glyph();
-        Side { title: s(x.title()), icon: s(icon_path(icon)), tint: tint(t, p) }
+        Side { title: s(x.title()), icon: s(icon_path(icon)), tint: tint(t, p), tool: s(x.mark().unwrap_or("")) }
     }).collect()
 }
 

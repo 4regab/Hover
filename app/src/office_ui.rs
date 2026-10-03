@@ -716,6 +716,7 @@ impl App {
     /// answer are laid out again, now that its size is known; a prompt's thumbnail (a fixed
     /// square) is only painted again.
     pub fn image_arrived(self: &Rc<Self>, url: &str) {
+        self.desk_image_arrived(url);
         let open = self.page.thread.borrow_mut().as_mut().is_some_and(|c| {
             if c.thread.image_changed(url) { c.laid = None; }
             true

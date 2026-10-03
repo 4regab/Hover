@@ -67,6 +67,8 @@ pub struct R {
     pub kind: i32, pub h: f32, pub depth: i32,
     pub text: String, pub sub: String, pub right: String, pub num: String, pub num2: String,
     pub add: String, pub del: String, pub badge: String, pub tone: i32, pub flag: i32, pub act: String, pub tag1: String, pub tag2: String,
+    /// A row that is a picture (kind 25: the description, painted as Markdown).
+    pub img: Option<Image>,
 }
 
 impl R {
@@ -112,7 +114,7 @@ impl Laid {
 
 fn drow(y: f32, r: &R) -> DRow {
     DRow { kind: r.kind, y: y, h: r.h, depth: r.depth, text: s(&r.text), sub: s(&r.sub), right: s(&r.right), num: s(&r.num), num2: s(&r.num2),
-        add: s(&r.add), del: s(&r.del), badge: s(&r.badge), tone: r.tone, flag: r.flag, act: s(&r.act), tag1: s(&r.tag1), tag2: s(&r.tag2) }
+        add: s(&r.add), del: s(&r.del), badge: s(&r.badge), tone: r.tone, flag: r.flag, act: s(&r.act), tag1: s(&r.tag1), tag2: s(&r.tag2), img: r.img.clone().unwrap_or_default() }
 }
 
 /// Characters that fit a list `width` wide, less `pad`.
@@ -397,8 +399,10 @@ fn pr_state(state: &str, draft: bool) -> (&'static str, i32) {
     match (state, draft) { ("open", true) => ("Draft", 0), ("merged", _) => ("Merged", 5), ("closed", _) => ("Closed", 2), _ => ("Open", 1) }
 }
 
-/// Pull request: the branch's own, with its checks and description.
-pub fn pr_rows(p: &d::PrDetail, width: f32) -> Vec<R> {
+/// Pull request: the branch's own, with its checks and description. `md` is the description
+/// painted as Markdown (the picture and its height, see `App::desk_markdown`); without it
+/// the description is plain wrapped lines.
+pub fn pr_rows(p: &d::PrDetail, width: f32, md: Option<(Image, f32)>) -> Vec<R> {
     let mut v = vec![];
     let (word, tone) = pr_state(&p.state, p.is_draft);
     let mut head = R::new(16, hh::HEAD).text(word).tone(tone);
@@ -431,8 +435,14 @@ pub fn pr_rows(p: &d::PrDetail, width: f32) -> Vec<R> {
     }
     if !p.body.trim().is_empty() {
         v.push(R::new(1, hh::HEAD).text("DESCRIPTION"));
-        let n = cols(width, 24.0, hh::PROSE * 1.08);
-        for l in wrap_words(p.body.trim(), n).into_iter().take(400) { v.push(R::new(22, 20.0).text(l)); }
+        if let Some((img, h)) = md {
+            let mut r = R::new(25, h.ceil() + 8.0);
+            r.img = Some(img);
+            v.push(r);
+        } else {
+            let n = cols(width, 24.0, hh::PROSE * 1.08);
+            for l in wrap_words(p.body.trim(), n).into_iter().take(400) { v.push(R::new(22, 20.0).text(l)); }
+        }
     }
     v
 }
@@ -541,6 +551,20 @@ pub struct Prefs {
     pub result: Option<d::CreatePrResult>,
 }
 
+/// The description of the pull request in view, laid out and painted by hover-chat (the
+/// chat's own Markdown), with what it was made from, to paint it again only when that changes.
+struct Doc {
+    thread: hover_chat::Thread,
+    painter: hover_chat::Painter,
+    key: (String, i32, u32),
+    out: Option<(Image, f32)>,
+}
+
+/// The longest description laid out: a body past it is cut (a bot's changelog can be megabytes).
+const DOC_MAX: usize = 8000;
+/// The tallest picture made of it, in device pixels (textures cap near 16k).
+const DOC_PX: f32 = 12000.0;
+
 #[derive(Default)]
 pub struct DeskUi {
     pub card: Cell<Option<i32>>,
@@ -551,6 +575,8 @@ pub struct DeskUi {
     asked: RefCell<HashMap<(i32, &'static str), Instant>>,
     inflight: RefCell<HashMap<(i32, &'static str), Instant>>,
     laid: RefCell<Laid>,
+    /// The pull request's description as a laid-out, painted Markdown text (see `desk_markdown`).
+    doc: RefCell<Option<Doc>>,
     sig: Cell<(u64, u64, usize, i32, usize)>,
     version: Cell<u64>,
     scroll: Cell<(f32, f32)>,
@@ -1073,7 +1099,10 @@ impl App {
                 _ => Laid::loading(),
             },
             "pr" => match got("pr") {
-                Some(Got::Pr(d::PrPanel::Open(detail))) => Laid::of(pr_rows(&detail, w), None),
+                Some(Got::Pr(d::PrPanel::Open(detail))) => {
+                    let md = (!detail.body.trim().is_empty()).then(|| self.desk_markdown(&detail.body, w)).flatten();
+                    Laid::of(pr_rows(&detail, w, md), None)
+                }
                 Some(Got::Pr(d::PrPanel::Error(e))) => Laid::of(vec![], Some(empty("pr", "No pull request", &e))),
                 Some(Got::Pr(_)) => Laid::default(),
                 _ => Laid::loading(),
@@ -1256,6 +1285,56 @@ impl App {
 
     fn desk_prefs_for<T>(&self, id: i32, f: impl FnOnce(&mut Prefs) -> T) -> T { f(self.page.desk.prefs.borrow_mut().entry(id).or_default()) }
 
+    // MARK: The description
+
+    /// The pull request's description as Markdown, painted as the chat paints an answer:
+    /// the picture and its height in logical px. The list is `w` wide, its rows 10 px less
+    /// (the bar), the text 8 more inside, and the painter adds the thread's 12 px each side,
+    /// which the row's picture hangs out by.
+    fn desk_markdown(&self, body: &str, w: f32) -> Option<(Image, f32)> {
+        let text_w = (w - 18.0).max(120.0);
+        let k = if self.page.target.get() == 1 { self.dash.borrow().as_ref().map_or(1.0, |d| d.window().scale_factor()) } else { self.notch.window().scale_factor() };
+        let body: String = body.trim().chars().take(DOC_MAX).collect();
+        let key = (body.clone(), text_w as i32, k.to_bits());
+        let mut doc = self.page.desk.doc.borrow_mut();
+        if doc.is_none() {
+            let f = vec![hover_office::canvas::PIXELIFY.to_vec()];
+            let images = crate::net::images();
+            let mut thread = hover_chat::Thread::new(hover_chat::Shaper::new(&f), "", [0, 0, 0, 255]);
+            thread.use_images(images.clone());
+            *doc = Some(Doc { thread, painter: hover_chat::Painter::new(&f, images), key: Default::default(), out: None });
+        }
+        let doc = doc.as_mut()?;
+        if doc.key != key {
+            doc.thread.document(&body, text_w.floor());
+            let h = doc.thread.height;
+            let px = doc.painter.paint(&doc.thread, 0.0, ((text_w.floor() + 24.0) * k).round() as u32, (h * k).ceil().min(DOC_PX) as u32, k, [0, 0, 0, 0]);
+            let img = Image::from_rgba8_premultiplied(SharedPixelBuffer::clone_from_slice(px.data(), px.width(), px.height()));
+            doc.out = Some((img, px.height() as f32 / k));
+            doc.key = key;
+        }
+        doc.out.clone()
+    }
+
+    /// A description's image arrived (or failed): it is laid out again with its size.
+    pub fn desk_image_arrived(self: &Rc<Self>, url: &str) {
+        let hit = self.page.desk.doc.borrow_mut().as_mut().is_some_and(|d| { let c = d.thread.image_changed(url); if c { d.key = Default::default(); } c });
+        if hit { self.desk_changed(); self.desk_sync(); }
+    }
+
+    /// A click on the description's picture, at (x, y) in it: a link opens, a code block's Copy copies.
+    fn desk_markdown_click(self: &Rc<Self>, x: f32, y: f32) {
+        let hit = self.page.desk.doc.borrow().as_ref().map(|d| d.thread.hit(x, y));
+        match hit {
+            Some(hover_chat::Hit::Link(url)) => { if url.starts_with("https://") || url.starts_with("http://") { crate::open_url(&url); } }
+            Some(hover_chat::Hit::Act(_, hover_chat::doc::Act::Copy(text))) => {
+                if let Err(e) = arboard::Clipboard::new().and_then(|mut c| c.set_text(text.to_string())) { hover_core::log::line(&format!("clipboard: {e}")); }
+                self.toast("Copied.");
+            }
+            _ => {}
+        }
+    }
+
     // MARK: Clicks in the panel
 
     fn desk_act(self: &Rc<Self>, act: &str) {
@@ -1263,6 +1342,7 @@ impl App {
         let (kind, arg) = act.split_once(':').unwrap_or((act, ""));
         match kind {
             "ext" => { if arg.starts_with("https://") || arg.starts_with("http://") { crate::open_url(arg); } return; }
+            "md" => { if let Some((x, y)) = arg.split_once(':').and_then(|(x, y)| Some((x.parse().ok()?, y.parse().ok()?))) { self.desk_markdown_click(x, y); } return; }
             "file" => { self.desk_prefs_for(id, |p| p.file = Some(arg.to_owned())); self.page.desk.got.borrow_mut().remove(&(id, "file")); self.desk_ask(id, "file", true); }
             "fback" => { self.desk_prefs_for(id, |p| p.file = None); }
             "dir" => { self.desk_prefs_for(id, |p| { if !p.open.remove(arg) { p.open.insert(arg.to_owned()); } }); }
@@ -1539,7 +1619,7 @@ mod tests {
             additions: 10, deletions: 2, changed_files: 3, body: "It adds the desk.\n\nSecond paragraph.".into(), author: Some("arz".into()), review: Some("APPROVED".into()),
             comments: 1, pass: 2, fail: 1, pending: 0, skip: 0, checks: vec![d::Check { name: "build".into(), state: "pass".into(), url: Some("https://x".into()) }, d::Check { name: "lint".into(), state: "fail".into(), url: None }],
             ..Default::default() };
-        let rows = pr_rows(&p, 640.0);
+        let rows = pr_rows(&p, 640.0, None);
         assert_eq!((rows[0].kind, rows[0].text.as_str(), rows[0].sub.as_str(), rows[0].tone), (16, "Open", "#12", 1));
         assert_eq!(rows[2].text, "feat → main · by arz · +10 −2 · 3 files · 1 comment · Approved");
         assert_eq!((rows[3].kind, rows[3].act.as_str()), (19, "ext:https://github.com/a/b/pull/12"));
@@ -1547,6 +1627,12 @@ mod tests {
         assert_eq!((tally.add.as_str(), tally.del.as_str()), ("✓ 2 passed", "✗ 1 failing"));
         assert_eq!(rows.iter().filter(|r| r.kind == 21).map(|r| (r.text.as_str(), r.tone, r.act.is_empty())).collect::<Vec<_>>(), [("build", 1, false), ("lint", 2, true)]);
         assert!(rows.iter().any(|r| r.kind == 22 && r.text == "Second paragraph."));
+        // With the description painted as Markdown it is one picture row, not wrapped lines.
+        let rows = pr_rows(&p, 640.0, Some((Image::default(), 90.4)));
+        assert!(rows.iter().all(|r| r.kind != 22));
+        let pic = rows.iter().find(|r| r.kind == 25).unwrap();
+        assert_eq!((pic.h, pic.img.is_some()), (99.0, true));
+        assert_eq!(rows.iter().position(|r| r.kind == 1).map(|i| rows[i].text.as_str()), Some("DESCRIPTION"));
     }
 
     #[test]

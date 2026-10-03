@@ -1245,6 +1245,23 @@ impl Thread {
         }
     }
 
+    /// Lays `src` out as Markdown on its own, the way an answer is, for a page outside the
+    /// chat (the desk's pull request description): one section with no prompt, name or
+    /// buttons. `width` is the text's; the painter adds the thread's side padding on each
+    /// side, so paint it `width + 24` wide.
+    pub fn document(&mut self, src: &str, width: f32) {
+        self.width = width + theme::THREAD_PAD[1] + theme::THREAD_PAD[3];
+        self.pending_images.clear();
+        let blocks = hover_md::parse(src, Some(&*self.image_rule));
+        let state = &*self.image_state;
+        let mut md = Md { sh: &mut self.sh, image_state: state, used: vec![], copied: self.copied.clone() };
+        let b = md.blocks(&blocks, Look { lh: 1.55, color: [0xe9, 0xe7, 0xec, 255], ..Look::body() }, width, true);
+        let images = md.used;
+        self.selection = None;
+        self.sections = vec![Section { y: 0.0, h: b.h, frag: b.frag, summary: None, answer_tok: None, answer_at: None, images, stale: false, key: (Turn::new(src), width.to_bits(), false, false, 0, false, 0) }];
+        self.height = b.h;
+    }
+
     fn line(&mut self, text: &str, look: Look, w: Option<f32>) -> TextBox {
         let (layout, text, _) = self.sh.text(&[plain(text, None)], look, w, Alignment::Start);
         TextBox { layout, x: 0.0, y: 0.0, text, links: vec![], clip: None, shimmer: false, cell: false, scroller: None }
@@ -1417,7 +1434,9 @@ impl Thread {
                 let label = Look { size: 11.0, lh: 1.2, color: [0xf6, 0xf2, 0xff, 158], weight: 400.0, family: theme::SANS };
                 let done = self.copied.as_deref() == Some(whole.as_str());
                 let mut buttons = vec![(if done { CHECK_ICON } else { COPY_ICON }, if done { "Copied" } else { "Copy" }, Act::Copy(whole.as_str().into()))];
-                if last && t.stage != Stage::Waking { buttons.push((RETRY_ICON, "Retry", Act::Retry)); }
+                // One way to send the newest message again: Try again where a checkpoint lets
+                // the folder go back too, else Retry (the prompt again, files as they are).
+                if last && t.stage != Stage::Waking && !t.again { buttons.push((RETRY_ICON, "Retry", Act::Retry)); }
                 if t.restore { buttons.push((UNDO_ICON, "Restore", Act::Restore)); }
                 if t.again { buttons.push((TRY_ICON, "Try again", Act::TryAgain)); }
                 for (icon, word, act) in buttons {
