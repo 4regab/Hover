@@ -551,7 +551,7 @@ function syncMinis(s) {
 
 
 // ── Sessions ────────────────────────────────────────────────────────────
-// In Hover the page is shown in WebView2: the sessions come from Hover as state
+// In Hover the page is shown in the Mac app's WKWebView: the sessions come from Hover as state
 // messages, and what the user asks for goes back as messages. Opened on its own in
 // a browser it plays with demo sessions instead, so the design can be looked at.
 const host = window.hoverHost || window.chrome?.webview || null;
@@ -2358,7 +2358,7 @@ const beats = (() => {
     } else if (audio && !audio.paused) ramp(0);
   }
   btn.onclick = () => { want = !want; localStorage.setItem('office.beats', want ? 'on' : 'off'); sync(); };
-  // Played only after a click on the page: WebView2, like any browser, won't autoplay.
+  // Played only after a click on the page: WKWebView, like any browser, won't autoplay.
   addEventListener('pointerdown', () => { if (want && audio?.paused !== false) sync(); }, { once: true });
   return { follow(on) { seen = on; sync(); } };
 })();

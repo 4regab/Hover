@@ -45,7 +45,7 @@ pub fn supported() -> bool { cfg!(any(target_os = "macos", target_os = "linux"))
 /// Why the switch is disabled here, or none.
 pub fn note() -> Option<&'static str> { (!supported()).then_some(UNSUPPORTED) }
 
-/// Hover itself runs in a sandbox already (a developer's cargo run under srt, see .kiro/steering/sandbox.md): another one
+/// Hover itself runs in a sandbox already (a developer's cargo run under srt, see scripts/sandbox.sh): another one
 /// inside it would fail, and the outer one holds.
 pub fn inside() -> bool { std::env::var("HOVER_SANDBOXED").is_ok_and(|v| v == "1") }
 
