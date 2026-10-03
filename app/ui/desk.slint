@@ -100,6 +100,14 @@ export global Desk {
     in property <bool> c-asking;
     in property <string> c-ask-title;
     in property <string> c-ask-line;
+    // The session's id and the open question's, for the buttons that answer it; the allow
+    // button's word and whether it is a dangerous one; a question's choices (Skip, Answer…)
+    // in place of Deny, Trust and Allow.
+    in property <int> c-id;
+    in property <string> c-ask-id;
+    in property <string> c-ask-allow;
+    in property <bool> c-ask-danger;
+    in property <bool> c-ask-question;
     in property <[DTile]> tiles;
     in-out property <string> c-draft;
     in property <string> c-placeholder;

@@ -483,6 +483,16 @@ fn desk_shots(app: &Rc<App>, hover: &Arc<hover_app::app::Hover>, dir: &Path, fol
     shot("desk-card-asking.png");
     hover.sessions.answer(busy, "d1", hover_agents::ask::AskAnswer::Deny);
     app.desk_close_card();
+    // A question with choices (OpenCode, Claude Code): Skip and Answer… in place of the three.
+    let question = hover_agents::ask::AgentAsk { id: "d2".into(), kind: "question".into(), title: "Question".into(), command: None, path: None, preview: None, added: 0, removed: 0,
+        reason: String::new(), danger: false, questions: Some(vec![hover_agents::ask::AgentQuestion { header: "Scope".into(), question: "Should refresh() also skip views that are hidden, or only clean ones?".into(),
+            options: vec![("Only clean ones".into(), "Keep the change small".into()), ("Hidden too".into(), "Also check visibility".into())], multiple: false, custom: true }]) };
+    hover.sessions.ask(AgentTool::Kiro, &sid, question, &hover_agents::cancel::Cancel::new(), Box::new(|_| {}));
+    app.desk_shot_card(busy, bx + 40.0, by + 20.0);
+    settle(500);
+    shot("desk-card-question.png");
+    hover.sessions.answer(busy, "d2", hover_agents::ask::AskAnswer::Deny);
+    app.desk_close_card();
     // The panel, tab by tab, on the finished desk (its session is idle, so Create is open).
     let tab = |name: &str, file: &str| { app.desk_shot_open(done, name); settle(700); shot(file); };
     tab("terminal", "desk-tab-terminal.png");

@@ -925,8 +925,17 @@ impl App {
             g.set_c_helpers(ModelRc::new(VecModel::from(hc)));
             g.set_c_helpers_text(s(&helpers_text));
             g.set_c_asking(asking.is_some());
+            g.set_c_id(id);
+            g.set_c_ask_id(s(asking.as_ref().map_or("", |a| a.id.as_str())));
+            g.set_c_ask_allow(s(asking.as_ref().map(|a| hover_agents::words::ask_allow(a)).unwrap_or("Allow")));
+            g.set_c_ask_danger(asking.as_ref().is_some_and(|a| a.danger));
+            g.set_c_ask_question(asking.as_ref().is_some_and(|a| a.is_question()));
             g.set_c_ask_title(s(asking.as_ref().map(|a| hover_agents::words::ask_title(a).to_string()).unwrap_or_default()));
-            g.set_c_ask_line(s(asking.as_ref().map_or("", |a| a.command.as_deref().or(a.path.as_deref()).unwrap_or(&a.reason))));
+            // A question shows its own words; a permission, its command, path or reason.
+            g.set_c_ask_line(s(asking.as_ref().map_or("", |a| match a.questions.as_ref().and_then(|q| q.first()) {
+                Some(q) => q.question.as_str(),
+                None => a.command.as_deref().or(a.path.as_deref()).unwrap_or(&a.reason),
+            })));
             if let Some(m) = crate::view::sync(g.get_tiles(), &model) { g.set_tiles(m); }
             g.set_c_placeholder(s(&placeholder));
             g.set_c_busy(busy);
@@ -943,7 +952,8 @@ impl App {
         let text = text.trim().to_owned();
         let name = BOTS[sess.bot % 6].0;
         if text.is_empty() {
-            if sess.busy() && !sess.stopping { self.hover.sessions.pause(id); self.office_widgets(); }
+            // Asking, the empty button is a disabled Send: Stop would end the run under its question.
+            if sess.busy() && !sess.stopping && !sess.waiting() { self.hover.sessions.pause(id); self.office_widgets(); }
             return;
         }
         if !self.hover.sessions.reply(id, &text, vec![]) { self.toast("3 tasks are running. Reply when one is done."); return; }

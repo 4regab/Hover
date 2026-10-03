@@ -995,11 +995,18 @@ component DeskCard inherits Rectangle {
     accessible-id: "deskCard";
     accessible-label: Desk.c-name + "’s desk";
     // The bot's colour, washed over the top.
-    Rectangle { height: 64px; background: @linear-gradient(180deg, Desk.c-color.with-alpha(0.2) 0%, Desk.c-color.with-alpha(0) 100%); }
+    // Placed by y: left to itself a Rectangle with only a height sits in the middle of the
+    // card, which put this wash's hard top edge across the status box.
+    Rectangle { y: 0; width: parent.width; height: 64px; background: @linear-gradient(180deg, Desk.c-color.with-alpha(0.2) 0%, Desk.c-color.with-alpha(0) 100%); }
     TouchArea { scroll-event(e) => { accept } }
     keys := FocusScope {
         init => { self.focus(); }
         key-pressed(e) => {
+            // While a permission waits, the keys answer it as they do on the notch.
+            if (Desk.c-asking && !Desk.c-ask-question) {
+                if (e.text == Key.Escape) { Office.answer(Desk.c-id, Desk.c-ask-id, "deny"); return accept; }
+                if (e.text == "\n") { Office.answer(Desk.c-id, Desk.c-ask-id, e.modifiers.shift ? "trust" : "allow"); return accept; }
+            }
             if (e.text == Key.Escape) { Desk.card-close(); return accept; }
             if (e.text == "\n") { Desk.card-chat(); return accept; }
             if (!e.modifiers.control && !e.modifiers.alt && !e.modifiers.meta && Desk.card-key(e.text)) { return accept; }
@@ -1009,7 +1016,9 @@ component DeskCard inherits Rectangle {
             padding: 8px;
             // .dhd: the tool's logo with a dot for how it goes, the desk's name, the task, chips.
             HorizontalLayout {
-                padding: 4px;
+                // Flush with the box and the tiles below: the logo and the chips share their edge.
+                padding: 0px;
+                padding-top: 4px;
                 padding-bottom: 10px;
                 spacing: 11px;
                 VerticalLayout { alignment: start;
@@ -1040,20 +1049,38 @@ component DeskCard inherits Rectangle {
             // .dnow: its last steps, the question, or the answer.
             Rectangle {
                 vertical-stretch: 0;
-                height: now.preferred-height;
+                // Its content's height up to a cap; what is past the cap fades out inside
+                // the box's own border instead of running under the tiles.
+                height: min(now.preferred-height, 132px);
                 border-radius: 12px;
                 background: #ffffff08;
                 border-width: 1px;
                 border-color: #ffffff0d;
+                clip: true;
                 now := VerticalLayout {
+                    y: 0;
+                    // Its own height, not the box's: a box capped shorter clips this instead
+                    // of squeezing the lines together.
+                    height: self.preferred-height;
                     padding: 8px;
                     padding-top: 7px;
-                    padding-bottom: 7px;
+                    padding-bottom: 8px;
                     spacing: 2px;
                     if Desk.c-asking: VerticalLayout { spacing: 2px;
                         Text { text: Desk.c-ask-title; font-size: 12px; font-weight: 600; color: #ffd59a; overflow: elide; }
                         if Desk.c-ask-line != "": Text { text: Desk.c-ask-line; font-size: 12px; color: #ffd59abf; overflow: elide; }
-                        HorizontalLayout { padding-top: 5px; alignment: start; DButton { id: "deskReview"; small: true; text: "Review"; clicked => { Desk.card-chat(); } } } }
+                        // The same answers as the bubble over the bot's head and the notch:
+                        // Enter allows, Shift+Enter trusts, Esc denies. Review opens the chat.
+                        if !Desk.c-ask-question: HorizontalLayout { padding-top: 6px; spacing: 6px;
+                            AskButton { text: "Deny"; clicked => { Office.answer(Desk.c-id, Desk.c-ask-id, "deny"); } }
+                            AskButton { text: "Review"; clicked => { Desk.card-chat(); } }
+                            Rectangle { horizontal-stretch: 1; }
+                            AskButton { text: "Trust"; clicked => { Office.answer(Desk.c-id, Desk.c-ask-id, "trust"); } }
+                            AskButton { text: Desk.c-ask-allow; kind: Desk.c-ask-danger ? 2 : 1; clicked => { Office.answer(Desk.c-id, Desk.c-ask-id, "allow"); } } }
+                        if Desk.c-ask-question: HorizontalLayout { padding-top: 6px; spacing: 6px;
+                            AskButton { text: "Skip"; clicked => { Office.answer(Desk.c-id, Desk.c-ask-id, "deny"); } }
+                            Rectangle { horizontal-stretch: 1; }
+                            AskButton { text: "Answer…"; kind: 1; clicked => { Desk.card-chat(); } } } }
                     if !Desk.c-asking: VerticalLayout {
                         for s in Desk.c-steps: Rectangle {
                             height: 24px;
@@ -1074,6 +1101,9 @@ component DeskCard inherits Rectangle {
                         for c in Desk.c-helpers: VerticalLayout { alignment: center; Rectangle { width: 12px; height: 11px; border-radius: 3px; background: c; } }
                         Text { text: " " + Desk.c-helpers-text; font-size: 11.5px; color: #ffffff80; vertical-alignment: center; overflow: elide; } }
                 }
+                // Past the cap the last line fades out at the box's bottom edge.
+                if now.preferred-height > 132px: Rectangle { x: 8px; y: parent.height - 30px; width: parent.width - 16px; height: 28px;
+                    background: @linear-gradient(180deg, #16111a00 0%, #16111af2 100%); }
             }
             Rectangle { height: 8px; }
             DeskTiles { }
@@ -1109,6 +1139,8 @@ component DeskCard inherits Rectangle {
                                 cursor-position-changed(c) => { dfl2.content-y = Caret.follow(dfl2.content-y, dfl2.height, c.y, self.font-size); }
                                 key-pressed(e) => {
                                     if (e.text == "\n" && !e.modifiers.shift && self.preedit-text == "") { Desk.card-send(); return accept; }
+                                    // Esc denies only from an empty box: with words typed it is leaving the reply.
+                                    if (e.text == Key.Escape && Desk.c-asking && !Desk.c-ask-question && self.text == "") { Office.answer(Desk.c-id, Desk.c-ask-id, "deny"); return accept; }
                                     if (e.text == Key.Escape) { Desk.card-close(); return accept; }
                                     reject
                                 }
@@ -1117,11 +1149,12 @@ component DeskCard inherits Rectangle {
                         if Desk.c-draft == "" && dinput.preedit-text == "": Text { y: 4px; width: parent.width; text: Desk.c-placeholder; font-size: 12.5px; color: #f6f2ff61; overflow: elide; }
                     }
                     VerticalLayout { alignment: end;
+                        // Asking, the button is only Send: a Stop here reads as "send ends the run".
                         GoButton { id: "deskSend"; round: true;
                             property <bool> empty: Desk.c-draft == "";
-                            enabled: !self.empty || (Desk.c-busy && !Desk.c-stopping);
-                            stop: self.empty && Desk.c-busy;
-                            label: self.empty && Desk.c-busy ? "Stop the run" : "Send";
+                            enabled: !self.empty || (Desk.c-busy && !Desk.c-stopping && !Desk.c-asking);
+                            stop: self.empty && Desk.c-busy && !Desk.c-asking;
+                            label: self.empty && Desk.c-busy && !Desk.c-asking ? "Stop the run" : "Send";
                             clicked => { Desk.card-send(); } } }
                 }
             }

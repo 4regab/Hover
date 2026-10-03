@@ -342,8 +342,11 @@ impl App {
         if let Some((img, blurred)) = images {
             // renderAsks: the question over the head while the session waits.
             let asking = self.hover.sessions.asking_now();
+            // The card of a bot that asks shows the question itself, with the same buttons:
+            // its bubble over the head would sit half under the card.
+            let card = self.page.desk.card.get();
             let tags: Vec<TagData> = out.tags.iter().map(|t| {
-                let ask = asking.iter().find(|x| x.0 as i64 == t.id).map(|(_, a, n)| self.ask_data(a, *n));
+                let ask = asking.iter().find(|x| x.0 as i64 == t.id && card != Some(x.0)).map(|(_, a, n)| self.ask_data(a, *n));
                 TagData {
                     id: t.id as i32, x: t.x as f32, y: t.y as f32, name: s(t.name), color: Color::from_rgb_u8(t.color[0], t.color[1], t.color[2]),
                     tool: s(tool_name(&t.tool)), tool_color: tool_color(&t.tool), text: s(&t.text), stage: t.stage as i32, hot: t.hot,
