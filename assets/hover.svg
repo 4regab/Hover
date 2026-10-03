@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <!-- Hover's logo: a blue ninja, no background. make-icon.py puts it on #161616 for
+       hover.png and the .ico, and crops it tight for hover-mark.png. -->
+  <defs>
+    <clipPath id="body">
+      <path id="shape" d="M183 376C215 235 350 150 512 150S809 235 841 376
+        L846 450L842 528C830 610 770 655 690 675
+        C705 690 716 715 716 750C716 795 702 812 677 822
+        C690 835 686 865 662 879C640 888 592 888 576 878C560 865 566 850 561 832
+        L465 830C460 850 463 865 446 878C430 888 382 888 358 880C340 870 343 840 350 822
+        C325 812 308 790 308 745C308 710 320 690 335 675
+        C255 655 195 610 182 528L178 450Z"/>
+    </clipPath>
+  </defs>
+  <use href="#shape" fill="#1a73ff"/>
+  <g clip-path="url(#body)">
+    <path d="M150 378Q512 332 880 378L880 524Q512 568 150 524Z" fill="#161616"/>
+  </g>
+  <circle cx="390" cy="455" r="41" fill="#fff"/>
+  <circle cx="634" cy="455" r="41" fill="#fff"/>
+</svg>
