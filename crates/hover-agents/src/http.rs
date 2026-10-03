@@ -20,9 +20,10 @@ pub enum HttpErr {
     Cancelled,
 }
 
-/// Where the server listens and how to sign in to it.
+/// Where the server listens and how to sign in to it, and any headers of its own (an MCP
+/// server's token and session).
 #[derive(Clone)]
-pub struct Client { host: String, port: u16, auth: String }
+pub struct Client { host: String, port: u16, auth: String, extra: Vec<(String, String)> }
 
 /// Uri.EscapeDataString: everything but the unreserved characters, as %XX of UTF-8.
 pub fn escape_data(s: &str) -> String {
@@ -149,9 +150,12 @@ impl Read for Body {
 }
 
 /// An open response: its status and its body, and the stop's hold on the socket.
-pub struct Response { pub status: u16, pub body: BufReader<Body>, stopped: Arc<AtomicBool>, _reg: Option<Registration> }
+pub struct Response { pub status: u16, pub body: BufReader<Body>, headers: Vec<(String, String)>, stopped: Arc<AtomicBool>, _reg: Option<Registration> }
 
 impl Response {
+    /// A header of the answer by name (any case), as it came.
+    pub fn header(&self, name: &str) -> Option<&str> { self.headers.iter().find(|(k, _)| k.eq_ignore_ascii_case(name)).map(|(_, v)| v.as_str()) }
+
     /// The whole body as text (bad UTF-8 replaced).
     pub fn text(mut self) -> Result<(u16, String), HttpErr> {
         let mut b = Vec::new();
@@ -191,7 +195,20 @@ impl Client {
     /// The server at an http:// URL, signed in as `user` with `password`.
     pub fn new(url: &str, user: &str, password: &str) -> Option<Client> {
         let (host, port) = host_port(url)?;
-        Some(Client { host, port, auth: format!("Basic {}", base64(format!("{user}:{password}").as_bytes())) })
+        Some(Client { host, port, auth: format!("Basic {}", base64(format!("{user}:{password}").as_bytes())), extra: vec![] })
+    }
+
+    /// The server at an http:// URL with no sign-in of Hover's (its headers say who asks).
+    pub fn bare(url: &str) -> Option<Client> {
+        let (host, port) = host_port(url)?;
+        Some(Client { host, port, auth: String::new(), extra: vec![] })
+    }
+
+    /// The same server, with one more header on every request (one named Accept replaces
+    /// the default). Names and values with a line break are left out.
+    pub fn with_header(mut self, name: &str, value: &str) -> Client {
+        if ![name, value].iter().any(|s| s.contains(['\r', '\n'])) { self.extra.push((name.to_owned(), value.to_owned())); }
+        self
     }
 
     /// Sends a request and reads the answer's head; the body is read from the response.
@@ -214,7 +231,10 @@ impl Client {
             }
             None => None,
         };
-        let mut head = format!("{method} {target} HTTP/1.1\r\nHost: {}:{}\r\nAuthorization: {}\r\nAccept: */*\r\nConnection: close\r\n", self.host, self.port, self.auth);
+        let mut head = format!("{method} {target} HTTP/1.1\r\nHost: {}:{}\r\nConnection: close\r\n", self.host, self.port);
+        if !self.auth.is_empty() { head.push_str(&format!("Authorization: {}\r\n", self.auth)); }
+        if !self.extra.iter().any(|(k, _)| k.eq_ignore_ascii_case("accept")) { head.push_str("Accept: */*\r\n"); }
+        for (k, v) in &self.extra { head.push_str(&format!("{k}: {v}\r\n")); }
         if let Some(b) = body { head.push_str(&format!("Content-Type: application/json; charset=utf-8\r\nContent-Length: {}\r\n", b.len())); }
         head.push_str("\r\n");
         let mut w = s.try_clone().map_err(|e| HttpErr::Io(e.to_string()))?;
@@ -229,7 +249,7 @@ impl Client {
             Err(e) => return Err(why(&stopped, e)),
         }
         let status: u16 = status_line.split_whitespace().nth(1).and_then(|c| c.parse().ok()).ok_or_else(|| HttpErr::Io(format!("not HTTP: {}", status_line.trim())))?;
-        let (mut length, mut chunked) = (None, false);
+        let (mut length, mut chunked, mut headers) = (None, false, Vec::new());
         loop {
             let mut h = String::new();
             match r.read_line(&mut h) { Ok(0) => break, Ok(_) => {} Err(e) => return Err(why(&stopped, e)) }
@@ -239,13 +259,15 @@ impl Client {
                 let (k, v) = (k.trim(), v.trim());
                 if k.eq_ignore_ascii_case("content-length") { length = v.parse::<u64>().ok(); }
                 if k.eq_ignore_ascii_case("transfer-encoding") && v.to_ascii_lowercase().contains("chunked") { chunked = true; }
+                // Kept for the caller (a few short ones): an MCP server's session id.
+                if headers.len() < 32 { headers.push((k.to_owned(), v.to_owned())); }
             }
         }
         let mode = if method == "HEAD" || status == 204 || status == 304 || (100..200).contains(&status) { Mode::Length(0) }
             else if chunked { Mode::Chunked { left: 0, done: false } }
             else { length.map_or(Mode::Eof, Mode::Length) };
         let stopped2 = r.get_ref().stopped.clone();
-        Ok(Response { status, body: BufReader::new(Body { r, mode }), stopped: stopped2, _reg: reg })
+        Ok(Response { status, body: BufReader::new(Body { r, mode }), headers, stopped: stopped2, _reg: reg })
     }
 
     /// A whole request: the status and the body's text.

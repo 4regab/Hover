@@ -285,7 +285,8 @@ mod tests {
         assert_eq!((o.access.as_str(), o.aliases.clone(), o.voice, o.id.len()), ("risky", vec!["b".to_string()], true, 32));
         let v = VoiceSettings::default();
         assert!(!v.enabled, "voice is off until switched on");
-        assert_eq!(v.shortcut.label(), "Ctrl+Alt+Space");
+        // Written as each OS writes it (Shortcut::label): ⌃⌥ on a Mac.
+        assert_eq!(v.shortcut.label(), if cfg!(target_os = "macos") { "⌃⌥Space" } else { "Ctrl+Alt+Space" });
         assert_eq!(VoiceSettings::from_json(&v.to_json()).unwrap(), v);
         let m = VoiceSettings::from_json(&crate::json::parse(r#"{"Model":"made-up","CleanupProvider":"openai"}"#).unwrap()).unwrap();
         assert_eq!((m.model.as_str(), m.cleanup_provider), ("whisper-large-v3-turbo", CleanupProvider::OpenAi));

@@ -19,6 +19,7 @@ pub mod runtime;
 pub mod sandbox;
 pub mod session;
 pub mod setup;
+pub mod space_driver;
 pub mod spaces;
 pub mod state;
 pub mod stream;

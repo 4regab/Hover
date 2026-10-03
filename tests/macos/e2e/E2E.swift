@@ -25,7 +25,9 @@ final class Harness {
     var latest: [String: Any]?, seen: [[String: Any]] = [], links: [String] = [], inputs: [[String: Any]] = []
 
     func start() throws {
-        office = Office(resources: resources, dataFolder: root.appendingPathComponent("data"), dashboard: false)
+        // The window's office: the desk's Browser and Screen open there (the notch's asks
+        // for the window; checked below).
+        office = Office(resources: resources, dataFolder: root.appendingPathComponent("data"), dashboard: true)
         office.web.frame = CGRect(x: 0, y: 0, width: 1300, height: 760)
         // The page's E2E hook, and no throttling while it has no window.
         office.web.configuration.userContentController.addUserScript(WKUserScript(source: "window.hoverE2E = true", injectionTime: .atDocumentStart, forMainFrameOnly: true))
@@ -217,7 +219,8 @@ final class Harness {
         check(await until("its desktop activity", 30) { (await self.text("#pBody .vmtl")).contains("Typed") }, "the activity lists what it did on its desktop")
         let rows = await text("#pBody .vmtl")
         check(rows.contains("Clicked") && rows.contains("Typed"), "the activity reads Clicked and Typed")
-        check(await until("its calls reached the Space", 10) { cuaLog().contains("call local:hover-") && cuaLog().contains("computer_click") }, "the agent's computer use went to its own Space, through Hover's relay to cua mcp")
+        check(await until("its calls reached the Space", 10) { cuaLog().contains("call local:hover-") && cuaLog().contains("computer_click") }, "the agent's computer use went to its own Space, through Hover's relay to the desktop's driver")
+        check(cuaLog().range(of: #"computer_click .* session=hover-[0-9a-f]{1,12}-[0-9a-f]{4}"#, options: .regularExpression) != nil, "each agent works in its own driver session there (a cursor of its own)")
         await shot("screen")
 
         // The viewer link is kept: the panel opened again shows the same live view.
@@ -225,32 +228,45 @@ final class Harness {
         await js("window.__office.openDesk(\(sid), 'screen')"); try? await Task.sleep(nanoseconds: 1_500_000_000)
         check(cuaLog().components(separatedBy: "sb view").count - 1 == 1, "opening the Screen panel again reuses the live view (one cua sb view)")
 
-        // Dragging is polled, so window drags the window server moves itself are seen.
+        // Dragging to the notch is for files and folders: a window moved up there (which is
+        // how windows are tiled) never counts; an app's window goes by "Send to Hover VM".
         do {
             let drag = TeleportDrag()
-            var frame = CGRect(x: 300, y: 300, width: 800, height: 600)
-            drag.windowAt = { _ in (id: 77, pid: 4242, frame: CGRect(x: 300, y: 300, width: 800, height: 600)) }
-            drag.frameOf = { _ in frame }
-            drag.appOf = { _ in ("Google Chrome", "com.google.Chrome", "/Applications/Google Chrome.app") }
+            var board: (count: Int, urls: [URL]) = (1, [])
+            drag.dragged = { board }
             drag.near = { p in p.y > 950 }
-            var seen: [(String, String?)] = []
-            drag.phase = { ph, _, d in seen.append((ph, d.bundle)) }
-            drag.poll(CGPoint(x: 600, y: 600), buttons: 1)                       // pressed on its title bar
-            drag.poll(CGPoint(x: 600, y: 600), buttons: 0)                       // a click: nothing
-            check(seen.isEmpty, "a click on a window is not a drag")
-            drag.poll(CGPoint(x: 600, y: 600), buttons: 1)
-            frame.size.width += 40; drag.poll(CGPoint(x: 640, y: 600), buttons: 1) // a resize: nothing
-            check(seen.isEmpty, "resizing a window is not a drag to the notch")
-            drag.poll(CGPoint(x: 640, y: 600), buttons: 0)
-            frame = CGRect(x: 300, y: 300, width: 800, height: 600)
-            drag.poll(CGPoint(x: 600, y: 600), buttons: 1)
-            frame.origin.y += 200; drag.poll(CGPoint(x: 600, y: 800), buttons: 1)  // moving, not near yet
-            check(seen.isEmpty, "a window moved about the screen doesn't open the notch")
-            frame.origin.y += 160; drag.poll(CGPoint(x: 700, y: 970), buttons: 1)  // at the notch
+            var seen: [(String, Int)] = []
+            drag.phase = { ph, _, d in seen.append((ph, d.files.count)) }
+            drag.poll(CGPoint(x: 600, y: 600), buttons: 0)
+            drag.poll(CGPoint(x: 600, y: 600), buttons: 1)                         // a window's title bar
+            drag.poll(CGPoint(x: 700, y: 970), buttons: 1); drag.poll(CGPoint(x: 700, y: 970), buttons: 0)
+            check(seen.isEmpty, "a window dragged to the top of the screen is not a drop on the notch")
+            drag.poll(CGPoint(x: 600, y: 600), buttons: 1)                         // Finder: two files
+            board = (2, [URL(fileURLWithPath: "/tmp/a.txt"), URL(fileURLWithPath: "/tmp/b")])
+            drag.poll(CGPoint(x: 650, y: 800), buttons: 1)
+            check(seen.isEmpty, "files dragged about the screen don't open the notch")
+            drag.poll(CGPoint(x: 700, y: 970), buttons: 1)
             try? await Task.sleep(nanoseconds: 50_000_000)
             drag.poll(CGPoint(x: 720, y: 975), buttons: 1)
-            drag.poll(CGPoint(x: 720, y: 975), buttons: 0)                       // let go there
-            check(seen.map(\.0) == ["start", "over", "drop"] && seen.allSatisfy { $0.1 == "com.google.Chrome" }, "a window dragged to the notch opens it and drops there, naming the app: \(seen.map(\.0))")
+            drag.poll(CGPoint(x: 720, y: 975), buttons: 0)
+            check(seen.map(\.0) == ["start", "over", "drop"] && seen.allSatisfy { $0.1 == 2 }, "files dragged to the notch open it and drop there: \(seen.map(\.0))")
+            seen = []
+            drag.poll(CGPoint(x: 600, y: 600), buttons: 1)                         // the same pasteboard again: nothing new
+            drag.poll(CGPoint(x: 700, y: 970), buttons: 1); drag.poll(CGPoint(x: 700, y: 970), buttons: 0)
+            check(seen.isEmpty, "a click after a drag doesn't replay the last one")
+        }
+        // "Send to Hover VM": one project goes straight there; more ask which.
+        do {
+            let vm = SendToVM()
+            vm.enabled = { true }
+            let me = NSRunningApplication.current
+            vm.projects = { [.init(name: "Hover", folder: "/tmp/hover")] }
+            check(vm.menu(for: me).items.first?.submenu == nil && vm.menu(for: me).items.first?.title.hasSuffix("to Hover VM") == true, "with one project the item sends straight to it")
+            vm.projects = { [.init(name: "Hover", folder: "/tmp/hover"), .init(name: "Site", folder: "/tmp/site")] }
+            let sub = vm.menu(for: me).items.first?.submenu
+            check(sub?.items.filter { $0.action != nil }.map(\.title) == ["Hover", "Site"], "with several projects it asks which")
+            vm.enabled = { false }
+            check(vm.menu(for: me).items.first?.title.hasSuffix("…") == true, "with desktops off it leads to turning them on")
         }
 
         // An app dragged onto the notch: the agents' desktops open as drop targets.
@@ -267,8 +283,71 @@ final class Harness {
             check(await until("the tile under the pointer lights", 3) { await self.truthy("document.querySelector('#tdrop [data-tdrop=\"\(sid)\"]').classList.contains('on')") }, "the agent's tile lights under the pointer")
             office.deliver(["type": "teleportDrag", "phase": "drop", "app": "Tiny", "bundle": "dev.hover.tiny", "path": testApp.path, "files": [], "x": x + 30, "y": y + 30, "vw": 1300])
             check(await until("the app is sent", 20) { cuaLog().contains(":/Users/lume/Downloads/.hover-hover-app-") && cuaLog().contains("sb exec local:hover-project-") && cuaLog().contains("Tiny.app") }, "dropping it copies the app into the project's desktop and opens it there (cua sb cp, sb exec)")
-            check(!cuaLog().contains("teleport"), "without Cua's own app: no teleport, no Cua Spaces")
+            check(!cuaLog().contains("teleport push"), "an app Cua can't teleport is copied in, not teleported")
             check(await until("the office says so", 10) { (await self.text("#toast")).contains("Tiny is on") }, "the office says the app is on the desktop: \(await text("#toast"))")
+            // An app Cua teleports (Chrome): what would go is shown first, secrets unticked,
+            // and only what's ticked goes, straight to the Space's spacesd.
+            office.deliver(["type": "teleportDrag", "phase": "start", "app": "Google Chrome", "bundle": "com.google.Chrome", "path": testApp.path, "files": [], "x": 300, "y": 120, "vw": 1300])
+            office.deliver(["type": "teleportDrag", "phase": "drop", "app": "Google Chrome", "bundle": "com.google.Chrome", "path": testApp.path, "files": [], "x": x + 30, "y": y + 30, "vw": 1300])
+            check(await until("the review shows", 15) { await self.truthy("!document.querySelector('#tpReview').hidden && document.querySelectorAll('#tpReview input').length === 3") }, "dropping Chrome shows what teleport would move, before anything goes")
+            check(await truthy("(() => { const b = [...document.querySelectorAll('#tpReview input')].map(i => i.checked); return b[0] && !b[1] && b[2]; })()"), "tabs and bookmarks are ticked; cookies (sign-in data) are not")
+            await shot("teleport-review")
+            let before0 = seen.count
+            _ = await js("document.querySelector('#tprGo').click()")
+            check(await until("it teleports", 15) { cuaLog().contains("teleport push --app com.google.Chrome --scope full --url http://127.0.0.1:3211 --progress --include tabs.json --include Default/Bookmarks") }, "Teleport sends exactly the ticked items to the desktop (cua teleport push --include)")
+            check(!cuaLog().contains("--include Default/Cookies") && cuaLog().contains("push token-in-env"), "nothing unticked goes, and the desktop's token stays off the command line")
+            check(await until("the office says so", 10) { (await self.text("#toast")).contains("teleported") }, "the office says it teleported: \(await text("#toast"))")
+            let wholeDone: () -> [String: Any]? = { self.seen[before0...].last { $0["type"] as? String == "teleport" && $0["phase"] as? String == "done" && $0["app"] as? String == "Google Chrome" }?["data"] as? [String: Any] }
+            check(await until("Chrome's answer", 15) { wholeDone() != nil }, "the teleport is answered")
+            check(wholeDone()?["moved"] as? Bool == true && wholeDone()?["whole"] as? Bool == true, "with its session items it went whole, for the host to quit it here: \(wholeDone() ?? [:])")
+            // Safari: its tabs (read by the host, each with where it is) are picked one by one,
+            // and the picked ones open together in the desktop's own Safari.
+            let safariTabs: [[String: Any]] = [["id": "5:1", "title": "A's page", "url": "https://example.com/a?q=1'x"], ["id": "5:2", "title": "Leave me", "url": "https://example.com/b"], ["id": "5:3", "url": "file:///etc/passwd"]]
+            backend.send(["type": "teleport", "id": sid, "app": "Safari", "bundle": "com.apple.Safari", "path": "/Applications/Safari.app", "tabs": safariTabs])
+            check(await until("Safari's review shows", 15) { await self.truthy("!document.querySelector('#tpReview').hidden && document.querySelectorAll('#tpReview input[data-t]').length === 2 && !document.querySelector('#tpReview input[data-i]')") }, "sending Safari asks which tabs, listing only web ones")
+            check(await truthy("document.querySelector('#tprCount').textContent === '2 of 2' && document.querySelector('#tprGo').textContent === 'Move tabs'"), "every tab starts picked")
+            _ = await js("(() => { const c = document.querySelectorAll('#tpReview input[data-t]')[1]; c.checked = false; c.dispatchEvent(new Event('change')); })()")
+            check(await truthy("document.querySelector('#tprCount').textContent === '1 of 2' && document.querySelector('#tprAll').textContent === 'All'"), "unpicking a tab says so")
+            await shot("teleport-tabs")
+            let before = seen.count
+            _ = await js("document.querySelector('#tprGo').click()")
+            check(await until("Safari opens there", 15) { cuaLog().contains("exec /usr/bin/open -b com.apple.Safari 'https://example.com/a?q=1'\\''x'") }, "the desktop's Safari opens the picked tab, its address quoted")
+            check(!cuaLog().contains("https://example.com/b") && !cuaLog().contains("/etc/passwd"), "an unpicked tab, and a file address, never go")
+            let safariDone: () -> [String: Any]? = { self.seen[before...].last { $0["type"] as? String == "teleport" && $0["phase"] as? String == "done" && $0["app"] as? String == "Safari" } }
+            check(await until("Safari's answer", 15) { safariDone() != nil }, "the send is answered")
+            let sd = safariDone()?["data"] as? [String: Any] ?? [:]
+            check(sd["moved"] as? Bool == true && sd["tabs"] as? [String] == ["5:1"] && safariDone()?["bundle"] as? String == "com.apple.Safari", "the answer names the tab that went, for the host to close: \(sd)")
+            // Chrome, its tabs read: picked one by one into one new window there, with only the
+            // profile items ticked (Cua's own session items, which bring every tab back, left out).
+            let chromeTabs: [[String: Any]] = [["id": "9:1", "title": "One", "url": "https://one.test/"], ["id": "9:2", "title": "Two", "url": "https://two.test/"], ["id": "9:3", "title": "Three", "url": "https://three.test/"]]
+            backend.send(["type": "teleport", "id": sid, "app": "Google Chrome", "bundle": "com.google.Chrome", "path": testApp.path, "tabs": chromeTabs])
+            check(await until("Chrome's review shows", 15) { await self.truthy("!document.querySelector('#tpReview').hidden && document.querySelectorAll('#tpReview input[data-t]').length === 3 && document.querySelectorAll('#tpReview input[data-i]').length === 2") }, "sending Chrome lists its tabs to pick and its profile items, without Cua's session items")
+            _ = await js("(() => { const c = document.querySelectorAll('#tpReview input[data-t]')[1]; c.checked = false; c.dispatchEvent(new Event('change')); })()")
+            let before2 = seen.count
+            _ = await js("document.querySelector('#tprGo').click()")
+            check(await until("Chrome goes", 20) { cuaLog().contains("teleport push --app com.google.Chrome --scope full --url http://127.0.0.1:3211 --progress --no-launch --include Default/Bookmarks") }, "its ticked profile items go first, without launching it")
+            check(await until("its window opens", 20) { cuaLog().contains("exec /usr/bin/open -n -b 'com.google.Chrome' --args '--no-first-run' '--no-default-browser-check' '--new-window' 'https://one.test/' 'https://three.test/'") }, "the picked tabs open together in one new Chrome window there")
+            check(!cuaLog().contains("two.test"), "the unpicked tab stays")
+            let chromeDone: () -> [String: Any]? = { self.seen[before2...].last { $0["type"] as? String == "teleport" && $0["phase"] as? String == "done" && $0["app"] as? String == "Google Chrome" } }
+            check(await until("Chrome's answer", 15) { chromeDone() != nil }, "the Chrome send is answered")
+            check((chromeDone()?["data"] as? [String: Any])?["tabs"] as? [String] == ["9:1", "9:3"], "the answer names the two tabs that went")
+            check((chromeDone()?["data"] as? [String: Any])?["whole"] as? Bool == false, "picked tabs never take the whole browser")
+            // What then leaves this Mac: only what Hover noted when the user sent it.
+            let t = { (id: String) in BrowserTabs.Tab(id: id, title: "", url: "https://\(id).test/") }
+            let chrome = Moved.Sent(bundle: "com.google.Chrome", pid: 1, tabs: [t("9:1"), t("9:2"), t("9:3")], at: Date())
+            let done = { (bundle: String, data: [String: Any]) -> [String: Any] in ["type": "teleport", "phase": "done", "bundle": bundle, "data": data] }
+            check(Moved.after(done("com.google.Chrome", ["ok": true, "moved": true, "tabs": ["9:1", "9:3", "9:9"]]), sent: chrome) == .close([t("9:1"), t("9:3")]), "the browser closes just the tabs that went (and only ones it read)")
+            check(Moved.after(done("com.google.Chrome", ["ok": true, "moved": true, "tabs": []]), sent: chrome) == .nothing, "a browser none of whose tabs went stays as it is")
+            check(Moved.after(done("com.google.Chrome", ["ok": true, "moved": true, "whole": true, "tabs": []]), sent: chrome) == .quit, "a browser whose whole session went quits here")
+            let closing = BrowserTabs.closeScript([BrowserTabs.Tab(id: "9:3", title: "", url: "https://q.test/?a=\"b\\")], in: "com.google.Chrome")
+            check(closing.contains("whose id is 3 and URL is \"https://q.test/?a=\\\"b\\\\\"") && closing.contains("window id 9") && closing.hasSuffix("((count of windows) as text)\nend tell"), "a tab closes only by its id and the address it had, quoted: \(closing)")
+            check(BrowserTabs.notPermitted("execution error: Not authorized to send Apple events to Google Chrome. (-1743)") && !BrowserTabs.notPermitted("execution error: Google Chrome got an error: Can’t get window id 9. (-1728)"), "only macOS's refusal reads as Automation being off")
+            check(Moved.after(done("com.google.Chrome", ["error": "The app didn’t go."]), sent: chrome) == .nothing, "nothing leaves when the send failed")
+            check(Moved.after(done("com.google.Chrome", ["ok": true, "moved": true, "tabs": ["9:1"]]), sent: nil) == .nothing, "nor for a send the user didn't make here")
+            let slack = Moved.Sent(bundle: "com.tinyspeck.slackmacgap", pid: 1, tabs: [], at: Date())
+            check(Moved.after(done("com.tinyspeck.slackmacgap", ["ok": true, "moved": true, "tabs": []]), sent: slack) == .quit, "any other app quits here once it's there")
+            check(Moved.after(done("com.tinyspeck.slackmacgap", ["ok": true, "moved": true]), sent: slack, now: Date().addingTimeInterval(3600)) == .nothing, "an old note counts for nothing")
+            check(Moved.after(done("com.apple.finder", ["ok": true, "moved": true]), sent: Moved.Sent(bundle: "com.apple.finder", pid: 1, tabs: [], at: Date())) == .nothing, "the Finder never quits")
             // Files dropped the same way land in its Downloads.
             let file = root.appendingPathComponent("project/login.html").path
             office.deliver(["type": "teleportDrag", "phase": "start", "app": "login.html", "files": [file], "x": 300, "y": 120, "vw": 1300])
@@ -299,6 +378,17 @@ final class Harness {
         check(await truthy("document.querySelector('#bigBtn svg')"), "the office has its full-screen button at the top right")
         _ = await click("#bigBtn")
         check(await until("the window message", 5) { self.windowAsks.contains { ($0["open"] as? [String: Any])?["tab"] as? String == "browser" } }, "it asks for the window, carrying the open desk and tab")
+        // In the notch, Browser and Screen open the window (which the notch grows into)
+        // instead of a cramped panel there.
+        if let notchState = latest.map({ s -> [String: Any] in var n = s; n["window"] = false; return n }),
+           let data = try? JSONSerialization.data(withJSONObject: notchState), let json = String(data: data, encoding: .utf8) {
+            windowAsks = []
+            await js("window.__office.closePanel?.(); window.hoverReceive(\(json))")
+            await js("window.__office.openDesk(\(sid), 'screen')")
+            check(await until("the notch asks for the window", 5) { self.windowAsks.contains { ($0["open"] as? [String: Any])?["tab"] as? String == "screen" && ($0["open"] as? [String: Any])?["desk"] as? Int == sid } }, "from the notch, a desk's Screen opens in the window, on that desk")
+            check(!(await truthy("document.querySelector('#panel.open .spbox')")), "and not in the notch")
+            if let latest { office.deliver(latest) }
+        }
 
         // The desk's other panels.
         for (tab, has) in [("terminal", "npm run dev"), ("files", "login.html"), ("diff", "signed in"), ("agents", "explore")] {
@@ -349,8 +439,12 @@ final class Harness {
         let mates = both().map { (($0["space"] as? [String: Any])?["with"] as? [Any])?.count ?? 0 }
         check(mates == [1, 1], "each knows it shares the desktop with the other")
         let servers = (try? String(contentsOf: root.appendingPathComponent("agent.log"), encoding: .utf8))?.components(separatedBy: "\n").filter { $0.hasPrefix("mcpServers") } ?? []
-        let tokens = servers.map { line -> String in (line.range(of: #"cua-space"[^\]]*\]"#, options: .regularExpression).map { String(line[$0]) } ?? "") }
-        check(tokens.count == 2 && tokens[0] == tokens[1] && !tokens[0].isEmpty, "both sessions were handed the same desktop server")
+        // The server's entry through its token (in its env, never on its command line).
+        let tokens = servers.map { line -> String in (line.range(of: #"cua-space".*?"value": ?"[^"]+""#, options: .regularExpression).map { String(line[$0]) } ?? "") }
+        check(tokens.count == 2 && tokens[0] != tokens[1] && tokens.allSatisfy { !$0.isEmpty }, "each session was handed a desktop server of its own (its own cursor there)")
+        let calls = cuaLog().components(separatedBy: "\n").filter { $0.hasPrefix("call local:") }
+        check(Set(calls.map { $0.split(separator: " ")[1] }).count == 1, "both agents' computer use went to the one project desktop")
+        check(calls.contains { $0.contains(" end_session ") }, "an agent's driver session ends when its tool lets go of the desktop")
         await js("window.__office.openDesk(\(both().last?["id"] as? Int ?? 0), 'screen')")
         check(await until("the shared badge", 10) { (await self.text("#pBody .spwith")).contains("Shared with") }, "the Screen panel says the desktop is shared: \(await text("#pBody .spwith"))")
         await shot("shared-desktop")

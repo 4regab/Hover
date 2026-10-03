@@ -22,3 +22,11 @@ hover-quota = { path = "../hover-quota" }
 fancy-regex = { workspace = true }
 # In the tree (hover-quota): the quota readers take the time as a DateTime<Utc>.
 chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
+
+# The tools' release notes (Kiro's manifest, npm, Cursor's installer) over HTTPS, as
+# hover-quota reads cursor.com: the same crate and TLS, already in the tree.
+[target.'cfg(not(windows))'.dependencies]
+ureq = "3"
+
+[target.'cfg(windows)'.dependencies]
+ureq = { version = "3", default-features = false, features = ["native-tls", "gzip"] }

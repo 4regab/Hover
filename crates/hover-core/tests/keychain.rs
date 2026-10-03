@@ -9,6 +9,9 @@ use hover_core::platform::{keychain_find, SystemKeyGuard};
 
 #[test]
 fn the_key_round_trips_through_the_login_keychain() {
+    // Only by hand (cargo test -p hover-core --test keychain): a test run never asks the
+    // user's Keychain, which shows a prompt on their screen.
+    if hover_core::platform::macos::keychain_off() { eprintln!("skipped: the Keychain is off in test runs"); return; }
     let guard = SystemKeyGuard;
     let key = [0x5au8; 32];
     let stored = guard.wrap(&key).unwrap();

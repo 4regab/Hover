@@ -6,7 +6,9 @@ assert root.name.startswith('hover-sandbox.') and str(root).startswith('/private
 project = root/'project'; project.mkdir(exist_ok=True)
 # A git repo with one change, for the Files and Diff panels.
 (project/'app.js').write_text('a\n')
-for c in (['init','-q'],['add','.'],['-c','user.email=t@t','-c','user.name=t','commit','-qm','init']): subprocess.run(['/usr/bin/git',*c],cwd=project,check=True,capture_output=True)
+# None of the user's git config (the sandbox can't read it, and it mustn't change the test).
+git_env={**os.environ,'GIT_CONFIG_GLOBAL':'/dev/null','GIT_CONFIG_NOSYSTEM':'1'}
+for c in (['init','-q'],['add','.'],['-c','user.email=t@t','-c','user.name=t','commit','-qm','init']): subprocess.run(['/usr/bin/git',*c],cwd=project,check=True,capture_output=True,env=git_env)
 (project/'app.js').write_text('a\nb\n')
 # A stand-in executable exercises actual process launch, approval, stream, resume
 # and cancellation without credentials, external network, or a real coding agent.
@@ -14,6 +16,9 @@ fake = root/'fake-bin'/'codex-acp'
 fake.write_text('''#!/usr/bin/python3
 import json,sys,subprocess,os
 pending=None
+# The project, as session/new names it: one agent process serves every folder, so its own
+# working folder is not the project's.
+cwd=None
 for line in sys.stdin:
  m=json.loads(line); method=m.get('method'); ident=m.get('id'); p=m.get('params',{})
  if method is None and ident==900 and pending is not None:
@@ -24,7 +29,7 @@ for line in sys.stdin:
   up({'sessionUpdate':'agent_thought_chunk','content':{'type':'text','text':'Plan: run the build, then check it.'}})
   for u in [
    {'toolCallId':'run-1','kind':'execute','title':'npm run dev','rawInput':{'command':'npm run dev'},'status':'completed','rawOutput':{'stdout':'ready on http://localhost:5173/','exit_code':0}},
-   {'toolCallId':'edit-2','kind':'edit','title':'Edit app.js','locations':[{'path':os.getcwd()+'/app.js'}],'status':'completed','content':[{'type':'diff','path':os.getcwd()+'/app.js','oldText':'a\\n','newText':'a\\nb\\n'}]},
+   {'toolCallId':'edit-2','kind':'edit','title':'Edit app.js','locations':[{'path':cwd+'/app.js'}],'status':'completed','content':[{'type':'diff','path':cwd+'/app.js','oldText':'a\\n','newText':'a\\nb\\n'}]},
    {'toolCallId':'agent-1','kind':'other','title':'Task','rawInput':{'subagent_type':'explore','description':'Find the config','prompt':'Look for config files'},'status':'completed','rawOutput':'Found config.json'},
    {'toolCallId':'fetch-1','kind':'fetch','title':'Fetch docs','rawInput':{'url':'https://example.com/docs'},'status':'completed'},
    {'toolCallId':'cua-1','kind':'other','title':'cua-driver: screenshot','rawInput':{},'status':'completed'}]:
@@ -34,6 +39,7 @@ for line in sys.stdin:
   pending=None;continue
  if method=='initialize': result={'protocolVersion':1,'agentCapabilities':{'loadSession':True}}
  elif method=='session/new':
+  cwd=p.get('cwd')
   # With computer use on, every session is handed the stand-in cua-driver over stdio.
   open(os.environ['HOVER_SANDBOX_ROOT']+'/mcp-servers.json','w').write(json.dumps(p.get('mcpServers')))
   result={'sessionId':'fake-session'}
@@ -64,7 +70,9 @@ case "$1" in
 esac
 ''')
 cua.chmod(0o700)
-env = dict(os.environ, PATH=str(root/'fake-bin')+':/usr/bin:/bin', HOVER_DATA_DIR=str(root/'integration-data'))
+(root/'home').mkdir(exist_ok=True)
+# A home of its own: the user's is unreadable here, and the backend starts its tools in it.
+env = dict(os.environ, HOME=str(root/'home'), PATH=str(root/'fake-bin')+':/usr/bin:/bin', HOVER_DATA_DIR=str(root/'integration-data'), GIT_CONFIG_GLOBAL='/dev/null', GIT_CONFIG_NOSYSTEM='1')
 key = base64.b64encode(bytes(range(32))).decode()
 def launch():
  p=subprocess.Popen([str(app/'Contents/Resources/hover-guardian'),str(app/'Contents/Resources/backend/hover-backend')],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,env=env)
@@ -74,6 +82,12 @@ def launch():
    try:q.put(json.loads(line))
    except ValueError:pass
  threading.Thread(target=read,daemon=True).start()
+ # Its log, read as it comes: a full stderr pipe stops the backend mid-write.
+ log=[]
+ def drain():
+  for line in p.stderr: log.append(line.rstrip()); del log[:-40]
+ threading.Thread(target=drain,daemon=True).start()
+ p.log=log
  def send(m):p.stdin.write(json.dumps(m)+'\n');p.stdin.flush()
  def until(predicate):
   end=time.monotonic()+25
@@ -81,10 +95,10 @@ def launch():
    try: m=q.get(timeout=max(.01,end-time.monotonic()))
    except queue.Empty:
     if p.poll() is not None: raise AssertionError('Backend exited: '+p.stderr.read())
-    raise AssertionError('Backend timeout')
+    raise AssertionError('Backend timeout; its log:\n'+'\n'.join(log))
    if m.get('type')=='toast':raise AssertionError(m)
    if predicate(m):return m
-  raise AssertionError('Backend timeout')
+  raise AssertionError('Backend timeout; its log:\n'+'\n'.join(log))
  send({'type':'initialize','key':key});until(lambda m:m.get('type')=='initialized')
  return p,send,until
 p,send,until=launch()

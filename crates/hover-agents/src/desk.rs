@@ -673,22 +673,26 @@ fn clean(p: &Path) -> PathBuf {
 }
 
 /// DeskInfo.Real: the path with every link on it followed (realpath), as far as it exists.
-pub fn real(path: &Path) -> PathBuf {
+pub fn real(path: &Path) -> PathBuf { real_in(path, 0) }
+
+// A link's target is resolved in full too: one to /var/… on a Mac is /private/var/…, and a
+// target whose own folders are links would otherwise be compared as written.
+fn real_in(path: &Path, depth: usize) -> PathBuf {
     let full = clean(&std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf()));
     let mut cur = PathBuf::new();
     for c in full.components() {
         match c {
             Component::Prefix(_) | Component::RootDir => cur.push(c.as_os_str()),
             Component::Normal(part) => {
-                let mut next = cur.join(part);
-                for _ in 0..32 {
-                    let is_link = std::fs::symlink_metadata(&next).is_ok_and(|m| m.file_type().is_symlink());
-                    if !is_link { break; }
-                    let Ok(target) = std::fs::read_link(&next) else { break };
-                    let target = plain_path(target);
-                    next = clean(&if target.is_absolute() { target } else { next.parent().unwrap_or(&cur).join(target) });
-                }
-                cur = next;
+                let next = cur.join(part);
+                let is_link = depth < 32 && std::fs::symlink_metadata(&next).is_ok_and(|m| m.file_type().is_symlink());
+                cur = match std::fs::read_link(&next).ok().filter(|_| is_link) {
+                    Some(target) => {
+                        let target = plain_path(target);
+                        real_in(&if target.is_absolute() { target } else { cur.join(target) }, depth + 1)
+                    }
+                    None => next,
+                };
             }
             _ => {}
         }

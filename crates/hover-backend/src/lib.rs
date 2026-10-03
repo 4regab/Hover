@@ -12,6 +12,7 @@ pub mod panels;
 pub mod prefs;
 pub mod quotas;
 pub mod screen;
+pub mod updates;
 pub mod wire;
 
 use backend::Link;

@@ -64,6 +64,12 @@ pub fn exe() -> Option<PathBuf> {
 
 fn tool(name: &str, fallbacks: &[&str]) -> Option<PathBuf> { on_path(name).or_else(|| fallbacks.iter().map(PathBuf::from).find(|p| p.is_file())) }
 
+/// ripgrep, which srt finds the paths it must keep closed with (Hover's own install
+/// links it into ~/.local/bin).
+pub fn rg() -> Option<PathBuf> {
+    on_path("rg").or_else(|| tool("rg", &["/opt/homebrew/bin/rg", "/usr/local/bin/rg", "/usr/bin/rg"])).or_else(|| Some(proc::home().join(".local/bin/rg")).filter(|p| p.is_file()))
+}
+
 /// What is missing for the sandbox to run, as one line to show; none when nothing (or
 /// when it isn't wanted).
 pub fn missing() -> Option<String> {
@@ -73,7 +79,7 @@ pub fn missing() -> Option<String> {
     if exe().is_none() { need.push(format!("npm install -g {PACKAGE}@{VERSION}")); }
     // srt finds the paths it must keep closed with ripgrep (and on Linux needs bubblewrap
     // and socat for the sandbox itself).
-    if tool("rg", &["/opt/homebrew/bin/rg", "/usr/local/bin/rg", "/usr/bin/rg"]).is_none() { need.push(if mac { "brew install ripgrep" } else { "install ripgrep" }.into()); }
+    if rg().is_none() { need.push(if mac { "brew install ripgrep" } else { "install ripgrep" }.into()); }
     if cfg!(target_os = "linux") && tool("bwrap", &["/usr/bin/bwrap"]).is_none() { need.push("install bubblewrap".into()); }
     if cfg!(target_os = "linux") && tool("socat", &["/usr/bin/socat"]).is_none() { need.push("install socat".into()); }
     missing_line(&need)

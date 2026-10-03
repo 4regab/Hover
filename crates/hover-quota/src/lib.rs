@@ -201,12 +201,7 @@ pub fn parse_codex_line(line: &str, now: DateTime<Utc>) -> Option<Reading> {
             Some(at + chrono::Duration::milliseconds(ms as i64))
         } else { None };
         if reset.is_some_and(|rs| rs <= now) { used = 0.0; }
-        let mins = n(w, "window_minutes").unwrap_or(0.0);
-        let label = if mins >= 10000.0 { "week".to_owned() }
-            else if mins >= 60.0 { format!("{}h", dotnet_double((mins / 60.0).round_ties_even())) }
-            else if mins > 0.0 { format!("{}m", dotnet_double(mins)) }
-            else { fallback.to_owned() };
-        Ok(Some((used.clamp(0.0, 100.0), label)))
+        Ok(Some((used.clamp(0.0, 100.0), window_label(n(w, "window_minutes").unwrap_or(0.0), fallback))))
     };
 
     let windows: Vec<(f64, String)> = [window("primary", "5h").ok()?, window("secondary", "week").ok()?].into_iter().flatten().collect();
@@ -215,6 +210,68 @@ pub fn parse_codex_line(line: &str, now: DateTime<Utc>) -> Option<Reading> {
         + &format!(" · as of {}", format_local(at, "d MMM HH:mm"));
     let top = windows.iter().map(|w| w.0).fold(f64::NEG_INFINITY, f64::max);
     Some(Reading::new(top, detail))
+}
+
+/// A limit's window by its length in minutes: "week", "3d", "5h", "30m", or the fallback.
+fn window_label(mins: f64, fallback: &str) -> String {
+    if mins >= 10000.0 { "week".to_owned() }
+    else if mins >= 1440.0 { format!("{}d", dotnet_double((mins / 1440.0).round_ties_even())) }
+    else if mins >= 60.0 { format!("{}h", dotnet_double((mins / 60.0).round_ties_even())) }
+    else if mins > 0.0 { format!("{}m", dotnet_double(mins)) }
+    else { fallback.to_owned() }
+}
+
+/// Codex's sign-in in auth.json: {"tokens": {"access_token", "account_id"}}. None for an
+/// API key, or an access token that has expired (only Codex itself may renew it, which
+/// rotates its tokens).
+pub fn codex_sign_in(text: &str, utc_now: DateTime<Utc>) -> Option<(String, Option<String>)> {
+    let root = parse(text)?;
+    let t = root.get("tokens").filter(|t| is_obj(t))?;
+    let s = |name: &str| t.get(name).and_then(Json::as_str).filter(|v| !v.is_empty()).map(str::to_owned);
+    let token = s("access_token")?;
+    let parts: Vec<&str> = token.split('.').collect();
+    if parts.len() == 3 {
+        // A JWT: its exp, a minute's grace.
+        let body = parts[1].replace('-', "+").replace('_', "/");
+        let pad = "=".repeat((4 - body.len() % 4) % 4);
+        let claims = base64(&(body + &pad)).and_then(|b| parse(&String::from_utf8_lossy(&b)))?;
+        if let Some(exp) = n(&claims, "exp") {
+            if from_unix_secs(exp).is_none_or(|e| e <= utc_now + chrono::Duration::seconds(60)) { return None; }
+        }
+    }
+    Some((token, s("account_id")))
+}
+
+/// Codex's limits as its own /status shows them (chatgpt.com/backend-api/wham/usage):
+/// rate_limit.primary_window and secondary_window, each a used_percent, a length in
+/// seconds and a reset_at (epoch seconds). The window closer to its limit leads; a limit
+/// reached reads full.
+pub fn parse_codex_usage(text: &str, now: DateTime<Utc>) -> Reading {
+    let Some(root) = parse(text) else { return Reading::fail("Codex’s answer couldn’t be read.") };
+    let Some(limits) = root.get("rate_limit").filter(|l| is_obj(l)) else { return Reading::fail("Codex didn’t report its limits.") };
+    let window = |name: &str, fallback: &str| -> Option<(f64, String, Option<DateTime<Utc>>)> {
+        let w = limits.get(name).filter(|w| is_obj(w))?;
+        let mut used = n(w, "used_percent")?;
+        let reset = match (n(w, "reset_at"), n(w, "reset_after_seconds")) {
+            (Some(epoch), _) => from_unix_secs(epoch),
+            (None, Some(secs)) if secs.is_finite() && secs.abs() < 3.2e11 => Some(now + chrono::Duration::milliseconds((secs * 1000.0) as i64)),
+            _ => None,
+        };
+        if reset.is_some_and(|rs| rs <= now) { used = 0.0; }
+        Some((used.clamp(0.0, 100.0), window_label(n(w, "limit_window_seconds").unwrap_or(0.0) / 60.0, fallback), reset))
+    };
+    let windows: Vec<_> = [window("primary_window", "5h"), window("secondary_window", "week")].into_iter().flatten().collect();
+    if windows.is_empty() { return Reading::fail("Codex didn’t report its limits."); }
+    // MaxBy: the first of equals.
+    let top = windows.iter().fold(None::<&(f64, String, Option<DateTime<Utc>>)>, |b, w| match b { Some(b) if b.0 >= w.0 => Some(b), _ => Some(w) }).unwrap();
+    let plan = root.get("plan_type").and_then(Json::as_str).filter(|p| !p.is_empty()).map(|p| capital(p) + " · ").unwrap_or_default();
+    let reached = matches!(limits.get("limit_reached"), Some(Json::Bool(true)));
+    let reset_text = top.2.map(|when| {
+        let shown = if local_date(when) == local_date(now) { format_local(when, "HH:mm") } else { format_local(when, "d MMM HH:mm") };
+        format!(" · resets {shown}")
+    }).unwrap_or_default();
+    let list = windows.iter().map(|(u, l, _)| format!("{l} {}%", custom(*u, 0))).collect::<Vec<_>>().join(" · ");
+    Reading::new(if reached { 100.0 } else { top.0 }, plan + &list + &reset_text)
 }
 
 // MARK: Cursor

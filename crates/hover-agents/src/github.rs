@@ -1,12 +1,12 @@
 //! Services/GitHubCli.cs, for Windows, Linux and macOS: the GitHub CLI (gh), which the
 //! desk's pull request panels read through and Create pull request (desk.rs) runs. Is it
-//! installed, is it signed in and as whom, a one-click install where the system has a
-//! package manager Hover may use without asking for a password (winget on Windows,
-//! Homebrew on a Mac), and gh's own device-code sign-in: `gh auth login --web` prints a
+//! installed, is it signed in and as whom, a one-click install where Hover may install
+//! it without asking for a password (winget on Windows; Homebrew on a Mac, else gh's own
+//! release, pinned to its checksum, into ~/.local), and gh's own device-code sign-in: `gh auth login --web` prints a
 //! one-time code, the user enters it at github.com/login/device, and git is then set to
 //! use gh for GitHub (`gh auth setup-git`) so a push from Hover works.
 //!
-//! Where there is no such package manager (Linux, a Mac without Homebrew) Hover does
+//! Where there is no such way (Linux) Hover does
 //! not install anything: it says what to run (`install_hint`), and never uses sudo.
 //! gh keeps its sign-in in the system's keychain; the agents never read it.
 //!
@@ -298,6 +298,9 @@ pub enum InstallPlan {
     Winget(PathBuf),
     /// macOS: `brew install gh`.
     Homebrew(PathBuf),
+    /// macOS without Homebrew: gh's own release, checked against its pinned sum, into
+    /// ~/.local (setup::release_script).
+    Release(crate::setup::Release),
     /// Hover doesn't install it here; this is what to tell the user.
     Manual(String),
 }
@@ -479,7 +482,7 @@ impl GitHubCli {
             let brew = on_path("brew").or_else(|| ["/opt/homebrew/bin/brew", "/usr/local/bin/brew"].iter().map(PathBuf::from).find(|p| p.is_file()));
             return match brew {
                 Some(b) => InstallPlan::Homebrew(b),
-                None => InstallPlan::Manual(format!("Install the GitHub CLI with Homebrew (brew install gh) or from {}.", INSTALL_URL.trim_start_matches("https://"))),
+                None => InstallPlan::Release(crate::setup::GH),
             };
         }
         let line = std::fs::read_to_string("/etc/os-release").map(|t| linux_install_line(&t)).unwrap_or_default();
@@ -496,10 +499,12 @@ impl GitHubCli {
     }
 
     fn install(&self, cancel: &Cancel) -> Done<()> {
+        let script;
         let (exe, args): (PathBuf, Vec<&str>) = match self.install_plan() {
             InstallPlan::Manual(hint) => return Err(Stop::Failed(hint)),
             InstallPlan::Winget(w) => (w, vec!["install", "--id", "GitHub.cli", "-e", "--silent", "--accept-package-agreements", "--accept-source-agreements"]),
             InstallPlan::Homebrew(b) => (b, vec!["install", "gh"]),
+            InstallPlan::Release(r) => { script = crate::setup::release_script(&r); (PathBuf::from("/bin/bash"), vec!["-c", &script]) }
         };
         let mut env = self.env.clone();
         env.push(("HOMEBREW_NO_AUTO_UPDATE".into(), "1".into()));

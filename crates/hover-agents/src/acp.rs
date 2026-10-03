@@ -206,12 +206,13 @@ impl Host {
         }
         // The agent's cua-driver can't start CuaDriver's daemon from inside the sandbox
         // (no Launch Services there), so Hover does, outside it.
-        if sandbox::wanted() && crate::agents::toggles().computer_use { computer_use::ensure_daemon(); }
+        // With desktops on the agents act there instead, so the host's daemon isn't needed.
+        if sandbox::wanted() && crate::agents::toggles().computer_use && !crate::spaces::wanted() { computer_use::ensure_daemon(); }
         let o = (self.options)().with_access(access);
         let mut servers = (self.mcp.lock().unwrap().clone())(tag);
         // The project's desktop, for a session's run (not the routing turn that has none):
-        // every agent in that folder is given the same one.
-        if tag.is_some() { servers.extend(crate::spaces::servers(folder)); }
+        // every agent in that folder shares it, each with a cursor of its own.
+        if let Some(t) = tag { servers.extend(crate::spaces::servers(Some(folder), t)); }
         let mcp = (computer_use::acp(&servers), computer_use::signature(&servers));
 
         // A session's MCP servers are fixed when it is made or loaded. A reply to one made

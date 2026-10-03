@@ -17,6 +17,10 @@ pub mod shortcut;
 pub mod single;
 pub mod time;
 
+/// A test run (scripts/test-macos.sh sets HOVER_SANDBOX_ROOT): nothing of the user's is
+/// asked or started then, so no Keychain prompt and no app opens on their screen.
+pub fn in_test_sandbox() -> bool { std::env::var_os("HOVER_SANDBOX_ROOT").is_some_and(|v| !v.is_empty()) }
+
 /// Guid.NewGuid().ToString("N"): a version-4 GUID as 32 lower-case hex digits.
 pub fn guid_n() -> String {
     let mut b = [0u8; 16];

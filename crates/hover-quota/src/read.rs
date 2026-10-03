@@ -64,7 +64,38 @@ pub fn kiro_with(exe: &Path, args: &[&str], limit: Duration) -> Reading {
 /// CODEX_HOME, else ~/.codex (the same on Windows, Linux and macOS).
 pub fn codex_home() -> PathBuf { env_dir("CODEX_HOME").unwrap_or_else(|| home().join(".codex")) }
 
-pub fn codex(now: DateTime<Utc>) -> Reading { codex_in(&codex_home(), now) }
+pub const CODEX_URL: &str = "https://chatgpt.com/backend-api/wham/usage";
+
+/// Codex's limits as its own /status shows them, asked of chatgpt.com with the sign-in
+/// Codex keeps in auth.json (read-only, never refreshed). The logs only hold what Codex
+/// last saw: a limit reset early, or used from another machine or the web, stayed wrong
+/// there until Codex ran again. They are the fallback when the live answer can't be had
+/// (an API key, an expired sign-in, offline).
+pub fn codex(now: DateTime<Utc>) -> Reading {
+    let home = codex_home();
+    match codex_live(&home.join("auth.json"), CODEX_URL, now) {
+        Some(r) if r.ok() => r,
+        live => {
+            let logged = codex_in(&home, now);
+            if logged.ok() { logged } else { live.unwrap_or(logged) }
+        }
+    }
+}
+
+/// The live read; None when there is nothing to ask with or no answer worth showing (the
+/// logs are read then), a failure only for a sign-in chatgpt.com refused.
+pub fn codex_live(auth: &Path, url: &str, now: DateTime<Utc>) -> Option<Reading> {
+    let text = std::fs::read(auth).ok()?;
+    let (token, account) = codex_sign_in(&hover_core::json::text_of(&text), now)?;
+    let bearer = format!("Bearer {token}");
+    let mut headers = vec![("Authorization", bearer.as_str()), ("Accept", "application/json"), ("User-Agent", "Hover")];
+    if let Some(a) = account.as_deref() { headers.push(("ChatGPT-Account-Id", a)); }
+    match get(url, &headers) {
+        Ok((401 | 403, _)) => Some(Reading::fail("Codex’s sign-in has expired — run codex to renew it.")),
+        Ok((s, body)) if (200..300).contains(&s) => Some(parse_codex_usage(&body, now)).filter(Reading::ok),
+        _ => None,
+    }
+}
 
 /// Quota.LastEvent: when a Codex session log last had an event, the "timestamp" that
 /// starts its last line, read from the file's last 8 KB. None when it can't be read.
@@ -113,19 +144,47 @@ pub fn codex_in(home: &Path, now: DateTime<Utc>) -> Reading {
     // OrderByDescending is stable: equal times keep the walk's order.
     files.sort_by(|a, b| b.0.cmp(&a.0));
     for (_, f) in files.into_iter().take(8) {
-        // Codex may be writing to it right now; a plain read shares it on both systems.
-        let bytes = match std::fs::read(&f) { Ok(b) => b, Err(e) => return Reading::fail(format!("Couldn’t read Codex’s logs: {e}")) };
-        let text = hover_core::json::text_of(&bytes);
-        let mut last = None;
-        // StreamReader.ReadLine: \n, \r and \r\n all end a line.
-        for line in text.split('\n').flat_map(|l| l.split('\r')) {
-            if line.contains("\"rate_limits\"") {
-                if let Some(q) = parse_codex_line(line, now) { last = Some(q); }
-            }
+        match last_limits(&f, now) {
+            Ok(Some(q)) => return q,
+            Ok(None) => {}
+            Err(e) => return Reading::fail(format!("Couldn’t read Codex’s logs: {e}")),
         }
-        if let Some(q) = last { return q; }
     }
     Reading::fail("Codex hasn’t recorded any limits yet — use it once.")
+}
+
+/// The newest limits in a session log, read from its end a block at a time: the line
+/// wanted is nearly always among the last few, and a long session's log runs to hundreds
+/// of MB (reading all of it took seconds and as much memory). Codex may be writing to it
+/// right now; a plain read shares it on every system.
+fn last_limits(path: &Path, now: DateTime<Utc>) -> std::io::Result<Option<Reading>> {
+    use std::io::{Seek, SeekFrom};
+    const BLOCK: u64 = 256 << 10;
+    let mut f = std::fs::File::open(path)?;
+    let mut end = f.metadata()?.len();
+    // The start of a line cut by the block below it, carried up to the next read.
+    let mut carry: Vec<u8> = Vec::new();
+    let mut block = Vec::with_capacity(BLOCK as usize);
+    while end > 0 {
+        let start = end.saturating_sub(BLOCK);
+        block.clear();
+        block.resize((end - start) as usize, 0);
+        f.seek(SeekFrom::Start(start))?;
+        f.read_exact(&mut block)?;
+        block.extend_from_slice(&carry);
+        // Every whole line in it, newest first (\n, \r and \r\n all end one); the first
+        // piece is whole only at the file's start.
+        let mut pieces: Vec<&[u8]> = block.split(|b| *b == b'\n' || *b == b'\r').collect();
+        let first = if start > 0 { pieces.remove(0).to_vec() } else { Vec::new() };
+        for line in pieces.iter().rev() {
+            if line.windows(13).any(|w| w == b"\"rate_limits\"") {
+                if let Some(q) = parse_codex_line(&String::from_utf8_lossy(line), now) { return Ok(Some(q)); }
+            }
+        }
+        carry = first;
+        end = start;
+    }
+    Ok(None)
 }
 
 // MARK: HTTP

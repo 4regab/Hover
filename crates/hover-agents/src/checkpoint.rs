@@ -7,7 +7,7 @@
 //! Nothing here runs a shell: git gets an argument list, and a tree id is checked to be
 //! hex before it goes to one.
 
-use crate::proc::{hidden, home, on_path};
+use crate::proc::{hidden, home};
 use std::collections::HashSet;
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -34,8 +34,9 @@ const TOO_LONG: &str = "git took too long";
 struct Ran { ok: bool, out: String, err: String }
 
 impl Checkpoints {
-    /// The stores go under `dir`. None when git isn't installed.
-    pub fn new(dir: PathBuf) -> Option<Checkpoints> { on_path("git").map(|git| Checkpoints { dir, git, lock: Mutex::new(()), slow: Mutex::new(HashSet::new()) }) }
+    /// The stores go under `dir`. None when git isn't installed (a Mac's /usr/bin/git
+    /// stub without the Command Line Tools would open Apple's install dialog every turn).
+    pub fn new(dir: PathBuf) -> Option<Checkpoints> { crate::desk::find_git().map(|git| Checkpoints { dir, git, lock: Mutex::new(()), slow: Mutex::new(HashSet::new()) }) }
 
     /// The folder as it is now, kept: its tree id. None, with the reason in the log, when
     /// it can't be (no such folder, one too broad to keep, git failing or too slow).

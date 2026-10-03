@@ -42,6 +42,9 @@ xcrun swiftc "${SWIFT_FLAGS[@]}" -O -target "$ARCH-apple-macos14.0" -framework A
 xcrun clang -O2 -arch "$ARCH" -mmacosx-version-min=14.0 "$ROOT/macos/Sources/guardian.c" -o "$RES/hover-guardian"
 cp "$ROOT/web/office/dist/kiro-office.html" "$RES/office/"
 cp "$ROOT/macos/Resources/office-beats.m4a" "$RES/office/"
+# The office's pixel font, for the native voice card (SIL OFL; its licence goes with it).
+cp "$ROOT/web/office/fonts/PixelifySans.ttf" "$RES/"
+cp "$ROOT/web/office/fonts/OFL.txt" "$RES/PixelifySans-OFL.txt"
 cp "$ROOT/LICENSE" "$ROOT/THIRD-PARTY-NOTICES.txt" "$RES/"
 ICONSET="$STAGE/Hover.iconset"; mkdir -p "$ICONSET"
 for SIZE in 16 32 128 256 512; do
@@ -59,6 +62,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 <key>CFBundleShortVersionString</key><string>$VERSION</string><key>CFBundleVersion</key><string>$BUILD</string>
 <key>LSMinimumSystemVersion</key><string>14.0</string><key>LSUIElement</key><true/>
 <key>NSHighResolutionCapable</key><true/>
+<key>NSAppleEventsUsageDescription</key><string>When you send a browser (Safari, Chrome, …) to an agent’s desktop, Hover reads its open tabs so you can pick which go, and closes the ones that went.</string>
 <key>NSMicrophoneUsageDescription</key><string>Hover listens while you hold Control-Option-Space, so you can say a task for an agent.</string>
 <key>NSSpeechRecognitionUsageDescription</key><string>Hover turns what you say into a task's words on this Mac.</string>
 <key>NSAppTransportSecurity</key><dict><key>NSAllowsLocalNetworking</key><true/></dict>

@@ -364,16 +364,37 @@ export function spaceHTML(bot, sp, v, actions, big, demo, mates = []) {
     : phase === 'failed' ? `<div class="spmsg">${ICONS.screen}<b>The ${esc(sp.project || '')} desktop didn’t start</b><span>${esc(v.error || sp.error || 'Cua Spaces didn’t answer.')}</span><button class="pbtn" data-spretry>Try again</button></div>`
     : phase === 'stopped' ? `<div class="spmsg">${ICONS.screen}<b>The desktop is off</b><span>It turns back on with the project’s next task, or now.</span><button class="pbtn" data-spretry>Turn it on</button></div>`
     : `<div class="spmsg">${ICONS.screen}<b>${phase === 'opening' ? 'Opening the viewer…' : `Getting the ${esc(sp.project || 'project’s')} desktop ready…`}</b><span>${esc(sp.line || 'One desktop for the project’s agents, so they never use yours.')}</span>${pct != null ? `<i class="spbar"><i style="width:${pct}%"></i></i>` : '<i class="spin"></i>'}</div>`;
-  const hint = `<p class="sphint">${ICONS.pointer}Click into it to take over · drag an app window or files onto the notch to send them here</p>`;
+  const hint = `<p class="sphint">${ICONS.pointer}Click into it to take over · right-click an app’s title bar for <b>Send to Hover VM</b> · drag files onto the notch to send them here</p>`;
   const rows = actions.slice(0, 40).map((x, i) => `<div class="vmrow${x.status === 'failed' ? ' bad' : ''}${x.status === 'in_progress' ? ' run' : ''}"><time>${esc(new Date(x.t).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit', second: '2-digit' }))}</time><i></i>${x.who ? `<u>${esc(x.who)}</u>` : ''}<b>${esc(x.verb)}</b>${x.cmd ? `<span>${esc(x.cmd)}</span>` : ''}${i === 0 && x.status === 'in_progress' ? '<em>now</em>' : ''}</div>`).join('');
   return `<div class="vm sp${phase === 'live' ? ' live' : ''}">${bar}<div class="vmscreen spbox">${inside}</div>${phase === 'live' ? hint : ''}<div class="vmtl"><h4 class="sh">Activity <span>${actions.length}</span></h4>${rows || `<p class="none">What ${esc(bot)} does on its desktop shows here as it happens.</p>`}</div></div>`;
+}
+
+/// Before a teleport: what Cua would move from this Mac, each item a box to tick. Secrets
+/// (cookies, sign-in tokens, keys) start unticked and say so; nothing goes until Teleport.
+/// A browser's open tabs are listed one by one: the ones picked open together in one
+/// window there, and close here once they have.
+export function reviewHTML(m, where) {
+  const p = m.plan || {}, items = p.items || [], tabs = p.tabs || [];
+  const host = u => { try { return new URL(u).host; } catch { return u; } };
+  const row = (it, i) => `<li><label class="${it.sensitive ? 'sens' : ''}"><input type="checkbox" data-i="${i}"${it.on ? ' checked' : ''}>${esc(it.label)}${it.count != null ? ` <span>(${it.count} ${esc(it.noun || '')})</span>` : ''}<em>${it.sensitive ? 'sign-in data' : ''}</em></label></li>`;
+  const tab = (t, i) => `<li><label class="tab" title="${esc(t.url)}"><input type="checkbox" data-t="${i}"${t.on !== false ? ' checked' : ''}><span class="tt">${esc(t.title || host(t.url))}</span><em>${esc(host(t.url))}</em></label></li>`;
+  const name = esc(p.name || m.app);
+  const lead = tabs.length && !items.length
+    ? `Pick the tabs to move. They open together in one ${name} window there, and close here once they have.`
+    : `Cua installs ${name} there and brings what you tick from this Mac. Anyone using that desktop, agents included, can use what arrives.`;
+  return `<b id="tprTitle">${tabs.length && !items.length ? 'Move tabs' : 'Teleport'} from ${esc(m.app)} to ${esc(where)}?</b>
+<span>${lead}</span>
+${tabs.length ? `<div class="tprhead"><span>Open tabs <i id="tprCount">${tabs.length} of ${tabs.length}</i></span><button id="tprAll" type="button">None</button></div><ul class="tprtabs">${tabs.map(tab).join('')}</ul>` : ''}
+${items.length ? `${tabs.length ? '<div class="tprhead"><span>From its profile</span></div>' : ''}<ul>${items.map(row).join('')}</ul>` : ''}
+${(p.notes || []).map(n => `<span class="tprnote">${esc(n)}</span>`).join('')}
+<div class="tprbtns"><button id="tprNo">Cancel</button><button id="tprApp" title="Copy only the app in, with none of your data">Just the app</button><button id="tprGo">${tabs.length && !items.length ? 'Move tabs' : 'Teleport'}</button></div>`;
 }
 
 /// The notch while an app or files are dragged onto it: each project's desktop as a
 /// drop target, with the agents that share it.
 export function dropHTML(d, desks, on) {
   const what = d.files.length ? (d.files.length === 1 ? d.app : `${d.files.length} items`) : d.app;
-  const head = `<div class="tdh">${ICONS.screen}<div><b>Send ${esc(what)} to a project’s desktop</b><span>${on ? (d.files.length ? 'Drop on a desktop: the files land in its Downloads, for every agent working there.' : 'Drop on a desktop: Hover copies the app there and opens it. Only the app goes, none of your data.') : 'Agent desktops are off. Turn them on in Settings → Computer Use.'}</span></div></div>`;
+  const head = `<div class="tdh">${ICONS.screen}<div><b>Send ${esc(what)} to a project’s desktop</b><span>${on ? (d.files.length ? 'Let go over a desktop: the files and folders land in its Downloads, for every agent working there.' : 'Let go over a desktop: the app opens there. Chrome, Slack and other apps Cua supports bring their open tabs or session; you see what goes first.') : 'Agent desktops are off. Turn them on in Settings → Computer Use.'}</span></div></div>`;
   if (!desks.length) return head + '<p class="tdnone">No agents yet. Start a task, and its project gets a desktop its agents share.</p>';
   return head + `<div class="tdt">${desks.map(k => `<div class="tdtile" data-tdrop="${k.id}" style="--c:${k.agents[0]?.css || '#9b6bff'}"><span class="tdmon">${k.agents.length ? k.agents.map(a => `<i>${a.badge}</i>`).join('') : ICONS.screen}</span><b>${esc(k.project)}</b><span>${esc(k.agents.length ? k.agents.map(a => a.name).join(', ') : 'No agent at work yet')}</span><em>${esc({ ready: 'Desktop ready', creating: 'Making its desktop', starting: 'Starting', stopped: 'Off: starts on drop', failed: 'Didn’t start', none: 'Made on drop' }[k.space?.phase || 'none'] || '')}</em></div>`).join('')}</div>`;
 }

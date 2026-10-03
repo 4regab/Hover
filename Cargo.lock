@@ -2062,6 +2062,7 @@ dependencies = [
  "hover-agents",
  "hover-core",
  "hover-quota",
+ "ureq",
 ]
 
 [[package]]

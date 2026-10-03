@@ -238,7 +238,9 @@ impl Agent {
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     if args.iter().any(|a| a == "--version") { println!("fake-agent 1.0.0"); return; }
-    if args.iter().any(|a| matches!(a.as_str(), "whoami" | "status" | "login")) { println!("Logged in as fake@example.com"); return; }
+    // As cua-driver: its daemon's state and the grants it reports through it.
+    if args.first().map(String::as_str) == Some("permissions") { println!(r#"{{"accessibility":true,"screen_recording":true}}"#); return; }
+    if args.iter().any(|a| matches!(a.as_str(), "whoami" | "status" | "login")) { println!("Logged in as fake@example.com\nThe daemon is running."); return; }
     // The Kiro quota's read (kiro-cli chat --no-interactive /usage): the bar kiro-cli
     // prints, after FAKEACP_USAGE_MS (default 0) as the real one takes seconds.
     if args.iter().any(|a| a == "/usage") {

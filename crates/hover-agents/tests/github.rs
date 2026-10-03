@@ -64,6 +64,7 @@ fn the_places_gh_is_looked_for_fit_the_system() {
         InstallPlan::Manual(hint) => { assert!(hint.contains("cli.github.com"), "{hint}"); assert!(!cli.can_install()); assert_eq!(cli.install_hint(), Some(hint)); }
         InstallPlan::Winget(_) => assert!(cfg!(windows) && cli.can_install() && cli.install_hint().is_none()),
         InstallPlan::Homebrew(_) => assert!(cfg!(target_os = "macos") && cli.can_install()),
+        InstallPlan::Release(r) => assert!(cfg!(target_os = "macos") && cli.can_install() && r == hover_agents::setup::GH, "a Mac without Homebrew gets gh's own release"),
     }
     if cfg!(target_os = "linux") { assert!(matches!(cli.install_plan(), InstallPlan::Manual(_)), "Hover never installs with sudo"); }
 }

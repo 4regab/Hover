@@ -32,12 +32,14 @@ pub fn note() -> Option<&'static str> { (!supported()).then_some(UNSUPPORTED) }
 #[derive(Clone, Debug, PartialEq, Default)]
 pub struct Progress { pub step: Option<String>, pub line: String, pub error: Option<String> }
 
-/// One install step: what it is called and the bash command that does it.
+/// One install step: what it is called and the bash command that does it. A sandbox step
+/// (`sandbox`) that fails leaves the tool itself installed and usable, outside it.
 #[derive(Clone, Debug, PartialEq)]
-pub struct Step { pub title: String, pub command: String }
+pub struct Step { pub title: String, pub command: String, pub sandbox: bool }
 
 impl Step {
-    fn new(title: &str, command: &str) -> Step { Step { title: title.into(), command: command.into() } }
+    fn new(title: &str, command: &str) -> Step { Step { title: title.into(), command: command.into(), sandbox: false } }
+    fn for_sandbox(mut self) -> Step { self.sandbox = true; self }
 }
 
 /// How a step ended, short of succeeding.
@@ -55,14 +57,80 @@ pub fn npm(packages: &[&str]) -> String { format!("npm install --global --no-fun
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SandboxNeeds { pub srt_missing: bool, pub rg_missing: bool }
 
+impl SandboxNeeds {
+    pub fn any(&self) -> bool { self.srt_missing || self.rg_missing }
+}
+
+/// A release archive pinned to its SHA-256, for each of a Mac's chips: a fresh Mac has
+/// neither Homebrew nor Node, and one click must still get there, with no sudo.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Release { pub name: &'static str, pub arm64: (&'static str, &'static str), pub x64: (&'static str, &'static str), pub bins: &'static [&'static str] }
+
+/// Node.js (the LTS line), from nodejs.org: npm for Codex's adapter and the sandbox.
+pub const NODE: Release = Release {
+    name: "node",
+    arm64: ("https://nodejs.org/dist/v24.21.0/node-v24.21.0-darwin-arm64.tar.gz", "bed7eea5325e1108f32ce5228ddd6a5f0f08a499ee42aa7442aea583702f6057"),
+    x64: ("https://nodejs.org/dist/v24.21.0/node-v24.21.0-darwin-x64.tar.gz", "1462cb3b3046b815cf8ea436d3da450ec1a9f11dac7e5a46b0ada5305d7e8097"),
+    bins: &["bin/node", "bin/npm", "bin/npx"],
+};
+/// ripgrep, which srt needs on a Mac, from its own releases.
+pub const RIPGREP: Release = Release {
+    name: "ripgrep",
+    arm64: ("https://github.com/BurntSushi/ripgrep/releases/download/15.2.0/ripgrep-15.2.0-aarch64-apple-darwin.tar.gz", "3750b2e93f37e0c692657da574d7019a101c0084da05a790c83fd335bad973e4"),
+    x64: ("https://github.com/BurntSushi/ripgrep/releases/download/15.2.0/ripgrep-15.2.0-x86_64-apple-darwin.tar.gz", "af7825fcc69a2afc7a7aea55fc9af90e26421d8f20fe59df32e233c0b8a231c1"),
+    bins: &["rg"],
+};
+/// The GitHub CLI, from its own releases (github.rs, where there is no Homebrew).
+pub const GH: Release = Release {
+    name: "gh",
+    arm64: ("https://github.com/cli/cli/releases/download/v2.102.0/gh_2.102.0_macOS_arm64.zip", "da922c20d1792e5b2cbf375593d7a658acf034c12c84e007e71c76ef959c337e"),
+    x64: ("https://github.com/cli/cli/releases/download/v2.102.0/gh_2.102.0_macOS_amd64.zip", "b245f24eb2bf5f75b426b4c26da3651a107f8d5b6f4fddfbfccc5679041378b3"),
+    bins: &["bin/gh"],
+};
+
+/// The bash that installs a release for the user alone: the archive for this Mac's chip,
+/// checked against its pinned SHA-256 before anything is unpacked, into
+/// ~/.local/lib/hover/<name>, its programs linked into ~/.local/bin (on Hover's PATH).
+pub fn release_script(r: &Release) -> String {
+    let link = r.bins.iter().map(|b| format!("ln -sf \"$top/{b}\" \"$HOME/.local/bin/{}\"", b.rsplit('/').next().unwrap_or(b))).collect::<Vec<_>>().join("; ");
+    format!(concat!(
+        "set -euo pipefail; ",
+        "case \"$(uname -m)\" in arm64) u='{}'; s='{}';; x86_64) u='{}'; s='{}';; *) echo 'This Mac’s chip isn’t supported.' >&2; exit 1;; esac; ",
+        "t=\"$(mktemp -d)\"; trap 'rm -rf \"$t\"' EXIT; ",
+        "curl -fL --retry 3 --proto '=https' -o \"$t/a\" \"$u\"; ",
+        "echo \"$s  $t/a\" | shasum -a 256 -c - >/dev/null || {{ echo 'The download didn’t match its checksum, so nothing was installed.' >&2; exit 1; }}; ",
+        "d=\"$HOME/.local/lib/hover/{}\"; rm -rf \"$d\"; mkdir -p \"$d\" \"$HOME/.local/bin\"; ",
+        "case \"$u\" in *.zip) ditto -x -k \"$t/a\" \"$d\";; *) tar -xzf \"$t/a\" -C \"$d\";; esac; ",
+        "top=\"$(find \"$d\" -mindepth 1 -maxdepth 1 -type d | head -n 1)\"; {}"),
+        r.arm64.0, r.arm64.1, r.x64.0, r.x64.1, r.name, link)
+}
+
+/// Node from Homebrew where the user has it, else nodejs.org's own build.
+fn node_step(has: &dyn Fn(&str) -> bool) -> Step {
+    if has("brew") { Step::new("Installing Node.js", "brew install node") } else { Step::new("Installing Node.js", &release_script(&NODE)) }
+}
+
 /// What a tool still needs, in order; empty when everything is there.
 pub fn plan(t: AgentTool) -> Vec<Step> {
-    let has = |n: &str| on_path(n).is_some();
-    let sandbox = crate::sandbox::wanted().then(|| SandboxNeeds {
+    // The tool itself where Hover looks for it (agents::exe also knows its installers'
+    // own folders), so a tool already there is never installed again.
+    let has = |n: &str| on_path(n).is_some() || match n {
+        "kiro-cli" => agents::exe(AgentTool::Kiro).is_some(),
+        "codex-acp" => agents::exe(AgentTool::Codex).is_some(),
+        "cursor-agent" => agents::exe(AgentTool::Cursor).is_some(),
+        "opencode" => agents::exe(AgentTool::OpenCode).is_some(),
+        "claude" => agents::exe(AgentTool::Claude).is_some(),
+        _ => false,
+    };
+    plan_with(t, &has, sandbox_needs())
+}
+
+/// What the sandbox still needs, when it is wanted.
+pub fn sandbox_needs() -> Option<SandboxNeeds> {
+    crate::sandbox::wanted().then(|| SandboxNeeds {
         srt_missing: crate::sandbox::exe().is_none(),
-        rg_missing: !has("rg") && !Path::new("/opt/homebrew/bin/rg").is_file() && !Path::new("/usr/local/bin/rg").is_file(),
-    });
-    plan_with(t, &has, sandbox)
+        rg_missing: crate::sandbox::rg().is_none(),
+    })
 }
 
 /// plan, with what is on PATH (`has`) and the sandbox's needs given.
@@ -80,21 +148,27 @@ pub fn plan_with(t: AgentTool, has: &dyn Fn(&str) -> bool, sandbox: Option<Sandb
         // Not in 2.x's macOS build.
         AgentTool::Claude => if !has("claude") { steps.push(Step::new("Installing Claude Code", "curl -fsSL https://claude.ai/install.sh | bash")); },
     }
-    let node = Step::new("Installing Node.js", "brew install node");
     if !packages.is_empty() {
-        // The adapters are Node programs; Homebrew's Node when there is no Node yet.
-        if !has("npm") && has("brew") { steps.push(node.clone()); }
+        // The adapters are Node programs.
+        if !has("npm") { steps.push(node_step(has)); }
         let title = if packages.len() > 1 { "Installing Codex and its ACP adapter" } else { "Installing Codex's ACP adapter" };
-        steps.push(Step { title: title.into(), command: npm(&packages) });
+        steps.push(Step::new(title, &npm(&packages)));
     }
-    // Every tool runs in the sandbox (sandbox.rs): srt, a Node program at the version
-    // Hover was checked against, and ripgrep, which srt needs on a Mac.
-    if let Some(need) = sandbox {
-        if need.srt_missing {
-            if !has("npm") && has("brew") && !steps.contains(&node) { steps.push(node.clone()); }
-            steps.push(Step { title: "Installing the agent sandbox (srt)".into(), command: npm(&[&format!("{}@{}", crate::sandbox::PACKAGE, crate::sandbox::VERSION)]) });
-        }
-        if need.rg_missing && has("brew") { steps.push(Step::new("Installing ripgrep for the sandbox", "brew install ripgrep")); }
+    if let Some(need) = sandbox { steps.extend(sandbox_steps(has, need, &steps)); }
+    steps
+}
+
+/// Every tool runs in the sandbox (sandbox.rs): srt, a Node program at the version Hover
+/// was checked against, and ripgrep, which srt needs on a Mac. `before` are the steps
+/// that run first (Node is installed once).
+pub fn sandbox_steps(has: &dyn Fn(&str) -> bool, need: SandboxNeeds, before: &[Step]) -> Vec<Step> {
+    let mut steps: Vec<Step> = vec![];
+    if need.srt_missing {
+        if !has("npm") && !before.iter().any(|s| s.title == "Installing Node.js") { steps.push(node_step(has).for_sandbox()); }
+        steps.push(Step::new("Installing the agent sandbox (srt)", &npm(&[&format!("{}@{}", crate::sandbox::PACKAGE, crate::sandbox::VERSION)])).for_sandbox());
+    }
+    if need.rg_missing {
+        steps.push(if has("brew") { Step::new("Installing ripgrep for the sandbox", "brew install ripgrep") } else { Step::new("Installing ripgrep for the sandbox", &release_script(&RIPGREP)) }.for_sandbox());
     }
     steps
 }
@@ -234,29 +308,98 @@ fn progress(step: &str, line: impl Into<String>) -> Progress { Progress { step: 
 fn work(t: AgentTool, open_file: Option<OpenFile>, ct: &Cancel) -> Result<(), StepError> {
     let fail = |m: String| StepError::Failed(m);
     let steps = plan(t);
+    // A sandbox step that fails is said at the end: the tool still works, outside it.
+    let mut sandbox_failed: Option<String> = None;
     if !steps.is_empty() {
-        if steps.iter().any(|s| s.command.starts_with("npm ")) && on_path("npm").is_none() && !steps.iter().any(|s| s.command.starts_with("brew ")) {
-            return Err(fail("Node.js is needed for this tool's ACP adapter. Install Node.js from nodejs.org, then try again.".into()));
-        }
         set(t, progress("installing", "Waiting for another install to finish…"));
-        let _gate = loop {
-            if ct.is_cancelled() { return Err(StepError::Cancelled); }
-            match GATE.try_lock() {
-                Ok(g) => break g,
-                Err(std::sync::TryLockError::Poisoned(p)) => break p.into_inner(),
-                Err(_) => std::thread::sleep(Duration::from_millis(200)),
-            }
-        };
+        let _gate = gate(ct)?;
         for s in &steps {
+            if s.sandbox && sandbox_failed.is_some() { continue; }
             set(t, progress("installing", format!("{}…", s.title)));
-            let command = format!("set -o pipefail; {}", s.command);
-            stream_step(Path::new("/bin/bash"), &["-c", &command], &[("HOMEBREW_NO_AUTO_UPDATE", "1")], Duration::from_secs(600),
-                &s.title.replace("Installing", "Couldn’t install"), ct, &|l| set(t, progress("installing", l)))?;
+            match run_steps(std::slice::from_ref(s), ct, &|l| set(t, progress("installing", l))) {
+                Err(StepError::Failed(m)) if s.sandbox => { hover_core::log::line(&format!("setup: sandbox: {m}")); sandbox_failed = Some(m); }
+                r => r?,
+            }
         }
     }
     let ready = agents::check(t, true);
     if !ready.installed { return Err(fail(format!("The installer finished, but {} still isn't found. {}", t.name(), agents::install_hint(t)))); }
-    if !ready.signed_in { sign_in(t, open_file, ct) } else { Ok(()) }
+    if !ready.signed_in { sign_in(t, open_file, ct)?; }
+    match sandbox_failed {
+        Some(m) => Err(fail(format!("{} is ready, but its sandbox isn’t set up ({m}). It runs outside it until Set Up in Settings → General works.", t.name()))),
+        None => Ok(()),
+    }
+}
+
+/// One install at a time (npm and the installers share ~/.local), until `ct` says stop.
+fn gate(ct: &Cancel) -> Result<std::sync::MutexGuard<'static, ()>, StepError> {
+    loop {
+        if ct.is_cancelled() { return Err(StepError::Cancelled); }
+        match GATE.try_lock() {
+            Ok(g) => return Ok(g),
+            Err(std::sync::TryLockError::Poisoned(p)) => return Ok(p.into_inner()),
+            Err(_) => std::thread::sleep(Duration::from_millis(200)),
+        }
+    }
+}
+
+/// Runs steps in bash, in order, each line to `line`. ~/.local/bin goes first on PATH, so
+/// a Node or ripgrep just put there is the one the next step uses.
+fn run_steps(steps: &[Step], ct: &Cancel, line: &dyn Fn(String)) -> Result<(), StepError> {
+    for s in steps {
+        let command = format!("set -o pipefail; export PATH=\"$HOME/.local/bin:$PATH\"; {}", s.command);
+        stream_step(Path::new("/bin/bash"), &["-c", &command], &[("HOMEBREW_NO_AUTO_UPDATE", "1"), ("NONINTERACTIVE", "1")], Duration::from_secs(600),
+            &s.title.replace("Installing", "Couldn’t install"), ct, line)?;
+    }
+    Ok(())
+}
+
+// MARK: The sandbox's own setup
+
+static SANDBOX: Mutex<Option<(Progress, Option<Cancel>)>> = Mutex::new(None);
+static SANDBOX_LISTENERS: Mutex<Vec<Arc<dyn Fn() + Send + Sync>>> = Mutex::new(Vec::new());
+
+/// Called, off the caller's thread, whenever the sandbox setup's progress changes.
+pub fn on_sandbox_change(f: impl Fn() + Send + Sync + 'static) { SANDBOX_LISTENERS.lock().unwrap().push(Arc::new(f)); }
+
+/// The sandbox setup's progress, and whether one runs.
+pub fn sandbox_progress() -> (Progress, bool) {
+    SANDBOX.lock().unwrap().as_ref().map_or_else(|| (Progress::default(), false), |(p, c)| (p.clone(), c.is_some()))
+}
+
+fn set_sandbox(p: Progress, running: Option<Cancel>) {
+    *SANDBOX.lock().unwrap() = Some((p, running));
+    let all: Vec<_> = SANDBOX_LISTENERS.lock().unwrap().clone();
+    for f in all { f(); }
+}
+
+pub fn cancel_sandbox() { if let Some((_, Some(c))) = SANDBOX.lock().unwrap().as_ref() { c.cancel(); } }
+
+/// Settings → General's Set Up beside the sandbox switch, for agents installed before it
+/// (or by hand): installs what the sandbox still needs, Node first where there is none.
+/// The next start of each tool is sandboxed. Blocks: run it off the UI thread.
+pub fn run_sandbox() {
+    if !supported() { set_sandbox(Progress { error: Some(UNSUPPORTED.into()), ..Default::default() }, None); return; }
+    if sandbox_progress().1 { return; }
+    let ct = Cancel::new();
+    let Some(need) = sandbox_needs().filter(SandboxNeeds::any) else { set_sandbox(Progress::default(), None); return };
+    let at = |l: String| Progress { step: Some("installing".into()), line: l, error: None };
+    set_sandbox(at("Waiting for another install to finish…".into()), Some(ct.clone()));
+    let has = |n: &str| on_path(n).is_some();
+    let steps = sandbox_steps(&has, need, &[]);
+    let done = gate(&ct).and_then(|_g| {
+        for s in &steps {
+            set_sandbox(at(format!("{}…", s.title)), Some(ct.clone()));
+            run_steps(std::slice::from_ref(s), &ct, &|l| set_sandbox(at(l), Some(ct.clone())))?;
+        }
+        Ok(())
+    });
+    let p = match done {
+        Ok(()) => match crate::sandbox::missing() { None => Progress::default(), Some(m) => Progress { error: Some(m), ..Default::default() } },
+        Err(StepError::Cancelled) => Progress::default(),
+        Err(StepError::Failed(m)) => Progress { error: Some(m), ..Default::default() },
+    };
+    set_sandbox(p, None);
 }
 
 /// Opens the tool's own login in Terminal and waits (up to ten minutes) for its status
@@ -272,6 +415,8 @@ fn sign_in(t: AgentTool, open_file: Option<OpenFile>, ct: &Cancel) -> Result<(),
     set(t, progress("signing-in", "Finish signing in in the Terminal window and your browser…"));
     match open_file {
         Some(open) => open(&script).map_err(io)?,
+        // (Never in a test run: no Terminal window on the user's screen.)
+        None if hover_core::in_test_sandbox() => {}
         None => { let _ = agents::ask(Path::new("/usr/bin/open"), &["-a", "Terminal", &script.to_string_lossy()]); }
     }
     let until = Instant::now() + Duration::from_secs(600);

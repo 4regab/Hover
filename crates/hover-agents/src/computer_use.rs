@@ -408,7 +408,11 @@ pub fn parse_permissions(text: &str) -> Option<(bool, bool)> {
     Some((*ax, matches!(v.get("screen_recording"), Some(Json::Bool(true)))))
 }
 
-fn start_daemon() { let _ = ask(Path::new("/usr/bin/open"), &["-n", "-g", "-a", "CuaDriver", "--args", "serve"]); }
+fn start_daemon() {
+    // A test never opens the user's CuaDriver.app.
+    if hover_core::in_test_sandbox() { return; }
+    let _ = ask(Path::new("/usr/bin/open"), &["-n", "-g", "-a", "CuaDriver", "--args", "serve"]);
+}
 
 /// CuaDriver's daemon is up before a sandboxed agent's cua-driver looks for it: it can't
 /// start the daemon itself from inside the sandbox (no Launch Services there), so Hover

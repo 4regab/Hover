@@ -86,6 +86,9 @@ final class Dictation {
     weak var sink: DictationSink?
     private var impl: DictationImpl?
     private(set) var engineName = ""
+    // Finished or cancelled while it was still starting (the permission prompt, the
+    // model's download): the microphone then never comes on.
+    private var stopped = false
 
     /// Which engine this Mac uses, for Settings.
     static var engineDescription: String {
@@ -97,8 +100,10 @@ final class Dictation {
 
     func start(locale: Locale) async throws {
         voiceLog.info("start: microphone \(Permissions.microphone.rawValue, privacy: .public), speech \(Permissions.speech.rawValue, privacy: .public)")
+        stopped = false
         try await Permissions.ensure()
         voiceLog.info("start: permissions granted")
+        guard !stopped else { return }
         let impl: DictationImpl
         #if compiler(>=6.2)
         if #available(macOS 26.0, *) { impl = AnalyzerDictation() } else { impl = LegacyDictation() }
@@ -108,13 +113,14 @@ final class Dictation {
         impl.sink = sink
         self.impl = impl
         try await impl.start(locale: locale)
+        if stopped { impl.cancel(); return }
         voiceLog.info("start: listening")
     }
 
     /// Stops listening and returns everything heard (waits for the last words).
-    func finish() async -> String { await impl?.finish() ?? "" }
+    func finish() async -> String { stopped = true; return await impl?.finish() ?? "" }
 
-    func cancel() { impl?.cancel(); impl = nil }
+    func cancel() { stopped = true; impl?.cancel(); impl = nil }
 }
 
 private protocol DictationImpl: AnyObject {
@@ -161,12 +167,14 @@ final class AnalyzerDictation: DictationImpl {
     private var input: AsyncStream<AnalyzerInput>.Continuation?
     private var results: Task<Void, Never>?
     private let heard = Heard()
-    private var tapped = false
+    private var tapped = false, stopped = false
 
     func start(locale: Locale) async throws {
         let mic = engine.inputNode.outputFormat(forBus: 0)
         guard mic.sampleRate > 0, mic.channelCount > 0 else { throw DictationError(kind: .engine, message: "No microphone is available.") }
         let feed = try await prepare(locale: locale, from: mic)
+        // Stopped while the model got ready: no tap, no microphone.
+        guard !stopped else { return }
         engine.inputNode.installTap(onBus: 0, bufferSize: 2048, format: mic) { [weak self] buffer, _ in
             let level = audioLevel(buffer)
             DispatchQueue.main.async { self?.sink?.dictationLevel(level) }
@@ -212,12 +220,12 @@ final class AnalyzerDictation: DictationImpl {
         let (stream, continuation) = AsyncStream<AnalyzerInput>.makeStream(bufferingPolicy: .bufferingNewest(256))
         input = continuation
         let heard = self.heard
-        results = Task {
+        results = Task { [weak self] in
             do {
                 for try await r in transcriber.results {
                     let text = String(r.text.characters)
                     let (f, p) = r.isFinal ? heard.append(final: text) : heard.set(partial: text)
-                    DispatchQueue.main.async { [weak self] in self?.sink?.dictationText(final: f, partial: p) }
+                    DispatchQueue.main.async { self?.sink?.dictationText(final: f, partial: p) }
                 }
             } catch {}
         }
@@ -243,6 +251,7 @@ final class AnalyzerDictation: DictationImpl {
     }
 
     private func stopMic() {
+        stopped = true
         if tapped { engine.inputNode.removeTap(onBus: 0); tapped = false }
         if engine.isRunning { engine.stop() }
         input?.finish(); input = nil
@@ -325,8 +334,9 @@ private final class LegacyDictation: DictationImpl {
             DispatchQueue.main.async {
                 if self.ended { c.resume(); return }
                 self.done = c
-                // A recognizer that never says final still lets go after a moment.
-                DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { [weak self] in self?.end() }
+                // A recognizer that never says final still lets go after a moment (end() is
+                // a no-op once it has ended).
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { self.end() }
             }
         }
         task?.finish()

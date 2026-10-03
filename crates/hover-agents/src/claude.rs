@@ -400,7 +400,7 @@ impl Host {
         if prompt.trim().is_empty() { return KiroResult::new(KiroState::Failed, format!("Tell {NAME} what to do first.")); }
         // The sandbox of the process this run starts opens this folder.
         crate::sandbox::remember(folder);
-        if crate::sandbox::wanted() && crate::agents::toggles().computer_use { computer_use::ensure_daemon(); }
+        if crate::sandbox::wanted() && crate::agents::toggles().computer_use && !crate::spaces::wanted() { computer_use::ensure_daemon(); }
         let o = (self.options)().with_access(access);
         let turn = Arc::new(Turn {
             stream: Mutex::new(KiroStream::new(NAME)), progress, events, options: o.clone(), folder: folder.into(), token: ct.clone(), deny_all: access == Some("none"),
@@ -430,8 +430,8 @@ impl Host {
         let ct = turn.token.clone();
         let mut servers = (self.mcp.lock().unwrap().clone())(tag);
         // The project's desktop for a session's run (not a routing turn, which has no tag):
-        // every agent in that folder is given the same one.
-        if tag.is_some() { servers.extend(crate::spaces::servers(&turn.folder)); }
+        // every agent in that folder shares it, each with a cursor of its own.
+        if let Some(t) = tag { servers.extend(crate::spaces::servers(Some(&turn.folder), t)); }
         let (proc, lost) = match self.take(&setup, resume, &ct, &servers, tag) {
             Ok(x) => x,
             Err(_) if ct.is_cancelled() => return turn.stopped(),

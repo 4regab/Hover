@@ -217,6 +217,13 @@ final class Notch: NSObject {
         island.outline = Outline(current)
     }
 
+    /// The open office's shape in screen coordinates (no ears): where the window grows from.
+    var openFrame: CGRect {
+        let o = openOutline(), f = window.frame
+        return CGRect(x: f.midX - o.width / 2, y: f.maxY - o.height, width: o.width, height: o.height)
+    }
+    var notchHeight: CGFloat { geometry.notchHeight }
+
     /// The target shape in screen coordinates, ears included, for pointer tests.
     var shapeFrame: CGRect {
         let o = Outline(target), f = window.frame

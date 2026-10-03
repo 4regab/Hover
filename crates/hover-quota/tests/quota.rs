@@ -110,6 +110,74 @@ fn codex_ranks_its_logs_by_their_last_event() {
     assert_eq!(read::codex_in(&home, now()).used, Some(70.0));
 }
 
+/// A long session's log is read from its end: the newest limits win however far up the
+/// older ones are, and a line cut across two blocks is read whole.
+#[test]
+fn codex_reads_a_long_log_from_its_end() {
+    let home = temp("codex-long");
+    let day = home.join("sessions").join("2026").join("09").join("27");
+    std::fs::create_dir_all(&day).unwrap();
+    let line = |used: f64| format!("{{\"timestamp\":\"{}\",\"type\":\"event_msg\",\"payload\":{{\"type\":\"token_count\",\"rate_limits\":{{\"primary\":{{\"used_percent\":{used},\"window_minutes\":300,\"resets_in_seconds\":3600}}}}}}}}\n", iso(now() - Duration::minutes(2)));
+    let mut text = line(5.0);
+    // About 1 MB of other events (tool output), then the newest limits, then more output.
+    let filler = format!("{{\"type\":\"response_item\",\"payload\":\"{}\"}}\n", "x".repeat(4000));
+    for _ in 0..250 { text.push_str(&filler); }
+    text.push_str(&line(64.0));
+    // A last line longer than a block, so the newest limits sit across a block's edge.
+    text.push_str(&format!("{{\"type\":\"response_item\",\"payload\":\"{}\"}}\r\n", "y".repeat(300 << 10)));
+    std::fs::write(day.join("rollout-long.jsonl"), text).unwrap();
+    assert_eq!(read::codex_in(&home, now()).used, Some(64.0));
+}
+
+/// Codex's live limits, as /status reads them: both windows, the fuller leading, the plan,
+/// and a reset early (what the logs got wrong) trusted.
+#[test]
+fn codex_live_usage_reads_both_windows() {
+    let reset = (now() + Duration::days(3)).timestamp();
+    let q = parse_codex_usage(&format!("{{\"plan_type\":\"plus\",\"rate_limit\":{{\"allowed\":true,\"limit_reached\":false,\
+        \"primary_window\":{{\"used_percent\":12,\"limit_window_seconds\":18000,\"reset_at\":{reset}}},\
+        \"secondary_window\":{{\"used_percent\":64,\"limit_window_seconds\":604800,\"reset_at\":{reset}}}}}}}"), now());
+    assert_eq!(q.used, Some(64.0));
+    assert!(q.detail.starts_with("Plus · 5h 12% · week 64% · resets "), "{}", q.detail);
+    let early = parse_codex_usage(r#"{"rate_limit":{"primary_window":{"used_percent":0,"limit_window_seconds":604800,"reset_after_seconds":604800},"secondary_window":null}}"#, now());
+    assert_eq!(early.used, Some(0.0));
+    assert!(early.detail.starts_with("week 0%"), "{}", early.detail);
+    assert_eq!(parse_codex_usage(r#"{"rate_limit":{"primary_window":{"used_percent":40},"limit_reached":true}}"#, now()).used, Some(100.0));
+    assert_eq!(parse_codex_usage(r#"{"rate_limit":{"primary_window":{"used_percent":1,"limit_window_seconds":259200}}}"#, now()).detail, "3d 1%");
+    assert!(!parse_codex_usage(r#"{"detail":"x"}"#, now()).ok());
+    assert!(!parse_codex_usage("<html>", now()).ok());
+}
+
+/// Codex's own sign-in is used only while its access token lasts, and never an API key.
+#[test]
+fn codex_sign_in_is_skipped_once_it_has_expired() {
+    let auth = |exp: DateTime<Utc>| format!("{{\"tokens\":{{\"access_token\":\"{}.{}.sig\",\"account_id\":\"acct\"}}}}", b64("{\"alg\":\"RS256\"}"), b64(&format!("{{\"exp\":{}}}", exp.timestamp())));
+    let utc = Utc::now();
+    let ok = codex_sign_in(&auth(utc + Duration::hours(5)), utc).unwrap();
+    assert_eq!(ok.1.as_deref(), Some("acct"));
+    assert!(codex_sign_in(&auth(utc - Duration::minutes(5)), utc).is_none());
+    assert!(codex_sign_in(r#"{"OPENAI_API_KEY":"sk-x","tokens":null}"#, utc).is_none());
+}
+
+/// The live read asks with Codex's sign-in and its account; a refused one says so, and an
+/// answer that can't be had leaves the logs to answer.
+#[test]
+fn codex_live_asks_with_codex_own_sign_in() {
+    let dir = temp("codex-live");
+    let auth = dir.join("auth.json");
+    let exp = (Utc::now() + Duration::hours(5)).timestamp();
+    std::fs::write(&auth, format!("{{\"tokens\":{{\"access_token\":\"{}.{}.sig\",\"account_id\":\"acct-1\"}}}}", b64("{\"alg\":\"RS256\"}"), b64(&format!("{{\"exp\":{exp}}}")))).unwrap();
+    let (url, h) = serve(200, r#"{"plan_type":"plus","rate_limit":{"primary_window":{"used_percent":21,"limit_window_seconds":604800,"reset_after_seconds":3600}}}"#);
+    assert_eq!(read::codex_live(&auth, &url, Utc::now()).unwrap().used, Some(21.0));
+    let req = h.join().unwrap().to_lowercase();
+    assert!(req.contains("authorization: bearer ") && req.contains("chatgpt-account-id: acct-1"), "{req}");
+    let (url, _) = serve(401, "{}");
+    assert_eq!(read::codex_live(&auth, &url, Utc::now()).unwrap().detail, "Codex’s sign-in has expired — run codex to renew it.");
+    let (url, _) = serve(500, "{}");
+    assert!(read::codex_live(&auth, &url, Utc::now()).is_none(), "a server error leaves the logs to answer");
+    assert!(read::codex_live(&dir.join("none.json"), &url, Utc::now()).is_none());
+}
+
 /// Convert.ToBase64String(...).TrimEnd('=').Replace('+', '-').Replace('/', '_')
 fn b64(s: &str) -> String {
     const A: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";

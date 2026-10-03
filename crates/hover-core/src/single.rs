@@ -93,10 +93,13 @@ mod imp {
     }
 
     /// This user's id: the owner of /proc/self on Linux, of the home folder on macOS.
+    /// This process's user, from the C library. Reading $HOME's owner (as it once did)
+    /// gave 0, root's, wherever $HOME can't be read (a sandbox), and the lock then went
+    /// to a folder of root's in /tmp that this user can't make.
     fn uid() -> u32 {
-        use std::os::unix::fs::MetadataExt;
-        let of = if cfg!(target_os = "linux") { Some(PathBuf::from("/proc/self")) } else { std::env::var_os("HOME").map(PathBuf::from) };
-        of.and_then(|p| std::fs::metadata(p).ok()).map(|m| m.uid()).unwrap_or(0)
+        extern "C" { fn getuid() -> u32; }
+        // SAFETY: getuid takes no arguments, never fails and touches no memory of ours.
+        unsafe { getuid() }
     }
 
     /// Where the lock and the socket live, for this user alone: $XDG_RUNTIME_DIR (0700 by

@@ -129,6 +129,19 @@ final class MenuBar: NSObject, NSMenuDelegate {
             row.target = app; row.representedObject = s["id"]; row.image = Self.tileImage(tool)
             menu.addItem(row)
         }
+        // Newer releases of the tools: each one's own updater, all in one click.
+        let updates = app.updatesAvailable
+        if !updates.isEmpty {
+            let names = updates.map { $0 == "cua-driver" ? "Cua Driver" : Marks.name($0) }
+            let all = NSMenuItem(title: "Update \(ListFormatter.localizedString(byJoining: names))", action: #selector(App.updateAll), keyEquivalent: "")
+            all.target = app; all.image = Self.badged(updates.first == "cua-driver" ? nil : updates.first)
+            all.toolTip = "Runs each tool's own updater. A tool with a task at work is updated when it is done."
+            menu.addItem(all)
+        }
+        // Any open app to a project's desktop (the same as right-clicking its title bar).
+        let vm = NSMenuItem(title: "Send to Hover VM", action: nil, keyEquivalent: "")
+        vm.image = SendToVM.icon; vm.submenu = app.sendToVM.appsMenu()
+        menu.addItem(vm)
         let office = NSMenuItem(title: "Open Office", action: #selector(App.toggleOffice), keyEquivalent: "n")
         office.keyEquivalentModifierMask = [.option]; office.target = app
         menu.addItem(office)
@@ -162,6 +175,18 @@ final class MenuBar: NSObject, NSMenuDelegate {
         NSImage(size: CGSize(width: 16, height: 16), flipped: false) { r in
             guard let cg = NSGraphicsContext.current?.cgContext else { return false }
             Marks.drawTile(id, in: r.insetBy(dx: 1, dy: 1), context: cg); return true
+        }
+    }
+
+    /// A tool's tile (or a plain arrow) with the red "!" the office puts on it for an update.
+    static func badged(_ id: String?) -> NSImage {
+        NSImage(size: CGSize(width: 16, height: 16), flipped: false) { r in
+            guard let cg = NSGraphicsContext.current?.cgContext else { return false }
+            if let id { Marks.drawTile(id, in: r.insetBy(dx: 1, dy: 1), context: cg) }
+            else { NSImage(systemSymbolName: "arrow.down.circle", accessibilityDescription: nil)?.draw(in: r.insetBy(dx: 1, dy: 1)) }
+            let b = CGRect(x: r.maxX - 8, y: r.maxY - 8, width: 8, height: 8)
+            cg.setFillColor(NSColor(srgbRed: 1, green: 0.27, blue: 0.23, alpha: 1).cgColor); cg.fillEllipse(in: b)
+            return true
         }
     }
 

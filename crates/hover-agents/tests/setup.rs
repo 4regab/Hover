@@ -31,9 +31,28 @@ fn codex_with_nothing_installs_both_in_one_npm_step() {
 fn node_comes_from_homebrew_when_there_is_no_npm() {
     let plan = setup::plan_with(AgentTool::Codex, &have(&["brew"]), None);
     assert_eq!(cmds(&plan), vec!["brew install node", plan[1].command.as_str()]);
-    // No npm and no brew: the npm step is left for run() to refuse with a clear message.
+    // No npm and no brew (a fresh Mac): nodejs.org's own build, then the npm step.
     let bare = setup::plan_with(AgentTool::Codex, &have(&[]), None);
-    assert_eq!(bare.len(), 1);
+    assert_eq!(bare.len(), 2);
+    assert_eq!(bare[0].command, setup::release_script(&setup::NODE));
+    assert!(bare[1].command.starts_with("npm install"));
+}
+
+#[test]
+fn a_release_is_checked_against_its_pinned_sum_before_it_is_unpacked() {
+    let s = setup::release_script(&setup::RIPGREP);
+    let (get, check, unpack) = (s.find("curl -fL").unwrap(), s.find("shasum -a 256 -c").unwrap(), s.find("tar -xzf").unwrap());
+    assert!(get < check && check < unpack, "{s}");
+    assert!(s.contains(setup::RIPGREP.arm64.1) && s.contains(setup::RIPGREP.x64.1) && s.contains("--proto '=https'"));
+    // For the user alone, never with sudo, its programs linked onto Hover's PATH.
+    assert!(!s.contains("sudo") && s.contains("d=\"$HOME/.local/lib/hover/ripgrep\"") && s.ends_with("ln -sf \"$top/rg\" \"$HOME/.local/bin/rg\""));
+    let n = setup::release_script(&setup::NODE);
+    assert!(n.ends_with("ln -sf \"$top/bin/node\" \"$HOME/.local/bin/node\"; ln -sf \"$top/bin/npm\" \"$HOME/.local/bin/npm\"; ln -sf \"$top/bin/npx\" \"$HOME/.local/bin/npx\""));
+    // gh's is a zip, unpacked with ditto.
+    assert!(setup::release_script(&setup::GH).contains("*.zip) ditto -x -k"));
+    for r in [setup::NODE, setup::RIPGREP, setup::GH] {
+        for (url, sum) in [r.arm64, r.x64] { assert!(url.starts_with("https://") && sum.len() == 64 && sum.bytes().all(|b| b.is_ascii_hexdigit()), "{url}"); }
+    }
 }
 
 #[test]
@@ -65,9 +84,19 @@ fn the_sandbox_is_installed_with_the_tool_when_it_is_wanted() {
     assert!(plan[1].command.contains("sandbox-runtime@0.0.78"));
     let plan = setup::plan_with(AgentTool::Codex, &have(&["brew"]), Some(SandboxNeeds { srt_missing: true, rg_missing: false }));
     assert_eq!(plan.iter().filter(|s| s.command == "brew install node").count(), 1, "node is installed once for both npm steps");
-    // Not wanted: nothing of it; ripgrep needs brew.
+    assert_eq!(plan.iter().map(|s| s.sandbox).collect::<Vec<_>>(), vec![false, false, true], "only the sandbox's own steps may fail softly");
+    // A fresh Mac: Node and ripgrep from their own releases, Node once.
+    let plan = setup::plan_with(AgentTool::Kiro, &have(&["kiro-cli"]), Some(needs));
+    assert_eq!(cmds(&plan), vec![
+        setup::release_script(&setup::NODE).as_str(),
+        "npm install --global --no-fund --no-audit --prefix \"$HOME/.local\" @anthropic-ai/sandbox-runtime@0.0.78",
+        setup::release_script(&setup::RIPGREP).as_str(),
+    ]);
+    assert!(plan.iter().all(|s| s.sandbox));
+    // Not wanted: nothing of it.
     assert!(setup::plan_with(AgentTool::Kiro, &have(&["kiro-cli"]), None).is_empty());
-    assert!(setup::plan_with(AgentTool::Kiro, &have(&["kiro-cli"]), Some(SandboxNeeds { srt_missing: false, rg_missing: true })).is_empty());
+    // Settings' own Set Up: just the sandbox's steps.
+    assert_eq!(setup::sandbox_steps(&have(&["npm"]), SandboxNeeds { srt_missing: true, rg_missing: false }, &[]).len(), 1);
 }
 
 #[test]

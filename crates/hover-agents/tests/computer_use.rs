@@ -100,6 +100,10 @@ fn never_cuas_approval_bypass() {
 
 #[test]
 fn not_installed_is_no_server_even_when_on() {
+    // CuaDriver.app in /Applications is found wherever PATH and HOME point: it is installed.
+    if cfg!(target_os = "macos") && std::path::Path::new("/Applications/CuaDriver.app/Contents/MacOS/cua-driver").is_file() {
+        eprintln!("skipped: Cua Driver is installed on this Mac"); return;
+    }
     let _e = Env::new("none");
     ON.store(true, Ordering::SeqCst);
     assert!(computer_use::servers().is_empty());

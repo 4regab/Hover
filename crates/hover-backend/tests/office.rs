@@ -68,8 +68,10 @@ fn the_state_has_the_names_of_the_c_sharp_snapshot_in_its_order() {
     assert_eq!(state.get("spaces"), Some(&Json::Bool(false)), "agent desktops are off, here and wherever Cua isn't");
     let tools = state.get("tools").unwrap().items().unwrap();
     assert_eq!(tools.iter().map(|t| t.get("id").unwrap().as_str().unwrap()).collect::<Vec<_>>(), ["kiro", "codex", "cursor", "opencode", "claude"]);
-    assert_eq!(keys(&tools[0]), ["id", "name", "ready", "hint", "checkedYet", "installed", "signedIn", "canSetup", "setup", "access", "readOnly", "hideSteps",
+    assert_eq!(keys(&tools[0]), ["id", "name", "ready", "hint", "checkedYet", "installed", "signedIn", "canSetup", "setup", "update", "access", "readOnly", "hideSteps",
         "models", "model", "efforts", "effort", "effortLabel", "questions"]);
+    // No release known yet: no badge.
+    assert_eq!(tools[0].get("update"), Some(&Json::Null));
     assert_eq!(keys(tools[0].get("setup").unwrap()), ["step", "line", "error", "busy", "needs"]);
     assert_eq!(keys(&tools[0].get("models").unwrap().items().unwrap()[0]), ["id", "name", "levels"]);
     // Unchecked: not ready, "Checking installation…"; checked: as Agents.Known says.

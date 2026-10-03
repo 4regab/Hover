@@ -12,7 +12,6 @@ use crate::quotas::{self, Credentials};
 use crate::wire::{bool_of, int_of, str_of, Loop, Out};
 use hover_agents::agents::{self, Toggles};
 use hover_agents::ask::AskAnswer;
-use hover_agents::cancel::Cancel;
 use hover_agents::desk::{self, Desk, Snap};
 use hover_agents::github::{self, GitHubCli};
 use hover_agents::runtime::Runtime;
@@ -97,7 +96,7 @@ pub struct Backend {
     /// Ends the one-minute timer that turns idle desktops off.
     idle_stop: Mutex<Option<Sender<()>>>,
     /// The last time each project's desktop (by name) had an agent at work or was looked at.
-    space_busy: Mutex<HashMap<String, Instant>>,
+    space_busy: Arc<Mutex<HashMap<String, Instant>>>,
 }
 
 /// Decoding of the host's key: Convert.FromBase64String.
@@ -140,6 +139,21 @@ impl Backend {
         let st_ = settings.clone();
         spaces::set_source(move || spaces::Switches { on: st_.agent_spaces(), linux: st_.space_image() == "linux" });
         let sessions = KiroSessions::new(move |tool| spaces::around(by_tool.iter().find(|(t, _)| *t == tool).expect("a runtime per tool").1.runner()), Some(history.clone()));
+        let space_busy: Arc<Mutex<HashMap<String, Instant>>> = Arc::default();
+        // OpenCode's one server serves every folder: its desktop is that of its newest
+        // session at work.
+        let ks = sessions.clone();
+        spaces::set_opencode_folder(move || {
+            ks.all().into_iter().filter(|x| x.tool == AgentTool::OpenCode && x.busy())
+                .max_by_key(|x| x.current().map_or(0, |t| t.started_at.ticks)).map(|x| x.folder)
+        });
+        // A desktop may be turned off for another project's (two macOS desktops at most)
+        // when none of its agents is at work and nobody has looked at it for a few minutes.
+        let (ks, seen) = (sessions.clone(), space_busy.clone());
+        spaces::set_can_pause(move |folder| {
+            !ks.all().iter().any(|x| x.busy() && spaces::same_project(&x.folder, folder))
+                && seen.lock().unwrap().get(&spaces::name_for(folder)).is_none_or(|t| t.elapsed() > Duration::from_secs(3 * 60))
+        });
         // Chats keep the project folder before and after each turn, so they can go back to it;
         // without git there are none.
         sessions.set_max_running(max_running.get());
@@ -169,9 +183,13 @@ impl Backend {
         let l = link.clone();
         setup::on_change(move |_| l.push());
         let l = link.clone();
+        setup::on_sandbox_change(move || l.with(|b| b.send_machine()));
+        let l = link.clone();
         computer_use::on_change(move || l.with(|b| b.send_computer_use()));
         let l = link.clone();
         spaces::on_change(move || l.with(|b| { b.send_spaces(); b.link.push(); }));
+        let l = link.clone();
+        crate::updates::on_change(move || l.with(|b| { b.link.push(); b.send_computer_use(); }));
         let l = link.clone();
         sessions.on_changed(move || l.push());
         let l = link.clone();
@@ -208,7 +226,7 @@ impl Backend {
         std::thread::spawn(|| { spaces::supported(); });
         Ok(Backend {
             link, settings, history, runtimes, sessions, max_running, desk: Desk::shared(), gh, credentials: Arc::new(Credentials::default()),
-            browser: browser_host, quota_stop: Mutex::new(Some(stop)), idle_stop: Mutex::new(Some(idle)), space_busy: Mutex::new(HashMap::new()),
+            browser: browser_host, quota_stop: Mutex::new(Some(stop)), idle_stop: Mutex::new(Some(idle)), space_busy,
         })
     }
 
@@ -248,7 +266,7 @@ impl Backend {
 
     fn send_preferences(&self) {
         let s = &self.settings;
-        self.link.out.send(&Json::obj(vec![
+        let mut fields = vec![
             ("type", st("preferences")), ("maxRunning", Json::int(self.max_running.get() as i64)), ("hover", Json::Bool(s.hover_opens_workspace())),
             ("noticeSeen", Json::Bool(s.kiro_notice_seen())), ("quotaItems", Json::Arr(s.notch_items().iter().map(|i| st(i)).collect())),
             ("computerUse", Json::Bool(s.computer_use())), ("sandbox", Json::Bool(s.sandbox())), ("agentBrowser", Json::Bool(s.agent_browser())),
@@ -259,7 +277,29 @@ impl Backend {
                 let o = s.agent_options(t);
                 Json::obj(vec![("id", st(t.id())), ("access", st(o.access_id(true))), ("idle", Json::int(o.idle_minutes as i64)), ("hideSteps", Json::Bool(o.hide_steps))])
             }).collect())),
-        ]));
+        ];
+        fields.extend(Self::machine());
+        self.link.out.send(&Json::obj(fields));
+    }
+
+    /// What a fresh Mac may still lack, each set up from Settings → General in one click:
+    /// the sandbox's srt and ripgrep (with its setup's progress) and git (checkpoints, the
+    /// desk's Diff and pull requests; the Command Line Tools on a Mac).
+    fn machine() -> Vec<(&'static str, Json)> {
+        let needs = setup::sandbox_needs().unwrap_or(setup::SandboxNeeds { srt_missing: false, rg_missing: false });
+        let (p, busy) = setup::sandbox_progress();
+        vec![
+            ("sandboxNeeds", Json::Arr([(needs.srt_missing, "srt"), (needs.rg_missing, "ripgrep")].iter().filter(|x| x.0).map(|x| st(x.1)).collect())),
+            ("sandboxSetup", Json::obj(vec![("busy", Json::Bool(busy)), ("line", st(&p.line)), ("error", opt(p.error.as_deref()))])),
+            ("gitInstalled", Json::Bool(hover_agents::desk::find_git().is_some())),
+        ]
+    }
+
+    /// The same, on its own (a setup's progress, a fresh look from Settings).
+    fn send_machine(&self) {
+        let mut fields = vec![("type", st("machine"))];
+        fields.extend(Self::machine());
+        self.link.out.send(&Json::obj(fields));
     }
 
     /// Cua Driver as Settings → Computer Use shows it: installed, its grants, and a setup's
@@ -274,6 +314,7 @@ impl Backend {
             ("hint", st(s.as_ref().map_or("", |s| s.hint.as_str()))), ("canGrant", Json::Bool(computer_use::can_grant())),
             ("installHint", st(computer_use::install_hint())),
             ("step", opt(p.step.as_deref())), ("line", st(&p.line)), ("error", opt(p.error.as_deref())), ("busy", Json::Bool(computer_use::busy())),
+            ("update", crate::updates::state(crate::updates::CUA_DRIVER)),
         ]));
     }
 
@@ -303,18 +344,14 @@ impl Backend {
     fn stop_idle_spaces(&self) {
         if self.link.closing() || !spaces::wanted() { return; }
         let now = Instant::now();
-        let mut groups: Vec<(String, String, bool)> = vec![];
-        for x in self.sessions.all() {
-            let name = spaces::name_for(&x.folder);
-            match groups.iter_mut().find(|g| g.0 == name) {
-                Some(g) => g.2 |= x.busy(),
-                None => groups.push((name, x.folder.clone(), x.busy())),
-            }
-        }
+        let all = self.sessions.all();
         let mut seen = self.space_busy.lock().unwrap();
-        for (name, folder, busy) in groups {
-            if busy || !seen.contains_key(&name) { seen.insert(name, now); continue; }
-            if now.duration_since(seen[&name]) > Duration::from_secs(15 * 60) && spaces::state_of(&folder).is_some_and(|s| s.phase == "ready") {
+        // Every desktop that is on, with or without agents in the office (a drop on a
+        // project with none of its agents there starts one too).
+        for folder in spaces::ready_folders() {
+            let name = spaces::name_for(&folder);
+            if all.iter().any(|x| x.busy() && spaces::same_project(&x.folder, &folder)) || !seen.contains_key(&name) { seen.insert(name, now); continue; }
+            if now.duration_since(seen[&name]) > Duration::from_secs(15 * 60) && !spaces::in_use(&folder) {
                 seen.insert(name, now);
                 self.spawn("space-stop", move || spaces::stop(&folder));
             }
@@ -327,14 +364,10 @@ impl Backend {
     }
 
     /// `spaceView`: the session's desktop viewer, answered as `space` when it is ready.
-    /// Opening the panel makes or starts the desktop when it isn't on, and counts as the
-    /// project being in use.
+    /// Opening the panel makes or starts the desktop when it isn't on (the viewer does),
+    /// and counts as the project being in use.
     fn space_view(&self, s: &KiroSession) {
         self.space_busy.lock().unwrap().insert(spaces::name_for(&s.folder), Instant::now());
-        if spaces::wanted() && spaces::state_of(&s.folder).is_none_or(|st| matches!(st.phase.as_str(), "failed" | "stopped")) {
-            let folder = s.folder.clone();
-            self.spawn("space-ensure", move || { spaces::ensure(&folder, &Cancel::new()); });
-        }
         let (folder, id, out) = (s.folder.clone(), s.id, self.link.out.clone());
         self.spawn("space-view", move || {
             let data = guarded(|| spaces::viewer(&folder), "The desktop’s viewer didn’t open.");
@@ -348,27 +381,73 @@ impl Backend {
         s.map(|s| s.folder.clone()).or_else(|| str_of(m, "folder").filter(|f| hover_agents::usable_folder(Some(f))).map(str::to_owned))
     }
 
-    /// `teleport`: an app dragged onto the notch goes into the project's desktop, with
-    /// `teleport` messages for each step and the end.
+    /// `teleport`: an app sent to the project's desktop (dragged to the notch, or Send to
+    /// Hover VM). First its plan: an app whose data could go too (Safari's tabs, an app Cua
+    /// teleports) comes back as `review` for the user to tick; any other goes at once. The
+    /// answer comes back with `include`, exactly the items ticked. `teleport` messages for
+    /// each step and the end.
     fn teleport(&self, m: &Json, s: Option<&KiroSession>) {
         let (Some(folder), Some(path)) = (Self::drop_target(m, s), str_of(m, "path").map(str::to_owned)) else { return };
+        self.space_busy.lock().unwrap().insert(spaces::name_for(&folder), Instant::now());
         let id = s.map_or(0, |s| s.id);
         let app = str_of(m, "app").map(str::to_owned).unwrap_or_else(|| std::path::Path::new(&path).file_stem().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default());
+        let bundle = str_of(m, "bundle").filter(|b| !b.is_empty() && b.len() < 256).map(str::to_owned);
+        let strings = |key: &str, max: usize| -> Option<Vec<String>> {
+            match m.get(key) { Some(Json::Arr(a)) => Some(a.iter().filter_map(Json::as_str).take(max).map(str::to_owned).collect()), _ => None }
+        };
+        let urls = strings("urls", 200).unwrap_or_default();
+        let include = strings("include", 64).map(|i| i.into_iter().filter(|x| !x.is_empty() && x.len() < 400).collect::<Vec<_>>());
+        // The browser's tabs as the host read them (`tabs`), or an older message's addresses.
+        // Answering the review, `tabs` are the ones picked; an older answer ticked "tabs" for all.
+        let tabs = match (&include, m.get("tabs")) {
+            (Some(_), Some(t)) => spaces::tabs_of(Some(t), &[]),
+            (Some(picked), None) if picked.iter().any(|i| i == "tabs") => spaces::tabs_of(None, &urls),
+            (Some(_), None) => vec![],
+            (None, t) => spaces::tabs_of(t, &urls),
+        };
+        let include = include.map(|i| i.into_iter().filter(|x| x != "tabs").collect::<Vec<_>>());
+        let to = str_of(m, "folder").map(str::to_owned);
         let out = self.link.out.clone();
         let sending = move |out: &Out, app: &str, line: &str| {
             out.send(&Json::obj(vec![("type", st("teleport")), ("id", Json::int(id as i64)), ("phase", st("sending")), ("app", st(app)), ("line", st(line))]));
         };
-        sending(&out, &app, &format!("Sending {app}…"));
-        self.spawn("teleport", move || {
-            let data = guarded(|| spaces::send_app(&folder, &path, &|line| sending(&out, &app, line)), "The app didn’t go.");
-            out.send(&Json::obj(vec![("type", st("teleport")), ("id", Json::int(id as i64)), ("app", st(&app)), ("phase", st("done")), ("data", data)]));
-        });
+        // With the bundle, so the host knows which of its apps (or tabs) went.
+        let done = move |out: &Out, app: &str, bundle: Option<&str>, data: Json| {
+            out.send(&Json::obj(vec![("type", st("teleport")), ("id", Json::int(id as i64)), ("app", st(app)), ("bundle", Json::opt_str_of(bundle)), ("phase", st("done")), ("data", data)]));
+        };
+        match include {
+            Some(picked) => {
+                sending(&out, &app, &if picked.is_empty() && tabs.is_empty() { format!("Sending {app}…") } else { format!("Teleporting {app}…") });
+                self.spawn("teleport", move || {
+                    let data = guarded(|| spaces::teleport(&folder, bundle.as_deref(), &path, &app, &picked, &tabs, &|line| sending(&out, &app, line)), "The app didn’t go.");
+                    done(&out, &app, bundle.as_deref(), data);
+                });
+            }
+            None => {
+                sending(&out, &app, &format!("Looking at {app}…"));
+                self.spawn("teleport", move || {
+                    let plan = guarded(|| spaces::plan(bundle.as_deref(), &app, &tabs), "");
+                    if matches!(plan.get("review"), Some(Json::Bool(true))) {
+                        out.send(&Json::obj(vec![
+                            ("type", st("teleport")), ("id", Json::int(id as i64)), ("folder", Json::opt_str_of(to.as_deref())), ("app", st(&app)),
+                            ("bundle", Json::opt_str_of(bundle.as_deref())), ("path", st(&path)),
+                            ("urls", Json::Arr(tabs.iter().map(|t| Json::str(&t.url)).collect())), ("phase", st("review")), ("plan", plan),
+                        ]));
+                        return;
+                    }
+                    // Nothing to pick: it goes as it is (a browser with its one tab).
+                    let data = guarded(|| spaces::teleport(&folder, bundle.as_deref(), &path, &app, &[], &tabs, &|line| sending(&out, &app, line)), "The app didn’t go.");
+                    done(&out, &app, bundle.as_deref(), data);
+                });
+            }
+        }
     }
 
     /// `spaceFiles`: files dropped on the project's desktop in the notch.
     fn space_files(&self, m: &Json, s: Option<&KiroSession>) {
         let Some(folder) = Self::drop_target(m, s) else { return };
         let Some(Json::Arr(items)) = m.get("paths") else { return };
+        self.space_busy.lock().unwrap().insert(spaces::name_for(&folder), Instant::now());
         let paths: Vec<String> = items.iter().filter_map(|x| x.as_str()).filter(|x| !x.is_empty()).map(str::to_owned).collect();
         let (id, out) = (s.map_or(0, |s| s.id), self.link.out.clone());
         self.spawn("space-files", move || {
@@ -416,6 +495,7 @@ impl Backend {
                 self.link.push();
                 self.check();
                 self.refresh_quotas();
+                self.spawn("update-check", || crate::updates::check(false));
                 if self.settings.computer_use() { self.spawn("computer-use", || { computer_use::check(false); }); }
             }
             Some("new") => self.start(m)?,
@@ -503,6 +583,7 @@ impl Backend {
             Some("refresh") => {
                 self.check();
                 self.refresh_quotas();
+                self.spawn("update-check", || crate::updates::check(false));
                 if self.settings.computer_use() { self.spawn("computer-use", || { computer_use::check(true); }); }
             }
             // Settings → Computer Use: what is known now, then a fresh check.
@@ -519,6 +600,14 @@ impl Backend {
                 }
                 self.send_computer_use();
             }
+            // Settings → General's Set Up beside the sandbox switch, and a fresh look at what
+            // this Mac lacks (Settings shown, the Command Line Tools' installer closed).
+            Some("machine") => self.send_machine(),
+            Some("sandboxSetup") => {
+                if str_of(m, "step") == Some("cancel") { setup::cancel_sandbox(); return Ok(()); }
+                let link = self.link.clone();
+                self.spawn("sandbox-setup", move || { setup::run_sandbox(); link.with(|b| b.send_machine()); });
+            }
             Some("setup") => {
                 let Some(t) = AgentTool::parse(str_of(m, "tool")) else { return Ok(()) };
                 if str_of(m, "step") == Some("cancel") { setup::cancel(t); return Ok(()); }
@@ -528,6 +617,22 @@ impl Backend {
                     link.with(|b| { b.link.push(); b.refresh_quotas(); });
                 });
                 self.link.push();
+            }
+            // A tool's one-click update (its logo's badge, Settings, the menu bar): never
+            // under a task of it, and its process starts afresh on its next task.
+            Some("update") => {
+                let Some(id) = str_of(m, "tool").and_then(|i| crate::updates::ids().find(|x| *x == i)) else { return Ok(()) };
+                let (tool, sessions, link) = (AgentTool::parse(Some(id)), self.sessions.clone(), self.link.clone());
+                self.spawn("update", move || {
+                    let busy = || tool.is_some_and(|t| sessions.all().iter().any(|x| x.tool == t && x.busy()));
+                    crate::updates::update(id, busy);
+                    link.with(move |b| {
+                        if let Some(t) = tool.filter(|t| !b.sessions.all().iter().any(|x| x.tool == *t && x.busy())) {
+                            if let Some(r) = b.runtimes.iter().find(|r| r.tool() == t) { r.shutdown("updated"); }
+                        }
+                        b.link.push();
+                    });
+                });
             }
             Some("claudeCredentials") => self.credentials.answer(str_of(m, "json").map(str::to_owned)),
             // Restore to just after an answer, and Try again from a message: the chat and

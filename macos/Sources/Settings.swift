@@ -12,6 +12,18 @@ import Speech
 
 struct ToolPrefs: Equatable { var access = "full"; var idle = 5; var hideSteps = false }
 
+/// A newer release of a tool, and its one-click update, as the backend reports them.
+struct UpdateStatus: Equatable {
+    var available = false, busy = false, latest = "", installed = "", line = "", error: String?
+    init?(_ v: Any?) {
+        guard let m = v as? [String: Any] else { return nil }
+        available = m["available"] as? Bool ?? false; busy = m["busy"] as? Bool ?? false
+        latest = m["latest"] as? String ?? ""; installed = m["installed"] as? String ?? ""
+        line = m["line"] as? String ?? ""; error = m["error"] as? String
+    }
+    var title: String { latest.isEmpty ? "Update" : "Update to \(latest)" }
+}
+
 /// Cua Spaces, the agents' own desktops, as the backend's spaces message reports them.
 struct SpacesStatus: Equatable {
     var on = false, supported = true, checked = false, installed = false, ready = false, busy = false
@@ -40,7 +52,7 @@ struct SpacesStatus: Equatable {
 struct CuaStatus: Equatable {
     var checked = false, installed = false, ready = false, busy = false, canGrant = true
     var version = "", permissions = "unknown", hint = "", installHint = "", line = ""
-    var step: String?, error: String?
+    var step: String?, error: String?, update: UpdateStatus?
 
     init() {}
     init(_ m: [String: Any]) {
@@ -48,7 +60,7 @@ struct CuaStatus: Equatable {
         ready = m["ready"] as? Bool ?? false; busy = m["busy"] as? Bool ?? false; canGrant = m["canGrant"] as? Bool ?? true
         version = m["version"] as? String ?? ""; permissions = m["permissions"] as? String ?? "unknown"
         hint = m["hint"] as? String ?? ""; installHint = m["installHint"] as? String ?? ""; line = m["line"] as? String ?? ""
-        step = m["step"] as? String; error = m["error"] as? String
+        step = m["step"] as? String; error = m["error"] as? String; update = UpdateStatus(m["update"])
     }
 
     /// What the one button does now, if anything: install, grant or cancel.
@@ -69,12 +81,70 @@ struct CuaStatus: Equatable {
     }
 }
 
+/// What this Mac still lacks, as the backend's machine message (and its preferences) say.
+struct Machine: Equatable {
+    var sandboxNeeds: [String] = [], busy = false, line = "", error: String?, gitInstalled = true, gitAsked = false
+    init() {}
+    init(_ m: [String: Any]) {
+        sandboxNeeds = m["sandboxNeeds"] as? [String] ?? []
+        let s = m["sandboxSetup"] as? [String: Any] ?? [:]
+        busy = s["busy"] as? Bool ?? false; line = s["line"] as? String ?? ""; error = s["error"] as? String
+        gitInstalled = m["gitInstalled"] as? Bool ?? true
+    }
+    /// "srt and ripgrep", for the line beside Set Up.
+    var needs: String { sandboxNeeds.count == 2 ? "\(sandboxNeeds[0]) and \(sandboxNeeds[1])" : sandboxNeeds.first ?? "" }
+    func missing(sandboxOn: Bool) -> Bool { (sandboxOn && (!sandboxNeeds.isEmpty || busy)) || !gitInstalled }
+}
+
+/// What this Mac lacks, each with its one button: the sandbox's programs (installed for
+/// the user alone, with no password) and git (Apple's Command Line Tools).
+private struct MachineRows: View {
+    @ObservedObject var model: SettingsModel
+    let sandbox: Bool, git: Bool
+    var body: some View {
+        let m = model.machine
+        if sandbox && model.sandbox && (!m.sandboxNeeds.isEmpty || m.busy) {
+            SetupRow(title: "Agent sandbox",
+                     text: m.busy ? (m.line.isEmpty ? "Installing…" : m.line)
+                        : m.error ?? "Not set up yet: Hover installs \(m.needs) for you, with no password. Until then agents run outside it.",
+                     failed: !m.busy && m.error != nil, busy: m.busy, button: m.busy ? "Cancel" : "Set Up") { model.sandboxSetup(m.busy ? "cancel" : "run") }
+        }
+        if git && !m.gitInstalled {
+            SetupRow(title: "Git",
+                     text: m.gitAsked ? "Finish Apple’s installer for the Command Line Tools; Hover notices when git is there."
+                        : "Not installed. Checkpoints (Restore, Try again), the desk’s Diff and pull requests need it; Apple’s Command Line Tools include it.",
+                     failed: false, busy: m.gitAsked, button: m.gitAsked ? "Open Again" : "Install") { model.installGit() }
+        }
+    }
+}
+
+private struct SetupRow: View {
+    let title: String, text: String, failed: Bool, busy: Bool, button: String
+    let action: () -> Void
+    var body: some View {
+        HStack(alignment: .center, spacing: 12) {
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 6) {
+                    Text(title).font(.body.weight(.medium))
+                    if busy { ProgressView().controlSize(.mini) } else if failed { Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange) }
+                }
+                Text(text).font(.caption).foregroundStyle(failed ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary))
+                    .fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
+            }
+            Spacer(minLength: 8)
+            Button(button, action: action).buttonStyle(.borderedProminent).tint(button == "Cancel" ? .gray : .accentColor)
+                .accessibilityLabel("\(button) \(title)")
+        }
+    }
+}
+
 /// One tool as the office's state reports it, with what one-click setup can do.
 struct ToolStatus: Equatable {
     var id: String, name: String
     var checked = false, installed = false, signedIn = false, ready = false
     var hint = "", readOnly = true, canSetup = false
     var step: String?, line = "", error: String?, busy = false, needs: [String] = []
+    var update: UpdateStatus?
 
     init(id: String, name: String) { self.id = id; self.name = name }
     init(_ m: [String: Any]) {
@@ -86,6 +156,7 @@ struct ToolStatus: Equatable {
         let s = m["setup"] as? [String: Any] ?? [:]
         step = s["step"] as? String; line = s["line"] as? String ?? ""; error = s["error"] as? String
         busy = s["busy"] as? Bool ?? false; needs = s["needs"] as? [String] ?? []
+        update = UpdateStatus(m["update"])
     }
 
     enum Phase: Equatable { case checking, ready, installing, signingIn, failed, needsInstall, needsSignIn }
@@ -126,6 +197,9 @@ final class SettingsModel: ObservableObject {
     @Published var noticeSeen = false
     @Published var computerUse = false
     @Published var sandbox = true
+    /// What this Mac still lacks (Settings → General sets each up in one click): the
+    /// sandbox's programs, with their setup's progress, and git.
+    @Published var machine = Machine()
     @Published var agentBrowser = true
     /// Kiro compacts a long conversation by itself once it fills this share of its context window.
     @Published var kiroAutoCompact = false
@@ -178,6 +252,7 @@ final class SettingsModel: ObservableObject {
         quotaItems = m["quotaItems"] as? [String] ?? []
         computerUse = m["computerUse"] as? Bool ?? false
         sandbox = m["sandbox"] as? Bool ?? true
+        receiveMachine(m)
         agentBrowser = m["agentBrowser"] as? Bool ?? true
         // The backend says in the preferences whether this Mac can host agent desktops, so the switch is right before the Spaces message comes.
         if let ok = m["spacesSupported"] as? Bool { spaces.supported = ok }
@@ -210,6 +285,23 @@ final class SettingsModel: ObservableObject {
     func setComputerUse(_ on: Bool) { computerUse = on; request(["type": "saveSettings", "computerUse": on]) }
     func setAgentBrowser(_ on: Bool) { agentBrowser = on; request(["type": "saveSettings", "agentBrowser": on]) }
     func setSandbox(_ on: Bool) { sandbox = on; request(["type": "saveSettings", "sandbox": on]) }
+    func receiveMachine(_ m: [String: Any]) { var next = Machine(m); next.gitAsked = machine.gitAsked; if next != machine { machine = next } }
+    func sandboxSetup(_ step: String = "run") { send(["type": "sandboxSetup", "step": step]) }
+    /// Apple's own installer for the Command Line Tools (git among them): its dialog, then
+    /// a look every few seconds until git is there.
+    func installGit() {
+        guard !smoke else { return }
+        let p = Process(); p.executableURL = URL(fileURLWithPath: "/usr/bin/xcode-select"); p.arguments = ["--install"]
+        try? p.run()
+        machine.gitAsked = true
+        gitWatch?.invalidate()
+        let until = Date().addingTimeInterval(15 * 60)
+        gitWatch = Timer.scheduledTimer(withTimeInterval: 10, repeats: true) { [weak self] t in
+            guard let self, !self.machine.gitInstalled, Date() < until else { t.invalidate(); return }
+            self.send(["type": "machine"])
+        }
+    }
+    private var gitWatch: Timer?
     func setKiroAutoCompact(_ on: Bool) { kiroAutoCompact = on; request(["type": "saveSettings", "kiroAutoCompact": on]) }
     func setKiroCompactAt(_ n: Int) { kiroCompactAt = n; request(["type": "saveSettings", "kiroCompactAt": n]) }
     /// Asks the backend for Cua Driver's state (it answers with what it knows, then checks again).
@@ -271,6 +363,8 @@ final class SettingsModel: ObservableObject {
         let s = status(id)
         send(["type": "setup", "tool": id, "step": s.phase == .installing || s.phase == .signingIn ? "cancel" : "auto"])
     }
+    /// A tool's one-click update with its own updater ("cua-driver" for Cua Driver).
+    func update(_ id: String) { send(["type": "update", "tool": id]) }
 }
 
 /// The Settings window; the SwiftUI view lives in it for the app's lifetime.
@@ -341,8 +435,28 @@ private struct SetupButton: View {
                 .tint(title == "Cancel" ? .gray : .accentColor)
                 .controlSize(.regular)
                 .accessibilityLabel("\(title) \(s.name)")
+        } else if s.phase == .ready, let u = s.update {
+            UpdateButton(update: u, name: s.name) { model.update(id) }
         } else if s.phase == .ready {
             Label("Ready", systemImage: "checkmark").labelStyle(.titleAndIcon).foregroundStyle(.green).font(.callout.weight(.medium))
+        }
+    }
+}
+
+/// A newer release's one click, its progress while it runs, and why it stopped.
+private struct UpdateButton: View {
+    let update: UpdateStatus, name: String
+    let action: () -> Void
+    var body: some View {
+        if update.busy {
+            HStack(spacing: 6) { ProgressView().controlSize(.small); Text(update.line.isEmpty ? "Updating…" : update.line).font(.callout).foregroundStyle(.secondary).lineLimit(1) }
+        } else if update.available {
+            Button(action: action) { Label(update.title, systemImage: "arrow.down.circle.fill") }
+                .buttonStyle(.borderedProminent).tint(.red)
+                .help(update.error ?? "\(name) \(update.installed) is installed; \(update.latest) is out. Hover runs \(name)'s own updater.")
+                .accessibilityLabel("\(update.title) for \(name)")
+        } else if let e = update.error {
+            Label(e, systemImage: "exclamationmark.triangle.fill").foregroundStyle(.orange).font(.callout).lineLimit(2)
         }
     }
 }
@@ -393,6 +507,7 @@ struct SettingsView: View {
                             Text(t.name)
                             Spacer()
                             if t.phase != .ready { StatusDot(status: t).imageScale(.small).controlSize(.mini) }
+                            else if t.update?.available == true { Circle().fill(.red).frame(width: 7, height: 7).accessibilityLabel("Update available") }
                         }
                         .tag(SettingsModel.Page.tool(t.id))
                     }
@@ -427,6 +542,15 @@ private struct StartPage: View {
                 }
                 VStack(spacing: 10) {
                     ForEach(model.tools.filter { $0.id != "opencode" }, id: \.id) { ToolCard(model: model, id: $0.id) }
+                }
+                // What this Mac still lacks for every agent: set up here in one click too.
+                if model.machine.missing(sandboxOn: model.sandbox) {
+                    GroupBox {
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text("This Mac").font(.headline)
+                            MachineRows(model: model, sandbox: true, git: true)
+                        }.padding(6)
+                    }
                 }
                 GroupBox {
                     VStack(alignment: .leading, spacing: 8) {
@@ -470,6 +594,9 @@ private struct GeneralPage: View {
                     Text("Agents change only the folders they work in, can’t open windows or control your apps, and reach only their own service, package registries and GitHub. Computer use still works in the background.")
                         .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 }
+                // A sandbox switched on but not installed yet: agents would run outside it.
+                MachineRows(model: model, sandbox: true, git: false)
+                MachineRows(model: model, sandbox: false, git: true)
             } header: { Text("Agents") }
             Section {
                 Toggle("Open Hover at login", isOn: Binding(get: { model.login }, set: { model.setLogin($0) }))
@@ -537,7 +664,7 @@ private struct ComputerUsePage: View {
                 Toggle(isOn: Binding(get: { sp.on }, set: { model.setSpaces($0) })) {
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Give agents a desktop of their own")
-                        Text("One Cua Space per project: a separate computer that the agents working in that folder share for computer use, each with its own cursor, instead of your screen. You watch it live in a desk’s Screen panel and can step in at any time. Drag an app or files onto the notch to send them to a project’s desktop.")
+                        Text("One Cua Space per project: a separate computer that the agents working in that folder share at the same time for computer use, each with its own cursor and working in the background on its own apps, instead of your screen. You watch it live in a desk’s Screen panel and can step in at any time. Right-click an app’s title bar (or use the menu bar’s Send to Hover VM) to send it to a project’s desktop, and drag files onto the notch.")
                             .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                     }
                 }
@@ -600,6 +727,8 @@ private struct ComputerUsePage: View {
                     if let a = c.action {
                         Button(a.title) { model.cuaSetup(a.step) }
                             .buttonStyle(.borderedProminent).tint(a.step == "cancel" ? .gray : .accentColor)
+                    } else if let u = c.update, u.available || u.busy || u.error != nil {
+                        UpdateButton(update: u, name: "Cua Driver") { model.update("cua-driver") }
                     } else if c.checked {
                         Button("Check Again") { model.checkComputerUse() }
                     }

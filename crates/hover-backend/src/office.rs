@@ -114,6 +114,8 @@ fn tool(c: &Ctx, t: AgentTool) -> Json {
         ("signedIn", Json::Bool(known.as_ref().is_some_and(|k| k.signed_in))),
         ("canSetup", Json::Bool(setup::supported())),
         ("setup", setup_state(t)),
+        // A newer release out, and its one-click update going on (a red "!" on the logo).
+        ("update", crate::updates::state(t.id())),
         ("access", st(opts.access_id(read_only))),
         ("readOnly", Json::Bool(read_only)),
         ("hideSteps", Json::Bool(opts.hide_steps)),

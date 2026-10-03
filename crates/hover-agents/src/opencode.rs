@@ -206,11 +206,16 @@ struct Host {
 pub type McpNow = Arc<dyn Fn() -> Vec<McpServer> + Send + Sync>;
 
 /// One server for all its sessions, so one browser server too: it answers for the
-/// OpenCode session at work (Hover's browser tag "opencode"). A project's desktop
-/// (spaces.rs) is per folder and the server is fixed at its start, so OpenCode gets none,
-/// and no computer use at all while agent desktops are on (computer_use::servers).
+/// OpenCode session at work (Hover's browser tag "opencode"). The server is fixed at its
+/// start, so its desktop server follows the OpenCode session at work too (spaces.rs), and
+/// there is no computer use of the user's screen while agent desktops are on.
 fn default_mcp() -> McpNow {
-    Arc::new(|| { let mut all = computer_use::servers(); all.extend(crate::browser::servers(AgentTool::OpenCode, Some("opencode"))); all })
+    Arc::new(|| {
+        let mut all = computer_use::servers();
+        all.extend(crate::browser::servers(AgentTool::OpenCode, Some("opencode")));
+        all.extend(crate::spaces::servers(None, crate::spaces::OPENCODE));
+        all
+    })
 }
 
 /// OpenCode's runtime: shared by every OpenCode session.
@@ -287,7 +292,7 @@ impl Host {
                 Fit::Outside => return KiroResult::new(KiroState::Failed, sandbox::outside_message(NAME)),
             }
         }
-        if sandbox::wanted() && crate::agents::toggles().computer_use { computer_use::ensure_daemon(); }
+        if sandbox::wanted() && crate::agents::toggles().computer_use && !crate::spaces::wanted() { computer_use::ensure_daemon(); }
         self.busy.fetch_add(1, Ordering::SeqCst);
         self.idle.fetch_add(1, Ordering::SeqCst);
         let turn = Arc::new(Turn {

@@ -17,7 +17,14 @@ def vm(name, change):
 a = sys.argv[1:]
 if a[:1] == ['--version']: print('cua 0.3.0'); sys.exit(0)
 if a[:2] == ['spaces', 'ls']: print(json.dumps({'relay_error': None, 'spaces': load()})); sys.exit(0)
-if a[:2] == ['spaces', 'ls']: print(json.dumps(load())); sys.exit(0)
+# This Mac's own sandboxes with their power state (Lume's), as `sb ls --local` lists them.
+if a[:2] == ['sb', 'ls']:
+    v = json.load(open(vms)) if os.path.exists(vms) else {}
+    print(json.dumps([{'id': x['id'], 'name': x['id'].split(':')[-1], 'runtime': 'lume', 'kind': 'vm', 'status': v.get(x['id'].split(':')[-1], {}).get('status', 'stopped')} for x in load()])); sys.exit(0)
+# Where the Space's own driver answers MCP: the stand-in driver, with the desktop's token.
+if a[:2] == ['sb', 'mcp'] and a[3:5] == ['env', 'config']:
+    print(json.dumps({'type': 'http', 'url': '%s/s/%s/mcp' % (os.environ['HOVER_E2E_DRIVER'], a[2].split(':')[-1]), 'headers': {'x-cua-env-authorization': 'Bearer ' + ('e2e-token' if '--show-secrets' in a else '****')}})); sys.exit(0)
+if a[:2] == ['spaces', 'cancel']: sys.exit(0)
 if a[:2] == ['spaces', 'create']:
     name = a[a.index('--name') + 1]
     assert '--cpus' in a and '--memory-mb' in a, a
@@ -25,6 +32,8 @@ if a[:2] == ['spaces', 'create']:
         print(json.dumps({'phase': ph, 'fraction': f}), flush=True); time.sleep(0.4)
     # As the real one: no power state in the list, and the guest's hostname as its name.
     s = [x for x in load() if x['id'] != 'local:' + name] + [{'id': 'local:' + name, 'name': 'Apple-Virtual-Machine-1.local', 'os': 'macos'}]
+    # Cua's own record of the sandbox: where its cua-spacesd listens, and its token.
+    json.dump({'name': name, 'host': '127.0.0.1', 'api_port': 3211, 'env_token': 'e2e-token'}, open(os.environ['CUA_HOME'] + '/sandboxes/' + name + '.json', 'w'))
     save(s); vm(name, {'status': 'running', 'cpuCount': int(a[a.index('--cpus') + 1]), 'memorySize': int(a[a.index('--memory-mb') + 1]) << 20, 'display': '1024x768'}); sys.exit(0)
 if a[:2] in (['spaces', 'start'], ['spaces', 'stop']):
     vm(a[2].split(':')[-1], {'status': 'running' if a[1] == 'start' else 'stopped'})
@@ -37,12 +46,26 @@ if a[:2] == ['spaces', 'add']:
     save(s); sys.exit(0)
 if a[:2] == ['sb', 'exec']:
     print('exec', a[3][:300], file=log, flush=True)
+    # The desktop has Apple's own apps, and nothing else until it's sent.
+    if a[3].startswith('/usr/bin/open -b ') and 'com.apple.' not in a[3].split(' ')[2]: print('Unable to find application', file=sys.stderr); sys.exit(1)
     print('/Users/lume'); sys.exit(0)
 if a[:2] == ['sb', 'cp']: print('copied', file=log, flush=True); sys.exit(0)
 if a[:2] == ['runtime', 'setup']: sys.exit(0)
 if a[:2] == ['sb', 'view']: print('Viewer for %s: %s/viewer/#ticket=e2e-ticket&files=%%2Fhome' % (a[2], os.environ['HOVER_E2E_SITE'])); sys.exit(0)
-if a[:1] == ['teleport']:
+if a[:1] == ['teleport'] and 'Cua Spaces.app' not in sys.argv[0]:
     print('cua: unsupported: teleport ships with Cua Spaces', file=sys.stderr); sys.exit(2)
+if a[:2] == ['teleport', 'providers']:
+    print(json.dumps([{'id': 'chrome', 'display_name': 'Google Chrome / Chromium', 'app_ids': ['com.google.Chrome', 'Google Chrome'], 'installed': True, 'macos': True}])); sys.exit(0)
+if a[:2] == ['teleport', 'manifest']:
+    print(json.dumps({'provider_id': 'chrome', 'scope': 'full_profile', 'notes': ['Full profile includes cookies, saved logins, and history.'], 'items': [
+        {'label': 'Open tabs', 'rel_path': 'tabs.json', 'count': 3, 'count_noun': 'tabs', 'sensitive': False, 'default_checked': True},
+        {'label': 'Cookies', 'rel_path': 'Default/Cookies', 'sensitive': True, 'default_checked': False},
+        {'label': 'Bookmarks', 'rel_path': 'Default/Bookmarks', 'sensitive': False, 'default_checked': True}]})); sys.exit(0)
+if a[:2] == ['teleport', 'push']:
+    # The token comes in the environment, never on the command line.
+    print('push token-in-env' if os.environ.get('CUA_ENV_TOKEN') == 'e2e-token' and 'e2e-token' not in a else 'push token-missing', file=log, flush=True)
+    for x in ('progress 0 4096', 'progress 4096 4096', 'teleported chrome (2 items, 4096 bytes), launched'): print(x, flush=True); time.sleep(0.2)
+    sys.exit(0)
 if a[:1] == ['mcp']:
     space = a[a.index('--sandbox') + 1] if '--sandbox' in a else ''
     tools = [{'name': n, 'description': n, 'inputSchema': {'type': 'object'}} for n in ['computer_screenshot', 'computer_click', 'computer_type', 'send_file']]

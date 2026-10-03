@@ -223,7 +223,11 @@ mod socket {
 
     /// Listening at a path of the test's own (Unix sockets take short ones).
     fn listening(name: &str) -> (std::path::PathBuf, std::path::PathBuf) {
-        let dir = std::path::PathBuf::from("/tmp").join(format!("hb-{name}-{}", std::process::id()));
+        // The run's own temp folder (a sandboxed run may write nowhere else) when a socket's
+        // path fits in it (104 bytes on a Mac), else /tmp.
+        let tmp = std::env::temp_dir();
+        let base = if tmp.as_os_str().len() < 64 { tmp } else { std::path::PathBuf::from("/tmp") };
+        let dir = base.join(format!("hb-{name}-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let sock = dir.join("b.sock");
         std::env::set_var("HOVER_BROWSER_SOCKET", &sock);

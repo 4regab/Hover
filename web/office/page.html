@@ -196,6 +196,19 @@ textarea::placeholder{color:var(--faint)}
 #mMenu .mrow svg{order:1;width:12px;height:12px;flex:none;fill:none;stroke:var(--dim);stroke-width:2.4;stroke-linecap:round;stroke-linejoin:round}
 #mMenu p{margin:4px 8px 3px;font-size:11px;color:var(--faint)}
 #confirm{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);z-index:9;width:min(320px,calc(100% - 32px));padding:16px;border-radius:16px;display:flex;flex-direction:column;gap:6px}
+#tpReview{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);z-index:13;width:min(420px,calc(100% - 32px));max-height:calc(100% - 32px);overflow:auto;padding:16px;border-radius:16px;display:flex;flex-direction:column;gap:8px}
+#tpReview b{font:600 14px var(--px)}#tpReview>span,#tpReview .tprnote{font-size:12px;color:var(--dim)}
+#tpReview ul{list-style:none;margin:4px 0;padding:0;display:flex;flex-direction:column;gap:2px}
+#tpReview label{display:flex;align-items:center;gap:8px;padding:5px 6px;border-radius:8px;font-size:12.5px;cursor:pointer}#tpReview label:hover{background:rgba(255,255,255,.05)}
+#tpReview label em{margin-left:auto;font-style:normal;font-size:11px;color:var(--dim)}#tpReview label.sens em{color:#ffb340}
+#tpReview .tprbtns{display:flex;gap:8px;justify-content:flex-end;margin-top:6px}
+#tpReview .tprhead{display:flex;align-items:center;justify-content:space-between;margin-top:4px;font-size:11.5px;font-weight:600;color:var(--dim);text-transform:uppercase;letter-spacing:.04em}
+#tpReview .tprhead i{font-style:normal;font-weight:500;text-transform:none;letter-spacing:0;margin-left:6px;color:var(--faint)}
+#tpReview .tprhead button{height:24px;padding:0 10px;font-size:11.5px;text-transform:none;letter-spacing:0}
+#tpReview ul.tprtabs{max-height:220px;overflow:auto}
+#tpReview label.tab .tt{min-width:0;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}#tpReview label.tab em{flex:none;max-width:40%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#tpReview button:disabled{opacity:.45;cursor:default}
+#tpReview button{height:32px;padding:0 14px;border-radius:10px;border:1px solid var(--line);background:rgba(255,255,255,.05);font-weight:600;font-size:12.5px}#tprGo{background:#7c5cff!important;border-color:transparent!important;color:#fff}
 #confirm b{font:600 14px var(--px)}#confirm span{font-size:12.5px;color:var(--dim)}#confirm div{display:flex;gap:8px;justify-content:flex-end;margin-top:8px}
 #confirm button{height:32px;padding:0 14px;border-radius:10px;border:1px solid var(--line);background:rgba(255,255,255,.05);font-weight:600;font-size:12.5px}#cfYes{background:rgba(255,69,58,.85)!important;border-color:transparent!important;color:#fff}
 /* History, on the bookshelf. */
@@ -262,6 +275,12 @@ textarea::placeholder{color:var(--faint)}
 #fab.s-pick #fabMain svg{transform:rotate(45deg)}
 #fabMain .draft{position:absolute;right:1px;top:1px;width:8px;height:8px;border-radius:50%;background:var(--li);box-shadow:0 0 0 2px #140f1a;display:none}
 #fab.draft.s-rest #fabMain .draft{display:block}
+#fab.upd.s-rest #fabMain::after{content:"";position:absolute;left:1px;top:1px;width:8px;height:8px;border-radius:50%;background:#ff453a;box-shadow:0 0 0 2px #140f1a}
+.lg .bang{position:absolute;top:-4px;right:-4px;width:14px;height:14px;border-radius:50%;background:#ff453a;color:#fff;font:800 9.5px/14px Inter,"Segoe UI",sans-serif;font-style:normal;text-align:center;box-shadow:0 0 0 2px #140f1a;cursor:pointer;transition:transform .12s}
+.lg .bang:hover{transform:scale(1.2)}.lg .bang.bad{background:#8e8e93}
+.lg .bang.busy{background:#140f1a;box-shadow:inset 0 0 0 2px rgba(255,179,107,.25);cursor:default}
+.lg .bang.busy::before{content:"";position:absolute;inset:0;border-radius:50%;border:2px solid #ffb36b;border-right-color:transparent;animation:spin .8s linear infinite}
+.lg .tip em.u{color:#ff8a80}
 #fab.s-open #fabMain{transform:scale(.5);opacity:0;pointer-events:none}
 #fabTools{position:absolute;left:0;bottom:0;pointer-events:none}
 .lg{flex:none;display:grid;place-items:center;border:0;border-radius:50%;padding:0}
@@ -668,6 +687,7 @@ body.host.notch #office::before{content:"";position:absolute;inset:0 0 auto;heig
   <div id="deskMenu" role="menu" hidden></div>
   <div id="deskSub" role="menu" aria-label="Pages" hidden></div>
   <div id="tdrop" class="glass" role="dialog" aria-label="Send to an agent’s desktop" hidden></div>
+  <div id="tpReview" class="glass" role="dialog" aria-modal="true" aria-labelledby="tprTitle" hidden></div>
   <div id="confirm" class="glass" role="alertdialog" aria-modal="true" aria-labelledby="cfTitle" hidden><b id="cfTitle"></b><span id="cfText"></span><div><button id="cfNo">Cancel</button><button id="cfYes">Delete</button></div></div>
   <div id="tip" hidden></div>
   <div id="toast" class="glass"></div>

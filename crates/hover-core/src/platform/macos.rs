@@ -112,6 +112,14 @@ pub const ERR_SEC_ITEM_NOT_FOUND: i32 = -25300;
 #[derive(Default)]
 pub struct Login;
 
+/// Never the Keychain in a test run (scripts/test-macos.sh sets HOVER_SANDBOX_ROOT): its
+/// sandbox can't read the user's keychains, and macOS then asks the user on screen about
+/// a keychain it can't find. HOVER_NO_KEYCHAIN=1 does the same anywhere. Off, it is as
+/// if there were none: nothing found, and note.key keeps the key.
+pub fn keychain_off() -> bool {
+    crate::in_test_sandbox() || std::env::var_os("HOVER_NO_KEYCHAIN").is_some_and(|v| v == "1")
+}
+
 #[cfg(target_os = "macos")]
 fn describe(e: security_framework::base::Error) -> String {
     format!("Keychain status {}{}", e.code(), e.message().map(|m| format!(" ({m})")).unwrap_or_default())
@@ -120,11 +128,13 @@ fn describe(e: security_framework::base::Error) -> String {
 #[cfg(target_os = "macos")]
 impl Keychain for Login {
     fn set(&self, service: &str, account: &str, secret: &[u8]) -> Result<(), String> {
+        if keychain_off() { return Err("the Keychain is off in tests".into()); }
         security_framework::passwords::set_generic_password(service, account, secret).map_err(describe)
     }
 
     fn get(&self, service: &str, account: &str) -> Result<Option<Vec<u8>>, String> {
         use security_framework::passwords::{generic_password, PasswordOptions};
+        if keychain_off() { return Ok(None); }
         match generic_password(PasswordOptions::new_generic_password(service, account)) {
             Ok(v) => Ok(Some(v)),
             Err(e) if e.code() == ERR_SEC_ITEM_NOT_FOUND => Ok(None),
@@ -139,6 +149,7 @@ impl Keychain for Login {
 #[cfg(target_os = "macos")]
 pub fn keychain_find(service: &str) -> Result<Option<Vec<u8>>, String> {
     use security_framework::item::{ItemClass, ItemSearchOptions, SearchResult};
+    if keychain_off() { return Ok(None); }
     match ItemSearchOptions::new().class(ItemClass::generic_password()).service(service).load_data(true).limit(1).search() {
         Ok(found) => Ok(found.into_iter().find_map(|r| match r { SearchResult::Data(d) => Some(d), _ => None })),
         Err(e) if e.code() == ERR_SEC_ITEM_NOT_FOUND => Ok(None),

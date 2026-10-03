@@ -71,7 +71,9 @@ final class AgentBrowsers {
         MainActor.assumeIsolated {
             // One browser shows at a time in an office; the others go back to no window.
             for (k, t) in tabs where k != id && t.web.superview === office { t.park() }
-            guard let rect, rect.width > 20, rect.height > 20 else { tabs[id]?.park(); return }
+            // Hidden only where it is: a folding notch's late "none" must not take it out of
+            // the window that shows it now.
+            guard let rect, rect.width > 20, rect.height > 20 else { if let t = tabs[id], t.web.superview === office { t.park() }; return }
             let t = tab(id)
             if t.web.superview !== office { t.web.removeFromSuperview(); office.addSubview(t.web) }
             let y = office.isFlipped ? rect.minY : office.bounds.height - rect.maxY

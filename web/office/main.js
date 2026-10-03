@@ -1432,7 +1432,22 @@ $('#send').onclick = () => { const s = cur(); if ($('#send').classList.contains(
 // New task: the circle, the agents' logos, then the box for the one picked. The
 // folder and the model are the tool's own; each session keeps its folder.
 function renderTools() {
-  $('#fabTools').innerHTML = tools.map((x, i) => `<button class="lg ${x.id}${x.ready ? '' : ' off'}" role="menuitem" data-tool="${x.id}" style="--i:${i}" tabindex="${fab === 'pick' ? 0 : -1}" aria-label="${esc(x.ready ? x.name : `${x.name}: ${x.hint}`)}"><span class="tip">${esc(x.name)}${x.ready ? '' : ' <em>· ' + esc(x.hint) + '</em>'}</span>${logo(x.id)}</button>`).join('');
+  $('#fabTools').innerHTML = tools.map((x, i) => {
+    // A newer release out: a red "!" on the logo, which updates it in one click.
+    const u = x.update, upd = u && (u.available || u.busy || u.error);
+    const say = !u ? '' : u.busy ? (u.line || 'Updating…') : u.error ? u.error : `${u.latest ? 'Version ' + u.latest : 'An update'} is out. Click ! to update.`;
+    const label = x.ready ? x.name : `${x.name}: ${x.hint}`;
+    return `<button class="lg ${x.id}${x.ready ? '' : ' off'}" role="menuitem" data-tool="${x.id}" style="--i:${i}" tabindex="${fab === 'pick' ? 0 : -1}" aria-label="${esc(label + (upd ? '. ' + say + (u.busy ? '' : ' Press U to update.') : ''))}"><span class="tip">${esc(x.name)}${x.ready ? '' : ' <em>· ' + esc(x.hint) + '</em>'}${upd ? ' <em class="u">· ' + esc(say) + '</em>' : ''}</span>${logo(x.id)}${upd ? `<i class="bang${u.busy ? ' busy' : u.error ? ' bad' : ''}" aria-hidden="true">${u.busy ? '' : '!'}</i>` : ''}</button>`;
+  }).join('');
+  // The circle says so too, so an update is seen before the picker opens.
+  $('#fab').classList.toggle('upd', tools.some(x => x.update?.available && !x.update.busy));
+}
+function update(x) {
+  if (!x?.update || x.update.busy || !host) return;
+  if (!x.update.available && x.update.error) return toast(x.update.error);
+  host.postMessage({ type: 'update', tool: x.id });
+  x.update = { ...x.update, busy: true, error: null, line: 'Updating…' }; renderTools();
+  toast(`Updating ${x.name}…`);
 }
 function renderNew() {
   const full = sessions.length >= DESKS.length && !sessions.some(s => !busy(s));
@@ -1474,12 +1489,14 @@ $('#fabMain').onclick = () => fab === 'pick' ? fold() : openNew();
 $('#fabTools').onclick = e => {
   const b = e.target.closest('[data-tool]'); if (!b) return;
   const x = tools.find(t => t.id === b.dataset.tool);
+  if (e.target.closest('.bang')) return update(x);
   // A tool that isn't ready opens its one-click setup where the host has one.
   if (!x.ready) { if (x.canSetup && host) { host.postMessage({ type: 'setup', tool: x.id, open: true }); return; } return toast(x.hint); }
   newTool = x.id; toolPicked = true; setFab('open');
 };
 $('#fabTools').addEventListener('keydown', e => {
   const items = [...$('#fabTools').querySelectorAll('.lg')], i = items.indexOf(document.activeElement);
+  if ((e.key === 'u' || e.key === 'U') && document.activeElement?.dataset.tool) { e.preventDefault(); return update(tools.find(t => t.id === document.activeElement.dataset.tool)); }
   if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') { e.preventDefault(); items[(i + (e.key === 'ArrowRight' ? 1 : -1) + items.length) % items.length]?.focus(); }
 });
 $('#nWho').onclick = () => { closeMenu(); setFab('pick'); };
@@ -1794,6 +1811,11 @@ addEventListener('pointerdown', e => { if (deskMenuFor != null && !e.target.clos
 function openDesk(id, tab, opts = {}) {
   closeDeskMenu();
   const s = sessions.find(x => x.id === id); if (!s) return;
+  // The browser and the agents' desktops want room: from the notch they open in the
+  // office's window, which the notch grows into.
+  if (host && !inWindow && !opts.here && (tab === 'browser' || tab === 'screen')) {
+    host.postMessage({ type: 'window', open: { desk: id, tab, url: opts.url } }); return;
+  }
   const ui = uiOf(id);
   if (opts.url) { ui.url = opts.url; ui.picked = true; }
   if (desk && desk.id !== id) leaveDesk();
@@ -1886,7 +1908,7 @@ function placeBrowser() {
   const s = deskOf();
   let id = null, r = null;
   if (s && !paused && panel === 'desk' && desk.ui.tab === 'browser' && agentTabs[s.id]?.url) {
-    const v = $('#pBody .bview'), over = deskMenuFor != null || !$('#confirm').hidden || !$('#mMenu').hidden || !$('#hudMenu').hidden || drawerOpen;
+    const v = $('#pBody .bview'), over = deskMenuFor != null || !$('#confirm').hidden || !$('#mMenu').hidden || !$('#hudMenu').hidden || drawerOpen || !$('#tpReview').hidden;
     const b = v?.getBoundingClientRect();
     if (b && !over && b.width > 40 && b.height > 40) { id = s.id; r = { x: b.left, y: b.top, w: b.width, h: b.height, vw: innerWidth, vh: innerHeight }; }
   }
@@ -2028,7 +2050,7 @@ function placeSpace() {
   const s = deskOf();
   let id = null, r = null, url = '';
   if (s && spacesOn && !paused && panel === 'desk' && desk.ui.tab === 'screen' && spaceView[spaceOf(s)]?.url) {
-    const b = $('#pBody .spbox')?.getBoundingClientRect(), over = deskMenuFor != null || !$('#confirm').hidden || !$('#mMenu').hidden || !$('#hudMenu').hidden || drawerOpen || !$('#tdrop').hidden;
+    const b = $('#pBody .spbox')?.getBoundingClientRect(), over = deskMenuFor != null || !$('#confirm').hidden || !$('#mMenu').hidden || !$('#hudMenu').hidden || drawerOpen || !$('#tdrop').hidden || !$('#tpReview').hidden;
     if (b && !over && b.width > 40 && b.height > 40) { id = spaceOf(s); url = spaceView[id].url; r = { x: b.left, y: b.top, w: b.width, h: b.height, vw: innerWidth }; }
   }
   const key = id == null ? 'none' : [id, url, r.x, r.y, r.w, r.h].map(x => typeof x === 'number' ? Math.round(x) : x).join('|');
@@ -2053,7 +2075,7 @@ $('#bigBtn').onclick = () => {
   else toast('In Hover this opens the office in its own window.');
 };
 function onRestore(m) {
-  if (m.desk != null && sessions.some(s => s.id === m.desk)) openDesk(m.desk, m.tab || 'browser');
+  if (m.desk != null && sessions.some(s => s.id === m.desk)) openDesk(m.desk, m.tab || 'browser', { url: m.url });
   else if (m.chat != null && sessions.some(s => s.id === m.chat)) openSession(m.chat);
 }
 
@@ -2079,28 +2101,73 @@ function onTeleportDrag(m) {
     box.innerHTML = D.dropHTML(tdrag, [...desks.values()], spacesOn);
     box.hidden = false;
   }
-  const hit = document.elementsFromPoint(x, y).find(e => e.matches?.('#tdrop [data-tdrop]'));
-  box.querySelectorAll('[data-tdrop]').forEach(t => t.classList.toggle('on', t === hit));
+  // The tile under the pointer, or else (one desktop, or one within a short reach) the
+  // nearest while the pointer is over the open notch: a drop there never just vanishes,
+  // and with several desktops it never lands on one it wasn't near.
+  const tiles = [...box.querySelectorAll('[data-tdrop]')];
+  let hit = document.elementsFromPoint(x, y).find(e => e.matches?.('#tdrop [data-tdrop]'));
+  // The notch's own band (and the menu bar beside it) is above the page: y < 0 there.
+  if (!hit && x >= -40 && y >= -120 && x <= innerWidth + 40 && y <= innerHeight && tiles.length) {
+    const dist = t => { const r = t.getBoundingClientRect(); return Math.hypot(Math.max(r.left - x, 0, x - r.right), Math.max(r.top - y, 0, y - r.bottom)); };
+    const near = tiles.reduce((a, b) => dist(b) < dist(a) ? b : a);
+    if (tiles.length === 1 || dist(near) < 60) hit = near;
+  }
+  tiles.forEach(t => t.classList.toggle('on', t === hit));
   if (m.phase !== 'drop') return;
+  if (host) host.postMessage({ type: 'dragTrace', at: [Math.round(x), Math.round(y)], view: [innerWidth, innerHeight], tiles: tiles.length, hit: hit?.dataset.tdrop ?? null });
   const d = tdrag; tdrag = null;
   setTimeout(() => { box.hidden = true; }, hit ? 900 : 200);
-  if (!hit) return;
+  if (!hit) { toast(tiles.length > 1 ? `Let go over one of the desktops to send ${d.app} there.` : `Let go over the notch to send ${d.app} to a desktop.`); return; }
+  if (!spacesOn) { toast('Turn on agent desktops in Settings → Computer Use first.'); return; }
   const own = hit.dataset.tdrop === 'f';
   const s = own ? null : sessions.find(x => x.id === +hit.dataset.tdrop); if (!own && !s) return;
+  // Stay open while it goes, so its progress and result are seen.
+  host?.postMessage({ type: 'stay', seconds: 30 });
   hit.classList.add('sent');
   const where = own ? `the ${short(defaultFolder)} desktop` : s.space?.project ? `the ${s.space.project} desktop` : `${s.b.name}’s desktop`;
   const to = own ? { folder: defaultFolder } : { id: s.id };
-  if (!spacesOn) { toast('Turn on agent desktops in Settings → Computer Use first.'); return; }
   if (d.files.length) { host?.postMessage({ type: 'spaceFiles', ...to, paths: d.files }); toast(`Sending ${d.app} to ${where}…`); }
-  else if (d.path) { host?.postMessage({ type: 'teleport', ...to, app: d.app, path: d.path }); toast(`Sending ${d.app} to ${where}…`); }
+  else if (d.path) { host?.postMessage({ type: 'teleport', ...to, app: d.app, bundle: d.bundle, path: d.path }); toast(`Sending ${d.app} to ${where}…`); }
   else toast(`Hover couldn’t tell which app that is.`);
 }
 function onTeleport(m) {
   const s = sessions.find(x => x.id === m.id), who = s?.space?.project ? `the ${s.space.project} desktop` : s ? `${s.b.name}’s desktop` : defaultFolder ? `the ${short(defaultFolder)} desktop` : 'the desktop';
   if (m.phase === 'sending') { if (m.line) toast(m.line); return; }
+  if (m.phase === 'review') { reviewTeleport(m, who); return; }
   if (m.phase !== 'done') return;
   const n = m.data?.sent ?? 0;
-  toast(m.data?.error ? m.data.error : m.app === 'files' ? `Sent ${n} item${n === 1 ? '' : 's'} to the Downloads on ${who}.` : `${m.app} is on ${who}.`);
+  // Arrived: in the window, that desktop's live view, where the app or files now are
+  // (the notch only says so; its Screen opens the window).
+  if (!m.data?.error && s && inWindow) openDesk(s.id, 'screen');
+  toast(m.data?.error ? m.data.error : m.app === 'files' ? `Sent ${n} item${n === 1 ? '' : 's'} to the Downloads on ${who}.`
+    : m.data?.tabs?.length ? `Moved ${n} tab${n === 1 ? '' : 's'} to ${m.app} on ${who}.` : m.data?.teleported ? `${m.app} teleported to ${who}.` : `${m.app} is on ${who}.`);
+}
+
+// What a teleport would move, ticked by the user; the answer goes back as `include` (the
+// profile items) and `tabs` (the tabs picked, which open in one window there).
+function reviewTeleport(m, who) {
+  const box = $('#tpReview'), items = m.plan?.items || [], tabs = m.plan?.tabs || [];
+  box.innerHTML = D.reviewHTML(m, who);
+  const to = m.id ? { id: m.id } : { folder: m.folder || defaultFolder };
+  const send = (include, picked) => { box.hidden = true; host?.postMessage({ type: 'teleport', ...to, app: m.app, bundle: m.bundle, path: m.path, urls: m.urls || [], include, tabs: picked }); };
+  const boxes = () => [...box.querySelectorAll('input[data-t]')];
+  const picked = () => boxes().filter(c => c.checked).map(c => tabs[+c.dataset.t]).filter(Boolean).map(t => ({ id: t.id, title: t.title, url: t.url }));
+  // How many tabs are picked, All or None, and nothing to move means nothing to press.
+  const count = () => {
+    if (!tabs.length) return;
+    const n = boxes().filter(c => c.checked).length;
+    $('#tprCount').textContent = `${n} of ${tabs.length}`;
+    $('#tprAll').textContent = n === tabs.length ? 'None' : 'All';
+    $('#tprGo').disabled = !n && !box.querySelector('input[data-i]:checked');
+  };
+  box.querySelectorAll('input').forEach(c => { c.onchange = count; });
+  if (tabs.length) $('#tprAll').onclick = () => { const on = boxes().some(c => !c.checked); boxes().forEach(c => { c.checked = on; }); count(); };
+  count();
+  $('#tprNo').onclick = () => { box.hidden = true; toast(`${m.app} stays on this Mac.`); };
+  $('#tprApp').onclick = () => send([], []);
+  $('#tprGo').onclick = () => send([...box.querySelectorAll('input[data-i]:checked')].map(c => items[+c.dataset.i]?.path).filter(Boolean), picked());
+  box.onkeydown = e => { if (e.key === 'Escape') { e.stopPropagation(); $('#tprNo').click(); } };
+  $('#tdrop').hidden = true; box.hidden = false; $('#tprGo').focus();
 }
 
 // Take control: clicks, keys and the wheel on the desktop go to the agent's apps.
@@ -2486,6 +2553,7 @@ if (host && window.hoverE2E) window.__office = {
   openDeskMenu: id => openDeskMenu(sessions.find(x => x.id === id), 420, 260),
   openDesk: (id, tab) => openDesk(id, tab),
   openSession: id => openSession(id),
+  closePanel: () => closePanel(),
   spaces: () => spacesOn,
   // A page without a window gets no animation frames: the harness turns the clock.
   tick: (n = 1) => { for (let i = 0; i < n; i++) { e2eNow = Math.max(e2eNow + 34, performance.now()); frame(e2eNow); } },

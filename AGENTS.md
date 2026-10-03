@@ -139,7 +139,7 @@ macos/           the Mac app, in Swift (not a crate): Hover.swift (entry, hot ke
                  Notch.swift (the notch window and island), MenuBar.swift, Settings.swift,
                  Voice.swift and VoicePanel.swift, OfficeHost.swift (the web office in a
                  WKWebView and the backend's pipe), AgentBrowser.swift, Spaces.swift,
-                 Screen.swift, ShellEnvironment.swift, guardian.c (starts the backend);
+                 Screen.swift, ShellEnvironment.swift, MoveToApplications.swift, guardian.c (starts the backend);
                  entitlements, Resources/ (the office's music)
 web/office/      the web office (main.js, desk.js, page.html; esbuild bundles it into
                  dist/kiro-office.html, not tracked); the Mac app's office
@@ -198,7 +198,10 @@ assets/          hover.svg (the logo), make-icon.py (writes hover.png and
     refreshed (refreshing would rotate its tokens).
   - Kiro: `kiro-cli chat --no-interactive /usage`. This is the heavy one: it takes a
     few hundred MB for about eight seconds.
-  - Codex: the newest `token_count` event in `~/.codex/sessions/**/rollout-*.jsonl`.
+  - Codex: `chatgpt.com/backend-api/wham/usage` with Codex's own sign-in
+    (`~/.codex/auth.json`, never refreshed), else the newest `token_count` event in
+    `~/.codex/sessions/**/rollout-*.jsonl`, read backwards from the end of the newest
+    file in 256 KB blocks (stale once a limit resets early or is used elsewhere).
   - Cursor: `cursor.com/api/usage-summary` with the token from Cursor's `state.vscdb`.
 
   Each is off until switched on, and is re-read five minutes after the last read. A
@@ -335,10 +338,31 @@ assets/          hover.svg (the logo), make-icon.py (writes hover.png and
   on in Settings → Computer Use, and macOS 26+ on Apple silicon only (`spaces::UNSUPPORTED`).
   Each project folder gets one Space, a macOS VM (Cua's `cua` CLI with Lume) that the agents
   working there share for computer use instead of the user's screen. It is made when the
-  project's first agent starts, turned off when none of its agents is in the office, after
-  15 idle minutes and when Hover quits, and deleted with the project's last session. The
-  Screen panel shows its viewer. Drag an app or files onto the notch and the office opens
-  on the desktops to send them to; the full-screen button opens Hover in a window.
+  project's first agent starts (one create for agents starting together), turned off when
+  none of its agents is in the office, after 15 idle minutes (`InUse` keeps it on while a
+  call, send or viewer uses it) and when Hover quits, and deleted with the project's last
+  session. A Mac runs two macOS VMs at most: a third project turns off one nobody is using
+  or has looked at for 3 minutes (`set_can_pause`). Its state comes from `cua sb ls --local`
+  (no relay call) and Lume. Each agent gets `cua-space`, Hover's relay to a driver session
+  of its own on the Space's Cua Driver (`space_driver.rs`, HTTP MCP to cua-spacesd's `/mcp`,
+  the address and token from `cua sb mcp <id> env config`), so each has its own cursor;
+  whole-desktop and foreground input go one agent at a time, and tools that would reach
+  another's work (`kill_app`, `bring_to_front`, `end_session`, …) are not offered. With
+  desktops on, the user's own Cua Driver is never given. The Screen panel shows its viewer.
+  Files and folders dragged onto the notch, or an app sent with Send to Hover VM (a Finder
+  service and the menu bar; `SendToVM.swift`, asking which project when there is more
+  than one), go to the project's desktop. An app whose data could go too (Safari's open
+  tabs, an app Cua teleports) is shown as a plan to tick first (`spaces::plan`,
+  `teleport` with `include`). A browser with more than one tab asks which (they open
+  together in one window there). Once it has gone, it leaves this Mac (`Moved`, in
+  `Spaces.swift`): the tabs that went close (a browser left with no window quits), any other
+  app quits. Its tabs are read and closed with Apple Events; with Automation off, nothing is
+  sent and System Settings opens on Automation. The full-screen button, Browser or Screen grows the notch
+  into Hover's window (`Zoom.swift`).
+- **Updates** (`crates/hover-backend/src/updates.rs`). Each installed tool's latest release
+  (Kiro's release manifest, npm, Cursor's installer, `cua-driver check-update`) is checked every six
+  hours; a newer one shows a red badge on the tool's logo, in Settings and the menu bar,
+  and one click runs the tool's own updater (never while its sessions run).
 - **The agent browser** (`browser.rs` + `crates/hover-backend/src/browser_host.rs` +
   `macos/Sources/AgentBrowser.swift`, macOS only). Each agent
   gets a browser MCP server (12 tools: open, snapshot, click, type, …) that talks over a
@@ -349,7 +373,14 @@ assets/          hover.svg (the logo), make-icon.py (writes hover.png and
   sessions, so its calls go to the session at work.
 - **Setting an agent up** (`setup.rs`, macOS). The "Set up" row on an agent's page installs
   what is missing with the maker's own installer and then runs the tool's sign-in in a
-  Terminal window; Hover never sees the credentials.
+  Terminal window; Hover never sees the credentials. A fresh Mac needs nothing first: where
+  there is no Homebrew, Node.js and ripgrep come from their own releases, pinned to their
+  SHA-256 (`setup::NODE`, `RIPGREP`, `release_script`), into `~/.local` with no sudo. The
+  sandbox's srt and ripgrep are installed with any agent, and on their own by Set Up beside
+  the sandbox switch (Settings → General, and Get Started's "This Mac", with git: Apple's
+  Command Line Tools installer); a sandbox step that fails leaves the agent working outside
+  it. A Hover opened from Downloads offers once to move itself to Applications
+  (`MoveToApplications.swift`).
 - **The desk card** (`desk_ui.rs`, `ui/desk.slint`; data from `hover-agents::desk`). A click
   on a desk with a session opens a card where you clicked: the last steps, the question
   the agent waits on, or the answer, a reply box, and eight tiles that open a wide panel:
@@ -358,7 +389,8 @@ assets/          hover.svg (the logo), make-icon.py (writes hover.png and
   on screen reach Slint. Files shown stay inside the session's folder (links followed).
   A tile the OS can't run is disabled with its reason (`TileContext.off`).
 - **The pull request tab** sets up the GitHub CLI in one click (`github.rs`): install with
-  winget or Homebrew where there is one (else a hint: Hover never uses sudo), then
+  winget or Homebrew where there is one (on a Mac without it, gh's own release, pinned to
+  its checksum, into `~/.local`; elsewhere a hint: Hover never uses sudo), then
   `gh auth login` with the device code shown to copy and the page to open. Create pull
   request can commit, make a branch, push and open the PR; it is disabled with the reason
   while the agent runs.
@@ -395,7 +427,7 @@ beside it, never hidden. The notes are constants next to the code (`sandbox::UNS
 | Computer use | off: "Computer use needs macOS." | off, same note | yes | Cua Driver is built for macOS; Cua is kept to the Mac |
 | Agent desktops (Cua Spaces), drag to the notch | off: "Agent desktops need macOS 26 or later on Apple silicon." | off, same note | yes, on macOS 26+ Apple silicon with Cua's CLI and Lume | Cua Spaces runs macOS VMs with Lume; Cua is kept to the Mac |
 | Screen panel capture | yes (PrintWindow) | X11 only | yes, with Screen Recording | |
-| GitHub CLI one-click install | winget | hint only | Homebrew, else hint | no sudo, no release download (no TLS in `hover-agents`) |
+| GitHub CLI one-click install | winget | hint only | Homebrew, else gh's release (pinned SHA-256, via curl) | no sudo; Linux's packages need it |
 | Local speech (Phonon) | yes | yes | off: Apple's on-device speech recognizer instead (no Groq or cleanup) | Phonon's runtime isn't built for a Mac |
 | Usage in the island | yes | yes | in the menu bar instead | the camera housing |
 | Tray | yes | yes (D-Bus) | menu bar | |
