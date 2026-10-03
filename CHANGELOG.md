@@ -8,7 +8,7 @@ What changed in each Hover release. Versions follow [Semantic Versioning](https:
 ### Changed
 
 - A new logo, the blue ninja, in the app icon, the tray, the title bar, the Linux icon and the
-  README; and a new social preview picture (`assets/social-preview.png`).
+  README.
 
 ## [3.3.1] - 2026-10-02
 
