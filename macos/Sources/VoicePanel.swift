@@ -926,12 +926,18 @@ private struct Glass: ViewModifier {
     let radius: CGFloat
     func body(content: Content) -> some View {
         let shape = RoundedRectangle(cornerRadius: radius, style: .continuous)
+        // glassEffect is in the macOS 26 SDK only (Xcode 26, Swift 6.2).
+        #if compiler(>=6.2)
         if #available(macOS 26.0, *) {
             content.background(shape.fill(Color.black.opacity(0.42))).glassEffect(.regular, in: shape)
         } else {
             content.background(VisualEffect().clipShape(shape)).background(shape.fill(Color.black.opacity(0.3)))
                 .overlay(shape.strokeBorder(Color.white.opacity(0.1)))
         }
+        #else
+        content.background(VisualEffect().clipShape(shape)).background(shape.fill(Color.black.opacity(0.3)))
+            .overlay(shape.strokeBorder(Color.white.opacity(0.1)))
+        #endif
     }
 }
 

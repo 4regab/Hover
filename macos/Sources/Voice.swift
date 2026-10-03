@@ -89,7 +89,9 @@ final class Dictation {
 
     /// Which engine this Mac uses, for Settings.
     static var engineDescription: String {
+        #if compiler(>=6.2)
         if #available(macOS 26.0, *) { return "Apple’s on-device speech model (SpeechAnalyzer)" }
+        #endif
         return "macOS dictation (SFSpeechRecognizer, on device when the language allows)"
     }
 
@@ -98,7 +100,11 @@ final class Dictation {
         try await Permissions.ensure()
         voiceLog.info("start: permissions granted")
         let impl: DictationImpl
+        #if compiler(>=6.2)
         if #available(macOS 26.0, *) { impl = AnalyzerDictation() } else { impl = LegacyDictation() }
+        #else
+        impl = LegacyDictation()
+        #endif
         impl.sink = sink
         self.impl = impl
         try await impl.start(locale: locale)
@@ -144,6 +150,9 @@ private final class Heard {
 
 // MARK: macOS 26+: SpeechAnalyzer
 
+// The macOS 26 SDK (Xcode 26, Swift 6.2) has SpeechAnalyzer; an older one builds only the
+// recognizer below.
+#if compiler(>=6.2)
 @available(macOS 26.0, *)
 final class AnalyzerDictation: DictationImpl {
     weak var sink: DictationSink?
@@ -256,6 +265,7 @@ final class AnalyzerDictation: DictationImpl {
         analyzer = nil
     }
 }
+#endif
 
 // MARK: macOS 14–15: SFSpeechRecognizer
 
@@ -383,6 +393,7 @@ enum VoiceProbe {
             } catch { line("mic start failed: \(error.localizedDescription)") }
         }
         if let audio {
+            #if compiler(>=6.2)
             if #available(macOS 26.0, *) {
                 do {
                     let file = try AVAudioFile(forReading: URL(fileURLWithPath: audio))
@@ -402,6 +413,9 @@ enum VoiceProbe {
                     if case .new(let tool)? = target { line("routed: new \(tool) task: \(task)") } else { line("routed: default agent, task: \(task)") }
                 } catch { line("transcription failed: \(error.localizedDescription)") }
             } else { line("transcription: skipped (needs macOS 26)") }
+            #else
+            line("transcription: skipped (built without the macOS 26 SDK)")
+            #endif
         }
         line("done")
     }

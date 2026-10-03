@@ -211,6 +211,14 @@ jobs:
         shell: bash
     steps:
       - uses: actions/checkout@v4
+      # Voice uses macOS 26's SpeechAnalyzer, which needs the macOS 26 SDK: the newest
+      # Xcode 26 on the image (its default is older). Without one the build goes on, and
+      # Voice.swift compiles only the older recognizer (#if compiler(>=6.2)).
+      - name: Xcode
+        run: |
+          x=$(ls -d /Applications/Xcode_26*.app 2>/dev/null | sort -V | tail -n 1)
+          if [ -n "$x" ]; then sudo xcode-select -s "$x/Contents/Developer"; fi
+          xcodebuild -version
       - name: Toolchain
         run: |
           if ! command -v rustup >/dev/null; then

@@ -24,7 +24,8 @@ fn main() {
     let dir = exe.parent().unwrap().to_path_buf();
     let args: Vec<String> = std::env::args().skip(1).collect();
     let mut log = std::fs::OpenOptions::new().create(true).append(true).open(dir.join("calls.log")).unwrap();
-    writeln!(log, "{}", args.join("\u{1f}")).unwrap();
+    // One write per call: lookups run side by side, and writeln!'s pieces could interleave.
+    log.write_all(format!("{}\n", args.join("\u{1f}")).as_bytes()).unwrap();
     drop(log);
 
     let key = if args.first().map(String::as_str) == Some("--version") {
