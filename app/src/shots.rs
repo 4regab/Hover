@@ -191,6 +191,9 @@ const LONG_PROMPT: &str = concat!("FIRST LINE: the notch blinks when it opens on
     "and at notch.rs where the openness animates. Keep the resting island's size. Add a test that opens the notch twice on a scaled monitor and ",
     "counts the resizes. Don't touch the office's renderer. When done, run the tests and tell me what changed and why. LAST WORDS HERE");
 
+/// `HOVER_SHOTS_SKIP=chat,voice` leaves those sets out, for a quick run of the rest.
+fn skip(what: &str) -> bool { std::env::var("HOVER_SHOTS_SKIP").is_ok_and(|v| v.split(',').any(|w| w.trim() == what)) }
+
 fn run_for(ms: u64) {
     let t = std::time::Instant::now();
     while t.elapsed() < Duration::from_millis(ms) {
@@ -455,45 +458,72 @@ fn desk_shots(app: &Rc<App>, hover: &Arc<hover_app::app::Hover>, dir: &Path, fol
     g.set_over_kind(2);
     shot("desk-tip-desk.png");
     g.set_over_kind(0);
-    // The card, on the busy desk: its live steps, the helpers out, the eight tiles.
+    // The card, on the busy desk: its live steps, the helpers out, the eight tiles; on the
+    // finished one; asking; with a question. First at the Large office (desk-card-<state>),
+    // then at every other size Settings offers (desk-card-<size>-<state>): Small is the
+    // shortest, and a card must fit each. The last shot of each is a click in the far corner,
+    // where the card is pushed back into the office.
     desk_sample(app, busy);
     desk_sample(app, done);
-    app.desk_shot_card(busy, bx + 40.0, by + 20.0);
-    settle(700);
-    shot("desk-card-working.png");
-    // The same with a reply typed.
-    app.notch.global::<Desk>().set_c_draft("Also keep the dirty flag in the tests".into());
-    settle(300);
-    shot("desk-card-working-reply.png");
-    app.notch.global::<Desk>().set_c_draft("".into());
-    // The finished desk: the answer it gave, in a line or so.
-    app.desk_close_card();
-    let (dx, dy) = at(done);
-    app.desk_shot_card(done, dx + 40.0, dy + 20.0);
-    settle(700);
-    shot("desk-card-done.png");
-    // A question the agent waits on, in place of the steps.
     let sid = hover.sessions.get(busy).and_then(|s| s.kiro_id).unwrap_or_default();
     let ask = hover_agents::ask::AgentAsk { id: "d1".into(), kind: "execute".into(), title: "Run".into(), command: Some("cargo build --release -p hover".into()), path: None,
         preview: None, added: 0, removed: 0, reason: "Builds the project".into(), danger: false, questions: None };
-    hover.sessions.ask(AgentTool::Kiro, &sid, ask, &hover_agents::cancel::Cancel::new(), Box::new(|_| {}));
-    app.desk_close_card();
-    app.desk_shot_card(busy, bx + 40.0, by + 20.0);
-    settle(500);
-    shot("desk-card-asking.png");
-    hover.sessions.answer(busy, "d1", hover_agents::ask::AskAnswer::Deny);
-    app.desk_close_card();
     // A question with choices (OpenCode, Claude Code): Skip and Answer… in place of the three.
     let question = hover_agents::ask::AgentAsk { id: "d2".into(), kind: "question".into(), title: "Question".into(), command: None, path: None, preview: None, added: 0, removed: 0,
         reason: String::new(), danger: false, questions: Some(vec![hover_agents::ask::AgentQuestion { header: "Scope".into(), question: "Should refresh() also skip views that are hidden, or only clean ones?".into(),
             options: vec![("Only clean ones".into(), "Keep the change small".into()), ("Hidden too".into(), "Also check visibility".into())], multiple: false, custom: true }]) };
-    hover.sessions.ask(AgentTool::Kiro, &sid, question, &hover_agents::cancel::Cancel::new(), Box::new(|_| {}));
-    app.desk_shot_card(busy, bx + 40.0, by + 20.0);
-    settle(500);
-    shot("desk-card-question.png");
-    hover.sessions.answer(busy, "d2", hover_agents::ask::AskAnswer::Deny);
-    app.desk_close_card();
-    // The panel, tab by tab, on the finished desk (its session is idle, so Create is open).
+    use hover_core::model::WorkspaceSize as W;
+    for (ws, tag) in [(W::Large, ""), (W::Small, "small-"), (W::Default, "default-"), (W::ExtraLarge, "extra-large-")] {
+        if !tag.is_empty() {
+            hover.settings.set_workspace_size(ws);
+            view::Host::settings_changed(&**app);
+            app.office_follow();
+            app.office_push();
+            settle(1500);
+        }
+        let full = { let n = app.n.borrow(); (n.win.width() as u32, n.win.height() as u32) };
+        let shot = |name: &str| save_office(&notch, full, &dir.join(format!("desk-card-{tag}{name}.png")));
+        let (bx, by) = at(busy);
+        let (dx, dy) = at(done);
+        app.desk_close_card();
+        app.desk_shot_card(busy, bx + 40.0, by + 20.0);
+        settle(700);
+        shot("working");
+        // The same with a reply typed.
+        app.notch.global::<Desk>().set_c_draft("Also keep the dirty flag in the tests".into());
+        settle(300);
+        shot("working-reply");
+        app.notch.global::<Desk>().set_c_draft("".into());
+        // The finished desk: the answer it gave, in a line or so.
+        app.desk_close_card();
+        app.desk_shot_card(done, dx + 40.0, dy + 20.0);
+        settle(700);
+        shot("done");
+        // A permission the agent waits on, in place of the steps.
+        hover.sessions.ask(AgentTool::Kiro, &sid, ask.clone(), &hover_agents::cancel::Cancel::new(), Box::new(|_| {}));
+        app.desk_close_card();
+        app.desk_shot_card(busy, bx + 40.0, by + 20.0);
+        settle(500);
+        shot("asking");
+        // A click far past the office's corner: the card is held inside it.
+        app.desk_close_card();
+        app.desk_shot_card(busy, 5000.0, 5000.0);
+        settle(500);
+        shot("asking-corner");
+        hover.sessions.answer(busy, "d1", hover_agents::ask::AskAnswer::Deny);
+        app.desk_close_card();
+        hover.sessions.ask(AgentTool::Kiro, &sid, question.clone(), &hover_agents::cancel::Cancel::new(), Box::new(|_| {}));
+        app.desk_shot_card(busy, bx + 40.0, by + 20.0);
+        settle(500);
+        shot("question");
+        hover.sessions.answer(busy, "d2", hover_agents::ask::AskAnswer::Deny);
+        app.desk_close_card();
+    }
+    hover.settings.set_workspace_size(W::Large);
+    view::Host::settings_changed(&**app);
+    app.office_follow();
+    app.office_push();
+    settle(1500);    // The panel, tab by tab, on the finished desk (its session is idle, so Create is open).
     let tab = |name: &str, file: &str| { app.desk_shot_open(done, name); settle(700); shot(file); };
     tab("terminal", "desk-tab-terminal.png");
     tab("files", "desk-tab-files.png");
@@ -518,12 +548,16 @@ fn desk_shots(app: &Rc<App>, hover: &Arc<hover_app::app::Hover>, dir: &Path, fol
     tab("diff", "desk-tab-diff.png");
     // Pull request: the branch's own, with its checks.
     let pr = d::PrDetail { number: 57, title: "Redraw the panel only when it changed".into(), state: "open".into(), is_draft: true, url: "https://github.com/4regab/Hover/pull/57".into(), head: "feat/refresh".into(), base: "main".into(),
-        additions: 29, deletions: 11, changed_files: 3, body: "`refresh()` returns early when the view isn't dirty, so the panel stops redrawing on every poll.\n\nFixes the flicker from #42. The tests cover a clean view and a dirty one.".into(),
+        additions: 29, deletions: 11, changed_files: 3, body: "## What changed\n\n`refresh()` returns early when the view isn't dirty, so the panel stops redrawing on every poll.\n\n- **Skips** clean views\n- Keeps the dirty flag in `View`\n- Covers a clean view and a dirty one in the tests\n\n```rust\nif !view.dirty { return; }\n```\n\nFixes the flicker from [#42](https://github.com/4regab/Hover/pull/42).".into(),
         author: Some("arz".into()), review: Some("REVIEW_REQUIRED".into()), updated_at: None, comments: 2, pass: 3, fail: 1, pending: 1, skip: 0,
         checks: vec![d::Check { name: "build (ubuntu)".into(), state: "pass".into(), url: Some("https://github.com/x".into()) }, d::Check { name: "build (windows)".into(), state: "pass".into(), url: Some("https://github.com/x".into()) },
             d::Check { name: "test".into(), state: "fail".into(), url: Some("https://github.com/x".into()) }, d::Check { name: "lint".into(), state: "pass".into(), url: None }, d::Check { name: "deploy preview".into(), state: "pending".into(), url: None }] };
-    app.desk_put(done, "pr", Got::Pr(d::PrPanel::Open(Box::new(pr))));
+    app.desk_put(done, "pr", Got::Pr(d::PrPanel::Open(Box::new(pr.clone()))));
     tab("pr", "desk-tab-pr.png");
+    // The same without its checks, so the description (headings, a list, bold, inline code, a code block, a link) is in view.
+    let pr_text = d::PrDetail { checks: vec![], pass: 0, fail: 0, pending: 0, ..pr.clone() };
+    app.desk_put(done, "pr", Got::Pr(d::PrPanel::Open(Box::new(pr_text.clone()))));
+    tab("pr", "desk-tab-pr-description.png");
     // The GitHub CLI's setup: one button; then its one-time code, with Copy and Open.
     app.desk_put(done, "pr", Got::Pr(d::PrPanel::Setup { need: d::Setup::Install, message: "Set up the GitHub CLI.".into() }));
     settle(300);
@@ -549,6 +583,7 @@ fn desk_shots(app: &Rc<App>, hover: &Arc<hover_app::app::Hover>, dir: &Path, fol
     // Create pull request, on a finished desk: the form from the session's title and answer.
     let create = d::CreateInfo { branch: Some("main".into()), base: "main".into(), on_default: true, suggest: Some("hover/refresh-skips-clean-views".into()), ahead: 0, changed: 3,
         title: "Refresh skips views that are clean".into(), body: "`refresh()` now returns early when the view isn't dirty, so the panel stops redrawing on every poll.\n\nChanges: src/refresh.ts, src/view.test.ts.".into(), busy: false };
+    let create_small = create.clone();
     app.desk_put(done, "pr", Got::Pr(d::PrPanel::NoPr { message: "This branch has no pull request yet.".into(), create: create.clone() }));
     settle(500);
     shot("desk-tab-pr-create.png");
@@ -580,9 +615,30 @@ fn desk_shots(app: &Rc<App>, hover: &Arc<hover_app::app::Hover>, dir: &Path, fol
         if bar { image::Rgba([0x2a, 0x2a, 0x30, 255]) } else if inside { image::Rgba([0xf4, 0xf1, 0xea, 255]) } else { image::Rgba([(0x30 + y / 20) as u8, (0x40 + x / 30) as u8, 0x7a, 255]) }
     });
     app.desk_shot_open(done, "screen");
-    app.desk_shot_frame(frame, false);
+    app.desk_shot_frame(frame.clone(), false);
     settle(500);
     shot("desk-tab-screen.png");
+    // The panel at Small, the shortest office (840 x 340): every tab must fit it, with the
+    // description as Markdown and the pull request form (desk-tab-small-<tab>.png).
+    hover.settings.set_workspace_size(W::Small);
+    view::Host::settings_changed(&**app);
+    app.office_follow();
+    app.office_push();
+    settle(1500);
+    let small = { let n = app.n.borrow(); (n.win.width() as u32, n.win.height() as u32) };
+    let tab_small = |name: &str, file: &str| { app.desk_shot_open(done, name); settle(700); save_office(&notch, small, &dir.join(format!("desk-tab-small-{file}.png"))); };
+    app.desk_put(done, "pr", Got::Pr(d::PrPanel::Open(Box::new(pr))));
+    for name in ["terminal", "files", "diff", "pr", "linked", "agents", "browser"] { tab_small(name, name); }
+    app.desk_put(done, "pr", Got::Pr(d::PrPanel::Open(Box::new(pr_text))));
+    tab_small("pr", "pr-description");
+    app.desk_put(done, "pr", Got::Pr(d::PrPanel::NoPr { message: "This branch has no pull request yet.".into(), create: create_small }));
+    tab_small("pr", "pr-create");
+    tab_small("screen", "screen");
+    hover.settings.set_workspace_size(W::Large);
+    view::Host::settings_changed(&**app);
+    app.office_follow();
+    app.office_push();
+    settle(1000);
     // Everything off: Create's state cleared, the panel put away, the sessions let go.
     app.desk_close_panel();
     *hold.lock().unwrap() = false;
@@ -906,7 +962,7 @@ pub fn run(dir: &Path) {
     save(&notch, (full.0, 220), 2.0, desk, &dir.join("notch-rest-card-2x.png"));
     app.answer_asked(hover_agents::ask::AskAnswer::Deny);
     run_for(700);
-    voice_shots(&app, &hover, dir, &data);
+    if !skip("voice") { voice_shots(&app, &hover, dir, &data); }
 
     { let mut n = app.n.borrow_mut(); n.hover.opened(false); n.open = Openness::at(1.0); }
     app.hover.seen();
@@ -1136,7 +1192,7 @@ pub fn run(dir: &Path) {
         app.close_drawer();
     }
     *hold3.lock().unwrap() = false;
-    chat_shots(&app, &hover, dir, &folder, &hold, &hold_c);
+    if !skip("chat") { chat_shots(&app, &hover, dir, &folder, &hold, &hold_c); }
     desk_shots(&app, &hover, dir, &folder, &hold_d);
     app.show_settings_in(0, Section::General);
     save(&notch, full, 1.0, desk, &dir.join("notch-open-settings.png"));
@@ -1173,7 +1229,7 @@ pub fn run(dir: &Path) {
         app.show_settings_in(1, s);
         save(&dash, (840, 620), 1.0, [0, 0, 0], &dir.join(format!("settings-{}-narrow.png", s.title().to_lowercase().replace(' ', "-"))));
     }
-    settings_voice_shots(&app, &hover, dir, &data);
+    if !skip("voice") { settings_voice_shots(&app, &hover, dir, &data); }
     settings_integrations_shots(&app, &hover, dir);
     // A VS Code theme (Dark+ as its files say), and the model picker open.
     let t = hover_core::model::SavedTheme { name: "Dark+".into(), dark: true, colors: [("editor.background", "#1e1e1e"), ("foreground", "#cccccc"),

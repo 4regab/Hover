@@ -5,6 +5,21 @@ What changed in each Hover release. Versions follow [Semantic Versioning](https:
 
 ## [Unreleased]
 
+## [3.4.2] - 2026-10-03
+
+### Fixed
+
+- The chat offered both Retry and Try again under the newest answer. Try again (the folder
+  goes back too) now takes Retry's place where a checkpoint was kept; Retry shows only
+  where there is none.
+- The desk card was cut off on a small notch. It now stays inside the office at every
+  size, and is smaller (a compact header, one-line tiles, less padding), so it covers
+  less of the office.
+- The Pull request tab shows the description as Markdown (headings, lists, bold, code
+  and links), as the chat does, instead of raw text.
+- Claude Code's mark: Settings showed a generic sparkle for it (and for Cursor). Each
+  agent's section and page now show the tool's own mark, as the office does.
+
 ## [3.4.1] - 2026-10-03
 
 ### Added

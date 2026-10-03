@@ -19,11 +19,14 @@ export struct DPage { url: string, label: string, server: bool, on: bool, tip: s
 // 6 the open file's bar, 7 code line, 8 diff file, 9 hunk, 10 diff line, 11 more lines,
 // 12 command, 13 output line, 14 subagent, 15 its section, 16 pull request head, 17 its title,
 // 18 its facts, 19 button, 20 checks, 21 a check, 22 description line, 23 linked pull request,
-// 24 diff summary. tone: 0 ink, 1 green, 2 red, 3 amber, 4 blue, 5 purple, 6 dim, 7 faint.
+// 24 diff summary, 25 the description as a picture of Markdown.
+// tone: 0 ink, 1 green, 2 red, 3 amber, 4 blue, 5 purple, 6 dim, 7 faint.
 export struct DRow {
     kind: int, y: length, h: length, depth: int,
     text: string, sub: string, right: string, num: string, num2: string,
     add: string, del: string, badge: string, tone: int, flag: int, act: string, tag1: string, tag2: string,
+    // 25: the description painted as Markdown by hover-chat.
+    img: image,
 }
 
 // The desk.js line icons on their 24 grid, for what icons.slint lacks.
@@ -550,6 +553,13 @@ component DeskRowView inherits Rectangle {
     }
     // 22: a line of the description.
     if r.kind == 22: Text { x: 6px; width: parent.width - 12px; text: r.text; font-size: 13px; color: #ececf0; vertical-alignment: center; overflow: clip; }
+    // 25: the description, painted as Markdown by hover-chat with the thread's 12 px at each
+    // side, so the picture hangs 8 px out at the left to put its text at the rows' 4 px. A
+    // click goes back with its place in the picture (a link, a code block's Copy).
+    if r.kind == 25: Rectangle {
+        Image { x: -8px; y: 0; width: parent.width + 16px; height: parent.height - 8px; source: r.img; image-fit: fill; }
+        TouchArea { clicked => { act("md:" + round((self.mouse-x + 8px) / 1px) + ":" + round(self.mouse-y / 1px)); } }
+    }
     // 23: a pull request the session mentions.
     if r.kind == 23: Rectangle {
         border-radius: 10px;
@@ -942,37 +952,39 @@ export component DeskBody inherits VerticalLayout {
     }
 }
 
-// The card's eight tiles, in a grid of four.
+// The card's eight tiles, in a grid of four: the icon and the title on a line, what the
+// surface holds under it. A short office (tight) keeps only the line.
 export component DeskTiles inherits Rectangle {
-    height: 2 * 62px + 5px;
+    in property <bool> tight;
+    property <length> th: tight ? 26px : 36px;
+    height: 2 * th + 4px;
     for t[i] in Desk.tiles: Rectangle {
-        x: mod(i, 4) * (parent.width + 5px) / 4;
-        y: floor(i / 4) * (62px + 5px);
-        width: (parent.width - 15px) / 4;
-        height: 62px;
-        border-radius: 11px;
+        x: mod(i, 4) * (parent.width + 4px) / 4;
+        y: floor(i / 4) * (th + 4px);
+        width: (parent.width - 12px) / 4;
+        height: th;
+        border-radius: 9px;
         background: ta.has-hover && t.enabled ? Desk.c-color.with-alpha(0.2) : t.enabled ? #ffffff0b : #ffffff07;
         border-width: 1px;
         border-color: t.live ? #ff453a59 : ta.has-hover && t.enabled ? Desk.c-color.with-alpha(0.4) : #ffffff0d;
         accessible-role: button;
         accessible-id: "dtile-" + t.id;
-        accessible-label: t.enabled ? t.title + ". " + t.detail : t.title + ". " + t.reason;
+        accessible-label: t.enabled ? t.title + " (" + t.letter + "). " + t.detail : t.title + ". " + t.reason;
         accessible-enabled: t.enabled;
         accessible-action-default => { Desk.card-tile(t.id); }
         VerticalLayout {
-            padding-left: 8px; padding-right: 8px; padding-top: 8px; padding-bottom: 7px; spacing: 1px;
-            HorizontalLayout { height: 20px;
-                Rectangle { width: 20px;
-                    Icon { x: 1px; name: DeskIcons.of(t.icon); size: 16px; tint: t.enabled ? #ececf0e6 : #ececf061; }
-                    if t.badge > 0: Rectangle { x: 10px; y: -4px; width: max(14px, bb.preferred-width + 6px); height: 14px; border-radius: 7px; background: #3b82f6;
+            alignment: center;
+            padding-left: 7px; padding-right: 5px; spacing: 1px;
+            HorizontalLayout { height: 15px; spacing: 5px;
+                Rectangle { width: 14px;
+                    Icon { x: 0px; name: DeskIcons.of(t.icon); size: 14px; tint: t.enabled ? #ececf0e6 : #ececf061; }
+                    if t.badge > 0: Rectangle { x: 9px; y: -6px; width: max(14px, bb.preferred-width + 6px); height: 14px; border-radius: 7px; background: #3b82f6;
                         bb := Text { text: "" + t.badge; font-size: 9px; font-weight: 600; color: white; horizontal-alignment: center; vertical-alignment: center; } }
-                    if t.live: Rectangle { x: 14px; y: -1px; width: 6px; height: 6px; border-radius: 3px; background: #ff453a; }
+                    if t.live: Rectangle { x: 10px; y: -2px; width: 6px; height: 6px; border-radius: 3px; background: #ff453a; }
                 }
-                Rectangle { horizontal-stretch: 1; }
-                Text { text: t.letter; font-size: 10.5px; color: #ececf04d; vertical-alignment: top; }
+                Text { text: t.title == "Linked pull requests" ? "Linked PRs" : t.title; font-size: 11px; font-weight: 600; color: t.enabled ? #ececf0 : #ececf061; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; }
             }
-            Text { text: t.title == "Linked pull requests" ? "Linked PRs" : t.title; font-size: 12px; font-weight: 600; color: t.enabled ? #ececf0 : #ececf061; overflow: elide; }
-            Text { text: t.enabled ? t.detail : t.reason; font-size: 10.5px; font-weight: 500; color: #ececf073; overflow: elide; }
+            if !tight: Text { text: t.enabled ? t.detail : t.reason; font-size: 11px; font-weight: 500; color: #ececf073; overflow: elide; }
         }
         ta := TouchArea { mouse-cursor: t.enabled ? pointer : default; clicked => { Desk.card-tile(t.id); } }
     }

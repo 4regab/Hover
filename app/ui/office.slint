@@ -981,7 +981,13 @@ component MenuRow inherits Rectangle {
 component DeskCard inherits Rectangle {
     in property <length> max-w;
     in property <length> max-h;
-    width: min(436px, max-w);
+    // A short office (Small is 340 tall): the tiles keep their title and drop what they hold.
+    property <bool> tight: max-h < 340px;
+    // What is in the card besides the status box, so the box takes what is left (up to 104),
+    // and the card never asks for more than the office has.
+    property <length> rest: 2 * 6px + hd.preferred-height + tiles.height + dcomp.preferred-height + 28px + 4 * 5px;
+    property <length> now-cap: max(56px, min(104px, max-h - rest));
+    width: min(408px, max-w);
     height: min(col.preferred-height, max-h);
     border-radius: 16px;
     background: #140f18f7;
@@ -997,7 +1003,7 @@ component DeskCard inherits Rectangle {
     // The bot's colour, washed over the top.
     // Placed by y: left to itself a Rectangle with only a height sits in the middle of the
     // card, which put this wash's hard top edge across the status box.
-    Rectangle { y: 0; width: parent.width; height: 64px; background: @linear-gradient(180deg, Desk.c-color.with-alpha(0.2) 0%, Desk.c-color.with-alpha(0) 100%); }
+    Rectangle { y: 0; width: parent.width; height: 56px; background: @linear-gradient(180deg, Desk.c-color.with-alpha(0.2) 0%, Desk.c-color.with-alpha(0) 100%); }
     TouchArea { scroll-event(e) => { accept } }
     keys := FocusScope {
         init => { self.focus(); }
@@ -1013,80 +1019,91 @@ component DeskCard inherits Rectangle {
             reject
         }
         col := VerticalLayout {
-            padding: 8px;
-            // .dhd: the tool's logo with a dot for how it goes, the desk's name, the task, chips.
-            HorizontalLayout {
+            padding: 6px;
+            spacing: 5px;
+            // .dhd: the tool's logo with a dot for how it goes; the desk's name and its chips
+            // on one line, the task under them.
+            hd := HorizontalLayout {
                 // Flush with the box and the tiles below: the logo and the chips share their edge.
                 padding: 0px;
-                padding-top: 4px;
-                padding-bottom: 10px;
-                spacing: 11px;
+                padding-top: 2px;
+                padding-bottom: 1px;
+                spacing: 9px;
                 VerticalLayout { alignment: start;
-                    Rectangle { width: 34px; height: 34px;
-                        Logo { width: 34px; height: 34px; radius: 10px; mark: Desk.c-tool-id == "codex" ? 22px : 19px; tool: Desk.c-tool-id;
+                    Rectangle { width: 30px; height: 30px;
+                        Logo { width: 30px; height: 30px; radius: 9px; mark: Desk.c-tool-id == "codex" ? 20px : 17px; tool: Desk.c-tool-id;
                             accessible-role: image; accessible-label: Desk.c-tool; }
-                        Rectangle { x: 25px; y: 25px; width: 10px; height: 10px; border-radius: 5px; border-width: 2px; border-color: #17141b;
+                        Rectangle { x: 22px; y: 22px; width: 10px; height: 10px; border-radius: 5px; border-width: 2px; border-color: #17141b;
                             background: Desk.c-stage <= 1 ? #c4a2ff : Desk.c-stage == 2 ? #30d158 : Desk.c-stage == 3 ? #ff453a : Desk.c-stage == 5 ? #ffb340 : #8e8e93; }
                     } }
                 VerticalLayout {
                     horizontal-stretch: 1;
                     spacing: 2px;
-                    Text { text: (Desk.c-name + "’s desk").to-uppercase(); font-family: "Pixelify Sans"; font-weight: 600; font-size: 11.5px; letter-spacing: 0.7px;
-                        color: Desk.c-color.mix(white, 0.45); overflow: elide; }
-                    Text { text: Desk.c-title; font-size: 13.5px; font-weight: 600; color: white; overflow: elide; accessible-role: text; accessible-id: "deskTitle"; }
-                    Rectangle { height: 2px; }
-                    HorizontalLayout { spacing: 5px; alignment: start;
-                        Chip { text: Desk.c-clock != "" ? Desk.c-what + " · " + Desk.c-clock : Desk.c-what;
-                            fg: Desk.c-stage <= 1 ? #d9c4ff : Desk.c-stage == 2 ? #7ee59a : Desk.c-stage == 3 ? #ff9a92 : Desk.c-stage == 5 ? #ffc46b : #ffffff99;
-                            bg: Desk.c-stage <= 1 ? #9b6bff24 : Desk.c-stage == 2 ? #30d1581a : Desk.c-stage == 3 ? #ff453a1f : Desk.c-stage == 5 ? #ffb3401f : #ffffff0e; }
-                        if Desk.c-folder != "": Chip { icon: PagePaths.folder; text: Desk.c-folder; shrink: true; }
-                        if Desk.c-access != "": Chip { icon: PagePaths.shield; text: Desk.c-access; tip: Desk.c-access-note;
-                            fg: Desk.c-access-id == "full" ? #ffc46b : #ffffff99; bg: Desk.c-access-id == "full" ? #ffb34017 : #ffffff0e; }
-                        if Desk.c-ctx >= 0: Chip { text: Desk.c-ctx + "%"; tip: Desk.c-ctx + "% of the context window used"; }
+                    HorizontalLayout { spacing: 8px; alignment: start;
+                        VerticalLayout { alignment: center;
+                            Text { text: (Desk.c-name + "’s desk").to-uppercase(); font-family: "Pixelify Sans"; font-weight: 600; font-size: 11.5px; letter-spacing: 0.7px;
+                                color: Desk.c-color.mix(white, 0.45); overflow: elide; } }
+                        HorizontalLayout { spacing: 5px; alignment: start; horizontal-stretch: 1;
+                            Chip { text: Desk.c-clock != "" ? Desk.c-what + " · " + Desk.c-clock : Desk.c-what;
+                                fg: Desk.c-stage <= 1 ? #d9c4ff : Desk.c-stage == 2 ? #7ee59a : Desk.c-stage == 3 ? #ff9a92 : Desk.c-stage == 5 ? #ffc46b : #ffffff99;
+                                bg: Desk.c-stage <= 1 ? #9b6bff24 : Desk.c-stage == 2 ? #30d1581a : Desk.c-stage == 3 ? #ff453a1f : Desk.c-stage == 5 ? #ffb3401f : #ffffff0e; }
+                            if Desk.c-folder != "": Chip { icon: PagePaths.folder; text: Desk.c-folder; shrink: true; }
+                            if Desk.c-access != "": Chip { icon: PagePaths.shield; text: Desk.c-access; tip: Desk.c-access-note;
+                                fg: Desk.c-access-id == "full" ? #ffc46b : #ffffff99; bg: Desk.c-access-id == "full" ? #ffb34017 : #ffffff0e; }
+                            if Desk.c-ctx >= 0: Chip { text: Desk.c-ctx + "%"; tip: Desk.c-ctx + "% of the context window used"; }
+                        }
                     }
+                    Text { text: Desk.c-title; font-size: 13px; font-weight: 600; color: white; overflow: elide; accessible-role: text; accessible-id: "deskTitle"; }
                 }
             }
             // .dnow: its last steps, the question, or the answer.
             Rectangle {
                 vertical-stretch: 0;
-                // Its content's height up to a cap; what is past the cap fades out inside
-                // the box's own border instead of running under the tiles.
-                height: min(now.preferred-height, 132px);
-                border-radius: 12px;
+                // Its content's height up to a cap (what the office leaves it); what is past
+                // the cap scrolls with the wheel and fades out inside the box's own border
+                // instead of running under the tiles.
+                height: min(now.preferred-height, now-cap);
+                border-radius: 11px;
                 background: #ffffff08;
                 border-width: 1px;
                 border-color: #ffffff0d;
                 clip: true;
+                nowf := Flickable {
+                    width: parent.width;
+                    height: parent.height;
+                    interactive: false;
+                    content-height: now.preferred-height;
                 now := VerticalLayout {
                     y: 0;
-                    // Its own height, not the box's: a box capped shorter clips this instead
+                    width: parent.width;
+                    // Its own height, not the box's: a box capped shorter scrolls this instead
                     // of squeezing the lines together.
                     height: self.preferred-height;
                     padding: 8px;
-                    padding-top: 7px;
-                    padding-bottom: 8px;
+                    padding-top: 6px;
+                    padding-bottom: 7px;
                     spacing: 2px;
                     if Desk.c-asking: VerticalLayout { spacing: 2px;
                         Text { text: Desk.c-ask-title; font-size: 12px; font-weight: 600; color: #ffd59a; overflow: elide; }
                         if Desk.c-ask-line != "": Text { text: Desk.c-ask-line; font-size: 12px; color: #ffd59abf; overflow: elide; }
                         // The same answers as the bubble over the bot's head and the notch:
                         // Enter allows, Shift+Enter trusts, Esc denies. Review opens the chat.
-                        if !Desk.c-ask-question: HorizontalLayout { padding-top: 6px; spacing: 6px;
+                        if !Desk.c-ask-question: HorizontalLayout { padding-top: 4px; spacing: 6px;
                             AskButton { text: "Deny"; clicked => { Office.answer(Desk.c-id, Desk.c-ask-id, "deny"); } }
                             AskButton { text: "Review"; clicked => { Desk.card-chat(); } }
                             Rectangle { horizontal-stretch: 1; }
                             AskButton { text: "Trust"; clicked => { Office.answer(Desk.c-id, Desk.c-ask-id, "trust"); } }
                             AskButton { text: Desk.c-ask-allow; kind: Desk.c-ask-danger ? 2 : 1; clicked => { Office.answer(Desk.c-id, Desk.c-ask-id, "allow"); } } }
-                        if Desk.c-ask-question: HorizontalLayout { padding-top: 6px; spacing: 6px;
+                        if Desk.c-ask-question: HorizontalLayout { padding-top: 4px; spacing: 6px;
                             AskButton { text: "Skip"; clicked => { Office.answer(Desk.c-id, Desk.c-ask-id, "deny"); } }
                             Rectangle { horizontal-stretch: 1; }
                             AskButton { text: "Answer…"; kind: 1; clicked => { Desk.card-chat(); } } } }
                     if !Desk.c-asking: VerticalLayout {
                         for s in Desk.c-steps: Rectangle {
-                            height: 24px;
+                            height: 22px;
                             HorizontalLayout { spacing: 8px; padding-left: 2px;
                                 VerticalLayout { alignment: center;
-                                    Rectangle { width: 20px; height: 20px; border-radius: 6px; background: s.color.with-alpha(0.14); border-width: s.live ? 1px : 0; border-color: #ffc46b80;
+                                    Rectangle { width: 18px; height: 18px; border-radius: 6px; background: s.color.with-alpha(0.14); border-width: s.live ? 1px : 0; border-color: #ffc46b80;
                                         Icon { name: DeskIcons.step(s.icon); size: 12px; tint: s.fail ? #ff7b72 : s.color; } } }
                                 Text { text: s.name; font-size: 12px; font-weight: 600; color: s.fail ? #ff9a92 : #f3f1f6; vertical-alignment: center; }
                                 Text { text: s.text; font-family: "DejaVu Sans Mono"; font-size: 11px; color: #ffffff8c; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; }
@@ -1097,17 +1114,16 @@ component DeskCard inherits Rectangle {
                     if !Desk.c-asking && Desk.c-steps.length == 0 && Desk.c-answer != "": Text { text: Desk.c-answer; font-size: 12.5px; color: Desk.c-answer-err ? #ffb0aa : #e9e7ec;
                         wrap: word-wrap; max-height: 56px; overflow: elide; }
                     if !Desk.c-asking && Desk.c-steps.length == 0 && Desk.c-answer != "" && Desk.c-meta != "": Text { text: Desk.c-meta; font-size: 12px; color: #f6f2ff9e; }
-                    if Desk.c-helpers.length > 0: HorizontalLayout { padding-top: 4px; spacing: 4px; alignment: start;
+                    if Desk.c-helpers.length > 0: HorizontalLayout { padding-top: 3px; spacing: 4px; alignment: start;
                         for c in Desk.c-helpers: VerticalLayout { alignment: center; Rectangle { width: 12px; height: 11px; border-radius: 3px; background: c; } }
                         Text { text: " " + Desk.c-helpers-text; font-size: 11.5px; color: #ffffff80; vertical-alignment: center; overflow: elide; } }
                 }
-                // Past the cap the last line fades out at the box's bottom edge.
-                if now.preferred-height > 132px: Rectangle { x: 8px; y: parent.height - 30px; width: parent.width - 16px; height: 28px;
+                }
+                // Past the cap the last line fades out at the box's bottom edge, until it is scrolled to.
+                if now.preferred-height > now-cap + 1px && nowf.content-y > nowf.height - now.preferred-height + 1px: Rectangle { x: 8px; y: parent.height - 26px; width: parent.width - 16px; height: 24px;
                     background: @linear-gradient(180deg, #16111a00 0%, #16111af2 100%); }
             }
-            Rectangle { height: 8px; }
-            DeskTiles { }
-            Rectangle { height: 8px; }
+            tiles := DeskTiles { tight: root.tight; }
             // .dcomp: the reply, and the round button that sends it or stops the run.
             Rectangle {
                 height: dcomp.preferred-height;
@@ -1116,7 +1132,7 @@ component DeskCard inherits Rectangle {
                 border-width: 1px;
                 border-color: dinput.has-focus ? #c4a2ff8c : #ffffff14;
                 dcomp := HorizontalLayout {
-                    padding-left: 10px; padding-right: 5px; padding-top: 5px; padding-bottom: 5px; spacing: 6px;
+                    padding-left: 10px; padding-right: 3px; padding-top: 3px; padding-bottom: 3px; spacing: 6px;
                     Rectangle {
                         horizontal-stretch: 1;
                         height: max(28px, min(96px, dinput.preferred-height + 6px));
@@ -1158,10 +1174,9 @@ component DeskCard inherits Rectangle {
                             clicked => { Desk.card-send(); } } }
                 }
             }
-            Rectangle { height: 6px; }
             // The chat itself.
             Rectangle {
-                height: 32px;
+                height: 28px;
                 border-radius: 10px;
                 background: cta.has-hover ? Desk.c-color.with-alpha(0.32) : Desk.c-color.with-alpha(0.2);
                 border-width: 1px;
