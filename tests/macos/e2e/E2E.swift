@@ -92,6 +92,7 @@ final class Harness {
             office.deliver(m)
         case "browser": browsers.handle(m)
         case "toast": print("toast: \(m["text"] ?? "")"); office.deliver(m)
+        case "error": print("error popup: \(m["text"] ?? "")"); office.deliver(m)
         case "backendFailure": print("BACKEND FAILURE: \(m["text"] ?? "")"); failures += 1
         default: office.deliver(m)
         }

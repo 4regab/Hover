@@ -201,6 +201,12 @@ impl Backend {
             l.out.send(&Json::obj(vec![
                 ("type", st("ended")), ("title", st(&format!("{}: {}", s.tool.name(), s.title()))), ("text", st(r.state.name())),
                 ("tool", st(s.tool.id())), ("task", st(&s.title())), ("ok", Json::Bool(r.state == KiroState::Completed)),
+                // Why it failed, for the notification and the popup (the state's name alone said nothing).
+                ("id", Json::int(s.id as i64)),
+                ("error", if r.state == KiroState::Failed {
+                    let e = r.text.trim();
+                    Json::str(if e.chars().count() > 600 { e.chars().take(599).collect::<String>() + "…" } else { e.to_owned() })
+                } else { Json::Null }),
             ]));
         });
 
@@ -486,7 +492,7 @@ impl Backend {
 
     // MARK: Commands
 
-    /// Backend.Handle. An error is shown to the user as a toast.
+    /// Backend.Handle. An error is shown to the user as a popup (`error`).
     pub fn handle(&mut self, m: &Json) -> Result<()> {
         if !matches!(m, Json::Obj(_)) { return Err("Invalid host message.".into()); }
         let s = int_of(m, "id").and_then(|id| self.sessions.get(id));
@@ -642,7 +648,8 @@ impl Backend {
                 let Some(turn) = int_of(m, "turn").and_then(|n| usize::try_from(n).ok()) else { return Err("That message isn't here.".into()) };
                 let to = if kind == "restore" { Rewind::After(turn) } else { Rewind::Before(turn) };
                 let (sessions, out) = (self.sessions.clone(), self.link.out.clone());
-                self.spawn("rewind", move || { if let Err(e) = sessions.rewind(s.id, to) { out.toast(&e); } });
+                let kind = kind.to_owned();
+                self.spawn("rewind", move || { if let Err(e) = sessions.rewind(s.id, to) { out.error(&e, Some(&kind)); } });
             }
             Some("shutdown") => self.shutdown(),
             _ => {}
@@ -661,11 +668,21 @@ impl Backend {
         let read_only_works = agents::read_only_works(tool);
         let access = str_of(m, "access").filter(|a| matches!(*a, "full" | "risky" | "always" | "read")).unwrap_or_else(|| self.settings.agent_options(tool).access_id(read_only_works));
         let folder = folder.unwrap();
+        let prompt = str_of(m, "prompt").unwrap_or("");
+        let images = save_images(m);
+        // Each reason on its own: one sentence for all of them didn't say which it was.
+        if prompt.trim().is_empty() && images.is_empty() { return Err("Write what the agent should do first.".into()); }
+        if !self.can_start() {
+            let n = self.max_running.get().min(self.sessions.max_running());
+            let stuck = self.sessions.all().iter().filter(|x| x.busy() && x.phase == hover_agents::stream::KiroPhase::Starting).count();
+            let what = if n == 1 { "1 task is".to_owned() } else { format!("{n} tasks are") };
+            let more = if stuck > 0 { format!(" {stuck} of them {} still starting; stop one from its desk if it is stuck.", if stuck == 1 { "is" } else { "are" }) } else { String::new() };
+            return Err(format!("{what} running, the most Hover runs at once. Start this one when one of them is done, or raise “Tasks at once” in Settings → General.{more}"));
+        }
         self.settings.set_kiro_folder(Some(folder));
         self.settings.set_agent_tool(tool);
-        let busy = !self.can_start();
-        if busy || self.sessions.start_as(tool, folder, str_of(m, "prompt").unwrap_or(""), save_images(m), Some(access)).is_none() {
-            return Err("All available desks are busy, or the prompt is empty.".into());
+        if self.sessions.start_as(tool, folder, prompt, images, Some(access)).is_none() {
+            return Err("All six desks are taken by agents at work. Stop or remove one, then start this task again.".into());
         }
         Ok(())
     }

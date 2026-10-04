@@ -10,7 +10,9 @@ let environment = ProcessInfo.processInfo.environment
 let sandboxRoot = environment["HOVER_SANDBOX_ROOT"]
 
 final class App: NSObject, NSApplicationDelegate, NSWindowDelegate {
-    let backend = BackendPipe()
+    var backend = BackendPipe()
+    /// What the backend was started with, to start it again if it dies, and when it did.
+    var backendStart: (key: Data, env: [String: String])?, backendUp = false, backendRestarts: [Date] = []
     let screen = ScreenFeed()
     let browsers = AgentBrowsers()
     let spaceViewers = SpaceViewers(), teleport = TeleportDrag(), sendToVM = SendToVM()
@@ -54,6 +56,7 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate {
             makeNotch()
             if smoke {
                 // The sandbox's restricted PATH is the point of the test; no shell probe.
+                backendStart = (key, environment)
                 try backend.start(resources: resources, dataFolder: dataFolder, key: key, env: environment)
                 try validateLocalFiles()
                 DispatchQueue.main.asyncAfter(deadline: .now() + 35) { [weak self] in self?.finishSmoke(false, "Timed out waiting for the office") }
@@ -75,6 +78,7 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     FileHandle.standardError.write(Data("Shell environment read in \(Int(Date().timeIntervalSince(started) * 1000)) ms\n".utf8))
                     DispatchQueue.main.async {
                         guard let self else { return }
+                        self.backendStart = (key, env)
                         do { try self.backend.start(resources: self.resources, dataFolder: self.dataFolder, key: key, env: env) }
                         catch { self.fatal(error.localizedDescription) }
                     }
@@ -615,7 +619,7 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     if read.denied {
                         self.moving[b] = nil
                         let name = m["app"] as? String ?? "the browser"
-                        self.say("Hover isn’t allowed to see \(name)’s tabs. Turn on \(name) under Hover in System Settings → Privacy & Security → Automation, then send it again.")
+                        self.receive(["type": "error", "of": "teleport", "text": "Hover isn’t allowed to see \(name)’s tabs. Turn on \(name) under Hover in System Settings → Privacy & Security → Automation, then send it again."])
                         if !smoke { NSWorkspace.shared.open(BrowserTabs.automationSettings) }
                         return
                     }
@@ -710,7 +714,7 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
     func receive(_ m: [String: Any]) {
         switch m["type"] as? String {
-        case "initialized": settings.model.request(["type": "getSettings"])
+        case "initialized": backendUp = true; settings.model.request(["type": "getSettings"])
         case "state":
             latest = m
             let ids = Set((m["sessions"] as? [[String: Any]] ?? []).compactMap { ($0["id"] as? NSNumber)?.intValue })
@@ -750,7 +754,7 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate {
             ended = (m["tool"] as? String ?? "kiro", m["task"] as? String ?? "", m["ok"] as? Bool ?? false, Date().addingTimeInterval(6))
             updateIsland()
             if !smoke && UserDefaults.standard.bool(forKey: "notifications") {
-                let content = UNMutableNotificationContent(); content.title = m["title"] as? String ?? "Agent finished"; content.body = m["text"] as? String ?? ""; content.sound = .default
+                let content = UNMutableNotificationContent(); content.title = m["title"] as? String ?? "Agent finished"; content.body = m["error"] as? String ?? m["text"] as? String ?? ""; content.sound = .default
                 UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil), withCompletionHandler: nil)
             }
         case "readClaudeCredentials":
@@ -771,7 +775,19 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate {
         case "toast":
             // A voice task the backend turned down says so on the voice card.
             if voice?.backendToast(m["text"] as? String ?? "") != true { office.deliver(m); dashboardOffice?.deliver(m) }
-        case "backendFailure": fatal(m["text"] as? String ?? "Backend stopped")
+        // Something the user asked for failed: a popup in the office that shows, or Hover's
+        // own alert when none does (a toast there was gone before it was read).
+        case "error":
+            let text = m["text"] as? String ?? "Something went wrong."
+            if voice?.backendToast(text) == true { break }
+            let showing: [Office] = (notch.expanded ? [office] : []) + (dashboardUp ? [dashboardOffice].compactMap { $0 } : [])
+            if showing.isEmpty {
+                // The office still puts a refused task's words back in its box, quietly.
+                var quiet = m; quiet["quiet"] = true
+                office.deliver(quiet); dashboardOffice?.deliver(quiet)
+                alertError(text)
+            } else { for o in showing { o.deliver(m) } }
+        case "backendFailure": if !restartBackend(m["text"] as? String ?? "") { fatal(m["text"] as? String ?? "Backend stopped") }
         default: office.deliver(m); dashboardOffice?.deliver(m)
         }
     }
@@ -812,9 +828,40 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if let root = sandboxRoot { try? JSONSerialization.data(withJSONObject: ["success": success, "detail": text]).write(to: URL(fileURLWithPath: root).appendingPathComponent("smoke-result.json")) }
         FileHandle.standardError.write(Data("Smoke \(success ? "passed" : "failed"): \(text)\n".utf8)); NSApp.terminate(nil)
     }
+    /// The backend died after it was up: started again (three times in five minutes at
+    /// most), with a popup saying so, instead of Hover quitting. Its tasks were stopped with
+    /// it; their chats are in the history. False when it isn't (Hover then quits).
+    func restartBackend(_ why: String) -> Bool {
+        guard backendUp, !smoke, let start = backendStart else { return false }
+        backendRestarts = backendRestarts.filter { $0 > Date().addingTimeInterval(-300) }
+        guard backendRestarts.count < 3 else { return false }
+        backendRestarts.append(Date()); backendUp = false
+        let next = BackendPipe()
+        next.receive = { [weak self] m in self?.receive(m) }
+        backend = next
+        do { try next.start(resources: resources, dataFolder: dataFolder, key: start.key, env: start.env) } catch { return false }
+        // The offices learn the new backend's state as a page that just loaded does.
+        next.send(["type": "ready"])
+        receive(["type": "error", "of": "backend", "text": "\(why.isEmpty ? "The agent backend stopped." : why.replacingOccurrences(of: " Quit and reopen Hover.", with: "")) Hover started it again. Tasks that were running were stopped; their chats are in the history."])
+        return true
+    }
     func fatal(_ text: String) {
         if smoke { finishSmoke(false, text); return }
         let alert = NSAlert(); alert.messageText = "Hover could not start"; alert.informativeText = text; alert.runModal(); NSApp.terminate(nil)
+    }
+    /// A failure with no office on screen to show it: Hover's alert, in front. One at a
+    /// time; another while it shows is said in the log.
+    private var alerting = false
+    func alertError(_ text: String, title: String = "That didn’t work") {
+        FileHandle.standardError.write(Data("Hover error: \(text)\n".utf8))
+        if smoke || alerting { return }
+        alerting = true
+        DispatchQueue.main.async { [weak self] in
+            NSApp.activate(ignoringOtherApps: true)
+            let alert = NSAlert(); alert.alertStyle = .warning; alert.messageText = title; alert.informativeText = text; alert.addButton(withTitle: "OK")
+            alert.runModal()
+            self?.alerting = false
+        }
     }
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool { if !smoke { showDashboard() }; return false }
     /// The projects' desktops are turned off as Hover quits, by a cua of their own that

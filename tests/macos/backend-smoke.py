@@ -96,7 +96,7 @@ def launch():
    except queue.Empty:
     if p.poll() is not None: raise AssertionError('Backend exited: '+p.stderr.read())
     raise AssertionError('Backend timeout; its log:\n'+'\n'.join(log))
-   if m.get('type')=='toast':raise AssertionError(m)
+   if m.get('type') in ('toast','error'):raise AssertionError(m)
    if predicate(m):return m
   raise AssertionError('Backend timeout; its log:\n'+'\n'.join(log))
  send({'type':'initialize','key':key});until(lambda m:m.get('type')=='initialized')

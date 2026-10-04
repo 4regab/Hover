@@ -55,6 +55,8 @@ system_sqlite!(#[link(name = "sqlite3")] "C");
 const SQLITE_OPEN_READONLY: c_int = 0x1;
 const SQLITE_OPEN_READWRITE: c_int = 0x2;
 const SQLITE_OPEN_CREATE: c_int = 0x4;
+const SQLITE_OPEN_URI: c_int = 0x40;
+const SQLITE_CANTOPEN: c_int = 14;
 const SQLITE_ROW: c_int = 100;
 const SQLITE_DONE: c_int = 101;
 const SQLITE_TEXT: c_int = 3;
@@ -80,17 +82,48 @@ fn message(db: *mut sqlite3, code: c_int) -> String {
 /// The first column of the first row, or Other when there is no row or it isn't
 /// text or a blob. Read-only and closed at once, so Hover never holds the database
 /// open; a lock is waited on for two seconds (DefaultTimeout = 2), no longer.
+///
+/// Cursor's database is in WAL mode, and Cursor deletes its -wal and -shm files when it
+/// quits. A read-only connection may not make them, so with Cursor closed the open failed
+/// (SQLITE_CANTOPEN) and its usage was never read. Then nothing is writing to the file and
+/// its WAL is empty, so it is read again as immutable, which needs neither.
 pub fn scalar(path: &std::path::Path, sql: &str) -> Result<Scalar, String> {
     let name = CString::new(path.to_string_lossy().as_bytes()).map_err(|e| e.to_string())?;
     let sql = CString::new(sql).map_err(|e| e.to_string())?;
+    match query(&name, SQLITE_OPEN_READONLY, &sql) {
+        Err((rc, _)) if rc & 0xff == SQLITE_CANTOPEN => {
+            let uri = CString::new(immutable_uri(path)).map_err(|e| e.to_string())?;
+            query(&uri, SQLITE_OPEN_READONLY | SQLITE_OPEN_URI, &sql).map_err(|(_, m)| m)
+        }
+        r => r.map_err(|(_, m)| m),
+    }
+}
+
+/// `file:` URI for a path, opened as immutable: no locks, no -wal or -shm. Every byte but
+/// the unreserved ones and `/` is percent-encoded (Cursor's folder has a space).
+pub fn immutable_uri(path: &std::path::Path) -> String {
+    let p = path.to_string_lossy().replace('\\', "/");
+    let mut out = String::from("file:");
+    // A Windows drive path is file:/C:/…, as SQLite reads it.
+    if !p.starts_with('/') { out.push('/'); }
+    for b in p.bytes() {
+        if b.is_ascii_alphanumeric() || matches!(b, b'/' | b'-' | b'_' | b'.' | b'~' | b':') { out.push(b as char); } else { out.push_str(&format!("%{b:02X}")); }
+    }
+    out.push_str("?immutable=1");
+    out
+}
+
+/// One open, prepare and step; the SQLite code is kept with the message, so `scalar` can
+/// tell a file it may not open from any other failure.
+fn query(name: &CStr, flags: c_int, sql: &CStr) -> Result<Scalar, (c_int, String)> {
     let mut raw = std::ptr::null_mut();
-    let rc = unsafe { sqlite3_open_v2(name.as_ptr(), &mut raw, SQLITE_OPEN_READONLY, std::ptr::null()) };
+    let rc = unsafe { sqlite3_open_v2(name.as_ptr(), &mut raw, flags, std::ptr::null()) };
     let db = Db(raw);
-    if rc != 0 { return Err(message(db.0, rc)); }
+    if rc != 0 { return Err((rc, message(db.0, rc))); }
     unsafe { sqlite3_busy_timeout(db.0, 2000); }
     let mut stmt = std::ptr::null_mut();
     let rc = unsafe { sqlite3_prepare_v2(db.0, sql.as_ptr(), -1, &mut stmt, std::ptr::null_mut()) };
-    if rc != 0 { return Err(message(db.0, rc)); }
+    if rc != 0 { return Err((rc, message(db.0, rc))); }
     let out = unsafe {
         match sqlite3_step(stmt) {
             SQLITE_ROW => match sqlite3_column_type(stmt, 0) {
@@ -107,7 +140,7 @@ pub fn scalar(path: &std::path::Path, sql: &str) -> Result<Scalar, String> {
                 _ => Ok(Scalar::Other),
             },
             SQLITE_DONE => Ok(Scalar::Other),
-            rc => Err(message(db.0, rc)),
+            rc => Err((rc, message(db.0, rc))),
         }
     };
     unsafe { sqlite3_finalize(stmt); }
@@ -127,4 +160,17 @@ pub fn exec(path: &std::path::Path, sql: &str) -> Result<(), String> {
     let rc = unsafe { sqlite3_exec(db.0, sql.as_ptr(), None, std::ptr::null_mut(), std::ptr::null_mut()) };
     if rc != 0 { return Err(message(db.0, rc)); }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::immutable_uri;
+    use std::path::Path;
+
+    #[test]
+    fn an_immutable_uri_encodes_the_path() {
+        assert_eq!(immutable_uri(Path::new("/Users/a/Library/Application Support/Cursor/state.vscdb")),
+            "file:/Users/a/Library/Application%20Support/Cursor/state.vscdb?immutable=1");
+        assert_eq!(immutable_uri(Path::new(r"C:\Users\a b\x#?%.db")), "file:/C:/Users/a%20b/x%23%3F%25.db?immutable=1");
+    }
 }

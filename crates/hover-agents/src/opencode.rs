@@ -25,7 +25,7 @@ use crate::cancel::Cancel;
 use crate::computer_use::{self, McpServer};
 use crate::http::{escape_data, Client, HttpErr};
 use crate::proc::strip_ansi;
-use crate::sandbox::{self, Boxed, Fit};
+use crate::sandbox::{self, Boxed};
 use crate::stream::{clip_to, head_units, tool_phase, units, KiroEvent, KiroPhase, KiroResult};
 use hover_core::json::{self, Json};
 use hover_core::model::{AcpChoice, AcpOption, AgentApproval, AgentOptions, AgentTool, KiroState, KiroStep};
@@ -285,12 +285,9 @@ impl Host {
         }
         // As in AcpHost: a sandboxed server reaches only the folders it started with.
         sandbox::remember(folder);
-        if self.live.lock().unwrap().is_some() {
-            match self.boxed.fit(folder, self.busy.load(Ordering::SeqCst) > 0, sandbox::active()) {
-                Fit::Fits => {}
-                Fit::Restart => self.end(None, "its sandbox changed", "OpenCode stopped."),
-                Fit::Outside => return KiroResult::new(KiroState::Failed, sandbox::outside_message(NAME)),
-            }
+        if !sandbox::wait_to_fit(&self.boxed, folder, NAME, &|| self.live.lock().unwrap().is_some(), &|| self.busy.load(Ordering::SeqCst) > 0,
+            &|| self.end(None, "its sandbox changed", "OpenCode stopped."), ct, events.as_deref()) {
+            return KiroResult::new(KiroState::Cancelled, format!("Stopped before {NAME} started."));
         }
         if sandbox::wanted() && crate::agents::toggles().computer_use && !crate::spaces::wanted() { computer_use::ensure_daemon(); }
         self.busy.fetch_add(1, Ordering::SeqCst);

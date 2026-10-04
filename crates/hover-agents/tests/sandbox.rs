@@ -125,6 +125,41 @@ fn a_sandboxed_tool_that_no_longer_fits_is_started_again_only_when_idle() {
     assert!(sandbox::outside_message("Kiro").contains("Kiro is working on a task in another folder"));
 }
 
+/// A run in a folder the busy tool's sandbox doesn't reach waits for it (it used to fail at
+/// once), says so in a step, and starts it again once nothing of it runs.
+#[test]
+fn a_run_outside_the_sandbox_waits_for_the_tool_to_be_free() {
+    use hover_agents::cancel::Cancel;
+    use hover_agents::stream::KiroEvent;
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    use std::sync::{Arc, Mutex};
+    let b = Boxed::default();
+    b.started(Some(vec!["/work/a".into()]));
+    let busy = Arc::new(AtomicBool::new(true));
+    let restarts = AtomicUsize::new(0);
+    let steps: Arc<Mutex<Vec<(String, String)>>> = Arc::default();
+    let seen = steps.clone();
+    let events = move |e: KiroEvent| { if let Some(s) = e.step { seen.lock().unwrap().push((s.id, s.status)); } };
+    let b2 = busy.clone();
+    let done = std::thread::spawn(move || { std::thread::sleep(std::time::Duration::from_millis(600)); b2.store(false, Ordering::SeqCst); });
+    let t = std::time::Instant::now();
+    assert!(sandbox::wait_to_fit(&b, "/work/b", "Kiro", &|| true, &|| busy.load(Ordering::SeqCst), &|| { restarts.fetch_add(1, Ordering::SeqCst); }, &Cancel::new(), Some(&events)));
+    done.join().unwrap();
+    assert!(t.elapsed() >= std::time::Duration::from_millis(500), "it waited for the other task");
+    assert_eq!(restarts.load(Ordering::SeqCst), 1, "started again once free");
+    assert_eq!(*steps.lock().unwrap(), vec![(sandbox::WAIT_STEP.to_owned(), "in_progress".to_owned()), (sandbox::WAIT_STEP.to_owned(), "completed".to_owned())]);
+    // Inside its folders: on at once, nothing said.
+    steps.lock().unwrap().clear();
+    assert!(sandbox::wait_to_fit(&b, "/work/a/x", "Kiro", &|| true, &|| true, &|| panic!("no restart"), &Cancel::new(), Some(&events)));
+    assert!(steps.lock().unwrap().is_empty());
+    // Stopped while it waits.
+    let ct = Cancel::new();
+    ct.cancel();
+    assert!(!sandbox::wait_to_fit(&b, "/work/b", "Kiro", &|| true, &|| true, &|| panic!("no restart"), &ct, None));
+    // No process yet: nothing to fit.
+    assert!(sandbox::wait_to_fit(&b, "/work/b", "Kiro", &|| false, &|| true, &|| panic!("no restart"), &Cancel::new(), None));
+}
+
 #[test]
 fn what_is_missing_is_said_in_one_line() {
     assert_eq!(sandbox::missing_line(&[]), None);

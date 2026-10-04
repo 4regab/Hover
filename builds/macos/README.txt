@@ -1,7 +1,15 @@
-Hover 3.4.2 for macOS 14 or later, built from this branch with scripts/build-macos.sh.
+Hover 4.20.1 for macOS 14 or later, built from this branch with scripts/build-macos.sh.
 
   Hover-macOS-arm64.zip   Apple silicon (M1 and later)
   Hover-macOS-x64.zip     Intel
+
+What 4.20.1 fixes
+  - Cursor usage is read with Cursor closed (its database was opened in a way that needs
+    Cursor running).
+  - A new agent starts at once: it no longer waits minutes for its project's desktop to be
+    made, for another agent's checkpoint, or fails because its tool is busy in another folder.
+  - Failures show as a popup you dismiss (with Edit task / Open chat), not a toast at the top;
+    a refused task keeps its words. A backend that stops is started again.
 
 Install
   1. Unzip and open Hover.app. It is signed ad hoc, not notarized, so macOS stops it the
@@ -19,5 +27,5 @@ Install
 Agent desktops (Settings → Computer Use) need macOS 26 on Apple silicon.
 
 SHA-256
-  Hover-macOS-arm64.zip  558719e9519f7b86ba73edc3f0a935422ee59458d8de7c1c58c2d1974e0346c4
-  Hover-macOS-x64.zip    3f14332ae72a0312c454c10018b4d0598d7bc5dcea906f9ec4b8ebee5d1649fe
+  Hover-macOS-arm64.zip  681fac621a88ccec2aa4fb4a814c7c095fe091cfb588cfd5998ff1d38906e0af
+  Hover-macOS-x64.zip    005a5c8e46d44bb692ca107285566087992d6bae236bc15591ef4f0384d47323

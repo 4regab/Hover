@@ -2010,7 +2010,7 @@ checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
 
 [[package]]
 name = "hover"
-version = "3.4.2"
+version = "4.20.1"
 dependencies = [
  "arboard",
  "cpal",
@@ -2044,7 +2044,7 @@ dependencies = [
 
 [[package]]
 name = "hover-agents"
-version = "3.4.2"
+version = "4.20.1"
 dependencies = [
  "fancy-regex",
  "getrandom 0.3.4",
@@ -2055,7 +2055,7 @@ dependencies = [
 
 [[package]]
 name = "hover-backend"
-version = "3.4.2"
+version = "4.20.1"
 dependencies = [
  "chrono",
  "fancy-regex",
@@ -2067,7 +2067,7 @@ dependencies = [
 
 [[package]]
 name = "hover-chat"
-version = "3.4.2"
+version = "4.20.1"
 dependencies = [
  "hover-md",
  "icu_segmenter",
@@ -2080,7 +2080,7 @@ dependencies = [
 
 [[package]]
 name = "hover-core"
-version = "3.4.2"
+version = "4.20.1"
 dependencies = [
  "aes-gcm",
  "chrono",
@@ -2093,14 +2093,14 @@ dependencies = [
 
 [[package]]
 name = "hover-diagram"
-version = "3.4.2"
+version = "4.20.1"
 dependencies = [
  "fancy-regex",
 ]
 
 [[package]]
 name = "hover-md"
-version = "3.4.2"
+version = "4.20.1"
 dependencies = [
  "fancy-regex",
  "hover-diagram",
@@ -2109,7 +2109,7 @@ dependencies = [
 
 [[package]]
 name = "hover-measure"
-version = "3.4.2"
+version = "4.20.1"
 dependencies = [
  "hover-core",
  "image",
@@ -2119,11 +2119,11 @@ dependencies = [
 
 [[package]]
 name = "hover-notch"
-version = "3.4.2"
+version = "4.20.1"
 
 [[package]]
 name = "hover-office"
-version = "3.4.2"
+version = "4.20.1"
 dependencies = [
  "bytemuck",
  "futures-lite",
@@ -2136,7 +2136,7 @@ dependencies = [
 
 [[package]]
 name = "hover-quota"
-version = "3.4.2"
+version = "4.20.1"
 dependencies = [
  "chrono",
  "hover-agents",
@@ -3340,7 +3340,7 @@ dependencies = [
 
 [[package]]
 name = "notch-proto"
-version = "3.4.2"
+version = "4.20.1"
 dependencies = [
  "hover-notch",
  "image",

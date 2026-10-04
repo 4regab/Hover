@@ -672,10 +672,15 @@ function fromHost(m) {
     if (!s) {
       s = { id: h.id, key: h.key, files: h.files, tool: h.tool, bot: h.bot, desk: h.seat, title: h.title, folder: h.folder, ctx: h.ctx, ask: h.ask, access: h.access, testing: h.testing, browsing: h.browsing, apps: h.apps, space: h.space, turns };
       sessions.push(s); spawn(s, !firstState && last(s).stage === 'waking');
+      // The task just sent has its desk.
+      if (pendingNew && !pendingNew.ids.has(h.id)) pendingNew = null;
+      if (!firstState) { failedPopups(s, turns, []); spacePopup(s, null); }
     } else {
+      const before = s.turns, was = s.space?.phase;
       turns.forEach((t, k) => { const old = s.turns[k]; if (t.answer && !(old && old.answer)) t.fresh = !firstState; });
       if (last(s).stage === 'waking' && s.turns.length !== turns.length && s.b.seated) s.b.sinceSeat = 0;
       Object.assign(s, { files: h.files, title: h.title, folder: h.folder, ctx: h.ctx, ask: h.ask, access: h.access, testing: h.testing, browsing: h.browsing, apps: h.apps, space: h.space, turns });
+      if (!firstState) { failedPopups(s, turns, before); spacePopup(s, was); }
     }
   }
   for (const s of [...sessions]) if (!seen.has(s.id)) retire(s);
@@ -750,8 +755,11 @@ function doReply(text, images = [], s = cur()) {
   s.turns.push(T);
   if (wait) changed(s); else play(s, T);
 }
+// The task last sent to the host, until its desk appears or the host says why not (then
+// its words go back to the box: they were lost with the composer folded).
+let pendingNew = null;
 function doNew(text, folder, images = []) {
-  if (host) { host.postMessage({ type: 'new', prompt: text, folder, images, tool: newTool, access: newAccessOf(tools.find(x => x.id === newTool) || tools[0]) }); return true; }
+  if (host) { pendingNew = { text, images: images.slice(), ids: new Set(sessions.map(s => s.id)) }; host.postMessage({ type: 'new', prompt: text, folder, images, tool: newTool, access: newAccessOf(tools.find(x => x.id === newTool) || tools[0]) }); return true; }
   let desk = freeDesk();
   if (desk < 0) {
     const old = sessions.filter(s => !busy(s)).sort((a, b) => last(a).t0 - last(b).t0)[0];
@@ -1444,7 +1452,7 @@ function renderTools() {
 }
 function update(x) {
   if (!x?.update || x.update.busy || !host) return;
-  if (!x.update.available && x.update.error) return toast(x.update.error);
+  if (!x.update.available && x.update.error) return showError(`${x.name} didn’t update`, x.update.error);
   host.postMessage({ type: 'update', tool: x.id });
   x.update = { ...x.update, busy: true, error: null, line: 'Updating…' }; renderTools();
   toast(`Updating ${x.name}…`);
@@ -1491,7 +1499,7 @@ $('#fabTools').onclick = e => {
   const x = tools.find(t => t.id === b.dataset.tool);
   if (e.target.closest('.bang')) return update(x);
   // A tool that isn't ready opens its one-click setup where the host has one.
-  if (!x.ready) { if (x.canSetup && host) { host.postMessage({ type: 'setup', tool: x.id, open: true }); return; } return toast(x.hint); }
+  if (!x.ready) { if (x.canSetup && host) { host.postMessage({ type: 'setup', tool: x.id, open: true }); return; } return showError(`${x.name} isn’t ready`, x.hint); }
   newTool = x.id; toolPicked = true; setFab('open');
 };
 $('#fabTools').addEventListener('keydown', e => {
@@ -1908,7 +1916,7 @@ function placeBrowser() {
   const s = deskOf();
   let id = null, r = null;
   if (s && !paused && panel === 'desk' && desk.ui.tab === 'browser' && agentTabs[s.id]?.url) {
-    const v = $('#pBody .bview'), over = deskMenuFor != null || !$('#confirm').hidden || !$('#mMenu').hidden || !$('#hudMenu').hidden || drawerOpen || !$('#tpReview').hidden;
+    const v = $('#pBody .bview'), over = deskMenuFor != null || !$('#confirm').hidden || !$('#alert').hidden || !$('#mMenu').hidden || !$('#hudMenu').hidden || drawerOpen || !$('#tpReview').hidden;
     const b = v?.getBoundingClientRect();
     if (b && !over && b.width > 40 && b.height > 40) { id = s.id; r = { x: b.left, y: b.top, w: b.width, h: b.height, vw: innerWidth, vh: innerHeight }; }
   }
@@ -2050,7 +2058,7 @@ function placeSpace() {
   const s = deskOf();
   let id = null, r = null, url = '';
   if (s && spacesOn && !paused && panel === 'desk' && desk.ui.tab === 'screen' && spaceView[spaceOf(s)]?.url) {
-    const b = $('#pBody .spbox')?.getBoundingClientRect(), over = deskMenuFor != null || !$('#confirm').hidden || !$('#mMenu').hidden || !$('#hudMenu').hidden || drawerOpen || !$('#tdrop').hidden || !$('#tpReview').hidden;
+    const b = $('#pBody .spbox')?.getBoundingClientRect(), over = deskMenuFor != null || !$('#confirm').hidden || !$('#alert').hidden || !$('#mMenu').hidden || !$('#hudMenu').hidden || drawerOpen || !$('#tdrop').hidden || !$('#tpReview').hidden;
     if (b && !over && b.width > 40 && b.height > 40) { id = spaceOf(s); url = spaceView[id].url; r = { x: b.left, y: b.top, w: b.width, h: b.height, vw: innerWidth }; }
   }
   const key = id == null ? 'none' : [id, url, r.x, r.y, r.w, r.h].map(x => typeof x === 'number' ? Math.round(x) : x).join('|');
@@ -2139,7 +2147,8 @@ function onTeleport(m) {
   // Arrived: in the window, that desktop's live view, where the app or files now are
   // (the notch only says so; its Screen opens the window).
   if (!m.data?.error && s && inWindow) openDesk(s.id, 'screen');
-  toast(m.data?.error ? m.data.error : m.app === 'files' ? `Sent ${n} item${n === 1 ? '' : 's'} to the Downloads on ${who}.`
+  if (m.data?.error) return showError(m.app === 'files' ? 'The files didn’t go' : `${m.app} didn’t go`, m.data.error);
+  toast(m.app === 'files' ? `Sent ${n} item${n === 1 ? '' : 's'} to the Downloads on ${who}.`
     : m.data?.tabs?.length ? `Moved ${n} tab${n === 1 ? '' : 's'} to ${m.app} on ${who}.` : m.data?.teleported ? `${m.app} teleported to ${who}.` : `${m.app} is on ${who}.`);
 }
 
@@ -2216,7 +2225,7 @@ function bindScreen(el) {
   });
 }
 let demoTold = false;
-function onScreenInput(m) { if (m.error) toast(m.error); }
+function onScreenInput(m) { if (m.error) showError('That didn’t reach the agent’s app', m.error); }
 // ── What the panel's controls do ────────────────────────────────────────
 $('#pBody').addEventListener('click', e => {
   if (panel !== 'desk' || !desk) return;
@@ -2362,6 +2371,59 @@ $('#cfNo').onclick = closeConfirm;
 $('#cfYes').onclick = () => { const a = confirmAction; closeConfirm(); a?.(); };
 $('#confirm').addEventListener('keydown', e => { if (e.key === 'Escape') { e.stopPropagation(); closeConfirm(); } });
 
+// ── Errors: one popup, read and dismissed (a toast at the top was gone before it was
+// read). Several wait their turn; the same one twice shows once. `more` is a second
+// button: { label, run }.
+const alerts = [], alerted = new Set();
+function showError(title, text, more, once) {
+  if (once) { if (alerted.has(once)) return; alerted.add(once); }
+  if (alerts.some(a => a.title === title && a.text === text)) return;
+  alerts.push({ title, text: String(text || '').trim() || 'Something went wrong.', more });
+  if ($('#alert').hidden) nextAlert();
+}
+function nextAlert() {
+  const a = alerts[0];
+  if (!a) { $('#alert').hidden = true; return; }
+  $('#alTitle').textContent = a.title; $('#alText').textContent = a.text;
+  $('#alMore').hidden = !a.more; $('#alMore').textContent = a.more?.label || '';
+  $('#alert').hidden = false; $('#alOk').focus({ preventScroll: true });
+}
+function closeAlert(run) { const a = alerts.shift(); $('#alert').hidden = true; if (run) a?.more?.run(); nextAlert(); }
+$('#alOk').onclick = () => closeAlert(false);
+$('#alMore').onclick = () => closeAlert(true);
+$('#alert').addEventListener('keydown', e => { if (e.key === 'Escape' || (e.key === 'Enter' && e.target.id !== 'alMore')) { e.preventDefault(); e.stopPropagation(); closeAlert(false); } });
+// What each command's failure is called.
+const FAILED = { new: 'The task didn’t start', reply: 'The reply wasn’t sent', answer: 'The answer wasn’t sent', restore: 'The chat wasn’t restored', again: 'The message wasn’t sent again',
+  setup: 'Set up didn’t work', update: 'The update didn’t work', saveSettings: 'Settings weren’t saved', delete: 'The session wasn’t deleted',
+  backend: 'The agent backend stopped', teleport: 'The app didn’t go' };
+// A task the host refused: its words come back to the box, so nothing typed is lost.
+function onError(m) {
+  let more = null;
+  if (m.of === 'new' && pendingNew) {
+    const p = pendingNew; pendingNew = null;
+    if (!$('#nInput').value.trim()) $('#nInput').value = p.text;
+    if (!attached.new.length && p.images.length) { attached.new.push(...p.images); renderPics('new'); }
+    renderNew();
+    more = { label: 'Edit task', run: () => { if (drawerOpen) closeDrawer(); setFab('open'); } };
+  }
+  // Hover showed it in its own alert (no office was on screen).
+  if (m.quiet) return;
+  showError(FAILED[m.of] || 'That didn’t work', m.text, more);
+}
+// A turn that failed, or a project's desktop that couldn't start, once each.
+function failedPopups(s, turns, before) {
+  const name = tools.find(t => t.id === s.tool)?.name || 'The agent';
+  turns.forEach((t, k) => {
+    if (t.stage !== 'failed' || !t.answer || before[k]?.stage === 'failed') return;
+    showError(`${name} couldn’t finish “${s.title}”`, t.answer, { label: 'Open chat', run: () => openSession(s.id) }, `turn:${s.key}:${k}:${t.answer}`);
+  });
+}
+function spacePopup(s, was) {
+  const sp = s.space;
+  if (!sp || sp.phase !== 'failed' || was === 'failed' || !sp.error) return;
+  showError('The project’s desktop couldn’t start', `${sp.error}\n\nThe agent goes on without it.`, null, `space:${s.folder}:${sp.error}`);
+}
+
 // ── History, on the bookshelf ───────────────────────────────────────────
 function openHistory(key) {
   const here = sessions.find(s => s.key === key);
@@ -2396,6 +2458,7 @@ host?.addEventListener('message', e => {
   const m = e.data; if (!m || typeof m !== 'object') return;
   if (m.type === 'state') fromHost(m);
   else if (m.type === 'toast') toast(m.text);
+  else if (m.type === 'error') onError(m);
   else if (m.type === 'transcript') showTranscript(m.session);
   else if (m.type === 'visible') { paused = !m.on; beats.follow(m.on); screenPulse(); }
   else if (m.type === 'desk') onDesk(m);

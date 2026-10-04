@@ -201,7 +201,7 @@ impl Run {
                 Ok(m) => {
                     self.seen.push(m.clone());
                     if f(&m) { return m; }
-                    if is(&m, "toast") || is(&m, "backendFailure") { panic!("waiting for {what}: {}", m.compact()); }
+                    if is(&m, "toast") || is(&m, "error") || is(&m, "backendFailure") { panic!("waiting for {what}: {}", m.compact()); }
                 }
                 Err(RecvTimeoutError::Timeout) => panic!("timed out waiting for {what}; saw {}", self.seen.iter().rev().take(6).map(Json::compact).collect::<Vec<_>>().join("\n")),
                 Err(RecvTimeoutError::Disconnected) => panic!("the backend ended while waiting for {what} ({:?})", self.child.try_wait()),
@@ -653,8 +653,9 @@ fn a_new_task_says_why_it_cant_start() {
     r.initialize(&key_of(0));
     let says = |r: &mut Run, m: Json, want: &str| {
         r.send(m);
-        let t = r.message("toast");
+        let t = r.message("error");
         assert!(text(&t, "text").contains(want), "{} should say {want}", t.compact());
+        assert!(t.get("of").and_then(Json::as_str).is_some(), "{} names its command", t.compact());
     };
     says(&mut r, jo(vec![("type", js("new")), ("tool", js("codex")), ("folder", js("relative/dir")), ("prompt", js("x"))]), "Choose an existing project folder.");
     says(&mut r, jo(vec![("type", js("new")), ("tool", js("codex")), ("folder", js(&folder)), ("prompt", js("x"))]), "Review agent access in Settings");
@@ -663,7 +664,7 @@ fn a_new_task_says_why_it_cant_start() {
     says(&mut r, jo(vec![("type", js("new")), ("tool", js("codex")), ("folder", js(&folder)), ("prompt", js("x"))]), "The tool is not ready yet.");
     r.ready_tool("codex");
     says(&mut r, jo(vec![("type", js("new")), ("tool", js("cursor")), ("folder", js(&folder)), ("prompt", js("x"))]), "Install the Cursor CLI");
-    says(&mut r, jo(vec![("type", js("new")), ("tool", js("codex")), ("folder", js(&folder)), ("prompt", js("  "))]), "All available desks are busy, or the prompt is empty.");
+    says(&mut r, jo(vec![("type", js("new")), ("tool", js("codex")), ("folder", js(&folder)), ("prompt", js("  "))]), "Write what the agent should do first.");
     says(&mut r, jo(vec![("type", js("reply")), ("id", Json::int(9999)), ("text", js("hi"))]), "Could not send this reply.");
     assert!(r.hang_up().success());
 }

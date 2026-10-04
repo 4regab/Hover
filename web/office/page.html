@@ -211,6 +211,11 @@ textarea::placeholder{color:var(--faint)}
 #tpReview button{height:32px;padding:0 14px;border-radius:10px;border:1px solid var(--line);background:rgba(255,255,255,.05);font-weight:600;font-size:12.5px}#tprGo{background:#7c5cff!important;border-color:transparent!important;color:#fff}
 #confirm b{font:600 14px var(--px)}#confirm span{font-size:12.5px;color:var(--dim)}#confirm div{display:flex;gap:8px;justify-content:flex-end;margin-top:8px}
 #confirm button{height:32px;padding:0 14px;border-radius:10px;border:1px solid var(--line);background:rgba(255,255,255,.05);font-weight:600;font-size:12.5px}#cfYes{background:rgba(255,69,58,.85)!important;border-color:transparent!important;color:#fff}
+/* A failure to read and dismiss: above every other card, its text selectable to copy. */
+#alert{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);z-index:14;width:min(380px,calc(100% - 32px));padding:16px;border-radius:16px;display:flex;flex-direction:column;gap:6px;border-left:3px solid var(--bad)}
+#alert b{font:600 14px var(--px)}#alert span{font-size:12.5px;color:var(--dim);white-space:pre-wrap;overflow-wrap:anywhere;max-height:40vh;overflow:auto;user-select:text;-webkit-user-select:text}
+#alert div{display:flex;gap:8px;justify-content:flex-end;margin-top:8px}
+#alert button{height:32px;padding:0 14px;border-radius:10px;border:1px solid var(--line);background:rgba(255,255,255,.05);font-weight:600;font-size:12.5px}#alOk{background:var(--p)!important;border-color:transparent!important;color:#fff}
 /* History, on the bookshelf. */
 /* History, on the bookshelf: one row per session. The tool's logo, the task on one
    line, and under it how it went, when, how long and where. Delete shows on hover. */
@@ -689,6 +694,7 @@ body.host.notch #office::before{content:"";position:absolute;inset:0 0 auto;heig
   <div id="tdrop" class="glass" role="dialog" aria-label="Send to an agent’s desktop" hidden></div>
   <div id="tpReview" class="glass" role="dialog" aria-modal="true" aria-labelledby="tprTitle" hidden></div>
   <div id="confirm" class="glass" role="alertdialog" aria-modal="true" aria-labelledby="cfTitle" hidden><b id="cfTitle"></b><span id="cfText"></span><div><button id="cfNo">Cancel</button><button id="cfYes">Delete</button></div></div>
+  <div id="alert" class="glass" role="alertdialog" aria-modal="true" aria-labelledby="alTitle" aria-describedby="alText" hidden><b id="alTitle"></b><span id="alText"></span><div><button id="alMore" hidden></button><button id="alOk">OK</button></div></div>
   <div id="tip" hidden></div>
   <div id="toast" class="glass"></div>
 </div>

@@ -20,6 +20,12 @@ impl Out {
     }
 
     pub fn toast(&self, text: &str) { self.send(&Json::obj(vec![("type", Json::str("toast")), ("text", Json::str(text))])); }
+
+    /// Something the user asked for failed: shown as a popup they dismiss, not a toast that
+    /// is gone before it is read. `of` names the command (`new` puts the draft back).
+    pub fn error(&self, text: &str, of: Option<&str>) {
+        self.send(&Json::obj(vec![("type", Json::str("error")), ("text", Json::str(text)), ("of", Json::opt_str_of(of))]));
+    }
 }
 
 /// What a job on the loop is given: the backend once `initialize` has made it, and

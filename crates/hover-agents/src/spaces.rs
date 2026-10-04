@@ -604,12 +604,31 @@ fn explain(error: &str) -> String {
 /// asks while one is being made or started waits for that one, and one who stops waiting
 /// (`ct`) doesn't stop it: the desktop is the project's, and the next run wants it too.
 /// None when it is ready; else why not (the run then goes on without a desktop).
-pub fn ensure(folder: &str, ct: &Cancel) -> Option<String> { ensure_with(folder, ct, false) }
+pub fn ensure(folder: &str, ct: &Cancel) -> Option<String> { ensure_with(folder, ct, false, None) }
 
-/// As `ensure`, asking Lume afresh rather than trusting a desktop seen on a moment ago.
-pub fn ensure_fresh(folder: &str, fresh: bool) -> Option<String> { ensure_with(folder, &Cancel::new(), fresh) }
+/// How long an agent's desktop tool waits for a desktop still being made or started. Making
+/// one takes minutes (an hour when the image is pulled first): a call that waited for it gave
+/// the agent nothing to do, and its tool list (asked before its session even began) held the
+/// whole agent at "Starting".
+pub const TOOL_WAIT: Duration = Duration::from_secs(45);
 
-fn ensure_with(folder: &str, ct: &Cancel, fresh: bool) -> Option<String> {
+/// How long a run waits for its project's desktop before the agent starts anyway. One that is
+/// on, or starts quickly, is there for its first call; one being made goes on being made,
+/// and its tools say so until it is ready.
+pub const RUN_WAIT: Duration = Duration::from_secs(8);
+
+/// As `ensure`, asking Lume afresh when `fresh` (rather than trusting a desktop seen on a
+/// moment ago), and waiting no longer than `limit`: the desktop goes on being made or
+/// started in the background, and a later call finds it ready.
+pub fn ensure_within(folder: &str, fresh: bool, limit: Duration) -> Option<String> { ensure_with(folder, &Cancel::new(), fresh, Some(limit)) }
+
+/// Said while a project's desktop is still being made or started.
+pub fn not_yet(folder: &str) -> String {
+    let line = state_of(folder).map(|s| s.line).filter(|l| !l.trim().is_empty()).unwrap_or_else(|| "The project’s desktop is still starting.".into());
+    format!("{} It isn’t ready yet: try again in a minute, and go on with work that doesn’t need it meanwhile.", line.trim_end())
+}
+
+fn ensure_with(folder: &str, ct: &Cancel, fresh: bool, limit: Option<Duration>) -> Option<String> {
     if !wanted() || exe().is_none() { return Some("Agent desktops are off.".into()); }
     let name = name_for(folder);
     FOLDERS.lock().unwrap().insert(name.clone(), folder.to_owned());
@@ -632,10 +651,12 @@ fn ensure_with(folder: &str, ct: &Cancel, fresh: bool) -> Option<String> {
             a.1.notify_all();
         });
     }
+    let until = limit.map(|l| Instant::now() + l);
     let mut got = answer.0.lock().unwrap();
     loop {
         if let Some(why) = got.as_ref() { return why.clone(); }
         if ct.is_cancelled() { return Some("Stopped.".into()); }
+        if until.is_some_and(|u| Instant::now() >= u) { drop(got); return Some(not_yet(folder)); }
         got = answer.1.wait_timeout(got, Duration::from_millis(200)).unwrap().0;
     }
 }
@@ -752,13 +773,15 @@ pub fn delete(folder: &str) {
 }
 
 /// A session's run, with its project's desktop made or started first (checked afresh: it
-/// may have been turned off since): Starting is reported while that goes on, and a
-/// desktop that can't be had lets the run go on without one.
+/// may have been turned off since). The run waits for it a few seconds at most: making a
+/// desktop takes minutes, and the agent sat at "Starting" all that time (or for good, when
+/// it never came). Past that the agent starts, the desktop goes on being made, and its
+/// tools say it isn't ready until it is; one that can't be had shows as failed on the desk.
 pub fn around(inner: RunTask) -> RunTask {
     Arc::new(move |a: RunArgs| {
         if wanted() {
             (a.progress)(KiroPhase::Starting);
-            if let Some(why) = ensure_with(&a.folder, &a.ct, true) { hover_core::log::line(&format!("spaces: {}: {why}", a.folder)); }
+            if let Some(why) = ensure_with(&a.folder, &a.ct, true, Some(RUN_WAIT)) { hover_core::log::line(&format!("spaces: {}: {why}", a.folder)); }
         }
         inner(a)
     })
@@ -789,7 +812,7 @@ pub fn viewer(folder: &str) -> Json {
         // A start is quick and is waited for; a create takes minutes.
         let f = folder.to_owned();
         let (tx, rx) = mpsc::channel();
-        let _ = std::thread::Builder::new().name("space-viewer-start".into()).spawn(move || { let _ = tx.send(ensure_fresh(&f, true)); });
+        let _ = std::thread::Builder::new().name("space-viewer-start".into()).spawn(move || { let _ = tx.send(ensure_with(&f, &Cancel::new(), true, None)); });
         let done = rx.recv_timeout(Duration::from_secs(3));
         if let Ok(Some(why)) = done { return Json::obj(vec![("phase", Json::str("failed")), ("error", Json::str(why))]); }
         if done.is_err() || state_of(folder).is_none_or(|s| s.phase != "ready") {

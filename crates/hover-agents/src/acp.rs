@@ -11,7 +11,7 @@ use crate::ask::{self, AgentAsk, AskAnswer};
 use crate::cancel::Cancel;
 use crate::computer_use::{self, McpServer};
 use crate::proc::{strip_ansi, Link};
-use crate::sandbox::{self, Boxed, Fit};
+use crate::sandbox::{self, Boxed};
 use crate::stream::{KiroEvent, KiroPhase, KiroResult, KiroStream};
 use hover_core::json::{self, Json};
 use hover_core::model::{AcpChoice, AcpOption, AgentApproval, AgentOptions, AgentTool, KiroState, KiroStep};
@@ -197,12 +197,9 @@ impl Host {
         // started again when nothing of it runs. Busy in other folders, it can't take
         // this one yet.
         sandbox::remember(folder);
-        if self.link.lock().unwrap().is_some() {
-            match self.boxed.fit(folder, self.busy.load(Ordering::SeqCst) > 0, sandbox::active()) {
-                Fit::Fits => {}
-                Fit::Restart => self.shutdown("its sandbox changed"),
-                Fit::Outside => return KiroResult::new(KiroState::Failed, sandbox::outside_message(name)),
-            }
+        if !sandbox::wait_to_fit(&self.boxed, folder, name, &|| self.link.lock().unwrap().is_some(), &|| self.busy.load(Ordering::SeqCst) > 0,
+            &|| self.shutdown("its sandbox changed"), ct, events.as_deref()) {
+            return KiroResult::new(KiroState::Cancelled, format!("Stopped before {name} started."));
         }
         // The agent's cua-driver can't start CuaDriver's daemon from inside the sandbox
         // (no Launch Services there), so Hover does, outside it.

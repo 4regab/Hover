@@ -161,7 +161,45 @@ impl Boxed {
 
 /// Said when a run has to wait for a task of its tool in other folders.
 pub fn outside_message(name: &str) -> String {
-    format!("{name} is working on a task in another folder, and its sandbox reaches only the folders it started with. Start this one when that task is done.")
+    format!("{name} is working on a task in another folder, and its sandbox reaches only the folders it started with. This task starts when that one is done.")
+}
+
+/// The id of the step a run shows while it waits for its tool to be free.
+pub const WAIT_STEP: &str = "hover-sandbox-wait";
+
+/// Before a run: a running process that doesn't fit the folder is ended (`restart`) when
+/// nothing of it runs; busy in other folders, the run waits until it is free, with a step
+/// saying why (it used to fail at once, and the agent was never made). `live` says whether
+/// the tool's process is up, `busy` whether a run of it is at work. False when stopped
+/// while waiting.
+#[allow(clippy::too_many_arguments)]
+pub fn wait_to_fit(b: &Boxed, folder: &str, name: &str, live: &dyn Fn() -> bool, busy: &dyn Fn() -> bool, restart: &dyn Fn(), ct: &crate::cancel::Cancel,
+    events: Option<&(dyn Fn(crate::stream::KiroEvent) + Send + Sync)>) -> bool {
+    use hover_core::model::KiroStep;
+    let step = |title: &str, status: &str| {
+        if let Some(f) = events { f(crate::stream::KiroEvent { step: Some(KiroStep::new(WAIT_STEP, "other", title, None, status)), ..Default::default() }); }
+    };
+    let mut waited = false;
+    while live() {
+        match b.fit(folder, busy(), active()) {
+            Fit::Fits => break,
+            Fit::Restart => { restart(); break; }
+            Fit::Outside => {
+                if ct.is_cancelled() {
+                    if waited { step(&format!("Stopped while waiting for {name}"), "failed"); }
+                    return false;
+                }
+                if !waited {
+                    waited = true;
+                    hover_core::log::line(&format!("sandbox: {name} waits for its task in another folder"));
+                    step(&outside_message(name), "in_progress");
+                }
+                std::thread::sleep(std::time::Duration::from_millis(250));
+            }
+        }
+    }
+    if waited { step(&format!("{name} is free: starting"), "completed"); }
+    true
 }
 
 // MARK: The policy

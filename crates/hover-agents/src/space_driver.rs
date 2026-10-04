@@ -294,7 +294,9 @@ impl Driver {
         let _one = self.connecting.lock().unwrap_or_else(|p| p.into_inner());
         let folder = match (self.folder)() { Some(f) => f, None => { *self.why.lock().unwrap() = "No project is at work.".into(); return None; } };
         if !again { if let Some(l) = self.link.lock().unwrap().clone().filter(|l| l.folder == folder) { return Some(l); } }
-        if let Some(why) = spaces::ensure_fresh(&folder, again) { *self.why.lock().unwrap() = why; return None; }
+        // Bounded: a desktop still being made takes minutes, and the agent's call (or its
+        // tool list, asked before its session begins) would hold it that long.
+        if let Some(why) = spaces::ensure_within(&folder, again, spaces::TOOL_WAIT) { *self.why.lock().unwrap() = why; return None; }
         let Some(end) = spaces::driver(&folder, again) else { *self.why.lock().unwrap() = "Its driver couldn't be reached.".into(); return None; };
         let mut link = Link { folder, end, session: None };
         let init = self.init.lock().unwrap().clone().unwrap_or_else(|| Json::obj(vec![

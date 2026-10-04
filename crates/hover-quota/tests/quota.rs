@@ -359,6 +359,12 @@ fn cursor_takes_its_token_from_the_database() {
     let (url, _) = serve(403, "");
     assert_eq!(read::cursor_at(&db, &url, Utc::now()).detail, "cursor.com refused Cursor’s sign-in — open Cursor to renew it.");
 
+    // Cursor's database is in WAL mode, and with Cursor closed there is no -wal or -shm,
+    // which a read-only connection may not make: the token is still read.
+    hover_quota::sqlite::exec(&db, "PRAGMA journal_mode=WAL;").unwrap();
+    for end in ["-wal", "-shm"] { let _ = std::fs::remove_file(dir.join(format!("state.vscdb{end}"))); }
+    assert_eq!(read::cursor_token(&db).unwrap().as_deref(), Some(token.as_str()));
+    assert!(!dir.join("state.vscdb-wal").exists(), "the read made a WAL file");
     std::fs::write(&db, b"not a database, just some bytes long enough to have a header..........................................").unwrap();
     assert!(read::cursor_at(&db, &url, Utc::now()).detail.starts_with("Couldn’t read Cursor’s sign-in: "));
 }

@@ -204,6 +204,9 @@ assets/          hover.svg (the logo), make-icon.py (writes hover.png and
     file in 256 KB blocks (stale once a limit resets early or is used elsewhere).
   - Cursor: `cursor.com/api/usage-summary` with the token from Cursor's `state.vscdb`.
 
+  Cursor's `state.vscdb` is WAL; with Cursor closed its -wal and -shm are gone and a read-only
+  open fails, so it is read again as `immutable=1` (`sqlite::scalar`).
+
   Each is off until switched on, and is re-read five minutes after the last read. A
   format change shows as a readable failure, not a crash.
 - **Agents run as ACP servers, never in a terminal.** Each tool is one long-lived
@@ -274,6 +277,11 @@ assets/          hover.svg (the logo), make-icon.py (writes hover.png and
   - AskUserQuestion shows as OpenCode's questions do; the answers go back by each
     question's own text (as Claude Code looks them up). What it says (partial messages,
     tool calls and results, thinking) is put into ACP's shapes and read by `KiroStream`.
+- **Errors are popups** (`#alert` in `web/office`). A command the backend refuses is an
+  `error` message (`Out::error`, with `of`, the command); a refused `new` puts its words back
+  in the box. A turn that fails, or a desktop that can't start, pops up once. With no office on
+  screen, the Swift app shows its own alert. A backend that dies after it was up is started
+  again (three times in five minutes at most) instead of Hover quitting.
 - **The office's note before the first task** (`KiroNoticeSeen`) stands in place of the
   office until Got it.
 - **Sessions are kept until the user deletes them.** The history is sealed with
@@ -319,7 +327,8 @@ assets/          hover.svg (the logo), make-icon.py (writes hover.png and
   can't be read; there is no window server and no Apple Events; the network goes through
   srt's proxy to the tool's service, package registries and GitHub (more in
   `<data>/sandbox/allowed-domains.txt`). The folders are fixed when the tool starts, so a session in
-  another folder gets the tool started again (when nothing of it runs). The settings file
+  another folder gets the tool started again (when nothing of it runs); while the tool is busy
+  elsewhere the run waits for it with a step saying so (`sandbox::wait_to_fit`). The settings file
   for srt is text built by pure functions (`config`, `srt_args`) that the tests run on every OS.
   If `srt`, `rg` (and on Linux `bwrap`, `socat`) is missing, or Hover is already inside a
   sandbox (`HOVER_SANDBOXED=1`), the tool starts as before and `hover.log` says why;
@@ -338,7 +347,9 @@ assets/          hover.svg (the logo), make-icon.py (writes hover.png and
   on in Settings → Computer Use, and macOS 26+ on Apple silicon only (`spaces::UNSUPPORTED`).
   Each project folder gets one Space, a macOS VM (Cua's `cua` CLI with Lume) that the agents
   working there share for computer use instead of the user's screen. It is made when the
-  project's first agent starts (one create for agents starting together), turned off when
+  project's first agent starts (one create for agents starting together; the run waits for it
+  `spaces::RUN_WAIT`, 8 s, at most and the agent starts anyway, and a desktop tool waits
+  `TOOL_WAIT`, 45 s, then says it isn't ready yet), turned off when
   none of its agents is in the office, after 15 idle minutes (`InUse` keeps it on while a
   call, send or viewer uses it) and when Hover quits, and deleted with the project's last
   session. A Mac runs two macOS VMs at most: a third project turns off one nobody is using

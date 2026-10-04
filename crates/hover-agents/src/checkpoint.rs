@@ -8,10 +8,10 @@
 //! hex before it goes to one.
 
 use crate::proc::{hidden, home};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 /// The longest one git command may take. A huge folder that doesn't finish in this time
@@ -21,8 +21,10 @@ const LIMIT: Duration = Duration::from_secs(90);
 pub struct Checkpoints {
     dir: PathBuf,
     git: PathBuf,
-    /// One command at a time: they share each store's index.
-    lock: Mutex<()>,
+    /// One command at a time per store: they share its index. Each session has its own
+    /// store, so one lock for all made every agent wait at "Starting" while another's (maybe
+    /// huge) folder was copied.
+    locks: Mutex<HashMap<String, Arc<Mutex<()>>>>,
     /// Sessions whose folder was too slow to keep: not tried again, so a huge folder costs
     /// one wait, not one per turn.
     slow: Mutex<HashSet<String>>,
@@ -36,7 +38,10 @@ struct Ran { ok: bool, out: String, err: String }
 impl Checkpoints {
     /// The stores go under `dir`. None when git isn't installed (a Mac's /usr/bin/git
     /// stub without the Command Line Tools would open Apple's install dialog every turn).
-    pub fn new(dir: PathBuf) -> Option<Checkpoints> { crate::desk::find_git().map(|git| Checkpoints { dir, git, lock: Mutex::new(()), slow: Mutex::new(HashSet::new()) }) }
+    pub fn new(dir: PathBuf) -> Option<Checkpoints> { crate::desk::find_git().map(|git| Checkpoints { dir, git, locks: Mutex::new(HashMap::new()), slow: Mutex::new(HashSet::new()) }) }
+
+    /// The lock of one session's store.
+    fn lock(&self, key: &str) -> Arc<Mutex<()>> { self.locks.lock().unwrap().entry(key.to_owned()).or_default().clone() }
 
     /// The folder as it is now, kept: its tree id. None, with the reason in the log, when
     /// it can't be (no such folder, one too broad to keep, git failing or too slow).
@@ -55,7 +60,8 @@ impl Checkpoints {
     fn try_snapshot(&self, key: &str, folder: &str) -> Result<String, String> {
         let folder = usable(folder)?;
         let repo = self.repo(key)?;
-        let _one = self.lock.lock().unwrap();
+        let lock = self.lock(key);
+        let _one = lock.lock().unwrap_or_else(|p| p.into_inner());
         self.ensure(&repo, &folder)?;
         self.sync(&repo, &folder)?;
         self.tree(&repo, &folder)
@@ -69,7 +75,8 @@ impl Checkpoints {
         let folder = usable(folder)?;
         let repo = self.repo(key)?;
         if !repo.join("HEAD").is_file() { return Err("This chat has no checkpoints kept.".into()); }
-        let _one = self.lock.lock().unwrap();
+        let lock = self.lock(key);
+        let _one = lock.lock().unwrap_or_else(|p| p.into_inner());
         let kind = self.run(&repo, &folder, &["cat-file", "-t", tree])?;
         if !kind.ok || kind.out.trim() != "tree" { return Err("That checkpoint is no longer kept.".into()); }
         // The index becomes the folder as it is, so that `read-tree --reset -u` knows every
@@ -92,8 +99,12 @@ impl Checkpoints {
     /// A session was deleted: its checkpoints go with it.
     pub fn delete(&self, key: &str) {
         let Ok(repo) = self.repo(key) else { return };
-        let _one = self.lock.lock().unwrap();
-        if repo.exists() { let _ = std::fs::remove_dir_all(&repo); }
+        let lock = self.lock(key);
+        {
+            let _one = lock.lock().unwrap_or_else(|p| p.into_inner());
+            if repo.exists() { let _ = std::fs::remove_dir_all(&repo); }
+        }
+        self.locks.lock().unwrap().remove(key);
     }
 
     fn repo(&self, key: &str) -> Result<PathBuf, String> {

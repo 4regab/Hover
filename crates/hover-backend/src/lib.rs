@@ -51,8 +51,10 @@ fn read_commands(mut input: impl BufRead, lp: &Loop, out: &Arc<Out>) {
 }
 
 /// One command: the first makes the backend, the rest are its to handle. A failure before
-/// the backend exists is `backendFailure` (the host stops); after, a toast.
+/// the backend exists is `backendFailure` (the host stops); after, an `error` the host shows
+/// as a popup (it was a toast, gone before it could be read).
 fn dispatch(h: &mut Host, command: Json, link: Link) {
+    let of = wire::str_of(&command, "type").map(str::to_owned);
     let result = match h.backend.as_mut() {
         // A command that panics costs that command, not the host's backend.
         Some(b) => std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| b.handle(&command))).unwrap_or_else(|p| {
@@ -61,8 +63,11 @@ fn dispatch(h: &mut Host, command: Json, link: Link) {
         None => backend::initialize(&command, &link).map(|b| { h.backend = Some(b); }),
     };
     if let Err(e) = result {
-        let kind = if h.backend.is_none() { "backendFailure" } else { "toast" };
-        link.out.send(&Json::obj(vec![("type", Json::str(kind)), ("text", Json::str(e))]));
+        if h.backend.is_none() { link.out.send(&Json::obj(vec![("type", Json::str("backendFailure")), ("text", Json::str(e))])); }
+        else {
+            hover_core::log::line(&format!("backend: {} failed - {e}", of.as_deref().unwrap_or("a command")));
+            link.out.error(&e, of.as_deref());
+        }
     }
     if h.backend.as_ref().is_some_and(|b| b.closing()) { h.done = true; }
 }
