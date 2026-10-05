@@ -185,6 +185,16 @@ fn key(w: &Rc<MinimalSoftwareWindow>, ctrl: bool, k: slint::platform::Key) {
     if ctrl { w.window().dispatch_event(E::KeyReleased { text: Key::Control.into() }); }
 }
 
+/// Characters typed into whatever has the keyboard focus in the window.
+fn type_text(w: &Rc<MinimalSoftwareWindow>, text: &str) {
+    use slint::platform::{WindowAdapter as _, WindowEvent as E};
+    for c in text.chars() {
+        let s = slint::SharedString::from(c.to_string());
+        w.window().dispatch_event(E::KeyPressed { text: s.clone() });
+        w.window().dispatch_event(E::KeyReleased { text: s });
+    }
+}
+
 /// A prompt of a dozen lines, its first and last words marked, for the boxes that must scroll.
 const LONG_PROMPT: &str = concat!("FIRST LINE: the notch blinks when it opens on my second monitor. Steps: plug in a 150 % monitor, open the office, close it, open it again. ",
     "Expected: no blink. Seen: one blink per open, only on that monitor. Look at src/win.rs where the window is placed and at the DPI change handler, ",
@@ -712,11 +722,18 @@ fn settings_integrations_shots(app: &Rc<App>, hover: &Arc<hover_app::app::Hover>
     // Kiro's auto compact: off (the switch alone), then on at 70 % with its choice.
     app.show_settings_in(1, Section::Kiro);
     save(&dash, (1200, 1000), 1.0, [0, 0, 0], &dir.join("settings-kiro-compact-off.png"));
-    hover.settings.set_kiro_auto_compact(true);
+    // Through the page's own callbacks, as a click on the switches and on 70 % does.
+    if let Some(d) = &*app.dash.borrow() {
+        let page = d.global::<crate::ui::Page>();
+        page.invoke_toggled("KiroAutoCompact".into(), true);
+        page.invoke_toggled("KiroRetryBusy".into(), true);
+    }
+    assert!(hover.settings.kiro_auto_compact() && hover.settings.kiro_retry_busy(), "the switches took the clicks");
     hover.settings.set_kiro_compact_at(70);
     app.show_settings_in(1, Section::Kiro);
     save(&dash, (1200, 1000), 1.0, [0, 0, 0], &dir.join("settings-kiro-compact-on.png"));
     hover.settings.set_kiro_auto_compact(false);
+    hover.settings.set_kiro_retry_busy(false);
 }
 /// A voice preview as Voice makes one, for the shots.
 fn preview(folder: &str, target: &str, note: Option<&str>, task: &str, countdown: Option<f32>, access: &str) -> hover_app::voice::Preview {
@@ -806,6 +823,25 @@ fn voice_shots(app: &Rc<App>, hover: &Arc<hover_app::app::Hover>, dir: &Path, da
         save(&notch, (w, h), 1.0, desk, &dir.join(format!("voice-{tag}-menu-long.png")));
         app.notch.invoke_voice_open_menu(0);
         app.voice_ui.ready.borrow_mut().take();
+        // Kiro Web: no folder pick, and the repo menu with its search box.
+        if ws == W::Default {
+            draw(&states[6].1);
+            save(&notch, (w, 200), 1.0, desk, &dir.join("voice-default-cloud-no-folder.png"));
+            app.cloud_shot(None, vec!["4regab/hoverweb".into(), "4regab/Hover".into(), "4regab/tasksync-mcp".into()]);
+            for (q, name) in [("", "voice-default-cloud-repos.png"), ("HOV", "voice-default-cloud-repos-search.png")] {
+                if q.is_empty() { app.notch.invoke_voice_open_menu(4); } else { type_text(&notch, q); }
+                let sz = notch.size();
+                let mut buf = vec![PremultipliedRgbaColor::default(); (sz.width * sz.height) as usize];
+                notch.request_redraw();
+                notch.draw_if_needed(|r| { r.render(&mut buf, sz.width as usize); });
+                run_for(100);
+                app.update_rest();
+                run_for(700);
+                let h = app.n.borrow().win.height() as u32;
+                save(&notch, (w, h), 1.0, desk, &dir.join(name));
+            }
+            app.notch.invoke_voice_open_menu(0);
+        }
     }
     // The aura in a colour picked in Settings → Voice.
     hover.settings.set_voice(hover_core::projects::VoiceSettings { aura_color: Some("#C4A2FF".into()), ..hover.settings.voice() });
@@ -1040,6 +1076,16 @@ pub fn run(dir: &Path) {
     app.open_panel(Some("history"));
     settle(600);
     save(&notch, full, 1.0, desk, &dir.join("office-panel-history.png"));
+    // Kiro Web sessions made elsewhere, in the same list by date, with the cloud mark.
+    {
+        use hover_agents::acp::CloudSession;
+        let ago = |h: f64| Some(hover_core::time::Stamp::now().add_secs(-h * 3600.0));
+        app.web_shot(vec![CloudSession { id: "w1".into(), title: "Fix the checkout total on mobile".into(), updated: ago(0.5) },
+            CloudSession { id: "w2".into(), title: "Write the release notes for 3.7".into(), updated: ago(30.0) }, CloudSession { id: "w3".into(), title: String::new(), updated: None }]);
+        settle(600);
+        save(&notch, full, 1.0, desk, &dir.join("office-panel-history-web.png"));
+        app.web_shot(vec![]);
+    }
     app.open_panel(None);
     app.notch.global::<Office>().invoke_fab_main();
     settle(600);
@@ -1057,6 +1103,10 @@ pub fn run(dir: &Path) {
     app.notch.global::<Office>().invoke_open_repos();
     settle(300);
     save(&notch, full, 1.0, desk, &dir.join("office-fab-cloud-repos.png"));
+    // The search box: typing keeps the repositories that match.
+    type_text(&notch, "HOV");
+    settle(300);
+    save(&notch, full, 1.0, desk, &dir.join("office-fab-cloud-repos-search.png"));
     app.notch.global::<Office>().invoke_open_repos();
     app.notch.global::<Office>().invoke_toggle_cloud();
     settle(300);

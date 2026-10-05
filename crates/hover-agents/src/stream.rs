@@ -60,6 +60,8 @@ pub struct KiroStream {
     pub finished: bool,
     pub session_id: Option<String>,
     pub context: Option<f64>,
+    /// Kiro said the turn is over (its turn_completion report, which also carries the credits).
+    pub completed: bool,
     said: String,
     plain: std::collections::VecDeque<String>,
     events: Vec<KiroEvent>,
@@ -95,7 +97,7 @@ fn num(e: &Json, name: &str) -> Option<f64> { match e.get(name) { Some(v @ Json:
 impl KiroStream {
     pub fn new(name: &str) -> KiroStream {
         KiroStream { name: name.into(), phase: KiroPhase::Starting, final_text: None, stop_reason: None, error: None, interrupted: false, finished: false,
-            session_id: None, context: None, said: String::new(), plain: Default::default(), events: vec![], steps: Default::default(), began: Default::default(), after_tool: false,
+            session_id: None, context: None, completed: false, said: String::new(), plain: Default::default(), events: vec![], steps: Default::default(), began: Default::default(), after_tool: false,
             message: None, is_final: false, thought: None, thoughts: 0, thought_sent: None }
     }
 
@@ -224,6 +226,10 @@ impl KiroStream {
             }
             Some("plan") => self.phase = KiroPhase::Planning,
             Some("tool_call" | "tool_call_update" | "tool_call_chunk") => {
+                // An update for a tool call that never started here and names nothing is old news: Kiro
+                // sends the results of an earlier conversation like this (67 in a second, seen in a Kiro
+                // Web chat), and each was a "Working" row. There is nothing to show for it.
+                if kind == Some("tool_call_update") && s(u, "title").is_none() && s(u, "toolCallId").is_none_or(|i| !self.steps.contains_key(i)) { return; }
                 if let Some(p) = tool_phase(s(u, "kind"), s(u, "title")) { self.phase = p; }
                 if !self.said.is_empty() { self.after_tool = true; }
                 self.step(u);
@@ -235,6 +241,7 @@ impl KiroStream {
                 if let Some(p) = pct { self.set_context(p); }
                 // At a turn's end: {"_meta":{"kiro":{"kind":"turn_completion",
                 // "promptTurnSummaries":[{"unit":"credit","usage":0.087}]}}}.
+                if kiro.is_some_and(|k| s(k, "kind") == Some("turn_completion")) { self.completed = true; }
                 if let Some(Json::Arr(sums)) = kiro.filter(|k| s(k, "kind") == Some("turn_completion")).and_then(|k| k.get("promptTurnSummaries")) {
                     let credits = sums.iter().filter(|x| s(x, "unit") == Some("credit")).filter_map(|x| num(x, "usage")).reduce(|a, b| a + b);
                     if let Some(spent) = credits { self.events.push(KiroEvent { credits: Some(spent), ..Default::default() }); }
@@ -262,12 +269,15 @@ impl KiroStream {
         let known = match self.steps.get(id) {
             Some(k) => k.clone(),
             None => {
-                self.began.insert(id.into(), std::time::Instant::now());
-                // Diagnostic (Kiro Web shows many "Working" rows): a step that starts with no
-                // title is named "Working". Only ids and field names are logged, never text.
-                if s(u, "title").is_none() {
+                // Kept from the first update: an empty step waits for its next one.
+                let first = !self.began.contains_key(id);
+                self.began.entry(id.into()).or_insert_with(std::time::Instant::now);
+                // Diagnostic (Kiro Web shows many "Working" rows): a step with no title, or
+                // titled "Working", says nothing. Only ids and field names are logged, never text.
+                if first && s(u, "title").is_none_or(|t| t == "Working") {
                     let keys = match u { Json::Obj(v) => v.iter().map(|(k, _)| k.as_str()).collect::<Vec<_>>().join(","), _ => String::new() };
-                    hover_core::log::line(&format!("stream: new step without a title, shown as Working: id={id} update={} kind={} status={} fields=[{keys}] steps_so_far={}",
+                    hover_core::log::line(&format!("stream: new step with no real title: id={id} title={} update={} kind={} status={} fields=[{keys}] steps_so_far={}",
+                        if s(u, "title").is_some() { "Working" } else { "none" },
                         s(u, "sessionUpdate").unwrap_or("-"), s(u, "kind").unwrap_or("-"), status.unwrap_or("-"), self.steps.len()));
                 }
                 KiroStep::new(id, s(u, "kind").unwrap_or("other"), s(u, "title").unwrap_or("Working"), target(u), status.unwrap_or("in_progress"))
@@ -292,6 +302,11 @@ impl KiroStream {
             if let Some(t0) = self.began.get(id) { next.ms = Some(t0.elapsed().as_secs_f64() * 1000.0); }
         }
         if seen && next == known { return; }
+        // A new step that still says nothing (no title, no file or command, no output) and
+        // hasn't failed is not shown: dozens of "Working" rows told the user nothing. It is
+        // shown once an update gives it something. ponytail: a step that never does stays hidden.
+        if !seen && next.title == "Working" && next.target.is_none() && next.input.is_none() && next.log.is_none()
+            && next.output.is_none() && next.diff.is_none() && next.status != "failed" { return; }
         self.steps.insert(id.into(), next.clone());
         self.events.push(KiroEvent { step: Some(next), ..Default::default() });
     }
@@ -733,6 +748,35 @@ mod tests {
         let chunk = "é".repeat(40_000);
         for _ in 0..2 { k.feed(&update(&format!(r#"{{"sessionUpdate":"agent_message_chunk","content":{{"type":"text","text":"{chunk}"}}}}"#))); }
         assert_eq!(units(k.said()), 64 * 1024);
+    }
+
+    /// Kiro Web's calls that say nothing are not rows ("Working" dozens of times); one that
+    /// later gets a title, or fails, is.
+    #[test]
+    fn a_step_that_says_nothing_is_not_shown_until_it_does() {
+        let mut k = KiroStream::new("Kiro");
+        k.feed(&update(r#"{"sessionUpdate":"tool_call","toolCallId":"e1","status":"in_progress"}"#));
+        k.feed(&update(r#"{"sessionUpdate":"tool_call_update","toolCallId":"e1","status":"completed"}"#));
+        k.feed(&update(r#"{"sessionUpdate":"tool_call","toolCallId":"e2","title":"Working","status":"in_progress"}"#));
+        assert!(k.drain().iter().all(|e| e.step.is_none()), "no row for either");
+        k.feed(&update(r#"{"sessionUpdate":"tool_call_update","toolCallId":"e2","title":"Read File","status":"completed"}"#));
+        k.feed(&update(r#"{"sessionUpdate":"tool_call","toolCallId":"e3","status":"failed"}"#));
+        let ids: Vec<String> = k.drain().into_iter().filter_map(|e| e.step).map(|s| s.id).collect();
+        assert_eq!(ids, ["e2", "e3"]);
+    }
+
+    /// Old results sent as updates for calls that never started here (as Kiro Web did, from the user's
+    /// own log) are dropped, and do not cut what the agent was saying.
+    #[test]
+    fn updates_for_calls_that_never_started_are_dropped() {
+        let mut k = KiroStream::new("Kiro");
+        k.feed(&update(r#"{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"Working on it. "}}"#));
+        for i in 0..5 {
+            k.feed(&update(&format!(r#"{{"sessionUpdate":"tool_call_update","toolCallId":"run_command_toolu_{i}","status":"completed","rawOutput":{{"x":1}},"content":[{{"type":"content","content":{{"type":"text","text":"old"}}}}]}}"#)));
+        }
+        k.feed(&update(r#"{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"Done."}}"#));
+        assert!(k.drain().iter().all(|e| e.step.is_none()), "no rows for them");
+        assert_eq!(k.said(), "Working on it. Done.", "and the answer is not cut");
     }
 
     /// KiroStream.InputOf / LogOf: a step keeps its call's input and the longer end of what

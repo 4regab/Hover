@@ -295,6 +295,9 @@ pub fn toggled(h: &dyn Host, pane: &RefCell<Pane>, id: &str, on: bool) {
         "ComputerUse" => { st.set_computer_use(on); if on { h.action("integ.look"); } }
         "Sandbox" => { st.set_sandbox(on); h.action("integ.look"); }
         "AgentBrowser" => st.set_agent_browser(on),
+        // Kiro's page: auto compact and continuing when the model is busy.
+        "KiroAutoCompact" => { pages::set_compact(st, id, on); }
+        "KiroRetryBusy" => st.set_kiro_retry_busy(on),
         _ => {}
     }
     h.refresh();
@@ -412,6 +415,7 @@ pub fn picked_seg(h: &dyn Host, pane: &RefCell<Pane>, id: &str, i: usize) {
         "VoiceCountdown" => if let Some(&n) = VoiceSettings::COUNTDOWNS.get(i) { st.set_voice(VoiceSettings { countdown: n, ..st.voice() }); h.action("voice.changed"); },
         "DefaultAccess" => st.set_default_workspace(Workspace { access: ACCESS_IDS[i].into(), ..st.default_workspace() }),
         "ProjectAccess" => edit_project(h, pane, id, |p| p.access = ACCESS_IDS[i].into()),
+        "KiroCompactAt" => { pages::pick_compact_at(st, id, i); }
         _ => {
             for t in AgentTool::ALL {
                 let o = st.agent_options(t);

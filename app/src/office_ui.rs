@@ -41,6 +41,8 @@ pub struct Page {
     new_folder: RefCell<Option<String>>,
     /// The new-task box's Kiro Web switch and repo.
     cloud: RefCell<NewCloud>,
+    /// The user's Kiro Web sessions that Hover doesn't have yet, listed each time the history opens.
+    web: RefCell<WebList>,
     time_mode: Cell<i32>,
     toast_timer: slint::Timer,
     push_timer: slint::Timer,
@@ -153,7 +155,28 @@ fn double_click() -> (Duration, (f32, f32)) {
 #[cfg(not(windows))]
 fn double_click() -> (Duration, (f32, f32)) { (Duration::from_millis(400), (10.0, 10.0)) }
 
+/// Whether a repository ("owner/name") matches what was typed in a repo menu's search box:
+/// any part of it, capitals ignored. Nothing typed matches all.
+pub(crate) fn repo_matches(name: &str, query: &str) -> bool {
+    let q = query.trim();
+    q.is_empty() || name.to_lowercase().contains(&q.to_lowercase())
+}
+
 fn fonts() -> Vec<Vec<u8>> { vec![hover_office::canvas::PIXELIFY.to_vec()] }
+
+/// The Kiro Web sessions in the user's Kiro account that the history shows beside Hover's own.
+#[derive(Default)]
+struct WebList {
+    listing: bool,
+    list: Vec<hover_agents::acp::CloudSession>,
+    /// Why they couldn't be listed this time.
+    error: Option<String>,
+    /// The one being opened (its conversation read from the cloud).
+    opening: Option<String>,
+}
+
+/// A Kiro Web session's row in the history: its id after this.
+const WEB_ROW: &str = "kiro-web:";
 
 /// The new-task box in Kiro Web (Kiro only).
 #[derive(Default)]
@@ -168,12 +191,14 @@ struct NewCloud {
     /// A folder and the GitHub repo its remote points at, once looked up.
     folder_repo: Option<(String, Option<String>)>,
     looking: Option<String>,
+    /// What is typed in the repo menu's search box.
+    query: String,
 }
 
 impl Default for Page {
     fn default() -> Page {
         Page { live: RefCell::new(None), size: Cell::new((0, 0)), open: Cell::new(None), panel: Cell::new(None), fab: Cell::new(0), new_tool: Cell::new(0), menu: Cell::new(false), access_menu: Cell::new(false), new_access: RefCell::new([None; AgentTool::ALL.len()]),
-            new_folder: RefCell::new(None), cloud: Default::default(), time_mode: Cell::new(0), toast_timer: Default::default(), push_timer: Default::default(), dirty: Cell::new(true),
+            new_folder: RefCell::new(None), cloud: Default::default(), web: Default::default(), time_mode: Cell::new(0), toast_timer: Default::default(), push_timer: Default::default(), dirty: Cell::new(true),
             checking: Cell::new([false; AgentTool::ALL.len()]), confirm_key: RefCell::new(None), confirm_rewind: RefCell::new(None), rewinding: Cell::new(false), thread: RefCell::new(None), turns: RefCell::new(vec![]), drafts: Default::default(), copied: Default::default(),
             rows_open: RefCell::new(vec![]), target: Cell::new(0), shown: Cell::new(None), drop_timer: Default::default(), view: Cell::new(None),
             picks: Default::default(), qmodels: Default::default(), model_menu: Cell::new(0), attached: Default::default(), thumbs: Default::default(),
@@ -194,6 +219,14 @@ macro_rules! each {
 impl App {
     /// The office's window and size: the app window when it is up, else the open notch.
     fn office_size(&self) -> Option<(u32, u32, i32)> {
+        let n = self.n.borrow();
+        // Below a Mac's camera housing, when the notch has one.
+        let below = n.hw.filter(|h| h.real).map_or(0.0, |h| h.height);
+        let notch = || ((n.open_size.0 - 16.0) as u32, (n.open_size.1 - 16.0 - below).max(1.0) as u32, 0);
+        // The open notch first: it sits over everything, so it is what the user looks at.
+        // The app window used to win whenever it was open, even behind other windows or
+        // minimised (Slint still calls both visible), and the notch's office froze.
+        if n.hover.state != hover_notch::State::Rest { return Some(notch()); }
         if let Some(d) = &*self.dash.borrow() {
             if d.window().is_visible() {
                 let sz = d.window().size();
@@ -201,10 +234,7 @@ impl App {
                 return Some(((sz.width as f32 / k) as u32, (sz.height as f32 / k) as u32, 1));
             }
         }
-        let n = self.n.borrow();
-        // Below a Mac's camera housing, when the notch has one.
-        let below = n.hw.filter(|h| h.real).map_or(0.0, |h| h.height);
-        (n.hover.state != hover_notch::State::Rest || self.headless).then(|| ((n.open_size.0 - 16.0) as u32, (n.open_size.1 - 16.0 - below).max(1.0) as u32, 0))
+        self.headless.then(notch)
     }
 
     /// Starts the office thread the first time an office is seen, and tells it whether
@@ -256,6 +286,7 @@ impl App {
             }
         }
         if let Some((w, h, which)) = want {
+            if p.target.get() != which { hover_core::log::line(if which == 1 { "office: frames go to the app window" } else { "office: frames go to the notch" }); }
             p.target.set(which);
             if p.size.get() != (w, h) { p.size.set((w, h)); live.send(In::Resize(w, h)); }
         }
@@ -559,7 +590,68 @@ impl App {
         if p.is_some() { self.desk_leave(); self.page.open.set(None); self.send(In::Drawer(None)); self.page.fab.set(0); }
         self.page.panel.set(p);
         self.send(In::Panel(p));
+        if p == Some("history") { self.list_web(); }
         self.office_widgets();
+    }
+
+    /// Asks Kiro for the user's Kiro Web sessions, each time the history opens (the account may have
+    /// changed), off the UI thread. The ones Hover already has are left out.
+    fn list_web(self: &Rc<Self>) {
+        if self.headless || self.page.web.borrow().listing { return; }
+        // Not where Kiro isn't set up: it would be started to list nothing.
+        if hover_agents::agents::known(AgentTool::Kiro).is_some_and(|r| !r.ok()) { return; }
+        let Some(host) = self.hover.hosts.iter().find(|h| h.tool() == AgentTool::Kiro).cloned() else { return };
+        self.page.web.borrow_mut().listing = true;
+        let history = self.hover.history.clone();
+        std::thread::spawn(move || {
+            let got = host.cloud_sessions().map(|list| {
+                // ponytail: every Kiro session in the history is read for its id, each time; an index of ids is the upgrade.
+                let have: std::collections::HashSet<String> = history.map(|h| h.entries().into_iter().filter(|e| e.tool == AgentTool::Kiro)
+                    .filter_map(|e| h.load(&e.key)).filter_map(|s| s.acp_id).collect()).unwrap_or_default();
+                list.into_iter().filter(|c| !have.contains(&c.id)).collect::<Vec<_>>()
+            });
+            crate::ui_do(move |a| {
+                {
+                    let mut w = a.page.web.borrow_mut();
+                    w.listing = false;
+                    // Another account's list never stays: a failure shows none.
+                    match got { Ok(l) => { w.list = l; w.error = None; } Err(e) => { w.list.clear(); w.error = Some(e); } }
+                }
+                a.office_widgets();
+            });
+        });
+    }
+
+    /// A Kiro Web session from the history's list: its conversation is read from the cloud, off the UI
+    /// thread, and it comes to a desk as a chat (title and why, when it can't be read).
+    fn open_web(self: &Rc<Self>, id: &str) {
+        let Some(c) = self.page.web.borrow().list.iter().find(|c| c.id == id).cloned() else { return };
+        if self.page.web.borrow().opening.is_some() { return; }
+        if let Some(s) = self.hover.sessions.all().into_iter().find(|s| s.kiro_id.as_deref() == Some(id)) { return self.open_session(s.id); }
+        let Some(host) = self.hover.hosts.iter().find(|h| h.tool() == AgentTool::Kiro).cloned() else { return };
+        // It works in its own sandbox; here it has the default workspace, as a Kiro Web task started with no folder.
+        let folder = match self.hover.settings.default_workspace().path().map(|p| hover_core::projects::ensure_folder(&p)) {
+            Some(Ok(p)) => p.to_string_lossy().into_owned(),
+            Some(Err(e)) => return self.toast(&e),
+            None => return self.toast("Hover can’t find your home folder for the default workspace."),
+        };
+        self.page.web.borrow_mut().opening = Some(c.id.clone());
+        self.toast("Opening it from Kiro Web…");
+        self.office_widgets();
+        std::thread::spawn(move || {
+            let turns = host.cloud_transcript(&c.id, &folder);
+            crate::ui_do(move |a| {
+                a.page.web.borrow_mut().opening = None;
+                match a.hover.sessions.adopt_cloud(&c.id, &c.title, &folder, c.updated, turns) {
+                    Some(s) => {
+                        a.page.web.borrow_mut().list.retain(|x| x.id != c.id);
+                        a.office_changed();
+                        a.open_session(s.id);
+                    }
+                    None => { a.toast("All six desks are busy. Stop or remove a session first."); a.office_widgets(); }
+                }
+            });
+        });
     }
 
     /// The repo a Kiro Web task clones: the one picked, else the folder's own (None: an
@@ -604,6 +696,12 @@ impl App {
         });
     }
 
+    /// The shots' history: Kiro Web sessions as Kiro would list them, without Kiro.
+    pub fn web_shot(self: &Rc<Self>, list: Vec<hover_agents::acp::CloudSession>) {
+        *self.page.web.borrow_mut() = WebList { list, ..Default::default() };
+        self.office_widgets();
+    }
+
     /// The shots' Kiro Web box: a repo picked and the list Kiro would give, without Kiro.
     pub fn cloud_shot(self: &Rc<Self>, pick: Option<&str>, repos: Vec<String>) {
         { let mut c = self.page.cloud.borrow_mut(); c.pick = Some(pick.map(str::to_owned)); c.repos = Some(Ok(repos)); }
@@ -625,18 +723,20 @@ impl App {
         });
     }
 
-    /// The repo menu's rows (no repo first, then the folder's, then the connected ones)
-    /// and its note.
+    /// The repo menu's rows (no repo first, then the folder's, then the connected ones that
+    /// match the search) and its note.
     fn repo_rows(&self, current: Option<&str>, folder_repo: Option<&str>) -> (Vec<AccessOpt>, String) {
         let c = self.page.cloud.borrow();
+        let q = c.query.as_str();
         let mut names: Vec<&str> = folder_repo.into_iter().collect();
         if let Some(Ok(list)) = &c.repos { for r in list { if !names.contains(&r.as_str()) { names.push(r); } } }
         let mut rows = vec![AccessOpt { id: s(""), label: s("Empty workspace"), note: s("No repository: the agent starts in an empty folder."), on: current.is_none() }];
-        rows.extend(names.iter().map(|r| AccessOpt { id: s(*r), label: s(*r), note: s(if Some(*r) == folder_repo { "This folder’s repository" } else { "" }), on: current == Some(*r) }));
+        rows.extend(names.iter().filter(|r| Some(**r) == folder_repo || repo_matches(r, q)).map(|r| AccessOpt { id: s(*r), label: s(*r), note: s(if Some(*r) == folder_repo { "This folder’s repository" } else { "" }), on: current == Some(*r) }));
         let note = match &c.repos {
             _ if c.listing => "Loading your connected repositories…".to_owned(),
             Some(Err(e)) => e.clone(),
             Some(Ok(l)) if l.is_empty() => "No GitHub repositories are connected. Connect GitHub in Kiro Web.".into(),
+            Some(Ok(l)) if !l.iter().any(|r| repo_matches(r, q)) => format!("No repository matches “{}”.", q.trim()),
             _ => String::new(),
         };
         (rows, note)
@@ -804,11 +904,31 @@ impl App {
                 let find = self.notch.global::<crate::ui::Office>().get_find().to_string().to_lowercase();
                 let all = self.hover.history.as_ref().map(|h| h.entries()).unwrap_or_default();
                 let list: Vec<_> = all.iter().filter(|h| find.is_empty() || format!("{} {} {}", h.title, h.folder, h.tool.id()).to_lowercase().contains(&find)).collect();
+                // The user's Kiro Web sessions Hover doesn't have, in the same list by date.
+                let web = self.page.web.borrow();
+                let clouds: Vec<_> = web.list.iter().filter(|c| !sessions.iter().any(|x| x.kiro_id.as_deref() == Some(c.id.as_str())))
+                    .filter(|c| find.is_empty() || format!("{} kiro web", c.title).to_lowercase().contains(&find)).collect();
+                enum Item<'a> { Here(&'a hover_core::history::HistoryEntry), Web(&'a hover_agents::acp::CloudSession) }
+                let mut items: Vec<(f64, Item)> = list.iter().map(|h| (h.updated.unix_ms() as f64, Item::Here(h)))
+                    .chain(clouds.iter().map(|c| (c.updated.map_or(0.0, |u| u.unix_ms() as f64), Item::Web(c)))).collect();
+                items.sort_by(|a, b| b.0.total_cmp(&a.0));
                 let mut at = String::new();
-                for h in &list {
-                    let ms = h.updated.unix_ms() as f64;
-                    let d = day(now, ms);
+                for (ms, item) in &items {
+                    let ms = *ms;
+                    let d = if ms > 0.0 { day(now, ms) } else { "Earlier".to_owned() };
                     if d != at { at = d.clone(); rows.push(PanelRow { text: s(d.to_uppercase()), color: Color::from_argb_u8(0, 0, 0, 0), ..row(0) }); opens.push((None, None)); }
+                    let h = match item {
+                        Item::Here(h) => *h,
+                        Item::Web(c) => {
+                            // Kiro's logo, the title, and that it is in Kiro Web; open 1 marks it (no bin: Hover doesn't keep it yet).
+                            let opening = web.opening.as_deref() == Some(c.id.as_str());
+                            let title = if c.title.is_empty() { "Kiro Web session" } else { c.title.as_str() };
+                            rows.push(PanelRow { sub: s("kiro"), text: s(title), meta: s(if opening { "Opening…" } else { "Not opened yet" }), s1: s(if ms > 0.0 { stamp(now, ms) } else { String::new() }),
+                                count: s("click to read it"), stage: Stage::Stopped as i32, open: 1, ..row(6) });
+                            opens.push((None, Some(format!("{WEB_ROW}{}", c.id))));
+                            continue;
+                        }
+                    };
                     let live = sessions.iter().find(|s| s.key == h.key);
                     let desk = live.is_some();
                     // The saved entry holds the last finished turn's state, so a reply running now
@@ -823,8 +943,11 @@ impl App {
                         stage: stage as i32, key: s(&h.key), desk, ..row(6) });
                     opens.push((None, Some(h.key.clone())));
                 }
-                if list.is_empty() { rows.push(PanelRow { text: s(if all.is_empty() { "Sessions you start are kept here. Open one to read it, reply to carry on." } else { "Nothing matches." }), ..row(4) }); opens.push((None, None)); }
-                ("Session history".into(), format!("{} session{}, kept until you delete them", all.len(), if all.len() == 1 { "" } else { "s" }), rows, opens)
+                if items.is_empty() { rows.push(PanelRow { text: s(if all.is_empty() && web.list.is_empty() { "Sessions you start are kept here. Open one to read it, reply to carry on." } else { "Nothing matches." }), ..row(4) }); opens.push((None, None)); }
+                let mut sub = format!("{} session{}, kept until you delete them", all.len(), if all.len() == 1 { "" } else { "s" });
+                if web.listing { sub.push_str(" · looking up Kiro Web…"); }
+                else if let Some(e) = &web.error { sub.push_str(&format!(" · Kiro Web sessions couldn’t be listed: {e}")); }
+                ("Session history".into(), sub, rows, opens)
             }
             None => (String::new(), String::new(), rows, opens),
         }
@@ -995,6 +1118,7 @@ impl App {
             let r = a.page.rows_open.borrow().get(i as usize).cloned();
             match r {
                 Some((Some(id), _)) => a.open_session(id as i32),
+                Some((None, Some(key))) if key.starts_with(WEB_ROW) => a.open_web(&key[WEB_ROW.len()..]),
                 Some((None, Some(key))) => {
                     if let Some(s) = a.hover.sessions.all().into_iter().find(|s| s.key == key) { a.open_session(s.id); }
                     else if let Some(s) = a.hover.sessions.wake(&key) { a.office_changed(); a.open_session(s.id); }
@@ -1005,7 +1129,7 @@ impl App {
         let a = self.clone();
         g.on_row_delete(move |i| {
             let r = a.page.rows_open.borrow().get(i as usize).cloned();
-            if let Some((_, Some(key))) = r {
+            if let Some((_, Some(key))) = r.filter(|r| !r.1.as_deref().is_some_and(|k| k.starts_with(WEB_ROW))) {
                 let title = a.hover.history.as_ref().and_then(|h| h.entries().into_iter().find(|e| e.key == key)).map(|e| e.title).unwrap_or_default();
                 a.ask_delete(None, Some(key), &title, false);
             }
@@ -1047,6 +1171,7 @@ impl App {
             let list = {
                 let mut c = a.page.cloud.borrow_mut();
                 c.menu = !c.menu;
+                c.query.clear();
                 // Listed once a run (again after a failure); Kiro starts if it isn't up.
                 let want = c.menu && !c.listing && !matches!(c.repos, Some(Ok(_)));
                 if want { c.listing = true; }
@@ -1064,8 +1189,26 @@ impl App {
         });
         let a = self.clone();
         g.on_pick_repo(move |id| {
-            { let mut c = a.page.cloud.borrow_mut(); c.pick = Some(Some(id.to_string()).filter(|r| !r.is_empty())); c.menu = false; }
+            { let mut c = a.page.cloud.borrow_mut(); c.pick = Some(Some(id.to_string()).filter(|r| !r.is_empty())); c.menu = false; c.query.clear(); }
             a.office_widgets();
+        });
+        let a = self.clone();
+        g.on_repo_search(move |q| { a.page.cloud.borrow_mut().query = q.to_string(); a.office_widgets(); });
+        let a = self.clone();
+        // Enter in the search box picks the first repository that matches.
+        g.on_repo_search_enter(move || {
+            let folder = a.page.new_folder.borrow().clone();
+            let first = {
+                let c = a.page.cloud.borrow();
+                let q = c.query.trim();
+                let mut names: Vec<String> = c.folder_repo.as_ref().filter(|(k, _)| Some(k) == folder.as_ref()).and_then(|(_, r)| r.clone()).into_iter().collect();
+                if let Some(Ok(l)) = &c.repos { names.extend(l.iter().cloned()); }
+                if q.is_empty() { None } else { names.into_iter().find(|r| repo_matches(r, q)) }
+            };
+            if let Some(r) = first {
+                { let mut c = a.page.cloud.borrow_mut(); c.pick = Some(Some(r)); c.menu = false; c.query.clear(); }
+                a.office_widgets();
+            }
         });
         let a = self.clone();
         g.on_d_open_cloud(move || {

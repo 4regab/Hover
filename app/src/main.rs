@@ -442,7 +442,7 @@ impl App {
                 ui.set_act_verb((*verb).into());
                 ui.set_act_obj(obj.as_str().into());
                 ui.set_timer(hover_app::rest::clock(*secs).into());
-                ui.set_act_label(format!("{name}: {verb} {obj}{}", if *more > 0 { format!(", and {more} more at work") } else { String::new() }).trim().into());
+                ui.set_act_label(format!("{name}: {}{}", [*verb, obj.as_str()].iter().filter(|x| !x.is_empty()).copied().collect::<Vec<_>>().join(" "), if *more > 0 { format!(", and {more} more at work") } else { String::new() }).trim().into());
             }
             Seg::Done { tool, state, title, took_secs, count } => {
                 ui.set_seg(3);
@@ -848,6 +848,8 @@ fn main() {
     let app = platform_start(hover.clone(), look, selftest.is_some());
     hover_core::platform::watch_look(|| ui_do(|a| a.look_changed(hover_core::platform::look())));
     hover_core::log::line("started");
+    // Kiro Web tasks that were still working in the cloud when Hover closed are followed on.
+    hover.sessions.reattach_cut_off();
     if bench::active() { bench::listen(); }
     #[cfg(target_os = "linux")]
     if let Some(dir) = selftest {

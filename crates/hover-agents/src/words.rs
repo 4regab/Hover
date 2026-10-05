@@ -49,7 +49,13 @@ pub fn activity(s: &KiroSession) -> (&'static str, String) {
                     // The tool's own title says more than "Working" ("Loaded skill: unslop",
                     // "Serve the mockup on localhost"); a many-line one is a message, not a name.
                     let t = step.title.trim();
-                    if !t.is_empty() && t != "Working" && !t.contains('\n') { return ("Working on", clip_to(t, 28)); }
+                    if !t.is_empty() && t != "Working" && !t.contains('\n') {
+                        // A title that already starts with a verb ("Cloning repository") stands alone:
+                        // "Working on Cloning repository" is wrong.
+                        // ponytail: any first word ending in "ing" counts as a verb; a list of verbs is the upgrade.
+                        let verb_first = t.split_whitespace().next().is_some_and(|w| w.len() > 4 && w.to_lowercase().ends_with("ing"));
+                        return (if verb_first { "" } else { "Working on" }, clip_to(t, 28));
+                    }
                     "Working"
                 }
             }
