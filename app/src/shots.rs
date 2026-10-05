@@ -1089,6 +1089,17 @@ pub fn run(dir: &Path) {
         save(&notch, full, 1.0, desk, &dir.join("office-panel-history-web.png"));
         app.web_shot(vec![], "");
     }
+    // Long titles wrap to two lines in the board's cards; the next card must start below.
+    *hold.lock().unwrap() = false;
+    run_for(600);
+    for x in hover.sessions.all() { hover.sessions.dismiss(x.id); }
+    hover.sessions.start(AgentTool::Kiro, &folder, "is cloudflare good replacement for vercel since we cant use the free plan for a team project anymore", vec![]);
+    run_for(600);
+    hover.sessions.start(AgentTool::Kiro, &folder, "Can you work on the Checker Project again on KiroWeb?", vec![]);
+    run_for(900);
+    app.open_panel(Some("board"));
+    settle(1200);
+    save(&notch, full, 1.0, desk, &dir.join("office-panel-board-long.png"));
     app.open_panel(None);
     app.notch.global::<Office>().invoke_fab_main();
     settle(600);

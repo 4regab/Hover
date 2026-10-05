@@ -736,6 +736,8 @@ component Tag inherits Rectangle {
 // The side panels' rows (.card, .col h4, .stats, .meter).
 component RowView inherits Rectangle {
     in property <PanelRow> r;
+    // The list's width, known before the rows are laid out: a wrapped title needs it to be measured.
+    in property <length> list-w;
     callback clicked;
     callback delete;
     height: lay.preferred-height;
@@ -771,7 +773,7 @@ component RowView inherits Rectangle {
                         horizontal-stretch: 1;
                         spacing: 1px;
                         Text { text: r.sub; font-size: 11.5px; font-weight: 600; color: r.stage == 2 ? #30d158 : r.stage == 3 ? #ff453a : r.stage <= 1 ? #c4a2ff : #f6f2ff9e; overflow: elide; }
-                        Text { text: r.text; font-size: 12.5px; color: #f6f2ff; wrap: word-wrap; max-height: 34px; overflow: elide; }
+                        Text { text: r.text; width: list-w - 51px - (r.kind == 3 ? 44px : 0px); font-size: 12.5px; color: #f6f2ff; wrap: word-wrap; max-height: 34px; overflow: elide; }
                         if r.kind == 3: Rectangle { height: 5px; border-radius: 3px; background: #ffffff1a;
                             Rectangle { x: 0; width: parent.width * clamp(r.pct / 100, 0, 1); border-radius: 3px; background: #c4a2ff; } }
                         if r.meta != "": Text { text: r.meta; font-size: 11px; color: #f6f2ff61; overflow: elide; }
@@ -1719,7 +1721,7 @@ export component OfficeView inherits Rectangle {
                         list := VerticalLayout {
                             padding: 12px;
                             padding-top: 14px;
-                            for r[i] in Office.rows: RowView { r: r; clicked => { Office.row-clicked(i); } delete => { Office.row-delete(i); } }
+                            for r[i] in Office.rows: RowView { r: r; list-w: side-w - 24px; clicked => { Office.row-clicked(i); } delete => { Office.row-delete(i); } }
                         }
                     }
                 }
