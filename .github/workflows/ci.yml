@@ -313,11 +313,28 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
           pattern: installer-*
           path: dist
           merge-multiple: true
+      # The release text is this version's section of CHANGELOG.md, so the page on GitHub
+      # says what the changelog says. A version with no section stops the release here.
+      - name: Release notes from CHANGELOG.md
+        env:
+          VERSION: ${{ needs.windows.outputs.version }}
+        run: |
+          {
+            echo "**macOS:** download \`Hover-$VERSION-macos-arm64.dmg\` (Apple silicon) or \`-macos-x64.dmg\` (Intel), open it and drag Hover to Applications. The app isn't notarized yet, so the first time, open it with right-click → Open (or System Settings → Privacy & Security → Open Anyway)."
+            echo
+            tr -d '\r' < CHANGELOG.md | awk -v v="$VERSION" 'on && /^## \[/ { exit } index($0, "## [" v "]") == 1 { on = 1; next } on { print }'
+          } > release-notes.md
+          if ! grep -q '^### ' release-notes.md; then
+            echo "::error::CHANGELOG.md has no section for $VERSION. Add '## [$VERSION] - date' with its changes, then run the release again."
+            exit 1
+          fi
+          cat release-notes.md
       - name: Publish GitHub release
         uses: softprops/action-gh-release@v2
         with:
@@ -330,7 +347,4 @@ jobs:
           make_latest: true
           files: dist/*
           fail_on_unmatched_files: true
-          generate_release_notes: true
-          # The Mac app is signed ad hoc, not with a Developer ID, so macOS asks once.
-          body: |
-            **macOS:** download `Hover-${{ needs.windows.outputs.version }}-macos-arm64.dmg` (Apple silicon) or `-macos-x64.dmg` (Intel), open it and drag Hover to Applications. The app isn't notarized yet, so the first time, open it with right-click → Open (or System Settings → Privacy & Security → Open Anyway).
+          body_path: release-notes.md
