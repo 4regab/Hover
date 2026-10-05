@@ -256,10 +256,7 @@ fn chat_shots(app: &Rc<App>, hover: &Arc<hover_app::app::Hover>, dir: &Path, fol
         // on its change, its output and a thought.
         open(rich);
         shot("done");
-        // A Kiro Web chat: the cloud chip beside the context ring.
-        g.set_d_cloud(true);
-        shot("cloud-chip");
-        g.set_d_cloud(false);
+
         // The question Restore and Try again ask before they touch the folder.
         g.set_confirm_title("Restore to here?".into());
         g.set_confirm_ok("Restore".into());
@@ -360,6 +357,23 @@ fn chat_shots(app: &Rc<App>, hover: &Arc<hover_app::app::Hover>, dir: &Path, fol
     }
     *hold_c.lock().unwrap() = false;
     run_for(600);
+    // A Kiro Web chat, made last so the shots above keep their office: its cloud chip
+    // beside the context ring. Kiro is the only tool that runs there.
+    if let Some(key) = long.and_then(|id| hover.sessions.get(id)).map(|s| s.key) { hover.sessions.delete(&key); }
+    let cloud = hover.sessions.start_in(AgentTool::Kiro, folder, "Add a dark mode with a theme switch to the site.", vec![], Some("full"), Some(vec!["4regab/hoverweb".into()])).map(|s| s.id);
+    idle(cloud);
+    for (ws, tag) in [(hover_core::model::WorkspaceSize::Small, "small"), (hover_core::model::WorkspaceSize::Default, "default")] {
+        hover.settings.set_workspace_size(ws);
+        view::Host::settings_changed(&**app);
+        app.office_follow();
+        app.office_push();
+        settle(1500);
+        let full = { let n = app.n.borrow(); (n.win.width() as u32, n.win.height() as u32) };
+        if let Some(id) = cloud { app.open_session(id); }
+        settle(1200);
+        save_office(&notch, full, &dir.join(format!("chat-{tag}-cloud-chip.png")));
+        app.close_drawer();
+    }
 }
 
 /// The desk card's sessions: a turn with the steps a real one reports (commands with their
