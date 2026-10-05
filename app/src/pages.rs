@@ -839,6 +839,8 @@ fn compact_rows(s: &Settings) -> Vec<Row> {
         rows.push(row("Compact at", Some(format!("{at} % of the context window.")),
             Control::Segments { id: "KiroCompactAt".into(), labels, picked: COMPACT_AT.iter().position(|p| *p == at).map_or(-1, |p| p as i32) }, Lead::Tile("gauge", Tint::Teal)));
     }
+    rows.push(row("Continue when high usage encountered", Some("When Kiro stops because too many people are using the model, Hover sends “continue” straight away, again and again until it works or you press Stop.".into()),
+        switch("KiroRetryBusy", "Continue when high usage encountered", s.kiro_retry_busy()), Lead::Tile("sparkles", Tint::Orange)));
     rows
 }
 

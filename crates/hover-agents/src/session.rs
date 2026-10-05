@@ -246,6 +246,8 @@ struct Shared {
     checkpoints: Mutex<Option<Arc<Checkpoints>>>,
     /// Where auto compact's percent comes from (None while it is off); without one, settings.json.
     compact: Mutex<Option<Arc<dyn Fn() -> Option<u8> + Send + Sync>>>,
+    /// Whether a Kiro turn stopped by a busy model is continued (None while unset; the setting is then read from settings.json).
+    retry_busy: Mutex<Option<Arc<dyn Fn() -> bool + Send + Sync>>>,
     /// How many run at once: MAX_RUNNING, unless the host says otherwise (the Mac's Settings).
     limit: AtomicUsize,
 }
@@ -265,13 +267,17 @@ impl KiroSessions {
     pub fn with_clock(make: impl Fn(AgentTool) -> RunTask + Send + Sync + 'static, history: Option<Arc<AgentHistory>>,
         now: impl Fn() -> Stamp + Send + Sync + 'static) -> KiroSessions {
         KiroSessions(Arc::new(Shared { inner: Mutex::new(Inner { all: vec![], selected: None }), make: Box::new(make), history, now: Box::new(now),
-            changed: Mutex::new(vec![]), ended: Mutex::new(vec![]), checkpoints: Mutex::new(None), compact: Mutex::new(None), limit: AtomicUsize::new(MAX_RUNNING) }))
+            changed: Mutex::new(vec![]), ended: Mutex::new(vec![]), checkpoints: Mutex::new(None), compact: Mutex::new(None), retry_busy: Mutex::new(None), limit: AtomicUsize::new(MAX_RUNNING) }))
     }
 
     /// Kiro's auto compact: `at` says, at each prompt, the context percent that calls for a
     /// `/compact` first, or None while it is off. Without one the setting is read from
     /// settings.json at each prompt.
     pub fn set_auto_compact(&self, at: impl Fn() -> Option<u8> + Send + Sync + 'static) { *self.0.compact.lock().unwrap() = Some(Arc::new(at)); }
+
+    /// Kiro's "continue when high usage encountered": `on` says, after each stopped turn, whether to
+    /// continue it. Without one the setting is read from settings.json each time.
+    pub fn set_retry_when_busy(&self, on: impl Fn() -> bool + Send + Sync + 'static) { *self.0.retry_busy.lock().unwrap() = Some(Arc::new(on)); }
 
     pub fn history(&self) -> Option<&Arc<AgentHistory>> { self.0.history.as_ref() }
     /// Keep the project folder before and after every turn from now on (checkpoint.rs).
@@ -667,6 +673,33 @@ fn with<R>(me: &Weak<Shared>, id: i32, f: impl FnOnce(&mut Slot, Stamp) -> R) ->
 
 /// The step auto compact leaves in the turn it ran before.
 const COMPACT_STEP: &str = "hover-compact";
+const RETRY_STEP: &str = "hover-retry";
+
+/// Kiro's words when the model has too many users (seen in its issue tracker and CLI).
+fn busy_message(text: &str) -> bool {
+    let t = text.to_lowercase();
+    ["high volume of traffic", "high traffic", "high demand", "too many requests", "trouble responding right now", "overloaded"].iter().any(|p| t.contains(p))
+}
+
+/// A Kiro turn that failed only because the model is busy, with the setting on and no Stop:
+/// it goes again. Short messages only, so an answer that merely mentions these words never loops.
+fn busy_again(me: &Weak<Shared>, id: i32, ct: &Cancel, r: &KiroResult) -> bool {
+    if ct.is_cancelled() || r.unconfirmed || r.state != KiroState::Failed || r.text.len() > 600 || !busy_message(&r.text) { return false; }
+    let Some(sh) = me.upgrade() else { return false };
+    if !sh.inner.lock().unwrap().all.iter().any(|x| x.s.id == id && x.s.tool == AgentTool::Kiro) { return false; }
+    let f = sh.retry_busy.lock().unwrap().clone();
+    match f { Some(f) => f(), None => hover_core::settings::load_model(&hover_core::paths::settings_file()).retry_busy() }
+}
+
+/// The turn's one quiet step for it: in progress while the next try starts, done once it has.
+fn retry_step(me: &Weak<Shared>, id: i32, ti: usize, tries: u32, going: bool) {
+    let step = KiroStep::new(RETRY_STEP, "other", &format!("Retrying after high demand ({tries})"), None, if going { "in_progress" } else { "completed" });
+    if let Some((ks, ())) = with(me, id, |slot, now| {
+        let t = &mut slot.s.turns[ti];
+        match t.steps.iter().position(|x| x.id == step.id) { Some(i) => t.steps[i] = step, None => t.steps.push(step) }
+        if t.woke_at.is_none() { t.woke_at = Some(now); }
+    }) { ks.raise(vec![Note::Changed]); }
+}
 
 /// What the compaction step says. `said` is Kiro's answer to /compact.
 pub fn compact_title(usage: f64, state: Option<KiroState>, said: &str) -> String {
@@ -754,7 +787,7 @@ fn go(me: Weak<Shared>, id: i32, ti: usize, run: RunTask, ct: Cancel, cp: Option
     if before.is_some() { let b = before.clone(); with(&me, id, move |slot, _| slot.s.turns[ti].before = b); }
     let kept_folder = folder.clone();
     let (m1, m2) = (me.clone(), me.clone());
-    let progress = Box::new(move |p: KiroPhase| {
+    let progress: Arc<dyn Fn(KiroPhase) + Send + Sync> = Arc::new(move |p: KiroPhase| {
         if let Some((ks, true)) = with(&m1, id, |slot, now| {
             if !slot.s.busy() || slot.s.phase == p { return false; }
             slot.s.phase = p;
@@ -762,7 +795,7 @@ fn go(me: Weak<Shared>, id: i32, ti: usize, run: RunTask, ct: Cancel, cp: Option
             true
         }) { ks.raise(vec![Note::Changed]); }
     });
-    let events = Box::new(move |e: KiroEvent| {
+    let events: Arc<dyn Fn(KiroEvent) + Send + Sync> = Arc::new(move |e: KiroEvent| {
         if let Some((ks, ())) = with(&m2, id, |slot, now| {
             if let Some(i) = e.session_id { slot.s.kiro_id = Some(i); }
             if let Some(c) = e.context { slot.s.context = Some(c); slot.usage = Some(c); }
@@ -777,12 +810,28 @@ fn go(me: Weak<Shared>, id: i32, ti: usize, run: RunTask, ct: Cancel, cp: Option
     let tag = me.upgrade().and_then(|sh| sh.inner.lock().unwrap().all.iter().find(|x| x.s.id == id).map(|x| x.s.key.clone()));
     // Kiro's cloud compacts its own conversations.
     let stopped = if cloud.is_some() { None } else { compact_first(&me, id, ti, &run, &folder, &resume, &access, &tag, &ct) };
-    let args = RunArgs { folder, prompt, progress, ct: ct.clone(), resume, events, access, tag, cloud };
+    let (first_prompt, mut prompt, mut resume) = (prompt.clone(), prompt, resume);
+    let mut tries = 0u32;
     let mut r = match stopped {
         Some(r) => r,
-        None => match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run(args))) {
-            Ok(r) => r,
-            Err(p) => KiroResult::new(KiroState::Failed, p.downcast_ref::<String>().cloned().or_else(|| p.downcast_ref::<&str>().map(|s| s.to_string())).unwrap_or_else(|| "The run failed.".into())),
+        None => loop {
+            let args = RunArgs { folder: folder.clone(), prompt: prompt.clone(), progress: { let p = progress.clone(); Box::new(move |x| p(x)) }, ct: ct.clone(), resume: resume.clone(),
+                events: { let e = events.clone(); Box::new(move |x| e(x)) }, access: access.clone(), tag: tag.clone(), cloud: cloud.clone() };
+            let r = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run(args))) {
+                Ok(r) => r,
+                Err(p) => KiroResult::new(KiroState::Failed, p.downcast_ref::<String>().cloned().or_else(|| p.downcast_ref::<&str>().map(|s| s.to_string())).unwrap_or_else(|| "The run failed.".into())),
+            };
+            if !busy_again(&me, id, &ct, &r) { break r; }
+            tries += 1;
+            hover_core::log::line(&format!("kiro run {id} turn {}: the model is busy, continuing (try {tries}): {}", ti + 1, crate::stream::clip(r.text.trim(), 200)));
+            retry_step(&me, id, ti, tries, true);
+            // ponytail: one second between tries, not none: an instant loop hammers a busy server. It waits in slices so Stop ends it.
+            for _ in 0..10 { if ct.is_cancelled() { break; } std::thread::sleep(std::time::Duration::from_millis(100)); }
+            if ct.is_cancelled() { break KiroResult::new(KiroState::Cancelled, "Stopped before Kiro finished."); }
+            // The conversation it has by now (a first prompt that never got one is sent again, not "continue").
+            resume = with(&me, id, |slot, _| slot.s.kiro_id.clone()).and_then(|(_, k)| k);
+            prompt = if resume.is_some() { "continue".into() } else { first_prompt.clone() };
+            retry_step(&me, id, ti, tries, false);
         },
     };
     if ct.is_cancelled() && r.state != KiroState::Completed && !r.unconfirmed { r.state = KiroState::Cancelled; }
