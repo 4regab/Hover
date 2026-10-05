@@ -39,6 +39,8 @@ pub struct Page {
     /// The access the new-task box picked, by tool, for the tasks it starts next.
     new_access: RefCell<[Option<&'static str>; AgentTool::ALL.len()]>,
     new_folder: RefCell<Option<String>>,
+    /// The new-task box's Kiro Web switch and repo.
+    cloud: RefCell<NewCloud>,
     time_mode: Cell<i32>,
     toast_timer: slint::Timer,
     push_timer: slint::Timer,
@@ -153,10 +155,25 @@ fn double_click() -> (Duration, (f32, f32)) { (Duration::from_millis(400), (10.0
 
 fn fonts() -> Vec<Vec<u8>> { vec![hover_office::canvas::PIXELIFY.to_vec()] }
 
+/// The new-task box in Kiro Web (Kiro only).
+#[derive(Default)]
+struct NewCloud {
+    on: bool,
+    menu: bool,
+    /// The connected GitHub repos, once Kiro has listed them (Err: why it couldn't).
+    repos: Option<Result<Vec<String>, String>>,
+    listing: bool,
+    /// The repo picked in the menu: Some(None) is an empty workspace. None: the folder's own.
+    pick: Option<Option<String>>,
+    /// A folder and the GitHub repo its remote points at, once looked up.
+    folder_repo: Option<(String, Option<String>)>,
+    looking: Option<String>,
+}
+
 impl Default for Page {
     fn default() -> Page {
         Page { live: RefCell::new(None), size: Cell::new((0, 0)), open: Cell::new(None), panel: Cell::new(None), fab: Cell::new(0), new_tool: Cell::new(0), menu: Cell::new(false), access_menu: Cell::new(false), new_access: RefCell::new([None; AgentTool::ALL.len()]),
-            new_folder: RefCell::new(None), time_mode: Cell::new(0), toast_timer: Default::default(), push_timer: Default::default(), dirty: Cell::new(true),
+            new_folder: RefCell::new(None), cloud: Default::default(), time_mode: Cell::new(0), toast_timer: Default::default(), push_timer: Default::default(), dirty: Cell::new(true),
             checking: Cell::new([false; AgentTool::ALL.len()]), confirm_key: RefCell::new(None), confirm_rewind: RefCell::new(None), rewinding: Cell::new(false), thread: RefCell::new(None), turns: RefCell::new(vec![]), drafts: Default::default(), copied: Default::default(),
             rows_open: RefCell::new(vec![]), target: Cell::new(0), shown: Cell::new(None), drop_timer: Default::default(), view: Cell::new(None),
             picks: Default::default(), qmodels: Default::default(), model_menu: Cell::new(0), attached: Default::default(), thumbs: Default::default(),
@@ -545,6 +562,58 @@ impl App {
         self.office_widgets();
     }
 
+    /// The repo a Kiro Web task clones: the one picked, else the folder's own (None: an
+    /// empty workspace). `wait` looks the folder's up now if it isn't known yet.
+    fn cloud_repo(&self, folder: Option<&str>, wait: bool) -> Option<String> {
+        let c = self.page.cloud.borrow();
+        if let Some(p) = &c.pick { return p.clone(); }
+        let f = folder?;
+        if let Some((k, r)) = &c.folder_repo { if k == f { return r.clone(); } }
+        drop(c);
+        if !wait { return None; }
+        let r = hover_agents::desk::Desk::shared().github_repo(f);
+        self.page.cloud.borrow_mut().folder_repo = Some((f.to_owned(), r.clone()));
+        r
+    }
+
+    /// The shots' Kiro Web box: a repo picked and the list Kiro would give, without Kiro.
+    pub fn cloud_shot(self: &Rc<Self>, pick: Option<&str>, repos: Vec<String>) {
+        { let mut c = self.page.cloud.borrow_mut(); c.pick = Some(pick.map(str::to_owned)); c.repos = Some(Ok(repos)); }
+        self.office_widgets();
+    }
+
+    /// Looks up the folder's GitHub repo off the UI thread, once per folder.
+    fn cloud_look(&self, folder: Option<&str>) {
+        let Some(f) = folder.map(str::to_owned) else { return };
+        let mut c = self.page.cloud.borrow_mut();
+        if c.folder_repo.as_ref().is_some_and(|(k, _)| *k == f) || c.looking.as_deref() == Some(f.as_str()) { return; }
+        c.looking = Some(f.clone());
+        std::thread::spawn(move || {
+            let r = hover_agents::desk::Desk::shared().github_repo(&f);
+            crate::ui_do(move |a| {
+                { let mut c = a.page.cloud.borrow_mut(); c.looking = None; c.folder_repo = Some((f, r)); }
+                a.office_widgets();
+            });
+        });
+    }
+
+    /// The repo menu's rows (no repo first, then the folder's, then the connected ones)
+    /// and its note.
+    fn repo_rows(&self, current: Option<&str>, folder_repo: Option<&str>) -> (Vec<AccessOpt>, String) {
+        let c = self.page.cloud.borrow();
+        let mut names: Vec<&str> = folder_repo.into_iter().collect();
+        if let Some(Ok(list)) = &c.repos { for r in list { if !names.contains(&r.as_str()) { names.push(r); } } }
+        let mut rows = vec![AccessOpt { id: s(""), label: s("Empty workspace"), note: s("No repository: the agent starts in an empty folder."), on: current.is_none() }];
+        rows.extend(names.iter().map(|r| AccessOpt { id: s(*r), label: s(*r), note: s(if Some(*r) == folder_repo { "This folder’s repository" } else { "" }), on: current == Some(*r) }));
+        let note = match &c.repos {
+            _ if c.listing => "Loading your connected repositories…".to_owned(),
+            Some(Err(e)) => e.clone(),
+            Some(Ok(l)) if l.is_empty() => "No GitHub repositories are connected. Connect GitHub in Kiro Web.".into(),
+            _ => String::new(),
+        };
+        (rows, note)
+    }
+
     /// Everything around the scene, from the state and the page's own state.
     pub fn office_widgets(self: &Rc<Self>) {
         let p = &self.page;
@@ -569,7 +638,15 @@ impl App {
         let time_mode = p.time_mode.get();
         let beats = self.beats.want();
         let (menu, access_menu) = (p.menu.get(), p.access_menu.get());
-        let acc = self.new_access(nt);
+        let cloud_shown = tool == AgentTool::Kiro;
+        let cloud_on = cloud_shown && p.cloud.borrow().on;
+        if cloud_on { self.cloud_look(folder.as_deref()); }
+        let repo = if cloud_on { self.cloud_repo(folder.as_deref(), false) } else { None };
+        let folder_repo = p.cloud.borrow().folder_repo.as_ref().filter(|(k, _)| Some(k) == folder.as_ref()).and_then(|(_, r)| r.clone());
+        let repo_menu = cloud_on && p.cloud.borrow().menu;
+        let (repo_opts, repo_note) = if repo_menu { self.repo_rows(repo.as_deref(), folder_repo.as_deref()) } else { (vec![], String::new()) };
+        // Kiro Web has no asking: its tasks are Full.
+        let acc = if cloud_on { "full" } else { self.new_access(nt) };
         let access_opts: Vec<AccessOpt> = ACCESS.iter().filter(|(id, ..)| *id != "read" || hover_agents::agents::read_only_works(tool))
             .map(|(id, label, _)| AccessOpt { id: s(*id), label: s(*label), note: s(access_note(id, tool)), on: *id == acc }).collect();
         // renderPill for the box's tool and the open chat's, and the menu of the one open.
@@ -580,7 +657,7 @@ impl App {
         let notice = !self.hover.settings.kiro_notice_seen();
         let shots: Vec<Vec<Image>> = p.attached.borrow().iter().map(|l| l.iter().map(|f| self.thumb(f)).collect()).collect();
         let acc_label = access_label(acc);
-        let acc_tip = format!("{acc_label}: {} Click to change.", access_note(acc, tool));
+        let acc_tip = if cloud_on { format!("{acc_label}: Kiro Web runs every task with full access.") } else { format!("{acc_label}: {} Click to change.", access_note(acc, tool)) };
         each!(self, |g| {
             g.set_notice(notice);
             g.set_n_model(s(&n_pill.0));
@@ -605,12 +682,18 @@ impl App {
             g.set_new_access(s(acc_label));
             g.set_new_access_full(acc == "full");
             g.set_new_access_tip(s(&acc_tip));
+            g.set_new_cloud_shown(cloud_shown);
+            g.set_new_cloud(cloud_on);
+            g.set_new_repo(s(repo.as_deref().unwrap_or("Empty workspace")));
+            g.set_repo_menu(repo_menu);
+            if let Some(m) = crate::view::sync(g.get_repo_opts(), &repo_opts) { g.set_repo_opts(m); }
+            g.set_repo_note(s(&repo_note));
             if let Some(m) = crate::view::sync(g.get_tools(), &tools) { g.set_tools(m); }
             g.set_new_tool(nt as i32);
             g.set_fab(fab);
             g.set_new_folder(s(folder.as_deref().map(hover_office::office::short).unwrap_or_else(|| "Choose a folder".into())));
             g.set_new_note(s(&note));
-            g.set_new_go(ready && can && !full && folder.is_some() && (!g.get_new_draft().trim().is_empty() || !shots[1].is_empty()));
+            g.set_new_go(ready && can && !full && (folder.is_some() || cloud_on) && (!g.get_new_draft().trim().is_empty() || !shots[1].is_empty()));
             g.set_time_mode(time_mode);
             g.set_beats(beats);
             g.set_summary(s(&summary));
@@ -632,6 +715,7 @@ impl App {
                 g.set_d_access_note(s(if ACCESS.iter().any(|a| a.0 == access) { access_note(&access, o.tool) } else { "" }));
                 g.set_d_access_id(s(&access));
                 g.set_d_ctx(o.context.map_or(-1.0, |c| c.round_ties_even() as f32));
+                g.set_d_cloud(o.cloud.is_some() && o.kiro_id.is_some());
                 g.set_d_asking(o.waiting());
                 g.set_d_ask(o.asking().map(|a| self.ask_data(a, o.asks.len())).unwrap_or_default());
                 g.set_d_tool_color(tool_color(o.tool.id()));
@@ -843,14 +927,26 @@ impl App {
             // Enter starts it too, past the Start button's own gate: what keeps the button
             // off is said here instead of nothing happening.
             if let Some(r) = hover_agents::agents::known(tool).filter(|r| !r.ok()) { a.toast(&r.hint); return; }
+            let cloud_on = tool == AgentTool::Kiro && a.page.cloud.borrow().on;
             let folder = a.page.new_folder.borrow().clone().filter(|f| hover_agents::usable_folder(Some(f)));
+            // Kiro Web works in its own sandbox; the session still has a folder here, the
+            // default workspace when none was picked.
+            let folder = if cloud_on && folder.is_none() {
+                match a.hover.settings.default_workspace().path().map(|p| hover_core::projects::ensure_folder(&p)) {
+                    Some(Ok(p)) => Some(p.to_string_lossy().into_owned()),
+                    Some(Err(e)) => { a.toast(&e); return; }
+                    None => None,
+                }
+            } else { folder };
             let Some(folder) = folder else { a.toast(&format!("Choose a folder for {} to work in first.", tool.name())); return };
             if !a.hover.sessions.can_start() { a.toast("3 tasks are running. Start another when one is done."); return; }
             if !a.hover.settings.kiro_notice_seen() { a.hover.settings.set_kiro_notice_seen(true); }
             // The access picked in the new-task box, for this session only.
             let access = a.new_access(a.page.new_tool.get());
-            match a.hover.sessions.start_as(tool, &folder, &text, images, Some(access)) {
-                Some(_) => { each!(a, |g| g.set_new_draft(s(""))); a.page.attached.borrow_mut()[1].clear(); a.page.fab.set(0); }
+            let picked = a.page.new_folder.borrow().clone();
+            let cloud = cloud_on.then(|| a.cloud_repo(picked.as_deref(), true).into_iter().collect::<Vec<_>>());
+            match a.hover.sessions.start_in(tool, &folder, &text, images, Some(access), cloud) {
+                Some(_) => { each!(a, |g| g.set_new_draft(s(""))); a.page.attached.borrow_mut()[1].clear(); a.page.fab.set(0); a.page.cloud.borrow_mut().menu = false; }
                 None => a.toast("All six desks are busy. Stop or remove a session first."),
             }
             a.office_changed();
@@ -901,7 +997,47 @@ impl App {
         let a = self.clone();
         g.on_toggle_menu(move || { a.page.menu.set(!a.page.menu.get()); a.office_widgets(); });
         let a = self.clone();
-        g.on_open_access(move || { a.page.access_menu.set(!a.page.access_menu.get()); a.office_widgets(); });
+        g.on_open_access(move || {
+            if AgentTool::ALL[a.page.new_tool.get()] == AgentTool::Kiro && a.page.cloud.borrow().on { a.toast("Kiro Web runs every task with full access."); return; }
+            a.page.access_menu.set(!a.page.access_menu.get());
+            a.office_widgets();
+        });
+        let a = self.clone();
+        g.on_toggle_cloud(move || {
+            { let mut c = a.page.cloud.borrow_mut(); c.on = !c.on; c.menu = false; }
+            a.page.access_menu.set(false);
+            a.office_widgets();
+        });
+        let a = self.clone();
+        g.on_open_repos(move || {
+            let list = {
+                let mut c = a.page.cloud.borrow_mut();
+                c.menu = !c.menu;
+                // Listed once a run (again after a failure); Kiro starts if it isn't up.
+                let want = c.menu && !c.listing && !matches!(c.repos, Some(Ok(_)));
+                if want { c.listing = true; }
+                want
+            };
+            a.page.access_menu.set(false);
+            if list {
+                let host = a.hover.hosts.iter().find(|h| h.tool() == AgentTool::Kiro).cloned();
+                std::thread::spawn(move || {
+                    let got = host.map_or_else(|| Err("Kiro isn’t set up.".to_owned()), |h| h.repos());
+                    crate::ui_do(move |a| { { let mut c = a.page.cloud.borrow_mut(); c.listing = false; c.repos = Some(got); } a.office_widgets(); });
+                });
+            }
+            a.office_widgets();
+        });
+        let a = self.clone();
+        g.on_pick_repo(move |id| {
+            { let mut c = a.page.cloud.borrow_mut(); c.pick = Some(Some(id.to_string()).filter(|r| !r.is_empty())); c.menu = false; }
+            a.office_widgets();
+        });
+        let a = self.clone();
+        g.on_d_open_cloud(move || {
+            let id = a.page.open.get().and_then(|i| a.hover.sessions.get(i)).filter(|s| s.cloud.is_some()).and_then(|s| s.kiro_id);
+            if let Some(id) = id { crate::open_url(&format!("{}{id}", hover_agents::acp::KIRO_WEB_SESSION)); }
+        });
         let a = self.clone();
         g.on_pick_access(move |id| {
             let id = ACCESS.iter().map(|a| a.0).find(|x| *x == id.as_str());

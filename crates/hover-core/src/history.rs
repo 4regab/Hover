@@ -43,6 +43,9 @@ pub struct SavedSession {
     pub turns: Vec<SavedTurn>,
     pub updated: Stamp,
     pub access: Option<String>,
+    /// Run in Kiro's cloud: the GitHub repos it was given ("owner/name"), empty for an
+    /// empty workspace. None for a session on this computer.
+    pub cloud: Option<Vec<String>>,
 }
 
 /// HistoryEntry(Key, Tool, Title, Folder, Updated, State, Turns).
@@ -104,7 +107,7 @@ impl SavedTurn {
 
 impl SavedSession {
     pub fn to_json(&self) -> Json {
-        Json::obj(vec![
+        let mut props = vec![
             ("Key", Json::str(&self.key)),
             ("Tool", self.tool.to_json()),
             ("Folder", Json::str(&self.folder)),
@@ -114,7 +117,10 @@ impl SavedSession {
             ("Turns", Json::Arr(self.turns.iter().map(SavedTurn::to_json).collect())),
             ("Updated", self.updated.to_json()),
             ("Access", Json::opt_str_of(self.access.as_deref())),
-        ])
+        ];
+        // Only for a cloud session, so every other session is written byte for byte as before.
+        if let Some(repos) = &self.cloud { props.push(("Cloud", Json::Arr(repos.iter().map(|r| Json::str(r)).collect()))); }
+        Json::obj(props)
     }
 
     pub fn from_json(v: &Json) -> Result<SavedSession> {
@@ -129,6 +135,7 @@ impl SavedSession {
             turns: opt(v.get("Turns"), |t| Ok(t.opt_list(SavedTurn::from_json)?.unwrap_or_default()))?.unwrap_or_default(),
             updated: opt(v.get("Updated"), Stamp::from_json)?.unwrap_or(Stamp::DEFAULT),
             access: opt_text(v.get("Access"))?,
+            cloud: opt(v.get("Cloud"), |c| c.opt_list(|r| text(Some(r))))?.flatten(),
         })
     }
 }
@@ -382,6 +389,7 @@ mod tests {
             }],
             updated: at(updated),
             access: None,
+            cloud: None,
         }
     }
 

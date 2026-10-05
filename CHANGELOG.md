@@ -5,12 +5,19 @@ What changed in each Hover release. Versions follow [Semantic Versioning](https:
 
 ## [Unreleased]
 
+## [3.5.0] - 2026-10-05
+
 ### Added
 
+- Kiro tasks can run in Kiro Web, in Kiro's cloud, instead of on this computer: the cloud
+  button in the new-task box and in voice's preview (Kiro only). The task clones the folder's
+  GitHub repo, another connected one, or none. Replies reach the same session, also after a
+  restart, and the chat's cloud chip opens it in Kiro Web. Windows and Linux.
 - Voice's listening and working cards show only an aura now (a glowing ring of light, after
   LiveKit's Aura visualizer), with no words and no Esc chip. The Esc key still cancels. It swirls and swells with your voice
   while listening, and swirls faster with a pulse while Hover works on what you said. Pick its colour
   in Settings → Voice → Aura colour, or type any hex colour.
+
 
 ### Fixed
 
