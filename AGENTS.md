@@ -282,7 +282,11 @@ assets/          hover.svg (the logo), make-icon.py (writes hover.png and
   - The repo is the folder's GitHub remote (`Desk::github_repo`), or one picked from
     `_kiro/sourceProviders/listResources`, or none. Access is always Full (the cloud has
     no asking), the session gets none of this computer's MCP servers, and it has no
-    checkpoints. The desk card's Terminal, Files and Diff are off (`CLOUD_NOTE`).
+    checkpoints. The desk card's Terminal and Files are off (`CLOUD_NOTE`). Its Pull request and
+    Diff work from the chat, not this folder (`Snap::cloud`): the PR it created
+    (`created_pr`), else one it mentions in its own repos (`mentioned_pr`); Diff is that PR's
+    `gh pr diff`, or the edits it reported before it has one. A local chat's Pull request
+    tab takes the created PR first too, then its branch's, then a mentioned one.
   - The first prompt waits for the sandbox: one sent before its first `context_usage`
     update (about 15 s) is answered `cancelled` here while the cloud still runs it.
   - A reply after Kiro's process restarted loads the session with

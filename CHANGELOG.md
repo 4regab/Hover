@@ -5,6 +5,8 @@ What changed in each Hover release. Versions follow [Semantic Versioning](https:
 
 ## [Unreleased]
 
+## [3.6.0] - 2026-10-05
+
 ### Added
 
 - Voice's preview card can change the folder: the folder pick opens a list of your voice
