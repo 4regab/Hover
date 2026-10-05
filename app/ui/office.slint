@@ -91,6 +91,17 @@ export global Office {
     in property <bool> access-menu;
     in property <string> access-head;
     in property <[AccessOpt]> access-opts;
+    // Kiro Web, for Kiro only: the box's cloud switch, the repo it clones ("Empty
+    // workspace" for none) in place of the folder, and the menu of connected repos
+    // (repo-note says it is loading, or why there are none).
+    in property <bool> new-cloud-shown;
+    in property <bool> new-cloud;
+    in property <string> new-repo;
+    in property <bool> repo-menu;
+    in property <[AccessOpt]> repo-opts;
+    in property <string> repo-note;
+    // The open chat runs in Kiro Web: its cloud chip opens the session there.
+    in property <bool> d-cloud;
     // The model pills (renderPill): the drawer's (d-) and the new-task box's (n-): the
     // model's name, its effort ("" none), and whether the tool offers any models.
     in property <string> d-model;
@@ -174,6 +185,10 @@ export global Office {
     callback toggle-menu();
     callback open-access();
     callback pick-access(string);
+    callback toggle-cloud();
+    callback open-repos();
+    callback pick-repo(string);
+    callback d-open-cloud();
     // The office answered a question: the session, the ask's id, allow | trust | deny.
     callback answer(int, string, string);
     // A question's choices: a pick (the question's index, the label), typed words, Answer,
@@ -1214,6 +1229,7 @@ export component OfficeView inherits Rectangle {
         if (Desk.card) { Desk.card-close(); return; }
         if (Office.model-menu != 0) { Office.open-model(0, 0, 0); return; }
         if (Office.access-menu) { Office.open-access(); return; }
+        if (Office.repo-menu) { Office.open-repos(); return; }
         if (Office.menu) { Office.toggle-menu(); return; }
         if (Office.fab != 0) { Office.new-fold(); return; }
         // The reply box closes first, and keeps what was written.
@@ -1501,12 +1517,22 @@ export component OfficeView inherits Rectangle {
                 HorizontalLayout {
                     spacing: 4px;
                     ClipButton { id: "nAttach"; clicked => { Office.attach(2); } }
-                    nf := Rectangle { width: min(fl.preferred-width, (parent.width - 60px) * 0.4); height: 28px; border-radius: 9px; background: fo.has-hover ? #ffffff12 : transparent;
-                        accessible-role: button; accessible-id: "nFolder"; accessible-label: Office.new-folder;
+                    // Kiro Web on or off; blue while on.
+                    nc := Rectangle { width: Office.new-cloud-shown ? 28px : 0px; height: 28px; border-radius: 9px; visible: Office.new-cloud-shown;
+                        background: Office.new-cloud ? #6ba8ff24 : ca.has-hover ? #ffffff12 : transparent;
+                        accessible-role: checkbox; accessible-id: "nCloud"; accessible-label: "Run in Kiro Web"; accessible-checkable: true; accessible-checked: Office.new-cloud;
+                        accessible-action-default => { Office.toggle-cloud(); }
+                        Icon { name: Icons.cloud; size: 15px; tint: Office.new-cloud ? #8fbcff : #f6f2ff9e; }
+                        ca := TouchArea { mouse-cursor: pointer; clicked => { Office.toggle-cloud(); } } }
+                    // The folder, or in Kiro Web the repo it clones.
+                    nf := Rectangle { width: min(fl.preferred-width, (parent.width - 60px) * 0.4); height: 28px; border-radius: 9px; background: fo.has-hover || Office.repo-menu ? #ffffff12 : transparent;
+                        accessible-role: button; accessible-id: "nFolder"; accessible-label: Office.new-cloud ? "Repository: " + Office.new-repo + ". Change" : Office.new-folder;
                         fl := HorizontalLayout { padding-left: 9px; padding-right: 9px; spacing: 6px;
-                            VerticalLayout { alignment: center; Icon { name: Icons.folder; size: 14px; tint: Office.new-folder == "Choose a folder" ? #ffb36b : #f6f2ff9e; } }
-                            Text { text: Office.new-folder; font-family: "DejaVu Sans Mono"; font-size: 11.5px; color: Office.new-folder == "Choose a folder" ? #ffb36b : #f6f2ff9e; vertical-alignment: center; overflow: elide; } }
-                        fo := TouchArea { mouse-cursor: pointer; clicked => { Office.new-folder-clicked(); } } }
+                            VerticalLayout { alignment: center; Icon { name: Office.new-cloud ? Icons.globe : Icons.folder; size: 14px;
+                                tint: Office.new-cloud ? #8fbcff : Office.new-folder == "Choose a folder" ? #ffb36b : #f6f2ff9e; } }
+                            Text { text: Office.new-cloud ? Office.new-repo : Office.new-folder; font-family: "DejaVu Sans Mono"; font-size: 11.5px;
+                                color: Office.new-cloud ? #8fbcff : Office.new-folder == "Choose a folder" ? #ffb36b : #f6f2ff9e; vertical-alignment: center; overflow: elide; } }
+                        fo := TouchArea { mouse-cursor: pointer; clicked => { if (Office.new-cloud) { Office.open-repos(); } else { Office.new-folder-clicked(); } } } }
                     // .fchip.acc: what the task may do on its own, amber for Trust all.
                     na := Rectangle { width: al.preferred-width; height: 28px; border-radius: 9px; background: aa.has-hover || Office.access-menu ? #ffffff12 : transparent;
                         accessible-role: button; accessible-id: "nAccess"; accessible-label: "Tool access: " + Office.new-access + ". Change";
@@ -1518,7 +1544,7 @@ export component OfficeView inherits Rectangle {
                     if Office.n-model-shown: MPill { id: "nModel"; model: Office.n-model; effort: Office.n-model-effort; open: Office.model-menu == 2;
                         // What the row has left once +, the folder, the access and Start (and the
                         // five gaps) are in: a long model name elides instead of pushing Start out.
-                        max-w: min(parent.width * 0.62, parent.width - nf.width - na.width - 30px - 30px - 5 * 4px);
+                        max-w: min(parent.width * 0.62, parent.width - nc.width - nf.width - na.width - 30px - 30px - 6 * 4px);
                         clicked(x, y) => { Office.open-model(Office.model-menu == 2 ? 0 : 2, x, y); } }
                     GoButton { id: "nGo"; label: "Start"; enabled: Office.new-go; clicked => { Office.new-go-clicked(); } }
                 }
@@ -1559,6 +1585,47 @@ export component OfficeView inherits Rectangle {
                     oa := TouchArea { mouse-cursor: pointer; clicked => { Office.pick-access(o.id); } }
                 }
                 Text { text: "For this task only. Settings keeps the default."; font-size: 11px; color: #f6f2ff61; x: 8px; height: self.preferred-height + 8px; vertical-alignment: center; }
+            }
+        }
+
+        // The repos a Kiro Web task can clone: none first, then the connected ones.
+        if Office.repo-menu: TouchArea { clicked => { Office.open-repos(); } }
+        if Office.repo-menu: Glass {
+            x: 22px;
+            y: parent.height - self.height - 60px;
+            width: 270px;
+            height: min(rm.preferred-height, parent.height - 120px);
+            border-radius: 14px;
+            accessible-role: list;
+            accessible-id: "repoMenu";
+            rm := VerticalLayout {
+                padding: 6px;
+                Text { text: "KIRO WEB CLONES"; font-family: "Pixelify Sans"; font-weight: 600; font-size: 10.5px; letter-spacing: 0.63px; color: #f6f2ff61;
+                    height: self.preferred-height + 10px; vertical-alignment: center; x: 8px; }
+                Flickable {
+                    height: min(rl.preferred-height, 260px);
+                    content-height: rl.preferred-height;
+                    rl := VerticalLayout {
+                        for o in Office.repo-opts: Rectangle {
+                            height: ro.preferred-height;
+                            border-radius: 8px;
+                            background: rt.has-hover ? #ffffff17 : transparent;
+                            accessible-role: list-item;
+                            accessible-label: o.label;
+                            accessible-checkable: true;
+                            accessible-checked: o.on;
+                            accessible-action-default => { Office.pick-repo(o.id); }
+                            ro := HorizontalLayout { padding: 7px; padding-left: 8px; padding-right: 8px; spacing: 8px;
+                                VerticalLayout { horizontal-stretch: 1; spacing: 1px;
+                                    Text { text: o.label; font-size: 12.5px; font-weight: 600; color: #f6f2ff; overflow: elide; }
+                                    if o.note != "": Text { text: o.note; font-size: 11px; color: #f6f2ff61; wrap: word-wrap; } }
+                                if o.on: VerticalLayout { alignment: start; padding-top: 3px; Icon { name: Icons.check; size: 12px; tint: #c4a2ff; } } }
+                            rt := TouchArea { mouse-cursor: pointer; clicked => { Office.pick-repo(o.id); } }
+                        }
+                    }
+                }
+                if Office.repo-note != "": Text { text: Office.repo-note; font-size: 11px; color: #f6f2ff61; wrap: word-wrap; x: 8px; width: parent.width - 16px;
+                    height: self.preferred-height + 8px; vertical-alignment: center; }
             }
         }
 
@@ -1660,6 +1727,15 @@ export component OfficeView inherits Rectangle {
                                         Path { width: 11px; height: 11px; viewbox-width: 11; viewbox-height: 11; stroke: #ffffffbf; stroke-width: 2px; fill: transparent;
                                             commands: "M 5.5 1.5 A 4 4 0 " + (Office.d-ctx > 50 ? "1" : "0") + " 1 " + (5.5 + 4 * sin(360deg * min(Office.d-ctx, 99.9) / 100)) + " " + (5.5 - 4 * cos(360deg * min(Office.d-ctx, 99.9) / 100)); } } }
                                     Text { text: Office.d-ctx + "%"; font-size: 11px; font-weight: 500; color: #ffffff99; vertical-alignment: center; } } }
+                            // Kiro Web: opens this session there; says so while hovered.
+                            if Office.d-cloud: Rectangle { height: 20px; width: 26px; border-radius: 6px; background: cw.has-hover ? #6ba8ff33 : #6ba8ff1c;
+                                accessible-role: button; accessible-id: "dCloud"; accessible-label: "Open cloud session";
+                                accessible-action-default => { Office.d-open-cloud(); }
+                                Icon { name: Icons.cloud; size: 13px; tint: #8fbcff; }
+                                cw := TouchArea { mouse-cursor: pointer; clicked => { Office.d-open-cloud(); } }
+                                if cw.has-hover: Rectangle { x: parent.width + 6px; y: 0; height: 20px; width: ct.preferred-width + 14px; border-radius: 6px; background: #1c1a24f2;
+                                    border-width: 1px; border-color: #ffffff1a;
+                                    ct := Text { text: "Open cloud session"; font-size: 11px; font-weight: 500; color: #f6f2ffde; vertical-alignment: center; } } }
                         }
                     }
                     VerticalLayout { alignment: center; XButton { id: "dDel"; label: "Delete this session"; icon: PagePaths.bin; small: compact; clicked => { Office.d-delete(); } } }

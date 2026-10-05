@@ -42,6 +42,7 @@ fn main() {
                 }).collect(),
                 updated: now,
                 access: None,
+                cloud: None,
             };
             h.save(&s);
             h.flush();
