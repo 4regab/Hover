@@ -117,26 +117,43 @@ struct Turn {
     deny_all: bool,
 }
 
-/// A loaded cloud conversation as it is replayed: the part after the last message of the
-/// user's is the turn that was cut off, so each user message starts the stream afresh.
-struct Replay { name: &'static str, stream: KiroStream, in_user: bool, updates: usize, kinds: Vec<(String, usize)> }
+/// A loaded cloud conversation as it is replayed, turn by turn: each message of the user's
+/// starts a turn (its words, and a stream of what came of it). The last is the turn that was cut off.
+struct Replay { name: &'static str, turns: Vec<(String, KiroStream)>, in_user: bool, updates: usize, kinds: Vec<(String, usize)> }
+
+/// A content block's text (one block, or a list of them).
+fn text_of(c: &Json) -> String { match c { Json::Arr(p) => p.iter().map(text_of).collect(), _ => s(c, "text").unwrap_or("").to_owned() } }
 
 impl Replay {
-    fn new(name: &'static str) -> Replay { Replay { name, stream: KiroStream::new(name), in_user: false, updates: 0, kinds: vec![] } }
+    fn new(name: &'static str) -> Replay { Replay { name, turns: vec![], in_user: false, updates: 0, kinds: vec![] } }
 
     fn feed(&mut self, line: &str, update: Option<&Json>) {
         let kind = update.and_then(|u| s(u, "sessionUpdate")).unwrap_or("-").to_owned();
         self.updates += 1;
         match self.kinds.iter_mut().find(|k| k.0 == kind) { Some(k) => k.1 += 1, None => self.kinds.push((kind.clone(), 1)) }
         if kind == "user_message_chunk" {
-            if !self.in_user { self.stream = KiroStream::new(self.name); }
+            if !self.in_user { self.turns.push((String::new(), KiroStream::new(self.name))); }
             self.in_user = true;
+            if let (Some(c), Some(t)) = (update.and_then(|u| u.get("content")), self.turns.last_mut()) { t.0.push_str(&text_of(c)); }
             return;
         }
         self.in_user = false;
-        self.stream.feed(line);
+        if self.turns.is_empty() { self.turns.push((String::new(), KiroStream::new(self.name))); }
+        if let Some(t) = self.turns.last_mut() { t.1.feed(line); }
     }
+
+    /// The last turn's stream, which a cut-off turn carries on in.
+    fn last(&mut self) -> KiroStream { self.turns.pop().map_or_else(|| KiroStream::new(self.name), |t| t.1) }
 }
+
+/// A Kiro Web session in the user's Kiro account, as Kiro lists it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct CloudSession { pub id: String, pub title: String, pub updated: Option<hover_core::time::Stamp> }
+
+/// One turn of a Kiro Web conversation as its replay gave it: what was asked, the answer, the
+/// steps, and whether it was reported finished.
+#[derive(Clone, Debug, PartialEq)]
+pub struct CloudTurn { pub prompt: String, pub text: String, pub steps: Vec<KiroStep>, pub completed: bool }
 
 struct Live {
     gen: u64,
@@ -174,6 +191,8 @@ struct Host {
     can_cloud: AtomicBool,
     /// The agent takes pictures in a prompt (initialize's promptCapabilities.image).
     can_image: AtomicBool,
+    /// The agent lists its sessions (initialize's sessionCapabilities.list).
+    can_list: AtomicBool,
     /// Cloud sessions whose sandbox said it is ready (its first context_usage), by ACP
     /// session id; cleared with the process.
     ready: Mutex<HashSet<String>>,
@@ -208,7 +227,7 @@ impl AcpHost {
             tool, options: Box::new(options), connect, gate: Mutex::new(()), link: Mutex::new(None), gens: AtomicU64::new(0),
             pending: Mutex::new(HashMap::new()), turns: Mutex::new(HashMap::new()), session_options: Mutex::new(HashMap::new()),
             can_load: AtomicBool::new(false), ids: AtomicI64::new(0), busy: AtomicUsize::new(0), idle: AtomicU64::new(0), seen: Mutex::new(vec![]),
-            asking: Mutex::new(None), trusted: Mutex::new(HashMap::new()), session_mcp: Mutex::new(HashMap::new()), mcp: Mutex::new(default_mcp(tool)), boxed, can_cloud: AtomicBool::new(false), can_image: AtomicBool::new(false), ready: Mutex::new(HashSet::new()),
+            asking: Mutex::new(None), trusted: Mutex::new(HashMap::new()), session_mcp: Mutex::new(HashMap::new()), mcp: Mutex::new(default_mcp(tool)), boxed, can_cloud: AtomicBool::new(false), can_image: AtomicBool::new(false), can_list: AtomicBool::new(false), ready: Mutex::new(HashSet::new()),
         }))
     }
 
@@ -249,6 +268,14 @@ impl AcpHost {
     /// The GitHub repos ("owner/name") the user connected to Kiro, which a cloud session
     /// can be given. Starts the tool if it isn't up. Blocks: run it off the UI thread.
     pub fn repos(&self) -> Result<Vec<String>, String> { self.0.repos() }
+
+    /// Every Kiro Web session in the user's Kiro account, newest first as Kiro gives them. Starts
+    /// the tool if it isn't up. Blocks: run it off the UI thread.
+    pub fn cloud_sessions(&self) -> Result<Vec<CloudSession>, String> { self.0.cloud_sessions() }
+
+    /// A Kiro Web session's whole conversation, from its replay, opened in `folder` (a folder on
+    /// this computer; the session works in its own sandbox). Blocks: run it off the UI thread.
+    pub fn cloud_transcript(&self, id: &str, folder: &str) -> Result<Vec<CloudTurn>, String> { self.0.cloud_transcript(id, folder) }
 
     /// Where a question goes. Without one, whatever the settings say should be asked
     /// about is turned down.
@@ -475,12 +502,14 @@ impl Host {
         self.session_mcp.lock().unwrap().insert(r.into(), mcp.1.clone());
         if let Some(o) = options(&res) { self.session_options.lock().unwrap().insert(r.into(), o); }
         // The replay's last turn becomes the stream, and its steps and context go to the chat.
-        let Some(rep) = turn.replay.lock().unwrap().take() else { return Err(again(String::new())) };
+        let Some(mut rep) = turn.replay.lock().unwrap().take() else { return Err(again(String::new())) };
         let kinds = rep.kinds.iter().map(|k| format!("{}={}", k.0, k.1)).collect::<Vec<_>>().join(" ");
-        let (completed, said_len) = (rep.stream.completed, rep.stream.said().len());
-        hover_core::log::line(&format!("acp {name}: attach {r}: replayed {} updates in {} ms [{kinds}]; the last turn {} and said {said_len} bytes",
-            rep.updates, began.elapsed().as_millis(), if completed { "was completed" } else { "has no completion report" }));
-        let events = { let mut st = turn.stream.lock().unwrap(); *st = rep.stream; st.drain() };
+        let updates = rep.updates;
+        let last = rep.last();
+        let (completed, said_len) = (last.completed, last.said().len());
+        hover_core::log::line(&format!("acp {name}: attach {r}: replayed {updates} updates in {} ms [{kinds}]; the last turn {} and said {said_len} bytes",
+            began.elapsed().as_millis(), if completed { "was completed" } else { "has no completion report" }));
+        let events = { let mut st = turn.stream.lock().unwrap(); *st = last; st.drain() };
         if let Some(f) = &turn.events { for e in events { f(e); } }
         *turn.last_update.lock().unwrap() = std::time::Instant::now();
         turn.live.store(0, Ordering::SeqCst);
@@ -551,6 +580,76 @@ impl Host {
             self.schedule_idle(Duration::from_secs(60 * (self.options)().idle_minutes.max(1) as u64));
         }
         got.map_err(|e| match e { CallErr::Acp(m) => self.explain(&m), CallErr::Gone(m) => m, CallErr::Cancelled => "Stopped.".into() })
+    }
+
+    /// Runs `work` with the tool started, counted as busy so it isn't shut down meanwhile; errors in words.
+    fn with_tool<T>(self: &Arc<Self>, work: impl FnOnce(&Cancel) -> Result<T, CallErr>) -> Result<T, String> {
+        let ct = Cancel::new();
+        self.busy.fetch_add(1, Ordering::SeqCst);
+        self.idle.fetch_add(1, Ordering::SeqCst);
+        let got = self.start(&ct).and_then(|_| work(&ct));
+        if self.busy.fetch_sub(1, Ordering::SeqCst) == 1 && self.link.lock().unwrap().is_some() {
+            self.schedule_idle(Duration::from_secs(60 * (self.options)().idle_minutes.max(1) as u64));
+        }
+        got.map_err(|e| match e { CallErr::Acp(m) => self.explain(&m), CallErr::Gone(m) => m, CallErr::Cancelled => "Stopped.".into() })
+    }
+
+    fn cloud_sessions(self: &Arc<Self>) -> Result<Vec<CloudSession>, String> {
+        let name = self.name();
+        self.with_tool(|ct| {
+            if !self.can_list.load(Ordering::SeqCst) { return Err(CallErr::Acp(format!("This {name} CLI can’t list sessions. Update Kiro CLI."))); }
+            let mut all = vec![];
+            let mut cursor: Option<String> = None;
+            // ponytail: at most 50 pages; a cursor that never ends stops there.
+            for _ in 0..50 {
+                // From Kiro's cloud store, as session/load reads it (sessionSource "remote").
+                let mut p = vec![("_meta", o_(vec![("kiro", o_(vec![("sessionSource", st("remote"))]))]))];
+                if let Some(c) = &cursor { p.push(("cursor", st(c))); }
+                let r = self.call("session/list", o_(p), Some(ct), Some(Duration::from_secs(60)))?;
+                if let Some(Json::Arr(list)) = r.get("sessions") {
+                    for x in list {
+                        let Some(id) = s(x, "sessionId").filter(|i| !i.is_empty()) else { continue };
+                        // One Kiro marks as this computer's is not a Kiro Web session.
+                        let kiro = x.get("_meta").and_then(|m| m.get("kiro"));
+                        let local = kiro.is_some_and(|k| s(k, "sessionSource") == Some("local") || s(k, "executionTarget") == Some("local")
+                            || k.get("executionTarget").and_then(|t| s(t, "kind")) == Some("local"));
+                        if local || all.iter().any(|c: &CloudSession| c.id == id) { continue; }
+                        all.push(CloudSession { id: id.into(), title: s(x, "title").unwrap_or("").trim().to_owned(), updated: s(x, "updatedAt").and_then(hover_core::time::Stamp::parse) });
+                    }
+                }
+                match s(&r, "nextCursor") { Some(c) if !c.is_empty() => cursor = Some(c.to_owned()), _ => break }
+            }
+            Ok(all)
+        })
+    }
+
+    fn cloud_transcript(self: &Arc<Self>, id: &str, folder: &str) -> Result<Vec<CloudTurn>, String> {
+        let name = self.name();
+        self.with_tool(|ct| {
+            if !self.can_load.load(Ordering::SeqCst) { return Err(CallErr::Acp(format!("This {name} CLI can’t open sessions again. Update Kiro CLI."))); }
+            // A turn of its own, muted, so the replay is read into it and nothing else hears it.
+            let turn = Arc::new(Turn { stream: Mutex::new(KiroStream::new(name)), progress: None, events: None, options: (self.options)(), folder: folder.into(), token: ct.clone(),
+                muted: AtomicBool::new(true), replay: Mutex::new(Some(Replay::new(name))), last_update: Mutex::new(std::time::Instant::now()), live: AtomicUsize::new(0),
+                refused: AtomicBool::new(false), mcp_failed: Mutex::new(vec![]), deny_all: true });
+            self.turns.lock().unwrap().insert(id.into(), turn.clone());
+            // A cloud session gets none of this computer's MCP servers.
+            let mcp = (computer_use::acp(&[]), computer_use::signature(&[]));
+            let params = vec![("sessionId", st(id)), ("cwd", st(folder)), ("mcpServers", mcp.0.clone()),
+                ("_meta", o_(vec![("kiro", o_(vec![("sessionSource", st("remote"))]))]))];
+            let res = self.call("session/load", o_(params), Some(ct), Some(Duration::from_secs(120)));
+            { let mut t = self.turns.lock().unwrap(); if t.get(id).is_some_and(|x| Arc::ptr_eq(x, &turn)) { t.remove(id); } }
+            let res = res?;
+            // Loaded now: a reply carries on in it without loading it again.
+            self.session_mcp.lock().unwrap().insert(id.into(), mcp.1);
+            if let Some(o) = options(&res) { self.session_options.lock().unwrap().insert(id.into(), o); }
+            let rep = turn.replay.lock().unwrap().take().unwrap_or_else(|| Replay::new(name));
+            Ok(rep.turns.into_iter().map(|(prompt, mut st)| {
+                st.end();
+                let mut steps: Vec<KiroStep> = vec![];
+                for e in st.drain() { if let Some(x) = e.step { match steps.iter().position(|y| y.id == x.id) { Some(i) => steps[i] = x, None => steps.push(x) } } }
+                CloudTurn { prompt: prompt.trim().to_owned(), text: st.said().trim().to_owned(), steps, completed: st.completed }
+            }).collect())
+        })
     }
 
     fn finish(&self, t: &Turn, stop_reason: Option<&str>, cancelled: bool) -> KiroResult {
@@ -727,6 +826,8 @@ impl Host {
                 self.can_cloud.store(matches!(targets, Some(Json::Arr(t)) if t.iter().any(|x| x.as_str() == Some("cloud-sandbox"))), Ordering::SeqCst);
                 let image = r.get("agentCapabilities").and_then(|c| c.get("promptCapabilities")).and_then(|p| p.get("image")) == Some(&Json::Bool(true));
                 self.can_image.store(image, Ordering::SeqCst);
+                let list = r.get("agentCapabilities").and_then(|c| c.get("sessionCapabilities")).and_then(|c| c.get("list")).is_some_and(|l| !l.is_null() && l != &Json::Bool(false));
+                self.can_list.store(list, Ordering::SeqCst);
                 Ok(())
             }
             Err(e) => { self.shutdown("didn't start"); Err(e) }

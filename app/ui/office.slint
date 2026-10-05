@@ -836,7 +836,7 @@ component RowView inherits Rectangle {
                     // .h1: the title, and its date at the right; the bin takes the date's place on hover.
                     HorizontalLayout { spacing: 8px;
                         Text { text: r.text; font-size: 13px; font-weight: 500; color: #f6f2ff; overflow: elide; horizontal-stretch: 1; }
-                        Text { text: r.s1; font-size: 11.5px; color: #f6f2ff61; vertical-alignment: center; opacity: ha.has-hover || xa2.has-hover ? 0 : 1; }
+                        Text { text: r.s1; font-size: 11.5px; color: #f6f2ff61; vertical-alignment: center; opacity: r.open != 1 && (ha.has-hover || xa2.has-hover) ? 0 : 1; }
                     }
                     HorizontalLayout { spacing: 5px;
                         VerticalLayout { alignment: center; Rectangle { width: 6px; height: 6px; border-radius: 3px;
@@ -845,11 +845,17 @@ component RowView inherits Rectangle {
                         Text { text: "· " + r.count; font-size: 11.5px; color: #f6f2ff61; overflow: elide; horizontal-stretch: 1; }
                         if r.desk: VerticalLayout { alignment: center; Rectangle { height: 17px; width: dk.preferred-width + 12px; border-radius: 5px; background: #b48cff24;
                             dk := Text { text: "At a desk"; font-size: 10.5px; font-weight: 500; color: #d8c6ff; } } }
+                        // A Kiro Web session Hover doesn't have yet (open 1): the cloud mark.
+                        if r.open == 1: VerticalLayout { alignment: center; Rectangle { height: 17px; width: wk.preferred-width + 24px; border-radius: 5px; background: #6ba8ff24;
+                            Icon { x: 5px; name: Icons.cloud; size: 11px; tint: #8fbcff; }
+                            wk := Text { x: 19px; text: "Kiro Web"; font-size: 10.5px; font-weight: 500; color: #b8d4ff; } } }
                     }
                 }
             }
             ha := TouchArea { mouse-cursor: pointer; clicked => { clicked(); } }
+            // Not for a Kiro Web session Hover doesn't keep (open 1): there is nothing here to delete.
             Rectangle {
+                visible: r.open != 1;
                 opacity: ha.has-hover || xa2.has-hover ? 1 : 0;
                 x: parent.width - 32px;
                 y: 5px;

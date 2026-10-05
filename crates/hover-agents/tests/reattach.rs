@@ -94,3 +94,30 @@ fn a_turn_running_when_hover_closed_is_attached_to_at_start() {
     assert_eq!(s.turns[1].result.as_ref().unwrap().text, "Picked up where it was.");
     assert_eq!(*seen.lock().unwrap(), [(ATTACH_PROMPT.to_owned(), Some("k1".to_owned()))], "attached, nothing prompted");
 }
+
+fn cloud_turn(prompt: &str, text: &str, completed: bool) -> hover_agents::acp::CloudTurn {
+    hover_agents::acp::CloudTurn { prompt: prompt.into(), text: text.into(), steps: vec![], completed }
+}
+
+#[test]
+fn a_kiro_web_session_from_elsewhere_comes_to_a_desk_with_its_conversation() {
+    let f = folder("adopt");
+    let (make, seen) = runner(KiroResult::new(KiroState::Completed, "Finished in the cloud."));
+    let k = KiroSessions::new(make, None);
+    // Finished: every turn, as it was, and nothing is sent.
+    let s = k.adopt_cloud("w1", "Fix the footer", &f, None, Ok(vec![cloud_turn("fix it", "Fixed.", true), cloud_turn("and the header", "Both done.", true)])).unwrap();
+    let got: Vec<(String, String)> = s.turns.iter().map(|t| (t.prompt.clone(), t.result.as_ref().unwrap().text.clone())).collect();
+    assert_eq!(got, [("fix it".to_owned(), "Fixed.".to_owned()), ("and the header".to_owned(), "Both done.".to_owned())]);
+    assert_eq!((s.state, s.kiro_id.as_deref(), s.cloud.is_some()), (KiroState::Completed, Some("w1"), true));
+    assert!(seen.lock().unwrap().is_empty());
+    assert_eq!(k.adopt_cloud("w1", "again", &f, None, Ok(vec![])).unwrap().id, s.id, "opened twice is the same session");
+    // Still working there: it is followed on, in its last turn.
+    let r = k.adopt_cloud("w2", "Long task", &f, None, Ok(vec![cloud_turn("go", "", false)])).unwrap();
+    let r = ended(&k, r.id);
+    assert_eq!((r.state, r.turns.len(), r.turns[0].result.as_ref().unwrap().text.as_str()), (KiroState::Completed, 1, "Finished in the cloud."));
+    assert_eq!(*seen.lock().unwrap(), [(ATTACH_PROMPT.to_owned(), Some("w2".to_owned()))]);
+    // Couldn't be read: its title, and why.
+    let e = k.adopt_cloud("w3", "Broken one", &f, None, Err("Kiro didn’t answer.".into())).unwrap();
+    assert_eq!((e.turns.len(), e.turns[0].prompt.as_str(), e.state), (1, "Broken one", KiroState::Failed));
+    assert!(e.turns[0].result.as_ref().unwrap().text.contains("Kiro didn’t answer."));
+}

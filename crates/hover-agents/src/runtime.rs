@@ -65,6 +65,12 @@ impl Runtime {
     pub fn runner(&self) -> RunTask { match self { Runtime::Acp(h) => h.runner(), Runtime::OpenCode(h) => h.runner(), Runtime::Claude(h) => h.runner() } }
     /// The GitHub repos a Kiro Web session can be given (AcpHost::repos). Blocks.
     pub fn repos(&self) -> Result<Vec<String>, String> { match self { Runtime::Acp(h) => h.repos(), _ => Err("Only Kiro runs Kiro Web sessions.".into()) } }
+    /// The user's Kiro Web sessions (AcpHost::cloud_sessions). Blocks.
+    pub fn cloud_sessions(&self) -> Result<Vec<crate::acp::CloudSession>, String> { match self { Runtime::Acp(h) => h.cloud_sessions(), _ => Err("Only Kiro runs Kiro Web sessions.".into()) } }
+    /// A Kiro Web session's conversation (AcpHost::cloud_transcript). Blocks.
+    pub fn cloud_transcript(&self, id: &str, folder: &str) -> Result<Vec<crate::acp::CloudTurn>, String> {
+        match self { Runtime::Acp(h) => h.cloud_transcript(id, folder), _ => Err("Only Kiro runs Kiro Web sessions.".into()) }
+    }
 }
 
 impl From<AcpHost> for Runtime { fn from(h: AcpHost) -> Runtime { Runtime::Acp(h) } }

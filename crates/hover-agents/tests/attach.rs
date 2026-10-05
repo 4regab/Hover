@@ -52,7 +52,10 @@ fn host(done: bool, live: bool) -> (AcpHost, Arc<Mutex<Vec<Json>>>) {
                 g3.lock().unwrap().push(m.clone());
                 let id = m.get("id").and_then(|i| i.i64().ok());
                 let r = match m.get("method").and_then(Json::as_str) {
-                    Some("initialize") => Some(r#"{"protocolVersion":1,"agentCapabilities":{"loadSession":true,"_meta":{"kiro":{"executionTargets":["local","cloud-sandbox"]}}}}"#.to_owned()),
+                    Some("initialize") => Some(r#"{"protocolVersion":1,"agentCapabilities":{"loadSession":true,"sessionCapabilities":{"list":{}},"_meta":{"kiro":{"executionTargets":["local","cloud-sandbox"]}}}}"#.to_owned()),
+                    // Two pages: a Kiro Web session and one Kiro marks as this computer's, then another.
+                    Some("session/list") if m.get("params").and_then(|p| p.get("cursor")).is_none() => Some(r#"{"sessions":[{"sessionId":"c1","cwd":"/sandbox","title":"Fix the footer","updatedAt":"2026-10-05T10:00:00Z"},{"sessionId":"l1","cwd":"/home/me","title":"Local one","_meta":{"kiro":{"sessionSource":"local"}}}],"nextCursor":"p2"}"#.to_owned()),
+                    Some("session/list") => Some(r#"{"sessions":[{"sessionId":"c2","cwd":"/sandbox","title":"  Add tests  "}]}"#.to_owned()),
                     Some("session/load") => {
                         replay(&o2, done);
                         Some(r#"{"configOptions":[]}"#.to_owned())
@@ -113,5 +116,25 @@ fn a_turn_still_running_is_followed_to_its_end() {
     assert_eq!((r.state, r.text.as_str()), (KiroState::Completed, "Finished the work."));
     let ids = step_ids(&ev);
     assert!(ids.contains(&"cut1".to_owned()) && ids.contains(&"live1".to_owned()) && !ids.contains(&"old1".to_owned()), "{ids:?}");
+    host.shutdown("test");
+}
+
+#[test]
+fn kiro_web_sessions_are_listed_page_by_page_without_the_local_ones() {
+    let (host, got) = host(true, false);
+    let list = host.cloud_sessions().unwrap();
+    let ids: Vec<(&str, &str, bool)> = list.iter().map(|c| (c.id.as_str(), c.title.as_str(), c.updated.is_some())).collect();
+    assert_eq!(ids, [("c1", "Fix the footer", true), ("c2", "Add tests", false)]);
+    let first = got.lock().unwrap().iter().find(|m| m.get("method").and_then(Json::as_str) == Some("session/list")).cloned().unwrap();
+    assert!(first.compact().contains(r#""sessionSource":"remote""#), "{}", first.compact());
+    host.shutdown("test");
+}
+
+#[test]
+fn a_kiro_web_conversation_is_read_back_turn_by_turn() {
+    let (host, _) = host(true, false);
+    let turns = host.cloud_transcript("c1", &std::env::temp_dir().to_string_lossy()).unwrap();
+    let got: Vec<(&str, &str, Vec<&str>, bool)> = turns.iter().map(|t| (t.prompt.as_str(), t.text.as_str(), t.steps.iter().map(|s| s.id.as_str()).collect(), t.completed)).collect();
+    assert_eq!(got, [("first", "First answer.", vec!["old1"], true), ("second one", "Second answer, finished while away.", vec!["cut1"], true)]);
     host.shutdown("test");
 }

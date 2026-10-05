@@ -16,6 +16,9 @@ use std::sync::{Arc, Mutex, Weak};
 
 /// What a turn that was running when Hover closed reads as, once the session is brought back.
 pub const CLOSED_TEXT: &str = "Stopped when Hover closed.";
+/// What a Kiro Web session's last turn reads as when it was opened while still working there,
+/// until Hover has followed it to its end (KiroSessions::adopt_cloud).
+pub const STILL_WORKING_TEXT: &str = "Kiro Web was still working on this when Hover opened it.";
 
 pub const MAX_RUNNING: usize = 3;
 pub const MAX_KEPT: usize = 6;
@@ -502,7 +505,8 @@ impl KiroSessions {
             let mut keys = vec![];
             for e in h.entries().into_iter().filter(|e| e.tool == AgentTool::Kiro && week.secs_since(&e.updated) < 3.0 * 86400.0).take(10) {
                 let Some(s) = h.load(&e.key) else { continue };
-                let cut = s.turns.last().is_some_and(|t| t.state.is_none() || t.state == Some(KiroState::Failed) && cut_off_text(t.text.as_deref().unwrap_or("")));
+                let cut = s.turns.last().is_some_and(|t| t.state.is_none() || t.state == Some(KiroState::Failed) && cut_off_text(t.text.as_deref().unwrap_or(""))
+                    || t.state == Some(KiroState::Cancelled) && t.text.as_deref() == Some(STILL_WORKING_TEXT));
                 if s.cloud.is_some() && s.acp_id.is_some() && cut { keys.push(e.key); }
             }
             for key in keys {
@@ -522,7 +526,7 @@ impl KiroSessions {
         let Some(slot) = g.all.iter_mut().find(|x| x.s.id == id) else { return false };
         if slot.s.busy() || running >= self.max_running() || slot.s.cloud.is_none() || slot.s.kiro_id.is_none() { return false; }
         let Some(ti) = slot.s.turns.len().checked_sub(1) else { return false };
-        let cut = slot.s.turns[ti].result.as_ref().filter(|r| (r.state == KiroState::Cancelled && r.text == CLOSED_TEXT) || cut_off_result(r)).cloned();
+        let cut = slot.s.turns[ti].result.as_ref().filter(|r| (r.state == KiroState::Cancelled && (r.text == CLOSED_TEXT || r.text == STILL_WORKING_TEXT)) || cut_off_result(r)).cloned();
         let Some(prior) = cut else { return false };
         let t = &mut slot.s.turns[ti];
         t.result = None;
@@ -540,6 +544,51 @@ impl KiroSessions {
         self.save(&snap);
         std::thread::Builder::new().name("agent-turn".into()).spawn(move || go(me, id, ti, run, ct, None, args_base, Some(prior))).expect("a thread for the turn");
         true
+    }
+
+    /// A Kiro Web session made outside Hover (Kiro Web, the CLI, another computer), brought to a
+    /// desk and kept in the history like any other. `turns` is its conversation as its replay gave
+    /// it; when that couldn't be read, it is one turn with its title and why. A last turn still
+    /// working in the cloud is followed on. The one already here when it was opened before. None
+    /// when every desk is busy.
+    pub fn adopt_cloud(&self, kiro_id: &str, title: &str, folder: &str, updated: Option<Stamp>, turns: Result<Vec<crate::acp::CloudTurn>, String>) -> Option<KiroSession> {
+        if let Some(s) = self.all().into_iter().find(|s| s.kiro_id.as_deref() == Some(kiro_id)) { return Some(s); }
+        let at = updated.unwrap_or_else(|| self.now());
+        let title = if title.trim().is_empty() { "Kiro Web session" } else { title.trim() };
+        let turn = |prompt: &str, steps: Vec<KiroStep>, state: KiroState, text: String| {
+            let mut t = KiroTurn::new(prompt, vec![]);
+            (t.started_at, t.ended_at, t.steps, t.result) = (at, Some(at), steps, Some(KiroResult::new(state, text)));
+            t
+        };
+        let mut s = KiroSession::new(AgentTool::Kiro);
+        (s.folder, s.kiro_id, s.cloud, s.access) = (folder.into(), Some(kiro_id.into()), Some(vec![]), Some("full".into()));
+        let mut running = false;
+        match turns {
+            Ok(list) if !list.is_empty() => {
+                let n = list.len();
+                for (i, c) in list.into_iter().enumerate() {
+                    let prompt = if c.prompt.is_empty() && i == 0 { title.to_owned() } else { c.prompt };
+                    let (state, text) = if i + 1 == n && !c.completed { running = true; (KiroState::Cancelled, STILL_WORKING_TEXT.into()) }
+                        else if c.text.is_empty() { (KiroState::Completed, "Done. Kiro didn’t leave a summary.".into()) } else { (KiroState::Completed, c.text) };
+                    s.turns.push(turn(&prompt, c.steps, state, text));
+                }
+            }
+            Ok(_) => s.turns.push(turn(title, vec![], KiroState::Completed, "This Kiro Web session has no messages yet.".into())),
+            Err(e) => s.turns.push(turn(title, vec![], KiroState::Failed, format!("Couldn’t read this conversation from Kiro Web. {e} Open it there with the cloud button, or reply to carry on."))),
+        }
+        s.state = s.turns.last().and_then(|t| t.result.as_ref()).map_or(KiroState::Completed, |r| r.state);
+        let snap = {
+            let mut g = self.0.inner.lock().unwrap();
+            if !Self::free_desk(&mut g) { return None; }
+            Self::seat(&g, &mut s);
+            let snap = s.clone();
+            g.all.push(Slot::new(s, (self.0.make)(AgentTool::Kiro)));
+            snap
+        };
+        self.save(&snap);
+        self.raise(vec![Note::Changed]);
+        if running { self.reattach(snap.id); }
+        Some(snap)
     }
 
     /// The history entry's record, whether or not it is at a desk now.
