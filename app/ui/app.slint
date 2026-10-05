@@ -398,7 +398,7 @@ export component NotchWindow inherits Window {
                         accessible-id: "NotchKiro";
                         accessible-label: root.act-label;
                         Text { text: root.act-verb; font-size: 12.5px; font-weight: 500; color: #ffffff8c; vertical-alignment: center; }
-                        if root.act-obj != "": Text { text: " " + root.act-obj; font-size: 12.5px; font-weight: 600; color: white; vertical-alignment: center; overflow: elide; }
+                        if root.act-obj != "": Text { text: (root.act-verb != "" ? " " : "") + root.act-obj; font-size: 12.5px; font-weight: 600; color: white; vertical-alignment: center; overflow: elide; }
                     }
                     Rectangle { width: 9px; }
                     Text { text: root.timer; font-size: 11.5px; font-weight: 500; color: #ffffff8c; vertical-alignment: center; }

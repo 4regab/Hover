@@ -45,6 +45,8 @@ fn other_steps_say_their_own_title() {
     assert_eq!(says("other", "Update Session Information", None), ("Working on", "Update Session Information".to_owned()));
     assert_eq!(says("other", "Serve the mockup on localhost for testing", Some("python -m http.server 8765 --bind 127.0.0.1")),
         ("Working on", "Serve the mockup on localho…".to_owned()));
+    // A title that is already a verb phrase (the cloud sandbox's setup) is not prefixed.
+    assert_eq!(says("other", "Cloning repository", None), ("", "Cloning repository".to_owned()));
     // Kiro's own message when it is stuck is not a name.
     assert_eq!(says("other", "I've been trying to use \"mcp_playwriter_execute\" but it's failed 3 times in a row.\n\nWhat would you like me to do?", None), ("Working", String::new()));
     assert_eq!(says("other", "Working", None), ("Working", String::new()));

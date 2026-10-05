@@ -442,7 +442,7 @@ impl App {
                 ui.set_act_verb((*verb).into());
                 ui.set_act_obj(obj.as_str().into());
                 ui.set_timer(hover_app::rest::clock(*secs).into());
-                ui.set_act_label(format!("{name}: {verb} {obj}{}", if *more > 0 { format!(", and {more} more at work") } else { String::new() }).trim().into());
+                ui.set_act_label(format!("{name}: {}{}", [*verb, obj.as_str()].iter().filter(|x| !x.is_empty()).copied().collect::<Vec<_>>().join(" "), if *more > 0 { format!(", and {more} more at work") } else { String::new() }).trim().into());
             }
             Seg::Done { tool, state, title, took_secs, count } => {
                 ui.set_seg(3);
