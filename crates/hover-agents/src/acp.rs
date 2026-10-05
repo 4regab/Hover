@@ -607,7 +607,11 @@ impl Host {
         let mut cursor: Option<String> = None;
         // ponytail: at most 50 pages; a cursor that never ends stops there.
         for _ in 0..50 {
-            let mut p = vec![("_meta", o_(vec![("kiro", o_(vec![("sessionSource", st(source))]))]))];
+            // Kiro lists Kiro Web's sessions only with listScope "user": its default, "workspace", is
+            // this computer's folders, and a cloud session has none (seen in Kiro's agent server, Oct 2026).
+            let mut meta = vec![("sessionSource", st(source))];
+            if source == "remote" { meta.push(("listScope", st("user"))); }
+            let mut p = vec![("_meta", o_(vec![("kiro", o_(meta))]))];
             if let Some(c) = &cursor { p.push(("cursor", st(c))); }
             let r = self.call("session/list", o_(p), Some(ct), Some(Duration::from_secs(60)))?;
             if let Some(Json::Arr(list)) = r.get("sessions") {

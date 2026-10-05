@@ -177,7 +177,8 @@ impl Hover {
     }
 
     /// Called as the app quits. A running task is stopped rather than left working
-    /// with nobody watching; then the tools, the history and the settings.
+    /// with nobody watching, except a Kiro Web one, which goes on in the cloud and is
+    /// followed on at the next start; then the tools, the history and the settings.
     pub fn shutdown(&self) {
         self.sessions.stop_all();
         for h in &self.hosts { h.shutdown("Hover quit"); }

@@ -753,8 +753,10 @@ impl KiroSessions {
         true
     }
 
+    /// Stops every running turn, except Kiro Web's: a cancel would stop the cloud run too, and
+    /// the next start follows it on (`reattach_cut_off`).
     pub fn stop_all(&self) {
-        let cs: Vec<Cancel> = self.0.inner.lock().unwrap().all.iter().filter(|x| x.s.busy()).filter_map(|x| x.cancel.clone()).collect();
+        let cs: Vec<Cancel> = self.0.inner.lock().unwrap().all.iter().filter(|x| x.s.busy() && x.s.cloud.is_none()).filter_map(|x| x.cancel.clone()).collect();
         for c in cs { c.cancel(); }
     }
 
@@ -781,10 +783,13 @@ const RETRY_STEP: &str = "hover-retry";
 const RECONNECT_STEP: &str = "hover-reconnect";
 
 /// Kiro's own words (and Hover's, when the agent's process ended) for a cloud session whose
-/// connection dropped while it worked on.
+/// connection dropped while it worked on. The last two are what Kiro says when this computer
+/// loses its internet ("Could not reach the cloud session service…") or drops the link
+/// ("The connection dropped before the turn finished…"); both leave the cloud session running.
 fn cut_off_text(text: &str) -> bool {
     let t = text.to_lowercase();
     t.contains("cloud session was lost") || t.contains("connection to the cloud") || (t.contains("connection") && t.contains("lost")) || (t.len() < 40 && t.ends_with(" stopped."))
+        || t.contains("could not reach the cloud session") || t.contains("connection dropped before the turn finished")
 }
 
 /// A turn that failed only because its connection to the cloud session dropped.
@@ -922,8 +927,14 @@ fn go(me: Weak<Shared>, id: i32, ti: usize, run: RunTask, ct: Cancel, cp: Option
         }) { ks.raise(vec![Note::Changed]); }
     });
     let events: Arc<dyn Fn(KiroEvent) + Send + Sync> = Arc::new(move |e: KiroEvent| {
-        if let Some((ks, ())) = with(&m2, id, |slot, now| {
-            if let Some(i) = e.session_id { slot.s.kiro_id = Some(i); }
+        if let Some((ks, fresh)) = with(&m2, id, |slot, now| {
+            // A Kiro Web session's id is written to disk as soon as Kiro gives it, not when the turn
+            // ends: if Hover closes or dies first, the next start can only rejoin it with the id.
+            let mut fresh = None;
+            if let Some(i) = e.session_id {
+                if slot.s.cloud.is_some() && slot.s.kiro_id.as_deref() != Some(i.as_str()) { slot.s.kiro_id = Some(i); fresh = Some(slot.s.clone()); }
+                else { slot.s.kiro_id = Some(i); }
+            }
             if let Some(c) = e.context { slot.s.context = Some(c); slot.usage = Some(c); }
             if let Some(c) = e.credits { slot.s.turns[ti].credits = Some(c); }
             if let Some(step) = e.step {
@@ -931,7 +942,11 @@ fn go(me: Weak<Shared>, id: i32, ti: usize, run: RunTask, ct: Cancel, cp: Option
                 match t.steps.iter().position(|x| x.id == step.id) { Some(i) => t.steps[i] = step, None => t.steps.push(step) }
                 if t.woke_at.is_none() { t.woke_at = Some(now); }
             }
-        }) { ks.raise(vec![Note::Changed]); }
+            fresh
+        }) {
+            if let Some(snap) = fresh { ks.save(&snap); }
+            ks.raise(vec![Note::Changed]);
+        }
     });
     let tag = me.upgrade().and_then(|sh| sh.inner.lock().unwrap().all.iter().find(|x| x.s.id == id).map(|x| x.s.key.clone()));
     // Kiro's cloud compacts its own conversations.

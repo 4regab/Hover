@@ -121,3 +121,80 @@ fn a_kiro_web_session_from_elsewhere_comes_to_a_desk_with_its_conversation() {
     assert_eq!((e.turns.len(), e.turns[0].prompt.as_str(), e.state), (1, "Broken one", KiroState::Failed));
     assert!(e.turns[0].result.as_ref().unwrap().text.contains("Kiro didn’t answer."));
 }
+
+/// Kiro's own words when the PC can't reach the cloud (read from its agent server, Oct 2026).
+const OFFLINE: &str = "Could not reach the cloud session service. Please check your connection and try again.";
+const DROPPED: &str = "The connection dropped before the turn finished. The cloud session kept running — reopen it to continue.";
+
+#[test]
+fn every_way_kiro_says_the_connection_went_is_attached_to_again() {
+    for words in [OFFLINE, DROPPED] {
+        let seen: Seen = Default::default();
+        let s2 = seen.clone();
+        let make = move |_| -> RunTask {
+            let s3 = s2.clone();
+            Arc::new(move |a: RunArgs| {
+                s3.lock().unwrap().push((a.prompt.clone(), a.resume.clone()));
+                (a.events)(KiroEvent { session_id: Some("k1".into()), ..Default::default() });
+                if a.prompt == ATTACH_PROMPT { KiroResult::new(KiroState::Completed, "The real answer.") } else { KiroResult::new(KiroState::Failed, words) }
+            })
+        };
+        let k = KiroSessions::new(make, None);
+        let s = ended(&k, k.start_in(AgentTool::Kiro, &folder("words"), "task", vec![], None, Some(vec![])).unwrap().id);
+        assert_eq!(s.state, KiroState::Completed, "not attached again after: {words}");
+    }
+}
+
+#[test]
+fn closing_hover_does_not_stop_a_kiro_web_turn() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let (stopped, release) = (Arc::new(AtomicBool::new(false)), Arc::new(AtomicBool::new(false)));
+    let (st, rl) = (stopped.clone(), release.clone());
+    let make = move |_| -> RunTask {
+        let (st, rl) = (st.clone(), rl.clone());
+        Arc::new(move |a: RunArgs| {
+            (a.events)(KiroEvent { session_id: Some("k1".into()), ..Default::default() });
+            let t = Instant::now();
+            while !rl.load(Ordering::SeqCst) && t.elapsed() < Duration::from_secs(5) {
+                if a.ct.is_cancelled() { st.store(true, Ordering::SeqCst); break; }
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            KiroResult::new(KiroState::Completed, "x")
+        })
+    };
+    let k = KiroSessions::new(make, None);
+    let s = k.start_in(AgentTool::Kiro, &folder("quit"), "task", vec![], None, Some(vec![])).unwrap();
+    std::thread::sleep(Duration::from_millis(200));
+    k.stop_all();
+    std::thread::sleep(Duration::from_millis(300));
+    let was_stopped = stopped.load(Ordering::SeqCst);
+    release.store(true, Ordering::SeqCst);
+    ended(&k, s.id);
+    assert!(!was_stopped, "Hover's quit told the cloud turn to stop");
+}
+
+#[test]
+fn a_kiro_web_sessions_id_is_saved_as_soon_as_kiro_gives_it() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let f = folder("idsave");
+    let history = Arc::new(AgentHistory::new(std::path::PathBuf::from(&f).join("agents"), Arc::new(Crypto::with_key([1; 32]))));
+    let release = Arc::new(AtomicBool::new(false));
+    let rl = release.clone();
+    let make = move |_| -> RunTask {
+        let rl = rl.clone();
+        Arc::new(move |a: RunArgs| {
+            (a.events)(KiroEvent { session_id: Some("k1".into()), ..Default::default() });
+            let t = Instant::now();
+            while !rl.load(Ordering::SeqCst) && t.elapsed() < Duration::from_secs(5) { std::thread::sleep(Duration::from_millis(10)); }
+            KiroResult::new(KiroState::Completed, "x")
+        })
+    };
+    let k = KiroSessions::new(make, Some(history.clone()));
+    let s = k.start_in(AgentTool::Kiro, &f, "task", vec![], None, Some(vec![])).unwrap();
+    std::thread::sleep(Duration::from_millis(300));
+    history.flush();
+    let saved = history.load(&s.key).expect("saved while it runs");
+    release.store(true, Ordering::SeqCst);
+    ended(&k, s.id);
+    assert_eq!(saved.acp_id.as_deref(), Some("k1"), "closed now, Hover could not find the cloud session again");
+}

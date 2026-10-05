@@ -11,13 +11,20 @@ What changed in each Hover release. Versions follow [Semantic Versioning](https:
 
 - Session history says in words why no Kiro Web sessions are listed (Kiro refused the request,
   or answered the same for the cloud and for this computer), in a row at the top of the list.
-  Kiro Web sessions are told apart from the ones on this computer by asking Kiro twice. This
-  is not yet tested against the real Kiro cloud.
+  Kiro Web sessions are told apart from the ones on this computer by asking Kiro twice.
 - The release page on GitHub now shows this file's section for the version, in place of
   GitHub's automatic list of pull requests. A version with no section here stops the release.
 
 ### Fixed
 
+- Kiro Web sessions made outside Hover now show in Session history. Kiro lists them only when
+  asked for the "user" scope, and Hover asked for the default one, which is this computer's
+  folders. Checked against the real Kiro: 0 found before, 36 after.
+- A Kiro Web task now carries on after Hover is closed or the internet drops. Hover no longer
+  tells Kiro to stop the task when it quits. It saves the task's id the moment Kiro gives it,
+  not when the turn ends. And it now also recognises Kiro's "Could not reach the cloud session
+  service" and "The connection dropped before the turn finished" as a lost connection.
+  Checked with Hover's session tests; not yet with a live Kiro Web task.
 - In the Session board and the Office overview, a card with a two-line title was drawn taller
   than its row, so the next card was drawn over it.
 - `hover.log` now lists the models Kiro offered each time a chat starts, and whether the
