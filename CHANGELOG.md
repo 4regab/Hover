@@ -5,6 +5,24 @@ What changed in each Hover release. Versions follow [Semantic Versioning](https:
 
 ## [Unreleased]
 
+## [3.6.2] - 2026-10-05
+
+### Changed
+
+- Session history says in words why no Kiro Web sessions are listed (Kiro refused the request,
+  or answered the same for the cloud and for this computer), in a row at the top of the list.
+  Kiro Web sessions are told apart from the ones on this computer by asking Kiro twice. This
+  is not yet tested against the real Kiro cloud.
+- The release page on GitHub now shows this file's section for the version, in place of
+  GitHub's automatic list of pull requests. A version with no section here stops the release.
+
+### Fixed
+
+- In the Session board and the Office overview, a card with a two-line title was drawn taller
+  than its row, so the next card was drawn over it.
+- `hover.log` now lists the models Kiro offered each time a chat starts, and whether the
+  sandbox was on, to find out why Kiro's model list looks short on Linux.
+
 ## [3.6.1] - 2026-10-05
 
 ### Added
