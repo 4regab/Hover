@@ -39,6 +39,8 @@ pub struct RunArgs {
     /// The session's key: what the agent browser's server is tagged with, so its calls
     /// reach this session's browser. None for a run that is no session's (voice's routing).
     pub tag: Option<String>,
+    /// A Kiro Web session's repos (KiroSession::cloud); None runs on this computer.
+    pub cloud: Option<Vec<String>>,
 }
 
 /// Runs one turn and blocks until it ends; a panic reads as a failure.
@@ -101,6 +103,9 @@ pub struct KiroSession {
     pub deleted: bool,
     /// The tool access picked when the session started; None keeps the tool's setting.
     pub access: Option<String>,
+    /// Runs in Kiro's cloud (Kiro Web): the GitHub repos it was given, empty for an empty
+    /// workspace. None runs on this computer.
+    pub cloud: Option<Vec<String>>,
     /// What the agent is waiting on the user for, oldest first.
     pub asks: Vec<AgentAsk>,
     /// Asked to stop or pause; the turn hasn't ended yet (the tool hasn't said).
@@ -117,7 +122,7 @@ impl KiroSession {
     /// A new session with no turns (the C# constructor).
     pub fn new(tool: AgentTool) -> KiroSession {
         KiroSession { id: IDS.fetch_add(1, Ordering::SeqCst) + 1, tool, state: KiroState::Idle, phase: KiroPhase::Starting, folder: String::new(), turns: vec![],
-            kiro_id: None, context: None, seat: 0, bot: 0, key: hover_core::guid_n(), deleted: false, access: None, asks: vec![], stopping: false, rev: 0 }
+            kiro_id: None, context: None, seat: 0, bot: 0, key: hover_core::guid_n(), deleted: false, access: None, cloud: None, asks: vec![], stopping: false, rev: 0 }
     }
 
     /// A copy without what only the chat reads: the answers' text, and the steps'
@@ -134,7 +139,7 @@ impl KiroSession {
                 queued: t.queued, started_at: t.started_at, woke_at: t.woke_at, ended_at: t.ended_at, credits: t.credits,
                 before: t.before.clone(), after: t.after.clone(),
             }).collect(),
-            folder: self.folder.clone(), kiro_id: self.kiro_id.clone(), key: self.key.clone(), access: self.access.clone(), asks: self.asks.clone(),
+            folder: self.folder.clone(), kiro_id: self.kiro_id.clone(), key: self.key.clone(), access: self.access.clone(), cloud: self.cloud.clone(), asks: self.asks.clone(),
             ..*self
         }
     }
@@ -160,6 +165,7 @@ impl KiroSession {
                 ended_at: t.ended_at, credits: t.credits, before: t.before.clone(), after: t.after.clone() }).collect(),
             updated: now,
             access: self.access.clone(),
+            cloud: self.cloud.clone(),
         }
     }
 
@@ -173,6 +179,7 @@ impl KiroSession {
         self.kiro_id = s.acp_id.clone();
         self.context = s.context;
         self.access = s.access.clone();
+        self.cloud = s.cloud.clone();
         for t in &s.turns {
             let mut turn = KiroTurn::new(&t.prompt, t.images.clone());
             turn.started_at = t.started_at;
@@ -333,6 +340,11 @@ impl KiroSessions {
 
     /// start, with the session's own tool access (AgentOptions::with_access), kept in its history.
     pub fn start_as(&self, tool: AgentTool, folder: &str, prompt: &str, images: Vec<String>, access: Option<&str>) -> Option<KiroSession> {
+        self.start_in(tool, folder, prompt, images, access, None)
+    }
+
+    /// start_as, in Kiro's cloud when `cloud` names its repos (KiroSession::cloud).
+    pub fn start_in(&self, tool: AgentTool, folder: &str, prompt: &str, images: Vec<String>, access: Option<&str>, cloud: Option<Vec<String>>) -> Option<KiroSession> {
         let mut g = self.0.inner.lock().unwrap();
         let running = g.all.iter().filter(|x| x.s.busy()).count();
         if running >= self.max_running() || !crate::usable_folder(Some(folder)) || !usable(prompt, &images) { return None; }
@@ -341,6 +353,7 @@ impl KiroSessions {
         Self::seat(&g, &mut s);
         s.folder = folder.into();
         s.access = access.map(str::to_owned);
+        s.cloud = cloud;
         s.turns.push(KiroTurn::new(prompt.trim(), images));
         let id = s.id;
         g.all.push(Slot::new(s, (self.0.make)(tool)));
@@ -371,8 +384,9 @@ impl KiroSessions {
         // After a rewind the agent is told once that its folder and chat went back.
         let mut prompt = slot.s.turns[ti].text();
         if let Some(n) = slot.note.take() { prompt = format!("{n}\n\n{prompt}"); }
-        let cp = self.checkpoints().map(|c| (c, slot.s.key.clone()));
-        let args_base = (slot.s.folder.clone(), prompt, slot.s.kiro_id.clone(), slot.s.access.clone());
+        // A cloud session's files are in its sandbox, not this folder: nothing to keep.
+        let cp = self.checkpoints().filter(|_| slot.s.cloud.is_none()).map(|c| (c, slot.s.key.clone()));
+        let args_base = (slot.s.folder.clone(), prompt, slot.s.kiro_id.clone(), slot.s.access.clone(), slot.s.cloud.clone());
         let run = slot.run.clone();
         let me = Arc::downgrade(&self.0);
         Box::new(move || {
@@ -718,7 +732,7 @@ fn compact_first(me: &Weak<Shared>, id: i32, ti: usize, run: &RunTask, folder: &
         }) { ks.raise(vec![Note::Changed]); }
     });
     let began = std::time::Instant::now();
-    let args = RunArgs { folder: folder.into(), prompt: crate::acp::COMPACT_PROMPT.into(), progress: Box::new(|_| {}), ct: ct.clone(), resume: resume.clone(), events, access: access.clone(), tag: tag.clone() };
+    let args = RunArgs { folder: folder.into(), prompt: crate::acp::COMPACT_PROMPT.into(), progress: Box::new(|_| {}), ct: ct.clone(), resume: resume.clone(), events, access: access.clone(), tag: tag.clone(), cloud: None };
     let r = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run(args))) {
         Ok(r) => r,
         Err(_) => KiroResult::new(KiroState::Failed, "The compaction failed."),
@@ -734,7 +748,7 @@ fn compact_first(me: &Weak<Shared>, id: i32, ti: usize, run: &RunTask, folder: &
 }
 
 /// KiroSession.Go: one turn, on its own thread.
-fn go(me: Weak<Shared>, id: i32, ti: usize, run: RunTask, ct: Cancel, cp: Option<(Arc<Checkpoints>, String)>, (folder, prompt, resume, access): (String, String, Option<String>, Option<String>)) {
+fn go(me: Weak<Shared>, id: i32, ti: usize, run: RunTask, ct: Cancel, cp: Option<(Arc<Checkpoints>, String)>, (folder, prompt, resume, access, cloud): (String, String, Option<String>, Option<String>, Option<Vec<String>>)) {
     // The folder as it is before the agent touches it (and again after, below).
     let before = cp.as_ref().and_then(|(c, key)| c.snapshot(key, &folder));
     if before.is_some() { let b = before.clone(); with(&me, id, move |slot, _| slot.s.turns[ti].before = b); }
@@ -761,8 +775,9 @@ fn go(me: Weak<Shared>, id: i32, ti: usize, run: RunTask, ct: Cancel, cp: Option
         }) { ks.raise(vec![Note::Changed]); }
     });
     let tag = me.upgrade().and_then(|sh| sh.inner.lock().unwrap().all.iter().find(|x| x.s.id == id).map(|x| x.s.key.clone()));
-    let stopped = compact_first(&me, id, ti, &run, &folder, &resume, &access, &tag, &ct);
-    let args = RunArgs { folder, prompt, progress, ct: ct.clone(), resume, events, access, tag };
+    // Kiro's cloud compacts its own conversations.
+    let stopped = if cloud.is_some() { None } else { compact_first(&me, id, ti, &run, &folder, &resume, &access, &tag, &ct) };
+    let args = RunArgs { folder, prompt, progress, ct: ct.clone(), resume, events, access, tag, cloud };
     let mut r = match stopped {
         Some(r) => r,
         None => match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run(args))) {

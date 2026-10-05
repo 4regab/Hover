@@ -219,7 +219,7 @@ pub fn route(run: Option<&RunTask>, text: &str, targets: &[Target], active: Opti
     let (tx, rx) = std::sync::mpsc::channel();
     let (run2, p, ct2, f2) = (run.clone(), prompt(text, targets, active, &candidates), ct.clone(), folder.clone());
     std::thread::Builder::new().name("voice-route".into()).spawn(move || {
-        let r = run2(RunArgs { folder: f2, prompt: p, progress: Box::new(|_| {}), ct: ct2, resume: None, events: Box::new(|_| {}), access: Some("none".into()), tag: None });
+        let r = run2(RunArgs { folder: f2, prompt: p, progress: Box::new(|_| {}), ct: ct2, resume: None, events: Box::new(|_| {}), access: Some("none".into()), tag: None, cloud: None });
         let _ = tx.send(r);
     }).map_err(|e| e.to_string())?;
     let got = rx.recv_timeout(limit);

@@ -1061,6 +1061,19 @@ pub fn linked_urls(s: &Snap) -> Vec<(String, String, u32)> {
     found
 }
 
+/// "owner/name" from a GitHub remote: https://github.com/o/n(.git), git@github.com:o/n.git
+/// or ssh://git@github.com/o/n.git.
+pub fn github_name(url: &str) -> Option<String> {
+    let rest = ["https://github.com/", "http://github.com/", "git@github.com:", "ssh://git@github.com/", "git://github.com/"].iter().find_map(|p| url.strip_prefix(p))?;
+    let rest = rest.trim_end_matches('/');
+    let rest = rest.strip_suffix(".git").unwrap_or(rest);
+    let mut parts = rest.split('/');
+    match (parts.next(), parts.next(), parts.next()) {
+        (Some(o), Some(n), None) if !o.is_empty() && !n.is_empty() => Some(format!("{o}/{n}")),
+        _ => None,
+    }
+}
+
 // MARK: Desk
 
 type Cache = HashMap<String, (Instant, Arc<dyn Any + Send + Sync>)>;
@@ -1385,6 +1398,13 @@ impl Desk {
         let r = self.git(folder, 5000, 4096, &["remote"]);
         let all: Vec<&str> = if r.code == 0 { r.out.lines().map(str::trim).filter(|l| !l.is_empty()).collect() } else { vec![] };
         if all.contains(&"origin") { "origin".into() } else { all.first().map_or("origin".into(), |s| (*s).to_owned()) }
+    }
+
+    /// The GitHub repo ("owner/name") the folder's remote points at, for a Kiro Web
+    /// session to clone; None when it has no GitHub remote.
+    pub fn github_repo(&self, folder: &str) -> Option<String> {
+        let r = self.git(folder, 5000, 4096, &["remote", "get-url", &self.remote(folder)]);
+        if r.code == 0 { github_name(r.out.trim()) } else { None }
     }
 
     /// DeskInfo.DefaultBranch: the remote's HEAD, else main or master (2 min).

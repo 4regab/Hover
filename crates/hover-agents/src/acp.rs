@@ -26,6 +26,9 @@ use std::time::Duration;
 /// sent as `_kiro/session/compact` (session.rs's auto compact; a reply of `/compact` too).
 pub const COMPACT_PROMPT: &str = "/compact";
 
+/// Where Kiro Web shows a cloud session: this, then the session's id.
+pub const KIRO_WEB_SESSION: &str = "https://app.kiro.dev/session/";
+
 pub type Progress = Box<dyn Fn(KiroPhase) + Send + Sync>;
 pub type Events = Box<dyn Fn(KiroEvent) + Send + Sync>;
 type Connect = Box<dyn Fn() -> std::io::Result<Option<Link>> + Send + Sync>;
@@ -101,6 +104,11 @@ struct Host {
     mcp: Mutex<McpFn>,
     /// How the process was sandboxed (sandbox.rs); untouched for a process Hover didn't start.
     boxed: Arc<Boxed>,
+    /// The process can run sessions in Kiro's cloud (initialize's executionTargets).
+    can_cloud: AtomicBool,
+    /// Cloud sessions whose sandbox said it is ready (its first context_usage), by ACP
+    /// session id; cleared with the process.
+    ready: Mutex<HashSet<String>>,
 }
 
 #[derive(Clone)]
@@ -132,7 +140,7 @@ impl AcpHost {
             tool, options: Box::new(options), connect, gate: Mutex::new(()), link: Mutex::new(None), gens: AtomicU64::new(0),
             pending: Mutex::new(HashMap::new()), turns: Mutex::new(HashMap::new()), session_options: Mutex::new(HashMap::new()),
             can_load: AtomicBool::new(false), ids: AtomicI64::new(0), busy: AtomicUsize::new(0), idle: AtomicU64::new(0), seen: Mutex::new(vec![]),
-            asking: Mutex::new(None), trusted: Mutex::new(HashMap::new()), session_mcp: Mutex::new(HashMap::new()), mcp: Mutex::new(default_mcp(tool)), boxed,
+            asking: Mutex::new(None), trusted: Mutex::new(HashMap::new()), session_mcp: Mutex::new(HashMap::new()), mcp: Mutex::new(default_mcp(tool)), boxed, can_cloud: AtomicBool::new(false), ready: Mutex::new(HashSet::new()),
         }))
     }
 
@@ -154,21 +162,25 @@ impl AcpHost {
     /// agent to stop (session/cancel); one that doesn't within 8 s is left, or shut
     /// down when nothing else of it runs. Blocks: run it off the UI thread.
     pub fn run(&self, folder: &str, prompt: &str, progress: Option<Progress>, ct: &Cancel, resume: Option<&str>, events: Option<Events>) -> KiroResult {
-        self.0.run(folder, prompt, progress, ct, resume, events, None, None)
+        self.0.run(folder, prompt, progress, ct, resume, events, None, None, None)
     }
 
     /// run, with the session's own tool access (AgentOptions::with_access).
     #[allow(clippy::too_many_arguments)]
     pub fn run_as(&self, folder: &str, prompt: &str, progress: Option<Progress>, ct: &Cancel, resume: Option<&str>, events: Option<Events>, access: Option<&str>) -> KiroResult {
-        self.0.run(folder, prompt, progress, ct, resume, events, access, None)
+        self.0.run(folder, prompt, progress, ct, resume, events, access, None, None)
     }
 
     /// run_as, naming the Hover session (its key) the run is for: the tag Hover's browser
     /// server is made for (AcpHost.Run's tag).
     #[allow(clippy::too_many_arguments)]
     pub fn run_tagged(&self, folder: &str, prompt: &str, progress: Option<Progress>, ct: &Cancel, resume: Option<&str>, events: Option<Events>, access: Option<&str>, tag: Option<&str>) -> KiroResult {
-        self.0.run(folder, prompt, progress, ct, resume, events, access, tag)
+        self.0.run(folder, prompt, progress, ct, resume, events, access, tag, None)
     }
+
+    /// The GitHub repos ("owner/name") the user connected to Kiro, which a cloud session
+    /// can be given. Starts the tool if it isn't up. Blocks: run it off the UI thread.
+    pub fn repos(&self) -> Result<Vec<String>, String> { self.0.repos() }
 
     /// Where a question goes. Without one, whatever the settings say should be asked
     /// about is turned down.
@@ -180,7 +192,7 @@ impl AcpHost {
     /// The session's runner for this tool (OwlApp.Kiro's make: Agents[tool].Run).
     pub fn runner(&self) -> crate::session::RunTask {
         let h = self.clone();
-        Arc::new(move |a: crate::session::RunArgs| { let tag = crate::runtime::tag_of(&a); h.run_tagged(&a.folder, &a.prompt, Some(a.progress), &a.ct, a.resume.as_deref(), Some(a.events), a.access.as_deref(), tag.as_deref()) })
+        Arc::new(move |a: crate::session::RunArgs| { let tag = crate::runtime::tag_of(&a); h.0.run(&a.folder, &a.prompt, Some(a.progress), &a.ct, a.resume.as_deref(), Some(a.events), a.access.as_deref(), tag.as_deref(), a.cloud.as_deref()) })
     }
 }
 
@@ -188,7 +200,10 @@ impl Host {
     fn name(&self) -> &'static str { self.tool.name() }
 
     #[allow(clippy::too_many_arguments)]
-    fn run(self: &Arc<Self>, folder: &str, prompt: &str, progress: Option<Progress>, ct: &Cancel, resume: Option<&str>, events: Option<Events>, access: Option<&str>, tag: Option<&str>) -> KiroResult {
+    fn run(self: &Arc<Self>, folder: &str, prompt: &str, progress: Option<Progress>, ct: &Cancel, resume: Option<&str>, events: Option<Events>, access: Option<&str>, tag: Option<&str>,
+        cloud: Option<&[String]>) -> KiroResult {
+        // Kiro's cloud runs in Autopilot (it has no asking), so its sessions are Full.
+        let access = if cloud.is_some() { Some("full") } else { access };
         let name = self.name();
         if !crate::usable_folder(Some(folder)) { return KiroResult::new(KiroState::Failed, "That folder isn’t there any more. Choose another one."); }
         if prompt.trim().is_empty() { return KiroResult::new(KiroState::Failed, format!("Tell {name} what to do first.")); }
@@ -208,10 +223,11 @@ impl Host {
         // (no Launch Services there), so Hover does, outside it.
         if sandbox::wanted() && crate::agents::toggles().computer_use { computer_use::ensure_daemon(); }
         let o = (self.options)().with_access(access);
-        let mut servers = (self.mcp.lock().unwrap().clone())(tag);
+        // A cloud session's sandbox can't reach this computer's servers: it gets none.
+        let mut servers = if cloud.is_some() { vec![] } else { (self.mcp.lock().unwrap().clone())(tag) };
         // The project's desktop, for a session's run (not the routing turn that has none):
         // every agent in that folder is given the same one.
-        if tag.is_some() { servers.extend(crate::spaces::servers(folder)); }
+        if tag.is_some() && cloud.is_none() { servers.extend(crate::spaces::servers(folder)); }
         let mcp = (computer_use::acp(&servers), computer_use::signature(&servers));
 
         // A session's MCP servers are fixed when it is made or loaded. A reply to one made
@@ -226,7 +242,7 @@ impl Host {
         let turn = Arc::new(Turn { stream: Mutex::new(KiroStream::new(name)), progress, events, options: o.clone(), folder: folder.into(), token: ct.clone(), muted: AtomicBool::new(false),
             refused: AtomicBool::new(false), mcp_failed: Mutex::new(vec![]), deny_all: access == Some("none") });
         let mut sid: Option<String> = None;
-        let r = self.turn(folder, prompt, ct, resume, &o, &turn, &mut sid, &mcp);
+        let r = self.turn(folder, prompt, ct, resume, &o, &turn, &mut sid, &mcp, cloud);
         // A thought still open when the turn ends (however it ends) ends with it.
         let last = { let mut st = turn.stream.lock().unwrap(); st.end(); st.drain() };
         if let Some(f) = &turn.events { for e in last { f(e); } }
@@ -251,11 +267,14 @@ impl Host {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn turn(self: &Arc<Self>, folder: &str, prompt: &str, ct: &Cancel, resume: Option<&str>, o: &AgentOptions, turn: &Arc<Turn>, sid: &mut Option<String>, mcp: &(Json, String))
-        -> Result<KiroResult, CallErr> {
+    fn turn(self: &Arc<Self>, folder: &str, prompt: &str, ct: &Cancel, resume: Option<&str>, o: &AgentOptions, turn: &Arc<Turn>, sid: &mut Option<String>, mcp: &(Json, String),
+        cloud: Option<&[String]>) -> Result<KiroResult, CallErr> {
         let name = self.name();
         if let Some(p) = &turn.progress { p(KiroPhase::Starting); }
         self.start(ct)?;
+        if cloud.is_some() && !self.can_cloud.load(Ordering::SeqCst) {
+            return Err(CallErr::Acp(format!("{name} on this computer can’t run Kiro Web sessions. Update Kiro CLI, and check that cloud sessions are on for your account.")));
+        }
         let mut offered: Option<Vec<AcpOption>> = None;
         if let Some(r) = resume.filter(|r| !r.is_empty()) {
             let known = self.session_options.lock().unwrap().get(r).cloned();
@@ -265,9 +284,16 @@ impl Host {
             } else if self.can_load.load(Ordering::SeqCst) {
                 turn.muted.store(true, Ordering::SeqCst);
                 self.turns.lock().unwrap().insert(r.into(), turn.clone());
-                let params = o_(vec![("sessionId", st(r)), ("cwd", st(folder)), ("mcpServers", mcp.0.clone())]);
-                match self.call("session/load", params, Some(ct), Some(Duration::from_secs(120))) {
+                let mut params = vec![("sessionId", st(r)), ("cwd", st(folder)), ("mcpServers", mcp.0.clone())];
+                // From Kiro's cloud store: without this it reads the local store, finds
+                // nothing, and makes an empty local session of the same id.
+                if cloud.is_some() { params.push(("_meta", o_(vec![("kiro", o_(vec![("sessionSource", st("remote"))]))]))); }
+                match self.call("session/load", o_(params), Some(ct), Some(Duration::from_secs(120))) {
                     Ok(res) => { *sid = Some(r.into()); offered = options(&res); self.session_mcp.lock().unwrap().insert(r.into(), mcp.1.clone()); }
+                    Err(CallErr::Acp(m)) if cloud.is_some() => {
+                        self.turns.lock().unwrap().remove(r);
+                        return Err(CallErr::Acp(format!("Couldn’t open this Kiro Web session again: {m}")));
+                    }
                     Err(CallErr::Acp(m)) => {
                         // Gone from the agent's own history: carry on in a new conversation.
                         hover_core::log::line(&format!("acp {name}: couldn't load {r} - {m}"));
@@ -279,10 +305,28 @@ impl Host {
             }
         }
         if sid.is_none() {
-            let res = self.call("session/new", o_(vec![("cwd", st(folder)), ("mcpServers", mcp.0.clone())]), Some(ct), Some(Duration::from_secs(120)))?;
+            // A reply to a cloud session never starts another one in its place.
+            if cloud.is_some() && resume.is_some_and(|r| !r.is_empty()) { return Err(CallErr::Acp("Couldn’t open this Kiro Web session again.".into())); }
+            let mut params = vec![("cwd", st(folder)), ("mcpServers", mcp.0.clone())];
+            if let Some(repos) = cloud {
+                let mut kiro = vec![("executionTarget", o_(vec![("kind", st("cloud-sandbox"))]))];
+                if !repos.is_empty() {
+                    kiro.push(("repositories", Json::Arr(repos.iter().map(|r| o_(vec![("providerType", st("GITHUB")), ("name", st(r))])).collect())));
+                }
+                params.push(("_meta", o_(vec![("kiro", o_(kiro))])));
+            }
+            let res = self.call("session/new", o_(params), Some(ct), Some(Duration::from_secs(120)))?;
             *sid = Some(s(&res, "sessionId").ok_or_else(|| CallErr::Acp(format!("{name} didn’t start a session.")))?.to_owned());
             self.session_mcp.lock().unwrap().insert(sid.clone().unwrap(), mcp.1.clone());
             offered = options(&res);
+            if cloud.is_some() {
+                // Said now, not after the wait: its id is kept even if Hover quits while the
+                // sandbox comes up, and the sandbox's own setup steps show in the chat.
+                let id = sid.clone().unwrap();
+                self.turns.lock().unwrap().insert(id.clone(), turn.clone());
+                if let Some(e) = &turn.events { e(KiroEvent { session_id: Some(id.clone()), ..Default::default() }); }
+                self.await_ready(&id, ct)?;
+            }
         }
         let id = sid.clone().unwrap();
         self.turns.lock().unwrap().insert(id.clone(), turn.clone());
@@ -328,6 +372,47 @@ impl Host {
             }
         }?;
         Ok(self.finish(turn, s(&reply, "stopReason"), ct.is_cancelled()))
+    }
+
+    /// A new cloud session takes its prompt only once its sandbox is up: one sent before
+    /// is answered "cancelled" here while the cloud still runs it (seen Oct 2026). The
+    /// sandbox says it is up with its first context_usage, about 15 s after session/new.
+    fn await_ready(&self, sid: &str, ct: &Cancel) -> Result<(), CallErr> {
+        // ponytail: polled every 250 ms instead of a condvar; it waits seconds at most once per session.
+        let until = std::time::Instant::now() + Duration::from_secs(120);
+        loop {
+            if ct.is_cancelled() { return Err(CallErr::Cancelled); }
+            if self.link.lock().unwrap().is_none() { return Err(CallErr::Gone(format!("{} stopped.", self.name()))); }
+            if self.ready.lock().unwrap().remove(sid) { return Ok(()); }
+            if std::time::Instant::now() >= until {
+                hover_core::log::line(&format!("acp {}: {sid} didn't say its sandbox was ready in 120 s; prompting anyway", self.name()));
+                return Ok(());
+            }
+            std::thread::sleep(Duration::from_millis(250));
+        }
+    }
+
+    fn repos(self: &Arc<Self>) -> Result<Vec<String>, String> {
+        let ct = Cancel::new();
+        self.busy.fetch_add(1, Ordering::SeqCst);
+        self.idle.fetch_add(1, Ordering::SeqCst);
+        let got = (|| -> Result<Vec<String>, CallErr> {
+            self.start(&ct)?;
+            let mut all = vec![];
+            let mut cursor: Option<String> = None;
+            loop {
+                let mut p = vec![("providerType", st("GITHUB"))];
+                if let Some(c) = &cursor { p.push(("cursor", st(c))); }
+                let r = self.call("_kiro/sourceProviders/listResources", o_(p), Some(&ct), Some(Duration::from_secs(60)))?;
+                if let Some(Json::Arr(list)) = r.get("resources") { all.extend(list.iter().filter_map(|x| s(x, "name")).map(str::to_owned)); }
+                match s(&r, "nextCursor") { Some(c) if !c.is_empty() => cursor = Some(c.to_owned()), _ => break }
+            }
+            Ok(all)
+        })();
+        if self.busy.fetch_sub(1, Ordering::SeqCst) == 1 && self.link.lock().unwrap().is_some() {
+            self.schedule_idle(Duration::from_secs(60 * (self.options)().idle_minutes.max(1) as u64));
+        }
+        got.map_err(|e| match e { CallErr::Acp(m) => self.explain(&m), CallErr::Gone(m) => m, CallErr::Cancelled => "Stopped.".into() })
     }
 
     fn finish(&self, t: &Turn, stop_reason: Option<&str>, cancelled: bool) -> KiroResult {
@@ -488,6 +573,7 @@ impl Host {
         *self.link.lock().unwrap() = Some(live);
         self.session_options.lock().unwrap().clear();
         self.session_mcp.lock().unwrap().clear();
+        self.ready.lock().unwrap().clear();
         let me: Weak<Host> = Arc::downgrade(self);
         std::thread::Builder::new().name(format!("acp-{}", self.tool.id())).spawn(move || read(me, from_agent, gen)).expect("a reader thread");
         let init = o_(vec![
@@ -499,6 +585,8 @@ impl Host {
             Ok(r) => {
                 let load = r.get("agentCapabilities").filter(|c| matches!(c, Json::Obj(_))).and_then(|c| c.get("loadSession")) == Some(&Json::Bool(true));
                 self.can_load.store(load, Ordering::SeqCst);
+                let targets = r.get("agentCapabilities").and_then(|c| c.get("_meta")).and_then(|m| m.get("kiro")).and_then(|k| k.get("executionTargets"));
+                self.can_cloud.store(matches!(targets, Some(Json::Arr(t)) if t.iter().any(|x| x.as_str() == Some("cloud-sandbox"))), Ordering::SeqCst);
                 Ok(())
             }
             Err(e) => { self.shutdown("didn't start"); Err(e) }
@@ -513,6 +601,7 @@ impl Host {
         // can start, and its calls and options must not go with this one.
         self.session_options.lock().unwrap().clear();
         self.session_mcp.lock().unwrap().clear();
+        self.ready.lock().unwrap().clear();
         self.fail(CallErr::Gone(format!("{} stopped.", self.name())));
         drop(l);
         hover_core::log::line(&format!("acp {}: {why}", self.name()));
@@ -533,6 +622,8 @@ impl Host {
             // right after an idle shutdown) had its calls failed by this one's exit.
             self.session_options.lock().unwrap().clear();
             self.session_mcp.lock().unwrap().clear();
+            self.ready.lock().unwrap().clear();
+        self.ready.lock().unwrap().clear();
             self.fail(CallErr::Gone(format!("{} stopped unexpectedly.{tail}", self.name())));
             (link, why)
         };
@@ -614,6 +705,10 @@ impl Host {
         };
         let p = m.get("params").cloned().unwrap_or(Json::Null);
         let psid = s(&p, "sessionId").map(str::to_owned);
+        if method == "session/update" {
+            let kind = p.get("update").and_then(|u| u.get("_meta")).and_then(|m| m.get("kiro")).and_then(|k| s(k, "kind"));
+            if kind == Some("context_usage") { if let Some(sid) = &psid { self.ready.lock().unwrap().insert(sid.clone()); } }
+        }
         let turn = psid.as_ref().and_then(|sid| self.turns.lock().unwrap().get(sid).cloned());
         if let Some(id) = id {
             if method == "session/request_permission" {
