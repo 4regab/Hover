@@ -5,6 +5,13 @@ What changed in each Hover release. Versions follow [Semantic Versioning](https:
 
 ## [Unreleased]
 
+### Added
+
+- Voice's listening and working cards show only an aura now (a glowing ring of light, after
+  LiveKit's Aura visualizer), with no words and no Esc chip. The Esc key still cancels. It swirls and swells with your voice
+  while listening, and swirls faster with a pulse while Hover works on what you said. Pick its colour
+  in Settings → Voice → Aura colour, or type any hex colour.
+
 ### Fixed
 
 - Voice's preview card was cut off below the task box when the agent menu was open

@@ -50,6 +50,10 @@ pub struct Ui {
     close_timer: Timer,
     /// The card's kind as last drawn (a level or a second only sets two properties).
     kind: Cell<i32>,
+    /// The listening and working cards' aura, between frames.
+    aura: RefCell<hover_app::aura::Aura>,
+    /// Its colour, read from the settings each time the card is drawn.
+    aura_rgb: Cell<[u8; 3]>,
     /// A preview folder's look on the card: (folder, (~/path, letter, tint, home)).
     look: RefCell<Option<(String, (slint::SharedString, slint::SharedString, slint::Color, bool))>>,
     /// A stage to draw instead of Voice's (the shots).
@@ -308,6 +312,8 @@ impl App {
             if let Some(c) = card { self.notch.set_voice(c); }
             if let Stage::Recording { level, .. } = stage { self.notch.set_voice_level(level); }
             self.voice_menu_draw(&stage);
+            // With the clock off (animations off) the aura still answers the voice.
+            if !self.clock_timer.running() { self.aura_draw(); }
             return;
         }
         self.update_rest();
@@ -492,7 +498,21 @@ impl App {
         self.notch.set_voice_level(if let Stage::Recording { level, .. } = stage { level } else { 0.0 });
         self.voice_menu_draw(&stage);
         self.voice_ui.kind.set(kind);
+        self.voice_ui.aura_rgb.set(projects::VoiceSettings::rgb(self.hover.settings.voice().aura()));
+        self.aura_draw();
         kind
+    }
+
+    /// The aura's next frame, while the listening or working card shows (the clock's
+    /// tick calls it too). Gone, it starts afresh the next time.
+    pub fn aura_draw(&self) {
+        use hover_app::aura::Mode;
+        let mode = match self.voice_ui.kind.get() { 1 => Mode::Listening, 2 => Mode::Working, _ => return self.voice_ui.aura.borrow_mut().reset() };
+        let n = &self.notch;
+        let px = (66.0 * n.window().scale_factor()).round() as u32;
+        let snap = self.voice_ui.shot.borrow().is_some() || !self.look.get().animations;
+        let img = self.voice_ui.aura.borrow_mut().frame(mode, n.global::<Clock>().get_t(), n.get_voice_level(), px, snap, self.voice_ui.aura_rgb.get());
+        n.set_voice_aura(img);
     }
 
     /// The card's buttons and keys.

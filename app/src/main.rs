@@ -488,8 +488,8 @@ impl App {
         };
         notch::shape(ui, &self.n.borrow(), view::argb(self.palette.borrow().panel));
         if changed { self.animate(); }
-        // Voice's working spinner turns on the same clock.
-        self.clock(busy || vkind == 2);
+        // Voice's aura, listening and working, moves on the same clock.
+        self.clock(busy || vkind == 1 || vkind == 2);
     }
 
     /// OpenCard: the question grows into a card that takes the keyboard (Enter allows,
@@ -552,6 +552,7 @@ impl App {
             let c = a.notch.global::<Clock>();
             c.set_t(c.get_t() + dt);
             c.set_done_since(c.get_done_since() + dt);
+            a.aura_draw();
         });
     }
 
