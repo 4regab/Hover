@@ -23,6 +23,12 @@ What changed in each Hover release. Versions follow [Semantic Versioning](https:
 - Claude models show as "Opus 5.5" and "Sonnet 5" in the model pill and its menu, without
   "Claude", so the name fits.
 
+### Fixed
+
+- Session history said "Done" for a chat that was working on a reply. The history keeps the
+  state of the last finished turn, so a new reply still read as done. A chat that is running
+  now shows what it is doing.
+
 ## [3.5.0] - 2026-10-05
 
 ### Added

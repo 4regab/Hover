@@ -809,8 +809,14 @@ impl App {
                     let ms = h.updated.unix_ms() as f64;
                     let d = day(now, ms);
                     if d != at { at = d.clone(); rows.push(PanelRow { text: s(d.to_uppercase()), color: Color::from_argb_u8(0, 0, 0, 0), ..row(0) }); opens.push((None, None)); }
-                    let desk = sessions.iter().any(|s| s.key == h.key);
-                    let stage = Stage::parse(hover_agents::state::stage(h.state, hover_agents::stream::KiroPhase::Working));
+                    let live = sessions.iter().find(|s| s.key == h.key);
+                    let desk = live.is_some();
+                    // The saved entry holds the last finished turn's state, so a reply running now
+                    // would read "Done". A session at a desk that is running says what it is doing.
+                    let stage = match live.filter(|l| l.busy()) {
+                        Some(l) => stage_of(l),
+                        None => Stage::parse(hover_agents::state::stage(h.state, hover_agents::stream::KiroPhase::Working)),
+                    };
                     // .hr: the tool's logo, the task and its date, then how it went · turns · where.
                     rows.push(PanelRow { sub: s(h.tool.id()), text: s(&h.title), meta: s(stage.word()), s1: s(stamp(now, ms)),
                         count: s(format!("{} turn{} · {}", h.turns, if h.turns == 1 { "" } else { "s" }, hover_office::office::short(&h.folder))),
