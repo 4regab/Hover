@@ -61,6 +61,8 @@ pub struct Ui {
     /// The preview's open menu (0 none, 1 the agents, 2 the model) and the interaction
     /// it was opened for: another interaction finds it closed.
     pub menu: Cell<(i32, u64)>,
+    /// What is typed in the Kiro Web repo menu's search box.
+    pub repo_query: RefCell<String>,
     /// The agents ready for that interaction, once checked (off the UI thread).
     pub ready: RefCell<Option<(u64, Vec<AgentTool>)>>,
     /// The stage last written to the log.
@@ -407,7 +409,10 @@ impl App {
     fn fill_preview(&self, c: &mut VoiceCard, p: &Preview) {
         let st = &self.hover.settings;
         c.heard = s(&p.heard);
-        c.note = s([p.note.clone(), p.cleanup_note.clone()].into_iter().flatten().collect::<Vec<_>>().join(" "));
+        // In Kiro Web no folder here is used, so the default workspace's note (and that it will
+        // be made) says nothing; other notes (an error, cleanup) stay.
+        let note = p.note.clone().filter(|n| !(p.cloud && p.target_name == "Default workspace" && n.starts_with("Using default workspace")));
+        c.note = s([note, p.cleanup_note.clone()].into_iter().flatten().collect::<Vec<_>>().join(" "));
         c.target = s(&p.target_name);
         // The folder's look is read from the disk once per folder, not per countdown tick.
         let cached = self.voice_ui.look.borrow().as_ref().filter(|(f, _)| *f == p.folder).map(|x| x.1.clone());
@@ -499,11 +504,13 @@ impl App {
             return ("FOLDER FOR THIS TASK".into(), rows, "Your voice projects. Add more in Settings → Projects.".into());
         }
         let (list, note) = self.connected_repos();
+        let q = self.voice_ui.repo_query.borrow().clone();
+        let note = if !list.is_empty() && !list.iter().any(|r| crate::office_ui::repo_matches(r, &q)) { format!("No repository matches “{}”.", q.trim()) } else { note };
         let mut rows = vec![
             MOpt { id: s(""), label: s("This folder’s repository"), on: p.repo == Repo::Folder },
             MOpt { id: s("-"), label: s("Empty workspace"), on: p.repo == Repo::Empty },
         ];
-        rows.extend(list.iter().map(|r| MOpt { id: s(r), label: s(r), on: p.repo == Repo::Named(r.clone()) }));
+        rows.extend(list.iter().filter(|r| crate::office_ui::repo_matches(r, &q)).map(|r| MOpt { id: s(r), label: s(r), on: p.repo == Repo::Named(r.clone()) }));
         ("REPOSITORY FOR KIRO WEB".into(), rows, note)
     }
 
@@ -513,6 +520,7 @@ impl App {
         let stage = self.shown();
         let Some(p) = self.menu_preview(&stage) else { self.voice_ui.menu.set((0, 0)); return self.voice_menu_draw(&stage); };
         self.voice_ui.menu.set((which, p.id));
+        self.voice_ui.repo_query.borrow_mut().clear();
         if which != 0 { self.voice.hold(); }
         let checked = self.voice_ui.ready.borrow().as_ref().is_some_and(|r| r.0 == p.id);
         if which == 4 && self.voice_ui.shot.borrow().is_none() { self.load_repos(|a| a.voice_menu_draw(&a.shown())); }
@@ -610,6 +618,24 @@ impl App {
                 _ => return,
             }
             a.voice_ui.menu.set((0, 0));
+            a.voice_ui.repo_query.borrow_mut().clear();
+            a.voice_menu_draw(&a.shown());
+            a.update_rest();
+        });
+        let a = self.clone();
+        self.notch.on_voice_search(move |q| {
+            *a.voice_ui.repo_query.borrow_mut() = q.to_string();
+            a.voice_menu_draw(&a.shown());
+        });
+        let a = self.clone();
+        // Enter in the search box picks the first repository that matches.
+        self.notch.on_voice_search_enter(move || {
+            if a.menu_preview(&a.shown()).is_none() || a.voice_ui.menu.get().0 != 4 { return; }
+            let q = a.voice_ui.repo_query.borrow().clone();
+            let Some(r) = a.connected_repos().0.into_iter().find(|r| crate::office_ui::repo_matches(r, &q)).filter(|_| !q.trim().is_empty()) else { return };
+            a.voice.change_repo(Repo::Named(r));
+            a.voice_ui.menu.set((0, 0));
+            a.voice_ui.repo_query.borrow_mut().clear();
             a.voice_menu_draw(&a.shown());
             a.update_rest();
         });

@@ -188,6 +188,9 @@ export global Office {
     callback toggle-cloud();
     callback open-repos();
     callback pick-repo(string);
+    // The repo menu's search box: what is typed, and Enter (the first match is picked).
+    callback repo-search(string);
+    callback repo-search-enter();
     callback d-open-cloud();
     // The office answered a question: the session, the ask's id, allow | trust | deny.
     callback answer(int, string, string);
@@ -1603,6 +1606,36 @@ export component OfficeView inherits Rectangle {
                 padding: 6px;
                 Text { text: "KIRO WEB CLONES"; font-family: "Pixelify Sans"; font-weight: 600; font-size: 10.5px; letter-spacing: 0.63px; color: #f6f2ff61;
                     height: self.preferred-height + 10px; vertical-alignment: center; x: 8px; }
+                // Search: typing keeps the repositories that match; Enter picks the first; Esc closes.
+                Rectangle {
+                    height: 32px;
+                    border-radius: 8px;
+                    background: #ffffff0f;
+                    border-width: 1px;
+                    border-color: rs.has-focus ? #c4a2ff8c : #ffffff14;
+                    rs := TextInput {
+                        x: 10px;
+                        width: parent.width - 20px;
+                        height: parent.height;
+                        vertical-alignment: center;
+                        single-line: true;
+                        font-size: 12.5px;
+                        color: #f6f2ff;
+                        selection-background-color: #c4a2ff66;
+                        accessible-role: text-input;
+                        accessible-id: "repoSearch";
+                        accessible-label: "Search repositories";
+                        edited => { Office.repo-search(self.text); }
+                        key-pressed(e) => {
+                            if (e.text == Key.Escape) { Office.open-repos(); return accept; }
+                            if (e.text == "\n" && self.preedit-text == "") { Office.repo-search-enter(); return accept; }
+                            reject
+                        }
+                        init => { self.focus(); }
+                    }
+                    if rs.text == "": Text { x: 10px; text: "Search repositories"; font-size: 12.5px; color: #f6f2ff61; vertical-alignment: center; }
+                }
+                Rectangle { height: 4px; }
                 Flickable {
                     height: min(rl.preferred-height, 260px);
                     content-height: rl.preferred-height;

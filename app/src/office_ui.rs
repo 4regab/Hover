@@ -153,6 +153,13 @@ fn double_click() -> (Duration, (f32, f32)) {
 #[cfg(not(windows))]
 fn double_click() -> (Duration, (f32, f32)) { (Duration::from_millis(400), (10.0, 10.0)) }
 
+/// Whether a repository ("owner/name") matches what was typed in a repo menu's search box:
+/// any part of it, capitals ignored. Nothing typed matches all.
+pub(crate) fn repo_matches(name: &str, query: &str) -> bool {
+    let q = query.trim();
+    q.is_empty() || name.to_lowercase().contains(&q.to_lowercase())
+}
+
 fn fonts() -> Vec<Vec<u8>> { vec![hover_office::canvas::PIXELIFY.to_vec()] }
 
 /// The new-task box in Kiro Web (Kiro only).
@@ -168,6 +175,8 @@ struct NewCloud {
     /// A folder and the GitHub repo its remote points at, once looked up.
     folder_repo: Option<(String, Option<String>)>,
     looking: Option<String>,
+    /// What is typed in the repo menu's search box.
+    query: String,
 }
 
 impl Default for Page {
@@ -631,18 +640,20 @@ impl App {
         });
     }
 
-    /// The repo menu's rows (no repo first, then the folder's, then the connected ones)
-    /// and its note.
+    /// The repo menu's rows (no repo first, then the folder's, then the connected ones that
+    /// match the search) and its note.
     fn repo_rows(&self, current: Option<&str>, folder_repo: Option<&str>) -> (Vec<AccessOpt>, String) {
         let c = self.page.cloud.borrow();
+        let q = c.query.as_str();
         let mut names: Vec<&str> = folder_repo.into_iter().collect();
         if let Some(Ok(list)) = &c.repos { for r in list { if !names.contains(&r.as_str()) { names.push(r); } } }
         let mut rows = vec![AccessOpt { id: s(""), label: s("Empty workspace"), note: s("No repository: the agent starts in an empty folder."), on: current.is_none() }];
-        rows.extend(names.iter().map(|r| AccessOpt { id: s(*r), label: s(*r), note: s(if Some(*r) == folder_repo { "This folder’s repository" } else { "" }), on: current == Some(*r) }));
+        rows.extend(names.iter().filter(|r| Some(**r) == folder_repo || repo_matches(r, q)).map(|r| AccessOpt { id: s(*r), label: s(*r), note: s(if Some(*r) == folder_repo { "This folder’s repository" } else { "" }), on: current == Some(*r) }));
         let note = match &c.repos {
             _ if c.listing => "Loading your connected repositories…".to_owned(),
             Some(Err(e)) => e.clone(),
             Some(Ok(l)) if l.is_empty() => "No GitHub repositories are connected. Connect GitHub in Kiro Web.".into(),
+            Some(Ok(l)) if !l.iter().any(|r| repo_matches(r, q)) => format!("No repository matches “{}”.", q.trim()),
             _ => String::new(),
         };
         (rows, note)
@@ -1053,6 +1064,7 @@ impl App {
             let list = {
                 let mut c = a.page.cloud.borrow_mut();
                 c.menu = !c.menu;
+                c.query.clear();
                 // Listed once a run (again after a failure); Kiro starts if it isn't up.
                 let want = c.menu && !c.listing && !matches!(c.repos, Some(Ok(_)));
                 if want { c.listing = true; }
@@ -1070,8 +1082,26 @@ impl App {
         });
         let a = self.clone();
         g.on_pick_repo(move |id| {
-            { let mut c = a.page.cloud.borrow_mut(); c.pick = Some(Some(id.to_string()).filter(|r| !r.is_empty())); c.menu = false; }
+            { let mut c = a.page.cloud.borrow_mut(); c.pick = Some(Some(id.to_string()).filter(|r| !r.is_empty())); c.menu = false; c.query.clear(); }
             a.office_widgets();
+        });
+        let a = self.clone();
+        g.on_repo_search(move |q| { a.page.cloud.borrow_mut().query = q.to_string(); a.office_widgets(); });
+        let a = self.clone();
+        // Enter in the search box picks the first repository that matches.
+        g.on_repo_search_enter(move || {
+            let folder = a.page.new_folder.borrow().clone();
+            let first = {
+                let c = a.page.cloud.borrow();
+                let q = c.query.trim();
+                let mut names: Vec<String> = c.folder_repo.as_ref().filter(|(k, _)| Some(k) == folder.as_ref()).and_then(|(_, r)| r.clone()).into_iter().collect();
+                if let Some(Ok(l)) = &c.repos { names.extend(l.iter().cloned()); }
+                if q.is_empty() { None } else { names.into_iter().find(|r| repo_matches(r, q)) }
+            };
+            if let Some(r) = first {
+                { let mut c = a.page.cloud.borrow_mut(); c.pick = Some(Some(r)); c.menu = false; c.query.clear(); }
+                a.office_widgets();
+            }
         });
         let a = self.clone();
         g.on_d_open_cloud(move || {

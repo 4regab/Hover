@@ -271,6 +271,9 @@ export component NotchWindow inherits Window {
     callback voice-pick-opt(string);
     callback voice-open-menu(int);
     callback voice-pick-model(string);
+    // The repo menu's search box: what is typed, and Enter (the first match is picked).
+    callback voice-search(string);
+    callback voice-search-enter();
     callback voice-pick-effort(string);
     public function focus-voice() { voice-keys.focus(); }
     callback deny();
@@ -595,7 +598,8 @@ export component NotchWindow inherits Window {
                         alignment: start;
                         // The target: the project's letter tile, or the home of the default
                         // workspace. It opens the folder menu (and stops the countdown).
-                        VMenuPick {
+                        // Not in Kiro Web: the repo is what it works on, not a folder here.
+                        if !root.voice.cloud: VMenuPick {
                             max-width: 190px;
                             open: root.voice-menu == 3;
                             enabled: !root.voice.starting;
@@ -721,6 +725,35 @@ export component NotchWindow inherits Window {
                                 padding: 6px;
                                 Text { text: root.voice-menu-head; font-family: "Pixelify Sans"; font-weight: 600; font-size: 10.5px; letter-spacing: 0.63px; color: #f6f2ff61;
                                     height: self.preferred-height + 10px; vertical-alignment: center; x: 8px; }
+                                // Kiro Web's repositories: typing keeps the ones that match; Enter picks the first.
+                                if root.voice-menu == 4: Rectangle {
+                                    height: 32px;
+                                    border-radius: 8px;
+                                    background: #ffffff0f;
+                                    border-width: 1px;
+                                    border-color: vrs.has-focus ? #c4a2ff8c : #ffffff14;
+                                    vrs := TextInput {
+                                        x: 10px;
+                                        width: parent.width - 20px;
+                                        height: parent.height;
+                                        vertical-alignment: center;
+                                        single-line: true;
+                                        font-size: 12.5px;
+                                        color: white;
+                                        selection-background-color: #c4a2ff66;
+                                        accessible-role: text-input;
+                                        accessible-id: "NotchVoiceRepoSearch";
+                                        accessible-label: "Search repositories";
+                                        edited => { root.voice-search(self.text); }
+                                        key-pressed(e) => {
+                                            if (e.text == Key.Escape) { root.voice-open-menu(0); return accept; }
+                                            if (e.text == "\n" && self.preedit-text == "") { root.voice-search-enter(); return accept; }
+                                            reject
+                                        }
+                                        init => { self.focus(); }
+                                    }
+                                    if vrs.text == "": Text { x: 10px; text: "Search repositories"; font-size: 12.5px; color: #f6f2ff61; vertical-alignment: center; }
+                                }
                                 for t in root.voice-tools: VRow { label: t.name; tool: t.id; on: t.id == root.voice.tool; clicked => { root.voice-pick(t.id); } }
                                 for m in root.voice-mm-models: VRow { label: m.label; on: m.on; clicked => { root.voice-pick-model(m.id); } }
                                 for m in root.voice-opts: VRow { label: m.label; on: m.on; clicked => { root.voice-pick-opt(m.id); } }
