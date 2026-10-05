@@ -344,6 +344,9 @@ impl Host {
         }
 
         let params = o_(vec![("sessionId", st(&id)), ("prompt", Json::Arr(vec![o_(vec![("type", st("text")), ("text", st(prompt.trim()))])]))]);
+        // TEMP (image check): what a prompt with pictures sends. Sizes only, never the words.
+        let pics = prompt.matches("Attached image (read it from this file):").count();
+        if pics > 0 { hover_core::log::line(&format!("acp {name}: {id} session/prompt cloud={} blocks=[text {} chars] pictures as paths in the text={pics}", cloud.is_some(), prompt.trim().len())); }
         let (call, rx) = self.begin_call("session/prompt", params)?;
         let me = Arc::downgrade(self);
         let cancel_sid = id.clone();
@@ -587,6 +590,9 @@ impl Host {
                 self.can_load.store(load, Ordering::SeqCst);
                 let targets = r.get("agentCapabilities").and_then(|c| c.get("_meta")).and_then(|m| m.get("kiro")).and_then(|k| k.get("executionTargets"));
                 self.can_cloud.store(matches!(targets, Some(Json::Arr(t)) if t.iter().any(|x| x.as_str() == Some("cloud-sandbox"))), Ordering::SeqCst);
+                // TEMP (image check): does this agent take pictures in a prompt? Remove once known.
+                let pc = r.get("agentCapabilities").and_then(|c| c.get("promptCapabilities")).map_or("none".into(), Json::compact);
+                hover_core::log::line(&format!("acp {name}: promptCapabilities {pc}"));
                 Ok(())
             }
             Err(e) => { self.shutdown("didn't start"); Err(e) }
