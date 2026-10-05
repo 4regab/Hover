@@ -25,7 +25,7 @@ export struct CardData { tool: string, title: string, sub: string, count: string
 export struct VoiceCard {
     kind: int, words: string, sub: string, heard: string, note: string,
     target: string, folder: string, letter: string, tint: color, home: bool,
-    tool: string, agent: string, model: string, access: string, full: bool, task: string, cloud-shown: bool, cloud: bool,
+    tool: string, agent: string, model: string, access: string, full: bool, task: string, cloud-shown: bool, cloud: bool, repo: string,
     ring: float, start: string, can-start: bool, starting: bool, retry: bool, settings: bool,
 }
 export struct VoiceTool { id: string, name: string }
@@ -266,6 +266,9 @@ export component NotchWindow inherits Window {
     in property <[MOpt]> voice-mm-models;
     in property <string> voice-mm-effort-head;
     in property <[MOpt]> voice-mm-efforts;
+    // Menu 3 is the folder, 4 the Kiro Web repo: their rows and the pick of one.
+    in property <[MOpt]> voice-opts;
+    callback voice-pick-opt(string);
     callback voice-open-menu(int);
     callback voice-pick-model(string);
     callback voice-pick-effort(string);
@@ -590,11 +593,15 @@ export component NotchWindow inherits Window {
                         vertical-stretch: 0;
                         spacing: 6px;
                         alignment: start;
-                        // The target: the project's letter tile, or the home of the default workspace.
-                        VPick {
+                        // The target: the project's letter tile, or the home of the default
+                        // workspace. It opens the folder menu (and stops the countdown).
+                        VMenuPick {
                             max-width: 190px;
-                            accessible-role: text;
-                            accessible-label: "Folder: " + root.voice.target + ", " + root.voice.folder;
+                            open: root.voice-menu == 3;
+                            enabled: !root.voice.starting;
+                            accessible-label: "Folder: " + root.voice.target + ", " + root.voice.folder + ". Change";
+                            accessible-id: "NotchVoiceFolder";
+                            clicked => { root.voice-open-menu(root.voice-menu == 3 ? 0 : 3); }
                             HorizontalLayout {
                                 padding-left: 5px;
                                 padding-right: 9px;
@@ -607,6 +614,7 @@ export component NotchWindow inherits Window {
                                 } }
                                 Text { text: root.voice.target; font-size: 12px; color: white; vertical-alignment: center; overflow: elide; }
                                 Text { text: root.voice.folder; font-family: "DejaVu Sans Mono"; font-size: 10.5px; color: #f6f2ff61; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; }
+                                VerticalLayout { alignment: center; Icon { name: Icons.chevron-down; size: 11px; tint: #f6f2ff9e; } }
                             }
                         }
                         // The agent and its model, for this task: each opens its menu (and
@@ -667,8 +675,30 @@ export component NotchWindow inherits Window {
                             }
                         }
                     }
+                    // The repo Kiro Web is given (the office's repo pick), while it is on.
+                    if root.voice.kind == 3 && root.voice.cloud: HorizontalLayout {
+                        vertical-stretch: 0;
+                        alignment: start;
+                        VMenuPick {
+                            max-width: 300px;
+                            open: root.voice-menu == 4;
+                            enabled: !root.voice.starting;
+                            accessible-label: "Repository: " + root.voice.repo + ". Change";
+                            accessible-id: "NotchVoiceRepo";
+                            clicked => { root.voice-open-menu(root.voice-menu == 4 ? 0 : 4); }
+                            HorizontalLayout {
+                                padding-left: 8px;
+                                padding-right: 8px;
+                                spacing: 6px;
+                                VerticalLayout { alignment: center; Icon { name: Icons.cloud; size: 12px; tint: #8fbcff; } }
+                                Text { text: root.voice.repo; font-size: 12px; color: white; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; }
+                                VerticalLayout { alignment: center; Icon { name: Icons.chevron-down; size: 11px; tint: #f6f2ff9e; } }
+                            }
+                        }
+                    }
                     // The open menu, under the picks (the office's #mMenu, in the card): the
-                    // agents ready for this task, or the model, then its effort or variant.
+                    // agents ready for this task, or the model, then its effort or variant;
+                    // or the folder, or the Kiro Web repo.
                     if root.voice.kind == 3 && root.voice-menu != 0: Rectangle {
                         preferred-height: min(vmm.preferred-height, 168px);
                         min-height: min(vmm.preferred-height, 64px);
@@ -692,6 +722,7 @@ export component NotchWindow inherits Window {
                                     height: self.preferred-height + 10px; vertical-alignment: center; x: 8px; }
                                 for t in root.voice-tools: VRow { label: t.name; tool: t.id; on: t.id == root.voice.tool; clicked => { root.voice-pick(t.id); } }
                                 for m in root.voice-mm-models: VRow { label: m.label; on: m.on; clicked => { root.voice-pick-model(m.id); } }
+                                for m in root.voice-opts: VRow { label: m.label; on: m.on; clicked => { root.voice-pick-opt(m.id); } }
                                 if root.voice-mm-efforts.length > 0: Text { text: root.voice-mm-effort-head; font-family: "Pixelify Sans"; font-weight: 600; font-size: 10.5px;
                                     letter-spacing: 0.63px; color: #f6f2ff61; height: self.preferred-height + 10px; vertical-alignment: center; x: 8px; }
                                 if root.voice-mm-efforts.length > 0: HorizontalLayout { padding-left: 4px; padding-right: 4px; padding-bottom: 4px; padding-top: 2px; spacing: 3px;

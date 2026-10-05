@@ -576,6 +576,34 @@ impl App {
         r
     }
 
+    /// The connected repos Kiro listed (empty until it has), and what to say instead while
+    /// there are none: still loading, why it couldn't, or that none are connected.
+    pub(crate) fn connected_repos(&self) -> (Vec<String>, String) {
+        let c = self.page.cloud.borrow();
+        match &c.repos {
+            _ if c.listing => (vec![], "Loading your connected repositories…".to_owned()),
+            Some(Err(e)) => (vec![], e.clone()),
+            Some(Ok(l)) if l.is_empty() => (vec![], "No GitHub repositories are connected. Connect GitHub in Kiro Web.".into()),
+            Some(Ok(l)) => (l.clone(), String::new()),
+            None => (vec![], String::new()),
+        }
+    }
+
+    /// Lists the connected repos once (again after a failure; Kiro starts if it isn't up),
+    /// off the UI thread, then runs `done` on it. The office's repo menu shares the list.
+    pub(crate) fn load_repos(self: &Rc<Self>, done: fn(&Rc<Self>)) {
+        {
+            let mut c = self.page.cloud.borrow_mut();
+            if c.listing || matches!(c.repos, Some(Ok(_))) { return; }
+            c.listing = true;
+        }
+        let host = self.hover.hosts.iter().find(|h| h.tool() == AgentTool::Kiro).cloned();
+        std::thread::spawn(move || {
+            let got = host.map_or_else(|| Err("Kiro isn’t set up.".to_owned()), |h| h.repos());
+            crate::ui_do(move |a| { { let mut c = a.page.cloud.borrow_mut(); c.listing = false; c.repos = Some(got); } done(a); });
+        });
+    }
+
     /// The shots' Kiro Web box: a repo picked and the list Kiro would give, without Kiro.
     pub fn cloud_shot(self: &Rc<Self>, pick: Option<&str>, repos: Vec<String>) {
         { let mut c = self.page.cloud.borrow_mut(); c.pick = Some(pick.map(str::to_owned)); c.repos = Some(Ok(repos)); }

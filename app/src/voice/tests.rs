@@ -74,7 +74,7 @@ fn harness(text: &str, o: Opt) -> H {
     let available = o.available;
     let hooks = Hooks {
         router: Box::new(|_| None),
-        start: Box::new(move |t: AgentTool, f: &str, p: &str, a: &str, _cloud: bool| { let mut s = s2.lock().unwrap(); s.push((t, f.into(), p.into(), a.into())); Ok(s.len() as i32) }),
+        start: Box::new(move |t: AgentTool, f: &str, p: &str, a: &str, _cloud: Option<Repo>| { let mut s = s2.lock().unwrap(); s.push((t, f.into(), p.into(), a.into())); Ok(s.len() as i32) }),
         available: Box::new(move |t| available(t)),
         active_project: Box::new(|| None),
     };
@@ -274,6 +274,32 @@ fn a_press_while_busy_keeps_the_current_one() {
     preview(&h.v);
     assert_eq!(h.opens.load(Ordering::SeqCst), 1);
     h.v.cancel();
+}
+
+#[test]
+fn saying_kiro_web_switches_to_kiro_in_the_cloud_and_the_card_can_change_folder_and_repo() {
+    let h = harness("use Kiro Web to fix the footer in demo", Opt { countdown: Duration::from_secs(30), ..Opt::default() });
+    let p = say(&h, false);
+    assert_eq!((p.tool, p.cloud, p.task.as_str(), p.target_name.as_str()), (AgentTool::Kiro, true, "fix the footer", "demo"), "the words are taken out of the task");
+    // Another folder: the default workspace, then back. The countdown stops; Kiro Web stays.
+    h.v.change_folder(None);
+    let Stage::Editing(p) = h.v.stage() else { panic!("{:?}", h.v.stage()) };
+    assert_eq!((p.target_name.as_str(), p.cloud, p.tool, p.countdown), ("Default workspace", true, AgentTool::Kiro, None));
+    let demo = h.v.folder_choices()[0].id.clone();
+    h.v.change_folder(Some(demo));
+    h.v.change_repo(Repo::Named("me/demo".into()));
+    let Stage::Editing(p) = h.v.stage() else { panic!() };
+    assert_eq!((p.target_name.as_str(), p.repo), ("demo", Repo::Named("me/demo".into())));
+    // Turned off and back on, a repo isn't picked for a task that isn't in Kiro Web.
+    h.v.toggle_cloud();
+    h.v.change_repo(Repo::Empty);
+    let Stage::Editing(p) = h.v.stage() else { panic!() };
+    assert_eq!((p.cloud, p.repo), (false, Repo::Named("me/demo".into())));
+    h.v.toggle_cloud();
+    h.v.start_now();
+    wait(&h.v, |s| matches!(s, Stage::Started { .. }));
+    let s = h.starts.lock().unwrap();
+    assert_eq!((s.len(), s[0].0, s[0].2.as_str()), (1, AgentTool::Kiro, "fix the footer"));
 }
 
 #[test]

@@ -723,7 +723,7 @@ fn preview(folder: &str, target: &str, note: Option<&str>, task: &str, countdown
     hover_app::voice::Preview {
         id: 1, heard: "go to hover and fix the notch blink on the second monitor when the taskbar is at the top".into(), cleanup_note: None,
         task: task.into(), folder: folder.into(), target_name: target.into(), note: note.map(Into::into), tool: AgentTool::Codex,
-        model: String::new(), access: access.into(), countdown, trial: false, cloud: false,
+        model: String::new(), access: access.into(), countdown, trial: false, cloud: false, repo: Default::default(),
     }
 }
 

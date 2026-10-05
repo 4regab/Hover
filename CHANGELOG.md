@@ -5,6 +5,16 @@ What changed in each Hover release. Versions follow [Semantic Versioning](https:
 
 ## [Unreleased]
 
+### Added
+
+- Voice's preview card can change the folder: the folder pick opens a list of your voice
+  projects and the default workspace. The countdown stops, and Start is needed.
+- Say "use Kiro Web" or "use cloud agent" (also "run in the cloud", "in Kiro Web") and the
+  task goes to Kiro in Kiro Web. Those words are taken out of the task. The card shows Kiro
+  with the cloud button on, so you can switch it off before Start. English only.
+- With Kiro Web on, the preview card has a repository pick: the folder's own repo, none, or a
+  connected one.
+
 ## [3.5.0] - 2026-10-05
 
 ### Added
