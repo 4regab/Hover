@@ -14,6 +14,9 @@ use hover_core::time::Stamp;
 use std::sync::atomic::{AtomicI32, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 
+/// What a turn that was running when Hover closed reads as, once the session is brought back.
+pub const CLOSED_TEXT: &str = "Stopped when Hover closed.";
+
 pub const MAX_RUNNING: usize = 3;
 pub const MAX_KEPT: usize = 6;
 
@@ -189,7 +192,7 @@ impl KiroSession {
             turn.before = t.before.clone();
             turn.after = t.after.clone();
             turn.steps = t.steps.clone();
-            turn.result = Some(KiroResult::new(t.state.unwrap_or(KiroState::Cancelled), t.text.clone().unwrap_or_else(|| "Stopped when Hover closed.".into())));
+            turn.result = Some(KiroResult::new(t.state.unwrap_or(KiroState::Cancelled), t.text.clone().unwrap_or_else(|| CLOSED_TEXT.into())));
             self.turns.push(turn);
         }
         self.state = self.turns.last().map_or(KiroState::Cancelled, |t| t.result.as_ref().unwrap().state);
@@ -396,7 +399,7 @@ impl KiroSessions {
         let run = slot.run.clone();
         let me = Arc::downgrade(&self.0);
         Box::new(move || {
-            std::thread::Builder::new().name("agent-turn".into()).spawn(move || go(me, id, ti, run, ct, cp, args_base)).expect("a thread for the turn");
+            std::thread::Builder::new().name("agent-turn".into()).spawn(move || go(me, id, ti, run, ct, cp, args_base, None)).expect("a thread for the turn");
         })
     }
 
@@ -485,6 +488,57 @@ impl KiroSessions {
         drop(g);
         self.raise(vec![Note::Changed]);
         Some(snap)
+    }
+
+    /// Kiro Web sessions that were still working when Hover closed are brought back to desks and
+    /// followed on (`reattach`). Reads the history off this thread; only sessions updated in the
+    /// last three days, at most the newest few.
+    pub fn reattach_cut_off(&self) {
+        let Some(h) = self.0.history.clone() else { return };
+        let me = self.clone();
+        std::thread::Builder::new().name("reattach".into()).spawn(move || {
+            let week = me.now();
+            let mut keys = vec![];
+            for e in h.entries().into_iter().filter(|e| e.tool == AgentTool::Kiro && week.secs_since(&e.updated) < 3.0 * 86400.0).take(10) {
+                let Some(s) = h.load(&e.key) else { continue };
+                let cut = s.turns.last().is_some_and(|t| t.state.is_none() || t.state == Some(KiroState::Failed) && cut_off_text(t.text.as_deref().unwrap_or("")));
+                if s.cloud.is_some() && s.acp_id.is_some() && cut { keys.push(e.key); }
+            }
+            for key in keys {
+                let Some(s) = me.wake(&key) else { continue };
+                hover_core::log::line(&format!("kiro web: {} was still working when Hover closed; attaching to it", s.title()));
+                me.reattach(s.id);
+            }
+        }).ok();
+    }
+
+    /// A Kiro Web session whose last turn was cut off (Hover closed, or the connection was lost)
+    /// goes back to running and follows the cloud session on, in that turn. False when it isn't one,
+    /// or it is busy, or three already run.
+    pub fn reattach(&self, id: i32) -> bool {
+        let mut g = self.0.inner.lock().unwrap();
+        let running = g.all.iter().filter(|x| x.s.busy()).count();
+        let Some(slot) = g.all.iter_mut().find(|x| x.s.id == id) else { return false };
+        if slot.s.busy() || running >= self.max_running() || slot.s.cloud.is_none() || slot.s.kiro_id.is_none() { return false; }
+        let Some(ti) = slot.s.turns.len().checked_sub(1) else { return false };
+        let cut = slot.s.turns[ti].result.as_ref().filter(|r| (r.state == KiroState::Cancelled && r.text == CLOSED_TEXT) || cut_off_result(r)).cloned();
+        let Some(prior) = cut else { return false };
+        let t = &mut slot.s.turns[ti];
+        t.result = None;
+        t.ended_at = None;
+        slot.s.phase = KiroPhase::Starting;
+        slot.s.state = KiroState::Running;
+        slot.s.rev += 1;
+        let ct = Cancel::new();
+        slot.cancel = Some(ct.clone());
+        let args_base = (slot.s.folder.clone(), crate::acp::ATTACH_PROMPT.to_owned(), slot.s.kiro_id.clone(), slot.s.access.clone(), slot.s.cloud.clone());
+        let (run, me) = (slot.run.clone(), Arc::downgrade(&self.0));
+        let snap = slot.s.clone();
+        drop(g);
+        self.raise(vec![Note::Changed]);
+        self.save(&snap);
+        std::thread::Builder::new().name("agent-turn".into()).spawn(move || go(me, id, ti, run, ct, None, args_base, Some(prior))).expect("a thread for the turn");
+        true
     }
 
     /// The history entry's record, whether or not it is at a desk now.
@@ -674,6 +728,27 @@ fn with<R>(me: &Weak<Shared>, id: i32, f: impl FnOnce(&mut Slot, Stamp) -> R) ->
 /// The step auto compact leaves in the turn it ran before.
 const COMPACT_STEP: &str = "hover-compact";
 const RETRY_STEP: &str = "hover-retry";
+const RECONNECT_STEP: &str = "hover-reconnect";
+
+/// Kiro's own words (and Hover's, when the agent's process ended) for a cloud session whose
+/// connection dropped while it worked on.
+fn cut_off_text(text: &str) -> bool {
+    let t = text.to_lowercase();
+    t.contains("cloud session was lost") || t.contains("connection to the cloud") || (t.contains("connection") && t.contains("lost")) || (t.len() < 40 && t.ends_with(" stopped."))
+}
+
+/// A turn that failed only because its connection to the cloud session dropped.
+fn cut_off_result(r: &KiroResult) -> bool { r.state == KiroState::Failed && !r.unconfirmed && cut_off_text(&r.text) }
+
+/// The turn's one quiet step while it reconnects.
+fn reconnect_step(me: &Weak<Shared>, id: i32, ti: usize, tries: u32, going: bool) {
+    let step = KiroStep::new(RECONNECT_STEP, "other", &format!("Reconnecting to the cloud session ({tries})"), None, if going { "in_progress" } else { "completed" });
+    if let Some((ks, ())) = with(me, id, |slot, now| {
+        let t = &mut slot.s.turns[ti];
+        match t.steps.iter().position(|x| x.id == step.id) { Some(i) => t.steps[i] = step, None => t.steps.push(step) }
+        if t.woke_at.is_none() { t.woke_at = Some(now); }
+    }) { ks.raise(vec![Note::Changed]); }
+}
 
 /// Kiro's words when the model has too many users (seen in its issue tracker and CLI).
 fn busy_message(text: &str) -> bool {
@@ -781,7 +856,8 @@ fn compact_first(me: &Weak<Shared>, id: i32, ti: usize, run: &RunTask, folder: &
 }
 
 /// KiroSession.Go: one turn, on its own thread.
-fn go(me: Weak<Shared>, id: i32, ti: usize, run: RunTask, ct: Cancel, cp: Option<(Arc<Checkpoints>, String)>, (folder, prompt, resume, access, cloud): (String, String, Option<String>, Option<String>, Option<Vec<String>>)) {
+fn go(me: Weak<Shared>, id: i32, ti: usize, run: RunTask, ct: Cancel, cp: Option<(Arc<Checkpoints>, String)>, (folder, prompt, resume, access, cloud): (String, String, Option<String>, Option<String>, Option<Vec<String>>),
+    prior: Option<KiroResult>) {
     // The folder as it is before the agent touches it (and again after, below).
     let before = cp.as_ref().and_then(|(c, key)| c.snapshot(key, &folder));
     if before.is_some() { let b = before.clone(); with(&me, id, move |slot, _| slot.s.turns[ti].before = b); }
@@ -810,17 +886,21 @@ fn go(me: Weak<Shared>, id: i32, ti: usize, run: RunTask, ct: Cancel, cp: Option
     let tag = me.upgrade().and_then(|sh| sh.inner.lock().unwrap().all.iter().find(|x| x.s.id == id).map(|x| x.s.key.clone()));
     // Kiro's cloud compacts its own conversations.
     let stopped = if cloud.is_some() { None } else { compact_first(&me, id, ti, &run, &folder, &resume, &access, &tag, &ct) };
+    // One run of the tool, with this prompt and conversation.
+    let attempt = |prompt: &str, resume: &Option<String>| -> KiroResult {
+        let args = RunArgs { folder: folder.clone(), prompt: prompt.to_owned(), progress: { let p = progress.clone(); Box::new(move |x| p(x)) }, ct: ct.clone(), resume: resume.clone(),
+            events: { let e = events.clone(); Box::new(move |x| e(x)) }, access: access.clone(), tag: tag.clone(), cloud: cloud.clone() };
+        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run(args))) {
+            Ok(r) => r,
+            Err(p) => KiroResult::new(KiroState::Failed, p.downcast_ref::<String>().cloned().or_else(|| p.downcast_ref::<&str>().map(|s| s.to_string())).unwrap_or_else(|| "The run failed.".into())),
+        }
+    };
     let (first_prompt, mut prompt, mut resume) = (prompt.clone(), prompt, resume);
     let mut tries = 0u32;
     let mut r = match stopped {
         Some(r) => r,
         None => loop {
-            let args = RunArgs { folder: folder.clone(), prompt: prompt.clone(), progress: { let p = progress.clone(); Box::new(move |x| p(x)) }, ct: ct.clone(), resume: resume.clone(),
-                events: { let e = events.clone(); Box::new(move |x| e(x)) }, access: access.clone(), tag: tag.clone(), cloud: cloud.clone() };
-            let r = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run(args))) {
-                Ok(r) => r,
-                Err(p) => KiroResult::new(KiroState::Failed, p.downcast_ref::<String>().cloned().or_else(|| p.downcast_ref::<&str>().map(|s| s.to_string())).unwrap_or_else(|| "The run failed.".into())),
-            };
+            let r = attempt(&prompt, &resume);
             if !busy_again(&me, id, &ct, &r) { break r; }
             tries += 1;
             hover_core::log::line(&format!("kiro run {id} turn {}: the model is busy, continuing (try {tries}): {}", ti + 1, crate::stream::clip(r.text.trim(), 200)));
@@ -834,6 +914,37 @@ fn go(me: Weak<Shared>, id: i32, ti: usize, run: RunTask, ct: Cancel, cp: Option
             retry_step(&me, id, ti, tries, false);
         },
     };
+    // Kiro Web: a cloud turn whose connection dropped, or that Hover closed on, is still working in the
+    // cloud. Attach to it again (5 s, 10, 20, 40, then a minute apart, eight tries) and carry on from there;
+    // if it sends nothing new or can't be reached, the turn ends as it had.
+    if cloud.is_some() && !ct.is_cancelled() && (prior.is_some() || cut_off_result(&r)) {
+        let first = prior.is_some();
+        let keep = prior.unwrap_or_else(|| r.clone());
+        let mut n = 0u32;
+        let mut cur = first.then(|| r.clone());
+        r = loop {
+            let res = match cur.take() {
+                Some(x) => x,
+                None => {
+                    n += 1;
+                    reconnect_step(&me, id, ti, n, true);
+                    let wait = (5u64 << (n - 1).min(3)).min(60);
+                    hover_core::log::line(&format!("kiro run {id} turn {}: reconnecting to the cloud session in {wait} s (try {n})", ti + 1));
+                    for _ in 0..wait * 10 { if ct.is_cancelled() { break; } std::thread::sleep(std::time::Duration::from_millis(100)); }
+                    if ct.is_cancelled() { break KiroResult::new(KiroState::Cancelled, "Stopped before Kiro finished."); }
+                    let now = with(&me, id, |slot, _| slot.s.kiro_id.clone()).and_then(|(_, k)| k).or_else(|| resume.clone());
+                    attempt(crate::acp::ATTACH_PROMPT, &now)
+                }
+            };
+            if ct.is_cancelled() { break KiroResult::new(KiroState::Cancelled, "Stopped before Kiro finished."); }
+            if res.text == crate::acp::ATTACH_NOTHING { break keep.clone(); }
+            let again = res.state == KiroState::Failed && (res.text.starts_with(crate::acp::ATTACH_FAILED) || cut_off_result(&res));
+            if again && n < 8 { continue; }
+            break if again { keep.clone() } else { res };
+        };
+        hover_core::log::line(&format!("kiro run {id} turn {}: after {n} reconnects the turn is {}", ti + 1, r.state.name().to_lowercase()));
+        if n > 0 { reconnect_step(&me, id, ti, n, false); }
+    }
     if ct.is_cancelled() && r.state != KiroState::Completed && !r.unconfirmed { r.state = KiroState::Cancelled; }
     let after = if before.is_some() { cp.as_ref().and_then(|(c, key)| c.snapshot(key, &kept_folder)) } else { None };
     let Some((ks, (snap, next, denied))) = with(&me, id, |slot, now| {

@@ -848,6 +848,8 @@ fn main() {
     let app = platform_start(hover.clone(), look, selftest.is_some());
     hover_core::platform::watch_look(|| ui_do(|a| a.look_changed(hover_core::platform::look())));
     hover_core::log::line("started");
+    // Kiro Web tasks that were still working in the cloud when Hover closed are followed on.
+    hover.sessions.reattach_cut_off();
     if bench::active() { bench::listen(); }
     #[cfg(target_os = "linux")]
     if let Some(dir) = selftest {

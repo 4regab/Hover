@@ -26,6 +26,15 @@ use std::time::Duration;
 /// sent as `_kiro/session/compact` (session.rs's auto compact; a reply of `/compact` too).
 pub const COMPACT_PROMPT: &str = "/compact";
 
+/// Not a prompt: a run of exactly this attaches to a Kiro Web session that is still working
+/// in the cloud (its connection was lost, or Hover was closed) and follows it on, in the
+/// turn that was cut off. It ends with the answer, or with ATTACH_NOTHING when the session
+/// sent nothing new, which leaves the earlier failure as it was.
+pub const ATTACH_PROMPT: &str = "/hover-attach-cloud";
+pub const ATTACH_NOTHING: &str = "The cloud session sent nothing new.";
+/// How a failed attempt to open the session begins (the reply the cloud gave, if any, follows).
+pub const ATTACH_FAILED: &str = "Couldn’t open this Kiro Web session again";
+
 /// Where Kiro Web shows a cloud session: this, then the session's id.
 pub const KIRO_WEB_SESSION: &str = "https://app.kiro.dev/session/";
 
@@ -64,12 +73,40 @@ struct Turn {
     token: Cancel,
     /// While a conversation is loaded back, the agent replays it; that isn't news.
     muted: AtomicBool,
+    /// Only when attaching: the replay is read into this (the last turn's part of it), and the
+    /// stream carries on from it.
+    replay: Mutex<Option<Replay>>,
+    /// When the agent last sent anything for this turn.
+    last_update: Mutex<std::time::Instant>,
+    /// Updates for this turn since it was loaded.
+    live: AtomicUsize,
     refused: AtomicBool,
     /// The MCP servers the agent said didn't start this turn, in the order it said so.
     mcp_failed: Mutex<Vec<String>>,
     /// Access "none": every request the agent makes is turned down, reading too (voice's
     /// routing turn, which only reads what it is sent).
     deny_all: bool,
+}
+
+/// A loaded cloud conversation as it is replayed: the part after the last message of the
+/// user's is the turn that was cut off, so each user message starts the stream afresh.
+struct Replay { name: &'static str, stream: KiroStream, in_user: bool, updates: usize, kinds: Vec<(String, usize)> }
+
+impl Replay {
+    fn new(name: &'static str) -> Replay { Replay { name, stream: KiroStream::new(name), in_user: false, updates: 0, kinds: vec![] } }
+
+    fn feed(&mut self, line: &str, update: Option<&Json>) {
+        let kind = update.and_then(|u| s(u, "sessionUpdate")).unwrap_or("-").to_owned();
+        self.updates += 1;
+        match self.kinds.iter_mut().find(|k| k.0 == kind) { Some(k) => k.1 += 1, None => self.kinds.push((kind.clone(), 1)) }
+        if kind == "user_message_chunk" {
+            if !self.in_user { self.stream = KiroStream::new(self.name); }
+            self.in_user = true;
+            return;
+        }
+        self.in_user = false;
+        self.stream.feed(line);
+    }
 }
 
 struct Live {
@@ -240,6 +277,7 @@ impl Host {
         self.busy.fetch_add(1, Ordering::SeqCst);
         self.idle.fetch_add(1, Ordering::SeqCst);
         let turn = Arc::new(Turn { stream: Mutex::new(KiroStream::new(name)), progress, events, options: o.clone(), folder: folder.into(), token: ct.clone(), muted: AtomicBool::new(false),
+            replay: Mutex::new(None), last_update: Mutex::new(std::time::Instant::now()), live: AtomicUsize::new(0),
             refused: AtomicBool::new(false), mcp_failed: Mutex::new(vec![]), deny_all: access == Some("none") });
         let mut sid: Option<String> = None;
         let r = self.turn(folder, prompt, ct, resume, &o, &turn, &mut sid, &mcp, cloud);
@@ -275,6 +313,7 @@ impl Host {
         if cloud.is_some() && !self.can_cloud.load(Ordering::SeqCst) {
             return Err(CallErr::Acp(format!("{name} on this computer can’t run Kiro Web sessions. Update Kiro CLI, and check that cloud sessions are on for your account.")));
         }
+        if prompt == ATTACH_PROMPT { return self.attach(folder, ct, resume, turn, sid, mcp, cloud); }
         let mut offered: Option<Vec<AcpOption>> = None;
         if let Some(r) = resume.filter(|r| !r.is_empty()) {
             let known = self.session_options.lock().unwrap().get(r).cloned();
@@ -375,6 +414,73 @@ impl Host {
             }
         }?;
         Ok(self.finish(turn, s(&reply, "stopReason"), ct.is_cancelled()))
+    }
+
+    /// Attaches to a cloud session that went on working while Hover was away: loads it again
+    /// (the cloud replays it, then sends what happens next), reads the replay for the turn that
+    /// was cut off, and follows that turn to its end. Logged closely: what Kiro sends to a client
+    /// that attaches mid-turn isn't in its docs.
+    #[allow(clippy::too_many_arguments)]
+    fn attach(self: &Arc<Self>, folder: &str, ct: &Cancel, resume: Option<&str>, turn: &Arc<Turn>, sid: &mut Option<String>, mcp: &(Json, String),
+        cloud: Option<&[String]>) -> Result<KiroResult, CallErr> {
+        let name = self.name();
+        let again = |m: String| CallErr::Acp(format!("{ATTACH_FAILED}{}", if m.is_empty() { ".".into() } else { format!(": {m}") }));
+        let Some(r) = resume.filter(|r| !r.is_empty()).filter(|_| cloud.is_some()) else { return Err(again(String::new())) };
+        if !self.can_load.load(Ordering::SeqCst) { return Err(again(String::new())); }
+        let began = std::time::Instant::now();
+        *turn.replay.lock().unwrap() = Some(Replay::new(name));
+        turn.muted.store(true, Ordering::SeqCst);
+        self.turns.lock().unwrap().insert(r.into(), turn.clone());
+        let params = vec![("sessionId", st(r)), ("cwd", st(folder)), ("mcpServers", mcp.0.clone()),
+            ("_meta", o_(vec![("kiro", o_(vec![("sessionSource", st("remote"))]))]))];
+        let res = match self.call("session/load", o_(params), Some(ct), Some(Duration::from_secs(120))) {
+            Ok(res) => res,
+            Err(CallErr::Acp(m)) => {
+                self.turns.lock().unwrap().remove(r);
+                hover_core::log::line(&format!("acp {name}: attach {r}: couldn't load it - {m}"));
+                return Err(again(m));
+            }
+            Err(e) => return Err(e),
+        };
+        *sid = Some(r.into());
+        self.session_mcp.lock().unwrap().insert(r.into(), mcp.1.clone());
+        if let Some(o) = options(&res) { self.session_options.lock().unwrap().insert(r.into(), o); }
+        // The replay's last turn becomes the stream, and its steps and context go to the chat.
+        let Some(rep) = turn.replay.lock().unwrap().take() else { return Err(again(String::new())) };
+        let kinds = rep.kinds.iter().map(|k| format!("{}={}", k.0, k.1)).collect::<Vec<_>>().join(" ");
+        let (completed, said_len) = (rep.stream.completed, rep.stream.said().len());
+        hover_core::log::line(&format!("acp {name}: attach {r}: replayed {} updates in {} ms [{kinds}]; the last turn {} and said {said_len} bytes",
+            rep.updates, began.elapsed().as_millis(), if completed { "was completed" } else { "has no completion report" }));
+        let events = { let mut st = turn.stream.lock().unwrap(); *st = rep.stream; st.drain() };
+        if let Some(f) = &turn.events { for e in events { f(e); } }
+        *turn.last_update.lock().unwrap() = std::time::Instant::now();
+        turn.live.store(0, Ordering::SeqCst);
+        turn.muted.store(false, Ordering::SeqCst);
+        if completed { return Ok(self.finish(turn, Some("end_turn"), false)); }
+        // Not reported complete: follow what comes. A session that is working keeps sending (tool calls,
+        // thinking, its context); one that sends nothing for a while is not working on this.
+        const FIRST: Duration = Duration::from_secs(30);
+        const QUIET: Duration = Duration::from_secs(120);
+        loop {
+            if ct.is_cancelled() { return Err(CallErr::Cancelled); }
+            if self.link.lock().unwrap().is_none() { return Err(CallErr::Gone(format!("{name} stopped."))); }
+            let (done, n) = (turn.stream.lock().unwrap().completed, turn.live.load(Ordering::SeqCst));
+            let quiet = turn.last_update.lock().unwrap().elapsed();
+            if done {
+                hover_core::log::line(&format!("acp {name}: attach {r}: the turn completed after {n} live updates, {} s", began.elapsed().as_secs()));
+                return Ok(self.finish(turn, Some("end_turn"), false));
+            }
+            if n == 0 && quiet > FIRST {
+                hover_core::log::line(&format!("acp {name}: attach {r}: nothing live in {} s and no completion report; leaving the turn as it was", FIRST.as_secs()));
+                return Ok(KiroResult::new(KiroState::Failed, ATTACH_NOTHING));
+            }
+            if n > 0 && quiet > QUIET {
+                hover_core::log::line(&format!("acp {name}: attach {r}: {n} live updates, then quiet for {} s with no completion report; taking it as finished", QUIET.as_secs()));
+                return Ok(self.finish(turn, Some("end_turn"), false));
+            }
+            // ponytail: polled every 100 ms; a condvar is the upgrade if many cloud sessions are followed at once.
+            std::thread::sleep(Duration::from_millis(100));
+        }
     }
 
     /// A new cloud session takes its prompt only once its sandbox is up: one sent before
@@ -736,9 +842,18 @@ impl Host {
             if let Some(t) = &turn { self.mcp_status(t, &p); }
             return;
         }
-        let Some(turn) = turn.filter(|t| !t.muted.load(Ordering::SeqCst)) else { return };
+        let Some(turn) = turn else { return };
+        if turn.muted.load(Ordering::SeqCst) {
+            // Attaching: the replay is read for the turn that was cut off; otherwise it is ignored.
+            if method == "session/update" {
+                if let Some(rp) = turn.replay.lock().unwrap().as_mut() { rp.feed(line, p.get("update")); }
+            }
+            return;
+        }
         match method {
             "session/update" => {
+                *turn.last_update.lock().unwrap() = std::time::Instant::now();
+                turn.live.fetch_add(1, Ordering::SeqCst);
                 let (phase, events) = { let mut st = turn.stream.lock().unwrap(); (st.feed(line), st.drain()) };
                 if let (Some(p), Some(f)) = (phase, &turn.progress) { f(p); }
                 if let Some(f) = &turn.events { for e in events { f(e); } }

@@ -60,6 +60,8 @@ pub struct KiroStream {
     pub finished: bool,
     pub session_id: Option<String>,
     pub context: Option<f64>,
+    /// Kiro said the turn is over (its turn_completion report, which also carries the credits).
+    pub completed: bool,
     said: String,
     plain: std::collections::VecDeque<String>,
     events: Vec<KiroEvent>,
@@ -95,7 +97,7 @@ fn num(e: &Json, name: &str) -> Option<f64> { match e.get(name) { Some(v @ Json:
 impl KiroStream {
     pub fn new(name: &str) -> KiroStream {
         KiroStream { name: name.into(), phase: KiroPhase::Starting, final_text: None, stop_reason: None, error: None, interrupted: false, finished: false,
-            session_id: None, context: None, said: String::new(), plain: Default::default(), events: vec![], steps: Default::default(), began: Default::default(), after_tool: false,
+            session_id: None, context: None, completed: false, said: String::new(), plain: Default::default(), events: vec![], steps: Default::default(), began: Default::default(), after_tool: false,
             message: None, is_final: false, thought: None, thoughts: 0, thought_sent: None }
     }
 
@@ -235,6 +237,7 @@ impl KiroStream {
                 if let Some(p) = pct { self.set_context(p); }
                 // At a turn's end: {"_meta":{"kiro":{"kind":"turn_completion",
                 // "promptTurnSummaries":[{"unit":"credit","usage":0.087}]}}}.
+                if kiro.is_some_and(|k| s(k, "kind") == Some("turn_completion")) { self.completed = true; }
                 if let Some(Json::Arr(sums)) = kiro.filter(|k| s(k, "kind") == Some("turn_completion")).and_then(|k| k.get("promptTurnSummaries")) {
                     let credits = sums.iter().filter(|x| s(x, "unit") == Some("credit")).filter_map(|x| num(x, "usage")).reduce(|a, b| a + b);
                     if let Some(spent) = credits { self.events.push(KiroEvent { credits: Some(spent), ..Default::default() }); }
