@@ -160,6 +160,8 @@ pub struct VoiceSettings {
     pub agent: Option<AgentTool>,
     /// Seconds the preview counts down before it starts the task; 0 waits for Start.
     pub countdown: u32,
+    /// The listening card's aura, as #RRGGBB; None is AURA_COLOR.
+    pub aura_color: Option<String>,
 }
 
 impl VoiceSettings {
@@ -168,12 +170,35 @@ impl VoiceSettings {
     /// The countdowns Settings offers (0 is Off), and the default.
     pub const COUNTDOWNS: [u32; 4] = [0, 3, 5, 10];
     pub const COUNTDOWN: u32 = 5;
+    /// The aura's colour unless one is picked (LiveKit's Aura's own).
+    pub const AURA_COLOR: &str = "#1FD5F9";
+    /// The colours Settings offers; any other is typed in.
+    pub const AURA_COLORS: [(&str, &str); 6] =
+        [("Cyan", "#1FD5F9"), ("Violet", "#C4A2FF"), ("Green", "#4ADE80"), ("Amber", "#FFB340"), ("Pink", "#FF6BD5"), ("White", "#F6F2FF")];
+
+    /// The aura's colour now, as #RRGGBB.
+    pub fn aura(&self) -> &str { self.aura_color.as_deref().unwrap_or(Self::AURA_COLOR) }
+
+    /// #RRGGBB from "#rgb", "rrggbb" and the like (upper case); None if it isn't one.
+    pub fn hex_color(s: &str) -> Option<String> {
+        let h = s.trim().trim_start_matches('#');
+        if !h.chars().all(|c| c.is_ascii_hexdigit()) { return None; }
+        let full = match h.len() { 3 => h.chars().flat_map(|c| [c, c]).collect(), 6 => h.to_owned(), _ => return None };
+        Some(format!("#{}", full.to_ascii_uppercase()))
+    }
+
+    /// The colour's red, green and blue.
+    pub fn rgb(hex: &str) -> [u8; 3] {
+        let v = Self::hex_color(hex).and_then(|h| u32::from_str_radix(&h[1..], 16).ok()).unwrap_or(0x1FD5F9);
+        [(v >> 16) as u8, (v >> 8) as u8, v as u8]
+    }
 }
 
 impl Default for VoiceSettings {
     fn default() -> Self {
         VoiceSettings { enabled: false, shortcut: Self::SHORTCUT, microphone: None, speech: SpeechMode::Cloud, local: None, model: TRANSCRIBE_MODELS[0].0.into(), cleanup: false,
-            cleanup_provider: CleanupProvider::Gemini, cleanup_model: None, cleanup_base: None, agent: None, countdown: Self::COUNTDOWN }
+            cleanup_provider: CleanupProvider::Gemini, cleanup_model: None, cleanup_base: None, agent: None, countdown: Self::COUNTDOWN,
+            aura_color: None }
     }
 }
 
@@ -183,7 +208,8 @@ impl VoiceSettings {
             ("Speech", Json::str(self.speech.id())), ("Local", self.local.as_ref().map(LocalModel::to_json).unwrap_or(Json::Null)),
             ("Model", Json::str(&self.model)), ("Cleanup", Json::Bool(self.cleanup)), ("CleanupProvider", Json::str(self.cleanup_provider.name())),
             ("CleanupModel", Json::opt_str_of(self.cleanup_model.as_deref())), ("CleanupBase", Json::opt_str_of(self.cleanup_base.as_deref())),
-            ("Agent", Json::opt_str_of(self.agent.map(AgentTool::id))), ("Countdown", Json::int(self.countdown as i64))])
+            ("Agent", Json::opt_str_of(self.agent.map(AgentTool::id))), ("Countdown", Json::int(self.countdown as i64)),
+            ("AuraColor", Json::opt_str_of(self.aura_color.as_deref()))])
     }
 
     pub fn from_json(v: &Json) -> Result<VoiceSettings> {
@@ -211,6 +237,8 @@ impl VoiceSettings {
             agent: AgentTool::parse(opt_text(v.get("Agent"))?.as_deref()),
             // Settings before this had none (3 s, fixed): the new default. A minute at most.
             countdown: match v.get("Countdown") { Some(n @ Json::Num(_)) => n.i64().ok().filter(|n| (0..=60).contains(n)).map_or(d.countdown, |n| n as u32), _ => d.countdown },
+            // One that isn't a colour is the default.
+            aura_color: opt_text(v.get("AuraColor")).ok().flatten().as_deref().and_then(Self::hex_color),
         })
     }
 }
@@ -306,6 +334,20 @@ mod tests {
         // Settings from before it was a setting, and nonsense, get the default.
         for old in [r#"{"Enabled":true}"#, r#"{"Countdown":-1}"#, r#"{"Countdown":600}"#, r#"{"Countdown":"5"}"#] {
             assert_eq!(VoiceSettings::from_json(&crate::json::parse(old).unwrap()).unwrap().countdown, 5, "{old}");
+        }
+    }
+
+    #[test]
+    fn the_aura_colour_is_kept_as_hex_and_anything_else_is_the_default() {
+        let d = VoiceSettings::default();
+        assert_eq!((d.aura(), VoiceSettings::rgb(d.aura())), ("#1FD5F9", [0x1f, 0xd5, 0xf9]));
+        let v = VoiceSettings { aura_color: Some("#C4A2FF".into()), ..d.clone() };
+        assert_eq!(VoiceSettings::from_json(&v.to_json()).unwrap(), v);
+        for (typed, hex) in [("#c4a2ff", Some("#C4A2FF")), ("c4a2ff", Some("#C4A2FF")), (" #f0a ", Some("#FF00AA")), ("#12345", None), ("blue", None), ("", None)] {
+            assert_eq!(VoiceSettings::hex_color(typed).as_deref(), hex, "{typed}");
+        }
+        for old in [r#"{"Enabled":true}"#, r#"{"AuraColor":"nope"}"#, r#"{"AuraColor":7}"#] {
+            assert_eq!(VoiceSettings::from_json(&crate::json::parse(old).unwrap()).unwrap().aura_color, None, "{old}");
         }
     }
 

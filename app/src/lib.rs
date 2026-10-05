@@ -7,6 +7,7 @@
 compile_error!("The hover app is for Windows and Linux; on macOS build macos/ (Swift) with scripts/build-macos.sh, which runs on crates/hover-backend.");
 
 pub mod app;
+pub mod aura;
 pub mod keys;
 pub mod music;
 pub mod pages;

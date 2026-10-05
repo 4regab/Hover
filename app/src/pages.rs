@@ -550,6 +550,15 @@ fn voice(b: &mut Vec<Block>, i: &Input) {
         row("Microphone", None, Control::Picker { id: "VoiceMicrophone".into(), name: "Microphone".into(),
             shown: v.microphone.clone().unwrap_or_else(|| "System default".into()), options: mics }, Lead::None),
     ]));
+    // The aura on the listening card: one of the offered colours, or any typed in.
+    let aura = v.aura();
+    let preset = VoiceSettings::AURA_COLORS.iter().find(|c| c.1 == aura);
+    b.push(Block::Group(vec![
+        row("Aura colour", Some("The light that swirls on the notch while it listens and works on what you said.".into()),
+            Control::Picker { id: "VoiceAuraColor".into(), name: "Aura colour".into(), shown: preset.map_or_else(|| "Custom".to_owned(), |c| c.0.to_owned()),
+                options: VoiceSettings::AURA_COLORS.iter().map(|c| (c.0.to_owned(), Some(c) == preset)).collect() }, Lead::None),
+        row("Custom colour", Some("Any colour, as hex: #1FD5F9.".into()), field("VoiceAuraHex", "Aura colour, hex", aura, VoiceSettings::AURA_COLOR), Lead::None),
+    ]));
 
     heading(b, "Speech recognition");
     let mut language = row("Language", None, Control::Text(if local { "English only" } else { "Detected automatically" }.into()), Lead::None);

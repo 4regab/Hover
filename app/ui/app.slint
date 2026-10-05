@@ -238,6 +238,8 @@ export component NotchWindow inherits Window {
     // listening, the agents to pick from, and a press turned away as busy.
     in property <VoiceCard> voice;
     in property <float> voice-level;
+    // The listening and working cards' aura (aura.rs), redrawn each frame they show.
+    in property <image> voice-aura;
     in property <[VoiceTool]> voice-tools;
     in property <bool> voice-busy;
     // The one-line cards (listening, working on what was said, started, cancelled) are
@@ -247,7 +249,7 @@ export component NotchWindow inherits Window {
     out property <length> voice-w: root.voice.kind == 1 || root.voice.kind == 2 ? min(440px, vl.preferred-width)
         : root.voice.kind == 5 || root.voice.kind == 6 ? min(330px, vs.preferred-width)
         : root.voice.kind == 7 ? 420px : 460px;
-    out property <length> voice-h: root.voice.kind == 1 || root.voice.kind == 2 ? 52px : root.voice.kind == 5 || root.voice.kind == 6 ? 34px
+    out property <length> voice-h: root.voice.kind == 1 || root.voice.kind == 2 ? 74px : root.voice.kind == 5 || root.voice.kind == 6 ? 34px
         : root.voice.kind == 7 ? max(58px, ve.preferred-height) : min(vc.preferred-height, root.open-h);
     callback voice-start();
     callback voice-toggle-cloud();
@@ -519,53 +521,26 @@ export component NotchWindow inherits Window {
                     if (e.text == Key.Return && !e.modifiers.shift && root.voice.kind == 3 && root.voice.can-start) { root.voice-start(); return accept; }
                     reject
                 }
-                // The widest the listening time gets ("10:00", the ten-minute cap),
-                // measured but never drawn and never in a layout: the time's cell is held
-                // at this, so the card doesn't change width as the digits do.
-                vclock := Text { x: 0; y: 0; width: 0; height: 0; visible: false; text: "10:00"; font-size: 11.5px; font-weight: 500; }
-                // .nlisten: the mic swells a little with the voice's level; while Hover
-                // works on what was said a ring goes round it.
+                // .nlisten: only the aura (aura.rs, drawn each frame), no words and no Esc
+                // chip (the Esc key still cancels): it swirls and swells with the voice
+                // while listening, and swirls faster, pulsing, while Hover works on what
+                // was said. A screen reader still hears the stage and the time.
                 vl := HorizontalLayout {
                     x: 0;
                     y: 0;
                     width: root.voice-w;
-                    height: 52px;
+                    height: 74px;
                     visible: root.voice.kind == 1 || root.voice.kind == 2;
-                    padding-left: 14px;
-                    padding-right: 14px;
-                    spacing: 11px;
-                    VerticalLayout { alignment: center; Rectangle {
-                        width: 26px;
-                        height: 26px;
-                        property <float> k: root.voice.kind == 1 ? 1 + 0.35 * min(1, root.voice-level) : 1;
-                        Rectangle {
-                            width: 26px * parent.k;
-                            height: 26px * parent.k;
-                            border-radius: self.width / 2;
-                            background: #ffffff1c;
-                            animate width, height { duration: Pal.motion ? 90ms : 0ms; }
-                        }
-                        Icon { name: Icons.mic; size: 13px; tint: white; }
-                        if root.voice.kind == 2: Path {
-                            x: -2px; y: -2px; width: 30px; height: 30px; viewbox-width: 30; viewbox-height: 30;
-                            commands: Arc.of(15, 14, mod(Clock.t * 313, 360) * 1deg, 100deg);
-                            stroke: #c4a2ff; stroke-width: 2px; stroke-line-cap: round; fill: transparent;
-                        }
-                    } }
-                    Text {
-                        text: root.voice.words;
-                        font-size: 13px;
-                        color: root.voice.kind == 1 ? #f6f2ff61 : #f6f2ffd9;
-                        vertical-alignment: center;
-                        horizontal-stretch: 1;
-                        overflow: elide;
+                    padding-left: 24px;
+                    padding-right: 24px;
+                    VerticalLayout { alignment: center; Image {
+                        width: 66px;
+                        height: 66px;
+                        source: root.voice-aura;
                         accessible-role: text;
                         accessible-id: "NotchVoiceStage";
                         accessible-label: root.voice.words + " " + root.voice.sub;
-                    }
-                    if root.voice.sub != "": Text { text: root.voice.sub; font-size: 11.5px; font-weight: 500; color: #f6f2ff61; vertical-alignment: center;
-                        min-width: vclock.preferred-width; horizontal-alignment: right; }
-                    VerticalLayout { alignment: center; EscChip { clicked => { root.voice-cancel(); } } }
+                    } }
                 }
                 // .ncard: what was heard, the target, the agent and the access, the task
                 // (edit it to stop the countdown), Start with its ring, and Cancel.

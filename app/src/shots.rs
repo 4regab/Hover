@@ -807,6 +807,12 @@ fn voice_shots(app: &Rc<App>, hover: &Arc<hover_app::app::Hover>, dir: &Path, da
         app.notch.invoke_voice_open_menu(0);
         app.voice_ui.ready.borrow_mut().take();
     }
+    // The aura in a colour picked in Settings → Voice.
+    hover.settings.set_voice(hover_core::projects::VoiceSettings { aura_color: Some("#C4A2FF".into()), ..hover.settings.voice() });
+    draw(&states[0].1);
+    let w = app.n.borrow().win.width() as u32;
+    save(&notch, (w, 200), 2.0, desk, &dir.join("voice-listening-violet-2x.png"));
+    hover.settings.set_voice(hover_core::projects::VoiceSettings { aura_color: None, ..hover.settings.voice() });
     // A press while one is in progress: the card glows amber a moment.
     draw(&states[4].1);
     app.notch.set_voice_busy(true);

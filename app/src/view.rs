@@ -327,6 +327,14 @@ fn edited(h: &dyn Host, pane: &RefCell<Pane>, id: &str, v: &str) {
             Some(b) if !(b.starts_with("https://") || b.starts_with("http://")) => note(pane, id, "Use the full address, starting with https://.".into()),
             b => { st.set_voice(VoiceSettings { cleanup_base: b.map(|b| b.trim_end_matches('/').to_owned()), ..st.voice() }); h.action("voice.changed"); }
         },
+        // Empty goes back to the default colour.
+        "VoiceAuraHex" => match text() {
+            None => st.set_voice(VoiceSettings { aura_color: None, ..st.voice() }),
+            Some(t) => match VoiceSettings::hex_color(&t) {
+                Some(c) => st.set_voice(VoiceSettings { aura_color: Some(c), ..st.voice() }),
+                None => note(pane, id, "Use a hex colour, like #1FD5F9.".into()),
+            },
+        },
         "VoiceGroqKey" | "VoiceCleanupKey" => {
             let name = if id == "VoiceGroqKey" { GROQ_SECRET } else { st.voice().cleanup_provider.secret() };
             // The error never holds the key (Secrets::set's promise).
@@ -437,6 +445,7 @@ pub fn menu_pick(h: &dyn Host, pane: &RefCell<Pane>, id: &str, i: usize) {
             h.action("voice.changed");
         }
         "VoiceModel" => { st.set_voice(VoiceSettings { model: TRANSCRIBE_MODELS[i.min(TRANSCRIBE_MODELS.len() - 1)].0.into(), ..st.voice() }); h.action("voice.changed"); }
+        "VoiceAuraColor" => if let Some(c) = VoiceSettings::AURA_COLORS.get(i) { st.set_voice(VoiceSettings { aura_color: Some(c.1.into()), ..st.voice() }); },
         // Voice's own default agent from then on; the new-task box keeps its own.
         "VoiceAgentTool" => { if let Some(&t) = AgentTool::ALL.get(i) { st.set_voice(VoiceSettings { agent: Some(t), ..st.voice() }); } }
         _ => {}
