@@ -35,6 +35,35 @@ pub const ATTACH_NOTHING: &str = "The cloud session sent nothing new.";
 /// How a failed attempt to open the session begins (the reply the cloud gave, if any, follows).
 pub const ATTACH_FAILED: &str = "Couldn’t open this Kiro Web session again";
 
+/// How a pasted picture's line in a prompt begins (KiroTurn::text), then its file.
+pub const ATTACHED: &str = "Attached image (read it from this file): ";
+/// The most a picture may be, and how many go with one prompt (Kiro's own limits).
+const IMAGE_MAX: u64 = 10 * 1024 * 1024;
+const IMAGES_MAX: usize = 10;
+
+/// The prompt's content blocks. Kiro gets each pasted picture as an image block (its contents,
+/// so a Kiro Web session's sandbox, which can't read this computer's files, sees it too) and the
+/// text without those lines. A picture it can't be sent (gone, too big, past the tenth, or the agent
+/// takes none) stays a line naming its file, which an agent on this computer can still read.
+fn prompt_blocks(prompt: &str, images: bool) -> Json {
+    let text = |t: &str| o_(vec![("type", st("text")), ("text", st(t.trim()))]);
+    if !images || !prompt.contains(ATTACHED) { return Json::Arr(vec![text(prompt)]); }
+    let (mut kept, mut pics) = (vec![], vec![]);
+    for line in prompt.lines() {
+        let pic = line.strip_prefix(ATTACHED).filter(|_| pics.len() < IMAGES_MAX).and_then(|p| {
+            let mime = match std::path::Path::new(p).extension()?.to_str()?.to_ascii_lowercase().as_str() {
+                "png" => "image/png", "jpg" | "jpeg" => "image/jpeg", "gif" => "image/gif", "webp" => "image/webp", _ => return None,
+            };
+            if std::fs::metadata(p).ok()?.len() > IMAGE_MAX { return None; }
+            Some(o_(vec![("type", st("image")), ("mimeType", st(mime)), ("data", st(&crate::http::base64(&std::fs::read(p).ok()?)))]))
+        });
+        match pic { Some(b) => pics.push(b), None => kept.push(line) }
+    }
+    let mut blocks = vec![text(&kept.join("\n"))];
+    blocks.extend(pics);
+    Json::Arr(blocks)
+}
+
 /// Where Kiro Web shows a cloud session: this, then the session's id.
 pub const KIRO_WEB_SESSION: &str = "https://app.kiro.dev/session/";
 
@@ -143,6 +172,8 @@ struct Host {
     boxed: Arc<Boxed>,
     /// The process can run sessions in Kiro's cloud (initialize's executionTargets).
     can_cloud: AtomicBool,
+    /// The agent takes pictures in a prompt (initialize's promptCapabilities.image).
+    can_image: AtomicBool,
     /// Cloud sessions whose sandbox said it is ready (its first context_usage), by ACP
     /// session id; cleared with the process.
     ready: Mutex<HashSet<String>>,
@@ -177,7 +208,7 @@ impl AcpHost {
             tool, options: Box::new(options), connect, gate: Mutex::new(()), link: Mutex::new(None), gens: AtomicU64::new(0),
             pending: Mutex::new(HashMap::new()), turns: Mutex::new(HashMap::new()), session_options: Mutex::new(HashMap::new()),
             can_load: AtomicBool::new(false), ids: AtomicI64::new(0), busy: AtomicUsize::new(0), idle: AtomicU64::new(0), seen: Mutex::new(vec![]),
-            asking: Mutex::new(None), trusted: Mutex::new(HashMap::new()), session_mcp: Mutex::new(HashMap::new()), mcp: Mutex::new(default_mcp(tool)), boxed, can_cloud: AtomicBool::new(false), ready: Mutex::new(HashSet::new()),
+            asking: Mutex::new(None), trusted: Mutex::new(HashMap::new()), session_mcp: Mutex::new(HashMap::new()), mcp: Mutex::new(default_mcp(tool)), boxed, can_cloud: AtomicBool::new(false), can_image: AtomicBool::new(false), ready: Mutex::new(HashSet::new()),
         }))
     }
 
@@ -382,10 +413,8 @@ impl Host {
                 else { KiroResult::new(KiroState::Completed, "Compacted the conversation.") });
         }
 
-        let params = o_(vec![("sessionId", st(&id)), ("prompt", Json::Arr(vec![o_(vec![("type", st("text")), ("text", st(prompt.trim()))])]))]);
-        // TEMP (image check): what a prompt with pictures sends. Sizes only, never the words.
-        let pics = prompt.matches("Attached image (read it from this file):").count();
-        if pics > 0 { hover_core::log::line(&format!("acp {name}: {id} session/prompt cloud={} blocks=[text {} chars] pictures as paths in the text={pics}", cloud.is_some(), prompt.trim().len())); }
+        let images = self.tool == AgentTool::Kiro && self.can_image.load(Ordering::SeqCst);
+        let params = o_(vec![("sessionId", st(&id)), ("prompt", prompt_blocks(prompt, images))]);
         let (call, rx) = self.begin_call("session/prompt", params)?;
         let me = Arc::downgrade(self);
         let cancel_sid = id.clone();
@@ -696,9 +725,8 @@ impl Host {
                 self.can_load.store(load, Ordering::SeqCst);
                 let targets = r.get("agentCapabilities").and_then(|c| c.get("_meta")).and_then(|m| m.get("kiro")).and_then(|k| k.get("executionTargets"));
                 self.can_cloud.store(matches!(targets, Some(Json::Arr(t)) if t.iter().any(|x| x.as_str() == Some("cloud-sandbox"))), Ordering::SeqCst);
-                // TEMP (image check): does this agent take pictures in a prompt? Remove once known.
-                let pc = r.get("agentCapabilities").and_then(|c| c.get("promptCapabilities")).map_or("none".into(), Json::compact);
-                hover_core::log::line(&format!("acp {name}: promptCapabilities {pc}"));
+                let image = r.get("agentCapabilities").and_then(|c| c.get("promptCapabilities")).and_then(|p| p.get("image")) == Some(&Json::Bool(true));
+                self.can_image.store(image, Ordering::SeqCst);
                 Ok(())
             }
             Err(e) => { self.shutdown("didn't start"); Err(e) }

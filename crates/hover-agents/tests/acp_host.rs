@@ -31,6 +31,8 @@ struct FakeState {
     model: String,
     /// MCP servers it reports as failed (_kiro/mcp/status) as the prompt starts.
     mcp_failed: Vec<String>,
+    /// It says it takes pictures in a prompt (promptCapabilities.image).
+    images: bool,
     out: Option<Arc<Mutex<Option<std::io::PipeWriter>>>>,
 }
 
@@ -95,7 +97,8 @@ impl Fake {
             self.0.lock().unwrap().got.push((method.clone(), p.clone()));
             let id = m.get("id").and_then(|i| i.i64().ok());
             let result: Option<String> = match method.as_str() {
-                "initialize" => Some(r#"{"protocolVersion":1,"agentCapabilities":{"loadSession":true}}"#.into()),
+                "initialize" => Some(if self.0.lock().unwrap().images { r#"{"protocolVersion":1,"agentCapabilities":{"loadSession":true,"promptCapabilities":{"image":true}}}"# }
+                    else { r#"{"protocolVersion":1,"agentCapabilities":{"loadSession":true}}"# }.into()),
                 "session/new" => Some(if self.0.lock().unwrap().offer { format!(r#"{{"sessionId":"s1","configOptions":{}}}"#, access()) }
                     else { format!(r#"{{"sessionId":"s1","configOptions":[{{"id":"model","category":"model","currentValue":"m1","options":{}}}]}}"#, models()) }),
                 "session/load" => {
@@ -479,4 +482,33 @@ fn stopping_withdraws_the_question() {
     assert_eq!(r.state, KiroState::Cancelled);
     assert_eq!(answer_of(&fake).as_deref(), Some("cancelled"));
     host.shutdown("test");
+}
+
+/// A pasted picture goes to Kiro as an image block (its contents, which a Kiro Web sandbox can see),
+/// not as a path; an agent that takes no pictures still gets the path, and a missing file stays a path.
+#[test]
+fn pictures_go_to_kiro_as_image_blocks_when_it_takes_them() {
+    let d = dir("pictures");
+    let pic = std::path::Path::new(&d).join("shot.png");
+    std::fs::write(&pic, b"\x89PNG fake").unwrap();
+    let gone = std::path::Path::new(&d).join("gone.png");
+    let prompt = format!("What is this?\n\n{a}{}\n{a}{}", pic.display(), gone.display(), a = hover_agents::acp::ATTACHED);
+    let sent = |images: bool| {
+        let (host, fake) = make(AgentOptions::default());
+        fake.set(|g| g.images = images);
+        host.run(&d, &prompt, None, &Cancel::new(), None, None);
+        host.shutdown("test");
+        let got = fake.0.lock().unwrap().got.clone();
+        got.into_iter().find(|g| g.0 == "session/prompt").unwrap().1.get("prompt").unwrap().clone()
+    };
+    let with = sent(true);
+    let blocks = with.items().unwrap();
+    assert_eq!(blocks.len(), 2, "{}", with.compact());
+    let text = blocks[0].get("text").and_then(Json::as_str).unwrap();
+    assert!(text.starts_with("What is this?") && !text.contains("shot.png") && text.contains("gone.png"), "{text}");
+    assert_eq!((blocks[1].get("type").and_then(Json::as_str), blocks[1].get("mimeType").and_then(Json::as_str)), (Some("image"), Some("image/png")));
+    assert_eq!(hover_core::images::from_base64(blocks[1].get("data").and_then(Json::as_str).unwrap()).unwrap(), b"\x89PNG fake");
+    let without = sent(false);
+    assert_eq!(without.items().unwrap().len(), 1);
+    assert!(without.items().unwrap()[0].get("text").and_then(Json::as_str).unwrap().contains("shot.png"));
 }

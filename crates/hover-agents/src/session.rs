@@ -76,11 +76,12 @@ impl KiroTurn {
         KiroTurn { prompt: prompt.into(), images, steps: vec![], result: None, queued: false, started_at: Stamp::DEFAULT, woke_at: None, ended_at: None, credits: None, before: None, after: None }
     }
 
-    /// What the agent is sent: the prompt, then the pictures' paths for it to look at.
+    /// What the agent is sent: the prompt, then the pictures' paths for it to look at. Kiro gets
+    /// the pictures themselves from these lines (acp.rs, ATTACHED).
     pub fn text(&self) -> String {
         if self.images.is_empty() { return self.prompt.clone(); }
         let head = if self.prompt.is_empty() { "Look at the attached image." } else { &self.prompt };
-        format!("{head}\n\n{}", self.images.iter().map(|p| format!("Attached image (read it from this file): {p}")).collect::<Vec<_>>().join("\n"))
+        format!("{head}\n\n{}", self.images.iter().map(|p| format!("{}{p}", crate::acp::ATTACHED)).collect::<Vec<_>>().join("\n"))
     }
 }
 
