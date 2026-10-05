@@ -28,7 +28,7 @@ pub const TABS: [&str; 8] = ["browser", "terminal", "files", "diff", "pr", "link
 fn s(v: impl AsRef<str>) -> SharedString { v.as_ref().into() }
 fn rgb(c: u32) -> Color { Color::from_rgb_u8((c >> 16) as u8, (c >> 8) as u8, c as u8) }
 
-/// Why a Kiro Web session's Terminal, Files and Diff are grey.
+/// Why a Kiro Web session's Terminal and Files are grey (its Diff and Pull request work).
 pub const CLOUD_NOTE: &str = "This session runs in Kiro’s cloud, not on this computer.";
 
 /// Runs against the Desk global of every window that has an office.
@@ -803,7 +803,7 @@ impl App {
         let mut off = Self::desk_off();
         // A Kiro Web session works in its own sandbox: this computer's folder isn't its.
         if self.hover.sessions.get(id).is_some_and(|s| s.cloud.is_some()) {
-            for t in ["terminal", "files", "diff"] { off.retain(|(i, _)| *i != t); off.push((t, CLOUD_NOTE.into())); }
+            for t in ["terminal", "files"] { off.retain(|(i, _)| *i != t); off.push((t, CLOUD_NOTE.into())); }
         }
         let off: Vec<(&str, &str)> = off.iter().map(|(a, b)| (*a, b.as_str())).collect();
         d::tiles(probe.as_ref(), snap, &d::TileContext { browser_url: url.as_deref(), pages: &pages, off: &off })

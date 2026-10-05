@@ -57,6 +57,18 @@ pub enum Stage {
     Error { message: String, retry: bool, transcript: Option<String> },
 }
 
+/// Which GitHub repo a Kiro Web task is given.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub enum Repo {
+    /// The one the folder's own remote points at (an empty workspace when it has none).
+    #[default]
+    Folder,
+    /// No repo: the agent starts in an empty folder.
+    Empty,
+    /// One of the repos connected to Kiro ("owner/name").
+    Named(String),
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Preview {
     pub id: u64,
@@ -77,8 +89,10 @@ pub struct Preview {
     pub countdown: Option<f32>,
     /// Try it: Start disabled, never dispatches.
     pub trial: bool,
-    /// Run in Kiro Web (Kiro only), switched on from the preview.
+    /// Run in Kiro Web (Kiro only), switched on from the preview or by saying so.
     pub cloud: bool,
+    /// The repo Kiro Web is given, when it runs there.
+    pub repo: Repo,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -88,8 +102,9 @@ pub struct Pending { pub id: u64, pub text: String, pub tools: Vec<AgentTool> }
 pub struct Hooks {
     /// The tool's runner for a routing turn (access "none"), when it has one.
     pub router: Box<dyn Fn(AgentTool) -> Option<RunTask> + Send + Sync>,
-    /// A new chat: tool, folder, prompt, access, in Kiro Web. Ok(session id) once the provider took it.
-    pub start: Box<dyn Fn(AgentTool, &str, &str, &str, bool) -> Result<i32, String> + Send + Sync>,
+    /// A new chat: tool, folder, prompt, access, and the repo when it runs in Kiro Web.
+    /// Ok(session id) once the provider took it.
+    pub start: Box<dyn Fn(AgentTool, &str, &str, &str, Option<Repo>) -> Result<i32, String> + Send + Sync>,
     pub available: Box<dyn Fn(AgentTool) -> bool + Send + Sync>,
     /// The project open in Hover now (its id), which wins a tie.
     pub active_project: Box<dyn Fn() -> Option<String> + Send + Sync>,
@@ -138,6 +153,8 @@ struct Run {
     review: bool,
     /// The target last shown: Some(None) is the default workspace.
     target: Option<Option<String>>,
+    /// Kiro Web was asked for in words ("use Kiro Web").
+    cloud: bool,
     resume: Resume,
 }
 
@@ -287,7 +304,7 @@ impl Voice {
             st.run = Some(Run {
                 trial, dictate, voice, projects: self.settings.projects().into_iter().filter(|p| p.voice).collect(), workspace: ws,
                 tool, released: Default::default(), cancel: Default::default(), ct: Cancel::new(),
-                text: String::new(), heard: String::new(), cleanup_note: None, review: false, target: None, resume: Resume::Record,
+                text: String::new(), heard: String::new(), cleanup_note: None, review: false, target: None, cloud: false, resume: Resume::Record,
             });
             st.stage = Stage::Recording { level: 0.0, secs: 0.0 };
             st.deadline = None;
@@ -426,6 +443,52 @@ impl Voice {
         self.notify();
     }
 
+    /// Another folder for this task, from the preview: a voice project, or the default
+    /// workspace (None). The countdown stops for good and Start is needed, as after an
+    /// edit; what was picked on the card (agent, Kiro Web, repo) stays.
+    pub fn change_folder(&self, target: Option<String>) {
+        let (id, old) = {
+            let st = self.st.lock().unwrap();
+            match &st.stage { Stage::Preview(p) | Stage::Editing(p) if p.id == st.id && !p.trial => (st.id, p.clone()), _ => return }
+        };
+        let Some(r) = self.copy(id) else { return };
+        // Only the note for the default workspace is read from it: "Using default workspace."
+        let routed = Routed { project: target.clone(), why: Why::Active, task: old.task.clone() };
+        let built = self.preview(id, &r, &target, &routed, old.task.clone());
+        {
+            let mut st = self.st.lock().unwrap();
+            if st.id != id { return; }
+            st.deadline = None;
+            match built {
+                Ok(p) => {
+                    st.stage = Stage::Editing(Preview { tool: old.tool, model: old.model.clone(), cloud: old.cloud, repo: old.repo.clone(), countdown: None, ..p });
+                    if let Some(run) = st.run.as_mut() { run.target = Some(target); }
+                }
+                // Shown on the card; the folder stays as it was.
+                Err(e) => st.stage = Stage::Editing(Preview { note: Some(e), countdown: None, ..old }),
+            }
+        }
+        self.notify();
+    }
+
+    /// Another repo for this Kiro Web task, from the preview: as Kiro Web itself, the
+    /// countdown stops for good and Start is needed.
+    pub fn change_repo(&self, repo: Repo) {
+        {
+            let mut st = self.st.lock().unwrap();
+            let p = match &st.stage { Stage::Preview(p) | Stage::Editing(p) if p.id == st.id && p.cloud && p.tool == AgentTool::Kiro => p.clone(), _ => return };
+            st.deadline = None;
+            st.stage = Stage::Editing(Preview { repo, countdown: None, ..p });
+        }
+        self.notify();
+    }
+
+    /// The voice projects a task can be moved to from the card (the default workspace is
+    /// the one not in the list), as they were at the press.
+    pub fn folder_choices(&self) -> Vec<Project> {
+        self.st.lock().unwrap().run.as_ref().map(|r| r.projects.clone()).unwrap_or_default()
+    }
+
     /// Stops the countdown for good (a menu on the card opened): Start is needed after.
     pub fn hold(&self) {
         {
@@ -560,11 +623,14 @@ impl Voice {
         self.with_run(id, |r| RunCopy {
             trial: r.trial, tool: r.tool, targets: Voice::targets(r), projects: r.projects.clone(), workspace: r.workspace.clone(),
             ct: r.ct.clone(), cancel: r.cancel.clone(), text: r.text.clone(), heard: r.heard.clone(), cleanup_note: r.cleanup_note.clone(),
-            review: r.review, target: r.target.clone(),
+            review: r.review, target: r.target.clone(), cloud: r.cloud,
         })
     }
 
     fn resolve(&self, id: u64) {
+        // "Use Kiro Web" / "use cloud agent": the task goes to Kiro, in Kiro Web, less those
+        // words. The card shows it (the agent and the blue cloud) and can undo it.
+        self.with_run(id, |x| if let Some(t) = route::take_cloud(&x.text) { x.text = t; x.cloud = true; x.tool = AgentTool::Kiro; });
         let Some(r) = self.copy(id) else { return };
         self.with_run(id, |x| x.resume = Resume::Route);
         if !r.trial && !(self.hooks.available)(r.tool) {
@@ -633,7 +699,7 @@ impl Voice {
             }
         };
         Ok(Preview { id, heard: r.heard.clone(), cleanup_note: r.cleanup_note.clone(), task, folder, target_name, note: note.filter(|n| !n.is_empty()),
-            tool: r.tool, model, access, countdown: None, trial: r.trial, cloud: false })
+            tool: r.tool, model, access, countdown: None, trial: r.trial, cloud: r.cloud && r.tool == AgentTool::Kiro, repo: Repo::Folder })
     }
 
     /// The countdown, ten updates a second; its end starts the task (unless something
@@ -669,8 +735,8 @@ impl Voice {
         let Stage::Editing(old) = &st.stage else { return };
         match built {
             Ok(p) => {
-                // An agent picked on the card while this was routed stays picked.
-                st.stage = Stage::Editing(Preview { tool: old.tool, model: old.model.clone(), ..p });
+                // An agent, Kiro Web or a repo picked on the card while this was routed stay picked.
+                st.stage = Stage::Editing(Preview { tool: old.tool, model: old.model.clone(), cloud: old.cloud, repo: old.repo.clone(), ..p });
                 st.checking = false;
                 if let (Some(run), Some(t)) = (st.run.as_mut(), target) { run.target = Some(t); }
             }
@@ -720,7 +786,7 @@ impl Voice {
             drop(st);
             return self.notify();
         }
-        match (self.hooks.start)(p.tool, &folder, &p.task, &access, p.cloud && p.tool == AgentTool::Kiro) {
+        match (self.hooks.start)(p.tool, &folder, &p.task, &access, (p.cloud && p.tool == AgentTool::Kiro).then(|| p.repo.clone())) {
             Ok(session) => { self.set(id, Stage::Started { session, folder }); }
             Err(e) => keep(self, e),
         }
@@ -741,6 +807,7 @@ struct RunCopy {
     cleanup_note: Option<String>,
     review: bool,
     target: Option<Option<String>>,
+    cloud: bool,
 }
 
 /// A local HTTP server for the tests: answers each connection with the next reply, and

@@ -50,7 +50,7 @@ them up later.
 | **Ask before acting** | Set a tool or a task to ask first. Approve, trust or deny each request in the notch, over the bot, or in the chat. |
 | **Checkpoints** | Each turn keeps the project folder as it was. **Restore** puts the files and the chat back to an earlier answer; **Try again** goes back to before a message and sends it again. Needs Git installed. |
 | **Desk card** | Click a desk to see what its agent is doing, reply to it, or open its terminal, files, diff, agents, linked pull requests and the branch's pull request. The pull request tab can set up the GitHub CLI and open a pull request for you. |
-| **Kiro Web** | Kiro only, on Windows and Linux. Switch on the cloud button in the new-task box or in voice's preview, and the task runs in Kiro's cloud on a GitHub repo you connected to Kiro, or in an empty workspace. Reply from Hover as usual; the chat's cloud chip opens the session in Kiro Web. |
+| **Kiro Web** | Kiro only, on Windows and Linux. Switch on the cloud button in the new-task box or in voice's preview, and the task runs in Kiro's cloud on a GitHub repo you connected to Kiro, or in an empty workspace. Reply from Hover as usual; the chat's cloud chip opens the session in Kiro Web. Its Pull request and Diff tabs show the pull request it opened. |
 | **Helpers** | A subagent at work shows as a small bot beside its parent's desk. |
 | **Sandbox** | On a Mac or Linux, agents run inside Anthropic's sandbox-runtime: they write only to their folders, can't read your keys or other apps' data, and reach only the hosts they need. Needs `srt`; Settings → Integrations says what is missing. |
 | **Computer use** | macOS only, and off until you switch it on. Agents drive other apps in the background through Cua Driver, without moving your pointer or taking focus. Settings installs it and asks for its permissions. |
@@ -145,6 +145,11 @@ you switch it on in Settings → Voice.
 5. **Talk.** Hold `Ctrl+Alt+Space` (on a Mac, Control-Option-Space, which is fixed; elsewhere you can change it), speak, and let go. Edit the task to
    stop the countdown, then press Start. Esc cancels. Settings → Voice → Try it shows what
    would start, without starting anything.
+6. **On the card.** The folder, the agent, its model and the Kiro Web button each open a menu
+   or switch for this task only (the countdown stops, and Start is needed). The folder menu
+   lists the default workspace and your voice projects. Say "use Kiro Web" or "use cloud
+   agent" (English) and the task goes to Kiro in Kiro Web, with those words left out of the
+   task. With Kiro Web on, a repository pick appears.
 
 On a Mac, voice is Apple's speech recognizer on the Mac instead (no Phonon, Groq or cleanup).
 macOS asks for the Microphone and Speech Recognition the first time Hover listens.

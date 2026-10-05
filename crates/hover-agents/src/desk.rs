@@ -87,6 +87,9 @@ pub struct Snap {
     pub steps: Vec<Item>,
     /// Every turn's prompt and then its answer (empty if none yet), oldest first.
     pub texts: Vec<String>,
+    /// A Kiro Web session: the GitHub repos it was given. Its work is in Kiro's cloud, so
+    /// this computer's folder says nothing about it; its pull request is the way to its changes.
+    pub cloud: Option<Vec<String>>,
 }
 
 impl Snap {
@@ -100,6 +103,7 @@ impl Snap {
             current: s.turns.iter().rposition(|t| !t.queued),
             steps: s.turns.iter().enumerate().flat_map(|(i, t)| t.steps.iter().map(move |x| Item { turn: i, step: x.into() })).collect(),
             texts: s.turns.iter().flat_map(|t| [t.prompt.clone(), t.result.as_ref().map(|r| r.text.clone()).unwrap_or_default()]).collect(),
+            cloud: s.cloud.clone(),
         }
     }
 
@@ -627,6 +631,9 @@ pub fn gh_reason(err: &str) -> String {
 /// gh's answer when the branch has no pull request (the Create pull request form's cue).
 pub const NO_PR: &str = "This branch has no pull request yet.";
 
+/// A Kiro Web session that hasn't said where its pull request is.
+pub const CLOUD_NO_PR: &str = "This Kiro Web session hasn’t opened a pull request yet.";
+
 // MARK: Paths
 
 /// A path that names a place from the root, however the system writes it.
@@ -1001,10 +1008,12 @@ pub fn tiles(probe: Option<&Probe>, snap: &Snap, ctx: &TileContext) -> Vec<Tile>
         let (mut enabled, mut reason) = match id {
             "terminal" => (p.map_or(runs, |p| p.commands) > 0, "No commands run yet.".to_owned()),
             "files" => (p.is_none_or(|p| p.folder), "The folder isn’t there any more.".into()),
+            // A Kiro Web session's changes are its pull request's, or the edits it reported.
+            "diff" if snap.cloud.is_some() => (true, String::new()),
             "diff" => (p.is_none_or(|p| p.folder && (p.git || edits > 0)),
                 match p { Some(p) if !p.folder => "The folder isn’t there any more.", Some(p) if !p.git_installed => "Git isn’t installed.", _ => "No changes yet." }.into()),
             // Open even without one: the panel sets up gh, or opens a pull request.
-            "pr" => (p.is_none_or(|p| p.git), match p { None => wait, Some(p) if !p.git_installed => "Git isn’t installed.", Some(_) => "Not a Git repository." }.into()),
+            "pr" => (snap.cloud.is_some() || p.is_none_or(|p| p.git), match p { None => wait, Some(p) if !p.git_installed => "Git isn’t installed.", Some(_) => "Not a Git repository." }.into()),
             "linked" => (linked > 0, if p.is_some() { "No pull requests mentioned in this session." } else { wait }.into()),
             "agents" => (agents > 0, if p.is_some() { "No subagents in this session." } else { wait }.into()),
             _ => (true, String::new()),
@@ -1023,9 +1032,10 @@ pub fn tiles(probe: Option<&Probe>, snap: &Snap, ctx: &TileContext) -> Vec<Tile>
                 None => "…".into(),
                 Some(p) => match &p.pr {
                     Some(pr) => format!("#{} {}", pr.number, if pr.is_draft { "draft" } else { pr.state.as_str() }),
-                    None if !p.git => "No repository".into(),
+                    None if !p.git && snap.cloud.is_none() => "No repository".into(),
                     None if !p.gh => "Set up GitHub".into(),
                     None if !p.gh_auth => "Sign in".into(),
+                    None if snap.cloud.is_some() => "None yet".into(),
                     None => "Open one".into(),
                 },
             },
@@ -1059,6 +1069,29 @@ pub fn linked_urls(s: &Snap) -> Vec<(String, String, u32)> {
     found.reverse();
     found.truncate(12);
     found
+}
+
+/// The pull request this session made: the newest address a step that opens one printed
+/// (`gh pr create`, or a GitHub tool's create pull request).
+pub fn created_pr(s: &Snap) -> Option<String> {
+    s.steps.iter().rev().find_map(|i| {
+        let x = &i.step;
+        let said = [x.target.as_deref(), x.input.as_deref(), Some(x.title.as_str())].into_iter().flatten().collect::<Vec<_>>().join(" ").to_lowercase();
+        if !["pr create", "create_pull_request", "create pull request", "create a pull request"].iter().any(|k| said.contains(k)) { return None; }
+        let out = x.text()?;
+        let m = PR_URL.captures_iter(out).flatten().last()?;
+        Some(m[0].to_owned())
+    })
+}
+
+/// The newest pull request the session mentions. A Kiro Web session's own repos first:
+/// a link to some other repository is not its pull request.
+pub fn mentioned_pr(s: &Snap) -> Option<String> {
+    let all = linked_urls(s);
+    match s.cloud.as_deref().filter(|r| !r.is_empty()) {
+        Some(repos) => all.into_iter().find(|u| repos.iter().any(|r| r.eq_ignore_ascii_case(&u.1))).map(|u| u.0),
+        None => all.into_iter().next().map(|u| u.0),
+    }
 }
 
 /// "owner/name" from a GitHub remote: https://github.com/o/n(.git), git@github.com:o/n.git
@@ -1215,24 +1248,31 @@ impl Desk {
         let gh = self.gh.exe().is_some();
         let status = gh.then(|| self.gh.check(false));
         let signed_in = status.as_ref().is_some_and(|x| x.signed_in);
-        let changed = if repo.git { self.status(&s.folder, &repo).len() } else { 0 };
+        let cloud = s.cloud.is_some();
+        let mut changed = if repo.git && !cloud { self.status(&s.folder, &repo).len() } else { 0 };
         let mut pr = None;
-        let mut pr_reason = if !repo.git { Some("Not a Git repository.".to_owned()) } else if !gh { Some("Install the GitHub CLI (gh) to see pull requests.".into()) } else if !signed_in { Some("Sign in to GitHub to see pull requests.".into()) } else { None };
-        if repo.git && gh && signed_in {
-            let full = self.pr_full(&s.folder);
+        let link = created_pr(s).or_else(|| mentioned_pr(s));
+        // Here a Kiro Web session needs no repository, only its pull request's address.
+        let can_look = if cloud { link.is_some() } else { repo.git };
+        let mut pr_reason = if cloud && !can_look { Some(CLOUD_NO_PR.to_owned()) } else if !can_look { Some("Not a Git repository.".to_owned()) } else if !gh { Some("Install the GitHub CLI (gh) to see pull requests.".into()) } else if !signed_in { Some("Sign in to GitHub to see pull requests.".into()) } else { None };
+        let mut from_pr = (0i64, 0i64);
+        if can_look && gh && signed_in {
+            let full = self.pr_full(s);
             pr_reason = full.error.clone();
             pr = full.data.as_ref().map(|d| PrBrief { number: d.number, title: d.title.clone(), state: d.state.clone(), is_draft: d.is_draft });
+            // A Kiro Web session's changes are its pull request's; this folder's are not.
+            if let (true, Some(d)) = (cloud, &full.data) { from_pr = (d.additions as i64, d.deletions as i64); changed = d.changed_files.max(0) as usize; }
         }
         let sub: Vec<&Item> = s.steps.iter().filter(|i| is_subagent(&i.step)).collect();
-        let counts = if repo.git { self.num_stat(&s.folder, &repo) } else { HashMap::new() };
+        let counts = if repo.git && !cloud { self.num_stat(&s.folder, &repo) } else { HashMap::new() };
         Probe {
             folder: crate::usable_folder(Some(&s.folder)),
             git_installed: self.git.is_some(),
             git: repo.git,
             branch: repo.branch,
             changed,
-            add: counts.values().map(|c| c.0 as i64).sum(),
-            del: counts.values().map(|c| c.1 as i64).sum(),
+            add: if cloud { from_pr.0 } else { counts.values().map(|c| c.0 as i64).sum() },
+            del: if cloud { from_pr.1 } else { counts.values().map(|c| c.1 as i64).sum() },
             gh,
             gh_auth: signed_in,
             gh_user: status.and_then(|x| x.user),
@@ -1300,6 +1340,7 @@ impl Desk {
     /// DeskInfo.Diff: the working tree against the last commit, capped; untracked files
     /// as whole added files. Outside Git, the edits the session made.
     pub fn diff(&self, s: &Snap) -> Diff {
+        if s.cloud.is_some() { return self.cloud_diff(s); }
         let repo = self.repo_of(&s.folder);
         if !repo.git { return Diff { git: false, partial: true, files: from_steps(s), ..Default::default() }; }
         let base = ["-c", "core.quotepath=off", "diff"];
@@ -1332,14 +1373,26 @@ impl Desk {
         Diff { git: true, partial: false, branch: repo.branch, truncated: r.capped, error: None, files }
     }
 
+    /// A Kiro Web session's changes: its pull request's patch, through gh; before it has
+    /// one (or when gh can't say), the edits it reported. This computer's folder is not its.
+    fn cloud_diff(&self, s: &Snap) -> Diff {
+        let reported = || Diff { git: false, partial: true, files: from_steps(s), ..Default::default() };
+        let Some(url) = created_pr(s).or_else(|| mentioned_pr(s)) else { return reported() };
+        if self.gh.exe().is_none() || !self.gh.check(false).signed_in { return reported(); }
+        let r = self.cached(format!("prdiff\0{}\0{url}", s.folder), Duration::from_secs(30), || {
+            self.gh_run(&self.gh.exe().unwrap_or_default(), &s.folder, 30000, PATCH_LIMIT, &["pr", "diff", &url, "--color", "never"], None)
+        });
+        if r.code != 0 && !r.capped { return reported(); }
+        Diff { git: true, partial: false, branch: None, truncated: r.capped, error: None, files: parse_diff(&r.out) }
+    }
+
     // MARK: Pull requests
 
-    /// The pull request of the folder's branch, through gh (30 s).
-    fn pr_full(&self, folder: &str) -> PrResult {
-        let branch = self.repo_of(folder).branch.unwrap_or_default();
-        self.cached(format!("pr\0{folder}\0{branch}"), Duration::from_secs(30), || {
+    /// gh's answer for one pull request, by its address (30 s). It needs no local repository.
+    fn pr_at(&self, folder: &str, url: &str) -> PrResult {
+        self.cached(format!("pr\0{folder}\0at:{url}"), Duration::from_secs(30), || {
             let Some(gh) = self.gh.exe() else { return PrResult { error: Some("Install the GitHub CLI (gh) to see pull requests.".into()), data: None } };
-            let r = self.gh_run(&gh, folder, 20000, 1024 * 1024, &["pr", "view", "--json", PR_FIELDS], None);
+            let r = self.gh_run(&gh, folder, 20000, 1024 * 1024, &["pr", "view", url, "--json", PR_FIELDS], None);
             if r.code != 0 { return PrResult { error: Some(gh_reason(&r.err)), data: None }; }
             match json::parse(&r.out) {
                 Ok(v) => PrResult { error: None, data: Some(slim(&v)) },
@@ -1348,20 +1401,52 @@ impl Desk {
         })
     }
 
+    /// The session's pull request, through gh: the one it created; else (a chat on this
+    /// computer) the folder's branch's; else the newest one it mentions. A Kiro Web
+    /// session has no branch here, so it goes from the one it created to the one it mentions.
+    fn pr_full(&self, s: &Snap) -> PrResult {
+        let folder = s.folder.as_str();
+        if let Some(url) = created_pr(s) { return self.pr_at(folder, &url); }
+        if s.cloud.is_some() {
+            return match mentioned_pr(s) { Some(url) => self.pr_at(folder, &url), None => PrResult { error: Some(CLOUD_NO_PR.into()), data: None } };
+        }
+        let branch = self.repo_of(folder).branch.unwrap_or_default();
+        let own = self.cached(format!("pr\0{folder}\0{branch}"), Duration::from_secs(30), || {
+            let Some(gh) = self.gh.exe() else { return PrResult { error: Some("Install the GitHub CLI (gh) to see pull requests.".into()), data: None } };
+            let r = self.gh_run(&gh, folder, 20000, 1024 * 1024, &["pr", "view", "--json", PR_FIELDS], None);
+            if r.code != 0 { return PrResult { error: Some(gh_reason(&r.err)), data: None }; }
+            match json::parse(&r.out) {
+                Ok(v) => PrResult { error: None, data: Some(slim(&v)) },
+                Err(_) => PrResult { error: Some("gh’s answer couldn’t be read.".into()), data: None },
+            }
+        });
+        if own.data.is_some() { return own; }
+        // The branch has none (or there is no repository): the one the chat talks about.
+        match mentioned_pr(s).map(|url| self.pr_at(folder, &url)) {
+            Some(found) if found.data.is_some() => found,
+            _ => own,
+        }
+    }
+
     /// DeskInfo.Pr: the Pull request tab. Runs gh.
     pub fn pr(&self, s: &Snap) -> PrPanel {
         let repo = self.repo_of(&s.folder);
-        if !repo.git { return PrPanel::Error(if self.git.is_none() { "Git isn’t installed.".into() } else { "Not a Git repository.".into() }); }
+        let link = created_pr(s).or_else(|| mentioned_pr(s));
+        if s.cloud.is_some() {
+            if link.is_none() { return PrPanel::Error(CLOUD_NO_PR.into()); }
+        } else if !repo.git {
+            return PrPanel::Error(if self.git.is_none() { "Git isn’t installed.".into() } else { "Not a Git repository.".into() });
+        }
         if self.gh.exe().is_none() {
             return PrPanel::Setup { need: Setup::Install, message: "Install the GitHub CLI to see and open pull requests.".into() };
         }
         if !self.gh.check(false).signed_in {
             return PrPanel::Setup { need: Setup::SignIn, message: "Sign in to GitHub to see and open pull requests.".into() };
         }
-        let full = self.pr_full(&s.folder);
+        let full = self.pr_full(s);
         if let Some(e) = full.error {
             // No pull request for this branch yet: what Create pull request needs.
-            return if e == NO_PR { PrPanel::NoPr { message: e, create: self.create_info_for(s, &repo) } } else { PrPanel::Error(e) };
+            return if e == NO_PR && repo.git { PrPanel::NoPr { message: e, create: self.create_info_for(s, &repo) } } else { PrPanel::Error(e) };
         }
         PrPanel::Open(Box::new(full.data.unwrap_or_default()))
     }

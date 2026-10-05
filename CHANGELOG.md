@@ -5,6 +5,38 @@ What changed in each Hover release. Versions follow [Semantic Versioning](https:
 
 ## [Unreleased]
 
+## [3.6.0] - 2026-10-05
+
+### Added
+
+- Voice's preview card can change the folder: the folder pick opens a list of your voice
+  projects and the default workspace. The countdown stops, and Start is needed.
+- Say "use Kiro Web" or "use cloud agent" (also "run in the cloud", "in Kiro Web") and the
+  task goes to Kiro in Kiro Web. Those words are taken out of the task. The card shows Kiro
+  with the cloud button on, so you can switch it off before Start. English only.
+- With Kiro Web on, the preview card has a repository pick: the folder's own repo, none, or a
+  connected one.
+
+### Changed
+
+- With Kiro Web on, the "Trust all" chip in the new-task box (and the Full pill on voice's
+  card) is gone: every Kiro Web task has full access, so there is nothing to pick. The room
+  goes to the model name.
+- Claude models show as "Opus 5.5" and "Sonnet 5" in the model pill and its menu, without
+  "Claude", so the name fits.
+
+### Fixed
+
+- Session history said "Done" for a chat that was working on a reply. The history keeps the
+  state of the last finished turn, so a new reply still read as done. A chat that is running
+  now shows what it is doing.
+- The desk's Pull request tab showed the PR of whatever branch was checked out in the folder,
+  not the chat's. It now shows the PR the chat opened (from its `gh pr create` output), then the
+  branch's, then the newest one the chat mentions.
+- Kiro Web chats: the Pull request tab works without a local repository, using the PR the chat
+  opened or mentions in its own repos. The Diff tab is on and shows that PR's changes (or the
+  edits the chat reported, before it has one). Terminal and Files stay off.
+
 ## [3.5.0] - 2026-10-05
 
 ### Added

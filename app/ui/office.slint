@@ -1533,8 +1533,9 @@ export component OfficeView inherits Rectangle {
                             Text { text: Office.new-cloud ? Office.new-repo : Office.new-folder; font-family: "DejaVu Sans Mono"; font-size: 11.5px;
                                 color: Office.new-cloud ? #8fbcff : Office.new-folder == "Choose a folder" ? #ffb36b : #f6f2ff9e; vertical-alignment: center; overflow: elide; } }
                         fo := TouchArea { mouse-cursor: pointer; clicked => { if (Office.new-cloud) { Office.open-repos(); } else { Office.new-folder-clicked(); } } } }
-                    // .fchip.acc: what the task may do on its own, amber for Trust all.
-                    na := Rectangle { width: al.preferred-width; height: 28px; border-radius: 9px; background: aa.has-hover || Office.access-menu ? #ffffff12 : transparent;
+                    // .fchip.acc: what the task may do on its own, amber for Trust all. Not in
+                    // Kiro Web: every task there is full access, so there is nothing to pick.
+                    na := Rectangle { width: Office.new-cloud ? 0px : al.preferred-width; visible: !Office.new-cloud; height: 28px; border-radius: 9px; background: aa.has-hover || Office.access-menu ? #ffffff12 : transparent;
                         accessible-role: button; accessible-id: "nAccess"; accessible-label: "Tool access: " + Office.new-access + ". Change";
                         al := HorizontalLayout { padding-left: 9px; padding-right: 9px; spacing: 6px;
                             VerticalLayout { alignment: center; Icon { name: PagePaths.shield; size: 14px; tint: Office.new-access-full ? #ffc46b : #f6f2ff9e; } }

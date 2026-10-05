@@ -7,7 +7,7 @@ use crate::{ui_do, view, App};
 use hover_app::app::Hover;
 use hover_app::pages::{self, PhononAction, PhononCard, Section, TryCard};
 use hover_app::phonon::{Install, Phonon};
-use hover_app::voice::{Hooks, Preview, Stage, Voice};
+use hover_app::voice::{Hooks, Preview, Repo, Stage, Voice};
 use hover_core::model::{AgentOptions, AgentTool, KiroState};
 use hover_core::projects::{self, SpeechMode, GROQ_SECRET};
 use hover_core::shortcut::Shortcut;
@@ -88,9 +88,16 @@ pub fn make(hover: &Arc<Hover>) -> (Ui, Arc<Phonon>, Arc<Voice>) {
 /// A new chat for a voice task, through the same start the office's new-task box uses.
 /// Ok only once the tool took it (it named the conversation, or the turn ended well).
 /// Called on Voice's worker thread, so it may wait.
-fn start(h: &Hover, tool: AgentTool, folder: &str, prompt: &str, access: &str, cloud: bool) -> Result<i32, String> {
-    // In Kiro Web: the folder's GitHub repo, else an empty workspace; always Full.
-    let (access, cloud) = if cloud { ("full", Some(hover_agents::desk::Desk::shared().github_repo(folder).into_iter().collect::<Vec<_>>())) } else { (access, None) };
+fn start(h: &Hover, tool: AgentTool, folder: &str, prompt: &str, access: &str, cloud: Option<Repo>) -> Result<i32, String> {
+    // In Kiro Web: the repo picked, else the folder's GitHub repo, else an empty workspace; always Full.
+    let (access, cloud) = match cloud {
+        Some(repo) => ("full", Some(match repo {
+            Repo::Folder => hover_agents::desk::Desk::shared().github_repo(folder).into_iter().collect::<Vec<_>>(),
+            Repo::Empty => vec![],
+            Repo::Named(r) => vec![r],
+        })),
+        None => (access, None),
+    };
     // with_access("read") on a tool with no read only mode would run it with its own
     // setting: more than the target allows.
     if access == "read" && !hover_agents::agents::read_only_works(tool) {
@@ -422,6 +429,7 @@ impl App {
         c.full = cloud || p.access == "full";
         c.cloud_shown = p.tool == AgentTool::Kiro;
         c.cloud = cloud;
+        c.repo = s(match &p.repo { Repo::Folder => "This folder’s repository", Repo::Empty => "Empty workspace", Repo::Named(r) => r });
         c.task = s(&p.task);
         // What is left of the countdown the preview started with (a shot's has none: Settings').
         let total = match self.voice.countdown_total().as_secs_f32() { t if t > 0.0 => t, _ => st.voice().countdown.max(1) as f32 };
@@ -460,6 +468,7 @@ impl App {
         n.set_voice_menu(which);
         if let Some(m) = view::sync(n.get_voice_tools(), &self.voice_tools(stage)) { n.set_voice_tools(m); }
         let (mut head, mut models, mut effort_head, mut efforts, mut note) = (String::new(), vec![], String::new(), vec![], String::new());
+        let mut opts: Vec<MOpt> = vec![];
         match (which, &p) {
             (1, Some(p)) => {
                 head = "AGENT FOR THIS TASK".into();
@@ -467,6 +476,7 @@ impl App {
                 note = if checked { "Agents that are installed and signed in. The default is in Settings → Voice." } else { "Checking which agents are ready…" }.into();
             }
             (2, Some(p)) => (head, models, effort_head, efforts, note) = self.model_rows(p.tool),
+            (3 | 4, Some(p)) => (head, opts, note) = self.voice_opts(which, p),
             _ => {}
         }
         n.set_voice_menu_head(s(head));
@@ -474,6 +484,27 @@ impl App {
         n.set_voice_mm_effort_head(s(effort_head));
         if let Some(m) = view::sync(n.get_voice_mm_models(), &models) { n.set_voice_mm_models(m); }
         if let Some(m) = view::sync(n.get_voice_mm_efforts(), &efforts) { n.set_voice_mm_efforts(m); }
+        if let Some(m) = view::sync(n.get_voice_opts(), &opts) { n.set_voice_opts(m); }
+    }
+
+    /// The folder menu (3) or the Kiro Web repo menu (4): heading, rows and note. A folder
+    /// row's id is the project's (empty: the default workspace); a repo row's is "" for
+    /// the folder's own, "-" for none, else "owner/name".
+    fn voice_opts(&self, which: i32, p: &Preview) -> (String, Vec<MOpt>, String) {
+        if which == 3 {
+            let row = |id: &str, label: &str, on: bool| MOpt { id: s(id), label: s(label), on };
+            let home = self.hover.settings.default_workspace().path().is_some_and(|w| projects::same_folder(&w.to_string_lossy(), &p.folder));
+            let mut rows = vec![row("", "Default workspace", home)];
+            rows.extend(self.voice.folder_choices().iter().map(|x| row(&x.id, &x.name, !home && projects::same_folder(&x.folder, &p.folder))));
+            return ("FOLDER FOR THIS TASK".into(), rows, "Your voice projects. Add more in Settings → Projects.".into());
+        }
+        let (list, note) = self.connected_repos();
+        let mut rows = vec![
+            MOpt { id: s(""), label: s("This folder’s repository"), on: p.repo == Repo::Folder },
+            MOpt { id: s("-"), label: s("Empty workspace"), on: p.repo == Repo::Empty },
+        ];
+        rows.extend(list.iter().map(|r| MOpt { id: s(r), label: s(r), on: p.repo == Repo::Named(r.clone()) }));
+        ("REPOSITORY FOR KIRO WEB".into(), rows, note)
     }
 
     /// Opens a menu on the preview (0 closes it). Opening stops the countdown for good,
@@ -484,6 +515,7 @@ impl App {
         self.voice_ui.menu.set((which, p.id));
         if which != 0 { self.voice.hold(); }
         let checked = self.voice_ui.ready.borrow().as_ref().is_some_and(|r| r.0 == p.id);
+        if which == 4 && self.voice_ui.shot.borrow().is_none() { self.load_repos(|a| a.voice_menu_draw(&a.shown())); }
         if which == 1 && !checked && self.voice_ui.shot.borrow().is_none() {
             let (v, id) = (self.voice.clone(), p.id);
             std::thread::spawn(move || {
@@ -525,7 +557,7 @@ impl App {
         let a = self.clone();
         self.notch.on_voice_start(move || a.voice.start_now());
         let a = self.clone();
-        self.notch.on_voice_toggle_cloud(move || a.voice.toggle_cloud());
+        self.notch.on_voice_toggle_cloud(move || { a.voice_ui.menu.set((0, 0)); a.voice.toggle_cloud(); });
         let a = self.clone();
         self.notch.on_voice_cancel(move || {
             if a.voice.stage() == Stage::Idle { a.voice_ui.hold_error.borrow_mut().take(); a.update_rest(); } else { a.voice.cancel(); }
@@ -568,6 +600,18 @@ impl App {
             a.hover.settings.set_agent_options(p.tool, AgentOptions { effort: Some(e.to_string()), ..o });
             a.voice.hold();
             a.voice_menu_draw(&a.shown());
+        });
+        let a = self.clone();
+        self.notch.on_voice_pick_opt(move |id| {
+            if a.menu_preview(&a.shown()).is_none() { return; }
+            match a.voice_ui.menu.get().0 {
+                3 => a.voice.change_folder(Some(id.to_string()).filter(|x| !x.is_empty())),
+                4 => a.voice.change_repo(match id.as_str() { "" => Repo::Folder, "-" => Repo::Empty, r => Repo::Named(r.to_owned()) }),
+                _ => return,
+            }
+            a.voice_ui.menu.set((0, 0));
+            a.voice_menu_draw(&a.shown());
+            a.update_rest();
         });
         let a = self.clone();
         self.notch.on_voice_settings(move || {

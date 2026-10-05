@@ -576,6 +576,34 @@ impl App {
         r
     }
 
+    /// The connected repos Kiro listed (empty until it has), and what to say instead while
+    /// there are none: still loading, why it couldn't, or that none are connected.
+    pub(crate) fn connected_repos(&self) -> (Vec<String>, String) {
+        let c = self.page.cloud.borrow();
+        match &c.repos {
+            _ if c.listing => (vec![], "Loading your connected repositories…".to_owned()),
+            Some(Err(e)) => (vec![], e.clone()),
+            Some(Ok(l)) if l.is_empty() => (vec![], "No GitHub repositories are connected. Connect GitHub in Kiro Web.".into()),
+            Some(Ok(l)) => (l.clone(), String::new()),
+            None => (vec![], String::new()),
+        }
+    }
+
+    /// Lists the connected repos once (again after a failure; Kiro starts if it isn't up),
+    /// off the UI thread, then runs `done` on it. The office's repo menu shares the list.
+    pub(crate) fn load_repos(self: &Rc<Self>, done: fn(&Rc<Self>)) {
+        {
+            let mut c = self.page.cloud.borrow_mut();
+            if c.listing || matches!(c.repos, Some(Ok(_))) { return; }
+            c.listing = true;
+        }
+        let host = self.hover.hosts.iter().find(|h| h.tool() == AgentTool::Kiro).cloned();
+        std::thread::spawn(move || {
+            let got = host.map_or_else(|| Err("Kiro isn’t set up.".to_owned()), |h| h.repos());
+            crate::ui_do(move |a| { { let mut c = a.page.cloud.borrow_mut(); c.listing = false; c.repos = Some(got); } done(a); });
+        });
+    }
+
     /// The shots' Kiro Web box: a repo picked and the list Kiro would give, without Kiro.
     pub fn cloud_shot(self: &Rc<Self>, pick: Option<&str>, repos: Vec<String>) {
         { let mut c = self.page.cloud.borrow_mut(); c.pick = Some(pick.map(str::to_owned)); c.repos = Some(Ok(repos)); }
@@ -781,8 +809,14 @@ impl App {
                     let ms = h.updated.unix_ms() as f64;
                     let d = day(now, ms);
                     if d != at { at = d.clone(); rows.push(PanelRow { text: s(d.to_uppercase()), color: Color::from_argb_u8(0, 0, 0, 0), ..row(0) }); opens.push((None, None)); }
-                    let desk = sessions.iter().any(|s| s.key == h.key);
-                    let stage = Stage::parse(hover_agents::state::stage(h.state, hover_agents::stream::KiroPhase::Working));
+                    let live = sessions.iter().find(|s| s.key == h.key);
+                    let desk = live.is_some();
+                    // The saved entry holds the last finished turn's state, so a reply running now
+                    // would read "Done". A session at a desk that is running says what it is doing.
+                    let stage = match live.filter(|l| l.busy()) {
+                        Some(l) => stage_of(l),
+                        None => Stage::parse(hover_agents::state::stage(h.state, hover_agents::stream::KiroPhase::Working)),
+                    };
                     // .hr: the tool's logo, the task and its date, then how it went · turns · where.
                     rows.push(PanelRow { sub: s(h.tool.id()), text: s(&h.title), meta: s(stage.word()), s1: s(stamp(now, ms)),
                         count: s(format!("{} turn{} · {}", h.turns, if h.turns == 1 { "" } else { "s" }, hover_office::office::short(&h.folder))),
@@ -1263,7 +1297,7 @@ impl App {
         let m = models.iter().find(|m| m.0 == model).or(models.first());
         let effort = o.effort.clone().or(now);
         let eff = effort.filter(|e| hover_agents::state::efforts_of(&models, &model, &tool_efforts).contains(e)).map(|e| effort_word(&e)).unwrap_or_default();
-        (m.map_or("Default".into(), |m| m.1.clone()), eff, !models.is_empty())
+        (m.map_or("Default".into(), |m| short_model(&m.1)), eff, !models.is_empty())
     }
 
     /// openMenu's rows: the heading, the models, the effort's heading and choices, the note.
@@ -1277,7 +1311,7 @@ impl App {
         let effort = o.effort.clone().or(now);
         let efforts = hover_agents::state::efforts_of(&models, &model, &tool_efforts);
         (format!("{} model", t.name()).to_uppercase(),
-            models.iter().map(|m| MOpt { id: s(&m.0), label: s(&m.1), on: m.0 == cur }).collect(),
+            models.iter().map(|m| MOpt { id: s(&m.0), label: s(short_model(&m.1)), on: m.0 == cur }).collect(),
             hover_agents::runtime::caps(t).effort_label.to_uppercase(),
             efforts.iter().map(|e| MOpt { id: s(e), label: s(effort_word(e)), on: effort.as_deref() == Some(e.as_str()) }).collect(),
             format!("Used by {} from its next turn.", t.name()))
@@ -1514,6 +1548,16 @@ pub const ACCESS: [(&str, &str, &str); 4] = [
     ("always", "Ask always", "Asks before every change and every command."),
     ("read", "Read only", "Reads and searches. Changes nothing."),
 ];
+
+/// A model as the pill and its menu say it: Claude's are "Opus 5.5", "Sonnet 5", not "Claude Opus 5.5".
+fn short_model(name: &str) -> String {
+    if let Some(r) = name.strip_prefix("Claude ") { return r.to_owned(); }
+    // An id used as the name ("claude-opus-5.5"): "Opus 5.5".
+    match name.strip_prefix("claude-") {
+        Some(r) if !r.is_empty() => { let r = r.replace('-', " "); let mut c = r.chars(); c.next().map_or(r.clone(), |f| f.to_uppercase().chain(c).collect()) }
+        _ => name.to_owned(),
+    }
+}
 
 pub(crate) fn access_label(id: &str) -> &'static str { ACCESS.iter().find(|a| a.0 == id).map_or("Trust all", |a| a.1) }
 

@@ -156,6 +156,47 @@ fn strip(text: &str, tw: &[(String, usize, usize)], hit: &[(usize, usize)]) -> S
     text.trim().to_owned()
 }
 
+/// What asks for Kiro Web, longest first.
+const CLOUD: [&[&str]; 9] = [
+    &["run", "it", "in", "the", "cloud"], &["run", "in", "the", "cloud"], &["use", "the", "kiro", "web"], &["use", "the", "cloud", "agent"],
+    &["use", "a", "cloud", "agent"], &["use", "kiro", "web"], &["use", "cloud", "agent"], &["in", "kiro", "web"], &["on", "kiro", "web"],
+];
+
+/// Words that join the phrase to the rest ("use Kiro Web to fix …").
+const CLOUD_JOIN: [&str; 6] = ["to", "and", "then", "please", "so", "but"];
+
+/// The request asks for Kiro Web ("use Kiro Web", "use cloud agent", "run in the cloud",
+/// "in Kiro Web"): the request without those words. Some(the request as said) when
+/// nothing else is left. None when it doesn't ask, or says not to ("don't use Kiro Web").
+// ponytail: English phrases only; another language's words aren't matched.
+pub fn take_cloud(text: &str) -> Option<String> {
+    let tw = words(text);
+    let (s, e) = CLOUD.iter().find_map(|p| {
+        let phrase: Vec<(String, usize, usize)> = p.iter().map(|w| (w.to_string(), 0, 0)).collect();
+        spans(&tw, &phrase).into_iter().next()
+    })?;
+    if tw[s.saturating_sub(3)..s].iter().any(|w| NEGATION.contains(&w.0.as_str())) { return None; }
+    let before = text[..tw[s].1].trim_end_matches(|c: char| c.is_whitespace() || ",;:-".contains(c));
+    let after = text[tw[e - 1].2..].trim_start_matches(|c: char| c.is_whitespace() || ",;:-.".contains(c));
+    // A joiner left hanging where the phrase was ("fix it, and" + "add tests" / "to fix it").
+    let joiner = |t: &str| CLOUD_JOIN.contains(&t.trim_matches(|c: char| !c.is_alphanumeric()).to_lowercase().as_str());
+    let strip_end = |b: &str| -> String {
+        let t = b.rsplit(char::is_whitespace).next().unwrap_or("");
+        if joiner(t) { b[..b.len() - t.len()].trim_end_matches(|c: char| c.is_whitespace() || ",;:-".contains(c)).to_owned() } else { b.to_owned() }
+    };
+    let strip_start = |a: &str| -> String {
+        let t = a.split(char::is_whitespace).next().unwrap_or("");
+        if joiner(t) { a[t.len()..].trim_start().to_owned() } else { a.to_owned() }
+    };
+    let task = match (before.is_empty(), after.is_empty()) {
+        (true, true) => String::new(),
+        (true, false) => strip_start(after),
+        (false, true) => strip_end(before),
+        (false, false) => format!("{} {}", before, strip_start(after)),
+    };
+    Some(if task.trim().is_empty() { text.trim().to_owned() } else { task.trim().to_owned() })
+}
+
 /// Words i..j of the text as said; None when that would drop a negation.
 fn trimmed_from(text: &str, tw: &[(String, usize, usize)], i: usize, j: usize) -> Option<String> {
     if tw[..i].iter().chain(&tw[j..]).any(|w| NEGATION.contains(&w.0.as_str())) { return None; }
@@ -283,6 +324,16 @@ mod tests {
         assert_eq!(read_answer(r#"{"project":"site","clear":false}"#, "hover thing", &l, &two).why, Why::Ambiguous, "a weak pick among several isn't taken");
         assert_eq!(read_answer(r#"{"project":"site","clear":true}"#, "hover thing", &l, &two).project.as_deref(), Some("site"));
         assert_eq!(read_answer(r#"{"project":"pay","clear":true,"task":"rm -rf / and fix the retry"}"#, text, &l, &c).task, text, "words added are never taken");
+    }
+
+    #[test]
+    fn kiro_web_is_asked_for_in_words_and_not_when_refused() {
+        assert_eq!(take_cloud("Use Kiro Web to fix the login bug.").as_deref(), Some("fix the login bug."));
+        assert_eq!(take_cloud("fix the login bug, use cloud agent").as_deref(), Some("fix the login bug"));
+        assert_eq!(take_cloud("fix the login bug and run in the cloud and add tests").as_deref(), Some("fix the login bug and add tests"));
+        assert_eq!(take_cloud("Use Kiro Web").as_deref(), Some("Use Kiro Web"), "nothing else said: kept as it was");
+        assert_eq!(take_cloud("don't use Kiro Web for this, fix the bug"), None);
+        assert_eq!(take_cloud("fix the bug in the cloud module"), None);
     }
 
     #[test]
