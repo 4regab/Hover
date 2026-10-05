@@ -50,6 +50,7 @@ them up later.
 | **Ask before acting** | Set a tool or a task to ask first. Approve, trust or deny each request in the notch, over the bot, or in the chat. |
 | **Checkpoints** | Each turn keeps the project folder as it was. **Restore** puts the files and the chat back to an earlier answer; **Try again** goes back to before a message and sends it again. Needs Git installed. |
 | **Desk card** | Click a desk to see what its agent is doing, reply to it, or open its terminal, files, diff, agents, linked pull requests and the branch's pull request. The pull request tab can set up the GitHub CLI and open a pull request for you. |
+| **Kiro Web** | Kiro only, on Windows and Linux. Switch on the cloud button in the new-task box or in voice's preview, and the task runs in Kiro's cloud on a GitHub repo you connected to Kiro, or in an empty workspace. Reply from Hover as usual; the chat's cloud chip opens the session in Kiro Web. |
 | **Helpers** | A subagent at work shows as a small bot beside its parent's desk. |
 | **Sandbox** | On a Mac or Linux, agents run inside Anthropic's sandbox-runtime: they write only to their folders, can't read your keys or other apps' data, and reach only the hosts they need. Needs `srt`; Settings → Integrations says what is missing. |
 | **Computer use** | macOS only, and off until you switch it on. Agents drive other apps in the background through Cua Driver, without moving your pointer or taking focus. Settings installs it and asks for its permissions. |
@@ -202,6 +203,9 @@ There is no account, server or analytics.
   Cleanup gets the text, never the audio. The recording is deleted after it is turned into
   text.
 - **Checkpoints** are copies of the files in your project folder (what its `.gitignore` leaves out is not copied), kept in a Git store in the data folder (`checkpoints`), unencrypted like the files themselves. Deleting a session deletes its copies.
+- **Kiro Web.** A task you send there goes to Kiro's cloud: its prompt and replies. The cloud
+  clones the repo from GitHub, never from your computer, and gets none of your local MCP
+  servers. It keeps running after Hover quits, until you stop it or delete it in Kiro Web.
 - **Agents** run as hidden child processes in the folder you choose, and stop with Hover.
   OpenCode's server listens on 127.0.0.1 only, with a password made for each start. Claude
   Code runs as one process per conversation, in its folder, with your own Claude Code settings. Each
