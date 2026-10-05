@@ -830,7 +830,12 @@ impl Host {
         }
     }
 
-    fn raise_seen(&self, offered: &[AcpOption]) { for f in self.seen.lock().unwrap().iter() { f(self.tool, offered); } }
+    fn raise_seen(&self, offered: &[AcpOption]) {
+        // Which models the tool listed, and whether it ran in the sandbox: what to read when a list looks short.
+        let ids: Vec<&str> = offered.iter().find(|o| o.category.as_deref() == Some("model")).map(|o| o.choices.iter().map(|c| c.value.as_str()).collect()).unwrap_or_default();
+        hover_core::log::line(&format!("acp {}: offered {} model{}: {}; sandbox {}", self.name(), ids.len(), if ids.len() == 1 { "" } else { "s" }, ids.join(", "), if sandbox::active() { "on" } else { "off" }));
+        for f in self.seen.lock().unwrap().iter() { f(self.tool, offered); }
+    }
 
     // MARK: The process
 
