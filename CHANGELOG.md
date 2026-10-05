@@ -5,6 +5,33 @@ What changed in each Hover release. Versions follow [Semantic Versioning](https:
 
 ## [Unreleased]
 
+## [3.6.1] - 2026-10-05
+
+### Added
+
+- Session history lists your Kiro Web sessions started outside Hover (the browser, your phone,
+  the terminal), by date with a "Kiro Web" mark. Click one to read the whole chat and reply.
+  The list is fetched each time history opens, so it follows the account you're signed in to.
+- Settings → Kiro → "Continue when high usage encountered": when Kiro stops because too many
+  people are using the model, Hover sends "continue" until it works or you press Stop. Off
+  by default.
+- The repository menus for Kiro Web (the new-task box and the voice preview) have a search box.
+
+### Changed
+
+- With Kiro Web on, the voice preview hides the folder pick and its default-workspace note.
+- The voice ring reacts more to your voice, with small dots and ripples.
+
+### Fixed
+
+- The office in the notch froze when the app window was open behind other windows or
+  minimised.
+- Kiro Web chats showed dozens of empty "Working" rows.
+- The notch said "Working on Cloning repository"; it now says "Cloning repository".
+- The "Compact automatically" switch and its percent in Settings → Kiro did nothing.
+- Pictures pasted into a Kiro Web task never reached it; they are now sent with the prompt.
+- A Kiro Web task cut off by a dropped connection, or by closing Hover, now picks up again.
+
 ## [3.6.0] - 2026-10-05
 
 ### Added
