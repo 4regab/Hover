@@ -271,6 +271,26 @@ assets/          hover.svg (the logo), make-icon.py (writes hover.png and
   - AskUserQuestion shows as OpenCode's questions do; the answers go back by each
     question's own text (as Claude Code looks them up). What it says (partial messages,
     tool calls and results, thinking) is put into ACP's shapes and read by `KiroStream`.
+- **Kiro Web sessions** (`acp.rs`, `KiroSession::cloud`; Windows and Linux, not the Mac
+  app yet). A Kiro task can run in Kiro's cloud instead of on this computer: the
+  new-task box's cloud button (Kiro only) and the voice preview's. It goes through the
+  same `kiro-cli acp` process: `session/new` with `_meta.kiro.executionTarget`
+  `{kind: "cloud-sandbox"}` and `repositories` (`[{providerType: "GITHUB", name}]`; none
+  is an empty workspace). Neither field is in Kiro's docs; both were read from its agent
+  server (Oct 2026), which advertises the cloud in `initialize`'s
+  `_meta.kiro.executionTargets`.
+  - The repo is the folder's GitHub remote (`Desk::github_repo`), or one picked from
+    `_kiro/sourceProviders/listResources`, or none. Access is always Full (the cloud has
+    no asking), the session gets none of this computer's MCP servers, and it has no
+    checkpoints. The desk card's Terminal, Files and Diff are off (`CLOUD_NOTE`).
+  - The first prompt waits for the sandbox: one sent before its first `context_usage`
+    update (about 15 s) is answered `cancelled` here while the cloud still runs it.
+  - A reply after Kiro's process restarted loads the session with
+    `_meta.kiro.sessionSource: "remote"`; without it Kiro makes an empty local session of
+    the same id. A cloud session that can't be loaded fails; another is never started
+    in its place.
+  - The chat's cloud chip opens it in Kiro Web (`KIRO_WEB_SESSION` + the session id).
+  - Saved in the history as `"Cloud"` (its repos), written only for cloud sessions.
 - **The office's note before the first task** (`KiroNoticeSeen`) stands in place of the
   office until Got it.
 - **Sessions are kept until the user deletes them.** The history is sealed with

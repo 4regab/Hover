@@ -256,6 +256,7 @@ fn chat_shots(app: &Rc<App>, hover: &Arc<hover_app::app::Hover>, dir: &Path, fol
         // on its change, its output and a thought.
         open(rich);
         shot("done");
+
         // The question Restore and Try again ask before they touch the folder.
         g.set_confirm_title("Restore to here?".into());
         g.set_confirm_ok("Restore".into());
@@ -356,6 +357,23 @@ fn chat_shots(app: &Rc<App>, hover: &Arc<hover_app::app::Hover>, dir: &Path, fol
     }
     *hold_c.lock().unwrap() = false;
     run_for(600);
+    // A Kiro Web chat, made last so the shots above keep their office: its cloud chip
+    // beside the context ring. Kiro is the only tool that runs there.
+    if let Some(key) = long.and_then(|id| hover.sessions.get(id)).map(|s| s.key) { hover.sessions.delete(&key); }
+    let cloud = hover.sessions.start_in(AgentTool::Kiro, folder, "Add a dark mode with a theme switch to the site.", vec![], Some("full"), Some(vec!["4regab/hoverweb".into()])).map(|s| s.id);
+    idle(cloud);
+    for (ws, tag) in [(hover_core::model::WorkspaceSize::Small, "small"), (hover_core::model::WorkspaceSize::Default, "default")] {
+        hover.settings.set_workspace_size(ws);
+        view::Host::settings_changed(&**app);
+        app.office_follow();
+        app.office_push();
+        settle(1500);
+        let full = { let n = app.n.borrow(); (n.win.width() as u32, n.win.height() as u32) };
+        if let Some(id) = cloud { app.open_session(id); }
+        settle(1200);
+        save_office(&notch, full, &dir.join(format!("chat-{tag}-cloud-chip.png")));
+        app.close_drawer();
+    }
 }
 
 /// The desk card's sessions: a turn with the steps a real one reports (commands with their
@@ -705,7 +723,7 @@ fn preview(folder: &str, target: &str, note: Option<&str>, task: &str, countdown
     hover_app::voice::Preview {
         id: 1, heard: "go to hover and fix the notch blink on the second monitor when the taskbar is at the top".into(), cleanup_note: None,
         task: task.into(), folder: folder.into(), target_name: target.into(), note: note.map(Into::into), tool: AgentTool::Codex,
-        model: String::new(), access: access.into(), countdown, trial: false,
+        model: String::new(), access: access.into(), countdown, trial: false, cloud: false,
     }
 }
 
@@ -738,6 +756,7 @@ fn voice_shots(app: &Rc<App>, hover: &Arc<hover_app::app::Hover>, dir: &Path, da
         ("resolving", Stage::Resolving),
         ("preview", Stage::Preview(preview(&pf, "Hover", None, task, Some(2.1), "full"))),
         ("preview-default-workspace", Stage::Preview(preview(&home, "Default workspace", Some("Using default workspace: no clear project match. It will be made when the task starts."), task, Some(0.9), "risky"))),
+        ("preview-kiro-cloud", Stage::Preview(hover_app::voice::Preview { tool: AgentTool::Kiro, cloud: true, ..preview(&pf, "Hover", None, task, Some(2.1), "risky") })),
         ("editing", Stage::Editing(preview(&pf, "Hover", None, long, None, "full"))),
         ("starting", Stage::Starting(preview(&pf, "Hover", None, task, None, "full"))),
         ("choose-agent", Stage::ChooseAgent(Pending { id: 1, text: task.into(), tools: vec![AgentTool::Codex, AgentTool::OpenCode] })),
@@ -771,6 +790,22 @@ fn voice_shots(app: &Rc<App>, hover: &Arc<hover_app::app::Hover>, dir: &Path, da
             save(&notch, (w, 200), 1.0, desk, &dir.join(format!("voice-{tag}-{name}.png")));
             if ws == W::Default { save(&notch, (w, 200), 2.0, desk, &dir.join(format!("voice-{tag}-{name}-2x.png"))); }
         }
+        // The tallest the preview gets: the agent menu open over a long task with a note.
+        // It stays inside the window (Small's is the shortest), Start and Cancel in view.
+        draw(&Stage::Preview(preview(&home, "Default workspace", Some("Using default workspace: no project named. Cleanup failed; using the original."), long, None, "full")));
+        *app.voice_ui.ready.borrow_mut() = Some((1, vec![AgentTool::Kiro, AgentTool::Codex, AgentTool::Cursor, AgentTool::OpenCode, AgentTool::Claude]));
+        app.notch.invoke_voice_open_menu(1);
+        let sz = notch.size();
+        let mut buf = vec![PremultipliedRgbaColor::default(); (sz.width * sz.height) as usize];
+        notch.request_redraw();
+        notch.draw_if_needed(|r| { r.render(&mut buf, sz.width as usize); });
+        run_for(100);
+        app.update_rest();
+        run_for(700);
+        let h = app.n.borrow().win.height() as u32;
+        save(&notch, (w, h), 1.0, desk, &dir.join(format!("voice-{tag}-menu-long.png")));
+        app.notch.invoke_voice_open_menu(0);
+        app.voice_ui.ready.borrow_mut().take();
     }
     // A press while one is in progress: the card glows amber a moment.
     draw(&states[4].1);
@@ -1008,6 +1043,17 @@ pub fn run(dir: &Path) {
     app.office_widgets();
     settle(600);
     save(&notch, full, 1.0, desk, &dir.join("office-fab-open.png"));
+    // Kiro Web: the cloud switch on, the repo in place of the folder, then the repo menu.
+    app.notch.global::<Office>().invoke_toggle_cloud();
+    app.cloud_shot(Some("4regab/hoverweb"), vec!["4regab/hoverweb".into(), "4regab/Hover".into(), "4regab/tasksync-mcp".into()]);
+    settle(300);
+    save(&notch, full, 1.0, desk, &dir.join("office-fab-cloud.png"));
+    app.notch.global::<Office>().invoke_open_repos();
+    settle(300);
+    save(&notch, full, 1.0, desk, &dir.join("office-fab-cloud-repos.png"));
+    app.notch.global::<Office>().invoke_open_repos();
+    app.notch.global::<Office>().invoke_toggle_cloud();
+    settle(300);
     // A long task: the box grows to its cap, then scrolls with the caret (Ctrl+End).
     app.notch.global::<Office>().set_new_draft(LONG_PROMPT.into());
     settle(300);

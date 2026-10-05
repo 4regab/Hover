@@ -5,6 +5,21 @@ What changed in each Hover release. Versions follow [Semantic Versioning](https:
 
 ## [Unreleased]
 
+## [3.5.0] - 2026-10-05
+
+### Added
+
+- Kiro tasks can run in Kiro Web, in Kiro's cloud, instead of on this computer: the cloud
+  button in the new-task box and in voice's preview (Kiro only). The task clones the folder's
+  GitHub repo, another connected one, or none. Replies reach the same session, also after a
+  restart, and the chat's cloud chip opens it in Kiro Web. Windows and Linux.
+
+### Fixed
+
+- Voice's preview card was cut off below the task box when the agent menu was open
+  over a long task (Start and Cancel out of view), most on the Small office size. The card
+  now stays inside the notch: the menu and the task box give up height first, and scroll.
+
 ## [3.4.2] - 2026-10-03
 
 ### Fixed

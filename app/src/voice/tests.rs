@@ -74,7 +74,7 @@ fn harness(text: &str, o: Opt) -> H {
     let available = o.available;
     let hooks = Hooks {
         router: Box::new(|_| None),
-        start: Box::new(move |t: AgentTool, f: &str, p: &str, a: &str| { let mut s = s2.lock().unwrap(); s.push((t, f.into(), p.into(), a.into())); Ok(s.len() as i32) }),
+        start: Box::new(move |t: AgentTool, f: &str, p: &str, a: &str, _cloud: bool| { let mut s = s2.lock().unwrap(); s.push((t, f.into(), p.into(), a.into())); Ok(s.len() as i32) }),
         available: Box::new(move |t| available(t)),
         active_project: Box::new(|| None),
     };

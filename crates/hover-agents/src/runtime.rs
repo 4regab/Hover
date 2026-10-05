@@ -63,6 +63,8 @@ impl Runtime {
     /// End the tool's process now. Runs still going fail; the next one starts it again.
     pub fn shutdown(&self, why: &str) { match self { Runtime::Acp(h) => h.shutdown(why), Runtime::OpenCode(h) => h.shutdown(why), Runtime::Claude(h) => h.shutdown(why) } }
     pub fn runner(&self) -> RunTask { match self { Runtime::Acp(h) => h.runner(), Runtime::OpenCode(h) => h.runner(), Runtime::Claude(h) => h.runner() } }
+    /// The GitHub repos a Kiro Web session can be given (AcpHost::repos). Blocks.
+    pub fn repos(&self) -> Result<Vec<String>, String> { match self { Runtime::Acp(h) => h.repos(), _ => Err("Only Kiro runs Kiro Web sessions.".into()) } }
 }
 
 impl From<AcpHost> for Runtime { fn from(h: AcpHost) -> Runtime { Runtime::Acp(h) } }

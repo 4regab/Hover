@@ -25,7 +25,7 @@ export struct CardData { tool: string, title: string, sub: string, count: string
 export struct VoiceCard {
     kind: int, words: string, sub: string, heard: string, note: string,
     target: string, folder: string, letter: string, tint: color, home: bool,
-    tool: string, agent: string, model: string, access: string, full: bool, task: string,
+    tool: string, agent: string, model: string, access: string, full: bool, task: string, cloud-shown: bool, cloud: bool,
     ring: float, start: string, can-start: bool, starting: bool, retry: bool, settings: bool,
 }
 export struct VoiceTool { id: string, name: string }
@@ -248,8 +248,9 @@ export component NotchWindow inherits Window {
         : root.voice.kind == 5 || root.voice.kind == 6 ? min(330px, vs.preferred-width)
         : root.voice.kind == 7 ? 420px : 460px;
     out property <length> voice-h: root.voice.kind == 1 || root.voice.kind == 2 ? 52px : root.voice.kind == 5 || root.voice.kind == 6 ? 34px
-        : root.voice.kind == 7 ? max(58px, ve.preferred-height) : vc.preferred-height;
+        : root.voice.kind == 7 ? max(58px, ve.preferred-height) : min(vc.preferred-height, root.open-h);
     callback voice-start();
+    callback voice-toggle-cloud();
     callback voice-cancel();
     callback voice-edit(string);
     callback voice-retry();
@@ -572,7 +573,11 @@ export component NotchWindow inherits Window {
                     x: 0;
                     y: 0;
                     width: 460px;
-                    height: self.preferred-height;
+                    // Never taller than the window (the open office's height, Small's 340
+                    // or a short screen's): past it the card's foot, Start and Cancel,
+                    // was cut off. The open menu and the task give up their height first,
+                    // and scroll.
+                    height: min(self.preferred-height, root.open-h);
                     visible: root.voice.kind == 3 || root.voice.kind == 4;
                     padding-left: 14px;
                     padding-right: 14px;
@@ -580,13 +585,15 @@ export component NotchWindow inherits Window {
                     padding-bottom: 12px;
                     spacing: 9px;
                     HorizontalLayout {
+                        vertical-stretch: 0;
                         spacing: 7px;
                         VerticalLayout { alignment: center; Icon { name: Icons.mic; size: 12px; tint: #c4a2ff; } }
                         Text { text: "“" + root.voice.heard + "”"; font-size: 11.5px; font-italic: true; color: #f6f2ff61; overflow: elide; horizontal-stretch: 1;
                             vertical-alignment: center; accessible-role: text; accessible-label: "Heard: " + root.voice.heard; }
                     }
-                    if root.voice.kind == 4: Text { text: root.voice.words; font-size: 12.5px; color: white; wrap: word-wrap; accessible-role: text; }
+                    if root.voice.kind == 4: Text { text: root.voice.words; font-size: 12.5px; color: white; wrap: word-wrap; accessible-role: text; vertical-stretch: 0; }
                     if root.voice.kind == 4: HorizontalLayout {
+                        vertical-stretch: 0;
                         spacing: 6px;
                         alignment: start;
                         for t in root.voice-tools: VPick {
@@ -605,6 +612,7 @@ export component NotchWindow inherits Window {
                         }
                     }
                     if root.voice.kind == 3: HorizontalLayout {
+                        vertical-stretch: 0;
                         spacing: 6px;
                         alignment: start;
                         // The target: the project's letter tile, or the home of the default workspace.
@@ -670,11 +678,27 @@ export component NotchWindow inherits Window {
                                 Text { text: root.voice.access; font-size: 12px; color: root.voice.full ? #ffc46b : white; vertical-alignment: center; }
                             }
                         }
+                        // Kiro Web on or off for this task (Kiro only); blue while on.
+                        if root.voice.cloud-shown: VMenuPick {
+                            open: root.voice.cloud;
+                            enabled: !root.voice.starting;
+                            accessible-label: root.voice.cloud ? "Runs in Kiro Web. Run on this computer instead" : "Run in Kiro Web";
+                            accessible-id: "NotchVoiceCloud";
+                            clicked => { root.voice-toggle-cloud(); }
+                            HorizontalLayout {
+                                padding-left: 7px;
+                                padding-right: 7px;
+                                VerticalLayout { alignment: center; Icon { name: Icons.cloud; size: 13px; tint: root.voice.cloud ? #8fbcff : #f6f2ff9e; } }
+                            }
+                        }
                     }
                     // The open menu, under the picks (the office's #mMenu, in the card): the
                     // agents ready for this task, or the model, then its effort or variant.
                     if root.voice.kind == 3 && root.voice-menu != 0: Rectangle {
-                        height: min(vmm.preferred-height, 168px);
+                        preferred-height: min(vmm.preferred-height, 168px);
+                        min-height: min(vmm.preferred-height, 64px);
+                        max-height: min(vmm.preferred-height, 168px);
+                        vertical-stretch: 1;
                         border-radius: 12px;
                         background: #ffffff0a;
                         border-width: 1px;
@@ -702,10 +726,13 @@ export component NotchWindow inherits Window {
                             }
                         }
                     }
-                    if root.voice.note != "": Text { text: root.voice.note; font-size: 11px; color: #f6f2ff9e; wrap: word-wrap; accessible-role: text; }
+                    if root.voice.note != "": Text { text: root.voice.note; font-size: 11px; color: #f6f2ff9e; wrap: word-wrap; accessible-role: text; vertical-stretch: 0; }
                     // .ntask: four lines, then it scrolls. Focusing it stops the countdown.
                     if root.voice.kind == 3: Rectangle {
-                        height: min(tin.preferred-height, 80px) + 18px;
+                        preferred-height: min(tin.preferred-height, 80px) + 18px;
+                        min-height: min(tin.preferred-height, 34px) + 18px;
+                        max-height: min(tin.preferred-height, 80px) + 18px;
+                        vertical-stretch: 1;
                         border-radius: 10px;
                         background: #ffffff08;
                         border-width: 1px;
@@ -744,6 +771,7 @@ export component NotchWindow inherits Window {
                         }
                     }
                     HorizontalLayout {
+                        vertical-stretch: 0;
                         spacing: 6px;
                         if root.voice.kind == 3: VBtn {
                             horizontal-stretch: 1;

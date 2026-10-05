@@ -77,6 +77,8 @@ pub struct Preview {
     pub countdown: Option<f32>,
     /// Try it: Start disabled, never dispatches.
     pub trial: bool,
+    /// Run in Kiro Web (Kiro only), switched on from the preview.
+    pub cloud: bool,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -86,8 +88,8 @@ pub struct Pending { pub id: u64, pub text: String, pub tools: Vec<AgentTool> }
 pub struct Hooks {
     /// The tool's runner for a routing turn (access "none"), when it has one.
     pub router: Box<dyn Fn(AgentTool) -> Option<RunTask> + Send + Sync>,
-    /// A new chat: tool, folder, prompt, access. Ok(session id) once the provider took it.
-    pub start: Box<dyn Fn(AgentTool, &str, &str, &str) -> Result<i32, String> + Send + Sync>,
+    /// A new chat: tool, folder, prompt, access, in Kiro Web. Ok(session id) once the provider took it.
+    pub start: Box<dyn Fn(AgentTool, &str, &str, &str, bool) -> Result<i32, String> + Send + Sync>,
     pub available: Box<dyn Fn(AgentTool) -> bool + Send + Sync>,
     /// The project open in Hover now (its id), which wins a tie.
     pub active_project: Box<dyn Fn() -> Option<String> + Send + Sync>,
@@ -412,6 +414,18 @@ impl Voice {
         self.notify();
     }
 
+    /// Kiro Web on or off for this task, from the preview: as another agent, the
+    /// countdown stops for good and Start is needed.
+    pub fn toggle_cloud(&self) {
+        {
+            let mut st = self.st.lock().unwrap();
+            let p = match &st.stage { Stage::Preview(p) | Stage::Editing(p) if p.id == st.id && p.tool == AgentTool::Kiro => p.clone(), _ => return };
+            st.deadline = None;
+            st.stage = Stage::Editing(Preview { cloud: !p.cloud, countdown: None, ..p });
+        }
+        self.notify();
+    }
+
     /// Stops the countdown for good (a menu on the card opened): Start is needed after.
     pub fn hold(&self) {
         {
@@ -619,7 +633,7 @@ impl Voice {
             }
         };
         Ok(Preview { id, heard: r.heard.clone(), cleanup_note: r.cleanup_note.clone(), task, folder, target_name, note: note.filter(|n| !n.is_empty()),
-            tool: r.tool, model, access, countdown: None, trial: r.trial })
+            tool: r.tool, model, access, countdown: None, trial: r.trial, cloud: false })
     }
 
     /// The countdown, ten updates a second; its end starts the task (unless something
@@ -706,7 +720,7 @@ impl Voice {
             drop(st);
             return self.notify();
         }
-        match (self.hooks.start)(p.tool, &folder, &p.task, &access) {
+        match (self.hooks.start)(p.tool, &folder, &p.task, &access, p.cloud && p.tool == AgentTool::Kiro) {
             Ok(session) => { self.set(id, Stage::Started { session, folder }); }
             Err(e) => keep(self, e),
         }

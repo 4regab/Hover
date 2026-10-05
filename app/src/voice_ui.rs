@@ -72,7 +72,7 @@ pub fn make(hover: &Arc<Hover>) -> (Ui, Arc<Phonon>, Arc<Voice>) {
     let (h1, h2) = (hover.clone(), hover.clone());
     let hooks = Hooks {
         router: Box::new(move |t| h1.runner(t)),
-        start: Box::new(move |t, folder, prompt, access| start(&h2, t, folder, prompt, access)),
+        start: Box::new(move |t, folder, prompt, access, cloud| start(&h2, t, folder, prompt, access, cloud)),
         // Installed and signed in, by the tool's own status command (kept five minutes).
         available: Box::new(|t| hover_agents::agents::check(t, false).ok()),
         active_project: Box::new(move || active.lock().unwrap().clone()),
@@ -84,13 +84,15 @@ pub fn make(hover: &Arc<Hover>) -> (Ui, Arc<Phonon>, Arc<Voice>) {
 /// A new chat for a voice task, through the same start the office's new-task box uses.
 /// Ok only once the tool took it (it named the conversation, or the turn ended well).
 /// Called on Voice's worker thread, so it may wait.
-fn start(h: &Hover, tool: AgentTool, folder: &str, prompt: &str, access: &str) -> Result<i32, String> {
+fn start(h: &Hover, tool: AgentTool, folder: &str, prompt: &str, access: &str, cloud: bool) -> Result<i32, String> {
+    // In Kiro Web: the folder's GitHub repo, else an empty workspace; always Full.
+    let (access, cloud) = if cloud { ("full", Some(hover_agents::desk::Desk::shared().github_repo(folder).into_iter().collect::<Vec<_>>())) } else { (access, None) };
     // with_access("read") on a tool with no read only mode would run it with its own
     // setting: more than the target allows.
     if access == "read" && !hover_agents::agents::read_only_works(tool) {
         return Err(format!("{} has no read only mode on this computer, so Hover won’t start it here. Change the target’s access in Settings → Projects, or pick another agent.", tool.name()));
     }
-    let Some(s) = h.sessions.start_as(tool, folder, prompt, vec![], Some(access)) else {
+    let Some(s) = h.sessions.start_in(tool, folder, prompt, vec![], Some(access), cloud) else {
         return Err(if h.sessions.can_start() { "Hover couldn’t start the task." } else { "Three tasks are running already. Start this one when one of them ends." }.into());
     };
     hover_core::log::line(&format!("voice: run {} started ({}, access {access})", s.id, tool.name().to_lowercase()));
@@ -409,8 +411,11 @@ impl App {
         c.agent = s(p.tool.name());
         // The office's pill: the model's name ("Default" when the tool lists none).
         c.model = s(self.pill(p.tool).0);
-        c.access = s(pages::access_label(&p.access));
-        c.full = p.access == "full";
+        let cloud = p.cloud && p.tool == AgentTool::Kiro;
+        c.access = s(pages::access_label(if cloud { "full" } else { &p.access }));
+        c.full = cloud || p.access == "full";
+        c.cloud_shown = p.tool == AgentTool::Kiro;
+        c.cloud = cloud;
         c.task = s(&p.task);
         // What is left of the countdown the preview started with (a shot's has none: Settings').
         let total = match self.voice.countdown_total().as_secs_f32() { t if t > 0.0 => t, _ => st.voice().countdown.max(1) as f32 };
@@ -499,6 +504,8 @@ impl App {
     pub fn wire_voice(self: &Rc<Self>) {
         let a = self.clone();
         self.notch.on_voice_start(move || a.voice.start_now());
+        let a = self.clone();
+        self.notch.on_voice_toggle_cloud(move || a.voice.toggle_cloud());
         let a = self.clone();
         self.notch.on_voice_cancel(move || {
             if a.voice.stage() == Stage::Idle { a.voice_ui.hold_error.borrow_mut().take(); a.update_rest(); } else { a.voice.cancel(); }
