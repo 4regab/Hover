@@ -194,6 +194,14 @@ macro_rules! each {
 impl App {
     /// The office's window and size: the app window when it is up, else the open notch.
     fn office_size(&self) -> Option<(u32, u32, i32)> {
+        let n = self.n.borrow();
+        // Below a Mac's camera housing, when the notch has one.
+        let below = n.hw.filter(|h| h.real).map_or(0.0, |h| h.height);
+        let notch = || ((n.open_size.0 - 16.0) as u32, (n.open_size.1 - 16.0 - below).max(1.0) as u32, 0);
+        // The open notch first: it sits over everything, so it is what the user looks at.
+        // The app window used to win whenever it was open, even behind other windows or
+        // minimised (Slint still calls both visible), and the notch's office froze.
+        if n.hover.state != hover_notch::State::Rest { return Some(notch()); }
         if let Some(d) = &*self.dash.borrow() {
             if d.window().is_visible() {
                 let sz = d.window().size();
@@ -201,10 +209,7 @@ impl App {
                 return Some(((sz.width as f32 / k) as u32, (sz.height as f32 / k) as u32, 1));
             }
         }
-        let n = self.n.borrow();
-        // Below a Mac's camera housing, when the notch has one.
-        let below = n.hw.filter(|h| h.real).map_or(0.0, |h| h.height);
-        (n.hover.state != hover_notch::State::Rest || self.headless).then(|| ((n.open_size.0 - 16.0) as u32, (n.open_size.1 - 16.0 - below).max(1.0) as u32, 0))
+        self.headless.then(notch)
     }
 
     /// Starts the office thread the first time an office is seen, and tells it whether
@@ -256,6 +261,7 @@ impl App {
             }
         }
         if let Some((w, h, which)) = want {
+            if p.target.get() != which { hover_core::log::line(if which == 1 { "office: frames go to the app window" } else { "office: frames go to the notch" }); }
             p.target.set(which);
             if p.size.get() != (w, h) { p.size.set((w, h)); live.send(In::Resize(w, h)); }
         }

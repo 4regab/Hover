@@ -162,6 +162,7 @@ fn run(rx: Receiver<In>, out: Arc<Mutex<Out>>, spare: Arc<Mutex<Vec<u8>>>, slots
     let mut page = crate::page::Composer::default();
     // The frame as read back, kept between frames.
     let mut rgba: Vec<u8> = vec![];
+    let mut starved = false;
     loop {
         // One frame's worth of waiting: 16 ms, as requestAnimationFrame.
         let msg = rx.recv_timeout(Duration::from_millis(if visible { 16 } else { 500 }));
@@ -247,7 +248,12 @@ fn run(rx: Receiver<In>, out: Arc<Mutex<Out>>, spare: Arc<Mutex<Vec<u8>>>, slots
             for (gn, i) in freed.lock().unwrap().drain(..) { if gn == gen && !free.contains(&i) { free.push(i); } }
             // Nothing free: the UI is behind, so this frame is dropped rather than drawn
             // over a texture a window still shows. The clicks wait for the next one.
-            let Some(slot) = free.pop() else { continue };
+            let Some(slot) = free.pop() else {
+                // Said once per run of dropped frames: a slot that never comes back stops the office.
+                if !starved { starved = true; hover_core::log::line(&format!("office: no free slot, frames dropped until one comes back (set {gen}, waiting {:?})", out.lock().unwrap().slot)); }
+                continue
+            };
+            if starved { starved = false; hover_core::log::line("office: a slot came back, drawing again"); }
             g.sync(&r.queue, o.time == Time::Day);
             let spent = Instant::now();
             r.render_gpu(&mut o, g, slot);
@@ -256,7 +262,10 @@ fn run(rx: Receiver<In>, out: Arc<Mutex<Out>>, spare: Arc<Mutex<Vec<u8>>>, slots
             // windows' own drawing polls the device.
             let us = gpu_us.clone();
             r.queue.on_submitted_work_done(move || us.store(spent.elapsed().as_micros() as u64, Ordering::Relaxed));
-            rest_until = Instant::now() + Duration::from_micros(gpu_us.load(Ordering::Relaxed)) * 2;
+            let rest = Duration::from_micros(gpu_us.load(Ordering::Relaxed)) * 2;
+            // The frame's time is only known when the device is next polled, which can be late.
+            if rest > Duration::from_secs(1) { hover_core::log::line(&format!("office: resting the device {} ms before the next frame", rest.as_millis())); }
+            rest_until = Instant::now() + rest;
             slot_out = Some((gen, slot));
         } else {
             let spent = Instant::now();
