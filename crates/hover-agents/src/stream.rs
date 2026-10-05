@@ -226,6 +226,10 @@ impl KiroStream {
             }
             Some("plan") => self.phase = KiroPhase::Planning,
             Some("tool_call" | "tool_call_update" | "tool_call_chunk") => {
+                // An update for a tool call that never started here and names nothing is old news: Kiro
+                // sends the results of an earlier conversation like this (67 in a second, seen in a Kiro
+                // Web chat), and each was a "Working" row. There is nothing to show for it.
+                if kind == Some("tool_call_update") && s(u, "title").is_none() && s(u, "toolCallId").is_none_or(|i| !self.steps.contains_key(i)) { return; }
                 if let Some(p) = tool_phase(s(u, "kind"), s(u, "title")) { self.phase = p; }
                 if !self.said.is_empty() { self.after_tool = true; }
                 self.step(u);
@@ -759,6 +763,20 @@ mod tests {
         k.feed(&update(r#"{"sessionUpdate":"tool_call","toolCallId":"e3","status":"failed"}"#));
         let ids: Vec<String> = k.drain().into_iter().filter_map(|e| e.step).map(|s| s.id).collect();
         assert_eq!(ids, ["e2", "e3"]);
+    }
+
+    /// Old results sent as updates for calls that never started here (as Kiro Web did, from the user's
+    /// own log) are dropped, and do not cut what the agent was saying.
+    #[test]
+    fn updates_for_calls_that_never_started_are_dropped() {
+        let mut k = KiroStream::new("Kiro");
+        k.feed(&update(r#"{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"Working on it. "}}"#));
+        for i in 0..5 {
+            k.feed(&update(&format!(r#"{{"sessionUpdate":"tool_call_update","toolCallId":"run_command_toolu_{i}","status":"completed","rawOutput":{{"x":1}},"content":[{{"type":"content","content":{{"type":"text","text":"old"}}}}]}}"#)));
+        }
+        k.feed(&update(r#"{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"Done."}}"#));
+        assert!(k.drain().iter().all(|e| e.step.is_none()), "no rows for them");
+        assert_eq!(k.said(), "Working on it. Done.", "and the answer is not cut");
     }
 
     /// KiroStream.InputOf / LogOf: a step keeps its call's input and the longer end of what
