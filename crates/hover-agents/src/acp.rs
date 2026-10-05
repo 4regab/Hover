@@ -146,6 +146,10 @@ impl Replay {
     fn last(&mut self) -> KiroStream { self.turns.pop().map_or_else(|| KiroStream::new(self.name), |t| t.1) }
 }
 
+/// What listing the user's Kiro Web sessions found, and when it found none, in words why.
+#[derive(Clone, Debug, PartialEq, Default)]
+pub struct CloudList { pub sessions: Vec<CloudSession>, pub note: String }
+
 /// A Kiro Web session in the user's Kiro account, as Kiro lists it.
 #[derive(Clone, Debug, PartialEq)]
 pub struct CloudSession { pub id: String, pub title: String, pub updated: Option<hover_core::time::Stamp> }
@@ -193,6 +197,8 @@ struct Host {
     can_image: AtomicBool,
     /// The agent lists its sessions (initialize's sessionCapabilities.list).
     can_list: AtomicBool,
+    /// What the agent advertises for Kiro (agentCapabilities._meta.kiro), as it said it.
+    kiro_caps: Mutex<Json>,
     /// Cloud sessions whose sandbox said it is ready (its first context_usage), by ACP
     /// session id; cleared with the process.
     ready: Mutex<HashSet<String>>,
@@ -227,7 +233,7 @@ impl AcpHost {
             tool, options: Box::new(options), connect, gate: Mutex::new(()), link: Mutex::new(None), gens: AtomicU64::new(0),
             pending: Mutex::new(HashMap::new()), turns: Mutex::new(HashMap::new()), session_options: Mutex::new(HashMap::new()),
             can_load: AtomicBool::new(false), ids: AtomicI64::new(0), busy: AtomicUsize::new(0), idle: AtomicU64::new(0), seen: Mutex::new(vec![]),
-            asking: Mutex::new(None), trusted: Mutex::new(HashMap::new()), session_mcp: Mutex::new(HashMap::new()), mcp: Mutex::new(default_mcp(tool)), boxed, can_cloud: AtomicBool::new(false), can_image: AtomicBool::new(false), can_list: AtomicBool::new(false), ready: Mutex::new(HashSet::new()),
+            asking: Mutex::new(None), trusted: Mutex::new(HashMap::new()), session_mcp: Mutex::new(HashMap::new()), mcp: Mutex::new(default_mcp(tool)), boxed, can_cloud: AtomicBool::new(false), can_image: AtomicBool::new(false), can_list: AtomicBool::new(false), kiro_caps: Mutex::new(Json::Null), ready: Mutex::new(HashSet::new()),
         }))
     }
 
@@ -271,7 +277,7 @@ impl AcpHost {
 
     /// Every Kiro Web session in the user's Kiro account, newest first as Kiro gives them. Starts
     /// the tool if it isn't up. Blocks: run it off the UI thread.
-    pub fn cloud_sessions(&self) -> Result<Vec<CloudSession>, String> { self.0.cloud_sessions() }
+    pub fn cloud_sessions(&self) -> Result<CloudList, String> { self.0.cloud_sessions() }
 
     /// A Kiro Web session's whole conversation, from its replay, opened in `folder` (a folder on
     /// this computer; the session works in its own sandbox). Blocks: run it off the UI thread.
@@ -594,32 +600,66 @@ impl Host {
         got.map_err(|e| match e { CallErr::Acp(m) => self.explain(&m), CallErr::Gone(m) => m, CallErr::Cancelled => "Stopped.".into() })
     }
 
-    fn cloud_sessions(self: &Arc<Self>) -> Result<Vec<CloudSession>, String> {
+    /// Every session Kiro lists when asked for `source` ("remote": Kiro Web's, "local": this
+    /// computer's), paging through. Each with whether Kiro marked it cloud, and whether local.
+    fn list_source(&self, ct: &Cancel, source: &str) -> Result<Vec<(CloudSession, bool, bool)>, CallErr> {
+        let mut all: Vec<(CloudSession, bool, bool)> = vec![];
+        let mut cursor: Option<String> = None;
+        // ponytail: at most 50 pages; a cursor that never ends stops there.
+        for _ in 0..50 {
+            let mut p = vec![("_meta", o_(vec![("kiro", o_(vec![("sessionSource", st(source))]))]))];
+            if let Some(c) = &cursor { p.push(("cursor", st(c))); }
+            let r = self.call("session/list", o_(p), Some(ct), Some(Duration::from_secs(60)))?;
+            if let Some(Json::Arr(list)) = r.get("sessions") {
+                // What Kiro answers, with no titles or paths: how many, and the first one's field names and marks.
+                if cursor.is_none() {
+                    let first = list.first().map(|x| match x { Json::Obj(f) => format!("fields=[{}] _meta={}", f.iter().map(|(k, _)| k.as_str()).collect::<Vec<_>>().join(","),
+                        crate::stream::clip(&x.get("_meta").map_or("none".into(), Json::compact), 300)), _ => "not an object".into() }).unwrap_or_else(|| "none".into());
+                    hover_core::log::line(&format!("acp {}: session/list sessionSource={source}: {} on the first page; first: {first}", self.name(), list.len()));
+                }
+                for x in list {
+                    let Some(id) = s(x, "sessionId").filter(|i| !i.is_empty()) else { continue };
+                    if all.iter().any(|c| c.0.id == id) { continue; }
+                    let marks = x.get("_meta").and_then(|m| m.get("kiro")).map(|k| k.compact().to_lowercase()).unwrap_or_default();
+                    let (cloud, local) = (marks.contains("cloud") || marks.contains("remote"), marks.contains("\"local\""));
+                    all.push((CloudSession { id: id.into(), title: s(x, "title").unwrap_or("").trim().to_owned(), updated: s(x, "updatedAt").and_then(hover_core::time::Stamp::parse) }, cloud, local));
+                }
+            }
+            match s(&r, "nextCursor") { Some(c) if !c.is_empty() => cursor = Some(c.to_owned()), _ => break }
+        }
+        Ok(all)
+    }
+
+    /// The user's Kiro Web sessions. Kiro's docs don't say how a cloud session is marked in its list,
+    /// so Hover asks for Kiro Web's and for this computer's, and takes a session for Kiro Web's when
+    /// Kiro marks it cloud, or when it is in the first list and neither marked local nor in the
+    /// second. If Kiro gives the same sessions for both, Hover can't tell, and says so.
+    fn cloud_sessions(self: &Arc<Self>) -> Result<CloudList, String> {
         let name = self.name();
         self.with_tool(|ct| {
             if !self.can_list.load(Ordering::SeqCst) { return Err(CallErr::Acp(format!("This {name} CLI can’t list sessions. Update Kiro CLI."))); }
-            let mut all = vec![];
-            let mut cursor: Option<String> = None;
-            // ponytail: at most 50 pages; a cursor that never ends stops there.
-            for _ in 0..50 {
-                // From Kiro's cloud store, as session/load reads it (sessionSource "remote").
-                let mut p = vec![("_meta", o_(vec![("kiro", o_(vec![("sessionSource", st("remote"))]))]))];
-                if let Some(c) = &cursor { p.push(("cursor", st(c))); }
-                let r = self.call("session/list", o_(p), Some(ct), Some(Duration::from_secs(60)))?;
-                if let Some(Json::Arr(list)) = r.get("sessions") {
-                    for x in list {
-                        let Some(id) = s(x, "sessionId").filter(|i| !i.is_empty()) else { continue };
-                        // One Kiro marks as this computer's is not a Kiro Web session.
-                        let kiro = x.get("_meta").and_then(|m| m.get("kiro"));
-                        let local = kiro.is_some_and(|k| s(k, "sessionSource") == Some("local") || s(k, "executionTarget") == Some("local")
-                            || k.get("executionTarget").and_then(|t| s(t, "kind")) == Some("local"));
-                        if local || all.iter().any(|c: &CloudSession| c.id == id) { continue; }
-                        all.push(CloudSession { id: id.into(), title: s(x, "title").unwrap_or("").trim().to_owned(), updated: s(x, "updatedAt").and_then(hover_core::time::Stamp::parse) });
-                    }
+            let remote = self.list_source(ct, "remote")?;
+            let local = self.list_source(ct, "local").ok();
+            let local_ids: HashSet<&str> = local.iter().flatten().map(|c| c.0.id.as_str()).collect();
+            let same = local.as_ref().is_some_and(|l| !remote.is_empty() && l.len() == remote.len() && remote.iter().all(|c| local_ids.contains(c.0.id.as_str())));
+            let sessions: Vec<CloudSession> = remote.iter()
+                .filter(|(c, cloud, local_mark)| *cloud || (!*local_mark && !same && !local_ids.contains(c.id.as_str()))).map(|x| x.0.clone()).collect();
+            hover_core::log::line(&format!("acp {name}: Kiro Web sessions: {} for Kiro Web, {} for this computer, {} kept; it advertises {}", remote.len(),
+                local.as_ref().map_or("?".into(), |l| l.len().to_string()), sessions.len(), crate::stream::clip(&self.kiro_caps.lock().unwrap().compact(), 600)));
+            let mut note = String::new();
+            if sessions.is_empty() {
+                note = format!("{name} listed {} for Kiro Web{}.", remote.len(), local.as_ref().map_or(String::new(), |l| format!(" and {} for this computer", l.len())));
+                if same { note.push_str(" They are the same, so Hover can’t tell which are Kiro Web’s."); }
+                // What it says it can do, to see how to ask it.
+                if let Json::Obj(caps) = &*self.kiro_caps.lock().unwrap() {
+                    let offers: Vec<String> = caps.iter().filter_map(|(k, v)| match v {
+                        Json::Arr(items) if ["scope", "source", "target"].iter().any(|w| k.to_lowercase().contains(w)) =>
+                            Some(format!("{k}: {}", items.iter().filter_map(Json::as_str).collect::<Vec<_>>().join("/"))),
+                        _ => None }).collect();
+                    if !offers.is_empty() { note.push_str(&format!(" It offers {}.", offers.join("; "))); }
                 }
-                match s(&r, "nextCursor") { Some(c) if !c.is_empty() => cursor = Some(c.to_owned()), _ => break }
             }
-            Ok(all)
+            Ok(CloudList { sessions, note })
         })
     }
 
@@ -828,6 +868,7 @@ impl Host {
                 self.can_image.store(image, Ordering::SeqCst);
                 let list = r.get("agentCapabilities").and_then(|c| c.get("sessionCapabilities")).and_then(|c| c.get("list")).is_some_and(|l| !l.is_null() && l != &Json::Bool(false));
                 self.can_list.store(list, Ordering::SeqCst);
+                *self.kiro_caps.lock().unwrap() = r.get("agentCapabilities").and_then(|c| c.get("_meta")).and_then(|m| m.get("kiro")).cloned().unwrap_or(Json::Null);
                 Ok(())
             }
             Err(e) => { self.shutdown("didn't start"); Err(e) }

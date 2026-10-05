@@ -37,7 +37,10 @@ fn replay(out: &Out, done: bool) {
     }
 }
 
-fn host(done: bool, live: bool) -> (AcpHost, Arc<Mutex<Vec<Json>>>) {
+fn host(done: bool, live: bool) -> (AcpHost, Arc<Mutex<Vec<Json>>>) { host_with(done, live, false) }
+
+/// `same`: Kiro gives the same sessions whichever source it is asked for.
+fn host_with(done: bool, live: bool, same: bool) -> (AcpHost, Arc<Mutex<Vec<Json>>>) {
     let got: Arc<Mutex<Vec<Json>>> = Default::default();
     let g2 = got.clone();
     let host = AcpHost::with_connect(AgentTool::Kiro, AgentOptions::default, move || {
@@ -53,9 +56,16 @@ fn host(done: bool, live: bool) -> (AcpHost, Arc<Mutex<Vec<Json>>>) {
                 let id = m.get("id").and_then(|i| i.i64().ok());
                 let r = match m.get("method").and_then(Json::as_str) {
                     Some("initialize") => Some(r#"{"protocolVersion":1,"agentCapabilities":{"loadSession":true,"sessionCapabilities":{"list":{}},"_meta":{"kiro":{"executionTargets":["local","cloud-sandbox"]}}}}"#.to_owned()),
-                    // Two pages: a Kiro Web session and one Kiro marks as this computer's, then another.
-                    Some("session/list") if m.get("params").and_then(|p| p.get("cursor")).is_none() => Some(r#"{"sessions":[{"sessionId":"c1","cwd":"/sandbox","title":"Fix the footer","updatedAt":"2026-10-05T10:00:00Z"},{"sessionId":"l1","cwd":"/home/me","title":"Local one","_meta":{"kiro":{"sessionSource":"local"}}}],"nextCursor":"p2"}"#.to_owned()),
-                    Some("session/list") => Some(r#"{"sessions":[{"sessionId":"c2","cwd":"/sandbox","title":"  Add tests  "}]}"#.to_owned()),
+                    // For Kiro Web's: two pages, a Kiro Web session and this computer's, then another. For this
+                    // computer's: only its own. (`same`: the same for both, with nothing marked.)
+                    Some("session/list") => {
+                        let p = m.get("params").cloned().unwrap_or(Json::Null);
+                        let remote = p.compact().contains("\"remote\"");
+                        Some(if same { r#"{"sessions":[{"sessionId":"a1","title":"One"},{"sessionId":"a2","title":"Two"}]}"#.to_owned() }
+                            else if !remote { r#"{"sessions":[{"sessionId":"l1","cwd":"/home/me","title":"Local one"}]}"#.to_owned() }
+                            else if p.get("cursor").is_none() { r#"{"sessions":[{"sessionId":"c1","cwd":"/sandbox","title":"Fix the footer","updatedAt":"2026-10-05T10:00:00Z"},{"sessionId":"l1","cwd":"/home/me","title":"Local one"}],"nextCursor":"p2"}"#.to_owned() }
+                            else { r#"{"sessions":[{"sessionId":"c2","cwd":"/sandbox","title":"  Add tests  "}]}"#.to_owned() })
+                    }
                     Some("session/load") => {
                         replay(&o2, done);
                         Some(r#"{"configOptions":[]}"#.to_owned())
@@ -123,8 +133,9 @@ fn a_turn_still_running_is_followed_to_its_end() {
 fn kiro_web_sessions_are_listed_page_by_page_without_the_local_ones() {
     let (host, got) = host(true, false);
     let list = host.cloud_sessions().unwrap();
-    let ids: Vec<(&str, &str, bool)> = list.iter().map(|c| (c.id.as_str(), c.title.as_str(), c.updated.is_some())).collect();
-    assert_eq!(ids, [("c1", "Fix the footer", true), ("c2", "Add tests", false)]);
+    let ids: Vec<(&str, &str, bool)> = list.sessions.iter().map(|c| (c.id.as_str(), c.title.as_str(), c.updated.is_some())).collect();
+    assert_eq!(ids, [("c1", "Fix the footer", true), ("c2", "Add tests", false)], "this computer's session is left out");
+    assert!(list.note.is_empty());
     let first = got.lock().unwrap().iter().find(|m| m.get("method").and_then(Json::as_str) == Some("session/list")).cloned().unwrap();
     assert!(first.compact().contains(r#""sessionSource":"remote""#), "{}", first.compact());
     host.shutdown("test");
@@ -136,5 +147,16 @@ fn a_kiro_web_conversation_is_read_back_turn_by_turn() {
     let turns = host.cloud_transcript("c1", &std::env::temp_dir().to_string_lossy()).unwrap();
     let got: Vec<(&str, &str, Vec<&str>, bool)> = turns.iter().map(|t| (t.prompt.as_str(), t.text.as_str(), t.steps.iter().map(|s| s.id.as_str()).collect(), t.completed)).collect();
     assert_eq!(got, [("first", "First answer.", vec!["old1"], true), ("second one", "Second answer, finished while away.", vec!["cut1"], true)]);
+    host.shutdown("test");
+}
+
+/// When Kiro gives the same sessions whichever source it is asked for, Hover can't tell which are Kiro
+/// Web's: it shows none, and says so in words.
+#[test]
+fn when_kiro_cannot_be_told_apart_it_says_so() {
+    let (host, _) = host_with(true, false, true);
+    let list = host.cloud_sessions().unwrap();
+    assert!(list.sessions.is_empty());
+    assert!(list.note.contains("listed 2 for Kiro Web and 2 for this computer") && list.note.contains("can’t tell"), "{}", list.note);
     host.shutdown("test");
 }

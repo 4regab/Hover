@@ -1080,11 +1080,14 @@ pub fn run(dir: &Path) {
     {
         use hover_agents::acp::CloudSession;
         let ago = |h: f64| Some(hover_core::time::Stamp::now().add_secs(-h * 3600.0));
+        app.web_shot(vec![], "Kiro listed 4 for Kiro Web and 4 for this computer. They are the same, so Hover can’t tell which are Kiro Web’s. It offers sessionSources: local/remote.");
+        settle(400);
+        save(&notch, full, 1.0, desk, &dir.join("office-panel-history-web-none.png"));
         app.web_shot(vec![CloudSession { id: "w1".into(), title: "Fix the checkout total on mobile".into(), updated: ago(0.5) },
-            CloudSession { id: "w2".into(), title: "Write the release notes for 3.7".into(), updated: ago(30.0) }, CloudSession { id: "w3".into(), title: String::new(), updated: None }]);
+            CloudSession { id: "w2".into(), title: "Write the release notes for 3.7".into(), updated: ago(30.0) }, CloudSession { id: "w3".into(), title: String::new(), updated: None }], "");
         settle(600);
         save(&notch, full, 1.0, desk, &dir.join("office-panel-history-web.png"));
-        app.web_shot(vec![]);
+        app.web_shot(vec![], "");
     }
     app.open_panel(None);
     app.notch.global::<Office>().invoke_fab_main();

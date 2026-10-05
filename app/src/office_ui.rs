@@ -171,6 +171,8 @@ struct WebList {
     list: Vec<hover_agents::acp::CloudSession>,
     /// Why they couldn't be listed this time.
     error: Option<String>,
+    /// When the list is empty though Kiro answered: what it said, in words.
+    note: String,
     /// The one being opened (its conversation read from the cloud).
     opening: Option<String>,
 }
@@ -599,23 +601,31 @@ impl App {
     fn list_web(self: &Rc<Self>) {
         if self.headless || self.page.web.borrow().listing { return; }
         // Not where Kiro isn't set up: it would be started to list nothing.
-        if hover_agents::agents::known(AgentTool::Kiro).is_some_and(|r| !r.ok()) { return; }
+        if hover_agents::agents::known(AgentTool::Kiro).is_some_and(|r| !r.ok()) {
+            let mut w = self.page.web.borrow_mut();
+            (w.list, w.note, w.error) = (vec![], String::new(), Some("Kiro isn’t set up on this computer.".into()));
+            return;
+        }
         let Some(host) = self.hover.hosts.iter().find(|h| h.tool() == AgentTool::Kiro).cloned() else { return };
         self.page.web.borrow_mut().listing = true;
         let history = self.hover.history.clone();
         std::thread::spawn(move || {
-            let got = host.cloud_sessions().map(|list| {
+            let got = host.cloud_sessions().map(|found| {
                 // ponytail: every Kiro session in the history is read for its id, each time; an index of ids is the upgrade.
                 let have: std::collections::HashSet<String> = history.map(|h| h.entries().into_iter().filter(|e| e.tool == AgentTool::Kiro)
                     .filter_map(|e| h.load(&e.key)).filter_map(|s| s.acp_id).collect()).unwrap_or_default();
-                list.into_iter().filter(|c| !have.contains(&c.id)).collect::<Vec<_>>()
+                let total = found.sessions.len();
+                let fresh: Vec<_> = found.sessions.into_iter().filter(|c| !have.contains(&c.id)).collect();
+                // All of them already in Hover's history is not a failure.
+                let note = if fresh.is_empty() && total > 0 { format!("All {total} are in Hover’s history already.") } else { found.note };
+                (fresh, note)
             });
             crate::ui_do(move |a| {
                 {
                     let mut w = a.page.web.borrow_mut();
                     w.listing = false;
                     // Another account's list never stays: a failure shows none.
-                    match got { Ok(l) => { w.list = l; w.error = None; } Err(e) => { w.list.clear(); w.error = Some(e); } }
+                    match got { Ok((l, note)) => { w.list = l; w.note = note; w.error = None; } Err(e) => { w.list.clear(); w.note.clear(); w.error = Some(e); } }
                 }
                 a.office_widgets();
             });
@@ -697,8 +707,8 @@ impl App {
     }
 
     /// The shots' history: Kiro Web sessions as Kiro would list them, without Kiro.
-    pub fn web_shot(self: &Rc<Self>, list: Vec<hover_agents::acp::CloudSession>) {
-        *self.page.web.borrow_mut() = WebList { list, ..Default::default() };
+    pub fn web_shot(self: &Rc<Self>, list: Vec<hover_agents::acp::CloudSession>, note: &str) {
+        *self.page.web.borrow_mut() = WebList { list, note: note.into(), ..Default::default() };
         self.office_widgets();
     }
 
@@ -912,6 +922,9 @@ impl App {
                 let mut items: Vec<(f64, Item)> = list.iter().map(|h| (h.updated.unix_ms() as f64, Item::Here(h)))
                     .chain(clouds.iter().map(|c| (c.updated.map_or(0.0, |u| u.unix_ms() as f64), Item::Web(c)))).collect();
                 items.sort_by(|a, b| b.0.total_cmp(&a.0));
+                // Why there are no Kiro Web sessions, in words at the top, not in the small print.
+                if let Some(e) = &web.error { rows.push(PanelRow { text: s(format!("Kiro Web sessions couldn’t be listed. {e}")), ..row(4) }); opens.push((None, None)); }
+                else if !web.listing && web.list.is_empty() && !web.note.is_empty() { rows.push(PanelRow { text: s(format!("No Kiro Web sessions to add. {}", web.note)), ..row(4) }); opens.push((None, None)); }
                 let mut at = String::new();
                 for (ms, item) in &items {
                     let ms = *ms;
@@ -946,7 +959,6 @@ impl App {
                 if items.is_empty() { rows.push(PanelRow { text: s(if all.is_empty() && web.list.is_empty() { "Sessions you start are kept here. Open one to read it, reply to carry on." } else { "Nothing matches." }), ..row(4) }); opens.push((None, None)); }
                 let mut sub = format!("{} session{}, kept until you delete them", all.len(), if all.len() == 1 { "" } else { "s" });
                 if web.listing { sub.push_str(" · looking up Kiro Web…"); }
-                else if let Some(e) = &web.error { sub.push_str(&format!(" · Kiro Web sessions couldn’t be listed: {e}")); }
                 ("Session history".into(), sub, rows, opens)
             }
             None => (String::new(), String::new(), rows, opens),
