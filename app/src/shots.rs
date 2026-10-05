@@ -722,11 +722,18 @@ fn settings_integrations_shots(app: &Rc<App>, hover: &Arc<hover_app::app::Hover>
     // Kiro's auto compact: off (the switch alone), then on at 70 % with its choice.
     app.show_settings_in(1, Section::Kiro);
     save(&dash, (1200, 1000), 1.0, [0, 0, 0], &dir.join("settings-kiro-compact-off.png"));
-    hover.settings.set_kiro_auto_compact(true);
+    // Through the page's own callbacks, as a click on the switches and on 70 % does.
+    if let Some(d) = &*app.dash.borrow() {
+        let page = d.global::<crate::ui::Page>();
+        page.invoke_toggled("KiroAutoCompact".into(), true);
+        page.invoke_toggled("KiroRetryBusy".into(), true);
+    }
+    assert!(hover.settings.kiro_auto_compact() && hover.settings.kiro_retry_busy(), "the switches took the clicks");
     hover.settings.set_kiro_compact_at(70);
     app.show_settings_in(1, Section::Kiro);
     save(&dash, (1200, 1000), 1.0, [0, 0, 0], &dir.join("settings-kiro-compact-on.png"));
     hover.settings.set_kiro_auto_compact(false);
+    hover.settings.set_kiro_retry_busy(false);
 }
 /// A voice preview as Voice makes one, for the shots.
 fn preview(folder: &str, target: &str, note: Option<&str>, task: &str, countdown: Option<f32>, access: &str) -> hover_app::voice::Preview {
