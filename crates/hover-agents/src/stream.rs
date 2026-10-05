@@ -263,6 +263,13 @@ impl KiroStream {
             Some(k) => k.clone(),
             None => {
                 self.began.insert(id.into(), std::time::Instant::now());
+                // Diagnostic (Kiro Web shows many "Working" rows): a step that starts with no
+                // title is named "Working". Only ids and field names are logged, never text.
+                if s(u, "title").is_none() {
+                    let keys = match u { Json::Obj(v) => v.iter().map(|(k, _)| k.as_str()).collect::<Vec<_>>().join(","), _ => String::new() };
+                    hover_core::log::line(&format!("stream: new step without a title, shown as Working: id={id} update={} kind={} status={} fields=[{keys}] steps_so_far={}",
+                        s(u, "sessionUpdate").unwrap_or("-"), s(u, "kind").unwrap_or("-"), status.unwrap_or("-"), self.steps.len()));
+                }
                 KiroStep::new(id, s(u, "kind").unwrap_or("other"), s(u, "title").unwrap_or("Working"), target(u), status.unwrap_or("in_progress"))
             }
         };
