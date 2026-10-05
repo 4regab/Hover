@@ -1291,7 +1291,7 @@ impl App {
         let m = models.iter().find(|m| m.0 == model).or(models.first());
         let effort = o.effort.clone().or(now);
         let eff = effort.filter(|e| hover_agents::state::efforts_of(&models, &model, &tool_efforts).contains(e)).map(|e| effort_word(&e)).unwrap_or_default();
-        (m.map_or("Default".into(), |m| m.1.clone()), eff, !models.is_empty())
+        (m.map_or("Default".into(), |m| short_model(&m.1)), eff, !models.is_empty())
     }
 
     /// openMenu's rows: the heading, the models, the effort's heading and choices, the note.
@@ -1305,7 +1305,7 @@ impl App {
         let effort = o.effort.clone().or(now);
         let efforts = hover_agents::state::efforts_of(&models, &model, &tool_efforts);
         (format!("{} model", t.name()).to_uppercase(),
-            models.iter().map(|m| MOpt { id: s(&m.0), label: s(&m.1), on: m.0 == cur }).collect(),
+            models.iter().map(|m| MOpt { id: s(&m.0), label: s(short_model(&m.1)), on: m.0 == cur }).collect(),
             hover_agents::runtime::caps(t).effort_label.to_uppercase(),
             efforts.iter().map(|e| MOpt { id: s(e), label: s(effort_word(e)), on: effort.as_deref() == Some(e.as_str()) }).collect(),
             format!("Used by {} from its next turn.", t.name()))
@@ -1542,6 +1542,16 @@ pub const ACCESS: [(&str, &str, &str); 4] = [
     ("always", "Ask always", "Asks before every change and every command."),
     ("read", "Read only", "Reads and searches. Changes nothing."),
 ];
+
+/// A model as the pill and its menu say it: Claude's are "Opus 5.5", "Sonnet 5", not "Claude Opus 5.5".
+fn short_model(name: &str) -> String {
+    if let Some(r) = name.strip_prefix("Claude ") { return r.to_owned(); }
+    // An id used as the name ("claude-opus-5.5"): "Opus 5.5".
+    match name.strip_prefix("claude-") {
+        Some(r) if !r.is_empty() => { let r = r.replace('-', " "); let mut c = r.chars(); c.next().map_or(r.clone(), |f| f.to_uppercase().chain(c).collect()) }
+        _ => name.to_owned(),
+    }
+}
 
 pub(crate) fn access_label(id: &str) -> &'static str { ACCESS.iter().find(|a| a.0 == id).map_or("Trust all", |a| a.1) }
 

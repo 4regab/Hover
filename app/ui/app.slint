@@ -649,7 +649,8 @@ export component NotchWindow inherits Window {
                                 VerticalLayout { alignment: center; Icon { name: Icons.chevron-down; size: 11px; tint: #f6f2ff9e; } }
                             }
                         }
-                        VPick {
+                        // Not in Kiro Web: every task there is full access.
+                        if !root.voice.cloud: VPick {
                             amber: root.voice.full;
                             accessible-role: text;
                             accessible-label: "Access: " + root.voice.access;

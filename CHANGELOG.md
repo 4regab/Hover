@@ -15,6 +15,14 @@ What changed in each Hover release. Versions follow [Semantic Versioning](https:
 - With Kiro Web on, the preview card has a repository pick: the folder's own repo, none, or a
   connected one.
 
+### Changed
+
+- With Kiro Web on, the "Trust all" chip in the new-task box (and the Full pill on voice's
+  card) is gone: every Kiro Web task has full access, so there is nothing to pick. The room
+  goes to the model name.
+- Claude models show as "Opus 5.5" and "Sonnet 5" in the model pill and its menu, without
+  "Claude", so the name fits.
+
 ## [3.5.0] - 2026-10-05
 
 ### Added
