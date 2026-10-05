@@ -20,6 +20,7 @@ fn snap(folder: &str, steps: Vec<DeskStep>) -> Snap {
         key: "test".into(), folder: folder.into(), busy: false, current: Some(0),
         steps: steps.into_iter().map(|step| d::Item { turn: 0, step }).collect(),
         texts: vec!["Fix it".into(), "Opened https://github.com/acme/app/pull/7 for review.".into()],
+        cloud: None,
     }
 }
 
@@ -623,6 +624,49 @@ fn the_pull_requests_a_session_mentions_are_looked_up_each() {
     assert!(!l.gh);
     assert_eq!(l.prs.len(), 2);
     assert!(l.prs.iter().all(|p| p.state.is_none() && p.title.is_none() && p.error.is_none()));
+}
+
+#[test]
+fn a_chat_shows_its_own_pull_request_and_a_kiro_web_chat_needs_no_folder_for_it() {
+    if !git_available() { eprintln!("git isn't installed"); return; }
+    let f = Fake::new();
+    ready(&f);
+    // The branch here has #12, but this chat opened #7 (and #3 is another repository's).
+    f.script("pr_view", &[PR_JSON]);
+    f.script("pr_view_httpsgithubcomacmeapppull7", &[r#"out={"number":7,"title":"Chat's own","state":"OPEN","isDraft":false,"url":"https://github.com/acme/app/pull/7","headRefName":"chat","baseRefName":"main","additions":5,"deletions":1,"changedFiles":2}"#]);
+    f.script("pr_diff", &["out=diff --git a/a.txt b/a.txt", "out=--- a/a.txt", "out=+++ b/a.txt", "out=@@ -1 +1 @@", "out=-old", "out=+new"]);
+    let r = Repo::new("desk-own-pr");
+    git(&r.repo, &["switch", "-q", "-c", "feat"]);
+    let mut made = step("9", "execute", "Run", Some("gh pr create --fill"), "completed");
+    made.log = Some("https://github.com/acme/app/pull/7".into());
+    let mut local = r.snap();
+    local.steps = vec![d::Item { turn: 0, step: made.clone() }];
+    let desk = f.desk();
+    let d::PrPanel::Open(pr) = desk.pr(&local) else { panic!("{:?}", desk.pr(&local)) };
+    assert_eq!((pr.number, pr.title.as_str()), (7, "Chat's own"), "the chat's pull request, not the branch's");
+
+    // Kiro Web: its folder is not a repository, and only its own repos' links count.
+    let plain = Dir::new("desk-cloud");
+    let mut cloud = snap(&plain.s(), vec![]);
+    cloud.cloud = Some(vec!["acme/app".into()]);
+    cloud.texts = vec!["Fix it".into(), "See https://github.com/other/thing/pull/3 and https://github.com/acme/app/pull/7".into()];
+    let d::PrPanel::Open(pr) = desk.pr(&cloud) else { panic!("{:?}", desk.pr(&cloud)) };
+    assert_eq!(pr.number, 7);
+    let p = desk.probe(&cloud);
+    assert_eq!((p.pr.as_ref().map(|b| b.number), p.add, p.del, p.changed), (Some(7), 5, 1, 2), "its changes are the pull request's, not this folder's");
+    let tiles = d::tiles(Some(&p), &cloud, &d::TileContext::default());
+    assert!(["diff", "pr"].iter().all(|id| tiles.iter().find(|t| t.id == *id).unwrap().enabled));
+    let diff = desk.diff(&cloud);
+    assert_eq!(diff.files.iter().map(|x| (x.path.as_str(), x.add, x.del)).collect::<Vec<_>>(), [("a.txt", 1, 1)]);
+    let call = f.calls().into_iter().find(|c| c.len() > 2 && c[..2] == ["pr", "diff"]).unwrap();
+    assert_eq!(call[2], "https://github.com/acme/app/pull/7");
+
+    // Before it has opened one, the panel says so and the diff is what it reported.
+    let mut early = snap(&plain.s(), vec![]);
+    early.cloud = Some(vec!["acme/app".into()]);
+    early.texts = vec!["Fix it".into(), "Working on it.".into()];
+    assert_eq!(desk.pr(&early), d::PrPanel::Error(d::CLOUD_NO_PR.into()));
+    assert!(desk.diff(&early).partial);
 }
 
 // MARK: The tiles

@@ -17,7 +17,7 @@ fn step(id: &str, kind: &str, title: &str, target: Option<&str>, input: Option<&
 }
 
 fn snap(folder: &str, steps: Vec<DeskStep>) -> Snap {
-    Snap { key: "k".into(), folder: folder.into(), busy: false, current: Some(0), steps: steps.into_iter().map(|step| Item { turn: 0, step }).collect(), texts: vec![] }
+    Snap { key: "k".into(), folder: folder.into(), busy: false, current: Some(0), steps: steps.into_iter().map(|step| Item { turn: 0, step }).collect(), texts: vec![], cloud: None }
 }
 
 fn temp(name: &str) -> std::path::PathBuf {

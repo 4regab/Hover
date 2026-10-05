@@ -28,6 +28,12 @@ What changed in each Hover release. Versions follow [Semantic Versioning](https:
 - Session history said "Done" for a chat that was working on a reply. The history keeps the
   state of the last finished turn, so a new reply still read as done. A chat that is running
   now shows what it is doing.
+- The desk's Pull request tab showed the PR of whatever branch was checked out in the folder,
+  not the chat's. It now shows the PR the chat opened (from its `gh pr create` output), then the
+  branch's, then the newest one the chat mentions.
+- Kiro Web chats: the Pull request tab works without a local repository, using the PR the chat
+  opened or mentions in its own repos. The Diff tab is on and shows that PR's changes (or the
+  edits the chat reported, before it has one). Terminal and Files stay off.
 
 ## [3.5.0] - 2026-10-05
 
