@@ -771,6 +771,22 @@ fn voice_shots(app: &Rc<App>, hover: &Arc<hover_app::app::Hover>, dir: &Path, da
             save(&notch, (w, 200), 1.0, desk, &dir.join(format!("voice-{tag}-{name}.png")));
             if ws == W::Default { save(&notch, (w, 200), 2.0, desk, &dir.join(format!("voice-{tag}-{name}-2x.png"))); }
         }
+        // The tallest the preview gets: the agent menu open over a long task with a note.
+        // It stays inside the window (Small's is the shortest), Start and Cancel in view.
+        draw(&Stage::Preview(preview(&home, "Default workspace", Some("Using default workspace: no project named. Cleanup failed; using the original."), long, None, "full")));
+        *app.voice_ui.ready.borrow_mut() = Some((1, vec![AgentTool::Kiro, AgentTool::Codex, AgentTool::Cursor, AgentTool::OpenCode, AgentTool::Claude]));
+        app.notch.invoke_voice_open_menu(1);
+        let sz = notch.size();
+        let mut buf = vec![PremultipliedRgbaColor::default(); (sz.width * sz.height) as usize];
+        notch.request_redraw();
+        notch.draw_if_needed(|r| { r.render(&mut buf, sz.width as usize); });
+        run_for(100);
+        app.update_rest();
+        run_for(700);
+        let h = app.n.borrow().win.height() as u32;
+        save(&notch, (w, h), 1.0, desk, &dir.join(format!("voice-{tag}-menu-long.png")));
+        app.notch.invoke_voice_open_menu(0);
+        app.voice_ui.ready.borrow_mut().take();
     }
     // A press while one is in progress: the card glows amber a moment.
     draw(&states[4].1);

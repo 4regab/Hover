@@ -5,6 +5,12 @@ What changed in each Hover release. Versions follow [Semantic Versioning](https:
 
 ## [Unreleased]
 
+### Fixed
+
+- Voice's preview card was cut off below the task box when the agent menu was open
+  over a long task (Start and Cancel out of view), most on the Small office size. The card
+  now stays inside the notch: the menu and the task box give up height first, and scroll.
+
 ## [3.4.2] - 2026-10-03
 
 ### Fixed
