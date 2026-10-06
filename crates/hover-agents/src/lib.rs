@@ -10,6 +10,7 @@ pub mod checkpoint;
 pub mod claude;
 pub mod computer_use;
 pub mod desk;
+pub mod discord;
 pub mod github;
 pub mod http;
 pub mod opencode;

@@ -295,6 +295,7 @@ pub fn toggled(h: &dyn Host, pane: &RefCell<Pane>, id: &str, on: bool) {
         "ComputerUse" => { st.set_computer_use(on); if on { h.action("integ.look"); } }
         "Sandbox" => { st.set_sandbox(on); h.action("integ.look"); }
         "AgentBrowser" => st.set_agent_browser(on),
+        "DiscordPresence" => { st.set_discord_presence(on); hover_agents::discord::wake(); }
         // Kiro's page: auto compact and continuing when the model is busy.
         "KiroAutoCompact" => { pages::set_compact(st, id, on); }
         "KiroRetryBusy" => st.set_kiro_retry_busy(on),

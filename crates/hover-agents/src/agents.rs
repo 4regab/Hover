@@ -159,6 +159,8 @@ type Asking = Arc<(Mutex<Option<AgentReady>>, Condvar)>;
 struct Checks {
     done: HashMap<AgentTool, (Instant, AgentReady)>,
     asking: HashMap<AgentTool, Asking>,
+    /// What the status command printed, while signed in (Kiro's says who is signed in).
+    said: HashMap<AgentTool, String>,
 }
 
 fn checks() -> &'static Mutex<Checks> {
@@ -168,6 +170,9 @@ fn checks() -> &'static Mutex<Checks> {
 
 /// The last check, if any, without running one.
 pub fn known(t: AgentTool) -> Option<AgentReady> { checks().lock().unwrap().done.get(&t).map(|c| c.1.clone()) }
+
+/// What the last check's status command printed, if it said signed in; None otherwise.
+pub fn said(t: AgentTool) -> Option<String> { checks().lock().unwrap().said.get(&t).cloned() }
 
 /// Installed and signed in, by the tool's own status command. Kept five minutes; a
 /// check already under way is shared rather than run twice. Blocks; call it off the
@@ -188,15 +193,17 @@ pub fn check(t: AgentTool, fresh: bool) -> AgentReady {
         let g = cv.wait_while(m.lock().unwrap(), |r| r.is_none()).unwrap();
         return g.clone().unwrap();
     }
-    let ready = look(t);
+    let (ready, said) = look(t);
     let mut c = checks().lock().unwrap();
     c.done.insert(t, (Instant::now(), ready.clone()));
+    if ready.signed_in { c.said.insert(t, said); } else { c.said.remove(&t); }
     if let Some(w) = c.asking.remove(&t) { *w.0.lock().unwrap() = Some(ready.clone()); w.1.notify_all(); }
     ready
 }
 
-fn look(t: AgentTool) -> AgentReady {
-    let Some(exe) = exe(t) else { return AgentReady { installed: false, signed_in: false, hint: install_hint(t) } };
+/// The answer, and what the status command printed ("" when none ran).
+fn look(t: AgentTool) -> (AgentReady, String) {
+    let Some(exe) = exe(t) else { return (AgentReady { installed: false, signed_in: false, hint: install_hint(t) }, String::new()) };
     if t == AgentTool::OpenCode {
         // Having no sign-in doesn't mean it can't run: API keys in the environment and
         // local models count too. The version is all that is checked here; a provider
@@ -204,11 +211,11 @@ fn look(t: AgentTool) -> AgentReady {
         let (vc, vt) = ask(&exe, &["--version"]);
         let version = vt.trim().split('\n').next_back().unwrap_or("").trim().to_owned();
         let bad = |hint: String| AgentReady { installed: true, signed_in: false, hint };
-        return match (vc, parse_version(version.split('-').next().unwrap_or(""))) {
+        return (match (vc, parse_version(version.split('-').next().unwrap_or(""))) {
             (0, Some(have)) if have < parse_version(OPENCODE_MIN_VERSION).unwrap() => bad(format!("OpenCode {version} is too old for Hover. {}", install_hint(t))),
             (0, Some(_)) => AgentReady { installed: true, signed_in: true, hint: String::new() },
             _ => bad(format!("Couldn’t read OpenCode’s version. {}", install_hint(t))),
-        };
+        }, String::new());
     }
     let (cmd, args): (Option<PathBuf>, &[&str]) = match t {
         AgentTool::Kiro => (Some(exe), &["whoami"]),
@@ -219,11 +226,11 @@ fn look(t: AgentTool) -> AgentReady {
         AgentTool::OpenCode => unreachable!(),
     };
     // The adapter can carry its own Codex; without the CLI there is nothing to ask.
-    let Some(cmd) = cmd else { return AgentReady { installed: true, signed_in: true, hint: String::new() } };
+    let Some(cmd) = cmd else { return (AgentReady { installed: true, signed_in: true, hint: String::new() }, String::new()) };
     let (code, text) = ask(&cmd, args);
     let lower = text.to_lowercase();
     let signed_in = code == 0 && !lower.contains("not logged in") && !lower.contains("not signed in") && !lower.contains("logged out");
-    AgentReady { installed: true, signed_in, hint: if signed_in { String::new() } else { sign_in_hint(t).into() } }
+    (AgentReady { installed: true, signed_in, hint: if signed_in { String::new() } else { sign_in_hint(t).into() } }, text)
 }
 
 /// Runs a status command with its input closed: its code and its output, or -1

@@ -59,6 +59,9 @@ pub struct Model {
     /// A Kiro turn that stops because the model is busy (too many users) is continued at
     /// once, until stopped (Hover's own). None (never set) is off; written only once set.
     pub kiro_retry_busy: Option<bool>,
+    /// Hover shows on the user's Discord status (hover-agents::discord). None (never set) is
+    /// off; written only once set.
+    pub discord_presence: Option<bool>,
     pub sc_workspace: Shortcut,
     /// The registered projects, voice's settings and its default workspace (new in 3.x;
     /// null in a file from before them).
@@ -73,7 +76,7 @@ impl Default for Model {
             hover_opens_workspace: true, notch_items: None, appearance: Appearance::System, theme: None, workspace_size: WorkspaceSize::Default,
             kiro_folder: None, kiro_notice_seen: false, kiro_model: None, kiro_effort: Some("high".into()), kiro_agent: None,
             kiro_read_only: false, kiro_require_mcp: false, kiro_idle_minutes: 5, kiro_hide_steps: false, kiro_approval: AgentApproval::Autopilot, agents: None, agent_offers: None,
-            agent_tool: None, computer_use: false, sandbox: None, agent_browser: None, agent_spaces: false, space_image: None, kiro_auto_compact: None, kiro_compact_at: None, kiro_retry_busy: None, sc_workspace: Shortcut::DEFAULT, projects: None, voice: None, default_workspace: None,
+            agent_tool: None, computer_use: false, sandbox: None, agent_browser: None, agent_spaces: false, space_image: None, kiro_auto_compact: None, kiro_compact_at: None, kiro_retry_busy: None, discord_presence: None, sc_workspace: Shortcut::DEFAULT, projects: None, voice: None, default_workspace: None,
         }
     }
 }
@@ -97,6 +100,7 @@ impl Model {
             self.kiro_auto_compact.map(|v| ("KiroAutoCompact", Json::Bool(v))),
             self.kiro_compact_at.map(|v| ("KiroCompactAt", Json::int(v as i64))),
             self.kiro_retry_busy.map(|v| ("KiroRetryBusy", Json::Bool(v))),
+            self.discord_presence.map(|v| ("DiscordPresence", Json::Bool(v))),
         ].into_iter().flatten().collect();
         let mut props = vec![
             ("HoverOpensWorkspace", Json::Bool(self.hover_opens_workspace)),
@@ -162,6 +166,7 @@ impl Model {
                 "KiroAutoCompact" => m.kiro_auto_compact = if x.is_null() { None } else { Some(b()?) },
                 "KiroCompactAt" => m.kiro_compact_at = if x.is_null() { None } else { Some(x.i32()?) },
                 "KiroRetryBusy" => m.kiro_retry_busy = if x.is_null() { None } else { Some(b()?) },
+                "DiscordPresence" => m.discord_presence = if x.is_null() { None } else { Some(b()?) },
                 // A null shortcut would leave C# with none at all (and a crash where
                 // it is read); here it is unset, as a cleared shortcut is.
                 "ScWorkspace" => m.sc_workspace = if x.is_null() { Shortcut::default() } else { Shortcut::from_json(x)? },
@@ -405,6 +410,11 @@ impl Settings {
     /// Kiro only: a turn that stops because the model is busy is continued at once, until stopped.
     pub fn kiro_retry_busy(&self) -> bool { self.m.lock().unwrap().retry_busy() }
     pub fn set_kiro_retry_busy(&self, v: bool) { self.change(|m| m.kiro_retry_busy = Some(v)) }
+
+    /// Hover shows on the user's Discord status while this is on (hover-agents::discord).
+    /// Off unless switched on.
+    pub fn discord_presence(&self) -> bool { self.m.lock().unwrap().discord_presence.unwrap_or(false) }
+    pub fn set_discord_presence(&self, v: bool) { self.change(|m| m.discord_presence = Some(v)) }
 
     /// Launch at login: outside settings.json, in the platform's own place.
     pub fn launch_at_login(&self) -> bool { self.autostart.enabled() }

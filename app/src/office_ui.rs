@@ -162,6 +162,31 @@ pub(crate) fn repo_matches(name: &str, query: &str) -> bool {
     q.is_empty() || name.to_lowercase().contains(&q.to_lowercase())
 }
 
+/// Who is signed in to Kiro, as a SHA-256 of what `kiro-cli whoami` printed (so the
+/// saved repo list names no one). None while Kiro isn't signed in. Blocks.
+fn repo_account() -> Option<String> {
+    use sha2::{Digest, Sha256};
+    hover_agents::agents::check(AgentTool::Kiro, false);
+    let said = hover_agents::agents::said(AgentTool::Kiro)?;
+    Some(Sha256::digest(said.trim().as_bytes()).iter().map(|b| format!("{b:02x}")).collect())
+}
+
+/// The connected repos saved last time (repos.json), if they are `account`'s.
+fn saved_repos(account: &str) -> Option<Vec<String>> {
+    let v: serde_json::Value = serde_json::from_slice(&std::fs::read(hover_core::paths::support().join("repos.json")).ok()?).ok()?;
+    if v["account"].as_str() != Some(account) { return None; }
+    Some(v["repos"].as_array()?.iter().filter_map(|r| r.as_str().map(str::to_owned)).collect())
+}
+
+/// Saves the connected repos for next time. ponytail: one account's list, written in
+/// place; a half-written file only fails to read, and the list is asked of Kiro again.
+fn save_repos(account: &str, repos: &[String]) {
+    let body = serde_json::json!({ "account": account, "repos": repos }).to_string();
+    if let Err(e) = hover_core::crypto::write_private(&hover_core::paths::support().join("repos.json"), body.as_bytes()) {
+        hover_core::log::line(&format!("repos.json not saved: {e}"));
+    }
+}
+
 fn fonts() -> Vec<Vec<u8>> { vec![hover_office::canvas::PIXELIFY.to_vec()] }
 
 /// The Kiro Web sessions in the user's Kiro account that the history shows beside Hover's own.
@@ -188,6 +213,9 @@ struct NewCloud {
     /// The connected GitHub repos, once Kiro has listed them (Err: why it couldn't).
     repos: Option<Result<Vec<String>, String>>,
     listing: bool,
+    /// Who the list is for (repo_account), and when Kiro was last asked for it.
+    account: Option<String>,
+    asked: Option<Instant>,
     /// The repo picked in the menu: Some(None) is an empty workspace. None: the folder's own.
     pick: Option<Option<String>>,
     /// A folder and the GitHub repo its remote points at, once looked up.
@@ -683,27 +711,58 @@ impl App {
     pub(crate) fn connected_repos(&self) -> (Vec<String>, String) {
         let c = self.page.cloud.borrow();
         match &c.repos {
+            // The list there is stays while Kiro is asked again.
+            Some(Ok(l)) if !l.is_empty() => (l.clone(), if c.listing { "Checking for new repositories…".into() } else { String::new() }),
             _ if c.listing => (vec![], "Loading your connected repositories…".to_owned()),
             Some(Err(e)) => (vec![], e.clone()),
-            Some(Ok(l)) if l.is_empty() => (vec![], "No GitHub repositories are connected. Connect GitHub in Kiro Web.".into()),
-            Some(Ok(l)) => (l.clone(), String::new()),
+            Some(Ok(_)) => (vec![], "No GitHub repositories are connected. Connect GitHub in Kiro Web.".into()),
             None => (vec![], String::new()),
         }
     }
 
-    /// Lists the connected repos once (again after a failure; Kiro starts if it isn't up),
-    /// off the UI thread, then runs `done` on it. The office's repo menu shares the list.
+    /// Lists the connected repos off the UI thread, then runs `done` (again once Kiro has
+    /// answered). The list saved last time shows first, if it is for the account signed in
+    /// now. Kiro is asked every time, so a repository made since shows up; a failure keeps
+    /// the list there was. Kiro starts if it isn't up. The office's repo menu shares the list.
     pub(crate) fn load_repos(self: &Rc<Self>, done: fn(&Rc<Self>)) {
-        {
+        if self.headless { return; }
+        let had = {
             let mut c = self.page.cloud.borrow_mut();
-            if c.listing || matches!(c.repos, Some(Ok(_))) { return; }
+            if c.listing { return; }
             c.listing = true;
-        }
+            c.asked = Some(Instant::now());
+            c.account.clone()
+        };
         let host = self.hover.hosts.iter().find(|h| h.tool() == AgentTool::Kiro).cloned();
         std::thread::spawn(move || {
+            let who = repo_account();
+            // The first time this run, or after signing in as someone else: the saved list, or none.
+            if who.is_some() && who != had {
+                let (w, saved) = (who.clone(), who.as_deref().and_then(saved_repos));
+                crate::ui_do(move |a| { { let mut c = a.page.cloud.borrow_mut(); c.account = w; c.repos = saved.map(Ok); } done(a); });
+            }
             let got = host.map_or_else(|| Err("Kiro isn’t set up.".to_owned()), |h| h.repos());
-            crate::ui_do(move |a| { { let mut c = a.page.cloud.borrow_mut(); c.listing = false; c.repos = Some(got); } done(a); });
+            if let (Ok(l), Some(w)) = (&got, &who) { save_repos(w, l); }
+            crate::ui_do(move |a| {
+                {
+                    let mut c = a.page.cloud.borrow_mut();
+                    c.listing = false;
+                    if got.is_ok() || !matches!(c.repos, Some(Ok(_))) { c.repos = Some(got); }
+                }
+                done(a);
+            });
         });
+    }
+
+    /// A search that matches none of the repos asks Kiro again (at most every 15 s): the
+    /// repository may have been made since the list was.
+    pub(crate) fn repos_missed(self: &Rc<Self>, q: &str, done: fn(&Rc<Self>)) {
+        let miss = {
+            let c = self.page.cloud.borrow();
+            !q.trim().is_empty() && c.asked.is_none_or(|t| t.elapsed() > Duration::from_secs(15))
+                && matches!(&c.repos, Some(Ok(l)) if !l.iter().any(|r| repo_matches(r, q)))
+        };
+        if miss { self.load_repos(done); }
     }
 
     /// The shots' history: Kiro Web sessions as Kiro would list them, without Kiro.
@@ -742,11 +801,14 @@ impl App {
         if let Some(Ok(list)) = &c.repos { for r in list { if !names.contains(&r.as_str()) { names.push(r); } } }
         let mut rows = vec![AccessOpt { id: s(""), label: s("Empty workspace"), note: s("No repository: the agent starts in an empty folder."), on: current.is_none() }];
         rows.extend(names.iter().filter(|r| Some(**r) == folder_repo || repo_matches(r, q)).map(|r| AccessOpt { id: s(*r), label: s(*r), note: s(if Some(*r) == folder_repo { "This folder’s repository" } else { "" }), on: current == Some(*r) }));
+        // The list there is stays while Kiro is asked again.
+        let checking = if c.listing { " Checking for new repositories…" } else { "" };
         let note = match &c.repos {
+            Some(Ok(l)) if !l.is_empty() && !l.iter().any(|r| repo_matches(r, q)) => format!("No repository matches “{}”.{checking}", q.trim()),
+            Some(Ok(l)) if !l.is_empty() => checking.trim_start().to_owned(),
             _ if c.listing => "Loading your connected repositories…".to_owned(),
             Some(Err(e)) => e.clone(),
-            Some(Ok(l)) if l.is_empty() => "No GitHub repositories are connected. Connect GitHub in Kiro Web.".into(),
-            Some(Ok(l)) if !l.iter().any(|r| repo_matches(r, q)) => format!("No repository matches “{}”.", q.trim()),
+            Some(Ok(_)) => "No GitHub repositories are connected. Connect GitHub in Kiro Web.".into(),
             _ => String::new(),
         };
         (rows, note)
@@ -1181,23 +1243,15 @@ impl App {
         });
         let a = self.clone();
         g.on_open_repos(move || {
-            let list = {
+            let open = {
                 let mut c = a.page.cloud.borrow_mut();
                 c.menu = !c.menu;
                 c.query.clear();
-                // Listed once a run (again after a failure); Kiro starts if it isn't up.
-                let want = c.menu && !c.listing && !matches!(c.repos, Some(Ok(_)));
-                if want { c.listing = true; }
-                want
+                c.menu
             };
             a.page.access_menu.set(false);
-            if list {
-                let host = a.hover.hosts.iter().find(|h| h.tool() == AgentTool::Kiro).cloned();
-                std::thread::spawn(move || {
-                    let got = host.map_or_else(|| Err("Kiro isn’t set up.".to_owned()), |h| h.repos());
-                    crate::ui_do(move |a| { { let mut c = a.page.cloud.borrow_mut(); c.listing = false; c.repos = Some(got); } a.office_widgets(); });
-                });
-            }
+            // Asked of Kiro each time it opens (the saved list shows meanwhile).
+            if open { a.load_repos(|a| a.office_widgets()); }
             a.office_widgets();
         });
         let a = self.clone();
@@ -1206,7 +1260,7 @@ impl App {
             a.office_widgets();
         });
         let a = self.clone();
-        g.on_repo_search(move |q| { a.page.cloud.borrow_mut().query = q.to_string(); a.office_widgets(); });
+        g.on_repo_search(move |q| { a.page.cloud.borrow_mut().query = q.to_string(); a.repos_missed(&q, |a| a.office_widgets()); a.office_widgets(); });
         let a = self.clone();
         // Enter in the search box picks the first repository that matches.
         g.on_repo_search_enter(move || {

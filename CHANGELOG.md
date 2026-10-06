@@ -5,6 +5,28 @@ What changed in each Hover release. Versions follow [Semantic Versioning](https:
 
 ## [Unreleased]
 
+## [3.8.0] - 2026-10-06
+
+### Added
+
+- Settings → Integrations → "Show on Discord" (off by default): Hover shows on your Discord
+  status as "Playing Hover", with how many agents are working and which ones ("2 agents working",
+  "Kiro, Codex"), or "Idle", and how long Hover has been open. Task names are never shared. It
+  talks to the Discord app open on this computer, so nothing goes online from Hover, and it
+  clears when you switch it off or quit Hover. Windows, Linux (including the Flatpak and Snap
+  Discord) and the Mac app. Checked against a stand-in Discord that answers as Discord does;
+  not yet with the real Discord app. The Mac switch has not been built on a Mac.
+
+### Changed
+
+- Kiro Web in voice's preview: the repository button sits on the same row as the agent, model
+  and Kiro Web buttons, and a long name is cut short with "…". It had a row of its own.
+- The list of repositories you connected to Kiro is saved on your computer (`repos.json` in the
+  data folder, for the Kiro account you are signed in to). The menu shows it at once, and asks
+  Kiro again each time it opens, so a repository you just made appears a few seconds later. A
+  search that finds nothing asks Kiro again, at most every 15 seconds. If Kiro can't be reached,
+  the saved list stays.
+
 ## [3.7.0] - 2026-10-05
 
 ### Added

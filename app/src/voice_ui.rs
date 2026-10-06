@@ -522,7 +522,7 @@ impl App {
         }
         let (list, note) = self.connected_repos();
         let q = self.voice_ui.repo_query.borrow().clone();
-        let note = if !list.is_empty() && !list.iter().any(|r| crate::office_ui::repo_matches(r, &q)) { format!("No repository matches “{}”.", q.trim()) } else { note };
+        let note = if !list.is_empty() && !list.iter().any(|r| crate::office_ui::repo_matches(r, &q)) { format!("No repository matches “{}”. {note}", q.trim()).trim_end().to_owned() } else { note };
         let mut rows = vec![
             MOpt { id: s(""), label: s("This folder’s repository"), on: p.repo == Repo::Folder },
             MOpt { id: s("-"), label: s("Empty workspace"), on: p.repo == Repo::Empty },
@@ -668,6 +668,7 @@ impl App {
         let a = self.clone();
         self.notch.on_voice_search(move |q| {
             *a.voice_ui.repo_query.borrow_mut() = q.to_string();
+            if a.voice_ui.shot.borrow().is_none() { a.repos_missed(&q, |a| a.voice_menu_draw(&a.shown())); }
             a.voice_menu_draw(&a.shown());
         });
         let a = self.clone();

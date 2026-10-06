@@ -435,6 +435,9 @@ fn extras(b: &mut Vec<Block>, i: &Input) {
     if !caps.browser { sub = format!("{}\n{sub}", hover_agents::browser::UNSUPPORTED); br.enabled = false; }
     br.sub = Some(sub);
     rows.push(br);
+    // Discord: Hover on the status.
+    rows.push(row("Show on Discord", Some("Shows Hover on your Discord status, with how many agents are working and which ones. Task names are never shared. The Discord app has to be open on this computer, and “Share my activity” on in Discord’s Activity Privacy.".into()),
+        switch("DiscordPresence", "Show Hover on Discord", s.discord_presence()), Lead::Tile("plug", Tint::Purple)));
     b.push(Block::Group(rows));
 }
 
