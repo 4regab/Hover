@@ -226,13 +226,17 @@ struct Pending { id: String, reply: Answer, _stop: Option<Registration> }
 
 /// pausing: the turn was cancelled by Pause, so the replies queued behind it go once it ends.
 /// usage: Kiro's last reported context (percent) that no compaction has answered yet.
-struct Slot { s: KiroSession, cancel: Option<Cancel>, run: RunTask, asks: Vec<Pending>, pausing: bool, note: Option<String>, usage: Option<f64> }
+/// parked: the run is waiting on its helpers (orch.rs), so it holds no place among the tasks that run at once.
+struct Slot { s: KiroSession, cancel: Option<Cancel>, run: RunTask, asks: Vec<Pending>, pausing: bool, note: Option<String>, usage: Option<f64>, parked: bool }
 
 impl Slot {
     fn new(s: KiroSession, run: RunTask) -> Slot {
         let usage = s.context.filter(|_| s.tool == AgentTool::Kiro);
-        Slot { s, cancel: None, run, asks: vec![], pausing: false, note: None, usage }
+        Slot { s, cancel: None, run, asks: vec![], pausing: false, note: None, usage, parked: false }
     }
+
+    /// Runs and takes a place among the tasks that run at once.
+    fn counts(&self) -> bool { self.s.busy() && !self.parked }
 
     /// KiroSession.DenyAll: every question it left has nobody to answer it now. The
     /// replies go once the lock is released.
@@ -247,6 +251,7 @@ struct Inner { all: Vec<Slot>, selected: Option<i32> }
 
 type Changed = Arc<dyn Fn() + Send + Sync>;
 type Ended = Arc<dyn Fn(&KiroSession, &KiroResult) + Send + Sync>;
+type Stopped = Arc<dyn Fn(&KiroSession) + Send + Sync>;
 
 struct Shared {
     inner: Mutex<Inner>,
@@ -256,6 +261,8 @@ struct Shared {
     changed: Mutex<Vec<Changed>>,
     ended: Mutex<Vec<Ended>>,
     checkpoints: Mutex<Option<Arc<Checkpoints>>>,
+    /// Called when a run is asked to stop (Stop, Pause, delete, quit).
+    stops: Mutex<Vec<Stopped>>,
     /// Where auto compact's percent comes from (None while it is off); without one, settings.json.
     compact: Mutex<Option<Arc<dyn Fn() -> Option<u8> + Send + Sync>>>,
     /// Whether a Kiro turn stopped by a busy model is continued (None while unset; the setting is then read from settings.json).
@@ -279,7 +286,7 @@ impl KiroSessions {
     pub fn with_clock(make: impl Fn(AgentTool) -> RunTask + Send + Sync + 'static, history: Option<Arc<AgentHistory>>,
         now: impl Fn() -> Stamp + Send + Sync + 'static) -> KiroSessions {
         KiroSessions(Arc::new(Shared { inner: Mutex::new(Inner { all: vec![], selected: None }), make: Box::new(make), history, now: Box::new(now),
-            changed: Mutex::new(vec![]), ended: Mutex::new(vec![]), checkpoints: Mutex::new(None), compact: Mutex::new(None), retry_busy: Mutex::new(None), limit: AtomicUsize::new(MAX_RUNNING) }))
+            changed: Mutex::new(vec![]), ended: Mutex::new(vec![]), checkpoints: Mutex::new(None), stops: Mutex::new(vec![]), compact: Mutex::new(None), retry_busy: Mutex::new(None), limit: AtomicUsize::new(MAX_RUNNING) }))
     }
 
     /// Kiro's auto compact: `at` says, at each prompt, the context percent that calls for a
@@ -299,6 +306,34 @@ impl KiroSessions {
 
     /// Any session changed, or one came or went. Off any thread.
     pub fn on_changed(&self, f: impl Fn() + Send + Sync + 'static) { self.0.changed.lock().unwrap().push(Arc::new(f)); }
+    /// A run was asked to stop (Stop or Pause, a delete, Hover quitting), with the lock released. Off any thread.
+    pub fn on_stop(&self, f: impl Fn(&KiroSession) + Send + Sync + 'static) { self.0.stops.lock().unwrap().push(Arc::new(f)); }
+    fn stopping(&self, s: &KiroSession) { let cbs = self.0.stops.lock().unwrap().clone(); for f in cbs { f(s); } }
+
+    /// Takes a run out of the count of tasks that run at once while it waits on its helpers, or puts it back.
+    /// A full house of waiting parents can then never keep their helpers from starting.
+    pub fn park(&self, key: &str, on: bool) {
+        let changed = { let mut g = self.0.inner.lock().unwrap(); g.all.iter_mut().find(|x| x.s.key == key).is_some_and(|x| std::mem::replace(&mut x.parked, on) != on) };
+        if changed { self.raise(vec![Note::Changed]); }
+    }
+
+    /// Changes a session's links (ext) and keeps it in the history. False when it isn't at a desk.
+    pub fn update_ext(&self, key: &str, f: impl FnOnce(&mut SessionExt)) -> bool {
+        let snap = {
+            let mut g = self.0.inner.lock().unwrap();
+            let Some(x) = g.all.iter_mut().find(|x| x.s.key == key) else { return false };
+            f(&mut x.s.ext);
+            x.s.rev += 1;
+            x.s.clone()
+        };
+        self.save(&snap);
+        self.raise(vec![Note::Changed]);
+        true
+    }
+
+    /// The session with this lasting key, if it is at a desk.
+    pub fn find(&self, key: &str) -> Option<KiroSession> { self.0.inner.lock().unwrap().all.iter().find(|x| x.s.key == key).map(|x| x.s.clone()) }
+
     /// A turn ended. Off any thread.
     pub fn on_ended(&self, f: impl Fn(&KiroSession, &KiroResult) + Send + Sync + 'static) { self.0.ended.lock().unwrap().push(Arc::new(f)); }
 
@@ -324,7 +359,7 @@ impl KiroSessions {
     pub fn asking_now(&self) -> Vec<(i32, AgentAsk, usize)> {
         self.0.inner.lock().unwrap().all.iter().filter_map(|x| x.s.asking().map(|a| (x.s.id, a.clone(), x.s.asks.len()))).collect()
     }
-    pub fn running(&self) -> usize { self.0.inner.lock().unwrap().all.iter().filter(|x| x.s.busy()).count() }
+    pub fn running(&self) -> usize { self.0.inner.lock().unwrap().all.iter().filter(|x| x.counts()).count() }
     pub fn can_start(&self) -> bool { self.running() < self.max_running() }
     /// How many tasks run at once (Settings.MaxRunning on a Mac: 1 to MAX_KEPT).
     pub fn max_running(&self) -> usize { self.0.limit.load(Ordering::SeqCst) }
@@ -371,7 +406,7 @@ impl KiroSessions {
     #[allow(clippy::too_many_arguments)]
     pub fn start_bound(&self, tool: AgentTool, folder: &str, prompt: &str, images: Vec<String>, access: Option<&str>, cloud: Option<Vec<String>>, ext: SessionExt) -> Option<KiroSession> {
         let mut g = self.0.inner.lock().unwrap();
-        let running = g.all.iter().filter(|x| x.s.busy()).count();
+        let running = g.all.iter().filter(|x| x.counts()).count();
         if running >= self.max_running() || !crate::usable_folder(Some(folder)) || !usable(prompt, &images) || crate::workspace::held(folder).is_some() { return None; }
         if !Self::free_desk(&mut g) { return None; }
         let mut s = KiroSession::new(tool);
@@ -425,7 +460,7 @@ impl KiroSessions {
     /// a fourth run.
     pub fn reply(&self, id: i32, text: &str, images: Vec<String>) -> bool {
         let mut g = self.0.inner.lock().unwrap();
-        let running = g.all.iter().filter(|x| x.s.busy()).count();
+        let running = g.all.iter().filter(|x| x.counts()).count();
         let Some(slot) = g.all.iter_mut().find(|x| x.s.id == id) else { return false };
         if !slot.s.busy() && running >= self.max_running() { return false; }
         if slot.s.state == KiroState::Idle || !usable(text, &images) || crate::workspace::held(&slot.s.folder).is_some() { return false; }
@@ -458,12 +493,12 @@ impl KiroSessions {
             let (i, after) = match to { Rewind::After(i) => (i, true), Rewind::Before(i) => (i, false) };
             let t = slot.s.turns.get(i).ok_or("That message isn't here.")?;
             let tree = if after { &t.after } else { &t.before }.clone().ok_or("No checkpoint was kept there.")?;
-            if !after && g.all.iter().filter(|x| x.s.busy()).count() >= self.max_running() { return Err(format!("{} running. Try again when one is done.", match self.max_running() { 1 => "1 task is".to_owned(), n => format!("{n} tasks are") })); }
+            if !after && g.all.iter().filter(|x| x.counts()).count() >= self.max_running() { return Err(format!("{} running. Try again when one is done.", match self.max_running() { 1 => "1 task is".to_owned(), n => format!("{n} tasks are") })); }
             (slot.s.key.clone(), slot.s.folder.clone(), tree, if after { i + 1 } else { i }, t.prompt.clone(), t.images.clone())
         };
         // The folder is held for the whole restore: no task may start or reply in it, or in a folder inside it
         // or around it. A task already running there (an ancestor or a descendant too) stops the restore.
-        let _hold = crate::workspace::hold(&folder, "A checkpoint restore")?;
+        let hold = crate::workspace::hold(&folder, "A checkpoint restore")?;
         {
             let g = self.0.inner.lock().unwrap();
             if let Some(o) = g.all.iter().find(|x| x.s.id != id && x.s.busy() && x.s.cloud.is_none() && crate::workspace::overlaps(&x.s.folder, &folder)) {
@@ -495,6 +530,8 @@ impl KiroSessions {
             }
             slot.s.clone()
         };
+        // The chat is cut: the folder may be used again (the message below starts a turn in it).
+        drop(hold);
         self.save(&snap);
         self.raise(vec![Note::Changed]);
         if matches!(to, Rewind::Before(_)) && !self.reply(id, &prompt, images) { return Err("The files are back, but the message couldn't be sent again.".into()); }
@@ -545,7 +582,7 @@ impl KiroSessions {
     /// or it is busy, or three already run.
     pub fn reattach(&self, id: i32) -> bool {
         let mut g = self.0.inner.lock().unwrap();
-        let running = g.all.iter().filter(|x| x.s.busy()).count();
+        let running = g.all.iter().filter(|x| x.counts()).count();
         let Some(slot) = g.all.iter_mut().find(|x| x.s.id == id) else { return false };
         if slot.s.busy() || running >= self.max_running() || slot.s.cloud.is_none() || slot.s.kiro_id.is_none() { return false; }
         let Some(ti) = slot.s.turns.len().checked_sub(1) else { return false };
@@ -641,13 +678,16 @@ impl KiroSessions {
     /// The user deleted a session: a run is stopped, and it leaves the office and the history.
     pub fn delete(&self, key: &str) {
         let mut g = self.0.inner.lock().unwrap();
+        let mut gone = None;
         if let Some(i) = g.all.iter().position(|x| x.s.key == key) {
             let mut slot = g.all.remove(i);
             slot.s.deleted = true;
             if slot.s.busy() { if let Some(c) = &slot.cancel { c.cancel(); } }
             if g.selected == Some(slot.s.id) { g.selected = None; }
+            gone = Some(slot.s.clone());
         }
         drop(g);
+        if let Some(s) = &gone { self.stopping(s); }
         if let Some(h) = &self.0.history { h.delete(key); }
         if let Some(c) = self.checkpoints() { c.delete(key); }
         self.raise(vec![Note::Changed]);
@@ -679,6 +719,7 @@ impl KiroSessions {
         for d in denied { d.deny(); }
         if found { self.raise(vec![Note::Changed]); }
         if let Some(c) = c { c.cancel(); }
+        if found { if let Some(s) = self.get(id) { self.stopping(&s); } }
         found
     }
 
@@ -779,7 +820,12 @@ impl KiroSessions {
     /// Stops every running turn, except Kiro Web's: a cancel would stop the cloud run too, and
     /// the next start follows it on (`reattach_cut_off`).
     pub fn stop_all(&self) {
-        let cs: Vec<Cancel> = self.0.inner.lock().unwrap().all.iter().filter(|x| x.s.busy() && x.s.cloud.is_none()).filter_map(|x| x.cancel.clone()).collect();
+        let (cs, who): (Vec<Cancel>, Vec<KiroSession>) = {
+            let g = self.0.inner.lock().unwrap();
+            let busy: Vec<&Slot> = g.all.iter().filter(|x| x.s.busy() && x.s.cloud.is_none()).collect();
+            (busy.iter().filter_map(|x| x.cancel.clone()).collect(), busy.iter().map(|x| x.s.clone()).collect())
+        };
+        for s in &who { self.stopping(s); }
         for c in cs { c.cancel(); }
     }
 

@@ -60,7 +60,7 @@ fn a_task_runs_in_its_worktree_and_the_binding_comes_back_after_a_restart() {
     let seen: Arc<Mutex<Vec<String>>> = Default::default();
     let k = KiroSessions::new(runner(seen.clone()), Some(Arc::new(AgentHistory::new(hist.clone(), crypto.clone()))));
     let prep = workspace::prepare(&src.to_string_lossy(), &Choice::Own { base: None }, "Add a file", &root.join("worktrees"), false, false, &Cancel::new()).unwrap();
-    let ext = hover_core::ext::SessionExt { workspace: prep.binding.clone() };
+    let ext = hover_core::ext::SessionExt { workspace: prep.binding.clone(), ..Default::default() };
     let s = k.start_bound(AgentTool::Codex, &prep.folder, "Add a file", vec![], None, None, ext).unwrap();
     wait_for(|| k.get(s.id).is_some_and(|x| !x.busy()));
     assert_eq!(seen.lock().unwrap().as_slice(), [prep.folder.clone()], "the agent ran in the worktree");

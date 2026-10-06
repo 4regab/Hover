@@ -77,7 +77,7 @@ pub type McpFn = Arc<dyn Fn(Option<&str>) -> Vec<McpServer> + Send + Sync>;
 
 /// The servers a session gets unless a host is given others.
 pub fn default_mcp(tool: AgentTool) -> McpFn {
-    Arc::new(move |tag| { let mut all = computer_use::servers(); all.extend(crate::browser::servers(tool, tag)); all })
+    Arc::new(move |tag| { let mut all = computer_use::servers(); all.extend(crate::browser::servers(tool, tag)); all.extend(crate::orch::servers(tag)); all })
 }
 /// AcpHost.Asking: asks the user about a tool call for the ACP session named first;
 /// the token ends when the run is stopped. The answer goes to the reply, from any thread.

@@ -15,6 +15,7 @@ pub mod editor;
 pub mod github;
 pub mod http;
 pub mod opencode;
+pub mod orch;
 pub mod proc;
 pub mod route;
 pub mod runtime;

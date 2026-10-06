@@ -238,6 +238,28 @@ impl EditorSettings {
     }
 }
 
+/// How far an agent may delegate (hover-agents::orch), set by the user: helpers in all for one task, helpers
+/// working at once, and how deep helpers may delegate in turn (1: only the task itself may).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct DelegationLimits { pub max_helpers: u32, pub max_parallel: u32, pub max_depth: u32 }
+
+impl Default for DelegationLimits {
+    fn default() -> Self { DelegationLimits { max_helpers: 6, max_parallel: 2, max_depth: 1 } }
+}
+
+impl DelegationLimits {
+    pub fn to_json(&self) -> Json {
+        Json::obj(vec![("MaxHelpers", Json::int(self.max_helpers as i64)), ("MaxParallel", Json::int(self.max_parallel as i64)), ("MaxDepth", Json::int(self.max_depth as i64))])
+    }
+
+    pub fn from_json(v: &Json) -> Result<DelegationLimits> {
+        v.props()?;
+        let d = DelegationLimits::default();
+        let n = |k: &str, d: u32, hi: u32| -> Result<u32> { Ok(v.get(k).map(Json::i32).transpose()?.map_or(d, |x| x.clamp(0, hi as i32) as u32)) };
+        Ok(DelegationLimits { max_helpers: n("MaxHelpers", d.max_helpers, 50)?, max_parallel: n("MaxParallel", d.max_parallel, 10)?, max_depth: n("MaxDepth", d.max_depth, 4)? })
+    }
+}
+
 /// Core.SavedTheme(Name, Dark, Colors): a VS Code theme's few colours, kept.
 #[derive(Clone, Debug, PartialEq)]
 pub struct SavedTheme { pub name: String, pub dark: bool, pub colors: Vec<(String, String)> }

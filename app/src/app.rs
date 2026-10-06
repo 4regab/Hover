@@ -2,6 +2,7 @@
 //! processes, their sessions and history, the quota readings), the ends announced
 //! while nobody watches, and the orderly quit. No UI here: the views register hooks.
 
+use hover_agents::orch::{Orch, SystemEnv};
 use hover_agents::runtime::Runtime;
 use hover_agents::session::{KiroSession, KiroSessions, RunTask};
 use hover_agents::stream::KiroResult;
@@ -40,6 +41,8 @@ pub struct Hover {
     /// server for OpenCode.
     pub hosts: Vec<Runtime>,
     pub sessions: KiroSessions,
+    /// Helpers: who asked whom for what (hover-agents::orch).
+    pub orch: Arc<Orch>,
     pub quotas: Poller,
     /// The tests' stand-in for every tool's runner (None: each host's own).
     run: Option<RunTask>,
@@ -64,6 +67,9 @@ impl Hover {
         }).collect();
         let me = Hover::with(settings, history, hosts, None, None);
         hover_agents::discord::start(me.settings.clone(), me.sessions.clone());
+        // Results of helpers that finished while no lead was there to hear them.
+        let o = me.orch.clone();
+        std::thread::Builder::new().name("orch-deliver".into()).spawn(move || o.deliver_pending()).ok();
         me
     }
 
@@ -105,7 +111,11 @@ impl Hover {
         let is_on = { let s = settings.clone(); Arc::new(move |id: &str| s.has_notch_item(id)) };
         let changed: Arc<dyn Fn() + Send + Sync> = Arc::new(move || fire(&qh, |h| &h.quotas));
         let quotas = match reader { Some(r) => Poller::new(r, is_on, changed), None => Poller::system(is_on, changed) };
-        let me = Arc::new(Hover { settings, history, hosts, sessions, quotas, run, unseen: Default::default(), watching: AtomicBool::new(false), hooks });
+        // Helpers: kept in the data folder, sealed, when there is a key this run; in memory for this run when not.
+        let doc = hover_core::crypto::global().filter(|_| run.is_none()).map(|c| hover_core::store::Sealed::in_dir(&hover_core::paths::support().join("orch"), "runs", c));
+        let orch = Orch::new(sessions.clone(), Arc::new(SystemEnv::new(settings.clone())), doc);
+        orch.install();
+        let me = Arc::new(Hover { settings, history, hosts, sessions, orch, quotas, run, unseen: Default::default(), watching: AtomicBool::new(false), hooks });
         let sh = me.hooks.clone();
         me.sessions.on_changed(move || fire(&sh, |h| &h.sessions));
         let weak = Arc::downgrade(&me);
@@ -186,6 +196,7 @@ impl Hover {
         for h in &self.hosts { h.shutdown("Hover quit"); }
         // The agent browser's socket and its relay (a Mac's).
         hover_agents::browser::stop();
+        self.orch.flush();
         if let Some(h) = &self.history { h.flush(); }
         self.settings.flush();
     }
