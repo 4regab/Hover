@@ -138,7 +138,7 @@ fn chat_fixture(a: &RunArgs, hold: &Arc<std::sync::Mutex<bool>>) -> Option<KiroR
     use hover_agents::stream::KiroEvent;
     use hover_core::model::KiroStep;
     let p = a.prompt.as_str();
-    let kind = ["second monitor", "taskbar is at the top", "every monitor setup", "release build", "whole notch"].iter().position(|k| p.contains(k))?;
+    let kind = ["second monitor", "taskbar is at the top", "every monitor setup", "release build", "whole notch", "usage limit shot"].iter().position(|k| p.contains(k))?;
     let ev = |s: KiroStep| (a.events)(KiroEvent { step: Some(s), ..Default::default() });
     let st = |id: &str, kind: &str, title: &str, target: Option<&str>, status: &str| KiroStep::new(id, kind, title, target.map(Into::into), status);
     let think = |id: &str, text: &str, ms: Option<f64>| KiroStep { output: Some(text.into()), ms, ..st(id, "thought", "Thinking", None, if ms.is_some() { "completed" } else { "in_progress" }) };
@@ -163,6 +163,8 @@ fn chat_fixture(a: &RunArgs, hold: &Arc<std::sync::Mutex<bool>>) -> Option<KiroR
             ev(st("r1", "read", "Read", Some("apps/hover/src/win.rs"), "completed"));
             ev(think("t1", "The user wants it to hold when the taskbar is at the top too. The notch sits at the top centre, so a top taskbar pushes the work area down.\n\nTwo choices. Use `rcWork` from `GetMonitorInfoW` and start the notch under the taskbar. Or keep it at the very top and draw over the taskbar, since the window is topmost anyway.\n\nDrawing over the taskbar hides the clock on some setups. Starting under it is safer, and it matches what NotchOwl does on a Mac with the menu bar.\n\nThere are three monitors to check, and Linux may have the same bug.", None));
             wait();
+            // A stop ends it as a real agent's does: cancelled, not finished.
+            if a.ct.is_cancelled() { return Some(KiroResult::new(KiroState::Cancelled, "Stopped.")); }
             done("The notch now starts under a top taskbar on every monitor.")
         }
         2 => {
@@ -187,6 +189,7 @@ fn chat_fixture(a: &RunArgs, hold: &Arc<std::sync::Mutex<bool>>) -> Option<KiroR
             wait();
             done("Built.")
         }
+        5 => Some(KiroResult::new(KiroState::Failed, "Usage limit reached. Try again in 2 hours.")),
         _ => done(&format!("## The whole notch, start to end\n\n{}\n\nThe one path that matters: https://example.com/a/very/long/link/that/does/not/break/anywhere/because/it/is/one/word/{}\n\n```rust\nlet placed = place(hwnd, monitor, scale, work_area, taskbar_edge, auto_hide, animations_on, reduced_motion, office_size);\n```\n\n{}",
             "The notch is one window, as wide as the main display, that never resizes while it opens: the shape grows from its resting size to the office by animating one openness value. ".repeat(4),
             "x".repeat(60), "Every step is drawn by the same painter, so a long answer scrolls as one thread and a selection runs across all of it. ".repeat(3))),
@@ -544,6 +547,92 @@ fn workspace_shots(app: &Rc<App>, hover: &Arc<hover_app::app::Hover>, dir: &Path
     app.close_drawer();
     let _ = std::process::Command::new("git").args(["worktree", "prune"]).current_dir(&repo).output();
     let _ = std::fs::remove_dir_all(&repo);
+}
+
+/// The chat's note strip and its More menu (#35, #36, #39), pressed through the buttons' own callbacks: a
+/// usage limit (continue at the reset, cancel), replies held after Stop (send them), and continue with
+/// another agent, fork, and bring findings back.
+fn chat_action_shots(app: &Rc<App>, hover: &Arc<hover_app::app::Hover>, dir: &Path, folder: &str, hold_c: &Arc<std::sync::Mutex<bool>>) {
+    use slint::Model;
+    let dash = adapter(1);
+    let settle = |ms: u64| {
+        let t = std::time::Instant::now();
+        while t.elapsed() < Duration::from_millis(ms) {
+            slint::platform::update_timers_and_animations();
+            pump();
+            app.office_frame();
+            std::thread::sleep(Duration::from_millis(15));
+        }
+    };
+    macro_rules! g { () => { app.dash.borrow().as_ref().expect("the app window").global::<Office>() } }
+    let until = |f: &dyn Fn() -> bool| { let t = std::time::Instant::now(); while t.elapsed() < Duration::from_secs(8) && !f() { settle(20); } assert!(f(), "waited for the state"); };
+    for t in [AgentTool::Kiro, AgentTool::Codex, AgentTool::Cursor] { hover_agents::agents::seed(t, hover_agents::agents::AgentReady { installed: true, signed_in: true, hint: String::new() }); }
+    if let Some(d) = &*app.dash.borrow() { d.set_in_settings(false); }
+    app.dash_settings.set(false);
+    app.refresh_page(false);
+
+    // A usage limit: the note says when it lifts; Continue at the reset arms it; Cancel takes it away.
+    let lim = hover.sessions.start(AgentTool::Kiro, folder, "A usage limit shot.", vec![]).map(|s| s.id).expect("the limited task starts");
+    until(&|| hover.sessions.get(lim).is_some_and(|s| !s.busy()));
+    let key = hover.sessions.get(lim).unwrap().key;
+    app.open_session(lim);
+    settle(800);
+    assert!(hover.limits.of(&key).is_some(), "the limit was noticed");
+    assert!(g!().get_d_note().contains("Usage limit") && g!().get_d_note().contains("It lifts at"), "the note: {}", g!().get_d_note());
+    save(&dash, (1200, 720), 1.0, [0, 0, 0], &dir.join("chat-limit-note.png"));
+    g!().invoke_d_note_act(0);
+    settle(400);
+    assert!(matches!(hover.limits.of(&key).map(|l| l.mode), Some(hover_agents::limit::Mode::Auto)), "armed");
+    assert!(g!().get_d_note().contains("continues this task after"), "the note: {}", g!().get_d_note());
+    save(&dash, (1200, 720), 1.0, [0, 0, 0], &dir.join("chat-limit-armed.png"));
+    g!().invoke_d_note_act(1);
+    settle(400);
+    assert!(hover.limits.of(&key).is_none() && g!().get_d_note().is_empty(), "cancelled: no limit, no note");
+
+    // Replies held after Stop: the note offers to send them.
+    *hold_c.lock().unwrap() = true;
+    let live = hover.sessions.start(AgentTool::Kiro, folder, "Now make it hold when the taskbar is at the top too, and check all three monitors.", vec![]).map(|s| s.id).expect("the live task starts");
+    until(&|| hover.sessions.get(live).is_some_and(|s| !s.turns.is_empty() && !s.turns[0].steps.is_empty()));
+    assert!(hover.sessions.reply(live, "Use rcWork, and check monitor 3 too.", vec![]), "queued behind the run");
+    hover.sessions.stop(live);
+    until(&|| hover.sessions.get(live).is_some_and(|s| !s.busy()));
+    app.open_session(live);
+    settle(600);
+    assert!(hover.sessions.get(live).unwrap().held, "Stop held the reply");
+    assert!(g!().get_d_note().contains("held"), "the note: {}", g!().get_d_note());
+    save(&dash, (1200, 720), 1.0, [0, 0, 0], &dir.join("chat-held-note.png"));
+    *hold_c.lock().unwrap() = false;
+    g!().invoke_d_note_act(0);
+    settle(500);
+    assert!(!hover.sessions.get(live).unwrap().held, "the held reply was let go");
+    until(&|| hover.sessions.get(live).is_some_and(|s| !s.busy()));
+
+    // The More menu on a finished chat.
+    let done = hover.sessions.all().into_iter().find(|s| !s.busy() && s.cloud.is_none() && s.tool == AgentTool::Codex && s.turns.iter().any(|t| t.result.is_some())).expect("a finished Codex chat");
+    app.open_session(done.id);
+    settle(600);
+    let at = |label: &str| g!().get_d_more_items().iter().position(|m| m.label == label).unwrap_or_else(|| panic!("{label} in the menu")) as i32;
+    g!().set_d_more(true);
+    settle(300);
+    save(&dash, (1200, 720), 1.0, [0, 0, 0], &dir.join("chat-more-menu.png"));
+    let before = hover_agents::session::provider_id(&hover.sessions.get(done.id).unwrap());
+    g!().invoke_d_more_act(at("Continue with Cursor"));
+    settle(500);
+    let after = hover_agents::session::provider_id(&hover.sessions.get(done.id).unwrap());
+    assert_eq!((before.as_str(), after.as_str()), ("codex", "cursor"), "the chat moved to Cursor");
+    let n = hover.sessions.all().len();
+    g!().invoke_d_more_act(at("Fork this chat"));
+    until(&|| hover.sessions.all().len() > n || hover.sessions.all().iter().any(|s| s.ext.lineage.as_ref().is_some_and(|l| l.fork.is_some())));
+    let fork = hover.sessions.all().into_iter().find(|s| s.ext.lineage.as_ref().is_some_and(|l| l.fork.is_some())).expect("the fork");
+    assert_eq!(app.page.open.get(), Some(fork.id), "the fork is the chat in front");
+    settle(600);
+    g!().set_d_more(true);
+    settle(300);
+    save(&dash, (1200, 720), 1.0, [0, 0, 0], &dir.join("chat-more-menu-fork.png"));
+    g!().invoke_d_more_act(at("Bring findings back to the original"));
+    settle(400);
+    println!("chat actions: moved to {after}, forked into {}, toast {:?}", fork.id, g!().get_toast().to_string());
+    app.close_drawer();
 }
 
 /// The desk card's sessions: a turn with the steps a real one reports (commands with their
@@ -1572,6 +1661,7 @@ pub fn run(dir: &Path) {
     settings_integrations_shots(&app, &hover, dir);
     expand_shots(&app, &hover, dir, &folder, &hold_c);
     workspace_shots(&app, &hover, dir);
+    chat_action_shots(&app, &hover, dir, &folder, &hold_c);
     // A VS Code theme (Dark+ as its files say), and the model picker open.
     let t = hover_core::model::SavedTheme { name: "Dark+".into(), dark: true, colors: [("editor.background", "#1e1e1e"), ("foreground", "#cccccc"),
         ("sideBar.background", "#181818"), ("button.background", "#0e639c"), ("terminal.ansiRed", "#cd3131"), ("terminal.ansiYellow", "#e5e510"),

@@ -191,6 +191,13 @@ export global Office {
     in property <[ListRow]> list;
     in-out property <bool> list-open: true;
     in-out property <length> list-w: 248px;
+    // A note over the reply box (a usage limit, replies held after Stop) and its buttons; the header's More menu.
+    in property <string> d-note;
+    in property <[string]> d-note-btns;
+    in property <[MOpt]> d-more-items;
+    in-out property <bool> d-more;
+    callback d-note-act(int);
+    callback d-more-act(int);
     callback d-expand();
     callback d-collapse();
     callback d-stop();
@@ -1893,6 +1900,7 @@ export component OfficeView inherits Rectangle {
                         ChipButton { icon: Icons.code; text: tight ? "" : "Editor"; tip: "Open this task’s folder in your editor"; clicked => { Office.d-editor(); } }
                         ChipButton { icon: DeskIcons.files; text: tight ? "" : "Files & changes"; tip: Desk.panel ? "Close the files and changes" : "Open the files and changes beside the chat"; clicked => { Office.d-details(); } }
                     } }
+                    if Office.d-more-items.length > 0: VerticalLayout { alignment: center; XButton { id: "dMore"; label: "More: continue with another agent, fork"; icon: Icons.more; small: compact; clicked => { Office.d-more = !Office.d-more; } } }
                     VerticalLayout { alignment: center; XButton { id: "dExpand"; label: Office.d-wide ? "Back to the office" : "Expand chat"; icon: Office.d-wide ? PagePaths.shrink : PagePaths.expand; small: compact;
                         clicked => { if (Office.d-wide) { Office.d-collapse(); } else { Office.d-expand(); } } } }
                     VerticalLayout { alignment: center; XButton { id: "dDel"; label: "Delete this session"; icon: PagePaths.bin; small: compact; clicked => { Office.d-delete(); } } }
@@ -1991,6 +1999,25 @@ export component OfficeView inherits Rectangle {
                 }
                 // The question at the end of the chat (askHTML(s, 'chat')): kept in view
                 // over the composer while the agent waits.
+                if Office.d-note != "": HorizontalLayout { alignment: center; padding-left: 10px; padding-right: 10px; padding-top: 4px; padding-bottom: 2px;
+                    Rectangle {
+                        width: min(parent.width - 20px, col-w);
+                        height: nl.preferred-height + 2px;
+                        border-radius: 12px;
+                        background: #ffb3401a;
+                        border-width: 1px;
+                        border-color: #ffb34038;
+                        accessible-role: groupbox;
+                        accessible-label: Office.d-note;
+                        nl := VerticalLayout {
+                            padding: 8px;
+                            spacing: 6px;
+                            Text { text: Office.d-note; font-size: 12px; color: #ffd9a0; wrap: word-wrap; }
+                            HorizontalLayout { alignment: end; spacing: 5px;
+                                for b[i] in Office.d-note-btns: ChipButton { text: b; tip: b; clicked => { Office.d-note-act(i); } } }
+                        }
+                    }
+                }
                 if Office.d-asking: HorizontalLayout { alignment: center; padding-left: 14px; padding-right: 14px; padding-top: 4px; padding-bottom: composing ? 0 : 8px;
                     AskCard { w: min(parent.width - 28px, col-w); a: Office.d-ask; tool: Office.d-tool-id; over: false; answer(how) => { Office.answer(-1, Office.d-ask.id, how); }
                         pick(qi, l) => { Office.q-pick(-1, Office.d-ask.id, qi, l); } typed(qi, v) => { Office.q-text(-1, Office.d-ask.id, qi, v); }
@@ -2088,6 +2115,27 @@ export component OfficeView inherits Rectangle {
                 }
             }
             }
+            }
+            // The header's More menu: switch agent, fork, bring findings back. A click elsewhere puts it away.
+            if Office.d-more && Office.d-more-items.length > 0: TouchArea { clicked => { Office.d-more = false; } }
+            if Office.d-more && Office.d-more-items.length > 0: Rectangle {
+                x: parent.width - self.width - 12px;
+                y: compact ? 46px : 56px;
+                width: min(280px, parent.width - 24px);
+                height: ml.preferred-height;
+                border-radius: 14px;
+                background: #1c1a24;
+                border-width: 1px;
+                border-color: #ffffff1a;
+                drop-shadow-blur: 24px;
+                drop-shadow-offset-y: 8px;
+                drop-shadow-color: #00000088;
+                accessible-role: list;
+                accessible-label: "More";
+                ml := VerticalLayout {
+                    padding: 6px;
+                    for m[i] in Office.d-more-items: MenuRow { o: m; clicked => { Office.d-more-act(i); } }
+                }
             }
         }
 
