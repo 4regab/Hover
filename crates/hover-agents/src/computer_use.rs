@@ -492,11 +492,13 @@ fn go(step: &str, line: &str, work: impl FnOnce(&Cancel) -> Result<(), StepError
         *r = Some(ct.clone());
     }
     report(Progress { step: Some(step.into()), line: line.into(), error: None });
-    match work(&ct) {
+    let done = work(&ct);
+    // No longer under way before the end is told, so its message never says busy beside the result.
+    *RUNNING.lock().unwrap() = None;
+    match done {
         Ok(()) | Err(StepError::Cancelled) => report(Progress::default()),
         Err(StepError::Failed(m)) => report(Progress { step: None, line: String::new(), error: Some(m) }),
     }
-    *RUNNING.lock().unwrap() = None;
     changed();
 }
 

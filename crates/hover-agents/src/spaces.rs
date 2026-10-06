@@ -455,11 +455,14 @@ pub fn run_setup() {
         if s.setup.is_some() { return; }
         s.setup = Some(ct.clone());
     }
-    match setup_steps(&ct) {
+    let done = setup_steps(&ct);
+    // No longer under way before the end is told: the message it raises reads busy() at once, and
+    // said "busy" beside the error whenever it was quicker than this line.
+    SHARED.lock().unwrap().setup = None;
+    match done {
         Ok(()) | Err(StepError::Cancelled) => report(Progress::default()),
         Err(StepError::Failed(m)) => report(Progress { error: Some(m), ..Default::default() }),
     }
-    SHARED.lock().unwrap().setup = None;
     check(true);
 }
 
