@@ -20,10 +20,32 @@ fn on_signals() {
     }
 }
 
+/// Who holds the timers, if someone does. Checking who holds the lock takes it for an instant (`wake::held`, which the Settings page
+/// does too), and that writes no name, so a refusal with no name may be only such a glance: it is looked at again before it is believed.
+fn other_holder(dir: &std::path::Path) -> Option<String> {
+    for _ in 0..10 {
+        match wake::held(dir) {
+            wake::Held::Free => return None,
+            wake::Held::By(who) if who != "another process" => return Some(who),
+            wake::Held::By(_) => std::thread::sleep(Duration::from_millis(100)),
+        }
+    }
+    Some("another process".into())
+}
+
+/// `take_timers`, trying again for a second when it is refused, for the same reason as `other_holder`.
+fn take_timers_patiently(hover: &std::sync::Arc<Hover>) -> bool {
+    for _ in 0..10 {
+        if hover.take_timers("the service", true) { return true; }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    false
+}
+
 /// Runs until stopped or handed over. The exit code is for the unit: 0 is a clean end.
 pub fn run() -> i32 {
     let dir = Hover::exec_dir();
-    if let wake::Held::By(who) = wake::held(&dir) {
+    if let Some(who) = other_holder(&dir) {
         println!("{who} runs the timers; the service has nothing to do now.");
         return 0;
     }
@@ -33,7 +55,7 @@ pub fn run() -> i32 {
     hover.sched.set_service_mode(true);
     hover_core::log::line("service: started");
     while !STOP.load(Ordering::SeqCst) {
-        if !hover.has_timers() && !hover.take_timers("the service", true) { break; }
+        if !hover.has_timers() && !take_timers_patiently(&hover) { break; }
         if service::handover_requested(&dir) {
             hover_core::log::line("service: the app is starting; letting go of the timers");
             hover.give_up_timers();
