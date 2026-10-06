@@ -208,17 +208,18 @@ fn the_colour_round_trip_matches_three() {
 }
 
 #[test]
-fn the_pace_returns_to_idle_once_the_helpers_are_gone() {
+fn the_pace_is_the_same_once_the_helpers_are_gone() {
     let (mut o, mut c, state) = office();
     // Everyone done or sent away: an empty office, so nothing is lively but the helpers.
     let mut e = state.clone();
     if let Json::Obj(p) = &mut e { for (k, v) in p.iter_mut() { if k == "sessions" { *v = Json::Arr(vec![]); } } }
     o.state(&with_agents(&state, 0, &["in_progress"]));
     c.run(&mut o, 60);
-    assert!(o.crew.any() && o.lively, "helpers keep the pace at 30 fps");
+    assert!(o.crew.any() && o.lively, "helpers are at work");
     o.state(&e);
     c.run(&mut o, 1500);
     assert!(o.crew.minis.is_empty() && o.sessions.is_empty());
     let late = (0..625).filter(|_| { let n = o.frame(c.0, 16.0); c.0 += 16.0; n }).count();
-    assert!((80..=101).contains(&late), "{late} frames in 10 s: idle again");
+    // The pace is flat (PR #44): nothing slows it once the helpers are gone, so about 312 frames in 10 s.
+    assert!((300..=325).contains(&late), "{late} frames in 10 s: the same flat pace");
 }
