@@ -113,6 +113,8 @@ crates/
                  (voice's project routing); sandbox.rs (srt), computer_use.rs (Cua
                  Driver), spaces.rs (Cua Spaces: the agents' desktops, their `cua`
                  calls), browser.rs (the agent browser's MCP server and socket),
+                 discord.rs (the Discord status: Settings → Integrations → Show on
+                 Discord, off by default; Discord's local socket or pipe, no sign-in),
                  setup.rs (one-click agent install and sign-in), github.rs (gh: status,
                  install, sign-in), desk.rs (what the desk card and its panels read:
                  git, gh, terminal, files, diff, pull requests, subagents, pages)

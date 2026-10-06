@@ -127,6 +127,7 @@ final class SettingsModel: ObservableObject {
     @Published var computerUse = false
     @Published var sandbox = true
     @Published var agentBrowser = true
+    @Published var discordPresence = false
     /// Kiro compacts a long conversation by itself once it fills this share of its context window.
     @Published var kiroAutoCompact = false
     @Published var kiroCompactAt = 80
@@ -179,6 +180,7 @@ final class SettingsModel: ObservableObject {
         computerUse = m["computerUse"] as? Bool ?? false
         sandbox = m["sandbox"] as? Bool ?? true
         agentBrowser = m["agentBrowser"] as? Bool ?? true
+        discordPresence = m["discordPresence"] as? Bool ?? false
         // The backend says in the preferences whether this Mac can host agent desktops, so the switch is right before the Spaces message comes.
         if let ok = m["spacesSupported"] as? Bool { spaces.supported = ok }
         kiroAutoCompact = m["kiroAutoCompact"] as? Bool ?? false
@@ -209,6 +211,7 @@ final class SettingsModel: ObservableObject {
     func setMaxRunning(_ n: Int) { maxRunning = n; request(["type": "saveSettings", "maxRunning": n]) }
     func setComputerUse(_ on: Bool) { computerUse = on; request(["type": "saveSettings", "computerUse": on]) }
     func setAgentBrowser(_ on: Bool) { agentBrowser = on; request(["type": "saveSettings", "agentBrowser": on]) }
+    func setDiscordPresence(_ on: Bool) { discordPresence = on; request(["type": "saveSettings", "discordPresence": on]) }
     func setSandbox(_ on: Bool) { sandbox = on; request(["type": "saveSettings", "sandbox": on]) }
     func setKiroAutoCompact(_ on: Bool) { kiroAutoCompact = on; request(["type": "saveSettings", "kiroAutoCompact": on]) }
     func setKiroCompactAt(_ n: Int) { kiroCompactAt = n; request(["type": "saveSettings", "kiroCompactAt": n]) }
@@ -580,6 +583,19 @@ private struct ComputerUsePage: View {
                 .toggleStyle(.switch)
             } footer: {
                 Text("It has no cookies or sign-ins of yours and opens web pages only. It runs outside the agents' sandbox, so it can reach any website; each step follows the agent's tool access like any other tool.")
+                    .foregroundStyle(.secondary)
+            }
+            Section {
+                Toggle(isOn: Binding(get: { model.discordPresence }, set: { model.setDiscordPresence($0) })) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Show on Discord")
+                        Text("Shows Hover on your Discord status, with how many agents are working and which ones.")
+                            .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                .toggleStyle(.switch)
+            } footer: {
+                Text("Task names are never shared. The Discord app has to be open on this Mac, and “Share my activity” on in Discord's Activity Privacy.")
                     .foregroundStyle(.secondary)
             }
             Section {

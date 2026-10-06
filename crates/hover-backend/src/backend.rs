@@ -174,6 +174,8 @@ impl Backend {
         spaces::on_change(move || l.with(|b| { b.send_spaces(); b.link.push(); }));
         let l = link.clone();
         sessions.on_changed(move || l.push());
+        // Hover on the Discord status, when the switch in Settings → Integrations is on.
+        hover_agents::discord::start(settings.clone(), sessions.clone());
         let l = link.clone();
         history.on_changed(move || l.push());
         // The tool and outcome let the native island show the tool's logo with a badge.
@@ -252,6 +254,7 @@ impl Backend {
             ("type", st("preferences")), ("maxRunning", Json::int(self.max_running.get() as i64)), ("hover", Json::Bool(s.hover_opens_workspace())),
             ("noticeSeen", Json::Bool(s.kiro_notice_seen())), ("quotaItems", Json::Arr(s.notch_items().iter().map(|i| st(i)).collect())),
             ("computerUse", Json::Bool(s.computer_use())), ("sandbox", Json::Bool(s.sandbox())), ("agentBrowser", Json::Bool(s.agent_browser())),
+            ("discordPresence", Json::Bool(s.discord_presence())),
             ("agentSpaces", Json::Bool(s.agent_spaces())), ("spaceImage", st(s.space_image())), ("spacesSupported", Json::Bool(spaces::supported())),
             // Kiro's auto compact: off until switched on, at this percent of the context (added for Rust).
             ("kiroAutoCompact", Json::Bool(s.kiro_auto_compact())), ("kiroCompactAt", Json::int(s.kiro_compact_at() as i64)),
@@ -624,6 +627,7 @@ impl Backend {
         if let Some(image) = str_of(m, "spaceImage") { s.set_space_image(image); }
         // Each session gets it from its next run.
         if let Some(on) = bool_of(m, "agentBrowser") { s.set_agent_browser(on); }
+        if let Some(on) = bool_of(m, "discordPresence") { s.set_discord_presence(on); hover_agents::discord::wake(); }
         if let Some(on) = bool_of(m, "kiroAutoCompact") { s.set_kiro_auto_compact(on); }
         if let Some(pct) = int_of(m, "kiroCompactAt") { s.set_kiro_compact_at(pct.clamp(1, 100) as u8); }
         if let Some(Json::Arr(items)) = m.get("quotaItems") {

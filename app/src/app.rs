@@ -62,7 +62,9 @@ impl Hover {
             let s = settings.clone();
             Runtime::new(t, move || s.agent_options(t))
         }).collect();
-        Hover::with(settings, history, hosts, None, None)
+        let me = Hover::with(settings, history, hosts, None, None);
+        hover_agents::discord::start(me.settings.clone(), me.sessions.clone());
+        me
     }
 
     /// With the parts given (tests hand in stand-in hosts and a reader).

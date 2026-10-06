@@ -57,6 +57,7 @@ them up later.
 | **Agent desktops** | macOS 26 or later on Apple silicon, off until you switch it on. Each project gets its own Cua Space, a macOS VM its agents work in instead of your screen. Drag an app or files onto the notch to send them there. |
 | **Agent browser** | macOS. Agents get a browser they can open pages in, read, click and type in; you see it in the desk card's Browser tab. |
 | **Agent setup** | macOS. One click installs an agent with its maker's own installer and opens its sign-in. |
+| **Discord status** | Off until you switch it on in Settings → Integrations. Your Discord status reads "Playing Hover", with how many agents are working and which ones. Task names are never shared. The Discord app has to be open on the same computer. |
 | **Reply, queue, pause** | Replies sent during a run wait their turn. Pause stops the current answer, and the next queued reply starts once the agent confirms. |
 | **Voice** | Hold `Ctrl+Alt+Space`, say a task, let go. Speech is turned into text on your computer (Phonon) or by Groq. |
 | **Projects** | Register the folders voice may work in, the other names you call them by, and each folder's own tool access. |
@@ -204,6 +205,10 @@ There is no account, server or analytics.
 
   The Kiro quota runs `kiro-cli /usage` on your PC, and the Codex quota reads Codex's own
   logs.
+- **Discord status.** Only when you switch it on. Hover hands the Discord app on your computer
+  a line like "2 agents working" and the agents' names, over the local connection Discord opens
+  for this. Discord then shows it on your profile, as its Activity Privacy setting allows. Hover
+  sends no task names, folders or answers, and makes no sign-in or web request for it.
 - **Voice data.** Cloud sends the audio to Groq; Local keeps recognition on your computer.
   Cleanup gets the text, never the audio. The recording is deleted after it is turned into
   text.
@@ -235,6 +240,7 @@ There is no account, server or analytics.
 | Global shortcuts (`Alt+N`, voice) | ✓ | ✓ | Only while an XWayland window has focus | ✓ (Option-N, Control-Option-Space) |
 | Local speech (Phonon) | ✓ | ✓ (arm64 not tested yet) | ✓ | off, Apple's on-device recognizer instead |
 | Sandbox | off | ✓ | ✓ | ✓ |
+| Discord status | ✓ | ✓ | ✓ | ✓ (not built on a Mac yet) |
 | Agent browser and Browser tab | off | off | off | ✓ |
 | One-click agent setup | off | off | off | ✓ |
 | Computer use | off | off | off | ✓ |
