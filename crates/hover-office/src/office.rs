@@ -487,8 +487,7 @@ impl Office {
         self.now_ms = now_ms;
         let dt = (dt_ms / 1000.0).clamp(0.0, 0.1);
         self.acc += dt;
-        let calm = !self.lively && now_ms - self.poked > 1500.0;
-        let need = if calm { if self.still { 1.0 } else { 0.1 } } else { 1.0 / 31.0 };
+        let need = 1.0 / 60.0;
         if self.acc < need { return false; }
         let step = self.acc;
         self.acc = 0.0;
