@@ -530,6 +530,7 @@ fn workspace_shots(app: &Rc<App>, hover: &Arc<hover_app::app::Hover>, dir: &Path
     git(&["add", "."]);
     git(&["commit", "-q", "-m", "first"]);
     let folder = repo.to_string_lossy().into_owned();
+    app.notch.global::<Office>().invoke_toggle_helpers();
     app.shot_new_task(&folder, "The whole notch, explained once more.", false);
     settle(2500);
     save(&dash, (1200, 720), 1.0, [0, 0, 0], &dir.join("workspace-plan.png"));
@@ -538,6 +539,7 @@ fn workspace_shots(app: &Rc<App>, hover: &Arc<hover_app::app::Hover>, dir: &Path
     let mine = || hover.sessions.all().into_iter().find(|s| s.folder.contains("worktrees"));
     while t.elapsed() < Duration::from_secs(20) && mine().is_none() { settle(100); }
     let s = mine().unwrap_or_else(|| panic!("the task started in a worktree; sessions: {:?}; running {}; can start {}; toast {:?}", hover.sessions.all().iter().map(|s| (s.folder.clone(), s.busy())).collect::<Vec<_>>(), hover.sessions.running(), hover.sessions.can_start(), app.dash.borrow().as_ref().map(|d| d.global::<Office>().get_toast().to_string())));
+    assert!(s.ext.orch.as_ref().is_some_and(|l| l.delegation), "the Helpers switch was on: the task may ask others for help");
     let b = s.ext.workspace.clone().expect("the task has a workspace");
     assert!(b.is_worktree(), "a worktree of its own, not {:?}", b.kind);
     assert_ne!(s.folder, folder, "not the project folder");
@@ -631,6 +633,16 @@ fn chat_action_shots(app: &Rc<App>, hover: &Arc<hover_app::app::Hover>, dir: &Pa
     save(&dash, (1200, 720), 1.0, [0, 0, 0], &dir.join("chat-more-menu-fork.png"));
     g!().invoke_d_more_act(at("Bring findings back to the original"));
     settle(400);
+    // The More menu's helpers switch, on and off.
+    let hchat = hover.sessions.all().into_iter().find(|s| !s.busy() && s.cloud.is_none() && s.id != done.id && s.ext.orch.is_none() && Path::new(&s.folder).is_dir()).expect("a chat for the helpers switch");
+    app.open_session(hchat.id);
+    settle(500);
+    g!().invoke_d_more_act(at("Let it ask other agents for help"));
+    settle(300);
+    assert!(hover.sessions.get(hchat.id).unwrap().ext.orch.is_some_and(|l| l.delegation), "helpers on");
+    g!().invoke_d_more_act(at("Stop letting it ask other agents for help"));
+    settle(300);
+    assert!(!hover.sessions.get(hchat.id).unwrap().ext.orch.is_some_and(|l| l.delegation), "helpers off");
     // Context chips: in the reply box with their ×, taken off one by one, and sent with the reply.
     let chat = hover.sessions.all().into_iter().find(|s| !s.busy() && s.cloud.is_none() && s.id != done.id && s.turns.iter().any(|t| t.result.is_some()) && Path::new(&s.folder).is_dir()).expect("a chat to reply in");
     std::fs::write(Path::new(&chat.folder).join("notes.txt"), "the rows redraw too often\n").unwrap();

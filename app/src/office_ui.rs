@@ -92,6 +92,8 @@ pub struct Page {
     blur: RefCell<Blur>,
     /// A new task's workspace is being made (a worktree can take a while): another Start waits.
     starting: Cell<bool>,
+    /// The new-task box's switch: the task may ask other agents for help.
+    new_helpers: Cell<bool>,
     /// What is attached to each chat's unsent reply (context chips), kept while another chat is open.
     chips: RefCell<HashMap<i32, Vec<hover_core::ext::Chip>>>,
     /// What the chat's note strip and its More menu do, by position (chat_note, chat_more).
@@ -252,7 +254,7 @@ impl Default for Page {
             #[cfg(windows)] gpu: Default::default(),
             #[cfg(windows)] scratch: Default::default(),
             #[cfg(windows)] slots: Default::default(), blur: Default::default(),
-            starting: Cell::new(false), chips: Default::default(), note_acts: RefCell::new(vec![]), more_acts: RefCell::new(vec![]), wide: Cell::new(false), rows_list: RefCell::new(vec![]), branch: Default::default(), desk: Default::default() }
+            starting: Cell::new(false), new_helpers: Cell::new(false), chips: Default::default(), note_acts: RefCell::new(vec![]), more_acts: RefCell::new(vec![]), wide: Cell::new(false), rows_list: RefCell::new(vec![]), branch: Default::default(), desk: Default::default() }
     }
 }
 
@@ -720,6 +722,10 @@ impl App {
             if t.id() != here && hover_agents::agents::known(t).is_some_and(|r| r.ok()) { items.push((format!("to:{}", t.id()), format!("Continue with {}", t.name()))); }
         }
         for p in self.hover.customs.providers().into_iter().filter(|p| p.ready && p.id != here) { items.push((format!("to:{}", p.id), format!("Continue with {}", p.name))); }
+        if hover_agents::orch::mcp_supported() && !o.ext.orch.as_ref().is_some_and(|l| l.parent.is_some()) {
+            let on = o.ext.orch.as_ref().is_some_and(|l| l.delegation);
+            items.push(("helpers".into(), (if on { "Stop letting it ask other agents for help" } else { "Let it ask other agents for help" }).into()));
+        }
         if o.turns.iter().any(|t| t.result.is_some() && !t.queued) { items.push(("fork".into(), "Fork this chat".into())); }
         if o.ext.lineage.as_ref().is_some_and(|l| l.fork.is_some()) { items.push(("back".into(), "Bring findings back to the original".into())); }
         items
@@ -763,6 +769,11 @@ impl App {
             }
         } else if act == "fork" {
             self.fork_chat(&s);
+        } else if act == "helpers" {
+            let on = !s.ext.orch.as_ref().is_some_and(|l| l.delegation);
+            self.hover.orch.enable(&s.key, on);
+            let l = self.hover.settings.delegation();
+            self.toast(&if on { format!("On. It can ask other agents for help: up to {} helpers, {} at once. Limits are in Settings → Automation.", l.max_helpers, l.max_parallel) } else { "Off. It can no longer ask other agents for help.".to_owned() });
         }
         self.office_changed();
         self.office_widgets();
@@ -1150,6 +1161,8 @@ impl App {
             g.set_new_access(s(acc_label));
             g.set_new_access_full(acc == "full");
             g.set_new_access_tip(s(&acc_tip));
+            g.set_new_helpers_shown(hover_agents::orch::mcp_supported() && !cloud_on);
+            g.set_new_helpers(p.new_helpers.get() && hover_agents::orch::mcp_supported() && !cloud_on);
             g.set_new_cloud_shown(cloud_shown);
             g.set_new_cloud(cloud_on);
             g.set_new_repo(s(repo.as_deref().unwrap_or("Empty workspace")));
@@ -1464,6 +1477,8 @@ impl App {
             use hover_agents::workspace::Choice;
             let choice = if a.hover.settings.automation().use_folder { Choice::Folder } else { Choice::Own { base: None } };
             let read_only = access == "read";
+            // Helpers only where the host can serve them, and for this task only.
+            let helpers = a.page.new_helpers.replace(false) && hover_agents::orch::mcp_supported() && !cloud_on;
             if matches!(choice, Choice::Own { .. }) && !cloud_on && !read_only { a.toast("Setting up the task’s workspace…"); }
             let title: String = text.lines().next().unwrap_or("task").chars().take(60).collect();
             let root = hover_core::paths::support().join("worktrees");
@@ -1474,7 +1489,8 @@ impl App {
                     let p = match made { Ok(p) => p, Err(e) => { a.toast(&e); return; } };
                     // What was decided, in words, unless it is what the user chose or a Kiro Web task's own place.
                     if let (Choice::Own { .. }, Some(n)) = (&choice, &p.note) { if !cloud_on { a.toast(n); } }
-                    let ext = hover_core::ext::SessionExt { workspace: p.binding.clone(), ..Default::default() };
+                    let orch = helpers.then(|| hover_core::ext::OrchLink { delegation: true, ..Default::default() });
+                    let ext = hover_core::ext::SessionExt { workspace: p.binding.clone(), orch, ..Default::default() };
                     match a.hover.sessions.start_bound(tool, &p.folder, &text, images, Some(access), cloud, ext) {
                         Some(_) => { each!(a, |g| g.set_new_draft(s(""))); a.page.attached.borrow_mut()[1].clear(); a.page.fab.set(0); a.page.cloud.borrow_mut().menu = false; }
                         None => {
@@ -1539,6 +1555,8 @@ impl App {
             a.page.access_menu.set(!a.page.access_menu.get());
             a.office_widgets();
         });
+        let a = self.clone();
+        g.on_toggle_helpers(move || { a.page.new_helpers.set(!a.page.new_helpers.get()); a.office_widgets(); });
         let a = self.clone();
         g.on_toggle_cloud(move || {
             { let mut c = a.page.cloud.borrow_mut(); c.on = !c.on; c.menu = false; }

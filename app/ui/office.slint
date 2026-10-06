@@ -99,6 +99,10 @@ export global Office {
     // (repo-note says it is loading, or why there are none).
     in property <bool> new-cloud-shown;
     in property <bool> new-cloud;
+    // Let the new task ask other agents for help (Linux and Mac): the switch, whether it is on, and its press.
+    in property <bool> new-helpers-shown;
+    in property <bool> new-helpers;
+    callback toggle-helpers();
     in property <string> new-repo;
     in property <bool> repo-menu;
     in property <[AccessOpt]> repo-opts;
@@ -1600,8 +1604,15 @@ export component OfficeView inherits Rectangle {
                         accessible-action-default => { Office.toggle-cloud(); }
                         Icon { name: Icons.cloud; size: 15px; tint: Office.new-cloud ? #8fbcff : #f6f2ff9e; }
                         ca := TouchArea { mouse-cursor: pointer; clicked => { Office.toggle-cloud(); } } }
+                    // Agents helping agents: the task may ask others for help; purple while on.
+                    nh := Rectangle { width: Office.new-helpers-shown ? 28px : 0px; height: 28px; border-radius: 9px; visible: Office.new-helpers-shown;
+                        background: Office.new-helpers ? #9b6bff30 : ha.has-hover ? #ffffff12 : transparent;
+                        accessible-role: checkbox; accessible-id: "nHelpers"; accessible-label: "Let it ask other agents for help"; accessible-checkable: true; accessible-checked: Office.new-helpers;
+                        accessible-action-default => { Office.toggle-helpers(); }
+                        Icon { name: Icons.bot; size: 15px; tint: Office.new-helpers ? #c4a2ff : #f6f2ff9e; }
+                        ha := TouchArea { mouse-cursor: pointer; clicked => { Office.toggle-helpers(); } } }
                     // The folder, or in Kiro Web the repo it clones.
-                    nf := Rectangle { width: min(fl.preferred-width, (parent.width - 60px) * 0.4); height: 28px; border-radius: 9px; background: fo.has-hover || Office.repo-menu ? #ffffff12 : transparent;
+                    nf := Rectangle { width: min(fl.preferred-width, (parent.width - 140px) * 0.4); height: 28px; border-radius: 9px; background: fo.has-hover || Office.repo-menu ? #ffffff12 : transparent;
                         accessible-role: button; accessible-id: "nFolder"; accessible-label: Office.new-cloud ? "Repository: " + Office.new-repo + ". Change" : Office.new-folder;
                         fl := HorizontalLayout { padding-left: 9px; padding-right: 9px; spacing: 6px;
                             VerticalLayout { alignment: center; Icon { name: Office.new-cloud ? Icons.globe : Icons.folder; size: 14px;

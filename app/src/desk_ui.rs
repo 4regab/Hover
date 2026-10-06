@@ -374,6 +374,16 @@ pub fn diff_rows(df: &d::Diff, open: &HashMap<String, bool>) -> Vec<R> {
     v
 }
 
+/// The helpers a task asked other agents for (orch.rs), as the Agents tab lists subagents.
+pub fn helper_agents(helpers: &[hover_agents::orch::Info]) -> Vec<d::Subagent> {
+    use hover_agents::orch::RunState;
+    helpers.iter().map(|h| d::Subagent {
+        id: format!("helper:{}", h.run), turn: 0, name: format!("Helper · {}", h.provider), task: h.role.clone().unwrap_or_else(|| "Helper".into()), prompt: None,
+        status: match h.state { RunState::Queued | RunState::Running => "in_progress", RunState::Done => "completed", _ => "failed" }.into(), ms: None,
+        out: h.result.clone().or_else(|| h.note.clone()),
+    }).collect()
+}
+
 /// Subagents: each with its task and what came back.
 pub fn agent_rows(sa: &d::Subagents, open: &HashSet<String>, cols: usize) -> Vec<R> {
     let mut v = vec![];
@@ -1175,7 +1185,14 @@ impl App {
                 _ => Laid::loading(),
             },
             "agents" => {
-                let sa = d::subagents(snap);
+                let mut sa = d::subagents(snap);
+                // Hover's own helpers (orch.rs) come first: the tasks this one asked other agents to do.
+                let helpers = self.hover.orch.helpers_of(&sess.key);
+                if !helpers.is_empty() {
+                    let mine = helper_agents(&helpers);
+                    sa.running += mine.iter().filter(|m| m.status == "in_progress").count();
+                    sa.agents.splice(0..0, mine);
+                }
                 if sa.agents.is_empty() { return Laid::of(vec![], Some(empty("agents", "No subagents", "Work this session hands to subagents shows here."))); }
                 Laid::of(agent_rows(&sa, &p.map(|p| p.agent_open.clone()).unwrap_or_default(), mono), None)
             }
@@ -1713,6 +1730,19 @@ mod tests {
         assert_eq!(rows[3].text, "The rest of this file isn’t shown.");
         assert!(file_rows(&d::FileView::Binary { path: "a.png".into(), size: 10 })[1].text.contains("Binary files"));
         assert!(file_rows(&d::FileView::Error { path: "x".into(), error: "gone".into() })[1].text.contains("gone"));
+    }
+
+    #[test]
+    fn helpers_are_listed_with_the_subagents_in_their_states() {
+        use hover_agents::orch::{Delivery, Info, RunState};
+        let h = |run: &str, state, result: Option<&str>, note: Option<&str>| Info { run: run.into(), state, provider: "codex".into(), role: Some("checker".into()), parent: "p".into(), session: None, access: "full".into(), result: result.map(Into::into), note: note.map(Into::into), delivery: Delivery::Pending };
+        let list = helper_agents(&[h("r1", RunState::Running, None, None), h("r2", RunState::Done, Some("All three monitors hold."), None), h("r3", RunState::Failed, None, Some("No desk was free."))]);
+        assert_eq!(list.iter().map(|a| a.status.as_str()).collect::<Vec<_>>(), ["in_progress", "completed", "failed"]);
+        assert_eq!((list[0].name.as_str(), list[0].task.as_str()), ("Helper · codex", "checker"));
+        assert_eq!((list[1].out.as_deref(), list[2].out.as_deref()), (Some("All three monitors hold."), Some("No desk was free.")));
+        let rows = agent_rows(&d::Subagents { agents: list, running: 1 }, &HashSet::new(), 60);
+        assert_eq!(rows[0].text, "3 subagents");
+        assert_eq!(rows.iter().filter(|r| r.kind == 14).count(), 3);
     }
 
     #[test]
