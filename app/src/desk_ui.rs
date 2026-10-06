@@ -1143,7 +1143,16 @@ impl App {
             "pr" => match got("pr") {
                 Some(Got::Pr(d::PrPanel::Open(detail))) => {
                     let md = (!detail.body.trim().is_empty()).then(|| self.desk_markdown(&detail.body, w)).flatten();
-                    Laid::of(pr_rows(&detail, w, md), None)
+                    let mut rows = pr_rows(&detail, w, md);
+                    // Watch this pull request: the task is told of new reviews, failed checks and the rest (prwatch.rs).
+                    let key = self.hover.sessions.get(id).map(|s| s.key).unwrap_or_default();
+                    let watching = self.hover.watcher.of(&key).into_iter().find(|w| w.url == detail.url);
+                    let (label, act) = match &watching {
+                        Some(w) => (format!("Stop watching · {}", match &w.state { hover_agents::prwatch::WState::Active => "active".to_owned(), hover_agents::prwatch::WState::Paused(why) => format!("paused: {why}"), hover_agents::prwatch::WState::Ended(why) => format!("ended: {why}") }), format!("unwatch:{}", w.id)),
+                        None => ("Watch this pull request".to_owned(), format!("watch:{}", detail.url)),
+                    };
+                    if rows.len() > 3 { rows.insert(4, R::new(26, 44.0).text(label).act(act)); }
+                    Laid::of(rows, None)
                 }
                 Some(Got::Pr(d::PrPanel::Error(e))) => Laid::of(vec![], Some(empty("pr", "No pull request", &e))),
                 Some(Got::Pr(_)) => Laid::default(),
@@ -1393,6 +1402,14 @@ impl App {
                 self.desk_prefs_for(id, |p| { let now = p.diff_open.get(arg).copied().unwrap_or(i < 12); p.diff_open.insert(arg.to_owned(), !now); });
             }
             "sa" => { self.desk_prefs_for(id, |p| { if !p.agent_open.remove(arg) { p.agent_open.insert(arg.to_owned()); } }); }
+            "watch" => {
+                let key = self.hover.sessions.get(id).map(|s| s.key).unwrap_or_default();
+                match self.hover.watcher.watch(&key, arg, hover_agents::prwatch::Events::all(), "") {
+                    Ok(_) => self.toast("Watching. This task is told of new reviews, failed checks and when it is done or closed."),
+                    Err(e) => self.toast(&e),
+                }
+            }
+            "unwatch" => { self.hover.watcher.unwatch(arg); self.toast("No longer watching."); }
             _ => return,
         }
         if kind == "file" || kind == "fback" { self.desk_reset_scroll(); }

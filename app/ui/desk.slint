@@ -534,6 +534,11 @@ component DeskRowView inherits Rectangle {
         padding-left: 4px; alignment: start;
         VerticalLayout { alignment: center; DButton { text: r.text; icon: DeskIcons.ext; small: true; clicked => { act(r.act); } } }
     }
+    // 26: a button that watches or stops watching the pull request.
+    if r.kind == 26: HorizontalLayout {
+        padding-left: 4px; alignment: start;
+        VerticalLayout { alignment: center; DButton { id: "prWatch"; text: r.text; icon: Icons.bell; small: true; clicked => { act(r.act); } } }
+    }
     // 20: the checks' tally.
     if r.kind == 20: HorizontalLayout {
         padding-left: 4px; spacing: 12px; alignment: start;

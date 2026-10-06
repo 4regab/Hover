@@ -831,6 +831,16 @@ fn desk_shots(app: &Rc<App>, hover: &Arc<hover_app::app::Hover>, dir: &Path, fol
             d::Check { name: "test".into(), state: "fail".into(), url: Some("https://github.com/x".into()) }, d::Check { name: "lint".into(), state: "pass".into(), url: None }, d::Check { name: "deploy preview".into(), state: "pending".into(), url: None }] };
     app.desk_put(done, "pr", Got::Pr(d::PrPanel::Open(Box::new(pr.clone()))));
     tab("pr", "desk-tab-pr.png");
+    // Watch this pull request, and stop, through the row's own button.
+    let watch_key = hover.sessions.get(done).map(|s| s.key).unwrap_or_default();
+    app.notch.global::<Desk>().invoke_act("watch:https://github.com/4regab/Hover/pull/57".into());
+    settle(500);
+    assert_eq!(hover.watcher.of(&watch_key).len(), 1, "the pull request is watched");
+    shot("desk-tab-pr-watching.png");
+    let wid = hover.watcher.of(&watch_key)[0].id.clone();
+    app.notch.global::<Desk>().invoke_act(format!("unwatch:{wid}").into());
+    settle(300);
+    assert!(hover.watcher.of(&watch_key).is_empty(), "no longer watched");
     // The same without its checks, so the description (headings, a list, bold, inline code, a code block, a link) is in view.
     let pr_text = d::PrDetail { checks: vec![], pass: 0, fail: 0, pending: 0, ..pr.clone() };
     app.desk_put(done, "pr", Got::Pr(d::PrPanel::Open(Box::new(pr_text.clone()))));
