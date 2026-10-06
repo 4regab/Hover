@@ -58,6 +58,8 @@ pub struct Ui {
     look: RefCell<Option<(String, (slint::SharedString, slint::SharedString, slint::Color, bool))>>,
     /// A stage to draw instead of Voice's (the shots).
     pub shot: RefCell<Option<Stage>>,
+    /// Screenshot files to show instead of Voice's (the shots).
+    pub shot_pics: RefCell<Option<Vec<String>>>,
     /// The preview's open menu (0 none, 1 the agents, 2 the model) and the interaction
     /// it was opened for: another interaction finds it closed.
     pub menu: Cell<(i32, u64)>,
@@ -67,6 +69,10 @@ pub struct Ui {
     pub ready: RefCell<Option<(u64, Vec<AgentTool>)>>,
     /// The stage last written to the log.
     logged: Cell<Option<std::mem::Discriminant<Stage>>>,
+    /// Voice's screenshot count as last answered (a chime, a flash, a note).
+    shot_seen: Cell<u64>,
+    note_timer: Timer,
+    flash_timer: Timer,
     pub hold: RefCell<Option<HoldFn>>,
 }
 
@@ -78,7 +84,7 @@ pub fn make(hover: &Arc<Hover>) -> (Ui, Arc<Phonon>, Arc<Voice>) {
     let (h1, h2) = (hover.clone(), hover.clone());
     let hooks = Hooks {
         router: Box::new(move |t| h1.runner(t)),
-        start: Box::new(move |t, folder, prompt, access, cloud| start(&h2, t, folder, prompt, access, cloud)),
+        start: Box::new(move |t, folder, prompt, access, cloud, shots| start(&h2, t, folder, prompt, access, cloud, shots)),
         // Installed and signed in, by the tool's own status command (kept five minutes).
         available: Box::new(|t| hover_agents::agents::check(t, false).ok()),
         active_project: Box::new(move || active.lock().unwrap().clone()),
@@ -90,7 +96,7 @@ pub fn make(hover: &Arc<Hover>) -> (Ui, Arc<Phonon>, Arc<Voice>) {
 /// A new chat for a voice task, through the same start the office's new-task box uses.
 /// Ok only once the tool took it (it named the conversation, or the turn ended well).
 /// Called on Voice's worker thread, so it may wait.
-fn start(h: &Hover, tool: AgentTool, folder: &str, prompt: &str, access: &str, cloud: Option<Repo>) -> Result<i32, String> {
+fn start(h: &Hover, tool: AgentTool, folder: &str, prompt: &str, access: &str, cloud: Option<Repo>, shots: Vec<String>) -> Result<i32, String> {
     // In Kiro Web: the repo picked, else the folder's GitHub repo, else an empty workspace; always Full.
     let (access, cloud) = match cloud {
         Some(repo) => ("full", Some(match repo {
@@ -105,7 +111,7 @@ fn start(h: &Hover, tool: AgentTool, folder: &str, prompt: &str, access: &str, c
     if access == "read" && !hover_agents::agents::read_only_works(tool) {
         return Err(format!("{} has no read only mode on this computer, so Hover won’t start it here. Change the target’s access in Settings → Projects, or pick another agent.", tool.name()));
     }
-    let Some(s) = h.sessions.start_in(tool, folder, prompt, vec![], Some(access), cloud) else {
+    let Some(s) = h.sessions.start_in(tool, folder, prompt, shots, Some(access), cloud) else {
         return Err(if h.sessions.can_start() { "Hover couldn’t start the task." } else { "Three tasks are running already. Start this one when one of them ends." }.into());
     };
     hover_core::log::line(&format!("voice: run {} started ({}, access {access})", s.id, tool.name().to_lowercase()));
@@ -185,9 +191,11 @@ impl App {
         self.refresh_page(false);
     }
 
-    /// The chord went down (or Try it was pressed).
+    /// The chord went down (or Try it was pressed). In toggle mode (Settings → Voice) a
+    /// press while it listens ends the recording, as letting go does in hold mode.
     pub fn voice_press(self: &Rc<Self>, trial: bool) {
         let stage = self.voice.stage();
+        if !self.hover.settings.voice().hold && matches!(stage, Stage::Recording { .. }) { return self.voice.release(); }
         // A Try it's result waits in Settings until the next press: the shortcut's press
         // replaces it rather than being turned away as busy.
         if !trial && self.voice_ui.trial.get() && matches!(stage, Stage::Preview(_)) { self.voice.cancel(); }
@@ -225,6 +233,10 @@ impl App {
         self.voice.press(trial);
     }
 
+    /// The chord (or Try it) came up: the end of the recording in hold mode; in toggle mode
+    /// the next press ends it instead.
+    pub fn voice_released(&self) { if self.hover.settings.voice().hold { self.voice.release(); } }
+
     /// Dictation's place: an office in view (the open notch's or the app window's, not
     /// under Settings) whose chat has its reply box open, with the pointer over that chat.
     pub(crate) fn dictation_here(&self) -> bool {
@@ -252,6 +264,8 @@ impl App {
                 };
                 put(self.notch.global::<Office>());
                 if let Some(d) = &*self.dash.borrow() { put(d.global::<Office>()); }
+                // Screenshots said for go with the reply, as pasted ones do.
+                self.attach_reply(self.voice.shots());
                 say("");
                 self.voice_ui.dictating.set(false);
                 self.voice.dismiss();
@@ -289,6 +303,8 @@ impl App {
         if let Some(b) = self.voice.busy_since() {
             if self.voice_ui.busy_seen.replace(Some(b)) != Some(b) { self.flash_busy(); }
         }
+        let (n, said) = self.voice.shot();
+        if self.voice_ui.shot_seen.replace(n) != n { self.shot_feedback(&said); }
         if self.voice_ui.dictating.get() { return self.dictation_changed(&stage); }
         if self.voice_ui.trial.get() {
             let t = try_card(&stage, &self.hover.settings);
@@ -320,6 +336,7 @@ impl App {
         // The same card again (a level, a second, the countdown): its properties only.
         // The poll picks up a new height and springs the shape to it.
         if kind != 0 && kind == self.voice_ui.kind.get() {
+            self.shots_draw();
             if let Some(c) = card { self.notch.set_voice(c); }
             if let Stage::Recording { level, .. } = stage { self.notch.set_voice_level(level); }
             self.voice_menu_draw(&stage);
@@ -539,6 +556,7 @@ impl App {
         let stage = self.shown();
         let card = self.voice_card(&stage);
         let kind = card.as_ref().map_or(0, |c| c.kind);
+        self.shots_draw();
         if let Some(c) = card { self.notch.set_voice(c); }
         self.notch.set_voice_level(if let Stage::Recording { level, .. } = stage { level } else { 0.0 });
         self.voice_menu_draw(&stage);
@@ -560,8 +578,33 @@ impl App {
         n.set_voice_aura(img);
     }
 
+    /// A screenshot was taken (or couldn't be): a chime and the card's flash for one taken, and
+    /// for a moment what happened, on the card (or as the office's note while dictating).
+    pub(crate) fn shot_feedback(self: &Rc<Self>, said: &str) {
+        if said == hover_app::voice::SHOT_TAKEN {
+            if !self.headless { hover_app::music::chime(); }
+            self.notch.set_voice_flash(true);
+            let a = self.clone();
+            self.voice_ui.flash_timer.start(TimerMode::SingleShot, Duration::from_millis(90), move || a.notch.set_voice_flash(false));
+        }
+        if self.voice_ui.dictating.get() { return self.toast(said); }
+        self.notch.set_voice_note(s(said));
+        let a = self.clone();
+        self.voice_ui.note_timer.start(TimerMode::SingleShot, Duration::from_millis(1800), move || { a.notch.set_voice_note(s("")); a.update_rest(); });
+        self.update_rest();
+    }
+
+    /// The preview's screenshots, as thumbnails.
+    fn shots_draw(&self) {
+        let files = self.voice_ui.shot_pics.borrow().clone().unwrap_or_else(|| self.voice.shots());
+        let pics: Vec<slint::Image> = files.iter().map(|f| self.thumb(f)).collect();
+        if let Some(m) = crate::view::sync(self.notch.get_voice_shots(), &pics) { self.notch.set_voice_shots(m); }
+    }
+
     /// The card's buttons and keys.
     pub fn wire_voice(self: &Rc<Self>) {
+        let a = self.clone();
+        self.notch.on_voice_unattach(move |i| { a.voice.unattach(i.max(0) as usize); a.shots_draw(); });
         let a = self.clone();
         self.notch.on_voice_start(move || a.voice.start_now());
         let a = self.clone();
@@ -672,7 +715,7 @@ impl App {
             "phonon.repair" => { self.voice_ui.phonon_error.borrow_mut().take(); self.phonon.repair(); }
             "phonon.remove" => *self.voice_ui.phonon_error.borrow_mut() = self.phonon.remove().err(),
             "voice.try.press" => self.voice_press(true),
-            "voice.try.release" => self.voice.release(),
+            "voice.try.release" => self.voice_released(),
             "groq.check" => {
                 self.pane.borrow_mut().live.groq_check = Some("Checking…".into());
                 let key = view::secrets().get(GROQ_SECRET);

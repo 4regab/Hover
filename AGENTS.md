@@ -304,8 +304,12 @@ assets/          hover.svg (the logo), make-icon.py (writes hover.png and
 - **A new task starts from one circle** at the office's bottom left: tool logos, then
   a box for the picked tool. A draft is kept and marked with a dot. The box's pill shows
   the model, and the effort only when the tool listed efforts in its last run.
-- **Voice** (`voice/`, off until switched on in Settings → Voice). Hold Ctrl+Alt+Space
-  (rebindable), speak, let go. Speech is Local (Phonon, on this computer, English only)
+- **Voice** (`voice/`, off until switched on in Settings → Voice). Press Ctrl+Alt+Space to start
+  and again to finish (Settings' Voice Recording Mode: Toggle, the default, or Hold to speak, where
+  letting go finishes). Saying "take a screenshot" attaches a picture of the screen (`screen::whole`)
+  to the task: with Cloud speech each pause's stretch is read on its own while recording
+  (`Pauses`, `take_screenshots`), with Local at the end; the phrase is always taken out. The
+  shortcut is rebindable. Speech is Local (Phonon, on this computer, English only)
   or Cloud (Groq, the user's key), read once per recording; Hover never falls back from
   one to the other. Optional cleanup tidies the text. Routing matches registered
   voice projects by their words; only what is left unclear goes to the default agent

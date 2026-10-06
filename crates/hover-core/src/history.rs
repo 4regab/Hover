@@ -48,7 +48,7 @@ pub struct SavedSession {
     pub cloud: Option<Vec<String>>,
 }
 
-/// HistoryEntry(Key, Tool, Title, Folder, Updated, State, Turns).
+/// HistoryEntry(Key, Tool, Title, Folder, Updated, State, Turns, Credits).
 #[derive(Clone, Debug, PartialEq)]
 pub struct HistoryEntry {
     pub key: String,
@@ -58,6 +58,9 @@ pub struct HistoryEntry {
     pub updated: Stamp,
     pub state: KiroState,
     pub turns: i32,
+    /// What the whole session cost, as the sum of its turns' credits. None when no turn
+    /// says (only Kiro reports credits).
+    pub credits: Option<f64>,
 }
 
 fn opt<T>(v: Option<&Json>, f: impl Fn(&Json) -> Result<T>) -> Result<Option<T>> { v.map(f).transpose() }
@@ -145,6 +148,7 @@ impl HistoryEntry {
         Json::obj(vec![
             ("Key", Json::str(&self.key)), ("Tool", self.tool.to_json()), ("Title", Json::str(&self.title)), ("Folder", Json::str(&self.folder)),
             ("Updated", self.updated.to_json()), ("State", self.state.to_json()), ("Turns", Json::int(self.turns as i64)),
+            ("Credits", self.credits.map_or(Json::Null, Json::double)),
         ])
     }
 
@@ -158,6 +162,7 @@ impl HistoryEntry {
             updated: opt(v.get("Updated"), Stamp::from_json)?.unwrap_or(Stamp::DEFAULT),
             state: opt(v.get("State"), KiroState::from_json)?.unwrap_or(KiroState::Idle),
             turns: opt(v.get("Turns"), Json::i32)?.unwrap_or(0),
+            credits: opt(v.get("Credits"), Json::opt_f64)?.flatten(),
         })
     }
 }
@@ -207,10 +212,24 @@ impl AgentHistory {
             if self.index_file().exists() {
                 let r = std::fs::read(self.index_file()).map_err(|e| e.to_string()).and_then(|b| {
                     let v = json::parse(&self.crypto.open(&b)).map_err(|e| e.to_string())?;
-                    Ok(v.opt_list(HistoryEntry::from_json).map_err(|e| e.to_string())?.unwrap_or_default())
+                    let old = v.items().map(|l| l.iter().filter(|x| x.get("Credits").is_none()).filter_map(|x| x.get("Key").and_then(|k| k.as_str().map(str::to_owned))).collect::<Vec<String>>())
+                        .unwrap_or_default();
+                    Ok((v.opt_list(HistoryEntry::from_json).map_err(|e| e.to_string())?.unwrap_or_default(), old))
                 });
                 match r {
-                    Ok(l) => list = l,
+                    Ok((l, old)) => {
+                        list = l;
+                        // Lines written before the index kept credits get them once, from their
+                        // Kiro sessions' files (no other tool reports credits); then it is written back.
+                        // ponytail: reads each old Kiro session's file once, on the first read of the
+                        // index; a very long history pays that one time.
+                        if !old.is_empty() {
+                            for e in list.iter_mut().filter(|e| e.tool == AgentTool::Kiro && old.contains(&e.key)) {
+                                if let Some(s) = self.read(&e.key) { e.credits = credits_of(&s); }
+                            }
+                            whole = false;
+                        }
+                    }
                     Err(e) => {
                         // The index is only a summary of the session files: read them
                         // instead. The unreadable one is set aside, not written over.
@@ -288,6 +307,12 @@ impl AgentHistory {
     pub fn load(&self, key: &str) -> Option<SavedSession> {
         if !plain(key) { return None; }
         self.flush();
+        self.read(key)
+    }
+
+    /// A session's file as it is on disk now (no wait for writes under way).
+    fn read(&self, key: &str) -> Option<SavedSession> {
+        if !plain(key) { return None; }
         let f = self.file_of(key);
         if !f.exists() { return None; }
         let r = std::fs::read(&f).map_err(|e| e.to_string()).and_then(|b| {
@@ -337,8 +362,12 @@ impl AgentHistory {
 /// A session's line in the index. Its state is the last turn's that has one, else Running.
 fn entry_of(s: &SavedSession) -> HistoryEntry {
     let state = s.turns.iter().rev().find_map(|t| t.state).unwrap_or(KiroState::Running);
-    HistoryEntry { key: s.key.clone(), tool: s.tool, title: s.title.clone(), folder: s.folder.clone(), updated: s.updated, state, turns: s.turns.len() as i32 }
+    HistoryEntry { key: s.key.clone(), tool: s.tool, title: s.title.clone(), folder: s.folder.clone(), updated: s.updated, state, turns: s.turns.len() as i32,
+        credits: credits_of(s) }
 }
+
+/// The session's credits: its turns' added up, or None when none of them says.
+fn credits_of(s: &SavedSession) -> Option<f64> { s.turns.iter().filter_map(|t| t.credits).reduce(|a, b| a + b) }
 
 fn seal(c: &Crypto, file: &Path, json: &str) -> std::io::Result<()> {
     let mut tmp = file.as_os_str().to_owned();
@@ -517,6 +546,34 @@ mod tests {
         h.save(&session("cccc", "2026-09-28T19:45:00Z"));
         h.flush();
         assert_eq!(keys(&h), ["bbbb"]);
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    /// History shows what a session cost in all: its turns' credits added up, none when no
+    /// turn says. An index written before it kept credits gets them once from the files.
+    #[test]
+    fn a_sessions_credits_are_its_turns_added_up_and_old_index_lines_get_them() {
+        let d = dir("credits");
+        let c = Arc::new(Crypto::with_key([3; 32]));
+        let h = AgentHistory::new(d.clone(), c.clone());
+        let mut s = session("aaaa", "2026-09-28T16:45:00Z");
+        s.tool = AgentTool::Kiro;
+        let t = s.turns[0].clone();
+        s.turns = vec![SavedTurn { credits: Some(0.25), ..t.clone() }, SavedTurn { credits: None, ..t.clone() }, SavedTurn { credits: Some(1.5), ..t.clone() }];
+        h.save(&s);
+        let mut none = session("bbbb", "2026-09-28T17:45:00Z");
+        none.turns = vec![SavedTurn { credits: None, ..t.clone() }];
+        h.save(&none);
+        h.flush();
+        let got = |h: &AgentHistory| h.entries().into_iter().map(|e| (e.key, e.credits)).collect::<Vec<_>>();
+        assert_eq!(got(&h), [("bbbb".to_owned(), None), ("aaaa".to_owned(), Some(1.75))]);
+        assert_eq!(got(&AgentHistory::new(d.clone(), c.clone())), got(&h), "kept in the index");
+        // An index from before: no Credits on its lines. The Kiro session's are read from its file once.
+        let old = Json::Arr(h.entries().iter().map(|e| { let Json::Obj(mut f) = e.to_json() else { unreachable!() }; f.retain(|(k, _)| k != "Credits"); Json::Obj(f) }).collect());
+        seal(&c, &d.join("index.dat"), &old.compact()).unwrap();
+        let again = AgentHistory::new(d.clone(), c.clone());
+        assert_eq!(got(&again), [("bbbb".to_owned(), None), ("aaaa".to_owned(), Some(1.75))]);
+        again.flush();
         let _ = std::fs::remove_dir_all(&d);
     }
 

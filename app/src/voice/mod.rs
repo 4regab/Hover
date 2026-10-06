@@ -1,4 +1,4 @@
-//! Voice: hold the shortcut, speak, let go. The recording becomes text (Groq in the
+//! Voice: press the shortcut, speak, press it again (or hold it and let go, in hold mode). The recording becomes text (Groq in the
 //! cloud, or Phonon on this computer: the user's choice, read once per recording and
 //! never switched behind their back), is optionally tidied, routed to a registered
 //! project or the default workspace, and shown as a preview that starts a new chat
@@ -31,7 +31,7 @@ const ROUTE_LIMIT: Duration = Duration::from_secs(60);
 /// An edit is routed again once typing pauses this long.
 const EDIT_SETTLE: Duration = Duration::from_millis(300);
 
-const NOTHING: &str = "Nothing was heard. Hold the shortcut, speak, then let go.";
+const NOTHING: &str = "Nothing was heard. Start again with the shortcut, and speak a little closer to the microphone.";
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Stage {
@@ -102,9 +102,9 @@ pub struct Pending { pub id: u64, pub text: String, pub tools: Vec<AgentTool> }
 pub struct Hooks {
     /// The tool's runner for a routing turn (access "none"), when it has one.
     pub router: Box<dyn Fn(AgentTool) -> Option<RunTask> + Send + Sync>,
-    /// A new chat: tool, folder, prompt, access, and the repo when it runs in Kiro Web.
-    /// Ok(session id) once the provider took it.
-    pub start: Box<dyn Fn(AgentTool, &str, &str, &str, Option<Repo>) -> Result<i32, String> + Send + Sync>,
+    /// A new chat: tool, folder, prompt, access, the repo when it runs in Kiro Web, and the
+    /// screenshots to send with it (files). Ok(session id) once the provider took it.
+    pub start: Box<dyn Fn(AgentTool, &str, &str, &str, Option<Repo>, Vec<String>) -> Result<i32, String> + Send + Sync>,
     pub available: Box<dyn Fn(AgentTool) -> bool + Send + Sync>,
     /// The project open in Hover now (its id), which wins a tie.
     pub active_project: Box<dyn Fn() -> Option<String> + Send + Sync>,
@@ -156,6 +156,10 @@ struct Run {
     /// Kiro Web was asked for in words ("use Kiro Web").
     cloud: bool,
     resume: Resume,
+    /// Screenshots taken by saying so, as files in kiro-images, sent with the task.
+    shots: Arc<Mutex<Vec<String>>>,
+    /// Stretches of the recording being read for "take a screenshot" now.
+    reading: Arc<std::sync::atomic::AtomicUsize>,
 }
 
 struct St {
@@ -169,6 +173,10 @@ struct St {
     edit: u64,
     busy: Option<Instant>,
     run: Option<Run>,
+    /// Counts the screenshots taken by voice (one each, or one that failed), with what the card
+    /// says of the last: SHOT_TAKEN, or why there is none. The UI chimes, flashes and says it
+    /// when the count moves.
+    shot: (u64, String),
 }
 
 pub struct Voice {
@@ -204,6 +212,74 @@ fn audible(s: &[i16]) -> bool {
         && s.chunks(480).any(|w| (w.iter().map(|&x| (x as f64).powi(2)).sum::<f64>() / w.len() as f64).sqrt() > 0.003 * 32768.0)
 }
 
+/// "Screenshot attached", or why there is none: what the card says after a capture.
+pub const SHOT_TAKEN: &str = "Screenshot attached";
+/// The largest a screenshot is kept (it is sent to the agent as it is).
+const SHOT_MAX: (u32, u32) = (1920, 1200);
+/// The task when nothing was said but "take a screenshot".
+const SHOT_ONLY: &str = "Take a look at the attached screenshot.";
+
+/// "take a screenshot" and "take a screenshot of this", in any case and spacing ("screen shot"
+/// too, as speech engines write it), as whole words: the text without them (and the comma or
+/// full stop that ended them), and how many there were. What is left is tidied after by cleanup.
+pub fn take_screenshots(text: &str) -> (String, usize) {
+    // The words, with where each starts and ends.
+    let mut words: Vec<(usize, usize)> = vec![];
+    let mut start = None;
+    for (i, c) in text.char_indices().chain(std::iter::once((text.len(), ' '))) {
+        let w = c.is_alphanumeric() || c == '\'';
+        match (w, start) { (true, None) => start = Some(i), (false, Some(s)) => { words.push((s, i)); start = None; } _ => {} }
+    }
+    let lower = |k: usize| words.get(k).map(|&(a, b)| text[a..b].to_lowercase());
+    let is = |k: usize, w: &str| lower(k).as_deref() == Some(w);
+    let mut cut: Vec<(usize, usize)> = vec![];
+    let mut k = 0;
+    while k < words.len() {
+        // take a screenshot | take a screen shot, then "of this" if it follows.
+        let shot = if is(k, "take") && is(k + 1, "a") && is(k + 2, "screenshot") { Some(k + 3) }
+            else if is(k, "take") && is(k + 1, "a") && is(k + 2, "screen") && is(k + 3, "shot") { Some(k + 4) } else { None };
+        let Some(mut next) = shot else { k += 1; continue };
+        if is(next, "of") && is(next + 1, "this") { next += 2; }
+        let mut end = words[next - 1].1;
+        // The punctuation that closed the phrase goes with it.
+        if let Some(c) = text[end..].chars().next().filter(|c| matches!(c, '.' | ',' | '!' | '?' | ';' | ':')) { end += c.len_utf8(); }
+        cut.push((words[k].0, end));
+        k = next;
+    }
+    if cut.is_empty() { return (text.to_owned(), 0); }
+    let mut out = String::with_capacity(text.len());
+    let mut at = 0;
+    for (a, b) in &cut { out.push_str(&text[at..*a]); out.push(' '); at = *b; }
+    out.push_str(&text[at..]);
+    // One space between words, none before punctuation, none left dangling at either end.
+    let mut tidy = out.split_whitespace().collect::<Vec<_>>().join(" ");
+    for p in [" .", " ,", " !", " ?", " ;", " :"] { tidy = tidy.replace(p, &p[1..]); }
+    let tidy = tidy.trim_start_matches([',', '.', ';', ':', ' ']).trim().to_owned();
+    (tidy, cut.len())
+}
+
+/// Where a recording pauses, for voice to listen for "take a screenshot" while it goes on:
+/// fed the audio as it comes, it says when a stretch of speech has ended (a pause after it,
+/// or twelve seconds without one), so that stretch can be read on its own.
+#[derive(Default)]
+pub struct Pauses { cut: usize, spoke: f32, quiet: f32 }
+
+impl Pauses {
+    /// The audio from `at - chunk.len()` to `at`; Some((from, to)) when a stretch ended there.
+    /// `ready` false (stretches already being read) lets the stretch grow instead.
+    pub fn feed(&mut self, chunk: &[i16], at: usize, ready: bool) -> Option<(usize, usize)> {
+        if chunk.is_empty() { return None; }
+        let secs = chunk.len() as f32 / audio::RATE as f32;
+        let loud = (chunk.iter().map(|&x| (x as f64).powi(2)).sum::<f64>() / chunk.len() as f64).sqrt() > 0.003 * 32768.0;
+        if loud { self.spoke += secs; self.quiet = 0.0; } else { self.quiet += secs; }
+        let long = at.saturating_sub(self.cut) >= audio::RATE as usize * 12;
+        if !ready || self.spoke < 0.6 || !(self.quiet >= 0.6 || long) { return None; }
+        let r = (self.cut, at);
+        *self = Pauses { cut: at, spoke: 0.0, quiet: 0.0 };
+        Some(r)
+    }
+}
+
 impl Voice {
     pub fn new<L: Local + 'static>(settings: Arc<Settings>, secrets: Arc<Secrets>, phonon: Arc<L>, hooks: Hooks) -> Arc<Voice> {
         wav::sweep();
@@ -214,7 +290,7 @@ impl Voice {
     fn build(settings: Arc<Settings>, secrets: Arc<Secrets>, local: Arc<dyn Local>, hooks: Hooks, cloud: Cloud, open: audio::Open, countdown: Option<Duration>, max: usize) -> Arc<Voice> {
         Arc::new_cyclic(|me| Voice {
             me: me.clone(), settings, secrets, local, hooks, cloud, open, countdown, max,
-            st: Mutex::new(St { stage: Stage::Idle, id: 0, deadline: None, total: Duration::ZERO, checking: false, edit: 0, busy: None, run: None }),
+            st: Mutex::new(St { stage: Stage::Idle, id: 0, deadline: None, total: Duration::ZERO, checking: false, edit: 0, busy: None, run: None, shot: (0, String::new()) }),
             listeners: Mutex::new(vec![]),
         })
     }
@@ -243,6 +319,47 @@ impl Voice {
 
     /// The agent this interaction uses now (the default, or one picked for it).
     pub fn tool(&self) -> Option<AgentTool> { self.st.lock().unwrap().run.as_ref().map(|r| r.tool) }
+
+    /// The screenshots this interaction has taken so far (files), oldest first.
+    pub fn shots(&self) -> Vec<String> { self.st.lock().unwrap().run.as_ref().map(|r| r.shots.lock().unwrap().clone()).unwrap_or_default() }
+
+    /// How many screenshots voice has tried to take, and what the card says of the last.
+    pub fn shot(&self) -> (u64, String) { self.st.lock().unwrap().shot.clone() }
+
+    /// The card's × on a screenshot: it isn't sent. A preview counting down stops for good,
+    /// as after an edit, so what goes is what was looked at.
+    pub fn unattach(&self, i: usize) {
+        {
+            let st = self.st.lock().unwrap();
+            let Some(r) = &st.run else { return };
+            let mut l = r.shots.lock().unwrap();
+            if i >= l.len() { return; }
+            l.remove(i);
+        }
+        self.hold();
+        self.notify();
+    }
+
+    /// A picture of the screen now, kept with this interaction. Off the UI thread.
+    fn screenshot(&self, id: u64) {
+        let Some(shots) = self.with_run(id, |r| r.shots.clone()) else { return };
+        // Into kiro-images, where the office keeps pasted pictures (and the agent reads them).
+        let got = crate::screen::whole(SHOT_MAX).and_then(|img| {
+            let url = hover_core::json::Json::str(crate::screen::data_url(&img, 85));
+            hover_core::images::save(&[url], &hover_core::images::folder(hover_core::paths::support())).into_iter().next()
+                .map(|p| p.to_string_lossy().into_owned()).ok_or_else(|| "it couldn’t be kept.".to_owned())
+        });
+        let said = match got {
+            Ok(file) => { shots.lock().unwrap().push(file); SHOT_TAKEN.to_owned() }
+            Err(e) => { hover_core::log::line(&format!("voice: screenshot failed - {e}")); format!("Couldn’t take a screenshot: {e}") }
+        };
+        {
+            let mut st = self.st.lock().unwrap();
+            if st.id != id { return; }
+            st.shot = (st.shot.0 + 1, said);
+        }
+        self.notify();
+    }
 
     /// Called from any thread when the stage changes (and while recording or counting
     /// down, ten to twenty times a second).
@@ -305,6 +422,7 @@ impl Voice {
                 trial, dictate, voice, projects: self.settings.projects().into_iter().filter(|p| p.voice).collect(), workspace: ws,
                 tool, released: Default::default(), cancel: Default::default(), ct: Cancel::new(),
                 text: String::new(), heard: String::new(), cleanup_note: None, review: false, target: None, cloud: false, resume: Resume::Record,
+                shots: Default::default(), reading: Default::default(),
             });
             st.stage = Stage::Recording { level: 0.0, secs: 0.0 };
             st.deadline = None;
@@ -555,6 +673,12 @@ impl Voice {
             Err(e) => return self.fail(id, e, true, None, Resume::Record),
         };
         let t0 = Instant::now();
+        // "Take a screenshot" is heard while it records: each stretch of speech, once it pauses,
+        // is read by the same engine on its own thread, and the phrase takes a picture then.
+        // Cloud only: Local starts Phonon's Python and model for each reading (seconds), so it
+        // can't keep up; there the picture is taken at the end, from the whole transcript.
+        let reading = self.with_run(id, |r| r.reading.clone()).unwrap_or_default();
+        let (mut pauses, mut seen) = (Pauses::default(), 0usize);
         loop {
             std::thread::sleep(Duration::from_millis(50));
             if cancel.load(Ordering::Relaxed) { drop(src.finish()); return; }
@@ -562,6 +686,26 @@ impl Voice {
             let n = src.samples();
             // Ten minutes by the samples, or by the clock should the device stall.
             if released.load(Ordering::Relaxed) || n >= self.max || t0.elapsed() > Duration::from_secs(601) { break; }
+            if !local {
+                let chunk = src.since(seen);
+                seen += chunk.len();
+                // ponytail: at most two stretches read at once; past that the next one grows until
+                // one is done. Each is a request to Groq, which counts toward its limits.
+                if let Some((from, to)) = pauses.feed(&chunk, seen, reading.load(Ordering::Relaxed) < 2) {
+                    let stretch: Vec<i16> = src.since(from).into_iter().take(to - from).collect();
+                    let (engine, cancel, reading) = (engine.clone(), cancel.clone(), reading.clone());
+                    reading.fetch_add(1, Ordering::Relaxed);
+                    self.spawn("voice-listen", move |v| {
+                        let heard = wav::write(&stretch, audio::RATE).ok().map(|f| engine.transcribe(f.path(), &cancel));
+                        match heard {
+                            Some(Ok(t)) => { for _ in 0..take_screenshots(&t.text).1 { v.screenshot(id); } }
+                            Some(Err(SpeechError::Cancelled)) | None => {}
+                            Some(Err(e)) => hover_core::log::line(&format!("voice: a stretch couldn’t be read for “take a screenshot” - {}", e.message())),
+                        }
+                        reading.fetch_sub(1, Ordering::Relaxed);
+                    });
+                }
+            }
             self.set(id, Stage::Recording { level: src.level(), secs: n as f32 / audio::RATE as f32 });
         }
         let samples = src.finish();
@@ -581,6 +725,14 @@ impl Voice {
         };
         let heard = t.text.trim().to_owned();
         if heard.is_empty() { return self.fail(id, NOTHING.into(), true, None, Resume::Record); }
+        // A stretch still being read may take a picture yet: it waits for them (a few seconds at most).
+        let wait = Instant::now();
+        while reading.load(Ordering::Relaxed) > 0 && wait.elapsed() < Duration::from_secs(8) && !cancel.load(Ordering::Relaxed) { std::thread::sleep(Duration::from_millis(50)); }
+        // The phrase never reaches the task. Said but not caught on the way (Local, or a stretch
+        // that couldn't be read), the picture is taken now.
+        let (heard, asked) = take_screenshots(&heard);
+        if asked > 0 && self.shots().is_empty() { self.screenshot(id); }
+        let heard = if heard.is_empty() && asked > 0 { SHOT_ONLY.to_owned() } else { heard };
         let (text, note) = if voice.cleanup {
             if !self.set(id, Stage::Cleaning) { return; }
             match self.cleanup_service(&voice) {
@@ -786,7 +938,7 @@ impl Voice {
             drop(st);
             return self.notify();
         }
-        match (self.hooks.start)(p.tool, &folder, &p.task, &access, (p.cloud && p.tool == AgentTool::Kiro).then(|| p.repo.clone())) {
+        match (self.hooks.start)(p.tool, &folder, &p.task, &access, (p.cloud && p.tool == AgentTool::Kiro).then(|| p.repo.clone()), self.shots()) {
             Ok(session) => { self.set(id, Stage::Started { session, folder }); }
             Err(e) => keep(self, e),
         }

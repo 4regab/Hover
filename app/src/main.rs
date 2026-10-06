@@ -1014,7 +1014,7 @@ fn platform_start(hover: Arc<Hover>, look: Look, _selftest: bool) -> Rc<App> {
     // Hold to talk, on the shortcut's event thread: handed to the UI thread.
     let g = grab.clone();
     *app.voice_ui.hold.borrow_mut() = Some(Box::new(move |sc| match sc {
-        Some(sc) => g.register_hold(sc, || ui_do(|a| a.voice_press(false)), || ui_do(|a| a.voice.release())),
+        Some(sc) => g.register_hold(sc, || ui_do(|a| a.voice_press(false)), || ui_do(|a| a.voice_released())),
         None => { g.clear_hold(); Ok(()) }
     }));
     app.register_voice();
@@ -1050,7 +1050,7 @@ fn platform_start(hover: Arc<Hover>, look: Look, _selftest: bool) -> Rc<App> {
     // Hold to talk: the press and release come on the UI thread, inside the notch
     // window's message handler, so they are handed on to run after it.
     *app.voice_ui.hold.borrow_mut() = Some(Box::new(|sc| match sc {
-        Some(sc) => win::register_hold(sc, || ui_do(|a| a.voice_press(false)), || ui_do(|a| a.voice.release())),
+        Some(sc) => win::register_hold(sc, || ui_do(|a| a.voice_press(false)), || ui_do(|a| a.voice_released())),
         None => { win::clear_hold(); Ok(()) }
     }));
     win::set_tray_menu(app.menu());

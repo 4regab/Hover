@@ -807,6 +807,32 @@ fn voice_shots(app: &Rc<App>, hover: &Arc<hover_app::app::Hover>, dir: &Path, da
             save(&notch, (w, 200), 1.0, desk, &dir.join(format!("voice-{tag}-{name}.png")));
             if ws == W::Default { save(&notch, (w, 200), 2.0, desk, &dir.join(format!("voice-{tag}-{name}-2x.png"))); }
         }
+        if ws == W::Default {
+            // "Take a screenshot" while listening: the flash, then the note; then the preview with the
+            // pictures it will send, each with its ×. Two made-up screens stand in for real ones.
+            let pics: Vec<String> = [([0x1e, 0x29, 0x3b], [0x4a, 0xde, 0x80]), ([0xf6, 0xf2, 0xff], [0x6b, 0xa8, 0xff])].iter().enumerate().map(|(i, (bg, bar))| {
+                let mut img = image::RgbaImage::from_pixel(1600, 1000, image::Rgba([bg[0], bg[1], bg[2], 255]));
+                for y in 0..60 { for x in 0..1600 { img.put_pixel(x, y, image::Rgba([bar[0], bar[1], bar[2], 255])); } }
+                for y in 200..700 { for x in 200..1000 { img.put_pixel(x, y, image::Rgba([0x80, 0x80, 0x90, 255])); } }
+                let f = data.join(format!("voice-shot-{i}.png"));
+                img.save(&f).unwrap();
+                f.to_string_lossy().into_owned()
+            }).collect();
+            let listening = Stage::Recording { level: 0.6, secs: 6.8 };
+            *app.voice_ui.shot_pics.borrow_mut() = Some(pics[..1].to_vec());
+            draw(&listening);
+            app.shot_feedback(hover_app::voice::SHOT_TAKEN);
+            run_for(40);
+            save(&notch, (w, 200), 2.0, desk, &dir.join(format!("voice-{tag}-screenshot-flash-2x.png")));
+            run_for(700);
+            save(&notch, (w, 200), 2.0, desk, &dir.join(format!("voice-{tag}-screenshot-note-2x.png")));
+            *app.voice_ui.shot_pics.borrow_mut() = Some(pics.clone());
+            draw(&Stage::Preview(preview(&pf, "Hover", None, "Fix the footer: it overlaps the menu on narrow screens.", Some(2.1), "full")));
+            let h = app.n.borrow().win.height() as u32;
+            save(&notch, (w, h), 2.0, desk, &dir.join(format!("voice-{tag}-preview-screenshots-2x.png")));
+            app.voice_ui.shot_pics.borrow_mut().take();
+            app.notch.set_voice_note("".into());
+        }
         // The tallest the preview gets: the agent menu open over a long task with a note.
         // It stays inside the window (Small's is the shortest), Start and Cancel in view.
         draw(&Stage::Preview(preview(&home, "Default workspace", Some("Using default workspace: no project named. Cleanup failed; using the original."), long, None, "full")));

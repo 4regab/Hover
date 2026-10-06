@@ -242,6 +242,12 @@ export component NotchWindow inherits Window {
     in property <image> voice-aura;
     in property <[VoiceTool]> voice-tools;
     in property <bool> voice-busy;
+    // Screenshots taken by saying "take a screenshot", for the preview's row (× drops one);
+    // voice-note says one was taken (or why not) for a moment, and voice-flash flashes the card.
+    in property <[image]> voice-shots;
+    in property <string> voice-note;
+    in property <bool> voice-flash;
+    callback voice-unattach(int);
     // The one-line cards (listening, working on what was said, started, cancelled) are
     // only as wide as their own line: the fixed 440 and 330 left most of the island
     // empty. The old widths stay as the most they may take, so a long line still elides
@@ -547,6 +553,13 @@ export component NotchWindow inherits Window {
                         accessible-id: "NotchVoiceStage";
                         accessible-label: root.voice.words + " " + root.voice.sub;
                     } }
+                    if root.voice-note != "": HorizontalLayout {
+                        padding-left: 10px;
+                        spacing: 6px;
+                        VerticalLayout { alignment: center; Icon { name: Icons.image; size: 13px; tint: #f6f2ff; } }
+                        Text { text: root.voice-note + (root.voice-shots.length > 1 ? " (" + root.voice-shots.length + ")" : ""); font-size: 12px; color: white;
+                            vertical-alignment: center; overflow: elide; accessible-role: text; }
+                    }
                 }
                 // .ncard: what was heard, the target, the agent and the access, the task
                 // (edit it to stop the countdown), Start with its ring, and Cancel.
@@ -810,6 +823,41 @@ export component NotchWindow inherits Window {
                             }
                         }
                     }
+                    // The screenshots it will send, each with its ×; the row scrolls when they don't fit.
+                    if root.voice.kind == 3 && root.voice-shots.length > 0: Flickable {
+                        vertical-stretch: 0;
+                        height: 52px;
+                        content-width: max(self.width, shl.preferred-width);
+                        shl := HorizontalLayout {
+                            spacing: 6px;
+                            alignment: start;
+                            for im[i] in root.voice-shots: Rectangle {
+                                width: 72px;
+                                height: 52px;
+                                border-radius: 9px;
+                                clip: true;
+                                background: black;
+                                border-width: 1px;
+                                border-color: #ffffff17;
+                                accessible-role: image;
+                                accessible-label: "Screenshot " + (i + 1);
+                                Image { width: 100%; height: 100%; source: im; image-fit: cover; }
+                                Rectangle {
+                                    x: parent.width - 21px;
+                                    y: 3px;
+                                    width: 18px;
+                                    height: 18px;
+                                    border-radius: 9px;
+                                    background: #000000b3;
+                                    accessible-role: button;
+                                    accessible-label: "Remove screenshot " + (i + 1);
+                                    accessible-action-default => { root.voice-unattach(i); }
+                                    Icon { name: Icons.close; size: 9px; tint: white; }
+                                    TouchArea { mouse-cursor: pointer; clicked => { root.voice-unattach(i); } }
+                                }
+                            }
+                        }
+                    }
                     HorizontalLayout {
                         vertical-stretch: 0;
                         spacing: 6px;
@@ -883,6 +931,23 @@ export component NotchWindow inherits Window {
                         bta := TouchArea { mouse-cursor: pointer; clicked => { if (root.voice.retry) { root.voice-retry(); } else { root.voice-settings(); } } }
                     } }
                     VerticalLayout { alignment: center; EscChip { clicked => { root.voice-cancel(); } } }
+                }
+                // A screenshot was taken: the card flashes white and fades back (it takes no clicks).
+                vflash := Rectangle {
+                    // Inside the card by a few pixels, so none of the white shows past the notch's curves.
+                    x: 18px;
+                    y: 4px;
+                    width: root.voice-w - 36px;
+                    height: root.voice-h - 10px;
+                    border-radius: 22px;
+                    background: white;
+                    opacity: 0;
+                    states [
+                        flashing when root.voice-flash: {
+                            vflash.opacity: 0.85;
+                            out { animate vflash.opacity { duration: 450ms; easing: ease-out; } }
+                        }
+                    ]
                 }
             }
         }

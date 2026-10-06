@@ -153,6 +153,14 @@ impl Plat for X {
         if let Err(e) = r.map_err(|e| e.to_string()).and_then(|c| c.check().map_err(|e| format!("{e:?}"))) {
             hover_core::log::line(&format!("notch input shape: {e}"));
         }
+        // The window's own outline too. Nothing is drawn outside the input shape (its pixels there
+        // are clear), but a compositor that goes by the outline, as GNOME's does with XWayland
+        // windows, otherwise treats the whole office-sized window as there: it covers the top bar
+        // and takes the pointer over it (#26).
+        let r = self.conn.shape_rectangles(shape::SO::SET, shape::SK::BOUNDING, xproto::ClipOrdering::UNSORTED, w, 0, 0, &rects);
+        if let Err(e) = r.map_err(|e| e.to_string()).and_then(|c| c.check().map_err(|e| format!("{e:?}"))) {
+            hover_core::log::line(&format!("notch outline shape: {e}"));
+        }
     }
 
     fn foreground_is_ours(&self) -> bool {

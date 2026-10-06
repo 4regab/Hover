@@ -21,6 +21,9 @@ pub trait Source {
     fn failed(&self) -> Option<String>;
     /// Stops at once and hands the samples over.
     fn finish(self: Box<Self>) -> Vec<i16>;
+    /// A copy of the samples from `from` on, while it records (voice listens for "take a
+    /// screenshot" in it). None where the source can't give them.
+    fn since(&self, _from: usize) -> Vec<i16> { vec![] }
 }
 
 /// Opens a source: the device's name (None is the default) and the most samples to keep.
@@ -47,6 +50,7 @@ impl Source for Mic {
     fn level(&self) -> f32 { f32::from_bits(self.shared.level.load(Ordering::Relaxed)) }
     fn samples(&self) -> usize { self.shared.buf.lock().unwrap().len() }
     fn failed(&self) -> Option<String> { self.shared.failed.lock().unwrap().clone() }
+    fn since(&self, from: usize) -> Vec<i16> { self.shared.buf.lock().unwrap().get(from..).map(<[i16]>::to_vec).unwrap_or_default() }
     fn finish(mut self: Box<Self>) -> Vec<i16> {
         // The stream first: the device is let go before anything else happens.
         drop(self.stream.take());

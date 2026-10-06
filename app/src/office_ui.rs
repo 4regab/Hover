@@ -952,7 +952,8 @@ impl App {
                     };
                     // .hr: the tool's logo, the task and its date, then how it went · turns · where.
                     rows.push(PanelRow { sub: s(h.tool.id()), text: s(&h.title), meta: s(stage.word()), s1: s(stamp(now, ms)),
-                        count: s(format!("{} turn{} · {}", h.turns, if h.turns == 1 { "" } else { "s" }, hover_office::office::short(&h.folder))),
+                        // What the session cost in all, where the tool says (Kiro); else only where.
+                        count: s(match h.credits { Some(c) => format!("{} · {}", hover_chat::state::credits(c), hover_office::office::short(&h.folder)), None => hover_office::office::short(&h.folder) }),
                         stage: stage as i32, key: s(&h.key), desk, ..row(6) });
                     opens.push((None, Some(h.key.clone())));
                 }
@@ -1472,8 +1473,18 @@ impl App {
             format!("Used by {} from its next turn.", t.name()))
     }
 
+    /// Pictures from elsewhere (voice's screenshots while dictating) for the reply, as a paste
+    /// adds them: up to the most a message takes.
+    pub(crate) fn attach_reply(self: &Rc<Self>, files: Vec<String>) {
+        if files.is_empty() { return; }
+        let mut l = self.page.attached.borrow_mut();
+        for f in files { if l[0].len() < hover_core::images::MAX_IMAGES { l[0].push(f); } }
+        drop(l);
+        self.office_widgets();
+    }
+
     /// A picture's thumbnail, read once.
-    fn thumb(&self, file: &str) -> Image {
+    pub(crate) fn thumb(&self, file: &str) -> Image {
         if let Some(i) = self.page.thumbs.borrow().get(file) { return i.clone(); }
         let img = image::open(file).ok().map(|i| i.thumbnail(104, 104).to_rgba8()).map(|i| {
             Image::from_rgba8(SharedPixelBuffer::<Rgba8Pixel>::clone_from_slice(i.as_raw(), i.width(), i.height()))

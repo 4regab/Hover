@@ -5,7 +5,18 @@ What changed in each Hover release. Versions follow [Semantic Versioning](https:
 
 ## [Unreleased]
 
-## [3.6.2] - 2026-10-05
+## [3.7.0] - 2026-10-05
+
+### Added
+
+- Voice: say "take a screenshot" (or "take a screenshot of this") while you speak, and Hover
+  takes a picture of your screen and sends it with the task. Say it as often as you like. Each
+  one chimes, flashes the notch and says "Screenshot attached". The preview shows the pictures,
+  each with an × to drop it. The words themselves never reach the task. With Cloud speech the
+  picture is taken while you speak; with Local speech, when you finish.
+- Voice: press the shortcut once to start listening and again to finish. This is the new
+  default. Settings → Voice → Voice Recording Mode switches back to "Hold to speak".
+- Session history shows what each Kiro session cost in credits, in place of its turn count.
 
 ### Changed
 
@@ -29,6 +40,9 @@ What changed in each Hover release. Versions follow [Semantic Versioning](https:
   than its row, so the next card was drawn over it.
 - `hover.log` now lists the models Kiro offered each time a chat starts, and whether the
   sandbox was on, to find out why Kiro's model list looks short on Linux.
+- Linux: the resting notch no longer covers the top bar on desktops that go by a window's
+  outline (GNOME on Wayland, through XWayland). Its outline is now the notch itself, not the
+  whole office-sized window (part of #26).
 
 ## [3.6.1] - 2026-10-05
 

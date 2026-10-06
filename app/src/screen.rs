@@ -94,6 +94,10 @@ pub fn capture_apps(apps: &Apps, max: (u32, u32)) -> Result<RgbaImage, String> {
 /// The desktop alone (the panel at rest): the wallpaper, scaled to fit `max`.
 pub fn desktop(max: (u32, u32)) -> Result<RgbaImage, String> { imp::desktop().map(|i| scaled(i, max)) }
 
+/// The main display as it is now, every window on it (voice's "take a screenshot"), scaled to
+/// fit `max`. Blocks for a moment: call it off the UI thread.
+pub fn whole(max: (u32, u32)) -> Result<RgbaImage, String> { imp::whole().map(|i| scaled(i, max)) }
+
 // MARK: Windows
 
 #[cfg(windows)]
@@ -169,6 +173,36 @@ mod imp {
         }
     }
 
+    /// The primary display from the screen's own picture (BitBlt with CAPTUREBLT, so layered
+    /// windows are in it too).
+    pub fn whole() -> Result<RgbaImage, String> {
+        let (w, hh) = screen();
+        let (w, hh) = (w as i32, hh as i32);
+        unsafe {
+            let screen = GetDC(None);
+            let mem = CreateCompatibleDC(Some(screen));
+            let info = BITMAPINFO { bmiHeader: BITMAPINFOHEADER { biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32, biWidth: w, biHeight: -hh, biPlanes: 1, biBitCount: 32, biCompression: BI_RGB.0, ..Default::default() }, ..Default::default() };
+            let mut bits: *mut c_void = std::ptr::null_mut();
+            let bmp = CreateDIBSection(Some(mem), &info, DIB_RGB_COLORS, &mut bits, None, 0);
+            let out = match bmp {
+                Ok(bmp) if !bits.is_null() => {
+                    let old = SelectObject(mem, bmp.into());
+                    let ok = BitBlt(mem, 0, 0, w, hh, Some(screen), 0, 0, ROP_CODE(SRCCOPY.0 | CAPTUREBLT.0)).is_ok();
+                    let bytes = std::slice::from_raw_parts(bits as *const u8, (w * hh * 4) as usize);
+                    let mut rgba = Vec::with_capacity(bytes.len());
+                    for p in bytes.chunks_exact(4) { rgba.extend_from_slice(&[p[2], p[1], p[0], 255]); }
+                    SelectObject(mem, old);
+                    let _ = DeleteObject(bmp.into());
+                    if ok { RgbaImage::from_raw(w as u32, hh as u32, rgba) } else { None }
+                }
+                _ => None,
+            };
+            let _ = DeleteDC(mem);
+            ReleaseDC(None, screen);
+            out.ok_or_else(|| "Windows didn’t give a picture of the screen.".into())
+        }
+    }
+
     pub fn capture(apps: &Apps, _max: (u32, u32)) -> Result<RgbaImage, String> {
         let mut canvas = desktop()?;
         if apps.pids.is_empty() { return Ok(canvas); }
@@ -197,6 +231,19 @@ mod imp {
         let (c, n) = x11rb::connect(None).map_err(|e| format!("No X display: {e}"))?;
         let s = &c.setup().roots[n];
         Ok(plain((s.width_in_pixels as u32, s.height_in_pixels as u32), [0x24, 0x27, 0x2e]))
+    }
+
+    /// The root window's picture: the screen as X has it, every window included.
+    pub fn whole() -> Result<RgbaImage, String> {
+        let (c, n) = x11rb::connect(None).map_err(|e| format!("No X display: {e}"))?;
+        let s = &c.setup().roots[n];
+        let (w, h) = (s.width_in_pixels, s.height_in_pixels);
+        let img = c.get_image(ImageFormat::Z_PIXMAP, s.root, 0, 0, w, h, !0).map_err(|e| e.to_string())?.reply().map_err(|e| format!("X didn’t give a picture of the screen: {e}"))?;
+        // 24- and 32-bit ZPixmap on a little-endian server: B, G, R, pad.
+        if img.data.len() != w as usize * h as usize * 4 { return Err("The screen’s picture isn’t in a form Hover reads.".into()); }
+        let mut rgba = Vec::with_capacity(img.data.len());
+        for p in img.data.chunks_exact(4) { rgba.extend_from_slice(&[p[2], p[1], p[0], 255]); }
+        RgbaImage::from_raw(w as u32, h as u32, rgba).ok_or_else(|| "The screen’s picture couldn’t be read.".into())
     }
 
     pub fn capture(apps: &Apps, _max: (u32, u32)) -> Result<RgbaImage, String> {
@@ -231,6 +278,7 @@ mod imp {
     use super::*;
     pub fn supported() -> bool { false }
     pub fn desktop() -> Result<RgbaImage, String> { Err("The screen panel isn’t available here.".into()) }
+    pub fn whole() -> Result<RgbaImage, String> { desktop() }
     pub fn capture(_: &Apps, _: (u32, u32)) -> Result<RgbaImage, String> { desktop() }
 }
 

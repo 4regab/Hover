@@ -115,6 +115,10 @@ fn run(dir: &std::path::Path, notch: u32) -> String {
     let pill_w = (seen.rest.0 * seen.scale).round() as i32;
     let one = rects.len() == 1 && (rects[0].2 as i32 - pill_w).abs() <= 2;
     t.check("input_shape_is_the_pill", one, format!("input shape {rects:?}, rest {:?}", seen.rest));
+    // The outline is the same, so a compositor that goes by it leaves the rest of the screen alone.
+    let outline = c.shape_get_rectangles(notch, x11rb::protocol::shape::SK::BOUNDING).unwrap().reply().unwrap();
+    let out: Vec<_> = outline.rectangles.iter().map(|r| (r.x, r.y, r.width, r.height)).collect();
+    t.check("outline_is_the_pill", out == rects, format!("outline {out:?}, input {rects:?}"));
     // A click on the empty part lands on the helper, not the notch.
     let (qx, qy) = (seen.win.0 as i16 + 60, seen.win.1 as i16 + 200);
     motion(qx, qy);

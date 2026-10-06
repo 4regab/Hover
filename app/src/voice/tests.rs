@@ -74,7 +74,7 @@ fn harness(text: &str, o: Opt) -> H {
     let available = o.available;
     let hooks = Hooks {
         router: Box::new(|_| None),
-        start: Box::new(move |t: AgentTool, f: &str, p: &str, a: &str, _cloud: Option<Repo>| { let mut s = s2.lock().unwrap(); s.push((t, f.into(), p.into(), a.into())); Ok(s.len() as i32) }),
+        start: Box::new(move |t: AgentTool, f: &str, p: &str, a: &str, _cloud: Option<Repo>, _shots: Vec<String>| { let mut s = s2.lock().unwrap(); s.push((t, f.into(), p.into(), a.into())); Ok(s.len() as i32) }),
         available: Box::new(move |t| available(t)),
         active_project: Box::new(|| None),
     };
@@ -395,4 +395,42 @@ fn dictation_gives_the_words_and_starts_nothing() {
     assert_eq!(h.v.stage(), Stage::Idle);
     let p = say(&h, false);
     assert_eq!(p.task, "fix the footer");
+}
+/// "Take a screenshot" (and "… of this") is taken out of what was said, however it is
+/// cased, spaced or punctuated, and counted; nothing else is touched.
+#[test]
+fn the_screenshot_phrase_never_reaches_the_task() {
+    use super::take_screenshots as t;
+    assert_eq!(t("Fix the footer. Take a screenshot. Then the header."), ("Fix the footer. Then the header.".to_owned(), 1));
+    assert_eq!(t("take a screenshot of this, it's broken"), ("it's broken".to_owned(), 1));
+    assert_eq!(t("Look here TAKE  A  SCREEN SHOT and here take a screenshot of this!"), ("Look here and here".to_owned(), 2));
+    assert_eq!(t("Take a screenshot."), (String::new(), 1));
+    // Not the phrase: left as it is.
+    assert_eq!(t("I took a screenshot yesterday"), ("I took a screenshot yesterday".to_owned(), 0));
+    assert_eq!(t("take a screenshotting tool"), ("take a screenshotting tool".to_owned(), 0));
+    assert_eq!(t("Fix the menu."), ("Fix the menu.".to_owned(), 0));
+}
+
+/// The listener reads a stretch of speech once it pauses (or runs long), never silence alone,
+/// and lets a stretch grow while two are being read.
+#[test]
+fn a_stretch_of_speech_is_cut_at_its_pause() {
+    let rate = super::audio::RATE as usize;
+    let loud = vec![3000i16; rate / 20];
+    let quiet = vec![0i16; rate / 20];
+    let mut p = super::Pauses::default();
+    let mut at = 0;
+    let mut feed = |p: &mut super::Pauses, c: &[i16], ready: bool| { at += c.len(); p.feed(c, at, ready) };
+    for _ in 0..40 { assert_eq!(feed(&mut p, &quiet, true), None, "silence is never read"); }
+    for _ in 0..20 { assert_eq!(feed(&mut p, &loud, true), None); }
+    // A second of speech, then a pause: busy readers hold it back; free, it is cut there.
+    let mut got = None;
+    for _ in 0..11 { got = got.or(feed(&mut p, &quiet, false)); }
+    assert_eq!(got, None);
+    let cut = feed(&mut p, &quiet, true).expect("cut at the pause");
+    assert_eq!(cut.0, 0);
+    // Twelve seconds of speech with no pause is cut too.
+    let mut long = None;
+    for _ in 0..241 { long = long.or(feed(&mut p, &loud, true)); }
+    assert!(long.is_some_and(|(a, b)| a == cut.1 && b - a >= rate * 12), "{long:?}");
 }

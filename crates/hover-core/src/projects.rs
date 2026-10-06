@@ -162,6 +162,9 @@ pub struct VoiceSettings {
     pub countdown: u32,
     /// The listening card's aura, as #RRGGBB; None is AURA_COLOR.
     pub aura_color: Option<String>,
+    /// Hold the shortcut to talk and let go to finish. Off (the default) is a toggle:
+    /// one press starts listening, the next ends it.
+    pub hold: bool,
 }
 
 impl VoiceSettings {
@@ -198,7 +201,7 @@ impl Default for VoiceSettings {
     fn default() -> Self {
         VoiceSettings { enabled: false, shortcut: Self::SHORTCUT, microphone: None, speech: SpeechMode::Cloud, local: None, model: TRANSCRIBE_MODELS[0].0.into(), cleanup: false,
             cleanup_provider: CleanupProvider::Gemini, cleanup_model: None, cleanup_base: None, agent: None, countdown: Self::COUNTDOWN,
-            aura_color: None }
+            aura_color: None, hold: false }
     }
 }
 
@@ -209,7 +212,7 @@ impl VoiceSettings {
             ("Model", Json::str(&self.model)), ("Cleanup", Json::Bool(self.cleanup)), ("CleanupProvider", Json::str(self.cleanup_provider.name())),
             ("CleanupModel", Json::opt_str_of(self.cleanup_model.as_deref())), ("CleanupBase", Json::opt_str_of(self.cleanup_base.as_deref())),
             ("Agent", Json::opt_str_of(self.agent.map(AgentTool::id))), ("Countdown", Json::int(self.countdown as i64)),
-            ("AuraColor", Json::opt_str_of(self.aura_color.as_deref()))])
+            ("AuraColor", Json::opt_str_of(self.aura_color.as_deref())), ("HoldToTalk", Json::Bool(self.hold))])
     }
 
     pub fn from_json(v: &Json) -> Result<VoiceSettings> {
@@ -239,6 +242,8 @@ impl VoiceSettings {
             countdown: match v.get("Countdown") { Some(n @ Json::Num(_)) => n.i64().ok().filter(|n| (0..=60).contains(n)).map_or(d.countdown, |n| n as u32), _ => d.countdown },
             // One that isn't a colour is the default.
             aura_color: opt_text(v.get("AuraColor")).ok().flatten().as_deref().and_then(Self::hex_color),
+            // Settings before this were hold to talk; the toggle is the new default for everyone.
+            hold: v.get("HoldToTalk").map(Json::bool).transpose()?.unwrap_or(false),
         })
     }
 }

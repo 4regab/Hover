@@ -85,7 +85,7 @@ fn the_state_message_is_the_fixtures_bytes() {
     let history: Vec<HistoryEntry> = fx.get("history").unwrap().items().unwrap().iter().map(|h| HistoryEntry {
         key: s(h, "key").into(), tool: AgentTool::parse(Some(s(h, "tool"))).unwrap(), title: s(h, "title").into(), folder: s(h, "folder").into(),
         updated: Stamp::from_unix_ms(h.get("at").unwrap().i64().unwrap(), Kind::Local),
-        state: state_of(s(h, "stage")).unwrap_or(KiroState::Running), turns: h.get("turns").unwrap().i32().unwrap() }).collect();
+        state: state_of(s(h, "stage")).unwrap_or(KiroState::Running), turns: h.get("turns").unwrap().i32().unwrap(), credits: None }).collect();
     let ready = |t: AgentTool| Some(if t == AgentTool::Cursor {
         AgentReady { installed: true, signed_in: false, hint: hover_agents::agents::sign_in_hint(t).into() }
     } else { AgentReady { installed: true, signed_in: true, hint: String::new() } });

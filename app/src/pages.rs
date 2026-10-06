@@ -538,15 +538,18 @@ fn voice(b: &mut Vec<Block>, i: &Input) {
     let s = i.settings;
     let v = s.voice();
     let local = v.speech == SpeechMode::Local;
-    b.push(Block::Lead("Talk to Hover from anywhere. The notch listens while you hold the shortcut.".into()));
+    b.push(Block::Lead(if v.hold { "Talk to Hover from anywhere. The notch listens while you hold the shortcut." }
+        else { "Talk to Hover from anywhere. Press the shortcut to start listening, and press it again to finish." }.into()));
     let mut mics = vec![("System default".to_owned(), v.microphone.is_none())];
     mics.extend(i.live.mics.iter().map(|m| (m.clone(), v.microphone.as_ref() == Some(m))));
     // A saved device that isn't plugged in now still shows as the one picked.
     if let Some(m) = v.microphone.as_ref().filter(|m| !i.live.mics.contains(m)) { mics.push((m.clone(), true)); }
     b.push(Block::Group(vec![
         row("Voice control", None, switch("VoiceEnabled", "Voice control", v.enabled), Lead::None),
-        row("Shortcut", Some(i.live.shortcut_error.clone().unwrap_or_else(|| "Hold it to talk, let go to finish. Up to ten minutes.".into())),
+        row("Shortcut", Some(i.live.shortcut_error.clone().unwrap_or_else(|| if v.hold { "Hold it to talk, let go to finish. Up to ten minutes." }
+            else { "Press it to talk, press it again to finish. Up to ten minutes." }.into())),
             Control::Shortcut { id: "VoiceShortcut".into(), name: "Voice shortcut".into(), text: i.voice_shortcut.clone() }, Lead::None),
+        row("Voice Recording Mode", None, segments("VoiceMode", &["Toggle (Click on/off)", "Hold to speak"], v.hold as i32), Lead::None),
         row("Microphone", None, Control::Picker { id: "VoiceMicrophone".into(), name: "Microphone".into(),
             shown: v.microphone.clone().unwrap_or_else(|| "System default".into()), options: mics }, Lead::None),
     ]));
@@ -646,14 +649,15 @@ fn voice(b: &mut Vec<Block>, i: &Input) {
     heading(b, "Try it");
     let t = i.live.voice_try.as_ref();
     let sub = t.and_then(|t| t.error.clone().or_else(|| Some(t.status.clone()).filter(|x| !x.is_empty())))
-        .unwrap_or_else(|| "Hold the button and speak. It shows what voice would start; nothing starts and no files are touched.".into());
-    let mut rows = vec![row("Try it", Some(sub), Control::Hold { id: "voice.try".into(), name: "Hold to try voice".into(), text: "Hold to talk".into() }, Lead::None)];
+        .unwrap_or_else(|| if v.hold { "Hold the button and speak. It shows what voice would start; nothing starts and no files are touched." }
+        else { "Click the button, speak, then click it again. It shows what voice would start; nothing starts and no files are touched." }.into());
+    let mut rows = vec![row("Try it", Some(sub), Control::Hold { id: "voice.try".into(), name: (if v.hold { "Hold to try voice" } else { "Click to try voice" }).into(), text: (if v.hold { "Hold to talk" } else { "Click to talk" }).into() }, Lead::None)];
     if let Some(t) = t { rows.extend(t.lines.iter().map(|(l, v)| row(l, Some(v.clone()), Control::None, Lead::None))); }
     b.push(Block::Group(rows));
     let start = match v.countdown { 0 => "and waits for Start".to_owned(), n => format!("and starts it after {}", secs_words(n)) };
-    b.push(Block::Footnote(format!("Hold the shortcut, say what to do (“in Hover, fix the notch blink”) and let go. A card shows the folder, agent, access and task, \
+    b.push(Block::Footnote(format!("Use the shortcut, say what to do (“in Hover, fix the notch blink”) and finish. A card shows the folder, agent, access and task, \
         {start}. Enter starts it now, editing the task stops the countdown, and Esc cancels. With a chat open in the office and its reply box open, \
-        hold the shortcut with the pointer over the chat to write into the reply instead.")));
+        use the shortcut with the pointer over the chat to write into the reply instead.")));
 }
 
 /// "5 seconds", "1 second".
@@ -1079,7 +1083,7 @@ mod tests {
         i.has_secret = &has;
         let cloud = build(Section::Voice, &i);
         let v = ids(&cloud);
-        for id in ["VoiceEnabled", "VoiceShortcut", "VoiceMicrophone", "VoiceSpeechLocal (Phonon)", "VoiceGroqKey", "groq.check", "VoiceModel", "VoiceCleanup", "VoiceCleanupKey", "VoiceAgentTool", "VoiceAgent", "voice.try"] {
+        for id in ["VoiceEnabled", "VoiceShortcut", "VoiceModeToggle (Click on/off)", "VoiceMicrophone", "VoiceSpeechLocal (Phonon)", "VoiceGroqKey", "groq.check", "VoiceModel", "VoiceCleanup", "VoiceCleanupKey", "VoiceAgentTool", "VoiceAgent", "voice.try"] {
             assert!(v.contains(&id.to_string()), "{id} in {v:?}");
         }
         let key = rows(&cloud).into_iter().find(|r| r.control.id() == Some("VoiceGroqKey")).unwrap();

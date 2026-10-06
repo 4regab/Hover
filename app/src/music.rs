@@ -98,6 +98,34 @@ impl Beats {
     }
 }
 
+/// A short two-note chime on the default output (voice's screenshot), on its own thread;
+/// the device is let go when it ends. Nothing when there is no output.
+pub fn chime() {
+    let _ = std::thread::Builder::new().name("chime".into()).spawn(|| {
+        use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+        let go = || -> Result<(), String> {
+            let device = cpal::default_host().default_output_device().ok_or("no output device")?;
+            let cfg = device.default_output_config().map_err(|e| e.to_string())?;
+            let (channels, rate) = (cfg.channels() as usize, cfg.sample_rate() as f32);
+            let mut n = 0f32;
+            let stream = device.build_output_stream(cfg.config(), move |out: &mut [f32], _| {
+                for frame in out.chunks_mut(channels) {
+                    let t = n / rate;
+                    n += 1.0;
+                    // 880 Hz then 1320 Hz, 90 ms each, each fading out; quiet, under the music.
+                    let (f, k) = if t < 0.09 { (880.0, t / 0.09) } else { (1320.0, (t - 0.09) / 0.09) };
+                    let v = if t < 0.18 { (t * f * std::f32::consts::TAU).sin() * 0.12 * (1.0 - k) } else { 0.0 };
+                    for s in frame.iter_mut() { *s = v; }
+                }
+            }, |e| hover_core::log::line(&format!("chime: {e}")), None).map_err(|e| e.to_string())?;
+            stream.play().map_err(|e| e.to_string())?;
+            std::thread::sleep(std::time::Duration::from_millis(260));
+            Ok(())
+        };
+        if let Err(e) = go() { hover_core::log::line(&format!("chime: {e}")); }
+    });
+}
+
 /// The open device and the decoder feeding it.
 struct Output { _stream: cpal::Stream }
 
