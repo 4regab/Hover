@@ -990,7 +990,7 @@ fn agent(b: &mut Vec<Block>, section: Section, i: &Input) {
     if tool == AgentTool::Kiro {
         b.push(Block::Credits(Box::new(credits_card(i.credits, i.settings.has_notch_item(item::KIRO), (i.reading)(item::KIRO).as_ref(), i.live.credits_range))));
         b.push(Block::Footnote("Kiro total is read from \"kiro-cli /usage\" every five minutes while Hover runs. Outside is that total minus Hover’s own tasks: \
-            the Kiro IDE, kiro-cli on its own and Kiro Web. A day Hover wasn’t running counts toward the next day it was.".into()));
+            the Kiro IDE, kiro-cli on its own and Kiro Web. After a day Hover wasn’t running, the next day counts only from Hover’s first reading of it and is marked partial.".into()));
     }
 
     heading(b, "Model");
