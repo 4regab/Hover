@@ -692,13 +692,10 @@ export component NotchWindow inherits Window {
                                 VerticalLayout { alignment: center; Icon { name: Icons.cloud; size: 13px; tint: root.voice.cloud ? #8fbcff : #f6f2ff9e; } }
                             }
                         }
-                    }
-                    // The repo Kiro Web is given (the office's repo pick), while it is on.
-                    if root.voice.kind == 3 && root.voice.cloud: HorizontalLayout {
-                        vertical-stretch: 0;
-                        alignment: start;
-                        VMenuPick {
-                            max-width: 300px;
+                        // The repo Kiro Web is given (the office's repo pick), while it is on:
+                        // last on the row, its name cut short when the row is full.
+                        if root.voice.cloud: VMenuPick {
+                            max-width: 220px;
                             open: root.voice-menu == 4;
                             enabled: !root.voice.starting;
                             accessible-label: "Repository: " + root.voice.repo + ". Change";
