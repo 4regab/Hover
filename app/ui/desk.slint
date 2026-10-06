@@ -434,6 +434,12 @@ component DeskRowView inherits Rectangle {
     // 7: a line of a file, with its number.
     if r.kind == 7: Rectangle {
         background: #0b0a0d;
+        // Hovered: Open at this line in the editor.
+        lh := TouchArea { }
+        if r.act != "" && lh.has-hover: Rectangle { x: parent.width - 86px; y: 1px; width: 80px; height: parent.height - 2px; border-radius: 6px; background: oa.has-hover ? #ffffff26 : #ffffff14;
+            accessible-role: button; accessible-label: "Open line " + r.num + " in the editor"; accessible-action-default => { act(r.act); }
+            Text { text: "Open ↗"; font-size: 10.5px; color: #f6f2ffc4; horizontal-alignment: center; vertical-alignment: center; }
+            oa := TouchArea { mouse-cursor: pointer; clicked => { act(r.act); } } }
         Text { x: 0; width: 44px; text: r.num; font-family: "DejaVu Sans Mono"; font-size: 11.5px; color: #ffffff38; horizontal-alignment: right; vertical-alignment: center; }
         Text { x: 56px; width: parent.width - 62px; text: r.text; font-family: "DejaVu Sans Mono"; font-size: 11.5px; color: #d6d3dc; vertical-alignment: center; overflow: clip; }
     }
@@ -470,6 +476,12 @@ component DeskRowView inherits Rectangle {
     // 10: a diff line, with both sides' numbers.
     if r.kind == 10: Rectangle {
         background: r.tone == 1 ? #2ea04326 : r.tone == 2 ? #f8514921 : #0f0e11;
+        // Hovered: Open at this line in the editor.
+        dlh := TouchArea { }
+        if r.act != "" && dlh.has-hover: Rectangle { x: parent.width - 86px; y: 1px; width: 80px; height: parent.height - 2px; border-radius: 6px; background: doa.has-hover ? #ffffff30 : #ffffff1c;
+            accessible-role: button; accessible-label: "Open line " + r.num2 + " in the editor"; accessible-action-default => { act(r.act); }
+            Text { text: "Open ↗"; font-size: 10.5px; color: #f6f2ffc4; horizontal-alignment: center; vertical-alignment: center; }
+            doa := TouchArea { mouse-cursor: pointer; clicked => { act(r.act); } } }
         Text { x: 0; width: 38px; text: r.num; font-family: "DejaVu Sans Mono"; font-size: 11px; color: #ffffff38; horizontal-alignment: right; vertical-alignment: center; }
         Text { x: 40px; width: 38px; text: r.num2; font-family: "DejaVu Sans Mono"; font-size: 11px; color: #ffffff38; horizontal-alignment: right; vertical-alignment: center; }
         Text { x: 88px; width: parent.width - 94px; text: r.text; font-family: "DejaVu Sans Mono"; font-size: 11.5px; vertical-alignment: center; overflow: clip;

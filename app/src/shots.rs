@@ -860,6 +860,11 @@ fn desk_shots(app: &Rc<App>, hover: &Arc<hover_app::app::Hover>, dir: &Path, fol
     app.desk_put(done, "file", Got::File("src/refresh.ts".into(), d::FileView::Text { path: "src/refresh.ts".into(), text, truncated: false, size: 14_900 }));
     settle(500);
     shot("desk-tab-file.png");
+    // The pointer over a line: Open at this line shows at its end.
+    notch.dispatch_event(slint::platform::WindowEvent::PointerMoved { position: slint::LogicalPosition::new(app.notch.get_shape_x() + 1180.0, 338.0) });
+    settle(300);
+    shot("desk-tab-file-hover.png");
+    notch.dispatch_event(slint::platform::WindowEvent::PointerMoved { position: slint::LogicalPosition::new(5.0, 5.0) });
     app.notch.global::<Desk>().invoke_scrolled(2000.0, 300.0);
     settle(300);
     shot("desk-tab-file-scrolled.png");
@@ -872,6 +877,21 @@ fn desk_shots(app: &Rc<App>, hover: &Arc<hover_app::app::Hover>, dir: &Path, fol
     settle(300);
     let kinds: Vec<(String, bool)> = app.chips_of(done).iter().filter(|c| c.kind == "file").map(|c| (c.source.clone(), c.live)).collect();
     assert_eq!(kinds, [("src/refresh.ts".to_owned(), false), ("src/refresh.ts".to_owned(), true)], "a copy, then a reference");
+    // Open at this line: a stand-in editor records what it is started with (a real one is not run here).
+    {
+        let rec = Path::new(&task_folder).join("rec-editor.sh");
+        let out = Path::new(&task_folder).join("editor-args.txt");
+        std::fs::write(&rec, format!("#!/bin/sh\nprintf '%s\\n' \"$@\" > '{}'\n", out.display())).unwrap();
+        #[cfg(unix)] { use std::os::unix::fs::PermissionsExt; std::fs::set_permissions(&rec, std::fs::Permissions::from_mode(0o755)).unwrap(); }
+        hover.settings.set_editor(hover_core::model::EditorSettings { default: Some("custom".into()), custom_exe: Some(rec.to_string_lossy().into_owned()), custom_args: Some("--goto\n{file}:{line}\n{folder}".into()) });
+        let _ = std::fs::remove_file(&out);
+        app.notch.global::<Desk>().invoke_act("open:src/refresh.ts:12".into());
+        let t = std::time::Instant::now();
+        while t.elapsed() < Duration::from_secs(5) && !out.exists() { settle(50); }
+        let got = std::fs::read_to_string(&out).unwrap_or_default();
+        assert_eq!(got.lines().collect::<Vec<_>>(), ["--goto", format!("{task_folder}/src/refresh.ts:12").as_str(), task_folder.as_str()], "the editor was started at the line: {got:?}");
+        hover.settings.set_editor(hover_core::model::EditorSettings::default());
+    }
     app.notch.global::<Desk>().invoke_act("fback".into());
     tab("diff", "desk-tab-diff.png");
     app.notch.global::<Desk>().invoke_act("chip-diff:src/refresh.ts".into());

@@ -297,6 +297,7 @@ pub fn file_rows(f: &d::FileView) -> Vec<R> {
             for (i, l) in lines.iter().take(6000).enumerate() {
                 let mut r = R::new(7, hh::LINE).text(l.replace('\t', "    "));
                 r.num = (i + 1).to_string();
+                r.act = format!("open:{path}:{}", i + 1);
                 v.push(r);
             }
             if *truncated || lines.len() > 6000 { v.push(R::faint("The rest of this file isn’t shown.")); }
@@ -366,7 +367,11 @@ pub fn diff_rows(df: &d::Diff, open: &HashMap<String, bool>) -> Vec<R> {
             else {
                 let (rows, used) = hunks(&f.patch, budget);
                 budget = budget.saturating_sub(used);
-                if rows.is_empty() { v.push(R::new(11, hh::LINE + 6.0).text("No text changes")); } else { v.extend(rows); }
+                if rows.is_empty() { v.push(R::new(11, hh::LINE + 6.0).text("No text changes")); }
+                else {
+                    // A line that is in the file now can be opened in the editor at its place.
+                    v.extend(rows.into_iter().map(|mut r| { if r.kind == 10 && !r.num2.is_empty() { r.act = format!("open:{}:{}", f.path, r.num2); } r }));
+                }
             }
         }
         v.push(R::gap());
@@ -821,11 +826,15 @@ impl App {
     }
 
     /// Open in editor for a session: the expanded chat's button, as well as the card's.
-    pub(crate) fn editor_for(self: &Rc<Self>, id: i32) {
+    pub(crate) fn editor_for(self: &Rc<Self>, id: i32) { self.editor_at(id, None); }
+
+    /// Open in editor, at a file and line of the task's folder when given (the file and diff views' Open at this line).
+    fn editor_at(self: &Rc<Self>, id: i32, at: Option<(String, u32)>) {
         let Some(s) = self.hover.sessions.get(id) else { return };
         let (settings, folder, cloud) = (self.hover.settings.editor(), s.folder.clone(), s.cloud.is_some());
         std::thread::Builder::new().name("open-editor".into()).spawn(move || {
-            let said = hover_agents::editor::open(&settings, None, &hover_agents::editor::Target::folder(&folder), cloud)
+            let target = match &at { Some((file, line)) => hover_agents::editor::Target::file(&folder, file, Some(*line), None), None => hover_agents::editor::Target::folder(&folder) };
+            let said = hover_agents::editor::open(&settings, None, &target, cloud)
                 .unwrap_or_else(|e| if e == "Pick an editor first." { "Choose a default editor in Settings → Automation.".to_owned() } else { e });
             crate::ui_do(move |a| a.toast(&said));
         }).ok();
@@ -1429,6 +1438,11 @@ impl App {
             }
             "sa" => { self.desk_prefs_for(id, |p| { if !p.agent_open.remove(arg) { p.agent_open.insert(arg.to_owned()); } }); }
             "chip-file" | "chip-ref" | "chip-diff" | "chip-term" => { self.desk_attach(id, kind, arg); return; }
+            // Open at this line: the editor opens the file there (a file outside the folder opens the folder alone).
+            "open" => {
+                if let Some((file, line)) = arg.rsplit_once(':').and_then(|(f, l)| Some((f.to_owned(), l.parse::<u32>().ok()?))) { self.editor_at(id, Some((file, line))); }
+                return;
+            }
             "watch" => {
                 let key = self.hover.sessions.get(id).map(|s| s.key).unwrap_or_default();
                 match self.hover.watcher.watch(&key, arg, hover_agents::prwatch::Events::all(), "") {
