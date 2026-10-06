@@ -166,6 +166,7 @@ pub fn blocks(bs: &[B], p: &Palette) -> Vec<Block> {
                             d.longest = s(labels.iter().max_by_key(|l| l.chars().map(|c| if c.is_uppercase() { 3 } else { 2 }).sum::<usize>()).cloned().unwrap_or_default());
                             d.labels = model(labels.iter().map(s).collect());
                         }
+                        Control::Slider { id, name, value, min, max } => { d.control = 10; d.id = s(id); d.name = s(name); d.picked = *value; d.lo = *min; d.hi = *max; }
                         Control::Picker { id, name, shown, options } => {
                             d.control = 5; d.id = s(id); d.name = s(name); d.text = s(shown);
                             d.options = model(options.iter().map(|(l, on)| Opt { label: s(l), on: *on }).collect());
@@ -641,6 +642,7 @@ pub fn picked_seg(h: &dyn Host, pane: &RefCell<Pane>, id: &str, i: usize) {
         "VoiceCountdown" => if let Some(&n) = VoiceSettings::COUNTDOWNS.get(i) { st.set_voice(VoiceSettings { countdown: n, ..st.voice() }); h.action("voice.changed"); },
         "DefaultAccess" => st.set_default_workspace(Workspace { access: ACCESS_IDS[i].into(), ..st.default_workspace() }),
         "ProjectAccess" => edit_project(h, pane, id, |p| p.access = ACCESS_IDS[i].into()),
+        // A slider's number (a percent), not a segment's index.
         "KiroCompactAt" => { pages::pick_compact_at(st, id, i); }
         "DelegMax" => if let Some(&n) = [2u32, 4, 6, 10].get(i) { st.set_delegation(hover_core::model::DelegationLimits { max_helpers: n, ..st.delegation() }); },
         "DelegParallel" => if let Some(&n) = [1u32, 2, 3, 4].get(i) { st.set_delegation(hover_core::model::DelegationLimits { max_parallel: n, ..st.delegation() }); },

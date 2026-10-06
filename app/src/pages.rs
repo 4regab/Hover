@@ -7,7 +7,7 @@ use hover_agents::agents::{self, AgentReady};
 use hover_core::model::{AcpOption, AgentOptions, AgentTool, Appearance, SavedTheme, WorkspaceSize};
 use hover_core::palette::{InstalledTheme, Palette};
 use hover_core::projects::{resolve_folder, CleanupProvider, Project, SpeechMode, VoiceSettings, ACCESS_IDS, GROQ_SECRET, TRANSCRIBE_MODELS};
-use hover_core::settings::Settings;
+use hover_core::settings::{Settings, COMPACT_MIN};
 use hover_quota::{item, Reading};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -49,6 +49,8 @@ pub enum Control {
     /// "WorkspaceShortcut".
     Shortcut { id: String, name: String, text: String },
     Segments { id: String, labels: Vec<String>, picked: i32 },
+    /// A slider for a whole number from `min` to `max`; the new value is told on release (through `picked_seg`'s path, as a number).
+    Slider { id: String, name: String, value: i32, min: i32, max: i32 },
     /// A button showing the current choice that opens a menu of them.
     Picker { id: String, name: String, shown: String, options: Vec<(String, bool)> },
     Text(String),
@@ -67,7 +69,7 @@ impl Control {
     /// The id the row's own control answers to.
     pub fn id(&self) -> Option<&str> {
         match self {
-            Control::Switch { id, .. } | Control::Button { id, .. } | Control::Shortcut { id, .. } | Control::Segments { id, .. }
+            Control::Switch { id, .. } | Control::Button { id, .. } | Control::Shortcut { id, .. } | Control::Segments { id, .. } | Control::Slider { id, .. }
             | Control::Picker { id, .. } | Control::Field { id, .. } | Control::Hold { id, .. } => Some(id),
             Control::Chips { open, .. } => open.as_deref(),
             _ => None,
@@ -975,20 +977,15 @@ fn agent(b: &mut Vec<Block>, section: Section, i: &Input) {
         tasks, with no terminal window. Prompts go to it on its input, never on a command line. Changes apply to the next task.")));
 }
 
-/// Kiro's auto compact: the shares of the context window to choose from (settings.json
-/// keeps the number).
-pub const COMPACT_AT: [u8; 5] = [50, 60, 70, 80, 90];
-
-/// The switch, and once it is on, the share that calls for it. Kiro only compacts by itself at 100 %.
+/// The switch, and once it is on, the share that calls for it (a slider, COMPACT_MIN to 100 %). Kiro only compacts by itself at 100 %.
 fn compact_rows(s: &Settings) -> Vec<Row> {
     let on = s.kiro_auto_compact();
     let mut rows = vec![row("Compact automatically", Some("Before the next reply, Hover asks Kiro to compact once its context is this full. Kiro compacts by itself only when it is full.".into()),
         switch("KiroAutoCompact", "Compact automatically", on), Lead::Tile("brain", Tint::Teal))];
     if on {
         let at = s.kiro_compact_at();
-        let labels: Vec<String> = COMPACT_AT.iter().map(|p| format!("{p} %")).collect();
-        rows.push(row("Compact at", Some(format!("{at} % of the context window.")),
-            Control::Segments { id: "KiroCompactAt".into(), labels, picked: COMPACT_AT.iter().position(|p| *p == at).map_or(-1, |p| p as i32) }, Lead::Tile("gauge", Tint::Teal)));
+        rows.push(row("Compact at", Some(format!("{at} % of the context window. The lowest is {COMPACT_MIN} %.")),
+            Control::Slider { id: "KiroCompactAt".into(), name: "Compact at".into(), value: at as i32, min: COMPACT_MIN as i32, max: 100 }, Lead::Tile("gauge", Tint::Teal)));
     }
     rows.push(row("Continue when high usage encountered", Some("When Kiro stops because too many people are using the model, Hover sends “continue” straight away, again and again until it works or you press Stop.".into()),
         switch("KiroRetryBusy", "Continue when high usage encountered", s.kiro_retry_busy()), Lead::Tile("sparkles", Tint::Orange)));
@@ -1002,10 +999,10 @@ pub fn set_compact(s: &Settings, id: &str, on: bool) -> bool {
     true
 }
 
-/// A share was picked (its index in COMPACT_AT): true when `id` was auto compact's.
-pub fn pick_compact_at(s: &Settings, id: &str, index: usize) -> bool {
+/// A share was set on the slider (a percent; below COMPACT_MIN it is COMPACT_MIN): true when `id` was auto compact's.
+pub fn pick_compact_at(s: &Settings, id: &str, percent: usize) -> bool {
     if id != "KiroCompactAt" { return false; }
-    if let Some(p) = COMPACT_AT.get(index) { s.set_kiro_compact_at(*p); }
+    s.set_kiro_compact_at(percent.min(100) as u8);
     true
 }
 
@@ -1133,10 +1130,13 @@ mod tests {
         assert!(set_compact(&s, "KiroAutoCompact", true) && s.kiro_auto_compact());
         let k = build(Section::Kiro, &i);
         let at = rows(&k).into_iter().find(|r| r.label == "Compact at").expect("the share");
-        assert!(matches!(&at.control, Control::Segments { id, labels, picked: 3 } if id == "KiroCompactAt" && labels == &["50 %", "60 %", "70 %", "80 %", "90 %"]));
-        assert!(pick_compact_at(&s, "KiroCompactAt", 1) && s.kiro_compact_at() == 60);
+        assert!(matches!(&at.control, Control::Slider { id, value: 80, min: 20, max: 100, .. } if id == "KiroCompactAt"));
+        assert!(pick_compact_at(&s, "KiroCompactAt", 35) && s.kiro_compact_at() == 35);
         let k = build(Section::Kiro, &i);
-        assert!(matches!(&rows(&k).into_iter().find(|r| r.label == "Compact at").unwrap().control, Control::Segments { picked: 1, .. }));
+        assert!(matches!(&rows(&k).into_iter().find(|r| r.label == "Compact at").unwrap().control, Control::Slider { value: 35, .. }));
+        // The slider cannot go under 20 %, nor over 100 %.
+        assert!(pick_compact_at(&s, "KiroCompactAt", 3) && s.kiro_compact_at() == 20);
+        assert!(pick_compact_at(&s, "KiroCompactAt", 400) && s.kiro_compact_at() == 100);
         assert!(!set_compact(&s, "Sandbox", true) && !pick_compact_at(&s, "KiroIdle", 0));
         for other in [Section::Codex, Section::Cursor, Section::OpenCode, Section::Claude] {
             assert!(!ids(&build(other, &i)).iter().any(|x| x.contains("Compact")), "{other:?}");

@@ -11,6 +11,9 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Condvar, Mutex, Weak};
 use std::time::{Duration, Instant};
 
+/// The lowest share of Kiro's context window that auto compact may be set to.
+pub const COMPACT_MIN: u8 = 20;
+
 /// Settings.Model, field for field.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Model {
@@ -192,8 +195,9 @@ impl Model {
         Ok(m)
     }
 
-    /// Auto compact's percent (1 to 100; 80 unless set), whether or not it is on.
-    pub fn compact_at(&self) -> u8 { self.kiro_compact_at.unwrap_or(80).clamp(1, 100) as u8 }
+    /// Auto compact's percent (COMPACT_MIN to 100; 80 unless set), whether or not it is on. A lower number in the
+    /// file (an older Hover allowed 1 to 100) is read as COMPACT_MIN; the file itself is not rewritten.
+    pub fn compact_at(&self) -> u8 { self.kiro_compact_at.unwrap_or(80).clamp(COMPACT_MIN as i32, 100) as u8 }
 
     /// Whether a Kiro turn stopped by a busy model is continued at once (off unless set).
     pub fn retry_busy(&self) -> bool { self.kiro_retry_busy.unwrap_or(false) }
@@ -433,7 +437,7 @@ impl Settings {
     pub fn set_kiro_auto_compact(&self, v: bool) { self.change(|m| m.kiro_auto_compact = Some(v)) }
     /// The percent of the context window that triggers it (1 to 100; 80 unless set).
     pub fn kiro_compact_at(&self) -> u8 { self.m.lock().unwrap().compact_at() }
-    pub fn set_kiro_compact_at(&self, pct: u8) { self.change(|m| m.kiro_compact_at = Some(pct.clamp(1, 100) as i32)) }
+    pub fn set_kiro_compact_at(&self, pct: u8) { self.change(|m| m.kiro_compact_at = Some(pct.clamp(COMPACT_MIN, 100) as i32)) }
 
     /// Kiro only: a turn that stops because the model is busy is continued at once, until stopped.
     pub fn kiro_retry_busy(&self) -> bool { self.m.lock().unwrap().retry_busy() }
@@ -658,9 +662,16 @@ mod tests {
         assert!(at("\"AgentTool\"") < at("\"KiroAutoCompact\"") && at("\"KiroAutoCompact\"") < at("\"KiroCompactAt\"") && at("\"KiroCompactAt\"") < at("\"ScWorkspace\""));
         let back = Settings::load(s.file.clone());
         assert!(back.kiro_auto_compact() && back.kiro_compact_at() == 60 && back.model().auto_compact() == Some(60));
-        // On with no percent: 80. A percent off the scale is pulled onto it.
+        // On with no percent: 80. A percent off the scale is pulled onto it: 100 at most, COMPACT_MIN (20) at least.
         std::fs::write(&s.file, "{\"KiroAutoCompact\": true, \"KiroCompactAt\": 500}").unwrap();
         assert_eq!(Settings::load(s.file.clone()).model().auto_compact(), Some(100));
+        // An older Hover allowed 1 to 100: a 5 in the file is read as 20, and the file is left as it was.
+        std::fs::write(&s.file, "{\"KiroAutoCompact\": true, \"KiroCompactAt\": 5}").unwrap();
+        let low = Settings::load(s.file.clone());
+        assert_eq!((low.model().auto_compact(), low.kiro_compact_at()), (Some(20), 20));
+        assert!(std::fs::read_to_string(&s.file).unwrap().contains("\"KiroCompactAt\": 5"), "read as 20, not rewritten");
+        low.set_kiro_compact_at(1);
+        assert_eq!(low.kiro_compact_at(), 20, "a setter below the floor is held at it");
         std::fs::write(&s.file, "{\"KiroAutoCompact\": true}").unwrap();
         assert_eq!(Settings::load(s.file.clone()).model().auto_compact(), Some(80));
         std::fs::write(&s.file, "{\"KiroAutoCompact\": null, \"KiroCompactAt\": null}").unwrap();

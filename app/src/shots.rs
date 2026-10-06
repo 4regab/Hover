@@ -892,6 +892,43 @@ fn settings_integrations_shots(app: &Rc<App>, hover: &Arc<hover_app::app::Hover>
     hover.settings.set_kiro_compact_at(70);
     app.show_settings_in(1, Section::Kiro);
     save(&dash, (1200, 1000), 1.0, [0, 0, 0], &dir.join("settings-kiro-compact-on.png"));
+    // The slider's release goes out through the page's callback as a percent: 35 is kept; 10 is held at the floor, 20.
+    if let Some(d) = &*app.dash.borrow() { d.global::<crate::ui::Page>().invoke_picked_seg("KiroCompactAt".into(), 35); }
+    assert_eq!(hover.settings.kiro_compact_at(), 35, "the slider's 35 % was taken");
+    if let Some(d) = &*app.dash.borrow() { d.global::<crate::ui::Page>().invoke_picked_seg("KiroCompactAt".into(), 10); }
+    assert_eq!(hover.settings.kiro_compact_at(), 20, "below 20 % is held at 20");
+    app.show_settings_in(1, Section::Kiro);
+    save(&dash, (1200, 1000), 1.0, [0, 0, 0], &dir.join("settings-kiro-compact-min.png"));
+    // With Kiro ready the rows are live. A real press, drag and release on the slider.
+    hover_agents::agents::seed(AgentTool::Kiro, hover_agents::agents::AgentReady { installed: true, signed_in: true, hint: String::new() });
+    app.show_settings_in(1, Section::Kiro);
+    save(&dash, (1200, 1000), 1.0, [0, 0, 0], &dir.join("settings-kiro-compact-ready.png"));
+    {
+        use slint::platform::{PointerEventButton, WindowEvent};
+        use slint::LogicalPosition as P;
+        // The track runs x 918 to 1102 at this size (the knob is centred on its ends): half way is 60 %.
+        let at = |x: f32| P::new(x, 688.0);
+        dash.dispatch_event(WindowEvent::PointerMoved { position: at(930.0) });
+        dash.dispatch_event(WindowEvent::PointerPressed { position: at(930.0), button: PointerEventButton::Left });
+        run_for(60);
+        dash.dispatch_event(WindowEvent::PointerMoved { position: at(1010.0) });
+        run_for(60);
+        assert_eq!(hover.settings.kiro_compact_at(), 20, "nothing is saved while the knob is still down");
+        dash.dispatch_event(WindowEvent::PointerReleased { position: at(1010.0), button: PointerEventButton::Left });
+        run_for(200);
+        let got = hover.settings.kiro_compact_at();
+        assert!((59..=61).contains(&got), "a drag to the middle gave {got} %");
+        println!("compact slider: dragged to {got} %");
+        app.show_settings_in(1, Section::Kiro);
+        save(&dash, (1200, 1000), 1.0, [0, 0, 0], &dir.join("settings-kiro-compact-dragged.png"));
+        // Pulled left of the track, it is held at 20.
+        dash.dispatch_event(WindowEvent::PointerMoved { position: at(1010.0) });
+        dash.dispatch_event(WindowEvent::PointerPressed { position: at(1010.0), button: PointerEventButton::Left });
+        dash.dispatch_event(WindowEvent::PointerMoved { position: at(300.0) });
+        dash.dispatch_event(WindowEvent::PointerReleased { position: at(300.0), button: PointerEventButton::Left });
+        run_for(200);
+        assert_eq!(hover.settings.kiro_compact_at(), 20, "dragged past the left end: 20 %");
+    }
     hover.settings.set_kiro_auto_compact(false);
     hover.settings.set_kiro_retry_busy(false);
 }

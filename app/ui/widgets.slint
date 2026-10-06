@@ -265,6 +265,70 @@ export component Segments inherits Rectangle {
     }
 }
 
+// A slider for a whole number from lo to hi. The knob follows the pointer while it is down and the
+// number is told once, on release; the arrow keys change it by one (Home and End go to the ends),
+// each telling it at once.
+export component Slider inherits Rectangle {
+    in property <string> id;
+    in property <string> label;
+    in property <int> lo: 0;
+    in property <int> hi: 100;
+    in property <int> value;
+    in property <bool> enabled: true;
+    callback picked(int);
+    property <length> track-w: self.width - 16px;
+    property <int> at: lo + Math.round(Math.clamp(ta.mouse-x - 8px, 0px, track-w) / track-w * (hi - lo));
+    // The number shown: the pointer's while it is down, else the model's.
+    out property <int> shown: ta.pressed ? at : value;
+    property <length> knob-x: track-w * (shown - lo) / Math.max(1, hi - lo);
+    width: 200px;
+    height: 28px;
+    opacity: enabled ? 1 : 0.4;
+    accessible-role: slider;
+    accessible-id: id;
+    accessible-label: label;
+    accessible-value: shown;
+    accessible-value-minimum: lo;
+    accessible-value-maximum: hi;
+    accessible-value-step: 1;
+    accessible-action-increment => { if (value < hi) { picked(value + 1); } }
+    accessible-action-decrement => { if (value > lo) { picked(value - 1); } }
+    accessible-action-set-value(v) => { picked(Math.clamp(v.to-float(), lo, hi).round()); }
+    Rectangle { x: 8px; y: 12px; width: track-w; height: 4px; border-radius: 2px; background: Pal.wash-strong; }
+    Rectangle { x: 8px; y: 12px; width: knob-x; height: 4px; border-radius: 2px; background: Pal.blue; }
+    Rectangle {
+        x: 8px + knob-x - 8px;
+        y: 6px;
+        width: 16px;
+        height: 16px;
+        border-radius: 8px;
+        background: Pal.thumb;
+        border-width: fs.has-focus ? 2px : 0px;
+        border-color: Pal.blue.with-alpha(0.7);
+        drop-shadow-blur: 6px;
+        drop-shadow-offset-y: 2px;
+        drop-shadow-color: #0000003a;
+    }
+    fs := FocusScope {
+        enabled: enabled;
+        key-pressed(e) => {
+            if (e.text == Key.LeftArrow || e.text == Key.DownArrow) { if (value > lo) { picked(value - 1); } return accept; }
+            if (e.text == Key.RightArrow || e.text == Key.UpArrow) { if (value < hi) { picked(value + 1); } return accept; }
+            if (e.text == Key.Home) { picked(lo); return accept; }
+            if (e.text == Key.End) { picked(hi); return accept; }
+            reject
+        }
+    }
+    ta := TouchArea {
+        enabled: enabled;
+        mouse-cursor: pointer;
+        pointer-event(e) => {
+            if (e.button == PointerEventButton.left && e.kind == PointerEventKind.down) { fs.focus(); }
+            if (e.button == PointerEventButton.left && e.kind == PointerEventKind.up) { picked(at); }
+        }
+    }
+}
+
 // Ui.Ring: a track and an arc from twelve o'clock, green, amber, red as it fills.
 export component Ring inherits Rectangle {
     in property <float> value: -1;
