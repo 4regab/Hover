@@ -371,6 +371,22 @@ component Chip inherits Rectangle {
         Text { text: root.text; font-size: 11px; font-weight: 500; color: fg; vertical-alignment: center; overflow: elide; } }
 }
 
+// A chip that is a button.
+component ChipButton inherits Rectangle {
+    in property <string> icon;
+    in property <string> text;
+    in property <string> tip;
+    callback clicked();
+    height: 20px;
+    preferred-width: c.preferred-width;
+    accessible-role: AccessibleRole.button;
+    accessible-label: tip != "" ? tip : text;
+    accessible-action-default => { root.clicked(); }
+    c := Chip { icon: root.icon; text: root.text; width: parent.width; }
+    ta := TouchArea { mouse-cursor: MouseCursor.pointer; clicked => { root.clicked(); } }
+    if ta.has-hover: Rectangle { background: #ffffff14; border-radius: 6px; }
+}
+
 // One 34 × 32 button of a HUD group (.seg button).
 component SegButton inherits Rectangle {
     in property <string> icon;
@@ -1077,6 +1093,7 @@ component DeskCard inherits Rectangle {
                             if Desk.c-access != "": Chip { icon: PagePaths.shield; text: Desk.c-access; tip: Desk.c-access-note;
                                 fg: Desk.c-access-id == "full" ? #ffc46b : #ffffff99; bg: Desk.c-access-id == "full" ? #ffb34017 : #ffffff0e; }
                             if Desk.c-ctx >= 0: Chip { text: Desk.c-ctx + "%"; tip: Desk.c-ctx + "% of the context window used"; }
+                            ChipButton { icon: Icons.code; text: "Editor"; tip: "Open this task’s folder in your editor"; clicked => { Desk.card-editor(); } }
                         }
                     }
                     Text { text: Desk.c-title; font-size: 13px; font-weight: 600; color: white; overflow: elide; accessible-role: text; accessible-id: "deskTitle"; }

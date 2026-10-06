@@ -780,6 +780,9 @@ impl view::Host for App {
     fn action(&self, id: &str) {
         APP.with(|a| if let Some(a) = a.borrow().clone() { if id.starts_with("integ.") { a.integ_action(id); } else { a.voice_action(id); } });
     }
+    fn later(&self, work: Box<dyn FnOnce() + Send>) {
+        std::thread::Builder::new().name("settings-work".into()).spawn(move || { work(); ui_do(|a| a.refresh_page(false)); }).ok();
+    }
 }
 
 /// The folder and file pickers: the system's own dialog (IFileDialog on Windows, the

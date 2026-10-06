@@ -61,7 +61,6 @@ pub enum Schedule {
     Daily { hour: u8, minute: u8, days: u8 },
 }
 
-#[cfg(test)]
 fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
     let y = if m <= 2 { y - 1 } else { y };
     let era = y.div_euclid(400);
@@ -110,6 +109,22 @@ pub fn next_due(s: Schedule, after: i64, offset_of: &dyn Fn(i64) -> i64) -> Opti
         }
     }
 }
+
+/// “2026-11-02 09:30” as that wall-clock time in `tz`, in ms since 1970. None when it isn’t a real date and time.
+pub fn parse_in(text: &str, tz: Tz) -> Option<i64> {
+    let (date, time) = text.trim().split_once(' ')?;
+    let mut d = date.split('-').map(|x| x.parse::<i64>().ok());
+    let (y, m, day) = (d.next()??, d.next()??, d.next()??);
+    let (h, mi) = time.split_once(':').and_then(|(h, m)| Some((h.parse::<i64>().ok()?, m.parse::<i64>().ok()?)))?;
+    if !(1..=12).contains(&m) || !(1..=31).contains(&day) || !(0..24).contains(&h) || !(0..60).contains(&mi) || !(1970..=2200).contains(&y) { return None; }
+    let wall = days_from_civil(y, m, day) * DAY_MS + (h * 60 + mi) * 60_000;
+    if civil_from_days(wall.div_euclid(DAY_MS)) != (y, m, day) { return None; }
+    let first = wall - tz.offset_min(wall) * 60_000;
+    Some(wall - tz.offset_min(first) * 60_000)
+}
+
+/// `parse_in` for the computer’s own zone.
+pub fn parse_local(text: &str) -> Option<i64> { parse_in(text, Tz::Local) }
 
 pub fn civil_text(utc_ms: i64, tz: Tz) -> String {
     let local = utc_ms + tz.offset_min(utc_ms) * 60_000;
@@ -505,5 +520,9 @@ mod tests {
         assert_eq!(Tz::parse("local"), Some(Tz::Local));
         assert_eq!(Tz::parse("mars"), None);
         assert_eq!(civil_text(utc(2026, 10, 6, 13, 5), Tz::Fixed(120)), "2026-10-06 15:05");
+        assert_eq!(parse_in("2026-10-06 15:05", Tz::Fixed(120)), Some(utc(2026, 10, 6, 13, 5)));
+        assert_eq!(parse_in("2026-02-30 10:00", Tz::Fixed(0)), None, "not a real date");
+        assert_eq!(parse_in("2026-10-06 25:00", Tz::Fixed(0)), None);
+        assert_eq!(parse_in("tomorrow", Tz::Fixed(0)), None);
     }
 }

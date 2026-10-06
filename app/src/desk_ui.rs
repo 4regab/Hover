@@ -616,6 +616,8 @@ impl App {
         let a = self.clone();
         g.on_card_tile(move |id| a.desk_pick(id.as_str()));
         let a = self.clone();
+        g.on_card_editor(move || a.desk_open_editor());
+        let a = self.clone();
         g.on_card_send(move || a.desk_card_send());
         let a = self.clone();
         g.on_card_chat(move || { if let Some(id) = a.page.desk.card.get() { a.desk_close_card(); a.open_session(id); } });
@@ -794,6 +796,18 @@ impl App {
         let snap = self.desk_snap(&sess);
         if let Some(t) = self.desk_tiles(id, &snap).get(tab).filter(|t| !t.enabled) { self.toast(&t.reason); return; }
         self.desk_open(id, tab);
+    }
+
+    /// Open in editor: the card's own folder (a task's worktree is the folder), off the UI thread. The answer is a toast.
+    fn desk_open_editor(self: &Rc<Self>) {
+        let Some(id) = self.page.desk.card.get().or(self.page.desk.panel.get().map(|p| p.0)) else { return };
+        let Some(s) = self.hover.sessions.get(id) else { return };
+        let (settings, folder, cloud) = (self.hover.settings.editor(), s.folder.clone(), s.cloud.is_some());
+        std::thread::Builder::new().name("open-editor".into()).spawn(move || {
+            let said = hover_agents::editor::open(&settings, None, &hover_agents::editor::Target::folder(&folder), cloud)
+                .unwrap_or_else(|e| if e == "Pick an editor first." { "Choose a default editor in Settings → Automation.".to_owned() } else { e });
+            crate::ui_do(move |a| a.toast(&said));
+        }).ok();
     }
 
     fn desk_tiles(&self, id: i32, snap: &d::Snap) -> Vec<d::Tile> {

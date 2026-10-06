@@ -121,6 +121,8 @@ export global Desk {
     callback card-tile(string);
     callback card-send();
     callback card-chat();
+    // Open this desk's own folder in the editor the user chose.
+    callback card-editor();
     // A key the card got that may be a surface's letter: true when it opened one.
     callback card-key(string) -> bool;
 
