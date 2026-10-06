@@ -196,6 +196,8 @@ impl App {
         // Hooks from other threads land on the UI thread.
         app.hover.on_quotas(|| ui_do(|a| { a.update_rest(); if matches!(a.pane.borrow().section, Section::Integrations | Section::Kiro) { a.refresh_page(false); } }));
         app.hover.on_sessions(|| ui_do(|a| { a.update_rest(); a.office_changed(); }));
+        // Kiro's credits are counted from now, off this thread, so its page opens with them.
+        let _ = app.hover.credits.view();
         // The notch shows an ending as its own island (the tool's logo, a badge and the
         // task); the system gets the words.
         app.hover.on_notify(|t, b| { let (t, b) = (t.to_owned(), b.to_owned()); ui_do(move |a| a.announce(&t, &b)); });
