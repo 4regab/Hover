@@ -23,25 +23,34 @@ and a real Git repository; not run on Windows or a Mac.
   box. It is the same session, draft, queue and place in the thread; nothing restarts, and approvals
   and questions stay answerable. Esc or the shrink button goes back to the office.
 - Open in editor (#40): the desk card and the expanded chat open the task's own folder in the editor
-  chosen in Settings → Automation.
+  chosen in Settings → Automation. Hover a line in Files or Diff and press "Open ↗" to open the file at that line.
 - Queued replies can be edited, sent now, or cancelled in the chat (#36). Stop now keeps the replies
-  waiting behind the run, held, instead of dropping them.
-- Settings → Automation (#32, #34, #37, #39): limits for helpers, custom ACP agents and the ACP
-  Registry, saved tasks that run on a schedule or a webhook, a webhook address, "Continue when a usage
-  limit lifts", and the background service (`hoverai --service`), which runs saved tasks when the app is
-  closed. The service is written for systemd, launchd and Task Scheduler; only the systemd unit text was
-  checked, none of the three was run.
+  waiting behind the run, held, instead of dropping them, and a note over the reply box offers "Send them now".
+- A usage-limit note over the reply box (#39): what the agent said, when it lifts, and Continue at the reset,
+  Retry now, Snooze, Cancel. Settings → Automation → "Continue when a usage limit lifts" arms it for you.
+- A More menu in the chat header (#35): continue with another agent, fork the chat, and bring a fork's
+  findings back to the original. A fork gets a worktree of its own, as a new task does.
+- Context chips (#33): Attach on a file (a copy, or "As reference"), on each changed file in Diff, and on
+  each command in Terminal. The chips show above the reply box with an ×, and go with the message.
+- Watch this pull request (#38): a button in the PR panel. The task is told of new reviews, failed checks, a
+  conflict, and when the pull request is done or closed. "Stop watching" ends it.
+- Let a task ask other agents for help (#32, Linux and Mac): a switch in the new-task box, a chat menu item,
+  and the helpers listed in the Agents tab. Limits are in Settings → Automation.
+- Settings → Automation (#34, #37): custom ACP agents and the ACP Registry, saved tasks that run on a
+  schedule or a webhook, a webhook address, and the background service (`hoverai --service`), which runs
+  saved tasks when the app is closed. The service is written for systemd, launchd and Task Scheduler; only
+  the systemd unit text was checked, none of the three was run.
 - Kiro → Compact at is a slider from 20 % to 100 %. It replaces the five buttons (50 to 90 %). A saved
   number under 20 is read as 20 and the file is left as it was.
 
-### Built, with no screen yet
+### Not in this release
 
-These work in the code and are covered by tests, but Hover's windows do not offer them yet:
-
-- Agents asking other agents for help (#32): the tools, limits and stop-the-whole-tree are there. The
-  switch at task start is not, and Windows has no socket for it.
-- Context chips (#33), continue with another agent, fork, and bring findings back (#35), pull request
-  watches (#38) and the usage-limit banner with Resume, Snooze and Cancel (#39).
+- The Mac Swift app and the web office are not changed.
+- Worktree choices beyond the default (start from another branch, use an existing worktree, remove, make
+  again, bring the branch back) are in the code and tested, but the app has no screen for them.
+- Agents helping agents has no socket on Windows.
+- Send-a-selection: context chips take a whole file, a whole file's change, or a command's whole output,
+  not a selected part.
 
 ### Changed
 
