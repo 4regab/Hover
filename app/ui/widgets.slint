@@ -424,25 +424,40 @@ export component TextField inherits Rectangle {
         vertical-alignment: center;
         overflow: elide;
     }
-    input := TextInput {
+    // A TextInput doesn't scroll itself: text longer than the box ran past its right edge
+    // with the cursor out of sight. It is clipped here and moved to keep the cursor in
+    // view, as std-widgets' LineEdit does.
+    Rectangle {
         x: 8px;
         width: parent.width - 16px;
         height: parent.height;
-        text: value;
-        single-line: true;
-        vertical-alignment: center;
-        font-size: 12.5px;
-        color: Pal.ink;
-        selection-background-color: Pal.blue.with-alpha(0.45);
-        input-type: secret ? InputType.password : InputType.text;
-        enabled: enabled;
-        accessible-id: id;
-        accessible-label: label;
-        accepted => { done(); }
-        changed has-focus => { if (!self.has-focus) { done(); } }
-        key-pressed(e) => {
-            if (e.text == Key.Escape) { self.text = value; self.clear-focus(); return accept; }
-            reject
+        clip: true;
+        input := TextInput {
+            property <length> shift;
+            property <length> margin: 6px;
+            x: min(0px, max(parent.width - self.width - self.text-cursor-width, shift));
+            width: max(parent.width - self.text-cursor-width, self.preferred-width);
+            height: parent.height;
+            cursor-position-changed(at) => {
+                if (at.x + shift < margin) { shift = margin - at.x; }
+                else if (at.x + shift > parent.width - margin - self.text-cursor-width) { shift = parent.width - margin - self.text-cursor-width - at.x; }
+            }
+            text: value;
+            single-line: true;
+            vertical-alignment: center;
+            font-size: 12.5px;
+            color: Pal.ink;
+            selection-background-color: Pal.blue.with-alpha(0.45);
+            input-type: secret ? InputType.password : InputType.text;
+            enabled: enabled;
+            accessible-id: id;
+            accessible-label: label;
+            accepted => { done(); }
+            changed has-focus => { if (!self.has-focus) { done(); } }
+            key-pressed(e) => {
+                if (e.text == Key.Escape) { self.text = value; self.clear-focus(); return accept; }
+                reject
+            }
         }
     }
     Rectangle {
