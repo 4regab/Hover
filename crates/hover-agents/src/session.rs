@@ -8,6 +8,7 @@ use crate::ask::{AgentAsk, Answers, AskAnswer};
 use crate::cancel::{Cancel, Registration};
 use crate::checkpoint::Checkpoints;
 use crate::stream::{KiroEvent, KiroPhase, KiroResult};
+use hover_core::ext::SessionExt;
 use hover_core::history::{AgentHistory, SavedSession, SavedTurn};
 use hover_core::model::{AgentTool, KiroState, KiroStep};
 use hover_core::time::Stamp;
@@ -113,6 +114,8 @@ pub struct KiroSession {
     /// Runs in Kiro's cloud (Kiro Web): the GitHub repos it was given, empty for an empty
     /// workspace. None runs on this computer.
     pub cloud: Option<Vec<String>>,
+    /// Where the task works (a worktree of its own, or the folder itself) and the links orchestration adds.
+    pub ext: SessionExt,
     /// What the agent is waiting on the user for, oldest first.
     pub asks: Vec<AgentAsk>,
     /// Asked to stop or pause; the turn hasn't ended yet (the tool hasn't said).
@@ -129,7 +132,7 @@ impl KiroSession {
     /// A new session with no turns (the C# constructor).
     pub fn new(tool: AgentTool) -> KiroSession {
         KiroSession { id: IDS.fetch_add(1, Ordering::SeqCst) + 1, tool, state: KiroState::Idle, phase: KiroPhase::Starting, folder: String::new(), turns: vec![],
-            kiro_id: None, context: None, seat: 0, bot: 0, key: hover_core::guid_n(), deleted: false, access: None, cloud: None, asks: vec![], stopping: false, rev: 0 }
+            kiro_id: None, context: None, seat: 0, bot: 0, key: hover_core::guid_n(), deleted: false, access: None, cloud: None, ext: SessionExt::default(), asks: vec![], stopping: false, rev: 0 }
     }
 
     /// A copy without what only the chat reads: the answers' text, and the steps'
@@ -146,7 +149,7 @@ impl KiroSession {
                 queued: t.queued, started_at: t.started_at, woke_at: t.woke_at, ended_at: t.ended_at, credits: t.credits,
                 before: t.before.clone(), after: t.after.clone(),
             }).collect(),
-            folder: self.folder.clone(), kiro_id: self.kiro_id.clone(), key: self.key.clone(), access: self.access.clone(), cloud: self.cloud.clone(), asks: self.asks.clone(),
+            folder: self.folder.clone(), kiro_id: self.kiro_id.clone(), key: self.key.clone(), access: self.access.clone(), cloud: self.cloud.clone(), ext: self.ext.clone(), asks: self.asks.clone(),
             ..*self
         }
     }
@@ -173,6 +176,7 @@ impl KiroSession {
             updated: now,
             access: self.access.clone(),
             cloud: self.cloud.clone(),
+            ext: self.ext.clone(),
         }
     }
 
@@ -187,6 +191,7 @@ impl KiroSession {
         self.context = s.context;
         self.access = s.access.clone();
         self.cloud = s.cloud.clone();
+        self.ext = s.ext.clone();
         for t in &s.turns {
             let mut turn = KiroTurn::new(&t.prompt, t.images.clone());
             turn.started_at = t.started_at;
@@ -358,15 +363,23 @@ impl KiroSessions {
 
     /// start_as, in Kiro's cloud when `cloud` names its repos (KiroSession::cloud).
     pub fn start_in(&self, tool: AgentTool, folder: &str, prompt: &str, images: Vec<String>, access: Option<&str>, cloud: Option<Vec<String>>) -> Option<KiroSession> {
+        self.start_bound(tool, folder, prompt, images, access, cloud, SessionExt::default())
+    }
+
+    /// start_in, in the workspace `ext` names (workspace.rs: `folder` is then the task's worktree). None
+    /// also while a checkpoint restore holds that folder.
+    #[allow(clippy::too_many_arguments)]
+    pub fn start_bound(&self, tool: AgentTool, folder: &str, prompt: &str, images: Vec<String>, access: Option<&str>, cloud: Option<Vec<String>>, ext: SessionExt) -> Option<KiroSession> {
         let mut g = self.0.inner.lock().unwrap();
         let running = g.all.iter().filter(|x| x.s.busy()).count();
-        if running >= self.max_running() || !crate::usable_folder(Some(folder)) || !usable(prompt, &images) { return None; }
+        if running >= self.max_running() || !crate::usable_folder(Some(folder)) || !usable(prompt, &images) || crate::workspace::held(folder).is_some() { return None; }
         if !Self::free_desk(&mut g) { return None; }
         let mut s = KiroSession::new(tool);
         Self::seat(&g, &mut s);
         s.folder = folder.into();
         s.access = access.map(str::to_owned);
         s.cloud = cloud;
+        s.ext = ext;
         s.turns.push(KiroTurn::new(prompt.trim(), images));
         let id = s.id;
         g.all.push(Slot::new(s, (self.0.make)(tool)));
@@ -415,7 +428,7 @@ impl KiroSessions {
         let running = g.all.iter().filter(|x| x.s.busy()).count();
         let Some(slot) = g.all.iter_mut().find(|x| x.s.id == id) else { return false };
         if !slot.s.busy() && running >= self.max_running() { return false; }
-        if slot.s.state == KiroState::Idle || !usable(text, &images) { return false; }
+        if slot.s.state == KiroState::Idle || !usable(text, &images) || crate::workspace::held(&slot.s.folder).is_some() { return false; }
         let mut t = KiroTurn::new(text.trim(), images);
         // Replies left queued (behind a stop that wasn't confirmed) go first, in order.
         let start_now = !slot.s.busy();
@@ -448,6 +461,16 @@ impl KiroSessions {
             if !after && g.all.iter().filter(|x| x.s.busy()).count() >= self.max_running() { return Err(format!("{} running. Try again when one is done.", match self.max_running() { 1 => "1 task is".to_owned(), n => format!("{n} tasks are") })); }
             (slot.s.key.clone(), slot.s.folder.clone(), tree, if after { i + 1 } else { i }, t.prompt.clone(), t.images.clone())
         };
+        // The folder is held for the whole restore: no task may start or reply in it, or in a folder inside it
+        // or around it. A task already running there (an ancestor or a descendant too) stops the restore.
+        let _hold = crate::workspace::hold(&folder, "A checkpoint restore")?;
+        {
+            let g = self.0.inner.lock().unwrap();
+            if let Some(o) = g.all.iter().find(|x| x.s.id != id && x.s.busy() && x.s.cloud.is_none() && crate::workspace::overlaps(&x.s.folder, &folder)) {
+                return Err(format!("Another task is working in {}, which overlaps this folder. Stop it first.", o.s.folder));
+            }
+            if g.all.iter().find(|x| x.s.id == id).is_some_and(|x| x.s.busy()) { return Err("Stop the run first.".into()); }
+        }
         // Files first, off the lock: a big folder takes a while, and the chat stays as it is until it worked.
         cp.restore(&key, &folder, &tree)?;
         let snap = {

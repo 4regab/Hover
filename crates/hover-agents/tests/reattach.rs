@@ -73,7 +73,7 @@ fn a_turn_running_when_hover_closed_is_attached_to_at_start() {
     let turn = |prompt: &str, state: Option<KiroState>, text: Option<&str>| SavedTurn { prompt: prompt.into(), images: vec![], steps: vec![], state, text: text.map(str::to_owned),
         started_at: Stamp::now(), woke_at: None, ended_at: None, credits: None, before: None, after: None };
     let saved = |key: &str, cloud: Option<Vec<String>>, last: Option<KiroState>| SavedSession { key: key.into(), tool: AgentTool::Kiro, folder: f.clone(), title: key.into(), acp_id: Some("k1".into()), context: None,
-        turns: vec![turn("done", Some(KiroState::Completed), Some("ok")), turn("cut", last, None)], updated: Stamp::now(), access: Some("full".into()), cloud };
+        turns: vec![turn("done", Some(KiroState::Completed), Some("ok")), turn("cut", last, None)], updated: Stamp::now(), access: Some("full".into()), cloud, ext: Default::default() };
     history.save(&saved("cutoff", Some(vec![]), None));
     history.save(&saved("finished", Some(vec![]), Some(KiroState::Completed)));
     history.save(&saved("local", None, None));

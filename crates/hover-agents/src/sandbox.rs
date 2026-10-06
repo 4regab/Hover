@@ -91,7 +91,10 @@ static SEEN: Mutex<BTreeSet<String>> = Mutex::new(BTreeSet::new());
 /// A folder a session works in, so the next start of its tool covers it.
 pub fn remember(folder: &str) {
     if !supported() || !crate::usable_folder(Some(folder)) { return; }
-    SEEN.lock().unwrap().insert(full(folder));
+    let mut seen = SEEN.lock().unwrap();
+    seen.insert(full(folder));
+    // A task's own worktree commits into the main checkout's .git: the tool may write there too.
+    for g in crate::workspace::git_dirs(folder).into_iter().filter(|g| crate::usable_folder(Some(g))) { seen.insert(full(&g)); }
 }
 
 /// The folders a tool started now gets: the ones sessions use this run, and the folder

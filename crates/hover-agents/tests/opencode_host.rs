@@ -570,7 +570,7 @@ fn history_keeps_opencodes_session_and_old_tools_read_as_before() {
     let d = std::path::PathBuf::from(dir()).join("history");
     let c = Arc::new(hover_core::crypto::Crypto::with_key([7u8; 32]));
     let saved = |key: &str, tool, acp: &str| SavedSession { key: key.into(), tool, folder: "/x".into(), title: "Task".into(), acp_id: Some(acp.into()), context: None,
-        turns: vec![], updated: hover_core::time::Stamp::now(), access: None, cloud: None };
+        turns: vec![], updated: hover_core::time::Stamp::now(), access: None, cloud: None, ext: Default::default() };
     let h = AgentHistory::new(d.clone(), c.clone());
     h.save(&saved("abc123", AgentTool::OpenCode, "ses_keep"));
     h.save(&saved("def456", AgentTool::Cursor, "acp-1"));

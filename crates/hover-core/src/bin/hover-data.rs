@@ -43,6 +43,7 @@ fn main() {
                 updated: now,
                 access: None,
                 cloud: None,
+                ext: Default::default(),
             };
             h.save(&s);
             h.flush();

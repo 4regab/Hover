@@ -218,6 +218,26 @@ impl AcpOption {
     }
 }
 
+/// Open in editor (hover-agents::editor): which editor opens a desk's folder by default, and
+/// the custom editor's program and arguments. `default` is an editor id ("vscode", "zed",
+/// "cursor", "kiro" or "custom"); none means ask each time. `custom_args` is one argument per
+/// line, each a literal with {folder}, {file}, {line} and {column} to fill in: it is never run
+/// through a shell.
+#[derive(Clone, Debug, PartialEq, Default)]
+pub struct EditorSettings { pub default: Option<String>, pub custom_exe: Option<String>, pub custom_args: Option<String> }
+
+impl EditorSettings {
+    pub fn to_json(&self) -> Json {
+        Json::obj(vec![("Default", Json::opt_str_of(self.default.as_deref())), ("CustomExe", Json::opt_str_of(self.custom_exe.as_deref())),
+            ("CustomArgs", Json::opt_str_of(self.custom_args.as_deref()))])
+    }
+
+    pub fn from_json(v: &Json) -> Result<EditorSettings> {
+        v.props()?;
+        Ok(EditorSettings { default: opt_text(v.get("Default"))?, custom_exe: opt_text(v.get("CustomExe"))?, custom_args: opt_text(v.get("CustomArgs"))? })
+    }
+}
+
 /// Core.SavedTheme(Name, Dark, Colors): a VS Code theme's few colours, kept.
 #[derive(Clone, Debug, PartialEq)]
 pub struct SavedTheme { pub name: String, pub dark: bool, pub colors: Vec<(String, String)> }

@@ -11,6 +11,7 @@ pub mod claude;
 pub mod computer_use;
 pub mod desk;
 pub mod discord;
+pub mod editor;
 pub mod github;
 pub mod http;
 pub mod opencode;
@@ -25,6 +26,7 @@ pub mod state;
 pub mod stream;
 pub mod text;
 pub mod words;
+pub mod workspace;
 
 use std::path::Path;
 

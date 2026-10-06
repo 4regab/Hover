@@ -4,6 +4,7 @@
 //! replace the old one, off the caller's thread, in order.
 
 use crate::crypto::Crypto;
+use crate::ext::SessionExt;
 use crate::json::{self, Json, Result};
 use crate::model::{opt_text, text, AgentTool, KiroState, KiroStep};
 use crate::time::Stamp;
@@ -46,6 +47,8 @@ pub struct SavedSession {
     /// Run in Kiro's cloud: the GitHub repos it was given ("owner/name"), empty for an
     /// empty workspace. None for a session on this computer.
     pub cloud: Option<Vec<String>>,
+    /// The workspace binding and the links orchestration adds (ext.rs); written only when it holds something.
+    pub ext: SessionExt,
 }
 
 /// HistoryEntry(Key, Tool, Title, Folder, Updated, State, Turns, Credits).
@@ -123,6 +126,7 @@ impl SavedSession {
         ];
         // Only for a cloud session, so every other session is written byte for byte as before.
         if let Some(repos) = &self.cloud { props.push(("Cloud", Json::Arr(repos.iter().map(|r| Json::str(r)).collect()))); }
+        if !self.ext.is_empty() { props.push(("Ext", self.ext.to_json())); }
         Json::obj(props)
     }
 
@@ -139,6 +143,7 @@ impl SavedSession {
             updated: opt(v.get("Updated"), Stamp::from_json)?.unwrap_or(Stamp::DEFAULT),
             access: opt_text(v.get("Access"))?,
             cloud: opt(v.get("Cloud"), |c| c.opt_list(|r| text(Some(r))))?.flatten(),
+            ext: match v.get("Ext") { Some(e) if !e.is_null() => SessionExt::from_json(e)?, _ => SessionExt::default() },
         })
     }
 }
@@ -419,6 +424,7 @@ mod tests {
             updated: at(updated),
             access: None,
             cloud: None,
+            ext: Default::default(),
         }
     }
 
