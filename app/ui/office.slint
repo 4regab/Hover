@@ -2078,11 +2078,9 @@ export component OfficeView inherits Rectangle {
                                 }
                             }
                             if Office.d-shots.length > 0: Shots { shots: Office.d-shots; which: 1; padding: 3px; padding-bottom: 6px; }
-                            // Past 140 px the reply scrolls inside, the caret kept in view. The expanded
-                            // chat's box opens at its full height (240, or a third of a short window, so the
-                            // conversation keeps its room) instead of growing into it line by line.
+                            // Past 140 px the reply scrolls inside, the caret kept in view.
                             Rectangle {
-                                height: Office.d-wide ? min(240px, max(64px, root.height * 0.32)) : max(24px, min(140px, input.preferred-height + 6px));
+                                height: max(Office.d-wide ? 64px : 24px, min(Office.d-wide ? 240px : 140px, input.preferred-height + 6px));
                                 dfl := Flickable {
                                     x: 2px;
                                     y: 3px;
