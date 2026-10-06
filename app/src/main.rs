@@ -606,7 +606,7 @@ impl App {
                 });
                 let w = d.as_weak();
                 let a = self.clone();
-                d.on_close_clicked(move || { if let Some(d) = w.upgrade() { let _ = d.hide(); } let a = a.clone(); Timer::single_shot(Duration::ZERO, move || { a.dash.borrow_mut().take(); a.dash_settings.set(false); a.page.wide.set(false); a.watching_changed(); }); });
+                d.on_close_clicked(move || { if let Some(d) = w.upgrade() { let _ = d.hide(); } let a = a.clone(); Timer::single_shot(Duration::ZERO, move || { a.dash.borrow_mut().take(); a.dash_settings.set(false); a.watching_changed(); }); });
                 let w = d.as_weak();
                 d.on_drag(move || { if let Some(d) = w.upgrade() { d.window().with_winit_window(|ww| { let _ = ww.drag_window(); }); } });
                 let w = d.as_weak();
@@ -619,7 +619,7 @@ impl App {
             let a = self.clone();
             d.window().on_close_requested(move || {
                 let a = a.clone();
-                Timer::single_shot(Duration::ZERO, move || { a.dash.borrow_mut().take(); a.dash_settings.set(false); a.page.wide.set(false); a.watching_changed(); });
+                Timer::single_shot(Duration::ZERO, move || { a.dash.borrow_mut().take(); a.dash_settings.set(false); a.watching_changed(); });
                 slint::CloseRequestResponse::HideWindow
             });
             publish!(d, &*self.palette.borrow(), self.look.get().animations);

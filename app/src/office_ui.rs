@@ -62,7 +62,7 @@ pub struct Page {
     copied: slint::Timer,
     rows_open: RefCell<Vec<(Option<i64>, Option<String>)>>,
     pub target: Cell<i32>,
-    shown: Cell<Option<bool>>,
+    pub(crate) shown: Cell<Option<bool>>,
     drop_timer: slint::Timer,
     view: Cell<Option<[f64; 3]>>,
     /// qPick: what has been picked and typed for each question, by its ask's id, so a
@@ -99,8 +99,6 @@ pub struct Page {
     /// What the chat's note strip and its More menu do, by position (chat_note, chat_more).
     note_acts: RefCell<Vec<&'static str>>,
     more_acts: RefCell<Vec<String>>,
-    /// Expand chat: the open chat fills the app window (the notch never shows it so).
-    pub wide: Cell<bool>,
     /// What each row of the expanded chat's session list opens (a live session by id, a saved one by key).
     rows_list: RefCell<Vec<(Option<i32>, Option<String>)>>,
     /// The open chat's workspace branch, for the expanded chat's header.
@@ -254,7 +252,7 @@ impl Default for Page {
             #[cfg(windows)] gpu: Default::default(),
             #[cfg(windows)] scratch: Default::default(),
             #[cfg(windows)] slots: Default::default(), blur: Default::default(),
-            starting: Cell::new(false), new_helpers: Cell::new(false), chips: Default::default(), note_acts: RefCell::new(vec![]), more_acts: RefCell::new(vec![]), wide: Cell::new(false), rows_list: RefCell::new(vec![]), branch: Default::default(), desk: Default::default() }
+            starting: Cell::new(false), new_helpers: Cell::new(false), chips: Default::default(), note_acts: RefCell::new(vec![]), more_acts: RefCell::new(vec![]), rows_list: RefCell::new(vec![]), branch: Default::default(), desk: Default::default() }
     }
 }
 
@@ -292,8 +290,11 @@ impl App {
     pub fn office_follow(self: &Rc<Self>) {
         let want = self.office_size();
         let p = &self.page;
+        // The chat view covers the office: none is made for it, and one there is draws nothing.
+        let chat = self.chat_view();
         if p.live.borrow().is_none() {
-            let Some((w, h, _)) = want else { return };
+            let Some((w, h, which)) = want else { return };
+            if chat { each!(self, |g| g.set_built(true)); p.target.set(which); return; }
             // The office's items, gone since it was dropped, are made again.
             each!(self, |g| g.set_built(true));
             let still = !self.look.get().animations;
@@ -323,12 +324,13 @@ impl App {
         let live = p.live.borrow();
         let live = live.as_ref().unwrap();
         // Only when it changes: every message to the page wakes it to full speed.
-        if p.shown.get() != Some(want.is_some()) {
-            p.shown.set(Some(want.is_some()));
-            live.send(In::Visible(want.is_some()));
+        let visible = want.is_some() && !chat;
+        if p.shown.get() != Some(visible) {
+            p.shown.set(Some(visible));
+            live.send(In::Visible(visible));
             // Hidden 30 s, the page is dropped (KiroPage's rule for its WebView2); shown
             // again, it is made again at once.
-            if want.is_none() {
+            if !visible {
                 let a = self.clone();
                 p.drop_timer.start(slint::TimerMode::SingleShot, Duration::from_secs(30), move || a.office_drop());
             } else {
@@ -348,12 +350,14 @@ impl App {
     fn office_drop(self: &Rc<Self>) {
         let p = &self.page;
         if p.shown.get() != Some(false) { return; }
+        // Under the chat view only the office goes: the chat, its details and the views stay.
+        let chat = self.chat_view();
         p.push_timer.stop();
-        self.desk_leave();
+        if !chat { self.desk_leave(); }
         *p.live.borrow_mut() = None;
-        *p.thread.borrow_mut() = None;
+        if !chat { *p.thread.borrow_mut() = None; }
         // The last frame and its blurred copy would otherwise stay in the globals.
-        let clear = |g: crate::ui::Office| { g.set_scene(Image::default()); g.set_tags(ModelRc::default()); g.set_d_thread(Image::default()); g.set_built(false); };
+        let clear = |g: crate::ui::Office| { g.set_scene(Image::default()); g.set_tags(ModelRc::default()); if !chat { g.set_d_thread(Image::default()); g.set_built(false); } };
         clear(self.notch.global::<crate::ui::Office>());
         self.notch.global::<crate::ui::Backdrop>().set_blurred(Image::default());
         if let Some(d) = &*self.dash.borrow() { clear(d.global::<crate::ui::Office>()); d.global::<crate::ui::Backdrop>().set_blurred(Image::default()); }
@@ -365,8 +369,7 @@ impl App {
         *p.blur.borrow_mut() = Blur::default();
         // The chat's copy of the open session's turns (made again when it is drawn), and
         // the thumbnails (read again from their files).
-        *p.turns.borrow_mut() = Vec::new();
-        p.thumbs.borrow_mut().clear();
+        if !chat { *p.turns.borrow_mut() = Vec::new(); p.thumbs.borrow_mut().clear(); }
         hover_core::log::line("office dropped after 30 s hidden");
         crate::bench::dropped();
         // glibc keeps what the office thread freed (its arena, the software GPU's
@@ -612,7 +615,6 @@ impl App {
 
     pub fn close_drawer(self: &Rc<Self>) {
         self.keep_draft();
-        self.page.wide.set(false);
         self.page.open.set(None);
         self.send(In::Drawer(None));
         *self.page.thread.borrow_mut() = None;
@@ -636,21 +638,36 @@ impl App {
         self.office_widgets();
     }
 
-    /// Expand chat: the open session, large, in the app window. It is the same session with
-    /// the same draft, queue and scroll; only the window and the layout change.
+    /// Expand chat: the open session in the chat view, where it is. It is the same session with
+    /// the same draft, queue and scroll; only the layout changes.
     pub fn expand_chat(self: &Rc<Self>, id: i32) {
         if self.page.open.get() != Some(id) { self.open_session(id); }
+        self.set_chat_view(true);
+    }
+
+    pub fn chat_view(&self) -> bool { self.hover.settings.chat_view() }
+
+    /// The switch at the office's top left: the chat view in place of the office, or the office
+    /// again. Kept in the settings, so the notch and the app window open on it until switched
+    /// back. The open chat, its draft and its details carry over.
+    pub fn set_chat_view(self: &Rc<Self>, on: bool) {
+        if self.chat_view() == on { return; }
         let draft = self.shown_draft();
-        self.page.wide.set(true);
-        self.open_dashboard(false);
+        self.hover.settings.set_chat_view(on);
         each!(self, |g| g.set_d_draft(draft.clone()));
-        // A second Expand brings the window that has the chat to the front.
-        if let Some(d) = &*self.dash.borrow() {
-            use slint::winit_030::WinitWindowAccessor;
-            d.window().set_minimized(false);
-            d.window().with_winit_window(|w| w.focus_window());
-        }
+        // The office's own layers have no place in the chat view, nor the details beside a chat in the small drawer.
+        self.page.fab.set(0);
+        self.page.menu.set(false);
+        if self.page.panel.get().is_some() { self.page.panel.set(None); self.send(In::Panel(None)); }
+        if !on { self.desk_leave(); }
         self.office_widgets();
+        self.office_follow();
+    }
+
+    /// New chat in the chat view: the open chat is put away for the start screen.
+    pub fn new_chat(self: &Rc<Self>) {
+        self.desk_leave();
+        if self.page.open.get().is_some() { self.close_drawer(); } else { self.office_widgets(); }
     }
 
     /// The reply being written is in the box of the window that shows the chat (each window has
@@ -661,13 +678,7 @@ impl App {
     }
 
     /// Back to the office: the chat is the small drawer again, the details beside it are put away.
-    pub fn collapse_chat(self: &Rc<Self>) {
-        let draft = self.shown_draft();
-        self.page.wide.set(false);
-        each!(self, |g| g.set_d_draft(draft.clone()));
-        self.desk_leave();
-        self.office_widgets();
-    }
+    pub fn collapse_chat(self: &Rc<Self>) { self.set_chat_view(false); }
 
     /// The branch (and whether it is a linked worktree) of the open chat's workspace, for the
     /// expanded chat's header. Git is asked off the UI thread; the last answer shows meanwhile.
@@ -874,7 +885,7 @@ impl App {
     }
 
     pub fn open_panel(self: &Rc<Self>, p: Option<&'static str>) {
-        if p.is_some() { self.desk_leave(); self.page.wide.set(false); self.page.open.set(None); self.send(In::Drawer(None)); self.page.fab.set(0); }
+        if p.is_some() { self.desk_leave(); self.page.open.set(None); self.send(In::Drawer(None)); self.page.fab.set(0); }
         self.page.panel.set(p);
         self.send(In::Panel(p));
         if p == Some("history") { self.list_web(); }
@@ -1124,8 +1135,8 @@ impl App {
         let note_labels: Vec<SharedString> = note_btns.iter().map(|b| s(b.1)).collect();
         let chip_labels: Vec<SharedString> = p.open.get().and_then(|id| p.chips.borrow().get(&id).map(|l| l.iter().map(|c| s(if c.live { format!("{} (reference)", c.label) } else { c.label.clone() })).collect())).unwrap_or_default();
         let more_items: Vec<MOpt> = more.iter().map(|m| MOpt { id: s(&m.0), label: s(&m.1), on: false }).collect();
-        // The expanded chat's header and list; only the app window shows it large.
-        let wide = p.wide.get() && open.is_some();
+        // The chat view's header and session list (with no chat open, its start screen).
+        let wide = self.chat_view();
         let (list_rows, list_opens) = if wide { self.list_rows(&sessions, p.open.get()) } else { (vec![], vec![]) };
         *p.rows_list.borrow_mut() = list_opens;
         let (status, stage, branch) = match &open {
@@ -1218,8 +1229,7 @@ impl App {
                 g.set_d_reply_label(s(format!("Reply to {bot}")));
             }
         });
-        self.notch.global::<crate::ui::Office>().set_d_wide(false);
-        if let Some(d) = &*self.dash.borrow() { d.global::<crate::ui::Office>().set_d_wide(wide); }
+        each!(self, |g| g.set_d_wide(wide));
         if open.is_some() { self.paint_thread(); }
         self.desk_sync();
     }
@@ -1436,7 +1446,8 @@ impl App {
             if let Some(r) = hover_agents::agents::known(t).filter(|r| !r.ok()) { a.toast(&r.hint); return; }
             a.page.new_tool.set(i as usize);
             a.hover.settings.set_agent_tool(t);
-            a.page.fab.set(2);
+            // The chat view's start screen has its own box; the office's opens at the corner.
+            if !a.chat_view() { a.page.fab.set(2); }
             a.office_widgets();
         });
         let a = self.clone();
@@ -1492,7 +1503,11 @@ impl App {
                     let orch = helpers.then(|| hover_core::ext::OrchLink { delegation: true, ..Default::default() });
                     let ext = hover_core::ext::SessionExt { workspace: p.binding.clone(), orch, ..Default::default() };
                     match a.hover.sessions.start_bound(tool, &p.folder, &text, images, Some(access), cloud, ext) {
-                        Some(_) => { each!(a, |g| g.set_new_draft(s(""))); a.page.attached.borrow_mut()[1].clear(); a.page.fab.set(0); a.page.cloud.borrow_mut().menu = false; }
+                        Some(started) => {
+                            each!(a, |g| g.set_new_draft(s(""))); a.page.attached.borrow_mut()[1].clear(); a.page.fab.set(0); a.page.cloud.borrow_mut().menu = false;
+                            // The chat view goes on into the new chat, as a chat app does; the office shows it at its desk.
+                            if a.chat_view() { a.open_session(started.id); }
+                        }
                         None => {
                             // No desk: the worktree just made would stay behind, empty.
                             if let Some(b) = p.binding.filter(|b| b.is_worktree()) { let _ = hover_agents::workspace::remove(&b, &p.folder, false, false, hover_agents::workspace::RemoveOpts { delete_branch: true, ..Default::default() }); }
@@ -1636,6 +1651,10 @@ impl App {
         g.on_d_expand(move || if let Some(id) = a.page.open.get() { a.expand_chat(id); });
         let a = self.clone();
         g.on_d_collapse(move || a.collapse_chat());
+        let a = self.clone();
+        g.on_toggle_view(move || a.set_chat_view(!a.chat_view()));
+        let a = self.clone();
+        g.on_new_chat(move || a.new_chat());
         let a = self.clone();
         g.on_d_stop(move || if let Some(id) = a.page.open.get() { a.hover.sessions.stop(id); a.office_changed(); a.office_widgets(); });
         let a = self.clone();

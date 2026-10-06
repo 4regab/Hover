@@ -756,7 +756,7 @@ impl App {
         d.card.set(None);
         self.desk_clear_floats();
         // The panel takes the chat's and the other panels' place; the expanded chat keeps its own, and the panel sits beside it.
-        if self.page.open.get().is_some() && !self.page.wide.get() { self.close_drawer(); }
+        if self.page.open.get().is_some() && !self.chat_view() { self.close_drawer(); }
         if self.page.panel.get().is_some() { self.open_panel(None); }
         if let Some((old, _)) = d.panel.get() { if old != id { self.desk_leave_tab(); } }
         d.panel.set(Some((id, tab)));

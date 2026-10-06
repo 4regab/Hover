@@ -297,6 +297,13 @@ assets/          hover.svg (the logo), make-icon.py (writes hover.png and
     in its place.
   - The chat's cloud chip opens it in Kiro Web (`KIRO_WEB_SESSION` + the session id).
   - Saved in the history as `"Cloud"` (its repos), written only for cloud sessions.
+- **The chat view** (the switch at the office's top left, `Office.d-wide`, `App::set_chat_view`).
+  A chat app in place of the office, in the notch and the app window alike: the sessions down
+  the left (New chat, Settings), the open chat with a slim reply bar, or with none open a start
+  screen (the agents, then one box with folder, access and model). Kept in `settings.json`
+  (`ChatView`, written only while on), so the notch opens on it until the switch goes back;
+  Esc and the notch folding never leave it. The office draws nothing under it, and is made
+  only when switched back to. A chat's Expand button switches it on.
 - **The office's note before the first task** (`KiroNoticeSeen`) stands in place of the
   office until Got it.
 - **Sessions are kept until the user deletes them.** The history is sealed with

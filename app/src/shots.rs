@@ -507,6 +507,85 @@ fn expand_shots(app: &Rc<App>, hover: &Arc<hover_app::app::Hover>, dir: &Path, f
     *hold_c.lock().unwrap() = false;
 }
 
+/// The chat view in place of the office, through its switch: the start screen, a chat with its
+/// reply bar at rest and grown, the list hidden, a narrow window, and the notch. It is kept in
+/// the settings, so it is switched off again at the end and the office shots after it are as before.
+fn chat_view_shots(app: &Rc<App>, hover: &Arc<hover_app::app::Hover>, dir: &Path) {
+    let dash = adapter(1);
+    let settle = |ms: u64| {
+        let t = std::time::Instant::now();
+        while t.elapsed() < Duration::from_millis(ms) {
+            slint::platform::update_timers_and_animations();
+            app.office_frame();
+            std::thread::sleep(Duration::from_millis(15));
+        }
+    };
+    macro_rules! g { () => { app.dash.borrow().as_ref().expect("the app window").global::<Office>() } }
+    let shot = |name: &str| save(&dash, (1200, 720), 1.0, [0, 0, 0], &dir.join(format!("chat-view-{name}.png")));
+    app.close_drawer();
+    settle(600);
+    shot("off");
+    // The switch, as a click on it: the office goes, the start screen comes, and the choice is kept.
+    g!().invoke_toggle_view();
+    settle(900);
+    assert!(hover.settings.chat_view() && g!().get_d_wide(), "the switch turned the chat view on, and it is kept");
+    assert_eq!(app.page.shown.get(), Some(false), "the office draws nothing under the chat view");
+    shot("home");
+    g!().set_new_draft("Fix the login redirect: after signing in it should go back to the page you were on, not the home page.".into());
+    settle(400);
+    shot("home-typed");
+    g!().set_new_draft("".into());
+    // A chat: the reply bar is one slim line at rest, and grows with what is written.
+    let done = hover.sessions.all().into_iter().find(|s| !s.busy() && !s.waiting() && !s.turns.is_empty()).map(|s| s.id);
+    if let Some(id) = done {
+        app.open_session(id);
+        settle(1200);
+        assert!(g!().get_d_wide(), "a chat opens in the chat view");
+        shot("chat");
+        g!().set_d_draft("First line of a longer reply.\nA second line.\nAnd a third, so the bar grows to fit what is written.".into());
+        settle(400);
+        shot("chat-long-draft");
+        g!().set_d_draft("".into());
+        g!().set_list_open(false);
+        settle(500);
+        shot("chat-no-list");
+        g!().set_list_open(true);
+        save(&dash, (880, 560), 1.0, [0, 0, 0], &dir.join("chat-view-chat-narrow.png"));
+        // Closing the chat goes to the start screen, still in the chat view.
+        g!().invoke_d_close();
+        settle(500);
+        assert!(hover.settings.chat_view() && app.page.open.get().is_none(), "closed: the start screen, not the office");
+        // Esc doesn't leave it either.
+        app.open_session(id);
+        settle(500);
+    }
+    // The notch opens on the chat view too.
+    {
+        let mut n = app.n.borrow_mut();
+        n.hover.opened(false);
+        n.open = Openness::at(1.0);
+    }
+    app.notch.set_view_visible(true);
+    app.notch_settings.set(false);
+    app.notch.set_in_settings(false);
+    app.watching_changed();
+    settle(1200);
+    let notch = adapter(0);
+    let full = { let n = app.n.borrow(); (n.win.width() as u32, n.win.height() as u32) };
+    assert!(app.notch.global::<Office>().get_d_wide(), "the notch shows the chat view as well");
+    save_office(&notch, full, &dir.join("chat-view-notch.png"));
+    app.close_drawer();
+    settle(500);
+    save_office(&notch, full, &dir.join("chat-view-notch-home.png"));
+    app.collapse();
+    // Back to the office through the switch: drawn again.
+    g!().invoke_toggle_view();
+    settle(900);
+    assert!(!hover.settings.chat_view() && !g!().get_d_wide(), "the switch turned it off again");
+    assert_eq!(app.page.shown.get(), Some(true), "the office draws again");
+    shot("back-to-office");
+}
+
 /// A task started from the new-task box in a real Git project gets a worktree of its own (#31): the box
 /// says so first, the session then works in the worktree on a new branch, and the project folder is untouched.
 fn workspace_shots(app: &Rc<App>, hover: &Arc<hover_app::app::Hover>, dir: &Path) {
@@ -1844,6 +1923,7 @@ pub fn run(dir: &Path) {
     settings_integrations_shots(&app, &hover, dir);
     settings_credits_shots(&app, &hover, dir);
     expand_shots(&app, &hover, dir, &folder, &hold_c);
+    chat_view_shots(&app, &hover, dir);
     workspace_shots(&app, &hover, dir);
     chat_action_shots(&app, &hover, dir, &folder, &hold_c);
     // A VS Code theme (Dark+ as its files say), and the model picker open.
