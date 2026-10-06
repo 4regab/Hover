@@ -2050,6 +2050,7 @@ dependencies = [
  "getrandom 0.3.4",
  "hover-core",
  "libc",
+ "sha2",
  "windows",
 ]
 

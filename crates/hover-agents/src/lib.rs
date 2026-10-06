@@ -23,12 +23,15 @@ pub mod proc;
 pub mod route;
 pub mod runtime;
 pub mod sandbox;
+pub mod sched;
 pub mod session;
 pub mod setup;
 pub mod spaces;
 pub mod state;
 pub mod stream;
 pub mod text;
+pub mod wake;
+pub mod webhook;
 pub mod words;
 pub mod workspace;
 
