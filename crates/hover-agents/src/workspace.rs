@@ -470,6 +470,8 @@ mod tests {
     fn repo(name: &str) -> PathBuf {
         let d = temp(name);
         sh(&d, &["init", "-q"]);
+        // Git for Windows turns \n into \r\n on checkout by default; the tests compare files byte for byte.
+        sh(&d, &["config", "core.autocrlf", "false"]);
         std::fs::write(d.join("a.txt"), "one\n").unwrap();
         sh(&d, &["add", "."]);
         sh(&d, &["commit", "-qm", "first"]);
@@ -669,7 +671,8 @@ mod tests {
         let w = prepare(&s, &own(), "One", &root, false, false, &Cancel::new()).unwrap();
         let all = list(&s);
         assert_eq!(all.len(), 2);
-        assert!(all.iter().any(|m| m.path == w.folder && m.branch == w.binding.as_ref().unwrap().branch));
+        // As paths: git lists C:/… on Windows, where the folder is C:\….
+        assert!(all.iter().any(|m| Path::new(&m.path) == Path::new(&w.folder) && m.branch == w.binding.as_ref().unwrap().branch));
         let e = prepare(&s, &Choice::Existing(w.folder.clone()), "Two", &root, false, false, &Cancel::new()).unwrap();
         assert_eq!(e.folder, w.folder);
         assert_eq!(e.binding.unwrap().kind, "existing");
