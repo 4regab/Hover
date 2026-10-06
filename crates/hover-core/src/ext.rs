@@ -121,6 +121,74 @@ impl Lineage {
     }
 }
 
+/// One thing attached to a message besides its words: a file, lines of a file, a piece of terminal output, a
+/// diff hunk or review comment, a quoted answer, or another conversation. The chip says what it holds and where it
+/// came from; `text` is the captured excerpt when the exact version matters (a snapshot), and a *live* chip holds
+/// only a reference that is read when the message is sent.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Chip {
+    /// `file`, `lines`, `terminal`, `diff`, `quote` or `thread`.
+    pub kind: String,
+    /// What the user sees: `src/a.rs:10-20`, `npm test`, …
+    pub label: String,
+    /// Where it came from: a path relative to the folder, a session key, a step id.
+    pub source: String,
+    /// The captured excerpt, when it is a snapshot.
+    pub text: Option<String>,
+    /// A fingerprint of the source when it was captured (a file's size and modified time), to tell a changed one.
+    pub rev: Option<String>,
+    pub from: Option<u32>,
+    pub to: Option<u32>,
+    /// A reference read at send time, not a snapshot.
+    pub live: bool,
+    /// The conversation it was captured in (its key).
+    pub session: Option<String>,
+}
+
+impl Chip {
+    pub fn to_json(&self) -> Json {
+        let mut p = vec![("Kind", Json::str(&self.kind)), ("Label", Json::str(&self.label)), ("Source", Json::str(&self.source))];
+        if let Some(t) = &self.text { p.push(("Text", Json::str(t))); }
+        if let Some(r) = &self.rev { p.push(("Rev", Json::str(r))); }
+        if let Some(f) = self.from { p.push(("From", Json::int(f as i64))); }
+        if let Some(t) = self.to { p.push(("To", Json::int(t as i64))); }
+        if self.live { p.push(("Live", Json::Bool(true))); }
+        if let Some(s) = &self.session { p.push(("Session", Json::str(s))); }
+        Json::obj(p)
+    }
+
+    pub fn from_json(v: &Json) -> Result<Chip> {
+        v.props()?;
+        let n = |k: &str| -> Result<Option<u32>> { Ok(v.get(k).filter(|x| !x.is_null()).map(Json::i32).transpose()?.map(|x| x.max(0) as u32)) };
+        Ok(Chip { kind: text(v.get("Kind"))?, label: text(v.get("Label"))?, source: text(v.get("Source"))?, text: opt_text(v.get("Text"))?, rev: opt_text(v.get("Rev"))?,
+            from: n("From")?, to: n("To")?, live: v.get("Live").map(Json::bool).transpose()?.unwrap_or(false), session: opt_text(v.get("Session"))? })
+    }
+}
+
+/// What a saved turn keeps beyond 3.8's record: a reply still waiting to be sent (with the id that names it in queue
+/// edits), its chips, and a provider switch asked for when it is sent. Written only when it holds something.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct TurnExt { pub queued: bool, pub uid: Option<String>, pub chips: Vec<Chip>, pub switch_to: Option<String> }
+
+impl TurnExt {
+    pub fn is_empty(&self) -> bool { *self == TurnExt::default() }
+
+    pub fn to_json(&self) -> Json {
+        let mut p = vec![];
+        if self.queued { p.push(("Queued", Json::Bool(true))); }
+        if let Some(u) = &self.uid { p.push(("Uid", Json::str(u))); }
+        if !self.chips.is_empty() { p.push(("Chips", Json::Arr(self.chips.iter().map(Chip::to_json).collect()))); }
+        if let Some(s) = &self.switch_to { p.push(("SwitchTo", Json::str(s))); }
+        Json::obj(p)
+    }
+
+    pub fn from_json(v: &Json) -> Result<TurnExt> {
+        v.props()?;
+        Ok(TurnExt { queued: v.get("Queued").map(Json::bool).transpose()?.unwrap_or(false), uid: opt_text(v.get("Uid"))?,
+            chips: v.get("Chips").map(|c| c.opt_list(Chip::from_json)).transpose()?.flatten().unwrap_or_default(), switch_to: opt_text(v.get("SwitchTo"))? })
+    }
+}
+
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct SessionExt {
     pub workspace: Option<WorkspaceBinding>,
@@ -157,6 +225,14 @@ impl SessionExt {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_turns_queue_state_and_chips_round_trip_and_an_empty_one_writes_nothing() {
+        assert!(TurnExt::default().is_empty());
+        let t = TurnExt { queued: true, uid: Some("u1".into()), switch_to: Some("codex".into()), chips: vec![Chip { kind: "lines".into(), label: "a.rs:1-2".into(), source: "a.rs".into(),
+            text: Some("fn a() {}".into()), rev: Some("12:34".into()), from: Some(1), to: Some(2), live: false, session: Some("k".into()) }, Chip { kind: "file".into(), label: "b.rs".into(), source: "b.rs".into(), live: true, ..Default::default() }] };
+        assert_eq!(TurnExt::from_json(&crate::json::parse(&t.to_json().compact()).unwrap()).unwrap(), t);
+    }
 
     #[test]
     fn an_empty_ext_writes_nothing_and_a_binding_round_trips() {

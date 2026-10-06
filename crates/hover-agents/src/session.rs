@@ -8,7 +8,7 @@ use crate::ask::{AgentAsk, Answers, AskAnswer};
 use crate::cancel::{Cancel, Registration};
 use crate::checkpoint::Checkpoints;
 use crate::stream::{KiroEvent, KiroPhase, KiroResult};
-use hover_core::ext::SessionExt;
+use hover_core::ext::{Chip, SessionExt, TurnExt};
 use hover_core::history::{AgentHistory, SavedSession, SavedTurn};
 use hover_core::model::{AgentTool, KiroState, KiroStep};
 use hover_core::time::Stamp;
@@ -73,19 +73,28 @@ pub struct KiroTurn {
     /// None where none could be taken (no git, a folder too broad, too slow).
     pub before: Option<String>,
     pub after: Option<String>,
+    /// Names this message in queue edits, so an edit, a move or a send-now reaches that message and no other.
+    pub uid: String,
+    /// What was attached besides words (context.rs), kept with the message in drafts, the queue and the history.
+    pub chips: Vec<Chip>,
+    /// A provider switch asked for with this message: it happens when the message is sent, not before.
+    pub switch_to: Option<String>,
 }
 
 impl KiroTurn {
     pub fn new(prompt: &str, images: Vec<String>) -> KiroTurn {
-        KiroTurn { prompt: prompt.into(), images, steps: vec![], result: None, queued: false, started_at: Stamp::DEFAULT, woke_at: None, ended_at: None, credits: None, before: None, after: None }
+        KiroTurn { prompt: prompt.into(), images, steps: vec![], result: None, queued: false, started_at: Stamp::DEFAULT, woke_at: None, ended_at: None, credits: None, before: None, after: None,
+            uid: hover_core::guid_n(), chips: vec![], switch_to: None }
     }
 
-    /// What the agent is sent: the prompt, then the pictures' paths for it to look at. Kiro gets
-    /// the pictures themselves from these lines (acp.rs, ATTACHED).
+    /// What the agent is sent: the prompt, then what is attached (context.rs), then the pictures' paths
+    /// for it to look at. Kiro gets the pictures themselves from these lines (acp.rs, ATTACHED).
     pub fn text(&self) -> String {
-        if self.images.is_empty() { return self.prompt.clone(); }
-        let head = if self.prompt.is_empty() { "Look at the attached image." } else { &self.prompt };
-        format!("{head}\n\n{}", self.images.iter().map(|p| format!("{}{p}", crate::acp::ATTACHED)).collect::<Vec<_>>().join("\n"))
+        let head = if self.prompt.is_empty() && !self.images.is_empty() { "Look at the attached image.".to_owned() } else { self.prompt.clone() };
+        let mut out = head;
+        if !self.chips.is_empty() { out = format!("{out}\n\n{}", crate::context::render(&self.chips)); }
+        if !self.images.is_empty() { out = format!("{out}\n\n{}", self.images.iter().map(|p| format!("{}{p}", crate::acp::ATTACHED)).collect::<Vec<_>>().join("\n")); }
+        out
     }
 }
 
@@ -116,6 +125,9 @@ pub struct KiroSession {
     pub cloud: Option<Vec<String>>,
     /// Where the task works (a worktree of its own, or the folder itself) and the links orchestration adds.
     pub ext: SessionExt,
+    /// The replies waiting are held: a stop or a restart leaves them, and only `resume_queue` or a new
+    /// message from the user sends them.
+    pub held: bool,
     /// What the agent is waiting on the user for, oldest first.
     pub asks: Vec<AgentAsk>,
     /// Asked to stop or pause; the turn hasn't ended yet (the tool hasn't said).
@@ -132,7 +144,7 @@ impl KiroSession {
     /// A new session with no turns (the C# constructor).
     pub fn new(tool: AgentTool) -> KiroSession {
         KiroSession { id: IDS.fetch_add(1, Ordering::SeqCst) + 1, tool, state: KiroState::Idle, phase: KiroPhase::Starting, folder: String::new(), turns: vec![],
-            kiro_id: None, context: None, seat: 0, bot: 0, key: hover_core::guid_n(), deleted: false, access: None, cloud: None, ext: SessionExt::default(), asks: vec![], stopping: false, rev: 0 }
+            kiro_id: None, context: None, seat: 0, bot: 0, key: hover_core::guid_n(), deleted: false, access: None, cloud: None, ext: SessionExt::default(), held: false, asks: vec![], stopping: false, rev: 0 }
     }
 
     /// A copy without what only the chat reads: the answers' text, and the steps'
@@ -147,7 +159,7 @@ impl KiroSession {
                     input: x.input.clone().filter(|_| crate::state::is_subagent(x)), log: None }).collect(),
                 result: t.result.as_ref().map(|r| KiroResult { state: r.state, text: String::new(), exit_code: r.exit_code, unconfirmed: r.unconfirmed }),
                 queued: t.queued, started_at: t.started_at, woke_at: t.woke_at, ended_at: t.ended_at, credits: t.credits,
-                before: t.before.clone(), after: t.after.clone(),
+                before: t.before.clone(), after: t.after.clone(), uid: t.uid.clone(), chips: t.chips.clone(), switch_to: t.switch_to.clone(),
             }).collect(),
             folder: self.folder.clone(), kiro_id: self.kiro_id.clone(), key: self.key.clone(), access: self.access.clone(), cloud: self.cloud.clone(), ext: self.ext.clone(), asks: self.asks.clone(),
             ..*self
@@ -172,7 +184,8 @@ impl KiroSession {
             key: self.key.clone(), tool: self.tool, folder: self.folder.clone(), title: self.title(), acp_id: self.kiro_id.clone(), context: self.context,
             turns: self.turns.iter().map(|t| SavedTurn { prompt: t.prompt.clone(), images: t.images.clone(), steps: t.steps.clone(),
                 state: t.result.as_ref().map(|r| r.state), text: t.result.as_ref().map(|r| r.text.clone()), started_at: t.started_at, woke_at: t.woke_at,
-                ended_at: t.ended_at, credits: t.credits, before: t.before.clone(), after: t.after.clone() }).collect(),
+                ended_at: t.ended_at, credits: t.credits, before: t.before.clone(), after: t.after.clone(),
+                ext: TurnExt { queued: t.queued, uid: t.queued.then(|| t.uid.clone()), chips: t.chips.clone(), switch_to: t.switch_to.clone() } }).collect(),
             updated: now,
             access: self.access.clone(),
             cloud: self.cloud.clone(),
@@ -201,14 +214,55 @@ impl KiroSession {
             turn.before = t.before.clone();
             turn.after = t.after.clone();
             turn.steps = t.steps.clone();
-            turn.result = Some(KiroResult::new(t.state.unwrap_or(KiroState::Cancelled), t.text.clone().unwrap_or_else(|| CLOSED_TEXT.into())));
+            turn.chips = t.ext.chips.clone();
+            turn.switch_to = t.ext.switch_to.clone();
+            if t.ext.queued {
+                // A reply that was waiting when Hover closed is still waiting, and held: a saved message alone
+                // does not start a task again.
+                turn.queued = true;
+                turn.uid = t.ext.uid.clone().unwrap_or(turn.uid);
+                turn.ended_at = None;
+                self.held = true;
+            } else {
+                turn.result = Some(KiroResult::new(t.state.unwrap_or(KiroState::Cancelled), t.text.clone().unwrap_or_else(|| CLOSED_TEXT.into())));
+            }
             self.turns.push(turn);
         }
-        self.state = self.turns.last().map_or(KiroState::Cancelled, |t| t.result.as_ref().unwrap().state);
+        self.state = self.turns.iter().rev().find_map(|t| t.result.as_ref()).map_or(KiroState::Cancelled, |r| r.state);
     }
 }
 
 fn usable(text: &str, images: &[String]) -> bool { !text.trim().is_empty() || !images.is_empty() }
+
+/// A message to an agent: its words, pictures and chips (context.rs), and a provider switch asked for with it
+/// (applied when it is sent).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Msg { pub text: String, pub images: Vec<String>, pub chips: Vec<Chip>, pub switch_to: Option<String> }
+
+impl Msg {
+    pub fn text(text: &str) -> Msg { Msg { text: text.into(), ..Default::default() } }
+    fn ok(&self) -> bool { usable(&self.text, &self.images) || !self.chips.is_empty() }
+}
+
+/// Why a queue edit didn't happen.
+#[derive(Clone, Debug, PartialEq)]
+pub enum QueueError {
+    /// No such session or message.
+    Gone,
+    /// The message began to send while it was being edited. The text the edit carried comes back, so it can go
+    /// into the composer instead of being lost.
+    Started(Msg),
+    Invalid(String),
+}
+
+/// What send-now did.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SendNow {
+    /// Nothing was running: the message started.
+    Started,
+    /// A run was going: it is being stopped (through the tool, not by force), and the message goes once the tool confirms.
+    Steering,
+}
 
 type Reply = Box<dyn FnOnce(AskAnswer) + Send>;
 type QuestionReply = Box<dyn FnOnce(Answers) + Send>;
@@ -458,13 +512,21 @@ impl KiroSessions {
     /// A reply. While a turn runs it waits and starts when that one ends. False when the
     /// session isn't here or hasn't started, there is nothing to send, or it would start
     /// a fourth run.
-    pub fn reply(&self, id: i32, text: &str, images: Vec<String>) -> bool {
+    pub fn reply(&self, id: i32, text: &str, images: Vec<String>) -> bool { self.reply_msg(id, Msg { text: text.into(), images, ..Default::default() }) }
+
+    /// reply, with chips and a provider switch. A reply from the user also frees a held queue: the oldest waiting message goes first.
+    pub fn reply_msg(&self, id: i32, m: Msg) -> bool {
+        let Msg { text, images, chips, switch_to } = m;
+        let text = text.as_str();
         let mut g = self.0.inner.lock().unwrap();
         let running = g.all.iter().filter(|x| x.counts()).count();
         let Some(slot) = g.all.iter_mut().find(|x| x.s.id == id) else { return false };
         if !slot.s.busy() && running >= self.max_running() { return false; }
-        if slot.s.state == KiroState::Idle || !usable(text, &images) || crate::workspace::held(&slot.s.folder).is_some() { return false; }
+        if slot.s.state == KiroState::Idle || !(usable(text, &images) || !chips.is_empty()) || crate::workspace::held(&slot.s.folder).is_some() { return false; }
         let mut t = KiroTurn::new(text.trim(), images);
+        t.chips = chips;
+        t.switch_to = switch_to;
+        slot.s.held = false;
         // Replies left queued (behind a stop that wasn't confirmed) go first, in order.
         let start_now = !slot.s.busy();
         t.queued = slot.s.busy() || slot.s.turns.iter().any(|t| t.queued);
@@ -736,6 +798,100 @@ impl KiroSessions {
         };
         self.save(&snap);
         self.raise(vec![Note::Changed]);
+        true
+    }
+
+    /// The queued message `uid` of session `id`: its place in `turns`, or why not.
+    fn queued_at(slot: &Slot, uid: &str, carried: &Msg) -> Result<usize, QueueError> {
+        match slot.s.turns.iter().position(|t| t.uid == uid) {
+            None => Err(QueueError::Gone),
+            Some(i) if !slot.s.turns[i].queued => Err(QueueError::Started(carried.clone())),
+            Some(i) => Ok(i),
+        }
+    }
+
+    fn queue_change<R>(&self, id: i32, f: impl FnOnce(&mut Slot) -> Result<R, QueueError>) -> Result<R, QueueError> {
+        let (r, snap) = {
+            let mut g = self.0.inner.lock().unwrap();
+            let slot = g.all.iter_mut().find(|x| x.s.id == id).ok_or(QueueError::Gone)?;
+            let r = f(slot)?;
+            if !slot.s.turns.iter().any(|t| t.queued) { slot.s.held = false; }
+            slot.s.rev += 1;
+            (r, slot.s.clone())
+        };
+        self.save(&snap);
+        self.raise(vec![Note::Changed]);
+        Ok(r)
+    }
+
+    /// Replaces a waiting message’s words, pictures and chips. If it began to send meanwhile, the error carries the
+    /// text back so it can be put in the composer; nothing of it is lost.
+    pub fn edit_queued(&self, id: i32, uid: &str, m: Msg) -> Result<(), QueueError> {
+        if !m.ok() { return Err(QueueError::Invalid("A message needs words, a picture or an attachment.".into())); }
+        self.queue_change(id, |slot| {
+            let i = Self::queued_at(slot, uid, &m)?;
+            let t = &mut slot.s.turns[i];
+            (t.prompt, t.images, t.chips, t.switch_to) = (m.text.trim().to_owned(), m.images, m.chips, m.switch_to);
+            Ok(())
+        })
+    }
+
+    /// Moves a waiting message to place `to` among the waiting ones (0 is the next to go).
+    pub fn move_queued(&self, id: i32, uid: &str, to: usize) -> Result<(), QueueError> {
+        self.queue_change(id, |slot| {
+            let i = Self::queued_at(slot, uid, &Msg::default())?;
+            let first = slot.s.turns.iter().position(|t| t.queued).unwrap_or(i);
+            let n = slot.s.turns.iter().filter(|t| t.queued).count();
+            let t = slot.s.turns.remove(i);
+            slot.s.turns.insert(first + to.min(n - 1), t);
+            Ok(())
+        })
+    }
+
+    /// Takes a waiting message back. The same message twice is `Gone`, not an error for the one that worked.
+    pub fn remove_queued(&self, id: i32, uid: &str) -> Result<Msg, QueueError> {
+        self.queue_change(id, |slot| {
+            let i = Self::queued_at(slot, uid, &Msg::default())?;
+            let t = slot.s.turns.remove(i);
+            Ok(Msg { text: t.prompt, images: t.images, chips: t.chips, switch_to: t.switch_to })
+        })
+    }
+
+    /// Sends a waiting message now, ahead of the others. No provider here steers a run that is going (none says so),
+    /// so a run in progress is asked to stop the way Pause asks: through the tool, the conversation kept, and the message
+    /// goes once the tool confirms. If it never confirms, nothing is sent and no second writer starts. A second click
+    /// finds the message already sent.
+    pub fn send_now(&self, id: i32, uid: &str) -> Result<SendNow, QueueError> {
+        let busy = self.queue_change(id, |slot| {
+            let i = Self::queued_at(slot, uid, &Msg::default())?;
+            let first = slot.s.turns.iter().position(|t| t.queued).unwrap_or(i);
+            let t = slot.s.turns.remove(i);
+            slot.s.turns.insert(first, t);
+            slot.s.held = false;
+            Ok(slot.s.busy())
+        })?;
+        if busy {
+            return if self.halt(id, true) { Ok(SendNow::Steering) } else { Ok(SendNow::Started) };
+        }
+        self.resume_queue(id).then_some(SendNow::Started).ok_or_else(|| QueueError::Invalid("No place is free to start it now.".into()))
+    }
+
+    /// Lets a held queue go: the oldest waiting message starts (when nothing runs and a place is free). The user's own action; a saved
+    /// queue, or a stop, never does this by itself.
+    pub fn resume_queue(&self, id: i32) -> bool {
+        let mut g = self.0.inner.lock().unwrap();
+        let running = g.all.iter().filter(|x| x.counts()).count();
+        let Some(slot) = g.all.iter_mut().find(|x| x.s.id == id) else { return false };
+        if !slot.s.turns.iter().any(|t| t.queued) { slot.s.held = false; return false; }
+        if slot.s.busy() { slot.s.held = false; return true; }
+        if running >= self.max_running() || crate::workspace::held(&slot.s.folder).is_some() { return false; }
+        slot.s.held = false;
+        let begun = self.begin(&mut g, id);
+        let snap = g.all.iter().find(|x| x.s.id == id).unwrap().s.clone();
+        drop(g);
+        self.raise(vec![Note::Changed]);
+        begun();
+        self.save(&snap);
         true
     }
 
@@ -1098,16 +1254,14 @@ fn go(me: Weak<Shared>, id: i32, ti: usize, run: RunTask, ct: Cancel, cp: Option
         // A stop drops the replies that were waiting; a pause sends the next one, once the
         // tool has said the turn ended. A stop the tool never confirmed sends nothing:
         // what it was doing may still go on (a pause keeps them queued, a stop drops them).
+        // Stop holds what is waiting: the replies stay, in order, and go only when the user resumes the queue (or
+        // sends a new message). A stop the tool never confirmed sends nothing either.
         let mut next = slot.s.turns.iter().any(|t| t.queued);
         if next && r.unconfirmed && pausing {
             next = false;
+            slot.s.held = true;
         } else if next && !pausing && (r.state == KiroState::Cancelled || r.unconfirmed) {
-            for q in slot.s.turns.iter_mut().filter(|t| t.queued) {
-                q.queued = false;
-                q.started_at = now;
-                q.ended_at = Some(now);
-                q.result = Some(KiroResult::new(KiroState::Cancelled, "Not sent: the run before it was stopped."));
-            }
+            slot.s.held = true;
             next = false;
         }
         (slot.s.clone(), next, denied)

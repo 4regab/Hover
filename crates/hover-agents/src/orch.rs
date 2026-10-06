@@ -723,6 +723,31 @@ impl Orch {
         Ok((out, next, false))
     }
 
+    /// Whether `caller` was handed a reference to `target`: a message it was sent carries a conversation chip for it. The
+    /// reference lets it read, nothing else.
+    pub fn can_read(&self, caller: &str, target: &str) -> bool {
+        self.sessions.find(caller).is_some_and(|s| s.turns.iter().filter(|t| !t.queued).any(|t| t.chips.iter().any(|c| c.kind == "thread" && c.source == target)))
+    }
+
+    /// A referenced conversation, from turn `from`, in pages of at most `max` characters (the first turn of a page is
+    /// always given whole). All of it stays saved; the agent fetches what it needs. Reads the open session, or the saved one.
+    pub fn read_conversation(&self, caller: &str, target: &str, from: usize, max: usize) -> Result<(String, usize, bool), String> {
+        let me = self.sessions.find(caller).ok_or("This task isn’t open any more.")?;
+        if !me.busy() { return Err("This task’s turn is over, so these credentials are no longer valid.".into()); }
+        if !self.can_read(caller, target) { return Err("You were not given a reference to that conversation. Having its key does not let you read it.".into()); }
+        let saved = self.sessions.saved(target).ok_or("That conversation isn’t available any more.")?;
+        let mut out = String::new();
+        let mut next = from;
+        for (i, t) in saved.turns.iter().enumerate().skip(from) {
+            if t.ext.queued { break; }
+            let piece = format!("[{i}] User: {}\n{}\n\n", t.prompt, t.text.as_ref().map_or("(no answer yet)".to_owned(), |x| format!("Agent: {x}")));
+            if !out.is_empty() && out.chars().count() + piece.chars().count() > max { return Ok((out, next, true)); }
+            out += &piece;
+            next = i + 1;
+        }
+        Ok((out, next, false))
+    }
+
     pub fn thread_send(&self, caller: &str, id: &str, text: &str) -> Result<(), String> {
         let s = self.owned_thread(caller, id)?;
         if self.sessions.reply(s.id, text, vec![]) { Ok(()) } else { Err("The thread couldn’t take that message now (no place is free, or it is empty).".into()) }
@@ -768,8 +793,11 @@ pub const INSTRUCTIONS: &str = "Hover lets you ask other coding agents for help.
 brief (they do not see this conversation), then wait_for_task or task_result for the answer. A helper has your access or less. Waiting that times out does not \
 stop the helper: ask again. Give each delegate_task a request_id so a retry never starts a second helper.";
 
+/// Every tool the server has. A task without delegation is offered `read_conversation` alone (`tools_for`).
 pub fn tools() -> Json {
     Json::Arr(vec![
+        tool("read_conversation", "Read a saved conversation you were given a reference to, in bounded pages: each message and answer from turn `from`. This only reads; it cannot message or change that conversation.",
+            vec![("conversation", text_prop("The key of the referenced conversation.")), ("from", int_prop("First turn.")), ("max_chars", int_prop("Default 20000."))], &["conversation"]),
         tool("list_providers", "Which agents can be asked for help, whether each is ready, and what it can do.", vec![], &[]),
         tool("delegate_task", "Ask another agent to do one job. Returns a run_id at once; the helper works on its own.",
             vec![("provider", text_prop("A provider id from list_providers.")), ("brief", text_prop("What to do, with everything the helper needs. It cannot see your conversation.")),
@@ -786,6 +814,11 @@ pub fn tools() -> Json {
         tool("send_to_thread", "Send a message to a thread you launched.", vec![("thread_id", text_prop("The thread id.")), ("text", text_prop("The message."))], &["thread_id", "text"]),
         tool("interrupt_thread", "Stop what a thread you launched is doing.", vec![("thread_id", text_prop("The thread id."))], &["thread_id"]),
     ])
+}
+
+/// The tools a task sees: all of them with delegation on, else only the reading of conversations it was given.
+fn tools_for(delegation: bool) -> Json {
+    match tools() { Json::Arr(all) => Json::Arr(all.into_iter().filter(|t| delegation || t.get("name").and_then(Json::as_str) == Some("read_conversation")).collect()), other => other }
 }
 
 fn reply_ok(id: &Json, result: Json) -> Json { Json::obj(vec![("jsonrpc", Json::str("2.0")), ("id", id.clone()), ("result", result)]) }
@@ -825,7 +858,7 @@ impl Orch {
                 ("serverInfo", Json::obj(vec![("name", Json::str(SERVER_NAME)), ("title", Json::str("Hover helpers")), ("version", Json::str("1.0"))])),
                 ("instructions", Json::str(INSTRUCTIONS))]))),
             Some("ping") => Some(reply_ok(id, Json::obj(vec![]))),
-            Some("tools/list") => Some(reply_ok(id, Json::obj(vec![("tools", tools())]))),
+            Some("tools/list") => Some(reply_ok(id, Json::obj(vec![("tools", tools_for(self.sessions.find(caller).is_some_and(|s| s.ext.orch.as_ref().is_some_and(|l| l.delegation))))]))),
             Some("tools/call") => {
                 let name = params.and_then(|p| p.get("name")).and_then(Json::as_str).unwrap_or("");
                 let args = match params.and_then(|p| p.get("arguments")) { Some(a @ Json::Obj(_)) => a.clone(), _ => Json::obj(vec![]) };
@@ -839,6 +872,10 @@ impl Orch {
     fn call(&self, caller: &str, name: &str, a: &Json) -> Result<String, String> {
         let need = |k: &str| arg_s(a, k).ok_or_else(|| format!("{k} is needed."));
         match name {
+            "read_conversation" => {
+                let (text, next, more) = self.read_conversation(caller, &need("conversation")?, arg_n(a, "from").unwrap_or(0), arg_n(a, "max_chars").unwrap_or(PAGE).clamp(200, 100_000))?;
+                Ok(format!("{text}next_from: {next}{}", if more { "\n(More turns: call read_conversation again with from = next_from.)" } else { "" }))
+            }
             "list_providers" => {
                 self.lead(caller)?;
                 Ok(self.env.providers().iter().map(|p| format!("{} — {}: {}{}{}", p.id, p.name, if p.ready { "ready".to_owned() } else { format!("not ready ({})", p.hint) },
@@ -891,7 +928,9 @@ fn serve(orch: Weak<Orch>, name: &str, reader: Box<dyn std::io::BufRead + Send>,
 pub fn servers(tag: Option<&str>) -> Vec<McpServer> {
     let Some(tag) = tag.filter(|t| !t.is_empty()) else { return vec![] };
     let Some(o) = GLOBAL.get().and_then(Weak::upgrade) else { return vec![] };
-    if !o.sessions.find(tag).is_some_and(|s| s.ext.orch.as_ref().is_some_and(|l| l.delegation)) { return vec![]; }
+    // Delegation on, or a conversation reference was sent to it (which needs the reading tool). A session's servers are fixed
+    // when its agent starts them, so a reference sent later reaches an agent that is started afterwards.
+    if !o.sessions.find(tag).is_some_and(|s| s.ext.orch.as_ref().is_some_and(|l| l.delegation) || s.turns.iter().any(|t| t.chips.iter().any(|c| c.kind == "thread"))) { return vec![]; }
     let w = Arc::downgrade(&o);
     browser::bridge(&format!("orch:{tag}"), SERVER_NAME, Arc::new(move |name, r, wr| serve(w.clone(), name, r, wr)))
 }

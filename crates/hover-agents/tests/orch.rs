@@ -413,3 +413,31 @@ fn an_agent_reaches_the_helpers_through_the_relay_and_the_socket() {
     hover_agents::browser::stop();
     let _ = std::fs::remove_dir_all(&short);
 }
+
+#[test]
+fn an_agent_sent_a_conversation_reference_reads_it_in_pages_and_cannot_read_others() {
+    use hover_agents::session::Msg;
+    let r = rig("readconv", DelegationLimits::default(), |a, o, _| {
+        let tag = a.tag.clone().unwrap();
+        if !a.prompt.contains("[Attached by Hover]") { return KiroResult::new(KiroState::Completed, &format!("I am {}. The secret of this one is: blue.", if a.prompt.contains("other") { "other" } else { "earlier" })); }
+        let key = a.prompt.split("(key ").nth(1).and_then(|r| r.split(')').next()).unwrap().to_owned();
+        let (page, next, more) = o.read_conversation(&tag, &key, 0, 10_000).unwrap();
+        let denied = o.read_conversation(&tag, "not-given", 0, 100).unwrap_err();
+        KiroResult::new(KiroState::Completed, &format!("{page}|{next}|{more}|{denied}"))
+    });
+    let earlier = r.k.start(AgentTool::Codex, &r.folder, "earlier topic", vec![]).unwrap();
+    let other = r.k.start(AgentTool::Codex, &r.folder, "other topic", vec![]).unwrap();
+    let me = r.k.start(AgentTool::Kiro, &r.folder, "hello", vec![]).unwrap();
+    wait_for("all", || r.k.running() == 0);
+    let chip = hover_agents::context::thread(&earlier.key, "Earlier topic");
+    assert!(r.k.reply_msg(me.id, Msg { text: "please read it".into(), chips: vec![chip], ..Default::default() }));
+    wait_for("the reply", || r.k.get(me.id).is_some_and(|s| !s.busy() && s.turns.len() == 2 && s.turns[1].result.is_some()));
+    let said = r.k.get(me.id).unwrap().result().unwrap().text.clone();
+    assert!(said.contains("[0] User: earlier topic") && said.contains("secret of this one is: blue") && said.contains("|1|false|"), "{said}");
+    assert!(!said.contains("other topic"), "only the referenced conversation");
+    assert!(said.contains("You were not given a reference to that conversation"), "{said}");
+    assert!(r.orch.answer(&me.key, &Json::obj(vec![("id", Json::int(1)), ("method", Json::str("tools/list"))])).unwrap().compact().contains("read_conversation"));
+    let listed = r.orch.answer(&me.key, &Json::obj(vec![("id", Json::int(1)), ("method", Json::str("tools/list"))])).unwrap().compact();
+    assert!(!listed.contains("delegate_task"), "without delegation only the reading tool is listed: {listed}");
+    let _ = other;
+}

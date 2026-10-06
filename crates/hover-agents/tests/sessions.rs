@@ -115,9 +115,16 @@ fn a_reply_carries_on_with_the_tools_id_and_waits_while_a_turn_runs() {
     k.reply(s.id, "third", vec![]);
     k.stop(s.id);
     wait_for(|| !k.get(s.id).unwrap().busy());
-    let last = k.get(s.id).unwrap().turns.last().unwrap().clone();
-    assert_eq!(last.result.unwrap(), KiroResult::new(KiroState::Cancelled, "Not sent: the run before it was stopped."), "a stop drops the waiting reply");
-    assert_eq!(runs.lock().unwrap().len(), 2);
+    // A stop holds the waiting reply: it stays, in order, and goes only when the user resumes the queue.
+    let held = k.get(s.id).unwrap();
+    assert!(held.held && held.turns.last().unwrap().queued && held.turns.last().unwrap().prompt == "third", "a stop holds the waiting reply");
+    std::thread::sleep(Duration::from_millis(100));
+    assert_eq!(runs.lock().unwrap().len(), 2, "nothing is sent by itself");
+    assert!(k.resume_queue(s.id));
+    wait_for(|| runs.lock().unwrap().len() == 3);
+    assert_eq!(runs.lock().unwrap()[2].prompt, "third");
+    assert!(!k.get(s.id).unwrap().held);
+    finish(&runs, 2, KiroResult::new(KiroState::Completed, "three"));
 }
 
 #[test]

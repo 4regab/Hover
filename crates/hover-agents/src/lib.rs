@@ -9,6 +9,7 @@ pub mod cancel;
 pub mod checkpoint;
 pub mod claude;
 pub mod computer_use;
+pub mod context;
 pub mod desk;
 pub mod discord;
 pub mod editor;
