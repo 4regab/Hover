@@ -178,6 +178,27 @@ pub fn parse_kiro(output: &str) -> Reading {
     Reading::new(used.clamp(0.0, 100.0), plan_text + &detail + &reset_text)
 }
 
+/// The raw numbers of kiro-cli's report, which `parse_kiro` boils down to a percent:
+/// what the daily credits (`daily`) are made from. `reset` is the text as printed
+/// ("10/01" or "2026-10-01"), the next reset.
+#[derive(Clone, Debug, PartialEq)]
+pub struct KiroUsage {
+    pub used: f64,
+    pub limit: f64,
+    pub plan: Option<String>,
+    pub reset: Option<String>,
+}
+
+/// The credit line, the plan and the reset of the same report, or None when there is no
+/// "X of Y covered" (a release that drops it, a failure) or the plan has no credits.
+pub fn parse_kiro_usage(output: &str) -> Option<KiroUsage> {
+    let text = ANSI.replace_all(output, "");
+    let c = CREDITS.captures(&text)?;
+    let (used, limit) = (num_of(&c[1])?, num_of(&c[2])?);
+    if limit <= 0.0 { return None; }
+    Some(KiroUsage { used, limit, plan: PLAN.captures(&text).map(|c| c[1].trim().to_owned()), reset: RESET.captures(&text).map(|c| c[1].to_owned()) })
+}
+
 // MARK: Codex
 
 /// One token_count event from a Codex session log. Its rate_limits carry the five-hour
