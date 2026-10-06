@@ -6,7 +6,7 @@ resolver = "2"
 members = ["app", "crates/*", "tools/*"]
 
 [workspace.package]
-version = "3.9.0"
+version = "4.0.0"
 edition = "2021"
 # 1.89: File::try_lock, for the single instance on Linux.
 rust-version = "1.89"
