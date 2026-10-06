@@ -316,6 +316,10 @@ fn automation(b: &mut Vec<Block>, i: &Input) {
     let d = |k: &str| a.draft.get(k).cloned().unwrap_or_default();
     b.push(Block::Lead("Work that runs by itself, helpers for your agents, and agents of your own. Nothing here starts until you set it up.".into()));
 
+    heading(b, "Where tasks work");
+    b.push(Block::Group(vec![row("Work in the project folder itself", Some("By default a task that edits files gets its own Git worktree and branch, so two tasks can’t overwrite each other. Switch this on to work in the folder itself. Read-only tasks, Kiro Web, and folders that aren’t Git projects always do.".into()),
+        switch("UseFolder", "Work in the project folder itself", s.automation().use_folder), Lead::Tile("folder", Tint::Blue))]));
+
     heading(b, "Open in editor");
     let ed = s.editor();
     let mut options = vec![("Ask each time".to_owned(), ed.default.is_none())];

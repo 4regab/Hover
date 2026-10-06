@@ -264,17 +264,18 @@ impl DelegationLimits {
 }
 
 /// What runs by itself (hover-agents::sched, webhook, limit): continue a task when its provider's usage limit lifts (the default for a new
-/// limit), and the webhook listener's address (off unless set; this computer's own unless `public` is chosen).
+/// limit), the webhook listener's address (off unless set; this computer's own unless `public` is chosen), and whether a new task
+/// works in the project folder itself (`use_folder`) instead of in a worktree of its own, which is the default (workspace.rs).
 #[derive(Clone, Debug, PartialEq, Default)]
-pub struct AutomationSettings { pub auto_resume: bool, pub webhook_addr: Option<String>, pub webhook_public: bool }
+pub struct AutomationSettings { pub auto_resume: bool, pub webhook_addr: Option<String>, pub webhook_public: bool, pub use_folder: bool }
 
 impl AutomationSettings {
     pub fn to_json(&self) -> Json {
-        Json::obj(vec![("AutoResume", Json::Bool(self.auto_resume)), ("WebhookAddr", Json::opt_str_of(self.webhook_addr.as_deref())), ("WebhookPublic", Json::Bool(self.webhook_public))])
+        Json::obj(vec![("AutoResume", Json::Bool(self.auto_resume)), ("WebhookAddr", Json::opt_str_of(self.webhook_addr.as_deref())), ("WebhookPublic", Json::Bool(self.webhook_public)), ("UseFolder", Json::Bool(self.use_folder))])
     }
     pub fn from_json(v: &Json) -> Result<AutomationSettings> {
         v.props()?;
-        Ok(AutomationSettings { auto_resume: v.get("AutoResume").map(Json::bool).transpose()?.unwrap_or(false), webhook_addr: opt_text(v.get("WebhookAddr"))?, webhook_public: v.get("WebhookPublic").map(Json::bool).transpose()?.unwrap_or(false) })
+        Ok(AutomationSettings { auto_resume: v.get("AutoResume").map(Json::bool).transpose()?.unwrap_or(false), webhook_addr: opt_text(v.get("WebhookAddr"))?, webhook_public: v.get("WebhookPublic").map(Json::bool).transpose()?.unwrap_or(false), use_folder: v.get("UseFolder").map(Json::bool).transpose()?.unwrap_or(false) })
     }
 }
 

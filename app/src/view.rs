@@ -312,6 +312,7 @@ pub fn toggled(h: &dyn Host, pane: &RefCell<Pane>, id: &str, on: bool) {
         // Kiro's page: auto compact and continuing when the model is busy.
         "KiroAutoCompact" => { pages::set_compact(st, id, on); }
         "KiroRetryBusy" => st.set_kiro_retry_busy(on),
+        "UseFolder" => st.set_automation(hover_core::model::AutomationSettings { use_folder: on, ..st.automation() }),
         "AutoResume" => st.set_automation(hover_core::model::AutomationSettings { auto_resume: on, ..st.automation() }),
         "WebhookPublic" => { st.set_automation(hover_core::model::AutomationSettings { webhook_public: on, ..st.automation() }); hv.apply_automation(); }
         "CaEnvSecret" => draft(pane, "ca_env_secret", if on { "1" } else { "0" }),

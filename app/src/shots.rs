@@ -45,7 +45,25 @@ thread_local! {
 
 struct Headless;
 
+/// What `ui_do` was asked to run on the UI thread. The shots have no event loop, so this waits
+/// until `pump` runs it (only the checks that need an answer from a thread call it).
+static QUEUED: std::sync::Mutex<Vec<Box<dyn FnOnce() + Send>>> = std::sync::Mutex::new(Vec::new());
+
+struct Proxy;
+
+impl slint::platform::EventLoopProxy for Proxy {
+    fn quit_event_loop(&self) -> Result<(), slint::EventLoopError> { Ok(()) }
+    fn invoke_from_event_loop(&self, event: Box<dyn FnOnce() + Send>) -> Result<(), slint::EventLoopError> { QUEUED.lock().unwrap().push(event); Ok(()) }
+}
+
+/// Runs what threads asked the UI thread to do.
+fn pump() {
+    let todo = std::mem::take(&mut *QUEUED.lock().unwrap());
+    for f in todo { f(); }
+}
+
 impl Platform for Headless {
+    fn new_event_loop_proxy(&self) -> Option<Box<dyn slint::platform::EventLoopProxy>> { Some(Box::new(Proxy)) }
     fn create_window_adapter(&self) -> Result<Rc<dyn WindowAdapter>, slint::PlatformError> {
         let w = MinimalSoftwareWindow::new(RepaintBufferType::NewBuffer);
         WINDOWS.with(|v| v.borrow_mut().push(w.clone()));
@@ -484,6 +502,48 @@ fn expand_shots(app: &Rc<App>, hover: &Arc<hover_app::app::Hover>, dir: &Path, f
         app.close_drawer();
     }
     *hold_c.lock().unwrap() = false;
+}
+
+/// A task started from the new-task box in a real Git project gets a worktree of its own (#31): the box
+/// says so first, the session then works in the worktree on a new branch, and the project folder is untouched.
+fn workspace_shots(app: &Rc<App>, hover: &Arc<hover_app::app::Hover>, dir: &Path) {
+    let dash = adapter(1);
+    let settle = |ms: u64| {
+        let t = std::time::Instant::now();
+        while t.elapsed() < Duration::from_millis(ms) {
+            slint::platform::update_timers_and_animations();
+            pump();
+            app.office_frame();
+            std::thread::sleep(Duration::from_millis(15));
+        }
+    };
+    hover_agents::agents::seed(AgentTool::Kiro, hover_agents::agents::AgentReady { installed: true, signed_in: true, hint: String::new() });
+    let repo = std::env::temp_dir().join(format!("hover-ws-shot-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&repo);
+    std::fs::create_dir_all(&repo).expect("the project folder");
+    std::fs::write(repo.join("a.txt"), "one\n").unwrap();
+    let git = |args: &[&str]| { let o = std::process::Command::new("git").args(["-c", "user.name=t", "-c", "user.email=t@t", "-c", "init.defaultBranch=main"]).args(args).current_dir(&repo).output().expect("git runs"); assert!(o.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&o.stderr)); };
+    git(&["init", "-q"]);
+    git(&["add", "."]);
+    git(&["commit", "-q", "-m", "first"]);
+    let folder = repo.to_string_lossy().into_owned();
+    app.shot_new_task(&folder, "The whole notch, explained once more.", false);
+    settle(2500);
+    save(&dash, (1200, 720), 1.0, [0, 0, 0], &dir.join("workspace-plan.png"));
+    app.shot_new_task(&folder, "The whole notch, explained once more.", true);
+    let t = std::time::Instant::now();
+    let mine = || hover.sessions.all().into_iter().find(|s| s.folder.contains("worktrees"));
+    while t.elapsed() < Duration::from_secs(20) && mine().is_none() { settle(100); }
+    let s = mine().unwrap_or_else(|| panic!("the task started in a worktree; sessions: {:?}; running {}; can start {}; toast {:?}", hover.sessions.all().iter().map(|s| (s.folder.clone(), s.busy())).collect::<Vec<_>>(), hover.sessions.running(), hover.sessions.can_start(), app.dash.borrow().as_ref().map(|d| d.global::<Office>().get_toast().to_string())));
+    let b = s.ext.workspace.clone().expect("the task has a workspace");
+    assert!(b.is_worktree(), "a worktree of its own, not {:?}", b.kind);
+    assert_ne!(s.folder, folder, "not the project folder");
+    assert!(Path::new(&s.folder).join(".git").exists(), "the worktree is there");
+    assert_eq!(b.source, std::fs::canonicalize(&repo).unwrap().to_string_lossy().trim_start_matches("\\\\?\\"), "cut from the project");
+    println!("workspace: task runs in {} on {:?}", s.folder, b.branch);
+    app.close_drawer();
+    let _ = std::process::Command::new("git").args(["worktree", "prune"]).current_dir(&repo).output();
+    let _ = std::fs::remove_dir_all(&repo);
 }
 
 /// The desk card's sessions: a turn with the steps a real one reports (commands with their
@@ -1474,6 +1534,7 @@ pub fn run(dir: &Path) {
     if !skip("voice") { settings_voice_shots(&app, &hover, dir, &data); }
     settings_integrations_shots(&app, &hover, dir);
     expand_shots(&app, &hover, dir, &folder, &hold_c);
+    workspace_shots(&app, &hover, dir);
     // A VS Code theme (Dark+ as its files say), and the model picker open.
     let t = hover_core::model::SavedTheme { name: "Dark+".into(), dark: true, colors: [("editor.background", "#1e1e1e"), ("foreground", "#cccccc"),
         ("sideBar.background", "#181818"), ("button.background", "#0e639c"), ("terminal.ansiRed", "#cd3131"), ("terminal.ansiYellow", "#e5e510"),

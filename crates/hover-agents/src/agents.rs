@@ -176,6 +176,9 @@ fn checks() -> &'static Mutex<Checks> {
 /// The last check, if any, without running one.
 pub fn known(t: AgentTool) -> Option<AgentReady> { checks().lock().unwrap().done.get(&t).map(|c| c.1.clone()) }
 
+/// Records a check's answer without running one (the screenshots and tests, on a machine without the tool).
+pub fn seed(t: AgentTool, ready: AgentReady) { checks().lock().unwrap().done.insert(t, (Instant::now(), ready)); }
+
 /// What the last check's status command printed, if it said signed in; None otherwise.
 pub fn said(t: AgentTool) -> Option<String> { checks().lock().unwrap().said.get(&t).cloned() }
 

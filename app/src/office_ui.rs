@@ -90,6 +90,8 @@ pub struct Page {
     slots: RefCell<SlotImages>,
     /// The glass panels' blurred copy of the frame, and its working buffers.
     blur: RefCell<Blur>,
+    /// A new task's workspace is being made (a worktree can take a while): another Start waits.
+    starting: Cell<bool>,
     /// Expand chat: the open chat fills the app window (the notch never shows it so).
     pub wide: Cell<bool>,
     /// What each row of the expanded chat's session list opens (a live session by id, a saved one by key).
@@ -102,7 +104,7 @@ pub struct Page {
 
 /// A folder's branch as last looked up (off the UI thread; again after 10 s).
 #[derive(Default)]
-struct Branch { folder: String, label: String, at: Option<Instant>, looking: bool }
+struct Branch { folder: String, label: String, head: bool, at: Option<Instant>, looking: bool }
 
 /// The office's slots as images, and which slot each window last showed (0 the notch, 1
 /// the app window). A window holds its slot until it is given another, so the office
@@ -245,7 +247,7 @@ impl Default for Page {
             #[cfg(windows)] gpu: Default::default(),
             #[cfg(windows)] scratch: Default::default(),
             #[cfg(windows)] slots: Default::default(), blur: Default::default(),
-            wide: Cell::new(false), rows_list: RefCell::new(vec![]), branch: Default::default(), desk: Default::default() }
+            starting: Cell::new(false), wide: Cell::new(false), rows_list: RefCell::new(vec![]), branch: Default::default(), desk: Default::default() }
     }
 }
 
@@ -656,17 +658,39 @@ impl App {
             self.page.branch.borrow_mut().looking = true;
             let folder = folder.to_owned();
             std::thread::Builder::new().name("branch".into()).spawn(move || {
-                let label = match hover_agents::workspace::inspect(&folder) {
-                    Ok(i) => format!("{}{}", i.branch.unwrap_or_else(|| "detached HEAD".into()), if i.linked { " · worktree" } else { "" }),
-                    Err(_) => String::new(),
+                let (label, head) = match hover_agents::workspace::inspect(&folder) {
+                    Ok(i) => (format!("{}{}", i.branch.unwrap_or_else(|| "detached HEAD".into()), if i.linked { " · worktree" } else { "" }), i.head.is_some()),
+                    Err(_) => (String::new(), false),
                 };
                 crate::ui_do(move |a| {
-                    let changed = { let mut b = a.page.branch.borrow_mut(); let c = b.folder != folder || b.label != label; *b = Branch { folder, label, at: Some(Instant::now()), looking: false }; c };
+                    let changed = { let mut b = a.page.branch.borrow_mut(); let c = b.folder != folder || b.label != label; *b = Branch { folder, label, head, at: Some(Instant::now()), looking: false }; c };
                     if changed { a.office_widgets(); }
                 });
             }).ok();
         }
         label
+    }
+
+    /// The new-task box's line about where the task will work, from the same lookup as the branch.
+    /// Empty until Git has answered. The tasks' choice itself is made in workspace::prepare.
+    fn plan_line(self: &Rc<Self>, folder: &str, read_only: bool) -> String {
+        if read_only { return "Read only: it looks at the folder itself.".into(); }
+        if self.hover.settings.automation().use_folder { return "Works in the folder itself, as set in Settings.".into(); }
+        let label = self.branch_of(folder);
+        let b = self.page.branch.borrow();
+        if b.folder != folder || b.at.is_none() { return String::new(); }
+        if label.is_empty() || !b.head { return "Works in the folder itself: it isn’t a Git project with a commit yet.".into(); }
+        format!("Gets its own worktree and branch, cut from {}.", label.trim_end_matches(" · worktree"))
+    }
+
+    /// Shots: a task typed into the new-task box for this folder, shown (`start` false) or started with Start.
+    pub fn shot_new_task(self: &Rc<Self>, folder: &str, text: &str, start: bool) {
+        *self.page.new_folder.borrow_mut() = Some(folder.into());
+        self.page.new_tool.set(0);
+        self.page.fab.set(2);
+        each!(self, |g| g.set_new_draft(s(text)));
+        self.office_widgets();
+        if start { self.notch.global::<crate::ui::Office>().invoke_new_go_clicked(); }
     }
 
     /// The expanded chat's session list: the sessions open now, then the saved ones.
@@ -925,7 +949,8 @@ impl App {
         let folder = p.new_folder.borrow().clone();
         let full = sessions.len() >= 6 && sessions.iter().all(|s| s.busy());
         let can = self.hover.sessions.can_start();
-        let note = if !ready { hover_agents::agents::known(tool).map(|r| r.hint).unwrap_or_default() } else if !can { "3 tasks are running. Start another when one is done.".into() } else if full { "All six desks are busy. Stop or remove a session first.".into() } else { String::new() };
+        let plan_note = |a: &Rc<Self>| -> String { match (&folder, tool == AgentTool::Kiro && p.cloud.borrow().on) { (Some(f), false) => a.plan_line(f, self.new_access(nt) == "read"), _ => String::new() } };
+        let note = if !ready { hover_agents::agents::known(tool).map(|r| r.hint).unwrap_or_default() } else if !can { "3 tasks are running. Start another when one is done.".into() } else if full { "All six desks are busy. Stop or remove a session first.".into() } else { plan_note(self) };
         // The panel's rows.
         let (title, sub, rows, opens) = self.panel_rows(&sessions);
         *p.rows_open.borrow_mut() = opens;
@@ -1295,12 +1320,34 @@ impl App {
             let access = a.new_access(a.page.new_tool.get());
             let picked = a.page.new_folder.borrow().clone();
             let cloud = cloud_on.then(|| a.cloud_repo(picked.as_deref(), true).into_iter().collect::<Vec<_>>());
-            match a.hover.sessions.start_in(tool, &folder, &text, images, Some(access), cloud) {
-                Some(_) => { each!(a, |g| g.set_new_draft(s(""))); a.page.attached.borrow_mut()[1].clear(); a.page.fab.set(0); a.page.cloud.borrow_mut().menu = false; }
-                None => a.toast("All six desks are busy. Stop or remove a session first."),
-            }
-            a.office_changed();
-            a.office_widgets();
+            // Where it works (workspace.rs): a worktree of its own by default. Git makes it off the UI thread.
+            if a.page.starting.replace(true) { return; }
+            use hover_agents::workspace::Choice;
+            let choice = if a.hover.settings.automation().use_folder { Choice::Folder } else { Choice::Own { base: None } };
+            let read_only = access == "read";
+            if matches!(choice, Choice::Own { .. }) && !cloud_on && !read_only { a.toast("Setting up the task’s workspace…"); }
+            let title: String = text.lines().next().unwrap_or("task").chars().take(60).collect();
+            let root = hover_core::paths::support().join("worktrees");
+            std::thread::Builder::new().name("workspace".into()).spawn(move || {
+                let made = hover_agents::workspace::prepare(&folder, &choice, &title, &root, read_only, cloud_on, &hover_agents::cancel::Cancel::new());
+                crate::ui_do(move |a| {
+                    a.page.starting.set(false);
+                    let p = match made { Ok(p) => p, Err(e) => { a.toast(&e); return; } };
+                    // What was decided, in words, unless it is what the user chose or a Kiro Web task's own place.
+                    if let (Choice::Own { .. }, Some(n)) = (&choice, &p.note) { if !cloud_on { a.toast(n); } }
+                    let ext = hover_core::ext::SessionExt { workspace: p.binding.clone(), ..Default::default() };
+                    match a.hover.sessions.start_bound(tool, &p.folder, &text, images, Some(access), cloud, ext) {
+                        Some(_) => { each!(a, |g| g.set_new_draft(s(""))); a.page.attached.borrow_mut()[1].clear(); a.page.fab.set(0); a.page.cloud.borrow_mut().menu = false; }
+                        None => {
+                            // No desk: the worktree just made would stay behind, empty.
+                            if let Some(b) = p.binding.filter(|b| b.is_worktree()) { let _ = hover_agents::workspace::remove(&b, &p.folder, false, false, hover_agents::workspace::RemoveOpts { delete_branch: true, ..Default::default() }); }
+                            a.toast("All six desks are busy. Stop or remove a session first.");
+                        }
+                    }
+                    a.office_changed();
+                    a.office_widgets();
+                });
+            }).ok();
         });
         let a = self.clone();
         g.on_tag_clicked(move |id| a.open_session(id));
