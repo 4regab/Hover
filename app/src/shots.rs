@@ -386,6 +386,106 @@ fn chat_shots(app: &Rc<App>, hover: &Arc<hover_app::app::Hover>, dir: &Path, fol
     }
 }
 
+/// Expand chat (#41): each kind of chat in the small drawer in the app window (before), then
+/// the same chat expanded (after); with the files and changes beside it, the session list
+/// hidden, and the narrowest window. Checks that going there and back keeps the session, the
+/// draft and the place in the thread.
+fn expand_shots(app: &Rc<App>, hover: &Arc<hover_app::app::Hover>, dir: &Path, folder: &str, hold_c: &Arc<std::sync::Mutex<bool>>) {
+    let dash = adapter(1);
+    let settle = |ms: u64| {
+        let t = std::time::Instant::now();
+        while t.elapsed() < Duration::from_millis(ms) {
+            slint::platform::update_timers_and_animations();
+            app.office_frame();
+            std::thread::sleep(Duration::from_millis(15));
+        }
+    };
+    if let Some(d) = &*app.dash.borrow() { d.set_in_settings(false); }
+    app.dash_settings.set(false);
+    app.refresh_page(false);
+    // One that is still streaming, and one that waits for an approval, held open as the chat shots hold theirs.
+    *hold_c.lock().unwrap() = true;
+    let live = hover.sessions.start(AgentTool::Kiro, folder, "Now make it hold when the taskbar is at the top too, and check all three monitors.", vec![]).map(|s| s.id);
+    let asker = hover.sessions.start(AgentTool::Codex, folder, "Make a release build and run it.", vec![]).map(|s| s.id);
+    for id in [live, asker].into_iter().flatten() {
+        let t = std::time::Instant::now();
+        while t.elapsed() < Duration::from_secs(5) && !hover.sessions.get(id).is_some_and(|s| s.kiro_id.is_some() && !s.turns.is_empty() && !s.turns[0].steps.is_empty()) { std::thread::sleep(Duration::from_millis(10)); }
+    }
+    if let Some(id) = asker {
+        let sid = hover.sessions.get(id).and_then(|s| s.kiro_id).unwrap_or_default();
+        let ask = hover_agents::ask::AgentAsk { id: "c1".into(), kind: "execute".into(), title: "Run".into(), command: Some("cargo build --release -p hover".into()), path: None,
+            preview: None, added: 0, removed: 0, reason: "Runs a command".into(), danger: false, questions: None };
+        hover.sessions.ask(AgentTool::Codex, &sid, ask, &hover_agents::cancel::Cancel::new(), Box::new(|_| {}));
+    }
+    let all = hover.sessions.all();
+    let done = all.iter().find(|s| !s.busy() && !s.waiting() && !s.turns.is_empty()).map(|s| s.id);
+    let picks = [("done", done), ("live", live), ("ask", asker)];
+    macro_rules! g { () => { app.dash.borrow().as_ref().expect("the app window").global::<Office>() } }
+    let top_turn = || { let sc = app.page_scroll(); app.page_thread().and_then(|t| t.sections.iter().position(|x| x.y + x.h > sc)) };
+    for (name, sess) in picks {
+        let Some(id) = sess else { println!("no {name} chat for the expanded shots"); continue };
+        app.open_session(id);
+        // A draft written in the small drawer comes along.
+        g!().set_d_draft(format!("a draft for the {name} chat").into());
+        settle(1200);
+        save(&dash, (1200, 720), 1.0, [0, 0, 0], &dir.join(format!("expand-{name}-before.png")));
+        g!().invoke_d_wheel(60.0);
+        settle(300);
+        let (turn, before) = (top_turn(), app.page_scroll());
+        g!().invoke_d_expand();
+        settle(1500);
+        assert!(g!().get_d_wide(), "{name}: the chat is expanded");
+        assert_eq!(app.page.open.get(), Some(id), "{name}: the same session");
+        assert_eq!(g!().get_d_draft().as_str(), format!("a draft for the {name} chat"), "{name}: the draft came along");
+        assert_eq!(top_turn(), turn, "{name}: the reader stays at the same turn ({before} before)");
+        save(&dash, (1200, 720), 1.0, [0, 0, 0], &dir.join(format!("expand-{name}-after.png")));
+        if name == "done" {
+            app.desk_details(id);
+            settle(1500);
+            assert!(app.page.desk.panel.get().is_some(), "the files and changes open beside the chat");
+            assert!(g!().get_d_wide(), "the chat stays expanded beside them");
+            save(&dash, (1200, 720), 1.0, [0, 0, 0], &dir.join("expand-done-details.png"));
+            app.desk_details(id);
+            settle(600);
+            g!().set_list_open(false);
+            settle(600);
+            save(&dash, (1200, 720), 1.0, [0, 0, 0], &dir.join("expand-done-no-list.png"));
+            g!().set_list_open(true);
+            save(&dash, (880, 560), 1.0, [0, 0, 0], &dir.join("expand-done-narrow.png"));
+            save(&dash, (1200, 720), 1.0, [0, 0, 0], &dir.join("expand-done-after-wide-again.png"));
+        }
+        g!().invoke_d_collapse();
+        settle(1200);
+        assert!(!g!().get_d_wide(), "{name}: back to the small drawer");
+        save(&dash, (1200, 720), 1.0, [0, 0, 0], &dir.join(format!("expand-{name}-collapsed.png")));
+        assert_eq!(app.page.open.get(), Some(id), "{name}: still the same session");
+        assert_eq!(g!().get_d_draft().as_str(), format!("a draft for the {name} chat"), "{name}: the draft came back");
+        g!().set_d_draft("".into());
+        app.close_drawer();
+    }
+    // Memory and time: ten trips there and back on the finished chat. Hover's own resident memory
+    // (the agents run as other processes), and how long one switch takes until the next frame.
+    if let Some(id) = done {
+        let rss = || std::fs::read_to_string("/proc/self/status").ok().and_then(|t| t.lines().find_map(|l| l.strip_prefix("VmRSS:").map(|v| v.trim().to_owned()))).unwrap_or_default();
+        app.open_session(id);
+        settle(600);
+        let start = rss();
+        let mut worst = Duration::ZERO;
+        for _ in 0..10 {
+            let t = std::time::Instant::now();
+            g!().invoke_d_expand();
+            settle(300);
+            app.office_frame();
+            worst = worst.max(t.elapsed().saturating_sub(Duration::from_millis(300)));
+            g!().invoke_d_collapse();
+            settle(300);
+        }
+        println!("expand chat memory: {start} before, {} after 10 round trips; slowest switch {} ms beyond the 300 ms wait", rss(), worst.as_millis());
+        app.close_drawer();
+    }
+    *hold_c.lock().unwrap() = false;
+}
+
 /// The desk card's sessions: a turn with the steps a real one reports (commands with their
 /// output, a failed one, a dev server, a page fetched, two subagents), held while it "works".
 fn desk_fixture(a: &RunArgs, hold: &Arc<std::sync::Mutex<bool>>) -> Option<KiroResult> {
@@ -1373,6 +1473,7 @@ pub fn run(dir: &Path) {
     }
     if !skip("voice") { settings_voice_shots(&app, &hover, dir, &data); }
     settings_integrations_shots(&app, &hover, dir);
+    expand_shots(&app, &hover, dir, &folder, &hold_c);
     // A VS Code theme (Dark+ as its files say), and the model picker open.
     let t = hover_core::model::SavedTheme { name: "Dark+".into(), dark: true, colors: [("editor.background", "#1e1e1e"), ("foreground", "#cccccc"),
         ("sideBar.background", "#181818"), ("button.background", "#0e639c"), ("terminal.ansiRed", "#cd3131"), ("terminal.ansiYellow", "#e5e510"),

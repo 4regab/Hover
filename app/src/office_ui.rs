@@ -90,9 +90,19 @@ pub struct Page {
     slots: RefCell<SlotImages>,
     /// The glass panels' blurred copy of the frame, and its working buffers.
     blur: RefCell<Blur>,
+    /// Expand chat: the open chat fills the app window (the notch never shows it so).
+    pub wide: Cell<bool>,
+    /// What each row of the expanded chat's session list opens (a live session by id, a saved one by key).
+    rows_list: RefCell<Vec<(Option<i32>, Option<String>)>>,
+    /// The open chat's workspace branch, for the expanded chat's header.
+    branch: RefCell<Branch>,
     /// The desk card and the desk panel (desk_ui.rs).
     pub desk: crate::desk_ui::DeskUi,
 }
+
+/// A folder's branch as last looked up (off the UI thread; again after 10 s).
+#[derive(Default)]
+struct Branch { folder: String, label: String, at: Option<Instant>, looking: bool }
 
 /// The office's slots as images, and which slot each window last showed (0 the notch, 1
 /// the app window). A window holds its slot until it is given another, so the office
@@ -234,7 +244,8 @@ impl Default for Page {
             picks: Default::default(), qmodels: Default::default(), model_menu: Cell::new(0), attached: Default::default(), thumbs: Default::default(),
             #[cfg(windows)] gpu: Default::default(),
             #[cfg(windows)] scratch: Default::default(),
-            #[cfg(windows)] slots: Default::default(), blur: Default::default(), desk: Default::default() }
+            #[cfg(windows)] slots: Default::default(), blur: Default::default(),
+            wide: Cell::new(false), rows_list: RefCell::new(vec![]), branch: Default::default(), desk: Default::default() }
     }
 }
 
@@ -592,11 +603,97 @@ impl App {
 
     pub fn close_drawer(self: &Rc<Self>) {
         self.keep_draft();
+        self.page.wide.set(false);
         self.page.open.set(None);
         self.send(In::Drawer(None));
         *self.page.thread.borrow_mut() = None;
         each!(self, |g| { g.set_d_draft(s("")); g.set_d_compose(false); });
         self.office_widgets();
+    }
+
+    /// Expand chat: the open session, large, in the app window. It is the same session with
+    /// the same draft, queue and scroll; only the window and the layout change.
+    pub fn expand_chat(self: &Rc<Self>, id: i32) {
+        if self.page.open.get() != Some(id) { self.open_session(id); }
+        let draft = self.shown_draft();
+        self.page.wide.set(true);
+        self.open_dashboard(false);
+        each!(self, |g| g.set_d_draft(draft.clone()));
+        // A second Expand brings the window that has the chat to the front.
+        if let Some(d) = &*self.dash.borrow() {
+            use slint::winit_030::WinitWindowAccessor;
+            d.window().set_minimized(false);
+            d.window().with_winit_window(|w| w.focus_window());
+        }
+        self.office_widgets();
+    }
+
+    /// The reply being written is in the box of the window that shows the chat (each window has
+    /// its own box); the window the user goes to gets it, so nothing typed is lost.
+    fn shown_draft(&self) -> SharedString {
+        if self.page.target.get() == 1 { if let Some(d) = &*self.dash.borrow() { return d.global::<crate::ui::Office>().get_d_draft(); } }
+        self.notch.global::<crate::ui::Office>().get_d_draft()
+    }
+
+    /// Back to the office: the chat is the small drawer again, the details beside it are put away.
+    pub fn collapse_chat(self: &Rc<Self>) {
+        let draft = self.shown_draft();
+        self.page.wide.set(false);
+        each!(self, |g| g.set_d_draft(draft.clone()));
+        self.desk_leave();
+        self.office_widgets();
+    }
+
+    /// The branch (and whether it is a linked worktree) of the open chat's workspace, for the
+    /// expanded chat's header. Git is asked off the UI thread; the last answer shows meanwhile.
+    fn branch_of(self: &Rc<Self>, folder: &str) -> String {
+        if !hover_agents::usable_folder(Some(folder)) { return String::new(); }
+        let (label, start) = {
+            let b = self.page.branch.borrow();
+            (if b.folder == folder { b.label.clone() } else { String::new() }, !b.looking && (b.folder != folder || b.at.is_none_or(|t| t.elapsed() > Duration::from_secs(10))))
+        };
+        if start {
+            self.page.branch.borrow_mut().looking = true;
+            let folder = folder.to_owned();
+            std::thread::Builder::new().name("branch".into()).spawn(move || {
+                let label = match hover_agents::workspace::inspect(&folder) {
+                    Ok(i) => format!("{}{}", i.branch.unwrap_or_else(|| "detached HEAD".into()), if i.linked { " · worktree" } else { "" }),
+                    Err(_) => String::new(),
+                };
+                crate::ui_do(move |a| {
+                    let changed = { let mut b = a.page.branch.borrow_mut(); let c = b.folder != folder || b.label != label; *b = Branch { folder, label, at: Some(Instant::now()), looking: false }; c };
+                    if changed { a.office_widgets(); }
+                });
+            }).ok();
+        }
+        label
+    }
+
+    /// The expanded chat's session list: the sessions open now, then the saved ones.
+    fn list_rows(&self, sessions: &[KiroSession], open: Option<i32>) -> (Vec<ListRow>, Vec<(Option<i32>, Option<String>)>) {
+        let stage_of = |s: &KiroSession| Stage::parse(hover_agents::state::stage(s.state, s.phase)) as i32;
+        let (mut rows, mut opens) = (vec![], vec![]);
+        let head = |text: &str| ListRow { head: true, text: s(text), tool: s(""), stage: 0, on: false };
+        if !sessions.is_empty() {
+            rows.push(head("Open now"));
+            opens.push((None, None));
+            for x in sessions {
+                rows.push(ListRow { head: false, text: s(x.title()), tool: s(x.tool.id()), stage: stage_of(x), on: open == Some(x.id) });
+                opens.push((Some(x.id), None));
+            }
+        }
+        let mut saved: Vec<_> = self.hover.history.as_ref().map(|h| h.entries()).unwrap_or_default().into_iter().filter(|h| !sessions.iter().any(|x| x.key == h.key)).collect();
+        saved.sort_by_key(|h| std::cmp::Reverse(h.updated.unix_ms()));
+        // ponytail: the 30 newest; the history panel lists them all, with search.
+        if !saved.is_empty() {
+            rows.push(head("Saved"));
+            opens.push((None, None));
+            for h in saved.into_iter().take(30) {
+                rows.push(ListRow { head: false, text: s(&h.title), tool: s(h.tool.id()), stage: Stage::parse(hover_agents::state::stage(h.state, hover_agents::stream::KiroPhase::Working)) as i32, on: false });
+                opens.push((None, Some(h.key)));
+            }
+        }
+        (rows, opens)
     }
 
     /// The folder in front in the office: the open chat's, else the new-task box's
@@ -617,7 +714,7 @@ impl App {
     }
 
     pub fn open_panel(self: &Rc<Self>, p: Option<&'static str>) {
-        if p.is_some() { self.desk_leave(); self.page.open.set(None); self.send(In::Drawer(None)); self.page.fab.set(0); }
+        if p.is_some() { self.desk_leave(); self.page.wide.set(false); self.page.open.set(None); self.send(In::Drawer(None)); self.page.fab.set(0); }
         self.page.panel.set(p);
         self.send(In::Panel(p));
         if p == Some("history") { self.list_web(); }
@@ -856,6 +953,17 @@ impl App {
         let menu_rows = mm.map(|t| self.model_rows(t));
         let notice = !self.hover.settings.kiro_notice_seen();
         let shots: Vec<Vec<Image>> = p.attached.borrow().iter().map(|l| l.iter().map(|f| self.thumb(f)).collect()).collect();
+        // The expanded chat's header and list; only the app window shows it large.
+        let wide = p.wide.get() && open.is_some();
+        let (list_rows, list_opens) = if wide { self.list_rows(&sessions, p.open.get()) } else { (vec![], vec![]) };
+        *p.rows_list.borrow_mut() = list_opens;
+        let (status, stage, branch) = match &open {
+            Some(o) if wide => {
+                let st = Stage::parse(hover_agents::state::stage(o.state, o.phase));
+                (if o.stopping { "Stopping…" } else { st.word() }, st as i32, if o.cloud.is_some() { String::new() } else { self.branch_of(&o.folder) })
+            }
+            _ => ("", 0, String::new()),
+        };
         let acc_label = access_label(acc);
         let acc_tip = if cloud_on { format!("{acc_label}: Kiro Web runs every task with full access.") } else { format!("{acc_label}: {} Click to change.", access_note(acc, tool)) };
         each!(self, |g| {
@@ -902,6 +1010,10 @@ impl App {
             g.set_panel_sub(s(&sub));
             if let Some(m) = crate::view::sync(g.get_rows(), &rows) { g.set_rows(m); }
             g.set_drawer(open.is_some());
+            g.set_d_status(s(status));
+            g.set_d_stage(stage);
+            g.set_d_branch(s(&branch));
+            if let Some(m) = crate::view::sync(g.get_list(), &list_rows) { g.set_list(m); }
             if let Some(o) = &open {
                 let (name, c) = hover_office::bot::BOTS[o.bot % 6];
                 let _ = name;
@@ -929,6 +1041,8 @@ impl App {
                 g.set_d_reply_label(s(format!("Reply to {bot}")));
             }
         });
+        self.notch.global::<crate::ui::Office>().set_d_wide(false);
+        if let Some(d) = &*self.dash.borrow() { d.global::<crate::ui::Office>().set_d_wide(wide); }
         if open.is_some() { self.paint_thread(); }
         self.desk_sync();
     }
@@ -1097,7 +1211,11 @@ impl App {
             c.thread.view_h = h;
             // Room under the last turn for the reply circle over the thread's corner.
             c.thread.extra_bottom = 40.0;
+            // A new width (the chat expanded, or came back) keeps the reader at the same place:
+            // the turn at the top of the view, and how far down it (as a share of the turn).
+            let anchor = (c.width > 0.0 && c.width != w && !was_near).then(|| c.thread.sections.iter().position(|x| x.y + x.h > c.scroll).map(|i| (i, (c.scroll - c.thread.sections[i].y) / c.thread.sections[i].h.max(1.0)))).flatten();
             c.thread.set(&turns, w);
+            if let Some((i, frac)) = anchor { if let Some(x) = c.thread.sections.get(i) { c.scroll = x.y + frac * x.h; } }
             if was_near { c.scroll = f32::MAX; }
             *self.page.turns.borrow_mut() = turns;
             c.width = w;
@@ -1301,6 +1419,28 @@ impl App {
         });
         let a = self.clone();
         g.on_d_close(move || a.close_drawer());
+        let a = self.clone();
+        g.on_d_expand(move || if let Some(id) = a.page.open.get() { a.expand_chat(id); });
+        let a = self.clone();
+        g.on_d_collapse(move || a.collapse_chat());
+        let a = self.clone();
+        g.on_d_stop(move || if let Some(id) = a.page.open.get() { a.hover.sessions.stop(id); a.office_changed(); a.office_widgets(); });
+        let a = self.clone();
+        g.on_d_editor(move || if let Some(id) = a.page.open.get() { a.editor_for(id); });
+        let a = self.clone();
+        g.on_d_details(move || if let Some(id) = a.page.open.get() { a.desk_details(id); });
+        let a = self.clone();
+        g.on_list_clicked(move |i| {
+            let r = a.page.rows_list.borrow().get(i as usize).cloned();
+            match r {
+                Some((Some(id), _)) => a.open_session(id),
+                Some((None, Some(key))) => {
+                    if let Some(s) = a.hover.sessions.all().into_iter().find(|s| s.key == key) { a.open_session(s.id); }
+                    else if let Some(s) = a.hover.sessions.wake(&key) { a.office_changed(); a.open_session(s.id); }
+                }
+                _ => {}
+            }
+        });
         let a = self.clone();
         g.on_d_delete(move || { if let Some(s) = a.page.open.get().and_then(|id| a.hover.sessions.get(id)) { a.ask_delete(Some(s.id), None, &s.title(), s.busy()); } });
         let a = self.clone();

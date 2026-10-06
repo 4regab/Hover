@@ -59,6 +59,9 @@ export struct ToolData { id: string, name: string, ready: bool, hint: string }
 export struct PanelRow { kind: int, text: string, sub: string, meta: string, color: color, stage: int, count: string, open: int, key: string, pct: float, desk: bool,
     s1: string, s2: string, s3: string, s4: string }
 
+// A row of the expanded chat's session list: a heading, or a session (live, or saved) with the tool's id and its stage.
+export struct ListRow { head: bool, text: string, tool: string, stage: int, on: bool }
+
 export global Office {
     // The office's items are made (office_ui: false once the office is dropped after 30 s
     // hidden, so the renderer lets go of what it kept for them; true when it is made again).
@@ -178,6 +181,22 @@ export global Office {
     in property <bool> d-jump;
     in-out property <length> d-thread-w;
     in-out property <length> d-thread-h;
+    // Expanded chat: the open chat fills the app window, with the session list and the
+    // desk's panel (files, changes) beside it. Its header's status, and the branch the
+    // workspace is on.
+    in property <bool> d-wide;
+    in property <string> d-status;
+    in property <int> d-stage;
+    in property <string> d-branch;
+    in property <[ListRow]> list;
+    in-out property <bool> list-open: true;
+    in-out property <length> list-w: 248px;
+    callback d-expand();
+    callback d-collapse();
+    callback d-stop();
+    callback d-editor();
+    callback d-details();
+    callback list-clicked(int);
     callback pointer(int, length, length);
     callback wheel(length, length, length);
     callback key(string);
@@ -376,13 +395,15 @@ component ChipButton inherits Rectangle {
     in property <string> icon;
     in property <string> text;
     in property <string> tip;
+    in property <color> fg: #ffffff99;
+    in property <color> bg: #ffffff0e;
     callback clicked();
     height: 20px;
     preferred-width: c.preferred-width;
     accessible-role: AccessibleRole.button;
     accessible-label: tip != "" ? tip : text;
     accessible-action-default => { root.clicked(); }
-    c := Chip { icon: root.icon; text: root.text; width: parent.width; }
+    c := Chip { icon: root.icon; text: root.text; fg: root.fg; bg: root.bg; width: parent.width; }
     ta := TouchArea { mouse-cursor: MouseCursor.pointer; clicked => { root.clicked(); } }
     if ta.has-hover: Rectangle { background: #ffffff14; border-radius: 6px; }
 }
@@ -429,6 +450,9 @@ global PagePaths {
     out property <string> notes: "M9 18V5l12-2v13 M6 15a3 3 0 1 0 0 6 3 3 0 0 0 0-6Z M18 13a3 3 0 1 0 0 6 3 3 0 0 0 0-6Z";
     out property <string> shield: "M12 3 5 6v5c0 4.4 3 8.3 7 9.5 4-1.2 7-5.1 7-9.5V6Z";
     out property <string> folder: "M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z";
+    out property <string> expand: "M15 3h6v6 M9 21H3v-6 M21 3l-7 7 M3 21l7-7";
+    out property <string> shrink: "M4 14h6v6 M20 10h-6V4 M14 10l7-7 M3 21l7-7";
+    out property <string> sidebar: "M5 3h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Z M9 3v18";
     out property <string> bin: "M4 7h16 M10 11v6 M14 11v6 M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12 M9 7V4h6v3";
 }
 
@@ -1094,6 +1118,7 @@ component DeskCard inherits Rectangle {
                                 fg: Desk.c-access-id == "full" ? #ffc46b : #ffffff99; bg: Desk.c-access-id == "full" ? #ffb34017 : #ffffff0e; }
                             if Desk.c-ctx >= 0: Chip { text: Desk.c-ctx + "%"; tip: Desk.c-ctx + "% of the context window used"; }
                             ChipButton { icon: Icons.code; text: "Editor"; tip: "Open this task’s folder in your editor"; clicked => { Desk.card-editor(); } }
+                            ChipButton { icon: PagePaths.expand; text: "Expand"; tip: "Open this chat large, in the app window"; clicked => { Desk.card-expand(); } }
                         }
                     }
                     Text { text: Desk.c-title; font-size: 13px; font-weight: 600; color: white; overflow: elide; accessible-role: text; accessible-id: "deskTitle"; }
@@ -1260,6 +1285,8 @@ export component OfficeView inherits Rectangle {
         if (Office.repo-menu) { Office.open-repos(); return; }
         if (Office.menu) { Office.toggle-menu(); return; }
         if (Office.fab != 0) { Office.new-fold(); return; }
+        // The expanded chat: its details close first, then it goes back to the office.
+        if (Office.drawer && Office.d-wide) { if (Desk.panel) { Desk.panel-close(); } else { Office.d-collapse(); } return; }
         // The reply box closes first, and keeps what was written.
         if (Office.drawer && Office.d-compose) { Office.d-compose = false; focus.focus(); return; }
         if (Office.drawer) { Office.d-close(); return; }
@@ -1287,7 +1314,18 @@ export component OfficeView inherits Rectangle {
         property <length> side-gap: compact ? 8px : 12px;
         property <length> side-w: min(compact ? 360px : 400px, self.width - 2 * side-gap);
         // The desk's panel is wider: its tabs are the eight surfaces.
-        property <length> desk-w: min(720px, self.width - 2 * side-gap);
+        // Beside the expanded chat it is narrower, so the conversation keeps the room.
+        property <length> desk-w: Office.d-wide ? min(560px, max(360px, self.width * 0.42)) : min(720px, self.width - 2 * side-gap);
+        // The reply box is always there in the expanded chat; the conversation and the box
+        // keep to a column this wide (long lines are hard to read), centred.
+        property <bool> composing: Office.d-compose || Office.d-wide;
+        property <length> col-w: 860px;
+        // The session list has room in a window 900 px wide or more, and not beside the details unless it is wide (1400).
+        property <bool> list-allowed: self.width >= 900px && !(Desk.panel && self.width < 1400px);
+        property <bool> list-shown: Office.d-wide && Office.list-open && self.list-allowed;
+        // The expanded chat's own width: the header's buttons keep to their icons when it is under 640 px.
+        property <length> main-w: self.width - 2 * side-gap - (Desk.panel ? desk-w + side-gap : 0px) - (self.list-shown ? Office.list-w : 0px);
+        property <bool> tight: self.main-w < 640px;
         property <bool> desk-now: Desk.card || Desk.panel;
         changed fab-now => { if (self.fab-now == 0 && !Office.drawer) { focus.focus(); } }
         changed drawer-now => { if (!self.drawer-now && Office.fab == 0) { focus.focus(); } }
@@ -1747,9 +1785,9 @@ export component OfficeView inherits Rectangle {
 
         // The chat drawer.
         if Office.drawer: Graphite {
-            x: parent.width - self.width - side-gap;
+            x: Office.d-wide ? side-gap : parent.width - self.width - side-gap;
             y: side-gap;
-            width: side-w;
+            width: Office.d-wide ? parent.width - 2 * side-gap - (Desk.panel ? desk-w + side-gap : 0px) : side-w;
             height: parent.height - 2 * side-gap;
             border-radius: compact ? 16px : 20px;
             accessible-role: groupbox;
@@ -1759,14 +1797,61 @@ export component OfficeView inherits Rectangle {
             dh := TouchArea {
             init => { Office.d-hover = false; }
             changed has-hover => { Office.d-hover = self.has-hover; }
+            Rectangle {
+            width: parent.width;
+            height: parent.height;
+            // The room the session list takes at the left of the expanded chat (none when hidden or the window is narrow).
+            property <length> lw: list-shown ? Office.list-w : 0px;
+            // The sessions, open now and saved, in the expanded chat; a drag on its edge resizes it.
+            if self.lw > 0: Rectangle {
+                x: 0px;
+                width: parent.lw;
+                background: #ffffff06;
+                accessible-role: list;
+                accessible-label: "Sessions";
+                Flickable {
+                    width: parent.width;
+                    height: parent.height;
+                    VerticalLayout {
+                        padding: 8px;
+                        spacing: 2px;
+                        for r[i] in Office.list: Rectangle {
+                            height: r.head ? 26px : 34px;
+                            if r.head: Text { x: 8px; y: 4px; text: r.text.to-uppercase(); font-family: "Pixelify Sans"; font-weight: 600; font-size: 10.5px; letter-spacing: 0.63px; color: #f6f2ff61; vertical-alignment: center; }
+                            if !r.head: Rectangle {
+                                border-radius: 8px;
+                                background: r.on ? #ffffff14 : lta.has-hover ? #ffffff0a : transparent;
+                                accessible-role: button;
+                                accessible-label: r.text + (r.on ? ", open" : "");
+                                accessible-action-default => { Office.list-clicked(i); }
+                                HorizontalLayout { padding-left: 9px; padding-right: 9px; spacing: 8px;
+                                    VerticalLayout { alignment: center; Rectangle { width: 8px; height: 8px; border-radius: 4px;
+                                        background: r.stage == 0 ? #7fb8ff : r.stage == 1 ? #c4a2ff : r.stage == 2 ? #4ade80 : r.stage == 3 ? #ff5b52 : r.stage == 5 ? #ffb340 : #ffffff40; } }
+                                    Text { text: r.text; font-size: 12.5px; font-weight: r.on ? 600 : 400; color: r.on ? #f6f2ff : #f6f2ffc4; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; }
+                                }
+                                lta := TouchArea { mouse-cursor: pointer; clicked => { Office.list-clicked(i); } }
+                            }
+                        }
+                    }
+                }
+                Rectangle { x: parent.width - 1px; width: 1px; background: #ffffff0f; }
+                Rectangle { x: parent.width - 4px; width: 8px;
+                    TouchArea { mouse-cursor: ew-resize; moved => { if (self.pressed) { Office.list-w = max(180px, min(420px, Office.list-w + (self.mouse-x - self.pressed-x))); } } } }
+            }
             VerticalLayout {
+                x: parent.lw;
+                width: parent.width - parent.lw;
+                height: parent.height;
                 // .dh: the tool's logo, the task, and its folder, access and context; delete, close.
                 HorizontalLayout {
+                    vertical-stretch: 0;
                     padding-left: compact ? 10px : 12px;
                     padding-right: compact ? 8px : 10px;
                     padding-top: compact ? 8px : 12px;
                     padding-bottom: compact ? 8px : 11px;
                     spacing: compact ? 9px : 11px;
+                    if Office.d-wide && list-allowed: VerticalLayout { alignment: center;
+                        XButton { id: "dList"; label: Office.list-open ? "Hide the session list" : "Show the session list"; icon: PagePaths.sidebar; small: compact; clicked => { Office.list-open = !Office.list-open; } } }
                     VerticalLayout { alignment: center; Logo { width: compact ? 26px : 30px; height: self.width; radius: compact ? 8px : 9px;
                         mark: compact ? 15px : Office.d-tool-id == "codex" ? 22px : 18px; tool: Office.d-tool-id;
                         accessible-role: image; accessible-label: Office.d-tool; } }
@@ -1786,6 +1871,12 @@ export component OfficeView inherits Rectangle {
                                         Path { width: 11px; height: 11px; viewbox-width: 11; viewbox-height: 11; stroke: #ffffffbf; stroke-width: 2px; fill: transparent;
                                             commands: "M 5.5 1.5 A 4 4 0 " + (Office.d-ctx > 50 ? "1" : "0") + " 1 " + (5.5 + 4 * sin(360deg * min(Office.d-ctx, 99.9) / 100)) + " " + (5.5 - 4 * cos(360deg * min(Office.d-ctx, 99.9) / 100)); } } }
                                     Text { text: Office.d-ctx + "%"; font-size: 11px; font-weight: 500; color: #ffffff99; vertical-alignment: center; } } }
+                            // The expanded chat says more: where the workspace stands, which model, and how it is going.
+                            if Office.d-wide && Office.d-branch != "": Chip { icon: Icons.git; text: Office.d-branch; tip: "Branch: " + Office.d-branch; shrink: true; }
+                            if Office.d-wide && Office.d-model-shown: Chip { text: Office.d-model + (Office.d-model-effort != "" ? " · " + Office.d-model-effort : ""); tip: "Model"; shrink: true; }
+                            if Office.d-wide: Chip { text: Office.d-status; tip: "Status: " + Office.d-status;
+                                fg: Office.d-stage <= 1 ? #d9c4ff : Office.d-stage == 2 ? #7ee59a : Office.d-stage == 3 ? #ff9a92 : Office.d-stage == 5 ? #ffc46b : #ffffff99;
+                                bg: Office.d-stage <= 1 ? #9b6bff24 : Office.d-stage == 2 ? #30d1581a : Office.d-stage == 3 ? #ff453a1f : Office.d-stage == 5 ? #ffb3401f : #ffffff0e; }
                             // Kiro Web: opens this session there; says so while hovered.
                             if Office.d-cloud: Rectangle { height: 20px; width: 26px; border-radius: 6px; background: cw.has-hover ? #6ba8ff33 : #6ba8ff1c;
                                 accessible-role: button; accessible-id: "dCloud"; accessible-label: "Open cloud session";
@@ -1797,14 +1888,27 @@ export component OfficeView inherits Rectangle {
                                     ct := Text { text: "Open cloud session"; font-size: 11px; font-weight: 500; color: #f6f2ffde; vertical-alignment: center; } } }
                         }
                     }
+                    if Office.d-wide: VerticalLayout { alignment: center; HorizontalLayout { spacing: 6px;
+                        if Office.d-busy && !Office.d-stopping: ChipButton { icon: PagePaths.stop; text: tight ? "" : "Stop"; tip: "Stop this run"; fg: #ff9a92; bg: #ff453a1f; clicked => { Office.d-stop(); } }
+                        ChipButton { icon: Icons.code; text: tight ? "" : "Editor"; tip: "Open this task’s folder in your editor"; clicked => { Office.d-editor(); } }
+                        ChipButton { icon: DeskIcons.files; text: tight ? "" : "Files & changes"; tip: Desk.panel ? "Close the files and changes" : "Open the files and changes beside the chat"; clicked => { Office.d-details(); } }
+                    } }
+                    VerticalLayout { alignment: center; XButton { id: "dExpand"; label: Office.d-wide ? "Back to the office" : "Expand chat"; icon: Office.d-wide ? PagePaths.shrink : PagePaths.expand; small: compact;
+                        clicked => { if (Office.d-wide) { Office.d-collapse(); } else { Office.d-expand(); } } } }
                     VerticalLayout { alignment: center; XButton { id: "dDel"; label: "Delete this session"; icon: PagePaths.bin; small: compact; clicked => { Office.d-delete(); } } }
                     VerticalLayout { alignment: center; XButton { id: "dClose"; label: "Close"; icon: Icons.close; small: compact; clicked => { Office.d-close(); } } }
                 }
                 Rectangle { height: 1px; background: #ffffff0f; }
                 thread := Rectangle {
                     vertical-stretch: 1;
+                    // Beside the column the wheel still scrolls the conversation.
+                    TouchArea { scroll-event(e) => { Office.d-wheel(e.delta-y); accept } }
+                    col := Rectangle {
+                    x: (parent.width - self.width) / 2;
+                    width: Office.d-wide ? min(parent.width, col-w) : parent.width;
+                    height: parent.height;
                     init => { Office.d-thread-w = self.width; Office.d-thread-h = self.height; }
-                    changed width => { Office.d-thread-w = self.width; }
+                    changed width => { Office.d-thread-w = self.width; Office.d-resized(); }
                     changed height => { Office.d-thread-h = self.height; Office.d-resized(); }
                     Image { width: 100%; height: 100%; source: Office.d-thread; image-fit: fill; }
                     TouchArea {
@@ -1816,17 +1920,19 @@ export component OfficeView inherits Rectangle {
                             // An empty reply box closes; one with words in it stays.
                             if (e.button == PointerEventButton.left && e.kind == PointerEventKind.down) {
                                 if (Office.d-compose && Office.d-draft == "" && Office.d-shots.length == 0) { Office.d-compose = false; }
-                                focus.focus();
+                                // The expanded chat keeps the keys in its reply box (Ctrl+C there copies the selection too).
+                                if (!Office.d-wide) { focus.focus(); }
                                 Office.d-pointer(0, self.mouse-x, self.mouse-y, e.modifiers.shift);
                             }
                             if (e.button == PointerEventButton.left && e.kind == PointerEventKind.up) { Office.d-pointer(2, self.mouse-x, self.mouse-y, false); }
                         }
                         moved => { if (self.pressed) { Office.d-pointer(1, self.mouse-x, self.mouse-y, false); } }
                     }
+                    }
                     // .jump: "Latest", over the thread's end, once the reader is well above it.
                     if Office.d-jump: Glass {
                         x: (parent.width - self.width) / 2;
-                        y: parent.height - self.height - (Office.d-compose ? 12px : 56px);
+                        y: parent.height - self.height - (composing ? 12px : 56px);
                         width: jl.preferred-width;
                         height: 24px;
                         border-radius: 12px;
@@ -1843,7 +1949,7 @@ export component OfficeView inherits Rectangle {
                     // bottom right, which grows to say "Reply to Juno" (and the start of a
                     // draft) under the pointer; a dot while a draft waits. A click, or a
                     // character typed while the chat has the keyboard, opens the box.
-                    if !Office.d-compose: Rectangle {
+                    if !composing: Rectangle {
                         property <bool> draft: Office.d-draft != "" || Office.d-shots.length > 0;
                         property <bool> wide: rta.has-hover;
                         x: parent.width - self.width - 10px;
@@ -1885,19 +1991,19 @@ export component OfficeView inherits Rectangle {
                 }
                 // The question at the end of the chat (askHTML(s, 'chat')): kept in view
                 // over the composer while the agent waits.
-                if Office.d-asking: HorizontalLayout { padding-left: 14px; padding-right: 14px; padding-top: 4px; padding-bottom: Office.d-compose ? 0 : 8px;
-                    AskCard { w: parent.width - 28px; a: Office.d-ask; tool: Office.d-tool-id; over: false; answer(how) => { Office.answer(-1, Office.d-ask.id, how); }
+                if Office.d-asking: HorizontalLayout { alignment: center; padding-left: 14px; padding-right: 14px; padding-top: 4px; padding-bottom: composing ? 0 : 8px;
+                    AskCard { w: min(parent.width - 28px, col-w); a: Office.d-ask; tool: Office.d-tool-id; over: false; answer(how) => { Office.answer(-1, Office.d-ask.id, how); }
                         pick(qi, l) => { Office.q-pick(-1, Office.d-ask.id, qi, l); } typed(qi, v) => { Office.q-text(-1, Office.d-ask.id, qi, v); }
                         send => { Office.q-send(-1, Office.d-ask.id); } } }
                 // .comp: the reply box, grown out of the circle. The text, then a bar with +,
                 // the model, Hide (Esc: the draft stays), and one round button that sends,
                 // queues a reply while a run goes, or pauses the run when the box is empty.
-                if Office.d-compose: Rectangle {
+                if composing: Rectangle {
                     height: comp.preferred-height + 16px;
                     Rectangle {
-                        x: 10px;
+                        x: Office.d-wide ? (parent.width - self.width) / 2 : 10px;
                         y: 6px;
-                        width: parent.width - 20px;
+                        width: Office.d-wide ? min(parent.width - 20px, col-w) : parent.width - 20px;
                         height: comp.preferred-height;
                         border-radius: 17px;
                         background: #1b181ff0;
@@ -1915,7 +2021,7 @@ export component OfficeView inherits Rectangle {
                             if Office.d-shots.length > 0: Shots { shots: Office.d-shots; which: 1; padding: 3px; padding-bottom: 6px; }
                             // Past 140 px the reply scrolls inside, the caret kept in view.
                             Rectangle {
-                                height: max(24px, min(140px, input.preferred-height + 6px));
+                                height: max(Office.d-wide ? 64px : 24px, min(Office.d-wide ? 240px : 140px, input.preferred-height + 6px));
                                 dfl := Flickable {
                                     x: 2px;
                                     y: 3px;
@@ -1963,7 +2069,7 @@ export component OfficeView inherits Rectangle {
                                 // Not confirmed yet: the tool hasn't said the run stopped.
                                 if Office.d-voice != "": Text { text: Office.d-voice; font-size: 11.5px; color: #ff8fa3; vertical-alignment: center; overflow: elide; accessible-role: text; accessible-id: "dVoice"; }
                                 if Office.d-stopping: Text { text: "Stopping…"; font-size: 11.5px; color: #ffc46b; vertical-alignment: center; accessible-role: text; }
-                                Rectangle { width: 26px; height: 28px;
+                                if !Office.d-wide: Rectangle { width: 26px; height: 28px;
                                     accessible-role: button; accessible-id: "hideBtn"; accessible-label: "Hide. Keeps your draft";
                                     accessible-action-default => { Office.d-compose = false; focus.focus(); }
                                     Rectangle { y: 1px; width: 26px; height: 26px; border-radius: 9px; background: hta.has-hover ? #ffffff12 : transparent;
@@ -1980,6 +2086,7 @@ export component OfficeView inherits Rectangle {
                         }
                     }
                 }
+            }
             }
             }
         }

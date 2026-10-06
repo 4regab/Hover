@@ -620,6 +620,8 @@ impl App {
         let a = self.clone();
         g.on_card_send(move || a.desk_card_send());
         let a = self.clone();
+        g.on_card_expand(move || { if let Some(id) = a.page.desk.card.get() { a.desk_close_card(); a.expand_chat(id); } });
+        let a = self.clone();
         g.on_card_chat(move || { if let Some(id) = a.page.desk.card.get() { a.desk_close_card(); a.open_session(id); } });
         let a = self.clone();
         g.on_card_key(move |k| {
@@ -734,8 +736,8 @@ impl App {
         let d = &self.page.desk;
         d.card.set(None);
         self.desk_clear_floats();
-        // The panel takes the chat's and the other panels' place.
-        if self.page.open.get().is_some() { self.close_drawer(); }
+        // The panel takes the chat's and the other panels' place; the expanded chat keeps its own, and the panel sits beside it.
+        if self.page.open.get().is_some() && !self.page.wide.get() { self.close_drawer(); }
         if self.page.panel.get().is_some() { self.open_panel(None); }
         if let Some((old, _)) = d.panel.get() { if old != id { self.desk_leave_tab(); } }
         d.panel.set(Some((id, tab)));
@@ -801,6 +803,11 @@ impl App {
     /// Open in editor: the card's own folder (a task's worktree is the folder), off the UI thread. The answer is a toast.
     fn desk_open_editor(self: &Rc<Self>) {
         let Some(id) = self.page.desk.card.get().or(self.page.desk.panel.get().map(|p| p.0)) else { return };
+        self.editor_for(id);
+    }
+
+    /// Open in editor for a session: the expanded chat's button, as well as the card's.
+    pub(crate) fn editor_for(self: &Rc<Self>, id: i32) {
         let Some(s) = self.hover.sessions.get(id) else { return };
         let (settings, folder, cloud) = (self.hover.settings.editor(), s.folder.clone(), s.cloud.is_some());
         std::thread::Builder::new().name("open-editor".into()).spawn(move || {
@@ -808,6 +815,20 @@ impl App {
                 .unwrap_or_else(|e| if e == "Pick an editor first." { "Choose a default editor in Settings → Automation.".to_owned() } else { e });
             crate::ui_do(move |a| a.toast(&said));
         }).ok();
+    }
+
+    /// The expanded chat's Files & changes: the desk's panel beside the conversation (Changes
+    /// if the folder has any to show, else Files), or closed if it is open.
+    pub(crate) fn desk_details(self: &Rc<Self>, id: i32) {
+        if self.page.desk.panel.get().is_some_and(|p| p.0 == id) { self.desk_close_panel(); return; }
+        let Some(sess) = self.hover.sessions.get(id) else { return };
+        let snap = self.desk_snap(&sess);
+        let tiles = self.desk_tiles(id, &snap);
+        let tab = ["diff", "files"].iter().filter_map(|n| TABS.iter().position(|t| t == n)).find(|&i| tiles.get(i).is_some_and(|t| t.enabled));
+        match tab {
+            Some(t) => self.desk_open(id, t),
+            None => { let why = TABS.iter().position(|t| *t == "diff").and_then(|i| tiles.get(i)).map(|t| t.reason.clone()).unwrap_or_default(); self.toast(&why); }
+        }
     }
 
     fn desk_tiles(&self, id: i32, snap: &d::Snap) -> Vec<d::Tile> {
