@@ -10,7 +10,9 @@
 //! Kiro IDE's command is `kiro`, which is not kiro-cli (the agent Hover runs): a `kiro` that
 //! turns out to be kiro-cli's own file is refused.
 
-use crate::proc::{home, on_path};
+use crate::proc::on_path;
+#[cfg(unix)]
+use crate::proc::home;
 use hover_core::model::EditorSettings;
 use std::path::{Path, PathBuf};
 

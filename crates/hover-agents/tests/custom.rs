@@ -43,6 +43,8 @@ fn a_custom_conversation_keeps_its_agent_across_a_restart_and_survives_the_agent
     assert!(again.reply(woke.id, "more", vec![]));
     wait_for(|| again.get(woke.id).is_some_and(|x| !x.busy() && x.turns.len() == 2 && x.turns[1].result.is_some()));
     assert_eq!(which.lock().unwrap().last().unwrap(), "custom ca-one");
+    // The turn is saved just after it ends: wait until it is on disk before another copy reads it.
+    wait_for(|| again.history().unwrap().load(&s.key).is_some_and(|x| x.turns.len() == 2));
     // The agent is removed: the conversation stays, and a reply says what to do instead of using some other agent.
     let gone = KiroSessions::new(make(which.clone()), hist());
     gone.set_custom(|_| None);

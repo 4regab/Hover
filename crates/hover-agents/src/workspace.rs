@@ -456,7 +456,8 @@ mod tests {
     fn temp(name: &str) -> PathBuf {
         let d = std::env::temp_dir().join(format!("hover-ws-{name}-{}-{}", std::process::id(), hex(6)));
         std::fs::create_dir_all(&d).unwrap();
-        std::fs::canonicalize(&d).unwrap()
+        // Without Windows' \\?\ prefix, which git can't take in a path.
+        PathBuf::from(std::fs::canonicalize(&d).unwrap().to_string_lossy().trim_start_matches(r"\\?\"))
     }
 
     fn sh(dir: &Path, args: &[&str]) -> String {

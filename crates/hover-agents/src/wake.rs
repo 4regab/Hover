@@ -168,8 +168,9 @@ impl Executor {
         let file = std::fs::OpenOptions::new().create(true).read(true).write(true).truncate(false).open(&path).map_err(|e| format!("the lock file: {e}"))?;
         match file.try_lock() {
             Ok(()) => {
-                let _ = file.set_len(0);
-                let _ = std::io::Write::write_all(&mut &file, who.as_bytes());
+                // The name goes in a file of its own: on Windows the lock keeps everyone else from reading the locked file.
+                // A glance (`held`, no name) writes nothing, so it can't blank the holder's name.
+                if !who.is_empty() { let _ = std::fs::write(dir.join("executor.who"), who.as_bytes()); }
                 Ok(Executor { _file: file, path })
             }
             Err(_) => Err(Self::holder(dir)),
@@ -177,7 +178,7 @@ impl Executor {
     }
 
     /// The name the holder wrote (empty if it hasn't yet).
-    pub fn holder(dir: &Path) -> String { std::fs::read_to_string(dir.join("executor.lock")).unwrap_or_default().trim().to_owned() }
+    pub fn holder(dir: &Path) -> String { std::fs::read_to_string(dir.join("executor.who")).unwrap_or_default().trim().to_owned() }
 
     pub fn path(&self) -> &Path { &self.path }
 }

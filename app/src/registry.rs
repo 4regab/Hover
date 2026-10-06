@@ -73,6 +73,7 @@ pub fn install(plan: &Plan, root: &Path, cancel: &Cancel) -> Result<Installed, S
             let (exe, args, env) = custom::command_of(&plan.dist, &dir);
             // The program is inside the folder it was unpacked into, links followed, and runs.
             let inside = std::fs::canonicalize(&exe).ok().filter(|p| std::fs::canonicalize(&dir).is_ok_and(|d| p.starts_with(d)));
+            #[cfg_attr(not(unix), allow(unused_variables))]
             let Some(real) = inside.filter(|p| p.is_file()) else { let _ = std::fs::remove_dir_all(&dir); return Err("The program named in the registry isn’t in the download.".into()) };
             #[cfg(unix)]
             { use std::os::unix::fs::PermissionsExt; let _ = std::fs::set_permissions(&real, std::fs::Permissions::from_mode(0o755)); }

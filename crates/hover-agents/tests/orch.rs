@@ -18,7 +18,8 @@ fn dir(name: &str) -> PathBuf {
     let d = std::env::temp_dir().join(format!("hover-orch-{name}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&d);
     std::fs::create_dir_all(&d).unwrap();
-    std::fs::canonicalize(&d).unwrap()
+    // Without Windows' \\?\ prefix, which git can't take in a path.
+    PathBuf::from(std::fs::canonicalize(&d).unwrap().to_string_lossy().trim_start_matches(r"\\?\"))
 }
 
 fn wait_for(what: &str, f: impl Fn() -> bool) {
