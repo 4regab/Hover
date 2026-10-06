@@ -263,6 +263,21 @@ impl DelegationLimits {
     }
 }
 
+/// What runs by itself (hover-agents::sched, webhook, limit): continue a task when its provider's usage limit lifts (the default for a new
+/// limit), and the webhook listener's address (off unless set; this computer's own unless `public` is chosen).
+#[derive(Clone, Debug, PartialEq, Default)]
+pub struct AutomationSettings { pub auto_resume: bool, pub webhook_addr: Option<String>, pub webhook_public: bool }
+
+impl AutomationSettings {
+    pub fn to_json(&self) -> Json {
+        Json::obj(vec![("AutoResume", Json::Bool(self.auto_resume)), ("WebhookAddr", Json::opt_str_of(self.webhook_addr.as_deref())), ("WebhookPublic", Json::Bool(self.webhook_public))])
+    }
+    pub fn from_json(v: &Json) -> Result<AutomationSettings> {
+        v.props()?;
+        Ok(AutomationSettings { auto_resume: v.get("AutoResume").map(Json::bool).transpose()?.unwrap_or(false), webhook_addr: opt_text(v.get("WebhookAddr"))?, webhook_public: v.get("WebhookPublic").map(Json::bool).transpose()?.unwrap_or(false) })
+    }
+}
+
 /// Core.SavedTheme(Name, Dark, Colors): a VS Code theme's few colours, kept.
 #[derive(Clone, Debug, PartialEq)]
 pub struct SavedTheme { pub name: String, pub dark: bool, pub colors: Vec<(String, String)> }

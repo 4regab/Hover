@@ -4,7 +4,7 @@
 //! flush forces them out. Keys an older build wrote are ignored and dropped.
 
 use crate::json::{self, Json, Result};
-use crate::model::{notch_item, opt_text, AcpOption, AgentApproval, AgentOptions, AgentTool, Appearance, DelegationLimits, EditorSettings, SavedTheme, WorkspaceSize};
+use crate::model::{notch_item, opt_text, AcpOption, AgentApproval, AgentOptions, AgentTool, Appearance, AutomationSettings, DelegationLimits, EditorSettings, SavedTheme, WorkspaceSize};
 use crate::projects::{Project, VoiceSettings, Workspace};
 use crate::shortcut::Shortcut;
 use std::path::{Path, PathBuf};
@@ -67,6 +67,8 @@ pub struct Model {
     pub editor: Option<EditorSettings>,
     /// How far agents may delegate to helpers (hover-agents::orch). None (never set) is the defaults; written only once set.
     pub delegation: Option<DelegationLimits>,
+    /// Resuming at a usage limit's reset and the webhook address (hover-agents). None (never set) is off; written only once set.
+    pub automation: Option<AutomationSettings>,
     pub sc_workspace: Shortcut,
     /// The registered projects, voice's settings and its default workspace (new in 3.x;
     /// null in a file from before them).
@@ -81,7 +83,7 @@ impl Default for Model {
             hover_opens_workspace: true, notch_items: None, appearance: Appearance::System, theme: None, workspace_size: WorkspaceSize::Default,
             kiro_folder: None, kiro_notice_seen: false, kiro_model: None, kiro_effort: Some("high".into()), kiro_agent: None,
             kiro_read_only: false, kiro_require_mcp: false, kiro_idle_minutes: 5, kiro_hide_steps: false, kiro_approval: AgentApproval::Autopilot, agents: None, agent_offers: None,
-            agent_tool: None, computer_use: false, sandbox: None, agent_browser: None, agent_spaces: false, space_image: None, kiro_auto_compact: None, kiro_compact_at: None, kiro_retry_busy: None, discord_presence: None, editor: None, delegation: None, sc_workspace: Shortcut::DEFAULT, projects: None, voice: None, default_workspace: None,
+            agent_tool: None, computer_use: false, sandbox: None, agent_browser: None, agent_spaces: false, space_image: None, kiro_auto_compact: None, kiro_compact_at: None, kiro_retry_busy: None, discord_presence: None, editor: None, delegation: None, automation: None, sc_workspace: Shortcut::DEFAULT, projects: None, voice: None, default_workspace: None,
         }
     }
 }
@@ -108,6 +110,7 @@ impl Model {
             self.discord_presence.map(|v| ("DiscordPresence", Json::Bool(v))),
             self.editor.as_ref().map(|v| ("Editor", v.to_json())),
             self.delegation.as_ref().map(|v| ("Delegation", v.to_json())),
+            self.automation.as_ref().map(|v| ("Automation", v.to_json())),
         ].into_iter().flatten().collect();
         let mut props = vec![
             ("HoverOpensWorkspace", Json::Bool(self.hover_opens_workspace)),
@@ -176,6 +179,7 @@ impl Model {
                 "DiscordPresence" => m.discord_presence = if x.is_null() { None } else { Some(b()?) },
                 "Editor" => m.editor = if x.is_null() { None } else { Some(EditorSettings::from_json(x)?) },
                 "Delegation" => m.delegation = if x.is_null() { None } else { Some(DelegationLimits::from_json(x)?) },
+                "Automation" => m.automation = if x.is_null() { None } else { Some(AutomationSettings::from_json(x)?) },
                 // A null shortcut would leave C# with none at all (and a crash where
                 // it is read); here it is unset, as a cleared shortcut is.
                 "ScWorkspace" => m.sc_workspace = if x.is_null() { Shortcut::default() } else { Shortcut::from_json(x)? },
@@ -447,6 +451,9 @@ impl Settings {
     /// How far agents may delegate (the limits the user set, else the defaults).
     pub fn delegation(&self) -> DelegationLimits { self.m.lock().unwrap().delegation.unwrap_or_default() }
     pub fn set_delegation(&self, v: DelegationLimits) { self.change(|m| m.delegation = Some(v)) }
+
+    pub fn automation(&self) -> AutomationSettings { self.m.lock().unwrap().automation.clone().unwrap_or_default() }
+    pub fn set_automation(&self, v: AutomationSettings) { self.change(|m| m.automation = Some(v)) }
 
     /// Launch at login: outside settings.json, in the platform's own place.
     pub fn launch_at_login(&self) -> bool { self.autostart.enabled() }

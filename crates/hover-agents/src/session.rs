@@ -687,7 +687,13 @@ impl KiroSessions {
     pub fn reply(&self, id: i32, text: &str, images: Vec<String>) -> bool { self.reply_msg(id, Msg { text: text.into(), images, ..Default::default() }) }
 
     /// reply, with chips and a provider switch. A reply from the user also frees a held queue: the oldest waiting message goes first.
-    pub fn reply_msg(&self, id: i32, m: Msg) -> bool {
+    pub fn reply_msg(&self, id: i32, m: Msg) -> bool { self.reply_at(id, m, false) }
+
+    /// reply_msg, but the message goes *ahead* of any that wait: it is the next sent (and starts now when nothing runs). For a
+    /// continuation that must finish before the follow-ups held behind it.
+    pub fn reply_first(&self, id: i32, m: Msg) -> bool { self.reply_at(id, m, true) }
+
+    fn reply_at(&self, id: i32, m: Msg, front: bool) -> bool {
         let Msg { text, images, chips, switch_to } = m;
         let text = text.as_str();
         let mut g = self.0.inner.lock().unwrap();
@@ -699,10 +705,11 @@ impl KiroSessions {
         t.chips = chips;
         t.switch_to = switch_to;
         slot.s.held = false;
+        let at = if front { slot.s.turns.iter().position(|x| x.queued) } else { None };
         // Replies left queued (behind a stop that wasn't confirmed) go first, in order.
         let start_now = !slot.s.busy();
         t.queued = slot.s.busy() || slot.s.turns.iter().any(|t| t.queued);
-        slot.s.turns.push(t);
+        match at { Some(i) => slot.s.turns.insert(i, t), None => slot.s.turns.push(t) }
         slot.s.rev += 1;
         let begun = if start_now { Some(self.begin(&mut g, id)) } else { None };
         let snap = g.all.iter().find(|x| x.s.id == id).unwrap().s.clone();
@@ -923,9 +930,11 @@ impl KiroSessions {
     pub fn dismiss(&self, id: i32) {
         let mut g = self.0.inner.lock().unwrap();
         let Some(i) = g.all.iter().position(|x| x.s.id == id && !x.s.busy()) else { return };
-        g.all.remove(i);
+        let gone = g.all.remove(i).s;
         if g.selected == Some(id) { g.selected = None; }
         drop(g);
+        // Putting a task away ends what was waiting on its behalf (watches, resumes).
+        self.stopping(&gone);
         self.raise(vec![Note::Changed]);
     }
 
@@ -1453,6 +1462,10 @@ fn go(me: Weak<Shared>, id: i32, ti: usize, run: RunTask, ct: Cancel, cp: Option
             next = false;
             slot.s.held = true;
         } else if next && !pausing && (r.state == KiroState::Cancelled || r.unconfirmed) {
+            slot.s.held = true;
+            next = false;
+        } else if next && r.state == KiroState::Failed && crate::limit::detect(&r.text, Stamp::now().unix_ms(), 0).is_some() {
+            // The provider's usage ran out: what waits would only meet the same wall, so it is held until the task is continued.
             slot.s.held = true;
             next = false;
         }

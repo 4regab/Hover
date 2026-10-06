@@ -216,6 +216,9 @@ pub struct Scheduler {
     env: Arc<dyn Env>,
     doc: Option<Sealed>,
     executor: Mutex<Option<String>>,
+    /// Run only what asks nothing (the background service): a task that asks before it acts waits for the app.
+    service: std::sync::atomic::AtomicBool,
+    hold: std::sync::atomic::AtomicBool,
 }
 
 const KIND: &str = "task";
@@ -223,7 +226,8 @@ const KIND: &str = "task";
 impl Scheduler {
     pub fn new(sessions: KiroSessions, env: Arc<dyn Env>, wake: Arc<Wake>, doc: Option<Sealed>) -> Arc<Scheduler> {
         let tasks = doc.as_ref().and_then(Sealed::read).and_then(|v| match v.get("Tasks") { Some(Json::Arr(a)) => Some(a.iter().filter_map(|t| Task::from_json(t).ok()).collect::<Vec<_>>()), _ => None }).unwrap_or_default();
-        let s = Arc::new_cyclic(|me| Scheduler { me: me.clone(), tasks: Mutex::new(tasks), waiting: Mutex::new(VecDeque::new()), wake: wake.clone(), sessions: sessions.clone(), env, doc, executor: Mutex::new(None) });
+        let s = Arc::new_cyclic(|me| Scheduler { me: me.clone(), tasks: Mutex::new(tasks), waiting: Mutex::new(VecDeque::new()), wake: wake.clone(), sessions: sessions.clone(), env, doc, executor: Mutex::new(None),
+            service: Default::default(), hold: Default::default() });
         let w = s.me.clone();
         wake.on(KIND, move |t, late| { if let Some(s) = w.upgrade() { s.fire(t, late); } });
         let w = s.me.clone();
@@ -246,6 +250,22 @@ impl Scheduler {
             }
         }
         self.wake.start();
+        self.requeue();
+    }
+
+    /// This copy runs only tasks that never ask (access `full` or `read`); the others wait, with a note, for the app.
+    pub fn set_service_mode(&self, on: bool) { self.service.store(on, std::sync::atomic::Ordering::SeqCst); }
+
+    /// Stops starting runs (a handover to the app is under way). Runs already going finish.
+    pub fn hold_starts(&self, on: bool) { self.hold.store(on, std::sync::atomic::Ordering::SeqCst); }
+
+    /// Runs that were waiting for a place or for the app when the last owner stopped are started by this one.
+    fn requeue(&self) {
+        let waiting: Vec<(String, i64, String)> = self.list().iter().filter(|t| t.enabled).flat_map(|t| t.runs.iter().filter(|r| r.state == RunState::Waiting && r.session.is_none() && !r.why.starts_with("hook:")).map(|r| (t.id.clone(), r.due, r.why.clone()))).collect();
+        let mut w = self.waiting.lock().unwrap();
+        for (task, due, why) in waiting { if !w.iter().any(|x| x.task == task && x.due == due && x.why == why) && w.len() < MAX_WAITING { w.push_back(Waiting { task, due, why, extra: String::new(), note: String::new() }); } }
+        drop(w);
+        self.pump();
     }
 
     pub fn status(&self) -> Status {
@@ -371,7 +391,7 @@ impl Scheduler {
     /// Starts waiting runs while places are free. Each start runs on a thread of its own (a worktree may be made).
     pub fn pump(&self) {
         loop {
-            if !self.sessions.can_start() { return; }
+            if !self.sessions.can_start() || self.hold.load(std::sync::atomic::Ordering::SeqCst) { return; }
             let Some(w) = self.waiting.lock().unwrap().pop_front() else { return };
             let Some(me) = self.me.upgrade() else { return };
             let _ = std::thread::Builder::new().name("task-start".into()).spawn(move || me.start(w));
@@ -384,6 +404,11 @@ impl Scheduler {
         let fail = |note: String| self.record(&w.task, RunRecord { due: w.due, why: w.why.clone(), started: now_ms(), session: None, state: RunState::Failed, note });
         let Some(t) = self.get(&w.task).filter(|t| t.enabled || w.why == "now") else { return };
         let Some(to) = Target::parse(&t.provider) else { return fail("The agent isn’t known.".into()) };
+        // The service never answers for the user: a task that asks waits (as it is, Waiting) until the app is open.
+        if self.service.load(std::sync::atomic::Ordering::SeqCst) && matches!(t.access.as_str(), "risky" | "always") {
+            self.record(&w.task, RunRecord { due: w.due, why: w.why, started: now_ms(), session: None, state: RunState::Waiting, note: "It asks before it acts, so it starts when Hover is open.".into() });
+            return;
+        }
         if let Some(p) = self.env.providers().into_iter().find(|p| p.id == t.provider) { if !p.ready { return fail(format!("{} isn’t available: {}", p.name, p.hint)); } }
         let title = t.name.clone();
         let choice = if t.workspace == "folder" { Choice::Folder } else { Choice::Own { base: None } };
