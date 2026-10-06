@@ -188,7 +188,10 @@ pub fn terminal_rows(t: &d::Terminal, cols: usize) -> Vec<R> {
         let lines = if c.out.is_empty() { vec![] } else { wrap_chars(c.out.trim_end_matches('\n'), cols) };
         let cmd = c.cmd.lines().next().unwrap_or("").trim().to_owned();
         let alone = lines.is_empty() && run;
-        v.push(R::new(12, hh::CMD).text(cmd).right(status).tone(if run { 3 } else if bad { 2 } else { 1 }).flag(alone as i32));
+        let mut head = R::new(12, hh::CMD).text(cmd).right(status).tone(if run { 3 } else if bad { 2 } else { 1 }).flag(alone as i32);
+        // Attach: its output goes to the chat as a chip.
+        if !c.out.trim().is_empty() { head.tag2 = format!("chip-term:{}", c.id); }
+        v.push(head);
         if lines.is_empty() {
             if !run { v.push(R::new(13, hh::PRE + 6.0).text("No output").tone(7)); }
         } else {
@@ -354,6 +357,7 @@ pub fn diff_rows(df: &d::Diff, open: &HashMap<String, bool>) -> Vec<R> {
         let name = match &f.old { Some(o) => format!("{o} → {}", f.path), None => f.path.clone() };
         let mut r = R::new(8, hh::DIFF_FILE).text(name).act(format!("df:{}", f.path)).flag(is_open as i32);
         r.badge = badge_of(f.status);
+        if !f.binary { r.tag2 = format!("chip-diff:{}", f.path); }
         if f.add > 0 { r.add = format!("+{}", num(f.add as i64)); }
         if f.del > 0 { r.del = format!("−{}", num(f.del as i64)); }
         v.push(r);
@@ -1118,7 +1122,12 @@ impl App {
             "files" => {
                 if let Some(path) = p.and_then(|p| p.file.clone()) {
                     return match got("file") {
-                        Some(Got::File(f, v)) if f == path => Laid::of(file_rows(&v), None),
+                        Some(Got::File(f, v)) if f == path => {
+                            let mut rows = file_rows(&v);
+                            // Attach: a copy as it is now, or a reference the agent reads itself.
+                            if matches!(v, d::FileView::Text { .. }) { rows[0].act = format!("chip-file:{path}"); rows[0].tag2 = format!("chip-ref:{path}"); }
+                            Laid::of(rows, None)
+                        }
                         _ => { let mut l = Laid::of(vec![R::new(6, hh::BAR).text(base(&path)).sub(dir_of(&path))], None); l.loading = true; l }
                     };
                 }
@@ -1402,6 +1411,7 @@ impl App {
                 self.desk_prefs_for(id, |p| { let now = p.diff_open.get(arg).copied().unwrap_or(i < 12); p.diff_open.insert(arg.to_owned(), !now); });
             }
             "sa" => { self.desk_prefs_for(id, |p| { if !p.agent_open.remove(arg) { p.agent_open.insert(arg.to_owned()); } }); }
+            "chip-file" | "chip-ref" | "chip-diff" | "chip-term" => { self.desk_attach(id, kind, arg); return; }
             "watch" => {
                 let key = self.hover.sessions.get(id).map(|s| s.key).unwrap_or_default();
                 match self.hover.watcher.watch(&key, arg, hover_agents::prwatch::Events::all(), "") {
@@ -1415,6 +1425,39 @@ impl App {
         if kind == "file" || kind == "fback" { self.desk_reset_scroll(); }
         self.desk_changed();
         self.desk_sync();
+    }
+
+    /// The screenshots: the ids of the commands the Terminal tab lists.
+    pub fn desk_terminal_ids(&self, id: i32) -> Vec<String> {
+        self.hover.sessions.get(id).map(|s| d::terminal(&self.desk_snap(&s)).commands.into_iter().map(|c| c.id).collect()).unwrap_or_default()
+    }
+
+    /// Attach to the chat: a file, a reference to it, a changed file's diff, or a command's output becomes a chip in that
+    /// chat's reply box (context.rs). Too big or not there: said, and nothing is attached.
+    fn desk_attach(self: &Rc<Self>, id: i32, kind: &str, arg: &str) {
+        let Some(sess) = self.hover.sessions.get(id) else { return };
+        let made = match kind {
+            "chip-file" => hover_agents::context::file_snapshot(&sess.folder, arg),
+            "chip-ref" => hover_agents::context::file_live(&sess.folder, arg),
+            "chip-diff" => match self.page.desk.got.borrow().get(&(id, "diff")) {
+                Some(Got::Diff(df)) => match df.files.iter().find(|f| f.path == arg) {
+                    Some(f) => hover_agents::context::diff(&f.path, &f.patch, None, &sess.key),
+                    None => Err("That file isn’t in the changes any more.".into()),
+                },
+                _ => Err("The changes aren’t loaded.".into()),
+            },
+            _ => {
+                let snap = self.desk_snap(&sess);
+                match d::terminal(&snap).commands.into_iter().find(|c| c.id == arg) {
+                    Some(c) => hover_agents::context::terminal(&c.cmd, &c.out, &sess.key, &c.id),
+                    None => Err("That command isn’t there any more.".into()),
+                }
+            }
+        };
+        match made {
+            Ok(chip) => self.add_chip(id, chip),
+            Err(e) => self.toast(&e),
+        }
     }
 
     // MARK: Browser

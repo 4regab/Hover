@@ -631,6 +631,27 @@ fn chat_action_shots(app: &Rc<App>, hover: &Arc<hover_app::app::Hover>, dir: &Pa
     save(&dash, (1200, 720), 1.0, [0, 0, 0], &dir.join("chat-more-menu-fork.png"));
     g!().invoke_d_more_act(at("Bring findings back to the original"));
     settle(400);
+    // Context chips: in the reply box with their ×, taken off one by one, and sent with the reply.
+    let chat = hover.sessions.all().into_iter().find(|s| !s.busy() && s.cloud.is_none() && s.id != done.id && s.turns.iter().any(|t| t.result.is_some()) && Path::new(&s.folder).is_dir()).expect("a chat to reply in");
+    std::fs::write(Path::new(&chat.folder).join("notes.txt"), "the rows redraw too often\n").unwrap();
+    app.add_chip(chat.id, hover_agents::context::file_snapshot(&chat.folder, "notes.txt").expect("the file chip"));
+    app.add_chip(chat.id, hover_agents::context::terminal("npm test", "20 passed", &chat.key, "x1").expect("the output chip"));
+    app.open_session(chat.id);
+    g!().set_d_draft("Explain the whole notch again, with these.".into());
+    g!().set_d_compose(true);
+    settle(600);
+    assert_eq!(g!().get_d_chips().row_count(), 2, "both chips are in the reply box");
+    save(&dash, (1200, 720), 1.0, [0, 0, 0], &dir.join("chat-chips.png"));
+    g!().invoke_d_chip_remove(0);
+    settle(300);
+    assert_eq!((g!().get_d_chips().row_count(), app.chips_of(chat.id).len()), (1, 1), "× took one off");
+    app.add_chip(chat.id, hover_agents::context::file_snapshot(&chat.folder, "notes.txt").expect("the file chip"));
+    g!().invoke_d_send();
+    settle(600);
+    let sent = hover.sessions.get(chat.id).unwrap();
+    let last = sent.turns.last().unwrap();
+    assert_eq!(last.chips.len(), 2, "the reply carries its chips");
+    assert!(app.chips_of(chat.id).is_empty() && g!().get_d_chips().row_count() == 0, "the box is empty after sending");
     println!("chat actions: moved to {after}, forked into {}, toast {:?}", fork.id, g!().get_toast().to_string());
     app.close_drawer();
 }
@@ -803,6 +824,15 @@ fn desk_shots(app: &Rc<App>, hover: &Arc<hover_app::app::Hover>, dir: &Path, fol
     settle(1500);    // The panel, tab by tab, on the finished desk (its session is idle, so Create is open).
     let tab = |name: &str, file: &str| { app.desk_shot_open(done, name); settle(700); shot(file); };
     tab("terminal", "desk-tab-terminal.png");
+    // Attach a command's output to the chat: a chip in that chat's reply box.
+    let term = app.desk_terminal_ids(done);
+    let with_out = term.iter().find(|_| true).cloned();
+    if let Some(t) = with_out {
+        app.notch.global::<Desk>().invoke_act(format!("chip-term:{t}").into());
+        settle(300);
+        let got = app.chips_of(done);
+        assert!(got.iter().any(|c| c.kind == "terminal" && c.text.as_deref().is_some_and(|t| !t.is_empty())), "the output became a chip: {got:?}");
+    }
     tab("files", "desk-tab-files.png");
     app.notch.global::<Desk>().invoke_act("dir:src".into());
     app.notch.global::<Desk>().invoke_act("dir:src/ui".into());
@@ -821,8 +851,20 @@ fn desk_shots(app: &Rc<App>, hover: &Arc<hover_app::app::Hover>, dir: &Path, fol
     app.notch.global::<Desk>().invoke_scrolled(2000.0, 300.0);
     settle(300);
     shot("desk-tab-file-scrolled.png");
+    // Attach the open file: a copy as it is now, and a reference. (The sample's file is made in the task's folder for it.)
+    let task_folder = hover.sessions.get(done).map(|s| s.folder).unwrap_or_default();
+    std::fs::create_dir_all(Path::new(&task_folder).join("src")).unwrap();
+    std::fs::write(Path::new(&task_folder).join("src/refresh.ts"), "export const a = 1;\n").unwrap();
+    app.notch.global::<Desk>().invoke_act("chip-file:src/refresh.ts".into());
+    app.notch.global::<Desk>().invoke_act("chip-ref:src/refresh.ts".into());
+    settle(300);
+    let kinds: Vec<(String, bool)> = app.chips_of(done).iter().filter(|c| c.kind == "file").map(|c| (c.source.clone(), c.live)).collect();
+    assert_eq!(kinds, [("src/refresh.ts".to_owned(), false), ("src/refresh.ts".to_owned(), true)], "a copy, then a reference");
     app.notch.global::<Desk>().invoke_act("fback".into());
     tab("diff", "desk-tab-diff.png");
+    app.notch.global::<Desk>().invoke_act("chip-diff:src/refresh.ts".into());
+    settle(300);
+    assert!(app.chips_of(done).iter().any(|c| c.kind == "diff" && c.source == "src/refresh.ts"), "the file's change became a chip");
     // Pull request: the branch's own, with its checks.
     let pr = d::PrDetail { number: 57, title: "Redraw the panel only when it changed".into(), state: "open".into(), is_draft: true, url: "https://github.com/4regab/Hover/pull/57".into(), head: "feat/refresh".into(), base: "main".into(),
         additions: 29, deletions: 11, changed_files: 3, body: "## What changed\n\n`refresh()` returns early when the view isn't dirty, so the panel stops redrawing on every poll.\n\n- **Skips** clean views\n- Keeps the dirty flag in `View`\n- Covers a clean view and a dirty one in the tests\n\n```rust\nif !view.dirty { return; }\n```\n\nFixes the flicker from [#42](https://github.com/4regab/Hover/pull/42).".into(),

@@ -92,6 +92,8 @@ pub struct Page {
     blur: RefCell<Blur>,
     /// A new task's workspace is being made (a worktree can take a while): another Start waits.
     starting: Cell<bool>,
+    /// What is attached to each chat's unsent reply (context chips), kept while another chat is open.
+    chips: RefCell<HashMap<i32, Vec<hover_core::ext::Chip>>>,
     /// What the chat's note strip and its More menu do, by position (chat_note, chat_more).
     note_acts: RefCell<Vec<&'static str>>,
     more_acts: RefCell<Vec<String>>,
@@ -250,7 +252,7 @@ impl Default for Page {
             #[cfg(windows)] gpu: Default::default(),
             #[cfg(windows)] scratch: Default::default(),
             #[cfg(windows)] slots: Default::default(), blur: Default::default(),
-            starting: Cell::new(false), note_acts: RefCell::new(vec![]), more_acts: RefCell::new(vec![]), wide: Cell::new(false), rows_list: RefCell::new(vec![]), branch: Default::default(), desk: Default::default() }
+            starting: Cell::new(false), chips: Default::default(), note_acts: RefCell::new(vec![]), more_acts: RefCell::new(vec![]), wide: Cell::new(false), rows_list: RefCell::new(vec![]), branch: Default::default(), desk: Default::default() }
     }
 }
 
@@ -613,6 +615,22 @@ impl App {
         self.send(In::Drawer(None));
         *self.page.thread.borrow_mut() = None;
         each!(self, |g| { g.set_d_draft(s("")); g.set_d_compose(false); });
+        self.office_widgets();
+    }
+
+    /// What is attached to that chat's unsent reply.
+    pub fn chips_of(&self, id: i32) -> Vec<hover_core::ext::Chip> { self.page.chips.borrow().get(&id).cloned().unwrap_or_default() }
+
+    /// A chip for that chat's reply: once (the same thing twice adds nothing).
+    pub(crate) fn add_chip(self: &Rc<Self>, id: i32, chip: hover_core::ext::Chip) {
+        {
+            let mut all = self.page.chips.borrow_mut();
+            let list = all.entry(id).or_default();
+            if list.iter().any(|c| c.kind == chip.kind && c.source == chip.source && c.live == chip.live && c.text == chip.text) { drop(all); self.toast("Already attached."); return; }
+            list.push(chip);
+        }
+        let bot = self.hover.sessions.get(id).map_or("the agent".to_owned(), |s| hover_office::bot::BOTS[s.bot % 6].0.to_owned());
+        self.toast(&format!("Attached to {bot}’s reply."));
         self.office_widgets();
     }
 
@@ -1093,6 +1111,7 @@ impl App {
         *p.note_acts.borrow_mut() = note_btns.iter().map(|b| b.0).collect();
         *p.more_acts.borrow_mut() = more.iter().map(|m| m.0.clone()).collect();
         let note_labels: Vec<SharedString> = note_btns.iter().map(|b| s(b.1)).collect();
+        let chip_labels: Vec<SharedString> = p.open.get().and_then(|id| p.chips.borrow().get(&id).map(|l| l.iter().map(|c| s(if c.live { format!("{} (reference)", c.label) } else { c.label.clone() })).collect())).unwrap_or_default();
         let more_items: Vec<MOpt> = more.iter().map(|m| MOpt { id: s(&m.0), label: s(&m.1), on: false }).collect();
         // The expanded chat's header and list; only the app window shows it large.
         let wide = p.wide.get() && open.is_some();
@@ -1151,6 +1170,7 @@ impl App {
             g.set_panel_sub(s(&sub));
             if let Some(m) = crate::view::sync(g.get_rows(), &rows) { g.set_rows(m); }
             g.set_drawer(open.is_some());
+            if let Some(m) = crate::view::sync(g.get_d_chips(), &chip_labels) { g.set_d_chips(m); }
             g.set_d_note(s(&cnote));
             if let Some(m) = crate::view::sync(g.get_d_note_btns(), &note_labels) { g.set_d_note_btns(m); }
             if let Some(m) = crate::view::sync(g.get_d_more_items(), &more_items) { g.set_d_more_items(m); }
@@ -1586,6 +1606,11 @@ impl App {
         let a = self.clone();
         g.on_d_close(move || a.close_drawer());
         let a = self.clone();
+        g.on_d_chip_remove(move |i| {
+            if let Some(id) = a.page.open.get() { if let Some(l) = a.page.chips.borrow_mut().get_mut(&id) { if (i as usize) < l.len() { l.remove(i as usize); } } }
+            a.office_widgets();
+        });
+        let a = self.clone();
         g.on_d_note_act(move |i| a.note_act(i as usize));
         let a = self.clone();
         g.on_d_more_act(move |i| a.more_act(i as usize));
@@ -1618,7 +1643,8 @@ impl App {
             let Some(id) = a.page.open.get() else { return };
             let text = each_reply(&a).trim().to_owned();
             let images = a.page.attached.borrow()[0].clone();
-            if text.is_empty() && images.is_empty() {
+            let chips = a.page.chips.borrow().get(&id).cloned().unwrap_or_default();
+            if text.is_empty() && images.is_empty() && chips.is_empty() {
                 // Pause, not Stop: the tool cancels the turn, the conversation stays, and
                 // the next queued reply goes once it says the turn has ended.
                 if a.hover.sessions.get(id).is_some_and(|s| s.busy() && !s.stopping) { a.hover.sessions.pause(id); a.office_widgets(); }
@@ -1638,7 +1664,13 @@ impl App {
                     return;
                 }
             }
-            if !a.hover.sessions.reply(id, &text, images) { a.toast("3 tasks are running. Reply when one is done."); return; }
+            // The chips are looked at against the folder first: one that can't be sent stops the reply, and says why.
+            let problems = a.hover.sessions.get(id).map(|s| hover_agents::context::check(&chips, &s.folder, &|k| a.hover.sessions.find(k).is_some() || a.hover.history.as_ref().is_some_and(|h| h.entries().iter().any(|e| e.key == k)))).unwrap_or_default();
+            if let Some(p) = problems.iter().find(|p| p.blocking) { a.toast(&p.message); return; }
+            let note = problems.first().map(|p| p.message.clone());
+            if !a.hover.sessions.reply_msg(id, hover_agents::session::Msg { text: text.clone(), images, chips, switch_to: None }) { a.toast("3 tasks are running. Reply when one is done."); return; }
+            if let Some(n) = note { a.toast(&n); }
+            a.page.chips.borrow_mut().remove(&id);
             a.page.attached.borrow_mut()[0].clear();
             a.page.drafts.borrow_mut().remove(&id);
             // Sending closes the box; the thread shows the reply at its end.

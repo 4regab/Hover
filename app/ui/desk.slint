@@ -427,6 +427,9 @@ component DeskRowView inherits Rectangle {
             Text { text: r.text; font-size: 12.5px; font-weight: 500; color: #f6f2ff; vertical-alignment: center; overflow: elide; }
             Text { text: r.sub; font-family: "DejaVu Sans Mono"; font-size: 11px; color: #f6f2ff61; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; } }
         Text { text: r.right; font-size: 11px; color: #f6f2ff61; vertical-alignment: center; }
+        // Attach to the chat: a copy as it is now, or a reference the agent reads itself.
+        if r.act != "": VerticalLayout { alignment: center; DButton { id: "attachFile"; small: true; text: "Attach"; icon: Icons.add; clicked => { act(r.act); } } }
+        if r.tag2 != "": VerticalLayout { alignment: center; DButton { id: "attachRef"; small: true; text: "As reference"; clicked => { act(r.tag2); } } }
     }
     // 7: a line of a file, with its number.
     if r.kind == 7: Rectangle {
@@ -446,6 +449,8 @@ component DeskRowView inherits Rectangle {
         accessible-expandable: true;
         accessible-expanded: r.flag == 1;
         accessible-action-default => { act(r.act); }
+        // Under the row's contents, so the Attach button gets its own clicks.
+        dh := TouchArea { mouse-cursor: pointer; clicked => { act(r.act); } }
         if dh.has-hover: Rectangle { background: #ffffff0a; border-radius: 10px; }
         HorizontalLayout {
             padding-left: 10px; padding-right: 10px; spacing: 8px;
@@ -454,8 +459,8 @@ component DeskRowView inherits Rectangle {
             Text { text: r.text; font-family: "DejaVu Sans Mono"; font-size: 12px; color: #f6f2ff; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; }
             if r.add != "": Text { text: r.add; font-family: "DejaVu Sans Mono"; font-size: 11px; color: #5de37a; vertical-alignment: center; }
             if r.del != "": Text { text: r.del; font-family: "DejaVu Sans Mono"; font-size: 11px; color: #ff7b72; vertical-alignment: center; }
+            if r.tag2 != "": VerticalLayout { alignment: center; DButton { id: "attachDiff"; small: true; text: "Attach"; icon: Icons.add; clicked => { act(r.tag2); } } }
         }
-        dh := TouchArea { mouse-cursor: pointer; clicked => { act(r.act); } }
     }
     // 9: a hunk's header.
     if r.kind == 9: Rectangle {
@@ -488,6 +493,7 @@ component DeskRowView inherits Rectangle {
             Text { text: "$"; font-family: "DejaVu Sans Mono"; font-size: 12px; color: #5de37a; vertical-alignment: center; }
             Text { text: r.text; font-family: "DejaVu Sans Mono"; font-size: 12px; color: #f3f1f6; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; }
             Text { text: r.right; font-family: "DejaVu Sans Mono"; font-size: 10.5px; color: Tones.color(r.tone); vertical-alignment: center; }
+            if r.tag2 != "": VerticalLayout { alignment: center; DButton { id: "attachOutput"; small: true; text: "Attach"; icon: Icons.add; clicked => { act(r.tag2); } } }
         }
     }
     // 13: a line of output.
