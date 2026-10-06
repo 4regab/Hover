@@ -108,7 +108,7 @@ struct Shared {
     changed: Arc<dyn Fn() + Send + Sync>,
 }
 
-struct State { dirty: bool, closed: bool }
+struct State { dirty: bool, closed: bool, pinned: bool }
 
 /// A change asks for a new view, and a burst of them (a running task saves its session at
 /// every step) makes one.
@@ -124,7 +124,7 @@ impl Credits {
     /// thread starts at the first `view`: the background service, which nobody looks at
     /// Settings in, never decrypts sessions to count credits.
     pub fn new(history: Option<Arc<AgentHistory>>, file: PathBuf, changed: Arc<dyn Fn() + Send + Sync>) -> Credits {
-        Credits(Arc::new(Shared { history, file, latest: Mutex::new(None), state: Mutex::new(State { dirty: true, closed: false }), wake: Condvar::new(), changed }), Once::new())
+        Credits(Arc::new(Shared { history, file, latest: Mutex::new(None), state: Mutex::new(State { dirty: true, closed: false, pinned: false }), wake: Condvar::new(), changed }), Once::new())
     }
 
     /// The latest view; None until the first is made (the first call starts making it).
@@ -134,6 +134,13 @@ impl Credits {
             std::thread::Builder::new().name("credits".into()).spawn(move || run(me)).expect("a thread for the credits");
         });
         self.0.latest.lock().unwrap().clone()
+    }
+
+    /// Shows this view from now on, whatever the history and the readings say: the
+    /// screenshots' made-up days.
+    pub fn pin(&self, v: CreditsView) {
+        self.0.state.lock().unwrap().pinned = true;
+        *self.0.latest.lock().unwrap() = Some(Arc::new(v));
     }
 
     /// The history changed, or Kiro was read: make the view again.
@@ -181,6 +188,7 @@ fn run(sh: Arc<Shared>) {
             }
         }
         let v = Arc::new(v);
+        if sh.state.lock().unwrap().pinned { continue; }
         let same = sh.latest.lock().unwrap().as_deref() == Some(&*v);
         if !same {
             *sh.latest.lock().unwrap() = Some(v);

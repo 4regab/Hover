@@ -1054,7 +1054,7 @@ fn settings_integrations_shots(app: &Rc<App>, hover: &Arc<hover_app::app::Hover>
     app.pane.borrow_mut().live.integ = Integ::default();
     // Kiro's auto compact: off (the switch alone), then on at 70 % with its choice.
     app.show_settings_in(1, Section::Kiro);
-    save(&dash, (1200, 1000), 1.0, [0, 0, 0], &dir.join("settings-kiro-compact-off.png"));
+    save(&dash, (1200, 1400), 1.0, [0, 0, 0], &dir.join("settings-kiro-compact-off.png"));
     // Through the page's own callbacks, as a click on the switches and on 70 % does.
     if let Some(d) = &*app.dash.borrow() {
         let page = d.global::<crate::ui::Page>();
@@ -1064,23 +1064,24 @@ fn settings_integrations_shots(app: &Rc<App>, hover: &Arc<hover_app::app::Hover>
     assert!(hover.settings.kiro_auto_compact() && hover.settings.kiro_retry_busy(), "the switches took the clicks");
     hover.settings.set_kiro_compact_at(70);
     app.show_settings_in(1, Section::Kiro);
-    save(&dash, (1200, 1000), 1.0, [0, 0, 0], &dir.join("settings-kiro-compact-on.png"));
+    save(&dash, (1200, 1400), 1.0, [0, 0, 0], &dir.join("settings-kiro-compact-on.png"));
     // The slider's release goes out through the page's callback as a percent: 35 is kept; 10 is held at the floor, 20.
     if let Some(d) = &*app.dash.borrow() { d.global::<crate::ui::Page>().invoke_picked_seg("KiroCompactAt".into(), 35); }
     assert_eq!(hover.settings.kiro_compact_at(), 35, "the slider's 35 % was taken");
     if let Some(d) = &*app.dash.borrow() { d.global::<crate::ui::Page>().invoke_picked_seg("KiroCompactAt".into(), 10); }
     assert_eq!(hover.settings.kiro_compact_at(), 20, "below 20 % is held at 20");
     app.show_settings_in(1, Section::Kiro);
-    save(&dash, (1200, 1000), 1.0, [0, 0, 0], &dir.join("settings-kiro-compact-min.png"));
+    save(&dash, (1200, 1400), 1.0, [0, 0, 0], &dir.join("settings-kiro-compact-min.png"));
     // With Kiro ready the rows are live. A real press, drag and release on the slider.
     hover_agents::agents::seed(AgentTool::Kiro, hover_agents::agents::AgentReady { installed: true, signed_in: true, hint: String::new() });
     app.show_settings_in(1, Section::Kiro);
-    save(&dash, (1200, 1000), 1.0, [0, 0, 0], &dir.join("settings-kiro-compact-ready.png"));
+    save(&dash, (1200, 1400), 1.0, [0, 0, 0], &dir.join("settings-kiro-compact-ready.png"));
     {
         use slint::platform::{PointerEventButton, WindowEvent};
         use slint::LogicalPosition as P;
-        // The track runs x 918 to 1102 at this size (the knob is centred on its ends): half way is 60 %.
-        let at = |x: f32| P::new(x, 688.0);
+        // The track runs x 918 to 1102 at this size (the knob is centred on its ends), under
+        // the credits card: half way is 60 %.
+        let at = |x: f32| P::new(x, 1097.0);
         dash.dispatch_event(WindowEvent::PointerMoved { position: at(930.0) });
         dash.dispatch_event(WindowEvent::PointerPressed { position: at(930.0), button: PointerEventButton::Left });
         run_for(60);
@@ -1093,7 +1094,7 @@ fn settings_integrations_shots(app: &Rc<App>, hover: &Arc<hover_app::app::Hover>
         assert!((59..=61).contains(&got), "a drag to the middle gave {got} %");
         println!("compact slider: dragged to {got} %");
         app.show_settings_in(1, Section::Kiro);
-        save(&dash, (1200, 1000), 1.0, [0, 0, 0], &dir.join("settings-kiro-compact-dragged.png"));
+        save(&dash, (1200, 1400), 1.0, [0, 0, 0], &dir.join("settings-kiro-compact-dragged.png"));
         // Pulled left of the track, it is held at 20.
         dash.dispatch_event(WindowEvent::PointerMoved { position: at(1010.0) });
         dash.dispatch_event(WindowEvent::PointerPressed { position: at(1010.0), button: PointerEventButton::Left });
@@ -1105,6 +1106,101 @@ fn settings_integrations_shots(app: &Rc<App>, hover: &Arc<hover_app::app::Hover>
     hover.settings.set_kiro_auto_compact(false);
     hover.settings.set_kiro_retry_busy(false);
 }
+/// Settings → Kiro's credits, from 30 made-up days to Oct 6 2026: a monthly reset on
+/// Sep 20, two days Hover wasn't running (Oct 2 and 3, so Oct 4 is partial), today's
+/// three sessions. Then the range at 30 days, a bar under the pointer, the quota off, and
+/// no data at all.
+fn settings_credits_shots(app: &Rc<App>, hover: &Arc<hover_app::app::Hover>, dir: &Path) {
+    use chrono::NaiveDate;
+    use hover_core::ledger::{DayA, SessionCredits};
+    use hover_quota::daily::Day;
+    let dash = adapter(1);
+    let today = NaiveDate::from_ymd_opt(2026, 10, 6).unwrap();
+    // Kiro's total and Hover's share, oldest first.
+    let spend: [(f64, f64); 30] = [(1.9, 1.2), (2.6, 2.0), (0.4, 0.0), (0.0, 0.0), (3.1, 1.4), (2.2, 2.2), (1.7, 0.6), (2.9, 2.1), (1.1, 1.1), (0.6, 0.0),
+        (3.4, 1.8), (2.4, 2.0), (1.3, 0.9), (2.8, 1.6), (3.6, 2.4), (0.9, 0.3), (0.2, 0.0), (2.7, 1.9), (2.2, 1.5), (3.3, 2.6),
+        (1.8, 1.0), (2.5, 2.1), (4.4, 2.0), (1.6, 1.2), (2.1, 1.7), (0.0, 0.0), (0.0, 0.0), (3.9, 1.6), (2.3, 1.4), (3.24, 2.10)];
+    let (mut used, mut days, mut a) = (31.0, vec![], std::collections::BTreeMap::new());
+    for (k, (t, hv)) in spend.iter().enumerate() {
+        let date = today - chrono::Duration::days(29 - k as i64);
+        let reset_day = NaiveDate::from_ymd_opt(2026, 9, 20).unwrap();
+        if date == reset_day { used = 0.0; }
+        let before = used;
+        used += t;
+        a.insert(date, DayA { credits: *hv, turns: 1, sessions: vec![] });
+        // No reading on Oct 2 and 3; Oct 4's first came part way through it.
+        if (3..=4).contains(&(today - date).num_days()) { continue; }
+        let first = if (today - date).num_days() == 2 { used - 2.6 } else { before };
+        days.push(Day { date, first, used, limit: 50.0, reset: Some(if date < reset_day { "09/20" } else { "10/20" }.into()), plan: Some("KIRO PRO".into()), at: String::new() });
+    }
+    let s = |t: &str, f: &str, c: f64| SessionCredits { key: t.into(), title: t.into(), folder: f.into(), credits: c };
+    a.get_mut(&today).unwrap().sessions = vec![s("Fix login redirect", "C:\\work\\Hover\\app", 1.20), s("Add CSV export", "/home/me/billing-svc", 0.64), s("Tidy the imports", "/home/me/project", 0.26)];
+    hover.credits.pin(hover_quota::credits::combine(&a, &days, today));
+    hover.settings.set_theme(None);
+    let shot = |name: &str| { app.show_settings_in(1, Section::Kiro); save(&dash, (1200, 1000), 1.0, [0, 0, 0], &dir.join(name)); };
+    for (dark, tag) in [(true, "dark"), (false, "light")] {
+        hover.settings.set_appearance(if dark { Appearance::Dark } else { Appearance::Light });
+        view::Host::theme_changed(&**app);
+        shot(&format!("settings-kiro-credits-{tag}.png"));
+    }
+    hover.settings.set_appearance(Appearance::Dark);
+    view::Host::theme_changed(&**app);
+    if let Some(d) = &*app.dash.borrow() { d.global::<crate::ui::Page>().invoke_picked_seg(hover_app::pages::CREDITS_RANGE.into(), 1); }
+    assert_eq!(app.pane.borrow().live.credits_range, 1, "the range took the pick");
+    shot("settings-kiro-credits-30-days.png");
+    // The pointer over a bar: its day in place of the legend.
+    {
+        use slint::platform::WindowEvent;
+        let (x, y) = std::env::var("HOVER_CREDITS_AT").ok().and_then(|v| { let (x, y) = v.split_once(',')?; Some((x.parse().ok()?, y.parse().ok()?)) }).unwrap_or((1080.0f32, 300.0f32));
+        dash.dispatch_event(WindowEvent::PointerMoved { position: slint::LogicalPosition::new(x, y) });
+        run_for(60);
+        save(&dash, (1200, 1000), 1.0, [0, 0, 0], &dir.join("settings-kiro-credits-hover.png"));
+        dash.dispatch_event(WindowEvent::PointerExited);
+    }
+    app.pane.borrow_mut().live.credits_range = 0;
+    // The quota off: Hover's numbers, Kiro's own as dashes and why.
+    hover.settings.set_notch_item("kiro", false);
+    shot("settings-kiro-credits-quota-off.png");
+    hover.settings.set_notch_item("kiro", true);
+    hover.credits.pin(hover_quota::credits::combine(&Default::default(), &[], today));
+    shot("settings-kiro-credits-empty.png");
+    field_scroll_shot(app, hover, dir);
+}
+
+/// A text box keeps its cursor in view: a value longer than the box, typed into
+/// Automation's Custom program, shows its end, and Home brings its start back.
+fn field_scroll_shot(app: &Rc<App>, hover: &Arc<hover_app::app::Hover>, dir: &Path) {
+    use slint::platform::{Key, PointerEventButton, WindowEvent};
+    let dash = adapter(1);
+    app.show_settings_in(1, Section::Automation);
+    save(&dash, (1200, 620), 1.0, [0, 0, 0], &dir.join("settings-field-before.png"));
+    let at = slint::LogicalPosition::new(1053.0, 344.0);
+    dash.dispatch_event(WindowEvent::PointerMoved { position: at });
+    dash.dispatch_event(WindowEvent::PointerPressed { position: at, button: PointerEventButton::Left });
+    dash.dispatch_event(WindowEvent::PointerReleased { position: at, button: PointerEventButton::Left });
+    run_for(60);
+    let typed = "/opt/editors/code-insiders/bin/code-insiders-wrapper --reuse-window";
+    for ch in typed.chars() {
+        let t: slint::SharedString = ch.to_string().into();
+        dash.dispatch_event(WindowEvent::KeyPressed { text: t.clone() });
+        dash.dispatch_event(WindowEvent::KeyReleased { text: t });
+    }
+    run_for(60);
+    save(&dash, (1200, 620), 1.0, [0, 0, 0], &dir.join("settings-field-typed-end.png"));
+    let home: slint::SharedString = Key::Home.into();
+    dash.dispatch_event(WindowEvent::KeyPressed { text: home.clone() });
+    dash.dispatch_event(WindowEvent::KeyReleased { text: home });
+    run_for(60);
+    save(&dash, (1200, 620), 1.0, [0, 0, 0], &dir.join("settings-field-typed-home.png"));
+    // Enter saves it, as a user's would be.
+    let enter: slint::SharedString = Key::Return.into();
+    dash.dispatch_event(WindowEvent::KeyPressed { text: enter.clone() });
+    dash.dispatch_event(WindowEvent::KeyReleased { text: enter });
+    run_for(60);
+    assert_eq!(hover.settings.editor().custom_exe.as_deref(), Some(typed), "the whole value was typed into the box and saved");
+    hover.settings.set_editor(hover_core::model::EditorSettings { custom_exe: None, ..hover.settings.editor() });
+}
+
 /// A voice preview as Voice makes one, for the shots.
 fn preview(folder: &str, target: &str, note: Option<&str>, task: &str, countdown: Option<f32>, access: &str) -> hover_app::voice::Preview {
     hover_app::voice::Preview {
@@ -1383,6 +1479,9 @@ pub fn run(dir: &Path) {
     // Kept in the history, so its panel has rows (with their dates) to show.
     let history = hover_core::crypto::global().map(|c| Arc::new(hover_core::history::AgentHistory::new(hover_core::paths::agents(), c)));
     let hover = hover_app::app::Hover::with(settings, history, vec![], Some(run), Some(reader));
+    // Kiro's credits card is as tall in every Kiro shot (the compact slider's drag hits
+    // it where it is): no days, until the credits shots pin their own.
+    hover.credits.pin(hover_quota::credits::combine(&Default::default(), &[], chrono::Local::now().date_naive()));
     let app = App::new(hover.clone(), Box::new(Plain), Look { dark: true, animations: true }, true);
     // The software renderer doesn't clip to rounded corners: the glass's blurred copy
     // of the scene would show as a square behind each rounded panel.
@@ -1743,6 +1842,7 @@ pub fn run(dir: &Path) {
     }
     if !skip("voice") { settings_voice_shots(&app, &hover, dir, &data); }
     settings_integrations_shots(&app, &hover, dir);
+    settings_credits_shots(&app, &hover, dir);
     expand_shots(&app, &hover, dir, &folder, &hold_c);
     workspace_shots(&app, &hover, dir);
     chat_action_shots(&app, &hover, dir, &folder, &hold_c);

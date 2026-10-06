@@ -2013,6 +2013,7 @@ name = "hover"
 version = "3.9.0"
 dependencies = [
  "arboard",
+ "chrono",
  "cpal",
  "embed-resource",
  "flate2",

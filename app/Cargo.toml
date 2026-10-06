@@ -28,6 +28,8 @@ hover-chat = { path = "../crates/hover-chat" }
 # main.js imageFor: which of an answer's images the chat may load.
 hover-md = { path = "../crates/hover-md" }
 serde_json = "1"
+# Already in the tree (hover-core, hover-quota): the credits card's local days and dates.
+chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
 # One process, one renderer: femtovg on wgpu (DirectComposition on Windows, as
 # notch-proto; Vulkan or GL on Linux), and the software renderer for headless shots.
 slint = { version = "=1.18.1", default-features = false, features = ["std", "compat-1-2", "backend-winit", "renderer-femtovg", "renderer-femtovg-wgpu", "unstable-wgpu-30", "renderer-software", "software-renderer-systemfonts", "accessibility", "unstable-winit-030"] }

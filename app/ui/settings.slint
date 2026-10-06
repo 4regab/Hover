@@ -26,11 +26,23 @@ export struct TileData {
     green: color, orange: color, red: color, purple: color, teal: color,
 }
 
+// Settings → Kiro's credits (pages.rs CreditsCard). A bar's hover and outside are 0..1 of
+// the chart's top; month-progress is -1 with no month; range is the picked segment.
+export struct CreditBar { label: string, hover: float, outside: float, partial: bool, tip: string }
+export struct TopRow { title: string, folder: string, credits: string }
+export struct CreditsData {
+    id: string, range: int, labels: [string], longest: string,
+    today: string, today-sub: string, week: string, week-sub: string,
+    month-title: string, month: string, month-progress: float, month-pct: string, month-sub: string,
+    bars: [CreditBar], y-top: string, y-mid: string, empty: string,
+    top: [TopRow], top-empty: string, note: string, label: string,
+}
+
 // kind: 0 title (first: a lead line follows), 1 heading, 2 group, 3 footnote, 4 tiles,
-// 5 link, 6 lead line.
+// 5 link, 6 lead line, 7 Kiro's credits (credits).
 export struct Block {
     kind: int, text: string, first: bool, rows: [RowData], tiles: [TileData],
-    id: string, name: string, icon: string, dim: bool, status: string,
+    id: string, name: string, icon: string, dim: bool, status: string, credits: CreditsData,
 }
 
 export struct Side { title: string, icon: string, tint: color, tool: string }
@@ -276,6 +288,176 @@ component RowView inherits Rectangle {
     }
 }
 
+// One figure of the credits' summary: what it is, the number, and a dim line.
+component Figure inherits VerticalLayout {
+    in property <string> title;
+    in property <string> value;
+    in property <string> sub;
+    spacing: 1px;
+    Text { text: title; font-size: 11.5px; color: Pal.ink-dim; overflow: elide; }
+    Text { text: value; font-size: 22px; font-weight: 600; font-family: Fonts.display; color: Pal.ink; }
+    Text { text: sub; font-size: 11.5px; color: Pal.ink-dim; overflow: elide; }
+}
+
+// A legend's swatch: Hover's solid blue, Outside's tint, a partial day's fainter one.
+component Swatch inherits Rectangle {
+    in property <bool> outside;
+    in property <bool> partial;
+    width: 9px;
+    height: 9px;
+    border-radius: 2px;
+    background: !outside ? Pal.blue : partial ? Pal.blue.with-alpha(0.14) : Pal.blue.with-alpha(0.38);
+    border-width: partial ? 1px : 0;
+    border-color: Pal.blue.with-alpha(0.55);
+}
+
+// Settings → Kiro's credits: the heading with its range, the card (summary, the chart
+// of Hover's and the outside credits by day, today's dearest sessions) and the note.
+component CreditsCard inherits VerticalLayout {
+    in property <CreditsData> c;
+    callback pick(int);
+    padding-bottom: 6px;
+    HorizontalLayout {
+        padding-left: 12px;
+        padding-top: 10px;
+        padding-bottom: 6px;
+        Text { text: "CREDITS"; font-size: 10.5px; font-weight: 600; color: Pal.ink-dim; vertical-alignment: bottom; horizontal-stretch: 1; }
+        Segments { id: c.id; labels: c.labels; longest: c.longest; picked: c.range; pick(i) => { pick(i); } }
+    }
+    Rectangle {
+        border-radius: 12px;
+        background: Pal.surface;
+        clip: true;
+        VerticalLayout {
+            HorizontalLayout {
+                padding: 12px;
+                spacing: 18px;
+                // Widths by stretch alone (1 : 1 : 2), so a column doesn't move when its number does.
+                Figure { title: "Today"; value: c.today; sub: c.today-sub; horizontal-stretch: 1; preferred-width: 0; min-width: 0; }
+                Figure { title: "Last 7 days"; value: c.week; sub: c.week-sub; horizontal-stretch: 1; preferred-width: 0; min-width: 0; }
+                VerticalLayout {
+                    horizontal-stretch: 2;
+                    preferred-width: 0;
+                    min-width: 0;
+                    spacing: 1px;
+                    Text { text: c.month-title; font-size: 11.5px; color: Pal.ink-dim; overflow: elide; }
+                    HorizontalLayout {
+                        spacing: 10px;
+                        Text { text: c.month; font-size: 22px; font-weight: 600; font-family: Fonts.display; color: Pal.ink; }
+                        if c.month-progress >= 0: VerticalLayout {
+                            alignment: center;
+                            horizontal-stretch: 1;
+                            Rectangle {
+                                height: 4px;
+                                border-radius: 2px;
+                                background: Pal.wash-strong;
+                                accessible-role: progress-indicator;
+                                accessible-value: c.month-pct;
+                                Rectangle { x: 0; width: parent.width * c.month-progress; border-radius: 2px; background: Pal.blue; }
+                            }
+                        }
+                        if c.month-progress >= 0: Text { text: c.month-pct; font-size: 12.5px; color: Pal.ink; vertical-alignment: center; }
+                    }
+                    Text { text: c.month-sub; font-size: 11.5px; color: Pal.ink-dim; overflow: elide; }
+                }
+            }
+            HorizontalLayout { padding-left: 12px; Rectangle { height: 1px; background: Pal.separator; } }
+            chart := Rectangle {
+                height: 150px;
+                accessible-role: text;
+                accessible-label: c.label;
+                property <length> pad-l: 40px;
+                property <length> pad-r: 14px;
+                property <length> pad-t: 14px;
+                property <length> pad-b: 30px;
+                property <length> plot-w: self.width - pad-l - pad-r;
+                property <length> plot-h: self.height - pad-t - pad-b;
+                property <length> slot: plot-w / max(1, c.bars.length);
+                property <length> bar-w: min(22px, slot * 0.62);
+                // The bar under the pointer, from where it is across the plot.
+                property <int> hot: ta.has-hover && ta.mouse-x >= pad-l && ta.mouse-x < pad-l + plot-w ? floor((ta.mouse-x - pad-l) / slot) : -1;
+                out property <string> tip: hot >= 0 && hot < c.bars.length ? c.bars[hot].tip : "";
+                // The axis: 0, half and the top, with faint lines across.
+                for y[k] in [0, 0.5, 1]: Rectangle {
+                    Rectangle { x: pad-l - 4px; y: pad-t + plot-h * (1 - y); width: plot-w + 4px; height: 1px; background: k == 0 ? Pal.separator : Pal.separator.with-alpha(0.35); }
+                    Text {
+                        x: 0; y: pad-t + plot-h * (1 - y) - 7px; width: pad-l - 10px; height: 14px;
+                        text: k == 0 ? "0" : k == 1 ? c.y-mid : c.y-top;
+                        font-size: 10px; color: Pal.ink-dim; horizontal-alignment: right; vertical-alignment: center;
+                    }
+                }
+                if hot >= 0: Rectangle { x: pad-l + hot * slot; y: pad-t; width: slot; height: plot-h; border-radius: 4px; background: Pal.ink.with-alpha(0.05); }
+                for b[i] in c.bars: Rectangle {
+                    property <length> hover-h: b.hover > 0 ? max(2px, chart.plot-h * b.hover) : 0;
+                    property <length> outside-h: b.outside > 0 ? max(2px, chart.plot-h * b.outside) : 0;
+                    x: chart.pad-l + i * chart.slot + (chart.slot - chart.bar-w) / 2;
+                    y: 0;
+                    width: chart.bar-w;
+                    height: chart.height;
+                    Rectangle {
+                        y: chart.pad-t + chart.plot-h - hover-h - outside-h; height: outside-h;
+                        border-radius: 2px;
+                        background: b.partial ? Pal.blue.with-alpha(0.14) : Pal.blue.with-alpha(0.38);
+                        border-width: b.partial ? 1px : 0;
+                        border-color: Pal.blue.with-alpha(0.55);
+                    }
+                    Rectangle { y: chart.pad-t + chart.plot-h - hover-h; height: hover-h; border-radius: 2px; background: Pal.blue; }
+                    if b.label != "": Text {
+                        x: (parent.width - 44px) / 2; y: chart.pad-t + chart.plot-h + 5px; width: 44px;
+                        text: b.label; font-size: 10px; color: Pal.ink-dim; horizontal-alignment: center;
+                    }
+                }
+                if c.empty != "": Text {
+                    x: pad-l; y: pad-t; width: plot-w; height: plot-h;
+                    text: c.empty; font-size: 12px; color: Pal.ink-dim; horizontal-alignment: center; vertical-alignment: center;
+                }
+                ta := TouchArea { }
+            }
+            // The legend, or the day under the pointer.
+            HorizontalLayout {
+                padding-left: chart.pad-l;
+                padding-right: 12px;
+                padding-bottom: 10px;
+                height: 26px;
+                spacing: 6px;
+                if chart.tip != "": Text { text: chart.tip; font-size: 11.5px; color: Pal.ink; vertical-alignment: center; overflow: elide; }
+                if chart.tip == "": HorizontalLayout {
+                    spacing: 6px;
+                    alignment: start;
+                    VerticalLayout { alignment: center; Swatch { } }
+                    Text { text: "Hover"; font-size: 11.5px; color: Pal.ink-dim; vertical-alignment: center; }
+                    Rectangle { width: 8px; }
+                    VerticalLayout { alignment: center; Swatch { outside: true; } }
+                    Text { text: "Outside"; font-size: 11.5px; color: Pal.ink-dim; vertical-alignment: center; }
+                    Rectangle { width: 8px; }
+                    VerticalLayout { alignment: center; Swatch { outside: true; partial: true; } }
+                    Text { text: "Partial day"; font-size: 11.5px; color: Pal.ink-dim; vertical-alignment: center; }
+                }
+            }
+            HorizontalLayout { padding-left: 12px; Rectangle { height: 1px; background: Pal.separator; } }
+            VerticalLayout {
+                padding: 12px;
+                padding-top: 9px;
+                spacing: 6px;
+                Text { text: "Today’s top sessions"; font-size: 11.5px; color: Pal.ink-dim; }
+                for t in c.top: HorizontalLayout {
+                    spacing: 12px;
+                    Text { text: t.title; font-size: 13px; color: Pal.ink; overflow: elide; horizontal-stretch: 3; }
+                    Text { text: t.folder; font-size: 12px; color: Pal.ink-dim; overflow: elide; horizontal-stretch: 2; }
+                    Text { text: t.credits; font-size: 12.5px; color: Pal.ink; horizontal-alignment: right; min-width: 90px; }
+                }
+                if c.top-empty != "": Sub { text: c.top-empty; }
+            }
+        }
+    }
+    if c.note != "": HorizontalLayout {
+        padding-left: 12px;
+        padding-right: 12px;
+        padding-top: 6px;
+        Sub { text: c.note; }
+    }
+}
+
 export component SettingsPage inherits Rectangle {
     in property <[Side]> sections;
     in property <int> current;
@@ -290,6 +472,9 @@ export component SettingsPage inherits Rectangle {
     callback tile(string);
     callback record;
     callback chord(KeyEvent) -> bool;
+    // Another section opens at its top: it kept the last one's scroll, and a long page
+    // (Kiro's) left a short one opened part way down, or past its end.
+    changed current => { scroll-y = 0; }
 
     // Margin 10,0,10,10 around the grid; the sidebar card, 8 between, the pane.
     Rectangle {
@@ -384,6 +569,7 @@ export component SettingsPage inherits Rectangle {
                         }
                     }
                 }
+                if b.kind == 7: CreditsCard { c: b.credits; pick(i) => { root.picked-seg(b.credits.id, i); } }
                 if b.kind == 3: HorizontalLayout {
                     padding-left: 12px;
                     padding-right: 12px;
