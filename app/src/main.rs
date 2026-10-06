@@ -194,7 +194,7 @@ impl App {
         app.refresh_page(false);
 
         // Hooks from other threads land on the UI thread.
-        app.hover.on_quotas(|| ui_do(|a| { a.update_rest(); if a.pane.borrow().section == Section::Integrations { a.refresh_page(false); } }));
+        app.hover.on_quotas(|| ui_do(|a| { a.update_rest(); if matches!(a.pane.borrow().section, Section::Integrations | Section::Kiro) { a.refresh_page(false); } }));
         app.hover.on_sessions(|| ui_do(|a| { a.update_rest(); a.office_changed(); }));
         // The notch shows an ending as its own island (the tool's logo, a badge and the
         // task); the system gets the words.

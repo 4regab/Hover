@@ -12,6 +12,7 @@
 //! readers that touch the disk, the network and kiro-cli are in `read`, and OwlApp's
 //! five-minute refresh is `schedule`.
 
+pub mod credits;
 pub mod daily;
 pub mod num;
 pub mod read;
