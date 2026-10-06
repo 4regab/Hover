@@ -16,6 +16,7 @@ use hover_agents::text;
 use hover_core::history::AgentHistory;
 use hover_core::model::{AgentTool, KiroState};
 use hover_core::settings::Settings;
+use hover_quota::credits::Credits;
 use hover_quota::schedule::Poller;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -60,6 +61,8 @@ pub struct Hover {
     pub limits: Arc<Limits>,
     exec: Mutex<Option<Executor>>,
     pub quotas: Poller,
+    /// Kiro's credits by day (Settings → Kiro), made off the UI thread; Settings only reads the latest.
+    pub credits: Arc<Credits>,
     /// The tests' stand-in for every tool's runner (None: each host's own).
     run: Option<RunTask>,
     unseen: Mutex<Unseen>,
@@ -189,7 +192,17 @@ impl Hover {
         let qh = hooks.clone();
         let is_on = { let s = settings.clone(); Arc::new(move |id: &str| s.has_notch_item(id)) };
         let changed: Arc<dyn Fn() + Send + Sync> = Arc::new(move || fire(&qh, |h| &h.quotas));
-        let quotas = match reader { Some(r) => Poller::new(r, is_on, changed), None => Poller::system(is_on, changed) };
+        // Kiro's credits by day are made again when the history changes and after each Kiro reading, and ask Settings to redraw as the quota poll does.
+        let credits = Arc::new(Credits::new(history.clone(), hover_quota::daily::path(), changed.clone()));
+        if let Some(h) = &history {
+            let w = Arc::downgrade(&credits);
+            h.on_changed(move || if let Some(c) = w.upgrade() { c.poke(); });
+        }
+        let w = Arc::downgrade(&credits);
+        let quotas = match reader {
+            Some(r) => Poller::new(r, is_on, changed),
+            None => Poller::system_with(is_on, changed, Arc::new(move |u| if let Some(c) = w.upgrade() { c.on_usage(&u); })),
+        };
         // Helpers: kept in the data folder, sealed, when there is a key this run; in memory for this run when not.
         let doc = hover_core::crypto::global().filter(|_| run.is_none()).map(|c| hover_core::store::Sealed::in_dir(&hover_core::paths::support().join("orch"), "runs", c));
         let crypto = hover_core::crypto::global().filter(|_| run.is_none());
@@ -215,7 +228,7 @@ impl Hover {
         let watcher = Watcher::new(sessions.clone(), wake.clone(), Arc::new(GhPoller(hover_agents::github::shared())), seal("watches"), move |k| o1.stopped_now(k));
         let s3 = settings.clone();
         let limits = Limits::new(sessions.clone(), wake.clone(), move || s3.automation().auto_resume, move |k| o2.stopped_now(k));
-        let me = Arc::new(Hover { settings, history, hosts, sessions, orch, customs, wake, sched, webhooks, watcher, limits, exec: Mutex::new(None), quotas, run, unseen: Default::default(), watching: AtomicBool::new(false), hooks });
+        let me = Arc::new(Hover { settings, history, hosts, sessions, orch, customs, wake, sched, webhooks, watcher, limits, exec: Mutex::new(None), quotas, credits, run, unseen: Default::default(), watching: AtomicBool::new(false), hooks });
         let sh = me.hooks.clone();
         me.sessions.on_changed(move || fire(&sh, |h| &h.sessions));
         let weak = Arc::downgrade(&me);

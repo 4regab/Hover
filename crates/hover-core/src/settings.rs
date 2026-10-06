@@ -41,6 +41,9 @@ pub struct Model {
     /// Agents get Cua Driver's MCP server (macOS build, Services/ComputerUse.cs). Off
     /// until switched on; written only once it is on.
     pub computer_use: bool,
+    /// The chat view in place of the office (the switch at its top left), in the notch and
+    /// the app window alike, until switched back. Written only while it is on.
+    pub chat_view: bool,
     /// Agents run inside srt (Services/Sandbox.cs). None (never set) is on; written only
     /// once it has been set.
     pub sandbox: Option<bool>,
@@ -86,7 +89,7 @@ impl Default for Model {
             hover_opens_workspace: true, notch_items: None, appearance: Appearance::System, theme: None, workspace_size: WorkspaceSize::Default,
             kiro_folder: None, kiro_notice_seen: false, kiro_model: None, kiro_effort: Some("high".into()), kiro_agent: None,
             kiro_read_only: false, kiro_require_mcp: false, kiro_idle_minutes: 5, kiro_hide_steps: false, kiro_approval: AgentApproval::Autopilot, agents: None, agent_offers: None,
-            agent_tool: None, computer_use: false, sandbox: None, agent_browser: None, agent_spaces: false, space_image: None, kiro_auto_compact: None, kiro_compact_at: None, kiro_retry_busy: None, discord_presence: None, editor: None, delegation: None, automation: None, sc_workspace: Shortcut::DEFAULT, projects: None, voice: None, default_workspace: None,
+            agent_tool: None, computer_use: false, chat_view: false, sandbox: None, agent_browser: None, agent_spaces: false, space_image: None, kiro_auto_compact: None, kiro_compact_at: None, kiro_retry_busy: None, discord_presence: None, editor: None, delegation: None, automation: None, sc_workspace: Shortcut::DEFAULT, projects: None, voice: None, default_workspace: None,
         }
     }
 }
@@ -103,6 +106,7 @@ impl Model {
         // stays as 3.x wrote it.
         let toggles: Vec<(&str, Json)> = [
             self.computer_use.then_some(("ComputerUse", Json::Bool(true))),
+            self.chat_view.then_some(("ChatView", Json::Bool(true))),
             self.sandbox.map(|v| ("Sandbox", Json::Bool(v))),
             self.agent_browser.map(|v| ("AgentBrowser", Json::Bool(v))),
             self.agent_spaces.then_some(("AgentSpaces", Json::Bool(true))),
@@ -172,6 +176,7 @@ impl Model {
                     .map(|l| l.map(|l| l.into_iter().flatten().collect())))?,
                 "AgentTool" => m.agent_tool = opt_text(Some(x))?,
                 "ComputerUse" => m.computer_use = b()?,
+                "ChatView" => m.chat_view = b()?,
                 "Sandbox" => m.sandbox = if x.is_null() { None } else { Some(b()?) },
                 "AgentBrowser" => m.agent_browser = if x.is_null() { None } else { Some(b()?) },
                 "AgentSpaces" => m.agent_spaces = b()?,
@@ -410,6 +415,9 @@ impl Settings {
     /// its next session.
     pub fn computer_use(&self) -> bool { self.m.lock().unwrap().computer_use }
     pub fn set_computer_use(&self, v: bool) { self.change(|m| m.computer_use = v) }
+    /// The chat view in place of the office; the office until switched.
+    pub fn chat_view(&self) -> bool { self.m.lock().unwrap().chat_view }
+    pub fn set_chat_view(&self, v: bool) { self.change(|m| m.chat_view = v) }
 
     /// Agents run inside Anthropic's sandbox-runtime (hover-agents::sandbox). On unless
     /// switched off; a tool picks it up when it next starts.
@@ -609,6 +617,16 @@ mod tests {
         assert!(at("\"AgentTool\"") < at("\"ComputerUse\"") && at("\"ComputerUse\"") < at("\"Sandbox\"") && at("\"Sandbox\"") < at("\"AgentBrowser\"") && at("\"AgentBrowser\"") < at("\"ScWorkspace\""));
         let back = Settings::load(s.file.clone());
         assert!(back.computer_use() && !back.sandbox() && back.agent_browser());
+        // The chat view: written only while it is on, and kept.
+        assert!(!s.chat_view() && !text.contains("ChatView"));
+        s.set_chat_view(true);
+        s.flush();
+        let text = std::fs::read_to_string(&s.file).unwrap();
+        assert!(text.contains("\"ChatView\": true") && at("\"ComputerUse\"") < text.find("\"ChatView\"").unwrap());
+        assert!(Settings::load(s.file.clone()).chat_view());
+        s.set_chat_view(false);
+        s.flush();
+        assert!(!std::fs::read_to_string(&s.file).unwrap().contains("ChatView"), "off again: as before");
         // 2.x's macOS file wrote Sandbox and AgentBrowser as null when never set.
         std::fs::write(&s.file, "{\"ComputerUse\": false, \"Sandbox\": null, \"AgentBrowser\": null}").unwrap();
         let old = Settings::load(s.file.clone());

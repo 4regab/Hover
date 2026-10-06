@@ -8,6 +8,7 @@ use hover_core::model::{AcpOption, AgentOptions, AgentTool, Appearance, SavedThe
 use hover_core::palette::{InstalledTheme, Palette};
 use hover_core::projects::{resolve_folder, CleanupProvider, Project, SpeechMode, VoiceSettings, ACCESS_IDS, GROQ_SECRET, TRANSCRIBE_MODELS};
 use hover_core::settings::{Settings, COMPACT_MIN};
+use hover_quota::credits::{CreditDay, CreditsView};
 use hover_quota::{item, Reading};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -103,6 +104,32 @@ pub enum Block {
     Link { id: String, name: String, icon: &'static str, text: String, dim: bool, status: String },
     /// The line under a page's title (the mockup's lead).
     Lead(String),
+    /// Settings → Kiro's credits: its heading with the range, the card, and a line under it.
+    Credits(Box<CreditsCard>),
+}
+
+/// A day's bar: Hover's and the outside share, each 0..1 of the chart's top.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct CreditBar { pub label: String, pub hover: f32, pub outside: f32, pub partial: bool, pub tip: String }
+
+/// One of today's dearest sessions: its title, short folder and credits.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct TopRow { pub title: String, pub folder: String, pub credits: String }
+
+/// The credits card as text and bar heights, made from the credits view, so the page is
+/// tested without Slint. `month_progress` is -1 with no month to show; `note` is the dim
+/// line under the card (why Kiro's own total is missing).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct CreditsCard {
+    pub range: i32,
+    pub today: String, pub today_sub: String,
+    pub week: String, pub week_sub: String,
+    pub month_title: String, pub month: String, pub month_progress: f32, pub month_pct: String, pub month_sub: String,
+    pub bars: Vec<CreditBar>, pub y_top: String, pub y_mid: String, pub empty: String,
+    pub top: Vec<TopRow>, pub top_empty: String,
+    pub note: String,
+    /// The chart's accessible label: the range summed up.
+    pub label: String,
 }
 
 /// What only the running app knows about voice, filled in by it (the Phonon card, Try
@@ -122,6 +149,8 @@ pub struct Live {
     pub integ: Integ,
     /// Saved tasks, the service, custom agents and the registry, as they are now (Automation).
     pub auto: AutoView,
+    /// The credits chart's range, an index of CREDITS_RANGES: the page's own choice, not a setting.
+    pub credits_range: i32,
 }
 
 /// A saved task as Automation lists it.
@@ -267,6 +296,8 @@ pub struct Input<'a> {
     /// folder, a key that couldn't be saved): shown under that row.
     pub note: Option<(String, String)>,
     pub live: &'a Live,
+    /// Kiro's credits by day, as last made off the UI thread; None until the first is.
+    pub credits: Option<&'a CreditsView>,
 }
 
 const WIN: bool = cfg!(windows);
@@ -482,6 +513,100 @@ fn themes(b: &mut Vec<Block>, i: &Input) {
     b.push(Block::Link { id: "ImportTheme".into(), name: "Import a VS Code theme file".into(), icon: "import", text: "Import a VS Code theme file…".into(), dim: false, status: i.import_status.clone() });
     b.push(Block::Footnote(format!("The colour themes of VS Code, Cursor, Kiro and Windsurf on this {} show here, and any VS Code theme file (.json) can be imported. \
         A theme colours Settings, its menus and the app window; the office and the resting notch keep their own look.", if WIN { "PC" } else { "computer" })));
+}
+
+/// The credits chart's range: its Segments id, and each choice's label and days.
+pub const CREDITS_RANGE: &str = "KiroCreditsRange";
+pub const CREDITS_RANGES: [(&str, usize); 2] = [("14 days", 14), ("30 days", 30)];
+
+/// The chart's top: the busiest day rounded up to a number whose half is a round one too.
+fn nice_top(v: f64) -> f64 {
+    if v <= 0.0 { return 1.0; }
+    let p = 10f64.powf(v.log10().floor());
+    // Rounded, so 3 × 0.1 is 0.3 and not a hair over.
+    [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 8.0, 10.0].into_iter().map(|f| (f * p * 1e6).round() / 1e6).find(|t| *t >= v - 1e-9).unwrap_or(10.0 * p)
+}
+
+/// Which bars carry a day-of-month label: every one of 14; every third of 30, counted
+/// back from today, and the first of a month always, its neighbours then left blank.
+fn labelled(dates: &[chrono::NaiveDate]) -> Vec<bool> {
+    use chrono::Datelike;
+    let n = dates.len();
+    let every = if n > 14 { 3 } else { 1 };
+    let mut on: Vec<bool> = (0..n).map(|i| (n - 1 - i).is_multiple_of(every)).collect();
+    for i in (0..n).filter(|&i| dates[i].day() == 1) {
+        on[i] = true;
+        if every > 1 {
+            if i > 0 { on[i - 1] = false; }
+            if i + 1 < n { on[i + 1] = false; }
+        }
+    }
+    on
+}
+
+/// Settings → Kiro's credits, from the view the app keeps. Kiro's own total (and so
+/// Outside) shows only while its quota is on and reads: a total from a reading that now
+/// fails would be a stale one. Hover's own numbers always show.
+pub fn credits_card(v: Option<&CreditsView>, quota_on: bool, reading: Option<&Reading>, range: i32) -> CreditsCard {
+    use chrono::Datelike;
+    let blank;
+    let v = match v { Some(v) => v, None => { blank = hover_quota::credits::combine(&Default::default(), &[], chrono::Local::now().date_naive()); &blank } };
+    let failing = reading.filter(|r| !r.ok());
+    let live = quota_on && failing.is_none();
+    let total = |d: &CreditDay| d.total.filter(|_| live);
+    let outside = |d: &CreditDay| d.outside.filter(|_| live);
+    let n2 = |x: f64| format!("{x:.2}");
+    let or_dash = |x: Option<f64>| x.map_or("—".to_owned(), n2);
+    let range = range.clamp(0, CREDITS_RANGES.len() as i32 - 1);
+    let (range_label, n) = CREDITS_RANGES[range as usize];
+    let days = &v.days[v.days.len().saturating_sub(n)..];
+    let top = nice_top(days.iter().map(|d| d.hover + outside(d).unwrap_or(0.0)).fold(0.0, f64::max));
+    let marks = labelled(&days.iter().map(|d| d.date).collect::<Vec<_>>());
+    let bars = days.iter().zip(marks).enumerate().map(|(k, (d, on))| {
+        let label = if !on { String::new() } else if k == 0 || d.date.day() == 1 { d.date.format("%b %-d").to_string() } else { d.date.day().to_string() };
+        let mut tip = format!("{} · Hover {}", d.date.format("%a, %b %-d"), n2(d.hover));
+        match (outside(d), total(d)) {
+            (Some(o), Some(t)) => tip += &format!(" · Outside {} · Total {}", n2(o), n2(t)),
+            _ => tip += " · Kiro total —",
+        }
+        let partial = live && d.partial;
+        if partial { tip += " · partial"; }
+        CreditBar { label, hover: (d.hover / top) as f32, outside: (outside(d).unwrap_or(0.0) / top) as f32, partial, tip }
+    }).collect();
+    let nothing = v.days.iter().all(|d| d.hover <= 0.0 && total(d).is_none());
+    let sum = |f: &dyn Fn(&CreditDay) -> Option<f64>| { let k: Vec<f64> = days.iter().filter_map(f).collect(); (!k.is_empty()).then(|| k.iter().sum::<f64>()) };
+    let range_hover: f64 = days.iter().map(|d| d.hover).sum();
+    let range_days = range_label.split(' ').next().unwrap_or("");
+    let label = match sum(&|d| total(d)) {
+        Some(t) => format!("Last {range_days} days: {} credits, {} in Hover", n2(t), n2(range_hover)),
+        None => format!("Last {range_days} days: {} credits in Hover", n2(range_hover)),
+    };
+    let month = v.month.as_ref().filter(|_| live);
+    let custom = hover_quota::num::custom;
+    CreditsCard {
+        range,
+        today: or_dash(total(&v.today)),
+        today_sub: format!("{} Hover", n2(v.today.hover)),
+        week: or_dash(v.week_total.filter(|_| live)),
+        week_sub: match v.per_day_7.filter(|_| live) { Some(p) => format!("{} a day", n2(p)), None => format!("{} Hover", n2(v.week_hover)) },
+        month_title: match month.and_then(|m| m.plan.as_deref()) { Some(p) => format!("This month · {p}"), None => "This month".into() },
+        month: month.map_or("—".into(), |m| format!("{} of {}", custom(m.used, 2), custom(m.limit, 2))),
+        month_progress: month.map_or(-1.0, |m| (m.used / m.limit).clamp(0.0, 1.0) as f32),
+        month_pct: month.map_or(String::new(), |m| format!("{} %", custom((m.used / m.limit * 100.0).clamp(0.0, 100.0), 0))),
+        month_sub: month.map_or(String::new(), |m| {
+            let mut s = m.reset.as_ref().map(|r| format!("resets {r}")).unwrap_or_default();
+            if let Some(out) = v.runs_out { if !s.is_empty() { s += " · "; } s += &format!("out by {}/{}", out.month(), out.day()); }
+            s
+        }),
+        bars,
+        y_top: custom(top, 2),
+        y_mid: custom(top / 2.0, 2),
+        empty: if nothing { "Credits show here once Kiro has run a task.".into() } else { String::new() },
+        top: v.top_today.iter().map(|s| TopRow { title: s.title.clone(), folder: hover_office::office::short(&s.folder), credits: hover_chat::state::credits(s.credits) }).collect(),
+        top_empty: if v.top_today.is_empty() { "No Kiro tasks in Hover today.".into() } else { String::new() },
+        note: if !quota_on { "Switch on the Kiro quota in Integrations to see Kiro’s own total.".into() } else { failing.map(|r| r.detail.clone()).unwrap_or_default() },
+        label,
+    }
 }
 
 pub fn quota_hint(id: &str) -> &'static str {
@@ -861,6 +986,12 @@ fn agent(b: &mut Vec<Block>, section: Section, i: &Input) {
     first.extend(setup_row(tool, ready.as_ref(), i));
     b.push(Block::Group(first));
     let usable = !bad;
+    // Only Kiro reports credits, and only kiro-cli tells the account's total.
+    if tool == AgentTool::Kiro {
+        b.push(Block::Credits(Box::new(credits_card(i.credits, i.settings.has_notch_item(item::KIRO), (i.reading)(item::KIRO).as_ref(), i.live.credits_range))));
+        b.push(Block::Footnote("Kiro total is read from \"kiro-cli /usage\" every five minutes while Hover runs. Outside is that total minus Hover’s own tasks: \
+            the Kiro IDE, kiro-cli on its own and Kiro Web. After a day Hover wasn’t running, the next day counts only from Hover’s first reading of it and is marked partial.".into()));
+    }
 
     heading(b, "Model");
     let models = models(tool, &offers);
@@ -1082,7 +1213,7 @@ mod tests {
         static LIVE: std::sync::OnceLock<Live> = std::sync::OnceLock::new();
         fn no(_: &str) -> bool { false }
         Input { settings: s, launch_at_login: false, shortcut: s.sc_workspace().label(), reading, ready, installed, system_dark: true, import_status: String::new(), kiro_agents: vec!["reviewer".into()],
-            voice_shortcut: s.voice().shortcut.label(), has_secret: &no, secrets_kept: true, project: None, note: None, live: LIVE.get_or_init(Live::default) }
+            voice_shortcut: s.voice().shortcut.label(), has_secret: &no, secrets_kept: true, project: None, note: None, live: LIVE.get_or_init(Live::default), credits: None }
     }
 
     fn settings() -> std::sync::Arc<Settings> {
@@ -1160,7 +1291,9 @@ mod tests {
             assert!(q.contains(&format!("NotchItem{id}")) && q.contains(&format!("QuotaStatus{id}")));
         }
         assert!(q.contains(&"RefreshQuotas".to_string()));
-        let k = ids(&build(Section::Kiro, &i));
+        let kb = build(Section::Kiro, &i);
+        assert!(kb.iter().any(|x| matches!(x, Block::Credits(_))), "Kiro's page has its credits");
+        let k = ids(&kb);
         for id in ["KiroRecheck", "KiroModel", "KiroAgent", "KiroToolsFull", "KiroToolsRead only", "KiroShowSteps", "KiroIdle5 min", "KiroIdle15 min", "SettingsKiroFolder", "KiroNoticeAgain"] {
             assert!(k.contains(&id.to_string()), "{id} in {k:?}");
         }
@@ -1358,13 +1491,131 @@ mod tests {
         assert_eq!(pick_model(AgentTool::Claude, &o, &offers, 0).model, None, "Default sends no model");
     }
 
+    // MARK: Kiro's credits
+
+    use hover_core::ledger::{DayA, SessionCredits};
+    use hover_quota::daily::Day;
+
+    fn date(m: u32, d: u32) -> chrono::NaiveDate { chrono::NaiveDate::from_ymd_opt(2026, m, d).unwrap() }
+
+    /// Three days of readings and Hover's share of the last two, as of Oct 6.
+    fn view() -> CreditsView {
+        let day = |d: u32, first: f64, used: f64| Day { date: date(10, d), first, used, limit: 50.0, reset: Some("10/20".into()), plan: Some("KIRO PRO".into()), at: String::new() };
+        let mut a = std::collections::BTreeMap::new();
+        a.insert(date(10, 5), DayA { credits: 1.0, turns: 1, sessions: vec![] });
+        a.insert(date(10, 6), DayA { credits: 2.1, turns: 3, sessions: vec![
+            SessionCredits { key: "a".into(), title: "Fix login redirect".into(), folder: r"C:\work\Hover\app".into(), credits: 1.2 },
+            SessionCredits { key: "b".into(), title: "Add CSV export".into(), folder: "/home/me/billing-svc".into(), credits: 0.64 },
+        ] });
+        hover_quota::credits::combine(&a, &[day(4, 30.0, 35.0), day(5, 35.0, 37.5), day(6, 37.5, 41.0)], date(10, 6))
+    }
+
+    fn card(b: &[Block]) -> Option<&CreditsCard> { b.iter().find_map(|x| if let Block::Credits(c) = x { Some(&**c) } else { None }) }
+
+    #[test]
+    fn kiros_credits_come_after_its_status_and_before_the_model_and_only_on_kiros_page() {
+        let s = settings();
+        let none = |_: &str| None;
+        let ready = |_| Some(AgentReady { installed: true, signed_in: true, hint: String::new() });
+        let i = input(&s, &[], &none, &ready);
+        let k = build(Section::Kiro, &i);
+        let at = k.iter().position(|x| matches!(x, Block::Credits(_))).unwrap();
+        assert!(matches!(&k[at - 1], Block::Group(r) if r[0].label == "Kiro"), "right under the installed-and-signed-in group");
+        assert!(matches!(&k[at + 1], Block::Footnote(t) if t.starts_with("Kiro total is read from")), "its footnote under the card");
+        assert_eq!(k[at + 2], Block::Heading("MODEL".into(), false), "then the Model heading");
+        for sec in [Section::Codex, Section::Cursor, Section::OpenCode, Section::Claude] {
+            let b = build(sec, &i);
+            assert!(card(&b).is_none(), "{sec:?} has no credits");
+            assert!(matches!(&b[2], Block::Heading(h, _) if h == "MODEL"), "{sec:?} goes from its status to the Model heading as before");
+        }
+    }
+
+    #[test]
+    fn the_card_shows_kiros_total_hovers_share_and_the_month_while_the_quota_reads() {
+        let v = view();
+        let ok = Reading { used: Some(82.0), detail: "KIRO PRO · 41 of 50 credits · resets 10/20".into() };
+        let c = credits_card(Some(&v), true, Some(&ok), 0);
+        assert_eq!((c.today.as_str(), c.today_sub.as_str()), ("3.50", "2.10 Hover"));
+        // Oct 4 is the first day on file (5 of its own), Oct 5 2.5, Oct 6 3.5: 11 over 3 days.
+        assert_eq!((c.week.as_str(), c.week_sub.as_str()), ("11.00", "3.67 a day"));
+        assert_eq!((c.month_title.as_str(), c.month.as_str(), c.month_pct.as_str()), ("This month · KIRO PRO", "41 of 50", "82 %"));
+        assert!((c.month_progress - 0.82).abs() < 1e-6);
+        // Since 9/20, 17 days at 41: 2.41 a day, so the 9 left last 4 days.
+        assert_eq!(c.month_sub, "resets 10/20 · out by 10/10");
+        assert_eq!(c.note, "");
+        assert_eq!(c.label, "Last 14 days: 11.00 credits, 3.10 in Hover");
+        assert_eq!(c.bars.len(), 14);
+        let today = c.bars.last().unwrap();
+        // Oct 4's 5 is the most: the chart's top is 5.
+        assert_eq!((c.y_top.as_str(), c.y_mid.as_str()), ("5", "2.5"));
+        assert!((today.hover - 2.1 / 5.0).abs() < 1e-6 && (today.outside - 1.4 / 5.0).abs() < 1e-6);
+        assert_eq!(today.tip, "Tue, Oct 6 · Hover 2.10 · Outside 1.40 · Total 3.50");
+        assert_eq!(c.bars[11].tip, "Sun, Oct 4 · Hover 0.00 · Outside 5.00 · Total 5.00 · partial");
+        assert!(c.bars[11].partial && !today.partial);
+        // 14 days: each labelled, the first with its month, as is the first of a month.
+        assert_eq!((c.bars[0].label.as_str(), c.bars[13].label.as_str()), ("Sep 23", "6"));
+        assert_eq!(c.bars.iter().find(|b| b.tip.starts_with("Thu, Oct 1")).unwrap().label, "Oct 1");
+        assert_eq!(c.top, [TopRow { title: "Fix login redirect".into(), folder: "app".into(), credits: "1.20 credits".into() },
+            TopRow { title: "Add CSV export".into(), folder: "billing-svc".into(), credits: "0.64 credits".into() }]);
+        assert_eq!((c.empty.as_str(), c.top_empty.as_str()), ("", ""));
+        // 30 days: every third day labelled, counted back from today.
+        let c = credits_card(Some(&v), true, Some(&ok), 1);
+        assert_eq!(c.bars.len(), 30);
+        assert_eq!(c.bars.iter().filter(|b| !b.label.is_empty()).count(), 10);
+        assert_eq!((c.bars[29].label.as_str(), c.bars[28].label.as_str()), ("6", ""));
+        assert_eq!(c.label, "Last 30 days: 11.00 credits, 3.10 in Hover");
+    }
+
+    #[test]
+    fn with_the_quota_failing_or_off_kiros_total_is_a_dash_and_hovers_numbers_stand() {
+        let v = view();
+        let fail = Reading::fail("kiro-cli isn’t installed or isn’t on PATH.");
+        let c = credits_card(Some(&v), true, Some(&fail), 0);
+        assert_eq!((c.today.as_str(), c.today_sub.as_str(), c.week.as_str(), c.week_sub.as_str()), ("—", "2.10 Hover", "—", "3.10 Hover"));
+        assert_eq!((c.month.as_str(), c.month_progress, c.month_sub.as_str()), ("—", -1.0, ""));
+        assert_eq!(c.note, "kiro-cli isn’t installed or isn’t on PATH.");
+        assert!(c.bars.iter().all(|b| b.outside == 0.0 && !b.partial), "Hover-only bars");
+        assert_eq!(c.bars[13].tip, "Tue, Oct 6 · Hover 2.10 · Kiro total —");
+        assert_eq!(c.label, "Last 14 days: 3.10 credits in Hover");
+        // The top is Hover's busiest day now: 2.1 rounds up to 3.
+        assert_eq!(c.y_top, "3");
+        let off = credits_card(Some(&v), false, None, 0);
+        assert_eq!((off.today.as_str(), off.note.as_str()), ("—", "Switch on the Kiro quota in Integrations to see Kiro’s own total."));
+        // Through the page: the reading Settings has is the one shown.
+        let s = settings();
+        s.set_notch_item("kiro", true);
+        let reading = |id: &str| (id == "kiro").then(|| Reading::fail("Run “kiro-cli login” first."));
+        let ready = |_| None;
+        let mut i = input(&s, &[], &reading, &ready);
+        i.credits = Some(&v);
+        let b = build(Section::Kiro, &i);
+        let c = card(&b).unwrap();
+        assert_eq!((c.today.as_str(), c.note.as_str()), ("—", "Run “kiro-cli login” first."));
+    }
+
+    #[test]
+    fn with_no_data_the_chart_is_empty_and_says_why() {
+        for v in [None, Some(hover_quota::credits::combine(&Default::default(), &[], date(10, 6)))] {
+            let c = credits_card(v.as_ref(), true, None, 0);
+            assert_eq!(c.empty, "Credits show here once Kiro has run a task.");
+            assert_eq!(c.top_empty, "No Kiro tasks in Hover today.");
+            assert!(c.top.is_empty() && c.bars.iter().all(|b| b.hover == 0.0 && b.outside == 0.0));
+            assert_eq!((c.today.as_str(), c.today_sub.as_str(), c.y_top.as_str()), ("—", "0.00 Hover", "1"));
+        }
+    }
+
+    #[test]
+    fn the_charts_top_is_a_round_number_with_a_round_half() {
+        assert_eq!([0.0, 0.3, 1.0, 2.1, 3.5, 5.2, 7.0, 9.0, 13.0, 41.0].map(nice_top), [1.0, 0.3, 1.0, 3.0, 4.0, 6.0, 8.0, 10.0, 20.0, 50.0]);
+    }
+
     // MARK: Integrations
 
     fn with_live<'a>(s: &'a Settings, live: &'a Live, ready: &'a dyn Fn(AgentTool) -> Option<AgentReady>) -> Input<'a> {
         fn no(_: &str) -> bool { false }
         static NONE: fn(&str) -> Option<Reading> = |_| None;
         Input { settings: s, launch_at_login: false, shortcut: s.sc_workspace().label(), reading: &NONE, ready, installed: &[], system_dark: true, import_status: String::new(), kiro_agents: vec![],
-            voice_shortcut: s.voice().shortcut.label(), has_secret: &no, secrets_kept: true, project: None, note: None, live }
+            voice_shortcut: s.voice().shortcut.label(), has_secret: &no, secrets_kept: true, project: None, note: None, live, credits: None }
     }
 
     fn row_of<'a>(b: &'a [Block], label: &str) -> Option<&'a Row> { rows_all(b).into_iter().find(|r| r.label == label) }

@@ -317,3 +317,26 @@ fn kiro_runs_the_cli_and_gives_up_after_its_deadline() {
     assert!(t.elapsed() < std::time::Duration::from_secs(5));
     assert!(read::kiro_with(&dir.join("missing"), &[], std::time::Duration::from_secs(1)).detail.starts_with("kiro-cli failed: "));
 }
+
+/// The raw numbers behind `parse_kiro`'s percent: kept for the daily credits.
+#[test]
+fn kiro_usage_keeps_the_credits_the_plan_and_the_reset_as_printed() {
+    let u = parse_kiro_usage("\u{1b}[1m┃  | KIRO PRO ┃\n┃ ████████ 42% (resets on 10/01) ┃\n┃ (21.00 of 50 covered in plan) ┃\n").unwrap();
+    assert_eq!(u, KiroUsage { used: 21.0, limit: 50.0, plan: Some("KIRO PRO".into()), reset: Some("10/01".into()) });
+    // The other reset format, and credits in 0.01 steps.
+    let u = parse_kiro_usage("KIRO POWER\n██ 3%\n(20.37 of 1000 covered in plan) resets on 2026-10-01").unwrap();
+    assert_eq!((u.used, u.limit, u.plan.as_deref(), u.reset.as_deref()), (20.37, 1000.0, Some("KIRO POWER"), Some("2026-10-01")));
+    // Colour codes inside the line don't hide it; a report without plan or reset still counts.
+    let u = parse_kiro_usage("\u{1b}[32m(\u{1b}[0m0.5 of 50 covered in plan)\u{1b}[0m").unwrap();
+    assert_eq!((u.used, u.limit, u.plan, u.reset), (0.5, 50.0, None, None));
+}
+
+#[test]
+fn kiro_usage_needs_the_credit_line_and_a_limit() {
+    assert_eq!(parse_kiro_usage("████████ 42% (resets on 10/01)"), None, "the bar alone has no credits to count");
+    assert_eq!(parse_kiro_usage("(5 of 0 covered in plan)"), None);
+    assert_eq!(parse_kiro_usage("Not logged in. Run kiro-cli login."), None);
+    assert_eq!(parse_kiro_usage(""), None);
+    // parse_kiro is as it was.
+    assert_eq!(parse_kiro("(21.00 of 50 covered in plan) resets on 10/01").detail, "21 of 50 credits · resets 10/01");
+}

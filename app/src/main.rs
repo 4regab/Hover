@@ -194,8 +194,10 @@ impl App {
         app.refresh_page(false);
 
         // Hooks from other threads land on the UI thread.
-        app.hover.on_quotas(|| ui_do(|a| { a.update_rest(); if a.pane.borrow().section == Section::Integrations { a.refresh_page(false); } }));
+        app.hover.on_quotas(|| ui_do(|a| { a.update_rest(); if matches!(a.pane.borrow().section, Section::Integrations | Section::Kiro) { a.refresh_page(false); } }));
         app.hover.on_sessions(|| ui_do(|a| { a.update_rest(); a.office_changed(); }));
+        // Kiro's credits are counted from now, off this thread, so its page opens with them.
+        let _ = app.hover.credits.view();
         // The notch shows an ending as its own island (the tool's logo, a badge and the
         // task); the system gets the words.
         app.hover.on_notify(|t, b| { let (t, b) = (t.to_owned(), b.to_owned()); ui_do(move |a| a.announce(&t, &b)); });
@@ -604,7 +606,7 @@ impl App {
                 });
                 let w = d.as_weak();
                 let a = self.clone();
-                d.on_close_clicked(move || { if let Some(d) = w.upgrade() { let _ = d.hide(); } let a = a.clone(); Timer::single_shot(Duration::ZERO, move || { a.dash.borrow_mut().take(); a.dash_settings.set(false); a.page.wide.set(false); a.watching_changed(); }); });
+                d.on_close_clicked(move || { if let Some(d) = w.upgrade() { let _ = d.hide(); } let a = a.clone(); Timer::single_shot(Duration::ZERO, move || { a.dash.borrow_mut().take(); a.dash_settings.set(false); a.watching_changed(); }); });
                 let w = d.as_weak();
                 d.on_drag(move || { if let Some(d) = w.upgrade() { d.window().with_winit_window(|ww| { let _ = ww.drag_window(); }); } });
                 let w = d.as_weak();
@@ -617,7 +619,7 @@ impl App {
             let a = self.clone();
             d.window().on_close_requested(move || {
                 let a = a.clone();
-                Timer::single_shot(Duration::ZERO, move || { a.dash.borrow_mut().take(); a.dash_settings.set(false); a.page.wide.set(false); a.watching_changed(); });
+                Timer::single_shot(Duration::ZERO, move || { a.dash.borrow_mut().take(); a.dash_settings.set(false); a.watching_changed(); });
                 slint::CloseRequestResponse::HideWindow
             });
             publish!(d, &*self.palette.borrow(), self.look.get().animations);

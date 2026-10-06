@@ -4,7 +4,7 @@
 //! so a stale number never comes back with the switch. A read runs on a thread of its
 //! own, and one quota is never read twice at once.
 
-use crate::Reading;
+use crate::{KiroUsage, Reading};
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -51,6 +51,8 @@ impl Book {
 
 type Reader = Arc<dyn Fn(&str) -> Reading + Send + Sync>;
 type IsOn = Arc<dyn Fn(&str) -> bool + Send + Sync>;
+/// Told, on the poll's thread, the raw credits of every good Kiro reading.
+pub type OnUsage = Arc<dyn Fn(KiroUsage) + Send + Sync>;
 
 /// The book, the reader and a callback for changes: what OwlApp's quota half is.
 #[derive(Clone)]
@@ -67,8 +69,19 @@ impl Poller {
     }
 
     /// The real readers.
-    pub fn system(is_on: IsOn, changed: Arc<dyn Fn() + Send + Sync>) -> Poller {
-        Poller::new(Arc::new(crate::read::by_id), is_on, changed)
+    pub fn system(is_on: IsOn, changed: Arc<dyn Fn() + Send + Sync>) -> Poller { Poller::system_with(is_on, changed, Arc::new(|_| {})) }
+
+    /// The real readers, and Kiro's raw credits handed on as well. They don't ride on
+    /// `Reading`: a field there changes every struct literal of it (the backend's too),
+    /// and the other tools would carry a field they never fill. The Kiro reader sees them
+    /// where it parses the report, and the other tools are read as before.
+    pub fn system_with(is_on: IsOn, changed: Arc<dyn Fn() + Send + Sync>, on_usage: OnUsage) -> Poller {
+        Poller::new(Arc::new(move |id: &str| {
+            if id != crate::item::KIRO { return crate::read::by_id(id); }
+            let (r, usage) = crate::read::kiro_read();
+            if let Some(u) = usage { on_usage(u); }
+            r
+        }), is_on, changed)
     }
 
     pub fn reading(&self, id: &str) -> Option<Reading> { self.book.lock().unwrap().readings.get(id).map(|r| r.0.clone()) }

@@ -6,6 +6,7 @@ pub mod ext;
 pub mod history;
 pub mod images;
 pub mod json;
+pub mod ledger;
 pub mod log;
 pub mod model;
 pub mod palette;

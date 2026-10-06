@@ -22,16 +22,31 @@ fn env_dir(var: &str) -> Option<PathBuf> {
 /// kiro-cli's own report: `kiro-cli chat --no-interactive /usage`. One deadline of 25 s
 /// for the exit and both pipes: a grandchild that inherits stdout can hold it open
 /// after kiro-cli itself has gone. On a timeout the whole tree is killed.
-pub fn kiro() -> Reading {
-    let Some(exe) = hover_agents::agents::find("kiro-cli") else { return Reading::fail("kiro-cli isn’t installed or isn’t on PATH.") };
-    kiro_with(&exe, &["chat", "--no-interactive", "/usage"], Duration::from_secs(25))
+pub fn kiro() -> Reading { kiro_read().0 }
+
+/// The reading and the raw credits behind it, made from the one report (it takes eight
+/// seconds to print, so the daily credits must not ask twice).
+pub fn kiro_read() -> (Reading, Option<KiroUsage>) {
+    let Some(exe) = hover_agents::agents::find("kiro-cli") else { return (Reading::fail("kiro-cli isn’t installed or isn’t on PATH."), None) };
+    kiro_both(&exe, &["chat", "--no-interactive", "/usage"], Duration::from_secs(25))
 }
 
-pub fn kiro_with(exe: &Path, args: &[&str], limit: Duration) -> Reading {
+pub fn kiro_with(exe: &Path, args: &[&str], limit: Duration) -> Reading { kiro_both(exe, args, limit).0 }
+
+/// The credits only when the reading itself is good, so a failure text that happens to
+/// hold a credit line is never recorded.
+fn kiro_both(exe: &Path, args: &[&str], limit: Duration) -> (Reading, Option<KiroUsage>) {
+    match kiro_output(exe, args, limit) {
+        Err(r) => (r, None),
+        Ok(text) => { let r = parse_kiro(&text); let u = if r.ok() { parse_kiro_usage(&text) } else { None }; (r, u) }
+    }
+}
+
+fn kiro_output(exe: &Path, args: &[&str], limit: Duration) -> Result<String, Reading> {
     use hover_agents::proc::{hidden, Group};
     let g = match Group::spawn(hidden(exe, args)) {
         Ok(g) => g,
-        Err(e) => return Reading::fail(format!("kiro-cli failed: {e}")),
+        Err(e) => return Err(Reading::fail(format!("kiro-cli failed: {e}"))),
     };
     let start = std::time::Instant::now();
     let (stdin, stdout, stderr) = g.take_pipes();
@@ -46,7 +61,7 @@ pub fn kiro_with(exe: &Path, args: &[&str], limit: Duration) -> Reading {
         });
     }
     drop(tx);
-    let timed_out = || { g.kill(); Reading::fail("kiro-cli didn’t answer in time.") };
+    let timed_out = || { g.kill(); Err(Reading::fail("kiro-cli didn’t answer in time.")) };
     if g.wait_timeout(limit).is_none() { return timed_out(); }
     let mut out = [String::new(), String::new()];
     for _ in 0..2 {
@@ -56,7 +71,7 @@ pub fn kiro_with(exe: &Path, args: &[&str], limit: Duration) -> Reading {
             Err(_) => return timed_out(),
         }
     }
-    parse_kiro(&format!("{}\n{}", out[0], out[1]))
+    Ok(format!("{}\n{}", out[0], out[1]))
 }
 
 // MARK: Codex

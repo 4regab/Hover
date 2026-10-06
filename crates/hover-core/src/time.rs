@@ -37,6 +37,13 @@ impl Stamp {
         }
     }
 
+    /// The calendar day on this machine's clock: an Unspecified stamp is already a wall
+    /// time; the others are an instant, shown in the machine's zone.
+    pub fn local_date(&self) -> Option<chrono::NaiveDate> {
+        let wall = if self.kind == Kind::Unspecified { self.ticks } else { self.ticks + local_offset_min(self.ticks) * 60 * TICKS_PER_SEC };
+        chrono::NaiveDate::from_num_days_from_ce_opt(i32::try_from(wall.div_euclid(TICKS_PER_DAY) + 1).ok()?)
+    }
+
     /// new DateTimeOffset(t).ToUnixTimeMilliseconds(), floored as .NET floors it.
     pub fn unix_ms(&self) -> i64 { (self.utc_ticks() - UNIX_TICKS).div_euclid(10_000) }
 

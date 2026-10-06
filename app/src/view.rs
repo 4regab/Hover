@@ -136,6 +136,19 @@ pub fn blocks(bs: &[B], p: &Palette) -> Vec<Block> {
             // A title with a lead line under it sits close to it (first).
             B::Title(t) => { o.kind = 0; o.text = s(t); o.first = matches!(bs.get(k + 1), Some(B::Lead(_))); }
             B::Lead(t) => { o.kind = 6; o.text = s(t); }
+            B::Credits(c) => {
+                o.kind = 7;
+                let labels: Vec<SharedString> = pages::CREDITS_RANGES.iter().map(|r| s(r.0)).collect();
+                o.credits = CreditsData {
+                    id: s(pages::CREDITS_RANGE), range: c.range, longest: labels.iter().max_by_key(|l| l.len()).cloned().unwrap_or_default(), labels: model(labels),
+                    today: s(&c.today), today_sub: s(&c.today_sub), week: s(&c.week), week_sub: s(&c.week_sub),
+                    month_title: s(&c.month_title), month: s(&c.month), month_progress: c.month_progress, month_pct: s(&c.month_pct), month_sub: s(&c.month_sub),
+                    bars: model(c.bars.iter().map(|b| CreditBar { label: s(&b.label), hover: b.hover, outside: b.outside, partial: b.partial, tip: s(&b.tip) }).collect()),
+                    y_top: s(&c.y_top), y_mid: s(&c.y_mid), empty: s(&c.empty),
+                    top: model(c.top.iter().map(|t| TopRow { title: s(&t.title), folder: s(&t.folder), credits: s(&t.credits) }).collect()),
+                    top_empty: s(&c.top_empty), note: s(&c.note), label: s(&c.label),
+                };
+            }
             B::Heading(t, first) => { o.kind = 1; o.text = s(t); o.first = *first; }
             B::Footnote(t) => { o.kind = 3; o.text = s(t); }
             B::Link { id, name, icon, text, dim, status } => {
@@ -258,6 +271,8 @@ pub fn build(h: &dyn Host, pane: &mut Pane) -> Vec<B> {
     let field = if pane.recording_voice { None } else { pane.field.clone() }.unwrap_or_else(|| hv.settings.sc_workspace().label());
     let voice_field = if pane.recording_voice { pane.field.clone() } else { None }.unwrap_or_else(|| hv.settings.voice().shortcut.label());
     let reading = |id: &str| hv.quotas.reading(id);
+    // Only Kiro's page reads it, and the first look starts the thread that makes it.
+    let credits = if pane.section == Section::Kiro { hv.credits.view() } else { None };
     let ready = |t: AgentTool| hover_agents::agents::known(t);
     let store = secrets();
     let has_secret = |n: &str| store.has(n);
@@ -277,6 +292,7 @@ pub fn build(h: &dyn Host, pane: &mut Pane) -> Vec<B> {
         project: pane.project.clone(),
         note: pane.note.clone(),
         live: &pane.live,
+        credits: credits.as_deref(),
     };
     pages::build(pane.section, &input)
 }
@@ -647,6 +663,8 @@ pub fn picked_seg(h: &dyn Host, pane: &RefCell<Pane>, id: &str, i: usize) {
         "DelegMax" => if let Some(&n) = [2u32, 4, 6, 10].get(i) { st.set_delegation(hover_core::model::DelegationLimits { max_helpers: n, ..st.delegation() }); },
         "DelegParallel" => if let Some(&n) = [1u32, 2, 3, 4].get(i) { st.set_delegation(hover_core::model::DelegationLimits { max_parallel: n, ..st.delegation() }); },
         "DelegDepth" => if let Some(&n) = [1u32, 2, 3].get(i) { st.set_delegation(hover_core::model::DelegationLimits { max_depth: n, ..st.delegation() }); },
+        // The chart's range is the page's own, not a setting.
+        pages::CREDITS_RANGE => pane.borrow_mut().live.credits_range = i as i32,
         "TaskKind" => draft(pane, "kind", &i.to_string()),
         "TaskDays" => draft(pane, "days", &i.to_string()),
         _ => {
