@@ -15,6 +15,7 @@ pub mod desk;
 pub mod discord;
 pub mod editor;
 pub mod github;
+pub mod handoff;
 pub mod http;
 pub mod opencode;
 pub mod orch;

@@ -151,9 +151,9 @@ fn a_chat_goes_back_to_an_answer_or_tries_a_message_again() {
     assert!(k.reply(id, "write four.txt", vec![]));
     wait_for(|| k.get(id).is_some_and(|s| !s.busy() && s.turns.len() == 2 && s.turns[1].result.is_some()));
     let sent = log.lock().unwrap().last().cloned().unwrap();
-    assert!(sent.0.starts_with("[Hover] The project's files were just put back"), "{}", sent.0);
+    assert!(sent.0.starts_with("[Hover handoff] The project's files were just put back"), "{}", sent.0);
     assert!(sent.0.contains("“write one.txt”") && sent.0.ends_with("write four.txt"), "{}", sent.0);
-    assert_eq!(sent.1.as_deref(), Some("conversation-1"), "the conversation goes on");
+    assert_eq!(sent.1, None, "the agent still remembered the removed turns, so it starts a new conversation from an account of the ones that remain");
     assert!(k.reply(id, "write five.txt", vec![]));
     wait_for(|| k.get(id).is_some_and(|s| !s.busy() && s.turns.len() == 3 && s.turns[2].result.is_some()));
     assert_eq!(log.lock().unwrap().last().unwrap().0, "write five.txt", "the note is sent once");

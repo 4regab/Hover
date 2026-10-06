@@ -8,7 +8,7 @@ use crate::ask::{AgentAsk, Answers, AskAnswer};
 use crate::cancel::{Cancel, Registration};
 use crate::checkpoint::Checkpoints;
 use crate::stream::{KiroEvent, KiroPhase, KiroResult};
-use hover_core::ext::{Chip, SessionExt, TurnExt};
+use hover_core::ext::{Chip, Fork, Handoff, Lineage, Native, Returned, SessionExt, TurnExt};
 use hover_core::history::{AgentHistory, SavedSession, SavedTurn};
 use hover_core::model::{AgentTool, KiroState, KiroStep};
 use hover_core::time::Stamp;
@@ -233,6 +233,34 @@ impl KiroSession {
 }
 
 fn usable(text: &str, images: &[String]) -> bool { !text.trim().is_empty() || !images.is_empty() }
+
+/// A provider a conversation can move to: a built-in tool, or one of the user's custom agents.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Target { pub id: String, pub tool: AgentTool, pub instance: Option<String> }
+
+impl Target {
+    /// `kiro`, `codex`, … or `custom:<id>`. Nothing is looked up: whether it is ready is the caller's to know.
+    pub fn parse(id: &str) -> Option<Target> {
+        if let Some(c) = id.strip_prefix("custom:").filter(|c| !c.is_empty()) { return Some(Target { id: id.into(), tool: AgentTool::Custom, instance: Some(c.into()) }); }
+        AgentTool::parse(Some(id)).map(|t| Target { id: id.into(), tool: t, instance: None })
+    }
+}
+
+/// The provider a session is with now, as `Target::parse` names it.
+pub fn provider_id(s: &KiroSession) -> String {
+    match (&s.tool, &s.ext.provider) { (AgentTool::Custom, Some(c)) => format!("custom:{c}"), (t, _) => t.id().to_owned() }
+}
+
+/// What a provider switch did.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Switched {
+    /// `native` (the provider’s own conversation, resumed), `portable` (a new one, started from an account of this) or `fresh`
+    /// (nothing had been said yet).
+    pub mode: &'static str,
+    pub carried: usize,
+    pub omitted: usize,
+    pub notes: Vec<String>,
+}
 
 /// A message to an agent: its words, pictures and chips (context.rs), and a provider switch asked for with it
 /// (applied when it is sent).
@@ -499,6 +527,121 @@ impl KiroSessions {
         Some(snap)
     }
 
+    /// Moves the slot's conversation to another provider. Changes nothing until it knows it can: the account for a provider that
+    /// starts afresh is made first, and if it doesn't fit, the conversation stays where it is. History is never altered; it gains a
+    /// record of the move. Native state of the provider it leaves is kept, so coming back resumes it and brings over only what it missed.
+    fn apply_switch(&self, slot: &mut Slot, to: &Target) -> Result<Switched, String> {
+        if slot.s.cloud.is_some() { return Err("A Kiro Web task stays with Kiro Web.".into()); }
+        let from = provider_id(&slot.s);
+        if from == to.id { return Err(format!("It is with {} already.", to.id)); }
+        let done = slot.s.turns.iter().filter(|t| !t.queued && t.result.is_some()).count();
+        let mut lin = slot.s.ext.lineage.clone().unwrap_or_default();
+        if let Some(id) = slot.s.kiro_id.clone() { lin.natives.retain(|n| n.provider != from); lin.natives.push(Native { provider: from.clone(), id, seen: done }); }
+        let native = lin.natives.iter().find(|n| n.provider == to.id && n.seen <= done).cloned();
+        let (mode, carry, id) = match &native {
+            // Its own conversation, resumed; what it missed since is handed over as text.
+            Some(n) => {
+                let missed = crate::handoff::portable(&slot.s.turns, n.seen, crate::handoff::BUDGET, &slot.s.key,
+                    &format!("You are {} again, and this conversation went on without you for {} turn{}. Your own memory of it is intact up to turn {}; the turns you missed follow.", to.id, done - n.seen, if done - n.seen == 1 { "" } else { "s" }, n.seen))?;
+                ("native", (n.seen < done).then_some(missed), Some(n.id.clone()))
+            }
+            None if done == 0 => ("fresh", None, None),
+            None => ("portable", Some(crate::handoff::portable(&slot.s.turns, 0, crate::handoff::BUDGET, &slot.s.key,
+                &format!("This conversation was with {from} until now, and you ({}) are carrying it on. You have none of it in memory; this is an account of it.", to.id))?), None),
+        };
+        lin.handoffs.push(Handoff { turn: done, from, to: to.id.clone(), mode: mode.into(), carried: carry.as_ref().map_or(0, |c| c.carried), omitted: carry.as_ref().map_or(0, |c| c.omitted) });
+        lin.pending = carry.as_ref().map(|c| c.text.clone()).filter(|t| !t.is_empty());
+        slot.s.tool = to.tool;
+        slot.s.ext.provider = to.instance.clone();
+        slot.s.ext.lineage = Some(lin);
+        slot.s.kiro_id = id;
+        slot.s.context = None;
+        slot.usage = None;
+        slot.run = self.run_for(to.tool, to.instance.as_deref());
+        slot.s.rev += 1;
+        Ok(Switched { mode, carried: carry.as_ref().map_or(0, |c| c.carried), omitted: carry.as_ref().map_or(0, |c| c.omitted), notes: carry.map_or(vec![], |c| c.notes) })
+    }
+
+    /// Moves a conversation to another provider now. Not while a run goes on: a switch asked for with a queued message happens when that
+    /// message is sent (`Msg::switch_to`), after the work before it.
+    pub fn switch_provider(&self, id: i32, to: &Target) -> Result<Switched, String> {
+        let (r, snap) = {
+            let mut g = self.0.inner.lock().unwrap();
+            let slot = g.all.iter_mut().find(|x| x.s.id == id).ok_or("That chat isn't here.")?;
+            if slot.s.busy() { return Err("A run is going on. Wait for it, or queue the message with the switch; it happens when that message is sent.".into()); }
+            if crate::workspace::held(&slot.s.folder).is_some() { return Err("The folder is in use by a restore. Try again in a moment.".into()); }
+            (self.apply_switch(slot, to)?, slot.s.clone())
+        };
+        self.save(&snap);
+        self.raise(vec![Note::Changed]);
+        Ok(r)
+    }
+
+    /// A new conversation from turn `turn` of another, which stays as it is. The copy holds the turns up to and including it, so the chat reads on;
+    /// its agent starts afresh from an account of them (no provider here forks its own conversation). The provider is the caller's choice and
+    /// the folder is given separately: branching the conversation and choosing where files are written are two decisions. Only from a turn that ended.
+    pub fn fork(&self, key: &str, turn: usize, to: &Target, folder: &str, workspace: Option<hover_core::ext::WorkspaceBinding>) -> Result<KiroSession, String> {
+        let src = self.saved(key).ok_or("That conversation isn’t available.")?;
+        let t = src.turns.get(turn).ok_or("That message isn’t there.")?;
+        if t.ext.queued || t.state.is_none() { return Err("A conversation can be forked only from a turn that has ended.".into()); }
+        if src.cloud.is_some() { return Err("A Kiro Web conversation can’t be forked here.".into()); }
+        if !crate::usable_folder(Some(folder)) { return Err("The folder isn’t there.".into()); }
+        let mut copy = src.clone();
+        copy.key = hover_core::guid_n();
+        copy.turns.truncate(turn + 1);
+        for t in &mut copy.turns { (t.before, t.after) = (None, None); }
+        (copy.tool, copy.acp_id, copy.context, copy.folder, copy.cloud) = (to.tool, None, None, folder.into(), None);
+        copy.ext = SessionExt { workspace, provider: to.instance.clone(), orch: None, lineage: None };
+        let mut s = KiroSession::new(to.tool);
+        s.restore(&copy);
+        let from = { let mut probe = KiroSession::new(src.tool); probe.ext.provider = src.ext.provider.clone(); provider_id(&probe) };
+        let carry = crate::handoff::portable(&s.turns, 0, crate::handoff::BUDGET, &copy.key,
+            &format!("This conversation is a fork of another, taken after turn {}. It was with {from}; you ({}) are carrying it on from that point. You have none of it in memory; this is an account of it.", turn + 1, to.id))?;
+        s.ext.lineage = Some(Lineage { fork: Some(Fork { key: key.into(), turn }), pending: Some(carry.text).filter(|t| !t.is_empty()),
+            handoffs: if from != to.id { vec![Handoff { turn: turn + 1, from, to: to.id.clone(), mode: "portable".into(), carried: carry.carried, omitted: carry.omitted }] } else { vec![] }, ..Default::default() });
+        s.ext.provider = to.instance.clone();
+        s.held = false;
+        let snap = {
+            let mut g = self.0.inner.lock().unwrap();
+            if !Self::free_desk(&mut g) { return Err("Every desk is busy. Finish or dismiss a task first.".into()); }
+            Self::seat(&g, &mut s);
+            let snap = s.clone();
+            let run = self.run_for(to.tool, to.instance.as_deref());
+            g.all.push(Slot::new(s, run));
+            g.selected = Some(snap.id);
+            snap
+        };
+        self.save(&snap);
+        self.raise(vec![Note::Changed]);
+        Ok(snap)
+    }
+
+    /// Brings what a conversation found back to another (by default the one it was forked from), as one message to it: words only. No code, file
+    /// or branch moves. Done once per state of the fork: the same findings are found already sent (by the mark in the message) and not sent again;
+    /// a fork that has gone on since has new findings to send. Records what was moved.
+    pub fn bring_findings_back(&self, fork_key: &str, into_key: Option<&str>) -> Result<usize, String> {
+        let fork = self.saved(fork_key).ok_or("That conversation isn’t available.")?;
+        let lin = fork.ext.lineage.clone().unwrap_or_default();
+        let (from_turn, parent) = match (&lin.fork, into_key) {
+            (Some(f), None) => (f.turn, f.key.clone()),
+            (Some(f), Some(p)) => (if p == f.key { f.turn } else { 0 }, p.to_owned()),
+            (None, Some(p)) => (0, p.to_owned()),
+            (None, None) => return Err("This conversation wasn’t forked from another, so say where the findings go.".into()),
+        };
+        let parent_s = self.wake(&parent).ok_or("The conversation to bring them to isn’t available (every desk may be busy).")?;
+        let mut probe = KiroSession::new(fork.tool);
+        probe.restore(&fork);
+        let (text, chars) = crate::handoff::findings(&fork.title, fork_key, &probe.turns, from_turn, 16_000);
+        let marker = text.split(|c: char| c == '(' || c == ')').find(|p| p.starts_with("hover-return:")).unwrap_or("").to_owned();
+        if !marker.is_empty() && parent_s.turns.iter().any(|t| t.prompt.contains(&marker)) { return Ok(0); }
+        let done = probe.turns.iter().enumerate().filter(|(i, t)| *i > from_turn && !t.queued && t.result.is_some()).count();
+        if done == 0 { return Err("Nothing was asked in that conversation after the point it was forked at.".into()); }
+        let chip = crate::context::thread(fork_key, &fork.title);
+        if !self.reply_msg(parent_s.id, Msg { text, chips: vec![chip], ..Default::default() }) { return Err("The message couldn’t be sent now. Try again when a place is free.".into()); }
+        self.update_ext(&parent, |e| { e.lineage.get_or_insert_with(Default::default).returned.push(Returned { from: fork_key.into(), turn: done, chars }); });
+        Ok(chars)
+    }
+
     /// Marks the next turn running and gives back what starts its thread (run once the
     /// lock is gone).
     fn begin(&self, g: &mut Inner, id: i32) -> Box<dyn FnOnce() + Send> {
@@ -513,9 +656,21 @@ impl KiroSessions {
         slot.s.rev += 1;
         let ct = Cancel::new();
         slot.cancel = Some(ct.clone());
-        // After a rewind the agent is told once that its folder and chat went back.
+        // A provider switch asked for with this message happens now, as it is sent. One that can't be made leaves the conversation where it
+        // is, and the message says so to the agent that gets it.
+        let mut failed = None;
+        if let Some(p) = slot.s.turns[ti].switch_to.take() {
+            match Target::parse(&p) {
+                Some(to) if to.id != provider_id(&slot.s) => { if let Err(e) = self.apply_switch(slot, &to) { failed = Some(format!("[Hover] The switch to {p} couldn’t be made ({e}) and this message goes to {}.", provider_id(&slot.s))); } }
+                Some(_) => {}
+                None => failed = Some(format!("[Hover] The switch to “{p}” couldn’t be made: there is no such agent.")),
+            }
+        }
+        // What the agent is told first, once: that its folder and chat went back, or the account of a conversation it now carries on.
         let mut prompt = slot.s.turns[ti].text();
+        if let Some(carry) = slot.s.ext.lineage.as_mut().and_then(|l| l.pending.take()) { prompt = format!("{carry}{prompt}"); }
         if let Some(n) = slot.note.take() { prompt = format!("{n}\n\n{prompt}"); }
+        if let Some(f) = failed { prompt = format!("{f}\n\n{prompt}"); }
         // A cloud session's files are in its sandbox, not this folder: nothing to keep.
         let cp = self.checkpoints().filter(|_| slot.s.cloud.is_none()).map(|c| (c, slot.s.key.clone()));
         let args_base = (slot.s.folder.clone(), prompt, slot.s.kiro_id.clone(), slot.s.access.clone(), slot.s.cloud.clone());
@@ -595,6 +750,9 @@ impl KiroSessions {
             slot.s.state = slot.s.turns.last().and_then(|t| t.result.as_ref()).map_or(slot.s.state, |r| r.state);
             slot.s.asks.clear();
             slot.s.rev += 1;
+            // What the provider remembers is no longer the chat: its own conversation (and any it kept from another move) held the turns
+            // just removed.
+            if let Some(l) = &mut slot.s.ext.lineage { l.natives.retain(|n| n.seen <= keep); l.pending = None; }
             if keep == 0 {
                 slot.s.kiro_id = None;
                 slot.s.context = None;
@@ -602,10 +760,26 @@ impl KiroSessions {
                 slot.note = None;
             } else {
                 let what = crate::stream::clip_to(first_line(&slot.s.turns[keep - 1].prompt), 80);
-                slot.note = Some(match to {
-                    Rewind::After(_) => format!("[Hover] The project's files were just put back to how they were right after your reply to “{what}”. Everything that changed after that point was undone, and the later messages were removed from this chat. Carry on from here and don't rely on that later work."),
-                    Rewind::Before(_) => "[Hover] The project's files were just put back to how they were before the next message, and your earlier attempt at it (and anything after it) was undone and removed from this chat. Start it afresh.".to_owned(),
-                });
+                let told = match to {
+                    Rewind::After(_) => format!("The project's files were just put back to how they were right after your reply to “{what}”. Everything that changed after that point was undone, and the later messages were removed from this chat. Carry on from here and don't rely on that later work."),
+                    Rewind::Before(_) => "The project's files were just put back to how they were before the next message, and your earlier attempt at it (and anything after it) was undone and removed from this chat. Start it afresh.".to_owned(),
+                };
+                // A replacement conversation: the agent starts anew from an account of the turns that remain, not from its memory of ones that
+                // are gone. If the account won't fit, the old way is kept (it is told, and remembers) and the log says why.
+                let intro = format!("{told} This is a new conversation for you: it starts from the account below, not from what you remember of this one.");
+                match crate::handoff::portable(&slot.s.turns, 0, crate::handoff::BUDGET, &slot.s.key, &intro) {
+                    Ok(c) if !c.text.is_empty() => {
+                        slot.s.kiro_id = None;
+                        slot.s.context = None;
+                        slot.usage = None;
+                        slot.note = None;
+                        slot.s.ext.lineage.get_or_insert_with(Default::default).pending = Some(c.text);
+                    }
+                    other => {
+                        if let Err(e) = other { hover_core::log::line(&format!("rewind: no replacement conversation - {e}")); }
+                        slot.note = Some(format!("[Hover] {told}"));
+                    }
+                }
             }
             slot.s.clone()
         };

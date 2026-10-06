@@ -90,8 +90,20 @@ pub struct Handoff {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Returned { pub from: String, pub turn: usize, pub chars: usize }
 
+/// A provider's own conversation id for this Hover conversation, and how many turns it has seen. Kept when the conversation moves
+/// to another provider, so that coming back can resume it and bring over only the turns it missed.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Native { pub provider: String, pub id: String, pub seen: usize }
+
 #[derive(Clone, Debug, Default, PartialEq)]
-pub struct Lineage { pub fork: Option<Fork>, pub handoffs: Vec<Handoff>, pub returned: Vec<Returned> }
+pub struct Lineage {
+    pub fork: Option<Fork>,
+    pub handoffs: Vec<Handoff>,
+    pub returned: Vec<Returned>,
+    pub natives: Vec<Native>,
+    /// What the next message carries ahead of itself (a handoff, or the account of a rewind), kept until that message is sent.
+    pub pending: Option<String>,
+}
 
 impl Lineage {
     pub fn is_empty(&self) -> bool { *self == Lineage::default() }
@@ -103,6 +115,10 @@ impl Lineage {
             p.push(("Handoffs", Json::Arr(self.handoffs.iter().map(|h| Json::obj(vec![("Turn", Json::int(h.turn as i64)), ("From", Json::str(&h.from)), ("To", Json::str(&h.to)),
                 ("Mode", Json::str(&h.mode)), ("Carried", Json::int(h.carried as i64)), ("Omitted", Json::int(h.omitted as i64))])).collect())));
         }
+        if !self.natives.is_empty() {
+            p.push(("Natives", Json::Arr(self.natives.iter().map(|n| Json::obj(vec![("Provider", Json::str(&n.provider)), ("Id", Json::str(&n.id)), ("Seen", Json::int(n.seen as i64))])).collect())));
+        }
+        if let Some(t) = &self.pending { p.push(("Pending", Json::str(t))); }
         if !self.returned.is_empty() {
             p.push(("Returned", Json::Arr(self.returned.iter().map(|r| Json::obj(vec![("From", Json::str(&r.from)), ("Turn", Json::int(r.turn as i64)), ("Chars", Json::int(r.chars as i64))])).collect())));
         }
@@ -117,6 +133,8 @@ impl Lineage {
             handoffs: v.get("Handoffs").map(|l| l.opt_list(|h| Ok(Handoff { turn: n(h, "Turn")?, from: text(h.get("From"))?, to: text(h.get("To"))?, mode: text(h.get("Mode"))?,
                 carried: n(h, "Carried")?, omitted: n(h, "Omitted")? }))).transpose()?.flatten().unwrap_or_default(),
             returned: v.get("Returned").map(|l| l.opt_list(|r| Ok(Returned { from: text(r.get("From"))?, turn: n(r, "Turn")?, chars: n(r, "Chars")? }))).transpose()?.flatten().unwrap_or_default(),
+            natives: v.get("Natives").map(|l| l.opt_list(|r| Ok(Native { provider: text(r.get("Provider"))?, id: text(r.get("Id"))?, seen: n(r, "Seen")? }))).transpose()?.flatten().unwrap_or_default(),
+            pending: opt_text(v.get("Pending"))?,
         })
     }
 }
@@ -242,6 +260,7 @@ mod tests {
             orch: Some(OrchLink { delegation: true, run: Some("r-1".into()), parent: Some("p".into()), root: Some("p".into()), depth: 1 }),
             provider: Some("custom-1".into()),
             lineage: Some(Lineage { fork: Some(Fork { key: "k".into(), turn: 2 }), returned: vec![Returned { from: "k".into(), turn: 2, chars: 40 }],
+                natives: vec![Native { provider: "kiro".into(), id: "acp-1".into(), seen: 2 }], pending: Some("carry this".into()),
                 handoffs: vec![Handoff { turn: 3, from: "kiro".into(), to: "codex".into(), mode: "portable".into(), carried: 2, omitted: 1 }] }),
         };
         assert!(!e.is_empty());

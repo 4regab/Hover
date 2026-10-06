@@ -726,7 +726,9 @@ impl Orch {
     /// Whether `caller` was handed a reference to `target`: a message it was sent carries a conversation chip for it. The
     /// reference lets it read, nothing else.
     pub fn can_read(&self, caller: &str, target: &str) -> bool {
-        self.sessions.find(caller).is_some_and(|s| s.turns.iter().filter(|t| !t.queued).any(|t| t.chips.iter().any(|c| c.kind == "thread" && c.source == target)))
+        // A conversation may always read itself (an agent carrying it on reads what a handoff left out); others only by a reference sent to it.
+        caller == target && self.sessions.find(caller).is_some()
+            || self.sessions.find(caller).is_some_and(|s| s.turns.iter().filter(|t| !t.queued).any(|t| t.chips.iter().any(|c| c.kind == "thread" && c.source == target)))
     }
 
     /// A referenced conversation, from turn `from`, in pages of at most `max` characters (the first turn of a page is
@@ -930,7 +932,7 @@ pub fn servers(tag: Option<&str>) -> Vec<McpServer> {
     let Some(o) = GLOBAL.get().and_then(Weak::upgrade) else { return vec![] };
     // Delegation on, or a conversation reference was sent to it (which needs the reading tool). A session's servers are fixed
     // when its agent starts them, so a reference sent later reaches an agent that is started afterwards.
-    if !o.sessions.find(tag).is_some_and(|s| s.ext.orch.as_ref().is_some_and(|l| l.delegation) || s.turns.iter().any(|t| t.chips.iter().any(|c| c.kind == "thread"))) { return vec![]; }
+    if !o.sessions.find(tag).is_some_and(|s| s.ext.orch.as_ref().is_some_and(|l| l.delegation) || s.ext.lineage.as_ref().is_some_and(|l| l.pending.is_some() || !l.handoffs.is_empty() || l.fork.is_some()) || s.turns.iter().any(|t| t.chips.iter().any(|c| c.kind == "thread"))) { return vec![]; }
     let w = Arc::downgrade(&o);
     browser::bridge(&format!("orch:{tag}"), SERVER_NAME, Arc::new(move |name, r, wr| serve(w.clone(), name, r, wr)))
 }
