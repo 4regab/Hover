@@ -1649,6 +1649,36 @@ impl App {
             }
             hover_chat::Hit::Act(i, hover_chat::doc::Act::Restore) => { self.ask_rewind(hover_agents::session::Rewind::After(i)); return; }
             hover_chat::Hit::Act(i, hover_chat::doc::Act::TryAgain) => { self.ask_rewind(hover_agents::session::Rewind::Before(i)); return; }
+            hover_chat::Hit::Act(i, hover_chat::doc::Act::SendNow) => {
+                let Some(id) = self.page.open.get() else { return };
+                let Some(uid) = self.hover.sessions.get(id).and_then(|s| s.turns.get(i).map(|t| t.uid.clone())) else { return };
+                match self.hover.sessions.send_now(id, &uid) {
+                    Ok(hover_agents::session::SendNow::Steering) => self.toast("Stopping the run to send this now."),
+                    Ok(_) => {}
+                    Err(hover_agents::session::QueueError::Invalid(m)) => self.toast(&m),
+                    Err(_) => self.toast("That message was already sent."),
+                }
+                self.office_changed();
+                self.office_widgets();
+                return;
+            }
+            // Edit: the message leaves the queue and its words go into the reply box; sending it queues it again. If it started meanwhile, nothing is lost: it is already sent.
+            hover_chat::Hit::Act(i, hover_chat::doc::Act::Edit) => {
+                let Some(id) = self.page.open.get() else { return };
+                let Some(uid) = self.hover.sessions.get(id).and_then(|s| s.turns.get(i).map(|t| t.uid.clone())) else { return };
+                match self.hover.sessions.remove_queued(id, &uid) {
+                    Ok(m) => {
+                        let keep = each_reply(self);
+                        let text = if keep.trim().is_empty() { m.text } else { format!("{keep}\n{}", m.text) };
+                        each!(self, |g| { g.set_d_draft(s(&text)); g.set_d_compose(true); });
+                        if !m.images.is_empty() { self.attach_reply(m.images); }
+                    }
+                    Err(_) => self.toast("That message was already sent."),
+                }
+                self.office_changed();
+                self.office_widgets();
+                return;
+            }
             hover_chat::Hit::Act(i, hover_chat::doc::Act::Cancel) => {
                 let Some(id) = self.page.open.get() else { return };
                 if self.hover.sessions.cancel_queued(id, i) { self.office_changed(); self.office_widgets(); }
