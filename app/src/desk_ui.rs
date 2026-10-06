@@ -188,7 +188,10 @@ pub fn terminal_rows(t: &d::Terminal, cols: usize) -> Vec<R> {
         let lines = if c.out.is_empty() { vec![] } else { wrap_chars(c.out.trim_end_matches('\n'), cols) };
         let cmd = c.cmd.lines().next().unwrap_or("").trim().to_owned();
         let alone = lines.is_empty() && run;
-        v.push(R::new(12, hh::CMD).text(cmd).right(status).tone(if run { 3 } else if bad { 2 } else { 1 }).flag(alone as i32));
+        let mut head = R::new(12, hh::CMD).text(cmd).right(status).tone(if run { 3 } else if bad { 2 } else { 1 }).flag(alone as i32);
+        // Attach: its output goes to the chat as a chip.
+        if !c.out.trim().is_empty() { head.tag2 = format!("chip-term:{}", c.id); }
+        v.push(head);
         if lines.is_empty() {
             if !run { v.push(R::new(13, hh::PRE + 6.0).text("No output").tone(7)); }
         } else {
@@ -294,6 +297,7 @@ pub fn file_rows(f: &d::FileView) -> Vec<R> {
             for (i, l) in lines.iter().take(6000).enumerate() {
                 let mut r = R::new(7, hh::LINE).text(l.replace('\t', "    "));
                 r.num = (i + 1).to_string();
+                r.act = format!("open:{path}:{}", i + 1);
                 v.push(r);
             }
             if *truncated || lines.len() > 6000 { v.push(R::faint("The rest of this file isn’t shown.")); }
@@ -354,6 +358,7 @@ pub fn diff_rows(df: &d::Diff, open: &HashMap<String, bool>) -> Vec<R> {
         let name = match &f.old { Some(o) => format!("{o} → {}", f.path), None => f.path.clone() };
         let mut r = R::new(8, hh::DIFF_FILE).text(name).act(format!("df:{}", f.path)).flag(is_open as i32);
         r.badge = badge_of(f.status);
+        if !f.binary { r.tag2 = format!("chip-diff:{}", f.path); }
         if f.add > 0 { r.add = format!("+{}", num(f.add as i64)); }
         if f.del > 0 { r.del = format!("−{}", num(f.del as i64)); }
         v.push(r);
@@ -362,12 +367,26 @@ pub fn diff_rows(df: &d::Diff, open: &HashMap<String, bool>) -> Vec<R> {
             else {
                 let (rows, used) = hunks(&f.patch, budget);
                 budget = budget.saturating_sub(used);
-                if rows.is_empty() { v.push(R::new(11, hh::LINE + 6.0).text("No text changes")); } else { v.extend(rows); }
+                if rows.is_empty() { v.push(R::new(11, hh::LINE + 6.0).text("No text changes")); }
+                else {
+                    // A line that is in the file now can be opened in the editor at its place.
+                    v.extend(rows.into_iter().map(|mut r| { if r.kind == 10 && !r.num2.is_empty() { r.act = format!("open:{}:{}", f.path, r.num2); } r }));
+                }
             }
         }
         v.push(R::gap());
     }
     v
+}
+
+/// The helpers a task asked other agents for (orch.rs), as the Agents tab lists subagents.
+pub fn helper_agents(helpers: &[hover_agents::orch::Info]) -> Vec<d::Subagent> {
+    use hover_agents::orch::RunState;
+    helpers.iter().map(|h| d::Subagent {
+        id: format!("helper:{}", h.run), turn: 0, name: format!("Helper · {}", h.provider), task: h.role.clone().unwrap_or_else(|| "Helper".into()), prompt: None,
+        status: match h.state { RunState::Queued | RunState::Running => "in_progress", RunState::Done => "completed", _ => "failed" }.into(), ms: None,
+        out: h.result.clone().or_else(|| h.note.clone()),
+    }).collect()
 }
 
 /// Subagents: each with its task and what came back.
@@ -616,7 +635,11 @@ impl App {
         let a = self.clone();
         g.on_card_tile(move |id| a.desk_pick(id.as_str()));
         let a = self.clone();
+        g.on_card_editor(move || a.desk_open_editor());
+        let a = self.clone();
         g.on_card_send(move || a.desk_card_send());
+        let a = self.clone();
+        g.on_card_expand(move || { if let Some(id) = a.page.desk.card.get() { a.desk_close_card(); a.expand_chat(id); } });
         let a = self.clone();
         g.on_card_chat(move || { if let Some(id) = a.page.desk.card.get() { a.desk_close_card(); a.open_session(id); } });
         let a = self.clone();
@@ -732,8 +755,8 @@ impl App {
         let d = &self.page.desk;
         d.card.set(None);
         self.desk_clear_floats();
-        // The panel takes the chat's and the other panels' place.
-        if self.page.open.get().is_some() { self.close_drawer(); }
+        // The panel takes the chat's and the other panels' place; the expanded chat keeps its own, and the panel sits beside it.
+        if self.page.open.get().is_some() && !self.page.wide.get() { self.close_drawer(); }
         if self.page.panel.get().is_some() { self.open_panel(None); }
         if let Some((old, _)) = d.panel.get() { if old != id { self.desk_leave_tab(); } }
         d.panel.set(Some((id, tab)));
@@ -794,6 +817,41 @@ impl App {
         let snap = self.desk_snap(&sess);
         if let Some(t) = self.desk_tiles(id, &snap).get(tab).filter(|t| !t.enabled) { self.toast(&t.reason); return; }
         self.desk_open(id, tab);
+    }
+
+    /// Open in editor: the card's own folder (a task's worktree is the folder), off the UI thread. The answer is a toast.
+    fn desk_open_editor(self: &Rc<Self>) {
+        let Some(id) = self.page.desk.card.get().or(self.page.desk.panel.get().map(|p| p.0)) else { return };
+        self.editor_for(id);
+    }
+
+    /// Open in editor for a session: the expanded chat's button, as well as the card's.
+    pub(crate) fn editor_for(self: &Rc<Self>, id: i32) { self.editor_at(id, None); }
+
+    /// Open in editor, at a file and line of the task's folder when given (the file and diff views' Open at this line).
+    fn editor_at(self: &Rc<Self>, id: i32, at: Option<(String, u32)>) {
+        let Some(s) = self.hover.sessions.get(id) else { return };
+        let (settings, folder, cloud) = (self.hover.settings.editor(), s.folder.clone(), s.cloud.is_some());
+        std::thread::Builder::new().name("open-editor".into()).spawn(move || {
+            let target = match &at { Some((file, line)) => hover_agents::editor::Target::file(&folder, file, Some(*line), None), None => hover_agents::editor::Target::folder(&folder) };
+            let said = hover_agents::editor::open(&settings, None, &target, cloud)
+                .unwrap_or_else(|e| if e == "Pick an editor first." { "Choose a default editor in Settings → Automation.".to_owned() } else { e });
+            crate::ui_do(move |a| a.toast(&said));
+        }).ok();
+    }
+
+    /// The expanded chat's Files & changes: the desk's panel beside the conversation (Changes
+    /// if the folder has any to show, else Files), or closed if it is open.
+    pub(crate) fn desk_details(self: &Rc<Self>, id: i32) {
+        if self.page.desk.panel.get().is_some_and(|p| p.0 == id) { self.desk_close_panel(); return; }
+        let Some(sess) = self.hover.sessions.get(id) else { return };
+        let snap = self.desk_snap(&sess);
+        let tiles = self.desk_tiles(id, &snap);
+        let tab = ["diff", "files"].iter().filter_map(|n| TABS.iter().position(|t| t == n)).find(|&i| tiles.get(i).is_some_and(|t| t.enabled));
+        match tab {
+            Some(t) => self.desk_open(id, t),
+            None => { let why = TABS.iter().position(|t| *t == "diff").and_then(|i| tiles.get(i)).map(|t| t.reason.clone()).unwrap_or_default(); self.toast(&why); }
+        }
     }
 
     fn desk_tiles(&self, id: i32, snap: &d::Snap) -> Vec<d::Tile> {
@@ -1083,7 +1141,12 @@ impl App {
             "files" => {
                 if let Some(path) = p.and_then(|p| p.file.clone()) {
                     return match got("file") {
-                        Some(Got::File(f, v)) if f == path => Laid::of(file_rows(&v), None),
+                        Some(Got::File(f, v)) if f == path => {
+                            let mut rows = file_rows(&v);
+                            // Attach: a copy as it is now, or a reference the agent reads itself.
+                            if matches!(v, d::FileView::Text { .. }) { rows[0].act = format!("chip-file:{path}"); rows[0].tag2 = format!("chip-ref:{path}"); }
+                            Laid::of(rows, None)
+                        }
                         _ => { let mut l = Laid::of(vec![R::new(6, hh::BAR).text(base(&path)).sub(dir_of(&path))], None); l.loading = true; l }
                     };
                 }
@@ -1108,7 +1171,16 @@ impl App {
             "pr" => match got("pr") {
                 Some(Got::Pr(d::PrPanel::Open(detail))) => {
                     let md = (!detail.body.trim().is_empty()).then(|| self.desk_markdown(&detail.body, w)).flatten();
-                    Laid::of(pr_rows(&detail, w, md), None)
+                    let mut rows = pr_rows(&detail, w, md);
+                    // Watch this pull request: the task is told of new reviews, failed checks and the rest (prwatch.rs).
+                    let key = self.hover.sessions.get(id).map(|s| s.key).unwrap_or_default();
+                    let watching = self.hover.watcher.of(&key).into_iter().find(|w| w.url == detail.url);
+                    let (label, act) = match &watching {
+                        Some(w) => (format!("Stop watching · {}", match &w.state { hover_agents::prwatch::WState::Active => "active".to_owned(), hover_agents::prwatch::WState::Paused(why) => format!("paused: {why}"), hover_agents::prwatch::WState::Ended(why) => format!("ended: {why}") }), format!("unwatch:{}", w.id)),
+                        None => ("Watch this pull request".to_owned(), format!("watch:{}", detail.url)),
+                    };
+                    if rows.len() > 3 { rows.insert(4, R::new(26, 44.0).text(label).act(act)); }
+                    Laid::of(rows, None)
                 }
                 Some(Got::Pr(d::PrPanel::Error(e))) => Laid::of(vec![], Some(empty("pr", "No pull request", &e))),
                 Some(Got::Pr(_)) => Laid::default(),
@@ -1122,7 +1194,14 @@ impl App {
                 _ => Laid::loading(),
             },
             "agents" => {
-                let sa = d::subagents(snap);
+                let mut sa = d::subagents(snap);
+                // Hover's own helpers (orch.rs) come first: the tasks this one asked other agents to do.
+                let helpers = self.hover.orch.helpers_of(&sess.key);
+                if !helpers.is_empty() {
+                    let mine = helper_agents(&helpers);
+                    sa.running += mine.iter().filter(|m| m.status == "in_progress").count();
+                    sa.agents.splice(0..0, mine);
+                }
                 if sa.agents.is_empty() { return Laid::of(vec![], Some(empty("agents", "No subagents", "Work this session hands to subagents shows here."))); }
                 Laid::of(agent_rows(&sa, &p.map(|p| p.agent_open.clone()).unwrap_or_default(), mono), None)
             }
@@ -1358,11 +1437,58 @@ impl App {
                 self.desk_prefs_for(id, |p| { let now = p.diff_open.get(arg).copied().unwrap_or(i < 12); p.diff_open.insert(arg.to_owned(), !now); });
             }
             "sa" => { self.desk_prefs_for(id, |p| { if !p.agent_open.remove(arg) { p.agent_open.insert(arg.to_owned()); } }); }
+            "chip-file" | "chip-ref" | "chip-diff" | "chip-term" => { self.desk_attach(id, kind, arg); return; }
+            // Open at this line: the editor opens the file there (a file outside the folder opens the folder alone).
+            "open" => {
+                if let Some((file, line)) = arg.rsplit_once(':').and_then(|(f, l)| Some((f.to_owned(), l.parse::<u32>().ok()?))) { self.editor_at(id, Some((file, line))); }
+                return;
+            }
+            "watch" => {
+                let key = self.hover.sessions.get(id).map(|s| s.key).unwrap_or_default();
+                match self.hover.watcher.watch(&key, arg, hover_agents::prwatch::Events::all(), "") {
+                    Ok(_) => self.toast("Watching. This task is told of new reviews, failed checks and when it is done or closed."),
+                    Err(e) => self.toast(&e),
+                }
+            }
+            "unwatch" => { self.hover.watcher.unwatch(arg); self.toast("No longer watching."); }
             _ => return,
         }
         if kind == "file" || kind == "fback" { self.desk_reset_scroll(); }
         self.desk_changed();
         self.desk_sync();
+    }
+
+    /// The screenshots: the ids of the commands the Terminal tab lists.
+    pub fn desk_terminal_ids(&self, id: i32) -> Vec<String> {
+        self.hover.sessions.get(id).map(|s| d::terminal(&self.desk_snap(&s)).commands.into_iter().map(|c| c.id).collect()).unwrap_or_default()
+    }
+
+    /// Attach to the chat: a file, a reference to it, a changed file's diff, or a command's output becomes a chip in that
+    /// chat's reply box (context.rs). Too big or not there: said, and nothing is attached.
+    fn desk_attach(self: &Rc<Self>, id: i32, kind: &str, arg: &str) {
+        let Some(sess) = self.hover.sessions.get(id) else { return };
+        let made = match kind {
+            "chip-file" => hover_agents::context::file_snapshot(&sess.folder, arg),
+            "chip-ref" => hover_agents::context::file_live(&sess.folder, arg),
+            "chip-diff" => match self.page.desk.got.borrow().get(&(id, "diff")) {
+                Some(Got::Diff(df)) => match df.files.iter().find(|f| f.path == arg) {
+                    Some(f) => hover_agents::context::diff(&f.path, &f.patch, None, &sess.key),
+                    None => Err("That file isn’t in the changes any more.".into()),
+                },
+                _ => Err("The changes aren’t loaded.".into()),
+            },
+            _ => {
+                let snap = self.desk_snap(&sess);
+                match d::terminal(&snap).commands.into_iter().find(|c| c.id == arg) {
+                    Some(c) => hover_agents::context::terminal(&c.cmd, &c.out, &sess.key, &c.id),
+                    None => Err("That command isn’t there any more.".into()),
+                }
+            }
+        };
+        match made {
+            Ok(chip) => self.add_chip(id, chip),
+            Err(e) => self.toast(&e),
+        }
     }
 
     // MARK: Browser
@@ -1618,6 +1744,19 @@ mod tests {
         assert_eq!(rows[3].text, "The rest of this file isn’t shown.");
         assert!(file_rows(&d::FileView::Binary { path: "a.png".into(), size: 10 })[1].text.contains("Binary files"));
         assert!(file_rows(&d::FileView::Error { path: "x".into(), error: "gone".into() })[1].text.contains("gone"));
+    }
+
+    #[test]
+    fn helpers_are_listed_with_the_subagents_in_their_states() {
+        use hover_agents::orch::{Delivery, Info, RunState};
+        let h = |run: &str, state, result: Option<&str>, note: Option<&str>| Info { run: run.into(), state, provider: "codex".into(), role: Some("checker".into()), parent: "p".into(), session: None, access: "full".into(), result: result.map(Into::into), note: note.map(Into::into), delivery: Delivery::Pending };
+        let list = helper_agents(&[h("r1", RunState::Running, None, None), h("r2", RunState::Done, Some("All three monitors hold."), None), h("r3", RunState::Failed, None, Some("No desk was free."))]);
+        assert_eq!(list.iter().map(|a| a.status.as_str()).collect::<Vec<_>>(), ["in_progress", "completed", "failed"]);
+        assert_eq!((list[0].name.as_str(), list[0].task.as_str()), ("Helper · codex", "checker"));
+        assert_eq!((list[1].out.as_deref(), list[2].out.as_deref()), (Some("All three monitors hold."), Some("No desk was free.")));
+        let rows = agent_rows(&d::Subagents { agents: list, running: 1 }, &HashSet::new(), 60);
+        assert_eq!(rows[0].text, "3 subagents");
+        assert_eq!(rows.iter().filter(|r| r.kind == 14).count(), 3);
     }
 
     #[test]

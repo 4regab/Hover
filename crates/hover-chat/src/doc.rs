@@ -995,6 +995,10 @@ pub enum Act {
     TryAgain,
     /// A queued reply taken back.
     Cancel,
+    /// A queued reply taken back into the composer to be changed (its text, and its pictures, come with it).
+    Edit,
+    /// A queued reply sent now, ahead of the others.
+    SendNow,
 }
 
 pub struct Section {
@@ -1288,17 +1292,25 @@ impl Thread {
         let pics = t.images.len();
         if pics > 0 { tw = tw.max(((pics.min(per_row)) as f32 * 77.0 - 5.0).min(maxw)); }
         let q = t.queued.then(|| self.line("Queued · sends when this run ends", Look { size: 11.0, color: [0xff, 0xc4, 0x6b, 255], weight: 600.0, lh: 1.5, ..look }, Some(maxw)));
-        // .qd's Cancel, at the queued line's end: drawn, not copied.
-        let cancel = t.queued.then(|| { let mut c = self.line("Cancel", Look { size: 11.0, color: [0xf6, 0xf2, 0xff, 200], weight: 600.0, lh: 1.5, ..look }, None); c.text.clear(); c });
-        let cancel_w = cancel.as_ref().map_or(0.0, |c| c.layout.width() + 12.0);
-        if let Some(q) = &q { tw = tw.max((q.layout.calculate_content_widths().max + cancel_w).min(maxw).ceil()); }
+        // .qd's Cancel, with Edit and Send now, on a row under the queued line: drawn, not copied.
+        let pills: Vec<(_, Act)> = if t.queued {
+            [("Edit", Act::Edit), ("Send now", Act::SendNow), ("Cancel", Act::Cancel)].into_iter().map(|(label, act)| {
+                let mut c = self.line(label, Look { size: 11.0, color: [0xf6, 0xf2, 0xff, 200], weight: 600.0, lh: 1.5, ..look }, None);
+                c.text.clear();
+                (c, act)
+            }).collect()
+        } else { vec![] };
+        // Each pill is its text plus 5 px each side; 6 px between pills.
+        let pills_w = pills.iter().map(|(c, _)| c.layout.width() + 16.0).sum::<f32>() - 6.0;
+        let pills_h = pills.first().map_or(0.0, |(c, _)| c.layout.height() + 6.0);
+        if let Some(q) = &q { tw = tw.max(q.layout.calculate_content_widths().max.max(pills_w).min(maxw).ceil()); }
         let when = (!t.when.is_empty()).then(|| self.line(&t.when, Look { size: 10.5, color: [255, 255, 255, 89], lh: 1.5, ..look }, None));
         // The time sits at the bubble's right, so a short message widens to hold it.
         if let Some(wb) = &when { tw = tw.max(wb.layout.width().ceil().min(maxw)); }
         layout.break_all_lines(Some(tw));
         layout.align(Alignment::Start, AlignmentOptions::default());
         let pics_h = if pics > 0 { pics.div_ceil(per_row) as f32 * 77.0 } else { 0.0 };
-        let qh = q.as_ref().map_or(0.0, |q| q.layout.height() + 3.0);
+        let qh = q.as_ref().map_or(0.0, |q| q.layout.height() + 3.0 + pills_h);
         let wh = when.as_ref().map_or(0.0, |w| w.layout.height() + 2.0);
         let bh = pics_h + layout.height() + qh + wh + 14.0;
         let bw = tw + 22.0;
@@ -1317,13 +1329,17 @@ impl Thread {
             q.x = bx + 11.0;
             q.y = yy + 3.0;
             yy = q.y + q.layout.height();
-            if let Some(mut c) = cancel {
-                c.x = bx + bw - 11.0 - c.layout.width();
-                c.y = q.y;
+            // Right to left: Cancel at the end, Send now and Edit before it.
+            let mut right = bx + bw - 11.0 - 5.0;
+            for (mut c, act) in pills.into_iter().rev() {
+                c.x = right - c.layout.width();
+                c.y = yy + 4.0;
                 frag.shapes.push(Shape::Rect { x: c.x - 5.0, y: c.y - 1.0, w: c.layout.width() + 10.0, h: c.layout.height() + 2.0, radius: [6.0; 4], fill: Some([255, 255, 255, 16]), stroke: None });
-                frag.hits.push(([c.x - 6.0, c.y - 4.0, c.layout.width() + 12.0, c.layout.height() + 8.0], Act::Cancel));
+                frag.hits.push(([c.x - 6.0, c.y - 4.0, c.layout.width() + 12.0, c.layout.height() + 8.0], act));
+                right = c.x - 16.0;
                 frag.texts.push(c);
             }
+            yy += pills_h;
             frag.text(q);
         }
         if let Some(mut wb) = when {

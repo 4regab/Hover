@@ -8,10 +8,12 @@ compile_error!("The hover app is for Windows and Linux; on macOS build macos/ (S
 
 pub mod app;
 pub mod aura;
+pub mod headless;
 pub mod keys;
 pub mod music;
 pub mod pages;
 pub mod phonon;
+pub mod registry;
 pub mod rest;
 pub mod screen;
 pub mod speech;

@@ -3,6 +3,7 @@
 //!
 //!   hover                 run
 //!   hover --version       print the version (Cargo.toml's)
+//!   hover --service      the background service: saved tasks, webhooks, watches, with no window
 //!   hover --shots DIR     render every view headless (software renderer) into DIR
 //!   hover --selftest DIR  run on the real display, drive it, and write report.json (X11)
 
@@ -603,7 +604,7 @@ impl App {
                 });
                 let w = d.as_weak();
                 let a = self.clone();
-                d.on_close_clicked(move || { if let Some(d) = w.upgrade() { let _ = d.hide(); } let a = a.clone(); Timer::single_shot(Duration::ZERO, move || { a.dash.borrow_mut().take(); a.dash_settings.set(false); a.watching_changed(); }); });
+                d.on_close_clicked(move || { if let Some(d) = w.upgrade() { let _ = d.hide(); } let a = a.clone(); Timer::single_shot(Duration::ZERO, move || { a.dash.borrow_mut().take(); a.dash_settings.set(false); a.page.wide.set(false); a.watching_changed(); }); });
                 let w = d.as_weak();
                 d.on_drag(move || { if let Some(d) = w.upgrade() { d.window().with_winit_window(|ww| { let _ = ww.drag_window(); }); } });
                 let w = d.as_weak();
@@ -616,7 +617,7 @@ impl App {
             let a = self.clone();
             d.window().on_close_requested(move || {
                 let a = a.clone();
-                Timer::single_shot(Duration::ZERO, move || { a.dash.borrow_mut().take(); a.dash_settings.set(false); a.watching_changed(); });
+                Timer::single_shot(Duration::ZERO, move || { a.dash.borrow_mut().take(); a.dash_settings.set(false); a.page.wide.set(false); a.watching_changed(); });
                 slint::CloseRequestResponse::HideWindow
             });
             publish!(d, &*self.palette.borrow(), self.look.get().animations);
@@ -779,6 +780,9 @@ impl view::Host for App {
     fn action(&self, id: &str) {
         APP.with(|a| if let Some(a) = a.borrow().clone() { if id.starts_with("integ.") { a.integ_action(id); } else { a.voice_action(id); } });
     }
+    fn later(&self, work: Box<dyn FnOnce() + Send>) {
+        std::thread::Builder::new().name("settings-work".into()).spawn(move || { work(); ui_do(|a| a.refresh_page(false)); }).ok();
+    }
 }
 
 /// The folder and file pickers: the system's own dialog (IFileDialog on Windows, the
@@ -824,6 +828,8 @@ fn main() {
     // GUI exe has no console: print shows from a terminal that pipes it.)
     if args.iter().any(|a| a == "--version") { println!("Hover {}", env!("CARGO_PKG_VERSION")); return; }
     if let Some(dir) = arg("--shots") { shots::run(std::path::Path::new(&dir)); return; }
+    // The background service: no window, no single-instance claim (it may run beside the app, which takes the timers from it).
+    if args.iter().any(|a| a == "--service") { std::process::exit(hover_app::headless::run()); }
 
     // One notch is the point; two copies of the app is not. A second launch asks the
     // running copy to open its window, then exits.

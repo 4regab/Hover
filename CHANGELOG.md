@@ -5,6 +5,67 @@ What changed in each Hover release. Versions follow [Semantic Versioning](https:
 
 ## [Unreleased]
 
+## [3.9.0] - 2026-10-06
+
+Roadmap #30 (issues #31 to #41), the Compact at slider, and two fixes from PR #44. Windows and
+Linux only: the Mac app and the web office are not changed. Checked on Linux with stand-in agents
+and a real Git repository; not run on Windows or a Mac.
+
+### Added
+
+- A new task that edits files gets its own Git worktree and branch (#31). The new-task box says so
+  before you start. Read-only tasks, Kiro Web, folders that are not Git projects and repositories
+  with no commit yet work in the folder itself; Hover never runs `git init`. Settings → Automation →
+  "Work in the project folder itself" switches it off.
+- Expand chat (#41). The desk card and the chat header have an Expand button that opens the same chat
+  large in the app window: a session list (open and saved chats, hideable and resizable), Files &
+  changes beside it, the status, branch, model, Stop and Open in editor in the header, and a wide reply
+  box. It is the same session, draft, queue and place in the thread; nothing restarts, and approvals
+  and questions stay answerable. Esc or the shrink button goes back to the office.
+- Open in editor (#40): the desk card and the expanded chat open the task's own folder in the editor
+  chosen in Settings → Automation. Hover a line in Files or Diff and press "Open ↗" to open the file at that line.
+- Queued replies can be edited, sent now, or cancelled in the chat (#36). Stop now keeps the replies
+  waiting behind the run, held, instead of dropping them, and a note over the reply box offers "Send them now".
+- A usage-limit note over the reply box (#39): what the agent said, when it lifts, and Continue at the reset,
+  Retry now, Snooze, Cancel. Settings → Automation → "Continue when a usage limit lifts" arms it for you.
+- A More menu in the chat header (#35): continue with another agent, fork the chat, and bring a fork's
+  findings back to the original. A fork gets a worktree of its own, as a new task does.
+- Context chips (#33): Attach on a file (a copy, or "As reference"), on each changed file in Diff, and on
+  each command in Terminal. The chips show above the reply box with an ×, and go with the message.
+- Watch this pull request (#38): a button in the PR panel. The task is told of new reviews, failed checks, a
+  conflict, and when the pull request is done or closed. "Stop watching" ends it.
+- Let a task ask other agents for help (#32, Linux and Mac): a switch in the new-task box, a chat menu item,
+  and the helpers listed in the Agents tab. Limits are in Settings → Automation.
+- Settings → Automation (#34, #37): custom ACP agents and the ACP Registry, saved tasks that run on a
+  schedule or a webhook, a webhook address, and the background service (`hoverai --service`), which runs
+  saved tasks when the app is closed. The service is written for systemd, launchd and Task Scheduler; only
+  the systemd unit text was checked, none of the three was run.
+- Kiro → Compact at is a slider from 20 % to 100 %. It replaces the five buttons (50 to 90 %). A saved
+  number under 20 is read as 20 and the file is left as it was.
+
+### Not in this release
+
+- The Mac Swift app and the web office are not changed.
+- Worktree choices beyond the default (start from another branch, use an existing worktree, remove, make
+  again, bring the branch back) are in the code and tested, but the app has no screen for them.
+- Agents helping agents has no socket on Windows.
+- Send-a-selection: context chips take a whole file, a whole file's change, or a command's whole output,
+  not a selected part.
+
+### Changed
+
+- The office draws on one flat 60 fps schedule, and no longer slows down when idle (PR #44, half of
+  the stutter in #27). Linux still reads each frame back and composes it on the CPU, which is the
+  rest of #27. Two office tests that expected the old 10 fps idle pace now expect the flat one.
+- Rewind starts a replacement conversation from an account of the kept turns, instead of telling the
+  agent it still remembers.
+- `hover-agents` depends on `sha2`, which is already in the build. `AgentTool` has a sixth value,
+  `Custom`: going back to 3.8 with a custom-agent chat leaves that chat unreadable.
+
+### Fixed
+
+- The office thread no longer spins when its channel closes without a quit message (#43, PR #44).
+
 ## [3.8.0] - 2026-10-06
 
 ### Added

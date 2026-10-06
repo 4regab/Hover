@@ -91,7 +91,10 @@ static SEEN: Mutex<BTreeSet<String>> = Mutex::new(BTreeSet::new());
 /// A folder a session works in, so the next start of its tool covers it.
 pub fn remember(folder: &str) {
     if !supported() || !crate::usable_folder(Some(folder)) { return; }
-    SEEN.lock().unwrap().insert(full(folder));
+    let mut seen = SEEN.lock().unwrap();
+    seen.insert(full(folder));
+    // A task's own worktree commits into the main checkout's .git: the tool may write there too.
+    for g in crate::workspace::git_dirs(folder).into_iter().filter(|g| crate::usable_folder(Some(g))) { seen.insert(full(&g)); }
 }
 
 /// The folders a tool started now gets: the ones sessions use this run, and the folder
@@ -186,6 +189,8 @@ pub fn tool_domains(t: AgentTool) -> &'static [&'static str] {
         // Not in 2.x's macOS build. Bedrock and Vertex users add their cloud's hosts to
         // allowed-domains.txt.
         AgentTool::Claude => &["anthropic.com", "*.anthropic.com", "claude.ai", "*.claude.ai", "claude.com", "*.claude.com"],
+        // Custom agents run outside the sandbox (their state folders and hosts are unknown).
+        AgentTool::Custom => &[],
     }
 }
 
@@ -252,6 +257,7 @@ pub fn tool_state(t: AgentTool, ctx: &Ctx) -> Vec<String> {
         AgentTool::Cursor => &["~/.cursor", "~/.config/cursor", "~/Library/Application Support/Cursor", "~/.local/share/cursor-agent"],
         AgentTool::OpenCode => &["~/.local/share/opencode", "~/.local/state/opencode", "~/.config/opencode", "~/.cache/opencode"],
         AgentTool::Claude => &["~/.claude", "~/.claude.json", "~/.config/claude"],
+        AgentTool::Custom => &[],
     };
     // What builds and package managers the agents run write to.
     const SHARED: &[&str] = &[

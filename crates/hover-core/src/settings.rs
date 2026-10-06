@@ -4,12 +4,15 @@
 //! flush forces them out. Keys an older build wrote are ignored and dropped.
 
 use crate::json::{self, Json, Result};
-use crate::model::{notch_item, opt_text, AcpOption, AgentApproval, AgentOptions, AgentTool, Appearance, SavedTheme, WorkspaceSize};
+use crate::model::{notch_item, opt_text, AcpOption, AgentApproval, AgentOptions, AgentTool, Appearance, AutomationSettings, DelegationLimits, EditorSettings, SavedTheme, WorkspaceSize};
 use crate::projects::{Project, VoiceSettings, Workspace};
 use crate::shortcut::Shortcut;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Condvar, Mutex, Weak};
 use std::time::{Duration, Instant};
+
+/// The lowest share of Kiro's context window that auto compact may be set to.
+pub const COMPACT_MIN: u8 = 20;
 
 /// Settings.Model, field for field.
 #[derive(Clone, Debug, PartialEq)]
@@ -62,6 +65,13 @@ pub struct Model {
     /// Hover shows on the user's Discord status (hover-agents::discord). None (never set) is
     /// off; written only once set.
     pub discord_presence: Option<bool>,
+    /// Open in editor (hover-agents::editor): the default editor and the custom one. None (never
+    /// set) is no default and no custom editor; written only once set.
+    pub editor: Option<EditorSettings>,
+    /// How far agents may delegate to helpers (hover-agents::orch). None (never set) is the defaults; written only once set.
+    pub delegation: Option<DelegationLimits>,
+    /// Resuming at a usage limit's reset and the webhook address (hover-agents). None (never set) is off; written only once set.
+    pub automation: Option<AutomationSettings>,
     pub sc_workspace: Shortcut,
     /// The registered projects, voice's settings and its default workspace (new in 3.x;
     /// null in a file from before them).
@@ -76,7 +86,7 @@ impl Default for Model {
             hover_opens_workspace: true, notch_items: None, appearance: Appearance::System, theme: None, workspace_size: WorkspaceSize::Default,
             kiro_folder: None, kiro_notice_seen: false, kiro_model: None, kiro_effort: Some("high".into()), kiro_agent: None,
             kiro_read_only: false, kiro_require_mcp: false, kiro_idle_minutes: 5, kiro_hide_steps: false, kiro_approval: AgentApproval::Autopilot, agents: None, agent_offers: None,
-            agent_tool: None, computer_use: false, sandbox: None, agent_browser: None, agent_spaces: false, space_image: None, kiro_auto_compact: None, kiro_compact_at: None, kiro_retry_busy: None, discord_presence: None, sc_workspace: Shortcut::DEFAULT, projects: None, voice: None, default_workspace: None,
+            agent_tool: None, computer_use: false, sandbox: None, agent_browser: None, agent_spaces: false, space_image: None, kiro_auto_compact: None, kiro_compact_at: None, kiro_retry_busy: None, discord_presence: None, editor: None, delegation: None, automation: None, sc_workspace: Shortcut::DEFAULT, projects: None, voice: None, default_workspace: None,
         }
     }
 }
@@ -101,6 +111,9 @@ impl Model {
             self.kiro_compact_at.map(|v| ("KiroCompactAt", Json::int(v as i64))),
             self.kiro_retry_busy.map(|v| ("KiroRetryBusy", Json::Bool(v))),
             self.discord_presence.map(|v| ("DiscordPresence", Json::Bool(v))),
+            self.editor.as_ref().map(|v| ("Editor", v.to_json())),
+            self.delegation.as_ref().map(|v| ("Delegation", v.to_json())),
+            self.automation.as_ref().map(|v| ("Automation", v.to_json())),
         ].into_iter().flatten().collect();
         let mut props = vec![
             ("HoverOpensWorkspace", Json::Bool(self.hover_opens_workspace)),
@@ -167,6 +180,9 @@ impl Model {
                 "KiroCompactAt" => m.kiro_compact_at = if x.is_null() { None } else { Some(x.i32()?) },
                 "KiroRetryBusy" => m.kiro_retry_busy = if x.is_null() { None } else { Some(b()?) },
                 "DiscordPresence" => m.discord_presence = if x.is_null() { None } else { Some(b()?) },
+                "Editor" => m.editor = if x.is_null() { None } else { Some(EditorSettings::from_json(x)?) },
+                "Delegation" => m.delegation = if x.is_null() { None } else { Some(DelegationLimits::from_json(x)?) },
+                "Automation" => m.automation = if x.is_null() { None } else { Some(AutomationSettings::from_json(x)?) },
                 // A null shortcut would leave C# with none at all (and a crash where
                 // it is read); here it is unset, as a cleared shortcut is.
                 "ScWorkspace" => m.sc_workspace = if x.is_null() { Shortcut::default() } else { Shortcut::from_json(x)? },
@@ -179,8 +195,9 @@ impl Model {
         Ok(m)
     }
 
-    /// Auto compact's percent (1 to 100; 80 unless set), whether or not it is on.
-    pub fn compact_at(&self) -> u8 { self.kiro_compact_at.unwrap_or(80).clamp(1, 100) as u8 }
+    /// Auto compact's percent (COMPACT_MIN to 100; 80 unless set), whether or not it is on. A lower number in the
+    /// file (an older Hover allowed 1 to 100) is read as COMPACT_MIN; the file itself is not rewritten.
+    pub fn compact_at(&self) -> u8 { self.kiro_compact_at.unwrap_or(80).clamp(COMPACT_MIN as i32, 100) as u8 }
 
     /// Whether a Kiro turn stopped by a busy model is continued at once (off unless set).
     pub fn retry_busy(&self) -> bool { self.kiro_retry_busy.unwrap_or(false) }
@@ -350,6 +367,21 @@ impl Settings {
         });
     }
 
+    /// A custom agent's own model and effort (by its id); the defaults until set.
+    pub fn custom_options(&self, id: &str) -> AgentOptions {
+        let key = format!("custom:{id}");
+        self.m.lock().unwrap().agents.as_ref().and_then(|a| a.iter().find(|(k, _)| *k == key)).and_then(|(_, v)| v.clone()).unwrap_or_default()
+    }
+
+    pub fn set_custom_options(&self, id: &str, v: AgentOptions) {
+        let key = format!("custom:{id}");
+        let v = AgentOptions { agent: None, require_mcp: false, ..v };
+        self.change(|m| {
+            let a = m.agents.get_or_insert_with(Vec::new);
+            match a.iter_mut().find(|(k, _)| *k == key) { Some(slot) => slot.1 = Some(v), None => a.push((key, Some(v))) }
+        });
+    }
+
     /// The models, efforts and modes the tool offered the last time it ran.
     pub fn agent_offers(&self, t: AgentTool) -> Vec<AcpOption> {
         let m = self.m.lock().unwrap();
@@ -405,7 +437,7 @@ impl Settings {
     pub fn set_kiro_auto_compact(&self, v: bool) { self.change(|m| m.kiro_auto_compact = Some(v)) }
     /// The percent of the context window that triggers it (1 to 100; 80 unless set).
     pub fn kiro_compact_at(&self) -> u8 { self.m.lock().unwrap().compact_at() }
-    pub fn set_kiro_compact_at(&self, pct: u8) { self.change(|m| m.kiro_compact_at = Some(pct.clamp(1, 100) as i32)) }
+    pub fn set_kiro_compact_at(&self, pct: u8) { self.change(|m| m.kiro_compact_at = Some(pct.clamp(COMPACT_MIN, 100) as i32)) }
 
     /// Kiro only: a turn that stops because the model is busy is continued at once, until stopped.
     pub fn kiro_retry_busy(&self) -> bool { self.m.lock().unwrap().retry_busy() }
@@ -415,6 +447,17 @@ impl Settings {
     /// Off unless switched on.
     pub fn discord_presence(&self) -> bool { self.m.lock().unwrap().discord_presence.unwrap_or(false) }
     pub fn set_discord_presence(&self, v: bool) { self.change(|m| m.discord_presence = Some(v)) }
+
+    /// Open in editor: the default editor and the custom one (EditorSettings).
+    pub fn editor(&self) -> EditorSettings { self.m.lock().unwrap().editor.clone().unwrap_or_default() }
+    pub fn set_editor(&self, v: EditorSettings) { self.change(|m| m.editor = Some(v)) }
+
+    /// How far agents may delegate (the limits the user set, else the defaults).
+    pub fn delegation(&self) -> DelegationLimits { self.m.lock().unwrap().delegation.unwrap_or_default() }
+    pub fn set_delegation(&self, v: DelegationLimits) { self.change(|m| m.delegation = Some(v)) }
+
+    pub fn automation(&self) -> AutomationSettings { self.m.lock().unwrap().automation.clone().unwrap_or_default() }
+    pub fn set_automation(&self, v: AutomationSettings) { self.change(|m| m.automation = Some(v)) }
 
     /// Launch at login: outside settings.json, in the platform's own place.
     pub fn launch_at_login(&self) -> bool { self.autostart.enabled() }
@@ -619,9 +662,16 @@ mod tests {
         assert!(at("\"AgentTool\"") < at("\"KiroAutoCompact\"") && at("\"KiroAutoCompact\"") < at("\"KiroCompactAt\"") && at("\"KiroCompactAt\"") < at("\"ScWorkspace\""));
         let back = Settings::load(s.file.clone());
         assert!(back.kiro_auto_compact() && back.kiro_compact_at() == 60 && back.model().auto_compact() == Some(60));
-        // On with no percent: 80. A percent off the scale is pulled onto it.
+        // On with no percent: 80. A percent off the scale is pulled onto it: 100 at most, COMPACT_MIN (20) at least.
         std::fs::write(&s.file, "{\"KiroAutoCompact\": true, \"KiroCompactAt\": 500}").unwrap();
         assert_eq!(Settings::load(s.file.clone()).model().auto_compact(), Some(100));
+        // An older Hover allowed 1 to 100: a 5 in the file is read as 20, and the file is left as it was.
+        std::fs::write(&s.file, "{\"KiroAutoCompact\": true, \"KiroCompactAt\": 5}").unwrap();
+        let low = Settings::load(s.file.clone());
+        assert_eq!((low.model().auto_compact(), low.kiro_compact_at()), (Some(20), 20));
+        assert!(std::fs::read_to_string(&s.file).unwrap().contains("\"KiroCompactAt\": 5"), "read as 20, not rewritten");
+        low.set_kiro_compact_at(1);
+        assert_eq!(low.kiro_compact_at(), 20, "a setter below the floor is held at it");
         std::fs::write(&s.file, "{\"KiroAutoCompact\": true}").unwrap();
         assert_eq!(Settings::load(s.file.clone()).model().auto_compact(), Some(80));
         std::fs::write(&s.file, "{\"KiroAutoCompact\": null, \"KiroCompactAt\": null}").unwrap();

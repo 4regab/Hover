@@ -77,8 +77,12 @@ pub type McpFn = Arc<dyn Fn(Option<&str>) -> Vec<McpServer> + Send + Sync>;
 
 /// The servers a session gets unless a host is given others.
 pub fn default_mcp(tool: AgentTool) -> McpFn {
-    Arc::new(move |tag| { let mut all = computer_use::servers(); all.extend(crate::browser::servers(tool, tag)); all })
+    Arc::new(move |tag| { let mut all = computer_use::servers(); all.extend(crate::browser::servers(tool, tag)); all.extend(crate::orch::servers(tag)); all })
 }
+/// What `AcpHost::discover` found: the `initialize` answer, the `session/new` answer and the options read from it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Discovery { pub init: Json, pub created: Json, pub options: Vec<AcpOption>, pub problem: Option<String> }
+
 /// AcpHost.Asking: asks the user about a tool call for the ACP session named first;
 /// the token ends when the run is stopped. The answer goes to the reply, from any thread.
 pub type Asking = Arc<dyn Fn(&str, AgentAsk, &Cancel, Box<dyn FnOnce(AskAnswer) + Send>) + Send + Sync>;
@@ -88,6 +92,12 @@ enum CallErr {
     Acp(String),
     Gone(String),
     Cancelled,
+}
+
+impl std::fmt::Display for CallErr {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self { CallErr::Acp(m) | CallErr::Gone(m) => f.write_str(m), CallErr::Cancelled => f.write_str("Cancelled.") }
+    }
 }
 
 enum Msg { Reply(Result<Json, CallErr>), CancelAsked }
@@ -168,6 +178,10 @@ struct Live {
 
 struct Host {
     tool: AgentTool,
+    /// What the user reads as the agent’s name: the tool's, or a custom agent's own.
+    label: &'static str,
+    /// The last `initialize` answer, whole (a custom agent’s capabilities are read from it).
+    init: Mutex<Json>,
     options: Box<dyn Fn() -> AgentOptions + Send + Sync>,
     connect: Connect,
     gate: Mutex<()>,
@@ -228,9 +242,16 @@ impl AcpHost {
         AcpHost::build(tool, options, Box::new(connect), Arc::new(Boxed::default()))
     }
 
+    /// A custom agent (custom.rs): any program that speaks ACP on its stdio, started by `connect`. `label` is its name in messages.
+    pub fn custom(label: &str, options: impl Fn() -> AgentOptions + Send + Sync + 'static, connect: impl Fn() -> std::io::Result<Option<Link>> + Send + Sync + 'static) -> AcpHost {
+        // ponytail: the name is leaked (a few bytes per agent added, per Hover run) so every message can borrow it for free.
+        let host = AcpHost::build(AgentTool::Custom, options, Box::new(connect), Arc::new(Boxed::default()));
+        AcpHost(Arc::new(Host { label: Box::leak(label.to_owned().into_boxed_str()), ..Arc::try_unwrap(host.0).unwrap_or_else(|_| unreachable!("a new host has one owner")) }))
+    }
+
     fn build(tool: AgentTool, options: impl Fn() -> AgentOptions + Send + Sync + 'static, connect: Connect, boxed: Arc<Boxed>) -> AcpHost {
         AcpHost(Arc::new(Host {
-            tool, options: Box::new(options), connect, gate: Mutex::new(()), link: Mutex::new(None), gens: AtomicU64::new(0),
+            tool, label: tool.name(), init: Mutex::new(Json::Null), options: Box::new(options), connect, gate: Mutex::new(()), link: Mutex::new(None), gens: AtomicU64::new(0),
             pending: Mutex::new(HashMap::new()), turns: Mutex::new(HashMap::new()), session_options: Mutex::new(HashMap::new()),
             can_load: AtomicBool::new(false), ids: AtomicI64::new(0), busy: AtomicUsize::new(0), idle: AtomicU64::new(0), seen: Mutex::new(vec![]),
             asking: Mutex::new(None), trusted: Mutex::new(HashMap::new()), session_mcp: Mutex::new(HashMap::new()), mcp: Mutex::new(default_mcp(tool)), boxed, can_cloud: AtomicBool::new(false), can_image: AtomicBool::new(false), can_list: AtomicBool::new(false), kiro_caps: Mutex::new(Json::Null), ready: Mutex::new(HashSet::new()),
@@ -242,6 +263,32 @@ impl AcpHost {
     pub fn set_mcp(&self, f: impl Fn(Option<&str>) -> Vec<McpServer> + Send + Sync + 'static) { *self.0.mcp.lock().unwrap() = Arc::new(f); }
 
     pub fn tool(&self) -> AgentTool { self.0.tool }
+
+    /// Starts the agent, reads what it says it can do, opens one session in `folder` to see the models and modes it offers,
+    /// and ends it again. `Discovery::problem` is set when the session couldn't be made (often: it wants a sign-in first).
+    /// Blocks: run it off the UI thread.
+    pub fn discover(&self, folder: &str, ct: &Cancel) -> Result<Discovery, String> {
+        let h = &self.0;
+        let begun = h.start(ct).map_err(|e| e.to_string());
+        let out = begun.and_then(|()| {
+            let init = h.init.lock().unwrap().clone();
+            let params = o_(vec![("cwd", st(folder)), ("mcpServers", Json::Arr(vec![]))]);
+            match h.call("session/new", params, Some(ct), Some(Duration::from_secs(60))) {
+                Ok(created) => Ok(Discovery { init, options: options(&created).unwrap_or_default(), created, problem: None }),
+                Err(CallErr::Acp(m)) => Ok(Discovery { init, options: vec![], created: Json::Null, problem: Some(m) }),
+                Err(e) => Err(e.to_string()),
+            }
+        });
+        h.shutdown("discovery done");
+        out
+    }
+
+    /// Signs in by one of the methods the agent listed (its `initialize` authMethods), and waits for the agent to say it worked. The
+    /// agent runs its own flow (a browser, a device code); Hover sees no credentials. Cancelling ends the wait.
+    pub fn authenticate(&self, method: &str, ct: &Cancel) -> Result<(), String> {
+        self.0.start(ct).map_err(|e| e.to_string())?;
+        self.0.call("authenticate", o_(vec![("methodId", st(method))]), Some(ct), Some(Duration::from_secs(600))).map(|_| ()).map_err(|e| e.to_string())
+    }
 
     /// The tool's process is up.
     pub fn alive(&self) -> bool { self.0.link.lock().unwrap().is_some() }
@@ -298,7 +345,7 @@ impl AcpHost {
 }
 
 impl Host {
-    fn name(&self) -> &'static str { self.tool.name() }
+    fn name(&self) -> &'static str { self.label }
 
     #[allow(clippy::too_many_arguments)]
     fn run(self: &Arc<Self>, folder: &str, prompt: &str, progress: Option<Progress>, ct: &Cancel, resume: Option<&str>, events: Option<Events>, access: Option<&str>, tag: Option<&str>,
@@ -776,6 +823,8 @@ impl Host {
             AgentTool::Cursor => { let f = find(&offered, Some("mode"), &["mode"]); set(&mut offered, f, Some(if o.read_only { "ask" } else { "agent" }))?; }
             // OpenCode and Claude Code run their own ways (opencode.rs, claude.rs), never as ACP servers.
             AgentTool::OpenCode | AgentTool::Claude => {}
+            // A custom agent keeps the mode it starts in: Hover doesn't know what its modes mean.
+            AgentTool::Custom => {}
         }
         if !offered.is_empty() { self.raise_seen(&offered); }
         Ok(offered)
@@ -878,6 +927,7 @@ impl Host {
                 let list = r.get("agentCapabilities").and_then(|c| c.get("sessionCapabilities")).and_then(|c| c.get("list")).is_some_and(|l| !l.is_null() && l != &Json::Bool(false));
                 self.can_list.store(list, Ordering::SeqCst);
                 *self.kiro_caps.lock().unwrap() = r.get("agentCapabilities").and_then(|c| c.get("_meta")).and_then(|m| m.get("kiro")).cloned().unwrap_or(Json::Null);
+                *self.init.lock().unwrap() = r;
                 Ok(())
             }
             Err(e) => { self.shutdown("didn't start"); Err(e) }

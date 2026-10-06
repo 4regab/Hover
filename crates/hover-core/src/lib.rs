@@ -2,6 +2,7 @@
 //! UI: what the C# app writes, this reads, and the other way round.
 
 pub mod crypto;
+pub mod ext;
 pub mod history;
 pub mod images;
 pub mod json;
@@ -15,6 +16,7 @@ pub mod secrets;
 pub mod settings;
 pub mod shortcut;
 pub mod single;
+pub mod store;
 pub mod time;
 
 /// Guid.NewGuid().ToString("N"): a version-4 GUID as 32 lower-case hex digits.

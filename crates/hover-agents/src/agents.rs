@@ -72,6 +72,8 @@ pub fn exe(t: AgentTool) -> Option<PathBuf> {
         AgentTool::Cursor => cursor_shim().filter(|p| p.is_file()).or_else(|| find("cursor-agent")),
         AgentTool::OpenCode => opencode_exe(),
         AgentTool::Claude => claude_exe(),
+        // A custom agent is started from its own record (custom.rs), not found by name.
+        AgentTool::Custom => None,
     }
 }
 
@@ -118,6 +120,7 @@ pub fn arguments(t: AgentTool) -> &'static [&'static str] {
         // its control protocol on stdio, so every permission comes to Hover. The rest
         // (access, model, effort, resume) is added per conversation (claude::launch_args).
         AgentTool::Claude => &["--output-format", "stream-json", "--verbose", "--input-format", "stream-json", "--permission-prompt-tool", "stdio", "--include-partial-messages"],
+        AgentTool::Custom => &[],
     }
 }
 
@@ -131,6 +134,7 @@ pub fn install_hint(t: AgentTool) -> String {
         AgentTool::OpenCode => format!("Install OpenCode {OPENCODE_MIN_VERSION} or newer from opencode.ai."),
         AgentTool::Claude if cfg!(windows) => "Install Claude Code: irm https://claude.ai/install.ps1 | iex".into(),
         AgentTool::Claude => "Install Claude Code: curl -fsSL https://claude.ai/install.sh | bash".into(),
+        AgentTool::Custom => "Check the agent’s program in Settings.".into(),
     }
 }
 
@@ -144,6 +148,7 @@ pub fn sign_in_hint(t: AgentTool) -> &'static str {
         // An API key in its environment, Bedrock or Vertex count as signed in too (its
         // auth status says so).
         AgentTool::Claude => "Sign in: run “claude auth login” in a terminal.",
+        AgentTool::Custom => "Sign in with the agent’s own method in Settings.",
     }
 }
 
@@ -170,6 +175,9 @@ fn checks() -> &'static Mutex<Checks> {
 
 /// The last check, if any, without running one.
 pub fn known(t: AgentTool) -> Option<AgentReady> { checks().lock().unwrap().done.get(&t).map(|c| c.1.clone()) }
+
+/// Records a check's answer without running one (the screenshots and tests, on a machine without the tool).
+pub fn seed(t: AgentTool, ready: AgentReady) { checks().lock().unwrap().done.insert(t, (Instant::now(), ready)); }
 
 /// What the last check's status command printed, if it said signed in; None otherwise.
 pub fn said(t: AgentTool) -> Option<String> { checks().lock().unwrap().said.get(&t).cloned() }
@@ -204,6 +212,7 @@ pub fn check(t: AgentTool, fresh: bool) -> AgentReady {
 /// The answer, and what the status command printed ("" when none ran).
 fn look(t: AgentTool) -> (AgentReady, String) {
     let Some(exe) = exe(t) else { return (AgentReady { installed: false, signed_in: false, hint: install_hint(t) }, String::new()) };
+    if t == AgentTool::Custom { return (AgentReady { installed: false, signed_in: false, hint: install_hint(t) }, String::new()); }
     if t == AgentTool::OpenCode {
         // Having no sign-in doesn't mean it can't run: API keys in the environment and
         // local models count too. The version is all that is checked here; a provider
@@ -223,7 +232,7 @@ fn look(t: AgentTool) -> (AgentReady, String) {
         AgentTool::Cursor => (Some(exe), &["status"]),
         // Exit 0 and {"loggedIn": true} when signed in, 1 when not.
         AgentTool::Claude => (Some(exe), &["auth", "status"]),
-        AgentTool::OpenCode => unreachable!(),
+        AgentTool::OpenCode | AgentTool::Custom => unreachable!(),
     };
     // The adapter can carry its own Codex; without the CLI there is nothing to ask.
     let Some(cmd) = cmd else { return (AgentReady { installed: true, signed_in: true, hint: String::new() }, String::new()) };

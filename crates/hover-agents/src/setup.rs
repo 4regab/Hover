@@ -79,6 +79,8 @@ pub fn plan_with(t: AgentTool, has: &dyn Fn(&str) -> bool, sandbox: Option<Sandb
         AgentTool::OpenCode => if !has("opencode") { steps.push(Step::new("Installing OpenCode", "curl -fsSL https://opencode.ai/install | bash")); },
         // Not in 2.x's macOS build.
         AgentTool::Claude => if !has("claude") { steps.push(Step::new("Installing Claude Code", "curl -fsSL https://claude.ai/install.sh | bash")); },
+        // A custom agent is set up in Settings → Agents, by its own record.
+        AgentTool::Custom => {}
     }
     let node = Step::new("Installing Node.js", "brew install node");
     if !packages.is_empty() {
@@ -107,6 +109,7 @@ pub fn sign_in_command(t: AgentTool) -> &'static str {
         AgentTool::Cursor => "cursor-agent login",
         AgentTool::OpenCode => "opencode auth login",
         AgentTool::Claude => "claude auth login",
+        AgentTool::Custom => "",
     }
 }
 

@@ -121,6 +121,9 @@ export global Desk {
     callback card-tile(string);
     callback card-send();
     callback card-chat();
+    // Open this desk's own folder in the editor the user chose.
+    callback card-editor();
+    callback card-expand();
     // A key the card got that may be a surface's letter: true when it opened one.
     callback card-key(string) -> bool;
 
@@ -424,10 +427,19 @@ component DeskRowView inherits Rectangle {
             Text { text: r.text; font-size: 12.5px; font-weight: 500; color: #f6f2ff; vertical-alignment: center; overflow: elide; }
             Text { text: r.sub; font-family: "DejaVu Sans Mono"; font-size: 11px; color: #f6f2ff61; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; } }
         Text { text: r.right; font-size: 11px; color: #f6f2ff61; vertical-alignment: center; }
+        // Attach to the chat: a copy as it is now, or a reference the agent reads itself.
+        if r.act != "": VerticalLayout { alignment: center; DButton { id: "attachFile"; small: true; text: "Attach"; icon: Icons.add; clicked => { act(r.act); } } }
+        if r.tag2 != "": VerticalLayout { alignment: center; DButton { id: "attachRef"; small: true; text: "As reference"; clicked => { act(r.tag2); } } }
     }
     // 7: a line of a file, with its number.
     if r.kind == 7: Rectangle {
         background: #0b0a0d;
+        // Hovered: Open at this line in the editor.
+        lh := TouchArea { }
+        if r.act != "" && lh.has-hover: Rectangle { x: parent.width - 86px; y: 1px; width: 80px; height: parent.height - 2px; border-radius: 6px; background: oa.has-hover ? #ffffff26 : #ffffff14;
+            accessible-role: button; accessible-label: "Open line " + r.num + " in the editor"; accessible-action-default => { act(r.act); }
+            Text { text: "Open ↗"; font-size: 10.5px; color: #f6f2ffc4; horizontal-alignment: center; vertical-alignment: center; }
+            oa := TouchArea { mouse-cursor: pointer; clicked => { act(r.act); } } }
         Text { x: 0; width: 44px; text: r.num; font-family: "DejaVu Sans Mono"; font-size: 11.5px; color: #ffffff38; horizontal-alignment: right; vertical-alignment: center; }
         Text { x: 56px; width: parent.width - 62px; text: r.text; font-family: "DejaVu Sans Mono"; font-size: 11.5px; color: #d6d3dc; vertical-alignment: center; overflow: clip; }
     }
@@ -443,6 +455,8 @@ component DeskRowView inherits Rectangle {
         accessible-expandable: true;
         accessible-expanded: r.flag == 1;
         accessible-action-default => { act(r.act); }
+        // Under the row's contents, so the Attach button gets its own clicks.
+        dh := TouchArea { mouse-cursor: pointer; clicked => { act(r.act); } }
         if dh.has-hover: Rectangle { background: #ffffff0a; border-radius: 10px; }
         HorizontalLayout {
             padding-left: 10px; padding-right: 10px; spacing: 8px;
@@ -451,8 +465,8 @@ component DeskRowView inherits Rectangle {
             Text { text: r.text; font-family: "DejaVu Sans Mono"; font-size: 12px; color: #f6f2ff; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; }
             if r.add != "": Text { text: r.add; font-family: "DejaVu Sans Mono"; font-size: 11px; color: #5de37a; vertical-alignment: center; }
             if r.del != "": Text { text: r.del; font-family: "DejaVu Sans Mono"; font-size: 11px; color: #ff7b72; vertical-alignment: center; }
+            if r.tag2 != "": VerticalLayout { alignment: center; DButton { id: "attachDiff"; small: true; text: "Attach"; icon: Icons.add; clicked => { act(r.tag2); } } }
         }
-        dh := TouchArea { mouse-cursor: pointer; clicked => { act(r.act); } }
     }
     // 9: a hunk's header.
     if r.kind == 9: Rectangle {
@@ -462,6 +476,12 @@ component DeskRowView inherits Rectangle {
     // 10: a diff line, with both sides' numbers.
     if r.kind == 10: Rectangle {
         background: r.tone == 1 ? #2ea04326 : r.tone == 2 ? #f8514921 : #0f0e11;
+        // Hovered: Open at this line in the editor.
+        dlh := TouchArea { }
+        if r.act != "" && dlh.has-hover: Rectangle { x: parent.width - 86px; y: 1px; width: 80px; height: parent.height - 2px; border-radius: 6px; background: doa.has-hover ? #ffffff30 : #ffffff1c;
+            accessible-role: button; accessible-label: "Open line " + r.num2 + " in the editor"; accessible-action-default => { act(r.act); }
+            Text { text: "Open ↗"; font-size: 10.5px; color: #f6f2ffc4; horizontal-alignment: center; vertical-alignment: center; }
+            doa := TouchArea { mouse-cursor: pointer; clicked => { act(r.act); } } }
         Text { x: 0; width: 38px; text: r.num; font-family: "DejaVu Sans Mono"; font-size: 11px; color: #ffffff38; horizontal-alignment: right; vertical-alignment: center; }
         Text { x: 40px; width: 38px; text: r.num2; font-family: "DejaVu Sans Mono"; font-size: 11px; color: #ffffff38; horizontal-alignment: right; vertical-alignment: center; }
         Text { x: 88px; width: parent.width - 94px; text: r.text; font-family: "DejaVu Sans Mono"; font-size: 11.5px; vertical-alignment: center; overflow: clip;
@@ -485,6 +505,7 @@ component DeskRowView inherits Rectangle {
             Text { text: "$"; font-family: "DejaVu Sans Mono"; font-size: 12px; color: #5de37a; vertical-alignment: center; }
             Text { text: r.text; font-family: "DejaVu Sans Mono"; font-size: 12px; color: #f3f1f6; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; }
             Text { text: r.right; font-family: "DejaVu Sans Mono"; font-size: 10.5px; color: Tones.color(r.tone); vertical-alignment: center; }
+            if r.tag2 != "": VerticalLayout { alignment: center; DButton { id: "attachOutput"; small: true; text: "Attach"; icon: Icons.add; clicked => { act(r.tag2); } } }
         }
     }
     // 13: a line of output.
@@ -530,6 +551,11 @@ component DeskRowView inherits Rectangle {
     if r.kind == 19: HorizontalLayout {
         padding-left: 4px; alignment: start;
         VerticalLayout { alignment: center; DButton { text: r.text; icon: DeskIcons.ext; small: true; clicked => { act(r.act); } } }
+    }
+    // 26: a button that watches or stops watching the pull request.
+    if r.kind == 26: HorizontalLayout {
+        padding-left: 4px; alignment: start;
+        VerticalLayout { alignment: center; DButton { id: "prWatch"; text: r.text; icon: Icons.bell; small: true; clicked => { act(r.act); } } }
     }
     // 20: the checks' tally.
     if r.kind == 20: HorizontalLayout {

@@ -129,7 +129,7 @@ fn a_new_session_walks_in_and_a_gone_one_walks_out() {
 }
 
 #[test]
-fn the_camera_keeps_to_its_limits_and_the_pace_drops_when_idle() {
+fn the_camera_keeps_to_its_limits_and_the_pace_stays_flat_when_idle() {
     let mut o = office();
     o.zoom_by(10.0, 0.0, 0.0);
     assert_eq!(o.user[2], 2.8);
@@ -139,17 +139,15 @@ fn the_camera_keeps_to_its_limits_and_the_pace_drops_when_idle() {
     assert!(o.user[0].abs() <= 6.0 && o.user[1].abs() <= 5.0);
     o.reset_view();
     assert_eq!(o.user, [0.0, 0.0, 1.0]);
-    // The empty office goes quiet: after the settle, frames come at 10 fps, not 30.
+    // The pace is flat (one fixed schedule, PR #44): the empty office draws as often as a busy one, not at 10 fps.
     let mut e = Office::new(1104.0, 424.0, false);
     let (mut state, _) = fixture();
     if let Json::Obj(p) = &mut state { for (k, v) in p.iter_mut() { if k == "sessions" { *v = Json::Arr(vec![]); } } }
     e.state(&state);
-    let mut drawn = 0;
-    for i in 0..1000 { if e.frame(i as f64 * 16.0, 16.0) { drawn += 1; } }
+    for i in 0..1000 { e.frame(i as f64 * 16.0, 16.0); }
     let late: usize = (1000..1625).filter(|i| e.frame(*i as f64 * 16.0, 16.0)).count();
-    assert!(drawn > late);
-    // 10 s at 10 fps; on a 16 ms clock a 100 ms gap takes 7 ticks, so about 89.
-    assert!((80..=101).contains(&late), "{late} frames in 10 s");
+    // 10 s at a flat 60 fps schedule, on a 16 ms clock that draws every other tick: about 312.
+    assert!((300..=325).contains(&late), "{late} frames in 10 s");
 }
 
 /// Sessions come and go all day in an office that stays open: a bot that walked out is

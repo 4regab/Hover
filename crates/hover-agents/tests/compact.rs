@@ -198,7 +198,7 @@ fn stopping_during_the_compaction_stops_the_reply_and_what_waited_behind_it() {
     assert_eq!(prompts(&seen), ["first", "/compact"], "the reply was never sent");
     let s = k.get(s.id).unwrap();
     assert_eq!(s.turns[1].result.as_ref().unwrap().state, KiroState::Cancelled);
-    assert_eq!(s.turns[2].result.as_ref().unwrap().text, "Not sent: the run before it was stopped.");
+    assert!(s.turns[2].queued && s.held && s.turns[2].result.is_none(), "the reply behind it is held, not dropped");
     let step = &s.turns[1].steps[0];
     assert_eq!((step.title.as_str(), step.status.as_str()), ("Stopped while compacting the conversation (90% full)", "failed"));
 }

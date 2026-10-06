@@ -8,6 +8,7 @@ use crate::ask::{AgentAsk, Answers, AskAnswer};
 use crate::cancel::{Cancel, Registration};
 use crate::checkpoint::Checkpoints;
 use crate::stream::{KiroEvent, KiroPhase, KiroResult};
+use hover_core::ext::{Chip, Fork, Handoff, Lineage, Native, Returned, SessionExt, TurnExt};
 use hover_core::history::{AgentHistory, SavedSession, SavedTurn};
 use hover_core::model::{AgentTool, KiroState, KiroStep};
 use hover_core::time::Stamp;
@@ -72,19 +73,28 @@ pub struct KiroTurn {
     /// None where none could be taken (no git, a folder too broad, too slow).
     pub before: Option<String>,
     pub after: Option<String>,
+    /// Names this message in queue edits, so an edit, a move or a send-now reaches that message and no other.
+    pub uid: String,
+    /// What was attached besides words (context.rs), kept with the message in drafts, the queue and the history.
+    pub chips: Vec<Chip>,
+    /// A provider switch asked for with this message: it happens when the message is sent, not before.
+    pub switch_to: Option<String>,
 }
 
 impl KiroTurn {
     pub fn new(prompt: &str, images: Vec<String>) -> KiroTurn {
-        KiroTurn { prompt: prompt.into(), images, steps: vec![], result: None, queued: false, started_at: Stamp::DEFAULT, woke_at: None, ended_at: None, credits: None, before: None, after: None }
+        KiroTurn { prompt: prompt.into(), images, steps: vec![], result: None, queued: false, started_at: Stamp::DEFAULT, woke_at: None, ended_at: None, credits: None, before: None, after: None,
+            uid: hover_core::guid_n(), chips: vec![], switch_to: None }
     }
 
-    /// What the agent is sent: the prompt, then the pictures' paths for it to look at. Kiro gets
-    /// the pictures themselves from these lines (acp.rs, ATTACHED).
+    /// What the agent is sent: the prompt, then what is attached (context.rs), then the pictures' paths
+    /// for it to look at. Kiro gets the pictures themselves from these lines (acp.rs, ATTACHED).
     pub fn text(&self) -> String {
-        if self.images.is_empty() { return self.prompt.clone(); }
-        let head = if self.prompt.is_empty() { "Look at the attached image." } else { &self.prompt };
-        format!("{head}\n\n{}", self.images.iter().map(|p| format!("{}{p}", crate::acp::ATTACHED)).collect::<Vec<_>>().join("\n"))
+        let head = if self.prompt.is_empty() && !self.images.is_empty() { "Look at the attached image.".to_owned() } else { self.prompt.clone() };
+        let mut out = head;
+        if !self.chips.is_empty() { out = format!("{out}\n\n{}", crate::context::render(&self.chips)); }
+        if !self.images.is_empty() { out = format!("{out}\n\n{}", self.images.iter().map(|p| format!("{}{p}", crate::acp::ATTACHED)).collect::<Vec<_>>().join("\n")); }
+        out
     }
 }
 
@@ -113,6 +123,11 @@ pub struct KiroSession {
     /// Runs in Kiro's cloud (Kiro Web): the GitHub repos it was given, empty for an empty
     /// workspace. None runs on this computer.
     pub cloud: Option<Vec<String>>,
+    /// Where the task works (a worktree of its own, or the folder itself) and the links orchestration adds.
+    pub ext: SessionExt,
+    /// The replies waiting are held: a stop or a restart leaves them, and only `resume_queue` or a new
+    /// message from the user sends them.
+    pub held: bool,
     /// What the agent is waiting on the user for, oldest first.
     pub asks: Vec<AgentAsk>,
     /// Asked to stop or pause; the turn hasn't ended yet (the tool hasn't said).
@@ -129,7 +144,7 @@ impl KiroSession {
     /// A new session with no turns (the C# constructor).
     pub fn new(tool: AgentTool) -> KiroSession {
         KiroSession { id: IDS.fetch_add(1, Ordering::SeqCst) + 1, tool, state: KiroState::Idle, phase: KiroPhase::Starting, folder: String::new(), turns: vec![],
-            kiro_id: None, context: None, seat: 0, bot: 0, key: hover_core::guid_n(), deleted: false, access: None, cloud: None, asks: vec![], stopping: false, rev: 0 }
+            kiro_id: None, context: None, seat: 0, bot: 0, key: hover_core::guid_n(), deleted: false, access: None, cloud: None, ext: SessionExt::default(), held: false, asks: vec![], stopping: false, rev: 0 }
     }
 
     /// A copy without what only the chat reads: the answers' text, and the steps'
@@ -144,9 +159,9 @@ impl KiroSession {
                     input: x.input.clone().filter(|_| crate::state::is_subagent(x)), log: None }).collect(),
                 result: t.result.as_ref().map(|r| KiroResult { state: r.state, text: String::new(), exit_code: r.exit_code, unconfirmed: r.unconfirmed }),
                 queued: t.queued, started_at: t.started_at, woke_at: t.woke_at, ended_at: t.ended_at, credits: t.credits,
-                before: t.before.clone(), after: t.after.clone(),
+                before: t.before.clone(), after: t.after.clone(), uid: t.uid.clone(), chips: t.chips.clone(), switch_to: t.switch_to.clone(),
             }).collect(),
-            folder: self.folder.clone(), kiro_id: self.kiro_id.clone(), key: self.key.clone(), access: self.access.clone(), cloud: self.cloud.clone(), asks: self.asks.clone(),
+            folder: self.folder.clone(), kiro_id: self.kiro_id.clone(), key: self.key.clone(), access: self.access.clone(), cloud: self.cloud.clone(), ext: self.ext.clone(), asks: self.asks.clone(),
             ..*self
         }
     }
@@ -169,10 +184,12 @@ impl KiroSession {
             key: self.key.clone(), tool: self.tool, folder: self.folder.clone(), title: self.title(), acp_id: self.kiro_id.clone(), context: self.context,
             turns: self.turns.iter().map(|t| SavedTurn { prompt: t.prompt.clone(), images: t.images.clone(), steps: t.steps.clone(),
                 state: t.result.as_ref().map(|r| r.state), text: t.result.as_ref().map(|r| r.text.clone()), started_at: t.started_at, woke_at: t.woke_at,
-                ended_at: t.ended_at, credits: t.credits, before: t.before.clone(), after: t.after.clone() }).collect(),
+                ended_at: t.ended_at, credits: t.credits, before: t.before.clone(), after: t.after.clone(),
+                ext: TurnExt { queued: t.queued, uid: t.queued.then(|| t.uid.clone()), chips: t.chips.clone(), switch_to: t.switch_to.clone() } }).collect(),
             updated: now,
             access: self.access.clone(),
             cloud: self.cloud.clone(),
+            ext: self.ext.clone(),
         }
     }
 
@@ -187,6 +204,7 @@ impl KiroSession {
         self.context = s.context;
         self.access = s.access.clone();
         self.cloud = s.cloud.clone();
+        self.ext = s.ext.clone();
         for t in &s.turns {
             let mut turn = KiroTurn::new(&t.prompt, t.images.clone());
             turn.started_at = t.started_at;
@@ -196,14 +214,83 @@ impl KiroSession {
             turn.before = t.before.clone();
             turn.after = t.after.clone();
             turn.steps = t.steps.clone();
-            turn.result = Some(KiroResult::new(t.state.unwrap_or(KiroState::Cancelled), t.text.clone().unwrap_or_else(|| CLOSED_TEXT.into())));
+            turn.chips = t.ext.chips.clone();
+            turn.switch_to = t.ext.switch_to.clone();
+            if t.ext.queued {
+                // A reply that was waiting when Hover closed is still waiting, and held: a saved message alone
+                // does not start a task again.
+                turn.queued = true;
+                turn.uid = t.ext.uid.clone().unwrap_or(turn.uid);
+                turn.ended_at = None;
+                self.held = true;
+            } else {
+                turn.result = Some(KiroResult::new(t.state.unwrap_or(KiroState::Cancelled), t.text.clone().unwrap_or_else(|| CLOSED_TEXT.into())));
+            }
             self.turns.push(turn);
         }
-        self.state = self.turns.last().map_or(KiroState::Cancelled, |t| t.result.as_ref().unwrap().state);
+        self.state = self.turns.iter().rev().find_map(|t| t.result.as_ref()).map_or(KiroState::Cancelled, |r| r.state);
     }
 }
 
 fn usable(text: &str, images: &[String]) -> bool { !text.trim().is_empty() || !images.is_empty() }
+
+/// A provider a conversation can move to: a built-in tool, or one of the user's custom agents.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Target { pub id: String, pub tool: AgentTool, pub instance: Option<String> }
+
+impl Target {
+    /// `kiro`, `codex`, … or `custom:<id>`. Nothing is looked up: whether it is ready is the caller's to know.
+    pub fn parse(id: &str) -> Option<Target> {
+        if let Some(c) = id.strip_prefix("custom:").filter(|c| !c.is_empty()) { return Some(Target { id: id.into(), tool: AgentTool::Custom, instance: Some(c.into()) }); }
+        AgentTool::parse(Some(id)).map(|t| Target { id: id.into(), tool: t, instance: None })
+    }
+}
+
+/// The provider a session is with now, as `Target::parse` names it.
+pub fn provider_id(s: &KiroSession) -> String {
+    match (&s.tool, &s.ext.provider) { (AgentTool::Custom, Some(c)) => format!("custom:{c}"), (t, _) => t.id().to_owned() }
+}
+
+/// What a provider switch did.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Switched {
+    /// `native` (the provider’s own conversation, resumed), `portable` (a new one, started from an account of this) or `fresh`
+    /// (nothing had been said yet).
+    pub mode: &'static str,
+    pub carried: usize,
+    pub omitted: usize,
+    pub notes: Vec<String>,
+}
+
+/// A message to an agent: its words, pictures and chips (context.rs), and a provider switch asked for with it
+/// (applied when it is sent).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Msg { pub text: String, pub images: Vec<String>, pub chips: Vec<Chip>, pub switch_to: Option<String> }
+
+impl Msg {
+    pub fn text(text: &str) -> Msg { Msg { text: text.into(), ..Default::default() } }
+    fn ok(&self) -> bool { usable(&self.text, &self.images) || !self.chips.is_empty() }
+}
+
+/// Why a queue edit didn't happen.
+#[derive(Clone, Debug, PartialEq)]
+pub enum QueueError {
+    /// No such session or message.
+    Gone,
+    /// The message began to send while it was being edited. The text the edit carried comes back, so it can go
+    /// into the composer instead of being lost.
+    Started(Msg),
+    Invalid(String),
+}
+
+/// What send-now did.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SendNow {
+    /// Nothing was running: the message started.
+    Started,
+    /// A run was going: it is being stopped (through the tool, not by force), and the message goes once the tool confirms.
+    Steering,
+}
 
 type Reply = Box<dyn FnOnce(AskAnswer) + Send>;
 type QuestionReply = Box<dyn FnOnce(Answers) + Send>;
@@ -221,13 +308,17 @@ struct Pending { id: String, reply: Answer, _stop: Option<Registration> }
 
 /// pausing: the turn was cancelled by Pause, so the replies queued behind it go once it ends.
 /// usage: Kiro's last reported context (percent) that no compaction has answered yet.
-struct Slot { s: KiroSession, cancel: Option<Cancel>, run: RunTask, asks: Vec<Pending>, pausing: bool, note: Option<String>, usage: Option<f64> }
+/// parked: the run is waiting on its helpers (orch.rs), so it holds no place among the tasks that run at once.
+struct Slot { s: KiroSession, cancel: Option<Cancel>, run: RunTask, asks: Vec<Pending>, pausing: bool, note: Option<String>, usage: Option<f64>, parked: bool }
 
 impl Slot {
     fn new(s: KiroSession, run: RunTask) -> Slot {
         let usage = s.context.filter(|_| s.tool == AgentTool::Kiro);
-        Slot { s, cancel: None, run, asks: vec![], pausing: false, note: None, usage }
+        Slot { s, cancel: None, run, asks: vec![], pausing: false, note: None, usage, parked: false }
     }
+
+    /// Runs and takes a place among the tasks that run at once.
+    fn counts(&self) -> bool { self.s.busy() && !self.parked }
 
     /// KiroSession.DenyAll: every question it left has nobody to answer it now. The
     /// replies go once the lock is released.
@@ -242,6 +333,8 @@ struct Inner { all: Vec<Slot>, selected: Option<i32> }
 
 type Changed = Arc<dyn Fn() + Send + Sync>;
 type Ended = Arc<dyn Fn(&KiroSession, &KiroResult) + Send + Sync>;
+type Stopped = Arc<dyn Fn(&KiroSession) + Send + Sync>;
+type CustomRunner = Arc<dyn Fn(&str) -> Option<RunTask> + Send + Sync>;
 
 struct Shared {
     inner: Mutex<Inner>,
@@ -251,6 +344,10 @@ struct Shared {
     changed: Mutex<Vec<Changed>>,
     ended: Mutex<Vec<Ended>>,
     checkpoints: Mutex<Option<Arc<Checkpoints>>>,
+    /// Called when a run is asked to stop (Stop, Pause, delete, quit).
+    stops: Mutex<Vec<Stopped>>,
+    /// The runner of a custom agent, by its id (custom.rs). Without one, a custom conversation says its agent isn't set up.
+    custom: Mutex<Option<CustomRunner>>,
     /// Where auto compact's percent comes from (None while it is off); without one, settings.json.
     compact: Mutex<Option<Arc<dyn Fn() -> Option<u8> + Send + Sync>>>,
     /// Whether a Kiro turn stopped by a busy model is continued (None while unset; the setting is then read from settings.json).
@@ -274,7 +371,7 @@ impl KiroSessions {
     pub fn with_clock(make: impl Fn(AgentTool) -> RunTask + Send + Sync + 'static, history: Option<Arc<AgentHistory>>,
         now: impl Fn() -> Stamp + Send + Sync + 'static) -> KiroSessions {
         KiroSessions(Arc::new(Shared { inner: Mutex::new(Inner { all: vec![], selected: None }), make: Box::new(make), history, now: Box::new(now),
-            changed: Mutex::new(vec![]), ended: Mutex::new(vec![]), checkpoints: Mutex::new(None), compact: Mutex::new(None), retry_busy: Mutex::new(None), limit: AtomicUsize::new(MAX_RUNNING) }))
+            changed: Mutex::new(vec![]), ended: Mutex::new(vec![]), checkpoints: Mutex::new(None), stops: Mutex::new(vec![]), custom: Mutex::new(None), compact: Mutex::new(None), retry_busy: Mutex::new(None), limit: AtomicUsize::new(MAX_RUNNING) }))
     }
 
     /// Kiro's auto compact: `at` says, at each prompt, the context percent that calls for a
@@ -294,6 +391,47 @@ impl KiroSessions {
 
     /// Any session changed, or one came or went. Off any thread.
     pub fn on_changed(&self, f: impl Fn() + Send + Sync + 'static) { self.0.changed.lock().unwrap().push(Arc::new(f)); }
+    /// Where a custom agent's runner comes from (custom.rs), by the agent's id.
+    pub fn set_custom(&self, f: impl Fn(&str) -> Option<RunTask> + Send + Sync + 'static) { *self.0.custom.lock().unwrap() = Some(Arc::new(f)); }
+
+    /// The runner for a new or woken session: its tool's, or its custom agent's.
+    fn run_for(&self, tool: AgentTool, provider: Option<&str>) -> RunTask {
+        if tool != AgentTool::Custom { return (self.0.make)(tool); }
+        let f = self.0.custom.lock().unwrap().clone();
+        match provider.and_then(|p| f.as_ref().and_then(|f| f(p))) {
+            Some(r) => r,
+            None => Arc::new(|_| KiroResult::new(KiroState::Failed, "This conversation’s agent isn’t set up any more. Add it again in Settings → Agents to carry on; the conversation is kept.")),
+        }
+    }
+
+    /// A run was asked to stop (Stop or Pause, a delete, Hover quitting), with the lock released. Off any thread.
+    pub fn on_stop(&self, f: impl Fn(&KiroSession) + Send + Sync + 'static) { self.0.stops.lock().unwrap().push(Arc::new(f)); }
+    fn stopping(&self, s: &KiroSession) { let cbs = self.0.stops.lock().unwrap().clone(); for f in cbs { f(s); } }
+
+    /// Takes a run out of the count of tasks that run at once while it waits on its helpers, or puts it back.
+    /// A full house of waiting parents can then never keep their helpers from starting.
+    pub fn park(&self, key: &str, on: bool) {
+        let changed = { let mut g = self.0.inner.lock().unwrap(); g.all.iter_mut().find(|x| x.s.key == key).is_some_and(|x| std::mem::replace(&mut x.parked, on) != on) };
+        if changed { self.raise(vec![Note::Changed]); }
+    }
+
+    /// Changes a session's links (ext) and keeps it in the history. False when it isn't at a desk.
+    pub fn update_ext(&self, key: &str, f: impl FnOnce(&mut SessionExt)) -> bool {
+        let snap = {
+            let mut g = self.0.inner.lock().unwrap();
+            let Some(x) = g.all.iter_mut().find(|x| x.s.key == key) else { return false };
+            f(&mut x.s.ext);
+            x.s.rev += 1;
+            x.s.clone()
+        };
+        self.save(&snap);
+        self.raise(vec![Note::Changed]);
+        true
+    }
+
+    /// The session with this lasting key, if it is at a desk.
+    pub fn find(&self, key: &str) -> Option<KiroSession> { self.0.inner.lock().unwrap().all.iter().find(|x| x.s.key == key).map(|x| x.s.clone()) }
+
     /// A turn ended. Off any thread.
     pub fn on_ended(&self, f: impl Fn(&KiroSession, &KiroResult) + Send + Sync + 'static) { self.0.ended.lock().unwrap().push(Arc::new(f)); }
 
@@ -319,7 +457,7 @@ impl KiroSessions {
     pub fn asking_now(&self) -> Vec<(i32, AgentAsk, usize)> {
         self.0.inner.lock().unwrap().all.iter().filter_map(|x| x.s.asking().map(|a| (x.s.id, a.clone(), x.s.asks.len()))).collect()
     }
-    pub fn running(&self) -> usize { self.0.inner.lock().unwrap().all.iter().filter(|x| x.s.busy()).count() }
+    pub fn running(&self) -> usize { self.0.inner.lock().unwrap().all.iter().filter(|x| x.counts()).count() }
     pub fn can_start(&self) -> bool { self.running() < self.max_running() }
     /// How many tasks run at once (Settings.MaxRunning on a Mac: 1 to MAX_KEPT).
     pub fn max_running(&self) -> usize { self.0.limit.load(Ordering::SeqCst) }
@@ -358,18 +496,27 @@ impl KiroSessions {
 
     /// start_as, in Kiro's cloud when `cloud` names its repos (KiroSession::cloud).
     pub fn start_in(&self, tool: AgentTool, folder: &str, prompt: &str, images: Vec<String>, access: Option<&str>, cloud: Option<Vec<String>>) -> Option<KiroSession> {
+        self.start_bound(tool, folder, prompt, images, access, cloud, SessionExt::default())
+    }
+
+    /// start_in, in the workspace `ext` names (workspace.rs: `folder` is then the task's worktree). None
+    /// also while a checkpoint restore holds that folder.
+    #[allow(clippy::too_many_arguments)]
+    pub fn start_bound(&self, tool: AgentTool, folder: &str, prompt: &str, images: Vec<String>, access: Option<&str>, cloud: Option<Vec<String>>, ext: SessionExt) -> Option<KiroSession> {
         let mut g = self.0.inner.lock().unwrap();
-        let running = g.all.iter().filter(|x| x.s.busy()).count();
-        if running >= self.max_running() || !crate::usable_folder(Some(folder)) || !usable(prompt, &images) { return None; }
+        let running = g.all.iter().filter(|x| x.counts()).count();
+        if running >= self.max_running() || !crate::usable_folder(Some(folder)) || !usable(prompt, &images) || crate::workspace::held(folder).is_some() { return None; }
         if !Self::free_desk(&mut g) { return None; }
         let mut s = KiroSession::new(tool);
         Self::seat(&g, &mut s);
         s.folder = folder.into();
         s.access = access.map(str::to_owned);
         s.cloud = cloud;
+        s.ext = ext;
         s.turns.push(KiroTurn::new(prompt.trim(), images));
         let id = s.id;
-        g.all.push(Slot::new(s, (self.0.make)(tool)));
+        let run = self.run_for(tool, s.ext.provider.as_deref());
+        g.all.push(Slot::new(s, run));
         let begun = self.begin(&mut g, id);
         g.selected = Some(id);
         let snap = g.all.iter().find(|x| x.s.id == id).unwrap().s.clone();
@@ -378,6 +525,121 @@ impl KiroSessions {
         self.raise(vec![Note::Changed, Note::Changed]);
         begun();
         Some(snap)
+    }
+
+    /// Moves the slot's conversation to another provider. Changes nothing until it knows it can: the account for a provider that
+    /// starts afresh is made first, and if it doesn't fit, the conversation stays where it is. History is never altered; it gains a
+    /// record of the move. Native state of the provider it leaves is kept, so coming back resumes it and brings over only what it missed.
+    fn apply_switch(&self, slot: &mut Slot, to: &Target) -> Result<Switched, String> {
+        if slot.s.cloud.is_some() { return Err("A Kiro Web task stays with Kiro Web.".into()); }
+        let from = provider_id(&slot.s);
+        if from == to.id { return Err(format!("It is with {} already.", to.id)); }
+        let done = slot.s.turns.iter().filter(|t| !t.queued && t.result.is_some()).count();
+        let mut lin = slot.s.ext.lineage.clone().unwrap_or_default();
+        if let Some(id) = slot.s.kiro_id.clone() { lin.natives.retain(|n| n.provider != from); lin.natives.push(Native { provider: from.clone(), id, seen: done }); }
+        let native = lin.natives.iter().find(|n| n.provider == to.id && n.seen <= done).cloned();
+        let (mode, carry, id) = match &native {
+            // Its own conversation, resumed; what it missed since is handed over as text.
+            Some(n) => {
+                let missed = crate::handoff::portable(&slot.s.turns, n.seen, crate::handoff::BUDGET, &slot.s.key,
+                    &format!("You are {} again, and this conversation went on without you for {} turn{}. Your own memory of it is intact up to turn {}; the turns you missed follow.", to.id, done - n.seen, if done - n.seen == 1 { "" } else { "s" }, n.seen))?;
+                ("native", (n.seen < done).then_some(missed), Some(n.id.clone()))
+            }
+            None if done == 0 => ("fresh", None, None),
+            None => ("portable", Some(crate::handoff::portable(&slot.s.turns, 0, crate::handoff::BUDGET, &slot.s.key,
+                &format!("This conversation was with {from} until now, and you ({}) are carrying it on. You have none of it in memory; this is an account of it.", to.id))?), None),
+        };
+        lin.handoffs.push(Handoff { turn: done, from, to: to.id.clone(), mode: mode.into(), carried: carry.as_ref().map_or(0, |c| c.carried), omitted: carry.as_ref().map_or(0, |c| c.omitted) });
+        lin.pending = carry.as_ref().map(|c| c.text.clone()).filter(|t| !t.is_empty());
+        slot.s.tool = to.tool;
+        slot.s.ext.provider = to.instance.clone();
+        slot.s.ext.lineage = Some(lin);
+        slot.s.kiro_id = id;
+        slot.s.context = None;
+        slot.usage = None;
+        slot.run = self.run_for(to.tool, to.instance.as_deref());
+        slot.s.rev += 1;
+        Ok(Switched { mode, carried: carry.as_ref().map_or(0, |c| c.carried), omitted: carry.as_ref().map_or(0, |c| c.omitted), notes: carry.map_or(vec![], |c| c.notes) })
+    }
+
+    /// Moves a conversation to another provider now. Not while a run goes on: a switch asked for with a queued message happens when that
+    /// message is sent (`Msg::switch_to`), after the work before it.
+    pub fn switch_provider(&self, id: i32, to: &Target) -> Result<Switched, String> {
+        let (r, snap) = {
+            let mut g = self.0.inner.lock().unwrap();
+            let slot = g.all.iter_mut().find(|x| x.s.id == id).ok_or("That chat isn't here.")?;
+            if slot.s.busy() { return Err("A run is going on. Wait for it, or queue the message with the switch; it happens when that message is sent.".into()); }
+            if crate::workspace::held(&slot.s.folder).is_some() { return Err("The folder is in use by a restore. Try again in a moment.".into()); }
+            (self.apply_switch(slot, to)?, slot.s.clone())
+        };
+        self.save(&snap);
+        self.raise(vec![Note::Changed]);
+        Ok(r)
+    }
+
+    /// A new conversation from turn `turn` of another, which stays as it is. The copy holds the turns up to and including it, so the chat reads on;
+    /// its agent starts afresh from an account of them (no provider here forks its own conversation). The provider is the caller's choice and
+    /// the folder is given separately: branching the conversation and choosing where files are written are two decisions. Only from a turn that ended.
+    pub fn fork(&self, key: &str, turn: usize, to: &Target, folder: &str, workspace: Option<hover_core::ext::WorkspaceBinding>) -> Result<KiroSession, String> {
+        let src = self.saved(key).ok_or("That conversation isn’t available.")?;
+        let t = src.turns.get(turn).ok_or("That message isn’t there.")?;
+        if t.ext.queued || t.state.is_none() { return Err("A conversation can be forked only from a turn that has ended.".into()); }
+        if src.cloud.is_some() { return Err("A Kiro Web conversation can’t be forked here.".into()); }
+        if !crate::usable_folder(Some(folder)) { return Err("The folder isn’t there.".into()); }
+        let mut copy = src.clone();
+        copy.key = hover_core::guid_n();
+        copy.turns.truncate(turn + 1);
+        for t in &mut copy.turns { (t.before, t.after) = (None, None); }
+        (copy.tool, copy.acp_id, copy.context, copy.folder, copy.cloud) = (to.tool, None, None, folder.into(), None);
+        copy.ext = SessionExt { workspace, provider: to.instance.clone(), orch: None, lineage: None };
+        let mut s = KiroSession::new(to.tool);
+        s.restore(&copy);
+        let from = { let mut probe = KiroSession::new(src.tool); probe.ext.provider = src.ext.provider.clone(); provider_id(&probe) };
+        let carry = crate::handoff::portable(&s.turns, 0, crate::handoff::BUDGET, &copy.key,
+            &format!("This conversation is a fork of another, taken after turn {}. It was with {from}; you ({}) are carrying it on from that point. You have none of it in memory; this is an account of it.", turn + 1, to.id))?;
+        s.ext.lineage = Some(Lineage { fork: Some(Fork { key: key.into(), turn }), pending: Some(carry.text).filter(|t| !t.is_empty()),
+            handoffs: if from != to.id { vec![Handoff { turn: turn + 1, from, to: to.id.clone(), mode: "portable".into(), carried: carry.carried, omitted: carry.omitted }] } else { vec![] }, ..Default::default() });
+        s.ext.provider = to.instance.clone();
+        s.held = false;
+        let snap = {
+            let mut g = self.0.inner.lock().unwrap();
+            if !Self::free_desk(&mut g) { return Err("Every desk is busy. Finish or dismiss a task first.".into()); }
+            Self::seat(&g, &mut s);
+            let snap = s.clone();
+            let run = self.run_for(to.tool, to.instance.as_deref());
+            g.all.push(Slot::new(s, run));
+            g.selected = Some(snap.id);
+            snap
+        };
+        self.save(&snap);
+        self.raise(vec![Note::Changed]);
+        Ok(snap)
+    }
+
+    /// Brings what a conversation found back to another (by default the one it was forked from), as one message to it: words only. No code, file
+    /// or branch moves. Done once per state of the fork: the same findings are found already sent (by the mark in the message) and not sent again;
+    /// a fork that has gone on since has new findings to send. Records what was moved.
+    pub fn bring_findings_back(&self, fork_key: &str, into_key: Option<&str>) -> Result<usize, String> {
+        let fork = self.saved(fork_key).ok_or("That conversation isn’t available.")?;
+        let lin = fork.ext.lineage.clone().unwrap_or_default();
+        let (from_turn, parent) = match (&lin.fork, into_key) {
+            (Some(f), None) => (f.turn, f.key.clone()),
+            (Some(f), Some(p)) => (if p == f.key { f.turn } else { 0 }, p.to_owned()),
+            (None, Some(p)) => (0, p.to_owned()),
+            (None, None) => return Err("This conversation wasn’t forked from another, so say where the findings go.".into()),
+        };
+        let parent_s = self.wake(&parent).ok_or("The conversation to bring them to isn’t available (every desk may be busy).")?;
+        let mut probe = KiroSession::new(fork.tool);
+        probe.restore(&fork);
+        let (text, chars) = crate::handoff::findings(&fork.title, fork_key, &probe.turns, from_turn, 16_000);
+        let marker = text.split(|c: char| c == '(' || c == ')').find(|p| p.starts_with("hover-return:")).unwrap_or("").to_owned();
+        if !marker.is_empty() && parent_s.turns.iter().any(|t| t.prompt.contains(&marker)) { return Ok(0); }
+        let done = probe.turns.iter().enumerate().filter(|(i, t)| *i > from_turn && !t.queued && t.result.is_some()).count();
+        if done == 0 { return Err("Nothing was asked in that conversation after the point it was forked at.".into()); }
+        let chip = crate::context::thread(fork_key, &fork.title);
+        if !self.reply_msg(parent_s.id, Msg { text, chips: vec![chip], ..Default::default() }) { return Err("The message couldn’t be sent now. Try again when a place is free.".into()); }
+        self.update_ext(&parent, |e| { e.lineage.get_or_insert_with(Default::default).returned.push(Returned { from: fork_key.into(), turn: done, chars }); });
+        Ok(chars)
     }
 
     /// Marks the next turn running and gives back what starts its thread (run once the
@@ -394,9 +656,21 @@ impl KiroSessions {
         slot.s.rev += 1;
         let ct = Cancel::new();
         slot.cancel = Some(ct.clone());
-        // After a rewind the agent is told once that its folder and chat went back.
+        // A provider switch asked for with this message happens now, as it is sent. One that can't be made leaves the conversation where it
+        // is, and the message says so to the agent that gets it.
+        let mut failed = None;
+        if let Some(p) = slot.s.turns[ti].switch_to.take() {
+            match Target::parse(&p) {
+                Some(to) if to.id != provider_id(&slot.s) => { if let Err(e) = self.apply_switch(slot, &to) { failed = Some(format!("[Hover] The switch to {p} couldn’t be made ({e}) and this message goes to {}.", provider_id(&slot.s))); } }
+                Some(_) => {}
+                None => failed = Some(format!("[Hover] The switch to “{p}” couldn’t be made: there is no such agent.")),
+            }
+        }
+        // What the agent is told first, once: that its folder and chat went back, or the account of a conversation it now carries on.
         let mut prompt = slot.s.turns[ti].text();
+        if let Some(carry) = slot.s.ext.lineage.as_mut().and_then(|l| l.pending.take()) { prompt = format!("{carry}{prompt}"); }
         if let Some(n) = slot.note.take() { prompt = format!("{n}\n\n{prompt}"); }
+        if let Some(f) = failed { prompt = format!("{f}\n\n{prompt}"); }
         // A cloud session's files are in its sandbox, not this folder: nothing to keep.
         let cp = self.checkpoints().filter(|_| slot.s.cloud.is_none()).map(|c| (c, slot.s.key.clone()));
         let args_base = (slot.s.folder.clone(), prompt, slot.s.kiro_id.clone(), slot.s.access.clone(), slot.s.cloud.clone());
@@ -410,17 +684,32 @@ impl KiroSessions {
     /// A reply. While a turn runs it waits and starts when that one ends. False when the
     /// session isn't here or hasn't started, there is nothing to send, or it would start
     /// a fourth run.
-    pub fn reply(&self, id: i32, text: &str, images: Vec<String>) -> bool {
+    pub fn reply(&self, id: i32, text: &str, images: Vec<String>) -> bool { self.reply_msg(id, Msg { text: text.into(), images, ..Default::default() }) }
+
+    /// reply, with chips and a provider switch. A reply from the user also frees a held queue: the oldest waiting message goes first.
+    pub fn reply_msg(&self, id: i32, m: Msg) -> bool { self.reply_at(id, m, false) }
+
+    /// reply_msg, but the message goes *ahead* of any that wait: it is the next sent (and starts now when nothing runs). For a
+    /// continuation that must finish before the follow-ups held behind it.
+    pub fn reply_first(&self, id: i32, m: Msg) -> bool { self.reply_at(id, m, true) }
+
+    fn reply_at(&self, id: i32, m: Msg, front: bool) -> bool {
+        let Msg { text, images, chips, switch_to } = m;
+        let text = text.as_str();
         let mut g = self.0.inner.lock().unwrap();
-        let running = g.all.iter().filter(|x| x.s.busy()).count();
+        let running = g.all.iter().filter(|x| x.counts()).count();
         let Some(slot) = g.all.iter_mut().find(|x| x.s.id == id) else { return false };
         if !slot.s.busy() && running >= self.max_running() { return false; }
-        if slot.s.state == KiroState::Idle || !usable(text, &images) { return false; }
+        if slot.s.state == KiroState::Idle || !(usable(text, &images) || !chips.is_empty()) || crate::workspace::held(&slot.s.folder).is_some() { return false; }
         let mut t = KiroTurn::new(text.trim(), images);
+        t.chips = chips;
+        t.switch_to = switch_to;
+        slot.s.held = false;
+        let at = if front { slot.s.turns.iter().position(|x| x.queued) } else { None };
         // Replies left queued (behind a stop that wasn't confirmed) go first, in order.
         let start_now = !slot.s.busy();
         t.queued = slot.s.busy() || slot.s.turns.iter().any(|t| t.queued);
-        slot.s.turns.push(t);
+        match at { Some(i) => slot.s.turns.insert(i, t), None => slot.s.turns.push(t) }
         slot.s.rev += 1;
         let begun = if start_now { Some(self.begin(&mut g, id)) } else { None };
         let snap = g.all.iter().find(|x| x.s.id == id).unwrap().s.clone();
@@ -445,9 +734,19 @@ impl KiroSessions {
             let (i, after) = match to { Rewind::After(i) => (i, true), Rewind::Before(i) => (i, false) };
             let t = slot.s.turns.get(i).ok_or("That message isn't here.")?;
             let tree = if after { &t.after } else { &t.before }.clone().ok_or("No checkpoint was kept there.")?;
-            if !after && g.all.iter().filter(|x| x.s.busy()).count() >= self.max_running() { return Err(format!("{} running. Try again when one is done.", match self.max_running() { 1 => "1 task is".to_owned(), n => format!("{n} tasks are") })); }
+            if !after && g.all.iter().filter(|x| x.counts()).count() >= self.max_running() { return Err(format!("{} running. Try again when one is done.", match self.max_running() { 1 => "1 task is".to_owned(), n => format!("{n} tasks are") })); }
             (slot.s.key.clone(), slot.s.folder.clone(), tree, if after { i + 1 } else { i }, t.prompt.clone(), t.images.clone())
         };
+        // The folder is held for the whole restore: no task may start or reply in it, or in a folder inside it
+        // or around it. A task already running there (an ancestor or a descendant too) stops the restore.
+        let hold = crate::workspace::hold(&folder, "A checkpoint restore")?;
+        {
+            let g = self.0.inner.lock().unwrap();
+            if let Some(o) = g.all.iter().find(|x| x.s.id != id && x.s.busy() && x.s.cloud.is_none() && crate::workspace::overlaps(&x.s.folder, &folder)) {
+                return Err(format!("Another task is working in {}, which overlaps this folder. Stop it first.", o.s.folder));
+            }
+            if g.all.iter().find(|x| x.s.id == id).is_some_and(|x| x.s.busy()) { return Err("Stop the run first.".into()); }
+        }
         // Files first, off the lock: a big folder takes a while, and the chat stays as it is until it worked.
         cp.restore(&key, &folder, &tree)?;
         let snap = {
@@ -458,6 +757,9 @@ impl KiroSessions {
             slot.s.state = slot.s.turns.last().and_then(|t| t.result.as_ref()).map_or(slot.s.state, |r| r.state);
             slot.s.asks.clear();
             slot.s.rev += 1;
+            // What the provider remembers is no longer the chat: its own conversation (and any it kept from another move) held the turns
+            // just removed.
+            if let Some(l) = &mut slot.s.ext.lineage { l.natives.retain(|n| n.seen <= keep); l.pending = None; }
             if keep == 0 {
                 slot.s.kiro_id = None;
                 slot.s.context = None;
@@ -465,13 +767,31 @@ impl KiroSessions {
                 slot.note = None;
             } else {
                 let what = crate::stream::clip_to(first_line(&slot.s.turns[keep - 1].prompt), 80);
-                slot.note = Some(match to {
-                    Rewind::After(_) => format!("[Hover] The project's files were just put back to how they were right after your reply to “{what}”. Everything that changed after that point was undone, and the later messages were removed from this chat. Carry on from here and don't rely on that later work."),
-                    Rewind::Before(_) => "[Hover] The project's files were just put back to how they were before the next message, and your earlier attempt at it (and anything after it) was undone and removed from this chat. Start it afresh.".to_owned(),
-                });
+                let told = match to {
+                    Rewind::After(_) => format!("The project's files were just put back to how they were right after your reply to “{what}”. Everything that changed after that point was undone, and the later messages were removed from this chat. Carry on from here and don't rely on that later work."),
+                    Rewind::Before(_) => "The project's files were just put back to how they were before the next message, and your earlier attempt at it (and anything after it) was undone and removed from this chat. Start it afresh.".to_owned(),
+                };
+                // A replacement conversation: the agent starts anew from an account of the turns that remain, not from its memory of ones that
+                // are gone. If the account won't fit, the old way is kept (it is told, and remembers) and the log says why.
+                let intro = format!("{told} This is a new conversation for you: it starts from the account below, not from what you remember of this one.");
+                match crate::handoff::portable(&slot.s.turns, 0, crate::handoff::BUDGET, &slot.s.key, &intro) {
+                    Ok(c) if !c.text.is_empty() => {
+                        slot.s.kiro_id = None;
+                        slot.s.context = None;
+                        slot.usage = None;
+                        slot.note = None;
+                        slot.s.ext.lineage.get_or_insert_with(Default::default).pending = Some(c.text);
+                    }
+                    other => {
+                        if let Err(e) = other { hover_core::log::line(&format!("rewind: no replacement conversation - {e}")); }
+                        slot.note = Some(format!("[Hover] {told}"));
+                    }
+                }
             }
             slot.s.clone()
         };
+        // The chat is cut: the folder may be used again (the message below starts a turn in it).
+        drop(hold);
         self.save(&snap);
         self.raise(vec![Note::Changed]);
         if matches!(to, Rewind::Before(_)) && !self.reply(id, &prompt, images) { return Err("The files are back, but the message couldn't be sent again.".into()); }
@@ -488,7 +808,8 @@ impl KiroSessions {
         s.restore(&saved);
         Self::seat(&g, &mut s);
         let snap = s.clone();
-        g.all.push(Slot::new(s, (self.0.make)(saved.tool)));
+        let run = self.run_for(saved.tool, saved.ext.provider.as_deref());
+        g.all.push(Slot::new(s, run));
         drop(g);
         self.raise(vec![Note::Changed]);
         Some(snap)
@@ -522,7 +843,7 @@ impl KiroSessions {
     /// or it is busy, or three already run.
     pub fn reattach(&self, id: i32) -> bool {
         let mut g = self.0.inner.lock().unwrap();
-        let running = g.all.iter().filter(|x| x.s.busy()).count();
+        let running = g.all.iter().filter(|x| x.counts()).count();
         let Some(slot) = g.all.iter_mut().find(|x| x.s.id == id) else { return false };
         if slot.s.busy() || running >= self.max_running() || slot.s.cloud.is_none() || slot.s.kiro_id.is_none() { return false; }
         let Some(ti) = slot.s.turns.len().checked_sub(1) else { return false };
@@ -609,22 +930,27 @@ impl KiroSessions {
     pub fn dismiss(&self, id: i32) {
         let mut g = self.0.inner.lock().unwrap();
         let Some(i) = g.all.iter().position(|x| x.s.id == id && !x.s.busy()) else { return };
-        g.all.remove(i);
+        let gone = g.all.remove(i).s;
         if g.selected == Some(id) { g.selected = None; }
         drop(g);
+        // Putting a task away ends what was waiting on its behalf (watches, resumes).
+        self.stopping(&gone);
         self.raise(vec![Note::Changed]);
     }
 
     /// The user deleted a session: a run is stopped, and it leaves the office and the history.
     pub fn delete(&self, key: &str) {
         let mut g = self.0.inner.lock().unwrap();
+        let mut gone = None;
         if let Some(i) = g.all.iter().position(|x| x.s.key == key) {
             let mut slot = g.all.remove(i);
             slot.s.deleted = true;
             if slot.s.busy() { if let Some(c) = &slot.cancel { c.cancel(); } }
             if g.selected == Some(slot.s.id) { g.selected = None; }
+            gone = Some(slot.s.clone());
         }
         drop(g);
+        if let Some(s) = &gone { self.stopping(s); }
         if let Some(h) = &self.0.history { h.delete(key); }
         if let Some(c) = self.checkpoints() { c.delete(key); }
         self.raise(vec![Note::Changed]);
@@ -656,6 +982,7 @@ impl KiroSessions {
         for d in denied { d.deny(); }
         if found { self.raise(vec![Note::Changed]); }
         if let Some(c) = c { c.cancel(); }
+        if found { if let Some(s) = self.get(id) { self.stopping(&s); } }
         found
     }
 
@@ -672,6 +999,100 @@ impl KiroSessions {
         };
         self.save(&snap);
         self.raise(vec![Note::Changed]);
+        true
+    }
+
+    /// The queued message `uid` of session `id`: its place in `turns`, or why not.
+    fn queued_at(slot: &Slot, uid: &str, carried: &Msg) -> Result<usize, QueueError> {
+        match slot.s.turns.iter().position(|t| t.uid == uid) {
+            None => Err(QueueError::Gone),
+            Some(i) if !slot.s.turns[i].queued => Err(QueueError::Started(carried.clone())),
+            Some(i) => Ok(i),
+        }
+    }
+
+    fn queue_change<R>(&self, id: i32, f: impl FnOnce(&mut Slot) -> Result<R, QueueError>) -> Result<R, QueueError> {
+        let (r, snap) = {
+            let mut g = self.0.inner.lock().unwrap();
+            let slot = g.all.iter_mut().find(|x| x.s.id == id).ok_or(QueueError::Gone)?;
+            let r = f(slot)?;
+            if !slot.s.turns.iter().any(|t| t.queued) { slot.s.held = false; }
+            slot.s.rev += 1;
+            (r, slot.s.clone())
+        };
+        self.save(&snap);
+        self.raise(vec![Note::Changed]);
+        Ok(r)
+    }
+
+    /// Replaces a waiting message’s words, pictures and chips. If it began to send meanwhile, the error carries the
+    /// text back so it can be put in the composer; nothing of it is lost.
+    pub fn edit_queued(&self, id: i32, uid: &str, m: Msg) -> Result<(), QueueError> {
+        if !m.ok() { return Err(QueueError::Invalid("A message needs words, a picture or an attachment.".into())); }
+        self.queue_change(id, |slot| {
+            let i = Self::queued_at(slot, uid, &m)?;
+            let t = &mut slot.s.turns[i];
+            (t.prompt, t.images, t.chips, t.switch_to) = (m.text.trim().to_owned(), m.images, m.chips, m.switch_to);
+            Ok(())
+        })
+    }
+
+    /// Moves a waiting message to place `to` among the waiting ones (0 is the next to go).
+    pub fn move_queued(&self, id: i32, uid: &str, to: usize) -> Result<(), QueueError> {
+        self.queue_change(id, |slot| {
+            let i = Self::queued_at(slot, uid, &Msg::default())?;
+            let first = slot.s.turns.iter().position(|t| t.queued).unwrap_or(i);
+            let n = slot.s.turns.iter().filter(|t| t.queued).count();
+            let t = slot.s.turns.remove(i);
+            slot.s.turns.insert(first + to.min(n - 1), t);
+            Ok(())
+        })
+    }
+
+    /// Takes a waiting message back. The same message twice is `Gone`, not an error for the one that worked.
+    pub fn remove_queued(&self, id: i32, uid: &str) -> Result<Msg, QueueError> {
+        self.queue_change(id, |slot| {
+            let i = Self::queued_at(slot, uid, &Msg::default())?;
+            let t = slot.s.turns.remove(i);
+            Ok(Msg { text: t.prompt, images: t.images, chips: t.chips, switch_to: t.switch_to })
+        })
+    }
+
+    /// Sends a waiting message now, ahead of the others. No provider here steers a run that is going (none says so),
+    /// so a run in progress is asked to stop the way Pause asks: through the tool, the conversation kept, and the message
+    /// goes once the tool confirms. If it never confirms, nothing is sent and no second writer starts. A second click
+    /// finds the message already sent.
+    pub fn send_now(&self, id: i32, uid: &str) -> Result<SendNow, QueueError> {
+        let busy = self.queue_change(id, |slot| {
+            let i = Self::queued_at(slot, uid, &Msg::default())?;
+            let first = slot.s.turns.iter().position(|t| t.queued).unwrap_or(i);
+            let t = slot.s.turns.remove(i);
+            slot.s.turns.insert(first, t);
+            slot.s.held = false;
+            Ok(slot.s.busy())
+        })?;
+        if busy {
+            return if self.halt(id, true) { Ok(SendNow::Steering) } else { Ok(SendNow::Started) };
+        }
+        self.resume_queue(id).then_some(SendNow::Started).ok_or_else(|| QueueError::Invalid("No place is free to start it now.".into()))
+    }
+
+    /// Lets a held queue go: the oldest waiting message starts (when nothing runs and a place is free). The user's own action; a saved
+    /// queue, or a stop, never does this by itself.
+    pub fn resume_queue(&self, id: i32) -> bool {
+        let mut g = self.0.inner.lock().unwrap();
+        let running = g.all.iter().filter(|x| x.counts()).count();
+        let Some(slot) = g.all.iter_mut().find(|x| x.s.id == id) else { return false };
+        if !slot.s.turns.iter().any(|t| t.queued) { slot.s.held = false; return false; }
+        if slot.s.busy() { slot.s.held = false; return true; }
+        if running >= self.max_running() || crate::workspace::held(&slot.s.folder).is_some() { return false; }
+        slot.s.held = false;
+        let begun = self.begin(&mut g, id);
+        let snap = g.all.iter().find(|x| x.s.id == id).unwrap().s.clone();
+        drop(g);
+        self.raise(vec![Note::Changed]);
+        begun();
+        self.save(&snap);
         true
     }
 
@@ -756,7 +1177,12 @@ impl KiroSessions {
     /// Stops every running turn, except Kiro Web's: a cancel would stop the cloud run too, and
     /// the next start follows it on (`reattach_cut_off`).
     pub fn stop_all(&self) {
-        let cs: Vec<Cancel> = self.0.inner.lock().unwrap().all.iter().filter(|x| x.s.busy() && x.s.cloud.is_none()).filter_map(|x| x.cancel.clone()).collect();
+        let (cs, who): (Vec<Cancel>, Vec<KiroSession>) = {
+            let g = self.0.inner.lock().unwrap();
+            let busy: Vec<&Slot> = g.all.iter().filter(|x| x.s.busy() && x.s.cloud.is_none()).collect();
+            (busy.iter().filter_map(|x| x.cancel.clone()).collect(), busy.iter().map(|x| x.s.clone()).collect())
+        };
+        for s in &who { self.stopping(s); }
         for c in cs { c.cancel(); }
     }
 
@@ -1029,16 +1455,18 @@ fn go(me: Weak<Shared>, id: i32, ti: usize, run: RunTask, ct: Cancel, cp: Option
         // A stop drops the replies that were waiting; a pause sends the next one, once the
         // tool has said the turn ended. A stop the tool never confirmed sends nothing:
         // what it was doing may still go on (a pause keeps them queued, a stop drops them).
+        // Stop holds what is waiting: the replies stay, in order, and go only when the user resumes the queue (or
+        // sends a new message). A stop the tool never confirmed sends nothing either.
         let mut next = slot.s.turns.iter().any(|t| t.queued);
         if next && r.unconfirmed && pausing {
             next = false;
+            slot.s.held = true;
         } else if next && !pausing && (r.state == KiroState::Cancelled || r.unconfirmed) {
-            for q in slot.s.turns.iter_mut().filter(|t| t.queued) {
-                q.queued = false;
-                q.started_at = now;
-                q.ended_at = Some(now);
-                q.result = Some(KiroResult::new(KiroState::Cancelled, "Not sent: the run before it was stopped."));
-            }
+            slot.s.held = true;
+            next = false;
+        } else if next && r.state == KiroState::Failed && crate::limit::detect(&r.text, Stamp::now().unix_ms(), 0).is_some() {
+            // The provider's usage ran out: what waits would only meet the same wall, so it is held until the task is continued.
+            slot.s.held = true;
             next = false;
         }
         (slot.s.clone(), next, denied)

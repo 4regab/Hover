@@ -57,12 +57,14 @@ pub struct Pane {
     /// The key under the finger, by position (winit's `KeyCode`), while a shortcut records
     /// on a Mac: Option-N types a dead key that the character alone can't name.
     pub physical: Option<String>,
+    /// The text of Automation's "new task" and "new agent" boxes, until they are added.
+    pub draft: std::collections::HashMap<String, String>,
 }
 
 impl Default for Pane {
     fn default() -> Self {
         Pane { section: Section::General, recording: false, recording_voice: false, field: None, import_status: String::new(), menu: None, installed: None,
-            project: None, note: None, live: pages::Live::default(), physical: None }
+            project: None, note: None, live: pages::Live::default(), physical: None, draft: Default::default() }
     }
 }
 
@@ -164,6 +166,7 @@ pub fn blocks(bs: &[B], p: &Palette) -> Vec<Block> {
                             d.longest = s(labels.iter().max_by_key(|l| l.chars().map(|c| if c.is_uppercase() { 3 } else { 2 }).sum::<usize>()).cloned().unwrap_or_default());
                             d.labels = model(labels.iter().map(s).collect());
                         }
+                        Control::Slider { id, name, value, min, max } => { d.control = 10; d.id = s(id); d.name = s(name); d.picked = *value; d.lo = *min; d.hi = *max; }
                         Control::Picker { id, name, shown, options } => {
                             d.control = 5; d.id = s(id); d.name = s(name); d.text = s(shown);
                             d.options = model(options.iter().map(|(l, on)| Opt { label: s(l), on: *on }).collect());
@@ -236,10 +239,21 @@ pub trait Host {
     ///     was left or voice switched off.
     /// Then fill pane.live and refresh.
     fn action(&self, id: &str) { let _ = id; }
+    /// Runs `work` off the UI thread and then rebuilds the page (checks, sign-ins, downloads, the service).
+    fn later(&self, work: Box<dyn FnOnce() + Send>) { work(); }
 }
+
+/// What background work says, shown under the control that started it on the next rebuild.
+static LATER_NOTE: std::sync::Mutex<Option<(String, String)>> = std::sync::Mutex::new(None);
+/// The registry's last search: its entries and a line about it.
+static REGISTRY: std::sync::Mutex<(Vec<hover_agents::custom::Entry>, String)> = std::sync::Mutex::new((Vec::new(), String::new()));
+
+fn said(id: &str, text: impl Into<String>) { *LATER_NOTE.lock().unwrap() = Some((id.into(), text.into())); }
 
 pub fn build(h: &dyn Host, pane: &mut Pane) -> Vec<B> {
     let hv = h.hover();
+    if let Some(n) = LATER_NOTE.lock().unwrap().take() { pane.note = Some(n); }
+    if pane.section == Section::Automation { pane.live.auto = auto_view(hv, &pane.draft); }
     let installed = installed(pane);
     let field = if pane.recording_voice { None } else { pane.field.clone() }.unwrap_or_else(|| hv.settings.sc_workspace().label());
     let voice_field = if pane.recording_voice { pane.field.clone() } else { None }.unwrap_or_else(|| hv.settings.voice().shortcut.label());
@@ -299,6 +313,10 @@ pub fn toggled(h: &dyn Host, pane: &RefCell<Pane>, id: &str, on: bool) {
         // Kiro's page: auto compact and continuing when the model is busy.
         "KiroAutoCompact" => { pages::set_compact(st, id, on); }
         "KiroRetryBusy" => st.set_kiro_retry_busy(on),
+        "UseFolder" => st.set_automation(hover_core::model::AutomationSettings { use_folder: on, ..st.automation() }),
+        "AutoResume" => st.set_automation(hover_core::model::AutomationSettings { auto_resume: on, ..st.automation() }),
+        "WebhookPublic" => { st.set_automation(hover_core::model::AutomationSettings { webhook_public: on, ..st.automation() }); hv.apply_automation(); }
+        "CaEnvSecret" => draft(pane, "ca_env_secret", if on { "1" } else { "0" }),
         _ => {}
     }
     h.refresh();
@@ -323,6 +341,7 @@ fn edit_project(h: &dyn Host, pane: &RefCell<Pane>, id: &str, f: impl FnOnce(&mu
 fn edited(h: &dyn Host, pane: &RefCell<Pane>, id: &str, v: &str) {
     let st = &h.hover().settings;
     let text = || Some(v.trim().to_owned()).filter(|t| !t.is_empty());
+    if auto_edited(h, pane, id, v) { return; }
     match id {
         "ProjectName" => edit_project(h, pane, id, |p| p.name = v.into()),
         "ProjectAliases" => edit_project(h, pane, id, |p| p.aliases = v.split(',').map(|a| a.trim().to_owned()).filter(|a| !a.is_empty()).collect()),
@@ -350,12 +369,218 @@ fn edited(h: &dyn Host, pane: &RefCell<Pane>, id: &str, v: &str) {
     }
 }
 
+
+// MARK: Automation
+
+fn schedule_text(t: &hover_agents::sched::Task) -> String {
+    use hover_agents::sched::{civil_text, Schedule};
+    let zone = t.tz.name();
+    match t.schedule {
+        Schedule::Manual => "Runs when you press Run now, or a webhook calls".into(),
+        Schedule::Once { at } => format!("Once, {} ({zone})", civil_text(at, t.tz)),
+        Schedule::Every { minutes } => format!("Every {minutes} minutes"),
+        Schedule::Daily { hour, minute, days } => format!("{} at {hour:02}:{minute:02} ({zone})", if days & 0x7f == 0x7f { "Every day" } else { "Weekdays" }),
+    }
+}
+
+/// Automation's live state, read fresh at each rebuild (each is quick: files, a lookup on PATH, one service query).
+fn auto_view(hv: &hover_app::app::Hover, draft: &std::collections::HashMap<String, String>) -> pages::AutoView {
+    use hover_agents::{custom, editor, service, wake};
+    let tasks = hv.sched.list().iter().map(|t| pages::TaskRow {
+        id: t.id.clone(), name: t.name.clone(), when: schedule_text(t), enabled: t.enabled, state: if t.enabled { "On" } else { "Paused" }.into(),
+        last: t.runs.last().map_or("Not run yet".to_owned(), |r| format!("Last run {}: {}{}", hover_agents::sched::civil_text(r.started, t.tz), r.state.name(), if r.note.is_empty() { String::new() } else { format!(" · {}", r.note) })),
+    }).collect();
+    let mut agents: Vec<(String, String)> = AgentTool::ALL.iter().filter(|t| hover_agents::agents::known(**t).is_some_and(|r| r.ok())).map(|t| (t.id().to_owned(), t.name().to_owned())).collect();
+    agents.extend(hv.customs.providers().into_iter().filter(|p| p.ready).map(|p| (p.id, p.name)));
+    let svc = service::state();
+    let (service_line, installed) = match &svc {
+        service::State::NotInstalled => ("Not installed. Tasks run only while Hover is open.".to_owned(), false),
+        service::State::Installed { running } => (if *running { "Installed and running." } else { "Installed, not running right now." }.to_owned(), true),
+        service::State::Unavailable(e) => (format!("Can’t be checked here: {e}"), false),
+    };
+    let timers = if hv.has_timers() { "Hover (this window) runs the timers now.".to_owned() } else { match wake::held(&hover_app::app::Hover::exec_dir()) { wake::Held::By(who) => format!("{who} runs the timers now; Hover takes them when it can."), wake::Held::Free => "Nothing runs the timers yet.".into() } };
+    let customs = hv.customs.list().iter().map(|a| {
+        let st = hv.customs.status(&a.id);
+        let (status, sign_in) = match &st {
+            custom::Status::Unknown => ("Not checked yet. Press Check.".to_owned(), false),
+            custom::Status::Ready(c) => (format!("{}{} · {} model{}{}", c.name.clone().unwrap_or_else(|| a.exe.clone()), c.version.as_ref().map(|v| format!(" {v}")).unwrap_or_default(), c.models.len(), if c.models.len() == 1 { "" } else { "s" },
+                [c.why_not("resume").map(|_| "can’t resume"), c.why_not("images").map(|_| "no pictures")].into_iter().flatten().map(|x| format!(" · {x}")).collect::<String>()), false),
+            custom::Status::NeedsSignIn(c) => (format!("Needs a sign-in ({}).", c.auth.iter().map(|m| m.1.clone()).collect::<Vec<_>>().join(", ")), !c.auth.is_empty()),
+            custom::Status::Failed(e) => (e.clone(), false),
+        };
+        pages::CustomRow { id: a.id.clone(), name: a.name.clone(), status, ready: st.ready(), sign_in }
+    }).collect();
+    let (entries, note) = REGISTRY.lock().unwrap().clone();
+    let has = |c: &str| hover_agents::proc::on_path(c).is_some();
+    let registry = entries.iter().take(6).map(|e| match custom::plan(e, &custom::target(), &has) {
+        Ok(p) => {
+            let needs = p.blockers().iter().map(|n| format!("needs {} first", n.name)).collect::<Vec<_>>().join(", ");
+            pages::RegRow { id: e.id.clone(), name: e.name.clone(), can: p.blockers().is_empty(),
+                note: format!("{} · version {} · {}{}{}{}", e.description, e.version, if p.kind == "binary" { "downloads a program" } else { "runs a package" }, if p.checked { " (checksum checked)" } else if p.kind == "binary" { " (no checksum given)" } else { "" }, if needs.is_empty() { String::new() } else { format!(" · {needs}") }, e.license.as_ref().map(|l| format!(" · {l}")).unwrap_or_default()) }
+        }
+        Err(e2) => pages::RegRow { id: e.id.clone(), name: e.name.clone(), can: false, note: e2 },
+    }).collect();
+    pages::AutoView { editors: editor::available(&hv.settings.editor()).into_iter().filter(|f| f.id != editor::CUSTOM).map(|f| (f.id, f.name)).collect(), tasks, agents, service: service_line, service_installed: installed, timers,
+        webhook: hv.webhooks.addr().map_or("Off.".to_owned(), |a| format!("Listening on {a}.")), customs, registry, registry_note: note, draft: draft.clone() }
+}
+
+fn draft(pane: &RefCell<Pane>, k: &str, v: &str) { pane.borrow_mut().draft.insert(k.into(), v.into()); }
+fn drafted(pane: &RefCell<Pane>, k: &str) -> String { pane.borrow().draft.get(k).cloned().unwrap_or_default() }
+
+/// Builds the new task from its boxes and adds it. The secret of its webhook, if it has one, is shown once.
+fn add_task(h: &dyn Host, pane: &RefCell<Pane>) {
+    use hover_agents::sched::{Hook, NewTask, Schedule, Tz};
+    let hv = h.hover();
+    let d = |k: &str| drafted(pane, k);
+    let kind: i32 = d("kind").parse().unwrap_or(0);
+    let when = d("when");
+    let schedule = match kind {
+        1 => match hover_agents::sched::parse_local(when.trim()) { Some(ms) => Schedule::Once { at: ms }, None => return note(pane, "TaskAdd", "Write the date and time like 2026-11-02 09:30.".into()) },
+        2 => match when.trim().parse::<u32>() { Ok(m) if m >= 5 => Schedule::Every { minutes: m }, _ => return note(pane, "TaskAdd", "Write how many minutes between runs: 5 or more.".into()) },
+        3 => match when.trim().split_once(':').and_then(|(h, m)| Some((h.parse::<u8>().ok()?, m.parse::<u8>().ok()?))) { Some((hour, minute)) if hour < 24 && minute < 60 => Schedule::Daily { hour, minute, days: if d("days") == "1" { 0b0111110 } else { 0x7f } }, _ => return note(pane, "TaskAdd", "Write the time like 09:00.".into()) },
+        _ => Schedule::Manual,
+    };
+    let fields: Vec<String> = d("hook").split(',').map(|f| f.trim().to_owned()).filter(|f| !f.is_empty() && f != "off").collect();
+    let hook = (!d("hook").trim().is_empty() && d("hook").trim() != "off").then(|| Hook { enabled: true, events: vec![], fields });
+    let agent = { let a = d("agent"); if a.is_empty() { hv.customs.providers().into_iter().filter(|p| p.ready).map(|p| p.id).next().or_else(|| AgentTool::ALL.iter().find(|t| hover_agents::agents::known(**t).is_some_and(|r| r.ok())).map(|t| t.id().to_owned())).unwrap_or_default() } else { a } };
+    let t = NewTask { name: d("name"), folder: d("folder"), prompt: d("prompt"), provider: agent, workspace: "own".into(), access: if d("access").is_empty() { "risky".into() } else { d("access") }, schedule, tz: Tz::Local, hook: hook.clone() };
+    match hv.sched.add(t) {
+        Ok(id) => {
+            let mut text = "Added.".to_owned();
+            if hook.is_some() {
+                match hv.webhooks.rotate(&id) {
+                    Ok(secret) => text = format!("Added. Webhook address: http://{}/hook/{id}. Secret, shown once: {secret}. Sign the body with HMAC-SHA256 (GitHub’s X-Hub-Signature-256 works).", hv.webhooks.addr().map_or("<set a listen address below>".to_owned(), |a| a.to_string())),
+                    Err(e) => text = format!("Added, but the webhook secret couldn’t be made: {e}"),
+                }
+            }
+            pane.borrow_mut().draft.clear();
+            note(pane, "TaskAdd", text);
+        }
+        Err(e) => note(pane, "TaskAdd", e),
+    }
+}
+
+/// Adds the agent from its boxes and checks it in the background.
+fn add_custom(h: &dyn Host, pane: &RefCell<Pane>) {
+    use hover_agents::custom::{EnvInput, Source};
+    let hv = h.hover();
+    let d = |k: &str| drafted(pane, k);
+    let args: Vec<String> = (1..=4).map(|n| d(&format!("ca_arg{n}"))).filter(|a| !a.is_empty()).collect();
+    let env = if d("ca_env_name").is_empty() { vec![] } else { vec![EnvInput { name: d("ca_env_name"), value: d("ca_env_value"), secret: d("ca_env_secret") == "1" }] };
+    match hv.customs.add(&d("ca_name"), &d("ca_exe"), args, env, Source::Local) {
+        Ok(id) => {
+            pane.borrow_mut().draft.clear();
+            note(pane, "CaAdd", "Added. Checking it…".into());
+            let (c, hv2) = (hv.customs.clone(), ());
+            let _ = hv2;
+            h.later(Box::new(move || { let st = c.check(&id, &hover_agents::cancel::Cancel::new()); said("CaAdd", match st { hover_agents::custom::Status::Ready(_) => "Added, and it is ready.".to_owned(), other => format!("Added. {}", match other { hover_agents::custom::Status::NeedsSignIn(_) => "It needs a sign-in: press Sign in.".to_owned(), hover_agents::custom::Status::Failed(e) => e, _ => String::new() }) }); }));
+        }
+        Err(e) => note(pane, "CaAdd", e),
+    }
+}
+
+/// A click on one of Automation's row buttons; true when it was one of theirs.
+fn auto_pressed(h: &dyn Host, pane: &RefCell<Pane>, id: &str) -> bool {
+    let hv = h.hover();
+    if let Some(t) = id.strip_prefix("Task.run.") { if let Err(e) = hv.sched.run_now(t) { note(pane, id, e); } return true; }
+    if let Some(t) = id.strip_prefix("Task.toggle.") { let on = hv.sched.get(t).is_some_and(|x| !x.enabled); hv.sched.set_enabled(t, on); return true; }
+    if let Some(t) = id.strip_prefix("Task.remove.") { hv.webhooks.forget(t); hv.sched.remove(t); return true; }
+    if let Some(a) = id.strip_prefix("Custom.check.") {
+        let (c, a) = (hv.customs.clone(), a.to_owned());
+        h.later(Box::new(move || { let st = c.check(&a, &hover_agents::cancel::Cancel::new()); if let hover_agents::custom::Status::Failed(e) = st { said("CaAdd", e); } }));
+        return true;
+    }
+    if let Some(a) = id.strip_prefix("Custom.signin.") {
+        let (c, a) = (hv.customs.clone(), a.to_owned());
+        note(pane, id, "Signing in… follow what the agent shows (a browser, a code).".into());
+        h.later(Box::new(move || {
+            let method = c.status(&a).caps().and_then(|k| k.auth.first().map(|m| m.0.clone()));
+            let st = match method { Some(m) => c.sign_in(&a, &m, &hover_agents::cancel::Cancel::new()), None => c.check(&a, &hover_agents::cancel::Cancel::new()) };
+            said("CaAdd", if st.ready() { "Signed in. The agent is ready.".to_owned() } else { "It is not ready yet.".to_owned() });
+        }));
+        return true;
+    }
+    if let Some(a) = id.strip_prefix("Custom.remove.") { hv.customs.remove(a); return true; }
+    if let Some(e) = id.strip_prefix("Reg.install.") {
+        let entry = REGISTRY.lock().unwrap().0.iter().find(|x| x.id == e).cloned();
+        let Some(entry) = entry else { return true };
+        let c = hv.customs.clone();
+        note(pane, id, format!("Installing {}…", entry.name));
+        h.later(Box::new(move || {
+            let root = hover_core::paths::support().join("custom-agents");
+            match hover_app::registry::add(&c, &entry, &root, &hover_agents::cancel::Cancel::new()) {
+                Ok(id) => { let st = c.check(&id, &hover_agents::cancel::Cancel::new()); said("RegSearch", format!("{} is added{}", entry.name, match st { hover_agents::custom::Status::Ready(_) => " and ready.".to_owned(), hover_agents::custom::Status::NeedsSignIn(_) => ". It needs a sign-in: press Sign in under Agents of your own.".to_owned(), hover_agents::custom::Status::Failed(e) => format!(", but it isn’t ready: {e}"), _ => ".".into() })); }
+                Err(e) => said("RegSearch", e),
+            }
+        }));
+        return true;
+    }
+    match id {
+        "TaskFolder" => { if let Some(f) = h.choose_folder() { draft(pane, "folder", &f); } }
+        "TaskAdd" => add_task(h, pane),
+        "CaAdd" => add_custom(h, pane),
+        "Service.install" => {
+            let exe = std::env::current_exe().unwrap_or_default();
+            let data_dir = std::env::var_os("HOVER_DATA_DIR").map(std::path::PathBuf::from);
+            h.later(Box::new(move || said("Service.install", match hover_agents::service::install(&hover_agents::service::Spec { exe, data_dir }) { Ok(()) => "Installed. It starts at login and runs while Hover is closed.".to_owned(), Err(e) => e })));
+        }
+        "Service.stop" => h.later(Box::new(|| said("Service.stop", match hover_agents::service::stop() { Ok(()) => "Stopped. It comes back at the next login, or when Hover quits.".to_owned(), Err(e) => e }))),
+        "Service.remove" => h.later(Box::new(|| said("Service.remove", match hover_agents::service::uninstall() { Ok(()) => "Removed. Your tasks and their history are kept.".to_owned(), Err(e) => e }))),
+        _ => return false,
+    }
+    true
+}
+
+/// A text box of Automation.
+fn auto_edited(h: &dyn Host, pane: &RefCell<Pane>, id: &str, v: &str) -> bool {
+    let hv = h.hover();
+    let st = &hv.settings;
+    let text = || Some(v.trim().to_owned()).filter(|t| !t.is_empty());
+    match id {
+        "EditorExe" => st.set_editor(hover_core::model::EditorSettings { custom_exe: text(), ..st.editor() }),
+        _ if id.starts_with("EditorArg") => {
+            let n: usize = id["EditorArg".len()..].parse().unwrap_or(1);
+            let e = st.editor();
+            let mut slots: Vec<String> = e.custom_args.as_deref().unwrap_or("").lines().map(str::to_owned).collect();
+            slots.resize(4, String::new());
+            slots[(n - 1).min(3)] = v.trim().to_owned();
+            let joined = slots.into_iter().filter(|a| !a.is_empty()).collect::<Vec<_>>().join("\n");
+            st.set_editor(hover_core::model::EditorSettings { custom_args: Some(joined).filter(|j| !j.is_empty()), ..e });
+        }
+        "WebhookAddr" => { st.set_automation(hover_core::model::AutomationSettings { webhook_addr: text(), ..st.automation() }); hv.apply_automation(); if text().is_some() && hv.webhooks.addr().is_none() { note(pane, id, "It couldn’t listen there (see the log), or another copy of Hover holds the timers.".into()); } }
+        "TaskName" => draft(pane, "name", v.trim()),
+        "TaskPrompt" => draft(pane, "prompt", v.trim()),
+        "TaskWhen" => draft(pane, "when", v.trim()),
+        "TaskHook" => draft(pane, "hook", v.trim()),
+        "CaName" => draft(pane, "ca_name", v.trim()),
+        "CaExe" => draft(pane, "ca_exe", v.trim()),
+        "CaEnvName" => draft(pane, "ca_env_name", v.trim()),
+        "CaEnvValue" => draft(pane, "ca_env_value", v),
+        _ if id.starts_with("CaArg") => draft(pane, &format!("ca_arg{}", &id["CaArg".len()..]), v),
+        "RegSearch" => {
+            draft(pane, "reg_q", v.trim());
+            let q = v.trim().to_owned();
+            *REGISTRY.lock().unwrap() = (vec![], "Searching…".into());
+            h.later(Box::new(move || {
+                let r = hover_app::registry::catalog(hover_app::registry::URL);
+                *REGISTRY.lock().unwrap() = match r {
+                    Ok(all) => { let found: Vec<_> = hover_agents::custom::search(&all, &q).into_iter().cloned().collect(); let n = found.len(); (found, if n == 0 { "Nothing in the registry matches that.".into() } else { format!("{n} found in the ACP Registry. Nothing is downloaded until you press Install.") }) }
+                    Err(e) => (vec![], e),
+                };
+            }));
+        }
+        _ => return false,
+    }
+    true
+}
+
 pub fn pressed(h: &dyn Host, pane: &RefCell<Pane>, id: &str) {
     let hv = h.hover();
     let st = &hv.settings;
     pane.borrow_mut().note = None;
     // A text box's commit comes as "{id}\u{1f}{value}": the page's one string callback.
     if let Some((field, value)) = id.split_once('\u{1f}') { edited(h, pane, field, value); h.refresh(); return; }
+    if auto_pressed(h, pane, id) { h.refresh(); return; }
     match id {
         "Quit" => { h.quit(); return; }
         "RefreshQuotas" => hv.refresh_quotas(true),
@@ -417,7 +642,13 @@ pub fn picked_seg(h: &dyn Host, pane: &RefCell<Pane>, id: &str, i: usize) {
         "VoiceCountdown" => if let Some(&n) = VoiceSettings::COUNTDOWNS.get(i) { st.set_voice(VoiceSettings { countdown: n, ..st.voice() }); h.action("voice.changed"); },
         "DefaultAccess" => st.set_default_workspace(Workspace { access: ACCESS_IDS[i].into(), ..st.default_workspace() }),
         "ProjectAccess" => edit_project(h, pane, id, |p| p.access = ACCESS_IDS[i].into()),
+        // A slider's number (a percent), not a segment's index.
         "KiroCompactAt" => { pages::pick_compact_at(st, id, i); }
+        "DelegMax" => if let Some(&n) = [2u32, 4, 6, 10].get(i) { st.set_delegation(hover_core::model::DelegationLimits { max_helpers: n, ..st.delegation() }); },
+        "DelegParallel" => if let Some(&n) = [1u32, 2, 3, 4].get(i) { st.set_delegation(hover_core::model::DelegationLimits { max_parallel: n, ..st.delegation() }); },
+        "DelegDepth" => if let Some(&n) = [1u32, 2, 3].get(i) { st.set_delegation(hover_core::model::DelegationLimits { max_depth: n, ..st.delegation() }); },
+        "TaskKind" => draft(pane, "kind", &i.to_string()),
+        "TaskDays" => draft(pane, "days", &i.to_string()),
         _ => {
             for t in AgentTool::ALL {
                 let o = st.agent_options(t);
@@ -454,6 +685,13 @@ pub fn menu_pick(h: &dyn Host, pane: &RefCell<Pane>, id: &str, i: usize) {
         "VoiceAuraColor" => if let Some(c) = VoiceSettings::AURA_COLORS.get(i) { st.set_voice(VoiceSettings { aura_color: Some(c.1.into()), ..st.voice() }); },
         // Voice's own default agent from then on; the new-task box keeps its own.
         "VoiceAgentTool" => { if let Some(&t) = AgentTool::ALL.get(i) { st.set_voice(VoiceSettings { agent: Some(t), ..st.voice() }); } }
+        "EditorDefault" => {
+            let editors = hover_agents::editor::available(&st.editor()).into_iter().filter(|f| f.id != hover_agents::editor::CUSTOM).collect::<Vec<_>>();
+            let pick = match i { 0 => None, n if n <= editors.len() => Some(editors[n - 1].id.clone()), _ => Some(hover_agents::editor::CUSTOM.to_owned()) };
+            st.set_editor(hover_core::model::EditorSettings { default: pick, ..st.editor() });
+        }
+        "TaskAgent" => { let pane_agents = pane.borrow().live.auto.agents.clone(); if let Some(a) = pane_agents.get(i) { draft(pane, "agent", &a.0); } }
+        "TaskAccess" => { if let Some(a) = ["risky", "always", "read", "full"].get(i) { draft(pane, "access", a); } }
         _ => {}
     }
     for t in AgentTool::ALL {

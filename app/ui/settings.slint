@@ -1,7 +1,7 @@
 // Owl/Pages.cs's SettingsPage, drawn from the blocks pages.rs builds: a 196 px sidebar
 // card of the five sections beside one scrolling pane of grouped rows.
 
-import { Pal, Fonts, Icon, Icons, PillButton, Switch, Segments, Ring, Tile, TextField, HoldButton } from "widgets.slint";
+import { Pal, Fonts, Icon, Icons, PillButton, Switch, Segments, Slider, Ring, Tile, TextField, HoldButton } from "widgets.slint";
 import { ScrollView } from "std-widgets.slint";
 import { Mark } from "marks.slint";
 
@@ -9,12 +9,13 @@ export struct Opt { label: string, on: bool }
 export struct Btn { id: string, text: string, red: bool }
 
 // One row. control: 0 none, 1 switch, 2 button, 3 shortcut, 4 segments, 5 picker, 6 text,
-// 7 text box, 8 badges and buttons (open: the row opens that id), 9 hold button.
+// 7 text box, 8 badges and buttons (open: the row opens that id), 9 hold button, 10 slider (picked is its
+// value, lo to hi; its new value goes out through picked-seg).
 // lead: 0 none, 1 tile, 2 ring, 3 letter tile, 4 a tool's own mark (tool). progress: 0..1 under the sub, -1 none.
 export struct RowData {
     label: string, sub: string, sub-id: string, enabled: bool,
     control: int, id: string, name: string, text: string, on: bool, button-enabled: bool,
-    labels: [string], longest: string, picked: int, options: [Opt],
+    labels: [string], longest: string, picked: int, lo: int, hi: int, options: [Opt],
     lead: int, icon: string, tint: color, ring: float, tool: string,
     placeholder: string, secret: bool, badges: [Opt], buttons: [Btn], open: string, progress: float, letter: string,
 }
@@ -194,6 +195,11 @@ component RowView inherits Rectangle {
                     key-pressed(e) => { if (recording) { return chord(e) ? accept : reject; } reject }
                     focus-changed-event => { if (!self.has-focus && recording) { root.record(); } }
                 }
+            }
+            if r.control == 10: HorizontalLayout {
+                spacing: 10px;
+                sl := Slider { id: r.id; label: r.name; lo: r.lo; hi: r.hi; value: r.picked; enabled: r.enabled; picked(v) => { picked-seg(r.id, v); } }
+                Text { width: 44px; text: sl.shown + " %"; font-size: 12.5px; color: Pal.ink; vertical-alignment: center; horizontal-alignment: right; }
             }
             if r.control == 4: Segments { id: r.id; labels: r.labels; longest: r.longest; picked: r.picked; enabled: r.enabled; pick(i) => { picked-seg(r.id, i); } }
             if r.control == 5: pk := PillButton {

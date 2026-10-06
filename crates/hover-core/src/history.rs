@@ -4,6 +4,7 @@
 //! replace the old one, off the caller's thread, in order.
 
 use crate::crypto::Crypto;
+use crate::ext::{SessionExt, TurnExt};
 use crate::json::{self, Json, Result};
 use crate::model::{opt_text, text, AgentTool, KiroState, KiroStep};
 use crate::time::Stamp;
@@ -28,6 +29,8 @@ pub struct SavedTurn {
     /// a tree id each. None for turns from before Hover kept them, or where none could be taken.
     pub before: Option<String>,
     pub after: Option<String>,
+    /// A reply still waiting, its chips and the like (ext.rs); written only when it holds something.
+    pub ext: TurnExt,
 }
 
 /// SavedSession(Key, Tool, Folder, Title, AcpId, Context, Turns, Updated, Access).
@@ -46,6 +49,8 @@ pub struct SavedSession {
     /// Run in Kiro's cloud: the GitHub repos it was given ("owner/name"), empty for an
     /// empty workspace. None for a session on this computer.
     pub cloud: Option<Vec<String>>,
+    /// The workspace binding and the links orchestration adds (ext.rs); written only when it holds something.
+    pub ext: SessionExt,
 }
 
 /// HistoryEntry(Key, Tool, Title, Folder, Updated, State, Turns, Credits).
@@ -85,6 +90,7 @@ impl SavedTurn {
         // Written only when taken, so a turn without them is the bytes 2.x and 3.0 wrote.
         if let Some(b) = &self.before { props.push(("CheckpointBefore", Json::str(b))); }
         if let Some(a) = &self.after { props.push(("CheckpointAfter", Json::str(a))); }
+        if !self.ext.is_empty() { props.push(("Ext", self.ext.to_json())); }
         Json::obj(props)
     }
 
@@ -104,6 +110,7 @@ impl SavedTurn {
             credits: opt(v.get("Credits"), Json::opt_f64)?.flatten(),
             before: opt_text(v.get("CheckpointBefore"))?,
             after: opt_text(v.get("CheckpointAfter"))?,
+            ext: match v.get("Ext") { Some(e) if !e.is_null() => TurnExt::from_json(e)?, _ => TurnExt::default() },
         })
     }
 }
@@ -123,6 +130,7 @@ impl SavedSession {
         ];
         // Only for a cloud session, so every other session is written byte for byte as before.
         if let Some(repos) = &self.cloud { props.push(("Cloud", Json::Arr(repos.iter().map(|r| Json::str(r)).collect()))); }
+        if !self.ext.is_empty() { props.push(("Ext", self.ext.to_json())); }
         Json::obj(props)
     }
 
@@ -139,6 +147,7 @@ impl SavedSession {
             updated: opt(v.get("Updated"), Stamp::from_json)?.unwrap_or(Stamp::DEFAULT),
             access: opt_text(v.get("Access"))?,
             cloud: opt(v.get("Cloud"), |c| c.opt_list(|r| text(Some(r))))?.flatten(),
+            ext: match v.get("Ext") { Some(e) if !e.is_null() => SessionExt::from_json(e)?, _ => SessionExt::default() },
         })
     }
 }
@@ -414,11 +423,12 @@ mod tests {
             turns: vec![SavedTurn {
                 prompt: "Fix the secret thing".into(), images: vec![], steps: vec![KiroStep::new("r0", "read", "Read File", Some(r"C:\hover\src\a.ts".into()), "completed")],
                 state: Some(KiroState::Completed), text: Some("answer <b> & 'c'".into()), started_at: at("2026-09-28T16:44:07.1234567Z"),
-                woke_at: Some(at("2026-09-28T16:44:09.1234567Z")), ended_at: None, credits: Some(0.087), before: None, after: None,
+                woke_at: Some(at("2026-09-28T16:44:09.1234567Z")), ended_at: None, credits: Some(0.087), before: None, after: None, ext: Default::default(),
             }],
             updated: at(updated),
             access: None,
             cloud: None,
+            ext: Default::default(),
         }
     }
 
