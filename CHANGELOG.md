@@ -5,6 +5,38 @@ What changed in each Hover release. Versions follow [Semantic Versioning](https:
 
 ## [Unreleased]
 
+## [4.0.0] - 2026-10-06
+
+The chat view, Kiro's daily credits, and text boxes that scroll. Windows and Linux only: the Mac
+app and the web office are not changed. Checked on Linux with stand-in agents and the rendered
+screenshots; not run with a real Kiro account, on Windows by hand, or on a Mac.
+
+### Added
+
+- The chat view. A switch at the office's top left (an office icon and a chat icon) puts a chat
+  app in place of the office, in the notch and the app window: your chats down the left with
+  New chat and Settings, the open chat, and a slim message bar that is one line when empty and
+  grows to six. With no chat open it shows a start screen: the agents, and one box for the task
+  with its folder, access and model. It stays on through the notch closing, Esc and restarts
+  until the switch is clicked again (`ChatView` in settings.json, written only while it is on).
+  The office stops drawing under it.
+- Kiro's credits by day, at the top of Settings → Kiro: today, the last 7 days and the month so
+  far (with when it resets, and when the credits run out at the month's pace), a 14 or 30 day
+  chart of the credits Hover's tasks used and those used elsewhere (the Kiro IDE, kiro-cli on its
+  own, Kiro Web), and today's dearest chats. The account's total comes from the existing
+  five-minute `kiro-cli /usage` read, one reading kept per day in `kiro-usage.json`; nothing new
+  is sent anywhere.
+
+### Changed
+
+- A chat's Expand button opens it in the chat view where it is, instead of in the app window.
+
+### Fixed
+
+- Text boxes in Settings scroll to keep the cursor in view: a long value (Automation's Custom
+  program and arguments) ran past the box's edge and couldn't be edited.
+- A Settings section opens at its top, not at the last section's scroll.
+
 ## [3.9.0] - 2026-10-06
 
 Roadmap #30 (issues #31 to #41), the Compact at slider, and two fixes from PR #44. Windows and
