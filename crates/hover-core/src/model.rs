@@ -5,25 +5,28 @@
 use crate::json::{Json, JsonError, Result};
 
 /// Services.AgentTool. New tools go at the end: the names are saved in settings and
-/// history.
+/// history. `Custom` stands for every agent the user added (hover-agents::custom); which one is
+/// in the session's `ext.provider`. `ALL` lists the five Hover ships, which is what every
+/// per-tool list and page goes through.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum AgentTool { Kiro, Codex, Cursor, OpenCode, Claude }
+pub enum AgentTool { Kiro, Codex, Cursor, OpenCode, Claude, Custom }
 
 impl AgentTool {
     pub const ALL: [AgentTool; 5] = [AgentTool::Kiro, AgentTool::Codex, AgentTool::Cursor, AgentTool::OpenCode, AgentTool::Claude];
+    const EVERY: [AgentTool; 6] = [AgentTool::Kiro, AgentTool::Codex, AgentTool::Cursor, AgentTool::OpenCode, AgentTool::Claude, AgentTool::Custom];
     // Claude Code is new in 3.x, so its saved name can be its product's (2.x never wrote one).
-    const NAMES: [&'static str; 5] = ["Kiro", "Codex", "Cursor", "OpenCode", "Claude Code"];
+    const NAMES: [&'static str; 6] = ["Kiro", "Codex", "Cursor", "OpenCode", "Claude Code", "Custom"];
 
     /// Agents.Name: the enum's name.
     pub fn name(self) -> &'static str { Self::NAMES[self as usize] }
     /// Agents.Id: the name in lower case.
-    pub fn id(self) -> &'static str { ["kiro", "codex", "cursor", "opencode", "claude"][self as usize] }
-    /// Agents.Parse: the exact id, or none.
+    pub fn id(self) -> &'static str { ["kiro", "codex", "cursor", "opencode", "claude", "custom"][self as usize] }
+    /// Agents.Parse: the exact id, or none. Only the five Hover ships: a custom agent is named by its own id.
     pub fn parse(id: Option<&str>) -> Option<AgentTool> { Self::ALL.into_iter().find(|t| Some(t.id()) == id) }
 
     pub fn to_json(self) -> Json { Json::str(self.name()) }
     pub fn from_json(v: &Json) -> Result<AgentTool> {
-        v.enum_of(&Self::NAMES)?.map(|i| Self::ALL[i]).ok_or_else(|| JsonError("not an AgentTool".into()))
+        v.enum_of(&Self::NAMES)?.map(|i| Self::EVERY[i]).ok_or_else(|| JsonError("not an AgentTool".into()))
     }
 }
 

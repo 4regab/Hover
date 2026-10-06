@@ -359,6 +359,21 @@ impl Settings {
         });
     }
 
+    /// A custom agent's own model and effort (by its id); the defaults until set.
+    pub fn custom_options(&self, id: &str) -> AgentOptions {
+        let key = format!("custom:{id}");
+        self.m.lock().unwrap().agents.as_ref().and_then(|a| a.iter().find(|(k, _)| *k == key)).and_then(|(_, v)| v.clone()).unwrap_or_default()
+    }
+
+    pub fn set_custom_options(&self, id: &str, v: AgentOptions) {
+        let key = format!("custom:{id}");
+        let v = AgentOptions { agent: None, require_mcp: false, ..v };
+        self.change(|m| {
+            let a = m.agents.get_or_insert_with(Vec::new);
+            match a.iter_mut().find(|(k, _)| *k == key) { Some(slot) => slot.1 = Some(v), None => a.push((key, Some(v))) }
+        });
+    }
+
     /// The models, efforts and modes the tool offered the last time it ran.
     pub fn agent_offers(&self, t: AgentTool) -> Vec<AcpOption> {
         let m = self.m.lock().unwrap();

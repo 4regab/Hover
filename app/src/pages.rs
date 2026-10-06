@@ -27,7 +27,7 @@ impl Section {
     }
     /// The section of a tool's own page.
     pub fn of(tool: AgentTool) -> Section {
-        match tool { AgentTool::Codex => Section::Codex, AgentTool::Cursor => Section::Cursor, AgentTool::OpenCode => Section::OpenCode, AgentTool::Claude => Section::Claude, AgentTool::Kiro => Section::Kiro }
+        match tool { AgentTool::Codex => Section::Codex, AgentTool::Cursor => Section::Cursor, AgentTool::OpenCode => Section::OpenCode, AgentTool::Claude => Section::Claude, AgentTool::Kiro | AgentTool::Custom => Section::Kiro }
     }
     pub fn tool(self) -> AgentTool {
         match self { Section::Codex => AgentTool::Codex, Section::Cursor => AgentTool::Cursor, Section::OpenCode => AgentTool::OpenCode, Section::Claude => AgentTool::Claude, _ => AgentTool::Kiro }

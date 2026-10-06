@@ -12,6 +12,7 @@ pub mod keys;
 pub mod music;
 pub mod pages;
 pub mod phonon;
+pub mod registry;
 pub mod rest;
 pub mod screen;
 pub mod speech;
