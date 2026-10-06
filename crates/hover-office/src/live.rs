@@ -7,8 +7,7 @@
 use crate::office::{Click, Hover, Office, Prop, Tag, Time};
 use crate::render::Renderer;
 use hover_core::json::Json;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::mpsc::{channel, Receiver, RecvTimeoutError, Sender};
+use std::sync::mpsc::{channel, Receiver, RecvTimeoutError, Sender, TryRecvError};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -148,14 +147,8 @@ fn run(rx: Receiver<In>, out: Arc<Mutex<Out>>, spare: Arc<Mutex<Vec<u8>>>, slots
     // The slots nothing shows. One is drawn into, one may wait for the UI, and each
     // window that shows the office holds the one it last handed to Slint.
     let mut free: Vec<usize> = (0..crate::page::SLOTS).collect();
-    // The last frame's own time on the GPU, measured without waiting for it.
-    let gpu_us = Arc::new(AtomicU64::new(0));
     let t0 = Instant::now();
     let mut last = 0.0;
-    // A frame isn't started before this: the device gets twice a frame's own time to
-    // itself after each one, so a slow one (WARP, an old GPU) is never asked for more
-    // than it can draw, which left the windows waiting behind the office's frames.
-    let mut rest_until = Instant::now();
     let (mut visible, mut down, mut prev) = (true, None::<(f64, f64)>, (0.0, 0.0));
     let mut clicks = vec![];
     let mut time_check = Instant::now();
@@ -163,9 +156,24 @@ fn run(rx: Receiver<In>, out: Arc<Mutex<Out>>, spare: Arc<Mutex<Vec<u8>>>, slots
     // The frame as read back, kept between frames.
     let mut rgba: Vec<u8> = vec![];
     let mut starved = false;
+    let frame_dur = Duration::from_micros(16_667); // 60 fps continuous
+    let mut next_frame = Instant::now();
     loop {
-        // One frame's worth of waiting: 16 ms, as requestAnimationFrame.
-        let msg = rx.recv_timeout(Duration::from_millis(if visible { 16 } else { 500 }));
+        let now_inst = Instant::now();
+        let timeout = if visible {
+            if next_frame > now_inst { next_frame - now_inst } else { Duration::ZERO }
+        } else {
+            Duration::from_millis(500)
+        };
+        let msg = if timeout.is_zero() {
+            match rx.try_recv() {
+                Ok(m) => Ok(m),
+                Err(TryRecvError::Empty) => Err(RecvTimeoutError::Timeout),
+                Err(TryRecvError::Disconnected) => Err(RecvTimeoutError::Disconnected),
+            }
+        } else {
+            rx.recv_timeout(timeout)
+        };
         let mut msgs = vec![];
         match msg { Ok(m) => msgs.push(m), Err(RecvTimeoutError::Disconnected) => return, Err(RecvTimeoutError::Timeout) => {} }
         while let Ok(m) = rx.try_recv() { msgs.push(m); }
@@ -234,13 +242,14 @@ fn run(rx: Receiver<In>, out: Arc<Mutex<Out>>, spare: Arc<Mutex<Vec<u8>>>, slots
             time_check = Instant::now();
             if o.manual_time.is_none() { let t = Office::auto_time(hour_now()); if t != o.time { o.apply_time(t); } }
         }
-        if !visible { last = t0.elapsed().as_secs_f64() * 1000.0; continue; }
-        // Resting the device: the time waited is added to the next frame's step.
-        if Instant::now() < rest_until && clicks.is_empty() { continue; }
+        if !visible { last = t0.elapsed().as_secs_f64() * 1000.0; next_frame = Instant::now() + frame_dur; continue; }
+        // Guards dropped: run continuously without rest_until delay
         let now = t0.elapsed().as_secs_f64() * 1000.0;
         let dt = now - last;
         last = now;
         if !o.frame(now, dt) && clicks.is_empty() { continue; }
+        let now_after = Instant::now();
+        if next_frame + frame_dur > now_after { next_frame += frame_dur; } else { next_frame = now_after; }
         let mut rgb = Vec::new();
         let mut slot_out = None;
         if let Some(g) = gpu.as_mut() {
@@ -255,25 +264,13 @@ fn run(rx: Receiver<In>, out: Arc<Mutex<Out>>, spare: Arc<Mutex<Vec<u8>>>, slots
             };
             if starved { starved = false; hover_core::log::line("office: a slot came back, drawing again"); }
             g.sync(&r.queue, o.time == Time::Day);
-            let spent = Instant::now();
             r.render_gpu(&mut o, g, slot);
-            // Resting the device still needs the frame's cost, and nothing waits for the
-            // GPU here: the time is taken when the work reports done, which happens as the
-            // windows' own drawing polls the device.
-            let us = gpu_us.clone();
-            r.queue.on_submitted_work_done(move || us.store(spent.elapsed().as_micros() as u64, Ordering::Relaxed));
-            let rest = Duration::from_micros(gpu_us.load(Ordering::Relaxed)) * 2;
-            // The frame's time is only known when the device is next polled, which can be late.
-            if rest > Duration::from_secs(1) { hover_core::log::line(&format!("office: resting the device {} ms before the next frame", rest.as_millis())); }
-            rest_until = Instant::now() + rest;
             slot_out = Some((gen, slot));
         } else {
-            let spent = Instant::now();
             r.render_into(&mut o, &mut rgba);
             // The buffer the UI gave back, or a new one.
             rgb = std::mem::take(&mut *spare.lock().unwrap());
             page.compose_into(&rgba, r.w as usize, r.h as usize, o.time == Time::Day, &mut rgb);
-            rest_until = Instant::now() + spent.elapsed() * 2;
         }
         let hint = match o.hovered { Some(Hover::Prop(Prop::Clock)) => String::from("clock"), Some(Hover::Prop(p)) => o.hint(p).to_owned(), _ => String::new() };
         let mut g = out.lock().unwrap();
