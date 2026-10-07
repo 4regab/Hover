@@ -5,6 +5,22 @@ What changed in each Hover release. Versions follow [Semantic Versioning](https:
 
 ## [Unreleased]
 
+## [5.0.1] - 2026-10-07 (nightly)
+
+A nightly build, published as a pre-release: it is not marked Latest, so the Latest release stays
+5.0.0. Fixes to the chat view's layout, for Windows and Linux. Checked with `hover --shots`, not on a
+real display or on Windows by hand.
+
+### Fixed
+
+- The chat's header: the branch, context and cloud chips sat above the middle of the title. They
+  are centred on it now, with a little more space between them.
+- The sidebar's chats: the spinning ring round a working chat's logo is gone. The chat that is
+  open, at work, waiting on you or under the pointer is drawn in full and the others are faded. The
+  amber ring for a chat waiting on you stays.
+- The start screen ("What should we work on?") with the sidebar closed had no way back to the
+  office or the chats. The office/chat switch stays there now, with a button to show the sidebar.
+
 ## [5.0.0] - 2026-10-07
 
 The chat and office redesign, and Antigravity as a sixth agent. The redesign is for Windows and
