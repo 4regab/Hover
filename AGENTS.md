@@ -62,7 +62,8 @@ tests/macos/e2e/run.sh <Hover.app>      # E2E with stand-in agents, gh, cua and 
 A push to `main` whose `Cargo.toml` version has no tag yet, or a `v*` tag
 (matching it), runs `.github/workflows/ci.yml`'s tests on Windows and Linux (Ubuntu 22.04)
 on GitHub's runners, then builds the installers from that build, tags the commit and
-publishes them together as the Latest GitHub release. Raising the version releases it.
+publishes them together as the Latest GitHub release. Raising the version releases it. A version whose
+CHANGELOG.md heading ends in `(nightly)` is published as a pre-release and is not made the Latest.
 A `macos` job (macos-15, Apple Silicon) runs `cargo check` on every crate but `hover`,
 `notch-proto` and `hover-measure`, builds `hover-backend`, then runs `scripts/build-macos.sh`
 and uploads the ad-hoc-signed `Hover.app` as a workflow artifact, on pull requests too.
