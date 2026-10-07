@@ -1044,7 +1044,7 @@ component RowView inherits Rectangle {
     }
 }
 
-// .mpill: the model and its effort, with a chevron; its menu opens above it.
+// .pill.model: the model and its effort ("Opus 5.5 · High"; Auto has none), with a chevron; its menu opens by it.
 component MPill inherits Rectangle {
     in property <string> model;
     in property <string> effort;
@@ -1054,8 +1054,8 @@ component MPill inherits Rectangle {
     callback clicked(length, length);
     height: 28px;
     width: min(max-w, pl.preferred-width);
-    border-radius: 14px;
-    background: ta.has-hover || open ? #ffffff14 : transparent;
+    border-radius: 8px;
+    background: ta.has-hover || open ? #ffffff0b : transparent;
     accessible-role: button;
     accessible-id: id;
     accessible-label: "Model: " + model + (effort != "" ? ", " + effort : "") + ". Change";
@@ -1063,10 +1063,9 @@ component MPill inherits Rectangle {
     pl := HorizontalLayout {
         padding-left: 9px;
         padding-right: 9px;
-        spacing: 5px;
-        Text { text: model; font-size: 12.5px; font-weight: 600; color: #f6f2ff; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; }
-        // The effort is picked in the menu the pill opens, so the pill names only the model.
-        VerticalLayout { alignment: center; Icon { name: Icons.chevron-down; size: 12px; tint: #f6f2ff9e; } }
+        spacing: 6px;
+        Text { text: effort != "" ? model + " · " + effort : model; font-size: 12.5px; font-weight: 500; color: ta.has-hover || open ? #f6f2ff : #f6f2ffb0; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; }
+        VerticalLayout { alignment: center; Icon { name: Icons.chevron-down; size: 13px; tint: ta.has-hover || open ? #f6f2ff : #f6f2ffb0; } }
     }
     ta := TouchArea { mouse-cursor: pointer; clicked => { root.clicked(root.absolute-position.x, root.absolute-position.y); } }
 }
@@ -1102,13 +1101,13 @@ component Shots inherits HorizontalLayout {
     }
 }
 
-// .clip: the round + that attaches an image.
+// .icon-btn: the + that attaches an image (28 px, a 7 px corner).
 component ClipButton inherits Rectangle {
     in property <string> id;
     callback clicked;
-    width: 30px;
-    height: 30px;
-    border-radius: 15px;
+    width: 28px;
+    height: 28px;
+    border-radius: 7px;
     background: ta.has-hover ? #ffffff14 : transparent;
     accessible-role: button;
     accessible-id: id;
@@ -1118,8 +1117,8 @@ component ClipButton inherits Rectangle {
     ta := TouchArea { mouse-cursor: pointer; clicked => { root.clicked(); } }
 }
 
-// .go: the round send / start button (a square while it stops the run). The reply's is
-// a 28 px circle (round), and shows Pause while a run goes and the box is empty.
+// .send: the round send / start button (a square while it stops the run). 30 px, 32 in the start
+// box (`size`); it shows Pause while a run goes and the box is empty.
 component GoButton inherits Rectangle {
     in property <string> id;
     in property <string> label;
@@ -1127,11 +1126,12 @@ component GoButton inherits Rectangle {
     in property <bool> stop;
     in property <bool> pause;
     in property <bool> round;
+    in property <length> size: 30px;
     callback clicked;
-    width: round ? 28px : 30px;
+    width: size;
     height: self.width;
-    border-radius: round ? 14px : 10px;
-    background: !enabled && round ? #ffffff1c : ta.has-hover && enabled ? white : #f5f5f7;
+    border-radius: round ? self.width / 2 : 10px;
+    background: !enabled && round ? #ffffff12 : ta.has-hover && enabled ? white : #f6f2ff;
     opacity: enabled || round ? 1 : 0.3;
     accessible-role: button;
     accessible-id: id;
@@ -1142,7 +1142,7 @@ component GoButton inherits Rectangle {
     if pause: HorizontalLayout { alignment: center; spacing: 2.4px; padding-top: 8px; padding-bottom: 8px;
         Rectangle { width: 2.8px; border-radius: 1px; background: #131116; }
         Rectangle { width: 2.8px; border-radius: 1px; background: #131116; } }
-    if !stop && !pause: Icon { name: PagePaths.up; size: 14px; tint: !enabled && round ? #ffffff5c : black; }
+    if !stop && !pause: Icon { name: PagePaths.up; size: 16px; tint: !enabled && round ? #f6f2ff47 : #0c0b0e; }
     ta := TouchArea { enabled: root.enabled; mouse-cursor: pointer; clicked => { root.clicked(); } }
 }
 
@@ -1223,7 +1223,7 @@ component StartPill inherits Rectangle {
     accessible-label: text + ". Change";
     accessible-action-default => { clicked(); }
     pl := HorizontalLayout { padding-left: 9px; padding-right: 9px; spacing: 6px;
-        if icon != "": VerticalLayout { alignment: center; Icon { name: icon; size: 14px; tint: fg; } }
+        if icon != "": VerticalLayout { alignment: center; Icon { name: icon; size: 13px; tint: fg; } }
         if logo != "": VerticalLayout { alignment: center; Logo { width: 16px; height: 16px; mark: 10px; radius: 4.8px; tool: logo; } }
         Text { text: root.text; font-size: 12.5px; font-weight: 500; color: fg; vertical-alignment: center; }
         VerticalLayout { alignment: center; Icon { name: Icons.chevron-down; size: 13px; tint: fg; } }
@@ -1244,7 +1244,7 @@ component PickRow inherits Rectangle {
     height: rl.preferred-height;
     border-radius: 7px;
     background: ta.has-hover ? #ffffff0d : transparent;
-    opacity: dim ? 0.55 : 1;
+    opacity: dim ? 0.45 : 1;
     accessible-role: list-item;
     accessible-id: id;
     accessible-label: label;
@@ -2074,7 +2074,7 @@ export component OfficeView inherits Rectangle {
                                     if Office.n-model-shown: MPill { id: "chatModel"; model: Office.n-model; effort: Office.n-model-effort; open: Office.model-menu == 2;
                                         max-w: min(parent.width * 0.5, parent.width - agentp.width - wherep.width - accp.width - 32px - 30px - 6 * 2px);
                                         clicked(x, y) => { Office.open-model(Office.model-menu == 2 ? 0 : 2, x, y); } }
-                                    GoButton { id: "chatGo"; round: true; label: "Start"; enabled: Office.new-go; clicked => { Office.new-go-clicked(); } }
+                                    GoButton { id: "chatGo"; round: true; size: 32px; label: "Start"; enabled: Office.new-go; clicked => { Office.new-go-clicked(); } }
                                 }
                             }
                         }
