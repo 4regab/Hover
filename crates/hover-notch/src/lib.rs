@@ -6,8 +6,8 @@
 /// DIP padding around the open shape inside the window (the shadow lives there).
 pub const PAD: f64 = 40.0;
 pub const PILL_HEIGHT: f64 = 32.0;
-/// The island's padding after its last item (4 before the first is in its content).
-pub const PILL_PAD_RIGHT: f64 = 7.0;
+/// The island's padding after its last item (11 before the first is in its content).
+pub const PILL_PAD_RIGHT: f64 = 9.0;
 pub const POLL_MS: u64 = 50;
 pub const DWELL_MS: u64 = 120;
 pub const LEAVE_GRACE_MS: u64 = 350;
@@ -53,14 +53,14 @@ pub fn placement(work: Rect, scale: f64, open: (f64, f64)) -> Rect {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Rest {
     None,
-    /// The island's content width in DIPs, the 4 before its first item included.
+    /// The island's content width in DIPs, the 11 before its first item included.
     Pill(f64),
     /// The question's card, as it measures.
     Card(f64, f64),
 }
 
 /// RestSize: the island rounded to 2 px (so it doesn't twitch as its clock ticks), with
-/// 7 after its last item; the card as it measures.
+/// 9 after its last item; the card as it measures.
 pub fn rest_size(rest: Rest) -> (f64, f64) {
     match rest {
         Rest::None => (0.0, 0.0),
@@ -325,9 +325,9 @@ mod tests {
 
     #[test]
     fn resting_shapes_and_corners() {
-        // 4 before the first item (in the content), 7 after the last, to 2 px.
-        assert_eq!(rest_size(Rest::Pill(101.0)), (108.0, 32.0));
-        assert_eq!(rest_size(Rest::Pill(100.0)), (108.0, 32.0));
+        // 11 before the first item (in the content), 9 after the last, to 2 px.
+        assert_eq!(rest_size(Rest::Pill(101.0)), (110.0, 32.0));
+        assert_eq!(rest_size(Rest::Pill(100.0)), (110.0, 32.0));
         assert_eq!(rest_size(Rest::Card(500.0, 181.4)), (500.0, 182.0));
         assert_eq!(rest_corners(32.0), (16.0, 7.0));
         assert_eq!(rest_corners(182.0), (24.0, 10.0));

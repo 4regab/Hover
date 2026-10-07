@@ -1715,7 +1715,8 @@ export component OfficeView inherits Rectangle {
     office := Rectangle {
         visible: !in-settings;
         clip: true;
-        background: #07050a;
+        // The notch's ground is its own black, so the office opens out of the island with no seam.
+        background: dashboard ? #07050a : #000000;
         // The box's and the chat's text fields take the keyboard; when they go, nothing
         // has it and Esc would do nothing (the page's keys are on the document, which
         // always has them). So it comes back here.
@@ -1743,8 +1744,9 @@ export component OfficeView inherits Rectangle {
         property <bool> chat: Office.d-wide;
         property <float> ct: chat ? 1 : 0;
         animate ct { duration: Pal.motion ? 260ms : 0ms; easing: cubic-bezier(0.32, 0.72, 0, 1); }
-        // The session list has room in a window 760 px wide or more, and not beside the details unless it is wide (1300).
-        property <bool> list-allowed: self.width >= 760px && !(Desk.panel && self.width < 1300px);
+        // The session list has room in a window 760 px wide or more, and not beside the details unless it is wide (1300). In the
+        // notch the sidebar folds while a panel is open unless the notch is 1240 wide or more.
+        property <bool> list-allowed: self.width >= 760px && !(Desk.panel && self.width < (dashboard ? 1300px : 1240px));
         property <bool> list-shown: Office.d-wide && Office.list-open && self.list-allowed;
         property <length> lw: list-shown ? Office.list-w : 0px;
         // Where the switch sits (the office's top left), and the sidebar button beside it in

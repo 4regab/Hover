@@ -360,7 +360,8 @@ export component NotchWindow inherits Window {
             height: root.rest-h;
             pill := HorizontalLayout {
                 visible: root.rest-kind == 1;
-                x: 4px;
+                // The island's padding is 0 9px 0 11px (notch.rs rest_of and hover-notch's PILL_PAD_RIGHT): the logos don't touch its edges.
+                x: 11px;
                 width: self.preferred-width;
                 alignment: start;
                 spacing: 12px;
@@ -510,10 +511,7 @@ export component NotchWindow inherits Window {
                     HorizontalLayout {
                         Press { text: "Deny"; key: "Esc"; clicked => { root.answer("deny"); } }
                         Rectangle { horizontal-stretch: 1; }
-                        Press { text: "Trust"; key: "Shift+Enter"; r-right: 0; clicked => { root.answer("trust"); } }
-                        Rectangle { width: 1px; }
-                        // More: allow everything this session.
-                        Press { text: "All"; r-left: 0; clicked => { root.answer("trustAll"); } }
+                        Press { text: "Trust"; key: "Shift+Enter"; clicked => { root.answer("trust"); } }
                         Rectangle { width: 8px; }
                         Press { text: root.card.allow; key: "Enter"; kind: root.card.danger ? 2 : 1; clicked => { root.answer("allow"); } }
                     }
