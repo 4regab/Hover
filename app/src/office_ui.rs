@@ -129,7 +129,12 @@ struct Picks { sel: Vec<Vec<String>>, text: Vec<String> }
 /// The drawer's thread, laid out and painted by hover-chat.
 /// laid: the session's change number and clock second its turns were read at, the
 /// thread's width and height then (None: not yet).
-struct Chat { id: i32, thread: hover_chat::Thread, painter: hover_chat::Painter, scroll: f32, width: f32, key: String, laid: Option<(u64, i64, f32, f32)>, sel: Sel }
+struct Chat { id: i32, thread: hover_chat::Thread, painter: hover_chat::Painter, scroll: f32, width: f32, key: String, laid: Option<(u64, i64, f32, f32)>, sel: Sel,
+    /// Runs while a command is running: its counting time and the shimmer need a repaint; `t0` is the shimmer's clock.
+    tick: slint::Timer, t0: Instant }
+
+/// Whether the open chat has a command running (see `Chat::tick`).
+fn chat_ticking(chat: &RefCell<Option<Chat>>) -> bool { chat.borrow().as_ref().is_some_and(|c| c.thread.ticking) }
 
 /// A text selection being made in the thread with the pointer (chat-proto's): where it
 /// began, by what unit a double or triple click grows it, and the click count.
@@ -1353,9 +1358,9 @@ impl App {
         let Some(id) = self.page.open.get() else { return };
         let Some((rev, _busy)) = self.hover.sessions.rev(id) else { return };
         let now = hover_core::time::Stamp::now();
-        // Nothing in the thread moves with the clock: it is laid out again only when the
-        // session changed.
-        let second = 0;
+        // Nothing in the thread moves with the clock, except a running command's time: then
+        // it is laid out again each second (and painted ten times a second for the shimmer).
+        let second = if chat_ticking(&self.page.thread) { now.unix_ms() / 1000 } else { 0 };
         let which = self.page.target.get();
         let dash = self.dash.borrow();
         let g = if which == 1 { dash.as_ref().map(|d| d.global::<crate::ui::Office>()) } else { Some(self.notch.global::<crate::ui::Office>()) };
@@ -1395,7 +1400,7 @@ impl App {
                 thread.use_images(images.clone());
                 let (host, folder) = (files(&sess), sess.folder.clone());
                 thread.image_rule = Box::new(move |src| hover_md::image::image_for(&hover_md::image::Session { files: host.as_deref(), folder: &folder }, src));
-                *chat = Some(Chat { id, thread, painter: hover_chat::Painter::new(&f, images), scroll: f32::MAX, width: 0.0, key: sess.key.clone(), laid: None, sel: Sel::default() });
+                *chat = Some(Chat { id, thread, painter: hover_chat::Painter::new(&f, images), scroll: f32::MAX, width: 0.0, key: sess.key.clone(), laid: None, sel: Sel::default(), tick: Default::default(), t0: Instant::now() });
             }
             let c = chat.as_mut().unwrap();
             // Follows the bottom only when it was there (within 40 px): reading older
@@ -1421,9 +1426,15 @@ impl App {
         // .jump: "Latest" once the reader is well above the end.
         g.set_d_jump(max - c.scroll > 160.0);
         let k = if which == 1 { dash.as_ref().map_or(1.0, |d| d.window().scale_factor()) } else { self.notch.window().scale_factor() };
+        c.painter.time = c.t0.elapsed().as_secs_f32();
         let px = c.painter.paint(&c.thread, c.scroll, (w * k).round() as u32, (h * k).round() as u32, k, [0, 0, 0, 0]);
         let img = Image::from_rgba8_premultiplied(SharedPixelBuffer::clone_from_slice(px.data(), px.width(), px.height()));
         g.set_d_thread(img);
+        if !c.thread.ticking { c.tick.stop(); }
+        else if !c.tick.running() {
+            let a = self.clone();
+            c.tick.start(slint::TimerMode::Repeated, Duration::from_millis(100), move || a.paint_thread());
+        }
         let _ = &c.key;
     }
 
@@ -2096,9 +2107,13 @@ impl App {
                 self.office_widgets();
                 return;
             }
-            hover_chat::Hit::Act(i, hover_chat::doc::Act::Cancel) => {
-                let Some(id) = self.page.open.get() else { return };
-                if self.hover.sessions.cancel_queued(id, i) { self.office_changed(); self.office_widgets(); }
+            // A sent prompt's Edit: its words go into the reply box, to change and send again. The chat keeps what was said.
+            hover_chat::Hit::Act(i, hover_chat::doc::Act::EditPrompt) => {
+                let Some(t) = turns.get(i) else { return };
+                let keep = each_reply(self);
+                let text = if keep.trim().is_empty() { t.prompt.clone() } else { format!("{keep}\n{}", t.prompt) };
+                each!(self, |g| { g.set_d_draft(s(&text)); g.set_d_compose(true); });
+                self.office_widgets();
                 return;
             }
             hover_chat::Hit::Act(_, hover_chat::doc::Act::Copy(text)) => {
@@ -2112,7 +2127,7 @@ impl App {
                     a.paint_thread();
                 });
             }
-            hover_chat::Hit::Link(url) => crate::open_url(&url),
+            hover_chat::Hit::Link(url) => { if url.starts_with("https://") || url.starts_with("http://") { crate::open_url(&url); } }
             _ => return,
         }
         self.paint_thread();

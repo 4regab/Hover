@@ -22,7 +22,8 @@ fn thread(turns: &[Turn]) -> Thread {
 }
 
 fn acts(th: &Thread, section: usize) -> Vec<(Act, [f32; 4])> {
-    th.sections[section].frag.hits.iter().filter(|(_, a)| matches!(a, Act::Copy(_) | Act::Retry | Act::Restore | Act::TryAgain)).map(|(r, a)| (a.clone(), *r)).collect()
+    // The answer's Copy copies "Done."; the prompt's own Copy (under its bubble) is not this row's.
+    th.sections[section].frag.hits.iter().filter(|(_, a)| matches!(a, Act::Copy(t) if &**t == "Done.") || matches!(a, Act::Retry | Act::Restore | Act::TryAgain)).map(|(r, a)| (a.clone(), *r)).collect()
 }
 
 #[test]

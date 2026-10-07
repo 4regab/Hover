@@ -125,23 +125,23 @@ fn copies(th: &Thread) -> Vec<String> {
 }
 
 #[test]
-fn only_what_the_agent_wrote_has_a_copy_button() {
+fn each_copyable_thing_has_one_copy_button() {
     let mut th = thread();
     let prompt = "Make the check strict.";
-    // A message on its own (sent, nothing back yet): no Copy under it.
+    // A message on its own (sent, nothing back yet): its Copy is under it, and nothing else.
     let turns = vec![Turn { when: "12:04".into(), live: true, stage: Stage::Working, ..Turn::new(prompt) }];
     th.set(&turns, 358.0);
-    assert!(copies(&th).is_empty(), "no Copy under the user's own message: {:?}", copies(&th));
+    assert_eq!(copies(&th), [prompt], "the message's Copy copies the message");
     // With an answer that has code, and its change open: the answer, the code and the
-    // diff each have one, the message still none.
+    // diff each have one, besides the message's own.
     let turns = vec![Turn { prompt: prompt.into(), when: "12:04".into(), answer: "Done.\n\n```rust\nfn main() {}\n```".into(), ..ended(steps()) }];
     th.set(&turns, 358.0);
     th.toggle_steps(&turns, 0);
     th.toggle_step(&turns, 0, EDIT, false);
     let c = copies(&th);
-    assert!(!c.iter().any(|t| t == prompt), "no Copy for the message: {c:?}");
+    assert!(c.iter().any(|t| t == prompt), "the message's Copy: {c:?}");
     assert!(c.iter().any(|t| t.trim_end() == "fn main() {}"), "the code block's Copy: {c:?}");
     assert!(c.iter().any(|t| t == DIFF), "the diff's Copy: {c:?}");
     assert!(c.iter().any(|t| t.starts_with("Done.")), "the answer's Copy: {c:?}");
-    assert_eq!(c.len(), 3, "{c:?}");
+    assert_eq!(c.len(), 4, "{c:?}");
 }

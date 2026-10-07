@@ -138,7 +138,7 @@ fn chat_fixture(a: &RunArgs, hold: &Arc<std::sync::Mutex<bool>>) -> Option<KiroR
     use hover_agents::stream::KiroEvent;
     use hover_core::model::KiroStep;
     let p = a.prompt.as_str();
-    let kind = ["second monitor", "taskbar is at the top", "every monitor setup", "release build", "whole notch"].iter().position(|k| p.contains(k))?;
+    let kind = ["second monitor", "taskbar is at the top", "every monitor setup", "release build", "whole notch", "linker fails"].iter().position(|k| p.contains(k))?;
     let ev = |s: KiroStep| (a.events)(KiroEvent { step: Some(s), ..Default::default() });
     let st = |id: &str, kind: &str, title: &str, target: Option<&str>, status: &str| KiroStep::new(id, kind, title, target.map(Into::into), status);
     let think = |id: &str, text: &str, ms: Option<f64>| KiroStep { output: Some(text.into()), ms, ..st(id, "thought", "Thinking", None, if ms.is_some() { "completed" } else { "in_progress" }) };
@@ -188,6 +188,15 @@ fn chat_fixture(a: &RunArgs, hold: &Arc<std::sync::Mutex<bool>>) -> Option<KiroR
             ev(st("r1", "read", "Read", Some("Cargo.toml"), "completed"));
             wait();
             done("Built.")
+        }
+        5 => {
+            // A command that passed, one that failed and one still running (the mockup's #working).
+            ev(KiroStep { exit: Some(0), ms: Some(300.0), output: Some("Switched to branch 'main'\nYour branch is behind 'origin/main' by 17 commits, and can be fast-forwarded.".into()), ..st("x1", "execute", "Run", Some("git switch main"), "completed") });
+            ev(KiroStep { exit: Some(101), ms: Some(4200.0), output: Some("   Compiling hover v4.0.0\nerror: linker `link.exe` not found\n  = note: the msvc targets depend on the msvc linker but `link.exe` was not found".into()), ..st("x2", "execute", "Run", Some("cargo build --release --target i686-pc-windows-msvc"), "failed") });
+            ev(st("x3", "execute", "Run", Some("git merge --ff-only origin/main"), "in_progress"));
+            wait();
+            if a.ct.is_cancelled() { return Some(KiroResult::new(KiroState::Cancelled, "Stopped.")); }
+            done("The 32-bit build needs the MSVC linker, which isn't installed.")
         }
         _ => done(&format!("## The whole notch, start to end\n\n{}\n\nThe one path that matters: https://example.com/a/very/long/link/that/does/not/break/anywhere/because/it/is/one/word/{}\n\n```rust\nlet placed = place(hwnd, monitor, scale, work_area, taskbar_edge, auto_hide, animations_on, reduced_motion, office_size);\n```\n\n{}",
             "The notch is one window, as wide as the main display, that never resizes while it opens: the shape grows from its resting size to the office by animating one openness value. ".repeat(4),
@@ -404,6 +413,30 @@ fn chat_shots(app: &Rc<App>, hover: &Arc<hover_app::app::Hover>, dir: &Path, fol
         save_office(&notch, full, &dir.join(format!("chat-{tag}-cloud-chip.png")));
         app.close_drawer();
     }
+    // Commands as the mockup draws them (#working): one that passed, one that failed and one
+    // still running, folded under the summary line and then with the timeline open.
+    *hold_c.lock().unwrap() = true;
+    let cmds = start(AgentTool::Codex, "The linker fails on the 32-bit build. Build it, then merge main.");
+    if let Some(id) = cmds { until(&|| hover.sessions.get(id).is_some_and(|s| s.turns.first().is_some_and(|t| t.steps.len() >= 3))); }
+    for (ws, tag) in [(hover_core::model::WorkspaceSize::Small, "small"), (hover_core::model::WorkspaceSize::Default, "default")] {
+        hover.settings.set_workspace_size(ws);
+        view::Host::settings_changed(&**app);
+        app.office_follow();
+        app.office_push();
+        settle(1500);
+        let full = { let n = app.n.borrow(); (n.win.width() as u32, n.win.height() as u32) };
+        if let Some(id) = cmds { app.open_session(id); }
+        settle(1200);
+        save_office(&notch, full, &dir.join(format!("chat-{tag}-commands-live.png")));
+        let turns = app.page_turns();
+        if let Some(mut c) = app.page_thread() { c.toggle_steps(&turns, 0); }
+        app.office_widgets();
+        settle(1200);
+        save_office(&notch, full, &dir.join(format!("chat-{tag}-commands-timeline.png")));
+        app.close_drawer();
+    }
+    *hold_c.lock().unwrap() = false;
+    run_for(600);
 }
 
 /// Expand chat (#41): each kind of chat in the small drawer in the app window (before), then

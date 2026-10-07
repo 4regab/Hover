@@ -510,14 +510,15 @@ impl Md<'_> {
                 // The header is text in the page (.ch), so a copy takes "tsCopy" on its own line.
                 frag.text(TextBox { layout: lay, x: 11.0, y: ly, text: lang.into(), links: vec![], clip: None, shimmer: false, cell: false, scroller: None });
                 let done = self.copied.as_deref() == Some(text.as_str());
-                let bl = Look { size: 10.5, lh: 1.2, color: [255, 255, 255, 153], weight: 500.0, family: theme::SANS };
+                let bl = Look { size: 10.5, lh: 1.2, color: if done { [0x4a, 0xde, 0x80, 255] } else { [255, 255, 255, 153] }, weight: 500.0, family: theme::SANS };
                 let label = if done { "Copied" } else { "Copy" };
                 let (lay, _, _) = self.sh.text(&[plain(label, None)], bl, None, Alignment::Start);
-                let (bw, bh) = (lay.width() + 16.0, 18.0);
-                let (bx, by) = (w - 8.0 - bw, 6.0);
-                frag.shapes.push(Shape::Rect { x: bx, y: by, w: bw, h: bh, radius: [6.0; 4], fill: Some([255, 255, 255, 15]), stroke: None });
+                // .cb-h button: the copy icon and the word, no fill until hovered.
+                let (bw, bh) = (lay.width() + 8.0 + 13.0 + 5.0 + 8.0, 22.0);
+                let (bx, by) = (w - 5.0 - bw, 1.0 + (HEAD - bh) / 2.0);
+                frag.shapes.push(Shape::Svg { x: bx + 8.0, y: by + (bh - 13.0) / 2.0, w: 13.0, h: 13.0, svg: path_svg(if done { CHECK_ICON } else { COPY_ICON }, bl.color, 13.0, 2.0) });
                 let ty = by + (bh - lay.height()) / 2.0;
-                frag.text(TextBox { layout: lay, x: bx + 8.0, y: ty, text: label.into(), links: vec![], clip: None, shimmer: false, cell: false, scroller: None });
+                frag.text(TextBox { layout: lay, x: bx + 8.0 + 13.0 + 5.0, y: ty, text: label.into(), links: vec![], clip: None, shimmer: false, cell: false, scroller: None });
                 frag.copy.push(Tok::Req(1));
                 frag.hits.push(([bx, by, bw, bh], Act::Copy(text.as_str().into())));
                 let code_at = frag.texts.len();
@@ -831,6 +832,46 @@ const TRY_ICON: &str = r#"<path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74
 const CHECK_ICON: &str = r#"<path d="M20 6 9 17l-5-5"/>"#;
 const RETRY_ICON: &str = r#"<path d="M3 12a9 9 0 0 1 15.5-6.3L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-15.5 6.3L3 16"/><path d="M3 21v-5h5"/>"#;
 
+/// A 1 px dashed outline of a rounded box (3 px on, 3 off): `border-style: dashed`, which
+/// the painter's rectangle stroke can't draw. Each dash is a short line along the outline.
+fn dashed(out: &mut Vec<Shape>, x: f32, y: f32, w: f32, h: f32, r: [f32; 4], color: Rgba) {
+    // The outline runs along the middle of the 1 px border.
+    let (x, y, w, h) = (x + 0.5, y + 0.5, w - 1.0, h - 1.0);
+    let [tl, tr, br, bl] = r.map(|r| (r - 0.5).max(0.0));
+    let mut p: Vec<(f32, f32)> = vec![];
+    // Clockwise from the left of the top left corner; each corner is six steps of an arc.
+    let mut arc = |cx: f32, cy: f32, r: f32, from: f32| for i in 0..=6 {
+        let a = (from + 90.0 * i as f32 / 6.0).to_radians();
+        p.push((cx + r * a.cos(), cy + r * a.sin()));
+    };
+    arc(x + tl, y + tl, tl, 180.0);
+    arc(x + w - tr, y + tr, tr, 270.0);
+    arc(x + w - br, y + h - br, br, 0.0);
+    arc(x + bl, y + h - bl, bl, 90.0);
+    p.push(p[0]);
+    let (dash, period) = (3.0f32, 6.0f32);
+    let (mut at, mut cur) = (0.0f32, vec![]);
+    for seg in p.windows(2) {
+        let (a, b) = (seg[0], seg[1]);
+        let len = ((b.0 - a.0).powi(2) + (b.1 - a.1).powi(2)).sqrt();
+        let pt = |d: f32| (a.0 + (b.0 - a.0) * d / len, a.1 + (b.1 - a.1) * d / len);
+        let mut d = 0.0;
+        while d < len - 1e-4 {
+            let on = at < dash - 1e-4;
+            let step = ((if on { dash } else { period }) - at).min(len - d);
+            if on {
+                if cur.is_empty() { cur.push(pt(d)); }
+                cur.push(pt(d + step));
+            }
+            d += step;
+            at += step;
+            if on && at >= dash - 1e-4 { out.push(Shape::Line { pts: std::mem::take(&mut cur), color, width: 1.0 }); }
+            if at >= period - 1e-4 { at = 0.0; }
+        }
+    }
+    if cur.len() > 1 { out.push(Shape::Line { pts: cur, color, width: 1.0 }); }
+}
+
 /// A subagent's state dot (.sd): spinning while it runs (drawn still: the thread is
 /// painted when it changes, not on a clock), a check when done, a cross when it failed.
 /// (OpenCode reports a subagent waiting for a slot as running, so there is no queued dot.)
@@ -995,10 +1036,10 @@ pub enum Act {
     Restore,
     /// Try again: back to just before this turn's message, which goes again.
     TryAgain,
-    /// A queued reply taken back.
-    Cancel,
     /// A queued reply taken back into the composer to be changed (its text, and its pictures, come with it).
     Edit,
+    /// A sent prompt's Edit: its words go into the reply box to be changed and sent again.
+    EditPrompt,
     /// A queued reply sent now, ahead of the others.
     SendNow,
 }
@@ -1062,6 +1103,11 @@ pub struct Thread {
     pub flags: std::collections::HashSet<(u64, usize, usize, u32)>,
     /// Room kept under the last turn (the reply circle sits over the thread's corner).
     pub extra_bottom: f32,
+    /// A command is running: its time counts, so the app lays the thread out again each second.
+    pub ticking: bool,
+    /// When a running command was first seen, by (session, turn, step): the tool reports a
+    /// command's time only once it ends, so the count starts here.
+    began: std::collections::HashMap<(u64, usize, usize), std::time::Instant>,
     /// Images a thought uses, gathered while its turn is laid out.
     pending_images: Vec<String>,
 }
@@ -1133,7 +1179,7 @@ impl Thread {
         Thread { sh, width: 360.0, who: who.into(), color, sections: vec![], height: 0.0, selection: None, tail: Tail::None,
             image_state: Box::new(|_| ImageState::Broken), image_rule: Box::new(|s| if s.starts_with("http") { Some(s.into()) } else { None }),
             steps_user: Default::default(), session: 0, hide_steps: false, tool: "kiro".into(), step_user: Default::default(), copied: None, view_h: f32::INFINITY, sum_h: 26.0, relayouts: 0, hscroll: Default::default(), fresh: None,
-            flags: Default::default(), extra_bottom: 0.0, pending_images: vec![] }
+            flags: Default::default(), extra_bottom: 0.0, ticking: false, began: Default::default(), pending_images: vec![] }
     }
 
     fn flag(&self, i: usize, j: usize, k: u32) -> bool { self.flags.contains(&(self.session, i, j, k)) }
@@ -1216,6 +1262,7 @@ impl Thread {
 
     fn lay(&mut self, turns: &[Turn], width: f32) {
         self.width = width;
+        self.ticking = turns.iter().any(|t| t.live && t.steps.last().is_some_and(|s| s.kind == StepIcon::Run && s.cmd.is_some() && !s.ended()));
         let wkey = width.to_bits();
         let mut old: Vec<Option<Section>> = std::mem::take(&mut self.sections).into_iter().map(Some).collect();
         let [pt, pr, pb, pl] = theme::THREAD_PAD;
@@ -1285,7 +1332,7 @@ impl Thread {
         let mut answer_tok = None;
         let look = Look::body();
         // .me: max-width 86%, padding 6px 10px, 1px border, radius 16 16 5 16, at the right.
-        let me = Look { color: [0xf1, 0xef, 0xf4, 255], ..look };
+        let me = Look { color: if t.queued { theme::DIM } else { [0xf1, 0xef, 0xf4, 255] }, ..look };
         let maxw = w * 0.86 - 22.0;
         let (mut layout, text, _) = self.sh.text(&[plain(&t.prompt, None)], me, Some(maxw), Alignment::Start);
         let mut tw = layout.calculate_content_widths().max.min(maxw).ceil();
@@ -1293,68 +1340,70 @@ impl Thread {
         let per_row = (((maxw + 5.0) / 77.0).floor() as usize).max(1);
         let pics = t.images.len();
         if pics > 0 { tw = tw.max(((pics.min(per_row)) as f32 * 77.0 - 5.0).min(maxw)); }
-        let q = t.queued.then(|| self.line("Queued · sends when this run ends", Look { size: 11.0, color: [0xff, 0xc4, 0x6b, 255], weight: 600.0, lh: 1.5, ..look }, Some(maxw)));
-        // .qd's Cancel, with Edit and Send now, on a row under the queued line: drawn, not copied.
-        let pills: Vec<(_, Act)> = if t.queued {
-            [("Edit", Act::Edit), ("Send now", Act::SendNow), ("Cancel", Act::Cancel)].into_iter().map(|(label, act)| {
-                let mut c = self.line(label, Look { size: 11.0, color: [0xf6, 0xf2, 0xff, 200], weight: 600.0, lh: 1.5, ..look }, None);
-                c.text.clear();
-                (c, act)
-            }).collect()
-        } else { vec![] };
-        // Each pill is its text plus 5 px each side; 6 px between pills.
-        let pills_w = pills.iter().map(|(c, _)| c.layout.width() + 16.0).sum::<f32>() - 6.0;
-        let pills_h = pills.first().map_or(0.0, |(c, _)| c.layout.height() + 6.0);
-        if let Some(q) = &q { tw = tw.max(q.layout.calculate_content_widths().max.max(pills_w).min(maxw).ceil()); }
-        let when = (!t.when.is_empty()).then(|| self.line(&t.when, Look { size: 10.5, color: [255, 255, 255, 89], lh: 1.5, ..look }, None));
-        // The time sits at the bubble's right, so a short message widens to hold it.
-        if let Some(wb) = &when { tw = tw.max(wb.layout.width().ceil().min(maxw)); }
         layout.break_all_lines(Some(tw));
         layout.align(Alignment::Start, AlignmentOptions::default());
         let pics_h = if pics > 0 { pics.div_ceil(per_row) as f32 * 77.0 } else { 0.0 };
-        let qh = q.as_ref().map_or(0.0, |q| q.layout.height() + 3.0 + pills_h);
-        let wh = when.as_ref().map_or(0.0, |w| w.layout.height() + 2.0);
-        let bh = pics_h + layout.height() + qh + wh + 14.0;
+        let bh = pics_h + layout.height() + 14.0;
         let bw = tw + 22.0;
         let bx = w - bw;
-        frag.shapes.push(Shape::Rect { x: bx, y: 0.0, w: bw, h: bh, radius: [16.0, 16.0, 5.0, 16.0], fill: Some(theme::YOU_BG), stroke: Some((theme::YOU_EDGE, 1.0)) });
+        let radius = [16.0, 16.0, 5.0, 16.0];
+        if t.queued {
+            // .you.queued p: no fill, a dashed amber outline.
+            dashed(&mut frag.shapes, bx, 0.0, bw, bh, radius, [0xff, 0xc4, 0x6b, 0x47]);
+        } else {
+            frag.shapes.push(Shape::Rect { x: bx, y: 0.0, w: bw, h: bh, radius, fill: Some(theme::YOU_BG), stroke: Some((theme::YOU_EDGE, 1.0)) });
+        }
         for (k, src) in t.images.iter().enumerate() {
             let (c, r) = ((k % per_row) as f32, (k / per_row) as f32);
             frag.shapes.push(Shape::Image { x: bx + 11.0 + c * 77.0, y: 7.0 + r * 77.0, w: 72.0, h: 72.0, radius: 8.0, src: src.clone(), cover: true });
         }
         let ty = 7.0 + pics_h;
-        let lh = layout.height();
         frag.text(TextBox { layout, x: bx + 11.0, y: ty, text, links: vec![], clip: None, shimmer: false, cell: false, scroller: None });
-        let mut yy = ty + lh;
-        if let Some(mut q) = q {
-            frag.copy.push(Tok::Req(1));
-            q.x = bx + 11.0;
-            q.y = yy + 3.0;
-            yy = q.y + q.layout.height();
-            // Right to left: Cancel at the end, Send now and Edit before it.
-            let mut right = bx + bw - 11.0 - 5.0;
-            for (mut c, act) in pills.into_iter().rev() {
-                c.x = right - c.layout.width();
-                c.y = yy + 4.0;
-                frag.shapes.push(Shape::Rect { x: c.x - 5.0, y: c.y - 1.0, w: c.layout.width() + 10.0, h: c.layout.height() + 2.0, radius: [6.0; 4], fill: Some([255, 255, 255, 16]), stroke: None });
-                frag.hits.push(([c.x - 6.0, c.y - 4.0, c.layout.width() + 12.0, c.layout.height() + 8.0], act));
-                right = c.x - 16.0;
-                frag.texts.push(c);
+        frag.copy.push(Tok::Req(1));
+        // .you-acts (and .q for a queued one): a row under the bubble, 3 px down, 4 px past its right edge.
+        let (row_y, row_h) = (bh + 3.0, 26.0);
+        let faint = [0xf6, 0xf2, 0xff, 97];
+        let mut rx = bx + bw + 4.0;
+        if t.queued {
+            // Edit takes it back into the reply box; Send now stops the run and sends it next. There is no Cancel.
+            for (label, act) in [("Send now", Act::SendNow), ("Edit", Act::Edit)] {
+                let mut b = self.line(label, Look { size: 11.0, lh: 1.5, color: faint, weight: 400.0, ..look }, None);
+                b.text.clear();
+                let w2 = b.layout.width() + 16.0;
+                rx -= w2;
+                b.x = rx + 8.0;
+                b.y = row_y + (row_h - b.layout.height()) / 2.0;
+                frag.hits.push(([rx, row_y + 1.0, w2, 24.0], act));
+                frag.texts.push(b);
+                rx -= 2.0;
             }
-            yy += pills_h;
+            let mut q = self.line("Queued · sends when this run ends", Look { size: 11.0, lh: 1.5, color: [0xff, 0xc4, 0x6b, 204], weight: 400.0, ..look }, None);
+            rx -= 4.0;
+            q.x = rx - q.layout.width();
+            q.y = row_y + (row_h - q.layout.height()) / 2.0;
             frag.text(q);
-        }
-        if let Some(mut wb) = when {
-            // .when: display block, right-aligned, and copied on its own line.
-            frag.copy.push(Tok::Req(1));
-            wb.x = bx + bw - 11.0 - wb.layout.width();
-            wb.y = yy + 2.0;
-            // No Copy under one's own message: the user wrote it, and a selection still
-            // copies it.
-            frag.text(wb);
+        } else {
+            // Right to left: Edit, Copy, then the time.
+            let done = !t.prompt.is_empty() && self.copied.as_deref() == Some(t.prompt.as_str());
+            let green = [0x4a, 0xde, 0x80, 255];
+            let mut buttons = vec![(StepIcon::Edit.path(), faint, Act::EditPrompt)];
+            if !t.prompt.is_empty() { buttons.push((if done { CHECK_ICON } else { COPY_ICON }, if done { green } else { faint }, Act::Copy(t.prompt.as_str().into()))); }
+            for (icon, color, act) in buttons {
+                rx -= 26.0;
+                frag.shapes.push(Shape::Svg { x: rx + 6.0, y: row_y + 6.0, w: 14.0, h: 14.0, svg: path_svg(icon, color, 14.0, 2.0) });
+                frag.hits.push(([rx, row_y, 26.0, row_h], act));
+            }
+            if !t.when.is_empty() {
+                // .when is text in the page, so a selection still copies it.
+                let mut wb = self.line(&t.when, Look { size: 11.0, lh: 1.5, color: faint, ..look }, None);
+                rx -= 4.0 + wb.layout.width();
+                wb.x = rx;
+                wb.y = row_y + (row_h - wb.layout.height()) / 2.0;
+                frag.text(wb);
+            }
         }
         frag.copy.push(Tok::Req(1));
-        let mut y = bh;
+        let mut y = row_y + row_h;
 
         if !t.steps.is_empty() && !self.hide_steps {
             y += theme::THREAD_GAP;
@@ -1533,8 +1582,73 @@ impl Thread {
             j += 1;
         }
         // .steps::before: the thin line under the icons, 12 px in from each end.
-        if y - y0 > 24.0 { frag.shapes.insert(line_at, rect(9.0, y0 + 12.0, 1.0, y - y0 - 24.0, 0.0, Some([255, 255, 255, 20]))); }
+        // ponytail: a command line has no icon on the line, so the line is left out when one is there.
+        let has_cmd = list.iter().any(|s| s.kind == StepIcon::Run && s.name.is_none() && s.cmd.is_some());
+        if y - y0 > 24.0 && !has_cmd { frag.shapes.insert(line_at, rect(9.0, y0 + 12.0, 1.0, y - y0 - 24.0, 0.0, Some([255, 255, 255, 20]))); }
         y - y0
+    }
+
+    /// A command as one quiet line (.cmd-h): "Ran `cmd`", its exit code and time at the
+    /// right (red when it failed), and a click opens what it printed. The verb and the
+    /// command are one text box, so the running one has one shimmer band across all of it,
+    /// and its time counts. Returns its height, output and all.
+    #[allow(clippy::too_many_arguments)]
+    fn command_row(&mut self, frag: &mut Frag, x: &Step, ti: usize, j: usize, now: bool, y: f32, w: f32, live: bool, open: bool) -> f32 {
+        let row_h = 30.0;
+        let verb = if live { verb_on(&x.verb).to_owned() } else { x.verb.clone() };
+        let base = Look { size: 12.0, lh: 1.3, color: theme::FAINT, weight: 400.0, family: theme::SANS };
+        // .cl code: no background, the dim colour, the mono face a size under the words.
+        let spans = [plain(&format!("{verb} "), None),
+            Span::Text { text: x.cmd.clone().unwrap_or_default(), marks: Default::default(), link: None, color: Some(theme::DIM), family: Some(theme::MONO), size: Some(11.0), weight: None }];
+        // .cmd-m: "exit 0 · 0.3s"; a running one says only how long it has gone.
+        let (green, red) = ([0x7e, 0xe5, 0x9a, 204], [0xff, 0x7b, 0x72, 255]);
+        let sep = Span::Text { text: " · ".into(), marks: Default::default(), link: None, color: Some([255, 255, 255, 51]), family: None, size: None, weight: None };
+        let colored = |t: String, c: Rgba| Span::Text { text: t, marks: Default::default(), link: None, color: Some(c), family: None, size: None, weight: None };
+        let mut meta = vec![];
+        if live {
+            let t0 = *self.began.entry((self.session, ti, j)).or_insert_with(std::time::Instant::now);
+            meta.push(plain(&format!("{}s", t0.elapsed().as_secs()), None));
+        } else {
+            if let Some(e) = x.exit { meta.push(colored(format!("exit {e}"), if e == 0 { green } else { red })); }
+            else if x.status == "failed" { meta.push(colored("failed".into(), red)); }
+            if let Some(ms) = x.ms {
+                if !meta.is_empty() { meta.push(sep); }
+                let s = ms / 1000.0;
+                meta.push(plain(&if s < 10.0 { format!("{s:.1}s") } else if s < 60.0 { format!("{}s", s.round() as i64) } else { format!("{}m {:02}s", (s / 60.0) as i64, (s % 60.0).round() as i64) }, None));
+            }
+        }
+        let blk = x.has_block();
+        let mut rx = w - 4.0;
+        if blk && !live { rx -= 12.0; frag.shapes.push(caret(rx, y + (row_h - 12.0) / 2.0, 12.0, [255, 255, 255, 89], open)); rx -= 8.0; }
+        let mut right = None;
+        if !meta.is_empty() {
+            let (lay, st, _) = self.sh.text(&meta, Look { size: 11.0, lh: 1.3, ..base }, None, Alignment::Start);
+            rx -= lay.width();
+            right = Some(TextBox { x: rx, y: y + (row_h - lay.height()) / 2.0, layout: lay, text: st, links: vec![], clip: None, shimmer: false, cell: false, scroller: None });
+            rx -= 12.0;
+        }
+        let avail = rx.max(0.0);
+        let (lay, st, _) = self.sh.text(&spans, base, None, Alignment::Start);
+        let mut tb = TextBox { x: 0.0, y: y + (row_h - lay.height()) / 2.0, layout: lay, text: st, links: vec![], clip: None, shimmer: live, cell: false, scroller: None };
+        if tb.layout.width() > avail + 0.01 {
+            // .cl: white-space: nowrap; text-overflow: ellipsis.
+            let mut e = self.line("…", base, None);
+            let ew = e.layout.width();
+            let cut = parley::Cursor::from_point(&tb.layout, (avail - ew).max(0.0), 1.0).geometry(&tb.layout, 0.0).x0 as f32;
+            let cut = cut.min(avail - ew).max(0.0);
+            tb.clip = Some([0.0, tb.y - 2.0, cut, tb.layout.height() + 4.0]);
+            e.text.clear();
+            e.x = cut;
+            e.y = tb.y;
+            frag.texts.push(e);
+        }
+        frag.text(tb);
+        frag.copy.push(Tok::Req(1));
+        if let Some(r) = right { frag.text(r); frag.copy.push(Tok::Req(1)); }
+        if blk && j != usize::MAX { frag.hits.push(([-8.0, y, w + 16.0, row_h], Act::Step(j, now))); }
+        let mut h = row_h;
+        if blk && open { h += self.block(frag, x, ti, j, y + row_h, w); }
+        h
     }
 
     /// stepRow: the kind's icon, the verb and the file (name bright, folder dim) or the
@@ -1543,6 +1657,7 @@ impl Thread {
     #[allow(clippy::too_many_arguments)]
     fn step_row(&mut self, frag: &mut Frag, x: &Step, ti: usize, j: usize, now: bool, y: f32, w: f32, live: bool, open: bool) -> f32 {
         if x.kind == StepIcon::Thought { return self.thought_row(frag, x, ti, j, now, y, w, open); }
+        if x.kind == StepIcon::Run && x.name.is_none() && x.cmd.is_some() { return self.command_row(frag, x, ti, j, now, y, w, live, open); }
         let verb = if live { verb_on(&x.verb).to_owned() } else { x.verb.clone() };
         let fail = x.status == "failed";
         let row_h = 25.0;
@@ -1638,7 +1753,10 @@ impl Thread {
     #[allow(clippy::too_many_arguments)]
     fn block(&mut self, frag: &mut Frag, x: &Step, ti: usize, j: usize, y: f32, w: f32) -> f32 {
         const HEAD: f32 = 28.0;
-        let (bx, bw) = (28.0, w - 28.0);
+        // A command's output is the mockup's .out: the whole row wide, with no header (the
+        // exit code and time are on the command's own line). A file's change keeps its header.
+        let cmdblk = x.diff.is_none();
+        let (bx, bw) = if cmdblk { (0.0, w) } else { (28.0, w - 28.0) };
         let y0 = y + 4.0;
         let at = frag.shapes.len();
         let (green, red) = ([0x4a, 0xde, 0x80, 255], [0xff, 0x6b, 0x62, 255]);
@@ -1668,6 +1786,7 @@ impl Thread {
         } else {
             let o = x.out.as_deref().unwrap_or("");
             title = x.cmd.as_ref().map_or_else(String::new, |c| format!("$ {c}"));
+            if cmdblk { if let Some(c) = &x.cmd { rows.push((None, format!("$ {c}"), mono.color, None, false)); } }
             for (k, l) in o.split('\n').enumerate() {
                 // What hover-agents cut from a long output, said as its own first line.
                 let note = k == 0 && l.starts_with("… ") && l.ends_with("not kept");
@@ -1682,6 +1801,8 @@ impl Thread {
             if let Some(ms) = x.ms.filter(|m| *m >= 1000.0) { right.push((crate::state::took(ms), small.color, None)); }
         }
         // .bh: the title, the counts or exit code, Copy.
+        if cmdblk { right.clear(); }
+        let title = if cmdblk { String::new() } else { title };
         let hy = y0 + 1.0;
         let mut rx = bx + bw - 8.0;
         if let Some(c) = &copy {
@@ -1708,7 +1829,7 @@ impl Thread {
             frag.texts.push(tb);
             rx -= 6.0 + pad;
         }
-        let mut head_h = HEAD;
+        let mut head_h = if cmdblk { 0.0 } else { HEAD };
         if !title.is_empty() {
             // A command wraps to all of it (the counts and Copy keep to its first line); a
             // file's path keeps to one line.
@@ -1722,17 +1843,26 @@ impl Thread {
             else { tb.clip = Some([bx + 10.0, hy, tw, HEAD]); }
             frag.texts.push(tb);
         }
-        frag.shapes.push(rect(bx + 1.0, hy + head_h, bw - 2.0, 1.0, 0.0, Some([255, 255, 255, 12])));
+        if !cmdblk { frag.shapes.push(rect(bx + 1.0, hy + head_h, bw - 2.0, 1.0, 0.0, Some([255, 255, 255, 12]))); }
         // pre: 8 px above and below; a 22 px gutter when the lines are numbered.
         let numbered = rows.iter().any(|r| r.0.is_some());
         let tx = bx + 12.0 + if numbered { 32.0 } else { 0.0 };
         let total = rows.len();
         let full = self.flag(ti, j, 0);
         let shown = if total > 8 && !full { 8 } else { total };
-        let mut cy = hy + head_h + 1.0 + 8.0;
+        let mut cy = hy + head_h + if cmdblk { 10.0 } else { 1.0 + 8.0 };
         let clip_top = cy;
-        for (n, text, color, bg, note) in rows.into_iter().take(shown) {
-            let (lay, t, _) = self.sh.text(&[Span::Text { text, marks: hover_md::Marks { em: note, ..Default::default() }, link: None, color: Some(color), family: None, size: None, weight: None }], mono, None, Alignment::Start);
+        for (ri, (n, text, color, bg, note)) in rows.into_iter().take(shown).enumerate() {
+            // The output's first line is the command after its "$" prompt, which is fainter.
+            let prompt = cmdblk && ri == 0 && x.cmd.is_some();
+            let spans = if prompt {
+                vec![Span::Text { text: "$ ".into(), marks: Default::default(), link: None, color: Some([0xf6, 0xf2, 0xff, 97]), family: None, size: None, weight: None },
+                    Span::Text { text: text[2..].to_owned(), marks: Default::default(), link: None, color: Some(color), family: None, size: None, weight: None }]
+            } else {
+                vec![Span::Text { text, marks: hover_md::Marks { em: note, ..Default::default() }, link: None, color: Some(color), family: None, size: None, weight: None }]
+            };
+            // The command line above is cut short by its ellipsis, and the output is pre-wrap: both wrap here.
+            let (lay, t, _) = self.sh.text(&spans, mono, cmdblk.then_some((bw - 24.0).max(0.0)), Alignment::Start);
             let h = lay.height();
             if let Some(bg) = bg { frag.shapes.push(rect(bx + 1.0, cy, bw - 2.0, h, 0.0, Some(bg))); }
             if let Some(n) = n {
@@ -1748,7 +1878,7 @@ impl Thread {
             frag.copy.push(Tok::Req(1));
             cy += h;
         }
-        cy += 8.0;
+        cy += if cmdblk { 10.0 } else { 8.0 };
         if total > 8 {
             // .fold: the rest of what was kept, or fold it again.
             frag.shapes.push(rect(bx + 1.0, cy, bw - 2.0, 1.0, 0.0, Some([255, 255, 255, 10])));
@@ -1761,7 +1891,7 @@ impl Thread {
             cy += 25.0;
         }
         frag.shapes.insert(at, Shape::Rect { x: bx, y: y0, w: bw, h: cy - y0 + 1.0, radius: [9.0; 4], fill: Some([0x0a, 0x09, 0x0c, 255]), stroke: Some(([255, 255, 255, 16], 1.0)) });
-        cy + 1.0 - y + 4.0
+        cy + 1.0 - y + if cmdblk { 8.0 } else { 4.0 }
     }
 
     /// A thought: the bulb, "Thinking…" while it streams (its text under it, the newest
