@@ -99,6 +99,9 @@ pub struct Page {
     more_acts: RefCell<Vec<String>>,
     /// What each row of the expanded chat's session list opens (a live session by id, a saved one by key).
     rows_list: RefCell<Vec<(Option<i32>, Option<String>)>>,
+    /// The folder each row of that list stands for (None for a chat's row), and the folders folded away.
+    list_heads: RefCell<Vec<Option<String>>>,
+    folded: RefCell<std::collections::HashSet<String>>,
     /// The open chat's workspace branch, for the expanded chat's header.
     branch: RefCell<Branch>,
     /// The desk card and the desk panel (desk_ui.rs).
@@ -250,7 +253,7 @@ impl Default for Page {
             #[cfg(windows)] gpu: Default::default(),
             #[cfg(windows)] scratch: Default::default(),
             #[cfg(windows)] slots: Default::default(), blur: Default::default(),
-            new_helpers: Cell::new(false), chips: Default::default(), note_acts: RefCell::new(vec![]), more_acts: RefCell::new(vec![]), rows_list: RefCell::new(vec![]), branch: Default::default(), desk: Default::default() }
+            new_helpers: Cell::new(false), chips: Default::default(), note_acts: RefCell::new(vec![]), more_acts: RefCell::new(vec![]), rows_list: RefCell::new(vec![]), list_heads: RefCell::new(vec![]), folded: Default::default(), branch: Default::default(), desk: Default::default() }
     }
 }
 
@@ -837,30 +840,43 @@ impl App {
         if start { self.notch.global::<crate::ui::Office>().invoke_new_go_clicked(); }
     }
 
-    /// The expanded chat's session list: the sessions open now, then the saved ones.
+    /// The expanded chat's session list: one group per project folder, the sessions open now and the saved ones in it. The folder
+    /// with a chat at work comes first, then by the newest chat; inside a folder, chats at work first, then the newest. A folded folder
+    /// shows its row only.
     fn list_rows(&self, sessions: &[KiroSession], open: Option<i32>) -> (Vec<ListRow>, Vec<(Option<i32>, Option<String>)>) {
         let stage_of = |s: &KiroSession| Stage::parse(hover_agents::state::stage(s.state, s.phase)) as i32;
-        let (mut rows, mut opens) = (vec![], vec![]);
-        let head = |text: &str| ListRow { head: true, text: s(text), tool: s(""), stage: 0, on: false };
-        if !sessions.is_empty() {
-            rows.push(head("Open now"));
-            opens.push((None, None));
-            for x in sessions {
-                rows.push(ListRow { head: false, text: s(x.title()), tool: s(x.tool.id()), stage: stage_of(x), on: open == Some(x.id) });
-                opens.push((Some(x.id), None));
-            }
+        let now = hover_core::time::Stamp::now().unix_ms();
+        // (folder, row, what a click opens, when it last ended, whether it is at work)
+        let mut items: Vec<(String, ListRow, (Option<i32>, Option<String>), i64, bool)> = vec![];
+        for x in sessions {
+            let live = x.busy() || x.waiting();
+            let at = x.current().map_or(0, |t| t.ended_at.unwrap_or(t.started_at).unix_ms());
+            let row = ListRow { head: false, text: s(x.title()), tool: s(x.tool.id()), stage: stage_of(x), on: open == Some(x.id), when: s(if live { String::new() } else { when_short(now - at) }), shut: false };
+            items.push((x.folder.clone(), row, (Some(x.id), None), at, live));
         }
         let mut saved: Vec<_> = self.hover.history.as_ref().map(|h| h.entries()).unwrap_or_default().into_iter().filter(|h| !sessions.iter().any(|x| x.key == h.key)).collect();
         saved.sort_by_key(|h| std::cmp::Reverse(h.updated.unix_ms()));
         // ponytail: the 30 newest; the history panel lists them all, with search.
-        if !saved.is_empty() {
-            rows.push(head("Saved"));
-            opens.push((None, None));
-            for h in saved.into_iter().take(30) {
-                rows.push(ListRow { head: false, text: s(&h.title), tool: s(h.tool.id()), stage: Stage::parse(hover_agents::state::stage(h.state, hover_agents::stream::KiroPhase::Working)) as i32, on: false });
-                opens.push((None, Some(h.key)));
-            }
+        for h in saved.into_iter().take(30) {
+            let at = h.updated.unix_ms();
+            let row = ListRow { head: false, text: s(&h.title), tool: s(h.tool.id()), stage: Stage::parse(hover_agents::state::stage(h.state, hover_agents::stream::KiroPhase::Working)) as i32, on: false, when: s(when_short(now - at)), shut: false };
+            items.push((h.folder.clone(), row, (None, Some(h.key)), at, false));
         }
+        items.sort_by_key(|i| (!i.4, std::cmp::Reverse(i.3)));
+        let mut order: Vec<&str> = vec![];
+        for i in &items { if !order.contains(&i.0.as_str()) { order.push(&i.0); } }
+        let folded = self.page.folded.borrow();
+        let (mut rows, mut opens, mut heads) = (vec![], vec![], vec![]);
+        for f in order {
+            let shut = folded.contains(f);
+            let label = if f.is_empty() { "No folder".to_owned() } else { hover_office::office::short(f) };
+            rows.push(ListRow { head: true, text: s(label), tool: s(""), stage: 0, on: false, when: s(""), shut });
+            opens.push((None, None));
+            heads.push(Some(f.to_owned()));
+            if shut { continue; }
+            for i in items.iter().filter(|i| i.0 == f) { rows.push(i.1.clone()); opens.push(i.2.clone()); heads.push(None); }
+        }
+        *self.page.list_heads.borrow_mut() = heads;
         (rows, opens)
     }
 
@@ -1644,6 +1660,39 @@ impl App {
             }
         });
         let a = self.clone();
+        g.on_list_fold(move |i| {
+            let Some(folder) = a.page.list_heads.borrow().get(i as usize).cloned().flatten() else { return };
+            { let mut f = a.page.folded.borrow_mut(); if !f.remove(&folder) { f.insert(folder); } }
+            a.office_widgets();
+        });
+        let a = self.clone();
+        g.on_list_delete(move |i| {
+            let r = a.page.rows_list.borrow().get(i as usize).cloned();
+            match r {
+                Some((Some(id), _)) => if let Some(s) = a.hover.sessions.get(id) { a.ask_delete(Some(id), None, &s.title(), s.busy()); },
+                Some((None, Some(key))) => {
+                    let title = a.hover.history.as_ref().and_then(|h| h.entries().into_iter().find(|e| e.key == key)).map(|e| e.title).unwrap_or_default();
+                    a.ask_delete(None, Some(key), &title, false);
+                }
+                _ => {}
+            }
+        });
+        // The app window's title bar menus (File, Settings, Help).
+        g.set_app_version(env!("CARGO_PKG_VERSION").into());
+        let a = self.clone();
+        g.on_menu_new_chat(move || { a.set_chat_view(true); a.new_chat(); });
+        let a = self.clone();
+        g.on_menu_open_folder(move || if let Some(f) = crate::pick(true) {
+            *a.page.new_folder.borrow_mut() = Some(f);
+            a.set_chat_view(true);
+            a.new_chat();
+            a.office_widgets();
+        });
+        let a = self.clone();
+        g.on_open_settings_page(move |i| if let Some(sec) = hover_app::pages::Section::ALL.get(i as usize) { a.show_settings_in(1, *sec); });
+        g.on_open_link(move |url| crate::open_url(url.as_str()));
+        g.on_open_logs(move || crate::open_url(&hover_core::paths::support().to_string_lossy()));
+        let a = self.clone();
         g.on_d_delete(move || { if let Some(s) = a.page.open.get().and_then(|id| a.hover.sessions.get(id)) { a.ask_delete(Some(s.id), None, &s.title(), s.busy()); } });
         let a = self.clone();
         g.on_d_send(move || {
@@ -2230,6 +2279,13 @@ fn to_serde(j: &hover_core::json::Json) -> serde_json::Value {
 }
 
 /// ago(): "now", "5 min ago", "3 h ago", "2 d ago".
+/// The sidebar's short age: now, 5m, 3h, Yesterday, 4d, 2w.
+fn when_short(ms: i64) -> String {
+    let m = ms.max(0) / 60_000;
+    if m < 1 { "now".into() } else if m < 60 { format!("{m}m") } else if m < 24 * 60 { format!("{}h", m / 60) } else if m < 48 * 60 { "Yesterday".into() }
+    else if m < 7 * 24 * 60 { format!("{}d", m / 1440) } else { format!("{}w", m / 10080) }
+}
+
 pub fn ago(ms: f64) -> String {
     let m = (ms / 60e3).round() as i64;
     if m < 1 { "now".into() } else if m < 60 { format!("{m} min ago") } else if m < 24 * 60 { format!("{} h ago", (m as f64 / 60.0).round()) } else { format!("{} d ago", (m as f64 / 1440.0).round()) }

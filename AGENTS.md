@@ -18,7 +18,7 @@ of day, music, history, Settings) opens Settings over it (ten sections: General,
 back button.
 
 The only ordinary window is the dashboard: the same office in a window with Hover's
-own title bar (the system's on a Mac). It opens from the tray (the menu bar on a Mac), or a second launch. The app
+own title bar (File, Settings and Help menus; the system's on a Mac). It opens from the tray (the menu bar on a Mac), or a second launch. The app
 lives in the tray.
 
 On a Mac the usage rings are one status item in the menu bar instead of the island (the
@@ -303,7 +303,8 @@ assets/          hover.svg (the logo), make-icon.py (writes hover.png and
   - Saved in the history as `"Cloud"` (its repos), written only for cloud sessions.
 - **The chat view** (the switch at the office's top left, `Office.d-wide`, `App::set_chat_view`).
   A chat app in place of the office, in the notch and the app window alike: the sessions down
-  the left (New chat, Settings), the open chat with a slim reply bar, or with none open a start
+  the left (the office/chat switch, New chat, the chats grouped by project folder; its hide button shows
+  on hover, and a closed sidebar leaves a show button before the title), the open chat with a slim reply bar, or with none open a start
   screen (the agents, then one box with folder, access and model). Kept in `settings.json`
   (`ChatView`, written only while on), so the notch opens on it until the switch goes back;
   Esc and the notch folding never leave it. The office draws nothing under it, and is made

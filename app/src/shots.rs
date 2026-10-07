@@ -510,6 +510,7 @@ fn expand_shots(app: &Rc<App>, hover: &Arc<hover_app::app::Hover>, dir: &Path, f
 /// reply bar at rest and grown, the list hidden, a narrow window, and the notch. It is kept in
 /// the settings, so it is switched off again at the end and the office shots after it are as before.
 fn chat_view_shots(app: &Rc<App>, hover: &Arc<hover_app::app::Hover>, dir: &Path) {
+    use slint::Model as _;
     let dash = adapter(1);
     let settle = |ms: u64| {
         let t = std::time::Instant::now();
@@ -564,13 +565,34 @@ fn chat_view_shots(app: &Rc<App>, hover: &Arc<hover_app::app::Hover>, dir: &Path
         settle(400);
         assert_eq!(hover.sessions.get(id).expect("the chat").title(), "A name I typed", "the typed name is the title");
         assert_eq!(g!().get_d_title().as_str(), "A name I typed", "the header shows it");
-        assert!(slint::Model::iter(&g!().get_list()).any(|r| r.text.as_str() == "A name I typed"), "the sidebar row shows it");
+        assert!(g!().get_list().iter().any(|r| r.text.as_str() == "A name I typed"), "the sidebar row shows it");
         // It is kept in the history too, so the saved row and a later wake-up carry it.
         let key = hover.sessions.get(id).expect("the chat").key;
         let t = std::time::Instant::now();
         while t.elapsed() < Duration::from_secs(3) && !hover.history.as_ref().is_some_and(|h| h.entries().iter().any(|e| e.key == key && e.title == "A name I typed")) { settle(100); }
         assert!(hover.history.as_ref().is_some_and(|h| h.entries().iter().any(|e| e.key == key && e.title == "A name I typed")), "the typed name is saved in the history");
         shot("header-renamed");
+        // The branch and the context chips (the fixture's folder has no branch, and no context yet).
+        g!().set_d_branch("main".into());
+        g!().set_d_ctx(11.0);
+        settle(200);
+        shot("header-chips");
+        // A folder folds its chats, and unfolds them.
+        let rows = g!().get_list().row_count();
+        g!().invoke_list_fold(0);
+        settle(300);
+        assert!(g!().get_list().row_count() < rows && slint::Model::row_data(&g!().get_list(), 0).is_some_and(|r| r.head && r.shut), "a folded folder shows its row only");
+        shot("sidebar-folded");
+        g!().invoke_list_fold(0);
+        settle(300);
+        assert_eq!(g!().get_list().row_count(), rows, "unfolded, the chats are back");
+        // The title bar's menus.
+        for (n, name) in [(1, "file"), (2, "settings"), (3, "help")] {
+            app.dash.borrow().as_ref().expect("the app window").set_bar(n);
+            settle(300);
+            shot(&format!("bar-{name}"));
+        }
+        app.dash.borrow().as_ref().expect("the app window").set_bar(0);
         g!().set_d_draft("First line of a longer reply.\nA second line.\nAnd a third, so the bar grows to fit what is written.".into());
         settle(400);
         shot("chat-long-draft");
