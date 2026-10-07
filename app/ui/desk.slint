@@ -12,14 +12,17 @@ export struct DTile { id: string, title: string, letter: string, icon: string, e
 // A line of what the agent does now (the card's live steps). icon is a path.
 export struct DStep { icon: string, color: color, name: string, text: string, live: bool, fail: bool }
 // A tab of the panel.
-export struct DTab { id: string, title: string, icon: string, enabled: bool, reason: string, badge: int, live: bool }
+export struct DTab { id: string, title: string, icon: string, enabled: bool, reason: string, badge: int, live: bool, idx: int }
+// A row of the Open in menu: an editor Hover found, or the file manager (id "fm").
+export struct DChoice { id: string, name: string, last: bool, letter: string, tint: color }
 // A page the agent opened, in the Browser tab.
 export struct DPage { url: string, label: string, server: bool, on: bool, tip: string }
 // One row of a tab's list. kind: 0 gap, 1 heading, 2 note, 3 faint line, 4 file, 5 tree,
 // 6 the open file's bar, 7 code line, 8 diff file, 9 hunk, 10 diff line, 11 more lines,
 // 12 command, 13 output line, 14 subagent, 15 its section, 16 pull request head, 17 its title,
 // 18 its facts, 19 button, 20 checks, 21 a check, 22 description line, 23 linked pull request,
-// 24 diff summary, 25 the description as a picture of Markdown.
+// 24 diff summary, 25 the description as a picture of Markdown, 26 watch button, 27 a terminal
+// command (prompt in sub, status in right), 28 a terminal output line.
 // tone: 0 ink, 1 green, 2 red, 3 amber, 4 blue, 5 purple, 6 dim, 7 faint.
 export struct DRow {
     kind: int, y: length, h: length, depth: int,
@@ -152,6 +155,35 @@ export global Desk {
     in-out property <string> find;
     in property <bool> file-open;
     callback find-edited(string);
+    // The open file: its path, 0 preview / 1 Markdown source / 2 editing, whether it is a
+    // Markdown file and can be edited (and why not), the amber warning, the text while editing.
+    in property <string> f-path;
+    in property <int> f-mode;
+    in property <bool> f-md;
+    in property <bool> f-can-edit;
+    in property <string> f-why;
+    in property <string> f-warning;
+    in property <bool> f-saving;
+    in-out property <string> f-text;
+    callback f-mode-pick(int);
+    callback f-edit();
+    callback f-save();
+    callback f-cancel();
+    // Open in: the menu of the file's bar.
+    in property <[DChoice]> open-choices;
+    in-out property <bool> open-menu;
+    callback open-in(string);
+    // Terminal: 0 My commands, 1 the agent's; the prompt, whether a command of yours runs.
+    in property <int> term-tab;
+    in property <string> term-agent;
+    in property <bool> term-agent-live;
+    in property <string> term-prompt;
+    in property <bool> term-running;
+    callback term-pick(int);
+    callback term-run(string);
+    callback term-hist(int) -> string;
+    callback term-interrupt();
+    callback term-clear();
     // Browser
     in-out property <string> b-url;
     in property <bool> b-native;
@@ -346,6 +378,15 @@ component StatusBadge inherits Rectangle {
     Text { text: letter; font-size: 10px; font-weight: 700; color: c; horizontal-alignment: center; vertical-alignment: center; }
 }
 
+// A running thing's words: they brighten and dim in a loop, so a glance tells it is alive.
+component Shimmer inherits Text {
+    in property <color> base: #f6f2ff61;
+    property <float> t: 0;
+    animate t { duration: 1600ms; iteration-count: -1; easing: linear; }
+    init => { self.t = 1; }
+    color: #ffffff.mix(base, abs(t * 2 - 1));
+}
+
 // One row of the list, by its kind (see DRow).
 component DeskRowView inherits Rectangle {
     in property <DRow> r;
@@ -407,29 +448,14 @@ component DeskRowView inherits Rectangle {
         accessible-expanded: r.flag == 1;
         accessible-action-default => { act(r.act); }
         HorizontalLayout {
-            padding-left: 8px + r.depth * 14px; padding-right: 8px; spacing: 7px;
+            padding-left: 12px + r.depth * 16px; padding-right: 12px; spacing: 8px;
             VerticalLayout { alignment: center; width: 12px;
                 if r.act.starts-with("dir:"): Icon { name: r.flag == 1 ? Icons.chevron-down : Icons.chevron-right; size: 12px; tint: #f6f2ff61; } }
             VerticalLayout { alignment: center; Icon { name: r.act.starts-with("dir:") ? Icons.folder : DeskIcons.file; size: 14px; tint: #f6f2ff61; } }
-            Text { text: r.text; font-size: 12px; color: r.flag == 2 ? #ffd59a : #dcd8e4; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; }
+            Text { text: r.text; font-size: 12.5px; color: r.flag >= 2 ? #ffc46b : ta5.has-hover ? #f6f2ff : #f6f2ff9e; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; }
+            if r.badge != "": VerticalLayout { alignment: center; StatusBadge { letter: r.badge; } }
         }
         ta5 := TouchArea { mouse-cursor: pointer; clicked => { act(r.act); } }
-    }
-    // 6: the open file's bar: back, its name and folder, its size.
-    if r.kind == 6: HorizontalLayout {
-        padding-left: 2px; padding-right: 2px; spacing: 8px;
-        VerticalLayout { alignment: center;
-            Rectangle { width: 28px; height: 28px; border-radius: 9px; background: ba.has-hover ? #ffffff17 : #ffffff0f;
-                accessible-role: button; accessible-label: "Back to the files"; accessible-action-default => { act("fback"); }
-                Icon { name: DeskIcons.back; size: 14px; tint: #f6f2ff9e; }
-                ba := TouchArea { mouse-cursor: pointer; clicked => { act("fback"); } } } }
-        HorizontalLayout { horizontal-stretch: 1; spacing: 7px;
-            Text { text: r.text; font-size: 12.5px; font-weight: 500; color: #f6f2ff; vertical-alignment: center; overflow: elide; }
-            Text { text: r.sub; font-family: "DejaVu Sans Mono"; font-size: 11px; color: #f6f2ff61; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; } }
-        Text { text: r.right; font-size: 11px; color: #f6f2ff61; vertical-alignment: center; }
-        // Attach to the chat: a copy as it is now, or a reference the agent reads itself.
-        if r.act != "": VerticalLayout { alignment: center; DButton { id: "attachFile"; small: true; text: "Attach"; icon: Icons.add; clicked => { act(r.act); } } }
-        if r.tag2 != "": VerticalLayout { alignment: center; DButton { id: "attachRef"; small: true; text: "As reference"; clicked => { act(r.tag2); } } }
     }
     // 7: a line of a file, with its number.
     if r.kind == 7: Rectangle {
@@ -492,22 +518,20 @@ component DeskRowView inherits Rectangle {
         background: #0f0e11;
         Text { x: 10px; width: parent.width - 20px; text: r.text; font-size: 11.5px; color: #f6f2ff61; vertical-alignment: center; }
     }
-    // 12: a command of the terminal, and how it ended.
-    if r.kind == 12: Rectangle {
-        background: #ffffff09;
-        border-top-left-radius: 10px;
-        border-top-right-radius: 10px;
-        border-bottom-left-radius: r.flag == 1 ? 10px : 0;
-        border-bottom-right-radius: r.flag == 1 ? 10px : 0;
-        border-width: 0;
+    // 27: a terminal's command line: the prompt, the command, and on the right how it ended.
+    // flag 1: it runs (its words pulse).
+    if r.kind == 27: Rectangle {
         HorizontalLayout {
-            padding-left: 10px; padding-right: 10px; spacing: 8px;
-            Text { text: "$"; font-family: "DejaVu Sans Mono"; font-size: 12px; color: #5de37a; vertical-alignment: center; }
-            Text { text: r.text; font-family: "DejaVu Sans Mono"; font-size: 12px; color: #f3f1f6; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; }
-            Text { text: r.right; font-family: "DejaVu Sans Mono"; font-size: 10.5px; color: Tones.color(r.tone); vertical-alignment: center; }
-            if r.tag2 != "": VerticalLayout { alignment: center; DButton { id: "attachOutput"; small: true; text: "Attach"; icon: Icons.add; clicked => { act(r.tag2); } } }
+            padding-left: 16px; padding-right: 16px; spacing: 0px;
+            Text { text: r.sub; font-family: "DejaVu Sans Mono"; font-size: 12.5px; color: #f6f2ffe0; vertical-alignment: center; }
+            Text { text: r.text; font-family: "DejaVu Sans Mono"; font-size: 12.5px; color: #f6f2ffe0; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; }
+            if r.flag != 1: Text { text: r.right; font-size: 11.5px; color: Tones.color(r.tone); vertical-alignment: center; }
+            if r.flag == 1: Shimmer { text: r.right; font-size: 11.5px; vertical-alignment: center; base: #f6f2ff61; }
         }
     }
+    // 28: a line of a terminal's output (tone 2 is what the program wrote to its error output).
+    if r.kind == 28: Text { x: 16px; width: parent.width - 32px; height: parent.height; text: r.text; font-family: "DejaVu Sans Mono"; font-size: 12.5px; vertical-alignment: center; overflow: clip;
+        color: r.tone == 2 ? #ff9a92 : r.tone == 7 ? #f6f2ff61 : #f6f2ffb3; }
     // 13: a line of output.
     if r.kind == 13: Rectangle {
         background: #0b0a0d;
@@ -608,18 +632,22 @@ component DeskRowView inherits Rectangle {
     }
     // 24: the diff's summary.
     if r.kind == 24: HorizontalLayout {
-        padding-left: 4px; spacing: 8px; alignment: start;
+        padding-left: 4px; padding-right: 6px; spacing: 8px;
         Text { text: r.text; font-size: 12px; font-weight: 600; color: #f6f2ff; vertical-alignment: center; }
         if r.add != "": Text { text: r.add; font-family: "DejaVu Sans Mono"; font-size: 11px; color: #5de37a; vertical-alignment: center; }
         if r.del != "": Text { text: r.del; font-family: "DejaVu Sans Mono"; font-size: 11px; color: #ff7b72; vertical-alignment: center; }
         if r.sub != "": VerticalLayout { alignment: center; Rectangle { height: 19px; width: bt.preferred-width + 16px; border-radius: 6px; background: #ffffff0e;
             bt := Text { text: r.sub; font-family: "DejaVu Sans Mono"; font-size: 10.5px; color: #f6f2ff99; horizontal-alignment: center; vertical-alignment: center; } } }
+        Rectangle { horizontal-stretch: 1; }
+        if r.act != "": VerticalLayout { alignment: center; DButton { id: "diffCreatePr"; small: true; primary: true; text: "Create PR"; clicked => { act(r.act); } } }
     }
 }
 
 // The windowed list: the rows in view, placed at their own y in a viewport as tall as all of them.
 component DeskList inherits Rectangle {
     callback act(string);
+    // The end of the list stays in view as it grows (a terminal).
+    in property <bool> follow;
     clip: true;
     fl := Flickable {
         width: parent.width;
@@ -638,7 +666,10 @@ component DeskList inherits Rectangle {
         }
     }
     property <int> reset: Desk.reset;
-    changed reset => { fl.content-y = 0; }
+    changed reset => { fl.content-y = root.follow ? min(0px, root.height - Desk.content-h) : 0px; }
+    property <length> ch: Desk.content-h;
+    changed ch => { if (root.follow) { fl.content-y = min(0px, root.height - Desk.content-h); } }
+    changed height => { if (root.follow) { fl.content-y = min(0px, root.height - Desk.content-h); } }
     // The bar beside it, so a long list shows there is more of it.
     Rectangle {
         x: parent.width - 4px;
@@ -671,6 +702,7 @@ component DeskEmpty inherits Rectangle {
 }
 
 component BarButton inherits Rectangle {
+    in property <string> id;
     in property <string> icon;
     in property <string> label;
     in property <bool> enabled: true;
@@ -683,6 +715,7 @@ component BarButton inherits Rectangle {
         background: ta.has-hover && root.enabled ? #ffffff14 : transparent;
         opacity: root.enabled ? 1 : 0.3;
         accessible-role: button;
+        accessible-id: root.id;
         accessible-label: root.label;
         accessible-enabled: root.enabled;
         accessible-action-default => { if (root.enabled) { root.clicked(); } }
@@ -920,59 +953,374 @@ component PrForm inherits Flickable {
     }
 }
 
+// A tab of the panel: its icon and its name, always both.
 component Tab inherits Rectangle {
     in property <DTab> t;
     in property <bool> on;
     callback clicked;
+    // Where it is, when it becomes the one shown, so the row can scroll it into view.
+    callback shown(length, length);
     height: 30px;
-    border-radius: 8px;
-    background: on ? #ffffff1a : ta.has-hover && t.enabled ? #ffffff0f : transparent;
+    width: row.preferred-width;
+    border-radius: 7px;
+    background: on ? #ffffff14 : ta.has-hover ? #ffffff0d : transparent;
     accessible-role: tab;
     accessible-id: "dtab-" + t.id;
-    accessible-label: t.enabled ? t.title : t.title + ". " + t.reason;
+    accessible-label: t.title;
     accessible-item-selectable: true;
     accessible-item-selected: on;
     accessible-action-default => { clicked(); }
-    Icon { name: DeskIcons.of(t.icon); size: 16px; tint: on ? white : t.enabled ? #f6f2ff9e : #f6f2ff38; }
-    if t.badge > 0: Rectangle { x: parent.width / 2 + 2px; y: 1px; width: max(14px, bt.preferred-width + 6px); height: 14px; border-radius: 7px; background: #3b82f6;
-        bt := Text { text: "" + t.badge; font-size: 9px; font-weight: 600; color: white; horizontal-alignment: center; vertical-alignment: center; } }
-    if t.live: Rectangle { x: parent.width / 2 + 5px; y: 5px; width: 7px; height: 7px; border-radius: 3.5px; background: #ff453a; }
-    ta := TouchArea { mouse-cursor: t.enabled ? pointer : default; clicked => { root.clicked(); } }
+    changed on => { if (self.on) { shown(self.x, self.width); } }
+    row := HorizontalLayout {
+        padding-left: 9px; padding-right: 9px; spacing: 6px;
+        VerticalLayout { alignment: center; Icon { name: DeskIcons.of(t.icon); size: 15px; tint: on ? #f6f2ff : ta.has-hover ? #f6f2ff9e : #f6f2ff61; } }
+        Text { text: t.title; font-size: 12.5px; color: on ? #f6f2ff : ta.has-hover ? #f6f2ff9e : #f6f2ff61; vertical-alignment: center; }
+        if t.badge > 0: VerticalLayout { alignment: center; Rectangle { width: max(14px, bt.preferred-width + 6px); height: 14px; border-radius: 7px; background: #3b82f6;
+            bt := Text { text: "" + t.badge; font-size: 9px; font-weight: 600; color: white; horizontal-alignment: center; vertical-alignment: center; } } }
+        if t.live: VerticalLayout { alignment: center; Rectangle { width: 6px; height: 6px; border-radius: 3px; background: #ff453a; } }
+    }
+    ta := TouchArea { mouse-cursor: pointer; clicked => { root.clicked(); } }
 }
 
-// The panel's inside, under its header: the eight tabs, then the one shown.
-export component DeskBody inherits VerticalLayout {
-    // The tabs.
-    Rectangle {
-        vertical-stretch: 0;
-        height: 46px;
-        HorizontalLayout { padding-left: 10px; padding-right: 10px; padding-top: 8px; padding-bottom: 8px; spacing: 2px;
-            for t[i] in Desk.tabs: Tab { horizontal-stretch: 1; t: t; on: Desk.tab == i; clicked => { Desk.pick-tab(i); } } }
-    }
-    Rectangle {
-        vertical-stretch: 1;
-        // Browser.
-        if Desk.tab == 0: VerticalLayout { padding-left: 10px; padding-right: 10px; padding-bottom: 12px; BrowserBody { } }
-        // Screen.
-        if Desk.tab == 7: VerticalLayout { padding-left: 10px; padding-right: 10px; padding-bottom: 12px; ScreenBody { } }
-        // Pull request: the setup, or the form.
-        if Desk.tab == 4 && Desk.pr-mode == 1: VerticalLayout { padding-left: 10px; padding-right: 10px; padding-bottom: 12px; GhSetup { } }
-        if Desk.tab == 4 && Desk.pr-mode == 2: VerticalLayout { padding-left: 10px; padding-right: 0px; padding-bottom: 12px; PrForm { } }
-        // The lists.
-        if Desk.tab != 0 && Desk.tab != 7 && !(Desk.tab == 4 && Desk.pr-mode != 0): VerticalLayout {
-            padding-left: 10px; padding-right: 4px; padding-bottom: 12px; spacing: 6px;
-            if Desk.tab == 2 && !Desk.file-open: Rectangle {
-                vertical-stretch: 0;
-                height: 34px; border-radius: 10px; background: #1b181e; border-width: 1px; border-color: ff.has-focus ? #ffffff38 : #ffffff12;
-                Icon { x: 10px; name: DeskIcons.search; size: 14px; tint: #f6f2ff61; }
-                ff := TextInput { x: 32px; width: parent.width - 42px; text <=> Desk.find; font-size: 12.5px; color: #f6f2ff; vertical-alignment: center;
-                    accessible-role: text-input; accessible-id: "fFind"; accessible-label: "Find a file"; edited => { Desk.find-edited(self.text); } }
-                if Desk.find == "": Text { x: 32px; text: "Find a file"; font-size: 12.5px; color: #f6f2ff61; vertical-alignment: center; }
+// The panel's top line: every tab by name, sideways when there are more than fit (a fade at
+// the right says so), and the close button that stays where it is.
+component TabsBar inherits Rectangle {
+    height: 52px;
+    HorizontalLayout {
+        padding-left: 10px; padding-right: 10px; spacing: 6px;
+        Rectangle {
+            horizontal-stretch: 1;
+            clip: true;
+            tf := Flickable {
+                width: parent.width;
+                height: parent.height;
+                content-width: tr.preferred-width;
+                tr := HorizontalLayout {
+                    alignment: start; spacing: 2px;
+                    for t in Desk.tabs: VerticalLayout { alignment: center;
+                        Tab {
+                            t: t;
+                            on: Desk.tab == t.idx;
+                            clicked => { Desk.pick-tab(t.idx); }
+                            shown(x, w) => {
+                                if (x < -tf.content-x) { tf.content-x = -x; }
+                                else if (x + w > -tf.content-x + tf.width) { tf.content-x = -(x + w - tf.width); }
+                            }
+                        } }
+                }
             }
-            Rectangle {
-                vertical-stretch: 1;
-                if Desk.rows.length > 0: DeskList { act(a) => { Desk.act(a); } }
-                if Desk.rows.length == 0: DeskEmpty { }
+            if tf.content-width > tf.width + 1px && -tf.content-x < tf.content-width - tf.width - 1px: Rectangle {
+                x: parent.width - 28px; width: 28px;
+                background: @linear-gradient(90deg, #13111600 0%, #131116 100%);
+            }
+        }
+        BarButton { id: "deskClose"; icon: Icons.close; label: "Close"; clicked => { Desk.panel-close(); } }
+    }
+    Rectangle { y: parent.height - 1px; height: 1px; background: #ffffff0f; }
+}
+
+// An editor's mark in the Open in menu: its colour and letter (the file manager has a folder).
+component EdMark inherits Rectangle {
+    in property <DChoice> c;
+    width: 15px;
+    height: 15px;
+    border-radius: 4px;
+    background: c.id == "fm" ? transparent : c.tint;
+    border-width: c.id == "fm" ? 0 : 1px;
+    border-color: #ffffff1f;
+    if c.id == "fm": Icon { name: Icons.folder; size: 14px; tint: #f6f2ff9e; }
+    if c.id != "fm": Text { text: c.letter; font-size: 9px; font-weight: 700; color: white; horizontal-alignment: center; vertical-alignment: center; }
+}
+
+// The file's Open in: the last one used, and a chevron for the others.
+component OpenInPill inherits Rectangle {
+    height: 26px;
+    width: pr.preferred-width;
+    border-radius: 8px;
+    background: Desk.open-menu ? #ffffff1a : pa.has-hover ? #ffffff14 : transparent;
+    accessible-role: button;
+    accessible-id: "fileOpenIn";
+    accessible-label: "Open in " + (Desk.open-choices.length > 0 ? Desk.open-choices[0].name : "");
+    accessible-expandable: true;
+    accessible-expanded: Desk.open-menu;
+    accessible-action-default => { Desk.open-menu = !Desk.open-menu; }
+    pr := HorizontalLayout {
+        padding-left: 7px; padding-right: 6px; spacing: 4px;
+        if Desk.open-choices.length > 0: VerticalLayout { alignment: center; EdMark { c: Desk.open-choices[0]; } }
+        VerticalLayout { alignment: center; Icon { name: Icons.chevron-down; size: 12px; tint: #f6f2ff61; } }
+    }
+    pa := TouchArea { mouse-cursor: pointer; clicked => { Desk.open-menu = !Desk.open-menu; } }
+}
+
+// Preview / Markdown.
+component Seg2 inherits Rectangle {
+    in property <string> a;
+    in property <string> b;
+    in property <int> value;
+    callback picked(int);
+    height: 26px;
+    width: sr.preferred-width + 4px;
+    border-radius: 7px;
+    background: #ffffff08;
+    sr := HorizontalLayout {
+        padding: 2px; spacing: 0px;
+        for n[i] in [root.a, root.b]: Rectangle {
+            width: nt.preferred-width + 14px;
+            border-radius: 5px;
+            background: root.value == i ? #ffffff17 : transparent;
+            accessible-role: radio-button;
+            accessible-label: n;
+            accessible-checkable: true;
+            accessible-checked: root.value == i;
+            accessible-action-default => { root.picked(i); }
+            nt := Text { text: n; font-size: 11.5px; color: root.value == i ? #f6f2ff : na.has-hover ? #f6f2ff9e : #f6f2ff61; horizontal-alignment: center; vertical-alignment: center; }
+            na := TouchArea { mouse-cursor: pointer; clicked => { root.picked(i); } }
+        }
+    }
+}
+
+// The open file's bar: back, its path, and Preview / Markdown, Edit and Open in; or, while
+// it is edited, that, with Cancel and Save.
+component FileBar inherits Rectangle {
+    height: 44px;
+    HorizontalLayout {
+        padding-left: Desk.f-mode == 2 ? 16px : 8px; padding-right: 12px; spacing: 8px;
+        if Desk.f-mode != 2: BarButton { id: "fileBack"; icon: DeskIcons.back; label: "Back to the files"; clicked => { Desk.act("fback"); } }
+        VerticalLayout { horizontal-stretch: 1; alignment: center;
+            Text { text: Desk.f-path; font-family: "DejaVu Sans Mono"; font-size: 12px; color: #f6f2ff; overflow: elide; accessible-role: text; accessible-id: "filePath"; } }
+        if Desk.f-mode == 2: VerticalLayout { alignment: center; Text { text: "Editing"; font-size: 11.5px; font-weight: 500; color: #ffc46b; } }
+        if Desk.f-mode == 2: VerticalLayout { alignment: center; DButton { id: "fileCancel"; small: true; text: "Cancel"; clicked => { Desk.f-cancel(); } } }
+        if Desk.f-mode == 2: VerticalLayout { alignment: center; DButton { id: "fileSave"; small: true; primary: true; text: Desk.f-saving ? "Saving…" : "Save  Ctrl+S"; enabled: !Desk.f-saving; clicked => { Desk.f-save(); } } }
+        if Desk.f-mode != 2 && Desk.f-md: VerticalLayout { alignment: center; Seg2 { a: "Preview"; b: "Markdown"; value: Desk.f-mode; picked(i) => { Desk.f-mode-pick(i); } } }
+        if Desk.f-mode != 2: BarButton { id: "fileEdit"; icon: Icons.rename; label: Desk.f-can-edit ? "Edit" : Desk.f-why; enabled: Desk.f-can-edit; clicked => { Desk.f-edit(); } }
+        if Desk.f-mode != 2: VerticalLayout { alignment: center; OpenInPill { } }
+    }
+    Rectangle { y: parent.height - 1px; height: 1px; background: #ffffff0f; }
+}
+
+// The amber line while the agent works in the folder: saving is allowed, and says what happens.
+component FileWarn inherits Rectangle {
+    height: wt.preferred-height + 16px;
+    background: #ffc46b0d;
+    HorizontalLayout {
+        padding-left: 16px; padding-right: 16px; spacing: 8px;
+        VerticalLayout { alignment: center; Icon { name: Icons.warning; size: 14px; tint: #ffc46b; } }
+        wt := Text { text: Desk.f-warning; font-size: 12px; color: #ffc46b; wrap: word-wrap; vertical-alignment: center; horizontal-stretch: 1; }
+    }
+    Rectangle { y: parent.height - 1px; height: 1px; background: #ffffff0f; }
+}
+
+// A file edited in place: a plain box. Ctrl+S saves, Esc cancels.
+component FileEditor inherits Rectangle {
+    background: #08070a;
+    clip: true;
+    fs := FocusScope {
+        key-pressed(e) => {
+            if (e.text == Key.Escape) { Desk.f-cancel(); return accept; }
+            if (e.modifiers.control && (e.text == "s" || e.text == "S" || e.text == "\u{13}")) { Desk.f-save(); return accept; }
+            reject
+        }
+        fl := Flickable {
+            width: parent.width;
+            height: parent.height;
+            content-height: max(self.height, ti.y + ti.preferred-height + 28px);
+            TouchArea { clicked => { ti.focus(); } }
+            ti := TextInput {
+                x: 16px;
+                y: 10px;
+                width: parent.width - 32px;
+                text <=> Desk.f-text;
+                wrap: word-wrap;
+                single-line: false;
+                font-family: "DejaVu Sans Mono";
+                font-size: 12px;
+                color: #f6f2ff;
+                accessible-role: text-input;
+                accessible-id: "fileEditor";
+                accessible-label: "Edit " + Desk.f-path;
+                cursor-position-changed(c) => { fl.content-y = Follow.y(fl.content-y, fl.height, self.y + c.y, 17px); }
+            }
+        }
+    }
+    init => { ti.focus(); }
+}
+
+// One tab of the terminal: My commands, or the agent's.
+component TermTab inherits Rectangle {
+    in property <string> text;
+    in property <bool> on;
+    in property <bool> live;
+    callback clicked;
+    height: 26px;
+    width: tr.preferred-width;
+    border-radius: 6px;
+    background: on ? #ffffff0f : ta.has-hover ? #ffffff0a : transparent;
+    accessible-role: tab;
+    accessible-label: text;
+    accessible-item-selectable: true;
+    accessible-item-selected: on;
+    accessible-action-default => { clicked(); }
+    tr := HorizontalLayout {
+        padding-left: 10px; padding-right: 10px; spacing: 6px;
+        Text { text: root.text; font-size: 12px; color: on ? #f6f2ff : ta.has-hover ? #f6f2ff9e : #f6f2ff61; vertical-alignment: center; }
+        if live: VerticalLayout { alignment: center; Rectangle { width: 6px; height: 6px; border-radius: 3px; background: #9b6bff; } }
+    }
+    ta := TouchArea { mouse-cursor: pointer; clicked => { root.clicked(); } }
+}
+
+// The Terminal: two tabs, then a screen that is drawn as a terminal is. On My commands the
+// prompt is the last line and the box you type in is the end of it.
+component TermBody inherits Rectangle {
+    background: #08070a;
+    property <bool> mine: Desk.term-tab == 0;
+    property <bool> running: Desk.term-running;
+    changed running => { if (self.mine) { if (self.running) { fs.focus(); } else { ti.focus(); } } }
+    // The prompt has the keyboard when My commands shows, and after a tab change.
+    changed mine => { if (self.mine) { ti.focus(); } }
+    property <int> reset: Desk.reset;
+    changed reset => { if (self.mine) { ti.focus(); } }
+    VerticalLayout {
+        Rectangle {
+            vertical-stretch: 0;
+            height: 38px;
+            HorizontalLayout {
+                padding-left: 8px; padding-right: 8px; spacing: 2px; alignment: start;
+                VerticalLayout { alignment: center; TermTab { text: "My commands"; on: mine; clicked => { Desk.term-pick(0); } } }
+                VerticalLayout { alignment: center; TermTab { text: Desk.term-agent; on: !mine; live: Desk.term-agent-live; clicked => { Desk.term-pick(1); } } }
+            }
+            Rectangle { y: parent.height - 1px; height: 1px; background: #ffffff0f; }
+        }
+        area := Rectangle {
+            vertical-stretch: 1;
+            property <length> ph: 24px;
+            property <length> list-h: root.mine ? max(0px, min(Desk.content-h, self.height - ph - 8px)) : self.height;
+            fs := FocusScope {
+                key-pressed(e) => {
+                    if (!root.mine) { return reject; }
+                    if (e.modifiers.control && (e.text == "c" || e.text == "C" || e.text == "\u{3}")) {
+                        if (Desk.term-running) { Desk.term-interrupt(); return accept; }
+                        if (ti.anchor-position-byte-offset == ti.cursor-position-byte-offset) { ti.text = ""; return accept; }
+                        return reject;
+                    }
+                    if (e.modifiers.control && (e.text == "l" || e.text == "L" || e.text == "\u{c}")) { Desk.term-clear(); return accept; }
+                    if (!Desk.term-running && e.text == Key.UpArrow) { ti.text = Desk.term-hist(-1); ti.set-selection-offsets(ti.text.character-count, ti.text.character-count); return accept; }
+                    if (!Desk.term-running && e.text == Key.DownArrow) { ti.text = Desk.term-hist(1); ti.set-selection-offsets(ti.text.character-count, ti.text.character-count); return accept; }
+                    reject
+                }
+                // Anywhere under the last line is the prompt.
+                TouchArea { clicked => { ti.focus(); } }
+                DeskList {
+                    x: 0; y: 0;
+                    width: parent.width;
+                    height: area.list-h;
+                    follow: true;
+                    act(a) => { Desk.act(a); }
+                }
+                Rectangle {
+                    y: area.list-h;
+                    height: area.ph;
+                    visible: root.mine && !Desk.term-running;
+                    HorizontalLayout {
+                        padding-left: 16px; padding-right: 16px; spacing: 0px;
+                        Text { text: Desk.term-prompt; font-family: "DejaVu Sans Mono"; font-size: 12.5px; color: #f6f2ffe0; vertical-alignment: center; }
+                        ti := TextInput {
+                            horizontal-stretch: 1;
+                            single-line: true;
+                            font-family: "DejaVu Sans Mono";
+                            font-size: 12.5px;
+                            color: #f6f2ffe0;
+                            vertical-alignment: center;
+                            accessible-role: text-input;
+                            accessible-id: "termInput";
+                            accessible-label: "Command";
+                            accepted => { Desk.term-run(self.text); self.text = ""; }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    init => { if (self.mine) { ti.focus(); } }
+}
+
+// The panel's inside: the tabs, then the one shown.
+export component DeskBody inherits Rectangle {
+    VerticalLayout {
+        TabsBar { vertical-stretch: 0; }
+        Rectangle {
+            vertical-stretch: 1;
+            // Browser.
+            if Desk.tab == 0: VerticalLayout { padding-left: 10px; padding-right: 10px; padding-bottom: 12px; BrowserBody { } }
+            // Terminal.
+            if Desk.tab == 1: TermBody { }
+            // Screen.
+            if Desk.tab == 7: VerticalLayout { padding-left: 10px; padding-right: 10px; padding-bottom: 12px; ScreenBody { } }
+            // Pull request: the setup, or the form.
+            if Desk.tab == 4 && Desk.pr-mode == 1: VerticalLayout { padding-left: 10px; padding-right: 10px; padding-bottom: 12px; GhSetup { } }
+            if Desk.tab == 4 && Desk.pr-mode == 2: VerticalLayout { padding-left: 10px; padding-right: 0px; padding-bottom: 12px; PrForm { } }
+            // The lists.
+            if Desk.tab != 0 && Desk.tab != 1 && Desk.tab != 7 && !(Desk.tab == 4 && Desk.pr-mode != 0): VerticalLayout {
+                padding-bottom: 12px; spacing: 0px;
+                padding-left: Desk.tab == 2 ? (Desk.file-open && Desk.f-mode == 0 ? 14px : 0px) : 10px; padding-right: Desk.tab == 2 ? 0px : 4px;
+                if Desk.tab == 2 && Desk.file-open: FileBar { vertical-stretch: 0; }
+                if Desk.tab == 2 && Desk.file-open && Desk.f-warning != "" && Desk.f-mode == 2: FileWarn { vertical-stretch: 0; }
+                if Desk.tab == 2 && !Desk.file-open: Rectangle {
+                    vertical-stretch: 0;
+                    height: 44px;
+                    Rectangle {
+                        x: 12px; y: 6px; width: parent.width - 24px; height: 32px; border-radius: 8px; background: #ffffff07; border-width: 1px; border-color: ff.has-focus ? #c4a2ff4d : #ffffff0f;
+                        Icon { x: 10px; name: DeskIcons.search; size: 14px; tint: #f6f2ff61; }
+                        ff := TextInput { x: 32px; width: parent.width - 42px; text <=> Desk.find; font-size: 12.5px; color: #f6f2ff; vertical-alignment: center;
+                            accessible-role: text-input; accessible-id: "fFind"; accessible-label: "Find a file"; edited => { Desk.find-edited(self.text); } }
+                        if Desk.find == "": Text { x: 32px; text: "Find a file"; font-size: 12.5px; color: #f6f2ff61; vertical-alignment: center; }
+                    }
+                }
+                Rectangle {
+                    vertical-stretch: 1;
+                    if Desk.tab == 2 && Desk.file-open && Desk.f-mode == 2: FileEditor { }
+                    if !(Desk.tab == 2 && Desk.file-open && Desk.f-mode == 2) && Desk.rows.length > 0: DeskList { act(a) => { Desk.act(a); } }
+                    if !(Desk.tab == 2 && Desk.file-open && Desk.f-mode == 2) && Desk.rows.length == 0: DeskEmpty { }
+                }
+            }
+        }
+    }
+    // The Open in menu, over everything, until a click elsewhere.
+    if Desk.open-menu: TouchArea { clicked => { Desk.open-menu = false; } }
+    if Desk.open-menu: Rectangle {
+        x: parent.width - 214px;
+        y: 52px + 44px - 6px;
+        width: 204px;
+        height: mv.preferred-height + 12px;
+        border-radius: 10px;
+        background: #1b181e;
+        border-width: 1px;
+        border-color: #ffffff1a;
+        drop-shadow-blur: 24px;
+        drop-shadow-offset-y: 8px;
+        drop-shadow-color: #00000099;
+        accessible-role: list;
+        accessible-label: "Open in";
+        mv := VerticalLayout {
+            padding: 6px; spacing: 0px;
+            Text { text: "Open file in"; font-size: 11px; color: #f6f2ff61; height: 24px; vertical-alignment: center; x: 8px; }
+            for c[i] in Desk.open-choices: VerticalLayout {
+                if c.id == "fm" && i > 0: Rectangle { height: 9px; Rectangle { y: 4px; height: 1px; background: #ffffff0f; } }
+                Rectangle {
+                    height: 30px;
+                    border-radius: 7px;
+                    background: ma.has-hover ? #ffffff0d : transparent;
+                    accessible-role: button;
+                    accessible-label: c.last ? c.name + ", last used" : c.name;
+                    accessible-action-default => { Desk.open-in(c.id); }
+                    HorizontalLayout {
+                        padding-left: 8px; padding-right: 8px; spacing: 10px;
+                        VerticalLayout { alignment: center; EdMark { c: c; } }
+                        Text { text: c.name; font-size: 13px; color: ma.has-hover ? #f6f2ff : #f6f2ff9e; vertical-alignment: center; }
+                        Rectangle { horizontal-stretch: 1; }
+                        if c.last: Text { text: "Last used"; font-size: 11px; color: #f6f2ff61; vertical-alignment: center; }
+                    }
+                    ma := TouchArea { mouse-cursor: pointer; clicked => { Desk.open-in(c.id); } }
+                }
             }
         }
     }

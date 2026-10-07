@@ -214,6 +214,15 @@ fn key(w: &Rc<MinimalSoftwareWindow>, ctrl: bool, k: slint::platform::Key) {
     if ctrl { w.window().dispatch_event(E::KeyReleased { text: Key::Control.into() }); }
 }
 
+/// A letter with Ctrl held (Ctrl+S, Ctrl+L), as the keyboard sends it.
+fn ctrl_letter(w: &Rc<MinimalSoftwareWindow>, c: &str) {
+    use slint::platform::{Key, WindowAdapter as _, WindowEvent as E};
+    w.window().dispatch_event(E::KeyPressed { text: Key::Control.into() });
+    w.window().dispatch_event(E::KeyPressed { text: c.into() });
+    w.window().dispatch_event(E::KeyReleased { text: c.into() });
+    w.window().dispatch_event(E::KeyReleased { text: Key::Control.into() });
+}
+
 /// Characters typed into whatever has the keyboard focus in the window.
 fn type_text(w: &Rc<MinimalSoftwareWindow>, text: &str) {
     use slint::platform::{WindowAdapter as _, WindowEvent as E};
@@ -996,17 +1005,43 @@ fn desk_shots(app: &Rc<App>, hover: &Arc<hover_app::app::Hover>, dir: &Path, fol
     app.office_push();
     settle(1500);    // The panel, tab by tab, on the finished desk (its session is idle, so Create is open).
     let tab = |name: &str, file: &str| { app.desk_shot_open(done, name); settle(700); shot(file); };
-    tab("terminal", "desk-tab-terminal.png");
-    // Attach a command's output to the chat: a chip in that chat's reply box.
-    let term = app.desk_terminal_ids(done);
-    let with_out = term.iter().find(|_| true).cloned();
-    if let Some(t) = with_out {
-        app.notch.global::<Desk>().invoke_act(format!("chip-term:{t}").into());
-        settle(300);
-        let got = app.chips_of(done);
-        assert!(got.iter().any(|c| c.kind == "terminal" && c.text.as_deref().is_some_and(|t| !t.is_empty())), "the output became a chip: {got:?}");
+    // Terminal: My commands (the user's own shell, drawn as a terminal; no shell runs in the shots), then the agent's.
+    {
+        use hover_agents::term::{Entry, Line, Run};
+        let cwd = if cfg!(windows) { r"C:\Users\james\code\Hover" } else { "/home/james/code/Hover" };
+        let line = |t: &str, err: bool| Line { text: t.into(), err };
+        let entry = |cmd: &str, lines: Vec<Line>, run: Run| Entry { cwd: cwd.into(), cmd: cmd.into(), lines, run, cut: 0 };
+        app.desk_shot_term(done, vec![
+            entry("git log --oneline -3", vec![line("9f3a0d2 (HEAD -> main, origin/main) Release 4.0.0", false), line("1c7e5b0 Chat view: the sessions down the left", false), line("6a2d913 Kiro credit tracking in the model picker", false)], Run::Done(0, 120)),
+            entry("npm test", vec![line("FAIL src/view.test.ts", true), line("  expected 3, got 2", true)], Run::Done(1, 2100)),
+            entry("ping -t example.com", vec![line("Reply from 93.184.216.34: bytes=32 time=11ms", false), line("^C", false)], Run::Stopped(4000)),
+        ]);
     }
-    tab("files", "desk-tab-files.png");
+    tab("terminal", "desk-tab-terminal.png");
+    app.notch.global::<Desk>().invoke_term_pick(1);
+    settle(400);
+    shot("desk-tab-terminal-agent.png");
+    app.notch.global::<Desk>().invoke_term_pick(0);
+    settle(300);
+    // The prompt takes typing; Enter runs it in a real shell; Up brings it back; Ctrl+L clears.
+    {
+        let gd = app.notch.global::<Desk>();
+        type_text(&notch, if cfg!(windows) { "Write-Output 'hello from your shell'; cmd /c exit 3" } else { "echo 'hello from your shell'; (exit 3)" });
+        settle(200);
+        shot("desk-tab-terminal-typing.png");
+        key(&notch, false, slint::platform::Key::Return);
+        let t = std::time::Instant::now();
+        settle(400);
+        while t.elapsed() < Duration::from_secs(20) && gd.get_term_running() { settle(100); }
+        settle(500);
+        shot("desk-tab-terminal-run.png");
+        key(&notch, false, slint::platform::Key::UpArrow);
+        settle(300);
+        shot("desk-tab-terminal-history.png");
+        ctrl_letter(&notch, "l");
+        settle(300);
+        shot("desk-tab-terminal-cleared.png");
+    }    tab("files", "desk-tab-files.png");
     app.notch.global::<Desk>().invoke_act("dir:src".into());
     app.notch.global::<Desk>().invoke_act("dir:src/ui".into());
     settle(300);
@@ -1029,16 +1064,54 @@ fn desk_shots(app: &Rc<App>, hover: &Arc<hover_app::app::Hover>, dir: &Path, fol
     app.notch.global::<Desk>().invoke_scrolled(2000.0, 300.0);
     settle(300);
     shot("desk-tab-file-scrolled.png");
-    // Attach the open file: a copy as it is now, and a reference. (The sample's file is made in the task's folder for it.)
-    let task_folder = hover.sessions.get(done).map(|s| s.folder).unwrap_or_default();
-    std::fs::create_dir_all(Path::new(&task_folder).join("src")).unwrap();
-    std::fs::write(Path::new(&task_folder).join("src/refresh.ts"), "export const a = 1;\n").unwrap();
-    app.notch.global::<Desk>().invoke_act("chip-file:src/refresh.ts".into());
-    app.notch.global::<Desk>().invoke_act("chip-ref:src/refresh.ts".into());
+    // A Markdown file opens as its preview, with a Preview / Markdown switch; Edit, and Open in.
+    let gd = app.notch.global::<Desk>();
+    gd.invoke_act("fback".into());
+    let readme = "# Refresh\n\nSkips views that are **clean**, so the panel stops redrawing on every poll.\n\n## What it does\n\n- Returns early when `dirty` is false.\n- Keeps the flag in `View`.\n- Covers a clean view and a dirty one in the tests.\n\n## Build\n\n```powershell\n.\\build.ps1 test\n```\n\nSee [AGENTS.md](AGENTS.md) for how it works.".to_owned();
+    gd.invoke_act("file:README.md".into());
+    app.desk_put(done, "file", Got::File("README.md".into(), d::FileView::Text { path: "README.md".into(), text: readme.clone(), truncated: false, size: readme.len() as u64 }));
+    app.desk_shot_editors(vec![
+        hover_agents::editor::Found { id: "vscode".into(), name: "VS Code".into(), exe: "code".into() },
+        hover_agents::editor::Found { id: "zed".into(), name: "Zed".into(), exe: "zed".into() }]);
+    hover.settings.set_last_editor("zed");
+    settle(600);
+    shot("desk-tab-file-md-preview.png");
+    gd.invoke_f_mode_pick(1);
     settle(300);
-    let kinds: Vec<(String, bool)> = app.chips_of(done).iter().filter(|c| c.kind == "file").map(|c| (c.source.clone(), c.live)).collect();
-    assert_eq!(kinds, [("src/refresh.ts".to_owned(), false), ("src/refresh.ts".to_owned(), true)], "a copy, then a reference");
-    app.notch.global::<Desk>().invoke_act("fback".into());
+    shot("desk-tab-file-md-source.png");
+    gd.set_open_menu(true);
+    settle(300);
+    shot("desk-tab-file-open-in.png");
+    gd.set_open_menu(false);
+    // Edit in place, with Cancel and Save; saving marks the file M in the tree.
+    gd.invoke_f_edit();
+    settle(400);
+    shot("desk-tab-file-edit.png");
+    // Typing reaches the box, and Ctrl+S saves.
+    type_text(&notch, "Typed in the box. ");
+    assert!(gd.get_f_text().starts_with("Typed in the box."), "typing reaches the editor: {}", gd.get_f_text());
+    ctrl_letter(&notch, "s");
+    settle(400);
+    assert_ne!(gd.get_f_mode(), 2, "Ctrl+S saved and left the editor");
+    gd.invoke_act("fback".into());
+    settle(400);
+    shot("desk-tab-files-saved.png");
+    // The same while the agent works in that folder: the amber warning, and saving is still allowed.
+    app.desk_shot_open(busy, "files");
+    gd.invoke_act("file:README.md".into());
+    app.desk_put(busy, "file", Got::File("README.md".into(), d::FileView::Text { path: "README.md".into(), text: readme.clone(), truncated: false, size: readme.len() as u64 }));
+    settle(400);
+    gd.invoke_f_edit();
+    settle(400);
+    shot("desk-tab-file-edit-busy.png");
+    type_text(&notch, "dropped");
+    key(&notch, false, slint::platform::Key::Escape);
+    settle(300);
+    assert_ne!(gd.get_f_mode(), 2, "Esc cancelled the edit");
+    gd.invoke_act("fback".into());
+    app.desk_shot_open(done, "files");
+    gd.invoke_act("file:src/refresh.ts".into());
+    settle(300);    app.notch.global::<Desk>().invoke_act("fback".into());
     tab("diff", "desk-tab-diff.png");
     app.notch.global::<Desk>().invoke_act("chip-diff:src/refresh.ts".into());
     settle(300);

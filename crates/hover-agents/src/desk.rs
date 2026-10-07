@@ -755,6 +755,29 @@ pub fn file_text(folder: &str, rel: Option<&str>) -> FileView {
     FileView::Text { path, text: String::from_utf8_lossy(&buf).into_owned(), truncated: meta.len() > FILE_LIMIT as u64, size: meta.len() }
 }
 
+/// Saves a file of the session's folder as the user edited it. The text goes to a temp file
+/// beside it first and is renamed over the file, so a crash or a full disk can't leave half
+/// a file. Only a file that is already there, only inside the folder (links followed), and
+/// only one that `file_text` showed whole and as valid UTF-8: anything else would lose data.
+pub fn write_file(folder: &str, rel: &str, text: &str) -> Result<(), String> {
+    let full = inside(folder, Some(rel)).ok_or("That file isn’t in the session’s folder.")?;
+    let meta = std::fs::metadata(&full).map_err(|_| "That file isn’t there any more.".to_owned())?;
+    if !meta.is_file() { return Err("That file isn’t there any more.".into()); }
+    if meta.len() > FILE_LIMIT as u64 { return Err("This file is too big to edit here.".into()); }
+    let now = std::fs::read(&full).map_err(|e| e.to_string())?;
+    if has_nul(&now) || std::str::from_utf8(&now).is_err() { return Err("This isn’t plain UTF-8 text, so Hover won’t rewrite it.".into()); }
+    let name = full.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    let tmp = full.with_file_name(format!(".{name}.hover-{}.tmp", std::process::id()));
+    let done = (|| -> std::io::Result<()> {
+        std::fs::write(&tmp, text)?;
+        // Keep the file's permissions (an executable script stays one).
+        std::fs::set_permissions(&tmp, meta.permissions())?;
+        std::fs::rename(&tmp, &full)
+    })();
+    if let Err(e) = done { let _ = std::fs::remove_file(&tmp); return Err(format!("Couldn’t save it. {e}")); }
+    Ok(())
+}
+
 // MARK: What the panels hold
 
 /// Whether the folder is in a Git work tree, its branch, and where the folder is in it.
@@ -1006,7 +1029,8 @@ pub fn tiles(probe: Option<&Probe>, snap: &Snap, ctx: &TileContext) -> Vec<Tile>
     let apps = apps(snap).is_some();
     SURFACES.iter().map(|&(id, title, letter)| {
         let (mut enabled, mut reason) = match id {
-            "terminal" => (p.map_or(runs, |p| p.commands) > 0, "No commands run yet.".to_owned()),
+            // The user's own shell is in it too ("My commands"), so it needs only the folder.
+            "terminal" => (p.is_none_or(|p| p.folder), "The folder isn’t there any more.".to_owned()),
             "files" => (p.is_none_or(|p| p.folder), "The folder isn’t there any more.".into()),
             // A Kiro Web session's changes are its pull request's, or the edits it reported.
             "diff" if snap.cloud.is_some() => (true, String::new()),

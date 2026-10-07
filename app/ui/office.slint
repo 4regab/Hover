@@ -1682,7 +1682,7 @@ export component OfficeView inherits Rectangle {
         property <length> sw-y: compact ? 8px : 10px;
         property <length> sw-room: sw-x + (compact ? 68px : 76px) + 10px;
         // The chat's own width: the header's buttons keep to their icons when it is under 640 px.
-        property <length> main-w: chat ? self.width - lw - (Desk.panel ? desk-w + side-gap : 0px) : self.width - 2 * side-gap - (Desk.panel ? desk-w + side-gap : 0px);
+        property <length> main-w: chat ? self.width - lw - (Desk.panel ? desk-w : 0px) : self.width - 2 * side-gap - (Desk.panel ? desk-w + side-gap : 0px);
         // Where the access menu opens: by the chip that asked (the chat view's start screen), else the office's box.
         property <length> pop-x: -1px;
         property <length> pop-y;
@@ -2433,7 +2433,7 @@ export component OfficeView inherits Rectangle {
         if Office.drawer: Graphite {
             x: chat ? lw : parent.width - self.width - side-gap;
             y: chat ? 0px : side-gap;
-            width: chat ? parent.width - lw - (Desk.panel ? desk-w + side-gap : 0px) : side-w;
+            width: chat ? parent.width - lw - (Desk.panel ? desk-w : 0px) : side-w;
             height: chat ? parent.height : parent.height - 2 * side-gap;
             border-radius: chat ? 0px : compact ? 16px : 20px;
             opacity: chat ? ct : 1;
@@ -2983,36 +2983,19 @@ export component OfficeView inherits Rectangle {
             }
         }
 
-        // The desk's panel: wider than the others, its surfaces as tabs along the top.
+        // The desk's panel: wider than the others, its surfaces as tabs along the top. In the chat
+        // view it is attached to the chat's right edge at the chat's full height.
         if Desk.panel: Graphite {
-            x: parent.width - self.width - side-gap;
-            y: side-gap;
+            x: chat ? parent.width - self.width : parent.width - self.width - side-gap;
+            y: chat ? 0px : side-gap;
             width: desk-w;
-            height: parent.height - 2 * side-gap;
-            border-radius: compact ? 16px : 20px;
+            height: chat ? parent.height : parent.height - 2 * side-gap;
+            border-radius: chat ? 0px : compact ? 16px : 20px;
             accessible-role: groupbox;
             accessible-id: "deskPanel";
             accessible-label: Desk.p-title;
-            VerticalLayout {
-                HorizontalLayout {
-                    vertical-stretch: 0;
-                    padding-left: 14px;
-                    padding-right: 10px;
-                    padding-top: 12px;
-                    padding-bottom: 11px;
-                    VerticalLayout {
-                        horizontal-stretch: 1;
-                        alignment: center;
-                        Text { text: Desk.p-title; font-size: 14px; font-weight: 600; letter-spacing: -0.14px; color: #f6f2ff; overflow: elide; accessible-role: text; accessible-id: "pTitle"; }
-                        Text { text: Desk.p-sub; font-size: 11.5px; color: #f6f2ff61; overflow: elide; }
-                    }
-                    VerticalLayout { alignment: center; XButton { id: "deskClose"; label: "Close"; icon: Icons.close; small: compact; clicked => { Desk.panel-close(); } } }
-                }
-                Rectangle { height: 1px; background: #ffffff0f; }
-                DeskBody { vertical-stretch: 1; }
-            }
+            DeskBody { width: parent.width; height: parent.height; }
         }
-
         // The desk's card, where the desk was clicked; a click elsewhere puts it away.
         if Desk.card: TouchArea { clicked => { Desk.card-close(); } }
         if Desk.card: DeskCard {

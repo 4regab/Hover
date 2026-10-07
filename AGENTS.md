@@ -118,6 +118,7 @@ crates/
                  setup.rs (one-click agent install and sign-in), github.rs (gh: status,
                  install, sign-in), desk.rs (what the desk card and its panels read:
                  git, gh, terminal, files, diff, pull requests, subagents, pages),
+                 term.rs (the user's own shell in the Terminal panel),
                  orch.rs (helpers: a task asking other agents for help, under fixed
                  limits), workspace.rs (what Git says about a task's folder, and the
                  holds a checkpoint restore takes), editor.rs (finds the editors on
@@ -398,7 +399,27 @@ assets/          hover.svg (the logo), make-icon.py (writes hover.png and
   Terminal, Files, Diff, Agents, Linked PRs, Pull request, Browser, Screen. Every git and
   gh call blocks, so it runs on a worker; lists are windowed from Rust and only the rows
   on screen reach Slint. Files shown stay inside the session's folder (links followed).
-  A tile the OS can't run is disabled with its reason (`TileContext.off`).
+  A tile the OS can't run is disabled on the card with its reason (`TileContext.off`); in the
+  panel the same tab is hidden, not greyed (the one open stays while it is open). The panel
+  sits at the chat's right edge at the chat's full height in the chat view, and floats over
+  the office otherwise. Its tabs each show their name and scroll sideways, with a fade at the
+  right and the close button fixed.
+- **Files & changes, Files tab** (`desk_ui.rs`). The tree only; what changed is the Diff
+  tab's, and a changed file (or one saved here) shows its letter. A `.md` file opens as a
+  preview (hover-chat paints it, as it does a pull request's description) with a Preview /
+  Markdown switch. Edit is for every file that `file_text` showed whole and as UTF-8: a box
+  in place, Cancel and Save (Ctrl+S saves, Esc cancels), and an amber line, not a block, while
+  the agent works in the folder. `desk::write_file` saves inside the session's folder, through
+  a temp file renamed over the original. Open in lists only the editors `editor::available()`
+  finds, then the file manager; the last used is first and marked (`LastEditor` in
+  `settings.json`).
+- **The Terminal tab** has two tabs. The agent's is its commands from the session's steps,
+  read only. "My commands" is the user's own shell (`hover-agents::term`): PowerShell on
+  Windows, bash elsewhere, one long-lived process per chat started in the chat's folder, run as
+  the user and outside the agents' sandbox. A command goes to its stdin as base64 inside a
+  fixed wrapper (never pasted into a command line or into the shell's syntax), and the wrapper
+  prints a marker with the exit code and the folder, so `cd` lasts. Ctrl+C ends the shell and
+  starts a new one in the same folder. A command that waits for typed input gets none.
 - **The pull request tab** sets up the GitHub CLI in one click (`github.rs`): install with
   winget or Homebrew where there is one (else a hint: Hover never uses sudo), then
   `gh auth login` with the device code shown to copy and the page to open. Create pull

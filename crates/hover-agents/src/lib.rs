@@ -27,6 +27,7 @@ pub mod setup;
 pub mod spaces;
 pub mod state;
 pub mod stream;
+pub mod term;
 pub mod text;
 pub mod words;
 pub mod workspace;

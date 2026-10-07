@@ -56,6 +56,8 @@ pub struct Model {
     /// The image a new Space starts from, `macos` or `linux`. None (never set) is `macos`;
     /// written only once set.
     pub space_image: Option<String>,
+    /// The editor (or the file manager, `fm`) Open in used last, so the picker lists it first. Written only once set.
+    pub last_editor: Option<String>,
     /// Kiro is asked to compact its conversation before the next reply once its context is this
     /// full (Hover's own; Kiro compacts by itself only at 100 %). None (never set) is off;
     /// written only once set.
@@ -82,7 +84,7 @@ impl Default for Model {
             hover_opens_workspace: true, notch_items: None, appearance: Appearance::System, theme: None, workspace_size: WorkspaceSize::Default,
             kiro_folder: None, kiro_notice_seen: false, kiro_model: None, kiro_effort: Some("high".into()), kiro_agent: None,
             kiro_read_only: false, kiro_require_mcp: false, kiro_idle_minutes: 5, kiro_hide_steps: false, kiro_approval: AgentApproval::Autopilot, agents: None, agent_offers: None,
-            agent_tool: None, computer_use: false, chat_view: false, sandbox: None, agent_browser: None, agent_spaces: false, space_image: None, kiro_auto_compact: None, kiro_compact_at: None, kiro_retry_busy: None, discord_presence: None, sc_workspace: Shortcut::DEFAULT, projects: None, voice: None, default_workspace: None,
+            agent_tool: None, computer_use: false, chat_view: false, sandbox: None, agent_browser: None, agent_spaces: false, space_image: None, last_editor: None, kiro_auto_compact: None, kiro_compact_at: None, kiro_retry_busy: None, discord_presence: None, sc_workspace: Shortcut::DEFAULT, projects: None, voice: None, default_workspace: None,
         }
     }
 }
@@ -104,6 +106,7 @@ impl Model {
             self.agent_browser.map(|v| ("AgentBrowser", Json::Bool(v))),
             self.agent_spaces.then_some(("AgentSpaces", Json::Bool(true))),
             self.space_image.as_deref().map(|v| ("SpaceImage", Json::str(v))),
+            self.last_editor.as_deref().map(|v| ("LastEditor", Json::str(v))),
             self.kiro_auto_compact.map(|v| ("KiroAutoCompact", Json::Bool(v))),
             self.kiro_compact_at.map(|v| ("KiroCompactAt", Json::int(v as i64))),
             self.kiro_retry_busy.map(|v| ("KiroRetryBusy", Json::Bool(v))),
@@ -173,6 +176,7 @@ impl Model {
                 "AgentBrowser" => m.agent_browser = if x.is_null() { None } else { Some(b()?) },
                 "AgentSpaces" => m.agent_spaces = b()?,
                 "SpaceImage" => m.space_image = opt_text(Some(x))?,
+                "LastEditor" => m.last_editor = opt_text(Some(x))?,
                 "KiroAutoCompact" => m.kiro_auto_compact = if x.is_null() { None } else { Some(b()?) },
                 "KiroCompactAt" => m.kiro_compact_at = if x.is_null() { None } else { Some(x.i32()?) },
                 "KiroRetryBusy" => m.kiro_retry_busy = if x.is_null() { None } else { Some(b()?) },
@@ -414,6 +418,8 @@ impl Settings {
     /// picks it up from its next session.
     pub fn agent_spaces(&self) -> bool { self.m.lock().unwrap().agent_spaces }
     pub fn set_agent_spaces(&self, v: bool) { self.change(|m| m.agent_spaces = v) }
+    pub fn last_editor(&self) -> Option<String> { self.m.lock().unwrap().last_editor.clone() }
+    pub fn set_last_editor(&self, v: &str) { self.change(|m| m.last_editor = Some(v.to_owned())) }
     /// The image a new Space starts from: "macos" (a VM, two at most on a Mac) or "linux".
     pub fn space_image(&self) -> &'static str { if self.m.lock().unwrap().space_image.as_deref() == Some("linux") { "linux" } else { "macos" } }
     pub fn set_space_image(&self, v: &str) { let v = if v == "linux" { "linux" } else { "macos" }; self.change(|m| m.space_image = Some(v.into())) }

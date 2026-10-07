@@ -180,6 +180,67 @@ pub fn open(choice: Option<&str>, t: &Target, cloud: bool) -> Result<String, Str
     Ok(format!("Opened in {}.", f.name))
 }
 
+/// What the Open in picker lists: an editor, or the computer's file manager.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Choice { pub id: String, pub name: String, pub last: bool }
+
+/// The id the file manager has in the picker.
+pub const FILE_MANAGER: &str = "fm";
+
+/// What the file manager is called here.
+pub fn file_manager_name() -> &'static str {
+    if cfg!(windows) { "File Explorer" } else if cfg!(target_os = "macos") { "Finder" } else { "Files" }
+}
+
+/// The picker's rows: the last one used first and marked, then the editors found (in `BUILTIN`
+/// order), then the file manager. Only editors that were found are listed; a `last` that is
+/// gone is forgotten.
+pub fn choices(found: &[Found], last: Option<&str>) -> Vec<Choice> {
+    let mut all: Vec<Choice> = found.iter().map(|f| Choice { id: f.id.clone(), name: f.name.clone(), last: false })
+        .chain(std::iter::once(Choice { id: FILE_MANAGER.into(), name: file_manager_name().into(), last: false })).collect();
+    if let Some(i) = last.and_then(|l| all.iter().position(|c| c.id == l)) {
+        let mut c = all.remove(i);
+        c.last = true;
+        all.insert(0, c);
+    }
+    all
+}
+
+/// Opens `t` in the file manager: the folder, or the folder a file is in (selected, where the
+/// file manager can). No shell: the path is one argument.
+pub fn open_file_manager(t: &Target, cloud: bool) -> Result<String, String> {
+    check_folder(&t.folder, cloud)?;
+    let file = t.file.as_deref().and_then(|f| crate::desk::inside(&t.folder, Some(f)));
+    #[cfg(windows)]
+    let (exe, args) = (PathBuf::from("explorer.exe"), match &file {
+        Some(p) => vec![format!("/select,{}", p.display())],
+        None => vec![t.folder.clone()],
+    });
+    #[cfg(not(windows))]
+    let (exe, args) = {
+        let folder = file.as_deref().and_then(Path::parent).map_or_else(|| t.folder.clone(), |p| p.to_string_lossy().into_owned());
+        (PathBuf::from(if cfg!(target_os = "macos") { "open" } else { "xdg-open" }), vec![folder])
+    };
+    launch(&exe, &args)?;
+    Ok(format!("Opened in {}.", file_manager_name()))
+}
+
+/// Like `open`, but an editor that isn't found (the last one used, since uninstalled) gives way to
+/// the first that is. The id of the one used, and what to tell the user.
+pub fn open_or_first(choice: Option<&str>, t: &Target, cloud: bool) -> Result<(String, String), String> {
+    check_folder(&t.folder, cloud)?;
+    let found = available();
+    let f = pick(choice, &found).or_else(|e| pick(None, &found).map_err(|_| e))?;
+    launch(&f.exe, &args(&f.id, t))?;
+    hover_core::log::line(&format!("editor: {} opened {}", f.name, t.folder));
+    Ok((f.id.clone(), format!("Opened in {}.", f.name)))
+}
+
+/// Opens `t` in the one picked: an editor's id, or `FILE_MANAGER`. Off the UI thread.
+pub fn open_in(choice: &str, t: &Target, cloud: bool) -> Result<String, String> {
+    if choice == FILE_MANAGER { open_file_manager(t, cloud) } else { open(Some(choice), t, cloud) }
+}
+
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
