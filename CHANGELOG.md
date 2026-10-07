@@ -5,6 +5,13 @@ What changed in each Hover release. Versions follow [Semantic Versioning](https:
 
 ## [Unreleased]
 
+### Changed
+
+- Voice's aura is now an orb, like Siri's: a dark glass ball with ribbons of light swirling
+  inside. While Hover listens, your voice makes it swell and swirl faster. While Hover works on
+  what you said, it swirls slowly and breathes. Its colours are the Aura colour from Settings →
+  Voice and the hues next to it. The dots and ripples around the old ring are gone.
+
 ## [4.0.0] - 2026-10-06
 
 The chat view, Kiro's daily credits, and text boxes that scroll. Windows and Linux only: the Mac
