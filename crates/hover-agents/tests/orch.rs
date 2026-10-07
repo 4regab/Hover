@@ -130,6 +130,9 @@ fn helpers_never_have_more_access_than_the_lead_and_failures_say_why() {
     let r = rig("perm", DelegationLimits { max_helpers: 10, max_parallel: 10, max_depth: 1 }, |a, _, release| hold(a, release));
     *r.env.access.lock().unwrap() = "risky".into();
     let lead = r.lead("hold");
+    // A task of its own, started before the helpers fill the three places the app allows at once (they start at once now,
+    // with no worktree to wait for).
+    let plain = r.k.start(AgentTool::Codex, &r.folder, "hold", vec![]).unwrap();
     let ask = |p: &str, access: Option<&str>| r.orch.delegate(&lead.key, Delegate { provider: p.into(), brief: "x".into(), access: access.map(str::to_owned), ..Default::default() });
     let a = ask("codex", Some("full")).unwrap();
     assert_eq!(a.access, "risky");
@@ -141,7 +144,6 @@ fn helpers_never_have_more_access_than_the_lead_and_failures_say_why() {
     assert!(e.contains("no provider called “gemini”") && e.contains("kiro, codex"), "{e}");
     assert!(r.orch.delegate(&lead.key, Delegate { provider: "kiro".into(), brief: "  ".into(), ..Default::default() }).unwrap_err().contains("needs a brief"));
     // Delegation off for a task: a clear refusal.
-    let plain = r.k.start(AgentTool::Codex, &r.folder, "hold", vec![]).unwrap();
     assert_eq!(r.orch.delegate(&plain.key, Delegate { provider: "kiro".into(), brief: "x".into(), ..Default::default() }).unwrap_err(), orch::OFF);
     r.release();
     wait_for("all to finish", || r.k.running() == 0);
