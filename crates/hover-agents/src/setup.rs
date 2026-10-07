@@ -80,7 +80,7 @@ pub fn plan_with(t: AgentTool, has: &dyn Fn(&str) -> bool, sandbox: Option<Sandb
         AgentTool::OpenCode => if !has("opencode") { steps.push(Step::new("Installing OpenCode", "curl -fsSL https://opencode.ai/install | bash")); },
         // Not in 2.x's macOS build.
         AgentTool::Claude => if !has("claude") { steps.push(Step::new("Installing Claude Code", "curl -fsSL https://claude.ai/install.sh | bash")); },
-        // A custom agent is set up in Settings → Agents, by its own record.
+        // Only old chats have this tool (an agent of the user's own, gone from Hover); there is nothing to set up.
         AgentTool::Custom => {}
         // Google's ACP server for Antigravity (agents.rs), unpacked where Hover looks for it.
         AgentTool::Agy => if !has("agy_acp_server.par") {

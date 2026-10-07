@@ -819,7 +819,7 @@ impl App {
         self.desk_open(id, tab);
     }
 
-    /// Open in editor: the card's own folder (a task's worktree is the folder), off the UI thread. The answer is a toast.
+    /// Open in editor: the card's own folder, off the UI thread. The answer is a toast.
     fn desk_open_editor(self: &Rc<Self>) {
         let Some(id) = self.page.desk.card.get().or(self.page.desk.panel.get().map(|p| p.0)) else { return };
         self.editor_for(id);
@@ -831,11 +831,10 @@ impl App {
     /// Open in editor, at a file and line of the task's folder when given (the file and diff views' Open at this line).
     fn editor_at(self: &Rc<Self>, id: i32, at: Option<(String, u32)>) {
         let Some(s) = self.hover.sessions.get(id) else { return };
-        let (settings, folder, cloud) = (self.hover.settings.editor(), s.folder.clone(), s.cloud.is_some());
+        let (folder, cloud) = (s.folder.clone(), s.cloud.is_some());
         std::thread::Builder::new().name("open-editor".into()).spawn(move || {
             let target = match &at { Some((file, line)) => hover_agents::editor::Target::file(&folder, file, Some(*line), None), None => hover_agents::editor::Target::folder(&folder) };
-            let said = hover_agents::editor::open(&settings, None, &target, cloud)
-                .unwrap_or_else(|e| if e == "Pick an editor first." { "Choose a default editor in Settings → Automation.".to_owned() } else { e });
+            let said = hover_agents::editor::open(None, &target, cloud).unwrap_or_else(|e| e);
             crate::ui_do(move |a| a.toast(&said));
         }).ok();
     }
@@ -1171,16 +1170,7 @@ impl App {
             "pr" => match got("pr") {
                 Some(Got::Pr(d::PrPanel::Open(detail))) => {
                     let md = (!detail.body.trim().is_empty()).then(|| self.desk_markdown(&detail.body, w)).flatten();
-                    let mut rows = pr_rows(&detail, w, md);
-                    // Watch this pull request: the task is told of new reviews, failed checks and the rest (prwatch.rs).
-                    let key = self.hover.sessions.get(id).map(|s| s.key).unwrap_or_default();
-                    let watching = self.hover.watcher.of(&key).into_iter().find(|w| w.url == detail.url);
-                    let (label, act) = match &watching {
-                        Some(w) => (format!("Stop watching · {}", match &w.state { hover_agents::prwatch::WState::Active => "active".to_owned(), hover_agents::prwatch::WState::Paused(why) => format!("paused: {why}"), hover_agents::prwatch::WState::Ended(why) => format!("ended: {why}") }), format!("unwatch:{}", w.id)),
-                        None => ("Watch this pull request".to_owned(), format!("watch:{}", detail.url)),
-                    };
-                    if rows.len() > 3 { rows.insert(4, R::new(26, 44.0).text(label).act(act)); }
-                    Laid::of(rows, None)
+                    Laid::of(pr_rows(&detail, w, md), None)
                 }
                 Some(Got::Pr(d::PrPanel::Error(e))) => Laid::of(vec![], Some(empty("pr", "No pull request", &e))),
                 Some(Got::Pr(_)) => Laid::default(),
@@ -1443,14 +1433,6 @@ impl App {
                 if let Some((file, line)) = arg.rsplit_once(':').and_then(|(f, l)| Some((f.to_owned(), l.parse::<u32>().ok()?))) { self.editor_at(id, Some((file, line))); }
                 return;
             }
-            "watch" => {
-                let key = self.hover.sessions.get(id).map(|s| s.key).unwrap_or_default();
-                match self.hover.watcher.watch(&key, arg, hover_agents::prwatch::Events::all(), "") {
-                    Ok(_) => self.toast("Watching. This task is told of new reviews, failed checks and when it is done or closed."),
-                    Err(e) => self.toast(&e),
-                }
-            }
-            "unwatch" => { self.hover.watcher.unwatch(arg); self.toast("No longer watching."); }
             _ => return,
         }
         if kind == "file" || kind == "fback" { self.desk_reset_scroll(); }

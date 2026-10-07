@@ -14,7 +14,7 @@ office hands tasks to Kiro, Codex, Cursor, OpenCode or Claude Code, which run he
 each in a chosen folder, as bots at desks in a voxel office. A click on a desk opens its
 **desk card** (what the agent is doing, and panels for its terminal, files, diff, pull
 request, browser and screen). The office's menu (time
-of day, music, history, Settings) opens Settings over it (nine sections: General, Integrations, Projects, Voice, Kiro, Codex, Cursor, OpenCode, Claude Code), with a
+of day, music, history, Settings) opens Settings over it (ten sections: General, Integrations, Projects, Voice, Kiro, Codex, Cursor, OpenCode, Claude Code, Antigravity), with a
 back button.
 
 The only ordinary window is the dashboard: the same office in a window with Hover's
@@ -98,7 +98,7 @@ On a Mac, `open -a Hover --args --settings <page>` opens Settings on a page (`st
 
 ```
 crates/
-  hover-core     paths (+ the Noty move), settings.json (System.Text.Json's bytes),
+  hover-core     paths (+ the Noty move), settings.json (System.Text.Json's bytes; keys of dropped features are skipped and not written back),
                  crypto (AES-GCM; DPAPI / Secret Service key), history (sealed
                  agents/), images, single instance, palette and VS Code themes,
                  platform/{windows,linux,macos} (macos.rs compiles everywhere, so its
@@ -117,7 +117,11 @@ crates/
                  Discord, off by default; Discord's local socket or pipe, no sign-in),
                  setup.rs (one-click agent install and sign-in), github.rs (gh: status,
                  install, sign-in), desk.rs (what the desk card and its panels read:
-                 git, gh, terminal, files, diff, pull requests, subagents, pages)
+                 git, gh, terminal, files, diff, pull requests, subagents, pages),
+                 orch.rs (helpers: a task asking other agents for help, under fixed
+                 limits), workspace.rs (what Git says about a task's folder, and the
+                 holds a checkpoint restore takes), editor.rs (finds the editors on
+                 this computer and opens a folder or file in one)
   hover-quota    the four quota readers
   hover-backend  the Mac app's backend (binary hover-backend; the Slint app doesn't link
                  it): hover-core, hover-agents and hover-quota behind JSON lines on stdin and
@@ -418,10 +422,12 @@ assets/          hover.svg (the logo), make-icon.py (writes hover.png and
 
 ## What each OS can't run
 
-A feature the OS can't run is switched off in Settings (or its desk tile) with the reason
-beside it, never hidden. The notes are constants next to the code (`sandbox::UNSUPPORTED`,
-`browser::UNSUPPORTED`, `setup::UNSUPPORTED`, `computer_use::UNSUPPORTED`,
-`spaces::UNSUPPORTED`).
+A Settings switch for a feature the OS can't run stays in Settings, shown off, with the reason
+beside it. The tabs of Files & changes (Terminal, Files, Diff, Agents, Linked PRs, Pull request,
+Browser, Screen) are the other way round: a tab this computer can't use is hidden, not greyed out.
+The notes are constants next to the code (`sandbox::UNSUPPORTED`, `browser::UNSUPPORTED`,
+`setup::UNSUPPORTED`, `computer_use::UNSUPPORTED`, `spaces::UNSUPPORTED`). In the table, "off" is the
+Settings switch.
 
 | Feature | Windows | Linux | macOS | Why |
 |---|---|---|---|---|
@@ -469,6 +475,13 @@ beside it, never hidden. The notes are constants next to the code (`sandbox::UNS
   merged it in (the backend starts after).
 - **`Shortcut::label()` reads ⌥N on a Mac**, not Alt+N; tests that want the Windows text
   use `label_for(false)`.
+- **Dropped features leave quiet leftovers.** Agents of your own, the ACP Registry, task worktrees, the
+  default editor, helper limits, pull request watches, continuing at a usage limit's reset, saved tasks,
+  the background service and webhooks are gone. Their keys in `settings.json` are read past and not
+  written back; the data they kept in the data folder (saved tasks, own agents, worktrees, timers) is
+  left on disk and nothing reads it. A chat made with an own agent still opens; a reply to it says the agent is gone.
+  The first start after the update removes the old service's scheduled task (Windows) or systemd user
+  unit (Linux) once (`remove_old_service` in `app.rs`) and writes one line to `hover.log`.
 - **Headless GPU runs** need `XDG_RUNTIME_DIR` set.
 - **The chat's layout goldens** (`hover-chat`'s `thread.rs`) were measured in Linux
   Chromium with DejaVu Sans, so the three that compare text widths skip on Windows.

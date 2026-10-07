@@ -90,8 +90,6 @@ pub struct Page {
     slots: RefCell<SlotImages>,
     /// The glass panels' blurred copy of the frame, and its working buffers.
     blur: RefCell<Blur>,
-    /// A new task's workspace is being made (a worktree can take a while): another Start waits.
-    starting: Cell<bool>,
     /// The new-task box's switch: the task may ask other agents for help.
     new_helpers: Cell<bool>,
     /// What is attached to each chat's unsent reply (context chips), kept while another chat is open.
@@ -109,7 +107,7 @@ pub struct Page {
 
 /// A folder's branch as last looked up (off the UI thread; again after 10 s).
 #[derive(Default)]
-struct Branch { folder: String, label: String, head: bool, at: Option<Instant>, looking: bool }
+struct Branch { folder: String, label: String, at: Option<Instant>, looking: bool }
 
 /// The office's slots as images, and which slot each window last showed (0 the notch, 1
 /// the app window). A window holds its slot until it is given another, so the office
@@ -252,7 +250,7 @@ impl Default for Page {
             #[cfg(windows)] gpu: Default::default(),
             #[cfg(windows)] scratch: Default::default(),
             #[cfg(windows)] slots: Default::default(), blur: Default::default(),
-            starting: Cell::new(false), new_helpers: Cell::new(false), chips: Default::default(), note_acts: RefCell::new(vec![]), more_acts: RefCell::new(vec![]), rows_list: RefCell::new(vec![]), branch: Default::default(), desk: Default::default() }
+            new_helpers: Cell::new(false), chips: Default::default(), note_acts: RefCell::new(vec![]), more_acts: RefCell::new(vec![]), rows_list: RefCell::new(vec![]), branch: Default::default(), desk: Default::default() }
     }
 }
 
@@ -692,12 +690,12 @@ impl App {
             self.page.branch.borrow_mut().looking = true;
             let folder = folder.to_owned();
             std::thread::Builder::new().name("branch".into()).spawn(move || {
-                let (label, head) = match hover_agents::workspace::inspect(&folder) {
-                    Ok(i) => (format!("{}{}", i.branch.unwrap_or_else(|| "detached HEAD".into()), if i.linked { " · worktree" } else { "" }), i.head.is_some()),
-                    Err(_) => (String::new(), false),
+                let label = match hover_agents::workspace::inspect(&folder) {
+                    Ok(i) => format!("{}{}", i.branch.unwrap_or_else(|| "detached HEAD".into()), if i.linked { " · worktree" } else { "" }),
+                    Err(_) => String::new(),
                 };
                 crate::ui_do(move |a| {
-                    let changed = { let mut b = a.page.branch.borrow_mut(); let c = b.folder != folder || b.label != label; *b = Branch { folder, label, head, at: Some(Instant::now()), looking: false }; c };
+                    let changed = { let mut b = a.page.branch.borrow_mut(); let c = b.folder != folder || b.label != label; *b = Branch { folder, label, at: Some(Instant::now()), looking: false }; c };
                     if changed { a.office_widgets(); }
                 });
             }).ok();
@@ -705,20 +703,8 @@ impl App {
         label
     }
 
-    /// The strip over the reply box: a usage limit the provider gave (Continue at the reset, Retry now, Snooze,
-    /// Cancel), or replies held since Stop (Send them). The text, then the buttons as (action, label).
+    /// The strip over the reply box: replies held since Stop (Send them). The text, then the buttons as (action, label).
     fn chat_note(&self, o: &KiroSession) -> (String, Vec<(&'static str, &'static str)>) {
-        use hover_agents::limit::Mode;
-        let now = hover_core::time::Stamp::now().unix_ms();
-        if let Some(l) = self.hover.limits.of(&o.key).filter(|l| !matches!(l.mode, Mode::Snoozed(u) if u > now)) {
-            let at = l.limit.reset_at.map(|a| hover_agents::sched::civil_text(a, hover_agents::sched::Tz::Local));
-            let said = l.limit.reason.trim().trim_end_matches('.').to_owned();
-            return match (l.mode, at) {
-                (Mode::Auto, Some(at)) => (format!("Usage limit: {said}. Hover continues this task after {at}."), vec![("retry", "Retry now"), ("cancel", "Cancel")]),
-                (_, Some(at)) => (format!("Usage limit: {said}. It lifts at {at}."), vec![("arm", "Continue at the reset"), ("retry", "Retry now"), ("snooze", "Snooze"), ("cancel", "Cancel")]),
-                (_, None) => (format!("Usage limit: {said}. The agent didn’t say when it lifts."), vec![("retry", "Retry now"), ("snooze", "Snooze"), ("cancel", "Cancel")]),
-            };
-        }
         if o.held && o.turns.iter().any(|t| t.queued) { return ("You stopped this run, so the replies waiting behind it are held.".into(), vec![("resume", "Send them now")]); }
         (String::new(), vec![])
     }
@@ -732,7 +718,6 @@ impl App {
         for t in AgentTool::ALL {
             if t.id() != here && hover_agents::agents::known(t).is_some_and(|r| r.ok()) { items.push((format!("to:{}", t.id()), format!("Continue with {}", t.name()))); }
         }
-        for p in self.hover.customs.providers().into_iter().filter(|p| p.ready && p.id != here) { items.push((format!("to:{}", p.id), format!("Continue with {}", p.name))); }
         if hover_agents::orch::mcp_supported() && !o.ext.orch.as_ref().is_some_and(|l| l.parent.is_some()) {
             let on = o.ext.orch.as_ref().is_some_and(|l| l.delegation);
             items.push(("helpers".into(), (if on { "Stop letting it ask other agents for help" } else { "Let it ask other agents for help" }).into()));
@@ -745,14 +730,8 @@ impl App {
     /// A note strip button: what it does to the open chat.
     fn note_act(self: &Rc<Self>, i: usize) {
         let Some(id) = self.page.open.get() else { return };
-        let Some(s) = self.hover.sessions.get(id) else { return };
         let act = self.page.note_acts.borrow().get(i).copied().unwrap_or("");
-        let now = hover_core::time::Stamp::now().unix_ms();
         match act {
-            "arm" => match self.hover.limits.arm(&s.key) { Ok(_) => {} Err(e) => self.toast(&e) },
-            "retry" => if let Err(e) = self.hover.limits.retry_now(&s.key) { self.toast(&e); },
-            "snooze" => { let until = self.hover.limits.of(&s.key).and_then(|l| l.limit.reset_at).filter(|a| *a > now).unwrap_or(now + 3_600_000); self.hover.limits.snooze(&s.key, until); }
-            "cancel" => self.hover.limits.cancel(&s.key),
             "resume" => if !self.hover.sessions.resume_queue(id) { self.toast("A task is still running or every desk is busy. Try again in a moment."); },
             _ => {}
         }
@@ -783,51 +762,21 @@ impl App {
         } else if act == "helpers" {
             let on = !s.ext.orch.as_ref().is_some_and(|l| l.delegation);
             self.hover.orch.enable(&s.key, on);
-            let l = self.hover.settings.delegation();
-            self.toast(&if on { format!("On. It can ask other agents for help: up to {} helpers, {} at once. Limits are in Settings → Automation.", l.max_helpers, l.max_parallel) } else { "Off. It can no longer ask other agents for help.".to_owned() });
+            let l = hover_core::model::DelegationLimits::default();
+            self.toast(&if on { format!("On. It can ask other agents for help: up to {} helpers, {} at once.", l.max_helpers, l.max_parallel) } else { "Off. It can no longer ask other agents for help.".to_owned() });
         }
         self.office_changed();
         self.office_widgets();
     }
 
-    /// Fork from the last ended turn, with the same agent, in a workspace of its own when the project is a Git one (as a new task gets).
+    /// Fork from the last ended turn, with the same agent, in the folder the chat works in.
     fn fork_chat(self: &Rc<Self>, s: &KiroSession) {
         let Some(turn) = s.turns.iter().rposition(|t| t.result.is_some() && !t.queued) else { self.toast("Nothing has ended yet to fork from."); return };
         let Some(target) = hover_agents::session::Target::parse(&hover_agents::session::provider_id(s)) else { return };
-        if self.page.starting.replace(true) { return; }
-        self.toast("Forking…");
-        let source = s.ext.workspace.as_ref().map(|w| w.source.clone()).unwrap_or_else(|| s.folder.clone());
-        let (key, title) = (s.key.clone(), s.title());
-        let use_folder = self.hover.settings.automation().use_folder;
-        let root = hover_core::paths::support().join("worktrees");
-        std::thread::Builder::new().name("fork".into()).spawn(move || {
-            use hover_agents::workspace::Choice;
-            let choice = if use_folder { Choice::Folder } else { Choice::Own { base: None } };
-            let made = hover_agents::workspace::prepare(&source, &choice, &format!("fork {title}"), &root, false, false, &hover_agents::cancel::Cancel::new());
-            crate::ui_do(move |a| {
-                a.page.starting.set(false);
-                let p = match made { Ok(p) => p, Err(e) => { a.toast(&e); return; } };
-                match a.hover.sessions.fork(&key, turn, &target, &p.folder, p.binding.clone()) {
-                    Ok(f) => { a.toast("Forked. This is the copy; the original is unchanged."); a.office_changed(); a.open_session(f.id); }
-                    Err(e) => {
-                        if let Some(b) = p.binding.filter(|b| b.is_worktree()) { let _ = hover_agents::workspace::remove(&b, &p.folder, false, false, hover_agents::workspace::RemoveOpts { delete_branch: true, ..Default::default() }); }
-                        a.toast(&e);
-                    }
-                }
-            });
-        }).ok();
-    }
-
-    /// The new-task box's line about where the task will work, from the same lookup as the branch.
-    /// Empty until Git has answered. The tasks' choice itself is made in workspace::prepare.
-    fn plan_line(self: &Rc<Self>, folder: &str, read_only: bool) -> String {
-        if read_only { return "Read only: it looks at the folder itself.".into(); }
-        if self.hover.settings.automation().use_folder { return "Works in the folder itself, as set in Settings.".into(); }
-        let label = self.branch_of(folder);
-        let b = self.page.branch.borrow();
-        if b.folder != folder || b.at.is_none() { return String::new(); }
-        if label.is_empty() || !b.head { return "Works in the folder itself: it isn’t a Git project with a commit yet.".into(); }
-        format!("Gets its own worktree and branch, cut from {}.", label.trim_end_matches(" · worktree"))
+        match self.hover.sessions.fork(&s.key, turn, &target, &s.folder, s.ext.workspace.clone()) {
+            Ok(f) => { self.toast("Forked. This is the copy; the original is unchanged."); self.office_changed(); self.open_session(f.id); }
+            Err(e) => self.toast(&e),
+        }
     }
 
     /// Shots: a task typed into the new-task box for this folder, shown (`start` false) or started with Start.
@@ -1096,8 +1045,7 @@ impl App {
         let folder = p.new_folder.borrow().clone();
         let full = sessions.len() >= 6 && sessions.iter().all(|s| s.busy());
         let can = self.hover.sessions.can_start();
-        let plan_note = |a: &Rc<Self>| -> String { match (&folder, tool == AgentTool::Kiro && p.cloud.borrow().on) { (Some(f), false) => a.plan_line(f, self.new_access(nt) == "read"), _ => String::new() } };
-        let note = if !ready { hover_agents::agents::known(tool).map(|r| r.hint).unwrap_or_default() } else if !can { "3 tasks are running. Start another when one is done.".into() } else if full { "All six desks are busy. Stop or remove a session first.".into() } else { plan_note(self) };
+        let note = if !ready { hover_agents::agents::known(tool).map(|r| r.hint).unwrap_or_default() } else if !can { "3 tasks are running. Start another when one is done.".into() } else if full { "All six desks are busy. Stop or remove a session first.".into() } else { String::new() };
         // The panel's rows.
         let (title, sub, rows, opens) = self.panel_rows(&sessions);
         *p.rows_open.borrow_mut() = opens;
@@ -1483,41 +1431,20 @@ impl App {
             let access = a.new_access(a.page.new_tool.get());
             let picked = a.page.new_folder.borrow().clone();
             let cloud = cloud_on.then(|| a.cloud_repo(picked.as_deref(), true).into_iter().collect::<Vec<_>>());
-            // Where it works (workspace.rs): a worktree of its own by default. Git makes it off the UI thread.
-            if a.page.starting.replace(true) { return; }
-            use hover_agents::workspace::Choice;
-            let choice = if a.hover.settings.automation().use_folder { Choice::Folder } else { Choice::Own { base: None } };
-            let read_only = access == "read";
             // Helpers only where the host can serve them, and for this task only.
             let helpers = a.page.new_helpers.replace(false) && hover_agents::orch::mcp_supported() && !cloud_on;
-            if matches!(choice, Choice::Own { .. }) && !cloud_on && !read_only { a.toast("Setting up the task’s workspace…"); }
-            let title: String = text.lines().next().unwrap_or("task").chars().take(60).collect();
-            let root = hover_core::paths::support().join("worktrees");
-            std::thread::Builder::new().name("workspace".into()).spawn(move || {
-                let made = hover_agents::workspace::prepare(&folder, &choice, &title, &root, read_only, cloud_on, &hover_agents::cancel::Cancel::new());
-                crate::ui_do(move |a| {
-                    a.page.starting.set(false);
-                    let p = match made { Ok(p) => p, Err(e) => { a.toast(&e); return; } };
-                    // What was decided, in words, unless it is what the user chose or a Kiro Web task's own place.
-                    if let (Choice::Own { .. }, Some(n)) = (&choice, &p.note) { if !cloud_on { a.toast(n); } }
-                    let orch = helpers.then(|| hover_core::ext::OrchLink { delegation: true, ..Default::default() });
-                    let ext = hover_core::ext::SessionExt { workspace: p.binding.clone(), orch, ..Default::default() };
-                    match a.hover.sessions.start_bound(tool, &p.folder, &text, images, Some(access), cloud, ext) {
-                        Some(started) => {
-                            each!(a, |g| g.set_new_draft(s(""))); a.page.attached.borrow_mut()[1].clear(); a.page.fab.set(0); a.page.cloud.borrow_mut().menu = false;
-                            // The chat view goes on into the new chat, as a chat app does; the office shows it at its desk.
-                            if a.chat_view() { a.open_session(started.id); }
-                        }
-                        None => {
-                            // No desk: the worktree just made would stay behind, empty.
-                            if let Some(b) = p.binding.filter(|b| b.is_worktree()) { let _ = hover_agents::workspace::remove(&b, &p.folder, false, false, hover_agents::workspace::RemoveOpts { delete_branch: true, ..Default::default() }); }
-                            a.toast("All six desks are busy. Stop or remove a session first.");
-                        }
-                    }
-                    a.office_changed();
-                    a.office_widgets();
-                });
-            }).ok();
+            let orch = helpers.then(|| hover_core::ext::OrchLink { delegation: true, ..Default::default() });
+            let ext = hover_core::ext::SessionExt { orch, ..Default::default() };
+            match a.hover.sessions.start_bound(tool, &folder, &text, images, Some(access), cloud, ext) {
+                Some(started) => {
+                    each!(a, |g| g.set_new_draft(s(""))); a.page.attached.borrow_mut()[1].clear(); a.page.fab.set(0); a.page.cloud.borrow_mut().menu = false;
+                    // The chat view goes on into the new chat, as a chat app does; the office shows it at its desk.
+                    if a.chat_view() { a.open_session(started.id); }
+                }
+                None => a.toast("All six desks are busy. Stop or remove a session first."),
+            }
+            a.office_changed();
+            a.office_widgets();
         });
         let a = self.clone();
         g.on_tag_clicked(move |id| a.open_session(id));

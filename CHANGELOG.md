@@ -12,6 +12,24 @@ What changed in each Hover release. Versions follow [Semantic Versioning](https:
   what you said, it swirls slowly and breathes. Its colours are the Aura colour from Settings →
   Voice and the hues next to it. The dots and ripples around the old ring are gone.
 
+### Removed
+
+Features the redesign drops. Old files still open: the settings and data they left behind are ignored.
+
+- Agents of your own, and the ACP Registry that found them. A chat you had with one is kept; a
+  reply to it says the agent is gone.
+- Task worktrees. A task works in the folder you give it, as a chat started in a folder does. A
+  writing helper works in its lead's folder. Chats started in a worktree before keep theirs.
+- The default-editor setting and its custom program. Open in editor uses the first editor found
+  (VS Code, Zed, Cursor, Kiro IDE).
+- Helper limits in Settings. Helpers keep the old defaults: 6 in all, 2 at once, no helpers of helpers.
+- Pull request watches.
+- Continue when a limit lifts, and the Retry, Snooze and Cancel notes for a usage limit.
+- Saved tasks (once, on a repeat, or by webhook) and webhooks.
+- The background service (`hoverai --service`). The first start after updating removes the
+  scheduled task (Windows) or systemd user unit (Linux) it left, with one line in `hover.log`.
+- Settings → Automation, which held all of the above.
+
 ## [4.0.0] - 2026-10-06
 
 The chat view, Kiro's daily credits, and text boxes that scroll. Windows and Linux only: the Mac

@@ -72,7 +72,7 @@ pub fn exe(t: AgentTool) -> Option<PathBuf> {
         AgentTool::Cursor => cursor_shim().filter(|p| p.is_file()).or_else(|| find("cursor-agent")),
         AgentTool::OpenCode => opencode_exe(),
         AgentTool::Claude => claude_exe(),
-        // A custom agent is started from its own record (custom.rs), not found by name.
+        // Agents of the user's own are gone: a chat that still names one has nothing to start.
         AgentTool::Custom => None,
         AgentTool::Agy => agy_acp_exe(),
     }

@@ -12,14 +12,14 @@ use hover_quota::credits::{CreditDay, CreditsView};
 use hover_quota::{item, Reading};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Section { General, Integrations, Projects, Voice, Kiro, Codex, Cursor, OpenCode, Claude, Agy, Automation }
+pub enum Section { General, Integrations, Projects, Voice, Kiro, Codex, Cursor, OpenCode, Claude, Agy }
 
 impl Section {
-    pub const ALL: [Section; 11] = [Section::General, Section::Integrations, Section::Projects, Section::Voice, Section::Kiro, Section::Codex, Section::Cursor, Section::OpenCode, Section::Claude, Section::Agy, Section::Automation];
-    pub fn title(self) -> &'static str { ["General", "Integrations", "Projects", "Voice", "Kiro", "Codex", "Cursor", "OpenCode", "Claude Code", "Antigravity", "Automation"][self as usize] }
+    pub const ALL: [Section; 10] = [Section::General, Section::Integrations, Section::Projects, Section::Voice, Section::Kiro, Section::Codex, Section::Cursor, Section::OpenCode, Section::Claude, Section::Agy];
+    pub fn title(self) -> &'static str { ["General", "Integrations", "Projects", "Voice", "Kiro", "Codex", "Cursor", "OpenCode", "Claude Code", "Antigravity"][self as usize] }
     /// The sidebar's icon and its tile's colour.
     pub fn glyph(self) -> (&'static str, Tint) {
-        [("settings", Tint::Gray), ("plug", Tint::Purple), ("folder", Tint::Orange), ("mic", Tint::Pink), ("ghost", Tint::Bot), ("terminal", Tint::Green), ("sparkles", Tint::Blue), ("terminal", Tint::Gray), ("sparkles", Tint::Orange), ("sparkles", Tint::Blue), ("calendar", Tint::Teal)][self as usize]
+        [("settings", Tint::Gray), ("plug", Tint::Purple), ("folder", Tint::Orange), ("mic", Tint::Pink), ("ghost", Tint::Bot), ("terminal", Tint::Green), ("sparkles", Tint::Blue), ("terminal", Tint::Gray), ("sparkles", Tint::Orange), ("sparkles", Tint::Blue)][self as usize]
     }
     /// A tool's page shows the tool's own mark (the office's, ui/marks.slint) in place of a
     /// glyph: Claude's spark on its clay tile, Cursor's cube, Codex's, OpenCode's, Antigravity's arch, Kiro's ghost.
@@ -147,41 +147,8 @@ pub struct Live {
     pub groq_check: Option<String>,
     /// Computer use, the sandbox and each agent's one-click setup, as they are now.
     pub integ: Integ,
-    /// Saved tasks, the service, custom agents and the registry, as they are now (Automation).
-    pub auto: AutoView,
     /// The credits chart's range, an index of CREDITS_RANGES: the page's own choice, not a setting.
     pub credits_range: i32,
-}
-
-/// A saved task as Automation lists it.
-#[derive(Clone, Debug, Default, PartialEq)]
-pub struct TaskRow { pub id: String, pub name: String, pub when: String, pub state: String, pub enabled: bool, pub last: String }
-
-/// A custom agent as Automation lists it.
-#[derive(Clone, Debug, Default, PartialEq)]
-pub struct CustomRow { pub id: String, pub name: String, pub status: String, pub ready: bool, pub sign_in: bool }
-
-/// A registry entry as Automation offers it.
-#[derive(Clone, Debug, Default, PartialEq)]
-pub struct RegRow { pub id: String, pub name: String, pub note: String, pub can: bool }
-
-/// What only the running app knows for Automation: filled in by it, with the form boxes' drafts.
-#[derive(Clone, Debug, Default, PartialEq)]
-pub struct AutoView {
-    /// Editors found on this computer: id and name.
-    pub editors: Vec<(String, String)>,
-    pub tasks: Vec<TaskRow>,
-    /// The agents a task can use: provider id and name.
-    pub agents: Vec<(String, String)>,
-    pub service: String,
-    pub service_installed: bool,
-    pub timers: String,
-    pub webhook: String,
-    pub customs: Vec<CustomRow>,
-    pub registry: Vec<RegRow>,
-    pub registry_note: String,
-    /// The text of the "new task" and "new agent" boxes, by their names.
-    pub draft: std::collections::HashMap<String, String>,
 }
 
 /// What this system can run of the agents' extras; what it can't is switched off, with a note.
@@ -321,7 +288,6 @@ pub fn build(section: Section, i: &Input) -> Vec<Block> {
         }
         Section::Projects => projects(&mut b, i),
         Section::Voice => voice(&mut b, i),
-        Section::Automation => automation(&mut b, i),
         _ => agent(&mut b, section, i),
     }
     // The last action's message goes under the row (or beside the link) it is about.
@@ -339,115 +305,6 @@ pub fn build(section: Section, i: &Input) -> Vec<Block> {
     b
 }
 
-
-const ACCESS: [(&str, &str); 4] = [("risky", "Ask first"), ("always", "Ask always"), ("read", "Read only"), ("full", "Full access")];
-
-fn btn(id: &str, name: &str, text: &str, enabled: bool) -> Control { Control::Button { id: id.into(), name: name.into(), text: text.into(), enabled } }
-
-fn automation(b: &mut Vec<Block>, i: &Input) {
-    let (s, a) = (i.settings, &i.live.auto);
-    let d = |k: &str| a.draft.get(k).cloned().unwrap_or_default();
-    b.push(Block::Lead("Work that runs by itself, helpers for your agents, and agents of your own. Nothing here starts until you set it up.".into()));
-
-    heading(b, "Where tasks work");
-    b.push(Block::Group(vec![row("Work in the project folder itself", Some("By default a task that edits files gets its own Git worktree and branch, so two tasks can’t overwrite each other. Switch this on to work in the folder itself. Read-only tasks, Kiro Web, and folders that aren’t Git projects always do.".into()),
-        switch("UseFolder", "Work in the project folder itself", s.automation().use_folder), Lead::Tile("folder", Tint::Blue))]));
-
-    heading(b, "Open in editor");
-    let ed = s.editor();
-    let mut options = vec![("Ask each time".to_owned(), ed.default.is_none())];
-    options.extend(a.editors.iter().map(|(id, n)| (n.clone(), ed.default.as_deref() == Some(id.as_str()))));
-    options.push(("Custom program".into(), ed.default.as_deref() == Some("custom")));
-    let shown = options.iter().find(|o| o.1).map_or("Ask each time", |o| o.0.as_str()).to_owned();
-    let args: Vec<&str> = ed.custom_args.as_deref().unwrap_or("").lines().collect();
-    let mut rows = vec![
-        row("Default editor", Some("The desk card’s Open in editor button opens the task’s own folder here (a task’s worktree, not the project).".into()), Control::Picker { id: "EditorDefault".into(), name: "Default editor".into(), shown, options }, Lead::Tile("code", Tint::Blue)),
-        row("Custom program", Some("Its name, or its full path. Started with the arguments below, one each, with no shell.".into()), field("EditorExe", "Custom editor program", ed.custom_exe.as_deref().unwrap_or(""), "code-insiders"), Lead::None),
-    ];
-    for n in 1..=4 {
-        rows.push(row(format!("Argument {n}"), if n == 1 { Some("{folder}, {file}, {line} and {column} are filled in. An argument that needs a file is left out when none is chosen.".into()) } else { None },
-            field(&format!("EditorArg{n}"), &format!("Custom editor argument {n}"), args.get(n - 1).copied().unwrap_or(""), if n == 1 { "{folder}" } else { "" }), Lead::None));
-    }
-    b.push(Block::Group(rows));
-
-    heading(b, "Helpers");
-    let l = s.delegation();
-    let pick = |v: u32, all: &[u32]| all.iter().position(|x| *x == v).map_or(-1, |p| p as i32);
-    b.push(Block::Group(vec![
-        row("Helpers for one task", Some("An agent can ask others for help only in a task where you switch this on. These are your limits.".into()), segments("DelegMax", &["2", "4", "6", "10"], pick(l.max_helpers, &[2, 4, 6, 10])), Lead::Tile("sliders", Tint::Purple)),
-        row("Working at once", None, segments("DelegParallel", &["1", "2", "3", "4"], pick(l.max_parallel, &[1, 2, 3, 4])), Lead::None),
-        row("Helpers of helpers", Some("How far down a helper may ask for help in turn.".into()), segments("DelegDepth", &["Not at all", "One level", "Two levels"], pick(l.max_depth, &[1, 2, 3])), Lead::None),
-    ]));
-
-    heading(b, "Usage limits");
-    b.push(Block::Group(vec![row("Continue when a limit lifts", Some("A task that stopped on its agent’s usage limit is continued at the reset time the agent gave, once, with the same access. Without a time from the agent, it only offers a retry.".into()),
-        switch("AutoResume", "Continue when a usage limit lifts", s.automation().auto_resume), Lead::Tile("stopwatch", Tint::Orange))]));
-
-    heading(b, "Background service");
-    let mut buttons = vec![];
-    if a.service_installed { buttons.push(("Service.stop".to_owned(), "Stop".to_owned(), false)); buttons.push(("Service.remove".to_owned(), "Remove".to_owned(), true)); } else { buttons.push(("Service.install".to_owned(), "Install".to_owned(), false)); }
-    b.push(Block::Group(vec![row("Keep tasks running when Hover is closed", Some(format!("{}\n{}", a.service, a.timers)), Control::Chips { badges: vec![], buttons, open: None }, Lead::Tile("server", Tint::Gray))]));
-    b.push(Block::Footnote("Off until you install it. It runs tasks that never ask for permission; a task that asks waits for Hover to be open, because nobody being at the screen never answers for you. Removing it keeps your tasks and their history.".into()));
-
-    heading(b, "Saved tasks");
-    let mut rows: Vec<Row> = a.tasks.iter().map(|t| {
-        let buttons = vec![(format!("Task.run.{}", t.id), "Run now".to_owned(), false), (format!("Task.toggle.{}", t.id), if t.enabled { "Pause" } else { "Resume" }.to_owned(), false), (format!("Task.remove.{}", t.id), "Remove".to_owned(), true)];
-        row(&t.name, Some(format!("{}\n{}", t.when, t.last)), Control::Chips { badges: vec![(t.state.clone(), !t.enabled)], buttons, open: None }, Lead::Tile("calendar", Tint::Teal))
-    }).collect();
-    if rows.is_empty() { rows.push(row("No tasks yet", Some("Add one below.".into()), Control::None, Lead::None)); }
-    b.push(Block::Group(rows));
-    let kind: i32 = d("kind").parse().unwrap_or(0);
-    let agent = { let want = d("agent"); a.agents.iter().find(|x| x.0 == want).or(a.agents.first()).cloned() };
-    let acc = { let want = d("access"); ACCESS.iter().find(|x| x.0 == want).copied().unwrap_or(ACCESS[0]) };
-    let folder = d("folder");
-    let mut form = vec![
-        row("Name", None, field("TaskName", "Task name", &d("name"), "Nightly check"), Lead::None),
-        row("What to do", None, field("TaskPrompt", "What the task does", &d("prompt"), "Run the tests and tell me what failed"), Lead::None),
-        row("Folder", None, btn("TaskFolder", "Choose the task’s folder", if folder.is_empty() { "Choose…" } else { &folder }, true), Lead::Tile("folder", Tint::Orange)),
-        row("Agent", None, Control::Picker { id: "TaskAgent".into(), name: "Agent".into(), shown: agent.as_ref().map_or("None ready".into(), |x| x.1.clone()), options: a.agents.iter().map(|x| (x.1.clone(), agent.as_ref().is_some_and(|y| y.0 == x.0))).collect() }, Lead::None),
-        row("Access", Some("What it may do without asking. Default: ask first.".into()), Control::Picker { id: "TaskAccess".into(), name: "Access".into(), shown: acc.1.into(), options: ACCESS.iter().map(|x| (x.1.to_owned(), x.0 == acc.0)).collect() }, Lead::None),
-        row("Runs", None, segments("TaskKind", &["By hand", "Once", "Every", "Daily"], kind), Lead::None),
-    ];
-    if kind > 0 {
-        let (ph, sub) = match kind { 1 => ("2026-11-02 09:30", "Your local date and time."), 2 => ("60", "Minutes between runs (at least 5)."), _ => ("09:00", "Your local time; the task runs at this wall-clock time through clock changes.") };
-        form.push(row("When", Some(sub.into()), field("TaskWhen", "When the task runs", &d("when"), ph), Lead::None));
-    }
-    if kind == 3 { form.push(row("On", None, segments("TaskDays", &["Every day", "Weekdays"], d("days").parse().unwrap_or(0)), Lead::None)); }
-    form.push(row("Webhook", Some("Also start it when a webhook calls (set the address below). Fields of what the call sent, by path, separated by commas, go into the prompt; nothing else does.".into()), field("TaskHook", "Webhook fields", &d("hook"), "off, or /pull_request/title, /sender/login"), Lead::None));
-    form.push(row("", None, btn("TaskAdd", "Add the task", "Add task", true), Lead::None));
-    b.push(Block::Group(form));
-
-    heading(b, "Webhooks");
-    b.push(Block::Group(vec![
-        row("Listen on", Some(format!("{}\nThis computer only, unless you allow more. Reaching it from the internet (a tunnel or a proxy) is for you to set up.", a.webhook)), field("WebhookAddr", "Webhook address", s.automation().webhook_addr.as_deref().unwrap_or(""), "127.0.0.1:47653"), Lead::Tile("plug", Tint::Purple)),
-        row("Allow other computers", Some("Lets it listen beyond this computer. Every call still needs its task’s signature.".into()), switch("WebhookPublic", "Allow other computers", s.automation().webhook_public), Lead::None),
-    ]));
-
-    heading(b, "Agents of your own");
-    let mut rows: Vec<Row> = a.customs.iter().map(|c| {
-        let mut buttons = vec![(format!("Custom.check.{}", c.id), "Check".to_owned(), false)];
-        if c.sign_in { buttons.push((format!("Custom.signin.{}", c.id), "Sign in".to_owned(), false)); }
-        buttons.push((format!("Custom.remove.{}", c.id), "Remove".to_owned(), true));
-        row(&c.name, Some(c.status.clone()), Control::Chips { badges: vec![(if c.ready { "Ready" } else { "Not ready" }.to_owned(), !c.ready)], buttons, open: None }, Lead::Letter(c.name.chars().next().unwrap_or('?').to_string(), Tint::Blue))
-    }).collect();
-    if rows.is_empty() { rows.push(row("None added", Some("Any program that speaks ACP on its stdio can be added, or found in the ACP Registry below.".into()), Control::None, Lead::None)); }
-    b.push(Block::Group(rows));
-    let mut form = vec![
-        row("Name", None, field("CaName", "Agent name", &d("ca_name"), "My agent"), Lead::None),
-        row("Program", Some("Its name, or its full path.".into()), field("CaExe", "Agent program", &d("ca_exe"), "my-agent"), Lead::None),
-    ];
-    for n in 1..=4 { form.push(row(format!("Argument {n}"), if n == 1 { Some("One argument each; nothing is run through a shell.".into()) } else { None }, field(&format!("CaArg{n}"), &format!("Agent argument {n}"), &d(&format!("ca_arg{n}")), ""), Lead::None)); }
-    form.push(row("Environment name", None, field("CaEnvName", "Environment variable name", &d("ca_env_name"), "MY_API_KEY"), Lead::None));
-    form.push(row("Environment value", None, field("CaEnvValue", "Environment variable value", &d("ca_env_value"), ""), Lead::None));
-    form.push(row("Keep the value secret", Some("Sealed on this computer and never shown again or written to a log.".into()), switch("CaEnvSecret", "Keep the value secret", d("ca_env_secret") == "1"), Lead::None));
-    form.push(row("", None, btn("CaAdd", "Add the agent", "Add agent", true), Lead::None));
-    b.push(Block::Group(form));
-
-    heading(b, "ACP Registry");
-    let mut rows = vec![row("Search", Some(if a.registry_note.is_empty() { "Finds agents other people made. Nothing is downloaded until you press Install.".to_owned() } else { a.registry_note.clone() }), field("RegSearch", "Search the ACP Registry", &d("reg_q"), "gemini"), Lead::Tile("globe", Tint::Blue))];
-    for r in &a.registry { rows.push(row(&r.name, Some(r.note.clone()), btn(&format!("Reg.install.{}", r.id), &format!("Install {}", r.name), "Install", r.can), Lead::None)); }
-    b.push(Block::Group(rows));
-}
 
 fn heading(b: &mut Vec<Block>, text: &str) {
     // The first heading sits right under the title; later ones start a new group.

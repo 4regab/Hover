@@ -21,23 +21,20 @@
 //! - a result reaches a lead once: by its own wait/result call, else as one message when its turn is
 //!   over, never to a lead the user stopped and never twice (a marker in the message settles doubt);
 //! - Stop reaches helpers, their helpers and their queued starts; late news from them wakes nobody;
-//! - helpers get equal or narrower access; a writing helper gets its own worktree (workspace.rs);
+//! - helpers get equal or narrower access; a writing helper works in the lead's folder;
 //! - after a restart, no run is left pretending to work.
 //!
 //! Nothing here is written to the log except ids and states: briefs, results and tokens stay out of it.
 
 use crate::browser;
-use crate::cancel::Cancel;
 use crate::computer_use::McpServer;
 use crate::session::{KiroSession, KiroSessions};
 use crate::stream::KiroResult;
-use crate::workspace::{self, Choice};
 use hover_core::ext::{OrchLink, SessionExt};
 use hover_core::json::{self, Json};
 use hover_core::model::{AgentTool, DelegationLimits, KiroState};
 use hover_core::store::Sealed;
 use std::collections::HashSet;
-use std::path::PathBuf;
 use std::sync::mpsc;
 use std::sync::{Arc, Condvar, Mutex, OnceLock, Weak};
 use std::time::{Duration, Instant};
@@ -55,12 +52,10 @@ const KEEP: usize = 400_000;
 /// A provider as the lead sees it.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Provider {
-    /// What the lead writes: `kiro`, `codex`, `cursor`, `opencode`, `claude`, or `custom:<id>`.
+    /// What the lead writes: `kiro`, `codex`, `cursor`, `opencode` or `claude`.
     pub id: String,
     pub name: String,
     pub tool: AgentTool,
-    /// The custom provider's instance id.
-    pub instance: Option<String>,
     pub ready: bool,
     pub hint: String,
     /// Can run read-only, resume a conversation, and call tools of its own (so can lead).
@@ -76,8 +71,6 @@ pub trait Env: Send + Sync {
     /// The access a session really has: `full`, `risky`, `always` or `read`.
     fn access_of(&self, s: &KiroSession) -> String;
     fn limits(&self) -> DelegationLimits;
-    /// Where worktrees for writing helpers go.
-    fn worktrees(&self) -> PathBuf;
 }
 
 /// Widest first. A helper's access is never above its lead's.
@@ -91,36 +84,29 @@ pub fn narrow(lead: &str, want: Option<&str>) -> String {
     }
 }
 
-/// The host's real answers: the tools on this computer, the user's settings, Hover's data folder.
-pub struct SystemEnv { settings: Arc<hover_core::settings::Settings>, extra: Mutex<Vec<Arc<dyn Fn() -> Vec<Provider> + Send + Sync>>> }
+/// The host's real answers: the tools on this computer and the user's settings.
+pub struct SystemEnv { settings: Arc<hover_core::settings::Settings> }
 
 impl SystemEnv {
-    pub fn new(settings: Arc<hover_core::settings::Settings>) -> SystemEnv { SystemEnv { settings, extra: Mutex::new(vec![]) } }
-
-    /// More providers (the user's custom agents), asked for at each listing.
-    pub fn add(&self, f: impl Fn() -> Vec<Provider> + Send + Sync + 'static) { self.extra.lock().unwrap().push(Arc::new(f)); }
+    pub fn new(settings: Arc<hover_core::settings::Settings>) -> SystemEnv { SystemEnv { settings } }
 }
 
 impl Env for SystemEnv {
     fn providers(&self) -> Vec<Provider> {
-        let mut all: Vec<Provider> = AgentTool::ALL.iter().map(|&t| {
+        AgentTool::ALL.iter().map(|&t| {
             let c = crate::runtime::caps(t);
             let ready = crate::agents::check(t, false);
-            Provider { id: t.id().into(), name: t.name().into(), tool: t, instance: None, ready: ready.ok(), hint: ready.hint, read_only: c.read_only, resume: c.resume,
+            Provider { id: t.id().into(), name: t.name().into(), tool: t, ready: ready.ok(), hint: ready.hint, read_only: c.read_only, resume: c.resume,
                 // OpenCode's one shared server can't hand each session its own MCP server.
                 leads: t != AgentTool::OpenCode }
-        }).collect();
-        for f in self.extra.lock().unwrap().clone() { all.extend(f()); }
-        all
+        }).collect()
     }
 
     fn access_of(&self, s: &KiroSession) -> String {
         s.access.clone().unwrap_or_else(|| self.settings.agent_options(s.tool).access_id(crate::agents::read_only_works(s.tool)).to_owned())
     }
 
-    fn limits(&self) -> DelegationLimits { self.settings.delegation() }
-
-    fn worktrees(&self) -> PathBuf { hover_core::paths::support().join("worktrees") }
+    fn limits(&self) -> DelegationLimits { DelegationLimits::default() }
 }
 
 // MARK: Records
@@ -416,7 +402,7 @@ impl Orch {
 
     fn run_info(&self, id: &str) -> Option<Info> { self.st.lock().unwrap().runs.iter().find(|r| r.id == id).map(info) }
 
-    /// Starts every queued run that can start now. Each start (a worktree may be made) runs on a thread of its own.
+    /// Starts every queued run that can start now. Each start runs on a thread of its own.
     pub fn pump(&self) {
         let todo: Vec<String> = {
             let mut g = self.st.lock().unwrap();
@@ -443,18 +429,14 @@ impl Orch {
         if !self.sessions.can_start() { return done(self); }
         let read_only = run.access == "read";
         let cloud = lead.cloud.is_some();
-        let prepared = if read_only || cloud { Ok(workspace::Prepared { folder: lead.folder.clone(), binding: lead.ext.workspace.clone(), note: None }) }
-            else { workspace::prepare(&lead.folder, &Choice::Own { base: None }, run.role.as_deref().unwrap_or(&run.brief), &self.env.worktrees(), false, false, &Cancel::new()) };
-        let prepared = match prepared { Ok(x) => x, Err(e) => { self.finish(id, RunState::Failed, None, Some(&format!("No workspace for the helper: {e}"))); return done(self); } };
+        // A helper works in the lead's folder; one that may write says so.
         let mut note = run.note.clone();
-        if !read_only && prepared.binding.as_ref().is_some_and(|b| !b.is_worktree()) {
-            note = Some(format!("{} The helper shares the task’s folder.", prepared.note.clone().unwrap_or_default()).trim().to_owned());
-        }
+        if !read_only && !cloud { note = Some("The helper shares the task’s folder.".to_owned()); }
         let depth = run.depth;
         let link = OrchLink { delegation: p.leads && depth < self.env.limits().max_depth, run: Some(run.id.clone()), parent: Some(run.parent.clone()), root: Some(run.root.clone()), depth };
-        let ext = SessionExt { workspace: prepared.binding.clone(), orch: Some(link), provider: p.instance.clone(), ..Default::default() };
+        let ext = SessionExt { workspace: lead.ext.workspace.clone(), orch: Some(link), ..Default::default() };
         let prompt = brief_prompt(&run);
-        match self.sessions.start_bound(p.tool, &prepared.folder, &prompt, vec![], Some(&run.access), None, ext) {
+        match self.sessions.start_bound(p.tool, &lead.folder, &prompt, vec![], Some(&run.access), None, ext) {
             Some(s) => {
                 let mut g = self.st.lock().unwrap();
                 if let Some(r) = g.runs.iter_mut().find(|r| r.id == id) {
@@ -692,7 +674,7 @@ impl Orch {
             if g.runs.iter().filter(|r| r.root == root).count() + g.threads.iter().filter(|t| t.owner == root).count() >= limits.max_helpers as usize { return Err("This task has used its helpers and threads.".into()); }
         }
         let access = narrow(&self.env.access_of(&lead), access);
-        let ext = SessionExt { workspace: lead.ext.workspace.clone(), orch: Some(OrchLink { delegation: false, run: None, parent: Some(caller.to_owned()), root: Some(root.clone()), depth: link.depth + 1 }), provider: p.instance.clone(), ..Default::default() };
+        let ext = SessionExt { workspace: lead.ext.workspace.clone(), orch: Some(OrchLink { delegation: false, run: None, parent: Some(caller.to_owned()), root: Some(root.clone()), depth: link.depth + 1 }), ..Default::default() };
         let s = self.sessions.start_bound(p.tool, &lead.folder, prompt, vec![], Some(&access), None, ext).ok_or("No place is free to start a thread now. Try again when a task is done.")?;
         let id = new_id("t");
         let mut g = self.st.lock().unwrap();

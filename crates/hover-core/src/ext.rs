@@ -1,14 +1,14 @@
 //! What a session keeps beyond 3.8's record: its workspace (a Git worktree or the folder itself),
-//! and the links the orchestration layer, custom providers and handoffs add. One optional
+//! and the links the orchestration layer, handoffs and (in chats made by earlier versions) worktrees and own agents add. One optional
 //! object, `Ext`, written only when it holds something, so a session that uses none of it is
 //! the bytes 3.8 wrote; a file with an `Ext` reads in 3.8 too (unknown keys are ignored).
 
 use crate::json::{Json, Result};
 use crate::model::{opt_text, text};
 
-/// Where a task works. `path` is the session's folder itself (what the terminal, files, diff,
-/// checkpoints and the editor launcher use); the rest says where it came from, so a removed
-/// checkout can be made again from the saved branch and base.
+/// Where a task worked, as a chat made by an earlier version kept it. Hover makes no worktrees now and starts no chat with
+/// one of these; an old chat keeps its own (and a fork of it). The session's folder is the worktree itself; the rest says
+/// where it came from.
 #[derive(Clone, Debug, PartialEq)]
 pub struct WorkspaceBinding {
     /// `worktree` (made by Hover for this task), `existing` (another task's worktree, by the user's
@@ -24,9 +24,6 @@ pub struct WorkspaceBinding {
 }
 
 impl WorkspaceBinding {
-    pub fn folder(source: &str) -> WorkspaceBinding { WorkspaceBinding { kind: "folder".into(), source: source.into(), branch: None, base: None, base_commit: None } }
-    pub fn is_worktree(&self) -> bool { self.kind == "worktree" }
-
     pub fn to_json(&self) -> Json {
         Json::obj(vec![("Kind", Json::str(&self.kind)), ("Source", Json::str(&self.source)), ("Branch", Json::opt_str_of(self.branch.as_deref())),
             ("Base", Json::opt_str_of(self.base.as_deref())), ("BaseCommit", Json::opt_str_of(self.base_commit.as_deref()))])
@@ -211,7 +208,7 @@ impl TurnExt {
 pub struct SessionExt {
     pub workspace: Option<WorkspaceBinding>,
     pub orch: Option<OrchLink>,
-    /// The custom provider instance that runs this conversation (hover-agents::custom); the session's tool is then `Custom`.
+    /// The id of the own agent that ran this conversation (agents of your own are gone; old chats still name theirs); the session's tool is then `Custom`.
     pub provider: Option<String>,
     pub lineage: Option<Lineage>,
 }
