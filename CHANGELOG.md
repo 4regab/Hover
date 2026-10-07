@@ -5,6 +5,11 @@ What changed in each Hover release. Versions follow [Semantic Versioning](https:
 
 ## [Unreleased]
 
+## [5.0.0] - 2026-10-07
+
+The chat and office redesign. Windows and Linux only: the Mac app and the web office are not
+changed. Not run with a real Kiro account, on Windows by hand, or on a Mac.
+
 ### Added
 
 - Settings → Kiro lists Kiro's MCP servers, from `~/.kiro/settings/mcp.json`, the file the Kiro
