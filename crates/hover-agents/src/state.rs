@@ -83,6 +83,23 @@ pub fn models_with_levels(settings: &Settings, t: AgentTool) -> Vec<(String, Str
     list
 }
 
+/// What each Kiro model costs against Auto (1.0x), as Kiro's models page lists it (kiro.dev/docs/models, October 2026).
+/// GPT-5.6's rate holds for requests up to 272K tokens; over that Kiro bills double. Kept by hand: Kiro's protocol does
+/// not carry it, so a model that is not here shows no rate.
+static KIRO_RATES: &[(&str, f64)] = &[
+    ("auto", 1.0), ("gpt-5.6-sol", 4.4), ("gpt-5.6-terra", 2.2), ("gpt-5.6-luna", 1.1), ("fable-5.1", 6.0),
+    ("opus-5.5", 2.0), ("opus-5", 2.2), ("opus-4.8", 2.2), ("opus-4.7", 2.2), ("opus-4.6", 2.2), ("opus-4.5", 2.2),
+    ("sonnet-5.5", 1.3), ("sonnet-5", 1.3), ("sonnet-4.6", 1.3), ("sonnet-4.5", 1.3), ("sonnet-4.0", 1.3), ("sonnet-4", 1.3),
+    ("haiku-4.5", 0.4), ("deepseek-3.2", 0.25), ("minimax-m2.5", 0.25), ("minimax-m2.1", 0.15), ("glm-5", 0.5), ("qwen3-coder-next", 0.05),
+];
+
+/// A Kiro model's credit rate against Auto, by its id or its name ("claude-opus-5.5" and "Claude Opus 5.5" are one model).
+pub fn kiro_rate(id_or_name: &str) -> Option<f64> {
+    let key = id_or_name.trim().to_lowercase().replace([' ', '_'], "-");
+    let key = key.strip_prefix("claude-").unwrap_or(&key);
+    KIRO_RATES.iter().find(|(k, _)| *k == key).map(|(_, r)| *r)
+}
+
 /// The efforts the tool's effort option lists, and the one it has now.
 pub fn efforts(settings: &Settings, t: AgentTool) -> (Vec<String>, Option<String>) {
     let e = offer(settings, t, "thought_level", &EFFORT_IDS);
@@ -351,6 +368,18 @@ mod tests {
 
     fn step(kind: &str, title: &str, target: Option<&str>, status: &str) -> KiroStep {
         KiroStep::new("x", kind, title, target.map(str::to_owned), status)
+    }
+
+    /// Every model Hover lists for Kiro has a rate, by id and by the name the picker shows.
+    #[test]
+    fn every_listed_kiro_model_has_a_credit_rate() {
+        for (id, name) in crate::KIRO_MODELS {
+            assert!(kiro_rate(id).is_some(), "{id} has no rate");
+            assert_eq!(kiro_rate(id), kiro_rate(name), "{id} and {name} are one model");
+        }
+        assert_eq!((kiro_rate("claude-opus-5.5"), kiro_rate("Opus 5.5")), (Some(2.0), Some(2.0)));
+        assert_eq!((kiro_rate("GPT 5.6 Luna"), kiro_rate("qwen3-coder-next"), kiro_rate("auto")), (Some(1.1), Some(0.05), Some(1.0)));
+        assert_eq!(kiro_rate("not-a-model"), None);
     }
 
     #[test]

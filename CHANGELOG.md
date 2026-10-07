@@ -35,8 +35,9 @@ What changed in each Hover release. Versions follow [Semantic Versioning](https:
   running one has one band of light across the whole line. Your sent prompts have Copy and Edit, a
   queued reply has Edit and Send now, and links and code blocks can be clicked.
 - The new chat screen is one box for the agent, where it runs, access and model.
-- The model picker gives Auto no effort, falls back to High when a model lacks the one picked,
-  keeps the effort buttons on one line, and ends with Kiro's auto compact setting.
+- The model picker shows what each Kiro model costs against Auto (from Kiro's models page), gives
+  Auto no effort, falls back to High when a model lacks the one picked, keeps the effort buttons
+  on one line, and ends with Kiro's auto compact setting.
 - The notch: more room around the logos in the resting island, no "All" button on a question, and
   the chat view's sidebar folds while a panel is open unless the notch is 1240 wide or more. The
   Files & changes tabs that this computer can't use (Browser and Screen on Windows and Linux) are

@@ -1233,6 +1233,9 @@ impl App {
                 if let Some(m) = crate::view::sync(g.get_mm_efforts(), efforts) { g.set_mm_efforts(m); }
                 g.set_mm_note(s(note));
                 g.set_mm_compact(mm == Some(AgentTool::Kiro));
+                // Only Kiro's models have a rate to show.
+                let rates: Vec<MRate> = models.iter().map(|m| if mm == Some(AgentTool::Kiro) { model_rate(m) } else { MRate::default() }).collect();
+                if let Some(r) = crate::view::sync(g.get_mm_rates(), &rates) { g.set_mm_rates(r); }
             }
             if let Some(m) = crate::view::sync(g.get_d_shots(), &shots[0]) { g.set_d_shots(m); }
             if let Some(m) = crate::view::sync(g.get_n_shots(), &shots[1]) { g.set_n_shots(m); }
@@ -2448,6 +2451,19 @@ fn short_model(name: &str) -> String {
 }
 
 pub(crate) fn access_label(id: &str) -> &'static str { ACCESS.iter().find(|a| a.0 == id).map_or("Full access", |a| a.1) }
+
+/// A Kiro model's credit rate against Auto, for its row in the picker: "2.2x", "0.25x", "1.0x". Green under 1x, amber over
+/// 3x. None of the rate (empty) for a model Kiro's page doesn't list, such as "Default".
+fn model_rate(m: &MOpt) -> MRate {
+    match hover_agents::state::kiro_rate(m.id.as_str()).or_else(|| hover_agents::state::kiro_rate(m.label.as_str())) {
+        Some(r) => {
+            let plain = format!("{r}");
+            let text = if plain.contains('.') { format!("{plain}x") } else { format!("{r:.1}x") };
+            MRate { text: s(text), tone: if r < 1.0 { 1 } else if r > 3.0 { 2 } else { 0 } }
+        }
+        None => MRate::default(),
+    }
+}
 
 /// accessNote: Codex's Ask first is its own preset, which lets the rest run.
 pub fn access_note(id: &str, tool: AgentTool) -> &'static str {

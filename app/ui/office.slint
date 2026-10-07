@@ -47,6 +47,8 @@ export struct AskData { id: string, title: string, command: string, path: string
     question: bool, qs: [QData] }
 // A model or an effort in the model menu.
 export struct MOpt { id: string, label: string, on: bool }
+// A model's credit rate against Auto, as its row in Kiro's picker tags it ("2.2x"); tone 1 is cheap (green), 2 dear (amber).
+export struct MRate { text: string, tone: int }
 // A row of the reply box's @ / / list. kind: 0 a group's label, 1 a file (name, dir), 2 a command (name, note), 3 a word
 // that nothing matches. idx counts what can be picked (-1 for the rest); sel is the lit one.
 export struct PopRow { kind: int, name: string, dir: string, note: string, sel: bool, idx: int }
@@ -128,6 +130,8 @@ export global Office {
     in property <length> model-y;
     in property <string> mm-head;
     in property <[MOpt]> mm-models;
+    // Each model's credit rate, in the same order (empty for a tool that has none).
+    in property <[MRate]> mm-rates;
     // Which of them is the picked one (the list opens on it).
     in property <int> mm-cur;
     in property <string> mm-effort-head;
@@ -1164,6 +1168,7 @@ component GoButton inherits Rectangle {
 // #mMenu's rows: a model (a check on the picked one), or an effort in its row.
 component MenuRow inherits Rectangle {
     in property <MOpt> o;
+    in property <MRate> rate;
     in property <bool> seg;
     callback clicked;
     height: seg ? 26px : max(28px, rt.preferred-height + 12px);
@@ -1182,6 +1187,12 @@ component MenuRow inherits Rectangle {
         spacing: 8px;
         rt := Text { text: o.label; font-size: seg ? 11.5px : 12.5px; color: #f6f2ff; vertical-alignment: center; horizontal-alignment: seg ? center : left;
             wrap: seg ? TextWrap.no-wrap : TextWrap.word-wrap; horizontal-stretch: 1; }
+        // .x: what the model costs against Auto (green under 1x, amber over 3x).
+        if rate.text != "" && !seg: VerticalLayout { alignment: center;
+            Rectangle { height: 18px; width: rtx.preferred-width + 12px; border-radius: 5px; background: #ffffff0a;
+                rtx := Text { text: rate.text; font-family: "DejaVu Sans Mono"; font-size: 11px; vertical-alignment: center; horizontal-alignment: center;
+                    color: rate.tone == 1 ? #7ee59a : rate.tone == 2 ? #ffc46b : #f6f2ffb0;
+                    accessible-role: text; accessible-label: rate.text + " the credits"; } } }
         if o.on && !seg: VerticalLayout { alignment: center; Icon { name: Icons.check; size: 12px; tint: #c4a2ff; } }
     }
     ta := TouchArea { mouse-cursor: pointer; clicked => { root.clicked(); } }
@@ -3015,7 +3026,7 @@ export component OfficeView inherits Rectangle {
                         content-y: -min(max(0px, Office.mm-cur * 28px - (self.height - 28px) / 2), max(0px, self.content-height - self.height));
                         mml := VerticalLayout {
                             width: parent.width;
-                            for m in Office.mm-models: MenuRow { o: m; clicked => { Office.pick-model(m.id); } }
+                            for m[i] in Office.mm-models: MenuRow { o: m; rate: Office.mm-rates[i]; clicked => { Office.pick-model(m.id); } }
                         }
                     }
                     InputThumb { x: parent.width - 4px; y: 0px; height: parent.height; f-height: mmf.height; f-content: mmf.content-height; f-y: mmf.content-y; }
