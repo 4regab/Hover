@@ -2603,10 +2603,13 @@ export component OfficeView inherits Rectangle {
                             }
                         }
                         // The chips: no fill, no border; only the text brightens on hover. Both are the same size.
-                        HorizontalLayout {
+                        // Centred on the row so the ring and cloud line up with the title, not float above it.
+                        VerticalLayout {
                             horizontal-stretch: 1;
+                            alignment: center;
+                        HorizontalLayout {
                             alignment: start;
-                            spacing: 4px;
+                            spacing: 6px;
                             if Office.d-branch != "": HeadChip { icon: Icons.git; text: Office.d-branch; label: "Branch: " + Office.d-branch; }
                             if Office.d-ctx >= 0: HeadChip { ring: Office.d-ctx; text: Office.d-ctx + "%";
                                 label: Office.d-ctx + "% of the context used" + (Office.d-tool-id == "kiro" ? " · Kiro compacts at 70%" : ""); tick: Office.d-tool-id == "kiro"; }
@@ -2619,6 +2622,7 @@ export component OfficeView inherits Rectangle {
                                 if cw.has-hover: Rectangle { x: parent.width + 6px; y: 0; height: 24px; width: ct.preferred-width + 14px; border-radius: 6px; background: #1c1a24f2;
                                     border-width: 1px; border-color: #ffffff1a;
                                     ct := Text { text: "Open cloud session"; font-size: 11px; font-weight: 500; color: #f6f2ffde; vertical-alignment: center; horizontal-alignment: center; } } }
+                        }
                         }
                         }
                         VerticalLayout { alignment: center;
