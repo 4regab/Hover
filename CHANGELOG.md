@@ -7,11 +7,18 @@ What changed in each Hover release. Versions follow [Semantic Versioning](https:
 
 ## [5.0.0] - 2026-10-07
 
-The chat and office redesign. Windows and Linux only: the Mac app and the web office are not
-changed. Not run with a real Kiro account, on Windows by hand, or on a Mac.
+The chat and office redesign, and Antigravity as a sixth agent. The redesign is for Windows and
+Linux. The Mac app and the web office only gain Antigravity's name and logo, and that part has not
+been compiled on a Mac. Not run with a real Kiro account or on Windows by hand.
 
 ### Added
 
+- Antigravity (Google's agent) joins Kiro, Codex, Cursor, OpenCode and Claude Code, with its own
+  page in Settings. It needs Google's `agy_acp_server`, and signs in with a Gemini API key or
+  Google's sign-in.
+- OpenCode writes extra lines to `hover.log` (they start with `opencode: [diag]`) so the reason it
+  fails to connect on Linux can be confirmed. This does not fix it. The likely cause is the
+  sandbox, which hides the loopback address OpenCode listens on.
 - Settings → Kiro lists Kiro's MCP servers, from `~/.kiro/settings/mcp.json`, the file the Kiro
   IDE uses too. Switch a server on or off, edit it, remove it (it asks first) or add one, with a
   check on each field. A server that failed to start in Kiro's last task says so. Hover changes
