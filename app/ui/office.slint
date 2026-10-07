@@ -2007,21 +2007,21 @@ export component OfficeView inherits Rectangle {
                                             sbhga := TouchArea { mouse-cursor: pointer; clicked => { Office.list-fold(i); } }
                                         }
                                         if !r.head: Rectangle {
+                                            // At rest (it has a time; a chat at work or waiting on you has none): faded, until it is open or under the pointer.
+                                            property <bool> dim: r.when != "" && !r.on && !sblta.has-hover;
                                             border-radius: 7px;
                                             background: r.on ? #ffffff12 : sblta.has-hover ? #ffffff0b : transparent;
                                             accessible-role: button;
                                             accessible-label: r.text + (r.on ? ", open" : "");
                                             accessible-action-default => { Office.list-clicked(i); }
                                             HorizontalLayout { padding-left: 8px; padding-right: 8px; spacing: 10px;
-                                                // The tool's logo; a ring round it while the chat is at work (purple) or waits on you (amber).
+                                                // The tool's logo; an amber ring round it while the chat waits on you. A chat at work is simply the one not faded.
                                                 VerticalLayout { alignment: center;
                                                     Rectangle { width: 16px; height: 16px;
-                                                        Logo { width: 16px; height: 16px; mark: 10px; radius: 4.8px; tool: r.tool; }
-                                                        if r.stage <= 1: Path { x: -4px; y: -4px; width: 24px; height: 24px; viewbox-width: 24; viewbox-height: 24; fill: transparent;
-                                                            stroke: #c4a2ff; stroke-width: 1.5px; stroke-line-cap: round; commands: "M 12 1 A 11 11 0 0 1 23 12"; }
+                                                        Logo { width: 16px; height: 16px; mark: 10px; radius: 4.8px; tool: r.tool; opacity: dim ? 0.45 : 1; }
                                                         if r.stage == 5: Rectangle { x: -4px; y: -4px; width: 24px; height: 24px; border-radius: 12px; border-width: 1.5px; border-color: #ffc46b; }
                                                     } }
-                                                Text { text: r.text; font-size: 13px; color: r.on || sblta.has-hover ? #f6f2ff : #f6f2ffb0; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; }
+                                                Text { text: r.text; font-size: 13px; color: dim ? #f6f2ff73 : #f6f2ff; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; }
                                                 if r.when != "": Text { text: r.when; font-size: 11.5px; color: r.stage == 3 ? #ff9a92 : #f6f2ff80; vertical-alignment: center; opacity: sblta.has-hover ? 0 : 1; }
                                             }
                                             sblta := TouchArea {
