@@ -1,0 +1,41 @@
+unix_ms,kind,text
+1791388264694,note,script /projects/sandbox/hover-avalonia/prototype/bench/cycles.hms exe /projects/sandbox/Hover/target/release/hoverai
+1791388264694,launch,391
+1791388264857,got,bench visible
+1791388264857,time,startup 163.0
+1791388264857,send,task kiro @ - bot one [seconds:900]
+1791388264862,got,bench task 1
+1791388264862,send,task kiro @ - bot two [seconds:900]
+1791388265132,got,bench task 2
+1791388265132,send,task codex @ - bot three [seconds:900]
+1791388265233,got,bench task 3
+1791388270233,mark,baseline-before-cycles
+1791388278233,send,unfold
+1791388279019,got,bench reopen 783.5
+1791388279019,time,first-office 783.9
+1791388284019,mark,cycle-1-open
+1791388289019,send,fold
+1791388289024,got,bench folded
+1791388319027,got,bench dropped
+1791388319027,mark,cycle-1-dropped
+1791388325027,send,unfold
+1791388325213,got,bench reopen 183.7
+1791388325213,time,reopen-after-drop 184.0
+1791388330213,mark,cycle-2-open
+1791388335213,send,fold
+1791388335233,got,bench folded
+1791388365234,got,bench dropped
+1791388365234,mark,cycle-2-dropped
+1791388371234,send,unfold
+1791388371428,got,bench reopen 191.2
+1791388371428,time,reopen-after-drop 191.4
+1791388376428,mark,cycle-3-open
+1791388381428,send,fold
+1791388381438,got,bench folded
+1791388411440,got,bench dropped
+1791388411440,mark,cycle-3-dropped
+1791388417440,mark,-
+1791388417440,send,quit
+1791388417460,time,exit 20.1
+1791388420460,orphans,0 
+1791388420694,end,ok

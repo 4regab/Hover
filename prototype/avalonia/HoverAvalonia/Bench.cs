@@ -38,7 +38,7 @@ static class Bench
             case "frames":
             {
                 double secs = p.Length > 1 ? double.Parse(p[1]) : 10; var oc = nw.OfficeCtl;
-                var st = oc?.Stamps ?? []; double now = nw.Now; var recent = st.Where(t => now - t <= secs * 1000).ToList();
+                var st = oc?.Stamps ?? []; double now = oc?.ClockMs ?? 0; var recent = st.Where(t => now - t <= secs * 1000).ToList();
                 var iv = recent.Zip(recent.Skip(1), (x, y) => y - x).OrderBy(x => x).ToList();
                 double Pc(double q) => iv.Count == 0 ? 0 : iv[(int)Math.Round((iv.Count - 1) * q)];
                 Console.WriteLine($"bench frames {recent.Count} {Pc(.5):F1} {Pc(.95):F1} {Pc(.99):F1} {oc?.Rendered ?? 0}"); break;

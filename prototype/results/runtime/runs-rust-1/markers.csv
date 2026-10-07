@@ -1,0 +1,28 @@
+unix_ms,kind,text
+1791387382784,note,script /projects/sandbox/hover-avalonia/prototype/bench/compare.hms exe /projects/sandbox/Hover/target/release/hoverai
+1791387382784,launch,392
+1791387382967,got,bench visible
+1791387382967,time,startup 179.3
+1791387382967,mark,notch-only
+1791387402967,send,task kiro @ - bot one [seconds:600]
+1791387402972,got,bench task 1
+1791387402972,send,task kiro @ - bot two [seconds:600]
+1791387403247,got,bench task 2
+1791387403247,send,task codex @ - bot three [seconds:600]
+1791387403348,got,bench task 3
+1791387403348,mark,notch-3-working
+1791387418349,send,unfold
+1791387419167,got,bench reopen 817.3
+1791387419167,time,first-office 817.6
+1791387425167,mark,office-3-bots-working
+1791387455167,send,frames 25
+1791387455177,got,bench frames 1449 16.6 26.8 31.9 3232
+1791387455177,mark,-
+1791387455177,send,fold
+1791387455187,got,bench folded
+1791387455187,mark,after-fold
+1791387465187,mark,-
+1791387465187,send,quit
+1791387465228,time,exit 40.2
+1791387468228,orphans,0 
+1791387468284,end,ok

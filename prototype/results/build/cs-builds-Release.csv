@@ -1,0 +1,13 @@
+config,kind,run,seconds
+Release,clean,1,4.624280448
+Release,nochange,1,1.033179857
+Release,ui,1,2.271546182
+Release,logic,1,2.104453555
+Release,clean,2,4.627246212
+Release,nochange,2,.989442173
+Release,ui,2,2.236940457
+Release,logic,2,2.164673827
+Release,clean,3,4.561344056
+Release,nochange,3,1.045896325
+Release,ui,3,2.262883563
+Release,logic,3,2.143156565

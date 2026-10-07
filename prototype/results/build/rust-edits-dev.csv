@@ -1,0 +1,10 @@
+profile,kind,run,seconds
+dev,nochange,1,.394721354
+dev,ui,1,51.585923433
+dev,logic,1,19.179153684
+dev,nochange,2,.403151884
+dev,ui,2,39.131368895
+dev,logic,2,19.223325659
+dev,nochange,3,.291798815
+dev,ui,3,37.534991566
+dev,logic,3,19.632106969

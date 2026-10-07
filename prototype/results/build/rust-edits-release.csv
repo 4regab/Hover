@@ -1,0 +1,10 @@
+profile,kind,run,seconds
+release,nochange,1,.299856178
+release,ui,1,153.792535931
+release,logic,1,144.890816298
+release,nochange,2,.289925076
+release,ui,2,153.688664733
+release,logic,2,145.093665176
+release,nochange,3,.309262325
+release,ui,3,154.381106104
+release,logic,3,156.514070540

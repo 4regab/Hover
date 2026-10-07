@@ -1,0 +1,71 @@
+{
+  "checks": {
+    "pointer_over_pill_hits_notch_window": true,
+    "pointer_inside_window_but_outside_shape_clicks_through": true,
+    "pointer_left_of_shape_at_top_clicks_through": true,
+    "rest_focus_not_ours": true,
+    "hover_opened_peek": true,
+    "openness_after_open": 1,
+    "stays_open_while_pointer_in_panel": true,
+    "selected_bot_zoomed": true,
+    "camera_moved": true,
+    "camera_zoomed": true,
+    "leaving_collapses_after_grace": true,
+    "alt_n_global_hotkey_opens": true,
+    "alt_n_global_hotkey_closes": true
+  },
+  "platform_adapter": "X11",
+  "os": "Amazon Linux 2023.12.20260918",
+  "runtime": ".NET 9.0.20",
+  "screens": [
+    {
+      "Bounds": "0, 0, 1920, 1080",
+      "WorkingArea": "0, 0, 1920, 1080",
+      "Scaling": 1,
+      "IsPrimary": false
+    }
+  ],
+  "window_rect": "360, 0, 1200, 480",
+  "window_xid": 4194323,
+  "hover_open_after_ms": 185,
+  "gl": "llvmpipe (LLVM 15.0.7, 256 bits) | 4.5 (Core Profile) Mesa 24.2.6 [OpenGL 4.0]",
+  "gl_error": null,
+  "frames_6s": {
+    "count": 143,
+    "interval_p50": 39.77850000000035,
+    "interval_p95": 44.84170000000017,
+    "interval_p99": 49.16849999999977,
+    "render_cpu_ms_p50": 2.1389,
+    "render_cpu_ms_p95": 5.001,
+    "draws": "see gl",
+    "rss_kb": 342224
+  },
+  "collapse_after_ms": 386,
+  "open_close_cycles": [
+    {
+      "cycle": 1,
+      "rss_kb": 351844,
+      "managed_kb": 4580,
+      "office_alive": false
+    },
+    {
+      "cycle": 2,
+      "rss_kb": 374052,
+      "managed_kb": 4585,
+      "office_alive": false
+    },
+    {
+      "cycle": 3,
+      "rss_kb": 375324,
+      "managed_kb": 4585,
+      "office_alive": false
+    },
+    {
+      "cycle": 4,
+      "rss_kb": 375492,
+      "managed_kb": 4441,
+      "office_alive": false
+    }
+  ],
+  "done": true
+}

@@ -10,6 +10,8 @@ static class Program
     [STAThread]
     public static int Main(string[] args)
     {
+        // hover-measure launches the exe with no arguments; HOVER_PROTO_ARGS carries them for scripted runs.
+        args = args.Concat((Environment.GetEnvironmentVariable("HOVER_PROTO_ARGS") ?? "").Split(' ', StringSplitOptions.RemoveEmptyEntries)).ToArray();
         string? A(string n) { int i = Array.IndexOf(args, n); return i >= 0 && i + 1 < args.Length ? args[i + 1] : null; }
         bool F(string n) => args.Contains(n);
         Opt = new Options(

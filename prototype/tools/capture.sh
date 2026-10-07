@@ -7,7 +7,7 @@ XCM=${XCOMPMGR:-xcompmgr}
 export XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR:-/tmp/xdg} HOME=${HOME:-/tmp/hhome} DISPLAY=:${DISP:-77}; mkdir -p "$OUT" "$XDG_RUNTIME_DIR"
 W=$((1920*SCALE)); H=$((1080*SCALE))
 Xvfb $DISPLAY -screen 0 ${W}x${H}x24 +extension RANDR +extension XTEST +extension COMPOSITE >/dev/null 2>&1 & XP=$!; sleep 2
-$XCM -a >/dev/null 2>&1 & CP=$!; sleep 1
+$XCM -n >/dev/null 2>&1 & CP=$!; sleep 1
 [ "$SCALE" != 1 ] && export AVALONIA_GLOBAL_SCALE_FACTOR=$SCALE
 run() { # name seconds args...
   local name=$1 secs=$2; shift 2

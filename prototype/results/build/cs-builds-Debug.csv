@@ -1,0 +1,13 @@
+config,kind,run,seconds
+Debug,clean,1,6.440375211
+Debug,nochange,1,.992154074
+Debug,ui,1,2.127235572
+Debug,logic,1,2.206507367
+Debug,clean,2,4.555873724
+Debug,nochange,2,1.064873823
+Debug,ui,2,2.204871035
+Debug,logic,2,2.129459076
+Debug,clean,3,4.513698268
+Debug,nochange,3,1.028877186
+Debug,ui,3,2.316814861
+Debug,logic,3,2.067779631

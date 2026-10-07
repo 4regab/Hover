@@ -1,0 +1,8 @@
+kind,run,seconds,size_bytes,files
+framework-dependent linux-x64,1,4.189737912,28609979,38
+framework-dependent linux-x64,2,1.087215214,28609979,38
+framework-dependent linux-x64,3,1.015330087,28609979,38
+self-contained linux-x64,1,2.595482813,108133096,222
+self-contained linux-x64,2,1.121906527,108133096,222
+self-contained linux-x64,3,1.199734582,108133096,222
+self-contained trimmed(partial) linux-x64,1,13.090619420,50336596,95

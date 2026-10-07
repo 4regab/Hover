@@ -62,6 +62,7 @@ public partial class NotchWindow : Window
     void OnOpened()
     {
         Plat.Attach(this);
+        Console.WriteLine($"transparency: requested={string.Join(',', TransparencyLevelHint)} actual={ActualTransparencyLevel}");
         Layout();
         RestChanged(rest0: true);
         poll.Start();
@@ -114,7 +115,7 @@ public partial class NotchWindow : Window
         View.IsVisible = t > 0.001 || hover.State != State.Rest;
         View.Clip = Geom(f.W, f.H, f.R, 0, (winW - f.W) / 2 - Pad, close: true);
         // The drop shadow follows the shape at rest and when fully open, not while it grows (Hover: ~70 MB of GPU saved).
-        Shape.Effect = t <= 0.001 || !open.Animating(Now) ? shadowFx : null;
+        Shape.Effect = t >= 0.999 && !open.Animating(Now) ? shadowFx : null;   // not at rest: the X11 bounding shape is a rectangle and would show the blur as a dark box
         Plat.SetHit(over, (x0, 0, f.W, f.H + ShadowDepth), scale);
         if (!open.Animating(Now) && anim.IsEnabled) { anim.Stop(); if (hover.State == State.Rest) Settled(); }
     }

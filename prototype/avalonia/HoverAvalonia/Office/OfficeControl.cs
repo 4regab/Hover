@@ -20,6 +20,7 @@ public sealed class OfficeControl : OpenGlControlBase
     readonly DispatcherTimer timer = new();
     readonly Stopwatch clock = Stopwatch.StartNew();
     double lastMs;
+    public double ClockMs => clock.Elapsed.TotalMilliseconds;
     public event Action? Stepped;
     public string GlInfo = "(no GL context yet)";
     public string? InitError;
