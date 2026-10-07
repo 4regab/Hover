@@ -720,6 +720,13 @@ fn chat_view_shots(app: &Rc<App>, hover: &Arc<hover_app::app::Hover>, dir: &Path
     app.close_drawer();
     settle(500);
     save_office(&notch, full, &dir.join("chat-view-notch-home.png"));
+    // The sidebar closed on the start screen: the switch and the show button stay, the way back to the office and the chats.
+    let ng = app.notch.global::<Office>();
+    ng.set_list_open(false);
+    settle(400);
+    save_office(&notch, full, &dir.join("chat-view-notch-home-no-list.png"));
+    ng.set_list_open(true);
+    settle(300);
     app.collapse();
     // Back to the office through the switch: drawn again.
     g!().invoke_toggle_view();

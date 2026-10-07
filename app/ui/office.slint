@@ -2990,8 +2990,23 @@ export component OfficeView inherits Rectangle {
         // variants), then from when the pick holds. Above the pill, kept in the office.
         // The switch between the office and the chat view, over both at the top left: in the chat view it is the sidebar's first
         // thing, so it goes with the sidebar when that is closed (the header's show button is then the way back) and stays
-        // where the sidebar has no room.
-        vsw := ViewSwitch { x: sw-x; y: sw-y; chat: chat; small: compact; glass: !chat; visible: !chat || list-shown || !list-allowed; toggled => { Office.toggle-view(); } }
+        // where the sidebar has no room. The start screen has no header, so there it stays (with the show button beside it).
+        vsw := ViewSwitch { x: sw-x; y: sw-y; chat: chat; small: compact; glass: !chat; visible: !chat || list-shown || !list-allowed || !Office.drawer; toggled => { Office.toggle-view(); } }
+        // The start screen with the sidebar closed: its show button, beside the switch, is the way back to the chats.
+        if chat && !Office.drawer && lw == 0 && list-allowed: Rectangle {
+            x: sw-x + vsw.width + 6px;
+            y: sw-y + (vsw.height - self.height) / 2;
+            width: 28px;
+            height: 28px;
+            border-radius: 7px;
+            background: ssta.has-hover ? #ffffff0b : transparent;
+            accessible-role: button;
+            accessible-id: "dShowListStart";
+            accessible-label: "Show the sidebar";
+            accessible-action-default => { Office.list-open = true; }
+            Icon { name: PagePaths.sidebar; size: 16px; tint: ssta.has-hover ? #f6f2ff : #f6f2ff80; }
+            ssta := TouchArea { mouse-cursor: pointer; clicked => { Office.list-open = true; } }
+        }
         if vsw.visible && vsw.side != 0: Rectangle {
             x: sw-x + (vsw.side == 1 ? 0px : vsw.width / 2);
             y: sw-y + vsw.height + 6px;
