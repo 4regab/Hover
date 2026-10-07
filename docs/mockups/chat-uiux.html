@@ -1,0 +1,1934 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hover · chat UI/UX mockup</title>
+<style>
+/* The app's own fonts, from app/assets. */
+@font-face { font-family: Inter; src: url(../../app/assets/Inter-Regular.ttf); font-weight: 400; }
+@font-face { font-family: Inter; src: url(../../app/assets/Inter-Medium.ttf); font-weight: 500; }
+@font-face { font-family: Inter; src: url(../../app/assets/Inter-SemiBold.ttf); font-weight: 600; }
+@font-face { font-family: Inter; src: url(../../app/assets/Inter-Bold.ttf); font-weight: 700; }
+
+:root {
+  --bg: #0c0b0e; --side: #0e0d11; --panel: #0f0e12; --raise: #17151b; --menu: #1a1820;
+  --line: #ffffff0f; --line2: #ffffff17; --line3: #ffffff24;
+  /* Text on the dark ground: text ~17:1, dim ~8:1, faint ~5:1 (all past WCAG AA for small text).
+     ghost is for hairlines, line numbers and other marks that are not words. */
+  --text: #f6f2ff; --dim: #f6f2ffb0; --faint: #f6f2ff80; --ghost: #f6f2ff47;
+  --hover: #ffffff0b; --sel: #ffffff12;
+  --accent: #c4a2ff; --accent-bg: #9b6bff24; --green: #7ee59a; --red: #ff9a92; --amber: #ffc46b; --teal: #7fe3d4;
+  /* Motion: strong ease-out for things that enter, the drawer curve for panels, and the
+     switch's spring (office.slint's own: cubic-bezier(0.34, 1.45, 0.64, 1), 340 ms). */
+  --ease-out: cubic-bezier(.23, 1, .32, 1);
+  --ease-drawer: cubic-bezier(.32, .72, 0, 1);
+  --spring: cubic-bezier(.34, 1.45, .64, 1);
+  /* hover-chat's theme::MONO. */
+  --mono: "Cascadia Code", Consolas, "DejaVu Sans Mono", monospace;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; background: #050507; color: var(--text); font: 13px/1.5 Inter, "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif; -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; }
+button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; padding: 0; }
+button:disabled { cursor: default; }
+svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.75; stroke-linecap: round; stroke-linejoin: round; flex: none; display: block; }
+code { font: 12px/1.4 var(--mono); background: #ffffff0f; padding: 1px 5px; border-radius: 5px; }
+:focus { outline: none; }
+:focus-visible { outline: 2px solid #c4a2ffb3; outline-offset: 2px; }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+[hidden] { display: none !important; }
+
+/* Everything pressable answers the press (scale .97, 160 ms), so it feels heard. */
+.icon-btn, .pill, .send, .new, .acts button, .you-acts button, .q button, .btn, .rest, .tab, .chip.btn, .switch button, .mi, .mrow, .seg button, .compact {
+  transition: transform 160ms var(--ease-out), background-color 150ms ease, color 150ms ease, opacity 150ms ease, border-color 150ms ease; }
+.icon-btn:active, .pill:active, .send:not(:disabled):active, .new:active, .acts button:active, .you-acts button:not([aria-disabled="true"]):active, .q button:active, .btn:active, .rest:active, .tab:active, .chip.btn:active, .seg button:active { transform: scale(.97); }
+
+/* Tooltips: a short wait before the first, then instant while moving between them. */
+[data-tip] { position: relative; }
+[data-tip]::after { content: attr(data-tip); position: absolute; top: calc(100% + 6px); left: 50%; translate: -50% 0; z-index: 40;
+  padding: 5px 8px; border-radius: 7px; background: #221f29; border: 1px solid var(--line2); box-shadow: 0 6px 16px #0009;
+  color: var(--text); font: 500 11.5px/1.3 Inter, system-ui; letter-spacing: 0; white-space: nowrap; pointer-events: none;
+  opacity: 0; scale: .97; transform-origin: top center; transition: opacity 125ms ease, scale 125ms var(--ease-out); }
+[data-tip]:hover::after, [data-tip]:focus-visible::after { opacity: 1; scale: 1; transition-delay: 450ms; }
+.warm [data-tip]:hover::after, .warm [data-tip]:focus-visible::after { transition-delay: 0ms; transition-duration: 0ms; }
+[data-tip-up]::after { top: auto; bottom: calc(100% + 6px); transform-origin: bottom center; }
+[data-tip-end]::after { left: auto; right: 0; translate: none; transform-origin: top right; }
+[data-tip-start]::after { left: 0; translate: none; transform-origin: top left; }
+.menu-open [data-tip]::after { display: none; }
+
+/* ── The mockup's own controls (not part of Hover) ─────────── */
+.bar { position: sticky; top: 0; z-index: 50; display: flex; gap: 6px; align-items: center; padding: 10px 18px; flex-wrap: wrap; background: #050507e6; border-bottom: 1px solid var(--line); }
+.bar b { margin-right: 10px; font-weight: 600; }
+.bar .sep { width: 1px; height: 18px; background: var(--line2); margin: 0 6px; }
+.bar button { padding: 5px 11px; border-radius: 7px; border: 1px solid var(--line2); color: var(--dim); font-size: 12px; transition: background-color 150ms ease, color 150ms ease; }
+.bar button:hover { color: var(--text); }
+.bar button[aria-pressed="true"] { background: var(--accent-bg); color: var(--accent); border-color: #c4a2ff40; }
+.stage { padding: 18px; display: flex; justify-content: center; }
+.notes { max-width: 1440px; margin: 0 auto 40px; padding: 0 18px; color: var(--dim); font-size: 12.5px; }
+.notes h3 { color: var(--text); font-size: 13px; margin: 18px 0 6px; }
+.notes li { margin: 3px 0; }
+
+/* ── The window ─────────────────────────────────────────────── */
+.win { position: relative; width: min(1440px, 100%); height: max(640px, min(860px, calc(100vh - 100px))); background: var(--bg); border: 1px solid var(--line2); border-radius: 10px; overflow: hidden; display: flex; flex-direction: column; box-shadow: 0 40px 120px #000c; }
+.titlebar { height: 36px; display: flex; align-items: center; gap: 1px; padding-left: 6px; font-size: 12.5px; color: var(--faint); border-bottom: 1px solid var(--line); flex: none; position: relative; z-index: 30; }
+.titlebar .sp { flex: 1; align-self: stretch; }
+.tb-ico { width: 30px; height: 26px; margin-right: 4px; border-radius: 6px; display: grid; place-items: center; color: var(--faint); transition: background-color 120ms ease, color 120ms ease, opacity 120ms ease; }
+.tb-ico svg { width: 15px; height: 15px; }
+.tb-ico:hover { background: #ffffff0f; color: var(--text); }
+/* Over the office the switch sits on dark glass, so it reads on the 3D room. */
+.switch.office-sw { position: absolute; top: 10px; left: 12px; z-index: 3; background: #0c0b0ecc; box-shadow: inset 0 0 0 1px #ffffff14, 0 8px 24px #00000066; backdrop-filter: blur(12px); }
+
+.tbm { position: relative; }
+.tb-btn { height: 26px; padding: 0 9px; border-radius: 6px; font-size: 12.5px; color: var(--dim); transition: background-color 120ms ease, color 120ms ease; }
+.tb-btn:hover, .tb-btn[aria-expanded="true"] { background: #ffffff0f; color: var(--text); }
+/* Menus from the title bar drop from their word. Moving to the next word while one is open
+   switches at once, with no animation, as a native menu bar does. */
+.menu.bar-m { top: 31px; left: 0; width: 228px; transform-origin: top left; }
+.menu.bar-m.swap { transition: none; }
+a.mi { text-decoration: none; }
+.mi .ext { margin-left: auto; width: 12px; height: 12px; color: var(--ghost); }
+.mi .logo { --s: 15px; margin: 0 .5px; }
+.mi.ver { height: 26px; font-size: 11.5px; color: var(--faint); cursor: default; }
+.mi.ver:hover { background: none; color: var(--faint); }
+.titlebar .wc { width: 46px; height: 36px; display: grid; place-items: center; color: var(--dim); transition: background-color 120ms ease; }
+.titlebar .wc:hover { background: #ffffff12; }
+.titlebar .wc.close:hover { background: #c42b1c; color: #fff; }
+.titlebar .wc svg { width: 10px; height: 10px; stroke-width: 1; }
+.body { flex: 1; display: flex; min-height: 0; }
+
+/* Tool logos: Hover's own marks (marks.slint, assets/kiro.svg), tile radius 0.3 of its side. */
+.logo { --s: 16px; width: var(--s); height: var(--s); border-radius: calc(var(--s) * .3); display: grid; place-items: center; flex: none; }
+.logo img, .logo svg { width: 66%; height: 66%; stroke: none; }
+.logo.kiro { background: #9046ff; }
+.logo.codex { background: #fff; } .logo.codex svg { width: 80%; height: 80%; }
+.logo.claude { background: #d97757; }
+.logo.cursor { background: #18181c; box-shadow: inset 0 0 0 1px #ffffff2e; } .logo.opencode { background: #101012; box-shadow: inset 0 0 0 1px #ffffff2e; }
+.logo.cursor svg, .logo.opencode svg { width: 58%; height: 58%; } .logo.claude svg { width: 62%; height: 62%; }
+
+.icon-btn { width: 28px; height: 28px; border-radius: 7px; display: grid; place-items: center; color: var(--faint); flex: none; }
+.icon-btn:hover, .icon-btn[aria-expanded="true"] { background: var(--hover); color: var(--text); }
+
+/* ── Sidebar ───────────────────────────────────────────────── */
+.side { width: 260px; background: var(--side); border-right: 1px solid var(--line); display: flex; flex-direction: column; flex: none; overflow: hidden; transition: width 280ms var(--ease-drawer); }
+.side > * { width: 259px; }
+.side.hidden { width: 0; border-right-width: 0; }
+.side-top { height: 52px; display: flex; align-items: center; padding: 0 8px 0 12px; gap: 8px; flex: none; }
+.side-top .sp { flex: 1; }
+/* The sidebar toggle stays out of sight until the pointer is over the sidebar (or the header,
+   when the sidebar is closed). Keyboard focus and touch screens always see it. */
+.side-tg { opacity: 0; }
+.side:hover .side-tg, .side-tg:focus-visible { opacity: 1; }
+@media (hover: none) { .side-tg { opacity: 1; } }
+/* With the sidebar closed its show button sits before the title, always seen (an unseen button left a gap). */
+.hd .open-tg { display: none; opacity: 1; }
+#sceneChat:has(.side.hidden) .hd { padding-left: 10px; gap: 6px; }
+#sceneChat:has(.side.hidden) .hd .open-tg { display: grid; }
+/* The office / chat switch: two icons (each named in its tooltip), fully round. A quiet raised thumb sits
+   under the one picked; only its icon takes the accent. It stays put: the same place in both views
+   (the sidebar's top left, 12 in and 10 down), and the thumb doesn't slide, since the view changes at once. */
+.switch { width: 76px; height: 32px; padding: 3px; border-radius: 99px; position: relative; display: flex;
+  background: #ffffff07; box-shadow: inset 0 0 0 1px #ffffff0a; }
+.switch::before { content: ""; position: absolute; top: 3px; bottom: 3px; left: 3px; width: calc(50% - 3px); border-radius: 99px;
+  background: #ffffff14; box-shadow: inset 0 1px 0 #ffffff14, 0 0 0 1px #ffffff0a, 0 1px 3px #00000059; }
+.switch.chat::before { translate: 100% 0; }
+.switch button { flex: 1; display: grid; place-items: center; z-index: 1; border-radius: 99px; color: var(--faint); }
+.switch button:hover { color: var(--dim); }
+.switch button.on { color: var(--text); }
+.switch svg { width: 15px; height: 15px; stroke-width: 1.7; transition: color 150ms ease; }
+.switch button.on svg { color: var(--accent); }
+.new { margin: 0 8px 6px; height: 32px; display: flex; align-items: center; gap: 10px; padding: 0 10px; border-radius: 8px; color: var(--text); font-weight: 500; font-size: 13px; width: calc(100% - 16px); }
+.new svg { width: 15px; height: 15px; color: var(--dim); }
+.new:hover { background: var(--hover); }
+.list { flex: 1; overflow-y: auto; padding: 2px 8px 12px; scrollbar-width: thin; scrollbar-color: #ffffff1a transparent; }
+/* One group per project folder; its chevron shows on hover, and it folds smoothly. */
+.grp + .grp { margin-top: 12px; }
+.grp-h { display: flex; align-items: center; gap: 7px; height: 28px; padding: 0 8px; color: var(--faint); font-size: 12px; font-weight: 500; border-radius: 6px; width: 100%; text-align: left; }
+.grp-h:hover { color: var(--dim); }
+.grp-h svg { width: 14px; height: 14px; }
+.grp-h .chev { margin-left: auto; width: 13px; height: 13px; opacity: 0; transition: transform 200ms var(--ease-out), opacity 150ms ease; }
+.grp-h:hover .chev, .grp-h:focus-visible .chev, .grp.shut .chev { opacity: 1; }
+.grp.shut .chev { transform: rotate(-90deg); }
+.rows-w { display: grid; grid-template-rows: 1fr; transition: grid-template-rows 220ms var(--ease-out); }
+.grp.shut .rows-w { grid-template-rows: 0fr; }
+.rows { overflow: hidden; min-height: 0; }
+.row { position: relative; display: flex; align-items: center; gap: 10px; height: 30px; padding: 0 8px; border-radius: 7px; color: var(--dim); cursor: pointer; transition: background-color 120ms ease, color 120ms ease; }
+.row:hover { background: var(--hover); color: var(--text); }
+.row.on { background: var(--sel); color: var(--text); }
+.row:focus-visible { outline-offset: -2px; }
+.row .t { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 13px; }
+.row .when { font-size: 11.5px; color: var(--faint); transition: opacity 120ms ease; }
+/* A session at work: the notch's language. A ring spins round its logo (LiveMark ring 2);
+   one waiting on you breathes amber (ring 3). No extra dots. */
+.lm { position: relative; flex: none; display: grid; }
+.lm::after { content: ""; position: absolute; inset: -4px; border-radius: 50%; border: 1.5px solid transparent; }
+.lm.run::after { border-top-color: var(--tc); border-right-color: var(--tc); animation: spin 1.15s linear infinite; }
+.lm.ask::after { border-color: var(--amber); animation: breathe 1.6s ease-in-out infinite; }
+@keyframes spin { to { rotate: 360deg; } }
+@keyframes breathe { 50% { opacity: .4; } }
+/* A small delete button replaces the time on hover, as Codex does. */
+.row .del { position: absolute; right: 4px; width: 24px; height: 24px; border-radius: 6px; display: grid; place-items: center; color: var(--faint); opacity: 0; transition: opacity 120ms ease, background-color 120ms ease, color 120ms ease; }
+.row .del svg { width: 14px; height: 14px; }
+.row:hover .del, .row:focus-within .del { opacity: 1; }
+.row:hover .when, .row:focus-within .when { opacity: 0; }
+.row .del:hover { color: var(--red); background: #ff453a1f; }
+
+/* ── Chat ──────────────────────────────────────────────────── */
+.main { flex: 1; min-width: 0; display: flex; flex-direction: column; position: relative; }
+.hd { height: 52px; display: flex; align-items: center; gap: 10px; padding: 0 10px 0 20px; border-bottom: 1px solid var(--line); flex: none; }
+.hd-t { flex: 1; min-width: 0; display: flex; align-items: center; gap: 10px; }
+.hd-t h1 { margin: 0; font-size: 14px; font-weight: 600; letter-spacing: -.01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 46%; }
+/* The chips: no fill, no border, grey text. */
+.chips { display: flex; align-items: center; gap: 4px; min-width: 0; }
+/* Both chips, the branch (a button) and the context, are the same size: .chip.btn beats .btn's box,
+   and the svg and hover rules name .chip.btn too so .btn's (later in the file) don't win. */
+.chip, .chip.btn { height: 24px; display: inline-flex; align-items: center; gap: 6px; padding: 0 6px; border-radius: 6px; border: 0; background: none; color: var(--faint); font-size: 12px; font-weight: 500; white-space: nowrap; }
+.chip svg, .chip.btn svg { width: 13px; height: 13px; }
+.chip.btn:hover { color: var(--dim); background: none; }
+.ring { width: 13px; height: 13px; }
+.ring circle { stroke-width: 2.2; }
+.hd-r { display: flex; gap: 2px; position: relative; }
+
+/* Menus open from their trigger: 180 ms in, 120 ms out; opened from the keyboard, at once. */
+.menu { position: absolute; z-index: 20; padding: 4px; border-radius: 12px; background: var(--menu); border: 1px solid var(--line2);
+  box-shadow: 0 0 0 1px #00000066, 0 4px 12px #00000066, 0 18px 40px -8px #000000cc;
+  opacity: 0; transform: translateY(-2px) scale(.96); transform-origin: top right; pointer-events: none;
+  transition: opacity 120ms ease, transform 120ms var(--ease-out); }
+.menu.open { opacity: 1; transform: none; pointer-events: auto; transition-duration: 180ms; }
+.kb .menu, .kb .card .composer { transition: none !important; }
+.menu.more { top: 34px; right: 30px; width: 188px; }
+.hd-r .menu.more { right: 0; }
+.mi { display: flex; align-items: center; gap: 10px; width: 100%; height: 30px; padding: 0 8px; border-radius: 7px; color: var(--dim); text-align: left; font-size: 13px; }
+.mi svg { width: 15px; height: 15px; stroke-width: 1.6; color: var(--faint); transition: color 150ms ease; }
+.mi:hover, .mi:focus-visible { background: #ffffff0d; color: var(--text); outline: none; }
+.mi:hover svg, .mi:focus-visible svg { color: var(--dim); }
+.mi .chev { margin-left: auto; width: 13px; height: 13px; }
+.mi.red, .mi.red svg { color: var(--red); }
+.mi.red:hover { background: #ff453a17; }
+.msep { height: 1px; background: var(--line); margin: 4px 2px; }
+.mlab { padding: 6px 8px 4px; font-size: 11px; font-weight: 500; color: var(--faint); letter-spacing: .02em; }
+
+.thread { flex: 1; overflow-y: auto; scrollbar-width: thin; scrollbar-color: #ffffff1a transparent; }
+.col { max-width: 720px; margin: 0 auto; padding: 32px 24px 168px; }
+/* New messages rise in (220 ms); what was already there stays still. */
+.enter { transition: opacity 220ms ease-out, transform 220ms var(--ease-out); }
+@starting-style { .enter { opacity: 0; transform: translateY(6px); } }
+.you { display: flex; flex-direction: column; align-items: flex-end; margin: 4px 0 28px; }
+.you p { margin: 0; max-width: 80%; padding: 9px 14px; border-radius: 18px; background: #ffffff0f; font-size: 13.5px; line-height: 1.55; }
+/* A sent prompt's time, Copy and Edit, under it on hover (as ChatGPT and Codex do). */
+.you-acts { display: flex; align-items: center; margin: 3px -4px 0 0; opacity: 0; transition: opacity 150ms ease; }
+.you:hover .you-acts, .you:focus-within .you-acts { opacity: 1; }
+.you-acts time { font-size: 11.5px; color: var(--faint); margin-right: 4px; }
+.you-acts button { width: 26px; height: 26px; border-radius: 7px; display: grid; place-items: center; color: var(--faint); }
+.you-acts button:hover { background: var(--hover); color: var(--text); }
+.you-acts button[aria-disabled="true"] { opacity: .4; cursor: default; }
+.you-acts button[aria-disabled="true"]:hover { background: none; color: var(--faint); }
+.you-acts svg { width: 14px; height: 14px; }
+/* Editing a prompt: the bubble becomes a box in place. Send puts the folder and chat back to just
+   before this message (Restore's Rewind::Before) and runs the new words. */
+.you.editing { align-items: stretch; }
+.edit-box { border-radius: 16px; background: var(--raise); border: 1px solid #c4a2ff4d; box-shadow: 0 0 0 3px #9b6bff14;
+  transition: opacity 180ms ease-out, transform 180ms var(--ease-out); }
+@starting-style { .edit-box { opacity: 0; transform: scale(.98); } }
+.edit-box textarea { display: block; width: 100%; resize: none; border: 0; outline: 0; background: none; color: var(--text); font: 13.5px/1.55 Inter, system-ui; padding: 11px 14px 4px; min-height: 44px; field-sizing: content; }
+.edit-bar { display: flex; align-items: center; gap: 6px; padding: 6px 8px 8px 14px; }
+.edit-bar span { flex: 1; font-size: 11.5px; color: var(--faint); }
+.turn { margin-bottom: 32px; }
+.you.queued p { background: none; border: 1px dashed #ffc46b47; color: var(--dim); }
+.q { display: flex; align-items: center; gap: 2px; margin-top: 4px; font-size: 11.5px; }
+.q span { color: #ffc46bcc; margin-right: 6px; }
+.q button { height: 24px; padding: 0 8px; border-radius: 6px; color: var(--faint); }
+.q button:hover { background: var(--hover); color: var(--text); }
+/* "Thought for 5s", as Codex says it: words and a chevron, no icon. */
+.thought { display: inline-flex; align-items: center; gap: 4px; color: var(--faint); font-size: 12.5px; margin: 0 0 8px; height: 24px; border-radius: 6px; padding: 0 6px; margin-left: -6px; transition: color 150ms ease, background-color 150ms ease; }
+.thought:hover { color: var(--dim); background: var(--hover); }
+.thought svg { width: 13px; height: 13px; }
+.who { display: flex; align-items: center; gap: 7px; font-size: 12px; color: var(--faint); font-weight: 500; margin-bottom: 6px; }
+.who .logo { --s: 15px; }
+.ans { font-size: 13.5px; line-height: 1.7; color: #f6f2ffe6; }
+.ans p { margin: 0 0 12px; }
+.ans ul, .ans ol { margin: 0 0 12px; padding-left: 20px; }
+.ans li { margin: 4px 0; padding-left: 2px; }
+.ans li::marker { color: var(--faint); }
+.ans b { font-weight: 600; color: var(--text); }
+/* Links: accent text with a soft underline that firms up on hover. A path is a link too: a click opens
+   the file in the editor, or the folder. */
+.ans a { color: var(--accent); text-decoration: underline; text-decoration-color: #c4a2ff59; text-underline-offset: 3px; text-decoration-thickness: 1px; border-radius: 3px; transition: text-decoration-color 150ms ease, color 150ms ease; }
+.ans a:hover { color: #d7c0ff; text-decoration-color: currentColor; }
+.ans a code { color: inherit; }
+.ans a.path { text-decoration-style: dotted; }
+/* A code block: the language (or file name) and Copy in its header, the code under it. */
+.cb { margin: 4px 0 14px; border-radius: 12px; background: #09080b; border: 1px solid #ffffff14; overflow: hidden; }
+.cb-h { display: flex; align-items: center; height: 32px; padding: 0 5px 0 12px; border-bottom: 1px solid #ffffff0f; font-size: 11.5px; color: var(--faint); }
+.cb-h .fn2 { font: 11.5px var(--mono); color: var(--dim); }
+.cb-h button { margin-left: auto; height: 24px; padding: 0 8px; display: inline-flex; gap: 5px; align-items: center; border-radius: 6px; color: var(--faint); font-size: 11.5px; transition: background-color 150ms ease, color 150ms ease, transform 160ms var(--ease-out); }
+.cb-h button:hover { background: var(--hover); color: var(--text); }
+.cb-h button:active { transform: scale(.97); }
+.cb-h button svg { width: 13px; height: 13px; }
+.cb-h button.done { color: var(--green); }
+.cb pre { margin: 0; padding: 12px 14px; font: 12.5px/1.65 var(--mono); overflow-x: auto; color: #f6f2ffd9; scrollbar-width: thin; scrollbar-color: #ffffff1a transparent; }
+.acts:has(.cm.open) { opacity: 1; }
+/* The answer's Copy: a click copies the text; the arrow beside it offers Markdown too. */
+.copy-w { position: relative; display: flex; }
+.copy-w .more-c { width: 16px; margin-left: -4px; }
+.copy-w .more-c svg { width: 11px; height: 11px; }
+.menu.cm { top: auto; bottom: calc(100% + 4px); left: 0; right: auto; width: 176px; transform-origin: bottom left; }
+/* The answer's actions: icons only (each says what it does on hover), and the turn's cost. */
+.acts { display: flex; align-items: center; gap: 0; margin: 2px 0 0 -6px; opacity: 0; transition: opacity 150ms ease; }
+.turn:hover .acts, .turn:focus-within .acts, .turn.last .acts, .card .acts { opacity: 1; }
+.acts > button, .copy-w > button { width: 28px; height: 28px; border-radius: 7px; display: grid; place-items: center; color: var(--faint); }
+.acts > button:hover, .copy-w > button:hover { background: var(--hover); color: var(--text); }
+.acts > button svg, .copy-w > button svg { width: 15px; height: 15px; }
+.acts .meta { margin-left: 8px; color: var(--faint); font-size: 11.5px; }
+
+/* Commands: one quiet line each; a click opens its output. */
+.cmds { margin: 2px 0 12px; display: flex; flex-direction: column; }
+.cmd-h { display: flex; align-items: center; gap: 8px; width: calc(100% + 16px); height: 30px; padding: 0 8px; margin-left: -8px; border-radius: 7px; text-align: left; color: var(--faint); font-size: 13px; transition: background-color 150ms ease, color 150ms ease; }
+.cmd-h:hover { background: #ffffff07; color: var(--dim); }
+/* As wide as its words, so the shimmer's band is measured on the text (as the painter's is). */
+.cl { flex: 0 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cl code { background: none; padding: 0; color: var(--dim); }
+.cmd-m { flex: none; margin-left: auto; font-size: 11.5px; color: var(--faint); opacity: 0; transition: opacity 150ms ease; }
+.cmd-h:hover .cmd-m, .cmd.open .cmd-m, .cmd.live .cmd-m { opacity: 1; }
+.cmd-m .ok { font-style: normal; color: #7ee59acc; }
+.cmd-h .chev { width: 13px; height: 13px; opacity: 0; transition: transform 200ms var(--ease-out), opacity 150ms ease; }
+.cmd-h:hover .chev, .cmd.open .chev { opacity: .8; }
+.cmd.open .chev { transform: rotate(90deg); }
+/* The running one: ONE band of light crosses the whole line, verb and command together
+   (the painter's .work .on: dim 30%, white 50%, dim 70%, 200% wide, every 2 s, linear). */
+.cmd.live .cl { color: transparent; background: linear-gradient(90deg, var(--faint) 30%, #fff 50%, var(--faint) 70%) 0 0 / 200% 100%;
+  -webkit-background-clip: text; background-clip: text; animation: shine 2s linear infinite; }
+.cmd.live .cl code { color: transparent; }
+@keyframes shine { from { background-position: 150% 0; } to { background-position: -50% 0; } }
+.out-w { display: grid; grid-template-rows: 0fr; opacity: 0; transition: grid-template-rows 220ms var(--ease-out), opacity 150ms ease; }
+.cmd.open .out-w { grid-template-rows: 1fr; opacity: 1; }
+.out-w > div { overflow: hidden; min-height: 0; }
+.out { margin: 4px 0 8px; padding: 10px 12px; border-radius: 9px; background: #08070a; border: 1px solid var(--line); font: 12px/1.6 var(--mono); color: #f6f2ffb3; white-space: pre-wrap; max-height: 180px; overflow: auto; }
+.out .ps { color: var(--faint); }
+
+/* ── New chat ───────────────────────────────────────────────
+   One heading, the project as a quiet picker under it, and one box. The agent, where it runs, its
+   access and the model are pills in the box's bottom row, each a small menu: no row of agent chips. */
+.main.starting > .hd, .main.starting > .thread, .main.starting > .dock { display: none; }
+.start { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 0 24px 14vh; }
+.start .enter2 { transition: opacity 260ms ease-out, transform 260ms var(--ease-out); }
+@starting-style { .start .enter2 { opacity: 0; transform: translateY(8px); } }
+.st-h { margin: 0; font: 600 26px/1.2 Inter, system-ui; letter-spacing: -.022em; color: var(--text); text-align: center; }
+.st-proj { margin-top: 8px; position: relative; }
+.st-proj > button { display: inline-flex; align-items: center; gap: 7px; height: 30px; padding: 0 10px; border-radius: 8px; color: var(--dim); font-size: 13.5px; transition: background-color 150ms ease, color 150ms ease, transform 160ms var(--ease-out); }
+.st-proj > button:hover, .st-proj > button[aria-expanded="true"] { background: var(--hover); color: var(--text); }
+.st-proj > button:active { transform: scale(.97); }
+.st-proj > button svg { width: 15px; height: 15px; color: var(--faint); }
+.st-proj > button .chev { width: 13px; height: 13px; }
+.sbox { width: min(700px, 100%); margin-top: 22px; border-radius: 20px; background: var(--raise); border: 1px solid var(--line2);
+  box-shadow: 0 16px 40px #00000059, inset 0 1px 0 #ffffff08; transition: border-color 150ms ease, box-shadow 150ms ease; position: relative; }
+.sbox:focus-within { border-color: #c4a2ff4d; box-shadow: 0 16px 40px #00000059, 0 0 0 3px #9b6bff14, inset 0 1px 0 #ffffff08; }
+.sbox textarea { display: block; width: 100%; resize: none; border: 0; outline: 0; background: none; color: var(--text); font: 14px/1.55 Inter, system-ui; padding: 16px 18px 6px; min-height: 84px; max-height: 260px; field-sizing: content; }
+.sbox textarea::placeholder { color: var(--faint); }
+.sbar { display: flex; align-items: center; gap: 2px; padding: 6px 10px 10px; }
+.sbar .sp { flex: 1; }
+.pw { position: relative; }
+.pill .logo { --s: 16px; }
+.pill.amber { color: var(--amber); } .pill.amber:hover, .pill.amber[aria-expanded="true"] { color: #ffd89a; }
+.sbar .send { width: 32px; height: 32px; }
+/* The start box's menus drop down (the box sits mid-screen) and open from their pill. */
+.menu.sm { top: calc(100% + 6px); left: 0; width: 248px; transform: translateY(-2px) scale(.96); transform-origin: top left; }
+.menu.sm.end { left: auto; right: 0; transform-origin: top right; }
+.menu.sm.open { transform: none; }
+.mo { display: grid; grid-template-columns: 18px 1fr 14px; align-items: center; gap: 10px; width: 100%; padding: 7px 8px; border-radius: 7px; text-align: left; transition: background-color 120ms ease; }
+.mo:hover, .mo:focus-visible { background: #ffffff0d; outline: none; }
+.mo:disabled { opacity: .45; cursor: default; } .mo:disabled:hover { background: none; }
+.mo b { display: block; font-weight: 500; font-size: 13px; color: var(--text); line-height: 1.35; }
+.mo small { display: block; font-size: 11.5px; color: var(--faint); line-height: 1.35; }
+.mo > svg { width: 16px; height: 16px; color: var(--dim); }
+.mo .ok { color: var(--accent); width: 14px; height: 14px; stroke-width: 2; }
+.mo .logo { --s: 18px; }
+.st-hint { display: flex; align-items: center; gap: 6px; margin-top: 12px; font-size: 12px; color: var(--faint); }
+.st-hint svg { width: 13px; height: 13px; }
+.st-hint code { font-size: 11.5px; color: var(--dim); }
+
+/* The reply box, docked in the column; it grows with what is typed. */
+.dock { position: absolute; left: 0; right: 0; bottom: 0; padding: 0 24px 16px; background: linear-gradient(180deg, transparent, var(--bg) 40px); }
+.composer { max-width: 720px; margin: 0 auto; border-radius: 18px; background: var(--raise); border: 1px solid var(--line2);
+  box-shadow: 0 8px 24px #0000004d, inset 0 1px 0 #ffffff08; transition: border-color 150ms ease, box-shadow 150ms ease; position: relative; }
+.composer:focus-within { border-color: #c4a2ff4d; box-shadow: 0 8px 24px #0000004d, 0 0 0 3px #9b6bff14, inset 0 1px 0 #ffffff08; }
+.composer textarea { display: block; width: 100%; resize: none; border: 0; outline: 0; background: none; color: var(--text); font: 13.5px/1.5 Inter, system-ui; padding: 13px 16px 4px; min-height: 46px; max-height: 200px; field-sizing: content; }
+.composer textarea::placeholder { color: var(--faint); }
+.cbar { display: flex; align-items: center; gap: 2px; padding: 4px 8px 8px; }
+.cbar .sp { flex: 1; }
+.pill { display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 9px; border-radius: 8px; color: var(--dim); font-size: 12.5px; font-weight: 500; white-space: nowrap; }
+.pill:hover, .pill[aria-expanded="true"] { background: var(--hover); color: var(--text); }
+.pill svg { width: 13px; height: 13px; }
+.pill.folder { color: var(--faint); font-weight: 400; max-width: 240px; }
+.pill.folder span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.pill.folder:hover { color: var(--dim); }
+.send { width: 30px; height: 30px; margin-left: 4px; border-radius: 50%; display: grid; place-items: center; background: #f6f2ff; color: #0c0b0e; }
+.send svg { stroke-width: 2.2; width: 16px; height: 16px; }
+.send:hover { background: #fff; }
+.send:disabled { background: #ffffff12; color: var(--ghost); }
+.send.stop { background: #ffffff1f; color: var(--text); }
+.send.stop:hover { background: #ffffff2b; }
+.send.stop svg { fill: currentColor; stroke: none; width: 11px; height: 11px; }
+
+/* The model picker: each model's credit rate, the effort, and when Kiro compacts. */
+.menu.models { bottom: calc(100% + 8px); top: auto; right: 42px; width: 236px; transform: translateY(2px) scale(.96); transform-origin: bottom right; }
+.menu.models.open { transform: none; }
+.mrow { display: grid; grid-template-columns: 14px 1fr auto; align-items: center; gap: 8px; width: 100%; padding: 5px 8px; border-radius: 7px; text-align: left; }
+.mrow:hover, .mrow:focus-visible { background: #ffffff0d; outline: none; }
+.mrow b { font-weight: 500; font-size: 13px; color: var(--text); display: block; line-height: 1.35; }
+.mrow small { color: var(--faint); font-size: 11.5px; display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: 1.35; }
+.mrow .x { font: 11px var(--mono); color: var(--dim); padding: 2px 6px; border-radius: 5px; background: #ffffff0a; }
+.mrow .x.lo { color: var(--green); } .mrow .x.hi { color: var(--amber); }
+.mrow .ck { color: var(--accent); }
+.mrow .ck svg { width: 14px; height: 14px; stroke-width: 2; }
+/* Effort: its name over the model's own levels, which share the menu's width (up to five). */
+.eff { display: flex; flex-direction: column; gap: 6px; padding: 6px 8px 6px; }
+.eff span { font-size: 12px; color: var(--faint); }
+.eff small { font-size: 11.5px; color: var(--faint); }
+.eff .seg button { flex: 1 0 auto; padding: 0 5px; white-space: nowrap; }
+.seg { display: flex; background: #ffffff08; border-radius: 7px; padding: 2px; }
+.seg button { height: 22px; padding: 0 7px; border-radius: 5px; font-size: 11.5px; color: var(--faint); }
+.seg button:hover { color: var(--dim); }
+.seg button.on { background: #ffffff17; color: var(--text); }
+.compact { display: flex; align-items: center; gap: 8px; padding: 7px 8px; border-radius: 8px; background: #2dd4bf0f; color: var(--teal); font-size: 12px; width: 100%; text-align: left; }
+.compact:hover { background: #2dd4bf1a; }
+.compact svg { width: 14px; height: 14px; }
+.compact span { flex: 1; color: var(--dim); }
+.compact span b { color: var(--teal); font-weight: 500; }
+.compact .chev { width: 13px; height: 13px; color: var(--faint); }
+
+/* Files & changes, attached to the chat: full height, a hairline, no gap or rounding. */
+.desk { width: 0; border-left: 0 solid var(--line); background: var(--panel); display: flex; flex-direction: column; flex: none; overflow: hidden; transition: width 280ms var(--ease-drawer); position: relative; }
+.desk.open { width: 520px; border-left-width: 1px; }
+.desk .grip { position: absolute; left: 0; top: 0; bottom: 0; width: 6px; cursor: col-resize; z-index: 2; }
+.desk .grip::after { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 2px; background: transparent; transition: background-color 150ms ease; }
+.desk .grip:hover::after { background: #c4a2ff59; }
+.desk-hd { height: 52px; display: flex; align-items: center; gap: 2px; padding: 0 10px; border-bottom: 1px solid var(--line); flex: none; min-width: 520px; }
+/* The tabs scroll sideways when there are more than fit (a Mac adds Browser and Screen); ✕ stays put. */
+.desk-hd .tabs { flex: 1; min-width: 0; display: flex; align-items: center; gap: 2px; overflow-x: auto; scrollbar-width: none; mask-image: linear-gradient(90deg, #000 calc(100% - 16px), #0000); }
+.desk-hd .tabs::-webkit-scrollbar { display: none; }
+.tab { flex: none; height: 30px; display: inline-flex; align-items: center; gap: 6px; padding: 0 9px; border-radius: 7px; color: var(--faint); font-size: 12.5px; white-space: nowrap; }
+.tab svg { width: 15px; height: 15px; }
+.tab:hover { color: var(--dim); background: var(--hover); }
+.tab.on { color: var(--text); background: var(--sel); }
+.tab.on::after { display: none; }
+.desk-body { flex: 1; overflow: auto; min-width: 520px; scrollbar-width: thin; scrollbar-color: #ffffff1a transparent; }
+.pane { animation: paneIn 160ms var(--ease-out); }
+@keyframes paneIn { from { opacity: 0; transform: translateY(3px); } }
+/* Every panel: one quiet bar on top (what it shows, its actions), then the content. */
+.pbar { position: sticky; top: 0; z-index: 2; display: flex; align-items: center; gap: 8px; height: 44px; padding: 0 12px 0 16px; border-bottom: 1px solid var(--line); background: var(--panel); font-size: 12.5px; color: var(--dim); }
+.pbar .sp { flex: 1; }
+.pbar .n { color: var(--faint); }
+.pbar .icon-btn { margin-left: -8px; }
+.pbar .path { font: 12px var(--mono); color: var(--text); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.na { color: var(--green); font: 12px var(--mono); } .nd { color: var(--red); font: 12px var(--mono); }
+.btn { height: 28px; display: inline-flex; align-items: center; gap: 6px; padding: 0 11px; border-radius: 8px; font-size: 12.5px; font-weight: 500; color: var(--dim); border: 1px solid var(--line2); white-space: nowrap; }
+.btn svg { width: 14px; height: 14px; }
+.btn:hover { color: var(--text); background: var(--hover); }
+.btn.sm { height: 24px; padding: 0 8px; font-size: 11.5px; border-radius: 6px; }
+.btn.primary { background: #f6f2ff; color: #0c0b0e; border-color: transparent; }
+.btn.primary:hover { background: #fff; }
+.btn:disabled { opacity: .4; } .btn:disabled:hover { background: none; color: var(--dim); } .btn.primary:disabled:hover { background: #f6f2ff; color: #0c0b0e; }
+.sect { display: flex; align-items: center; gap: 6px; padding: 14px 16px 6px; font-size: 11.5px; font-weight: 500; color: var(--faint); }
+.badge { width: 18px; height: 18px; border-radius: 5px; display: grid; place-items: center; font: 600 10.5px var(--mono); flex: none; }
+.badge.M { color: var(--amber); background: #ffc46b14; } .badge.A, .badge.U { color: var(--green); background: #7ee59a14; }
+.badge.D { color: var(--red); background: #ff9a9214; } .badge.R { color: #7cb7ff; background: #7cb7ff14; }
+.live-t { color: transparent; background: linear-gradient(90deg, var(--faint) 30%, #fff 50%, var(--faint) 70%) 0 0 / 200% 100%; -webkit-background-clip: text; background-clip: text; animation: shine 2s linear infinite; }
+
+/* Terminal: your own shell in the session's folder, drawn as a terminal is. The prompt, what you
+   typed and what it printed, then the prompt again where you type. No boxes, no buttons. */
+.desk-body:has(.tpane) { overflow: hidden; display: flex; flex-direction: column; }
+.desk-body:has(.tpane) > .pane { flex: 1; min-height: 0; display: flex; }
+.tpane { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.xterm { flex: 1; overflow: auto; scrollbar-width: thin; scrollbar-color: #ffffff1a transparent; padding: 12px 16px 24px; background: #08070a; font: 12.5px/1.6 var(--mono); color: #f6f2ffe0; cursor: text; }
+.xterm pre { margin: 0; white-space: pre-wrap; word-break: break-word; font: inherit; color: #f6f2ffb3; }
+.xterm .ban { color: var(--faint); margin-bottom: 8px; }
+.xterm .ln { display: flex; white-space: pre-wrap; word-break: break-word; }
+.xterm .ps { flex: none; white-space: pre; color: inherit; }
+.xterm .err { color: #ff9a92; }
+.xterm .ctl { color: var(--faint); }
+.xterm .ex { margin-left: auto; padding-left: 14px; flex: none; font: 11.5px Inter, system-ui; color: var(--faint); align-self: center; }
+.xterm .ex.bad { color: var(--red); }
+/* The terminal's own tabs: your shell, and Nova's commands. */
+.ttabs { flex: none; display: flex; align-items: center; gap: 2px; height: 38px; padding: 0 8px; background: #08070a; border-bottom: 1px solid var(--line); }
+.ttab { height: 26px; display: inline-flex; align-items: center; gap: 6px; padding: 0 10px; border-radius: 6px; font-size: 12px; color: var(--faint); transition: background-color 120ms ease, color 120ms ease; }
+.ttab:hover { color: var(--dim); background: var(--hover); }
+.ttab.on { color: var(--text); background: #ffffff0f; }
+.ttab svg { width: 13px; height: 13px; }
+.ttab .live { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); animation: breathe 1.6s ease-in-out infinite; }
+#tin input { flex: 1; min-width: 0; padding: 0; background: none; border: 0; outline: 0; color: inherit; font: inherit; caret-color: var(--text); }
+.st { width: 14px; height: 14px; display: grid; place-items: center; flex: none; }
+.st svg { width: 13px; height: 13px; stroke-width: 2.2; }
+.st.ok { color: var(--green); } .st.bad { color: var(--red); }
+.st.run::before { content: ""; width: 10px; height: 10px; border-radius: 50%; border: 1.5px solid #ffffff24; border-top-color: var(--accent); animation: spin .8s linear infinite; }
+.caret { display: inline-block; width: 7px; height: 14px; background: var(--dim); vertical-align: -2px; animation: blink 1s steps(1) infinite; }
+@keyframes blink { 50% { opacity: 0; } }
+
+/* Files: find, what changed, what the agent touched, then the whole tree. */
+.find { margin: 10px 12px 2px; height: 32px; display: flex; align-items: center; gap: 8px; padding: 0 10px; border-radius: 8px; background: #ffffff07; border: 1px solid var(--line); color: var(--faint); transition: border-color 150ms ease, box-shadow 150ms ease; }
+.find:focus-within { border-color: #c4a2ff4d; box-shadow: 0 0 0 3px #9b6bff14; }
+.find svg { width: 14px; height: 14px; }
+.find input { flex: 1; min-width: 0; background: none; border: 0; outline: 0; color: var(--text); font: 12.5px Inter, system-ui; }
+.find input::placeholder { color: var(--faint); }
+.frow { position: relative; display: flex; align-items: center; gap: 8px; height: 30px; padding: 0 12px 0 calc(16px + var(--d, 0) * 16px); font-size: 12.5px; color: var(--dim); cursor: pointer; width: 100%; text-align: left; transition: background-color 120ms ease, color 120ms ease; }
+.frow:hover, .frow:focus-visible { background: var(--hover); color: var(--text); outline-offset: -2px; }
+.frow .nm { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.frow .dir { color: var(--faint); }
+.frow.chg .nm { color: var(--amber); }
+.frow .fi { width: 14px; height: 14px; color: var(--faint); }
+.frow .chev { width: 13px; height: 13px; color: var(--faint); transition: transform 200ms var(--ease-out); margin-left: -2px; }
+.td:not(.open) > .frow .chev { transform: rotate(-90deg); }
+.td:not(.open) > .tk { display: none; }
+.frow .r { margin-left: auto; display: flex; align-items: center; gap: 8px; font-size: 11.5px; color: var(--faint); flex: none; }
+/* A file: Preview or Markdown (for .md), Edit, and Open in. Editing is a plain box in place; Save writes it. */
+.pbar .editing { font-size: 11.5px; font-weight: 500; color: var(--amber); }
+.btn kbd { font: 600 10px var(--mono); opacity: .55; margin-left: 2px; }
+.fwarn { display: flex; align-items: center; gap: 8px; padding: 8px 16px; font-size: 12px; color: var(--amber); background: #ffc46b0d; border-bottom: 1px solid var(--line); }
+.fwarn svg { width: 14px; height: 14px; flex: none; }
+.fedit { display: block; width: 100%; min-height: 480px; field-sizing: content; resize: none; border: 0; outline: 0; background: #08070a; color: var(--text); font: 12px/1.7 var(--mono); padding: 10px 16px 28px; tab-size: 4; caret-color: var(--text); }
+.md-pv { padding: 18px 22px 30px; font-size: 13px; }
+.md-pv h2 { margin: 0 0 10px; font-size: 19px; font-weight: 600; letter-spacing: -.015em; }
+.md-pv h3 { margin: 20px 0 8px; font-size: 14.5px; font-weight: 600; }
+.md-pv h4 { margin: 16px 0 6px; font-size: 13.5px; font-weight: 600; }
+.open-in .pill { gap: 4px; padding: 0 6px 0 7px; }
+.open-in .pill > svg { width: 12px; height: 12px; color: var(--faint); }
+/* An editor's mark: its colour, its glyph (Kiro's is Hover's own). */
+.ed { width: 15px; height: 15px; border-radius: 4px; display: grid; place-items: center; flex: none; box-shadow: inset 0 0 0 1px #ffffff1f; }
+.ed:has(.logo) { box-shadow: none; }
+.ed > svg, .mi .ed > svg { width: 72%; height: 72%; fill: #fff; stroke: none; color: #fff; }
+.mi .last { margin-left: auto; font-size: 11px; color: var(--faint); }
+/* A menu inside a menu (Open in) opens beside its row on hover; the file's Open in drops on click. */
+.mi-w { position: relative; }
+.menu.fly { top: -5px; right: calc(100% - 2px); width: 204px; transform-origin: top right; }
+.menu .mi-w:hover > .fly, .menu .mi-w:focus-within > .fly { opacity: 1; transform: none; pointer-events: auto; transition-duration: 180ms; }
+.menu.fly.down { top: calc(100% + 6px); right: 0; }
+
+/* @ and /: a list above the reply box, filtered as you type. ↑/↓ move, Enter or Tab picks, Esc closes. */
+.menu.pop { top: auto; bottom: calc(100% + 6px); left: 6px; width: 340px; max-height: 280px; overflow-y: auto; scrollbar-width: thin; transform: translateY(2px) scale(.98); transform-origin: bottom left; }
+.menu.pop.open { transform: none; }
+.pop .pi { display: flex; align-items: center; gap: 9px; width: 100%; min-height: 30px; padding: 4px 8px; border-radius: 7px; text-align: left; color: var(--dim); font-size: 12.5px; }
+.pop .pi[aria-selected="true"] { background: #ffffff0f; color: var(--text); }
+.pop .pi svg { width: 14px; height: 14px; color: var(--faint); flex: none; }
+.pop .pi .nm { color: var(--text); white-space: nowrap; }
+.pop .pi .nm mark { background: none; color: var(--accent); }
+.pop .pi .dir { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--faint); font-size: 11.5px; }
+.pop .pi code { font: 12px var(--mono); color: var(--text); }
+.pop .pi small { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--faint); font-size: 11.5px; }
+.pop .none { padding: 8px; color: var(--faint); font-size: 12px; }
+/* A file added with @ sits in the box as a chip, as an image does. */
+.atts { display: flex; flex-wrap: wrap; gap: 6px; padding: 10px 12px 0; }
+.atts:empty { display: none; }
+.att { display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 4px 0 8px; border-radius: 7px; background: #ffffff0d; border: 1px solid var(--line2); font: 12px var(--mono); color: var(--text); }
+.att svg { width: 13px; height: 13px; color: var(--faint); }
+.att button { width: 18px; height: 18px; display: grid; place-items: center; border-radius: 5px; color: var(--faint); }
+.att button:hover { background: #ffffff14; color: var(--text); }
+.att button svg { width: 11px; height: 11px; }
+.fview .code { font: 12px/1.7 var(--mono); padding: 8px 0 20px; }
+.code div { min-height: 1.7em; padding: 0 16px 0 56px; position: relative; white-space: pre; color: #f6f2ffcc; }
+.code div::before { content: attr(data-n); position: absolute; left: 12px; width: 30px; text-align: right; color: var(--ghost); }
+.k { color: #c4a2ff; } .s { color: #9be3b0; } .cm { color: var(--faint); } .nu { color: #ffc46b; } .fn { color: #8cc8ff; }
+
+/* Diff: one block per file, with its status, old and new line numbers, and its hunks. */
+.file { border-bottom: 1px solid var(--line); }
+.file-h { display: flex; align-items: center; gap: 8px; width: 100%; height: 38px; padding: 0 16px; font-size: 12px; color: var(--dim); text-align: left; transition: background-color 120ms ease; position: sticky; top: 44px; background: var(--panel); z-index: 1; }
+.file-h:hover { background: #141217; }
+.file-h > svg { width: 13px; height: 13px; color: var(--faint); transition: transform 200ms var(--ease-out); }
+.file:not(.open) .file-h > svg { transform: rotate(-90deg); }
+.file-h .p { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 12px var(--mono); color: var(--text); }
+.file-h .p span { color: var(--faint); }
+.diff { font: 12px/1.65 var(--mono); padding-bottom: 8px; }
+.file:not(.open) .diff { display: none; }
+.diff div { padding: 0 16px 0 92px; position: relative; white-space: pre; color: #f6f2ffb3; }
+.diff div::before, .diff div::after { position: absolute; width: 30px; text-align: right; color: var(--ghost); }
+.diff div::before { content: attr(data-o); left: 10px; } .diff div::after { content: attr(data-n); left: 46px; }
+.diff .a { background: #30d15812; color: #b8f0c6; } .diff .r { background: #ff453a14; color: #ffc2bd; }
+.diff .a::after { color: #7ee59a80; } .diff .r::before { color: #ff9a9280; }
+.diff .h { color: var(--faint); background: #9b6bff0d; padding-top: 2px; padding-bottom: 2px; margin: 4px 0; }
+
+/* Pull request: the branch's PR (state, checks, what it says), the form that opens one, or gh's setup. */
+.pr { padding: 16px; }
+.state { display: inline-flex; align-items: center; gap: 5px; height: 22px; padding: 0 8px; border-radius: 11px; font-size: 11.5px; font-weight: 500; }
+.state svg { width: 12px; height: 12px; stroke-width: 2; }
+.state.open { color: var(--green); background: #7ee59a17; } .state.merged { color: var(--accent); background: #c4a2ff1a; }
+.state.closed { color: var(--red); background: #ff9a9217; } .state.draft { color: var(--dim); background: #ffffff0f; }
+.pr-top { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; color: var(--faint); font-size: 12px; }
+.pr h3 { margin: 0 0 6px; font-size: 15px; font-weight: 600; letter-spacing: -.01em; line-height: 1.4; }
+.pr .meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; color: var(--faint); font-size: 12px; }
+.pr .meta code { font-size: 11.5px; color: var(--dim); }
+.pr .meta svg { width: 12px; height: 12px; }
+.stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1px; margin: 14px 0; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: var(--line); }
+.stats div { background: var(--panel); padding: 9px 12px; }
+.stats b { display: block; font-size: 13px; font-weight: 600; }
+.stats small { color: var(--faint); font-size: 11.5px; }
+.box { border: 1px solid var(--line); border-radius: 10px; margin-bottom: 12px; overflow: hidden; }
+.box-h { display: flex; align-items: center; gap: 8px; height: 38px; padding: 0 12px; font-size: 12.5px; font-weight: 500; color: var(--text); border-bottom: 1px solid var(--line); }
+.box-h small { font-weight: 400; color: var(--faint); font-size: 12px; }
+.box-h .sp { flex: 1; }
+.chk { display: flex; align-items: center; gap: 9px; height: 34px; padding: 0 12px; font-size: 12.5px; color: var(--dim); }
+.chk + .chk { border-top: 1px solid var(--line); }
+.chk .r { margin-left: auto; color: var(--faint); font-size: 11.5px; }
+.pr-body { padding: 12px; font-size: 13px; line-height: 1.65; color: #f6f2ffd9; }
+.pr-body p { margin: 0 0 8px; } .pr-body ul { margin: 0; padding-left: 18px; } .pr-body li::marker { color: var(--faint); }
+.pr-acts { display: flex; gap: 8px; }
+.form { padding: 16px; display: flex; flex-direction: column; gap: 14px; }
+.lead { display: flex; gap: 10px; align-items: center; color: var(--dim); font-size: 12.5px; }
+.lead svg { width: 16px; height: 16px; color: var(--faint); }
+.fld label { display: block; font-size: 12px; font-weight: 500; color: var(--dim); margin-bottom: 6px; }
+.fld input, .fld textarea { display: block; width: 100%; background: #ffffff06; border: 1px solid var(--line2); border-radius: 8px; color: var(--text); font: 13px/1.5 Inter, system-ui; padding: 7px 10px; outline: 0; resize: vertical; transition: border-color 150ms ease, box-shadow 150ms ease; }
+.fld input:focus, .fld textarea:focus { border-color: #c4a2ff66; box-shadow: 0 0 0 3px #9b6bff14; }
+.fld textarea { min-height: 116px; }
+.fld .mono { font: 12px/1.5 var(--mono); }
+.fld small { display: block; margin-top: 5px; color: var(--faint); font-size: 11.5px; }
+.cbx { display: flex; align-items: center; gap: 9px; font-size: 12.5px; color: var(--dim); cursor: pointer; }
+.cbx input { appearance: none; width: 16px; height: 16px; margin: 0; border-radius: 5px; border: 1px solid var(--line3); background: #ffffff06; display: grid; place-items: center; cursor: pointer; transition: background-color 150ms ease, border-color 150ms ease; }
+.cbx input:checked { background: var(--accent); border-color: transparent; }
+.cbx input:checked::after { content: ""; width: 8px; height: 4px; border: solid #0c0b0e; border-width: 0 0 2px 2px; rotate: -45deg; translate: 0 -1px; }
+.cbx small { color: var(--faint); }
+.note { display: flex; gap: 8px; align-items: flex-start; padding: 9px 11px; border-radius: 8px; background: #ffc46b0f; color: #ffd89a; font-size: 12px; line-height: 1.5; }
+.note svg { width: 14px; height: 14px; margin-top: 1px; }
+.form-foot { display: flex; align-items: center; gap: 8px; padding-top: 2px; }
+.form-foot .sp { flex: 1; }
+.form-foot small { color: var(--faint); font-size: 12px; }
+.setup { padding: 32px 24px; display: flex; flex-direction: column; align-items: center; text-align: center; }
+.setup .gh { width: 44px; height: 44px; border-radius: 12px; background: #ffffff0d; display: grid; place-items: center; margin-bottom: 14px; color: var(--text); }
+.setup .gh svg { width: 22px; height: 22px; }
+.setup h3 { margin: 0 0 6px; font-size: 14.5px; font-weight: 600; }
+.setup > p { margin: 0 0 20px; color: var(--dim); font-size: 12.5px; max-width: 340px; }
+.steps { width: 100%; max-width: 400px; border: 1px solid var(--line); border-radius: 12px; text-align: left; overflow: hidden; }
+.stp { display: flex; gap: 12px; padding: 14px; }
+.stp + .stp { border-top: 1px solid var(--line); }
+.stp .dn { width: 22px; height: 22px; border-radius: 50%; border: 1px solid var(--line3); display: grid; place-items: center; font-size: 11.5px; color: var(--dim); flex: none; }
+.stp.done .dn { background: #7ee59a1f; border-color: transparent; color: var(--green); }
+.stp .dn svg { width: 12px; height: 12px; stroke-width: 2.4; }
+.stp b { display: block; font-size: 13px; font-weight: 500; margin-bottom: 2px; }
+.stp small { color: var(--faint); font-size: 12px; }
+.dcode { display: flex; align-items: center; gap: 6px; margin: 10px 0; }
+.dcode span { font: 600 17px var(--mono); letter-spacing: .14em; padding: 5px 12px; border-radius: 8px; background: #ffffff0a; border: 1px dashed var(--line3); }
+
+/* Linked PRs: the ones this chat mentions, in any repo, each with its state. */
+.lpr { display: flex; align-items: center; gap: 12px; width: 100%; padding: 11px 16px; border-bottom: 1px solid var(--line); text-align: left; transition: background-color 120ms ease; }
+.lpr:hover { background: #ffffff05; }
+.ic { width: 28px; height: 28px; border-radius: 8px; display: grid; place-items: center; flex: none; }
+.ic svg { width: 15px; height: 15px; }
+.ic.open { color: var(--green); background: #7ee59a14; } .ic.merged { color: var(--accent); background: #c4a2ff17; }
+.ic.closed { color: var(--red); background: #ff9a9214; } .ic.draft { color: var(--faint); background: #ffffff0a; }
+.lpr .t { flex: 1; min-width: 0; }
+.lpr .t b { display: block; font-weight: 500; font-size: 13px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lpr .t small { display: flex; align-items: center; gap: 6px; color: var(--faint); font-size: 12px; white-space: nowrap; }
+.lpr .t code { font-size: 11.5px; color: var(--dim); overflow: hidden; text-overflow: ellipsis; }
+.lpr .r { display: flex; align-items: center; gap: 8px; flex: none; }
+.lpr .ext { width: 14px; height: 14px; color: var(--faint); opacity: 0; transition: opacity 120ms ease; }
+.lpr:hover .ext, .lpr:focus-visible .ext { opacity: 1; }
+
+/* Agents: the helpers this session sent out, as small bots. */
+.sub { border-bottom: 1px solid var(--line); }
+.sub-h { display: flex; align-items: center; gap: 11px; width: 100%; padding: 11px 16px; text-align: left; transition: background-color 120ms ease; }
+.sub-h:hover { background: #ffffff05; }
+.face { width: 24px; height: 22px; border-radius: 7px; background: var(--c); display: grid; place-items: center; flex: none; }
+.face i { width: 15px; height: 8px; border-radius: 3px; background: #121018; display: flex; justify-content: space-around; align-items: center; padding: 0 2px; }
+.face i::before, .face i::after { content: ""; width: 2px; height: 4px; border-radius: 1px; background: var(--c); }
+.sub-h .t { flex: 1; min-width: 0; }
+.sub-h .t b { display: block; font-weight: 500; font-size: 13px; }
+.sub-h .t small { display: block; color: var(--faint); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sub-h .m { font-size: 11.5px; color: var(--faint); flex: none; }
+.sub-o { padding: 0 16px 12px 51px; font-size: 12.5px; color: var(--dim); line-height: 1.6; }
+.sub:not(.open) .sub-o { display: none; }
+
+/* Browser (macOS): the page the agent has open, in its own WKWebView. */
+.urlbar { display: flex; align-items: center; gap: 2px; padding: 8px 10px; border-bottom: 1px solid var(--line); }
+.url { flex: 1; height: 30px; margin-left: 4px; border-radius: 8px; background: #ffffff08; display: flex; align-items: center; gap: 7px; padding: 0 10px; font-size: 12.5px; color: var(--faint); }
+.url svg { width: 13px; height: 13px; } .url b { color: var(--text); font-weight: 400; }
+.webpage { margin: 12px; border-radius: 10px; overflow: hidden; border: 1px solid var(--line2); background: #fbfaf8; color: #18161c; }
+.webpage .wn { display: flex; align-items: center; gap: 14px; padding: 12px 16px; border-bottom: 1px solid #0000000f; font-size: 12px; color: #18161c99; }
+.webpage .wn b { color: #18161c; font-size: 13px; margin-right: auto; }
+.webpage .wb { padding: 22px 16px; }
+.webpage h4 { margin: 0 0 6px; font-size: 18px; letter-spacing: -.01em; } .webpage p { margin: 0 0 14px; font-size: 12.5px; color: #18161cb3; }
+.webpage .fake { height: 10px; border-radius: 5px; background: #0000000d; margin-bottom: 8px; }
+.webpage .cta { display: inline-block; padding: 7px 12px; border-radius: 8px; background: #18161c; color: #fff; font-size: 12px; outline: 2px solid #9b6bff; outline-offset: 3px; }
+.agent-at { display: flex; align-items: center; gap: 8px; margin: 0 12px; font-size: 12px; color: var(--faint); }
+
+/* Screen (macOS): a still of the screen, or live while the agent tests on it. */
+.screen { margin: 12px; border-radius: 10px; overflow: hidden; border: 1px solid var(--line2); aspect-ratio: 16 / 10; position: relative;
+  background: radial-gradient(ellipse at 20% 10%, #6d5bd0, transparent 60%), radial-gradient(ellipse at 90% 90%, #c2577a, transparent 55%), #241b3d; }
+.screen .mb { height: 14px; background: #0000004d; }
+.screen .w { position: absolute; border-radius: 7px; background: #f4f2f7; box-shadow: 0 10px 30px #0006; overflow: hidden; }
+.screen .w::before { content: ""; display: block; height: 14px; background: #e3e0e8; }
+.screen .w i { display: block; height: 6px; margin: 8px 10px 0; border-radius: 3px; background: #0000001a; }
+.screen .cur { position: absolute; width: 14px; height: 14px; filter: drop-shadow(0 1px 2px #0009); }
+.screen .cur svg { width: 14px; height: 14px; fill: #fff; stroke: #111; stroke-width: 1.2; }
+.live-dot { width: 7px; height: 7px; border-radius: 50%; background: #ff5b52; animation: breathe 1.6s ease-in-out infinite; }
+
+/* ── Scene 2: the office's chat card, over the real office ─── */
+/* The office fills whatever shape holds it (the window, or the notch's wide strip): cover, never letterboxed. */
+.office { flex: 1; position: relative; overflow: hidden; background: #1b1311 url(../../assets/readme/office.jpg) 30% 40% / cover no-repeat; }
+.card { position: absolute; right: 14px; top: 14px; bottom: 14px; width: 400px; border-radius: 18px; background: linear-gradient(180deg, #131116f5, #0d0c0ffa); border: 1px solid #ffffff14; box-shadow: 0 30px 60px #000b; display: flex; flex-direction: column; overflow: hidden; transition: width 280ms var(--ease-drawer); }
+.card.short { width: 360px; }
+.card-hd { display: flex; align-items: center; gap: 4px; padding: 11px 8px 10px 16px; border-bottom: 1px solid var(--line); position: relative; }
+.card-hd .tt { flex: 1; min-width: 0; margin-right: 4px; display: flex; align-items: center; gap: 8px; }
+.card-hd h2 { margin: 0; min-width: 0; font-size: 13.5px; font-weight: 600; letter-spacing: -.01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.card-hd .chip { flex: none; }
+/* The title renames in place: a quiet hover says it can be clicked; the box keeps the title's size. */
+[data-rename]:is(h1, h2) { cursor: text; border-radius: 6px; padding: 3px 6px; margin-left: -6px !important; transition: background-color 120ms ease; }
+[data-rename]:is(h1, h2):hover { background: var(--hover); }
+.ttl-in { min-width: 0; flex: 0 1 360px; height: 28px; margin-left: -6px; padding: 0 6px; border-radius: 6px; border: 1px solid #c4a2ff4d; box-shadow: 0 0 0 3px #9b6bff14; background: var(--raise); outline: 0; color: var(--text); font: 600 14px Inter, system-ui; letter-spacing: -.01em; }
+.card-hd .ttl-in { font-size: 13.5px; }
+.card .menu.more { top: 46px; right: 38px; }
+.card .thread .col { padding: 18px 18px 60px; }
+.card .ans { font-size: 13px; }
+/* The reply circle at rest; under the pointer it grows to say "Reply to Nova".
+   The thread leaves room under its last line, so the circle never sits on text. */
+.rest { position: absolute; right: 10px; bottom: 10px; height: 34px; min-width: 34px; display: flex; align-items: center; justify-content: flex-end; padding: 0 8px; border-radius: 17px;
+  background: #1c18225c; border: 1px solid #ffffff1a; color: var(--text); font-size: 12.5px; font-weight: 500; opacity: .75; box-shadow: 0 6px 18px #0000004d; }
+.rest span { max-width: 0; opacity: 0; overflow: hidden; white-space: nowrap; transition: max-width 240ms var(--ease-out), margin 240ms var(--ease-out), opacity 150ms ease; }
+.rest:hover, .rest:focus-visible { opacity: 1; background: #282230a6; }
+.rest:hover span, .rest:focus-visible span { max-width: 140px; margin: 0 6px 0 4px; opacity: 1; }
+.rest svg { width: 16px; height: 16px; }
+/* A draft waits in the box: a dot on the circle, as the new-task circle has. */
+.rest.draft::after { content: ""; position: absolute; top: 3px; right: 3px; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 2px var(--bg); }
+/* The chat's reply at rest: the same circle, at the column's right edge. The thread shows to the bottom. */
+.dock-rest { max-width: 720px; margin: 0 auto; display: flex; justify-content: flex-end; gap: 8px; }
+.dock-rest .rest { position: relative; right: auto; bottom: auto; }
+.dock.rested { background: none; pointer-events: none; }
+.dock.rested .dock-rest > * { pointer-events: auto; }
+#chatComposer { transition: opacity 180ms ease-out, transform 180ms var(--ease-out), border-color 150ms ease, box-shadow 150ms ease; }
+@starting-style { #chatComposer { opacity: 0; transform: translateY(6px); } }
+/* Resting is the default, so the thread runs to just above the circles (34 high, 16 up). */
+#sceneChat .main:has(.dock.rested) .col { padding-bottom: 56px; }
+.card .composer { margin: 0 12px 12px; max-width: none; transition: opacity 180ms ease-out, transform 180ms var(--ease-out), border-color 150ms ease, box-shadow 150ms ease; }
+@starting-style { .card .composer { opacity: 0; transform: translateY(6px); } }
+.card .menu.models { right: 40px; }
+
+/* ── Settings ──────────────────────────────────────────────
+   Over the chat or the office, under the title bar: the sections down the left, the page in a column.
+   Rows sit in rounded groups (a tile, the name and a line under it, the control on the right). */
+.settings { position: absolute; left: 0; right: 0; bottom: 0; top: 37px; z-index: 25; display: flex; background: var(--bg); }
+body.notch .settings { top: 0; }
+.set-nav { width: 224px; flex: none; padding: 10px 8px; border-right: 1px solid var(--line); background: var(--side); overflow-y: auto; }
+.set-nav .mi { height: 32px; font-size: 13px; }
+.set-nav .mi[aria-current="page"] { background: var(--sel); color: var(--text); }
+.set-nav .mi .logo { --s: 16px; }
+.set-back { margin-bottom: 8px; color: var(--dim) !important; }
+.set-main { flex: 1; min-width: 0; overflow-y: auto; scrollbar-width: thin; scrollbar-color: #ffffff1a transparent; }
+.set-col { max-width: 700px; margin: 0 auto; padding: 28px 32px 56px; }
+.set-col h1 { margin: 0 0 18px; font-size: 20px; font-weight: 600; letter-spacing: -.015em; }
+.set-h { margin: 26px 2px 8px; font-size: 11px; font-weight: 600; letter-spacing: .06em; color: var(--faint); display: flex; align-items: center; gap: 8px; }
+.set-h .sp { flex: 1; }
+.set-h .btn { letter-spacing: 0; }
+.grp2 { border-radius: 14px; background: var(--raise); border: 1px solid var(--line); overflow: hidden; }
+.srow { display: flex; align-items: center; gap: 12px; min-height: 58px; padding: 10px 14px; }
+.srow + .srow, .grp2 > * + * { border-top: 1px solid var(--line); }
+.srow .tx { flex: 1; min-width: 0; }
+.srow .tx b { display: block; font-size: 13px; font-weight: 500; color: var(--text); }
+.srow .tx small { display: block; font-size: 12px; color: var(--faint); line-height: 1.45; margin-top: 1px; }
+.srow .tx small.mono { font: 11.5px var(--mono); color: var(--faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.srow .tx .warn { color: var(--amber); font: 12px Inter, system-ui; white-space: normal; }
+.srow.off .tx b, .srow.off .tx small.mono { opacity: .55; }
+.tile { width: 30px; height: 30px; border-radius: 8px; display: grid; place-items: center; flex: none; }
+.tile svg { width: 16px; height: 16px; }
+.tile.blue { background: #3b82f629; color: #8cb8ff; } .tile.purple { background: #9b6bff29; color: var(--accent); }
+.tile.orange { background: #ff9f4329; color: #ffbe7a; } .tile.green { background: #34c75929; color: #7ee59a; } .tile.gray { background: #ffffff12; color: var(--dim); }
+.srow > .logo { --s: 30px; border-radius: 8px; }
+.kind { flex: none; font-size: 11px; font-weight: 500; color: var(--faint); padding: 2px 8px; border-radius: 99px; background: #ffffff0a; }
+/* A switch: on is the accent, the knob slides 140 ms. */
+.tg { flex: none; width: 34px; height: 20px; border-radius: 99px; background: #ffffff1f; position: relative; transition: background-color 150ms ease; }
+.tg::after { content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: #f6f2ff; box-shadow: 0 1px 2px #0006; transition: translate 140ms var(--ease-out); }
+.tg[aria-checked="true"] { background: var(--accent); }
+.tg[aria-checked="true"]::after { translate: 14px 0; }
+.set-note { margin: 10px 4px 0; font-size: 12px; line-height: 1.55; color: var(--faint); }
+.set-note code { font: 11.5px var(--mono); color: var(--dim); }
+.set-note button { color: var(--accent); text-decoration: underline; text-decoration-color: #c4a2ff59; text-underline-offset: 3px; font-size: 12px; }
+.addrow { width: 100%; display: flex; align-items: center; gap: 10px; height: 46px; padding: 0 14px; color: var(--dim); font-size: 13px; text-align: left; }
+.addrow:hover { background: var(--hover); color: var(--text); }
+.addrow svg { width: 16px; height: 16px; }
+/* Adding or editing a server: a small form in place, in the group. */
+.mform { padding: 14px; display: grid; gap: 12px; background: #ffffff04; }
+.mform label { display: grid; gap: 5px; font-size: 12px; color: var(--dim); }
+.mform input, .mform textarea { width: 100%; height: 32px; padding: 0 10px; border-radius: 8px; border: 1px solid var(--line2); background: var(--bg); color: var(--text); font: 12.5px var(--mono); outline: 0; }
+.mform textarea { height: auto; min-height: 56px; padding: 7px 10px; resize: vertical; field-sizing: content; }
+.mform input:focus, .mform textarea:focus { border-color: #c4a2ff66; box-shadow: 0 0 0 3px #9b6bff14; }
+.mform input[aria-invalid="true"] { border-color: #ff9a9280; }
+.mform .err { color: var(--red); font-size: 11.5px; }
+.mform .hint { color: var(--faint); font-size: 11.5px; }
+.mform .two { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.mform .envr { display: grid; grid-template-columns: 1fr 1.4fr 28px; gap: 6px; align-items: center; }
+.mform .acts2 { display: flex; gap: 8px; align-items: center; } .mform .acts2 .sp { flex: 1; }
+.confirm { display: flex; align-items: center; gap: 10px; padding: 12px 14px; background: #ff453a0f; font-size: 12.5px; color: var(--dim); }
+.confirm b { color: var(--text); font-weight: 500; }
+.confirm .sp { flex: 1; }
+.btn.danger { background: #ff453a; color: #fff; border-color: transparent; }
+.btn.danger:hover { background: #ff5a50; color: #fff; }
+.placeholder { padding: 40px 0; color: var(--faint); font-size: 13px; }
+
+/* ── The notch ─────────────────────────────────────────────
+   ?frame=notch: the same chat and office in the notch's open shape. The frame's size is the
+   notch's (Settings' office size: 840×340, 1120×440, 1320×520, 1560×600). No title bar: the
+   notch has none. The ground is the notch's black, so it opens out of the island with no seam.
+   ?frame=island: the notch at rest (#quota, #work, #ask, #done) or the question's card (#card). */
+html:has(> body.notch), html:has(> body.island), body.notch, body.island { background: transparent; }
+body.notch .bar, body.notch .notes, body.notch .titlebar, body.island .bar, body.island .notes, body.island .stage { display: none; }
+body.notch { --bg: #000; --side: #060608; --panel: #060608; }
+body.notch .stage { padding: 0; height: 100vh; }
+body.notch .win { width: 100%; height: 100%; border: 0; border-radius: 0; box-shadow: none; }
+/* At 440 high the whole picker can't show above the reply box, so it scrolls (effort and compact at its end). */
+body.notch .menu.models { max-height: calc(100vh - 130px); overflow-y: auto; scrollbar-width: thin; scrollbar-color: #ffffff1a transparent; }
+.isl-wrap { display: flex; justify-content: center; padding-bottom: 40px; }
+/* The island: 32 high, black, its top on the screen's edge, with the small ears that join it to the edge. */
+.isl { position: relative; height: 32px; display: inline-flex; align-items: center; gap: 12px; padding: 0 9px 0 11px; background: #000; border-radius: 0 0 14px 14px; font-size: 12.5px; color: #fff; }
+.isl::before, .isl::after, .qcard::before, .qcard::after { content: ""; position: absolute; top: 0; width: 10px; height: 10px; }
+.isl::before, .qcard::before { left: -10px; background: radial-gradient(circle at 0 100%, #0000 9.5px, #000 10px); }
+.isl::after, .qcard::after { right: -10px; background: radial-gradient(circle at 100% 100%, #0000 9.5px, #000 10px); }
+/* A glow while it asks (amber) or an end is new (green), as today. */
+.isl.ask, .qcard { box-shadow: 0 0 26px #ffb3409e; }
+.isl.done { box-shadow: 0 0 26px #34c7599e; }
+.isl .dv { width: 1px; height: 14px; background: #ffffff2e; flex: none; }
+.isl .tm { font-size: 11.5px; font-weight: 500; color: #ffffff8c; }
+.isl .verb { color: #ffffff8c; font-weight: 500; white-space: nowrap; }
+.isl .verb b { color: #fff; font-weight: 600; }
+.isl .verb code { font: 600 12px var(--mono); color: #fff; }
+/* What the agent does shimmers as one line, as the chat's running command does. */
+.isl .act { white-space: nowrap; max-width: 300px; overflow: hidden; text-overflow: ellipsis; font-weight: 500; color: transparent;
+  background: linear-gradient(90deg, #ffffff8c 30%, #fff 50%, #ffffff8c 70%) 0 0 / 200% 100%; -webkit-background-clip: text; background-clip: text; animation: shine 2s linear infinite; }
+.isl .act b { font-weight: 600; }
+/* A quota: the tool's logo in its ring, the number, a dim %. */
+.q1 { display: inline-flex; align-items: center; gap: 5px; }
+.qr { position: relative; width: 24px; height: 24px; display: grid; place-items: center; flex: none; }
+.qr::before { content: ""; position: absolute; inset: 0; border-radius: 50%; background: conic-gradient(var(--tc) calc(var(--v) * 1%), #ffffff24 0);
+  -webkit-mask: radial-gradient(farthest-side, #0000 calc(100% - 2px), #000 calc(100% - 1.5px)); mask: radial-gradient(farthest-side, #0000 calc(100% - 2px), #000 calc(100% - 1.5px)); }
+.qr .logo { --s: 14px; }
+.isl .num { font-size: 11.5px; font-weight: 600; } .isl .num i { font-style: normal; font-size: 10.5px; color: #ffffff5c; }
+.isl .stack { display: flex; padding: 0 4px; } .isl .stack .lm + .lm { margin-left: -5px; z-index: -1; }
+.isl .stack .logo, .isl > .lm .logo { --s: 18px; }
+.isl .btn { border-radius: 99px; height: 22px; padding: 0 10px; font-weight: 600; border-color: transparent; background: #ffffff1a; color: #fff; }
+.isl .btn.primary { background: #fff; color: #000; }
+.bdg { position: absolute; right: -4px; bottom: -4px; width: 11px; height: 11px; border-radius: 50%; background: var(--green); box-shadow: 0 0 0 2px #000; display: grid; place-items: center; }
+.bdg svg { width: 7px; height: 7px; stroke: #000; stroke-width: 3.5; }
+/* The question's card, 500 wide: what it wants, the command, why it asks, then Deny, Trust, Allow. */
+.qcard { position: relative; width: 500px; padding: 12px 14px 14px; background: #000; border-radius: 0 0 24px 24px; }
+.qc-h { display: flex; align-items: center; gap: 10px; }
+.qc-h .logo { --s: 26px; }
+.qc-h b { display: block; font-size: 13.5px; font-weight: 600; }
+.qc-h small { display: block; font-size: 11.5px; color: var(--faint); }
+.qc-h .cnt { margin-left: auto; font-size: 11px; font-weight: 600; color: var(--dim); background: #ffffff17; border-radius: 99px; padding: 2px 8px; }
+.qc-code { margin-top: 11px; padding: 9px 12px; background: #0f0f12; border: 1px solid var(--line2); border-radius: 12px; font: 12.5px/1.5 var(--mono); white-space: pre-wrap; }
+.qc-code i { font-style: normal; color: var(--amber); margin-right: 8px; }
+.qc-why { display: flex; align-items: center; gap: 8px; margin-top: 10px; font-size: 11.5px; color: var(--faint); }
+.qc-why::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--amber); flex: none; }
+.qc-acts { display: flex; gap: 8px; margin-top: 12px; } .qc-acts .sp { flex: 1; }
+.qc-acts kbd { font: 600 10px var(--mono); opacity: .55; margin-left: 2px; }
+
+/* Reduced motion: no movement, only gentle fades (the app's Pal.motion off). */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { transition-property: opacity, color, background-color, border-color !important; }
+  .lm.run::after { animation: breathe 1.6s ease-in-out infinite; border-color: var(--tc); }
+  .cmd.live .cl { background: none; color: var(--dim); animation: breathe 2s ease-in-out infinite; }
+  .cmd.live .cl code { color: var(--dim); }
+}
+</style>
+</head>
+<body>
+<!-- Codex's mark fills with this (marks.slint's Mark). -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs><linearGradient id="codexFill" x1="0" x2="1" y1="0" y2="0"><stop offset="0" stop-color="#b1a7ff"/><stop offset=".5" stop-color="#7a9dff"/><stop offset="1" stop-color="#3941ff"/></linearGradient></defs></svg>
+
+<div class="bar" role="toolbar" aria-label="Mockup controls">
+  <b>Hover mockup</b>
+  <button data-scene="chat" aria-pressed="true">Chat view</button>
+  <button data-scene="office" aria-pressed="false">Office card</button>
+  <span class="sep"></span>
+  <button data-t="working" aria-pressed="false">Agent working</button>
+  <button data-t="desk" aria-pressed="false">Files &amp; changes</button>
+  <button data-t="models" aria-pressed="false">Model picker</button>
+  <button data-t="more" aria-pressed="false">⋯ menu</button>
+  <button data-t="start" aria-pressed="false">New chat screen</button>
+  <button data-t="side" aria-pressed="false">Hide sidebar</button>
+  <button data-t="compose" aria-pressed="false">Card: reply open</button>
+  <button data-t="short" aria-pressed="false">Card: short screen</button>
+  <span class="sep"></span>
+  <button data-os="win" aria-pressed="true">Windows</button>
+  <button data-os="linux" aria-pressed="false">Linux</button>
+  <button data-os="mac" aria-pressed="false">macOS</button>
+  <button data-t="helpers" aria-pressed="false">Has helpers</button>
+  <button id="prmBtn" aria-pressed="false">PR: open</button>
+</div>
+
+<div class="isl-wrap" id="island" hidden></div>
+
+<div class="stage"><div class="win">
+  <!-- Hover's own title bar (the dashboard window only; a Mac uses its menu bar): the sidebar toggle, then
+       File, Settings and Help as Codex has them, in place of the logo and name. -->
+  <div class="titlebar" role="menubar" aria-label="Hover">
+    <div class="tbm"><button class="tb-btn" data-tbm="file" role="menuitem" aria-haspopup="menu" aria-expanded="false">File</button><div class="menu bar-m" role="menu" aria-label="File" data-for="file"></div></div>
+    <div class="tbm"><button class="tb-btn" data-tbm="settings" role="menuitem" aria-haspopup="menu" aria-expanded="false">Settings</button><div class="menu bar-m" role="menu" aria-label="Settings" data-for="settings"></div></div>
+    <div class="tbm"><button class="tb-btn" data-tbm="help" role="menuitem" aria-haspopup="menu" aria-expanded="false">Help</button><div class="menu bar-m" role="menu" aria-label="Help" data-for="help"></div></div>
+    <span class="sp"></span>
+    <button class="wc" aria-label="Minimise"><svg viewBox="0 0 10 10"><path d="M0 5h10"/></svg></button>
+    <button class="wc" aria-label="Maximise"><svg viewBox="0 0 10 10"><rect x=".5" y=".5" width="9" height="9"/></svg></button>
+    <button class="wc close" aria-label="Close Hover"><svg viewBox="0 0 10 10"><path d="M0 0l10 10M10 0 0 10"/></svg></button></div>
+
+  <!-- ═════════ Scene 1: chat view ═════════ -->
+  <div class="body" id="sceneChat">
+    <aside class="side" id="side" aria-label="Sessions">
+      <div class="side-top">
+        <div class="switch chat" role="radiogroup" aria-label="View">
+          <!-- The office: a desk whose screen shows a bot's eyes, as the office's bots look. -->
+          <button role="radio" aria-checked="false" aria-label="Office" data-tip="Office" data-tip-start><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="3.5" width="14" height="9.5" rx="2"/><path d="M10 7.2v2.1M14 7.2v2.1M12 13v3M2.5 16h19M5 16v4.5M19 16v4.5"/></svg></button>
+          <!-- The chat: Lucide's message-circle. -->
+          <button role="radio" aria-checked="true" aria-label="Chat" data-tip="Chat" class="on"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/></svg></button>
+        </div>
+        <span class="sp"></span>
+        <!-- Hide the sidebar: at the sidebar's top right, shown only while the pointer is over the sidebar. -->
+        <button class="icon-btn side-tg" data-click="side" data-i="panel" aria-label="Hide the sidebar" data-tip="Hide sidebar" data-tip-end></button>
+      </div>
+      <button class="new" data-i="pen" data-newchat>New chat</button>
+      <nav class="list" id="list" aria-label="Chats by folder"></nav>
+    </aside>
+
+    <section class="main" aria-label="Chat">
+      <header class="hd">
+        <!-- Show the sidebar: only while it is closed. -->
+        <button class="icon-btn open-tg" data-click="side" data-i="panel" aria-label="Show the sidebar" data-tip="Show sidebar" data-tip-start></button>
+        <div class="hd-t">
+          <h1 data-rename tabindex="0" role="button" aria-label="Rename: pull latest changes" data-tip="Rename">pull latest changes</h1>
+          <div class="chips">
+            <button class="chip btn" data-i="branch" data-tip="Branch: main">main</button>
+            <span class="chip" tabindex="0" id="ctx" data-tip="11% of the context used · Kiro compacts at 70%"></span>
+          </div>
+        </div>
+        <div class="hd-r">
+          <!-- No ✕: in the chat view another chat is a click away (the sidebar, New chat). -->
+          <button class="icon-btn" data-click="more" data-i="more" aria-label="More" aria-haspopup="menu" aria-expanded="false" data-tip="More" data-tip-end></button>
+          <div class="menu more" id="moreMenu" role="menu" aria-label="More"></div>
+        </div>
+      </header>
+
+      <div class="thread"><div class="col"><div id="head"></div><div id="tail"></div></div></div>
+
+      <div class="dock" id="dock">
+        <!-- At rest, as the office card's reply: a circle (it says "Reply to Nova" under the pointer).
+             A click or a typed key opens the box; Esc and sending close it. -->
+        <div class="dock-rest" id="dockRest">
+          <button class="rest" id="restChat" data-click="cc" aria-label="Reply to Nova"><span>Reply to Nova</span><svg viewBox="0 0 24 24"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/></svg></button>
+        </div>
+        <div class="composer" id="chatComposer">
+          <textarea rows="1" id="reply" placeholder="Reply to Nova" aria-label="Reply"></textarea>
+          <div class="cbar">
+            <button class="icon-btn" data-i="plus" aria-label="Attach an image" data-tip="Attach an image" data-tip-up data-tip-start></button>
+            <!-- The session's folder sits in the reply box, beside +. A click opens it. -->
+            <button class="pill folder" data-tip="C:\Users\james\…\Hover-rust-8fb777af" data-tip-up data-tip-start><svg viewBox="0 0 24 24"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg><span>Hover-rust-8fb777af</span></button>
+            <span class="sp"></span>
+            <button class="pill model" data-click="models" aria-haspopup="menu" aria-expanded="false"><span class="mname">Opus 5.5 · High</span><svg viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></svg></button>
+            <button class="send" id="send" aria-label="Send" disabled></button>
+          </div>
+          <div class="menu models" id="modelMenu" role="menu" aria-label="Kiro model"></div>
+        </div>
+      </div>
+      <!-- New chat: one heading, the project under it, then one box that holds every choice. -->
+      <div class="start" id="start" hidden></div>
+    </section>
+
+    <aside class="desk" id="desk" aria-label="Files and changes">
+      <div class="grip" aria-hidden="true"></div>
+      <div class="desk-hd" role="tablist" aria-label="Panels">
+        <!-- Every tab says what it is, so nothing needs a click to find out. -->
+        <div class="tabs">
+        <button class="tab" role="tab" aria-selected="false" data-i="terminal"><span class="tl">Terminal</span></button>
+        <button class="tab" role="tab" aria-selected="false" data-i="file"><span class="tl">Files</span></button>
+        <button class="tab on" role="tab" aria-selected="true" data-i="diff"><span class="tl">Diff</span></button>
+        <button class="tab" role="tab" aria-selected="false" data-i="pr"><span class="tl">Pull request</span></button>
+        <button class="tab" role="tab" aria-selected="false" data-i="link"><span class="tl">Linked PRs</span></button>
+        <!-- Shown only when this session has helpers; otherwise there is nothing in it. -->
+        <button class="tab" role="tab" aria-selected="false" data-i="bot" data-needs="helpers"><span class="tl">Agents</span></button>
+        <!-- Shown only where the OS can run it: the agent browser and computer use are macOS only. -->
+        <button class="tab" role="tab" aria-selected="false" data-i="globe" data-os="mac"><span class="tl">Browser</span></button>
+        <button class="tab" role="tab" aria-selected="false" data-i="monitor" data-os="mac"><span class="tl">Screen</span></button>
+        </div>
+        <button class="icon-btn" data-click="desk" data-i="x" aria-label="Close files and changes" data-tip="Close" data-tip-end></button>
+      </div>
+      <div class="desk-body" id="deskBody" role="tabpanel"></div>
+    </aside>
+  </div>
+
+  <!-- ═════════ Scene 2: the office's chat card ═════════ -->
+  <div class="body" id="sceneOffice" hidden>
+    <div class="office" aria-label="The 3D office">
+      <!-- The same switch, over the office's top left (as Office.d-wide sits in the app). -->
+      <div class="switch office-sw" role="radiogroup" aria-label="View">
+        <button role="radio" aria-checked="true" aria-label="Office" data-tip="Office" data-tip-start class="on"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="3.5" width="14" height="9.5" rx="2"/><path d="M10 7.2v2.1M14 7.2v2.1M12 13v3M2.5 16h19M5 16v4.5M19 16v4.5"/></svg></button>
+        <button role="radio" aria-checked="false" aria-label="Chat" data-tip="Chat"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/></svg></button>
+      </div>
+      <aside class="card" id="card" aria-label="Session">
+        <header class="card-hd">
+          <!-- One line, as the chat's header: the title and the context chip. The folder is in the reply box. -->
+          <div class="tt">
+            <h2 data-rename tabindex="0" role="button" aria-label="Rename: okay, i want you to pull the latest changes" data-tip="Rename">okay, i want you to pull the latest changes</h2>
+            <span class="chip" tabindex="0" id="cardCtx" data-tip="37% of the context used · Kiro compacts at 70%"></span>
+          </div>
+          <button class="icon-btn" data-click="more" data-i="more" aria-label="More" aria-haspopup="menu" aria-expanded="false" data-tip="More" data-tip-end></button>
+          <button class="icon-btn" data-i="x" aria-label="Close the chat" data-tip="Close" data-tip-end></button>
+          <div class="menu more" id="cardMenu" role="menu" aria-label="More"></div>
+        </header>
+        <div class="thread"><div class="col" id="cardCol"></div></div>
+        <!-- The reply circle stays (as today); it says "Reply to Nova" under the pointer. -->
+        <button class="rest" id="rest" data-click="compose" aria-label="Reply to Nova"><span>Reply to Nova</span><svg viewBox="0 0 24 24"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/></svg></button>
+        <div class="composer" id="cardComposer" hidden>
+          <textarea rows="2" placeholder="Reply to Nova" aria-label="Reply"></textarea>
+          <div class="cbar">
+            <button class="icon-btn" data-i="plus" aria-label="Attach an image" data-tip="Attach an image" data-tip-up data-tip-start></button>
+            <button class="pill folder" data-tip="C:\Users\james\…\Hover-rust-8fb777af" data-tip-up data-tip-start><svg viewBox="0 0 24 24"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg><span>Hover-rust-8fb777af</span></button>
+            <span class="sp"></span>
+            <button class="pill model" data-click="models" aria-haspopup="menu" aria-expanded="false"><span class="mname">Opus 5.5</span><svg viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></svg></button>
+            <button class="send" aria-label="Send" disabled></button>
+          </div>
+          <div class="menu models" id="cardModels" role="menu" aria-label="Kiro model"></div>
+        </div>
+      </aside>
+    </div>
+  </div>
+  <!-- Settings: over the chat or the office (which go on underneath), with its sections down the left. -->
+  <div class="settings" id="settings" hidden></div>
+</div></div>
+
+<div class="notes">
+  <h3>This pass (motion, icons, type, access)</h3>
+  <ul>
+    <li>The running command has one band of light across the whole line, verb and command together. The app's painter already shades by the glyph across one text box, so the build keeps "Running" and the command in one box.</li>
+    <li>Motion: menus open from their button in 180 ms and close in 120 ms. Opened or closed from the keyboard, they show at once. Buttons shrink slightly when pressed. Panels slide on the drawer curve in 280 ms. New messages rise in. Folder groups and command output fold smoothly.</li>
+    <li>Tooltips wait a moment the first time, then show at once while you move along a row of buttons. Icon-only buttons (tabs, ⋯, ✕, Copy, Try again) all have one.</li>
+    <li>Icons are Lucide's, at one stroke weight. The tool logos are Hover's own marks (Kiro, Codex, Claude).</li>
+    <li>A session at work has a ring spinning round its logo, as in the notch. One waiting on you has a breathing amber ring. The dots are gone.</li>
+    <li>Text: grey text is a little brighter, so the smallest text passes WCAG AA contrast. Nothing is smaller than 11 px. Code uses Cascadia Code, as the chat does.</li>
+    <li>Focus rings show for keyboard use only. With reduced motion on, nothing moves, only fades.</li>
+    <li>The send button stays grey until something is typed. While the agent works it is Stop, and turns back into Send (to queue) once you type.</li>
+  </ul>
+  <h3>Chat view</h3>
+  <ul>
+    <li>Header: title, then quiet chips for branch and context. Only ⋯ and ✕ on the right. The folder is in the reply box, beside +.</li>
+    <li>⋯ holds Open in (the editors found on this computer, then the file manager), Terminal, Files &amp; changes, Switch agent, Fork, and Delete.</li>
+    <li>In the reply box, @ adds a file from the folder as a chip, and / lists the agent's commands and Hover's.</li>
+    <li>Files: a Markdown file opens as a preview (or its Markdown), every file has Edit (Ctrl+S saves, Esc cancels) and Open in.</li>
+    <li>Commands: one line each, "Ran git switch main", with exit code and time at the right. A click opens the output.</li>
+    <li>A queued reply has Edit and Send now under it. No Cancel.</li>
+    <li>Files &amp; changes is attached at full height and shows only the tabs this computer can use.</li>
+    <li>Model picker: each model's credit rate, the effort, and the auto compact line.</li>
+  </ul>
+  <h3>Office card</h3>
+  <ul>
+    <li>Header: the title, with the folder and context in grey under it. Only ⋯ and ✕.</li>
+    <li>The reply circle stays and says "Reply to Nova" under the pointer. A click or a typed key opens the reply box.</li>
+  </ul>
+</div>
+
+<script>
+const $ = s => document.querySelector(s);
+// ?frame=notch (the open notch) or ?frame=island (the notch at rest); see the notch styles.
+const FRAME = new URLSearchParams(location.search).get('frame');
+if (FRAME) document.body.classList.add(FRAME);
+const $$ = s => document.querySelectorAll(s);
+
+// Lucide's shapes (the set Hover's icons come from), at one stroke weight.
+const I = {
+  plus: '<path d="M5 12h14M12 5v14"/>',
+  x: '<path d="M18 6 6 18M6 6l12 12"/>',
+  pen: '<path d="M12 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.375 2.625a1 1 0 0 1 3 3l-9.013 9.014a2 2 0 0 1-.853.505l-2.873.84a.5.5 0 0 1-.62-.62l.84-2.873a2 2 0 0 1 .506-.852z"/>',
+  panel: '<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18"/>',
+  settings: '<path d="M14 17H5M19 7h-9"/><circle cx="17" cy="17" r="3"/><circle cx="7" cy="7" r="3"/>',
+  folder: '<path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/>',
+  branch: '<path d="M6 3v12"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/>',
+  more: '<circle cx="5" cy="12" r="1" fill="currentColor"/><circle cx="12" cy="12" r="1" fill="currentColor"/><circle cx="19" cy="12" r="1" fill="currentColor"/>',
+  up: '<path d="m5 12 7-7 7 7M12 19V5"/>',
+  stop: '<rect x="5" y="5" width="14" height="14" rx="3"/>',
+  copy: '<rect x="8" y="8" width="14" height="14" rx="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>',
+  retry: '<path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/>',
+  undo: '<path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/>',
+  chevR: '<path d="m9 18 6-6-6-6"/>',
+  chevD: '<path d="m6 9 6 6 6-6"/>',
+  check: '<path d="M20 6 9 17l-5-5"/>',
+  terminal: '<path d="m4 17 6-6-6-6M12 19h8"/>',
+  file: '<path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4M16 13H8M16 17H8M10 9H8"/>',
+  diff: '<path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M9 10h6M12 13V7M9 17h6"/>',
+  pr: '<circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M13 6h3a2 2 0 0 1 2 2v7M6 9v12"/>',
+  link: '<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>',
+  bot: '<path d="M12 8V4H8"/><rect x="4" y="8" width="16" height="12" rx="2"/><path d="M2 14h2M20 14h2M15 13v2M9 13v2"/>',
+  globe: '<circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20M2 12h20"/>',
+  monitor: '<rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/>',
+  expand: '<path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/>',
+  code: '<path d="m18 16 4-4-4-4M6 8l-4 4 4 4M14.5 4l-5 16"/>',
+  swap: '<path d="M8 3 4 7l4 4M4 7h16M16 21l4-4-4-4M20 17H4"/>',
+  fork: '<circle cx="12" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><circle cx="18" cy="6" r="3"/><path d="M18 9v2c0 .6-.4 1-1 1H7c-.6 0-1-.4-1-1V9M12 12v3"/>',
+  trash: '<path d="M3 6h18M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/>',
+  shrink: '<path d="m14 10 7-7M20 10h-6V4M3 21l7-7M4 14h6v6"/>',
+};
+const svg = (n, cls = '') => `<svg viewBox="0 0 24 24"${cls ? ` class="${cls}"` : ''} aria-hidden="true">${I[n]}</svg>`;
+$$('[data-i]').forEach(el => el.insertAdjacentHTML('afterbegin', svg(el.dataset.i)));
+
+// Hover's own marks (marks.slint): Kiro is assets/kiro.svg; Codex's cloud and prompt; Claude's spark.
+const CODEX = 'M9.064,3.344 C9.787,3.047 10.573,2.939 11.349,3.032 C12.349,3.147 13.24,3.572 14.022,4.307 C14.032,4.317 14.046,4.324 14.059,4.328 C14.073,4.331 14.088,4.331 14.102,4.328 C15.119,4.065 16.195,4.163 17.148,4.603 L17.195,4.625 L17.311,4.682 C18.309,5.188 19.087,6.041 19.499,7.081 C19.708,7.591 19.812,8.122 19.814,8.676 C19.829,9.088 19.784,9.5 19.68,9.899 C19.67,9.94 19.681,9.983 19.71,10.014 C20.304,10.621 20.698,11.344 20.893,12.184 C21.182,13.609 20.886,14.894 20.006,16.038 L19.87,16.204 C19.287,16.871 18.522,17.354 17.669,17.592 C17.631,17.603 17.601,17.631 17.588,17.668 C17.397,18.219 17.205,18.691 16.848,19.162 C15.948,20.349 14.626,21.008 13.137,21 C11.95,20.994 10.898,20.56 9.98,19.698 C9.952,19.672 9.912,19.663 9.875,19.674 C9.487,19.799 9.095,19.817 8.671,19.812 C7.996,19.807 7.33,19.647 6.726,19.346 C6.093,19.032 5.542,18.575 5.116,18.011 C4.964,17.809 4.813,17.619 4.702,17.394 C4.55,17.085 4.427,16.764 4.332,16.433 C4.132,15.681 4.127,14.89 4.318,14.135 C4.324,14.117 4.326,14.098 4.324,14.079 C4.321,14.06 4.311,14.044 4.297,14.031 C3.835,13.563 3.482,13 3.263,12.38 C3.117,11.998 3.033,11.596 3.012,11.188 C2.976,10.651 3.023,10.111 3.153,9.588 C3.49,8.476 4.135,7.603 5.086,6.97 C5.298,6.829 5.499,6.719 5.687,6.64 C5.902,6.551 6.117,6.476 6.333,6.413 C6.364,6.403 6.389,6.378 6.398,6.347 C6.562,5.758 6.844,5.209 7.227,4.732 C7.71,4.119 8.342,3.641 9.064,3.344 Z';
+const CODEX_GLYPH = 'M12.546,13.909 C12.209,13.928 11.945,14.207 11.945,14.545 C11.945,14.883 12.209,15.162 12.546,15.181 L16.182,15.181 C16.418,15.194 16.641,15.076 16.763,14.874 C16.885,14.672 16.885,14.418 16.763,14.216 C16.641,14.014 16.418,13.896 16.182,13.909 L12.546,13.909 Z M8.462,9.23 C8.282,8.937 7.902,8.84 7.603,9.01 C7.305,9.18 7.195,9.557 7.356,9.861 L8.628,12.085 L7.362,14.221 C7.183,14.523 7.283,14.914 7.585,15.093 C7.887,15.272 8.278,15.172 8.457,14.87 L9.911,12.415 C10.028,12.218 10.03,11.974 9.916,11.775 L8.462,9.23 Z';
+const CLAUDE = 'M4.709,15.955 L9.429,13.308 L9.509,13.078 L9.429,12.95 L9.2,12.95 L8.41,12.902 L5.712,12.829 L3.373,12.732 L1.107,12.61 L0.536,12.489 L0,11.784 L0.055,11.432 L0.535,11.111 L1.221,11.171 L2.741,11.274 L5.019,11.432 L6.671,11.529 L9.12,11.784 L9.509,11.784 L9.564,11.627 L9.43,11.529 L9.327,11.432 L6.969,9.836 L4.417,8.148 L3.081,7.176 L2.357,6.685 L1.993,6.223 L1.835,5.215 L2.491,4.493 L3.372,4.553 L3.597,4.614 L4.49,5.3 L6.398,6.776 L8.889,8.609 L9.254,8.913 L9.399,8.81 L9.418,8.737 L9.254,8.463 L7.899,6.017 L6.453,3.527 L5.809,2.495 L5.639,1.876 C5.574,1.638 5.539,1.393 5.535,1.147 L6.283,0.134 L6.696,0 L7.692,0.134 L8.112,0.498 L8.732,1.912 L9.734,4.141 L11.289,7.171 L11.745,8.069 L11.988,8.901 L12.079,9.156 L12.237,9.156 L12.237,9.01 L12.365,7.304 L12.602,5.209 L12.832,2.514 L12.912,1.754 L13.288,0.844 L14.035,0.352 L14.619,0.632 L15.099,1.317 L15.032,1.761 L14.746,3.612 L14.187,6.515 L13.823,8.457 L14.035,8.457 L14.278,8.215 L15.263,6.909 L16.915,4.845 L17.645,4.025 L18.495,3.121 L19.042,2.69 L20.075,2.69 L20.835,3.819 L20.495,4.985 L19.431,6.332 L18.55,7.474 L17.286,9.174 L16.496,10.534 L16.569,10.644 L16.757,10.624 L19.613,10.018 L21.156,9.738 L22.997,9.423 L23.83,9.811 L23.921,10.206 L23.593,11.013 L21.624,11.499 L19.315,11.961 L15.876,12.774 L15.834,12.804 L15.883,12.865 L17.432,13.011 L18.094,13.047 L19.716,13.047 L22.736,13.272 L23.526,13.794 L24,14.432 L23.921,14.917 L22.706,15.537 L21.066,15.148 L17.237,14.238 L15.925,13.909 L15.743,13.909 L15.743,14.019 L16.836,15.087 L18.842,16.897 L21.351,19.227 L21.478,19.805 L21.156,20.26 L20.816,20.211 L18.611,18.554 L17.76,17.807 L15.834,16.187 L15.706,16.187 L15.706,16.357 L16.15,17.006 L18.495,20.527 L18.617,21.607 L18.447,21.96 L17.839,22.173 L17.171,22.051 L15.797,20.126 L14.382,17.959 L13.239,16.016 L13.099,16.096 L12.425,23.35 L12.109,23.72 L11.38,24 L10.773,23.539 L10.451,22.792 L10.773,21.316 L11.162,19.392 L11.477,17.862 L11.763,15.962 L11.933,15.33 L11.921,15.288 L11.781,15.306 L10.347,17.273 L8.167,20.218 L6.441,22.063 L6.027,22.227 L5.31,21.857 L5.377,21.195 L5.778,20.606 L8.166,17.57 L9.606,15.688 L10.536,14.602 L10.53,14.444 L10.475,14.444 L4.132,18.56 L3.002,18.706 L2.515,18.25 L2.576,17.504 L2.807,17.261 L4.715,15.949 Z';
+const MARK = {
+  kiro: '<img src="../../app/assets/kiro.svg" alt="">',
+  codex: `<svg viewBox="3 3 18 18"><path fill="url(#codexFill)" d="${CODEX}"/><path fill="#fff" d="${CODEX_GLYPH}"/></svg>`,
+  claude: `<svg viewBox="0 0 24 24"><path fill="#fff" d="${CLAUDE}"/></svg>`,
+};
+// Cursor and OpenCode: simple stand-ins for their marks (marks.slint has the real ones).
+MARK.cursor = '<svg viewBox="0 0 24 24"><path fill="#fff" fill-rule="evenodd" d="M12 2 3 7v10l9 5 9-5V7Zm0 2.3L18.9 8 12 11.8 5.1 8Z"/></svg>';
+MARK.opencode = '<svg viewBox="0 0 24 24"><path fill="#fff" fill-rule="evenodd" d="M5 3h14v18H5Zm3 3v12h8V6Z"/></svg>';
+const NAME = { kiro: 'Kiro', codex: 'Codex', cursor: 'Cursor', opencode: 'OpenCode', claude: 'Claude Code' };
+const TC = { kiro: '#b48cff', codex: '#7a9dff', claude: '#d97757', cursor: '#cfcfd6', opencode: '#cfcfd6' };
+const SET_PAGES = [['general', 'sliders', 'General'], ['integrations', 'plug', 'Integrations'], ['projects', 'folder', 'Projects'], ['voice', 'mic', 'Voice']];
+const logo = t => `<span class="logo ${t}" role="img" aria-label="${NAME[t]}">${MARK[t]}</span>`;
+
+// The context ring, with the teal tick where Kiro compacts (70%).
+const ring = p => `<svg class="ring" viewBox="0 0 12 12" aria-hidden="true"><circle cx="6" cy="6" r="4.5" stroke="#ffffff24"/><circle cx="6" cy="6" r="4.5" stroke="#ffffffbf" stroke-dasharray="${(p / 100 * 28.27).toFixed(2)} 28.3" transform="rotate(-90 6 6)"/><line x1="6" y1="0.4" x2="6" y2="2.6" stroke="#7fe3d4" stroke-width="1.4" transform="rotate(252 6 6)"/></svg>`;
+$('#ctx').innerHTML = `${ring(11)}11%`;
+$('#cardCtx').innerHTML = `${ring(37)}37%`;
+
+// The sessions by project folder; running ones first in their group.
+const groups = [
+  ['Hover-rust-8fb777af', [['kiro', 'pull latest changes', 'run', true], ['kiro', 'I want you to add this image to the README', 'ask'], ['kiro', 'Screenshots (at least one required)', '2h'], ['codex', "let's plan to improve the architecture", 'Yesterday'], ['kiro', 'Finish missing roadmap #30 screens', 'Mon']]],
+  ['Hover', [['kiro', 'okay, i want you to pull the latest changes', 'run'], ['claude', 'this needs changes, when user hovers', '3d'], ['kiro', 'git pull latest changes on rust branch', '5d']]],
+  ['buildknights', [['kiro', "Let's work on buildknights hackathon", '1w'], ['codex', 'write me essay about AI', '2w']]],
+  ['No folder', [['kiro', 'Open kisskh.co on google chrome', '2w'], ['kiro', 'hi', '3w']]],
+];
+$('#list').innerHTML = groups.map(([g, rows]) => `<div class="grp"><button class="grp-h" aria-expanded="true">${svg('folder')}${g}${svg('chevD', 'chev')}</button><div class="rows-w"><div class="rows">${
+  rows.map(([t, title, w, on]) => {
+    const live = w === 'run' || w === 'ask';
+    return `<div class="row${on ? ' on' : ''}" tabindex="0"${on ? ' aria-current="true"' : ''}><span class="lm${live ? ' ' + w : ''}" style="--tc:${TC[t]}">${logo(t)}</span><span class="t">${title}</span>${
+      live ? `<span class="sr">${w === 'ask' ? 'waiting on you' : 'working'}</span>` : `<span class="when">${w}</span>`
+    }<button class="del" aria-label="Delete ${title}">${svg('trash')}</button></div>`;
+  }).join('')
+}</div></div></div>`).join('');
+$$('.grp-h').forEach(h => h.onclick = () => { const g = h.parentElement; g.classList.toggle('shut'); h.setAttribute('aria-expanded', !g.classList.contains('shut')); });
+
+// The switch: the thumb slides to the mark clicked, then the view changes to it. There is one in the
+// chat's sidebar and one over the office's top left, so it is always where you look.
+$$('.switch button').forEach(b => b.onclick = () => {
+  const sw = b.parentElement, i = [...sw.children].indexOf(b), to = i === 1 ? 'chat' : 'office';
+  if (st.scene === to) return;
+  sw.classList.toggle('chat', i === 1);
+  sw.querySelectorAll('button').forEach((x, j) => { x.classList.toggle('on', j === i); x.setAttribute('aria-checked', j === i); });
+  setTimeout(() => { st.scene = to; draw(); }, 200);
+});
+// Each switch shows the view it sits in.
+function syncSwitches() {
+  $$('.switch').forEach(sw => { const chat = st.scene === 'chat'; sw.classList.toggle('chat', chat);
+    sw.querySelectorAll('button').forEach((x, j) => { const on = (j === 1) === chat; x.classList.toggle('on', on); x.setAttribute('aria-checked', on); }); });
+}
+
+// The ⋯ menu: short labels keep it narrow; no shortcuts Hover doesn't have.
+// Open in: only the editors found on this computer (hover-agents::editor::available, which looks in
+// each installer's folders and on PATH), the last one used first, then the OS's file manager.
+const ED = {
+  vscode: ['VS Code', '#0e7fd6', '<path fill-rule="evenodd" d="M16.5 2.5 9 9.4 4.6 6 2.5 7v10l2.1 1 4.4-3.4 7.5 6.9 5-2.4V4.9Zm0 4.9v9.2L10.7 12Z"/>'],
+  cursor: ['Cursor', '#18181c', '<path fill-rule="evenodd" d="M12 2 3 7v10l9 5 9-5V7Zm0 2.3L18.9 8 12 11.8 5.1 8Z"/>'],
+  kiro: ['Kiro IDE', '#9046ff', ''],
+  zed: ['Zed', '#101012', '<path d="M5 5h14v2.4L9.4 17H19v2H5v-2.4L14.6 7H5Z"/>'],
+};
+const FOUND = ['vscode', 'cursor', 'kiro', 'zed'];
+let lastEd = 'vscode';
+const FM = { win: 'File Explorer', mac: 'Finder', linux: 'Files' };
+const edIcon = id => id === 'kiro' ? `<span class="ed">${logo('kiro')}</span>` : `<span class="ed" style="background:${ED[id][1]}"><svg viewBox="0 0 24 24" aria-hidden="true">${ED[id][2]}</svg></span>`;
+const openList = what => `<div class="mlab">Open ${what} in</div>${[lastEd, ...FOUND.filter(e => e !== lastEd)].map(e => `<button class="mi" role="menuitem" data-ed="${e}">${edIcon(e)}${ED[e][0]}${e === lastEd ? '<small class="last">Last used</small>' : ''}</button>`).join('')}
+  <div class="msep" role="separator"></div><button class="mi" role="menuitem" data-ed="fm">${svg('folder')}<span data-fm>File Explorer</span></button>`;
+const more = big => `${big ? `<button class="mi" role="menuitem">${svg('expand')}Open in chat view</button>` : ''}
+  <div class="mi-w"><button class="mi" role="menuitem" aria-haspopup="menu">${svg('code')}Open in${svg('chevR', 'chev')}</button><div class="menu fly" role="menu" aria-label="Open in">${openList('the folder')}</div></div>
+  <button class="mi" role="menuitem" data-openterm>${svg('terminal')}Terminal</button>
+  <button class="mi" role="menuitem" data-click="desk">${svg('diff')}Files &amp; changes</button>
+  <div class="msep" role="separator"></div>
+  <button class="mi" role="menuitem" aria-haspopup="menu">${svg('swap')}Switch agent${svg('chevR', 'chev')}</button>
+  <button class="mi" role="menuitem" data-rename>${svg('pen')}Rename</button>
+  <button class="mi" role="menuitem">${svg('fork')}Fork</button>
+  <div class="msep" role="separator"></div>
+  <button class="mi red" role="menuitem">${svg('trash')}Delete</button>`;
+// ── The title bar's menus: File, Settings (straight to a page), Help ──
+Object.assign(I, {
+  ext: '<path d="M15 3h6v6M10 14 21 3M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>',
+  folderOpen: '<path d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2"/>',
+  sliders: '<path d="M10 5H3M12 19H3M14 3v4M16 17v4M21 12h-9M21 19h-5M21 5h-7M8 10v4M8 12H3"/>',
+  plug: '<path d="M12 22v-5M9 8V2M15 8V2M18 8v5a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V8Z"/>',
+  mic: '<path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2M12 19v3"/>',
+  book: '<path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H19a1 1 0 0 1 1 1v18a1 1 0 0 1-1 1H6.5a1 1 0 0 1 0-5H20"/>',
+  tag: '<path d="M12.586 2.586A2 2 0 0 0 11.172 2H4a2 2 0 0 0-2 2v7.172a2 2 0 0 0 .586 1.414l8.704 8.704a2.426 2.426 0 0 0 3.42 0l6.58-6.58a2.426 2.426 0 0 0 0-3.42z"/><circle cx="7.5" cy="7.5" r=".5" fill="currentColor"/>',
+  bug: '<path d="m8 2 1.88 1.88M14.12 3.88 16 2M9 7.13v-1a3 3 0 1 1 6 0v1"/><path d="M12 20c-3.3 0-6-2.7-6-6v-3a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v3c0 3.3-2.7 6-6 6M12 20v-9M6.53 9C4.6 8.8 3 7.1 3 5M6 13H2M3 21c0-2.1 1.7-3.9 3.8-4M20.97 5c0 2.1-1.6 3.8-3.5 4M22 13h-4M17.2 17c2.1.1 3.8 1.9 3.8 4"/>',
+  bulb: '<path d="M15 14c.2-1 .7-1.7 1.5-2.5 1-.9 1.5-2.2 1.5-3.5A6 6 0 0 0 6 8c0 1 .2 2.2 1.5 3.5.7.7 1.3 1.5 1.5 2.5M9 18h6M10 22h4"/>',
+  logs: '<path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4M10 9H8M16 13H8M16 17H8"/>',
+});
+// Cursor's and OpenCode's marks, from marks.slint.
+MARK.cursor = '<svg viewBox="1.4 0 21.1 24"><path fill="#ececf0" fill-rule="evenodd" d="M22.106,5.68 L12.5,0.135 C12.191,-0.043 11.811,-0.043 11.502,0.135 L1.893,5.68 C1.634,5.83 1.474,6.107 1.474,6.406 L1.474,17.592 C1.474,17.892 1.634,18.169 1.894,18.319 L11.501,23.866 C11.81,24.044 12.19,24.044 12.499,23.866 L22.107,18.319 C22.367,18.169 22.527,17.892 22.527,17.592 L22.527,6.407 C22.526,6.107 22.366,5.831 22.107,5.681 Z M21.503,6.856 L12.228,22.92 C12.165,23.028 12,22.984 12,22.859 L12,12.34 C12,12.13 11.887,11.935 11.705,11.83 L2.595,6.57 C2.488,6.508 2.532,6.342 2.657,6.342 L21.207,6.342 C21.471,6.342 21.635,6.628 21.503,6.856 Z"/></svg>';
+MARK.opencode = '<svg viewBox="4 2 16 20"><path fill="#f4f4f6" fill-rule="evenodd" d="M4,2 L20,2 L20,22 L4,22 Z M8,6 L8,18 L16,18 L16,6 Z M8,12 L16,12 L16,18 L8,18 Z"/></svg>';
+Object.assign(NAME, { cursor: 'Cursor', opencode: 'OpenCode' });
+const REPO = 'https://github.com/4regab/Hover';
+const ext = svg('ext', 'ext');
+const tbMenus = {
+  file: `<button class="mi" role="menuitem">${svg('pen')}New chat</button>
+    <button class="mi" role="menuitem">${svg('folderOpen')}Open folder…</button>
+    <div class="msep" role="separator"></div>
+    <button class="mi" role="menuitem">${svg('x')}Close window</button>`,
+  // Straight to a page of Settings (its nine sections).
+  settings: `${SET_PAGES.map(([k, i, n]) => `<button class="mi" role="menuitem" data-set="${k}">${svg(i)}${n}</button>`).join('')}
+    <div class="msep" role="separator"></div><div class="mlab">Agents</div>
+    ${['kiro', 'codex', 'cursor', 'opencode', 'claude'].map(t => `<button class="mi" role="menuitem" data-set="${t}">${logo(t)}${NAME[t]}</button>`).join('')}`,
+  help: `<a class="mi" role="menuitem" href="https://tryhover.co/docs" target="_blank" rel="noopener">${svg('book')}Documentation${ext}</a>
+    <a class="mi" role="menuitem" href="${REPO}/releases" target="_blank" rel="noopener">${svg('tag')}Releases${ext}</a>
+    <div class="msep" role="separator"></div>
+    <a class="mi" role="menuitem" href="${REPO}/issues/new?template=bug_report.yml" target="_blank" rel="noopener">${svg('bug')}Report a bug${ext}</a>
+    <a class="mi" role="menuitem" href="${REPO}/issues/new?template=feature_request.yml" target="_blank" rel="noopener">${svg('bulb')}Request a feature${ext}</a>
+    <div class="msep" role="separator"></div>
+    <button class="mi" role="menuitem">${svg('logs')}Open the logs folder</button>
+    <div class="mi ver" role="none">Hover 4.0.0</div>`,
+};
+$$('.bar-m').forEach(m => m.innerHTML = tbMenus[m.dataset.for]);
+$('#moreMenu').innerHTML = more(false);
+$('#cardMenu').innerHTML = more(true);
+
+// The models Kiro offers, with the rate Kiro's own list gives.
+const models = [['Auto', 'Picks per task', 1.0], ['Opus 5.5', 'Preview · 1M', 2.0], ['Sonnet 5.5', 'Preview · 1M', 1.3], ['Opus 5', '1M', 2.2], ['Sonnet 5', '1M', 1.3], ['GPT 5.6 Sol', 'Preview · 1M', 4.4], ['GPT 5.6 Terra', 'Preview · 1M', 2.2], ['GPT 5.6 Luna', 'Preview · 1M', 0.6]];
+const pick = { model: 'Opus 5.5', effort: 'High' };
+// Each model's own efforts, as Kiro lists them per model (AcpChoice.levels; "xhigh" reads X-High).
+// Auto picks the model per task, so it has none. A model without the effort picked falls back to High.
+const effortsOf = m => m === 'Auto' ? [] : /^GPT/.test(m) ? ['Low', 'Medium', 'High', 'X-High'] : ['Low', 'Medium', 'High', 'X-High', 'Max'];
+const effortNow = () => { const l = effortsOf(pick.model); return l.includes(pick.effort) ? pick.effort : l.length ? 'High' : ''; };
+const modelLabel = () => effortNow() ? `${pick.model} · ${effortNow()}` : pick.model;
+const picker = () => `<div class="mlab">Kiro model</div>${models.map(([n, d, r]) => { const on = n === pick.model;
+  return `<button class="mrow" role="menuitemradio" aria-checked="${on}" data-model="${n}"><span class="ck">${on ? svg('check') : ''}</span><span><b>${n}</b><small>${d}</small></span><span class="x${r < 1 ? ' lo' : r > 3 ? ' hi' : ''}" aria-label="${r.toFixed(1)} times the credits">${r.toFixed(1)}x</span></button>`; }).join('')}
+  <div class="msep" role="separator"></div>
+  <div class="eff"><span id="effLab">Effort</span>${effortsOf(pick.model).length ? `<div class="seg" role="radiogroup" aria-labelledby="effLab">${effortsOf(pick.model).map(e => `<button role="radio" aria-checked="${e === effortNow()}" class="${e === effortNow() ? 'on' : ''}" data-effort="${e}">${e}</button>`).join('')}</div>` : '<small>Auto picks it per task</small>'}</div>
+  <div class="msep" role="separator"></div>
+  <button class="compact" role="menuitem">${svg('shrink')}<span>Auto compact at <b>70%</b></span>${svg('chevR', 'chev')}</button>`;
+function drawPicker() {
+  $('#modelMenu').innerHTML = picker(); $('#cardModels').innerHTML = picker();
+  $('#sceneChat .mname').textContent = modelLabel();
+  $('#sceneOffice .mname').textContent = pick.model;
+}
+drawPicker();
+
+// The thread, done or at work.
+I.edit = '<path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"/><path d="m15 5 4 4"/>';
+const you = (t, at) => `<div class="you enter"><p>${t}</p><div class="you-acts"><time>${at}</time><button data-act="copy" aria-label="Copy" data-tip="Copy">${svg('copy')}</button><button data-act="edit" aria-label="Edit" data-tip="Edit" data-tip-end>${svg('edit')}</button></div></div>`;
+const esc = s => s.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+// Edit: the bubble becomes a box. Send drops everything after it and runs the new words from there.
+function startEdit(y) {
+  $$('.you.editing').forEach(cancelEdit);
+  const text = y.querySelector('p').textContent;
+  y.dataset.orig = y.innerHTML; y.classList.add('editing');
+  y.innerHTML = `<div class="edit-box"><textarea aria-label="Edit your message">${esc(text)}</textarea><div class="edit-bar"><span>Runs again from here. The folder and chat go back to before this message.</span><button class="btn" data-edit="cancel">Cancel</button><button class="btn primary" data-edit="send">Send</button></div></div>`;
+  const box = y.querySelector('textarea'); box.focus(); box.setSelectionRange(box.value.length, box.value.length);
+  box.addEventListener('keydown', e => {
+    if (e.key === 'Escape') { e.stopPropagation(); cancelEdit(y); }
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendEdit(y); }
+  });
+}
+function cancelEdit(y) { y.innerHTML = y.dataset.orig; y.classList.remove('editing'); y.querySelector('[data-act="edit"]')?.focus(); }
+function sendEdit(y) {
+  const text = y.querySelector('textarea').value.trim(); if (!text) return;
+  y.innerHTML = y.dataset.orig; y.classList.remove('editing'); y.querySelector('p').textContent = text;
+  const all = [...$$('#head > *, #tail > *')];
+  all.slice(all.indexOf(y) + 1).forEach(n => n.remove());
+  y.insertAdjacentHTML('afterend', `<div class="turn enter">${who}<div class="cmds"><div class="cmd live" role="status"><div class="cmd-h"><span class="cl">Thinking</span></div></div></div></div>`);
+}
+const who = `<div class="who">${logo('kiro')}Nova</div>`;
+const acts = (meta, restore) => `<div class="acts"><div class="copy-w"><button aria-label="Copy" data-tip="Copy" data-copy="text">${svg('copy')}</button><button class="more-c" aria-label="More ways to copy" aria-haspopup="menu" aria-expanded="false" data-cmenu>${svg('chevD')}</button>
+  <div class="menu cm" role="menu" aria-label="Copy"><button class="mi" role="menuitem" data-copy="text">${svg('copy')}Copy text</button><button class="mi" role="menuitem" data-copy="md">${svg('code')}Copy as Markdown</button></div></div>${restore ? `<button aria-label="Restore to here" data-tip="Restore to here">${svg('undo')}</button>` : ''}<button aria-label="Try again" data-tip="Try again">${svg('retry')}</button><span class="meta">${meta}</span></div>`;
+const thought = t => `<button class="thought" aria-expanded="false">Thought for ${t}${svg('chevR')}</button>`;
+const turn1 = `${you('pull latest changes', '9:22 AM')}<div class="turn">${thought('5s')}${who}<div class="ans">
+  <p>I fetched the latest changes but didn't merge them, because the merge conflicted. I aborted it, so your branch is back where it started.</p>
+  <p><code>origin/main</code> is 20 commits ahead. It includes releases 3.6.0 through 4.0.0, the Chat view, Kiro credit tracking and agent orchestration.</p>
+  <p>You have three options:</p>
+  <ol><li>Reset this branch to <code>origin/main</code>.</li><li>Merge and resolve the conflicts by hand.</li><li>Fast-forward local <code>main</code> and leave this branch alone.</li></ol>
+  <p>Which one do you want?</p></div>${acts('44 s · 1.28 credits', true)}</div>`;
+const done2 = `${you('ok switch to main branch', '9:24 AM')}<div class="turn last enter">${thought('1s')}${who}<div class="ans"><p>You're on <code>main</code> now, with all the latest changes pulled. It matches <code>origin/main</code> at <code>b6c5e21</code>. The release notes are on <a href="https://github.com/4regab/Hover/releases" target="_blank" rel="noopener" title="https://github.com/4regab/Hover/releases">GitHub's releases page</a>.</p>
+  <p>Open the mockup here: <b><a href="http://127.0.0.1:8765/docs/mockups/chat-uiux.html" target="_blank" rel="noopener" title="http://127.0.0.1:8765/docs/mockups/chat-uiux.html">http://127.0.0.1:8765/docs/mockups/chat-uiux.html</a></b></p>
+  <p>The file is <a class="path" href="#" title="Open in the editor"><code>docs/mockups/chat-uiux.html</code></a>, and the branch <code>hover/pull-latest-changes-99a0</code> still has its 3 voice-aura commits. To stop the server:</p>
+  <div class="cb"><div class="cb-h">powershell<button data-cbcopy>${svg('copy')}<span>Copy</span></button></div><pre>Stop-Process -Id 2052
+git log --oneline main..hover/pull-latest-changes-99a0</pre></div></div>${acts('15 s · 0.87 credits')}</div>`;
+// A reply sent while it works waits in the queue: Edit (takes it out, into the reply box) and Send now.
+const queued = t => `<div class="you queued enter"><p>${t}</p><div class="q"><span>Queued · sends when this run ends</span><button>Edit</button><button>Send now</button></div></div>`;
+// Commands as Codex and T3 Code show them: one line each, which opens to its output. The verb and
+// the command are ONE span, so the running line's shimmer is one band across all of it.
+const cmd = (verb, c, meta, open, out) => { const live = verb === 'Running';
+  return `<div class="cmd${open ? ' open' : ''}${live ? ' live' : ''}"${live ? ' role="status"' : ''}>
+  <button class="cmd-h"${live ? '' : ` aria-expanded="${!!open}"`}><span class="cl">${verb} <code>${c}</code></span><span class="cmd-m">${meta}</span>${live ? '' : svg('chevR', 'chev')}</button>
+  ${out ? `<div class="out-w"><div><pre class="out"><span class="ps">$</span> ${c}\n${out}</pre></div></div>` : ''}</div>`; };
+const work2 = () => `${you('ok switch to main branch', '9:24 AM')}<div class="turn enter">${who}<div class="cmds">
+  ${cmd('Ran', 'git switch main', '<i class="ok">exit 0</i> · 0.3s', true, "Switched to branch 'main'\nYour branch is behind 'origin/main' by 17 commits, and can be fast-forwarded.")}
+  ${cmd('Running', 'git merge --ff-only origin/main', '<span id="tick">4</span>s', false, '')}
+</div></div>${queued('width can be decreased and icons can be improved')}`;
+$('#head').innerHTML = turn1;
+$('#cardCol').innerHTML = `<div class="turn">${who}<div class="ans">
+  <ul><li><b>The section under the mockup is now the plan.</b> It covers the chat, office, Settings and voice. Each card says whether the part is new or changed.</li>
+  <li><b>Layout:</b> the plan's right column was cut off, and that's fixed.</li></ul>
+  <p><b>What I tested:</b> typing opens the reply box, and Esc hides it while keeping the draft. Sending closes it.</p>
+  <p><b>Still open, before building voice:</b> which speech-to-text to use on Linux, and which model matches projects.</p>
+  <p>Say go and I'll start build step 1.</p></div>${acts('56 s · 4.19 credits')}</div>`;
+// The running command's time goes up, as it will in the app.
+setInterval(() => { const t = $('#tick'); if (t) t.textContent = +t.textContent + 1; }, 1000);
+
+// ── Files & changes: each tab's panel, with the fields hover-agents' desk.rs gives it ──
+Object.assign(I, {
+  search: '<circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>',
+  ext: '<path d="M15 3h6v6M10 14 21 3M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>',
+  merge: '<circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M6 21V9a9 9 0 0 0 9 9"/>',
+  prClosed: '<circle cx="6" cy="6" r="3"/><path d="M6 9v12M21 3l-6 6M21 9l-6-6M18 11.5V15"/><circle cx="18" cy="18" r="3"/>',
+  prDraft: '<circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M18 6V5M18 11v-1M6 9v12"/>',
+  alert: '<circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/>',
+  back: '<path d="m12 19-7-7 7-7M19 12H5"/>', fwd: '<path d="M5 12h14M12 5l7 7-7 7"/>',
+  lock: '<rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>',
+  clip: '<path d="m16 6-8.414 8.586a2 2 0 0 0 2.829 2.829l8.414-8.586a4 4 0 1 0-5.657-5.657l-8.379 8.551a6 6 0 1 0 8.485 8.485l8.379-8.551"/>',
+  doc: '<path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/>',
+  gh: '<path d="M15 22v-4a4.8 4.8 0 0 0-1-3.5c3 0 6-2 6-5.5.08-1.25-.27-2.48-1-3.5.28-1.15.28-2.35 0-3.5 0 0-1 0-3 1.5-2.64-.5-5.36-.5-8 0C6 2 5 2 5 2c-.3 1.15-.3 2.35 0 3.5A5.4 5.4 0 0 0 4 9c0 3.5 3 5.5 6 5.5-.39.49-.68 1.05-.85 1.65-.17.6-.22 1.23-.15 1.85v4"/><path d="M9 18c-4.51 2-5-2-7-2"/>',
+  xs: '<path d="M18 6 6 18M6 6l12 12"/>',
+  return: '<path d="M20 4v7a4 4 0 0 1-4 4H4"/><path d="m9 10-5 5 5 5"/>',
+});
+const split = p => { const i = p.lastIndexOf('/'); return i < 0 ? ['', p] : [p.slice(0, i + 1), p.slice(i + 1)]; };
+const stIcon = s => s === 'run' ? '<span class="st run" aria-label="Running"></span>' : `<span class="st ${s}" aria-label="${s === 'ok' ? 'Succeeded' : 'Failed'}">${svg(s === 'ok' ? 'check' : 'xs')}</span>`;
+const prIc = { open: 'pr', merged: 'merge', closed: 'prClosed', draft: 'prDraft' };
+const prWord = { open: 'Open', merged: 'Merged', closed: 'Closed', draft: 'Draft' };
+
+// Your own commands: each runs once in the session's folder with your shell, its output read as it
+// comes. A few made-up outputs, so the mockup answers what is typed.
+const fakeOut = c => {
+  const w = c.trim().split(/\s+/)[0];
+  if (/^git status/.test(c)) return [0, 'On branch main\nYour branch is up to date with \'origin/main\'.\n\nChanges not staged for commit:\n  modified:   app/ui/office.slint\n  modified:   app/src/office_ui.rs\n  modified:   crates/hover-agents/src/acp.rs'];
+  if (/^git log/.test(c)) return [0, '9f3a0d2 (HEAD -> main, origin/main) Release 4.0.0\n1c7e5b0 Chat view: the sessions down the left\n6a2d913 Kiro credit tracking in the model picker'];
+  if (/^git (branch|switch|checkout)/.test(c)) return [0, '* main\n  hover/pull-latest-changes-99a0'];
+  if (/^(ls|dir|Get-ChildItem|gci)\b/i.test(w)) return [0, 'app/  crates/  docs/  packaging/  scripts/  tools/\nAGENTS.md  Cargo.lock  Cargo.toml  Makefile  README.md  build.ps1'];
+  if (/^cargo/.test(c)) return [0, '   Compiling hover-chat v4.0.0\n   Compiling hover v4.0.0 (app)\n    Finished `release` profile [optimized] target(s) in 41.2s'];
+  if (/^(pwd|Get-Location)$/i.test(c.trim())) return [0, 'C:\\Users\\james\\AppData\\Roaming\\Hover\\worktrees\\Hover-rust-8fb777af'];
+  return [1, `<span class="err">${st.os === 'win' ? `${esc(w)}: The term '${esc(w)}' is not recognized as a name of a cmdlet, function, script file, or executable program.` : `${st.os === 'mac' ? 'zsh' : 'bash'}: ${esc(w)}: command not found`}</span>`];
+};
+function runMine(c) {
+  const cmd = { c, s: 'run', x: null, t: '', out: '', mine: true, at: Date.now() };
+  st.mine.push(cmd); st.hist.push(c); st.hi = st.hist.length; draw();
+  cmd.timer = setTimeout(() => { const [x, out] = fakeOut(c); Object.assign(cmd, { s: x ? 'bad' : 'ok', x, out, t: ((Date.now() - cmd.at) / 1000).toFixed(1) + 's' }); paneKey = ''; draw(); }, 900 + Math.random() * 700);
+}
+// Kiro's MCP servers: Kiro's own list (~/.kiro/settings/mcp.json), which the Kiro IDE and kiro-cli share.
+// The switch writes the server's "disabled"; Add and Edit write its entry; Hover keeps no copy.
+// failed: Kiro said it didn't start in the last task (acp.rs keeps that as mcp_failed).
+const MCPS = [
+  { name: 'aws-docs', cmd: 'uvx', args: ['awslabs.aws-documentation-mcp-server@latest'], env: [['FASTMCP_LOG_LEVEL', 'ERROR']], on: true },
+  { name: 'github', url: 'https://api.githubcopilot.com/mcp/', env: [], on: true },
+  { name: 'playwright', cmd: 'npx', args: ['@playwright/mcp@latest'], env: [], on: true, failed: 'Didn’t start in the last task: npx wasn’t found.' },
+  { name: 'fetch', cmd: 'uvx', args: ['mcp-server-fetch'], env: [], on: false },
+];
+const tile = (ic, c) => `<span class="tile ${c}">${svg(ic)}</span>`;
+const srow = (lead, name, sub, ctl, cls = '') => `<div class="srow${cls ? ' ' + cls : ''}">${lead}<div class="tx"><b>${name}</b>${sub ? `<small>${sub}</small>` : ''}</div>${ctl}</div>`;
+const segs = (labels, on, attr = '') => `<div class="seg" role="radiogroup">${labels.map(l => `<button role="radio" aria-checked="${l === on}" class="${l === on ? 'on' : ''}"${attr ? ` ${attr}="${l}"` : ''}>${l}</button>`).join('')}</div>`;
+const newForm = s => ({ edit: s?.name ?? null, kind: s?.url ? 'url' : 'cmd', name: s?.name ?? '', url: s?.url ?? '', cmd: s?.cmd ?? '', args: (s?.args ?? []).join('\n'), env: s?.env?.length ? s.env.map(e => [...e]) : [['', '']], err: {} });
+// What is typed in the form, kept before it is drawn again (a switch of kind, a row added).
+function grab() { const f = $('#mform'); if (!f || !st.mf) return; const v = n => f.elements[n]?.value ?? st.mf[n];
+  Object.assign(st.mf, { name: v('name'), url: v('url'), cmd: v('cmd'), args: v('args'), env: [...f.querySelectorAll('.envr')].map(r => [r.querySelector('[name=ek]').value, r.querySelector('[name=ev]').value]) }); }
+function mcpForm() {
+  const m = st.mf, url = m.kind === 'url', e = m.err, bad = k => e[k] ? ` aria-invalid="true" aria-describedby="err-${k}"` : '', say = k => e[k] ? `<span class="err" id="err-${k}">${e[k]}</span>` : '';
+  return `<form class="mform" id="mform" autocomplete="off" novalidate aria-label="${m.edit ? 'Edit ' + esc(m.edit) : 'Add an MCP server'}">
+    <label>Name<input name="name" value="${esc(m.name)}" placeholder="github" spellcheck="false"${bad('name')}>${say('name')}</label>
+    <div class="seg" role="radiogroup" aria-label="Runs as">${[['cmd', 'A command on this computer'], ['url', 'A URL']].map(([k, n]) => `<button type="button" role="radio" aria-checked="${m.kind === k}" class="${m.kind === k ? 'on' : ''}" data-mkind="${k}">${n}</button>`).join('')}</div>
+    ${url ? `<label>URL<input name="url" value="${esc(m.url)}" placeholder="https://example.com/mcp" spellcheck="false"${bad('url')}>${say('url')}</label>`
+      : `<div class="two"><label>Command<input name="cmd" value="${esc(m.cmd)}" placeholder="npx" spellcheck="false"${bad('cmd')}>${say('cmd')}</label><label>Arguments<textarea name="args" placeholder="One per line" spellcheck="false">${esc(m.args)}</textarea></label></div>`}
+    <div><div class="hint" style="margin-bottom:6px">${url ? 'Headers' : 'Environment variables'}</div>
+      ${m.env.map(([k, v], i) => `<div class="envr" style="margin-bottom:6px"><input name="ek" value="${esc(k)}" placeholder="${url ? 'Authorization' : 'API_KEY'}" aria-label="Name" spellcheck="false"><input name="ev" value="${esc(v)}" placeholder="value" aria-label="Value" spellcheck="false"><button type="button" class="icon-btn" data-menvx="${i}" aria-label="Remove this one">${svg('xs')}</button></div>`).join('')}
+      ${say('env')}<button type="button" class="btn sm" data-menv>${svg('plus')}Add one</button></div>
+    <div class="hint">Saved in Kiro’s file as plain text, as Kiro keeps it.</div>
+    <div class="acts2"><span class="sp"></span><button type="button" class="btn sm" data-mcancel>Cancel</button><button class="btn sm primary">${m.edit ? 'Save' : 'Add server'}</button></div></form>`;
+}
+function mcpRows() {
+  const rows = MCPS.map(s => st.mdel === s.name
+    ? `<div class="confirm">Remove <b>${esc(s.name)}</b> from Kiro? The Kiro IDE uses this list too.<span class="sp"></span><button class="btn sm" data-mdelno>Cancel</button><button class="btn sm danger" data-mdelyes="${esc(s.name)}">Remove</button></div>`
+    : st.mf?.edit === s.name ? mcpForm()
+    : `<div class="srow${s.on ? '' : ' off'}">${tile(s.url ? 'globe' : 'terminal', s.url ? 'blue' : 'gray')}<div class="tx"><b>${esc(s.name)}</b><small class="mono">${esc(s.url || [s.cmd, ...s.args].join(' '))}</small>${s.failed && s.on ? `<small class="warn">${s.failed}</small>` : ''}</div>
+      <span class="kind">${s.url ? 'Remote' : 'Local'}</span><button class="icon-btn" data-medit="${esc(s.name)}" aria-label="Edit ${esc(s.name)}" data-tip="Edit">${svg('pen')}</button><button class="icon-btn" data-mdel="${esc(s.name)}" aria-label="Remove ${esc(s.name)}" data-tip="Remove">${svg('trash')}</button>
+      <button class="tg" role="switch" aria-checked="${s.on}" aria-label="${esc(s.name)}" data-mtg="${esc(s.name)}"></button></div>`).join('');
+  return rows + (st.mf && !st.mf.edit ? mcpForm() : `<button class="addrow" data-madd>${svg('plus')}Add MCP server</button>`);
+}
+function kiroPage() {
+  const n = MCPS.filter(s => s.on).length;
+  return `<h1>Kiro</h1>
+    <div class="grp2">${srow(logo('kiro'), 'Kiro', 'Installed and signed in.', '<button class="btn sm">Check again</button>')}</div>
+    <div class="set-h">MODEL</div>
+    <div class="grp2">${srow(tile('sliders', 'purple'), 'Model', 'The first is Kiro’s own choice for each task.', `<button class="pill">${pick.model}${svg('chevD')}</button>`)}
+      ${srow(tile('shrink', 'orange'), 'Effort', effortsOf(pick.model).length ? 'How long it thinks. Higher is slower and uses more of your plan.' : 'Auto picks it per task.', effortsOf(pick.model).length ? segs(effortsOf(pick.model), effortNow(), 'data-effort') : '')}</div>
+    <div class="set-h">TOOLS AND MEMORY</div>
+    <div class="grp2">${srow(tile('bot', 'blue'), 'Agent', 'Its MCP servers, skills and steering come with it.', `<button class="pill">Default${svg('chevD')}</button>`)}
+      ${srow(tile('shield', 'green'), 'Tool access', 'Kiro can edit files and run commands without asking.', segs(['Full', 'Ask first', 'Ask always', 'Read only'], 'Full'))}
+      ${srow(tile('logs', 'gray'), 'Keep it running', 'How long Kiro stays open with nothing to do.', segs(['5 min', '15 min', '30 min'], '15 min'))}</div>
+    <div class="set-h">MCP SERVERS<span style="font-weight:500;letter-spacing:0">· ${n} of ${MCPS.length} on</span></div>
+    <div class="grp2">${mcpRows()}</div>
+    <p class="set-note">These are Kiro’s own servers, from <code>~/.kiro/settings/mcp.json</code>, so the Kiro IDE and kiro-cli see the same list.
+      A project’s <code>.kiro/settings/mcp.json</code> adds its own, and wins on the same name. The agent picked above brings its own too.
+      Changes apply to the next task; a chat already running keeps its servers until Kiro starts again. <button data-ed="${lastEd}">Open mcp.json in ${ED[lastEd][0]}</button></p>`;
+}
+let setKey = '';
+function drawSettings() {
+  const el = $('#settings'); el.hidden = !st.set;
+  const key = st.set ? JSON.stringify([st.set, st.scene, st.mf, st.mdel, MCPS, pick, lastEd]) : '';
+  if (!st.set || key === setKey) { setKey = key; return; }
+  setKey = key;
+  const item = (k, lead, n) => `<button class="mi" data-set="${k}"${st.set === k ? ' aria-current="page"' : ''}>${lead}${n}</button>`;
+  const title = (SET_PAGES.find(p => p[0] === st.set) || [, , NAME[st.set]])[2];
+  el.innerHTML = `<nav class="set-nav" aria-label="Settings"><button class="mi set-back" data-set="">${svg('back')}Back to the ${st.scene === 'office' ? 'office' : 'chat'}</button>
+    ${SET_PAGES.map(([k, i, n]) => item(k, svg(i), n)).join('')}<div class="mlab" style="margin-top:8px">Agents</div>${['kiro', 'codex', 'cursor', 'opencode', 'claude'].map(t => item(t, logo(t), NAME[t])).join('')}</nav>
+    <div class="set-main"><div class="set-col">${st.set === 'kiro' ? kiroPage() : `<h1>${title}</h1><div class="placeholder">This page isn’t in the mockup. Kiro’s is, with its MCP servers.</div>`}</div></div>`;
+}
+// Saving the form: a name Kiro can use (letters, digits, - and _, not taken), a command or a URL
+// (https, or http on this computer), and variables with proper names. Empty variable rows are dropped.
+function saveMcp() {
+  grab(); const m = st.mf, e = {};
+  if (!/^[A-Za-z0-9_-]+$/.test(m.name.trim())) e.name = m.name.trim() ? 'Use letters, numbers, - and _ only.' : 'Give it a name.';
+  else if (MCPS.some(s => s.name === m.name.trim() && s.name !== m.edit)) e.name = 'Kiro already has a server with this name.';
+  if (m.kind === 'url' && !/^(https:\/\/\S+|http:\/\/(localhost|127\.0\.0\.1)(:\d+)?(\/\S*)?)$/.test(m.url.trim())) e.url = 'Use an https:// address (http only for this computer).';
+  if (m.kind === 'cmd' && !m.cmd.trim()) e.cmd = 'What runs it, like npx or uvx.';
+  const env = m.env.filter(([k, v]) => k.trim() || v.trim());
+  if (env.some(([k]) => !(m.kind === 'url' ? /^[A-Za-z0-9-]+$/ : /^[A-Za-z_][A-Za-z0-9_]*$/).test(k.trim()))) e.env = m.kind === 'url' ? 'A header name is letters, numbers and -.' : 'A variable name is letters, numbers and _, not starting with a number.';
+  m.err = e; if (Object.keys(e).length) { draw(); $(`#mform [aria-invalid="true"]`)?.focus(); return; }
+  const s = { name: m.name.trim(), env: env.map(([k, v]) => [k.trim(), v]), on: true, ...(m.kind === 'url' ? { url: m.url.trim() } : { cmd: m.cmd.trim(), args: m.args.split('\n').map(a => a.trim()).filter(Boolean) }) };
+  const i = MCPS.findIndex(x => x.name === m.edit);
+  if (i >= 0) MCPS[i] = { ...s, on: MCPS[i].on }; else MCPS.push(s);
+  st.mf = null; draw();
+}
+// Renaming a chat: its title becomes a box in place. Enter or leaving the box saves (the history
+// keeps the new title, the sidebar follows); Esc puts the old one back. An empty title isn't kept.
+function rename(h) {
+  if (!h || h.hidden) return;
+  const old = h.textContent, inp = document.createElement('input');
+  inp.className = 'ttl-in'; inp.value = old; inp.maxLength = 120; inp.setAttribute('aria-label', 'Chat title');
+  h.hidden = true; h.after(inp); inp.focus(); inp.select();
+  let done = false;
+  const end = keep => { if (done) return; done = true; const t = inp.value.trim();
+    if (keep && t && t !== old) { h.textContent = t; h.setAttribute('aria-label', `Rename: ${t}`); $$('.row .t').forEach(r => { if (r.textContent === old) r.textContent = t; }); }
+    inp.remove(); h.hidden = false; if (!keep || document.activeElement === document.body) h.focus(); };
+  inp.addEventListener('keydown', e => { e.stopPropagation(); if (e.key === 'Enter') { e.preventDefault(); end(true); } else if (e.key === 'Escape') { e.preventDefault(); end(false); } });
+  inp.addEventListener('blur', () => end(true));
+}
+// Editing a file in place: Save writes it (and the tree marks it changed), Cancel drops what was typed.
+function fileEdit(a) {
+  if (a === 'edit') { st.fmode = 'edit'; st.fopen = false; draw(); const t = $('#fedit'); t?.focus(); t?.setSelectionRange(0, 0); return; }
+  if (a === 'save') { FILES[st.fileView] = $('#fedit').value; CHANGED[st.fileView] = 'M'; }
+  st.fmode = null; draw();
+}
+function stopMine() { const cmd = st.mine.find(m => m.s === 'run'); if (!cmd) return; clearTimeout(cmd.timer); Object.assign(cmd, { s: 'bad', x: 130, out: (cmd.out ? cmd.out + '\n' : '') + '<span class="ctl">^C</span>', t: ((Date.now() - cmd.at) / 1000).toFixed(1) + 's' }); paneKey = ''; draw(); }
+
+// Terminal: your own shell in the session's folder, nothing else (Nova's commands are in the chat).
+// Drawn as a terminal is: prompt, command, output, then the prompt again where you type.
+// Enter runs, ↑/↓ walk your history, Ctrl+C stops, clear (or cls) empties it.
+const SHELL = { win: 'PowerShell', linux: 'bash', mac: 'zsh' };
+const prompt = () => ({
+  win: 'PS C:\\Users\\james\\…\\Hover-rust-8fb777af&gt; ',
+  linux: 'james@hover:~/…/Hover-rust-8fb777af (main)$ ',
+  mac: 'james@MacBook Hover-rust-8fb777af (main) % ',
+}[st.os]);
+// Nova's side: desk::terminal's commands (the last 80), read only, newest last, each with how it ended.
+const NOVA_CMDS = [
+  ['git fetch origin', 'ok', 0, '1.8s', 'From github.com:4regab/Hover\n   b6c5e21..9f3a0d2  main       -&gt; origin/main'],
+  ['git status --short', 'ok', 0, '0.1s', ' M app/ui/office.slint\n M app/src/office_ui.rs\n M crates/hover-agents/src/acp.rs'],
+  ['git merge origin/main', 'bad', 1, '0.6s', '<span class="err">CONFLICT (content): Merge conflict in app/ui/office.slint\nAutomatic merge failed; fix conflicts and then commit the result.</span>'],
+  ['git merge --abort', 'ok', 0, '0.1s', ''],
+  ['git switch main', 'ok', 0, '0.3s', "Switched to branch 'main'\nYour branch is behind 'origin/main' by 17 commits, and can be fast-forwarded."],
+];
+function paneTerminal() {
+  // Two tabs, as a terminal app has: your shell, and what Nova ran (with a dot while it runs one).
+  const tabs = `<div class="ttabs" role="tablist" aria-label="Terminal">${[['mine', 'My commands', 'terminal'], ['nova', 'Nova', 'bot']].map(([k, n, ic]) =>
+    `<button class="ttab${st.tv === k ? ' on' : ''}" role="tab" aria-selected="${st.tv === k}" data-tv="${k}">${svg(ic)}${n}${k === 'nova' && st.working ? '<span class="live" aria-label="running a command"></span>' : ''}</button>`).join('')}</div>`;
+  if (st.tv === 'nova') {
+    const cmds = NOVA_CMDS.map(([c, s, x, t, out]) => ({ c, s, x, t, out }));
+    if (st.working) cmds.push({ c: 'git merge --ff-only origin/main', s: 'run', out: 'Updating b6c5e21..9f3a0d2\nFast-forward\n app/ui/office.slint     | 214 ++++++++------\n app/src/office_ui.rs    |  88 ++++--' });
+    return `<div class="tpane">${tabs}<div class="xterm" id="term" tabindex="-1" aria-label="Nova's commands"><div class="ban">What Nova ran in this folder. Read only.</div>${cmds.map(m =>
+      `<div class="ln"><span class="ps" aria-hidden="true">$ </span><span>${esc(m.c)}</span><span class="ex ${m.s}">${m.s === 'run' ? '<span class="live-t">running · 6s</span>' : `exit ${m.x} · ${m.t}`}</span></div>${m.out ? `<pre>${m.out}</pre>` : ''}${m.s === 'run' ? '<span class="caret"></span>' : ''}`).join('')}</div></div>`;
+  }
+  const ps = `<span class="ps" aria-hidden="true">${prompt()}</span>`;
+  const running = st.mine.some(m => m.s === 'run');
+  // No bar: a shell's own banner says what it is and where it runs (the sandbox note stays, it matters).
+  const ban = `<div class="ban">${SHELL[st.os]} · ${st.os === 'win' ? 'runs as you (Windows has no sandbox)' : 'inside the sandbox'}</div>`;
+  return `<div class="tpane">${tabs}
+  <div class="xterm" id="term" tabindex="-1" aria-label="Terminal in Hover-rust-8fb777af">${ban}${st.mine.map(m => `<div class="ln">${ps}<span>${esc(m.c)}</span></div>${m.out ? `<pre>${m.out}</pre>` : ''}${m.s === 'run' ? '<span class="caret"></span>' : ''}`).join('')}
+    ${running ? '' : `<form class="ln" id="tin" autocomplete="off">${ps}<input id="tinBox" aria-label="Command" spellcheck="false" autocomplete="off"></form>`}</div></div>`;
+}
+
+// Files: find, what changed (git status), what the agent read or edited, then the tree.
+const tree = [['app', 1, [['assets', 0, []], ['src', 1, [['office_ui.rs'], ['desk_ui.rs'], ['app.rs']]], ['ui', 1, [['office.slint'], ['desk.slint'], ['widgets.slint']]], ['Cargo.toml']]],
+  ['crates', 0, [['hover-agents', 0, []], ['hover-chat', 0, []]]], ['docs', 0, []], ['AGENTS.md'], ['Cargo.toml'], ['README.md']];
+function treeRows(nodes, d, base) {
+  return nodes.map(([n, open, kids]) => kids ? `<div class="td${open ? ' open' : ''}"><div class="frow" role="button" tabindex="0" style="--d:${d}" aria-expanded="${!!open}">${svg('chevD', 'chev')}${svg('folder', 'fi')}<span class="nm">${n}</span></div><div class="tk">${treeRows(kids, d + 1, base + n + '/')}</div></div>`
+    : `<div class="frow${CHANGED[base + n] ? ' chg' : ''}" role="button" tabindex="0" style="--d:${d}" data-file="${base + n}"><span style="width:11px"></span>${svg('doc', 'fi')}<span class="nm">${n}</span><span class="r">${CHANGED[base + n] ? `<span class="info"><span class="badge ${CHANGED[base + n]}" aria-label="Modified">${CHANGED[base + n]}</span></span>` : ''}</span></div>`).join('');
+}
+const CHANGED = { 'app/ui/office.slint': 'M', 'app/src/office_ui.rs': 'M' };
+// What the files hold, as text (a few, so the mockup shows something real for each kind).
+const FILES = {
+  'README.md': '# Hover\n\nA desktop app for Windows, Linux and macOS. One surface a hover away: **the notch** at the top of your screen.\n\n## What it does\n\n- Shows the quotas you switched on, and the agents at work.\n- Opens the **Agent office**: hand tasks to Kiro, Codex, Cursor, OpenCode or Claude Code.\n- Keeps every chat until you delete it.\n\n## Build\n\n```powershell\n.\\build.ps1 release run\n```\n\nSee [AGENTS.md](AGENTS.md) for how it works, and the [releases](https://github.com/4regab/Hover/releases) for installers.',
+  'AGENTS.md': '# AGENTS.md\n\nGuidance for humans and AI agents working in this repository.\n\n## Build, test, run\n\n```powershell\n.\\build.ps1 test\n```\n\n- Keep changes **surgical**.\n- Verify by running the real thing.',
+  'Cargo.toml': '# The product: crate `hover`, binary hoverai.\n[package]\nname = "hover"\nversion.workspace = true\nedition.workspace = true\n\n[[bin]]\nname = "hoverai"\npath = "src/main.rs"\n\n[dependencies]\nhover-core = { path = "../crates/hover-core" }\nhover-agents = { path = "../crates/hover-agents" }\nslint = { version = "=1.18.1", default-features = false }',
+};
+const textOf = p => FILES[p] ?? FILES[p.split('/').pop()] ?? FILES['Cargo.toml'];
+// A little highlighting: TOML strings and booleans, Markdown headings and fences, comments.
+const hl = (l, md) => md ? (/^#{1,6} /.test(l) ? `<span class="k">${esc(l)}</span>` : /^```/.test(l) ? `<span class="cm">${esc(l)}</span>` : esc(l))
+  : /^#/.test(l) ? `<span class="cm">${esc(l)}</span>` : esc(l).replace(/(&quot;|")(.*?)\1/g, '<span class="s">"$2"</span>').replace(/\b(true|false)\b/g, '<span class="k">$1</span>');
+// Markdown preview: hover-md draws it in the app; this is the same look as an answer (.ans).
+function mdHtml(src) {
+  const inl = t => esc(t).replace(/`([^`]+)`/g, '<code>$1</code>').replace(/\*\*(.+?)\*\*/g, '<b>$1</b>').replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_, a, h) => `<a href="${h}"${/^https?:/.test(h) ? ' target="_blank" rel="noopener"' : ' class="path"'}>${a}</a>`);
+  const out = []; const ls = src.split('\n'); let i = 0;
+  while (i < ls.length) {
+    const l = ls[i];
+    if (/^```/.test(l)) { const lang = l.slice(3) || 'text'; const body = []; while (++i < ls.length && !/^```/.test(ls[i])) body.push(ls[i]); i++;
+      out.push(`<div class="cb"><div class="cb-h">${esc(lang)}<button data-cbcopy>${svg('copy')}<span>Copy</span></button></div><pre>${esc(body.join('\n'))}</pre></div>`); continue; }
+    const h = /^(#{1,3}) (.*)/.exec(l); if (h) { out.push(`<h${h[1].length + 1}>${inl(h[2])}</h${h[1].length + 1}>`); i++; continue; }
+    if (/^- /.test(l)) { const it = []; while (i < ls.length && /^- /.test(ls[i])) it.push(`<li>${inl(ls[i++].slice(2))}</li>`); out.push(`<ul>${it.join('')}</ul>`); continue; }
+    if (l.trim()) { const p = []; while (i < ls.length && ls[i].trim() && !/^(#|- |```)/.test(ls[i])) p.push(ls[i++]); out.push(`<p>${inl(p.join(' '))}</p>`); continue; }
+    i++;
+  }
+  return out.join('');
+}
+function paneFiles() {
+  if (st.fileView) {
+    const p = st.fileView, md = /\.md$/i.test(p), text = textOf(p);
+    const mode = st.fmode === 'edit' ? 'edit' : md && st.fmode !== 'code' ? 'preview' : 'code';
+    // Open in: the last editor's icon, a chevron for the others. It opens the file, at the line when there is one.
+    const openIn = `<div class="mi-w open-in"><button class="pill" data-click="fopen" aria-haspopup="menu" aria-expanded="${!!st.fopen}" aria-label="Open in ${ED[lastEd][0]}" data-tip="Open in ${ED[lastEd][0]}" data-tip-end>${edIcon(lastEd)}${svg('chevD')}</button><div class="menu fly down${st.fopen ? ' open' : ''}" role="menu" aria-label="Open in">${openList('the file')}</div></div>`;
+    const bar = mode === 'edit'
+      ? `<span class="path">${p}</span><span class="editing">Editing</span><span class="sp"></span><button class="btn sm" data-fedit="cancel">Cancel</button><button class="btn sm primary" data-fedit="save">Save <kbd>Ctrl+S</kbd></button>`
+      : `<button class="icon-btn" data-back aria-label="Back to files" data-tip="Back" data-tip-start>${svg('back')}</button><span class="path">${p}</span><span class="sp"></span>
+        ${md ? `<div class="seg" role="radiogroup" aria-label="Show">${[['preview', 'Preview'], ['code', 'Markdown']].map(([k, n]) => `<button role="radio" aria-checked="${mode === k}" class="${mode === k ? 'on' : ''}" data-fmode="${k}">${n}</button>`).join('')}</div>` : ''}
+        <button class="icon-btn" data-fedit="edit" aria-label="Edit ${p.split('/').pop()}" data-tip="Edit" data-tip-end>${svg('pen')}</button>${openIn}`;
+    // Saving while Nova works in this folder could clash with its own edits: say so, don't block.
+    const warn = mode === 'edit' && st.working ? `<div class="fwarn">${svg('alert')}Nova is working in this folder. If it changes this file too, saving keeps your version.</div>` : '';
+    const body = mode === 'edit' ? `<textarea class="fedit" id="fedit" spellcheck="false" aria-label="Edit ${p}">${esc(text)}</textarea>`
+      : mode === 'preview' ? `<div class="ans md-pv">${mdHtml(text)}</div>`
+      : `<div class="code">${text.split('\n').map((l, i) => `<div data-n="${i + 1}">${hl(l, md)}</div>`).join('')}</div>`;
+    return `<div class="fview${mode === 'edit' ? ' is-edit' : ''}"><div class="pbar">${bar}</div>${warn}${body}</div>`;
+  }
+  // Only the tree: what changed is Diff's job. A changed file still shows its letter in the tree.
+  return `<label class="find">${svg('search')}<input placeholder="Find a file" aria-label="Find a file"></label><div style="height:6px"></div>${treeRows(tree, 0, '')}<div style="height:16px"></div>`;
+}
+
+// Diff: desk::parse_diff's files, each with its status and hunks, old and new line numbers.
+function paneDiff() {
+  const files = [
+    ['M', 'app/ui/office.slint', 31, 14, 1, [['h', '@@ -2166,8 +2166,7 @@ component DeskCard'], ['', '2166', '2166', '                    }'], ['', '2167', '2167', '                    HorizontalLayout {'],
+      ['r', '2168', '', '-   if Office.d-busy: ChipButton { text: "Stop"; … }'], ['r', '2169', '', '-   ChipButton { icon: Icons.code; text: "Editor"; … }'], ['r', '2170', '', '-   ChipButton { icon: DeskIcons.files; text: "Files &amp; changes"; … }'],
+      ['a', '', '2168', '+   // Editor and Files &amp; changes are in the ⋯ menu now.'], ['a', '', '2169', '+   XButton { id: "dMore"; icon: Icons.more; … }'], ['', '2171', '2170', '    XButton { id: "dClose"; icon: Icons.close; … }'], ['', '2172', '2171', '                    }']]],
+    ['M', 'app/src/office_ui.rs', 12, 5, 0, [['h', '@@ -412,6 +412,9 @@ fn wire_desk(ui: &amp;Office, s: &amp;Shared)'], ['', '412', '412', '    let s2 = s.clone();'], ['r', '413', '', '-    ui.on_d_stop(move || s2.stop());'], ['a', '', '413', '+    // Stop is the reply box\'s button now (send turns into stop).'], ['a', '', '414', '+    ui.on_d_more(move |x, y| more_menu(&amp;s2, x, y));'], ['', '414', '415', '    ui.on_d_close(move || close(&amp;s3));']]],
+    ['M', 'crates/hover-agents/src/acp.rs', 5, 2, 0, [['h', '@@ -88,4 +88,7 @@ impl KiroSession'], ['r', '88', '', '-    pub trust_all: bool,'], ['a', '', '88', '+    /// Trust is Hover\'s, for the session (the header no longer shows it).'], ['a', '', '89', '+    pub trust_all: bool,'], ['', '89', '90', '    pub folder: String,']]],
+  ];
+  return `<div class="pbar"><span>${files.length} files changed</span><span class="na">+48</span><span class="nd">−21</span><span class="sp"></span><button class="btn sm primary" data-gopr>Create PR</button></div>
+  ${files.map(([b, p, a, d, open, lines]) => { const [dir, nm] = split(p); return `<div class="file${open ? ' open' : ''}"><button class="file-h" aria-expanded="${!!open}">${svg('chevD')}<span class="badge ${b}">${b}</span><span class="p"><span>${dir}</span>${nm}</span><span class="na">+${a}</span><span class="nd">−${d}</span></button>
+    <div class="diff">${lines.map(([k, o, n, t]) => k === 'h' ? `<div class="h">${o}</div>` : `<div class="${k}" data-o="${o}" data-n="${n}">${t}</div>`).join('')}</div></div>`; }).join('')}`;
+}
+
+// Pull request: PrPanel's three states: the branch's PR, the form that opens one, gh's setup.
+function panePr() {
+  if (st.prm === 'setup') return `<div class="setup"><div class="gh">${svg('gh')}</div><h3>Pull requests need the GitHub CLI</h3><p>Hover uses gh to read and open pull requests. You sign in on GitHub's own page, so Hover never sees your password.</p>
+    <div class="steps"><div class="stp done"><span class="dn">${svg('check')}</span><div><b>Install the GitHub CLI</b><small>Installed with winget.</small></div></div>
+    <div class="stp"><span class="dn">2</span><div style="flex:1"><b>Sign in to GitHub</b><small>Copy this code, then paste it on the page that opens.</small>
+      <div class="dcode"><span>4F2A-91C0</span><button class="icon-btn" aria-label="Copy the code" data-tip="Copy">${svg('copy')}</button></div>
+      <button class="btn primary">${svg('ext')}Open github.com/login/device</button><div style="margin-top:10px;font-size:12px"><span class="live-t">Waiting for you to finish on GitHub</span></div></div></div></div></div>`;
+  if (st.prm === 'create') return `<div class="form"><div class="lead">${svg('pr')}This branch has no pull request yet.</div>
+    ${st.working ? `<div class="note">${svg('alert')}Nova is working in this folder. You can open a pull request when it finishes.</div>` : ''}
+    <div class="fld"><label for="prT">Title</label><input id="prT" value="Clean up the chat header and attach Files &amp; changes"></div>
+    <div class="fld"><label for="prB">Description</label><textarea id="prB">The header keeps only the title, branch and context, with ⋯ and ✕.\n\n- Stop moves into the reply box's send button.\n- Editor and Files &amp; changes move into the ⋯ menu.\n- Files &amp; changes is attached to the chat at full height.</textarea></div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px"><div class="fld"><label for="prBase">Into</label><input id="prBase" class="mono" value="main"><small>The repository's default branch.</small></div>
+      <div class="fld"><label for="prNew">New branch</label><input id="prNew" class="mono" value="hover/clean-up-chat-header"><small>You're on main, so one is made first.</small></div></div>
+    <label class="cbx"><input type="checkbox" checked>Commit the 3 changed files first</label>
+    <label class="cbx"><input type="checkbox">Open as a draft</label>
+    <div class="form-foot"><small>Pushes to origin, then opens it on GitHub.</small><span class="sp"></span><button class="btn primary"${st.working ? ' disabled' : ''}>Create pull request</button></div></div>`;
+  const checks = [['ok', 'CI / test (windows-latest)', '4m 12s'], ['ok', 'CI / test (ubuntu-22.04)', '3m 40s'], ['run', 'CI / macos (build Hover.app)', 'Running']];
+  return `<div class="pr"><div class="pr-top"><span class="state open">${svg('pr')}Open</span>#142<span class="sp"></span></div>
+    <h3>Clean up the chat header and attach Files &amp; changes</h3>
+    <div class="meta">${svg('branch')}<code>hover/clean-up-chat-header</code>${svg('fwd')}<code>main</code><span>·</span>james<span>·</span>updated 12m ago</div>
+    <div class="stats"><div><b><span class="na">+48</span> <span class="nd">−21</span></b><small>3 files</small></div><div><b style="color:var(--amber)">Review required</b><small>No reviews yet</small></div><div><b>2</b><small>comments</small></div></div>
+    <div class="box"><div class="box-h">Checks<small>2 passed · 1 running</small></div>${checks.map(([s, n, r]) => `<div class="chk">${stIcon(s)}${n}<span class="r">${s === 'run' ? '<span class="live-t">Running</span>' : r}</span></div>`).join('')}</div>
+    <div class="box"><div class="box-h">Description</div><div class="pr-body"><p>The header keeps only the title, branch and context, with ⋯ and ✕.</p><ul><li>Stop moves into the reply box's send button.</li><li>Editor and Files &amp; changes move into the ⋯ menu.</li><li>Files &amp; changes is attached to the chat at full height.</li></ul></div></div>
+    <div class="pr-acts"><button class="btn primary">${svg('ext')}Open on GitHub</button><button class="btn">${svg('copy')}Copy link</button></div></div>`;
+}
+
+// Linked PRs: desk::Linked, the PRs this chat mentions in any repo, with gh's state for each.
+function paneLinked() {
+  const prs = [['open', 'Add Kiro credit rates to the model picker', 'jamesq/Hover', 142, 48, 21, 'hover/credits'], ['merged', 'Chat view: the sessions down the left', 'jamesq/Hover', 138, 612, 140, 'chat-view'],
+    ['draft', 'Voice aura in the notch', 'jamesq/Hover', 131, 233, 18, 'hover/pull-latest-changes-99a0'], ['closed', 'Try WebView2 for the office again', 'jamesq/Hover-legacy', 97, 40, 3, 'webview2']];
+  return `<div class="pbar"><span>PRs this chat mentions</span><span class="n">· ${prs.length}</span></div>${prs.map(([s, t, repo, n, a, d, head]) => `<button class="lpr"><span class="ic ${s}" aria-label="${prWord[s]}">${svg(prIc[s])}</span>
+    <span class="t"><b>${t}</b><small>${repo} #${n} · ${prWord[s]} · <code>${head}</code></small></span><span class="r"><span class="na">+${a}</span><span class="nd">−${d}</span>${svg('ext', 'ext')}</span></button>`).join('')}`;
+}
+
+// Agents: desk::subagents, the helpers this session sent out.
+function paneAgents() {
+  const subs = [['#7cb7ff', 'Explorer', 'Find where the notch draws its island', 'run', '12s', ''], ['#7ee59a', 'Reviewer', 'Check the diff for leftover Stop buttons', 'ok', '41s', 'Found none. The last one was in office.slint line 2168, which this diff removes.'], ['#ffc46b', 'Tester', 'Render the chat view with hover --shots', 'ok', '1m 06s', 'Wrote 14 shots to target/shots. The header and the reply box look as planned.']];
+  return `<div class="pbar"><span>${subs.length} helpers</span><span class="n">· 1 at work</span></div>${subs.map(([c, n, t, s, ms, out], i) => `<div class="sub${i === 1 ? ' open' : ''}"><button class="sub-h"${out ? ` aria-expanded="${i === 1}"` : ''}><span class="face" style="--c:${c}"><i></i></span><span class="t"><b>${n}</b><small>${s === 'run' ? `<span class="live-t">${t}</span>` : t}</small></span><span class="m">${ms}</span>${stIcon(s)}</button>${out ? `<div class="sub-o">${out}</div>` : ''}</div>`).join('')}`;
+}
+
+// Browser (macOS): the page the agent has open.
+function paneBrowser() {
+  return `<div class="urlbar"><button class="icon-btn" aria-label="Back" data-tip="Back" data-tip-start>${svg('back')}</button><button class="icon-btn" aria-label="Forward" data-tip="Forward">${svg('fwd')}</button><button class="icon-btn" aria-label="Reload" data-tip="Reload">${svg('retry')}</button>
+    <div class="url">${svg('lock')}<b>localhost:5173</b>/settings</div><button class="icon-btn" aria-label="Open in your browser" data-tip="Open in your browser" data-tip-end>${svg('ext')}</button></div>
+    <div class="webpage"><div class="wn"><b>Acme</b>Docs<span>Pricing</span><span>Settings</span></div><div class="wb"><h4>Settings</h4><p>Your workspace name and who can see it.</p><div class="fake" style="width:80%"></div><div class="fake" style="width:60%"></div><div class="fake" style="width:70%;margin-bottom:18px"></div><span class="cta">Save changes</span></div></div>
+    <div class="agent-at"><span class="live-dot"></span><span class="live-t">Nova is clicking Save changes</span></div>`;
+}
+
+// Screen (macOS): live while the agent tests on it, else a still.
+function paneScreen() {
+  return `<div class="pbar"><span class="live-dot"></span><span>Live</span><span class="n">· Nova is testing in Simulator</span><span class="sp"></span><button class="btn sm">Stop watching</button></div>
+    <div class="screen"><div class="mb"></div><div class="w" style="left:8%;top:16%;width:46%;height:58%"><i style="width:60%"></i><i style="width:80%"></i><i style="width:40%"></i></div><div class="w" style="left:44%;top:30%;width:44%;height:56%"><i style="width:50%"></i><i style="width:70%"></i></div><span class="cur" style="left:62%;top:58%"><svg viewBox="0 0 24 24"><path d="M4 2v18l5-5 3.5 7 3-1.5L12 13.5h7Z"/></svg></span></div>
+    <div class="agent-at">Updates about twice a second while computer use runs. Only the apps Nova used are shown.</div>`;
+}
+const PANES = { terminal: paneTerminal, files: paneFiles, diff: paneDiff, pr: panePr, linked: paneLinked, agents: paneAgents, browser: paneBrowser, screen: paneScreen };
+const TAB = { terminal: 'terminal', file: 'files', diff: 'diff', pr: 'pr', link: 'linked', bot: 'agents', globe: 'browser', monitor: 'screen' };
+$$('.tab').forEach(t => t.dataset.pane = TAB[t.dataset.i]);
+setInterval(() => { const t = $('.tick2'); if (t) t.textContent = +t.textContent + 1; }, 1000);
+let paneKey = '';
+
+// ── New chat: the agent, where it runs (Kiro only), its access and the model, all in the box ──
+Object.assign(I, {
+  laptop: '<path d="M18 5a2 2 0 0 1 2 2v8.5H4V7a2 2 0 0 1 2-2Z"/><path d="M2 19.5h20"/>',
+  cloud: '<path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z"/>',
+  shield: '<path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1Z"/>',
+  eye: '<path d="M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0"/><circle cx="12" cy="12" r="3"/>',
+  hand: '<path d="M18 11V6a2 2 0 0 0-4 0M14 10V4a2 2 0 0 0-4 0v2M10 10.5V6a2 2 0 0 0-4 0v8"/><path d="M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15"/>',
+});
+const AGENTS = [['kiro', 'Kiro CLI · signed in'], ['codex', 'codex-acp · signed in'], ['cursor', 'cursor-agent · signed in'], ['opencode', 'Not found on this computer', true], ['claude', 'Claude Code · signed in']];
+const ACCESS = { full: ['shield', 'Full access', 'Never asks'], first: ['hand', 'Ask first', 'Asks before commands, deletes and the network'], always: ['hand', 'Ask always', 'Asks before every change'], read: ['eye', 'Read only', 'Reads, never changes a file'] };
+const PROJECTS = ['Hover-rust-8fb777af', 'Hover', 'buildknights'];
+const MODEL = { kiro: 'Opus 5.5', codex: 'Default', cursor: 'Default', opencode: 'Default', claude: 'Default' };
+let startShown = '';
+function drawStart() {
+  $('#sceneChat .main').classList.toggle('starting', st.start);
+  const el = $('#start'); el.hidden = !st.start;
+  if (!st.start) { startShown = ''; return; }
+  const key = [st.agent, st.where, st.access, st.proj, st.sm].join('|');
+  if (key === startShown) return;
+  const first = !startShown; startShown = key;
+  const box = el.querySelector('textarea'), draft = box?.value ?? '', focused = document.activeElement === box;
+  const kiro = st.agent === 'kiro', cloud = kiro && st.where === 'cloud';
+  const pill = (k, inner, cls = '') => `<button class="pill${cls}" data-sm="${k}" aria-haspopup="menu" aria-expanded="${st.sm === k}">${inner}${svg('chevD')}</button>`;
+  const menu = (k, rows, end) => `<div class="menu sm${end ? ' end' : ''}${st.sm === k ? ' open' : ''}" role="menu">${rows}</div>`;
+  const opt = (k, v, lead, b, s, on, off) => `<button class="mo" role="menuitemradio" aria-checked="${on}" data-pick="${k}:${v}"${off ? ' disabled' : ''}>${lead}<span><b>${b}</b><small>${s}</small></span>${on ? svg('check', 'ok') : '<span></span>'}</button>`;
+  const [ai, an] = ACCESS[st.access];
+  el.innerHTML = `<div class="${first ? 'enter2' : ''}" style="display:flex;flex-direction:column;align-items:center;width:100%">
+    <h2 class="st-h">What should we work on?</h2>
+    <div class="st-proj pw"><button data-sm="proj" aria-haspopup="menu" aria-expanded="${st.sm === 'proj'}">${svg('folder')}${st.proj}${svg('chevD', 'chev')}</button>
+      ${menu('proj', `<div class="mlab">Recent</div>${PROJECTS.map(p => opt('proj', p, svg('folder'), p, p === 'Hover-rust-8fb777af' ? 'Worktree of Hover · main' : 'C:\\Users\\james\\code\\' + p, p === st.proj)).join('')}<div class="msep"></div><button class="mi" role="menuitem">${svg('folderOpen')}Open folder…</button>`)}</div>
+    <div class="sbox"><textarea rows="3" aria-label="Your task" placeholder="Ask ${NAME[st.agent]} to build, fix or explain something. @ adds files, / for commands"></textarea>
+      <div class="sbar">
+        <button class="icon-btn" data-i="plus" aria-label="Attach an image" data-tip="Attach an image" data-tip-start>${svg('plus')}</button>
+        <div class="pw">${pill('agent', `${logo(st.agent)}${NAME[st.agent]}`)}${menu('agent', AGENTS.map(([t, s, off]) => opt('agent', t, logo(t), NAME[t], s, t === st.agent, off)).join(''))}</div>
+        ${kiro ? `<div class="pw">${pill('where', `${svg(cloud ? 'cloud' : 'laptop')}${cloud ? 'Kiro cloud' : 'This computer'}`)}${menu('where', opt('where', 'local', svg('laptop'), 'This computer', 'In a worktree of this folder', !cloud) + opt('where', 'cloud', svg('cloud'), 'Kiro cloud', 'In a sandbox on 4regab/Hover, with a pull request at the end', cloud))}</div>` : ''}
+        ${cloud ? '' : `<div class="pw">${pill('access', `${svg(ai)}${an}`, st.access === 'full' ? ' amber' : '')}${menu('access', Object.entries(ACCESS).map(([k, [i, b, s]]) => opt('access', k, svg(i), b, s, k === st.access)).join(''))}</div>`}
+        <span class="sp"></span>
+        ${kiro ? `<div class="pw">${pill('model', modelLabel())}<div class="menu sm end models2${st.sm === 'model' ? ' open' : ''}" role="menu">${picker()}</div></div>` : `<button class="pill" disabled style="opacity:.7">${MODEL[st.agent]}</button>`}
+        <button class="send" aria-label="Start" disabled>${svg('up')}</button>
+      </div></div>
+    <div class="st-hint">${cloud ? `${svg('cloud')}Runs in Kiro's cloud. It opens a pull request on <code>4regab/Hover</code> when done.` : st.access === 'read' ? `${svg('eye')}Reads this folder and changes nothing.` : `${svg('branch')}Gets its own worktree and branch, cut from <code>main</code>.`}</div></div>`;
+  const nb = el.querySelector('textarea'); nb.value = draft; if (focused || first) nb.focus();
+  const send = el.querySelector('.send'); const sync = () => send.disabled = !nb.value.trim(); sync();
+  nb.addEventListener('input', sync);
+  nb.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); if (nb.value.trim()) { nb.value = ''; st.start = false; st.sm = null; draw(); } } });
+}
+
+const st = { start: false, sm: null, agent: 'kiro', where: 'local', access: 'full', proj: 'Hover-rust-8fb777af', mine: [{ c: 'git log --oneline -3', s: 'ok', x: 0, out: '9f3a0d2 (HEAD -> main, origin/main) Release 4.0.0\n1c7e5b0 Chat view: the sessions down the left\n6a2d913 Kiro credit tracking in the model picker' }], hist: ['git log --oneline -3'], hi: 1, tfocus: false, tv: 'mine', set: null, mf: null, mdel: null, cc: false, fmode: null, fopen: false, tbm: null, pane: 'diff', prm: 'open', fileView: null, working: false, desk: false, models: false, more: false, side: false, compose: false, short: false, helpers: false, scene: 'chat', os: 'win' };
+// A view can be linked: #office,compose,models or #desk,working,mac.
+for (const k of location.hash.slice(1).split(',').filter(Boolean)) { if (k === 'office' || k === 'chat') st.scene = k; else if (['win', 'linux', 'mac'].includes(k)) st.os = k; else if (k in PANES) { st.pane = k; st.desk = true; } else if (k === 'create' || k === 'setup') st.prm = k; else if (k === 'kiroset') st.set = 'kiro'; else if (k === 'mcpadd') { st.set = 'kiro'; st.mf = newForm(); } else if (k === 'nova') { st.desk = true; st.pane = 'terminal'; st.tv = 'nova'; } else if (k === 'readme') { st.desk = true; st.pane = 'files'; st.fileView = 'README.md'; } else if (k in tbMenus) st.tbm = k; else if (k in st) st[k] = true; }
+// The mockup's PR button: the branch's PR, no PR yet (the form), or gh not set up.
+$('#prmBtn').onclick = () => { st.prm = { open: 'create', create: 'setup', setup: 'open' }[st.prm]; st.pane = 'pr'; st.desk = true; draw(); };
+
+// The send button: grey until something is typed; Stop while the agent works and the box is empty.
+function syncSend(box, btn) {
+  const has = box.value.trim().length > 0, stop = st.working && !has && btn.id === 'send';
+  btn.className = 'send' + (stop ? ' stop' : '');
+  btn.disabled = !has && !stop;
+  btn.innerHTML = svg(stop ? 'stop' : 'up');
+  btn.setAttribute('aria-label', stop ? 'Stop this run' : st.working ? 'Queue this reply' : 'Send');
+}
+$$('.composer').forEach(c => { const box = c.querySelector('textarea'), btn = c.querySelector('.send');
+  box.addEventListener('input', () => syncSend(box, btn));
+  // Sending closes the box back to its circle, in the chat as in the office card.
+  box.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); if (box.value.trim()) { box.value = ''; syncSend(box, btn);
+    c.querySelector('.atts')?.remove(); if (c.id === 'chatComposer') st.cc = false; if (c.id === 'cardComposer') st.compose = false; draw(); } } });
+});
+
+let shown = null;
+function draw() {
+  drawStart();
+  // Only the part that changed is drawn again, so only new messages rise in.
+  // The thread follows the newest message, as a chat does.
+  if (shown !== st.working) { $('#tail').innerHTML = st.working ? work2() : done2; shown = st.working;
+    const th = $('#sceneChat .thread'); requestAnimationFrame(() => th.scrollTop = th.scrollHeight); }
+  $('#desk').classList.toggle('open', st.desk);
+  // In the notch there is no room for the sidebar and Files & changes together: the sidebar folds
+  // while the panel is open, and comes back when it closes.
+  const fold = FRAME === 'notch' && st.desk && innerWidth < 1240;
+  $('#side').classList.toggle('hidden', st.side || fold);
+  const chat = st.scene === 'chat';
+  $('#modelMenu').classList.toggle('open', st.models && chat);
+  $('#cardModels').classList.toggle('open', st.models && !chat && st.compose);
+  $('#moreMenu').classList.toggle('open', st.more && chat);
+  $('#cardMenu').classList.toggle('open', st.more && !chat);
+  document.body.classList.toggle('menu-open', st.more || st.models || !!st.tbm);
+  $$('.bar-m').forEach(m => m.classList.toggle('open', m.dataset.for === st.tbm));
+  $$('[data-tbm]').forEach(b => b.setAttribute('aria-expanded', b.dataset.tbm === st.tbm));
+  syncSwitches(); drawSettings();
+  $$('[data-fm]').forEach(s => s.textContent = FM[st.os]);
+  $$('[data-click="models"]').forEach(b => b.setAttribute('aria-expanded', st.models));
+  $$('.hd-r [data-click="more"], .card-hd [data-click="more"]').forEach(b => b.setAttribute('aria-expanded', st.more));
+  $('#reply').placeholder = st.working ? 'Queue a reply' : 'Reply to Nova';
+  // Going back needs nothing running, as Restore and Try again do.
+  $$('[data-act="edit"]').forEach(b => { b.setAttribute('aria-disabled', st.working); b.dataset.tip = st.working ? 'Stop the run to edit' : 'Edit'; });
+  $$('.composer').forEach(c => syncSend(c.querySelector('textarea'), c.querySelector('.send')));
+  $('#sceneChat').hidden = !chat; $('#sceneOffice').hidden = chat;
+  $('#rest').hidden = st.compose; $('#cardComposer').hidden = !st.compose;
+  // The chat's reply box: open, or resting as the circle (with Stop while the agent works). The model
+  // picker lives in the box, so opening it opens the box.
+  if (st.models && chat && !st.start) st.cc = true;
+  $('#dock').classList.toggle('rested', !st.cc); $('#dockRest').hidden = st.cc; $('#chatComposer').hidden = !st.cc;
+  $('#restChat').classList.toggle('draft', !st.cc && !!$('#reply').value.trim());
+  $('#rest').classList.toggle('draft', !st.compose && !!$('#cardComposer textarea').value.trim());
+  $('#card').classList.toggle('short', st.short);
+  $$('[data-t]').forEach(b => b.setAttribute('aria-pressed', st[b.dataset.t]));
+  $$('[data-scene]').forEach(b => b.setAttribute('aria-pressed', b.dataset.scene === st.scene));
+  // A tab the OS can't run, or with nothing in it, is not shown at all.
+  $$('.tab[data-os]').forEach(t => t.hidden = t.dataset.os !== st.os);
+  $$('.tab[data-needs="helpers"]').forEach(t => t.hidden = !st.helpers);
+  $$('.bar [data-os]').forEach(b => b.setAttribute('aria-pressed', b.dataset.os === st.os));
+  // A hidden tab can't stay open: back to Diff.
+  if ($(`.tab[data-pane="${st.pane}"]`).hidden) st.pane = 'diff';
+  $$('.tab').forEach(t => { const on = t.dataset.pane === st.pane; t.classList.toggle('on', on); t.setAttribute('aria-selected', on); });
+  $('#prmBtn').textContent = `PR: ${{ open: 'open', create: 'none yet', setup: 'gh not set up' }[st.prm]}`;
+  $('#prmBtn').setAttribute('aria-pressed', st.pane === 'pr' && st.desk);
+  // Each panel is drawn again only when what it shows changes, so what is open inside it stays open.
+  const key = [st.pane, st.tv, st.prm, st.fileView, st.fmode, st.fopen, st.working, st.os, st.mine.length, st.mine.map(m => m.s).join()].join('|');
+  if (key !== paneKey) {
+    // While you use the terminal it keeps the keys: the box, or (while a command runs) the terminal itself, for Ctrl+C.
+    const typing = st.tfocus || document.activeElement?.id === 'tinBox';
+    const same = paneKey.split('|')[0] === st.pane; paneKey = key;
+    $('#deskBody').innerHTML = `<div class="pane"${same ? ' style="animation:none"' : ''}>${PANES[st.pane]()}</div>`; $('#deskBody').scrollTop = 0;
+    // The terminal follows its newest command, and keeps the box focused while you type.
+    const term = $('#term'); if (term) term.scrollTop = term.scrollHeight;
+    if (typing) ($('#tinBox') || term)?.focus();
+  }
+}
+$$('.bar [data-os]').forEach(b => b.onclick = () => { st.os = b.dataset.os; draw(); });
+$$('[data-t]').forEach(b => b.onclick = () => { st[b.dataset.t] = !st[b.dataset.t]; draw(); });
+$$('[data-scene]').forEach(b => b.onclick = () => { st.scene = b.dataset.scene; draw(); });
+
+document.addEventListener('click', e => {
+  // A click from the keyboard (Enter, Space) has no pointer: it shows at once, with no motion.
+  document.body.classList.toggle('kb', e.detail === 0);
+  // Settings: a page from the title bar's menu or the sections, Back closes it; then Kiro's MCP servers.
+  const sp = e.target.closest('[data-set]');
+  if (sp) { st.set = sp.dataset.set || null; st.tbm = null; st.mf = st.mdel = null; draw(); return; }
+  if (e.target.closest('#settings')) {
+    const a = k => e.target.closest(`[${k}]`)?.getAttribute(k);
+    if (a('data-mtg') != null) { const s = MCPS.find(x => x.name === a('data-mtg')); s.on = !s.on; draw(); return; }
+    if (a('data-madd') != null) { st.mf = newForm(); st.mdel = null; draw(); $('#mform [name=name]')?.focus(); return; }
+    if (a('data-medit') != null) { st.mf = newForm(MCPS.find(x => x.name === a('data-medit'))); st.mdel = null; draw(); $('#mform [name=name]')?.focus(); return; }
+    if (a('data-mdel') != null) { st.mdel = a('data-mdel'); st.mf = null; draw(); return; }
+    if (a('data-mdelno') != null) { st.mdel = null; draw(); return; }
+    if (a('data-mdelyes') != null) { MCPS.splice(MCPS.findIndex(x => x.name === a('data-mdelyes')), 1); st.mdel = null; draw(); return; }
+    if (a('data-mkind') != null) { grab(); st.mf.kind = a('data-mkind'); st.mf.err = {}; draw(); return; }
+    if (a('data-menv') != null) { grab(); st.mf.env.push(['', '']); draw(); $$('#mform [name=ek]').item($$('#mform [name=ek]').length - 1)?.focus(); return; }
+    if (a('data-menvx') != null) { grab(); st.mf.env.splice(+a('data-menvx'), 1); if (!st.mf.env.length) st.mf.env.push(['', '']); draw(); return; }
+    if (a('data-mcancel') != null) { st.mf = null; draw(); return; }
+  }
+  const tb = e.target.closest('[data-tbm]');
+  if (tb) { st.tbm = st.tbm === tb.dataset.tbm ? null : tb.dataset.tbm; st.more = st.models = false; draw(); return; }
+  // Picking an item closes its menu (the links still open their page).
+  if (e.target.closest('.bar-m .mi:not(.ver)')) { st.tbm = null; draw(); return; }
+  if (st.tbm && !e.target.closest('.bar-m')) { st.tbm = null; draw(); }
+  // Copy: the answer's text, or (from the arrow's menu) its Markdown; a code block's Copy takes only its code.
+  const flash = (b, label) => { const keep = b.innerHTML; b.classList.add('done'); b.innerHTML = svg('check') + (label ? `<span>${label}</span>` : ''); if (b.dataset.tip) b.dataset.tip = 'Copied'; setTimeout(() => { b.innerHTML = keep; b.classList.remove('done'); if (b.dataset.tip) b.dataset.tip = 'Copy'; }, 1400); };
+  // New chat: the sidebar's button opens it, a session row leaves it; its pills open their menus.
+  if (e.target.closest('[data-newchat]')) { st.start = true; st.sm = null; draw(); return; }
+  if (e.target.closest('.row') && !e.target.closest('.del')) { st.start = false; draw(); }
+  const smb = e.target.closest('[data-sm]');
+  if (smb) { st.sm = st.sm === smb.dataset.sm ? null : smb.dataset.sm; draw(); return; }
+  const pk = e.target.closest('[data-pick]');
+  if (pk) { const [k, v] = pk.dataset.pick.split(':'); st[k] = v; st.sm = null; draw(); $('#start textarea')?.focus(); return; }
+  if (st.sm && e.target.closest('.models2 [data-model]')) { pick.model = e.target.closest('[data-model]').dataset.model; st.sm = null; drawPicker(); startShown = ''; draw(); return; }
+  if (st.sm && e.target.closest('.models2 [data-effort]')) { pick.effort = e.target.closest('[data-effort]').dataset.effort; drawPicker(); startShown = ''; draw(); return; }
+  if (st.sm && !e.target.closest('.menu.sm')) { st.sm = null; draw(); }
+  const rn = e.target.closest('[data-rename]');
+  if (rn) { st.more = false; draw(); rename(rn.matches('h1, h2') ? rn : $(st.scene === 'office' ? '.card-hd h2' : '#sceneChat .hd h1')); return; }
+  // Open in an editor (or the file manager): the one picked becomes the last used, first next time.
+  const edb = e.target.closest('[data-ed]');
+  if (edb) { if (edb.dataset.ed !== 'fm') lastEd = edb.dataset.ed; st.more = st.fopen = false;
+    $('#moreMenu').innerHTML = more(false); $('#cardMenu').innerHTML = more(true); paneKey = ''; draw(); return; }
+  if (e.target.closest('[data-openterm]')) { const open = st.desk && st.pane === 'terminal'; st.desk = !open; st.more = false; st.tv = 'mine'; st.pane = 'terminal'; st.fileView = null; draw(); if (!open) setTimeout(() => $('#tinBox')?.focus(), 300); return; }
+  const tvb = e.target.closest('[data-tv]');
+  if (tvb) { st.tv = tvb.dataset.tv; st.tfocus = st.tv === 'mine'; draw(); return; }
+  // A click anywhere in the terminal puts the cursor at the prompt (unless you were selecting text).
+  st.tfocus = !!e.target.closest('#term');
+  if (st.tfocus) { if (!getSelection().toString()) ($('#tinBox') || $('#term')).focus(); return; }
+  const cbc = e.target.closest('[data-cbcopy]');
+  if (cbc) { flash(cbc, 'Copied'); return; }
+  const cm = e.target.closest('[data-cmenu]');
+  $$('.menu.cm.open').forEach(m => { if (!cm || m !== cm.nextElementSibling) { m.classList.remove('open'); m.previousElementSibling.setAttribute('aria-expanded', false); } });
+  if (cm) { const m = cm.nextElementSibling; m.classList.toggle('open'); cm.setAttribute('aria-expanded', m.classList.contains('open')); return; }
+  const cp = e.target.closest('[data-copy]');
+  if (cp) { const w = cp.closest('.copy-w'); w.querySelector('.menu.cm').classList.remove('open'); flash(w.querySelector('button[data-copy]')); return; }
+  if (e.target.closest('.ans a')) { if (e.target.closest('a.path')) e.preventDefault(); return; }
+  const ya = e.target.closest('[data-act]');
+  if (ya) { const y = ya.closest('.you');
+    if (ya.dataset.act === 'copy') { ya.innerHTML = svg('check'); ya.dataset.tip = 'Copied'; setTimeout(() => { ya.innerHTML = svg('copy'); ya.dataset.tip = 'Copy'; }, 1400); }
+    else if (ya.getAttribute('aria-disabled') !== 'true') startEdit(y);
+    return; }
+  const ed = e.target.closest('[data-edit]');
+  if (ed) { const y = ed.closest('.you'); ed.dataset.edit === 'send' ? sendEdit(y) : cancelEdit(y); return; }
+  const tab = e.target.closest('.tab');
+  if (tab) { st.pane = tab.dataset.pane; st.fileView = null; draw(); return; }
+  if (e.target.closest('[data-gopr]')) { st.pane = 'pr'; st.prm = 'create'; draw(); return; }
+  if (e.target.closest('[data-back]')) { st.fileView = null; st.fopen = false; draw(); return; }
+  const fm = e.target.closest('[data-fmode]');
+  if (fm) { st.fmode = fm.dataset.fmode; draw(); return; }
+  const fe = e.target.closest('[data-fedit]');
+  if (fe) { fileEdit(fe.dataset.fedit); return; }
+  const sh = e.target.closest('.sub-h');
+  if (sh && sh.hasAttribute('aria-expanded')) { const c = sh.parentElement; c.classList.toggle('open'); sh.setAttribute('aria-expanded', c.classList.contains('open')); return; }
+  const fr = e.target.closest('.frow');
+  if (fr) { if (fr.dataset.file) { st.fileView = fr.dataset.file; st.fmode = null; st.fopen = false; draw(); } else { const d = fr.parentElement; d.classList.toggle('open'); fr.setAttribute('aria-expanded', d.classList.contains('open')); } return; }
+  const fh = e.target.closest('.file-h');
+  if (fh) { const f = fh.parentElement; f.classList.toggle('open'); fh.setAttribute('aria-expanded', f.classList.contains('open')); return; }
+  const h = e.target.closest('.cmd-h');
+  if (h) { const c = h.parentElement; if (c.classList.contains('live')) return; c.classList.toggle('open'); h.setAttribute('aria-expanded', c.classList.contains('open')); return; }
+  const m = e.target.closest('[data-model]');
+  if (m) { pick.model = m.dataset.model; st.models = false; drawPicker(); draw(); return; }
+  const ef = e.target.closest('[data-effort]');
+  if (ef) { pick.effort = ef.dataset.effort; drawPicker(); draw(); return; }
+  const c = e.target.closest('[data-click]');
+  // Showing the sidebar the notch folded closes the panel instead.
+  if (c && c.dataset.click === 'side' && !st.side && $('#side').classList.contains('hidden')) { st.desk = false; draw(); return; }
+  if (c) { const k = c.dataset.click; if (k === 'desk' || k === 'compose') st.more = false; if (k === 'more') st.models = false; if (k === 'models') st.more = false; st[k] = !st[k]; draw();
+    if (k === 'compose' && st.compose) $('#cardComposer textarea').focus();
+    if (k === 'cc' && st.cc) $('#reply').focus(); return; }
+  if (!e.target.closest('.menu, .bar')) { if (st.more || st.models || st.fopen) { st.more = st.models = st.fopen = false; draw(); } }
+});
+// In the office card a typed key opens the reply box too; Esc closes what is open, at once.
+// Your command box: Enter runs (not while one of yours runs), Up and Down walk your earlier commands.
+document.addEventListener('submit', e => { if (e.target.id === 'mform') { e.preventDefault(); saveMcp(); } });
+document.addEventListener('submit', e => { if (e.target.id !== 'tin') return; e.preventDefault();
+  const box = $('#tinBox'), c = box.value.trim(); st.tfocus = true;
+  // An empty Enter prints a new prompt, as a shell does.
+  if (!c) { st.mine.push({ c: '', s: 'ok', x: 0, out: '' }); draw(); return; }
+  if (/^(clear|cls|Clear-Host)$/i.test(c)) { st.mine = []; st.hist.push(c); st.hi = st.hist.length; draw(); return; }
+  runMine(c); });
+document.addEventListener('keydown', e => {
+  if (e.target.id === 'tinBox' && (e.key === 'ArrowUp' || e.key === 'ArrowDown') && st.hist.length) {
+    e.preventDefault(); st.hi = Math.max(0, Math.min(st.hist.length, st.hi + (e.key === 'ArrowUp' ? -1 : 1))); e.target.value = st.hist[st.hi] ?? ''; return; }
+  // Ctrl+C stops what runs; with nothing running it drops what you typed onto a fresh prompt.
+  if (e.ctrlKey && e.key === 'c' && e.target.closest?.('#term') && !getSelection().toString()) { e.preventDefault();
+    if (st.mine.some(m => m.s === 'run')) stopMine();
+    else { const b = $('#tinBox'); st.mine.push({ c: b.value, s: 'ok', x: 0, out: '<span class="ctl">^C</span>' }); b.value = ''; draw(); }
+    return; }
+  if (e.target.id === 'fedit' && ((e.ctrlKey || e.metaKey) && e.key === 's' || e.key === 'Escape')) { e.preventDefault(); fileEdit(e.key === 'Escape' ? 'cancel' : 'save'); return; }
+  if (e.ctrlKey && e.key === 'l' && e.target.id === 'tinBox') { e.preventDefault(); st.mine = []; draw(); return; }
+}, true);
+document.addEventListener('keydown', e => {
+  // The file rows hold buttons, so they are divs with role="button": Enter and Space press them.
+  if ((e.key === 'Enter' || e.key === ' ') && e.target.matches('.frow, h1[data-rename], h2[data-rename]')) { e.preventDefault(); e.target.click(); return; }
+  // The title bar's menus: Left and Right move between them, Down and Up through the items.
+  if (st.tbm && ['ArrowLeft', 'ArrowRight', 'ArrowDown', 'ArrowUp'].includes(e.key)) {
+    e.preventDefault(); const names = Object.keys(tbMenus);
+    if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') { st.tbm = names[(names.indexOf(st.tbm) + (e.key === 'ArrowRight' ? 1 : names.length - 1)) % names.length]; $$('.bar-m').forEach(m => m.classList.add('swap')); draw(); $(`[data-tbm="${st.tbm}"]`).focus(); requestAnimationFrame(() => $$('.bar-m').forEach(m => m.classList.remove('swap'))); return; }
+    const items = [...$(`.bar-m[data-for="${st.tbm}"]`).querySelectorAll('.mi:not(.ver)')], i = items.indexOf(document.activeElement);
+    items[(i + (e.key === 'ArrowDown' ? 1 : items.length - 1) + (i < 0 && e.key === 'ArrowUp' ? 1 : 0)) % items.length].focus(); return;
+  }
+  if (e.key === 'Escape' && st.tbm) { const b = $(`[data-tbm="${st.tbm}"]`); st.tbm = null; draw(); b.focus(); return; }
+  // In the chat, Esc closes an open menu first, then the reply box (keeping the draft).
+  if (e.key === 'Escape') { document.body.classList.add('kb'); const menu = st.more || st.models || st.sm; st.more = st.models = false; st.sm = null;
+    if (st.scene === 'office') st.compose = false; else if (!menu && !e.target.closest?.('#term, #fedit')) st.cc = false; draw(); return; }
+  if (st.scene === 'chat' && !st.start && !st.cc && e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey && !e.target.closest?.('textarea, input, #term')) {
+    document.body.classList.add('kb'); st.cc = true; draw(); $('#reply').focus(); return; }
+  if (st.scene === 'office' && !st.compose && e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.target.closest('textarea')) {
+    document.body.classList.add('kb'); st.compose = true; draw(); $('#cardComposer textarea').focus(); }
+});
+// With a title bar menu open, the pointer moving onto another word opens that one at once.
+document.addEventListener('pointerover', e => { const b = e.target.closest('[data-tbm]');
+  if (b && st.tbm && st.tbm !== b.dataset.tbm) { $$('.bar-m').forEach(m => m.classList.add('swap')); st.tbm = b.dataset.tbm; draw(); requestAnimationFrame(() => $$('.bar-m').forEach(m => m.classList.remove('swap'))); } });
+// Tooltips: once one has shown, the next shows at once (until the pointer rests elsewhere).
+let warmT;
+document.addEventListener('pointerover', e => { if (e.target.closest('[data-tip]')) { clearTimeout(warmT); warmT = setTimeout(() => document.body.classList.add('warm'), 450); } });
+document.addEventListener('pointerout', e => { if (e.target.closest('[data-tip]') && !e.relatedTarget?.closest?.('[data-tip]')) { clearTimeout(warmT); warmT = setTimeout(() => document.body.classList.remove('warm'), 300); } });
+// @ adds a file from the workspace (the session's folder, as git ls-files and the untracked ones
+// .gitignore leaves in), sent with the prompt as an attachment. / lists commands: the agent's own
+// (ACP's available_commands_update, so they differ by tool) and Hover's.
+const WS = ['app/ui/office.slint', 'app/src/office_ui.rs', 'app/src/desk_ui.rs', 'app/src/app.rs', 'app/ui/desk.slint', 'app/ui/widgets.slint', 'app/Cargo.toml',
+  'crates/hover-agents/src/acp.rs', 'crates/hover-agents/src/desk.rs', 'crates/hover-chat/src/paint.rs', 'crates/hover-md/src/html.rs', 'AGENTS.md', 'Cargo.toml', 'README.md'];
+const CMDS = [
+  ['From Kiro', [['compact', 'Shrink the chat to free up context'], ['context', 'What fills the context window'], ['usage', 'Credits used this month'], ['tools', 'The tools Kiro can use']]],
+  ['Hover', [['model', 'Pick the model and effort', 'models'], ['terminal', 'Open your terminal', 'terminal'], ['files', 'Open Files & changes', 'files'], ['fork', 'Copy this chat into a new one', 'fork']]],
+];
+let pop = null; // { box, kind, q, at, i, items }
+const popEl = box => { const host = box.closest('.composer, .sbox'); let el = host.querySelector(':scope > .pop');
+  if (!el) { el = document.createElement('div'); el.className = 'menu pop'; el.setAttribute('role', 'listbox'); host.appendChild(el); } return el; };
+function trigger(box) {
+  const v = box.value.slice(0, box.selectionStart); let m;
+  if ((m = /(^|\s)@([\w./-]*)$/.exec(v))) return { kind: '@', q: m[2], at: v.length - m[2].length - 1 };
+  if ((m = /^\/(\w*)$/.exec(v))) return { kind: '/', q: m[1], at: 0 };
+  return null;
+}
+function drawPop() {
+  $$('.menu.pop.open').forEach(p => { if (!pop || p !== popEl(pop.box)) p.classList.remove('open'); });
+  if (!pop) return;
+  const q = pop.q.toLowerCase(), el = popEl(pop.box);
+  if (pop.kind === '@') {
+    // By the name first, then anywhere in the path; the match shows in the accent.
+    const hit = WS.filter(p => p.toLowerCase().includes(q)).sort((a, b) => (b.split('/').pop().toLowerCase().includes(q)) - (a.split('/').pop().toLowerCase().includes(q))).slice(0, 8);
+    pop.items = hit.map(p => ({ file: p }));
+    el.innerHTML = `<div class="mlab">Files in Hover-rust-8fb777af</div>` + (hit.length ? hit.map((p, i) => { const [dir, nm] = split(p); const n = q ? nm.replace(new RegExp(`(${q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'i'), '<mark>$1</mark>') : nm;
+      return `<button class="pi" role="option" aria-selected="${i === pop.i}" data-pi="${i}">${svg('doc')}<span class="nm">${n}</span><span class="dir">${dir.replace(/\/$/, '')}</span></button>`; }).join('') : '<div class="none">No file matches that.</div>');
+  } else {
+    const groups = CMDS.map(([g, cs]) => [g, cs.filter(([c]) => c.startsWith(q))]).filter(([, cs]) => cs.length);
+    pop.items = groups.flatMap(([, cs]) => cs.map(([c, d, act]) => ({ cmd: c, act })));
+    let n = 0;
+    el.innerHTML = groups.length ? groups.map(([g, cs]) => `<div class="mlab">${g}</div>${cs.map(([c, d]) => { const i = n++; return `<button class="pi" role="option" aria-selected="${i === pop.i}" data-pi="${i}"><code>/${c}</code><small>${d}</small></button>`; }).join('')}`).join('') : '<div class="none">No command starts with that.</div>';
+  }
+  el.classList.add('open');
+  el.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: 'nearest' });
+}
+function pickPop(i) {
+  const it = pop?.items[i]; if (!it) return;
+  const { box, at } = pop, end = box.selectionStart;
+  if (it.file) {
+    // The @ and what followed it leave the text; the file goes in as a chip.
+    box.value = box.value.slice(0, at) + box.value.slice(end);
+    const host = box.closest('.composer, .sbox'); let atts = host.querySelector('.atts');
+    if (!atts) { atts = document.createElement('div'); atts.className = 'atts'; box.before(atts); }
+    if (![...atts.children].some(c => c.title === it.file)) atts.insertAdjacentHTML('beforeend', `<span class="att" title="${it.file}">${svg('doc')}${split(it.file)[1]}<button aria-label="Remove ${it.file}" data-unatt>${svg('xs')}</button></span>`);
+    box.setSelectionRange(at, at);
+  } else if (!it.act) { box.value = `/${it.cmd} `; }
+  else {
+    // Hover's own: done at once, nothing is sent.
+    box.value = '';
+    if (it.act === 'models') st.models = true;
+    if (it.act === 'terminal' || it.act === 'files') { st.desk = true; st.pane = it.act; st.fileView = null; }
+  }
+  pop = null; drawPop(); draw(); box.dispatchEvent(new Event('input')); box.focus();
+}
+document.addEventListener('input', e => {
+  if (!e.target.matches?.('.composer textarea, .sbox textarea')) return;
+  const t = trigger(e.target);
+  pop = t ? { box: e.target, ...t, i: 0, items: [] } : null; drawPop();
+});
+document.addEventListener('keydown', e => {
+  if (!pop || e.target !== pop.box) return;
+  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); e.stopPropagation(); const n = pop.items.length; if (n) { pop.i = (pop.i + (e.key === 'ArrowDown' ? 1 : n - 1)) % n; drawPop(); } }
+  else if ((e.key === 'Enter' && !e.shiftKey) || e.key === 'Tab') { if (!pop.items.length) return; e.preventDefault(); e.stopPropagation(); pickPop(pop.i); }
+  else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); pop = null; drawPop(); }
+}, true);
+// The list's rows take the pointer without taking the focus from the box.
+document.addEventListener('mousedown', e => { const pi = e.target.closest('.pop [data-pi]'); if (pi) { e.preventDefault(); pickPop(+pi.dataset.pi); }
+  else if (pop && !e.target.closest('.pop') && e.target !== pop.box) { pop = null; drawPop(); } });
+document.addEventListener('click', e => { const u = e.target.closest('[data-unatt]'); if (u) u.closest('.att').remove(); });
+
+// The notch at rest, as app.slint's NotchWindow draws it: the quotas switched on; the agents at work
+// (their logos, what the one in front does, for how long); a question; an end nobody has seen yet.
+if (FRAME === 'notch' && innerHeight < 560) st.short = true;
+if (FRAME === 'island') {
+  const ring = (t, v) => `<span class="q1"><span class="qr" style="--tc:${TC[t]};--v:${v}">${logo(t)}</span><span class="num">${v}<i>%</i></span></span>`;
+  const quotas = ring('kiro', 42) + ring('codex', 18);
+  const ISL = {
+    quota: `<div class="isl">${quotas}</div>`,
+    work: `<div class="isl"><span class="stack"><span class="lm run" style="--tc:${TC.kiro}">${logo('kiro')}</span><span class="lm" style="--tc:${TC.claude}">${logo('claude')}</span></span><span class="act">Running <b>git merge --ff-only origin/main</b></span><span class="tm">1:42</span><span class="dv"></span>${quotas}</div>`,
+    ask: `<div class="isl ask"><span class="lm ask" style="--tc:${TC.kiro}">${logo('kiro')}</span><span class="verb">Wants to run <code>git push origin main</code></span><span class="dv"></span><button class="btn">Deny</button><button class="btn primary">Review</button></div>`,
+    done: `<div class="isl done"><span class="lm" style="position:relative">${logo('kiro')}<span class="bdg">${svg('check')}</span></span><span class="verb">Done · <b>pull latest changes</b></span><span class="tm">4m</span><span class="dv"></span>${quotas}</div>`,
+    card: `<div class="qcard"><div class="qc-h">${logo('kiro')}<span><b>Run a command</b><small>Kiro · pull latest changes</small></span><span class="cnt">1 of 2</span></div>
+      <div class="qc-code"><i>$</i>git push origin main</div>
+      <div class="qc-why">Ask first: commands and the network ask before they run.</div>
+      <div class="qc-acts"><button class="btn">Deny <kbd>Esc</kbd></button><span class="sp"></span><button class="btn">Trust <kbd>Shift+Enter</kbd></button><button class="btn primary">Allow <kbd>Enter</kbd></button></div></div>`,
+  };
+  const isl = $('#island'); isl.hidden = false; isl.innerHTML = ISL[location.hash.slice(1)] || ISL.quota;
+}
+draw();
+</script>
+</body>
+</html>
