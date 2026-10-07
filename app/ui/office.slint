@@ -189,8 +189,6 @@ export global Office {
     // desk's panel (files, changes) beside it. Its header's status, and the branch the
     // workspace is on.
     in property <bool> d-wide;
-    in property <string> d-status;
-    in property <int> d-stage;
     in property <string> d-branch;
     in property <[ListRow]> list;
     in-out property <bool> list-open: true;
@@ -205,15 +203,25 @@ export global Office {
     in-out property <bool> d-more;
     callback d-note-act(int);
     callback d-more-act(int);
+    // The chat view's ⋯ menu: open, which list is out of it (0 none, 1 Open in, 2 Switch agent), the editors found on this
+    // computer, the agents the chat can switch to, the file manager's name; a name typed for the chat, and a pick (editor:ID,
+    // fm, terminal, files, to:ID, fork, delete). Opening it asks for its lists.
+    in-out property <bool> d-menu;
+    // The title is being renamed in place.
+    in-out property <bool> d-renaming;
+    in-out property <int> d-fly;
+    in property <[MOpt]> d-editors;
+    in property <[MOpt]> d-switch;
+    in property <string> d-fm;
+    callback d-menu-open();
+    callback d-rename(string);
+    callback d-menu-act(string);
     callback d-expand();
     callback d-collapse();
     // The switch at the top left: the chat view in place of the office, or back; and the
     // chat view's New chat (its start screen).
     callback toggle-view();
     callback new-chat();
-    callback d-stop();
-    callback d-editor();
-    callback d-details();
     callback list-clicked(int);
     callback pointer(int, length, length);
     callback wheel(length, length, length);
@@ -565,6 +573,11 @@ global PagePaths {
     out property <string> shrink: "M4 14h6v6 M20 10h-6V4 M14 10l7-7 M3 21l7-7";
     out property <string> sidebar: "M5 3h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Z M9 3v18";
     out property <string> bin: "M4 7h16 M10 11v6 M14 11v6 M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12 M9 7V4h6v3";
+    out property <string> pen: "M12 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7 M18.375 2.625a1 1 0 0 1 3 3l-9.013 9.014a2 2 0 0 1-.853.505l-2.873.84a.5.5 0 0 1-.62-.62l.84-2.873a2 2 0 0 1 .506-.852z";
+    out property <string> swap: "M8 3 4 7l4 4 M4 7h16 M16 21l4-4-4-4 M20 17H4";
+    out property <string> fork: "M15 18A3 3 0 1 0 9 18 3 3 0 1 0 15 18Z M9 6A3 3 0 1 0 3 6 3 3 0 1 0 9 6Z M21 6A3 3 0 1 0 15 6 3 3 0 1 0 21 6Z M18 9v2c0 .6-.4 1-1 1H7c-.6 0-1-.4-1-1V9 M12 12v3";
+    out property <string> code: "m18 16 4-4-4-4 M6 8l-4 4 4 4 M14.5 4l-5 16";
+    out property <string> terminal: "m4 17 6-6-6-6 M12 19h8";
 }
 
 // .lg: a tool's logo in its circle (LOGOS in main.js, from LobeHub, MIT; the marks
@@ -1154,6 +1167,90 @@ component MenuRow inherits Rectangle {
     ta := TouchArea { mouse-cursor: pointer; clicked => { root.clicked(); } }
 }
 
+// A chip of the chat view's header: no fill and no border (not even on hover; the text only brightens), 24 px high,
+// 12 px words and a 13 px icon or context ring. The ring's teal tick is where Kiro compacts (70 %).
+component HeadChip inherits Rectangle {
+    in property <string> icon;
+    in property <string> text;
+    in property <string> label;
+    // The context used, in percent: a ring in place of an icon (-1 none).
+    in property <float> ring: -1;
+    in property <bool> tick;
+    property <color> fg: ta.has-hover ? #f6f2ffb0 : #f6f2ff80;
+    height: 24px;
+    preferred-width: hl.preferred-width;
+    border-radius: 6px;
+    accessible-role: AccessibleRole.text;
+    accessible-label: label;
+    hl := HorizontalLayout { padding-left: 6px; padding-right: 6px; spacing: 6px;
+        if icon != "": VerticalLayout { alignment: center; Icon { name: icon; size: 13px; tint: fg; } }
+        if ring >= 0: VerticalLayout { alignment: center;
+            Rectangle { width: 13px; height: 13px;
+                Path { width: 13px; height: 13px; viewbox-width: 12; viewbox-height: 12; stroke: #ffffff24; stroke-width: 2.2px; fill: transparent;
+                    commands: "M 10.5 6 A 4.5 4.5 0 1 1 1.5 6 A 4.5 4.5 0 1 1 10.5 6 Z"; }
+                Path { width: 13px; height: 13px; viewbox-width: 12; viewbox-height: 12; stroke: #ffffffbf; stroke-width: 2.2px; fill: transparent;
+                    commands: "M 6 1.5 A 4.5 4.5 0 " + (ring > 50 ? "1" : "0") + " 1 " + (6 + 4.5 * sin(360deg * min(ring, 99.9) / 100)) + " " + (6 - 4.5 * cos(360deg * min(ring, 99.9) / 100)); }
+                if tick: Path { width: 13px; height: 13px; viewbox-width: 12; viewbox-height: 12; stroke: #7fe3d4; stroke-width: 1.6px; fill: transparent; stroke-line-cap: round;
+                    commands: "M 2.86 7.02 L 0.58 7.76"; }
+            } }
+        Text { text: root.text; font-size: 12px; font-weight: 500; color: fg; vertical-alignment: center; }
+    }
+    ta := TouchArea { }
+}
+
+// A row of the chat view's ⋯ menu (.mi): 30 px, an icon (or an editor's tile, or an agent's logo), the words, and a chevron
+// when a list opens from it. `hovered` is raised when the pointer comes onto it.
+component MenuItem inherits Rectangle {
+    in property <string> id;
+    in property <string> icon;
+    in property <string> text;
+    in property <string> tile;
+    in property <string> logo;
+    in property <bool> chev;
+    in property <bool> red;
+    in property <bool> open;
+    callback clicked;
+    callback hovered;
+    height: 30px;
+    border-radius: 7px;
+    background: ta.has-hover || open ? #ffffff0d : transparent;
+    accessible-role: button;
+    accessible-id: id;
+    accessible-label: text;
+    accessible-action-default => { clicked(); }
+    property <bool> hov: ta.has-hover;
+    changed hov => { if (self.hov) { root.hovered(); } }
+    HorizontalLayout { padding-left: 8px; padding-right: 8px; spacing: 10px;
+        if icon != "": VerticalLayout { alignment: center; Icon { name: icon; size: 15px; tint: red ? #ff9a92 : ta.has-hover ? #f6f2ffb0 : #f6f2ff80; } }
+        if tile != "": VerticalLayout { alignment: center;
+            Rectangle { width: 18px; height: 18px; border-radius: 5px; background: tile == "vscode" ? #0e7fd6 : tile == "cursor" ? #18181c : tile == "kiro" ? #9046ff : #101012;
+                border-width: 1px; border-color: #ffffff1a;
+                Icon { name: Icons.code; size: 11px; tint: white; } } }
+        if logo != "": VerticalLayout { alignment: center; Logo { width: 18px; height: 18px; mark: 10px; tool: logo; radius: 5px; } }
+        Text { text: root.text; font-size: 13px; color: red ? #ff9a92 : ta.has-hover || open ? #f6f2ff : #f6f2ffb0; vertical-alignment: center; horizontal-stretch: 1; overflow: elide; }
+        if chev: VerticalLayout { alignment: center; Icon { name: Icons.chevron-right; size: 13px; tint: #f6f2ff47; } }
+    }
+    ta := TouchArea { mouse-cursor: pointer; clicked => { root.clicked(); } }
+    @children
+}
+
+// The list that opens to the left of a ⋯ menu row (.menu.fly): 204 wide, over its row.
+component Flyout inherits Rectangle {
+    x: -202px;
+    y: -5px;
+    width: 204px;
+    height: fl.preferred-height;
+    border-radius: 12px;
+    background: #1a1820;
+    border-width: 1px;
+    border-color: #ffffff17;
+    drop-shadow-blur: 30px;
+    drop-shadow-offset-y: 12px;
+    drop-shadow-color: #000000cc;
+    accessible-role: list;
+    fl := VerticalLayout { padding: 4px; @children }
+}
+
 // The desk as a card, in the chat's style: who works here and on what (the chat's header),
 // what it does now (its last steps, the question it waits on, or the answer it gave), its
 // eight surfaces as tiles with what each holds, a reply box and the chat (#deskMenu).
@@ -1388,6 +1485,11 @@ export component OfficeView inherits Rectangle {
 
     // Esc steps back one layer: the page's keydown on the document, which sees it
     // whichever field has the keyboard (the task box, the reply, the search).
+    // ⋯ in the chat view's header: closes its menu, or asks for its lists and opens it.
+    function toggle-menu() {
+        if (Office.d-menu) { Office.d-menu = false; } else { Office.d-fly = 0; Office.d-menu-open(); Office.d-menu = true; }
+    }
+
     public function escape() {
         // The app window has nothing to fold: there Esc takes Settings back to its office.
         if (in-settings) { if (dashboard) { root.back(); } else { root.fold(); } return; }
@@ -1400,7 +1502,7 @@ export component OfficeView inherits Rectangle {
         if (Office.fab != 0) { Office.new-fold(); return; }
         // The chat view: its details close first. It goes back to the office only by its switch;
         // past the details Esc folds the notch, as it does over the office.
-        if (Office.d-wide) { if (Desk.panel) { Desk.panel-close(); return; } root.fold(); return; }
+        if (Office.d-wide) { if (Office.d-menu) { Office.d-menu = false; return; } if (Desk.panel) { Desk.panel-close(); return; } root.fold(); return; }
         // The reply box closes first, and keeps what was written.
         if (Office.drawer && Office.d-compose) { Office.d-compose = false; focus.focus(); return; }
         if (Office.drawer) { Office.d-close(); return; }
@@ -1424,6 +1526,8 @@ export component OfficeView inherits Rectangle {
         property <bool> confirm-now: Office.confirm;
         property <bool> menu-now: Office.menu;
         property <bool> settings-now: root.in-settings;
+        property <string> title-now: Office.d-title;
+        changed title-now => { Office.d-renaming = false; }
         // #drawer and #panel: 12 px from the edges and up to 400 wide; 8 and 360 short.
         property <length> side-gap: compact ? 8px : 12px;
         property <length> side-w: min(compact ? 360px : 400px, self.width - 2 * side-gap);
@@ -2123,15 +2227,86 @@ export component OfficeView inherits Rectangle {
             VerticalLayout {
                 height: parent.height;
                 // .dh: the tool's logo, the task, and its folder, access and context; delete, close.
-                HorizontalLayout {
+                // The chat view's header: one line. The title (a click renames it), the branch, the context, then ⋯.
+                if Office.d-wide: Rectangle {
                     vertical-stretch: 0;
-                    // The chat view's switch (and sidebar button) sit over its top left while the list is hidden.
-                    padding-left: chat && lw == 0 ? sw-room : compact ? 10px : 12px;
+                    height: compact ? 44px : 52px;
+                    HorizontalLayout {
+                        // The chat view's switch (and sidebar button) sit over its top left while the list is hidden.
+                        padding-left: lw == 0 ? sw-room : 20px;
+                        padding-right: 10px;
+                        spacing: 10px;
+                        // The title: a click renames it in place. Enter or leaving the field saves, Esc undoes, empty keeps the old one.
+                        Rectangle {
+                            horizontal-stretch: 0;
+                            min-width: 0px;
+                            max-width: max(120px, parent.width * 0.46);
+                            preferred-width: Office.d-renaming ? max(180px, htl.preferred-width + 24px) : htl.preferred-width;
+                            accessible-role: button;
+                            accessible-id: "dTitle";
+                            accessible-label: "Rename: " + Office.d-title;
+                            accessible-action-default => { Office.d-renaming = true; }
+                            htl := Text { visible: !Office.d-renaming; width: parent.width; text: Office.d-title; font-size: 14px; font-weight: 600; letter-spacing: -0.14px;
+                                color: #f6f2ff; overflow: elide; vertical-alignment: center; }
+                            if !Office.d-renaming: TouchArea { mouse-cursor: pointer; clicked => { Office.d-renaming = true; } }
+                            if Office.d-renaming: Rectangle {
+                                height: 28px;
+                                border-radius: 7px;
+                                background: #ffffff0f;
+                                border-width: 1px;
+                                border-color: #c4a2ff59;
+                                rn := TextInput {
+                                    x: 7px;
+                                    width: parent.width - 14px;
+                                    text: Office.d-title;
+                                    font-size: 14px;
+                                    font-weight: 600;
+                                    color: #f6f2ff;
+                                    single-line: true;
+                                    vertical-alignment: center;
+                                    selection-background-color: #c4a2ff66;
+                                    accessible-role: text-input;
+                                    accessible-id: "dRename";
+                                    accessible-label: "Chat name";
+                                    init => { self.focus(); self.select-all(); }
+                                    accepted => { Office.d-renaming = false; Office.d-rename(self.text); }
+                                    key-pressed(e) => { if (e.text == Key.Escape) { Office.d-renaming = false; return accept; } reject }
+                                    changed has-focus => { if (!self.has-focus && Office.d-renaming) { Office.d-renaming = false; Office.d-rename(self.text); } }
+                                }
+                            }
+                        }
+                        // The chips: no fill, no border; only the text brightens on hover. Both are the same size.
+                        HorizontalLayout {
+                            horizontal-stretch: 1;
+                            alignment: start;
+                            spacing: 4px;
+                            if Office.d-branch != "": HeadChip { icon: Icons.git; text: Office.d-branch; label: "Branch: " + Office.d-branch; }
+                            if Office.d-ctx >= 0: HeadChip { ring: Office.d-ctx; text: Office.d-ctx + "%";
+                                label: Office.d-ctx + "% of the context used" + (Office.d-tool-id == "kiro" ? " · Kiro compacts at 70%" : ""); tick: Office.d-tool-id == "kiro"; }
+                        }
+                        VerticalLayout { alignment: center;
+                            Rectangle {
+                                width: 28px;
+                                height: 28px;
+                                border-radius: 7px;
+                                background: mta.has-hover || Office.d-menu ? #ffffff0b : transparent;
+                                accessible-role: button;
+                                accessible-id: "dMore";
+                                accessible-label: "More";
+                                accessible-action-default => { root.toggle-menu(); }
+                                Icon { name: Icons.more; size: 16px; tint: mta.has-hover || Office.d-menu ? #f6f2ff : #f6f2ff80; }
+                                mta := TouchArea { mouse-cursor: pointer; clicked => { root.toggle-menu(); } }
+                            }
+                        }
+                    }
+                }
+                if !Office.d-wide: HorizontalLayout {
+                    vertical-stretch: 0;
+                    padding-left: compact ? 10px : 12px;
                     padding-right: compact ? 8px : 10px;
                     padding-top: compact ? 8px : 12px;
                     padding-bottom: compact ? 8px : 11px;
                     spacing: compact ? 9px : 11px;
-                    min-height: chat ? sw-y * 2 + (compact ? 32px : 36px) : 0px;
                     VerticalLayout { alignment: center; Logo { width: compact ? 26px : 30px; height: self.width; radius: compact ? 8px : 9px;
                         mark: compact ? 15px : Office.d-tool-id == "codex" ? 22px : 18px; tool: Office.d-tool-id;
                         accessible-role: image; accessible-label: Office.d-tool; } }
@@ -2151,12 +2326,6 @@ export component OfficeView inherits Rectangle {
                                         Path { width: 11px; height: 11px; viewbox-width: 11; viewbox-height: 11; stroke: #ffffffbf; stroke-width: 2px; fill: transparent;
                                             commands: "M 5.5 1.5 A 4 4 0 " + (Office.d-ctx > 50 ? "1" : "0") + " 1 " + (5.5 + 4 * sin(360deg * min(Office.d-ctx, 99.9) / 100)) + " " + (5.5 - 4 * cos(360deg * min(Office.d-ctx, 99.9) / 100)); } } }
                                     Text { text: Office.d-ctx + "%"; font-size: 11px; font-weight: 500; color: #ffffff99; vertical-alignment: center; } } }
-                            // The expanded chat says more: where the workspace stands, which model, and how it is going.
-                            if Office.d-wide && Office.d-branch != "": Chip { icon: Icons.git; text: Office.d-branch; tip: "Branch: " + Office.d-branch; shrink: true; }
-                            if Office.d-wide && Office.d-model-shown: Chip { text: Office.d-model + (Office.d-model-effort != "" ? " · " + Office.d-model-effort : ""); tip: "Model"; shrink: true; }
-                            if Office.d-wide: Chip { text: Office.d-status; tip: "Status: " + Office.d-status;
-                                fg: Office.d-stage <= 1 ? #d9c4ff : Office.d-stage == 2 ? #7ee59a : Office.d-stage == 3 ? #ff9a92 : Office.d-stage == 5 ? #ffc46b : #ffffff99;
-                                bg: Office.d-stage <= 1 ? #9b6bff24 : Office.d-stage == 2 ? #30d1581a : Office.d-stage == 3 ? #ff453a1f : Office.d-stage == 5 ? #ffb3401f : #ffffff0e; }
                             // Kiro Web: opens this session there; says so while hovered.
                             if Office.d-cloud: Rectangle { height: 20px; width: 26px; border-radius: 6px; background: cw.has-hover ? #6ba8ff33 : #6ba8ff1c;
                                 accessible-role: button; accessible-id: "dCloud"; accessible-label: "Open cloud session";
@@ -2168,14 +2337,9 @@ export component OfficeView inherits Rectangle {
                                     ct := Text { text: "Open cloud session"; font-size: 11px; font-weight: 500; color: #f6f2ffde; vertical-alignment: center; } } }
                         }
                     }
-                    if Office.d-wide: VerticalLayout { alignment: center; HorizontalLayout { spacing: 6px;
-                        if Office.d-busy && !Office.d-stopping: ChipButton { icon: PagePaths.stop; text: tight ? "" : "Stop"; tip: "Stop this run"; fg: #ff9a92; bg: #ff453a1f; clicked => { Office.d-stop(); } }
-                        ChipButton { icon: Icons.code; text: tight ? "" : "Editor"; tip: "Open this task’s folder in your editor"; clicked => { Office.d-editor(); } }
-                        ChipButton { icon: DeskIcons.files; text: tight ? "" : "Files & changes"; tip: Desk.panel ? "Close the files and changes" : "Open the files and changes beside the chat"; clicked => { Office.d-details(); } }
-                    } }
                     if Office.d-more-items.length > 0: VerticalLayout { alignment: center; XButton { id: "dMore"; label: "More: continue with another agent, fork"; icon: Icons.more; small: compact; clicked => { Office.d-more = !Office.d-more; } } }
                     // Over the office: open this chat in the chat view (its switch goes back).
-                    if !Office.d-wide: VerticalLayout { alignment: center; XButton { id: "dExpand"; label: "Open in chat view"; icon: PagePaths.expand; small: compact;
+                    VerticalLayout { alignment: center; XButton { id: "dExpand"; label: "Open in chat view"; icon: PagePaths.expand; small: compact;
                         clicked => { Office.d-expand(); } } }
                     VerticalLayout { alignment: center; XButton { id: "dDel"; label: "Delete this session"; icon: PagePaths.bin; small: compact; clicked => { Office.d-delete(); } } }
                     VerticalLayout { alignment: center; XButton { id: "dClose"; label: "Close"; icon: Icons.close; small: compact; clicked => { Office.d-close(); } } }
@@ -2529,6 +2693,51 @@ export component OfficeView inherits Rectangle {
                 ml := VerticalLayout {
                     padding: 6px;
                     for m[i] in Office.d-more-items: MenuRow { o: m; clicked => { Office.d-more-act(i); } }
+                }
+            }
+            // The chat view's ⋯ menu. Open in and Switch agent open a list to their left.
+            if Office.d-wide && Office.d-menu: TouchArea { clicked => { Office.d-menu = false; } }
+            if Office.d-wide && Office.d-menu: Rectangle {
+                x: parent.width - self.width - 10px;
+                y: ((compact ? 44px : 52px) - 28px) / 2 + 34px;
+                width: 188px;
+                height: cm.preferred-height;
+                border-radius: 12px;
+                background: #1a1820;
+                border-width: 1px;
+                border-color: #ffffff17;
+                drop-shadow-blur: 30px;
+                drop-shadow-offset-y: 12px;
+                drop-shadow-color: #000000cc;
+                accessible-role: list;
+                accessible-id: "moreMenu";
+                accessible-label: "More";
+                cm := VerticalLayout {
+                    padding: 4px;
+                    MenuItem { id: "mOpenIn"; icon: PagePaths.code; text: "Open in"; chev: true; open: Office.d-fly == 1;
+                        hovered => { Office.d-fly = 1; } clicked => { Office.d-fly = 1; }
+                        if Office.d-fly == 1: Flyout {
+                            Text { height: 26px; text: "OPEN THE FOLDER IN"; font-size: 10.5px; font-weight: 600; letter-spacing: 0.63px; color: #f6f2ff61; vertical-alignment: center; x: 8px; }
+                            for e in Office.d-editors: MenuItem { id: "mEd" + e.id; text: e.label; tile: e.id; clicked => { Office.d-menu = false; Office.d-menu-act("editor:" + e.id); } }
+                            if Office.d-editors.length > 0: Rectangle { height: 9px; Rectangle { y: 4px; height: 1px; background: #ffffff0f; } }
+                            MenuItem { id: "mFm"; icon: PagePaths.folder; text: Office.d-fm; clicked => { Office.d-menu = false; Office.d-menu-act("fm"); } }
+                        }
+                    }
+                    MenuItem { id: "mTerminal"; icon: PagePaths.terminal; text: "Terminal"; hovered => { Office.d-fly = 0; } clicked => { Office.d-menu = false; Office.d-menu-act("terminal"); } }
+                    MenuItem { id: "mFiles"; icon: DeskIcons.diff; text: "Files & changes"; hovered => { Office.d-fly = 0; } clicked => { Office.d-menu = false; Office.d-menu-act("files"); } }
+                    Rectangle { height: 9px; Rectangle { y: 4px; x: 4px; width: parent.width - 8px; height: 1px; background: #ffffff0f; } }
+                    MenuItem { id: "mSwitch"; icon: PagePaths.swap; text: "Switch agent"; chev: true; open: Office.d-fly == 2;
+                        hovered => { Office.d-fly = 2; } clicked => { Office.d-fly = 2; }
+                        if Office.d-fly == 2: Flyout {
+                            Text { height: 26px; text: "SWITCH THIS CHAT TO"; font-size: 10.5px; font-weight: 600; letter-spacing: 0.63px; color: #f6f2ff61; vertical-alignment: center; x: 8px; }
+                            for a in Office.d-switch: MenuItem { id: "mTo" + a.id; text: a.label; logo: a.id; clicked => { Office.d-menu = false; Office.d-menu-act("to:" + a.id); } }
+                            if Office.d-switch.length == 0: Text { height: 30px; text: "No other agent is ready."; font-size: 12px; color: #f6f2ff80; vertical-alignment: center; x: 8px; }
+                        }
+                    }
+                    MenuItem { id: "mRename"; icon: PagePaths.pen; text: "Rename"; hovered => { Office.d-fly = 0; } clicked => { Office.d-menu = false; Office.d-renaming = true; } }
+                    MenuItem { id: "mFork"; icon: PagePaths.fork; text: "Fork"; hovered => { Office.d-fly = 0; } clicked => { Office.d-menu = false; Office.d-menu-act("fork"); } }
+                    Rectangle { height: 9px; Rectangle { y: 4px; x: 4px; width: parent.width - 8px; height: 1px; background: #ffffff0f; } }
+                    MenuItem { id: "mDelete"; icon: PagePaths.bin; text: "Delete"; red: true; hovered => { Office.d-fly = 0; } clicked => { Office.d-menu = false; Office.d-menu-act("delete"); } }
                 }
             }
         }

@@ -541,6 +541,36 @@ fn chat_view_shots(app: &Rc<App>, hover: &Arc<hover_app::app::Hover>, dir: &Path
         settle(1200);
         assert!(g!().get_d_wide(), "a chat opens in the chat view");
         shot("chat");
+        // The header: the title being renamed, ⋯ open with its lists, and a name typed in.
+        let before = hover.sessions.get(id).expect("the chat").title();
+        g!().set_d_renaming(true);
+        settle(300);
+        shot("header-renaming");
+        g!().set_d_renaming(false);
+        g!().invoke_d_menu_open();
+        g!().set_d_menu(true);
+        settle(300);
+        shot("header-menu");
+        g!().set_d_fly(1);
+        settle(300);
+        shot("header-menu-open-in");
+        g!().set_d_fly(2);
+        settle(300);
+        shot("header-menu-switch");
+        g!().set_d_menu(false);
+        g!().invoke_d_rename("".into());
+        assert_eq!(hover.sessions.get(id).expect("the chat").title(), before, "an empty name keeps the title");
+        g!().invoke_d_rename("A name I typed".into());
+        settle(400);
+        assert_eq!(hover.sessions.get(id).expect("the chat").title(), "A name I typed", "the typed name is the title");
+        assert_eq!(g!().get_d_title().as_str(), "A name I typed", "the header shows it");
+        assert!(slint::Model::iter(&g!().get_list()).any(|r| r.text.as_str() == "A name I typed"), "the sidebar row shows it");
+        // It is kept in the history too, so the saved row and a later wake-up carry it.
+        let key = hover.sessions.get(id).expect("the chat").key;
+        let t = std::time::Instant::now();
+        while t.elapsed() < Duration::from_secs(3) && !hover.history.as_ref().is_some_and(|h| h.entries().iter().any(|e| e.key == key && e.title == "A name I typed")) { settle(100); }
+        assert!(hover.history.as_ref().is_some_and(|h| h.entries().iter().any(|e| e.key == key && e.title == "A name I typed")), "the typed name is saved in the history");
+        shot("header-renamed");
         g!().set_d_draft("First line of a longer reply.\nA second line.\nAnd a third, so the bar grows to fit what is written.".into());
         settle(400);
         shot("chat-long-draft");

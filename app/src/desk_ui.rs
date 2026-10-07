@@ -853,6 +853,18 @@ impl App {
         }
     }
 
+    /// The chat header's Terminal: the panel beside the chat on that tab, or the reason it is off as a toast.
+    pub(crate) fn desk_open_tab(self: &Rc<Self>, id: i32, name: &str) {
+        let Some(sess) = self.hover.sessions.get(id) else { return };
+        let Some(i) = TABS.iter().position(|t| *t == name) else { return };
+        let snap = self.desk_snap(&sess);
+        match self.desk_tiles(id, &snap).get(i) {
+            Some(t) if t.enabled => self.desk_open(id, i),
+            Some(t) => self.toast(&t.reason),
+            None => {}
+        }
+    }
+
     fn desk_tiles(&self, id: i32, snap: &d::Snap) -> Vec<d::Tile> {
         let probe = match self.page.desk.got.borrow().get(&(id, "probe")) { Some(Got::Probe(p)) => Some(p.clone()), _ => None };
         let pages = d::pages(snap);

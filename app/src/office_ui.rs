@@ -709,15 +709,18 @@ impl App {
         (String::new(), vec![])
     }
 
+    /// The agents that are ready and are not the one running this chat.
+    fn switch_targets(o: &KiroSession) -> Vec<AgentTool> {
+        let here = hover_agents::session::provider_id(o);
+        AgentTool::ALL.into_iter().filter(|t| t.id() != here && hover_agents::agents::known(*t).is_some_and(|r| r.ok())).collect()
+    }
+
     /// The chat header's More menu: continue with another agent, fork, and bring a fork's findings back.
     /// (action id, label) for each. Nothing for a Kiro Web chat, which lives in Kiro's cloud.
     fn chat_more(&self, o: &KiroSession) -> Vec<(String, String)> {
         if o.cloud.is_some() { return vec![]; }
-        let here = hover_agents::session::provider_id(o);
         let mut items = vec![];
-        for t in AgentTool::ALL {
-            if t.id() != here && hover_agents::agents::known(t).is_some_and(|r| r.ok()) { items.push((format!("to:{}", t.id()), format!("Continue with {}", t.name()))); }
-        }
+        for t in Self::switch_targets(o) { items.push((format!("to:{}", t.id()), format!("Continue with {}", t.name()))); }
         if hover_agents::orch::mcp_supported() && !o.ext.orch.as_ref().is_some_and(|l| l.parent.is_some()) {
             let on = o.ext.orch.as_ref().is_some_and(|l| l.delegation);
             items.push(("helpers".into(), (if on { "Stop letting it ask other agents for help" } else { "Let it ask other agents for help" }).into()));
@@ -742,8 +745,13 @@ impl App {
     /// A More menu item: switch the open chat to another agent, fork it, or bring a fork's findings back.
     fn more_act(self: &Rc<Self>, i: usize) {
         each!(self, |g| g.set_d_more(false));
-        let Some(id) = self.page.open.get() else { return };
         let Some(act) = self.page.more_acts.borrow().get(i).cloned() else { return };
+        self.run_more(&act);
+    }
+
+    /// What a More menu item does to the open chat, by its action id.
+    fn run_more(self: &Rc<Self>, act: &str) {
+        let Some(id) = self.page.open.get() else { return };
         let Some(s) = self.hover.sessions.get(id) else { return };
         if let Some(to) = act.strip_prefix("to:") {
             let Some(target) = hover_agents::session::Target::parse(to) else { return };
@@ -767,6 +775,46 @@ impl App {
         }
         self.office_changed();
         self.office_widgets();
+    }
+
+    /// The chat view's ⋯ menu is about to open: the editors found on this computer and the agents the chat can switch to.
+    fn head_menu_lists(self: &Rc<Self>) {
+        let Some(o) = self.page.open.get().and_then(|id| self.hover.sessions.get(id)) else { return };
+        let editors: Vec<MOpt> = hover_agents::editor::available().into_iter().map(|f| MOpt { id: s(&f.id), label: s(&f.name), on: false }).collect();
+        let agents: Vec<MOpt> = if o.cloud.is_some() { vec![] } else { Self::switch_targets(&o).into_iter().map(|t| MOpt { id: s(t.id()), label: s(t.name()), on: false }).collect() };
+        each!(self, |g| {
+            if let Some(m) = crate::view::sync(g.get_d_editors(), &editors) { g.set_d_editors(m); }
+            if let Some(m) = crate::view::sync(g.get_d_switch(), &agents) { g.set_d_switch(m); }
+            g.set_d_fm(s(if cfg!(windows) { "File Explorer" } else { "Files" }));
+        });
+    }
+
+    /// A name typed in the header. Empty or unchanged keeps the title; a name is kept with the chat and wins over the one made from the first prompt.
+    fn rename_chat(self: &Rc<Self>, name: &str) {
+        let Some(sess) = self.page.open.get().and_then(|id| self.hover.sessions.get(id)) else { return };
+        let name = name.trim();
+        if name.is_empty() || name == sess.title() { return; }
+        if self.hover.sessions.rename(&sess.key, name) { self.office_changed(); self.office_widgets(); }
+    }
+
+    /// A pick in the chat view's ⋯ menu, by its action id.
+    fn head_act(self: &Rc<Self>, act: &str) {
+        let Some(id) = self.page.open.get() else { return };
+        let Some(sess) = self.hover.sessions.get(id) else { return };
+        match act {
+            "terminal" => self.desk_open_tab(id, "terminal"),
+            "files" => self.desk_details(id),
+            "fork" => self.run_more("fork"),
+            "delete" => self.ask_delete(Some(sess.id), None, &sess.title(), sess.busy()),
+            "fm" => if sess.cloud.is_some() || !hover_agents::usable_folder(Some(&sess.folder)) { self.toast("This chat has no folder on this computer.") } else { crate::open_url(&sess.folder) },
+            _ => if let Some(editor) = act.strip_prefix("editor:") {
+                let (folder, cloud, editor) = (sess.folder.clone(), sess.cloud.is_some(), editor.to_owned());
+                std::thread::Builder::new().name("open-editor".into()).spawn(move || {
+                    let said = hover_agents::editor::open(Some(&editor), &hover_agents::editor::Target::folder(&folder), cloud).unwrap_or_else(|e| e);
+                    crate::ui_do(move |a| a.toast(&said));
+                }).ok();
+            } else if act.starts_with("to:") { self.run_more(act) },
+        }
     }
 
     /// Fork from the last ended turn, with the same agent, in the folder the chat works in.
@@ -1087,12 +1135,9 @@ impl App {
         let wide = self.chat_view();
         let (list_rows, list_opens) = if wide { self.list_rows(&sessions, p.open.get()) } else { (vec![], vec![]) };
         *p.rows_list.borrow_mut() = list_opens;
-        let (status, stage, branch) = match &open {
-            Some(o) if wide => {
-                let st = Stage::parse(hover_agents::state::stage(o.state, o.phase));
-                (if o.stopping { "Stopping…" } else { st.word() }, st as i32, if o.cloud.is_some() { String::new() } else { self.branch_of(&o.folder) })
-            }
-            _ => ("", 0, String::new()),
+        let branch = match &open {
+            Some(o) if wide && o.cloud.is_none() => self.branch_of(&o.folder),
+            _ => String::new(),
         };
         let acc_label = access_label(acc);
         let acc_tip = if cloud_on { format!("{acc_label}: Kiro Web runs every task with full access.") } else { format!("{acc_label}: {} Click to change.", access_note(acc, tool)) };
@@ -1146,8 +1191,6 @@ impl App {
             g.set_d_note(s(&cnote));
             if let Some(m) = crate::view::sync(g.get_d_note_btns(), &note_labels) { g.set_d_note_btns(m); }
             if let Some(m) = crate::view::sync(g.get_d_more_items(), &more_items) { g.set_d_more_items(m); }
-            g.set_d_status(s(status));
-            g.set_d_stage(stage);
             g.set_d_branch(s(&branch));
             if let Some(m) = crate::view::sync(g.get_list(), &list_rows) { g.set_list(m); }
             if let Some(o) = &open {
@@ -1583,11 +1626,11 @@ impl App {
         let a = self.clone();
         g.on_new_chat(move || a.new_chat());
         let a = self.clone();
-        g.on_d_stop(move || if let Some(id) = a.page.open.get() { a.hover.sessions.stop(id); a.office_changed(); a.office_widgets(); });
+        g.on_d_menu_open(move || a.head_menu_lists());
         let a = self.clone();
-        g.on_d_editor(move || if let Some(id) = a.page.open.get() { a.editor_for(id); });
+        g.on_d_rename(move |name| a.rename_chat(name.as_str()));
         let a = self.clone();
-        g.on_d_details(move || if let Some(id) = a.page.open.get() { a.desk_details(id); });
+        g.on_d_menu_act(move |act| a.head_act(act.as_str()));
         let a = self.clone();
         g.on_list_clicked(move |i| {
             let r = a.page.rows_list.borrow().get(i as usize).cloned();

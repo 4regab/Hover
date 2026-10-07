@@ -175,8 +175,8 @@ impl KiroSession {
     pub fn prompt(&self) -> &str { self.turns.first().map_or("", |t| &t.prompt) }
     pub fn result(&self) -> Option<&KiroResult> { self.current().and_then(|t| t.result.as_ref()) }
 
-    /// The prompt's first line, short enough for a label.
-    pub fn title(&self) -> String { crate::stream::clip_to(first_line(self.prompt()), 60) }
+    /// The name the user gave the chat, else the prompt's first line, short enough for a label.
+    pub fn title(&self) -> String { self.ext.name.clone().unwrap_or_else(|| crate::stream::clip_to(first_line(self.prompt()), 60)) }
 
     /// The session as the history keeps it.
     pub fn snapshot(&self, now: Stamp) -> SavedSession {
@@ -417,6 +417,12 @@ impl KiroSessions {
         true
     }
 
+    /// Gives a session a name of the user's own. An empty one changes nothing. False when it isn't at a desk.
+    pub fn rename(&self, key: &str, name: &str) -> bool {
+        let name = crate::stream::clip_to(name.trim(), 80);
+        !name.is_empty() && self.update_ext(key, |e| e.name = Some(name))
+    }
+
     /// The session with this lasting key, if it is at a desk.
     pub fn find(&self, key: &str) -> Option<KiroSession> { self.0.inner.lock().unwrap().all.iter().find(|x| x.s.key == key).map(|x| x.s.clone()) }
 
@@ -579,7 +585,7 @@ impl KiroSessions {
         copy.turns.truncate(turn + 1);
         for t in &mut copy.turns { (t.before, t.after) = (None, None); }
         (copy.tool, copy.acp_id, copy.context, copy.folder, copy.cloud) = (to.tool, None, None, folder.into(), None);
-        copy.ext = SessionExt { workspace, provider: None, orch: None, lineage: None };
+        copy.ext = SessionExt { workspace, provider: None, orch: None, lineage: None, name: None };
         let mut s = KiroSession::new(to.tool);
         s.restore(&copy);
         let from = src.tool.id().to_owned();

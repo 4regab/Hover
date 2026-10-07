@@ -211,6 +211,8 @@ pub struct SessionExt {
     /// The id of the own agent that ran this conversation (agents of your own are gone; old chats still name theirs); the session's tool is then `Custom`.
     pub provider: Option<String>,
     pub lineage: Option<Lineage>,
+    /// A name the user typed for the chat. It wins over the title made from the first prompt.
+    pub name: Option<String>,
 }
 
 impl SessionExt {
@@ -222,6 +224,7 @@ impl SessionExt {
         if let Some(o) = &self.orch { props.push(("Orch", o.to_json())); }
         if let Some(p) = &self.provider { props.push(("Provider", Json::str(p))); }
         if let Some(l) = self.lineage.as_ref().filter(|l| !l.is_empty()) { props.push(("Lineage", l.to_json())); }
+        if let Some(n) = &self.name { props.push(("Name", Json::str(n))); }
         Json::obj(props)
     }
 
@@ -233,6 +236,7 @@ impl SessionExt {
             orch: some("Orch").map(OrchLink::from_json).transpose()?,
             provider: opt_text(v.get("Provider"))?,
             lineage: some("Lineage").map(Lineage::from_json).transpose()?,
+            name: opt_text(v.get("Name"))?,
         })
     }
 }
@@ -259,6 +263,7 @@ mod tests {
             lineage: Some(Lineage { fork: Some(Fork { key: "k".into(), turn: 2 }), returned: vec![Returned { from: "k".into(), turn: 2, chars: 40 }],
                 natives: vec![Native { provider: "kiro".into(), id: "acp-1".into(), seen: 2 }], pending: Some("carry this".into()),
                 handoffs: vec![Handoff { turn: 3, from: "kiro".into(), to: "codex".into(), mode: "portable".into(), carried: 2, omitted: 1 }] }),
+            name: Some("My own name".into()),
         };
         assert!(!e.is_empty());
         assert_eq!(SessionExt::from_json(&crate::json::parse(&e.to_json().compact()).unwrap()).unwrap(), e);
