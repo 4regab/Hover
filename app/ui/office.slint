@@ -2523,18 +2523,18 @@ export component OfficeView inherits Rectangle {
             height: parent.height;
             VerticalLayout {
                 height: parent.height;
-                // .dh: the tool's logo, the task, and its folder, access and context; delete, close.
-                // The chat view's header: one line. The title (a click renames it), the branch, the context, then ⋯.
-                if Office.d-wide: Rectangle {
+                // The header, in the chat view and on the office's card alike: one line. The title (a click renames it), the branch,
+                // the context, then ⋯ (and ✕ on the card, which has no sidebar to go with).
+                Rectangle {
                     vertical-stretch: 0;
                     height: compact ? 44px : 52px;
                     HorizontalLayout {
                         // The chat view's switch (and sidebar button) sit over its top left while the list is hidden.
-                        padding-left: lw == 0 ? (list-allowed ? 10px : sw-room) : 20px;
-                        padding-right: 10px;
+                        padding-left: !Office.d-wide ? 16px : lw == 0 ? (list-allowed ? 10px : sw-room) : 20px;
+                        padding-right: Office.d-wide ? 10px : 8px;
                         spacing: 6px;
                         // With the sidebar closed, its show button is always here, before the title.
-                        if lw == 0 && list-allowed: VerticalLayout { alignment: center;
+                        if Office.d-wide && lw == 0 && list-allowed: VerticalLayout { alignment: center;
                             Rectangle {
                                 width: 28px;
                                 height: 28px;
@@ -2554,7 +2554,7 @@ export component OfficeView inherits Rectangle {
                         Rectangle {
                             horizontal-stretch: 0;
                             min-width: 0px;
-                            max-width: max(120px, main-w * 0.46);
+                            max-width: max(120px, (Office.d-wide ? main-w : side-w) * 0.46);
                             preferred-width: Office.d-renaming ? max(180px, htl.preferred-width + 24px) : htl.preferred-width;
                             accessible-role: button;
                             accessible-id: "dTitle";
@@ -2597,6 +2597,15 @@ export component OfficeView inherits Rectangle {
                             if Office.d-branch != "": HeadChip { icon: Icons.git; text: Office.d-branch; label: "Branch: " + Office.d-branch; }
                             if Office.d-ctx >= 0: HeadChip { ring: Office.d-ctx; text: Office.d-ctx + "%";
                                 label: Office.d-ctx + "% of the context used" + (Office.d-tool-id == "kiro" ? " · Kiro compacts at 70%" : ""); tick: Office.d-tool-id == "kiro"; }
+                            // Kiro Web: opens this session there; says so while hovered.
+                            if Office.d-cloud: Rectangle { height: 24px; width: 28px; border-radius: 6px;
+                                accessible-role: button; accessible-id: "dCloud"; accessible-label: "Open cloud session";
+                                accessible-action-default => { Office.d-open-cloud(); }
+                                Icon { name: Icons.cloud; size: 13px; tint: cw.has-hover ? #a9cbff : #8fbcff; }
+                                cw := TouchArea { mouse-cursor: pointer; clicked => { Office.d-open-cloud(); } }
+                                if cw.has-hover: Rectangle { x: parent.width + 6px; y: 0; height: 24px; width: ct.preferred-width + 14px; border-radius: 6px; background: #1c1a24f2;
+                                    border-width: 1px; border-color: #ffffff1a;
+                                    ct := Text { text: "Open cloud session"; font-size: 11px; font-weight: 500; color: #f6f2ffde; vertical-alignment: center; horizontal-alignment: center; } } }
                         }
                         }
                         VerticalLayout { alignment: center;
@@ -2613,51 +2622,22 @@ export component OfficeView inherits Rectangle {
                                 mta := TouchArea { mouse-cursor: pointer; clicked => { root.toggle-menu(); } }
                             }
                         }
-                    }
-                }
-                if !Office.d-wide: HorizontalLayout {
-                    vertical-stretch: 0;
-                    padding-left: compact ? 10px : 12px;
-                    padding-right: compact ? 8px : 10px;
-                    padding-top: compact ? 8px : 12px;
-                    padding-bottom: compact ? 8px : 11px;
-                    spacing: compact ? 9px : 11px;
-                    VerticalLayout { alignment: center; Logo { width: compact ? 26px : 30px; height: self.width; radius: compact ? 8px : 9px;
-                        mark: compact ? 15px : Office.d-tool-id == "codex" ? 22px : 18px; tool: Office.d-tool-id;
-                        accessible-role: image; accessible-label: Office.d-tool; } }
-                    VerticalLayout {
-                        horizontal-stretch: 1;
-                        alignment: center;
-                        Text { text: Office.d-title; font-size: compact ? 13px : 14px; font-weight: 600; letter-spacing: -0.14px; color: #f6f2ff; overflow: elide; accessible-role: text; accessible-id: "dTitle"; }
-                        Rectangle { height: compact ? 3px : 5px; }
-                        HorizontalLayout { spacing: 5px; alignment: start;
-                            if Office.d-folder != "": Chip { icon: PagePaths.folder; text: Office.d-folder; shrink: true; }
-                            if Office.d-access != "": Chip { icon: PagePaths.shield; text: Office.d-access; tip: Office.d-access-note;
-                                fg: Office.d-access-id == "full" ? #ffc46b : #ffffff99; bg: Office.d-access-id == "full" ? #ffb34017 : #ffffff0e; }
-                            if Office.d-ctx >= 0: Rectangle { height: 20px; width: cx.preferred-width; border-radius: 6px; background: #ffffff0e;
-                                accessible-role: text; accessible-label: Office.d-ctx + "% of the context window used";
-                                cx := HorizontalLayout { padding-left: 7px; padding-right: 7px; spacing: 5px;
-                                    VerticalLayout { alignment: center; Rectangle { width: 11px; height: 11px; border-radius: 5.5px; border-width: 2px; border-color: #ffffff24;
-                                        Path { width: 11px; height: 11px; viewbox-width: 11; viewbox-height: 11; stroke: #ffffffbf; stroke-width: 2px; fill: transparent;
-                                            commands: "M 5.5 1.5 A 4 4 0 " + (Office.d-ctx > 50 ? "1" : "0") + " 1 " + (5.5 + 4 * sin(360deg * min(Office.d-ctx, 99.9) / 100)) + " " + (5.5 - 4 * cos(360deg * min(Office.d-ctx, 99.9) / 100)); } } }
-                                    Text { text: Office.d-ctx + "%"; font-size: 11px; font-weight: 500; color: #ffffff99; vertical-alignment: center; } } }
-                            // Kiro Web: opens this session there; says so while hovered.
-                            if Office.d-cloud: Rectangle { height: 20px; width: 26px; border-radius: 6px; background: cw.has-hover ? #6ba8ff33 : #6ba8ff1c;
-                                accessible-role: button; accessible-id: "dCloud"; accessible-label: "Open cloud session";
-                                accessible-action-default => { Office.d-open-cloud(); }
-                                Icon { name: Icons.cloud; size: 13px; tint: #8fbcff; }
-                                cw := TouchArea { mouse-cursor: pointer; clicked => { Office.d-open-cloud(); } }
-                                if cw.has-hover: Rectangle { x: parent.width + 6px; y: 0; height: 20px; width: ct.preferred-width + 14px; border-radius: 6px; background: #1c1a24f2;
-                                    border-width: 1px; border-color: #ffffff1a;
-                                    ct := Text { text: "Open cloud session"; font-size: 11px; font-weight: 500; color: #f6f2ffde; vertical-alignment: center; } } }
+                        // The card closes its chat here; the chat view has its sidebar for that.
+                        if !Office.d-wide: VerticalLayout { alignment: center;
+                            Rectangle {
+                                width: 28px;
+                                height: 28px;
+                                border-radius: 7px;
+                                background: xta.has-hover ? #ffffff0b : transparent;
+                                accessible-role: button;
+                                accessible-id: "dClose";
+                                accessible-label: "Close the chat";
+                                accessible-action-default => { Office.d-close(); }
+                                Icon { name: Icons.close; size: 15px; tint: xta.has-hover ? #f6f2ff : #f6f2ff80; }
+                                xta := TouchArea { mouse-cursor: pointer; clicked => { Office.d-close(); } }
+                            }
                         }
                     }
-                    if Office.d-more-items.length > 0: VerticalLayout { alignment: center; XButton { id: "dMore"; label: "More: continue with another agent, fork"; icon: Icons.more; small: compact; clicked => { Office.d-more = !Office.d-more; } } }
-                    // Over the office: open this chat in the chat view (its switch goes back).
-                    VerticalLayout { alignment: center; XButton { id: "dExpand"; label: "Open in chat view"; icon: PagePaths.expand; small: compact;
-                        clicked => { Office.d-expand(); } } }
-                    VerticalLayout { alignment: center; XButton { id: "dDel"; label: "Delete this session"; icon: PagePaths.bin; small: compact; clicked => { Office.d-delete(); } } }
-                    VerticalLayout { alignment: center; XButton { id: "dClose"; label: "Close"; icon: Icons.close; small: compact; clicked => { Office.d-close(); } } }
                 }
                 Rectangle { height: 1px; background: #ffffff0f; }
                 thread := Rectangle {
@@ -2896,20 +2876,14 @@ export component OfficeView inherits Rectangle {
                             bar := HorizontalLayout {
                                 spacing: 4px;
                                 ClipButton { id: "attach"; clicked => { Office.attach(1); } }
-                                // The chat view: the chat's folder beside +. A click opens it.
-                                if Office.d-wide && Office.d-folder != "": FolderChip { text: Office.d-folder; max-w: min(240px, parent.width * 0.3); clicked => { Office.d-menu-act("fm"); } }
+                                // The chat's folder beside +, in the chat view and on the card. A click opens it.
+                                if Office.d-folder != "": FolderChip { text: Office.d-folder; max-w: min(240px, parent.width * 0.3); clicked => { Office.d-menu-act("fm"); } }
                                 Rectangle { horizontal-stretch: 1; }
                                 // Not confirmed yet: the tool hasn't said the run stopped.
                                 if Office.d-voice != "": Text { text: Office.d-voice; font-size: 11.5px; color: #ff8fa3; vertical-alignment: center; overflow: elide; accessible-role: text; accessible-id: "dVoice"; }
                                 if Office.d-stopping: Text { text: "Stopping…"; font-size: 11.5px; color: #ffc46b; vertical-alignment: center; accessible-role: text; }
                                 if Office.d-model-shown: MPill { id: "dModel"; model: Office.d-model; effort: Office.d-model-effort; open: Office.model-menu == 1; max-w: parent.width * 0.5;
                                     clicked(x, y) => { Office.open-model(Office.model-menu == 1 ? 0 : 1, x, y); } }
-                                if !Office.d-wide: Rectangle { width: 26px; height: 28px;
-                                    accessible-role: button; accessible-id: "hideBtn"; accessible-label: "Hide. Keeps your draft";
-                                    accessible-action-default => { Office.pop-close(); Office.d-compose = false; focus.focus(); }
-                                    Rectangle { y: 1px; width: 26px; height: 26px; border-radius: 9px; background: hta.has-hover ? #ffffff12 : transparent;
-                                        Icon { name: Icons.chevron-down; size: 15px; tint: hta.has-hover ? #f6f2ff : #f6f2ff9e; } }
-                                    hta := TouchArea { mouse-cursor: pointer; clicked => { Office.pop-close(); Office.d-compose = false; focus.focus(); } } }
                                 VerticalLayout { alignment: center;
                                     GoButton { id: "send"; round: true;
                                         property <bool> empty: Office.d-draft == "" && Office.d-shots.length == 0 && Office.d-chips.length == 0;
@@ -2925,30 +2899,10 @@ export component OfficeView inherits Rectangle {
             }
             }
             }
-            // The header's More menu: switch agent, fork, bring findings back. A click elsewhere puts it away.
-            if Office.d-more && Office.d-more-items.length > 0: TouchArea { clicked => { Office.d-more = false; } }
-            if Office.d-more && Office.d-more-items.length > 0: Rectangle {
-                x: parent.width - self.width - 12px;
-                y: compact ? 46px : 56px;
-                width: min(280px, parent.width - 24px);
-                height: ml.preferred-height;
-                border-radius: 14px;
-                background: #1c1a24;
-                border-width: 1px;
-                border-color: #ffffff1a;
-                drop-shadow-blur: 24px;
-                drop-shadow-offset-y: 8px;
-                drop-shadow-color: #00000088;
-                accessible-role: list;
-                accessible-label: "More";
-                ml := VerticalLayout {
-                    padding: 6px;
-                    for m[i] in Office.d-more-items: MenuRow { o: m; clicked => { Office.d-more-act(i); } }
-                }
-            }
-            // The chat view's ⋯ menu. Open in and Switch agent open a list to their left.
-            if Office.d-wide && Office.d-menu: TouchArea { clicked => { Office.d-menu = false; } }
-            if Office.d-wide && Office.d-menu: Rectangle {
+            // The ⋯ menu, in the chat view and on the card. Open in and Switch agent open a list to their left; the card's
+            // has "Open in chat view" on top.
+            if Office.d-menu: TouchArea { clicked => { Office.d-menu = false; } }
+            if Office.d-menu: Rectangle {
                 x: parent.width - self.width - 10px;
                 y: ((compact ? 44px : 52px) - 28px) / 2 + 34px;
                 width: 188px;
@@ -2965,6 +2919,7 @@ export component OfficeView inherits Rectangle {
                 accessible-label: "More";
                 cm := VerticalLayout {
                     padding: 4px;
+                    if !Office.d-wide: MenuItem { id: "mChatView"; icon: PagePaths.expand; text: "Open in chat view"; hovered => { Office.d-fly = 0; } clicked => { Office.d-menu = false; Office.d-expand(); } }
                     MenuItem { id: "mOpenIn"; icon: PagePaths.code; text: "Open in"; chev: true; open: Office.d-fly == 1;
                         hovered => { Office.d-fly = 1; } clicked => { Office.d-fly = 1; }
                         if Office.d-fly == 1: Flyout {

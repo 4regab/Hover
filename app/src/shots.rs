@@ -808,9 +808,12 @@ fn chat_action_shots(app: &Rc<App>, hover: &Arc<hover_app::app::Hover>, dir: &Pa
     app.open_session(done.id);
     settle(600);
     let at = |label: &str| g!().get_d_more_items().iter().position(|m| m.label == label).unwrap_or_else(|| panic!("{label} in the menu")) as i32;
-    g!().set_d_more(true);
+    // The ⋯ menu on the card (and in the chat view): Open in chat view on top.
+    g!().invoke_d_menu_open();
+    g!().set_d_menu(true);
     settle(300);
     save(&dash, (1200, 720), 1.0, [0, 0, 0], &dir.join("chat-more-menu.png"));
+    g!().set_d_menu(false);
     let before = hover_agents::session::provider_id(&hover.sessions.get(done.id).unwrap());
     g!().invoke_d_more_act(at("Continue with Cursor"));
     settle(500);
@@ -822,9 +825,11 @@ fn chat_action_shots(app: &Rc<App>, hover: &Arc<hover_app::app::Hover>, dir: &Pa
     let fork = hover.sessions.all().into_iter().find(|s| s.ext.lineage.as_ref().is_some_and(|l| l.fork.is_some())).expect("the fork");
     assert_eq!(app.page.open.get(), Some(fork.id), "the fork is the chat in front");
     settle(600);
-    g!().set_d_more(true);
+    g!().invoke_d_menu_open();
+    g!().set_d_menu(true);
     settle(300);
     save(&dash, (1200, 720), 1.0, [0, 0, 0], &dir.join("chat-more-menu-fork.png"));
+    g!().set_d_menu(false);
     g!().invoke_d_more_act(at("Bring findings back to the original"));
     settle(400);
     // The More menu's helpers switch, on and off (only where helpers are offered).
