@@ -233,7 +233,7 @@ impl AcpHost {
         // In the sandbox, for the folders its sessions use (sandbox.rs), when it is wanted.
         AcpHost::build(tool, options, Box::new(move || match agents::exe(tool) {
             None => Ok(None),
-            Some(exe) => sandbox::launch(tool, &exe, agents::arguments(tool), &[], None, Some(&b)).map(Some),
+            Some(exe) => sandbox::launch(tool, &exe, agents::arguments(tool), &agents::environment(tool, &exe), None, Some(&b)).map(Some),
         }), boxed)
     }
 
@@ -821,6 +821,14 @@ impl Host {
                 set(&mut offered, f, Some(mode))?;
             }
             AgentTool::Cursor => { let f = find(&offered, Some("mode"), &["mode"]); set(&mut offered, f, Some(if o.read_only { "ask" } else { "agent" }))?; }
+            // Antigravity (T3 Code's mapping): "yolo" never asks; "default" asks for edits,
+            // commands and anything outside the folder (it reads the workspace itself), so
+            // Hover's rules decide, and Read only refuses what isn't a read. Never
+            // "auto_edit": its edits would bypass Ask first.
+            AgentTool::Agy => {
+                let f = find(&offered, Some("mode"), &["mode"]);
+                set(&mut offered, f, Some(if !o.read_only && !asks { "yolo" } else { "default" }))?;
+            }
             // OpenCode and Claude Code run their own ways (opencode.rs, claude.rs), never as ACP servers.
             AgentTool::OpenCode | AgentTool::Claude => {}
             // A custom agent keeps the mode it starts in: Hover doesn't know what its modes mean.
@@ -927,7 +935,24 @@ impl Host {
                 let list = r.get("agentCapabilities").and_then(|c| c.get("sessionCapabilities")).and_then(|c| c.get("list")).is_some_and(|l| !l.is_null() && l != &Json::Bool(false));
                 self.can_list.store(list, Ordering::SeqCst);
                 *self.kiro_caps.lock().unwrap() = r.get("agentCapabilities").and_then(|c| c.get("_meta")).and_then(|m| m.get("kiro")).cloned().unwrap_or(Json::Null);
+                let methods: Vec<String> = match r.get("authMethods") { Some(Json::Arr(m)) => m.iter().filter_map(|x| s(x, "id").map(str::to_owned)).collect(), _ => vec![] };
                 *self.init.lock().unwrap() = r;
+                // Antigravity's server makes no session until a sign-in method is picked
+                // ("Authentication required", -32000), so it is signed in at once, as T3
+                // Code does: an API key in the environment, else Google's own sign-in, which
+                // the server runs itself (a browser, back to it on this PC's loopback) and
+                // which returns at once when it already has a token.
+                if self.tool == AgentTool::Agy {
+                    let method = if std::env::var_os("GEMINI_API_KEY").is_some_and(|k| !k.is_empty()) { "gemini-api-key" } else { "oauth-personal" };
+                    if methods.iter().any(|m| m == method) {
+                        hover_core::log::line(&format!("acp {name}: signing in ({method})"));
+                        if let Err(e) = self.call("authenticate", o_(vec![("methodId", st(method))]), Some(ct), Some(Duration::from_secs(600))) {
+                            hover_core::log::line(&format!("acp {name}: sign-in ({method}) failed - {e}"));
+                            self.shutdown("didn't sign in");
+                            return Err(e);
+                        }
+                    }
+                }
                 Ok(())
             }
             Err(e) => { self.shutdown("didn't start"); Err(e) }

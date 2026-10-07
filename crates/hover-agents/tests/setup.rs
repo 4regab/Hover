@@ -47,7 +47,7 @@ fn each_tool_uses_its_makers_installer() {
 
 #[test]
 fn nothing_to_do_when_everything_is_installed() {
-    let all = have(&["codex", "codex-acp", "kiro-cli", "cursor-agent", "opencode", "claude", "npm", "brew"]);
+    let all = have(&["codex", "codex-acp", "kiro-cli", "cursor-agent", "opencode", "claude", "agy_acp_server.par", "npm", "brew"]);
     for t in AgentTool::ALL { assert!(setup::plan_with(t, &all, None).is_empty(), "{t:?}"); }
 }
 

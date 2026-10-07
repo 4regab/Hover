@@ -133,6 +133,8 @@ fn the_state_message_is_the_fixtures_bytes() {
         tools.push(json::parse(r#"{"id":"opencode","name":"OpenCode","ready":true,"hint":"","access":"full","readOnly":true,"hideSteps":false,"models":[{"id":"","name":"Default","levels":null}],"model":"","efforts":[],"effort":null,"effortLabel":"Variant","questions":true}"#).unwrap());
         // Claude Code, the fifth: its questions (AskUserQuestion) and its read only.
         tools.push(json::parse(r#"{"id":"claude","name":"Claude Code","ready":true,"hint":"","access":"full","readOnly":true,"hideSteps":false,"models":[{"id":"","name":"Default","levels":null}],"model":"","efforts":[],"effort":null,"effortLabel":"Effort","questions":true}"#).unwrap());
+        // Antigravity, the sixth: an ACP tool (no questions of its own), whose read only Hover enforces.
+        tools.push(json::parse(r#"{"id":"agy","name":"Antigravity","ready":true,"hint":"","access":"full","readOnly":true,"hideSteps":false,"models":[{"id":"","name":"Default","levels":null}],"model":"","efforts":[],"effort":null,"effortLabel":"Effort","questions":false}"#).unwrap());
     }
     // 6c1cdb9: each turn says what it cost (null until the tool says), after "took".
     if let Some((_, Json::Arr(ss))) = match &mut fxj { Json::Obj(p) => p.iter_mut().find(|(k, _)| k == "sessions"), _ => None } {

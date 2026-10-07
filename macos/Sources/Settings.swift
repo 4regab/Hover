@@ -156,7 +156,7 @@ final class SettingsModel: ObservableObject {
     private(set) var outstanding = 0
     private(set) var hasPreferences = false
 
-    static let order = ["codex", "kiro", "cursor", "opencode", "claude"]
+    static let order = ["codex", "kiro", "cursor", "opencode", "claude", "agy"]
     static let defaultTools = order.map { ToolStatus(id: $0, name: Marks.name($0)) }
 
     init() {

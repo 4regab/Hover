@@ -17,7 +17,7 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
-const TOOLS: [(&str, &str, u32); 5] = [("kiro", "Kiro", 0xb48cff), ("codex", "Codex", 0x3fd6a0), ("cursor", "Cursor", 0x7cc0ff), ("opencode", "OpenCode", 0xe8e8ec), ("claude", "Claude Code", 0xd97757)];
+const TOOLS: [(&str, &str, u32); 6] = [("kiro", "Kiro", 0xb48cff), ("codex", "Codex", 0x3fd6a0), ("cursor", "Cursor", 0x7cc0ff), ("opencode", "OpenCode", 0xe8e8ec), ("claude", "Claude Code", 0xd97757), ("agy", "Antigravity", 0x3186ff)];
 fn tool_color(id: &str) -> Color { let c = TOOLS.iter().find(|t| t.0 == id).map_or(0xb48cff, |t| t.2); Color::from_rgb_u8((c >> 16) as u8, (c >> 8) as u8, c as u8) }
 fn tool_name(id: &str) -> &'static str { TOOLS.iter().find(|t| t.0 == id).map_or("Kiro", |t| t.1) }
 fn s(v: impl AsRef<str>) -> SharedString { v.as_ref().into() }
@@ -1271,7 +1271,7 @@ impl App {
                     opens.push((Some(x.id as i64), None));
                 }
                 if sessions.is_empty() { rows.push(PanelRow { text: s("No sessions yet. Press + to give an agent a task."), ..row(4) }); opens.push((None, None)); }
-                ("Office overview".into(), "Up to 3 tasks run at once, across Kiro, Codex, Cursor, OpenCode and Claude Code".into(), rows, opens)
+                ("Office overview".into(), "Up to 3 tasks run at once, across Kiro, Codex, Cursor, OpenCode, Claude Code and Antigravity".into(), rows, opens)
             }
             Some(_) => {
                 let find = self.notch.global::<crate::ui::Office>().get_find().to_string().to_lowercase();

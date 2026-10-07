@@ -12,26 +12,26 @@ use hover_quota::credits::{CreditDay, CreditsView};
 use hover_quota::{item, Reading};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Section { General, Integrations, Projects, Voice, Kiro, Codex, Cursor, OpenCode, Claude, Automation }
+pub enum Section { General, Integrations, Projects, Voice, Kiro, Codex, Cursor, OpenCode, Claude, Agy, Automation }
 
 impl Section {
-    pub const ALL: [Section; 10] = [Section::General, Section::Integrations, Section::Projects, Section::Voice, Section::Kiro, Section::Codex, Section::Cursor, Section::OpenCode, Section::Claude, Section::Automation];
-    pub fn title(self) -> &'static str { ["General", "Integrations", "Projects", "Voice", "Kiro", "Codex", "Cursor", "OpenCode", "Claude Code", "Automation"][self as usize] }
+    pub const ALL: [Section; 11] = [Section::General, Section::Integrations, Section::Projects, Section::Voice, Section::Kiro, Section::Codex, Section::Cursor, Section::OpenCode, Section::Claude, Section::Agy, Section::Automation];
+    pub fn title(self) -> &'static str { ["General", "Integrations", "Projects", "Voice", "Kiro", "Codex", "Cursor", "OpenCode", "Claude Code", "Antigravity", "Automation"][self as usize] }
     /// The sidebar's icon and its tile's colour.
     pub fn glyph(self) -> (&'static str, Tint) {
-        [("settings", Tint::Gray), ("plug", Tint::Purple), ("folder", Tint::Orange), ("mic", Tint::Pink), ("ghost", Tint::Bot), ("terminal", Tint::Green), ("sparkles", Tint::Blue), ("terminal", Tint::Gray), ("sparkles", Tint::Orange), ("calendar", Tint::Teal)][self as usize]
+        [("settings", Tint::Gray), ("plug", Tint::Purple), ("folder", Tint::Orange), ("mic", Tint::Pink), ("ghost", Tint::Bot), ("terminal", Tint::Green), ("sparkles", Tint::Blue), ("terminal", Tint::Gray), ("sparkles", Tint::Orange), ("sparkles", Tint::Blue), ("calendar", Tint::Teal)][self as usize]
     }
     /// A tool's page shows the tool's own mark (the office's, ui/marks.slint) in place of a
-    /// glyph: Claude's spark on its clay tile, Cursor's cube, Codex's, OpenCode's, Kiro's ghost.
+    /// glyph: Claude's spark on its clay tile, Cursor's cube, Codex's, OpenCode's, Antigravity's arch, Kiro's ghost.
     pub fn mark(self) -> Option<&'static str> {
-        matches!(self, Section::Kiro | Section::Codex | Section::Cursor | Section::OpenCode | Section::Claude).then(|| self.tool().id())
+        matches!(self, Section::Kiro | Section::Codex | Section::Cursor | Section::OpenCode | Section::Claude | Section::Agy).then(|| self.tool().id())
     }
     /// The section of a tool's own page.
     pub fn of(tool: AgentTool) -> Section {
-        match tool { AgentTool::Codex => Section::Codex, AgentTool::Cursor => Section::Cursor, AgentTool::OpenCode => Section::OpenCode, AgentTool::Claude => Section::Claude, AgentTool::Kiro | AgentTool::Custom => Section::Kiro }
+        match tool { AgentTool::Codex => Section::Codex, AgentTool::Cursor => Section::Cursor, AgentTool::OpenCode => Section::OpenCode, AgentTool::Claude => Section::Claude, AgentTool::Agy => Section::Agy, AgentTool::Kiro | AgentTool::Custom => Section::Kiro }
     }
     pub fn tool(self) -> AgentTool {
-        match self { Section::Codex => AgentTool::Codex, Section::Cursor => AgentTool::Cursor, Section::OpenCode => AgentTool::OpenCode, Section::Claude => AgentTool::Claude, _ => AgentTool::Kiro }
+        match self { Section::Codex => AgentTool::Codex, Section::Cursor => AgentTool::Cursor, Section::OpenCode => AgentTool::OpenCode, Section::Claude => AgentTool::Claude, Section::Agy => AgentTool::Agy, _ => AgentTool::Kiro }
     }
 }
 
@@ -1003,7 +1003,7 @@ fn agent(b: &mut Vec<Block>, section: Section, i: &Input) {
     let per_model = hover_agents::runtime::per_model_effort(tool);
     let levels = effort_levels(tool, &o, &offers);
     let effort = if levels.is_empty() {
-        Control::Text(if tool == AgentTool::Cursor { "Part of the model" } else if per_model { "None for this model" } else { "Set by the model" }.into())
+        Control::Text(if matches!(tool, AgentTool::Cursor | AgentTool::Agy) { "Part of the model" } else if per_model { "None for this model" } else { "Set by the model" }.into())
     } else {
         let picked = o.effort.as_ref().and_then(|e| levels.iter().position(|l| l == e))
             .or_else(|| eff.and_then(|x| x.current.as_ref()).and_then(|n| levels.iter().position(|l| l == n))).unwrap_or(0);
@@ -1019,6 +1019,8 @@ fn agent(b: &mut Vec<Block>, section: Section, i: &Input) {
             if levels.is_empty() { "Pick a model with variants to choose one. Default leaves it to OpenCode.".into() } else { "The picked model’s own variants, from OpenCode.".into() }
         } else if levels.is_empty() {
             if tool == AgentTool::Cursor { "Cursor’s models carry their effort in their name.".into() }
+            // Gemini's levels are models of their own (gemini-3.8-flash-high, -medium, -low).
+            else if tool == AgentTool::Agy { "Antigravity’s models carry their effort in their name.".into() }
             else if per_model && has_models { "This model takes no effort setting.".into() }
             else { "Shown once a task has run with a model that takes one.".into() }
         } else { "How long it thinks. Higher is slower and uses more of your plan.".into() }), effort, Lead::Tile("gauge", Tint::Orange)),
@@ -1089,7 +1091,9 @@ fn agent(b: &mut Vec<Block>, section: Section, i: &Input) {
         return;
     }
     if tool != AgentTool::Kiro {
-        let exe = agents::exe(tool).and_then(|p| p.file_stem().map(|s| s.to_string_lossy().into_owned())).unwrap_or_else(|| tool.id().into());
+        // Antigravity's id is its CLI's (agy), but Hover runs Google's ACP server, not the CLI.
+        let fallback = if tool == AgentTool::Agy { "agy_acp_server".to_owned() } else { tool.id().to_owned() };
+        let exe = agents::exe(tool).and_then(|p| p.file_stem().map(|s| s.to_string_lossy().into_owned())).unwrap_or(fallback);
         b.push(Block::Footnote(format!("{name} runs in the background as an ACP server (\"{}\"), one for all its tasks, with no terminal window. \
             Prompts go to it on its input, never on a command line. Changes apply to the next task.", format!("{exe} {args}").trim())));
         return;
@@ -1269,7 +1273,7 @@ mod tests {
         assert!(pick_compact_at(&s, "KiroCompactAt", 3) && s.kiro_compact_at() == 20);
         assert!(pick_compact_at(&s, "KiroCompactAt", 400) && s.kiro_compact_at() == 100);
         assert!(!set_compact(&s, "Sandbox", true) && !pick_compact_at(&s, "KiroIdle", 0));
-        for other in [Section::Codex, Section::Cursor, Section::OpenCode, Section::Claude] {
+        for other in [Section::Codex, Section::Cursor, Section::OpenCode, Section::Claude, Section::Agy] {
             assert!(!ids(&build(other, &i)).iter().any(|x| x.contains("Compact")), "{other:?}");
         }
     }
@@ -1465,6 +1469,7 @@ mod tests {
         let ready = |_| Some(AgentReady { installed: true, signed_in: true, hint: String::new() });
         let i = input(&s, &[], &none, &ready);
         assert_eq!((Section::of(AgentTool::Claude), Section::Claude.tool(), Section::Claude.title()), (Section::Claude, AgentTool::Claude, "Claude Code"));
+        assert_eq!((Section::of(AgentTool::Agy), Section::Agy.tool(), Section::Agy.title(), Section::Agy.mark()), (Section::Agy, AgentTool::Agy, "Antigravity", Some("agy")));
         let b0 = build(Section::Claude, &i);
         let r0 = rows(&b0);
         assert_eq!(r0[1].sub.as_deref(), Some("More models show here once Claude Code has run a task."));
@@ -1523,7 +1528,7 @@ mod tests {
         assert!(matches!(&k[at - 1], Block::Group(r) if r[0].label == "Kiro"), "right under the installed-and-signed-in group");
         assert!(matches!(&k[at + 1], Block::Footnote(t) if t.starts_with("Kiro total is read from")), "its footnote under the card");
         assert_eq!(k[at + 2], Block::Heading("MODEL".into(), false), "then the Model heading");
-        for sec in [Section::Codex, Section::Cursor, Section::OpenCode, Section::Claude] {
+        for sec in [Section::Codex, Section::Cursor, Section::OpenCode, Section::Claude, Section::Agy] {
             let b = build(sec, &i);
             assert!(card(&b).is_none(), "{sec:?} has no credits");
             assert!(matches!(&b[2], Block::Heading(h, _) if h == "MODEL"), "{sec:?} goes from its status to the Model heading as before");

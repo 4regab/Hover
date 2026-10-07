@@ -577,14 +577,15 @@ component Logo inherits Rectangle {
     in property <length> radius: self.width / 2;
     property <bool> codex: tool == "codex";
     property <bool> claude: tool == "claude";
+    property <bool> agy: tool == "agy";
     // Kiro's mark as an image: femtovg fills a Path this small in a few straight cuts,
     // which ran its eyes into one bar. The SVG is drawn at the size it shows.
-    property <bool> kiro: !(codex || claude || tool == "cursor" || tool == "opencode");
+    property <bool> kiro: !(codex || claude || agy || tool == "cursor" || tool == "opencode");
     border-radius: radius;
     // .lg.off: grayscale(1) brightness(.55), worked out for each tile and mark.
-    background: !ready ? (codex ? #8c8c8c : tool == "cursor" ? #070708 : tool == "opencode" ? #09090a : claude ? #4a4a4a : #363636)
-        : codex ? white : tool == "cursor" ? #0d0d10 : tool == "opencode" ? #101012 : claude ? #d97757 : #9046ff;
-    border-width: tool == "cursor" || tool == "opencode" ? 1px : 0;
+    background: !ready ? (codex ? #8c8c8c : tool == "cursor" ? #070708 : tool == "opencode" || agy ? #09090a : claude ? #4a4a4a : #363636)
+        : codex ? white : tool == "cursor" ? #0d0d10 : tool == "opencode" || agy ? #101012 : claude ? #d97757 : #9046ff;
+    border-width: tool == "cursor" || tool == "opencode" || agy ? 1px : 0;
     border-color: #ffffff24;
     if kiro: Image {
         width: mark;
@@ -594,16 +595,17 @@ component Logo inherits Rectangle {
     }
     if !kiro: Path {
         // Claude's spark fills its whole grid, so it is drawn a little smaller (Marks' pad).
-        width: claude ? mark * 0.82 : mark;
-        height: claude ? mark * 0.82 : mark;
+        width: claude || agy ? mark * 0.82 : mark;
+        height: claude || agy ? mark * 0.82 : mark;
         viewbox-x: codex ? 3 : 0;
         viewbox-y: codex ? 2.9 : 0;
         viewbox-width: codex ? 18 : 24;
         viewbox-height: codex ? 18.2 : 24;
-        commands: codex ? MarkPaths.codex : tool == "cursor" ? MarkPaths.cursor : claude ? MarkPaths.claude : MarkPaths.opencode;
-        fill-rule: codex || claude ? nonzero : evenodd;
-        fill: !ready ? (codex ? #565656 : tool == "cursor" ? #828283 : claude ? #9a9a9a : #868687)
-            : codex ? @linear-gradient(180deg, #b1a7ff 0%, #7a9dff 50%, #3941ff 100%) : tool == "cursor" ? #ececf0 : claude ? white : #f4f4f6;
+        commands: codex ? MarkPaths.codex : tool == "cursor" ? MarkPaths.cursor : claude ? MarkPaths.claude : agy ? MarkPaths.agy : MarkPaths.opencode;
+        fill-rule: codex || claude || agy ? nonzero : evenodd;
+        fill: !ready ? (codex ? #565656 : tool == "cursor" ? #828283 : claude || agy ? #9a9a9a : #868687)
+            : codex ? @linear-gradient(180deg, #b1a7ff 0%, #7a9dff 50%, #3941ff 100%) : tool == "cursor" ? #ececf0 : claude ? white
+            : agy ? @linear-gradient(90deg, #00b95c 0%, #3186ff 45%, #fc413d 80%, #ffe432 100%) : #f4f4f6;
         stroke: transparent;
     }
     // Codex's prompt again, in the tile's colour (see MarkPaths).
@@ -875,7 +877,7 @@ component Tag inherits Rectangle {
                     padding-bottom: 3px;
                     spacing: 5px;
                     VerticalLayout { alignment: center; Logo { width: 15px; height: 15px; radius: 4px; mark: 10px; tool: t.tool-id;
-                        border-width: t.hot ? 1px : (t.tool-id == "cursor" || t.tool-id == "opencode" ? 1px : 0); border-color: t.hot ? #ffffff99 : #ffffff24; } }
+                        border-width: t.hot ? 1px : (t.tool-id == "cursor" || t.tool-id == "opencode" || t.tool-id == "agy" ? 1px : 0); border-color: t.hot ? #ffffff99 : #ffffff24; } }
                     Text { text: t.name; font-family: "Pixelify Sans"; font-weight: 600; font-size: 12px; letter-spacing: 0.36px; color: white; vertical-alignment: center; }
                 }
                 TouchArea { mouse-cursor: pointer; clicked => { clicked(); } }

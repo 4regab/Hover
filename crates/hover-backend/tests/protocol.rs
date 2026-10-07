@@ -289,7 +289,7 @@ fn preferences_round_trip_and_computer_use() {
     // Agent desktops (Cua Spaces): off, on the macOS image, and only a Mac 26 on Apple silicon can run them.
     assert!(!flag(&first, "agentSpaces") && text(&first, "spaceImage") == "macos", "{}", first.compact());
     assert_eq!(flag(&first, "spacesSupported"), hover_agents::spaces::supported());
-    assert_eq!(list(&first, "tools").len(), 5, "Kiro, Codex, Cursor, OpenCode and Claude Code");
+    assert_eq!(list(&first, "tools").len(), 6, "Kiro, Codex, Cursor, OpenCode, Claude Code and Antigravity");
     r.send(jo(vec![("type", js("saveSettings")), ("noticeSeen", Json::Bool(false)), ("hover", Json::Bool(true))]));
     let same = r.message("preferences");
     assert!(!flag(&same, "noticeSeen") && !flag(&same, "computerUse"));
@@ -454,7 +454,7 @@ fn a_task_runs_asks_answers_replies_and_is_kept_encrypted() {
     accept_notice(&mut r);
     let ready = r.ready_tool("codex");
     let tools = list(&ready, "tools");
-    assert_eq!(tools.iter().map(|t| text(t, "id")).collect::<Vec<_>>(), ["kiro", "codex", "cursor", "opencode", "claude"]);
+    assert_eq!(tools.iter().map(|t| text(t, "id")).collect::<Vec<_>>(), ["kiro", "codex", "cursor", "opencode", "claude", "agy"]);
     let codex = tools.iter().find(|t| text(t, "id") == "codex").unwrap();
     assert_eq!((text(codex, "name"), flag(codex, "checkedYet"), flag(codex, "installed"), flag(codex, "signedIn")), ("Codex", true, true, true));
     assert_eq!(text(codex, "effortLabel"), "Effort");

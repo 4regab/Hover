@@ -907,7 +907,7 @@ impl crate::App {
             pane.live.integ = pages::Integ { caps: pages::Caps::here(), cua, setup: setups, sandbox_missing: missing };
         }
         let section = self.pane.borrow().section;
-        if matches!(section, Section::Integrations | Section::Kiro | Section::Codex | Section::Cursor | Section::OpenCode | Section::Claude) { self.refresh_page(false); }
+        if matches!(section, Section::Integrations | Section::Kiro | Section::Codex | Section::Cursor | Section::OpenCode | Section::Claude | Section::Agy) { self.refresh_page(false); }
     }
 }
 #[cfg(target_os = "macos")]

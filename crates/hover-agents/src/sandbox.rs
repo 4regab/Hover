@@ -191,6 +191,13 @@ pub fn tool_domains(t: AgentTool) -> &'static [&'static str] {
         AgentTool::Claude => &["anthropic.com", "*.anthropic.com", "claude.ai", "*.claude.ai", "claude.com", "*.claude.com"],
         // Custom agents run outside the sandbox (their state folders and hosts are unknown).
         AgentTool::Custom => &[],
+        // Google's sign-in and its agent backend (Cloud Code), the Gemini API for a key,
+        // and Antigravity's own site.
+        AgentTool::Agy => &[
+            "accounts.google.com", "oauth2.googleapis.com", "openidconnect.googleapis.com", "www.googleapis.com",
+            "cloudcode-pa.googleapis.com", "daily-cloudcode-pa.googleapis.com", "generativelanguage.googleapis.com",
+            "antigravity.google", "*.antigravity.google", "play.googleapis.com",
+        ],
     }
 }
 
@@ -258,6 +265,8 @@ pub fn tool_state(t: AgentTool, ctx: &Ctx) -> Vec<String> {
         AgentTool::OpenCode => &["~/.local/share/opencode", "~/.local/state/opencode", "~/.config/opencode", "~/.cache/opencode"],
         AgentTool::Claude => &["~/.claude", "~/.claude.json", "~/.config/claude"],
         AgentTool::Custom => &[],
+        // GEMINI_HOME: the ACP server's token and settings (antigravity-acp/) and the CLI's.
+        AgentTool::Agy => &["~/.gemini"],
     };
     // What builds and package managers the agents run write to.
     const SHARED: &[&str] = &[

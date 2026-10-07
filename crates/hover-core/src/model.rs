@@ -6,22 +6,23 @@ use crate::json::{Json, JsonError, Result};
 
 /// Services.AgentTool. New tools go at the end: the names are saved in settings and
 /// history. `Custom` stands for every agent the user added (hover-agents::custom); which one is
-/// in the session's `ext.provider`. `ALL` lists the five Hover ships, which is what every
-/// per-tool list and page goes through.
+/// in the session's `ext.provider`. `ALL` lists the six Hover ships, which is what every
+/// per-tool list and page goes through. Antigravity (Google's agy, id "agy") came after
+/// Custom, so it is last here and in the saved names.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum AgentTool { Kiro, Codex, Cursor, OpenCode, Claude, Custom }
+pub enum AgentTool { Kiro, Codex, Cursor, OpenCode, Claude, Custom, Agy }
 
 impl AgentTool {
-    pub const ALL: [AgentTool; 5] = [AgentTool::Kiro, AgentTool::Codex, AgentTool::Cursor, AgentTool::OpenCode, AgentTool::Claude];
-    const EVERY: [AgentTool; 6] = [AgentTool::Kiro, AgentTool::Codex, AgentTool::Cursor, AgentTool::OpenCode, AgentTool::Claude, AgentTool::Custom];
+    pub const ALL: [AgentTool; 6] = [AgentTool::Kiro, AgentTool::Codex, AgentTool::Cursor, AgentTool::OpenCode, AgentTool::Claude, AgentTool::Agy];
+    const EVERY: [AgentTool; 7] = [AgentTool::Kiro, AgentTool::Codex, AgentTool::Cursor, AgentTool::OpenCode, AgentTool::Claude, AgentTool::Custom, AgentTool::Agy];
     // Claude Code is new in 3.x, so its saved name can be its product's (2.x never wrote one).
-    const NAMES: [&'static str; 6] = ["Kiro", "Codex", "Cursor", "OpenCode", "Claude Code", "Custom"];
+    const NAMES: [&'static str; 7] = ["Kiro", "Codex", "Cursor", "OpenCode", "Claude Code", "Custom", "Antigravity"];
 
     /// Agents.Name: the enum's name.
     pub fn name(self) -> &'static str { Self::NAMES[self as usize] }
-    /// Agents.Id: the name in lower case.
-    pub fn id(self) -> &'static str { ["kiro", "codex", "cursor", "opencode", "claude", "custom"][self as usize] }
-    /// Agents.Parse: the exact id, or none. Only the five Hover ships: a custom agent is named by its own id.
+    /// Agents.Id: the name in lower case (Antigravity's is its command's, "agy").
+    pub fn id(self) -> &'static str { ["kiro", "codex", "cursor", "opencode", "claude", "custom", "agy"][self as usize] }
+    /// Agents.Parse: the exact id, or none. Only the six Hover ships: a custom agent is named by its own id.
     pub fn parse(id: Option<&str>) -> Option<AgentTool> { Self::ALL.into_iter().find(|t| Some(t.id()) == id) }
 
     pub fn to_json(self) -> Json { Json::str(self.name()) }
