@@ -174,6 +174,8 @@ fn num(n: i64) -> String {
 }
 
 fn base(p: &str) -> &str { p.rsplit('/').next().unwrap_or(p) }
+/// A tab the panel keeps even when there is nothing in it, and opens to say so (the card's tile is grey).
+fn empty_tab(id: &str) -> bool { matches!(id, "diff" | "linked") }
 fn is_md(p: &str) -> bool { let l = p.to_lowercase(); l.ends_with(".md") || l.ends_with(".markdown") }
 fn dir_of(p: &str) -> &str { p.rfind('/').map_or("", |i| &p[..i]) }
 
@@ -758,9 +760,10 @@ impl App {
         snap
     }
 
-    /// Tiles this system can't run, with why.
+    /// Tiles this system can't run, with why. The panel hides their tabs.
     fn desk_off() -> Vec<(&'static str, String)> {
         let mut off = vec![];
+        if let Some(n) = hover_agents::browser::note() { off.push(("browser", n.to_owned())); }
         if let Some(n) = hover_app::screen::note() { off.push(("screen", n.to_owned())); }
         off
     }
@@ -854,7 +857,7 @@ impl App {
         let Some(sess) = self.hover.sessions.get(id) else { return };
         let snap = self.desk_snap(&sess);
         let tiles = self.desk_tiles(id, &snap);
-        if let Some(t) = tiles.get(tab).filter(|t| !t.enabled) { self.toast(&t.reason); return; }
+        if let Some(t) = tiles.get(tab).filter(|t| !t.enabled && !empty_tab(t.id)) { self.toast(&t.reason); return; }
         if tab != cur { self.desk_leave_tab(); }
         self.desk_open(id, tab);
     }
@@ -1135,10 +1138,11 @@ impl App {
         let title = d::SURFACES[tab].1;
         let prefs_file = d.prefs.borrow().get(&id).and_then(|p| p.file.clone());
         let p_title = if kind == "files" { prefs_file.as_deref().map_or(title.to_owned(), |f| base(f).to_owned()) } else { title.to_owned() };
-        // Only the tabs this computer can use (the one open stays while it is open), each by name.
+        // Only the tabs this computer can use (the one open stays while it is open), each by name. Diff and
+        // Linked PRs stay even when empty: they say so ("No changes"), as the mockup's do.
         let tabs: Vec<DTab> = TAB_ORDER.iter().filter_map(|id| {
             let i = TABS.iter().position(|t| t == id)?;
-            let t = tiles.get(i).filter(|t| t.enabled || i == tab)?;
+            let t = tiles.get(i).filter(|t| t.enabled || i == tab || empty_tab(t.id))?;
             Some(DTab {
                 id: s(t.id), title: s(if t.id == "linked" { "Linked PRs" } else { t.title }), icon: s(t.id), enabled: t.enabled, reason: s(&t.reason), idx: i as i32,
                 badge: if t.id == "agents" { probe.as_ref().map_or(0, |p| p.running as i32) } else { 0 },
