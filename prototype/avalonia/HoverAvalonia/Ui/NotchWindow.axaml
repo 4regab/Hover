@@ -1,0 +1,63 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:ui="using:HoverAvalonia.Ui"
+        x:Class="HoverAvalonia.Ui.NotchWindow"
+        x:CompileBindings="False"
+        Title="Hover (Avalonia prototype)"
+        Background="Transparent"
+        TransparencyLevelHint="Transparent"
+        WindowDecorations="None"
+        ShowInTaskbar="False"
+        Topmost="True"
+        CanResize="False"
+        ShowActivated="False"
+        FontFamily="avares://HoverAvalonia/Assets#Inter">
+  <Grid x:Name="Root">
+    <!-- The island: black while small, the panel colour by the time the cards are in. -->
+    <Path x:Name="Shape" Fill="Black" HorizontalAlignment="Left" VerticalAlignment="Top">
+      <Path.Effect>
+        <DropShadowEffect OffsetX="0" OffsetY="4" BlurRadius="24" Color="#99000000" />
+      </Path.Effect>
+    </Path>
+    <!-- Rim: the outline without its top edge (the shape is flush with the screen). -->
+    <Path x:Name="Rim" Stroke="#14FFFFFF" StrokeThickness="1" HorizontalAlignment="Left" VerticalAlignment="Top" IsHitTestVisible="False" />
+    <!-- Resting content: the working agent and the quota rings. -->
+    <Canvas x:Name="MiniHost" IsHitTestVisible="False">
+      <StackPanel x:Name="Mini" Orientation="Horizontal" Spacing="0" Height="32">
+        <ui:Ring x:Name="AgentRing" Margin="4,0,0,0" Fraction="0.28" RingColor="#9b6bff" Glyph="K" GlyphColor="#9b6bff" Spinner="True" />
+        <TextBlock Text="Running" Foreground="#A0A0A8" FontSize="13" FontWeight="Medium" VerticalAlignment="Center" Margin="22,0,5,0" />
+        <TextBlock x:Name="MiniTask" Text="npm test" Foreground="White" FontSize="13" FontWeight="SemiBold" VerticalAlignment="Center" />
+        <TextBlock x:Name="MiniTime" Text="0:00" Foreground="#8A8A92" FontSize="13" VerticalAlignment="Center" Margin="10,0,0,0" />
+        <Border Width="1" Height="18" Background="#2A2A30" Margin="12,0,12,0" VerticalAlignment="Center" />
+        <ui:Ring Fraction="0.38" RingColor="#34C759" Glyph="C" GlyphColor="#D97757" Text="38" />
+        <ui:Ring Fraction="0.82" RingColor="#FF9F0A" Glyph="K" GlyphColor="#9b6bff" Text="82" Margin="22,0,0,0" />
+        <ui:Ring Fraction="0" RingColor="#3A3A40" Glyph="&gt;" GlyphColor="#B0A8FF" Text="—" Margin="22,0,0,0" />
+        <ui:Ring Fraction="0.95" RingColor="#FF453A" Glyph="O" GlyphColor="#FFFFFF" Text="95" Margin="22,0,8,0" />
+      </StackPanel>
+    </Canvas>
+    <!-- The open office: the GL scene, its name tags, the chat drawer, the corner controls. Clipped to the island's outline. -->
+    <Panel x:Name="View" IsVisible="False">
+      <Panel.Background>
+        <LinearGradientBrush StartPoint="0%,0%" EndPoint="0%,100%">
+          <GradientStop Offset="0" Color="#FF050304" />
+          <GradientStop Offset="1" Color="#FF1E1411" />
+        </LinearGradientBrush>
+      </Panel.Background>
+      <Panel x:Name="OfficeSlot" />
+      <ui:TagLayer x:Name="Tags" IsHitTestVisible="False" />
+      <Border x:Name="ModeSwitch" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="12,12,0,0" Background="#CC1B1A20" BorderBrush="#33FFFFFF" BorderThickness="1" CornerRadius="16" Padding="3">
+        <StackPanel Orientation="Horizontal" Spacing="2">
+          <Border Background="#9466F5" CornerRadius="13" Width="26" Height="26"><TextBlock Text="⌂" Foreground="White" HorizontalAlignment="Center" VerticalAlignment="Center" FontSize="13" /></Border>
+          <Border Background="Transparent" CornerRadius="13" Width="26" Height="26"><TextBlock Text="▭" Foreground="#9A98A4" HorizontalAlignment="Center" VerticalAlignment="Center" FontSize="13" /></Border>
+        </StackPanel>
+      </Border>
+      <Border HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,12,12,0" Background="#CC1B1A20" BorderBrush="#33FFFFFF" BorderThickness="1" CornerRadius="8" Width="30" Height="30">
+        <TextBlock Text="≡" Foreground="#C8C6D0" HorizontalAlignment="Center" VerticalAlignment="Center" FontSize="16" />
+      </Border>
+      <Border HorizontalAlignment="Left" VerticalAlignment="Bottom" Margin="12,0,0,12" Background="#E61B1A20" BorderBrush="#33FFFFFF" BorderThickness="1" CornerRadius="16" Width="32" Height="32">
+        <TextBlock Text="+" Foreground="White" HorizontalAlignment="Center" VerticalAlignment="Center" FontSize="18" />
+      </Border>
+      <ui:ChatPanel x:Name="Chat" IsVisible="False" HorizontalAlignment="Right" />
+    </Panel>
+  </Grid>
+</Window>

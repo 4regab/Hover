@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net9.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <BuiltInComInteropSupport>true</BuiltInComInteropSupport>
+    <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <InvariantGlobalization>true</InvariantGlobalization>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Avalonia" Version="12.1.2" />
+    <PackageReference Include="Avalonia.Desktop" Version="12.1.2" />
+    <PackageReference Include="Avalonia.Themes.Fluent" Version="12.1.2" />
+    <PackageReference Include="Silk.NET.OpenGL" Version="2.22.0" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- Hover's own fonts, from the production app's assets (not copied): Inter for text, Pixelify Sans for the bots' name tags. -->
+    <AvaloniaResource Include="..\..\..\app\assets\Inter-Regular.ttf" Link="Assets\Inter-Regular.ttf" />
+    <AvaloniaResource Include="..\..\..\app\assets\Inter-Medium.ttf" Link="Assets\Inter-Medium.ttf" />
+    <AvaloniaResource Include="..\..\..\app\assets\Inter-SemiBold.ttf" Link="Assets\Inter-SemiBold.ttf" />
+    <AvaloniaResource Include="..\..\..\app\assets\Inter-Bold.ttf" Link="Assets\Inter-Bold.ttf" />
+    <AvaloniaResource Include="..\..\..\app\assets\PixelifySans.ttf" Link="Assets\PixelifySans.ttf" />
+  </ItemGroup>
+</Project>

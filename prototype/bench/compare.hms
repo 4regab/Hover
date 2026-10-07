@@ -1,0 +1,28 @@
+# One comparison run, played by tools/hover-measure against EITHER app (the prototype speaks the same HOVER_BENCH line protocol).
+# `task` starts a real fake-agent session in Hover and is an acknowledged no-op in the prototype (its three agents are simulated in-scene).
+launch
+expect "bench visible" 60 as startup
+mark notch-only
+sleep 20
+send task kiro @ - bot one [seconds:600]
+expect "bench task" 10
+send task kiro @ - bot two [seconds:600]
+expect "bench task" 10
+send task codex @ - bot three [seconds:600]
+expect "bench task" 10
+mark notch-3-working
+sleep 15
+send unfold
+expect "bench reopen" 60 as first-office
+sleep 6
+mark office-3-bots-working
+sleep 30
+send frames 25
+expect "bench frames" 10
+mark -
+send fold
+expect "bench folded" 10
+mark after-fold
+sleep 10
+mark -
+quit 30

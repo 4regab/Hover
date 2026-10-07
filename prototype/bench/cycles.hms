@@ -1,0 +1,44 @@
+# Memory after opening and closing the office repeatedly (the office is dropped after 30 s hidden in Hover; the prototype's default matches).
+launch
+expect "bench visible" 60 as startup
+send task kiro @ - bot one [seconds:900]
+expect "bench task" 10
+send task kiro @ - bot two [seconds:900]
+expect "bench task" 10
+send task codex @ - bot three [seconds:900]
+expect "bench task" 10
+sleep 5
+mark baseline-before-cycles
+sleep 8
+send unfold
+expect "bench reopen" 60 as first-office
+sleep 5
+mark cycle-1-open
+sleep 5
+send fold
+expect "bench folded" 10
+expect "bench dropped" 60
+mark cycle-1-dropped
+sleep 6
+send unfold
+expect "bench reopen" 60 as reopen-after-drop
+sleep 5
+mark cycle-2-open
+sleep 5
+send fold
+expect "bench folded" 10
+expect "bench dropped" 60
+mark cycle-2-dropped
+sleep 6
+send unfold
+expect "bench reopen" 60 as reopen-after-drop
+sleep 5
+mark cycle-3-open
+sleep 5
+send fold
+expect "bench folded" 10
+expect "bench dropped" 60
+mark cycle-3-dropped
+sleep 6
+mark -
+quit 30
