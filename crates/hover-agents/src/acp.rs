@@ -1089,8 +1089,11 @@ impl Host {
     fn mcp_status(&self, turn: &Turn, p: &Json) {
         let Some(Json::Arr(servers)) = p.get("servers") else { return };
         for sv in servers {
-            if !matches!(s(sv, "status"), Some("failed" | "error")) { continue; }
             let server = s(sv, "name").filter(|n| !n.trim().is_empty()).unwrap_or("unnamed").trim().to_owned();
+            // The Kiro page in Settings lists the servers and marks the ones that failed; a report that one runs clears the mark.
+            let failed_now = matches!(s(sv, "status"), Some("failed" | "error"));
+            crate::mcp::note_status(&server, failed_now, s(sv, "error").or_else(|| s(sv, "message")));
+            if !failed_now { continue; }
             {
                 // Kiro may report every server again on each change: one step per server.
                 let mut failed = turn.mcp_failed.lock().unwrap();

@@ -4,6 +4,7 @@
 //! Where Windows is named and Linux differs, the Linux words are the nearest ones.
 
 use hover_agents::agents::{self, AgentReady};
+use hover_agents::mcp::{self, Draft as McpDraft, Problems as McpProblems, Server as McpServer};
 use hover_core::model::{AcpOption, AgentOptions, AgentTool, Appearance, SavedTheme, WorkspaceSize};
 use hover_core::palette::{InstalledTheme, Palette};
 use hover_core::projects::{resolve_folder, CleanupProvider, Project, SpeechMode, VoiceSettings, ACCESS_IDS, GROQ_SECRET, TRANSCRIBE_MODELS};
@@ -106,7 +107,77 @@ pub enum Block {
     Lead(String),
     /// Settings → Kiro's credits: its heading with the range, the card, and a line under it.
     Credits(Box<CreditsCard>),
+    /// Kiro's MCP servers: the section, with its form and its plain-words line.
+    Mcp(Box<McpView>),
 }
+
+/// Kiro's MCP servers as the page shows them: the list from ~/.kiro/settings/mcp.json (read
+/// again on every build, since the Kiro IDE shares the file), and what the user is doing
+/// to it (a form open, a removal to confirm, the last refusal). Hover keeps no copy of the list.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct McpView {
+    pub servers: Vec<McpServer>,
+    /// Why the file can't be used (it doesn't parse); the list is empty and nothing is written.
+    pub error: Option<String>,
+    /// The file is there, so there is something to open in an editor.
+    pub has_file: bool,
+    /// The servers Kiro said didn't start in its last task, with its reason if it gave one.
+    pub failed: Vec<(String, Option<String>)>,
+    pub form: Option<McpForm>,
+    /// The server whose Remove is waiting for a yes.
+    pub confirm: Option<String>,
+    /// What a switch, a remove or a save ran into (the file changed under us, no write access).
+    pub notice: Option<String>,
+}
+
+/// The add or edit form: `editing` is the server being changed, None for a new one. `serial`
+/// is new for each opening, so the page tells one form from the next.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct McpForm { pub editing: Option<String>, pub draft: McpDraft, pub problems: McpProblems, pub serial: u32 }
+
+impl McpView {
+    /// Reads the list and what Kiro said about it. The form, the confirmation and the notice stay.
+    pub fn read(&mut self, file: &std::path::Path) {
+        self.has_file = file.is_file();
+        match mcp::load(file) {
+            Ok(s) => { self.servers = s; self.error = None; }
+            Err(e) => { self.servers.clear(); self.error = Some(e); }
+        }
+        self.failed = self.servers.iter().filter_map(|s| mcp::failed(&s.name).map(|why| (s.name.clone(), why))).collect();
+    }
+
+    /// Back to a plain list: another page was opened.
+    pub fn close(&mut self) { self.form = None; self.confirm = None; self.notice = None; }
+
+    pub fn open(&mut self, editing: Option<&str>, mut draft: McpDraft) {
+        static SERIAL: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(1);
+        // A row to type in, as the mockup's form starts with.
+        if draft.pairs.is_empty() { draft.pairs.push((String::new(), String::new())); }
+        self.form = Some(McpForm { editing: editing.map(Into::into), draft, problems: McpProblems::default(), serial: SERIAL.fetch_add(1, std::sync::atomic::Ordering::Relaxed) });
+        self.confirm = None;
+        self.notice = None;
+    }
+
+    /// "MCP servers · 3 of 4 on".
+    pub fn title(&self) -> String {
+        if self.error.is_some() { return "MCP servers".into(); }
+        format!("MCP servers · {} of {} on", self.servers.iter().filter(|s| !s.disabled).count(), self.servers.len())
+    }
+
+    /// The amber line under a server that failed in Kiro's last task. A server switched off
+    /// isn't started, so it has none.
+    pub fn warn(&self, s: &McpServer) -> Option<String> {
+        if s.disabled { return None; }
+        let (_, why) = self.failed.iter().find(|(n, _)| *n == s.name)?;
+        Some(match why { Some(w) => format!("Didn't start in the last task: {}.", w.trim().trim_end_matches('.')), None => "Didn't start in the last task.".into() })
+    }
+}
+
+/// Under the section: where the values live.
+pub const MCP_NOTE: &str = "These are Kiro's own servers, from ~/.kiro/settings/mcp.json, so the Kiro IDE and kiro-cli see the same list. \
+    A project's .kiro/settings/mcp.json adds its own, and wins on the same name; those aren't listed here. The agent picked above brings its own too. \
+    Changes apply to the next task; a chat already running keeps its servers until Kiro starts again. \
+    Values, such as keys in environment variables or headers, stay as plain text in that file, and Hover keeps no copy of it.";
 
 /// A day's bar: Hover's and the outside share, each 0..1 of the chart's top.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -149,6 +220,8 @@ pub struct Live {
     pub integ: Integ,
     /// The credits chart's range, an index of CREDITS_RANGES: the page's own choice, not a setting.
     pub credits_range: i32,
+    /// Kiro's MCP servers, and the form over them.
+    pub mcp: McpView,
 }
 
 /// What this system can run of the agents' extras; what it can't is switched off, with a note.
@@ -933,6 +1006,7 @@ fn agent(b: &mut Vec<Block>, section: Section, i: &Input) {
     if tool == AgentTool::Kiro { rows.extend(compact_rows(&i.settings)); }
     for r in &mut rows { r.enabled = usable; }
     b.push(Block::Group(rows));
+    if tool == AgentTool::Kiro { b.push(Block::Mcp(Box::new(i.live.mcp.clone()))); }
 
     let args = agents::arguments(tool).join(" ");
     if tool == AgentTool::OpenCode {

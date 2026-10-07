@@ -38,11 +38,25 @@ export struct CreditsData {
     top: [TopRow], top-empty: string, note: string, label: string,
 }
 
+// Settings, Kiro's MCP servers (pages.rs McpView). A row's mode: 0 the server, 1 asking
+// before it goes, 2 its form is here. The form is one at a time: adding (at the end) or
+// editing (in its row); the typing is kept by Rust (a key in a field is told as it is typed),
+// and e-* are what a field failed on. form-key is new for each opening.
+export struct McpRow { name: string, line: string, remote: bool, on: bool, warn: string, mode: int }
+export struct McpPair { k: string, v: string, bad: bool }
+export struct McpData {
+    head: string, count: string, error: string, notice: string, note: string,
+    rows: [McpRow], adding: bool, show-add: bool, open-file: bool,
+    form-key: int, saving: string, remote: bool,
+    name: string, url: string, command: string, args: string, pairs: [McpPair],
+    e-name: string, e-url: string, e-command: string, e-pairs: string,
+}
+
 // kind: 0 title (first: a lead line follows), 1 heading, 2 group, 3 footnote, 4 tiles,
-// 5 link, 6 lead line, 7 Kiro's credits (credits).
+// 5 link, 6 lead line, 7 Kiro's credits (credits), 8 Kiro's MCP servers (mcp).
 export struct Block {
     kind: int, text: string, first: bool, rows: [RowData], tiles: [TileData],
-    id: string, name: string, icon: string, dim: bool, status: string, credits: CreditsData,
+    id: string, name: string, icon: string, dim: bool, status: string, credits: CreditsData, mcp: McpData,
 }
 
 export struct Side { title: string, icon: string, tint: color, tool: string }
@@ -458,6 +472,321 @@ component CreditsCard inherits VerticalLayout {
     }
 }
 
+// The MCP section's small icon button (edit, remove, drop a row): keyboard reachable.
+component MiniIcon inherits Rectangle {
+    in property <string> icon;
+    in property <string> label;
+    in property <color> hot: Pal.ink;
+    callback clicked;
+    width: 28px;
+    height: 28px;
+    border-radius: 7px;
+    background: ta.has-hover ? Pal.row-hover : transparent;
+    accessible-role: button;
+    accessible-label: label;
+    accessible-action-default => { clicked(); }
+    Icon { name: icon; size: 14px; tint: ta.has-hover || fs.has-focus ? hot : Pal.ink-faint; }
+    ta := TouchArea { mouse-cursor: pointer; clicked => { fs.focus(); root.clicked(); } }
+    fs := FocusScope {
+        focus-on-click: false;
+        key-pressed(e) => { if (e.text == " " || e.text == "\n") { root.clicked(); return accept; } reject }
+    }
+    Rectangle { border-radius: 7px; border-width: fs.has-focus ? 2px : 0; border-color: Pal.blue.with-alpha(0.7); }
+}
+
+// A form field. Its words go to Rust as they are typed (edited), so Rust holds the draft and
+// a row added or dropped keeps what was typed; the page shown again sets the box only while it
+// has no focus. Enter (one line) saves, Esc closes the form.
+component McpField inherits Rectangle {
+    in property <string> value;
+    in property <string> placeholder;
+    in property <string> label;
+    in property <bool> bad;
+    in property <bool> multi;
+    callback edited(string);
+    callback accepted;
+    callback cancelled;
+    preferred-height: multi ? max(58px, inp.preferred-height + 14px) : 32px;
+    min-height: 32px;
+    border-radius: 8px;
+    background: Pal.wash;
+    changed value => { if (!inp.has-focus) { inp.text = value; } }
+    if inp.text == "" && !inp.has-focus: Text {
+        x: 10px;
+        y: multi ? 7px : 0px;
+        width: parent.width - 20px;
+        height: multi ? 20px : parent.height;
+        text: placeholder;
+        font-family: "DejaVu Sans Mono";
+        font-size: 12px;
+        color: Pal.ink-faint;
+        vertical-alignment: center;
+        overflow: elide;
+    }
+    inp := TextInput {
+        x: 10px;
+        y: multi ? 7px : 0px;
+        width: parent.width - 20px;
+        height: multi ? parent.height - 14px : parent.height;
+        text: value;
+        single-line: !multi;
+        wrap: multi ? TextWrap.word-wrap : TextWrap.no-wrap;
+        vertical-alignment: multi ? top : center;
+        font-family: "DejaVu Sans Mono";
+        font-size: 12px;
+        color: Pal.ink;
+        selection-background-color: Pal.blue.with-alpha(0.45);
+        accessible-label: label;
+        edited => { root.edited(self.text); }
+        accepted => { root.accepted(); }
+        key-pressed(e) => { if (e.text == Key.Escape) { root.cancelled(); return accept; } reject }
+    }
+    Rectangle {
+        border-radius: 8px;
+        border-width: inp.has-focus || bad ? 2px : 1px;
+        border-color: bad ? Pal.red.with-alpha(0.8) : inp.has-focus ? Pal.blue.with-alpha(0.7) : Pal.separator;
+    }
+}
+
+// A label over a field, and what the field failed on under it.
+component McpLabelled inherits VerticalLayout {
+    in property <string> label;
+    in property <string> error;
+    spacing: 5px;
+    Text { text: label; font-size: 12px; color: Pal.ink-dim; }
+    @children
+    if error != "": Text { text: error; font-size: 11.5px; color: Pal.red; wrap: word-wrap; }
+}
+
+component McpFormView inherits VerticalLayout {
+    in property <McpData> m;
+    callback act(string);
+    padding: 14px;
+    spacing: 12px;
+    function send(field: string, text: string) { act("McpType\u{1f}" + field + "\u{1f}" + text); }
+    McpLabelled {
+        label: "Name";
+        error: m.e-name;
+        McpField {
+            value: m.name;
+            placeholder: "github";
+            label: "Name";
+            bad: m.e-name != "";
+            edited(t) => { send("name", t); }
+            accepted => { act("McpSave\u{1f}"); }
+            cancelled => { act("McpCancel\u{1f}"); }
+        }
+    }
+    HorizontalLayout {
+        alignment: start;
+        Segments {
+            id: "McpKind";
+            labels: ["A command on this computer", "A URL"];
+            longest: "A command on this computer";
+            picked: m.remote ? 1 : 0;
+            pick(i) => { act("McpKind\u{1f}" + (i == 1 ? "1" : "0")); }
+        }
+    }
+    if m.remote: McpLabelled {
+        label: "URL";
+        error: m.e-url;
+        McpField {
+            value: m.url;
+            placeholder: "https://example.com/mcp";
+            label: "URL";
+            bad: m.e-url != "";
+            edited(t) => { send("url", t); }
+            accepted => { act("McpSave\u{1f}"); }
+            cancelled => { act("McpCancel\u{1f}"); }
+        }
+    }
+    if !m.remote: HorizontalLayout {
+        spacing: 8px;
+        McpLabelled {
+            label: "Command";
+            error: m.e-command;
+            McpField {
+                value: m.command;
+                placeholder: "npx";
+                label: "Command";
+                bad: m.e-command != "";
+                edited(t) => { send("command", t); }
+                accepted => { act("McpSave\u{1f}"); }
+                cancelled => { act("McpCancel\u{1f}"); }
+            }
+        }
+        McpLabelled {
+            label: "Arguments";
+            McpField {
+                value: m.args;
+                placeholder: "One per line";
+                label: "Arguments";
+                multi: true;
+                edited(t) => { send("args", t); }
+                cancelled => { act("McpCancel\u{1f}"); }
+            }
+        }
+    }
+    VerticalLayout {
+        spacing: 6px;
+        Text { text: m.remote ? "Headers" : "Environment variables"; font-size: 11.5px; color: Pal.ink-faint; }
+        for p[i] in m.pairs: HorizontalLayout {
+            spacing: 6px;
+            McpField {
+                horizontal-stretch: 1;
+                value: p.k;
+                placeholder: m.remote ? "Authorization" : "API_KEY";
+                label: "Name";
+                bad: p.bad;
+                edited(t) => { send("k" + i, t); }
+                accepted => { act("McpSave\u{1f}"); }
+                cancelled => { act("McpCancel\u{1f}"); }
+            }
+            McpField {
+                horizontal-stretch: 1.4;
+                value: p.v;
+                placeholder: "value";
+                label: "Value";
+                edited(t) => { send("v" + i, t); }
+                accepted => { act("McpSave\u{1f}"); }
+                cancelled => { act("McpCancel\u{1f}"); }
+            }
+            VerticalLayout { alignment: center; MiniIcon { icon: Icons.close; label: "Remove this one"; clicked => { act("McpPairDel\u{1f}" + i); } } }
+        }
+        if m.e-pairs != "": Text { text: m.e-pairs; font-size: 11.5px; color: Pal.red; wrap: word-wrap; }
+        HorizontalLayout {
+            alignment: start;
+            PillButton { text: "Add one"; icon: Icons.add; font-size: 12px; pad-x: 10px; pad-y: 3px; clicked => { act("McpPairAdd\u{1f}"); } }
+        }
+    }
+    Text { text: "Saved in Kiro's file as plain text, as Kiro keeps it."; font-size: 11.5px; color: Pal.ink-faint; wrap: word-wrap; }
+    HorizontalLayout {
+        alignment: end;
+        spacing: 8px;
+        PillButton { text: "Cancel"; font-size: 12px; pad-x: 12px; pad-y: 4px; clicked => { act("McpCancel\u{1f}"); } }
+        PillButton { text: m.saving; font-size: 12px; pad-x: 12px; pad-y: 4px; bg: #f6f2ff; fg: #0c0b0e; clicked => { act("McpSave\u{1f}"); } }
+    }
+}
+
+component McpRowView inherits Rectangle {
+    in property <McpRow> r;
+    callback act(string);
+    callback toggled(string, bool);
+    height: max(46px, lay.preferred-height);
+    lay := HorizontalLayout {
+        padding-left: 12px;
+        padding-right: 12px;
+        padding-top: 9px;
+        padding-bottom: 9px;
+        spacing: 8px;
+        VerticalLayout { alignment: center; padding-right: 2px; Tile { icon: r.remote ? Icons.globe : Icons.terminal; tint: r.remote ? Pal.blue : Pal.gray; } }
+        VerticalLayout {
+            alignment: center;
+            horizontal-stretch: 1;
+            spacing: 2px;
+            Text { text: r.name; font-size: 13px; color: Pal.ink; overflow: elide; opacity: r.on ? 1 : 0.55; }
+            Text { text: r.line; font-family: "DejaVu Sans Mono"; font-size: 11px; color: Pal.ink-dim; overflow: elide; opacity: r.on ? 1 : 0.55; }
+            if r.warn != "": Text { text: r.warn; font-size: 12px; color: #ffb340; wrap: word-wrap; }
+        }
+        VerticalLayout {
+            alignment: center;
+            Rectangle {
+                height: 20px;
+                width: kind.preferred-width + 16px;
+                border-radius: 10px;
+                background: Pal.ink.with-alpha(0.05);
+                kind := Text { text: r.remote ? "Remote" : "Local"; font-size: 11px; font-weight: 500; color: Pal.ink-faint; }
+            }
+        }
+        VerticalLayout { alignment: center; MiniIcon { icon: Icons.rename; label: "Edit " + r.name; clicked => { act("McpEdit\u{1f}" + r.name); } } }
+        VerticalLayout { alignment: center; MiniIcon { icon: Icons.delete; label: "Remove " + r.name; hot: Pal.red; clicked => { act("McpRemove\u{1f}" + r.name); } } }
+        VerticalLayout { alignment: center; Switch { id: "Mcp:" + r.name; label: r.name; on: r.on; toggled(v) => { root.toggled("Mcp:" + r.name, v); } } }
+    }
+}
+
+// Remove asks first, and says the Kiro IDE uses the same list.
+component McpAsk inherits Rectangle {
+    in property <McpRow> r;
+    callback act(string);
+    background: Pal.red.with-alpha(0.07);
+    height: ask.preferred-height;
+    ask := HorizontalLayout {
+        padding: 12px;
+        spacing: 10px;
+        VerticalLayout {
+            alignment: center;
+            horizontal-stretch: 1;
+            Text { text: "Remove " + r.name + " from Kiro? The Kiro IDE uses this list too."; font-size: 12.5px; color: Pal.ink-dim; wrap: word-wrap; }
+        }
+        VerticalLayout { alignment: center; PillButton { text: "Cancel"; font-size: 12px; pad-x: 12px; pad-y: 4px; clicked => { act("McpRemoveNo\u{1f}"); } } }
+        VerticalLayout { alignment: center; PillButton { text: "Remove"; font-size: 12px; pad-x: 12px; pad-y: 4px; bg: Pal.red; fg: white; clicked => { act("McpRemoveYes\u{1f}" + r.name); } } }
+    }
+}
+
+component McpCard inherits VerticalLayout {
+    in property <McpData> m;
+    callback act(string);
+    callback toggled(string, bool);
+    padding-bottom: 6px;
+    HorizontalLayout {
+        padding-left: 12px;
+        padding-top: 10px;
+        padding-bottom: 6px;
+        spacing: 6px;
+        alignment: start;
+        Text { text: m.head; font-size: 10.5px; font-weight: 600; color: Pal.ink-dim; vertical-alignment: bottom; }
+        if m.count != "": Text { text: "\u{b7} " + m.count; font-size: 10.5px; color: Pal.ink-faint; vertical-alignment: bottom; }
+    }
+    Rectangle {
+        border-radius: 12px;
+        background: Pal.surface;
+        clip: true;
+        VerticalLayout {
+            if m.error != "": HorizontalLayout {
+                padding: 12px;
+                Text { text: m.error; font-size: 12.5px; color: #ffb340; wrap: word-wrap; horizontal-stretch: 1; }
+            }
+            for r[i] in m.rows: VerticalLayout {
+                if i > 0: HorizontalLayout { padding-left: 12px; Rectangle { height: 1px; background: Pal.separator; } }
+                if r.mode == 0: McpRowView { r: r; act(id) => { root.act(id); } toggled(id, v) => { root.toggled(id, v); } }
+                if r.mode == 1: McpAsk { r: r; act(id) => { root.act(id); } }
+                if r.mode == 2: McpFormView { m: root.m; act(id) => { root.act(id); } }
+            }
+            if m.rows.length > 0 && (m.adding || m.show-add): HorizontalLayout { padding-left: 12px; Rectangle { height: 1px; background: Pal.separator; } }
+            if m.adding: McpFormView { m: root.m; act(id) => { root.act(id); } }
+            if m.show-add: Rectangle {
+                height: 46px;
+                background: add.has-hover ? Pal.row-hover : transparent;
+                accessible-role: button;
+                accessible-label: "Add MCP server";
+                accessible-action-default => { root.act("McpAdd\u{1f}"); }
+                HorizontalLayout {
+                    padding-left: 14px;
+                    spacing: 10px;
+                    VerticalLayout { alignment: center; Icon { name: Icons.add; size: 16px; tint: Pal.ink-dim; } }
+                    VerticalLayout { alignment: center; Text { text: "Add MCP server"; font-size: 13px; color: Pal.ink-dim; } }
+                }
+                add := TouchArea { mouse-cursor: pointer; clicked => { root.act("McpAdd\u{1f}"); } }
+            }
+            if m.notice != "": HorizontalLayout {
+                padding: 12px;
+                Text { text: m.notice; font-size: 12px; color: Pal.red; wrap: word-wrap; horizontal-stretch: 1; }
+            }
+        }
+    }
+    HorizontalLayout {
+        padding-left: 12px;
+        padding-right: 12px;
+        padding-top: 6px;
+        Sub { text: m.note; }
+    }
+    if m.open-file: HorizontalLayout {
+        padding-left: 6px;
+        alignment: start;
+        PillButton { text: "Open mcp.json in your editor"; label: "Open mcp.json in your editor"; bg: transparent; fg: Pal.blue; pad-x: 6px; pad-y: 3px; font-size: 12px; clicked => { act("McpOpen\u{1f}"); } }
+    }
+}
+
 export component SettingsPage inherits Rectangle {
     in property <[Side]> sections;
     in property <int> current;
@@ -570,6 +899,7 @@ export component SettingsPage inherits Rectangle {
                     }
                 }
                 if b.kind == 7: CreditsCard { c: b.credits; pick(i) => { root.picked-seg(b.credits.id, i); } }
+                if b.kind == 8: McpCard { m: b.mcp; act(id) => { root.pressed(id); } toggled(id, v) => { root.toggled(id, v); } }
                 if b.kind == 3: HorizontalLayout {
                     padding-left: 12px;
                     padding-right: 12px;

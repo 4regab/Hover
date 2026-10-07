@@ -16,6 +16,7 @@ pub mod editor;
 pub mod github;
 pub mod handoff;
 pub mod http;
+pub mod mcp;
 pub mod opencode;
 pub mod orch;
 pub mod proc;

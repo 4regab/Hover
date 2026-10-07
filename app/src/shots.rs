@@ -1375,6 +1375,117 @@ fn settings_credits_shots(app: &Rc<App>, hover: &Arc<hover_app::app::Hover>, dir
     shot("settings-kiro-credits-empty.png");
 }
 
+/// Settings, Kiro's MCP servers, driven through the page's real handlers: the list (a remote
+/// server, one that failed last time, one switched off), the add form with its field errors, an
+/// edit, a removal to confirm, a bad address, and a file that doesn't parse. The file is under the
+/// shots' own fake home (HOVER_KIRO_HOME), never the real ~/.kiro.
+fn settings_mcp_shots(app: &Rc<App>, hover: &Arc<hover_app::app::Hover>, dir: &Path, data: &Path) {
+    use hover_agents::mcp;
+    let file = mcp::file(&mcp::home());
+    assert!(file.starts_with(data), "the shots' MCP file is under the shots' data folder, not the user's home");
+    std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+    std::fs::write(&file, concat!("{\n  \"mcpServers\": {\n",
+        "    \"aws-docs\": {\n      \"command\": \"uvx\",\n      \"args\": [\"awslabs.aws-documentation-mcp-server@latest\"],\n      \"env\": { \"FASTMCP_LOG_LEVEL\": \"ERROR\" },\n      \"autoApprove\": [\"read_documentation\"]\n    },\n",
+        "    \"github\": { \"url\": \"https://api.githubcopilot.com/mcp/\" },\n",
+        "    \"playwright\": { \"command\": \"npx\", \"args\": [\"@playwright/mcp@latest\"] },\n",
+        "    \"fetch\": { \"command\": \"uvx\", \"args\": [\"mcp-server-fetch\"], \"disabled\": true }\n  }\n}\n")).unwrap();
+    // Kiro said playwright didn't start in its last task.
+    mcp::note_status("playwright", true, Some("npx wasn't found"));
+    let dash = adapter(1);
+    hover.settings.set_theme(None);
+    hover.settings.set_appearance(Appearance::Dark);
+    view::Host::theme_changed(&**app);
+    let press = |id: &str| { let d = app.dash.borrow(); d.as_ref().expect("the app window").global::<crate::ui::Page>().invoke_pressed(id.into()); };
+    let toggle = |id: &str, on: bool| { let d = app.dash.borrow(); d.as_ref().expect("the app window").global::<crate::ui::Page>().invoke_toggled(id.into(), on); };
+    // A key in a field reaches the draft without a redraw; the shots draw it so the box shows it.
+    let typed = |field: &str, text: &str| { press(&format!("McpType\u{1f}{field}\u{1f}{text}")); app.refresh_page(false); };
+    let shot = |name: &str| { app.show_settings_in(1, Section::Kiro); save(&dash, (1200, 1800), 1.0, [0, 0, 0], &dir.join(name)); };
+    let on_disk = || std::fs::read_to_string(&file).unwrap();
+
+    shot("settings-kiro-mcp-list.png");
+    {
+        let m = &app.pane.borrow().live.mcp;
+        assert_eq!(m.servers.len(), 4, "four servers read");
+        assert_eq!(m.title(), "MCP servers \u{b7} 3 of 4 on");
+        let by = |n: &str| m.servers.iter().find(|s| s.name == n).unwrap();
+        assert_eq!(m.warn(by("playwright")).as_deref(), Some("Didn't start in the last task: npx wasn't found."));
+        assert_eq!(m.warn(by("github")), None);
+        assert!(by("github").remote() && by("fetch").disabled);
+    }
+
+    // The add form, saved with a taken name, no command and a bad variable name.
+    press("McpAdd\u{1f}");
+    typed("name", "github");
+    press("McpPairAdd\u{1f}");
+    typed("k1", "1BAD");
+    typed("v1", "x");
+    press("McpSave\u{1f}");
+    {
+        let p = app.pane.borrow();
+        let pr = &p.live.mcp.form.as_ref().expect("the form stays open on an error").problems;
+        assert_eq!(pr.name.as_deref(), Some("Kiro already has a server with this name."));
+        assert!(pr.command.is_some() && pr.pairs.is_some() && pr.url.is_none());
+    }
+    shot("settings-kiro-mcp-add-error.png");
+    // Fixed and saved: the new one is at the end of the file, and the rest is as it was.
+    typed("name", "docs2");
+    typed("command", "uvx");
+    typed("args", "tool-a\ntool-b");
+    typed("k1", "FOO_KEY");
+    press("McpSave\u{1f}");
+    assert!(app.pane.borrow().live.mcp.form.is_none(), "the form closed on a good save");
+    let after = on_disk();
+    assert!(after.contains("\"docs2\"") && after.contains("\"FOO_KEY\": \"x\"") && after.contains("\"autoApprove\"") && after.contains("read_documentation"), "{after}");
+    assert!(after.find("\"fetch\"").unwrap() < after.find("\"docs2\"").unwrap(), "the new server went last");
+    shot("settings-kiro-mcp-list-added.png");
+
+    // Edit: the same form, filled in.
+    press("McpEdit\u{1f}aws-docs");
+    assert_eq!(app.pane.borrow().live.mcp.form.as_ref().unwrap().draft.command, "uvx");
+    shot("settings-kiro-mcp-edit.png");
+    press("McpCancel\u{1f}");
+
+    // The switch writes "disabled": fetch on, github off.
+    toggle("Mcp:fetch", true);
+    toggle("Mcp:github", false);
+    let servers = mcp::load(&file).unwrap();
+    assert!(!servers.iter().find(|s| s.name == "fetch").unwrap().disabled && servers.iter().find(|s| s.name == "github").unwrap().disabled);
+    shot("settings-kiro-mcp-switched.png");
+    toggle("Mcp:github", true);
+
+    // Remove asks first; a URL that isn't https is refused.
+    press("McpRemove\u{1f}docs2");
+    shot("settings-kiro-mcp-remove.png");
+    press("McpRemoveYes\u{1f}docs2");
+    assert!(!on_disk().contains("docs2"), "docs2 was removed");
+    press("McpAdd\u{1f}");
+    press("McpKind\u{1f}1");
+    typed("name", "web");
+    typed("url", "ftp://example.com/mcp");
+    press("McpSave\u{1f}");
+    assert!(app.pane.borrow().live.mcp.form.as_ref().unwrap().problems.url.is_some());
+    shot("settings-kiro-mcp-url-error.png");
+    press("McpCancel\u{1f}");
+
+    // Light.
+    hover.settings.set_appearance(Appearance::Light);
+    view::Host::theme_changed(&**app);
+    shot("settings-kiro-mcp-list-light.png");
+    hover.settings.set_appearance(Appearance::Dark);
+    view::Host::theme_changed(&**app);
+
+    // A file that doesn't parse is said so and left alone.
+    let bad = "{ \"mcpServers\": { \"a\": ";
+    std::fs::write(&file, bad).unwrap();
+    shot("settings-kiro-mcp-bad-file.png");
+    assert!(app.pane.borrow().live.mcp.error.is_some());
+    toggle("Mcp:a", false);
+    assert_eq!(on_disk(), bad, "a file that doesn't parse is never written");
+    let _ = std::fs::remove_file(&file);
+    mcp::note_status("playwright", false, None);
+    app.pane.borrow_mut().live.mcp.close();
+}
+
 /// A voice preview as Voice makes one, for the shots.
 fn preview(folder: &str, target: &str, note: Option<&str>, task: &str, countdown: Option<f32>, access: &str) -> hover_app::voice::Preview {
     hover_app::voice::Preview {
@@ -1601,6 +1712,8 @@ pub fn run(dir: &Path) {
     let _ = std::fs::remove_dir_all(&data);
     std::fs::create_dir_all(data.join("project")).unwrap();
     std::env::set_var("HOVER_DATA_DIR", &data);
+    // Kiro's MCP list lives under the home folder: the shots get one of their own.
+    std::env::set_var(hover_agents::mcp::HOME_ENV, data.join("home"));
     slint::platform::set_platform(Box::new(Headless)).unwrap();
 
     let settings = hover_core::settings::Settings::load(hover_core::paths::settings_file());
@@ -2017,6 +2130,7 @@ pub fn run(dir: &Path) {
     if !skip("voice") { settings_voice_shots(&app, &hover, dir, &data); }
     settings_integrations_shots(&app, &hover, dir);
     settings_credits_shots(&app, &hover, dir);
+    settings_mcp_shots(&app, &hover, dir, &data);
     expand_shots(&app, &hover, dir, &folder, &hold_c);
     chat_view_shots(&app, &hover, dir);
     new_task_shots(&app, &hover, dir);

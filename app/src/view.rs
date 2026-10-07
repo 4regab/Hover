@@ -119,6 +119,10 @@ pub fn sync_blocks(cur: ModelRc<Block>, v: Vec<Block>) -> Option<ModelRc<Block>>
             b.rows = sync(old.rows.clone(), &rows).unwrap_or(old.rows.clone());
             let tiles: Vec<TileData> = b.tiles.iter().collect();
             b.tiles = sync(old.tiles.clone(), &tiles).unwrap_or(old.tiles.clone());
+            // The MCP form keeps what was typed, so its rows and pairs are changed in place too.
+            let (mrows, pairs): (Vec<McpRow>, Vec<McpPair>) = (b.mcp.rows.iter().collect(), b.mcp.pairs.iter().collect());
+            b.mcp.rows = sync(old.mcp.rows.clone(), &mrows).unwrap_or(old.mcp.rows.clone());
+            b.mcp.pairs = sync(old.mcp.pairs.clone(), &pairs).unwrap_or(old.mcp.pairs.clone());
             if old != b { m.set_row_data(i, b); }
         } else if i < m.row_count() { m.set_row_data(i, b); } else { m.push(b); }
     }
@@ -147,6 +151,7 @@ pub fn blocks(bs: &[B], p: &Palette) -> Vec<Block> {
                     top_empty: s(&c.top_empty), note: s(&c.note), label: s(&c.label),
                 };
             }
+            B::Mcp(m) => { o.kind = 8; o.mcp = mcp_data(m); }
             B::Heading(t, first) => { o.kind = 1; o.text = s(t); o.first = *first; }
             B::Footnote(t) => { o.kind = 3; o.text = s(t); }
             B::Link { id, name, icon, text, dim, status } => {
@@ -208,6 +213,31 @@ pub fn blocks(bs: &[B], p: &Palette) -> Vec<Block> {
     }).collect()
 }
 
+/// The MCP section as Slint draws it: the servers, and the form in its row (or at the end).
+fn mcp_data(v: &pages::McpView) -> McpData {
+    let (head, count) = v.title().split_once(" \u{b7} ").map(|(h, c)| (h.to_owned(), c.to_owned())).unwrap_or_else(|| (v.title(), String::new()));
+    let editing = v.form.as_ref().and_then(|f| f.editing.as_deref());
+    let host = editing.and_then(|e| v.servers.iter().position(|x| x.name == e));
+    let rows = v.servers.iter().enumerate().map(|(i, x)| McpRow {
+        name: s(&x.name), line: s(x.line()), remote: x.remote(), on: !x.disabled, warn: s(v.warn(x).unwrap_or_default()),
+        mode: if Some(&x.name) == v.confirm.as_ref() { 1 } else if host == Some(i) { 2 } else { 0 },
+    }).collect();
+    let adding = v.form.is_some() && host.is_none();
+    let mut d = McpData {
+        head: s(head.to_uppercase()), count: s(count), error: s(v.error.as_deref().unwrap_or("")), notice: s(v.notice.as_deref().unwrap_or("")), note: s(pages::MCP_NOTE),
+        rows: model(rows), adding, show_add: v.error.is_none() && !adding, open_file: v.has_file, saving: s("Add server"), ..Default::default()
+    };
+    if let Some(f) = &v.form {
+        let (dr, p) = (&f.draft, &f.problems);
+        d.form_key = f.serial as i32; d.saving = s(if f.editing.is_some() { "Save" } else { "Add server" }); d.remote = dr.remote;
+        d.name = s(&dr.name); d.url = s(&dr.url); d.command = s(&dr.command); d.args = s(&dr.args);
+        d.pairs = model(dr.pairs.iter().map(|(k, x)| McpPair { k: s(k), v: s(x), bad: dr.pair_bad(k, x) }).collect());
+        d.e_name = s(p.name.as_deref().unwrap_or("")); d.e_url = s(p.url.as_deref().unwrap_or(""));
+        d.e_command = s(p.command.as_deref().unwrap_or("")); d.e_pairs = s(p.pairs.as_deref().unwrap_or(""));
+    }
+    d
+}
+
 /// An icon's path data from icons.slint's table, by its Lucide name; the mic (Voice's
 /// tile) is the mockup's, which that table lacks.
 pub fn icon_path(name: &str) -> String {
@@ -260,6 +290,8 @@ pub fn build(h: &dyn Host, pane: &mut Pane) -> Vec<B> {
     let reading = |id: &str| hv.quotas.reading(id);
     // Only Kiro's page reads it, and the first look starts the thread that makes it.
     let credits = if pane.section == Section::Kiro { hv.credits.view() } else { None };
+    // The Kiro IDE shares the MCP list, so it is read again rather than kept.
+    if pane.section == Section::Kiro { pane.live.mcp.read(&mcp_file()); }
     let ready = |t: AgentTool| hover_agents::agents::known(t);
     let store = secrets();
     let has_secret = |n: &str| store.has(n);
@@ -313,12 +345,76 @@ pub fn toggled(h: &dyn Host, pane: &RefCell<Pane>, id: &str, on: bool) {
         "Sandbox" => { st.set_sandbox(on); h.action("integ.look"); }
         "AgentBrowser" => st.set_agent_browser(on),
         "DiscordPresence" => { st.set_discord_presence(on); hover_agents::discord::wake(); }
+        // Kiro's MCP list: the switch is the server's "disabled" in the file.
+        _ if id.starts_with("Mcp:") => {
+            let r = hover_agents::mcp::set_disabled(&mcp_file(), &id["Mcp:".len()..], !on);
+            pane.borrow_mut().live.mcp.notice = r.err().map(|e| e.to_string());
+        }
         // Kiro's page: auto compact and continuing when the model is busy.
         "KiroAutoCompact" => { pages::set_compact(st, id, on); }
         "KiroRetryBusy" => st.set_kiro_retry_busy(on),
         _ => {}
     }
     h.refresh();
+}
+
+/// Kiro's MCP file (Settings, Kiro): the Kiro IDE and kiro-cli read the same one.
+fn mcp_file() -> std::path::PathBuf { hover_agents::mcp::file(&hover_agents::mcp::home()) }
+
+/// A click or a key in the MCP section, as "{action}\u{1f}{what}". True when the page should be
+/// drawn again: a key typed in a field needn't be (the box already shows it).
+fn mcp_act(pane: &RefCell<Pane>, action: &str, what: &str) -> bool {
+    use hover_agents::mcp::{self, Fail};
+    let file = mcp_file();
+    let mut p = pane.borrow_mut();
+    let m = &mut p.live.mcp;
+    match action {
+        "McpAdd" => m.open(None, Default::default()),
+        "McpEdit" => {
+            m.read(&file);
+            if let Some(x) = m.servers.iter().find(|x| x.name == what).cloned() { m.open(Some(what), mcp::Draft::of(&x)); }
+        }
+        "McpCancel" => m.form = None,
+        "McpKind" => if let Some(f) = &mut m.form { f.draft.remote = what == "1"; f.problems = Default::default(); },
+        "McpPairAdd" => if let Some(f) = &mut m.form { f.draft.pairs.push(Default::default()); },
+        "McpPairDel" => if let Some(f) = &mut m.form {
+            if let Ok(i) = what.parse::<usize>() { if i < f.draft.pairs.len() { f.draft.pairs.remove(i); } }
+            if f.draft.pairs.is_empty() { f.draft.pairs.push(Default::default()); }
+        },
+        // "{field}\u{1f}{text}": field is name, url, command, args, or k{row} / v{row} of a pair.
+        "McpType" => {
+            if let (Some(f), Some((field, text))) = (&mut m.form, what.split_once('\u{1f}')) {
+                let d = &mut f.draft;
+                match field {
+                    "name" => d.name = text.into(), "url" => d.url = text.into(), "command" => d.command = text.into(), "args" => d.args = text.into(),
+                    _ => if let (Some(i), Some(pair)) = (field[1..].parse::<usize>().ok(), field.get(..1)) {
+                        if let Some(row) = d.pairs.get_mut(i) { if pair == "k" { row.0 = text.into() } else { row.1 = text.into() } }
+                    },
+                }
+            }
+            return false;
+        }
+        "McpSave" => if let Some(f) = &mut m.form {
+            match mcp::save(&file, f.editing.as_deref(), &f.draft) {
+                Ok(()) => { m.form = None; m.notice = None; }
+                Err(Fail::Fields(pr)) => f.problems = pr,
+                Err(Fail::File(e)) => m.notice = Some(e),
+            }
+        },
+        // The editor is found on the disk, so this waits a moment (editor::open says as much).
+        "McpOpen" => {
+            let (dir, name) = (file.parent().map(|d| d.to_string_lossy().into_owned()).unwrap_or_default(), "mcp.json");
+            m.notice = hover_agents::editor::open(None, &hover_agents::editor::Target::file(&dir, name, None, None), false).err();
+        }
+        "McpRemove" => { m.confirm = Some(what.into()); m.form = None; m.notice = None; }
+        "McpRemoveNo" => m.confirm = None,
+        "McpRemoveYes" => {
+            m.notice = mcp::remove(&file, what).err().map(|e| e.to_string());
+            m.confirm = None;
+        }
+        _ => {}
+    }
+    true
 }
 
 fn tool_of(name: &str) -> AgentTool { AgentTool::ALL.into_iter().find(|t| t.name() == name).unwrap_or(AgentTool::Kiro) }
@@ -373,7 +469,12 @@ pub fn pressed(h: &dyn Host, pane: &RefCell<Pane>, id: &str) {
     let st = &hv.settings;
     pane.borrow_mut().note = None;
     // A text box's commit comes as "{id}\u{1f}{value}": the page's one string callback.
-    if let Some((field, value)) = id.split_once('\u{1f}') { edited(h, pane, field, value); h.refresh(); return; }
+    if let Some((field, value)) = id.split_once('\u{1f}') {
+        if field.starts_with("Mcp") { if mcp_act(pane, field, value) { h.refresh(); } return; }
+        edited(h, pane, field, value);
+        h.refresh();
+        return;
+    }
     match id {
         "Quit" => { h.quit(); return; }
         "RefreshQuotas" => hv.refresh_quotas(true),
@@ -575,7 +676,7 @@ macro_rules! wire_page {
         let g = $w.global::<crate::ui::Page>();
         let a = $app.clone();
         g.on_section(move |i| {
-            { let mut p = a.pane.borrow_mut(); p.section = hover_app::pages::Section::ALL[i as usize]; p.menu = None; p.project = None; p.note = None; }
+            { let mut p = a.pane.borrow_mut(); p.section = hover_app::pages::Section::ALL[i as usize]; p.menu = None; p.project = None; p.note = None; p.live.mcp.close(); }
             a.refresh_page(true);
         });
         let a = $app.clone();
