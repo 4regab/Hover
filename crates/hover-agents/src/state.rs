@@ -90,11 +90,21 @@ pub fn efforts(settings: &Settings, t: AgentTool) -> (Vec<String>, Option<String
 }
 
 /// effortsOf: the efforts for the picked model, its own levels (OpenCode's variants),
-/// or the tool's list when models don't carry any.
+/// or the tool's list when models don't carry any. Auto picks the model per task, so it has none.
 pub fn efforts_of(models: &[(String, String, Option<Vec<String>>)], model: &str, tool_efforts: &[String]) -> Vec<String> {
+    if model.eq_ignore_ascii_case("auto") { return vec![]; }
     let m = models.iter().find(|m| m.0 == model);
     if m.is_some_and(|m| m.2.is_some()) || models.iter().any(|m| m.2.is_some()) { return m.and_then(|m| m.2.clone()).unwrap_or_default(); }
     tool_efforts.to_vec()
+}
+
+/// effortNow: the effort in force for a model that offers `levels`: the one picked if it is among
+/// them, else High (or the first, where there is no High). None for a model that offers none.
+pub fn effort_now(levels: &[String], picked: Option<&str>) -> Option<String> {
+    if levels.is_empty() { return None; }
+    picked.filter(|p| levels.iter().any(|l| l == p)).map(str::to_owned)
+        .or_else(|| levels.iter().find(|l| l.as_str() == "high").cloned())
+        .or_else(|| levels.first().cloned())
 }
 
 fn tool(o: &Office, t: AgentTool) -> Json {

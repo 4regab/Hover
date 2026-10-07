@@ -132,6 +132,9 @@ pub struct KiroSession {
     pub asks: Vec<AgentAsk>,
     /// Asked to stop or pause; the turn hasn't ended yet (the tool hasn't said).
     pub stopping: bool,
+    /// The agent's own slash commands (name, what it does), as it last listed them. Not saved:
+    /// the agent lists them again when it starts.
+    pub commands: Vec<(String, String)>,
     /// Goes up with every change to the session: a view that drew it at this number
     /// needn't copy or lay it out again.
     pub rev: u64,
@@ -144,7 +147,7 @@ impl KiroSession {
     /// A new session with no turns (the C# constructor).
     pub fn new(tool: AgentTool) -> KiroSession {
         KiroSession { id: IDS.fetch_add(1, Ordering::SeqCst) + 1, tool, state: KiroState::Idle, phase: KiroPhase::Starting, folder: String::new(), turns: vec![],
-            kiro_id: None, context: None, seat: 0, bot: 0, key: hover_core::guid_n(), deleted: false, access: None, cloud: None, ext: SessionExt::default(), held: false, asks: vec![], stopping: false, rev: 0 }
+            kiro_id: None, context: None, seat: 0, bot: 0, key: hover_core::guid_n(), deleted: false, access: None, cloud: None, ext: SessionExt::default(), held: false, asks: vec![], stopping: false, commands: vec![], rev: 0 }
     }
 
     /// A copy without what only the chat reads: the answers' text, and the steps'
@@ -162,6 +165,7 @@ impl KiroSession {
                 before: t.before.clone(), after: t.after.clone(), uid: t.uid.clone(), chips: t.chips.clone(), switch_to: t.switch_to.clone(),
             }).collect(),
             folder: self.folder.clone(), kiro_id: self.kiro_id.clone(), key: self.key.clone(), access: self.access.clone(), cloud: self.cloud.clone(), ext: self.ext.clone(), asks: self.asks.clone(),
+            commands: self.commands.clone(),
             ..*self
         }
     }
@@ -1357,6 +1361,7 @@ fn go(me: Weak<Shared>, id: i32, ti: usize, run: RunTask, ct: Cancel, cp: Option
             }
             if let Some(c) = e.context { slot.s.context = Some(c); slot.usage = Some(c); }
             if let Some(c) = e.credits { slot.s.turns[ti].credits = Some(c); }
+            if let Some(c) = e.commands { slot.s.commands = c; }
             if let Some(step) = e.step {
                 let t = &mut slot.s.turns[ti];
                 match t.steps.iter().position(|x| x.id == step.id) { Some(i) => t.steps[i] = step, None => t.steps.push(step) }

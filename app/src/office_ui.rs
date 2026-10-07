@@ -104,6 +104,8 @@ pub struct Page {
     folded: RefCell<std::collections::HashSet<String>>,
     /// The open chat's workspace branch, for the expanded chat's header.
     branch: RefCell<Branch>,
+    /// The reply box's @ (files) or / (commands) list while one is out.
+    pop: RefCell<Option<Pop>>,
     /// The desk card and the desk panel (desk_ui.rs).
     pub desk: crate::desk_ui::DeskUi,
 }
@@ -111,6 +113,58 @@ pub struct Page {
 /// A folder's branch as last looked up (off the UI thread; again after 10 s).
 #[derive(Default)]
 struct Branch { folder: String, label: String, at: Option<Instant>, looking: bool }
+
+/// What a row of the reply box's @ / / list does when picked.
+#[derive(Clone, Debug, PartialEq)]
+enum PopPick {
+    /// A file of the folder, by its path there: it goes to the agent as that path.
+    File(String),
+    /// A command of the agent's own: its name goes into the box.
+    Agent(String),
+    /// One of Hover's own (model, terminal, files, fork): done at once, nothing is sent.
+    Hover(&'static str),
+}
+
+/// The list over the reply box: `@` after a space (or at the start) lists files, `/` at the start lists commands.
+#[derive(Clone, Debug, PartialEq)]
+struct Pop {
+    /// '@' or '/', where the trigger starts in the draft and where the caret was, and the words after it.
+    kind: char,
+    at: usize,
+    end: usize,
+    q: String,
+    /// What can be picked, and which of them is lit.
+    items: Vec<PopPick>,
+    sel: usize,
+}
+
+/// Hover's own commands, as the mockup lists them: (name, what it does, the action).
+static HOVER_CMDS: [(&str, &str, &str); 4] = [
+    ("model", "Pick the model and effort", "model"),
+    ("terminal", "Open your terminal", "terminal"),
+    ("files", "Open Files & changes", "files"),
+    ("fork", "Copy this chat into a new one", "fork"),
+];
+
+/// The trigger at the end of `before` (the draft up to the caret): `@name` after whitespace, or `/name` as the whole draft.
+fn pop_trigger(before: &str) -> Option<(char, String, usize)> {
+    if let Some(rest) = before.strip_prefix('/') {
+        if rest.chars().all(|c| c.is_alphanumeric() || c == '_') { return Some(('/', rest.to_owned(), 0)); }
+    }
+    let at = before.rfind('@')?;
+    let q = &before[at + 1..];
+    let lead_ok = before[..at].chars().next_back().is_none_or(char::is_whitespace);
+    (lead_ok && q.chars().all(|c| c.is_alphanumeric() || matches!(c, '_' | '.' | '/' | '-'))).then(|| ('@', q.to_owned(), at))
+}
+
+/// The files that match `q`, as the mockup picks them: a name first, then anywhere in the path; eight at most.
+fn pop_files(tree: &[String], q: &str) -> Vec<String> {
+    let q = q.to_lowercase();
+    let name = |p: &str| p.rsplit('/').next().unwrap_or(p).to_lowercase();
+    let mut hit: Vec<&String> = tree.iter().filter(|p| p.to_lowercase().contains(&q)).collect();
+    hit.sort_by_key(|p| !name(p).contains(&q));
+    hit.into_iter().take(8).cloned().collect()
+}
 
 /// The office's slots as images, and which slot each window last showed (0 the notch, 1
 /// the app window). A window holds its slot until it is given another, so the office
@@ -258,7 +312,7 @@ impl Default for Page {
             #[cfg(windows)] gpu: Default::default(),
             #[cfg(windows)] scratch: Default::default(),
             #[cfg(windows)] slots: Default::default(), blur: Default::default(),
-            new_helpers: Cell::new(false), chips: Default::default(), note_acts: RefCell::new(vec![]), more_acts: RefCell::new(vec![]), rows_list: RefCell::new(vec![]), list_heads: RefCell::new(vec![]), folded: Default::default(), branch: Default::default(), desk: Default::default() }
+            new_helpers: Cell::new(false), chips: Default::default(), note_acts: RefCell::new(vec![]), more_acts: RefCell::new(vec![]), rows_list: RefCell::new(vec![]), list_heads: RefCell::new(vec![]), folded: Default::default(), branch: Default::default(), pop: Default::default(), desk: Default::default() }
     }
 }
 
@@ -615,6 +669,7 @@ impl App {
         // This chat's own draft, never another's.
         let (text, pics) = self.page.drafts.borrow_mut().remove(&id).unwrap_or_default();
         self.page.attached.borrow_mut()[0] = pics;
+        self.pop_close();
         each!(self, |g| { g.set_d_draft(s(&text)); g.set_d_compose(false); });
         self.office_widgets();
     }
@@ -624,6 +679,7 @@ impl App {
         self.page.open.set(None);
         self.send(In::Drawer(None));
         *self.page.thread.borrow_mut() = None;
+        self.pop_close();
         each!(self, |g| { g.set_d_draft(s("")); g.set_d_compose(false); });
         self.office_widgets();
     }
@@ -1176,6 +1232,7 @@ impl App {
                 g.set_mm_effort_head(s(ehead));
                 if let Some(m) = crate::view::sync(g.get_mm_efforts(), efforts) { g.set_mm_efforts(m); }
                 g.set_mm_note(s(note));
+                g.set_mm_compact(mm == Some(AgentTool::Kiro));
             }
             if let Some(m) = crate::view::sync(g.get_d_shots(), &shots[0]) { g.set_d_shots(m); }
             if let Some(m) = crate::view::sync(g.get_n_shots(), &shots[1]) { g.set_n_shots(m); }
@@ -1408,8 +1465,8 @@ impl App {
             let was_near = c.thread.height - c.scroll - c.thread.view_h < 40.0;
             c.thread.tool = sess.tool.id().into();
             c.thread.view_h = h;
-            // Room under the last turn for the reply circle over the thread's corner.
-            c.thread.extra_bottom = 40.0;
+            // Room under the last turn for the reply circle over the thread's corner (56 px, as the circle's own room).
+            c.thread.extra_bottom = 56.0;
             // A new width (the chat expanded, or came back) keeps the reader at the same place:
             // the turn at the top of the view, and how far down it (as a share of the turn).
             let anchor = (c.width > 0.0 && c.width != w && !was_near).then(|| c.thread.sections.iter().position(|x| x.y + x.h > c.scroll).map(|i| (i, (c.scroll - c.thread.sections[i].y) / c.thread.sections[i].h.max(1.0)))).flatten();
@@ -1760,6 +1817,7 @@ impl App {
             a.page.attached.borrow_mut()[0].clear();
             a.page.drafts.borrow_mut().remove(&id);
             // Sending closes the box; the thread shows the reply at its end.
+            a.pop_close();
             each!(a, |g| { g.set_d_draft(s("")); g.set_d_compose(false); });
             if let Some(c) = &mut *a.page.thread.borrow_mut() { c.scroll = f32::MAX; }
             a.office_changed();
@@ -1791,11 +1849,140 @@ impl App {
             let (Some(c), None) = (cs.next(), cs.next()) else { return false };
             if c.is_control() || ('\u{e000}'..='\u{f8ff}').contains(&c) || a.page.open.get().is_none() { return false; }
             each!(a, |g| { let d = g.get_d_draft(); g.set_d_draft(s(format!("{d}{c}"))); g.set_d_compose(true); });
+            // A / or @ that opens the box starts its list too.
+            let now = each_reply(&a);
+            a.pop_text(&now, now.len());
             true
         });
     }
 
+    /// The reply box's words or caret changed: the list over it, when the words end in `@name` or are `/name`.
+    fn pop_text(self: &Rc<Self>, text: &str, caret: usize) {
+        let before = text.get(..caret).unwrap_or(text);
+        let Some((kind, q, at)) = pop_trigger(before) else { self.pop_close(); return };
+        // The same list typed on keeps its lit row.
+        let sel = self.page.pop.borrow().as_ref().filter(|p| p.kind == kind && p.q == q).map_or(0, |p| p.sel);
+        *self.page.pop.borrow_mut() = Some(Pop { kind, at, end: before.len(), q, items: vec![], sel });
+        self.pop_refresh();
+    }
+
+    /// The list is made again from its trigger. The files arrive after a moment (a worker reads them), so this runs then too.
+    pub(crate) fn pop_refresh(self: &Rc<Self>) {
+        let Some(mut pop) = self.page.pop.borrow().clone() else { return };
+        let Some(id) = self.page.open.get() else { return };
+        let Some(sess) = self.hover.sessions.get(id) else { return };
+        let row = |kind: i32, name: String, dir: String, note: String| PopRow { kind, name: s(name), dir: s(dir), note: s(note), sel: false, idx: -1 };
+        let (mut rows, mut items): (Vec<PopRow>, Vec<PopPick>) = (vec![], vec![]);
+        if pop.kind == '@' {
+            rows.push(row(0, format!("Files in {}", hover_office::office::short(&sess.folder)), String::new(), String::new()));
+            match self.desk_files(id) {
+                None => rows.push(row(3, "Reading the folder…".into(), String::new(), String::new())),
+                Some(tree) => {
+                    let hit = pop_files(&tree, &pop.q);
+                    if hit.is_empty() { rows.push(row(3, "No file matches that.".into(), String::new(), String::new())); }
+                    for p in hit {
+                        let (dir, name) = match p.rsplit_once('/') { Some((d, n)) => (d.to_owned(), n.to_owned()), None => (String::new(), p.clone()) };
+                        let mut r = row(1, name, dir, String::new());
+                        r.idx = items.len() as i32;
+                        rows.push(r);
+                        items.push(PopPick::File(p));
+                    }
+                }
+            }
+        } else {
+            let q = pop.q.to_lowercase();
+            let mine: Vec<&(String, String)> = sess.commands.iter().filter(|(n, _)| n.to_lowercase().starts_with(&q)).collect();
+            if !mine.is_empty() {
+                rows.push(row(0, format!("From {}", sess.tool.name()), String::new(), String::new()));
+                for (n, d) in mine {
+                    let mut r = row(2, format!("/{n}"), String::new(), d.clone());
+                    r.idx = items.len() as i32;
+                    rows.push(r);
+                    items.push(PopPick::Agent(n.clone()));
+                }
+            }
+            let ours: Vec<&(&str, &str, &str)> = HOVER_CMDS.iter().filter(|c| c.0.starts_with(&q)).collect();
+            if !ours.is_empty() {
+                rows.push(row(0, "Hover".into(), String::new(), String::new()));
+                for c in ours {
+                    let mut r = row(2, format!("/{}", c.0), String::new(), c.1.to_owned());
+                    r.idx = items.len() as i32;
+                    rows.push(r);
+                    items.push(PopPick::Hover(c.2));
+                }
+            }
+            if items.is_empty() { rows.push(row(3, "No command starts with that.".into(), String::new(), String::new())); }
+        }
+        pop.sel = pop.sel.min(items.len().saturating_sub(1));
+        for r in rows.iter_mut() { r.sel = r.idx >= 0 && r.idx as usize == pop.sel; }
+        let pickable = !items.is_empty();
+        pop.items = items;
+        *self.page.pop.borrow_mut() = Some(pop);
+        each!(self, |g| {
+            if let Some(m) = crate::view::sync(g.get_pop_rows(), &rows) { g.set_pop_rows(m); }
+            g.set_pop_pickable(pickable);
+        });
+    }
+
+    /// Esc, a send, or words that no longer end in a trigger: the list goes.
+    fn pop_close(self: &Rc<Self>) {
+        if self.page.pop.borrow_mut().take().is_none() { return; }
+        let none: Vec<PopRow> = vec![];
+        each!(self, |g| {
+            if let Some(m) = crate::view::sync(g.get_pop_rows(), &none) { g.set_pop_rows(m); }
+            g.set_pop_pickable(false);
+        });
+    }
+
+    /// ↑ (-1) and ↓ (+1) through what can be picked.
+    fn pop_move(self: &Rc<Self>, dir: i32) {
+        {
+            let mut p = self.page.pop.borrow_mut();
+            let Some(p) = p.as_mut() else { return };
+            let n = p.items.len() as i32;
+            if n == 0 { return; }
+            p.sel = (p.sel as i32 + dir).rem_euclid(n) as usize;
+        }
+        self.pop_refresh();
+    }
+
+    /// A row picked (`i` -1: the lit one). A file becomes a chip that holds its path; a command of the agent's goes into the box;
+    /// one of Hover's is done at once and sends nothing. Returns "model" when the model picker should open (it is drawn by the box).
+    fn pop_pick(self: &Rc<Self>, i: i32) -> String {
+        let (Some(id), Some(pop)) = (self.page.open.get(), self.page.pop.borrow().clone()) else { return String::new() };
+        let Some(item) = pop.items.get(if i < 0 { pop.sel } else { i as usize }).cloned() else { return String::new() };
+        let text = each_reply(self);
+        let mut act = String::new();
+        let draft = match &item {
+            // The @ and what followed it leave the words.
+            PopPick::File(_) => match (text.get(..pop.at), text.get(pop.end..)) { (Some(h), Some(t)) => format!("{h}{t}"), _ => text.clone() },
+            PopPick::Agent(name) => format!("/{name} "),
+            PopPick::Hover(_) => String::new(),
+        };
+        self.pop_close();
+        each!(self, |g| { g.set_d_draft(s(&draft)); g.set_d_compose(true); g.set_d_draft_to_end(g.get_d_draft_to_end().wrapping_add(1)); });
+        match item {
+            PopPick::File(rel) => {
+                let folder = self.hover.sessions.get(id).map(|x| x.folder.clone()).unwrap_or_default();
+                match hover_agents::context::file_live(&folder, &rel) { Ok(chip) => self.add_chip(id, chip), Err(e) => self.toast(&e) }
+            }
+            PopPick::Agent(_) => {}
+            PopPick::Hover("model") => act = "model".to_owned(),
+            PopPick::Hover(a) => self.head_act(a),
+        }
+        self.office_widgets();
+        act
+    }
+
     fn wire_office_more(self: &Rc<Self>, g: &crate::ui::Office) {
+        let a = self.clone();
+        g.on_pop_text(move |t, c| a.pop_text(t.as_str(), c.max(0) as usize));
+        let a = self.clone();
+        g.on_pop_move(move |d| a.pop_move(d));
+        let a = self.clone();
+        g.on_pop_pick(move |i| a.pop_pick(i).into());
+        let a = self.clone();
+        g.on_pop_close(move || a.pop_close());
         let a = self.clone();
         g.on_q_pick(move |id, ask, qi, label| {
             let Some(id) = (if id < 0 { a.page.open.get() } else { Some(id) }) else { return };
@@ -1830,6 +2017,8 @@ impl App {
         g.on_open_model(move |which, x, y| {
             a.page.model_menu.set(which);
             if which != 0 { a.page.access_menu.set(false); each!(a, |g| { g.set_model_x(x); g.set_model_y(y); }); }
+            // The picker lives in the reply box, so opening it opens the box.
+            if which == 1 { each!(a, |g| g.set_d_compose(true)); }
             a.office_widgets();
         });
         let a = self.clone();
@@ -1934,7 +2123,8 @@ impl App {
         let model = o.model.clone().or_else(|| models.first().map(|m| m.0.clone())).unwrap_or_default();
         let m = models.iter().find(|m| m.0 == model).or(models.first());
         let effort = o.effort.clone().or(now);
-        let eff = effort.filter(|e| hover_agents::state::efforts_of(&models, &model, &tool_efforts).contains(e)).map(|e| effort_word(&e)).unwrap_or_default();
+        let levels = hover_agents::state::efforts_of(&models, &model, &tool_efforts);
+        let eff = hover_agents::state::effort_now(&levels, effort.as_deref()).map(|e| effort_word(&e)).unwrap_or_default();
         (m.map_or("Default".into(), |m| short_model(&m.1)), eff, !models.is_empty())
     }
 
@@ -1948,11 +2138,16 @@ impl App {
         let model = o.model.clone().or_else(|| models.first().map(|m| m.0.clone())).unwrap_or_default();
         let effort = o.effort.clone().or(now);
         let efforts = hover_agents::state::efforts_of(&models, &model, &tool_efforts);
+        let shown = hover_agents::state::effort_now(&efforts, effort.as_deref());
+        // The heading stays for Auto, which says it picks the effort itself; a model with no efforts listed has none.
+        let ehead = if efforts.is_empty() && !model.eq_ignore_ascii_case("auto") { String::new() } else { hover_agents::runtime::caps(t).effort_label.to_uppercase() };
         (format!("{} model", t.name()).to_uppercase(),
             models.iter().map(|m| MOpt { id: s(&m.0), label: s(short_model(&m.1)), on: m.0 == cur }).collect(),
-            hover_agents::runtime::caps(t).effort_label.to_uppercase(),
-            efforts.iter().map(|e| MOpt { id: s(e), label: s(effort_word(e)), on: effort.as_deref() == Some(e.as_str()) }).collect(),
-            format!("Used by {} from its next turn.", t.name()))
+            ehead,
+            efforts.iter().map(|e| MOpt { id: s(e), label: s(effort_word(e)), on: shown.as_deref() == Some(e.as_str()) }).collect(),
+            // Kiro's row says when it compacts (a click opens its Settings); the others keep the note.
+            if t == AgentTool::Kiro { if st.kiro_auto_compact() { format!("Auto compact at {}%", st.kiro_compact_at()) } else { "Auto compact is off".to_owned() } }
+            else { format!("Used by {} from its next turn.", t.name()) })
     }
 
     /// Pictures from elsewhere (voice's screenshots while dictating) for the reply, as a paste

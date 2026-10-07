@@ -995,6 +995,16 @@ impl App {
         d.got.borrow_mut().insert((id, what), got);
         self.desk_changed();
         self.desk_sync();
+        // The reply box's @ list was waiting for the files.
+        if what == "files" { self.pop_refresh(); }
+    }
+
+    /// The session folder's files, for the reply box's @: what the Files tab read last. None until a worker has read them
+    /// (asked for now).
+    pub(crate) fn desk_files(self: &Rc<Self>, id: i32) -> Option<Vec<String>> {
+        if let Some(Got::Files(f)) = self.page.desk.got.borrow().get(&(id, "files")) { return Some(f.tree.clone()); }
+        self.desk_ask(id, "files", false);
+        None
     }
 
     /// The session changed: the surfaces read from the folder are asked again when due.

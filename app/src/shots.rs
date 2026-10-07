@@ -659,9 +659,35 @@ fn chat_view_shots(app: &Rc<App>, hover: &Arc<hover_app::app::Hover>, dir: &Path
             shot(&format!("bar-{name}"));
         }
         app.dash.borrow().as_ref().expect("the app window").set_bar(0);
+        // The reply box: a circle at rest (a dot once there is a draft), opened by a click; the folder beside +.
+        assert!(!g!().get_d_compose(), "the reply box rests as a circle");
+        g!().set_d_draft("A reply I have not sent".into());
+        settle(300);
+        shot("chat-rest-draft");
+        g!().set_d_compose(true);
         g!().set_d_draft("First line of a longer reply.\nA second line.\nAnd a third, so the bar grows to fit what is written.".into());
         settle(400);
         shot("chat-long-draft");
+        // The list over the box: @ lists files, / lists commands (the agent's own, and Hover's).
+        g!().set_d_draft("Look at @app".into());
+        g!().invoke_pop_text("Look at @app".into(), 12);
+        settle(400);
+        shot("chat-pop-files");
+        g!().invoke_pop_close();
+        g!().set_d_draft("/".into());
+        g!().invoke_pop_text("/".into(), 1);
+        settle(400);
+        assert!(g!().get_pop_pickable(), "Hover's commands are always there to pick");
+        shot("chat-pop-commands");
+        g!().invoke_pop_close();
+        // The model picker, from the box.
+        g!().set_d_draft("".into());
+        g!().invoke_open_model(1, 600.0, 500.0);
+        settle(400);
+        shot("chat-model-menu");
+        g!().invoke_open_model(0, 0.0, 0.0);
+        g!().set_d_compose(false);
+        settle(300);
         g!().set_d_draft("".into());
         g!().set_list_open(false);
         settle(500);
