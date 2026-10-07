@@ -387,7 +387,7 @@ fn mcp_act(pane: &RefCell<Pane>, action: &str, what: &str) -> bool {
                 let d = &mut f.draft;
                 match field {
                     "name" => d.name = text.into(), "url" => d.url = text.into(), "command" => d.command = text.into(), "args" => d.args = text.into(),
-                    _ => if let (Some(i), Some(pair)) = (field[1..].parse::<usize>().ok(), field.get(..1)) {
+                    _ => if let (Some(i), Some(pair)) = (field.get(1..).and_then(|n| n.parse::<usize>().ok()), field.get(..1)) {
                         if let Some(row) = d.pairs.get_mut(i) { if pair == "k" { row.0 = text.into() } else { row.1 = text.into() } }
                     },
                 }
