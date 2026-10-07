@@ -122,7 +122,8 @@ crates/
                  orch.rs (helpers: a task asking other agents for help, under fixed
                  limits), workspace.rs (what Git says about a task's folder, and the
                  holds a checkpoint restore takes), editor.rs (finds the editors on
-                 this computer and opens a folder or file in one)
+                 this computer and opens a folder or file in one), mcp.rs (Kiro's MCP
+                 servers: reads and edits ~/.kiro/settings/mcp.json for Settings → Kiro)
   hover-quota    the four quota readers
   hover-backend  the Mac app's backend (binary hover-backend; the Slint app doesn't link
                  it): hover-core, hover-agents and hover-quota behind JSON lines on stdin and
@@ -305,8 +306,14 @@ assets/          hover.svg (the logo), make-icon.py (writes hover.png and
 - **The chat view** (the switch at the office's top left, `Office.d-wide`, `App::set_chat_view`).
   A chat app in place of the office, in the notch and the app window alike: the sessions down
   the left (the office/chat switch, New chat, the chats grouped by project folder; its hide button shows
-  on hover, and a closed sidebar leaves a show button before the title), the open chat with a slim reply bar, or with none open a start
-  screen (the agents, then one box with folder, access and model). Kept in `settings.json`
+  on hover, and a closed sidebar leaves a show button before the title), the open chat, or with none open a start
+  screen (the agents, then one box with folder, access and model). The reply box rests as a
+  circle at the chat's corner (a dot when a draft waits) and opens on a click or a typed key;
+  Esc (after any menu), or sending, closes it. Open, it has +, the chat's folder, the model and
+  one round button (grey, Stop while the agent works, Send to queue once something is typed).
+  `@` lists the folder's files (a chip that sends the path, not the contents), `/` lists the
+  agent's own commands (ACP's `available_commands_update`, kept on the session) and Hover's.
+  The office's chat card uses the same header (title, context, ⋯, ✕) and reply box. Kept in `settings.json`
   (`ChatView`, written only while on), so the notch opens on it until the switch goes back;
   Esc and the notch folding never leave it. The office draws nothing under it, and is made
   only when switched back to. A chat's Expand button switches it on.
