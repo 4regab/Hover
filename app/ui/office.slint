@@ -89,7 +89,7 @@ export global Office {
     in property <bool> menu;
     // The new task's tool access (ACCESS in main.js): its label, whether it is Trust all
     // (amber), and the menu of choices.
-    in property <string> new-access: "Trust all";
+    in property <string> new-access: "Full access";
     in property <bool> new-access-full: true;
     in property <string> new-access-tip;
     in property <bool> access-menu;
@@ -224,6 +224,12 @@ export global Office {
     callback toggle-view();
     callback new-chat();
     callback list-clicked(int);
+    // The start screen's menus: which is out (0 none, 1 project, 2 agent, 3 where it runs), the recent folders, and a pick of one
+    // ("" is Open folder…). Asking for the folders is what opens the project menu.
+    in-out property <int> start-menu;
+    in property <[AccessOpt]> start-folders;
+    callback open-folders();
+    callback pick-start-folder(string);
     // A folder row's fold, and a chat row's Delete.
     callback list-fold(int);
     callback list-delete(int);
@@ -570,6 +576,7 @@ global PagePaths {
     out property <string> fork: "M15 18A3 3 0 1 0 9 18 3 3 0 1 0 15 18Z M9 6A3 3 0 1 0 3 6 3 3 0 1 0 9 6Z M21 6A3 3 0 1 0 15 6 3 3 0 1 0 21 6Z M18 9v2c0 .6-.4 1-1 1H7c-.6 0-1-.4-1-1V9 M12 12v3";
     out property <string> code: "m18 16 4-4-4-4 M6 8l-4 4 4 4 M14.5 4l-5 16";
     out property <string> terminal: "m4 17 6-6-6-6 M12 19h8";
+    out property <string> laptop: "M20 16V7a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v9 M20 16H4 M20 16l1.28 2.55a1 1 0 0 1-.9 1.45H3.62a1 1 0 0 1-.9-1.45L4 16";
     out property <string> desk: "M7 3.5H17A2 2 0 0 1 19 5.5V11A2 2 0 0 1 17 13H7A2 2 0 0 1 5 11V5.5A2 2 0 0 1 7 3.5Z M10 7.2v2.1 M14 7.2v2.1 M12 13v3 M2.5 16h19 M5 16v4.5 M19 16v4.5";
     out property <string> tag: "M12.586 2.586A2 2 0 0 0 11.172 2H4a2 2 0 0 0-2 2v7.172a2 2 0 0 0 .586 1.414l8.704 8.704a2.426 2.426 0 0 0 3.42 0l6.58-6.58a2.426 2.426 0 0 0 0-3.42Z M7.5 7.5h.01";
     out property <string> bulb: "M15 14c.2-1 .7-1.7 1.5-2.5 1-.9 1.5-2.2 1.5-3.5A6 6 0 0 0 6 8c0 1 .2 2.2 1.5 3.5.7.7 1.3 1.5 1.5 2.5 M9 18h6 M10 22h4";
@@ -1194,6 +1201,83 @@ component HeadChip inherits Rectangle {
     ta := TouchArea { }
 }
 
+// A pill of the start screen's box (.pill): 28 px, an icon or a tool's logo, the words and a chevron. Amber for Full access.
+component StartPill inherits Rectangle {
+    in property <string> id;
+    in property <string> icon;
+    in property <string> logo;
+    in property <string> text;
+    in property <bool> amber;
+    in property <bool> open;
+    // Not here at all (width 0), while its popup can still find it.
+    in property <bool> shown: true;
+    callback clicked;
+    property <color> fg: amber ? (ta.has-hover || open ? #ffd89a : #ffc46b) : (ta.has-hover || open ? #f6f2ff : #f6f2ffb0);
+    height: 28px;
+    width: shown ? pl.preferred-width : 0px;
+    visible: shown;
+    border-radius: 8px;
+    background: ta.has-hover || open ? #ffffff0b : transparent;
+    accessible-role: button;
+    accessible-id: id;
+    accessible-label: text + ". Change";
+    accessible-action-default => { clicked(); }
+    pl := HorizontalLayout { padding-left: 9px; padding-right: 9px; spacing: 6px;
+        if icon != "": VerticalLayout { alignment: center; Icon { name: icon; size: 14px; tint: fg; } }
+        if logo != "": VerticalLayout { alignment: center; Logo { width: 16px; height: 16px; mark: 10px; radius: 4.8px; tool: logo; } }
+        Text { text: root.text; font-size: 12.5px; font-weight: 500; color: fg; vertical-alignment: center; }
+        VerticalLayout { alignment: center; Icon { name: Icons.chevron-down; size: 13px; tint: fg; } }
+    }
+    ta := TouchArea { mouse-cursor: pointer; clicked => { root.clicked(); } }
+}
+
+// A choice in the start screen's menus (.mo): its icon or tool's logo, the choice in bold with its note under it, a check on the picked one.
+component PickRow inherits Rectangle {
+    in property <string> id;
+    in property <string> logo;
+    in property <string> icon;
+    in property <string> label;
+    in property <string> note;
+    in property <bool> on;
+    in property <bool> dim;
+    callback clicked;
+    height: rl.preferred-height;
+    border-radius: 7px;
+    background: ta.has-hover ? #ffffff0d : transparent;
+    opacity: dim ? 0.55 : 1;
+    accessible-role: list-item;
+    accessible-id: id;
+    accessible-label: label;
+    accessible-checkable: true;
+    accessible-checked: on;
+    accessible-action-default => { clicked(); }
+    rl := HorizontalLayout { padding: 7px; padding-left: 8px; padding-right: 8px; spacing: 10px;
+        VerticalLayout { alignment: center; width: 18px;
+            if logo != "": Logo { width: 18px; height: 18px; mark: 11px; radius: 5.4px; tool: logo; }
+            if icon != "": Icon { name: icon; size: 16px; tint: #f6f2ffb0; } }
+        VerticalLayout { horizontal-stretch: 1;
+            Text { text: label; font-size: 13px; font-weight: 500; color: #f6f2ff; overflow: elide; }
+            if note != "": Text { text: note; font-size: 11.5px; color: #f6f2ff80; wrap: word-wrap; } }
+        if on: VerticalLayout { alignment: center; Icon { name: Icons.check; size: 14px; tint: #c4a2ff; } }
+    }
+    ta := TouchArea { mouse-cursor: pointer; clicked => { root.clicked(); } }
+}
+
+// The start screen's menus (.menu.sm): 248 wide, dropping from the pill.
+component PickMenu inherits Rectangle {
+    width: 248px;
+    height: pv.preferred-height;
+    border-radius: 12px;
+    background: #1a1820;
+    border-width: 1px;
+    border-color: #ffffff17;
+    drop-shadow-blur: 30px;
+    drop-shadow-offset-y: 12px;
+    drop-shadow-color: #000000cc;
+    accessible-role: list;
+    pv := VerticalLayout { padding: 4px; @children }
+}
+
 // A row of the chat view's ⋯ menu (.mi): 30 px, an icon (or an editor's tile, or an agent's logo), the words, and a chevron
 // when a list opens from it. `hovered` is raised when the pointer comes onto it.
 export component MenuItem inherits Rectangle {
@@ -1539,6 +1623,7 @@ export component OfficeView inherits Rectangle {
         if (in-settings) { if (dashboard) { root.back(); } else { root.fold(); } return; }
         if (Office.confirm) { Office.confirm-no(); return; }
         if (Desk.card) { Desk.card-close(); return; }
+        if (Office.start-menu != 0) { Office.start-menu = 0; return; }
         if (Office.model-menu != 0) { Office.open-model(0, 0, 0); return; }
         if (Office.access-menu) { Office.open-access(); return; }
         if (Office.repo-menu) { Office.open-repos(); return; }
@@ -1601,6 +1686,8 @@ export component OfficeView inherits Rectangle {
         // Where the access menu opens: by the chip that asked (the chat view's start screen), else the office's box.
         property <length> pop-x: -1px;
         property <length> pop-y;
+        // The menu opens below its anchor (the start screen's project), not above it.
+        property <bool> pop-below;
         property <bool> tight: self.main-w < 640px;
         property <bool> desk-now: Desk.card || Desk.panel;
         changed fab-now => { if (self.fab-now == 0 && !Office.drawer) { focus.focus(); } }
@@ -1880,73 +1967,74 @@ export component OfficeView inherits Rectangle {
                 Rectangle { x: parent.width - 4px; width: 8px;
                     TouchArea { mouse-cursor: ew-resize; moved => { if (self.pressed) { Office.list-w = max(200px, min(420px, Office.list-w + (self.mouse-x - self.pressed-x))); } } } }
             }
-            // The start screen (an empty chat): which agent, then the task in one box with its
-            // folder, access and model, as the office's new-task box has them.
-            if !Office.drawer: Rectangle {
+            // The start screen (an empty chat): one heading, the project under it, then one box that holds every choice: the agent,
+            // where it runs (Kiro only), what it may do, the model and Start.
+            if !Office.drawer: sblk := Rectangle {
                 x: lw;
                 width: parent.width - lw;
-                property <length> box-w: min(self.width - 48px, 720px);
+                property <length> box-w: min(self.width - 48px, 700px);
+                // What the box says under itself: why Start waits, else where the task runs or that it changes nothing.
+                property <string> hint: Office.new-note != "" ? Office.new-note : Office.new-cloud
+                    ? (Office.new-repo == "Empty workspace" ? "Runs in Kiro’s cloud, in an empty workspace." : "Runs in Kiro’s cloud. It opens a pull request on " + Office.new-repo + " when done.")
+                    : Office.new-access == "Read only" ? "Reads this folder and changes nothing." : "";
                 VerticalLayout {
                     alignment: center;
-                    padding-bottom: compact ? 24px : 56px;
-                    spacing: compact ? 12px : 16px;
+                    padding-bottom: parent.height * 0.14;
                     HorizontalLayout { alignment: center;
-                        Text { text: "What should we work on?"; font-family: Fonts.display; font-size: compact ? 22px : 28px; font-weight: 600; letter-spacing: -0.4px; color: #f6f2ff;
+                        Text { text: "What should we work on?"; font-family: Fonts.display; font-size: compact ? 22px : 26px; font-weight: 600; letter-spacing: -0.57px; color: #f6f2ff;
                             accessible-role: text; } }
-                    // The agents: the one picked lit, one not ready dim with its hint.
-                    HorizontalLayout { alignment: center; spacing: 6px;
-                        for t[i] in Office.tools: Rectangle {
-                            height: compact ? 28px : 30px;
-                            width: tl.preferred-width;
-                            border-radius: self.height / 2;
-                            background: i == Office.new-tool ? #9b6bff2e : tta.has-hover ? #ffffff12 : #ffffff08;
-                            border-width: 1px;
-                            border-color: i == Office.new-tool ? #c4a2ff66 : #ffffff12;
-                            opacity: t.ready ? 1 : 0.5;
+                    Rectangle { height: 8px; }
+                    // The project: the folder (or in Kiro Web the repo it clones). A click lists the recent ones.
+                    HorizontalLayout { alignment: center;
+                        projp := Rectangle {
+                            height: 30px;
+                            width: pj.preferred-width;
+                            border-radius: 8px;
+                            background: pja.has-hover || Office.start-menu == 1 || Office.repo-menu ? #ffffff0b : transparent;
                             accessible-role: button;
-                            accessible-id: "chatTool" + t.id;
-                            accessible-label: t.ready ? t.name : t.name + ": " + t.hint;
-                            accessible-checkable: true;
-                            accessible-checked: i == Office.new-tool;
-                            accessible-action-default => { Office.pick-tool(i); }
-                            tl := HorizontalLayout { padding-left: 4px; padding-right: 11px; spacing: 7px;
-                                VerticalLayout { alignment: center; Logo { width: compact ? 20px : 22px; height: self.width; mark: compact ? 11px : 12px; tool: t.id; ready: t.ready; } }
-                                Text { text: t.name; font-size: 12.5px; font-weight: i == Office.new-tool ? 600 : 500; color: i == Office.new-tool ? #f6f2ff : #f6f2ffb3; vertical-alignment: center; } }
-                            tta := TouchArea { mouse-cursor: pointer; clicked => { Office.pick-tool(i); } }
+                            accessible-id: "chatFolder";
+                            accessible-label: Office.new-cloud ? "Repository: " + Office.new-repo + ". Change" : "Project: " + Office.new-folder + ". Change";
+                            pj := HorizontalLayout { padding-left: 10px; padding-right: 10px; spacing: 7px;
+                                VerticalLayout { alignment: center; Icon { name: Office.new-cloud ? Icons.globe : Icons.folder; size: 15px;
+                                    tint: Office.new-cloud ? #8fbcff : Office.new-folder == "Choose a folder" ? #ffb36b : pja.has-hover ? #f6f2ff : #f6f2ff80; } }
+                                Text { text: Office.new-cloud ? Office.new-repo : Office.new-folder; font-size: 13.5px; color: Office.new-folder == "Choose a folder" && !Office.new-cloud ? #ffb36b : pja.has-hover ? #f6f2ff : #f6f2ffb0; vertical-alignment: center; }
+                                VerticalLayout { alignment: center; Icon { name: Icons.chevron-down; size: 13px; tint: #f6f2ff80; } }
+                            }
+                            pja := TouchArea { mouse-cursor: pointer; clicked => {
+                                if (Office.new-cloud) { pop-x = self.absolute-position.x; pop-y = self.absolute-position.y + self.height; pop-below = true; Office.open-repos(); }
+                                else if (Office.start-menu == 1) { Office.start-menu = 0; } else { Office.open-folders(); Office.start-menu = 1; } } }
                         }
                     }
+                    Rectangle { height: 22px; }
                     HorizontalLayout { alignment: center;
                         Rectangle {
                             width: box-w;
                             height: hb.preferred-height;
-                            border-radius: 22px;
-                            background: #1b181f;
+                            border-radius: 20px;
+                            background: #17151b;
                             border-width: 1px;
-                            border-color: htext.has-focus ? #c4a2ff8c : #ffffff1f;
-                            drop-shadow-blur: 30px;
-                            drop-shadow-offset-y: 10px;
-                            drop-shadow-color: #00000080;
-                            animate border-color { duration: Pal.motion ? 160ms : 0ms; }
+                            border-color: htext.has-focus ? #c4a2ff4d : #ffffff17;
+                            drop-shadow-blur: 40px;
+                            drop-shadow-offset-y: 16px;
+                            drop-shadow-color: #00000059;
+                            animate border-color { duration: Pal.motion ? 150ms : 0ms; }
                             TouchArea { mouse-cursor: text; clicked => { htext.focus(); } }
                             hb := VerticalLayout {
-                                padding-left: 12px;
-                                padding-right: 10px;
-                                padding-top: 12px;
-                                padding-bottom: 9px;
-                                spacing: 8px;
-                                if Office.n-shots.length > 0: Shots { shots: Office.n-shots; which: 2; }
-                                // One line at rest; it grows with what is written (up to 8 lines), then scrolls.
+                                if Office.n-shots.length > 0: Shots { shots: Office.n-shots; which: 2; padding-left: 18px; padding-top: 12px; }
+                                // Three lines at rest; it grows with what is written (up to 8 lines), then scrolls.
                                 Rectangle {
-                                    height: max(20px, min(8 * 19px, htext.preferred-height));
+                                    height: 16px + max(62px, min(8 * 22px, htext.preferred-height)) + 6px;
                                     hfl := Flickable {
-                                        width: parent.width - 4px;
-                                        height: parent.height;
+                                        x: 18px;
+                                        y: 16px;
+                                        width: parent.width - 36px;
+                                        height: parent.height - 22px;
                                         interactive: false;
                                         content-height: max(self.height, htext.preferred-height);
                                         htext := TextInput {
                                             width: parent.width;
                                             text <=> Office.new-draft;
-                                            font-size: 13.5px;
+                                            font-size: 14px;
                                             color: #f6f2ff;
                                             wrap: word-wrap;
                                             single-line: false;
@@ -1963,45 +2051,76 @@ export component OfficeView inherits Rectangle {
                                             }
                                         }
                                     }
-                                    InputThumb { x: parent.width + 4px; y: 0; height: hfl.height; f-height: hfl.height; f-content: hfl.content-height; f-y: hfl.content-y; }
-                                    if Office.new-draft == "" && htext.preedit-text == "": Text { text: "Ask " + Office.tools[Office.new-tool].name + " to build, fix or explain something…";
-                                        font-size: 13.5px; color: #f6f2ff61; overflow: elide; width: parent.width; vertical-alignment: top; }
+                                    InputThumb { x: parent.width - 10px; y: hfl.y; height: hfl.height; f-height: hfl.height; f-content: hfl.content-height; f-y: hfl.content-y; }
+                                    if Office.new-draft == "" && htext.preedit-text == "": Text { x: 18px; y: 16px; width: parent.width - 36px;
+                                        text: "Ask " + Office.tools[Office.new-tool].name + " to build, fix or explain something. @ adds files, / for commands";
+                                        font-size: 14px; color: #f6f2ff80; wrap: word-wrap; vertical-alignment: top; }
                                 }
                                 HorizontalLayout {
-                                    spacing: 4px;
+                                    padding-left: 10px;
+                                    padding-right: 10px;
+                                    padding-top: 6px;
+                                    padding-bottom: 10px;
+                                    spacing: 2px;
                                     ClipButton { id: "chatAttach"; clicked => { Office.attach(2); } }
-                                    if Office.new-cloud-shown: Rectangle { width: 28px; height: 28px; border-radius: 9px;
-                                        background: Office.new-cloud ? #6ba8ff24 : hca.has-hover ? #ffffff12 : transparent;
-                                        accessible-role: checkbox; accessible-id: "chatCloud"; accessible-label: "Run in Kiro Web"; accessible-checkable: true; accessible-checked: Office.new-cloud;
-                                        accessible-action-default => { Office.toggle-cloud(); }
-                                        Icon { name: Icons.cloud; size: 15px; tint: Office.new-cloud ? #8fbcff : #f6f2ff9e; }
-                                        hca := TouchArea { mouse-cursor: pointer; clicked => { Office.toggle-cloud(); } } }
-                                    hf := Rectangle { width: min(hfl2.preferred-width, (parent.width - 160px) * 0.45); height: 28px; border-radius: 9px; background: hfo.has-hover || Office.repo-menu ? #ffffff12 : transparent;
-                                        accessible-role: button; accessible-id: "chatFolder"; accessible-label: Office.new-cloud ? "Repository: " + Office.new-repo + ". Change" : Office.new-folder;
-                                        hfl2 := HorizontalLayout { padding-left: 9px; padding-right: 9px; spacing: 6px;
-                                            VerticalLayout { alignment: center; Icon { name: Office.new-cloud ? Icons.globe : Icons.folder; size: 14px;
-                                                tint: Office.new-cloud ? #8fbcff : Office.new-folder == "Choose a folder" ? #ffb36b : #f6f2ff9e; } }
-                                            Text { text: Office.new-cloud ? Office.new-repo : Office.new-folder; font-family: "DejaVu Sans Mono"; font-size: 11.5px;
-                                                color: Office.new-cloud ? #8fbcff : Office.new-folder == "Choose a folder" ? #ffb36b : #f6f2ff9e; vertical-alignment: center; overflow: elide; } }
-                                        hfo := TouchArea { mouse-cursor: pointer; clicked => { pop-x = self.absolute-position.x; pop-y = self.absolute-position.y;
-                                            if (Office.new-cloud) { Office.open-repos(); } else { Office.new-folder-clicked(); } } } }
-                                    hacc := Rectangle { width: Office.new-cloud ? 0px : hal.preferred-width; visible: !Office.new-cloud; height: 28px; border-radius: 9px; background: haa.has-hover || Office.access-menu ? #ffffff12 : transparent;
-                                        accessible-role: button; accessible-id: "chatAccess"; accessible-label: "Tool access: " + Office.new-access + ". Change";
-                                        hal := HorizontalLayout { padding-left: 9px; padding-right: 9px; spacing: 6px;
-                                            VerticalLayout { alignment: center; Icon { name: PagePaths.shield; size: 14px; tint: Office.new-access-full ? #ffc46b : #f6f2ff9e; } }
-                                            Text { text: Office.new-access; font-size: 11.5px; font-weight: 500; color: Office.new-access-full ? #ffc46b : #f6f2ff9e; vertical-alignment: center; } }
-                                        haa := TouchArea { mouse-cursor: pointer; clicked => { pop-x = self.absolute-position.x; pop-y = self.absolute-position.y; Office.open-access(); } } }
+                                    agentp := StartPill { id: "chatAgent"; logo: Office.tools[Office.new-tool].id; text: Office.tools[Office.new-tool].name; open: Office.start-menu == 2;
+                                        clicked => { Office.start-menu = Office.start-menu == 2 ? 0 : 2; } }
+                                    wherep := StartPill { id: "chatWhere"; shown: Office.new-cloud-shown; icon: Office.new-cloud ? Icons.cloud : PagePaths.laptop; text: Office.new-cloud ? "Kiro cloud" : "This computer"; open: Office.start-menu == 3;
+                                        clicked => { Office.start-menu = Office.start-menu == 3 ? 0 : 3; } }
+                                    // Not in Kiro Web: every task there is full access, so there is nothing to pick.
+                                    accp := StartPill { id: "chatAccess"; shown: !Office.new-cloud; icon: PagePaths.shield; text: Office.new-access; amber: Office.new-access-full; open: Office.access-menu;
+                                        clicked => { Office.start-menu = 0; Office.open-access(); } }
                                     Rectangle { horizontal-stretch: 1; }
                                     if Office.n-model-shown: MPill { id: "chatModel"; model: Office.n-model; effort: Office.n-model-effort; open: Office.model-menu == 2;
-                                        max-w: min(parent.width * 0.5, parent.width - hf.width - hacc.width - 30px - 30px - 6 * 4px);
+                                        max-w: min(parent.width * 0.5, parent.width - agentp.width - wherep.width - accp.width - 32px - 30px - 6 * 2px);
                                         clicked(x, y) => { Office.open-model(Office.model-menu == 2 ? 0 : 2, x, y); } }
                                     GoButton { id: "chatGo"; round: true; label: "Start"; enabled: Office.new-go; clicked => { Office.new-go-clicked(); } }
                                 }
                             }
                         }
                     }
-                    if Office.new-note != "": HorizontalLayout { alignment: center;
-                        Text { width: box-w - 24px; text: Office.new-note; font-size: 11.5px; color: #f6f2ff61; wrap: word-wrap; horizontal-alignment: center; } }
+                    if hint != "": HorizontalLayout { alignment: center; padding-top: 12px; spacing: 6px;
+                        if Office.new-note == "": VerticalLayout { alignment: center; Icon { name: Office.new-cloud ? Icons.cloud : Icons.view; size: 13px; tint: #f6f2ff80; } }
+                        Text { text: hint; font-size: 12px; color: #f6f2ff80; vertical-alignment: center; } }
+                }
+                // A click anywhere else puts a menu away.
+                if Office.start-menu != 0 || Office.access-menu: TouchArea { clicked => { Office.start-menu = 0; if (Office.access-menu) { Office.open-access(); } } }
+                // The agent: every one, the ones not ready dim with why.
+                if Office.start-menu == 2: PickMenu {
+                    x: max(8px, min(agentp.absolute-position.x - sblk.absolute-position.x, sblk.width - self.width - 8px));
+                    y: agentp.absolute-position.y - sblk.absolute-position.y + agentp.height + 6px;
+                    accessible-id: "agentMenu";
+                    for t[i] in Office.tools: PickRow { id: "chatTool" + t.id; logo: t.id; label: t.name; note: t.ready ? "" : t.hint; on: i == Office.new-tool; dim: !t.ready;
+                        clicked => { Office.start-menu = 0; Office.pick-tool(i); } }
+                }
+                // Where a Kiro task runs.
+                if Office.start-menu == 3: PickMenu {
+                    x: max(8px, min(wherep.absolute-position.x - sblk.absolute-position.x, sblk.width - self.width - 8px));
+                    y: wherep.absolute-position.y - sblk.absolute-position.y + wherep.height + 6px;
+                    accessible-id: "whereMenu";
+                    PickRow { id: "whereLocal"; icon: PagePaths.laptop; label: "This computer"; note: "On this computer, in the folder"; on: !Office.new-cloud;
+                        clicked => { Office.start-menu = 0; if (Office.new-cloud) { Office.toggle-cloud(); } } }
+                    PickRow { id: "whereCloud"; icon: Icons.cloud; label: "Kiro cloud"; on: Office.new-cloud;
+                        note: Office.new-repo == "Empty workspace" ? "In a sandbox with an empty workspace" : "In a sandbox on " + Office.new-repo + ", with a pull request at the end";
+                        clicked => { Office.start-menu = 0; if (!Office.new-cloud) { Office.toggle-cloud(); } } }
+                }
+                // The project: the recent folders, then a folder of any other.
+                if Office.start-menu == 1: PickMenu {
+                    x: max(8px, min(projp.absolute-position.x - sblk.absolute-position.x, sblk.width - self.width - 8px));
+                    y: projp.absolute-position.y - sblk.absolute-position.y + projp.height + 6px;
+                    accessible-id: "projectMenu";
+                    if Office.start-folders.length > 0: Text { height: 26px; text: "Recent"; font-size: 11px; font-weight: 500; color: #f6f2ff80; vertical-alignment: center; x: 8px; }
+                    for f in Office.start-folders: PickRow { id: "proj" + f.label; icon: Icons.folder; label: f.label; note: f.note; on: f.on; clicked => { Office.start-menu = 0; Office.pick-start-folder(f.id); } }
+                    if Office.start-folders.length > 0: Rectangle { height: 9px; Rectangle { y: 4px; x: 2px; width: parent.width - 4px; height: 1px; background: #ffffff0f; } }
+                    MenuItem { id: "projOpen"; icon: Icons.folder-open; text: "Open folder…"; clicked => { Office.start-menu = 0; Office.pick-start-folder(""); } }
+                }
+                // What the task may do (the access menu, dropping from its pill).
+                if Office.access-menu: PickMenu {
+                    x: max(8px, min(accp.absolute-position.x - sblk.absolute-position.x, sblk.width - self.width - 8px));
+                    y: accp.absolute-position.y - sblk.absolute-position.y + accp.height + 6px;
+                    accessible-id: "accessMenu";
+                    Text { height: 26px; text: Office.access-head; font-size: 11px; font-weight: 500; color: #f6f2ff80; vertical-alignment: center; x: 8px; }
+                    for o in Office.access-opts: PickRow { id: "acc" + o.id; icon: o.id == "read" ? Icons.view : PagePaths.shield; label: o.label; note: o.note; on: o.on; clicked => { Office.pick-access(o.id); } }
                 }
             }
         }
@@ -2147,8 +2266,8 @@ export component OfficeView inherits Rectangle {
         }
 
         // #mMenu for the access chip: each choice with its note, then where it holds.
-        if Office.access-menu: TouchArea { clicked => { Office.open-access(); } }
-        if Office.access-menu: Glass {
+        if Office.access-menu && !(chat && !Office.drawer): TouchArea { clicked => { Office.open-access(); } }
+        if Office.access-menu && !(chat && !Office.drawer): Glass {
             x: pop-x >= 0 ? max(8px, min(pop-x - root.absolute-position.x, parent.width - self.width - 8px)) : 22px;
             y: pop-x >= 0 ? max(8px, pop-y - root.absolute-position.y - self.height - 6px) : parent.height - self.height - 60px;
             width: 250px;
@@ -2184,7 +2303,7 @@ export component OfficeView inherits Rectangle {
         if Office.repo-menu: TouchArea { clicked => { Office.open-repos(); } }
         if Office.repo-menu: Glass {
             x: pop-x >= 0 ? max(8px, min(pop-x - root.absolute-position.x, parent.width - self.width - 8px)) : 22px;
-            y: pop-x >= 0 ? max(8px, pop-y - root.absolute-position.y - self.height - 6px) : parent.height - self.height - 60px;
+            y: pop-x >= 0 ? (pop-below ? pop-y - root.absolute-position.y + 6px : max(8px, pop-y - root.absolute-position.y - self.height - 6px)) : parent.height - self.height - 60px;
             width: 270px;
             height: min(rm.preferred-height, parent.height - 120px);
             border-radius: 14px;

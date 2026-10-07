@@ -1677,6 +1677,25 @@ impl App {
                 _ => {}
             }
         });
+        let a = self.clone();
+        g.on_open_folders(move || {
+            let have = a.page.new_folder.borrow().clone();
+            let mut seen: Vec<String> = vec![];
+            // The folders of the newest chats, open now or saved; the ones gone from this computer are left out.
+            let mut saved = a.hover.history.as_ref().map(|h| h.entries()).unwrap_or_default();
+            saved.sort_by_key(|h| std::cmp::Reverse(h.updated.unix_ms()));
+            for f in a.hover.sessions.all().iter().map(|x| x.folder.clone()).chain(saved.into_iter().map(|h| h.folder)) {
+                if seen.len() < 6 && hover_agents::usable_folder(Some(&f)) && !seen.contains(&f) { seen.push(f); }
+            }
+            if let Some(f) = have.filter(|f| !seen.contains(f)) { seen.insert(0, f); }
+            let opts: Vec<AccessOpt> = seen.iter().map(|f| AccessOpt { id: s(f), label: s(hover_office::office::short(f)), note: s(f), on: have_eq(&a, f) }).collect();
+            each!(a, |g| if let Some(m) = crate::view::sync(g.get_start_folders(), &opts) { g.set_start_folders(m); });
+        });
+        let a = self.clone();
+        g.on_pick_start_folder(move |f| {
+            let f = if f.is_empty() { crate::pick(true) } else { Some(f.to_string()) };
+            if let Some(f) = f { *a.page.new_folder.borrow_mut() = Some(f); a.office_widgets(); }
+        });
         // The app window's title bar menus (File, Settings, Help).
         g.set_app_version(env!("CARGO_PKG_VERSION").into());
         let a = self.clone();
@@ -2191,7 +2210,7 @@ fn each_reply(a: &App) -> String {
 
 /// main.js ACCESS: what a session may do on its own, picked when it starts.
 pub const ACCESS: [(&str, &str, &str); 4] = [
-    ("full", "Trust all", "Never asks. Edits, runs commands and goes online on its own."),
+    ("full", "Full access", "Never asks. Edits, runs commands and goes online on its own."),
     ("risky", "Ask first", "Asks before commands, deletes, the network and anything outside the folder."),
     ("always", "Ask always", "Asks before every change and every command."),
     ("read", "Read only", "Reads and searches. Changes nothing."),
@@ -2207,7 +2226,7 @@ fn short_model(name: &str) -> String {
     }
 }
 
-pub(crate) fn access_label(id: &str) -> &'static str { ACCESS.iter().find(|a| a.0 == id).map_or("Trust all", |a| a.1) }
+pub(crate) fn access_label(id: &str) -> &'static str { ACCESS.iter().find(|a| a.0 == id).map_or("Full access", |a| a.1) }
 
 /// accessNote: Codex's Ask first is its own preset, which lets the rest run.
 pub fn access_note(id: &str, tool: AgentTool) -> &'static str {
@@ -2279,6 +2298,9 @@ fn to_serde(j: &hover_core::json::Json) -> serde_json::Value {
 }
 
 /// ago(): "now", "5 min ago", "3 h ago", "2 d ago".
+/// Whether that folder is the one picked for the new task.
+fn have_eq(a: &Rc<App>, f: &str) -> bool { a.page.new_folder.borrow().as_deref() == Some(f) }
+
 /// The sidebar's short age: now, 5m, 3h, Yesterday, 4d, 2w.
 fn when_short(ms: i64) -> String {
     let m = ms.max(0) / 60_000;
