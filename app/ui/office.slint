@@ -184,6 +184,8 @@ export global Office {
     in property <string> d-voice;
     // "Latest": the reader is well above the end of the thread.
     in property <bool> d-jump;
+    // The pointer is over a link, a button or a line of the thread that opens (a hand, not the text cursor).
+    in property <bool> d-over;
     in-out property <length> d-thread-w;
     in-out property <length> d-thread-h;
     // Expanded chat: the open chat fills the app window, with the session list and the
@@ -2599,6 +2601,7 @@ export component OfficeView inherits Rectangle {
                     changed height => { Office.d-thread-h = self.height; Office.d-resized(); }
                     Image { width: 100%; height: 100%; source: Office.d-thread; image-fit: fill; }
                     TouchArea {
+                        mouse-cursor: Office.d-over ? pointer : text;
                         scroll-event(e) => { Office.d-wheel(e.delta-y); accept }
                         clicked => { Office.d-click(self.mouse-x, self.mouse-y); }
                         pointer-event(e) => {
@@ -2613,7 +2616,9 @@ export component OfficeView inherits Rectangle {
                             }
                             if (e.button == PointerEventButton.left && e.kind == PointerEventKind.up) { Office.d-pointer(2, self.mouse-x, self.mouse-y, false); }
                         }
-                        moved => { if (self.pressed) { Office.d-pointer(1, self.mouse-x, self.mouse-y, false); } }
+                        moved => { if (self.pressed) { Office.d-pointer(1, self.mouse-x, self.mouse-y, false); } else { Office.d-pointer(5, self.mouse-x, self.mouse-y, false); } }
+                        // Off the thread: not over anything that opens.
+                        changed has-hover => { if (!self.has-hover) { Office.d-pointer(6, 0, 0, false); } }
                     }
                     }
                     // .jump: "Latest", over the thread's end, once the reader is well above it.

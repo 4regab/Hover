@@ -2015,6 +2015,17 @@ impl App {
     /// the click's (thread_click).
     fn thread_pointer(self: &Rc<Self>, kind: i32, x: f32, y: f32, shift: bool) {
         use hover_chat::{Hit, Pos, Unit};
+        // 5: moving with no button down; 6: the pointer left. A hand over a link, a button or a line that opens.
+        // Only the cursor changes, so the thread is not painted again.
+        if kind == 5 || kind == 6 {
+            let over = kind == 5 && {
+                let chat = self.page.thread.borrow();
+                let Some(c) = chat.as_ref() else { return };
+                matches!(c.thread.hit(x, y + c.scroll), Hit::Link(_) | Hit::Toggle(_) | Hit::Act(..))
+            };
+            each!(self, |g| if g.get_d_over() != over { g.set_d_over(over); });
+            return;
+        }
         {
             let mut chat = self.page.thread.borrow_mut();
             let Some(c) = chat.as_mut() else { return };
