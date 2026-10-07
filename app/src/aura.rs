@@ -1,101 +1,85 @@
-//! Voice's aura: a pulsing ring of light on the listening and working cards, in place
-//! of their words. Slint has no shaders of its own, so it is drawn here on the CPU into
-//! a small image (66 DIPs, about 17 000 pixels at 2x: a millisecond or two a frame).
+//! Voice's aura: a Siri-style orb on the listening and working cards, in place of their
+//! words. Slint has no shaders of its own, so it is drawn here on the CPU into a small
+//! image (66 DIPs, about 17 000 pixels at 2x: a millisecond or two a frame).
 //!
-//! How it moves in each state follows LiveKit Agents UI's Aura visualizer (the state
-//! table in its use-agent-audio-visualizer-aura.ts, Apache-2.0): listening swirls
-//! slowly with a gentle pulse, working swirls faster with a deep one, and the voice's
-//! level swells it as an agent's does when it speaks. The drawing is Hover's own:
-//! LiveKit's shader is Unicorn Studio's, under a non-resale licence, and isn't used.
+//! The orb is a dark glass ball with soft blobs of light swirling inside it, a bright rim
+//! and a faint glow round it, as Siri's orb was from iOS 14 to 17. The blobs' colours are
+//! made from the one picked in Settings → Voice (it, the hues either side of it and one
+//! further round; a pale tint of it lights the glass), so the orb stays one family of colour. Listening, it swirls and the voice
+//! swells it; working on what was said, it swirls slowly and breathes.
 //!
 //! The voice is read against the room: the quietest level heard is taken as the room's
 //! noise and the loudest lately as full voice, so speech uses the whole range whatever the
-//! microphone's gain. Small dots orbit the ring and drift out and brighten as the voice
-//! rises, and a thin ring spreads out from it on a sudden loud sound.
+//! microphone's gain.
 
 use slint::{Image, Rgba8Pixel, SharedPixelBuffer};
-use std::f32::consts::{PI, TAU};
+use std::f32::consts::TAU;
 
 /// What the card is doing.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Mode {
-    /// Recording: the voice's level swells the ring.
+    /// Recording: the voice's level swells the orb.
     Listening,
     /// Starting local speech, transcribing, cleaning up, finding the project.
     Working,
 }
 
-/// The strands of light that make the ring, and the angle steps each is sampled at.
-const STRANDS: usize = 12;
-const BINS: usize = 360;
-/// The dots that orbit it, and how long a ripple lasts (seconds) and how far it travels.
-const DOTS: usize = 16;
-const RIPPLE_LIFE: f32 = 0.9;
-const RIPPLE_REACH: f32 = 0.08;
+/// The blobs of light inside the orb.
+const BLOBS: usize = 4;
 
-/// A number in 0..1 that is always the same for the same `i` and `k`: each dot's own
-/// angle, speed, size and twinkle.
-fn rnd(i: usize, k: u32) -> f32 {
-    let mut x = (i as u32).wrapping_mul(0x9E37_79B1) ^ k.wrapping_mul(0x85EB_CA6B);
-    x ^= x >> 15;
-    x = x.wrapping_mul(0x2C1B_3C6D);
-    x ^= x >> 12;
-    x = x.wrapping_mul(0x297A_2D39);
-    x ^= x >> 15;
-    (x >> 8) as f32 / 16_777_216.0
-}
-
-/// One state's targets (LiveKit's numbers: speed, ring size, turbulence, its frequency,
-/// and the brightness it pulses between, 0.35 s each way).
-struct Look { speed: f32, scale: f32, amplitude: f32, frequency: f32, pulse: (f32, f32) }
+/// One state's targets: how fast the blobs swirl (radians a second), how far the orb
+/// breathes in and out (a fraction of its size) and over how many seconds, and how bright
+/// it is.
+struct Look { speed: f32, breath: f32, period: f32, bright: f32 }
 
 fn look(mode: Mode) -> Look {
     match mode {
-        Mode::Listening => Look { speed: 20.0, scale: 0.3, amplitude: 1.0, frequency: 0.7, pulse: (1.5, 2.0) },
-        Mode::Working => Look { speed: 30.0, scale: 0.3, amplitude: 0.5, frequency: 1.0, pulse: (0.5, 2.5) },
+        Mode::Listening => Look { speed: 1.1, breath: 0.025, period: 2.4, bright: 1.0 },
+        Mode::Working => Look { speed: 0.55, breath: 0.05, period: 2.0, bright: 0.85 },
     }
 }
 
-/// The aura between frames: its eased parameters, its phase, and the strands' radii.
+/// The aura between frames: its eased parameters and its phase.
 pub struct Aura {
     last_t: Option<f32>,
     phase: f32,
     speed: f32,
-    scale: f32,
-    amplitude: f32,
-    frequency: f32,
-    lo: f32,
-    hi: f32,
+    breath: f32,
+    period: f32,
+    bright: f32,
     level: f32,
-    radii: Vec<f32>,
     /// The room's noise and the loudest lately, in the microphone's own 0..1, once heard.
     floor: f32,
     peak: f32,
     heard: bool,
-    /// The voice (0..1 against the room) at the last frame, when a ripple last started, and
-    /// when each one still going began.
-    before: f32,
-    rippled: f32,
-    ripples: Vec<f32>,
 }
 
 impl Default for Aura {
     fn default() -> Self {
         let l = look(Mode::Listening);
-        Aura {
-            last_t: None, phase: 0.0, speed: l.speed, scale: l.scale, amplitude: l.amplitude, frequency: l.frequency,
-            lo: l.pulse.0, hi: l.pulse.1, level: 0.0, radii: vec![0.0; STRANDS * BINS],
-            floor: 0.0, peak: 0.0, heard: false, before: 0.0, rippled: f32::MIN, ripples: vec![],
-        }
+        Aura { last_t: None, phase: 0.0, speed: l.speed, breath: l.breath, period: l.period, bright: l.bright, level: 0.0, floor: 0.0, peak: 0.0, heard: false }
     }
 }
 
 /// Moves `v` toward `to` as an ease-out over about half a second.
 fn ease(v: &mut f32, to: f32, k: f32) { *v += (to - *v) * k; }
 
+/// `rgb` (0..1) with its hue turned by `deg` degrees, keeping its brightness and saturation.
+fn turn_hue(rgb: [f32; 3], deg: f32) -> [f32; 3] {
+    let (max, min) = (rgb[0].max(rgb[1]).max(rgb[2]), rgb[0].min(rgb[1]).min(rgb[2]));
+    let c = max - min;
+    // Grey has no hue to turn: white stays white.
+    if c < 1e-4 { return rgb; }
+    let h = if max == rgb[0] { ((rgb[1] - rgb[2]) / c).rem_euclid(6.0) } else if max == rgb[1] { (rgb[2] - rgb[0]) / c + 2.0 } else { (rgb[0] - rgb[1]) / c + 4.0 };
+    let h = (h + deg / 60.0).rem_euclid(6.0);
+    let x = c * (1.0 - (h % 2.0 - 1.0).abs());
+    let (r, g, b) = match h as u32 { 0 => (c, x, 0.0), 1 => (x, c, 0.0), 2 => (0.0, c, x), 3 => (0.0, x, c), 4 => (x, 0.0, c), _ => (c, 0.0, x) };
+    [r + min, g + min, b + min]
+}
+
 impl Aura {
     /// Forget the last frame: the next one starts at its state's look, not eased into it.
-    pub fn reset(&mut self) { self.last_t = None; self.heard = false; self.ripples.clear(); }
+    pub fn reset(&mut self) { self.last_t = None; self.heard = false; }
 
     /// The microphone's level against the room: 0 at the room's noise, 1 at the loudest
     /// lately. The noise falls to a quieter level at once and follows a louder room over
@@ -123,110 +107,89 @@ impl Aura {
         let to = look(mode);
         let level = if mode == Mode::Listening { self.against_room(level.clamp(0.0, 1.0), dt.max(0.0)) } else { 0.0 };
         if snap || !(0.0..=0.5).contains(&dt) {
-            (self.speed, self.scale, self.amplitude, self.frequency, self.lo, self.hi, self.level) =
-                (to.speed, to.scale, to.amplitude, to.frequency, to.pulse.0, to.pulse.1, level);
-            self.phase = t * 0.05 * self.speed;
+            (self.speed, self.breath, self.period, self.bright, self.level) = (to.speed, to.breath, to.period, to.bright, level);
+            self.phase = t * self.speed;
         } else {
             let k = 1.0 - (-dt / 0.15).exp();
             ease(&mut self.speed, to.speed, k);
-            ease(&mut self.scale, to.scale, k);
-            ease(&mut self.amplitude, to.amplitude, k);
-            ease(&mut self.frequency, to.frequency, k);
-            ease(&mut self.lo, to.pulse.0, k);
-            ease(&mut self.hi, to.pulse.1, k);
+            ease(&mut self.breath, to.breath, k);
+            ease(&mut self.period, to.period, k);
+            ease(&mut self.bright, to.bright, k);
             // The voice comes up quickly and falls away more slowly, as a meter does.
             let kl = 1.0 - (-dt / if level > self.level { 0.04 } else { 0.25 }).exp();
             ease(&mut self.level, level, kl);
-            // The voice turns the ring faster too.
-            self.phase += dt * 0.05 * (self.speed + 45.0 * self.level);
+            // The voice swirls it faster too.
+            self.phase += dt * self.speed * (1.0 + 1.6 * self.level);
         }
-        // A sudden loud sound sends a ripple out (not more than one in 0.35 s, three at most).
-        self.ripples.retain(|b| t - b < RIPPLE_LIFE);
-        if mode == Mode::Listening && !snap && self.level > 0.5 && self.level - self.before > 0.06 && t - self.rippled > 0.35 && self.ripples.len() < 3 {
-            self.ripples.push(t);
-            self.rippled = t;
-        }
-        self.before = self.level;
-        // Brightness swings lo → hi → lo, 0.35 s each way, eased out.
-        let m = (t / 0.35).rem_euclid(2.0);
-        let u = if m < 1.0 { m } else { 2.0 - m };
-        let bright = (self.lo + (self.hi - self.lo) * (1.0 - (1.0 - u) * (1.0 - u))) * (1.0 + 0.6 * self.level);
-        self.draw(px.max(8), t, bright, color.map(|c| c as f32 / 255.0))
+        let breath = (t / self.period * TAU).sin();
+        self.draw(px.max(8), breath, color.map(|c| c as f32 / 255.0))
     }
 
-    fn draw(&mut self, px: u32, t: f32, bright: f32, color: [f32; 3]) -> Image {
-        let (scale, amp) = (self.scale * (0.82 + 0.3 * self.level), self.amplitude * (1.0 + 1.0 * self.level));
-        // Higher frequency: more of the finer ripples.
-        let f = 0.4 + self.frequency;
-        let (ph, rot) = (self.phase, self.phase * 0.15);
-        // Each strand's ring: a few whole waves round the circle (so it closes), each
-        // moving at its own rate, the strands a little out of step so they fan apart
-        // where the waves are steep and braid where they cross.
-        for s in 0..STRANDS {
-            let u = s as f32 / (STRANDS - 1) as f32 - 0.5;
-            for b in 0..BINS {
-                let th = b as f32 / BINS as f32 * TAU - PI + rot;
-                let w = 0.10 * (2.0 * th + 1.0 * ph + 1.2 * u).sin()
-                    + 0.06 * f * (3.0 * th - 1.3 * ph + 2.0 * u + 1.7).sin()
-                    + 0.04 * f * (5.0 * th + 1.7 * ph + 2.8 * u + 4.1).sin();
-                self.radii[s * BINS + b] = scale * (1.0 + 0.8 * amp * w) + u * 0.02 * amp;
-            }
+    /// `breath` is -1..1, where the orb is in its breathing.
+    fn draw(&self, px: u32, breath: f32, color: [f32; 3]) -> Image {
+        let (ph, lv) = (self.phase, self.level);
+        // The orb's radius, in the picture's 0.5: the voice swells it, the breath moves it.
+        let radius = 0.34 * (1.0 + 0.13 * lv) * (1.0 + self.breath * breath);
+        // It brightens as it breathes in, and with the voice.
+        let bright = self.bright * (1.0 + 0.12 * breath * self.breath / 0.05) * (1.0 + 0.5 * lv);
+        // The family of colours: the picked one, its neighbours either side and one further
+        // round for the blobs, and a pale tint for the glass.
+        let pale = color.map(|c| c * 0.45 + 0.55);
+        let cols = [color, turn_hue(color, 38.0), turn_hue(color, -38.0), turn_hue(color, 80.0)];
+        // Each blob: centre, its long axis (along the way it moves), its two sizes, its colour
+        // and strength. They circle the middle at their own rates, nearer and further in turn,
+        // and spread out as the voice rises.
+        let mut blobs = [((0.0f32, 0.0f32), (1.0f32, 0.0f32), 0.0f32, 0.0f32, [0.0f32; 3], 0.0f32); BLOBS];
+        for (i, b) in blobs.iter_mut().enumerate() {
+            let k = i as f32;
+            let way = if i % 2 == 0 { 1.0 } else { -0.8 };
+            let a = ph * way * (0.8 + 0.23 * k) + k * 1.7 + 0.3 * k * k;
+            let r = radius * (0.44 + 0.14 * (ph * (0.6 + 0.17 * k) + 1.9 * k).sin()) * (1.0 + 0.35 * lv);
+            let along = (-(a.sin()) * way, a.cos() * way);
+            let long = radius * (0.58 + 0.10 * (ph * 0.9 + k).sin());
+            let short = radius * (0.17 + 0.04 * (ph * 1.3 + 2.0 * k).cos());
+            *b = ((a.cos() * r, a.sin() * r), along, long, short, cols[i], if i == 3 { 0.6 } else { 0.9 });
         }
-        // The dots: each on its own slow orbit, out from the ring by its own way, more as the
-        // voice rises, and twinkling. (x, y, size, brightness), in the picture's 0.5 radius.
-        let unit = px as f32 / 88.0;
-        let mut dots = [(0.0f32, 0.0f32, 0.0f32, 0.0f32); DOTS];
-        for (i, d) in dots.iter_mut().enumerate() {
-            let turn = (rnd(i, 1) - 0.5) * 2.0 * (0.25 + 0.75 * rnd(i, 2));
-            let a = rnd(i, 3) * TAU + turn * ph * 0.25 + rot;
-            let bin = (((a + PI).rem_euclid(TAU)) / TAU * BINS as f32) as usize % BINS;
-            let ring = self.radii[STRANDS / 2 * BINS + bin];
-            let way = (rnd(i, 4) - 0.5) * 2.0;
-            let r = ring + way * (0.02 + 0.07 * self.level) + 0.008 * (t * (0.8 + rnd(i, 5)) * 2.0 + rnd(i, 6) * TAU).sin();
-            let twinkle = 0.55 + 0.45 * (t * (1.5 + 2.5 * rnd(i, 7)) + rnd(i, 8) * TAU).sin();
-            *d = (a.cos() * r, a.sin() * r, (1.2 + 1.1 * rnd(i, 9)) * unit / px as f32, (0.25 + 0.75 * self.level) * twinkle);
-        }
-        // The ripples: (radius, strength) of each, fading as it spreads.
-        let ripples: Vec<(f32, f32)> = self.ripples.iter().map(|b| {
-            let age = ((t - b) / RIPPLE_LIFE).clamp(0.0, 1.0);
-            (scale + RIPPLE_REACH * (1.0 - (1.0 - age) * (1.0 - age)), 0.32 * (1.0 - age) * (1.0 - age))
-        }).collect();
+        // The middle turns a little against the rim, which twists the blobs into ribbons.
+        let swirl = 1.1 * (ph * 0.37).sin() + 0.6 * lv;
         let n = px as usize;
         let mut buf = SharedPixelBuffer::<Rgba8Pixel>::new(px, px);
         let pixels = buf.make_mut_slice();
-        // In pixels of an 88 px aura, scaled to this one: a thin filament,
-        // its glow, and a faint haze further out.
-        let (core, glow, haze) = (0.9 * unit / n as f32, 3.5 * unit / n as f32, 9.0 * unit / n as f32);
-        let gain = bright / 1.5;
+        // One pixel, in the picture's units: the rim's edge is smoothed over it.
+        let pix = 1.0 / n as f32;
         for y in 0..n {
             for x in 0..n {
                 let (dx, dy) = ((x as f32 + 0.5) / n as f32 - 0.5, (y as f32 + 0.5) / n as f32 - 0.5);
                 let rho = (dx * dx + dy * dy).sqrt();
-                let fade = ((0.5 - rho) / 0.12).clamp(0.0, 1.0);
-                if fade <= 0.0 { pixels[y * n + x] = Rgba8Pixel { r: 0, g: 0, b: 0, a: 0 }; continue; }
-                let bin = (((dy.atan2(dx) + PI) / TAU * BINS as f32) as usize).min(BINS - 1);
-                let mut i = 0.0;
-                for s in 0..STRANDS {
-                    let d = rho - self.radii[s * BINS + bin];
-                    let (c, g, h) = (d / core, d / glow, d / haze);
-                    i += 0.10 * (-c * c).exp() + 0.025 * (-g * g).exp() + 0.006 / (1.0 + h * h);
+                let q = rho / radius;
+                // Outside the orb only its glow shows, fading out before the picture's edge.
+                let edge_fade = ((0.5 - rho) / 0.1).clamp(0.0, 1.0);
+                let halo = 0.22 * bright * (-((q - 1.0).max(0.0) / 0.3).powi(2)).exp() * edge_fade * edge_fade;
+                let inside = ((radius - rho) / pix + 0.5).clamp(0.0, 1.0);
+                let mut v = [0.0f32; 3];
+                if inside > 0.0 {
+                    let s = swirl * (1.0 - q).max(0.0).powi(2);
+                    let (sn, cs) = s.sin_cos();
+                    let (rx, ry) = (dx * cs - dy * sn, dx * sn + dy * cs);
+                    for &((cx, cy), (ax, ay), long, short, col, strength) in &blobs {
+                        let (ox, oy) = (rx - cx, ry - cy);
+                        let (u, w) = ((ox * ax + oy * ay) / long, (-ox * ay + oy * ax) / short);
+                        let g = strength * (-(u * u + w * w)).exp();
+                        for c in 0..3 { v[c] += g * col[c]; }
+                    }
+                    // The glass: a rim in the pale tint that brightens toward the edge, and a soft
+                    // white highlight up and to the left.
+                    let rim = 0.45 * q.powi(12);
+                    let (hx, hy) = (dx / radius + 0.36, dy / radius + 0.42);
+                    let shine = 0.16 * (-(hx * hx / 0.07 + hy * hy / 0.035)).exp();
+                    for c in 0..3 { v[c] = (v[c] * 1.25 + 0.07 * color[c] + rim * pale[c] + shine) * bright * inside; }
                 }
-                for &(dotx, doty, size, lit) in &dots {
-                    let d2 = (dx - dotx) * (dx - dotx) + (dy - doty) * (dy - doty);
-                    let q = d2 / (size * size);
-                    if q < 36.0 { i += lit * (0.55 * (-q).exp() + 0.08 * (-q / 9.0).exp()); }
-                }
-                for &(rr, strength) in &ripples {
-                    let w = (rho - rr) / (glow * 1.3);
-                    i += strength * (-w * w).exp();
-                }
-                let i = i * gain * fade * fade;
                 // Light adds up to white where it is brightest, the colour round it.
-                let c = |k: f32| 1.0 - (-i * (k * 2.5 + 0.15)).exp();
-                let (r, g, b) = (c(color[0]), c(color[1]), c(color[2]));
-                let a = r.max(g).max(b);
-                let q = |v: f32| (v * 255.0).round().clamp(0.0, 255.0) as u8;
-                pixels[y * n + x] = Rgba8Pixel { r: q(r), g: q(g), b: q(b), a: q(a) };
+                let out = [0, 1, 2].map(|c| 1.0 - (-(v[c] + halo * (1.0 - inside) * color[c] * 1.4)).exp());
+                // The ball itself is dark glass over whatever is behind (the notch is black).
+                let a = out[0].max(out[1]).max(out[2]).max(0.92 * inside);
+                let q8 = |f: f32| (f * 255.0).round().clamp(0.0, 255.0) as u8;
+                pixels[y * n + x] = Rgba8Pixel { r: q8(out[0]), g: q8(out[1]), b: q8(out[2]), a: q8(a) };
             }
         }
         Image::from_rgba8_premultiplied(buf)

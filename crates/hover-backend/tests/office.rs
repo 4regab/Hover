@@ -67,7 +67,7 @@ fn the_state_has_the_names_of_the_c_sharp_snapshot_in_its_order() {
     assert_eq!(keys(&state), ["type", "canStart", "maxRunning", "spaces", "folder", "tool", "tools", "sessions", "history"]);
     assert_eq!(state.get("spaces"), Some(&Json::Bool(false)), "agent desktops are off, here and wherever Cua isn't");
     let tools = state.get("tools").unwrap().items().unwrap();
-    assert_eq!(tools.iter().map(|t| t.get("id").unwrap().as_str().unwrap()).collect::<Vec<_>>(), ["kiro", "codex", "cursor", "opencode", "claude"]);
+    assert_eq!(tools.iter().map(|t| t.get("id").unwrap().as_str().unwrap()).collect::<Vec<_>>(), ["kiro", "codex", "cursor", "opencode", "claude", "agy"]);
     assert_eq!(keys(&tools[0]), ["id", "name", "ready", "hint", "checkedYet", "installed", "signedIn", "canSetup", "setup", "access", "readOnly", "hideSteps",
         "models", "model", "efforts", "effort", "effortLabel", "questions"]);
     assert_eq!(keys(tools[0].get("setup").unwrap()), ["step", "line", "error", "busy", "needs"]);

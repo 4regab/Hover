@@ -47,6 +47,11 @@ export struct AskData { id: string, title: string, command: string, path: string
     question: bool, qs: [QData] }
 // A model or an effort in the model menu.
 export struct MOpt { id: string, label: string, on: bool }
+// A model's credit rate against Auto, as its row in Kiro's picker tags it ("2.2x"); tone 1 is cheap (green), 2 dear (amber).
+export struct MRate { text: string, tone: int }
+// A row of the reply box's @ / / list. kind: 0 a group's label, 1 a file (name, dir), 2 a command (name, note), 3 a word
+// that nothing matches. idx counts what can be picked (-1 for the rest); sel is the lit one.
+export struct PopRow { kind: int, name: string, dir: string, note: string, sel: bool, idx: int }
 // A bot's name tag and its bubble. stage: 0 waking, 1 working, 2 done, 3 failed, 4 stopped,
 // 5 waiting (its question shows over its head in place of the bubble).
 export struct TagData { id: int, x: length, y: length, name: string, color: color, tool: string, tool-color: color, text: string, stage: int, hot: bool,
@@ -59,8 +64,9 @@ export struct ToolData { id: string, name: string, ready: bool, hint: string }
 export struct PanelRow { kind: int, text: string, sub: string, meta: string, color: color, stage: int, count: string, open: int, key: string, pct: float, desk: bool,
     s1: string, s2: string, s3: string, s4: string }
 
-// A row of the expanded chat's session list: a heading, or a session (live, or saved) with the tool's id and its stage.
-export struct ListRow { head: bool, text: string, tool: string, stage: int, on: bool }
+// A row of the expanded chat's session list: a project folder (folded or not), or a session (live, or saved) with the tool's id,
+// its stage and how long ago it ended ("" while it is at work).
+export struct ListRow { head: bool, text: string, tool: string, stage: int, on: bool, when: string, shut: bool }
 
 export global Office {
     // The office's items are made (office_ui: false once the office is dropped after 30 s
@@ -88,7 +94,7 @@ export global Office {
     in property <bool> menu;
     // The new task's tool access (ACCESS in main.js): its label, whether it is Trust all
     // (amber), and the menu of choices.
-    in property <string> new-access: "Trust all";
+    in property <string> new-access: "Full access";
     in property <bool> new-access-full: true;
     in property <string> new-access-tip;
     in property <bool> access-menu;
@@ -124,11 +130,15 @@ export global Office {
     in property <length> model-y;
     in property <string> mm-head;
     in property <[MOpt]> mm-models;
+    // Each model's credit rate, in the same order (empty for a tool that has none).
+    in property <[MRate]> mm-rates;
     // Which of them is the picked one (the list opens on it).
     in property <int> mm-cur;
     in property <string> mm-effort-head;
     in property <[MOpt]> mm-efforts;
     in property <string> mm-note;
+    // Kiro's picker ends with its compact row (a click opens Settings → Kiro); the note is its words.
+    in property <bool> mm-compact;
     // The note before the first task (KiroPage.Notice): the office waits behind it.
     in property <bool> notice;
     // The pictures attached to the reply (d-) and the new task (n-), as thumbnails.
@@ -183,19 +193,27 @@ export global Office {
     in property <string> d-voice;
     // "Latest": the reader is well above the end of the thread.
     in property <bool> d-jump;
+    // The pointer is over a link, a button or a line of the thread that opens (a hand, not the text cursor).
+    in property <bool> d-over;
+    // The list over the reply box: @ lists the folder's files, / the commands. The words and the caret are told as they
+    // change; ↑ ↓ move the lit row, Enter or Tab picks it, Esc closes. A pick answers "model" when the picker should open.
+    in property <[PopRow]> pop-rows;
+    in property <bool> pop-pickable;
+    callback pop-text(string, int);
+    callback pop-move(int);
+    callback pop-pick(int) -> string;
+    callback pop-close();
     in-out property <length> d-thread-w;
     in-out property <length> d-thread-h;
     // Expanded chat: the open chat fills the app window, with the session list and the
     // desk's panel (files, changes) beside it. Its header's status, and the branch the
     // workspace is on.
     in property <bool> d-wide;
-    in property <string> d-status;
-    in property <int> d-stage;
     in property <string> d-branch;
     in property <[ListRow]> list;
     in-out property <bool> list-open: true;
-    in-out property <length> list-w: 248px;
-    // A note over the reply box (a usage limit, replies held after Stop) and its buttons; the header's More menu.
+    in-out property <length> list-w: 260px;
+    // A note over the reply box (replies held after Stop) and its buttons; the header's More menu.
     // What is attached to the reply (context chips): their labels, and × takes one off.
     in property <[string]> d-chips;
     callback d-chip-remove(int);
@@ -205,16 +223,42 @@ export global Office {
     in-out property <bool> d-more;
     callback d-note-act(int);
     callback d-more-act(int);
+    // The chat view's ⋯ menu: open, which list is out of it (0 none, 1 Open in, 2 Switch agent), the editors found on this
+    // computer, the agents the chat can switch to, the file manager's name; a name typed for the chat, and a pick (editor:ID,
+    // fm, terminal, files, to:ID, fork, delete). Opening it asks for its lists.
+    in-out property <bool> d-menu;
+    // The title is being renamed in place.
+    in-out property <bool> d-renaming;
+    in-out property <int> d-fly;
+    in property <[MOpt]> d-editors;
+    in property <[MOpt]> d-switch;
+    in property <string> d-fm;
+    callback d-menu-open();
+    callback d-rename(string);
+    callback d-menu-act(string);
     callback d-expand();
     callback d-collapse();
     // The switch at the top left: the chat view in place of the office, or back; and the
     // chat view's New chat (its start screen).
     callback toggle-view();
     callback new-chat();
-    callback d-stop();
-    callback d-editor();
-    callback d-details();
     callback list-clicked(int);
+    // The start screen's menus: which is out (0 none, 1 project, 2 agent, 3 where it runs), the recent folders, and a pick of one
+    // ("" is Open folder…). Asking for the folders is what opens the project menu.
+    in-out property <int> start-menu;
+    in property <[AccessOpt]> start-folders;
+    callback open-folders();
+    callback pick-start-folder(string);
+    // A folder row's fold, and a chat row's Delete.
+    callback list-fold(int);
+    callback list-delete(int);
+    // The window's title bar menus (app.slint): the version they show, and what their items do.
+    in property <string> app-version;
+    callback menu-new-chat();
+    callback menu-open-folder();
+    callback open-settings-page(int);
+    callback open-link(string);
+    callback open-logs();
     callback pointer(int, length, length);
     callback wheel(length, length, length);
     callback key(string);
@@ -367,95 +411,76 @@ component Graphite inherits Rectangle {
 }
 
 // .x: a 32 px square button in the drawer's and panel's header.
-// The switch at the office's top left: the office (an isometric room) or the chat view (a
-// speech bubble). Drawn here, not taken from Lucide: a lit thumb springs between the two
-// marks, the mark under it white and the other dim. Space or Enter flips it too.
+// The switch between the office and the chat view, in the sidebar's top left and over the office (the same spot): two
+// icons, fully round. A quiet thumb sits under the one picked and only its icon takes the accent. The thumb does not slide:
+// the view changes at once. Space or Enter flips it, Left and Right pick a side.
 component ViewSwitch inherits Rectangle {
     in property <bool> chat;
     in property <bool> small;
+    // Over the 3D office it sits on dark glass so it reads on the room; in the sidebar it is a quiet pill.
+    in property <bool> glass;
     callback toggled;
     property <length> pad: 3px;
-    property <length> knob: self.height - 2 * pad;
-    width: small ? 64px : 74px;
-    height: small ? 32px : 36px;
+    width: small ? 68px : 76px;
+    height: small ? 28px : 32px;
     border-radius: self.height / 2;
-    background: #18121ef0;
+    background: glass ? #0c0b0ecc : #ffffff07;
     border-width: 1px;
-    border-color: ta.has-hover || fs.has-focus ? #c4a2ff59 : #ffffff1f;
-    animate border-color { duration: Pal.motion ? 160ms : 0ms; }
+    border-color: glass ? #ffffff14 : #ffffff0a;
     accessible-role: switch;
     accessible-id: "viewSwitch";
     accessible-label: "Chat view";
     accessible-checkable: true;
     accessible-checked: chat;
     accessible-action-default => { toggled(); }
-    // The thumb: a lit purple disc in a soft halo (rounded layers, not a drop shadow, which
-    // some renderers draw square), with a little overshoot as it lands.
-    property <length> at: chat ? self.width - pad - knob : pad;
-    animate at { duration: Pal.motion ? 340ms : 0ms; easing: cubic-bezier(0.34, 1.45, 0.64, 1); }
-    Rectangle { x: at - 2px; y: pad - 2px; width: knob + 4px; height: knob + 4px; border-radius: self.height / 2; background: #9b6bff2e; }
     Rectangle {
-        x: at;
+        x: chat ? parent.width / 2 : pad;
         y: pad;
-        width: knob;
-        height: knob;
-        border-radius: knob / 2;
-        // Solid: the software renderer squares a gradient's corners.
-        background: #9466f5;
+        width: parent.width / 2 - pad;
+        height: parent.height - 2 * pad;
+        border-radius: self.height / 2;
+        background: #ffffff14;
         border-width: 1px;
-        border-color: #c9adff;
+        border-color: #ffffff0a;
     }
-    // The office: a small isometric room with a desk in it.
-    Path {
-        x: pad + (knob - self.width) / 2; y: (parent.height - self.height) / 2;
-        width: small ? 15px : 17px; height: self.width;
-        viewbox-width: 24; viewbox-height: 24;
-        commands: "M 12 2.8 L 20.2 7.4 L 20.2 16.6 L 12 21.2 L 3.8 16.6 L 3.8 7.4 Z M 3.8 7.4 L 12 12 L 20.2 7.4 M 12 12 L 12 21.2 M 7.6 13.4 L 9.9 14.7 M 14.1 14.7 L 16.4 13.4";
-        fill: transparent;
-        stroke: chat ? #f6f2ff73 : #ffffff;
-        stroke-width: 1.9px;
-        stroke-line-cap: round;
-        stroke-line-join: round;
-        animate stroke { duration: Pal.motion ? 200ms : 0ms; }
-    }
-    // The chat: a rounded bubble with its tail, and three dots in it.
-    Path {
-        x: parent.width - pad - knob + (knob - self.width) / 2; y: (parent.height - self.height) / 2;
-        width: small ? 15px : 17px; height: self.width;
-        viewbox-width: 24; viewbox-height: 24;
-        commands: "M 7 4 H 17 A 3.2 3.2 0 0 1 20.2 7.2 V 13.4 A 3.2 3.2 0 0 1 17 16.6 H 11.4 L 7.2 20 V 16.6 H 7 A 3.2 3.2 0 0 1 3.8 13.4 V 7.2 A 3.2 3.2 0 0 1 7 4 Z M 8.4 10.3 L 8.41 10.3 M 12 10.3 L 12.01 10.3 M 15.6 10.3 L 15.61 10.3";
-        fill: transparent;
-        stroke: chat ? #ffffff : #f6f2ff73;
-        stroke-width: 1.9px;
-        stroke-line-cap: round;
-        stroke-line-join: round;
-        animate stroke { duration: Pal.motion ? 200ms : 0ms; }
-    }
-    ta := TouchArea { mouse-cursor: pointer; clicked => { root.toggled(); } }
+    // The office: a desk whose screen shows a bot's eyes, as the office's bots look.
+    Icon { x: (parent.width / 2 - self.width) / 2; y: (parent.height - self.height) / 2; name: PagePaths.desk; size: 15px;
+        tint: !chat ? #c4a2ff : oa.has-hover ? #f6f2ffb0 : #f6f2ff80; }
+    // The chat: a message bubble.
+    Icon { x: parent.width / 2 + (parent.width / 2 - self.width) / 2; y: (parent.height - self.height) / 2; name: PagePaths.chat; size: 15px;
+        tint: chat ? #c4a2ff : ca.has-hover ? #f6f2ffb0 : #f6f2ff80; }
+    oa := TouchArea { x: 0; width: parent.width / 2; mouse-cursor: pointer; clicked => { if (root.chat) { root.toggled(); } } }
+    ca := TouchArea { x: parent.width / 2; width: parent.width / 2; mouse-cursor: pointer; clicked => { if (!root.chat) { root.toggled(); } } }
     fs := FocusScope {
         focus-on-click: false;
-        key-pressed(e) => { if (e.text == " " || e.text == "\n") { root.toggled(); return accept; } reject }
+        key-pressed(e) => {
+            if (e.text == " " || e.text == "\n") { root.toggled(); return accept; }
+            if (e.text == Key.LeftArrow && root.chat) { root.toggled(); return accept; }
+            if (e.text == Key.RightArrow && !root.chat) { root.toggled(); return accept; }
+            reject
+        }
     }
-    out property <bool> hovered: ta.has-hover;
+    // Which half the pointer is on (1 office, 2 chat), for the name shown under it.
+    out property <int> side: oa.has-hover ? 1 : ca.has-hover ? 2 : 0;
 }
 
-// A row of the chat view's sidebar: an icon and its words (New chat, Settings).
+// A row of the chat view's sidebar: an icon and its words (New chat).
 component SideRow inherits Rectangle {
     in property <string> icon;
     in property <string> text;
     in property <string> id;
     in property <bool> small;
     callback clicked;
-    height: small ? 30px : 34px;
-    border-radius: 9px;
-    background: ta.has-hover ? #ffffff0f : transparent;
+    height: small ? 30px : 32px;
+    border-radius: 8px;
+    background: ta.has-hover ? #ffffff0b : transparent;
     accessible-role: button;
     accessible-id: id;
     accessible-label: text;
     accessible-action-default => { clicked(); }
-    HorizontalLayout { padding-left: 9px; padding-right: 9px; spacing: 9px;
-        VerticalLayout { alignment: center; Icon { name: icon; size: 15px; tint: ta.has-hover ? #f6f2ff : #f6f2ffc4; } }
-        Text { text: text; font-size: 12.5px; font-weight: 500; color: ta.has-hover ? #f6f2ff : #f6f2ffc4; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; } }
+    HorizontalLayout { padding-left: 10px; padding-right: 10px; spacing: 10px;
+        VerticalLayout { alignment: center; Icon { name: icon; size: 15px; tint: #f6f2ffb0; } }
+        Text { text: text; font-size: 13px; font-weight: 500; color: #f6f2ff; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; } }
     ta := TouchArea { mouse-cursor: pointer; clicked => { root.clicked(); } }
 }
 
@@ -565,6 +590,16 @@ global PagePaths {
     out property <string> shrink: "M4 14h6v6 M20 10h-6V4 M14 10l7-7 M3 21l7-7";
     out property <string> sidebar: "M5 3h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Z M9 3v18";
     out property <string> bin: "M4 7h16 M10 11v6 M14 11v6 M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12 M9 7V4h6v3";
+    out property <string> pen: "M12 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7 M18.375 2.625a1 1 0 0 1 3 3l-9.013 9.014a2 2 0 0 1-.853.505l-2.873.84a.5.5 0 0 1-.62-.62l.84-2.873a2 2 0 0 1 .506-.852z";
+    out property <string> swap: "M8 3 4 7l4 4 M4 7h16 M16 21l4-4-4-4 M20 17H4";
+    out property <string> fork: "M15 18A3 3 0 1 0 9 18 3 3 0 1 0 15 18Z M9 6A3 3 0 1 0 3 6 3 3 0 1 0 9 6Z M21 6A3 3 0 1 0 15 6 3 3 0 1 0 21 6Z M18 9v2c0 .6-.4 1-1 1H7c-.6 0-1-.4-1-1V9 M12 12v3";
+    out property <string> code: "m18 16 4-4-4-4 M6 8l-4 4 4 4 M14.5 4l-5 16";
+    out property <string> terminal: "m4 17 6-6-6-6 M12 19h8";
+    out property <string> laptop: "M20 16V7a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v9 M20 16H4 M20 16l1.28 2.55a1 1 0 0 1-.9 1.45H3.62a1 1 0 0 1-.9-1.45L4 16";
+    out property <string> desk: "M7 3.5H17A2 2 0 0 1 19 5.5V11A2 2 0 0 1 17 13H7A2 2 0 0 1 5 11V5.5A2 2 0 0 1 7 3.5Z M10 7.2v2.1 M14 7.2v2.1 M12 13v3 M2.5 16h19 M5 16v4.5 M19 16v4.5";
+    out property <string> tag: "M12.586 2.586A2 2 0 0 0 11.172 2H4a2 2 0 0 0-2 2v7.172a2 2 0 0 0 .586 1.414l8.704 8.704a2.426 2.426 0 0 0 3.42 0l6.58-6.58a2.426 2.426 0 0 0 0-3.42Z M7.5 7.5h.01";
+    out property <string> bulb: "M15 14c.2-1 .7-1.7 1.5-2.5 1-.9 1.5-2.2 1.5-3.5A6 6 0 0 0 6 8c0 1 .2 2.2 1.5 3.5.7.7 1.3 1.5 1.5 2.5 M9 18h6 M10 22h4";
+    out property <string> logs: "M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z M14 2v4a2 2 0 0 0 2 2h4 M10 9H8 M16 13H8 M16 17H8";
 }
 
 // .lg: a tool's logo in its circle (LOGOS in main.js, from LobeHub, MIT; the marks
@@ -577,14 +612,15 @@ component Logo inherits Rectangle {
     in property <length> radius: self.width / 2;
     property <bool> codex: tool == "codex";
     property <bool> claude: tool == "claude";
+    property <bool> agy: tool == "agy";
     // Kiro's mark as an image: femtovg fills a Path this small in a few straight cuts,
     // which ran its eyes into one bar. The SVG is drawn at the size it shows.
-    property <bool> kiro: !(codex || claude || tool == "cursor" || tool == "opencode");
+    property <bool> kiro: !(codex || claude || agy || tool == "cursor" || tool == "opencode");
     border-radius: radius;
     // .lg.off: grayscale(1) brightness(.55), worked out for each tile and mark.
-    background: !ready ? (codex ? #8c8c8c : tool == "cursor" ? #070708 : tool == "opencode" ? #09090a : claude ? #4a4a4a : #363636)
-        : codex ? white : tool == "cursor" ? #0d0d10 : tool == "opencode" ? #101012 : claude ? #d97757 : #9046ff;
-    border-width: tool == "cursor" || tool == "opencode" ? 1px : 0;
+    background: !ready ? (codex ? #8c8c8c : tool == "cursor" ? #070708 : tool == "opencode" || agy ? #09090a : claude ? #4a4a4a : #363636)
+        : codex ? white : tool == "cursor" ? #0d0d10 : tool == "opencode" || agy ? #101012 : claude ? #d97757 : #9046ff;
+    border-width: tool == "cursor" || tool == "opencode" || agy ? 1px : 0;
     border-color: #ffffff24;
     if kiro: Image {
         width: mark;
@@ -594,16 +630,17 @@ component Logo inherits Rectangle {
     }
     if !kiro: Path {
         // Claude's spark fills its whole grid, so it is drawn a little smaller (Marks' pad).
-        width: claude ? mark * 0.82 : mark;
-        height: claude ? mark * 0.82 : mark;
+        width: claude || agy ? mark * 0.82 : mark;
+        height: claude || agy ? mark * 0.82 : mark;
         viewbox-x: codex ? 3 : 0;
         viewbox-y: codex ? 2.9 : 0;
         viewbox-width: codex ? 18 : 24;
         viewbox-height: codex ? 18.2 : 24;
-        commands: codex ? MarkPaths.codex : tool == "cursor" ? MarkPaths.cursor : claude ? MarkPaths.claude : MarkPaths.opencode;
-        fill-rule: codex || claude ? nonzero : evenodd;
-        fill: !ready ? (codex ? #565656 : tool == "cursor" ? #828283 : claude ? #9a9a9a : #868687)
-            : codex ? @linear-gradient(180deg, #b1a7ff 0%, #7a9dff 50%, #3941ff 100%) : tool == "cursor" ? #ececf0 : claude ? white : #f4f4f6;
+        commands: codex ? MarkPaths.codex : tool == "cursor" ? MarkPaths.cursor : claude ? MarkPaths.claude : agy ? MarkPaths.agy : MarkPaths.opencode;
+        fill-rule: codex || claude || agy ? nonzero : evenodd;
+        fill: !ready ? (codex ? #565656 : tool == "cursor" ? #828283 : claude || agy ? #9a9a9a : #868687)
+            : codex ? @linear-gradient(180deg, #b1a7ff 0%, #7a9dff 50%, #3941ff 100%) : tool == "cursor" ? #ececf0 : claude ? white
+            : agy ? @linear-gradient(90deg, #00b95c 0%, #3186ff 45%, #fc413d 80%, #ffe432 100%) : #f4f4f6;
         stroke: transparent;
     }
     // Codex's prompt again, in the tile's colour (see MarkPaths).
@@ -875,7 +912,7 @@ component Tag inherits Rectangle {
                     padding-bottom: 3px;
                     spacing: 5px;
                     VerticalLayout { alignment: center; Logo { width: 15px; height: 15px; radius: 4px; mark: 10px; tool: t.tool-id;
-                        border-width: t.hot ? 1px : (t.tool-id == "cursor" || t.tool-id == "opencode" ? 1px : 0); border-color: t.hot ? #ffffff99 : #ffffff24; } }
+                        border-width: t.hot ? 1px : (t.tool-id == "cursor" || t.tool-id == "opencode" || t.tool-id == "agy" ? 1px : 0); border-color: t.hot ? #ffffff99 : #ffffff24; } }
                     Text { text: t.name; font-family: "Pixelify Sans"; font-weight: 600; font-size: 12px; letter-spacing: 0.36px; color: white; vertical-alignment: center; }
                 }
                 TouchArea { mouse-cursor: pointer; clicked => { clicked(); } }
@@ -1026,7 +1063,7 @@ component RowView inherits Rectangle {
     }
 }
 
-// .mpill: the model and its effort, with a chevron; its menu opens above it.
+// .pill.model: the model and its effort ("Opus 5.5 · High"; Auto has none), with a chevron; its menu opens by it.
 component MPill inherits Rectangle {
     in property <string> model;
     in property <string> effort;
@@ -1036,8 +1073,8 @@ component MPill inherits Rectangle {
     callback clicked(length, length);
     height: 28px;
     width: min(max-w, pl.preferred-width);
-    border-radius: 14px;
-    background: ta.has-hover || open ? #ffffff14 : transparent;
+    border-radius: 8px;
+    background: ta.has-hover || open ? #ffffff0b : transparent;
     accessible-role: button;
     accessible-id: id;
     accessible-label: "Model: " + model + (effort != "" ? ", " + effort : "") + ". Change";
@@ -1045,10 +1082,9 @@ component MPill inherits Rectangle {
     pl := HorizontalLayout {
         padding-left: 9px;
         padding-right: 9px;
-        spacing: 5px;
-        Text { text: model; font-size: 12.5px; font-weight: 600; color: #f6f2ff; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; }
-        // The effort is picked in the menu the pill opens, so the pill names only the model.
-        VerticalLayout { alignment: center; Icon { name: Icons.chevron-down; size: 12px; tint: #f6f2ff9e; } }
+        spacing: 6px;
+        Text { text: effort != "" ? model + " · " + effort : model; font-size: 12.5px; font-weight: 500; color: ta.has-hover || open ? #f6f2ff : #f6f2ffb0; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; }
+        VerticalLayout { alignment: center; Icon { name: Icons.chevron-down; size: 13px; tint: ta.has-hover || open ? #f6f2ff : #f6f2ffb0; } }
     }
     ta := TouchArea { mouse-cursor: pointer; clicked => { root.clicked(root.absolute-position.x, root.absolute-position.y); } }
 }
@@ -1084,13 +1120,13 @@ component Shots inherits HorizontalLayout {
     }
 }
 
-// .clip: the round + that attaches an image.
+// .icon-btn: the + that attaches an image (28 px, a 7 px corner).
 component ClipButton inherits Rectangle {
     in property <string> id;
     callback clicked;
-    width: 30px;
-    height: 30px;
-    border-radius: 15px;
+    width: 28px;
+    height: 28px;
+    border-radius: 7px;
     background: ta.has-hover ? #ffffff14 : transparent;
     accessible-role: button;
     accessible-id: id;
@@ -1100,8 +1136,8 @@ component ClipButton inherits Rectangle {
     ta := TouchArea { mouse-cursor: pointer; clicked => { root.clicked(); } }
 }
 
-// .go: the round send / start button (a square while it stops the run). The reply's is
-// a 28 px circle (round), and shows Pause while a run goes and the box is empty.
+// .send: the round send / start button (a square while it stops the run). 30 px, 32 in the start
+// box (`size`); it shows Pause while a run goes and the box is empty.
 component GoButton inherits Rectangle {
     in property <string> id;
     in property <string> label;
@@ -1109,11 +1145,12 @@ component GoButton inherits Rectangle {
     in property <bool> stop;
     in property <bool> pause;
     in property <bool> round;
+    in property <length> size: 30px;
     callback clicked;
-    width: round ? 28px : 30px;
+    width: size;
     height: self.width;
-    border-radius: round ? 14px : 10px;
-    background: !enabled && round ? #ffffff1c : ta.has-hover && enabled ? white : #f5f5f7;
+    border-radius: round ? self.width / 2 : 10px;
+    background: !enabled && round ? #ffffff12 : ta.has-hover && enabled ? white : #f6f2ff;
     opacity: enabled || round ? 1 : 0.3;
     accessible-role: button;
     accessible-id: id;
@@ -1124,16 +1161,19 @@ component GoButton inherits Rectangle {
     if pause: HorizontalLayout { alignment: center; spacing: 2.4px; padding-top: 8px; padding-bottom: 8px;
         Rectangle { width: 2.8px; border-radius: 1px; background: #131116; }
         Rectangle { width: 2.8px; border-radius: 1px; background: #131116; } }
-    if !stop && !pause: Icon { name: PagePaths.up; size: 14px; tint: !enabled && round ? #ffffff5c : black; }
+    if !stop && !pause: Icon { name: PagePaths.up; size: 16px; tint: !enabled && round ? #f6f2ff47 : #0c0b0e; }
     ta := TouchArea { enabled: root.enabled; mouse-cursor: pointer; clicked => { root.clicked(); } }
 }
 
 // #mMenu's rows: a model (a check on the picked one), or an effort in its row.
 component MenuRow inherits Rectangle {
     in property <MOpt> o;
+    in property <MRate> rate;
     in property <bool> seg;
     callback clicked;
     height: seg ? 26px : max(28px, rt.preferred-height + 12px);
+    // An effort's name never wraps: its button is at least as wide as the word.
+    min-width: seg ? rt.preferred-width + 10px : 0px;
     border-radius: 8px;
     background: seg ? (o.on ? #9046ff59 : ta.has-hover ? #ffffff17 : #ffffff0d) : ta.has-hover ? #ffffff17 : transparent;
     accessible-role: list-item;
@@ -1146,10 +1186,271 @@ component MenuRow inherits Rectangle {
         padding-right: seg ? 0 : 8px;
         spacing: 8px;
         rt := Text { text: o.label; font-size: seg ? 11.5px : 12.5px; color: #f6f2ff; vertical-alignment: center; horizontal-alignment: seg ? center : left;
-            wrap: word-wrap; horizontal-stretch: 1; }
+            wrap: seg ? TextWrap.no-wrap : TextWrap.word-wrap; horizontal-stretch: 1; }
+        // .x: what the model costs against Auto (green under 1x, amber over 3x).
+        if rate.text != "" && !seg: VerticalLayout { alignment: center;
+            Rectangle { height: 18px; width: rtx.preferred-width + 12px; border-radius: 5px; background: #ffffff0a;
+                rtx := Text { text: rate.text; font-family: "DejaVu Sans Mono"; font-size: 11px; vertical-alignment: center; horizontal-alignment: center;
+                    color: rate.tone == 1 ? #7ee59a : rate.tone == 2 ? #ffc46b : #f6f2ffb0;
+                    accessible-role: text; accessible-label: rate.text + " the credits"; } } }
         if o.on && !seg: VerticalLayout { alignment: center; Icon { name: Icons.check; size: 12px; tint: #c4a2ff; } }
     }
     ta := TouchArea { mouse-cursor: pointer; clicked => { root.clicked(); } }
+}
+
+// A chip of the chat view's header: no fill and no border (not even on hover; the text only brightens), 24 px high,
+// 12 px words and a 13 px icon or context ring. The ring's teal tick is where Kiro compacts (70 %).
+component HeadChip inherits Rectangle {
+    in property <string> icon;
+    in property <string> text;
+    in property <string> label;
+    // The context used, in percent: a ring in place of an icon (-1 none).
+    in property <float> ring: -1;
+    in property <bool> tick;
+    property <color> fg: ta.has-hover ? #f6f2ffb0 : #f6f2ff80;
+    height: 24px;
+    preferred-width: hl.preferred-width;
+    border-radius: 6px;
+    accessible-role: AccessibleRole.text;
+    accessible-label: label;
+    hl := HorizontalLayout { padding-left: 6px; padding-right: 6px; spacing: 6px;
+        if icon != "": VerticalLayout { alignment: center; Icon { name: icon; size: 13px; tint: fg; } }
+        if ring >= 0: VerticalLayout { alignment: center;
+            Rectangle { width: 13px; height: 13px;
+                Path { width: 13px; height: 13px; viewbox-width: 12; viewbox-height: 12; stroke: #ffffff24; stroke-width: 2.2px; fill: transparent;
+                    commands: "M 10.5 6 A 4.5 4.5 0 1 1 1.5 6 A 4.5 4.5 0 1 1 10.5 6 Z"; }
+                Path { width: 13px; height: 13px; viewbox-width: 12; viewbox-height: 12; stroke: #ffffffbf; stroke-width: 2.2px; fill: transparent;
+                    commands: "M 6 1.5 A 4.5 4.5 0 " + (ring > 50 ? "1" : "0") + " 1 " + (6 + 4.5 * sin(360deg * min(ring, 99.9) / 100)) + " " + (6 - 4.5 * cos(360deg * min(ring, 99.9) / 100)); }
+                if tick: Path { width: 13px; height: 13px; viewbox-width: 12; viewbox-height: 12; stroke: #7fe3d4; stroke-width: 1.6px; fill: transparent; stroke-line-cap: round;
+                    commands: "M 2.86 7.02 L 0.58 7.76"; }
+            } }
+        Text { text: root.text; font-size: 12px; font-weight: 500; color: fg; vertical-alignment: center; }
+    }
+    ta := TouchArea { }
+}
+
+// A row of the reply box's @ / / list (.pi): a file (its name, and its folder quietly), a command (its name and what it
+// does), a group's label, or a word that nothing matches. The lit row is the one Enter picks.
+component PopRowView inherits Rectangle {
+    in property <PopRow> r;
+    callback picked;
+    height: r.kind == 0 ? 26px : r.kind == 3 ? 34px : 30px;
+    if r.kind == 0: Text { x: 8px; width: parent.width - 16px; height: parent.height; text: r.name; font-size: 11px; font-weight: 500; color: #f6f2ff80; vertical-alignment: center; overflow: elide; }
+    if r.kind == 3: Text { x: 8px; width: parent.width - 16px; height: parent.height; text: r.name; font-size: 12px; color: #f6f2ff80; vertical-alignment: center; overflow: elide; }
+    if r.kind == 1 || r.kind == 2: Rectangle {
+        border-radius: 7px;
+        background: r.sel || pta.has-hover ? #ffffff0d : transparent;
+        accessible-role: list-item;
+        accessible-label: r.kind == 1 ? r.name + " in " + r.dir : r.name + ". " + r.note;
+        accessible-checkable: true;
+        accessible-checked: r.sel;
+        accessible-action-default => { root.picked(); }
+        HorizontalLayout { padding-left: 8px; padding-right: 8px; spacing: 9px;
+            if r.kind == 1: VerticalLayout { alignment: center; Icon { name: DeskIcons.file; size: 14px; tint: #f6f2ffb0; } }
+            Text { text: r.name; font-family: r.kind == 2 ? "DejaVu Sans Mono" : ""; font-size: r.kind == 2 ? 12px : 13px; color: #f6f2ff; vertical-alignment: center; overflow: elide; }
+            Text { text: r.kind == 1 ? r.dir : r.note; font-size: 11.5px; color: #f6f2ff80; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; }
+        }
+        pta := TouchArea { mouse-cursor: pointer; clicked => { root.picked(); } }
+    }
+}
+
+// .pill.folder: the chat's folder in its reply box, beside +. Quiet; a click opens the folder.
+component FolderChip inherits Rectangle {
+    in property <string> text;
+    in property <length> max-w: 240px;
+    callback clicked;
+    property <color> fg: ta.has-hover ? #f6f2ffb0 : #f6f2ff80;
+    height: 28px;
+    width: min(max-w, fl.preferred-width);
+    border-radius: 8px;
+    background: ta.has-hover ? #ffffff0b : transparent;
+    accessible-role: button;
+    accessible-id: "dFolder";
+    accessible-label: "Open the folder " + text;
+    accessible-action-default => { clicked(); }
+    fl := HorizontalLayout { padding-left: 9px; padding-right: 9px; spacing: 6px;
+        VerticalLayout { alignment: center; Icon { name: Icons.folder; size: 13px; tint: fg; } }
+        Text { text: root.text; font-size: 12.5px; color: fg; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; }
+    }
+    ta := TouchArea { mouse-cursor: pointer; clicked => { root.clicked(); } }
+}
+
+// A pill of the start screen's box (.pill): 28 px, an icon or a tool's logo, the words and a chevron. Amber for Full access.
+component StartPill inherits Rectangle {
+    in property <string> id;
+    in property <string> icon;
+    in property <string> logo;
+    in property <string> text;
+    in property <bool> amber;
+    in property <bool> open;
+    // Not here at all (width 0), while its popup can still find it.
+    in property <bool> shown: true;
+    callback clicked;
+    property <color> fg: amber ? (ta.has-hover || open ? #ffd89a : #ffc46b) : (ta.has-hover || open ? #f6f2ff : #f6f2ffb0);
+    height: 28px;
+    width: shown ? pl.preferred-width : 0px;
+    visible: shown;
+    border-radius: 8px;
+    background: ta.has-hover || open ? #ffffff0b : transparent;
+    accessible-role: button;
+    accessible-id: id;
+    accessible-label: text + ". Change";
+    accessible-action-default => { clicked(); }
+    pl := HorizontalLayout { padding-left: 9px; padding-right: 9px; spacing: 6px;
+        if icon != "": VerticalLayout { alignment: center; Icon { name: icon; size: 13px; tint: fg; } }
+        if logo != "": VerticalLayout { alignment: center; Logo { width: 16px; height: 16px; mark: 10px; radius: 4.8px; tool: logo; } }
+        Text { text: root.text; font-size: 12.5px; font-weight: 500; color: fg; vertical-alignment: center; }
+        VerticalLayout { alignment: center; Icon { name: Icons.chevron-down; size: 13px; tint: fg; } }
+    }
+    ta := TouchArea { mouse-cursor: pointer; clicked => { root.clicked(); } }
+}
+
+// A choice in the start screen's menus (.mo): its icon or tool's logo, the choice in bold with its note under it, a check on the picked one.
+component PickRow inherits Rectangle {
+    in property <string> id;
+    in property <string> logo;
+    in property <string> icon;
+    in property <string> label;
+    in property <string> note;
+    in property <bool> on;
+    in property <bool> dim;
+    callback clicked;
+    height: rl.preferred-height;
+    border-radius: 7px;
+    background: ta.has-hover ? #ffffff0d : transparent;
+    opacity: dim ? 0.45 : 1;
+    accessible-role: list-item;
+    accessible-id: id;
+    accessible-label: label;
+    accessible-checkable: true;
+    accessible-checked: on;
+    accessible-action-default => { clicked(); }
+    rl := HorizontalLayout { padding: 7px; padding-left: 8px; padding-right: 8px; spacing: 10px;
+        VerticalLayout { alignment: center; width: 18px;
+            if logo != "": Logo { width: 18px; height: 18px; mark: 11px; radius: 5.4px; tool: logo; }
+            if icon != "": Icon { name: icon; size: 16px; tint: #f6f2ffb0; } }
+        VerticalLayout { horizontal-stretch: 1;
+            Text { text: label; font-size: 13px; font-weight: 500; color: #f6f2ff; overflow: elide; }
+            if note != "": Text { text: note; font-size: 11.5px; color: #f6f2ff80; wrap: word-wrap; } }
+        if on: VerticalLayout { alignment: center; Icon { name: Icons.check; size: 14px; tint: #c4a2ff; } }
+    }
+    ta := TouchArea { mouse-cursor: pointer; clicked => { root.clicked(); } }
+}
+
+// The start screen's menus (.menu.sm): 248 wide, dropping from the pill.
+component PickMenu inherits Rectangle {
+    width: 248px;
+    height: pv.preferred-height;
+    border-radius: 12px;
+    background: #1a1820;
+    border-width: 1px;
+    border-color: #ffffff17;
+    drop-shadow-blur: 30px;
+    drop-shadow-offset-y: 12px;
+    drop-shadow-color: #000000cc;
+    accessible-role: list;
+    pv := VerticalLayout { padding: 4px; @children }
+}
+
+// A row of the chat view's ⋯ menu (.mi): 30 px, an icon (or an editor's tile, or an agent's logo), the words, and a chevron
+// when a list opens from it. `hovered` is raised when the pointer comes onto it.
+export component MenuItem inherits Rectangle {
+    in property <string> id;
+    in property <string> icon;
+    in property <string> text;
+    in property <string> tile;
+    in property <string> logo;
+    in property <bool> chev;
+    in property <bool> red;
+    in property <bool> open;
+    // A link that leaves the app: a small arrow at the right.
+    in property <bool> ext;
+    callback clicked;
+    callback hovered;
+    height: 30px;
+    border-radius: 7px;
+    background: ta.has-hover || open ? #ffffff0d : transparent;
+    accessible-role: button;
+    accessible-id: id;
+    accessible-label: text;
+    accessible-action-default => { clicked(); }
+    property <bool> hov: ta.has-hover;
+    changed hov => { if (self.hov) { root.hovered(); } }
+    HorizontalLayout { padding-left: 8px; padding-right: 8px; spacing: 10px;
+        if icon != "": VerticalLayout { alignment: center; Icon { name: icon; size: 15px; tint: red ? #ff9a92 : ta.has-hover ? #f6f2ffb0 : #f6f2ff80; } }
+        if tile != "": VerticalLayout { alignment: center;
+            Rectangle { width: 18px; height: 18px; border-radius: 5px; background: tile == "vscode" ? #0e7fd6 : tile == "cursor" ? #18181c : tile == "kiro" ? #9046ff : #101012;
+                border-width: 1px; border-color: #ffffff1a;
+                Icon { name: Icons.code; size: 11px; tint: white; } } }
+        if logo != "": VerticalLayout { alignment: center; Logo { width: 18px; height: 18px; mark: 10px; tool: logo; radius: 5px; } }
+        Text { text: root.text; font-size: 13px; color: red ? #ff9a92 : ta.has-hover || open ? #f6f2ff : #f6f2ffb0; vertical-alignment: center; horizontal-stretch: 1; overflow: elide; }
+        if chev: VerticalLayout { alignment: center; Icon { name: Icons.chevron-right; size: 13px; tint: #f6f2ff47; } }
+        if ext: VerticalLayout { alignment: center; Icon { name: DeskIcons.ext; size: 12px; tint: #f6f2ff47; } }
+    }
+    ta := TouchArea { mouse-cursor: pointer; clicked => { root.clicked(); } }
+    @children
+}
+
+// The title bar's menus (File, Settings, Help), as the chat view's ⋯ menu is drawn. Every pick raises `picked`, which closes it.
+export component BarMenu inherits Rectangle {
+    // 1 File, 2 Settings, 3 Help.
+    in property <int> which;
+    callback picked();
+    callback close-window();
+    width: 228px;
+    height: bl.preferred-height;
+    border-radius: 12px;
+    background: #1a1820;
+    border-width: 1px;
+    border-color: #ffffff17;
+    drop-shadow-blur: 30px;
+    drop-shadow-offset-y: 12px;
+    drop-shadow-color: #000000cc;
+    accessible-role: list;
+    accessible-label: which == 1 ? "File" : which == 2 ? "Settings" : "Help";
+    bl := VerticalLayout {
+        padding: 4px;
+        if which == 1: MenuItem { id: "barNewChat"; icon: PagePaths.pen; text: "New chat"; clicked => { root.picked(); Office.menu-new-chat(); } }
+        if which == 1: MenuItem { id: "barOpenFolder"; icon: Icons.folder-open; text: "Open folder…"; clicked => { root.picked(); Office.menu-open-folder(); } }
+        if which == 1: Rectangle { height: 9px; Rectangle { y: 4px; x: 4px; width: parent.width - 8px; height: 1px; background: #ffffff0f; } }
+        if which == 1: MenuItem { id: "barClose"; icon: Icons.close; text: "Close window"; clicked => { root.picked(); root.close-window(); } }
+        // Straight to a page of Settings.
+        if which == 2: VerticalLayout {
+            for p[i] in [{ n: "General", ic: Icons.sliders }, { n: "Integrations", ic: Icons.plug }, { n: "Projects", ic: Icons.folder }, { n: "Voice", ic: Icons.mic }]:
+                MenuItem { id: "barSet" + p.n; icon: p.ic; text: p.n; clicked => { root.picked(); Office.open-settings-page(i); } }
+        }
+        if which == 2: Rectangle { height: 9px; Rectangle { y: 4px; x: 4px; width: parent.width - 8px; height: 1px; background: #ffffff0f; } }
+        if which == 2: Text { height: 26px; text: "AGENTS"; font-size: 10.5px; font-weight: 600; letter-spacing: 0.63px; color: #f6f2ff61; vertical-alignment: center; x: 8px; }
+        if which == 2: VerticalLayout {
+            for a[j] in [{ id: "kiro", n: "Kiro" }, { id: "codex", n: "Codex" }, { id: "cursor", n: "Cursor" }, { id: "opencode", n: "OpenCode" }, { id: "claude", n: "Claude Code" }, { id: "agy", n: "Antigravity" }]:
+                MenuItem { id: "barSet" + a.n; logo: a.id; text: a.n; clicked => { root.picked(); Office.open-settings-page(4 + j); } }
+        }
+        if which == 3: MenuItem { id: "barDocs"; icon: Icons.book; text: "Documentation"; ext: true; clicked => { root.picked(); Office.open-link("https://tryhover.co/docs"); } }
+        if which == 3: MenuItem { id: "barReleases"; icon: PagePaths.tag; text: "Releases"; ext: true; clicked => { root.picked(); Office.open-link("https://github.com/4regab/Hover/releases"); } }
+        if which == 3: Rectangle { height: 9px; Rectangle { y: 4px; x: 4px; width: parent.width - 8px; height: 1px; background: #ffffff0f; } }
+        if which == 3: MenuItem { id: "barBug"; icon: Icons.bug; text: "Report a bug"; ext: true; clicked => { root.picked(); Office.open-link("https://github.com/4regab/Hover/issues/new?template=bug_report.yml"); } }
+        if which == 3: MenuItem { id: "barFeature"; icon: PagePaths.bulb; text: "Request a feature"; ext: true; clicked => { root.picked(); Office.open-link("https://github.com/4regab/Hover/issues/new?template=feature_request.yml"); } }
+        if which == 3: Rectangle { height: 9px; Rectangle { y: 4px; x: 4px; width: parent.width - 8px; height: 1px; background: #ffffff0f; } }
+        if which == 3: MenuItem { id: "barLogs"; icon: PagePaths.logs; text: "Open the logs folder"; clicked => { root.picked(); Office.open-logs(); } }
+        if which == 3: Text { height: 26px; text: "Hover " + Office.app-version; font-size: 11.5px; color: #f6f2ff80; vertical-alignment: center; x: 8px; accessible-role: text; }
+    }
+}
+
+// The list that opens to the left of a ⋯ menu row (.menu.fly): 204 wide, over its row.
+component Flyout inherits Rectangle {
+    x: -202px;
+    y: -5px;
+    width: 204px;
+    height: fl.preferred-height;
+    border-radius: 12px;
+    background: #1a1820;
+    border-width: 1px;
+    border-color: #ffffff17;
+    drop-shadow-blur: 30px;
+    drop-shadow-offset-y: 12px;
+    drop-shadow-color: #000000cc;
+    accessible-role: list;
+    fl := VerticalLayout { padding: 4px; @children }
 }
 
 // The desk as a card, in the chat's style: who works here and on what (the chat's header),
@@ -1386,21 +1687,34 @@ export component OfficeView inherits Rectangle {
 
     // Esc steps back one layer: the page's keydown on the document, which sees it
     // whichever field has the keyboard (the task box, the reply, the search).
+    // ⋯ in the chat view's header: closes its menu, or asks for its lists and opens it.
+    function toggle-menu() {
+        if (Office.d-menu) { Office.d-menu = false; } else { Office.d-fly = 0; Office.d-menu-open(); Office.d-menu = true; }
+    }
+
     public function escape() {
         // The app window has nothing to fold: there Esc takes Settings back to its office.
         if (in-settings) { if (dashboard) { root.back(); } else { root.fold(); } return; }
         if (Office.confirm) { Office.confirm-no(); return; }
         if (Desk.card) { Desk.card-close(); return; }
+        if (Office.start-menu != 0) { Office.start-menu = 0; return; }
         if (Office.model-menu != 0) { Office.open-model(0, 0, 0); return; }
         if (Office.access-menu) { Office.open-access(); return; }
         if (Office.repo-menu) { Office.open-repos(); return; }
         if (Office.menu) { Office.toggle-menu(); return; }
         if (Office.fab != 0) { Office.new-fold(); return; }
-        // The chat view: its details close first. It goes back to the office only by its switch;
-        // past the details Esc folds the notch, as it does over the office.
-        if (Office.d-wide) { if (Desk.panel) { Desk.panel-close(); return; } root.fold(); return; }
+        // The chat view: its details close first, then the reply box (its words stay). It goes back to the office only by its
+        // switch; past those Esc folds the notch, as it does over the office.
+        if (Office.d-wide) {
+            if (Office.d-menu) { Office.d-menu = false; return; }
+            if (Office.pop-rows.length > 0) { Office.pop-close(); return; }
+            if (Office.d-compose) { Office.d-compose = false; focus.focus(); return; }
+            if (Desk.panel) { Desk.panel-close(); return; }
+            root.fold();
+            return;
+        }
         // The reply box closes first, and keeps what was written.
-        if (Office.drawer && Office.d-compose) { Office.d-compose = false; focus.focus(); return; }
+        if (Office.drawer && Office.d-compose) { Office.pop-close(); Office.d-compose = false; focus.focus(); return; }
         if (Office.drawer) { Office.d-close(); return; }
         if (Desk.panel) { Desk.panel-close(); return; }
         if (Office.panel != 0) { Office.panel-close(); return; }
@@ -1412,7 +1726,8 @@ export component OfficeView inherits Rectangle {
     office := Rectangle {
         visible: !in-settings;
         clip: true;
-        background: #07050a;
+        // The notch's ground is its own black, so the office opens out of the island with no seam.
+        background: dashboard ? #07050a : #000000;
         // The box's and the chat's text fields take the keyboard; when they go, nothing
         // has it and Esc would do nothing (the page's keys are on the document, which
         // always has them). So it comes back here.
@@ -1421,43 +1736,52 @@ export component OfficeView inherits Rectangle {
         property <int> panel-now: Office.panel;
         property <bool> confirm-now: Office.confirm;
         property <bool> menu-now: Office.menu;
+        property <bool> compose-now: Office.d-compose;
         property <bool> settings-now: root.in-settings;
+        property <string> title-now: Office.d-title;
+        changed title-now => { Office.d-renaming = false; }
         // #drawer and #panel: 12 px from the edges and up to 400 wide; 8 and 360 short.
         property <length> side-gap: compact ? 8px : 12px;
         property <length> side-w: min(compact ? 360px : 400px, self.width - 2 * side-gap);
         // The desk's panel is wider: its tabs are the eight surfaces.
         // Beside the expanded chat it is narrower, so the conversation keeps the room.
         property <length> desk-w: Office.d-wide ? min(560px, max(360px, self.width * 0.42)) : min(720px, self.width - 2 * side-gap);
-        // The reply box is always there in the expanded chat; the conversation and the box
-        // keep to a column this wide (long lines are hard to read), centred.
-        property <bool> composing: Office.d-compose || Office.d-wide;
+        // The reply box is open, or just its circle at the thread's corner (in the chat view too). The conversation and the
+        // box keep to a column this wide (long lines are hard to read), centred.
+        property <bool> composing: Office.d-compose;
         property <length> col-w: 820px;
         // The chat view (Office.d-wide) in place of the office; ct follows it over a quarter
         // second, so the office fades under the chat as it comes in and back as it goes.
         property <bool> chat: Office.d-wide;
         property <float> ct: chat ? 1 : 0;
         animate ct { duration: Pal.motion ? 260ms : 0ms; easing: cubic-bezier(0.32, 0.72, 0, 1); }
-        // The session list has room in a window 760 px wide or more, and not beside the details unless it is wide (1300).
-        property <bool> list-allowed: self.width >= 760px && !(Desk.panel && self.width < 1300px);
+        // The session list has room in a window 760 px wide or more, and not beside the details unless it is wide (1300). In the
+        // notch the sidebar folds while a panel is open unless the notch is 1240 wide or more.
+        property <bool> list-allowed: self.width >= 760px && !(Desk.panel && self.width < (dashboard ? 1300px : 1240px));
         property <bool> list-shown: Office.d-wide && Office.list-open && self.list-allowed;
         property <length> lw: list-shown ? Office.list-w : 0px;
         // Where the switch sits (the office's top left), and the sidebar button beside it in
         // the chat view: what a header there leaves free for them.
-        property <length> sw-x: compact ? 10px : 14px;
-        property <length> sw-y: compact ? 9px : 12px;
-        property <length> sw-room: sw-x + (compact ? 64px : 74px) + (chat && list-allowed ? (compact ? 34px : 40px) : 0px) + 10px;
+        property <length> sw-x: 12px;
+        property <length> sw-y: compact ? 8px : 10px;
+        property <length> sw-room: sw-x + (compact ? 68px : 76px) + 10px;
         // The chat's own width: the header's buttons keep to their icons when it is under 640 px.
-        property <length> main-w: chat ? self.width - lw - (Desk.panel ? desk-w + side-gap : 0px) : self.width - 2 * side-gap - (Desk.panel ? desk-w + side-gap : 0px);
+        property <length> main-w: chat ? self.width - lw - (Desk.panel ? desk-w : 0px) : self.width - 2 * side-gap - (Desk.panel ? desk-w + side-gap : 0px);
         // Where the access menu opens: by the chip that asked (the chat view's start screen), else the office's box.
         property <length> pop-x: -1px;
         property <length> pop-y;
+        // The menu opens below its anchor (the start screen's project), not above it.
+        property <bool> pop-below;
         property <bool> tight: self.main-w < 640px;
         property <bool> desk-now: Desk.card || Desk.panel;
         changed fab-now => { if (self.fab-now == 0 && !Office.drawer) { focus.focus(); } }
-        changed drawer-now => { if (!self.drawer-now && Office.fab == 0) { focus.focus(); } }
+        // A chat opening in the chat view takes the keys from whatever had them (the start screen's box), so a typed key opens its reply.
+        changed drawer-now => { if (Office.fab == 0) { focus.focus(); } }
         changed panel-now => { if (Office.fab == 0) { focus.focus(); } }
         changed confirm-now => { if (!self.confirm-now && Office.fab == 0) { focus.focus(); } }
         changed menu-now => { if (!self.menu-now && Office.fab == 0) { focus.focus(); } }
+        // The reply box closed (sent, or Esc): the keys go back here, so a typed character opens it again.
+        changed compose-now => { if (!self.compose-now && Office.fab == 0) { focus.focus(); } }
         changed settings-now => { if (!self.settings-now) { focus.focus(); } }
         changed desk-now => { if (!self.desk-now && Office.fab == 0) { focus.focus(); } }
         focus := FocusScope {
@@ -1624,119 +1948,180 @@ export component OfficeView inherits Rectangle {
             background: #0c0b0e;
             // Nothing reaches the office through it.
             TouchArea { scroll-event(e) => { accept } }
-            // The sessions, open now and saved, under the switch; New chat and Settings. A drag on its edge resizes it.
+            // The sessions down the left, grouped by project folder, under the switch; New chat. A drag on its edge resizes it.
             if lw > 0: Rectangle {
                 x: 0px;
                 width: lw;
-                background: #ffffff05;
-                VerticalLayout {
-                    padding-left: 8px;
-                    padding-right: 8px;
-                    padding-top: sw-y + (compact ? 32px : 36px) + (compact ? 8px : 12px);
-                    padding-bottom: 8px;
-                    spacing: 2px;
-                    SideRow { id: "newChat"; icon: Icons.add; text: "New chat"; small: compact; clicked => { Office.new-chat(); } }
-                    Rectangle { height: compact ? 4px : 8px; }
-                    Flickable {
-                        vertical-stretch: 1;
-                        accessible-role: list;
-                        accessible-label: "Sessions";
+                background: #0e0d11;
+                side-ta := TouchArea {
+                    VerticalLayout {
+                        // The top row: the switch is drawn over its left end (where the office has it); Hide sits at its right and shows
+                        // only while the pointer is over the sidebar or it has the keyboard.
+                        Rectangle {
+                            height: compact ? 44px : 52px;
+                            Rectangle {
+                                x: parent.width - self.width - 8px;
+                                y: (parent.height - self.height) / 2;
+                                width: 28px;
+                                height: 28px;
+                                border-radius: 7px;
+                                background: sbhta.has-hover ? #ffffff0b : transparent;
+                                opacity: side-ta.has-hover || sbhfs.has-focus ? 1 : 0;
+                                animate opacity { duration: Pal.motion ? 120ms : 0ms; }
+                                accessible-role: button;
+                                accessible-id: "dList";
+                                accessible-label: "Hide the sidebar";
+                                accessible-action-default => { Office.list-open = false; }
+                                Icon { name: PagePaths.sidebar; size: 16px; tint: sbhta.has-hover ? #f6f2ff : #f6f2ff80; }
+                                sbhta := TouchArea { mouse-cursor: pointer; clicked => { Office.list-open = false; } }
+                                sbhfs := FocusScope { focus-on-click: false; key-pressed(e) => { if (e.text == " " || e.text == "\n") { Office.list-open = false; return accept; } reject } }
+                            }
+                        }
                         VerticalLayout {
-                            alignment: start;
-                            spacing: 2px;
-                            for r[i] in Office.list: Rectangle {
-                                height: r.head ? 26px : (compact ? 31px : 34px);
-                                if r.head: Text { x: 9px; y: 4px; text: r.text.to-uppercase(); font-family: "Pixelify Sans"; font-weight: 600; font-size: 10.5px; letter-spacing: 0.63px; color: #f6f2ff61; vertical-alignment: center; }
-                                if !r.head: Rectangle {
-                                    border-radius: 9px;
-                                    background: r.on ? #ffffff14 : lta.has-hover ? #ffffff0a : transparent;
-                                    accessible-role: button;
-                                    accessible-label: r.text + (r.on ? ", open" : "");
-                                    accessible-action-default => { Office.list-clicked(i); }
-                                    HorizontalLayout { padding-left: 9px; padding-right: 9px; spacing: 8px;
-                                        VerticalLayout { alignment: center; Rectangle { width: 7px; height: 7px; border-radius: 3.5px;
-                                            background: r.stage == 0 ? #7fb8ff : r.stage == 1 ? #c4a2ff : r.stage == 2 ? #4ade80 : r.stage == 3 ? #ff5b52 : r.stage == 5 ? #ffb340 : #ffffff40; } }
-                                        Text { text: r.text; font-size: 12.5px; font-weight: r.on ? 600 : 400; color: r.on ? #f6f2ff : #f6f2ffc4; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; }
+                            padding-left: 8px;
+                            padding-right: 8px;
+                            padding-bottom: 8px;
+                            SideRow { id: "newChat"; icon: PagePaths.pen; text: "New chat"; small: compact; clicked => { Office.new-chat(); } }
+                            Rectangle { height: 6px; }
+                            Flickable {
+                                vertical-stretch: 1;
+                                accessible-role: list;
+                                accessible-label: "Chats by folder";
+                                VerticalLayout {
+                                    alignment: start;
+                                    for r[i] in Office.list: Rectangle {
+                                        height: r.head ? (i == 0 ? 28px : 40px) : (compact ? 28px : 30px);
+                                        // A project folder: a click folds its chats.
+                                        if r.head: Rectangle {
+                                            y: i == 0 ? 0px : 12px;
+                                            height: 28px;
+                                            border-radius: 6px;
+                                            accessible-role: button;
+                                            accessible-label: r.text + (r.shut ? ", folded" : "");
+                                            accessible-action-default => { Office.list-fold(i); }
+                                            HorizontalLayout { padding-left: 8px; padding-right: 8px; spacing: 7px;
+                                                VerticalLayout { alignment: center; Icon { name: Icons.folder; size: 14px; tint: sbhga.has-hover ? #f6f2ffb0 : #f6f2ff80; } }
+                                                Text { text: r.text; font-size: 12px; font-weight: 500; color: sbhga.has-hover ? #f6f2ffb0 : #f6f2ff80; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; }
+                                                VerticalLayout { alignment: center; Icon { name: r.shut ? Icons.chevron-right : Icons.chevron-down; size: 13px; tint: #f6f2ff80; opacity: sbhga.has-hover || r.shut ? 1 : 0; } }
+                                            }
+                                            sbhga := TouchArea { mouse-cursor: pointer; clicked => { Office.list-fold(i); } }
+                                        }
+                                        if !r.head: Rectangle {
+                                            border-radius: 7px;
+                                            background: r.on ? #ffffff12 : sblta.has-hover ? #ffffff0b : transparent;
+                                            accessible-role: button;
+                                            accessible-label: r.text + (r.on ? ", open" : "");
+                                            accessible-action-default => { Office.list-clicked(i); }
+                                            HorizontalLayout { padding-left: 8px; padding-right: 8px; spacing: 10px;
+                                                // The tool's logo; a ring round it while the chat is at work (purple) or waits on you (amber).
+                                                VerticalLayout { alignment: center;
+                                                    Rectangle { width: 16px; height: 16px;
+                                                        Logo { width: 16px; height: 16px; mark: 10px; radius: 4.8px; tool: r.tool; }
+                                                        if r.stage <= 1: Path { x: -4px; y: -4px; width: 24px; height: 24px; viewbox-width: 24; viewbox-height: 24; fill: transparent;
+                                                            stroke: #c4a2ff; stroke-width: 1.5px; stroke-line-cap: round; commands: "M 12 1 A 11 11 0 0 1 23 12"; }
+                                                        if r.stage == 5: Rectangle { x: -4px; y: -4px; width: 24px; height: 24px; border-radius: 12px; border-width: 1.5px; border-color: #ffc46b; }
+                                                    } }
+                                                Text { text: r.text; font-size: 13px; color: r.on || sblta.has-hover ? #f6f2ff : #f6f2ffb0; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; }
+                                                if r.when != "": Text { text: r.when; font-size: 11.5px; color: r.stage == 3 ? #ff9a92 : #f6f2ff80; vertical-alignment: center; opacity: sblta.has-hover ? 0 : 1; }
+                                            }
+                                            sblta := TouchArea {
+                                                mouse-cursor: pointer;
+                                                clicked => { Office.list-clicked(i); }
+                                                // Delete takes the time's place while the pointer is on the row.
+                                                Rectangle {
+                                                    x: parent.width - self.width - 4px;
+                                                    y: (parent.height - self.height) / 2;
+                                                    width: 24px;
+                                                    height: 24px;
+                                                    border-radius: 6px;
+                                                    background: sbdta.has-hover ? #ff453a1f : transparent;
+                                                    opacity: sblta.has-hover ? 1 : 0;
+                                                    accessible-role: button;
+                                                    accessible-label: "Delete " + r.text;
+                                                    accessible-action-default => { Office.list-delete(i); }
+                                                    Icon { name: PagePaths.bin; size: 14px; tint: sbdta.has-hover ? #ff9a92 : #f6f2ff80; }
+                                                    sbdta := TouchArea { mouse-cursor: pointer; clicked => { Office.list-delete(i); } }
+                                                }
+                                            }
+                                        }
                                     }
-                                    lta := TouchArea { mouse-cursor: pointer; clicked => { Office.list-clicked(i); } }
                                 }
                             }
                         }
                     }
-                    Rectangle { height: 1px; background: #ffffff0f; }
-                    SideRow { id: "chatSettings"; icon: Icons.settings; text: "Settings"; small: compact; clicked => { Office.open-settings(); } }
                 }
                 Rectangle { x: parent.width - 1px; width: 1px; background: #ffffff0f; }
                 Rectangle { x: parent.width - 4px; width: 8px;
                     TouchArea { mouse-cursor: ew-resize; moved => { if (self.pressed) { Office.list-w = max(200px, min(420px, Office.list-w + (self.mouse-x - self.pressed-x))); } } } }
             }
-            // The start screen (an empty chat): which agent, then the task in one box with its
-            // folder, access and model, as the office's new-task box has them.
-            if !Office.drawer: Rectangle {
+            // The start screen (an empty chat): one heading, the project under it, then one box that holds every choice: the agent,
+            // where it runs (Kiro only), what it may do, the model and Start.
+            if !Office.drawer: sblk := Rectangle {
                 x: lw;
                 width: parent.width - lw;
-                property <length> box-w: min(self.width - 48px, 720px);
+                property <length> box-w: min(self.width - 48px, 700px);
+                // What the box says under itself: why Start waits, else where the task runs or that it changes nothing.
+                property <string> hint: Office.new-note != "" ? Office.new-note : Office.new-cloud
+                    ? (Office.new-repo == "Empty workspace" ? "Runs in Kiro’s cloud, in an empty workspace." : "Runs in Kiro’s cloud. It opens a pull request on " + Office.new-repo + " when done.")
+                    : Office.new-access == "Read only" ? "Reads this folder and changes nothing." : "";
                 VerticalLayout {
                     alignment: center;
-                    padding-bottom: compact ? 24px : 56px;
-                    spacing: compact ? 12px : 16px;
+                    padding-bottom: parent.height * 0.14;
                     HorizontalLayout { alignment: center;
-                        Text { text: "What should we work on?"; font-family: Fonts.display; font-size: compact ? 22px : 28px; font-weight: 600; letter-spacing: -0.4px; color: #f6f2ff;
+                        Text { text: "What should we work on?"; font-family: Fonts.display; font-size: compact ? 22px : 26px; font-weight: 600; letter-spacing: -0.57px; color: #f6f2ff;
                             accessible-role: text; } }
-                    // The agents: the one picked lit, one not ready dim with its hint.
-                    HorizontalLayout { alignment: center; spacing: 6px;
-                        for t[i] in Office.tools: Rectangle {
-                            height: compact ? 28px : 30px;
-                            width: tl.preferred-width;
-                            border-radius: self.height / 2;
-                            background: i == Office.new-tool ? #9b6bff2e : tta.has-hover ? #ffffff12 : #ffffff08;
-                            border-width: 1px;
-                            border-color: i == Office.new-tool ? #c4a2ff66 : #ffffff12;
-                            opacity: t.ready ? 1 : 0.5;
+                    Rectangle { height: 8px; }
+                    // The project: the folder (or in Kiro Web the repo it clones). A click lists the recent ones.
+                    HorizontalLayout { alignment: center;
+                        projp := Rectangle {
+                            height: 30px;
+                            width: pj.preferred-width;
+                            border-radius: 8px;
+                            background: pja.has-hover || Office.start-menu == 1 || Office.repo-menu ? #ffffff0b : transparent;
                             accessible-role: button;
-                            accessible-id: "chatTool" + t.id;
-                            accessible-label: t.ready ? t.name : t.name + ": " + t.hint;
-                            accessible-checkable: true;
-                            accessible-checked: i == Office.new-tool;
-                            accessible-action-default => { Office.pick-tool(i); }
-                            tl := HorizontalLayout { padding-left: 4px; padding-right: 11px; spacing: 7px;
-                                VerticalLayout { alignment: center; Logo { width: compact ? 20px : 22px; height: self.width; mark: compact ? 11px : 12px; tool: t.id; ready: t.ready; } }
-                                Text { text: t.name; font-size: 12.5px; font-weight: i == Office.new-tool ? 600 : 500; color: i == Office.new-tool ? #f6f2ff : #f6f2ffb3; vertical-alignment: center; } }
-                            tta := TouchArea { mouse-cursor: pointer; clicked => { Office.pick-tool(i); } }
+                            accessible-id: "chatFolder";
+                            accessible-label: Office.new-cloud ? "Repository: " + Office.new-repo + ". Change" : "Project: " + Office.new-folder + ". Change";
+                            pj := HorizontalLayout { padding-left: 10px; padding-right: 10px; spacing: 7px;
+                                VerticalLayout { alignment: center; Icon { name: Office.new-cloud ? Icons.globe : Icons.folder; size: 15px;
+                                    tint: Office.new-cloud ? #8fbcff : Office.new-folder == "Choose a folder" ? #ffb36b : pja.has-hover ? #f6f2ff : #f6f2ff80; } }
+                                Text { text: Office.new-cloud ? Office.new-repo : Office.new-folder; font-size: 13.5px; color: Office.new-folder == "Choose a folder" && !Office.new-cloud ? #ffb36b : pja.has-hover ? #f6f2ff : #f6f2ffb0; vertical-alignment: center; }
+                                VerticalLayout { alignment: center; Icon { name: Icons.chevron-down; size: 13px; tint: #f6f2ff80; } }
+                            }
+                            pja := TouchArea { mouse-cursor: pointer; clicked => {
+                                if (Office.new-cloud) { pop-x = self.absolute-position.x; pop-y = self.absolute-position.y + self.height; pop-below = true; Office.open-repos(); }
+                                else if (Office.start-menu == 1) { Office.start-menu = 0; } else { Office.open-folders(); Office.start-menu = 1; } } }
                         }
                     }
+                    Rectangle { height: 22px; }
                     HorizontalLayout { alignment: center;
                         Rectangle {
                             width: box-w;
                             height: hb.preferred-height;
-                            border-radius: 22px;
-                            background: #1b181f;
+                            border-radius: 20px;
+                            background: #17151b;
                             border-width: 1px;
-                            border-color: htext.has-focus ? #c4a2ff8c : #ffffff1f;
-                            drop-shadow-blur: 30px;
-                            drop-shadow-offset-y: 10px;
-                            drop-shadow-color: #00000080;
-                            animate border-color { duration: Pal.motion ? 160ms : 0ms; }
+                            border-color: htext.has-focus ? #c4a2ff4d : #ffffff17;
+                            drop-shadow-blur: 40px;
+                            drop-shadow-offset-y: 16px;
+                            drop-shadow-color: #00000059;
+                            animate border-color { duration: Pal.motion ? 150ms : 0ms; }
                             TouchArea { mouse-cursor: text; clicked => { htext.focus(); } }
                             hb := VerticalLayout {
-                                padding-left: 12px;
-                                padding-right: 10px;
-                                padding-top: 12px;
-                                padding-bottom: 9px;
-                                spacing: 8px;
-                                if Office.n-shots.length > 0: Shots { shots: Office.n-shots; which: 2; }
-                                // One line at rest; it grows with what is written (up to 8 lines), then scrolls.
+                                if Office.n-shots.length > 0: Shots { shots: Office.n-shots; which: 2; padding-left: 18px; padding-top: 12px; }
+                                // Three lines at rest; it grows with what is written (up to 8 lines), then scrolls.
                                 Rectangle {
-                                    height: max(20px, min(8 * 19px, htext.preferred-height));
+                                    height: 16px + max(62px, min(8 * 22px, htext.preferred-height)) + 6px;
                                     hfl := Flickable {
-                                        width: parent.width - 4px;
-                                        height: parent.height;
+                                        x: 18px;
+                                        y: 16px;
+                                        width: parent.width - 36px;
+                                        height: parent.height - 22px;
                                         interactive: false;
                                         content-height: max(self.height, htext.preferred-height);
                                         htext := TextInput {
                                             width: parent.width;
                                             text <=> Office.new-draft;
-                                            font-size: 13.5px;
+                                            font-size: 14px;
                                             color: #f6f2ff;
                                             wrap: word-wrap;
                                             single-line: false;
@@ -1753,45 +2138,76 @@ export component OfficeView inherits Rectangle {
                                             }
                                         }
                                     }
-                                    InputThumb { x: parent.width + 4px; y: 0; height: hfl.height; f-height: hfl.height; f-content: hfl.content-height; f-y: hfl.content-y; }
-                                    if Office.new-draft == "" && htext.preedit-text == "": Text { text: "Ask " + Office.tools[Office.new-tool].name + " to build, fix or explain something…";
-                                        font-size: 13.5px; color: #f6f2ff61; overflow: elide; width: parent.width; vertical-alignment: top; }
+                                    InputThumb { x: parent.width - 10px; y: hfl.y; height: hfl.height; f-height: hfl.height; f-content: hfl.content-height; f-y: hfl.content-y; }
+                                    if Office.new-draft == "" && htext.preedit-text == "": Text { x: 18px; y: 16px; width: parent.width - 36px;
+                                        text: "Ask " + Office.tools[Office.new-tool].name + " to build, fix or explain something. @ adds files, / for commands";
+                                        font-size: 14px; color: #f6f2ff80; wrap: word-wrap; vertical-alignment: top; }
                                 }
                                 HorizontalLayout {
-                                    spacing: 4px;
+                                    padding-left: 10px;
+                                    padding-right: 10px;
+                                    padding-top: 6px;
+                                    padding-bottom: 10px;
+                                    spacing: 2px;
                                     ClipButton { id: "chatAttach"; clicked => { Office.attach(2); } }
-                                    if Office.new-cloud-shown: Rectangle { width: 28px; height: 28px; border-radius: 9px;
-                                        background: Office.new-cloud ? #6ba8ff24 : hca.has-hover ? #ffffff12 : transparent;
-                                        accessible-role: checkbox; accessible-id: "chatCloud"; accessible-label: "Run in Kiro Web"; accessible-checkable: true; accessible-checked: Office.new-cloud;
-                                        accessible-action-default => { Office.toggle-cloud(); }
-                                        Icon { name: Icons.cloud; size: 15px; tint: Office.new-cloud ? #8fbcff : #f6f2ff9e; }
-                                        hca := TouchArea { mouse-cursor: pointer; clicked => { Office.toggle-cloud(); } } }
-                                    hf := Rectangle { width: min(hfl2.preferred-width, (parent.width - 160px) * 0.45); height: 28px; border-radius: 9px; background: hfo.has-hover || Office.repo-menu ? #ffffff12 : transparent;
-                                        accessible-role: button; accessible-id: "chatFolder"; accessible-label: Office.new-cloud ? "Repository: " + Office.new-repo + ". Change" : Office.new-folder;
-                                        hfl2 := HorizontalLayout { padding-left: 9px; padding-right: 9px; spacing: 6px;
-                                            VerticalLayout { alignment: center; Icon { name: Office.new-cloud ? Icons.globe : Icons.folder; size: 14px;
-                                                tint: Office.new-cloud ? #8fbcff : Office.new-folder == "Choose a folder" ? #ffb36b : #f6f2ff9e; } }
-                                            Text { text: Office.new-cloud ? Office.new-repo : Office.new-folder; font-family: "DejaVu Sans Mono"; font-size: 11.5px;
-                                                color: Office.new-cloud ? #8fbcff : Office.new-folder == "Choose a folder" ? #ffb36b : #f6f2ff9e; vertical-alignment: center; overflow: elide; } }
-                                        hfo := TouchArea { mouse-cursor: pointer; clicked => { pop-x = self.absolute-position.x; pop-y = self.absolute-position.y;
-                                            if (Office.new-cloud) { Office.open-repos(); } else { Office.new-folder-clicked(); } } } }
-                                    hacc := Rectangle { width: Office.new-cloud ? 0px : hal.preferred-width; visible: !Office.new-cloud; height: 28px; border-radius: 9px; background: haa.has-hover || Office.access-menu ? #ffffff12 : transparent;
-                                        accessible-role: button; accessible-id: "chatAccess"; accessible-label: "Tool access: " + Office.new-access + ". Change";
-                                        hal := HorizontalLayout { padding-left: 9px; padding-right: 9px; spacing: 6px;
-                                            VerticalLayout { alignment: center; Icon { name: PagePaths.shield; size: 14px; tint: Office.new-access-full ? #ffc46b : #f6f2ff9e; } }
-                                            Text { text: Office.new-access; font-size: 11.5px; font-weight: 500; color: Office.new-access-full ? #ffc46b : #f6f2ff9e; vertical-alignment: center; } }
-                                        haa := TouchArea { mouse-cursor: pointer; clicked => { pop-x = self.absolute-position.x; pop-y = self.absolute-position.y; Office.open-access(); } } }
+                                    agentp := StartPill { id: "chatAgent"; logo: Office.tools[Office.new-tool].id; text: Office.tools[Office.new-tool].name; open: Office.start-menu == 2;
+                                        clicked => { Office.start-menu = Office.start-menu == 2 ? 0 : 2; } }
+                                    wherep := StartPill { id: "chatWhere"; shown: Office.new-cloud-shown; icon: Office.new-cloud ? Icons.cloud : PagePaths.laptop; text: Office.new-cloud ? "Kiro cloud" : "This computer"; open: Office.start-menu == 3;
+                                        clicked => { Office.start-menu = Office.start-menu == 3 ? 0 : 3; } }
+                                    // Not in Kiro Web: every task there is full access, so there is nothing to pick.
+                                    accp := StartPill { id: "chatAccess"; shown: !Office.new-cloud; icon: PagePaths.shield; text: Office.new-access; amber: Office.new-access-full; open: Office.access-menu;
+                                        clicked => { Office.start-menu = 0; Office.open-access(); } }
                                     Rectangle { horizontal-stretch: 1; }
                                     if Office.n-model-shown: MPill { id: "chatModel"; model: Office.n-model; effort: Office.n-model-effort; open: Office.model-menu == 2;
-                                        max-w: min(parent.width * 0.5, parent.width - hf.width - hacc.width - 30px - 30px - 6 * 4px);
+                                        max-w: min(parent.width * 0.5, parent.width - agentp.width - wherep.width - accp.width - 32px - 30px - 6 * 2px);
                                         clicked(x, y) => { Office.open-model(Office.model-menu == 2 ? 0 : 2, x, y); } }
-                                    GoButton { id: "chatGo"; round: true; label: "Start"; enabled: Office.new-go; clicked => { Office.new-go-clicked(); } }
+                                    GoButton { id: "chatGo"; round: true; size: 32px; label: "Start"; enabled: Office.new-go; clicked => { Office.new-go-clicked(); } }
                                 }
                             }
                         }
                     }
-                    if Office.new-note != "": HorizontalLayout { alignment: center;
-                        Text { width: box-w - 24px; text: Office.new-note; font-size: 11.5px; color: #f6f2ff61; wrap: word-wrap; horizontal-alignment: center; } }
+                    if hint != "": HorizontalLayout { alignment: center; padding-top: 12px; spacing: 6px;
+                        if Office.new-note == "": VerticalLayout { alignment: center; Icon { name: Office.new-cloud ? Icons.cloud : Icons.view; size: 13px; tint: #f6f2ff80; } }
+                        Text { text: hint; font-size: 12px; color: #f6f2ff80; vertical-alignment: center; } }
+                }
+                // A click anywhere else puts a menu away.
+                if Office.start-menu != 0 || Office.access-menu: TouchArea { clicked => { Office.start-menu = 0; if (Office.access-menu) { Office.open-access(); } } }
+                // The agent: every one, the ones not ready dim with why.
+                if Office.start-menu == 2: PickMenu {
+                    x: max(8px, min(agentp.absolute-position.x - sblk.absolute-position.x, sblk.width - self.width - 8px));
+                    y: agentp.absolute-position.y - sblk.absolute-position.y + agentp.height + 6px;
+                    accessible-id: "agentMenu";
+                    for t[i] in Office.tools: PickRow { id: "chatTool" + t.id; logo: t.id; label: t.name; note: t.ready ? "" : t.hint; on: i == Office.new-tool; dim: !t.ready;
+                        clicked => { Office.start-menu = 0; Office.pick-tool(i); } }
+                }
+                // Where a Kiro task runs.
+                if Office.start-menu == 3: PickMenu {
+                    x: max(8px, min(wherep.absolute-position.x - sblk.absolute-position.x, sblk.width - self.width - 8px));
+                    y: wherep.absolute-position.y - sblk.absolute-position.y + wherep.height + 6px;
+                    accessible-id: "whereMenu";
+                    PickRow { id: "whereLocal"; icon: PagePaths.laptop; label: "This computer"; note: "On this computer, in the folder"; on: !Office.new-cloud;
+                        clicked => { Office.start-menu = 0; if (Office.new-cloud) { Office.toggle-cloud(); } } }
+                    PickRow { id: "whereCloud"; icon: Icons.cloud; label: "Kiro cloud"; on: Office.new-cloud;
+                        note: Office.new-repo == "Empty workspace" ? "In a sandbox with an empty workspace" : "In a sandbox on " + Office.new-repo + ", with a pull request at the end";
+                        clicked => { Office.start-menu = 0; if (!Office.new-cloud) { Office.toggle-cloud(); } } }
+                }
+                // The project: the recent folders, then a folder of any other.
+                if Office.start-menu == 1: PickMenu {
+                    x: max(8px, min(projp.absolute-position.x - sblk.absolute-position.x, sblk.width - self.width - 8px));
+                    y: projp.absolute-position.y - sblk.absolute-position.y + projp.height + 6px;
+                    accessible-id: "projectMenu";
+                    if Office.start-folders.length > 0: Text { height: 26px; text: "Recent"; font-size: 11px; font-weight: 500; color: #f6f2ff80; vertical-alignment: center; x: 8px; }
+                    for f in Office.start-folders: PickRow { id: "proj" + f.label; icon: Icons.folder; label: f.label; note: f.note; on: f.on; clicked => { Office.start-menu = 0; Office.pick-start-folder(f.id); } }
+                    if Office.start-folders.length > 0: Rectangle { height: 9px; Rectangle { y: 4px; x: 2px; width: parent.width - 4px; height: 1px; background: #ffffff0f; } }
+                    MenuItem { id: "projOpen"; icon: Icons.folder-open; text: "Open folder…"; clicked => { Office.start-menu = 0; Office.pick-start-folder(""); } }
+                }
+                // What the task may do (the access menu, dropping from its pill).
+                if Office.access-menu: PickMenu {
+                    x: max(8px, min(accp.absolute-position.x - sblk.absolute-position.x, sblk.width - self.width - 8px));
+                    y: accp.absolute-position.y - sblk.absolute-position.y + accp.height + 6px;
+                    accessible-id: "accessMenu";
+                    Text { height: 26px; text: Office.access-head; font-size: 11px; font-weight: 500; color: #f6f2ff80; vertical-alignment: center; x: 8px; }
+                    for o in Office.access-opts: PickRow { id: "acc" + o.id; icon: o.id == "read" ? Icons.view : PagePaths.shield; label: o.label; note: o.note; on: o.on; clicked => { Office.pick-access(o.id); } }
                 }
             }
         }
@@ -1937,8 +2353,8 @@ export component OfficeView inherits Rectangle {
         }
 
         // #mMenu for the access chip: each choice with its note, then where it holds.
-        if Office.access-menu: TouchArea { clicked => { Office.open-access(); } }
-        if Office.access-menu: Glass {
+        if Office.access-menu && !(chat && !Office.drawer): TouchArea { clicked => { Office.open-access(); } }
+        if Office.access-menu && !(chat && !Office.drawer): Glass {
             x: pop-x >= 0 ? max(8px, min(pop-x - root.absolute-position.x, parent.width - self.width - 8px)) : 22px;
             y: pop-x >= 0 ? max(8px, pop-y - root.absolute-position.y - self.height - 6px) : parent.height - self.height - 60px;
             width: 250px;
@@ -1974,7 +2390,7 @@ export component OfficeView inherits Rectangle {
         if Office.repo-menu: TouchArea { clicked => { Office.open-repos(); } }
         if Office.repo-menu: Glass {
             x: pop-x >= 0 ? max(8px, min(pop-x - root.absolute-position.x, parent.width - self.width - 8px)) : 22px;
-            y: pop-x >= 0 ? max(8px, pop-y - root.absolute-position.y - self.height - 6px) : parent.height - self.height - 60px;
+            y: pop-x >= 0 ? (pop-below ? pop-y - root.absolute-position.y + 6px : max(8px, pop-y - root.absolute-position.y - self.height - 6px)) : parent.height - self.height - 60px;
             width: 270px;
             height: min(rm.preferred-height, parent.height - 120px);
             border-radius: 14px;
@@ -2104,7 +2520,7 @@ export component OfficeView inherits Rectangle {
         if Office.drawer: Graphite {
             x: chat ? lw : parent.width - self.width - side-gap;
             y: chat ? 0px : side-gap;
-            width: chat ? parent.width - lw - (Desk.panel ? desk-w + side-gap : 0px) : side-w;
+            width: chat ? parent.width - lw - (Desk.panel ? desk-w : 0px) : side-w;
             height: chat ? parent.height : parent.height - 2 * side-gap;
             border-radius: chat ? 0px : compact ? 16px : 20px;
             opacity: chat ? ct : 1;
@@ -2120,63 +2536,121 @@ export component OfficeView inherits Rectangle {
             height: parent.height;
             VerticalLayout {
                 height: parent.height;
-                // .dh: the tool's logo, the task, and its folder, access and context; delete, close.
-                HorizontalLayout {
+                // The header, in the chat view and on the office's card alike: one line. The title (a click renames it), the branch,
+                // the context, then ⋯ (and ✕ on the card, which has no sidebar to go with).
+                Rectangle {
                     vertical-stretch: 0;
-                    // The chat view's switch (and sidebar button) sit over its top left while the list is hidden.
-                    padding-left: chat && lw == 0 ? sw-room : compact ? 10px : 12px;
-                    padding-right: compact ? 8px : 10px;
-                    padding-top: compact ? 8px : 12px;
-                    padding-bottom: compact ? 8px : 11px;
-                    spacing: compact ? 9px : 11px;
-                    min-height: chat ? sw-y * 2 + (compact ? 32px : 36px) : 0px;
-                    VerticalLayout { alignment: center; Logo { width: compact ? 26px : 30px; height: self.width; radius: compact ? 8px : 9px;
-                        mark: compact ? 15px : Office.d-tool-id == "codex" ? 22px : 18px; tool: Office.d-tool-id;
-                        accessible-role: image; accessible-label: Office.d-tool; } }
-                    VerticalLayout {
-                        horizontal-stretch: 1;
-                        alignment: center;
-                        Text { text: Office.d-title; font-size: compact ? 13px : 14px; font-weight: 600; letter-spacing: -0.14px; color: #f6f2ff; overflow: elide; accessible-role: text; accessible-id: "dTitle"; }
-                        Rectangle { height: compact ? 3px : 5px; }
-                        HorizontalLayout { spacing: 5px; alignment: start;
-                            if Office.d-folder != "": Chip { icon: PagePaths.folder; text: Office.d-folder; shrink: true; }
-                            if Office.d-access != "": Chip { icon: PagePaths.shield; text: Office.d-access; tip: Office.d-access-note;
-                                fg: Office.d-access-id == "full" ? #ffc46b : #ffffff99; bg: Office.d-access-id == "full" ? #ffb34017 : #ffffff0e; }
-                            if Office.d-ctx >= 0: Rectangle { height: 20px; width: cx.preferred-width; border-radius: 6px; background: #ffffff0e;
-                                accessible-role: text; accessible-label: Office.d-ctx + "% of the context window used";
-                                cx := HorizontalLayout { padding-left: 7px; padding-right: 7px; spacing: 5px;
-                                    VerticalLayout { alignment: center; Rectangle { width: 11px; height: 11px; border-radius: 5.5px; border-width: 2px; border-color: #ffffff24;
-                                        Path { width: 11px; height: 11px; viewbox-width: 11; viewbox-height: 11; stroke: #ffffffbf; stroke-width: 2px; fill: transparent;
-                                            commands: "M 5.5 1.5 A 4 4 0 " + (Office.d-ctx > 50 ? "1" : "0") + " 1 " + (5.5 + 4 * sin(360deg * min(Office.d-ctx, 99.9) / 100)) + " " + (5.5 - 4 * cos(360deg * min(Office.d-ctx, 99.9) / 100)); } } }
-                                    Text { text: Office.d-ctx + "%"; font-size: 11px; font-weight: 500; color: #ffffff99; vertical-alignment: center; } } }
-                            // The expanded chat says more: where the workspace stands, which model, and how it is going.
-                            if Office.d-wide && Office.d-branch != "": Chip { icon: Icons.git; text: Office.d-branch; tip: "Branch: " + Office.d-branch; shrink: true; }
-                            if Office.d-wide && Office.d-model-shown: Chip { text: Office.d-model + (Office.d-model-effort != "" ? " · " + Office.d-model-effort : ""); tip: "Model"; shrink: true; }
-                            if Office.d-wide: Chip { text: Office.d-status; tip: "Status: " + Office.d-status;
-                                fg: Office.d-stage <= 1 ? #d9c4ff : Office.d-stage == 2 ? #7ee59a : Office.d-stage == 3 ? #ff9a92 : Office.d-stage == 5 ? #ffc46b : #ffffff99;
-                                bg: Office.d-stage <= 1 ? #9b6bff24 : Office.d-stage == 2 ? #30d1581a : Office.d-stage == 3 ? #ff453a1f : Office.d-stage == 5 ? #ffb3401f : #ffffff0e; }
+                    height: compact ? 44px : 52px;
+                    HorizontalLayout {
+                        // The chat view's switch (and sidebar button) sit over its top left while the list is hidden.
+                        padding-left: !Office.d-wide ? 16px : lw == 0 ? (list-allowed ? 10px : sw-room) : 20px;
+                        padding-right: Office.d-wide ? 10px : 8px;
+                        spacing: 6px;
+                        // With the sidebar closed, its show button is always here, before the title.
+                        if Office.d-wide && lw == 0 && list-allowed: VerticalLayout { alignment: center;
+                            Rectangle {
+                                width: 28px;
+                                height: 28px;
+                                border-radius: 7px;
+                                background: sta.has-hover ? #ffffff0b : transparent;
+                                accessible-role: button;
+                                accessible-id: "dShowList";
+                                accessible-label: "Show the sidebar";
+                                accessible-action-default => { Office.list-open = true; }
+                                Icon { name: PagePaths.sidebar; size: 16px; tint: sta.has-hover ? #f6f2ff : #f6f2ff80; }
+                                sta := TouchArea { mouse-cursor: pointer; clicked => { Office.list-open = true; } }
+                            } }
+                        HorizontalLayout {
+                            horizontal-stretch: 1;
+                            spacing: 10px;
+                        // The title: a click renames it in place. Enter or leaving the field saves, Esc undoes, empty keeps the old one.
+                        Rectangle {
+                            horizontal-stretch: 0;
+                            min-width: 0px;
+                            max-width: max(120px, (Office.d-wide ? main-w : side-w) * 0.46);
+                            preferred-width: Office.d-renaming ? max(180px, htl.preferred-width + 24px) : htl.preferred-width;
+                            accessible-role: button;
+                            accessible-id: "dTitle";
+                            accessible-label: "Rename: " + Office.d-title;
+                            accessible-action-default => { Office.d-renaming = true; }
+                            htl := Text { visible: !Office.d-renaming; width: parent.width; text: Office.d-title; font-size: 14px; font-weight: 600; letter-spacing: -0.14px;
+                                color: #f6f2ff; overflow: elide; vertical-alignment: center; }
+                            if !Office.d-renaming: TouchArea { mouse-cursor: pointer; clicked => { Office.d-renaming = true; } }
+                            if Office.d-renaming: Rectangle {
+                                height: 28px;
+                                border-radius: 7px;
+                                background: #ffffff0f;
+                                border-width: 1px;
+                                border-color: #c4a2ff59;
+                                rn := TextInput {
+                                    x: 7px;
+                                    width: parent.width - 14px;
+                                    text: Office.d-title;
+                                    font-size: 14px;
+                                    font-weight: 600;
+                                    color: #f6f2ff;
+                                    single-line: true;
+                                    vertical-alignment: center;
+                                    selection-background-color: #c4a2ff66;
+                                    accessible-role: text-input;
+                                    accessible-id: "dRename";
+                                    accessible-label: "Chat name";
+                                    init => { self.focus(); self.select-all(); }
+                                    accepted => { Office.d-renaming = false; Office.d-rename(self.text); }
+                                    key-pressed(e) => { if (e.text == Key.Escape) { Office.d-renaming = false; return accept; } reject }
+                                    changed has-focus => { if (!self.has-focus && Office.d-renaming) { Office.d-renaming = false; Office.d-rename(self.text); } }
+                                }
+                            }
+                        }
+                        // The chips: no fill, no border; only the text brightens on hover. Both are the same size.
+                        HorizontalLayout {
+                            horizontal-stretch: 1;
+                            alignment: start;
+                            spacing: 4px;
+                            if Office.d-branch != "": HeadChip { icon: Icons.git; text: Office.d-branch; label: "Branch: " + Office.d-branch; }
+                            if Office.d-ctx >= 0: HeadChip { ring: Office.d-ctx; text: Office.d-ctx + "%";
+                                label: Office.d-ctx + "% of the context used" + (Office.d-tool-id == "kiro" ? " · Kiro compacts at 70%" : ""); tick: Office.d-tool-id == "kiro"; }
                             // Kiro Web: opens this session there; says so while hovered.
-                            if Office.d-cloud: Rectangle { height: 20px; width: 26px; border-radius: 6px; background: cw.has-hover ? #6ba8ff33 : #6ba8ff1c;
+                            if Office.d-cloud: Rectangle { height: 24px; width: 28px; border-radius: 6px;
                                 accessible-role: button; accessible-id: "dCloud"; accessible-label: "Open cloud session";
                                 accessible-action-default => { Office.d-open-cloud(); }
-                                Icon { name: Icons.cloud; size: 13px; tint: #8fbcff; }
+                                Icon { name: Icons.cloud; size: 13px; tint: cw.has-hover ? #a9cbff : #8fbcff; }
                                 cw := TouchArea { mouse-cursor: pointer; clicked => { Office.d-open-cloud(); } }
-                                if cw.has-hover: Rectangle { x: parent.width + 6px; y: 0; height: 20px; width: ct.preferred-width + 14px; border-radius: 6px; background: #1c1a24f2;
+                                if cw.has-hover: Rectangle { x: parent.width + 6px; y: 0; height: 24px; width: ct.preferred-width + 14px; border-radius: 6px; background: #1c1a24f2;
                                     border-width: 1px; border-color: #ffffff1a;
-                                    ct := Text { text: "Open cloud session"; font-size: 11px; font-weight: 500; color: #f6f2ffde; vertical-alignment: center; } } }
+                                    ct := Text { text: "Open cloud session"; font-size: 11px; font-weight: 500; color: #f6f2ffde; vertical-alignment: center; horizontal-alignment: center; } } }
+                        }
+                        }
+                        VerticalLayout { alignment: center;
+                            Rectangle {
+                                width: 28px;
+                                height: 28px;
+                                border-radius: 7px;
+                                background: mta.has-hover || Office.d-menu ? #ffffff0b : transparent;
+                                accessible-role: button;
+                                accessible-id: "dMore";
+                                accessible-label: "More";
+                                accessible-action-default => { root.toggle-menu(); }
+                                Icon { name: Icons.more; size: 16px; tint: mta.has-hover || Office.d-menu ? #f6f2ff : #f6f2ff80; }
+                                mta := TouchArea { mouse-cursor: pointer; clicked => { root.toggle-menu(); } }
+                            }
+                        }
+                        // The card closes its chat here; the chat view has its sidebar for that.
+                        if !Office.d-wide: VerticalLayout { alignment: center;
+                            Rectangle {
+                                width: 28px;
+                                height: 28px;
+                                border-radius: 7px;
+                                background: xta.has-hover ? #ffffff0b : transparent;
+                                accessible-role: button;
+                                accessible-id: "dClose";
+                                accessible-label: "Close the chat";
+                                accessible-action-default => { Office.d-close(); }
+                                Icon { name: Icons.close; size: 15px; tint: xta.has-hover ? #f6f2ff : #f6f2ff80; }
+                                xta := TouchArea { mouse-cursor: pointer; clicked => { Office.d-close(); } }
+                            }
                         }
                     }
-                    if Office.d-wide: VerticalLayout { alignment: center; HorizontalLayout { spacing: 6px;
-                        if Office.d-busy && !Office.d-stopping: ChipButton { icon: PagePaths.stop; text: tight ? "" : "Stop"; tip: "Stop this run"; fg: #ff9a92; bg: #ff453a1f; clicked => { Office.d-stop(); } }
-                        ChipButton { icon: Icons.code; text: tight ? "" : "Editor"; tip: "Open this task’s folder in your editor"; clicked => { Office.d-editor(); } }
-                        ChipButton { icon: DeskIcons.files; text: tight ? "" : "Files & changes"; tip: Desk.panel ? "Close the files and changes" : "Open the files and changes beside the chat"; clicked => { Office.d-details(); } }
-                    } }
-                    if Office.d-more-items.length > 0: VerticalLayout { alignment: center; XButton { id: "dMore"; label: "More: continue with another agent, fork"; icon: Icons.more; small: compact; clicked => { Office.d-more = !Office.d-more; } } }
-                    // Over the office: open this chat in the chat view (its switch goes back).
-                    if !Office.d-wide: VerticalLayout { alignment: center; XButton { id: "dExpand"; label: "Open in chat view"; icon: PagePaths.expand; small: compact;
-                        clicked => { Office.d-expand(); } } }
-                    VerticalLayout { alignment: center; XButton { id: "dDel"; label: "Delete this session"; icon: PagePaths.bin; small: compact; clicked => { Office.d-delete(); } } }
-                    VerticalLayout { alignment: center; XButton { id: "dClose"; label: "Close"; icon: Icons.close; small: compact; clicked => { Office.d-close(); } } }
                 }
                 Rectangle { height: 1px; background: #ffffff0f; }
                 thread := Rectangle {
@@ -2192,6 +2666,7 @@ export component OfficeView inherits Rectangle {
                     changed height => { Office.d-thread-h = self.height; Office.d-resized(); }
                     Image { width: 100%; height: 100%; source: Office.d-thread; image-fit: fill; }
                     TouchArea {
+                        mouse-cursor: Office.d-over ? pointer : text;
                         scroll-event(e) => { Office.d-wheel(e.delta-y); accept }
                         clicked => { Office.d-click(self.mouse-x, self.mouse-y); }
                         pointer-event(e) => {
@@ -2206,7 +2681,9 @@ export component OfficeView inherits Rectangle {
                             }
                             if (e.button == PointerEventButton.left && e.kind == PointerEventKind.up) { Office.d-pointer(2, self.mouse-x, self.mouse-y, false); }
                         }
-                        moved => { if (self.pressed) { Office.d-pointer(1, self.mouse-x, self.mouse-y, false); } }
+                        moved => { if (self.pressed) { Office.d-pointer(1, self.mouse-x, self.mouse-y, false); } else { Office.d-pointer(5, self.mouse-x, self.mouse-y, false); } }
+                        // Off the thread: not over anything that opens.
+                        changed has-hover => { if (!self.has-hover) { Office.d-pointer(6, 0, 0, false); } }
                     }
                     }
                     // .jump: "Latest", over the thread's end, once the reader is well above it.
@@ -2297,109 +2774,7 @@ export component OfficeView inherits Rectangle {
                 // .comp: the reply box, grown out of the circle. The text, then a bar with +,
                 // the model, Hide (Esc: the draft stays), and one round button that sends,
                 // queues a reply while a run goes, or pauses the run when the box is empty.
-                // The chat view's reply box: one slim rounded bar at rest (+, the words, the
-                // model, send), which grows with what is written up to six lines, then scrolls.
-                if Office.d-wide: Rectangle {
-                    height: wpill.preferred-height + (compact ? 12px : 20px);
-                    Rectangle {
-                        property <bool> multi: winput.preferred-height > 24px || Office.d-chips.length > 0 || Office.d-shots.length > 0;
-                        x: (parent.width - self.width) / 2;
-                        y: compact ? 4px : 8px;
-                        width: min(parent.width - (compact ? 20px : 32px), col-w);
-                        height: wpill.preferred-height;
-                        border-radius: multi ? 20px : self.height / 2;
-                        background: #1b181f;
-                        border-width: 1px;
-                        border-color: winput.has-focus ? #c4a2ff8c : #ffffff1f;
-                        drop-shadow-blur: 26px;
-                        drop-shadow-offset-y: 8px;
-                        drop-shadow-color: #00000080;
-                        animate border-color { duration: Pal.motion ? 160ms : 0ms; }
-                        TouchArea { mouse-cursor: text; clicked => { winput.focus(); } }
-                        wpill := VerticalLayout {
-                            padding-left: 7px;
-                            padding-right: 7px;
-                            padding-top: compact ? 6px : 8px;
-                            padding-bottom: compact ? 6px : 8px;
-                            spacing: 6px;
-                            if Office.d-chips.length > 0: HorizontalLayout { spacing: 5px; alignment: start; padding-left: 6px; padding-top: 2px;
-                                for c[i] in Office.d-chips: Rectangle {
-                                    height: 22px;
-                                    width: min(wcl.preferred-width, 220px);
-                                    border-radius: 7px;
-                                    background: #ffffff12;
-                                    accessible-role: groupbox;
-                                    accessible-label: "Attached: " + c;
-                                    wcl := HorizontalLayout { padding-left: 8px; padding-right: 3px; spacing: 4px;
-                                        Text { text: c; font-size: 11px; color: #f6f2ffcc; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; }
-                                        VerticalLayout { alignment: center;
-                                            Rectangle { width: 16px; height: 16px; border-radius: 5px; background: wxa.has-hover ? #ffffff1f : transparent;
-                                                accessible-role: button; accessible-label: "Remove " + c; accessible-action-default => { Office.d-chip-remove(i); }
-                                                Icon { name: Icons.close; size: 10px; tint: #f6f2ff9e; }
-                                                wxa := TouchArea { mouse-cursor: pointer; clicked => { Office.d-chip-remove(i); } } } }
-                                    }
-                                }
-                            }
-                            if Office.d-shots.length > 0: Shots { shots: Office.d-shots; which: 1; padding-left: 6px; padding-top: 2px; }
-                            HorizontalLayout {
-                                spacing: 4px;
-                                VerticalLayout { alignment: end; ClipButton { id: "attach"; clicked => { Office.attach(1); } } }
-                                Rectangle {
-                                    horizontal-stretch: 1;
-                                    // One line (30 px, the buttons' height) at rest, up to six.
-                                    height: max(30px, min(6 * 19px + 11px, winput.preferred-height + 11px));
-                                    wfl := Flickable {
-                                        x: 4px;
-                                        y: 6px;
-                                        width: parent.width - 8px;
-                                        height: parent.height - 11px;
-                                        interactive: false;
-                                        content-height: max(self.height, winput.preferred-height);
-                                        winput := TextInput {
-                                            width: parent.width;
-                                            text <=> Office.d-draft;
-                                            // Words put in from outside (dictation): the caret goes after them, in view.
-                                            property <int> to-end: Office.d-draft-to-end;
-                                            changed to-end => { self.set-selection-offsets(2147483647, 2147483647); }
-                                            cursor-position-changed(c) => { wfl.content-y = Caret.follow(wfl.content-y, wfl.height, c.y, self.font-size); }
-                                            font-size: 13.5px;
-                                            color: #f6f2ff;
-                                            wrap: word-wrap;
-                                            single-line: false;
-                                            accessible-role: text-input;
-                                            accessible-id: "input";
-                                            accessible-label: Office.d-reply-label;
-                                            init => { self.focus(); self.set-selection-offsets(2147483647, 2147483647); }
-                                            key-pressed(e) => {
-                                                if (e.text == "\n" && !e.modifiers.shift && self.preedit-text == "") { Office.d-send(); return accept; }
-                                                if (e.modifiers.control && (e.text == "v" || e.text == "V") && Office.paste-image(1)) { return accept; }
-                                                if (e.modifiers.control && (e.text == "c" || e.text == "C") && self.anchor-position-byte-offset == self.cursor-position-byte-offset && Office.d-copy()) { return accept; }
-                                                reject
-                                            }
-                                        }
-                                    }
-                                    InputThumb { x: parent.width - 2px; y: wfl.y; height: wfl.height; f-height: wfl.height; f-content: wfl.content-height; f-y: wfl.content-y; }
-                                    if Office.d-draft == "" && winput.preedit-text == "": Text { x: 4px; y: 6px; width: parent.width - 8px; text: Office.d-placeholder;
-                                        font-size: 13.5px; color: #f6f2ff61; overflow: elide; }
-                                }
-                                if Office.d-voice != "": VerticalLayout { alignment: end; padding-bottom: 7px;
-                                    Text { text: Office.d-voice; font-size: 11.5px; color: #ff8fa3; overflow: elide; accessible-role: text; accessible-id: "dVoice"; } }
-                                if Office.d-stopping: VerticalLayout { alignment: end; padding-bottom: 7px; Text { text: "Stopping…"; font-size: 11.5px; color: #ffc46b; accessible-role: text; } }
-                                if Office.d-model-shown: VerticalLayout { alignment: end; padding-bottom: 1px;
-                                    MPill { id: "dModel"; model: Office.d-model; effort: Office.d-model-effort; open: Office.model-menu == 1; max-w: 220px;
-                                        clicked(x, y) => { Office.open-model(Office.model-menu == 1 ? 0 : 1, x, y); } } }
-                                VerticalLayout { alignment: end; padding-bottom: 1px;
-                                    GoButton { id: "send"; round: true;
-                                        property <bool> empty: Office.d-draft == "" && Office.d-shots.length == 0 && Office.d-chips.length == 0;
-                                        enabled: !self.empty || (Office.d-busy && !Office.d-stopping);
-                                        pause: self.empty && Office.d-busy;
-                                        label: Office.d-stopping && self.empty ? "Stopping…" : self.empty && Office.d-busy ? "Pause this run" : Office.d-busy ? "Queue this reply" : "Send";
-                                        clicked => { Office.d-send(); } } }
-                            }
-                        }
-                    }
-                }
-                if composing && !Office.d-wide: Rectangle {
+                if composing: Rectangle {
                     height: comp.preferred-height + 16px;
                     Rectangle {
                         x: Office.d-wide ? (parent.width - self.width) / 2 : 10px;
@@ -2414,6 +2789,27 @@ export component OfficeView inherits Rectangle {
                         drop-shadow-offset-y: -8px;
                         drop-shadow-color: #00000088;
                         cta := TouchArea { clicked => { input.focus(); } }
+                        // The @ (files) and / (commands) list, over the box.
+                        if Office.pop-rows.length > 0: Rectangle {
+                            y: -self.height - 8px;
+                            width: parent.width;
+                            height: pl.preferred-height;
+                            border-radius: 12px;
+                            background: #1a1820;
+                            border-width: 1px;
+                            border-color: #ffffff17;
+                            drop-shadow-blur: 30px;
+                            drop-shadow-offset-y: 12px;
+                            drop-shadow-color: #000000cc;
+                            accessible-role: list;
+                            accessible-id: "popList";
+                            accessible-label: "Files and commands";
+                            pl := VerticalLayout {
+                                padding: 4px;
+                                for r in Office.pop-rows: PopRowView { r: r;
+                                    picked => { if (Office.pop-pick(r.idx) == "model") { Office.open-model(1, bar.absolute-position.x + bar.width, bar.absolute-position.y); } } }
+                            }
+                        }
                         comp := VerticalLayout {
                             padding-left: 10px;
                             padding-right: 7px;
@@ -2464,7 +2860,18 @@ export component OfficeView inherits Rectangle {
                                         accessible-label: Office.d-reply-label;
                                         // Opened by a click or a typed character: the keys go here, after what is written.
                                         init => { self.focus(); self.set-selection-offsets(2147483647, 2147483647); }
+                                        edited => { Office.pop-text(self.text, self.cursor-position-byte-offset); }
                                         key-pressed(e) => {
+                                            // The @ / / list takes the arrows, Enter and Tab while it has something to pick, and Esc.
+                                            if (Office.pop-pickable) {
+                                                if (e.text == Key.UpArrow) { Office.pop-move(-1); return accept; }
+                                                if (e.text == Key.DownArrow) { Office.pop-move(1); return accept; }
+                                                if ((e.text == "\n" && !e.modifiers.shift && self.preedit-text == "") || e.text == Key.Tab) {
+                                                    if (Office.pop-pick(-1) == "model") { Office.open-model(1, bar.absolute-position.x + bar.width, bar.absolute-position.y); }
+                                                    return accept;
+                                                }
+                                            }
+                                            if (e.text == Key.Escape && Office.pop-rows.length > 0) { Office.pop-close(); return accept; }
                                             // Enter sends (not while an IME is composing: its Enter takes the word);
                                             // Shift+Enter is a new line.
                                             if (e.text == "\n" && !e.modifiers.shift && self.preedit-text == "") { Office.d-send(); return accept; }
@@ -2479,27 +2886,24 @@ export component OfficeView inherits Rectangle {
                                 if Office.d-draft == "" && input.preedit-text == "": Text { x: 2px; y: 3px; text: Office.d-placeholder; font-size: 13px; color: #f6f2ff61; overflow: elide; width: parent.width - 4px; }
                             }
                             Rectangle { height: 3px; }
-                            HorizontalLayout {
+                            bar := HorizontalLayout {
                                 spacing: 4px;
                                 ClipButton { id: "attach"; clicked => { Office.attach(1); } }
-                                if Office.d-model-shown: MPill { id: "dModel"; model: Office.d-model; effort: Office.d-model-effort; open: Office.model-menu == 1; max-w: parent.width * 0.62;
-                                    clicked(x, y) => { Office.open-model(Office.model-menu == 1 ? 0 : 1, x, y); } }
+                                // The chat's folder beside +, in the chat view and on the card. A click opens it.
+                                if Office.d-folder != "": FolderChip { text: Office.d-folder; max-w: min(240px, parent.width * 0.3); clicked => { Office.d-menu-act("fm"); } }
                                 Rectangle { horizontal-stretch: 1; }
                                 // Not confirmed yet: the tool hasn't said the run stopped.
                                 if Office.d-voice != "": Text { text: Office.d-voice; font-size: 11.5px; color: #ff8fa3; vertical-alignment: center; overflow: elide; accessible-role: text; accessible-id: "dVoice"; }
                                 if Office.d-stopping: Text { text: "Stopping…"; font-size: 11.5px; color: #ffc46b; vertical-alignment: center; accessible-role: text; }
-                                if !Office.d-wide: Rectangle { width: 26px; height: 28px;
-                                    accessible-role: button; accessible-id: "hideBtn"; accessible-label: "Hide. Keeps your draft";
-                                    accessible-action-default => { Office.d-compose = false; focus.focus(); }
-                                    Rectangle { y: 1px; width: 26px; height: 26px; border-radius: 9px; background: hta.has-hover ? #ffffff12 : transparent;
-                                        Icon { name: Icons.chevron-down; size: 15px; tint: hta.has-hover ? #f6f2ff : #f6f2ff9e; } }
-                                    hta := TouchArea { mouse-cursor: pointer; clicked => { Office.d-compose = false; focus.focus(); } } }
+                                if Office.d-model-shown: MPill { id: "dModel"; model: Office.d-model; effort: Office.d-model-effort; open: Office.model-menu == 1; max-w: parent.width * 0.5;
+                                    clicked(x, y) => { Office.open-model(Office.model-menu == 1 ? 0 : 1, x, y); } }
                                 VerticalLayout { alignment: center;
                                     GoButton { id: "send"; round: true;
                                         property <bool> empty: Office.d-draft == "" && Office.d-shots.length == 0 && Office.d-chips.length == 0;
                                         enabled: !self.empty || (Office.d-busy && !Office.d-stopping);
-                                        pause: self.empty && Office.d-busy;
-                                        label: Office.d-stopping && self.empty ? "Stopping…" : self.empty && Office.d-busy ? "Pause this run" : Office.d-busy ? "Queue this reply" : "Send";
+                                        // Grey until something is written; Stop while the agent works, and Send (to queue) once something is.
+                                        stop: self.empty && Office.d-busy;
+                                        label: Office.d-stopping && self.empty ? "Stopping…" : self.empty && Office.d-busy ? "Stop this run" : Office.d-busy ? "Queue this reply" : "Send";
                                         clicked => { Office.d-send(); } } }
                             }
                         }
@@ -2508,59 +2912,68 @@ export component OfficeView inherits Rectangle {
             }
             }
             }
-            // The header's More menu: switch agent, fork, bring findings back. A click elsewhere puts it away.
-            if Office.d-more && Office.d-more-items.length > 0: TouchArea { clicked => { Office.d-more = false; } }
-            if Office.d-more && Office.d-more-items.length > 0: Rectangle {
-                x: parent.width - self.width - 12px;
-                y: compact ? 46px : 56px;
-                width: min(280px, parent.width - 24px);
-                height: ml.preferred-height;
-                border-radius: 14px;
-                background: #1c1a24;
+            // The ⋯ menu, in the chat view and on the card. Open in and Switch agent open a list to their left; the card's
+            // has "Open in chat view" on top.
+            if Office.d-menu: TouchArea { clicked => { Office.d-menu = false; } }
+            if Office.d-menu: Rectangle {
+                x: parent.width - self.width - 10px;
+                y: ((compact ? 44px : 52px) - 28px) / 2 + 34px;
+                width: 188px;
+                height: cm.preferred-height;
+                border-radius: 12px;
+                background: #1a1820;
                 border-width: 1px;
-                border-color: #ffffff1a;
-                drop-shadow-blur: 24px;
-                drop-shadow-offset-y: 8px;
-                drop-shadow-color: #00000088;
+                border-color: #ffffff17;
+                drop-shadow-blur: 30px;
+                drop-shadow-offset-y: 12px;
+                drop-shadow-color: #000000cc;
                 accessible-role: list;
+                accessible-id: "moreMenu";
                 accessible-label: "More";
-                ml := VerticalLayout {
-                    padding: 6px;
-                    for m[i] in Office.d-more-items: MenuRow { o: m; clicked => { Office.d-more-act(i); } }
+                cm := VerticalLayout {
+                    padding: 4px;
+                    if !Office.d-wide: MenuItem { id: "mChatView"; icon: PagePaths.expand; text: "Open in chat view"; hovered => { Office.d-fly = 0; } clicked => { Office.d-menu = false; Office.d-expand(); } }
+                    MenuItem { id: "mOpenIn"; icon: PagePaths.code; text: "Open in"; chev: true; open: Office.d-fly == 1;
+                        hovered => { Office.d-fly = 1; } clicked => { Office.d-fly = 1; }
+                        if Office.d-fly == 1: Flyout {
+                            Text { height: 26px; text: "OPEN THE FOLDER IN"; font-size: 10.5px; font-weight: 600; letter-spacing: 0.63px; color: #f6f2ff61; vertical-alignment: center; x: 8px; }
+                            for e in Office.d-editors: MenuItem { id: "mEd" + e.id; text: e.label; tile: e.id; clicked => { Office.d-menu = false; Office.d-menu-act("editor:" + e.id); } }
+                            if Office.d-editors.length > 0: Rectangle { height: 9px; Rectangle { y: 4px; height: 1px; background: #ffffff0f; } }
+                            MenuItem { id: "mFm"; icon: PagePaths.folder; text: Office.d-fm; clicked => { Office.d-menu = false; Office.d-menu-act("fm"); } }
+                        }
+                    }
+                    MenuItem { id: "mTerminal"; icon: PagePaths.terminal; text: "Terminal"; hovered => { Office.d-fly = 0; } clicked => { Office.d-menu = false; Office.d-menu-act("terminal"); } }
+                    MenuItem { id: "mFiles"; icon: DeskIcons.diff; text: "Files & changes"; hovered => { Office.d-fly = 0; } clicked => { Office.d-menu = false; Office.d-menu-act("files"); } }
+                    Rectangle { height: 9px; Rectangle { y: 4px; x: 4px; width: parent.width - 8px; height: 1px; background: #ffffff0f; } }
+                    MenuItem { id: "mSwitch"; icon: PagePaths.swap; text: "Switch agent"; chev: true; open: Office.d-fly == 2;
+                        hovered => { Office.d-fly = 2; } clicked => { Office.d-fly = 2; }
+                        if Office.d-fly == 2: Flyout {
+                            Text { height: 26px; text: "SWITCH THIS CHAT TO"; font-size: 10.5px; font-weight: 600; letter-spacing: 0.63px; color: #f6f2ff61; vertical-alignment: center; x: 8px; }
+                            for a in Office.d-switch: MenuItem { id: "mTo" + a.id; text: a.label; logo: a.id; clicked => { Office.d-menu = false; Office.d-menu-act("to:" + a.id); } }
+                            if Office.d-switch.length == 0: Text { height: 30px; text: "No other agent is ready."; font-size: 12px; color: #f6f2ff80; vertical-alignment: center; x: 8px; }
+                        }
+                    }
+                    MenuItem { id: "mRename"; icon: PagePaths.pen; text: "Rename"; hovered => { Office.d-fly = 0; } clicked => { Office.d-menu = false; Office.d-renaming = true; } }
+                    MenuItem { id: "mFork"; icon: PagePaths.fork; text: "Fork"; hovered => { Office.d-fly = 0; } clicked => { Office.d-menu = false; Office.d-menu-act("fork"); } }
+                    Rectangle { height: 9px; Rectangle { y: 4px; x: 4px; width: parent.width - 8px; height: 1px; background: #ffffff0f; } }
+                    MenuItem { id: "mDelete"; icon: PagePaths.bin; text: "Delete"; red: true; hovered => { Office.d-fly = 0; } clicked => { Office.d-menu = false; Office.d-menu-act("delete"); } }
                 }
             }
         }
 
-        // The desk's panel: wider than the others, its surfaces as tabs along the top.
+        // The desk's panel: wider than the others, its surfaces as tabs along the top. In the chat
+        // view it is attached to the chat's right edge at the chat's full height.
         if Desk.panel: Graphite {
-            x: parent.width - self.width - side-gap;
-            y: side-gap;
+            x: chat ? parent.width - self.width : parent.width - self.width - side-gap;
+            y: chat ? 0px : side-gap;
             width: desk-w;
-            height: parent.height - 2 * side-gap;
-            border-radius: compact ? 16px : 20px;
+            height: chat ? parent.height : parent.height - 2 * side-gap;
+            border-radius: chat ? 0px : compact ? 16px : 20px;
             accessible-role: groupbox;
             accessible-id: "deskPanel";
             accessible-label: Desk.p-title;
-            VerticalLayout {
-                HorizontalLayout {
-                    vertical-stretch: 0;
-                    padding-left: 14px;
-                    padding-right: 10px;
-                    padding-top: 12px;
-                    padding-bottom: 11px;
-                    VerticalLayout {
-                        horizontal-stretch: 1;
-                        alignment: center;
-                        Text { text: Desk.p-title; font-size: 14px; font-weight: 600; letter-spacing: -0.14px; color: #f6f2ff; overflow: elide; accessible-role: text; accessible-id: "pTitle"; }
-                        Text { text: Desk.p-sub; font-size: 11.5px; color: #f6f2ff61; overflow: elide; }
-                    }
-                    VerticalLayout { alignment: center; XButton { id: "deskClose"; label: "Close"; icon: Icons.close; small: compact; clicked => { Desk.panel-close(); } } }
-                }
-                Rectangle { height: 1px; background: #ffffff0f; }
-                DeskBody { vertical-stretch: 1; }
-            }
+            DeskBody { width: parent.width; height: parent.height; }
         }
-
         // The desk's card, where the desk was clicked; a click elsewhere puts it away.
         if Desk.card: TouchArea { clicked => { Desk.card-close(); } }
         if Desk.card: DeskCard {
@@ -2571,20 +2984,12 @@ export component OfficeView inherits Rectangle {
         }
         // #mMenu for a model pill: the tool's models, then its efforts (or the model's own
         // variants), then from when the pick holds. Above the pill, kept in the office.
-        // The switch between the office and the chat view, over both at the top left; in the
-        // chat view the sidebar's button sits beside it.
-        vsw := ViewSwitch { x: sw-x; y: sw-y; chat: chat; small: compact; toggled => { Office.toggle-view(); } }
-        if chat && list-allowed: XButton {
-            x: sw-x + vsw.width + 8px;
-            y: sw-y + (vsw.height - self.height) / 2;
-            id: "dList";
-            label: Office.list-open ? "Hide the session list" : "Show the session list";
-            icon: PagePaths.sidebar;
-            small: compact;
-            clicked => { Office.list-open = !Office.list-open; }
-        }
-        if vsw.hovered: Rectangle {
-            x: sw-x;
+        // The switch between the office and the chat view, over both at the top left: in the chat view it is the sidebar's first
+        // thing, so it goes with the sidebar when that is closed (the header's show button is then the way back) and stays
+        // where the sidebar has no room.
+        vsw := ViewSwitch { x: sw-x; y: sw-y; chat: chat; small: compact; glass: !chat; visible: !chat || list-shown || !list-allowed; toggled => { Office.toggle-view(); } }
+        if vsw.visible && vsw.side != 0: Rectangle {
+            x: sw-x + (vsw.side == 1 ? 0px : vsw.width / 2);
             y: sw-y + vsw.height + 6px;
             width: vtip.preferred-width + 16px;
             height: vtip.preferred-height + 8px;
@@ -2592,7 +2997,7 @@ export component OfficeView inherits Rectangle {
             background: #0a060ee6;
             border-width: 1px;
             border-color: #ffffff1a;
-            vtip := Text { text: chat ? "Back to the agent office" : "Chat view"; font-size: 11.5px; font-weight: 500; color: #f6f2ff; }
+            vtip := Text { text: vsw.side == 1 ? "Office" : "Chat"; font-size: 11.5px; font-weight: 500; color: #f6f2ff; }
         }
         if Office.model-menu != 0: TouchArea { clicked => { Office.open-model(0, 0, 0); } }
         if Office.model-menu != 0: Glass {
@@ -2621,17 +3026,40 @@ export component OfficeView inherits Rectangle {
                         content-y: -min(max(0px, Office.mm-cur * 28px - (self.height - 28px) / 2), max(0px, self.content-height - self.height));
                         mml := VerticalLayout {
                             width: parent.width;
-                            for m in Office.mm-models: MenuRow { o: m; clicked => { Office.pick-model(m.id); } }
+                            for m[i] in Office.mm-models: MenuRow { o: m; rate: Office.mm-rates[i]; clicked => { Office.pick-model(m.id); } }
                         }
                     }
                     InputThumb { x: parent.width - 4px; y: 0px; height: parent.height; f-height: mmf.height; f-content: mmf.content-height; f-y: mmf.content-y; }
                 }
-                if Office.mm-efforts.length > 0: Text { text: Office.mm-effort-head; font-family: "Pixelify Sans"; font-weight: 600; font-size: 10.5px; letter-spacing: 0.63px; color: #f6f2ff61;
+                if Office.mm-effort-head != "": Text { text: Office.mm-effort-head; font-family: "Pixelify Sans"; font-weight: 600; font-size: 10.5px; letter-spacing: 0.63px; color: #f6f2ff61;
                     height: self.preferred-height + 10px; vertical-alignment: center; x: 8px; }
                 if Office.mm-efforts.length > 0: HorizontalLayout { padding-left: 4px; padding-right: 4px; padding-bottom: 4px; padding-top: 2px; spacing: 3px;
                     for e in Office.mm-efforts: MenuRow { seg: true; o: e; horizontal-stretch: 1; clicked => { Office.pick-effort(e.id); } } }
-                HorizontalLayout { padding-left: 8px; padding-right: 8px; padding-top: 4px; padding-bottom: 3px;
+                // Auto picks the model, and the effort with it.
+                if Office.mm-effort-head != "" && Office.mm-efforts.length == 0: HorizontalLayout { padding-left: 8px; padding-right: 8px; padding-bottom: 6px;
+                    Text { text: "Auto picks it per task"; font-size: 11.5px; color: #f6f2ff80; } }
+                if !Office.mm-compact: HorizontalLayout { padding-left: 8px; padding-right: 8px; padding-top: 4px; padding-bottom: 3px;
                     Text { text: Office.mm-note; font-size: 11px; color: #f6f2ff61; wrap: word-wrap; } }
+                // .compact: when Kiro compacts the chat; a click opens its Settings.
+                if Office.mm-compact: Rectangle {
+                    height: 36px;
+                    HorizontalLayout { padding-top: 4px; padding-left: 0px; padding-right: 0px;
+                        Rectangle {
+                            border-radius: 8px;
+                            background: cta2.has-hover ? #2dd4bf1a : #2dd4bf0f;
+                            accessible-role: button;
+                            accessible-id: "mCompact";
+                            accessible-label: Office.mm-note + ". Open Kiro's settings";
+                            accessible-action-default => { Office.open-model(0, 0, 0); Office.open-settings-page(4); }
+                            HorizontalLayout { padding-left: 8px; padding-right: 8px; spacing: 8px;
+                                VerticalLayout { alignment: center; Icon { name: "M 15 15 l 6 6 M 15 15 v 4.8 M 15 15 h 4.8 M 9 19.8 V 15 M 9 15 H 4.2 M 9 15 l -6 6 M 15 4.2 V 9 M 15 9 h 4.8 M 15 9 l 6 -6 M 9 4.2 V 9 M 9 9 H 4.2 M 9 9 L 3 3"; size: 14px; tint: #7fe3d4; } }
+                                Text { text: Office.mm-note; font-size: 12px; color: #f6f2ffb0; vertical-alignment: center; horizontal-stretch: 1; overflow: elide; }
+                                VerticalLayout { alignment: center; Icon { name: Icons.chevron-right; size: 13px; tint: #7fe3d4; } }
+                            }
+                            cta2 := TouchArea { mouse-cursor: pointer; clicked => { Office.open-model(0, 0, 0); Office.open-settings-page(4); } }
+                        }
+                    }
+                }
             }
         }
 

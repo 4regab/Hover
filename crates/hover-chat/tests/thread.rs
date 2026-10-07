@@ -49,8 +49,10 @@ fn a_select_all_copies_what_the_page_copies() {
         th.select_all();
         // On purpose since the page: how long the run took moved from beside the bot's
         // name ("· 3m 12s") to the answer's stamp, which is drawn, not copied. And a
-        // command shows whole, not the page's program and first word ("npm install …").
+        // command shows whole, not the page's program and first word ("npm install …"), and
+        // says how it ended as the mockup's command line does ("exit 1 · 6.1s").
         let page = want[name]["thread"].as_str().unwrap().split('\n').filter(|l| !l.starts_with("· ")).collect::<Vec<_>>().join("\n")
+            .replace("Ran npm install …\nfailed\n6 s", "Ran npm install three@0.171.0\nexit 1 · 6.1s")
             .replace("Ran npm install …", "Ran npm install three@0.171.0");
         assert_eq!(th.selected_text(), page, "{name}");
     }
@@ -186,18 +188,26 @@ fn a_long_rich_conversation_stays_responsive() {
 fn step_rows_sit_where_the_page_puts_them() {
     // copy.json's `rows`: the summary line and each timeline row, their top in #thread's
     // content and their height.
+    //
+    // Two things moved on purpose since the 2.x page these were measured in. The prompt's time line (17.75 px) became the
+    // row of Copy and Edit under it (26 px, with 3 px above), so everything under the prompt sits 11.25 px lower. And a
+    // command is one 30 px row with no icon box, where the page had a 25 px row with one.
+    const PROMPT_ROW: f32 = 29.0 - 17.75;
     let want: serde_json::Value = serde_json::from_str(&golden("expected/copy.json")).unwrap();
     for (name, k, open) in [("done-rich", 1, false), ("failed", 3, false), ("failed-steps-open", 3, true)] {
         let (mut th, turns) = fixture(k);
         if open { th.toggle_steps(&turns, 0); }
         let s = &th.sections[0];
         let [_, sy, _, sh] = s.summary.unwrap();
-        let mut got = vec![(s.y + sy, sh)];
+        let mut got = vec![(s.y + sy - PROMPT_ROW, sh)];
         // The icon boxes (19 x 19) centre in their 25 px rows.
         got.extend(s.frag.shapes.iter().filter_map(|x| match x {
-            hover_chat::doc::Shape::Rect { y, w, h, .. } if *w == 19.0 && *h == 19.0 => Some((s.y + y - 3.0, 25.0)),
+            hover_chat::doc::Shape::Rect { y, w, h, .. } if *w == 19.0 && *h == 19.0 => Some((s.y + y - 3.0 - PROMPT_ROW, 25.0)),
             _ => None,
         }));
+        // A command's row (30 px) has no icon box; the click that opens its output marks it.
+        got.extend(s.frag.hits.iter().filter(|(r, a)| r[3] == 30.0 && matches!(a, hover_chat::doc::Act::Step(..))).map(|(r, _)| (s.y + r[1] - PROMPT_ROW, 30.0)));
+        got[1..].sort_by(|a, b| a.0.total_cmp(&b.0));
         let rows = want[name]["rows"].as_array().unwrap();
         let exp: Vec<(f32, f32)> = rows.iter().map(|r| (r[0].as_f64().unwrap() as f32, r[1].as_f64().unwrap() as f32)).collect();
         eprintln!("{name}: rows at {got:?}, page {exp:?}");
@@ -211,7 +221,8 @@ fn step_rows_sit_where_the_page_puts_them() {
         // The rows sit where the page puts them under the summary.
         for (r, x) in got.iter().zip(&exp).skip(1) {
             let (rg, re) = (r.0 - (g.0 + g.1), x.0 - (e.0 + e.1));
-            assert!((rg - re).abs() <= 1.5 && (r.1 - x.1).abs() <= 0.5, "{name}: {r:?} vs {x:?}");
+            let command = r.1 == 30.0 && x.1 == 25.0;
+            assert!((rg - re).abs() <= 1.5 && ((r.1 - x.1).abs() <= 0.5 || command), "{name}: {r:?} vs {x:?}");
         }
     }
 }

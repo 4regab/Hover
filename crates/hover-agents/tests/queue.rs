@@ -225,7 +225,6 @@ fn chips_reach_the_agent_as_text_stay_in_the_history_and_a_conversation_referenc
         fn providers(&self) -> Vec<Provider> { vec![] }
         fn access_of(&self, _: &hover_agents::session::KiroSession) -> String { "full".into() }
         fn limits(&self) -> hover_core::model::DelegationLimits { Default::default() }
-        fn worktrees(&self) -> PathBuf { std::env::temp_dir() }
     }
     let _ = SystemEnv::new;
     let o = Orch::new(k.clone(), Arc::new(E), None);

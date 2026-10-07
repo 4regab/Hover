@@ -17,7 +17,7 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
-const TOOLS: [(&str, &str, u32); 5] = [("kiro", "Kiro", 0xb48cff), ("codex", "Codex", 0x3fd6a0), ("cursor", "Cursor", 0x7cc0ff), ("opencode", "OpenCode", 0xe8e8ec), ("claude", "Claude Code", 0xd97757)];
+const TOOLS: [(&str, &str, u32); 6] = [("kiro", "Kiro", 0xb48cff), ("codex", "Codex", 0x3fd6a0), ("cursor", "Cursor", 0x7cc0ff), ("opencode", "OpenCode", 0xe8e8ec), ("claude", "Claude Code", 0xd97757), ("agy", "Antigravity", 0x3186ff)];
 fn tool_color(id: &str) -> Color { let c = TOOLS.iter().find(|t| t.0 == id).map_or(0xb48cff, |t| t.2); Color::from_rgb_u8((c >> 16) as u8, (c >> 8) as u8, c as u8) }
 fn tool_name(id: &str) -> &'static str { TOOLS.iter().find(|t| t.0 == id).map_or("Kiro", |t| t.1) }
 fn s(v: impl AsRef<str>) -> SharedString { v.as_ref().into() }
@@ -90,8 +90,6 @@ pub struct Page {
     slots: RefCell<SlotImages>,
     /// The glass panels' blurred copy of the frame, and its working buffers.
     blur: RefCell<Blur>,
-    /// A new task's workspace is being made (a worktree can take a while): another Start waits.
-    starting: Cell<bool>,
     /// The new-task box's switch: the task may ask other agents for help.
     new_helpers: Cell<bool>,
     /// What is attached to each chat's unsent reply (context chips), kept while another chat is open.
@@ -101,15 +99,72 @@ pub struct Page {
     more_acts: RefCell<Vec<String>>,
     /// What each row of the expanded chat's session list opens (a live session by id, a saved one by key).
     rows_list: RefCell<Vec<(Option<i32>, Option<String>)>>,
+    /// The folder each row of that list stands for (None for a chat's row), and the folders folded away.
+    list_heads: RefCell<Vec<Option<String>>>,
+    folded: RefCell<std::collections::HashSet<String>>,
     /// The open chat's workspace branch, for the expanded chat's header.
     branch: RefCell<Branch>,
+    /// The reply box's @ (files) or / (commands) list while one is out.
+    pop: RefCell<Option<Pop>>,
     /// The desk card and the desk panel (desk_ui.rs).
     pub desk: crate::desk_ui::DeskUi,
 }
 
 /// A folder's branch as last looked up (off the UI thread; again after 10 s).
 #[derive(Default)]
-struct Branch { folder: String, label: String, head: bool, at: Option<Instant>, looking: bool }
+struct Branch { folder: String, label: String, at: Option<Instant>, looking: bool }
+
+/// What a row of the reply box's @ / / list does when picked.
+#[derive(Clone, Debug, PartialEq)]
+enum PopPick {
+    /// A file of the folder, by its path there: it goes to the agent as that path.
+    File(String),
+    /// A command of the agent's own: its name goes into the box.
+    Agent(String),
+    /// One of Hover's own (model, terminal, files, fork): done at once, nothing is sent.
+    Hover(&'static str),
+}
+
+/// The list over the reply box: `@` after a space (or at the start) lists files, `/` at the start lists commands.
+#[derive(Clone, Debug, PartialEq)]
+struct Pop {
+    /// '@' or '/', where the trigger starts in the draft and where the caret was, and the words after it.
+    kind: char,
+    at: usize,
+    end: usize,
+    q: String,
+    /// What can be picked, and which of them is lit.
+    items: Vec<PopPick>,
+    sel: usize,
+}
+
+/// Hover's own commands, as the mockup lists them: (name, what it does, the action).
+static HOVER_CMDS: [(&str, &str, &str); 4] = [
+    ("model", "Pick the model and effort", "model"),
+    ("terminal", "Open your terminal", "terminal"),
+    ("files", "Open Files & changes", "files"),
+    ("fork", "Copy this chat into a new one", "fork"),
+];
+
+/// The trigger at the end of `before` (the draft up to the caret): `@name` after whitespace, or `/name` as the whole draft.
+fn pop_trigger(before: &str) -> Option<(char, String, usize)> {
+    if let Some(rest) = before.strip_prefix('/') {
+        if rest.chars().all(|c| c.is_alphanumeric() || c == '_') { return Some(('/', rest.to_owned(), 0)); }
+    }
+    let at = before.rfind('@')?;
+    let q = &before[at + 1..];
+    let lead_ok = before[..at].chars().next_back().is_none_or(char::is_whitespace);
+    (lead_ok && q.chars().all(|c| c.is_alphanumeric() || matches!(c, '_' | '.' | '/' | '-'))).then(|| ('@', q.to_owned(), at))
+}
+
+/// The files that match `q`, as the mockup picks them: a name first, then anywhere in the path; eight at most.
+fn pop_files(tree: &[String], q: &str) -> Vec<String> {
+    let q = q.to_lowercase();
+    let name = |p: &str| p.rsplit('/').next().unwrap_or(p).to_lowercase();
+    let mut hit: Vec<&String> = tree.iter().filter(|p| p.to_lowercase().contains(&q)).collect();
+    hit.sort_by_key(|p| !name(p).contains(&q));
+    hit.into_iter().take(8).cloned().collect()
+}
 
 /// The office's slots as images, and which slot each window last showed (0 the notch, 1
 /// the app window). A window holds its slot until it is given another, so the office
@@ -128,7 +183,12 @@ struct Picks { sel: Vec<Vec<String>>, text: Vec<String> }
 /// The drawer's thread, laid out and painted by hover-chat.
 /// laid: the session's change number and clock second its turns were read at, the
 /// thread's width and height then (None: not yet).
-struct Chat { id: i32, thread: hover_chat::Thread, painter: hover_chat::Painter, scroll: f32, width: f32, key: String, laid: Option<(u64, i64, f32, f32)>, sel: Sel }
+struct Chat { id: i32, thread: hover_chat::Thread, painter: hover_chat::Painter, scroll: f32, width: f32, key: String, laid: Option<(u64, i64, f32, f32)>, sel: Sel,
+    /// Runs while a command is running: its counting time and the shimmer need a repaint; `t0` is the shimmer's clock.
+    tick: slint::Timer, t0: Instant }
+
+/// Whether the open chat has a command running (see `Chat::tick`).
+fn chat_ticking(chat: &RefCell<Option<Chat>>) -> bool { chat.borrow().as_ref().is_some_and(|c| c.thread.ticking) }
 
 /// A text selection being made in the thread with the pointer (chat-proto's): where it
 /// began, by what unit a double or triple click grows it, and the click count.
@@ -252,7 +312,7 @@ impl Default for Page {
             #[cfg(windows)] gpu: Default::default(),
             #[cfg(windows)] scratch: Default::default(),
             #[cfg(windows)] slots: Default::default(), blur: Default::default(),
-            starting: Cell::new(false), new_helpers: Cell::new(false), chips: Default::default(), note_acts: RefCell::new(vec![]), more_acts: RefCell::new(vec![]), rows_list: RefCell::new(vec![]), branch: Default::default(), desk: Default::default() }
+            new_helpers: Cell::new(false), chips: Default::default(), note_acts: RefCell::new(vec![]), more_acts: RefCell::new(vec![]), rows_list: RefCell::new(vec![]), list_heads: RefCell::new(vec![]), folded: Default::default(), branch: Default::default(), pop: Default::default(), desk: Default::default() }
     }
 }
 
@@ -609,6 +669,7 @@ impl App {
         // This chat's own draft, never another's.
         let (text, pics) = self.page.drafts.borrow_mut().remove(&id).unwrap_or_default();
         self.page.attached.borrow_mut()[0] = pics;
+        self.pop_close();
         each!(self, |g| { g.set_d_draft(s(&text)); g.set_d_compose(false); });
         self.office_widgets();
     }
@@ -618,6 +679,7 @@ impl App {
         self.page.open.set(None);
         self.send(In::Drawer(None));
         *self.page.thread.borrow_mut() = None;
+        self.pop_close();
         each!(self, |g| { g.set_d_draft(s("")); g.set_d_compose(false); });
         self.office_widgets();
     }
@@ -692,12 +754,12 @@ impl App {
             self.page.branch.borrow_mut().looking = true;
             let folder = folder.to_owned();
             std::thread::Builder::new().name("branch".into()).spawn(move || {
-                let (label, head) = match hover_agents::workspace::inspect(&folder) {
-                    Ok(i) => (format!("{}{}", i.branch.unwrap_or_else(|| "detached HEAD".into()), if i.linked { " · worktree" } else { "" }), i.head.is_some()),
-                    Err(_) => (String::new(), false),
+                let label = match hover_agents::workspace::inspect(&folder) {
+                    Ok(i) => format!("{}{}", i.branch.unwrap_or_else(|| "detached HEAD".into()), if i.linked { " · worktree" } else { "" }),
+                    Err(_) => String::new(),
                 };
                 crate::ui_do(move |a| {
-                    let changed = { let mut b = a.page.branch.borrow_mut(); let c = b.folder != folder || b.label != label; *b = Branch { folder, label, head, at: Some(Instant::now()), looking: false }; c };
+                    let changed = { let mut b = a.page.branch.borrow_mut(); let c = b.folder != folder || b.label != label; *b = Branch { folder, label, at: Some(Instant::now()), looking: false }; c };
                     if changed { a.office_widgets(); }
                 });
             }).ok();
@@ -705,34 +767,24 @@ impl App {
         label
     }
 
-    /// The strip over the reply box: a usage limit the provider gave (Continue at the reset, Retry now, Snooze,
-    /// Cancel), or replies held since Stop (Send them). The text, then the buttons as (action, label).
+    /// The strip over the reply box: replies held since Stop (Send them). The text, then the buttons as (action, label).
     fn chat_note(&self, o: &KiroSession) -> (String, Vec<(&'static str, &'static str)>) {
-        use hover_agents::limit::Mode;
-        let now = hover_core::time::Stamp::now().unix_ms();
-        if let Some(l) = self.hover.limits.of(&o.key).filter(|l| !matches!(l.mode, Mode::Snoozed(u) if u > now)) {
-            let at = l.limit.reset_at.map(|a| hover_agents::sched::civil_text(a, hover_agents::sched::Tz::Local));
-            let said = l.limit.reason.trim().trim_end_matches('.').to_owned();
-            return match (l.mode, at) {
-                (Mode::Auto, Some(at)) => (format!("Usage limit: {said}. Hover continues this task after {at}."), vec![("retry", "Retry now"), ("cancel", "Cancel")]),
-                (_, Some(at)) => (format!("Usage limit: {said}. It lifts at {at}."), vec![("arm", "Continue at the reset"), ("retry", "Retry now"), ("snooze", "Snooze"), ("cancel", "Cancel")]),
-                (_, None) => (format!("Usage limit: {said}. The agent didn’t say when it lifts."), vec![("retry", "Retry now"), ("snooze", "Snooze"), ("cancel", "Cancel")]),
-            };
-        }
         if o.held && o.turns.iter().any(|t| t.queued) { return ("You stopped this run, so the replies waiting behind it are held.".into(), vec![("resume", "Send them now")]); }
         (String::new(), vec![])
+    }
+
+    /// The agents that are ready and are not the one running this chat.
+    fn switch_targets(o: &KiroSession) -> Vec<AgentTool> {
+        let here = hover_agents::session::provider_id(o);
+        AgentTool::ALL.into_iter().filter(|t| t.id() != here && hover_agents::agents::known(*t).is_some_and(|r| r.ok())).collect()
     }
 
     /// The chat header's More menu: continue with another agent, fork, and bring a fork's findings back.
     /// (action id, label) for each. Nothing for a Kiro Web chat, which lives in Kiro's cloud.
     fn chat_more(&self, o: &KiroSession) -> Vec<(String, String)> {
         if o.cloud.is_some() { return vec![]; }
-        let here = hover_agents::session::provider_id(o);
         let mut items = vec![];
-        for t in AgentTool::ALL {
-            if t.id() != here && hover_agents::agents::known(t).is_some_and(|r| r.ok()) { items.push((format!("to:{}", t.id()), format!("Continue with {}", t.name()))); }
-        }
-        for p in self.hover.customs.providers().into_iter().filter(|p| p.ready && p.id != here) { items.push((format!("to:{}", p.id), format!("Continue with {}", p.name))); }
+        for t in Self::switch_targets(o) { items.push((format!("to:{}", t.id()), format!("Continue with {}", t.name()))); }
         if hover_agents::orch::mcp_supported() && !o.ext.orch.as_ref().is_some_and(|l| l.parent.is_some()) {
             let on = o.ext.orch.as_ref().is_some_and(|l| l.delegation);
             items.push(("helpers".into(), (if on { "Stop letting it ask other agents for help" } else { "Let it ask other agents for help" }).into()));
@@ -745,14 +797,8 @@ impl App {
     /// A note strip button: what it does to the open chat.
     fn note_act(self: &Rc<Self>, i: usize) {
         let Some(id) = self.page.open.get() else { return };
-        let Some(s) = self.hover.sessions.get(id) else { return };
         let act = self.page.note_acts.borrow().get(i).copied().unwrap_or("");
-        let now = hover_core::time::Stamp::now().unix_ms();
         match act {
-            "arm" => match self.hover.limits.arm(&s.key) { Ok(_) => {} Err(e) => self.toast(&e) },
-            "retry" => if let Err(e) = self.hover.limits.retry_now(&s.key) { self.toast(&e); },
-            "snooze" => { let until = self.hover.limits.of(&s.key).and_then(|l| l.limit.reset_at).filter(|a| *a > now).unwrap_or(now + 3_600_000); self.hover.limits.snooze(&s.key, until); }
-            "cancel" => self.hover.limits.cancel(&s.key),
             "resume" => if !self.hover.sessions.resume_queue(id) { self.toast("A task is still running or every desk is busy. Try again in a moment."); },
             _ => {}
         }
@@ -763,8 +809,13 @@ impl App {
     /// A More menu item: switch the open chat to another agent, fork it, or bring a fork's findings back.
     fn more_act(self: &Rc<Self>, i: usize) {
         each!(self, |g| g.set_d_more(false));
-        let Some(id) = self.page.open.get() else { return };
         let Some(act) = self.page.more_acts.borrow().get(i).cloned() else { return };
+        self.run_more(&act);
+    }
+
+    /// What a More menu item does to the open chat, by its action id.
+    fn run_more(self: &Rc<Self>, act: &str) {
+        let Some(id) = self.page.open.get() else { return };
         let Some(s) = self.hover.sessions.get(id) else { return };
         if let Some(to) = act.strip_prefix("to:") {
             let Some(target) = hover_agents::session::Target::parse(to) else { return };
@@ -783,51 +834,61 @@ impl App {
         } else if act == "helpers" {
             let on = !s.ext.orch.as_ref().is_some_and(|l| l.delegation);
             self.hover.orch.enable(&s.key, on);
-            let l = self.hover.settings.delegation();
-            self.toast(&if on { format!("On. It can ask other agents for help: up to {} helpers, {} at once. Limits are in Settings → Automation.", l.max_helpers, l.max_parallel) } else { "Off. It can no longer ask other agents for help.".to_owned() });
+            let l = hover_core::model::DelegationLimits::default();
+            self.toast(&if on { format!("On. It can ask other agents for help: up to {} helpers, {} at once.", l.max_helpers, l.max_parallel) } else { "Off. It can no longer ask other agents for help.".to_owned() });
         }
         self.office_changed();
         self.office_widgets();
     }
 
-    /// Fork from the last ended turn, with the same agent, in a workspace of its own when the project is a Git one (as a new task gets).
+    /// The chat view's ⋯ menu is about to open: the editors found on this computer and the agents the chat can switch to.
+    fn head_menu_lists(self: &Rc<Self>) {
+        let Some(o) = self.page.open.get().and_then(|id| self.hover.sessions.get(id)) else { return };
+        let editors: Vec<MOpt> = hover_agents::editor::available().into_iter().map(|f| MOpt { id: s(&f.id), label: s(&f.name), on: false }).collect();
+        let agents: Vec<MOpt> = if o.cloud.is_some() { vec![] } else { Self::switch_targets(&o).into_iter().map(|t| MOpt { id: s(t.id()), label: s(t.name()), on: false }).collect() };
+        each!(self, |g| {
+            if let Some(m) = crate::view::sync(g.get_d_editors(), &editors) { g.set_d_editors(m); }
+            if let Some(m) = crate::view::sync(g.get_d_switch(), &agents) { g.set_d_switch(m); }
+            g.set_d_fm(s(if cfg!(windows) { "File Explorer" } else { "Files" }));
+        });
+    }
+
+    /// A name typed in the header. Empty or unchanged keeps the title; a name is kept with the chat and wins over the one made from the first prompt.
+    fn rename_chat(self: &Rc<Self>, name: &str) {
+        let Some(sess) = self.page.open.get().and_then(|id| self.hover.sessions.get(id)) else { return };
+        let name = name.trim();
+        if name.is_empty() || name == sess.title() { return; }
+        if self.hover.sessions.rename(&sess.key, name) { self.office_changed(); self.office_widgets(); }
+    }
+
+    /// A pick in the chat view's ⋯ menu, by its action id.
+    fn head_act(self: &Rc<Self>, act: &str) {
+        let Some(id) = self.page.open.get() else { return };
+        let Some(sess) = self.hover.sessions.get(id) else { return };
+        match act {
+            "terminal" => self.desk_open_tab(id, "terminal"),
+            "files" => self.desk_details(id),
+            "fork" => self.run_more("fork"),
+            "delete" => self.ask_delete(Some(sess.id), None, &sess.title(), sess.busy()),
+            "fm" => if sess.cloud.is_some() || !hover_agents::usable_folder(Some(&sess.folder)) { self.toast("This chat has no folder on this computer.") } else { crate::open_url(&sess.folder) },
+            _ => if let Some(editor) = act.strip_prefix("editor:") {
+                let (folder, cloud, editor) = (sess.folder.clone(), sess.cloud.is_some(), editor.to_owned());
+                std::thread::Builder::new().name("open-editor".into()).spawn(move || {
+                    let said = hover_agents::editor::open(Some(&editor), &hover_agents::editor::Target::folder(&folder), cloud).unwrap_or_else(|e| e);
+                    crate::ui_do(move |a| a.toast(&said));
+                }).ok();
+            } else if act.starts_with("to:") { self.run_more(act) },
+        }
+    }
+
+    /// Fork from the last ended turn, with the same agent, in the folder the chat works in.
     fn fork_chat(self: &Rc<Self>, s: &KiroSession) {
         let Some(turn) = s.turns.iter().rposition(|t| t.result.is_some() && !t.queued) else { self.toast("Nothing has ended yet to fork from."); return };
         let Some(target) = hover_agents::session::Target::parse(&hover_agents::session::provider_id(s)) else { return };
-        if self.page.starting.replace(true) { return; }
-        self.toast("Forking…");
-        let source = s.ext.workspace.as_ref().map(|w| w.source.clone()).unwrap_or_else(|| s.folder.clone());
-        let (key, title) = (s.key.clone(), s.title());
-        let use_folder = self.hover.settings.automation().use_folder;
-        let root = hover_core::paths::support().join("worktrees");
-        std::thread::Builder::new().name("fork".into()).spawn(move || {
-            use hover_agents::workspace::Choice;
-            let choice = if use_folder { Choice::Folder } else { Choice::Own { base: None } };
-            let made = hover_agents::workspace::prepare(&source, &choice, &format!("fork {title}"), &root, false, false, &hover_agents::cancel::Cancel::new());
-            crate::ui_do(move |a| {
-                a.page.starting.set(false);
-                let p = match made { Ok(p) => p, Err(e) => { a.toast(&e); return; } };
-                match a.hover.sessions.fork(&key, turn, &target, &p.folder, p.binding.clone()) {
-                    Ok(f) => { a.toast("Forked. This is the copy; the original is unchanged."); a.office_changed(); a.open_session(f.id); }
-                    Err(e) => {
-                        if let Some(b) = p.binding.filter(|b| b.is_worktree()) { let _ = hover_agents::workspace::remove(&b, &p.folder, false, false, hover_agents::workspace::RemoveOpts { delete_branch: true, ..Default::default() }); }
-                        a.toast(&e);
-                    }
-                }
-            });
-        }).ok();
-    }
-
-    /// The new-task box's line about where the task will work, from the same lookup as the branch.
-    /// Empty until Git has answered. The tasks' choice itself is made in workspace::prepare.
-    fn plan_line(self: &Rc<Self>, folder: &str, read_only: bool) -> String {
-        if read_only { return "Read only: it looks at the folder itself.".into(); }
-        if self.hover.settings.automation().use_folder { return "Works in the folder itself, as set in Settings.".into(); }
-        let label = self.branch_of(folder);
-        let b = self.page.branch.borrow();
-        if b.folder != folder || b.at.is_none() { return String::new(); }
-        if label.is_empty() || !b.head { return "Works in the folder itself: it isn’t a Git project with a commit yet.".into(); }
-        format!("Gets its own worktree and branch, cut from {}.", label.trim_end_matches(" · worktree"))
+        match self.hover.sessions.fork(&s.key, turn, &target, &s.folder, s.ext.workspace.clone()) {
+            Ok(f) => { self.toast("Forked. This is the copy; the original is unchanged."); self.office_changed(); self.open_session(f.id); }
+            Err(e) => self.toast(&e),
+        }
     }
 
     /// Shots: a task typed into the new-task box for this folder, shown (`start` false) or started with Start.
@@ -840,30 +901,43 @@ impl App {
         if start { self.notch.global::<crate::ui::Office>().invoke_new_go_clicked(); }
     }
 
-    /// The expanded chat's session list: the sessions open now, then the saved ones.
+    /// The expanded chat's session list: one group per project folder, the sessions open now and the saved ones in it. The folder
+    /// with a chat at work comes first, then by the newest chat; inside a folder, chats at work first, then the newest. A folded folder
+    /// shows its row only.
     fn list_rows(&self, sessions: &[KiroSession], open: Option<i32>) -> (Vec<ListRow>, Vec<(Option<i32>, Option<String>)>) {
         let stage_of = |s: &KiroSession| Stage::parse(hover_agents::state::stage(s.state, s.phase)) as i32;
-        let (mut rows, mut opens) = (vec![], vec![]);
-        let head = |text: &str| ListRow { head: true, text: s(text), tool: s(""), stage: 0, on: false };
-        if !sessions.is_empty() {
-            rows.push(head("Open now"));
-            opens.push((None, None));
-            for x in sessions {
-                rows.push(ListRow { head: false, text: s(x.title()), tool: s(x.tool.id()), stage: stage_of(x), on: open == Some(x.id) });
-                opens.push((Some(x.id), None));
-            }
+        let now = hover_core::time::Stamp::now().unix_ms();
+        // (folder, row, what a click opens, when it last ended, whether it is at work)
+        let mut items: Vec<(String, ListRow, (Option<i32>, Option<String>), i64, bool)> = vec![];
+        for x in sessions {
+            let live = x.busy() || x.waiting();
+            let at = x.current().map_or(0, |t| t.ended_at.unwrap_or(t.started_at).unix_ms());
+            let row = ListRow { head: false, text: s(x.title()), tool: s(x.tool.id()), stage: stage_of(x), on: open == Some(x.id), when: s(if live { String::new() } else { when_short(now - at) }), shut: false };
+            items.push((x.folder.clone(), row, (Some(x.id), None), at, live));
         }
         let mut saved: Vec<_> = self.hover.history.as_ref().map(|h| h.entries()).unwrap_or_default().into_iter().filter(|h| !sessions.iter().any(|x| x.key == h.key)).collect();
         saved.sort_by_key(|h| std::cmp::Reverse(h.updated.unix_ms()));
         // ponytail: the 30 newest; the history panel lists them all, with search.
-        if !saved.is_empty() {
-            rows.push(head("Saved"));
-            opens.push((None, None));
-            for h in saved.into_iter().take(30) {
-                rows.push(ListRow { head: false, text: s(&h.title), tool: s(h.tool.id()), stage: Stage::parse(hover_agents::state::stage(h.state, hover_agents::stream::KiroPhase::Working)) as i32, on: false });
-                opens.push((None, Some(h.key)));
-            }
+        for h in saved.into_iter().take(30) {
+            let at = h.updated.unix_ms();
+            let row = ListRow { head: false, text: s(&h.title), tool: s(h.tool.id()), stage: Stage::parse(hover_agents::state::stage(h.state, hover_agents::stream::KiroPhase::Working)) as i32, on: false, when: s(when_short(now - at)), shut: false };
+            items.push((h.folder.clone(), row, (None, Some(h.key)), at, false));
         }
+        items.sort_by_key(|i| (!i.4, std::cmp::Reverse(i.3)));
+        let mut order: Vec<&str> = vec![];
+        for i in &items { if !order.contains(&i.0.as_str()) { order.push(&i.0); } }
+        let folded = self.page.folded.borrow();
+        let (mut rows, mut opens, mut heads) = (vec![], vec![], vec![]);
+        for f in order {
+            let shut = folded.contains(f);
+            let label = if f.is_empty() { "No folder".to_owned() } else { hover_office::office::short(f) };
+            rows.push(ListRow { head: true, text: s(label), tool: s(""), stage: 0, on: false, when: s(""), shut });
+            opens.push((None, None));
+            heads.push(Some(f.to_owned()));
+            if shut { continue; }
+            for i in items.iter().filter(|i| i.0 == f) { rows.push(i.1.clone()); opens.push(i.2.clone()); heads.push(None); }
+        }
+        *self.page.list_heads.borrow_mut() = heads;
         (rows, opens)
     }
 
@@ -1096,8 +1170,7 @@ impl App {
         let folder = p.new_folder.borrow().clone();
         let full = sessions.len() >= 6 && sessions.iter().all(|s| s.busy());
         let can = self.hover.sessions.can_start();
-        let plan_note = |a: &Rc<Self>| -> String { match (&folder, tool == AgentTool::Kiro && p.cloud.borrow().on) { (Some(f), false) => a.plan_line(f, self.new_access(nt) == "read"), _ => String::new() } };
-        let note = if !ready { hover_agents::agents::known(tool).map(|r| r.hint).unwrap_or_default() } else if !can { "3 tasks are running. Start another when one is done.".into() } else if full { "All six desks are busy. Stop or remove a session first.".into() } else { plan_note(self) };
+        let note = if !ready { hover_agents::agents::known(tool).map(|r| r.hint).unwrap_or_default() } else if !can { "3 tasks are running. Start another when one is done.".into() } else if full { "All six desks are busy. Stop or remove a session first.".into() } else { String::new() };
         // The panel's rows.
         let (title, sub, rows, opens) = self.panel_rows(&sessions);
         *p.rows_open.borrow_mut() = opens;
@@ -1139,12 +1212,9 @@ impl App {
         let wide = self.chat_view();
         let (list_rows, list_opens) = if wide { self.list_rows(&sessions, p.open.get()) } else { (vec![], vec![]) };
         *p.rows_list.borrow_mut() = list_opens;
-        let (status, stage, branch) = match &open {
-            Some(o) if wide => {
-                let st = Stage::parse(hover_agents::state::stage(o.state, o.phase));
-                (if o.stopping { "Stopping…" } else { st.word() }, st as i32, if o.cloud.is_some() { String::new() } else { self.branch_of(&o.folder) })
-            }
-            _ => ("", 0, String::new()),
+        let branch = match &open {
+            Some(o) if wide && o.cloud.is_none() => self.branch_of(&o.folder),
+            _ => String::new(),
         };
         let acc_label = access_label(acc);
         let acc_tip = if cloud_on { format!("{acc_label}: Kiro Web runs every task with full access.") } else { format!("{acc_label}: {} Click to change.", access_note(acc, tool)) };
@@ -1162,6 +1232,10 @@ impl App {
                 g.set_mm_effort_head(s(ehead));
                 if let Some(m) = crate::view::sync(g.get_mm_efforts(), efforts) { g.set_mm_efforts(m); }
                 g.set_mm_note(s(note));
+                g.set_mm_compact(mm == Some(AgentTool::Kiro));
+                // Only Kiro's models have a rate to show.
+                let rates: Vec<MRate> = models.iter().map(|m| if mm == Some(AgentTool::Kiro) { model_rate(m) } else { MRate::default() }).collect();
+                if let Some(r) = crate::view::sync(g.get_mm_rates(), &rates) { g.set_mm_rates(r); }
             }
             if let Some(m) = crate::view::sync(g.get_d_shots(), &shots[0]) { g.set_d_shots(m); }
             if let Some(m) = crate::view::sync(g.get_n_shots(), &shots[1]) { g.set_n_shots(m); }
@@ -1198,8 +1272,6 @@ impl App {
             g.set_d_note(s(&cnote));
             if let Some(m) = crate::view::sync(g.get_d_note_btns(), &note_labels) { g.set_d_note_btns(m); }
             if let Some(m) = crate::view::sync(g.get_d_more_items(), &more_items) { g.set_d_more_items(m); }
-            g.set_d_status(s(status));
-            g.set_d_stage(stage);
             g.set_d_branch(s(&branch));
             if let Some(m) = crate::view::sync(g.get_list(), &list_rows) { g.set_list(m); }
             if let Some(o) = &open {
@@ -1271,7 +1343,7 @@ impl App {
                     opens.push((Some(x.id as i64), None));
                 }
                 if sessions.is_empty() { rows.push(PanelRow { text: s("No sessions yet. Press + to give an agent a task."), ..row(4) }); opens.push((None, None)); }
-                ("Office overview".into(), "Up to 3 tasks run at once, across Kiro, Codex, Cursor, OpenCode and Claude Code".into(), rows, opens)
+                ("Office overview".into(), "Up to 3 tasks run at once, across Kiro, Codex, Cursor, OpenCode, Claude Code and Antigravity".into(), rows, opens)
             }
             Some(_) => {
                 let find = self.notch.global::<crate::ui::Office>().get_find().to_string().to_lowercase();
@@ -1346,9 +1418,9 @@ impl App {
         let Some(id) = self.page.open.get() else { return };
         let Some((rev, _busy)) = self.hover.sessions.rev(id) else { return };
         let now = hover_core::time::Stamp::now();
-        // Nothing in the thread moves with the clock: it is laid out again only when the
-        // session changed.
-        let second = 0;
+        // Nothing in the thread moves with the clock, except a running command's time: then
+        // it is laid out again each second (and painted ten times a second for the shimmer).
+        let second = if chat_ticking(&self.page.thread) { now.unix_ms() / 1000 } else { 0 };
         let which = self.page.target.get();
         let dash = self.dash.borrow();
         let g = if which == 1 { dash.as_ref().map(|d| d.global::<crate::ui::Office>()) } else { Some(self.notch.global::<crate::ui::Office>()) };
@@ -1388,7 +1460,7 @@ impl App {
                 thread.use_images(images.clone());
                 let (host, folder) = (files(&sess), sess.folder.clone());
                 thread.image_rule = Box::new(move |src| hover_md::image::image_for(&hover_md::image::Session { files: host.as_deref(), folder: &folder }, src));
-                *chat = Some(Chat { id, thread, painter: hover_chat::Painter::new(&f, images), scroll: f32::MAX, width: 0.0, key: sess.key.clone(), laid: None, sel: Sel::default() });
+                *chat = Some(Chat { id, thread, painter: hover_chat::Painter::new(&f, images), scroll: f32::MAX, width: 0.0, key: sess.key.clone(), laid: None, sel: Sel::default(), tick: Default::default(), t0: Instant::now() });
             }
             let c = chat.as_mut().unwrap();
             // Follows the bottom only when it was there (within 40 px): reading older
@@ -1396,8 +1468,8 @@ impl App {
             let was_near = c.thread.height - c.scroll - c.thread.view_h < 40.0;
             c.thread.tool = sess.tool.id().into();
             c.thread.view_h = h;
-            // Room under the last turn for the reply circle over the thread's corner.
-            c.thread.extra_bottom = 40.0;
+            // Room under the last turn for the reply circle over the thread's corner (56 px, as the circle's own room).
+            c.thread.extra_bottom = 56.0;
             // A new width (the chat expanded, or came back) keeps the reader at the same place:
             // the turn at the top of the view, and how far down it (as a share of the turn).
             let anchor = (c.width > 0.0 && c.width != w && !was_near).then(|| c.thread.sections.iter().position(|x| x.y + x.h > c.scroll).map(|i| (i, (c.scroll - c.thread.sections[i].y) / c.thread.sections[i].h.max(1.0)))).flatten();
@@ -1414,9 +1486,15 @@ impl App {
         // .jump: "Latest" once the reader is well above the end.
         g.set_d_jump(max - c.scroll > 160.0);
         let k = if which == 1 { dash.as_ref().map_or(1.0, |d| d.window().scale_factor()) } else { self.notch.window().scale_factor() };
+        c.painter.time = c.t0.elapsed().as_secs_f32();
         let px = c.painter.paint(&c.thread, c.scroll, (w * k).round() as u32, (h * k).round() as u32, k, [0, 0, 0, 0]);
         let img = Image::from_rgba8_premultiplied(SharedPixelBuffer::clone_from_slice(px.data(), px.width(), px.height()));
         g.set_d_thread(img);
+        if !c.thread.ticking { c.tick.stop(); }
+        else if !c.tick.running() {
+            let a = self.clone();
+            c.tick.start(slint::TimerMode::Repeated, Duration::from_millis(100), move || a.paint_thread());
+        }
         let _ = &c.key;
     }
 
@@ -1483,41 +1561,20 @@ impl App {
             let access = a.new_access(a.page.new_tool.get());
             let picked = a.page.new_folder.borrow().clone();
             let cloud = cloud_on.then(|| a.cloud_repo(picked.as_deref(), true).into_iter().collect::<Vec<_>>());
-            // Where it works (workspace.rs): a worktree of its own by default. Git makes it off the UI thread.
-            if a.page.starting.replace(true) { return; }
-            use hover_agents::workspace::Choice;
-            let choice = if a.hover.settings.automation().use_folder { Choice::Folder } else { Choice::Own { base: None } };
-            let read_only = access == "read";
             // Helpers only where the host can serve them, and for this task only.
             let helpers = a.page.new_helpers.replace(false) && hover_agents::orch::mcp_supported() && !cloud_on;
-            if matches!(choice, Choice::Own { .. }) && !cloud_on && !read_only { a.toast("Setting up the task’s workspace…"); }
-            let title: String = text.lines().next().unwrap_or("task").chars().take(60).collect();
-            let root = hover_core::paths::support().join("worktrees");
-            std::thread::Builder::new().name("workspace".into()).spawn(move || {
-                let made = hover_agents::workspace::prepare(&folder, &choice, &title, &root, read_only, cloud_on, &hover_agents::cancel::Cancel::new());
-                crate::ui_do(move |a| {
-                    a.page.starting.set(false);
-                    let p = match made { Ok(p) => p, Err(e) => { a.toast(&e); return; } };
-                    // What was decided, in words, unless it is what the user chose or a Kiro Web task's own place.
-                    if let (Choice::Own { .. }, Some(n)) = (&choice, &p.note) { if !cloud_on { a.toast(n); } }
-                    let orch = helpers.then(|| hover_core::ext::OrchLink { delegation: true, ..Default::default() });
-                    let ext = hover_core::ext::SessionExt { workspace: p.binding.clone(), orch, ..Default::default() };
-                    match a.hover.sessions.start_bound(tool, &p.folder, &text, images, Some(access), cloud, ext) {
-                        Some(started) => {
-                            each!(a, |g| g.set_new_draft(s(""))); a.page.attached.borrow_mut()[1].clear(); a.page.fab.set(0); a.page.cloud.borrow_mut().menu = false;
-                            // The chat view goes on into the new chat, as a chat app does; the office shows it at its desk.
-                            if a.chat_view() { a.open_session(started.id); }
-                        }
-                        None => {
-                            // No desk: the worktree just made would stay behind, empty.
-                            if let Some(b) = p.binding.filter(|b| b.is_worktree()) { let _ = hover_agents::workspace::remove(&b, &p.folder, false, false, hover_agents::workspace::RemoveOpts { delete_branch: true, ..Default::default() }); }
-                            a.toast("All six desks are busy. Stop or remove a session first.");
-                        }
-                    }
-                    a.office_changed();
-                    a.office_widgets();
-                });
-            }).ok();
+            let orch = helpers.then(|| hover_core::ext::OrchLink { delegation: true, ..Default::default() });
+            let ext = hover_core::ext::SessionExt { orch, ..Default::default() };
+            match a.hover.sessions.start_bound(tool, &folder, &text, images, Some(access), cloud, ext) {
+                Some(started) => {
+                    each!(a, |g| g.set_new_draft(s(""))); a.page.attached.borrow_mut()[1].clear(); a.page.fab.set(0); a.page.cloud.borrow_mut().menu = false;
+                    // The chat view goes on into the new chat, as a chat app does; the office shows it at its desk.
+                    if a.chat_view() { a.open_session(started.id); }
+                }
+                None => a.toast("All six desks are busy. Stop or remove a session first."),
+            }
+            a.office_changed();
+            a.office_widgets();
         });
         let a = self.clone();
         g.on_tag_clicked(move |id| a.open_session(id));
@@ -1656,11 +1713,11 @@ impl App {
         let a = self.clone();
         g.on_new_chat(move || a.new_chat());
         let a = self.clone();
-        g.on_d_stop(move || if let Some(id) = a.page.open.get() { a.hover.sessions.stop(id); a.office_changed(); a.office_widgets(); });
+        g.on_d_menu_open(move || a.head_menu_lists());
         let a = self.clone();
-        g.on_d_editor(move || if let Some(id) = a.page.open.get() { a.editor_for(id); });
+        g.on_d_rename(move |name| a.rename_chat(name.as_str()));
         let a = self.clone();
-        g.on_d_details(move || if let Some(id) = a.page.open.get() { a.desk_details(id); });
+        g.on_d_menu_act(move |act| a.head_act(act.as_str()));
         let a = self.clone();
         g.on_list_clicked(move |i| {
             let r = a.page.rows_list.borrow().get(i as usize).cloned();
@@ -1673,6 +1730,58 @@ impl App {
                 _ => {}
             }
         });
+        let a = self.clone();
+        g.on_list_fold(move |i| {
+            let Some(folder) = a.page.list_heads.borrow().get(i as usize).cloned().flatten() else { return };
+            { let mut f = a.page.folded.borrow_mut(); if !f.remove(&folder) { f.insert(folder); } }
+            a.office_widgets();
+        });
+        let a = self.clone();
+        g.on_list_delete(move |i| {
+            let r = a.page.rows_list.borrow().get(i as usize).cloned();
+            match r {
+                Some((Some(id), _)) => if let Some(s) = a.hover.sessions.get(id) { a.ask_delete(Some(id), None, &s.title(), s.busy()); },
+                Some((None, Some(key))) => {
+                    let title = a.hover.history.as_ref().and_then(|h| h.entries().into_iter().find(|e| e.key == key)).map(|e| e.title).unwrap_or_default();
+                    a.ask_delete(None, Some(key), &title, false);
+                }
+                _ => {}
+            }
+        });
+        let a = self.clone();
+        g.on_open_folders(move || {
+            let have = a.page.new_folder.borrow().clone();
+            let mut seen: Vec<String> = vec![];
+            // The folders of the newest chats, open now or saved; the ones gone from this computer are left out.
+            let mut saved = a.hover.history.as_ref().map(|h| h.entries()).unwrap_or_default();
+            saved.sort_by_key(|h| std::cmp::Reverse(h.updated.unix_ms()));
+            for f in a.hover.sessions.all().iter().map(|x| x.folder.clone()).chain(saved.into_iter().map(|h| h.folder)) {
+                if seen.len() < 6 && hover_agents::usable_folder(Some(&f)) && !seen.contains(&f) { seen.push(f); }
+            }
+            if let Some(f) = have.filter(|f| !seen.contains(f)) { seen.insert(0, f); }
+            let opts: Vec<AccessOpt> = seen.iter().map(|f| AccessOpt { id: s(f), label: s(hover_office::office::short(f)), note: s(f), on: have_eq(&a, f) }).collect();
+            each!(a, |g| if let Some(m) = crate::view::sync(g.get_start_folders(), &opts) { g.set_start_folders(m); });
+        });
+        let a = self.clone();
+        g.on_pick_start_folder(move |f| {
+            let f = if f.is_empty() { crate::pick(true) } else { Some(f.to_string()) };
+            if let Some(f) = f { *a.page.new_folder.borrow_mut() = Some(f); a.office_widgets(); }
+        });
+        // The app window's title bar menus (File, Settings, Help).
+        g.set_app_version(env!("CARGO_PKG_VERSION").into());
+        let a = self.clone();
+        g.on_menu_new_chat(move || { a.set_chat_view(true); a.new_chat(); });
+        let a = self.clone();
+        g.on_menu_open_folder(move || if let Some(f) = crate::pick(true) {
+            *a.page.new_folder.borrow_mut() = Some(f);
+            a.set_chat_view(true);
+            a.new_chat();
+            a.office_widgets();
+        });
+        let a = self.clone();
+        g.on_open_settings_page(move |i| if let Some(sec) = hover_app::pages::Section::ALL.get(i as usize) { a.show_settings_in(1, *sec); });
+        g.on_open_link(move |url| crate::open_url(url.as_str()));
+        g.on_open_logs(move || crate::open_url(&hover_core::paths::support().to_string_lossy()));
         let a = self.clone();
         g.on_d_delete(move || { if let Some(s) = a.page.open.get().and_then(|id| a.hover.sessions.get(id)) { a.ask_delete(Some(s.id), None, &s.title(), s.busy()); } });
         let a = self.clone();
@@ -1711,6 +1820,7 @@ impl App {
             a.page.attached.borrow_mut()[0].clear();
             a.page.drafts.borrow_mut().remove(&id);
             // Sending closes the box; the thread shows the reply at its end.
+            a.pop_close();
             each!(a, |g| { g.set_d_draft(s("")); g.set_d_compose(false); });
             if let Some(c) = &mut *a.page.thread.borrow_mut() { c.scroll = f32::MAX; }
             a.office_changed();
@@ -1742,11 +1852,140 @@ impl App {
             let (Some(c), None) = (cs.next(), cs.next()) else { return false };
             if c.is_control() || ('\u{e000}'..='\u{f8ff}').contains(&c) || a.page.open.get().is_none() { return false; }
             each!(a, |g| { let d = g.get_d_draft(); g.set_d_draft(s(format!("{d}{c}"))); g.set_d_compose(true); });
+            // A / or @ that opens the box starts its list too.
+            let now = each_reply(&a);
+            a.pop_text(&now, now.len());
             true
         });
     }
 
+    /// The reply box's words or caret changed: the list over it, when the words end in `@name` or are `/name`.
+    fn pop_text(self: &Rc<Self>, text: &str, caret: usize) {
+        let before = text.get(..caret).unwrap_or(text);
+        let Some((kind, q, at)) = pop_trigger(before) else { self.pop_close(); return };
+        // The same list typed on keeps its lit row.
+        let sel = self.page.pop.borrow().as_ref().filter(|p| p.kind == kind && p.q == q).map_or(0, |p| p.sel);
+        *self.page.pop.borrow_mut() = Some(Pop { kind, at, end: before.len(), q, items: vec![], sel });
+        self.pop_refresh();
+    }
+
+    /// The list is made again from its trigger. The files arrive after a moment (a worker reads them), so this runs then too.
+    pub(crate) fn pop_refresh(self: &Rc<Self>) {
+        let Some(mut pop) = self.page.pop.borrow().clone() else { return };
+        let Some(id) = self.page.open.get() else { return };
+        let Some(sess) = self.hover.sessions.get(id) else { return };
+        let row = |kind: i32, name: String, dir: String, note: String| PopRow { kind, name: s(name), dir: s(dir), note: s(note), sel: false, idx: -1 };
+        let (mut rows, mut items): (Vec<PopRow>, Vec<PopPick>) = (vec![], vec![]);
+        if pop.kind == '@' {
+            rows.push(row(0, format!("Files in {}", hover_office::office::short(&sess.folder)), String::new(), String::new()));
+            match self.desk_files(id) {
+                None => rows.push(row(3, "Reading the folder…".into(), String::new(), String::new())),
+                Some(tree) => {
+                    let hit = pop_files(&tree, &pop.q);
+                    if hit.is_empty() { rows.push(row(3, "No file matches that.".into(), String::new(), String::new())); }
+                    for p in hit {
+                        let (dir, name) = match p.rsplit_once('/') { Some((d, n)) => (d.to_owned(), n.to_owned()), None => (String::new(), p.clone()) };
+                        let mut r = row(1, name, dir, String::new());
+                        r.idx = items.len() as i32;
+                        rows.push(r);
+                        items.push(PopPick::File(p));
+                    }
+                }
+            }
+        } else {
+            let q = pop.q.to_lowercase();
+            let mine: Vec<&(String, String)> = sess.commands.iter().filter(|(n, _)| n.to_lowercase().starts_with(&q)).collect();
+            if !mine.is_empty() {
+                rows.push(row(0, format!("From {}", sess.tool.name()), String::new(), String::new()));
+                for (n, d) in mine {
+                    let mut r = row(2, format!("/{n}"), String::new(), d.clone());
+                    r.idx = items.len() as i32;
+                    rows.push(r);
+                    items.push(PopPick::Agent(n.clone()));
+                }
+            }
+            let ours: Vec<&(&str, &str, &str)> = HOVER_CMDS.iter().filter(|c| c.0.starts_with(&q)).collect();
+            if !ours.is_empty() {
+                rows.push(row(0, "Hover".into(), String::new(), String::new()));
+                for c in ours {
+                    let mut r = row(2, format!("/{}", c.0), String::new(), c.1.to_owned());
+                    r.idx = items.len() as i32;
+                    rows.push(r);
+                    items.push(PopPick::Hover(c.2));
+                }
+            }
+            if items.is_empty() { rows.push(row(3, "No command starts with that.".into(), String::new(), String::new())); }
+        }
+        pop.sel = pop.sel.min(items.len().saturating_sub(1));
+        for r in rows.iter_mut() { r.sel = r.idx >= 0 && r.idx as usize == pop.sel; }
+        let pickable = !items.is_empty();
+        pop.items = items;
+        *self.page.pop.borrow_mut() = Some(pop);
+        each!(self, |g| {
+            if let Some(m) = crate::view::sync(g.get_pop_rows(), &rows) { g.set_pop_rows(m); }
+            g.set_pop_pickable(pickable);
+        });
+    }
+
+    /// Esc, a send, or words that no longer end in a trigger: the list goes.
+    fn pop_close(self: &Rc<Self>) {
+        if self.page.pop.borrow_mut().take().is_none() { return; }
+        let none: Vec<PopRow> = vec![];
+        each!(self, |g| {
+            if let Some(m) = crate::view::sync(g.get_pop_rows(), &none) { g.set_pop_rows(m); }
+            g.set_pop_pickable(false);
+        });
+    }
+
+    /// ↑ (-1) and ↓ (+1) through what can be picked.
+    fn pop_move(self: &Rc<Self>, dir: i32) {
+        {
+            let mut p = self.page.pop.borrow_mut();
+            let Some(p) = p.as_mut() else { return };
+            let n = p.items.len() as i32;
+            if n == 0 { return; }
+            p.sel = (p.sel as i32 + dir).rem_euclid(n) as usize;
+        }
+        self.pop_refresh();
+    }
+
+    /// A row picked (`i` -1: the lit one). A file becomes a chip that holds its path; a command of the agent's goes into the box;
+    /// one of Hover's is done at once and sends nothing. Returns "model" when the model picker should open (it is drawn by the box).
+    fn pop_pick(self: &Rc<Self>, i: i32) -> String {
+        let (Some(id), Some(pop)) = (self.page.open.get(), self.page.pop.borrow().clone()) else { return String::new() };
+        let Some(item) = pop.items.get(if i < 0 { pop.sel } else { i as usize }).cloned() else { return String::new() };
+        let text = each_reply(self);
+        let mut act = String::new();
+        let draft = match &item {
+            // The @ and what followed it leave the words.
+            PopPick::File(_) => match (text.get(..pop.at), text.get(pop.end..)) { (Some(h), Some(t)) => format!("{h}{t}"), _ => text.clone() },
+            PopPick::Agent(name) => format!("/{name} "),
+            PopPick::Hover(_) => String::new(),
+        };
+        self.pop_close();
+        each!(self, |g| { g.set_d_draft(s(&draft)); g.set_d_compose(true); g.set_d_draft_to_end(g.get_d_draft_to_end().wrapping_add(1)); });
+        match item {
+            PopPick::File(rel) => {
+                let folder = self.hover.sessions.get(id).map(|x| x.folder.clone()).unwrap_or_default();
+                match hover_agents::context::file_live(&folder, &rel) { Ok(chip) => self.add_chip(id, chip), Err(e) => self.toast(&e) }
+            }
+            PopPick::Agent(_) => {}
+            PopPick::Hover("model") => act = "model".to_owned(),
+            PopPick::Hover(a) => self.head_act(a),
+        }
+        self.office_widgets();
+        act
+    }
+
     fn wire_office_more(self: &Rc<Self>, g: &crate::ui::Office) {
+        let a = self.clone();
+        g.on_pop_text(move |t, c| a.pop_text(t.as_str(), c.max(0) as usize));
+        let a = self.clone();
+        g.on_pop_move(move |d| a.pop_move(d));
+        let a = self.clone();
+        g.on_pop_pick(move |i| a.pop_pick(i).into());
+        let a = self.clone();
+        g.on_pop_close(move || a.pop_close());
         let a = self.clone();
         g.on_q_pick(move |id, ask, qi, label| {
             let Some(id) = (if id < 0 { a.page.open.get() } else { Some(id) }) else { return };
@@ -1781,6 +2020,8 @@ impl App {
         g.on_open_model(move |which, x, y| {
             a.page.model_menu.set(which);
             if which != 0 { a.page.access_menu.set(false); each!(a, |g| { g.set_model_x(x); g.set_model_y(y); }); }
+            // The picker lives in the reply box, so opening it opens the box.
+            if which == 1 { each!(a, |g| g.set_d_compose(true)); }
             a.office_widgets();
         });
         let a = self.clone();
@@ -1885,7 +2126,8 @@ impl App {
         let model = o.model.clone().or_else(|| models.first().map(|m| m.0.clone())).unwrap_or_default();
         let m = models.iter().find(|m| m.0 == model).or(models.first());
         let effort = o.effort.clone().or(now);
-        let eff = effort.filter(|e| hover_agents::state::efforts_of(&models, &model, &tool_efforts).contains(e)).map(|e| effort_word(&e)).unwrap_or_default();
+        let levels = hover_agents::state::efforts_of(&models, &model, &tool_efforts);
+        let eff = hover_agents::state::effort_now(&levels, effort.as_deref()).map(|e| effort_word(&e)).unwrap_or_default();
         (m.map_or("Default".into(), |m| short_model(&m.1)), eff, !models.is_empty())
     }
 
@@ -1899,11 +2141,16 @@ impl App {
         let model = o.model.clone().or_else(|| models.first().map(|m| m.0.clone())).unwrap_or_default();
         let effort = o.effort.clone().or(now);
         let efforts = hover_agents::state::efforts_of(&models, &model, &tool_efforts);
+        let shown = hover_agents::state::effort_now(&efforts, effort.as_deref());
+        // The heading stays for Auto, which says it picks the effort itself; a model with no efforts listed has none.
+        let ehead = if efforts.is_empty() && !model.eq_ignore_ascii_case("auto") { String::new() } else { hover_agents::runtime::caps(t).effort_label.to_uppercase() };
         (format!("{} model", t.name()).to_uppercase(),
             models.iter().map(|m| MOpt { id: s(&m.0), label: s(short_model(&m.1)), on: m.0 == cur }).collect(),
-            hover_agents::runtime::caps(t).effort_label.to_uppercase(),
-            efforts.iter().map(|e| MOpt { id: s(e), label: s(effort_word(e)), on: effort.as_deref() == Some(e.as_str()) }).collect(),
-            format!("Used by {} from its next turn.", t.name()))
+            ehead,
+            efforts.iter().map(|e| MOpt { id: s(e), label: s(effort_word(e)), on: shown.as_deref() == Some(e.as_str()) }).collect(),
+            // Kiro's row says when it compacts (a click opens its Settings); the others keep the note.
+            if t == AgentTool::Kiro { if st.kiro_auto_compact() { format!("Auto compact at {}%", st.kiro_compact_at()) } else { "Auto compact is off".to_owned() } }
+            else { format!("Used by {} from its next turn.", t.name()) })
     }
 
     /// Pictures from elsewhere (voice's screenshots while dictating) for the reply, as a paste
@@ -1966,6 +2213,17 @@ impl App {
     /// the click's (thread_click).
     fn thread_pointer(self: &Rc<Self>, kind: i32, x: f32, y: f32, shift: bool) {
         use hover_chat::{Hit, Pos, Unit};
+        // 5: moving with no button down; 6: the pointer left. A hand over a link, a button or a line that opens.
+        // Only the cursor changes, so the thread is not painted again.
+        if kind == 5 || kind == 6 {
+            let over = kind == 5 && {
+                let chat = self.page.thread.borrow();
+                let Some(c) = chat.as_ref() else { return };
+                matches!(c.thread.hit(x, y + c.scroll), Hit::Link(_) | Hit::Toggle(_) | Hit::Act(..))
+            };
+            each!(self, |g| if g.get_d_over() != over { g.set_d_over(over); });
+            return;
+        }
         {
             let mut chat = self.page.thread.borrow_mut();
             let Some(c) = chat.as_mut() else { return };
@@ -2058,9 +2316,13 @@ impl App {
                 self.office_widgets();
                 return;
             }
-            hover_chat::Hit::Act(i, hover_chat::doc::Act::Cancel) => {
-                let Some(id) = self.page.open.get() else { return };
-                if self.hover.sessions.cancel_queued(id, i) { self.office_changed(); self.office_widgets(); }
+            // A sent prompt's Edit: its words go into the reply box, to change and send again. The chat keeps what was said.
+            hover_chat::Hit::Act(i, hover_chat::doc::Act::EditPrompt) => {
+                let Some(t) = turns.get(i) else { return };
+                let keep = each_reply(self);
+                let text = if keep.trim().is_empty() { t.prompt.clone() } else { format!("{keep}\n{}", t.prompt) };
+                each!(self, |g| { g.set_d_draft(s(&text)); g.set_d_compose(true); });
+                self.office_widgets();
                 return;
             }
             hover_chat::Hit::Act(_, hover_chat::doc::Act::Copy(text)) => {
@@ -2074,7 +2336,7 @@ impl App {
                     a.paint_thread();
                 });
             }
-            hover_chat::Hit::Link(url) => crate::open_url(&url),
+            hover_chat::Hit::Link(url) => { if url.starts_with("https://") || url.starts_with("http://") { crate::open_url(&url); } }
             _ => return,
         }
         self.paint_thread();
@@ -2172,7 +2434,7 @@ fn each_reply(a: &App) -> String {
 
 /// main.js ACCESS: what a session may do on its own, picked when it starts.
 pub const ACCESS: [(&str, &str, &str); 4] = [
-    ("full", "Trust all", "Never asks. Edits, runs commands and goes online on its own."),
+    ("full", "Full access", "Never asks. Edits, runs commands and goes online on its own."),
     ("risky", "Ask first", "Asks before commands, deletes, the network and anything outside the folder."),
     ("always", "Ask always", "Asks before every change and every command."),
     ("read", "Read only", "Reads and searches. Changes nothing."),
@@ -2188,7 +2450,20 @@ fn short_model(name: &str) -> String {
     }
 }
 
-pub(crate) fn access_label(id: &str) -> &'static str { ACCESS.iter().find(|a| a.0 == id).map_or("Trust all", |a| a.1) }
+pub(crate) fn access_label(id: &str) -> &'static str { ACCESS.iter().find(|a| a.0 == id).map_or("Full access", |a| a.1) }
+
+/// A Kiro model's credit rate against Auto, for its row in the picker: "2.2x", "0.25x", "1.0x". Green under 1x, amber over
+/// 3x. None of the rate (empty) for a model Kiro's page doesn't list, such as "Default".
+fn model_rate(m: &MOpt) -> MRate {
+    match hover_agents::state::kiro_rate(m.id.as_str()).or_else(|| hover_agents::state::kiro_rate(m.label.as_str())) {
+        Some(r) => {
+            let plain = format!("{r}");
+            let text = if plain.contains('.') { format!("{plain}x") } else { format!("{r:.1}x") };
+            MRate { text: s(text), tone: if r < 1.0 { 1 } else if r > 3.0 { 2 } else { 0 } }
+        }
+        None => MRate::default(),
+    }
+}
 
 /// accessNote: Codex's Ask first is its own preset, which lets the rest run.
 pub fn access_note(id: &str, tool: AgentTool) -> &'static str {
@@ -2260,6 +2535,16 @@ fn to_serde(j: &hover_core::json::Json) -> serde_json::Value {
 }
 
 /// ago(): "now", "5 min ago", "3 h ago", "2 d ago".
+/// Whether that folder is the one picked for the new task.
+fn have_eq(a: &Rc<App>, f: &str) -> bool { a.page.new_folder.borrow().as_deref() == Some(f) }
+
+/// The sidebar's short age: now, 5m, 3h, Yesterday, 4d, 2w.
+fn when_short(ms: i64) -> String {
+    let m = ms.max(0) / 60_000;
+    if m < 1 { "now".into() } else if m < 60 { format!("{m}m") } else if m < 24 * 60 { format!("{}h", m / 60) } else if m < 48 * 60 { "Yesterday".into() }
+    else if m < 7 * 24 * 60 { format!("{}d", m / 1440) } else { format!("{}w", m / 10080) }
+}
+
 pub fn ago(ms: f64) -> String {
     let m = (ms / 60e3).round() as i64;
     if m < 1 { "now".into() } else if m < 60 { format!("{m} min ago") } else if m < 24 * 60 { format!("{} h ago", (m as f64 / 60.0).round()) } else { format!("{} d ago", (m as f64 / 1440.0).round()) }

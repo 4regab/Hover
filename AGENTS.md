@@ -14,11 +14,11 @@ office hands tasks to Kiro, Codex, Cursor, OpenCode or Claude Code, which run he
 each in a chosen folder, as bots at desks in a voxel office. A click on a desk opens its
 **desk card** (what the agent is doing, and panels for its terminal, files, diff, pull
 request, browser and screen). The office's menu (time
-of day, music, history, Settings) opens Settings over it (nine sections: General, Integrations, Projects, Voice, Kiro, Codex, Cursor, OpenCode, Claude Code), with a
+of day, music, history, Settings) opens Settings over it (ten sections: General, Integrations, Projects, Voice, Kiro, Codex, Cursor, OpenCode, Claude Code, Antigravity), with a
 back button.
 
 The only ordinary window is the dashboard: the same office in a window with Hover's
-own title bar (the system's on a Mac). It opens from the tray (the menu bar on a Mac), or a second launch. The app
+own title bar (File, Settings and Help menus; the system's on a Mac). It opens from the tray (the menu bar on a Mac), or a second launch. The app
 lives in the tray.
 
 On a Mac the usage rings are one status item in the menu bar instead of the island (the
@@ -98,7 +98,7 @@ On a Mac, `open -a Hover --args --settings <page>` opens Settings on a page (`st
 
 ```
 crates/
-  hover-core     paths (+ the Noty move), settings.json (System.Text.Json's bytes),
+  hover-core     paths (+ the Noty move), settings.json (System.Text.Json's bytes; keys of dropped features are skipped and not written back),
                  crypto (AES-GCM; DPAPI / Secret Service key), history (sealed
                  agents/), images, single instance, palette and VS Code themes,
                  platform/{windows,linux,macos} (macos.rs compiles everywhere, so its
@@ -117,7 +117,13 @@ crates/
                  Discord, off by default; Discord's local socket or pipe, no sign-in),
                  setup.rs (one-click agent install and sign-in), github.rs (gh: status,
                  install, sign-in), desk.rs (what the desk card and its panels read:
-                 git, gh, terminal, files, diff, pull requests, subagents, pages)
+                 git, gh, terminal, files, diff, pull requests, subagents, pages),
+                 term.rs (the user's own shell in the Terminal panel),
+                 orch.rs (helpers: a task asking other agents for help, under fixed
+                 limits), workspace.rs (what Git says about a task's folder, and the
+                 holds a checkpoint restore takes), editor.rs (finds the editors on
+                 this computer and opens a folder or file in one), mcp.rs (Kiro's MCP
+                 servers: reads and edits ~/.kiro/settings/mcp.json for Settings → Kiro)
   hover-quota    the four quota readers
   hover-backend  the Mac app's backend (binary hover-backend; the Slint app doesn't link
                  it): hover-core, hover-agents and hover-quota behind JSON lines on stdin and
@@ -299,8 +305,15 @@ assets/          hover.svg (the logo), make-icon.py (writes hover.png and
   - Saved in the history as `"Cloud"` (its repos), written only for cloud sessions.
 - **The chat view** (the switch at the office's top left, `Office.d-wide`, `App::set_chat_view`).
   A chat app in place of the office, in the notch and the app window alike: the sessions down
-  the left (New chat, Settings), the open chat with a slim reply bar, or with none open a start
-  screen (the agents, then one box with folder, access and model). Kept in `settings.json`
+  the left (the office/chat switch, New chat, the chats grouped by project folder; its hide button shows
+  on hover, and a closed sidebar leaves a show button before the title), the open chat, or with none open a start
+  screen (the agents, then one box with folder, access and model). The reply box rests as a
+  circle at the chat's corner (a dot when a draft waits) and opens on a click or a typed key;
+  Esc (after any menu), or sending, closes it. Open, it has +, the chat's folder, the model and
+  one round button (grey, Stop while the agent works, Send to queue once something is typed).
+  `@` lists the folder's files (a chip that sends the path, not the contents), `/` lists the
+  agent's own commands (ACP's `available_commands_update`, kept on the session) and Hover's.
+  The office's chat card uses the same header (title, context, ⋯, ✕) and reply box. Kept in `settings.json`
   (`ChatView`, written only while on), so the notch opens on it until the switch goes back;
   Esc and the notch folding never leave it. The office draws nothing under it, and is made
   only when switched back to. A chat's Expand button switches it on.
@@ -393,7 +406,27 @@ assets/          hover.svg (the logo), make-icon.py (writes hover.png and
   Terminal, Files, Diff, Agents, Linked PRs, Pull request, Browser, Screen. Every git and
   gh call blocks, so it runs on a worker; lists are windowed from Rust and only the rows
   on screen reach Slint. Files shown stay inside the session's folder (links followed).
-  A tile the OS can't run is disabled with its reason (`TileContext.off`).
+  A tile the OS can't run is disabled on the card with its reason (`TileContext.off`); in the
+  panel the same tab is hidden, not greyed (the one open stays while it is open). The panel
+  sits at the chat's right edge at the chat's full height in the chat view, and floats over
+  the office otherwise. Its tabs each show their name and scroll sideways, with a fade at the
+  right and the close button fixed.
+- **Files & changes, Files tab** (`desk_ui.rs`). The tree only; what changed is the Diff
+  tab's, and a changed file (or one saved here) shows its letter. A `.md` file opens as a
+  preview (hover-chat paints it, as it does a pull request's description) with a Preview /
+  Markdown switch. Edit is for every file that `file_text` showed whole and as UTF-8: a box
+  in place, Cancel and Save (Ctrl+S saves, Esc cancels), and an amber line, not a block, while
+  the agent works in the folder. `desk::write_file` saves inside the session's folder, through
+  a temp file renamed over the original. Open in lists only the editors `editor::available()`
+  finds, then the file manager; the last used is first and marked (`LastEditor` in
+  `settings.json`).
+- **The Terminal tab** has two tabs. The agent's is its commands from the session's steps,
+  read only. "My commands" is the user's own shell (`hover-agents::term`): PowerShell on
+  Windows, bash elsewhere, one long-lived process per chat started in the chat's folder, run as
+  the user and outside the agents' sandbox. A command goes to its stdin as base64 inside a
+  fixed wrapper (never pasted into a command line or into the shell's syntax), and the wrapper
+  prints a marker with the exit code and the folder, so `cd` lasts. Ctrl+C ends the shell and
+  starts a new one in the same folder. A command that waits for typed input gets none.
 - **The pull request tab** sets up the GitHub CLI in one click (`github.rs`): install with
   winget or Homebrew where there is one (else a hint: Hover never uses sudo), then
   `gh auth login` with the device code shown to copy and the page to open. Create pull
@@ -418,10 +451,12 @@ assets/          hover.svg (the logo), make-icon.py (writes hover.png and
 
 ## What each OS can't run
 
-A feature the OS can't run is switched off in Settings (or its desk tile) with the reason
-beside it, never hidden. The notes are constants next to the code (`sandbox::UNSUPPORTED`,
-`browser::UNSUPPORTED`, `setup::UNSUPPORTED`, `computer_use::UNSUPPORTED`,
-`spaces::UNSUPPORTED`).
+A Settings switch for a feature the OS can't run stays in Settings, shown off, with the reason
+beside it. The tabs of Files & changes (Terminal, Files, Diff, Agents, Linked PRs, Pull request,
+Browser, Screen) are the other way round: a tab this computer can't use is hidden, not greyed out.
+The notes are constants next to the code (`sandbox::UNSUPPORTED`, `browser::UNSUPPORTED`,
+`setup::UNSUPPORTED`, `computer_use::UNSUPPORTED`, `spaces::UNSUPPORTED`). In the table, "off" is the
+Settings switch.
 
 | Feature | Windows | Linux | macOS | Why |
 |---|---|---|---|---|
@@ -469,6 +504,13 @@ beside it, never hidden. The notes are constants next to the code (`sandbox::UNS
   merged it in (the backend starts after).
 - **`Shortcut::label()` reads ⌥N on a Mac**, not Alt+N; tests that want the Windows text
   use `label_for(false)`.
+- **Dropped features leave quiet leftovers.** Agents of your own, the ACP Registry, task worktrees, the
+  default editor, helper limits, pull request watches, continuing at a usage limit's reset, saved tasks,
+  the background service and webhooks are gone. Their keys in `settings.json` are read past and not
+  written back; the data they kept in the data folder (saved tasks, own agents, worktrees, timers) is
+  left on disk and nothing reads it. A chat made with an own agent still opens; a reply to it says the agent is gone.
+  The first start after the update removes the old service's scheduled task (Windows) or systemd user
+  unit (Linux) once (`remove_old_service` in `app.rs`) and writes one line to `hover.log`.
 - **Headless GPU runs** need `XDG_RUNTIME_DIR` set.
 - **The chat's layout goldens** (`hover-chat`'s `thread.rs`) were measured in Linux
   Chromium with DejaVu Sans, so the three that compare text widths skip on Windows.

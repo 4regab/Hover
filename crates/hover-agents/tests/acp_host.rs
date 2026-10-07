@@ -45,7 +45,7 @@ fn models() -> &'static str { r#"[{"value":"m1","name":"Model one"},{"value":"m2
 
 fn access() -> String {
     let c = |v: &str| format!(r#"{{"value":"{v}","name":"{v}"}}"#);
-    let modes: Vec<String> = ["vibe", "read-only", "workspace-write", "agent", "agent-full-access", "ask", "plan"].iter().map(|v| c(v)).collect();
+    let modes: Vec<String> = ["vibe", "read-only", "workspace-write", "agent", "agent-full-access", "ask", "plan", "yolo", "default"].iter().map(|v| c(v)).collect();
     format!(r#"[{{"id":"autopilot","currentValue":"unset","options":[{},{}]}},{{"id":"mode","category":"mode","currentValue":"x","options":[{}]}}]"#, c("on"), c("off"), modes.join(","))
 }
 
@@ -97,8 +97,9 @@ impl Fake {
             self.0.lock().unwrap().got.push((method.clone(), p.clone()));
             let id = m.get("id").and_then(|i| i.i64().ok());
             let result: Option<String> = match method.as_str() {
-                "initialize" => Some(if self.0.lock().unwrap().images { r#"{"protocolVersion":1,"agentCapabilities":{"loadSession":true,"promptCapabilities":{"image":true}}}"# }
-                    else { r#"{"protocolVersion":1,"agentCapabilities":{"loadSession":true}}"# }.into()),
+                "initialize" => Some(if self.0.lock().unwrap().images { r#"{"protocolVersion":1,"agentCapabilities":{"loadSession":true,"promptCapabilities":{"image":true}},"authMethods":[{"id":"oauth-personal","name":"Log in with Google"},{"id":"gemini-api-key","name":"Gemini API key"}]}"# }
+                    else { r#"{"protocolVersion":1,"agentCapabilities":{"loadSession":true},"authMethods":[{"id":"oauth-personal","name":"Log in with Google"},{"id":"gemini-api-key","name":"Gemini API key"}]}"# }.into()),
+                "authenticate" => Some("{}".into()),
                 "session/new" => Some(if self.0.lock().unwrap().offer { format!(r#"{{"sessionId":"s1","configOptions":{}}}"#, access()) }
                     else { format!(r#"{{"sessionId":"s1","configOptions":[{{"id":"model","category":"model","currentValue":"m1","options":{}}}]}}"#, models()) }),
                 "session/load" => {
@@ -428,7 +429,32 @@ fn each_tool_is_put_where_it_asks() {
     assert!(sets(AgentTool::Codex, AgentOptions::default()).contains(&"mode=agent-full-access".into()));
     assert!(sets(AgentTool::Codex, risky.clone()).contains(&"mode=workspace-write".into()), "not agent: Codex's own reviewer would answer for the user");
     assert!(sets(AgentTool::Codex, always).contains(&"mode=read-only".into()));
-    assert!(sets(AgentTool::Cursor, risky).contains(&"mode=agent".into()));
+    assert!(sets(AgentTool::Cursor, risky.clone()).contains(&"mode=agent".into()));
+    // Antigravity (T3 Code's mapping): yolo never asks; default sends edits and commands to Hover.
+    assert!(sets(AgentTool::Agy, AgentOptions::default()).contains(&"mode=yolo".into()));
+    assert!(sets(AgentTool::Agy, risky).contains(&"mode=default".into()));
+    assert!(sets(AgentTool::Agy, AgentOptions { read_only: true, ..Default::default() }).contains(&"mode=default".into()), "read only: Hover refuses what it asks");
+}
+
+#[test]
+fn antigravity_signs_in_before_its_first_session_and_the_others_dont() {
+    for (tool, signs_in) in [(AgentTool::Agy, true), (AgentTool::Cursor, false)] {
+        let d = dir(&format!("auth-{}", tool.id()));
+        let (host, fake) = make_for(AgentOptions::default(), tool);
+        let r = host.run(&d, "go", None, &Cancel::new(), None, None);
+        host.shutdown("test");
+        assert_eq!(r.state, KiroState::Completed, "{tool:?}: {}", r.text);
+        let m = fake.methods();
+        assert_eq!(m.iter().any(|x| x == "authenticate"), signs_in, "{tool:?}: {m:?}");
+        if signs_in {
+            let g = fake.0.lock().unwrap();
+            let auth = g.got.iter().find(|g| g.0 == "authenticate").unwrap();
+            let want = if std::env::var_os("GEMINI_API_KEY").is_some_and(|k| !k.is_empty()) { "gemini-api-key" } else { "oauth-personal" };
+            // An API key in the environment, else Google's sign-in.
+            assert_eq!(auth.1.get("methodId").and_then(Json::as_str), Some(want));
+            assert!(m.iter().position(|x| x == "authenticate") < m.iter().position(|x| x == "session/new"), "{m:?}");
+        }
+    }
 }
 
 #[test]

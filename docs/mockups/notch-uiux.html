@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Hover · notch mockup</title>
+<!-- Every view here is chat-uiux.html itself, framed as the notch (?frame=notch) or the notch at
+     rest (?frame=island), so the notch and the window share one design. -->
+<style>
+* { box-sizing: border-box; }
+body { margin: 0; background: #050507; color: #f6f2ff; font: 13px/1.5 Inter, "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
+.top { position: sticky; top: 0; z-index: 5; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; padding: 10px 18px; background: #050507e6; border-bottom: 1px solid #ffffff0f; backdrop-filter: blur(8px); }
+.top b { margin-right: 10px; font-weight: 600; }
+.top a { padding: 5px 11px; border-radius: 7px; border: 1px solid #ffffff17; color: #f6f2ffb0; font-size: 12px; text-decoration: none; }
+.top a:hover { color: #f6f2ff; }
+main { width: 1500px; margin: 0 auto; padding: 24px 0 60px; }
+section { margin-bottom: 44px; scroll-margin-top: 70px; }
+h2 { margin: 0 0 2px; font-size: 15px; font-weight: 600; letter-spacing: -.01em; }
+.note { margin: 0 0 12px; max-width: 980px; color: #f6f2ff80; font-size: 12.5px; }
+.note b { color: #f6f2ffb0; font-weight: 500; }
+/* A strip of desktop: the notch hangs from its top edge. */
+.screen { position: relative; border-radius: 12px; overflow: hidden; border: 1px solid #ffffff17;
+  background: radial-gradient(1100px 520px at 18% 120%, #3a2a6a 0, #0000 70%), radial-gradient(900px 480px at 92% -10%, #1d3b58 0, #0000 70%), #0d0f17; }
+.screen .lbl { position: absolute; left: 14px; bottom: 10px; font-size: 11.5px; color: #f6f2ff80; }
+.rest { height: 96px; }
+.screen > iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
+.rests { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.rests .screen { height: 96px; }
+.open { height: calc(var(--h) + 90px); }
+/* The open shape: radius 32 at the bottom (OPEN_R), ears of 10 (OPEN_EAR), the dark shadow. */
+.nw { position: absolute; top: 0; left: 50%; translate: -50% 0; width: var(--w); height: var(--h); }
+.nw::before, .nw::after { content: ""; position: absolute; top: 0; width: 10px; height: 10px; }
+.nw::before { left: -10px; background: radial-gradient(circle at 0 100%, #0000 9.5px, #000 10px); }
+.nw::after { right: -10px; background: radial-gradient(circle at 100% 100%, #0000 9.5px, #000 10px); }
+.notch { width: 100%; height: 100%; border-radius: 0 0 32px 32px; overflow: hidden; background: #000; box-shadow: 0 4px 24px #00000080; display: flex; flex-direction: column; }
+.notch iframe { flex: 1; width: 100%; border: 0; display: block; }
+/* A Mac's camera housing: the notch's content starts below it, as the office does. */
+.housing { flex: none; height: 32px; position: relative; }
+.housing::after { content: ""; position: absolute; left: 50%; top: 0; translate: -50% 0; width: 190px; height: 32px; border-radius: 0 0 12px 12px; background: #000; box-shadow: inset 0 -1px 0 #ffffff14; }
+.housing i { position: absolute; left: 50%; top: 11px; translate: -50% 0; z-index: 1; width: 9px; height: 9px; border-radius: 50%; background: #10131c; box-shadow: inset 0 0 0 2px #1b2233; }
+.open-q { margin: 0 0 12px; padding: 10px 14px; border-radius: 10px; border: 1px solid #ffc46b33; background: #ffc46b0d; color: #ffd89a; font-size: 12.5px; max-width: 980px; }
+</style>
+</head>
+<body>
+<nav class="top" aria-label="Notch views">
+  <b>Hover notch mockup</b>
+  <a href="#rest">At rest</a><a href="#card">Question</a><a href="#chat">Chat</a><a href="#reply">Reply open</a><a href="#working">Working</a>
+  <a href="#panel">Files &amp; changes</a><a href="#terminal">Terminal</a><a href="#start">New chat</a><a href="#models">Model picker</a>
+  <a href="#office">Office</a><a href="#settings">Kiro settings</a><a href="#small">Small size</a><a href="#mac">macOS</a>
+  <a href="chat-uiux.html">Window mockup →</a>
+</nav>
+<main>
+  <section id="rest">
+    <h2>At rest</h2>
+    <p class="note">The island is unchanged in shape: 32 high, black, the tool's logo in its ring. One change for consistency: what the agent is doing shimmers as one line, the same band as the chat's running command.</p>
+    <div class="rests">
+      <div class="screen"><iframe title="Quotas" src="chat-uiux.html?frame=island#quota"></iframe><span class="lbl">Quotas only</span></div>
+      <div class="screen"><iframe title="At work" src="chat-uiux.html?frame=island#work"></iframe><span class="lbl">Agents at work</span></div>
+      <div class="screen"><iframe title="Asking" src="chat-uiux.html?frame=island#ask"></iframe><span class="lbl">A question waits (amber glow)</span></div>
+      <div class="screen"><iframe title="Done" src="chat-uiux.html?frame=island#done"></iframe><span class="lbl">An end not seen yet (green glow)</span></div>
+    </div>
+  </section>
+
+  <section id="card">
+    <h2>The question's card (Review)</h2>
+    <p class="note">Same card, now in the chat's buttons and code box. Enter allows, Shift+Enter trusts, Esc denies.</p>
+    <div class="open-q">Question: the app's card also has an "All" button (allow everything this session). You had Trust all taken out of the chat, so I left "All" out here too. Keep it out?</div>
+    <div class="screen" style="height:250px"><iframe title="Question card" src="chat-uiux.html?frame=island#card" style="position:absolute;inset:0;width:100%;height:100%;border:0"></iframe></div>
+  </section>
+
+  <section id="chat">
+    <h2>Open on the chat view · Default size, 1120 × 440</h2>
+    <p class="note">The window's chat, as is, in the notch's shape. <b>No title bar</b> (File, Settings and Help are the window's). The ground is the notch's black, so it opens out of the island with no seam. Settings is reached from the office's menu only.</p>
+    <div class="screen open" style="--h:440px"><div class="nw" style="--w:1120px;--h:440px"><div class="notch"><iframe title="Chat in the notch" src="chat-uiux.html?frame=notch#chat"></iframe></div></div><span class="lbl">Hover the sidebar to see its hide button</span></div>
+  </section>
+
+  <section id="reply">
+    <h2>Reply box open</h2>
+    <p class="note">Click the title to rename the chat (or ⋯ → Rename). Enter saves, Esc puts it back.</p>
+    <div class="screen open" style="--h:440px"><div class="nw" style="--w:1120px;--h:440px"><div class="notch"><iframe title="Reply open" src="chat-uiux.html?frame=notch#chat,cc"></iframe></div></div></div>
+  </section>
+
+  <section id="working">
+    <h2>Agent working</h2>
+    <p class="note">The reply box rests as the office card's circle, so the whole thread shows while the agent works. A click or any typed key opens the box; Esc or sending closes it, and a draft leaves a dot on the circle.</p>
+    <div class="screen open" style="--h:440px"><div class="nw" style="--w:1120px;--h:440px"><div class="notch"><iframe title="Working" src="chat-uiux.html?frame=notch#chat,working"></iframe></div></div></div>
+  </section>
+
+  <section id="panel">
+    <h2>Files &amp; changes</h2>
+    <p class="note">At 1120 wide the sidebar, the chat and a 520 panel don't fit together. <b>In the notch the sidebar folds while the panel is open</b> and comes back when it closes. Its show button, before the title, closes the panel.</p>
+    <div class="screen open" style="--h:440px"><div class="nw" style="--w:1120px;--h:440px"><div class="notch"><iframe title="Diff" src="chat-uiux.html?frame=notch#chat,diff"></iframe></div></div></div>
+  </section>
+
+  <section id="terminal">
+    <h2>Terminal</h2>
+    <p class="note">Two tabs, as a terminal app has. <b>My commands</b> is your own shell in the chat's folder: prompt, command, output, then the prompt where you type. Click anywhere in it to type.</p>
+    <div class="screen open" style="--h:440px"><div class="nw" style="--w:1120px;--h:440px"><div class="notch"><iframe title="Terminal" src="chat-uiux.html?frame=notch#chat,terminal"></iframe></div></div></div>
+    <p class="note" style="margin-top:12px">The Nova tab: what the agent ran, read only, each with how it ended. A dot on the tab while it runs one.</p>
+    <div class="screen open" style="--h:440px"><div class="nw" style="--w:1120px;--h:440px"><div class="notch"><iframe title="Nova's commands" src="chat-uiux.html?frame=notch#chat,nova,working"></iframe></div></div></div>
+  </section>
+
+  <section id="start">
+    <h2>New chat</h2>
+    <div class="screen open" style="--h:440px"><div class="nw" style="--w:1120px;--h:440px"><div class="notch"><iframe title="New chat" src="chat-uiux.html?frame=notch#chat,start"></iframe></div></div></div>
+  </section>
+
+  <section id="models">
+    <h2>Model picker</h2>
+    <p class="note">The tallest menu. At 440 high it can't all fit above the reply box, so in the notch it scrolls. Effort and Auto compact are at its end.</p>
+    <div class="screen open" style="--h:440px"><div class="nw" style="--w:1120px;--h:440px"><div class="notch"><iframe title="Model picker" src="chat-uiux.html?frame=notch#chat,cc,models"></iframe></div></div></div>
+  </section>
+
+  <section id="office">
+    <h2>Open on the office, with a desk's card</h2>
+    <p class="note">The same switch at the top left. The card has the same header, thread and reply as the chat.</p>
+    <div class="screen open" style="--h:440px"><div class="nw" style="--w:1120px;--h:440px"><div class="notch"><iframe title="Office" src="chat-uiux.html?frame=notch#office"></iframe></div></div></div>
+  </section>
+
+  <section id="settings">
+    <h2>Settings → Kiro, with its MCP servers</h2>
+    <p class="note">In the notch, Settings opens from the office's menu and sits over the office. Kiro's MCP servers: a switch each, Edit, Remove (it asks first), and Add MCP server.</p>
+    <div class="screen open" style="--h:440px"><div class="nw" style="--w:1120px;--h:440px"><div class="notch"><iframe title="Kiro settings" src="chat-uiux.html?frame=notch#office,kiroset"></iframe></div></div></div>
+  </section>
+
+  <section id="small">
+    <h2>Small size, 840 × 340</h2>
+    <p class="note">The tightest case. The thread gets about 190 px between the header and the reply box.</p>
+    <div class="screen open" style="--h:340px"><div class="nw" style="--w:840px;--h:340px"><div class="notch"><iframe title="Small" src="chat-uiux.html?frame=notch#chat"></iframe></div></div></div>
+  </section>
+
+  <section id="mac">
+    <h2>macOS, with the camera housing</h2>
+    <p class="note">The chat starts below the housing, as the office already does. The 32 pt strip stays plain black.</p>
+    <div class="screen open" style="--h:440px"><div class="nw" style="--w:1120px;--h:440px"><div class="notch"><div class="housing"><i></i></div><iframe title="macOS" src="chat-uiux.html?frame=notch#chat,mac"></iframe></div></div></div>
+  </section>
+</main>
+</body>
+</html>

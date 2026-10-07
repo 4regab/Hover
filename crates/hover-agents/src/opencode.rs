@@ -80,6 +80,71 @@ fn is_false(e: Option<&Json>, name: &str) -> bool { e.and_then(|e| e.get(name)) 
 fn cap(t: &str) -> String { let mut c = t.chars(); c.next().map_or(String::new(), |f| f.to_uppercase().collect::<String>() + c.as_str()) }
 fn log(t: &str) { hover_core::log::line(&format!("opencode: {t}")); }
 
+// MARK: [diag] Diagnostics for "OpenCode doesn't work" (temporary, removed with the fix)
+//
+// Hypothesis 1: in the sandbox on Linux, srt runs the server under bwrap --unshare-net,
+// so its 127.0.0.1 is not Hover's and nothing reaches it (or another server on the same
+// port answers instead). Hypothesis 2: the turn gets past the start, but the event stream
+// or the prompt doesn't do what Hover waits for (no server.connected, events dropped or
+// filtered out, an idle never counted), so the turn hangs, fails late or ends empty.
+// Every line is tagged "opencode: [diag]" in hover.log. HOVER_OPENCODE_TRACE=1 also logs
+// each event of a turn.
+
+fn diag(t: &str) { log(&format!("[diag] {t}")); }
+
+fn trace_on() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("HOVER_OPENCODE_TRACE").is_ok_and(|v| !v.is_empty() && v != "0"))
+}
+
+fn clip_diag(t: &str, n: usize) -> String {
+    let one = t.replace(['\r', '\n'], " ");
+    if one.chars().count() <= n { one } else { format!("{}…", one.chars().take(n).collect::<String>()) }
+}
+
+/// [diag] What one turn saw of the event stream, logged when it ends.
+#[derive(Default)]
+struct Diag {
+    /// Events by type, for this session (or its subagents).
+    counts: Mutex<std::collections::BTreeMap<String, u32>>,
+    /// Data that wasn't a JSON object with a "type".
+    unparsed: AtomicUsize,
+    /// Events for other sessions (not this one or its subagents).
+    other: AtomicUsize,
+    /// Assistant messages and parts dropped because they didn't count as this turn's (mine()).
+    not_mine: AtomicUsize,
+    /// Text deltas for a part Hover didn't know yet.
+    orphan_deltas: AtomicUsize,
+    streams: AtomicUsize,
+    connected_after: Mutex<Option<Duration>>,
+}
+
+impl Diag {
+    fn count(&self, kind: &str) { *self.counts.lock().unwrap().entry(kind.to_owned()).or_default() += 1; }
+    fn summary(&self) -> String {
+        let c = self.counts.lock().unwrap();
+        let kinds: Vec<String> = c.iter().map(|(k, n)| format!("{k}×{n}")).collect();
+        format!("streams {} connected after {} | events [{}] | other sessions {} unparsed {} not-mine {} orphan deltas {}",
+            self.streams.load(Ordering::SeqCst),
+            self.connected_after.lock().unwrap().map_or("never".into(), |d| format!("{:.2}s", d.as_secs_f64())),
+            kinds.join(", "), self.other.load(Ordering::SeqCst), self.unparsed.load(Ordering::SeqCst),
+            self.not_mine.load(Ordering::SeqCst), self.orphan_deltas.load(Ordering::SeqCst))
+    }
+}
+
+/// [diag] Whether Hover itself can open a TCP connection to where the server said it
+/// listens. In a separate network namespace this is refused although the server is up.
+fn probe_tcp(url: &str) -> String {
+    let Some((h, p)) = crate::http::host_port(url) else { return format!("can't read host:port from {url}") };
+    use std::net::ToSocketAddrs;
+    let addr = match (h.as_str(), p).to_socket_addrs().ok().and_then(|mut a| a.next()) { Some(a) => a, None => return format!("{h}:{p} doesn't resolve") };
+    let t = Instant::now();
+    match std::net::TcpStream::connect_timeout(&addr, Duration::from_secs(2)) {
+        Ok(_) => format!("connect {addr} ok in {:.0} ms", t.elapsed().as_secs_f64() * 1000.0),
+        Err(e) => format!("connect {addr} FAILED in {:.0} ms: {e} ({:?})", t.elapsed().as_secs_f64() * 1000.0, e.kind()),
+    }
+}
+
 /// Shared answer slot a thread waits on (TaskCompletionSource).
 struct Done { r: Mutex<Option<KiroResult>>, cv: Condvar }
 
@@ -138,6 +203,9 @@ struct Turn {
     deny_all: bool,
     /// When each streaming thought was last passed on.
     thought_sent: Mutex<HashMap<String, Instant>>,
+    /// [diag] When the turn began, and what its event stream carried.
+    began: Instant,
+    diag: Diag,
 }
 
 impl Turn {
@@ -298,14 +366,23 @@ impl Host {
             error: Mutex::new(None), retry: Mutex::new(None), last_event: Mutex::new(Instant::now()), idle_confirms: AtomicUsize::new(0),
             open: Default::default(), resolved: Default::default(), said: Default::default(), phase: Mutex::new(KiroPhase::Starting), context: Mutex::new(None),
             deny_all: access == Some("none"), thought_sent: Default::default(),
+            began: Instant::now(), diag: Diag::default(),
         });
+        diag(&format!("run begins: folder {folder:?} resume {resume:?} access {access:?} model {:?} effort {:?} agent {:?} read_only {} approval {:?} sandbox wanted {} os {}",
+            o.model, o.effort, o.agent, o.read_only, o.approval, sandbox::wanted(), std::env::consts::OS));
         let mut pump: Option<std::thread::JoinHandle<()>> = None;
-        let r = match self.turn(prompt, ct, resume, &o, &turn, &mut pump) {
+        let got = self.turn(prompt, ct, resume, &o, &turn, &mut pump);
+        if let Err(e) = &got { diag(&format!("run error ({}): {}", match e { OcErr::Oc(c, _) => format!("Oc {c:?}"), OcErr::Net(_) => "Net".into(), OcErr::Cancelled => "Cancelled".into() }, clip_diag(&err_text(e), 400))); }
+        let r = match got {
             Ok(r) => r,
             Err(OcErr::Cancelled) => turn.stopped(),
             Err(OcErr::Oc(_, m)) => if ct.is_cancelled() { turn.stopped() } else { KiroResult::new(KiroState::Failed, explain(&m)) },
             Err(OcErr::Net(m)) => if ct.is_cancelled() { turn.stopped() } else { KiroResult::new(KiroState::Failed, format!("Couldn’t reach OpenCode: {m}")) },
         };
+        diag(&format!("run ends after {:.1}s: {:?} {:?} | sid {} mid {} accepted {} user_seen {} busy_seen {} idle_early {} stopping {} refused {} | {}",
+            turn.began.elapsed().as_secs_f64(), r.state, clip_diag(&r.text, 300), turn.sid(), turn.mid(),
+            Turn::flag(&turn.accepted), Turn::flag(&turn.user_seen), Turn::flag(&turn.busy_seen), Turn::flag(&turn.idle_early),
+            Turn::flag(&turn.stopping), Turn::flag(&turn.refused), turn.diag.summary()));
         // finally
         turn.done.set(turn.stopped());
         turn.stream.cancel();
@@ -328,7 +405,15 @@ impl Host {
         if let Some(p) = &turn.progress { p(KiroPhase::Starting); }
         self.start(ct)?;
         let inv = self.inventory_of(folder, ct)?;
-        let model = match pick_model(&inv, o.model.as_deref()) { Ok(m) => m, Err(e) => return Ok(KiroResult::new(KiroState::Failed, e)) };
+        let model = match pick_model(&inv, o.model.as_deref()) {
+            Ok(m) => m,
+            Err(e) => { diag(&format!("model {:?} not offered: {e}", o.model)); return Ok(KiroResult::new(KiroState::Failed, e)) }
+        };
+        diag(&format!("model {} (variants {:?}; effort {:?} {}) | OpenCode's defaults {}",
+            model.as_ref().map_or("none sent: OpenCode picks its default".into(), |m| format!("{}/{}", m.provider, m.model)),
+            model.as_ref().map(|m| &m.variants), o.effort,
+            if o.effort.as_ref().is_some_and(|v| model.as_ref().is_some_and(|m| m.variants.contains(v))) { "sent" } else { "not sent" },
+            clip_diag(&inv.get("default").map(|d| d.compact()).unwrap_or_default(), 200)));
         let agent = o.agent.clone();
         let agents = match self.get("/agent", Some(folder), Some(ct), None)? { a @ Json::Arr(_) => a, _ => Json::Arr(vec![]) };
         if let Some(a) = &agent {
@@ -364,6 +449,7 @@ impl Host {
             *turn.sid.lock().unwrap() = s(Some(&created), "id").ok_or_else(|| OcErr::Oc(None, "OpenCode didn’t start a session.".into()))?.to_owned();
         }
         let sid = turn.sid();
+        diag(&format!("session {sid} ({}) after {:.1}s", if resume.is_some_and(|r| !r.is_empty()) { "resumed, rules patched" } else { "created" }, turn.began.elapsed().as_secs_f64()));
         turn.related.lock().unwrap().insert(sid.clone());
         self.turns.lock().unwrap().insert(sid.clone(), turn.clone());
         if let Some(e) = &turn.events { e(KiroEvent { session_id: Some(sid.clone()), ..Default::default() }); }
@@ -380,6 +466,7 @@ impl Host {
             }
             if !*g {
                 if ct.is_cancelled() { return Err(OcErr::Cancelled); }
+                diag(&format!("event stream for {sid}: no server.connected within {:.0}s | {}", self.t.connect.as_secs_f64(), turn.diag.summary()));
                 return Ok(KiroResult::new(KiroState::Failed, "OpenCode’s event stream didn’t connect. Try again."));
             }
         }
@@ -403,7 +490,11 @@ impl Host {
     /// connection), the message is looked up by its id instead of sent again.
     fn submit(self: &Arc<Self>, turn: &Arc<Turn>, body: Json) -> Result<(), OcErr> {
         let sid = turn.sid();
-        match self.send("POST", &format!("/session/{}/prompt_async", escape_data(&sid)), Some(&turn.folder), Some(body), Some(&turn.token), Some(self.t.send)) {
+        let sent = Instant::now();
+        diag(&format!("prompt_async {sid} mid {} body keys {:?}", turn.mid(), match &body { Json::Obj(kv) => kv.iter().map(|(k, _)| k.as_str()).collect::<Vec<_>>(), _ => vec![] }));
+        let answer = self.send("POST", &format!("/session/{}/prompt_async", escape_data(&sid)), Some(&turn.folder), Some(body), Some(&turn.token), Some(self.t.send));
+        diag(&format!("prompt_async {sid} answered in {:.2}s: {}", sent.elapsed().as_secs_f64(), match &answer { Ok(_) => "accepted".into(), Err(e) => clip_diag(&err_text(e), 300) }));
+        match answer {
             Ok(_) => {
                 turn.accepted.store(true, Ordering::SeqCst);
                 // It may have gone idle before the answer to the prompt came back.
@@ -505,7 +596,12 @@ impl Host {
     }
 
     fn read_stream(self: &Arc<Self>, c: &Client, turn: &Arc<Turn>) -> Result<(), OcErr> {
-        let mut res = c.open("GET", &url("/event", Some(&turn.folder)), None, None, Some(&turn.stream)).map_err(|e| http_err(e, "GET", "/event"))?;
+        let n = turn.diag.streams.fetch_add(1, Ordering::SeqCst) + 1;
+        let mut res = match c.open("GET", &url("/event", Some(&turn.folder)), None, None, Some(&turn.stream)) {
+            Ok(r) => r,
+            Err(e) => { let e = http_err(e, "GET", "/event"); diag(&format!("event stream #{n} for {} couldn't open: {}", turn.sid(), err_text(&e))); return Err(e); }
+        };
+        diag(&format!("event stream #{n} for {} answered {} after {:.2}s", turn.sid(), res.status, turn.began.elapsed().as_secs_f64()));
         if !(200..300).contains(&res.status) { return Err(OcErr::Oc(Some(res.status), format!("OpenCode’s event stream answered {}.", res.status))); }
         let mut data = String::new();
         loop {
@@ -526,10 +622,21 @@ impl Host {
     }
 
     fn handle(self: &Arc<Self>, turn: &Arc<Turn>, data: &str) {
-        let Ok(ev @ Json::Obj(_)) = json::parse(data) else { return };
+        let ev = match json::parse(data) {
+            Ok(ev @ Json::Obj(_)) if s(Some(&ev), "type").is_some() => ev,
+            _ => {
+                // Hypothesis 2: an envelope Hover doesn't read (e.g. {"directory","payload"}) is dropped here.
+                if turn.diag.unparsed.fetch_add(1, Ordering::SeqCst) < 5 { diag(&format!("event not read (not {{\"type\",...}}): {}", clip_diag(data, 300))); }
+                return;
+            }
+        };
         let Some(kind) = s(Some(&ev), "type").map(str::to_owned) else { return };
         *turn.last_event.lock().unwrap() = Instant::now();
+        if trace_on() && kind != "server.heartbeat" { diag(&format!("event {:.2}s {}", turn.began.elapsed().as_secs_f64(), clip_diag(data, 400))); }
         if kind == "server.connected" {
+            turn.diag.count(&kind);
+            let mut first = turn.diag.connected_after.lock().unwrap();
+            if first.is_none() { *first = Some(turn.began.elapsed()); }
             let again = turn.connects.swap(true, Ordering::SeqCst);
             let (m, cv) = &turn.connected;
             *m.lock().unwrap() = true;
@@ -547,6 +654,7 @@ impl Host {
     fn apply(self: &Arc<Self>, turn: &Arc<Turn>, kind: &str, p: &Json) {
         let sid = s(Some(p), "sessionID").map(str::to_owned);
         let related = |x: &Option<String>| x.as_ref().is_some_and(|x| turn.related.lock().unwrap().contains(x));
+        if related(&sid) { turn.diag.count(kind); } else if sid.is_some() { turn.diag.other.fetch_add(1, Ordering::SeqCst); }
         match kind {
             "session.created" | "session.updated" => {
                 let info = p.get("info");
@@ -576,9 +684,15 @@ impl Host {
                 let role = s(Some(msg), "role").unwrap_or("");
                 turn.said.lock().unwrap().roles.insert(mid.into(), role.into());
                 if role == "user" && mid == turn.mid() { turn.user_seen.store(true, Ordering::SeqCst); }
+                if role == "assistant" && !mine(turn, mid, s(Some(msg), "parentID")) {
+                    if turn.diag.not_mine.fetch_add(1, Ordering::SeqCst) < 3 {
+                        diag(&format!("assistant message {mid} (parent {:?}) not counted as this turn's (mid {})", s(Some(msg), "parentID"), turn.mid()));
+                    }
+                }
                 if role == "assistant" && mine(turn, mid, s(Some(msg), "parentID")) {
                     { let mut g = turn.said.lock().unwrap(); if !g.messages.iter().any(|m| m == mid) { g.messages.push(mid.into()); } }
                     if let Some(err @ Json::Obj(_)) = msg.get("error") {
+                        diag(&format!("assistant message {mid} has an error: {}", clip_diag(&err.compact(), 400)));
                         if let Some(why) = error_text(Some(err)) { if s(Some(err), "name") != Some("MessageAbortedError") { *turn.error.lock().unwrap() = Some(why); } }
                     }
                     self.usage(turn, msg);
@@ -598,7 +712,7 @@ impl Host {
                         drop(g);
                         self.thought_out(turn, step, false);
                         return;
-                    } else { return; }
+                    } else { turn.diag.orphan_deltas.fetch_add(1, Ordering::SeqCst); return; }
                 }
                 turn.set_phase(KiroPhase::Writing);
             }
@@ -614,6 +728,7 @@ impl Host {
             "session.idle" => self.idle_seen(turn),
             "session.error" => {
                 let error = p.get("error");
+                diag(&format!("session.error (accepted {}): {}", Turn::flag(&turn.accepted), clip_diag(&error.map(|e| e.compact()).unwrap_or_default(), 400)));
                 if s(error, "name") == Some("MessageAbortedError") {
                     if Turn::flag(&turn.stopping) { turn.done.set(turn.stopped()); }
                     return;
@@ -631,6 +746,9 @@ impl Host {
     /// for it) ends the turn. Anything else is looked into instead.
     fn idle_seen(self: &Arc<Self>, turn: &Arc<Turn>) {
         let seen = Turn::flag(&turn.user_seen) || Turn::flag(&turn.busy_seen);
+        diag(&format!("idle for {} at {:.2}s: accepted {} user_seen {} busy_seen {} stopping {} -> {}", turn.sid(), turn.began.elapsed().as_secs_f64(),
+            Turn::flag(&turn.accepted), Turn::flag(&turn.user_seen), Turn::flag(&turn.busy_seen), Turn::flag(&turn.stopping),
+            if !Turn::flag(&turn.accepted) { "before the prompt was accepted" } else if Turn::flag(&turn.stopping) { "stopped" } else if seen { "finish" } else { "reconcile" }));
         if !Turn::flag(&turn.accepted) { if !turn.mid().is_empty() && seen { turn.idle_early.store(true, Ordering::SeqCst); } return; }
         if Turn::flag(&turn.stopping) { turn.done.set(turn.stopped()); return; }
         if seen { finish(turn); return; }
@@ -640,7 +758,8 @@ impl Host {
     fn part(self: &Arc<Self>, turn: &Arc<Turn>, part: &Json) {
         let (Some(id), Some(mid)) = (s(Some(part), "id"), s(Some(part), "messageID")) else { return };
         let role = turn.said.lock().unwrap().roles.get(mid).cloned();
-        if role.as_deref() == Some("user") || mid == turn.mid() || !mine(turn, mid, None) { return; }
+        if role.as_deref() == Some("user") || mid == turn.mid() { return; }
+        if !mine(turn, mid, None) { turn.diag.not_mine.fetch_add(1, Ordering::SeqCst); return; }
         { let mut g = turn.said.lock().unwrap(); if !g.messages.iter().any(|m| m == mid) { g.messages.push(mid.into()); } }
         match s(Some(part), "type") {
             Some("text") => {
@@ -812,6 +931,8 @@ impl Host {
         let r = (|| -> Result<(), OcErr> {
             let status = self.get("/session/status", Some(&turn.folder), Some(&turn.stream), Some(Duration::from_secs(5)))?;
             let kind = s(status.get(&sid), "type").unwrap_or("idle");
+            diag(&format!("reconcile {sid} ({why}): status {kind} user_seen {} busy_seen {} idle_confirms {} | {}", Turn::flag(&turn.user_seen),
+                Turn::flag(&turn.busy_seen), turn.idle_confirms.load(Ordering::SeqCst), turn.diag.summary()));
             if matches!(kind, "busy" | "retry") {
                 turn.busy_seen.store(true, Ordering::SeqCst);
                 turn.idle_confirms.store(0, Ordering::SeqCst);
@@ -979,6 +1100,8 @@ impl Host {
         let mcp = computer_use::signature(&self.servers());
         let link = (self.connect)(ct, &self.t)?.ok_or_else(|| OcErr::Oc(None, format!("OpenCode isn’t installed. {}", agents::install_hint(AgentTool::OpenCode))))?;
         let client = Client::new(&link.url, "opencode", &link.password).ok_or_else(|| OcErr::Oc(None, format!("OpenCode listened on {}, which Hover can’t reach.", link.url)))?;
+        // Hypothesis 1: is the address it printed reachable from Hover's side at all?
+        diag(&format!("server says {}; from Hover: {}", link.url, probe_tcp(&link.url)));
         let gen = self.gens.fetch_add(1, Ordering::SeqCst) + 1;
         let OpenCodeLink { url: at, kill, errors, exited, .. } = link;
         *self.live.lock().unwrap() = Some(Arc::new(Live { gen, client, kill, errors }));
@@ -1001,7 +1124,13 @@ impl Host {
             log(&format!("server {version} at {}", at.trim_start_matches("http://").trim_end_matches('/')));
             Ok(())
         })();
-        if health.is_err() { self.end(None, "didn't start", "OpenCode stopped."); }
+        if let Err(e) = &health {
+            // A 401 here means some other server (not the one Hover started) has that port.
+            diag(&format!("health check of {at} failed ({}): {} | sandboxed {} | server output: {}",
+                match e { OcErr::Oc(c, _) => format!("Oc status {c:?}"), OcErr::Net(_) => "Net".into(), OcErr::Cancelled => "Cancelled".into() },
+                clip_diag(&err_text(e), 300), sandbox::active(), clip_diag(&strip_ansi(&self.live.lock().unwrap().as_ref().map(|l| (l.errors)()).unwrap_or_default()), 600)));
+            self.end(None, "didn't start", "OpenCode stopped.");
+        }
         health
     }
 
@@ -1052,9 +1181,15 @@ impl Host {
     fn send(&self, method: &str, path: &str, folder: Option<&str>, body: Option<Json>, ct: Option<&Cancel>, timeout: Option<Duration>) -> Result<Json, OcErr> {
         let client = self.live.lock().unwrap().as_ref().map(|l| l.client.clone()).ok_or_else(|| OcErr::Oc(None, "OpenCode stopped.".into()))?;
         let body = body.map(|b| b.compact());
+        let began = Instant::now();
         let (status, text) = client.call(method, &url(path, folder), body.as_deref(), Some(timeout.unwrap_or(Duration::from_secs(30))), ct)
-            .map_err(|e| http_err(e, method, path))?;
+            .map_err(|e| {
+                if !matches!(e, HttpErr::Cancelled) { diag(&format!("{method} {path} failed after {:.2}s: {e:?}", began.elapsed().as_secs_f64())); }
+                http_err(e, method, path)
+            })?;
+        if trace_on() { diag(&format!("{method} {path} -> {status} in {:.2}s ({} bytes)", began.elapsed().as_secs_f64(), text.len())); }
         if !(200..300).contains(&status) {
+            diag(&format!("{method} {path} -> {status}: {}", clip_diag(&text, 400)));
             let n = json::parse(&text).ok();
             let message = s(n.as_ref().and_then(|n| n.get("data")), "message").or_else(|| s(n.as_ref(), "message"))
                 .or_else(|| s(n.as_ref().and_then(|n| n.get("error")), "message")).map(str::to_owned);
@@ -1363,7 +1498,8 @@ pub fn new_message_id() -> String {
 /// OpenCodeHost.Launch: "opencode serve" hidden, in the group that goes with Hover, its
 /// URL read from what it prints ("listening on http://127.0.0.1:port").
 fn launch(ct: &Cancel, t: &Timeouts, boxed: &Boxed, servers: &[McpServer]) -> Result<Option<OpenCodeLink>, OcErr> {
-    let Some(exe) = agents::exe(AgentTool::OpenCode) else { return Ok(None) };
+    let Some(exe) = agents::exe(AgentTool::OpenCode) else { diag("no opencode binary found (PATH, ~/.local/bin, ~/.opencode/bin)"); return Ok(None) };
+    let launched = Instant::now();
     let mut pw = [0u8; 24];
     getrandom::fill(&mut pw).expect("the system has no randomness");
     let password: String = pw.iter().map(|b| format!("{b:02X}")).collect();
@@ -1371,6 +1507,9 @@ fn launch(ct: &Cancel, t: &Timeouts, boxed: &Boxed, servers: &[McpServer]) -> Re
     // Hover reaches the server from outside it, on this PC's loopback.
     let folders = sandbox::folders();
     let start = sandbox::plan(AgentTool::OpenCode, &exe, agents::arguments(AgentTool::OpenCode), &[], &folders);
+    diag(&format!("launch: exe {} | sandboxed {} ({} folder(s)){} | runs {} {}", exe.display(), start.boxed, folders.len(),
+        if start.boxed && cfg!(target_os = "linux") { " - on Linux srt starts it under bwrap --unshare-net: its own network namespace and loopback" } else { "" },
+        start.exe.display(), clip_diag(&start.args.join(" "), 500)));
     boxed.started(start.boxed.then_some(folders));
     let args: Vec<&str> = start.args.iter().map(String::as_str).collect();
     let mut cmd = crate::proc::hidden(&start.exe, &args);
@@ -1389,16 +1528,19 @@ fn launch(ct: &Cancel, t: &Timeouts, boxed: &Boxed, servers: &[McpServer]) -> Re
     let tail = Arc::new(Mutex::new(String::new()));
     let (ready_tx, ready_rx) = mpsc::channel::<Result<String, String>>();
     // Both pipes are read to the end, so the server never blocks on a full one.
-    let keep = |pipe: Option<Box<dyn Read + Send>>| {
+    let keep = |pipe: Option<Box<dyn Read + Send>>, name: &'static str| {
         let (tail, ready) = (tail.clone(), ready_tx.clone());
         std::thread::spawn(move || {
             let Some(p) = pipe else { return };
             let mut r = BufReader::new(p);
             let mut buf = Vec::new();
+            let mut shown = 0;
             loop {
                 buf.clear();
                 match r.read_until(b'\n', &mut buf) { Ok(0) | Err(_) => break, Ok(_) => {} }
                 let line = String::from_utf8_lossy(&buf).trim_end_matches(['\r', '\n']).to_owned();
+                // The server's first lines (and all of them when tracing): where it listens, or why it doesn't.
+                if shown < 20 || trace_on() { shown += 1; diag(&format!("{name}: {}", clip_diag(&strip_ansi(&line), 400))); }
                 {
                     let mut t = tail.lock().unwrap();
                     t.push_str(&line);
@@ -1413,8 +1555,8 @@ fn launch(ct: &Cancel, t: &Timeouts, boxed: &Boxed, servers: &[McpServer]) -> Re
             }
         });
     };
-    keep(stdout.map(|p| Box::new(p) as Box<dyn Read + Send>));
-    keep(stderr.map(|p| Box::new(p) as Box<dyn Read + Send>));
+    keep(stdout.map(|p| Box::new(p) as Box<dyn Read + Send>), "stdout");
+    keep(stderr.map(|p| Box::new(p) as Box<dyn Read + Send>), "stderr");
     let (exit_tx, exit_rx) = mpsc::channel::<()>();
     {
         let (g, ready) = (g.clone(), ready_tx.clone());
@@ -1443,8 +1585,8 @@ fn launch(ct: &Cancel, t: &Timeouts, boxed: &Boxed, servers: &[McpServer]) -> Re
         }
     };
     let url = match got {
-        Ok(u) => u,
-        Err(m) => { g.kill(); return Err(OcErr::Oc(None, m)); }
+        Ok(u) => { diag(&format!("listening on {u} after {:.2}s", launched.elapsed().as_secs_f64())); u }
+        Err(m) => { diag(&format!("launch failed after {:.2}s: {}", launched.elapsed().as_secs_f64(), clip_diag(&m, 400))); g.kill(); return Err(OcErr::Oc(None, m)); }
     };
     if !crate::http::host_port(&url).is_some_and(|(h, _)| crate::http::is_loopback(&h)) {
         g.kill();

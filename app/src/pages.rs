@@ -4,6 +4,7 @@
 //! Where Windows is named and Linux differs, the Linux words are the nearest ones.
 
 use hover_agents::agents::{self, AgentReady};
+use hover_agents::mcp::{self, Draft as McpDraft, Problems as McpProblems, Server as McpServer};
 use hover_core::model::{AcpOption, AgentOptions, AgentTool, Appearance, SavedTheme, WorkspaceSize};
 use hover_core::palette::{InstalledTheme, Palette};
 use hover_core::projects::{resolve_folder, CleanupProvider, Project, SpeechMode, VoiceSettings, ACCESS_IDS, GROQ_SECRET, TRANSCRIBE_MODELS};
@@ -12,26 +13,26 @@ use hover_quota::credits::{CreditDay, CreditsView};
 use hover_quota::{item, Reading};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Section { General, Integrations, Projects, Voice, Kiro, Codex, Cursor, OpenCode, Claude, Automation }
+pub enum Section { General, Integrations, Projects, Voice, Kiro, Codex, Cursor, OpenCode, Claude, Agy }
 
 impl Section {
-    pub const ALL: [Section; 10] = [Section::General, Section::Integrations, Section::Projects, Section::Voice, Section::Kiro, Section::Codex, Section::Cursor, Section::OpenCode, Section::Claude, Section::Automation];
-    pub fn title(self) -> &'static str { ["General", "Integrations", "Projects", "Voice", "Kiro", "Codex", "Cursor", "OpenCode", "Claude Code", "Automation"][self as usize] }
+    pub const ALL: [Section; 10] = [Section::General, Section::Integrations, Section::Projects, Section::Voice, Section::Kiro, Section::Codex, Section::Cursor, Section::OpenCode, Section::Claude, Section::Agy];
+    pub fn title(self) -> &'static str { ["General", "Integrations", "Projects", "Voice", "Kiro", "Codex", "Cursor", "OpenCode", "Claude Code", "Antigravity"][self as usize] }
     /// The sidebar's icon and its tile's colour.
     pub fn glyph(self) -> (&'static str, Tint) {
-        [("settings", Tint::Gray), ("plug", Tint::Purple), ("folder", Tint::Orange), ("mic", Tint::Pink), ("ghost", Tint::Bot), ("terminal", Tint::Green), ("sparkles", Tint::Blue), ("terminal", Tint::Gray), ("sparkles", Tint::Orange), ("calendar", Tint::Teal)][self as usize]
+        [("settings", Tint::Gray), ("plug", Tint::Purple), ("folder", Tint::Orange), ("mic", Tint::Pink), ("ghost", Tint::Bot), ("terminal", Tint::Green), ("sparkles", Tint::Blue), ("terminal", Tint::Gray), ("sparkles", Tint::Orange), ("sparkles", Tint::Blue)][self as usize]
     }
     /// A tool's page shows the tool's own mark (the office's, ui/marks.slint) in place of a
-    /// glyph: Claude's spark on its clay tile, Cursor's cube, Codex's, OpenCode's, Kiro's ghost.
+    /// glyph: Claude's spark on its clay tile, Cursor's cube, Codex's, OpenCode's, Antigravity's arch, Kiro's ghost.
     pub fn mark(self) -> Option<&'static str> {
-        matches!(self, Section::Kiro | Section::Codex | Section::Cursor | Section::OpenCode | Section::Claude).then(|| self.tool().id())
+        matches!(self, Section::Kiro | Section::Codex | Section::Cursor | Section::OpenCode | Section::Claude | Section::Agy).then(|| self.tool().id())
     }
     /// The section of a tool's own page.
     pub fn of(tool: AgentTool) -> Section {
-        match tool { AgentTool::Codex => Section::Codex, AgentTool::Cursor => Section::Cursor, AgentTool::OpenCode => Section::OpenCode, AgentTool::Claude => Section::Claude, AgentTool::Kiro | AgentTool::Custom => Section::Kiro }
+        match tool { AgentTool::Codex => Section::Codex, AgentTool::Cursor => Section::Cursor, AgentTool::OpenCode => Section::OpenCode, AgentTool::Claude => Section::Claude, AgentTool::Agy => Section::Agy, AgentTool::Kiro | AgentTool::Custom => Section::Kiro }
     }
     pub fn tool(self) -> AgentTool {
-        match self { Section::Codex => AgentTool::Codex, Section::Cursor => AgentTool::Cursor, Section::OpenCode => AgentTool::OpenCode, Section::Claude => AgentTool::Claude, _ => AgentTool::Kiro }
+        match self { Section::Codex => AgentTool::Codex, Section::Cursor => AgentTool::Cursor, Section::OpenCode => AgentTool::OpenCode, Section::Claude => AgentTool::Claude, Section::Agy => AgentTool::Agy, _ => AgentTool::Kiro }
     }
 }
 
@@ -106,7 +107,77 @@ pub enum Block {
     Lead(String),
     /// Settings → Kiro's credits: its heading with the range, the card, and a line under it.
     Credits(Box<CreditsCard>),
+    /// Kiro's MCP servers: the section, with its form and its plain-words line.
+    Mcp(Box<McpView>),
 }
+
+/// Kiro's MCP servers as the page shows them: the list from ~/.kiro/settings/mcp.json (read
+/// again on every build, since the Kiro IDE shares the file), and what the user is doing
+/// to it (a form open, a removal to confirm, the last refusal). Hover keeps no copy of the list.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct McpView {
+    pub servers: Vec<McpServer>,
+    /// Why the file can't be used (it doesn't parse); the list is empty and nothing is written.
+    pub error: Option<String>,
+    /// The file is there, so there is something to open in an editor.
+    pub has_file: bool,
+    /// The servers Kiro said didn't start in its last task, with its reason if it gave one.
+    pub failed: Vec<(String, Option<String>)>,
+    pub form: Option<McpForm>,
+    /// The server whose Remove is waiting for a yes.
+    pub confirm: Option<String>,
+    /// What a switch, a remove or a save ran into (the file changed under us, no write access).
+    pub notice: Option<String>,
+}
+
+/// The add or edit form: `editing` is the server being changed, None for a new one. `serial`
+/// is new for each opening, so the page tells one form from the next.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct McpForm { pub editing: Option<String>, pub draft: McpDraft, pub problems: McpProblems, pub serial: u32 }
+
+impl McpView {
+    /// Reads the list and what Kiro said about it. The form, the confirmation and the notice stay.
+    pub fn read(&mut self, file: &std::path::Path) {
+        self.has_file = file.is_file();
+        match mcp::load(file) {
+            Ok(s) => { self.servers = s; self.error = None; }
+            Err(e) => { self.servers.clear(); self.error = Some(e); }
+        }
+        self.failed = self.servers.iter().filter_map(|s| mcp::failed(&s.name).map(|why| (s.name.clone(), why))).collect();
+    }
+
+    /// Back to a plain list: another page was opened.
+    pub fn close(&mut self) { self.form = None; self.confirm = None; self.notice = None; }
+
+    pub fn open(&mut self, editing: Option<&str>, mut draft: McpDraft) {
+        static SERIAL: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(1);
+        // A row to type in, as the mockup's form starts with.
+        if draft.pairs.is_empty() { draft.pairs.push((String::new(), String::new())); }
+        self.form = Some(McpForm { editing: editing.map(Into::into), draft, problems: McpProblems::default(), serial: SERIAL.fetch_add(1, std::sync::atomic::Ordering::Relaxed) });
+        self.confirm = None;
+        self.notice = None;
+    }
+
+    /// "MCP servers · 3 of 4 on".
+    pub fn title(&self) -> String {
+        if self.error.is_some() { return "MCP servers".into(); }
+        format!("MCP servers · {} of {} on", self.servers.iter().filter(|s| !s.disabled).count(), self.servers.len())
+    }
+
+    /// The amber line under a server that failed in Kiro's last task. A server switched off
+    /// isn't started, so it has none.
+    pub fn warn(&self, s: &McpServer) -> Option<String> {
+        if s.disabled { return None; }
+        let (_, why) = self.failed.iter().find(|(n, _)| *n == s.name)?;
+        Some(match why { Some(w) => format!("Didn't start in the last task: {}.", w.trim().trim_end_matches('.')), None => "Didn't start in the last task.".into() })
+    }
+}
+
+/// Under the section: where the values live.
+pub const MCP_NOTE: &str = "These are Kiro's own servers, from ~/.kiro/settings/mcp.json, so the Kiro IDE and kiro-cli see the same list. \
+    A project's .kiro/settings/mcp.json adds its own, and wins on the same name; those aren't listed here. The agent picked above brings its own too. \
+    Changes apply to the next task; a chat already running keeps its servers until Kiro starts again. \
+    Values, such as keys in environment variables or headers, stay as plain text in that file, and Hover keeps no copy of it.";
 
 /// A day's bar: Hover's and the outside share, each 0..1 of the chart's top.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -147,41 +218,10 @@ pub struct Live {
     pub groq_check: Option<String>,
     /// Computer use, the sandbox and each agent's one-click setup, as they are now.
     pub integ: Integ,
-    /// Saved tasks, the service, custom agents and the registry, as they are now (Automation).
-    pub auto: AutoView,
     /// The credits chart's range, an index of CREDITS_RANGES: the page's own choice, not a setting.
     pub credits_range: i32,
-}
-
-/// A saved task as Automation lists it.
-#[derive(Clone, Debug, Default, PartialEq)]
-pub struct TaskRow { pub id: String, pub name: String, pub when: String, pub state: String, pub enabled: bool, pub last: String }
-
-/// A custom agent as Automation lists it.
-#[derive(Clone, Debug, Default, PartialEq)]
-pub struct CustomRow { pub id: String, pub name: String, pub status: String, pub ready: bool, pub sign_in: bool }
-
-/// A registry entry as Automation offers it.
-#[derive(Clone, Debug, Default, PartialEq)]
-pub struct RegRow { pub id: String, pub name: String, pub note: String, pub can: bool }
-
-/// What only the running app knows for Automation: filled in by it, with the form boxes' drafts.
-#[derive(Clone, Debug, Default, PartialEq)]
-pub struct AutoView {
-    /// Editors found on this computer: id and name.
-    pub editors: Vec<(String, String)>,
-    pub tasks: Vec<TaskRow>,
-    /// The agents a task can use: provider id and name.
-    pub agents: Vec<(String, String)>,
-    pub service: String,
-    pub service_installed: bool,
-    pub timers: String,
-    pub webhook: String,
-    pub customs: Vec<CustomRow>,
-    pub registry: Vec<RegRow>,
-    pub registry_note: String,
-    /// The text of the "new task" and "new agent" boxes, by their names.
-    pub draft: std::collections::HashMap<String, String>,
+    /// Kiro's MCP servers, and the form over them.
+    pub mcp: McpView,
 }
 
 /// What this system can run of the agents' extras; what it can't is switched off, with a note.
@@ -321,7 +361,6 @@ pub fn build(section: Section, i: &Input) -> Vec<Block> {
         }
         Section::Projects => projects(&mut b, i),
         Section::Voice => voice(&mut b, i),
-        Section::Automation => automation(&mut b, i),
         _ => agent(&mut b, section, i),
     }
     // The last action's message goes under the row (or beside the link) it is about.
@@ -339,115 +378,6 @@ pub fn build(section: Section, i: &Input) -> Vec<Block> {
     b
 }
 
-
-const ACCESS: [(&str, &str); 4] = [("risky", "Ask first"), ("always", "Ask always"), ("read", "Read only"), ("full", "Full access")];
-
-fn btn(id: &str, name: &str, text: &str, enabled: bool) -> Control { Control::Button { id: id.into(), name: name.into(), text: text.into(), enabled } }
-
-fn automation(b: &mut Vec<Block>, i: &Input) {
-    let (s, a) = (i.settings, &i.live.auto);
-    let d = |k: &str| a.draft.get(k).cloned().unwrap_or_default();
-    b.push(Block::Lead("Work that runs by itself, helpers for your agents, and agents of your own. Nothing here starts until you set it up.".into()));
-
-    heading(b, "Where tasks work");
-    b.push(Block::Group(vec![row("Work in the project folder itself", Some("By default a task that edits files gets its own Git worktree and branch, so two tasks can’t overwrite each other. Switch this on to work in the folder itself. Read-only tasks, Kiro Web, and folders that aren’t Git projects always do.".into()),
-        switch("UseFolder", "Work in the project folder itself", s.automation().use_folder), Lead::Tile("folder", Tint::Blue))]));
-
-    heading(b, "Open in editor");
-    let ed = s.editor();
-    let mut options = vec![("Ask each time".to_owned(), ed.default.is_none())];
-    options.extend(a.editors.iter().map(|(id, n)| (n.clone(), ed.default.as_deref() == Some(id.as_str()))));
-    options.push(("Custom program".into(), ed.default.as_deref() == Some("custom")));
-    let shown = options.iter().find(|o| o.1).map_or("Ask each time", |o| o.0.as_str()).to_owned();
-    let args: Vec<&str> = ed.custom_args.as_deref().unwrap_or("").lines().collect();
-    let mut rows = vec![
-        row("Default editor", Some("The desk card’s Open in editor button opens the task’s own folder here (a task’s worktree, not the project).".into()), Control::Picker { id: "EditorDefault".into(), name: "Default editor".into(), shown, options }, Lead::Tile("code", Tint::Blue)),
-        row("Custom program", Some("Its name, or its full path. Started with the arguments below, one each, with no shell.".into()), field("EditorExe", "Custom editor program", ed.custom_exe.as_deref().unwrap_or(""), "code-insiders"), Lead::None),
-    ];
-    for n in 1..=4 {
-        rows.push(row(format!("Argument {n}"), if n == 1 { Some("{folder}, {file}, {line} and {column} are filled in. An argument that needs a file is left out when none is chosen.".into()) } else { None },
-            field(&format!("EditorArg{n}"), &format!("Custom editor argument {n}"), args.get(n - 1).copied().unwrap_or(""), if n == 1 { "{folder}" } else { "" }), Lead::None));
-    }
-    b.push(Block::Group(rows));
-
-    heading(b, "Helpers");
-    let l = s.delegation();
-    let pick = |v: u32, all: &[u32]| all.iter().position(|x| *x == v).map_or(-1, |p| p as i32);
-    b.push(Block::Group(vec![
-        row("Helpers for one task", Some("An agent can ask others for help only in a task where you switch this on. These are your limits.".into()), segments("DelegMax", &["2", "4", "6", "10"], pick(l.max_helpers, &[2, 4, 6, 10])), Lead::Tile("sliders", Tint::Purple)),
-        row("Working at once", None, segments("DelegParallel", &["1", "2", "3", "4"], pick(l.max_parallel, &[1, 2, 3, 4])), Lead::None),
-        row("Helpers of helpers", Some("How far down a helper may ask for help in turn.".into()), segments("DelegDepth", &["Not at all", "One level", "Two levels"], pick(l.max_depth, &[1, 2, 3])), Lead::None),
-    ]));
-
-    heading(b, "Usage limits");
-    b.push(Block::Group(vec![row("Continue when a limit lifts", Some("A task that stopped on its agent’s usage limit is continued at the reset time the agent gave, once, with the same access. Without a time from the agent, it only offers a retry.".into()),
-        switch("AutoResume", "Continue when a usage limit lifts", s.automation().auto_resume), Lead::Tile("stopwatch", Tint::Orange))]));
-
-    heading(b, "Background service");
-    let mut buttons = vec![];
-    if a.service_installed { buttons.push(("Service.stop".to_owned(), "Stop".to_owned(), false)); buttons.push(("Service.remove".to_owned(), "Remove".to_owned(), true)); } else { buttons.push(("Service.install".to_owned(), "Install".to_owned(), false)); }
-    b.push(Block::Group(vec![row("Keep tasks running when Hover is closed", Some(format!("{}\n{}", a.service, a.timers)), Control::Chips { badges: vec![], buttons, open: None }, Lead::Tile("server", Tint::Gray))]));
-    b.push(Block::Footnote("Off until you install it. It runs tasks that never ask for permission; a task that asks waits for Hover to be open, because nobody being at the screen never answers for you. Removing it keeps your tasks and their history.".into()));
-
-    heading(b, "Saved tasks");
-    let mut rows: Vec<Row> = a.tasks.iter().map(|t| {
-        let buttons = vec![(format!("Task.run.{}", t.id), "Run now".to_owned(), false), (format!("Task.toggle.{}", t.id), if t.enabled { "Pause" } else { "Resume" }.to_owned(), false), (format!("Task.remove.{}", t.id), "Remove".to_owned(), true)];
-        row(&t.name, Some(format!("{}\n{}", t.when, t.last)), Control::Chips { badges: vec![(t.state.clone(), !t.enabled)], buttons, open: None }, Lead::Tile("calendar", Tint::Teal))
-    }).collect();
-    if rows.is_empty() { rows.push(row("No tasks yet", Some("Add one below.".into()), Control::None, Lead::None)); }
-    b.push(Block::Group(rows));
-    let kind: i32 = d("kind").parse().unwrap_or(0);
-    let agent = { let want = d("agent"); a.agents.iter().find(|x| x.0 == want).or(a.agents.first()).cloned() };
-    let acc = { let want = d("access"); ACCESS.iter().find(|x| x.0 == want).copied().unwrap_or(ACCESS[0]) };
-    let folder = d("folder");
-    let mut form = vec![
-        row("Name", None, field("TaskName", "Task name", &d("name"), "Nightly check"), Lead::None),
-        row("What to do", None, field("TaskPrompt", "What the task does", &d("prompt"), "Run the tests and tell me what failed"), Lead::None),
-        row("Folder", None, btn("TaskFolder", "Choose the task’s folder", if folder.is_empty() { "Choose…" } else { &folder }, true), Lead::Tile("folder", Tint::Orange)),
-        row("Agent", None, Control::Picker { id: "TaskAgent".into(), name: "Agent".into(), shown: agent.as_ref().map_or("None ready".into(), |x| x.1.clone()), options: a.agents.iter().map(|x| (x.1.clone(), agent.as_ref().is_some_and(|y| y.0 == x.0))).collect() }, Lead::None),
-        row("Access", Some("What it may do without asking. Default: ask first.".into()), Control::Picker { id: "TaskAccess".into(), name: "Access".into(), shown: acc.1.into(), options: ACCESS.iter().map(|x| (x.1.to_owned(), x.0 == acc.0)).collect() }, Lead::None),
-        row("Runs", None, segments("TaskKind", &["By hand", "Once", "Every", "Daily"], kind), Lead::None),
-    ];
-    if kind > 0 {
-        let (ph, sub) = match kind { 1 => ("2026-11-02 09:30", "Your local date and time."), 2 => ("60", "Minutes between runs (at least 5)."), _ => ("09:00", "Your local time; the task runs at this wall-clock time through clock changes.") };
-        form.push(row("When", Some(sub.into()), field("TaskWhen", "When the task runs", &d("when"), ph), Lead::None));
-    }
-    if kind == 3 { form.push(row("On", None, segments("TaskDays", &["Every day", "Weekdays"], d("days").parse().unwrap_or(0)), Lead::None)); }
-    form.push(row("Webhook", Some("Also start it when a webhook calls (set the address below). Fields of what the call sent, by path, separated by commas, go into the prompt; nothing else does.".into()), field("TaskHook", "Webhook fields", &d("hook"), "off, or /pull_request/title, /sender/login"), Lead::None));
-    form.push(row("", None, btn("TaskAdd", "Add the task", "Add task", true), Lead::None));
-    b.push(Block::Group(form));
-
-    heading(b, "Webhooks");
-    b.push(Block::Group(vec![
-        row("Listen on", Some(format!("{}\nThis computer only, unless you allow more. Reaching it from the internet (a tunnel or a proxy) is for you to set up.", a.webhook)), field("WebhookAddr", "Webhook address", s.automation().webhook_addr.as_deref().unwrap_or(""), "127.0.0.1:47653"), Lead::Tile("plug", Tint::Purple)),
-        row("Allow other computers", Some("Lets it listen beyond this computer. Every call still needs its task’s signature.".into()), switch("WebhookPublic", "Allow other computers", s.automation().webhook_public), Lead::None),
-    ]));
-
-    heading(b, "Agents of your own");
-    let mut rows: Vec<Row> = a.customs.iter().map(|c| {
-        let mut buttons = vec![(format!("Custom.check.{}", c.id), "Check".to_owned(), false)];
-        if c.sign_in { buttons.push((format!("Custom.signin.{}", c.id), "Sign in".to_owned(), false)); }
-        buttons.push((format!("Custom.remove.{}", c.id), "Remove".to_owned(), true));
-        row(&c.name, Some(c.status.clone()), Control::Chips { badges: vec![(if c.ready { "Ready" } else { "Not ready" }.to_owned(), !c.ready)], buttons, open: None }, Lead::Letter(c.name.chars().next().unwrap_or('?').to_string(), Tint::Blue))
-    }).collect();
-    if rows.is_empty() { rows.push(row("None added", Some("Any program that speaks ACP on its stdio can be added, or found in the ACP Registry below.".into()), Control::None, Lead::None)); }
-    b.push(Block::Group(rows));
-    let mut form = vec![
-        row("Name", None, field("CaName", "Agent name", &d("ca_name"), "My agent"), Lead::None),
-        row("Program", Some("Its name, or its full path.".into()), field("CaExe", "Agent program", &d("ca_exe"), "my-agent"), Lead::None),
-    ];
-    for n in 1..=4 { form.push(row(format!("Argument {n}"), if n == 1 { Some("One argument each; nothing is run through a shell.".into()) } else { None }, field(&format!("CaArg{n}"), &format!("Agent argument {n}"), &d(&format!("ca_arg{n}")), ""), Lead::None)); }
-    form.push(row("Environment name", None, field("CaEnvName", "Environment variable name", &d("ca_env_name"), "MY_API_KEY"), Lead::None));
-    form.push(row("Environment value", None, field("CaEnvValue", "Environment variable value", &d("ca_env_value"), ""), Lead::None));
-    form.push(row("Keep the value secret", Some("Sealed on this computer and never shown again or written to a log.".into()), switch("CaEnvSecret", "Keep the value secret", d("ca_env_secret") == "1"), Lead::None));
-    form.push(row("", None, btn("CaAdd", "Add the agent", "Add agent", true), Lead::None));
-    b.push(Block::Group(form));
-
-    heading(b, "ACP Registry");
-    let mut rows = vec![row("Search", Some(if a.registry_note.is_empty() { "Finds agents other people made. Nothing is downloaded until you press Install.".to_owned() } else { a.registry_note.clone() }), field("RegSearch", "Search the ACP Registry", &d("reg_q"), "gemini"), Lead::Tile("globe", Tint::Blue))];
-    for r in &a.registry { rows.push(row(&r.name, Some(r.note.clone()), btn(&format!("Reg.install.{}", r.id), &format!("Install {}", r.name), "Install", r.can), Lead::None)); }
-    b.push(Block::Group(rows));
-}
 
 fn heading(b: &mut Vec<Block>, text: &str) {
     // The first heading sits right under the title; later ones start a new group.
@@ -1003,7 +933,7 @@ fn agent(b: &mut Vec<Block>, section: Section, i: &Input) {
     let per_model = hover_agents::runtime::per_model_effort(tool);
     let levels = effort_levels(tool, &o, &offers);
     let effort = if levels.is_empty() {
-        Control::Text(if tool == AgentTool::Cursor { "Part of the model" } else if per_model { "None for this model" } else { "Set by the model" }.into())
+        Control::Text(if matches!(tool, AgentTool::Cursor | AgentTool::Agy) { "Part of the model" } else if per_model { "None for this model" } else { "Set by the model" }.into())
     } else {
         let picked = o.effort.as_ref().and_then(|e| levels.iter().position(|l| l == e))
             .or_else(|| eff.and_then(|x| x.current.as_ref()).and_then(|n| levels.iter().position(|l| l == n))).unwrap_or(0);
@@ -1019,6 +949,8 @@ fn agent(b: &mut Vec<Block>, section: Section, i: &Input) {
             if levels.is_empty() { "Pick a model with variants to choose one. Default leaves it to OpenCode.".into() } else { "The picked model’s own variants, from OpenCode.".into() }
         } else if levels.is_empty() {
             if tool == AgentTool::Cursor { "Cursor’s models carry their effort in their name.".into() }
+            // Gemini's levels are models of their own (gemini-3.8-flash-high, -medium, -low).
+            else if tool == AgentTool::Agy { "Antigravity’s models carry their effort in their name.".into() }
             else if per_model && has_models { "This model takes no effort setting.".into() }
             else { "Shown once a task has run with a model that takes one.".into() }
         } else { "How long it thinks. Higher is slower and uses more of your plan.".into() }), effort, Lead::Tile("gauge", Tint::Orange)),
@@ -1074,6 +1006,7 @@ fn agent(b: &mut Vec<Block>, section: Section, i: &Input) {
     if tool == AgentTool::Kiro { rows.extend(compact_rows(&i.settings)); }
     for r in &mut rows { r.enabled = usable; }
     b.push(Block::Group(rows));
+    if tool == AgentTool::Kiro { b.push(Block::Mcp(Box::new(i.live.mcp.clone()))); }
 
     let args = agents::arguments(tool).join(" ");
     if tool == AgentTool::OpenCode {
@@ -1089,7 +1022,9 @@ fn agent(b: &mut Vec<Block>, section: Section, i: &Input) {
         return;
     }
     if tool != AgentTool::Kiro {
-        let exe = agents::exe(tool).and_then(|p| p.file_stem().map(|s| s.to_string_lossy().into_owned())).unwrap_or_else(|| tool.id().into());
+        // Antigravity's id is its CLI's (agy), but Hover runs Google's ACP server, not the CLI.
+        let fallback = if tool == AgentTool::Agy { "agy_acp_server".to_owned() } else { tool.id().to_owned() };
+        let exe = agents::exe(tool).and_then(|p| p.file_stem().map(|s| s.to_string_lossy().into_owned())).unwrap_or(fallback);
         b.push(Block::Footnote(format!("{name} runs in the background as an ACP server (\"{}\"), one for all its tasks, with no terminal window. \
             Prompts go to it on its input, never on a command line. Changes apply to the next task.", format!("{exe} {args}").trim())));
         return;
@@ -1269,7 +1204,7 @@ mod tests {
         assert!(pick_compact_at(&s, "KiroCompactAt", 3) && s.kiro_compact_at() == 20);
         assert!(pick_compact_at(&s, "KiroCompactAt", 400) && s.kiro_compact_at() == 100);
         assert!(!set_compact(&s, "Sandbox", true) && !pick_compact_at(&s, "KiroIdle", 0));
-        for other in [Section::Codex, Section::Cursor, Section::OpenCode, Section::Claude] {
+        for other in [Section::Codex, Section::Cursor, Section::OpenCode, Section::Claude, Section::Agy] {
             assert!(!ids(&build(other, &i)).iter().any(|x| x.contains("Compact")), "{other:?}");
         }
     }
@@ -1465,6 +1400,7 @@ mod tests {
         let ready = |_| Some(AgentReady { installed: true, signed_in: true, hint: String::new() });
         let i = input(&s, &[], &none, &ready);
         assert_eq!((Section::of(AgentTool::Claude), Section::Claude.tool(), Section::Claude.title()), (Section::Claude, AgentTool::Claude, "Claude Code"));
+        assert_eq!((Section::of(AgentTool::Agy), Section::Agy.tool(), Section::Agy.title(), Section::Agy.mark()), (Section::Agy, AgentTool::Agy, "Antigravity", Some("agy")));
         let b0 = build(Section::Claude, &i);
         let r0 = rows(&b0);
         assert_eq!(r0[1].sub.as_deref(), Some("More models show here once Claude Code has run a task."));
@@ -1523,7 +1459,7 @@ mod tests {
         assert!(matches!(&k[at - 1], Block::Group(r) if r[0].label == "Kiro"), "right under the installed-and-signed-in group");
         assert!(matches!(&k[at + 1], Block::Footnote(t) if t.starts_with("Kiro total is read from")), "its footnote under the card");
         assert_eq!(k[at + 2], Block::Heading("MODEL".into(), false), "then the Model heading");
-        for sec in [Section::Codex, Section::Cursor, Section::OpenCode, Section::Claude] {
+        for sec in [Section::Codex, Section::Cursor, Section::OpenCode, Section::Claude, Section::Agy] {
             let b = build(sec, &i);
             assert!(card(&b).is_none(), "{sec:?} has no credits");
             assert!(matches!(&b[2], Block::Heading(h, _) if h == "MODEL"), "{sec:?} goes from its status to the Model heading as before");

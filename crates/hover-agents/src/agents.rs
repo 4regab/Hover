@@ -72,8 +72,67 @@ pub fn exe(t: AgentTool) -> Option<PathBuf> {
         AgentTool::Cursor => cursor_shim().filter(|p| p.is_file()).or_else(|| find("cursor-agent")),
         AgentTool::OpenCode => opencode_exe(),
         AgentTool::Claude => claude_exe(),
-        // A custom agent is started from its own record (custom.rs), not found by name.
+        // Agents of the user's own are gone: a chat that still names one has nothing to start.
         AgentTool::Custom => None,
+        AgentTool::Agy => agy_acp_exe(),
+    }
+}
+
+/// Google's Antigravity ACP server, as T3 Code runs it (and as the ACP registry lists
+/// it): not the agy CLI, which has no ACP mode, but its own release
+/// (dl.google.com/agy-extensions, agy-acp-server-<version>-<os>-<arch>.zip). The zip holds
+/// the server and the agent harness it runs, which must sit next to it. Looked for on
+/// PATH (and ~/.local/bin), then where setup.rs unpacks it, AGY_ACP_DIR.
+pub const AGY_ACP_VERSION: &str = "1.3.0";
+const AGY_SERVER: &str = if cfg!(windows) { "agy_acp_server.exe" } else { "agy_acp_server.par" };
+const AGY_HARNESS: &str = if cfg!(windows) { "localharness_external.exe" } else { "localharness_external" };
+
+/// Where Hover's setup unpacks the server: outside Hover's own data folder, which the
+/// sandbox keeps the tools from reading.
+pub fn agy_acp_dir() -> PathBuf {
+    match std::env::var_os("LOCALAPPDATA").filter(|_| cfg!(windows)) {
+        Some(l) => PathBuf::from(l).join("antigravity-acp"),
+        None => crate::proc::home().join(".local/share/antigravity-acp"),
+    }
+}
+
+fn agy_acp_exe() -> Option<PathBuf> {
+    let unpacked = agy_acp_dir().join(AGY_SERVER);
+    find(AGY_SERVER).or_else(|| find("agy_acp_server")).or_else(|| Some(unpacked).filter(|p| p.is_file()))
+        .filter(|p| agy_harness(p).is_file())
+}
+
+/// The agent harness the server runs (ANTIGRAVITY_HARNESS_PATH), next to the server.
+pub fn agy_harness(server: &std::path::Path) -> PathBuf {
+    server.parent().map_or_else(|| PathBuf::from(AGY_HARNESS), |d| d.join(AGY_HARNESS))
+}
+
+/// What a tool's process gets in its environment besides Hover's own.
+pub fn environment(t: AgentTool, exe: &std::path::Path) -> Vec<(String, String)> {
+    match t {
+        AgentTool::Agy => {
+            // The server unpacks itself (about 1 GB) into its temp folder on every start,
+            // and leaves its logs there: a folder of its own, emptied before each start
+            // (one server per Hover), so a killed one leaves nothing behind for long.
+            let temp = crate::sandbox::temp_root().join("hover-agy");
+            let _ = std::fs::create_dir_all(&temp);
+            if let Ok(d) = std::fs::read_dir(&temp) {
+                for e in d.flatten() {
+                    // The sandbox's relay is written here just before the start.
+                    if e.file_name() == "relay.pl" { continue; }
+                    let p = e.path();
+                    let _ = if p.is_dir() { std::fs::remove_dir_all(&p) } else { std::fs::remove_file(&p) };
+                }
+            }
+            let t = temp.to_string_lossy().into_owned();
+            let mut env = vec![
+                ("ANTIGRAVITY_HARNESS_PATH".to_owned(), agy_harness(exe).to_string_lossy().into_owned()),
+                ("PYTHONUNBUFFERED".to_owned(), "1".to_owned()),
+            ];
+            if cfg!(windows) { env.extend([("TEMP".to_owned(), t.clone()), ("TMP".to_owned(), t)]); } else { env.push(("TMPDIR".to_owned(), t)); }
+            env
+        }
+        _ => vec![],
     }
 }
 
@@ -121,6 +180,9 @@ pub fn arguments(t: AgentTool) -> &'static [&'static str] {
         // (access, model, effort, resume) is added per conversation (claude::launch_args).
         AgentTool::Claude => &["--output-format", "stream-json", "--verbose", "--input-format", "stream-json", "--permission-prompt-tool", "stdio", "--include-partial-messages"],
         AgentTool::Custom => &[],
+        // On Linux the server wants its user id flag, empty (T3 Code starts it so).
+        AgentTool::Agy if cfg!(target_os = "linux") => &["--uid="],
+        AgentTool::Agy => &[],
     }
 }
 
@@ -135,6 +197,8 @@ pub fn install_hint(t: AgentTool) -> String {
         AgentTool::Claude if cfg!(windows) => "Install Claude Code: irm https://claude.ai/install.ps1 | iex".into(),
         AgentTool::Claude => "Install Claude Code: curl -fsSL https://claude.ai/install.sh | bash".into(),
         AgentTool::Custom => "Check the agent’s program in Settings.".into(),
+        AgentTool::Agy => format!("Install Google’s Antigravity ACP server {AGY_ACP_VERSION}: unzip agy-acp-server-{AGY_ACP_VERSION}-<os>-<arch>.zip from dl.google.com/agy-extensions/releases into {}.",
+            agy_acp_dir().display()),
     }
 }
 
@@ -149,6 +213,9 @@ pub fn sign_in_hint(t: AgentTool) -> &'static str {
         // auth status says so).
         AgentTool::Claude => "Sign in: run “claude auth login” in a terminal.",
         AgentTool::Custom => "Sign in with the agent’s own method in Settings.",
+        // The server runs Google's sign-in itself when Hover starts it (acp.rs), or takes
+        // GEMINI_API_KEY from the environment.
+        AgentTool::Agy => "Sign in: start an Antigravity task and finish Google’s sign-in in the browser it opens, or set GEMINI_API_KEY.",
     }
 }
 
@@ -226,13 +293,18 @@ fn look(t: AgentTool) -> (AgentReady, String) {
             _ => bad(format!("Couldn’t read OpenCode’s version. {}", install_hint(t))),
         }, String::new());
     }
+    if t == AgentTool::Agy {
+        // Never started to ask: it unpacks about 1 GB per start (T3 Code doesn't either).
+        // It has no status command; a missing sign-in shows as the task's own error.
+        return (AgentReady { installed: true, signed_in: true, hint: String::new() }, String::new());
+    }
     let (cmd, args): (Option<PathBuf>, &[&str]) = match t {
         AgentTool::Kiro => (Some(exe), &["whoami"]),
         AgentTool::Codex => (find("codex"), &["login", "status"]),
         AgentTool::Cursor => (Some(exe), &["status"]),
         // Exit 0 and {"loggedIn": true} when signed in, 1 when not.
         AgentTool::Claude => (Some(exe), &["auth", "status"]),
-        AgentTool::OpenCode | AgentTool::Custom => unreachable!(),
+        AgentTool::OpenCode | AgentTool::Custom | AgentTool::Agy => unreachable!(),
     };
     // The adapter can carry its own Codex; without the CLI there is nothing to ask.
     let Some(cmd) = cmd else { return (AgentReady { installed: true, signed_in: true, hint: String::new() }, String::new()) };

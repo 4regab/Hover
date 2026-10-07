@@ -315,12 +315,14 @@ impl Painter {
         // The clip is in the text box's parent coordinates, which don't scroll: x - t.x + off is that origin.
         let (ox, oy) = (x - t.x + off, y - t.y);
         let clip = t.clip.map(|c| [((ox + c[0]) * k) as i32, ((oy + c[1]) * k) as i32, ((ox + c[0] + c[2]) * k) as i32, ((oy + c[1] + c[3]) * k) as i32]);
-        // .work .on span: linear-gradient(90deg, dim 30%, #fff 50%, dim 70%) at 200% width,
-        // moved by -200% every 2 s, clipped to the text.
+        // The running line's one band: linear-gradient(90deg, dim 30%, #fff 50%, dim 70%) at 200%
+        // of the text's width, moved from 150% to -50% every 2 s (the mockup's `shine`), so the
+        // light enters at the left and leaves at the right. `sw` is the whole text box's width,
+        // so a verb and a command in one box share one band.
         let sw = t.layout.width().max(1.0);
         let phase = (self.time / 2.0).fract();
         let shimmer = |gx: f32| -> Rgba {
-            let u = ((gx - 2.0 * sw * phase) / (2.0 * sw)).rem_euclid(1.0);
+            let u = ((gx + 1.5 * sw - 2.0 * sw * phase) / (2.0 * sw)).rem_euclid(1.0);
             let m = if u <= 0.3 || u >= 0.7 { 0.0 } else if u <= 0.5 { (u - 0.3) / 0.2 } else { (0.7 - u) / 0.2 };
             let d = theme::DIM;
             let l = |a: u8, b: u8| (a as f32 + (b as f32 - a as f32) * m).round() as u8;

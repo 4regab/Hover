@@ -13,17 +13,24 @@ use crate::ui::*;
 use crate::App;
 use hover_agents::desk as d;
 use hover_agents::github as gh;
+use hover_agents::editor;
 use hover_agents::session::KiroSession;
+use hover_agents::term;
 use hover_core::model::KiroStep;
 use hover_office::bot::{Stage, BOTS};
 use slint::{Color, ComponentHandle, Image, ModelRc, Rgba8Pixel, SharedPixelBuffer, SharedString, VecModel};
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 /// The eight surfaces, as desk.js's SURFACES order them (the tabs and the tiles).
 pub const TABS: [&str; 8] = ["browser", "terminal", "files", "diff", "pr", "linked", "agents", "screen"];
+
+/// The tabs in the order the panel shows them. (`TABS` is the card's tiles' order, and what `Desk.tab` counts in.)
+const TAB_ORDER: [&str; 8] = ["terminal", "files", "diff", "pr", "linked", "agents", "browser", "screen"];
 
 fn s(v: impl AsRef<str>) -> SharedString { v.as_ref().into() }
 fn rgb(c: u32) -> Color { Color::from_rgb_u8((c >> 16) as u8, (c >> 8) as u8, c as u8) }
@@ -46,13 +53,13 @@ mod hh {
     pub const GAP: f32 = 8.0;
     pub const HEAD: f32 = 32.0;
     pub const FILE: f32 = 30.0;
-    pub const TREE: f32 = 26.0;
-    pub const BAR: f32 = 40.0;
+    pub const TREE: f32 = 30.0;
     pub const LINE: f32 = 18.0;
     pub const DIFF_FILE: f32 = 34.0;
     pub const HUNK: f32 = 22.0;
-    pub const CMD: f32 = 32.0;
     pub const PRE: f32 = 17.0;
+    /// A line of the terminal (12.5 px DejaVu Sans Mono, 1.6 line height).
+    pub const TERM: f32 = 20.0;
     pub const AGENT: f32 = 46.0;
     pub const SECTION: f32 = 24.0;
     pub const LINKED: f32 = 50.0;
@@ -62,6 +69,8 @@ mod hh {
     /// DejaVu Sans Mono at 11.5 px, and Inter at 13 px on average.
     pub const MONO: f32 = 6.95;
     pub const PROSE: f32 = 6.5;
+    /// DejaVu Sans Mono at 12.5 px.
+    pub const TERM_W: f32 = 7.55;
 }
 
 /// One row of a tab's list: what Slint's DRow holds, before its y is known.
@@ -165,46 +174,63 @@ fn num(n: i64) -> String {
 }
 
 fn base(p: &str) -> &str { p.rsplit('/').next().unwrap_or(p) }
+/// A tab the panel keeps even when there is nothing in it, and opens to say so (the card's tile is grey).
+fn empty_tab(id: &str) -> bool { matches!(id, "diff" | "linked") }
+fn is_md(p: &str) -> bool { let l = p.to_lowercase(); l.ends_with(".md") || l.ends_with(".markdown") }
 fn dir_of(p: &str) -> &str { p.rfind('/').map_or("", |i| &p[..i]) }
 
 /// desk.js STATUS: the one letter a file's state shows as.
 fn badge_of(st: char) -> String { match st { 'A' => "A", 'D' => "D", 'R' => "R", '?' => "U", _ => "M" }.into() }
 
-fn size_word(n: u64) -> String { if n < 1024 { format!("{n} B") } else if n < 10240 { format!("{:.1} KB", n as f64 / 1024.0) } else { format!("{} KB", (n as f64 / 1024.0).round()) } }
 
 // MARK: The tabs' rows
 
 /// The most lines of one command's output that are shown (its end).
 const OUT_LINES: usize = 80;
 
-/// Terminal: each command, its output, how it ended.
-pub fn terminal_rows(t: &d::Terminal, cols: usize) -> Vec<R> {
-    let mut v = vec![];
+/// Terminal, the agent's tab: what it ran as a terminal shows it. `$ command`, its output under it,
+/// and on the right how it ended (red when it failed; the running one pulses). Read only.
+pub fn terminal_rows(t: &d::Terminal, cols: usize, bot: &str) -> Vec<R> {
+    let mut v = vec![R::new(0, 10.0), R::new(28, hh::TERM).text(format!("What {bot} ran in this folder. Read only.")).tone(7), R::new(0, 6.0)];
+    if t.commands.is_empty() { v.push(R::new(28, hh::TERM).text("Nothing yet.").tone(7)); }
     for c in &t.commands {
         let run = c.status == "in_progress";
         let bad = c.status == "failed" || c.exit.is_some_and(|e| e != 0);
         let how = match c.exit { Some(e) => format!("exit {e}"), None if bad => "failed".into(), None => "done".into() };
         let status = if run { "running".to_owned() } else { format!("{how}{}", c.ms.filter(|m| *m > 0.0).map_or(String::new(), |m| format!(" · {}", dur(m)))) };
-        let lines = if c.out.is_empty() { vec![] } else { wrap_chars(c.out.trim_end_matches('\n'), cols) };
         let cmd = c.cmd.lines().next().unwrap_or("").trim().to_owned();
-        let alone = lines.is_empty() && run;
-        let mut head = R::new(12, hh::CMD).text(cmd).right(status).tone(if run { 3 } else if bad { 2 } else { 1 }).flag(alone as i32);
-        // Attach: its output goes to the chat as a chip.
-        if !c.out.trim().is_empty() { head.tag2 = format!("chip-term:{}", c.id); }
+        let room = cols.saturating_sub(2);
+        let mut parts = wrap_chars(&cmd, room).into_iter();
+        let head = R::new(27, hh::TERM).text(parts.next().unwrap_or_default()).sub("$ ").right(status).tone(if bad { 2 } else { 7 }).flag(run as i32);
         v.push(head);
-        if lines.is_empty() {
-            if !run { v.push(R::new(13, hh::PRE + 6.0).text("No output").tone(7)); }
-        } else {
-            let skip = lines.len().saturating_sub(OUT_LINES);
-            if skip > 0 { v.push(R::new(13, hh::PRE).text(format!("… {} earlier lines", num(skip as i64))).tone(7)); }
-            for l in lines.into_iter().skip(skip) { v.push(R::new(13, hh::PRE).text(l)); }
-            v.push(R::new(13, 6.0));
-        }
-        v.push(R::gap());
+        for more in parts { v.push(R::new(28, hh::TERM).text(format!("  {more}"))); }
+        let lines = if c.out.is_empty() { vec![] } else { wrap_chars(c.out.trim_end_matches('\n'), cols) };
+        let skip = lines.len().saturating_sub(OUT_LINES);
+        if skip > 0 { v.push(R::new(28, hh::TERM).text(format!("… {} earlier lines", num(skip as i64))).tone(7)); }
+        for l in lines.into_iter().skip(skip) { v.push(R::new(28, hh::TERM).text(l).tone(if bad { 2 } else { 0 })); }
     }
+    v.push(R::new(0, 10.0));
     v
 }
 
+/// Terminal, My commands: the banner, then each command as typed at its prompt with what it printed.
+/// The prompt where you type now is Slint's, under the last row.
+pub fn mine_rows(entries: &[term::Entry], cols: usize) -> Vec<R> {
+    let mut v = vec![R::new(0, 10.0), R::new(28, hh::TERM).text(term::banner()).tone(7), R::new(0, 6.0)];
+    for e in entries {
+        let prompt = term::prompt(&e.cwd);
+        let room = cols.saturating_sub(prompt.chars().count()).max(8);
+        let mut parts = wrap_chars(&e.cmd, room).into_iter();
+        v.push(R::new(27, hh::TERM).text(parts.next().unwrap_or_default()).sub(prompt));
+        for more in parts { v.push(R::new(28, hh::TERM).text(more)); }
+        if e.cut > 0 { v.push(R::new(28, hh::TERM).text(format!("… {} earlier lines", num(e.cut as i64))).tone(7)); }
+        for l in &e.lines {
+            let tone = if l.text == "^C" && !l.err { 7 } else if l.err { 2 } else { 0 };
+            v.extend(wrap_chars(&l.text, cols).into_iter().map(|t| R::new(28, hh::TERM).text(t).tone(tone)));
+        }
+    }
+    v
+}
 /// Files, searched: the paths holding `q`, 200 at most.
 pub fn find_rows(tree: &[String], q: &str) -> Vec<R> {
     let q = q.to_lowercase();
@@ -214,40 +240,25 @@ pub fn find_rows(tree: &[String], q: &str) -> Vec<R> {
     v
 }
 
-/// Files: what changed, what the agent looked at, and the folder as a tree.
-pub fn files_rows(f: &d::Files, bot: &str, open: &HashSet<String>) -> Vec<R> {
-    let mut v = vec![];
-    if !f.changed.is_empty() {
-        v.push(R::new(1, hh::HEAD).text("CHANGED").right(f.changed.len().to_string()));
-        for c in &f.changed {
-            let mut r = R::new(4, hh::FILE).text(base(&c.path)).sub(dir_of(&c.path)).act(format!("file:{}", c.path));
-            if c.add > 0 { r.add = format!("+{}", num(c.add as i64)); }
-            if c.del > 0 { r.del = format!("−{}", num(c.del as i64)); }
-            r.badge = badge_of(c.status);
-            if c.status == 'D' { r.flag = 4; }
-            v.push(r);
-        }
-    }
-    if !f.touched.is_empty() {
-        v.push(R::new(1, hh::HEAD).text(format!("{} LOOKED AT", bot.to_uppercase())).right(f.touched.len().to_string()));
-        for t in f.touched.iter().rev().take(60) {
-            let mut r = R::new(4, hh::FILE).text(base(&t.path)).sub(dir_of(&t.path)).act(format!("file:{}", t.path));
-            if t.edit > 0 { r.tag1 = if t.edit > 1 { format!("edited ×{}", t.edit) } else { "edited".into() }; r.flag = 2; }
-            if t.read > 0 { r.tag2 = if t.read > 1 { format!("read ×{}", t.read) } else { "read".into() }; }
-            v.push(r);
-        }
-    }
-    v.push(R::new(1, hh::HEAD).text("ALL FILES").right(format!("{}{}", num(f.tree.len() as i64), if f.more { "+" } else { "" })));
-    let hot: HashSet<&str> = f.changed.iter().map(|c| c.path.as_str()).collect();
-    let mut tree = tree_rows(&f.tree, open, &hot);
-    if tree.is_empty() { tree.push(R::faint("The folder is empty.")); }
-    v.extend(tree);
+/// Files: the folder as a tree, and nothing else (what changed is the Diff tab's). A file git sees
+/// as changed, or that was saved here, shows its letter.
+pub fn files_rows(f: &d::Files, open: &HashSet<String>, saved: &HashSet<String>) -> Vec<R> {
+    let changed = changed_map(f, saved);
+    let mut v = tree_rows(&f.tree, open, &changed);
+    if v.is_empty() { v.push(R::faint("The folder is empty.")); }
     if f.more { v.push(R::faint("Showing the first 5,000 files. Find one by name above.")); }
     v
 }
 
-/// The folder as a tree: folders first, each folded until opened.
-pub fn tree_rows(paths: &[String], open: &HashSet<String>, changed: &HashSet<&str>) -> Vec<R> {
+/// Each changed file's letter: git's, and M for one saved here that git doesn't list.
+pub fn changed_map(f: &d::Files, saved: &HashSet<String>) -> HashMap<String, String> {
+    let mut m: HashMap<String, String> = f.changed.iter().map(|c| (c.path.clone(), badge_of(c.status))).collect();
+    for p in saved { m.entry(p.clone()).or_insert_with(|| "M".into()); }
+    m
+}
+
+/// The folder as a tree: folders first, each folded until opened. `changed` maps a changed file to its letter.
+pub fn tree_rows(paths: &[String], open: &HashSet<String>, changed: &HashMap<String, String>) -> Vec<R> {
     #[derive(Default)]
     struct Node { dirs: std::collections::BTreeMap<String, Node>, files: Vec<String> }
     let mut root = Node::default();
@@ -258,8 +269,8 @@ pub fn tree_rows(paths: &[String], open: &HashSet<String>, changed: &HashSet<&st
         n.files.push(p.clone());
     }
     let mut hot: HashSet<String> = HashSet::new();
-    for c in changed { let parts: Vec<&str> = c.split('/').collect(); for i in 1..parts.len() { hot.insert(parts[..i].join("/")); } }
-    fn walk(n: &Node, prefix: &str, depth: i32, open: &HashSet<String>, hot: &HashSet<String>, changed: &HashSet<&str>, out: &mut Vec<R>) {
+    for c in changed.keys() { let parts: Vec<&str> = c.split('/').collect(); for i in 1..parts.len() { hot.insert(parts[..i].join("/")); } }
+    fn walk(n: &Node, prefix: &str, depth: i32, open: &HashSet<String>, hot: &HashSet<String>, changed: &HashMap<String, String>, out: &mut Vec<R>) {
         for (name, child) in &n.dirs {
             let path = format!("{prefix}{name}");
             let is_open = open.contains(&path);
@@ -272,7 +283,7 @@ pub fn tree_rows(paths: &[String], open: &HashSet<String>, changed: &HashSet<&st
         for f in &n.files {
             let mut r = R::new(5, hh::TREE).text(base(f)).act(format!("file:{f}"));
             r.depth = depth;
-            r.flag = if changed.contains(f.as_str()) { 2 } else { 0 };
+            if let Some(letter) = changed.get(f) { r.flag = 2; r.badge = letter.clone(); }
             out.push(r);
         }
     }
@@ -280,20 +291,26 @@ pub fn tree_rows(paths: &[String], open: &HashSet<String>, changed: &HashSet<&st
     walk(&root, "", 0, open, &hot, changed, &mut out);
     out
 }
-
-/// A file of the Files tab: its bar, then its lines with their numbers.
-pub fn file_rows(f: &d::FileView) -> Vec<R> {
-    let (path, size) = match f {
-        d::FileView::Text { path, size, .. } | d::FileView::Binary { path, size } => (path.as_str(), Some(*size)),
-        d::FileView::Error { path, .. } => (path.as_str(), None),
-    };
-    let mut v = vec![R::new(6, hh::BAR).text(base(path)).sub(dir_of(path)).right(size.map_or(String::new(), size_word))];
+/// A file of the Files tab: its lines with their numbers, or the picture of its Markdown (`preview`).
+/// The bar above them is Slint's.
+pub fn file_rows(f: &d::FileView, preview: Option<(Image, f32)>) -> Vec<R> {
+    let path = match f { d::FileView::Text { path, .. } | d::FileView::Binary { path, .. } | d::FileView::Error { path, .. } => path.as_str() };
+    let mut v = vec![];
     match f {
         d::FileView::Error { error, .. } => v.push(R::faint(format!("Couldn’t open it. {error}"))),
         d::FileView::Binary { .. } => v.push(R::faint("Not a text file. Binary files aren’t shown here.")),
+        d::FileView::Text { .. } if preview.is_some() => {
+            let (img, h) = preview.unwrap();
+            let mut r = R::new(25, h.ceil() + 8.0);
+            r.img = Some(img);
+            v.push(R::new(0, 10.0));
+            v.push(r);
+            v.push(R::new(0, 16.0));
+        }
         d::FileView::Text { text, truncated, .. } => {
             let text = text.replace("\r\n", "\n");
             let lines: Vec<&str> = text.strip_suffix('\n').unwrap_or(&text).split('\n').collect();
+            v.push(R::new(0, 8.0));
             for (i, l) in lines.iter().take(6000).enumerate() {
                 let mut r = R::new(7, hh::LINE).text(l.replace('\t', "    "));
                 r.num = (i + 1).to_string();
@@ -305,7 +322,6 @@ pub fn file_rows(f: &d::FileView) -> Vec<R> {
     }
     v
 }
-
 /// One file's hunks, with the old and the new line numbers, up to a budget of lines.
 pub fn hunks(patch: &str, budget: usize) -> (Vec<R>, usize) {
     fn header(l: &str) -> Option<(i64, i64)> {
@@ -341,7 +357,8 @@ pub fn hunks(patch: &str, budget: usize) -> (Vec<R>, usize) {
 }
 
 /// Diff: a file per block, folded or open, with both sides' line numbers.
-pub fn diff_rows(df: &d::Diff, open: &HashMap<String, bool>) -> Vec<R> {
+/// `pr`: a pull request can be opened from here (the branch has none yet), so the bar has Create PR.
+pub fn diff_rows(df: &d::Diff, open: &HashMap<String, bool>, pr: bool) -> Vec<R> {
     let mut v = vec![];
     let a: i64 = df.files.iter().map(|f| f.add as i64).sum();
     let del: i64 = df.files.iter().map(|f| f.del as i64).sum();
@@ -349,6 +366,7 @@ pub fn diff_rows(df: &d::Diff, open: &HashMap<String, bool>) -> Vec<R> {
     if a > 0 { sum.add = format!("+{}", num(a)); }
     if del > 0 { sum.del = format!("−{}", num(del)); }
     sum.sub = df.branch.clone().unwrap_or_default();
+    if pr { sum.act = "gopr".into(); }
     v.push(sum);
     if !df.git { v.push(R::new(2, 34.0).text("Not a Git repository: these are the parts of each edit the session kept.")); }
     if df.truncated { v.push(R::new(2, 34.0).text("The diff is long; the end isn’t shown.")); }
@@ -563,6 +581,15 @@ pub struct Prefs {
     pub url: Option<String>,
     pub picked: bool,
     pub file: Option<String>,
+    /// The open file, if Markdown: 0 preview (the default) or 1 its source. Being edited, the line
+    /// endings it came with, being saved, and the files saved here (shown as changed).
+    pub fmode: Option<i32>,
+    pub editing: bool,
+    pub crlf: bool,
+    pub saving: bool,
+    pub saved: HashSet<String>,
+    /// The terminal: 0 My commands, 1 the agent's.
+    pub term_tab: i32,
     pub find: String,
     pub open: HashSet<String>,
     pub diff_open: HashMap<String, bool>,
@@ -620,6 +647,10 @@ pub struct DeskUi {
     screen_err: RefCell<Option<String>>,
     /// Nothing is asked of git, gh or the screen: the screenshots hand in their own data.
     pub offline: Cell<bool>,
+    /// The user's own shell of each chat (Terminal, My commands), started with its first command.
+    terms: RefCell<HashMap<i32, Rc<term::Term>>>,
+    /// The editors found on this computer, read once off the UI thread, for the Open in menu.
+    editors: RefCell<Option<Vec<editor::Found>>>,
 }
 
 /// How often a surface is asked again while its session changes (ms): git and gh less.
@@ -663,6 +694,26 @@ impl App {
         g.on_act(move |x| a.desk_act(x.as_str()));
         let a = self.clone();
         g.on_find_edited(move |t| { a.desk_prefs(|p| { p.find = t.to_string(); }); a.desk_changed(); a.desk_sync(); });
+        let a = self.clone();
+        g.on_f_mode_pick(move |m| { a.desk_prefs(|p| p.fmode = Some(m)); a.desk_reset_scroll(); a.desk_changed(); a.desk_sync(); });
+        let a = self.clone();
+        g.on_f_edit(move || a.desk_file_edit());
+        let a = self.clone();
+        g.on_f_save(move || a.desk_file_save());
+        let a = self.clone();
+        g.on_f_cancel(move || a.desk_file_cancel());
+        let a = self.clone();
+        g.on_open_in(move |c| a.desk_open_in(c.as_str()));
+        let a = self.clone();
+        g.on_term_pick(move |t| { a.desk_prefs(|p| p.term_tab = t); a.desk_reset_scroll(); a.desk_changed(); a.desk_sync(); });
+        let a = self.clone();
+        g.on_term_run(move |c| { a.desk_term_do(|t| t.run(c.as_str())); });
+        let a = self.clone();
+        g.on_term_hist(move |dir| a.desk_term_do(|t| t.history(dir)).unwrap_or_default().into());
+        let a = self.clone();
+        g.on_term_interrupt(move || { a.desk_term_do(|t| t.interrupt()); });
+        let a = self.clone();
+        g.on_term_clear(move || { a.desk_term_do(|t| t.clear()); });
         let a = self.clone();
         g.on_b_go(move |t| a.desk_browser_go(t.as_str()));
         let a = self.clone();
@@ -709,9 +760,10 @@ impl App {
         snap
     }
 
-    /// Tiles this system can't run, with why.
+    /// Tiles this system can't run, with why. The panel hides their tabs.
     fn desk_off() -> Vec<(&'static str, String)> {
         let mut off = vec![];
+        if let Some(n) = hover_agents::browser::note() { off.push(("browser", n.to_owned())); }
         if let Some(n) = hover_app::screen::note() { off.push(("screen", n.to_owned())); }
         off
     }
@@ -773,6 +825,7 @@ impl App {
         self.desk_timer();
         self.office_widgets();
         self.desk_screen_tick();
+        self.desk_find_editors();
     }
 
     pub fn desk_close_panel(self: &Rc<Self>) {
@@ -804,7 +857,7 @@ impl App {
         let Some(sess) = self.hover.sessions.get(id) else { return };
         let snap = self.desk_snap(&sess);
         let tiles = self.desk_tiles(id, &snap);
-        if let Some(t) = tiles.get(tab).filter(|t| !t.enabled) { self.toast(&t.reason); return; }
+        if let Some(t) = tiles.get(tab).filter(|t| !t.enabled && !empty_tab(t.id)) { self.toast(&t.reason); return; }
         if tab != cur { self.desk_leave_tab(); }
         self.desk_open(id, tab);
     }
@@ -819,7 +872,7 @@ impl App {
         self.desk_open(id, tab);
     }
 
-    /// Open in editor: the card's own folder (a task's worktree is the folder), off the UI thread. The answer is a toast.
+    /// Open in editor: the card's own folder, off the UI thread. The answer is a toast.
     fn desk_open_editor(self: &Rc<Self>) {
         let Some(id) = self.page.desk.card.get().or(self.page.desk.panel.get().map(|p| p.0)) else { return };
         self.editor_for(id);
@@ -831,12 +884,16 @@ impl App {
     /// Open in editor, at a file and line of the task's folder when given (the file and diff views' Open at this line).
     fn editor_at(self: &Rc<Self>, id: i32, at: Option<(String, u32)>) {
         let Some(s) = self.hover.sessions.get(id) else { return };
-        let (settings, folder, cloud) = (self.hover.settings.editor(), s.folder.clone(), s.cloud.is_some());
+        let (folder, cloud) = (s.folder.clone(), s.cloud.is_some());
+        // The one used last, if it is still here (the file manager isn't an editor).
+        let last = self.hover.settings.last_editor().filter(|l| l != editor::FILE_MANAGER);
         std::thread::Builder::new().name("open-editor".into()).spawn(move || {
-            let target = match &at { Some((file, line)) => hover_agents::editor::Target::file(&folder, file, Some(*line), None), None => hover_agents::editor::Target::folder(&folder) };
-            let said = hover_agents::editor::open(&settings, None, &target, cloud)
-                .unwrap_or_else(|e| if e == "Pick an editor first." { "Choose a default editor in Settings → Automation.".to_owned() } else { e });
-            crate::ui_do(move |a| a.toast(&said));
+            let target = match &at { Some((file, line)) => editor::Target::file(&folder, file, Some(*line), None), None => editor::Target::folder(&folder) };
+            let res = editor::open_or_first(last.as_deref(), &target, cloud);
+            crate::ui_do(move |a| match res {
+                Ok((id, said)) => { a.hover.settings.set_last_editor(&id); a.toast(&said); }
+                Err(e) => a.toast(&e),
+            });
         }).ok();
     }
 
@@ -851,6 +908,18 @@ impl App {
         match tab {
             Some(t) => self.desk_open(id, t),
             None => { let why = TABS.iter().position(|t| *t == "diff").and_then(|i| tiles.get(i)).map(|t| t.reason.clone()).unwrap_or_default(); self.toast(&why); }
+        }
+    }
+
+    /// The chat header's Terminal: the panel beside the chat on that tab, or the reason it is off as a toast.
+    pub(crate) fn desk_open_tab(self: &Rc<Self>, id: i32, name: &str) {
+        let Some(sess) = self.hover.sessions.get(id) else { return };
+        let Some(i) = TABS.iter().position(|t| *t == name) else { return };
+        let snap = self.desk_snap(&sess);
+        match self.desk_tiles(id, &snap).get(i) {
+            Some(t) if t.enabled => self.desk_open(id, i),
+            Some(t) => self.toast(&t.reason),
+            None => {}
         }
     }
 
@@ -926,6 +995,16 @@ impl App {
         d.got.borrow_mut().insert((id, what), got);
         self.desk_changed();
         self.desk_sync();
+        // The reply box's @ list was waiting for the files.
+        if what == "files" { self.pop_refresh(); }
+    }
+
+    /// The session folder's files, for the reply box's @: what the Files tab read last. None until a worker has read them
+    /// (asked for now).
+    pub(crate) fn desk_files(self: &Rc<Self>, id: i32) -> Option<Vec<String>> {
+        if let Some(Got::Files(f)) = self.page.desk.got.borrow().get(&(id, "files")) { return Some(f.tree.clone()); }
+        self.desk_ask(id, "files", false);
+        None
     }
 
     /// The session changed: the surfaces read from the folder are asked again when due.
@@ -1069,10 +1148,22 @@ impl App {
         let title = d::SURFACES[tab].1;
         let prefs_file = d.prefs.borrow().get(&id).and_then(|p| p.file.clone());
         let p_title = if kind == "files" { prefs_file.as_deref().map_or(title.to_owned(), |f| base(f).to_owned()) } else { title.to_owned() };
-        let tabs: Vec<DTab> = tiles.iter().enumerate().map(|(i, t)| DTab {
-            id: s(t.id), title: s(t.title), icon: s(t.id), enabled: t.enabled, reason: s(&t.reason),
-            badge: if t.id == "agents" { probe.as_ref().map_or(0, |p| p.running as i32) } else { 0 },
-            live: (t.id == "screen" && snap.testing() && i != tab) || (t.id == "browser" && snap.browsing() && i != tab),
+        // Only the tabs this computer can use (the one open stays while it is open), each by name. Diff and
+        // Linked PRs stay even when empty: they say so ("No changes"), as the mockup's do.
+        let tabs: Vec<DTab> = TAB_ORDER.iter().filter_map(|id| {
+            let i = TABS.iter().position(|t| t == id)?;
+            let t = tiles.get(i).filter(|t| t.enabled || i == tab || empty_tab(t.id))?;
+            Some(DTab {
+                id: s(t.id), title: s(if t.id == "linked" { "Linked PRs" } else { t.title }), icon: s(t.id), enabled: t.enabled, reason: s(&t.reason), idx: i as i32,
+                badge: if t.id == "agents" { probe.as_ref().map_or(0, |p| p.running as i32) } else { 0 },
+                live: (t.id == "screen" && snap.testing() && i != tab) || (t.id == "browser" && snap.browsing() && i != tab),
+            })
+        }).collect();
+        let last = self.hover.settings.last_editor();
+        let found = self.page.desk.editors.borrow().clone().unwrap_or_default();
+        let choices: Vec<DChoice> = editor::choices(&found, last.as_deref()).into_iter().map(|c| {
+            let (letter, tint) = match c.id.as_str() { "vscode" => ("V", 0x0e7fd6), "cursor" => ("C", 0x2a2a30), "kiro" => ("K", 0x9046ff), "zed" => ("Z", 0x2a2a30), _ => ("", 0) };
+            DChoice { id: s(&c.id), name: s(&c.name), last: c.last, letter: s(letter), tint: rgb(tint) }
         }).collect();
         let w = if d.list_w.get() > 0.0 { d.list_w.get() } else { 640.0 };
         // The list is laid out again only when the session, the data or the width changed.
@@ -1089,6 +1180,7 @@ impl App {
             g.set_p_sub(s(format!("{name} · {}", sess.title())));
             g.set_tab(tab as i32);
             if let Some(m) = crate::view::sync(g.get_tabs(), &tabs) { g.set_tabs(m); }
+            if let Some(m) = crate::view::sync(g.get_open_choices(), &choices) { g.set_open_choices(m); }
         });
         self.desk_tab_props(id, tab, &snap, name);
         self.desk_window();
@@ -1135,19 +1227,22 @@ impl App {
         let failed = |e: &str| Laid::of(vec![], Some(empty("diff", "Couldn’t read that", e)));
         match TABS[tab] {
             "terminal" => {
-                let rows = terminal_rows(&d::terminal(snap), mono);
-                Laid::of(rows, Some(empty("terminal", "No commands yet", &format!("What {bot} runs shows here, with its output."))))
+                let cols = cols(w, 42.0, hh::TERM_W);
+                if p.is_some_and(|p| p.term_tab == 1) { return Laid::of(terminal_rows(&d::terminal(snap), cols, bot), None); }
+                Laid::of(self.desk_term(id, &sess.folder).view(|e, _, _| mine_rows(e, cols)), None)
             }
             "files" => {
                 if let Some(path) = p.and_then(|p| p.file.clone()) {
                     return match got("file") {
                         Some(Got::File(f, v)) if f == path => {
-                            let mut rows = file_rows(&v);
-                            // Attach: a copy as it is now, or a reference the agent reads itself.
-                            if matches!(v, d::FileView::Text { .. }) { rows[0].act = format!("chip-file:{path}"); rows[0].tag2 = format!("chip-ref:{path}"); }
-                            Laid::of(rows, None)
+                            // A Markdown file opens as its preview, unless the source was asked for.
+                            let preview = match &v {
+                                d::FileView::Text { text, .. } if is_md(&path) && p.is_some_and(|p| p.fmode.unwrap_or(0) == 0 && !p.editing) => self.desk_markdown(&text.replace("\r\n", "\n"), w),
+                                _ => None,
+                            };
+                            Laid::of(file_rows(&v, preview), None)
                         }
-                        _ => { let mut l = Laid::of(vec![R::new(6, hh::BAR).text(base(&path)).sub(dir_of(&path))], None); l.loading = true; l }
+                        _ => Laid::loading(),
                     };
                 }
                 match got("files") {
@@ -1155,7 +1250,7 @@ impl App {
                         if let Some(e) = &f.error { return failed(e); }
                         let find = p.map_or("", |p| p.find.as_str());
                         if !find.is_empty() { return Laid::of(find_rows(&f.tree, find), None); }
-                        Laid::of(files_rows(&f, bot, &p.map(|p| p.open.clone()).unwrap_or_default()), None)
+                        Laid::of(files_rows(&f, &p.map(|p| p.open.clone()).unwrap_or_default(), &p.map(|p| p.saved.clone()).unwrap_or_default()), None)
                     }
                     _ => Laid::loading(),
                 }
@@ -1164,23 +1259,17 @@ impl App {
                 Some(Got::Diff(df)) => {
                     if let Some(e) = &df.error { return Laid::of(vec![], Some(empty("diff", "Couldn’t read the diff", e))); }
                     if df.files.is_empty() { return Laid::of(vec![], Some(empty("diff", "No changes", if df.git { "The working tree matches the last commit." } else { "Nothing edited yet." }))); }
-                    Laid::of(diff_rows(&df, &p.map(|p| p.diff_open.clone()).unwrap_or_default()), None)
+                    // Create PR is in the bar while the branch has none and the Pull request tab can open one.
+                    let pr_ok = TABS.iter().position(|t| *t == "pr").is_some_and(|i| self.desk_tiles(id, snap).get(i).is_some_and(|t| t.enabled))
+                        && matches!(got("probe"), Some(Got::Probe(pr)) if pr.pr.is_none());
+                    Laid::of(diff_rows(&df, &p.map(|p| p.diff_open.clone()).unwrap_or_default(), pr_ok), None)
                 }
                 _ => Laid::loading(),
             },
             "pr" => match got("pr") {
                 Some(Got::Pr(d::PrPanel::Open(detail))) => {
                     let md = (!detail.body.trim().is_empty()).then(|| self.desk_markdown(&detail.body, w)).flatten();
-                    let mut rows = pr_rows(&detail, w, md);
-                    // Watch this pull request: the task is told of new reviews, failed checks and the rest (prwatch.rs).
-                    let key = self.hover.sessions.get(id).map(|s| s.key).unwrap_or_default();
-                    let watching = self.hover.watcher.of(&key).into_iter().find(|w| w.url == detail.url);
-                    let (label, act) = match &watching {
-                        Some(w) => (format!("Stop watching · {}", match &w.state { hover_agents::prwatch::WState::Active => "active".to_owned(), hover_agents::prwatch::WState::Paused(why) => format!("paused: {why}"), hover_agents::prwatch::WState::Ended(why) => format!("ended: {why}") }), format!("unwatch:{}", w.id)),
-                        None => ("Watch this pull request".to_owned(), format!("watch:{}", detail.url)),
-                    };
-                    if rows.len() > 3 { rows.insert(4, R::new(26, 44.0).text(label).act(act)); }
-                    Laid::of(rows, None)
+                    Laid::of(pr_rows(&detail, w, md), None)
                 }
                 Some(Got::Pr(d::PrPanel::Error(e))) => Laid::of(vec![], Some(empty("pr", "No pull request", &e))),
                 Some(Got::Pr(_)) => Laid::default(),
@@ -1253,6 +1342,44 @@ impl App {
                     g.set_s_watch(p.is_some_and(|p| p.watch));
                     g.set_s_denied(false);
                     g.set_s_note(s(&note));
+                });
+            }
+            "terminal" => {
+                let folder = self.hover.sessions.get(id).map(|s| s.folder.clone()).unwrap_or_default();
+                let mine = d.terms.borrow().get(&id).cloned();
+                let (cwd, running) = mine.map_or((folder, false), |t| t.view(|_, cwd, r| (cwd.to_owned(), r)));
+                let live = d::terminal(snap).commands.iter().any(|c| c.status == "in_progress");
+                each_desk!(self, |g| {
+                    g.set_term_tab(p.map_or(0, |p| p.term_tab));
+                    g.set_term_agent(s(bot));
+                    g.set_term_agent_live(live);
+                    g.set_term_prompt(s(term::prompt(&cwd)));
+                    g.set_term_running(running);
+                });
+            }
+            "files" => {
+                let busy = self.hover.sessions.get(id).is_some_and(|s| s.busy());
+                let file = p.and_then(|p| p.file.clone());
+                let md = file.as_deref().is_some_and(is_md);
+                let view = match (&file, d.got.borrow().get(&(id, "file"))) { (Some(f), Some(Got::File(g, v))) if g == f => Some(v.clone()), _ => None };
+                let (can, why) = match &view {
+                    Some(d::FileView::Text { truncated: true, .. }) => (false, "Too big to edit here."),
+                    Some(d::FileView::Text { text, .. }) if text.contains('\u{FFFD}') => (false, "Not plain UTF-8 text, so it can’t be edited here."),
+                    Some(d::FileView::Text { .. }) => (true, ""),
+                    Some(_) => (false, "Only text files can be edited."),
+                    None => (false, "Still reading it."),
+                };
+                let editing = p.is_some_and(|p| p.editing);
+                let mode = if editing { 2 } else if md { p.and_then(|p| p.fmode).unwrap_or(0) } else { 1 };
+                let warn = if editing && busy { format!("{bot} is working in this folder. If it changes this file too, saving keeps your version.") } else { String::new() };
+                each_desk!(self, |g| {
+                    g.set_f_path(s(file.as_deref().unwrap_or("")));
+                    g.set_f_mode(mode);
+                    g.set_f_md(md);
+                    g.set_f_can_edit(can);
+                    g.set_f_why(s(why));
+                    g.set_f_warning(s(&warn));
+                    g.set_f_saving(p.is_some_and(|p| p.saving));
                 });
             }
             "pr" => self.desk_pr_props(id, p),
@@ -1412,13 +1539,28 @@ impl App {
     fn desk_markdown_click(self: &Rc<Self>, x: f32, y: f32) {
         let hit = self.page.desk.doc.borrow().as_ref().map(|d| d.thread.hit(x, y));
         match hit {
-            Some(hover_chat::Hit::Link(url)) => { if url.starts_with("https://") || url.starts_with("http://") { crate::open_url(&url); } }
+            Some(hover_chat::Hit::Link(url)) => {
+                if url.starts_with("https://") || url.starts_with("http://") { crate::open_url(&url); }
+                else { self.desk_open_relative(&url); }
+            }
             Some(hover_chat::Hit::Act(_, hover_chat::doc::Act::Copy(text))) => {
                 if let Err(e) = arboard::Clipboard::new().and_then(|mut c| c.set_text(text.to_string())) { hover_core::log::line(&format!("clipboard: {e}")); }
                 self.toast("Copied.");
             }
             _ => {}
         }
+    }
+
+    /// A link in a Markdown file that names another file of the folder (`AGENTS.md`, `docs/a.md#top`) opens that file here.
+    fn desk_open_relative(self: &Rc<Self>, url: &str) {
+        let Some((id, _)) = self.page.desk.panel.get() else { return };
+        let Some(sess) = self.hover.sessions.get(id) else { return };
+        let Some(from) = self.page.desk.prefs.borrow().get(&id).and_then(|p| p.file.clone()) else { return };
+        let link = url.split(['#', '?']).next().unwrap_or("");
+        if link.is_empty() || link.contains(':') { return; }
+        let joined = if dir_of(&from).is_empty() || link.starts_with('/') { link.trim_start_matches('/').to_owned() } else { format!("{}/{}", dir_of(&from), link) };
+        let Some(rel) = d::relative(Some(&joined), &sess.folder) else { return };
+        if d::inside(&sess.folder, Some(&rel)).is_some_and(|p| p.is_file()) { self.desk_act(&format!("file:{rel}")); }
     }
 
     // MARK: Clicks in the panel
@@ -1437,20 +1579,13 @@ impl App {
                 self.desk_prefs_for(id, |p| { let now = p.diff_open.get(arg).copied().unwrap_or(i < 12); p.diff_open.insert(arg.to_owned(), !now); });
             }
             "sa" => { self.desk_prefs_for(id, |p| { if !p.agent_open.remove(arg) { p.agent_open.insert(arg.to_owned()); } }); }
-            "chip-file" | "chip-ref" | "chip-diff" | "chip-term" => { self.desk_attach(id, kind, arg); return; }
+            "chip-diff" => { self.desk_attach(id, kind, arg); return; }
+            "gopr" => { if let Some(i) = TABS.iter().position(|t| *t == "pr") { self.desk_tab(i); } return; }
             // Open at this line: the editor opens the file there (a file outside the folder opens the folder alone).
             "open" => {
                 if let Some((file, line)) = arg.rsplit_once(':').and_then(|(f, l)| Some((f.to_owned(), l.parse::<u32>().ok()?))) { self.editor_at(id, Some((file, line))); }
                 return;
             }
-            "watch" => {
-                let key = self.hover.sessions.get(id).map(|s| s.key).unwrap_or_default();
-                match self.hover.watcher.watch(&key, arg, hover_agents::prwatch::Events::all(), "") {
-                    Ok(_) => self.toast("Watching. This task is told of new reviews, failed checks and when it is done or closed."),
-                    Err(e) => self.toast(&e),
-                }
-            }
-            "unwatch" => { self.hover.watcher.unwatch(arg); self.toast("No longer watching."); }
             _ => return,
         }
         if kind == "file" || kind == "fback" { self.desk_reset_scroll(); }
@@ -1458,9 +1593,17 @@ impl App {
         self.desk_sync();
     }
 
-    /// The screenshots: the ids of the commands the Terminal tab lists.
-    pub fn desk_terminal_ids(&self, id: i32) -> Vec<String> {
-        self.hover.sessions.get(id).map(|s| d::terminal(&self.desk_snap(&s)).commands.into_iter().map(|c| c.id).collect()).unwrap_or_default()
+    /// The screenshots: My commands shows these, without a shell behind them.
+    pub fn desk_shot_term(self: &Rc<Self>, id: i32, entries: Vec<term::Entry>) {
+        if let Some(s) = self.hover.sessions.get(id) { self.desk_term(id, &s.folder).seed(entries); }
+        self.desk_changed();
+        self.desk_sync();
+    }
+
+    /// The screenshots: the editors found on this computer.
+    pub fn desk_shot_editors(self: &Rc<Self>, found: Vec<editor::Found>) {
+        *self.page.desk.editors.borrow_mut() = Some(found);
+        self.desk_sync();
     }
 
     /// Attach to the chat: a file, a reference to it, a changed file's diff, or a command's output becomes a chip in that
@@ -1468,8 +1611,6 @@ impl App {
     fn desk_attach(self: &Rc<Self>, id: i32, kind: &str, arg: &str) {
         let Some(sess) = self.hover.sessions.get(id) else { return };
         let made = match kind {
-            "chip-file" => hover_agents::context::file_snapshot(&sess.folder, arg),
-            "chip-ref" => hover_agents::context::file_live(&sess.folder, arg),
             "chip-diff" => match self.page.desk.got.borrow().get(&(id, "diff")) {
                 Some(Got::Diff(df)) => match df.files.iter().find(|f| f.path == arg) {
                     Some(f) => hover_agents::context::diff(&f.path, &f.patch, None, &sess.key),
@@ -1477,18 +1618,132 @@ impl App {
                 },
                 _ => Err("The changes aren’t loaded.".into()),
             },
-            _ => {
-                let snap = self.desk_snap(&sess);
-                match d::terminal(&snap).commands.into_iter().find(|c| c.id == arg) {
-                    Some(c) => hover_agents::context::terminal(&c.cmd, &c.out, &sess.key, &c.id),
-                    None => Err("That command isn’t there any more.".into()),
-                }
-            }
+            _ => Err("That isn't something to attach.".into()),
         };
         match made {
             Ok(chip) => self.add_chip(id, chip),
             Err(e) => self.toast(&e),
         }
+    }
+
+    // MARK: Files: edit, save, open in
+
+    /// The user's shell for a chat, made with its first use.
+    fn desk_term(&self, id: i32, folder: &str) -> Rc<term::Term> {
+        if let Some(t) = self.page.desk.terms.borrow().get(&id) { return t.clone(); }
+        // Output comes in bursts: one redraw is asked for at a time, and it reads whatever has come by then.
+        let pending = Arc::new(AtomicBool::new(false));
+        let t = Rc::new(term::Term::new(folder, move || {
+            if !pending.swap(true, Ordering::SeqCst) {
+                let p = pending.clone();
+                crate::ui_do(move |a| { p.store(false, Ordering::SeqCst); a.desk_changed(); a.desk_sync(); });
+            }
+        }));
+        self.page.desk.terms.borrow_mut().insert(id, t.clone());
+        t
+    }
+
+    /// Does something with the open panel's chat's shell.
+    fn desk_term_do<T>(&self, f: impl FnOnce(&term::Term) -> T) -> Option<T> {
+        let (id, _) = self.page.desk.panel.get()?;
+        let sess = self.hover.sessions.get(id)?;
+        Some(f(&self.desk_term(id, &sess.folder)))
+    }
+
+    /// The text in the editor's box, from the window that has the office in front.
+    fn desk_edit_text(&self) -> String {
+        if self.page.target.get() == 1 { if let Some(d) = &*self.dash.borrow() { return d.global::<Desk>().get_f_text().to_string(); } }
+        self.notch.global::<Desk>().get_f_text().to_string()
+    }
+
+    /// Edit: the open file's text goes into the box. Only a text file read whole, that is valid UTF-8.
+    fn desk_file_edit(self: &Rc<Self>) {
+        let Some((id, _)) = self.page.desk.panel.get() else { return };
+        let Some(path) = self.page.desk.prefs.borrow().get(&id).and_then(|p| p.file.clone()) else { return };
+        let text = match self.page.desk.got.borrow().get(&(id, "file")) {
+            Some(Got::File(f, d::FileView::Text { text, truncated: false, .. })) if *f == path && !text.contains('\u{FFFD}') => text.clone(),
+            _ => return,
+        };
+        let crlf = text.contains("\r\n");
+        let buf = text.replace("\r\n", "\n");
+        each_desk!(self, |g| g.set_f_text(s(&buf)));
+        self.desk_prefs_for(id, |p| { p.editing = true; p.crlf = crlf; });
+        self.desk_changed();
+        self.desk_sync();
+    }
+
+    fn desk_file_cancel(self: &Rc<Self>) {
+        let Some((id, _)) = self.page.desk.panel.get() else { return };
+        each_desk!(self, |g| g.set_f_text(s("")));
+        self.desk_prefs_for(id, |p| p.editing = false);
+        self.desk_changed();
+        self.desk_sync();
+    }
+
+    /// Save: the box's text replaces the file (temp file, then rename), inside the session's folder.
+    fn desk_file_save(self: &Rc<Self>) {
+        let Some((id, _)) = self.page.desk.panel.get() else { return };
+        let Some(sess) = self.hover.sessions.get(id) else { return };
+        let (path, crlf) = match self.page.desk.prefs.borrow().get(&id) {
+            Some(p) if p.editing && !p.saving => match &p.file { Some(f) => (f.clone(), p.crlf), None => return },
+            _ => return,
+        };
+        let text = self.desk_edit_text();
+        let text = if crlf { text.replace("\r\n", "\n").replace('\n', "\r\n") } else { text };
+        self.desk_prefs_for(id, |p| p.saving = true);
+        self.desk_changed();
+        self.desk_sync();
+        if self.page.desk.offline.get() { self.desk_saved(id, &path, &text, Ok(())); return; }
+        let folder = sess.folder.clone();
+        std::thread::Builder::new().name("save-file".into()).spawn(move || {
+            let res = d::write_file(&folder, &path, &text);
+            crate::ui_do(move |a| a.desk_saved(id, &path, &text, res));
+        }).ok();
+    }
+
+    /// The save is over: the file shows what was written and is marked changed; or why it wasn't.
+    fn desk_saved(self: &Rc<Self>, id: i32, path: &str, text: &str, res: Result<(), String>) {
+        match res {
+            Ok(()) => {
+                each_desk!(self, |g| g.set_f_text(s("")));
+                self.desk_prefs_for(id, |p| { p.saving = false; p.editing = false; p.saved.insert(path.to_owned()); });
+                // Shown at once as written; the folder is read again to be sure.
+                if let Some(Got::File(f, d::FileView::Text { text: t, size, .. })) = self.page.desk.got.borrow_mut().get_mut(&(id, "file")) {
+                    if f == path { *t = text.to_owned(); *size = text.len() as u64; }
+                }
+                for what in ["file", "files", "diff", "probe"] { self.desk_ask(id, what, true); }
+                self.toast("Saved.");
+            }
+            Err(e) => { self.desk_prefs_for(id, |p| p.saving = false); self.toast(&e); }
+        }
+        self.desk_changed();
+        self.desk_sync();
+    }
+
+    /// A pick in the Open in menu: the file (else the folder) opens in that editor or the file manager.
+    fn desk_open_in(self: &Rc<Self>, choice: &str) {
+        each_desk!(self, |g| g.set_open_menu(false));
+        let Some((id, _)) = self.page.desk.panel.get() else { return };
+        let Some(sess) = self.hover.sessions.get(id) else { return };
+        let file = self.page.desk.prefs.borrow().get(&id).and_then(|p| p.file.clone());
+        let (folder, cloud, choice) = (sess.folder.clone(), sess.cloud.is_some(), choice.to_owned());
+        std::thread::Builder::new().name("open-in".into()).spawn(move || {
+            let target = match &file { Some(f) => editor::Target::file(&folder, f, None, None), None => editor::Target::folder(&folder) };
+            let res = editor::open_in(&choice, &target, cloud);
+            crate::ui_do(move |a| match res {
+                Ok(said) => { a.hover.settings.set_last_editor(&choice); a.toast(&said); a.desk_sync(); }
+                Err(e) => a.toast(&e),
+            });
+        }).ok();
+    }
+
+    /// The editors on this computer are looked for once, off the UI thread.
+    fn desk_find_editors(self: &Rc<Self>) {
+        if self.page.desk.offline.get() || self.page.desk.editors.borrow().is_some() { return; }
+        std::thread::Builder::new().name("find-editors".into()).spawn(|| {
+            let found = editor::available();
+            crate::ui_do(move |a| { *a.page.desk.editors.borrow_mut() = Some(found); a.desk_sync(); });
+        }).ok();
     }
 
     // MARK: Browser
@@ -1669,14 +1924,14 @@ mod tests {
     #[test]
     fn the_tree_folds_folders_and_lists_them_first() {
         let paths = files(&["README.md", "src/main.rs", "src/ui/a.rs", "b.txt"]);
-        let hot: HashSet<&str> = ["src/ui/a.rs"].into_iter().collect();
+        let hot: HashMap<String, String> = [("src/ui/a.rs".to_owned(), "M".to_owned())].into_iter().collect();
         let closed = tree_rows(&paths, &HashSet::new(), &hot);
         assert_eq!(closed.iter().map(|r| r.text.as_str()).collect::<Vec<_>>(), ["src", "README.md", "b.txt"]);
         assert_eq!(closed[0].flag, 2, "the folder with a changed file in it is hot");
         let open: HashSet<String> = ["src", "src/ui"].iter().map(|s| s.to_string()).collect();
         let rows = tree_rows(&paths, &open, &hot);
         assert_eq!(rows.iter().map(|r| (r.text.as_str(), r.depth)).collect::<Vec<_>>(), [("src", 0), ("ui", 1), ("a.rs", 2), ("main.rs", 1), ("README.md", 0), ("b.txt", 0)]);
-        assert_eq!(rows[2].flag, 2);
+        assert_eq!((rows[2].flag, rows[2].badge.as_str()), (2, "M"), "a changed file shows its letter");
         assert_eq!(rows[0].flag, 3, "open and hot");
     }
 
@@ -1709,7 +1964,7 @@ mod tests {
     fn a_diff_opens_its_first_twelve_files_and_keeps_what_the_user_toggled() {
         let file = |p: &str| d::FileDiff { path: p.into(), old: None, status: 'M', add: 1, del: 1, binary: false, patch: "@@ -1 +1 @@\n-a\n+b".into() };
         let df = d::Diff { git: true, files: (0..14).map(|i| file(&format!("f{i}.rs"))).collect(), branch: Some("main".into()), ..Default::default() };
-        let rows = diff_rows(&df, &HashMap::new());
+        let rows = diff_rows(&df, &HashMap::new(), true);
         let heads: Vec<_> = rows.iter().filter(|r| r.kind == 8).collect();
         assert_eq!(heads.len(), 14);
         assert_eq!(heads.iter().filter(|r| r.flag == 1).count(), 12);
@@ -1717,35 +1972,46 @@ mod tests {
         let mut open = HashMap::new();
         open.insert("f0.rs".to_owned(), false);
         open.insert("f13.rs".to_owned(), true);
-        let heads: Vec<_> = diff_rows(&df, &open).into_iter().filter(|r| r.kind == 8).collect();
+        let heads: Vec<_> = diff_rows(&df, &open, false).into_iter().filter(|r| r.kind == 8).collect();
         assert_eq!((heads[0].flag, heads[13].flag), (0, 1));
     }
 
     #[test]
-    fn the_terminal_shows_the_end_of_a_long_output_and_how_each_command_ended() {
+    fn the_agents_terminal_shows_the_end_of_a_long_output_and_how_each_command_ended() {
         let long = (0..200).map(|i| format!("line {i}")).collect::<Vec<_>>().join("\n");
         let cmd = |cmd: &str, status: &str, exit: Option<i32>, out: &str| d::TermCommand { id: cmd.into(), turn: 0, cmd: cmd.into(), status: status.into(), exit, ms: Some(2500.0), out: out.into() };
         let t = d::Terminal { commands: vec![cmd("cargo test", "completed", Some(0), &long), cmd("false", "failed", Some(1), ""), cmd("sleep 9", "in_progress", None, "")] };
-        let rows = terminal_rows(&t, 80);
-        let heads: Vec<_> = rows.iter().filter(|r| r.kind == 12).map(|r| (r.text.as_str(), r.right.as_str(), r.tone, r.flag)).collect();
-        assert_eq!(heads, [("cargo test", "exit 0 · 2.5 s", 1, 0), ("false", "exit 1 · 2.5 s", 2, 0), ("sleep 9", "running", 3, 1)]);
+        let rows = terminal_rows(&t, 80, "Nova");
+        let heads: Vec<_> = rows.iter().filter(|r| r.kind == 27).map(|r| (r.text.as_str(), r.right.as_str(), r.tone, r.flag)).collect();
+        assert_eq!(heads, [("cargo test", "exit 0 · 2.5 s", 7, 0), ("false", "exit 1 · 2.5 s", 2, 0), ("sleep 9", "running", 7, 1)]);
         assert!(rows.iter().any(|r| r.text == "… 120 earlier lines"));
         assert!(rows.iter().any(|r| r.text == "line 199") && !rows.iter().any(|r| r.text == "line 119"));
-        assert!(rows.iter().any(|r| r.text == "No output" && r.tone == 7));
+        assert_eq!(rows[1].text, "What Nova ran in this folder. Read only.");
     }
 
     #[test]
-    fn a_file_shows_its_bar_its_numbered_lines_and_what_it_cannot() {
-        let text = d::FileView::Text { path: "src/a.rs".into(), text: "one\n\ttwo\n".into(), truncated: true, size: 2048 };
-        let rows = file_rows(&text);
-        assert_eq!((rows[0].kind, rows[0].text.as_str(), rows[0].sub.as_str(), rows[0].right.as_str()), (6, "a.rs", "src", "2.0 KB"));
-        assert_eq!((rows[1].num.as_str(), rows[1].text.as_str()), ("1", "one"));
-        assert_eq!((rows[2].num.as_str(), rows[2].text.as_str()), ("2", "    two"));
-        assert_eq!(rows[3].text, "The rest of this file isn’t shown.");
-        assert!(file_rows(&d::FileView::Binary { path: "a.png".into(), size: 10 })[1].text.contains("Binary files"));
-        assert!(file_rows(&d::FileView::Error { path: "x".into(), error: "gone".into() })[1].text.contains("gone"));
+    fn my_commands_are_drawn_as_a_terminal_would() {
+        let line = |t: &str, err| term::Line { text: t.into(), err };
+        let e = |cmd: &str, lines: Vec<term::Line>| term::Entry { cwd: "C:\\work".into(), cmd: cmd.into(), lines, run: term::Run::Done(0, 5), cut: 0 };
+        let rows = mine_rows(&[e("git status", vec![line("clean", false), line("oops", true)]), e("sleep 9", vec![line("^C", false)])], 80);
+        assert_eq!((rows[1].kind, rows[1].text.as_str()), (28, term::banner()));
+        let cmds: Vec<_> = rows.iter().filter(|r| r.kind == 27).map(|r| (r.text.as_str(), r.sub.starts_with(if cfg!(windows) { "PS " } else { "" }))).collect();
+        assert_eq!(cmds, [("git status", true), ("sleep 9", true)]);
+        let out: Vec<_> = rows.iter().filter(|r| r.kind == 28).skip(1).map(|r| (r.text.as_str(), r.tone)).collect();
+        assert_eq!(out, [("clean", 0), ("oops", 2), ("^C", 7)]);
     }
 
+    #[test]
+    fn a_file_shows_its_numbered_lines_and_what_it_cannot() {
+        let text = d::FileView::Text { path: "src/a.rs".into(), text: "one\n\ttwo\n".into(), truncated: true, size: 2048 };
+        let rows = file_rows(&text, None);
+        let lines: Vec<_> = rows.iter().filter(|r| r.kind == 7).collect();
+        assert_eq!((lines[0].num.as_str(), lines[0].text.as_str(), lines[0].act.as_str()), ("1", "one", "open:src/a.rs:1"));
+        assert_eq!((lines[1].num.as_str(), lines[1].text.as_str()), ("2", "    two"));
+        assert_eq!(rows.last().unwrap().text, "The rest of this file isn’t shown.");
+        assert!(file_rows(&d::FileView::Binary { path: "a.png".into(), size: 10 }, None)[0].text.contains("Binary files"));
+        assert!(file_rows(&d::FileView::Error { path: "x".into(), error: "gone".into() }, None)[0].text.contains("gone"));
+    }
     #[test]
     fn helpers_are_listed_with_the_subagents_in_their_states() {
         use hover_agents::orch::{Delivery, Info, RunState};

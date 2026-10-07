@@ -1,14 +1,14 @@
 //! What a session keeps beyond 3.8's record: its workspace (a Git worktree or the folder itself),
-//! and the links the orchestration layer, custom providers and handoffs add. One optional
+//! and the links the orchestration layer, handoffs and (in chats made by earlier versions) worktrees and own agents add. One optional
 //! object, `Ext`, written only when it holds something, so a session that uses none of it is
 //! the bytes 3.8 wrote; a file with an `Ext` reads in 3.8 too (unknown keys are ignored).
 
 use crate::json::{Json, Result};
 use crate::model::{opt_text, text};
 
-/// Where a task works. `path` is the session's folder itself (what the terminal, files, diff,
-/// checkpoints and the editor launcher use); the rest says where it came from, so a removed
-/// checkout can be made again from the saved branch and base.
+/// Where a task worked, as a chat made by an earlier version kept it. Hover makes no worktrees now and starts no chat with
+/// one of these; an old chat keeps its own (and a fork of it). The session's folder is the worktree itself; the rest says
+/// where it came from.
 #[derive(Clone, Debug, PartialEq)]
 pub struct WorkspaceBinding {
     /// `worktree` (made by Hover for this task), `existing` (another task's worktree, by the user's
@@ -24,9 +24,6 @@ pub struct WorkspaceBinding {
 }
 
 impl WorkspaceBinding {
-    pub fn folder(source: &str) -> WorkspaceBinding { WorkspaceBinding { kind: "folder".into(), source: source.into(), branch: None, base: None, base_commit: None } }
-    pub fn is_worktree(&self) -> bool { self.kind == "worktree" }
-
     pub fn to_json(&self) -> Json {
         Json::obj(vec![("Kind", Json::str(&self.kind)), ("Source", Json::str(&self.source)), ("Branch", Json::opt_str_of(self.branch.as_deref())),
             ("Base", Json::opt_str_of(self.base.as_deref())), ("BaseCommit", Json::opt_str_of(self.base_commit.as_deref()))])
@@ -211,9 +208,11 @@ impl TurnExt {
 pub struct SessionExt {
     pub workspace: Option<WorkspaceBinding>,
     pub orch: Option<OrchLink>,
-    /// The custom provider instance that runs this conversation (hover-agents::custom); the session's tool is then `Custom`.
+    /// The id of the own agent that ran this conversation (agents of your own are gone; old chats still name theirs); the session's tool is then `Custom`.
     pub provider: Option<String>,
     pub lineage: Option<Lineage>,
+    /// A name the user typed for the chat. It wins over the title made from the first prompt.
+    pub name: Option<String>,
 }
 
 impl SessionExt {
@@ -225,6 +224,7 @@ impl SessionExt {
         if let Some(o) = &self.orch { props.push(("Orch", o.to_json())); }
         if let Some(p) = &self.provider { props.push(("Provider", Json::str(p))); }
         if let Some(l) = self.lineage.as_ref().filter(|l| !l.is_empty()) { props.push(("Lineage", l.to_json())); }
+        if let Some(n) = &self.name { props.push(("Name", Json::str(n))); }
         Json::obj(props)
     }
 
@@ -236,6 +236,7 @@ impl SessionExt {
             orch: some("Orch").map(OrchLink::from_json).transpose()?,
             provider: opt_text(v.get("Provider"))?,
             lineage: some("Lineage").map(Lineage::from_json).transpose()?,
+            name: opt_text(v.get("Name"))?,
         })
     }
 }
@@ -262,6 +263,7 @@ mod tests {
             lineage: Some(Lineage { fork: Some(Fork { key: "k".into(), turn: 2 }), returned: vec![Returned { from: "k".into(), turn: 2, chars: 40 }],
                 natives: vec![Native { provider: "kiro".into(), id: "acp-1".into(), seen: 2 }], pending: Some("carry this".into()),
                 handoffs: vec![Handoff { turn: 3, from: "kiro".into(), to: "codex".into(), mode: "portable".into(), carried: 2, omitted: 1 }] }),
+            name: Some("My own name".into()),
         };
         assert!(!e.is_empty());
         assert_eq!(SessionExt::from_json(&crate::json::parse(&e.to_json().compact()).unwrap()).unwrap(), e);

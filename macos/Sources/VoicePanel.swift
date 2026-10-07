@@ -96,7 +96,7 @@ final class VoiceModel: ObservableObject {
 enum VoiceRoute {
     static let bots = ["Pip", "Juno", "Moss", "Nova", "Ada", "Rue"]
     // Kiro is a new word to the speech models, which hear it as these.
-    private static let tools: [(String, String)] = [("open ?code", "opencode"), ("kiro|kyro|keiro|keyro|kero|piro|pyro|kira", "kiro"), ("codex|codecs", "codex"), ("cursor", "cursor"), ("claude( code)?|cloud code", "claude")]
+    private static let tools: [(String, String)] = [("open ?code", "opencode"), ("kiro|kyro|keiro|keyro|kero|piro|pyro|kira", "kiro"), ("codex|codecs", "codex"), ("cursor", "cursor"), ("claude( code)?|cloud code", "claude"), ("anti ?gravity|agy", "agy")]
 
     /// A leading "Ask Codex to …", "Codex, …" or "Tell Pip …" picks the agent, and comes off the task.
     static func agent(in text: String, sessions: [VoiceSession]) -> (String, VoiceTarget?) {

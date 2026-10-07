@@ -5,23 +5,24 @@
 use crate::json::{Json, JsonError, Result};
 
 /// Services.AgentTool. New tools go at the end: the names are saved in settings and
-/// history. `Custom` stands for every agent the user added (hover-agents::custom); which one is
-/// in the session's `ext.provider`. `ALL` lists the five Hover ships, which is what every
-/// per-tool list and page goes through.
+/// history. `Custom` stood for every agent the user added (removed since, but old chats still name it); which one was
+/// in the session's `ext.provider`. `ALL` lists the six Hover ships, which is what every
+/// per-tool list and page goes through. Antigravity (Google's agy, id "agy") came after
+/// Custom, so it is last here and in the saved names.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum AgentTool { Kiro, Codex, Cursor, OpenCode, Claude, Custom }
+pub enum AgentTool { Kiro, Codex, Cursor, OpenCode, Claude, Custom, Agy }
 
 impl AgentTool {
-    pub const ALL: [AgentTool; 5] = [AgentTool::Kiro, AgentTool::Codex, AgentTool::Cursor, AgentTool::OpenCode, AgentTool::Claude];
-    const EVERY: [AgentTool; 6] = [AgentTool::Kiro, AgentTool::Codex, AgentTool::Cursor, AgentTool::OpenCode, AgentTool::Claude, AgentTool::Custom];
+    pub const ALL: [AgentTool; 6] = [AgentTool::Kiro, AgentTool::Codex, AgentTool::Cursor, AgentTool::OpenCode, AgentTool::Claude, AgentTool::Agy];
+    const EVERY: [AgentTool; 7] = [AgentTool::Kiro, AgentTool::Codex, AgentTool::Cursor, AgentTool::OpenCode, AgentTool::Claude, AgentTool::Custom, AgentTool::Agy];
     // Claude Code is new in 3.x, so its saved name can be its product's (2.x never wrote one).
-    const NAMES: [&'static str; 6] = ["Kiro", "Codex", "Cursor", "OpenCode", "Claude Code", "Custom"];
+    const NAMES: [&'static str; 7] = ["Kiro", "Codex", "Cursor", "OpenCode", "Claude Code", "Custom", "Antigravity"];
 
     /// Agents.Name: the enum's name.
     pub fn name(self) -> &'static str { Self::NAMES[self as usize] }
-    /// Agents.Id: the name in lower case.
-    pub fn id(self) -> &'static str { ["kiro", "codex", "cursor", "opencode", "claude", "custom"][self as usize] }
-    /// Agents.Parse: the exact id, or none. Only the five Hover ships: a custom agent is named by its own id.
+    /// Agents.Id: the name in lower case (Antigravity's is its command's, "agy").
+    pub fn id(self) -> &'static str { ["kiro", "codex", "cursor", "opencode", "claude", "custom", "agy"][self as usize] }
+    /// Agents.Parse: the exact id, or none. Only the six Hover ships: a custom agent is named by its own id.
     pub fn parse(id: Option<&str>) -> Option<AgentTool> { Self::ALL.into_iter().find(|t| Some(t.id()) == id) }
 
     pub fn to_json(self) -> Json { Json::str(self.name()) }
@@ -221,62 +222,13 @@ impl AcpOption {
     }
 }
 
-/// Open in editor (hover-agents::editor): which editor opens a desk's folder by default, and
-/// the custom editor's program and arguments. `default` is an editor id ("vscode", "zed",
-/// "cursor", "kiro" or "custom"); none means ask each time. `custom_args` is one argument per
-/// line, each a literal with {folder}, {file}, {line} and {column} to fill in: it is never run
-/// through a shell.
-#[derive(Clone, Debug, PartialEq, Default)]
-pub struct EditorSettings { pub default: Option<String>, pub custom_exe: Option<String>, pub custom_args: Option<String> }
-
-impl EditorSettings {
-    pub fn to_json(&self) -> Json {
-        Json::obj(vec![("Default", Json::opt_str_of(self.default.as_deref())), ("CustomExe", Json::opt_str_of(self.custom_exe.as_deref())),
-            ("CustomArgs", Json::opt_str_of(self.custom_args.as_deref()))])
-    }
-
-    pub fn from_json(v: &Json) -> Result<EditorSettings> {
-        v.props()?;
-        Ok(EditorSettings { default: opt_text(v.get("Default"))?, custom_exe: opt_text(v.get("CustomExe"))?, custom_args: opt_text(v.get("CustomArgs"))? })
-    }
-}
-
-/// How far an agent may delegate (hover-agents::orch), set by the user: helpers in all for one task, helpers
-/// working at once, and how deep helpers may delegate in turn (1: only the task itself may).
+/// How far an agent may delegate (hover-agents::orch): helpers in all for one task, helpers working at once, and how
+/// deep helpers may delegate in turn (1: only the task itself may). Fixed; the user no longer sets them.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct DelegationLimits { pub max_helpers: u32, pub max_parallel: u32, pub max_depth: u32 }
 
 impl Default for DelegationLimits {
     fn default() -> Self { DelegationLimits { max_helpers: 6, max_parallel: 2, max_depth: 1 } }
-}
-
-impl DelegationLimits {
-    pub fn to_json(&self) -> Json {
-        Json::obj(vec![("MaxHelpers", Json::int(self.max_helpers as i64)), ("MaxParallel", Json::int(self.max_parallel as i64)), ("MaxDepth", Json::int(self.max_depth as i64))])
-    }
-
-    pub fn from_json(v: &Json) -> Result<DelegationLimits> {
-        v.props()?;
-        let d = DelegationLimits::default();
-        let n = |k: &str, d: u32, hi: u32| -> Result<u32> { Ok(v.get(k).map(Json::i32).transpose()?.map_or(d, |x| x.clamp(0, hi as i32) as u32)) };
-        Ok(DelegationLimits { max_helpers: n("MaxHelpers", d.max_helpers, 50)?, max_parallel: n("MaxParallel", d.max_parallel, 10)?, max_depth: n("MaxDepth", d.max_depth, 4)? })
-    }
-}
-
-/// What runs by itself (hover-agents::sched, webhook, limit): continue a task when its provider's usage limit lifts (the default for a new
-/// limit), the webhook listener's address (off unless set; this computer's own unless `public` is chosen), and whether a new task
-/// works in the project folder itself (`use_folder`) instead of in a worktree of its own, which is the default (workspace.rs).
-#[derive(Clone, Debug, PartialEq, Default)]
-pub struct AutomationSettings { pub auto_resume: bool, pub webhook_addr: Option<String>, pub webhook_public: bool, pub use_folder: bool }
-
-impl AutomationSettings {
-    pub fn to_json(&self) -> Json {
-        Json::obj(vec![("AutoResume", Json::Bool(self.auto_resume)), ("WebhookAddr", Json::opt_str_of(self.webhook_addr.as_deref())), ("WebhookPublic", Json::Bool(self.webhook_public)), ("UseFolder", Json::Bool(self.use_folder))])
-    }
-    pub fn from_json(v: &Json) -> Result<AutomationSettings> {
-        v.props()?;
-        Ok(AutomationSettings { auto_resume: v.get("AutoResume").map(Json::bool).transpose()?.unwrap_or(false), webhook_addr: opt_text(v.get("WebhookAddr"))?, webhook_public: v.get("WebhookPublic").map(Json::bool).transpose()?.unwrap_or(false), use_folder: v.get("UseFolder").map(Json::bool).transpose()?.unwrap_or(false) })
-    }
 }
 
 /// Core.SavedTheme(Name, Dark, Colors): a VS Code theme's few colours, kept.

@@ -5,6 +5,79 @@ What changed in each Hover release. Versions follow [Semantic Versioning](https:
 
 ## [Unreleased]
 
+## [5.0.0] - 2026-10-07
+
+The chat and office redesign, and Antigravity as a sixth agent. The redesign is for Windows and
+Linux. The Mac app and the web office only gain Antigravity's name and logo, and that part has not
+been compiled on a Mac. Not run with a real Kiro account or on Windows by hand.
+
+### Added
+
+- Antigravity (Google's agent) joins Kiro, Codex, Cursor, OpenCode and Claude Code, with its own
+  page in Settings. It needs Google's `agy_acp_server`, and signs in with a Gemini API key or
+  Google's sign-in.
+- OpenCode writes extra lines to `hover.log` (they start with `opencode: [diag]`) so the reason it
+  fails to connect on Linux can be confirmed. This does not fix it. The likely cause is the
+  sandbox, which hides the loopback address OpenCode listens on.
+- Settings → Kiro lists Kiro's MCP servers, from `~/.kiro/settings/mcp.json`, the file the Kiro
+  IDE uses too. Switch a server on or off, edit it, remove it (it asks first) or add one, with a
+  check on each field. A server that failed to start in Kiro's last task says so. Hover changes
+  only what you change and keeps the rest of the file as it was. Values such as keys stay as plain
+  text in that file; Hover keeps no copy.
+- Terminal has two tabs: My commands, which runs your own shell in the chat's folder (it keeps
+  its folder from one command to the next, and Ctrl+C stops a command), and the agent's commands,
+  read only.
+- Files & changes: a Markdown file opens as a preview (switch to its source), any text file can be
+  edited and saved in place, and Open in lists the editors found on this computer, the last used
+  first, then the file manager. The Diff bar has Create PR.
+- In the reply box, `@` adds a file of the folder (its path goes to the agent) and `/` lists the
+  agent's own commands and Hover's own (model, terminal, files, fork).
+
+### Changed
+
+- The chat view's reply box rests as a round button at the chat's corner, like the office card's,
+  and opens on a click or a typed key. Its folder is beside +, and the send button turns into
+  Stop while the agent works. Esc or sending closes it again.
+- The office card has the chat view's header (title, context, ⋯ and ✕), and its ⋯ menu adds
+  Open in chat view. The folder moved into its reply box.
+- The chat's header is one line: the title (click it to rename), the branch, the context, and ⋯.
+  The sidebar groups chats by project folder, and the switch between the office and the chat view
+  is two round icons that stay in the same place.
+- Commands in a chat are one line, "Ran `cmd`", with the exit code and time at the right. A
+  running one has one band of light across the whole line. Your sent prompts have Copy and Edit, a
+  queued reply has Edit and Send now, and links and code blocks can be clicked.
+- The new chat screen is one box for the agent, where it runs, access and model.
+- The model picker shows what each Kiro model costs against Auto (from Kiro's models page), gives
+  Auto no effort, falls back to High when a model lacks the one picked, keeps the effort buttons
+  on one line, and ends with Kiro's auto compact setting.
+- The notch: more room around the logos in the resting island, no "All" button on a question, and
+  the chat view's sidebar folds while a panel is open unless the notch is 1240 wide or more. The
+  Files & changes tabs that this computer can't use (Browser and Screen on Windows and Linux) are
+  hidden, not greyed.
+- The window's title bar has File, Settings and Help menus in place of the logo and name.
+- Voice's aura is now an orb, like Siri's: a dark glass ball with ribbons of light swirling
+  inside. While Hover listens, your voice makes it swell and swirl faster. While Hover works on
+  what you said, it swirls slowly and breathes. Its colours are the Aura colour from Settings →
+  Voice and the hues next to it. The dots and ripples around the old ring are gone.
+
+### Removed
+
+Features the redesign drops. Old files still open: the settings and data they left behind are ignored.
+
+- Agents of your own, and the ACP Registry that found them. A chat you had with one is kept; a
+  reply to it says the agent is gone.
+- Task worktrees. A task works in the folder you give it, as a chat started in a folder does. A
+  writing helper works in its lead's folder. Chats started in a worktree before keep theirs.
+- The default-editor setting and its custom program. Open in editor uses the first editor found
+  (VS Code, Zed, Cursor, Kiro IDE).
+- Helper limits in Settings. Helpers keep the old defaults: 6 in all, 2 at once, no helpers of helpers.
+- Pull request watches.
+- Continue when a limit lifts, and the Retry, Snooze and Cancel notes for a usage limit.
+- Saved tasks (once, on a repeat, or by webhook) and webhooks.
+- The background service (`hoverai --service`). The first start after updating removes the
+  scheduled task (Windows) or systemd user unit (Linux) it left, with one line in `hover.log`.
+- Settings → Automation, which held all of the above.
+
 ## [4.0.0] - 2026-10-06
 
 The chat view, Kiro's daily credits, and text boxes that scroll. Windows and Linux only: the Mac

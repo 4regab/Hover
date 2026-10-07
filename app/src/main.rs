@@ -3,7 +3,6 @@
 //!
 //!   hover                 run
 //!   hover --version       print the version (Cargo.toml's)
-//!   hover --service      the background service: saved tasks, webhooks, watches, with no window
 //!   hover --shots DIR     render every view headless (software renderer) into DIR
 //!   hover --selftest DIR  run on the real display, drive it, and write report.json (X11)
 
@@ -782,9 +781,6 @@ impl view::Host for App {
     fn action(&self, id: &str) {
         APP.with(|a| if let Some(a) = a.borrow().clone() { if id.starts_with("integ.") { a.integ_action(id); } else { a.voice_action(id); } });
     }
-    fn later(&self, work: Box<dyn FnOnce() + Send>) {
-        std::thread::Builder::new().name("settings-work".into()).spawn(move || { work(); ui_do(|a| a.refresh_page(false)); }).ok();
-    }
 }
 
 /// The folder and file pickers: the system's own dialog (IFileDialog on Windows, the
@@ -830,8 +826,6 @@ fn main() {
     // GUI exe has no console: print shows from a terminal that pipes it.)
     if args.iter().any(|a| a == "--version") { println!("Hover {}", env!("CARGO_PKG_VERSION")); return; }
     if let Some(dir) = arg("--shots") { shots::run(std::path::Path::new(&dir)); return; }
-    // The background service: no window, no single-instance claim (it may run beside the app, which takes the timers from it).
-    if args.iter().any(|a| a == "--service") { std::process::exit(hover_app::headless::run()); }
 
     // One notch is the point; two copies of the app is not. A second launch asks the
     // running copy to open its window, then exits.

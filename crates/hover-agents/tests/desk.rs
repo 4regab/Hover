@@ -378,6 +378,38 @@ fn a_binary_file_is_not_shown_and_a_long_one_is_cut() {
     assert!(matches!(d::file_text(&f, Some("utf8.txt")), d::FileView::Text { text, .. } if text == "héllo wörld ✓\r\n"));
 }
 
+#[test]
+fn a_saved_file_stays_inside_the_folder_and_leaves_no_temp_file() {
+    let dir = Dir::new("desk-save");
+    let folder = dir.join("work");
+    std::fs::create_dir_all(folder.join("src")).unwrap();
+    std::fs::write(folder.join("src/a.txt"), "old").unwrap();
+    let outside = dir.join("outside.txt");
+    std::fs::write(&outside, "secret").unwrap();
+    let f = folder.to_string_lossy().into_owned();
+
+    d::write_file(&f, "src/a.txt", "new\r\ntext ✓").unwrap();
+    assert_eq!(std::fs::read_to_string(folder.join("src/a.txt")).unwrap(), "new\r\ntext ✓");
+    let left: Vec<_> = std::fs::read_dir(folder.join("src")).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
+    assert_eq!(left, ["a.txt"], "the temp file was renamed over it");
+
+    // Out of the folder, or not a file that is there, or not text: refused, and nothing is written.
+    for bad in ["../outside.txt", "/etc/passwd", "C:\\Windows\\win.ini", "src/missing.txt", "src"] {
+        assert!(d::write_file(&f, bad, "x").is_err(), "{bad:?}");
+    }
+    std::fs::write(folder.join("bin.dat"), [1u8, 0, 2]).unwrap();
+    assert!(d::write_file(&f, "bin.dat", "x").is_err());
+    std::fs::write(folder.join("latin.txt"), [0x68u8, 0xe9]).unwrap();
+    assert!(d::write_file(&f, "latin.txt", "x").is_err(), "a file that isn't UTF-8 would lose its bytes");
+    assert_eq!(std::fs::read_to_string(&outside).unwrap(), "secret");
+    assert_eq!(std::fs::read(folder.join("latin.txt")).unwrap(), [0x68, 0xe9]);
+    // A link that leads out of the folder is refused too (where links can be made).
+    if link_file(&outside, &folder.join("leak.txt")) {
+        assert!(d::write_file(&f, "leak.txt", "x").is_err());
+        assert_eq!(std::fs::read_to_string(&outside).unwrap(), "secret");
+    }
+}
+
 // MARK: Real repositories
 
 #[test]

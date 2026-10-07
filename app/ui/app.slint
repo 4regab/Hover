@@ -3,7 +3,7 @@
 
 import { Pal, Fonts, Icon, Icons, PillButton, Ring } from "widgets.slint";
 import { LiveMark, MarkStack, StackMark, Mark, Arc } from "marks.slint";
-import { OfficeView, Page, Office, Backdrop, Side, Block, Opt, TagData, ToolData, PanelRow, MOpt } from "office.slint";
+import { OfficeView, BarMenu, Page, Office, Backdrop, Side, Block, Opt, TagData, ToolData, PanelRow, MOpt } from "office.slint";
 import { Desk, DTile, DStep, DTab, DPage, DRow } from "desk.slint";
 export { Pal, Page, Office, Backdrop, Side, Block, Opt, TagData, ToolData, PanelRow, StackMark, Desk, DTile, DStep, DTab, DPage, DRow }
 
@@ -360,7 +360,8 @@ export component NotchWindow inherits Window {
             height: root.rest-h;
             pill := HorizontalLayout {
                 visible: root.rest-kind == 1;
-                x: 4px;
+                // The island's padding is 0 9px 0 11px (notch.rs rest_of and hover-notch's PILL_PAD_RIGHT): the logos don't touch its edges.
+                x: 11px;
                 width: self.preferred-width;
                 alignment: start;
                 spacing: 12px;
@@ -510,10 +511,7 @@ export component NotchWindow inherits Window {
                     HorizontalLayout {
                         Press { text: "Deny"; key: "Esc"; clicked => { root.answer("deny"); } }
                         Rectangle { horizontal-stretch: 1; }
-                        Press { text: "Trust"; key: "Shift+Enter"; r-right: 0; clicked => { root.answer("trust"); } }
-                        Rectangle { width: 1px; }
-                        // More: allow everything this session.
-                        Press { text: "All"; r-left: 0; clicked => { root.answer("trustAll"); } }
+                        Press { text: "Trust"; key: "Shift+Enter"; clicked => { root.answer("trust"); } }
                         Rectangle { width: 8px; }
                         Press { text: root.card.allow; key: "Enter"; kind: root.card.danger ? 2 : 1; clicked => { root.answer("allow"); } }
                     }
@@ -1021,6 +1019,26 @@ component Caption inherits Rectangle {
     ta := TouchArea { clicked => { root.clicked(); } }
 }
 
+// A word of the title bar's menu bar (File, Settings, Help): a quiet button that lights while its menu is out. Moving onto it
+// while another menu is out switches to its own.
+component BarButton inherits Rectangle {
+    in property <string> label;
+    in property <bool> open;
+    callback clicked;
+    callback hovered;
+    height: 26px;
+    width: bt.preferred-width + 18px;
+    border-radius: 6px;
+    background: ta.has-hover || open ? #ffffff0f : transparent;
+    accessible-role: button;
+    accessible-label: label;
+    accessible-action-default => { clicked(); }
+    property <bool> hov: ta.has-hover;
+    changed hov => { if (self.hov) { root.hovered(); } }
+    bt := Text { text: label; font-size: 12.5px; color: ta.has-hover || open ? #f6f2ff : #f6f2ffb0; horizontal-alignment: center; vertical-alignment: center; }
+    ta := TouchArea { mouse-cursor: pointer; clicked => { root.clicked(); } }
+}
+
 export component DashboardWindow inherits Window {
     in property <bool> in-settings;
     in property <bool> is-maximized;
@@ -1034,6 +1052,9 @@ export component DashboardWindow inherits Window {
     // 7 sw, 8 se) it resizes it.
     callback drag();
     callback resize(int);
+    // The title bar's menu that is out: 0 none, 1 File, 2 Settings, 3 Help.
+    in-out property <int> bar: 0;
+    property <length> bar-x;
     title: "Hover";
     // The taskbar's and Alt+Tab's icon while the dashboard shows.
     icon: @image-url("../assets/hover-mark.png");
@@ -1047,20 +1068,22 @@ export component DashboardWindow inherits Window {
     accessible-role: groupbox;
     accessible-id: "HoverDashboard";
     VerticalLayout {
-        // Hover's own title bar: the logo and name, then minimize, maximize, close. The
+        // Hover's own title bar: the File, Settings and Help menus, then minimize, maximize, close. The
         // office fills the window under it, edge to edge.
         if !root.native-frame: Rectangle {
-            height: 34px;
+            height: 36px;
             background: #0b0810;
             TouchArea {
                 pointer-event(e) => { if (e.kind == PointerEventKind.down && e.button == PointerEventButton.left) { root.drag(); } }
                 double-clicked => { root.maximize(); }
             }
+            Rectangle { y: parent.height - 1px; height: 1px; background: #ffffff0f; }
             HorizontalLayout {
-                padding-left: 12px;
-                Image { width: 16px; height: 16px; y: 9px; source: @image-url("../assets/hover-mark.png"); image-rendering: smooth; }
-                Rectangle { width: 8px; }
-                Text { text: "Hover"; font-size: 12px; font-weight: 500; color: #ffffffd9; vertical-alignment: center; }
+                padding-left: 6px;
+                spacing: 1px;
+                VerticalLayout { alignment: center; BarButton { label: "File"; open: root.bar == 1; clicked => { root.bar = root.bar == 1 ? 0 : 1; root.bar-x = self.absolute-position.x; } hovered => { if (root.bar != 0) { root.bar = 1; root.bar-x = self.absolute-position.x; } } } }
+                VerticalLayout { alignment: center; BarButton { label: "Settings"; open: root.bar == 2; clicked => { root.bar = root.bar == 2 ? 0 : 2; root.bar-x = self.absolute-position.x; } hovered => { if (root.bar != 0) { root.bar = 2; root.bar-x = self.absolute-position.x; } } } }
+                VerticalLayout { alignment: center; BarButton { label: "Help"; open: root.bar == 3; clicked => { root.bar = root.bar == 3 ? 0 : 3; root.bar-x = self.absolute-position.x; } hovered => { if (root.bar != 0) { root.bar = 3; root.bar-x = self.absolute-position.x; } } } }
                 Rectangle { horizontal-stretch: 1; }
                 Caption { label: "Minimize"; glyph: "M 0 5 L 10 5"; clicked => { root.minimize(); } }
                 Caption { label: root.is-maximized ? "Restore" : "Maximize"; glyph: root.is-maximized ? "M 0 2 L 8 2 L 8 10 L 0 10 Z M 2 2 L 2 0 L 10 0 L 10 8 L 8 8" : "M 0.5 0.5 L 9.5 0.5 L 9.5 9.5 L 0.5 9.5 Z"; clicked => { root.maximize(); } }
@@ -1074,7 +1097,7 @@ export component DashboardWindow inherits Window {
             if Office.built: FocusScope {
                 focus-on-click: false;
                 key-pressed(e) => {
-                    if (e.text == Key.Escape) { dv.escape(); return accept; }
+                    if (e.text == Key.Escape) { if (root.bar != 0) { root.bar = 0; } else { dv.escape(); } return accept; }
                     reject
                 }
                 dv := OfficeView {
@@ -1084,6 +1107,15 @@ export component DashboardWindow inherits Window {
                 }
             }
         }
+    }
+    // The title bar's menu: a click anywhere else puts it away.
+    if root.bar != 0: TouchArea { clicked => { root.bar = 0; } }
+    if root.bar != 0: BarMenu {
+        which: root.bar;
+        x: root.bar-x;
+        y: 32px;
+        picked => { root.bar = 0; }
+        close-window => { root.close-clicked(); }
     }
     // The resize border, 6 px, where the frame used to be.
     if !root.is-maximized && !root.native-frame: Rectangle {

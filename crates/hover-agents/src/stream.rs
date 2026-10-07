@@ -23,10 +23,10 @@ impl KiroResult {
 }
 
 /// Detail from a run as it goes: a step that started or ended, the context (0 to
-/// 100), the tool's session id, and what a turn cost in the tool's credits, as Kiro
-/// says at its end.
+/// 100), the tool's session id, what a turn cost in the tool's credits, as Kiro
+/// says at its end, and the slash commands the agent lists (name, what it does).
 #[derive(Clone, Debug, PartialEq, Default)]
-pub struct KiroEvent { pub step: Option<KiroStep>, pub context: Option<f64>, pub session_id: Option<String>, pub credits: Option<f64> }
+pub struct KiroEvent { pub step: Option<KiroStep>, pub context: Option<f64>, pub session_id: Option<String>, pub credits: Option<f64>, pub commands: Option<Vec<(String, String)>> }
 
 /// UTF-16 length, as C# counts a string.
 pub(crate) fn units(s: &str) -> usize { s.encode_utf16().count() }
@@ -225,6 +225,15 @@ impl KiroStream {
                 self.think(&t);
             }
             Some("plan") => self.phase = KiroPhase::Planning,
+            // The agent's own slash commands: {"availableCommands":[{"name":"compact","description":"…"}]}.
+            Some("available_commands_update") => {
+                if let Some(Json::Arr(list)) = u.get("availableCommands") {
+                    let cmds: Vec<(String, String)> = list.iter()
+                        .filter_map(|c| Some((s(c, "name")?.trim().trim_start_matches('/').to_owned(), s(c, "description").unwrap_or("").trim().to_owned())))
+                        .filter(|(name, _)| !name.is_empty()).collect();
+                    self.events.push(KiroEvent { commands: Some(cmds), ..Default::default() });
+                }
+            }
             Some("tool_call" | "tool_call_update" | "tool_call_chunk") => {
                 // An update for a tool call that never started here and names nothing is old news: Kiro
                 // sends the results of an earlier conversation like this (67 in a second, seen in a Kiro

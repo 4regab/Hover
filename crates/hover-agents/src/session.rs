@@ -132,6 +132,9 @@ pub struct KiroSession {
     pub asks: Vec<AgentAsk>,
     /// Asked to stop or pause; the turn hasn't ended yet (the tool hasn't said).
     pub stopping: bool,
+    /// The agent's own slash commands (name, what it does), as it last listed them. Not saved:
+    /// the agent lists them again when it starts.
+    pub commands: Vec<(String, String)>,
     /// Goes up with every change to the session: a view that drew it at this number
     /// needn't copy or lay it out again.
     pub rev: u64,
@@ -144,7 +147,7 @@ impl KiroSession {
     /// A new session with no turns (the C# constructor).
     pub fn new(tool: AgentTool) -> KiroSession {
         KiroSession { id: IDS.fetch_add(1, Ordering::SeqCst) + 1, tool, state: KiroState::Idle, phase: KiroPhase::Starting, folder: String::new(), turns: vec![],
-            kiro_id: None, context: None, seat: 0, bot: 0, key: hover_core::guid_n(), deleted: false, access: None, cloud: None, ext: SessionExt::default(), held: false, asks: vec![], stopping: false, rev: 0 }
+            kiro_id: None, context: None, seat: 0, bot: 0, key: hover_core::guid_n(), deleted: false, access: None, cloud: None, ext: SessionExt::default(), held: false, asks: vec![], stopping: false, commands: vec![], rev: 0 }
     }
 
     /// A copy without what only the chat reads: the answers' text, and the steps'
@@ -162,6 +165,7 @@ impl KiroSession {
                 before: t.before.clone(), after: t.after.clone(), uid: t.uid.clone(), chips: t.chips.clone(), switch_to: t.switch_to.clone(),
             }).collect(),
             folder: self.folder.clone(), kiro_id: self.kiro_id.clone(), key: self.key.clone(), access: self.access.clone(), cloud: self.cloud.clone(), ext: self.ext.clone(), asks: self.asks.clone(),
+            commands: self.commands.clone(),
             ..*self
         }
     }
@@ -175,8 +179,8 @@ impl KiroSession {
     pub fn prompt(&self) -> &str { self.turns.first().map_or("", |t| &t.prompt) }
     pub fn result(&self) -> Option<&KiroResult> { self.current().and_then(|t| t.result.as_ref()) }
 
-    /// The prompt's first line, short enough for a label.
-    pub fn title(&self) -> String { crate::stream::clip_to(first_line(self.prompt()), 60) }
+    /// The name the user gave the chat, else the prompt's first line, short enough for a label.
+    pub fn title(&self) -> String { self.ext.name.clone().unwrap_or_else(|| crate::stream::clip_to(first_line(self.prompt()), 60)) }
 
     /// The session as the history keeps it.
     pub fn snapshot(&self, now: Stamp) -> SavedSession {
@@ -234,22 +238,19 @@ impl KiroSession {
 
 fn usable(text: &str, images: &[String]) -> bool { !text.trim().is_empty() || !images.is_empty() }
 
-/// A provider a conversation can move to: a built-in tool, or one of the user's custom agents.
+/// A provider a conversation can move to: one of the tools Hover ships.
 #[derive(Clone, Debug, PartialEq)]
-pub struct Target { pub id: String, pub tool: AgentTool, pub instance: Option<String> }
+pub struct Target { pub id: String, pub tool: AgentTool }
 
 impl Target {
-    /// `kiro`, `codex`, … or `custom:<id>`. Nothing is looked up: whether it is ready is the caller's to know.
+    /// kiro, codex, and so on. Nothing is looked up: whether it is ready is the caller's to know.
     pub fn parse(id: &str) -> Option<Target> {
-        if let Some(c) = id.strip_prefix("custom:").filter(|c| !c.is_empty()) { return Some(Target { id: id.into(), tool: AgentTool::Custom, instance: Some(c.into()) }); }
-        AgentTool::parse(Some(id)).map(|t| Target { id: id.into(), tool: t, instance: None })
+        AgentTool::parse(Some(id)).map(|t| Target { id: id.into(), tool: t })
     }
 }
 
-/// The provider a session is with now, as `Target::parse` names it.
-pub fn provider_id(s: &KiroSession) -> String {
-    match (&s.tool, &s.ext.provider) { (AgentTool::Custom, Some(c)) => format!("custom:{c}"), (t, _) => t.id().to_owned() }
-}
+/// The provider a session is with now, as Target::parse names it.
+pub fn provider_id(s: &KiroSession) -> String { s.tool.id().to_owned() }
 
 /// What a provider switch did.
 #[derive(Clone, Debug, PartialEq)]
@@ -334,7 +335,6 @@ struct Inner { all: Vec<Slot>, selected: Option<i32> }
 type Changed = Arc<dyn Fn() + Send + Sync>;
 type Ended = Arc<dyn Fn(&KiroSession, &KiroResult) + Send + Sync>;
 type Stopped = Arc<dyn Fn(&KiroSession) + Send + Sync>;
-type CustomRunner = Arc<dyn Fn(&str) -> Option<RunTask> + Send + Sync>;
 
 struct Shared {
     inner: Mutex<Inner>,
@@ -346,8 +346,6 @@ struct Shared {
     checkpoints: Mutex<Option<Arc<Checkpoints>>>,
     /// Called when a run is asked to stop (Stop, Pause, delete, quit).
     stops: Mutex<Vec<Stopped>>,
-    /// The runner of a custom agent, by its id (custom.rs). Without one, a custom conversation says its agent isn't set up.
-    custom: Mutex<Option<CustomRunner>>,
     /// Where auto compact's percent comes from (None while it is off); without one, settings.json.
     compact: Mutex<Option<Arc<dyn Fn() -> Option<u8> + Send + Sync>>>,
     /// Whether a Kiro turn stopped by a busy model is continued (None while unset; the setting is then read from settings.json).
@@ -371,7 +369,7 @@ impl KiroSessions {
     pub fn with_clock(make: impl Fn(AgentTool) -> RunTask + Send + Sync + 'static, history: Option<Arc<AgentHistory>>,
         now: impl Fn() -> Stamp + Send + Sync + 'static) -> KiroSessions {
         KiroSessions(Arc::new(Shared { inner: Mutex::new(Inner { all: vec![], selected: None }), make: Box::new(make), history, now: Box::new(now),
-            changed: Mutex::new(vec![]), ended: Mutex::new(vec![]), checkpoints: Mutex::new(None), stops: Mutex::new(vec![]), custom: Mutex::new(None), compact: Mutex::new(None), retry_busy: Mutex::new(None), limit: AtomicUsize::new(MAX_RUNNING) }))
+            changed: Mutex::new(vec![]), ended: Mutex::new(vec![]), checkpoints: Mutex::new(None), stops: Mutex::new(vec![]), compact: Mutex::new(None), retry_busy: Mutex::new(None), limit: AtomicUsize::new(MAX_RUNNING) }))
     }
 
     /// Kiro's auto compact: `at` says, at each prompt, the context percent that calls for a
@@ -391,17 +389,11 @@ impl KiroSessions {
 
     /// Any session changed, or one came or went. Off any thread.
     pub fn on_changed(&self, f: impl Fn() + Send + Sync + 'static) { self.0.changed.lock().unwrap().push(Arc::new(f)); }
-    /// Where a custom agent's runner comes from (custom.rs), by the agent's id.
-    pub fn set_custom(&self, f: impl Fn(&str) -> Option<RunTask> + Send + Sync + 'static) { *self.0.custom.lock().unwrap() = Some(Arc::new(f)); }
-
-    /// The runner for a new or woken session: its tool's, or its custom agent's.
-    fn run_for(&self, tool: AgentTool, provider: Option<&str>) -> RunTask {
+    /// The runner for a new or woken session. A chat with an agent of the user's own (gone from Hover) is kept
+    /// for reading; a reply to it says so.
+    fn run_for(&self, tool: AgentTool) -> RunTask {
         if tool != AgentTool::Custom { return (self.0.make)(tool); }
-        let f = self.0.custom.lock().unwrap().clone();
-        match provider.and_then(|p| f.as_ref().and_then(|f| f(p))) {
-            Some(r) => r,
-            None => Arc::new(|_| KiroResult::new(KiroState::Failed, "This conversation’s agent isn’t set up any more. Add it again in Settings → Agents to carry on; the conversation is kept.")),
-        }
+        Arc::new(|_| KiroResult::new(KiroState::Failed, "This conversation's agent was one of your own, and Hover no longer has agents of your own. The conversation is kept; switch it to another agent to carry on."))
     }
 
     /// A run was asked to stop (Stop or Pause, a delete, Hover quitting), with the lock released. Off any thread.
@@ -427,6 +419,12 @@ impl KiroSessions {
         self.save(&snap);
         self.raise(vec![Note::Changed]);
         true
+    }
+
+    /// Gives a session a name of the user's own. An empty one changes nothing. False when it isn't at a desk.
+    pub fn rename(&self, key: &str, name: &str) -> bool {
+        let name = crate::stream::clip_to(name.trim(), 80);
+        !name.is_empty() && self.update_ext(key, |e| e.name = Some(name))
     }
 
     /// The session with this lasting key, if it is at a desk.
@@ -499,7 +497,7 @@ impl KiroSessions {
         self.start_bound(tool, folder, prompt, images, access, cloud, SessionExt::default())
     }
 
-    /// start_in, in the workspace `ext` names (workspace.rs: `folder` is then the task's worktree). None
+    /// start_in, with the links `ext` names (a chat made by an earlier version may still name its worktree). None
     /// also while a checkpoint restore holds that folder.
     #[allow(clippy::too_many_arguments)]
     pub fn start_bound(&self, tool: AgentTool, folder: &str, prompt: &str, images: Vec<String>, access: Option<&str>, cloud: Option<Vec<String>>, ext: SessionExt) -> Option<KiroSession> {
@@ -515,7 +513,7 @@ impl KiroSessions {
         s.ext = ext;
         s.turns.push(KiroTurn::new(prompt.trim(), images));
         let id = s.id;
-        let run = self.run_for(tool, s.ext.provider.as_deref());
+        let run = self.run_for(tool);
         g.all.push(Slot::new(s, run));
         let begun = self.begin(&mut g, id);
         g.selected = Some(id);
@@ -552,12 +550,12 @@ impl KiroSessions {
         lin.handoffs.push(Handoff { turn: done, from, to: to.id.clone(), mode: mode.into(), carried: carry.as_ref().map_or(0, |c| c.carried), omitted: carry.as_ref().map_or(0, |c| c.omitted) });
         lin.pending = carry.as_ref().map(|c| c.text.clone()).filter(|t| !t.is_empty());
         slot.s.tool = to.tool;
-        slot.s.ext.provider = to.instance.clone();
+        slot.s.ext.provider = None;
         slot.s.ext.lineage = Some(lin);
         slot.s.kiro_id = id;
         slot.s.context = None;
         slot.usage = None;
-        slot.run = self.run_for(to.tool, to.instance.as_deref());
+        slot.run = self.run_for(to.tool);
         slot.s.rev += 1;
         Ok(Switched { mode, carried: carry.as_ref().map_or(0, |c| c.carried), omitted: carry.as_ref().map_or(0, |c| c.omitted), notes: carry.map_or(vec![], |c| c.notes) })
     }
@@ -591,22 +589,22 @@ impl KiroSessions {
         copy.turns.truncate(turn + 1);
         for t in &mut copy.turns { (t.before, t.after) = (None, None); }
         (copy.tool, copy.acp_id, copy.context, copy.folder, copy.cloud) = (to.tool, None, None, folder.into(), None);
-        copy.ext = SessionExt { workspace, provider: to.instance.clone(), orch: None, lineage: None };
+        copy.ext = SessionExt { workspace, provider: None, orch: None, lineage: None, name: None };
         let mut s = KiroSession::new(to.tool);
         s.restore(&copy);
-        let from = { let mut probe = KiroSession::new(src.tool); probe.ext.provider = src.ext.provider.clone(); provider_id(&probe) };
+        let from = src.tool.id().to_owned();
         let carry = crate::handoff::portable(&s.turns, 0, crate::handoff::BUDGET, &copy.key,
             &format!("This conversation is a fork of another, taken after turn {}. It was with {from}; you ({}) are carrying it on from that point. You have none of it in memory; this is an account of it.", turn + 1, to.id))?;
         s.ext.lineage = Some(Lineage { fork: Some(Fork { key: key.into(), turn }), pending: Some(carry.text).filter(|t| !t.is_empty()),
             handoffs: if from != to.id { vec![Handoff { turn: turn + 1, from, to: to.id.clone(), mode: "portable".into(), carried: carry.carried, omitted: carry.omitted }] } else { vec![] }, ..Default::default() });
-        s.ext.provider = to.instance.clone();
+        s.ext.provider = None;
         s.held = false;
         let snap = {
             let mut g = self.0.inner.lock().unwrap();
             if !Self::free_desk(&mut g) { return Err("Every desk is busy. Finish or dismiss a task first.".into()); }
             Self::seat(&g, &mut s);
             let snap = s.clone();
-            let run = self.run_for(to.tool, to.instance.as_deref());
+            let run = self.run_for(to.tool);
             g.all.push(Slot::new(s, run));
             g.selected = Some(snap.id);
             snap
@@ -808,7 +806,7 @@ impl KiroSessions {
         s.restore(&saved);
         Self::seat(&g, &mut s);
         let snap = s.clone();
-        let run = self.run_for(saved.tool, saved.ext.provider.as_deref());
+        let run = self.run_for(saved.tool);
         g.all.push(Slot::new(s, run));
         drop(g);
         self.raise(vec![Note::Changed]);
@@ -1363,6 +1361,7 @@ fn go(me: Weak<Shared>, id: i32, ti: usize, run: RunTask, ct: Cancel, cp: Option
             }
             if let Some(c) = e.context { slot.s.context = Some(c); slot.usage = Some(c); }
             if let Some(c) = e.credits { slot.s.turns[ti].credits = Some(c); }
+            if let Some(c) = e.commands { slot.s.commands = c; }
             if let Some(step) = e.step {
                 let t = &mut slot.s.turns[ti];
                 match t.steps.iter().position(|x| x.id == step.id) { Some(i) => t.steps[i] = step, None => t.steps.push(step) }
@@ -1462,10 +1461,6 @@ fn go(me: Weak<Shared>, id: i32, ti: usize, run: RunTask, ct: Cancel, cp: Option
             next = false;
             slot.s.held = true;
         } else if next && !pausing && (r.state == KiroState::Cancelled || r.unconfirmed) {
-            slot.s.held = true;
-            next = false;
-        } else if next && r.state == KiroState::Failed && crate::limit::detect(&r.text, Stamp::now().unix_ms(), 0).is_some() {
-            // The provider's usage ran out: what waits would only meet the same wall, so it is held until the task is continued.
             slot.s.held = true;
             next = false;
         }

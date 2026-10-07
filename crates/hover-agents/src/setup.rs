@@ -57,7 +57,8 @@ pub struct SandboxNeeds { pub srt_missing: bool, pub rg_missing: bool }
 
 /// What a tool still needs, in order; empty when everything is there.
 pub fn plan(t: AgentTool) -> Vec<Step> {
-    let has = |n: &str| on_path(n).is_some();
+    // Antigravity's server is unpacked into a folder of its own, not put on PATH.
+    let has = |n: &str| on_path(n).is_some() || (n == "agy_acp_server.par" && crate::agents::exe(AgentTool::Agy).is_some());
     let sandbox = crate::sandbox::wanted().then(|| SandboxNeeds {
         srt_missing: crate::sandbox::exe().is_none(),
         rg_missing: !has("rg") && !Path::new("/opt/homebrew/bin/rg").is_file() && !Path::new("/usr/local/bin/rg").is_file(),
@@ -79,8 +80,17 @@ pub fn plan_with(t: AgentTool, has: &dyn Fn(&str) -> bool, sandbox: Option<Sandb
         AgentTool::OpenCode => if !has("opencode") { steps.push(Step::new("Installing OpenCode", "curl -fsSL https://opencode.ai/install | bash")); },
         // Not in 2.x's macOS build.
         AgentTool::Claude => if !has("claude") { steps.push(Step::new("Installing Claude Code", "curl -fsSL https://claude.ai/install.sh | bash")); },
-        // A custom agent is set up in Settings → Agents, by its own record.
+        // Only old chats have this tool (an agent of the user's own, gone from Hover); there is nothing to set up.
         AgentTool::Custom => {}
+        // Google's ACP server for Antigravity (agents.rs), unpacked where Hover looks for it.
+        AgentTool::Agy => if !has("agy_acp_server.par") {
+            let v = crate::agents::AGY_ACP_VERSION;
+            let dir = quote(&crate::agents::agy_acp_dir().to_string_lossy());
+            steps.push(Step { title: "Installing Antigravity’s ACP server".into(), command: format!(
+                "a=$([ \"$(uname -m)\" = arm64 ] && echo arm64 || echo x86_64); z=$(mktemp -t agy-acp).zip; \
+                 curl -fL -o \"$z\" https://dl.google.com/agy-extensions/releases/macos/agy-acp-server-{v}-darwin-$a.zip && \
+                 mkdir -p {dir} && unzip -o -q \"$z\" -d {dir}; rm -f \"$z\"") });
+        },
     }
     let node = Step::new("Installing Node.js", "brew install node");
     if !packages.is_empty() {
@@ -110,6 +120,8 @@ pub fn sign_in_command(t: AgentTool) -> &'static str {
         AgentTool::OpenCode => "opencode auth login",
         AgentTool::Claude => "claude auth login",
         AgentTool::Custom => "",
+        // No command: the server runs Google's sign-in itself at its first task (acp.rs).
+        AgentTool::Agy => "",
     }
 }
 

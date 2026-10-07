@@ -138,7 +138,7 @@ fn chat_fixture(a: &RunArgs, hold: &Arc<std::sync::Mutex<bool>>) -> Option<KiroR
     use hover_agents::stream::KiroEvent;
     use hover_core::model::KiroStep;
     let p = a.prompt.as_str();
-    let kind = ["second monitor", "taskbar is at the top", "every monitor setup", "release build", "whole notch", "usage limit shot"].iter().position(|k| p.contains(k))?;
+    let kind = ["second monitor", "taskbar is at the top", "every monitor setup", "release build", "whole notch", "linker fails"].iter().position(|k| p.contains(k))?;
     let ev = |s: KiroStep| (a.events)(KiroEvent { step: Some(s), ..Default::default() });
     let st = |id: &str, kind: &str, title: &str, target: Option<&str>, status: &str| KiroStep::new(id, kind, title, target.map(Into::into), status);
     let think = |id: &str, text: &str, ms: Option<f64>| KiroStep { output: Some(text.into()), ms, ..st(id, "thought", "Thinking", None, if ms.is_some() { "completed" } else { "in_progress" }) };
@@ -189,7 +189,15 @@ fn chat_fixture(a: &RunArgs, hold: &Arc<std::sync::Mutex<bool>>) -> Option<KiroR
             wait();
             done("Built.")
         }
-        5 => Some(KiroResult::new(KiroState::Failed, "Usage limit reached. Try again in 2 hours.")),
+        5 => {
+            // A command that passed, one that failed and one still running (the mockup's #working).
+            ev(KiroStep { exit: Some(0), ms: Some(300.0), output: Some("Switched to branch 'main'\nYour branch is behind 'origin/main' by 17 commits, and can be fast-forwarded.".into()), ..st("x1", "execute", "Run", Some("git switch main"), "completed") });
+            ev(KiroStep { exit: Some(101), ms: Some(4200.0), output: Some("   Compiling hover v4.0.0\nerror: linker `link.exe` not found\n  = note: the msvc targets depend on the msvc linker but `link.exe` was not found".into()), ..st("x2", "execute", "Run", Some("cargo build --release --target i686-pc-windows-msvc"), "failed") });
+            ev(st("x3", "execute", "Run", Some("git merge --ff-only origin/main"), "in_progress"));
+            wait();
+            if a.ct.is_cancelled() { return Some(KiroResult::new(KiroState::Cancelled, "Stopped.")); }
+            done("The 32-bit build needs the MSVC linker, which isn't installed.")
+        }
         _ => done(&format!("## The whole notch, start to end\n\n{}\n\nThe one path that matters: https://example.com/a/very/long/link/that/does/not/break/anywhere/because/it/is/one/word/{}\n\n```rust\nlet placed = place(hwnd, monitor, scale, work_area, taskbar_edge, auto_hide, animations_on, reduced_motion, office_size);\n```\n\n{}",
             "The notch is one window, as wide as the main display, that never resizes while it opens: the shape grows from its resting size to the office by animating one openness value. ".repeat(4),
             "x".repeat(60), "Every step is drawn by the same painter, so a long answer scrolls as one thread and a selection runs across all of it. ".repeat(3))),
@@ -204,6 +212,15 @@ fn key(w: &Rc<MinimalSoftwareWindow>, ctrl: bool, k: slint::platform::Key) {
     w.window().dispatch_event(E::KeyPressed { text: k.into() });
     w.window().dispatch_event(E::KeyReleased { text: k.into() });
     if ctrl { w.window().dispatch_event(E::KeyReleased { text: Key::Control.into() }); }
+}
+
+/// A letter with Ctrl held (Ctrl+S, Ctrl+L), as the keyboard sends it.
+fn ctrl_letter(w: &Rc<MinimalSoftwareWindow>, c: &str) {
+    use slint::platform::{Key, WindowAdapter as _, WindowEvent as E};
+    w.window().dispatch_event(E::KeyPressed { text: Key::Control.into() });
+    w.window().dispatch_event(E::KeyPressed { text: c.into() });
+    w.window().dispatch_event(E::KeyReleased { text: c.into() });
+    w.window().dispatch_event(E::KeyReleased { text: Key::Control.into() });
 }
 
 /// Characters typed into whatever has the keyboard focus in the window.
@@ -405,6 +422,30 @@ fn chat_shots(app: &Rc<App>, hover: &Arc<hover_app::app::Hover>, dir: &Path, fol
         save_office(&notch, full, &dir.join(format!("chat-{tag}-cloud-chip.png")));
         app.close_drawer();
     }
+    // Commands as the mockup draws them (#working): one that passed, one that failed and one
+    // still running, folded under the summary line and then with the timeline open.
+    *hold_c.lock().unwrap() = true;
+    let cmds = start(AgentTool::Codex, "The linker fails on the 32-bit build. Build it, then merge main.");
+    if let Some(id) = cmds { until(&|| hover.sessions.get(id).is_some_and(|s| s.turns.first().is_some_and(|t| t.steps.len() >= 3))); }
+    for (ws, tag) in [(hover_core::model::WorkspaceSize::Small, "small"), (hover_core::model::WorkspaceSize::Default, "default")] {
+        hover.settings.set_workspace_size(ws);
+        view::Host::settings_changed(&**app);
+        app.office_follow();
+        app.office_push();
+        settle(1500);
+        let full = { let n = app.n.borrow(); (n.win.width() as u32, n.win.height() as u32) };
+        if let Some(id) = cmds { app.open_session(id); }
+        settle(1200);
+        save_office(&notch, full, &dir.join(format!("chat-{tag}-commands-live.png")));
+        let turns = app.page_turns();
+        if let Some(mut c) = app.page_thread() { c.toggle_steps(&turns, 0); }
+        app.office_widgets();
+        settle(1200);
+        save_office(&notch, full, &dir.join(format!("chat-{tag}-commands-timeline.png")));
+        app.close_drawer();
+    }
+    *hold_c.lock().unwrap() = false;
+    run_for(600);
 }
 
 /// Expand chat (#41): each kind of chat in the small drawer in the app window (before), then
@@ -511,6 +552,7 @@ fn expand_shots(app: &Rc<App>, hover: &Arc<hover_app::app::Hover>, dir: &Path, f
 /// reply bar at rest and grown, the list hidden, a narrow window, and the notch. It is kept in
 /// the settings, so it is switched off again at the end and the office shots after it are as before.
 fn chat_view_shots(app: &Rc<App>, hover: &Arc<hover_app::app::Hover>, dir: &Path) {
+    use slint::Model as _;
     let dash = adapter(1);
     let settle = |ms: u64| {
         let t = std::time::Instant::now();
@@ -531,6 +573,30 @@ fn chat_view_shots(app: &Rc<App>, hover: &Arc<hover_app::app::Hover>, dir: &Path
     assert!(hover.settings.chat_view() && g!().get_d_wide(), "the switch turned the chat view on, and it is kept");
     assert_eq!(app.page.shown.get(), Some(false), "the office draws nothing under the chat view");
     shot("home");
+    // The start box's menus: the agent, where a Kiro task runs, the project, and what it may do.
+    hover_agents::agents::seed(AgentTool::Kiro, hover_agents::agents::AgentReady { installed: true, signed_in: true, hint: String::new() });
+    app.office_widgets();
+    settle(300);
+    g!().set_start_menu(2);
+    settle(300);
+    shot("home-agent-menu");
+    g!().set_start_menu(3);
+    settle(300);
+    shot("home-where-menu");
+    g!().invoke_open_folders();
+    g!().set_start_menu(1);
+    settle(300);
+    shot("home-project-menu");
+    g!().set_start_menu(0);
+    g!().invoke_open_access();
+    settle(300);
+    shot("home-access-menu");
+    g!().invoke_open_access();
+    g!().invoke_toggle_cloud();
+    settle(300);
+    shot("home-cloud");
+    g!().invoke_toggle_cloud();
+    settle(300);
     g!().set_new_draft("Fix the login redirect: after signing in it should go back to the page you were on, not the home page.".into());
     settle(400);
     shot("home-typed");
@@ -542,9 +608,86 @@ fn chat_view_shots(app: &Rc<App>, hover: &Arc<hover_app::app::Hover>, dir: &Path
         settle(1200);
         assert!(g!().get_d_wide(), "a chat opens in the chat view");
         shot("chat");
+        // The header: the title being renamed, ⋯ open with its lists, and a name typed in.
+        let before = hover.sessions.get(id).expect("the chat").title();
+        g!().set_d_renaming(true);
+        settle(300);
+        shot("header-renaming");
+        g!().set_d_renaming(false);
+        g!().invoke_d_menu_open();
+        g!().set_d_menu(true);
+        settle(300);
+        shot("header-menu");
+        g!().set_d_fly(1);
+        settle(300);
+        shot("header-menu-open-in");
+        g!().set_d_fly(2);
+        settle(300);
+        shot("header-menu-switch");
+        g!().set_d_menu(false);
+        g!().invoke_d_rename("".into());
+        assert_eq!(hover.sessions.get(id).expect("the chat").title(), before, "an empty name keeps the title");
+        g!().invoke_d_rename("A name I typed".into());
+        settle(400);
+        assert_eq!(hover.sessions.get(id).expect("the chat").title(), "A name I typed", "the typed name is the title");
+        assert_eq!(g!().get_d_title().as_str(), "A name I typed", "the header shows it");
+        assert!(g!().get_list().iter().any(|r| r.text.as_str() == "A name I typed"), "the sidebar row shows it");
+        // It is kept in the history too, so the saved row and a later wake-up carry it.
+        let key = hover.sessions.get(id).expect("the chat").key;
+        let t = std::time::Instant::now();
+        while t.elapsed() < Duration::from_secs(3) && !hover.history.as_ref().is_some_and(|h| h.entries().iter().any(|e| e.key == key && e.title == "A name I typed")) { settle(100); }
+        assert!(hover.history.as_ref().is_some_and(|h| h.entries().iter().any(|e| e.key == key && e.title == "A name I typed")), "the typed name is saved in the history");
+        shot("header-renamed");
+        // The branch and the context chips (the fixture's folder has no branch, and no context yet).
+        g!().set_d_branch("main".into());
+        g!().set_d_ctx(11.0);
+        settle(200);
+        shot("header-chips");
+        // A folder folds its chats, and unfolds them.
+        let rows = g!().get_list().row_count();
+        g!().invoke_list_fold(0);
+        settle(300);
+        assert!(g!().get_list().row_count() < rows && slint::Model::row_data(&g!().get_list(), 0).is_some_and(|r| r.head && r.shut), "a folded folder shows its row only");
+        shot("sidebar-folded");
+        g!().invoke_list_fold(0);
+        settle(300);
+        assert_eq!(g!().get_list().row_count(), rows, "unfolded, the chats are back");
+        // The title bar's menus.
+        for (n, name) in [(1, "file"), (2, "settings"), (3, "help")] {
+            app.dash.borrow().as_ref().expect("the app window").set_bar(n);
+            settle(300);
+            shot(&format!("bar-{name}"));
+        }
+        app.dash.borrow().as_ref().expect("the app window").set_bar(0);
+        // The reply box: a circle at rest (a dot once there is a draft), opened by a click; the folder beside +.
+        assert!(!g!().get_d_compose(), "the reply box rests as a circle");
+        g!().set_d_draft("A reply I have not sent".into());
+        settle(300);
+        shot("chat-rest-draft");
+        g!().set_d_compose(true);
         g!().set_d_draft("First line of a longer reply.\nA second line.\nAnd a third, so the bar grows to fit what is written.".into());
         settle(400);
         shot("chat-long-draft");
+        // The list over the box: @ lists files, / lists commands (the agent's own, and Hover's).
+        g!().set_d_draft("Look at @app".into());
+        g!().invoke_pop_text("Look at @app".into(), 12);
+        settle(400);
+        shot("chat-pop-files");
+        g!().invoke_pop_close();
+        g!().set_d_draft("/".into());
+        g!().invoke_pop_text("/".into(), 1);
+        settle(400);
+        assert!(g!().get_pop_pickable(), "Hover's commands are always there to pick");
+        shot("chat-pop-commands");
+        g!().invoke_pop_close();
+        // The model picker, from the box.
+        g!().set_d_draft("".into());
+        g!().invoke_open_model(1, 600.0, 500.0);
+        settle(400);
+        shot("chat-model-menu");
+        g!().invoke_open_model(0, 0.0, 0.0);
+        g!().set_d_compose(false);
+        settle(300);
         g!().set_d_draft("".into());
         g!().set_list_open(false);
         settle(500);
@@ -586,9 +729,8 @@ fn chat_view_shots(app: &Rc<App>, hover: &Arc<hover_app::app::Hover>, dir: &Path
     shot("back-to-office");
 }
 
-/// A task started from the new-task box in a real Git project gets a worktree of its own (#31): the box
-/// says so first, the session then works in the worktree on a new branch, and the project folder is untouched.
-fn workspace_shots(app: &Rc<App>, hover: &Arc<hover_app::app::Hover>, dir: &Path) {
+/// A task started from the new-task box with the Helpers switch on works in the project folder itself, and may ask others for help.
+fn new_task_shots(app: &Rc<App>, hover: &Arc<hover_app::app::Hover>, dir: &Path) {
     let dash = adapter(1);
     let settle = |ms: u64| {
         let t = std::time::Instant::now();
@@ -600,39 +742,30 @@ fn workspace_shots(app: &Rc<App>, hover: &Arc<hover_app::app::Hover>, dir: &Path
         }
     };
     hover_agents::agents::seed(AgentTool::Kiro, hover_agents::agents::AgentReady { installed: true, signed_in: true, hint: String::new() });
-    let repo = std::env::temp_dir().join(format!("hover-ws-shot-{}", std::process::id()));
+    let repo = std::env::temp_dir().join(format!("hover-new-task-shot-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&repo);
     std::fs::create_dir_all(&repo).expect("the project folder");
     std::fs::write(repo.join("a.txt"), "one\n").unwrap();
-    let git = |args: &[&str]| { let o = std::process::Command::new("git").args(["-c", "user.name=t", "-c", "user.email=t@t", "-c", "init.defaultBranch=main"]).args(args).current_dir(&repo).output().expect("git runs"); assert!(o.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&o.stderr)); };
-    git(&["init", "-q"]);
-    git(&["add", "."]);
-    git(&["commit", "-q", "-m", "first"]);
     let folder = repo.to_string_lossy().into_owned();
     app.notch.global::<Office>().invoke_toggle_helpers();
     app.shot_new_task(&folder, "The whole notch, explained once more.", false);
-    settle(2500);
-    save(&dash, (1200, 720), 1.0, [0, 0, 0], &dir.join("workspace-plan.png"));
+    settle(500);
+    save(&dash, (1200, 720), 1.0, [0, 0, 0], &dir.join("new-task-box.png"));
     app.shot_new_task(&folder, "The whole notch, explained once more.", true);
     let t = std::time::Instant::now();
-    let mine = || hover.sessions.all().into_iter().find(|s| s.folder.contains("worktrees"));
+    let mine = || hover.sessions.all().into_iter().find(|s| s.folder == folder);
     while t.elapsed() < Duration::from_secs(20) && mine().is_none() { settle(100); }
-    let s = mine().unwrap_or_else(|| panic!("the task started in a worktree; sessions: {:?}; running {}; can start {}; toast {:?}", hover.sessions.all().iter().map(|s| (s.folder.clone(), s.busy())).collect::<Vec<_>>(), hover.sessions.running(), hover.sessions.can_start(), app.dash.borrow().as_ref().map(|d| d.global::<Office>().get_toast().to_string())));
-    assert!(s.ext.orch.as_ref().is_some_and(|l| l.delegation), "the Helpers switch was on: the task may ask others for help");
-    let b = s.ext.workspace.clone().expect("the task has a workspace");
-    assert!(b.is_worktree(), "a worktree of its own, not {:?}", b.kind);
-    assert_ne!(s.folder, folder, "not the project folder");
-    assert!(Path::new(&s.folder).join(".git").exists(), "the worktree is there");
-    assert_eq!(b.source, std::fs::canonicalize(&repo).unwrap().to_string_lossy().trim_start_matches("\\\\?\\"), "cut from the project");
-    println!("workspace: task runs in {} on {:?}", s.folder, b.branch);
+    let s = mine().unwrap_or_else(|| panic!("the task started in the project folder; sessions: {:?}; running {}; can start {}; toast {:?}", hover.sessions.all().iter().map(|s| (s.folder.clone(), s.busy())).collect::<Vec<_>>(), hover.sessions.running(), hover.sessions.can_start(), app.dash.borrow().as_ref().map(|d| d.global::<Office>().get_toast().to_string())));
+    // The Helpers switch is offered only where the host can serve helpers (orch::mcp_supported: not on Windows yet).
+    assert_eq!(s.ext.orch.as_ref().is_some_and(|l| l.delegation), hover_agents::orch::mcp_supported(), "the Helpers switch was on where it is offered: the task may ask others for help");
+    assert!(s.ext.workspace.is_none(), "no worktree or other workspace was made for it");
+    println!("new task: runs in {}", s.folder);
     app.close_drawer();
-    let _ = std::process::Command::new("git").args(["worktree", "prune"]).current_dir(&repo).output();
     let _ = std::fs::remove_dir_all(&repo);
 }
 
 /// The chat's note strip and its More menu (#35, #36, #39), pressed through the buttons' own callbacks: a
-/// usage limit (continue at the reset, cancel), replies held after Stop (send them), and continue with
-/// another agent, fork, and bring findings back.
+/// replies held after Stop (send them), and continue with another agent, fork, and bring findings back.
 fn chat_action_shots(app: &Rc<App>, hover: &Arc<hover_app::app::Hover>, dir: &Path, folder: &str, hold_c: &Arc<std::sync::Mutex<bool>>) {
     use slint::Model;
     let dash = adapter(1);
@@ -651,24 +784,6 @@ fn chat_action_shots(app: &Rc<App>, hover: &Arc<hover_app::app::Hover>, dir: &Pa
     if let Some(d) = &*app.dash.borrow() { d.set_in_settings(false); }
     app.dash_settings.set(false);
     app.refresh_page(false);
-
-    // A usage limit: the note says when it lifts; Continue at the reset arms it; Cancel takes it away.
-    let lim = hover.sessions.start(AgentTool::Kiro, folder, "A usage limit shot.", vec![]).map(|s| s.id).expect("the limited task starts");
-    until(&|| hover.sessions.get(lim).is_some_and(|s| !s.busy()));
-    let key = hover.sessions.get(lim).unwrap().key;
-    app.open_session(lim);
-    settle(800);
-    assert!(hover.limits.of(&key).is_some(), "the limit was noticed");
-    assert!(g!().get_d_note().contains("Usage limit") && g!().get_d_note().contains("It lifts at"), "the note: {}", g!().get_d_note());
-    save(&dash, (1200, 720), 1.0, [0, 0, 0], &dir.join("chat-limit-note.png"));
-    g!().invoke_d_note_act(0);
-    settle(400);
-    assert!(matches!(hover.limits.of(&key).map(|l| l.mode), Some(hover_agents::limit::Mode::Auto)), "armed");
-    assert!(g!().get_d_note().contains("continues this task after"), "the note: {}", g!().get_d_note());
-    save(&dash, (1200, 720), 1.0, [0, 0, 0], &dir.join("chat-limit-armed.png"));
-    g!().invoke_d_note_act(1);
-    settle(400);
-    assert!(hover.limits.of(&key).is_none() && g!().get_d_note().is_empty(), "cancelled: no limit, no note");
 
     // Replies held after Stop: the note offers to send them.
     *hold_c.lock().unwrap() = true;
@@ -693,9 +808,12 @@ fn chat_action_shots(app: &Rc<App>, hover: &Arc<hover_app::app::Hover>, dir: &Pa
     app.open_session(done.id);
     settle(600);
     let at = |label: &str| g!().get_d_more_items().iter().position(|m| m.label == label).unwrap_or_else(|| panic!("{label} in the menu")) as i32;
-    g!().set_d_more(true);
+    // The ⋯ menu on the card (and in the chat view): Open in chat view on top.
+    g!().invoke_d_menu_open();
+    g!().set_d_menu(true);
     settle(300);
     save(&dash, (1200, 720), 1.0, [0, 0, 0], &dir.join("chat-more-menu.png"));
+    g!().set_d_menu(false);
     let before = hover_agents::session::provider_id(&hover.sessions.get(done.id).unwrap());
     g!().invoke_d_more_act(at("Continue with Cursor"));
     settle(500);
@@ -707,21 +825,25 @@ fn chat_action_shots(app: &Rc<App>, hover: &Arc<hover_app::app::Hover>, dir: &Pa
     let fork = hover.sessions.all().into_iter().find(|s| s.ext.lineage.as_ref().is_some_and(|l| l.fork.is_some())).expect("the fork");
     assert_eq!(app.page.open.get(), Some(fork.id), "the fork is the chat in front");
     settle(600);
-    g!().set_d_more(true);
+    g!().invoke_d_menu_open();
+    g!().set_d_menu(true);
     settle(300);
     save(&dash, (1200, 720), 1.0, [0, 0, 0], &dir.join("chat-more-menu-fork.png"));
+    g!().set_d_menu(false);
     g!().invoke_d_more_act(at("Bring findings back to the original"));
     settle(400);
-    // The More menu's helpers switch, on and off.
-    let hchat = hover.sessions.all().into_iter().find(|s| !s.busy() && s.cloud.is_none() && s.id != done.id && s.ext.orch.is_none() && Path::new(&s.folder).is_dir()).expect("a chat for the helpers switch");
-    app.open_session(hchat.id);
-    settle(500);
-    g!().invoke_d_more_act(at("Let it ask other agents for help"));
-    settle(300);
-    assert!(hover.sessions.get(hchat.id).unwrap().ext.orch.is_some_and(|l| l.delegation), "helpers on");
-    g!().invoke_d_more_act(at("Stop letting it ask other agents for help"));
-    settle(300);
-    assert!(!hover.sessions.get(hchat.id).unwrap().ext.orch.is_some_and(|l| l.delegation), "helpers off");
+    // The More menu's helpers switch, on and off (only where helpers are offered).
+    if hover_agents::orch::mcp_supported() {
+        let hchat = hover.sessions.all().into_iter().find(|s| !s.busy() && s.cloud.is_none() && s.id != done.id && s.ext.orch.is_none() && Path::new(&s.folder).is_dir()).expect("a chat for the helpers switch");
+        app.open_session(hchat.id);
+        settle(500);
+        g!().invoke_d_more_act(at("Let it ask other agents for help"));
+        settle(300);
+        assert!(hover.sessions.get(hchat.id).unwrap().ext.orch.is_some_and(|l| l.delegation), "helpers on");
+        g!().invoke_d_more_act(at("Stop letting it ask other agents for help"));
+        settle(300);
+        assert!(!hover.sessions.get(hchat.id).unwrap().ext.orch.is_some_and(|l| l.delegation), "helpers off");
+    }
     // Context chips: in the reply box with their ×, taken off one by one, and sent with the reply.
     let chat = hover.sessions.all().into_iter().find(|s| !s.busy() && s.cloud.is_none() && s.id != done.id && s.turns.iter().any(|t| t.result.is_some()) && Path::new(&s.folder).is_dir()).expect("a chat to reply in");
     std::fs::write(Path::new(&chat.folder).join("notes.txt"), "the rows redraw too often\n").unwrap();
@@ -914,17 +1036,43 @@ fn desk_shots(app: &Rc<App>, hover: &Arc<hover_app::app::Hover>, dir: &Path, fol
     app.office_push();
     settle(1500);    // The panel, tab by tab, on the finished desk (its session is idle, so Create is open).
     let tab = |name: &str, file: &str| { app.desk_shot_open(done, name); settle(700); shot(file); };
-    tab("terminal", "desk-tab-terminal.png");
-    // Attach a command's output to the chat: a chip in that chat's reply box.
-    let term = app.desk_terminal_ids(done);
-    let with_out = term.iter().find(|_| true).cloned();
-    if let Some(t) = with_out {
-        app.notch.global::<Desk>().invoke_act(format!("chip-term:{t}").into());
-        settle(300);
-        let got = app.chips_of(done);
-        assert!(got.iter().any(|c| c.kind == "terminal" && c.text.as_deref().is_some_and(|t| !t.is_empty())), "the output became a chip: {got:?}");
+    // Terminal: My commands (the user's own shell, drawn as a terminal; no shell runs in the shots), then the agent's.
+    {
+        use hover_agents::term::{Entry, Line, Run};
+        let cwd = if cfg!(windows) { r"C:\Users\james\code\Hover" } else { "/home/james/code/Hover" };
+        let line = |t: &str, err: bool| Line { text: t.into(), err };
+        let entry = |cmd: &str, lines: Vec<Line>, run: Run| Entry { cwd: cwd.into(), cmd: cmd.into(), lines, run, cut: 0 };
+        app.desk_shot_term(done, vec![
+            entry("git log --oneline -3", vec![line("9f3a0d2 (HEAD -> main, origin/main) Release 4.0.0", false), line("1c7e5b0 Chat view: the sessions down the left", false), line("6a2d913 Kiro credit tracking in the model picker", false)], Run::Done(0, 120)),
+            entry("npm test", vec![line("FAIL src/view.test.ts", true), line("  expected 3, got 2", true)], Run::Done(1, 2100)),
+            entry("ping -t example.com", vec![line("Reply from 93.184.216.34: bytes=32 time=11ms", false), line("^C", false)], Run::Stopped(4000)),
+        ]);
     }
-    tab("files", "desk-tab-files.png");
+    tab("terminal", "desk-tab-terminal.png");
+    app.notch.global::<Desk>().invoke_term_pick(1);
+    settle(400);
+    shot("desk-tab-terminal-agent.png");
+    app.notch.global::<Desk>().invoke_term_pick(0);
+    settle(300);
+    // The prompt takes typing; Enter runs it in a real shell; Up brings it back; Ctrl+L clears.
+    {
+        let gd = app.notch.global::<Desk>();
+        type_text(&notch, if cfg!(windows) { "Write-Output 'hello from your shell'; cmd /c exit 3" } else { "echo 'hello from your shell'; (exit 3)" });
+        settle(200);
+        shot("desk-tab-terminal-typing.png");
+        key(&notch, false, slint::platform::Key::Return);
+        let t = std::time::Instant::now();
+        settle(400);
+        while t.elapsed() < Duration::from_secs(20) && gd.get_term_running() { settle(100); }
+        settle(500);
+        shot("desk-tab-terminal-run.png");
+        key(&notch, false, slint::platform::Key::UpArrow);
+        settle(300);
+        shot("desk-tab-terminal-history.png");
+        ctrl_letter(&notch, "l");
+        settle(300);
+        shot("desk-tab-terminal-cleared.png");
+    }    tab("files", "desk-tab-files.png");
     app.notch.global::<Desk>().invoke_act("dir:src".into());
     app.notch.global::<Desk>().invoke_act("dir:src/ui".into());
     settle(300);
@@ -947,31 +1095,54 @@ fn desk_shots(app: &Rc<App>, hover: &Arc<hover_app::app::Hover>, dir: &Path, fol
     app.notch.global::<Desk>().invoke_scrolled(2000.0, 300.0);
     settle(300);
     shot("desk-tab-file-scrolled.png");
-    // Attach the open file: a copy as it is now, and a reference. (The sample's file is made in the task's folder for it.)
-    let task_folder = hover.sessions.get(done).map(|s| s.folder).unwrap_or_default();
-    std::fs::create_dir_all(Path::new(&task_folder).join("src")).unwrap();
-    std::fs::write(Path::new(&task_folder).join("src/refresh.ts"), "export const a = 1;\n").unwrap();
-    app.notch.global::<Desk>().invoke_act("chip-file:src/refresh.ts".into());
-    app.notch.global::<Desk>().invoke_act("chip-ref:src/refresh.ts".into());
+    // A Markdown file opens as its preview, with a Preview / Markdown switch; Edit, and Open in.
+    let gd = app.notch.global::<Desk>();
+    gd.invoke_act("fback".into());
+    let readme = "# Refresh\n\nSkips views that are **clean**, so the panel stops redrawing on every poll.\n\n## What it does\n\n- Returns early when `dirty` is false.\n- Keeps the flag in `View`.\n- Covers a clean view and a dirty one in the tests.\n\n## Build\n\n```powershell\n.\\build.ps1 test\n```\n\nSee [AGENTS.md](AGENTS.md) for how it works.".to_owned();
+    gd.invoke_act("file:README.md".into());
+    app.desk_put(done, "file", Got::File("README.md".into(), d::FileView::Text { path: "README.md".into(), text: readme.clone(), truncated: false, size: readme.len() as u64 }));
+    app.desk_shot_editors(vec![
+        hover_agents::editor::Found { id: "vscode".into(), name: "VS Code".into(), exe: "code".into() },
+        hover_agents::editor::Found { id: "zed".into(), name: "Zed".into(), exe: "zed".into() }]);
+    hover.settings.set_last_editor("zed");
+    settle(600);
+    shot("desk-tab-file-md-preview.png");
+    gd.invoke_f_mode_pick(1);
     settle(300);
-    let kinds: Vec<(String, bool)> = app.chips_of(done).iter().filter(|c| c.kind == "file").map(|c| (c.source.clone(), c.live)).collect();
-    assert_eq!(kinds, [("src/refresh.ts".to_owned(), false), ("src/refresh.ts".to_owned(), true)], "a copy, then a reference");
-    // Open at this line: a stand-in editor records what it is started with (a real one is not run here).
-    {
-        let rec = Path::new(&task_folder).join("rec-editor.sh");
-        let out = Path::new(&task_folder).join("editor-args.txt");
-        std::fs::write(&rec, format!("#!/bin/sh\nprintf '%s\\n' \"$@\" > '{}'\n", out.display())).unwrap();
-        #[cfg(unix)] { use std::os::unix::fs::PermissionsExt; std::fs::set_permissions(&rec, std::fs::Permissions::from_mode(0o755)).unwrap(); }
-        hover.settings.set_editor(hover_core::model::EditorSettings { default: Some("custom".into()), custom_exe: Some(rec.to_string_lossy().into_owned()), custom_args: Some("--goto\n{file}:{line}\n{folder}".into()) });
-        let _ = std::fs::remove_file(&out);
-        app.notch.global::<Desk>().invoke_act("open:src/refresh.ts:12".into());
-        let t = std::time::Instant::now();
-        while t.elapsed() < Duration::from_secs(5) && !out.exists() { settle(50); }
-        let got = std::fs::read_to_string(&out).unwrap_or_default();
-        assert_eq!(got.lines().collect::<Vec<_>>(), ["--goto", format!("{task_folder}/src/refresh.ts:12").as_str(), task_folder.as_str()], "the editor was started at the line: {got:?}");
-        hover.settings.set_editor(hover_core::model::EditorSettings::default());
-    }
-    app.notch.global::<Desk>().invoke_act("fback".into());
+    shot("desk-tab-file-md-source.png");
+    gd.set_open_menu(true);
+    settle(300);
+    shot("desk-tab-file-open-in.png");
+    gd.set_open_menu(false);
+    // Edit in place, with Cancel and Save; saving marks the file M in the tree.
+    gd.invoke_f_edit();
+    settle(400);
+    shot("desk-tab-file-edit.png");
+    // Typing reaches the box, and Ctrl+S saves.
+    type_text(&notch, "Typed in the box. ");
+    assert!(gd.get_f_text().starts_with("Typed in the box."), "typing reaches the editor: {}", gd.get_f_text());
+    ctrl_letter(&notch, "s");
+    settle(400);
+    assert_ne!(gd.get_f_mode(), 2, "Ctrl+S saved and left the editor");
+    gd.invoke_act("fback".into());
+    settle(400);
+    shot("desk-tab-files-saved.png");
+    // The same while the agent works in that folder: the amber warning, and saving is still allowed.
+    app.desk_shot_open(busy, "files");
+    gd.invoke_act("file:README.md".into());
+    app.desk_put(busy, "file", Got::File("README.md".into(), d::FileView::Text { path: "README.md".into(), text: readme.clone(), truncated: false, size: readme.len() as u64 }));
+    settle(400);
+    gd.invoke_f_edit();
+    settle(400);
+    shot("desk-tab-file-edit-busy.png");
+    type_text(&notch, "dropped");
+    key(&notch, false, slint::platform::Key::Escape);
+    settle(300);
+    assert_ne!(gd.get_f_mode(), 2, "Esc cancelled the edit");
+    gd.invoke_act("fback".into());
+    app.desk_shot_open(done, "files");
+    gd.invoke_act("file:src/refresh.ts".into());
+    settle(300);    app.notch.global::<Desk>().invoke_act("fback".into());
     tab("diff", "desk-tab-diff.png");
     app.notch.global::<Desk>().invoke_act("chip-diff:src/refresh.ts".into());
     settle(300);
@@ -984,16 +1155,6 @@ fn desk_shots(app: &Rc<App>, hover: &Arc<hover_app::app::Hover>, dir: &Path, fol
             d::Check { name: "test".into(), state: "fail".into(), url: Some("https://github.com/x".into()) }, d::Check { name: "lint".into(), state: "pass".into(), url: None }, d::Check { name: "deploy preview".into(), state: "pending".into(), url: None }] };
     app.desk_put(done, "pr", Got::Pr(d::PrPanel::Open(Box::new(pr.clone()))));
     tab("pr", "desk-tab-pr.png");
-    // Watch this pull request, and stop, through the row's own button.
-    let watch_key = hover.sessions.get(done).map(|s| s.key).unwrap_or_default();
-    app.notch.global::<Desk>().invoke_act("watch:https://github.com/4regab/Hover/pull/57".into());
-    settle(500);
-    assert_eq!(hover.watcher.of(&watch_key).len(), 1, "the pull request is watched");
-    shot("desk-tab-pr-watching.png");
-    let wid = hover.watcher.of(&watch_key)[0].id.clone();
-    app.notch.global::<Desk>().invoke_act(format!("unwatch:{wid}").into());
-    settle(300);
-    assert!(hover.watcher.of(&watch_key).is_empty(), "no longer watched");
     // The same without its checks, so the description (headings, a list, bold, inline code, a code block, a link) is in view.
     let pr_text = d::PrDetail { checks: vec![], pass: 0, fail: 0, pending: 0, ..pr.clone() };
     app.desk_put(done, "pr", Got::Pr(d::PrPanel::Open(Box::new(pr_text.clone()))));
@@ -1243,41 +1404,117 @@ fn settings_credits_shots(app: &Rc<App>, hover: &Arc<hover_app::app::Hover>, dir
     hover.settings.set_notch_item("kiro", true);
     hover.credits.pin(hover_quota::credits::combine(&Default::default(), &[], today));
     shot("settings-kiro-credits-empty.png");
-    field_scroll_shot(app, hover, dir);
 }
 
-/// A text box keeps its cursor in view: a value longer than the box, typed into
-/// Automation's Custom program, shows its end, and Home brings its start back.
-fn field_scroll_shot(app: &Rc<App>, hover: &Arc<hover_app::app::Hover>, dir: &Path) {
-    use slint::platform::{Key, PointerEventButton, WindowEvent};
+/// Settings, Kiro's MCP servers, driven through the page's real handlers: the list (a remote
+/// server, one that failed last time, one switched off), the add form with its field errors, an
+/// edit, a removal to confirm, a bad address, and a file that doesn't parse. The file is under the
+/// shots' own fake home (HOVER_KIRO_HOME), never the real ~/.kiro.
+fn settings_mcp_shots(app: &Rc<App>, hover: &Arc<hover_app::app::Hover>, dir: &Path, data: &Path) {
+    use hover_agents::mcp;
+    let file = mcp::file(&mcp::home());
+    assert!(file.starts_with(data), "the shots' MCP file is under the shots' data folder, not the user's home");
+    std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+    std::fs::write(&file, concat!("{\n  \"mcpServers\": {\n",
+        "    \"aws-docs\": {\n      \"command\": \"uvx\",\n      \"args\": [\"awslabs.aws-documentation-mcp-server@latest\"],\n      \"env\": { \"FASTMCP_LOG_LEVEL\": \"ERROR\" },\n      \"autoApprove\": [\"read_documentation\"]\n    },\n",
+        "    \"github\": { \"url\": \"https://api.githubcopilot.com/mcp/\" },\n",
+        "    \"playwright\": { \"command\": \"npx\", \"args\": [\"@playwright/mcp@latest\"] },\n",
+        "    \"fetch\": { \"command\": \"uvx\", \"args\": [\"mcp-server-fetch\"], \"disabled\": true }\n  }\n}\n")).unwrap();
+    // Kiro said playwright didn't start in its last task.
+    mcp::note_status("playwright", true, Some("npx wasn't found"));
     let dash = adapter(1);
-    app.show_settings_in(1, Section::Automation);
-    save(&dash, (1200, 620), 1.0, [0, 0, 0], &dir.join("settings-field-before.png"));
-    let at = slint::LogicalPosition::new(1053.0, 344.0);
-    dash.dispatch_event(WindowEvent::PointerMoved { position: at });
-    dash.dispatch_event(WindowEvent::PointerPressed { position: at, button: PointerEventButton::Left });
-    dash.dispatch_event(WindowEvent::PointerReleased { position: at, button: PointerEventButton::Left });
-    run_for(60);
-    let typed = "/opt/editors/code-insiders/bin/code-insiders-wrapper --reuse-window";
-    for ch in typed.chars() {
-        let t: slint::SharedString = ch.to_string().into();
-        dash.dispatch_event(WindowEvent::KeyPressed { text: t.clone() });
-        dash.dispatch_event(WindowEvent::KeyReleased { text: t });
+    hover.settings.set_theme(None);
+    hover.settings.set_appearance(Appearance::Dark);
+    view::Host::theme_changed(&**app);
+    let press = |id: &str| { let d = app.dash.borrow(); d.as_ref().expect("the app window").global::<crate::ui::Page>().invoke_pressed(id.into()); };
+    let toggle = |id: &str, on: bool| { let d = app.dash.borrow(); d.as_ref().expect("the app window").global::<crate::ui::Page>().invoke_toggled(id.into(), on); };
+    // A key in a field reaches the draft without a redraw; the shots draw it so the box shows it.
+    let typed = |field: &str, text: &str| { press(&format!("McpType\u{1f}{field}\u{1f}{text}")); app.refresh_page(false); };
+    let shot = |name: &str| { app.show_settings_in(1, Section::Kiro); save(&dash, (1200, 1800), 1.0, [0, 0, 0], &dir.join(name)); };
+    let on_disk = || std::fs::read_to_string(&file).unwrap();
+
+    shot("settings-kiro-mcp-list.png");
+    {
+        let m = &app.pane.borrow().live.mcp;
+        assert_eq!(m.servers.len(), 4, "four servers read");
+        assert_eq!(m.title(), "MCP servers \u{b7} 3 of 4 on");
+        let by = |n: &str| m.servers.iter().find(|s| s.name == n).unwrap();
+        assert_eq!(m.warn(by("playwright")).as_deref(), Some("Didn't start in the last task: npx wasn't found."));
+        assert_eq!(m.warn(by("github")), None);
+        assert!(by("github").remote() && by("fetch").disabled);
     }
-    run_for(60);
-    save(&dash, (1200, 620), 1.0, [0, 0, 0], &dir.join("settings-field-typed-end.png"));
-    let home: slint::SharedString = Key::Home.into();
-    dash.dispatch_event(WindowEvent::KeyPressed { text: home.clone() });
-    dash.dispatch_event(WindowEvent::KeyReleased { text: home });
-    run_for(60);
-    save(&dash, (1200, 620), 1.0, [0, 0, 0], &dir.join("settings-field-typed-home.png"));
-    // Enter saves it, as a user's would be.
-    let enter: slint::SharedString = Key::Return.into();
-    dash.dispatch_event(WindowEvent::KeyPressed { text: enter.clone() });
-    dash.dispatch_event(WindowEvent::KeyReleased { text: enter });
-    run_for(60);
-    assert_eq!(hover.settings.editor().custom_exe.as_deref(), Some(typed), "the whole value was typed into the box and saved");
-    hover.settings.set_editor(hover_core::model::EditorSettings { custom_exe: None, ..hover.settings.editor() });
+
+    // The add form, saved with a taken name, no command and a bad variable name.
+    press("McpAdd\u{1f}");
+    typed("name", "github");
+    press("McpPairAdd\u{1f}");
+    typed("k1", "1BAD");
+    typed("v1", "x");
+    press("McpSave\u{1f}");
+    {
+        let p = app.pane.borrow();
+        let pr = &p.live.mcp.form.as_ref().expect("the form stays open on an error").problems;
+        assert_eq!(pr.name.as_deref(), Some("Kiro already has a server with this name."));
+        assert!(pr.command.is_some() && pr.pairs.is_some() && pr.url.is_none());
+    }
+    shot("settings-kiro-mcp-add-error.png");
+    // Fixed and saved: the new one is at the end of the file, and the rest is as it was.
+    typed("name", "docs2");
+    typed("command", "uvx");
+    typed("args", "tool-a\ntool-b");
+    typed("k1", "FOO_KEY");
+    press("McpSave\u{1f}");
+    assert!(app.pane.borrow().live.mcp.form.is_none(), "the form closed on a good save");
+    let after = on_disk();
+    assert!(after.contains("\"docs2\"") && after.contains("\"FOO_KEY\": \"x\"") && after.contains("\"autoApprove\"") && after.contains("read_documentation"), "{after}");
+    assert!(after.find("\"fetch\"").unwrap() < after.find("\"docs2\"").unwrap(), "the new server went last");
+    shot("settings-kiro-mcp-list-added.png");
+
+    // Edit: the same form, filled in.
+    press("McpEdit\u{1f}aws-docs");
+    assert_eq!(app.pane.borrow().live.mcp.form.as_ref().unwrap().draft.command, "uvx");
+    shot("settings-kiro-mcp-edit.png");
+    press("McpCancel\u{1f}");
+
+    // The switch writes "disabled": fetch on, github off.
+    toggle("Mcp:fetch", true);
+    toggle("Mcp:github", false);
+    let servers = mcp::load(&file).unwrap();
+    assert!(!servers.iter().find(|s| s.name == "fetch").unwrap().disabled && servers.iter().find(|s| s.name == "github").unwrap().disabled);
+    shot("settings-kiro-mcp-switched.png");
+    toggle("Mcp:github", true);
+
+    // Remove asks first; a URL that isn't https is refused.
+    press("McpRemove\u{1f}docs2");
+    shot("settings-kiro-mcp-remove.png");
+    press("McpRemoveYes\u{1f}docs2");
+    assert!(!on_disk().contains("docs2"), "docs2 was removed");
+    press("McpAdd\u{1f}");
+    press("McpKind\u{1f}1");
+    typed("name", "web");
+    typed("url", "ftp://example.com/mcp");
+    press("McpSave\u{1f}");
+    assert!(app.pane.borrow().live.mcp.form.as_ref().unwrap().problems.url.is_some());
+    shot("settings-kiro-mcp-url-error.png");
+    press("McpCancel\u{1f}");
+
+    // Light.
+    hover.settings.set_appearance(Appearance::Light);
+    view::Host::theme_changed(&**app);
+    shot("settings-kiro-mcp-list-light.png");
+    hover.settings.set_appearance(Appearance::Dark);
+    view::Host::theme_changed(&**app);
+
+    // A file that doesn't parse is said so and left alone.
+    let bad = "{ \"mcpServers\": { \"a\": ";
+    std::fs::write(&file, bad).unwrap();
+    shot("settings-kiro-mcp-bad-file.png");
+    assert!(app.pane.borrow().live.mcp.error.is_some());
+    toggle("Mcp:a", false);
+    assert_eq!(on_disk(), bad, "a file that doesn't parse is never written");
+    let _ = std::fs::remove_file(&file);
+    mcp::note_status("playwright", false, None);
+    app.pane.borrow_mut().live.mcp.close();
 }
 
 /// A voice preview as Voice makes one, for the shots.
@@ -1506,6 +1743,8 @@ pub fn run(dir: &Path) {
     let _ = std::fs::remove_dir_all(&data);
     std::fs::create_dir_all(data.join("project")).unwrap();
     std::env::set_var("HOVER_DATA_DIR", &data);
+    // Kiro's MCP list lives under the home folder: the shots get one of their own.
+    std::env::set_var(hover_agents::mcp::HOME_ENV, data.join("home"));
     slint::platform::set_platform(Box::new(Headless)).unwrap();
 
     let settings = hover_core::settings::Settings::load(hover_core::paths::settings_file());
@@ -1922,9 +2161,10 @@ pub fn run(dir: &Path) {
     if !skip("voice") { settings_voice_shots(&app, &hover, dir, &data); }
     settings_integrations_shots(&app, &hover, dir);
     settings_credits_shots(&app, &hover, dir);
+    settings_mcp_shots(&app, &hover, dir, &data);
     expand_shots(&app, &hover, dir, &folder, &hold_c);
     chat_view_shots(&app, &hover, dir);
-    workspace_shots(&app, &hover, dir);
+    new_task_shots(&app, &hover, dir);
     chat_action_shots(&app, &hover, dir, &folder, &hold_c);
     // A VS Code theme (Dark+ as its files say), and the model picker open.
     let t = hover_core::model::SavedTheme { name: "Dark+".into(), dark: true, colors: [("editor.background", "#1e1e1e"), ("foreground", "#cccccc"),

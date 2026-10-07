@@ -1,7 +1,6 @@
-//! Open in editor: a desk's folder, or a file in it, in VS Code, Zed, Cursor, Kiro IDE or a
-//! custom program. Editors are found by the places their installers use and by PATH; nothing
-//! is installed. The folder is the session's own (its worktree, once it has one), never the
-//! source checkout. Every argument goes to the program as it is (no shell), so a path with
+//! Open in editor: a desk's folder, or a file in it, in VS Code, Zed, Cursor or Kiro IDE.
+//! Editors are found by the places their installers use and by PATH; nothing
+//! is installed. The folder is the session's own. Every argument goes to the program as it is (no shell), so a path with
 //! spaces, Unicode or shell characters is one argument. The editor is started and let go: it
 //! is no child of any agent and ends with nobody.
 //!
@@ -13,16 +12,12 @@
 use crate::proc::on_path;
 #[cfg(unix)]
 use crate::proc::home;
-use hover_core::model::EditorSettings;
 use std::path::{Path, PathBuf};
-
-pub const CUSTOM: &str = "custom";
 
 /// The editors Hover knows: id and the name shown.
 pub const BUILTIN: [(&str, &str); 4] = [("vscode", "VS Code"), ("zed", "Zed"), ("cursor", "Cursor"), ("kiro", "Kiro IDE")];
 
 pub fn name_of(id: &str) -> &str {
-    if id == CUSTOM { return "Custom editor"; }
     BUILTIN.iter().find(|(i, _)| *i == id).map_or(id, |(_, n)| n)
 }
 
@@ -98,12 +93,7 @@ fn commands(id: &str) -> &'static [&'static str] {
 
 /// The program that opens the editor, or none when it isn't found. The places its installer uses
 /// come first (a real program over a PATH shim), then PATH.
-pub fn find(id: &str, s: &EditorSettings) -> Option<PathBuf> {
-    if id == CUSTOM {
-        let exe = s.custom_exe.as_deref().map(str::trim).filter(|e| !e.is_empty())?;
-        let p = PathBuf::from(exe);
-        return if p.components().count() > 1 { file(p) } else { on_path(exe) };
-    }
+pub fn find(id: &str) -> Option<PathBuf> {
     let found = places(id).into_iter().find_map(file).or_else(|| commands(id).iter().find_map(|c| on_path(c)));
     found.filter(|p| id != "kiro" || !is_kiro_cli(p))
 }
@@ -120,77 +110,36 @@ fn is_kiro_cli(p: &Path) -> bool {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Found { pub id: String, pub name: String, pub exe: PathBuf }
 
-/// The editors that can be opened now: the four built in that were found, and the custom one when its
-/// program is there. Looks at the disk and PATH, so call it off the UI thread.
-pub fn available(s: &EditorSettings) -> Vec<Found> {
-    BUILTIN.iter().map(|(i, _)| *i).chain([CUSTOM]).filter_map(|id| find(id, s).map(|exe| Found { id: id.into(), name: name_of(id).into(), exe })).collect()
+/// The editors that can be opened now: the four Hover knows that were found, in the order of `BUILTIN`.
+/// Looks at the disk and PATH, so call it off the UI thread.
+pub fn available() -> Vec<Found> {
+    BUILTIN.iter().filter_map(|(id, name)| find(id).map(|exe| Found { id: (*id).into(), name: (*name).into(), exe })).collect()
 }
 
-/// Which editor a click opens: the one named, else the default, else the only one found. Err says
+/// Which editor a click opens: the one named, else the first one found. Err says
 /// what is missing, so the message can tell the user what to do.
-pub fn pick(s: &EditorSettings, choice: Option<&str>, found: &[Found]) -> Result<Found, String> {
-    let want = choice.or(s.default.as_deref()).filter(|c| !c.is_empty());
-    match want {
-        Some(id) => found.iter().find(|f| f.id == id).cloned().ok_or_else(|| if id == CUSTOM {
-            "The custom editor's program isn’t there. Set it in Settings → General → Open in editor.".to_owned()
-        } else {
-            format!("{} wasn’t found on this computer. Install it, or pick another editor or a custom program.", name_of(id))
-        }),
-        None => match found {
-            [one] => Ok(one.clone()),
-            [] => Err("No editor was found. Install VS Code, Zed, Cursor or Kiro IDE, or set a custom program in Settings → General → Open in editor.".into()),
-            _ => Err("Pick an editor first.".into()),
-        },
+pub fn pick(choice: Option<&str>, found: &[Found]) -> Result<Found, String> {
+    match choice.filter(|c| !c.is_empty()) {
+        Some(id) => found.iter().find(|f| f.id == id).cloned().ok_or_else(|| format!("{} wasn’t found on this computer. Install it, or pick another editor.", name_of(id))),
+        None => found.first().cloned().ok_or_else(|| "No editor was found. Install VS Code, Zed, Cursor or Kiro IDE.".into()),
     }
 }
 
 // MARK: Arguments
 
-/// The program's arguments, and a note when the editor couldn't do all that was asked.
-#[derive(Clone, Debug, PartialEq)]
-pub struct Plan { pub args: Vec<String>, pub note: Option<String> }
-
-const LIMIT: &str = "This editor can’t open a file at a line here, so the folder was opened.";
-
-/// The arguments for `id`. A file is opened at its line and column only when the editor can; the
-/// note says when it couldn't.
-pub fn plan(id: &str, t: &Target, custom_args: Option<&str>) -> Plan {
+/// The arguments for `id`. A file is opened at its line and column.
+pub fn args(id: &str, t: &Target) -> Vec<String> {
     let abs = t.file.as_deref().and_then(|f| crate::desk::inside(&t.folder, Some(f)));
     let place = abs.map(|p| {
         let mut s = p.to_string_lossy().into_owned();
         if let Some(l) = t.line { s += &format!(":{l}"); if let Some(c) = t.column { s += &format!(":{c}"); } }
         s
     });
-    match id {
-        "zed" => Plan { args: [Some(t.folder.clone()), place].into_iter().flatten().collect(), note: None },
-        CUSTOM => custom(t, custom_args.unwrap_or("")),
-        _ => match place {
-            Some(p) => Plan { args: vec![t.folder.clone(), "--goto".into(), p], note: None },
-            None => Plan { args: vec![t.folder.clone()], note: None },
-        },
+    match (id, place) {
+        ("zed", place) => [Some(t.folder.clone()), place].into_iter().flatten().collect(),
+        (_, Some(p)) => vec![t.folder.clone(), "--goto".into(), p],
+        (_, None) => vec![t.folder.clone()],
     }
-}
-
-/// A custom editor's arguments: one per line, with {folder}, {file}, {line} and {column} filled in. A
-/// line that names something there is none of (no file was asked for) is left out, and the note says
-/// so. With no lines at all the folder is the one argument.
-fn custom(t: &Target, template: &str) -> Plan {
-    let lines: Vec<&str> = template.lines().map(|l| l.trim_end_matches('\r')).filter(|l| !l.trim().is_empty()).take(32).collect();
-    if lines.is_empty() { return Plan { args: vec![t.folder.clone()], note: t.file.is_some().then(|| LIMIT.into()) }; }
-    let abs = t.file.as_deref().and_then(|f| crate::desk::inside(&t.folder, Some(f))).map(|p| p.to_string_lossy().into_owned());
-    let (mut args, mut dropped) = (vec![], false);
-    for l in lines {
-        let needs = |k: &str| l.contains(k);
-        if (needs("{file}") && abs.is_none()) || (needs("{line}") && t.line.is_none()) || (needs("{column}") && t.column.is_none()) {
-            dropped = true;
-            continue;
-        }
-        args.push(l.replace("{folder}", &t.folder).replace("{file}", abs.as_deref().unwrap_or("")).replace("{line}", &t.line.unwrap_or(0).to_string())
-            .replace("{column}", &t.column.unwrap_or(0).to_string()));
-    }
-    let asked = t.file.is_some() && !template.contains("{file}");
-    let note = if asked { Some(LIMIT.to_owned()) } else if dropped { Some("Part of the custom editor’s arguments was left out: no file was chosen.".to_owned()) } else { None };
-    Plan { args, note }
 }
 
 // MARK: Launching
@@ -200,7 +149,7 @@ fn custom(t: &Target, template: &str) -> Plan {
 fn shim_safe(exe: &Path, args: &[String]) -> Result<(), String> {
     let shim = exe.extension().is_some_and(|e| e.eq_ignore_ascii_case("cmd") || e.eq_ignore_ascii_case("bat"));
     if cfg!(windows) && shim && args.iter().any(|a| a.contains(['&', '|', '<', '>', '^', '%', '"'])) {
-        return Err(format!("Windows can't pass that path to {} safely. Set the editor's program (Code.exe, not code.cmd) in Settings.", exe.display()));
+        return Err(format!("Windows can't pass that path to {} safely.", exe.display()));
     }
     Ok(())
 }
@@ -221,15 +170,75 @@ pub fn launch(exe: &Path, args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
-/// Opens `t` in the editor: the one named, else the default. What to tell the user: where it opened,
-/// and the limit that applied. Blocks briefly (it looks at the disk): call it off the UI thread.
-pub fn open(s: &EditorSettings, choice: Option<&str>, t: &Target, cloud: bool) -> Result<String, String> {
+/// Opens `t` in the editor: the one named, else the first found. What to tell the user: where it opened.
+/// Blocks briefly (it looks at the disk): call it off the UI thread.
+pub fn open(choice: Option<&str>, t: &Target, cloud: bool) -> Result<String, String> {
     check_folder(&t.folder, cloud)?;
-    let f = pick(s, choice, &available(s))?;
-    let p = plan(&f.id, t, s.custom_args.as_deref());
-    launch(&f.exe, &p.args)?;
+    let f = pick(choice, &available())?;
+    launch(&f.exe, &args(&f.id, t))?;
     hover_core::log::line(&format!("editor: {} opened {}", f.name, t.folder));
-    Ok(match p.note { Some(n) => format!("Opened in {}. {n}", f.name), None => format!("Opened in {}.", f.name) })
+    Ok(format!("Opened in {}.", f.name))
+}
+
+/// What the Open in picker lists: an editor, or the computer's file manager.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Choice { pub id: String, pub name: String, pub last: bool }
+
+/// The id the file manager has in the picker.
+pub const FILE_MANAGER: &str = "fm";
+
+/// What the file manager is called here.
+pub fn file_manager_name() -> &'static str {
+    if cfg!(windows) { "File Explorer" } else if cfg!(target_os = "macos") { "Finder" } else { "Files" }
+}
+
+/// The picker's rows: the last one used first and marked, then the editors found (in `BUILTIN`
+/// order), then the file manager. Only editors that were found are listed; a `last` that is
+/// gone is forgotten.
+pub fn choices(found: &[Found], last: Option<&str>) -> Vec<Choice> {
+    let mut all: Vec<Choice> = found.iter().map(|f| Choice { id: f.id.clone(), name: f.name.clone(), last: false })
+        .chain(std::iter::once(Choice { id: FILE_MANAGER.into(), name: file_manager_name().into(), last: false })).collect();
+    if let Some(i) = last.and_then(|l| all.iter().position(|c| c.id == l)) {
+        let mut c = all.remove(i);
+        c.last = true;
+        all.insert(0, c);
+    }
+    all
+}
+
+/// Opens `t` in the file manager: the folder, or the folder a file is in (selected, where the
+/// file manager can). No shell: the path is one argument.
+pub fn open_file_manager(t: &Target, cloud: bool) -> Result<String, String> {
+    check_folder(&t.folder, cloud)?;
+    let file = t.file.as_deref().and_then(|f| crate::desk::inside(&t.folder, Some(f)));
+    #[cfg(windows)]
+    let (exe, args) = (PathBuf::from("explorer.exe"), match &file {
+        Some(p) => vec![format!("/select,{}", p.display())],
+        None => vec![t.folder.clone()],
+    });
+    #[cfg(not(windows))]
+    let (exe, args) = {
+        let folder = file.as_deref().and_then(Path::parent).map_or_else(|| t.folder.clone(), |p| p.to_string_lossy().into_owned());
+        (PathBuf::from(if cfg!(target_os = "macos") { "open" } else { "xdg-open" }), vec![folder])
+    };
+    launch(&exe, &args)?;
+    Ok(format!("Opened in {}.", file_manager_name()))
+}
+
+/// Like `open`, but an editor that isn't found (the last one used, since uninstalled) gives way to
+/// the first that is. The id of the one used, and what to tell the user.
+pub fn open_or_first(choice: Option<&str>, t: &Target, cloud: bool) -> Result<(String, String), String> {
+    check_folder(&t.folder, cloud)?;
+    let found = available();
+    let f = pick(choice, &found).or_else(|e| pick(None, &found).map_err(|_| e))?;
+    launch(&f.exe, &args(&f.id, t))?;
+    hover_core::log::line(&format!("editor: {} opened {}", f.name, t.folder));
+    Ok((f.id.clone(), format!("Opened in {}.", f.name)))
+}
+
+/// Opens `t` in the one picked: an editor's id, or `FILE_MANAGER`. Off the UI thread.
+pub fn open_in(choice: &str, t: &Target, cloud: bool) -> Result<String, String> {
+    if choice == FILE_MANAGER { open_file_manager(t, cloud) } else { open(Some(choice), t, cloud) }
 }
 
 #[cfg(all(test, unix))]
@@ -269,8 +278,7 @@ mod tests {
         std::fs::write(folder.join("src/a b.rs"), "x").unwrap();
         let (exe, log) = recorder(&d);
         let f = folder.to_string_lossy().into_owned();
-        let p = plan("vscode", &Target::file(&f, "src/a b.rs", Some(7), Some(3)), None);
-        launch(&exe, &p.args).unwrap();
+        launch(&exe, &args("vscode", &Target::file(&f, "src/a b.rs", Some(7), Some(3)))).unwrap();
         let got = wait_for(&log);
         let real = crate::desk::inside(&f, Some("src/a b.rs")).unwrap();
         assert_eq!(got, [f.clone(), "--goto".to_owned(), format!("{}:7:3", real.display())]);
@@ -284,43 +292,20 @@ mod tests {
         std::fs::write(d.join("x.txt"), "x").unwrap();
         let x = crate::desk::inside(&f, Some("x.txt")).unwrap().to_string_lossy().into_owned();
         let t = Target::file(&f, "x.txt", Some(4), None);
-        assert_eq!(plan("zed", &t, None).args, [f.clone(), format!("{x}:4")]);
-        assert_eq!(plan("cursor", &t, None).args, [f.clone(), "--goto".into(), format!("{x}:4")]);
-        assert_eq!(plan("kiro", &Target::folder(&f), None).args, [f.clone()]);
+        assert_eq!(args("zed", &t), [f.clone(), format!("{x}:4")]);
+        assert_eq!(args("cursor", &t), [f.clone(), "--goto".into(), format!("{x}:4")]);
+        assert_eq!(args("kiro", &Target::folder(&f)), [f.clone()]);
         let out = Target::file(&f, "../../etc/passwd", Some(1), Some(1));
         assert_eq!((out.file, out.line), (None, None));
     }
 
     #[test]
-    fn a_custom_editor_fills_its_lines_and_says_what_it_could_not_do() {
-        let d = temp("custom");
-        let f = d.to_string_lossy().into_owned();
-        std::fs::write(d.join("m.rs"), "x").unwrap();
-        let m = crate::desk::inside(&f, Some("m.rs")).unwrap().to_string_lossy().into_owned();
-        let tpl = "--new-window\n{folder}\n--at\n{file}:{line}";
-        assert_eq!(plan(CUSTOM, &Target::file(&f, "m.rs", Some(9), None), Some(tpl)).args, ["--new-window".to_owned(), f.clone(), "--at".into(), format!("{m}:9")]);
-        // No file asked for: the lines that need one are left out, with a note.
-        let p = plan(CUSTOM, &Target::folder(&f), Some(tpl));
-        assert_eq!(p.args, ["--new-window".to_owned(), f.clone(), "--at".into()]);
-        assert!(p.note.is_some());
-        // Arguments that never name a file can't open one: the folder opens and it says so.
-        let p = plan(CUSTOM, &Target::file(&f, "m.rs", Some(1), None), Some("{folder}"));
-        assert_eq!(p.args, [f.clone()]);
-        assert!(p.note.unwrap().contains("folder was opened"));
-        assert_eq!(plan(CUSTOM, &Target::folder(&f), None).args, [f]);
-    }
-
-    #[test]
-    fn the_choice_default_and_missing_editors_say_what_to_do() {
+    fn the_choice_and_missing_editors_say_what_to_do() {
         let found = vec![Found { id: "zed".into(), name: "Zed".into(), exe: "/x/zed".into() }, Found { id: "vscode".into(), name: "VS Code".into(), exe: "/x/code".into() }];
-        let s = EditorSettings { default: Some("vscode".into()), ..Default::default() };
-        assert_eq!(pick(&s, None, &found).unwrap().id, "vscode");
-        assert_eq!(pick(&s, Some("zed"), &found).unwrap().id, "zed", "a one-off choice beats the default");
-        assert!(pick(&s, Some("cursor"), &found).unwrap_err().contains("Cursor wasn’t found"));
-        assert_eq!(pick(&EditorSettings::default(), None, &found).unwrap_err(), "Pick an editor first.");
-        assert_eq!(pick(&EditorSettings::default(), None, &found[..1]).unwrap().id, "zed");
-        assert!(pick(&EditorSettings::default(), None, &[]).unwrap_err().contains("No editor was found"));
-        assert!(pick(&s, Some(CUSTOM), &found).unwrap_err().contains("custom editor"));
+        assert_eq!(pick(None, &found).unwrap().id, "zed", "the first one found");
+        assert_eq!(pick(Some("vscode"), &found).unwrap().id, "vscode", "a choice beats that");
+        assert!(pick(Some("cursor"), &found).unwrap_err().contains("Cursor wasn’t found"));
+        assert!(pick(None, &[]).unwrap_err().contains("No editor was found"));
     }
 
     #[test]
@@ -329,16 +314,5 @@ mod tests {
         assert!(check_folder(&d.to_string_lossy(), true).unwrap_err().contains("no local folder"));
         assert!(check_folder(&d.join("gone").to_string_lossy(), false).unwrap_err().contains("isn’t there"));
         assert!(check_folder(&d.to_string_lossy(), false).is_ok());
-    }
-
-    #[test]
-    fn a_custom_program_is_found_by_path_and_settings_survive_json() {
-        let d = temp("find");
-        let (exe, _) = recorder(&d);
-        let s = EditorSettings { default: Some(CUSTOM.into()), custom_exe: Some(exe.to_string_lossy().into()), custom_args: Some("{folder}\n--x".into()) };
-        assert_eq!(find(CUSTOM, &s), Some(exe));
-        assert!(available(&s).iter().any(|f| f.id == CUSTOM));
-        assert_eq!(EditorSettings::from_json(&hover_core::json::parse(&s.to_json().compact()).unwrap()).unwrap(), s);
-        assert_eq!(find(CUSTOM, &EditorSettings::default()), None);
     }
 }

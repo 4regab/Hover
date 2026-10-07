@@ -1,5 +1,6 @@
-//! A command in the timeline shows whole: its row and its output's header wrap a long
-//! one instead of cutting it, and a short one keeps its one 25 px row.
+//! A command in the timeline is one line: a long one is cut by an ellipsis there and shown
+//! whole (wrapped) at the top of its output; a short one keeps its one 30 px row, with its
+//! exit code and time at the right; a running one is one shimmering text.
 use std::path::Path;
 
 use hover_chat::doc::Act;
@@ -33,36 +34,52 @@ fn row(th: &Thread) -> [f32; 4] {
     th.sections[0].frag.hits.iter().find_map(|(r, a)| matches!(a, Act::Step(0, false)).then_some(*r)).expect("the row opens its output")
 }
 
-/// Where the output's first line is drawn.
-fn out_y(th: &Thread) -> f32 {
-    th.sections[0].frag.texts.iter().find(|t| t.text == OUT).expect("the output is laid out").y
-}
-
 #[test]
-fn a_long_command_shows_whole_and_wraps_in_its_row() {
+fn a_long_command_is_cut_by_an_ellipsis_in_one_row() {
     let th = thread(LONG, false);
     let t = th.sections[0].frag.texts.iter().find(|t| t.text.contains("Ran ")).expect("the row's words");
-    assert_eq!(t.text, format!("Ran {LONG}"), "all of the command, not its program and first word");
-    assert!(t.clip.is_none(), "nothing is cut");
-    assert!(t.layout.len() > 1, "it wraps");
+    assert_eq!(t.text, format!("Ran {LONG}"), "the verb and all of the command are one text (and what a copy takes)");
+    assert!(t.clip.is_some(), "the line is cut before the exit code");
+    assert_eq!(t.layout.len(), 1, "nowrap");
     let [_, _, w, h] = row(&th);
-    assert!(t.x + t.layout.width() <= w, "each line fits the row");
-    assert!(h > 25.0, "the row grows to hold it: {h}");
+    assert!(t.clip.unwrap()[2] < w, "the cut is inside the row");
+    assert_eq!(h, 30.0);
 }
 
 #[test]
-fn a_short_command_keeps_one_row() {
-    let th = thread("cargo test", false);
-    let t = th.sections[0].frag.texts.iter().find(|t| t.text.contains("Ran ")).unwrap();
+fn a_short_command_keeps_one_row_with_its_exit_code_and_time() {
+    let mut turns = turn("cargo test");
+    turns[0].steps[0].ms = Some(300.0);
+    let mut th = Thread::new(Shaper::new(&fonts()), "Juno", [47, 201, 176, 255]);
+    th.set(&turns, 358.0);
+    th.toggle_steps(&turns, 0);
+    let texts = &th.sections[0].frag.texts;
+    let t = texts.iter().find(|t| t.text.contains("Ran ")).unwrap();
     assert_eq!(t.text, "Ran cargo test");
     assert_eq!(t.layout.len(), 1);
-    assert_eq!(row(&th)[3], 25.0);
+    assert!(t.clip.is_none());
+    assert!(texts.iter().any(|t| t.text == "exit 0 · 0.3s"), "the exit code and time, at the right");
+    assert_eq!(row(&th)[3], 30.0);
 }
 
 #[test]
-fn the_outputs_header_wraps_a_long_command() {
-    // Under the row, the header ("$ command") grows with it rather than clipping it.
+fn a_running_command_is_one_shimmering_text_and_the_thread_ticks() {
+    let run = Step { kind: StepIcon::Run, verb: "Ran".into(), cmd: Some("git merge --ff-only origin/main".into()), status: "in_progress".into(), ..Step::default() };
+    let turns = vec![Turn { steps: vec![run], stage: Stage::Working, live: true, ..Turn::new("Merge it.") }];
+    let mut th = Thread::new(Shaper::new(&fonts()), "Juno", [47, 201, 176, 255]);
+    th.set(&turns, 358.0);
+    assert!(th.ticking, "its time counts");
+    let lit: Vec<_> = th.sections[0].frag.texts.iter().filter(|t| t.shimmer).collect();
+    assert_eq!(lit.len(), 1, "one band for the whole line");
+    assert_eq!(lit[0].text, "Running git merge --ff-only origin/main");
+    assert!(th.sections[0].frag.texts.iter().any(|t| t.text == "0s"), "the count starts at 0s");
+}
+
+#[test]
+fn the_output_opens_with_the_whole_command_wrapped() {
+    // Under the row, the output's first line is "$ command"; a long one wraps there instead of being cut.
     let (short, long) = (thread("cargo test", true), thread(LONG, true));
-    let gap = |th: &Thread| { let [_, y, _, h] = row(th); out_y(th) - (y + h) };
-    assert!(gap(&long) > gap(&short) + 10.0, "the header is taller: {} vs {}", gap(&long), gap(&short));
+    let first = |th: &Thread, cmd: &str| th.sections[0].frag.texts.iter().find(|t| t.text == format!("$ {cmd}")).map(|t| t.layout.len()).expect("the command's line");
+    assert_eq!(first(&short, "cargo test"), 1);
+    assert!(first(&long, LONG) > 1);
 }

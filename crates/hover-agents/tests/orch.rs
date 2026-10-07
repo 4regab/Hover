@@ -1,5 +1,5 @@
 //! Orchestration: a lead asks other agents for help through Hover. These run the real sessions and the real
-//! orchestrator against scripted agents; the one with worktrees runs the real git.
+//! orchestrator against scripted agents.
 
 use hover_agents::orch::{self, Delegate, Delivery, Env, Orch, Provider, RunState};
 use hover_agents::session::{KiroSession, KiroSessions, RunArgs, RunTask};
@@ -28,16 +28,15 @@ fn wait_for(what: &str, f: impl Fn() -> bool) {
     assert!(f(), "timed out waiting for {what}");
 }
 
-struct Stub { limits: Mutex<DelegationLimits>, worktrees: PathBuf, access: Mutex<String> }
+struct Stub { limits: Mutex<DelegationLimits>, access: Mutex<String> }
 
 impl Env for Stub {
     fn providers(&self) -> Vec<Provider> {
-        let p = |id: &str, tool, ready: bool, leads: bool| Provider { id: id.into(), name: id.to_uppercase(), tool, instance: None, ready, hint: if ready { String::new() } else { "sign in first".into() }, read_only: true, resume: true, leads };
+        let p = |id: &str, tool, ready: bool, leads: bool| Provider { id: id.into(), name: id.to_uppercase(), tool, ready, hint: if ready { String::new() } else { "sign in first".into() }, read_only: true, resume: true, leads };
         vec![p("kiro", AgentTool::Kiro, true, true), p("codex", AgentTool::Codex, true, true), p("claude", AgentTool::Claude, false, true), p("opencode", AgentTool::OpenCode, true, false)]
     }
     fn access_of(&self, s: &KiroSession) -> String { s.access.clone().unwrap_or_else(|| self.access.lock().unwrap().clone()) }
     fn limits(&self) -> DelegationLimits { *self.limits.lock().unwrap() }
-    fn worktrees(&self) -> PathBuf { self.worktrees.clone() }
 }
 
 /// What a scripted agent does: it gets its run arguments and the orchestrator.
@@ -72,7 +71,7 @@ fn rig(name: &str, limits: DelegationLimits, script: impl Fn(&RunArgs, &Arc<Orch
         let (cell, script) = (c2.clone(), script.clone());
         Arc::new(move |a: RunArgs| { let o = cell.get().expect("the orchestrator").clone(); script(&a, &o) })
     }, Some(Arc::new(AgentHistory::new(root.join("history"), crypto.clone()))));
-    let env = Arc::new(Stub { limits: Mutex::new(limits), worktrees: root.join("worktrees"), access: Mutex::new("full".into()) });
+    let env = Arc::new(Stub { limits: Mutex::new(limits), access: Mutex::new("full".into()) });
     let orch = Orch::new(k.clone(), env.clone(), Some(Sealed::in_dir(&root.join("orch"), "runs", crypto.clone())));
     cell.set(orch.clone()).ok();
     Rig { k, orch, env, folder: folder.to_string_lossy().into_owned(), root, release, crypto }
@@ -131,6 +130,9 @@ fn helpers_never_have_more_access_than_the_lead_and_failures_say_why() {
     let r = rig("perm", DelegationLimits { max_helpers: 10, max_parallel: 10, max_depth: 1 }, |a, _, release| hold(a, release));
     *r.env.access.lock().unwrap() = "risky".into();
     let lead = r.lead("hold");
+    // A task of its own, started before the helpers fill the three places the app allows at once (they start at once now,
+    // with no worktree to wait for).
+    let plain = r.k.start(AgentTool::Codex, &r.folder, "hold", vec![]).unwrap();
     let ask = |p: &str, access: Option<&str>| r.orch.delegate(&lead.key, Delegate { provider: p.into(), brief: "x".into(), access: access.map(str::to_owned), ..Default::default() });
     let a = ask("codex", Some("full")).unwrap();
     assert_eq!(a.access, "risky");
@@ -142,7 +144,6 @@ fn helpers_never_have_more_access_than_the_lead_and_failures_say_why() {
     assert!(e.contains("no provider called “gemini”") && e.contains("kiro, codex"), "{e}");
     assert!(r.orch.delegate(&lead.key, Delegate { provider: "kiro".into(), brief: "  ".into(), ..Default::default() }).unwrap_err().contains("needs a brief"));
     // Delegation off for a task: a clear refusal.
-    let plain = r.k.start(AgentTool::Codex, &r.folder, "hold", vec![]).unwrap();
     assert_eq!(r.orch.delegate(&plain.key, Delegate { provider: "kiro".into(), brief: "x".into(), ..Default::default() }).unwrap_err(), orch::OFF);
     r.release();
     wait_for("all to finish", || r.k.running() == 0);
@@ -286,7 +287,7 @@ fn a_restart_fails_runs_that_were_cut_off_and_does_not_send_a_result_twice() {
 }
 
 #[test]
-fn a_writing_helper_gets_a_worktree_and_a_read_only_helper_shares_the_leads_folder() {
+fn helpers_work_in_the_leads_folder_and_a_writing_one_is_told_so() {
     let r = rig("tree", DelegationLimits::default(), |a, o, _| {
         if a.prompt.starts_with("[Hover helper task]") {
             if a.access.as_deref() != Some("read") { std::fs::write(Path::new(&a.folder).join("by-helper.txt"), "x").unwrap(); }
@@ -299,21 +300,14 @@ fn a_writing_helper_gets_a_worktree_and_a_read_only_helper_shares_the_leads_fold
         assert_eq!((w.state, ro.state), (RunState::Done, RunState::Done));
         KiroResult::new(KiroState::Completed, &format!("{}|{}", w.result.unwrap(), ro.result.unwrap()))
     });
-    let git = |args: &[&str]| { let o = std::process::Command::new("git").current_dir(&r.folder).args(["-c", "user.name=T", "-c", "user.email=t@t", "-c", "init.defaultBranch=main"]).args(args).output().unwrap(); assert!(o.status.success()); };
-    git(&["init", "-q"]);
-    std::fs::write(Path::new(&r.folder).join("a.txt"), "1").unwrap();
-    git(&["add", "."]);
-    git(&["commit", "-qm", "first"]);
     let lead = r.lead("ask two helpers");
     wait_for("the lead to finish", || r.k.get(lead.id).is_some_and(|s| !s.busy() && s.result().is_some()));
     let said = r.k.get(lead.id).unwrap().result().unwrap().text.clone();
     let (writer, reader) = said.split_once('|').unwrap_or_else(|| panic!("the lead said: {said}"));
-    assert_ne!(writer, r.folder, "the writing helper has a folder of its own");
-    assert!(writer.starts_with(r.root.join("worktrees").to_str().unwrap()), "{writer}");
-    assert!(Path::new(writer).join("by-helper.txt").exists() && !Path::new(&r.folder).join("by-helper.txt").exists(), "the lead's folder was not written");
-    assert_eq!(reader, r.folder, "a read-only helper looks at the lead's folder");
-    let ws = r.k.find(r.orch.helpers_of(&lead.key)[0].session.as_ref().unwrap()).unwrap().ext.workspace.unwrap();
-    assert!(ws.is_worktree() && ws.branch.is_some());
+    assert_eq!((writer, reader), (r.folder.as_str(), r.folder.as_str()), "both helpers work in the lead's folder");
+    assert!(Path::new(&r.folder).join("by-helper.txt").exists());
+    let notes: Vec<_> = r.orch.helpers_of(&lead.key).into_iter().map(|h| (h.access, h.note.is_some_and(|n| n.contains("shares the task"))) ).collect();
+    assert!(notes.iter().any(|(a, said)| a != "read" && *said) && notes.iter().all(|(a, said)| a != "read" || !*said), "only the writer is told: {notes:?}");
 }
 
 #[test]

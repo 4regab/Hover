@@ -4,7 +4,7 @@
 //! flush forces them out. Keys an older build wrote are ignored and dropped.
 
 use crate::json::{self, Json, Result};
-use crate::model::{notch_item, opt_text, AcpOption, AgentApproval, AgentOptions, AgentTool, Appearance, AutomationSettings, DelegationLimits, EditorSettings, SavedTheme, WorkspaceSize};
+use crate::model::{notch_item, opt_text, AcpOption, AgentApproval, AgentOptions, AgentTool, Appearance, SavedTheme, WorkspaceSize};
 use crate::projects::{Project, VoiceSettings, Workspace};
 use crate::shortcut::Shortcut;
 use std::path::{Path, PathBuf};
@@ -56,6 +56,8 @@ pub struct Model {
     /// The image a new Space starts from, `macos` or `linux`. None (never set) is `macos`;
     /// written only once set.
     pub space_image: Option<String>,
+    /// The editor (or the file manager, `fm`) Open in used last, so the picker lists it first. Written only once set.
+    pub last_editor: Option<String>,
     /// Kiro is asked to compact its conversation before the next reply once its context is this
     /// full (Hover's own; Kiro compacts by itself only at 100 %). None (never set) is off;
     /// written only once set.
@@ -68,13 +70,6 @@ pub struct Model {
     /// Hover shows on the user's Discord status (hover-agents::discord). None (never set) is
     /// off; written only once set.
     pub discord_presence: Option<bool>,
-    /// Open in editor (hover-agents::editor): the default editor and the custom one. None (never
-    /// set) is no default and no custom editor; written only once set.
-    pub editor: Option<EditorSettings>,
-    /// How far agents may delegate to helpers (hover-agents::orch). None (never set) is the defaults; written only once set.
-    pub delegation: Option<DelegationLimits>,
-    /// Resuming at a usage limit's reset and the webhook address (hover-agents). None (never set) is off; written only once set.
-    pub automation: Option<AutomationSettings>,
     pub sc_workspace: Shortcut,
     /// The registered projects, voice's settings and its default workspace (new in 3.x;
     /// null in a file from before them).
@@ -89,7 +84,7 @@ impl Default for Model {
             hover_opens_workspace: true, notch_items: None, appearance: Appearance::System, theme: None, workspace_size: WorkspaceSize::Default,
             kiro_folder: None, kiro_notice_seen: false, kiro_model: None, kiro_effort: Some("high".into()), kiro_agent: None,
             kiro_read_only: false, kiro_require_mcp: false, kiro_idle_minutes: 5, kiro_hide_steps: false, kiro_approval: AgentApproval::Autopilot, agents: None, agent_offers: None,
-            agent_tool: None, computer_use: false, chat_view: false, sandbox: None, agent_browser: None, agent_spaces: false, space_image: None, kiro_auto_compact: None, kiro_compact_at: None, kiro_retry_busy: None, discord_presence: None, editor: None, delegation: None, automation: None, sc_workspace: Shortcut::DEFAULT, projects: None, voice: None, default_workspace: None,
+            agent_tool: None, computer_use: false, chat_view: false, sandbox: None, agent_browser: None, agent_spaces: false, space_image: None, last_editor: None, kiro_auto_compact: None, kiro_compact_at: None, kiro_retry_busy: None, discord_presence: None, sc_workspace: Shortcut::DEFAULT, projects: None, voice: None, default_workspace: None,
         }
     }
 }
@@ -111,13 +106,11 @@ impl Model {
             self.agent_browser.map(|v| ("AgentBrowser", Json::Bool(v))),
             self.agent_spaces.then_some(("AgentSpaces", Json::Bool(true))),
             self.space_image.as_deref().map(|v| ("SpaceImage", Json::str(v))),
+            self.last_editor.as_deref().map(|v| ("LastEditor", Json::str(v))),
             self.kiro_auto_compact.map(|v| ("KiroAutoCompact", Json::Bool(v))),
             self.kiro_compact_at.map(|v| ("KiroCompactAt", Json::int(v as i64))),
             self.kiro_retry_busy.map(|v| ("KiroRetryBusy", Json::Bool(v))),
             self.discord_presence.map(|v| ("DiscordPresence", Json::Bool(v))),
-            self.editor.as_ref().map(|v| ("Editor", v.to_json())),
-            self.delegation.as_ref().map(|v| ("Delegation", v.to_json())),
-            self.automation.as_ref().map(|v| ("Automation", v.to_json())),
         ].into_iter().flatten().collect();
         let mut props = vec![
             ("HoverOpensWorkspace", Json::Bool(self.hover_opens_workspace)),
@@ -171,7 +164,9 @@ impl Model {
                 "KiroIdleMinutes" => m.kiro_idle_minutes = x.i32()?,
                 "KiroHideSteps" => m.kiro_hide_steps = b()?,
                 "KiroApproval" => m.kiro_approval = AgentApproval::read(x)?,
-                "Agents" => m.agents = x.opt_map(|o| if o.is_null() { Ok(None) } else { AgentOptions::from_json(o).map(Some) })?,
+                // "custom:<id>" entries were the options of agents of the user's own, which Hover no longer has.
+                "Agents" => m.agents = x.opt_map(|o| if o.is_null() { Ok(None) } else { AgentOptions::from_json(o).map(Some) })?
+                    .map(|l: Vec<(String, Option<AgentOptions>)>| l.into_iter().filter(|(k, _)| !k.starts_with("custom:")).collect()),
                 "AgentOffers" => m.agent_offers = x.opt_map(|l| l.opt_list(|o| if o.is_null() { Ok(None) } else { AcpOption::from_json(o).map(Some) })
                     .map(|l| l.map(|l| l.into_iter().flatten().collect())))?,
                 "AgentTool" => m.agent_tool = opt_text(Some(x))?,
@@ -181,19 +176,22 @@ impl Model {
                 "AgentBrowser" => m.agent_browser = if x.is_null() { None } else { Some(b()?) },
                 "AgentSpaces" => m.agent_spaces = b()?,
                 "SpaceImage" => m.space_image = opt_text(Some(x))?,
+                "LastEditor" => m.last_editor = opt_text(Some(x))?,
                 "KiroAutoCompact" => m.kiro_auto_compact = if x.is_null() { None } else { Some(b()?) },
                 "KiroCompactAt" => m.kiro_compact_at = if x.is_null() { None } else { Some(x.i32()?) },
                 "KiroRetryBusy" => m.kiro_retry_busy = if x.is_null() { None } else { Some(b()?) },
                 "DiscordPresence" => m.discord_presence = if x.is_null() { None } else { Some(b()?) },
-                "Editor" => m.editor = if x.is_null() { None } else { Some(EditorSettings::from_json(x)?) },
-                "Delegation" => m.delegation = if x.is_null() { None } else { Some(DelegationLimits::from_json(x)?) },
-                "Automation" => m.automation = if x.is_null() { None } else { Some(AutomationSettings::from_json(x)?) },
                 // A null shortcut would leave C# with none at all (and a crash where
                 // it is read); here it is unset, as a cleared shortcut is.
                 "ScWorkspace" => m.sc_workspace = if x.is_null() { Shortcut::default() } else { Shortcut::from_json(x)? },
                 "Projects" => m.projects = x.opt_list(Project::from_json)?,
                 "Voice" => m.voice = if x.is_null() { None } else { Some(VoiceSettings::from_json(x)?) },
                 "DefaultWorkspace" => m.default_workspace = if x.is_null() { None } else { Some(Workspace::from_json(x)?) },
+                // Keys of features Hover no longer has (Editor, Delegation, Automation) and any other key
+                // this build doesn't know are not read, so their values can't fail the load. They are also
+                // not kept: the file is written whole from the model, in System.Text.Json's bytes, and
+                // keeping unread text would mean writing JSON that the model doesn't own. The data those
+                // features kept in other files (saved tasks, custom agents, worktrees) is left alone.
                 _ => {}
             }
         }
@@ -372,21 +370,6 @@ impl Settings {
         });
     }
 
-    /// A custom agent's own model and effort (by its id); the defaults until set.
-    pub fn custom_options(&self, id: &str) -> AgentOptions {
-        let key = format!("custom:{id}");
-        self.m.lock().unwrap().agents.as_ref().and_then(|a| a.iter().find(|(k, _)| *k == key)).and_then(|(_, v)| v.clone()).unwrap_or_default()
-    }
-
-    pub fn set_custom_options(&self, id: &str, v: AgentOptions) {
-        let key = format!("custom:{id}");
-        let v = AgentOptions { agent: None, require_mcp: false, ..v };
-        self.change(|m| {
-            let a = m.agents.get_or_insert_with(Vec::new);
-            match a.iter_mut().find(|(k, _)| *k == key) { Some(slot) => slot.1 = Some(v), None => a.push((key, Some(v))) }
-        });
-    }
-
     /// The models, efforts and modes the tool offered the last time it ran.
     pub fn agent_offers(&self, t: AgentTool) -> Vec<AcpOption> {
         let m = self.m.lock().unwrap();
@@ -435,6 +418,8 @@ impl Settings {
     /// picks it up from its next session.
     pub fn agent_spaces(&self) -> bool { self.m.lock().unwrap().agent_spaces }
     pub fn set_agent_spaces(&self, v: bool) { self.change(|m| m.agent_spaces = v) }
+    pub fn last_editor(&self) -> Option<String> { self.m.lock().unwrap().last_editor.clone() }
+    pub fn set_last_editor(&self, v: &str) { self.change(|m| m.last_editor = Some(v.to_owned())) }
     /// The image a new Space starts from: "macos" (a VM, two at most on a Mac) or "linux".
     pub fn space_image(&self) -> &'static str { if self.m.lock().unwrap().space_image.as_deref() == Some("linux") { "linux" } else { "macos" } }
     pub fn set_space_image(&self, v: &str) { let v = if v == "linux" { "linux" } else { "macos" }; self.change(|m| m.space_image = Some(v.into())) }
@@ -455,17 +440,6 @@ impl Settings {
     /// Off unless switched on.
     pub fn discord_presence(&self) -> bool { self.m.lock().unwrap().discord_presence.unwrap_or(false) }
     pub fn set_discord_presence(&self, v: bool) { self.change(|m| m.discord_presence = Some(v)) }
-
-    /// Open in editor: the default editor and the custom one (EditorSettings).
-    pub fn editor(&self) -> EditorSettings { self.m.lock().unwrap().editor.clone().unwrap_or_default() }
-    pub fn set_editor(&self, v: EditorSettings) { self.change(|m| m.editor = Some(v)) }
-
-    /// How far agents may delegate (the limits the user set, else the defaults).
-    pub fn delegation(&self) -> DelegationLimits { self.m.lock().unwrap().delegation.unwrap_or_default() }
-    pub fn set_delegation(&self, v: DelegationLimits) { self.change(|m| m.delegation = Some(v)) }
-
-    pub fn automation(&self) -> AutomationSettings { self.m.lock().unwrap().automation.clone().unwrap_or_default() }
-    pub fn set_automation(&self, v: AutomationSettings) { self.change(|m| m.automation = Some(v)) }
 
     /// Launch at login: outside settings.json, in the platform's own place.
     pub fn launch_at_login(&self) -> bool { self.autostart.enabled() }
@@ -799,5 +773,29 @@ mod tests {
         std::thread::sleep(Duration::from_millis(400));
         let m = load_model(&s.file);
         assert!(!m.hover_opens_workspace && m.kiro_notice_seen);
+    }
+
+    /// A file written while Hover still had agents of its own, the default editor, helper limits, saved tasks' settings,
+    /// webhooks, worktrees and resuming at a usage limit still loads: the old keys are skipped (the rest of the file is read
+    /// as it was) and are left out of the next write.
+    #[test]
+    fn a_file_with_the_removed_features_old_keys_still_loads() {
+        let f = temp("removed");
+        std::fs::write(&f, concat!("{\"HoverOpensWorkspace\": false, \"KiroModel\": \"claude-sonnet-5\",",
+            " \"Agents\": {\"codex\": {\"Model\": \"gpt-5\"}, \"custom:ca-1\": {\"Model\": \"x\"}},",
+            " \"Editor\": {\"Default\": \"custom\", \"CustomExe\": \"code-insiders\", \"CustomArgs\": \"{folder}\"},",
+            " \"Delegation\": {\"MaxHelpers\": 10, \"MaxParallel\": 4, \"MaxDepth\": 3},",
+            " \"Automation\": {\"AutoResume\": true, \"WebhookAddr\": \"127.0.0.1:47653\", \"WebhookPublic\": true, \"UseFolder\": true},",
+            " \"ScWorkspace\": {\"Key\": \"N\", \"Modifiers\": \"Alt\"}}")).unwrap();
+        let s = Settings::load(f.clone());
+        assert!(!s.hover_opens_workspace(), "the known keys around them are read");
+        assert_eq!(s.model().kiro_model.as_deref(), Some("claude-sonnet-5"));
+        assert_eq!(s.model().agents.as_ref().map(|a| a.iter().map(|(k, _)| k.as_str()).collect::<Vec<_>>()), Some(vec!["codex"]), "an own agent's options are dropped");
+        // Even values of the wrong kind in the old keys can't fail the load.
+        std::fs::write(&f, "{\"KiroModel\": \"m\", \"Editor\": 3, \"Delegation\": \"x\", \"Automation\": [1]}").unwrap();
+        assert_eq!(load_model(&f).kiro_model.as_deref(), Some("m"));
+        s.flush();
+        let text = std::fs::read_to_string(&f).unwrap();
+        assert!(!text.contains("Editor") && !text.contains("Delegation") && !text.contains("Automation") && !text.contains("custom:"), "{text}");
     }
 }
