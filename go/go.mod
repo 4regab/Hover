@@ -4,6 +4,7 @@ go 1.27.0
 
 require (
 	gioui.org v0.10.3
+	github.com/dlclark/regexp2 v1.12.0
 	github.com/go-webgpu/webgpu v0.5.5
 	golang.org/x/sys v0.48.0
 )
