@@ -121,6 +121,39 @@ Left for later:
 - `encoding/json` isn't used for anything Hover keeps. It writes other bytes than
   System.Text.Json.
 
+## Phase 2: agents, quota, md, diagram (under way)
+
+Done, with their tests passing on Linux (`-race`) and Windows:
+
+- `internal/diagram` and `internal/md`: the golden fixtures, the image rule, and 3,956
+  random cases compared with md.js (44 skipped where md.js throws or hangs).
+- `internal/agents`, so far: starting tools (a Windows job per tool; a process group and
+  watchdog on Linux and macOS), finding each tool and its sign-in, the update stream,
+  questions and approvals, OpenCode's HTTP calls, Kiro's MCP list, checkpoints, the GitHub
+  CLI setup, the terminal tab, chips, handoffs, folder holds, and the sessions with their
+  queue, stop, pause, rewind, provider switch, fork and Kiro Web reconnect.
+
+Still to port in `internal/agents`: `acp`, `opencode`, `claude` (each with its fake agent
+and the `tests/golden/acp` fixtures), `desk`, `orch`, `sandbox`, `browser`,
+`computer_use`, `spaces`, `setup`, `runtime`, `route`, `text`, `discord`, `editor`, and
+`state`'s office message. Then `hover-quota`. This is the biggest part of the port.
+
+How the Go code differs, on purpose:
+
+- **One package.** The crate's modules call each other in a ring, which Go only allows
+  inside one package. Files keep the module names.
+- **No drop.** Rust ends a tool when its handle is dropped. Go code calls `Close` or
+  `Kill` at the same places, and a cleanup ends the tool should one be missed.
+- **HTTP.** Rust wrote its own small client to need no crate. Go uses `net/http`, with no
+  proxy, no keep-alive and no compression, as Rust's had none.
+- **A .cmd or .bat shim** gets Rust's own safe command line (its `make_bat_command_line`).
+  Go would hand cmd the arguments unchecked.
+- **Test stand-ins.** The fake gh is the Go test program itself, linked (or on Windows
+  copied) under gh's name. Rust built a separate program with rustc.
+- **Errors from the system read differently.** Rust says "No such file or directory (os
+  error 2)", Go "open x: no such file or directory". Some of these reach the user, for
+  example "Couldn't reach OpenCode: …". The words around them are the same.
+
 ## Known costs
 
 - Memory, above.
