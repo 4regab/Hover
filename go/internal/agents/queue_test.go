@@ -2,8 +2,7 @@ package agents
 
 // tests/queue.rs: the reply queue. Waiting messages can be edited, moved, taken back and
 // sent ahead; each operation reaches the message it names, a stop holds the rest, and the
-// queue, its chips and its order come back after a restart (held). The last test there,
-// on chips and a conversation reference, waits for orch's port.
+// queue, its chips and its order come back after a restart (held).
 
 import (
 	"fmt"
@@ -344,4 +343,79 @@ func TestTheQueueItsOrderAndItsChipsComeBackAfterARestartHeld(t *testing.T) {
 		}
 		return true
 	})
+}
+
+type noProviders struct{}
+
+func (noProviders) Providers() []Provider         { return nil }
+func (noProviders) AccessOf(KiroSession) string   { return "full" }
+func (noProviders) Limits() core.DelegationLimits { return core.DefaultDelegationLimits() }
+
+func TestChipsReachTheAgentAsTextStayInTheHistoryAndAConversationReferenceLetsItReadOnly(t *testing.T) {
+	root := queueFolder(t, "chips")
+	var key [32]byte
+	for i := range key {
+		key[i] = 6
+	}
+	crypto := core.CryptoWithKey(key)
+	var mu sync.Mutex
+	var seen []string
+	k := NewKiroSessions(func(core.AgentTool) RunTask {
+		return func(r RunArgs) KiroResult {
+			mu.Lock()
+			seen = append(seen, r.Prompt)
+			mu.Unlock()
+			return NewResult(core.Completed, "The earlier talk said: use retries.")
+		}
+	}, core.NewAgentHistory(filepath.Join(root, "history"), crypto))
+	os.WriteFile(filepath.Join(root, "a.rs"), []byte("fn a() {}\nfn b() {}\n"), 0o666)
+	// An earlier conversation to refer to.
+	earlier := must(k.Start(core.Codex, root, "How should we handle flaky calls?", nil))
+	waitFor20(t, "the earlier one", func() bool { s, ok := k.Get(earlier.ID); return ok && !s.Busy() })
+	// A new task is sent a snapshot of lines, a live file and a reference to that
+	// conversation.
+	lines, err := Lines(root, "a.rs", 2, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	live, err := FileLive(root, "a.rs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	chips := []core.Chip{lines, live, ThreadChip(earlier.Key, "Flaky calls")}
+	s := must(k.StartBound(core.Kiro, root, "Use what we decided", nil, nil, nil, core.SessionExt{}))
+	waitFor20(t, "that one", func() bool { x, ok := k.Get(s.ID); return ok && !x.Busy() })
+	if !k.ReplyMsg(s.ID, Msg{Text: "Now apply it to this", Chips: chips}) {
+		t.Fatal("no reply")
+	}
+	waitFor20(t, "the reply", func() bool {
+		x, ok := k.Get(s.ID)
+		return ok && !x.Busy() && len(x.Turns) == 2 && x.Turns[1].Result != nil
+	})
+	mu.Lock()
+	sent := seen[len(seen)-1]
+	mu.Unlock()
+	if !strings.HasPrefix(sent, "Now apply it to this\n\n[Attached by Hover]") || !strings.Contains(sent, "fn b() {}") || !strings.Contains(sent, "Conversation “Flaky calls”") {
+		t.Error(sent)
+	}
+	if strings.Contains(sent, "How should we handle flaky calls?") {
+		t.Error("the other conversation is a reference, not a copy")
+	}
+	// The history keeps the chips with the sent message.
+	k.History().Flush()
+	if got := must(k.History().Load(s.Key)).Turns[1].Ext.Chips; !reflect.DeepEqual(got, chips) {
+		t.Errorf("%+v", got)
+	}
+	// The agent that was sent the reference can read that conversation, in pages; another
+	// can't.
+	o := NewOrch(k, noProviders{}, nil)
+	if !o.CanRead(s.Key, earlier.Key) {
+		t.Error("the reference doesn't let it read")
+	}
+	if o.CanRead(earlier.Key, s.Key) {
+		t.Error("a reference is one way")
+	}
+	if o.CanRead("someone-else", earlier.Key) {
+		t.Error("someone else reads it")
+	}
 }
