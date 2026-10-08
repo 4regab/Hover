@@ -18,6 +18,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 	"unsafe"
 
 	"gioui.org/io/input"
@@ -345,13 +346,14 @@ func wndProc(hwnd, m, wp, lp uintptr) uintptr {
 		if !s.editorDrawn {
 			return 0
 		}
-		// The text replaces the editor's own selection. Run 2 took the router's
-		// EditorState instead and put every character at 0 ("本日ÎÅ olleh"); the log
-		// line shows both, so the next run proves which one follows the caret.
+		// As Gio's own window does it (app/window.go EditorInsert): the text replaces the
+		// selection, then a SelectionEvent puts the caret after it. An EditEvent alone
+		// leaves the caret where it was, so run 3 typed every character at 0.
 		a, b := s.editor.Selection()
-		rs := s.router.EditorState().Selection.Range
-		s.logf("edit %q: editor's selection %d..%d, router's %d..%d", text, a, b, rs.Start, rs.End)
-		s.router.Queue(key.EditEvent{Range: key.Range{Start: min(a, b), End: max(a, b)}, Text: text})
+		start := min(a, b)
+		s.router.Queue(key.EditEvent{Range: key.Range{Start: start, End: max(a, b)}, Text: text})
+		caret := start + utf8.RuneCountInString(text)
+		s.router.Queue(key.SelectionEvent{Start: caret, End: caret})
 		s.frame()
 		return 0
 	case wmEraseBkgnd:
