@@ -1,8 +1,11 @@
 package agents
 
 import (
+	"errors"
 	"os/exec"
+	"strings"
 	"syscall"
+	"unicode"
 	"unsafe"
 
 	"github.com/4regab/Hover/go/internal/core"
@@ -11,6 +14,74 @@ import (
 
 func hideWindow(c *exec.Cmd) {
 	c.SysProcAttr = &syscall.SysProcAttr{CreationFlags: windows.CREATE_NO_WINDOW}
+}
+
+// batCommand runs a .cmd or .bat as Rust's std does (make_bat_command_line): through
+// System32's cmd.exe, each argument quoted and escaped for cmd, and refused (the command's
+// Err) when it can't be passed as plain data. Go itself would hand cmd the arguments as
+// they are.
+func batCommand(script string, args []string) *exec.Cmd {
+	sys, _ := windows.GetSystemDirectory()
+	c := exec.Command(sys + `\cmd.exe`)
+	hideWindow(c)
+	var b strings.Builder
+	b.WriteString(`cmd.exe /e:ON /v:OFF /d /c "`)
+	if strings.Contains(script, `"`) || strings.HasSuffix(script, `\`) {
+		c.Err = errors.New("Windows file names may not contain `\"` or end with `\\`")
+		return c
+	}
+	b.WriteString(`"` + script + `"`)
+	for _, a := range args {
+		b.WriteByte(' ')
+		if strings.ContainsAny(a, "\r\n") {
+			c.Err = errors.New("batch file arguments are invalid")
+			return c
+		}
+		if strings.ContainsRune(a, 0) {
+			c.Err = errors.New("nul byte found in provided data")
+			return c
+		}
+		appendBatArg(&b, a)
+	}
+	b.WriteByte('"')
+	c.SysProcAttr.CmdLine = b.String()
+	return c
+}
+
+// appendBatArg is Rust's append_bat_arg: quoted when anything in it but letters, digits
+// and #$*+-./:?@\_ (or a control character) could mean something to cmd; a quote doubled,
+// and % made one cmd won't expand.
+func appendBatArg(b *strings.Builder, arg string) {
+	quote := arg == "" || strings.HasSuffix(arg, `\`)
+	for _, c := range arg {
+		if c < 0x80 && !(asciiAlnum(c) || strings.ContainsRune(`#$*+-./:?@\_`, c)) || unicode.IsControl(c) {
+			quote = true
+		}
+	}
+	if quote {
+		b.WriteByte('"')
+	}
+	backslashes := 0
+	for _, c := range arg {
+		if c == '\\' {
+			backslashes++
+		} else {
+			if c == '"' {
+				// n backslashes to total 2n before an inner ", and the " doubled.
+				b.WriteString(strings.Repeat(`\`, backslashes))
+				b.WriteByte('"')
+			} else if c == '%' || c == '\r' {
+				// %%cd:~,% expands to nothing, which keeps cmd from expanding %VAR%.
+				b.WriteString("%%cd:~,")
+			}
+			backslashes = 0
+		}
+		b.WriteRune(c)
+	}
+	if quote {
+		b.WriteString(strings.Repeat(`\`, backslashes))
+		b.WriteByte('"')
+	}
 }
 
 func prepare(*exec.Cmd) {}

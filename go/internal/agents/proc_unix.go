@@ -15,6 +15,9 @@ import (
 
 func hideWindow(*exec.Cmd) {}
 
+// batCommand: only Windows has batch files (isShim is false elsewhere).
+func batCommand(script string, args []string) *exec.Cmd { return exec.Command(script, args...) }
+
 func prepare(cmd *exec.Cmd) {
 	if cmd.SysProcAttr == nil {
 		cmd.SysProcAttr = &syscall.SysProcAttr{}
