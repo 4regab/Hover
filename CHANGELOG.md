@@ -5,6 +5,21 @@ What changed in each Hover release. Versions follow [Semantic Versioning](https:
 
 ## [Unreleased]
 
+## [5.0.2] - 2026-10-08 (nightly)
+
+A nightly build, published as a pre-release: it is not marked Latest, so the Latest release stays
+5.0.0. Fixes to the start screen's menus, mostly for the notch, on Windows and Linux. Checked with
+`hover --shots` at window and notch size, not on a real display or on Windows by hand.
+
+### Fixed
+
+- The start screen's menus (agent, where it runs, folder, access) ran off the bottom of the notch
+  and could not be scrolled. Each one now stops at the bottom edge and scrolls.
+- The folder menu: long folder paths took up to three lines. Each path is one line now and ends
+  in "…" when it doesn't fit.
+- Kiro cloud's note took two lines. It says "In an empty sandbox" now, on one line.
+- The agent menu was wider than its short names need. It is narrower now.
+
 ## [5.0.1] - 2026-10-07 (nightly)
 
 A nightly build, published as a pre-release: it is not marked Latest, so the Latest release stays
