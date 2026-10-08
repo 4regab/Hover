@@ -81,6 +81,27 @@ go build -o ..\spike\notch-spike.exe .\cmd\notch-spike
 Things the spike leaves out on purpose (each marked `ponytail:` in the code): the drop
 shadow, Inter and system fonts, and display changes.
 
+### Results so far (run 4, windows-2022, no GPU)
+
+- All 16 Go checks pass: notch-proto's 14, plus the office stand-in and both WGSL files.
+- Private commit at rest after the run: 52 to 61 MiB over runs 2 to 4. Of that, the Go
+  runtime holds about 29 MiB (`go_sys`) and the Go heap about 12 MiB; the rest is
+  Direct3D on WARP, wgpu-native and the DLLs.
+- No Rust number yet. `notch-proto --selftest` panics at `main.rs:498` on the runner:
+  `hwnd_of` finds no window right after `show()`, so `n.hwnd` is `None`. The memory rule
+  above can't be checked until that is fixed or another Rust baseline is chosen.
+
+Where the Go self-test differs from notch-proto's, and why:
+
+- **Click on the resting pill.** notch-proto moves the pointer and clicks 30 ms apart on
+  the window's own thread, so the 50 ms poll can't run in between. Go's log showed the
+  window still click-through at the click, and the click went to the window underneath.
+  The Go test moves first and clicks 70 ms later, before the 120 ms hover delay. Rust
+  likely has the same problem, since its test sleeps on the same thread. Not confirmed:
+  it crashes before this step.
+- **The pill's colour.** notch-proto reads it at 12 dp, where the status text crosses the
+  centre (Go read a letter there). The Go test reads 28 dp, still inside the pill.
+
 ## Known costs
 
 - Memory, above.
