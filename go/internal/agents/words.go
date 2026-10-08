@@ -9,6 +9,8 @@ import (
 	"os"
 	"strings"
 	"unicode"
+
+	"github.com/4regab/Hover/go/internal/core"
 )
 
 // wordsFileName is Path.GetFileName: after the last separator (both kinds on Windows,
@@ -22,6 +24,110 @@ func wordsFileName(p string) string {
 		return p[i+1:]
 	}
 	return p
+}
+
+// Activity is the verb and its object: ("Editing", "refresh.ts"), ("Running", "npm test"),
+// ("Thinking", "").
+func Activity(s *KiroSession) (string, string) {
+	if s.State != core.Running {
+		switch s.State {
+		case core.Completed:
+			return "Done", ""
+		case core.Failed:
+			return "Couldn’t finish", ""
+		case core.Cancelled:
+			return "Stopped", ""
+		}
+		return "Ready", ""
+	}
+	if s.Phase == Starting {
+		return "Waking up", ""
+	}
+	var steps []core.KiroStep
+	if t := s.Current(); t != nil {
+		steps = t.Steps
+	}
+	var step *core.KiroStep
+	for i := len(steps) - 1; i >= 0; i-- {
+		if steps[i].Status == "in_progress" || steps[i].Status == "pending" {
+			step = &steps[i]
+			break
+		}
+	}
+	if step == nil && len(steps) > 0 {
+		switch s.Phase {
+		case Reading, Searching, Editing, Running:
+			step = &steps[len(steps)-1]
+		}
+	}
+	if step == nil {
+		switch s.Phase {
+		case Thinking:
+			return "Thinking", ""
+		case Planning:
+			return "Making a plan", ""
+		case Writing:
+			return "Writing it up", ""
+		}
+		return "Working", ""
+	}
+	var verb string
+	switch step.Kind {
+	case "read":
+		verb = "Reading"
+	case "edit":
+		verb = "Editing"
+	case "delete":
+		verb = "Deleting"
+	case "move":
+		verb = "Moving"
+	case "execute":
+		verb = "Running"
+	case "search":
+		verb = "Searching"
+	case "fetch":
+		verb = "Fetching"
+	case "think", "thought":
+		// "thought" is what a reasoning step is called (stream); without it the notch read
+		// its title and said "Working on Thinking".
+		verb = "Thinking"
+	default:
+		if name, ok := mcpName(step.Title); ok {
+			return "Using", clipTo(name, 28)
+		}
+		p, ok := ToolPhase(&step.Kind, &step.Title)
+		switch {
+		case ok && p == Reading:
+			verb = "Reading"
+		case ok && p == Editing:
+			verb = "Editing"
+		case ok && p == Running:
+			verb = "Running"
+		case ok && p == Searching:
+			verb = "Searching"
+		default:
+			// The tool's own title says more than "Working" ("Loaded skill: unslop", "Serve
+			// the mockup on localhost"); a many-line one is a message, not a name.
+			t := strings.TrimSpace(step.Title)
+			if t != "" && t != "Working" && !strings.Contains(t, "\n") {
+				// A title that already starts with a verb ("Cloning repository") stands
+				// alone: "Working on Cloning repository" is wrong.
+				// ponytail: any first word ending in "ing" counts as a verb; a list of verbs
+				// is the upgrade.
+				f := strings.Fields(t)
+				if len(f) > 0 && len(f[0]) > 4 && strings.HasSuffix(strings.ToLower(f[0]), "ing") {
+					return "", clipTo(t, 28)
+				}
+				return "Working on", clipTo(t, 28)
+			}
+			verb = "Working"
+		}
+	}
+	obj := ""
+	if o := Short(step.Target); o != nil {
+		obj = *o
+	}
+	return verb, obj
 }
 
 // mcpName is an MCP tool call's name from its title, as "server: tool": Kiro titles one

@@ -200,8 +200,8 @@ func cloneExt(e core.SessionExt) core.SessionExt {
 }
 
 // Clone is Rust's Clone: a copy that shares nothing a later change could reach.
-func (s *KiroSession) Clone() KiroSession {
-	c := *s
+func (s KiroSession) Clone() KiroSession {
+	c := s
 	c.Turns = make([]KiroTurn, len(s.Turns))
 	for i, t := range s.Turns {
 		c.Turns[i] = t.clone()
@@ -215,7 +215,7 @@ func (s *KiroSession) Clone() KiroSession {
 
 // Light is a copy without what only the chat reads: the answers' text, and the steps'
 // changes and output. What the notch, the desks and the panels draw is all there.
-func (s *KiroSession) Light() KiroSession {
+func (s KiroSession) Light() KiroSession {
 	c := s.Clone()
 	for i := range c.Turns {
 		t := &c.Turns[i]
@@ -236,20 +236,20 @@ func (s *KiroSession) Light() KiroSession {
 	return c
 }
 
-func (s *KiroSession) Busy() bool { return s.State == core.Running }
+func (s KiroSession) Busy() bool { return s.State == core.Running }
 
 // Asking is the question in front: the oldest one waiting.
-func (s *KiroSession) Asking() *AgentAsk {
+func (s KiroSession) Asking() *AgentAsk {
 	if len(s.Asks) == 0 {
 		return nil
 	}
 	return &s.Asks[0]
 }
 
-func (s *KiroSession) Waiting() bool { return len(s.Asks) > 0 }
+func (s KiroSession) Waiting() bool { return len(s.Asks) > 0 }
 
 // Current is the turn running now, or the last one that ran.
-func (s *KiroSession) Current() *KiroTurn {
+func (s KiroSession) Current() *KiroTurn {
 	for i := len(s.Turns) - 1; i >= 0; i-- {
 		if !s.Turns[i].Queued {
 			return &s.Turns[i]
@@ -258,14 +258,14 @@ func (s *KiroSession) Current() *KiroTurn {
 	return nil
 }
 
-func (s *KiroSession) Prompt() string {
+func (s KiroSession) Prompt() string {
 	if len(s.Turns) == 0 {
 		return ""
 	}
 	return s.Turns[0].Prompt
 }
 
-func (s *KiroSession) Result() *KiroResult {
+func (s KiroSession) Result() *KiroResult {
 	if t := s.Current(); t != nil {
 		return t.Result
 	}
@@ -274,7 +274,7 @@ func (s *KiroSession) Result() *KiroResult {
 
 // Title is the name the user gave the chat, else the prompt's first line, short enough
 // for a label.
-func (s *KiroSession) Title() string {
+func (s KiroSession) Title() string {
 	if s.Ext.Name != nil {
 		return *s.Ext.Name
 	}
@@ -282,7 +282,7 @@ func (s *KiroSession) Title() string {
 }
 
 // Snapshot is the session as the history keeps it.
-func (s *KiroSession) Snapshot(now core.Stamp) core.SavedSession {
+func (s KiroSession) Snapshot(now core.Stamp) core.SavedSession {
 	c := s.Clone()
 	turns := make([]core.SavedTurn, len(c.Turns))
 	for i, t := range c.Turns {
