@@ -11,7 +11,11 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
+
+	"github.com/4regab/Hover/go/internal/core"
 )
 
 func testDir(t *testing.T, name string) string {
@@ -181,5 +185,149 @@ func TestFoldersTooBroadAndBadIdsAreRefusedAndDeleteRemovesTheStore(t *testing.T
 	c.Delete("k3")
 	if exists(filepath.Join(root, "stores", "k3.git")) {
 		t.Error("the store is still there")
+	}
+}
+
+// writer is a runner that writes the file a "write NAME" prompt (its last line) names, and
+// notes each prompt it was sent with the conversation it was asked to resume.
+func writer(log *runLog) func(core.AgentTool) RunTask {
+	return func(tool core.AgentTool) RunTask {
+		return func(a RunArgs) KiroResult {
+			log.add(logged{tool, a.Prompt, a.Resume})
+			a.Events(KiroEvent{SessionID: sp("conversation-1")})
+			lines := rustLines(a.Prompt)
+			if name, ok := strings.CutPrefix(lines[len(lines)-1], "write "); ok {
+				os.WriteFile(filepath.Join(a.Folder, name), []byte(name), 0o666)
+			}
+			return KiroResult{State: core.Completed, Text: "Done.", ExitCode: i32(0)}
+		}
+	}
+}
+
+func TestAChatGoesBackToAnAnswerOrTriesAMessageAgain(t *testing.T) {
+	root := testDir(t, "chat")
+	project := filepath.Join(root, "project")
+	os.MkdirAll(project, 0o777)
+	os.WriteFile(filepath.Join(project, "seed.txt"), []byte("seed"), 0o666)
+	log := &runLog{}
+	k := NewKiroSessions(writer(log), nil)
+	k.SetCheckpoints(NewCheckpoints(filepath.Join(root, "stores")))
+	at := func(name string) string { return filepath.Join(project, name) }
+	waitIdleTurns := func(id int32, f func(KiroSession) bool) {
+		waitFor20(t, "the turn", func() bool { s, ok := k.Get(id); return ok && !s.Busy() && f(s) })
+	}
+	id := must(k.Start(core.Kiro, project, "write one.txt", nil)).ID
+	waitIdleTurns(id, func(KiroSession) bool { return true })
+	for _, name := range []string{"two.txt", "three.txt"} {
+		if !k.Reply(id, "write "+name, nil) {
+			t.Fatal(name)
+		}
+		waitIdleTurns(id, func(s KiroSession) bool {
+			l := s.Turns[len(s.Turns)-1]
+			return strings.HasSuffix(l.Prompt, name) && l.Result != nil
+		})
+	}
+	s := must(k.Get(id))
+	if len(s.Turns) != 3 {
+		t.Fatal(len(s.Turns))
+	}
+	for _, tt := range s.Turns {
+		if tt.Before == nil || tt.After == nil {
+			t.Fatal("every turn has both checkpoints")
+		}
+	}
+	if *s.Turns[1].Before != *s.Turns[0].After || *s.Turns[0].Before == *s.Turns[0].After || !exists(at("three.txt")) {
+		t.Error("a turn starts where the one before ended, and the first turn changed the folder")
+	}
+	// Back to just after the first answer: its file stays, the later ones go, the chat is cut.
+	if err := k.Rewind(id, Rewind{Turn: 0}); err != nil {
+		t.Fatal(err)
+	}
+	if !exists(at("seed.txt")) || !exists(at("one.txt")) || exists(at("two.txt")) || exists(at("three.txt")) {
+		t.Error("files")
+	}
+	if s := must(k.Get(id)); len(s.Turns) != 1 || s.State != core.Completed {
+		t.Error(len(s.Turns), s.State)
+	}
+	// The next message carries one note about it, then the message, on the same conversation.
+	k.Reply(id, "write four.txt", nil)
+	waitIdleTurns(id, func(s KiroSession) bool { return len(s.Turns) == 2 && s.Turns[1].Result != nil })
+	sent := log.last()
+	if !strings.HasPrefix(sent.prompt, "[Hover handoff] The project's files were just put back") || !strings.Contains(sent.prompt, "“write one.txt”") || !strings.HasSuffix(sent.prompt, "write four.txt") {
+		t.Error(sent.prompt)
+	}
+	if sent.resume != nil {
+		t.Error("the agent still remembered the removed turns, so it starts a new conversation from an account of the ones that remain")
+	}
+	k.Reply(id, "write five.txt", nil)
+	waitIdleTurns(id, func(s KiroSession) bool { return len(s.Turns) == 3 && s.Turns[2].Result != nil })
+	if log.last().prompt != "write five.txt" {
+		t.Error("the note is sent once")
+	}
+	// Try the second message again: the files as they were before it, and it goes again.
+	if err := k.Rewind(id, Rewind{Before: true, Turn: 1}); err != nil {
+		t.Fatal(err)
+	}
+	waitIdleTurns(id, func(s KiroSession) bool { return len(s.Turns) == 2 && s.Turns[1].Result != nil })
+	if s := must(k.Get(id)); s.Turns[1].Prompt != "write four.txt" || !exists(at("four.txt")) || exists(at("five.txt")) || !strings.HasSuffix(log.last().prompt, "write four.txt") {
+		t.Error("the same message, sent again")
+	}
+	// The very first message again: a new conversation, and the folder as it was before anything.
+	if err := k.Rewind(id, Rewind{Before: true, Turn: 0}); err != nil {
+		t.Fatal(err)
+	}
+	waitIdleTurns(id, func(s KiroSession) bool { return len(s.Turns) == 1 && s.Turns[0].Result != nil })
+	if log.last().resume != nil {
+		t.Error("nothing to resume")
+	}
+	if !exists(at("one.txt")) || exists(at("four.txt")) || !exists(at("seed.txt")) {
+		t.Error("files")
+	}
+	// Deleting the chat takes its checkpoints.
+	key := must(k.Get(id)).Key
+	if !exists(filepath.Join(root, "stores", key+".git")) {
+		t.Fatal("no store")
+	}
+	k.Delete(key)
+	if exists(filepath.Join(root, "stores", key+".git")) {
+		t.Error("the store stayed")
+	}
+}
+
+func TestARunningChatOrATurnWithoutACheckpointIsNotRewound(t *testing.T) {
+	root := testDir(t, "refused")
+	project := filepath.Join(root, "project")
+	os.MkdirAll(project, 0o777)
+	// With no store at all (git missing, or not switched on) there is nothing to go back to.
+	bare := NewKiroSessions(writer(&runLog{}), nil)
+	id := must(bare.Start(core.Kiro, project, "write a.txt", nil)).ID
+	waitFor20(t, "the turn", func() bool { return !must(bare.Get(id)).Busy() })
+	if err := bare.Rewind(id, Rewind{Turn: 0}); err == nil || !strings.Contains(err.Error(), "git") {
+		t.Error(err)
+	}
+	// One that is running is left alone: the agent could be writing.
+	var release atomic.Bool
+	k := NewKiroSessions(func(core.AgentTool) RunTask {
+		return func(RunArgs) KiroResult {
+			start := time.Now()
+			for !release.Load() && time.Since(start) < 20*time.Second {
+				time.Sleep(10 * time.Millisecond)
+			}
+			return NewResult(core.Completed, "ok")
+		}
+	}, nil)
+	k.SetCheckpoints(NewCheckpoints(filepath.Join(root, "stores")))
+	id = must(k.Start(core.Kiro, project, "wait", nil)).ID
+	waitFor20(t, "the first checkpoint", func() bool { return must(k.Get(id)).Turns[0].Before != nil })
+	if err := k.Rewind(id, Rewind{Before: true, Turn: 0}); err == nil || err.Error() != "Stop the run first." {
+		t.Error(err)
+	}
+	release.Store(true)
+	waitFor20(t, "the end", func() bool { return !must(k.Get(id)).Busy() })
+	if must(k.Get(id)).Turns[0].After == nil {
+		t.Error("no checkpoint after")
+	}
+	if k.Rewind(id, Rewind{Turn: 5}) == nil {
+		t.Error("no such message")
 	}
 }
