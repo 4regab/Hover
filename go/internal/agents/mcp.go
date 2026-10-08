@@ -54,19 +54,19 @@ type McpTarget struct {
 	Args    []string
 }
 
-// McpServer is one server of the list. Pairs are its environment variables (a local one)
+// KiroMcpServer is one server of the list. Pairs are its environment variables (a local one)
 // or its headers (a remote one), in file order; values are plain text, as Kiro keeps them.
-type McpServer struct {
+type KiroMcpServer struct {
 	Name     string
 	Target   McpTarget
 	Pairs    [][2]string
 	Disabled bool
 }
 
-func (s *McpServer) IsRemote() bool { return s.Target.Remote }
+func (s *KiroMcpServer) IsRemote() bool { return s.Target.Remote }
 
 // Line is what the row shows in mono: the URL, or the command and its arguments.
-func (s *McpServer) Line() string {
+func (s *KiroMcpServer) Line() string {
 	if s.Target.Remote {
 		return s.Target.URL
 	}
@@ -83,7 +83,7 @@ type McpDraft struct {
 	Pairs   [][2]string
 }
 
-func DraftOf(s *McpServer) McpDraft {
+func DraftOf(s *KiroMcpServer) McpDraft {
 	d := McpDraft{Name: s.Name, Remote: s.IsRemote(), Pairs: slices.Clone(s.Pairs)}
 	if s.Target.Remote {
 		d.URL = s.Target.URL
@@ -307,12 +307,12 @@ func pairsOf(v core.JSON, ok bool) [][2]string {
 	return out
 }
 
-func serverOf(name string, v core.JSON) McpServer {
+func serverOf(name string, v core.JSON) KiroMcpServer {
 	d, _ := v.Get("disabled")
 	disabled, _ := d.Bool()
 	if u, ok := str(v, "url"); ok {
 		h, hok := v.Get("headers")
-		return McpServer{Name: name, Target: McpTarget{Remote: true, URL: u}, Pairs: pairsOf(h, hok), Disabled: disabled}
+		return KiroMcpServer{Name: name, Target: McpTarget{Remote: true, URL: u}, Pairs: pairsOf(h, hok), Disabled: disabled}
 	}
 	var args []string
 	if a, ok := arr(v, "args"); ok {
@@ -322,13 +322,13 @@ func serverOf(name string, v core.JSON) McpServer {
 	}
 	cmd, _ := str(v, "command")
 	e, eok := v.Get("env")
-	return McpServer{Name: name, Target: McpTarget{Command: cmd, Args: args}, Pairs: pairsOf(e, eok), Disabled: disabled}
+	return KiroMcpServer{Name: name, Target: McpTarget{Command: cmd, Args: args}, Pairs: pairsOf(e, eok), Disabled: disabled}
 }
 
 // ParseMcp is the servers in the file's text, in file order. Where a name is written
 // twice the later one's data is used (that is how a reader of the file sees it), at the
 // first one's place.
-func ParseMcp(text string) ([]McpServer, error) {
+func ParseMcp(text string) ([]KiroMcpServer, error) {
 	top, err := document(text)
 	if err != nil {
 		return nil, err
@@ -337,10 +337,10 @@ func ParseMcp(text string) ([]McpServer, error) {
 	if err != nil {
 		return nil, err
 	}
-	out := []McpServer{}
+	out := []KiroMcpServer{}
 	for _, p := range list {
 		s := serverOf(p.Key, p.Val)
-		if i := slices.IndexFunc(out, func(o McpServer) bool { return o.Name == p.Key }); i >= 0 {
+		if i := slices.IndexFunc(out, func(o KiroMcpServer) bool { return o.Name == p.Key }); i >= 0 {
 			out[i] = s
 		} else {
 			out = append(out, s)
@@ -615,7 +615,7 @@ func readMcp(path string) (string, error) {
 
 // LoadMcp is the list in the file; no file is an empty list, and a file that doesn't
 // parse is the error.
-func LoadMcp(path string) ([]McpServer, error) {
+func LoadMcp(path string) ([]KiroMcpServer, error) {
 	text, err := readMcp(path)
 	if err != nil {
 		return nil, err
