@@ -102,6 +102,13 @@ func (t *selftest) g() (notch.Rect, float64, int, notch.Size) {
 func clickAt(x, y int) {
 	moveTo(x, y)
 	time.Sleep(30 * time.Millisecond)
+	// Evidence for the click-on-pill check: whether the window was still click-through
+	// (WS_EX_TRANSPARENT) when the click went in, and what Windows puts under it.
+	if app != nil {
+		ex := exStyle(app.hwnd)
+		app.logf("click at %d,%d: exstyle %#x, click-through %v, window under it is the notch %v",
+			x, y, ex, ex&wsExTransparent != 0, windowFromPoint(x, y) == app.hwnd)
+	}
 	sendMouse(mouseInput{Typ: inputMouse, Flags: mouseLeftDown}, mouseInput{Typ: inputMouse, Flags: mouseLeftUp})
 }
 

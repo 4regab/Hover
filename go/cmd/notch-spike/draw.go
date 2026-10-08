@@ -215,7 +215,12 @@ func (s *spike) drawView(gtx layout.Context, x0 float64, f notch.Frame) {
 	eo := op.Offset(image.Pt(r.Min.X+int(14*k), r.Min.Y)).Push(&s.ops)
 	eg := gtx
 	eg.Constraints = layout.Exact(image.Pt(r.Dx()-int(28*k), r.Dy()))
-	layout.W.Layout(eg, ed.Layout)
+	// The whole box's width, as the TextInput's parent.width - 28px: layout.W alone
+	// lets the editor shrink to its hint, and a click past the hint misses it.
+	layout.W.Layout(eg, func(gtx layout.Context) layout.Dimensions {
+		gtx.Constraints.Min.X = gtx.Constraints.Max.X
+		return ed.Layout(gtx)
+	})
 	s.editorDrawn = true
 	eo.Pop()
 }

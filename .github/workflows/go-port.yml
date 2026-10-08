@@ -63,6 +63,36 @@ jobs:
           if (-not $dll) { throw 'no wgpu_native.dll in the release zip' }
           Copy-Item $dll.FullName spike\
           Write-Host "wgpu_native.dll: $([math]::Round($dll.Length / 1MB, 1)) MB"
+      # The runner's screen is 1024 x 768: the open notch's window (1080 wide) runs off it,
+      # and the self-tests' corner pixels read black. Best effort; both tests share it.
+      - name: Screen 1920 x 1080
+        run: |
+          Add-Type @'
+          using System; using System.Runtime.InteropServices;
+          public static class Res {
+            [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+            public struct DEVMODE {
+              [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)] public string dmDeviceName;
+              public short dmSpecVersion, dmDriverVersion, dmSize, dmDriverExtra;
+              public int dmFields, dmPositionX, dmPositionY, dmDisplayOrientation, dmDisplayFixedOutput;
+              public short dmColor, dmDuplex, dmYResolution, dmTTOption, dmCollate;
+              [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)] public string dmFormName;
+              public short dmLogPixels;
+              public int dmBitsPerPel, dmPelsWidth, dmPelsHeight, dmDisplayFlags, dmDisplayFrequency;
+              public int dmICMMethod, dmICMIntent, dmMediaType, dmDitherType, dmReserved1, dmReserved2, dmPanningWidth, dmPanningHeight;
+            }
+            [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern bool EnumDisplaySettings(string d, int m, ref DEVMODE dm);
+            [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int ChangeDisplaySettings(ref DEVMODE dm, int f);
+            public static int Set(int w, int h) {
+              var dm = new DEVMODE(); dm.dmSize = (short)Marshal.SizeOf(typeof(DEVMODE));
+              if (!EnumDisplaySettings(null, -1, ref dm)) return -100;
+              dm.dmPelsWidth = w; dm.dmPelsHeight = h; dm.dmFields = 0x80000 | 0x100000;
+              return ChangeDisplaySettings(ref dm, 0);
+            }
+          }
+          '@
+          $r = [Res]::Set(1920, 1080)
+          Write-Host "ChangeDisplaySettings returned $r (0 means done)"
       - name: Go spike self-test
         run: |
           New-Item -ItemType Directory -Force out | Out-Null
@@ -81,6 +111,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'cargo build failed' }
       - name: Rust prototype self-test
         run: |
+          # The runner has no GPU; Slint refuses wgpu's CPU adapter (WARP) unless told.
+          $env:SLINT_WGPU_CPU = '1'
           & target\release\notch-proto.exe --selftest out\rust 2> out\rust-stderr.log
           Write-Host "exit code $LASTEXITCODE"
           Get-Content out\rust-stderr.log
