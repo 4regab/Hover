@@ -102,6 +102,11 @@ func (t *selftest) g() (notch.Rect, float64, int, notch.Size) {
 func clickAt(x, y int) {
 	moveTo(x, y)
 	time.Sleep(30 * time.Millisecond)
+	click(x, y)
+}
+
+// click presses where the pointer already is.
+func click(x, y int) {
 	// Evidence for the click-on-pill check: whether the window was still click-through
 	// (WS_EX_TRANSPARENT) when the click went in, and what Windows puts under it.
 	if app != nil {
@@ -161,8 +166,10 @@ func startSelftest(s *spike, dir string) *selftest {
 	at(2300, func() {
 		r, k, cx, _ := t.g()
 		img := t.shot("rest", r)
-		pad, corner, shape := px(img, cx-r.Left, int((24+30)*k)), px(img, 4, r.Height()-4), px(img, cx-r.Left, int(12*k))
-		t.check("transparent_over_desktop_at_rest", magenta(pad) && magenta(corner) && dark(shape), map[string]any{"below_pill": pad, "window_corner": corner, "pill": shape})
+		// notch-proto reads the pill at 12 dp, where the status text crosses the centre
+		// (run 2 read a letter, 167,167,167). 28 dp is still the pill, under the text.
+		pad, corner, shape := px(img, cx-r.Left, int((24+30)*k)), px(img, 4, r.Height()-4), px(img, cx-r.Left, int(28*k))
+		t.check("transparent_over_desktop_at_rest", magenta(pad) && magenta(corner) && dark(shape), map[string]any{"below_pill": pad, "window_corner": corner, "pill": shape, "pill_read_at_dp": 28})
 	})
 	at(2600, func() {
 		r, k, cx, _ := t.g()
@@ -177,9 +184,17 @@ func startSelftest(s *spike, dir string) *selftest {
 		t.check("click_through_empty_area", n == 1, map[string]any{"helper_clicks": n})
 		t.markClicks = t.clicks()
 	})
+	// notch-proto moves and clicks in one step, 30 ms apart on this thread, so the 50 ms
+	// poll can't run in between and the click passes through (run 2's log: click-through
+	// true). Here the poll gets its turn first, and the click still lands before the
+	// 120 ms dwell would peek.
 	at(3100, func() {
 		r, k, cx, _ := t.g()
-		clickAt(cx, r.Top+int(12*k))
+		moveTo(cx, r.Top+int(12*k))
+	})
+	at(3170, func() {
+		r, k, cx, _ := t.g()
+		click(cx, r.Top+int(12*k))
 	})
 	at(3800, func() {
 		n := t.clicks() - t.markClicks

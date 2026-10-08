@@ -345,8 +345,13 @@ func wndProc(hwnd, m, wp, lp uintptr) uintptr {
 		if !s.editorDrawn {
 			return 0
 		}
-		// As Gio's own window does it: the text replaces the editor's selection.
-		s.router.Queue(key.EditEvent{Range: s.router.EditorState().Selection.Range, Text: text})
+		// The text replaces the editor's own selection. Run 2 took the router's
+		// EditorState instead and put every character at 0 ("本日ÎÅ olleh"); the log
+		// line shows both, so the next run proves which one follows the caret.
+		a, b := s.editor.Selection()
+		rs := s.router.EditorState().Selection.Range
+		s.logf("edit %q: editor's selection %d..%d, router's %d..%d", text, a, b, rs.Start, rs.End)
+		s.router.Queue(key.EditEvent{Range: key.Range{Start: min(a, b), End: max(a, b)}, Text: text})
 		s.frame()
 		return 0
 	case wmEraseBkgnd:

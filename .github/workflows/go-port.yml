@@ -93,11 +93,17 @@ jobs:
           '@
           $r = [Res]::Set(1920, 1080)
           Write-Host "ChangeDisplaySettings returned $r (0 means done)"
+      # Each self-test gets 90 s and its leftovers are killed: run 2's Rust test crashed
+      # and its helper window kept the step's output pipe open for 23 minutes.
       - name: Go spike self-test
+        timeout-minutes: 3
         run: |
           New-Item -ItemType Directory -Force out | Out-Null
-          & spike\notch-spike.exe --selftest out\go --wgsl crates\hover-office\src 2> out\go-stderr.log
-          Write-Host "exit code $LASTEXITCODE"
+          $p = Start-Process spike\notch-spike.exe -ArgumentList '--selftest', 'out\go', '--wgsl', 'crates\hover-office\src' -PassThru -NoNewWindow -RedirectStandardError out\go-stderr.log
+          $null = $p.Handle  # without it ExitCode reads empty
+          if (-not $p.WaitForExit(90000)) { Write-Host 'timed out'; $p.Kill() }
+          Write-Host "exit code $($p.ExitCode)"
+          Get-Process notch-spike -ErrorAction SilentlyContinue | Stop-Process -Force
           Get-Content out\go-stderr.log
           exit 0
       # The Rust baseline on the same machine. The image has MSVC and rustup;
@@ -110,11 +116,15 @@ jobs:
           & (Join-Path $cargoBin 'cargo.exe') build --release -p notch-proto
           if ($LASTEXITCODE -ne 0) { throw 'cargo build failed' }
       - name: Rust prototype self-test
+        timeout-minutes: 3
         run: |
           # The runner has no GPU; Slint refuses wgpu's CPU adapter (WARP) unless told.
           $env:SLINT_WGPU_CPU = '1'
-          & target\release\notch-proto.exe --selftest out\rust 2> out\rust-stderr.log
-          Write-Host "exit code $LASTEXITCODE"
+          $p = Start-Process target\release\notch-proto.exe -ArgumentList '--selftest', 'out\rust' -PassThru -NoNewWindow -RedirectStandardError out\rust-stderr.log
+          $null = $p.Handle
+          if (-not $p.WaitForExit(90000)) { Write-Host 'timed out'; $p.Kill() }
+          Write-Host "exit code $($p.ExitCode)"
+          Get-Process notch-proto -ErrorAction SilentlyContinue | Stop-Process -Force
           Get-Content out\rust-stderr.log
           exit 0
       - name: Compare

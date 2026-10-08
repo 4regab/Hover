@@ -152,7 +152,9 @@ func (s *spike) drawMini(gtx layout.Context, x0 float64, f notch.Frame) {
 	dims := lbl.Layout(tg)
 	rec := m.Stop()
 	content := 17 + 7 + float64(dims.Size.X)/k
-	left := x0 + 12 + (f.W-24-content)/2
+	// Centred when it fits; when it doesn't, Slint's layout starts it at the left and
+	// clips the text (run 2 pushed the glyph off the left edge instead).
+	left := x0 + 12 + max((f.W-24-content)/2, 0)
 	gx := left
 	box(gx+1, 3+4, 15, 13, 3, 0x9b6bffff)
 	box(gx+3, 3+7, 11, 7, 2, 0x121018ff)
