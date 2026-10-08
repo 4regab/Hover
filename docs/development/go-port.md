@@ -102,6 +102,25 @@ Where the Go self-test differs from notch-proto's, and why:
 - **The pill's colour.** notch-proto reads it at 12 dp, where the status text crosses the
   centre (Go read a letter there). The Go test reads 28 dp, still inside the pill.
 
+## Phase 1: `internal/core` (done on Windows)
+
+`crates/hover-core` is ported file for file to `go/internal/core`, with its tests (70 pass,
+with `-race` on Linux and plainly on Windows). `go/cmd/hover-data` is the Rust `hover-data`,
+plus `check`: whether Go would save a data folder's files with the bytes it read.
+
+CI checks it on Windows: the Rust and the Go `hover-data` each write a data folder (a DPAPI
+`note.key`, `settings.json`, a sealed session), and each reads the other's. Both write the
+same `settings.json` bytes, and Go saves Rust's session and index files unchanged.
+
+Left for later:
+
+- Linux's Secret Service (phase 6). A `note.key` that names a Secret Service item is left
+  alone, and there is no history that run. Nothing is replaced.
+- The settings portal for Linux's dark mode (phase 6). The desktop's own files are read.
+- `platform/macos.rs`, the Keychain and the LaunchAgent (phase 7).
+- `encoding/json` isn't used for anything Hover keeps. It writes other bytes than
+  System.Text.Json.
+
 ## Known costs
 
 - Memory, above.
