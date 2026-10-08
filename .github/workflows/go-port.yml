@@ -1,0 +1,118 @@
+name: Go port
+
+# The Go port (docs/development/go-port.md), on its own branch; ci.yml is untouched.
+# Linux vets and tests the Go code and builds it for Windows. Windows runs phase 0's
+# notch spike self-test, then the Rust prototype's (tools/notch-proto) on the same
+# runner, and compares the two reports check by check, with their private commit.
+on:
+  push:
+    branches: ['go-port']
+    paths: ['go/**', '.github/workflows/go-port.yml', 'crates/hover-notch/**', 'crates/hover-office/src/*.wgsl', 'tools/notch-proto/**']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: go-port-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-22.04
+    defaults:
+      run:
+        working-directory: go
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go/go.mod
+          cache-dependency-path: go/go.sum
+      - run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
+      - run: go vet ./...
+      - run: GOOS=windows go vet ./...
+      - run: go test ./...
+      # No C compiler: the Windows build works from any machine.
+      - run: GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -o /tmp/notch-spike.exe ./cmd/notch-spike
+
+  spike-windows:
+    runs-on: windows-2022
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go/go.mod
+          cache-dependency-path: go/go.sum
+      - name: Build the Go spike
+        working-directory: go
+        run: |
+          $env:CGO_ENABLED = '0'
+          go build -o ..\spike\notch-spike.exe .\cmd\notch-spike
+          if ($LASTEXITCODE -ne 0) { throw 'go build failed' }
+      # The version go-webgpu v0.5.5 is built against.
+      - name: wgpu-native
+        run: |
+          $zip = Join-Path $env:RUNNER_TEMP 'wgpu.zip'
+          Invoke-WebRequest 'https://github.com/gfx-rs/wgpu-native/releases/download/v29.0.0.0/wgpu-windows-x86_64-msvc-release.zip' -OutFile $zip
+          Expand-Archive $zip (Join-Path $env:RUNNER_TEMP 'wgpu') -Force
+          $dll = Get-ChildItem (Join-Path $env:RUNNER_TEMP 'wgpu') -Recurse -Filter wgpu_native.dll | Select-Object -First 1
+          if (-not $dll) { throw 'no wgpu_native.dll in the release zip' }
+          Copy-Item $dll.FullName spike\
+          Write-Host "wgpu_native.dll: $([math]::Round($dll.Length / 1MB, 1)) MB"
+      - name: Go spike self-test
+        run: |
+          New-Item -ItemType Directory -Force out | Out-Null
+          & spike\notch-spike.exe --selftest out\go --wgsl crates\hover-office\src 2> out\go-stderr.log
+          Write-Host "exit code $LASTEXITCODE"
+          Get-Content out\go-stderr.log
+          exit 0
+      # The Rust baseline on the same machine. The image has MSVC and rustup;
+      # rust-toolchain.toml picks the version, as in ci.yml.
+      - name: Build notch-proto
+        run: |
+          $cargoBin = Join-Path $env:USERPROFILE '.cargo\bin'
+          Add-Content -Path $env:GITHUB_PATH -Value $cargoBin
+          & (Join-Path $cargoBin 'rustup.exe') set auto-self-update disable
+          & (Join-Path $cargoBin 'cargo.exe') build --release -p notch-proto
+          if ($LASTEXITCODE -ne 0) { throw 'cargo build failed' }
+      - name: Rust prototype self-test
+        run: |
+          & target\release\notch-proto.exe --selftest out\rust 2> out\rust-stderr.log
+          Write-Host "exit code $LASTEXITCODE"
+          Get-Content out\rust-stderr.log
+          exit 0
+      - name: Compare
+        run: |
+          function Read-Report($dir) {
+            $p = Join-Path $dir 'report.json'
+            if (Test-Path $p) { Get-Content $p -Raw | ConvertFrom-Json } else { $null }
+          }
+          $go = Read-Report 'out\go'
+          $rust = Read-Report 'out\rust'
+          if (-not $go) { throw 'the Go spike wrote no report' }
+          $names = @($go.PSObject.Properties | Where-Object { $_.Value.PSObject.Properties.Name -contains 'pass' } | ForEach-Object Name)
+          if ($rust) { $names += @($rust.PSObject.Properties | Where-Object { $_.Value.PSObject.Properties.Name -contains 'pass' } | ForEach-Object Name) }
+          $word = { param($r, $n) if (-not $r -or -not $r.$n) { '-' } elseif ($r.$n.pass) { 'pass' } else { 'FAIL' } }
+          $lines = @('| Check | Rust (notch-proto) | Go (notch-spike) |', '|---|---|---|')
+          $worse = @()
+          foreach ($n in ($names | Sort-Object -Unique)) {
+            $r = & $word $rust $n; $g = & $word $go $n
+            $lines += "| $n | $r | $g |"
+            if ($g -eq 'FAIL' -and $r -ne 'FAIL') { $worse += $n }
+          }
+          $mib = { param($r) if ($r -and $r.no_redraws_while_resting) { '{0:N1} MiB' -f ($r.no_redraws_while_resting.detail.private_bytes / 1MB) } else { '-' } }
+          $lines += ''
+          $lines += "Private commit at rest, after the run: Rust $(& $mib $rust), Go $(& $mib $go)."
+          $lines | Out-File -Append -Encoding utf8 $env:GITHUB_STEP_SUMMARY
+          $lines | ForEach-Object { Write-Host $_ }
+          if ($worse.Count) { throw "The Go spike fails where the Rust prototype doesn't: $($worse -join ', ')" }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: spike-reports
+          path: out/
+          if-no-files-found: warn

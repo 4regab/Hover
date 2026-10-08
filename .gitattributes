@@ -22,5 +22,9 @@ Makefile text eol=lf
 *.c text eol=lf
 *.m4a binary
 *.py text eol=lf
+# gofmt and the go command write LF; with CRLF every Go file reads as unformatted.
+*.go text eol=lf
+go.mod text eol=lf
+go.sum text eol=lf
 # codesign's plist parser (AMFI) is strict: entitlements stay LF, as Xcode writes them.
 *.entitlements text eol=lf
