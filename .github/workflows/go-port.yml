@@ -7,7 +7,7 @@ name: Go port
 on:
   push:
     branches: ['go-port']
-    paths: ['go/**', '.github/workflows/go-port.yml', 'crates/hover-notch/**', 'crates/hover-office/src/*.wgsl', 'tools/notch-proto/**']
+    paths: ['go/**', '.github/workflows/go-port.yml', 'crates/hover-core/**', 'crates/hover-notch/**', 'crates/hover-office/src/*.wgsl', 'tools/notch-proto/**']
   workflow_dispatch:
 
 permissions:
@@ -32,7 +32,7 @@ jobs:
       - run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
       - run: go vet ./...
       - run: GOOS=windows go vet ./...
-      - run: go test ./...
+      - run: go test -race ./...
       # No C compiler: the Windows build works from any machine.
       - run: GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -o /tmp/notch-spike.exe ./cmd/notch-spike
 
@@ -47,12 +47,52 @@ jobs:
         with:
           go-version-file: go/go.mod
           cache-dependency-path: go/go.sum
+      # On Windows itself: DPAPI, the registry, the named mutex and CRLF settings.json.
+      - name: Go tests
+        working-directory: go
+        run: |
+          go test ./...
+          if ($LASTEXITCODE -ne 0) { throw 'go test failed' }
       - name: Build the Go spike
         working-directory: go
         run: |
           $env:CGO_ENABLED = '0'
           go build -o ..\spike\notch-spike.exe .\cmd\notch-spike
           if ($LASTEXITCODE -ne 0) { throw 'go build failed' }
+      # Phase 1's data check on Windows: the Rust hover-data and the Go one each write a
+      # data folder (DPAPI key, settings.json, a sealed session), and each reads the
+      # other's. `check` then says whether Go would save every file with the same bytes.
+      - name: Rust and Go read each other's data folders
+        run: |
+          $cargoBin = Join-Path $env:USERPROFILE '.cargo\bin'
+          & (Join-Path $cargoBin 'rustup.exe') set auto-self-update disable
+          & (Join-Path $cargoBin 'cargo.exe') build --release -p hover-core --bin hover-data
+          if ($LASTEXITCODE -ne 0) { throw 'cargo build failed' }
+          Push-Location go
+          go build -o ..\spike\hover-data-go.exe .\cmd\hover-data
+          if ($LASTEXITCODE -ne 0) { throw 'go build failed' }
+          Pop-Location
+          $rust = 'target\release\hover-data.exe'; $go = 'spike\hover-data-go.exe'
+          $d = Join-Path $env:RUNNER_TEMP 'data'
+          New-Item -ItemType Directory -Force $d | Out-Null
+          Set-Content -Path "$d\answer.md" -Value "# Answer`n`nRich <text> & `"quotes`", é, 日本, 👋.`n`n| a | b |`n|---|---|`n| 1 | 2 |" -Encoding utf8
+          & $rust write "$d\rust" "$d\proj" 3 "$d\answer.md"; if ($LASTEXITCODE) { throw 'rust write' }
+          & $go write "$d\go" "$d\proj" 3 "$d\answer.md"; if ($LASTEXITCODE) { throw 'go write' }
+          $out = @()
+          foreach ($pair in @(@($rust, 'go'), @($go, 'rust'), @($rust, 'rust'), @($go, 'go'))) {
+            $text = (& $pair[0] dump "$d\$($pair[1])" 2>$null) -join "`n"
+            if ($text -notmatch 'history: 1 sessions' -or $text -notmatch '3 turns') { throw "$($pair[0]) couldn't read $($pair[1])'s folder:`n$text" }
+            $out += "$($pair[0]) reads $($pair[1])'s folder: ok"
+          }
+          $a = [IO.File]::ReadAllBytes("$d\rust\settings.json"); $b = [IO.File]::ReadAllBytes("$d\go\settings.json")
+          if ([Convert]::ToBase64String($a) -ne [Convert]::ToBase64String($b)) { throw 'settings.json: Rust and Go wrote different bytes' }
+          $out += "settings.json: Rust and Go wrote the same $($a.Length) bytes"
+          foreach ($f in 'rust', 'go') {
+            & $go check "$d\$f" 2>$null | ForEach-Object { $out += "  $f $_" }
+            if ($LASTEXITCODE) { throw "Go would save $f's files differently" }
+          }
+          $out | ForEach-Object { Write-Host $_ }
+          @('', '### Phase 1: data folders on Windows', '') + ($out | ForEach-Object { "    $_" }) | Out-File -Append -Encoding utf8 $env:GITHUB_STEP_SUMMARY
       # The version go-webgpu v0.5.5 is built against.
       - name: wgpu-native
         run: |
