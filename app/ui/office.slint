@@ -2187,6 +2187,7 @@ export component OfficeView inherits Rectangle {
                     menu-width: 184px;
                     x: max(8px, min(agentp.absolute-position.x - sblk.absolute-position.x, sblk.width - self.width - 8px));
                     y: agentp.absolute-position.y - sblk.absolute-position.y + agentp.height + 6px;
+                    max-h: max(96px, sblk.height - self.y - 8px);
                     accessible-id: "agentMenu";
                     for t[i] in Office.tools: PickRow { id: "chatTool" + t.id; logo: t.id; label: t.name; note: t.ready ? "" : t.hint; on: i == Office.new-tool; dim: !t.ready;
                         clicked => { Office.start-menu = 0; Office.pick-tool(i); } }
@@ -2195,6 +2196,7 @@ export component OfficeView inherits Rectangle {
                 if Office.start-menu == 3: PickMenu {
                     x: max(8px, min(wherep.absolute-position.x - sblk.absolute-position.x, sblk.width - self.width - 8px));
                     y: wherep.absolute-position.y - sblk.absolute-position.y + wherep.height + 6px;
+                    max-h: max(96px, sblk.height - self.y - 8px);
                     accessible-id: "whereMenu";
                     PickRow { id: "whereLocal"; icon: PagePaths.laptop; label: "This computer"; note: "On this computer, in the folder"; on: !Office.new-cloud;
                         clicked => { Office.start-menu = 0; if (Office.new-cloud) { Office.toggle-cloud(); } } }
@@ -2206,6 +2208,7 @@ export component OfficeView inherits Rectangle {
                 if Office.start-menu == 1: PickMenu {
                     x: max(8px, min(projp.absolute-position.x - sblk.absolute-position.x, sblk.width - self.width - 8px));
                     y: projp.absolute-position.y - sblk.absolute-position.y + projp.height + 6px;
+                    max-h: max(96px, sblk.height - self.y - 8px);
                     accessible-id: "projectMenu";
                     if Office.start-folders.length > 0: Text { height: 26px; text: "Recent"; font-size: 11px; font-weight: 500; color: #f6f2ff80; vertical-alignment: center; x: 8px; }
                     for f in Office.start-folders: PickRow { id: "proj" + f.label; icon: Icons.folder; label: f.label; note: f.note; on: f.on; clicked => { Office.start-menu = 0; Office.pick-start-folder(f.id); } }
@@ -2216,6 +2219,7 @@ export component OfficeView inherits Rectangle {
                 if Office.access-menu: PickMenu {
                     x: max(8px, min(accp.absolute-position.x - sblk.absolute-position.x, sblk.width - self.width - 8px));
                     y: accp.absolute-position.y - sblk.absolute-position.y + accp.height + 6px;
+                    max-h: max(96px, sblk.height - self.y - 8px);
                     accessible-id: "accessMenu";
                     Text { height: 26px; text: Office.access-head; font-size: 11px; font-weight: 500; color: #f6f2ff80; vertical-alignment: center; x: 8px; }
                     for o in Office.access-opts: PickRow { id: "acc" + o.id; icon: o.id == "read" ? Icons.view : PagePaths.shield; label: o.label; note: o.note; on: o.on; clicked => { Office.pick-access(o.id); } }
