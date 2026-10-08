@@ -160,14 +160,14 @@ func newDir(t *testing.T, name string) string {
 // fake is a stand-in gh with its scripts, in a folder of its own.
 type fake struct{ dir string }
 
-// place puts this test program in the fake's folder under a name: a link where the
-// system allows one, else a copy.
+// place puts this test program in the fake's folder under a name: a link on Unix, a copy
+// on Windows (where a link to a running program can't be deleted, and a test deletes one).
 func place(t *testing.T, dst string) {
 	exe, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if os.Link(exe, dst) == nil {
+	if runtime.GOOS != "windows" && os.Link(exe, dst) == nil {
 		return
 	}
 	b, err := os.ReadFile(exe)
