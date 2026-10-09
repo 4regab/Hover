@@ -354,8 +354,23 @@ balloons, `Alt+N`, and a second launch that opens the app window. Built with no 
 - Looked at here as PNGs from the real shell (`cmd/ui-shots`: `notch-rest-pill|working|ask|card|
   done-2x`, the Rust shots' names). CI starts the exe on a Windows runner, presses `Alt+N` and
   Esc, launches it twice, and uploads pictures and `hover.log` (`app-windows` artifact).
+- **The first text waited 3 s for the system's fonts** (Gio scans them when its shaper is made, and
+  the first run on a machine has no cache). On the runner the open notch drew no frames until it
+  finished. `ui.Warm()` makes the shaper in the background at start.
+- Seen on the Windows runner (`app-windows` artifact): `Alt+N` opens the notch in about 560 ms
+  and Esc folds it in about 340 ms, both drawing every frame; the app window draws its title bar,
+  menus and caption buttons; a second launch opens it; private memory 130 to 160 MB with the
+  stand-in office (the Rust app's number is still to be measured, see Phase 5).
 - **Gio drops a focus request for a key area no frame has shown.** The open notch asks for the
   keyboard on its first frame, when it is still 0 px wide; the ask now waits for the area.
+
+### Done: `internal/music` and `internal/audio`
+
+`music.rs`: the Ogg Vorbis loop decoded as it plays (`jfreymuth/oggvorbis`, pure Go), its
+fade (16 steps up and 11 down, as the Rust test counts them), the chime, and the system's
+audio output: Windows' `waveOut` through `winmm.dll`, no COM and no C compiler. Linux's output
+(PulseAudio) is phase 6. Checked here: the loop decodes at 22.05 kHz and comes round again;
+not checked: sound itself (the runner has no audio device, so its path is "no output").
 
 ### Done: the desk card's pictures (`internal/ui/deskrows.go`, `deskpanel.go`, `deskcard.go`)
 
