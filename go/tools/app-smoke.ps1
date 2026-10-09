@@ -27,13 +27,16 @@ $log = Join-Path $data 'hover.log'
 $report = [ordered]@{}
 
 function Shot($name) {
-  $b = [System.Windows.Forms.SystemInformation]::PrimaryMonitorSize
-  $bmp = New-Object System.Drawing.Bitmap $b.Width, $b.Height
-  $g = [System.Drawing.Graphics]::FromImage($bmp)
-  # CAPTUREBLT: without it a see-through window (the notch) is left out.
-  $g.CopyFromScreen(0, 0, 0, 0, $bmp.Size, [System.Drawing.CopyPixelOperation]([int][System.Drawing.CopyPixelOperation]::SourceCopy -bor 0x40000000))
-  $bmp.Save((Join-Path $Out "$name.png"))
-  $g.Dispose(); $bmp.Dispose()
+  try {
+    $b = [System.Windows.Forms.SystemInformation]::PrimaryMonitorSize
+    $bmp = New-Object System.Drawing.Bitmap $b.Width, $b.Height
+    $g = [System.Drawing.Graphics]::FromImage($bmp)
+    # CAPTUREBLT: without it a see-through window (the notch) is left out.
+    $op = [System.Drawing.CopyPixelOperation]::SourceCopy -bor [System.Drawing.CopyPixelOperation]::CaptureBlt
+    $g.CopyFromScreen(0, 0, 0, 0, $bmp.Size, $op)
+    $bmp.Save((Join-Path $Out "$name.png"))
+    $g.Dispose(); $bmp.Dispose()
+  } catch { $report["shot_$name"] = "failed: $($_.Exception.Message)" }
 }
 function Has($text) { (Test-Path $log) -and ((Get-Content $log -Raw) -match [regex]::Escape($text)) }
 function Wait-For($text, $secs) {
