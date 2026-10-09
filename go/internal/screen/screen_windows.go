@@ -64,6 +64,9 @@ type bitmapInfoHeader struct {
 	ClrImportant  uint32
 }
 
+// unsupportedNote is never shown here: the panel works.
+const unsupportedNote = ""
+
 func supported() bool { return true }
 
 func screenSize() (int, int) {

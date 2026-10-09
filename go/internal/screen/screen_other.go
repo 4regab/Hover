@@ -1,4 +1,4 @@
-//go:build !windows
+//go:build !windows && !linux
 
 package screen
 
@@ -7,8 +7,10 @@ import (
 	"image"
 )
 
-// ponytail: Linux's capture is phase 6, on Wayland through the portal and PipeWire (no X11); the Mac app has its own panel (Screen.swift).
+// ponytail: the Mac app has its own panel (Screen.swift); Linux is screen_linux.go.
 func supported() bool { return false }
+
+const unsupportedNote = "The screen panel isn’t available here."
 
 var errNone = errors.New("The screen panel isn’t available here.")
 

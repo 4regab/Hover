@@ -4,8 +4,9 @@
 // acted on over it. The fitting and the encoding are plain; the capture is each OS's.
 //
 //   - Windows: each window of those processes through PrintWindow, over the wallpaper.
-//   - Linux: phase 6, native Wayland through the desktop portal's screen cast (PipeWire).
-//     Not X11 or XWayland: those are legacy and not a target.
+//   - Linux: Wayland only (X11 and XWayland are legacy, not a target). A Wayland program may
+//     not see another's windows, so the panel is off there; voice's screenshot of the whole
+//     display goes through the Screenshot portal (screen_linux.go).
 package screen
 
 import (
@@ -109,7 +110,7 @@ func Note() string {
 	if Supported() {
 		return ""
 	}
-	return "The screen panel needs Windows or a Linux Wayland desktop (screen cast through PipeWire)."
+	return unsupportedNote
 }
 
 // Capture is a frame of the main display with only the windows of the apps over the
