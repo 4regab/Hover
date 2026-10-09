@@ -46,7 +46,7 @@ jobs:
         run: |
           curl -sL -o wgpu.zip https://github.com/gfx-rs/wgpu-native/releases/download/v29.0.0.0/wgpu-linux-x86_64-release.zip
           unzip -o -q wgpu.zip lib/libwgpu_native.so
-          WGPU_NATIVE_LIB=lib/libwgpu_native.so sh packaging/linux/package-linux-go.sh "$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)" dist
+          WGPU_NATIVE_LIB=lib/libwgpu_native.so sh packaging/linux/package-linux-go.sh "$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1 | tr -d '\r')" dist
           ls -la dist
       - uses: actions/upload-artifact@v4
         with:

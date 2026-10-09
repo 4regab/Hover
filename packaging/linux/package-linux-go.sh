@@ -6,7 +6,7 @@
 # The binary carries its fonts, icon and music; libwgpu_native.so (the office's renderer) goes
 # beside it in /usr/lib/hover. Wayland only: no X11 libraries.
 set -eu
-VERSION=${1:-$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)}
+VERSION=${1:-$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1 | tr -d '\r')}
 OUT=${2:-dist}
 BIN=${HOVER_BIN:-hover-linux}
 LIB=${WGPU_NATIVE_LIB:?set WGPU_NATIVE_LIB to libwgpu_native.so}
