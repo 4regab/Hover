@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -28,12 +29,35 @@ func queueFolder(t *testing.T, name string) string {
 
 func waitFor20(t *testing.T, what string, f func() bool) {
 	t.Helper()
-	start := time.Now()
-	for !f() && time.Since(start) < 20*time.Second {
-		time.Sleep(10 * time.Millisecond)
+	// A condition seen true is true: it is not asked again, since it may be false the next
+	// moment (a run that ends and the next one that starts).
+	for start := time.Now(); time.Since(start) < 20*time.Second; time.Sleep(10 * time.Millisecond) {
+		if f() {
+			return
+		}
 	}
-	if !f() {
-		t.Fatalf("timed out waiting for %s", what)
+	t.Fatalf("timed out waiting for %s", what)
+}
+
+// quiet is a check, for waitFor20, that nothing runs and nothing waits to start, on three
+// polls in a row. A turn that ends marks its session finished and only then starts the
+// next queued one, so for an instant Running() is 0 although work is waiting; the Rust
+// tests have the same wait and the same gap.
+func quiet(k *KiroSessions) func() bool {
+	calm := 0
+	return func() bool {
+		still := k.Running() == 0
+		for _, s := range k.All() {
+			if still && !s.Held && slices.ContainsFunc(s.Turns, func(t KiroTurn) bool { return t.Queued }) {
+				still = false
+			}
+		}
+		if !still {
+			calm = 0
+			return false
+		}
+		calm++
+		return calm >= 3
 	}
 }
 
@@ -163,7 +187,7 @@ func TestWaitingMessagesAreEditedMovedAndTakenBackByNameAndOnlyInTheirOwnSession
 		t.Error(err)
 	}
 	a.open.Store(true)
-	waitFor20(t, "all to finish", func() bool { return k.Running() == 0 })
+	waitFor20(t, "all to finish", quiet(k))
 	n := 0
 	for _, p := range a.prompts() {
 		if strings.HasPrefix(p, "four") || strings.HasPrefix(p, "three") {

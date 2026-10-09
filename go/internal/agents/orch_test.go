@@ -251,7 +251,7 @@ func TestHelpersNeverHaveMoreAccessThanTheLeadAndFailuresSayWhy(t *testing.T) {
 		t.Error(err)
 	}
 	r.release.Store(true)
-	waitFor20(t, "all to finish", func() bool { return r.k.Running() == 0 })
+	waitFor20(t, "all to finish", quiet(r.k))
 	// A lead whose turn is over has stale credentials.
 	if _, err := ask("kiro", nil); !strings.Contains(errText(err), "no longer valid") {
 		t.Error(err)
@@ -355,7 +355,7 @@ func TestStopReachesHelpersAndTheirHelpersAndLateNewsWakesNobody(t *testing.T) {
 	waitFor20(t, "the grandchild to run", func() bool { return len(r.k.All()) == 3 && r.k.Running() == 3 })
 	childSession := val(r.orch.HelpersOf(lead.Key)[0].Session)
 	r.k.Stop(lead.ID)
-	waitFor20(t, "everything to stop", func() bool { return r.k.Running() == 0 })
+	waitFor20(t, "everything to stop", quiet(r.k))
 	waitFor20(t, "runs settled", func() bool { return r.orch.HelpersOf(lead.Key)[0].State == HelperCancelled })
 	if n := len(r.orch.HelpersOf(childSession)); n != 1 {
 		t.Fatal(n)
@@ -702,7 +702,7 @@ func TestAnAgentReachesTheHelpersThroughTheRelayAndTheSocket(t *testing.T) {
 	input.Close()
 	cmd.Wait()
 	r.release.Store(true)
-	waitFor20(t, "all done", func() bool { return r.k.Running() == 0 })
+	waitFor20(t, "all done", quiet(r.k))
 	BrowserStop()
 }
 
@@ -728,7 +728,7 @@ func TestAnAgentSentAConversationReferenceReadsItInPagesAndCannotReadOthers(t *t
 	earlier := must(r.k.Start(core.Codex, r.folder, "earlier topic", nil))
 	must(r.k.Start(core.Codex, r.folder, "other topic", nil))
 	me := must(r.k.Start(core.Kiro, r.folder, "hello", nil))
-	waitFor20(t, "all", func() bool { return r.k.Running() == 0 })
+	waitFor20(t, "all", quiet(r.k))
 	chip := ThreadChip(earlier.Key, "Earlier topic")
 	if !r.k.ReplyMsg(me.ID, Msg{Text: "please read it", Chips: []core.Chip{chip}}) {
 		t.Fatal("no reply")
