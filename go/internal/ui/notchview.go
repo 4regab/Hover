@@ -111,10 +111,16 @@ type NotchView struct {
 	rise, fade    Anim
 	// ViewKeys holds the keyboard for the open view (the FocusScope that sends Escape).
 	ViewKeys Focus
+	// wantView and wantCard are asks for the keyboard that wait until the area that takes it
+	// is in a frame: Gio drops a focus given to a tag that no frame has shown (the shape is
+	// not there at all while the resting notch is empty and the office has not grown).
+	wantView, wantCard bool
 }
 
-// CardFocus asks for the keyboard for the card (NotchWindow.focus-card).
-func (v *NotchView) CardFocus(c *Ctx) { v.card.Take(c) }
+// FocusView asks for the keyboard for the open view (NotchWindow.focus-view); FocusCard for
+// the card (focus-card).
+func (v *NotchView) FocusView() { v.wantView = true }
+func (v *NotchView) FocusCard() { v.wantCard = true }
 
 var (
 	cubicRise = &[4]float32{0.215, 0.61, 0.355, 1}
@@ -276,6 +282,10 @@ func (v *NotchView) Layout(c *Ctx, p *NotchProps, view func(c *Ctx, w, h float32
 	if p.Built && p.ViewVisible && visible {
 		// The keyboard's place for the open view; Esc folds the notch when nothing used it.
 		v.ViewKeys.Add(c, p.ShapeX, 0, p.ShapeW, 1)
+		if v.wantView {
+			v.wantView = false
+			v.ViewKeys.Take(c)
+		}
 		for _, e := range v.ViewKeys.Keys(c, key.NameEscape) {
 			if e.State == key.Press {
 				acts = append(acts, NotchAction{Kind: NotchEscape})
@@ -459,6 +469,10 @@ func (v *NotchView) cardLayout(c *Ctx, p *NotchProps, x, y float32, draw bool, a
 	// tag goes in first, under the buttons' touch areas, which would lose their presses to it.
 	if draw {
 		v.card.Add(c, x, y, w, 1)
+		if v.wantCard {
+			v.wantCard = false
+			v.card.Take(c)
+		}
 		for _, e := range v.card.Keys(c, key.NameEscape, key.NameReturn, key.NameEnter) {
 			if e.State != key.Press {
 				continue

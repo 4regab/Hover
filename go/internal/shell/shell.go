@@ -180,11 +180,11 @@ func (s *Shell) drawNotch(gtx layout.Context, scale float32) bool {
 	c := ui.NewCtx(gtx, scale, s.pal)
 	if s.focusCard {
 		s.focusCard = false
-		s.nview.CardFocus(c)
+		s.nview.FocusCard()
 	}
 	if s.focusView {
 		s.focusView = false
-		s.nview.ViewKeys.Take(c)
+		s.nview.FocusView()
 	}
 	acts := s.nview.Layout(c, &s.np, s.drawNotchView)
 	if len(acts) > 0 {
