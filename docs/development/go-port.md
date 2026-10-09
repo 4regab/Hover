@@ -310,6 +310,16 @@ names; CI uploads them (`spike-reports`, `ui/`).
   plus four times its side padding (`widgets.slint` counts it twice); a shortcut pill's own
   min-width replaces that. Text is shaped at 32 times its size (as in `internal/text`):
   Gio's shaper rounded 12.5 px up to 13.
+- `app.rs` (the shared state: settings, runtimes, sessions, quotas, credits, the ends
+  nobody saw) and `keys.rs` are `internal/app/hover.go` and `keys.go`, with their 5 tests.
+  `view.rs`'s handlers (every switch, button, box, segment, picker, theme tile and the
+  shortcut recorder) are `internal/app/view.go`. Keys arrive as Gio's key names, not
+  Slint's key text.
+- Driven here with real pointer and key events through Gio's router: a switch, a segment,
+  the shortcut recorder (Ctrl+Shift+K saved), a sidebar section, a picker's menu (opened,
+  closed by a click outside, an option picked) and the wheel all reach the settings.
+- **Gio's focus tags go under the touch areas.** A focus tag added over a button in the
+  same clip took its presses, and one outside any clip took every press in the window.
 - Compared here with the Rust shots from Windows CI (run 37900054115): the boxes, rows and
   controls sit on the same pixels. What differs: glyph edges, the title bar (not ported
   yet), the drop shadows (the Rust software renderer draws none), the marks with

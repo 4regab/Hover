@@ -146,10 +146,11 @@ func (b *PillButton) Layout(c *Ctx, x, y, w float32, p Pill) (clicked bool) {
 	if has && !b.byPointr {
 		c.focusRing(x, y, w, h)
 	}
-	b.touch.Add(c, x, y, w, h, p.Enabled)
+	// The focus tag goes under the touch area: over it, it takes the press.
 	if p.Enabled {
-		b.focus.Add(c)
+		b.focus.Add(c, x, y, w, h)
 	}
+	b.touch.Add(c, x, y, w, h, p.Enabled)
 	return clicked
 }
 
@@ -203,10 +204,10 @@ func (s *Switch) Layout(c *Ctx, x, y float32, on, enabled bool) (toggle bool) {
 	if has && !s.byPointr {
 		c.focusRing(x, y, SwitchW, SwitchH)
 	}
-	s.touch.Add(c, x, y, SwitchW, SwitchH, enabled)
 	if enabled {
-		s.focus.Add(c)
+		s.focus.Add(c, x, y, SwitchW, SwitchH)
 	}
+	s.touch.Add(c, x, y, SwitchW, SwitchH, enabled)
 	return toggle
 }
 
@@ -370,11 +371,11 @@ func (s *Slider) Layout(c *Ctx, x, y, w float32, lo, hi, value int, enabled bool
 		}
 	})
 	if enabled {
+		s.focus.Add(c, x, y, w, SliderH)
 		st := clip.Rect(c.irect(x, y, w, SliderH)).Push(c.Ops)
 		event.Op(c.Ops, &s.tag)
 		pointer.CursorPointer.Add(c.Ops)
 		st.Pop()
-		s.focus.Add(c)
 	}
 	return picked, ok
 }

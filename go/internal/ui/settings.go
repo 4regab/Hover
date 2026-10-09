@@ -478,6 +478,8 @@ func (p *SettingsPage) control(c *Ctx, r *app.Row, x, y, w, h float32) {
 		}
 	case app.CtlShortcut:
 		keys := st[Focus](p, sk+":keys")
+		// Under the button: the click starts recording and gives the keys to this scope.
+		keys.Add(c, x, y, w, h)
 		// The notch's records through record(); any other shortcut asks by its id.
 		if st[PillButton](p, sk).Layout(c, x, y, w, shortcutPill(c.Pal, ctl)) {
 			if ctl.ID == "WorkspaceShortcut" {
@@ -498,7 +500,6 @@ func (p *SettingsPage) control(c *Ctx, r *app.Row, x, y, w, h float32) {
 			p.emit(Event{Kind: EvRecord})
 		}
 		*had = has
-		keys.Add(c)
 	case app.CtlSlider:
 		s := st[Slider](p, sk)
 		if v, ok := s.Layout(c, x, y, 200, int(ctl.Min), int(ctl.Max), int(ctl.Value), r.Enabled); ok {

@@ -2,16 +2,12 @@ package ui
 
 import (
 	"fmt"
-	"image"
 	"image/color"
 	"strings"
 
 	"gioui.org/io/key"
-	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/op/clip"
-	"gioui.org/op/paint"
-	"gioui.org/unit"
 	"gioui.org/widget"
 
 	"github.com/4regab/Hover/go/internal/app"
@@ -45,8 +41,8 @@ func (p *SettingsPage) miniIcon(c *Ctx, k, icon string, hot color.NRGBA, x, y fl
 	if has {
 		c.Border(x, y, 28, 28, R(7), 2, Alpha(c.Pal.Blue, 0.7))
 	}
+	f.Add(c, x, y, 28, 28)
 	t.Add(c, x, y, 28, 28, true)
-	f.Add(c)
 	return clicked
 }
 
@@ -112,20 +108,8 @@ func (p *SettingsPage) mcpField(c *Ctx, k, field, value, placeholder string, bad
 		c.Text(placeholder, x+10, ty, TextBox{Font: mf, Color: c.Pal.InkFaint, W: w - 20, Elide: true})
 	}
 	cl := clip.Rect(c.irect(x+10, y, w-20, h)).Push(c.Ops)
-	at := c.At(x+10, ty)
-	gtx := c.Context
-	gtx.Metric = unit.Metric{PxPerDp: c.K, PxPerSp: c.K}
-	gtx.Constraints = layout.Exact(image.Pt(int((w-20)*c.K+0.5), int(If(multi, h-14, line)*c.K+0.5)))
-	f.ed.LineHeight, f.ed.LineHeightScale = unit.Sp(line), 1
 	f.ed.WrapPolicy = 0
-	ink := op.Record(c.Ops)
-	paint.ColorOp{Color: c.Pal.Ink}.Add(c.Ops)
-	inkOp := ink.Stop()
-	sel := op.Record(c.Ops)
-	paint.ColorOp{Color: Alpha(c.Pal.Blue, 0.45)}.Add(c.Ops)
-	selOp := sel.Stop()
-	f.ed.Layout(gtx, textShaper(), mf.gio(), unit.Sp(mf.Size), inkOp, selOp)
-	at.Pop()
+	c.editor(&f.ed, mf, x+10, ty, w-20, If(multi, h-14, line), line, c.Pal.Ink, Alpha(c.Pal.Blue, 0.45))
 	cl.Pop()
 	bw := If[float32](focused || bad, 2, 1)
 	bc := If(bad, Alpha(c.Pal.Red, 0.8), If(focused, Alpha(c.Pal.Blue, 0.7), c.Pal.Separator))

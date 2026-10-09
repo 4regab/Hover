@@ -2,7 +2,9 @@ package ui
 
 import (
 	"image"
+	"image/color"
 
+	"gioui.org/f32"
 	"gioui.org/io/key"
 	"gioui.org/layout"
 	"gioui.org/op"
@@ -83,25 +85,33 @@ func (t *TextField) Layout(c *Ctx, x, y, w float32, value, placeholder string, s
 		f := Font{Size: 12.5}
 		lh := c.LineH(f)
 		cl := clip.Rect(c.irect(x+8, y, w-16, FieldH)).Push(c.Ops)
-		at := c.At(x+8, y+(FieldH-lh)/2)
-		gtx := c.Context
-		gtx.Metric = unit.Metric{PxPerDp: c.K, PxPerSp: c.K}
-		gtx.Constraints = layout.Exact(image.Pt(int((w-16)*c.K+0.5), int(lh*c.K+0.5)))
-		t.ed.LineHeight, t.ed.LineHeightScale = unit.Sp(lh), 1
-		ink := op.Record(c.Ops)
-		paint.ColorOp{Color: c.Pal.Ink}.Add(c.Ops)
-		inkOp := ink.Stop()
-		sel := op.Record(c.Ops)
-		paint.ColorOp{Color: Alpha(c.Pal.Blue, 0.45)}.Add(c.Ops)
-		selOp := sel.Stop()
-		t.ed.Layout(gtx, textShaper(), f.gio(), unit.Sp(f.Size), inkOp, selOp)
-		at.Pop()
+		c.editor(&t.ed, f, x+8, y+(FieldH-lh)/2, w-16, lh, lh, c.Pal.Ink, Alpha(c.Pal.Blue, 0.45))
 		cl.Pop()
 	})
 	if focused {
 		c.Border(x, y, w, FieldH, R(6), 2, Alpha(c.Pal.Blue, 0.7))
 	}
 	return commit, ok
+}
+
+// editor lays a text box out at (x, y), w x h, its lines lineH apart. Like Text, it is
+// shaped at shapeScale times its size and drawn scaled back: the shaper rounds sizes up
+// to a whole pixel. Pointer events reach it through the same transform.
+func (c *Ctx) editor(ed *widget.Editor, f Font, x, y, w, h, lineH float32, ink, sel color.NRGBA) {
+	k := c.K * shapeScale
+	t := op.Affine(f32.Affine2D{}.Scale(f32.Pt(0, 0), f32.Pt(1.0/shapeScale, 1.0/shapeScale)).Offset(c.Pt(x, y))).Push(c.Ops)
+	gtx := c.Context
+	gtx.Metric = unit.Metric{PxPerDp: k, PxPerSp: k}
+	gtx.Constraints = layout.Exact(image.Pt(int(w*k+0.5), int(h*k+0.5)))
+	ed.LineHeight, ed.LineHeightScale = unit.Sp(lineH), 1
+	rec := op.Record(c.Ops)
+	paint.ColorOp{Color: ink}.Add(c.Ops)
+	inkOp := rec.Stop()
+	rec = op.Record(c.Ops)
+	paint.ColorOp{Color: sel}.Add(c.Ops)
+	selOp := rec.Stop()
+	ed.Layout(gtx, textShaper(), f.gio(), unit.Sp(f.Size), inkOp, selOp)
+	t.Pop()
 }
 
 // HoldButton is a button that acts while held, by pointer or Space: press as it goes
@@ -151,9 +161,9 @@ func (b *HoldButton) Layout(c *Ctx, x, y float32, text, icon string, enabled boo
 	if b.focus.Has(c) {
 		c.focusRing(x, y, w, h)
 	}
-	b.touch.Add(c, x, y, w, h, enabled)
 	if enabled {
-		b.focus.Add(c)
+		b.focus.Add(c, x, y, w, h)
 	}
+	b.touch.Add(c, x, y, w, h, enabled)
 	return press, release
 }

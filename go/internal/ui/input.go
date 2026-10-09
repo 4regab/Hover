@@ -77,5 +77,11 @@ func (f *Focus) Keys(c *Ctx, names ...key.Name) []key.Event {
 	}
 }
 
-// Add makes it focusable for this frame.
-func (f *Focus) Add(c *Ctx) { event.Op(c.Ops, &f.tag) }
+// Add makes it focusable for this frame, over its control's box, before (under) the
+// control's touch area: a tag added over it takes the press. Outside a clip it would
+// cover the whole window and take every press from what lies under it.
+func (f *Focus) Add(c *Ctx, x, y, w, h float32) {
+	st := clip.Rect(c.irect(x, y, w, h)).Push(c.Ops)
+	event.Op(c.Ops, &f.tag)
+	st.Pop()
+}
