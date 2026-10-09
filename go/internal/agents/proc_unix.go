@@ -111,3 +111,12 @@ func (g *groupImp) kill() {
 func (g *groupImp) release() { g.dropWatchdog() }
 
 func (g *groupImp) close() {}
+
+// detach puts a program Hover lets go of (an editor) in a process group of its own, so
+// Hover's signals and the agents' stops never reach it.
+func detach(cmd *exec.Cmd) {
+	if cmd.SysProcAttr == nil {
+		cmd.SysProcAttr = &syscall.SysProcAttr{}
+	}
+	cmd.SysProcAttr.Setpgid = true
+}

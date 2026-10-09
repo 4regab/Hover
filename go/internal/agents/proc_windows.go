@@ -121,3 +121,12 @@ func (g *groupImp) kill() { windows.TerminateJobObject(g.job, 1) }
 func (g *groupImp) release() {}
 
 func (g *groupImp) close() { windows.CloseHandle(g.job) }
+
+// detach starts a program Hover lets go of (an editor) with no window of Hover's and in a
+// process group of its own, so Hover's Ctrl+C never reaches it.
+func detach(cmd *exec.Cmd) {
+	if cmd.SysProcAttr == nil {
+		cmd.SysProcAttr = &syscall.SysProcAttr{}
+	}
+	cmd.SysProcAttr.CreationFlags |= windows.CREATE_NO_WINDOW | windows.CREATE_NEW_PROCESS_GROUP
+}
