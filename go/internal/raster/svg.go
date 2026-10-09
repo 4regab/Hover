@@ -400,6 +400,21 @@ func ellipsePath(cx, cy, r float32) []subpath {
 	return []subpath{{p, true}}
 }
 
+// PathPolylines is an SVG path's d attribute as polylines (curves and arcs flattened),
+// and whether a Z closed each one. The UI strokes and fills its icons from these.
+func PathPolylines(d string) (lines [][][2]float32, closed []bool) {
+	sub, _ := parsePath(d)
+	for _, s := range sub {
+		l := make([][2]float32, len(s.pts))
+		for i, p := range s.pts {
+			l[i] = [2]float32{p.x, p.y}
+		}
+		lines = append(lines, l)
+		closed = append(closed, s.closed)
+	}
+	return lines, closed
+}
+
 // parsePath reads a path's d attribute into polylines (curves flattened). The second
 // result says whether every subpath is closed by an explicit Z (open ones still fill).
 func parsePath(d string) ([]subpath, bool) {

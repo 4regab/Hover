@@ -277,6 +277,23 @@ structs, pins them while the call runs and lets go after.
 - `live_test.go` draws a triangle into a texture and reads the middle pixel back, after a
   depth-only pass. It passed here on Mesa's llvmpipe (Vulkan); CI runs it on Windows' WARP.
 
+### Done: `internal/ui` (widgets, icons, marks, bot)
+
+`widgets.slint`, `icons.slint`, `marks.slint` and `bot.slint` on Gio: the palette, the
+Lucide icons, the pill button, switch, segments, slider, ring, tile, text field and hold
+button, the tools' marks and live marks, and the bot glyph. Lengths are Slint's logical
+pixels.
+
+- **Text follows Slint's layout:** a line is the font's ascent minus its descent tall
+  (Inter: 1.21 em), with the baseline at the ascent. Gio shapes the glyphs.
+- **What Gio can't draw is drawn on the CPU once and cached as an image:** drop shadows
+  (a Gaussian blur), radial gradients and the marks, whose fills need gradients of three or
+  more stops and even-odd holes.
+- **Slint's software renderer draws no drop shadows** (its `draw_box_shadow` is a TODO),
+  so the Rust `--shots` pictures have none. The Go UI draws them, as femtovg does in the
+  running app. Shadows are the one expected difference against the shots.
+- Looked at here as a headless Gio render (Mesa EGL, `EGL_PLATFORM=surfaceless`).
+
 Not run here: this sandbox has no display, GPU or Windows fonts. The chat was looked at as
 PNGs (the failed and the rich sessions of the office-state fixture), with DejaVu Sans, Noto
 Sans and DejaVu Sans Mono. On Windows the width-based goldens skip, as in the Rust tests.
