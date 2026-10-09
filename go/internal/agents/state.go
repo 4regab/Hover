@@ -684,3 +684,9 @@ func SubagentsOut(s *KiroSession) int {
 	}
 	return n
 }
+
+// Ms, StateShort and DeskField are state.go's and desk.go's helpers for a host that writes its
+// own state message (internal/backend).
+func Ms(t core.Stamp) int64                           { return ms(t) }
+func StateShort(target *string) *string               { return stateShort(target) }
+func DeskField(input *string, names []string) *string { return field(input, names) }

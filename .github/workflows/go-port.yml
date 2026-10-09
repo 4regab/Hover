@@ -38,6 +38,8 @@ jobs:
       - run: GOOS=windows go vet ./...
       - run: go test -race -tags nowayland,nox11,novulkan ./...
       - run: go build -tags nowayland,nox11,novulkan -o ../hover-linux ./cmd/hover
+      # The Mac backend compiles for both Macs (it is run by backend-diff).
+      - run: GOOS=darwin GOARCH=arm64 go build -o /dev/null ./cmd/hover-backend && GOOS=darwin GOARCH=amd64 go build -o /dev/null ./cmd/hover-backend
       # The Linux packages (compiled, not run: no Wayland desktop on the runner).
       - name: Linux packages
         working-directory: .
@@ -472,3 +474,35 @@ jobs:
           name: memory-windows
           path: out/
           if-no-files-found: warn
+
+  # Phase 7: the Mac app's backend in Go (cmd/hover-backend) against the Rust one. Both are
+  # started with the same scripted sessions (the protocol tests of crates/hover-backend, with
+  # the stand-in tools and gh), and every message they send is compared. On Linux, and on a
+  # Mac.
+  backend-diff:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, macos-14]
+    runs-on: ${{ matrix.os }}
+    continue-on-error: ${{ matrix.os == 'macos-14' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go/go.mod
+          cache-dependency-path: go/go.sum
+      - name: Build the Rust backend and its stand-ins
+        run: |
+          cargo build --release -p hover-backend
+          cargo build --release -p hover-measure --bin fake-agent --bin fake-opencode
+          rustc --edition 2021 -C debuginfo=0 crates/hover-agents/tests/fixtures/fakegh.rs -o "$RUNNER_TEMP/fakegh"
+      - name: Build the Go backend
+        working-directory: go
+        run: go build -o "$RUNNER_TEMP/hb-go" ./cmd/hover-backend
+      - name: Same sessions, both backends
+        timeout-minutes: 25
+        env:
+          HB_GO: ${{ runner.temp }}/hb-go
+          FAKE_GH: ${{ runner.temp }}/fakegh
+        run: python3 go/tools/backend-diff/run.py
