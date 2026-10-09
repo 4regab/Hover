@@ -13,12 +13,16 @@ public static class Keys {
   public static void Down(byte vk) { keybd_event(vk, 0, 0, UIntPtr.Zero); }
   public static void Up(byte vk) { keybd_event(vk, 0, 2, UIntPtr.Zero); }
   public static void Press(byte vk) { Down(vk); Up(vk); }
+  [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
+  [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
+  public static uint ForegroundPid() { uint pid; GetWindowThreadProcessId(GetForegroundWindow(), out pid); return pid; }
 }
 '@
 
 $data = Join-Path $Out 'data'
 New-Item -ItemType Directory -Force $data | Out-Null
 $env:HOVER_DATA_DIR = (Resolve-Path $data).Path
+$env:HOVER_TRACE = '1'
 $log = Join-Path $data 'hover.log'
 $report = [ordered]@{}
 
@@ -26,7 +30,8 @@ function Shot($name) {
   $b = [System.Windows.Forms.SystemInformation]::PrimaryMonitorSize
   $bmp = New-Object System.Drawing.Bitmap $b.Width, $b.Height
   $g = [System.Drawing.Graphics]::FromImage($bmp)
-  $g.CopyFromScreen(0, 0, 0, 0, $bmp.Size)
+  # CAPTUREBLT: without it a see-through window (the notch) is left out.
+  $g.CopyFromScreen(0, 0, 0, 0, $bmp.Size, [System.Drawing.CopyPixelOperation]([int][System.Drawing.CopyPixelOperation]::SourceCopy -bor 0x40000000))
   $bmp.Save((Join-Path $Out "$name.png"))
   $g.Dispose(); $bmp.Dispose()
 }
@@ -49,6 +54,7 @@ $report.opened = Wait-For 'notch: opening' 5
 Start-Sleep -Milliseconds 1500
 Shot '2-open'
 $report.alive_after_open = -not $p.HasExited
+$report.foreground_is_hover_after_open = ([Keys]::ForegroundPid() -eq $p.Id)
 
 # Esc folds it.
 [Keys]::Press(0x1B)

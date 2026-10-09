@@ -6,6 +6,7 @@ import (
 	"errors"
 	"image"
 	"io"
+	"os"
 	"runtime"
 	"strings"
 	"sync"
@@ -473,6 +474,7 @@ func (w *Window) sync() {
 	}
 	w.size = n
 	if err := w.tgt.resize(n.X, n.Y); err != nil {
+		logf("window %s: resize to %v: %v; making the swap chain again", w.opts.Class, n, err)
 		w.rebuild(err)
 	}
 }
@@ -587,6 +589,9 @@ func (w *Window) paint() {
 		}
 	}
 	w.sync()
+	if tracing && w.frames.Load() < 3 {
+		w.trace("frame %d %v", w.frames.Load(), w.size)
+	}
 	scale := float32(w.Scale())
 	w.ops.Reset()
 	gtx := layout.Context{
@@ -621,6 +626,15 @@ func (w *Window) paint() {
 }
 
 func (w *Window) now() time.Duration { return time.Since(w.t0) }
+
+// trace is HOVER_TRACE=1: what the window sees of the keyboard and focus, for the CI run.
+var tracing = os.Getenv("HOVER_TRACE") != ""
+
+func (w *Window) trace(format string, a ...any) {
+	if tracing {
+		logf("win %s: "+format, append([]any{w.opts.Class + w.opts.Title}, a...)...)
+	}
+}
 
 func mods() key.Modifiers {
 	var m key.Modifiers
@@ -699,6 +713,9 @@ func wndProc(hwnd, m, wp, lp uintptr) uintptr {
 	if w == nil {
 		return call(pDefWindowProcW, hwnd, m, wp, lp)
 	}
+	if tracing && uint32(m) == wmActivate {
+		w.trace("activate %#x foreground=%#x me=%#x", wp, Foreground(), w.HWND)
+	}
 	if w.Msg != nil {
 		if r, ok := w.Msg(uint32(m), wp, lp); ok {
 			return r
@@ -771,6 +788,7 @@ func wndProc(hwnd, m, wp, lp uintptr) uintptr {
 		}
 	case wmSetFocus, wmKillFocus:
 		on := uint32(m) == wmSetFocus
+		w.trace("focus %v", on)
 		w.focused = on
 		if !on {
 			w.router.Queue(pointer.Event{Kind: pointer.Cancel})
@@ -852,6 +870,7 @@ func wndProc(hwnd, m, wp, lp uintptr) uintptr {
 		return 0
 	case wmKeyDown, wmKeyUp, wmSysKeyDown, wmSysKeyUp:
 		if n, ok := keyName(wp); ok {
+			w.trace("key %q msg %#x foreground=%v", n, m, Foreground() == w.HWND)
 			st := key.Press
 			if m == wmKeyUp || m == wmSysKeyUp {
 				st = key.Release
