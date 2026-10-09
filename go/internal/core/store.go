@@ -37,7 +37,7 @@ func (s *Sealed) File() string { return s.file }
 // Read is the document, or none when there is none yet or it can't be read (then the
 // file is kept beside it as .bad, and the log says why).
 func (s *Sealed) Read() (JSON, bool) {
-	b, err := os.ReadFile(s.file)
+	b, err := ReadFile(s.file)
 	if err != nil {
 		return JNull, false
 	}
@@ -107,7 +107,7 @@ func (s *Secrets) load() {
 	if s.crypto == nil {
 		return
 	}
-	b, err := os.ReadFile(s.file)
+	b, err := ReadFile(s.file)
 	if err != nil {
 		return
 	}

@@ -354,7 +354,7 @@ func (h *AgentHistory) loadIndex() []HistoryEntry {
 
 // readIndex is the index's entries, and the keys of its lines without Credits.
 func (h *AgentHistory) readIndex() ([]HistoryEntry, map[string]bool, error) {
-	b, err := os.ReadFile(h.indexFile())
+	b, err := ReadFile(h.indexFile())
 	if err != nil {
 		return nil, nil, err
 	}
@@ -402,7 +402,7 @@ func (h *AgentHistory) missingFrom(list []HistoryEntry, since *time.Time) []Hist
 				continue
 			}
 		}
-		b, err := os.ReadFile(filepath.Join(h.dir, e.Name()))
+		b, err := ReadFile(filepath.Join(h.dir, e.Name()))
 		if err != nil {
 			continue
 		}
@@ -483,7 +483,7 @@ func (h *AgentHistory) read(key string) (SavedSession, bool) {
 	if !PlainKey(key) {
 		return SavedSession{}, false
 	}
-	b, err := os.ReadFile(h.fileOf(key))
+	b, err := ReadFile(h.fileOf(key))
 	if errors.Is(err, os.ErrNotExist) {
 		return SavedSession{}, false
 	}
