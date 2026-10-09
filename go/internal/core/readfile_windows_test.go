@@ -64,7 +64,8 @@ func renamesWhileRead(t *testing.T, read func(string) ([]byte, error), rename fu
 	}
 	close(stop)
 	wg.Wait()
-	if b, err := ReadFile(target); err != nil || string(b) != "499" {
+	// When every rename went through, the last one's text is what is there.
+	if b, err := ReadFile(target); failed == 0 && (err != nil || string(b) != "499") {
 		t.Errorf("the last save: %q %v", b, err)
 	}
 	return
