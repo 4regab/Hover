@@ -46,6 +46,10 @@ Type: files; Name: "{app}\{#OldAppExe}"
 
 [Files]
 Source: "{#ExeDir}\{#MyAppExe}"; DestDir: "{app}"; Flags: ignoreversion
+; The Go build draws the office with wgpu-native, which it looks for beside the exe.
+#if FileExists(ExeDir + "\wgpu_native.dll")
+Source: "{#ExeDir}\wgpu_native.dll"; DestDir: "{app}"; Flags: ignoreversion
+#endif
 Source: "..\..\LICENSE"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\..\THIRD-PARTY-NOTICES.txt"; DestDir: "{app}"; Flags: ignoreversion
 

@@ -63,6 +63,10 @@ $p = Start-Process $Exe -PassThru
 $report.started = Wait-For 'started' 20
 Start-Sleep -Seconds 2
 $report.alive_after_start = -not $p.HasExited
+# The notch at rest: the number the memory rule in docs/development/go-port.md compares.
+$p.Refresh()
+$report.rest_private_mb = [math]::Round($p.PrivateMemorySize64 / 1MB, 1)
+$report.rest_working_set_mb = [math]::Round($p.WorkingSet64 / 1MB, 1)
 Shot '1-rest'
 
 # The shortcut opens the notch.

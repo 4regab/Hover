@@ -7,7 +7,7 @@ name: Go port
 on:
   push:
     branches: ['go-port']
-    paths: ['go/**', '.github/workflows/go-port.yml', 'crates/hover-core/**', 'crates/hover-notch/**', 'crates/hover-office/**', 'tools/notch-proto/**']
+    paths: ['go/**', '.github/workflows/go-port.yml', 'packaging/windows/**', 'crates/hover-core/**', 'crates/hover-notch/**', 'crates/hover-office/**', 'tools/notch-proto/**']
   workflow_dispatch:
 
 permissions:
@@ -317,5 +317,141 @@ jobs:
         if: always()
         with:
           name: rust-shots
+          path: out/
+          if-no-files-found: warn
+
+  # The installer: the Go build's setup installed over the Rust 5.x release the way a user
+  # would, then removed (go/tools/installer-check.ps1). The setup is kept as an artifact.
+  installer-windows:
+    runs-on: windows-2022
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go/go.mod
+          cache-dependency-path: go/go.sum
+      - name: Build hoverai.exe with the version
+        working-directory: go
+        run: |
+          $env:CGO_ENABLED = '0'
+          $v = (Select-String -Path ..\Cargo.toml -Pattern '^version = "(.+)"').Matches[0].Groups[1].Value
+          Add-Content -Path $env:GITHUB_ENV -Value "VERSION=$v"
+          New-Item -ItemType Directory -Force ..\publish | Out-Null
+          go build -ldflags "-H=windowsgui -X github.com/4regab/Hover/go/internal/shell.Version=$v" -o ..\publish\hoverai.exe .\cmd\hover
+          if ($LASTEXITCODE -ne 0) { throw 'go build failed' }
+      - name: wgpu-native beside the exe
+        run: |
+          $zip = Join-Path $env:RUNNER_TEMP 'wgpu.zip'
+          Invoke-WebRequest 'https://github.com/gfx-rs/wgpu-native/releases/download/v29.0.0.0/wgpu-windows-x86_64-msvc-release.zip' -OutFile $zip
+          Expand-Archive $zip (Join-Path $env:RUNNER_TEMP 'wgpu') -Force
+          $dll = Get-ChildItem (Join-Path $env:RUNNER_TEMP 'wgpu') -Recurse -Filter wgpu_native.dll | Select-Object -First 1
+          if (-not $dll) { throw 'no wgpu_native.dll in the release zip' }
+          Copy-Item $dll.FullName publish\
+      - name: Inno Setup
+        run: |
+          if (-not (Test-Path "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe")) {
+            $setup = Join-Path $env:RUNNER_TEMP 'innosetup-6.7.3.exe'
+            Invoke-WebRequest 'https://github.com/jrsoftware/issrc/releases/download/is-6_7_3/innosetup-6.7.3.exe' -OutFile $setup
+            $process = Start-Process $setup -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/SP-', '/ALLUSERS' -Wait -PassThru
+            if ($process.ExitCode -ne 0) { throw "Inno Setup install failed: $($process.ExitCode)" }
+          }
+      - name: Build the setup
+        run: |
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          & $iscc "/DMyAppVersion=$env:VERSION" "/DExeDir=$((Resolve-Path publish).Path)" "/O$((Resolve-Path .).Path)\dist" packaging\windows\Hover.iss
+          if ($LASTEXITCODE -ne 0) { throw 'Inno Setup compilation failed' }
+          Write-Host "$((Get-Item "dist\Hover-Setup-${env:VERSION}.exe").Length / 1MB) MB"
+      # The latest 5.x release the Rust app shipped: what an update installs over.
+      - name: The 5.x setup
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          New-Item -ItemType Directory -Force old | Out-Null
+          gh release download v5.0.2 --repo ${{ github.repository }} --pattern 'Hover-Setup-5.0.2.exe' --dir old
+          if ($LASTEXITCODE -ne 0) { throw 'no 5.0.2 setup to install over' }
+      - name: Install over 5.x, check, uninstall
+        timeout-minutes: 10
+        run: ./go/tools/installer-check.ps1 -Setup "dist\Hover-Setup-$env:VERSION.exe" -Old old\Hover-Setup-5.0.2.exe -Built publish\hoverai.exe -Out out\installer
+      - name: Summary
+        if: always()
+        run: |
+          if (Test-Path out\installer\report.json) {
+            $r = Get-Content out\installer\report.json -Raw | ConvertFrom-Json
+            @('', '### Go installer on Windows', '') + ($r.PSObject.Properties | ForEach-Object { "    $($_.Name) = $($_.Value)" }) | Out-File -Append -Encoding utf8 $env:GITHUB_STEP_SUMMARY
+          }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: installer-windows-go
+          path: |
+            dist/
+            out/installer/
+          if-no-files-found: warn
+
+  # The memory rule (the Go notch at rest within 25% of the Rust app's): both apps started
+  # on the same runner and read at rest by the same script. Run by hand only, as it builds
+  # the Rust app.
+  memory-windows:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: windows-2022
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go/go.mod
+          cache-dependency-path: go/go.sum
+      - name: Build both
+        run: |
+          $env:CGO_ENABLED = '0'
+          New-Item -ItemType Directory -Force out | Out-Null
+          Push-Location go
+          go build -ldflags '-H=windowsgui' -o ..\out\hoverai-go.exe .\cmd\hover
+          if ($LASTEXITCODE -ne 0) { throw 'go build failed' }
+          Pop-Location
+          $cargoBin = Join-Path $env:USERPROFILE '.cargo\bin'
+          & (Join-Path $cargoBin 'rustup.exe') set auto-self-update disable
+          & (Join-Path $cargoBin 'cargo.exe') build --release -p hover --bin hoverai
+          if ($LASTEXITCODE -ne 0) { throw 'cargo build failed' }
+          Copy-Item target\release\hoverai.exe out\hoverai-rust.exe
+      - name: wgpu-native beside the Go exe
+        run: |
+          $zip = Join-Path $env:RUNNER_TEMP 'wgpu.zip'
+          Invoke-WebRequest 'https://github.com/gfx-rs/wgpu-native/releases/download/v29.0.0.0/wgpu-windows-x86_64-msvc-release.zip' -OutFile $zip
+          Expand-Archive $zip (Join-Path $env:RUNNER_TEMP 'wgpu') -Force
+          Copy-Item (Get-ChildItem (Join-Path $env:RUNNER_TEMP 'wgpu') -Recurse -Filter wgpu_native.dll | Select-Object -First 1).FullName out\
+      - name: Screen 1920 x 1080
+        run: ./go/tools/set-resolution.ps1
+      - name: Go at rest
+        timeout-minutes: 5
+        run: ./go/tools/app-smoke.ps1 -Exe out\hoverai-go.exe -Out out\go
+      - name: Rust at rest
+        timeout-minutes: 5
+        continue-on-error: true
+        env:
+          # The runner has no GPU; Slint refuses wgpu's CPU adapter (WARP) unless told.
+          SLINT_WGPU_CPU: '1'
+        run: ./go/tools/app-smoke.ps1 -Exe out\hoverai-rust.exe -Out out\rust
+      - name: Compare
+        if: always()
+        run: |
+          $g = Get-Content out\go\report.json -Raw | ConvertFrom-Json
+          $r = if (Test-Path out\rust\report.json) { Get-Content out\rust\report.json -Raw | ConvertFrom-Json } else { $null }
+          $lines = @('', '### Memory at rest (private MB)', '', "    Go:   $($g.rest_private_mb)  (working set $($g.rest_working_set_mb))")
+          if ($r) {
+            $lines += "    Rust: $($r.rest_private_mb)  (working set $($r.rest_working_set_mb))"
+            $lines += "    Go / Rust = $([math]::Round($g.rest_private_mb / $r.rest_private_mb, 2)) (the rule: at most 1.25)"
+          } else { $lines += '    Rust: no reading' }
+          $lines | Out-File -Append -Encoding utf8 $env:GITHUB_STEP_SUMMARY
+          $lines | ForEach-Object { Write-Host $_ }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: memory-windows
           path: out/
           if-no-files-found: warn
