@@ -123,6 +123,9 @@ func run(dir string) error {
 	if err := notchShots(dir); err != nil {
 		return err
 	}
+	if err := deskShots(dir); err != nil {
+		return err
+	}
 	for _, dark := range []bool{true, false} {
 		tag := map[bool]string{true: "dark", false: "light"}[dark]
 		for _, sec := range app.Sections {
