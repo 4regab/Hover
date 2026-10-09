@@ -1,11 +1,10 @@
-//go:build !windows
+//go:build !windows && !linux
 
 package voice
 
 import "errors"
 
-// ponytail: Linux's microphone is phase 6, and it talks to PipeWire (not PulseAudio, which
-// is legacy). The Mac app records for itself.
+// ponytail: Linux is audio_linux.go (PipeWire). The Mac app records for itself.
 func Microphones() []string { return nil }
 
 func OpenMic(string, int) (Source, error) {
