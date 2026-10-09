@@ -105,3 +105,6 @@ func (f *Fonts) Face(list string, r rune, weight float32, italic bool) (face *fo
 	f.faces[k] = v
 	return v, skew
 }
+
+// Meta is the family name and the style of a face the set gave out.
+func (f *Fonts) Meta(face *font.Face) (string, font.Aspect) { return f.fm.FontMetadata(face.Font) }

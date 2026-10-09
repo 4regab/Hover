@@ -183,3 +183,28 @@ func abs32(v float32) float32 {
 	}
 	return v
 }
+
+// Caret is where the caret at byte b is: its x, and the top and bottom of its line.
+func (l *Layout) Caret(b int) (x, top, bottom float32, ok bool) {
+	for i := range l.Lines {
+		ln := &l.Lines[i]
+		if !(b >= ln.B0 && b < ln.B1) && !(i == len(l.Lines)-1 && b == ln.B1) {
+			continue
+		}
+		cs := l.clus[i]
+		for _, c := range cs {
+			if c.left() == b {
+				return c.X0, ln.Top, ln.Top + ln.Height, true
+			}
+			if c.right() == b {
+				x = c.X1
+				ok = true
+			}
+		}
+		if len(cs) > 0 && !ok {
+			x = cs[0].X0
+		}
+		return x, ln.Top, ln.Top + ln.Height, true
+	}
+	return 0, 0, 0, false
+}

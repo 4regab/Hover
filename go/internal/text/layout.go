@@ -155,6 +155,36 @@ type part struct {
 	isBox  bool
 }
 
+// subpx is how much finer than a pixel the shaper is asked to work: go-text's shaper
+// rounds the font size up to a whole pixel (so 11.5 px text would come out as 12 px), so
+// runs are shaped at subpx times the size and the result scaled back down.
+const subpx = 32
+
+func div(v fixed.Int26_6) fixed.Int26_6 {
+	if v < 0 {
+		return -div(-v)
+	}
+	return (v + subpx/2) / subpx
+}
+
+// shapeRun shapes one run at its exact size.
+func (s *Shaper) shapeRun(in shaping.Input) shaping.Output {
+	size := in.Size
+	in.Size *= subpx
+	o := s.hb.Shape(in)
+	o.Size = size
+	for i := range o.Glyphs {
+		g := &o.Glyphs[i]
+		g.Width, g.Height, g.XBearing, g.YBearing = div(g.Width), div(g.Height), div(g.XBearing), div(g.YBearing)
+		g.Advance, g.XAdvance, g.YAdvance = div(g.Advance), div(g.XAdvance), div(g.YAdvance)
+		g.XOffset, g.YOffset = div(g.XOffset), div(g.YOffset)
+	}
+	o.LineBounds = shaping.Bounds{Ascent: div(o.LineBounds.Ascent), Descent: div(o.LineBounds.Descent), Gap: div(o.LineBounds.Gap)}
+	o.GlyphBounds = shaping.Bounds{Ascent: div(o.GlyphBounds.Ascent), Descent: div(o.GlyphBounds.Descent), Gap: div(o.GlyphBounds.Gap)}
+	o.RecomputeAdvance()
+	return o
+}
+
 func fx(v float32) fixed.Int26_6 { return fixed.Int26_6(math.Round(float64(v) * 64)) }
 func ff(v fixed.Int26_6) float32 { return float32(v) / 64 }
 
@@ -163,10 +193,12 @@ func (s *Shaper) Shape(runs []Run, width float32, align Align) *Layout {
 	return s.shape(runs, width, align, shaping.WhenNecessary)
 }
 
-// ContentWidths is CSS min-content and max-content: the longest word, and the whole on one line.
+// ContentWidths is CSS min-content and max-content: the widest character (the text breaks
+// anywhere, as with `overflow-wrap: anywhere`, which every paragraph here has), and the
+// whole on one line.
 func (s *Shaper) ContentWidths(runs []Run) (min, max float32) {
 	max = s.shape(runs, 0, AlignStart, shaping.WhenNecessary).W
-	min = s.shape(runs, 1, AlignStart, shaping.Never).W
+	min = s.shape(runs, 1, AlignStart, shaping.WhenNecessary).W
 	return
 }
 
@@ -335,7 +367,7 @@ func (s *Shaper) paragraph(lay *Layout, parts []part, rs []rune, rb []int, pb0, 
 				outs = append(outs, missing(&part{r0: sp.RunStart, r1: sp.RunEnd}, st, rs))
 				continue
 			}
-			outs = append(outs, s.hb.Shape(sp))
+			outs = append(outs, s.shapeRun(sp))
 		}
 	}
 	w := width
@@ -439,7 +471,7 @@ func (s *Shaper) metrics(st *Style, r rune) (a, d float32) {
 	if face == nil {
 		return st.Size * 0.9, st.Size * 0.25
 	}
-	o := s.hb.Shape(shaping.Input{Text: []rune{r}, RunStart: 0, RunEnd: 1, Direction: di.DirectionLTR, Face: face, Size: fx(st.Size), Script: language.Latin})
+	o := s.shapeRun(shaping.Input{Text: []rune{r}, RunStart: 0, RunEnd: 1, Direction: di.DirectionLTR, Face: face, Size: fx(st.Size), Script: language.Latin})
 	a, d = ff(o.LineBounds.Ascent), -ff(o.LineBounds.Descent)
 	if a < 0 {
 		a, d = -a, -d
@@ -448,12 +480,13 @@ func (s *Shaper) metrics(st *Style, r rune) (a, d float32) {
 }
 
 // lineBox is a run's share of its line: Chromium rounds the font's ascent and descent to
-// whole pixels, then adds half of what the line height has over them above and below.
+// whole pixels, then puts half of what the line height has over them above (rounded
+// down, as LayoutNG's AddLeading does) and the rest below.
 func lineBox(st *Style, a, d float32) (asc, desc float32) {
 	a, d = float32(math.Round(float64(a))), float32(math.Round(float64(d)))
 	h := st.LineH * st.Size
-	half := (h - a - d) / 2
-	return a + half, d + half
+	asc = a + float32(math.Floor(float64((h-a-d)/2)))
+	return asc, h - asc
 }
 
 // missing is a stand-in output for characters no font has.

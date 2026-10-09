@@ -176,6 +176,54 @@ How the Go code differs, on purpose:
   AppImage can't count on one); the Mac (phase 7) has `/usr/lib/libsqlite3.dylib`. Until
   then Cursor's quota says it isn't supported there.
 
+## Phase 3: UI, bottom up (in progress)
+
+Order: `hover-chat` first, then the shared widgets, Settings, the desk card, the chat view,
+and the office last. Nothing here opens a window yet; each module draws into a plain image,
+so it can be looked at as a PNG and checked on any machine.
+
+### Done: `internal/text`, `internal/raster`, `internal/chat`
+
+- `internal/text` is parley's job: runs with their own font, size and colour, wrapped to a
+  width, with line heights, caret and selection positions, and inline gaps (the 5 px
+  around inline code). Shaping and line breaking are go-text/typesetting's (already in
+  the build through Gio, now a direct dependency).
+- `internal/raster` is tiny-skia's and resvg's job: rounded boxes, borders, glows, images,
+  glyph shapes (from font outlines, with the Rust painter's quarter-pixel positions and
+  14° slant), and a small SVG reader for the chat's own icons, the tools' logos and the
+  flowcharts.
+- `internal/chat` is `crates/hover-chat`: theme, scroll math (Chromium's thin scrollbar and
+  smooth scroll), state parsing, the image cache, the Markdown layout, the thread (turns,
+  timeline, commands, thoughts, subagents, answers, changes, buttons), selection and the
+  Chromium-style copy, and the painter. All 35 Rust tests are ported and run against the
+  same goldens (`tests/golden`).
+
+What differs from the Rust crate, on purpose:
+
+- **Words in Chinese and Japanese.** ICU finds them with a dictionary; the Go side uses
+  Unicode's rules with none, so each ideograph is a word. The ported test skips those
+  probes and counts them (18 of 3,600). Thai is the same. Already listed under Known costs.
+- **go-text's shaper rounds the font size up to a whole pixel** (11.5 px came out 12 px,
+  12.5 px came out 13 px). `internal/text` shapes at 32 times the size and scales back.
+  Without this the widths of every answer were wrong.
+- **Line boxes follow Chromium:** the font's ascent and descent are rounded, and the extra
+  height of the line is split with the top half rounded down. That is what made the code
+  and table boxes match the page to under half a pixel.
+- **Paragraphs break anywhere** (`overflow-wrap: anywhere`), so a table column's smallest
+  width is one character, as in the Rust build.
+- **Bidirectional text** is shaped and ordered by go-text, but the caret and selection
+  boxes are tested for left to right only.
+- **A step's "none" is an empty string** (`Name`, `Dir`, `Cmd`, `Diff`, `Out`, `Tag`), not
+  an option. A demo step with an empty command is therefore treated as having none.
+- **No synthetic bold.** A font with no bold face draws its regular face. Inter ships
+  bold, and so do Segoe UI and DejaVu.
+- **The broken-image icons** (`broken_image_100.png`, `_200.png`) are copied into
+  `go/internal/chat/assets` because `go:embed` cannot reach outside the module.
+
+Not run here: this sandbox has no display, GPU or Windows fonts. The chat was looked at as
+PNGs (the failed and the rich sessions of the office-state fixture), with DejaVu Sans, Noto
+Sans and DejaVu Sans Mono. On Windows the width-based goldens skip, as in the Rust tests.
+
 ## Known costs
 
 - Memory, above.
