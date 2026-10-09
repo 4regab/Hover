@@ -181,6 +181,17 @@ func (c *Canvas) GradientV(y0, y1 float64, stops []stop4, x, y, w, h float64) {
 	}
 }
 
+// GradientR is a radial gradient from (cx, cy) out to r over the whole canvas (the glow
+// sprite's texture).
+func (c *Canvas) GradientR(cx, cy, r float64, stops []stop4) {
+	for py := 0; py < c.H; py++ {
+		for px := 0; px < c.W; px++ {
+			t := math.Min(math.Max(math.Hypot(float64(px)+0.5-cx, float64(py)+0.5-cy)/r, 0), 1)
+			c.blend(px, py, sample(stops, t), 1)
+		}
+	}
+}
+
 func (c *Canvas) style() text.Style {
 	f := Font{}
 	f = c.Font

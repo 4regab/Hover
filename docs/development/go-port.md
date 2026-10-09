@@ -234,8 +234,21 @@ and the TV, board, clock and sky pictures on small canvases. The CPU page compos
   fonts the page embeds (copied to `go/internal/office/assets`, as `go:embed` cannot reach
   out of the module).
 - The scene and its tests never touch a GPU, so they run on every machine.
-- Still to do for the office: `render.rs` (the wgpu pipelines, shadow map, tone mapping,
-  glow sprite texture) and `live.rs` (the office on its own thread), on `internal/gpu`.
+
+### Done: the office renderer and its thread (`render.go`, `live.go`)
+
+`render.rs` and `live.rs` on `internal/gpu`: the same pipelines, shadow map, draw order,
+textures and uniforms, and `office.wgsl` as it is (a copy; a test checks it hasn't
+drifted). `cmd/office-shot` is the Rust `shot` example: the fixture at its fixed clock,
+1104 x 424, night or day.
+
+- **The frame is always read back** and composed on the CPU, the Rust office's Linux path.
+  The Rust office on Windows can share the app's wgpu device and keep the frame on the GPU.
+  Gio draws with its own device, so that path (its slots, `In::NoGpu`) has no Go version.
+- **A GPU error doesn't end the office.** Rust's wgpu panics on one; here it comes back in
+  `Out.Error` and the office goes on.
+- Looked at here as PNGs on llvmpipe (night and day). CI renders both on Windows' WARP with
+  the Go tool and with the Rust example, into the `spike-reports` artifact (`office/`).
 
 ### Done: `internal/gpu` (Hover's own wgpu-native binding)
 

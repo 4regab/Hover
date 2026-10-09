@@ -95,9 +95,12 @@ const (
 
 	ClampToEdge AddressMode = 1
 
-	BackendD3D12  BackendType = 4
-	BackendVulkan BackendType = 6
-	AdapterCPU    AdapterType = 3
+	BackendD3D12    BackendType = 4
+	BackendMetal    BackendType = 5
+	BackendVulkan   BackendType = 6
+	BackendOpenGL   BackendType = 7
+	BackendOpenGLES BackendType = 8
+	AdapterCPU      AdapterType = 3
 )
 
 // ---- pinning and strings ------------------------------------------------------------

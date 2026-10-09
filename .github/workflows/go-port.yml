@@ -7,7 +7,7 @@ name: Go port
 on:
   push:
     branches: ['go-port']
-    paths: ['go/**', '.github/workflows/go-port.yml', 'crates/hover-core/**', 'crates/hover-notch/**', 'crates/hover-office/src/*.wgsl', 'tools/notch-proto/**']
+    paths: ['go/**', '.github/workflows/go-port.yml', 'crates/hover-core/**', 'crates/hover-notch/**', 'crates/hover-office/**', 'tools/notch-proto/**']
   workflow_dispatch:
 
 permissions:
@@ -110,6 +110,17 @@ jobs:
           $env:WGPU_NATIVE_PATH = (Resolve-Path ..\spike\wgpu_native.dll).Path
           go test ./internal/gpu -run Live -v -count=1
           if ($LASTEXITCODE -ne 0) { throw 'go test failed' }
+      # The office rendered on WARP, as the Rust office's shot example renders it (the Rust
+      # shots come after notch-proto's build, and both go in the artifact to compare).
+      - name: Go office shots on WARP
+        working-directory: go
+        run: |
+          $env:WGPU_NATIVE_PATH = (Resolve-Path ..\spike\wgpu_native.dll).Path
+          New-Item -ItemType Directory -Force ..\out\office | Out-Null
+          foreach ($t in 'night', 'day') {
+            go run ./cmd/office-shot "..\out\office\go-$t.png" $t
+            if ($LASTEXITCODE -ne 0) { throw "office-shot $t failed" }
+          }
       # The runner's screen is 1024 x 768: the open notch's window (1080 wide) runs off it,
       # and the self-tests' corner pixels read black. Best effort; both tests share it.
       - name: Screen 1920 x 1080
@@ -174,6 +185,17 @@ jobs:
           Get-Process notch-proto -ErrorAction SilentlyContinue | Stop-Process -Force
           Get-Content out\rust-stderr.log
           exit 0
+      # The reference for the Go shots, not a check of the port: a failure here leaves the
+      # artifact without them.
+      - name: Rust office shots on WARP
+        continue-on-error: true
+        run: |
+          cargo build --release -p hover-office --example shot
+          if ($LASTEXITCODE -ne 0) { throw 'cargo build failed' }
+          foreach ($t in 'night', 'day') {
+            & target\release\examples\shot.exe "out\office\rust-$t.png" $t
+            if ($LASTEXITCODE -ne 0) { throw "shot $t failed" }
+          }
       - name: Compare
         run: |
           function Read-Report($dir) {
