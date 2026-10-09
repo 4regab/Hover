@@ -522,3 +522,7 @@ func trimmed(l *Line, text string) float32 {
 	}
 	return max(w, 0)
 }
+
+// Metrics are the ascent and descent of the face a style picks, in px at its size (not
+// rounded): what a canvas's text baselines are worked out from.
+func (s *Shaper) Metrics(st Style) (asc, desc float32) { return s.metrics(&st, 'x') }

@@ -24,12 +24,12 @@ func (c *Canvas) glyph(run *text.GlyphRun, gid font.GID, sc, gx float32) *glyphM
 	if m, ok := c.glyphs[key]; ok {
 		return m
 	}
-	m := renderGlyph(run.Face, gid, size, float32(sub)/4, run.Skew, &c.ras)
+	m := renderGlyph(run.Face, gid, size, float32(sub)/4, 0, run.Skew, &c.ras)
 	c.glyphs[key] = m
 	return m
 }
 
-func renderGlyph(face *font.Face, gid font.GID, size, subx float32, skew bool, ras *vector.Rasterizer) *glyphMask {
+func renderGlyph(face *font.Face, gid font.GID, size, subx, suby float32, skew bool, ras *vector.Rasterizer) *glyphMask {
 	if face == nil {
 		return nil
 	}
@@ -43,7 +43,7 @@ func renderGlyph(face *font.Face, gid font.GID, size, subx float32, skew bool, r
 		if skew {
 			x += p.Y * s * tan14
 		}
-		return x + subx, -p.Y * s
+		return x + subx, -p.Y*s + suby
 	}
 	x0, y0, x1, y1 := float32(math.MaxFloat32), float32(math.MaxFloat32), float32(-math.MaxFloat32), float32(-math.MaxFloat32)
 	for i := range out.Segments {
@@ -96,4 +96,16 @@ func renderGlyph(face *font.Face, gid font.GID, size, subx float32, skew bool, r
 	ras.DrawOp = draw.Src
 	ras.Draw(m, m.Bounds(), image.Opaque, image.Point{})
 	return &glyphMask{left: left, top: -top, m: m}
+}
+
+// GlyphMask is the coverage of one glyph at size px with its origin (dx, dy) px into a
+// pixel (both 0..1). The mask's top left pixel is at (left, top) from the origin's pixel;
+// nil when the glyph has no outline.
+func GlyphMask(face *font.Face, gid font.GID, size, dx, dy float32) (m *image.Alpha, left, top int) {
+	var ras vector.Rasterizer
+	g := renderGlyph(face, gid, size, dx, dy, false, &ras)
+	if g == nil {
+		return nil, 0, 0
+	}
+	return g.m, g.left, -g.top
 }
