@@ -131,6 +131,8 @@ type TextBox struct {
 	CharWrap bool // wrap: char-wrap (a line breaks anywhere)
 	Elide    bool // overflow: elide
 	MaxLines int
+	// Spacing is Slint's letter-spacing: logical pixels added after each character.
+	Spacing float32
 }
 
 type line struct {
@@ -173,7 +175,14 @@ func (c *Ctx) shape(s string, b TextBox) []line {
 	var lines []line
 	var cur line
 	first := true
+	var acc float32 // the letter spacing so far on this line, at shapeScale and 26.6
 	for g, ok := sh.NextGlyph(); ok; g, ok = sh.NextGlyph() {
+		if b.Spacing != 0 {
+			g.X += fixed.Int26_6(acc)
+			if g.Flags&text.FlagClusterBreak != 0 {
+				acc += b.Spacing * k * 64
+			}
+		}
 		if first {
 			cur.x0, first = float32(g.X)/64/shapeScale, false
 		}
@@ -183,7 +192,7 @@ func (c *Ctx) shape(s string, b TextBox) []line {
 		}
 		if g.Flags&text.FlagLineBreak != 0 {
 			lines = append(lines, cur)
-			cur, first = line{}, true
+			cur, first, acc = line{}, true, 0
 		}
 	}
 	if len(cur.glyphs) > 0 {

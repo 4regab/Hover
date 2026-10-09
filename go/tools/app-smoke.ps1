@@ -15,6 +15,23 @@ public static class Keys {
   public static void Press(byte vk) { Down(vk); Up(vk); }
   [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
   [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
+  [DllImport("user32.dll")] static extern IntPtr GetDC(IntPtr h);
+  [DllImport("user32.dll")] static extern int ReleaseDC(IntPtr h, IntPtr dc);
+  [DllImport("gdi32.dll")] static extern IntPtr CreateCompatibleDC(IntPtr dc);
+  [DllImport("gdi32.dll")] static extern IntPtr CreateCompatibleBitmap(IntPtr dc, int w, int h);
+  [DllImport("gdi32.dll")] static extern IntPtr SelectObject(IntPtr dc, IntPtr o);
+  [DllImport("gdi32.dll")] static extern bool BitBlt(IntPtr d, int x, int y, int w, int h, IntPtr s, int sx, int sy, uint rop);
+  [DllImport("gdi32.dll")] static extern bool DeleteDC(IntPtr dc);
+  [DllImport("gdi32.dll")] public static extern bool DeleteObject(IntPtr o);
+  // The screen with every layered and DirectComposition window drawn in (SRCCOPY | CAPTUREBLT).
+  public static IntPtr Capture(int w, int h) {
+    IntPtr screen = GetDC(IntPtr.Zero), mem = CreateCompatibleDC(screen), bmp = CreateCompatibleBitmap(screen, w, h);
+    IntPtr old = SelectObject(mem, bmp);
+    BitBlt(mem, 0, 0, w, h, screen, 0, 0, 0x00CC0020 | 0x40000000);
+    SelectObject(mem, old); DeleteDC(mem); ReleaseDC(IntPtr.Zero, screen);
+    return bmp;
+  }
+  public static void Free(IntPtr bmp) { DeleteObject(bmp); }
   public static uint ForegroundPid() { uint pid; GetWindowThreadProcessId(GetForegroundWindow(), out pid); return pid; }
 }
 '@
@@ -29,13 +46,10 @@ $report = [ordered]@{}
 function Shot($name) {
   try {
     $b = [System.Windows.Forms.SystemInformation]::PrimaryMonitorSize
-    $bmp = New-Object System.Drawing.Bitmap $b.Width, $b.Height
-    $g = [System.Drawing.Graphics]::FromImage($bmp)
-    # CAPTUREBLT: without it a see-through window (the notch) is left out.
-    $op = [System.Drawing.CopyPixelOperation]::SourceCopy -bor [System.Drawing.CopyPixelOperation]::CaptureBlt
-    $g.CopyFromScreen(0, 0, 0, 0, $bmp.Size, $op)
-    $bmp.Save((Join-Path $Out "$name.png"))
-    $g.Dispose(); $bmp.Dispose()
+    $h = [Keys]::Capture($b.Width, $b.Height)
+    $img = [System.Drawing.Image]::FromHbitmap($h)
+    $img.Save((Join-Path $Out "$name.png"))
+    $img.Dispose(); [Keys]::Free($h)
   } catch { $report["shot_$name"] = "failed: $($_.Exception.Message)" }
 }
 function Has($text) { (Test-Path $log) -and ((Get-Content $log -Raw) -match [regex]::Escape($text)) }
