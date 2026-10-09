@@ -132,7 +132,7 @@ func claudeMcpFile(tag *string, config string) (string, error) {
 			return "", err
 		}
 	}
-	if err := os.Rename(tmp, file); err != nil {
+	if err := core.Rename(tmp, file); err != nil {
 		return "", err
 	}
 	return file, nil

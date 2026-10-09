@@ -50,7 +50,7 @@ func (s *Sealed) Read() (JSON, bool) {
 		why = err.Error()
 	}
 	Logf("store: %s unreadable - %s", s.file, why)
-	os.Rename(s.file, s.file+"."+GUIDN()+".bad")
+	Rename(s.file, s.file+"."+GUIDN()+".bad")
 	return JNull, false
 }
 
@@ -62,7 +62,7 @@ func (s *Sealed) Write(v JSON) error {
 	if err := os.WriteFile(tmp, s.crypto.Seal(v.Compact()), 0o644); err != nil {
 		return err
 	}
-	return os.Rename(tmp, s.file)
+	return Rename(tmp, s.file)
 }
 
 func (s *Sealed) Remove() { os.Remove(s.file) }
@@ -162,7 +162,7 @@ func (s *Secrets) Set(name string, value *string) (Stored, error) {
 	tmp := strings.TrimSuffix(s.file, filepath.Ext(s.file)) + ".dat.tmp"
 	err := writePrivate(tmp, s.crypto.Seal(text))
 	if err == nil {
-		err = os.Rename(tmp, s.file)
+		err = Rename(tmp, s.file)
 	}
 	if err != nil {
 		return Saved, fmt.Errorf("Hover couldn’t save the key: %s", errKind(err))

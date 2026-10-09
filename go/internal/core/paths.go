@@ -32,7 +32,7 @@ func ResolveDataDir(overridden string, appData string) (string, error) {
 	legacy := filepath.Join(appData, "Noty")
 	if !isDir(dir) && isDir(legacy) {
 		// Not the log: logging needs this very folder.
-		if err := os.Rename(legacy, dir); err != nil {
+		if err := Rename(legacy, dir); err != nil {
 			fmt.Fprintf(os.Stderr, "hover: data migration failed — %v\n", err)
 		}
 	}

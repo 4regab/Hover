@@ -130,7 +130,7 @@ func Codex(now time.Time) Reading { return CodexIn(CodexHome(), now) }
 // "timestamp" that starts its last line, read from the file's last 8 KB. False when it
 // can't be read.
 func lastEvent(path string) (time.Time, bool) {
-	f, err := os.Open(path)
+	f, err := core.Open(path)
 	if err != nil {
 		return time.Time{}, false
 	}
@@ -208,7 +208,7 @@ func CodexIn(home string, now time.Time) Reading {
 	sort.SliceStable(files, func(a, b int) bool { return files[a].at.After(files[b].at) })
 	for _, f := range files[:min(len(files), 8)] {
 		// Codex may be writing to it right now; a plain read shares it on both systems.
-		b, err := os.ReadFile(f.path)
+		b, err := core.ReadFile(f.path)
 		if err != nil {
 			return Fail(fmt.Sprintf("Couldn’t read Codex’s logs: %v", err))
 		}
@@ -407,7 +407,7 @@ func ClaudeAt(file, url string, now time.Time) Reading {
 	if st, err := os.Stat(file); err != nil || !st.Mode().IsRegular() {
 		return Fail(claudeSignIn)
 	}
-	b, err := os.ReadFile(file)
+	b, err := core.ReadFile(file)
 	if err != nil {
 		return Fail(fmt.Sprintf("Couldn’t read Claude Code’s sign-in: %v", err))
 	}

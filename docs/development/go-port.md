@@ -121,22 +121,28 @@ Left for later:
 - `encoding/json` isn't used for anything Hover keeps. It writes other bytes than
   System.Text.Json.
 
-## Phase 2: agents, quota, md, diagram (under way)
+## Phase 2: agents, quota, md, diagram (done)
 
-Done, with their tests passing on Linux (`-race`) and Windows:
+Every Rust crate for this phase is ported, with its tests. 428 Go tests pass, on Linux
+(`-race`) and Windows; one skips (it needs a real `kiro-cli`).
 
 - `internal/diagram` and `internal/md`: the golden fixtures, the image rule, and 3,956
   random cases compared with md.js (44 skipped where md.js throws or hangs).
-- `internal/agents`, so far: starting tools (a Windows job per tool; a process group and
-  watchdog on Linux and macOS), finding each tool and its sign-in, the update stream,
-  questions and approvals, OpenCode's HTTP calls, Kiro's MCP list, checkpoints, the GitHub
-  CLI setup, the terminal tab, chips, handoffs, folder holds, and the sessions with their
-  queue, stop, pause, rewind, provider switch, fork and Kiro Web reconnect.
+- `internal/agents`: starting tools (a Windows job per tool; a process group and watchdog
+  on Linux and macOS), finding each tool and its sign-in, the update stream, questions and
+  approvals, the three hosts (ACP for Kiro, Codex, Cursor and Antigravity; OpenCode's server;
+  Claude Code's SDK mode) behind `Runtime`, checkpoints, the sandbox, computer use, the
+  agent browser's server, Cua Spaces, setup, the GitHub CLI, the terminal tab, chips,
+  handoffs, orchestration, folder holds, sessions with their queue, stop, pause, rewind,
+  provider switch, fork and Kiro Web reconnect, voice's routing, the Discord status, Open in
+  editor, the desk card's backend (`desk.go`) and the office's state message (`state.go`,
+  checked byte for byte against `tests/golden/fixtures/office-state.json`).
+- `internal/quota`: the four quota readers, the five-minute poller, the daily Kiro usage
+  file and Kiro's credits by day.
 
-Still to port in `internal/agents`: `acp`, `opencode`, `claude` (each with its fake agent
-and the `tests/golden/acp` fixtures), `desk`, `orch`, `sandbox`, `browser`,
-`computer_use`, `spaces`, `setup`, `runtime`, `route`, `text`, `discord`, `editor`, and
-`state`'s office message. Then `hover-quota`. This is the biggest part of the port.
+The Rust tests were matched by name against the Go ones. What has no Go test is only what
+belongs to a later phase: the Linux desktop files and portal, the Secret Service and the
+Mac's Keychain and LaunchAgent in `hover-core` (phases 6 and 7).
 
 How the Go code differs, on purpose:
 
@@ -145,7 +151,8 @@ How the Go code differs, on purpose:
 - **No drop.** Rust ends a tool when its handle is dropped. Go code calls `Close` or
   `Kill` at the same places, and a cleanup ends the tool should one be missed.
 - **HTTP.** Rust wrote its own small client to need no crate. Go uses `net/http`, with no
-  proxy, no keep-alive and no compression, as Rust's had none.
+  proxy, no keep-alive and no compression, as Rust's had none. `internal/quota` uses
+  `net/http` as it is, as the Rust quota readers used `ureq`.
 - **A .cmd or .bat shim** gets Rust's own safe command line (its `make_bat_command_line`).
   Go would hand cmd the arguments unchecked.
 - **Test stand-ins.** The fake gh is the Go test program itself, linked (or on Windows
@@ -153,6 +160,21 @@ How the Go code differs, on purpose:
 - **Errors from the system read differently.** Rust says "No such file or directory (os
   error 2)", Go "open x: no such file or directory". Some of these reach the user, for
   example "Couldn't reach OpenCode: …". The words around them are the same.
+- **Files that Hover replaces by renaming are read with `core.ReadFile`.** On Windows, Go
+  opens a file without letting others rename it; Rust's `std::fs` does let them. A save
+  that met a reader lost the save (`agent history: save failed - rename ...index.dat.tmp`,
+  seen in two of three Windows CI runs). `ReadFile` opens it the way Rust does. The
+  history and the sealed stores use it; two tests in `readfile_windows_test.go` show the
+  cause and the fix.
+- **A wait for "nothing is running" is `quiet(k)` in the tests.** Between one queued turn
+  ending and the next starting, `Running()` is 0 for an instant (a probe saw it 218 times
+  in 3 s). The Rust tests wait the same way and have the same gap, but have not met it on
+  CI. Only the Go tests were changed.
+- **Cursor's sign-in is read only on Windows for now.** It is in an SQLite file. Windows
+  calls `winsqlite3.dll`, which ships with it, so nothing is bundled and there is no C
+  compiler. Linux (phase 6) needs a reader with no C compiler and no system libsqlite3 (an
+  AppImage can't count on one); the Mac (phase 7) has `/usr/lib/libsqlite3.dylib`. Until
+  then Cursor's quota says it isn't supported there.
 
 ## Known costs
 

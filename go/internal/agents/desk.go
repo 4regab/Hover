@@ -1208,7 +1208,7 @@ func DeskFileText(folder string, rel *string) FileView {
 	if err != nil || !meta.Mode().IsRegular() {
 		return fail("That file isn’t there any more.")
 	}
-	f, err := os.Open(full)
+	f, err := core.Open(full)
 	if err != nil {
 		return fail(err.Error())
 	}
@@ -1240,7 +1240,7 @@ func DeskWriteFile(folder, rel, text string) error {
 	if meta.Size() > DeskFileLimit {
 		return errors.New("This file is too big to edit here.")
 	}
-	now, err := os.ReadFile(full)
+	now, err := core.ReadFile(full)
 	if err != nil {
 		return err
 	}
@@ -1256,7 +1256,7 @@ func DeskWriteFile(folder, rel, text string) error {
 		if err := os.Chmod(tmp, meta.Mode().Perm()); err != nil {
 			return err
 		}
-		return os.Rename(tmp, full)
+		return core.Rename(tmp, full)
 	}()
 	if done != nil {
 		os.Remove(tmp)
@@ -2169,7 +2169,7 @@ func (d *Desk) Diff(s *DeskSnap) DeskDiff {
 			files = append(files, binary)
 			continue
 		}
-		b, err := os.ReadFile(full)
+		b, err := core.ReadFile(full)
 		if err != nil {
 			continue
 		}

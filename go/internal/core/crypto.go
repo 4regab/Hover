@@ -70,7 +70,7 @@ func LoadOrCreateCrypto(file string, guard KeyGuard) *Crypto {
 	if _, err := os.Stat(file); err == nil {
 		var plain []byte
 		var kerr *KeyError
-		if stored, err := os.ReadFile(file); err != nil {
+		if stored, err := ReadFile(file); err != nil {
 			kerr = KeyNotNow(err.Error())
 		} else {
 			plain, kerr = guard.Unwrap(stored)
@@ -158,7 +158,7 @@ func (c *Crypto) Open(data []byte) string {
 // (false) when it can't: a key is never overwritten.
 func setAside(file, why string) bool {
 	to := file + ".unreadable-" + strings.ReplaceAll(LocalCompact(), "-", "")
-	if err := os.Rename(file, to); err != nil {
+	if err := Rename(file, to); err != nil {
 		Logf("key unwrap failed — %s; couldn't set it aside (%v), no history this run", why, err)
 		return false
 	}

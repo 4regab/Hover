@@ -409,7 +409,7 @@ func (m Model) Text() string { return m.ToJSON().Indented(NewLine) }
 // LoadModel is Settings.Load: the file's model, or the defaults when there is none or it
 // can't be read.
 func LoadModel(file string) Model {
-	b, err := os.ReadFile(file)
+	b, err := ReadFile(file)
 	if err != nil {
 		return DefaultModel()
 	}
@@ -558,7 +558,7 @@ func (s *Settings) write() {
 	tmp := strings.TrimSuffix(s.file, filepath.Ext(s.file)) + ".json.tmp"
 	err := os.WriteFile(tmp, []byte(text), 0o644)
 	if err == nil {
-		err = os.Rename(tmp, s.file)
+		err = Rename(tmp, s.file)
 	}
 	if err != nil {
 		Logf("settings save failed — %v", err)

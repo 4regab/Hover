@@ -218,14 +218,14 @@ func daysFromJSON(text string) ([]UsageDay, error) {
 // LoadDays is the days on file; none when there is no file. One that can't be read is set
 // aside, not written over (the history does the same with its index).
 func LoadDays(path string) []UsageDay {
-	b, err := os.ReadFile(path)
+	b, err := core.ReadFile(path)
 	if err != nil {
 		return nil
 	}
 	days, err := daysFromJSON(core.TextOf(b))
 	if err != nil {
 		core.Logf("kiro usage: %s unreadable - %v; starting a new one", path, err)
-		os.Rename(path, filepath.Join(filepath.Dir(path), "kiro-usage-"+core.GUIDN()+".bad"))
+		core.Rename(path, filepath.Join(filepath.Dir(path), "kiro-usage-"+core.GUIDN()+".bad"))
 		return nil
 	}
 	return days
@@ -245,7 +245,7 @@ func RecordDay(path string, u KiroUsage, now time.Time) {
 		err = os.WriteFile(tmp, []byte(daysJSON(days)), 0o666)
 	}
 	if err == nil {
-		err = os.Rename(tmp, path)
+		err = core.Rename(tmp, path)
 	}
 	if err != nil {
 		core.Logf("kiro usage: save failed - %v", err)

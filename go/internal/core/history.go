@@ -310,7 +310,7 @@ func (h *AgentHistory) loadIndex() []HistoryEntry {
 			// The index is only a summary of the session files: read them instead. The
 			// unreadable one is set aside, not written over.
 			Logf("agent history: index unreadable - %v; rebuilding it from the session files", err)
-			os.Rename(h.indexFile(), filepath.Join(h.dir, "index-"+GUIDN()+".bad"))
+			Rename(h.indexFile(), filepath.Join(h.dir, "index-"+GUIDN()+".bad"))
 			whole = false
 		} else {
 			list = l
@@ -593,7 +593,7 @@ func seal(c *Crypto, file, json string) error {
 	if err := os.WriteFile(tmp, c.Seal(json), 0o644); err != nil {
 		return err
 	}
-	return os.Rename(tmp, file)
+	return Rename(tmp, file)
 }
 
 // PlainKey: keys are Hover's own GUIDs; anything else never becomes a path.

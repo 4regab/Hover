@@ -603,7 +603,7 @@ func quote(o *strings.Builder, s string) {
 // MARK: The file
 
 func readMcp(path string) (string, error) {
-	b, err := os.ReadFile(path)
+	b, err := core.ReadFile(path)
 	if errors.Is(err, fs.ErrNotExist) {
 		return "", nil
 	}
@@ -633,7 +633,7 @@ func writeMcpFile(path, text string) error {
 	tmp := filepath.Join(dir, fmt.Sprintf("mcp.json.hover-%d.tmp", os.Getpid()))
 	err := os.WriteFile(tmp, []byte(text), 0o666)
 	if err == nil {
-		err = os.Rename(tmp, path)
+		err = core.Rename(tmp, path)
 	}
 	if err != nil {
 		os.Remove(tmp)
