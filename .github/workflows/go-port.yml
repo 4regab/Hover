@@ -121,6 +121,15 @@ jobs:
             go run ./cmd/office-shot "..\out\office\go-$t.png" $t
             if ($LASTEXITCODE -ne 0) { throw "office-shot $t failed" }
           }
+      # The Go UI rendered headless (Direct3D 11 on WARP), under the names the Rust app's
+      # hover --shots gives its own (the rust-shots job, run by hand), to compare.
+      - name: Go UI shots
+        working-directory: go
+        run: |
+          $env:CGO_ENABLED = '0'
+          go run ./cmd/ui-shots ..\out\ui
+          if ($LASTEXITCODE -ne 0) { throw 'ui-shots failed' }
+          Write-Host "$((Get-ChildItem ..\out\ui -Filter *.png).Count) shots"
       # The runner's screen is 1024 x 768: the open notch's window (1080 wide) runs off it,
       # and the self-tests' corner pixels read black. Best effort; both tests share it.
       - name: Screen 1920 x 1080

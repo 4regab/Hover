@@ -64,6 +64,9 @@ type Pal struct {
 	Gray, Bot color.NRGBA
 	// Motion is Windows' "Animation effects" (or the desktop's reduced motion) on.
 	Motion bool
+	// SchemeDark is the system's dark mode, which Slint's Fluent widgets (the scroll bars)
+	// follow whatever Hover's palette is.
+	SchemeDark bool
 }
 
 // ARGB is a colour as hover-core keeps it (0xAARRGGBB).

@@ -294,6 +294,27 @@ pixels.
   running app. Shadows are the one expected difference against the shots.
 - Looked at here as a headless Gio render (Mesa EGL, `EGL_PLATFORM=surfaceless`).
 
+### Done: Settings as data and on screen (`internal/app/pages.go`, `internal/ui/settings.go`)
+
+`pages.rs` (every section's rows, words and automation ids) with all 20 of its tests, and
+`settings.slint` on Gio: the sidebar, the scrolling pane, every row and control, the theme
+tiles, Kiro's credits card and MCP servers (list, remove, add and edit form), the picker's
+menu. `cmd/ui-shots` renders every section like the Rust `hover --shots`, under the same
+names; CI uploads them (`spike-reports`, `ui/`).
+
+- **Gio is patched to blend sRGB-encoded colour** (`go/third_party/README.md`). Unpatched,
+  every see-through palette colour came out lighter than Slint draws it. The notch's
+  DirectComposition view is now a plain UNORM one to match.
+- **Slint's measures, found by comparing shots:** a text line is the font's ascent minus
+  descent rounded up to a whole pixel (13 px Inter is 16 px); a pill button is its content
+  plus four times its side padding (`widgets.slint` counts it twice); a shortcut pill's own
+  min-width replaces that. Text is shaped at 32 times its size (as in `internal/text`):
+  Gio's shaper rounded 12.5 px up to 13.
+- Compared here with the Rust shots from Windows CI (run 37900054115): the boxes, rows and
+  controls sit on the same pixels. What differs: glyph edges, the title bar (not ported
+  yet), the drop shadows (the Rust software renderer draws none), the marks with
+  gradients (it fills them flat), and a few wrapped lines below the fold.
+
 Not run here: this sandbox has no display, GPU or Windows fonts. The chat was looked at as
 PNGs (the failed and the rich sessions of the office-state fixture), with DejaVu Sans, Noto
 Sans and DejaVu Sans Mono. On Windows the width-based goldens skip, as in the Rust tests.

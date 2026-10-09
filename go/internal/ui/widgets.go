@@ -85,10 +85,12 @@ func (b *PillButton) row(c *Ctx, p Pill) (w, h float32) {
 	return w + 6*float32(n-1), h
 }
 
-// Size is the button's preferred size (its min-width and height).
+// Size is the button's preferred size (its min-width and height). The padding counts
+// twice across: widgets.slint's min-width adds 2 pad-x to a row whose preferred width
+// already has them, and the row centres its content.
 func (b *PillButton) Size(c *Ctx, p Pill) (w, h float32) {
 	rw, rh := b.row(c, p)
-	return rw + 2*p.PadX, max(24, rh+2*p.PadY)
+	return rw + 4*p.PadX, max(24, rh+2*p.PadY)
 }
 
 // Layout draws the button at (x, y), w wide (0: its preferred width), and returns
@@ -285,6 +287,15 @@ type Slider struct {
 	tag    int
 	down   bool
 	mouseX float32 // logical, in the slider
+	shown  int
+}
+
+// Shown is the number shown: the pointer's while it is down, else value.
+func (s *Slider) Shown(value int) int {
+	if s.down {
+		return s.shown
+	}
+	return value
 }
 
 const SliderH = 28
@@ -346,6 +357,7 @@ func (s *Slider) Layout(c *Ctx, x, y, w float32, lo, hi, value int, enabled bool
 	if s.down {
 		shown = at()
 	}
+	s.shown = shown
 	knobX := trackW * float32(shown-lo) / float32(max(1, hi-lo))
 	has := s.focus.Has(c)
 	c.opacity(If[float32](enabled, 1, 0.4), func() {

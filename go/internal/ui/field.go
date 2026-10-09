@@ -81,7 +81,7 @@ func (t *TextField) Layout(c *Ctx, x, y, w float32, value, placeholder string, s
 			c.Text(placeholder, x+8, y, TextBox{Font: Font{Size: 12.5}, Color: c.Pal.InkFaint, W: w - 16, H: FieldH, VAlign: Middle, Elide: true})
 		}
 		f := Font{Size: 12.5}
-		lh := f.Size * faceMetrics[FaceInter][1]
+		lh := c.LineH(f)
 		cl := clip.Rect(c.irect(x+8, y, w-16, FieldH)).Push(c.Ops)
 		at := c.At(x+8, y+(FieldH-lh)/2)
 		gtx := c.Context

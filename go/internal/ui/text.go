@@ -39,9 +39,11 @@ const (
 	FaceInter Face = iota
 	FaceDisplay
 	FacePixel
+	// FaceMono is the MCP form's DejaVu Sans Mono, from the system (Consolas on Windows).
+	FaceMono
 )
 
-var faceNames = [...]font.Typeface{"Inter", "Inter Display", "Pixelify Sans"}
+var faceNames = [...]font.Typeface{"Inter", "Inter Display", "Pixelify Sans", monoFace}
 
 // The faces' ascent and line height per em (hhea, with no line gap). Slint's text layout
 // (parley) makes a line ascent minus descent tall and puts the baseline at the ascent.
@@ -49,6 +51,13 @@ var faceMetrics = [...][2]float32{
 	FaceInter:   {1984.0 / 2048, 2478.0 / 2048},
 	FaceDisplay: {1984.0 / 2048, 2478.0 / 2048},
 	FacePixel:   {920.0 / 1000, 1200.0 / 1000},
+	FaceMono:    {0.928, monoLH},
+}
+
+// LineH is a line's height for f: the face's ascent minus its descent, rounded up to a
+// whole physical pixel, as Slint's text layout makes it (a 13 px Inter line is 16 px).
+func (c *Ctx) LineH(f Font) float32 {
+	return float32(math.Ceil(float64(f.Size*faceMetrics[f.Face][1]*c.K-0.001))) / c.K
 }
 
 // Font is a Text's font: size in logical pixels, CSS weight (400 regular to 700 bold).
@@ -129,20 +138,26 @@ type line struct {
 	x0     float32 // the first glyph's x: Shape draws from it
 }
 
-// shape lays s out in physical pixels.
+// shapeScale: go-text's shaper rounds the font size up to a whole pixel (12.5 px came out
+// 13 px wide), so text is shaped at 32 times its size and drawn scaled back, as
+// internal/text does for the chat.
+const shapeScale = 32
+
+// shape lays s out; widths and x0 are physical pixels, the glyphs at shapeScale.
 func (c *Ctx) shape(s string, b TextBox) []line {
 	sh := textShaper()
+	k := c.K * shapeScale
 	p := text.Parameters{
 		Font:            b.Font.gio(),
-		PxPerEm:         fixed.Int26_6(math.Round(float64(b.Size * c.K * 64))),
+		PxPerEm:         fixed.Int26_6(math.Round(float64(b.Size * k * 64))),
 		LineHeightScale: 1,
-		LineHeight:      fixed.Int26_6(math.Round(float64(b.Size * c.K * faceMetrics[b.Face][1] * 64))),
+		LineHeight:      fixed.Int26_6(math.Round(float64(b.Size * k * faceMetrics[b.Face][1] * 64))),
 		WrapPolicy:      text.WrapWords,
 		MaxWidth:        math.MaxInt32 / 2,
 		MaxLines:        b.MaxLines,
 	}
 	if b.W > 0 && (b.Wrap || b.Elide) {
-		p.MaxWidth = int(math.Ceil(float64(b.W * c.K)))
+		p.MaxWidth = int(math.Ceil(float64(b.W * k)))
 	}
 	if b.Elide && !b.Wrap && p.MaxLines == 0 {
 		p.MaxLines = 1
@@ -156,10 +171,10 @@ func (c *Ctx) shape(s string, b TextBox) []line {
 	first := true
 	for g, ok := sh.NextGlyph(); ok; g, ok = sh.NextGlyph() {
 		if first {
-			cur.x0, first = float32(g.X)/64, false
+			cur.x0, first = float32(g.X)/64/shapeScale, false
 		}
 		cur.glyphs = append(cur.glyphs, g)
-		if end := float32(g.X+g.Advance) / 64; end > cur.width {
+		if end := float32(g.X+g.Advance) / 64 / shapeScale; end > cur.width {
 			cur.width = end
 		}
 		if g.Flags&text.FlagLineBreak != 0 {
@@ -181,7 +196,7 @@ func (c *Ctx) Measure(s string, f Font, maxW float32) (w, h float32) {
 		w = max(w, l.width/c.K)
 	}
 	n := max(len(lines), 1)
-	return w, float32(n) * f.Size * faceMetrics[f.Face][1]
+	return w, float32(n) * c.LineH(f)
 }
 
 // Text draws s in its box at (x, y) and returns the size the text takes.
@@ -190,7 +205,7 @@ func (c *Ctx) Text(s string, x, y float32, b TextBox) (w, h float32) {
 		return 0, 0
 	}
 	lines := c.shape(s, b)
-	lh := b.Size * faceMetrics[b.Face][1]
+	lh := c.LineH(b.Font)
 	asc := b.Size * faceMetrics[b.Face][0]
 	h = float32(len(lines)) * lh
 	top := y
@@ -215,7 +230,7 @@ func (c *Ctx) Text(s string, x, y float32, b TextBox) (w, h float32) {
 		}
 		w = max(w, l.width/c.K)
 		base := (top + float32(i)*lh + asc) * c.K
-		t := op.Affine(f32.Affine2D{}.Offset(f32.Pt(lx*c.K+l.x0, base))).Push(c.Ops)
+		t := op.Affine(f32.Affine2D{}.Scale(f32.Pt(0, 0), f32.Pt(1.0/shapeScale, 1.0/shapeScale)).Offset(f32.Pt(lx*c.K+l.x0, base))).Push(c.Ops)
 		paint.FillShape(c.Ops, b.Color, clip.Outline{Path: sh.Shape(l.glyphs)}.Op())
 		sh.Bitmaps(l.glyphs).Add(c.Ops)
 		t.Pop()

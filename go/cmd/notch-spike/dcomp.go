@@ -42,12 +42,14 @@ const (
 	bgraSupport    = 0x20
 	sdkVersion     = 7
 
-	formatBGRA8     = 87 // DXGI_FORMAT_B8G8R8A8_UNORM: a composition swap chain's buffer
-	formatBGRA8SRGB = 91 // its sRGB view: Gio writes linear colour and expects the target to encode it
-	usageRenderOut  = 0x20
-	flipSequential  = 3
-	alphaPremul     = 1
-	rtvTexture2D    = 4
+	// DXGI_FORMAT_B8G8R8A8_UNORM: a composition swap chain's buffer, and the view Gio draws
+	// into. The patched Gio (third_party) writes sRGB-encoded, premultiplied colour, which
+	// is what DirectComposition takes.
+	formatBGRA8    = 87
+	usageRenderOut = 0x20
+	flipSequential = 3
+	alphaPremul    = 1
+	rtvTexture2D   = 4
 )
 
 // com is a COM object: a pointer to its method table.
@@ -138,7 +140,7 @@ func newGraphics(hwnd uintptr, w, h int) (*graphics, error) {
 	if err := failed(g.swap.call(9, 0, uintptr(unsafe.Pointer(&iidID3D11Texture2D)), uintptr(unsafe.Pointer(&tex))), "IDXGISwapChain.GetBuffer"); err != nil {
 		return nil, err
 	}
-	rd := rtvDesc{Format: formatBGRA8SRGB, Dimension: rtvTexture2D}
+	rd := rtvDesc{Format: formatBGRA8, Dimension: rtvTexture2D}
 	hr = g.dev.call(9, uintptr(unsafe.Pointer(tex)), uintptr(unsafe.Pointer(&rd)), uintptr(unsafe.Pointer(&g.rtv)))
 	tex.release()
 	if err := failed(hr, "CreateRenderTargetView"); err != nil {
