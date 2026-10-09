@@ -6,6 +6,7 @@ package agents
 
 import (
 	"fmt"
+	"math"
 	"os"
 	"slices"
 	"strings"
@@ -408,4 +409,278 @@ func EscapeData(s string) string {
 		}
 	}
 	return b.String()
+}
+
+// Office is what Push reads besides the sessions.
+type Office struct {
+	// Window: in the app window rather than the notch.
+	Window bool
+	// Open is the session whose chat was open.
+	Open     *int32
+	Settings *core.Settings
+	// Folder is Settings.KiroFolder when it is usable, else nil (the caller checks: a
+	// Windows fixture's folder isn't usable on Linux).
+	Folder *string
+	// History is the whole history, only when it changed since the page last had it.
+	History []core.HistoryEntry
+	// Ready is Agents.Known: false when unknown.
+	Ready func(core.AgentTool) (AgentReady, bool)
+	// Files is the session's files host (FilesHost), when it has one.
+	Files func(*KiroSession) *string
+}
+
+// Push is KiroPage.Push: everything the office draws.
+func Push(o *Office, sessions []KiroSession) core.JSON {
+	running := 0
+	for _, s := range sessions {
+		if s.Busy() {
+			running++
+		}
+	}
+	open := core.JNull
+	if o.Open != nil {
+		open = core.JInt(int64(*o.Open))
+	}
+	tools := make([]core.JSON, len(core.AllTools))
+	for i, t := range core.AllTools {
+		tools[i] = officeTool(o, t)
+	}
+	list := make([]core.JSON, len(sessions))
+	for i := range sessions {
+		access := ToolAccess(o.Settings, sessions[i].Tool)
+		list[i] = StateWith(&sessions[i], o.Files, &access)
+	}
+	history := core.JNull
+	if o.History != nil {
+		rows := make([]core.JSON, len(o.History))
+		for i, e := range o.History {
+			rows[i] = historyRow(e)
+		}
+		history = core.JArr(rows...)
+	}
+	return core.JObj(
+		core.P("type", jst("state")),
+		core.P("window", core.JBool(o.Window)),
+		core.P("canStart", core.JBool(running < MaxRunning)),
+		core.P("maxRunning", core.JInt(MaxRunning)),
+		core.P("folder", core.JOptStr(o.Folder)),
+		core.P("tool", jst(o.Settings.AgentTool().ID())),
+		core.P("open", open),
+		core.P("tools", core.JArr(tools...)),
+		core.P("sessions", core.JArr(list...)),
+		core.P("history", history),
+	)
+}
+
+// Transcript is {type: "transcript", session}: one saved session, whole, for the chat to show.
+func Transcript(s *KiroSession, files func(*KiroSession) *string, settings *core.Settings) core.JSON {
+	access := ToolAccess(settings, s.Tool)
+	return core.JObj(core.P("type", jst("transcript")), core.P("session", StateWith(s, files, &access)))
+}
+
+func officeTool(o *Office, t core.AgentTool) core.JSON {
+	opts := o.Settings.AgentOptions(t)
+	known, has := o.Ready(t)
+	models := ModelsWithLevels(o.Settings, t)
+	effort, hasEffort := offer(o.Settings, t, "thought_level", effortIDs)
+	caps := Caps(t)
+	hint := ""
+	if has {
+		hint = known.Hint
+	}
+	ms := make([]core.JSON, len(models))
+	for i, m := range models {
+		levels := core.JNull
+		if m.Levels != nil {
+			l := make([]core.JSON, len(m.Levels))
+			for j, x := range m.Levels {
+				l[j] = jst(x)
+			}
+			levels = core.JArr(l...)
+		}
+		ms[i] = core.JObj(core.P("id", jst(m.ID)), core.P("name", jst(m.Name)), core.P("levels", levels))
+	}
+	model := opts.Model
+	if model == nil && len(models) > 0 {
+		model = &models[0].ID
+	}
+	var efforts []core.JSON
+	cur := opts.Effort
+	if hasEffort {
+		for _, c := range effort.Choices {
+			efforts = append(efforts, jst(c.Value))
+		}
+		if cur == nil {
+			cur = effort.Current
+		}
+	}
+	return core.JObj(
+		core.P("id", jst(t.ID())),
+		core.P("name", jst(t.Name())),
+		// Unknown until checked; the picker offers it meanwhile.
+		core.P("ready", core.JBool(!has || known.OK())),
+		core.P("hint", jst(hint)),
+		// The tool access a new task starts with, unless the box picks another.
+		core.P("access", jst(opts.AccessID(ReadOnlyWorks(t)))),
+		core.P("readOnly", core.JBool(ReadOnlyWorks(t))),
+		core.P("hideSteps", core.JBool(opts.HideSteps)),
+		// The composer's model and effort picks. A model with levels of its own
+		// (OpenCode's variants) takes those instead of the tool's efforts.
+		core.P("models", core.JArr(ms...)),
+		core.P("model", core.JOptStr(model)),
+		core.P("efforts", core.JArr(efforts...)),
+		core.P("effort", core.JOptStr(cur)),
+		core.P("effortLabel", jst(caps.EffortLabel)),
+		core.P("questions", core.JBool(caps.Questions)),
+	)
+}
+
+// State is one session as the office draws it.
+func State(s *KiroSession, files func(*KiroSession) *string) core.JSON {
+	return StateWith(s, files, nil)
+}
+
+// StateWith is State, with toolAccess the tool's setting as an access id, for a session
+// that picked none.
+func StateWith(s *KiroSession, files func(*KiroSession) *string, toolAccess *string) core.JSON {
+	var last *core.KiroStep
+	if t := s.Current(); t != nil && len(t.Steps) > 0 {
+		last = &t.Steps[len(t.Steps)-1]
+	}
+	waiting := s.Waiting()
+	ctx := core.JNull
+	if s.Context != nil {
+		// (int?)Math.Round(c): to even at the half, as .NET rounds.
+		ctx = core.JInt(int64(math.RoundToEven(*s.Context)))
+	}
+	access := "full"
+	if s.Access != nil {
+		access = *s.Access
+	} else if toolAccess != nil {
+		access = *toolAccess
+	}
+	stage := Stage(s.State, s.Phase)
+	if waiting {
+		stage = "waiting"
+	}
+	ask := core.JNull
+	if a := s.Asking(); a != nil {
+		verb, obj := AskLine(a)
+		questions := core.JNull
+		if a.Questions != nil {
+			qs := make([]core.JSON, len(*a.Questions))
+			for i, q := range *a.Questions {
+				opts := make([]core.JSON, len(q.Options))
+				for j, o := range q.Options {
+					opts[j] = core.JObj(core.P("label", jst(o[0])), core.P("description", jst(o[1])))
+				}
+				qs[i] = core.JObj(core.P("header", jst(q.Header)), core.P("question", jst(q.Question)), core.P("options", core.JArr(opts...)),
+					core.P("multiple", core.JBool(q.Multiple)), core.P("custom", core.JBool(q.Custom)))
+			}
+			questions = core.JArr(qs...)
+		}
+		ask = core.JObj(
+			core.P("id", jst(a.ID)), core.P("kind", jst(a.Kind)), core.P("title", jst(AskTitle(a))),
+			core.P("line", jst(strings.TrimSpace(verb+" "+obj))), core.P("command", core.JOptStr(a.Command)), core.P("path", core.JOptStr(a.Path)),
+			core.P("preview", core.JOptStr(a.Preview)), core.P("added", core.JInt(int64(a.Added))), core.P("removed", core.JInt(int64(a.Removed))),
+			core.P("reason", jst(a.Reason)), core.P("danger", core.JBool(a.Danger)), core.P("allow", jst(AskAllow(a))),
+			core.P("more", core.JInt(int64(len(s.Asks)-1))),
+			// A question's own choices, which the office shows as buttons.
+			core.P("questions", questions),
+		)
+	}
+	file := ""
+	if last != nil {
+		if f := stateShort(last.Target); f != nil {
+			file = *f
+		}
+	}
+	turns := make([]core.JSON, len(s.Turns))
+	for i, t := range s.Turns {
+		stageOf := stage
+		switch {
+		case t.Result != nil:
+			stageOf = Stage(t.Result.State, Working)
+		case t.Queued:
+			stageOf = "queued"
+		}
+		images := make([]core.JSON, len(t.Images))
+		for j, p := range t.Images {
+			images[j] = jst("https://hover.images/" + EscapeData(stateFileName(p)))
+		}
+		steps := make([]core.JSON, len(t.Steps))
+		for j := range t.Steps {
+			steps[j] = Row(&t.Steps[j], s.Folder)
+		}
+		answer := ""
+		if t.Result != nil {
+			answer = t.Result.Text
+		}
+		woke, took, credits := core.JNull, core.JNull, core.JNull
+		if t.WokeAt != nil {
+			woke = core.JDouble(t.WokeAt.SecsSince(t.StartedAt))
+		}
+		if t.EndedAt != nil {
+			took = core.JDouble(t.EndedAt.SecsSince(t.StartedAt) * 1000)
+		}
+		if t.Credits != nil {
+			credits = core.JDouble(*t.Credits)
+		}
+		turns[i] = core.JObj(
+			core.P("prompt", jst(t.Prompt)),
+			core.P("images", core.JArr(images...)),
+			core.P("queued", core.JBool(t.Queued)),
+			core.P("stage", jst(stageOf)),
+			core.P("steps", core.JArr(steps...)),
+			// Markdown as the tool wrote it; the page renders it.
+			core.P("answer", jst(answer)),
+			core.P("t0", core.JInt(ms(t.StartedAt))),
+			core.P("woke", woke),
+			core.P("took", took),
+			core.P("credits", credits),
+		)
+	}
+	var filesAt *string
+	if files != nil {
+		filesAt = files(s)
+	}
+	return core.JObj(
+		core.P("id", core.JInt(int64(s.ID))),
+		core.P("key", jst(s.Key)),
+		core.P("files", core.JOptStr(filesAt)),
+		core.P("tool", jst(s.Tool.ID())),
+		core.P("bot", core.JInt(int64(s.Bot))),
+		core.P("seat", core.JInt(int64(s.Seat))),
+		core.P("title", jst(s.Title())),
+		core.P("folder", jst(s.Folder)),
+		core.P("ctx", ctx),
+		// The session's own tool access, or the tool's setting.
+		core.P("access", jst(access)),
+		core.P("stage", jst(stage)),
+		// Asked to stop or pause, and the tool hasn't said it has.
+		core.P("stopping", core.JBool(s.Stopping)),
+		core.P("act", jst(Act(s.Phase))),
+		// What the agent is waiting on the user for, and how many more are behind it.
+		core.P("ask", ask),
+		core.P("pose", jst(Pose(s.Phase))),
+		core.P("file", jst(file)),
+		core.P("turns", core.JArr(turns...)),
+	)
+}
+
+// SubagentsOut are the subagents the session's live turn has out: its subagent steps not
+// yet completed or failed. The office shows each as a helper at the desk while the bot is
+// at work.
+func SubagentsOut(s *KiroSession) int {
+	t := s.Current()
+	if t == nil {
+		return 0
+	}
+	n := 0
+	for i := range t.Steps {
+		if x := &t.Steps[i]; IsSubagent(x) && x.Status != "completed" && x.Status != "failed" {
+			n++
+		}
+	}
+	return n
 }

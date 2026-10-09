@@ -377,3 +377,145 @@ func TestAProgramIsStoppedAtItsTimeAndAtItsCapAndTakesItsInputOnStdin(t *testing
 		t.Errorf("%+v", r)
 	}
 }
+
+// MARK: Create pull request
+
+func prArgs(title string) CreatePrArgs { return CreatePrArgs{Title: title} }
+
+func TestCreatePullRequestMakesTheBranchCommitsPushesAndOpensIt(t *testing.T) {
+	needGit(t)
+	f := newFake(t)
+	f.script("pr_create", "readall", "out=https://github.com/acme/app/pull/12")
+	desk := f.desk()
+	r := newRepo(t, "create")
+	r.write(t, "a.txt", "two\n")
+	a := CreatePrArgs{Title: "Change a", Body: "Made a two.", Branch: sp("hover/change-a"), Commit: true, Draft: true}
+	s := r.snap()
+	out := desk.CreatePr(&s, a)
+	if out.Error != nil || !out.OK {
+		t.Fatalf("%+v", out)
+	}
+	if ocText(out.URL) != "https://github.com/acme/app/pull/12" {
+		t.Error(out.URL)
+	}
+	eqS(t, out.Steps, []string{"Made branch hover/change-a", "Committed the changes", "Pushed hover/change-a to origin"}, "steps")
+	if !strings.Contains(git(t, r.remote, "branch", "--list", "hover/change-a"), "hover/change-a") {
+		t.Error("the branch was pushed")
+	}
+	if got := git(t, r.repo, "status", "--porcelain"); got != "" {
+		t.Errorf("the change was committed: %q", got)
+	}
+	// The commit message came in on stdin, with the title first.
+	if got := strings.TrimRight(git(t, r.repo, "log", "-1", "--format=%B"), "\r\n "); got != "Change a\n\nCommitted from Hover." {
+		t.Errorf("%q", got)
+	}
+	var gh []string
+	for _, c := range f.calls() {
+		if c[0] == "pr" && c[1] == "create" {
+			gh = c
+			break
+		}
+	}
+	// Neither the description nor the commit message is an argument.
+	eqS(t, gh, []string{"pr", "create", "--title", "Change a", "--body-file", "-", "--base", "main", "--head", "hover/change-a", "--draft"}, "gh call")
+	if in, _ := f.stdinOf("pr_create"); in != "Made a two." {
+		t.Errorf("%q", in)
+	}
+}
+
+func TestAnEmptyDescriptionIsTheTitleAndAPullRequestIsNotADraftUnlessAsked(t *testing.T) {
+	needGit(t)
+	f := newFake(t)
+	f.script("pr_create", "readall", "out=Creating pull request for feature into main in acme/app", "out=", "out=https://github.com/acme/app/pull/5")
+	r := newRepo(t, "create-plain")
+	git(t, r.repo, "switch", "-q", "-c", "feature")
+	s := r.snap()
+	out := f.desk().CreatePr(&s, prArgs("Just the title"))
+	if out.Error != nil || !out.OK || ocText(out.URL) != "https://github.com/acme/app/pull/5" {
+		t.Fatalf("%+v", out)
+	}
+	eqS(t, out.Steps, []string{"Pushed feature to origin"}, "nothing to commit, no new branch")
+	for _, c := range f.calls() {
+		if c[0] == "pr" && slices.Contains(c, "--draft") {
+			t.Error("a draft")
+		}
+	}
+	if in, _ := f.stdinOf("pr_create"); in != "Just the title" {
+		t.Errorf("%q", in)
+	}
+}
+
+func TestCreatePullRequestSaysNoBeforeItChangesAnything(t *testing.T) {
+	needGit(t)
+	f := newFake(t)
+	f.script("pr_create", "out=https://github.com/acme/app/pull/1")
+	desk := f.desk()
+	r := newRepo(t, "create-no")
+	r.write(t, "a.txt", "two\n")
+	failure := func(a CreatePrArgs, snap DeskSnap) string {
+		if e := desk.CreatePr(&snap, a).Error; e != nil {
+			return *e
+		}
+		return "it went ahead"
+	}
+
+	// Never while the agent works in the folder.
+	busy := r.snap()
+	busy.Busy = true
+	eq(t, failure(prArgs("x"), busy), "Wait for the agent to finish first: it is still working in this folder.", "busy")
+	eq(t, failure(prArgs("   "), r.snap()), "Give the pull request a title.", "title")
+	// A branch name that could be an option, or isn't a name at all, is refused, as a base is ignored.
+	for _, name := range []string{"--evil", "has space", "a..b"} {
+		a := prArgs("x")
+		a.Branch = sp(name)
+		eq(t, failure(a, r.snap()), "That branch name isn’t valid.", name)
+	}
+	// On the default branch without a new branch there is nothing to open.
+	eq(t, failure(prArgs("x"), r.snap()), "The pull request needs a branch other than main.", "default branch")
+	// A base that isn't a branch name falls back to the default one.
+	a := prArgs("x")
+	a.Base = sp("--upload-pack=evil")
+	eq(t, failure(a, r.snap()), "The pull request needs a branch other than main.", "bad base")
+	// Not a repository.
+	plain := newDir(t, "create-plain-dir")
+	eq(t, failure(prArgs("x"), DeskSnap{Folder: plain}), "Not a Git repository.", "not a repository")
+
+	eq(t, strings.TrimSpace(git(t, r.repo, "branch", "--list")), "* main", "no branch was made")
+	eq(t, strings.TrimSpace(git(t, r.repo, "status", "--porcelain")), "M a.txt", "nothing was committed")
+	for _, c := range f.calls() {
+		if c[0] == "pr" {
+			t.Error("gh was asked")
+		}
+	}
+}
+
+func TestAStepThatFailsComesBackAsItsReasonWithTheStepsBeforeIt(t *testing.T) {
+	needGit(t)
+	f := newFake(t)
+	desk := f.desk()
+	r := newRepo(t, "create-fail")
+	r.write(t, "a.txt", "two\n")
+	a := CreatePrArgs{Title: "Change a", Branch: sp("hover/change-a"), Commit: true}
+	s := r.snap()
+
+	// The push fails: the remote is gone.
+	git(t, r.repo, "remote", "set-url", "origin", filepath.Join(r.root, "gone.git"))
+	out := desk.CreatePr(&s, a)
+	if out.OK || out.URL != nil || !strings.HasPrefix(ocText(out.Error), "Couldn’t push the branch: ") {
+		t.Errorf("%+v", out)
+	}
+	eqS(t, out.Steps, []string{"Made branch hover/change-a", "Committed the changes"}, "steps before the push")
+
+	// The push works and gh says no.
+	git(t, r.repo, "remote", "set-url", "origin", r.remote)
+	f.script("pr_create", "readall", "err=GraphQL: Resource not accessible by personal access token", "exit=1")
+	a.Branch = nil
+	out = desk.CreatePr(&s, a)
+	eq(t, ocText(out.Error), "gh couldn’t open the pull request: GraphQL: Resource not accessible by personal access token", "gh said no")
+	eqS(t, out.Steps, []string{"Pushed hover/change-a to origin"}, "already committed and on the branch")
+
+	// No gh at all.
+	none := NewDesk(NewGitHubCli().With(sp(filepath.Join(r.root, "no-gh")), gitEnv(f.dir)), FindGit())
+	a.Branch = sp("hover/change-a")
+	eq(t, ocText(none.CreatePr(&s, a).Error), "Install the GitHub CLI first.", "no gh")
+}
