@@ -7,15 +7,19 @@ package agents
 
 import (
 	"bufio"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"slices"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/4regab/Hover/go/internal/core"
 )
@@ -295,5 +299,192 @@ for line in sys.stdin:
 	}
 	if get(look, "got", "name").Compact() != `"get_desktop_state"` {
 		t.Error("looking is fine")
+	}
+}
+
+// MARK: The servers reaching a real host's sessions
+
+// cuaFake is an ACP agent that can load sessions, answering every call plainly.
+type cuaFake struct {
+	mu     sync.Mutex
+	got    []fakeGot
+	starts int
+}
+
+func (f *cuaFake) params(method string) []core.JSON {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []core.JSON
+	for _, g := range f.got {
+		if g.method == method {
+			out = append(out, g.params)
+		}
+	}
+	return out
+}
+
+func (f *cuaFake) startCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.starts
+}
+
+func (f *cuaFake) connect() (*Link, error) {
+	link, _, err := pipeLink(func(r *bufio.Reader, out *pipeOut) {
+		eachLine(r, func(line string) {
+			m := jsonOf(line)
+			method, ok := str(m, "method")
+			id, hasID := m.Get("id")
+			if !ok || !hasID {
+				return
+			}
+			p, _ := m.Get("params")
+			f.mu.Lock()
+			f.got = append(f.got, fakeGot{method, p})
+			n := 0
+			for _, g := range f.got {
+				if g.method == "session/new" {
+					n++
+				}
+			}
+			f.mu.Unlock()
+			result := "{}"
+			switch method {
+			case "initialize":
+				result = `{"protocolVersion":1,"agentCapabilities":{"loadSession":true}}`
+			case "session/new":
+				result = fmt.Sprintf(`{"sessionId":"s%d"}`, n)
+			case "session/prompt":
+				result = `{"stopReason":"end_turn"}`
+			}
+			out.say(fmt.Sprintf(`{"jsonrpc":"2.0","id":%s,"result":%s}`, id.Compact(), result))
+		})
+	})
+	if err != nil {
+		return nil, err
+	}
+	f.mu.Lock()
+	f.starts++
+	f.mu.Unlock()
+	return link, nil
+}
+
+func mcpServersIn(p core.JSON) string {
+	v, _ := p.Get("mcpServers")
+	return v.Compact()
+}
+
+func TestAnAcpSessionGetsTheServersAndAReplyAfterAChangeLoadsItInAFreshProcess(t *testing.T) {
+	cuaEnv(t)
+	fake := &cuaFake{}
+	h := AcpHostWithConnect(core.Codex, core.DefaultAgentOptions, fake.connect)
+	dir := t.TempDir()
+	run := func(resume *string) KiroResult { return h.RunAs(dir, "hi", nil, NewCancel(), resume, nil, nil) }
+	one := `[{"name":"cua-driver","command":"/x/cua-driver","args":["mcp"],"env":[]}]`
+	defer h.Shutdown("test")
+
+	// Off (the default): the session is made with none, as before.
+	if r := run(nil); r.State != core.Completed {
+		t.Fatal(r.Text)
+	}
+	if got := mcpServersIn(fake.params("session/new")[0]); got != "[]" {
+		t.Errorf("%s", got)
+	}
+
+	// On: a new session carries Cua Driver's server.
+	h.SetMcp(func(*string) []McpServer { return []McpServer{cuaServer("/x/cua-driver")} })
+	if r := run(nil); r.State != core.Completed {
+		t.Fatal(r.Text)
+	}
+	if got := mcpServersIn(fake.params("session/new")[1]); got != one {
+		t.Errorf("%s", got)
+	}
+	if fake.startCount() != 1 {
+		t.Errorf("the same process: %d starts", fake.startCount())
+	}
+
+	// A reply to the first (made with none) now needs the servers: a fresh process loads it.
+	if r := run(sp("s1")); r.State != core.Completed {
+		t.Fatal(r.Text)
+	}
+	if fake.startCount() != 2 {
+		t.Errorf("started again for the changed servers: %d starts", fake.startCount())
+	}
+	load := fake.params("session/load")
+	if len(load) != 1 || mcpServersIn(load[0]) != one {
+		t.Errorf("%d loads: %v", len(load), load)
+	}
+
+	// The same servers again: it carries on as it is.
+	if r := run(sp("s1")); r.State != core.Completed {
+		t.Fatal(r.Text)
+	}
+	if fake.startCount() != 2 || len(fake.params("session/load")) != 1 {
+		t.Errorf("%d starts, %d loads", fake.startCount(), len(fake.params("session/load")))
+	}
+}
+
+func TestClaudeCodeIsStartedWithAnMcpConfigFileOnlyWhenThereAreServers(t *testing.T) {
+	cuaEnv(t)
+	var mu sync.Mutex
+	var seen [][]string
+	// A process that never answers: the start gives up, and the arguments are what counts.
+	connect := func(_ string, args []string) (*Link, error) {
+		mu.Lock()
+		seen = append(seen, slices.Clone(args))
+		mu.Unlock()
+		hoverReads, agentWrites, err := os.Pipe()
+		if err != nil {
+			return nil, err
+		}
+		agentReads, hoverWrites, err := os.Pipe()
+		if err != nil {
+			return nil, err
+		}
+		go func() { io.Copy(io.Discard, agentReads); agentReads.Close() }()
+		var once sync.Once
+		return &Link{ToAgent: hoverWrites, FromAgent: hoverReads, Kill: func() { once.Do(func() { agentWrites.Close() }) }, Errors: func() string { return "" }}, nil
+	}
+	h := ClaudeHostWithConnect(core.DefaultAgentOptions, connect, ClaudeTimeouts{Start: 300 * time.Millisecond, StopGrace: time.Second})
+	defer h.Shutdown("test")
+	dir := t.TempDir()
+	run := func(tag string) KiroResult {
+		return h.RunTagged(dir, "hi", nil, NewCancel(), nil, nil, nil, &tag)
+	}
+	if r := run("k1"); r.State != core.Failed {
+		t.Fatalf("%v %q", r.State, r.Text)
+	}
+	mu.Lock()
+	first := seen[0]
+	mu.Unlock()
+	if slices.Contains(first, "--mcp-config") {
+		t.Error("none off: the arguments as they were")
+	}
+
+	browser := NewMcpServer("hover-browser", "/usr/bin/perl", "/r.pl", "/s.sock")
+	browser.Env = append(browser.Env, [2]string{"HOVER_BROWSER_TOKEN", "t0k"})
+	servers := []McpServer{cuaServer("/x/cua-driver"), browser}
+	want := *ClaudeConfig(servers)
+	h.SetMcp(func(*string) []McpServer { return servers })
+	if r := run("k2"); r.State != core.Failed {
+		t.Fatalf("%v %q", r.State, r.Text)
+	}
+	mu.Lock()
+	args := slices.Clone(seen[1])
+	mu.Unlock()
+	at := slices.Index(args, "--mcp-config")
+	if at < 0 {
+		t.Fatal("--mcp-config is passed")
+	}
+	if b, err := os.ReadFile(args[at+1]); err != nil || string(b) != want {
+		t.Errorf("%q %v", b, err)
+	}
+	for _, a := range args {
+		if strings.Contains(a, "t0k") {
+			t.Error("the token is on the command line")
+		}
+		if a == "--strict-mcp-config" {
+			t.Error("the user's own servers stay")
+		}
 	}
 }

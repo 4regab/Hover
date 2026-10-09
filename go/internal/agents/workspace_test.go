@@ -6,7 +6,9 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/4regab/Hover/go/internal/core"
 )
@@ -102,5 +104,72 @@ func TestFoldersOverlapWhenOneHoldsTheOtherAndAHoldBlocksBothWays(t *testing.T) 
 		t.Error(err)
 	} else {
 		hb.Release()
+	}
+}
+
+// tests/workspace.rs: a checkpoint restore at the session level checks for tasks in
+// overlapping folders and holds its folder. This runs the real git.
+func TestARestoreIsRefusedWhileATaskRunsInAnOverlappingFolderAndHoldsItsFolder(t *testing.T) {
+	root := wsTemp(t, "lock")
+	proj := filepath.Join(root, "proj")
+	inner := filepath.Join(proj, "inner")
+	os.MkdirAll(inner, 0o777)
+	os.WriteFile(filepath.Join(proj, "seed.txt"), []byte("seed"), 0o666)
+	var release atomic.Bool
+	// A task started in the folder *inside* the project waits; the others finish at once.
+	k := NewKiroSessions(func(core.AgentTool) RunTask {
+		return func(a RunArgs) KiroResult {
+			if a.Prompt == "hold" {
+				for start := time.Now(); !release.Load() && time.Since(start) < 20*time.Second; {
+					time.Sleep(10 * time.Millisecond)
+				}
+			}
+			return NewResult(core.Completed, "ok")
+		}
+	}, nil)
+	cp := NewCheckpoints(filepath.Join(root, "stores"))
+	if cp == nil {
+		t.Skip("git isn't installed")
+	}
+	k.SetCheckpoints(cp)
+	first, ok := k.Start(core.Kiro, proj, "first", nil)
+	if !ok {
+		t.Fatal("no start")
+	}
+	a := first.ID
+	state := func(id int32) KiroSession { s, _ := k.Get(id); return s }
+	waitFor20(t, "the first task", func() bool { s := state(a); return !s.Busy() && len(s.Turns) > 0 && s.Turns[0].After != nil })
+	second, ok := k.Start(core.Codex, inner, "hold", nil)
+	if !ok {
+		t.Fatal("no start in the inner folder")
+	}
+	b := second.ID
+	waitFor20(t, "the held task", func() bool { s := state(b); return s.Busy() && len(s.Turns) > 0 && s.Turns[0].Before != nil })
+	// The project's own chat may not be put back while a task works in a folder inside it.
+	err := k.Rewind(a, Rewind{Turn: 0})
+	if err == nil || !strings.Contains(err.Error(), "overlaps this folder") || !strings.Contains(err.Error(), inner) {
+		t.Fatalf("%v", err)
+	}
+	release.Store(true)
+	waitFor20(t, "the held task to end", func() bool { return !state(b).Busy() })
+	// While a restore holds the project, nothing starts in it or inside it, and a reply waits
+	// for the hold to go.
+	hold, herr := HoldFolder(proj, "A checkpoint restore")
+	if herr != nil {
+		t.Fatal(herr)
+	}
+	if _, ok := k.Start(core.Kiro, inner, "x", nil); ok {
+		t.Error("a start in a folder inside the held one")
+	}
+	if k.Reply(a, "more", nil) {
+		t.Error("a reply to a held folder")
+	}
+	hold.Release()
+	if !k.Reply(a, "more", nil) {
+		t.Fatal("no reply once the hold is gone")
+	}
+	waitFor20(t, "the reply", func() bool { s := state(a); return !s.Busy() && len(s.Turns) == 2 })
+	if err := k.Rewind(a, Rewind{Turn: 0}); err != nil {
+		t.Errorf("and the restore works once nothing overlaps: %v", err)
 	}
 }
