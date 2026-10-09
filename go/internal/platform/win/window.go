@@ -454,6 +454,7 @@ func (w *Window) SetSize(pw, ph int) {
 // keyboard.
 func (w *Window) Place(l, t, r, b int) {
 	call(pSetWindowPos, w.HWND, ^uintptr(0), uintptr(l), uintptr(t), uintptr(r-l), uintptr(b-t), swpNoActivate|swpShowWindow)
+	w.trace("placed at %d,%d %dx%d", l, t, r-l, b-t)
 	w.sync()
 }
 

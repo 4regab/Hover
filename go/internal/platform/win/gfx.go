@@ -180,6 +180,8 @@ func sharedDevice() (*device, error) {
 		return nil, err
 	}
 	shared.d = d
+	// As the Rust build logs its GPU: which card, and whether it is the CPU's rasteriser.
+	logf("GPU: %s (Direct3D 11, %s)", map[bool]string{true: d.adapter, false: "the default adapter"}[d.adapter != ""], d.driver)
 	return d, nil
 }
 
