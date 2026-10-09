@@ -158,3 +158,28 @@ func isSpace(c rune) bool {
 	}
 	return c >= 0x2000 && c <= 0x200a
 }
+
+// SnapX is the x of the cluster edge on the first line nearest x (parley's
+// Cursor::from_point(x, 1).geometry().x0): where a line cut short for an ellipsis ends.
+func (l *Layout) SnapX(x float32) float32 {
+	if len(l.clus) == 0 || len(l.clus[0]) == 0 {
+		return 0
+	}
+	cs := l.clus[0]
+	best := cs[0].X0
+	for _, c := range cs {
+		for _, e := range [2]float32{c.X0, c.X1} {
+			if abs32(e-x) < abs32(best-x) {
+				best = e
+			}
+		}
+	}
+	return best
+}
+
+func abs32(v float32) float32 {
+	if v < 0 {
+		return -v
+	}
+	return v
+}

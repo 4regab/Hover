@@ -303,3 +303,21 @@ func (c *Canvas) mask(m *glyphMask, x, y int, col color.NRGBA, clip image.Rectan
 	}
 	draw.DrawMask(c.Img, dr, image.NewUniform(col), image.Point{}, m.m, dr.Min.Sub(image.Pt(x, y)), draw.Over)
 }
+
+// Polygon fills a closed shape of straight edges.
+func (c *Canvas) Polygon(pts [][2]float32, col color.NRGBA, clip image.Rectangle) {
+	if len(pts) < 3 {
+		return
+	}
+	x0, y0, x1, y1 := pts[0][0], pts[0][1], pts[0][0], pts[0][1]
+	for _, p := range pts {
+		x0, y0, x1, y1 = min(x0, p[0]), min(y0, p[1]), max(x1, p[0]), max(y1, p[1])
+	}
+	c.fill(x0, y0, x1, y1, col, clip, func(r *vector.Rasterizer, ox, oy float32) {
+		r.MoveTo(pts[0][0]+ox, pts[0][1]+oy)
+		for _, p := range pts[1:] {
+			r.LineTo(p[0]+ox, p[1]+oy)
+		}
+		r.ClosePath()
+	})
+}
