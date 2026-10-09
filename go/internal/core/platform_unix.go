@@ -6,11 +6,16 @@ package core
 // autostart entry for launch at login. macOS takes these too until phase 7 ports
 // platform/macos.rs.
 //
-// ponytail: no Secret Service and no settings portal yet (both D-Bus; phase 6). A note.key
-// that names a Secret Service item is "not now": left alone, with no history this run,
-// never replaced. A new key is kept in the 0600 file, as Rust does without a keyring.
+// The Secret Service (GNOME Keyring, KWallet, KeePassXC) keeps the key, encrypted with the
+// login and unlocked with it, as DPAPI keeps it on Windows (dbus_linux.go). Without one (no
+// session bus, no keyring) note.key holds the key itself, readable by this user only (0600).
+// Either way, other programs of the same user can read it, as with DPAPI. A note.key that
+// names a Secret Service item the keyring can't be asked for now is "not now": left alone,
+// with no history this run, never replaced. The Mac has neither until phase 7.
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"os"
 	"os/exec"
@@ -58,13 +63,37 @@ func FullPath(p string) string {
 // marker and the item's id.
 const secretMarker = "hover-key:secret-service:"
 
-type SystemKeyGuard struct{}
+type SystemKeyGuard struct {
+	// Bus is a D-Bus address instead of the session bus (the checks' own bus).
+	Bus string
+}
 
-func (SystemKeyGuard) Wrap(key []byte) ([]byte, error) { return append([]byte(nil), key...), nil }
+func (g SystemKeyGuard) Wrap(key []byte) ([]byte, error) {
+	var b [8]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return nil, err
+	}
+	id := hex.EncodeToString(b[:])
+	if err := storeSecret(g.Bus, id, key); err != nil {
+		Logf("no Secret Service (%v); note.key keeps the key, for this user only", err)
+		return append([]byte(nil), key...), nil
+	}
+	return []byte(secretMarker + id + "\n"), nil
+}
 
-func (SystemKeyGuard) Unwrap(stored []byte) ([]byte, *KeyError) {
-	if strings.HasPrefix(string(stored), secretMarker) {
-		return nil, KeyNotNow("the key is in the Secret Service, which this build can't ask yet")
+func (g SystemKeyGuard) Unwrap(stored []byte) ([]byte, *KeyError) {
+	if id, ok := strings.CutPrefix(string(stored), secretMarker); ok {
+		id = strings.TrimSpace(id)
+		// No keyring now (not started, no session bus, a locked prompt dismissed) may be one
+		// later; an item that isn't there is gone for good.
+		k, err := findSecret(g.Bus, id)
+		switch {
+		case err != nil:
+			return nil, KeyNotNow(err.Error())
+		case k == nil:
+			return nil, KeyNever("the keyring has no Hover key " + id)
+		}
+		return k, nil
 	}
 	if len(stored) == 32 {
 		return append([]byte(nil), stored...), nil
@@ -177,27 +206,47 @@ func (SystemAutostart) Set(on bool) error {
 // Look is what Theme.SystemDark and Animator.Still read on Windows.
 type Look struct{ Dark, Animations bool }
 
-// SystemLook reads the desktop's own files: GNOME through gsettings, KDE's kdeglobals,
-// GTK's settings.ini. With nothing to go by: light, as Windows' missing value means, and
-// animations on. (The settings portal comes first in Rust; phase 6.)
-func SystemLook() Look {
+// SystemLook is the settings portal first (org.freedesktop.appearance color-scheme; GNOME's
+// enable-animations, which its portal passes through), else the desktop's own files: GNOME
+// through gsettings, KDE's kdeglobals, GTK's settings.ini. With nothing to go by: light, as
+// Windows' missing value means, and animations on.
+func SystemLook() Look { return lookOn("") }
+
+func lookOn(bus string) Look {
+	scheme, anim, ok := portalLook(bus)
 	l := Look{Dark: false, Animations: true}
-	if d, ok := filesDark(); ok {
-		l.Dark = d
+	switch {
+	case ok && scheme != nil:
+		l.Dark = *scheme == 1
+	default:
+		if d, ok := filesDark(); ok {
+			l.Dark = d
+		}
 	}
-	if a, ok := filesAnimations(); ok {
-		l.Animations = a
+	switch {
+	case ok && anim != nil:
+		l.Animations = *anim
+	default:
+		if a, ok := filesAnimations(); ok {
+			l.Animations = a
+		}
 	}
 	return l
 }
 
-// WatchLook calls changed whenever the look may have changed: a look at the files every
-// five seconds (Rust listens to the portal's SettingChanged where there is one).
-func WatchLook(changed func()) {
+// WatchLook calls changed whenever the look may have changed: the portal's SettingChanged
+// signal where there is a portal (UserPreferenceChanged's counterpart), else a look at the
+// files every five seconds.
+func WatchLook(changed func()) { watchLookOn("", changed) }
+
+func watchLookOn(bus string, changed func()) {
 	go func() {
-		last := SystemLook()
+		if watchPortal(bus, changed) {
+			return
+		}
+		last := lookOn(bus)
 		for range time.Tick(5 * time.Second) {
-			if now := SystemLook(); now != last {
+			if now := lookOn(bus); now != last {
 				last = now
 				changed()
 			}
