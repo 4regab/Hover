@@ -107,6 +107,8 @@ type Env struct {
 	PickFolder    func() (string, bool)
 	PickThemeFile func() (string, bool)
 	PickImage     func() (string, bool)
+	// ClipboardImage is a picture on the clipboard as RGBA.
+	ClipboardImage func() (w, h int, rgba []byte, ok bool)
 
 	// NewNotch makes the notch's window (hidden, off screen until placed). NewDashboard the
 	// app window, NewWarning a small dialog (w and h in logical pixels, its client area).

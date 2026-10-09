@@ -45,6 +45,7 @@ type OfficeTag struct {
 	Hot       bool
 	ToolID    string
 	Asking    bool
+	Ask       AskData
 }
 
 // OfficeProps are the office's `in` properties (Office global).
@@ -72,6 +73,13 @@ type OfficeProps struct {
 	Backdrop *Backdrop
 	Chat     bool
 	SideBusy bool
+	// Drawer: a chat is open. ModelMenu: 0 closed, 1 the drawer's pill, 2 the new-task box's.
+	Drawer    bool
+	ModelMenu int
+	New       NewTaskProps
+	MM        ModelMenuProps
+	Confirm   ConfirmProps
+	Notice    bool
 }
 
 // OfficeEventKind is what the office asks of the app (the Office global's callbacks).
@@ -88,32 +96,39 @@ const (
 	OfficeSetTime
 	OfficeOpenHistory
 	OfficeOpenSettings
+	// OfficeAct is a callback of the Office global by its name (A), with what it was given.
+	OfficeAct
 )
 
 type OfficeEvent struct {
 	Kind    OfficeEventKind
 	N       int
 	X, Y, D float32
-	S       string
+	S, S2   string
+	A       string
 	ID      int64
 }
 
 // OfficeView is the view's state between frames.
 type OfficeView struct {
-	img      paint.ImageOp
-	gen      uint64
-	have     bool
-	scene    int
-	keys     Focus
-	tags     map[int64]*Touch
-	menuBtn  Touch
-	menuAway Touch
-	timeT    [3]Touch
-	rows     [3]Touch
-	last     time.Time
-	lastPos  f32.Point
-	was      bool
-	ev       []OfficeEvent
+	img        paint.ImageOp
+	gen        uint64
+	have       bool
+	scene      int
+	keys       Focus
+	tags       map[int64]*Touch
+	asks       map[string]*askState
+	nt         newTaskState
+	mn         menusState
+	repoScroll Scroll
+	menuBtn    Touch
+	menuAway   Touch
+	timeT      [3]Touch
+	rows       [3]Touch
+	last       time.Time
+	lastPos    f32.Point
+	was        bool
+	ev         []OfficeEvent
 	// FocusMe asks for the keyboard (the notch opened).
 	FocusMe bool
 	started bool
@@ -140,6 +155,7 @@ func (o *OfficeView) Layout(c *Ctx, w, h float32, p *OfficeProps) []OfficeEvent 
 	compact := h <= 620
 	if o.tags == nil {
 		o.tags = map[int64]*Touch{}
+		o.asks = map[string]*askState{}
 	}
 	// The keyboard: Esc and typed keys go to the office (Office.key), as the page's keydown does.
 	o.keys.Add(c, 0, 0, w, 1)
@@ -147,11 +163,7 @@ func (o *OfficeView) Layout(c *Ctx, w, h float32, p *OfficeProps) []OfficeEvent 
 		o.FocusMe, o.started = false, true
 		o.keys.Take(c)
 	}
-	for _, e := range o.keys.Keys(c, key.NameEscape) {
-		if e.State == key.Press {
-			o.emit(OfficeEvent{Kind: OfficeKey, S: "\x1b"})
-		}
-	}
+	o.keys.Keys(c)
 	for _, t := range o.keys.Typed() {
 		o.emit(OfficeEvent{Kind: OfficeKey, S: t})
 	}
@@ -180,6 +192,12 @@ func (o *OfficeView) Layout(c *Ctx, w, h float32, p *OfficeProps) []OfficeEvent 
 	if !p.Chat {
 		o.hud(c, w, h, compact, p)
 	}
+	o.newTask(c, w, h, compact, p)
+	if p.ModelMenu != 0 {
+		o.modelMenu(c, w, h, p)
+	} else {
+		o.closeModelMenu()
+	}
 	if p.ToastOn {
 		tf := Font{Size: If[float32](compact, 12, 12.5), Weight: 600, Face: FacePixel}
 		tw, th := c.Measure(p.Toast, tf, 0)
@@ -188,6 +206,13 @@ func (o *OfficeView) Layout(c *Ctx, w, h float32, p *OfficeProps) []OfficeEvent 
 		c.Glass(p.Backdrop, (w-gw)/2, gy, gw, gh, 12, true)
 		c.Text(p.Toast, (w-gw)/2, gy, TextBox{Font: tf, Color: RGB(0xf6f2ff), W: gw, H: gh, HAlign: Center, VAlign: Middle})
 	}
+	if p.Confirm.On {
+		o.confirm(c, w, h, p)
+	}
+	if p.Notice {
+		o.notice(c, w, h, p)
+	}
+	o.escape(c)
 	return o.ev
 }
 
@@ -256,13 +281,27 @@ func (o *OfficeView) tag(c *Ctx, t OfficeTag) {
 		tw += c.spacingW(t.Text, If[float32](t.Stage == 4, 2.8, 0))
 		bw, bh = min(240, min(218, tw)+22), th+13
 	}
-	colW := max(chipW, bw)
+	var aw, ah float32
+	if t.Asking {
+		aw = 240
+		ah = o.askCard(c, &t.Ask, t.ToolID, t.ID, true, aw, 0, 0, true)
+	}
+	colW := max(chipW, bw, aw)
 	colH := chipH
 	if show {
 		colH += 4 + bh
 	}
+	if t.Asking {
+		colH += 4 + ah
+	}
 	x0, y0 := t.X-colW/2, t.Y-colH
 	cy := y0
+	if t.Asking {
+		ax := x0 + (colW-aw)/2
+		c.askFrame(&t.Ask, true, ax, cy, aw, ah)
+		o.askCard(c, &t.Ask, t.ToolID, t.ID, true, aw, ax, cy, false)
+		cy += ah + 4
+	}
 	if show {
 		bx := x0 + (colW-bw)/2
 		by := cy
@@ -464,3 +503,17 @@ func (o *OfficeView) hud(c *Ctx, w, h float32, compact bool, p *OfficeProps) {
 }
 
 var _ = strings.ToUpper
+
+// escape reads the Esc nobody else took this frame (the page's keydown on the document,
+// which sees it whichever field has the keyboard).
+func (o *OfficeView) escape(c *Ctx) {
+	for {
+		e, ok := c.Event(key.Filter{Name: key.NameEscape})
+		if !ok {
+			return
+		}
+		if k, isKey := e.(key.Event); isKey && k.State == key.Press {
+			o.emit(OfficeEvent{Kind: OfficeKey, S: "\x1b"})
+		}
+	}
+}

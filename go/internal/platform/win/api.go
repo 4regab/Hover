@@ -28,6 +28,7 @@ var (
 	pGlobalLock       = kernel.NewProc("GlobalLock")
 	pGlobalUnlock     = kernel.NewProc("GlobalUnlock")
 	pGlobalFree       = kernel.NewProc("GlobalFree")
+	pGlobalSize       = kernel.NewProc("GlobalSize")
 
 	pRegisterClassExW            = user32.NewProc("RegisterClassExW")
 	pCreateWindowExW             = user32.NewProc("CreateWindowExW")

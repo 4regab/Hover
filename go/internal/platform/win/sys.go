@@ -4,6 +4,7 @@ package win
 
 import (
 	_ "embed"
+	"encoding/binary"
 	"fmt"
 	"unsafe"
 
@@ -217,6 +218,66 @@ func ClipboardText() string {
 	}
 	defer call(pGlobalUnlock, mem)
 	return windows.UTF16PtrToString((*uint16)(ptr(p)))
+}
+
+// ClipboardImage is a picture on the clipboard as RGBA (the page's paste handler, arboard's
+// get_image). Windows makes CF_DIB of any picture put there.
+// ponytail: 24 and 32 bits per pixel, which is what screenshots and copied images are; a
+// 32-bit DIB's alpha byte is unused in BI_RGB, so those come out opaque.
+func ClipboardImage() (w, h int, rgba []byte, ok bool) {
+	const cfDIB = 8
+	if call(pOpenClipboard, loop.hub) == 0 {
+		return 0, 0, nil, false
+	}
+	defer call(pCloseClipboard)
+	mem := call(pGetClipboardData, cfDIB)
+	if mem == 0 {
+		return 0, 0, nil, false
+	}
+	size := int(call(pGlobalSize, mem))
+	p := call(pGlobalLock, mem)
+	if p == 0 || size < 40 {
+		return 0, 0, nil, false
+	}
+	defer call(pGlobalUnlock, mem)
+	b := unsafe.Slice((*byte)(ptr(p)), size)
+	hdr := binary.LittleEndian.Uint32(b[0:])
+	width := int(int32(binary.LittleEndian.Uint32(b[4:])))
+	height := int(int32(binary.LittleEndian.Uint32(b[8:])))
+	bits := int(binary.LittleEndian.Uint16(b[14:]))
+	comp := binary.LittleEndian.Uint32(b[16:])
+	used := binary.LittleEndian.Uint32(b[32:])
+	if (bits != 24 && bits != 32) || (comp != 0 && comp != 3) || width <= 0 || height == 0 || int(hdr) > size {
+		return 0, 0, nil, false
+	}
+	off := int(hdr)
+	// BI_BITFIELDS after a plain header: three masks, which for 32 bits are the usual BGRA.
+	if comp == 3 && hdr == 40 {
+		off += 12
+	}
+	off += int(used) * 4
+	top := height < 0
+	if top {
+		height = -height
+	}
+	stride := (width*bits/8 + 3) &^ 3
+	if off+stride*height > size || width > 1<<15 || height > 1<<15 {
+		return 0, 0, nil, false
+	}
+	out := make([]byte, width*height*4)
+	for y := 0; y < height; y++ {
+		sy := y
+		if !top {
+			sy = height - 1 - y
+		}
+		row := b[off+sy*stride:]
+		for x := 0; x < width; x++ {
+			px := row[x*bits/8:]
+			o := (y*width + x) * 4
+			out[o], out[o+1], out[o+2], out[o+3] = px[2], px[1], px[0], 255
+		}
+	}
+	return width, height, out, true
 }
 
 // SetClipboardText puts text on the clipboard.

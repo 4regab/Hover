@@ -40,10 +40,11 @@ func SystemEnv() Env {
 		Every: func(d time.Duration, f func()) Timer { return win.Every(d, f) },
 		Quit:  win.Quit,
 
-		OpenURL:       win.OpenURL,
-		PickFolder:    func() (string, bool) { return win.PickFolder(owner()) },
-		PickThemeFile: func() (string, bool) { return win.PickThemeFile(owner()) },
-		PickImage:     func() (string, bool) { return win.PickImage(owner()) },
+		OpenURL:        win.OpenURL,
+		PickFolder:     func() (string, bool) { return win.PickFolder(owner()) },
+		PickThemeFile:  func() (string, bool) { return win.PickThemeFile(owner()) },
+		PickImage:      func() (string, bool) { return win.PickImage(owner()) },
+		ClipboardImage: win.ClipboardImage,
 
 		NewNotch: func() (Window, NotchPlat, error) {
 			w, err := win.NewWindow(win.Options{Kind: win.KindNotch, Title: "Hover notch", W: 120, H: 40})

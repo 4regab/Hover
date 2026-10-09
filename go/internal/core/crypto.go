@@ -207,3 +207,6 @@ func GUIDN() string {
 	b[8] = b[8]&0x3F | 0x80
 	return fmt.Sprintf("%x", b)
 }
+
+// WritePrivate writes a file only its owner can read.
+func WritePrivate(file string, b []byte) error { return writePrivate(file, b) }

@@ -123,6 +123,12 @@ func run(dir string) error {
 	if err := notchShots(dir); err != nil {
 		return err
 	}
+	// The office needs wgpu-native (WGPU_NATIVE_PATH, or beside the program) and a GPU.
+	if os.Getenv("HOVER_SHOTS_OFFICE") != "" {
+		if err := officeShots(dir); err != nil {
+			return err
+		}
+	}
 	if err := deskShots(dir); err != nil {
 		return err
 	}

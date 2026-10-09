@@ -57,6 +57,26 @@ type officePage struct {
 	toastOn bool
 	built   bool
 	open    int32 // the chat open in the drawer, -1 for none
+
+	// The new-task circle and box, and what hangs off them.
+	fab        int
+	newTool    int
+	accessMenu bool
+	newAccess  [6]string
+	newFolder  string
+	cloud      newCloud
+	newHelpers bool
+	newDraft   string
+	newGen     int
+	// modelMenu: 0 closed, 1 the drawer's pill, 2 the new-task box's.
+	modelMenu      int
+	modelX, modelY float32
+	popX, popY     float32
+	popBelow       bool
+	attached       [2][]string
+	thumbs         map[string]*ui.Thumb
+	confirm        ui.ConfirmProps
+	panel          string
 }
 
 func (s *Shell) pg() *officePage { return &s.page }
@@ -202,7 +222,8 @@ func (s *Shell) officePush() {
 	}
 	o := agents.Office{Window: p.target == 1, Open: open, Settings: hv.Settings, Folder: folder, Ready: agents.Known, Files: func(*agents.KiroSession) *string { return nil }}
 	if p.live != nil {
-		p.live.Send(office.InState{J: agents.Push(&o, sessions)})
+		trace("office: push %d sessions", len(sessions))
+		p.live.Send(office.InState{J: anyOf(agents.Push(&o, sessions))})
 	}
 	// Each tool's status is looked up once (agents.Check keeps it five minutes).
 	for i, t := range core.AllTools {
@@ -229,6 +250,9 @@ func (s *Shell) officeFrame() {
 		return
 	}
 	fresh := len(out.RGB) > 0
+	if fresh {
+		trace("office: frame %dx%d, %d tags", out.W, out.H, len(out.Tags))
+	}
 	if !fresh && len(out.Clicks) == 0 {
 		return
 	}
@@ -359,6 +383,7 @@ func (s *Shell) officeProps(which int) *ui.OfficeProps {
 		op.OverKind, op.OverName = p.over, p.oname
 		op.OverColor = ui.RGB(rgb24(p.ocol))
 	}
+	s.newTaskProps(op)
 	return op
 }
 
@@ -420,6 +445,8 @@ func (s *Shell) officeEvents(evs []ui.OfficeEvent, which int) {
 			s.openPanel("history")
 		case ui.OfficeOpenSettings:
 			s.ShowSettingsIn(which, app.SecGeneral)
+		case ui.OfficeAct:
+			s.officeAct(e, which)
 		}
 	}
 }
@@ -584,6 +611,29 @@ func (s *Shell) drawOffice(c *ui.Ctx, w, h float32, dashboard bool) {
 	}
 }
 
-// Slices still to come: the chat, the files and the new-task box.
+// Slices still to come: the chat and the files.
 func (s *Shell) newChat()    {}
 func (s *Shell) openFolder() {}
+
+// Slices still to come, so what is already written has somewhere to go.
+func (s *Shell) deskLeave()                        {}
+func (s *Shell) closeDrawer()                      {}
+func (s *Shell) chatView() bool                    { return false }
+func (s *Shell) composeOpen()                      {}
+func (s *Shell) officeActMore(ui.OfficeEvent, int) {}
+func (s *Shell) focusNewTask()                     { s.ovwN.FocusNewTask(); s.ovwD.FocusNewTask() }
+func (s *Shell) focusRepoSearch()                  { s.ovwN.FocusRepoSearch(); s.ovwD.FocusRepoSearch() }
+
+// OfficeReady says the office has drawn its first picture (the shots wait for it).
+func (s *Shell) OfficeReady() bool { return s.page.scene != nil }
+
+// PushNow sends the office its state at once, without the 120 ms timer (the shots have none).
+func (s *Shell) PushNow() { s.officePush() }
+
+// anyOf is Hover's JSON as the office reads it (encoding/json's maps and slices).
+// ponytail: through its text, at most 8 times a second; walking the value would be faster.
+func anyOf(j core.JSON) any {
+	var v any
+	_ = json.Unmarshal([]byte(j.Compact()), &v)
+	return v
+}

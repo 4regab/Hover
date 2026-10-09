@@ -108,6 +108,8 @@ type DeskProps struct {
 type deskInput struct {
 	ed      widget.Editor
 	started bool
+	// gen is the generation of the app's value the box last took (follow).
+	gen int
 }
 
 func (d *deskInput) focused(c *Ctx) bool { return c.Focused(&d.ed) }
@@ -120,6 +122,32 @@ func (d *deskInput) sync(c *Ctx, value string, single bool) (text string, edited
 		d.ed.SetText(value)
 		d.started = true
 	}
+	for {
+		e, ok := d.ed.Update(c.Context)
+		if !ok {
+			break
+		}
+		switch e.(type) {
+		case widget.ChangeEvent:
+			edited = true
+		case widget.SubmitEvent:
+			accepted = true
+		}
+	}
+	return d.ed.Text(), edited, accepted
+}
+
+// follow is sync for a box whose words the app keeps, edits and all: the box takes the app's
+// value when gen changes (a draft cleared, words dictated in), even while it has the
+// keyboard, and otherwise keeps what is typed.
+func (d *deskInput) follow(c *Ctx, value string, gen int, single bool) (text string, edited, accepted bool) {
+	if !d.started || gen != d.gen {
+		d.ed.SetText(value)
+		n := len([]rune(value))
+		d.ed.SetCaret(n, n)
+		d.gen, d.started = gen, true
+	}
+	d.ed.SingleLine, d.ed.Submit = single, single
 	for {
 		e, ok := d.ed.Update(c.Context)
 		if !ok {
