@@ -227,3 +227,36 @@ jobs:
           name: spike-reports
           path: out/
           if-no-files-found: warn
+
+  # The Rust app's own renders of every view (hover --shots, Slint's software renderer):
+  # what the Go UI is ported against. Run by hand only (workflow_dispatch), as the Rust
+  # app doesn't change on this branch.
+  rust-shots:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: windows-2022
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build hoverai
+        run: |
+          $cargoBin = Join-Path $env:USERPROFILE '.cargo\bin'
+          & (Join-Path $cargoBin 'rustup.exe') set auto-self-update disable
+          & (Join-Path $cargoBin 'cargo.exe') build --release -p hover --bin hoverai
+          if ($LASTEXITCODE -ne 0) { throw 'cargo build failed' }
+      # hoverai is a GUI program: Start-Process -Wait is what waits for it.
+      - name: Render every view
+        timeout-minutes: 20
+        run: |
+          New-Item -ItemType Directory -Force out\rust-shots | Out-Null
+          $p = Start-Process target\release\hoverai.exe -ArgumentList '--shots', 'out\rust-shots' -PassThru -Wait -NoNewWindow -RedirectStandardError out\rust-shots-stderr.log
+          Write-Host "exit code $($p.ExitCode)"
+          Get-Content out\rust-shots-stderr.log -Tail 40
+          Write-Host "$((Get-ChildItem out\rust-shots -Filter *.png).Count) shots"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: rust-shots
+          path: out/
+          if-no-files-found: warn

@@ -249,6 +249,9 @@ drifted). `cmd/office-shot` is the Rust `shot` example: the fixture at its fixed
   `Out.Error` and the office goes on.
 - Looked at here as PNGs on llvmpipe (night and day). CI renders both on Windows' WARP with
   the Go tool and with the Rust example, into the `spike-reports` artifact (`office/`).
+  On run 69bc2e5 the two matched except 638 of 468,096 pixels, night and day alike. All of
+  them are the small text on the board and the TV. The canvases draw text with
+  `internal/raster`, and Rust draws it with swash, so the glyph edges differ.
 
 ### Done: `internal/gpu` (Hover's own wgpu-native binding)
 
