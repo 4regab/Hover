@@ -23,7 +23,8 @@ IGNORE = [r"^restart_state\.tools", r"^image:turn", r"^ready_state\.tools",
 def clean(x, root):
     s = json.dumps(x, ensure_ascii=False)
     s = s.replace(root, "<ROOT>")
-    s = re.sub(r"/tmp/hb-[A-Za-z0-9_-]+", "<ROOT>", s)
+    # Each run's own sandbox folder, wherever the system keeps temp files (/tmp, /var/folders/...).
+    s = re.sub(r"/[^\"\s]*/hb-[A-Za-z0-9_-]+", "<ROOT>", s)
     s = re.sub(r"[0-9a-f]{32}", "<KEY>", s)
     return numbers_to_placeholder(json.loads(s))
 
