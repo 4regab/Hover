@@ -5,6 +5,7 @@ package gpu
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"runtime"
 	"unsafe"
 
@@ -26,6 +27,19 @@ func load() error {
 		name = "libwgpu_native.so"
 		if runtime.GOOS == "darwin" {
 			name = "libwgpu_native.dylib"
+		}
+	}
+	// Without WGPU_NATIVE_PATH: beside the program, in the package's lib folder, then the
+	// system's.
+	if os.Getenv("WGPU_NATIVE_PATH") == "" {
+		if exe, err := os.Executable(); err == nil {
+			dir := filepath.Dir(exe)
+			for _, p := range []string{filepath.Join(dir, name), filepath.Join(dir, "..", "lib", "hover", name)} {
+				if _, err := os.Stat(p); err == nil {
+					name = p
+					break
+				}
+			}
 		}
 	}
 	h, err := purego.Dlopen(name, purego.RTLD_NOW|purego.RTLD_GLOBAL)

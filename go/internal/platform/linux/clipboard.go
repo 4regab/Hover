@@ -58,3 +58,12 @@ func ClipboardImage() (w, h int, rgba []byte, ok bool) {
 	draw.Draw(out, out.Bounds(), img, b.Min, draw.Src)
 	return b.Dx(), b.Dy(), out.Pix, true
 }
+
+// ClipboardText is the clipboard's text, "" for none.
+func ClipboardText() string {
+	out, err := exec.Command("wl-paste", "--no-newline", "--type", "text").Output()
+	if err != nil {
+		return ""
+	}
+	return string(out)
+}

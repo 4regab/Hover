@@ -37,29 +37,31 @@ type bindSpec struct {
 	Props map[string]dbus.Variant
 }
 
-// Shortcuts is a session with the portal and what is bound in it.
+// Shortcuts binds shortcuts in the portal, each in a session of its own, so that one the
+// desktop refuses (or is still asking the user about) doesn't touch the others.
 type Shortcuts struct {
-	bus  string
-	mu   sync.Mutex
-	conn *dbus.Conn
-	sess dbus.ObjectPath
-	all  map[string]*Shortcut
+	bus string
+	mu  sync.Mutex
+	all map[string]*session
 }
 
-func NewShortcuts(bus string) *Shortcuts { return &Shortcuts{bus: bus, all: map[string]*Shortcut{}} }
+type session struct {
+	conn *dbus.Conn
+	path dbus.ObjectPath
+	s    *Shortcut
+}
 
-// Set binds s (or, with a nil s, lets go of id). A new session is made with everything that
-// is bound, as the portal cannot take a shortcut back. The error says why it could not.
+func NewShortcuts(bus string) *Shortcuts { return &Shortcuts{bus: bus, all: map[string]*session{}} }
+
+// Set binds s under id, in place of what was bound under it (a nil s lets go of it). The
+// error says why it could not.
 func (g *Shortcuts) Set(id string, s *Shortcut) error {
 	g.mu.Lock()
-	defer g.mu.Unlock()
+	old := g.all[id]
+	delete(g.all, id)
+	g.mu.Unlock()
+	old.close()
 	if s == nil {
-		delete(g.all, id)
-	} else {
-		g.all[id] = s
-	}
-	g.closeLocked()
-	if len(g.all) == 0 {
 		return nil
 	}
 	conn, err := Connect(g.bus)
@@ -80,17 +82,14 @@ func (g *Shortcuts) Set(id string, s *Shortcut) error {
 	})
 	if err != nil || resp.Code != 0 {
 		conn.Close()
-		return errors.New("The desktop has no global shortcuts portal. Bind a key to `hoverai --toggle` in its settings.")
+		return errors.New("There is no desktop portal to bind a global shortcut.")
 	}
 	sess, _ := resp.Results["session_handle"].Value().(string)
-	var specs []bindSpec
-	for _, a := range g.all {
-		specs = append(specs, bindSpec{a.ID, map[string]dbus.Variant{
-			"description": dbus.MakeVariant(a.Description), "preferred_trigger": dbus.MakeVariant(a.Trigger)}})
-	}
+	spec := []bindSpec{{s.ID, map[string]dbus.Variant{
+		"description": dbus.MakeVariant(s.Description), "preferred_trigger": dbus.MakeVariant(s.Trigger)}}}
 	// The user may be asked in the compositor's dialog: that takes as long as it takes.
 	resp, err = request(conn, 10*time.Minute, func(tok string) *dbus.Call {
-		return obj.Call(shortcutsIface+".BindShortcuts", 0, dbus.ObjectPath(sess), specs, "", map[string]dbus.Variant{"handle_token": dbus.MakeVariant(tok)})
+		return obj.Call(shortcutsIface+".BindShortcuts", 0, dbus.ObjectPath(sess), spec, "", map[string]dbus.Variant{"handle_token": dbus.MakeVariant(tok)})
 	})
 	if err != nil {
 		conn.Close()
@@ -100,40 +99,43 @@ func (g *Shortcuts) Set(id string, s *Shortcut) error {
 		conn.Close()
 		return errors.New("The shortcut wasn’t accepted by the desktop.")
 	}
-	g.conn, g.sess = conn, dbus.ObjectPath(sess)
-	go g.listen(conn, ch, dbus.ObjectPath(sess))
+	e := &session{conn: conn, path: dbus.ObjectPath(sess), s: s}
+	g.mu.Lock()
+	g.all[id] = e
+	g.mu.Unlock()
+	go e.listen(ch)
 	return nil
 }
 
-func (g *Shortcuts) closeLocked() {
-	if g.conn != nil {
-		_ = g.conn.Object(portalBus, g.sess).Call("org.freedesktop.portal.Session.Close", 0).Err
-		g.conn.Close()
-		g.conn = nil
+func (e *session) close() {
+	if e == nil {
+		return
 	}
+	_ = e.conn.Object(portalBus, e.path).Call("org.freedesktop.portal.Session.Close", 0).Err
+	e.conn.Close()
 }
 
 // Close lets go of everything.
 func (g *Shortcuts) Close() {
 	g.mu.Lock()
-	defer g.mu.Unlock()
-	g.all = map[string]*Shortcut{}
-	g.closeLocked()
+	all := g.all
+	g.all = map[string]*session{}
+	g.mu.Unlock()
+	for _, e := range all {
+		e.close()
+	}
 }
 
-func (g *Shortcuts) listen(conn *dbus.Conn, ch chan *dbus.Signal, sess dbus.ObjectPath) {
+func (e *session) listen(ch chan *dbus.Signal) {
+	a := e.s
 	for sig := range ch {
 		if len(sig.Body) < 2 || (sig.Name != shortcutsIface+".Activated" && sig.Name != shortcutsIface+".Deactivated") {
 			continue
 		}
-		if s, _ := sig.Body[0].(dbus.ObjectPath); s != sess {
+		if p, _ := sig.Body[0].(dbus.ObjectPath); p != e.path {
 			continue
 		}
-		id, _ := sig.Body[1].(string)
-		g.mu.Lock()
-		a := g.all[id]
-		g.mu.Unlock()
-		if a == nil {
+		if id, _ := sig.Body[1].(string); id != a.ID {
 			continue
 		}
 		if sig.Name == shortcutsIface+".Activated" {

@@ -1,6 +1,6 @@
-//go:build !windows
+//go:build !windows && !linux
 
-// Command hover on Linux is phase 6 of the port (docs/development/go-port.md).
+// Command hover on the Mac is the Swift app, with cmd/hover-backend (phase 7 of the port).
 package main
 
 import (
@@ -9,6 +9,6 @@ import (
 )
 
 func main() {
-	fmt.Fprintln(os.Stderr, "hover: this build is Windows only so far; Linux is phase 6 of the Go port")
+	fmt.Fprintln(os.Stderr, "hover: on the Mac the app is the Swift one; this build is for Windows and Linux")
 	os.Exit(2)
 }

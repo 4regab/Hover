@@ -30,10 +30,27 @@ jobs:
         with:
           go-version-file: go/go.mod
           cache-dependency-path: go/go.sum
+      # The Linux app draws through Gio's EGL (a C compiler and the EGL headers); its window
+      # is Wayland, spoken directly, so Gio's own Wayland, X11 and Vulkan are left out.
+      - run: sudo apt-get update && sudo apt-get install -y libegl1-mesa-dev libgles2-mesa-dev
       - run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
-      - run: go vet ./...
+      - run: go vet -tags nowayland,nox11,novulkan ./...
       - run: GOOS=windows go vet ./...
-      - run: go test -race ./...
+      - run: go test -race -tags nowayland,nox11,novulkan ./...
+      - run: go build -tags nowayland,nox11,novulkan -o ../hover-linux ./cmd/hover
+      # The Linux packages (compiled, not run: no Wayland desktop on the runner).
+      - name: Linux packages
+        working-directory: .
+        run: |
+          curl -sL -o wgpu.zip https://github.com/gfx-rs/wgpu-native/releases/download/v29.0.0.0/wgpu-linux-x86_64-release.zip
+          unzip -o -q wgpu.zip lib/libwgpu_native.so
+          WGPU_NATIVE_LIB=lib/libwgpu_native.so sh packaging/linux/package-linux-go.sh "$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)" dist
+          ls -la dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-go
+          path: dist/
+          if-no-files-found: error
       # No C compiler: the Windows build works from any machine.
       - run: GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -o /tmp/notch-spike.exe ./cmd/notch-spike
 

@@ -91,6 +91,24 @@ func (n *NotchCtl) shape(p *ui.NotchProps, panel color.NRGBA) {
 	tgt := n.restTarget()
 	p.RestW, p.RestH = float32(tgt.W), float32(tgt.H)
 	n.Plat.SetHit(n.Over)
+	if ip, ok := n.Plat.(inputter); ok {
+		ip.SetInput(n.inputBoxes())
+	}
+}
+
+// inputter is a platform whose window can't be click-through by where the pointer is (Wayland
+// shows a program the pointer only over its own surface): it is told the boxes of the
+// display that take the pointer.
+type inputter interface{ SetInput([]notch.Rect) }
+
+// inputBoxes is where the notch needs the pointer: its hover zone at rest (the size it
+// is going to as well as the one it has), the panel and its slack when open.
+func (n *NotchCtl) inputBoxes() []notch.Rect {
+	if n.Hover.State == notch.StateRest {
+		cur, tgt := n.rest(), n.restTarget()
+		return []notch.Rect{notch.Zone(n.Work, n.Scale, notch.Size{W: max(cur.W, tgt.W), H: max(cur.H, tgt.H)})}
+	}
+	return []notch.Rect{notch.PanelZone(n.Work, n.Scale, n.OpenSize)}
 }
 
 // layout is one window size for every state (resizing a layered window on each transition
