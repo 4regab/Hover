@@ -105,7 +105,16 @@ type officePage struct {
 	confirmRewind *rewindAsk
 	rewinding     bool
 	startMenu     int
-	listOpen      bool
+	startFolders  []ui.AccessOpt
+
+	// The panels and the chat view's list: what a click on a row opens, the folders folded
+	// away, the history's find box, and the Kiro Web sessions beside the history.
+	find      string
+	rowsOpen  []rowOpen
+	rowsList  []rowOpen
+	listHeads []listHead
+	folded    map[string]bool
+	web       webList
 }
 
 func (s *Shell) pg() *officePage { return &s.page }
@@ -410,11 +419,16 @@ func (s *Shell) newTask() {
 // openPanel opens the board, the overview or the history (name "" for none).
 func (s *Shell) openPanel(name string) {
 	p := s.pg()
-	if p.panel == name {
-		return
+	if name != "" {
+		s.deskLeave()
+		s.closeDrawer()
+		p.fab = 0
 	}
 	p.panel = name
 	s.send(office.InPanel{P: name})
+	if name == "history" {
+		s.listWeb()
+	}
 	s.invalidateAll()
 }
 
@@ -443,6 +457,20 @@ func (s *Shell) officeProps(which int) *ui.OfficeProps {
 	s.newTaskProps(op)
 	s.chatProps(op, which)
 	op.Panel = map[string]int{"board": 1, "tv": 2, "history": 3}[p.panel]
+	// ponytail: the rows are made again for every frame the panel or the list is out; the
+	// Rust app made them when something changed.
+	if p.panel != "" || op.Chat {
+		sessions := s.Hover.Sessions.AllLight()
+		if p.panel != "" {
+			op.PanelTitle, op.PanelSub, op.Rows, p.rowsOpen = s.panelRows(sessions)
+			op.Find = p.find
+		}
+		if op.Chat {
+			op.List, p.rowsList = s.listRows(sessions, p.open)
+		}
+	}
+	op.StartMenu = p.startMenu
+	op.New.StartFolders = p.startFolders
 	return op
 }
 
@@ -501,7 +529,11 @@ func (s *Shell) officeEvents(evs []ui.OfficeEvent, which int) {
 			localSet("time", []string{"", "night", "day"}[e.N])
 			s.invalidateAll()
 		case ui.OfficeOpenHistory:
-			s.openPanel("history")
+			if p.panel == "history" {
+				s.openPanel("")
+			} else {
+				s.openPanel("history")
+			}
 		case ui.OfficeOpenSettings:
 			s.ShowSettingsIn(which, app.SecGeneral)
 		case ui.OfficeAct:
@@ -683,7 +715,7 @@ func (s *Shell) deskCardOpen() bool               { return false }
 func (s *Shell) deskCardClose()                   {}
 func (s *Shell) deskPanelOpen() bool              { return false }
 func (s *Shell) deskPanelClose()                  {}
-func (s *Shell) panelAct(ui.OfficeEvent, int)     {}
+func (s *Shell) deskAct(ui.OfficeEvent, int)      {}
 func (s *Shell) voiceLine() string                { return "" }
 
 // OpenSession opens that session's chat in the drawer (the shots do it without a click).

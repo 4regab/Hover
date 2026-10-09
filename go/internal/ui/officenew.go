@@ -34,9 +34,11 @@ type NewTaskProps struct {
 	RepoMenu              bool
 	RepoOpts              []AccessOpt
 	RepoNote              string
-	Model, ModelEffort    string
-	ModelShown            bool
-	Shots                 []*Thumb
+	// StartFolders are the project menu's recent folders (the start screen's).
+	StartFolders       []AccessOpt
+	Model, ModelEffort string
+	ModelShown         bool
+	Shots              []*Thumb
 	// PopX is -1 when a menu opens by the box, else where the chip that asked is (the start
 	// screen's), in the view's coordinates; PopBelow opens the repo menu below it.
 	PopX, PopY float32
@@ -158,7 +160,7 @@ func (o *OfficeView) newTask(c *Ctx, w, h float32, compact bool, p *OfficeProps)
 	}
 
 	// #mMenu for the access chip: each choice with its note, then where it holds.
-	if n.AccessMenu && !(p.Chat && !p.Drawer) {
+	if n.AccessMenu && !(p.Chat && !p.D.Open) {
 		if s.accAway.Layout(c, w, h) {
 			act("openAccess", 0)
 		}

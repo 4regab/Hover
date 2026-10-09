@@ -911,7 +911,7 @@ func (s *Shell) officeAct(e ui.OfficeEvent, which int) {
 // popAt notes where a menu opens: by the chip that asked (X >= 0, the start screen's), or by the box.
 func (s *Shell) popAt(e ui.OfficeEvent) {
 	p := s.pg()
-	p.popX, p.popY, p.popBelow = e.X, e.Y, false
+	p.popX, p.popY, p.popBelow = e.X, e.Y, e.X >= 0 && e.N == 1
 	if e.X < 0 {
 		p.popX = -1
 	}

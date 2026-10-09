@@ -347,9 +347,6 @@ func (s *Shell) officeActMore(e ui.OfficeEvent, which int) {
 		s.invalidateAll()
 	case "dMenuAct":
 		s.headAct(e.S)
-	case "showList":
-		p.listOpen = true
-		s.invalidateAll()
 	case "dOpenCloud":
 		if ss, ok := hv.Sessions.Get(p.open); ok && ss.Cloud != nil && ss.KiroID != nil && s.env.OpenURL != nil {
 			s.env.OpenURL(agents.KiroWebSession + *ss.KiroID)

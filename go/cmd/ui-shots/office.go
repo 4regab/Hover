@@ -28,6 +28,7 @@ type rig struct {
 	s      *shell.Shell
 	hv     *app.Hover
 	win    *fakeWin
+	dwin   *fakeWin
 	pump   func()
 	folder string
 	hold   func(bool)
@@ -64,7 +65,7 @@ func newRig() (*rig, error) {
 		return agents.NewResult(core.Completed, "## Imports tidied\n\nAll 14 files now sort their imports.")
 	}
 	hv := app.With(settings, nil, nil, run, func(id string) quota.Reading { return *reading(id) })
-	r := &rig{hv: hv, win: &fakeWin{}}
+	r := &rig{hv: hv, win: &fakeWin{}, dwin: &fakeWin{w: 1200, h: 720}}
 	var qmu sync.Mutex
 	var queued []func()
 	r.pump = func() {
@@ -81,7 +82,8 @@ func newRig() (*rig, error) {
 		After: func(time.Duration, func()) shell.Timer { return stopped{} },
 		Every: func(time.Duration, func()) shell.Timer { return stopped{} },
 		Quit:  func() {}, Headless: true,
-		NewNotch: func() (shell.Window, shell.NotchPlat, error) { return r.win, plain{}, nil },
+		NewNotch:     func() (shell.Window, shell.NotchPlat, error) { return r.win, plain{}, nil },
+		NewDashboard: func() (shell.Window, error) { return r.dwin, nil },
 	}
 	s, err := shell.New(hv, env, core.Look{Dark: true, Animations: false})
 	if err != nil {
@@ -101,6 +103,16 @@ func newRig() (*rig, error) {
 func (r *rig) open() error {
 	r.s.Expand(false, false)
 	r.s.UpdateRest()
+	// No GPU (the pictures made on a machine that cannot draw the room): the room is left
+	// out and everything round it is drawn.
+	if os.Getenv("HOVER_SHOTS_NOGPU") != "" {
+		for i := 0; i < 20; i++ {
+			r.pump()
+			r.s.PushNow()
+			time.Sleep(20 * time.Millisecond)
+		}
+		return nil
+	}
 	for i := 0; i < 600; i++ {
 		r.pump()
 		r.s.PushNow()
@@ -131,6 +143,32 @@ func (r *rig) shot(dir, name string, h int) error {
 		return err
 	}
 	return save(filepath.Join(dir, name), img)
+}
+
+// dshot saves the app window (1200 x 720) at 1x.
+func (r *rig) dshot(dir, name string, w, h int) error {
+	r.dwin.w, r.dwin.h = w, h
+	for i := 0; i < 3; i++ {
+		r.pump()
+		r.s.UpdateRest()
+		if _, err := render(w, h, 1, color.NRGBA{A: 255}, r.dwin.draw); err != nil {
+			return err
+		}
+	}
+	r.pump()
+	img, err := render(w, h, 1, color.NRGBA{A: 255}, r.dwin.draw)
+	if err != nil {
+		return err
+	}
+	return save(filepath.Join(dir, name), img)
+}
+
+func (r *rig) settle(ms int) {
+	for t := 0; t < ms; t += 20 {
+		time.Sleep(20 * time.Millisecond)
+		r.s.PushNow()
+		r.pump()
+	}
 }
 
 func officeShots(dir string) error {
@@ -172,7 +210,51 @@ func officeShots(dir string) error {
 	if err := r.shot(dir, "office-drawer.png", 480); err != nil {
 		return err
 	}
-	return nil
+	// Panels, as shots.rs takes them: the board, the overview, the history (with Kiro Web
+	// sessions made elsewhere, and none), then long titles on the board.
+	settle := func(ms int) {
+		for t := 0; t < ms; t += 20 {
+			time.Sleep(20 * time.Millisecond)
+			r.s.PushNow()
+			r.pump()
+		}
+	}
+	r.s.CloseDrawer()
+	for _, p := range [][2]string{{"board", "office-panel-board.png"}, {"tv", "office-panel-tv.png"}, {"history", "office-panel-history.png"}} {
+		r.s.OpenPanel(p[0])
+		settle(600)
+		if err := r.shot(dir, p[1], 480); err != nil {
+			return err
+		}
+	}
+	ago := func(h float64) *core.Stamp { t := core.Now().AddSecs(-h * 3600); return &t }
+	r.s.WebShot(nil, "Kiro listed 4 for Kiro Web and 4 for this computer. They are the same, so Hover can’t tell which are Kiro Web’s. It offers sessionSources: local/remote.")
+	settle(200)
+	if err := r.shot(dir, "office-panel-history-web-none.png", 480); err != nil {
+		return err
+	}
+	r.s.WebShot([]agents.CloudSession{{ID: "w1", Title: "Fix the checkout total on mobile", Updated: ago(0.5)},
+		{ID: "w2", Title: "Write the release notes for 3.7", Updated: ago(30)}, {ID: "w3"}}, "")
+	settle(300)
+	if err := r.shot(dir, "office-panel-history-web.png", 480); err != nil {
+		return err
+	}
+	r.s.WebShot(nil, "")
+	// Long titles wrap to two lines in the board's cards; the next card must start below.
+	for _, x := range r.hv.Sessions.All() {
+		r.hv.Sessions.Dismiss(x.ID)
+	}
+	r.hv.Sessions.Start(core.Kiro, r.folder, "is cloudflare good replacement for vercel since we cant use the free plan for a team project anymore", nil)
+	time.Sleep(300 * time.Millisecond)
+	r.hv.Sessions.Start(core.Kiro, r.folder, "Can you work on the Checker Project again on KiroWeb?", nil)
+	time.Sleep(400 * time.Millisecond)
+	r.s.OpenPanel("board")
+	settle(600)
+	if err := r.shot(dir, "office-panel-board-long.png", 480); err != nil {
+		return err
+	}
+	r.s.OpenPanel("")
+	return chatViewShots(r, dir)
 }
 
 var _ = layout.Context{}

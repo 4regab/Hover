@@ -205,7 +205,7 @@ func (o *OfficeView) chatPane(c *Ctx, p *OfficeProps, x, y, w, h, radius float32
 		// With the sidebar closed, its show button is always here, before the title.
 		if d.Wide && !d.ListShown && d.ListAllowed {
 			if s.showList.Update(c) {
-				act("showList", 0)
+				o.ls.closed = false
 			}
 			hov := s.showList.Hovered()
 			c.Box(hx, y+(hdrH-28)/2, 28, 28, R(7), If(hov, RGBA(0xffffff0b), Transparent))

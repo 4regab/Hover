@@ -73,20 +73,25 @@ type OfficeProps struct {
 	Backdrop *Backdrop
 	Chat     bool
 	SideBusy bool
-	// Drawer: a chat is open. ModelMenu: 0 closed, 1 the drawer's pill, 2 the new-task box's.
-	Drawer    bool
+	// ModelMenu: 0 closed, 1 the drawer's pill, 2 the new-task box's.
 	ModelMenu int
 	New       NewTaskProps
 	MM        ModelMenuProps
 	Confirm   ConfirmProps
 	Notice    bool
 	D         ChatProps
-	// Panel: 0 none, 1 the board, 2 the overview, 3 the history. DeskPanel and DeskW: the desk's panel.
-	Panel     int
-	DeskPanel bool
-	DeskW     float32
-	// ChatX and ChatW: where the chat view puts the chat.
-	ChatX, ChatW float32
+	// Panel: 0 none, 1 the board, 2 the overview, 3 the history; its title and note, its
+	// rows and (the history's) find box. DeskPanel: the desk's panel is out.
+	Panel      int
+	PanelTitle string
+	PanelSub   string
+	Rows       []PanelRow
+	Find       string
+	DeskPanel  bool
+	// List is the chat view's session list; StartMenu which of the start screen's menus is
+	// out (0 none, 1 project, 2 agent, 3 where it runs).
+	List      []ListRow
+	StartMenu int
 }
 
 // OfficeEventKind is what the office asks of the app (the Office global's callbacks).
@@ -131,6 +136,10 @@ type OfficeView struct {
 	chipT      [2]Touch
 	vw, vh     float32
 	repoScroll Scroll
+	pn         panelState
+	ls         listState
+	deskW      float32
+	drawerWas  bool
 	menuBtn    Touch
 	menuAway   Touch
 	timeT      [3]Touch
@@ -179,12 +188,44 @@ func (o *OfficeView) Layout(c *Ctx, w, h float32, p *OfficeProps) []OfficeEvent 
 		o.emit(OfficeEvent{Kind: OfficeKey, S: t})
 	}
 
+	// The chat view (Office.d-wide) in place of the office; ct follows it over a quarter
+	// second, so the office fades under the chat as it comes in and back as it goes.
+	chat := p.Chat
+	ct := o.ls.ct.Get(c, If[float32](chat, 1, 0), c.Dur(260*time.Millisecond), cubicChat)
+	sideGap := If[float32](compact, 8, 12)
+	sideW := min(If[float32](compact, 360, 400), w-2*sideGap)
+	deskW := min(float32(720), w-2*sideGap)
+	if chat {
+		deskW = min(float32(560), max(360, w*0.42))
+	}
+	deskTake := float32(0)
+	if p.DeskPanel {
+		deskTake = deskW
+	}
+	// The session list has room in a window 760 px wide or more, and not beside the details
+	// unless it is wide (1300). In the notch the sidebar folds while a panel is open unless
+	// the notch is 1240 wide or more.
+	listAllowed := w >= 760 && !(p.DeskPanel && w < If[float32](p.Dashboard, 1300, 1240))
+	listShown := chat && !o.ls.closed && listAllowed
+	lw := If(listShown, o.ls.width(), 0)
+	o.deskW = deskW
+	d := &p.D
+	d.ListAllowed, d.ListShown, d.ListW = listAllowed, listShown, lw
+	d.MainW = If(chat, w-lw-deskTake, w-2*sideGap-If(p.DeskPanel, deskTake+sideGap, 0))
+	// A chat opening takes the keys from whatever had them (the start screen's box).
+	if p.D.Open != o.drawerWas {
+		o.drawerWas = p.D.Open
+		if p.New.Fab == 0 {
+			o.keys.Take(c)
+		}
+	}
+
 	// The scene: the office thread's frame, stretched over the view, pixel by pixel.
 	if p.Scene != nil && (p.SceneGen != o.gen || !o.have) {
 		o.img, o.gen, o.have = paint.NewImageOp(p.Scene), p.SceneGen, true
 		o.img.Filter = paint.FilterNearest
 	}
-	if o.have && !p.Chat {
+	if o.have && ct < 1 {
 		sz := o.img.Size()
 		c.imageScaled(o.img, 0, 0, w*c.K/float32(sz.X), h*c.K/float32(sz.Y))
 	}
@@ -200,18 +241,70 @@ func (o *OfficeView) Layout(c *Ctx, w, h float32, p *OfficeProps) []OfficeEvent 
 		o.tag(c, t)
 	}
 	o.tip(c, p, w)
-	if !p.Chat {
+	if !chat {
 		o.hud(c, w, h, compact, p)
 	}
+	// The chat view: an opaque layer over the office (which stops drawing under it), the
+	// session list down its left and, with no chat open, the start screen.
+	if ct > 0 {
+		c.opacity(ct, func() {
+			c.Box(0, 0, w, h, R(0), RGB(0x0c0b0e))
+			o.ls.layerBk.Add(c, 0, 0, w, h)
+			if lw > 0 {
+				o.sidebar(c, p, lw, h, compact)
+			}
+			if !p.D.Open {
+				o.startScreen(c, p, lw, w-lw, h, compact)
+			} else {
+				o.ls.wasStart = false
+			}
+		})
+	}
 	o.newTask(c, w, h, compact, p)
+	if p.Panel != 0 && !chat {
+		o.panel(c, w, h, compact, p)
+	}
 	if p.D.Open {
-		gap := If[float32](compact, 8, 12)
-		sw := min(If[float32](compact, 360, 400), w-2*gap)
-		if p.Chat {
-			// The chat view's own layout fills what the list and the details leave.
-			o.chatPane(c, p, p.ChatX, 0, p.ChatW, h, 0, compact)
+		if chat {
+			// The chat view's own layout fills what the list and the details leave, edge to
+			// edge, and comes in with the chat view's fade.
+			c.opacity(ct, func() { o.chatPane(c, p, lw, 0, w-lw-deskTake, h, 0, compact) })
 		} else {
-			o.chatPane(c, p, w-sw-gap, gap, sw, h-2*gap, If[float32](compact, 16, 20), compact)
+			o.chatPane(c, p, w-sideW-sideGap, sideGap, sideW, h-2*sideGap, If[float32](compact, 16, 20), compact)
+		}
+	}
+	// The switch between the office and the chat view, over both at the top left: in the
+	// chat view it is the sidebar's first thing, so it goes with the sidebar when that is
+	// closed (the header's show button is then the way back) and stays where the sidebar
+	// has no room. The start screen has no header, so there it stays.
+	vsX, vsY := float32(12), If[float32](compact, 8, 10)
+	if !chat || listShown || !listAllowed || !p.D.Open {
+		toggled, side := o.viewSwitch(c, chat, compact, !chat, vsX, vsY)
+		if toggled {
+			o.emit(OfficeEvent{Kind: OfficeAct, A: "toggleView"})
+		}
+		vw := If[float32](compact, 68, 76)
+		if chat && !p.D.Open && lw == 0 && listAllowed {
+			// The start screen with the sidebar closed: its show button is the way back.
+			bx, by := vsX+vw+6, vsY+(If[float32](compact, 28, 32)-28)/2
+			click := o.ls.showStart.Update(c)
+			hv := o.ls.showStart.Hovered()
+			c.Box(bx, by, 28, 28, R(7), If(hv, RGBA(0xffffff0b), Transparent))
+			c.Icon(PathSidebar, bx+6, by+6, 16, If(hv, ink, inkHalf))
+			o.ls.showStart.Add(c, bx, by, 28, 28, true)
+			if click {
+				o.ls.closed = false
+			}
+		}
+		if side != 0 {
+			name := If(side == 1, "Office", "Chat")
+			tf := Font{Size: 11.5, Weight: 500}
+			tw, th := c.Measure(name, tf, 0)
+			tx := vsX + If(side == 1, 0, vw/2)
+			ty := vsY + If[float32](compact, 28, 32) + 6
+			c.Box(tx, ty, tw+16, th+8, R(8), RGBA(0x0a060ee6))
+			c.Border(tx, ty, tw+16, th+8, R(8), 1, RGBA(0xffffff1a))
+			c.Text(name, tx+8, ty+4, TextBox{Font: tf, Color: RGB(0xf6f2ff)})
 		}
 	}
 	if p.ModelMenu != 0 {
@@ -439,7 +532,7 @@ func (o *OfficeView) hud(c *Ctx, w, h float32, compact bool, p *OfficeProps) {
 	gap := If[float32](compact, 8, 12)
 	side := min(If[float32](compact, 360, 400), w-2*gap)
 	if p.DeskPanel {
-		side = p.DeskW
+		side = o.deskW
 	}
 	// Under the drawer and the panels: only the part they leave free shows.
 	open := p.D.Open || p.Panel != 0 || p.DeskPanel
