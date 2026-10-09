@@ -38,6 +38,7 @@ type Shell struct {
 	lastBlocks []app.Block
 	ovN, ovD   ui.SettingsOverlay
 	ovwN, ovwD ui.OfficeView
+	voiceui    voiceUI
 
 	dwin   Window
 	dview  ui.DashView
@@ -99,12 +100,20 @@ func New(hover *app.Hover, env Env, look core.Look) (*Shell, error) {
 	win.SetHandlers(Handlers{OnPress: s.notchPressed})
 	if env.Bind != nil {
 		env.Bind(SysHooks{
-			Hotkey:      func(int) { s.Toggle() },
+			Hotkey: func(id int) {
+				if id == voiceID {
+					s.voiceHotkey()
+				} else {
+					s.Toggle()
+				}
+			},
 			Deactivated: s.deactivated,
 			TrayLeft:    func() { s.OpenDashboard(false) },
 			TrayMenu:    s.MenuItem,
 		})
 	}
+	// Voice first: the resting shape asks it which card to draw.
+	s.initVoice()
 	st := hover.Settings
 	s.n.Size = sizeOf(st.WorkspaceSize())
 	s.n.HoverOpens = st.HoverOpensWorkspace()
@@ -171,6 +180,7 @@ func (s *Shell) Start() {
 	s.n.layout(&s.np, s.panel(), s.win)
 	s.UpdateRest()
 	s.RegisterHotkeys()
+	s.registerVoice()
 	if s.env.TrayStart != nil {
 		s.env.TrayStart()
 	}
@@ -203,6 +213,9 @@ func (s *Shell) drawNotch(gtx layout.Context, scale float32) bool {
 		s.nview.FocusView()
 	}
 	acts := s.nview.Layout(c, &s.np, s.drawNotchView)
+	if vacts := s.nview.VoiceActs(); len(vacts) > 0 {
+		s.env.UIDo(func() { s.voiceActs(vacts) })
+	}
 	if len(acts) > 0 {
 		s.env.UIDo(func() {
 			for _, a := range acts {
@@ -252,7 +265,11 @@ func (s *Shell) stay() {
 	}
 }
 
-func (s *Shell) notchPressed() { s.stay() }
+func (s *Shell) notchPressed() {
+	s.stay()
+	// A click in voice's card when the keyboard is elsewhere brings it here.
+	s.env.UIDo(s.voiceClicked)
+}
 
 func (s *Shell) invalidate() {
 	if s.win != nil {
@@ -385,6 +402,10 @@ func (s *Shell) restOf(kind int) notch.Size {
 	case 2:
 		w, h := s.nview.CardSize(s.measure, &s.np)
 		return notch.RestSize(notch.Rest{Kind: notch.RestCard, W: float64(w), H: float64(h)})
+	case 3:
+		// Voice's card, as it measures.
+		w, h := s.nview.VoiceSize(s.measure, &s.np)
+		return notch.RestSize(notch.Rest{Kind: notch.RestCard, W: float64(w), H: float64(h)})
 	}
 	return notch.RestSize(notch.Rest{Kind: notch.RestNone})
 }
@@ -422,12 +443,17 @@ func (s *Shell) UpdateRest() {
 		return
 	}
 	p := &s.np
+	// Voice's card, while an interaction shows, in place of the island.
+	vkind := s.voiceDraw()
 	kind := 0
 	switch isl.Kind {
 	case app.IslandPill:
 		kind = 1
 	case app.IslandCard:
 		kind = 2
+	}
+	if vkind != 0 {
+		kind = 3
 	}
 	motion := s.look.Animations
 	atRest := s.n.Hover.State == notch.StateRest
@@ -570,12 +596,19 @@ func (s *Shell) UpdateRest() {
 			}
 		}
 	}
+	if vkind != 0 {
+		glow = clear
+		if p.Voice.Busy {
+			glow = ui.RGB(0xffb340)
+		}
+	}
 	if atRest {
 		p.Glow = glow
 	}
 	s.island.set, s.island.kind, s.island.key, s.island.words, s.island.ends = true, kind, isl.Key, words, ends
 	// A question waits: hovering doesn't open the office.
-	s.n.Asking = isl.Seg.Kind == app.SegAsk
+	// A question waits, or voice's card is up: hovering doesn't open the office.
+	s.n.Asking = isl.Seg.Kind == app.SegAsk || vkind != 0
 	// The 1 s clock runs while someone works or asks.
 	busy := isl.Seg.Kind == app.SegWork || isl.Seg.Kind == app.SegAsk
 	if busy && (s.secondTimer == nil || !s.secondTimer.Running()) {
@@ -604,7 +637,8 @@ func (s *Shell) UpdateRest() {
 	}
 	s.invalidate()
 	// The bots and the dots move on one clock.
-	s.clock(busy)
+	// Voice's aura, listening and working, moves on the same clock.
+	s.clock(busy || vkind == 1 || vkind == 2)
 }
 
 func itoa(n int) string { return strconv.Itoa(n) }
@@ -632,6 +666,7 @@ func (s *Shell) clock(needed bool) {
 		}
 		s.np.T += dt
 		s.np.DoneSince += dt
+		s.auraDraw()
 		s.invalidate()
 	})
 }

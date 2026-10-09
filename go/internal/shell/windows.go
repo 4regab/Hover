@@ -56,8 +56,9 @@ func (h host) Recheck(tool core.AgentTool, fresh bool) {
 func (h host) Action(id string) {
 	if strings.HasPrefix(id, "integ.") {
 		h.s.integAction(id)
+	} else {
+		h.s.voiceAction(id)
 	}
-	// ponytail: voice's actions (phonon.*, voice.*, groq.check) arrive with phase 4.
 }
 
 // Host is the shell as Settings' handlers see it.
@@ -193,6 +194,9 @@ func (s *Shell) RefreshPage(top bool) {
 	// tools' setup are looked up.
 	if top && s.pane.Section == app.SecIntegrations {
 		s.integLook(false)
+	}
+	if top && s.pane.Section == app.SecVoice {
+		s.loadMics()
 	}
 	s.lastBlocks = app.BuildPage(s.host(), &s.pane)
 	s.n.Popover = s.pane.Menu != nil

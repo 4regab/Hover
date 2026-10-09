@@ -126,6 +126,10 @@ type Env struct {
 	// Hotkey takes the notch's shortcut, letting go of the last; false when the system
 	// refuses it. Nil: none (no display).
 	Hotkey func(core.Shortcut) bool
+	// VoiceHotkey takes voice's hold-to-talk chord (id 2), letting go of the last. down says
+	// whether its key and modifiers are still held. The error says why the system refused
+	// it. Nil sc: let go. Nil: none (no display).
+	VoiceHotkey func(sc *core.Shortcut) (down func() bool, err error)
 	// SetTrayMenu is the menu the tray shows; Notify a system notification.
 	SetTrayMenu func(app.Menu)
 	Notify      func(title, body string)

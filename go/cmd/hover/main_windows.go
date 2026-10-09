@@ -71,6 +71,7 @@ func main() {
 	hover.Sessions.ReattachCutOff()
 	win.Run()
 	core.Logf("quitting")
+	s.VoiceQuit()
 	// Stop the agents before anything is torn down; then the history and the settings.
 	hover.Shutdown()
 	env.TrayStop()

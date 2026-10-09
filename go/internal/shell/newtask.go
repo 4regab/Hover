@@ -303,6 +303,27 @@ func saveRepos(account string, repos []string) {
 	}
 }
 
+// connectedRepos are the connected repos Kiro listed (none until it has), and what to say
+// instead while there are none: still loading, why it couldn't, or that none are connected.
+func (s *Shell) connectedRepos() ([]string, string) {
+	c := &s.page.cloud
+	switch {
+	case c.listed && c.reposErr == "" && len(c.repos) > 0:
+		// The list there is stays while Kiro is asked again.
+		if c.listing {
+			return c.repos, "Checking for new repositories…"
+		}
+		return c.repos, ""
+	case c.listing:
+		return nil, "Loading your connected repositories…"
+	case c.listed && c.reposErr != "":
+		return nil, c.reposErr
+	case c.listed:
+		return nil, "No GitHub repositories are connected. Connect GitHub in Kiro Web."
+	}
+	return nil, ""
+}
+
 // loadRepos lists the connected repos off the UI goroutine, then redraws (again once Kiro
 // has answered). The list saved last time shows first, if it is for the account signed in
 // now. Kiro is asked every time, so a repository made since shows up; a failure keeps the

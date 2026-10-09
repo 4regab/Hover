@@ -175,6 +175,10 @@ func (c *Ctx) shape(s string, b TextBox) []line {
 	}
 	if b.Elide {
 		p.Truncator = "…"
+		// One line cut short loses its last letters, not its last word (Slint's elide).
+		if !b.Wrap {
+			p.WrapPolicy = text.WrapGraphemes
+		}
 	}
 	sh.LayoutString(p, s)
 	var lines []line

@@ -2,7 +2,9 @@ package shell
 
 import (
 	"github.com/4regab/Hover/go/internal/agents"
+	"github.com/4regab/Hover/go/internal/core"
 	"github.com/4regab/Hover/go/internal/ui"
+	"github.com/4regab/Hover/go/internal/voice"
 )
 
 // What cmd/ui-shots does to the office without a click (shots.rs calls the same things).
@@ -118,3 +120,24 @@ func (s *Shell) DeskShotCard(id int32, x, y float32) { s.deskOpenCard(id, x, y) 
 
 // DeskPut hands the desk what a worker would have read.
 func (s *Shell) DeskPut(id int32, what string, got any) { s.deskPut(id, what, got) }
+
+// VoiceShot draws that stage in the notch instead of Voice's (nil: Voice's own).
+func (s *Shell) VoiceShot(st *voice.Stage) { s.vu().shot = st; s.UpdateRest() }
+
+// VoiceShotPics are the pictures a preview shows it will send (and the listening card's note).
+func (s *Shell) VoiceShotPics(files []string) {
+	s.vu().shotPics, s.vu().hasPics = files, files != nil
+	s.UpdateRest()
+}
+
+// VoiceShotReady sets the agents the preview's menu lists as ready, for the interaction shown.
+func (s *Shell) VoiceShotReady(id uint64, tools []core.AgentTool) {
+	r := &s.vu().ready
+	r.set, r.id, r.tools = true, id, tools
+}
+
+// VoiceShotMenu opens the preview's menu (0 closes it).
+func (s *Shell) VoiceShotMenu(which int) { s.voiceOpenMenu(which); s.UpdateRest() }
+
+// VoiceShotFeedback is what the card says after a capture (voice.ShotTaken, or why not).
+func (s *Shell) VoiceShotFeedback(said string) { s.shotFeedback(said) }

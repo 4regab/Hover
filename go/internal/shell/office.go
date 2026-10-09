@@ -716,7 +716,5 @@ func anyOf(j core.JSON) any {
 	return v
 }
 
-func (s *Shell) voiceLine() string { return "" }
-
 // OpenSession opens that session's chat in the drawer (the shots do it without a click).
 func (s *Shell) OpenSession(id int32) { s.openSession(id) }

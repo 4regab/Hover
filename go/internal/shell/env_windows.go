@@ -3,6 +3,7 @@
 package shell
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/4regab/Hover/go/internal/app"
@@ -105,6 +106,64 @@ func SystemEnv() Env {
 				return false
 			}
 			return true
+		},
+		VoiceHotkey: func(sc *core.Shortcut) (func() bool, error) {
+			// register_hold in win.rs: the chord is id 2; letting go of the keys is polled.
+			if notchWin == nil {
+				return nil, nil
+			}
+			notchWin.UnregisterHotkey(2)
+			if sc == nil || !sc.IsSet() {
+				return nil, nil
+			}
+			vk, ok := app.VK(sc.Key)
+			if !ok {
+				return nil, fmt.Errorf("%s has no key Windows can register.", sc.Label())
+			}
+			var mods uint32
+			var keys [][]uint16
+			if sc.Modifiers.Has(core.ModControl) {
+				mods |= win.ModControl
+				keys = append(keys, []uint16{0x11})
+			}
+			if sc.Modifiers.Has(core.ModAlt) {
+				mods |= win.ModAlt
+				keys = append(keys, []uint16{0x12})
+			}
+			if sc.Modifiers.Has(core.ModShift) {
+				mods |= win.ModShift
+				keys = append(keys, []uint16{0x10})
+			}
+			if sc.Modifiers.Has(core.ModWindows) {
+				mods |= win.ModWin
+				keys = append(keys, []uint16{0x5B, 0x5C})
+			}
+			if err := notchWin.RegisterHotkey(2, vk, mods); err != nil {
+				var code uint32
+				if he, ok := err.(win.HotkeyError); ok {
+					code = he.Code & 0xFFFF
+				}
+				core.Logf("voice hotkey %s could not be registered (Win32 error %d)", sc.Label(), code)
+				if code == 1409 {
+					return nil, fmt.Errorf("%s is already in use by another app, by Windows or by Hover’s own shortcut.", sc.Label())
+				}
+				return nil, fmt.Errorf("%s couldn’t be registered (Windows error %d).", sc.Label(), code)
+			}
+			return func() bool {
+				if !win.KeyDown(vk) {
+					return false
+				}
+				for _, ks := range keys {
+					any := false
+					for _, k := range ks {
+						any = any || win.KeyDown(k)
+					}
+					if !any {
+						return false
+					}
+				}
+				return true
+			}, nil
 		},
 		SetTrayMenu: func(m app.Menu) {
 			items := make([]win.MenuItem, len(m))

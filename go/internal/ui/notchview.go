@@ -80,6 +80,8 @@ type NotchProps struct {
 	InSettings bool
 	// Built: the office's items exist (false once it is dropped after 30 s hidden).
 	Built bool
+	// Voice is voice's card and what it needs (the voice-* properties).
+	Voice VoiceProps
 }
 
 // NotchAction is what a click or a key in the notch asks.
@@ -108,6 +110,7 @@ type NotchView struct {
 	cDeny, cTrust pressBtn
 	cAllow        pressBtn
 	card          Focus
+	vs            voiceState
 	rise, fade    Anim
 	// ViewKeys holds the keyboard for the open view (the FocusScope that sends Escape).
 	ViewKeys Focus
@@ -271,6 +274,10 @@ func (v *NotchView) Layout(c *Ctx, p *NotchProps, view func(c *Ctx, w, h float32
 					v.pill(c, p, ox+11, rise, true, &acts)
 				case 2:
 					v.cardLayout(c, p, ox+14, 12, true, &acts)
+				case 3:
+					// Voice's card, as it was laid out: at the rest shape's corner.
+					v.voiceKeys(c, p, ox, 0, p.RestW)
+					v.voiceLayout(c, p, ox, 0, true)
 				}
 			})
 		})

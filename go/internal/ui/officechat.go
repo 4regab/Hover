@@ -105,6 +105,9 @@ type chatState struct {
 	startedInput                                             bool
 	lastThreadW, lastThreadH                                 float32
 	scrollTag                                                int
+
+	// over follows the pointer over the whole pane, its children included (d-hover).
+	over Pointer
 }
 
 // colW is the column the conversation and the box keep to.
@@ -173,6 +176,8 @@ func (o *OfficeView) chatPane(c *Ctx, p *OfficeProps, x, y, w, h, radius float32
 		c.GraphiteR(x, y, w, h, radius)
 	}
 	s.drawBlk.Add(c, x, y, w, h)
+	s.over.Update(c)
+	defer s.over.Add(c, x, y, w, h)
 	cl := c.RRect(x, y, w, h, R(radius)).Push(c.Ops)
 	defer cl.Pop()
 
@@ -918,3 +923,7 @@ func (o *OfficeView) flyout(c *Ctx, d *ChatProps, x, y float32) {
 
 // FocusReply gives the keyboard to the reply box (it opened).
 func (o *OfficeView) FocusReply() { o.ch.focusInput = true }
+
+// ChatHover says the pointer is over the chat pane (voice dictates into the reply box only
+// then).
+func (o *OfficeView) ChatHover() bool { return o.ch.over.In }
