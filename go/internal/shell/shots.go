@@ -102,3 +102,19 @@ func (s *Shell) OpenDash() { s.OpenDashboard(false) }
 
 // CloseChat is the chat's ✕ on the start screen's way back.
 func (s *Shell) CloseChat() { s.closeDrawer() }
+
+// DeskOffline stops the desk asking git, gh or the screen: the shots hand in their own data.
+func (s *Shell) DeskOffline() { s.desk.offline = true }
+
+// DeskShotOpen opens the desk's panel on a tab, and DeskShotCard its card where the click was.
+func (s *Shell) DeskShotOpen(id int32, tab string) {
+	for i, t := range tabIDs {
+		if t == tab {
+			s.deskOpen(id, i)
+		}
+	}
+}
+func (s *Shell) DeskShotCard(id int32, x, y float32) { s.deskOpenCard(id, x, y) }
+
+// DeskPut hands the desk what a worker would have read.
+func (s *Shell) DeskPut(id int32, what string, got any) { s.deskPut(id, what, got) }

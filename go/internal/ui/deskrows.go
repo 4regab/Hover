@@ -1,10 +1,14 @@
 package ui
 
 import (
+	"fmt"
+	"image"
 	"image/color"
 	"math"
 	"strings"
 	"time"
+
+	"gioui.org/op/paint"
 
 	"github.com/4regab/Hover/go/internal/app"
 )
@@ -210,6 +214,10 @@ type DeskRowState struct {
 	main, aux Touch
 	btn       DeskButton
 	btn2      DeskButton
+	// the picture of a description (kind 25), and where the pointer is on it
+	ptr    Pointer
+	pic    paint.ImageOp
+	picSrc image.Image
 }
 
 func (c *Ctx) textW(s string, f Font) float32 { w, _ := c.Measure(s, f, 0); return w }
@@ -489,8 +497,21 @@ func (c *Ctx) DeskRow(st *DeskRowState, r app.DRow, x, y, w float32) (act string
 	case 22: // a line of the description
 		c.Text(r.Text, x+6, y, TextBox{Font: Font{Size: 13}, Color: RGB(0xececf0), W: w - 12, H: h, VAlign: Middle})
 	case 25: // the description, painted as Markdown
-		// ponytail: the picture arrives with the chat renderer's output (phase 3, the PR tab).
-		_ = r.Img
+		// The list is w wide, the picture 16 more, so its text sits at the rows' 4 px; a click
+		// goes back with its place in the picture (a link, a code block's Copy).
+		st.ptr.Update(c)
+		if main() && r.Img != nil {
+			act = fmt.Sprintf("md:%d:%d", int(math.Round(float64(st.ptr.X-x+8))), int(math.Round(float64(st.ptr.Y-y))))
+		}
+		if r.Img != nil {
+			if st.picSrc != r.Img {
+				st.pic, st.picSrc = paint.NewImageOp(r.Img), r.Img
+			}
+			sz := st.pic.Size()
+			c.imageScaled(st.pic, (x-8)*c.K, y*c.K, (w+16)*c.K/float32(sz.X), (h-8)*c.K/float32(sz.Y))
+		}
+		st.main.Add(c, x, y, w, h, true)
+		st.ptr.Add(c, x, y, w, h)
 	case 23: // a pull request the session mentions
 		if main() {
 			act = r.Act

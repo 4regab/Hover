@@ -88,6 +88,11 @@ type OfficeProps struct {
 	Rows       []PanelRow
 	Find       string
 	DeskPanel  bool
+	// Desk is the desk's panel (Desk global), Card the desk's card and CardX, CardY where
+	// the desk was clicked; nil for neither.
+	Desk         *DeskProps
+	Card         *DeskCardProps
+	CardX, CardY float32
 	// List is the chat view's session list; StartMenu which of the start screen's menus is
 	// out (0 none, 1 project, 2 agent, 3 where it runs).
 	List      []ListRow
@@ -137,6 +142,10 @@ type OfficeView struct {
 	vw, vh     float32
 	repoScroll Scroll
 	pn         panelState
+	dp         DeskPanel
+	dc         DeskCard
+	deskBlk    Blocker
+	cardAway   Away
 	ls         listState
 	deskW      float32
 	drawerWas  bool
@@ -271,6 +280,33 @@ func (o *OfficeView) Layout(c *Ctx, w, h float32, p *OfficeProps) []OfficeEvent 
 			c.opacity(ct, func() { o.chatPane(c, p, lw, 0, w-lw-deskTake, h, 0, compact) })
 		} else {
 			o.chatPane(c, p, w-sideW-sideGap, sideGap, sideW, h-2*sideGap, If[float32](compact, 16, 20), compact)
+		}
+	}
+	// The desk's panel: wider than the others, its surfaces as tabs along the top. In the chat
+	// view it is attached to the chat's right edge at the chat's full height.
+	if p.DeskPanel && p.Desk != nil {
+		dx, dy, dh, rad := w-deskW-sideGap, sideGap, h-2*sideGap, If[float32](compact, 16, 20)
+		if chat {
+			dx, dy, dh, rad = w-deskW, 0, h, 0
+		}
+		c.GraphiteR(dx, dy, deskW, dh, rad)
+		o.deskBlk.Add(c, dx, dy, deskW, dh)
+		cl := c.RRect(dx, dy, deskW, dh, R(rad)).Push(c.Ops)
+		for _, e := range o.dp.Layout(c, p.Desk, dx, dy, deskW, dh) {
+			o.emit(OfficeEvent{Kind: OfficeAct, A: "desk:" + e.Kind, S: e.S, N: e.N})
+		}
+		cl.Pop()
+	}
+	// The desk's card, where the desk was clicked; a click elsewhere puts it away.
+	if p.Card != nil {
+		if o.cardAway.Layout(c, w, h) {
+			o.emit(OfficeEvent{Kind: OfficeAct, A: "desk:cardClose"})
+		}
+		cw, ch := o.dc.Size(c, p.Card, w-16, h-16)
+		cx := max(8, min(p.CardX+6, w-cw-8))
+		cy := max(8, min(p.CardY-12, h-ch-8))
+		for _, e := range o.dc.Layout(c, p.Card, cx, cy, w-16, h-16) {
+			o.emit(OfficeEvent{Kind: OfficeAct, A: "desk:" + e.Kind, S: e.S, N: e.N})
 		}
 	}
 	// The switch between the office and the chat view, over both at the top left: in the

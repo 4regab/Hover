@@ -224,7 +224,7 @@ func (s *Shell) officeFollow() {
 }
 
 // officeChanged: a session changed; the next push carries it.
-func (s *Shell) officeChanged() { s.page.dirty = true }
+func (s *Shell) officeChanged() { s.page.dirty = true; s.deskSessionChanged() }
 
 // officeDrop: the office thread goes, and its GPU memory with it.
 func (s *Shell) officeDrop() {
@@ -315,7 +315,9 @@ func (s *Shell) officeFrame() {
 			ask := false
 			var askD ui.AskData
 			for _, a := range asking {
-				if int64(a.ID) == t.ID {
+				// The card of a bot that asks shows the question itself, with the same buttons:
+				// its bubble over the head would sit half under the card.
+				if int64(a.ID) == t.ID && !(s.desk.hasCard && s.desk.card == a.ID) {
 					ask, askD = true, s.askData(&a.Ask, a.Count)
 				}
 			}
@@ -341,7 +343,12 @@ func (s *Shell) officeFrame() {
 			}
 			return "", [3]uint8{}, false
 		}
-		switch out.Hovered.Kind {
+		s.deskNoteHelpers(out.Tags)
+		kind := out.Hovered.Kind
+		if s.desk.hasCard {
+			kind = office.HoverNone
+		}
+		switch kind {
 		case office.HoverBot:
 			if p.open != int32(out.Hovered.ID) {
 				if n, c, ok := find(out.Hovered.ID); ok {
@@ -392,8 +399,6 @@ func (s *Shell) officeClick(c office.Click) {
 	}
 }
 
-func (s *Shell) deskOpenCard(int32, float32, float32) {}
-func (s *Shell) deskLeave()                           {}
 func (s *Shell) officeNothing() {
 	p := s.pg()
 	switch {
@@ -468,6 +473,11 @@ func (s *Shell) officeProps(which int) *ui.OfficeProps {
 		if op.Chat {
 			op.List, p.rowsList = s.listRows(sessions, p.open)
 		}
+	}
+	op.DeskPanel = s.desk.hasPanel
+	op.Desk = s.desk.props
+	if s.desk.hasCard {
+		op.Card, op.CardX, op.CardY = s.desk.card_, s.desk.cardX, s.desk.cardY
 	}
 	op.StartMenu = p.startMenu
 	op.New.StartFolders = p.startFolders
@@ -706,17 +716,7 @@ func anyOf(j core.JSON) any {
 	return v
 }
 
-// The desk's card and panel (desk_ui.rs) are a later slice.
-func (s *Shell) deskImageArrived(string)          {}
-func (s *Shell) deskFiles(int32) ([]string, bool) { return nil, false }
-func (s *Shell) deskOpenTab(int32, string)        {}
-func (s *Shell) deskDetails(int32)                {}
-func (s *Shell) deskCardOpen() bool               { return false }
-func (s *Shell) deskCardClose()                   {}
-func (s *Shell) deskPanelOpen() bool              { return false }
-func (s *Shell) deskPanelClose()                  {}
-func (s *Shell) deskAct(ui.OfficeEvent, int)      {}
-func (s *Shell) voiceLine() string                { return "" }
+func (s *Shell) voiceLine() string { return "" }
 
 // OpenSession opens that session's chat in the drawer (the shots do it without a click).
 func (s *Shell) OpenSession(id int32) { s.openSession(id) }

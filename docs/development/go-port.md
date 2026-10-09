@@ -61,7 +61,7 @@ go/tools/                  fake-agent, fake-opencode, fake-anthropic, measure
 | 3 | UI: notch, office, desk card and chat, Settings | Screenshots of each view next to the Rust build's. |
 | 4 | Voice | Records, Groq, cleanup, Phonon reads `check.wav`. |
 | 5 | Ship Windows | Installs over 5.x and keeps the data. |
-| 6 | Linux | X11 window, D-Bus tray, Secret Service. |
+| 6 | Linux | Native Wayland window (no X11 or XWayland), D-Bus tray, Secret Service, PipeWire audio and screen capture (no PulseAudio). |
 | 7 | Mac | `cmd/hover-backend` replaces the Rust one. |
 
 ## Phase 0: the notch spike
@@ -369,7 +369,7 @@ balloons, `Alt+N`, and a second launch that opens the app window. Built with no 
 `music.rs`: the Ogg Vorbis loop decoded as it plays (`jfreymuth/oggvorbis`, pure Go), its
 fade (16 steps up and 11 down, as the Rust test counts them), the chime, and the system's
 audio output: Windows' `waveOut` through `winmm.dll`, no COM and no C compiler. Linux's output
-(PulseAudio) is phase 6. Checked here: the loop decodes at 22.05 kHz and comes round again;
+(PipeWire; PulseAudio is legacy and not a target) is phase 6. Checked here: the loop decodes at 22.05 kHz and comes round again;
 not checked: sound itself (the runner has no audio device, so its path is "no output").
 
 ### Done: the desk card's pictures (`internal/ui/deskrows.go`, `deskpanel.go`, `deskcard.go`)

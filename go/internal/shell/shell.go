@@ -71,6 +71,7 @@ type Shell struct {
 	started              bool
 	// The office: its state, the chill beats and the clock that fades them.
 	page       officePage
+	desk       deskState
 	beats      *music.Beats
 	beatsTimer Timer
 	// focusOffice: the office view takes the keyboard on its next frame.

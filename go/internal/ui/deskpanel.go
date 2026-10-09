@@ -1,11 +1,13 @@
 package ui
 
 import (
+	"image"
 	"image/color"
 	"strings"
 
 	"gioui.org/io/key"
 	"gioui.org/op/clip"
+	"gioui.org/op/paint"
 	"gioui.org/widget"
 
 	"github.com/4regab/Hover/go/internal/app"
@@ -83,6 +85,7 @@ type DeskProps struct {
 	SLive, SWatch, SDenied           bool
 	SSupported                       bool
 	SHasImage                        bool
+	SImage                           *image.RGBA
 	SNote                            string
 	PrMode                           int
 	GhTitle, GhText, GhCode          string
@@ -207,7 +210,11 @@ type DeskPanel struct {
 	lastReset            int
 	lastTab              int
 	termFocus            bool
+	termKeys             Focus
 	pagesOff             float32
+	screenOp             paint.ImageOp
+	screenSrc            *image.RGBA
+	lastListW            float32
 }
 
 func (p *DeskPanel) emit(kind, s string, n int) { p.ev = append(p.ev, DeskEvent{kind, s, n}) }
@@ -229,6 +236,8 @@ type DeskList struct {
 	lastTot float32
 	lastRst int
 	started bool
+	// width is the box the rows were last drawn in.
+	width float32
 }
 
 // Layout draws laid in (x, y, w, h) and returns the action a row asked for. follow keeps
@@ -237,6 +246,7 @@ func (l *DeskList) Layout(c *Ctx, laid *app.Laid, x, y, w, h float32, follow boo
 	if l.rows == nil {
 		l.rows = map[int]*DeskRowState{}
 	}
+	l.width = w
 	l.scroll.Update(c, laid.Total, h)
 	end := max(0, laid.Total-h)
 	if !l.started || reset != l.lastRst {
@@ -467,6 +477,11 @@ func (p *DeskPanel) Layout(c *Ctx, d *DeskProps, x, y, w, h float32) []DeskEvent
 	}
 	if p.openMenuOn {
 		p.openMenu(c, d, x, y, w)
+	}
+	// The list's width, for the rows' wrapping (the Desk global's resized).
+	if lw := max(p.list.width, p.termList.width); lw > 0 && absf(lw-p.lastListW) > 8 {
+		p.lastListW = lw
+		p.emit("resized", "", int(lw))
 	}
 	return p.ev
 }
@@ -799,6 +814,20 @@ func (p *DeskPanel) terminal(c *Ctx, d *DeskProps, x, y, w, h float32) {
 	if a := p.termList.Layout(c, d.Laid, x, ay, w, listH, true, d.Reset); a != "" {
 		p.emit("act", a, 0)
 	}
+	if mine && d.TermRunning {
+		// Ctrl+C interrupts the command that runs.
+		p.termKeys.Add(c, x, ay, w, ah)
+		if p.termFocus {
+			p.termFocus = false
+			p.termKeys.Take(c)
+		}
+		for _, k := range p.termKeys.Keys(c, "C") {
+			if k.State == key.Press && k.Modifiers.Contain(key.ModCtrl) {
+				p.emit("termInterrupt", "", 0)
+			}
+		}
+		p.termKeys.Typed()
+	}
 	if !mine || d.TermRunning {
 		return
 	}
@@ -993,7 +1022,18 @@ func (p *DeskPanel) screen(c *Ctx, d *DeskProps, x, y, w, h float32) {
 		msg := If(d.SSupported, "Reading…", d.SNote)
 		c.Text(msg, x+10, cy, TextBox{Font: Font{Size: 12}, Color: inkFnt, W: w - 20, H: ah, HAlign: Center, VAlign: Middle, Wrap: true})
 	}
-	// ponytail: the picture of the screen is drawn by the shell, which owns it.
+	if d.SHasImage && d.SImage != nil {
+		if p.screenSrc != d.SImage {
+			p.screenOp, p.screenSrc = paint.NewImageOp(d.SImage), d.SImage
+		}
+		// image-fit: contain, inside the rounded box.
+		sz := d.SImage.Bounds().Size()
+		k := min((w-2)/float32(sz.X), (ah-2)/float32(sz.Y))
+		iw, ih := float32(sz.X)*k, float32(sz.Y)*k
+		cl := c.RRect(x, cy, w, ah, R(10)).Push(c.Ops)
+		c.imageScaled(p.screenOp, (x+(w-iw)/2)*c.K, (cy+(ah-ih)/2)*c.K, k*c.K, k*c.K)
+		cl.Pop()
+	}
 	if d.SSupported {
 		c.Text(d.SNote, x, cy+ah+8, TextBox{Font: Font{Size: 11.5}, Color: inkFnt, W: w, Wrap: true})
 	}

@@ -254,6 +254,9 @@ func officeShots(dir string) error {
 		return err
 	}
 	r.s.OpenPanel("")
+	if err := deskShots2(r, dir); err != nil {
+		return err
+	}
 	return chatViewShots(r, dir)
 }
 

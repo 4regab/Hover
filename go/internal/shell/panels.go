@@ -521,7 +521,7 @@ func (s *Shell) panelAct(e ui.OfficeEvent, which int) {
 			s.invalidateAll()
 		}
 	default:
-		s.deskAct(e, which)
+		s.deskActEvent(e, which)
 	}
 }
 
