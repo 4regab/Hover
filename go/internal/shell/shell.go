@@ -2,6 +2,7 @@ package shell
 
 import (
 	"image/color"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -295,10 +296,17 @@ func (s *Shell) Toggle() {
 // animate is the 16 ms clock for the shape's openness and resting size, while they move.
 func (s *Shell) animate() {
 	if s.n.Anim {
+		trace("animate: already running")
 		return
 	}
 	s.n.Anim = true
+	trace("animate: start (open %.2f, animating %v)", s.n.openness(), s.n.animating())
+	ticks := 0
 	s.animTimer = s.env.Every(16*time.Millisecond, func() {
+		ticks++
+		if ticks < 4 || ticks%20 == 0 {
+			trace("animate: tick %d open %.2f animating %v shape %.0fx%.0f", ticks, s.n.openness(), s.n.animating(), s.np.ShapeW, s.np.ShapeH)
+		}
 		s.n.Still = !s.look.Animations
 		s.n.shape(&s.np, s.panel())
 		s.invalidate()
@@ -697,5 +705,12 @@ func answerWord(a agents.AskAnswer) string {
 func stopTimer(t Timer) {
 	if t != nil {
 		t.Stop()
+	}
+}
+
+// trace is HOVER_TRACE=1: what the shell is doing, for the CI run.
+func trace(format string, a ...any) {
+	if os.Getenv("HOVER_TRACE") != "" {
+		core.Logf(format, a...)
 	}
 }
