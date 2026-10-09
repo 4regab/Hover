@@ -172,11 +172,10 @@ How the Go code differs, on purpose:
   ending and the next starting, `Running()` is 0 for an instant (a probe saw it 218 times
   in 3 s). The Rust tests wait the same way and have the same gap, but have not met it on
   CI. Only the Go tests were changed.
-- **Cursor's sign-in is read only on Windows for now.** It is in an SQLite file. Windows
-  calls `winsqlite3.dll`, which ships with it, so nothing is bundled and there is no C
-  compiler. Linux (phase 6) needs a reader with no C compiler and no system libsqlite3 (an
-  AppImage can't count on one); the Mac (phase 7) has `/usr/lib/libsqlite3.dylib`. Until
-  then Cursor's quota says it isn't supported there.
+- **Cursor's sign-in is in an SQLite file.** Windows calls `winsqlite3.dll`, which ships with
+  it, so nothing is bundled. Linux and the Mac read the file with a small reader in plain Go
+  (`internal/quota/sqlite_reader.go`: tables, overflow pages, the write-ahead log), checked
+  against files that SQLite itself wrote.
 
 ## Phase 3: UI, bottom up (in progress)
 
@@ -349,8 +348,7 @@ balloons, `Alt+N`, and a second launch that opens the app window. Built with no 
   setup in Settings → Integrations. It never touches Win32: `Env` is what each OS fills in.
 - `internal/ui` has the notch (`notchview.go`), the app window's title bar and menus
   (`dashboard.go`, `barmenu.go`), the Settings overlay (`overlay.go`) and the warning dialog.
-- **The office view is a stand-in** (`ui/placeholder.go`: a title, and a Settings button) until it
-  is ported. It is not in the Rust app and goes when the office lands.
+- The office view that first stood here as a stand-in is the real one now (see the office below).
 - Looked at here as PNGs from the real shell (`cmd/ui-shots`: `notch-rest-pill|working|ask|card|
   done-2x`, the Rust shots' names). CI starts the exe on a Windows runner, presses `Alt+N` and
   Esc, launches it twice, and uploads pictures and `hover.log` (`app-windows` artifact).
@@ -385,12 +383,99 @@ Left for the desk: its glue (`desk_ui.rs`'s second half: `impl App`, about 1,200
 office page's state, so it goes in with the office view. Two things are stand-ins until then: row
 kind 25 (the pull request's description as a picture of Markdown) and the Screen tab's picture.
 
-### Left in phase 3
+### The rest of phase 3, as it stands
 
-In order: the office view (`office.slint`, about 3,300 lines, with `office_ui.rs`, 2,700) and
-the desk's glue; the chat view; `music.rs` (the office's beats), `net.rs` (web images in
-chats), `screen.rs` (the Screen panel's capture), `aura.rs` (voice's aura); the `--shots` run
-and the `Alt+N` self-test of the product. Then phases 4 to 7 as listed above.
+Done and on `go-port`: the office view and its drawer, the side panels (board, overview,
+history), the chat view with its session list and start screen, the desk card and its panel
+(glue and all), the Screen panel on Windows, the aura, the music and chime, and `net.rs`'s
+web images in chats (`shell/net.go`). `hoverai --shots DIR` draws every view
+(`internal/shots`; `cmd/ui-shots` is the same program without the product).
+
+Not done, on purpose or for lack of a way to check it:
+
+- **Pictures for the size variants.** Go draws 105 of the Rust build's 384 pictures: each
+  view once, not at each office size (small, large, extra large) or in each narrow and 2x
+  variant. The views are the same code; the variants were not drawn.
+- **`bench.rs`** (the Rust build's profiling harness, 390 lines) is not ported. It is for
+  tuning the Rust build and has no part in the product.
+- **`selftest.rs`** drives X11, which is not a target; on Windows the Rust product has none
+  either (`notch-proto --selftest` is its check). `hoverai --selftest` says so.
+
+## Phase 4: voice (done on Windows)
+
+`crates/hover-app/src/voice` and `voice_ui.rs` as `internal/voice` (the flow: hold to talk,
+Groq or local speech, cleanup, routing, the preview and its countdown, dictation into a
+chat's reply box, screenshots by voice) and the notch's card for every stage
+(`internal/ui/voicecard.go`, `shell/voice.go`). Phonon (local speech) downloads, verifies and
+runs its helper as in Rust.
+
+- The microphone on Windows is winmm's `waveIn` (16 kHz mono, no COM, no C compiler). Names
+  are matched by their first 31 characters, which is all winmm gives.
+- Checked here as pictures against the Rust build's (the preview, listening with its aura,
+  editing, the long menu), and by the Windows CI run. Not checked: a real microphone, Groq,
+  or Phonon's speech.
+- `Text` that is cut short with "…" now loses its last letters, not its last word, as Slint's
+  does (one line of text, everywhere).
+
+## Phase 5: shipping Windows (done)
+
+- The exe has Hover's icon (`cmd/hover/rsrc_windows_amd64.syso`, made with `go-winres`).
+- `packaging/windows/Hover.iss` also carries `wgpu_native.dll` when it is beside the exe.
+- CI (`installer-windows`) builds the setup, installs it over the 5.0.2 release the way a
+  user would, and checks: the exe is replaced in the same folder, one uninstall entry, the
+  Start Menu entry, the Run key kept, `%APPDATA%\Hover` untouched, and a clean uninstall.
+  It passes. The same job keeps the setup as an artifact.
+- **Memory (the rule above).** Measured by `memory-windows` (run by hand) with the same
+  script on both apps, at rest: Go **69.8 MB** private, Rust **34.7 MB**: **2.01 times**,
+  against the rule's 1.25. The working sets are alike (42.7 MB against 44.6 MB); the extra is
+  committed memory the Go runtime and Direct3D hold. The rule says the port stops here and we
+  decide again. That decision is the owner's.
+
+## Phase 6: Linux (written and run against stand-ins; not run on a real desktop)
+
+Wayland only (no X11, no XWayland) and PipeWire (no PulseAudio). The binary is a cgo build
+(Gio's EGL): `go build -tags nowayland,nox11,novulkan ./cmd/hover`. Everything else is Go:
+
+- **Window** (`internal/platform/wayland`): the wire protocol spoken directly; the notch is
+  a layer-shell surface at the top of the primary display, taking the pointer only where
+  the notch needs it (Wayland shows a program the pointer only over its own surface, so the
+  hover zone is the surface's input region); the app window is an xdg toplevel with Hover's
+  own title bar. Frames are rendered off screen by Gio and handed over in shared memory.
+  Keys go through libxkbcommon (called with purego). A desktop without layer-shell (GNOME's
+  Mutter) cannot place the notch; Hover says so and stops.
+- **Shortcuts**: the GlobalShortcuts portal (KDE, GNOME 48+, Hyprland). Elsewhere (Sway),
+  bind a key to `hover --toggle`.
+- **Tray and notifications**: StatusNotifierItem with its menu, and the notification service.
+- **Secret Service** keeps `note.key`'s key (the file with mode 0600 where there is none);
+  the **settings portal** says dark or light, and tells when it changes.
+- **Sound**: `pw-cat` plays and `pw-record` records (PipeWire's own tools; no PulseAudio).
+- **Pickers, clipboard, screenshots**: the FileChooser portal (else zenity or kdialog),
+  `wl-copy` and `wl-paste`, the Screenshot portal (else `grim`).
+- **wgpu** is called through purego (goffi could not link into a cgo build).
+- **Not there**: the Screen panel (a Wayland program may not see another's windows), input
+  methods and dead keys, fractional scaling (whole scales only), and a primary display
+  (the first the compositor lists, or `HOVER_OUTPUT`).
+- **Packages**: `packaging/linux/package-linux-go.sh` makes a `.deb` and a tarball, and CI
+  builds them.
+
+What was run here: the audio against a real PipeWire; the Secret Service, the portal, the
+tray, the shortcuts and the pickers against stand-ins on a real D-Bus; the SQLite reader
+against SQLite's own files; the GPU tests on Mesa's llvmpipe with cgo on; and the whole app
+against a stand-in compositor built from the Wayland protocol files, which decodes each
+request by the types the protocol declares. All 79 opcodes the window code uses were checked
+against those files. No real compositor, GPU, speaker or microphone was available.
+
+## Phase 7: the Mac backend (done; run on a Linux machine and, in CI, on a Mac)
+
+`cmd/hover-backend` replaces `crates/hover-backend`: the same JSON lines on stdin and stdout
+(`internal/backend`, one file for each of the Rust ones). The Swift app is unchanged.
+
+- `go/tools/backend-diff/run.py` starts the Rust backend and the Go one with the same scripted
+  sessions (the protocol tests, with the stand-in tools and `gh`) and compares every message
+  field by field: 69 messages, and the only differences are a few timing or random ones, which
+  it lists. CI runs it on Linux and on a Mac.
+- **Not done**: the Mac app's build and packaging still start the Rust `hover-backend`
+  (`macos/`, `ci.yml`). Switching them to the Go one is a change to the release, left for you.
 
 ## Known costs
 
