@@ -28,7 +28,9 @@ commit. If it doesn't, the port stops there and we decide again.
 Rules for the port:
 
 - No C compiler on Windows: `GOOS=windows go build` works from any machine.
-- Port line by line, as 3.0 ported 2.x. Port each crate's tests with it; they prove the Go code behaves the same.
+- Port line by line, as 3.0 ported 2.x. Phases 0 to 2 ported each crate's tests with it. From phase 3 on the
+  tests are not ported (the owner's call); the Go code is checked by running it: pictures against the Rust
+  build's, and `go/tools/app-smoke.ps1` driving the real app on Windows. The tests already written still run.
 - Same exe name (`hoverai.exe`), single-instance mutex and installer (`packaging/windows/Hover.iss`).
 
 ## Layout
@@ -328,6 +330,32 @@ names; CI uploads them (`spike-reports`, `ui/`).
 Not run here: this sandbox has no display, GPU or Windows fonts. The chat was looked at as
 PNGs (the failed and the rich sessions of the office-state fixture), with DejaVu Sans, Noto
 Sans and DejaVu Sans Mono. On Windows the width-based goldens skip, as in the Rust tests.
+
+### Done: the live Windows shell (`internal/platform/win`, `internal/shell`, `cmd/hover`)
+
+`hoverai.exe` starts: the notch window at the top centre, its island and the question's card,
+the app window with Hover's own title bar, Settings in both, the tray icon with its menu and
+balloons, `Alt+N`, and a second launch that opens the app window. Built with no C compiler:
+`go build -ldflags "-H=windowsgui" ./cmd/hover`.
+
+- `internal/platform/win` is `win.rs` plus what winit did for Slint: windows that Gio draws into
+  (one shared Direct3D 11 device; the notch's swap chain goes through DirectComposition for its
+  per-pixel alpha, the app window's is an ordinary one), the message loop with `UIDo` for other
+  goroutines, mouse, wheel (a notch scrolls 60 logical pixels, as Slint's winit does), keys and
+  text into Gio events, the clipboard, the notch's click-through and focus rules, the shortcut,
+  the tray, and the system's file dialogs.
+- `internal/shell` is `main.rs` and `notch.rs`: the notch's state, the island (`app/rest.go` is
+  `rest.rs`), the card, the app window, Settings' events, the shortcut warning, and Cua and
+  setup in Settings → Integrations. It never touches Win32: `Env` is what each OS fills in.
+- `internal/ui` has the notch (`notchview.go`), the app window's title bar and menus
+  (`dashboard.go`, `barmenu.go`), the Settings overlay (`overlay.go`) and the warning dialog.
+- **The office view is a stand-in** (`ui/placeholder.go`: a title, and a Settings button) until it
+  is ported. It is not in the Rust app and goes when the office lands.
+- Looked at here as PNGs from the real shell (`cmd/ui-shots`: `notch-rest-pill|working|ask|card|
+  done-2x`, the Rust shots' names). CI starts the exe on a Windows runner, presses `Alt+N` and
+  Esc, launches it twice, and uploads pictures and `hover.log` (`app-windows` artifact).
+- **Gio drops a focus request for a key area no frame has shown.** The open notch asks for the
+  keyboard on its first frame, when it is still 0 px wide; the ask now waits for the area.
 
 ## Known costs
 
