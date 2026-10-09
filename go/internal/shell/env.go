@@ -55,6 +55,9 @@ type Window interface {
 	Execute(input.Command)
 	// Frames is how many frames have been shown.
 	Frames() uint64
+	// Size is the client area in physical pixels; Scale the pixels per logical pixel.
+	Size() (w, h int)
+	Scale() float64
 }
 
 // NotchPlat is notch.rs's Plat: what differs per platform for the notch's window. The

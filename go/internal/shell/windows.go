@@ -153,9 +153,9 @@ func (s *Shell) dashAction(a ui.DashAction) {
 func (s *Shell) barPick(p ui.BarMenuPick) {
 	switch p.Kind {
 	case "newChat":
-		s.office.newChat()
+		s.newChat()
 	case "openFolder":
-		s.office.openFolder()
+		s.openFolder()
 	case "settingsPage":
 		s.ShowSettingsIn(1, app.Sections[p.N])
 	case "link":

@@ -52,6 +52,8 @@ func (f *fakeWin) ResizeFrom(int)                               {}
 func (f *fakeWin) Caption(bool, uint32)                         {}
 func (f *fakeWin) Execute(input.Command)                        {}
 func (f *fakeWin) Frames() uint64                               { return 0 }
+func (f *fakeWin) Size() (int, int)                             { return 1200, 480 }
+func (f *fakeWin) Scale() float64                               { return 1 }
 
 // plain is shots.rs's Plain: no platform at all.
 type plain struct{}

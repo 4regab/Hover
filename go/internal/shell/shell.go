@@ -13,6 +13,7 @@ import (
 	"github.com/4regab/Hover/go/internal/agents"
 	"github.com/4regab/Hover/go/internal/app"
 	"github.com/4regab/Hover/go/internal/core"
+	"github.com/4regab/Hover/go/internal/music"
 	"github.com/4regab/Hover/go/internal/notch"
 	"github.com/4regab/Hover/go/internal/office"
 	"github.com/4regab/Hover/go/internal/ui"
@@ -36,7 +37,7 @@ type Shell struct {
 	pane       app.Pane
 	lastBlocks []app.Block
 	ovN, ovD   ui.SettingsOverlay
-	phN, phD   ui.OfficePlaceholder
+	ovwN, ovwD ui.OfficeView
 
 	dwin   Window
 	dview  ui.DashView
@@ -68,8 +69,12 @@ type Shell struct {
 	focusView, focusCard bool
 	measure              *ui.Ctx
 	started              bool
-	// OnOpenSettings and the like: the office's menu items, until the office is here.
-	office officePlace
+	// The office: its state, the chill beats and the clock that fades them.
+	page       officePage
+	beats      *music.Beats
+	beatsTimer Timer
+	// focusOffice: the office view takes the keyboard on its next frame.
+	focusOffice bool
 }
 
 type cardAsk struct {
@@ -80,7 +85,8 @@ type cardAsk struct {
 // New is App::new: the notch window, the state it draws from and the hooks other threads
 // land on the UI thread through.
 func New(hover *app.Hover, env Env, look core.Look) (*Shell, error) {
-	s := &Shell{Hover: hover, env: env, look: look}
+	s := &Shell{Hover: hover, env: env, look: look, beats: music.New(beatsOn())}
+	s.page.open = -1
 	s.themeChangedQuiet()
 	win, plat, err := env.NewNotch()
 	if err != nil {
@@ -117,7 +123,7 @@ func New(hover *app.Hover, env Env, look core.Look) (*Shell, error) {
 			}
 		})
 	})
-	hover.OnSessions(func() { env.UIDo(func() { s.UpdateRest() }) })
+	hover.OnSessions(func() { env.UIDo(func() { s.UpdateRest(); s.officeChanged() }) })
 	// Kiro's credits are counted from now, off this thread, so its page opens with them.
 	_ = hover.Credits.View()
 	// The notch shows an ending as its own island (the tool's logo, a badge and the task);
@@ -225,7 +231,7 @@ func (s *Shell) notchAction(a ui.NotchAction) {
 			s.answerAsked(agents.Deny)
 		}
 	case ui.NotchEscape:
-		s.Collapse()
+		s.officeEscape(0)
 	}
 }
 
@@ -254,7 +260,7 @@ func (s *Shell) expand(peek, focus bool) {
 	}
 	s.n.expand(peek, focus)
 	if focus {
-		s.focusView = true
+		s.focusView, s.focusOffice = true, true
 	}
 	if wasRest {
 		s.hadFocus = false
@@ -383,6 +389,11 @@ func (s *Shell) watchingChanged() {
 	dash := s.dwin != nil && !s.dwin.Gone() && s.dwin.Visible() && !s.dwin.Minimized()
 	looking := open || (dash && s.dwin.Focused())
 	s.Hover.SetWatching(looking)
+	s.officeFollow()
+	s.beats.Follow(open || dash)
+	if s.beats.Volume() != s.beatsTarget() {
+		s.fade()
+	}
 }
 
 // MARK: The resting shape
@@ -637,7 +648,7 @@ func (s *Shell) openCard() {
 		if ss, ok := s.Hover.Sessions.Get(s.cardAsk.session); ok {
 			for i := range ss.Asks {
 				if ss.Asks[i].ID == s.cardAsk.id && ss.Asks[i].IsQuestion() {
-					s.office.openSession(s.cardAsk.session)
+					s.openSession(s.cardAsk.session)
 					s.expand(false, true)
 					return
 				}

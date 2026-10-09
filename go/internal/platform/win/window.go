@@ -378,6 +378,9 @@ func (w *Window) Rect() (l, t, r, b int) {
 	return int(rc.Left), int(rc.Top), int(rc.Right), int(rc.Bottom)
 }
 
+// Size is the client area in physical pixels.
+func (w *Window) Size() (int, int) { return w.size.X, w.size.Y }
+
 // Scale is physical pixels per logical pixel.
 func (w *Window) Scale() float64 {
 	if w.ScaleOverride > 0 {

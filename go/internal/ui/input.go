@@ -49,7 +49,10 @@ func (t *Touch) Add(c *Ctx, x, y, w, h float32, enabled bool) {
 }
 
 // Focus is a Slint FocusScope: it takes the keyboard on Tab or when asked.
-type Focus struct{ tag int }
+type Focus struct {
+	tag   int
+	typed []string
+}
 
 func (f *Focus) Tag() event.Tag { return &f.tag }
 
@@ -71,10 +74,20 @@ func (f *Focus) Keys(c *Ctx, names ...key.Name) []key.Event {
 		if !ok {
 			return out
 		}
-		if k, ok := e.(key.Event); ok {
+		switch k := e.(type) {
+		case key.Event:
 			out = append(out, k)
+		case key.EditEvent:
+			f.typed = append(f.typed, k.Text)
 		}
 	}
+}
+
+// Typed is the text typed since the last call, as Keys saw it.
+func (f *Focus) Typed() []string {
+	t := f.typed
+	f.typed = nil
+	return t
 }
 
 // Add makes it focusable for this frame, over its control's box, before (under) the
