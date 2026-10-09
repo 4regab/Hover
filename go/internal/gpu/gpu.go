@@ -8,7 +8,7 @@
 // can neither move nor free what the C side reads) and unpins them when the call returns.
 //
 // Windows calls wgpu_native.dll through syscall (no C compiler). Linux and macOS go
-// through goffi (no C compiler either).
+// through purego (no C compiler either; the Linux app has one for Gio, and purego works with it).
 //
 // ponytail: only what the office and the spike draw with. A new call is one method here
 // and, if it takes a struct, one wire struct and one line in wire_test.go.

@@ -111,7 +111,7 @@ var fnNames = [fnCount]string{
 	"wgpuSamplerRelease",
 }
 
-// The callbacks, made once when the library loads (Windows and goffi both keep every
+// The callbacks, made once when the library loads (Windows and purego both keep every
 // callback they make for the life of the process, so one per kind, routed by userdata).
 var cbAdapter, cbDevice, cbMap, cbPopErrorScope, cbUncaptured, cbDeviceLost uintptr
 

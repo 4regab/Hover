@@ -259,7 +259,7 @@ drifted). `cmd/office-shot` is the Rust `shot` example: the fixture at its fixed
 
 About 50 of wgpu-native v29's functions: what the office and the spike draw with, no more.
 Windows calls `wgpu_native.dll` through `syscall`; Linux and macOS call the shared library
-through goffi. Neither needs a C compiler. Each call copies its Go values into the C
+through purego. Neither needs a C compiler of its own (the Linux app has one anyway, for Gio's EGL; purego works with it, where goffi could not link into a cgo build). Each call copies its Go values into the C
 structs, pins them while the call runs and lets go after.
 
 - **Why not `go-webgpu/webgpu` v0.5.5.** Its structs no longer match wgpu-native v29: a
