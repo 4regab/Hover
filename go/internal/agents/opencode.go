@@ -23,7 +23,6 @@ import (
 	"bufio"
 	"crypto/rand"
 	"fmt"
-	"io"
 	"net"
 	"os"
 	"runtime"
@@ -258,11 +257,11 @@ type ocTurn struct {
 	connected chan struct{}
 	connOnce  sync.Once
 	// stream ends the event stream, the watch and the reads back when the turn ends.
-	stream                                                                 *Cancel
+	stream                                                               *Cancel
 	accepted, userSeen, busySeen, stopping, refused, idleEarly, connects atomic.Bool
-	errText, retry                                                         *string
-	lastEvent                                                              time.Time
-	idleConfirms                                                           atomic.Int64
+	errText, retry                                                       *string
+	lastEvent                                                            time.Time
+	idleConfirms                                                         atomic.Int64
 	// open are requests being asked about now, and resolved those answered, so neither
 	// is asked twice.
 	open     map[string]*Cancel
@@ -378,16 +377,16 @@ type OpenCodeHost struct {
 	gens    atomic.Uint64
 	// mu guards turns, trusted, inventory, stuck, lastModel, seen, asking, questioning,
 	// mcp and mcpStarted.
-	mu        sync.Mutex
-	turns     map[string]*ocTurn
-	trusted   map[string]map[string]bool
-	inventory map[string]core.JSON
-	stuck     map[string]bool
-	lastModel map[string]string
-	busy      atomic.Int64
-	idle      atomic.Uint64
-	seen      []func(core.AgentTool, []core.AcpOption)
-	asking    Asking
+	mu          sync.Mutex
+	turns       map[string]*ocTurn
+	trusted     map[string]map[string]bool
+	inventory   map[string]core.JSON
+	stuck       map[string]bool
+	lastModel   map[string]string
+	busy        atomic.Int64
+	idle        atomic.Uint64
+	seen        []func(core.AgentTool, []core.AcpOption)
+	asking      Asking
 	questioning Questioning
 	reconciling sync.Mutex
 	// mcp is the MCP servers the server is handed at its start (computer use's, Hover's
@@ -401,7 +400,9 @@ type OpenCodeHost struct {
 // NewOpenCodeHost is OpenCode as Agents finds and starts it.
 func NewOpenCodeHost(options func() core.AgentOptions) *OpenCodeHost {
 	h := buildOpenCodeHost(options, nil, DefaultOpenCodeTimeouts(), &Boxed{})
-	h.connect = func(ct *Cancel, t OpenCodeTimeouts) (*OpenCodeLink, *OcErr) { return ocLaunch(ct, t, h.boxed, h.servers()) }
+	h.connect = func(ct *Cancel, t OpenCodeTimeouts) (*OpenCodeLink, *OcErr) {
+		return ocLaunch(ct, t, h.boxed, h.servers())
+	}
 	return h
 }
 
@@ -462,7 +463,9 @@ func (h *OpenCodeHost) Run(folder, prompt string, progress func(KiroPhase), ct *
 }
 
 func (h *OpenCodeHost) Runner() RunTask {
-	return func(a RunArgs) KiroResult { return h.Run(a.Folder, a.Prompt, a.Progress, a.Ct, a.Resume, a.Events, a.Access) }
+	return func(a RunArgs) KiroResult {
+		return h.Run(a.Folder, a.Prompt, a.Progress, a.Ct, a.Resume, a.Events, a.Access)
+	}
 }
 
 func dbgStr(p *string) string {
@@ -523,7 +526,7 @@ func (h *OpenCodeHost) run(folder, prompt string, progress func(KiroPhase), ct *
 	h.idle.Add(1)
 	turn := &ocTurn{folder: folder, options: o, progress: progress, events: events, token: ct, related: map[string]bool{}, done: newDone(),
 		connected: make(chan struct{}), stream: NewCancel(), lastEvent: time.Now(), open: map[string]*Cancel{}, resolved: map[string]bool{},
-		said: ocSaid{partOrder: map[string][]string{}, text: map[string]string{}, roles: map[string]string{}, steps: map[string]core.KiroStep{}, began: map[string]time.Time{}},
+		said:  ocSaid{partOrder: map[string][]string{}, text: map[string]string{}, roles: map[string]string{}, steps: map[string]core.KiroStep{}, began: map[string]time.Time{}},
 		phase: Starting, denyAll: access != nil && *access == "none", thoughtSent: map[string]time.Time{}, began: time.Now()}
 	ocDiagLine(fmt.Sprintf("run begins: folder %q resume %s access %s model %s effort %s agent %s read_only %t approval %v sandbox wanted %t os %s",
 		folder, dbgStr(resume), dbgStr(access), dbgStr(o.Model), dbgStr(o.Effort), dbgStr(o.Agent), o.ReadOnly, o.Approval, SandboxWanted(), runtime.GOOS))
@@ -639,7 +642,7 @@ func (h *OpenCodeHost) turn(prompt string, ct *Cancel, resume *string, o core.Ag
 			if err != nil {
 				return KiroResult{}, err
 			}
-			if k, _ := str(get(status, r), "type"); k == "busy" || k == "retry" {
+			if k, _ := str(jget(status, r), "type"); k == "busy" || k == "retry" {
 				return NewResult(core.Failed, "OpenCode is still stopping the last run of this conversation. Try again in a moment."), nil
 			}
 			h.mu.Lock()
@@ -721,7 +724,7 @@ func (h *OpenCodeHost) turn(prompt string, ct *Cancel, resume *string, o core.Ag
 	turn.mu.Lock()
 	turn.messageID = NewMessageID()
 	turn.mu.Unlock()
-	body := []core.Prop{core.P("messageID", core.JStr(turn.mid())), core.P("parts", core.JArr(core.JObj(core.P("type", core.JStr("text")), core.P("text", core.JStr(strings.TrimSpace(prompt)))))))}
+	body := []core.Prop{core.P("messageID", core.JStr(turn.mid())), core.P("parts", core.JArr(core.JObj(core.P("type", core.JStr("text")), core.P("text", core.JStr(strings.TrimSpace(prompt))))))}
 	if model != nil {
 		body = append(body, core.P("model", core.JObj(core.P("providerID", core.JStr(model.Provider)), core.P("modelID", core.JStr(model.Model)))))
 		// Only a variant this model has; never one made up.
@@ -792,7 +795,7 @@ func (h *OpenCodeHost) messageExists(turn *ocTurn) bool {
 	if err != nil {
 		return false
 	}
-	id, _ := str(get(m, "info"), "id")
+	id, _ := str(jget(m, "info"), "id")
 	return id == mid
 }
 
@@ -1100,7 +1103,7 @@ func (h *OpenCodeHost) apply(turn *ocTurn, kind string, p core.JSON) {
 			turn.mu.Unlock()
 		} else if x, ok := turn.said.steps[pid]; ok && x.Kind == "thought" {
 			// A reasoning part streaming in: its thought grows.
-			x.Output = sp(val(x.Output) + delta)
+			x.Output = sp(ocText(x.Output) + delta)
 			turn.said.steps[pid] = x
 			turn.mu.Unlock()
 			h.thoughtOut(turn, x, false)
@@ -1315,4 +1318,1494 @@ func (h *OpenCodeHost) thoughtOut(turn *ocTurn, step core.KiroStep, now bool) {
 	if turn.events != nil {
 		turn.events(KiroEvent{Step: &step})
 	}
+}
+
+func (h *OpenCodeHost) toolPart(turn *ocTurn, part core.JSON) {
+	tool, ok := str(part, "tool")
+	if !ok {
+		tool = "tool"
+	}
+	// The question itself shows as the question's card.
+	if tool == "question" {
+		return
+	}
+	call, ok := str(part, "callID")
+	if !ok {
+		return
+	}
+	state, hasState := obj(part, "state")
+	if !hasState {
+		state = core.JNull
+	}
+	status := "in_progress"
+	switch k, _ := str(state, "status"); k {
+	case "completed":
+		status = "completed"
+	case "error":
+		status = "failed"
+	}
+	input, hasInput := obj(state, "input")
+	if !hasInput {
+		input = core.JNull
+	}
+	kind := OcKindOf(tool)
+	var target *string
+	for _, k := range []string{"filePath", "path", "command", "pattern", "url", "query"} {
+		if target = optStr(input, k); target != nil {
+			break
+		}
+	}
+	title, ok := str(state, "title")
+	if !ok || title == "" {
+		title = capFirst(tool)
+	}
+	meta, _ := state.Get("metadata")
+	turn.mu.Lock()
+	g := &turn.said
+	known, had := g.steps[call]
+	if !had {
+		g.began[call] = time.Now()
+		known = core.NewStep(call, kind, title, target, status)
+	}
+	next := known
+	next.Status, next.Title = status, title
+	if next.Target == nil {
+		next.Target = target
+	}
+	if kind == "edit" {
+		// OpenCode's own patch has the file's real line numbers; the input's strings are
+		// only the snippet.
+		var a, r int32
+		var d string
+		got := false
+		if diff, ok := str(meta, "diff"); ok {
+			a, r, d, got = OcUnified(diff)
+		}
+		if !got && hasInput {
+			a, r, d, got = ocChange(input)
+		}
+		if got {
+			next.Added, next.Removed, next.Diff = a, r, sp(d)
+		}
+	}
+	output := func() *string {
+		if o := optStr(state, "output"); o != nil {
+			return o
+		}
+		return optStr(state, "error")
+	}
+	if kind == "agent" {
+		// A subagent (the task tool): what it was asked, its kind, and what it found.
+		if d, ok := str(input, "description"); ok && d != "" {
+			next.Title = d
+		} else {
+			next.Title = title
+		}
+		if t := optStr(input, "subagent_type"); t != nil {
+			next.Target = t
+		}
+		if status != "in_progress" {
+			if out := output(); out != nil {
+				next.Output = sp(clipTo(strings.TrimSpace(*out), 4000))
+			}
+		}
+	}
+	if kind == "execute" && status != "in_progress" {
+		if out := output(); out != nil {
+			next.Output, _ = OutputOf(core.JObj(core.P("rawOutput", core.JStr(*out))))
+		}
+		if exit := num(meta, "exit"); exit != nil {
+			e := int32(*exit)
+			next.Exit = &e
+		}
+	}
+	// For the desk's panels: the call's input, and what it gave back.
+	if hasInput {
+		if props, _ := input.Props(); len(props) > 0 {
+			next.Input = sp(headUnits(input.Compact(), InputLimit))
+		}
+	}
+	if kind != "read" && kind != "edit" && status != "in_progress" {
+		if l := Tail(output()); l != nil {
+			next.Log = l
+		}
+	}
+	if status != "in_progress" && known.MS == nil {
+		if t0, ok := g.began[call]; ok {
+			next.MS = fp(float64(time.Since(t0).Microseconds()) / 1000)
+		}
+	}
+	if had && stepEqual(next, known) {
+		turn.mu.Unlock()
+		return
+	}
+	g.steps[call] = next
+	turn.mu.Unlock()
+	if status == "in_progress" {
+		if p, ok := ToolPhase(&kind, &title); ok {
+			turn.setPhase(p)
+		}
+	}
+	if turn.events != nil {
+		turn.events(KiroEvent{Step: &next})
+	}
+}
+
+func (h *OpenCodeHost) usage(turn *ocTurn, msg core.JSON) {
+	t, ok := obj(msg, "tokens")
+	pid, ok2 := str(msg, "providerID")
+	mid, ok3 := str(msg, "modelID")
+	if ok && ok2 && ok3 {
+		h.tokens(turn, t, sp(pid+"/"+mid))
+	}
+}
+
+// tokens is how full the context is: the tokens of the last request over the model's
+// window.
+func (h *OpenCodeHost) tokens(turn *ocTurn, tokens core.JSON, model *string) {
+	sid := turn.getSid()
+	h.mu.Lock()
+	if model != nil {
+		h.lastModel[sid] = *model
+	} else if m, ok := h.lastModel[sid]; ok {
+		model = &m
+	}
+	inv, ok := h.inventory[turn.folder]
+	h.mu.Unlock()
+	if model == nil || !ok {
+		return
+	}
+	m, err := PickModel(inv, model)
+	if err != nil || m == nil || m.Limit == nil || *m.Limit <= 0 {
+		return
+	}
+	// As C#'s double? sums: any part missing leaves no total.
+	cache, _ := tokens.Get("cache")
+	a, b, c, d := num(tokens, "input"), num(tokens, "output"), num(cache, "read"), num(cache, "write")
+	if a == nil || b == nil || c == nil || d == nil {
+		return
+	}
+	used := *a + *b + *c + *d
+	if used <= 0 {
+		return
+	}
+	pct := min(max(used*100 / *m.Limit, 0), 100)
+	turn.mu.Lock()
+	if turn.context != nil && abs64(*turn.context-pct) < 0.5 {
+		turn.mu.Unlock()
+		return
+	}
+	turn.context = &pct
+	turn.mu.Unlock()
+	if turn.events != nil {
+		turn.events(KiroEvent{Context: &pct})
+	}
+}
+
+func abs64(f float64) float64 {
+	if f < 0 {
+		return -f
+	}
+	return f
+}
+
+// MARK: Looking into the state
+
+// watch: no event for a while, the state and messages are read from the server.
+func (h *OpenCodeHost) watch(turn *ocTurn) {
+	for {
+		if turn.done.waitFor(3*time.Second) || turn.stream.IsCancelled() {
+			return
+		}
+		turn.mu.Lock()
+		quiet := time.Since(turn.lastEvent) > h.t.Quiet
+		turn.mu.Unlock()
+		if turn.accepted.Load() && quiet {
+			h.reconcile(turn, "quiet")
+		}
+	}
+}
+
+func (h *OpenCodeHost) reconcileLater(turn *ocTurn, why string) { go h.reconcile(turn, why) }
+
+// reconcile is what the server says now: busy carries on; idle with this prompt in the
+// conversation ends the turn with the messages read back; a prompt that never arrived,
+// after a few looks, fails rather than hang.
+func (h *OpenCodeHost) reconcile(turn *ocTurn, why string) {
+	if !h.reconciling.TryLock() {
+		return
+	}
+	defer h.reconciling.Unlock()
+	if turn.done.isSet() || !turn.accepted.Load() {
+		return
+	}
+	sid := turn.getSid()
+	ocLog(fmt.Sprintf("reading %s back (%s)", sid, why))
+	err := func() *OcErr {
+		status, err := h.get("/session/status", &turn.folder, turn.stream, 5*time.Second)
+		if err != nil {
+			return err
+		}
+		kind, ok := str(jget(status, sid), "type")
+		if !ok {
+			kind = "idle"
+		}
+		ocDiagLine(fmt.Sprintf("reconcile %s (%s): status %s user_seen %t busy_seen %t idle_confirms %d | %s", sid, why, kind, turn.userSeen.Load(),
+			turn.busySeen.Load(), turn.idleConfirms.Load(), turn.diag.summary()))
+		if kind == "busy" || kind == "retry" {
+			turn.busySeen.Store(true)
+			turn.idleConfirms.Store(0)
+			turn.mu.Lock()
+			turn.lastEvent = time.Now()
+			turn.mu.Unlock()
+			return nil
+		}
+		if !turn.userSeen.Load() && h.messageExists(turn) {
+			turn.userSeen.Store(true)
+		}
+		if err := h.readBack(turn); err != nil {
+			return err
+		}
+		h.recoverAsks(turn)
+		user := turn.userSeen.Load()
+		if user && (turn.busySeen.Load() || turn.idleConfirms.Add(1) >= 2) {
+			ocFinish(turn)
+			return nil
+		}
+		if !user && turn.idleConfirms.Add(1) >= 5 {
+			turn.done.set(NewResult(core.Failed, "OpenCode took the task but never started it. Send it again when you’re ready."))
+		}
+		return nil
+	}()
+	if err != nil {
+		ocLog(fmt.Sprintf("couldn't read %s back - %s", sid, ocErrText(err)))
+	}
+}
+
+// readBack is this turn's messages from the server, merged by id with what the events
+// built.
+func (h *OpenCodeHost) readBack(turn *ocTurn) *OcErr {
+	sid := turn.getSid()
+	list, err := h.get("/session/"+EscapeData(sid)+"/message", &turn.folder, turn.stream, 10*time.Second)
+	if err != nil {
+		return err
+	}
+	if list.Kind() != core.ArrKind {
+		return nil
+	}
+	messages, _ := list.Items()
+	for _, m := range messages {
+		info, ok := obj(m, "info")
+		if !ok {
+			continue
+		}
+		h.apply(turn, "message.updated", core.JObj(core.P("sessionID", core.JStr(sid)), core.P("info", info)))
+		if parts, ok := arr(m, "parts"); ok {
+			for _, part := range parts {
+				if part.Kind() == core.ObjKind {
+					h.part(turn, part)
+				}
+			}
+		}
+	}
+	return nil
+}
+
+// recoverAsks: requests left waiting (from before a reconnect, or from a run Hover wasn't
+// watching) are asked about now; the ones already open or answered aren't.
+func (h *OpenCodeHost) recoverAsks(turn *ocTurn) {
+	related := func(x core.JSON) bool {
+		s, ok := str(x, "sessionID")
+		return x.Kind() == core.ObjKind && ok && turn.isRelated(s)
+	}
+	err := func() *OcErr {
+		list, err := h.get("/permission", &turn.folder, turn.stream, 5*time.Second)
+		if err != nil {
+			return err
+		}
+		if list.Kind() == core.ArrKind {
+			items, _ := list.Items()
+			for _, p := range items {
+				if related(p) {
+					go h.permission(turn, p)
+				}
+			}
+		}
+		list, err = h.get("/question", &turn.folder, turn.stream, 5*time.Second)
+		if err != nil {
+			return err
+		}
+		if list.Kind() == core.ArrKind {
+			items, _ := list.Items()
+			for _, q := range items {
+				if related(q) {
+					go h.question(turn, q)
+				}
+			}
+		}
+		return nil
+	}()
+	if err != nil {
+		ocLog("couldn't read waiting requests - " + ocErrText(err))
+	}
+}
+
+// MARK: Approvals and questions
+
+// openRequest holds a request open while it is asked about: its own stop, which the
+// turn's stop and an answer from elsewhere set. False when it is open or answered already.
+func (h *OpenCodeHost) openRequest(turn *ocTurn, id string) (*Cancel, Registration, bool) {
+	turn.mu.Lock()
+	if turn.resolved[id] {
+		turn.mu.Unlock()
+		return nil, Registration{}, false
+	}
+	if _, ok := turn.open[id]; ok {
+		turn.mu.Unlock()
+		return nil, Registration{}, false
+	}
+	cts := NewCancel()
+	turn.open[id] = cts
+	turn.mu.Unlock()
+	return cts, turn.token.OnCancel(cts.Cancel), true
+}
+
+// resolve marks the request answered; false when it was answered elsewhere meanwhile.
+func (t *ocTurn) resolve(id string) bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.resolved[id] {
+		delete(t.open, id)
+		return false
+	}
+	t.resolved[id] = true
+	return true
+}
+
+func (t *ocTurn) closeRequest(id string) {
+	t.mu.Lock()
+	delete(t.open, id)
+	t.mu.Unlock()
+}
+
+// permission: read only turns every request down (its rules should leave none).
+// Otherwise what OpenCode asks is asked of the user: its rules already let through what
+// the access allows, and a request it sends on purpose is never answered yes for the
+// user. Trust is Hover's, for this session, and each yes is OpenCode's "once": its
+// "always" can outlast the session.
+func (h *OpenCodeHost) permission(turn *ocTurn, req core.JSON) {
+	id, ok := str(req, "id")
+	if !ok {
+		return
+	}
+	cts, reg, ok := h.openRequest(turn, id)
+	if !ok {
+		return
+	}
+	defer reg.Remove()
+	sid := turn.getSid()
+	ask := OcDescribe(req, turn.folder)
+	key := AskKey(&ask)
+	var message *string
+	h.mu.Lock()
+	t := h.trusted[sid]
+	trusted := t["*"] || t[key]
+	asking := h.asking
+	h.mu.Unlock()
+	trust := func(k string) {
+		h.mu.Lock()
+		if h.trusted[sid] == nil {
+			h.trusted[sid] = map[string]bool{}
+		}
+		h.trusted[sid][k] = true
+		h.mu.Unlock()
+	}
+	var reply string
+	switch {
+	case turn.denyAll:
+		message = sp("Hover's voice routing doesn't use tools.")
+		turn.refused.Store(true)
+		reply = "reject"
+	case turn.options.ReadOnly:
+		message = sp("Hover has OpenCode set to read only.")
+		turn.refused.Store(true)
+		reply = "reject"
+	case trusted:
+		reply = "once"
+	case asking != nil:
+		got := make(chan *AskAnswer, 2)
+		stop := cts.OnCancel(func() { got <- nil })
+		asking(sid, ask, cts, func(a AskAnswer) { got <- &a })
+		a := <-got
+		stop.Remove()
+		if a == nil || cts.IsCancelled() {
+			message, reply = sp("Stopped."), "reject"
+			break
+		}
+		switch *a {
+		case Allow:
+			reply = "once"
+		case Trust:
+			trust(key)
+			reply = "once"
+		case TrustAll:
+			trust("*")
+			reply = "once"
+		default:
+			reply = "reject"
+		}
+	default:
+		reply = "reject"
+	}
+	// Answered elsewhere meanwhile: nothing to send.
+	if !turn.resolve(id) {
+		return
+	}
+	body := []core.Prop{core.P("reply", core.JStr(reply))}
+	if message != nil {
+		body = append(body, core.P("message", core.JStr(*message)))
+	}
+	if _, err := h.send("POST", "/permission/"+EscapeData(id)+"/reply", &turn.folder, ptrJSON(core.JObj(body...)), nil, 10*time.Second); err != nil {
+		ocLog(fmt.Sprintf("permission %s - %s", id, ocErrText(err)))
+	}
+	turn.closeRequest(id)
+}
+
+// question goes to the user as it is; the answer is theirs, never made up. A skipped or
+// withdrawn one is rejected, which OpenCode tells the agent.
+func (h *OpenCodeHost) question(turn *ocTurn, req core.JSON) {
+	id, ok := str(req, "id")
+	if !ok {
+		return
+	}
+	cts, reg, ok := h.openRequest(turn, id)
+	if !ok {
+		return
+	}
+	defer reg.Remove()
+	questions := ocQuestionsOf(req)
+	var answers Answers
+	h.mu.Lock()
+	q := h.questioning
+	h.mu.Unlock()
+	if len(questions) > 0 && q != nil {
+		first := questions[0]
+		qs := slices.Clone(questions)
+		ask := AgentAsk{ID: id, Kind: "question", Title: first.Header, Reason: first.Question, Questions: &qs}
+		got := make(chan *Answers, 2)
+		stop := cts.OnCancel(func() { got <- nil })
+		q(turn.getSid(), ask, cts, func(a Answers) { got <- &a })
+		if a := <-got; a != nil && !cts.IsCancelled() {
+			answers = *a
+		}
+		stop.Remove()
+	}
+	if !turn.resolve(id) {
+		return
+	}
+	var err *OcErr
+	if answers != nil && len(*answers) > 0 {
+		var list []core.JSON
+		for _, x := range *answers {
+			var labels []core.JSON
+			for _, l := range x {
+				labels = append(labels, core.JStr(l))
+			}
+			list = append(list, core.JArr(labels...))
+		}
+		_, err = h.send("POST", "/question/"+EscapeData(id)+"/reply", &turn.folder, ptrJSON(core.JObj(core.P("answers", core.JArr(list...)))), nil, 10*time.Second)
+	} else {
+		_, err = h.send("POST", "/question/"+EscapeData(id)+"/reject", &turn.folder, nil, nil, 10*time.Second)
+	}
+	if err != nil {
+		ocLog(fmt.Sprintf("question %s - %s", id, ocErrText(err)))
+	}
+	turn.closeRequest(id)
+}
+
+// MARK: The process
+
+// servers is the MCP servers the server would be started with now.
+func (h *OpenCodeHost) servers() []McpServer {
+	h.mu.Lock()
+	f := h.mcp
+	h.mu.Unlock()
+	return f()
+}
+
+func (h *OpenCodeHost) start(ct *Cancel) *OcErr {
+	h.gate.Lock()
+	defer h.gate.Unlock()
+	if ct.IsCancelled() {
+		return ocCancelledErr
+	}
+	if h.Alive() {
+		return nil
+	}
+	// Read before the start, so the server and what it is said to have agree.
+	mcp := Signature(h.servers())
+	link, err := h.connect(ct, h.t)
+	if err != nil {
+		return err
+	}
+	if link == nil {
+		return ocErr(nil, "OpenCode isn’t installed. "+InstallHint(core.OpenCode))
+	}
+	client, ok := NewHttpClient(link.URL, "opencode", link.Password)
+	if !ok {
+		return ocErr(nil, fmt.Sprintf("OpenCode listened on %s, which Hover can’t reach.", link.URL))
+	}
+	// Hypothesis 1: is the address it printed reachable from Hover's side at all?
+	ocDiagLine(fmt.Sprintf("server says %s; from Hover: %s", link.URL, probeTCP(link.URL)))
+	gen := h.gens.Add(1)
+	at := link.URL
+	h.lmu.Lock()
+	h.live = &ocLive{gen: gen, client: client, kill: link.Kill, errors: link.Errors}
+	h.lmu.Unlock()
+	h.mu.Lock()
+	h.mcpStarted = &mcp
+	clear(h.inventory)
+	h.mu.Unlock()
+	if link.Exited != nil {
+		go func() { <-link.Exited; h.gone(gen) }()
+	}
+	// Its health and version before any task: an API Hover wasn't checked against is a
+	// clear error, not a strange failure later.
+	health := func() *OcErr {
+		hj, err := h.get("/global/health", nil, ct, 5*time.Second)
+		if err != nil {
+			return err
+		}
+		version, _ := str(hj, "version")
+		v, ok := ParseVersion(strings.SplitN(version, "-", 2)[0])
+		if !isTrue(hj.Get("healthy")) || !ok {
+			return ocErr(nil, "OpenCode’s server didn’t say it was healthy.")
+		}
+		least, _ := ParseVersion(OpenCodeMinVersion)
+		if versionLess(v, least) {
+			return ocErr(nil, fmt.Sprintf("OpenCode %s is too old for Hover. %s", version, InstallHint(core.OpenCode)))
+		}
+		ocLog(fmt.Sprintf("server %s at %s", version, strings.TrimRight(strings.TrimPrefix(at, "http://"), "/")))
+		return nil
+	}()
+	if health != nil {
+		out := ""
+		if l := h.liveNow(); l != nil {
+			out = l.errors()
+		}
+		kind := "Cancelled"
+		switch health.Kind {
+		case ocOc:
+			kind = "Oc status None"
+			if health.Status != nil {
+				kind = fmt.Sprintf("Oc status Some(%d)", *health.Status)
+			}
+		case ocNet:
+			kind = "Net"
+		}
+		// A 401 here means some other server (not the one Hover started) has that port.
+		ocDiagLine(fmt.Sprintf("health check of %s failed (%s): %s | sandboxed %t | server output: %s", at, kind, clipDiag(ocErrText(health), 300),
+			SandboxActive(), clipDiag(StripANSI(out), 600)))
+		h.end(nil, "didn't start", "OpenCode stopped.")
+	}
+	return health
+}
+
+// lastTwo is the last two lines of text that aren't blank.
+func lastTwo(text string) []string {
+	var lines []string
+	for _, l := range strings.Split(text, "\n") {
+		if l = strings.TrimSpace(l); l != "" {
+			lines = append(lines, l)
+		}
+	}
+	return lines[max(len(lines)-2, 0):]
+}
+
+// gone: the server exited on its own, and the runs using it fail and say why.
+func (h *OpenCodeHost) gone(gen uint64) {
+	l := h.liveNow()
+	if l == nil || l.gen != gen {
+		return
+	}
+	why := lastTwo(StripANSI(l.errors()))
+	failure := "OpenCode stopped unexpectedly."
+	if len(why) > 0 {
+		failure += " " + strings.Join(why, "\n")
+	}
+	h.end(&gen, "exited - "+strings.Join(why, " / "), failure)
+}
+
+func (h *OpenCodeHost) end(only *uint64, why, failure string) {
+	h.lmu.Lock()
+	live := h.live
+	if live == nil || only != nil && live.gen != *only {
+		h.lmu.Unlock()
+		return
+	}
+	h.live = nil
+	h.lmu.Unlock()
+	h.idle.Add(1)
+	ocLog(why)
+	h.mu.Lock()
+	clear(h.inventory)
+	var turns []*ocTurn
+	for _, t := range h.turns {
+		turns = append(turns, t)
+	}
+	h.mu.Unlock()
+	for _, t := range turns {
+		if t.stopping.Load() {
+			t.done.set(t.stopped())
+		} else {
+			t.done.set(NewResult(core.Failed, failure))
+		}
+		t.stream.Cancel()
+	}
+	live.kill()
+}
+
+func (h *OpenCodeHost) scheduleIdle(after time.Duration) {
+	gen := h.idle.Add(1)
+	time.AfterFunc(after, func() {
+		if h.idle.Load() == gen && h.busy.Load() == 0 {
+			h.end(nil, "idle", "OpenCode stopped.")
+		}
+	})
+}
+
+// MARK: HTTP
+
+func (h *OpenCodeHost) get(path string, folder *string, ct *Cancel, timeout time.Duration) (core.JSON, *OcErr) {
+	return h.send("GET", path, folder, nil, ct, timeout)
+}
+
+// send is one request; an answer that isn't JSON (or none) reads as null. A timeout of 0
+// is 30 s.
+func (h *OpenCodeHost) send(method, path string, folder *string, body *core.JSON, ct *Cancel, timeout time.Duration) (core.JSON, *OcErr) {
+	l := h.liveNow()
+	if l == nil {
+		return core.JNull, ocErr(nil, "OpenCode stopped.")
+	}
+	if timeout == 0 {
+		timeout = 30 * time.Second
+	}
+	var text *string
+	if body != nil {
+		text = sp(body.Compact())
+	}
+	if ct == nil {
+		ct = NewCancel()
+	}
+	began := time.Now()
+	status, answer, herr := l.client.Call(method, ocURL(path, folder), text, timeout, ct)
+	if herr != nil {
+		if herr.Kind != HttpCancelled {
+			ocDiagLine(fmt.Sprintf("%s %s failed after %.2fs: %v", method, path, time.Since(began).Seconds(), herr))
+		}
+		return core.JNull, httpToOc(herr, method, path)
+	}
+	if ocTrace() {
+		ocDiagLine(fmt.Sprintf("%s %s -> %d in %.2fs (%d bytes)", method, path, status, time.Since(began).Seconds(), len(answer)))
+	}
+	if status < 200 || status >= 300 {
+		ocDiagLine(fmt.Sprintf("%s %s -> %d: %s", method, path, status, clipDiag(answer, 400)))
+		n, _ := core.ParseJSON(answer)
+		message := optStr(jget(n, "data"), "message")
+		if message == nil {
+			message = optStr(n, "message")
+		}
+		if message == nil {
+			message = optStr(jget(n, "error"), "message")
+		}
+		if message == nil {
+			message = sp(fmt.Sprintf("OpenCode answered %d to %s %s.", status, method, path))
+		}
+		return core.JNull, ocErr(&status, *message)
+	}
+	if answer == "" {
+		return core.JNull, nil
+	}
+	v, err := core.ParseJSON(answer)
+	if err != nil {
+		return core.JNull, nil
+	}
+	return v, nil
+}
+
+func httpToOc(e *HttpErr, method, path string) *OcErr {
+	switch e.Kind {
+	case HttpCancelled:
+		return ocCancelledErr
+	case HttpTimeout:
+		return ocErr(nil, fmt.Sprintf("OpenCode didn’t answer (%s %s).", method, path))
+	}
+	return &OcErr{Kind: ocNet, Msg: e.Msg}
+}
+
+func ocErrText(e *OcErr) string {
+	if e.Kind == ocCancelled {
+		return "stopped"
+	}
+	return e.Msg
+}
+
+func ocURL(path string, folder *string) string {
+	if folder == nil {
+		return path
+	}
+	sep := "?"
+	if strings.Contains(path, "?") {
+		sep = "&"
+	}
+	return path + sep + "directory=" + EscapeData(*folder)
+}
+
+// jget is a property, null when it is missing.
+func jget(v core.JSON, name string) core.JSON {
+	x, _ := v.Get(name)
+	return x
+}
+
+func ocText(p *string) string {
+	if p == nil {
+		return ""
+	}
+	return *p
+}
+
+// agentsOf is the agents that are objects.
+func agentsOf(agents core.JSON) []core.JSON {
+	var out []core.JSON
+	if agents.Kind() == core.ArrKind {
+		items, _ := agents.Items()
+		for _, a := range items {
+			if a.Kind() == core.ObjKind {
+				out = append(out, a)
+			}
+		}
+	}
+	return out
+}
+
+// ocMine: an assistant message answers this turn's prompt, or came after it.
+func ocMine(turn *ocTurn, messageID string, parentID *string) bool {
+	mid := turn.mid()
+	return mid != "" && (parentID != nil && *parentID == mid || messageID > mid)
+}
+
+func ocFinish(turn *ocTurn) {
+	said := turn.saidText()
+	turn.mu.Lock()
+	errText := turn.errText
+	turn.mu.Unlock()
+	if errText != nil {
+		turn.done.set(NewResult(core.Failed, ocExplain(*errText)))
+		return
+	}
+	refused := turn.refused.Load()
+	if refused && said == "" {
+		turn.done.set(NewResult(core.Failed, "OpenCode wanted to change files or run a command, and it is set to read only (Settings → OpenCode)."))
+		return
+	}
+	// The model's own words can claim it did what read only refused.
+	if refused {
+		said += "\n\n*Hover has OpenCode set to read only, so the changes or commands it tried were refused.*"
+	}
+	if said == "" {
+		said = "Done. OpenCode didn’t leave a summary."
+	}
+	turn.done.set(NewResult(core.Completed, said))
+}
+
+func ocExplain(message string) string {
+	lower := strings.ToLower(message)
+	for _, k := range []string{"api key", "unauthorized", "authentication", "not authenticated"} {
+		if strings.Contains(lower, k) {
+			return message + "\n\n" + SignInHint(core.OpenCode)
+		}
+	}
+	if units(message) > 600 {
+		return headUnits(message, 599) + "…"
+	}
+	return message
+}
+
+func ocErrorText(e core.JSON, ok bool) *string {
+	if !ok {
+		return nil
+	}
+	if m := optStr(jget(e, "data"), "message"); m != nil {
+		return m
+	}
+	if m := optStr(e, "message"); m != nil {
+		return m
+	}
+	return optStr(e, "name")
+}
+
+func ocTitle(prompt string) string {
+	line := firstLine(prompt)
+	if line == "" {
+		line = "Hover task"
+	}
+	return clipTo(line, 60)
+}
+
+// OcPick is the picked model: its provider and id as OpenCode names them, its variants
+// and its context window.
+type OcPick struct {
+	Provider, Model string
+	Variants        []string
+	Limit           *float64
+}
+
+// PickModel is the model the settings name, exactly as OpenCode names it
+// ("provider/model", where the model part may itself have slashes). No model: OpenCode's
+// default (nil). The error says why.
+func PickModel(inv core.JSON, wanted *string) (*OcPick, error) {
+	if wanted == nil {
+		return nil, nil
+	}
+	w := *wanted
+	if slash := strings.IndexByte(w, '/'); slash > 0 {
+		if providers, ok := arr(inv, "providers"); ok {
+			pid, mid := w[:slash], w[slash+1:]
+			for _, p := range providers {
+				if id, _ := str(p, "id"); id != pid {
+					continue
+				}
+				if model, ok := obj(jget(p, "models"), mid); ok {
+					return &OcPick{Provider: pid, Model: mid, Variants: ocVariants(model), Limit: num(jget(model, "limit"), "context")}, nil
+				}
+			}
+		}
+	}
+	return nil, fmt.Errorf("OpenCode doesn’t offer “%s” any more. Pick another model in the model menu.", w)
+}
+
+func ocVariants(model core.JSON) []string {
+	out := []string{}
+	if v, ok := obj(model, "variants"); ok {
+		props, _ := v.Props()
+		for _, p := range props {
+			out = append(out, p.Key)
+		}
+	}
+	return out
+}
+
+// OpenCodeOffers is the tool's offers: every model with its own variants, and the agents
+// a task can use.
+func OpenCodeOffers(inv, agents core.JSON) []core.AcpOption {
+	models := []core.AcpChoice{}
+	if providers, ok := arr(inv, "providers"); ok {
+		for _, p := range providers {
+			pid, ok1 := str(p, "id")
+			list, ok2 := obj(p, "models")
+			if p.Kind() != core.ObjKind || !ok1 || !ok2 {
+				continue
+			}
+			pname, ok := str(p, "name")
+			if !ok {
+				pname = pid
+			}
+			props, _ := list.Props()
+			for _, m := range props {
+				if m.Val.Kind() != core.ObjKind {
+					continue
+				}
+				name, ok := str(m.Val, "name")
+				if !ok {
+					name = m.Key
+				}
+				models = append(models, core.AcpChoice{Value: pid + "/" + m.Key, Name: name + " · " + pname, Levels: ocVariants(m.Val)})
+			}
+		}
+	}
+	modes := []core.AcpChoice{}
+	for _, a := range agentsOf(agents) {
+		mode, _ := str(a, "mode")
+		n, _ := str(a, "name")
+		if (mode == "primary" || mode == "all") && !isTrue(a.Get("hidden")) && n != "" {
+			modes = append(modes, core.AcpChoice{Value: n, Name: capFirst(n)})
+		}
+	}
+	return []core.AcpOption{
+		{ID: "model", Category: sp("model"), Choices: models},
+		{ID: "agent", Category: sp("mode"), Choices: modes},
+	}
+}
+
+// OpenCodeRules is the session's rules for the tool access picked. OpenCode applies the
+// last rule that matches, so the agent's own deny rules (the user's config and the
+// agent's, Plan's no-edit for one) go after Hover's and always win: Full never undoes a
+// deny. Read only is enforced by the server, not by trusting the agent's name.
+func OpenCodeRules(o core.AgentOptions, agents core.JSON, agent string) core.JSON {
+	var r [][3]string
+	add := func(p, pat, a string) { r = append(r, [3]string{p, pat, a}) }
+	switch {
+	case o.ReadOnly:
+		// Everything but reading asks, and Hover turns every ask down in read only
+		// (permission), so the server runs no edit, command, subagent, MCP or custom tool,
+		// and nothing outside the folder. They are asked about rather than denied: a deny
+		// hides the tool, and OpenCode's free models refused a request whose tools didn't
+		// look like OpenCode's own.
+		add("*", "*", "ask")
+		for _, p := range []string{"read", "glob", "grep", "list", "lsp", "codesearch", "webfetch", "websearch", "todoread", "todowrite", "skill", "question"} {
+			add(p, "*", "allow")
+		}
+		add("read", "*.env", "deny")
+		add("read", "*.env.*", "deny")
+		for _, p := range []string{"edit", "bash", "task", "external_directory", "doom_loop"} {
+			add(p, "*", "ask")
+		}
+	case o.Approval == core.Autopilot:
+		add("*", "*", "allow")
+		add("external_directory", "*", "allow")
+		// OpenCode's own safety stop for a tool called over and over stays.
+		add("doom_loop", "*", "ask")
+	default:
+		// T3's Supervised set, with edits in the folder let through for Ask first.
+		add("*", "*", "ask")
+		for _, p := range []string{"read", "glob", "grep", "list", "lsp", "skill", "todoread", "todowrite", "question"} {
+			add(p, "*", "allow")
+		}
+		add("read", "*.env", "ask")
+		add("read", "*.env.*", "ask")
+		add("read", "*.env.example", "allow")
+		if o.Approval == core.Risky {
+			add("edit", "*", "allow")
+		} else {
+			add("edit", "*", "ask")
+		}
+		for _, p := range []string{"bash", "webfetch", "websearch", "codesearch", "external_directory", "doom_loop", "task"} {
+			add(p, "*", "ask")
+		}
+	}
+	for _, a := range agentsOf(agents) {
+		if n, _ := str(a, "name"); n != agent {
+			continue
+		}
+		own, ok := arr(a, "permission")
+		if !ok {
+			break
+		}
+		var list []core.JSON
+		for _, x := range own {
+			if x.Kind() == core.ObjKind {
+				list = append(list, x)
+			}
+		}
+		// Only a deny that is the agent's own last word: OpenCode's defaults deny the
+		// question tool and allow it again further down, and that allow wins.
+		for i, x := range list {
+			action, _ := str(x, "action")
+			p, ok1 := str(x, "permission")
+			pat, ok2 := str(x, "pattern")
+			if action != "deny" || !ok1 || !ok2 {
+				continue
+			}
+			undone := slices.ContainsFunc(list[i+1:], func(y core.JSON) bool {
+				ya, _ := str(y, "action")
+				return ya != "deny" && OcMatches(p, optStr(y, "permission")) && OcMatches(pat, optStr(y, "pattern"))
+			})
+			if !undone {
+				add(p, pat, "deny")
+			}
+		}
+		break
+	}
+	out := make([]core.JSON, len(r))
+	for i, x := range r {
+		out[i] = core.JObj(core.P("permission", core.JStr(x[0])), core.P("pattern", core.JStr(x[1])), core.P("action", core.JStr(x[2])))
+	}
+	return core.JArr(out...)
+}
+
+// OcMatches is OpenCode's wildcard: * is any run of characters (newlines too), the rest
+// is literal.
+func OcMatches(value string, pattern *string) bool {
+	if pattern == nil {
+		return false
+	}
+	v, p := []rune(value), []rune(*pattern)
+	i, j, star, mark := 0, 0, -1, 0
+	for i < len(v) {
+		switch {
+		case j < len(p) && p[j] != '*' && p[j] == v[i]:
+			i++
+			j++
+		case j < len(p) && p[j] == '*':
+			star, mark = j, i
+			j++
+		case star >= 0:
+			j = star + 1
+			mark++
+			i = mark
+		default:
+			return false
+		}
+	}
+	for j < len(p) && p[j] == '*' {
+		j++
+	}
+	return j == len(p)
+}
+
+// OcKindOf is OpenCode's tools as ACP's kinds, which the office draws.
+func OcKindOf(tool string) string {
+	switch tool {
+	case "read":
+		return "read"
+	case "write", "edit", "multiedit", "patch", "apply_patch":
+		return "edit"
+	case "bash", "shell":
+		return "execute"
+	case "glob", "grep", "list", "codesearch":
+		return "search"
+	case "webfetch", "websearch":
+		return "fetch"
+	case "todowrite", "todoread":
+		return "think"
+	case "task":
+		return "agent"
+	}
+	return "other"
+}
+
+// OcUnified is a unified diff (OpenCode's edit metadata) as a step's preview: each
+// hunk's "@@ -old +new @@" (the numbers of its first line), then its lines as "- ", "+ "
+// and "  ", up to 400; and the lines added and removed. False when none changed.
+func OcUnified(diff string) (added, removed int32, preview string, ok bool) {
+	var out []string
+	inHunk := false
+	for _, l := range strings.Split(strings.ReplaceAll(diff, "\r", ""), "\n") {
+		if hunk, ok := strings.CutPrefix(l, "@@ "); ok {
+			// The first two words, of which those that parse.
+			var nums []int64
+			f := strings.Fields(hunk)
+			for _, part := range f[:min(len(f), 2)] {
+				if n, err := strconv.ParseInt(strings.SplitN(strings.TrimLeft(part, "-+"), ",", 2)[0], 10, 64); err == nil {
+					nums = append(nums, n)
+				}
+			}
+			if len(nums) == 2 {
+				out = append(out, fmt.Sprintf("@@ -%d +%d @@", nums[0], nums[1]))
+				inHunk = true
+			}
+			continue
+		}
+		if !inHunk || strings.HasPrefix(l, "+++") || strings.HasPrefix(l, "---") || strings.HasPrefix(l, `\`) || l == "" {
+			continue
+		}
+		var tag string
+		switch l[0] {
+		case '+':
+			added++
+			tag = "+ "
+		case '-':
+			removed++
+			tag = "- "
+		case ' ':
+			tag = "  "
+		default:
+			continue
+		}
+		if len(out) < 400 {
+			out = append(out, tag+clipTo(strings.TrimRightFunc(l[1:], unicode.IsSpace), 160))
+		}
+	}
+	if added+removed == 0 {
+		return 0, 0, "", false
+	}
+	return added, removed, strings.Join(out, "\n"), true
+}
+
+// ocChange is an edit's lines added and removed, from its old and new text.
+func ocChange(input core.JSON) (int32, int32, string, bool) {
+	old := optStr(input, "oldString")
+	nw := optStr(input, "newString")
+	if nw == nil {
+		nw = optStr(input, "content")
+	}
+	if nw == nil {
+		return 0, 0, "", false
+	}
+	return DiffOf(core.JObj(core.P("content", core.JArr(core.JObj(core.P("type", core.JStr("diff")), core.P("oldText", core.JOptStr(old)), core.P("newText", core.JStr(*nw)))))))
+}
+
+func ocQuestionsOf(req core.JSON) []AgentQuestion {
+	list, ok := arr(req, "questions")
+	if !ok {
+		return nil
+	}
+	var out []AgentQuestion
+	for _, q := range list {
+		if q.Kind() != core.ObjKind {
+			continue
+		}
+		header, ok := str(q, "header")
+		if !ok {
+			header = "Question"
+		}
+		question, _ := str(q, "question")
+		options := [][2]string{}
+		if o, ok := arr(q, "options"); ok {
+			for _, x := range o {
+				if x.Kind() != core.ObjKind {
+					continue
+				}
+				label, _ := str(x, "label")
+				desc, _ := str(x, "description")
+				if label != "" {
+					options = append(options, [2]string{label, desc})
+				}
+			}
+		}
+		custom := true
+		if c, ok := q.Get("custom"); ok {
+			if b, err := c.Bool(); err == nil && !b {
+				custom = false
+			}
+		}
+		out = append(out, AgentQuestion{Header: header, Question: question, Options: options, Multiple: isTrue(q.Get("multiple")), Custom: custom})
+	}
+	return out
+}
+
+// OcDescribe is OpenCode's permission request as the notch and the office show it.
+func OcDescribe(req core.JSON, folder string) AgentAsk {
+	permission, ok := str(req, "permission")
+	if !ok {
+		permission = "tool"
+	}
+	meta, ok := obj(req, "metadata")
+	if !ok {
+		meta = core.JNull
+	}
+	var pattern *string
+	if ps, ok := arr(req, "patterns"); ok {
+		for _, p := range ps {
+			if x, ok := p.AsStr(); ok && x != "" {
+				pattern = &x
+				break
+			}
+		}
+	}
+	id, ok := str(req, "id")
+	if !ok {
+		id = core.GUIDN()
+	}
+	kind, title := "other", capFirst(permission)
+	var command, path, preview *string
+	var added, removed int32
+	m := func(k string) *string { return optStr(meta, k) }
+	or := func(a ...*string) *string {
+		for _, x := range a {
+			if x != nil {
+				return x
+			}
+		}
+		return nil
+	}
+	switch permission {
+	case "bash":
+		kind, title, command = "execute", "Run a command", or(m("command"), pattern)
+	case "edit":
+		kind, title = "edit", "Edit a file"
+		path = or(m("filepath"), m("filePath"), pattern)
+		if diff := m("diff"); diff != nil {
+			var changed []string
+			for _, l := range strings.Split(strings.ReplaceAll(*diff, "\r", ""), "\n") {
+				if strings.HasPrefix(l, "+") && !strings.HasPrefix(l, "+++") || strings.HasPrefix(l, "-") && !strings.HasPrefix(l, "---") {
+					changed = append(changed, l)
+				}
+			}
+			var shown []string
+			for _, l := range changed {
+				if l[0] == '+' {
+					added++
+				} else {
+					removed++
+				}
+				if len(shown) < 6 {
+					shown = append(shown, l[:1]+" "+clipTo(strings.TrimSpace(l[1:]), 110))
+				}
+			}
+			preview = sp(strings.Join(shown, "\n"))
+		}
+	case "webfetch", "websearch", "codesearch":
+		kind, title, command = "fetch", "Use the network", or(m("url"), m("query"), pattern)
+	case "read":
+		kind, title, path = "read", "Read a file", or(m("filePath"), pattern)
+	case "external_directory":
+		title, path = "Work outside the folder", pattern
+	case "task":
+		title, command = "Start a subagent", pattern
+	case "doom_loop":
+		title = "Repeat the same tool call"
+	}
+	outside := permission == "external_directory"
+	if path != nil && *path != "" {
+		p := *path
+		var full string
+		if FullyQualified(p) {
+			full = Full(p)
+		} else {
+			full = Full(folder + "/" + strings.TrimRight(p, "*"))
+		}
+		sep := "/"
+		if runtime.GOOS == "windows" {
+			sep = `\`
+		}
+		root := strings.TrimRight(Full(folder), `\/`) + sep
+		boundary := len(full) == len(root) || len(full) > len(root) && utf8.RuneStart(full[len(root)])
+		if boundary && strings.ToLower(full[:len(root)]) == strings.ToLower(root) {
+			path = sp(strings.ReplaceAll(full[len(root):], `\`, "/"))
+		} else {
+			outside = true
+		}
+	}
+	danger := permission == "doom_loop" || command != nil && Destructive(*command)
+	n := added + removed
+	var reason string
+	switch kind {
+	case "execute":
+		switch {
+		case danger:
+			reason = "Can delete or overwrite things"
+		case command != nil && Network(*command):
+			reason = "Installs packages or uses the network"
+		default:
+			reason = "Runs a command"
+		}
+	case "edit":
+		switch {
+		case outside:
+			reason = "Edits a file outside the folder"
+		case n > 0:
+			reason = fmt.Sprintf("Changes %d line%s", n, map[bool]string{true: "", false: "s"}[n == 1])
+		default:
+			reason = "Edits a file"
+		}
+	case "fetch":
+		reason = "Uses the network"
+	case "read":
+		reason = "Reads a file your OpenCode rules protect"
+	default:
+		switch permission {
+		case "external_directory":
+			reason = "Reaches outside the folder"
+		case "doom_loop":
+			reason = "OpenCode saw it call the same tool again and again"
+		case "task":
+			reason = "Hands part of the task to a subagent"
+		default:
+			reason = "Uses a tool"
+		}
+	}
+	if outside && kind != "edit" && kind != "other" {
+		reason += " · outside the folder"
+	}
+	if command != nil {
+		if *command == "" {
+			command = nil
+		} else {
+			command = sp(clipTo(*command, 400))
+		}
+	}
+	return AgentAsk{ID: id, Kind: kind, Title: title, Command: command, Path: path, Preview: preview, Added: added, Removed: removed, Reason: reason, Danger: danger}
+}
+
+var msgIDs struct {
+	sync.Mutex
+	ms, n uint64
+}
+
+// NewMessageID is a message id in OpenCode's own form (msg_, 12 hex digits of time, 14
+// random characters), later than any before it, so the server orders it last. As T3
+// makes it.
+func NewMessageID() string {
+	msgIDs.Lock()
+	now := uint64(time.Now().UnixMilli())
+	if now > msgIDs.ms {
+		msgIDs.ms, msgIDs.n = now, 0
+	}
+	msgIDs.n++
+	ms, n := msgIDs.ms, msgIDs.n
+	msgIDs.Unlock()
+	t := (ms*0x1000 + n) & 0xFFFF_FFFF_FFFF
+	const alphabet = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+	var r [14]byte
+	if _, err := rand.Read(r[:]); err != nil {
+		panic("the system has no randomness")
+	}
+	for i, b := range r {
+		r[i] = alphabet[int(b)%len(alphabet)]
+	}
+	return fmt.Sprintf("msg_%012x%s", t, r[:])
+}
+
+// ocLaunch is OpenCodeHost.Launch: "opencode serve" hidden, in the group that goes with
+// Hover, its URL read from what it prints ("listening on http://127.0.0.1:port").
+func ocLaunch(ct *Cancel, t OpenCodeTimeouts, boxed *Boxed, servers []McpServer) (*OpenCodeLink, *OcErr) {
+	exe := Exe(core.OpenCode)
+	if exe == "" {
+		ocDiagLine("no opencode binary found (PATH, ~/.local/bin, ~/.opencode/bin)")
+		return nil, nil
+	}
+	launched := time.Now()
+	var pw [24]byte
+	if _, err := rand.Read(pw[:]); err != nil {
+		panic("the system has no randomness")
+	}
+	password := strings.ToUpper(fmt.Sprintf("%x", pw[:]))
+	// In the sandbox, for the folders its sessions use (sandbox.go), when it is wanted.
+	// Hover reaches the server from outside it, on this PC's loopback.
+	folders := SandboxFolders()
+	start := SandboxPlan(core.OpenCode, exe, Arguments(core.OpenCode), nil, folders)
+	note := ""
+	if start.Boxed && runtime.GOOS == "linux" {
+		note = " - on Linux srt starts it under bwrap --unshare-net: its own network namespace and loopback"
+	}
+	ocDiagLine(fmt.Sprintf("launch: exe %s | sandboxed %t (%d folder(s))%s | runs %s %s", exe, start.Boxed, len(folders), note, start.Exe, clipDiag(strings.Join(start.Args, " "), 500)))
+	if start.Boxed {
+		boxed.Started(folders, true)
+	} else {
+		boxed.Started(nil, false)
+	}
+	cmd := Hidden(start.Exe, start.Args...)
+	cmd.Dir = Home()
+	for _, kv := range start.Env {
+		cmd.Env = append(cmd.Env, kv[0]+"="+kv[1])
+	}
+	cmd.Env = append(cmd.Env, "OPENCODE_SERVER_PASSWORD="+password,
+		// The question tool, which Hover answers in the notch and the office.
+		"OPENCODE_ENABLE_QUESTION_TOOL=1")
+	// Hover's MCP servers (Cua Driver for computer use, Hover's browser), as inline config
+	// over the user's and the project's, so no opencode.json is written.
+	var existing *string
+	if v, ok := os.LookupEnv("OPENCODE_CONFIG_CONTENT"); ok {
+		existing = &v
+	}
+	if inline := OpencodeConfig(servers, existing); inline != nil {
+		cmd.Env = append(cmd.Env, "OPENCODE_CONFIG_CONTENT="+*inline)
+	}
+	g, err := Spawn(cmd)
+	if err != nil {
+		return nil, ocErr(nil, fmt.Sprintf("OpenCode couldn’t start: %v", err))
+	}
+	stdin, stdout, stderr := g.TakePipes()
+	if stdin != nil {
+		stdin.Close()
+	}
+	ocLog(fmt.Sprintf("started (pid %d)", g.Pid()))
+	var tmu sync.Mutex
+	tail := ""
+	type got struct {
+		url string
+		err string
+	}
+	ready := make(chan got, 16)
+	tell := func(x got) {
+		select {
+		case ready <- x:
+		default:
+		}
+	}
+	// Both pipes are read to the end, so the server never blocks on a full one.
+	keep := func(pipe *os.File, name string) {
+		if pipe == nil {
+			return
+		}
+		go func() {
+			defer pipe.Close()
+			r := bufio.NewReader(pipe)
+			shown := 0
+			for {
+				b, err := r.ReadBytes('\n')
+				if len(b) == 0 && err != nil {
+					return
+				}
+				line := strings.TrimRight(core.Lossy(b), "\r\n")
+				// The server's first lines (and all of them when tracing): where it
+				// listens, or why it doesn't.
+				if shown < 20 || ocTrace() {
+					shown++
+					ocDiagLine(name + ": " + clipDiag(StripANSI(line), 400))
+				}
+				tmu.Lock()
+				tail += line + "\n"
+				if over := len(tail) - 8192; over > 0 {
+					for over < len(tail) && !utf8.RuneStart(tail[over]) {
+						over++
+					}
+					tail = tail[over:]
+				}
+				tmu.Unlock()
+				if at := strings.Index(strings.ToLower(line), "listening on "); at >= 0 {
+					if u := strings.TrimSpace(StripANSI(line[at+13:])); strings.HasPrefix(u, "http://") {
+						tell(got{url: u})
+					}
+				}
+				if err != nil {
+					return
+				}
+			}
+		}()
+	}
+	keep(stdout, "stdout")
+	keep(stderr, "stderr")
+	exited := make(chan struct{})
+	go func() {
+		for {
+			if _, ok := g.WaitTimeout(500 * time.Millisecond); ok {
+				break
+			}
+		}
+		tell(got{err: "OpenCode stopped before its server started."})
+		close(exited)
+	}()
+	tailNow := func() string {
+		tmu.Lock()
+		defer tmu.Unlock()
+		return tail
+	}
+	why := func() string { return strings.Join(lastTwo(tailNow()), " / ") }
+	until := time.Now().Add(t.Start)
+	var u string
+	var failed *string
+	for failed == nil && u == "" {
+		if ct.IsCancelled() {
+			g.Kill()
+			return nil, ocCancelledErr
+		}
+		left := time.Until(until)
+		if left <= 0 {
+			failed = sp(fmt.Sprintf("OpenCode’s server didn’t start within %.0f s. %s", t.Start.Seconds(), why()))
+			break
+		}
+		select {
+		case x := <-ready:
+			if x.err == "" {
+				u = x.url
+			} else {
+				time.Sleep(100 * time.Millisecond)
+				failed = sp(strings.TrimSpace(x.err + " " + why()))
+			}
+		case <-time.After(min(left, 100*time.Millisecond)):
+		}
+	}
+	if failed != nil {
+		ocDiagLine(fmt.Sprintf("launch failed after %.2fs: %s", time.Since(launched).Seconds(), clipDiag(*failed, 400)))
+		g.Kill()
+		return nil, ocErr(nil, *failed)
+	}
+	ocDiagLine(fmt.Sprintf("listening on %s after %.2fs", u, time.Since(launched).Seconds()))
+	if host, _, ok := HostPort(u); !ok || !IsLoopback(host) {
+		g.Kill()
+		return nil, ocErr(nil, fmt.Sprintf("OpenCode listened on %s, not on this PC only.", u))
+	}
+	return &OpenCodeLink{URL: u, Password: password, Kill: g.Kill, Errors: tailNow, Exited: exited}, nil
 }
