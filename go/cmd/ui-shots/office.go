@@ -116,6 +116,14 @@ func (r *rig) open() error {
 
 // shot saves the notch's window (1200 x h logical) at 1x over the desktop colour.
 func (r *rig) shot(dir, name string, h int) error {
+	// What the view asks of the app while it draws (its size, say) is done between draws.
+	for i := 0; i < 3; i++ {
+		r.pump()
+		r.s.UpdateRest()
+		if _, err := render(1200, h, 1, color.NRGBA{A: 255}, r.win.draw); err != nil {
+			return err
+		}
+	}
 	r.pump()
 	r.s.UpdateRest()
 	img, err := render(1200, h, 1, color.NRGBA{R: 0x3a, G: 0x4a, B: 0x5e, A: 255}, r.win.draw)
@@ -148,7 +156,22 @@ func officeShots(dir string) error {
 	if err := r.shot(dir, "notch-open-office.png", 480); err != nil {
 		return err
 	}
+	// A session that has finished, opened in the drawer.
 	r.hold(false)
+	time.Sleep(600 * time.Millisecond)
+	r.pump()
+	all := r.hv.Sessions.All()
+	if len(all) == 0 {
+		return fmt.Errorf("no session to open")
+	}
+	r.s.OpenSession(all[0].ID)
+	for i := 0; i < 8; i++ {
+		time.Sleep(100 * time.Millisecond)
+		r.pump()
+	}
+	if err := r.shot(dir, "office-drawer.png", 480); err != nil {
+		return err
+	}
 	return nil
 }
 

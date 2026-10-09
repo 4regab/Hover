@@ -268,3 +268,6 @@ func (c *Ctx) Text(s string, x, y float32, b TextBox) (w, h float32) {
 	}
 	return w, h
 }
+
+// PixelifyTTF is the bundled Pixelify Sans, for the chat's own fonts.
+func PixelifyTTF() []byte { return pixelify }

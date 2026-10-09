@@ -13,6 +13,7 @@ import (
 
 	"github.com/4regab/Hover/go/internal/agents"
 	"github.com/4regab/Hover/go/internal/app"
+	"github.com/4regab/Hover/go/internal/chat"
 	"github.com/4regab/Hover/go/internal/core"
 	"github.com/4regab/Hover/go/internal/music"
 	"github.com/4regab/Hover/go/internal/notch"
@@ -77,6 +78,34 @@ type officePage struct {
 	thumbs         map[string]*ui.Thumb
 	confirm        ui.ConfirmProps
 	panel          string
+
+	// The open chat.
+	thread        *chatThread
+	turns         []chat.Turn
+	threadW       float32
+	threadH       float32
+	drafts        map[int32]draft
+	chips         map[int32][]core.Chip
+	picks         map[string]*qPicks
+	reply         string
+	replyGen      int
+	compose       bool
+	pop           *popState
+	popRows       []ui.PopRow
+	popPickable   bool
+	dmenu         bool
+	dfly          int
+	renaming      bool
+	editors       []ui.MOpt
+	switchTo      []ui.MOpt
+	noteActs      []string
+	moreActs      []string
+	branch        branch
+	confirmKey    *confirmKey
+	confirmRewind *rewindAsk
+	rewinding     bool
+	startMenu     int
+	listOpen      bool
 }
 
 func (s *Shell) pg() *officePage { return &s.page }
@@ -275,14 +304,15 @@ func (s *Shell) officeFrame() {
 		var tags []ui.OfficeTag
 		for _, t := range out.Tags {
 			ask := false
+			var askD ui.AskData
 			for _, a := range asking {
 				if int64(a.ID) == t.ID {
-					ask = true
+					ask, askD = true, s.askData(&a.Ask, a.Count)
 				}
 			}
 			tags = append(tags, ui.OfficeTag{
 				ID: t.ID, X: float32(t.X), Y: float32(t.Y), Name: t.Name, Color: ui.RGB(rgb24(t.Color)), Tool: toolName(t.Tool),
-				ToolColor: toolColor(t.Tool), Text: t.Text, Stage: int(t.Stage), Hot: t.Hot, ToolID: t.Tool, Asking: ask,
+				ToolColor: toolColor(t.Tool), Text: t.Text, Stage: int(t.Stage), Hot: t.Hot, ToolID: t.Tool, Asking: ask, Ask: askD,
 			})
 		}
 		p.tags = tags
@@ -353,13 +383,40 @@ func (s *Shell) officeClick(c office.Click) {
 	}
 }
 
-// Slices still to come: the desk card, the panels, the drawer and the new-task box. Their
-// entry points are here so the scene's clicks have somewhere to go.
-func (s *Shell) openSession(int32)                    {}
 func (s *Shell) deskOpenCard(int32, float32, float32) {}
-func (s *Shell) openPanel(string)                     {}
-func (s *Shell) newTask()                             {}
-func (s *Shell) officeNothing()                       {}
+func (s *Shell) deskLeave()                           {}
+func (s *Shell) officeNothing() {
+	p := s.pg()
+	switch {
+	case p.fab != 0:
+		p.fab = 0
+		s.invalidateAll()
+	case p.open >= 0:
+		s.closeDrawer()
+	case p.panel != "":
+		s.openPanel("")
+	}
+}
+
+// newTask is a click on the new-task sign in the room: the circle opens its logos.
+func (s *Shell) newTask() {
+	s.deskLeave()
+	s.closeDrawer()
+	s.openPanel("")
+	s.pg().fab = 1
+	s.invalidateAll()
+}
+
+// openPanel opens the board, the overview or the history (name "" for none).
+func (s *Shell) openPanel(name string) {
+	p := s.pg()
+	if p.panel == name {
+		return
+	}
+	p.panel = name
+	s.send(office.InPanel{P: name})
+	s.invalidateAll()
+}
 
 // Toast shows a line at the top for 2.8 s.
 func (s *Shell) Toast(text string) {
@@ -384,6 +441,8 @@ func (s *Shell) officeProps(which int) *ui.OfficeProps {
 		op.OverColor = ui.RGB(rgb24(p.ocol))
 	}
 	s.newTaskProps(op)
+	s.chatProps(op, which)
+	op.Panel = map[string]int{"board": 1, "tv": 2, "history": 3}[p.panel]
 	return op
 }
 
@@ -451,26 +510,12 @@ func (s *Shell) officeEvents(evs []ui.OfficeEvent, which int) {
 	}
 }
 
-// officeEscape is OfficeView.escape for what is ported: a menu goes first; then the notch
-// folds (the app window has nothing to fold).
-func (s *Shell) officeEscape(which int) {
-	p := s.pg()
-	if p.menu {
-		p.menu = false
-		s.invalidateAll()
-		return
-	}
-	if which == 0 {
-		s.Collapse()
-	}
-}
-
 // MARK: The page's localStorage (office.beats, office.view, office.time)
 
-func localFile() string { return filepath.Join(core.Support(), "office.json") }
+func localStoreFile() string { return filepath.Join(core.Support(), "office.json") }
 
 func localGet(key string) (string, bool) {
-	b, err := os.ReadFile(localFile())
+	b, err := os.ReadFile(localStoreFile())
 	if err != nil {
 		return "", false
 	}
@@ -487,12 +532,12 @@ func localGet(key string) (string, bool) {
 // they were set. Both read either.
 func localSet(key, value string) {
 	m := map[string]string{}
-	if b, err := os.ReadFile(localFile()); err == nil {
+	if b, err := os.ReadFile(localStoreFile()); err == nil {
 		_ = json.Unmarshal(b, &m)
 	}
 	m[key] = value
 	if b, err := json.Marshal(m); err == nil {
-		_ = os.WriteFile(localFile(), b, 0o644)
+		_ = os.WriteFile(localStoreFile(), b, 0o644)
 	}
 }
 
@@ -611,18 +656,9 @@ func (s *Shell) drawOffice(c *ui.Ctx, w, h float32, dashboard bool) {
 	}
 }
 
-// Slices still to come: the chat and the files.
-func (s *Shell) newChat()    {}
-func (s *Shell) openFolder() {}
-
 // Slices still to come, so what is already written has somewhere to go.
-func (s *Shell) deskLeave()                        {}
-func (s *Shell) closeDrawer()                      {}
-func (s *Shell) chatView() bool                    { return false }
-func (s *Shell) composeOpen()                      {}
-func (s *Shell) officeActMore(ui.OfficeEvent, int) {}
-func (s *Shell) focusNewTask()                     { s.ovwN.FocusNewTask(); s.ovwD.FocusNewTask() }
-func (s *Shell) focusRepoSearch()                  { s.ovwN.FocusRepoSearch(); s.ovwD.FocusRepoSearch() }
+func (s *Shell) focusNewTask()    { s.ovwN.FocusNewTask(); s.ovwD.FocusNewTask() }
+func (s *Shell) focusRepoSearch() { s.ovwN.FocusRepoSearch(); s.ovwD.FocusRepoSearch() }
 
 // OfficeReady says the office has drawn its first picture (the shots wait for it).
 func (s *Shell) OfficeReady() bool { return s.page.scene != nil }
@@ -637,3 +673,18 @@ func anyOf(j core.JSON) any {
 	_ = json.Unmarshal([]byte(j.Compact()), &v)
 	return v
 }
+
+// The desk's card and panel (desk_ui.rs) are a later slice.
+func (s *Shell) deskImageArrived(string)          {}
+func (s *Shell) deskFiles(int32) ([]string, bool) { return nil, false }
+func (s *Shell) deskOpenTab(int32, string)        {}
+func (s *Shell) deskDetails(int32)                {}
+func (s *Shell) deskCardOpen() bool               { return false }
+func (s *Shell) deskCardClose()                   {}
+func (s *Shell) deskPanelOpen() bool              { return false }
+func (s *Shell) deskPanelClose()                  {}
+func (s *Shell) panelAct(ui.OfficeEvent, int)     {}
+func (s *Shell) voiceLine() string                { return "" }
+
+// OpenSession opens that session's chat in the drawer (the shots do it without a click).
+func (s *Shell) OpenSession(id int32) { s.openSession(id) }

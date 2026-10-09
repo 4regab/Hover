@@ -123,7 +123,15 @@ func New(hover *app.Hover, env Env, look core.Look) (*Shell, error) {
 			}
 		})
 	})
-	hover.OnSessions(func() { env.UIDo(func() { s.UpdateRest(); s.officeChanged() }) })
+	hover.OnSessions(func() {
+		env.UIDo(func() {
+			s.UpdateRest()
+			s.officeChanged()
+			if s.page.open >= 0 {
+				s.paintThread()
+			}
+		})
+	})
 	// Kiro's credits are counted from now, off this thread, so its page opens with them.
 	_ = hover.Credits.View()
 	// The notch shows an ending as its own island (the tool's logo, a badge and the task);

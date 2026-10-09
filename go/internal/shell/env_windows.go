@@ -45,6 +45,7 @@ func SystemEnv() Env {
 		PickThemeFile:  func() (string, bool) { return win.PickThemeFile(owner()) },
 		PickImage:      func() (string, bool) { return win.PickImage(owner()) },
 		ClipboardImage: win.ClipboardImage,
+		SetClipboard:   func(t string) { win.SetClipboardText(t) },
 
 		NewNotch: func() (Window, NotchPlat, error) {
 			w, err := win.NewWindow(win.Options{Kind: win.KindNotch, Title: "Hover notch", W: 120, H: 40})

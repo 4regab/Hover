@@ -131,10 +131,13 @@ func (c *Ctx) Glass(bd *Backdrop, x, y, w, h, radius float32, edge bool) {
 }
 
 // Graphite is the chat's and the side panel's panel: a neutral graphite, not glass.
-func (c *Ctx) Graphite(x, y, w, h float32) {
-	c.Shadow(x, y, w, h, R(20), 60, 0, 30, RGBA(0x000000b3))
-	c.Gradient(x, y, w, h, R(20), 180, RGBA(0x131116f7), RGBA(0x0d0c0ffa))
-	c.Border(x, y, w, h, R(20), 1, RGBA(0xffffff14))
+func (c *Ctx) Graphite(x, y, w, h float32) { c.GraphiteR(x, y, w, h, 20) }
+
+// GraphiteR is Graphite with its own corner radius.
+func (c *Ctx) GraphiteR(x, y, w, h, r float32) {
+	c.Shadow(x, y, w, h, R(r), 60, 0, 30, RGBA(0x000000b3))
+	c.Gradient(x, y, w, h, R(r), 180, RGBA(0x131116f7), RGBA(0x0d0c0ffa))
+	c.Border(x, y, w, h, R(r), 1, RGBA(0xffffff14))
 }
 
 var _ color.NRGBA

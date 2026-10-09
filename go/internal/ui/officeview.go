@@ -80,6 +80,13 @@ type OfficeProps struct {
 	MM        ModelMenuProps
 	Confirm   ConfirmProps
 	Notice    bool
+	D         ChatProps
+	// Panel: 0 none, 1 the board, 2 the overview, 3 the history. DeskPanel and DeskW: the desk's panel.
+	Panel     int
+	DeskPanel bool
+	DeskW     float32
+	// ChatX and ChatW: where the chat view puts the chat.
+	ChatX, ChatW float32
 }
 
 // OfficeEventKind is what the office asks of the app (the Office global's callbacks).
@@ -120,6 +127,9 @@ type OfficeView struct {
 	asks       map[string]*askState
 	nt         newTaskState
 	mn         menusState
+	ch         chatState
+	chipT      [2]Touch
+	vw, vh     float32
 	repoScroll Scroll
 	menuBtn    Touch
 	menuAway   Touch
@@ -152,6 +162,7 @@ func (c *Ctx) imageScaled(im paint.ImageOp, px, py, sx, sy float32) {
 // Layout draws the office in w x h and returns what was asked since the last frame.
 func (o *OfficeView) Layout(c *Ctx, w, h float32, p *OfficeProps) []OfficeEvent {
 	o.ev = o.ev[:0]
+	o.vw, o.vh = w, h
 	compact := h <= 620
 	if o.tags == nil {
 		o.tags = map[int64]*Touch{}
@@ -193,6 +204,16 @@ func (o *OfficeView) Layout(c *Ctx, w, h float32, p *OfficeProps) []OfficeEvent 
 		o.hud(c, w, h, compact, p)
 	}
 	o.newTask(c, w, h, compact, p)
+	if p.D.Open {
+		gap := If[float32](compact, 8, 12)
+		sw := min(If[float32](compact, 360, 400), w-2*gap)
+		if p.Chat {
+			// The chat view's own layout fills what the list and the details leave.
+			o.chatPane(c, p, p.ChatX, 0, p.ChatW, h, 0, compact)
+		} else {
+			o.chatPane(c, p, w-sw-gap, gap, sw, h-2*gap, If[float32](compact, 16, 20), compact)
+		}
+	}
 	if p.ModelMenu != 0 {
 		o.modelMenu(c, w, h, p)
 	} else {
@@ -415,36 +436,46 @@ func (o *OfficeView) tip(c *Ctx, p *OfficeProps, w float32) {
 // history, Settings).
 func (o *OfficeView) hud(c *Ctx, w, h float32, compact bool, p *OfficeProps) {
 	m := If[float32](compact, 10, 16)
+	gap := If[float32](compact, 8, 12)
+	side := min(If[float32](compact, 360, 400), w-2*gap)
+	if p.DeskPanel {
+		side = p.DeskW
+	}
+	// Under the drawer and the panels: only the part they leave free shows.
+	open := p.D.Open || p.Panel != 0 || p.DeskPanel
+	showBtn := !open || w-gap-side > w-m
 	bh := If[float32](compact, 32, 40)
 	pad := If[float32](compact, 2, 3)
 	sw, sh := If[float32](compact, 28, 34), If[float32](compact, 28, 32)
 	gw := sw + 2*pad
 	gx, gy := w-gw-m, m
-	c.Glass(p.Backdrop, gx, gy, gw, bh, If[float32](compact, 10, 13), true)
-	// SegButton: the icon in a quiet square.
-	clicked := o.menuBtn.Update(c)
-	bx, by := gx+pad, gy+pad
-	hov := o.menuBtn.Hovered()
-	switch {
-	case p.Menu:
-		c.Box(bx, by, sw, sh, R(If[float32](compact, 8, 10)), RGBA(0xffffff1f))
-	case hov:
-		c.Box(bx, by, sw, sh, R(If[float32](compact, 8, 10)), RGBA(0xffffff10))
-	}
-	isz := If[float32](compact, 15, 18)
-	c.Icon(PathMenu, bx+(sw-isz)/2, by+(sh-isz)/2, isz, If(hov || p.Menu, RGB(0xf6f2ff), RGBA(0xf6f2ff9e)))
-	o.menuBtn.Add(c, bx, by, sw, sh, true)
-	if clicked {
-		o.emit(OfficeEvent{Kind: OfficeToggleMenu})
-	}
-	// The button's name, under it while the pointer is on it.
-	if hov && !p.Menu {
-		tf := Font{Size: 11.5, Weight: 500}
-		tw, th := c.Measure("Menu", tf, 0)
-		x, y := w-(tw+16)-m, m+bh+6
-		c.Box(x, y, tw+16, th+8, R(7), RGBA(0x0a060ee6))
-		c.Border(x, y, tw+16, th+8, R(7), 1, RGBA(0xffffff1a))
-		c.Text("Menu", x+8, y+4, TextBox{Font: tf, Color: RGB(0xf6f2ff)})
+	if showBtn {
+		c.Glass(p.Backdrop, gx, gy, gw, bh, If[float32](compact, 10, 13), true)
+		// SegButton: the icon in a quiet square.
+		clicked := o.menuBtn.Update(c)
+		bx, by := gx+pad, gy+pad
+		hov := o.menuBtn.Hovered()
+		switch {
+		case p.Menu:
+			c.Box(bx, by, sw, sh, R(If[float32](compact, 8, 10)), RGBA(0xffffff1f))
+		case hov:
+			c.Box(bx, by, sw, sh, R(If[float32](compact, 8, 10)), RGBA(0xffffff10))
+		}
+		isz := If[float32](compact, 15, 18)
+		c.Icon(PathMenu, bx+(sw-isz)/2, by+(sh-isz)/2, isz, If(hov || p.Menu, RGB(0xf6f2ff), RGBA(0xf6f2ff9e)))
+		o.menuBtn.Add(c, bx, by, sw, sh, true)
+		if clicked {
+			o.emit(OfficeEvent{Kind: OfficeToggleMenu})
+		}
+		// The button's name, under it while the pointer is on it.
+		if hov && !p.Menu {
+			tf := Font{Size: 11.5, Weight: 500}
+			tw, th := c.Measure("Menu", tf, 0)
+			x, y := w-(tw+16)-m, m+bh+6
+			c.Box(x, y, tw+16, th+8, R(7), RGBA(0x0a060ee6))
+			c.Border(x, y, tw+16, th+8, R(7), 1, RGBA(0xffffff1a))
+			c.Text("Menu", x+8, y+4, TextBox{Font: tf, Color: RGB(0xf6f2ff)})
+		}
 	}
 	if !p.Menu {
 		return
