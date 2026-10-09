@@ -14,7 +14,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: go-port-${{ github.ref }}
+  # A manual run (the Rust shots take a while) is not cancelled by the next push.
+  group: go-port-${{ github.ref }}-${{ github.event_name }}
   cancel-in-progress: true
 
 jobs:
