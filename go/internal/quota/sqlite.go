@@ -2,8 +2,8 @@ package quota
 
 // sqlite.rs: one scalar out of an SQLite file, opened read-only, as Microsoft.Data.Sqlite's
 // ExecuteScalar gives it. Windows calls the winsqlite3.dll that ships with Windows 10 and
-// 11 (sqlite_windows.go), so nothing is compiled or bundled. The other systems have no
-// reader yet (sqlite_other.go).
+// 11 (sqlite_windows.go), so nothing is compiled or bundled. The other systems read the file
+// themselves, in plain Go (sqlite_reader.go): no library to find, no C compiler.
 
 import "unicode/utf16"
 
