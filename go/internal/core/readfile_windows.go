@@ -4,6 +4,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"time"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
@@ -48,7 +49,23 @@ func ReadFile(path string) ([]byte, error) {
 // Rename is std::fs::rename: MoveFileExW replacing what is there, and when that is refused
 // ("access denied": the file is open elsewhere, or read only) a rename with POSIX
 // semantics, which does not mind.
+//
+// Both are tried again for up to two seconds while the file stays locked: an antivirus
+// scanning the temporary file just written holds it without FILE_SHARE_DELETE, and then
+// neither rename can work (CI's Windows runner lost a settings.json write that way).
+// Go's own toolchain retries the same way (cmd/go/internal/robustio). Rust doesn't, so
+// here the Go build keeps a write the Rust one would lose.
 func Rename(from, to string) error {
+	var err error
+	for wait := time.Millisecond; ; wait *= 2 {
+		if err = renameOnce(from, to); err == nil || !locked(err) || wait > time.Second {
+			return err
+		}
+		time.Sleep(wait)
+	}
+}
+
+func renameOnce(from, to string) error {
 	err := os.Rename(from, to)
 	if err == nil || !errors.Is(err, windows.ERROR_ACCESS_DENIED) {
 		return err
@@ -57,6 +74,11 @@ func Rename(from, to string) error {
 		return nil
 	}
 	return err
+}
+
+// locked: the error is one another handle on the file causes.
+func locked(err error) bool {
+	return errors.Is(err, windows.ERROR_ACCESS_DENIED) || errors.Is(err, windows.ERROR_SHARING_VIOLATION)
 }
 
 // posixRename renames with FileRenameInfoEx and POSIX semantics, as Rust's rename does
