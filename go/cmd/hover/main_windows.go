@@ -5,6 +5,7 @@
 //
 //	hoverai                 run
 //	hoverai --version       print the version
+//	hoverai --shots DIR     render every view headless into DIR, then exit
 //
 // Build it as a window, not a console: go build -ldflags "-H=windowsgui" -o hoverai.exe
 package main
@@ -18,15 +19,29 @@ import (
 	"github.com/4regab/Hover/go/internal/core"
 	"github.com/4regab/Hover/go/internal/platform/win"
 	"github.com/4regab/Hover/go/internal/shell"
+	"github.com/4regab/Hover/go/internal/shots"
 	"github.com/4regab/Hover/go/internal/ui"
 )
 
 func main() {
-	for _, a := range os.Args[1:] {
+	for i, a := range os.Args[1:] {
 		// Before the single-instance check, so it answers while Hover runs. (A Windows GUI
 		// exe has no console: print shows from a terminal that pipes it.)
 		if a == "--version" {
 			fmt.Println("Hover", shell.Version)
+			return
+		}
+		// Not through the single-instance check either: it draws on its own.
+		if a == "--shots" && i+2 < len(os.Args) {
+			if err := shots.Run(os.Args[i+2]); err != nil {
+				core.Logf("--shots: %v", err)
+				os.Exit(1)
+			}
+			return
+		}
+		// The product's self-test on Windows is notch-proto's for now; Linux (Wayland) has no X11 one either.
+		if a == "--selftest" {
+			core.Logf("--selftest: the product has none; run notch-spike --selftest on Windows")
 			return
 		}
 	}

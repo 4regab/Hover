@@ -1,6 +1,6 @@
 //go:build windows || shots
 
-package main
+package shots
 
 import (
 	"image/color"
