@@ -259,6 +259,15 @@ jobs:
           go build -ldflags '-H=windowsgui' -o ..\out\hoverai.exe .\cmd\hover
           if ($LASTEXITCODE -ne 0) { throw 'go build failed' }
           Write-Host "hoverai.exe: $([math]::Round((Get-Item ..\out\hoverai.exe).Length / 1MB, 1)) MB"
+      # The office draws with wgpu-native; the exe looks for the DLL beside itself.
+      - name: wgpu-native beside the exe
+        run: |
+          $zip = Join-Path $env:RUNNER_TEMP 'wgpu.zip'
+          Invoke-WebRequest 'https://github.com/gfx-rs/wgpu-native/releases/download/v29.0.0.0/wgpu-windows-x86_64-msvc-release.zip' -OutFile $zip
+          Expand-Archive $zip (Join-Path $env:RUNNER_TEMP 'wgpu') -Force
+          $dll = Get-ChildItem (Join-Path $env:RUNNER_TEMP 'wgpu') -Recurse -Filter wgpu_native.dll | Select-Object -First 1
+          if (-not $dll) { throw 'no wgpu_native.dll in the release zip' }
+          Copy-Item $dll.FullName out\
       - name: Screen 1920 x 1080
         run: ./go/tools/set-resolution.ps1
       - name: Drive the app
