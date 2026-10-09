@@ -590,8 +590,9 @@ func (w *Window) paint() {
 		}
 	}
 	w.sync()
-	if tracing && w.frames.Load() < 3 {
-		w.trace("frame %d %v", w.frames.Load(), w.size)
+	if n := w.frames.Load(); tracing && (n < 12 || n%30 == 0) {
+		l, t, r, b := w.Rect()
+		w.trace("frame %d size %v at %d,%d-%d,%d visible=%v", n, w.size, l, t, r, b, w.Visible())
 	}
 	scale := float32(w.Scale())
 	w.ops.Reset()
