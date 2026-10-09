@@ -357,6 +357,26 @@ balloons, `Alt+N`, and a second launch that opens the app window. Built with no 
 - **Gio drops a focus request for a key area no frame has shown.** The open notch asks for the
   keyboard on its first frame, when it is still 0 px wide; the ask now waits for the area.
 
+### Done: the desk card's pictures (`internal/ui/deskrows.go`, `deskpanel.go`, `deskcard.go`)
+
+`desk.slint` and office.slint's `DeskCard` on Gio, next to the rows already laid out in
+`internal/app/desk.go`: all 29 row kinds, the tabs, the windowed list with its thin bar, the
+terminal (prompt, history, Ctrl+L), the open file's bar and editor, Open in, the browser bar,
+the screen, GitHub's setup and the pull request form, and the card (header chips, the status
+box with its question buttons, the eight tiles, the reply box, the chat button).
+`cmd/ui-shots` draws them from fixtures (`desk-card-working.png`, `desk-tab-files.png`).
+
+Left for the desk: its glue (`desk_ui.rs`'s second half: `impl App`, about 1,200 lines) needs the
+office page's state, so it goes in with the office view. Two things are stand-ins until then: row
+kind 25 (the pull request's description as a picture of Markdown) and the Screen tab's picture.
+
+### Left in phase 3
+
+In order: the office view (`office.slint`, about 3,300 lines, with `office_ui.rs`, 2,700) and
+the desk's glue; the chat view; `music.rs` (the office's beats), `net.rs` (web images in
+chats), `screen.rs` (the Screen panel's capture), `aura.rs` (voice's aura); the `--shots` run
+and the `Alt+N` self-test of the product. Then phases 4 to 7 as listed above.
+
 ## Known costs
 
 - Memory, above.
