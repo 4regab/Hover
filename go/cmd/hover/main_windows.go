@@ -18,6 +18,7 @@ import (
 	"github.com/4regab/Hover/go/internal/core"
 	"github.com/4regab/Hover/go/internal/platform/win"
 	"github.com/4regab/Hover/go/internal/shell"
+	"github.com/4regab/Hover/go/internal/ui"
 )
 
 func main() {
@@ -33,6 +34,7 @@ func main() {
 		core.Logf("windows: %v", err)
 		os.Exit(1)
 	}
+	ui.Warm()
 	// One notch is the point; two copies of the app is not. A second launch asks the
 	// running copy to open its window, then exits.
 	var current atomic.Pointer[shell.Shell]

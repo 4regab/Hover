@@ -85,6 +85,11 @@ var shaper struct {
 	s    *text.Shaper
 }
 
+// Warm loads the fonts in the background, so the first text on screen (the open notch's)
+// does not wait for the system's fonts to be read: the first run on a machine scans them
+// all, and that took 3 s on a runner with many.
+func Warm() { go textShaper() }
+
 // textShaper is the one shaper. Gio's isn't safe for use from two goroutines; the UI
 // draws on one. The system's fonts are the fallback for what Inter lacks (Slint's
 // software-renderer-systemfonts).
