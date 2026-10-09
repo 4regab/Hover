@@ -120,6 +120,9 @@ func run(dir string) error {
 		}
 		return save(filepath.Join(dir, name), img)
 	}
+	if err := notchShots(dir); err != nil {
+		return err
+	}
 	for _, dark := range []bool{true, false} {
 		tag := map[bool]string{true: "dark", false: "light"}[dark]
 		for _, sec := range app.Sections {

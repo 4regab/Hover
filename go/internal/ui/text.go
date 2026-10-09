@@ -128,6 +128,7 @@ type TextBox struct {
 	HAlign   HAlign
 	VAlign   VAlign
 	Wrap     bool // wrap: word-wrap
+	CharWrap bool // wrap: char-wrap (a line breaks anywhere)
 	Elide    bool // overflow: elide
 	MaxLines int
 }
@@ -156,7 +157,10 @@ func (c *Ctx) shape(s string, b TextBox) []line {
 		MaxWidth:        math.MaxInt32 / 2,
 		MaxLines:        b.MaxLines,
 	}
-	if b.W > 0 && (b.Wrap || b.Elide) {
+	if b.CharWrap {
+		p.WrapPolicy = text.WrapGraphemes
+	}
+	if b.W > 0 && (b.Wrap || b.CharWrap || b.Elide) {
 		p.MaxWidth = int(math.Ceil(float64(b.W * k)))
 	}
 	if b.Elide && !b.Wrap && p.MaxLines == 0 {
@@ -197,6 +201,19 @@ func (c *Ctx) Measure(s string, f Font, maxW float32) (w, h float32) {
 	}
 	n := max(len(lines), 1)
 	return w, float32(n) * c.LineH(f)
+}
+
+// MeasureBox is a Text's preferred size in the box b (its width, wrapping and eliding as
+// Text would draw it): the widest line and the lines' height, in logical pixels.
+func (c *Ctx) MeasureBox(s string, b TextBox) (w, h float32) {
+	if s == "" {
+		return 0, 0
+	}
+	lines := c.shape(s, b)
+	for _, l := range lines {
+		w = max(w, l.width/c.K)
+	}
+	return w, float32(max(len(lines), 1)) * c.LineH(b.Font)
 }
 
 // Text draws s in its box at (x, y) and returns the size the text takes.

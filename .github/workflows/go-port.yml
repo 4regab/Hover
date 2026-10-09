@@ -237,6 +237,46 @@ jobs:
           path: out/
           if-no-files-found: warn
 
+  # The Go app itself (cmd/hover) on a runner: built with no C compiler, started, and
+  # driven the way a user would: the shortcut, Esc, a second launch.
+  app-windows:
+    runs-on: windows-2022
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go/go.mod
+          cache-dependency-path: go/go.sum
+      - name: Build hoverai.exe
+        working-directory: go
+        run: |
+          $env:CGO_ENABLED = '0'
+          New-Item -ItemType Directory -Force ..\out | Out-Null
+          go build -ldflags '-H=windowsgui' -o ..\out\hoverai.exe .\cmd\hover
+          if ($LASTEXITCODE -ne 0) { throw 'go build failed' }
+          Write-Host "hoverai.exe: $([math]::Round((Get-Item ..\out\hoverai.exe).Length / 1MB, 1)) MB"
+      - name: Screen 1920 x 1080
+        run: ./go/tools/set-resolution.ps1
+      - name: Drive the app
+        timeout-minutes: 5
+        run: ./go/tools/app-smoke.ps1 -Exe out\hoverai.exe -Out out\app
+      - name: Summary
+        if: always()
+        run: |
+          if (Test-Path out\app\report.json) {
+            $r = Get-Content out\app\report.json -Raw | ConvertFrom-Json
+            @('', '### Go app on Windows', '') + ($r.PSObject.Properties | Where-Object Name -ne 'log' | ForEach-Object { "    $($_.Name) = $($_.Value)" }) | Out-File -Append -Encoding utf8 $env:GITHUB_STEP_SUMMARY
+          }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: app-windows
+          path: out/app/
+          if-no-files-found: warn
+
   # The Rust app's own renders of every view (hover --shots, Slint's software renderer):
   # what the Go UI is ported against. Run by hand only (workflow_dispatch), as the Rust
   # app doesn't change on this branch.

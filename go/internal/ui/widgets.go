@@ -45,6 +45,8 @@ type Pill struct {
 	Fg, Bg     color.NRGBA
 	Chevron    bool
 	BoldText   bool
+	// H is a height set on the button (0: its own).
+	H float32
 }
 
 func NewPill(p *Pal, text string) Pill {
@@ -90,7 +92,11 @@ func (b *PillButton) row(c *Ctx, p Pill) (w, h float32) {
 // already has them, and the row centres its content.
 func (b *PillButton) Size(c *Ctx, p Pill) (w, h float32) {
 	rw, rh := b.row(c, p)
-	return rw + 4*p.PadX, max(24, rh+2*p.PadY)
+	h = max(24, rh+2*p.PadY)
+	if p.H > 0 {
+		h = p.H
+	}
+	return rw + 4*p.PadX, h
 }
 
 // Layout draws the button at (x, y), w wide (0: its preferred width), and returns
