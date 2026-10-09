@@ -220,6 +220,24 @@ What differs from the Rust crate, on purpose:
 - **The broken-image icons** (`broken_image_100.png`, `_200.png`) are copied into
   `go/internal/chat/assets` because `go:embed` cannot reach outside the module.
 
+### Done: `internal/office` (the model; not yet the renderer)
+
+`crates/hover-office` without `render.rs`, `live.rs`, the WGSL shaders and the GPU half of
+`page.rs`: the seeded random numbers (the same sequence as the page's, checked against
+Node's numbers), the matrices and colours, the room (built in the page's order, since every
+jittered box draws from one generator), the bots and their poses, the subagent helpers, the
+sessions from Hover's `state` message, the camera, picking, the frame pacing, the bubbles,
+and the TV, board, clock and sky pictures on small canvases. The CPU page composition
+(`Composer`) is ported too. All 13 of the crate's model tests and its 3 small ones pass.
+
+- The wall canvases use `internal/text` and `internal/raster` for their text, with the two
+  fonts the page embeds (copied to `go/internal/office/assets`, as `go:embed` cannot reach
+  out of the module).
+- The scene and its tests never touch a GPU, so they run on every machine.
+- Still to do for the office: `render.rs` (the wgpu pipelines, shadow map, tone mapping,
+  glow sprite texture) and `live.rs` (the office on its own thread), on `go-webgpu`. They
+  can only be checked on the Windows runner.
+
 Not run here: this sandbox has no display, GPU or Windows fonts. The chat was looked at as
 PNGs (the failed and the rich sessions of the office-state fixture), with DejaVu Sans, Noto
 Sans and DejaVu Sans Mono. On Windows the width-based goldens skip, as in the Rust tests.
