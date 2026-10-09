@@ -20,7 +20,7 @@ commit. If it doesn't, the port stops there and we decide again.
 |---|---|---|
 | UI | Gio (`gioui.org`, pinned) | Draw-it-yourself, like Hover's UI. Pure Go on Windows. Its `gpu` package draws into a target we own. Fyne needs a C compiler and has its own look. |
 | Notch window | Our own Win32 window, not Gio's | Gio's windows can't be see-through, and Gio takes focus when it opens one. We use DirectComposition with premultiplied alpha, as notch-proto does through wgpu. |
-| Office | Keep the WGSL shaders on wgpu-native through `go-webgpu/webgpu` | Gio has no 3D. No C compiler; it ships `wgpu_native.dll`. Same design as now: render, read back, show as an image. |
+| Office | Keep the WGSL shaders on wgpu-native through Hover's own small binding (`go/internal/gpu`) | Gio has no 3D. No C compiler; it ships `wgpu_native.dll`. Same design as now: render, read back, show as an image. `go-webgpu/webgpu` was tried first and dropped (below). |
 | Data | A Go build installs over 5.x and keeps everything | `settings.json` stays byte for byte as .NET writes it (port `hover-core/src/json.rs`, not `encoding/json`). Sealed files are nonce + ciphertext + tag, which Go's `crypto/cipher` writes as is. |
 | Mac | Keep the Swift app; port `hover-backend` to Go with the same JSON lines | The Swift app doesn't change. |
 | Regex | `dlclark/regexp2` where a pattern looks behind or ahead | Go's `regexp` can't; the patterns came from C#, and regexp2 copies .NET's engine. |
@@ -235,8 +235,31 @@ and the TV, board, clock and sky pictures on small canvases. The CPU page compos
   out of the module).
 - The scene and its tests never touch a GPU, so they run on every machine.
 - Still to do for the office: `render.rs` (the wgpu pipelines, shadow map, tone mapping,
-  glow sprite texture) and `live.rs` (the office on its own thread), on `go-webgpu`. They
-  can only be checked on the Windows runner.
+  glow sprite texture) and `live.rs` (the office on its own thread), on `internal/gpu`.
+
+### Done: `internal/gpu` (Hover's own wgpu-native binding)
+
+About 50 of wgpu-native v29's functions: what the office and the spike draw with, no more.
+Windows calls `wgpu_native.dll` through `syscall`; Linux and macOS call the shared library
+through goffi. Neither needs a C compiler. Each call copies its Go values into the C
+structs, pins them while the call runs and lets go after.
+
+- **Why not `go-webgpu/webgpu` v0.5.5.** Its structs no longer match wgpu-native v29: a
+  bind group layout entry is missing `bindingArraySize`, and a vertex attribute and a depth
+  attachment are missing `nextInChain`. It refuses a pass with no colour target, which the
+  shadow map is. On Linux and macOS it passes the callback structs by pointer, where the C
+  side wants them by value.
+- **`wire_test.go`** compares every struct's size and every field's offset, and every
+  enum value the binding uses, with what a C compiler printed for wgpu-native's own
+  `webgpu.h` and `wgpu.h`.
+- **wgpu-native's default error handlers panic**, which ends the process when it happens
+  inside a C call. Hover sets its own, and `Device.Errors` returns what they caught.
+- **On Windows the instance asks for DX12 only**, as the Rust office does.
+- **A correction.** Commit 3e52354 blamed goffi for a crash in the Linux test. The fault
+  was that first version's own enum values (the WGSL source's struct type was 0x305, not
+  2), so wgpu-native read the shader as missing.
+- `live_test.go` draws a triangle into a texture and reads the middle pixel back, after a
+  depth-only pass. It passed here on Mesa's llvmpipe (Vulkan); CI runs it on Windows' WARP.
 
 Not run here: this sandbox has no display, GPU or Windows fonts. The chat was looked at as
 PNGs (the failed and the rich sessions of the office-state fixture), with DejaVu Sans, Noto

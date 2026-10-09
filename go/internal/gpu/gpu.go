@@ -1,803 +1,834 @@
-// Package gpu is Hover's own binding to wgpu-native v29, covering the ~50 calls the
-// office renderer needs. Every struct is laid out to match webgpu.h on the same platform
-// (x86-64 Linux, Windows, macOS), and a test checks them against the C compiler.
+// Package gpu is Hover's own small binding to wgpu-native v29: the calls the office
+// renderer and the notch spike need, and nothing else. go-webgpu was dropped for it (its
+// v0.5.5 structs no longer matched wgpu-native v29, see docs/development/go-port.md).
 //
-// On Windows the DLL is called through syscall (no C compiler). On Linux and macOS it is
-// loaded through goffi, which is already in the build through Gio.
+// Every C struct is in wire.go, and wire_test.go checks their sizes, offsets and the
+// enum numbers against what the C compiler gave for wgpu-native's own webgpu.h. The
+// public API takes Go values; each call builds its wire structs, pins them (so the GC
+// can neither move nor free what the C side reads) and unpins them when the call returns.
 //
-// ponytail: the binding covers only what the office draws. Adding a call is one function
-// and one line in the test. If the office ever needs compute or surfaces, add them here.
+// Windows calls wgpu_native.dll through syscall (no C compiler). Linux and macOS go
+// through goffi (no C compiler either).
+//
+// ponytail: only what the office and the spike draw with. A new call is one method here
+// and, if it takes a struct, one wire struct and one line in wire_test.go.
 package gpu
 
 import (
 	"errors"
 	"fmt"
-	"math"
+	"runtime"
 	"sync"
 	"unsafe"
 )
 
-// Handle is a wgpu opaque handle (a pointer on the native side).
-type Handle = uintptr
-
-// StringView is WGPUStringView: data + length (not null-terminated).
-type StringView struct {
-	Data   uintptr
-	Length uintptr
-}
-
-func sv(s string) StringView {
-	if len(s) == 0 {
-		return StringView{0, math.MaxUint64}
-	}
-	b := []byte(s)
-	return StringView{uintptr(unsafe.Pointer(&b[0])), uintptr(len(b))}
-}
-
-// nullSV is the WGPU_STRING_VIEW_INIT sentinel: data=NULL, length=SIZE_MAX.
-func nullSV() StringView { return StringView{0, math.MaxUint64} }
-
-// ---- enums (the values wgpu-native v29 expects, not the Go constants) ----------------
+// ---- the public enums (webgpu.h v29's numbers) --------------------------------------
 
 type (
-	BackendType       uint32
-	AdapterType       uint32
-	PowerPreference   uint32
-	FeatureLevel      uint32
-	CallbackMode      uint32
-	RequestStatus     uint32
-	ErrorFilter       uint32
-	ErrorType         uint32
-	MapMode           uint32
-	MapAsyncStatus    uint32
-	TextureFormat     uint32
-	TextureUsage      uint64
-	TextureDimension  uint32
-	TextureViewDim    uint32
-	TextureAspect     uint32
-	TextureSampleType uint32
-	BufferUsage       uint64
-	BufferBindType    uint32
-	SamplerBindType   uint32
-	ShaderStage       uint64
-	LoadOp            uint32
-	StoreOp           uint32
-	IndexFormat       uint32
-	VertexFormat      uint32
-	VertexStepMode    uint32
-	PrimTopology      uint32
-	FrontFace         uint32
-	CullMode          uint32
-	CompareFunc       uint32
-	StencilOp         uint32
-	BlendOp           uint32
-	BlendFactor       uint32
-	FilterMode        uint32
-	MipmapFilterMode  uint32
-	AddressMode       uint32
-	ColorWriteMask    uint64
-	OptionalBool      uint32
-	SType             uint32
-	PopErrorStatus    uint32
+	TextureFormat uint32
+	TextureUsage  uint64
+	BufferUsage   uint64
+	ShaderStage   uint64
+	SampleType    uint32
+	IndexFormat   uint32
+	VertexFormat  uint32
+	Topology      uint32
+	FrontFace     uint32
+	CullMode      uint32
+	Compare       uint32
+	BlendOp       uint32
+	BlendFactor   uint32
+	FilterMode    uint32
+	AddressMode   uint32
+	BackendType   uint32
+	AdapterType   uint32
 )
 
 const (
-	FeatureLevelCore        FeatureLevel   = 1
-	CallbackModeAllowEvents CallbackMode   = 1
-	RequestStatusSuccess    RequestStatus  = 1
-	ErrorFilterValidation   ErrorFilter    = 1
-	ErrorTypeNoError        ErrorType      = 1
-	MapModeRead             MapMode        = 1
-	MapAsyncStatusSuccess   MapAsyncStatus = 1
-	PopErrorStatusSuccess   PopErrorStatus = 1
+	FormatRGBA8Unorm     TextureFormat = 0x16
+	FormatRGBA8UnormSrgb TextureFormat = 0x17
+	FormatRGBA16Float    TextureFormat = 0x28
+	FormatDepth32Float   TextureFormat = 0x30
 
-	PowerPreferenceLowPower PowerPreference = 1
-	PowerPreferenceHighPerf PowerPreference = 2
+	TextureCopySrc        TextureUsage = 0x1
+	TextureCopyDst        TextureUsage = 0x2
+	TextureBinding        TextureUsage = 0x4
+	TextureRenderAttachmt TextureUsage = 0x10
 
-	FormatRGBA8Unorm     TextureFormat = 0x12
-	FormatRGBA8UnormSRGB TextureFormat = 0x13
-	FormatRGBA16Float    TextureFormat = 0x20
-	FormatDepth32Float   TextureFormat = 0x28
+	BufferMapRead BufferUsage = 0x1
+	BufferCopySrc BufferUsage = 0x4
+	BufferCopyDst BufferUsage = 0x8
+	BufferIndex   BufferUsage = 0x10
+	BufferVertex  BufferUsage = 0x20
+	BufferUniform BufferUsage = 0x40
 
-	TextureUsageNone           TextureUsage = 0
-	TextureUsageCopySrc        TextureUsage = 1
-	TextureUsageCopyDst        TextureUsage = 2
-	TextureUsageTextureBinding TextureUsage = 4
-	TextureUsageRenderAttach   TextureUsage = 0x10
+	StageVertex   ShaderStage = 0x1
+	StageFragment ShaderStage = 0x2
 
-	Dim2D TextureDimension = 2
+	SampleFloat SampleType = 2
+	SampleDepth SampleType = 4
 
-	ViewDim2D TextureViewDim = 3
+	IndexUint32 IndexFormat = 2
 
-	AspectAll TextureAspect = 1
+	VertexFloat32x2 VertexFormat = 0x1d
+	VertexFloat32x3 VertexFormat = 0x1e
 
-	SampleTypeFloat TextureSampleType = 2
-	SampleTypeDepth TextureSampleType = 5
-
-	BufUsageCopySrc BufferUsage = 4
-	BufUsageCopyDst BufferUsage = 8
-	BufUsageUniform BufferUsage = 0x40
-	BufUsageVertex  BufferUsage = 0x20
-	BufUsageIndex   BufferUsage = 0x10
-	BufUsageMapRead BufferUsage = 1
-
-	BufBindUniform BufferBindType = 2
-
-	SamplerBindFiltering SamplerBindType = 2
-
-	StageVertex   ShaderStage = 1
-	StageFragment ShaderStage = 2
-	StageVertFrag ShaderStage = 3
-
-	LoadClear LoadOp  = 2
-	StoreSt   StoreOp = 2
-
-	IndexU32 IndexFormat = 2
-
-	VFmtFloat32x2 VertexFormat = 8
-	VFmtFloat32x3 VertexFormat = 9
-
-	StepVertex VertexStepMode = 1
-
-	TopoTriangles PrimTopology = 1
-	TopoPoints    PrimTopology = 4
+	PointList    Topology = 1
+	TriangleList Topology = 4
 
 	FrontCCW FrontFace = 1
-	FrontCW  FrontFace = 2
 
 	CullNone  CullMode = 1
 	CullFront CullMode = 2
 	CullBack  CullMode = 3
 
-	CompareLessEq CompareFunc = 4
+	CompareLessEqual Compare = 4
 
-	StencilKeep StencilOp = 1
+	BlendAdd BlendOp = 1
 
-	BlendAdd               BlendOp     = 1
-	FactorOne              BlendFactor = 1
+	FactorOne              BlendFactor = 2
 	FactorSrcAlpha         BlendFactor = 5
 	FactorOneMinusSrcAlpha BlendFactor = 6
 
 	FilterNearest FilterMode = 1
 	FilterLinear  FilterMode = 2
 
-	MipmapNearest MipmapFilterMode = 1
-	MipmapLinear  MipmapFilterMode = 2
+	ClampToEdge AddressMode = 1
 
-	AddrClampToEdge AddressMode = 3
-
-	ColorWriteAll ColorWriteMask = 0xF
-
-	OptBoolFalse OptionalBool = 1
-	OptBoolTrue  OptionalBool = 2
-
-	STypeShaderSourceWGSL SType = 0x305
-
-	DepthSliceUndef uint32 = 0xFFFFFFFF
+	BackendD3D12  BackendType = 4
+	BackendVulkan BackendType = 6
+	AdapterCPU    AdapterType = 3
 )
 
-// ---- wire structs (match webgpu.h on x86-64) ----------------------------------------
+// ---- pinning and strings ------------------------------------------------------------
 
-// The offsets and sizes of every struct are checked in gpu_test.go against the C compiler.
+// pins keeps what one call hands to wgpu-native in place until the call returns.
+type pins struct{ p runtime.Pinner }
 
-type WChainedStruct struct {
-	Next  uintptr // *WChainedStruct
-	SType SType
-	_pad  [4]byte
-}
-
-type WExtent3D struct{ Width, Height, DepthOrLayers uint32 }
-type WOrigin3D struct{ X, Y, Z uint32 }
-type WColor struct{ R, G, B, A float64 }
-
-type WInstanceDescriptor struct {
-	NextInChain uintptr
-	Features    [2]uintptr // 2 pointers (requiredFeatureCount, requiredFeatures) — both 0
-	_pad        [8]byte
-}
-
-type WRequestAdapterOptions struct {
-	NextInChain       uintptr
-	FeatureLevel      FeatureLevel
-	PowerPreference   PowerPreference
-	ForceFallback     uint32 // WGPUBool
-	_pad              [4]byte
-	CompatibleSurface uintptr
-}
-
-type WCallbackInfo struct {
-	NextInChain uintptr
-	Mode        CallbackMode
-	_pad        [4]byte
-	Callback    uintptr
-	Userdata1   uintptr
-	Userdata2   uintptr
-}
-
-type WDeviceDescriptor struct {
-	NextInChain uintptr
-	Label       StringView
-	// The rest (requiredFeatureCount..uncapturedErrorCallbackInfo) is zeroed.
-	_rest [120]byte
-}
-
-// DeviceDescriptorInit returns a properly initialized WGPUDeviceDescriptor with the
-// sentinel values wgpu-native expects (NULL data, SIZE_MAX length for each StringView).
-func DeviceDescriptorInit() WDeviceDescriptor {
-	var d WDeviceDescriptor
-	d.Label = nullSV()
-	// defaultQueue.label at offset 56 from the start of _rest (= offset 80 in the struct):
-	// _rest starts at byte 24, so defaultQueue.label.Length is at _rest offset 80-24+8 = 64-24+8 = 48+8 = 56.
-	// Actually: the label (data+length) is at bytes 8..24 of the struct. _rest starts at byte 24.
-	// defaultQueue is at byte 48 (24 bytes into _rest). Its label.Length is at 48+8=56 of _rest.
-	// In the init dump: bytes 64..72 are ff ff ff ff ff ff ff ff.
-	// 64 - 24 = 40 bytes into _rest.
-	for i := 40; i < 48; i++ {
-		d._rest[i] = 0xff
+// ptr pins *v and returns its address.
+func ptr[T any](k *pins, v *T) uintptr {
+	if v == nil {
+		return 0
 	}
-	return d
+	k.p.Pin(v)
+	return uintptr(unsafe.Pointer(v))
 }
 
-type WShaderSourceWGSL struct {
-	Chain WChainedStruct
-	Code  StringView
+// slice pins a slice's backing array and returns its address (0 for an empty slice).
+func slice[T any](k *pins, s []T) uintptr {
+	if len(s) == 0 {
+		return 0
+	}
+	return ptr(k, &s[0])
 }
 
-type WShaderModuleDescriptor struct {
-	NextInChain uintptr
-	Label       StringView
+// str is a Go string as a webgpu.h string view, its bytes pinned.
+func (k *pins) str(s string) stringView {
+	if s == "" {
+		return noString
+	}
+	b := []byte(s)
+	return stringView{slice(k, b), uintptr(len(b))}
 }
 
-type WBufferBindingLayout struct {
-	NextInChain    uintptr
-	Type           BufferBindType
-	HasDynamicOff  uint32 // WGPUBool
-	MinBindingSize uint64
+func (k *pins) done() { k.p.Unpin() }
+
+// goString copies a string view out of wgpu-native's memory.
+func goString(v stringView) string {
+	if v.data == 0 || v.length == 0 || v.length == strlen {
+		return ""
+	}
+	return string(unsafe.Slice(cPtr[byte](v.data), v.length))
 }
 
-type WSamplerBindingLayout struct {
-	NextInChain uintptr
-	Type        SamplerBindType
-	_pad        [4]byte
-}
+// cPtr turns an address wgpu-native gave back into a Go pointer. It reads the uintptr's
+// bits as a pointer (what x/sys does) rather than converting, which go vet would flag:
+// the memory is wgpu-native's, never the Go heap's, so the GC has nothing to track.
+func cPtr[T any](a uintptr) *T { return *(**T)(unsafe.Pointer(&a)) }
 
-type WTextureBindingLayout struct {
-	NextInChain  uintptr
-	SampleType   TextureSampleType
-	ViewDim      TextureViewDim
-	Multisampled uint32 // WGPUBool
-	_pad         [4]byte
-}
-
-type WStorageTextureBindingLayout struct {
-	NextInChain uintptr
-	Access      uint32
-	Format      TextureFormat
-	ViewDim     TextureViewDim
-	_pad        [4]byte
-}
-
-type WBindGroupLayoutEntry struct {
-	NextInChain      uintptr
-	Binding          uint32
-	_pad1            [4]byte
-	Visibility       ShaderStage
-	BindingArraySize uint32
-	_pad2            [4]byte
-	Buffer           WBufferBindingLayout
-	Sampler          WSamplerBindingLayout
-	Texture          WTextureBindingLayout
-	StorageTexture   WStorageTextureBindingLayout
-}
-
-type WBindGroupLayoutDescriptor struct {
-	NextInChain uintptr
-	Label       StringView
-	EntryCount  uintptr
-	Entries     uintptr // *WBindGroupLayoutEntry
-}
-
-type WBindGroupEntry struct {
-	NextInChain uintptr
-	Binding     uint32
-	_pad        [4]byte
-	Buffer      Handle
-	Offset      uint64
-	Size        uint64
-	Sampler     Handle
-	TextureView Handle
-}
-
-type WBindGroupDescriptor struct {
-	NextInChain uintptr
-	Label       StringView
-	Layout      Handle
-	EntryCount  uintptr
-	Entries     uintptr // *WBindGroupEntry
-}
-
-type WPipelineLayoutDescriptor struct {
-	NextInChain   uintptr
-	Label         StringView
-	BGLCount      uintptr
-	BGLayouts     uintptr // *Handle
-	ImmediateSize uint32
-	_pad          [4]byte
-}
-
-type WVertexAttribute struct {
-	NextInChain    uintptr
-	Format         VertexFormat
-	_pad           [4]byte
-	Offset         uint64
-	ShaderLocation uint32
-	_pad2          [4]byte
-}
-
-type WVertexBufferLayout struct {
-	NextInChain uintptr
-	StepMode    VertexStepMode
-	_pad        [4]byte
-	ArrayStride uint64
-	AttrCount   uintptr
-	Attributes  uintptr // *WVertexAttribute
-}
-
-type WVertexState struct {
-	NextInChain   uintptr
-	Module        Handle
-	EntryPoint    StringView
-	ConstantCount uintptr
-	Constants     uintptr
-	BufferCount   uintptr
-	Buffers       uintptr // *WVertexBufferLayout
-}
-
-type WBlendComponent struct {
-	Op  BlendOp
-	Src BlendFactor
-	Dst BlendFactor
-}
-
-type WBlendState struct {
-	Color WBlendComponent
-	Alpha WBlendComponent
-}
-
-type WColorTargetState struct {
-	NextInChain uintptr
-	Format      TextureFormat
-	_pad        [4]byte
-	Blend       uintptr // *WBlendState, nullable
-	WriteMask   ColorWriteMask
-}
-
-type WFragmentState struct {
-	NextInChain   uintptr
-	Module        Handle
-	EntryPoint    StringView
-	ConstantCount uintptr
-	Constants     uintptr
-	TargetCount   uintptr
-	Targets       uintptr // *WColorTargetState
-}
-
-type WPrimitiveState struct {
-	NextInChain      uintptr
-	Topology         PrimTopology
-	StripIndexFormat IndexFormat
-	FrontFace        FrontFace
-	CullMode         CullMode
-	UnclippedDepth   uint32 // WGPUBool
-	_pad             [4]byte
-}
-
-type WStencilFaceState struct {
-	Compare     CompareFunc
-	FailOp      StencilOp
-	DepthFailOp StencilOp
-	PassOp      StencilOp
-}
-
-type WDepthStencilState struct {
-	NextInChain         uintptr
-	Format              TextureFormat
-	DepthWriteEnabled   OptionalBool
-	DepthCompare        CompareFunc
-	StencilFront        WStencilFaceState
-	StencilBack         WStencilFaceState
-	StencilReadMask     uint32
-	StencilWriteMask    uint32
-	DepthBias           int32
-	DepthBiasSlopeScale float32
-	DepthBiasClamp      float32
-}
-
-type WMultisampleState struct {
-	NextInChain uintptr
-	Count       uint32
-	Mask        uint32
-	AlphaToCov  uint32 // WGPUBool
-	_pad        [4]byte
-}
-
-type WRenderPipelineDescriptor struct {
-	NextInChain  uintptr
-	Label        StringView
-	Layout       Handle
-	Vertex       WVertexState
-	Primitive    WPrimitiveState
-	DepthStencil uintptr // *WDepthStencilState, nullable
-	Multisample  WMultisampleState
-	Fragment     uintptr // *WFragmentState, nullable
-}
-
-type WSamplerDescriptor struct {
-	NextInChain  uintptr
-	Label        StringView
-	AddressU     AddressMode
-	AddressV     AddressMode
-	AddressW     AddressMode
-	MagFilter    FilterMode
-	MinFilter    FilterMode
-	MipmapFilter MipmapFilterMode
-	LodMin       float32
-	LodMax       float32
-	Compare      CompareFunc
-	MaxAniso     uint16
-	_pad2        [2]byte
-}
-
-type WBufferDescriptor struct {
-	NextInChain      uintptr
-	Label            StringView
-	Usage            BufferUsage
-	Size             uint64
-	MappedAtCreation uint32 // WGPUBool
-	_pad             [4]byte
-}
-
-type WTextureDescriptor struct {
-	NextInChain     uintptr
-	Label           StringView
-	Usage           TextureUsage
-	Dimension       TextureDimension
-	Size            WExtent3D
-	Format          TextureFormat
-	MipLevelCount   uint32
-	SampleCount     uint32
-	_pad            [4]byte
-	ViewFormatCount uintptr
-	ViewFormats     uintptr // *TextureFormat
-}
-
-type WTextureViewDescriptor struct {
-	NextInChain     uintptr
-	Label           StringView
-	Format          TextureFormat
-	Dimension       TextureViewDim
-	BaseMipLevel    uint32
-	MipLevelCount   uint32
-	BaseArrayLayer  uint32
-	ArrayLayerCount uint32
-	Aspect          TextureAspect
-	_pad            [4]byte
-	Usage           TextureUsage
-}
-
-type WCommandEncoderDescriptor struct {
-	NextInChain uintptr
-	Label       StringView
-}
-
-type WRenderPassColorAttachment struct {
-	NextInChain   uintptr
-	View          Handle
-	DepthSlice    uint32
-	_pad          [4]byte
-	ResolveTarget Handle
-	LoadOp        LoadOp
-	StoreOp       StoreOp
-	ClearValue    WColor
-}
-
-type WRenderPassDepthStencilAttachment struct {
-	NextInChain       uintptr
-	View              Handle
-	DepthLoadOp       LoadOp
-	DepthStoreOp      StoreOp
-	DepthClearValue   float32
-	DepthReadOnly     uint32 // WGPUBool
-	StencilLoadOp     LoadOp
-	StencilStoreOp    StoreOp
-	StencilClearValue uint32
-	StencilReadOnly   uint32 // WGPUBool
-}
-
-type WRenderPassDescriptor struct {
-	NextInChain    uintptr
-	Label          StringView
-	ColorCount     uintptr
-	Colors         uintptr // *WRenderPassColorAttachment
-	DepthStencil   uintptr // *WRenderPassDepthStencilAttachment, nullable
-	OcclusionQuery uintptr
-	Timestamp      uintptr
-}
-
-type WTexelCopyTextureInfo struct {
-	Texture  Handle
-	MipLevel uint32
-	Origin   WOrigin3D
-	Aspect   TextureAspect
-	_pad     [4]byte
-}
-
-type WTexelCopyBufferInfo struct {
-	Layout WTexelCopyBufferLayout
-	Buffer Handle
-}
-
-type WTexelCopyBufferLayout struct {
-	Offset       uint64
-	BytesPerRow  uint32
-	RowsPerImage uint32
-}
-
-type WCommandBufferDescriptor struct {
-	NextInChain uintptr
-	Label       StringView
-}
-
-type WAdapterInfo struct {
-	NextInChain  uintptr
-	Vendor       StringView
-	Architecture StringView
-	Device       StringView
-	Description  StringView
-	BackendType  BackendType
-	AdapterType  AdapterType
-	VendorID     uint32
-	DeviceID     uint32
-	_pad         [8]byte
-}
-
-// ---- the library (platform-specific loading is in gpu_windows.go / gpu_unix.go) ------
+// ---- the library and the callbacks ---------------------------------------------------
 
 var (
-	lib     library
-	libOnce sync.Once
-	libErr  error
+	initOnce sync.Once
+	initErr  error
 )
 
-// Init loads wgpu_native. It is called once; later calls return the first result.
+// Init loads wgpu-native (wgpu_native.dll beside the exe or at WGPU_NATIVE_PATH on
+// Windows, libwgpu_native.so / .dylib elsewhere) and makes the callbacks. Later calls
+// return the first result.
 func Init() error {
-	libOnce.Do(func() { lib, libErr = loadLib() })
-	return libErr
+	initOnce.Do(func() { initErr = load() })
+	return initErr
 }
 
-// ---- high-level API ------------------------------------------------------------------
+// pending is one asynchronous request: the callback writes it, the caller reads it. The
+// callback gets its id, never a Go pointer.
+type pending struct {
+	done   bool
+	status uint32
+	handle uintptr
+	typ    uint32
+	msg    string
+}
 
-type Instance struct{ h Handle }
-type Adapter struct{ h Handle }
-type Device struct{ h Handle }
-type Queue struct{ h Handle }
-type ShaderModule struct{ h Handle }
-type BindGroupLayout struct{ h Handle }
-type BindGroup struct{ h Handle }
-type PipelineLayout struct{ h Handle }
-type RenderPipeline struct{ h Handle }
-type Sampler struct{ h Handle }
-type Buffer struct{ h Handle }
-type Texture struct{ h Handle }
-type TextureView struct{ h Handle }
-type CommandEncoder struct{ h Handle }
-type CommandBuffer struct{ h Handle }
-type RenderPass struct{ h Handle }
+var requests struct {
+	sync.Mutex
+	next uintptr
+	m    map[uintptr]*pending
+}
 
-func (x Instance) Release()        { call("wgpuInstanceRelease", x.h) }
-func (x Adapter) Release()         { call("wgpuAdapterRelease", x.h) }
-func (x Device) Release()          { call("wgpuDeviceRelease", x.h) }
-func (x Queue) Release()           { call("wgpuQueueRelease", x.h) }
-func (x ShaderModule) Release()    { call("wgpuShaderModuleRelease", x.h) }
-func (x BindGroupLayout) Release() { call("wgpuBindGroupLayoutRelease", x.h) }
-func (x BindGroup) Release()       { call("wgpuBindGroupRelease", x.h) }
-func (x PipelineLayout) Release()  { call("wgpuPipelineLayoutRelease", x.h) }
-func (x RenderPipeline) Release()  { call("wgpuRenderPipelineRelease", x.h) }
-func (x Sampler) Release()         { call("wgpuSamplerRelease", x.h) }
-func (x Buffer) Release()          { call("wgpuBufferRelease", x.h) }
-func (x Texture) Release()         { call("wgpuTextureRelease", x.h) }
-func (x TextureView) Release()     { call("wgpuTextureViewRelease", x.h) }
-func (x CommandEncoder) Release()  { call("wgpuCommandEncoderRelease", x.h) }
-func (x CommandBuffer) Release()   { call("wgpuCommandBufferRelease", x.h) }
-func (x RenderPass) Release()      { call("wgpuRenderPassEncoderRelease", x.h) }
+func newRequest() (uintptr, *pending) {
+	requests.Lock()
+	defer requests.Unlock()
+	if requests.m == nil {
+		requests.m = map[uintptr]*pending{}
+	}
+	requests.next++
+	p := &pending{}
+	requests.m[requests.next] = p
+	return requests.next, p
+}
 
+func takeRequest(id uintptr) {
+	requests.Lock()
+	delete(requests.m, id)
+	requests.Unlock()
+}
+
+// complete is what every callback does with what wgpu-native passed.
+func complete(id uintptr, status uint32, handle uintptr, typ uint32, msg string) {
+	requests.Lock()
+	p := requests.m[id]
+	requests.Unlock()
+	if p == nil {
+		return
+	}
+	p.status, p.handle, p.typ, p.msg, p.done = status, handle, typ, msg, true
+}
+
+// Device errors: wgpu-native's own default handlers panic, which aborts the process when
+// it happens across the C boundary. Hover's record the message instead (Device.Errors).
+var deviceErrors struct {
+	sync.Mutex
+	m map[uintptr][]string
+}
+
+func deviceError(id uintptr, msg string) {
+	deviceErrors.Lock()
+	if deviceErrors.m == nil {
+		deviceErrors.m = map[uintptr][]string{}
+	}
+	if len(deviceErrors.m[id]) < 64 {
+		deviceErrors.m[id] = append(deviceErrors.m[id], msg)
+	}
+	deviceErrors.Unlock()
+}
+
+// ---- handles ---------------------------------------------------------------------------
+
+type (
+	Instance        struct{ h uintptr }
+	Adapter         struct{ h uintptr }
+	ShaderModule    struct{ h uintptr }
+	BindGroupLayout struct{ h uintptr }
+	BindGroup       struct{ h uintptr }
+	PipelineLayout  struct{ h uintptr }
+	RenderPipeline  struct{ h uintptr }
+	Sampler         struct{ h uintptr }
+	Buffer          struct{ h uintptr }
+	Texture         struct{ h uintptr }
+	TextureView     struct{ h uintptr }
+	CommandEncoder  struct{ h uintptr }
+	CommandBuffer   struct{ h uintptr }
+	RenderPass      struct{ h uintptr }
+	Queue           struct{ h uintptr }
+)
+
+// Device is a device, its queue and the id its error callbacks report under.
+type Device struct {
+	h     uintptr
+	Queue Queue
+	id    uintptr
+}
+
+func (x Instance) Release()        { call(fnInstanceRelease, x.h) }
+func (x Adapter) Release()         { call(fnAdapterRelease, x.h) }
+func (x ShaderModule) Release()    { call(fnShaderModuleRelease, x.h) }
+func (x BindGroupLayout) Release() { call(fnBindGroupLayoutRelease, x.h) }
+func (x BindGroup) Release()       { call(fnBindGroupRelease, x.h) }
+func (x PipelineLayout) Release()  { call(fnPipelineLayoutRelease, x.h) }
+func (x RenderPipeline) Release()  { call(fnRenderPipelineRelease, x.h) }
+func (x Sampler) Release()         { call(fnSamplerRelease, x.h) }
+func (x Buffer) Release()          { call(fnBufferRelease, x.h) }
+func (x Texture) Release()         { call(fnTextureRelease, x.h) }
+func (x TextureView) Release()     { call(fnTextureViewRelease, x.h) }
+func (x CommandEncoder) Release()  { call(fnCommandEncoderRelease, x.h) }
+func (x CommandBuffer) Release()   { call(fnCommandBufferRelease, x.h) }
+
+func (d *Device) Release() {
+	call(fnQueueRelease, d.Queue.h)
+	call(fnDeviceRelease, d.h)
+	deviceErrors.Lock()
+	delete(deviceErrors.m, d.id)
+	deviceErrors.Unlock()
+}
+
+// ---- instance, adapter, device --------------------------------------------------------
+
+// CreateInstance makes an instance. On Windows it asks for DX12 only: a device on its
+// own also woke Vulkan and OpenGL on every graphics card (the Rust office's note), and
+// DX12 is what WARP, the runner's CPU adapter, speaks.
 func CreateInstance() (Instance, error) {
-	desc := WInstanceDescriptor{}
-	h := call("wgpuCreateInstance", uintptr(unsafe.Pointer(&desc)))
+	if err := Init(); err != nil {
+		return Instance{}, err
+	}
+	var k pins
+	defer k.done()
+	desc := &wInstanceDescriptor{}
+	if backends := instanceBackends(); backends != 0 {
+		extras := &wInstanceExtras{chain: chainedStruct{sType: sTypeInstanceExtras}, backends: backends, dxcPath: noString}
+		desc.nextInChain = ptr(&k, extras)
+	}
+	h := call(fnCreateInstance, ptr(&k, desc))
 	if h == 0 {
-		return Instance{}, errors.New("gpu: wgpuCreateInstance returned null")
+		return Instance{}, errors.New("gpu: wgpuCreateInstance gave no instance")
 	}
 	return Instance{h}, nil
 }
 
-func (inst Instance) ProcessEvents() { call("wgpuInstanceProcessEvents", inst.h) }
-
-func (inst Instance) RequestAdapter(opts *WRequestAdapterOptions) (Adapter, error) {
-	return requestAdapter(inst, opts)
+// RequestAdapter asks for a low-power adapter; fallback asks for the CPU one (WARP on
+// Windows, llvmpipe on Linux).
+func (inst Instance) RequestAdapter(fallback bool) (Adapter, error) {
+	var k pins
+	defer k.done()
+	opts := &wRequestAdapterOptions{featureLevel: featureLevelCore, powerPreference: powerLowPower}
+	if fallback {
+		opts.forceFallbackAdapter = 1
+	}
+	id, p := newRequest()
+	defer takeRequest(id)
+	info := &wCallbackInfo{mode: callbackAllowProcess, callback: cbAdapter, userdata1: id}
+	callWithInfo(fnInstanceRequestAdapter, []uintptr{inst.h, ptr(&k, opts)}, ptr(&k, info))
+	// wgpu-native answers inside the call; ProcessEvents covers one that doesn't.
+	for i := 0; i < 100 && !p.done; i++ {
+		call(fnInstanceProcessEvents, inst.h)
+	}
+	switch {
+	case !p.done:
+		return Adapter{}, errors.New("gpu: no answer to the adapter request")
+	case p.status != statusSuccess || p.handle == 0:
+		return Adapter{}, fmt.Errorf("gpu: no adapter (status %d): %s", p.status, p.msg)
+	}
+	return Adapter{p.handle}, nil
 }
 
-func (a Adapter) Info() WAdapterInfo {
-	var info WAdapterInfo
-	call("wgpuAdapterGetInfo", a.h, uintptr(unsafe.Pointer(&info)))
-	return info
+// AdapterInfo is what the office logs and what decides software rendering.
+type AdapterInfo struct {
+	Name    string
+	Backend BackendType
+	Type    AdapterType
 }
 
-func (a Adapter) RequestDevice(inst Instance, desc *WDeviceDescriptor) (Device, Queue, error) {
-	return requestDevice(inst, a, desc)
+func (i AdapterInfo) String() string {
+	return fmt.Sprintf("%s (backend %d, type %d)", i.Name, i.Backend, i.Type)
 }
 
-func (d Device) CreateShaderModuleWGSL(label, code string) ShaderModule {
-	src := WShaderSourceWGSL{Chain: WChainedStruct{SType: STypeShaderSourceWGSL}, Code: sv(code)}
-	desc := WShaderModuleDescriptor{NextInChain: uintptr(unsafe.Pointer(&src)), Label: sv(label)}
-	return ShaderModule{call("wgpuDeviceCreateShaderModule", d.h, uintptr(unsafe.Pointer(&desc)))}
+// ponytail: the info's strings are wgpu-native's and are not freed (a few bytes, once
+// per adapter): wgpuAdapterInfoFreeMembers takes the 96-byte struct by value.
+func (a Adapter) Info() AdapterInfo {
+	var k pins
+	defer k.done()
+	info := &wAdapterInfo{}
+	call(fnAdapterGetInfo, a.h, ptr(&k, info))
+	return AdapterInfo{Name: goString(info.device), Backend: BackendType(info.backendType), Type: AdapterType(info.adapterType)}
 }
 
-func (d Device) CreateBindGroupLayout(desc *WBindGroupLayoutDescriptor) BindGroupLayout {
-	return BindGroupLayout{call("wgpuDeviceCreateBindGroupLayout", d.h, uintptr(unsafe.Pointer(desc)))}
+var nextDevice struct {
+	sync.Mutex
+	n uintptr
 }
 
-func (d Device) CreateBindGroup(desc *WBindGroupDescriptor) BindGroup {
-	return BindGroup{call("wgpuDeviceCreateBindGroup", d.h, uintptr(unsafe.Pointer(desc)))}
+func (inst Instance) RequestDevice(a Adapter, label string) (*Device, error) {
+	var k pins
+	defer k.done()
+	nextDevice.Lock()
+	nextDevice.n++
+	devID := nextDevice.n
+	nextDevice.Unlock()
+	desc := &wDeviceDescriptor{
+		label:        k.str(label),
+		defaultQueue: wQueueDescriptor{label: noString},
+		deviceLostCallbackInfo: wCallbackInfo{mode: callbackAllowSpontaneous, callback: cbDeviceLost,
+			userdata1: devID},
+		uncapturedErrorCallbackInfo: wUncapturedErrorCallbackInfo{callback: cbUncaptured, userdata1: devID},
+	}
+	id, p := newRequest()
+	defer takeRequest(id)
+	info := &wCallbackInfo{mode: callbackAllowProcess, callback: cbDevice, userdata1: id}
+	callWithInfo(fnAdapterRequestDevice, []uintptr{a.h, ptr(&k, desc)}, ptr(&k, info))
+	for i := 0; i < 100 && !p.done; i++ {
+		call(fnInstanceProcessEvents, inst.h)
+	}
+	switch {
+	case !p.done:
+		return nil, errors.New("gpu: no answer to the device request")
+	case p.status != statusSuccess || p.handle == 0:
+		return nil, fmt.Errorf("gpu: no device (status %d): %s", p.status, p.msg)
+	}
+	return &Device{h: p.handle, Queue: Queue{call(fnDeviceGetQueue, p.handle)}, id: devID}, nil
 }
 
-func (d Device) CreatePipelineLayout(desc *WPipelineLayoutDescriptor) PipelineLayout {
-	return PipelineLayout{call("wgpuDeviceCreatePipelineLayout", d.h, uintptr(unsafe.Pointer(desc)))}
+// Errors returns and forgets the errors the device reported outside an error scope (a
+// validation error, a lost device), oldest first.
+func (d *Device) Errors() []string {
+	deviceErrors.Lock()
+	defer deviceErrors.Unlock()
+	e := deviceErrors.m[d.id]
+	delete(deviceErrors.m, d.id)
+	return e
 }
 
-func (d Device) CreateRenderPipeline(desc *WRenderPipelineDescriptor) RenderPipeline {
-	return RenderPipeline{call("wgpuDeviceCreateRenderPipeline", d.h, uintptr(unsafe.Pointer(desc)))}
-}
-
-func (d Device) CreateSampler(desc *WSamplerDescriptor) Sampler {
-	return Sampler{call("wgpuDeviceCreateSampler", d.h, uintptr(unsafe.Pointer(desc)))}
-}
-
-func (d Device) CreateBuffer(desc *WBufferDescriptor) Buffer {
-	return Buffer{call("wgpuDeviceCreateBuffer", d.h, uintptr(unsafe.Pointer(desc)))}
-}
-
-func (d Device) CreateTexture(desc *WTextureDescriptor) Texture {
-	return Texture{call("wgpuDeviceCreateTexture", d.h, uintptr(unsafe.Pointer(desc)))}
-}
-
-func (d Device) CreateCommandEncoder(label string) CommandEncoder {
-	desc := WCommandEncoderDescriptor{Label: sv(label)}
-	return CommandEncoder{call("wgpuDeviceCreateCommandEncoder", d.h, uintptr(unsafe.Pointer(&desc)))}
-}
-
-func (d Device) Poll(wait bool) {
+// Poll waits for the queue's work (wait) or only collects what has finished; map
+// callbacks fire in it.
+func (d *Device) Poll(wait bool) {
 	w := uintptr(0)
 	if wait {
 		w = 1
 	}
-	call("wgpuDevicePoll", d.h, w, 0)
+	call(fnDevicePoll, d.h, w, 0)
 }
 
-func (d Device) PushErrorScope(filter ErrorFilter) {
-	call("wgpuDevicePushErrorScope", d.h, uintptr(filter))
+// ---- shaders and error scopes ---------------------------------------------------------
+
+func (d *Device) ShaderModule(label, wgsl string) ShaderModule {
+	var k pins
+	defer k.done()
+	src := &wShaderSourceWGSL{chain: chainedStruct{sType: sTypeShaderSourceWGSL}, code: k.str(wgsl)}
+	desc := &wShaderModuleDescriptor{nextInChain: ptr(&k, src), label: k.str(label)}
+	return ShaderModule{call(fnDeviceCreateShaderModule, d.h, ptr(&k, desc))}
 }
 
-func (d Device) PopErrorScope(inst Instance) (ErrorType, string) {
-	return popErrorScope(d, inst)
-}
-
-func (t Texture) CreateView(desc *WTextureViewDescriptor) TextureView {
-	var p uintptr
-	if desc != nil {
-		p = uintptr(unsafe.Pointer(desc))
+// CheckShader compiles WGSL inside a validation error scope and returns wgpu's message,
+// or "" when it compiled.
+func (d *Device) CheckShader(inst Instance, label, wgsl string) string {
+	call(fnDevicePushErrorScope, d.h, errorFilterValidation)
+	m := d.ShaderModule(label, wgsl)
+	id, p := newRequest()
+	defer takeRequest(id)
+	var k pins
+	defer k.done()
+	info := &wCallbackInfo{mode: callbackAllowProcess, callback: cbPopErrorScope, userdata1: id}
+	callWithInfo(fnDevicePopErrorScope, []uintptr{d.h}, ptr(&k, info))
+	for i := 0; i < 100 && !p.done; i++ {
+		call(fnInstanceProcessEvents, inst.h)
 	}
-	return TextureView{call("wgpuTextureCreateView", t.h, p)}
+	if m.h != 0 {
+		m.Release()
+	}
+	switch {
+	case !p.done:
+		return "no answer from the error scope"
+	case p.status != statusSuccess:
+		return fmt.Sprintf("the error scope failed (status %d): %s", p.status, p.msg)
+	case p.typ != errorTypeNoError:
+		if p.msg == "" {
+			return fmt.Sprintf("error type %d", p.typ)
+		}
+		return p.msg
+	}
+	return ""
 }
+
+// ---- bind groups and pipelines -------------------------------------------------------
+
+// LayoutEntry is one binding of a bind group layout: a uniform buffer, a filtering
+// sampler or a 2D texture.
+type LayoutEntry struct {
+	Binding    uint32
+	Visibility ShaderStage
+	// Uniform: a uniform buffer; Dynamic: it takes a dynamic offset; MinSize: 0 for any.
+	Uniform bool
+	Dynamic bool
+	MinSize uint64
+	Sampler bool
+	// Texture: its sample type (SampleFloat, SampleDepth), 0 for none.
+	Texture SampleType
+}
+
+func (d *Device) BindGroupLayout(entries ...LayoutEntry) BindGroupLayout {
+	var k pins
+	defer k.done()
+	w := make([]wBindGroupLayoutEntry, len(entries))
+	for i, e := range entries {
+		w[i] = wBindGroupLayoutEntry{binding: e.Binding, visibility: uint64(e.Visibility)}
+		switch {
+		case e.Uniform:
+			w[i].buffer = wBufferBindingLayout{typ: bufferBindingUniform, minBindingSize: e.MinSize}
+			if e.Dynamic {
+				w[i].buffer.hasDynamicOffset = 1
+			}
+		case e.Sampler:
+			w[i].sampler.typ = samplerBindingFilter
+		case e.Texture != 0:
+			w[i].texture = wTextureBindingLayout{sampleType: uint32(e.Texture), viewDimension: textureViewDimension2D}
+		}
+	}
+	desc := &wBindGroupLayoutDescriptor{label: noString, entryCount: uintptr(len(w)), entries: slice(&k, w)}
+	return BindGroupLayout{call(fnDeviceCreateBindGroupLayout, d.h, ptr(&k, desc))}
+}
+
+// GroupEntry is one resource of a bind group: a buffer range, a sampler or a view.
+type GroupEntry struct {
+	Binding uint32
+	Buffer  Buffer
+	Offset  uint64
+	// Size 0 is the whole buffer.
+	Size    uint64
+	Sampler Sampler
+	View    TextureView
+}
+
+func (d *Device) BindGroup(layout BindGroupLayout, entries ...GroupEntry) BindGroup {
+	var k pins
+	defer k.done()
+	w := make([]wBindGroupEntry, len(entries))
+	for i, e := range entries {
+		w[i] = wBindGroupEntry{binding: e.Binding, buffer: e.Buffer.h, offset: e.Offset, size: e.Size, sampler: e.Sampler.h, textureView: e.View.h}
+		if e.Buffer.h != 0 && e.Size == 0 {
+			w[i].size = wholeSize
+		}
+	}
+	desc := &wBindGroupDescriptor{label: noString, layout: layout.h, entryCount: uintptr(len(w)), entries: slice(&k, w)}
+	return BindGroup{call(fnDeviceCreateBindGroup, d.h, ptr(&k, desc))}
+}
+
+func (d *Device) PipelineLayout(layouts ...BindGroupLayout) PipelineLayout {
+	var k pins
+	defer k.done()
+	hs := make([]uintptr, len(layouts))
+	for i, l := range layouts {
+		hs[i] = l.h
+	}
+	desc := &wPipelineLayoutDescriptor{label: noString, bindGroupLayoutCount: uintptr(len(hs)), bindGroupLayouts: slice(&k, hs)}
+	return PipelineLayout{call(fnDeviceCreatePipelineLayout, d.h, ptr(&k, desc))}
+}
+
+type VertexAttr struct {
+	Format   VertexFormat
+	Offset   uint64
+	Location uint32
+}
+
+type VertexLayout struct {
+	Stride uint64
+	Attrs  []VertexAttr
+}
+
+type BlendComponent struct {
+	Op       BlendOp
+	Src, Dst BlendFactor
+}
+
+type Blend struct{ Color, Alpha BlendComponent }
+
+type Target struct {
+	Format TextureFormat
+	// Blend nil writes the colour as it is.
+	Blend *Blend
+}
+
+type DepthState struct {
+	Format  TextureFormat
+	Write   bool
+	Compare Compare
+}
+
+// PipelineDesc describes a render pipeline. A zero Layout is the automatic one; an empty
+// FS is no fragment stage (a depth-only pass).
+type PipelineDesc struct {
+	Label    string
+	Layout   PipelineLayout
+	Module   ShaderModule
+	VS, FS   string
+	Buffers  []VertexLayout
+	Targets  []Target
+	Topology Topology
+	Front    FrontFace
+	Cull     CullMode
+	Depth    *DepthState
+}
+
+func (d *Device) RenderPipeline(p PipelineDesc) RenderPipeline {
+	var k pins
+	defer k.done()
+	bufs := make([]wVertexBufferLayout, len(p.Buffers))
+	for i, b := range p.Buffers {
+		attrs := make([]wVertexAttribute, len(b.Attrs))
+		for j, a := range b.Attrs {
+			attrs[j] = wVertexAttribute{format: uint32(a.Format), offset: a.Offset, shaderLocation: a.Location}
+		}
+		bufs[i] = wVertexBufferLayout{stepMode: vertexStepModeVertex, arrayStride: b.Stride, attributeCount: uintptr(len(attrs)), attributes: slice(&k, attrs)}
+	}
+	topology := p.Topology
+	if topology == 0 {
+		topology = TriangleList
+	}
+	front := p.Front
+	if front == 0 {
+		front = FrontCCW
+	}
+	cull := p.Cull
+	if cull == 0 {
+		cull = CullNone
+	}
+	desc := &wRenderPipelineDescriptor{
+		label:       k.str(p.Label),
+		layout:      p.Layout.h,
+		vertex:      wVertexState{module: p.Module.h, entryPoint: k.str(p.VS), bufferCount: uintptr(len(bufs)), buffers: slice(&k, bufs)},
+		primitive:   wPrimitiveState{topology: uint32(topology), frontFace: uint32(front), cullMode: uint32(cull)},
+		multisample: wMultisampleState{count: 1, mask: 0xFFFFFFFF},
+	}
+	if p.Depth != nil {
+		keep := wStencilFaceState{compare: compareAlways, failOp: stencilKeep, depthFailOp: stencilKeep, passOp: stencilKeep}
+		ds := &wDepthStencilState{format: uint32(p.Depth.Format), depthWriteEnabled: optionalBoolFalse, depthCompare: uint32(p.Depth.Compare),
+			stencilFront: keep, stencilBack: keep, stencilReadMask: 0xFFFFFFFF, stencilWriteMask: 0xFFFFFFFF}
+		if p.Depth.Write {
+			ds.depthWriteEnabled = optionalBoolTrue
+		}
+		desc.depthStencil = ptr(&k, ds)
+	}
+	if p.FS != "" {
+		ts := make([]wColorTargetState, len(p.Targets))
+		for i, t := range p.Targets {
+			ts[i] = wColorTargetState{format: uint32(t.Format), writeMask: colorWriteAll}
+			if t.Blend != nil {
+				b := &wBlendState{
+					color: wBlendComponent{uint32(t.Blend.Color.Op), uint32(t.Blend.Color.Src), uint32(t.Blend.Color.Dst)},
+					alpha: wBlendComponent{uint32(t.Blend.Alpha.Op), uint32(t.Blend.Alpha.Src), uint32(t.Blend.Alpha.Dst)},
+				}
+				ts[i].blend = ptr(&k, b)
+			}
+		}
+		fs := &wFragmentState{module: p.Module.h, entryPoint: k.str(p.FS), targetCount: uintptr(len(ts)), targets: slice(&k, ts)}
+		desc.fragment = ptr(&k, fs)
+	}
+	return RenderPipeline{call(fnDeviceCreateRenderPipeline, d.h, ptr(&k, desc))}
+}
+
+// ---- samplers, buffers, textures -----------------------------------------------------
+
+type SamplerDesc struct {
+	Mag, Min FilterMode
+	AddressU AddressMode
+	AddressV AddressMode
+}
+
+func (d *Device) Sampler(s SamplerDesc) Sampler {
+	var k pins
+	defer k.done()
+	desc := &wSamplerDescriptor{label: noString, addressModeU: uint32(s.AddressU), addressModeV: uint32(s.AddressV), addressModeW: uint32(ClampToEdge),
+		magFilter: uint32(s.Mag), minFilter: uint32(s.Min), mipmapFilter: uint32(FilterNearest), lodMinClamp: 0, lodMaxClamp: 32, maxAnisotropy: 1}
+	return Sampler{call(fnDeviceCreateSampler, d.h, ptr(&k, desc))}
+}
+
+func (d *Device) Buffer(usage BufferUsage, size uint64) Buffer {
+	var k pins
+	defer k.done()
+	desc := &wBufferDescriptor{label: noString, usage: uint64(usage), size: size}
+	return Buffer{call(fnDeviceCreateBuffer, d.h, ptr(&k, desc))}
+}
+
+// BufferWith makes a buffer holding data (COPY_DST is added to its usage). Its size is
+// rounded up to 4 bytes, as a buffer write needs.
+func (d *Device) BufferWith(usage BufferUsage, data []byte) Buffer {
+	n := (uint64(len(data)) + 3) &^ 3
+	if n == 0 {
+		n = 4
+	}
+	b := d.Buffer(usage|BufferCopyDst, n)
+	if len(data)%4 != 0 {
+		data = append(append([]byte(nil), data...), make([]byte, 4-len(data)%4)...)
+	}
+	d.Queue.WriteBuffer(b, 0, data)
+	return b
+}
+
+type TextureDesc struct {
+	Label  string
+	W, H   uint32
+	Format TextureFormat
+	Usage  TextureUsage
+}
+
+func (d *Device) Texture(t TextureDesc) Texture {
+	var k pins
+	defer k.done()
+	desc := &wTextureDescriptor{label: k.str(t.Label), usage: uint64(t.Usage), dimension: textureDimension2D,
+		size: wExtent3D{t.W, t.H, 1}, format: uint32(t.Format), mipLevelCount: 1, sampleCount: 1}
+	return Texture{call(fnDeviceCreateTexture, d.h, ptr(&k, desc))}
+}
+
+// View is the texture's default view.
+func (t Texture) View() TextureView { return TextureView{call(fnTextureCreateView, t.h, 0)} }
+
+// ---- the queue -------------------------------------------------------------------------
 
 func (q Queue) Submit(cmds ...CommandBuffer) {
 	if len(cmds) == 0 {
 		return
 	}
-	handles := make([]Handle, len(cmds))
+	var k pins
+	defer k.done()
+	hs := make([]uintptr, len(cmds))
 	for i, c := range cmds {
-		handles[i] = c.h
+		hs[i] = c.h
 	}
-	call("wgpuQueueSubmit", q.h, uintptr(len(handles)), uintptr(unsafe.Pointer(&handles[0])))
+	call(fnQueueSubmit, q.h, uintptr(len(hs)), slice(&k, hs))
 }
 
-func (q Queue) WriteBuffer(buf Buffer, offset uint64, data []byte) {
+func (q Queue) WriteBuffer(b Buffer, offset uint64, data []byte) {
 	if len(data) == 0 {
 		return
 	}
-	call("wgpuQueueWriteBuffer", q.h, buf.h, uintptr(offset), uintptr(unsafe.Pointer(&data[0])), uintptr(len(data)))
+	var k pins
+	defer k.done()
+	call(fnQueueWriteBuffer, q.h, b.h, uintptr(offset), slice(&k, data), uintptr(len(data)))
 }
 
-func (q Queue) WriteTexture(dst *WTexelCopyTextureInfo, data []byte, layout *WTexelCopyBufferLayout, size *WExtent3D) {
+// WriteTexture fills a whole w x h texture from tightly packed rows (bytesPerRow apart).
+func (q Queue) WriteTexture(t Texture, data []byte, bytesPerRow, w, h uint32) {
 	if len(data) == 0 {
 		return
 	}
-	call("wgpuQueueWriteTexture", q.h, uintptr(unsafe.Pointer(dst)), uintptr(unsafe.Pointer(&data[0])), uintptr(len(data)), uintptr(unsafe.Pointer(layout)), uintptr(unsafe.Pointer(size)))
+	var k pins
+	defer k.done()
+	dst := &wTexelCopyTextureInfo{texture: t.h, aspect: aspectAll}
+	layout := &wTexelCopyBufferLayout{bytesPerRow: bytesPerRow, rowsPerImage: h}
+	size := &wExtent3D{w, h, 1}
+	call(fnQueueWriteTexture, q.h, ptr(&k, dst), slice(&k, data), uintptr(len(data)), ptr(&k, layout), ptr(&k, size))
 }
 
-func (enc CommandEncoder) BeginRenderPass(desc *WRenderPassDescriptor) RenderPass {
-	return RenderPass{call("wgpuCommandEncoderBeginRenderPass", enc.h, uintptr(unsafe.Pointer(desc)))}
+// ---- encoding --------------------------------------------------------------------------
+
+func (d *Device) Encoder() CommandEncoder {
+	var k pins
+	defer k.done()
+	desc := &wCommandEncoderDescriptor{label: noString}
+	return CommandEncoder{call(fnDeviceCreateCommandEncoder, d.h, ptr(&k, desc))}
 }
 
-func (enc CommandEncoder) CopyTextureToBuffer(src *WTexelCopyTextureInfo, dst *WTexelCopyBufferInfo, size *WExtent3D) {
-	call("wgpuCommandEncoderCopyTextureToBuffer", enc.h, uintptr(unsafe.Pointer(src)), uintptr(unsafe.Pointer(dst)), uintptr(unsafe.Pointer(size)))
+type Color struct{ R, G, B, A float64 }
+
+// ColorAttachment is cleared to Clear and stored.
+type ColorAttachment struct {
+	View  TextureView
+	Clear Color
 }
 
-func (enc CommandEncoder) Finish() CommandBuffer {
-	desc := WCommandBufferDescriptor{Label: nullSV()}
-	return CommandBuffer{call("wgpuCommandEncoderFinish", enc.h, uintptr(unsafe.Pointer(&desc)))}
+// DepthAttachment is cleared to Clear and stored.
+type DepthAttachment struct {
+	View  TextureView
+	Clear float32
 }
 
-func (p RenderPass) SetPipeline(pipe RenderPipeline) {
-	call("wgpuRenderPassEncoderSetPipeline", p.h, pipe.h)
-}
-
-func (p RenderPass) SetBindGroup(slot uint32, bg BindGroup, offsets []uint32) {
-	var op uintptr
-	if len(offsets) > 0 {
-		op = uintptr(unsafe.Pointer(&offsets[0]))
+// RenderPass begins a pass. Color may be nil: a depth-only pass (the shadow map).
+func (e CommandEncoder) RenderPass(label string, color *ColorAttachment, depth *DepthAttachment) RenderPass {
+	var k pins
+	defer k.done()
+	desc := &wRenderPassDescriptor{label: k.str(label)}
+	if color != nil {
+		c := &wRenderPassColorAttachment{view: color.View.h, depthSlice: depthSliceUndefined, loadOp: loadOpClear, storeOp: storeOpStore,
+			clearValue: wColor{color.Clear.R, color.Clear.G, color.Clear.B, color.Clear.A}}
+		desc.colorAttachmentCount, desc.colorAttachments = 1, ptr(&k, c)
 	}
-	call("wgpuRenderPassEncoderSetBindGroup", p.h, uintptr(slot), bg.h, uintptr(len(offsets)), op)
+	if depth != nil {
+		ds := &wRenderPassDepthStencilAttachment{view: depth.View.h, depthLoadOp: loadOpClear, depthStoreOp: storeOpStore, depthClearValue: depth.Clear}
+		desc.depthStencilAttachment = ptr(&k, ds)
+	}
+	return RenderPass{call(fnCommandEncoderBeginRenderPass, e.h, ptr(&k, desc))}
 }
 
-func (p RenderPass) SetVertexBuffer(slot uint32, buf Buffer) {
-	call("wgpuRenderPassEncoderSetVertexBuffer", p.h, uintptr(slot), buf.h, 0, 0xFFFFFFFFFFFFFFFF)
+// CopyTextureToBuffer copies a whole w x h texture into a buffer, rows bytesPerRow apart
+// (a multiple of 256).
+func (e CommandEncoder) CopyTextureToBuffer(t Texture, b Buffer, bytesPerRow, w, h uint32) {
+	var k pins
+	defer k.done()
+	src := &wTexelCopyTextureInfo{texture: t.h, aspect: aspectAll}
+	dst := &wTexelCopyBufferInfo{layout: wTexelCopyBufferLayout{bytesPerRow: bytesPerRow, rowsPerImage: h}, buffer: b.h}
+	size := &wExtent3D{w, h, 1}
+	call(fnCommandEncoderCopyTextureToBuffer, e.h, ptr(&k, src), ptr(&k, dst), ptr(&k, size))
 }
 
-func (p RenderPass) SetIndexBuffer(buf Buffer, format IndexFormat) {
-	call("wgpuRenderPassEncoderSetIndexBuffer", p.h, buf.h, uintptr(format), 0, 0xFFFFFFFFFFFFFFFF)
+// Finish ends the encoder (and releases it) and returns its commands.
+func (e CommandEncoder) Finish() CommandBuffer {
+	var k pins
+	defer k.done()
+	desc := &wCommandBufferDescriptor{label: noString}
+	c := CommandBuffer{call(fnCommandEncoderFinish, e.h, ptr(&k, desc))}
+	e.Release()
+	return c
 }
 
-func (p RenderPass) Draw(vertexCount, instanceCount, firstVertex, firstInstance uint32) {
-	call("wgpuRenderPassEncoderDraw", p.h, uintptr(vertexCount), uintptr(instanceCount), uintptr(firstVertex), uintptr(firstInstance))
+func (p RenderPass) SetPipeline(pl RenderPipeline) { call(fnRenderPassSetPipeline, p.h, pl.h) }
+
+func (p RenderPass) SetBindGroup(index uint32, g BindGroup, offsets ...uint32) {
+	var k pins
+	defer k.done()
+	call(fnRenderPassSetBindGroup, p.h, uintptr(index), g.h, uintptr(len(offsets)), slice(&k, offsets))
 }
 
-func (p RenderPass) DrawIndexed(indexCount, instanceCount, firstIndex uint32, baseVertex int32, firstInstance uint32) {
-	call("wgpuRenderPassEncoderDrawIndexed", p.h, uintptr(indexCount), uintptr(instanceCount), uintptr(firstIndex), uintptr(baseVertex), uintptr(firstInstance))
+func (p RenderPass) SetVertexBuffer(slot uint32, b Buffer) {
+	call(fnRenderPassSetVertexBuffer, p.h, uintptr(slot), b.h, 0, wholeSize)
 }
 
+func (p RenderPass) SetIndexBuffer(b Buffer, f IndexFormat) {
+	call(fnRenderPassSetIndexBuffer, p.h, b.h, uintptr(f), 0, wholeSize)
+}
+
+func (p RenderPass) Draw(vertices, instances, firstVertex, firstInstance uint32) {
+	call(fnRenderPassDraw, p.h, uintptr(vertices), uintptr(instances), uintptr(firstVertex), uintptr(firstInstance))
+}
+
+func (p RenderPass) DrawIndexed(indices, instances, firstIndex uint32, baseVertex int32, firstInstance uint32) {
+	call(fnRenderPassDrawIndexed, p.h, uintptr(indices), uintptr(instances), uintptr(firstIndex), uintptr(uint32(baseVertex)), uintptr(firstInstance))
+}
+
+// End ends the pass and releases it.
 func (p RenderPass) End() {
-	call("wgpuRenderPassEncoderEnd", p.h)
+	call(fnRenderPassEnd, p.h)
+	call(fnRenderPassRelease, p.h)
 }
 
-func (b Buffer) MapAsync(dev Device, mode MapMode, offset, size uint64) error {
-	return bufferMapAsync(b, dev, mode, offset, size)
-}
+// ---- reading back ----------------------------------------------------------------------
 
-func (b Buffer) GetMappedRange(offset, size uint64) unsafe.Pointer {
-	//nolint:govet // the handle is from wgpu
-	return unsafe.Pointer(call("wgpuBufferGetMappedRange", b.h, uintptr(offset), uintptr(size)))
-}
-
-func (b Buffer) Unmap() {
-	call("wgpuBufferUnmap", b.h)
-}
-
-// InfoString copies a StringView from wgpu-native memory into a Go string.
-func InfoString(sv StringView) string {
-	if sv.Data == 0 || sv.Length == 0 || sv.Length == math.MaxUint64 {
-		return ""
+// MapRead maps size bytes of a MAP_READ buffer and waits for it. The bytes are Mapped's
+// until Unmap.
+func (b Buffer) MapRead(d *Device, size uint64) error {
+	id, p := newRequest()
+	defer takeRequest(id)
+	var k pins
+	defer k.done()
+	info := &wCallbackInfo{mode: callbackAllowProcess, callback: cbMap, userdata1: id}
+	callWithInfo(fnBufferMapAsync, []uintptr{b.h, mapModeRead, 0, uintptr(size)}, ptr(&k, info))
+	for i := 0; i < 100 && !p.done; i++ {
+		d.Poll(true)
 	}
-	//nolint:govet // copying from wgpu memory
-	return string(unsafe.Slice((*byte)(unsafe.Pointer(sv.Data)), sv.Length))
+	switch {
+	case !p.done:
+		return errors.New("gpu: the buffer never mapped")
+	case p.status != statusSuccess:
+		return fmt.Errorf("gpu: map failed (status %d): %s", p.status, p.msg)
+	}
+	return nil
 }
 
-// Fmt is the adapter info as a readable string.
-func (info WAdapterInfo) Fmt() string {
-	return fmt.Sprintf("%s (backend %d, type %d)", InfoString(info.Device), info.BackendType, info.AdapterType)
+// Mapped is the mapped bytes. They are wgpu-native's and are gone after Unmap.
+func (b Buffer) Mapped(size uint64) []byte {
+	a := call(fnBufferGetMappedRange, b.h, 0, uintptr(size))
+	if a == 0 {
+		return nil
+	}
+	return unsafe.Slice(cPtr[byte](a), size)
 }
 
-//go:nosplit
-func noescape(p uintptr) unsafe.Pointer {
-	x := p
-	return unsafe.Pointer(x) //nolint:govet
-}
+func (b Buffer) Unmap() { call(fnBufferUnmap, b.h) }

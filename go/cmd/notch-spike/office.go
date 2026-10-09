@@ -2,19 +2,19 @@
 
 package main
 
-// The office stand-in on wgpu-native through go-webgpu (no C compiler): notch-proto's
+// The office stand-in on wgpu-native through internal/gpu (no C compiler): notch-proto's
 // shader, drawn offscreen once, read back and handed to Gio as an image. That is the
 // Rust office's own design (render, read back, compose on the CPU). It also compiles
 // the real office shaders, so a WGSL feature wgpu-native v29 refuses shows up now.
 
 import (
-	"fmt"
+	"errors"
 	"image"
 	"os"
 	"path/filepath"
-	"unsafe"
+	"strings"
 
-	"github.com/go-webgpu/webgpu/wgpu"
+	"github.com/4regab/Hover/go/internal/gpu"
 )
 
 // sceneWGSL is notch-proto's SCENE_WGSL: #office's radial background and an isometric
@@ -46,40 +46,25 @@ type officeResult struct {
 
 func renderOffice(wgslDir string) (res officeResult, err error) {
 	res.shaders = map[string]string{}
-	// ponytail: wgpu_native.dll next to the exe is found by hand; the installer will put it there.
-	if os.Getenv("WGPU_NATIVE_PATH") == "" {
-		if exe, e := os.Executable(); e == nil {
-			if p := filepath.Join(filepath.Dir(exe), "wgpu_native.dll"); fileExists(p) {
-				os.Setenv("WGPU_NATIVE_PATH", p)
-			}
-		}
-	}
-	if err = wgpu.Init(); err != nil {
-		return res, err
-	}
-	inst, err := wgpu.CreateInstance(nil)
+	inst, err := gpu.CreateInstance()
 	if err != nil {
 		return res, err
 	}
 	defer inst.Release()
-	adapter, err := inst.RequestAdapter(&wgpu.RequestAdapterOptions{PowerPreference: wgpu.PowerPreferenceLowPower})
+	adapter, err := inst.RequestAdapter(false)
 	if err != nil {
 		// No GPU (a CI runner): the software adapter, as notch-proto gets WARP there.
-		if adapter, err = inst.RequestAdapter(&wgpu.RequestAdapterOptions{ForceFallbackAdapter: true}); err != nil {
+		if adapter, err = inst.RequestAdapter(true); err != nil {
 			return res, err
 		}
 	}
 	defer adapter.Release()
-	if info, e := adapter.Info(); e == nil {
-		res.adapter = fmt.Sprintf("%s (backend %v, type %v)", info.Device, info.BackendType, info.AdapterType)
-	}
-	dev, err := adapter.RequestDevice(nil)
+	res.adapter = adapter.Info().String()
+	dev, err := inst.RequestDevice(adapter, "office stand-in")
 	if err != nil {
 		return res, err
 	}
 	defer dev.Release()
-	queue := dev.Queue()
-	defer queue.Release()
 
 	for _, name := range []string{"office.wgsl", "page.wgsl"} {
 		if wgslDir == "" {
@@ -90,98 +75,46 @@ func renderOffice(wgslDir string) (res officeResult, err error) {
 			res.shaders[name] = e.Error()
 			continue
 		}
-		dev.PushErrorScope(wgpu.ErrorFilterValidation)
-		m, e := dev.CreateShaderModuleWGSL(string(src))
-		typ, text, pe := dev.PopErrorScopeAsync(inst)
-		switch {
-		case e != nil:
-			res.shaders[name] = e.Error()
-		case pe != nil:
-			res.shaders[name] = pe.Error()
-		case typ != wgpu.ErrorTypeNoError:
-			res.shaders[name] = text
-		default:
-			res.shaders[name] = ""
-		}
-		if m != nil {
-			m.Release()
-		}
+		res.shaders[name] = dev.CheckShader(inst, name, string(src))
 	}
 
 	const w, h = 1104, 424
-	tex, err := dev.CreateTexture(&wgpu.TextureDescriptor{
-		Label: "office stand-in", Usage: wgpu.TextureUsageRenderAttachment | wgpu.TextureUsageCopySrc,
-		Dimension: wgpu.TextureDimension2D, Size: wgpu.Extent3D{Width: w, Height: h, DepthOrArrayLayers: 1},
-		Format: wgpu.TextureFormatRGBA8Unorm, MipLevelCount: 1, SampleCount: 1,
-	})
-	if err != nil {
-		return res, err
-	}
+	tex := dev.Texture(gpu.TextureDesc{Label: "office stand-in", W: w, H: h, Format: gpu.FormatRGBA8Unorm,
+		Usage: gpu.TextureRenderAttachmt | gpu.TextureCopySrc})
 	defer tex.Release()
-	view, err := tex.CreateView(nil)
-	if err != nil {
-		return res, err
-	}
+	view := tex.View()
 	defer view.Release()
-	module, err := dev.CreateShaderModuleWGSL(sceneWGSL)
-	if err != nil {
-		return res, err
-	}
+	module := dev.ShaderModule("scene", sceneWGSL)
 	defer module.Release()
-	pipe, err := dev.CreateRenderPipelineSimple(nil, module, "vs", module, "fs", wgpu.TextureFormatRGBA8Unorm)
-	if err != nil {
-		return res, err
-	}
+	pipe := dev.RenderPipeline(gpu.PipelineDesc{Label: "scene", Module: module, VS: "vs", FS: "fs",
+		Targets: []gpu.Target{{Format: gpu.FormatRGBA8Unorm}}})
 	defer pipe.Release()
 
 	const row = (w*4 + 255) / 256 * 256 // rows of a texture copy are 256-byte aligned
-	buf, err := dev.CreateBuffer(&wgpu.BufferDescriptor{Usage: wgpu.BufferUsageMapRead | wgpu.BufferUsageCopyDst, Size: row * h})
-	if err != nil {
-		return res, err
-	}
+	buf := dev.Buffer(gpu.BufferMapRead|gpu.BufferCopyDst, row*h)
 	defer buf.Release()
 
-	enc, err := dev.CreateCommandEncoder(nil)
-	if err != nil {
-		return res, err
-	}
-	pass, err := enc.BeginRenderPass(&wgpu.RenderPassDescriptor{ColorAttachments: []wgpu.RenderPassColorAttachment{{
-		View: view, LoadOp: wgpu.LoadOpClear, StoreOp: wgpu.StoreOpStore, ClearValue: wgpu.Color{A: 1},
-	}}})
-	if err != nil {
-		return res, err
-	}
+	enc := dev.Encoder()
+	pass := enc.RenderPass("scene", &gpu.ColorAttachment{View: view, Clear: gpu.Color{A: 1}}, nil)
 	pass.SetPipeline(pipe)
 	pass.Draw(3, 1, 0, 0)
 	pass.End()
-	pass.Release()
-	enc.CopyTextureToBuffer(tex, buf, []wgpu.BufferTextureCopy{{
-		BufferLayout: wgpu.ImageDataLayout{BytesPerRow: row, RowsPerImage: h},
-		TextureBase:  wgpu.ImageCopyTexture{Texture: tex, Aspect: wgpu.TextureAspectAll},
-		Size:         wgpu.Extent3D{Width: w, Height: h, DepthOrArrayLayers: 1},
-	}})
-	cmd, err := enc.Finish()
-	enc.Release()
-	if err != nil {
+	enc.CopyTextureToBuffer(tex, buf, row, w, h)
+	dev.Queue.Submit(enc.Finish())
+	if err = buf.MapRead(dev, row*h); err != nil {
 		return res, err
 	}
-	if _, err = queue.Submit(cmd); err != nil {
-		return res, err
+	raw := buf.Mapped(row * h)
+	if raw == nil {
+		return res, errors.New("the read-back buffer has no mapping")
 	}
-	cmd.Release()
-	if err = buf.MapAsyncBlocking(dev, wgpu.MapModeRead, 0, row*h); err != nil {
-		return res, err
-	}
-	p := buf.GetMappedRange(0, row*h)
-	if p == nil {
-		return res, fmt.Errorf("the read-back buffer has no mapping")
-	}
-	raw := unsafe.Slice((*byte)(p), row*h)
 	res.img = image.NewRGBA(image.Rect(0, 0, w, h))
 	for y := 0; y < h; y++ {
 		copy(res.img.Pix[y*w*4:(y+1)*w*4], raw[y*row:y*row+w*4])
 	}
-	return res, buf.Unmap()
+	buf.Unmap()
+	if e := dev.Errors(); len(e) > 0 {
+		return res, errors.New(strings.Join(e, "; "))
+	}
+	return res, nil
 }
-
-func fileExists(p string) bool { _, err := os.Stat(p); return err == nil }

@@ -93,7 +93,7 @@ jobs:
           }
           $out | ForEach-Object { Write-Host $_ }
           @('', '### Phase 1: data folders on Windows', '') + ($out | ForEach-Object { "    $_" }) | Out-File -Append -Encoding utf8 $env:GITHUB_STEP_SUMMARY
-      # The version go-webgpu v0.5.5 is built against.
+      # The version internal/gpu's structs are checked against (wire_test.go).
       - name: wgpu-native
         run: |
           $zip = Join-Path $env:RUNNER_TEMP 'wgpu.zip'
@@ -103,6 +103,13 @@ jobs:
           if (-not $dll) { throw 'no wgpu_native.dll in the release zip' }
           Copy-Item $dll.FullName spike\
           Write-Host "wgpu_native.dll: $([math]::Round($dll.Length / 1MB, 1)) MB"
+      # Hover's own wgpu-native binding drawing on the runner's CPU adapter (WARP, DX12).
+      - name: Go GPU tests on WARP
+        working-directory: go
+        run: |
+          $env:WGPU_NATIVE_PATH = (Resolve-Path ..\spike\wgpu_native.dll).Path
+          go test ./internal/gpu -run Live -v -count=1
+          if ($LASTEXITCODE -ne 0) { throw 'go test failed' }
       # The runner's screen is 1024 x 768: the open notch's window (1080 wide) runs off it,
       # and the self-tests' corner pixels read black. Best effort; both tests share it.
       - name: Screen 1920 x 1080
