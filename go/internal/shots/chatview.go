@@ -7,6 +7,7 @@ import (
 
 	"github.com/4regab/Hover/go/internal/agents"
 	"github.com/4regab/Hover/go/internal/core"
+	"github.com/4regab/Hover/go/internal/notch"
 )
 
 // The chat view in place of the office, through its switch (shots.rs's chat_view_shots): the
@@ -100,6 +101,13 @@ func chatViewShots(r *rig, dir string) error {
 	if err := shot("header-renamed"); err != nil {
 		return err
 	}
+	// The branch and the context chips (the fixture's folder has no branch, and no context yet).
+	r.s.ShotChips("main", 11)
+	r.settle(200)
+	if err := shot("header-chips"); err != nil {
+		return err
+	}
+	r.s.ShotChips("", -1)
 	r.s.ListFold(0)
 	r.settle(200)
 	if err := shot("sidebar-folded"); err != nil {
@@ -107,6 +115,18 @@ func chatViewShots(r *rig, dir string) error {
 	}
 	r.s.ListFold(0)
 	r.settle(200)
+	// The title bar's menus.
+	for _, b := range []struct {
+		n    int
+		name string
+	}{{1, "file"}, {2, "settings"}, {3, "help"}} {
+		r.s.ShotBar(b.n)
+		r.settle(300)
+		if err := shot("bar-" + b.name); err != nil {
+			return err
+		}
+	}
+	r.s.ShotBar(0)
 	// The reply box: a circle at rest (a dot once there is a draft), opened by a click.
 	r.s.SetReply("A reply I have not sent", false, -1)
 	r.settle(200)
@@ -152,6 +172,32 @@ func chatViewShots(r *rig, dir string) error {
 	// Closing the chat goes to the start screen, still in the chat view.
 	r.s.CloseChat()
 	r.settle(300)
+	// The notch opens on the chat view too.
+	r.s.OpenSession(done)
+	r.settle(500)
+	r.s.Expand(false, false)
+	r.s.UpdateRest()
+	r.settle(1200)
+	if !r.s.ChatViewOn() {
+		return fmt.Errorf("the notch did not show the chat view")
+	}
+	if err := r.officeShot(dir, "chat-view-notch.png", notch.SizeDefault); err != nil {
+		return err
+	}
+	r.s.CloseDrawer()
+	r.settle(500)
+	if err := r.officeShot(dir, "chat-view-notch-home.png", notch.SizeDefault); err != nil {
+		return err
+	}
+	// The sidebar closed on the start screen: the switch and the show button stay, the way back to the office and the chats.
+	r.s.SetListOpen(0, false)
+	r.settle(400)
+	if err := r.officeShot(dir, "chat-view-notch-home-no-list.png", notch.SizeDefault); err != nil {
+		return err
+	}
+	r.s.SetListOpen(0, true)
+	r.settle(300)
+	r.s.Collapse()
 	// Back to the office through the switch: drawn again.
 	r.s.ToggleView()
 	r.settle(500)

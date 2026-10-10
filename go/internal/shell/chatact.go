@@ -186,6 +186,9 @@ func (s *Shell) chatProps(op *ui.OfficeProps, which int) {
 	if d.Wide && sess.Cloud == nil {
 		d.Branch = s.branchOf(sess.Folder)
 	}
+	if c := s.shotChips; c != nil {
+		d.Branch, d.Ctx = c.branch, c.ctx
+	}
 	if p.target == which {
 		if ct := p.thread; ct != nil {
 			d.Thread, d.ThreadGen, d.Jump, d.Over = ct.img, ct.gen, ct.jump, ct.over

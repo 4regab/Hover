@@ -14,8 +14,10 @@ import (
 	"strings"
 
 	"github.com/4regab/Hover/go/internal/agents"
+	"github.com/4regab/Hover/go/internal/app"
 	"github.com/4regab/Hover/go/internal/chat"
 	"github.com/4regab/Hover/go/internal/core"
+	"github.com/4regab/Hover/go/internal/notch"
 	"github.com/4regab/Hover/go/internal/ui"
 )
 
@@ -307,6 +309,8 @@ func officeMoreShots(r *rig, dir string) error {
 		}
 	}
 	s.CloseDrawer()
+	// The words typed in the notch's box stay with the notch's box in the Rust app.
+	s.SetNewDraft("")
 	return nil
 }
 
@@ -325,3 +329,25 @@ func mockPNG(w, h int, f func(x, y int) [3]uint8) []byte {
 }
 
 func lowerDash(s string) string { return strings.ReplaceAll(strings.ToLower(s), " ", "-") }
+
+// notchSettingsShots is Settings over the notch's office, at the Default size and at Small, where
+// the nine sections are taller than its sidebar, which scrolls (shots.rs, after desk_shots).
+func notchSettingsShots(r *rig, dir string) error {
+	r.s.ShotSettingsIn(0, app.SecGeneral)
+	r.settle(400)
+	if err := r.shot(dir, "notch-open-settings.png", r.win.h); err != nil {
+		return err
+	}
+	r.sizeWindow(core.WorkspaceSmall, notch.SizeSmall)
+	r.settle(800)
+	r.s.ShotSettingsIn(0, app.SecClaude)
+	r.settle(400)
+	if err := r.shot(dir, "notch-open-settings-small.png", r.win.h); err != nil {
+		return err
+	}
+	r.sizeWindow(core.WorkspaceDefault, notch.SizeDefault)
+	r.settle(800)
+	r.s.ShotSettingsOut()
+	r.settle(300)
+	return nil
+}

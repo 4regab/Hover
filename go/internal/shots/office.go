@@ -52,6 +52,12 @@ func newRig() (*rig, error) {
 	os.Setenv("HOVER_DATA_DIR", data)
 	settings := core.LoadSettings(filepath.Join(data, "settings.json"))
 	settings.SetKiroNoticeSeen(true)
+	// The project the Rust shots start with (their Kiro folder).
+	project := filepath.Join(data, "project")
+	if err := os.MkdirAll(project, 0o755); err != nil {
+		return nil, err
+	}
+	settings.SetKiroFolder(&project)
 	var mu sync.Mutex
 	held, held3, heldC, heldD := true, true, true, true
 	var runs int
@@ -350,7 +356,19 @@ func officeShots(dir string) error {
 	if err := deskShots2(r, dir); err != nil {
 		return err
 	}
-	return chatViewShots(r, dir)
+	if err := notchSettingsShots(r, dir); err != nil {
+		return err
+	}
+	if err := expandShots(r, dir); err != nil {
+		return err
+	}
+	if err := chatViewShots(r, dir); err != nil {
+		return err
+	}
+	if err := newTaskBoxShot(r, dir); err != nil {
+		return err
+	}
+	return chatActionShots(r, dir)
 }
 
 var _ = layout.Context{}

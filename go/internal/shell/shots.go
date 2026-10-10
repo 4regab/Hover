@@ -389,3 +389,47 @@ func (s *Shell) ShotThreadScroll() float32 {
 	}
 	return 0
 }
+
+// The chat view, the expanded chat and the chat's menus, as the shots take them.
+
+// ShotChips are the branch and the context the chat's header shows (no branch: "").
+func (s *Shell) ShotChips(branch string, ctx float32) {
+	if branch == "" && ctx < 0 {
+		s.shotChips = nil
+		s.invalidateAll()
+		return
+	}
+	s.shotChips = &struct {
+		branch string
+		ctx    float32
+	}{branch, ctx}
+	s.invalidateAll()
+}
+
+// ShotBar puts out the app window's title-bar menu (1 File, 2 Settings, 3 Help; 0 none).
+func (s *Shell) ShotBar(n int) { s.dview.Bar = n; s.invalidateAll() }
+
+// ShotDeskDetails is the expanded chat's Files & changes: the panel beside the chat, or away.
+func (s *Shell) ShotDeskDetails(id int32) { s.deskDetails(id) }
+
+// ShotPanelOpen says the desk's panel is out.
+func (s *Shell) ShotPanelOpen() bool { return s.desk.hasPanel }
+
+// ShotNewTask is the new-task box with a folder and words in it (shots.rs's shot_new_task).
+func (s *Shell) ShotNewTask(folder, text string) {
+	p := s.pg()
+	p.newFolder, p.newTool, p.fab = folder, 0, 2
+	s.SetNewDraft(text)
+}
+
+// ShotSettingsIn opens Settings over the notch's office on a page.
+func (s *Shell) ShotSettingsIn(which int, sec app.Section) { s.ShowSettingsIn(which, sec) }
+
+// ShotChip puts a chip in a chat's reply box.
+func (s *Shell) ShotChip(id int32, chip core.Chip) { s.addChip(id, chip) }
+
+// ShotChatOpen is the chat in the drawer (-1 for none).
+func (s *Shell) ShotChatOpen() int32 { return s.pg().open }
+
+// ShotSettingsOut puts the notch's Settings away, leaving the office open.
+func (s *Shell) ShotSettingsOut() { s.notchS = false; s.invalidateAll() }

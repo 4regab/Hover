@@ -27,8 +27,13 @@ type Shell struct {
 	tipShot *tipShot
 	// shotNewFolder, when set, is the folder the new task's box names (the shots' long one).
 	shotNewFolder string
-	Hover         *app.Hover
-	env           Env
+	// shotChips, when set, are the branch and the context the chat's header shows (the shots').
+	shotChips *struct {
+		branch string
+		ctx    float32
+	}
+	Hover *app.Hover
+	env   Env
 
 	win    Window
 	n      *NotchCtl

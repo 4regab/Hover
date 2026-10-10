@@ -267,7 +267,7 @@ func (o *OfficeView) chatPane(c *Ctx, p *OfficeProps, x, y, w, h, radius float32
 		// The chips: branch, context, cloud.
 		cy := y + (hdrH-24)/2
 		if d.Branch != "" && hx < right {
-			hx += c.headChip(&o.chipT[0], "git", -1, false, d.Branch, hx, cy) + 6
+			hx += c.headChip(&o.chipT[0], IconGit, -1, false, d.Branch, hx, cy) + 6
 		}
 		if d.Ctx >= 0 && hx < right {
 			hx += c.headChip(&o.chipT[1], "", d.Ctx, d.ToolID == "kiro", itoaUI(int(d.Ctx+0.5))+"%", hx, cy) + 6

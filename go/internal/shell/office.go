@@ -253,6 +253,10 @@ func (s *Shell) officePush() {
 	if f := hv.Settings.KiroFolder(); f != nil && agents.UsableFolder(*f) {
 		folder = f
 	}
+	// The new-task box starts in the default project folder, until another is picked.
+	if p.newFolder == "" && folder != nil {
+		p.newFolder = *folder
+	}
 	var open *int32
 	if p.open >= 0 {
 		o := p.open
