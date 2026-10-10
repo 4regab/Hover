@@ -126,9 +126,12 @@ try:
  pages=desk('browser'); urls=json.dumps(pages); assert 'example.com/docs' in urls and 'localhost:5173' in urls,pages
  print('Desk panels passed: probe, terminal, files, diff, subagents, browser pages and the thought step.')
  servers=json.loads((root/'mcp-servers.json').read_text())
- # Behind Hover's guard (background only), which is written where the agent can read it.
- assert len(servers)==1 and servers[0]['name']=='cua-driver' and servers[0]['command']=='/usr/bin/perl' and servers[0]['env']==[],servers
- guard,exe,mode=servers[0]['args']; assert exe==str(cua) and mode=='mcp' and guard.endswith('/cua/guard.pl') and Path(guard).is_file(),servers
+ # Cua Driver is behind Hover's guard (background only), which is written where the agent can
+ # read it. The agent browser's server comes with it: the browser is on unless switched off.
+ assert sorted(x['name'] for x in servers)==['cua-driver','hover-browser'],servers
+ cua_server=next(x for x in servers if x['name']=='cua-driver')
+ assert cua_server['command']=='/usr/bin/perl' and cua_server['env']==[],servers
+ guard,exe,mode=cua_server['args']; assert exe==str(cua) and mode=='mcp' and guard.endswith('/cua/guard.pl') and Path(guard).is_file(),servers
  send({'type':'reply','id':s['id'],'text':'Continue'})
  waiting=until(lambda m:m.get('type')=='state' and m['sessions'][0]['stage']=='waiting')
  send({'type':'answer','id':s['id'],'ask':waiting['sessions'][0]['ask']['id'],'answer':'allow'})
