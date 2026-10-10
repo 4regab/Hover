@@ -621,11 +621,29 @@ jobs:
           file dist/macos-osx-arm64/Hover.app/Contents/Resources/backend/hover-backend
           codesign --verify --deep --strict dist/macos-osx-arm64/Hover.app
           ditto -c -k --keepParent dist/macos-osx-arm64/Hover.app dist/Hover-osx-arm64-go.zip
-      - name: The packaged backend
+      - name: The packaged backend (Go)
+        id: smoke-go
+        continue-on-error: true
         run: |
           S=$(mktemp -d /private/tmp/hover-sandbox.XXXXXX); mkdir -p "$S/fake-bin" "$S/tmp"
           export HOVER_SANDBOX_ROOT="$S" HOVER_SANDBOXED=1 TMPDIR="$S/tmp/" PATH="$S/fake-bin:/usr/bin:/bin"
           /usr/bin/python3 tests/macos/backend-smoke.py "$GITHUB_WORKSPACE/dist/macos-osx-arm64/Hover.app" "$S"
+      # The same test on the same app with the Rust backend in it, so that what the test gets
+      # wrong shows up on both and what only Go gets wrong shows up on Go alone.
+      - name: The packaged backend (Rust, to compare)
+        id: smoke-rust
+        continue-on-error: true
+        run: |
+          cargo build --release -p hover-backend
+          cp -R dist/macos-osx-arm64/Hover.app "$RUNNER_TEMP/Hover-rust.app"
+          cp target/release/hover-backend "$RUNNER_TEMP/Hover-rust.app/Contents/Resources/backend/hover-backend"
+          S=$(mktemp -d /private/tmp/hover-sandbox.XXXXXX); mkdir -p "$S/fake-bin" "$S/tmp"
+          export HOVER_SANDBOX_ROOT="$S" HOVER_SANDBOXED=1 TMPDIR="$S/tmp/" PATH="$S/fake-bin:/usr/bin:/bin"
+          /usr/bin/python3 tests/macos/backend-smoke.py "$RUNNER_TEMP/Hover-rust.app" "$S"
+      - name: Both
+        run: |
+          echo "Go: ${{ steps.smoke-go.outcome }}, Rust: ${{ steps.smoke-rust.outcome }}"
+          [ "${{ steps.smoke-go.outcome }}" = success ]
       - uses: actions/upload-artifact@v4
         with:
           name: Hover-macOS-go

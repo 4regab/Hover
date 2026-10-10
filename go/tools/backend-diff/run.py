@@ -15,10 +15,13 @@ import scenario_task, scenario_rest
 RUST = os.environ.get("HB_RUST") or f"{REPO}/target/release/hover-backend"
 GO = os.environ.get("HB_GO") or "/tmp/hb-go"
 
-# What differs between two runs of the same program: random names, and a state captured
-# before the tools' checks finished.
+# What differs between two runs of the same program: random names, a state captured
+# before the tools' checks finished, and the stage the history shows after a hang-up (both
+# backends end the tool and then write the history, and whether that last write lands before
+# the process exits differs from run to run: one macOS run showed Rust "working", Go "stopped").
 IGNORE = [r"^restart_state\.tools", r"^image:turn", r"^ready_state\.tools",
-          r"^stop:state\.sessions\[0\]\.(act|pose|file|turns\[0\]\.(steps|woke))"]
+          r"^stop:state\.sessions\[0\]\.(act|pose|file|turns\[0\]\.(steps|woke))",
+          r"^stop:history\[0\]\.stage"]
 
 def clean(x, root):
     s = json.dumps(x, ensure_ascii=False)
