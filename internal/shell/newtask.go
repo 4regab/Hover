@@ -88,13 +88,9 @@ func effortWord(e string) string {
 }
 
 // modelRate is a Kiro model's credit rate against Auto, for its row in the picker: "2.2x",
-// "0.25x", "1.0x". Green under 1x, amber over 3x. Nothing for a model Kiro's page doesn't list.
-func modelRate(m ui.MOpt) ui.MRate {
-	r, ok := agents.KiroRate(m.ID)
-	if !ok {
-		r, ok = agents.KiroRate(m.Label)
-	}
-	if !ok {
+// "0.25x", "1.0x". Green under 1x, amber over 3x. Nothing for a model Kiro gave no rate.
+func modelRate(r float64) ui.MRate {
+	if r <= 0 {
 		return ui.MRate{}
 	}
 	plain := fmt.Sprintf("%v", r)
@@ -221,7 +217,7 @@ func (s *Shell) modelMenuOf(t core.AgentTool) ui.ModelMenuProps {
 		}
 		m.Models = append(m.Models, mo)
 		if t == core.Kiro {
-			m.Rates = append(m.Rates, modelRate(mo))
+			m.Rates = append(m.Rates, modelRate(mc.Rate))
 		} else {
 			m.Rates = append(m.Rates, ui.MRate{})
 		}

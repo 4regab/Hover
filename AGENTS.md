@@ -260,6 +260,14 @@ assets/          hover.svg (the logo), make-icon.py (writes hover.png and
     is sent. Pause cancels the turn the same way, keeps the conversation, and sends the
     next queued reply once the tool says the turn ended.
   - Prompts go over stdin, never on a command line.
+  - **Models are Kiro's to say, not Hover's** (`discover.go`). Nothing lists them by hand. Kiro
+    answers `session/new` before it knows its models (`network.listAvailableModels` finishes a few
+    hundred ms later) and sends them as a `config_option_update`, so a run that picked a model waits
+    for them (`awaitModels`), and `Runtime.Discover` reads them without a task: one throwaway
+    session in an empty temp folder, deleted again with `session/delete` (`session/close` where
+    that is all the tool has). The rate on each model is Kiro's `_meta.kiro.rateMultiplier`.
+    `SetAgentOffers` keeps a saved model list when a later answer has none. Antigravity is never
+    started for it (about 1 GB at each start); OpenCode and Claude Code list theirs at a run.
   - Up to three sessions run at once across all tools, and the newest six are kept.
     An end shows in the island (the tool's logo with a badge, and the task) and as a
     system notification.

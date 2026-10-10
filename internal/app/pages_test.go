@@ -236,13 +236,14 @@ func TestTheWordsAreTheCSharps(t *testing.T) {
 	if r[2].Control.Kind != CtlText || r[2].Control.Text != "Part of the model" {
 		t.Errorf("%+v", r[2].Control)
 	}
-	// Kiro before any run: its own list with Auto first, "Checking…" until known.
+	// Kiro before Hover has read its models: only Default (the models come from Kiro, not
+	// from a list of Hover's own), "Checking…" until known.
 	k := Build(SecKiro, i)
 	r = rows(k)
 	if r[0].Sub != "Checking…" {
 		t.Error(r[0].Sub)
 	}
-	if c := r[1].Control; c.Kind != CtlPicker || c.Text != "Auto" || c.Options[0].Label != "Auto" || len(c.Options) != 14 {
+	if c := r[1].Control; c.Kind != CtlPicker || c.Text != "Default" || len(c.Options) != 1 {
 		t.Errorf("%+v", c)
 	}
 	if k[0].Kind != BlkTitle || k[0].Text != "Kiro" {

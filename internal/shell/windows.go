@@ -51,6 +51,13 @@ func (h host) Recheck(tool core.AgentTool, fresh bool) {
 	go func() {
 		agents.Check(tool, fresh)
 		h.s.env.UIDo(func() { h.s.RefreshPage(false) })
+		// A fresh look at the tool is also a fresh read of its models.
+		for _, r := range h.s.Hover.Hosts {
+			if r.Tool() == tool {
+				r.Discover(fresh)
+				h.s.env.UIDo(func() { h.s.RefreshPage(false) })
+			}
+		}
 	}()
 }
 func (h host) Action(id string) {

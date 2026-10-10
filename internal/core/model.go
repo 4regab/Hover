@@ -364,6 +364,9 @@ func AgentOptionsFromJSON(v JSON) (AgentOptions, error) {
 type AcpChoice struct {
 	Value, Name string
 	Levels      []string // nil: none
+	// Rate is what the tool says a turn with this choice costs against its default, in its
+	// own credits (Kiro's rateMultiplier); 0 when it doesn't say.
+	Rate float64
 }
 
 // AcpOption is Services.AcpOption(Id, Category, Current, Choices).
@@ -394,7 +397,12 @@ func (o AcpOption) ToJSON() JSON {
 			}
 			levels = JArr(l...)
 		}
-		choices[i] = JObj(P("Value", JStr(c.Value)), P("Name", JStr(c.Name)), P("Levels", levels))
+		props := []Prop{P("Value", JStr(c.Value)), P("Name", JStr(c.Name)), P("Levels", levels)}
+		// Written only when the tool gave one, so a list without rates keeps its bytes.
+		if c.Rate > 0 {
+			props = append(props, P("Rate", JDouble(c.Rate)))
+		}
+		choices[i] = JObj(props...)
 	}
 	return JObj(P("Id", JStr(o.ID)), P("Category", optStr(o.Category)), P("Current", optStr(o.Current)), P("Choices", JArr(choices...)))
 }
@@ -410,6 +418,9 @@ func AcpOptionFromJSON(v JSON) (AcpOption, error) {
 				levels, _, err := OptList(lv, itemText)
 				cr.fail(err)
 				ch.Levels = levels
+			}
+			if rate := cr.optF64("Rate"); rate != nil {
+				ch.Rate = *rate
 			}
 			return ch, cr.err
 		})

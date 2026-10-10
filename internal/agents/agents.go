@@ -44,6 +44,11 @@ func Find(name string) string {
 	if p := OnPath(name); p != "" {
 		return p
 	}
+	if name == "kiro-cli" {
+		if p := kiroInstalled(); p != "" {
+			return p
+		}
+	}
 	return userBin(name)
 }
 
@@ -87,6 +92,25 @@ func CurrentToggles() Toggles {
 		return DefaultToggles()
 	}
 	return f()
+}
+
+// kiroInstalled is where Kiro's Windows installer puts kiro-cli (the MSI's Program Files
+// folder; a per-user install under the local app data), for a Hover whose PATH was made
+// before the install, or by a shortcut that never saw it. "" elsewhere and when it isn't
+// there.
+func kiroInstalled() string {
+	if runtime.GOOS != "windows" {
+		return ""
+	}
+	for _, root := range []string{os.Getenv("ProgramFiles"), os.Getenv("LOCALAPPDATA")} {
+		if root == "" {
+			continue
+		}
+		if p := filepath.Join(root, "Kiro-Cli", "kiro-cli.exe"); isFile(p) {
+			return p
+		}
+	}
+	return ""
 }
 
 // Exe is the program that runs the tool, or "" when it isn't installed.

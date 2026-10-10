@@ -13,15 +13,6 @@ import (
 	"github.com/4regab/Hover/internal/core"
 )
 
-// KiroModels is KiroRunner.Models: Settings → Kiro's models until a run has listed Kiro's own.
-var KiroModels = [14][2]string{
-	{"auto", "Auto"}, {"claude-opus-5.5", "Claude Opus 5.5"}, {"claude-opus-5", "Claude Opus 5"},
-	{"claude-sonnet-5", "Claude Sonnet 5"}, {"claude-opus-4.8", "Claude Opus 4.8"}, {"claude-sonnet-4.6", "Claude Sonnet 4.6"},
-	{"claude-haiku-4.5", "Claude Haiku 4.5"}, {"gpt-5.6-sol", "GPT-5.6 Sol"}, {"gpt-5.6-terra", "GPT-5.6 Terra"},
-	{"gpt-5.6-luna", "GPT-5.6 Luna"}, {"deepseek-3.2", "DeepSeek 3.2"}, {"minimax-m2.5", "MiniMax M2.5"},
-	{"glm-5", "GLM-5"}, {"qwen3-coder-next", "Qwen3 Coder Next"},
-}
-
 // UsableFolder is KiroRunner.UsableFolder: a full path to a directory that is there
 // now. "" stands for none.
 func UsableFolder(path string) bool {
