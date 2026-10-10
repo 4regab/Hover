@@ -221,6 +221,10 @@ func (p *DeskCard) layoutTiles(c *Ctx, cd *DeskCardProps, tight bool, x, y, w fl
 
 // MARK: The card
 
+// answerLines is how many lines of the answer the status box shows (Slint's max-height: 56px
+// on 12.5 px text: the fourth line starts inside it, and is cut with an ellipsis).
+const answerLines = 4
+
 type cardMetrics struct {
 	hd, now, nowCap, rest, input float32
 	tight                        bool
@@ -246,7 +250,8 @@ func (p *DeskCard) measure(c *Ctx, cd *DeskCardProps, maxW, maxH float32) cardMe
 		} else if cd.Answer == "" {
 			h += min(c.LineH(Font{Size: 12})*2, 36)
 		} else {
-			h += min(c.LineH(Font{Size: 12.5})*2, 56)
+			_, ah := c.MeasureBox(cd.Answer, TextBox{Font: Font{Size: 12.5}, W: maxW - 12 - 16, Wrap: true, MaxLines: answerLines})
+			h += ah
 			if cd.Meta != "" {
 				h += 2 + lh
 			}
@@ -337,10 +342,7 @@ func (p *DeskCard) Layout(c *Ctx, cd *DeskCardProps, x, y, maxW, maxH float32) [
 	nf := Font{Size: 11.5, Weight: 600, Face: FacePixel}
 	nameCol := Mix(White, cd.Color, 0.45)
 	nw, _ := c.Measure(name, nf, 0)
-	// Chips and buttons, 5 apart, after the name and 8. Only the folder's chip gives way
-	// (down to 48) when they do not all fit.
-	c.Text(name, tx, hy, TextBox{Font: nf, Color: nameCol, W: nw, H: 20, VAlign: Middle, Spacing: 0.7})
-	cx := tx + nw + c.spacingW(name, 0.7) + 8
+	lw := nw + c.spacingW(name, 0.7)
 	fg, bg := RGBA(0xffffff99), RGBA(0xffffff0e)
 	switch {
 	case cd.Stage <= 1:
@@ -360,21 +362,22 @@ func (p *DeskCard) Layout(c *Ctx, cd *DeskCardProps, x, y, maxW, maxH float32) [
 		icon, text string
 		fg, bg     color.NRGBA
 		shrink     bool
+		w          float32 // 0 until the row is too full
 	}
 	grey, greyBg := RGBA(0xffffff99), RGBA(0xffffff0e)
-	specs := []chipSpec{{"", what, fg, bg, false}}
+	specs := []chipSpec{{"", what, fg, bg, false, 0}}
 	if cd.Folder != "" {
-		specs = append(specs, chipSpec{PathFolder, cd.Folder, grey, greyBg, true})
+		specs = append(specs, chipSpec{PathFolder, cd.Folder, grey, greyBg, true, 0})
 	}
 	if cd.Access != "" {
 		afg, abg := grey, greyBg
 		if cd.AccessID == "full" {
 			afg, abg = RGB(0xffc46b), RGBA(0xffb34017)
 		}
-		specs = append(specs, chipSpec{PathShield, cd.Access, afg, abg, false})
+		specs = append(specs, chipSpec{PathShield, cd.Access, afg, abg, false, 0})
 	}
 	if cd.Ctx >= 0 {
-		specs = append(specs, chipSpec{"", itoaUI(int(cd.Ctx+0.5)) + "%", grey, greyBg, false})
+		specs = append(specs, chipSpec{"", itoaUI(int(cd.Ctx+0.5)) + "%", grey, greyBg, false, 0})
 	}
 	btns := [2][2]string{{IconCode, "Editor"}, {PathExpand, "Expand"}}
 	total := float32(0)
@@ -384,15 +387,35 @@ func (p *DeskCard) Layout(c *Ctx, cd *DeskCardProps, x, y, maxW, maxH float32) [
 	for _, b := range btns {
 		total += c.chipW(b[0], b[1]) + 5
 	}
-	over := total - 5 - (x + w - 6 - cx)
+	// Slint's HorizontalLayout when the row is too full: the chips' row gives first (only the
+	// folder's chip can, down to 48), then the name (down to its "…"); the buttons never do,
+	// and what is left runs past the card, which clips it. The task's title is as wide as
+	// that row, so it is cut by the card too, not elided in it.
+	over := lw + 8 + total - 5 - (x + w - 6 - tx)
+	nameW := lw
+	for i := range specs {
+		if sp := &specs[i]; sp.shrink && over > 0 {
+			cw := c.chipW(sp.icon, sp.text)
+			cut := min(over, cw-min(cw, 48))
+			over -= cut
+			specs[i].w = cw - cut
+		}
+	}
+	if over > 0 {
+		ew, _ := c.Measure("…", nf, 0)
+		nameW = lw - min(over, max(lw-(ew+c.spacingW("…", 0.7)), 0))
+	}
+	c.Text(name, tx, hy, TextBox{Font: nf, Color: nameCol, W: nameW, H: 20, VAlign: Middle, Spacing: 0.7, Elide: true})
+	cx := tx + nameW + 8
 	for _, sp := range specs {
-		cw := c.chipW(sp.icon, sp.text)
-		if sp.shrink && over > 0 {
-			cw = max(cw-over, min(cw, 48))
+		cw := sp.w
+		if cw == 0 {
+			cw = c.chipW(sp.icon, sp.text)
 		}
 		c.chip(sp.icon, sp.text, sp.fg, sp.bg, cx, hy, cw)
 		cx += cw + 5
 	}
+	rowEnd := cx + c.chipW(btns[0][0], btns[0][1]) + 5 + c.chipW(btns[1][0], btns[1][1])
 	if w, ok := c.chipButton(&p.ed, btns[0][0], btns[0][1], cx, hy); ok {
 		p.emit("cardEditor", "", 0)
 	} else {
@@ -401,7 +424,7 @@ func (p *DeskCard) Layout(c *Ctx, cd *DeskCardProps, x, y, maxW, maxH float32) [
 	if _, ok := c.chipButton(&p.ex, btns[1][0], btns[1][1], cx, hy); ok {
 		p.emit("cardExpand", "", 0)
 	}
-	c.Text(cd.Title, tx, hy+20+2, TextBox{Font: Font{Size: 13, Weight: 600}, Color: White, W: tw, Elide: true})
+	c.Text(cd.Title, tx, hy+20+2, TextBox{Font: Font{Size: 13, Weight: 600}, Color: White, W: max(tw, rowEnd-tx), Elide: true})
 	cy += m.hd + 5
 
 	// .dnow: its last steps, the question, or the answer.
@@ -452,6 +475,8 @@ func (p *DeskCard) Layout(c *Ctx, cd *DeskCardProps, x, y, maxW, maxH float32) [
 				p.emit("cardChat", "", 0)
 			}
 		}
+		// The helpers' line goes under the buttons (26 high, 2 apart), not over them.
+		ny += 26 + 2
 	case len(cd.Steps) > 0:
 		for _, s := range cd.Steps {
 			col := RGB(s.Color)
@@ -470,7 +495,7 @@ func (p *DeskCard) Layout(c *Ctx, cd *DeskCardProps, x, y, maxW, maxH float32) [
 		c.Text(cd.Line, nx, ny, TextBox{Font: Font{Size: 12}, Color: inkDim, W: nw2, Wrap: true, MaxLines: 2, Elide: true})
 	default:
 		col := If(cd.AnswerErr, RGB(0xffb0aa), RGB(0xe9e7ec))
-		_, ah := c.Text(cd.Answer, nx, ny, TextBox{Font: Font{Size: 12.5}, Color: col, W: nw2, Wrap: true, MaxLines: 3, Elide: true})
+		_, ah := c.Text(cd.Answer, nx, ny, TextBox{Font: Font{Size: 12.5}, Color: col, W: nw2, Wrap: true, MaxLines: answerLines, Elide: true})
 		ny += ah
 		if cd.Meta != "" {
 			c.Text(cd.Meta, nx, ny+2, TextBox{Font: Font{Size: 12}, Color: inkDim})

@@ -126,14 +126,15 @@ type DeskBtn struct {
 
 func (b DeskBtn) font() Font { return Font{Size: If[float32](b.Small, 11.5, 12), Weight: 600} }
 
-// Size is the button's size: the row and 24 of padding.
+// Size is the button's size: DButton's width is its row's (the content and 12 either side)
+// and 24 more, left empty at the right.
 func (b DeskBtn) Size(c *Ctx) (w, h float32) {
 	tw, _ := c.Measure(b.Text, b.font(), 0)
 	rw := tw + 24
 	if b.Icon != "" {
 		rw += 13 + 7
 	}
-	return rw + 24 - 24, If[float32](b.Small, 26, 30)
+	return rw + 24, If[float32](b.Small, 26, 30)
 }
 
 // Layout draws it at (x, y) and returns whether it was clicked.

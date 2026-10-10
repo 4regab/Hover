@@ -122,6 +122,9 @@ type deskState struct {
 	reset        int
 	// What the UI's fields hold now (the Desk global's in-out properties).
 	cDraft, fText, openMenuOpen string
+	// shotProps lets the pictures change what the panel is handed (the GitHub CLI's sign-in,
+	// which no picture can wait for).
+	shotProps func(*ui.DeskProps)
 	// props are what the views draw.
 	props *ui.DeskProps
 	card_ *ui.DeskCardProps
@@ -903,6 +906,9 @@ func (s *Shell) deskPanelSync() {
 	}
 	d.props = dp
 	s.deskTabProps(id, tab, snap, name, dp)
+	if d.shotProps != nil {
+		d.shotProps(dp)
+	}
 	_ = kind
 }
 

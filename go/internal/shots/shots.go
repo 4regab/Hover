@@ -34,6 +34,17 @@ import (
 // Run renders every view into dir.
 func Run(dir string) error { return run(dir) }
 
+// skip says HOVER_SHOTS_SKIP names that group ("voice", "chat"): for one that is being worked
+// on (shots.rs has the same).
+func skip(what string) bool {
+	for _, w := range strings.Split(os.Getenv("HOVER_SHOTS_SKIP"), ",") {
+		if strings.TrimSpace(w) == what {
+			return true
+		}
+	}
+	return false
+}
+
 // The quota readings shots.rs's reader gives.
 func reading(id string) *quota.Reading {
 	v := func(u float64, d string) *quota.Reading { return &quota.Reading{Used: &u, Detail: d} }
@@ -111,17 +122,16 @@ func run(dir string) error {
 	if err := notchShots(dir); err != nil {
 		return err
 	}
-	if err := voiceShots(dir); err != nil {
-		return err
+	if !skip("voice") {
+		if err := voiceShots(dir); err != nil {
+			return err
+		}
 	}
 	// The office needs wgpu-native (WGPU_NATIVE_PATH, or beside the program) and a GPU.
 	if os.Getenv("HOVER_SHOTS_OFFICE") != "" {
 		if err := officeShots(dir); err != nil {
 			return err
 		}
-	}
-	if err := deskShots(dir); err != nil {
-		return err
 	}
 	for _, dark := range []bool{true, false} {
 		tag := map[bool]string{true: "dark", false: "light"}[dark]

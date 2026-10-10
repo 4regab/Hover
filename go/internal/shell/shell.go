@@ -23,8 +23,10 @@ import (
 type Shell struct {
 	// shotFolder, when set, is the folder the chat's header names (the shots' long one).
 	shotFolder string
-	Hover      *app.Hover
-	env        Env
+	// tipShot, when set, is the tip the office draws (the shots' tip over a bot or a desk).
+	tipShot *tipShot
+	Hover   *app.Hover
+	env     Env
 
 	win    Window
 	n      *NotchCtl

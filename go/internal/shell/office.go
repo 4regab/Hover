@@ -360,6 +360,9 @@ func (s *Shell) officeFrame() {
 				p.over, p.oname, p.ocol = 2, n, c
 			}
 		}
+		if t := s.tipShot; t != nil {
+			p.over, p.oname, p.ocol, p.tipX, p.tipY = t.kind, t.name, t.col, t.x, t.y
+		}
 		s.invalidateAll()
 	}
 	for _, c := range out.Clicks {

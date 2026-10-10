@@ -1,6 +1,8 @@
 package shell
 
 import (
+	"image"
+
 	"github.com/4regab/Hover/go/internal/agents"
 	"github.com/4regab/Hover/go/internal/app"
 	"github.com/4regab/Hover/go/internal/chat"
@@ -243,4 +245,123 @@ func (s *Shell) ShotReplyHome() {
 	s.ovwN.ReplyCaretStart()
 	s.ovwD.ReplyCaretStart()
 	s.invalidateAll()
+}
+
+// The desk card and its panel, as the shots take them (shots.rs's desk_shots).
+
+// DeskTag is where the office drew that desk's name tag.
+func (s *Shell) DeskTag(id int32) (x, y float32, ok bool) {
+	t, ok := s.desk.tags[int64(id)]
+	return t[0], t[1], ok
+}
+
+type tipShot struct {
+	kind int
+	name string
+	col  [3]uint8
+	x, y float32
+}
+
+// DeskTipShot shows the tip over a bot (kind 1) or a desk (2) at x, y; 0 puts it away. The
+// office keeps it there through its next pictures, as it would for a pointer that stays.
+func (s *Shell) DeskTipShot(kind int, name string, col [3]uint8, x, y float32) {
+	p := s.pg()
+	s.tipShot = nil
+	if kind != 0 {
+		s.tipShot = &tipShot{kind, name, col, x, y}
+	}
+	p.over, p.oname, p.ocol, p.tipX, p.tipY = kind, name, col, x, y
+	s.invalidateAll()
+}
+
+// DeskCloseCard and DeskClosePanel put them away.
+func (s *Shell) DeskCloseCard()  { s.deskCloseCard() }
+func (s *Shell) DeskClosePanel() { s.deskClosePanel() }
+
+// DeskActShot is what the panel's own events ask (the "desk:" kinds): a row's act, a box's
+// words, a pick.
+func (s *Shell) DeskActShot(kind, text string, n int) {
+	s.deskActEvent(ui.OfficeEvent{A: "desk:" + kind, S: text, N: n}, 1)
+}
+
+// DeskFile hands the Files tab a file as a worker would have read it.
+func (s *Shell) DeskFile(id int32, path string, v agents.FileView) {
+	s.deskPut(id, "file", fileGot{path: path, v: v})
+}
+
+// DeskEditors are the editors this computer is said to have, for Open in.
+func (s *Shell) DeskEditors(found []agents.FoundEditor) {
+	s.desk.editors, s.desk.editorsKnown = found, true
+	s.deskSync()
+}
+
+// DeskOpenMenuShot opens or puts away the Open in menu.
+func (s *Shell) DeskOpenMenuShot(on bool) {
+	s.ovwN.DeskOpenMenu(on)
+	s.ovwD.DeskOpenMenu(on)
+	s.invalidateAll()
+}
+
+// DeskTermSeed puts commands in the terminal's list without a shell behind them.
+func (s *Shell) DeskTermSeed(id int32, entries []agents.TermEntry) {
+	if sess, ok := s.Hover.Sessions.Get(id); ok {
+		s.deskTerm(id, sess.Folder).Seed(entries)
+		s.deskChanged()
+		s.deskSync()
+	}
+}
+
+// DeskTermType leaves these words in the terminal's prompt, as typing would.
+func (s *Shell) DeskTermType(text string) {
+	s.ovwN.SetDeskTermText(text)
+	s.ovwD.SetDeskTermText(text)
+	s.invalidateAll()
+}
+
+// DeskTermKey is Enter (run what is in the prompt), Up (the command before) or Ctrl+L (clear).
+func (s *Shell) DeskTermKey(k string) {
+	id, _ := s.desk.current()
+	switch k {
+	case "enter":
+		text := s.ovwN.DeskTermText()
+		s.deskActEvent(ui.OfficeEvent{A: "desk:termRun", S: text}, 1)
+		s.DeskTermType("")
+	case "up":
+		if t := s.desk.terms[id]; t != nil {
+			s.DeskTermType(t.History(-1))
+		}
+	case "ctrl-l":
+		s.deskActEvent(ui.OfficeEvent{A: "desk:termClear"}, 1)
+	}
+}
+
+// DeskTermRunning says a command of the user's runs now.
+func (s *Shell) DeskTermRunning() bool {
+	id, _ := s.desk.current()
+	t := s.desk.terms[id]
+	return t != nil && t.Running()
+}
+
+// DeskScroll scrolls the panel's list to that offset.
+func (s *Shell) DeskScroll(off float32) {
+	s.ovwN.DeskScroll(off)
+	s.ovwD.DeskScroll(off)
+	s.invalidateAll()
+}
+
+// DeskProps changes what the panel is handed, once more, every time it is built.
+func (s *Shell) DeskProps(f func(*ui.DeskProps)) { s.desk.shotProps = f; s.deskSync() }
+
+// DeskCreateShot is the pull request form while it creates (creating) or after (res).
+func (s *Shell) DeskCreateShot(id int32, creating bool, res *agents.CreatePrResult) {
+	p := s.desk.prefsFor(id)
+	p.creating, p.result = creating, res
+	s.deskChanged()
+	s.deskSync()
+}
+
+// DeskFrameShot is the Screen tab's picture of the desktop.
+func (s *Shell) DeskFrameShot(img *image.RGBA) {
+	s.desk.screenImg, s.desk.screenErr = img, ""
+	s.deskSync()
 }

@@ -60,6 +60,14 @@ func (c *Ctx) LineH(f Font) float32 {
 	return float32(math.Ceil(float64(f.Size*faceMetrics[f.Face][1]*c.K-0.001))) / c.K
 }
 
+// linePitch is the distance between a paragraph's lines: Slint gives every line the font's
+// own height (size x ratio, 15.125 for 12.5 px Inter), not rounded; only the whole text's
+// height is rounded up. blockH is that height for n lines (LineH for one).
+func linePitch(f Font) float32 { return f.Size * faceMetrics[f.Face][1] }
+func (c *Ctx) blockH(f Font, n int) float32 {
+	return float32(math.Ceil(float64(float32(n)*linePitch(f)*c.K-0.001))) / c.K
+}
+
 // Font is a Text's font: size in logical pixels, CSS weight (400 regular to 700 bold).
 type Font struct {
 	Size   float32
@@ -217,8 +225,7 @@ func (c *Ctx) Measure(s string, f Font, maxW float32) (w, h float32) {
 	for _, l := range lines {
 		w = max(w, l.width/c.K)
 	}
-	n := max(len(lines), 1)
-	return w, float32(n) * c.LineH(f)
+	return w, c.blockH(f, max(len(lines), 1))
 }
 
 // MeasureBox is a Text's preferred size in the box b (its width, wrapping and eliding as
@@ -231,7 +238,7 @@ func (c *Ctx) MeasureBox(s string, b TextBox) (w, h float32) {
 	for _, l := range lines {
 		w = max(w, l.width/c.K)
 	}
-	return w, float32(max(len(lines), 1)) * c.LineH(b.Font)
+	return w, c.blockH(b.Font, max(len(lines), 1))
 }
 
 // Text draws s in its box at (x, y) and returns the size the text takes.
@@ -240,9 +247,9 @@ func (c *Ctx) Text(s string, x, y float32, b TextBox) (w, h float32) {
 		return 0, 0
 	}
 	lines := c.shape(s, b)
-	lh := c.LineH(b.Font)
+	lh := linePitch(b.Font)
 	asc := b.Size * faceMetrics[b.Face][0]
-	h = float32(len(lines)) * lh
+	h = c.blockH(b.Font, len(lines))
 	top := y
 	if b.H > 0 {
 		switch b.VAlign {

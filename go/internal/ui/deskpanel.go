@@ -170,7 +170,12 @@ func (d *deskInput) follow(c *Ctx, value string, gen int, single bool) (text str
 func (d *deskInput) draw(c *Ctx, f Font, x, y, w, h float32, col color.NRGBA) {
 	lh := c.LineH(f)
 	cl := clip.Rect(c.irect(x, y, w, h)).Push(c.Ops)
-	c.editor(&d.ed, f, x, y+max(0, (h-lh)/2), w, h, lh, col, RGBA(0xc4a2ff66))
+	// A one-line box has its words in the middle; a multi-line box starts them at its top.
+	top := y
+	if d.ed.SingleLine {
+		top = y + max(0, (h-lh)/2)
+	}
+	c.editor(&d.ed, f, x, top, w, h, lh, col, RGBA(0xc4a2ff66))
 	cl.Pop()
 }
 
@@ -224,6 +229,19 @@ func (p *DeskPanel) OpenMenuOn() bool { return p.openMenuOn }
 
 // CloseOpenMenu puts it away (an Esc, a pick).
 func (p *DeskPanel) CloseOpenMenu() { p.openMenuOn = false }
+
+// What the pictures do to the panel without a keyboard or a wheel: the Open in menu out, the
+// words in the terminal's prompt (as typing leaves them, the caret at their end), the list
+// scrolled.
+func (o *OfficeView) DeskOpenMenu(on bool) { o.dp.openMenuOn = on }
+func (o *OfficeView) DeskTermText() string { return o.dp.term.ed.Text() }
+func (o *OfficeView) SetDeskTermText(t string) {
+	o.dp.term.ed.SetText(t)
+	n := len([]rune(t))
+	o.dp.term.ed.SetCaret(n, n)
+	o.dp.term.started = true
+}
+func (o *OfficeView) DeskScroll(off float32) { o.dp.list.scroll.Off = off }
 
 // MARK: The windowed list
 
@@ -1110,7 +1128,9 @@ func (p *DeskPanel) prForm(c *Ctx, d *DeskProps, x, y, w, h float32) {
 	p.prScroll.Update(c, p.prContent, h)
 	cl := clip.Rect(c.irect(x, y, w, h)).Push(c.Ops)
 	p.prScroll.Add(c, x, y, w, h)
-	ix, iw := x+12, w-10-24
+	// 12 of padding, and 5 more: the Rust form's pictures have every box 5 px further right than
+	// PrForm's padding gives (measured; its Slint source says nothing of it), the same width.
+	ix, iw := x+12+5, w-10-24
 	cy := y + 12 - p.prScroll.Off
 	field := func(in *deskInput, label, value, placeholder string, fx, fw float32, edited string) {
 		c.Text(label, fx, cy, TextBox{Font: Font{Size: 11}, Color: inkFnt})

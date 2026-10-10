@@ -35,6 +35,8 @@ type rig struct {
 	hold   func(bool)
 	// holdC lets go of the chat's stories that wait (the chat fixtures hold until shot).
 	holdC func(bool)
+	// holdD lets go of the desk card's busy task.
+	holdD func(bool)
 	done  func()
 }
 
@@ -48,7 +50,7 @@ func newRig() (*rig, error) {
 	settings := core.LoadSettings(filepath.Join(data, "settings.json"))
 	settings.SetKiroNoticeSeen(true)
 	var mu sync.Mutex
-	held, heldC := true, true
+	held, heldC, heldD := true, true, true
 	var runs int
 	run := func(a agents.RunArgs) agents.KiroResult {
 		mu.Lock()
@@ -58,6 +60,9 @@ func newRig() (*rig, error) {
 		a.Events(agents.KiroEvent{SessionID: &sid})
 		a.Progress(agents.Reading)
 		if res, ok := chatFixture(a, func() bool { mu.Lock(); defer mu.Unlock(); return heldC }); ok {
+			return res
+		}
+		if res, ok := deskFixture(a, func() bool { mu.Lock(); defer mu.Unlock(); return heldD }); ok {
 			return res
 		}
 		// The steps a real turn reports: reads, an edit with its change, a command with its
@@ -101,8 +106,14 @@ func newRig() (*rig, error) {
 		}
 	}
 	env := shell.Env{
-		UIDo:  func(f func()) { qmu.Lock(); queued = append(queued, f); qmu.Unlock() },
-		After: func(time.Duration, func()) shell.Timer { return stopped{} },
+		UIDo: func(f func()) { qmu.Lock(); queued = append(queued, f); qmu.Unlock() },
+		// No timer runs but the toast's: it goes after its 2.8 s, as the Rust shots' did.
+		After: func(d time.Duration, f func()) shell.Timer {
+			if d != 2800*time.Millisecond {
+				return stopped{}
+			}
+			return toastTimer{time.AfterFunc(d, func() { qmu.Lock(); queued = append(queued, f); qmu.Unlock() })}
+		},
 		Every: func(time.Duration, func()) shell.Timer { return stopped{} },
 		Quit:  func() {}, Headless: true,
 		NewNotch:     func() (shell.Window, shell.NotchPlat, error) { return r.win, plain{}, nil },
@@ -119,9 +130,16 @@ func newRig() (*rig, error) {
 	}
 	r.hold = func(on bool) { mu.Lock(); held = on; mu.Unlock() }
 	r.holdC = func(on bool) { mu.Lock(); heldC = on; mu.Unlock() }
+	r.holdD = func(on bool) { mu.Lock(); heldD = on; mu.Unlock() }
 	r.done = func() { hv.Shutdown(); os.RemoveAll(data) }
 	return r, nil
 }
+
+// toastTimer is the one timer that runs for real.
+type toastTimer struct{ t *time.Timer }
+
+func (t toastTimer) Stop()         { t.t.Stop() }
+func (t toastTimer) Running() bool { return true }
 
 // open opens the notch and waits for the office's first picture.
 func (r *rig) open() error {
@@ -297,8 +315,10 @@ func officeShots(dir string) error {
 		return err
 	}
 	r.s.OpenPanel("")
-	if err := chatShots(r, dir); err != nil {
-		return err
+	if !skip("chat") {
+		if err := chatShots(r, dir); err != nil {
+			return err
+		}
 	}
 	if err := deskShots2(r, dir); err != nil {
 		return err
