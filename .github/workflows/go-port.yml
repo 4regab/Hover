@@ -564,15 +564,19 @@ jobs:
             grep -q '^hover-key:keychain:' "$D/$who/note.key" || fail "$who: note.key does not name a Keychain item"
             id=$(sed -n 's/^hover-key:keychain:\(.*\)$/\1/p' "$D/$who/note.key")
             security find-generic-password -s Hover -a "note.key:$id" > /dev/null || fail "$who: no Keychain item Hover / note.key:$id"
-            tool "$bin" dump "$D/$who" | grep -q 'history: 1 sessions' || fail "$who couldn't read its own history"
+            tool "$bin" dump "$D/$who" | grep 'history: 1 sessions' > /dev/null || fail "$who couldn't read its own history"
             say "$who: key kept in the Keychain (Hover / note.key:$id), history read back"
           done
 
           # Each reading what the other wrote, with a key both can reach (made for any app,
           # 32 characters so it is a 32-byte key).
           seed=5eed5eed5eed5eed
+          # A program is let in by its code hash (both builds are signed ad hoc by the linker).
+          hash_of() { codesign -d --verbose=4 "$1" 2>&1 | sed -n 's/^CDHash=//p'; }
+          parts="apple-tool:,apple:,cdhash:$(hash_of "$RUST"),cdhash:$(hash_of "$GO")"
+          say "seeded item lets in: $parts"
           security add-generic-password -A -s Hover -a "note.key:$seed" -w abcdefghijklmnopqrstuvwxyz012345
-          security set-generic-password-partition-list -S "apple-tool:,apple:,unsigned:" -s Hover -a "note.key:$seed" -k hover > /dev/null 2>&1 || true
+          security set-generic-password-partition-list -S "$parts" -s Hover -a "note.key:$seed" -k hover
           for who in rust go; do
             mkdir -p "$D/x-$who"; printf 'hover-key:keychain:%s\n' "$seed" > "$D/x-$who/note.key"
           done
@@ -580,7 +584,7 @@ jobs:
           tool "$GO" write "$D/x-go" "$D/proj" 3 "$D/answer.md" > /dev/null
           for pair in "rust go" "go rust" "rust rust" "go go"; do
             set -- $pair; bin="$RUST"; [ "$1" = go ] && bin="$GO"
-            tool "$bin" dump "$D/x-$2" 2>&1 | grep -q 'history: 1 sessions' || fail "$1 couldn't read what $2 wrote through the Keychain"
+            tool "$bin" dump "$D/x-$2" 2>&1 | grep 'history: 1 sessions' > /dev/null || fail "$1 couldn't read what $2 wrote through the Keychain"
             say "$1 reads what $2 wrote, key from the Keychain: ok"
           done
           cmp "$D/x-rust/settings.json" "$D/x-go/settings.json" || fail "settings.json: Rust and Go wrote different bytes"
