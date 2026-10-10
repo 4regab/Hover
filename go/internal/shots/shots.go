@@ -139,7 +139,7 @@ func run(dir string) error {
 			return err
 		}
 	}
-	return nil
+	return settingsStateShots(dir)
 }
 
 // overlay is office.slint's Settings over the office: a bar (back), then the page.

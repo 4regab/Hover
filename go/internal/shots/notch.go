@@ -11,8 +11,10 @@ import (
 	"sync"
 	"time"
 
+	"gioui.org/f32"
 	"gioui.org/gpu/headless"
 	"gioui.org/io/input"
+	"gioui.org/io/pointer"
 	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/unit"
@@ -82,6 +84,9 @@ type stopped struct{}
 func (stopped) Stop()         {}
 func (stopped) Running() bool { return false }
 
+// pointerAt, when set, is where the pointer is (logical pixels) for the next pictures.
+var pointerAt *image.Point
+
 // render draws a window's callback into w x h physical pixels twice (the second sees the
 // first's measurements) and reads it back, over a backdrop.
 func render(w, h int, scale float32, backdrop color.NRGBA, draw func(layout.Context, float32) bool) (*image.RGBA, error) {
@@ -98,6 +103,10 @@ func render(w, h int, scale float32, backdrop color.NRGBA, draw func(layout.Cont
 			Constraints: layout.Exact(image.Pt(w, h)), Source: router.Source()}
 		draw(gtx, scale)
 		router.Frame(&ops)
+		if i == 0 && pointerAt != nil {
+			// The pointer over a box: it sees it on the next frame, as a window's would.
+			router.Queue(pointer.Event{Kind: pointer.Move, Source: pointer.Mouse, Position: f32.Pt(float32(pointerAt.X)*scale, float32(pointerAt.Y)*scale)})
+		}
 	}
 	if err := win.Frame(&ops); err != nil {
 		return nil, err

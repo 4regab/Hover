@@ -2,6 +2,7 @@ package shell
 
 import (
 	"github.com/4regab/Hover/go/internal/agents"
+	"github.com/4regab/Hover/go/internal/app"
 	"github.com/4regab/Hover/go/internal/core"
 	"github.com/4regab/Hover/go/internal/ui"
 	"github.com/4regab/Hover/go/internal/voice"
@@ -170,3 +171,30 @@ func (s *Shell) VoiceShotBusy(on bool) { s.np.Voice.Busy = on; s.UpdateRest() }
 // VoiceShotFlash and VoiceShotNote are the card's screenshot flash and its note.
 func (s *Shell) VoiceShotFlash(on bool) { s.np.Voice.Flash = on; s.invalidate() }
 func (s *Shell) VoiceShotNote(t string) { s.np.Voice.Note = t; s.UpdateRest() }
+
+// Settings, as the shots drive it: the page's state, and a click, a switch, a pick and a
+// menu as the page's own events make them (handlePage's cases).
+
+// Pane is the Settings page's state.
+func (s *Shell) Pane() *app.Pane { return &s.pane }
+
+func (s *Shell) PagePress(id string)           { app.Pressed(s.host(), &s.pane, id) }
+func (s *Shell) PageToggle(id string, on bool) { app.Toggled(s.host(), &s.pane, id, on) }
+func (s *Shell) PagePick(id string, i int)     { app.PickedSeg(s.host(), &s.pane, id, i) }
+
+// PageMenu opens a picker's menu where it was clicked.
+func (s *Shell) PageMenu(id string, x, y float32) {
+	s.pane.Menu = &app.OpenMenu{ID: id, Options: app.PickerOptions(s.lastBlocks, id), X: x, Y: y}
+	s.RefreshPage(false)
+}
+
+// ThemeChangedShot is Settings telling the shell the theme changed.
+func (s *Shell) ThemeChangedShot() { s.host().ThemeChanged() }
+
+// PhononCardShot is the local speech card as Settings shows it now, and TryCardShot Try it's
+// card for a stage.
+func (s *Shell) PhononCardShot() *app.PhononCard         { return phononCard(s.vu().phonon, nil) }
+func (s *Shell) TryCardShot(st voice.Stage) *app.TryCard { return s.tryCard(st) }
+
+// PhononDownloadBytesShot is what the local speech model's download comes to.
+func (s *Shell) PhononDownloadBytesShot() uint64 { return s.vu().phonon.Facts().DownloadBytes }
