@@ -35,6 +35,13 @@ type menusState struct {
 	bot                   Bot
 }
 
+// menuGap is the space between the model list and the compact row under it, and menuFade
+// the height of the fade at an edge of the list that has more rows beyond it.
+const (
+	menuGap  = 4
+	menuFade = 16
+)
+
 func mmRowH(c *Ctx, o MOpt, rate MRate, w float32) float32 {
 	rw := w - 16
 	if rate.Text != "" {
@@ -86,7 +93,8 @@ func (o *OfficeView) modelMenu(c *Ctx, w, h float32, p *OfficeProps) {
 		_, nh := c.MeasureBox(m.Note, TextBox{Font: Font{Size: 11}, W: iw - 16, Wrap: true})
 		noteH = 4 + nh + 3
 	} else {
-		noteH = 36
+		// The compact row, with a gap above it so the list's last row doesn't run into it.
+		noteH = 36 + menuGap
 	}
 	total += noteH + 6
 	gh := min(total, h-20)
@@ -100,7 +108,16 @@ func (o *OfficeView) modelMenu(c *Ctx, w, h float32, p *OfficeProps) {
 	// The models scroll inside a box of their own. It opens on the picked model.
 	if !s.wasOpen {
 		s.wasOpen = true
-		s.scroll.Off = max(0, min(float32(m.Cur)*28-(boxH-28)/2, max(0, listH-boxH)))
+		// Centred on the picked row, by the rows' real heights (a name that wraps is taller).
+		var above float32
+		for i := 0; i < m.Cur && i < len(rowH); i++ {
+			above += rowH[i]
+		}
+		mid := above
+		if m.Cur >= 0 && m.Cur < len(rowH) {
+			mid += rowH[m.Cur] / 2
+		}
+		s.scroll.Off = max(0, min(mid-boxH/2, max(0, listH-boxH)))
 	}
 	s.scroll.Update(c, listH, boxH)
 	cl := c.RRect(x, y, iw, boxH, R(0)).Push(c.Ops)
@@ -149,6 +166,23 @@ func (o *OfficeView) modelMenu(c *Ctx, w, h float32, p *OfficeProps) {
 		t.Add(c, x, max(ry, y), iw, min(rowH[i], y+boxH-max(ry, y)), ry+rowH[i] > y && ry < y+boxH)
 		ry += rowH[i]
 	}
+	// Rows cut by the box's edge fade into the panel there, so they read as scrolled and not
+	// as clipped; only on a side that has more beyond it.
+	if over := listH - boxH; over > 0 {
+		tint := RGBA(0x160f1eb8)
+		if p.Backdrop != nil && p.Backdrop.SolidPanel {
+			tint = RGBA(0x1c1a24f7)
+		}
+		clear := RGBA(0x00000000)
+		clear.R, clear.G, clear.B = tint.R, tint.G, tint.B
+		fh := min(menuFade, boxH/3)
+		if s.scroll.Off > 1 {
+			c.Gradient(x, y, iw, fh, R(0), 180, tint, clear)
+		}
+		if s.scroll.Off < over-1 {
+			c.Gradient(x, y+boxH-fh, iw, fh, R(0), 180, clear, tint)
+		}
+	}
 	cl.Pop()
 	s.scroll.Bar(c, x, y, iw, boxH)
 	y += boxH
@@ -195,7 +229,7 @@ func (o *OfficeView) modelMenu(c *Ctx, w, h float32, p *OfficeProps) {
 		o.emit(OfficeEvent{Kind: OfficeAct, A: "openModel", N: 0})
 		o.emit(OfficeEvent{Kind: OfficeAct, A: "openSettingsPage", N: 4})
 	}
-	cx, cy := x, y+4
+	cx, cy := x, y+4+menuGap
 	c.Box(cx, cy, iw, 32, R(8), If(s.compact.Hovered(), RGBA(0x2dd4bf1a), RGBA(0x2dd4bf0f)))
 	c.Icon("M 15 15 l 6 6 M 15 15 v 4.8 M 15 15 h 4.8 M 9 19.8 V 15 M 9 15 H 4.2 M 9 15 l -6 6 M 15 4.2 V 9 M 15 9 h 4.8 M 15 9 l 6 -6 M 9 4.2 V 9 M 9 9 H 4.2 M 9 9 L 3 3", cx+8, cy+9, 14, RGB(0x7fe3d4))
 	c.Text(m.Note, cx+8+14+8, cy, TextBox{Font: Font{Size: 12}, Color: inkMid, W: iw - 16 - 14 - 8 - 8 - 13, H: 32, VAlign: Middle, Elide: true})

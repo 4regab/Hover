@@ -87,6 +87,49 @@ func JOptDouble(v *float64) JSON {
 func (v JSON) Kind() JKind  { return v.kind }
 func (v JSON) IsNull() bool { return v.kind == NullKind }
 
+// Any is the value as encoding/json reads one into an any: nil, bool, float64, string,
+// []any and map[string]any, the last of a repeated name winning. It is what writing the
+// value out and reading that text back gives, without the text (a long chat's state is
+// megabytes of it, and was made again for every change to the chat).
+func (v JSON) Any() any {
+	switch v.kind {
+	case BoolKind:
+		return v.b
+	case NumKind:
+		f, _ := strconv.ParseFloat(v.s, 64)
+		return f
+	case StrKind:
+		// Text written out and read back has each byte of broken UTF-8 turned into U+FFFD.
+		if !utf8.ValidString(v.s) {
+			var b strings.Builder
+			for i := 0; i < len(v.s); {
+				r, n := utf8.DecodeRuneInString(v.s[i:])
+				if r == utf8.RuneError && n == 1 {
+					b.WriteRune(utf8.RuneError)
+				} else {
+					b.WriteString(v.s[i : i+n])
+				}
+				i += n
+			}
+			return b.String()
+		}
+		return v.s
+	case ArrKind:
+		out := make([]any, len(v.arr))
+		for i := range v.arr {
+			out[i] = v.arr[i].Any()
+		}
+		return out
+	case ObjKind:
+		m := make(map[string]any, len(v.obj))
+		for i := range v.obj {
+			m[v.obj[i].Key] = v.obj[i].Val.Any()
+		}
+		return m
+	}
+	return nil
+}
+
 // MARK: Reading
 
 // maxDepth is JsonSerializerOptions.MaxDepth's default.

@@ -131,6 +131,32 @@ func (s *Shell) thumbScale() float32 {
 	return float32(s.win.Scale())
 }
 
+// threadFrame is the least time between two paints of the chat that changes come in a
+// burst for: a frame at 60 Hz.
+const threadFrame = 16 * time.Millisecond
+
+// paintThreadSoon is paintThread for changes that come faster than frames: a streamed
+// answer, a turn of the wheel, a window being dragged. The first change paints at once; the
+// ones that follow within the frame wait and are painted together, from the newest state
+// (each paint reads it afresh). Every one of them used to relay out the chat and draw its
+// viewport on the CPU, and a burst of those is what made scrolling and streaming stutter.
+func (s *Shell) paintThreadSoon() {
+	p := s.pg()
+	if p.threadPaintDue {
+		return
+	}
+	wait := threadFrame - time.Since(p.lastThreadPaint)
+	if wait <= 0 {
+		s.paintThread()
+		return
+	}
+	p.threadPaintDue = true
+	s.env.After(wait, func() {
+		p.threadPaintDue = false
+		s.paintThread()
+	})
+}
+
 // paintThread is the open session's thread, as the drawer shows it (renderDrawer, through
 // internal/chat).
 func (s *Shell) paintThread() {
@@ -138,6 +164,7 @@ func (s *Shell) paintThread() {
 	if p.open < 0 {
 		return
 	}
+	defer func() { p.lastThreadPaint = time.Now() }()
 	id := p.open
 	rev, _, ok := s.Hover.Sessions.RevOf(id)
 	if !ok {

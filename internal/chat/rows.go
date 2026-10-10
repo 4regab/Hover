@@ -362,7 +362,9 @@ type rightBit struct {
 // block is .box: an edit's change (its file, the +/− counts, Copy; the file's line numbers
 // when the diff names them, never made up) or a command's output (the command, its exit
 // code when the tool said it, how long it took). Eight lines, then "Show N more lines";
-// all of what was kept once asked. It returns its height with margins.
+// all of what was kept once asked. A command shows its last lines (the end of an output is
+// where the error and the summary are), with "Show N earlier lines"; a change shows its first.
+// It returns its height with margins.
 func (th *Thread) block(fr *Frag, x *Step, ti, j int, y, w float32) float32 {
 	const head = 28
 	// A command's output is the mockup's .out: the whole row wide, with no header (the exit
@@ -423,7 +425,8 @@ func (th *Thread) block(fr *Frag, x *Step, ti, j int, y, w float32) float32 {
 		if x.Cmd != "" {
 			title = "$ " + x.Cmd
 		}
-		if cmdblk && x.Cmd != "" {
+		// Only a command has a prompt line; what a search or a fetch was for is on its row.
+		if cmdblk && x.Cmd != "" && x.Kind == IconRun {
 			rows = append(rows, blockRow{text: "$ " + x.Cmd, c: mono.Color})
 		}
 		for k, l := range strings.Split(x.Out, "\n") {
@@ -542,28 +545,40 @@ func (th *Thread) block(fr *Frag, x *Step, ti, j int, y, w float32) float32 {
 	}
 	total := len(rows)
 	full := th.flag(ti, j, 0)
-	shown := total
-	if total > 8 && !full {
-		shown = 8
+	// A command's prompt line stays on top, then the end of what it printed. A change shows
+	// its first lines.
+	lead := 0
+	if cmdblk && x.Cmd != "" && x.Kind == IconRun {
+		lead = 1
+	}
+	visible, hidden := rows, 0
+	if total-lead > 8 && !full {
+		hidden = total - lead - 8
+		if cmdblk {
+			visible = append(append([]blockRow(nil), rows[:lead]...), rows[total-8:]...)
+		} else {
+			visible = rows[:8]
+		}
 	}
 	cy := hy + headH + 1 + 8
 	if cmdblk {
 		cy = hy + headH + 10
 	}
 	clipTop := cy
-	for ri, r := range rows[:shown] {
+	for ri, r := range visible {
 		// The output's first line is the command after its "$" prompt, which is fainter.
-		prompt := cmdblk && ri == 0 && x.Cmd != ""
+		prompt := lead == 1 && ri == 0
 		var spans []span
 		if prompt {
 			spans = []span{plainC("$ ", C(0xf6, 0xf2, 0xff, 97)), plainC(r.text[2:], r.c)}
 		} else {
 			spans = []span{{text: r.text, marks: md.Marks{Em: r.note}, color: r.c, hasColor: true}}
 		}
-		// The command line above is cut short by its ellipsis, and the output is pre-wrap: both wrap here.
-		var ww float32
-		if cmdblk {
-			ww = max(bw-24, 0)
+		// The command line above is cut short by its ellipsis, and the output is pre-wrap: both
+		// wrap here. So does a change: a long line is read whole, not cut at the box's edge.
+		ww := max(bw-24, 0)
+		if !cmdblk {
+			ww = max(bw-(tx-bx)-12, 0)
 		}
 		lay, t, _ := th.sh.text(spans, mono, ww, text.AlignStart)
 		h := lay.Height()
@@ -596,12 +611,15 @@ func (th *Thread) block(fr *Frag, x *Step, ti, j int, y, w float32) float32 {
 	} else {
 		cy += 8
 	}
-	if total > 8 {
+	if total-lead > 8 {
 		// .fold: the rest of what was kept, or fold it again.
 		fr.Shapes = append(fr.Shapes, rectShape(bx+1, cy, bw-2, 1, 0, C(255, 255, 255, 10)))
 		label := "Fold"
 		if !full {
-			label = fmt.Sprintf("Show %d more line%s", total-8, plural1(total-8))
+			label = fmt.Sprintf("Show %d more line%s", hidden, plural1(hidden))
+			if cmdblk {
+				label = fmt.Sprintf("Show %d earlier line%s", hidden, plural1(hidden))
+			}
 		}
 		tb := th.line(label, small, 0)
 		tb.Text = ""
@@ -684,7 +702,22 @@ func (th *Thread) thoughtRow(fr *Frag, x *Step, ti, j int, now bool, y, w float3
 		capped := live && !full && b.h > 168
 		shown := b.h
 		if capped {
-			shown = 168
+			// The newest lines that fit, from a whole line: cut at 168 px exactly, the top of
+			// the box sliced a line through the middle, and did again with each chunk.
+			cut := b.h - 168
+			best := b.h
+			for i := range b.frag.Texts {
+				tb := &b.frag.Texts[i]
+				for _, ln := range tb.Layout.Lines {
+					if top := tb.Y + ln.Top; top >= cut-0.01 && top < best {
+						best = top
+					}
+				}
+			}
+			if best < b.h {
+				cut = best
+			}
+			shown = b.h - cut
 		}
 		bodyFrag := b.frag
 		if capped {
