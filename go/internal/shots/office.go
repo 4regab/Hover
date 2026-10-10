@@ -4,6 +4,7 @@ package shots
 
 import (
 	"fmt"
+	"image"
 	"image/color"
 	"os"
 	"path/filepath"
@@ -32,7 +33,9 @@ type rig struct {
 	pump   func()
 	folder string
 	hold   func(bool)
-	done   func()
+	// holdC lets go of the chat's stories that wait (the chat fixtures hold until shot).
+	holdC func(bool)
+	done  func()
 }
 
 func newRig() (*rig, error) {
@@ -45,7 +48,7 @@ func newRig() (*rig, error) {
 	settings := core.LoadSettings(filepath.Join(data, "settings.json"))
 	settings.SetKiroNoticeSeen(true)
 	var mu sync.Mutex
-	held := true
+	held, heldC := true, true
 	var runs int
 	run := func(a agents.RunArgs) agents.KiroResult {
 		mu.Lock()
@@ -53,6 +56,26 @@ func newRig() (*rig, error) {
 		sid := fmt.Sprintf("s%d", runs)
 		mu.Unlock()
 		a.Events(agents.KiroEvent{SessionID: &sid})
+		a.Progress(agents.Reading)
+		if res, ok := chatFixture(a, func() bool { mu.Lock(); defer mu.Unlock(); return heldC }); ok {
+			return res
+		}
+		// The steps a real turn reports: reads, an edit with its change, a command with its
+		// output, and what the turn cost (shots.rs's run).
+		stp := func(id, kind, title, target string) core.KiroStep {
+			return fstep(id, kind, title, ptrTo(target), "completed")
+		}
+		for _, x := range []core.KiroStep{stp("r1", "read", "Read", "src/app/imports.ts"), stp("r2", "read", "Read", "src/app/sort.ts")} {
+			a.Events(agents.KiroEvent{Step: &x})
+		}
+		e1 := stp("e1", "edit", "Edit", "src/app/imports.ts")
+		e1.Added, e1.Removed, e1.MS = 3, 1, ptrTo(1400.0)
+		e1.Diff = ptrTo("  export function tidy(files) {\n- return files;\n+ return files\n+   .map(sortImports)\n+   .filter(Boolean);")
+		a.Events(agents.KiroEvent{Step: &e1})
+		x1 := stp("x1", "execute", "Run", "npm test")
+		x1.Exit, x1.MS, x1.Output = ptrTo(int32(0)), ptrTo(8200.0), ptrTo("✓ 14 files sorted\nTests: 42 passed, 42 total")
+		a.Events(agents.KiroEvent{Step: &x1})
+		a.Events(agents.KiroEvent{Credits: ptrTo(0.087)})
 		for {
 			mu.Lock()
 			h := held
@@ -95,6 +118,7 @@ func newRig() (*rig, error) {
 		return nil, err
 	}
 	r.hold = func(on bool) { mu.Lock(); held = on; mu.Unlock() }
+	r.holdC = func(on bool) { mu.Lock(); heldC = on; mu.Unlock() }
 	r.done = func() { hv.Shutdown(); os.RemoveAll(data) }
 	return r, nil
 }
@@ -126,23 +150,42 @@ func (r *rig) open() error {
 	return fmt.Errorf("the office drew nothing in 30 s")
 }
 
-// shot saves the notch's window (1200 x h logical) at 1x over the desktop colour.
-func (r *rig) shot(dir, name string, h int) error {
+// grab draws the notch's window (its width, h tall, logical) at 1x over the desktop colour.
+func (r *rig) grab(h int) (*image.RGBA, error) {
 	// What the view asks of the app while it draws (its size, say) is done between draws.
+	w, _ := r.win.Size()
 	for i := 0; i < 3; i++ {
 		r.pump()
 		r.s.UpdateRest()
-		if _, err := render(1200, h, 1, color.NRGBA{A: 255}, r.win.draw); err != nil {
-			return err
+		if _, err := render(w, h, 1, color.NRGBA{A: 255}, r.win.draw); err != nil {
+			return nil, err
 		}
 	}
 	r.pump()
 	r.s.UpdateRest()
-	img, err := render(1200, h, 1, color.NRGBA{R: 0x3a, G: 0x4a, B: 0x5e, A: 255}, r.win.draw)
+	return render(w, h, 1, color.NRGBA{R: 0x3a, G: 0x4a, B: 0x5e, A: 255}, r.win.draw)
+}
+
+// shot saves the notch's window.
+func (r *rig) shot(dir, name string, h int) error {
+	img, err := r.grab(h)
 	if err != nil {
 		return err
 	}
 	return save(filepath.Join(dir, name), img)
+}
+
+// officeShot saves the open notch's office only (its shape), at its logical size: what the
+// mockup's frame shows (shots.rs's save_office).
+func (r *rig) officeShot(dir, name string, size notch.OfficeSize) error {
+	open := notch.OpenSize(size, notch.Size{W: 1920, H: 1080})
+	w, h := int(open.W), int(open.H)
+	img, err := r.grab(h + int(notch.Pad))
+	if err != nil {
+		return err
+	}
+	x := int(notch.Pad)
+	return save(filepath.Join(dir, name), img.SubImage(image.Rect(x, 0, x+w, h)))
 }
 
 // dshot saves the app window (1200 x 720) at 1x.
@@ -254,6 +297,9 @@ func officeShots(dir string) error {
 		return err
 	}
 	r.s.OpenPanel("")
+	if err := chatShots(r, dir); err != nil {
+		return err
+	}
 	if err := deskShots2(r, dir); err != nil {
 		return err
 	}

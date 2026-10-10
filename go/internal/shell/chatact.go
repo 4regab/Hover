@@ -149,6 +149,9 @@ func (s *Shell) chatProps(op *ui.OfficeProps, which int) {
 	}
 	d.Title = sess.Title()
 	d.Folder = office.Short(sess.Folder)
+	if s.shotFolder != "" {
+		d.Folder = s.shotFolder
+	}
 	d.Busy, d.Stopping = sess.Busy(), sess.Stopping
 	d.ReplyLabel = "Reply to " + bot.Name
 	d.Placeholder = d.ReplyLabel

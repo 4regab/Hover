@@ -21,8 +21,10 @@ import (
 
 // Shell is main.rs's App.
 type Shell struct {
-	Hover *app.Hover
-	env   Env
+	// shotFolder, when set, is the folder the chat's header names (the shots' long one).
+	shotFolder string
+	Hover      *app.Hover
+	env        Env
 
 	win    Window
 	n      *NotchCtl

@@ -924,6 +924,9 @@ func (o *OfficeView) flyout(c *Ctx, d *ChatProps, x, y float32) {
 // FocusReply gives the keyboard to the reply box (it opened).
 func (o *OfficeView) FocusReply() { o.ch.focusInput = true }
 
+// ReplyCaretStart puts the caret at the start of the reply box's words (Ctrl+Home).
+func (o *OfficeView) ReplyCaretStart() { o.ch.input.ed.SetCaret(0, 0) }
+
 // ChatHover says the pointer is over the chat pane (voice dictates into the reply box only
 // then).
 func (o *OfficeView) ChatHover() bool { return o.ch.over.In }

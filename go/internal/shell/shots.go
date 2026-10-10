@@ -3,6 +3,7 @@ package shell
 import (
 	"github.com/4regab/Hover/go/internal/agents"
 	"github.com/4regab/Hover/go/internal/app"
+	"github.com/4regab/Hover/go/internal/chat"
 	"github.com/4regab/Hover/go/internal/core"
 	"github.com/4regab/Hover/go/internal/ui"
 	"github.com/4regab/Hover/go/internal/voice"
@@ -198,3 +199,48 @@ func (s *Shell) TryCardShot(st voice.Stage) *app.TryCard { return s.tryCard(st) 
 
 // PhononDownloadBytesShot is what the local speech model's download comes to.
 func (s *Shell) PhononDownloadBytesShot() uint64 { return s.vu().phonon.Facts().DownloadBytes }
+
+// The chat, as the shots take it (shots.rs's chat_shots).
+
+// ShotThread changes the open chat's thread as clicks on it do (a summary, a step, a flag),
+// and draws it again.
+func (s *Shell) ShotThread(f func(th *chat.Thread, turns []chat.Turn)) {
+	p := s.pg()
+	if ct := p.thread; ct != nil {
+		f(ct.th, p.turns)
+	}
+	s.paintThread()
+	s.invalidateAll()
+}
+
+// ShotThreadTop scrolls the open chat to its first line.
+func (s *Shell) ShotThreadTop() {
+	if ct := s.pg().thread; ct != nil {
+		ct.scroll = 0
+	}
+	s.paintThread()
+	s.invalidateAll()
+}
+
+// ShotConfirm is the question Restore and Try again ask before they touch the folder, or its absence.
+func (s *Shell) ShotConfirm(title, ok, text string, on bool) {
+	s.pg().confirm = ui.ConfirmProps{On: on, Title: title, Ok: ok, Text: text}
+	s.invalidateAll()
+}
+
+// ShotFolder is the folder the chat's header names ("" for its own).
+func (s *Shell) ShotFolder(name string) { s.shotFolder = name; s.invalidateAll() }
+
+// ShotDictation is a stage of voice dictating into the open chat's reply box.
+func (s *Shell) ShotDictation(st voice.Stage) {
+	s.vu().dictating = true
+	s.dictationChanged(st)
+	s.invalidateAll()
+}
+
+// ShotReplyHome is Ctrl+Home in the reply box.
+func (s *Shell) ShotReplyHome() {
+	s.ovwN.ReplyCaretStart()
+	s.ovwD.ReplyCaretStart()
+	s.invalidateAll()
+}
