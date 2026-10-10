@@ -1,7 +1,7 @@
 # Contributing to Hover
 
-Hover is built and tested on Windows and Linux, and compiled on macOS. You can fork it, build it, test it and
-send changes without access to the maintainers' release machines, secrets or paid
+Hover is built and run on Windows and Linux, and compiled on macOS. You can fork it, build it
+and send changes without access to the maintainers' release machines, secrets or paid
 agent accounts.
 
 Start with [docs/development/architecture.md](docs/development/architecture.md) for how
@@ -18,8 +18,8 @@ Hover fits together, then [testing.md](docs/development/testing.md) and
    git remote add upstream https://github.com/4regab/Hover.git
    ```
 
-2. Pick the base branch. The native (Rust) Hover is on `main`; `dotnet`
-   still holds 2.x (.NET). Branch from the one your change is for:
+2. Pick the base branch. The Go Hover is on `main`; the Rust version it replaced is at the
+   tag `rust-final`, and `dotnet` still holds 2.x (.NET). Branch from the one your change is for:
 
    ```sh
    git fetch upstream
@@ -32,15 +32,14 @@ Hover fits together, then [testing.md](docs/development/testing.md) and
 
    ```powershell
    # Windows
-   .\build.ps1 release run      # build and start Hover
-   .\build.ps1 test             # every test in the workspace
+   .\build.ps1 run              # build and start Hover
    ```
 
    ```sh
    # Linux
-   make                         # release build
-   make test                    # every test in the workspace
-   ./target/release/hoverai
+   make wgpu                    # once: the library the office is drawn with
+   make
+   WGPU_NATIVE_PATH=lib/libwgpu_native.so ./hover-linux
    ```
 
 Only one copy of Hover runs at a time. Quit an installed Hover before you start your
@@ -63,32 +62,31 @@ you install a new build, and a fork changes only when you pull upstream into it.
 
 - One problem per pull request. Touch only what the change needs.
 - Match the style around your change. Comments say why, not what.
-- A new crate needs its reason written in its `Cargo.toml`.
-- Line endings are CRLF, except `Makefile` and `packaging/linux/*` (LF). The
-  `.gitattributes` file handles this.
-- Don't commit `target/`, `publish/`, `dist/` or `evidence/` output.
+- A new Go module needs its reason in the pull request. Run `go mod tidy`.
+- Line endings are CRLF, except Go files, shell scripts, `Makefile`, `VERSION` and
+  `packaging/linux/*` (LF). The `.gitattributes` file handles this.
+- Don't commit `publish/`, `dist/`, `evidence/` or `hover-linux` output.
 
 ## Check it before you send it
 
 Run what applies to your change and say what you ran in the pull request:
 
-- `cargo test --release --workspace` on your
-  platform.
-- On Linux, if you changed Windows code, the Windows compile check:
-  `cargo xwin check --release --workspace --all-targets --target x86_64-pc-windows-msvc`
-  (needs `rustup target add x86_64-pc-windows-msvc`, `cargo install cargo-xwin` and
-  clang 19 or newer). CI checks Windows on Windows, so you can also leave it to CI.
-- For UI changes: render it with `hover --shots DIR` and look at the pictures. A
-  green build doesn't prove the pixels are right. On Linux with X11, also run
-  `hover --selftest DIR`.
-- For agent, permission or storage changes: the fake-agent scenarios in
-  [testing.md](docs/development/testing.md).
+- `gofmt -l cmd internal` prints nothing, and `go vet ./cmd/... ./internal/...` passes for
+  each system you touched. Go builds for Windows and macOS from any machine:
+  `GOOS=windows CGO_ENABLED=0 go vet ./cmd/... ./internal/...` and
+  `GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 go vet ./cmd/... ./internal/...`. On Linux add
+  `-tags nowayland,nox11,novulkan`.
+- For UI changes: render it with `hoverai --shots DIR` and look at the pictures. A
+  green build doesn't prove the pixels are right.
+- For agent, permission or storage changes: run an agent, or the stand-in agents described
+  in [testing.md](docs/development/testing.md).
 - For memory or speed changes: before and after numbers from
   [profiling.md](docs/development/profiling.md), on the same machine and settings.
 
-The CI workflow (`.github/workflows/ci.yml`) runs the tests on Windows and Linux for
-every pull request. It uses only GitHub's own runners and the fake agent: no secrets,
-and no agent accounts.
+The CI workflow (`.github/workflows/ci.yml`) checks the Go code for Windows, Linux and macOS
+on every pull request, builds and drives the Windows app and its installer, and builds the
+Linux packages and the Mac app. It does not run the Go tests. It uses only GitHub's own
+runners: no secrets, and no agent accounts.
 
 ## Pull requests
 
@@ -105,7 +103,7 @@ Fill in the template. In short:
 
 ## Releases
 
-Releases are made by the maintainers: a push to `main` that raises
-`Cargo.toml`'s version (or a `v*` tag) runs `.github/workflows/ci.yml`, which publishes the
-installers once the tests pass. Forks don't need it: `.\build.ps1 installer` and
+Releases are made by the maintainers: a push to `main` that raises the number in
+`VERSION` (or a `v*` tag) runs `.github/workflows/ci.yml`, which publishes the installers
+once the builds pass. Forks don't need it: `.\build.ps1 installer` and
 `make package` build the same installers locally.

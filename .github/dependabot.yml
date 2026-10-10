@@ -1,21 +1,18 @@
-# Weekly pull requests for outdated Cargo crates and GitHub Actions. Crates pinned with
-# "=" in a Cargo.toml (slint, mimalloc) are left alone: they move only on purpose.
+# Weekly pull requests for outdated Go modules and GitHub Actions. Gio (gioui.org) is our own
+# patched copy in third_party/, so it is left alone: it moves only on purpose.
 version: 2
 updates:
-  - package-ecosystem: cargo
+  - package-ecosystem: gomod
     directory: /
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
     groups:
-      cargo:
+      gomod:
         patterns: ['*']
         update-types: [minor, patch]
     ignore:
-      - dependency-name: slint
-      - dependency-name: slint-build
-      - dependency-name: mimalloc
-      - dependency-name: libmimalloc-sys
+      - dependency-name: gioui.org
   - package-ecosystem: github-actions
     directory: /
     schedule:

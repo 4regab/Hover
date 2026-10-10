@@ -13,7 +13,7 @@
   <a href="https://github.com/4regab/Hover/actions/workflows/ci.yml"><img src="https://github.com/4regab/Hover/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI"></a>
   <a href="https://github.com/4regab/Hover/releases"><img src="https://img.shields.io/github/v/release/4regab/Hover?include_prereleases&label=release" alt="Latest release"></a>
   <img src="https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-informational" alt="Windows, Linux and macOS">
-  <img src="https://img.shields.io/badge/built%20with-Rust%20%2B%20Slint-orange" alt="Rust and Slint">
+  <img src="https://img.shields.io/badge/built%20with-Go%20%2B%20Gio-00ADD8" alt="Go and Gio">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT license"></a>
 </p>
 
@@ -233,20 +233,21 @@ There is no account, server or analytics.
 
 ## Platform support
 
-| | Windows 10/11 x64 | Linux x64 (X11) | Linux on Wayland | macOS 14+ |
-|---|---|---|---|---|
-| Notch, office, Settings | ✓ | ✓ | ✓ through XWayland | ✓ around the camera notch (unverified on a Mac) |
-| Quotas | on the notch | on the notch | on the notch | in the menu bar |
-| Global shortcuts (`Alt+N`, voice) | ✓ | ✓ | Only while an XWayland window has focus | ✓ (Option-N, Control-Option-Space) |
-| Local speech (Phonon) | ✓ | ✓ (arm64 not tested yet) | ✓ | off, Apple's on-device recognizer instead |
-| Sandbox | off | ✓ | ✓ | ✓ |
-| Discord status | ✓ | ✓ | ✓ | ✓ (not built on a Mac yet) |
-| Agent browser and Browser tab | off | off | off | ✓ |
-| One-click agent setup | off | off | off | ✓ |
-| Computer use | off | off | off | ✓ |
-| Agent desktops (Cua Spaces) | off | off | off | ✓ on macOS 26+, Apple silicon |
-| Desk card, helpers, Pull request tab | ✓ | ✓ | ✓ | ✓ |
-| Release package | installer | .deb, tarball | .deb, tarball | disk image (signed ad hoc) |
+| | Windows 10/11 x64 | Linux x64 (Wayland) | macOS 14+ |
+|---|---|---|---|
+| Notch, office, Settings | ✓ | ✓ on a compositor with layer-shell (KDE Plasma, Sway, Hyprland); not on GNOME's own, which has none | ✓ around the camera notch (unverified on a Mac) |
+| Quotas | on the notch | on the notch | in the menu bar |
+| Global shortcuts (`Alt+N`, voice) | ✓ | through the desktop's GlobalShortcuts portal (KDE, GNOME 48+, Hyprland); on Sway, bind `hover --toggle` | ✓ (Option-N, Control-Option-Space) |
+| Local speech (Phonon) | ✓ | ✓ (arm64 not tested yet) | off, Apple's on-device recognizer instead |
+| Sandbox | off | ✓ | ✓ |
+| Discord status | ✓ | ✓ | ✓ (not built on a Mac yet) |
+| Agent browser and Browser tab | off | off | ✓ |
+| One-click agent setup | off | off | ✓ |
+| Computer use | off | off | ✓ |
+| Agent desktops (Cua Spaces) | off | off | ✓ on macOS 26+, Apple silicon |
+| Screen panel | ✓ | off (Wayland shows no other program's windows) | ✓ |
+| Desk card, helpers, Pull request tab | ✓ | ✓ | ✓ |
+| Release package | installer | .deb, tarball | disk image (signed ad hoc) |
 
 Where a feature is off, its switch says why. The Mac app is new and hasn't been run on a Mac yet, so the macOS
 column is what the code is written to do and what builds, not something tested: see
@@ -254,42 +255,45 @@ column is what the code is written to do and what builds, not something tested: 
 
 ## Build from source
 
-Requires Rust 1.89 or newer. On Windows, install the MSVC build tools as well. The
-toolchain Hover is tested with is pinned in `rust-toolchain.toml`.
+Requires Go: the version `go.mod` names (an older Go fetches it for you). Windows needs no C
+compiler. Linux needs one and the EGL headers, because Gio draws through EGL.
 
-On Ubuntu or Debian, the build needs these packages (the tests also use
-`fonts-dejavu-core dbus gnome-keyring python3-gi`):
+On Ubuntu or Debian:
 
 ```sh
-sudo apt install build-essential pkg-config libfontconfig1-dev libfreetype-dev \
-  libasound2-dev libxkbcommon-dev libxkbcommon-x11-dev
+sudo apt install build-essential libegl1-mesa-dev libgles2-mesa-dev
 ```
+
+The office is drawn with wgpu-native, which is a separate library beside the program:
+`build.ps1` fetches `wgpu_native.dll` and `make wgpu` fetches `libwgpu_native.so`.
 
 ```powershell
 # Windows
-.\build.ps1 release run      # build and run
-.\build.ps1 test             # all tests
-.\build.ps1 publish          # hoverai.exe in .\publish
+.\build.ps1 run              # build and run
+.\build.ps1 publish          # hoverai.exe and wgpu_native.dll in .\publish
 .\build.ps1 installer        # Hover-Setup-<version>.exe in .\dist (needs Inno Setup 6 or 7)
 ```
 
 ```sh
 # Linux
-make                         # release build
-make test
+make                         # ./hover-linux
+make wgpu                    # lib/libwgpu_native.so; run with WGPU_NATIVE_PATH=lib/libwgpu_native.so
 sudo make install            # /usr/local (PREFIX=, DESTDIR= as usual); make uninstall
 make package                 # .deb and tarball in dist/
 ```
+
+The version is the number in the `VERSION` file.
 
 ```sh
 # macOS (needs Xcode's command line tools: xcode-select --install; Node for the office page)
 scripts/build-macos.sh             # dist/macos-osx-arm64/Hover.app, signed ad hoc
 ```
 
-The Mac app is Swift (`macos/`) around the web office (`web/office/`), on the Rust backend
-`crates/hover-backend`; `scripts/build-macos.sh` builds all three into `Hover.app` (`HOVER_ARCH=x64`
+The Mac app is Swift (`macos/`) around the web office (`web/office/`), on the Go backend
+`cmd/hover-backend`; `scripts/build-macos.sh` builds all three into `Hover.app` (`HOVER_ARCH=x64`
 for Intel). CI builds and signs it ad hoc and puts it on each release as a disk image for
-Apple silicon and one for Intel; it runs none of its tests, and the app isn't notarized yet.
+Apple silicon and one for Intel; it runs the packaged backend against stand-in tools
+(`tests/macos/backend-smoke.py`) and nothing more, and the app isn't notarized yet.
 [docs/MACOS.md](docs/MACOS.md) has the permissions it asks for.
 
 Developer documentation is in [`docs/development`](docs/development): architecture,
@@ -299,7 +303,8 @@ works for people and AI agents changing it.
 ## Contributing
 
 Issues and pull requests are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) first. Every
-pull request runs the tests on Windows and Linux, and builds the Mac app on macOS.
+pull request builds the app on Windows, Linux and macOS and drives the Windows app; CI does not run
+the Go tests.
 
 The macOS support builds on Arz's ([@Entourage397](https://github.com/Entourage397)) macOS
 v1.0 for Hover 2.x, which was Swift and C#.

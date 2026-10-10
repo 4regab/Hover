@@ -1,5 +1,6 @@
-"""Writes Hover's brand pictures from the logo in assets/hover.svg: assets/hover.png,
-app/assets/hover.ico and app/assets/hover-mark.png.
+"""Writes Hover's brand pictures from the logo in assets/hover.svg: assets/hover.png, the app's
+icon (internal/platform/win/hover.ico and the same file in internal/platform/linux) and
+internal/ui/assets/hover-mark.png.
 
     python assets/make-icon.py        (needs: pip install pillow cairosvg)
 
@@ -83,9 +84,11 @@ if __name__ == "__main__":
     clear = logo()
     square = on_square(clear)
     square.convert("RGB").save(ROOT / "assets" / "hover.png", optimize=True)
-    ico_path = ROOT / "app" / "assets" / "hover.ico"
+    ico_path = ROOT / "internal" / "platform" / "win" / "hover.ico"
     ico_path.write_bytes(ico([square.resize((s, s), Image.Resampling.LANCZOS) for s in SIZES]))
-    mark_path = ROOT / "app" / "assets" / "hover-mark.png"
+    linux_ico = ROOT / "internal" / "platform" / "linux" / "hover.ico"
+    linux_ico.write_bytes(ico_path.read_bytes())
+    mark_path = ROOT / "internal" / "ui" / "assets" / "hover-mark.png"
     mark(clear).save(mark_path, optimize=True)
 
     # Read it back: every size is there, and the large frame is still the logo
@@ -100,5 +103,5 @@ if __name__ == "__main__":
     m = Image.open(mark_path)
     assert m.getpixel((2, 2))[3] == 0, "background left in"
     assert m.getpixel((128, 170))[3] == 255, "body not solid"
-    for p in (ico_path, mark_path, ROOT / "assets" / "hover.png"):
+    for p in (ico_path, linux_ico, mark_path, ROOT / "assets" / "hover.png"):
         print(f"wrote {p.relative_to(ROOT)} ({p.stat().st_size} bytes)")

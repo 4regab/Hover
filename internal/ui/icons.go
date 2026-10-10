@@ -1,0 +1,158 @@
+package ui
+
+// icons.slint (generated once from the C# app's Icons.cs, Lucide 1.48.0; ISC, the notice
+// is in THIRD-PARTY-NOTICES.txt): line icons on a 24 x 24 grid, stroked where they are drawn.
+
+const (
+	IconCheck = "M 20 6 L 9 17 l -5 -5"
+	// The mockup's microphone (voice's card and its Settings tile).
+	IconMic       = "M 12 2 a 3 3 0 0 0 -3 3 v 6 a 3 3 0 0 0 6 0 V 5 a 3 3 0 0 0 -3 -3 Z M 5 11 a 7 7 0 0 0 14 0 M 12 18 v 4"
+	IconMore      = "M 11 12 A 1 1 0 1 0 13 12 A 1 1 0 1 0 11 12 Z M 18 12 A 1 1 0 1 0 20 12 A 1 1 0 1 0 18 12 Z M 4 12 A 1 1 0 1 0 6 12 A 1 1 0 1 0 4 12 Z"
+	IconAdd       = "M 5 12 h 14 M 12 5 v 14"
+	IconCalendar  = "M 8 2 v 3 M 16 2 v 3 M 5 3 H 19 A 2 2 0 0 1 21 5 V 19 A 2 2 0 0 1 19 21 H 5 A 2 2 0 0 1 3 19 V 5 A 2 2 0 0 1 5 3 Z M 3 9 h 18"
+	IconStopwatch = "M 10 2 L 14 2 M 12 14 L 15 11 M 4 14 A 8 8 0 1 0 20 14 A 8 8 0 1 0 4 14 Z"
+	IconBell      = "M 10.268 21 a 2 2 0 0 0 3.464 0 M 3.262 15.326 A 1 1 0 0 0 4 17 h 16 a 1 1 0 0 0 0.74 -1.673 C 19.41 13.956 18 12.499 18 8 A 6 6 0 0 0 6 8 c 0 4.499 -1.411 5.956 -2.738 7.326"
+	IconRefresh   = "M 3 12 a 9 9 0 0 1 9 -9 a 9.75 9.75 0 0 1 6.74 2.74 L 21 8 M 21 3 v 5 h -5 M 21 12 a 9 9 0 0 1 -9 9 a 9.75 9.75 0 0 1 -6.74 -2.74 L 3 16 M 8 16 H 3 v 5"
+	IconDelete    = "M 10 11 v 6 M 14 11 v 6 M 19 6 v 14 a 2 2 0 0 1 -2 2 H 7 a 2 2 0 0 1 -2 -2 V 6 M 3 6 h 18 M 8 6 V 4 a 2 2 0 0 1 2 -2 h 4 a 2 2 0 0 1 2 2 v 2"
+	IconCopy      = "M 10 8 H 20 A 2 2 0 0 1 22 10 V 20 A 2 2 0 0 1 20 22 H 10 A 2 2 0 0 1 8 20 V 10 A 2 2 0 0 1 10 8 Z M 4 16 c -1.1 0 -2 -0.9 -2 -2 V 4 c 0 -1.1 0.9 -2 2 -2 h 10 c 1.1 0 2 0.9 2 2"
+	IconForward   = "M 5 12 h 14 M 12 5 l 7 7 l -7 7"
+	IconRename    = "M 21.174 6.812 a 1 1 0 0 0 -3.986 -3.987 L 3.842 16.174 a 2 2 0 0 0 -0.5 0.83 l -1.321 4.352 a 0.5 0.5 0 0 0 0.623 0.622 l 4.353 -1.32 a 2 2 0 0 0 0.83 -0.497 Z M 15 5 l 4 4"
+	IconReturn    = "M 20 4 v 7 a 4 4 0 0 1 -4 4 H 4 M 9 10 l -5 5 l 5 5"
+	IconLines     = "M 21 5 H 3 M 15 12 H 3 M 17 19 H 3"
+	IconClose     = "M 18 6 L 6 18 M 6 6 l 12 12"
+	// A picture (voice’s screenshot note).
+	IconImage        = "M 5 3 h 14 a 2 2 0 0 1 2 2 v 14 a 2 2 0 0 1 -2 2 H 5 a 2 2 0 0 1 -2 -2 V 5 a 2 2 0 0 1 2 -2 Z M 9 7 a 2 2 0 1 0 0 4 a 2 2 0 1 0 0 -4 Z M 21 15 l -5 -5 L 5 21"
+	IconChevronDown  = "M 6 9 l 6 6 l 6 -6"
+	IconChevronUp    = "M 18 15 l -6 -6 l -6 6"
+	IconChevronLeft  = "M 15 18 l -6 -6 l 6 -6"
+	IconChevronRight = "M 9 18 l 6 -6 l -6 -6"
+	IconClock        = "M 2 12 A 10 10 0 1 0 22 12 A 10 10 0 1 0 2 12 Z M 12 6 v 6 l 4 2"
+	IconBolt         = "M 15.914 4 a 1.5 1.5 0 0 0 -2.474 -1.561 l -9 9 A 1.5 1.5 0 0 0 5.5 14 h 4.002 a 0.5 0.5 0 0 1 0.471 0.666 L 8.086 20 a 1.5 1.5 0 0 0 2.475 1.56 l 9 -9 A 1.5 1.5 0 0 0 18.5 10 h -3.997 a 0.5 0.5 0 0 1 -0.472 -0.667 Z"
+	IconSliders      = "M 10 5 H 3 M 12 19 H 3 M 14 3 v 4 M 16 17 v 4 M 21 12 h -9 M 21 19 h -5 M 21 5 h -7 M 8 10 v 4 M 8 12 H 3"
+	IconRing         = "M 2 12 A 10 10 0 1 0 22 12 A 10 10 0 1 0 2 12 Z"
+	IconDone         = "M 2 12 A 10 10 0 1 0 22 12 A 10 10 0 1 0 2 12 Z M 16 9 l -5.5 5.5 L 8 12"
+	IconTarget       = "M 2 12 A 10 10 0 1 0 22 12 A 10 10 0 1 0 2 12 Z M 6 12 A 6 6 0 1 0 18 12 A 6 6 0 1 0 6 12 Z M 10 12 A 2 2 0 1 0 14 12 A 2 2 0 1 0 10 12 Z"
+	IconChecklist    = "M 13 5 h 8 M 13 12 h 8 M 13 19 h 8 M 3 17 l 2 2 l 4 -4 M 3 7 l 2 2 l 4 -4"
+	IconCompose      = "M 13.4 2 H 6 a 2 2 0 0 0 -2 2 v 16 a 2 2 0 0 0 2 2 h 12 a 2 2 0 0 0 2 -2 v -7.4 M 2 6 h 4 M 2 10 h 4 M 2 14 h 4 M 2 18 h 4 M 21.378 5.626 a 1 1 0 1 0 -3.004 -3.004 l -5.01 5.012 a 2 2 0 0 0 -0.506 0.854 l -0.837 2.87 a 0.5 0.5 0 0 0 0.62 0.62 l 2.87 -0.837 a 2 2 0 0 0 0.854 -0.506 Z"
+	IconSettings     = "M 9.671 4.136 a 2.34 2.34 0 0 1 4.659 0 a 2.34 2.34 0 0 0 3.319 1.915 a 2.34 2.34 0 0 1 2.33 4.033 a 2.34 2.34 0 0 0 0 3.831 a 2.34 2.34 0 0 1 -2.33 4.033 a 2.34 2.34 0 0 0 -3.319 1.915 a 2.34 2.34 0 0 1 -4.659 0 a 2.34 2.34 0 0 0 -3.32 -1.915 a 2.34 2.34 0 0 1 -2.33 -4.033 a 2.34 2.34 0 0 0 0 -3.831 A 2.34 2.34 0 0 1 6.35 6.051 a 2.34 2.34 0 0 0 3.319 -1.915 M 9 12 A 3 3 0 1 0 15 12 A 3 3 0 1 0 9 12 Z"
+	IconFolder       = "M 20 20 a 2 2 0 0 0 2 -2 V 8 a 2 2 0 0 0 -2 -2 h -7.9 a 2 2 0 0 1 -1.69 -0.9 L 9.6 3.9 A 2 2 0 0 0 7.93 3 H 4 a 2 2 0 0 0 -2 2 v 13 a 2 2 0 0 0 2 2 Z"
+	IconWarning      = "M 21.73 18 l -8 -14 a 2 2 0 0 0 -3.48 0 l -8 14 A 2 2 0 0 0 4 21 h 16 a 2 2 0 0 0 1.73 -3 M 12 9 v 4 M 12 17 h 0.01"
+	IconPhoto        = "M 5 3 H 19 A 2 2 0 0 1 21 5 V 19 A 2 2 0 0 1 19 21 H 5 A 2 2 0 0 1 3 19 V 5 A 2 2 0 0 1 5 3 Z M 7 9 A 2 2 0 1 0 11 9 A 2 2 0 1 0 7 9 Z M 21 15 l -3.086 -3.086 a 2 2 0 0 0 -2.828 0 L 6 21"
+	IconLayout       = "M 4 3 H 9 A 1 1 0 0 1 10 4 V 9 A 1 1 0 0 1 9 10 H 4 A 1 1 0 0 1 3 9 V 4 A 1 1 0 0 1 4 3 Z M 15 3 H 20 A 1 1 0 0 1 21 4 V 9 A 1 1 0 0 1 20 10 H 15 A 1 1 0 0 1 14 9 V 4 A 1 1 0 0 1 15 3 Z M 15 14 H 20 A 1 1 0 0 1 21 15 V 20 A 1 1 0 0 1 20 21 H 15 A 1 1 0 0 1 14 20 V 15 A 1 1 0 0 1 15 14 Z M 4 14 H 9 A 1 1 0 0 1 10 15 V 20 A 1 1 0 0 1 9 21 H 4 A 1 1 0 0 1 3 20 V 15 A 1 1 0 0 1 4 14 Z"
+	IconGauge        = "M 12 14 l 4 -4 M 3.34 19 a 10 10 0 1 1 17.32 0"
+	IconNotch        = "M 5 3 H 19 A 2 2 0 0 1 21 5 V 19 A 2 2 0 0 1 19 21 H 5 A 2 2 0 0 1 3 19 V 5 A 2 2 0 0 1 5 3 Z M 3 9 h 18"
+	IconView         = "M 2.062 12.348 a 1 1 0 0 1 0 -0.696 a 10.75 10.75 0 0 1 19.876 0 a 1 1 0 0 1 0 0.696 a 10.75 10.75 0 0 1 -19.876 0 M 9 12 A 3 3 0 1 0 15 12 A 3 3 0 1 0 9 12 Z"
+	IconHide         = "M 10.733 5.076 a 10.744 10.744 0 0 1 11.205 6.575 a 1 1 0 0 1 0 0.696 a 10.747 10.747 0 0 1 -1.444 2.49 M 14.084 14.158 a 3 3 0 0 1 -4.242 -4.242 M 17.479 17.499 a 10.75 10.75 0 0 1 -15.417 -5.151 a 1 1 0 0 1 0 -0.696 a 10.75 10.75 0 0 1 4.446 -5.143 M 2 2 l 20 20"
+	IconReset        = "M 3 12 a 9 9 0 1 0 9 -9 a 9.75 9.75 0 0 0 -6.74 2.74 L 3 8 M 3 3 v 5 h 5"
+	IconCut          = "M 3 6 A 3 3 0 1 0 9 6 A 3 3 0 1 0 3 6 Z M 8.12 8.12 L 12 12 M 20 4 L 8.12 15.88 M 3 18 A 3 3 0 1 0 9 18 A 3 3 0 1 0 3 18 Z M 14.8 14.8 L 20 20"
+	IconSparkles     = "M 11.017 2.814 a 1 1 0 0 1 1.966 0 l 1.051 5.558 a 2 2 0 0 0 1.594 1.594 l 5.558 1.051 a 1 1 0 0 1 0 1.966 l -5.558 1.051 a 2 2 0 0 0 -1.594 1.594 l -1.051 5.558 a 1 1 0 0 1 -1.966 0 l -1.051 -5.558 a 2 2 0 0 0 -1.594 -1.594 l -5.558 -1.051 a 1 1 0 0 1 0 -1.966 l 5.558 -1.051 a 2 2 0 0 0 1.594 -1.594 Z M 20 2 v 4 M 22 4 h -4 M 2 20 A 2 2 0 1 0 6 20 A 2 2 0 1 0 2 20 Z"
+	IconTerminal     = "M 7 11 l 2 -2 l -2 -2 M 11 13 h 4 M 5 3 H 19 A 2 2 0 0 1 21 5 V 19 A 2 2 0 0 1 19 21 H 5 A 2 2 0 0 1 3 19 V 5 A 2 2 0 0 1 5 3 Z"
+	IconBot          = "M 12 8 V 4 H 8 M 6 8 H 18 A 2 2 0 0 1 20 10 V 18 A 2 2 0 0 1 18 20 H 6 A 2 2 0 0 1 4 18 V 10 A 2 2 0 0 1 6 8 Z M 2 14 h 2 M 20 14 h 2 M 15 13 v 2 M 9 13 v 2"
+	IconCode         = "M 16 18 l 6 -6 l -6 -6 M 8 6 l -6 6 l 6 6"
+	IconRocket       = "M 12 15 v 5 s 3.03 -0.55 4 -2 c 1.08 -1.62 0 -5 0 -5 M 4.5 16.5 c -1.5 1.26 -2 5 -2 5 s 3.74 -0.5 5 -2 c 0.71 -0.84 0.7 -2.13 -0.09 -2.91 a 2.18 2.18 0 0 0 -2.91 -0.09 M 9 12 a 22 22 0 0 1 2 -3.95 A 12.88 12.88 0 0 1 22 2 c 0 2.72 -0.78 7.5 -6 11 a 22.4 22.4 0 0 1 -4 2 Z M 9 12 H 4 s 0.55 -3.03 2 -4 c 1.62 -1.08 5 0.05 5 0.05"
+	IconBrain        = "M 12 18 V 5 M 15 13 a 4.17 4.17 0 0 1 -3 -4 a 4.17 4.17 0 0 1 -3 4 M 17.598 6.5 A 3 3 0 1 0 12 5 a 3 3 0 1 0 -5.598 1.5 M 17.997 5.125 a 4 4 0 0 1 2.526 5.77 M 18 18 a 4 4 0 0 0 2 -7.464 M 19.967 17.483 A 4 4 0 1 1 12 18 a 4 4 0 1 1 -7.967 -0.517 M 6 18 a 4 4 0 0 1 -2 -7.464 M 6.003 5.125 a 4 4 0 0 0 -2.526 5.77"
+	IconGlobe        = "M 2 12 A 10 10 0 1 0 22 12 A 10 10 0 1 0 2 12 Z M 12 2 a 14.5 14.5 0 0 0 0 20 a 14.5 14.5 0 0 0 0 -20 M 2 12 h 20"
+	IconGit          = "M 15 6 a 9 9 0 0 0 -9 9 V 3 M 15 6 A 3 3 0 1 0 21 6 A 3 3 0 1 0 15 6 Z M 3 18 A 3 3 0 1 0 9 18 A 3 3 0 1 0 3 18 Z"
+	IconDatabase     = "M 3 5 A 9 3 0 1 0 21 5 A 9 3 0 1 0 3 5 Z M 3 5 V 19 A 9 3 0 0 0 21 19 V 5 M 3 12 A 9 3 0 0 0 21 12"
+	IconCloud        = "M 17.5 19 H 9 a 7 7 0 1 1 6.71 -9 h 1.79 a 4.5 4.5 0 1 1 0 9 Z"
+	IconCpu          = "M 12 20 v 2 M 12 2 v 2 M 17 20 v 2 M 17 2 v 2 M 2 12 h 2 M 2 17 h 2 M 2 7 h 2 M 20 12 h 2 M 20 17 h 2 M 20 7 h 2 M 7 20 v 2 M 7 2 v 2 M 6 4 H 18 A 2 2 0 0 1 20 6 V 18 A 2 2 0 0 1 18 20 H 6 A 2 2 0 0 1 4 18 V 6 A 2 2 0 0 1 6 4 Z M 9 8 H 15 A 1 1 0 0 1 16 9 V 15 A 1 1 0 0 1 15 16 H 9 A 1 1 0 0 1 8 15 V 9 A 1 1 0 0 1 9 8 Z"
+	IconBug          = "M 12 20 v -9 M 14 7 a 4 4 0 0 1 4 4 v 3 a 6 6 0 0 1 -12 0 v -3 a 4 4 0 0 1 4 -4 Z M 14.12 3.88 L 16 2 M 21 21 a 4 4 0 0 0 -3.81 -4 M 21 5 a 4 4 0 0 1 -3.55 3.97 M 22 13 h -4 M 3 21 a 4 4 0 0 1 3.81 -4 M 3 5 a 4 4 0 0 0 3.55 3.97 M 6 13 H 2 M 8 2 l 1.88 1.88 M 9 7.13 V 6 a 3 3 0 1 1 6 0 v 1.13"
+	IconFlask        = "M 14 2 v 6 a 2 2 0 0 0 0.245 0.96 l 5.51 10.08 A 2 2 0 0 1 18 22 H 6 a 2 2 0 0 1 -1.755 -2.96 l 5.51 -10.08 A 2 2 0 0 0 10 8 V 2 M 6.453 15 h 11.094 M 8.5 2 h 7"
+	IconBook         = "M 12 5 v 16 M 20.001 19 A 2 2 0 0 0 22 17 V 5 a 2 2 0 0 0 -1.999 -2 L 16 3.002 A 5 5 0 0 0 12 5 a 5 5 0 0 0 -4 -2 H 4 a 2 2 0 0 0 -2 2 v 12 a 2 2 0 0 0 1.999 2 H 8 a 5 5 0 0 1 4 2 a 5 5 0 0 1 4 -2 Z"
+	IconMusic        = "M 9 18 V 5 l 12 -2 v 13 M 3 18 A 3 3 0 1 0 9 18 A 3 3 0 1 0 3 18 Z M 15 16 A 3 3 0 1 0 21 16 A 3 3 0 1 0 15 16 Z"
+	IconCoffee       = "M 10 2 v 2 M 14 2 v 2 M 16 8 a 1 1 0 0 1 1 1 v 8 a 4 4 0 0 1 -4 4 H 7 a 4 4 0 0 1 -4 -4 V 9 a 1 1 0 0 1 1 -1 h 14 a 4 4 0 1 1 0 8 h -1 M 6 2 v 2"
+	IconStar         = "M 11.525 2.295 a 0.53 0.53 0 0 1 0.95 0 l 2.31 4.679 a 2.123 2.123 0 0 0 1.595 1.16 l 5.166 0.756 a 0.53 0.53 0 0 1 0.294 0.904 l -3.736 3.638 a 2.123 2.123 0 0 0 -0.611 1.878 l 0.882 5.14 a 0.53 0.53 0 0 1 -0.771 0.56 l -4.618 -2.428 a 2.122 2.122 0 0 0 -1.973 0 L 6.396 21.01 a 0.53 0.53 0 0 1 -0.77 -0.56 l 0.881 -5.139 a 2.122 2.122 0 0 0 -0.611 -1.879 L 2.16 9.795 a 0.53 0.53 0 0 1 0.294 -0.906 l 5.165 -0.755 a 2.122 2.122 0 0 0 1.597 -1.16 Z"
+	IconHeart        = "M 2 9.5 a 5.5 5.5 0 0 1 9.591 -3.676 a 0.56 0.56 0 0 0 0.818 0 A 5.49 5.49 0 0 1 22 9.5 c 0 2.29 -1.5 4 -3 5.5 l -5.492 5.313 a 2 2 0 0 1 -3 0.019 L 5 15 c -1.5 -1.5 -3 -3.2 -3 -5.5"
+	IconWrench       = "M 14.7 6.3 a 1 1 0 0 0 0 1.4 l 1.6 1.6 a 1 1 0 0 0 1.4 0 l 3.106 -3.105 c 0.32 -0.322 0.863 -0.22 0.983 0.218 a 6 6 0 0 1 -8.259 7.057 l -7.91 7.91 a 1 1 0 0 1 -2.999 -3 l 7.91 -7.91 a 6 6 0 0 1 7.057 -8.259 c 0.438 0.12 0.54 0.662 0.219 0.984 Z"
+	IconPackage      = "M 11 21.73 a 2 2 0 0 0 2 0 l 7 -4 A 2 2 0 0 0 21 16 V 8 a 2 2 0 0 0 -1 -1.73 l -7 -4 a 2 2 0 0 0 -2 0 l -7 4 A 2 2 0 0 0 3 8 v 8 a 2 2 0 0 0 1 1.73 Z M 12 22 V 12 M 3.29 7 L 12 12 L 20.71 7 M 7.5 4.27 l 9 5.15"
+	IconCommand      = "M 15 6 v 12 a 3 3 0 1 0 3 -3 H 6 a 3 3 0 1 0 3 3 V 6 a 3 3 0 1 0 -3 3 h 12 a 3 3 0 1 0 -3 -3"
+	IconFlame        = "M 12 3 q 1 4 4 6.5 t 3 5.5 a 1 1 0 0 1 -14 0 a 5 5 0 0 1 1 -3 a 1 1 0 0 0 5 0 c 0 -2 -1.5 -3 -1.5 -5 q 0 -2 2.5 -4"
+	IconServer       = "M 4 2 H 20 A 2 2 0 0 1 22 4 V 8 A 2 2 0 0 1 20 10 H 4 A 2 2 0 0 1 2 8 V 4 A 2 2 0 0 1 4 2 Z M 4 14 H 20 A 2 2 0 0 1 22 16 V 20 A 2 2 0 0 1 20 22 H 4 A 2 2 0 0 1 2 20 V 16 A 2 2 0 0 1 4 14 Z M 6 6 L 6.01 6 M 6 18 L 6.01 18"
+	IconPalette      = "M 12 22 a 1 1 0 0 1 0 -20 a 10 9 0 0 1 10 9 a 5 5 0 0 1 -5 5 h -2.25 a 1.75 1.75 0 0 0 -1.4 2.8 l 0.3 0.4 a 1.75 1.75 0 0 1 -1.4 2.8 Z M 13 6.5 A 0.5 0.5 0 1 0 14 6.5 A 0.5 0.5 0 1 0 13 6.5 Z M 17 10.5 A 0.5 0.5 0 1 0 18 10.5 A 0.5 0.5 0 1 0 17 10.5 Z M 6 12.5 A 0.5 0.5 0 1 0 7 12.5 A 0.5 0.5 0 1 0 6 12.5 Z M 8 7.5 A 0.5 0.5 0 1 0 9 7.5 A 0.5 0.5 0 1 0 8 7.5 Z"
+	IconImport       = "M 6 22 a 2 2 0 0 1 -2 -2 V 4 a 2 2 0 0 1 2 -2 h 8 a 2.4 2.4 0 0 1 1.704 0.706 l 3.588 3.588 A 2.4 2.4 0 0 1 20 8 v 12 a 2 2 0 0 1 -2 2 Z M 14 2 v 5 a 1 1 0 0 0 1 1 h 5 M 12 18 v -6 M 9 15 l 3 3 l 3 -3"
+	IconHome         = "M 15 21 v -8 a 1 1 0 0 0 -1 -1 h -4 a 1 1 0 0 0 -1 1 v 8 M 3 10 a 2 2 0 0 1 0.709 -1.528 l 7 -6 a 2 2 0 0 1 2.582 0 l 7 6 A 2 2 0 0 1 21 10 v 9 a 2 2 0 0 1 -2 2 H 5 a 2 2 0 0 1 -2 -2 Z"
+	IconGhost        = "M 15 10 v 1 M 7.528 20.472 a 1.6 1.6 0 0 1 2.277 0 l 1.057 1.056 a 1.6 1.6 0 0 0 2.276 0 l 1.057 -1.056 a 1.6 1.6 0 0 1 2.277 0 l 1.114 1.114 a 1.4 1.4 0 0 0 2.414 -1 V 10 a 8 8 0 0 0 -16 0 v 10.586 a 1.4 1.4 0 0 0 2.414 1 Z M 9 10 v 1"
+	IconStop         = "M 5 3 H 19 A 2 2 0 0 1 21 5 V 19 A 2 2 0 0 1 19 21 H 5 A 2 2 0 0 1 3 19 V 5 A 2 2 0 0 1 5 3 Z"
+	IconShield       = "M 20 13 c 0 5 -3.5 7.5 -7.66 8.95 a 1 1 0 0 1 -0.67 -0.01 C 7.5 20.5 4 18 4 13 V 6 a 1 1 0 0 1 1 -1 c 2 0 4.5 -1.2 6.24 -2.72 a 1.17 1.17 0 0 1 1.52 0 C 14.51 3.81 17 5 19 5 a 1 1 0 0 1 1 1 Z M 9 12 l 2 2 l 4 -4"
+	IconFolderOpen   = "M 6 14 l 1.5 -2.9 A 2 2 0 0 1 9.24 10 H 20 a 2 2 0 0 1 1.94 2.5 l -1.54 6 a 2 2 0 0 1 -1.95 1.5 H 4 a 2 2 0 0 1 -2 -2 V 5 a 2 2 0 0 1 2 -2 h 3.9 a 2 2 0 0 1 1.69 0.9 l 0.81 1.2 a 2 2 0 0 0 1.67 0.9 H 18 a 2 2 0 0 1 2 2 v 2"
+	IconChart        = "M 3 3 v 16 a 2 2 0 0 0 2 2 h 16 M 18 17 V 9 M 13 17 V 5 M 8 17 v -3"
+	IconPlug         = "M 12 22 v -5 M 15 8 V 2 M 17 8 a 1 1 0 0 1 1 1 v 4 a 4 4 0 0 1 -4 4 h -4 a 4 4 0 0 1 -4 -4 V 9 a 1 1 0 0 1 1 -1 Z M 9 8 V 2"
+	IconSend         = "M 5 12 l 7 -7 l 7 7 M 12 19 V 5"
+)
+
+// IconByName is the table by Lucide name (icons.rs), for icons that travel as data: a
+// row's tile, a link.
+var IconByName = map[string]string{
+	"check":         IconCheck,
+	"mic":           IconMic,
+	"more":          IconMore,
+	"add":           IconAdd,
+	"calendar":      IconCalendar,
+	"stopwatch":     IconStopwatch,
+	"bell":          IconBell,
+	"refresh":       IconRefresh,
+	"delete":        IconDelete,
+	"copy":          IconCopy,
+	"forward":       IconForward,
+	"rename":        IconRename,
+	"return":        IconReturn,
+	"lines":         IconLines,
+	"close":         IconClose,
+	"image":         IconImage,
+	"chevron-down":  IconChevronDown,
+	"chevron-up":    IconChevronUp,
+	"chevron-left":  IconChevronLeft,
+	"chevron-right": IconChevronRight,
+	"clock":         IconClock,
+	"bolt":          IconBolt,
+	"sliders":       IconSliders,
+	"ring":          IconRing,
+	"done":          IconDone,
+	"target":        IconTarget,
+	"checklist":     IconChecklist,
+	"compose":       IconCompose,
+	"settings":      IconSettings,
+	"folder":        IconFolder,
+	"warning":       IconWarning,
+	"photo":         IconPhoto,
+	"layout":        IconLayout,
+	"gauge":         IconGauge,
+	"notch":         IconNotch,
+	"view":          IconView,
+	"hide":          IconHide,
+	"reset":         IconReset,
+	"cut":           IconCut,
+	"sparkles":      IconSparkles,
+	"terminal":      IconTerminal,
+	"bot":           IconBot,
+	"code":          IconCode,
+	"rocket":        IconRocket,
+	"brain":         IconBrain,
+	"globe":         IconGlobe,
+	"git":           IconGit,
+	"database":      IconDatabase,
+	"cloud":         IconCloud,
+	"cpu":           IconCpu,
+	"bug":           IconBug,
+	"flask":         IconFlask,
+	"book":          IconBook,
+	"music":         IconMusic,
+	"coffee":        IconCoffee,
+	"star":          IconStar,
+	"heart":         IconHeart,
+	"wrench":        IconWrench,
+	"package":       IconPackage,
+	"command":       IconCommand,
+	"flame":         IconFlame,
+	"server":        IconServer,
+	"palette":       IconPalette,
+	"import":        IconImport,
+	"home":          IconHome,
+	"ghost":         IconGhost,
+	"stop":          IconStop,
+	"shield":        IconShield,
+	"folder-open":   IconFolderOpen,
+	"chart":         IconChart,
+	"plug":          IconPlug,
+	"send":          IconSend,
+}

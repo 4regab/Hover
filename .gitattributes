@@ -9,7 +9,7 @@
 *.wav binary
 *.ttf binary
 
-# Golden files are compared byte for byte with what the Rust ports write, on every OS.
+# Golden files are compared byte for byte, on every OS.
 tests/golden/** -text
 
 # Run through sh on Linux, or read by Linux tools: a CR at a line's end breaks them.
@@ -22,5 +22,11 @@ Makefile text eol=lf
 *.c text eol=lf
 *.m4a binary
 *.py text eol=lf
+# VERSION is read by shell scripts, PowerShell and CI: LF, so no CR comes with the number.
+VERSION text eol=lf
+# gofmt and the go command write LF; with CRLF every Go file reads as unformatted.
+*.go text eol=lf
+go.mod text eol=lf
+go.sum text eol=lf
 # codesign's plist parser (AMFI) is strict: entitlements stay LF, as Xcode writes them.
 *.entitlements text eol=lf

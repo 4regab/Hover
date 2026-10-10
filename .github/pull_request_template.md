@@ -10,10 +10,9 @@
 
 <!-- What you ran, on which OS and GPU, and the result. -->
 
-- [ ] `cargo test --release --workspace` (OS: )
-- [ ] Windows compile check (`cargo xwin check`, see CONTRIBUTING.md), if you changed Windows code on Linux
-- [ ] `hover --shots` or a screenshot, for UI changes
-- [ ] fake-agent or real-agent run, for agent, permission or storage changes
+- [ ] `go vet` for the systems you touched (see CONTRIBUTING.md), and `gofmt -l` clean
+- [ ] `hoverai --shots` or a screenshot, for UI changes
+- [ ] A real agent run, for agent, permission or storage changes
 
 Blocked or not run, and why:
 
