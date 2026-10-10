@@ -1,5 +1,12 @@
 # The Go port
 
+> **Done. The port is finished and the Rust code has been removed.** This page is the history of
+> the port; it is not kept up to date. The Go code is now at the repo root (`cmd/`, `internal/`,
+> module `github.com/4regab/Hover`) where this page says `go/`. The last of the Rust is the git
+> tag `rust-final`: the files named below (`crates/`, `app/`, `tools/notch-proto`) can be read
+> with `git show rust-final:<path>`. For how Hover works now, read
+> [architecture.md](architecture.md) and [testing.md](testing.md).
+
 Hover is moving from Rust to Go. The Go code lives in `go/` on the `go-port` branch. The
 Rust app stays on `main` and keeps shipping until the Go one matches it. Windows comes
 first.

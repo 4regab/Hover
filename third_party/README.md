@@ -2,7 +2,7 @@
 
 ## gioui.org (Gio v0.10.3, patched)
 
-A copy of Gio v0.10.3 (`replace gioui.org => ./third_party/gioui.org` in `go/go.mod`),
+A copy of Gio v0.10.3 (`replace gioui.org => ./third_party/gioui.org` in `go.mod`),
 without its `app` package, tests and test data, which Hover doesn't use. Its licence is
 `gioui.org/LICENSE` (Unlicense or MIT).
 

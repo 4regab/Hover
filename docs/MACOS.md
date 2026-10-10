@@ -1,28 +1,28 @@
 # Hover on macOS
 
 Hover 3.4 runs on a Mac as a Swift app (`macos/Sources`: the notch, the menu bar, Settings,
-voice, and the office in a WKWebView) on the same Rust backend as Windows and Linux
-(`crates/hover-backend`, over `hover-agents`, `hover-core` and `hover-quota`), which the app
-starts over JSON lines on stdin and stdout. The office is the web page in `web/office`
+voice, and the office in a WKWebView) on a Go backend (`cmd/hover-backend`, built from the same
+packages as the Windows and Linux app: `internal/agents`, `internal/core`, `internal/quota`),
+which the app starts over JSON lines on stdin and stdout. The office is the web page in `web/office`
 (three.js). It is based on Arz's (@Entourage397) macOS v1.0, which had the
-same Swift shell around a C# engine; the C# is gone, and the Slint app (`app/`) is Windows
+same Swift shell around a C# engine; the C# is gone, and the Go app (`cmd/hover`) is Windows
 and Linux only.
 
-**Status: it builds, and nobody has run it on a Mac yet.** CI compiles the backend crates on
-Apple Silicon (`cargo check`), builds `hover-backend`, and builds and signs (ad hoc)
-`Hover.app` from the Swift sources, and uploads it as a workflow artifact; a release puts it on
-the release page as a disk image for Apple silicon and one for Intel. CI runs no test
-on a Mac. `scripts/test-macos.sh` and `tests/macos/e2e/run.sh` (below) are written to run
-one, in the background, and the pure parts of the Rust (the Keychain and LaunchAgent
-logic, the sandbox's settings) are tested on Windows.
+**Status: it builds and its backend runs on a Mac runner; nobody has used the app on a Mac.**
+CI builds the Go backend and signs (ad hoc) `Hover.app` from the Swift sources on Apple
+Silicon, runs the packaged backend through `tests/macos/backend-smoke.py` against a stand-in
+agent, and uploads the app as a workflow artifact; a release puts it on the release page as a
+disk image for Apple silicon and one for Intel. `tests/macos/e2e/run.sh` (below) is written to
+run a longer pass in the background, and CI does not run it. The Go Keychain and data-folder code
+was checked on a Mac runner, reading and writing the same items the Rust app did, before the
+Rust app was removed; nothing runs it now.
 Everything that needs AppKit, the window server, the Keychain or a
-permission prompt has not been run. The last section lists it.
+permission prompt has not been run by hand. The last section lists it.
 
 ## Build from source
 
 You need macOS 14 or later, Xcode's command line tools (`xcode-select --install`; full Xcode
-is not needed) and Rust through [rustup](https://rustup.rs). `rust-toolchain.toml` picks the
-version. From the repo root:
+is not needed) and Go (the version `go.mod` names; an older Go fetches it). From the repo root:
 
 ```sh
 scripts/build-macos.sh                 # dist/macos-osx-arm64/Hover.app (HOVER_ARCH=x64 for Intel)
@@ -30,7 +30,7 @@ open dist/macos-osx-arm64/Hover.app
 ```
 
 The script also needs Node (it bundles the office page from `web/office` with esbuild), builds
-`hover-backend` with cargo, compiles the Swift in `macos/Sources` with `swiftc`, and signs the
+`hover-backend` with `go build` (no C compiler), compiles the Swift in `macos/Sources` with `swiftc`, and signs the
 bundle ad hoc (`HOVER_SIGN_IDENTITY` names a Developer ID instead). A local build is signed
 with the bundle id as its requirement, so a rebuild keeps the permissions you granted.
 The bundle has an `Info.plist` and an identifier (`dev.hover.desktop`) because macOS asks for
@@ -38,17 +38,15 @@ the Microphone, and lists Screen Recording and notifications, only for such an a
 `LSUIElement`, so there is no Dock icon: it is the notch and its menu-bar item (the app does
 have a small main menu with Settings, Quit and the Edit commands, which the office's text
 boxes need). The bundle's `Info.plist` is written by the build script, with the version from
-`Cargo.toml`. Local builds are not notarized; `scripts/package-macos.sh` signs with a
+`VERSION`. Local builds are not notarized; `scripts/package-macos.sh` signs with a
 Developer ID (`HOVER_SIGN_IDENTITY`) and notarizes. The release's disk images are signed ad
 hoc, so macOS asks once: right-click → Open, or System Settings → Privacy & Security → Open
 Anyway.
 
-Tests: `scripts/test-macos.sh` (see the end-to-end section below for its sibling). It builds
-in a disposable copy and runs the cargo tests of `hover-backend`, `hover-core`,
-`hover-agents`, `hover-quota`, `hover-md` and `hover-diagram` under `sandbox-exec`, then
-`tests/macos/backend-smoke.py` against the packaged backend and the app's own
-`--smoke-test`. `cargo test --workspace` is not the command: the workspace includes the
-Slint app, which refuses to compile on a Mac. The CI job does not run any of them.
+Checks: `tests/macos/backend-smoke.py <Hover.app> <sandbox>` runs the packaged backend against a
+stand-in agent in a disposable folder under `/private/tmp` (CI runs it); the app's own
+`--smoke-test` is for the same purpose. The Go tests (`go test ./internal/...`) run on a Mac too,
+and CI does not run them.
 
 Agents (Kiro, Codex, Cursor, OpenCode, Claude Code) are found through the login shell's
 `PATH`, read once at start (`$SHELL -ilc`, `ShellEnvironment.swift`), because an app opened
@@ -114,8 +112,8 @@ that acts. Hover's hot keys are Carbon hot keys and the pointer is read with
   Apple silicon (two macOS desktops at a time, 8 GB of memory each); elsewhere the switch is
   off: "Agent desktops need macOS 26 or later on Apple silicon." The desktop may also be a
   Linux image, which needs Docker or Colima on the Mac.
-- **The sandbox and the Screen panel** also work on Linux (the sandbox with bubblewrap, the
-  panel over X11); Windows has the panel but no sandbox.
+- **The sandbox** also works on Linux (with bubblewrap), and **the Screen panel** on Windows
+  (not on Linux: Wayland shows no other program's windows). Windows has no sandbox.
 
 ## What is off on a Mac
 
@@ -149,7 +147,7 @@ tests/macos/e2e/run.sh "$PWD/dist/macos-osx-arm64/Hover.app"
 ```
 
 It drives the real office page, its bridge (`OfficeHost.swift`), Hover's browser and the
-screen feed with the packaged Rust backend (`hover-backend`), a stand-in agent
+screen feed with the packaged Go backend (`hover-backend`), a stand-in agent
 (`tests/macos/e2e/fake-agent.py`) and a stand-in `gh`, against a local test site: a task
 from the circle, an approval, two subagents and their helpers, the desk card, the agent
 driving Hover's browser over its MCP relay, the agent's desktop (apps, activity, Control's
@@ -165,7 +163,7 @@ localhost, and touches no real app. Screenshots of each step are kept in that fo
 
 ## Unverified
 
-Written from the Swift and Rust code and from Apple's documentation; **none of this has run on
+Written from the Swift and Go code and from Apple's documentation; **none of this has run on
 a Mac**. Look at these first:
 
 - The notch window (`Notch.swift`): the non-activating `NSPanel` whose `canBecomeKey` follows

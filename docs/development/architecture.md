@@ -1,117 +1,136 @@
 # Architecture
 
-Hover is one Rust workspace at the repository root. One binary (`hoverai`, installed as `hover`
-on Linux) holds the whole product. The crates keep the parts that have no window apart
-from the parts that do, so most of the logic builds and tests anywhere.
+Hover is one Go module (`github.com/4regab/Hover`) at the repository root. One program
+(`cmd/hover`: `hoverai` on Windows, `hover` on Linux) holds the whole product. The packages in
+`internal/` keep the parts that have no window apart from the parts that do, so most of the
+logic builds and runs anywhere. (The Rust version this replaced is at the git tag `rust-final`.)
 
 ## The big picture
 
-The same code builds for Windows and Linux. Nearly all of it is shared: the backend
-crates have no window and no OS calls of their own, and the UI is one set of Slint
-files. What differs per OS is a thin layer of adapters, picked at compile time with
-`cfg(windows)` / `cfg(not(windows))`.
+The same code builds for Windows and Linux. Nearly all of it is shared: the backend packages
+have no window and no OS calls of their own, and the interface is one set of Go files drawn
+with Gio. What differs per OS is a thin layer of adapters, picked at compile time by file name
+(`_windows.go`, `_linux.go`) or a `//go:build` line.
 
 ```mermaid
 flowchart TB
     subgraph UI["Frontend: shared"]
-        slint["ui/*.slint<br/>(notch, office, Settings, chat drawer)"]
-        glue["app/ glue<br/>main.rs, office_ui.rs, view.rs, pages.rs, voice_ui.rs"]
+        ui["internal/ui<br/>(Gio: notch, office, Settings, chat view, desk card)"]
+        glue["internal/shell + internal/app<br/>windows, timers, pages, voice and desk glue"]
     end
 
     subgraph Backend["Backend: shared, no window"]
-        core["hover-core<br/>paths, settings, crypto, history, secrets, projects"]
-        agents["hover-agents<br/>ACP host, OpenCode server, Claude Code, sessions, routing"]
-        quota["hover-quota<br/>Claude Code, Kiro, Codex, Cursor"]
-        chat["hover-chat<br/>thread layout and CPU painter"]
-        md["hover-md + hover-diagram<br/>Markdown, Mermaid"]
-        notch["hover-notch<br/>geometry, animation, hover rules"]
-        office["hover-office<br/>3D scene on wgpu, its own thread"]
-        voice["voice/, speech.rs, phonon.rs<br/>capture, Groq, Phonon, cleanup"]
+        core["core<br/>paths, settings, crypto, history, secrets, projects"]
+        agents["agents<br/>ACP host, OpenCode server, Claude Code, sessions, routing"]
+        quota["quota<br/>Claude Code, Kiro, Codex, Cursor"]
+        chat["chat + raster + text<br/>thread layout and CPU painter"]
+        md["md + diagram<br/>Markdown, Mermaid"]
+        notch["notch<br/>geometry, animation, hover rules"]
+        office["office + gpu<br/>3D scene on wgpu-native, its own goroutine"]
+        voice["voice<br/>capture, Groq, Phonon, cleanup"]
     end
 
     subgraph Win["Windows adapters"]
-        w1["win.rs: notch window, tray, RegisterHotKey, hold-to-talk"]
-        w2["platform/windows.rs: DPAPI, autostart, dark mode"]
-        w3["proc.rs: Job objects"]
-        w4["femtovg on wgpu (DX12), mimalloc"]
+        w1["platform/win: notch window, tray, RegisterHotKey, hold-to-talk"]
+        w2["core/platform_windows.go: DPAPI, autostart, dark mode"]
+        w3["agents/proc_windows.go: Job objects"]
+        w4["platform/win/gfx.go: Direct3D 11, DirectComposition"]
     end
 
     subgraph Lin["Linux adapters"]
-        l1["x11.rs: override-redirect window, XShape, XGrabKey"]
-        l2["sni.rs: tray and notifications over D-Bus"]
-        l3["platform/linux.rs: Secret Service, XDG"]
-        l4["proc.rs: process groups, PDEATHSIG"]
-        l5["femtovg on OpenGL"]
+        l1["platform/wayland: Hover's own Wayland client, layer-shell notch"]
+        l2["platform/linux: tray and notifications over D-Bus, portals, shortcuts"]
+        l3["core/dbus_linux.go: Secret Service, XDG"]
+        l4["agents/proc_linux.go: process groups, PDEATHSIG"]
+        l5["Gio on EGL"]
     end
 
-    slint --> glue
+    ui --> glue
     glue --> Backend
-    glue -- "cfg(windows)" --> Win
-    glue -- "cfg(not(windows))" --> Lin
-    core -. "cfg per OS" .-> w2
-    core -. "cfg per OS" .-> l3
-    agents -. "cfg per OS" .-> w3
-    agents -. "cfg per OS" .-> l4
+    glue -- "_windows.go" --> Win
+    glue -- "_linux.go" --> Lin
+    core -. "per OS" .-> w2
+    core -. "per OS" .-> l3
+    agents -. "per OS" .-> w3
+    agents -. "per OS" .-> l4
 ```
 
-The Slint files are compiled into Rust at build time (`app/build.rs` runs
-`slint_build::compile("ui/app.slint")`), so there is no UI file to ship and no
-interpreter at run time. The same markup draws on both OSes; only the renderer under it
-differs (see [Frames](#the-offices-frames-and-their-lifetime)).
+The interface is Go code (`internal/ui`), so there is no UI file to ship and no interpreter at
+run time. The same code draws on both OSes; only the window and surface under it differ
+(see [Frames](#the-offices-frames-and-their-lifetime)).
 
-## How the crates depend on each other
+## How the packages depend on each other
 
-Arrows point at what a crate uses. Nothing in `crates/` depends on `app/`, and no
-backend crate depends on Slint.
+Arrows point at what a package uses (the main ones). `core` imports nothing else from the
+module, and no backend package imports Gio.
 
 ```mermaid
 flowchart LR
-    hover["app<br/>(hoverai)"]
-    agents[hover-agents]
-    core[hover-core]
-    quota[hover-quota]
-    chat[hover-chat]
-    md[hover-md]
-    diagram[hover-diagram]
-    notch[hover-notch]
-    office[hover-office]
-    measure["tools/hover-measure"]
-    nproto["tools/notch-proto"]
+    hover["cmd/hover<br/>(hoverai)"]
+    shell
+    app
+    ui
+    agents
+    core
+    quota
+    chat
+    md
+    diagram
+    notch
+    office
+    gpu
+    raster
+    text
+    voice
+    screen
+    music
+    audio
+    plat["platform/<br/>win, linux, wayland"]
+    backend
+    hb["cmd/hover-backend"]
 
-    hover --> agents & chat & core & md & notch & office & quota
+    hover --> shell & app & core & ui & plat
+    shell --> agents & app & chat & core & md & music & notch & office & plat & screen & text & ui & voice
+    ui --> app & core & raster
+    app --> agents & chat & core & office & quota
+    voice --> agents & core & screen
     quota --> agents & core
     agents --> core
-    office --> core
-    chat --> md
+    backend --> agents & core & quota
+    hb --> backend
+    office --> core & gpu & raster & text
+    chat --> md & raster & text
     md --> diagram
-    measure --> core
-    nproto --> notch
+    raster --> text
+    music --> audio & core
+    screen --> core & plat
+    plat --> core & notch
 ```
 
-`hover-core` is the floor: everything that stores or reads the user's data goes
-through it. `hover-diagram` and `hover-notch` depend on nothing in the workspace.
+`core` is the floor: everything that stores or reads the user's data goes through it.
+`diagram`, `notch`, `gpu`, `text` and `audio` depend on nothing in the module.
 
 ## How the builds work
 
-Both platforms run the same Cargo build of the same workspace. They differ in the
-wrapper script and in how the result is packaged.
+Both platforms run the same `go build` of the same module. They differ in the wrapper script
+and in how the result is packaged. Windows needs no C compiler; Linux needs one for EGL.
 
 ```mermaid
 flowchart TB
-    src["workspace at the root<br/>crates + app + ui/*.slint"]
+    src["module at the root<br/>cmd + internal + VERSION"]
 
     subgraph WinB["Windows: build.ps1"]
-        wc["cargo build --release -p hover<br/>(MSVC toolchain)"]
-        wexe["target/release/hoverai.exe"]
-        wpub["publish/<br/>hoverai.exe, LICENSE, THIRD-PARTY-NOTICES.txt"]
+        wc["go build -ldflags -H=windowsgui<br/>CGO_ENABLED=0"]
+        wexe["publish/hoverai.exe + wgpu_native.dll<br/>(downloaded, wgpu-native v29.0.0.0)"]
+        wpub["publish/<br/>+ LICENSE, THIRD-PARTY-NOTICES.txt"]
         wiss["Inno Setup (ISCC) + packaging/windows/Hover.iss"]
         wout["dist/Hover-Setup-version.exe"]
-        wc --> wexe -->|"build.ps1 publish"| wpub -->|"build.ps1 installer"| wiss --> wout
+        wc --> wexe --> wpub -->|"build.ps1 installer"| wiss --> wout
     end
 
     subgraph LinB["Linux: Makefile"]
-        lc["cargo build --release -p hover<br/>(gcc, fontconfig, ALSA, xkbcommon)"]
-        lexe["target/release/hoverai"]
+        lc["go build -tags nowayland,nox11,novulkan<br/>(cgo: gcc and the EGL headers)"]
+        lexe["hover-linux + lib/libwgpu_native.so (make wgpu)"]
         lpkg["packaging/linux/package-linux.sh"]
         ldeb["dist/hover_version_amd64.deb"]
         ltar["dist/hover-version-linux-x86_64.tar.gz"]
@@ -124,62 +143,71 @@ flowchart TB
     src --> lc
 ```
 
-- The binary carries its fonts, icons, music and the Phonon locks and check sample
-  (`include_bytes!` / `include_str!`), so the installers ship one executable plus the
+- The program carries its fonts, icons, music and the Phonon locks and check sample
+  (`go:embed`), so the installers ship one executable, the wgpu-native library and the
   licence files.
-- The version is `Cargo.toml`'s `[workspace.package] version`. `build.ps1`,
-  the Makefile, the installers and `hoverai --version` all read it from there.
-- The Rust toolchain is pinned in `rust-toolchain.toml` at the repo root.
+- The version is the number in `VERSION`. `build.ps1`, the Makefile and the installers read
+  it, and put it in the program with `-ldflags "-X .../internal/shell.Version=..."`;
+  `hoverai --version` prints it.
+- The Go version is the one `go.mod` names. An older Go fetches it the first time.
+- Gio is `third_party/gioui.org` (patched; see its README), taken in by a `replace` in `go.mod`.
 
 ### CI and releases
 
-`.github/workflows/ci.yml` runs on GitHub's own runners. One job per OS does the whole
-check, and on a `v*` tag the same job builds the installers from the build it just
-tested. A third job compiles the workspace on macOS and does nothing else.
+`.github/workflows/ci.yml` runs on GitHub's own runners. It runs no Go tests. One job per OS
+builds and checks what it ships, and on a release the same jobs build the installers from the
+build they just checked.
 
 ```mermaid
 flowchart LR
-    push["push to main or rust-port/**<br/>or a pull request"] --> wj & lj & mj
-    tag["push of tag vX.Y.Z, or of a new<br/>Cargo.toml version to main"] --> wj & lj & mj
+    push["push to main or go-port<br/>or a pull request"] --> cj & wj & lj & mj
+    tag["push of tag vX.Y.Z, or of a new<br/>VERSION to main"] --> cj & wj & lj & mj
+    hand["Run workflow, by hand"] --> pj
+
+    subgraph cj["check (ubuntu-22.04)"]
+        c1["VERSION matches version.go, gofmt,<br/>go vet for Linux, Windows and macOS,<br/>the Mac backend builds"]
+    end
 
     subgraph wj["windows job (windows-2022)"]
-        wt["cargo test --workspace"] --> wi["release only:<br/>build.ps1 installer"]
+        wb["build.ps1 publish"] --> wd["start the app, Alt+N, Esc,<br/>second launch"] --> wi["installer over the 5.x setup,<br/>checks, uninstall"]
     end
 
     subgraph lj["linux job (ubuntu-22.04)"]
-        lt["cargo test --workspace"] --> lp["release only:<br/>make package"]
+        lp["make package"]
     end
 
     subgraph mj["macos job (macos-15, Apple Silicon)"]
-        mc["cargo check --workspace<br/>--all-targets --locked"]
+        mc["build-macos.sh, the packaged backend<br/>against stand-ins; release: Intel too,<br/>disk images"]
     end
 
-    wi --> rel
-    lp --> rel
-    rel["release job (release only)<br/>tags the commit; Latest GitHub release with the .exe, .deb, .tar.gz"]
+    subgraph pj["pictures (windows-2022)"]
+        pp["hoverai --shots: every view"]
+    end
+
+    cj & wj & lj & mj --> rel
+    rel["release job (release only)<br/>tags the commit; Latest GitHub release with the .exe, .deb, .tar.gz, .dmg"]
 ```
 
-A tag whose version doesn't match `Cargo.toml` fails before anything builds. A
-failing test on either OS means nothing is published. The release waits for the macOS
-job too, which builds the disk images (Apple silicon and Intel). It runs no tests (nothing has
-been run on a Mac yet; see `docs/MACOS.md`), and fails a pull request whose Mac code doesn't compile.
-Pushes that only touch Markdown,
-`docs/` or the README's pictures don't run CI.
+A tag whose version doesn't match `VERSION` fails before anything builds. A failing job means
+nothing is published. The release waits for all four jobs, the macOS one included: it builds
+the disk images (Apple silicon and Intel), runs the packaged backend against stand-in tools
+(nothing has been run on a Mac yet; see `docs/MACOS.md`), and fails a pull request whose Mac code
+doesn't compile. Pushes that only touch Markdown, `docs/` or the README's pictures don't run CI.
 
 ## What runs at run time
 
-One process. The UI thread owns every window; the heavy work runs on threads of its own
-and reaches the UI only through `ui_do`. The agents are child processes.
+One process. The UI goroutine owns every window; the heavy work runs on goroutines of its own
+and reaches the UI only through `UIDo`. The agents are child processes.
 
 ```mermaid
 flowchart LR
     subgraph P["hoverai process"]
-        ui["UI thread<br/>Slint event loop, notch, office UI, Settings"]
-        rt["Hover (app.rs)<br/>settings, history, sessions, quota poller"]
-        turns["one thread per running turn"]
-        off["office thread<br/>wgpu scene"]
-        vw["voice threads<br/>capture, transcribe, route, countdown"]
-        ui <-->|"ui_do / hooks"| rt
+        ui["UI goroutine<br/>window loop, notch, office UI, Settings"]
+        rt["app.Hover (hover.go)<br/>settings, history, sessions, quota poller"]
+        turns["one goroutine per running turn"]
+        off["office goroutine<br/>wgpu scene"]
+        vw["voice goroutines<br/>capture, transcribe, route, countdown"]
+        ui <-->|"UIDo / hooks"| rt
         rt --> turns
         ui <--> off
         ui <--> vw
@@ -196,81 +224,85 @@ flowchart LR
 The child processes sit in a Windows job object or a Linux process group, so they stop
 when Hover does.
 
-## Crates
+## Packages
 
-| Crate | What it owns | Window? |
+| Package | What it owns | Window? |
 |---|---|---|
-| `crates/hover-core` | The data folder (`paths.rs`, the old `Noty` move), `settings.json` (`settings.rs`, the exact bytes 2.x wrote), the key and encryption (`crypto.rs`: AES-GCM, key kept by DPAPI or the Secret Service), the sealed session history (`history.rs`), API keys sealed in `secrets.dat` (`secrets.rs`), projects, the default workspace and the voice settings (`projects.rs`), images, the single-instance lock (`single.rs`), colours and VS Code themes (`palette.rs`), and the OS adapters (`platform/windows.rs`, `platform/linux.rs`). | No |
-| `crates/hover-agents` | Running the agents: the ACP host (`acp.rs`, JSON-RPC over stdio for Kiro, Codex and Cursor), OpenCode's local server (`opencode.rs` over `http.rs`), Claude Code in its Agent SDK mode (`claude.rs`), the `Runtime` they sit behind (`runtime.rs`), the sessions and their limits (`session.rs`), permission questions (`ask.rs`), voice's project routing (`route.rs`), the office's state message (`state.rs`), process groups and Windows jobs (`proc.rs`). | No |
-| `crates/hover-quota` | The four quota readers (Claude Code, Kiro, Codex, Cursor) and their five-minute schedule. | No |
-| `crates/hover-md`, `crates/hover-diagram` | Markdown and Mermaid flowcharts, the same output as 2.x's `md.js` and `diagram.js`. | No |
-| `crates/hover-chat` | The chat thread: layout per message (cached), selection, copy, images, and a CPU painter. | No |
-| `crates/hover-notch` | The notch's geometry, animation and hover rules. | No |
-| `crates/hover-office` | The office: scene, bots, wall canvases, camera, picking and pacing (`office.rs`, `scene.rs`, `bot.rs`), the wgpu renderer (`render.rs`, `office.wgsl`), the page's background and vignette (`page.rs`), and its own thread (`live.rs`). | No (renders offscreen) |
-| `app` | The product: `main.rs` (windows, renderer, timers), `office_ui.rs` (the office UI around the scene), `view.rs` and `pages.rs` (Settings), `notch.rs` with `win.rs` / `x11.rs` (placing, focus, click-through), tray (`sni.rs` on Linux, `win.rs` on Windows), voice (`speech.rs`, `voice/`, `phonon.rs`, `voice_ui.rs`), `music.rs`, `bench.rs` (the measurement channel), `shots.rs`, `selftest.rs`, and the Slint UI in `ui/*.slint`. | Yes |
-| `tools/notch-proto` | The port's Windows notch prototype. Not shipped; kept for `notch-proto --selftest`, the only notch self-test on Windows (the app's `--selftest` is X11 only). | Yes |
-| `tools/hover-measure` | Dev tools, not shipped: the external memory sampler, the scenario runner, the summary, `fake-agent`, `fake-opencode` and `fake-anthropic` (a stand-in Anthropic API for the real Claude Code). See [profiling.md](profiling.md). | No |
+| `internal/core` | The data folder (`paths.go`, the old `Noty` move), `settings.json` (`settings.go`, `json.go`: the exact bytes 2.x wrote), the key and encryption (`crypto.go`: AES-GCM, key kept by DPAPI or the Secret Service), the sealed session history (`history.go`), API keys sealed in `secrets.dat` and images (`store.go`), projects, the default workspace and the voice settings (`projects.go`), the single-instance lock (`single*.go`), colours and VS Code themes (`palette.go`), and the OS adapters (`platform_*.go`, `dbus_linux.go`, `macos.go`). | No |
+| `internal/agents` | Running the agents: the ACP host (`acp.go`, JSON-RPC over stdio for Kiro, Codex and Cursor), OpenCode's local server (`opencode.go` over `http.go`), Claude Code in its Agent SDK mode (`claude.go`), the `Runtime` they sit behind (`runtime.go`), the sessions and their limits (`session.go`, `sessions.go`), permission questions (`ask.go`), voice's project routing (`route.go`), the office's state message (`state.go`), process groups and Windows jobs (`proc*.go`). | No |
+| `internal/quota` | The four quota readers (Claude Code, Kiro, Codex, Cursor) and their five-minute schedule. | No |
+| `internal/md`, `internal/diagram` | Markdown and Mermaid flowcharts, the same output as 2.x's `md.js` and `diagram.js`. | No |
+| `internal/chat`, `internal/raster`, `internal/text` | The chat thread: layout per message (cached), selection, copy, images; the CPU painter (`raster`) and text shaping and line breaking (`text`). | No |
+| `internal/notch` | The notch's geometry, animation and hover rules. | No |
+| `internal/office`, `internal/gpu` | The office: scene, bots, wall canvases, camera, picking and pacing (`office.go`, `scene.go`, `bot.go`), the wgpu renderer (`render.go`, `office.wgsl`), the page's background and vignette (`page.go`), and its own goroutine (`live.go`). `gpu` is Hover's small binding to wgpu-native. | No (renders offscreen) |
+| `internal/ui` | The interface on Gio: palette, icons, the tools' marks, the controls, Settings, the notch, the office views, the chat view, the desk card and panel, the voice card, the app window's title bar. | Yes |
+| `internal/app` | The app without a window: Settings as data (`pages.go`, `view.go`), the shared state `Hover` (`hover.go`), the resting notch (`rest.go`), key names (`keys.go`). | No |
+| `internal/shell` | The glue: windows, timers, the notch (`notchctl.go`), the office (`office.go`), chat, desk, new task, voice, and the system bindings (`env_windows.go`, `env_linux.go`). | Yes |
+| `internal/platform` | `win` (Win32 windows, Direct3D 11, DirectComposition, tray), `linux` (D-Bus tray and notifications, portals, pickers, clipboard), `wayland` (the notch as a layer-shell surface, the app window, keyboard, input method). | Yes |
+| `internal/voice`, `audio`, `music`, `screen` | Voice (capture, Groq, cleanup, Phonon), the system's audio output, the office's beats, the Screen panel's capture. | No |
+| `internal/backend`, `cmd/hover-backend` | The Mac app's backend: core, agents and quota behind JSON lines on stdin and stdout. | No |
+| `internal/shots`, `cmd/ui-shots`, `cmd/office-shot` | The pictures (`--shots`), and the office alone. Not part of the product's work. | Yes |
+| `cmd/notch-spike`, `cmd/hover-data` | The first notch prototype (Windows), and a tool that writes and reads a data folder. Not shipped. | Yes / No |
 
 ## Boundaries
 
-- **UI thread.** Slint's event loop runs everything in `app`. Other threads
-  reach it only through `ui_do` (`main.rs`), which posts a closure to the loop.
-- **Runtime.** `hover_app::app::Hover` (`app.rs`) is the shared state: settings,
-  history, one `Runtime` per tool, the sessions, the quota poller. It has no UI; views
-  register hooks (`on_sessions`, `on_quotas`, `on_notify`) that fire off the UI thread.
-- **Sessions.** `KiroSessions` keeps every session behind one lock. Each turn runs on
-  its own thread. `changed` and `ended` fire with the lock released. At most three
-  turns run at once (`MAX_RUNNING`); six sessions keep desks (`MAX_KEPT`).
-- **Storage.** `AgentHistory` writes the index and one sealed file per session off the
-  UI thread, in order. `Hover::shutdown` flushes the history and settings on quit.
-- **Views.** The notch and the dashboard window each have their own Slint globals.
-  `office_ui.rs` and `view.rs` push the same state into both (`each!`, `publish!`,
-  `show_page!`).
+- **UI goroutine.** The window loop runs everything in `internal/shell` and `internal/ui`.
+  Other goroutines reach it only through `Env.UIDo` (`internal/shell/env.go`), which posts a
+  function to the loop.
+- **Runtime.** `app.Hover` (`internal/app/hover.go`) is the shared state: settings, history,
+  one `Runtime` per tool, the sessions, the quota poller. It has no UI; views register hooks
+  (`OnSessions`, `OnQuotas`, `OnNotify`) that fire off the UI goroutine.
+- **Sessions.** `KiroSessions` keeps every session behind one lock. Each turn runs on its own
+  goroutine. `changed` and `ended` fire with the lock released. At most three turns run at
+  once (`MaxRunning`); six sessions keep desks (`MaxKept`).
+- **Storage.** `AgentHistory` writes the index and one sealed file per session off the UI
+  goroutine, in order. `Hover.Shutdown` flushes the history and settings on quit.
+- **Views.** The notch and the app window show the same state; `internal/shell` pushes it into
+  both (`officePush` in `office.go`).
 
 ## An agent task, end to end
 
-1. The new-task box (`office.slint`) calls `Office.new-go-clicked`.
-2. `office_ui.rs` calls `KiroSessions::start_as` with the tool, folder, prompt, images
-   and the access picked.
-3. `session.rs` gives the session a desk, saves it, and starts a turn thread that calls
+1. The new-task box (`internal/ui/officenew.go`) is clicked; `internal/shell/newtask.go`
+   handles it.
+2. It calls `KiroSessions.StartBound` (`StartAs` is the short form) with the tool, folder,
+   prompt, images and the access picked.
+3. `sessions.go` gives the session a desk, saves it, and starts a turn goroutine that calls
    the tool's `RunTask`.
-4. For Kiro, Codex and Cursor the runner is `AcpHost::run_as` (`acp.rs`): it starts
-   the tool once (`kiro-cli acp …`, `codex-acp`, `cursor-agent acp`), sends
-   `session/new` or `session/load`, sets model, effort and access, then
-   `session/prompt`. For OpenCode it is `opencode.rs`: one `opencode serve` on
-   127.0.0.1 with a password made for that start, `prompt_async`, and its event stream.
-   For Claude Code it is `claude.rs`: a `claude` process per conversation, started in
-   its folder in the Agent SDK's stream-json mode, `initialize`, then the prompt as a
-   user message on its stdin.
-5. Updates (`session/update`, OpenCode events, Claude Code's messages) become `KiroEvent`s and phases. The
-   session changes, `changed` fires, and the UI marks the office dirty.
+4. For Kiro, Codex and Cursor the runner is `AcpHost.RunAs` (`acp.go`): it starts the tool
+   once (`kiro-cli acp …`, `codex-acp`, `cursor-agent acp`), sends `session/new` or
+   `session/load`, sets model, effort and access, then `session/prompt`. For OpenCode it is
+   `opencode.go`: one `opencode serve` on 127.0.0.1 with a password made for that start,
+   `prompt_async`, and its event stream. For Claude Code it is `claude.go`: a `claude` process
+   per conversation, started in its folder in the Agent SDK's stream-json mode, `initialize`,
+   then the prompt as a user message on its stdin.
+5. Updates (`session/update`, OpenCode events, Claude Code's messages) become `KiroEvent`s and
+   phases. The session changes, `changed` fires, and the UI marks the office dirty.
 6. A permission request (`session/request_permission`) is answered off the read loop:
-   `ask.rs` decides what the access setting allows. The rest goes to
-   `KiroSessions::ask`, which shows it in the notch, over the bot and in the chat until
-   the user answers or the run stops.
+   `ask.go` decides what the access setting allows. The rest goes to `KiroSessions.Ask`, which
+   shows it in the notch, over the bot and in the chat until the user answers or the run stops.
 7. The turn ends: the result is saved, `ended` fires, and the notch shows the end (and
    a system notification when no office is in view).
 
 ## Projects and the default workspace
 
-`hover-core/src/projects.rs`, kept in `settings.json` beside the 2.x keys (`Projects`,
+`internal/core/projects.go`, kept in `settings.json` beside the 2.x keys (`Projects`,
 `DefaultWorkspace`, `Voice`; 2.x ignores keys it doesn't know). A project has a stable id,
 a name, a folder, aliases, a voice switch and its own access (`full`, `risky`, `always`,
 `read`). A new project or workspace starts at `risky` (Ask first): being registered
-never grants Full. `resolve_folder` checks a folder before use (absolute, followed links,
-readable; Windows' `\\?\` prefix dropped), and `same_folder` keeps one registration per
+never grants Full. `ResolveFolder` checks a folder before use (absolute, followed links,
+readable; Windows' `\\?\` prefix dropped), and `SameFolder` keeps one registration per
 real folder. The default workspace is home + `Hover` (`C:\Users\<name>\Hover`,
 `~/Hover`) unless the user picks another. It is made when a task first needs it
-(`ensure_folder`; no git init). Settings → Projects edits all of this (`pages.rs`,
-`view.rs`). Removing a project deletes no files, history or runs.
+(`EnsureFolder`; no git init). Settings → Projects edits all of this (`internal/app/pages.go`,
+`view.go`). Removing a project deletes no files, history or runs.
 
 ## Keys (`secrets.dat`)
 
-`hover-core/src/secrets.rs`. The Groq key (`voice.groq`) and the cleanup keys
+`internal/core/store.go`. The Groq key (`voice.groq`) and the cleanup keys
 (`cleanup.gemini`, `cleanup.openai`, `cleanup.custom`) are sealed with Hover's own key
 (`note.key`, kept by DPAPI or the Secret Service) in `secrets.dat` beside
 `settings.json`, written to a temp file and renamed. Settings holds no keys. When Hover's
-key isn't there this run, a key is kept in memory until Hover quits (`Stored::ThisRunOnly`)
+key isn't there this run, a key is kept in memory until Hover quits (`ThisRunOnly`)
 and Settings says so. It is never written in the clear. Errors never contain a key.
 
 ## Voice
@@ -280,29 +312,30 @@ text, is cleaned up if that is on, is routed to a project or the default workspa
 and shows in the notch as a preview. After three seconds it starts a new chat. Voice is
 off until switched on in Settings → Voice. Only new tasks start by voice.
 
-- **Capture** (`voice/audio.rs`). cpal opens the chosen microphone or the system's
-  default. The audio is mixed to mono and brought to 16 kHz 16-bit as it comes, into one
-  buffer that stops at ten minutes (9.6 M samples, 19.2 MB). The notch's level is the
+- **Capture** (`internal/voice/audio.go`, with `audio_windows.go` and `audio_linux.go`). The
+  chosen microphone or the system's default is opened (winmm's waveIn on Windows, PipeWire's
+  `pw-record` on Linux) and asked for 16 kHz mono 16-bit audio, which the system converts to.
+  It goes into one buffer that stops at ten minutes (9.6 M samples, 19.2 MB). The notch's level is the
   real RMS. The stream is dropped as soon as the key comes up, the cap is reached, the
   device fails or the user cancels. A recording with no 30 ms window above −50 dBFS, or
   under a quarter second, is "Nothing was heard" (`audible`), with Retry.
-- **One file** (`voice/wav.rs`). Just before transcription the samples are written as one
-  WAV in the system temp folder's `hover-voice`. It is deleted when dropped, on every
+- **One file** (`wav.go`). Just before transcription the samples are written as one
+  WAV in the system temp folder's `hover-voice`. It is deleted when closed, on every
   path. Files a crash left are swept when Hover starts.
-- **Speech** (`speech.rs`). One trait for both modes: `Speech::transcribe(wav, cancel)`
-  returns a `Transcript` or a `SpeechError`. It blocks, on voice's worker thread. The
-  mode (`VoiceSettings.speech`) is read once, at the press. Hover never switches modes on
+- **Speech** (`speech.go`). One interface for both modes: `Speech.Transcribe(wav, cancel)`
+  returns a `Transcript` or a `*SpeechError`. It blocks, on voice's worker thread. The
+  mode (`VoiceSettings.Speech`) is read once, at the press. Hover never switches modes on
   its own and never uploads a local recording: Local not Ready is an error that says to
   set it up. A transcript the engine says it cut short is shown for review, never
   counted down.
-  - Cloud (`voice/groq.rs`): the WAV to Groq's OpenAI-compatible
+  - Cloud (`groq.go`): the WAV to Groq's OpenAI-compatible
     `/audio/transcriptions` with the user's key and model (`whisper-large-v3-turbo` or
     `whisper-large-v3`). No language is sent, so Groq detects it. Over 25 MB is refused
     before upload. The key goes only in the Authorization header and is scrubbed from
     errors. `HOVER_GROQ_BASE` points it at a fake Groq for measuring; only a
     `http://127.0.0.1:PORT` address is taken.
-  - Local (`phonon.rs`): below.
-- **Cleanup** (`voice/cleanup.rs`), optional and separate from the speech mode. The
+  - Local (`phonon.go`): below.
+- **Cleanup** (`cleanup.go`), optional and separate from the speech mode. The
   transcript (never the audio) goes to the user's OpenAI-compatible service: the Gemini
   or OpenAI preset, or a custom base URL, with the user's key and model. The instruction
   is fixed and the transcript is the user message. Any failure keeps the original and
@@ -310,84 +343,85 @@ off until switched on in Settings → Voice. Only new tasks start by voice.
   timeout, an error, an empty answer, an answer that lost a negation or changed length a
   lot (`suspect`). A transcript over 12,000 characters isn't sent (it is never cut);
   the note then says it was too long.
-- **Routing** (`hover-agents/src/route.rs`). Only voice-enabled projects are candidates.
-  `decide` goes by the words first. A name or alias said in full settles it. Among
+- **Routing** (`internal/agents/route.go`). Only voice-enabled projects are candidates.
+  `Decide` goes by the words first. A name or alias said in full settles it. Among
   several, the active project wins (the chat open in the office, or the new-task box's
   folder, at the press). No project's words at all means the default workspace. Only
   what the words leave open goes to the default agent, in a turn with access `"none"`:
   `AcpHost` and `OpenCodeHost` turn down every request it makes, reads too. It runs in
   an empty temp folder of its own, with a 60 s limit, and gets no desk or chat. Its
-  answer is checked (`read_answer`): a project only from the candidates, and its task
-  only when it took words off one end and dropped no negation (`task_ok`). The app, not
+  answer is checked (`ReadAnswer`): a project only from the candidates, and its task
+  only when it took words off one end and dropped no negation (`TaskOk`). The app, not
   the model, turns the pick into a folder, agent, model and access. An agent that
   doesn't answer is an error with Retry, not a default-workspace pick.
 - **Preview and dispatch.** The card shows what was heard, the task (editable), the
-  folder, the agent and model, the access, and a note (`Routed::note`, for example
+  folder, the agent and model, the access, and a note (`Routed.Note`, for example
   "Using default workspace: no clear project match."). The countdown is 3 s on a
   monotonic clock. Every interaction has an id; Cancel moves it on, so late results are
   dropped. The countdown's end, Start and Enter all go through one locked
-  `begin_start`, so exactly one of them dispatches. An edit stops the countdown for
+  `beginStart`, so exactly one of them dispatches. An edit stops the countdown for
   good; the text is routed again once typing pauses (300 ms), and Start is needed. Start
   checks the target again: still registered and voice-enabled, folder usable, access
   unchanged (the default workspace is made here). A change shows the updated card for
-  another Start. Then `voice_ui::start` calls `KiroSessions::start_as(tool, folder,
-  prompt, [], Some(access))`: a new chat every time, even beside another chat in the same
+  another Start. Then the shell's `voiceStart` (`internal/shell/voice.go`) starts a session
+  through `KiroSessions.StartBound(tool, folder, prompt, nil, access, …)`: a new chat every time, even beside another chat in the same
   folder. Started shows only once the tool named the conversation, or the turn ended
   well. A failure keeps the prompt; Retry goes back to the card and nothing is resent on
   its own. Read only on a tool with no read only mode here (Codex on Windows) is refused.
-- **The agent.** Always the global default: `settings.agent_tool()`, the tool picked
-  in the new-task circle, with its `agent_options` (model and the rest). Project
-  settings don't change it. When it isn't available (`agents::check`), the card asks for
+- **The agent.** Always the global default: `Settings.AgentTool()`, the tool picked
+  in the new-task circle, with its `AgentOptions` (model and the rest). Project
+  settings don't change it. When it isn't available (`agents.Check`), the card asks for
   another for this task only (`ChooseAgent`), and routing and the run both use that pick.
-- **Try it** (Settings → Voice) is `press(true)`: the same mode, cleanup and routing (by
+- **Try it** (Settings → Voice) is `Press(true)`: the same mode, cleanup and routing (by
   the words alone when no agent is available), and a preview with Start off. It starts
   no session and makes no folder.
 
 ### The voice lifecycle
 
-`Voice` (`voice/mod.rs`) owns the state, behind one mutex, outside the renderer. Its
-work runs on threads of its own (`voice`, `voice-route`, `voice-edit`,
-`voice-countdown`, `voice-start`). `voice_ui.rs` only draws it (the notch's card, or Try
-it's card in Settings) and passes keys and clicks on; changes reach the UI thread one hop
-at a time. One interaction runs at a time: a press while one is in progress keeps it and
+`Voice` (`internal/voice/voice.go`) owns the state, behind one mutex, outside the renderer.
+Its work runs on goroutines of its own (recording, routing, editing, the countdown, the
+start). `internal/shell/voice.go` and `internal/ui/voicecard.go` only draw it (the notch's
+card, or Try it's card in Settings) and pass keys and clicks on; changes reach the UI
+goroutine one hop at a time. One interaction runs at a time: a press while one is in progress keeps it and
 flashes busy. Escape cancels the voice interaction only; from Starting on, the task is
 the chat's. Nothing resumes after a restart.
 
 | Stage | Means | Set by |
 |---|---|---|
-| `Idle` | Nothing in progress | `dismiss`; `retry` after a recording or transcription error |
-| `Recording { level, secs }` | The shortcut is held | `press`, then the `voice` thread |
-| `Loading` | Local: Phonon starts and transcribes (one call) | `voice` thread |
-| `Transcribing` | Cloud: Groq | `voice` thread |
-| `Cleaning` | The cleanup service | `voice` thread |
-| `Resolving` | Routing | `voice` thread, `choose_agent`, `retry` |
-| `ChooseAgent(Pending)` | The default agent isn't available | routing, or Start's check |
-| `Preview(Preview)` | Counting down; Try it's preview has no countdown | routing |
-| `Editing(Preview)` | Stopped for good: an edit, a cut-short transcript, a retry, a changed target | `edit`, routing, `retry`, Start's check |
-| `Starting(Preview)` | Being dispatched | `begin_start` (countdown, Start, Enter) |
-| `Started { session, folder }` | The tool took it | `voice-start` thread |
-| `Cancelled` | Escape or Cancel | `cancel` |
-| `Error { message, retry, transcript }` | A stage failed; the transcript is kept when there is one | any worker |
+| `StageIdle` | Nothing in progress | `Dismiss`; `Retry` after a recording or transcription error |
+| `StageRecording` (level, secs) | The shortcut is held | `Press`, then the recording goroutine |
+| `StageLoading` | Local: Phonon starts and transcribes (one call) | recording goroutine |
+| `StageTranscribing` | Cloud: Groq | recording goroutine |
+| `StageCleaning` | The cleanup service | recording goroutine |
+| `StageResolving` | Routing | recording goroutine, `ChooseAgent`, `Retry` |
+| `StageChooseAgent` | The default agent isn't available | routing, or Start's check |
+| `StagePreview` | Counting down; Try it's preview has no countdown | routing |
+| `StageEditing` | Stopped for good: an edit, a cut-short transcript, a retry, a changed target | `Edit`, routing, `Retry`, Start's check |
+| `StageStarting` | Being dispatched | `beginStart` (countdown, Start, Enter) |
+| `StageStarted` (session, folder) | The tool took it | the start goroutine |
+| `StageDictated` | Dictation: the words for the chat's reply box (the UI writes them in, then dismisses) | `Dictate` |
+| `StageCancelled` | Escape or Cancel | `Cancel` |
+| `StageError` (message, retry, transcript) | A stage failed; the transcript is kept when there is one | any worker |
 
 ### Local speech (Phonon)
 
-`phonon.rs`. Phonon-2 runs in the official `fermion` CLI (Python and CPU PyTorch), so
+`internal/voice/phonon.go`. Phonon-2 runs in the official `fermion` CLI (Python and CPU PyTorch), so
 Hover keeps a Python of its own for it. A system Python is never used or changed. It is
 downloaded only when the user presses Download in Settings → Voice, never for Cloud.
 
 - **Pins.** Model `FermionResearch/Phonon-2` at `9c7fef3584499a88fe8d394427f45851bbb8b446`,
   `fermion-research` 0.2.5, CPython 3.12.14 (python-build-standalone 20260929), and the
-  wheels per platform in `assets/phonon/wheels-<triple>.txt` (made by `make-lock.py`, at
-  build time only). Every file has a pinned URL, size and SHA-256.
+  wheels per platform in `internal/voice/assets/wheels-<triple>.txt` (made by `make-lock.py`
+  beside them, at build time only). Every file has a pinned URL, size and SHA-256.
 - **Before any download.** Windows x64 or Linux x64/arm64, SSE4.1 on x64, not Windows on
   Arm, the VC++ 2015–2022 runtime on Windows, glibc 2.28 or newer on Linux. A device that
   fails is `Unsupported` with the reason. Setup also needs the peak disk plus 300 MB free.
-- **Install states** (`Install`): `NotInstalled`, `Unsupported(why)`, `Downloading { done,
-  total }`, `Verifying` (every file hashed again), `Installing` (unpack the runtime, pip
+- **Install states** (`Install`, with its `InstallKind`): `NotInstalled`, `Unsupported` (with why),
+  `Downloading` (done of total), `Verifying` (every file hashed again), `Installing` (unpack the runtime, pip
   from the local hash-checked wheels only, fermion's own verifying unpacker for the
   model, the model files checked against their pins), `Ready`, `Cancelled`,
-  `Failed(why)`. `Ready` means the new install turned the bundled sample
-  (`assets/phonon/check.wav`) into the expected words. A partial download is never
+  `Failed` (with why). `Ready` means the new install turned the bundled sample
+  (`internal/voice/assets/check.wav`) into the expected words. A partial download is never
   resumed; a finished one is kept for Retry and hashed again.
 - **Where files live.** `<data>/phonon/` (`%APPDATA%\Hover\phonon`,
   `~/.local/share/Hover/phonon`): `downloads/` during setup, `installs/<id>/` (the Python,
@@ -403,7 +437,7 @@ downloaded only when the user presses Download in Settings → Voice, never for 
 - **Each recording** runs `python -I -c <fermion's main> transcribe --json <model> <wav>`
   with structured arguments, offline (`HF_HUB_OFFLINE=1`, `TRANSFORMERS_OFFLINE=1`), in a
   process group or job. No server, nothing at login. It exits when done; Cancel kills it,
-  and `shutdown` stops it on exit, when voice is switched off or when Local is left.
+  and `Shutdown` stops it on exit, when voice is switched off or when Local is left.
   Phonon-2 is English only. Recordings over ten minutes are refused.
 - **Remove** is refused while setup runs or a transcription reads the files. It forgets
   the install at once and deletes Hover's own folders on a worker. Local then reads Not
@@ -415,7 +449,7 @@ Measured sizes and times are in `evidence/voice-chat/phonon-proto.md`.
 
 - **Thoughts.** Reasoning the tool exposes becomes a `KiroStep` of kind `thought`, its text
   in `output`, in order among the tool calls. ACP's `agent_thought_chunk` and OpenCode's
-  `reasoning` part feed it (`stream.rs`, `opencode.rs`). An ACP thought lasts until the
+  `reasoning` part feed it (`stream.go`, `opencode.go`). An ACP thought lasts until the
   agent does something else and keeps 256 KB; an OpenCode thought is one reasoning part,
   done when the part ends. Each closes with its measured time and is saved with the
   session. Nothing is made up from the answer.
@@ -427,8 +461,8 @@ Measured sizes and times are in `evidence/voice-chat/phonon-proto.md`.
   of a command's output are kept, and a cut is said. The chat folds them after eight lines.
   An exit code shows only when the tool gave one.
 - **Pause, queue and stop.** A reply sent while a turn runs is queued, in order, and each
-  has Cancel (`KiroSessions::cancel_queued`). An empty composer during a turn shows Pause
-  (`KiroSessions::pause`): the turn is cancelled through the tool, the conversation stays,
+  has Cancel (`KiroSessions.CancelQueued`). An empty composer during a turn shows Pause
+  (`KiroSessions.Pause`): the turn is cancelled through the tool, the conversation stays,
   and the next queued reply goes once, after the tool says the turn has ended. A tool that
   doesn't confirm within 8 s is shut down when no other turn uses it. Otherwise the result
   is `unconfirmed`: the chat says it may still be working, and nothing queued is sent. A
@@ -437,8 +471,8 @@ Measured sizes and times are in `evidence/voice-chat/phonon-proto.md`.
 
 ## What each provider exposes
 
-What Hover reads from each tool. Kiro, Codex and Cursor speak ACP (`acp.rs`, `stream.rs`);
-OpenCode is its own server (`opencode.rs`); Claude Code runs in its SDK mode (`claude.rs`).
+What Hover reads from each tool. Kiro, Codex and Cursor speak ACP (`acp.go`, `stream.go`);
+OpenCode is its own server (`opencode.go`); Claude Code runs in its SDK mode (`claude.go`).
 
 | | Kiro, Codex, Cursor (ACP) | OpenCode |
 |---|---|---|
@@ -451,7 +485,7 @@ OpenCode is its own server (`opencode.rs`); Claude Code runs in its SDK mode (`c
 | Diffs | `diff` content (old and new text); line numbers only from the call's location or a new file | Its edit's unified diff, with the file's line numbers |
 | Tool output | `rawOutput`, the last 400 lines; exit code when given (`exitCode`, `exit_code`) | The command's output; exit code when given |
 
-Claude Code (`claude.rs`) in the same terms: reasoning is its thinking blocks (streamed
+Claude Code (`claude.go`) in the same terms: reasoning is its thinking blocks (streamed
 as `thinking_delta`) as a thought; a subagent's `Task` call is an `agent` step, and the
 subagent's own messages (`parent_tool_use_id` set) stay out of the answer; cancellation is
 the `interrupt` control request, then its process ended after 8 s; permissions are its
@@ -459,35 +493,35 @@ the `interrupt` control request, then its process ended after 8 s; permissions a
 command tools; context % is the last answer's tokens over the model's window (the result's
 `modelUsage`); diffs are its `structuredPatch` hunks with their line numbers; tool output is
 `tool_use_result.stdout`/`stderr`. Checked against Claude Code 2.1.287 through
-`fake-anthropic`; with a real model only by the maintainer, not in CI.
+`fake-anthropic` (a stand-in Anthropic API; it was in the Rust tools, tag `rust-final`); with a real model only by the maintainer, not in CI.
 
 Observed: written down in the code as seen from the real tool. Kiro sends an empty diff
 while an edit is pending. Kiro's context and credit payloads are the shapes quoted in
-`stream.rs`. Codex may send a warning before its answer. codex-acp 1.13 dropped
+`stream.go`. Codex may send a warning before its answer. codex-acp 1.13 dropped
 `workspace-write`. Codex's read-only mode wrote files on Windows (no sandbox there), so
 Hover doesn't offer it there.
 
 Not verified: whether each real tool sends reasoning text, which tools send
 `usage_update`, OpenCode's `task` and `reasoning` events, the diff line numbers, and an
 unconfirmed stop. These are handled in code and tested against fakes only
-(`hover-agents/tests/`, `stream.rs`'s tests). The voice live smoke used `fake-agent`, not
-the real tools.
+(`internal/agents/*_test.go`). The voice live smoke used `fake-agent` (in the Rust tools, tag
+`rust-final`), not the real tools.
 
 ## The office's frames and their lifetime
 
-- The office is made the first time an office is in view (`office_follow`). It runs on
-  its own thread (`hover_office::live`). The UI sends it the state (at most every
-  120 ms, only when something changed), the pointer and resizes.
-- Each frame: the scene is rendered on wgpu, read back, and composed on the CPU over
-  the page's background and vignette (`page.rs`). The UI makes a blurred quarter-size
-  copy for the glass panels.
-- On Windows the office shares the windows' GPU device (`shared_gpu` in `main.rs`). The
-  frame goes into one texture that the windows draw directly, written in place each
-  frame (`office_ui.rs`, `upload`). On Linux the office has its own device (Vulkan or
-  GL), and the frame reaches Slint (femtovg on OpenGL) as a pixel buffer.
-- Hidden for 30 s, the office is dropped: its thread, renderer and textures go, and the
-  allocator gives the pages back (`office_drop`). Shown again, it is made again at once,
-  with the camera and open chat restored.
+- The office is made the first time an office is in view (`officeFollow` in
+  `internal/shell/office.go`). It runs on its own goroutine (`office.StartLive`, `live.go`).
+  The UI sends it the state (at most every 120 ms, only when something changed), the pointer
+  and resizes.
+- Each frame: the scene is rendered on wgpu-native, read back, and composed on the CPU over
+  the page's background and vignette (`page.go`). The UI makes a blurred quarter-size
+  copy for the glass panels (`ui.Blur`).
+- On both systems the frame is read back and shown as an image in the Gio view. Gio has a
+  device of its own, so the office does not share it. The office has its own wgpu device
+  (DX12 on Windows, Vulkan or GL on Linux).
+- Hidden for 30 s, the office is dropped: its goroutine, renderer and textures go
+  (`officeDrop`). Shown again, it is made again at once, with the camera and open chat
+  restored.
 - Pacing: 30 fps while a bot walks or works, 10 fps idle, 1 fps with animations off,
   nothing while hidden.
 
@@ -495,31 +529,29 @@ the real tools.
 
 | Concern | Windows | Linux |
 |---|---|---|
-| Notch window | `win.rs`: borderless, topmost, `WS_EX_NOACTIVATE`; click-through by layered hit mode | `x11.rs`: override-redirect dock window, ARGB visual, XShape input region; Wayland through XWayland |
-| Renderer | femtovg on wgpu (DX12, DirectComposition), one shared device | femtovg on OpenGL; office on its own wgpu device |
-| Tray, notifications | `win.rs` (Shell_NotifyIcon) | `sni.rs` (StatusNotifierItem over D-Bus) |
-| Shortcut | `RegisterHotKey` | `XGrabKey` |
-| Voice hold-to-talk | `win::register_hold`: `RegisterHotKey` for the press, `GetAsyncKeyState` every 30 ms for the release | `x11::Grab::register_hold`: KeyPress/KeyRelease, XKB detectable auto-repeat, key state read every 50 ms while held; Wayland through XWayland only |
-| Microphone | cpal on WASAPI | cpal on ALSA |
+| Notch window | `platform/win`: borderless, topmost, `WS_EX_NOACTIVATE`; click-through by layered hit mode; DirectComposition for see-through | `platform/wayland`: a layer-shell surface at the top of the display, see-through. No X11 and no XWayland; a compositor with no layer-shell (GNOME's own) can't place it |
+| Renderer | Gio on Direct3D 11, one device shared by the windows; the office on wgpu-native (DX12) | Gio on EGL; the office on wgpu-native (Vulkan or GL) |
+| Tray, notifications | `platform/win` (Shell_NotifyIcon) | `platform/linux/sni.go` (StatusNotifierItem over D-Bus; notifications over org.freedesktop.Notifications) |
+| Shortcut | `RegisterHotKey` | The desktop's GlobalShortcuts portal (KDE, GNOME 48+, Hyprland); elsewhere bind a key to `hover --toggle` |
+| Voice hold-to-talk | `RegisterHotKey` for the press, `GetAsyncKeyState` polled for the release | The portal's key down and key up |
+| Microphone | winmm waveIn | PipeWire (`pw-record`) |
+| Sound out | winmm waveOut | PipeWire (`pw-cat`) |
 | Key storage | DPAPI | Secret Service, else a file only the user can read |
-| Child processes | Job object (tools die with Hover) | Process group with `PR_SET_PDEATHSIG` |
+| Child processes | Job object (tools die with Hover) | Process group with `Pdeathsig` |
 | Single instance | Named mutex `Local\HoverRunningInstance` | Lock file in `$XDG_RUNTIME_DIR` |
-| Allocator | mimalloc (freed pages go back to Windows) | glibc malloc, `malloc_trim` after the office drops |
 
-Keep OS code behind `cfg(windows)`, `cfg(target_os = "linux")` or `cfg(target_os = "macos")`
-in these files. Check `cfg(not(windows))` branches carefully: they used to mean Linux and
-now also reach a Mac. X11, D-Bus, the Secret Service, XDG and ALSA are Linux-only.
-What can be worked out without the OS (the Keychain and LaunchAgent logic in `hover-core`,
-the sandbox's settings text) is in functions compiled on
-every OS, so the Windows tests cover it.
+Keep OS code in files named for the system (`_windows.go`, `_linux.go`, `_darwin.go`) or behind
+a `//go:build` line. What can be worked out without the OS (the Keychain and LaunchAgent logic in
+`internal/core/macos.go`, the sandbox's settings text) is in files compiled on every OS, so
+tests on any system cover it.
 
 ### macOS
 
-The Mac app is not the Slint app (`hover` refuses to compile on a Mac). It is Swift in
+The Mac app is not the Gio app (`cmd/hover` on a Mac only says so and exits). It is Swift in
 `macos/Sources` (notch, menu bar, Settings, voice) around the web office (`web/office/`,
-in a WKWebView), and it starts `hover-backend` (`crates/hover-backend`) through
-`hover-guardian`, speaking JSON lines on stdin and stdout. `scripts/build-macos.sh` makes
-`Hover.app` from the three.
+in a WKWebView), and it starts `hover-backend` (`cmd/hover-backend`) through
+`hover-guardian` (`macos/Sources/guardian.c`), speaking JSON lines on stdin and stdout.
+`scripts/build-macos.sh` makes `Hover.app` from the three.
 
 | Concern | macOS |
 |---|---|
@@ -534,26 +566,25 @@ in a WKWebView), and it starts `hover-backend` (`crates/hover-backend`) through
 | Single instance | none in the Swift app |
 | Dark mode | the menu bar item redraws when its `effectiveAppearance` changes |
 | Launch at Login | `SMAppService.mainApp` |
-| Agent browser | `AgentBrowser.swift`: a WKWebView per session, driven by `browser.rs`'s calls, relayed by `hover-backend`'s `browser_host.rs` |
+| Agent browser | `AgentBrowser.swift`: a WKWebView per session, driven by `browser.go`'s calls, relayed by `internal/backend/browser_host.go` |
 | Screen panel | `Screen.swift`: ScreenCaptureKit |
-| Allocator | system malloc |
 
 ## Where to change things
 
-- **A setting.** Add it to `hover-core/src/settings.rs` (keep the JSON names and
-  their order: 2.x reads the same file). Show it in `app/src/pages.rs`, and
-  handle its click in `view.rs` (`toggled`, `pressed`, `picked_seg`, `menu_pick`).
-- **Something in the office UI.** `ui/office.slint` for the look;
-  `office_ui.rs` (`wire_office`, `office_widgets`) for what it shows and does.
-- **The 3D office.** `hover-office`: `scene.rs` (the room), `bot.rs`, `office.rs`
-  (behaviour), `render.rs` and `office.wgsl` (drawing).
-- **A provider.** Add an `AgentTool` variant in `hover-core/src/model.rs`. Then add its
+- **A setting.** Add it to `internal/core/settings.go` (keep the JSON names and
+  their order: 2.x reads the same file). Show it in `internal/app/pages.go`, and
+  handle its click in `internal/app/view.go` (`Toggled`, `Pressed`, `PickedSeg`, `MenuPick`).
+- **Something in the office UI.** `internal/ui/office*.go` for the look;
+  `internal/shell/office.go` for what it shows and does.
+- **The 3D office.** `internal/office`: `scene.go` (the room), `bot.go`, `office.go`
+  (behaviour), `render.go` and `office.wgsl` (drawing).
+- **A provider.** Add an `AgentTool` variant in `internal/core/model.go`. Then add its
   executable, arguments, install and sign-in hints, and status check in
-  `hover-agents/src/agents.rs`, and its capabilities in `runtime.rs`. If it speaks ACP,
-  `AcpHost` runs it; map its access modes in `AcpHost::configure` and
-  `permission`. Otherwise write a runtime like `opencode.rs` and put it behind
-  `Runtime`. Add its logo to `ui/marks.slint`, its colour to `TOOLS` in
-  `office_ui.rs`, and a settings page in `pages.rs`. Test it against `fake-agent`
-  (`tools/hover-measure`) and a fake host like `tests/acp_host.rs`.
-- **A quota.** `hover-quota/src/read.rs` and `lib.rs`; the notch item id in
-  `settings.rs`'s notch items.
+  `internal/agents/agents.go`, and its capabilities in `runtime.go`. If it speaks ACP,
+  `AcpHost` runs it; map its access modes in `AcpHost.configure` and
+  `permission`. Otherwise write a runtime like `opencode.go` and put it behind
+  `Runtime`. Add its logo to `internal/ui/marks.go`, its colour to `tools` in
+  `internal/shell/office.go`, and a settings page in `pages.go`. Test it against a stand-in
+  like `internal/agents/fakeacp_test.go`.
+- **A quota.** `internal/quota/read.go` and `quota.go`; the notch item id in
+  `settings.go`'s notch items.

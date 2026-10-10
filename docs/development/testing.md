@@ -1,179 +1,70 @@
 # Testing
 
-Three layers, from fastest to closest to what users run, then a manual voice check.
+What CI runs, what you can run yourself, and what nothing runs yet.
 
-## 1. Unit and golden tests
+## What CI runs
 
-```powershell
-cargo test --release --workspace
+`.github/workflows/ci.yml` does not run the Go tests. On every push and pull request it:
+
+- checks that the Go code is formatted, vets it for Windows, Linux and macOS, and compiles the
+  Mac backend for both Macs;
+- on Windows, builds `hoverai.exe` and its installer, **drives the app** (starts it, opens the
+  notch with Alt+N, folds it with Esc, starts it again to ask for the app window) and **installs
+  the new setup over the 5.0.2 release**, checks what the installer promises and uninstalls;
+- builds the Linux `.deb` and tarball (compiled, not run: the runner has no Wayland desktop);
+- builds the Mac app and runs its **packaged backend** against stand-in tools.
+
+By hand (Run workflow), the `pictures` job draws every view on the Windows runner.
+
+## The Windows checks
+
+- `tools/app-smoke.ps1 -Exe publish\hoverai.exe -Out out\app` starts the real app, presses its
+  shortcut, folds it, makes a second launch, and writes `report.json`: did each step happen,
+  and its private memory and working set at rest and after the app window opened. It exits 1
+  when a step didn't happen.
+- `tools/installer-check.ps1` installs the 5.0.2 setup, then the new one over it, and checks:
+  one product, the new exe in the same folder, `wgpu_native.dll` and the license installed,
+  one uninstall entry, the Start Menu entry, the Run key kept, `%APPDATA%\Hover` untouched, and
+  a clean uninstall.
+- `tools/set-resolution.ps1` sets the runner's screen to 1920 x 1080 first, so the open notch
+  fits.
+
+## The Go tests
+
+They live beside the code (`*_test.go`) with their fixtures in `tests/golden`. Nobody keeps
+them green any more and CI does not run them; run them when you want to know what changed:
+
+```sh
+go test -tags nowayland,nox11,novulkan ./cmd/... ./internal/...    # Linux
+go test ./cmd/... ./internal/...                                   # Windows
 ```
 
-`tests/golden/` holds fixtures and outputs made from the 2.x page (Markdown, flowcharts,
-the chat's copy and layout). `hover-agents`' tests drive the ACP host and the OpenCode host
-against in-process fakes. The three layout goldens that compare text widths were measured
-with DejaVu Sans on Linux, so they skip on Windows.
+(`make test`, `.\build.ps1 test`.) Two layout tests in `internal/chat` need DejaVu Sans, as the
+Chromium reference was measured with it. Timing tests (a task that sleeps, a file that must be
+written) can fail on a slow or busy machine; run them again before you look for a bug.
 
-Voice, Phonon, routing and Pause have their own tests in the same run. To run one part:
+## Pictures
 
-```powershell
-cargo test --release -p hover --lib voice::    # the voice flow, capture, WAV, Groq, cleanup
-cargo test --release -p hover --lib phonon::   # setup, checks, repair, remove (a fake Python)
-cargo test --release -p hover-agents --lib route::
-cargo test --release -p hover-agents --test sessions   # Pause, the queue, an unconfirmed stop
-cargo test --release -p hover-core                     # projects, secrets, the new settings keys
-```
+`hoverai --shots DIR` draws every view headless and writes the PNGs. They are for looking at:
+a green build doesn't prove the pixels are right.
 
-- `voice::tests` drives `Voice` with a fake engine, microphone and agent: the countdown
-  against Start (one dispatch), edits, cancel, a failed cleanup, Local not ready (never
-  Groq), the ten-minute cap, an unavailable agent, a busy press, Try it.
-- `voice::groq` and `voice::cleanup` talk to a local fake HTTP server; no key or network.
-- `phonon::tests` run setup against small fake pins and a fake Python.
-- `route::tests` cover the word rules, the agent's checked answer, and the routing turn's
-  access `"none"` in a folder of its own.
-- `sessions.rs`: `pause_sends_the_next_queued_reply_once_the_stop_is_confirmed` and
-  `an_unconfirmed_stop_sends_nothing_and_queued_replies_can_be_cancelled`.
-
-Two voice tests are ignored because they need real things:
-
-```powershell
-# A real microphone, for two seconds
-cargo test --release -p hover --lib voice::audio -- --ignored
-# Phonon for real: downloads, installs and checks it, transcribes the sample, then a cancel
-$env:PHONON_LIVE_DIR = "$env:TEMP\hover-phonon-live"   # the default; a Ready install there is reused
-cargo test --release -p hover --lib phonon::tests::live_install -- --ignored --nocapture
-```
-
-`live_install` downloads the pinned runtime, wheels and model (about 420 MB on Windows,
-523 MB on Linux x64) and prints each state, the sizes and the times. `PHONON_WAV=FILE`
-transcribes another 16 kHz mono WAV.
-
-## 2. The release app with fake tools
-
-`tools/hover-measure` (not shipped) runs the release app with `HOVER_BENCH=1`, sends it
-commands on stdin (`app/src/bench.rs`), and samples its process tree. Each run
-gets fresh app data and a project folder whose name has a space and a `ü` in it. The real
-tools are replaced by stand-ins placed first on `PATH`:
-
-- `fake-agent` answers as `kiro-cli`, `codex-acp`, `codex` and `cursor-agent`: signed in, ACP on
-  stdio, and `chat --no-interactive /usage` for the Kiro quota. A prompt says what its turn
-  does: `[seconds:N]`, `[bytes:N]`, `[ask:KIND:TARGET]`, `[fail]`, and so on (see the file's header).
-- `fake-opencode` is `opencode serve`: loopback only, Basic auth from `OPENCODE_SERVER_PASSWORD`,
-  the routes and event stream Hover uses. Its directives are `[question]`, `[ask:bash:CMD]`,
-  `[drop]` (the event stream closes halfway), `[lose]` (the prompt's response is lost) and
-  `[fail]`. With `FAKE_OPENCODE_LOG=FILE` it logs every request, so a run can check that no
-  prompt went twice and that every call named its folder.
-- `fake-anthropic` is the Anthropic Messages API, for the real Claude Code (`claude`, on PATH or
-  in `~/.local/bin`): start it on a port and give Hover `ANTHROPIC_BASE_URL` and any
-  `ANTHROPIC_API_KEY`. Its directives are `[write:NAME]`, `[run:CMD]`, `[question]`,
-  `[think]`, `[seconds:N]` and `[fail]`; `FAKE_ANTHROPIC_LOG=FILE` logs each request (how many
-  tools it carried shows read only at work).
-
-```powershell
-cargo build --release -p hover -p hover-measure
-.\tools\hover-measure\run-memory.ps1 -Exe target\release\hoverai.exe -Out out\oc -Runs 1 -Script opencode.hms -Env "FAKE_OPENCODE_LOG=$PWD\out\oc.log"
-Start-Process target\release\fake-anthropic.exe 18770
-.\tools\hover-measure\run-memory.ps1 -Exe target\release\hoverai.exe -Out out\cc -Runs 1 -Script claude.hms -Env "ANTHROPIC_BASE_URL=http://127.0.0.1:18770,ANTHROPIC_API_KEY=sk-fake"
-```
-
-| Scenario (`scenarios/`) | What it checks |
-|---|---|
-| `claude.hms` | Claude Code end to end, the real CLI against `fake-anthropic`: a turn; a file written; a question picked; a command allowed, then denied (Ask first); a write refused (Read only); a reply; Stop; an API failure. |
-| `opencode.hms` | OpenCode end to end: a turn; a question picked, then skipped; a command allowed, then denied; a dropped stream; a lost prompt; a failure; a reply. Each is checked through `said ID`, which prints the answer's start. |
-| `quota.hms` | Each quota on, then all of them: Kiro's read through `/usage`, the rest failing with readable messages. `FAKEACP_USAGE_MS` makes the read take as long as the real one. |
-| `memory.hms` | Every memory scenario in one run (see profiling.md). |
-| `stress.hms` | 100 fast cycles (office, chats, history, Settings, app window), 10 reopens at 29.5 s (just before the office is dropped) and 10 just after. An approval waits and a task runs the whole time; the end checks both are intact. |
-| `soak.hms` | About 80 minutes: 60 mixed with new tasks, then 20 of a fixed load that adds nothing to the history. |
-| `stress-dash.hms` | The app window minimised and restored 80 times while three agents work. |
-
-A failed `expect` stops the run and is written as `end,failed step N` in `markers.csv`.
-`quit` fails if any of Hover's child processes outlives it, and each run records
-`orphans`.
-
-Bench commands for checks: `sessions`, `said ID`, `until-idle`, `until-ask`,
-`answer ID allow|trust|trustAll|deny`, `answer-front HOW`, `pick ID LABEL` (a question's
-choice), `until-quota ID`, `drag X0 Y0 X1 Y1 [N]` (a text selection in the open chat, through
-the pointer's own callbacks), `copy`, `office`, `state`.
-
-## 3. Screenshots and real input
-
-`hover --shots DIR` renders every view with the software renderer, including the chat's images
-(`office-chat-images*.png`) and a selection (`office-chat-selection.png`). The 3D office isn't
-the same twice (the camera may still be moving, and the clock shows the real time), so compare
-the side panel between builds:
-
-```powershell
-.\tools\hover-measure\compare-shots.ps1 -A shots-before -B shots-after -Region 792,8,360,424 -Filter office-*.png
-```
-
-Settings shots compare whole.
-
-Voice adds two sets. `voice-<size>-<stage>.png` is the notch's voice card in every stage
-(listening, loading, transcribing, resolving, preview, preview-default-workspace, editing,
-starting, choose-agent, started, cancelled, error, error-setup) at each office size, with a
-`-2x` copy at Default, and `voice-extra-large-busy.png`. The Settings set is
-`settings-<name>.png`, each with a `-narrow` copy: `projects-registered`, `project-page`,
-`voice-cloud`, `voice-local-<state>` (each Phonon card state) and `voice-try-done` /
-`voice-try-listening`. The stages are drawn as `Voice` hands them over; no voice flow runs.
-
-Real pointer and keyboard input (`move`, `click`, `press`, `type`, `click-name`) goes through
-`SendInput` and UI Automation. It needs a logged-on, unlocked desktop session: on a machine
-reached only over SSH or SSM, the input desktop is the logon screen and the input never
-reaches Hover. On Linux, `hover --selftest DIR` drives the notch on a real X display. It
-doesn't exist in the Windows build.
-
-## 4. Voice live smoke (Windows)
-
-This checks the whole flow with a real microphone and Local speech, but fake agents. It
-needs a logged-on desktop, a microphone and speakers, and a Ready Phonon install (run
-`live_install` first).
-
-1. Use a data folder of its own: `$env:HOVER_DATA_DIR = "$env:TEMP\hover-int-live"`. Link
-   its `phonon` folder to the live install so nothing downloads:
-   `New-Item -ItemType Junction "$env:HOVER_DATA_DIR\phonon" -Target "$env:TEMP\hover-phonon-live\phonon"`.
-2. Put `fake-agent.exe` (from `hover-measure`) first on `PATH` as `kiro-cli.exe`,
-   `codex-acp.exe`, `codex.exe` and `cursor-agent.exe`, and set `FAKEACP_LOG=FILE`.
-3. Start `hoverai.exe`. In Settings → Voice: voice on, Local (Phonon). Set the default
-   workspace to a test folder with Ask first access.
-4. Hold Ctrl+Alt+Space for about 2 s in silence. Expected: Listening, then "Nothing was
-   heard…" with Retry, and no session. Esc closes the card.
-5. Hold it while `app/assets/phonon/check.wav` plays from the speakers.
-   Expected: Listening, Loading (about 25 s, Phonon's start), Resolving, the preview with
-   "Open the notes folder and add a list of the open tasks.", the default workspace, Kiro
-   and Ask first, a 3 s countdown, then Started.
-6. Check `FAKEACP_LOG`: one `session/new` with the workspace as `cwd` and one
-   `session/prompt` with the transcript. `hover.log` has `voice: run N started (kiro,
-   access risky)`.
-
-Not covered by this recipe: Cloud (Groq) and cleanup with real keys, choosing another
-agent, and giving the keyboard back to the previous app. Results of the last run:
-`evidence/voice-chat/integration.md`.
-
-## Linux
-
-The same tests run on Linux (`make test`). For voice on Linux (the build, X11
-hold-to-talk, the microphone, Phonon), see `evidence/voice-chat/linux.md`.
+- The office, desk, chat and expanded-chat pictures need `HOVER_SHOTS_OFFICE=1` and
+  wgpu-native (`WGPU_NATIVE_PATH`, or beside the program).
+- `HOVER_SHOTS_SKIP=voice,chat` leaves those groups out, to draw the rest sooner.
+- On Linux the program needs `-tags shots,nowayland,nox11,novulkan`, cgo and Mesa's EGL; run it
+  with `EGL_PLATFORM=surfaceless`.
 
 ## macOS
 
-CI (macos-15) runs `cargo check` on every crate but `hover`, `notch-proto` and
-`hover-measure` (the Slint app is Windows and Linux only), builds `hover-backend`, and
-builds and signs (ad hoc) `Hover.app` with `scripts/build-macos.sh`; no tests run there.
-On a Mac, `scripts/test-macos.sh` builds a disposable copy of the checkout and runs the
-cargo tests of `hover-backend`, `hover-core`, `hover-agents`, `hover-quota`, `hover-md` and
-`hover-diagram` under `sandbox-exec` (or inside srt, when started through
-`scripts/sandbox.sh`), then `tests/macos/backend-smoke.py` against the packaged backend,
-and, outside srt, the app's own `--smoke-test` (it opens the notch and office, so it needs
-a screen). `tests/macos/e2e/run.sh <Hover.app>` is the end-to-end run with stand-in agents,
-`gh`, `cua` and `lume`; see [MACOS.md](../MACOS.md). None of these has been run by CI. Two
-tests only run on a Mac (`hover-core/tests/keychain.rs`, which skips if the login Keychain
-can't be written to), and the Unix-only tests of the sandbox's relay, Cua's guard and the
-browser socket skip themselves without `perl` or `python3`.
+- `tests/macos/backend-smoke.py <Hover.app> <sandbox>` runs the packaged backend against a stand-in
+  agent in a disposable folder (CI does this).
+- `tests/macos/e2e/run.sh <Hover.app>` is the longer run: the real office, bridge and browser
+  with stand-in agent, `gh`, `cua` and `lume`, against a local test site. Not run in CI.
+- `tests/macos/SettingsSmoke.swift` is Settings' own smoke test.
 
-From Windows, `rustup target add aarch64-apple-darwin`, then
-`cargo check --target aarch64-apple-darwin -p hover-core -p hover-agents -p hover-office --all-targets`
-type-checks the Mac code the backend uses. `hover-quota` pulls in a C build step (`ring`),
-which needs a Mac's compiler and SDK; its check is the CI job. `hover` refuses to compile
-on a Mac, and the Swift app is checked only by building it on a Mac.
+## Not checked by anything
 
-There is no way to see the Mac UI from Windows or Linux: `hover --shots` renders the Slint
-app's views, not the Swift app's or the web office's.
+Real agents (Kiro, Codex, Cursor, OpenCode, Claude Code) with approvals, a real microphone
+(Groq and local speech), a second monitor at 150%, the pull request tab with real GitHub, and
+the Linux window on a real compositor. `docs/development/go-port.md` has the list of what to
+try by hand on Windows.
