@@ -11,7 +11,8 @@ import (
 
 // The interfaces used, with the opcodes of the requests and events Hover uses (from the
 // protocol XML: wayland.xml, xdg-shell.xml, wlr-layer-shell-unstable-v1.xml,
-// cursor-shape-v1.xml).
+// cursor-shape-v1.xml, fractional-scale-v1.xml, viewporter.xml,
+// text-input-unstable-v3.xml).
 const (
 	// wl_display
 	displaySync        = 0
@@ -113,6 +114,30 @@ const (
 	stateMaximized         = 1
 	stateActivated         = 4
 	layerKeyboardOnDemandV = 4
+	// wp_fractional_scale_manager_v1 and wp_fractional_scale_v1
+	fracManagerGetScale = 1
+	fracDestroy         = 0
+	fracEventPreferred  = 0
+	// wp_viewporter and wp_viewport
+	viewporterGetViewport  = 1
+	viewportDestroy        = 0
+	viewportSetDestination = 2
+	// zwp_text_input_manager_v3 and zwp_text_input_v3
+	textManagerGetInput     = 1
+	textInputDestroy        = 0
+	textInputEnable         = 1
+	textInputDisable        = 2
+	textInputSetSurrounding = 3
+	textInputSetChangeCause = 4
+	textInputSetContentType = 5
+	textInputSetCursorRect  = 6
+	textInputCommit         = 7
+	textInputEventEnter     = 0
+	textInputEventLeave     = 1
+	textInputEventPreedit   = 2
+	textInputEventCommit    = 3
+	textInputEventDelete    = 4
+	textInputEventDone      = 5
 )
 
 type global struct {
@@ -142,10 +167,14 @@ type Display struct {
 	layerShell  *Object
 	layerVer    uint32
 	cursorShape *Object
-	seatObj     *Object
-	seat        *Seat
-	outputs     []*Output
-	hasARGB     bool
+	// fracScale and viewporter come together: a surface is scaled by a viewport to the size
+	// the fractional scale asks for. Either missing, neither is used.
+	fracScale  *Object
+	viewporter *Object
+	seatObj    *Object
+	seat       *Seat
+	outputs    []*Output
+	hasARGB    bool
 
 	surfaces map[ID]*Win
 
@@ -219,9 +248,19 @@ func OpenOn(c *Conn) (*Display, error) {
 	if g, ok := d.globals["wp_cursor_shape_manager_v1"]; ok {
 		d.cursorShape = d.bind(g, "wp_cursor_shape_manager_v1", 1)
 	}
+	if g, ok := d.globals["wp_fractional_scale_manager_v1"]; ok {
+		if v, ok := d.globals["wp_viewporter"]; ok {
+			d.fracScale = d.bind(g, "wp_fractional_scale_manager_v1", 1)
+			d.viewporter = d.bind(v, "wp_viewporter", 1)
+		}
+	}
 	if g, ok := d.globals["wl_seat"]; ok {
 		d.seatObj = d.bind(g, "wl_seat", min(g.version, 5))
 		d.seat = newSeat(d, d.seatObj)
+		// Input methods (compose, CJK, on-screen keyboards) talk through the seat's text input.
+		if m, ok := d.globals["zwp_text_input_manager_v3"]; ok {
+			d.seat.ti = newTextInput(d, d.bind(m, "zwp_text_input_manager_v3", 1), d.seatObj)
+		}
 	}
 	// The outputs' modes and scales, and the seat's capabilities, come once bound.
 	if err := d.Roundtrip(); err != nil {

@@ -34,9 +34,9 @@ func (t *TextField) Focused(c *Ctx) bool { return c.Focused(&t.ed) }
 func (t *TextField) Layout(c *Ctx, x, y, w float32, value, placeholder string, secret, enabled bool) (commit string, ok bool) {
 	t.ed.SingleLine, t.ed.Submit, t.ed.ReadOnly = true, true, !enabled
 	if secret {
-		t.ed.Mask = '●'
+		t.ed.Mask, t.ed.InputHint = '●', key.HintPassword
 	} else {
-		t.ed.Mask = 0
+		t.ed.Mask, t.ed.InputHint = 0, key.HintAny
 	}
 	focused := c.Focused(&t.ed)
 	// A rebuild while typing leaves the typing alone.

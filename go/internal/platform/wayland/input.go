@@ -25,6 +25,9 @@ type Seat struct {
 	pressSerial       uint32
 	cursorShape       uint32
 
+	// ti is the input method's side of the seat (nil: the compositor has none).
+	ti *textInput
+
 	lay    *keyLayout
 	mods   key.Modifiers
 	rate   int // repeats a second (0: none)
@@ -244,6 +247,7 @@ func (s *Seat) keyboardEvent(op uint16, r *Reader) {
 		r.U32()
 		r.Obj()
 		s.stopRepeat()
+		s.lay.resetCompose()
 		if w := s.kbFocus; w != nil {
 			s.kbFocus = nil
 			w.focus(false)
@@ -279,9 +283,9 @@ func (s *Seat) key(code uint32, down bool) {
 	if down {
 		st = key.Press
 	}
-	text := ""
+	text, swallowed := "", false
 	if down && s.mods&(key.ModCtrl|key.ModAlt|key.ModSuper) == 0 {
-		text = s.lay.text(code)
+		text, swallowed = s.lay.typed(code)
 	}
 	w.keyEvent(name, s.mods, st, text)
 	if !down {
@@ -291,7 +295,7 @@ func (s *Seat) key(code uint32, down bool) {
 		return
 	}
 	s.stopRepeat()
-	if s.rate > 0 && s.lay.repeats(code) {
+	if s.rate > 0 && !swallowed && s.lay.repeats(code) {
 		s.repKey = code
 		s.rep = s.d.loop.After(s.delay, func() {
 			s.rep = s.d.loop.Every(time.Second/time.Duration(s.rate), func() {

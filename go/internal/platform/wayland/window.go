@@ -79,10 +79,17 @@ type Win struct {
 	configured bool
 	visible    bool
 	gone       bool
-	lw, lh     int // the size in logical pixels
-	scale      int
+	lw, lh     int     // the size in logical pixels
+	scale      float64 // pixels to a logical pixel; whole unless the compositor asks for a fraction
 	prefScale  int
+	fscale     uint32 // the fractional scale, in 120ths (0: none asked for yet)
 	entered    map[ID]int32
+
+	// fs and vp are the fractional-scale and viewport add-ons of the surface (nil without
+	// them). With a fractional scale the buffer is lw x lh times it, the buffer scale stays 1
+	// and the viewport says the surface is lw x lh; vpSet is whether it was told so.
+	fs, vp *Object
+	vpSet  bool
 
 	router  input.Router
 	ops     op.Ops
@@ -90,6 +97,7 @@ type Win struct {
 	pending atomic.Bool
 	cursor  pointer.Cursor
 	ime     input.EditorState
+	imeOn   bool // a text box has the keyboard, so an input method may write into it
 	frames  atomic.Uint64
 	focused bool
 
@@ -126,6 +134,18 @@ func (d *Display) NewWindow(o Options) (*Win, error) {
 	d.surfaces[w.surf.ID] = w
 	d.C.Req(d.compositor.ID, compositorCreateSurface).Obj(w.surf).Send()
 	w.surf.On = w.surfaceEvent
+	if d.fracScale != nil && d.viewporter != nil {
+		w.vp = d.C.New("wp_viewport")
+		d.C.Req(d.viewporter.ID, viewporterGetViewport).Obj(w.vp).Obj(w.surf).Send()
+		w.fs = d.C.New("wp_fractional_scale_v1")
+		d.C.Req(d.fracScale.ID, fracManagerGetScale).Obj(w.fs).Obj(w.surf).Send()
+		w.fs.On = func(op uint16, r *Reader) {
+			if op == fracEventPreferred {
+				w.fscale = r.U32()
+				w.rescale()
+			}
+		}
+	}
 	if o.Kind == KindNotch {
 		if d.layerShell == nil {
 			return nil, errors.New("this desktop can't place the notch: its compositor has no layer-shell (GNOME's Mutter has none; KDE, Sway, Hyprland and others do)")
@@ -161,15 +181,18 @@ func (w *Win) surfaceEvent(op uint16, r *Reader) {
 }
 
 func (w *Win) rescale() {
-	s := 1
-	if w.prefScale > 0 {
-		s = w.prefScale
-	} else {
+	s := 1.0
+	switch {
+	case w.fracOn():
+		s = float64(w.fscale) / 120
+	case w.prefScale > 0:
+		s = float64(w.prefScale)
+	default:
 		for _, v := range w.entered {
-			s = max(s, int(v))
+			s = max(s, float64(v))
 		}
 		if len(w.entered) == 0 && w.Kind == KindNotch {
-			s = int(w.d.Primary().Scale)
+			s = float64(w.d.Primary().Scale)
 		}
 	}
 	if s != w.scale {
@@ -181,14 +204,26 @@ func (w *Win) rescale() {
 	}
 }
 
+// fracOn says the surface is scaled by a viewport to a fractional scale the compositor named.
+func (w *Win) fracOn() bool { return w.vp != nil && w.fscale > 0 }
+
+// px is a length in logical pixels as pixels of the buffer: rounded halfway up, as the
+// fractional-scale protocol asks, or times the whole scale.
+func (w *Win) px(l int) int {
+	if w.fracOn() {
+		return (l*int(w.fscale) + 60) / 120
+	}
+	return l * int(w.scale)
+}
+
 // MARK: shell.Window
 
 func (w *Win) SetDraw(f func(gtx layout.Context, scale float32) bool) { w.draw = f }
 func (w *Win) SetHandlers(h Handlers)                                 { w.H = h }
 func (w *Win) Gone() bool                                             { return w.gone }
 func (w *Win) Frames() uint64                                         { return w.frames.Load() }
-func (w *Win) Size() (int, int)                                       { return w.lw * w.scale, w.lh * w.scale }
-func (w *Win) Scale() float64                                         { return float64(w.scale) }
+func (w *Win) Size() (int, int)                                       { return w.px(w.lw), w.px(w.lh) }
+func (w *Win) Scale() float64                                         { return w.scale }
 func (w *Win) Visible() bool                                          { return w.visible && w.configured && !w.minimized }
 func (w *Win) Minimized() bool                                        { return w.minimized }
 func (w *Win) Maximized() bool                                        { return w.maximized }
@@ -263,6 +298,13 @@ func (w *Win) Close() {
 	case w.layer != nil:
 		c.Req(w.layer.ID, layerDestroy).Send()
 	}
+	if w.fs != nil {
+		c.Req(w.fs.ID, fracDestroy).Send()
+		c.Forget(w.fs)
+		c.Req(w.vp.ID, viewportDestroy).Send()
+		c.Forget(w.vp)
+		w.fs, w.vp = nil, nil
+	}
 	c.Req(w.surf.ID, surfaceDestroy).Send()
 	delete(w.d.surfaces, w.surf.ID)
 	w.releaseBuffers()
@@ -276,6 +318,10 @@ func (w *Win) Close() {
 		}
 		if w.d.seat.kbFocus == w {
 			w.d.seat.kbFocus = nil
+		}
+		if ti := w.d.seat.ti; ti != nil && ti.surf == w {
+			ti.surf = nil
+			ti.reset()
 		}
 	}
 	if w.H.OnState != nil {
@@ -434,7 +480,7 @@ func (w *Win) paint() {
 	if w.draw == nil {
 		return
 	}
-	pw, ph := w.lw*w.scale, w.lh*w.scale
+	pw, ph := w.px(w.lw), w.px(w.lh)
 	if pw <= 0 || ph <= 0 {
 		return
 	}
@@ -465,6 +511,7 @@ func (w *Win) paint() {
 		animating = true
 	}
 	w.ime = w.router.EditorState()
+	w.imeFrame()
 	if err := w.hl.Frame(&w.ops); err != nil {
 		w.d.logf("window frame: %v", err)
 		return
@@ -481,7 +528,18 @@ func (w *Win) paint() {
 	}
 	buf.busy = true
 	c, id := w.d.C, w.surf.ID
-	c.Req(id, surfaceSetBufferScale).I32(int32(w.scale)).Send()
+	if w.fracOn() {
+		// The buffer is the fraction; the viewport says how big the surface is.
+		c.Req(id, surfaceSetBufferScale).I32(1).Send()
+		c.Req(w.vp.ID, viewportSetDestination).I32(int32(w.lw)).I32(int32(w.lh)).Send()
+		w.vpSet = true
+	} else {
+		c.Req(id, surfaceSetBufferScale).I32(int32(w.scale)).Send()
+		if w.vpSet {
+			c.Req(w.vp.ID, viewportSetDestination).I32(-1).I32(-1).Send()
+			w.vpSet = false
+		}
+	}
 	c.Req(id, surfaceAttach).Obj(buf.obj).I32(0).I32(0).Send()
 	c.Req(id, surfaceDamageBuffer).I32(0).I32(0).I32(int32(pw)).I32(int32(ph)).Send()
 	cb := c.New("wl_callback")
@@ -621,8 +679,19 @@ func (w *Win) freeBuffer() *shmBuf {
 
 // MARK: Input, from the seat
 
+// pt is a point of the surface, in logical pixels, as a point of the buffer. With a fraction
+// the buffer is rounded to whole pixels, so the ratio is the buffer's to the surface's.
 func (w *Win) pt(x, y float64) f32.Point {
-	return f32.Pt(float32(x)*float32(w.scale), float32(y)*float32(w.scale))
+	kx, ky := w.ratio()
+	return f32.Pt(float32(x*kx), float32(y*ky))
+}
+
+// ratio is buffer pixels to surface pixels, across and down.
+func (w *Win) ratio() (kx, ky float64) {
+	if w.fracOn() && w.lw > 0 && w.lh > 0 {
+		return float64(w.px(w.lw)) / float64(w.lw), float64(w.px(w.lh)) / float64(w.lh)
+	}
+	return w.scale, w.scale
 }
 
 func (w *Win) pointerMove(kind pointer.Kind, x, y float64, b pointer.Buttons, m key.Modifiers) {
@@ -701,6 +770,9 @@ func (w *Win) keyEvent(name key.Name, mods key.Modifiers, st key.State, text str
 // after it. The selection is kept here between frames, so two characters typed before the
 // next frame go in order.
 func (w *Win) editorInsert(s string) {
+	if ti := w.d.seat.ti; ti != nil {
+		ti.viaIM = false
+	}
 	sel := w.ime.Selection.Range
 	start, end := min(sel.Start, sel.End), max(sel.Start, sel.End)
 	w.router.Queue(key.EditEvent{Range: key.Range{Start: start, End: end}, Text: s})

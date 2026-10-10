@@ -4,6 +4,7 @@ package wayland
 
 import (
 	"fmt"
+	"os"
 	"sync"
 	"unicode"
 	"unicode/utf8"
@@ -30,7 +31,38 @@ var (
 	xkbStateKeyGetUTF8      func(st uintptr, key uint32, buf *byte, size uintptr) int32
 	xkbStateModNameIsActive func(st uintptr, name string, typ int32) int32
 	xkbCtx                  uintptr
+
+	// Compose: dead keys and the Compose key. The table is the locale's, found once; 0 when
+	// the locale has none (the keys then type what the layout gives them).
+	xkbComposeTableNewFromLocale func(ctx uintptr, locale string, flags int32) uintptr
+	xkbComposeStateNew           func(table uintptr, flags int32) uintptr
+	xkbComposeStateUnref         func(st uintptr)
+	xkbComposeStateFeed          func(st uintptr, sym uint32) int32
+	xkbComposeStateReset         func(st uintptr)
+	xkbComposeStateGetStatus     func(st uintptr) int32
+	xkbComposeStateGetUTF8       func(st uintptr, buf *byte, size uintptr) int32
+	xkbCompose                   uintptr
 )
+
+// xkb_compose_status, and the result of xkb_compose_state_feed.
+const (
+	composeNothing   = 0
+	composeComposing = 1
+	composeComposed  = 2
+	composeCancelled = 3
+	feedAccepted     = 1
+)
+
+// composeLocale is the locale the compose table is looked up for: the first of LC_ALL,
+// LC_CTYPE and LANG that is set, as setlocale(LC_CTYPE, "") reads them.
+func composeLocale() string {
+	for _, n := range []string{"LC_ALL", "LC_CTYPE", "LANG"} {
+		if v := os.Getenv(n); v != "" {
+			return v
+		}
+	}
+	return "C"
+}
 
 func loadXkb() error {
 	xkbOnce.Do(func() {
@@ -57,7 +89,16 @@ func loadXkb() error {
 		purego.RegisterLibFunc(&xkbStateModNameIsActive, h, "xkb_state_mod_name_is_active")
 		if xkbCtx = xkbContextNew(0); xkbCtx == 0 {
 			xkbErr = fmt.Errorf("xkb_context_new failed")
+			return
 		}
+		purego.RegisterLibFunc(&xkbComposeTableNewFromLocale, h, "xkb_compose_table_new_from_locale")
+		purego.RegisterLibFunc(&xkbComposeStateNew, h, "xkb_compose_state_new")
+		purego.RegisterLibFunc(&xkbComposeStateUnref, h, "xkb_compose_state_unref")
+		purego.RegisterLibFunc(&xkbComposeStateFeed, h, "xkb_compose_state_feed")
+		purego.RegisterLibFunc(&xkbComposeStateReset, h, "xkb_compose_state_reset")
+		purego.RegisterLibFunc(&xkbComposeStateGetStatus, h, "xkb_compose_state_get_status")
+		purego.RegisterLibFunc(&xkbComposeStateGetUTF8, h, "xkb_compose_state_get_utf8")
+		xkbCompose = xkbComposeTableNewFromLocale(xkbCtx, composeLocale(), 0)
 	})
 	return xkbErr
 }
@@ -67,6 +108,8 @@ func loadXkb() error {
 // the key as printed: Shift+1 is still "1", as the Windows window names it).
 type keyLayout struct {
 	km, state, base uintptr
+	// compose follows the keys typed (0: no table for the locale).
+	compose uintptr
 }
 
 func newKeyLayout(text string) (*keyLayout, error) {
@@ -77,16 +120,30 @@ func newKeyLayout(text string) (*keyLayout, error) {
 	if km == 0 {
 		return nil, fmt.Errorf("the keyboard layout could not be read")
 	}
-	return &keyLayout{km: km, state: xkbStateNew(km), base: xkbStateNew(km)}, nil
+	l := &keyLayout{km: km, state: xkbStateNew(km), base: xkbStateNew(km)}
+	if xkbCompose != 0 {
+		l.compose = xkbComposeStateNew(xkbCompose, 0)
+	}
+	return l, nil
 }
 
 func (l *keyLayout) close() {
 	if l == nil {
 		return
 	}
+	if l.compose != 0 {
+		xkbComposeStateUnref(l.compose)
+	}
 	xkbStateUnref(l.state)
 	xkbStateUnref(l.base)
 	xkbKeymapUnref(l.km)
+}
+
+// resetCompose drops a half-typed sequence (the keyboard went to another window).
+func (l *keyLayout) resetCompose() {
+	if l != nil && l.compose != 0 {
+		xkbComposeStateReset(l.compose)
+	}
 }
 
 func (l *keyLayout) update(dep, lat, lock, group uint32) {
@@ -111,6 +168,28 @@ func (l *keyLayout) mods() key.Modifiers {
 		m |= key.ModSuper
 	}
 	return m
+}
+
+// typed is what pressing the key types, with dead keys and the Compose key taken in: the
+// key's own text, or the composed character when it ends a sequence. swallowed says the key
+// went into a sequence (it started or continued one, or ended one that has no character) and
+// types nothing, so it must not repeat.
+func (l *keyLayout) typed(code uint32) (text string, swallowed bool) {
+	if l.compose != 0 && xkbComposeStateFeed(l.compose, xkbStateKeyGetOneSym(l.state, code+8)) == feedAccepted {
+		switch xkbComposeStateGetStatus(l.compose) {
+		case composeComposing:
+			return "", true
+		case composeCancelled:
+			xkbComposeStateReset(l.compose)
+			return "", true
+		case composeComposed:
+			var buf [32]byte
+			n := xkbComposeStateGetUTF8(l.compose, &buf[0], uintptr(len(buf)))
+			xkbComposeStateReset(l.compose)
+			return string(buf[:max(0, min(int(n), len(buf)-1))]), true
+		}
+	}
+	return l.text(code), false
 }
 
 // text is what the key types with the modifiers held now.
