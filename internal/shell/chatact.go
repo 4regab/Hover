@@ -368,7 +368,7 @@ func (s *Shell) officeActMore(e ui.OfficeEvent, which int) {
 		if p.thread != nil {
 			p.thread.scroll = max(p.thread.scroll-e.D, 0)
 		}
-		s.paintThread()
+		s.paintThreadSoon()
 	case "dClick":
 		s.threadClick(e.X, e.Y)
 	case "dPointer":
@@ -376,7 +376,7 @@ func (s *Shell) officeActMore(e ui.OfficeEvent, which int) {
 	case "threadSize":
 		if p.threadW != e.X || p.threadH != e.Y {
 			p.threadW, p.threadH = e.X, e.Y
-			s.paintThread()
+			s.paintThreadSoon()
 		}
 	case "compose":
 		p.compose = e.N == 1

@@ -251,9 +251,20 @@ type Shimmer func(gx float32) color.NRGBA
 
 // Layout draws a layout with its top left at x, y (CSS px) scaled by sc, within clip.
 func (c *Canvas) Layout(l *text.Layout, x, y, sc float32, clip image.Rectangle, shim Shimmer) {
+	// What can show is inside the canvas and the clip. A line is drawn only if some of its
+	// height is: a tall block of code with a few lines in view walked, looked up and masked
+	// every glyph of all the rest (18 ms a frame for 3000 lines, wherever it was scrolled).
+	vis := clip.Intersect(c.Img.Bounds())
 	for i := range l.Lines {
 		ln := &l.Lines[i]
 		base := y + ln.Baseline
+		// A line's glyphs, underlines and code backgrounds sit within its ascent and descent
+		// (the code background adds 1 px, an underline 2); a whole line of slack either
+		// side keeps accents and swashes that hang past it.
+		slack := ln.Ascent + ln.Descent + ln.Height + 4
+		if int((base+slack)*sc) < vis.Min.Y || int((base-slack)*sc) > vis.Max.Y {
+			continue
+		}
 		for r := range ln.Runs {
 			run := &ln.Runs[r]
 			if run.Box {

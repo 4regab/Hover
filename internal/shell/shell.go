@@ -149,7 +149,7 @@ func New(hover *app.Hover, env Env, look core.Look) (*Shell, error) {
 			s.UpdateRest()
 			s.officeChanged()
 			if s.page.open >= 0 {
-				s.paintThread()
+				s.paintThreadSoon()
 			}
 		})
 	})

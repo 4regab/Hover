@@ -309,6 +309,11 @@ func (k *KiroSessions) goTurn(id int32, ti int, run RunTask, ct *Cancel, cp *Che
 			if e.Commands != nil {
 				x.s.Commands = slices.Clone(*e.Commands)
 			}
+			// The answer as it is said: the chat shows it from the first words, not when the
+			// turn ends.
+			if e.Text != nil {
+				x.s.Turns[ti].Said = *e.Text
+			}
 			if e.Step != nil {
 				t := &x.s.Turns[ti]
 				if i := slices.IndexFunc(t.Steps, func(s core.KiroStep) bool { return s.ID == e.Step.ID }); i >= 0 {
@@ -468,6 +473,7 @@ func (k *KiroSessions) goTurn(id int32, ti int, run RunTask, ct *Cancel, cp *Che
 		t := &x.s.Turns[ti]
 		res := r
 		t.Result = &res
+		t.Said = ""
 		t.EndedAt = &now
 		x.s.State = r.State
 		secs := now.SecsSince(x.s.Turns[ti].StartedAt)

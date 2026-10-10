@@ -62,6 +62,9 @@ type KiroTurn struct {
 	Images []string
 	Steps  []core.KiroStep
 	Result *KiroResult
+	// Said is the answer so far while the turn runs (the newest message, as the tool is
+	// saying it). The chat shows it as the answer until Result replaces it; it is not kept.
+	Said string
 	// Queued: sent while the turn before still ran; it starts when that one ends.
 	Queued    bool
 	StartedAt core.Stamp
@@ -229,6 +232,7 @@ func (s KiroSession) Light() KiroSession {
 				x.Input = nil
 			}
 		}
+		t.Said = ""
 		if t.Result != nil {
 			t.Result.Text = ""
 		}
