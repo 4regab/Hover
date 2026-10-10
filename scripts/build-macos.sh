@@ -5,10 +5,10 @@ ARCH="${HOVER_ARCH:-arm64}"
 case "$ARCH" in arm64) RID=osx-arm64; GOARCH=arm64;; x64) RID=osx-x64; ARCH=x86_64; GOARCH=amd64;; *) echo 'HOVER_ARCH must be arm64 or x64' >&2; exit 64;; esac
 DEST="${HOVER_APP_OUTPUT:-$ROOT/dist/macos-$RID/Hover.app}"
 [[ "$DEST" = /*/Hover.app ]] || { echo 'Output must be an absolute path ending in /Hover.app' >&2; exit 64; }
-# The app's version is the workspace's ([workspace.package] in Cargo.toml, which may have CRLF
-# line endings); the build number is major*10000 + minor*100 + patch (2.1.0 was 20100).
-VERSION="$(tr -d '\r' < "$ROOT/Cargo.toml" | sed -n '/^\[workspace\.package\]/,/^\[/{s/^version *= *"\(.*\)"/\1/p;}' | head -n 1)"
-[[ "$VERSION" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+) ]] || { echo "No version in Cargo.toml's [workspace.package]" >&2; exit 66; }
+# The app's version is the number in VERSION; the build number is major*10000 + minor*100 + patch
+# (2.1.0 was 20100).
+VERSION="$(tr -d '\r' < "$ROOT/VERSION" | head -n 1)"
+[[ "$VERSION" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+) ]] || { echo "No version in VERSION" >&2; exit 66; }
 BUILD=$((10#${BASH_REMATCH[1]} * 10000 + 10#${BASH_REMATCH[2]} * 100 + 10#${BASH_REMATCH[3]}))
 mkdir -p "$(dirname "$DEST")"
 # Spotlight leaves the build folder alone, so a build is never listed as a second Hover.
@@ -20,10 +20,10 @@ RES="$APP/Contents/Resources"
 mkdir -p "$APP/Contents/MacOS" "$RES/office" "$RES/backend"
 npm ci --prefix "$ROOT/web/office"
 node "$ROOT/web/office/build.mjs"
-# The backend is Go (go/cmd/hover-backend): the same JSON lines the Rust one spoke. No C
-# compiler; GOARCH names the Mac it is for, and Go fetches the version go/go.mod asks for.
+# The backend is Go (cmd/hover-backend). No C compiler; GOARCH names the Mac it is for, and Go
+# fetches the version go.mod asks for.
 BACKEND="$STAGE/hover-backend"
-(cd "$ROOT/go" && GOOS=darwin GOARCH="$GOARCH" CGO_ENABLED=0 go build -trimpath -ldflags '-s -w' -o "$BACKEND" ./cmd/hover-backend)
+(cd "$ROOT" && GOOS=darwin GOARCH="$GOARCH" CGO_ENABLED=0 go build -trimpath -ldflags '-s -w' -o "$BACKEND" ./cmd/hover-backend)
 [[ -x "$BACKEND" ]] || { echo "go did not make $BACKEND" >&2; exit 66; }
 cp "$BACKEND" "$RES/backend/hover-backend"
 # Hover.swift holds the top-level entry point, so it compiles as main.swift.

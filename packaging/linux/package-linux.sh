@@ -1,12 +1,12 @@
 #!/bin/sh
 # Linux packages of the Go build: a .deb (made with ar and tar, so no dpkg is needed to
 # build it) and a plain tarball. Run from the repo root after
-#   (cd go && go build -tags nowayland,nox11,novulkan -o ../hover-linux ./cmd/hover)
+#   go build -tags nowayland,nox11,novulkan -o hover-linux ./cmd/hover   (or: make)
 #   WGPU_NATIVE_LIB=path/to/libwgpu_native.so sh packaging/linux/package-linux-go.sh [version] [outdir]
 # The binary carries its fonts, icon and music; libwgpu_native.so (the office's renderer) goes
 # beside it in /usr/lib/hover. Wayland only: no X11 libraries.
 set -eu
-VERSION=${1:-$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1 | tr -d '\r')}
+VERSION=${1:-$(tr -d '\r' < VERSION | head -n 1)}
 OUT=${2:-dist}
 BIN=${HOVER_BIN:-hover-linux}
 LIB=${WGPU_NATIVE_LIB:?set WGPU_NATIVE_LIB to libwgpu_native.so}
@@ -19,7 +19,7 @@ trap 'rm -rf "$STAGE"' EXIT
 root="$STAGE/root"
 install -Dm755 "$BIN" "$root/usr/bin/hover"
 install -Dm755 "$LIB" "$root/usr/lib/hover/libwgpu_native.so"
-install -Dm644 app/assets/hover-mark.png "$root/usr/share/icons/hicolor/256x256/apps/hover.png"
+install -Dm644 internal/ui/assets/hover-mark.png "$root/usr/share/icons/hicolor/256x256/apps/hover.png"
 install -Dm644 LICENSE "$root/usr/share/doc/hover/copyright"
 install -Dm644 THIRD-PARTY-NOTICES.txt "$root/usr/share/doc/hover/THIRD-PARTY-NOTICES.txt"
 mkdir -p "$root/usr/share/applications"

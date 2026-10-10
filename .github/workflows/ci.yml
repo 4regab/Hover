@@ -1,18 +1,19 @@
 name: CI
 
-# The native (Rust) Hover on GitHub's own runners. A push to main or rust-port/**, or a
-# pull request, runs the tests on Windows and Linux, and builds the Mac app on macOS (a
-# compile check). A release:
-# a v* tag (matching Cargo.toml), or a push to
-# main whose Cargo.toml version has no tag yet. The same jobs then build the
-# installers from what they just tested, and `release` tags the commit and publishes
+# Hover on GitHub's own runners. A push to main or go-port, or a pull request, checks the Go
+# code for Windows, Linux and macOS; builds the Windows app and its installer and drives them
+# (it starts the app, then installs over the 5.x release and uninstalls); builds the Linux
+# packages; and builds the Mac app and runs its backend through the stand-in tools. No Go tests
+# run here. A release: a v* tag (matching VERSION), or a push to main whose VERSION has no tag
+# yet. The same jobs then make the installers, and `release` tags the commit and publishes
 # them together as the Latest release, with the Mac app in disk images (signed ad hoc).
 # A version whose CHANGELOG.md heading ends in "(nightly)" is published as a pre-release
 # instead, and is not made the Latest.
-# No secrets and no agent accounts: agent runs use the repo's fake-agent.
+# No secrets and no agent accounts. By hand (workflow_dispatch), `pictures` also draws every
+# view on the Windows runner.
 on:
   push:
-    branches: ['main', 'rust-port/**']
+    branches: ['main', 'go-port']
     # Docs-only pushes don't rebuild. (Path filters don't apply to tags.)
     paths-ignore: ['**.md', 'docs/**', 'assets/readme/**']
     tags: ['v*']
@@ -26,10 +27,30 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
-env:
-  CARGO_TERM_COLOR: never
-
 jobs:
+  check:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      # The Linux app draws through Gio's EGL (a C compiler and the EGL headers); its window
+      # is Wayland, spoken directly, so Gio's own Wayland, X11 and Vulkan are left out.
+      - run: sudo apt-get update && sudo apt-get install -y libegl1-mesa-dev libgles2-mesa-dev
+      # The number in VERSION is the one the release uses; version.go's copy is for `go run`.
+      - name: VERSION matches version.go
+        run: |
+          v=$(tr -d '\r' < VERSION | head -n 1)
+          d=$(sed -n 's/^var Version = "\(.*\)"/\1/p' internal/shell/version.go)
+          [ "$v" = "$d" ] || { echo "::error::VERSION is $v but internal/shell/version.go says $d"; exit 1; }
+      - run: test -z "$(gofmt -l cmd internal third_party)" || { gofmt -l cmd internal third_party; exit 1; }
+      - run: go vet -tags nowayland,nox11,novulkan ./cmd/... ./internal/...
+      - run: GOOS=windows go vet ./cmd/... ./internal/...
+      - run: GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 go vet ./cmd/... ./internal/...
+      # The Mac backend compiles for both Macs.
+      - run: GOOS=darwin GOARCH=arm64 go build -o /dev/null ./cmd/hover-backend && GOOS=darwin GOARCH=amd64 go build -o /dev/null ./cmd/hover-backend
+
   windows:
     runs-on: windows-2022
     outputs:
@@ -40,82 +61,38 @@ jobs:
         shell: pwsh
     steps:
       - uses: actions/checkout@v4
-      # A release: a v* tag, or a push to main whose Cargo.toml version
-      # has no tag yet (so raising the version is what releases it).
+      # A release: a v* tag, or a push to main whose VERSION has no tag yet (so raising the
+      # version is what releases it).
       - name: Release?
         id: rel
         run: |
-          $crate = (Select-String -Path Cargo.toml -Pattern '^version = "(.+)"').Matches[0].Groups[1].Value
+          $ver = (Get-Content VERSION -TotalCount 1).Trim()
           $release = $false
           if ($env:GITHUB_REF -like 'refs/tags/v*') {
-            if ($env:GITHUB_REF_NAME -ne "v$crate") { throw "The tag is $env:GITHUB_REF_NAME but Cargo.toml says $crate." }
+            if ($env:GITHUB_REF_NAME -ne "v$ver") { throw "The tag is $env:GITHUB_REF_NAME but VERSION says $ver." }
             $release = $true
           } elseif ($env:GITHUB_EVENT_NAME -eq 'push' -and $env:GITHUB_REF_NAME -eq 'main') {
-            $tagged = git ls-remote --tags origin "refs/tags/v$crate"
+            $tagged = git ls-remote --tags origin "refs/tags/v$ver"
             if ($LASTEXITCODE -ne 0) { throw "couldn't list the tags" }
             $release = -not $tagged
           }
-          Write-Host "version $crate, release: $release"
+          Write-Host "version $ver, release: $release"
           Add-Content -Path $env:GITHUB_ENV -Value "RELEASE=$($release.ToString().ToLower())"
-          Add-Content -Path $env:GITHUB_ENV -Value "RELEASE_VERSION=$crate"
+          Add-Content -Path $env:GITHUB_ENV -Value "RELEASE_VERSION=$ver"
           Add-Content -Path $env:GITHUB_OUTPUT -Value "release=$($release.ToString().ToLower())"
-          Add-Content -Path $env:GITHUB_OUTPUT -Value "version=$crate"
-      # Rust on Windows links with MSVC. Its build tools go in only if the image lacks them.
-      - name: Visual Studio Build Tools
-        run: |
-          $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
-          if ((Test-Path $vswhere) -and (& $vswhere -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath)) {
-            Write-Host 'MSVC build tools already installed'
-            exit 0
-          }
-          $setup = Join-Path $env:RUNNER_TEMP 'vs_buildtools.exe'
-          Invoke-WebRequest 'https://aka.ms/vs/17/release/vs_buildtools.exe' -OutFile $setup
-          $process = Start-Process $setup -ArgumentList '--quiet', '--wait', '--norestart', '--nocache',
-            '--add', 'Microsoft.VisualStudio.Workload.VCTools', '--includeRecommended' -Wait -PassThru
-          # 3010: installed, a restart is suggested. Not needed for building.
-          if ($process.ExitCode -notin 0, 3010) { throw "Build tools install failed: $($process.ExitCode)" }
-      # rust-toolchain.toml picks the version. The image's own rustup isn't let update
-      # itself: that broke the rustup call after it.
-      - name: Toolchain
-        run: |
-          $cargoBin = Join-Path $env:USERPROFILE '.cargo\bin'
-          if (-not (Test-Path (Join-Path $cargoBin 'rustup.exe'))) {
-            $init = Join-Path $env:RUNNER_TEMP 'rustup-init.exe'
-            Invoke-WebRequest 'https://static.rust-lang.org/rustup/dist/x86_64-pc-windows-msvc/rustup-init.exe' -OutFile $init
-            & $init -y --profile minimal --default-toolchain none
-            if ($LASTEXITCODE -ne 0) { throw 'rustup install failed' }
-          }
-          Add-Content -Path $env:GITHUB_PATH -Value $cargoBin
-          & (Join-Path $cargoBin 'rustup.exe') set auto-self-update disable
-          # cargo installs rust-toolchain.toml's version the first time it runs.
-          & (Join-Path $cargoBin 'cargo.exe') --version
-          if ($LASTEXITCODE -ne 0) { throw 'rustup toolchain install failed' }
-      # The chat's tests lay out text in the first faces its font lists name: Inter (the
-      # repo's) and Cascadia Code (OFL, Microsoft's). The runner may lack them.
-      - name: Fonts
-        run: |
-          $zip = Join-Path $env:RUNNER_TEMP 'cascadia.zip'
-          Invoke-WebRequest 'https://github.com/microsoft/cascadia-code/releases/download/v2407.24/CascadiaCode-2407.24.zip' -OutFile $zip
-          Expand-Archive $zip (Join-Path $env:RUNNER_TEMP 'cascadia') -Force
-          $files = @(Get-ChildItem app\assets\Inter-*.ttf) + @(Get-ChildItem (Join-Path $env:RUNNER_TEMP 'cascadia\ttf\static\CascadiaCode-*.ttf'))
-          if ($files.Count -lt 5) { throw "Expected the Inter and Cascadia Code files, found $($files.Count)" }
-          $key = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Fonts'
-          foreach ($f in $files) {
-            Copy-Item $f.FullName (Join-Path $env:windir 'Fonts') -Force
-            New-ItemProperty -Path $key -Name "$($f.BaseName) (TrueType)" -Value $f.Name -PropertyType String -Force | Out-Null
-          }
-      # Saved only from main (a pull request restores main's), so PRs don't push it out
-      # of the repo's cache space; without it the job builds ~350 crates from scratch.
-      - uses: Swatinem/rust-cache@v2
+          Add-Content -Path $env:GITHUB_OUTPUT -Value "version=$ver"
+      - uses: actions/setup-go@v5
         with:
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-      # The ci profile (Cargo.toml): release's optimisation, built about a third faster.
-      - name: Test
-        run: |
-          cargo test --profile ci --workspace --no-fail-fast
-          if ($LASTEXITCODE -ne 0) { throw 'cargo test failed' }
-      - name: Build installer
-        if: env.RELEASE == 'true'
+          go-version-file: go.mod
+      # hoverai.exe and wgpu_native.dll in publish\, as the installer takes them. No C compiler.
+      - name: Build
+        run: ./build.ps1 publish -Version $env:RELEASE_VERSION
+      - name: Screen 1920 x 1080
+        run: ./tools/set-resolution.ps1
+      - name: Drive the app
+        timeout-minutes: 5
+        run: ./tools/app-smoke.ps1 -Exe publish\hoverai.exe -Out out\app
+      - name: Inno Setup
         run: |
           if (-not (Test-Path "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe")) {
             $setup = Join-Path $env:RUNNER_TEMP 'innosetup-6.7.3.exe'
@@ -123,9 +100,35 @@ jobs:
             $process = Start-Process $setup -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/SP-', '/ALLUSERS' -Wait -PassThru
             if ($process.ExitCode -ne 0) { throw "Inno Setup install failed: $($process.ExitCode)" }
           }
-          .\build.ps1 installer -Version $env:RELEASE_VERSION
+      - name: Build the setup
+        run: ./build.ps1 installer -Version $env:RELEASE_VERSION
+      # The latest 5.x release the Rust app shipped: what an update installs over.
+      - name: The 5.x setup
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          New-Item -ItemType Directory -Force old | Out-Null
+          gh release download v5.0.2 --repo ${{ github.repository }} --pattern 'Hover-Setup-5.0.2.exe' --dir old
+          if ($LASTEXITCODE -ne 0) { throw 'no 5.0.2 setup to install over' }
+      - name: Install over 5.x, check, uninstall
+        timeout-minutes: 10
+        run: ./tools/installer-check.ps1 -Setup "dist\Hover-Setup-$env:RELEASE_VERSION.exe" -Old old\Hover-Setup-5.0.2.exe -Built publish\hoverai.exe -Out out\installer
+      - name: Summary
+        if: always()
+        run: |
+          foreach ($pair in @(@('out\app\report.json', 'Go app on Windows'), @('out\installer\report.json', 'Installer on Windows'))) {
+            if (Test-Path $pair[0]) {
+              $r = Get-Content $pair[0] -Raw | ConvertFrom-Json
+              @('', "### $($pair[1])", '') + ($r.PSObject.Properties | Where-Object Name -ne 'log' | ForEach-Object { "    $($_.Name) = $($_.Value)" }) | Out-File -Append -Encoding utf8 $env:GITHUB_STEP_SUMMARY
+            }
+          }
       - uses: actions/upload-artifact@v4
-        if: env.RELEASE == 'true'
+        if: always()
+        with:
+          name: windows-reports
+          path: out/
+          if-no-files-found: warn
+      - uses: actions/upload-artifact@v4
         with:
           name: installer-windows
           path: dist/Hover-Setup-${{ env.RELEASE_VERSION }}.exe
@@ -145,51 +148,26 @@ jobs:
       - name: Release?
         id: rel
         run: |
-          # Cargo.toml has CRLF line endings: the CR isn't part of the version.
-          crate=$(tr -d '\r' < Cargo.toml | sed -n 's/^version = "\(.*\)"/\1/p' | head -n1)
+          ver=$(tr -d '\r' < VERSION | head -n 1)
           release=false
           if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
-            [[ "$GITHUB_REF_NAME" == "v$crate" ]] || { echo "The tag is $GITHUB_REF_NAME but Cargo.toml says $crate." >&2; exit 1; }
+            [[ "$GITHUB_REF_NAME" == "v$ver" ]] || { echo "The tag is $GITHUB_REF_NAME but VERSION says $ver." >&2; exit 1; }
             release=true
           elif [[ "$GITHUB_EVENT_NAME" == push && "$GITHUB_REF_NAME" == main ]]; then
-            [[ -z "$(git ls-remote --tags origin "refs/tags/v$crate")" ]] && release=true
+            [[ -z "$(git ls-remote --tags origin "refs/tags/v$ver")" ]] && release=true
           fi
-          echo "version $crate, release: $release"
-          { echo "RELEASE=$release"; echo "RELEASE_VERSION=$crate"; } >> "$GITHUB_ENV"
-          { echo "release=$release"; echo "version=$crate"; } >> "$GITHUB_OUTPUT"
-      - name: System libraries
-        run: |
-          SUDO=; [ "$(id -u)" -eq 0 ] || SUDO=sudo
-          $SUDO apt-get update
-          # Build: fontconfig, FreeType, ALSA, xkbcommon. Tests: DejaVu (the chat goldens),
-          # dbus, GNOME Keyring and Python's GLib (the D-Bus tests skip without them).
-          $SUDO env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-            build-essential pkg-config libfontconfig1-dev libfreetype-dev libasound2-dev \
-            libxkbcommon-dev libxkbcommon-x11-dev fonts-dejavu-core \
-            dbus gnome-keyring python3-gi mesa-vulkan-drivers
-      - name: Toolchain
-        run: |
-          if ! command -v rustup >/dev/null; then
-            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain none
-            echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
-            export PATH="$HOME/.cargo/bin:$PATH"
-          fi
-          # cargo installs rust-toolchain.toml's version the first time it runs.
-          cargo --version
-      - uses: Swatinem/rust-cache@v2
+          echo "version $ver, release: $release"
+          { echo "RELEASE=$release"; echo "RELEASE_VERSION=$ver"; } >> "$GITHUB_ENV"
+          echo "release=$release" >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-go@v5
         with:
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-      - name: Test
-        env:
-          XDG_RUNTIME_DIR: ${{ runner.temp }}/xdg
-        run: |
-          mkdir -p -m 700 "$XDG_RUNTIME_DIR"
-          cargo test --profile ci --workspace --no-fail-fast
+          go-version-file: go.mod
+      - run: sudo apt-get update && sudo apt-get install -y libegl1-mesa-dev libgles2-mesa-dev
+      # The packages are made and kept on every run (compiled, not run: no Wayland desktop on
+      # the runner).
       - name: Build packages
-        if: env.RELEASE == 'true'
         run: make package VERSION="$RELEASE_VERSION"
       - uses: actions/upload-artifact@v4
-        if: env.RELEASE == 'true'
         with:
           name: installer-linux
           path: |
@@ -198,11 +176,11 @@ jobs:
           if-no-files-found: error
 
   macos:
-    # Apple Silicon runner. No tests (the runner has no display, Keychain or permission
-    # prompts to run Hover on). The Mac app is the Swift UI in macos/ with the web office
-    # (web/office), on the Go backend (go/cmd/hover-backend). Every run checks the Rust
-    # crates and makes Hover.app (signed ad hoc); a release also makes it for Intel and
-    # puts both in disk images on the release.
+    # Apple Silicon runner. The runner has no display, Keychain or permission prompts to run
+    # Hover on, so the Mac app is checked by running its packaged backend against stand-in
+    # tools (tests/macos/backend-smoke.py). The Mac app is the Swift UI in macos/ with the web
+    # office (web/office), on the Go backend (cmd/hover-backend). Every run makes Hover.app
+    # (signed ad hoc); a release also makes it for Intel and puts both in disk images.
     runs-on: macos-15
     timeout-minutes: 60
     outputs:
@@ -216,16 +194,16 @@ jobs:
       - name: Release?
         id: rel
         run: |
-          crate=$(tr -d '\r' < Cargo.toml | sed -n 's/^version = "\(.*\)"/\1/p' | head -n1)
+          ver=$(tr -d '\r' < VERSION | head -n 1)
           release=false
           if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
-            [[ "$GITHUB_REF_NAME" == "v$crate" ]] || { echo "The tag is $GITHUB_REF_NAME but Cargo.toml says $crate." >&2; exit 1; }
+            [[ "$GITHUB_REF_NAME" == "v$ver" ]] || { echo "The tag is $GITHUB_REF_NAME but VERSION says $ver." >&2; exit 1; }
             release=true
           elif [[ "$GITHUB_EVENT_NAME" == push && "$GITHUB_REF_NAME" == main ]]; then
-            [[ -z "$(git ls-remote --tags origin "refs/tags/v$crate")" ]] && release=true
+            [[ -z "$(git ls-remote --tags origin "refs/tags/v$ver")" ]] && release=true
           fi
-          echo "version $crate, release: $release"
-          { echo "RELEASE=$release"; echo "RELEASE_VERSION=$crate"; } >> "$GITHUB_ENV"
+          echo "version $ver, release: $release"
+          { echo "RELEASE=$release"; echo "RELEASE_VERSION=$ver"; } >> "$GITHUB_ENV"
           echo "release=$release" >> "$GITHUB_OUTPUT"
       # Voice uses macOS 26's SpeechAnalyzer, which needs the macOS 26 SDK: the newest
       # Xcode 26 on the image (its default is older). Without one the build goes on, and
@@ -235,40 +213,27 @@ jobs:
           x=$(ls -d /Applications/Xcode_26*.app 2>/dev/null | sort -V | tail -n 1)
           if [ -n "$x" ]; then sudo xcode-select -s "$x/Contents/Developer"; fi
           xcodebuild -version
-      - name: Toolchain
-        run: |
-          if ! command -v rustup >/dev/null; then
-            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain none
-            echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
-            export PATH="$HOME/.cargo/bin:$PATH"
-          fi
-          # cargo installs rust-toolchain.toml's version the first time it runs.
-          cargo --version
-      - uses: Swatinem/rust-cache@v2
-        with:
-          save-if: ${{ github.ref == 'refs/heads/main' }}
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
           cache: npm
           cache-dependency-path: web/office/package-lock.json
-      # Every crate that targets macOS: not the Slint app (`hover`, Windows and Linux
-      # only) nor notch-proto (a Windows prototype) and hover-measure (its Windows and
-      # Linux scenarios). --locked: a change that needs a new Cargo.lock fails here
-      # instead of being made.
-      - name: Check
-        run: cargo check --workspace --exclude hover --exclude notch-proto --exclude hover-measure --all-targets --locked
-      # The backend is Go, built by build-macos.sh; go/go.mod names the version.
       - uses: actions/setup-go@v5
         with:
-          go-version-file: go/go.mod
-          cache-dependency-path: go/go.sum
+          go-version-file: go.mod
       # npm ci and the office page, the Swift app, the Go backend, the guardian,
-      # Info.plist (the version from Cargo.toml) and an ad hoc signature.
+      # Info.plist (the version from VERSION) and an ad hoc signature.
       - name: Hover.app
         run: |
           ./scripts/build-macos.sh
+          file dist/macos-osx-arm64/Hover.app/Contents/Resources/backend/hover-backend
+          codesign --verify --deep --strict dist/macos-osx-arm64/Hover.app
           ditto -c -k --keepParent dist/macos-osx-arm64/Hover.app dist/Hover-osx-arm64-development.zip
+      - name: The packaged backend
+        run: |
+          S=$(mktemp -d /private/tmp/hover-sandbox.XXXXXX); mkdir -p "$S/fake-bin" "$S/tmp"
+          export HOVER_SANDBOX_ROOT="$S" HOVER_SANDBOXED=1 TMPDIR="$S/tmp/" PATH="$S/fake-bin:/usr/bin:/bin"
+          /usr/bin/python3 tests/macos/backend-smoke.py "$GITHUB_WORKSPACE/dist/macos-osx-arm64/Hover.app" "$S"
       - uses: actions/upload-artifact@v4
         with:
           name: Hover-macOS-development
@@ -306,10 +271,42 @@ jobs:
             dist/Hover-${{ env.RELEASE_VERSION }}-macos-arm64.dmg
             dist/Hover-${{ env.RELEASE_VERSION }}-macos-x64.dmg
           if-no-files-found: error
+
+  # Every view drawn on the Windows runner (WARP, no GPU), by hand only. Slow (about ten
+  # minutes), and not a check: the pictures are for looking at.
+  pictures:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: windows-2022
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      # Only for wgpu_native.dll, which the office draws with.
+      - name: Build
+        run: ./build.ps1 publish
+      - name: Draw them
+        run: |
+          $env:CGO_ENABLED = '0'
+          $env:HOVER_SHOTS_OFFICE = '1'
+          $env:WGPU_NATIVE_PATH = (Resolve-Path publish\wgpu_native.dll).Path
+          go run ./cmd/ui-shots out\all
+          if ($LASTEXITCODE -ne 0) { throw 'ui-shots failed' }
+          Write-Host "$((Get-ChildItem out\all -Filter *.png).Count) pictures"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pictures-windows
+          path: out/all/
+          if-no-files-found: error
+
   release:
     # One job publishes, so the builds never race to create the release.
     if: needs.windows.outputs.release == 'true' && needs.linux.outputs.release == 'true' && needs.macos.outputs.release == 'true'
-    needs: [windows, linux, macos]
+    needs: [check, windows, linux, macos]
     runs-on: ubuntu-22.04
     permissions:
       contents: write
@@ -350,8 +347,8 @@ jobs:
           tag_name: v${{ needs.windows.outputs.version }}
           target_commitish: ${{ github.sha }}
           name: Hover v${{ needs.windows.outputs.version }}${{ steps.notes.outputs.nightly == 'true' && ' (nightly)' || '' }}
-          # The Rust port is main now, so each release is the Latest one, unless it is a nightly:
-          # that is a pre-release and leaves the Latest where it was.
+          # Each release is the Latest one, unless it is a nightly: that is a pre-release and
+          # leaves the Latest where it was.
           prerelease: ${{ steps.notes.outputs.nightly == 'true' }}
           make_latest: ${{ steps.notes.outputs.nightly == 'true' && 'false' || 'true' }}
           files: dist/*

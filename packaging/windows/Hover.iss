@@ -4,7 +4,7 @@
 ; hoverai.exe, not 2.x's Hover.exe: Discord's game list matches any path ending in
 ; hover/hover.exe (Hover: Revolt of Gamers) and showed Hover as that game.
 ;   .\build.ps1 installer   (iscc /DMyAppVersion=<version> /DExeDir=<publish> /O<dir> packaging\windows\Hover.iss)
-; build.ps1 installer passes the version from Cargo.toml. Needs Inno Setup 6 or 7.
+; build.ps1 installer passes the version from VERSION. Needs Inno Setup 6 or 7.
 
 #ifndef MyAppVersion
   #define MyAppVersion "3.0.0"
@@ -31,7 +31,7 @@ DisableProgramGroupPage=yes
 DisableDirPage=yes
 PrivilegesRequired=lowest
 OutputBaseFilename=Hover-Setup-{#MyAppVersion}
-SetupIconFile=..\..\app\assets\hover.ico
+SetupIconFile=..\..\internal\platform\win\hover.ico
 UninstallDisplayIcon={app}\{#MyAppExe}
 Compression=lzma2
 SolidCompression=yes
