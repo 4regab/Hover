@@ -200,9 +200,9 @@ jobs:
   macos:
     # Apple Silicon runner. No tests (the runner has no display, Keychain or permission
     # prompts to run Hover on). The Mac app is the Swift UI in macos/ with the web office
-    # (web/office), on the Rust backend (crates/hover-backend) that Windows and Linux
-    # share. Every run checks the backend crates and makes Hover.app (signed ad hoc); a
-    # release also makes it for Intel and puts both in disk images on the release.
+    # (web/office), on the Go backend (go/cmd/hover-backend). Every run checks the Rust
+    # crates and makes Hover.app (signed ad hoc); a release also makes it for Intel and
+    # puts both in disk images on the release.
     runs-on: macos-15
     timeout-minutes: 60
     outputs:
@@ -258,14 +258,14 @@ jobs:
       # instead of being made.
       - name: Check
         run: cargo check --workspace --exclude hover --exclude notch-proto --exclude hover-measure --all-targets --locked
-      # The target is named, as build-macos.sh builds it, so the app's build below reuses this.
-      - name: Backend
-        run: cargo build --release -p hover-backend --target aarch64-apple-darwin --locked
-      # npm ci and the office page, the Swift app, the backend (above), the guardian,
+      # The backend is Go, built by build-macos.sh; go/go.mod names the version.
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go/go.mod
+          cache-dependency-path: go/go.sum
+      # npm ci and the office page, the Swift app, the Go backend, the guardian,
       # Info.plist (the version from Cargo.toml) and an ad hoc signature.
       - name: Hover.app
-        env:
-          HOVER_CARGO_ARGS: --locked
         run: |
           ./scripts/build-macos.sh
           ditto -c -k --keepParent dist/macos-osx-arm64/Hover.app dist/Hover-osx-arm64-development.zip
@@ -275,13 +275,12 @@ jobs:
           path: dist/Hover-osx-arm64-development.zip
           retention-days: 7
           if-no-files-found: error
-      # A release (or a run started by hand, to try the packaging) builds Intel too: Rust and
+      # A release (or a run started by hand, to try the packaging) builds Intel too: Go and
       # Swift cross-compile on the Apple Silicon runner.
       - name: Hover.app (Intel)
         if: env.RELEASE == 'true' || github.event_name == 'workflow_dispatch'
         env:
           HOVER_ARCH: x64
-          HOVER_CARGO_ARGS: --locked
         run: ./scripts/build-macos.sh
       # A disk image per arch: Hover.app beside a link to /Applications, to drag across.
       # hdiutil on the runners is sometimes "busy" for a moment, so it is tried again.

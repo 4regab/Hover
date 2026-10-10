@@ -20,7 +20,7 @@ rsync -a --exclude node_modules --exclude /target --exclude /dist --exclude /pub
 # cargo builds in the copy (so test binaries find their fixtures there), with the user's own
 # toolchain and registry cache; only the test binaries run under the sandbox below.
 export HOVER_SANDBOX_ROOT="$SANDBOX" HOVER_DATA_DIR="$SANDBOX/data" TMPDIR="$SHORT_TMP" CARGO_TARGET_DIR="$SANDBOX/target"
-export npm_config_cache="$SANDBOX/npm-cache" CFFIXED_USER_HOME="$SANDBOX/cli"
+export npm_config_cache="$SANDBOX/npm-cache" CFFIXED_USER_HOME="$SANDBOX/cli" GOCACHE="$SANDBOX/go-cache"
 # Hover itself must not wrap its agents in a second sandbox inside this one.
 export HOVER_SANDBOXED=1
 # Restore/build may download packages, but do not execute tests or launch agents. The

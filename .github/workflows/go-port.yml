@@ -7,7 +7,7 @@ name: Go port
 on:
   push:
     branches: ['go-port']
-    paths: ['go/**', '.github/workflows/go-port.yml', 'packaging/windows/**', 'crates/hover-core/**', 'crates/hover-notch/**', 'crates/hover-office/**', 'tools/notch-proto/**']
+    paths: ['go/**', '.github/workflows/go-port.yml', 'packaging/windows/**', 'crates/hover-core/**', 'crates/hover-notch/**', 'crates/hover-office/**', 'tools/notch-proto/**', 'scripts/build-macos.sh', 'macos/**', 'tests/macos/**', 'web/office/**']
   workflow_dispatch:
 
 permissions:
@@ -590,3 +590,45 @@ jobs:
           cmp "$D/x-rust/settings.json" "$D/x-go/settings.json" || fail "settings.json: Rust and Go wrote different bytes"
           say "settings.json: the same bytes"
           { echo; echo '### The Mac: data folder and Keychain'; echo; sed 's/^/    /' "$OUT"; } >> "$GITHUB_STEP_SUMMARY"
+
+  # The Mac app with the Go backend in it (scripts/build-macos.sh, as the release builds it),
+  # then the packaged backend driven the way the app drives it, through hover-guardian, by
+  # tests/macos/backend-smoke.py: a stand-in tool, approvals, replies, stop, restart, the
+  # sealed history, and the tool's children ending when the app goes away. The app's own
+  # smoke needs a screen and is not run (ci.yml runs none either).
+  app-macos:
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Xcode
+        run: |
+          x=$(ls -d /Applications/Xcode_26*.app 2>/dev/null | sort -V | tail -n 1)
+          if [ -n "$x" ]; then sudo xcode-select -s "$x/Contents/Developer"; fi
+          xcodebuild -version
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: web/office/package-lock.json
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go/go.mod
+          cache-dependency-path: go/go.sum
+      - name: Hover.app
+        run: |
+          ./scripts/build-macos.sh
+          file dist/macos-osx-arm64/Hover.app/Contents/Resources/backend/hover-backend
+          codesign --verify --deep --strict dist/macos-osx-arm64/Hover.app
+          ditto -c -k --keepParent dist/macos-osx-arm64/Hover.app dist/Hover-osx-arm64-go.zip
+      - name: The packaged backend
+        run: |
+          S=$(mktemp -d /private/tmp/hover-sandbox.XXXXXX); mkdir -p "$S/fake-bin" "$S/tmp"
+          export HOVER_SANDBOX_ROOT="$S" HOVER_SANDBOXED=1 TMPDIR="$S/tmp/" PATH="$S/fake-bin:/usr/bin:/bin"
+          /usr/bin/python3 tests/macos/backend-smoke.py "$GITHUB_WORKSPACE/dist/macos-osx-arm64/Hover.app" "$S"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Hover-macOS-go
+          path: dist/Hover-osx-arm64-go.zip
+          retention-days: 7
+          if-no-files-found: error
