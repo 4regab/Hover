@@ -107,10 +107,6 @@ func models(settings *core.Settings, t core.AgentTool) core.JSON {
 		for _, c := range o.Choices {
 			list = append(list, m{c.Value, c.Name, c.Levels})
 		}
-	} else if t == core.Kiro {
-		for _, k := range agents.KiroModels {
-			list = append(list, m{k[0], k[1], nil})
-		}
 	}
 	if len(list) == 0 || list[0].id != "auto" {
 		list = append([]m{{"", "Default", nil}}, list...)

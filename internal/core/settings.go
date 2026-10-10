@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -746,6 +747,14 @@ func (s *Settings) AgentOffers(t AgentTool) []AcpOption {
 
 // SetAgentOffers: every turn reports them; only a change is written.
 func (s *Settings) SetAgentOffers(t AgentTool, offers []AcpOption) {
+	// A tool can answer before it knows its models (Kiro lists them a moment after it makes
+	// a session). Such a list keeps the models already known instead of wiping them. An
+	// empty list is a reset, and is taken as it is.
+	if len(offers) > 0 && !hasModelOffer(offers) {
+		if i := slices.IndexFunc(s.AgentOffers(t), isModelOffer); i >= 0 {
+			offers = append(slices.Clone(offers), s.AgentOffers(t)[i])
+		}
+	}
 	for _, kv := range s.Model().AgentOffers {
 		if kv.Key == t.ID() && kv.Val != nil && sameOffers(kv.Val, offers) {
 			return
@@ -765,6 +774,13 @@ func (s *Settings) SetAgentOffers(t AgentTool, offers []AcpOption) {
 		m.AgentOffers = append(m.AgentOffers, KV[[]AcpOption]{t.ID(), list})
 	})
 }
+
+// isModelOffer: the option that lists the tool's models (by category, else by its id).
+func isModelOffer(o AcpOption) bool {
+	return o.Category != nil && *o.Category == "model" || o.Category == nil && o.ID == "model"
+}
+
+func hasModelOffer(offers []AcpOption) bool { return slices.ContainsFunc(offers, isModelOffer) }
 
 func sameOffers(a, b []AcpOption) bool {
 	if len(a) != len(b) {

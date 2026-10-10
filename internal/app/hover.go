@@ -74,6 +74,13 @@ func Start() *Hover {
 	me := With(settings, history, hosts, nil, nil)
 	agents.DiscordStart(me.Settings, me.Sessions)
 	removeOldService()
+	// What each tool offers (its models) is read now, one tool after the other, so the
+	// settings pages and menus have it before any task has run.
+	go func() {
+		for _, h := range hosts {
+			h.Discover(false)
+		}
+	}()
 	// Results of helpers that finished while no lead was there to hear them.
 	go me.Orch.DeliverPending()
 	return me
@@ -107,6 +114,17 @@ func With(settings *core.Settings, history *core.AgentHistory, hosts []agents.Ru
 	if c := agents.NewCheckpoints(filepath.Join(core.Support(), "checkpoints")); c != nil {
 		me.Sessions.SetCheckpoints(c)
 	}
+	// Kiro's auto compact and continuing when the model is busy are read from the live
+	// settings at each prompt, not from the file they are written to after a pause (which a
+	// reply could read half-written, or before the click had settled).
+	me.Sessions.SetAutoCompact(func() *uint8 {
+		if settings.KiroAutoCompact() {
+			at := settings.KiroCompactAt()
+			return &at
+		}
+		return nil
+	})
+	me.Sessions.SetRetryWhenBusy(settings.KiroRetryBusy)
 	for _, h := range hosts {
 		// A question goes to the session whose conversation it is, where the notch and the
 		// office show it. One nobody holds is turned down.

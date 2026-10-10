@@ -575,6 +575,11 @@ func (b *Backend) check() {
 		wg.Wait()
 		link.flags.checking.Store(false)
 		link.push()
+		// What each tool offers (its models) is read once it is known to be ready, and the
+		// state goes out again when a tool's list arrives (OnOptionsSeen pushes).
+		for _, r := range b.runtimes {
+			r.Discover(false)
+		}
 	}()
 }
 

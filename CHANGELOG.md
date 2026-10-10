@@ -5,6 +5,28 @@ What changed in each Hover release. Versions follow [Semantic Versioning](https:
 
 ## [Unreleased]
 
+### Fixed
+
+- Kiro's model list was a built-in list of 14 until a task had run, so models such as Sonnet 5.5,
+  Opus 4.7, Opus 4.6 and MiniMax M2.1 were missing, and a lost start-up race could keep it that way.
+  Hover now reads the models from Kiro itself when it starts and on "Check again" (a throwaway
+  session in an empty folder, deleted again), for Kiro, Codex and Cursor. The credit rate in the
+  model menu comes from Kiro too: GPT-5.6 Luna was shown as 1.1x, it is 0.6x.
+- A model picked for a Kiro task was silently ignored when Kiro answered `session/new` before it
+  knew its models: the task ran on Auto. Hover now waits (up to 5 s) for the list. Such an
+  answer also no longer wipes the models already saved.
+- Kiro's Compact automatically and Compact at settings are read from the live setting at each
+  reply (as the Mac app does), not from settings.json, which a reply sent just after a click could
+  read before the click was written. They also stay editable while Kiro is not signed in.
+- Windows: kiro-cli is found in `C:\Program Files\Kiro-Cli` and `%LOCALAPPDATA%\Kiro-Cli` when
+  Hover's PATH does not have it. Kiro gets 3 minutes, not 1, to answer on its first start (it
+  unpacks its engine then, which a virus scanner can slow), and a compaction that never answers
+  ends after 10 minutes instead of holding the reply for good.
+
+Checked on Linux against kiro-cli 2.29.0 with an API key (`KIRO_API_KEY`): replies on seven
+models under 1x, tools, a reply after Kiro restarted, and a compaction at 49 % that kept the
+conversation. Not run by hand on Windows or a Mac, nor against Codex or Cursor accounts.
+
 ## [5.0.3] - 2026-10-10 (nightly)
 
 A nightly build, published as a pre-release: it is not marked Latest, so the Latest release stays

@@ -17,30 +17,6 @@ func testStep(kind, title string, target *string, status string) *core.KiroStep 
 	return &s
 }
 
-// Every model Hover lists for Kiro has a rate, by id and by the name the picker shows.
-func TestEveryListedKiroModelHasACreditRate(t *testing.T) {
-	for _, m := range KiroModels {
-		a, ok := KiroRate(m[0])
-		b, ok2 := KiroRate(m[1])
-		if !ok {
-			t.Errorf("%s has no rate", m[0])
-		}
-		if a != b || ok != ok2 {
-			t.Errorf("%s and %s are one model", m[0], m[1])
-		}
-	}
-	rate := func(s string) any {
-		r, ok := KiroRate(s)
-		if !ok {
-			return nil
-		}
-		return r
-	}
-	if rate("claude-opus-5.5") != 2.0 || rate("Opus 5.5") != 2.0 || rate("GPT 5.6 Luna") != 1.1 || rate("qwen3-coder-next") != 0.05 || rate("auto") != 1.0 || rate("not-a-model") != nil {
-		t.Error("rates")
-	}
-}
-
 func TestRowsLinesAndTagsAsKiroPageWritesThem(t *testing.T) {
 	dir, inside := "/p", "/p/src/a.ts"
 	if runtime.GOOS == "windows" {

@@ -331,6 +331,9 @@ type AcpHost struct {
 	// (promptCapabilities.image). canList: the agent lists its sessions
 	// (sessionCapabilities.list).
 	canCloud, canImage, canList atomic.Bool
+	// canDelete and canClose: the agent can delete or close a session it made
+	// (sessionCapabilities.delete, .close), which discovery uses to leave nothing behind.
+	canDelete, canClose atomic.Bool
 	// kiroCaps is what the agent advertises for Kiro (agentCapabilities._meta.kiro), as it
 	// said it.
 	kiroCaps core.JSON
@@ -626,6 +629,9 @@ func (h *AcpHost) turn(folder, prompt string, ct *Cancel, resume *string, o core
 		return h.attach(folder, ct, resume, turn, sid, mcp, cloud)
 	}
 	var offered []core.AcpOption
+	// made: the session was made or loaded by this call, so its options are the ones that
+	// came with the answer (not ones already known).
+	made := false
 	if r, ok := nonEmptyStr(resume); ok {
 		h.omu.Lock()
 		known, has := h.sessionOptions[r]
@@ -646,6 +652,7 @@ func (h *AcpHost) turn(folder, prompt string, ct *Cancel, resume *string, o core
 			switch {
 			case err == nil:
 				*sid = sp(r)
+				made = true
 				offered, _ = acpOptions(res)
 				h.setSessionMcp(r, mcp.sig)
 			case err.kind == callAcp && cloud != nil:
@@ -687,6 +694,7 @@ func (h *AcpHost) turn(folder, prompt string, ct *Cancel, resume *string, o core
 			return KiroResult{}, acpErr(fmt.Sprintf("%s didn’t start a session.", name))
 		}
 		*sid = sp(id)
+		made = true
 		h.setSessionMcp(id, mcp.sig)
 		offered, _ = acpOptions(res)
 		if cloud != nil {
@@ -702,6 +710,11 @@ func (h *AcpHost) turn(folder, prompt string, ct *Cancel, resume *string, o core
 	id := **sid
 	h.putTurn(id, turn)
 	h.sessionEvent(turn, id)
+	// Kiro lists its models a moment after it makes a session, so the answer can come
+	// without them. The model the user picked can't be set until they are here.
+	if made && h.tool == core.Kiro && o.Model != nil {
+		offered = h.awaitModels(id, offered, ct, modelsWait)
+	}
 	configured, err := h.configure(id, offered, o, ct)
 	if err != nil {
 		return KiroResult{}, err
@@ -712,7 +725,10 @@ func (h *AcpHost) turn(folder, prompt string, ct *Cancel, resume *string, o core
 	// /compact prompt as a chat message (its model says it can't run the command), so the
 	// compaction is its own request, which summarises the conversation and answers success.
 	if h.tool == core.Kiro && strings.TrimSpace(prompt) == CompactPrompt {
-		res, err := h.call("_kiro/session/compact", core.JObj(core.P("sessionId", core.JStr(id))), ct, 0)
+		// Summarising a full 1M-token window takes a while, but not forever: a compaction
+		// that never answers must not hold the reply behind it for good (it is only said,
+		// and the reply goes on).
+		res, err := h.call("_kiro/session/compact", core.JObj(core.P("sessionId", core.JStr(id))), ct, 10*time.Minute)
 		if err != nil {
 			return KiroResult{}, err
 		}
@@ -1547,7 +1563,10 @@ func (h *AcpHost) start(ct *Cancel) *callErr {
 		core.P("clientCapabilities", core.JObj(core.P("fs", core.JObj(core.P("readTextFile", core.JBool(false)), core.P("writeTextFile", core.JBool(false)))), core.P("terminal", core.JBool(false)))),
 		core.P("clientInfo", core.JObj(core.P("name", core.JStr("hover")), core.P("version", core.JStr("1")))),
 	)
-	r, cerr := h.call("initialize", init, ct, 60*time.Second)
+	// The first start of a Kiro version unpacks its engine (about 177 MB) before it answers;
+	// a virus scanner can make that take minutes, and ending it half way only starts the
+	// unpacking over at the next try.
+	r, cerr := h.call("initialize", init, ct, 180*time.Second)
 	if cerr != nil {
 		h.shutdown("didn't start")
 		return cerr
@@ -1568,6 +1587,12 @@ func (h *AcpHost) start(ct *Cancel) *callErr {
 	} else {
 		h.canList.Store(false)
 	}
+	has := func(name string) bool {
+		v, ok := at(caps, "sessionCapabilities", name)
+		return ok && !v.IsNull()
+	}
+	h.canDelete.Store(has("delete"))
+	h.canClose.Store(has("close"))
 	kiro, ok := at(caps, "_meta", "kiro")
 	if !ok {
 		kiro = core.JNull
@@ -1981,7 +2006,14 @@ func acpOptions(r core.JSON) ([]core.AcpOption, bool) {
 				if !ok {
 					n = v
 				}
-				choices = append(choices, core.AcpChoice{Value: v, Name: n})
+				ch := core.AcpChoice{Value: v, Name: n}
+				// Kiro says what a model costs against Auto in the choice's own _meta.
+				if m, ok := at(c, "_meta", "kiro", "rateMultiplier"); ok {
+					if f, err := m.F64(); err == nil && f > 0 {
+						ch.Rate = f
+					}
+				}
+				choices = append(choices, ch)
 			}
 		}
 		if opts, ok := arr(x, "options"); ok {

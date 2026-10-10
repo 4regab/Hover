@@ -1476,17 +1476,13 @@ func offer(offers []core.AcpOption, category string, ids ...string) *core.AcpOpt
 	return nil
 }
 
-// Models are the models to pick from: what the tool offered in its last run, Kiro's own
-// list before that, with a "Default" first when the list has no auto of its own.
+// Models are the models to pick from: what the tool offered the last time Hover read it
+// (at start, or in a run), with a "Default" first when the list has no auto of its own.
 func Models(tool core.AgentTool, offers []core.AcpOption) [][2]string {
 	var m [][2]string
 	if o := offer(offers, "model", "model"); o != nil {
 		for _, c := range o.Choices {
 			m = append(m, [2]string{c.Value, c.Name})
-		}
-	} else if tool == core.Kiro {
-		for _, x := range agents.KiroModels {
-			m = append(m, x)
 		}
 	}
 	if len(m) == 0 || !(m[0][0] == "auto" || strings.HasPrefix(m[0][0], "default")) {
@@ -1600,8 +1596,10 @@ func agentPage(b *[]Block, section Section, i *Input) {
 	hasModels := offer(offers, "model", "model") != nil
 	var modelSub string
 	switch {
-	case !hasModels:
+	case !hasModels && (tool == core.OpenCode || tool == core.Claude || tool == core.Agy):
 		modelSub = fmt.Sprintf("More models show here once %s has run a task.", name)
+	case !hasModels:
+		modelSub = fmt.Sprintf("%s’s models show here once Hover has read them, when %s is installed and signed in.", name, name)
 	case tool == core.OpenCode:
 		modelSub = "Your OpenCode providers’ models: API keys, sign-ins and local models. Default is your opencode config’s."
 	case tool == core.Claude:
@@ -1720,11 +1718,13 @@ func agentPage(b *[]Block, section Section, i *Input) {
 	}
 	rows = append(rows, row("Keep it running", fmt.Sprintf("How long %s stays open with nothing to do. A reply after that starts it again and picks the conversation back up.", name),
 		segments(id+"Idle", idle, indexOf(core.IdleChoices, o.IdleMinutes)), tileLead("clock", TintGray)))
-	if tool == core.Kiro {
-		rows = append(rows, compactRows(i.Settings)...)
-	}
 	for k := range rows {
 		rows[k].Enabled = usable
+	}
+	// Compacting and continuing are Hover's own settings, read at the next reply: they stay
+	// open to change even while Kiro itself isn't ready.
+	if tool == core.Kiro {
+		rows = append(rows, compactRows(i.Settings)...)
 	}
 	group(b, rows...)
 	if tool == core.Kiro {

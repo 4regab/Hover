@@ -44,15 +44,16 @@ func offer(settings *core.Settings, t core.AgentTool, category string, ids []str
 	return core.AcpOption{}, false
 }
 
-// ModelChoice is a model the composer offers: its id, its name, and its own levels
-// (OpenCode's variants; nil for none).
+// ModelChoice is a model the composer offers: its id, its name, its own levels (OpenCode's
+// variants; nil for none), and what the tool says it costs (Kiro's credit rate; 0 for none).
 type ModelChoice struct {
 	ID, Name string
 	Levels   []string
+	Rate     float64
 }
 
-// Models is KiroPage.Models: what the tool offered, Kiro's own list before it has run; a
-// Default that sends none comes first unless the first is the tool's "auto".
+// Models is KiroPage.Models: what the tool offered the last time Hover read it; a Default
+// that sends none comes first unless the first is the tool's "auto".
 func Models(settings *core.Settings, t core.AgentTool) [][2]string {
 	var out [][2]string
 	for _, m := range ModelsWithLevels(settings, t) {
@@ -67,44 +68,13 @@ func ModelsWithLevels(settings *core.Settings, t core.AgentTool) []ModelChoice {
 	var list []ModelChoice
 	if o, ok := offer(settings, t, "model", []string{"model"}); ok {
 		for _, c := range o.Choices {
-			list = append(list, ModelChoice{c.Value, c.Name, c.Levels})
-		}
-	} else if t == core.Kiro {
-		for _, m := range KiroModels {
-			list = append(list, ModelChoice{m[0], m[1], nil})
+			list = append(list, ModelChoice{c.Value, c.Name, c.Levels, c.Rate})
 		}
 	}
 	if len(list) == 0 || !(list[0].ID == "auto" || strings.HasPrefix(list[0].ID, "default")) {
-		list = append([]ModelChoice{{"", "Default", nil}}, list...)
+		list = append([]ModelChoice{{ID: "", Name: "Default"}}, list...)
 	}
 	return list
-}
-
-// What each Kiro model costs against Auto (1.0x), as Kiro's models page lists it
-// (kiro.dev/docs/models, October 2026). GPT-5.6's rate holds for requests up to 272K
-// tokens; over that Kiro bills double. Kept by hand: Kiro's protocol does not carry it, so
-// a model that is not here shows no rate.
-var kiroRates = []struct {
-	key  string
-	rate float64
-}{
-	{"auto", 1.0}, {"gpt-5.6-sol", 4.4}, {"gpt-5.6-terra", 2.2}, {"gpt-5.6-luna", 1.1}, {"fable-5.1", 6.0},
-	{"opus-5.5", 2.0}, {"opus-5", 2.2}, {"opus-4.8", 2.2}, {"opus-4.7", 2.2}, {"opus-4.6", 2.2}, {"opus-4.5", 2.2},
-	{"sonnet-5.5", 1.3}, {"sonnet-5", 1.3}, {"sonnet-4.6", 1.3}, {"sonnet-4.5", 1.3}, {"sonnet-4.0", 1.3}, {"sonnet-4", 1.3},
-	{"haiku-4.5", 0.4}, {"deepseek-3.2", 0.25}, {"minimax-m2.5", 0.25}, {"minimax-m2.1", 0.15}, {"glm-5", 0.5}, {"qwen3-coder-next", 0.05},
-}
-
-// KiroRate is a Kiro model's credit rate against Auto, by its id or its name
-// ("claude-opus-5.5" and "Claude Opus 5.5" are one model).
-func KiroRate(idOrName string) (float64, bool) {
-	key := strings.NewReplacer(" ", "-", "_", "-").Replace(strings.ToLower(strings.TrimSpace(idOrName)))
-	key = strings.TrimPrefix(key, "claude-")
-	for _, r := range kiroRates {
-		if r.key == key {
-			return r.rate, true
-		}
-	}
-	return 0, false
 }
 
 // Efforts are the efforts the tool's effort option lists, and the one it has now.
