@@ -151,6 +151,20 @@ jobs:
           go run ./cmd/ui-shots ..\out\ui
           if ($LASTEXITCODE -ne 0) { throw 'ui-shots failed' }
           Write-Host "$((Get-ChildItem ..\out\ui -Filter *.png).Count) shots"
+      # All of them, the office, desk, chat and expand pictures too (they need the office's GPU
+      # thread, here on WARP). The Rust build makes 384; the artifact holds these under out\all.
+      # It does not fail the job yet: its step result says whether it drew them all.
+      - name: Go all shots on WARP
+        continue-on-error: true
+        timeout-minutes: 25
+        working-directory: go
+        run: |
+          $env:CGO_ENABLED = '0'
+          $env:HOVER_SHOTS_OFFICE = '1'
+          $env:WGPU_NATIVE_PATH = (Resolve-Path ..\spike\wgpu_native.dll).Path
+          go run ./cmd/ui-shots ..\out\all
+          if ($LASTEXITCODE -ne 0) { throw 'ui-shots (all) failed' }
+          Write-Host "$((Get-ChildItem ..\out\all -Filter *.png).Count) shots (the Rust build makes 384)"
       # The runner's screen is 1024 x 768: the open notch's window (1080 wide) runs off it,
       # and the self-tests' corner pixels read black. Best effort; both tests share it.
       - name: Screen 1920 x 1080
