@@ -102,17 +102,18 @@ jobs:
           }
       - name: Build the setup
         run: ./build.ps1 installer -Version $env:RELEASE_VERSION
-      # The latest 5.x release the Rust app shipped: what an update installs over.
+      # An older release the Go app shipped: what an update installs over. 5.0.2's release was
+      # taken down, which failed this step on every run; 5.0.3 is the oldest Go one left.
       - name: The 5.x setup
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           New-Item -ItemType Directory -Force old | Out-Null
-          gh release download v5.0.2 --repo ${{ github.repository }} --pattern 'Hover-Setup-5.0.2.exe' --dir old
-          if ($LASTEXITCODE -ne 0) { throw 'no 5.0.2 setup to install over' }
+          gh release download v5.0.3 --repo ${{ github.repository }} --pattern 'Hover-Setup-5.0.3.exe' --dir old
+          if ($LASTEXITCODE -ne 0) { throw 'no 5.0.3 setup to install over' }
       - name: Install over 5.x, check, uninstall
         timeout-minutes: 10
-        run: ./tools/installer-check.ps1 -Setup "dist\Hover-Setup-$env:RELEASE_VERSION.exe" -Old old\Hover-Setup-5.0.2.exe -Built publish\hoverai.exe -Out out\installer
+        run: ./tools/installer-check.ps1 -Setup "dist\Hover-Setup-$env:RELEASE_VERSION.exe" -Old old\Hover-Setup-5.0.3.exe -Built publish\hoverai.exe -Out out\installer
       - name: Summary
         if: always()
         run: |
