@@ -4,11 +4,14 @@ name: CI
 # code for Windows, Linux and macOS; builds the Windows app and its installer and drives them
 # (it starts the app, then installs over the 5.x release and uninstalls); builds the Linux
 # packages; and builds the Mac app and runs its backend through the stand-in tools. No Go tests
-# run here. A release: a v* tag (matching VERSION), or a push to main whose VERSION has no tag
-# yet. The same jobs then make the installers, and `release` tags the commit and publishes
-# them together as the Latest release, with the Mac app in disk images (signed ad hoc).
-# A version whose CHANGELOG.md heading ends in "(nightly)" is published as a pre-release
-# instead, and is not made the Latest.
+# run here. Every push to main that changes more than docs is a release, and the `version`
+# job says which number: VERSION when it is above every tag (raised by hand: a v* tag matching
+# VERSION is the same), else the next patch number after the newest tag, as an automatic
+# nightly. The same jobs then make the installers, and `release` tags the commit and
+# publishes them together, with the Mac app in disk images (signed ad hoc). A version raised
+# by hand is the Latest release, unless its CHANGELOG.md heading ends in "(nightly)"; an
+# automatic nightly is always a pre-release, never the Latest, and its notes are GitHub's
+# list of the pull requests merged since the last release.
 # No secrets and no agent accounts. By hand (workflow_dispatch), `pictures` also draws every
 # view on the Windows runner.
 on:
@@ -23,9 +26,11 @@ on:
 permissions:
   contents: read
 
+# A newer push cancels the run before it, except on main: that run may be publishing a
+# release, and is waited for instead.
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
   check:
@@ -51,36 +56,59 @@ jobs:
       # The Mac backend compiles for both Macs.
       - run: GOOS=darwin GOARCH=arm64 go build -o /dev/null ./cmd/hover-backend && GOOS=darwin GOARCH=amd64 go build -o /dev/null ./cmd/hover-backend
 
-  windows:
-    runs-on: windows-2022
+  # Whether this run is a release, and which number it carries. The builds below take both
+  # from here, so the number is chosen once. Quick: it only reads the tags.
+  version:
+    runs-on: ubuntu-22.04
     outputs:
-      release: ${{ steps.rel.outputs.release }}
-      version: ${{ steps.rel.outputs.version }}
+      release: ${{ steps.v.outputs.release }}
+      version: ${{ steps.v.outputs.version }}
+      auto: ${{ steps.v.outputs.auto }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Release?
+        id: v
+        shell: bash
+        run: |
+          file=$(tr -d '\r' < VERSION | head -n 1)
+          ver=$file release=false auto=false
+          tags=$(git ls-remote --tags origin 'refs/tags/v*')
+          # The newest release so far (three-part numbers only).
+          top=$(sed -n 's|.*refs/tags/v\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\)$|\1|p' <<< "$tags" | sort -V | tail -n 1)
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            [[ "$GITHUB_REF_NAME" == "v$file" ]] || { echo "::error::The tag is $GITHUB_REF_NAME but VERSION says $file."; exit 1; }
+            release=true
+          elif [[ "$GITHUB_EVENT_NAME" == push && "$GITHUB_REF_NAME" == main ]]; then
+            if grep -q "$GITHUB_SHA" <<< "$tags"; then
+              echo "This commit is released already (a run started again)."
+            elif [[ -z "$top" || "$file" != "$top" && "$(printf '%s\n%s\n' "$file" "$top" | sort -V | tail -n 1)" == "$file" ]]; then
+              # VERSION is above every release: it was raised by hand, and is released as it is.
+              release=true
+            else
+              # Released already, or behind the newest release: the next number after it.
+              release=true auto=true
+              IFS=. read -r major minor patch <<< "$top"
+              ver="$major.$minor.$((patch + 1))"
+            fi
+          fi
+          echo "version $ver, release: $release, automatic: $auto (VERSION says $file, newest release ${top:-none})"
+          { echo "release=$release"; echo "version=$ver"; echo "auto=$auto"; } >> "$GITHUB_OUTPUT"
+
+  windows:
+    needs: version
+    runs-on: windows-2022
+    env:
+      RELEASE: ${{ needs.version.outputs.release }}
+      RELEASE_VERSION: ${{ needs.version.outputs.version }}
     defaults:
       run:
         shell: pwsh
     steps:
       - uses: actions/checkout@v4
-      # A release: a v* tag, or a push to main whose VERSION has no tag yet (so raising the
-      # version is what releases it).
-      - name: Release?
-        id: rel
-        run: |
-          $ver = (Get-Content VERSION -TotalCount 1).Trim()
-          $release = $false
-          if ($env:GITHUB_REF -like 'refs/tags/v*') {
-            if ($env:GITHUB_REF_NAME -ne "v$ver") { throw "The tag is $env:GITHUB_REF_NAME but VERSION says $ver." }
-            $release = $true
-          } elseif ($env:GITHUB_EVENT_NAME -eq 'push' -and $env:GITHUB_REF_NAME -eq 'main') {
-            $tagged = git ls-remote --tags origin "refs/tags/v$ver"
-            if ($LASTEXITCODE -ne 0) { throw "couldn't list the tags" }
-            $release = -not $tagged
-          }
-          Write-Host "version $ver, release: $release"
-          Add-Content -Path $env:GITHUB_ENV -Value "RELEASE=$($release.ToString().ToLower())"
-          Add-Content -Path $env:GITHUB_ENV -Value "RELEASE_VERSION=$ver"
-          Add-Content -Path $env:GITHUB_OUTPUT -Value "release=$($release.ToString().ToLower())"
-          Add-Content -Path $env:GITHUB_OUTPUT -Value "version=$ver"
+      # The number the builds read from VERSION is the one chosen above (the file in this
+      # checkout only; nothing is committed).
+      - name: Version
+        run: '[System.IO.File]::WriteAllText((Join-Path $PWD "VERSION"), "$env:RELEASE_VERSION`n")'
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
@@ -135,30 +163,20 @@ jobs:
           if-no-files-found: error
 
   linux:
+    needs: version
     # Ubuntu 22.04 (glibc 2.35), so the packages run on 22.04 and newer.
     runs-on: ubuntu-22.04
-    outputs:
-      release: ${{ steps.rel.outputs.release }}
+    env:
+      RELEASE: ${{ needs.version.outputs.release }}
+      RELEASE_VERSION: ${{ needs.version.outputs.version }}
     defaults:
       run:
         shell: bash
     steps:
       - uses: actions/checkout@v4
-      # The same choice as the Windows job's.
-      - name: Release?
-        id: rel
-        run: |
-          ver=$(tr -d '\r' < VERSION | head -n 1)
-          release=false
-          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
-            [[ "$GITHUB_REF_NAME" == "v$ver" ]] || { echo "The tag is $GITHUB_REF_NAME but VERSION says $ver." >&2; exit 1; }
-            release=true
-          elif [[ "$GITHUB_EVENT_NAME" == push && "$GITHUB_REF_NAME" == main ]]; then
-            [[ -z "$(git ls-remote --tags origin "refs/tags/v$ver")" ]] && release=true
-          fi
-          echo "version $ver, release: $release"
-          { echo "RELEASE=$release"; echo "RELEASE_VERSION=$ver"; } >> "$GITHUB_ENV"
-          echo "release=$release" >> "$GITHUB_OUTPUT"
+      # As in the Windows job.
+      - name: Version
+        run: printf '%s\n' "$RELEASE_VERSION" > VERSION
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
@@ -181,30 +199,20 @@ jobs:
     # tools (tests/macos/backend-smoke.py). The Mac app is the Swift UI in macos/ with the web
     # office (web/office), on the Go backend (cmd/hover-backend). Every run makes Hover.app
     # (signed ad hoc); a release also makes it for Intel and puts both in disk images.
+    needs: version
     runs-on: macos-15
     timeout-minutes: 60
-    outputs:
-      release: ${{ steps.rel.outputs.release }}
+    env:
+      RELEASE: ${{ needs.version.outputs.release }}
+      RELEASE_VERSION: ${{ needs.version.outputs.version }}
     defaults:
       run:
         shell: bash
     steps:
       - uses: actions/checkout@v4
-      # The same choice as the Windows job's.
-      - name: Release?
-        id: rel
-        run: |
-          ver=$(tr -d '\r' < VERSION | head -n 1)
-          release=false
-          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
-            [[ "$GITHUB_REF_NAME" == "v$ver" ]] || { echo "The tag is $GITHUB_REF_NAME but VERSION says $ver." >&2; exit 1; }
-            release=true
-          elif [[ "$GITHUB_EVENT_NAME" == push && "$GITHUB_REF_NAME" == main ]]; then
-            [[ -z "$(git ls-remote --tags origin "refs/tags/v$ver")" ]] && release=true
-          fi
-          echo "version $ver, release: $release"
-          { echo "RELEASE=$release"; echo "RELEASE_VERSION=$ver"; } >> "$GITHUB_ENV"
-          echo "release=$release" >> "$GITHUB_OUTPUT"
+      # As in the Windows job (Info.plist's version comes from the file).
+      - name: Version
+        run: printf '%s\n' "$RELEASE_VERSION" > VERSION
       # Voice uses macOS 26's SpeechAnalyzer, which needs the macOS 26 SDK: the newest
       # Xcode 26 on the image (its default is older). Without one the build goes on, and
       # Voice.swift compiles only the older recognizer (#if compiler(>=6.2)).
@@ -305,8 +313,8 @@ jobs:
 
   release:
     # One job publishes, so the builds never race to create the release.
-    if: needs.windows.outputs.release == 'true' && needs.linux.outputs.release == 'true' && needs.macos.outputs.release == 'true'
-    needs: [check, windows, linux, macos]
+    if: needs.version.outputs.release == 'true'
+    needs: [check, version, windows, linux, macos]
     runs-on: ubuntu-22.04
     permissions:
       contents: write
@@ -317,18 +325,28 @@ jobs:
           pattern: installer-*
           path: dist
           merge-multiple: true
-      # The release text is this version's section of CHANGELOG.md, so the page on GitHub
-      # says what the changelog says. A version with no section stops the release here.
-      - name: Release notes from CHANGELOG.md
+      # A version raised by hand: the release text is its section of CHANGELOG.md, so the page
+      # on GitHub says what the changelog says, and no section stops the release here. An
+      # automatic nightly has no section: GitHub lists the pull requests merged since the last
+      # release (generate_release_notes, below).
+      - name: Release notes
         id: notes
         env:
-          VERSION: ${{ needs.windows.outputs.version }}
+          VERSION: ${{ needs.version.outputs.version }}
+          AUTO: ${{ needs.version.outputs.auto }}
         run: |
           {
             echo "**macOS:** download \`Hover-$VERSION-macos-arm64.dmg\` (Apple silicon) or \`-macos-x64.dmg\` (Intel), open it and drag Hover to Applications. The app isn't notarized yet, so the first time, open it with right-click → Open (or System Settings → Privacy & Security → Open Anyway)."
             echo
-            tr -d '\r' < CHANGELOG.md | awk -v v="$VERSION" 'on && /^## \[/ { exit } index($0, "## [" v "]") == 1 { on = 1; next } on { print }'
           } > release-notes.md
+          echo "auto=$AUTO" >> "$GITHUB_OUTPUT"
+          if [[ "$AUTO" == true ]]; then
+            echo "An automatic nightly build of every change merged to main: a pre-release, never the Latest." >> release-notes.md
+            echo "nightly=true" >> "$GITHUB_OUTPUT"
+            cat release-notes.md
+            exit 0
+          fi
+          tr -d '\r' < CHANGELOG.md | awk -v v="$VERSION" 'on && /^## \[/ { exit } index($0, "## [" v "]") == 1 { on = 1; next } on { print }' >> release-notes.md
           if ! grep -q '^### ' release-notes.md; then
             echo "::error::CHANGELOG.md has no section for $VERSION. Add '## [$VERSION] - date' with its changes, then run the release again."
             exit 1
@@ -344,9 +362,9 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           # The tag is made here when a push released (on a tag push it is that tag).
-          tag_name: v${{ needs.windows.outputs.version }}
+          tag_name: v${{ needs.version.outputs.version }}
           target_commitish: ${{ github.sha }}
-          name: Hover v${{ needs.windows.outputs.version }}${{ steps.notes.outputs.nightly == 'true' && ' (nightly)' || '' }}
+          name: Hover v${{ needs.version.outputs.version }}${{ steps.notes.outputs.nightly == 'true' && ' (nightly)' || '' }}
           # Each release is the Latest one, unless it is a nightly: that is a pre-release and
           # leaves the Latest where it was.
           prerelease: ${{ steps.notes.outputs.nightly == 'true' }}
@@ -354,3 +372,5 @@ jobs:
           files: dist/*
           fail_on_unmatched_files: true
           body_path: release-notes.md
+          # An automatic nightly: the pull requests merged since the last release, under the text above.
+          generate_release_notes: ${{ steps.notes.outputs.auto == 'true' }}

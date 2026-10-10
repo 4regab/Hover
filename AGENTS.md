@@ -74,12 +74,19 @@ tarball (the runner has no Wayland desktop to run them on). `macos` (macos-15, A
 builds `Hover.app`, signed ad hoc, and runs its packaged backend against stand-in tools.
 `pictures` draws every view on Windows; it runs only by hand (Run workflow).
 
-A push to `main` whose `VERSION` has no tag yet, or a `v*` tag matching it, is a release: the
-same jobs make the installers, and `release` tags the commit and publishes them together as the
-Latest GitHub release. Raising the version releases it. A version whose CHANGELOG.md heading
-ends in `(nightly)` is published as a pre-release and is not made the Latest. A release also
-builds Intel and puts both Macs in disk images (`Hover-<version>-macos-arm64.dmg`, `-x64.dmg`),
-and `release` waits for them. `scripts/package-macos.sh` signs with a Developer ID and notarizes.
+Every push to `main` that changes more than docs is a release: the `version` job picks the
+number, the same jobs make the installers, and `release` tags the commit and publishes them
+together. If `VERSION` is above every `v*` tag (it was raised by hand, or a `v*` tag matching it
+was pushed), that is the number, and it is the Latest GitHub release; a version whose
+CHANGELOG.md heading ends in `(nightly)` is published as a pre-release and is not made the
+Latest. Otherwise it is an automatic nightly: the next patch number after the newest tag, a
+pre-release that is never the Latest, with no CHANGELOG.md section (its notes are GitHub's list
+of the pull requests merged since the last release). `VERSION` is not changed for it; the jobs
+write the chosen number into their own checkout. A run started again for a commit that has a tag
+releases nothing more, and a run on `main` waits for the one before it instead of cancelling it.
+A release also builds Intel and puts both Macs in disk images
+(`Hover-<version>-macos-arm64.dmg`, `-x64.dmg`), and `release` waits for them.
+`scripts/package-macos.sh` signs with a Developer ID and notarizes.
 
 Any machine can check the code for the other systems, which is what `check` does:
 `GOOS=windows go vet ./cmd/... ./internal/...`, `GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 go vet
