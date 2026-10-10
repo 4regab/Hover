@@ -141,3 +141,32 @@ func (s *Shell) VoiceShotMenu(which int) { s.voiceOpenMenu(which); s.UpdateRest(
 
 // VoiceShotFeedback is what the card says after a capture (voice.ShotTaken, or why not).
 func (s *Shell) VoiceShotFeedback(said string) { s.shotFeedback(said) }
+
+// SettingsChangedShot is what Settings tells the shell after a change (a new office size).
+func (s *Shell) SettingsChangedShot() { host{s}.SettingsChanged() }
+
+// CloudShot is the Kiro Web box with a repo picked (nil: an empty workspace) and the list
+// Kiro would give, without Kiro.
+func (s *Shell) CloudShot(pick *string, repos []string) {
+	c := &s.page.cloud
+	c.pickSet, c.pick = true, ""
+	if pick != nil {
+		c.pick = *pick
+	}
+	c.listed, c.repos, c.reposErr = true, repos, ""
+	s.invalidateAll()
+}
+
+// VoiceShotSearch types into the preview's repo menu's search box.
+func (s *Shell) VoiceShotSearch(q string) {
+	s.vu().repoQuery = q
+	s.voiceMenuDraw(s.voiceShown())
+	s.UpdateRest()
+}
+
+// VoiceShotBusy is a press while one is in progress: the card glows amber.
+func (s *Shell) VoiceShotBusy(on bool) { s.np.Voice.Busy = on; s.UpdateRest() }
+
+// VoiceShotFlash and VoiceShotNote are the card's screenshot flash and its note.
+func (s *Shell) VoiceShotFlash(on bool) { s.np.Voice.Flash = on; s.invalidate() }
+func (s *Shell) VoiceShotNote(t string) { s.np.Voice.Note = t; s.UpdateRest() }

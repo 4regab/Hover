@@ -458,20 +458,12 @@ func (v *NotchView) previewLayout(c *Ctx, p *NotchProps, x, y, maxH float32, dra
 	for _, h := range parts {
 		total += h
 	}
-	// Never taller than the window: the open menu and the task give up their height first,
-	// and scroll.
+	// Never taller than the window: the open menu and the task give up their height, and
+	// scroll. Slint's box layout (layout_items: Shrink) takes the same amount from each, as
+	// both have a stretch of 1, until one is at its least; the other goes on alone.
 	if over := total - maxH; over > 0 {
-		if menuH > 0 {
-			cut := min(over, menuH-min(menuAll, 64))
-			menuH -= max(cut, 0)
-			total -= max(cut, 0)
-			over -= max(cut, 0)
-		}
-		if over > 0 && card.Kind == 3 {
-			cut := min(over, taskH-(min(taskAll, 34)+18))
-			taskH -= max(cut, 0)
-			total -= max(cut, 0)
-		}
+		cut := shrinkEqually(over, &menuH, menuLeast(menuH, menuAll), card.Kind == 3, &taskH, min(taskAll, 34)+18)
+		total -= cut
 	}
 	if !draw {
 		return min(total, max(maxH, 0))
@@ -872,3 +864,44 @@ func (v *NotchView) VoiceActs() []VoiceAct {
 }
 
 func auraOp(im *image.RGBA) paint.ImageOp { return paint.NewImageOp(im) }
+
+// menuLeast is the least an open menu goes down to (Slint's min-height: 64 or its content).
+func menuLeast(menuH, menuAll float32) float32 {
+	if menuH <= 0 {
+		return 0
+	}
+	return min(menuAll, 64)
+}
+
+// shrinkEqually takes over from two stacked boxes, the same amount from each, until one is at
+// its least, then the rest from the other (Slint's adjust_items for equal stretch). b is left
+// out when haveB is false. It returns how much it took.
+func shrinkEqually(over float32, a *float32, aLeast float32, haveB bool, b *float32, bLeast float32) float32 {
+	canA := max(*a-aLeast, 0)
+	canB := float32(0)
+	if haveB {
+		canB = max(*b-bLeast, 0)
+	}
+	var cutA, cutB float32
+	switch {
+	case canA > 0 && canB > 0:
+		both := min(over/2, canA, canB)
+		cutA, cutB = both, both
+		if rest := over - 2*both; rest > 0 {
+			if canA > both {
+				cutA += min(rest, canA-both)
+			} else {
+				cutB += min(rest, canB-both)
+			}
+		}
+	case canA > 0:
+		cutA = min(over, canA)
+	case canB > 0:
+		cutB = min(over, canB)
+	}
+	*a -= cutA
+	if haveB {
+		*b -= cutB
+	}
+	return cutA + cutB
+}

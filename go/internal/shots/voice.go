@@ -4,6 +4,7 @@ package shots
 
 import (
 	"fmt"
+	"image"
 	"image/color"
 	"os"
 	"path/filepath"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/4regab/Hover/go/internal/app"
 	"github.com/4regab/Hover/go/internal/core"
+	"github.com/4regab/Hover/go/internal/notch"
 	"github.com/4regab/Hover/go/internal/quota"
 	"github.com/4regab/Hover/go/internal/shell"
 	"github.com/4regab/Hover/go/internal/voice"
@@ -61,8 +63,11 @@ func voiceShots(dir string) error {
 		return err
 	}
 	desk := color.NRGBA{R: 0x3a, G: 0x4a, B: 0x5e, A: 255}
+	// The window is as wide as the office size makes it, and as tall: its open size and the
+	// padding round it (shots.rs saves the notch window as it stands).
+	var ww, wh int
 	shot := func(name string, h int, scale float32) error {
-		img, err := render(int(1200*scale), int(float32(h)*scale), scale, desk, win.draw)
+		img, err := render(int(float32(ww)*scale), int(float32(h)*scale), scale, desk, win.draw)
 		if err != nil {
 			return err
 		}
@@ -97,23 +102,102 @@ func voiceShots(dir string) error {
 		s.SetClock(0.35)
 		s.UpdateRest()
 	}
-	for _, x := range stages {
-		draw(x.s)
-		if err := shot(fmt.Sprintf("voice-default-%s.png", x.name), 200, 1); err != nil {
+	// Two made-up screens stand in for real ones: the pictures "take a screenshot" attaches.
+	var pics []string
+	for i, c := range [][2]color.NRGBA{{{R: 0x1e, G: 0x29, B: 0x3b, A: 255}, {R: 0x4a, G: 0xde, B: 0x80, A: 255}}, {{R: 0xf6, G: 0xf2, B: 0xff, A: 255}, {R: 0x6b, G: 0xa8, B: 0xff, A: 255}}} {
+		img := image.NewRGBA(image.Rect(0, 0, 1600, 1000))
+		for y := 0; y < 1000; y++ {
+			for x := 0; x < 1600; x++ {
+				col := c[0]
+				switch {
+				case y < 60:
+					col = c[1]
+				case y >= 200 && y < 700 && x >= 200 && x < 1000:
+					col = color.NRGBA{R: 0x80, G: 0x80, B: 0x90, A: 255}
+				}
+				img.Set(x, y, col)
+			}
+		}
+		f := filepath.Join(data, fmt.Sprintf("voice-shot-%d.png", i))
+		if err := save(f, img); err != nil {
 			return err
 		}
-		if err := shot(fmt.Sprintf("voice-default-%s-2x.png", x.name), 200, 2); err != nil {
+		pics = append(pics, f)
+	}
+	work := notch.Size{W: 1920, H: 1080}
+	for _, z := range []struct {
+		tag  string
+		ws   core.WorkspaceSize
+		size notch.OfficeSize
+	}{{"small", core.WorkspaceSmall, notch.SizeSmall}, {"default", core.WorkspaceDefault, notch.SizeDefault},
+		{"large", core.WorkspaceLarge, notch.SizeLarge}, {"extra-large", core.WorkspaceExtraLarge, notch.SizeExtraLarge}} {
+		settings.SetWorkspaceSize(z.ws)
+		s.SettingsChangedShot()
+		open := notch.OpenSize(z.size, work)
+		ww, wh = int(open.W+2*notch.Pad), int(open.H+notch.Pad)
+		win.w, win.h = ww, wh
+		def := z.ws == core.WorkspaceDefault
+		for _, x := range stages {
+			draw(x.s)
+			if err := shot(fmt.Sprintf("voice-%s-%s.png", z.tag, x.name), 200, 1); err != nil {
+				return err
+			}
+			if def {
+				if err := shot(fmt.Sprintf("voice-%s-%s-2x.png", z.tag, x.name), 200, 2); err != nil {
+					return err
+				}
+			}
+		}
+		if def {
+			// "Take a screenshot" while listening: the flash, then the note; then the preview
+			// with the pictures it will send, each with its ×.
+			s.VoiceShotPics(pics[:1])
+			draw(voice.Stage{Kind: voice.StageRecording, Level: 0.6, Secs: 6.8})
+			s.VoiceShotFeedback(voice.ShotTaken)
+			if err := shot("voice-default-screenshot-flash-2x.png", 200, 2); err != nil {
+				return err
+			}
+			s.VoiceShotFlash(false)
+			if err := shot("voice-default-screenshot-note-2x.png", 200, 2); err != nil {
+				return err
+			}
+			s.VoiceShotPics(pics)
+			draw(voice.Stage{Kind: voice.StagePreview, Preview: voicePreview(proj, "Hover", "", "Fix the footer: it overlaps the menu on narrow screens.", 2.1, "full")})
+			if err := shot("voice-default-preview-screenshots-2x.png", wh, 2); err != nil {
+				return err
+			}
+			s.VoiceShotPics(nil)
+			s.VoiceShotNote("")
+		}
+		// The tallest the preview gets: the agent menu open over a long task with a note. It
+		// stays inside the window (Small's is the shortest), Start and Cancel in view.
+		draw(voice.Stage{Kind: voice.StagePreview, Preview: voicePreview(home, "Default workspace", "Using default workspace: no project named. Cleanup failed; using the original.", long, 0, "full")})
+		s.VoiceShotReady(1, []core.AgentTool{core.Kiro, core.Codex, core.Cursor, core.OpenCode, core.Claude})
+		s.VoiceShotMenu(1)
+		if err := shot(fmt.Sprintf("voice-%s-menu-long.png", z.tag), wh, 1); err != nil {
 			return err
 		}
+		s.VoiceShotMenu(0)
+		// Kiro Web: no folder pick, and the repo menu with its search box.
+		if def {
+			draw(stages[6].s)
+			if err := shot("voice-default-cloud-no-folder.png", 200, 1); err != nil {
+				return err
+			}
+			s.CloudShot(nil, []string{"4regab/hoverweb", "4regab/Hover", "4regab/tasksync-mcp"})
+			for _, q := range []struct{ text, name string }{{"", "voice-default-cloud-repos.png"}, {"HOV", "voice-default-cloud-repos-search.png"}} {
+				if q.text == "" {
+					s.VoiceShotMenu(4)
+				} else {
+					s.VoiceShotSearch(q.text)
+				}
+				if err := shot(q.name, wh, 1); err != nil {
+					return err
+				}
+			}
+			s.VoiceShotMenu(0)
+		}
 	}
-	// The tallest the preview gets: the agent menu open over a long task with a note.
-	draw(voice.Stage{Kind: voice.StagePreview, Preview: voicePreview(home, "Default workspace", "Using default workspace: no project named. Cleanup failed; using the original.", long, 0, "full")})
-	s.VoiceShotReady(1, []core.AgentTool{core.Kiro, core.Codex, core.Cursor, core.OpenCode, core.Claude})
-	s.VoiceShotMenu(1)
-	if err := shot("voice-default-menu-long.png", 480, 1); err != nil {
-		return err
-	}
-	s.VoiceShotMenu(0)
 	// The aura in a colour picked in Settings → Voice.
 	v := settings.Voice()
 	violet := "#C4A2FF"
@@ -125,7 +209,16 @@ func voiceShots(dir string) error {
 	}
 	v.AuraColor = nil
 	settings.SetVoice(v)
+	// A press while one is in progress: the card glows amber a moment.
+	draw(stages[4].s)
+	s.VoiceShotBusy(true)
+	if err := shot("voice-extra-large-busy.png", 200, 1); err != nil {
+		return err
+	}
+	s.VoiceShotBusy(false)
 	s.VoiceShot(nil)
+	settings.SetWorkspaceSize(core.WorkspaceDefault)
+	s.SettingsChangedShot()
 	hv.Shutdown()
 	return nil
 }
