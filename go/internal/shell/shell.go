@@ -25,8 +25,10 @@ type Shell struct {
 	shotFolder string
 	// tipShot, when set, is the tip the office draws (the shots' tip over a bot or a desk).
 	tipShot *tipShot
-	Hover   *app.Hover
-	env     Env
+	// shotNewFolder, when set, is the folder the new task's box names (the shots' long one).
+	shotNewFolder string
+	Hover         *app.Hover
+	env           Env
 
 	win    Window
 	n      *NotchCtl

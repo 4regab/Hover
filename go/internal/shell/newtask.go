@@ -706,6 +706,9 @@ func (s *Shell) newTaskProps(op *ui.OfficeProps) {
 	if folder != "" {
 		n.Folder = office.Short(folder)
 	}
+	if s.shotNewFolder != "" {
+		n.Folder = s.shotNewFolder
+	}
 	n.Note = note
 	n.Go = ready && can && !full && (folder != "" || cloudOn) && (strings.TrimSpace(p.newDraft) != "" || len(shots) > 0)
 	n.Access, n.AccessFull = accessLabel(acc), acc == "full"
@@ -717,7 +720,7 @@ func (s *Shell) newTaskProps(op *ui.OfficeProps) {
 	if repo == "" {
 		n.Repo = "Empty workspace"
 	}
-	n.RepoMenu, n.RepoOpts, n.RepoNote = repoMenu, repoOpts, repoNote
+	n.RepoMenu, n.RepoOpts, n.RepoNote, n.RepoQuery = repoMenu, repoOpts, repoNote, p.cloud.query
 	n.Model, n.ModelEffort, n.ModelShown = mdl, eff, mshown
 	n.Shots = shots
 	n.PopX, n.PopY, n.PopBelow = p.popX, p.popY, p.popBelow

@@ -243,6 +243,17 @@ func (o *OfficeView) SetDeskTermText(t string) {
 }
 func (o *OfficeView) DeskScroll(off float32) { o.dp.list.scroll.Off = off }
 
+// NewDraftCaret puts the caret in the new task's words at their start or their end (the
+// pictures' Ctrl+Home and Ctrl+End), and the box scrolls to it.
+func (o *OfficeView) NewDraftCaret(end bool) {
+	ed := &o.nt.text.ed
+	n := 0
+	if end {
+		n = len([]rune(ed.Text()))
+	}
+	ed.SetCaret(n, n)
+}
+
 // MARK: The windowed list
 
 // DeskList is DeskList: the rows in view, placed at their own y in a viewport as tall as

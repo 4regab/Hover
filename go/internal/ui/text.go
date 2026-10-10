@@ -5,6 +5,7 @@ import (
 	"image/color"
 	"math"
 	"sync"
+	"unicode/utf8"
 
 	"gioui.org/f32"
 	"gioui.org/font"
@@ -180,6 +181,14 @@ func (c *Ctx) shape(s string, b TextBox) []line {
 	}
 	if b.Elide && !b.Wrap && p.MaxLines == 0 {
 		p.MaxLines = 1
+	}
+	// Letter spacing is added after the shaper has cut the line, so one eliding line with a
+	// tighter spacing is given the room that gives back: a title that fits with its -0.14 px
+	// per letter must not be cut.
+	// ponytail: only the tighter spacing; a looser one is not made room for, and a cut line is
+	// given the room of the whole text's letters.
+	if b.Elide && !b.Wrap && b.Spacing < 0 && b.W > 0 {
+		p.MaxWidth = int(math.Ceil(float64((b.W - b.Spacing*float32(utf8.RuneCountInString(s))) * k)))
 	}
 	if b.Elide {
 		p.Truncator = "…"

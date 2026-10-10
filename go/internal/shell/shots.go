@@ -365,3 +365,27 @@ func (s *Shell) DeskFrameShot(img *image.RGBA) {
 	s.desk.screenImg, s.desk.screenErr = img, ""
 	s.deskSync()
 }
+
+// The office's own views, as the shots take them (shots.rs's office pictures).
+
+// OfficeActShot is an event of an office view as a click or a key makes it (which: 0 the
+// notch, 1 the app window): the new-task circle, its menus, a question's pick, the wheel.
+func (s *Shell) OfficeActShot(which int, e ui.OfficeEvent) { s.officeAct(e, which) }
+
+// ShotNewFolder is the folder the new task's box names ("" for its own).
+func (s *Shell) ShotNewFolder(label string) { s.shotNewFolder = label; s.invalidateAll() }
+
+// ShotNewCaret puts the caret in the new task's words at the start or the end.
+func (s *Shell) ShotNewCaret(end bool) {
+	s.ovwN.NewDraftCaret(end)
+	s.ovwD.NewDraftCaret(end)
+	s.invalidateAll()
+}
+
+// ShotThreadScroll is how far the open chat is scrolled.
+func (s *Shell) ShotThreadScroll() float32 {
+	if ct := s.pg().thread; ct != nil {
+		return ct.scroll
+	}
+	return 0
+}

@@ -8,6 +8,7 @@ import (
 	"image/color"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -19,6 +20,7 @@ import (
 	"github.com/4regab/Hover/go/internal/notch"
 	"github.com/4regab/Hover/go/internal/quota"
 	"github.com/4regab/Hover/go/internal/shell"
+	"github.com/4regab/Hover/go/internal/ui"
 )
 
 // The open notch with the office in it: the real shell, the real office thread (wgpu-native
@@ -35,8 +37,9 @@ type rig struct {
 	hold   func(bool)
 	// holdC lets go of the chat's stories that wait (the chat fixtures hold until shot).
 	holdC func(bool)
-	// holdD lets go of the desk card's busy task.
+	// holdD lets go of the desk card's busy task, hold3 of the one with the question.
 	holdD func(bool)
+	hold3 func(bool)
 	done  func()
 }
 
@@ -50,7 +53,7 @@ func newRig() (*rig, error) {
 	settings := core.LoadSettings(filepath.Join(data, "settings.json"))
 	settings.SetKiroNoticeSeen(true)
 	var mu sync.Mutex
-	held, heldC, heldD := true, true, true
+	held, held3, heldC, heldD := true, true, true, true
 	var runs int
 	run := func(a agents.RunArgs) agents.KiroResult {
 		mu.Lock()
@@ -81,16 +84,25 @@ func newRig() (*rig, error) {
 		x1.Exit, x1.MS, x1.Output = ptrTo(int32(0)), ptrTo(8200.0), ptrTo("✓ 14 files sorted\nTests: 42 passed, 42 total")
 		a.Events(agents.KiroEvent{Step: &x1})
 		a.Events(agents.KiroEvent{Credits: ptrTo(0.087)})
+		// A picture's answer: an image from the session's own folder, under its words.
+		if strings.Contains(a.Prompt, "mock-up") {
+			return agents.NewResult(core.Completed, "## Chart restyled\n\nThe bars follow your mock-up now:\n\n![The new chart](chart.png)\n\nColours come from the theme.")
+		}
+		// The task with the question holds on its own, until its pictures are taken.
+		three := strings.Contains(a.Prompt, "three")
 		for {
 			mu.Lock()
 			h := held
+			if three {
+				h = held3
+			}
 			mu.Unlock()
 			if !h || a.Ct.IsCancelled() {
 				break
 			}
 			time.Sleep(10 * time.Millisecond)
 		}
-		return agents.NewResult(core.Completed, "## Imports tidied\n\nAll 14 files now sort their imports.")
+		return agents.NewResult(core.Completed, "## Imports tidied\n\nAll 14 files now sort their imports.\n\n```ts\nexport const tidy = (f) => f.map(sortImports);\n```")
 	}
 	hv := app.With(settings, nil, nil, run, func(id string) quota.Reading { return *reading(id) })
 	r := &rig{hv: hv, win: &fakeWin{}, dwin: &fakeWin{w: 1200, h: 720}}
@@ -131,6 +143,7 @@ func newRig() (*rig, error) {
 	r.hold = func(on bool) { mu.Lock(); held = on; mu.Unlock() }
 	r.holdC = func(on bool) { mu.Lock(); heldC = on; mu.Unlock() }
 	r.holdD = func(on bool) { mu.Lock(); heldD = on; mu.Unlock() }
+	r.hold3 = func(on bool) { mu.Lock(); held3 = on; mu.Unlock() }
 	r.done = func() { hv.Shutdown(); os.RemoveAll(data) }
 	return r, nil
 }
@@ -224,6 +237,10 @@ func (r *rig) dshot(dir, name string, w, h int) error {
 	return save(filepath.Join(dir, name), img)
 }
 
+// frame draws the notch once and throws it away: a window draws all the while, and a menu
+// that is shut only knows it by a frame without it.
+func (r *rig) frame() { _, _ = r.grab(480) }
+
 func (r *rig) settle(ms int) {
 	for t := 0; t < ms; t += 20 {
 		time.Sleep(20 * time.Millisecond)
@@ -243,9 +260,16 @@ func officeShots(dir string) error {
 		r.hv.Sessions.Start(t, r.folder, "Tidy the imports in "+t.Name(), nil)
 	}
 	time.Sleep(400 * time.Millisecond)
+	// The note before the first task stands in place of the office until Got it.
+	r.hv.Settings.SetKiroNoticeSeen(false)
 	if err := r.open(); err != nil {
 		return err
 	}
+	r.settle(300)
+	if err := r.shot(dir, "office-notice.png", 480); err != nil {
+		return err
+	}
+	r.s.OfficeActShot(0, ui.OfficeEvent{A: "noticeOk"})
 	// The bots walk to their desks.
 	for i := 0; i < 60; i++ {
 		time.Sleep(100 * time.Millisecond)
@@ -315,6 +339,9 @@ func officeShots(dir string) error {
 		return err
 	}
 	r.s.OpenPanel("")
+	if err := officeMoreShots(r, dir); err != nil {
+		return err
+	}
 	if !skip("chat") {
 		if err := chatShots(r, dir); err != nil {
 			return err

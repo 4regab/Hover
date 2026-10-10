@@ -34,6 +34,8 @@ type NewTaskProps struct {
 	RepoMenu              bool
 	RepoOpts              []AccessOpt
 	RepoNote              string
+	// RepoQuery is what the repositories are searched for (the box shows it when it has no keyboard).
+	RepoQuery string
 	// StartFolders are the project menu's recent folders (the start screen's).
 	StartFolders       []AccessOpt
 	Model, ModelEffort string
@@ -389,7 +391,8 @@ func (o *OfficeView) accessMenu(c *Ctx, w, h float32, p *OfficeProps) {
 	total := float32(6) + headH
 	for i, op := range n.AccessOpts {
 		lh := c.LineH(Font{Size: 12.5, Weight: 600})
-		_, nh := c.MeasureBox(op.Note, TextBox{Font: Font{Size: 11}, W: mw - 12 - 16 - 8 - 12, Wrap: true})
+		// Only the picked row has the tick beside its words, and gives it 20.
+		_, nh := c.MeasureBox(op.Note, TextBox{Font: Font{Size: 11}, W: mw - 12 - 16 - If[float32](op.On, 20, 0), Wrap: true})
 		rows[i] = rowM{h: 7 + lh + 1 + nh + 7, lh: lh}
 		total += rows[i].h
 	}
@@ -420,7 +423,7 @@ func (o *OfficeView) accessMenu(c *Ctx, w, h float32, p *OfficeProps) {
 			c.Box(rx, y, rw, rows[i].h, R(8), RGBA(0xffffff17))
 		}
 		c.Text(op.Label, rx+8, y+7, TextBox{Font: Font{Size: 12.5, Weight: 600}, Color: ink})
-		c.Text(op.Note, rx+8, y+7+rows[i].lh+1, TextBox{Font: Font{Size: 11}, Color: inkFnt, W: rw - 16 - 8 - 12, Wrap: true})
+		c.Text(op.Note, rx+8, y+7+rows[i].lh+1, TextBox{Font: Font{Size: 11}, Color: inkFnt, W: rw - 16 - If[float32](op.On, 20, 0), Wrap: true})
 		if op.On {
 			c.Icon(IconCheck, rx+rw-8-12, y+7+3, 12, accent)
 		}
@@ -476,7 +479,7 @@ func (o *OfficeView) repoMenu(c *Ctx, w, h float32, p *OfficeProps) {
 	foc := s.repoText.focused(c)
 	c.Box(sx, y, sw, 32, R(8), RGBA(0xffffff0f))
 	c.Border(sx, y, sw, 32, R(8), 1, If(foc, RGBA(0xc4a2ff8c), RGBA(0xffffff14)))
-	text, edited, accepted := s.repoText.sync(c, "", true)
+	text, edited, accepted := s.repoText.sync(c, n.RepoQuery, true)
 	if o.nt.focusRepo {
 		o.nt.focusRepo = false
 		c.Execute(key.FocusCmd{Tag: &s.repoText.ed})
