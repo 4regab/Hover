@@ -1,9 +1,30 @@
 # Changelog
 
 What changed in each Hover release. Versions follow [Semantic Versioning](https://semver.org).
-3.x is the native (Rust) Hover; 2.x was the .NET app.
+3.x up to 5.0.2 is the native (Rust) Hover; 5.0.3 on is the Go Hover; 2.x was the .NET app.
 
 ## [Unreleased]
+
+## [5.0.3] - 2026-10-10 (nightly)
+
+A nightly build, published as a pre-release: it is not marked Latest, so the Latest release stays
+where it was. This is the first Go build of Hover. It replaces the Rust program with Go code built to
+match it view for view, and installs over 5.0.2 with your settings, history and keys kept. Checked on
+GitHub's Windows, Linux and Mac runners; not by hand on a real Windows PC, a real Linux desktop or a
+Mac.
+
+### Changed
+
+- Hover is written in Go now, not Rust. The look and the data files are the same: the installer
+  check installs this build over 5.0.2 and finds the data folder untouched.
+- Linux: Hover runs on Wayland only, with no X11 and no XWayland. It needs a compositor with
+  layer-shell (KDE Plasma, Sway, Hyprland). Stock GNOME has none, so Hover does not start there.
+- Linux: the shortcuts come from the desktop's GlobalShortcuts portal (KDE, GNOME 48 and later,
+  Hyprland). On Sway, bind a key to `hover --toggle`. The microphone and sound go through
+  PipeWire, so the `.deb` needs `pipewire-bin` or `pipewire-utils`.
+- Linux: the Screen panel is off. A Wayland desktop does not let one app see another's windows.
+  Voice's "take a screenshot" still works.
+- Mac: the backend behind the Swift app is Go. The Swift app itself is unchanged.
 
 ## [5.0.2] - 2026-10-08 (nightly)
 
