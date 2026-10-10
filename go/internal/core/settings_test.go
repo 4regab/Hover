@@ -407,15 +407,21 @@ func TestWritesWaitForTheValueToSettle(t *testing.T) {
 	s.SetHoverOpensWorkspace(false)
 	time.Sleep(200 * time.Millisecond)
 	s.SetKiroNoticeSeen(true)
+	set := time.Now()
 	time.Sleep(250 * time.Millisecond)
-	if _, err := os.Stat(s.file); err == nil {
+	// A sleep on a busy machine can run long: only a check made well inside the 400 ms counts.
+	if _, err := os.Stat(s.file); err == nil && time.Since(set) < 350*time.Millisecond {
 		t.Fatal("a change 250 ms ago holds the write back")
 	}
-	time.Sleep(400 * time.Millisecond)
-	m := LoadModel(s.file)
-	if m.HoverOpensWorkspace || !m.KiroNoticeSeen {
-		t.Fatalf("%+v", m)
+	// The write comes after the settle time, however long the system takes to make the file
+	// (on Windows a rename can wait for a scanner to let go of it).
+	var m Model
+	for end := time.Now().Add(10 * time.Second); time.Now().Before(end); time.Sleep(20 * time.Millisecond) {
+		if m = LoadModel(s.file); !m.HoverOpensWorkspace && m.KiroNoticeSeen {
+			return
+		}
 	}
+	t.Fatalf("not written with both changes within 10 s: %+v", m)
 }
 
 // A file written while Hover still had agents of its own, the default editor, helper
