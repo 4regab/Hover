@@ -27,7 +27,8 @@ func testHover(t *testing.T, answer string, state core.KiroState) (*Hover, strin
 
 func waitFor(t *testing.T, f func() bool) {
 	t.Helper()
-	for i := 0; i < 200; i++ {
+	// Ten seconds: a Windows runner under load once took four for a task that sleeps 50 ms.
+	for i := 0; i < 1000; i++ {
 		if f() {
 			return
 		}

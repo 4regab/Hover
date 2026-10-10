@@ -177,7 +177,7 @@ How the Go code differs, on purpose:
   (`internal/quota/sqlite_reader.go`: tables, overflow pages, the write-ahead log), checked
   against files that SQLite itself wrote.
 
-## Phase 3: UI, bottom up (in progress)
+## Phase 3: UI, bottom up (done)
 
 Order: `hover-chat` first, then the shared widgets, Settings, the desk card, the chat view,
 and the office last. Nothing here opens a window yet; each module draws into a plain image,
@@ -393,9 +393,28 @@ web images in chats (`shell/net.go`). `hoverai --shots DIR` draws every view
 
 Not done, on purpose or for lack of a way to check it:
 
-- **Pictures for the size variants.** Go draws 105 of the Rust build's 384 pictures: each
-  view once, not at each office size (small, large, extra large) or in each narrow and 2x
-  variant. The views are the same code; the variants were not drawn.
+- **Pictures: all 384 are drawn.** `hoverai --shots DIR` makes a Go twin of every picture the
+  Rust build makes, with the same name and size: each view at each office size (small,
+  default, large, extra large), narrow and 2x. They were compared with the Rust build's by eye
+  (side by side, Rust above Go), group by group: voice 82, Settings 88, the chat 58, the desk 71,
+  the office 33, the expanded chat 13, the chat view 30, the notch 8, the new-task box 1. A pixel
+  score is no help for the office pictures (the room is drawn at another time of day, and the
+  glass blurs it through), and fonts differ between Linux and the Windows runner, so those were
+  left alone. What the comparing found, all fixed: the voice card's menu and task box shrank
+  in the wrong order; the desk card's top row squeezed its chips differently; its answer box
+  was two lines tall, not four; the helpers line sat on the permission buttons; desk buttons were
+  24 px narrow; the file editor and the pull request description started their words in the
+  middle of the box; the access menu wrapped its notes early; a chat title that fit was cut with
+  letter spacing; the repository search box did not show what was typed; the chat header's
+  branch icon was not drawn; and the new-task box did not start in the default project folder.
+  The line spacing of wrapped text was 16 px at 12.5 px size, where Slint gives 15.1: that moved
+  every paragraph, and 47 of the voice and chat pictures (23 and 24) got closer to Rust's from
+  that one change.
+- **Known picture differences, not bugs.** The time of day of the room and what its bots say;
+  the clock and "took N s" in fixtures; fonts; the Screen tab, which this Linux machine
+  cannot draw (the Windows CI run's picture is the one to look at); a focus ring where no real keyboard focus is; and the
+  Rust build's own shots of the terminal, where its harness never ran the typed command (Go
+  runs it in a real shell, as the scenario says).
 - **`bench.rs`** (the Rust build's profiling harness, 390 lines) is not ported. It is for
   tuning the Rust build and has no part in the product.
 - **`selftest.rs`** drives X11, which is not a target; on Windows the Rust product has none
@@ -429,7 +448,7 @@ runs its helper as in Rust.
   script on both apps, at rest: Go **69.8 MB** private, Rust **34.7 MB**: **2.01 times**,
   against the rule's 1.25. The working sets are alike (42.7 MB against 44.6 MB); the extra is
   committed memory the Go runtime and Direct3D hold. The rule says the port stops here and we
-  decide again. That decision is the owner's.
+  decide again. **Decided: accepted** (the owner's call), so the port goes on.
 
 ## Phase 6: Linux (written and run against stand-ins; not run on a real desktop)
 
@@ -452,9 +471,14 @@ Wayland only (no X11, no XWayland) and PipeWire (no PulseAudio). The binary is a
 - **Pickers, clipboard, screenshots**: the FileChooser portal (else zenity or kdialog),
   `wl-copy` and `wl-paste`, the Screenshot portal (else `grim`).
 - **wgpu** is called through purego (goffi could not link into a cgo build).
-- **Not there**: the Screen panel (a Wayland program may not see another's windows), input
-  methods and dead keys, fractional scaling (whole scales only), and a primary display
-  (the first the compositor lists, or `HOVER_OUTPUT`).
+- **Dead keys** (libxkbcommon's compose tables), **fractional scaling** (`wp_fractional_scale`
+  with `wp_viewporter`: the buffer is the size times the scale, shown at the logical size) and
+  **input methods** (`zwp_text_input_v3`: the text being composed is real text in the box,
+  underlined, and secret fields say they are passwords and are never sent to the input method)
+  are in. Run against the stand-in compositor only, so Chinese, Japanese and Korean input
+  through a real IME is unchecked.
+- **Not there**: the Screen panel (a Wayland program may not see another's windows), and a
+  primary display (the first the compositor lists, or `HOVER_OUTPUT`).
 - **Packages**: `packaging/linux/package-linux-go.sh` makes a `.deb` and a tarball, and CI
   builds them.
 
@@ -474,15 +498,57 @@ against those files. No real compositor, GPU, speaker or microphone was availabl
   sessions (the protocol tests, with the stand-in tools and `gh`) and compares every message
   field by field: 69 messages, and the only differences are a few timing or random ones, which
   it lists. CI runs it on Linux and on a Mac.
-- **Not done**: the Mac app's build and packaging still start the Rust `hover-backend`
-  (`macos/`, `ci.yml`). Switching them to the Go one is a change to the release, left for you.
+- **The Mac platform layer** (`internal/core/macos.go`, `platform_darwin.go`, `keychain_darwin.go`,
+  and the quota readers' Keychain): the data folder under `~/Library/Application Support`, the
+  Keychain item names, the LaunchAgent and the `defaults` reads, as `platform/macos.rs` has
+  them. The Keychain is called through purego (Security.framework; no C compiler). CI
+  (`core-macos`) runs it on a real Mac: the data folder, its own key, four reads across Rust
+  and Go, and the same `settings.json` bytes.
+- **The Mac build uses the Go backend.** `scripts/build-macos.sh` builds `go/cmd/hover-backend`
+  (`CGO_ENABLED=0`, arm64 or amd64); `ci.yml`'s macOS job and `app-macos` run the Swift app's
+  smoke test on both backends. The Rust crates stay in the repo. `AGENTS.md` and `docs/MACOS.md`
+  still describe the Rust backend: they are the release's words, left for when the Rust one is
+  dropped.
+- The smoke test's check for "exactly one MCP server" was stale (the app offers two,
+  `cua-driver` and `hover-browser`); it fails the same way on the Rust backend, and is fixed.
+  A stop that lands during shutdown can leave a history stage unset; `run.py` ignores that.
+
+## Check on Windows by hand
+
+What CI runs: the Go tests, the installer over 5.0.2, the app driven by `app-smoke.ps1`, the
+pictures on WARP (no GPU), and, when started by hand, the memory run. What it cannot do is use
+a real machine. Before the Go build ships, someone should:
+
+1. Install the setup from the `installer-windows` artifact over a 5.x install with real data;
+   open Hover and check the history, the keys and the settings are all still there.
+2. Press Alt+N, hover the notch, click it: the office opens and folds without the notch
+   stealing focus from the window behind it. Do it with the taskbar at the top and on a second
+   monitor at 150%.
+3. Tray menu: open the app window, Settings, Quit. Start Hover a second time: the first one's
+   window opens.
+4. Run a real agent each in Kiro, Codex, Cursor, OpenCode and Claude Code, with Ask first:
+   approve, deny and trust one; stop one; reply while it works.
+5. A chat's panels: the terminal (run a command, Ctrl+C), the files (edit and save one), the
+   diff, the pull request (set up `gh`, open one), the screen.
+6. Voice with a real microphone: Groq, then local speech (Phonon download and a spoken task),
+   and dictation into a reply box.
+7. Memory at rest, about 70 MB, with Task Manager's "Memory (private working set)".
+8. Uninstall, and check `%APPDATA%\Hover` is left alone.
 
 ## Known costs
 
 - Memory, above.
 - Gio is before 1.0, so upgrades can break code. It's pinned in `go/go.mod`.
 - Double-click word select in Thai, Chinese and Japanese: Rust uses ICU's dictionaries,
-  and no Go package with them was found.
+  and no Go package with them was found. Accepted as a cost.
+- Two tests compare text widths with a Chromium reference measured in DejaVu Sans
+  (`internal/chat`: the double and triple clicks, and the scrolling boxes); they fail on a
+  Linux machine without that font and pass on the Windows runner.
+- `internal/app`'s notification test waits on a clock, and the Windows runner once stalled for
+  4 s under load. The wait is 10 s now. The settings write test had the same trouble and was
+  fixed the same way.
+- `go/hover` (a 2.3 MB Linux program) has been tracked in git since an early commit. It should
+  be removed and ignored; that is a change to the repository, left for you.
 - Semi-transparent colour over the desktop: Gio blends in linear light and the swap chain
   wants premultiplied sRGB. Black and its shadow are exact. A light colour at partial alpha
   over the desktop (the rim) comes out slightly bright. Phase 3 checks it on screen.
