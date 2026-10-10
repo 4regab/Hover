@@ -1,17 +1,16 @@
-//go:build !windows
+//go:build linux
 
 package core
 
 // platform/linux.rs: $XDG_DATA_HOME (~/.local/share), note.key as a 0600 file, and an XDG
-// autostart entry for launch at login. macOS takes these too until phase 7 ports
-// platform/macos.rs.
+// autostart entry for launch at login. The Mac has its own (platform_darwin.go).
 //
 // The Secret Service (GNOME Keyring, KWallet, KeePassXC) keeps the key, encrypted with the
 // login and unlocked with it, as DPAPI keeps it on Windows (dbus_linux.go). Without one (no
 // session bus, no keyring) note.key holds the key itself, readable by this user only (0600).
 // Either way, other programs of the same user can read it, as with DPAPI. A note.key that
 // names a Secret Service item the keyring can't be asked for now is "not now": left alone,
-// with no history this run, never replaced. The Mac has neither until phase 7.
+// with no history this run, never replaced.
 
 import (
 	"crypto/rand"
@@ -24,14 +23,6 @@ import (
 	"strings"
 	"time"
 )
-
-// Home is Environment.SpecialFolder.UserProfile.
-func Home() string { return os.Getenv("HOME") }
-
-// LocalAppData and ProgramFiles are Windows-only known folders (the editors' install
-// folders); none here.
-func LocalAppData() string { return "" }
-func ProgramFiles() string { return "" }
 
 // xdg is an XDG base directory: the variable when it holds an absolute path (the spec
 // ignores a relative one), else the fallback under $HOME.
@@ -50,14 +41,6 @@ func AppData() string { return xdg("XDG_DATA_HOME", ".local/share") }
 // ConfigDir is $XDG_CONFIG_HOME (~/.config): where Electron apps, KDE and GTK keep their
 // settings.
 func ConfigDir() string { return xdg("XDG_CONFIG_HOME", ".config") }
-
-func FullPath(p string) string {
-	cwd, err := os.Getwd()
-	if err != nil {
-		cwd = "/"
-	}
-	return LexicalFullPath(p, cwd)
-}
 
 // secretMarker is what note.key holds when the key itself is in the Secret Service: this
 // marker and the item's id.
@@ -102,23 +85,6 @@ func (g SystemKeyGuard) Unwrap(stored []byte) ([]byte, *KeyError) {
 }
 
 func (SystemKeyGuard) Inherited() ([]byte, *KeyError) { return nil, nil }
-
-// writePrivate writes for this user only: 0600, since the file may hold the key itself.
-func writePrivate(file string, b []byte) error {
-	f, err := os.OpenFile(file, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
-	if err != nil {
-		return err
-	}
-	if err := f.Chmod(0o600); err != nil {
-		f.Close()
-		return err
-	}
-	if _, err := f.Write(b); err != nil {
-		f.Close()
-		return err
-	}
-	return f.Close()
-}
 
 // MARK: Launch at login
 

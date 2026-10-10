@@ -428,7 +428,7 @@ func LoadModel(file string) Model {
 }
 
 // Autostart is Settings.LaunchAtLogin, per platform: HKCU\…\Run on Windows, an XDG
-// autostart entry on Linux.
+// autostart entry on Linux, a LaunchAgent on macOS.
 type Autostart interface {
 	Enabled() bool
 	Set(on bool) error

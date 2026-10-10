@@ -267,8 +267,7 @@ func CursorDB() string {
 	case "windows":
 		base = core.AppData()
 	case "darwin":
-		// ponytail: core.AppData has no macOS branch yet (phase 7 gives it one).
-		base = filepath.Join(agents.Home(), "Library", "Application Support")
+		base = core.AppData()
 	default:
 		base = core.ConfigDir()
 	}
@@ -377,11 +376,6 @@ const ClaudeKeychainMissing = "Claude Code credentials are unavailable. Sign in 
 // generic password of this service, whose value is the text .credentials.json holds
 // elsewhere.
 const ClaudeKeychainService = "Claude Code-credentials"
-
-// claudeKeychain is Claude Code's sign-in from the login Keychain (macOS; the user is asked
-// to allow it once). Nil where there is no Keychain or no such item. Read-only.
-// ponytail: the Keychain is the Mac backend's (phase 7); until then a Mac reads the file.
-func claudeKeychain() (*string, error) { return nil, nil }
 
 // Claude: on a Mac Claude Code keeps its sign-in in the Keychain, and the file is the
 // fallback; elsewhere it is the file.

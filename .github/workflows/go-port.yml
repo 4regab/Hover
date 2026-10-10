@@ -36,6 +36,7 @@ jobs:
       - run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
       - run: go vet -tags nowayland,nox11,novulkan ./...
       - run: GOOS=windows go vet ./...
+      - run: GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 go vet ./...
       - run: go test -race -tags nowayland,nox11,novulkan ./...
       - run: go build -tags nowayland,nox11,novulkan -o ../hover-linux ./cmd/hover
       # The Mac backend compiles for both Macs (it is run by backend-diff).
@@ -506,3 +507,82 @@ jobs:
           HB_GO: ${{ runner.temp }}/hb-go
           FAKE_GH: ${{ runner.temp }}/fakegh
         run: python3 go/tools/backend-diff/run.py
+
+  # The Mac's platform layer (core/macos.go, platform_darwin.go, keychain_darwin.go) on a
+  # Mac, next to the Rust build's: the data folder, and note.key in the login Keychain.
+  # The runner's own keychain can be locked, so the job makes one and unlocks it. A Keychain
+  # item asks the user before another program reads it (the Rust and the Go builds are two
+  # programs), and a runner can't answer, so the cross-read uses an item made for any app.
+  core-macos:
+    runs-on: macos-14
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go/go.mod
+          cache-dependency-path: go/go.sum
+      - name: A keychain this job may write to
+        run: |
+          security create-keychain -p hover ci.keychain
+          security set-keychain-settings -lut 21600 ci.keychain
+          security unlock-keychain -p hover ci.keychain
+          security list-keychains -d user -s "$HOME/Library/Keychains/ci.keychain-db"
+          security default-keychain -d user -s "$HOME/Library/Keychains/ci.keychain-db"
+          security default-keychain -d user
+      - name: Build hover-data in Rust and in Go
+        run: |
+          cargo build --release -p hover-core --bin hover-data
+          (cd go && go build -o "$RUNNER_TEMP/hover-data-go" ./cmd/hover-data)
+      - name: Data folder, Keychain, and each build reading the other's
+        run: |
+          set -eu
+          RUST="$PWD/target/release/hover-data"; GO="$RUNNER_TEMP/hover-data-go"
+          D="$RUNNER_TEMP/data"; mkdir -p "$D"
+          printf '# Answer\n\nRich <text> & "quotes", é, 日本.\n' > "$D/answer.md"
+          OUT="$RUNNER_TEMP/core-macos.txt"; : > "$OUT"
+          say() { echo "$*" | tee -a "$OUT"; }
+          fail() { say "FAILED: $*"; exit 1; }
+          # A Keychain prompt would wait for a person; a minute is long enough for the program.
+          tool() { perl -e 'alarm 60; exec @ARGV' -- "$@"; }
+
+          # Where the data goes: ~/Library/Application Support/Hover, in both builds.
+          H="$RUNNER_TEMP/home"; mkdir -p "$H"
+          want="$H/Library/Application Support/Hover"
+          for who in rust go; do
+            bin="$RUST"; [ "$who" = go ] && bin="$GO"
+            got=$(env -u HOVER_DATA_DIR HOME="$H" "$bin" where)
+            [ "$got" = "$want" ] || fail "$who puts its data in '$got', not '$want'"
+          done
+          say "data folder: both builds use ~/Library/Application Support/Hover"
+
+          # Each build keeps its own key in the Keychain and reads it back. A note.key that
+          # holds the key itself would mean the Keychain was not used.
+          for who in rust go; do
+            bin="$RUST"; [ "$who" = go ] && bin="$GO"
+            tool "$bin" write "$D/$who" "$D/proj" 3 "$D/answer.md" > /dev/null
+            grep -q '^hover-key:keychain:' "$D/$who/note.key" || fail "$who: note.key does not name a Keychain item"
+            id=$(sed -n 's/^hover-key:keychain:\(.*\)$/\1/p' "$D/$who/note.key")
+            security find-generic-password -s Hover -a "note.key:$id" > /dev/null || fail "$who: no Keychain item Hover / note.key:$id"
+            tool "$bin" dump "$D/$who" | grep -q 'history: 1 sessions' || fail "$who couldn't read its own history"
+            say "$who: key kept in the Keychain (Hover / note.key:$id), history read back"
+          done
+
+          # Each reading what the other wrote, with a key both can reach (made for any app,
+          # 32 characters so it is a 32-byte key).
+          seed=5eed5eed5eed5eed
+          security add-generic-password -A -s Hover -a "note.key:$seed" -w abcdefghijklmnopqrstuvwxyz012345
+          security set-generic-password-partition-list -S "apple-tool:,apple:,unsigned:" -s Hover -a "note.key:$seed" -k hover > /dev/null 2>&1 || true
+          for who in rust go; do
+            mkdir -p "$D/x-$who"; printf 'hover-key:keychain:%s\n' "$seed" > "$D/x-$who/note.key"
+          done
+          tool "$RUST" write "$D/x-rust" "$D/proj" 3 "$D/answer.md" > /dev/null
+          tool "$GO" write "$D/x-go" "$D/proj" 3 "$D/answer.md" > /dev/null
+          for pair in "rust go" "go rust" "rust rust" "go go"; do
+            set -- $pair; bin="$RUST"; [ "$1" = go ] && bin="$GO"
+            tool "$bin" dump "$D/x-$2" 2>&1 | grep -q 'history: 1 sessions' || fail "$1 couldn't read what $2 wrote through the Keychain"
+            say "$1 reads what $2 wrote, key from the Keychain: ok"
+          done
+          cmp "$D/x-rust/settings.json" "$D/x-go/settings.json" || fail "settings.json: Rust and Go wrote different bytes"
+          say "settings.json: the same bytes"
+          { echo; echo '### The Mac: data folder and Keychain'; echo; sed 's/^/    /' "$OUT"; } >> "$GITHUB_STEP_SUMMARY"
