@@ -5,6 +5,14 @@ What changed in each Hover release. Versions follow [Semantic Versioning](https:
 
 ## [Unreleased]
 
+## [5.0.4] - 2026-10-10 (nightly)
+
+A nightly build, published as a pre-release: it is not marked Latest, so the Latest release stays
+where it was. Fixes for Kiro's model list, its auto compact and finding kiro-cli on Windows. Checked
+on Linux against kiro-cli 2.29.0 with an API key (`KIRO_API_KEY`): replies on seven models under 1x,
+tools, a reply after Kiro restarted, and a compaction at 49 % that kept the conversation. Not run by
+hand on Windows or a Mac, nor against Codex or Cursor accounts.
+
 ### Fixed
 
 - Kiro's model list was a built-in list of 14 until a task had run, so models such as Sonnet 5.5,
@@ -22,10 +30,6 @@ What changed in each Hover release. Versions follow [Semantic Versioning](https:
   Hover's PATH does not have it. Kiro gets 3 minutes, not 1, to answer on its first start (it
   unpacks its engine then, which a virus scanner can slow), and a compaction that never answers
   ends after 10 minutes instead of holding the reply for good.
-
-Checked on Linux against kiro-cli 2.29.0 with an API key (`KIRO_API_KEY`): replies on seven
-models under 1x, tools, a reply after Kiro restarted, and a compaction at 49 % that kept the
-conversation. Not run by hand on Windows or a Mac, nor against Codex or Cursor accounts.
 
 ## [5.0.3] - 2026-10-10 (nightly)
 
