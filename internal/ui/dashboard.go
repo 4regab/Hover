@@ -182,7 +182,10 @@ func (d *DashView) Layout(c *Ctx, w, h float32, p DashProps, content func(c *Ctx
 			acts = append(acts, DashAction{Kind: DashDrag})
 		}
 	}
-	d.drag.Add(c, 0, 0, w, TitleBarH, true)
+	// Dragged, not clicked: Touch.Add would turn the pointer into a hand all along the bar.
+	dst := clip.Rect(c.irect(0, 0, w, TitleBarH)).Push(c.Ops)
+	d.drag.click.Add(c.Ops)
+	dst.Pop()
 	c.Box(0, TitleBarH-1, w, 1, R(0), RGBA(0xffffff0f))
 	x := float32(6)
 	for i, label := range [...]string{"File", "Settings", "Help"} {
