@@ -1962,3 +1962,16 @@ func TestStoppedTurnDoesNotBreakClicks(t *testing.T) {
 		t.Fatalf("panicked on a stopped turn: %s", msg)
 	}
 }
+
+func TestTitleBarKeepsTheArrow(t *testing.T) {
+	u := setup(t, 1200, 720, 1)
+	u.session("Why does the notch blink on a second monitor?")
+	u.move(600, 20) // empty bar, to be dragged
+	if u.hand() {
+		t.Errorf("a hand over the title bar's drag area")
+	}
+	u.move(25, 18) // File
+	if !u.hand() {
+		t.Errorf("no hand over File")
+	}
+}
