@@ -1,7 +1,7 @@
 # Installs the Go build's setup over a 5.x install, as a user would, and checks what the
 # installer promises: one product (same AppId), the new exe in the same folder, the data
 # folder (%APPDATA%\Hover) untouched, the Start Menu entry, and a clean uninstall.
-# Old is the 5.x setup (Hover-Setup-5.0.3.exe from the GitHub release).
+# Old is the 5.x setup (the oldest Go release's Hover-Setup-*.exe that CI finds).
 # Writes Out\report.json and exits 1 when a check fails.
 param([Parameter(Mandatory)][string]$Setup, [Parameter(Mandatory)][string]$Old, [Parameter(Mandatory)][string]$Built, [Parameter(Mandatory)][string]$Out)
 $ErrorActionPreference = 'Stop'
