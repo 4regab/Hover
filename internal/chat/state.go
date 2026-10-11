@@ -145,7 +145,7 @@ func StepOf(x any) Step {
 	opt := func(k string) string { return strOr(field(x, k), "") }
 	s := Step{
 		Kind: ParseIcon(opt("k")), Verb: opt("verb"), Name: opt("name"), Dir: opt("dir"), Cmd: opt("cmd"),
-		Status: strOr(field(x, "status"), "completed"), Diff: opt("diff"), Out: opt("out"),
+		Status: strOr(field(x, "status"), "completed"), Diff: opt("diff"), Out: opt("out"), Lead: opt("lead"),
 	}
 	if n, ok := asI64(field(x, "add")); ok {
 		s.Add = int(n)

@@ -20,8 +20,6 @@ type HitKind uint8
 const (
 	HitNone HitKind = iota
 	HitLink
-	// HitToggle is the step list's summary of this turn: a click opens or closes it.
-	HitToggle
 	// HitAct is a control in a turn: (section, what it does).
 	HitAct
 	HitText
@@ -46,9 +44,6 @@ func (th *Thread) Hit(x, y float32) Hit {
 			if x >= r[0] && x < r[0]+r[2] && y >= s.Y+r[1] && y < s.Y+r[1]+r[3] {
 				return Hit{Kind: HitAct, Section: i, Act: h.Act}
 			}
-		}
-		if sm := s.Summary; sm != nil && x >= sm[0] && x < sm[0]+sm[2] && y >= s.Y+sm[1] && y < s.Y+sm[1]+sm[3] {
-			return Hit{Kind: HitToggle, Section: i}
 		}
 	}
 	best := Hit{}

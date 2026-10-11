@@ -60,6 +60,8 @@ type Step struct {
 	HasMs     bool
 	// Tag is the demo's own tag ("81 passed"): a check and the words.
 	Tag string
+	// Lead is what the agent said just before this step, shown above it.
+	Lead string
 }
 
 func (s *Step) ended() bool { return s.Status == "completed" || s.Status == "failed" }
@@ -156,6 +158,8 @@ const (
 	ActEditPrompt
 	// ActSendNow: a queued reply sent now, ahead of the others.
 	ActSendNow
+	// ActGroup: a group's header: its steps (from step I) open or fold.
+	ActGroup
 )
 
 type Act struct {

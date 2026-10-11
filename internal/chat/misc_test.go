@@ -337,9 +337,9 @@ func shows(th *Thread, line string) bool { return textWith(th, line) != nil }
 
 func TestARunningTurnsThoughtsAndToolRunsStayOpenAndFoldOnceItEnds(t *testing.T) {
 	th := juno(t)
+	// A running turn's steps are open without a click.
 	turns := []Turn{running(foldSteps())}
 	th.Set(turns, 358)
-	th.ToggleSteps(turns, 0)
 	if !shows(th, foldThought) {
 		t.Error("the ended thought stays open while the turn runs")
 	}
@@ -376,7 +376,6 @@ func TestTheUsersOwnFoldOrUnfoldWinsDuringAndAfterTheTurn(t *testing.T) {
 	th := juno(t)
 	turns := []Turn{running(foldSteps())}
 	th.Set(turns, 358)
-	th.ToggleSteps(turns, 0)
 	// While it runs: the user folds the command, and folds then opens the thought again.
 	th.ToggleStep(turns, 0, foldRun, false)
 	th.ToggleStep(turns, 0, foldThink, false)
@@ -420,7 +419,6 @@ func TestAFoldInTheNowRowHoldsInTheTimeline(t *testing.T) {
 	if shows(th, foldNow) {
 		t.Error(`folded in the "now" row`)
 	}
-	th.ToggleSteps(turns, 0)
 	if shows(th, foldNow) {
 		t.Error("the same block, folded in the timeline too")
 	}

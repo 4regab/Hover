@@ -5,7 +5,22 @@ What changed in each Hover release. Versions follow [Semantic Versioning](https:
 
 ## [Unreleased]
 
+### Changed
+
+- The chat shows a turn the way Claude's desktop app does: what the agent said and the tools it
+  ran, in the order it happened, then its answer. A run of tools between two things it said is
+  one box that says what they did ("2 files read · 1 search"); a click opens it to the steps. A
+  single tool is its own row. The boxes are open while the agent works and fold once it is done.
+  Before, every step sat in one list above the answer, and what the agent said before its tools
+  was lost.
+
 ### Fixed
+
+- The 3D office kept drawing under the chat view, which covers it. Each of its pictures was
+  copied and blurred on the interface thread, 7 to 28 ms by window size, 10 to 30 times a second.
+  It now stops while the chat view is open, so clicks and typing in the chat don't wait on it.
+- A chat moved between the notch's card and the app window kept the other window's width until
+  it was resized.
 
 - Menus and lists did not scroll with the mouse wheel over their rows: the model menu, the
   start screen's folder list, the chat list and the other scrolling lists, in the notch and the

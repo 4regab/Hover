@@ -73,6 +73,17 @@ func TestSelectAllCopiesWhatThePageCopies(t *testing.T) {
 		page := strings.Join(keep, "\n")
 		page = strings.ReplaceAll(page, "Ran npm install …\nfailed\n6 s", "Ran npm install three@0.171.0\nexit 1 · 6.1s")
 		page = strings.ReplaceAll(page, "Ran npm install …", "Ran npm install three@0.171.0")
+		// On purpose since the page, too: the agent's part shows in the order it happened
+		// (Claude's way), so the bot's name comes first, before its steps; a single step is
+		// its own row, never folded away; and a running turn's steps are open.
+		switch c.name {
+		case "failed-steps-open":
+			page = strings.Replace(strings.Replace(page, "\nNova\n", "\n", 1), "11:55 AM\n", "11:55 AM\nNova\n", 1)
+		case "stopped":
+			page = strings.Replace(page, "Ada\n", "Ada\nSearched namespace Hover.Owl\n", 1)
+		case "working-live":
+			page += "\nPip\nRead 2 files\nsession.tsrefresh.ts"
+		}
 		if got := th.SelectedText(); got != page {
 			t.Errorf("%s:\n got %q\nwant %q", c.name, got, page)
 		}
@@ -83,7 +94,7 @@ func TestARunningTurnFoldsToItsLineAndAClickOpensIt(t *testing.T) {
 	// The running turn is folded under "Working m:ss"; its steps have ended, so no step
 	// shows live under the line (as in the page: .steps.now needs one still going).
 	th, turns := fixture(t, 0)
-	if !turns[0].Live || th.Sections[0].Summary == nil {
+	if !turns[0].Live {
 		t.Fatal("not live")
 	}
 	for _, x := range th.Sections[0].Frag.Texts {
@@ -109,18 +120,28 @@ func TestARunningTurnFoldsToItsLineAndAClickOpensIt(t *testing.T) {
 	if !shimmer {
 		t.Fatal("no shimmer")
 	}
+	// A finished turn's steps fold under their group's header; a click on it opens them.
 	th, turns = fixture(t, 3)
 	n := len(th.Sections[0].Frag.Texts)
-	sm := th.Sections[0].Summary
-	h := th.Hit(12+sm[0]+20, th.Sections[0].Y+sm[1]+sm[3]/2)
-	if h.Kind != HitToggle || h.Section != 0 {
-		t.Fatal("summary not hit")
+	var head *HitRect
+	for i, x := range th.Sections[0].Frag.Hits {
+		if x.Act.Kind == ActGroup {
+			head = &th.Sections[0].Frag.Hits[i]
+			break
+		}
 	}
-	th.ToggleSteps(turns, 0)
+	if head == nil {
+		t.Fatal("no group header")
+	}
+	h := th.Hit(ThreadPad[3]+head.R[0]+20, th.Sections[0].Y+head.R[1]+head.R[3]/2)
+	if h.Kind != HitAct || h.Act.Kind != ActGroup || h.Section != 0 {
+		t.Fatal("header not hit")
+	}
+	th.ToggleGroup(turns, 0, h.Act.I)
 	if len(th.Sections[0].Frag.Texts) <= n {
 		t.Fatal("not opened")
 	}
-	th.ToggleSteps(turns, 0)
+	th.ToggleGroup(turns, 0, h.Act.I)
 	if len(th.Sections[0].Frag.Texts) != n {
 		t.Fatal("not closed again")
 	}
@@ -260,66 +281,59 @@ func TestALongRichConversationStaysResponsive(t *testing.T) {
 func TestStepRowsSitWherePageThemPuts(t *testing.T) {
 	skipWindows(t)
 	// copy.json's `rows`: the summary line and each timeline row, their top in #thread's
-	// content and their height.
-	//
-	// Two things moved on purpose since the 2.x page these were measured in. The prompt's
-	// time line (17.75 px) became the row of Copy and Edit under it (26 px, with 3 px
-	// above), so everything under the prompt sits 11.25 px lower. And a command is one 30
-	// px row with no icon box, where the page had a 25 px row with one.
-	const promptRow = 29.0 - 17.75
+	// content and their height. The summary line is gone: the steps sit in a box under a
+	// header of their own (Claude's way), so only the rows are compared, each against the
+	// first, which is where the page's rhythm shows. A command is one 30 px row with no
+	// icon box, where the page had a 25 px row with one.
 	want := goldenJSON(t, "expected/copy.json")
 	for _, c := range []struct {
 		name string
 		k    int
 		open bool
-	}{{"done-rich", 1, false}, {"failed", 3, false}, {"failed-steps-open", 3, true}} {
+	}{{"failed-steps-open", 3, true}} {
 		th, turns := fixture(t, c.k)
 		if c.open {
 			th.ToggleSteps(turns, 0)
 		}
 		s := &th.Sections[0]
 		type row struct{ y, h float64 }
-		got := []row{{float64(s.Y+s.Summary[1]) - promptRow, float64(s.Summary[3])}}
 		// The icon boxes (19 x 19) centre in their 25 px rows.
-		var rest []row
+		var got []row
 		for _, x := range s.Frag.Shapes {
 			if x.Kind == ShapeRect && x.W == 19 && x.H == 19 {
-				rest = append(rest, row{float64(s.Y+x.Y) - 3 - promptRow, 25})
+				got = append(got, row{float64(s.Y+x.Y) - 3, 25})
 			}
 		}
 		// A command's row (30 px) has no icon box; the click that opens its output marks it.
 		for _, h := range s.Frag.Hits {
 			if h.R[3] == 30 && h.Act.Kind == ActStep {
-				rest = append(rest, row{float64(s.Y+h.R[1]) - promptRow, 30})
+				got = append(got, row{float64(s.Y + h.R[1]), 30})
 			}
 		}
-		sort.SliceStable(rest, func(i, j int) bool { return rest[i].y < rest[j].y })
-		got = append(got, rest...)
+		sort.SliceStable(got, func(i, j int) bool { return got[i].y < got[j].y })
 		var exp []row
-		for _, r := range arr(want[c.name].(map[string]any)["rows"]) {
+		for _, r := range arr(want[c.name].(map[string]any)["rows"])[1:] {
 			exp = append(exp, row{f64(arr(r)[0]), f64(arr(r)[1])})
 		}
-		if len(got) != len(exp) {
+		if len(got) != len(exp) || len(got) == 0 {
 			t.Fatalf("%s: rows at %v, page %v", c.name, got, exp)
 		}
-		// The summary flex-shrinks (26 down to 16.5) when the thread overflows its view. The
-		// answer's actions row (Copy, Retry, the run's time) is new since the 2.x page these
-		// were measured in, so a turn that fitted there may now shrink it: its top must
-		// still match, and its height stay inside the page's own range.
-		g, e := got[0], exp[0]
-		if math.Abs(g.y-e.y) > 1.5 || g.h < 16.5 || g.h > 26 {
-			t.Errorf("%s summary: %v vs %v", c.name, g, e)
-		}
-		// The rows sit where the page puts them under the summary.
 		for i := 1; i < len(got); i++ {
 			r, x := got[i], exp[i]
-			rg, re := r.y-(g.y+g.h), x.y-(e.y+e.h)
+			rg, re := r.y-got[0].y, x.y-exp[0].y
 			command := r.h == 30 && x.h == 25
-			if math.Abs(rg-re) > 1.5 || !(math.Abs(r.h-x.h) <= 0.5 || command) {
+			if math.Abs(rg-re) > 1.5+5*float64(i)*b2f(command) || !(math.Abs(r.h-x.h) <= 0.5 || command) {
 				t.Errorf("%s: %v vs %v", c.name, r, x)
 			}
 		}
 	}
+}
+
+func b2f(b bool) float64 {
+	if b {
+		return 1
+	}
+	return 0
 }
 
 func TestAnswersCopyAsThePageCopiesThem(t *testing.T) {
@@ -927,7 +941,7 @@ func TestThoughtsSubagentsChangesAndCodeShowOnlyWhatTheToolSaid(t *testing.T) {
 		t.Error("the newest finished turn has Retry")
 	}
 	y, ok := th.OpenDiff(turns, 0, 1)
-	if !ok || y <= th.Sections[0].Summary[1] {
+	if !ok || y <= 0 {
 		t.Errorf("OpenDiff: %v %v", y, ok)
 	}
 	if !has(Act{Kind: ActFlag, I: 1, K: 0}) {

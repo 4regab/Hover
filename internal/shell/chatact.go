@@ -189,6 +189,7 @@ func (s *Shell) chatProps(op *ui.OfficeProps, which int) {
 	if c := s.shotChips; c != nil {
 		d.Branch, d.Ctx = c.branch, c.ctx
 	}
+	d.Target, d.LaidW, d.LaidH = p.target == which, p.threadW, p.threadH
 	if p.target == which {
 		if ct := p.thread; ct != nil {
 			d.Thread, d.ThreadGen, d.Jump, d.Over = ct.img, ct.gen, ct.jump, ct.over

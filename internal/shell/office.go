@@ -200,7 +200,11 @@ func (s *Shell) officeFollow() {
 			}
 		})
 	}
-	visible := ok
+	// The chat view covers the whole office, so the office is hidden under it: it draws
+	// nothing, and its picture (read back, copied and blurred on this thread, 7 to 28 ms a
+	// frame by its size) no longer costs the chat that time 10 to 30 times a second. After
+	// 30 s it is dropped, as when hidden any other way, and made again when switched back.
+	visible := ok && !s.chatView()
 	if p.shown == nil || *p.shown != visible {
 		v := visible
 		p.shown = &v
@@ -471,6 +475,8 @@ func (s *Shell) officeProps(which int) *ui.OfficeProps {
 		op.OverKind, op.OverName = p.over, p.oname
 		op.OverColor = ui.RGB(rgb24(p.ocol))
 	}
+	// Glass over the chat view is a solid panel: there is no office under it to blur.
+	p.bd.SolidPanel = s.chatView()
 	s.newTaskProps(op)
 	s.chatProps(op, which)
 	op.Panel = map[string]int{"board": 1, "tv": 2, "history": 3}[p.panel]

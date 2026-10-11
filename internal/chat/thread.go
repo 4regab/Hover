@@ -1,8 +1,8 @@
 package chat
 
 import (
-	"fmt"
 	"math"
+	"strings"
 	"time"
 
 	"github.com/4regab/Hover/internal/md"
@@ -13,8 +13,6 @@ import (
 type Section struct {
 	Y, H float32
 	Frag *Frag
-	// Summary is the step list's summary line, which toggles it (x, y, w, h in section coordinates).
-	Summary *Rect4
 	// AnswerTok is where the answer's copy tokens start (a select-all inside `.ans`).
 	AnswerTok    int
 	HasAnswerTok bool
@@ -30,7 +28,6 @@ type Section struct {
 type sectionKey struct {
 	t     Turn
 	wkey  uint32
-	open  bool
 	live  bool
 	user  uint32
 	last  bool
@@ -38,12 +35,13 @@ type sectionKey struct {
 }
 
 func (a *sectionKey) equal(b *sectionKey) bool {
-	return a.wkey == b.wkey && a.open == b.open && a.live == b.live && a.user == b.user && a.last == b.last && a.flags == b.flags && a.t.Equal(&b.t)
+	return a.wkey == b.wkey && a.live == b.live && a.user == b.user && a.last == b.last && a.flags == b.flags && a.t.Equal(&b.t)
 }
 
-type stepsKey struct {
-	session uint64
-	turn    int
+// groupKey is a group of a turn's steps, by its first step.
+type groupKey struct {
+	session     uint64
+	turn, first int
 }
 type stepUserKey struct {
 	session    uint64
@@ -89,10 +87,9 @@ type Thread struct {
 	// ImageState and ImageRule: what the layout knows of an image, and where one may load from.
 	ImageState func(string) ImageState
 	ImageRule  md.ImageFn
-	// stepsUser holds the step lists the user opened (true) or closed (false), by (session,
-	// turn). The page keys them by turn only, so switching chats carried turn i's choice
-	// into the next one; decided in review: the port keeps each session's own (REPORT.md).
-	stepsUser map[stepsKey]bool
+	// groupUser holds the step groups the user opened (true) or closed (false), by (session,
+	// turn, first step): each session keeps its own.
+	groupUser map[groupKey]bool
 	// Session is the session shown (its id in the state message), for stepsUser.
 	Session   uint64
 	HideSteps bool
@@ -102,11 +99,8 @@ type Thread struct {
 	stepUser map[stepUserKey]bool
 	// Copied is the code block just copied (its button says "Copied" a moment).
 	Copied *string
-	// ViewH is the thread's visible height. #thread is a flex column: when its content is
-	// taller, the summary lines (height 26 px, the only items that can shrink) give way,
-	// down to their content's 16.5 px.
+	// ViewH is the thread's visible height.
 	ViewH float32
-	sumH  float32
 	// Relayouts counts section layouts made since the thread was created (for the tests and the benchmark).
 	Relayouts int
 	// HScroll is how far each sideways-scrolling box is scrolled, by (section, scroller). A
@@ -137,7 +131,7 @@ func NewThread(sh *Shaper, who string, color Rgba) *Thread {
 			}
 			return "", false
 		},
-		stepsUser: map[stepsKey]bool{}, Tool: "kiro", stepUser: map[stepUserKey]bool{}, ViewH: float32(math.Inf(1)), sumH: 26,
+		groupUser: map[groupKey]bool{}, Tool: "kiro", stepUser: map[stepUserKey]bool{}, ViewH: float32(math.Inf(1)),
 		HScroll: map[[2]int]float32{}, flags: map[flagKey]bool{}, began: map[beganKey]time.Time{},
 	}
 }
@@ -163,7 +157,13 @@ func (th *Thread) ToggleFlag(turns []Turn, section, j int, k uint32) {
 // OpenDiff: a file under the answer was clicked: the timeline opens on its change. It
 // returns where its row is now, in thread coordinates.
 func (th *Thread) OpenDiff(turns []Turn, section, j int) (float32, bool) {
-	th.stepsUser[stepsKey{th.Session, section}] = true
+	if section < len(turns) {
+		for _, g := range stepGroups(turns[section].Steps) {
+			if j >= g[0] && j < g[1] {
+				th.groupUser[groupKey{th.Session, section, g[0]}] = true
+			}
+		}
+	}
 	th.stepUser[stepUserKey{th.Session, section, j, false}] = true
 	th.Set(turns, th.Width)
 	if section >= len(th.Sections) {
@@ -196,13 +196,63 @@ func (th *Thread) stepOpen(t *Turn, ti, j int, now bool) bool {
 	return stepDefaultOpen(t)
 }
 
-// stepsOpen: whether turn i's timeline is open: the user's choice, else folded (a running
-// turn shows only its current step under the line).
-func (th *Thread) stepsOpen(i int) bool { return th.stepsUser[stepsKey{th.Session, i}] }
+// stepGroups splits a turn's steps where the agent spoke: [first, end) of each run of steps.
+func stepGroups(steps []Step) [][2]int {
+	var out [][2]int
+	for j := range steps {
+		if j == 0 || strings.TrimSpace(steps[j].Lead) != "" {
+			out = append(out, [2]int{j, j + 1})
+		} else {
+			out[len(out)-1][1] = j + 1
+		}
+	}
+	return out
+}
 
-// ToggleSteps: a click on a summary: the timeline flips and stays that way.
+// groupOpen: whether steps [a, b) of turn ti show their rows: the user's choice, else open
+// while the turn runs and folded once it has ended, as the steps' own blocks are, unless the
+// user opened one of its steps: then it stays open to show it.
+func (th *Thread) groupOpen(t *Turn, ti, a, b int) bool {
+	if v, ok := th.groupUser[groupKey{th.Session, ti, a}]; ok {
+		return v
+	}
+	if stepDefaultOpen(t) {
+		return true
+	}
+	for k, v := range th.stepUser {
+		if v && k.session == th.Session && k.turn == ti && k.step >= a && k.step < b {
+			return true
+		}
+	}
+	return false
+}
+
+// ToggleGroup: a click on a group's header: it opens or folds, and stays that way.
+func (th *Thread) ToggleGroup(turns []Turn, ti, first int) {
+	if ti >= len(turns) {
+		return
+	}
+	for _, g := range stepGroups(turns[ti].Steps) {
+		if g[0] == first {
+			th.groupUser[groupKey{th.Session, ti, first}] = !th.groupOpen(&turns[ti], ti, g[0], g[1])
+		}
+	}
+	th.Set(turns, th.Width)
+}
+
+// ToggleSteps opens or folds all of turn i's step groups, as its first one goes.
 func (th *Thread) ToggleSteps(turns []Turn, i int) {
-	th.stepsUser[stepsKey{th.Session, i}] = !th.stepsOpen(i)
+	if i >= len(turns) {
+		return
+	}
+	gs := stepGroups(turns[i].Steps)
+	if len(gs) == 0 {
+		return
+	}
+	on := !th.groupOpen(&turns[i], i, gs[0][0], gs[0][1])
+	for _, g := range gs {
+		th.groupUser[groupKey{th.Session, i, g[0]}] = on
+	}
 	th.Set(turns, th.Width)
 }
 
@@ -241,36 +291,7 @@ func (th *Thread) SetCopied(turns []Turn, t *string) {
 
 // Set lays the thread out for the drawer's width, re-using every section whose turn,
 // width and step-list state haven't changed.
-func (th *Thread) Set(turns []Turn, width float32) {
-	// The summary lines are flex items: when the thread is taller than the view they share
-	// the overflow equally, down to 16.5 from 26. Each section's height holds its summary's
-	// exactly once, so what they would have to give is read from this layout, whatever
-	// height they have in it, and a second layout is needed only when it differs.
-	//
-	// It starts from the height they had last time. Starting at 26 every time, a thread that
-	// stays taller than the view (which is every long chat) missed the layout cache twice
-	// over, once at 26 and once at the shrunk height, and laid every section out again for
-	// each chunk streamed: 0.5 s a chunk at 120 turns, against 0.3 ms.
-	th.lay(turns, width)
-	for range 3 {
-		sums := 0
-		for i := range th.Sections {
-			if th.Sections[i].Summary != nil {
-				sums++
-			}
-		}
-		want := float32(26)
-		if over := th.Height + float32(sums)*(26-th.sumH) - th.ViewH; sums > 0 && over > 0.01 {
-			// Flex shrink: equal bases, so each gives the same share, down to 16.5.
-			want = max(26-over/float32(sums), 16.5)
-		}
-		if d := want - th.sumH; d < 0.001 && d > -0.001 {
-			return
-		}
-		th.sumH = want
-		th.lay(turns, width)
-	}
-}
+func (th *Thread) Set(turns []Turn, width float32) { th.lay(turns, width) }
 
 func (th *Thread) lay(turns []Turn, width float32) {
 	th.Width = width
@@ -289,7 +310,6 @@ func (th *Thread) lay(turns []Turn, width float32) {
 	for i := range turns {
 		t := &turns[i]
 		live := t.Live
-		open := th.stepsOpen(i)
 		var user uint32
 		n := uint32(0)
 		for k, v := range th.stepUser {
@@ -305,7 +325,14 @@ func (th *Thread) lay(turns []Turn, width float32) {
 				user += x
 			}
 		}
-		user += n + math.Float32bits(th.sumH)
+		// The groups the user opened or folded in this turn.
+		for k, v := range th.groupUser {
+			if k.session == th.Session && k.turn == i {
+				n++
+				user += uint32(k.first)*0x9e3779b1 + 7 + map[bool]uint32{true: 3, false: 5}[v]
+			}
+		}
+		user += n
 		// The step switches for this turn, and whether it is the newest (its Retry).
 		var flags uint64
 		for k := range th.flags {
@@ -314,7 +341,7 @@ func (th *Thread) lay(turns []Turn, width float32) {
 			}
 		}
 		last := i+1 == len(turns)
-		key := sectionKey{t.clone(), wkey, open, live, user, last, flags}
+		key := sectionKey{t.clone(), wkey, live, user, last, flags}
 		var s Section
 		if i < len(old) && !old[i].stale && old[i].key.equal(&key) {
 			s = old[i]
@@ -325,12 +352,12 @@ func (th *Thread) lay(turns []Turn, width float32) {
 					delete(th.HScroll, k)
 				}
 			}
-			o := th.turn(t, i, width-pl-pr, open, live, last)
+			o := th.turn(t, i, width-pl-pr, live, last)
 			// A re-render drops .fresh (main.js consumes the flag), so the fade stops.
 			if th.HasFresh && th.FreshSection == i {
 				th.HasFresh = false
 			}
-			s = Section{H: o.h, Frag: o.frag, Summary: o.summary, AnswerTok: o.answerTok, HasAnswerTok: o.hasAnswerTok,
+			s = Section{H: o.h, Frag: o.frag, AnswerTok: o.answerTok, HasAnswerTok: o.hasAnswerTok,
 				AnswerAt: o.answerAt, HasAnswerAt: o.hasAnswerAt, Images: o.images, key: key}
 		}
 		if i > 0 {
@@ -381,7 +408,6 @@ func lkm(size, lh float32, c Rgba, weight float32) Look {
 type turnOut struct {
 	frag         *Frag
 	h            float32
-	summary      *Rect4
 	answerTok    int
 	hasAnswerTok bool
 	images       []string
@@ -392,7 +418,7 @@ type turnOut struct {
 // turn lays one turn out, as flex items with the thread's gap: what the user said, the
 // timeline under its summary line (and the step going on now), then the answer and what
 // it changed.
-func (th *Thread) turn(t *Turn, ti int, w float32, open, live, last bool) turnOut {
+func (th *Thread) turn(t *Turn, ti int, w float32, live, last bool) turnOut {
 	var o turnOut
 	th.pendingImages = nil
 	fr := &Frag{}
@@ -492,129 +518,24 @@ func (th *Thread) turn(t *Turn, ti int, w float32, open, live, last bool) turnOu
 	fr.Copy = append(fr.Copy, tokReq(1))
 	y := rowY + rowH
 
-	if len(t.Steps) > 0 && !th.HideSteps {
-		y += ThreadGap
-		// .sum: how long it worked, and what it did; a click opens or folds the timeline.
-		n := func(k StepIcon) int {
-			c := 0
-			for i := range t.Steps {
-				if t.Steps[i].Kind == k {
-					c++
-				}
-			}
-			return c
-		}
-		files := map[string]bool{}
-		for i := range t.Steps {
-			x := &t.Steps[i]
-			if x.Kind == IconEdit {
-				k := x.Name
-				if k == "" {
-					k = x.Cmd
-				}
-				if k == "" {
-					k = x.Verb
-				}
-				files[k] = true
-			}
-		}
-		var bits []string
-		// How long it thought, as the tool's thoughts measured it (the run's own time is
-		// said once, under the answer), then what it did.
-		var thoughtMs float64
-		for i := range t.Steps {
-			if t.Steps[i].Kind == IconThought && t.Steps[i].HasMs {
-				thoughtMs += t.Steps[i].Ms
-			}
-		}
-		if !live && thoughtMs > 0 {
-			bits = append(bits, "Thought for "+secs(thoughtMs))
-		}
-		plural := func(k int, one, many string) string {
-			if k == 1 {
-				return fmt.Sprintf("%d %s", k, one)
-			}
-			return fmt.Sprintf("%d %s", k, many)
-		}
-		if n(IconRead) > 0 {
-			bits = append(bits, fmt.Sprintf("%d read", n(IconRead)))
-		}
-		if len(files) > 0 {
-			bits = append(bits, plural(len(files), "file edited", "files edited"))
-		}
-		if n(IconRun) > 0 {
-			bits = append(bits, fmt.Sprintf("%d run", n(IconRun)))
-		}
-		if n(IconAgent) > 0 {
-			bits = append(bits, plural(n(IconAgent), "subagent", "subagents"))
-		}
-		faintW := C(255, 255, 255, 92)
-		var spans []span
-		// No clock here: the bot and the steps say what it does now.
-		head := ""
-		switch {
-		case t.Stopping:
-			head = "Stopping…"
-		case live && t.Waiting:
-			head = "Waiting on you"
-		case live:
-			head = "Working"
-		case t.Stage == StageStopped:
-			head = "Stopped"
-		case len(bits) == 0:
-			head = "Worked"
-		}
-		if head != "" {
-			c := C(255, 255, 255, 128)
-			if t.Waiting && !t.Stopping {
-				c = C(0xff, 0xc4, 0x6b, 230)
-			}
-			spans = append(spans, span{text: head, color: c, hasColor: true, weight: 500})
-		}
-		for k, bit := range bits {
-			if head != "" || k > 0 {
-				spans = append(spans, plainC("  ·  ", C(255, 255, 255, 51)))
-			}
-			spans = append(spans, plain(bit))
-		}
-		lay, _, _ := th.sh.text(spans, lk(11, 1.5, faintW, 400), 0, text.AlignStart)
-		sh := th.sumH
-		// user-select: none: drawn, not copied.
-		clip := Rect4{-6, y, w - 14, sh}
-		fr.Texts = append(fr.Texts, TextBox{Layout: lay, Y: y + (sh-16.5)/2, Clip: &clip})
-		fr.Shapes = append(fr.Shapes, caret(w-11-2, y+(sh-11)/2, 11, C(255, 255, 255, 77), open))
-		sm := Rect4{-6, y, w + 12, sh}
-		o.summary = &sm
-		y += sh
-		// .sum and .steps are items of #thread, so the gap comes between them.
-		if open {
-			y += ThreadGap - 4
-			y += th.timeline(fr, t, ti, y, w, live)
-		} else if last2 := &t.Steps[len(t.Steps)-1]; live && (!last2.ended() || last2.hasBlock()) {
-			// .steps.now: only the step it is on, under the line (the subagents it runs as
-			// their one list). One that has just ended with something to read, its output or
-			// its change, stays until the next step starts: a tool says nothing till it is
-			// done, so the row used to go the moment its result came in.
-			y += ThreadGap - 6
-			j := len(t.Steps) - 1
-			if t.Steps[j].Kind == IconAgent {
-				s := 0
-				for k := len(t.Steps) - 1; k >= 0; k-- {
-					if t.Steps[k].Kind != IconAgent {
-						s = k + 1
-						break
-					}
-				}
-				y += th.agents(fr, t, ti, s, j, y, w)
-			} else {
-				op := th.stepOpen(t, ti, j, true)
-				y += th.stepRow(fr, &t.Steps[j], ti, j, true, y, w, !t.Steps[j].ended(), op)
-			}
-		}
+	// The agent's part, in the order it happened, as Claude's desktop app shows a turn: what
+	// it said, the tools it ran, what it said next, and the answer last. A step's Lead is
+	// what was said just before it, so the steps fall into groups at each one.
+	groups := stepGroups(t.Steps)
+	ans := t.Answer
+	if n := len(groups); n > 0 && strings.TrimSpace(ans) == strings.TrimSpace(t.Steps[groups[n-1][0]].Lead) {
+		// Said before the last tools and nothing since: it is shown above them, not again.
+		ans = ""
 	}
-	if t.Answer != "" {
+	hasText := ans != ""
+	for _, g := range groups {
+		hasText = hasText || strings.TrimSpace(t.Steps[g[0]].Lead) != ""
+	}
+	showSteps := len(t.Steps) > 0 && !th.HideSteps
+	var words []string
+	if hasText || showSteps {
 		y += ThreadGap
-		// .who2: the tool's small logo, the bot's name, then "· took"; 6 px under.
+		// .who2: the tool's small logo and the bot's name, 6 px over what it did.
 		name := th.line(th.Who, lk(12, 1.5, C(0xf3, 0xf1, 0xf6, 255), 600), 0)
 		h := max(name.Layout.Height(), 16)
 		fr.Shapes = append(fr.Shapes, svgShape(0, y+(h-16)/2, 16, 16, LogoSVG(th.Tool)))
@@ -623,35 +544,82 @@ func (th *Thread) turn(t *Turn, ti int, w float32, open, live, last bool) turnOu
 		fr.text(name)
 		fr.Copy = append(fr.Copy, tokReq(1))
 		y += h + 6
-		// .ans.err: border-left 2px, padding-left 10px.
 		failed := t.Stage == StageFailed
-		var inset float32
-		if failed {
-			inset = 12
+		ansLook := look
+		ansLook.LH, ansLook.Color = 1.55, C(0xe9, 0xe7, 0xec, 255)
+		first := true
+		// segment lays out words the agent said, as Markdown. The answer (final) fades in
+		// when it arrives, and a failed turn's has the red rule.
+		segment := func(src string, final bool) {
+			if !first {
+				y += 8
+			}
+			first = false
+			var inset float32
+			if final && failed {
+				inset = 12
+			}
+			m := &mdLayout{sh: th.sh, imageState: th.ImageState, copied: th.Copied}
+			b := m.blocks(md.Parse(src, th.ImageRule), ansLook, w-inset, true)
+			o.images = append(o.images, m.used...)
+			if final && failed {
+				fr.Shapes = append(fr.Shapes, rectShape(0, y, 2, b.h, 0, Bad))
+			}
+			at := len(fr.Copy)
+			if !o.hasAnswerTok {
+				o.answerTok, o.hasAnswerTok = at, true
+			}
+			if final {
+				o.answerAt, o.hasAnswerAt = [3]int{len(fr.Texts), len(fr.Shapes), len(fr.Scrollers)}, true
+			}
+			fr.append(b.frag, inset, y)
+			y += b.h
+			var c copier
+			for _, tok := range fr.Copy[at:] {
+				if tok.Kind == TokText {
+					c.text(fr.Texts[tok.N].Text)
+				} else {
+					c.tok(tok)
+				}
+			}
+			words = append(words, c.finish())
 		}
-		blocks := md.Parse(t.Answer, th.ImageRule)
-		m := &mdLayout{sh: th.sh, imageState: th.ImageState, copied: th.Copied}
-		ans := look
-		ans.LH, ans.Color = 1.55, C(0xe9, 0xe7, 0xec, 255)
-		b := m.blocks(blocks, ans, w-inset, true)
-		o.images = m.used
-		if failed {
-			fr.Shapes = append(fr.Shapes, rectShape(0, y, 2, b.h, 0, Bad))
-		}
-		o.answerTok, o.hasAnswerTok = len(fr.Copy), true
-		o.answerAt, o.hasAnswerAt = [3]int{len(fr.Texts), len(fr.Shapes), len(fr.Scrollers)}, true
-		fr.append(b.frag, inset, y)
-		y += b.h
-		// What its Copy takes: the answer as a select-all inside it copies it.
-		var c copier
-		for _, tok := range fr.Copy[o.answerTok:] {
-			if tok.Kind == TokText {
-				c.text(fr.Texts[tok.N].Text)
-			} else {
-				c.tok(tok)
+		for _, g := range groups {
+			if lead := t.Steps[g[0]].Lead; strings.TrimSpace(lead) != "" {
+				segment(lead, false)
+			}
+			if showSteps {
+				if !first {
+					y += 8
+				}
+				first = false
+				y += th.group(fr, t, ti, g[0], g[1], y, w, live)
 			}
 		}
-		whole := c.finish()
+		if ans != "" {
+			segment(ans, true)
+		}
+		// While it works: what it is doing, unless a running step or the words coming in
+		// already show it. Once stopped, that it was.
+		status, statusC := "", C(255, 255, 255, 128)
+		lastRuns := len(t.Steps) > 0 && !t.Steps[len(t.Steps)-1].ended() && showSteps
+		switch {
+		case t.Stopping:
+			status = "Stopping…"
+		case live && t.Waiting:
+			status, statusC = "Waiting on you", C(0xff, 0xc4, 0x6b, 230)
+		case live && !lastRuns && ans == "":
+			status = "Working…"
+		case !live && t.Stage == StageStopped:
+			status = "Stopped"
+		}
+		if status != "" {
+			y += 6
+			lay, _, _ := th.sh.text([]span{{text: status, color: statusC, hasColor: true, weight: 500}}, lk(11.5, 1.5, statusC, 500), 0, text.AlignStart)
+			fr.Texts = append(fr.Texts, TextBox{Layout: lay, Y: y})
+			y += lay.Height()
+		}
+		whole := strings.Join(words, "\n\n")
 		if !th.HideSteps {
 			y += th.changes(fr, t, y, w)
 		}

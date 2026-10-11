@@ -466,7 +466,7 @@ func (s *Shell) threadPointer(kind int, x, y float32, shift bool) {
 		over := false
 		if kind == 5 {
 			h := ct.th.Hit(x, y+ct.scroll)
-			over = h.Kind == chat.HitLink || h.Kind == chat.HitToggle || h.Kind == chat.HitAct
+			over = h.Kind == chat.HitLink || h.Kind == chat.HitAct
 		}
 		if ct.over != over {
 			ct.over = over
@@ -506,7 +506,7 @@ func (s *Shell) threadPointer(kind int, x, y float32, shift bool) {
 		sl.anchor, sl.hasAnchor = a0, true
 		th.SelectUnits(a0, a1, tail, hit.Pos, sl.unit)
 		sl.dragging = true
-	case kind == 0 && (hit.Kind == chat.HitLink || hit.Kind == chat.HitToggle || hit.Kind == chat.HitAct):
+	case kind == 0 && (hit.Kind == chat.HitLink || hit.Kind == chat.HitAct):
 		return
 	case kind == 0:
 		p0 := chat.Pos{}
@@ -538,11 +538,11 @@ func (s *Shell) threadClick(x, y float32) {
 	hit := ct.th.Hit(x, y+ct.scroll)
 	turns := p.turns
 	switch hit.Kind {
-	case chat.HitToggle:
-		ct.th.ToggleSteps(turns, hit.Section)
 	case chat.HitAct:
 		a, i := hit.Act, hit.Section
 		switch a.Kind {
+		case chat.ActGroup:
+			ct.th.ToggleGroup(turns, i, a.I)
 		case chat.ActStep:
 			ct.th.ToggleStep(turns, i, a.I, a.Now)
 		case chat.ActFlag:

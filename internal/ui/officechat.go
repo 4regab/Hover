@@ -23,46 +23,50 @@ import (
 type ChatProps struct {
 	Open bool
 	// Wide: the chat view (d-wide).
-	Wide        bool
-	Name        string
-	Color       RGBAColor
-	Tool        string
-	ToolID      string
-	Title       string
-	Folder      string
-	Access      string
-	Asking      bool
-	Ask         AskData
-	Ctx         float32
-	Cloud       bool
-	Thread      *image.RGBA
-	ThreadGen   uint64
-	Busy        bool
-	Stopping    bool
-	Placeholder string
-	ReplyLabel  string
-	Draft       string
-	DraftGen    int
-	Compose     bool
-	Voice       string
-	Jump        bool
-	Over        bool
-	PopRows     []PopRow
-	PopPickable bool
-	Branch      string
-	Chips       []string
-	Note        string
-	NoteBtns    []string
-	Shots       []*Thumb
-	Model       string
-	ModelEffort string
-	ModelShown  bool
-	Menu        bool
-	Fly         int
-	Editors     []MOpt
-	Switch      []MOpt
-	Fm          string
-	Renaming    bool
+	Wide      bool
+	Name      string
+	Color     RGBAColor
+	Tool      string
+	ToolID    string
+	Title     string
+	Folder    string
+	Access    string
+	Asking    bool
+	Ask       AskData
+	Ctx       float32
+	Cloud     bool
+	Thread    *image.RGBA
+	ThreadGen uint64
+	// Target: this window gets the thread's pictures. LaidW, LaidH: the size the app lays it
+	// out at now.
+	Target       bool
+	LaidW, LaidH float32
+	Busy         bool
+	Stopping     bool
+	Placeholder  string
+	ReplyLabel   string
+	Draft        string
+	DraftGen     int
+	Compose      bool
+	Voice        string
+	Jump         bool
+	Over         bool
+	PopRows      []PopRow
+	PopPickable  bool
+	Branch       string
+	Chips        []string
+	Note         string
+	NoteBtns     []string
+	Shots        []*Thumb
+	Model        string
+	ModelEffort  string
+	ModelShown   bool
+	Menu         bool
+	Fly          int
+	Editors      []MOpt
+	Switch       []MOpt
+	Fm           string
+	Renaming     bool
 	// Copy is Ctrl+C: true when the thread had text selected and it was copied. Type is a
 	// printable key while the chat has the keyboard: true when it opened the reply box.
 	Copy func() bool
@@ -103,7 +107,6 @@ type chatState struct {
 	shotX                                                    [8]Touch
 	focusInput                                               bool
 	startedInput                                             bool
-	lastThreadW, lastThreadH                                 float32
 	scrollTag                                                int
 
 	// over follows the pointer over the whole pane, its children included (d-hover).
@@ -325,8 +328,10 @@ func (o *OfficeView) chatPane(c *Ctx, p *OfficeProps, x, y, w, h, radius float32
 	threadBot := bottom - boxH - askH - noteH
 	threadH := max(threadBot-threadTop, 0)
 	// The thread's box (the column), reported when it changes.
-	if colw != s.lastThreadW || threadH != s.lastThreadH {
-		s.lastThreadW, s.lastThreadH = colw, threadH
+	// Against the app's own size, not the last one this view sent: a chat moved to another
+	// window (the notch's card, then the app window) of an unchanged size was otherwise left
+	// laid out at the other window's width.
+	if d.Target && (colw != d.LaidW || threadH != d.LaidH) {
 		o.emit(OfficeEvent{Kind: OfficeAct, A: "threadSize", X: colw, Y: threadH})
 	}
 
