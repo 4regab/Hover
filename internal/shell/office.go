@@ -115,6 +115,11 @@ type officePage struct {
 	listHeads []listHead
 	folded    map[string]bool
 	web       webList
+
+	// When the chat was last painted, and whether a paint is waiting for the end of the
+	// frame (paintThreadSoon).
+	lastThreadPaint time.Time
+	threadPaintDue  bool
 }
 
 func (s *Shell) pg() *officePage { return &s.page }
@@ -715,13 +720,10 @@ func (s *Shell) OfficeReady() bool { return s.page.scene != nil }
 // PushNow sends the office its state at once, without the 120 ms timer (the shots have none).
 func (s *Shell) PushNow() { s.officePush() }
 
-// anyOf is Hover's JSON as the office reads it (encoding/json's maps and slices).
-// ponytail: through its text, at most 8 times a second; walking the value would be faster.
-func anyOf(j core.JSON) any {
-	var v any
-	_ = json.Unmarshal([]byte(j.Compact()), &v)
-	return v
-}
+// anyOf is Hover's JSON as the office reads it (encoding/json's maps and slices). It is
+// walked, not written out and read back: a long chat's state is megabytes of text, and
+// that took 58 ms for every change to it.
+func anyOf(j core.JSON) any { return j.Any() }
 
 // OpenSession opens that session's chat in the drawer (the shots do it without a click).
 func (s *Shell) OpenSession(id int32) { s.openSession(id) }

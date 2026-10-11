@@ -293,10 +293,21 @@ func Row(x *core.KiroStep, folder string) core.JSON {
 	if x.Exit != nil {
 		exit = core.JInt(int64(*x.Exit))
 	}
+	// A search, a fetch or an MCP tool reports what it found as text, not as a command's
+	// output: that is its result in the chat too. (A read's text is a whole file, which the
+	// chat has no use for, and a change has its diff.)
+	out := x.Output
+	if out == nil && x.Log != nil {
+		switch x.Kind {
+		case "read", "edit", "delete", "move":
+		default:
+			out = KeepRows(*x.Log)
+		}
+	}
 	return core.JObj(
 		core.P("k", jst(icon)), core.P("verb", jst(verb)), core.P("name", core.JOptStr(name)), core.P("dir", core.JOptStr(dir)), core.P("cmd", core.JOptStr(cmd)),
 		core.P("status", jst(x.Status)), core.P("add", core.JInt(int64(x.Added))), core.P("del", core.JInt(int64(x.Removed))),
-		core.P("diff", core.JOptStr(x.Diff)), core.P("out", core.JOptStr(x.Output)), core.P("exit", exit),
+		core.P("diff", core.JOptStr(x.Diff)), core.P("out", core.JOptStr(out)), core.P("exit", exit),
 		core.P("ms", optF(x.MS)),
 	)
 }
@@ -585,6 +596,9 @@ func StateWith(s *KiroSession, files func(*KiroSession) *string, toolAccess *str
 		answer := ""
 		if t.Result != nil {
 			answer = t.Result.Text
+		} else if t.Said != "" {
+			// Still being said: as the final answer will be, trimmed and cut.
+			answer = clip(strings.TrimSpace(t.Said), 20000)
 		}
 		woke, took, credits := core.JNull, core.JNull, core.JNull
 		if t.WokeAt != nil {

@@ -46,13 +46,15 @@ func NewResult(state core.KiroState, text string) KiroResult {
 
 // KiroEvent is detail from a run as it goes: a step that started or ended, the context
 // (0 to 100), the tool's session id, what a turn cost in the tool's credits, as Kiro says
-// at its end, and the slash commands the agent lists (name, what it does).
+// at its end, the slash commands the agent lists (name, what it does), and the answer so far
+// (the newest message, whole each time; one event for all the chunks since the last Drain).
 type KiroEvent struct {
 	Step      *core.KiroStep
 	Context   *float64
 	SessionID *string
 	Credits   *float64
 	Commands  *[][2]string
+	Text      *string
 }
 
 // units is the UTF-16 length, as C# counts a string.
@@ -125,7 +127,12 @@ type KiroStream struct {
 	// Completed: Kiro said the turn is over (its turn_completion report, which also
 	// carries the credits).
 	Completed bool
-	said      string
+	// said is the newest message so far, kept as bytes that are appended to (a string
+	// joined anew for every chunk, and measured again, made a long answer quadratic), with
+	// its length in UTF-16 units. saidDirty: it grew since the last Drain.
+	said      []byte
+	saidUnits int
+	saidDirty bool
 	plain     []string
 	events    []KiroEvent
 	steps     map[string]core.KiroStep
@@ -137,6 +144,9 @@ type KiroStream struct {
 	thought     *string
 	thoughts    int
 	thoughtSent *time.Time
+	// thoughtText is the open thought's text so far (bytes appended per chunk; the step
+	// gets it when it is passed on).
+	thoughtText []byte
 }
 
 // A thought step's text is kept to this many bytes; past it the step says so.
@@ -227,28 +237,25 @@ func (k *KiroStream) think(text string) {
 		k.steps[id] = st
 		k.thought = sp(id)
 		k.thoughtSent = nil
+		k.thoughtText = k.thoughtText[:0]
 	}
-	step := k.steps[id]
-	out := ""
-	if step.Output != nil {
-		out = *step.Output
-	}
-	if len(out) < thoughtLimit {
-		room := thoughtLimit - len(out)
+	if len(k.thoughtText) < thoughtLimit {
+		room := thoughtLimit - len(k.thoughtText)
 		cut := min(len(text), room)
 		for cut < len(text) && !utf8.RuneStart(text[cut]) {
 			cut--
 		}
-		out += text[:cut]
+		k.thoughtText = append(k.thoughtText, text[:cut]...)
 		if cut < len(text) {
-			out += "\n\n[Hover keeps the first 256 KB of a thought; the rest wasn’t saved.]"
+			k.thoughtText = append(k.thoughtText, "\n\n[Hover keeps the first 256 KB of a thought; the rest wasn’t saved.]"...)
 		}
 	}
-	step.Output = sp(out)
-	k.steps[id] = step
 	if k.thoughtSent == nil || time.Since(*k.thoughtSent) >= thoughtEvery {
 		now := time.Now()
 		k.thoughtSent = &now
+		step := k.steps[id]
+		step.Output = sp(string(k.thoughtText))
+		k.steps[id] = step
 		s := step
 		k.events = append(k.events, KiroEvent{Step: &s})
 	}
@@ -268,6 +275,7 @@ func (k *KiroStream) closeThought() {
 	if step, ok := k.steps[id]; ok {
 		step.Status = "completed"
 		step.MS = ms
+		step.Output = sp(string(k.thoughtText))
 		k.steps[id] = step
 		k.events = append(k.events, KiroEvent{Step: &step})
 	}
@@ -276,15 +284,37 @@ func (k *KiroStream) closeThought() {
 // End: the turn is over, a thought still open ends here.
 func (k *KiroStream) End() { k.closeThought() }
 
-// Drain is the steps, context and session id seen since the last call.
+// Drain is the steps, context and session id seen since the last call, and the answer so
+// far when it grew (one event however many chunks it took).
 func (k *KiroStream) Drain() []KiroEvent {
 	e := k.events
 	k.events = nil
+	if k.saidDirty {
+		k.saidDirty = false
+		s := k.Said()
+		e = append(e, KiroEvent{Text: &s})
+	}
 	return e
 }
 
 // Said is everything said so far, from the message chunks.
-func (k *KiroStream) Said() string { return k.said }
+func (k *KiroStream) Said() string {
+	k.trimSaid(saidLimit)
+	return string(k.said)
+}
+
+// trimSaid keeps the last limit UTF-16 units of what was said: only the end is ever shown.
+func (k *KiroStream) trimSaid(limit int) {
+	if k.saidUnits > limit {
+		k.said = append(k.said[:0], dropUnits(string(k.said), k.saidUnits-limit)...)
+		k.saidUnits = units(string(k.said))
+	}
+}
+
+func (k *KiroStream) resetSaid() {
+	k.said, k.saidUnits = k.said[:0], 0
+	k.saidDirty = true
+}
 
 // Feed takes one line of output; the new phase when it changed.
 func (k *KiroStream) Feed(line string) (KiroPhase, bool) {
@@ -383,7 +413,7 @@ func (k *KiroStream) update(u core.JSON) {
 			}
 		}
 		if k.afterTool || mid != nil && k.message != nil && *mid != *k.message || fin && !k.isFinal {
-			k.said = ""
+			k.resetSaid()
 			k.afterTool = false
 		}
 		k.isFinal = k.isFinal || fin
@@ -437,7 +467,7 @@ func (k *KiroStream) update(u core.JSON) {
 		if p, ok := ToolPhase(optStr(u, "kind"), optStr(u, "title")); ok {
 			k.Phase = p
 		}
-		if k.said != "" {
+		if len(k.said) > 0 {
 			k.afterTool = true
 		}
 		k.step(u)
@@ -608,17 +638,20 @@ func (k *KiroStream) append(content core.JSON) {
 		return
 	}
 	if t, ok := str(content, "text"); ok {
-		k.said += t
-		// A long run can say a lot; only the end is ever shown.
-		if n := units(k.said); n > saidLimit {
-			k.said = dropUnits(k.said, n-saidLimit)
+		k.said = append(k.said, t...)
+		k.saidUnits += units(t)
+		k.saidDirty = true
+		// A long run can say a lot; only the end is ever shown. It is cut back to that when
+		// it has doubled, so a chunk costs its own length and not the answer's.
+		if k.saidUnits > 2*saidLimit {
+			k.trimSaid(saidLimit)
 		}
 	}
 }
 
 // Outcome is the run's result once the tool is done.
 func (k *KiroStream) Outcome(exitCode int32, cancelled bool, stderr string) KiroResult {
-	text := k.said
+	text := k.Said()
 	if k.FinalText != nil {
 		text = *k.FinalText
 	}
@@ -844,8 +877,36 @@ func OutputOf(u core.JSON) (*string, *int32) {
 	if text == nil {
 		return nil, exit
 	}
+	rows := KeepRows(*text)
+	if rows == nil {
+		return nil, exit
+	}
+	return rows, exit
+}
+
+// OutputLineUnits is the longest line of a command's output a step keeps. The chat wraps
+// a line, so this is only to keep a runaway one (minified code, a blob) from filling a step.
+const OutputLineUnits = 2000
+
+// KeepRows is text as a step keeps it for the chat: ANSI codes gone, a line redrawn with a
+// carriage return left as the terminal ends up showing it (a progress bar is its last
+// frame, not every frame joined), the end of the output with a line to say what earlier
+// lines were not kept. nil when nothing is left.
+func KeepRows(text string) *string {
 	var rows []string
-	for _, l := range strings.Split(strings.ReplaceAll(StripANSI(*text), "\r", ""), "\n") {
+	for _, l := range strings.Split(strings.ReplaceAll(StripANSI(text), "\r\n", "\n"), "\n") {
+		// Text after the last carriage return is what is on the line in the end (the parts
+		// before it were written over); an empty one is a "\r" at the line's end.
+		if i := strings.LastIndexByte(l, '\r'); i >= 0 {
+			if rest := strings.TrimRight(l[i+1:], " \t"); rest != "" {
+				l = rest
+			} else {
+				l = strings.TrimRight(l[:i], "\r")
+				if j := strings.LastIndexByte(l, '\r'); j >= 0 {
+					l = l[j+1:]
+				}
+			}
+		}
 		rows = append(rows, trimEnd(l))
 	}
 	for len(rows) > 0 && rows[len(rows)-1] == "" {
@@ -855,7 +916,7 @@ func OutputOf(u core.JSON) (*string, *int32) {
 		rows = rows[1:]
 	}
 	if len(rows) == 0 {
-		return nil, exit
+		return nil
 	}
 	from := max(len(rows)-OutputLines, 0)
 	var kept []string
@@ -864,9 +925,9 @@ func OutputOf(u core.JSON) (*string, *int32) {
 		kept = append(kept, fmt.Sprintf("… %d earlier line%s not kept", from, plural(from)))
 	}
 	for _, l := range rows[from:] {
-		kept = append(kept, clip(l, 200))
+		kept = append(kept, clip(l, OutputLineUnits))
 	}
-	return sp(strings.Join(kept, "\n")), exit
+	return sp(strings.Join(kept, "\n"))
 }
 
 // InputLimit is the longest raw input a step keeps (KiroStream.InputLimit), and LogLimit

@@ -401,6 +401,9 @@ func turn(c *ctx, s *agents.KiroSession, t *agents.KiroTurn, waiting bool) core.
 	answer := ""
 	if t.Result != nil {
 		answer = t.Result.Text
+	} else if t.Said != "" {
+		// Still being said: as the final answer will be, trimmed and cut.
+		answer = clip(strings.TrimSpace(t.Said), 20000)
 	}
 	woke, took := core.JNull, core.JNull
 	if t.WokeAt != nil {

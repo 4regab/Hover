@@ -5,6 +5,30 @@ What changed in each Hover release. Versions follow [Semantic Versioning](https:
 
 ## [Unreleased]
 
+### Fixed
+
+- The chat did not stream. The answer appeared whole when the turn ended; it now grows word by
+  word as the tool writes it (checked with Kiro; Claude Code goes through the same code, not run).
+- A long chat lagged on every update: each streamed chunk laid out the whole conversation twice
+  (0.5 s a chunk at 120 turns, now 0.2 ms), and each update also turned the whole chat into text
+  and back (58 ms at 120 turns). Scrolling and window resizing are painted at most once a frame,
+  and a long block of code no longer paints every line it has to show a few of. Clicking Copy
+  laid out the whole chat (0.25 s); it now lays out only the sections that have that button.
+- A command's output in the chat showed its first 8 lines, so the error at the end was behind
+  "Show more". It shows the last 8 now, with "Show N earlier lines". Long lines in an output or a
+  change wrap and are no longer cut (an output line was cut at 200 characters). A progress bar
+  (`\r`) shows its last frame instead of every frame run together.
+- A search, a fetch or an MCP tool showed no result in the chat. The text it reported is its
+  result now.
+- The step a turn was on went from the chat the moment its result arrived, which for a tool that
+  says nothing until it is done meant its output was never seen. It stays until the next step.
+- Tabs were drawn as empty boxes in code blocks and command output; they are tab stops now (and
+  Copy still copies a tab).
+- The model menu cut its first and last rows through the middle against the heading and the
+  compact row. Rows at an edge with more beyond it fade out, and the menu opens centred on the
+  picked model also when a name wraps.
+- A live thought showed a half-cut line at the top of its box; it starts at a whole line.
+
 ## [5.0.4] - 2026-10-10 (nightly)
 
 A nightly build, published as a pre-release: it is not marked Latest, so the Latest release stays

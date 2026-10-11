@@ -215,9 +215,26 @@ func (th *Thread) ToggleStep(turns []Turn, section, j int, now bool) {
 
 // SetCopied: a code block's Copy was clicked: its button says so until the copy is done with.
 func (th *Thread) SetCopied(turns []Turn, t *string) {
+	was := th.Copied
 	th.Copied = t
+	// Only a section with a Copy button for the text that was copied, or the one that is,
+	// says "Copied" (or stops saying it). Laying out all of them cost 0.25 s on a long chat,
+	// and again when the word went back to "Copy".
+	offers := func(s *Section, text *string) bool {
+		if text == nil {
+			return false
+		}
+		for _, h := range s.Frag.Hits {
+			if h.Act.Kind == ActCopy && h.Act.Text == *text {
+				return true
+			}
+		}
+		return false
+	}
 	for i := range th.Sections {
-		th.Sections[i].stale = true
+		if s := &th.Sections[i]; offers(s, was) || offers(s, t) {
+			s.stale = true
+		}
 	}
 	th.Set(turns, th.Width)
 }
@@ -225,18 +242,32 @@ func (th *Thread) SetCopied(turns []Turn, t *string) {
 // Set lays the thread out for the drawer's width, re-using every section whose turn,
 // width and step-list state haven't changed.
 func (th *Thread) Set(turns []Turn, width float32) {
-	th.sumH = 26
+	// The summary lines are flex items: when the thread is taller than the view they share
+	// the overflow equally, down to 16.5 from 26. Each section's height holds its summary's
+	// exactly once, so what they would have to give is read from this layout, whatever
+	// height they have in it, and a second layout is needed only when it differs.
+	//
+	// It starts from the height they had last time. Starting at 26 every time, a thread that
+	// stays taller than the view (which is every long chat) missed the layout cache twice
+	// over, once at 26 and once at the shrunk height, and laid every section out again for
+	// each chunk streamed: 0.5 s a chunk at 120 turns, against 0.3 ms.
 	th.lay(turns, width)
-	sums := 0
-	for i := range th.Sections {
-		if th.Sections[i].Summary != nil {
-			sums++
+	for range 3 {
+		sums := 0
+		for i := range th.Sections {
+			if th.Sections[i].Summary != nil {
+				sums++
+			}
 		}
-	}
-	over := th.Height - th.ViewH
-	if sums > 0 && over > 0.01 {
-		// Flex shrink: equal bases, so each gives the same share, down to 16.5.
-		th.sumH = max(26-over/float32(sums), 16.5)
+		want := float32(26)
+		if over := th.Height + float32(sums)*(26-th.sumH) - th.ViewH; sums > 0 && over > 0.01 {
+			// Flex shrink: equal bases, so each gives the same share, down to 16.5.
+			want = max(26-over/float32(sums), 16.5)
+		}
+		if d := want - th.sumH; d < 0.001 && d > -0.001 {
+			return
+		}
+		th.sumH = want
 		th.lay(turns, width)
 	}
 }
@@ -559,9 +590,11 @@ func (th *Thread) turn(t *Turn, ti int, w float32, open, live, last bool) turnOu
 		if open {
 			y += ThreadGap - 4
 			y += th.timeline(fr, t, ti, y, w, live)
-		} else if last2 := &t.Steps[len(t.Steps)-1]; live && !last2.ended() {
+		} else if last2 := &t.Steps[len(t.Steps)-1]; live && (!last2.ended() || last2.hasBlock()) {
 			// .steps.now: only the step it is on, under the line (the subagents it runs as
-			// their one list).
+			// their one list). One that has just ended with something to read, its output or
+			// its change, stays until the next step starts: a tool says nothing till it is
+			// done, so the row used to go the moment its result came in.
 			y += ThreadGap - 6
 			j := len(t.Steps) - 1
 			if t.Steps[j].Kind == IconAgent {
@@ -575,7 +608,7 @@ func (th *Thread) turn(t *Turn, ti int, w float32, open, live, last bool) turnOu
 				y += th.agents(fr, t, ti, s, j, y, w)
 			} else {
 				op := th.stepOpen(t, ti, j, true)
-				y += th.stepRow(fr, &t.Steps[j], ti, j, true, y, w, true, op)
+				y += th.stepRow(fr, &t.Steps[j], ti, j, true, y, w, !t.Steps[j].ended(), op)
 			}
 		}
 	}

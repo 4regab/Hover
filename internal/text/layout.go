@@ -370,6 +370,7 @@ func (s *Shaper) paragraph(lay *Layout, parts []part, rs []rune, rb []int, pb0, 
 			outs = append(outs, s.shapeRun(sp))
 		}
 	}
+	tabStops(outs, rs)
 	w := width
 	if w <= 0 {
 		w = huge
@@ -460,6 +461,42 @@ func (s *Shaper) paragraph(lay *Layout, parts []part, rs []rune, rb []int, pb0, 
 		}
 	}
 	return lines
+}
+
+// tabSize is CSS tab-size's default: a tab goes to the next multiple of this many spaces.
+const tabSize = 8
+
+// tabStops gives each tab its width. A font has no glyph for a tab (it draws as an empty
+// box), and one run's tab depends on everything before it in the paragraph, as the
+// highlighted code in a block is a run for each colour. So it is done once the whole
+// paragraph is shaped: a tab is a space glyph as wide as the way to the next stop, measured
+// in the spaces of its own face. The text keeps its tab, so a copy does too.
+func tabStops(outs []shaping.Output, rs []rune) {
+	var pen fixed.Int26_6
+	for i := range outs {
+		o := &outs[i]
+		changed := false
+		for gi := range o.Glyphs {
+			g := &o.Glyphs[gi]
+			if o.Face != nil && g.ClusterIndex < len(rs) && rs[g.ClusterIndex] == '\t' && g.GlyphCount == 1 {
+				if sp, ok := o.Face.NominalGlyph(' '); ok {
+					// The face's advance is in its units; the output's size is in 26.6 px.
+					if upem := float32(o.Face.Upem()); upem > 0 {
+						space := fixed.Int26_6(math.Round(float64(o.Face.HorizontalAdvance(sp) * float32(o.Size) / upem)))
+						if stop := space * tabSize; stop > 0 {
+							adv := stop - pen%stop
+							g.GlyphID, g.Advance, g.XAdvance = sp, adv, adv
+							changed = true
+						}
+					}
+				}
+			}
+			pen += g.XAdvance
+		}
+		if changed {
+			o.RecomputeAdvance()
+		}
+	}
 }
 
 // metrics are the ascent and descent of the face a style picks for r, in px.

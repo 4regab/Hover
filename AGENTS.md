@@ -560,5 +560,14 @@ Settings switch.
   The first start after the update removes the old service's scheduled task (Windows) or systemd user
   unit (Linux) once (`removeOldService` in `internal/app/hover.go`) and writes one line to `hover.log`.
 - **Headless GPU runs** need `XDG_RUNTIME_DIR` set.
+- **The chat's cache is only tested with `ViewH = +Inf`.** `chat.Thread.Set` shrinks the summary
+  lines when the thread is taller than the view (`sumH`, part of every section's cache key), so a
+  test that never sets `ViewH` cannot see a change that makes every update lay out every section.
+  The app sets it (`paintThread`). Set it when you measure, and compare `Thread.Relayouts`.
+- **The answer streams through `KiroEvent.Text`, one event per `Drain`** (not per chunk: a
+  cloud session's replay feeds thousands of chunks before the first drain). It sits on the
+  running turn as `KiroTurn.Said` and is never saved; `Result.Text` replaces it at the end.
+  The chat's updates go through `paintThreadSoon` (a paint a frame at most); `paintThread`
+  itself paints at once and is for what the user just did.
 - **The chat's layout goldens** (`internal/chat`'s `thread_test.go`) were measured in Linux
   Chromium with DejaVu Sans, so the three that compare text widths skip on Windows.
