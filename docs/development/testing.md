@@ -10,7 +10,7 @@ What CI runs, what you can run yourself, and what nothing runs yet.
   Mac backend for both Macs;
 - on Windows, builds `hoverai.exe` and its installer, **drives the app** (starts it, opens the
   notch with Alt+N, folds it with Esc, starts it again to ask for the app window) and **installs
-  the new setup over the 5.0.3 release**, checks what the installer promises and uninstalls;
+  the new setup over the oldest Go release still published**, checks what the installer promises and uninstalls;
 - builds the Linux `.deb` and tarball (compiled, not run: the runner has no Wayland desktop);
 - builds the Mac app and runs its **packaged backend** against stand-in tools.
 
@@ -22,7 +22,7 @@ By hand (Run workflow), the `pictures` job draws every view on the Windows runne
   shortcut, folds it, makes a second launch, and writes `report.json`: did each step happen,
   and its private memory and working set at rest and after the app window opened. It exits 1
   when a step didn't happen.
-- `tools/installer-check.ps1` installs the 5.0.3 setup, then the new one over it, and checks:
+- `tools/installer-check.ps1` installs that older setup, then the new one over it, and checks:
   one product, the new exe in the same folder, `wgpu_native.dll` and the license installed,
   one uninstall entry, the Start Menu entry, the Run key kept, `%APPDATA%\Hover` untouched, and
   a clean uninstall.

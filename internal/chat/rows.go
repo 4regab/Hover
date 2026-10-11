@@ -13,12 +13,12 @@ import (
 // timeline is stepsHTML: the timeline, one row per tool call on a thin line. Files read
 // one after another fold into one row with their names under it. While the turn runs, its
 // changes, outputs and thoughts are open. It returns its height.
-func (th *Thread) timeline(fr *Frag, t *Turn, ti int, y0, w float32, live bool) float32 {
-	list := t.Steps
-	isLive := func(j int) bool { return live && j+1 == len(list) && !list[j].ended() }
+func (th *Thread) timeline(fr *Frag, t *Turn, ti, a, b int, y0, w float32, live bool) float32 {
+	list := t.Steps[:b]
+	isLive := func(j int) bool { return live && j+1 == len(t.Steps) && !list[j].ended() }
 	y := y0
 	lineAt := len(fr.Shapes)
-	for j := 0; j < len(list); {
+	for j := a; j < len(list); {
 		x := &list[j]
 		// Subagents started one after another: one list.
 		if x.Kind == IconAgent {
@@ -73,7 +73,7 @@ func (th *Thread) timeline(fr *Frag, t *Turn, ti int, y0, w float32, live bool) 
 	// .steps::before: the thin line under the icons, 12 px in from each end.
 	// ponytail: a command line has no icon on the line, so the line is left out when one is there.
 	hasCmd := false
-	for i := range list {
+	for i := a; i < len(list); i++ {
 		if list[i].Kind == IconRun && list[i].Name == "" && list[i].Cmd != "" {
 			hasCmd = true
 		}
@@ -82,6 +82,107 @@ func (th *Thread) timeline(fr *Frag, t *Turn, ti int, y0, w float32, live bool) 
 		fr.Shapes = insertShape(fr.Shapes, lineAt, rectShape(9, y0+12, 1, y-y0-24, 0, C(255, 255, 255, 20)))
 	}
 	return y - y0
+}
+
+// group is steps [a, b) of turn ti, one run of tools between two things the agent said, as
+// Claude's desktop app shows them. One step is its own row. More are a box whose header
+// says what they did (a click opens or folds it); open, their rows are inside. It returns
+// its height.
+func (th *Thread) group(fr *Frag, t *Turn, ti, a, b int, y, w float32, live bool) float32 {
+	if b-a == 1 {
+		return th.timeline(fr, t, ti, a, b, y, w, live)
+	}
+	const head, pad = 30, 10
+	open := th.groupOpen(t, ti, a, b)
+	working := live && b == len(t.Steps)
+	at := len(fr.Shapes)
+	bits := stepBits(t.Steps[a:b], working)
+	if len(bits) == 0 {
+		bits = []string{fmt.Sprintf("%d steps", b-a)}
+	}
+	var spans []span
+	for k, bit := range bits {
+		if k > 0 {
+			spans = append(spans, plainC("  ·  ", C(255, 255, 255, 51)))
+		}
+		spans = append(spans, plain(bit))
+	}
+	lay, _, _ := th.sh.text(spans, lk(12, 1.4, C(0xf3, 0xf1, 0xf6, 190), 500), 0, text.AlignStart)
+	// user-select: none: drawn, not copied. Folded while it works, it shimmers.
+	clip := Rect4{pad, y, max(w-2*pad-18, 0), head}
+	fr.Texts = append(fr.Texts, TextBox{Layout: lay, X: pad, Y: y + (head-lay.Height())/2, Clip: &clip, Shimmer: working && !open})
+	fr.Shapes = append(fr.Shapes, caret(w-pad-12, y+(head-12)/2, 12, C(255, 255, 255, 110), open))
+	fr.Hits = append(fr.Hits, HitRect{Rect4{0, y, w, head}, Act{Kind: ActGroup, I: a}})
+	h := float32(head)
+	if open {
+		fr.Shapes = append(fr.Shapes, rectShape(1, y+head, w-2, 1, 0, C(255, 255, 255, 13)))
+		in := &Frag{}
+		rh := th.timeline(in, t, ti, a, b, 0, w-2*pad, live)
+		fr.append(in, pad, y+head+1+6)
+		h += 1 + 6 + rh + 4
+	}
+	fr.Shapes = insertShape(fr.Shapes, at, boxShape(0, y, w, h, clear4(10), C(255, 255, 255, 6), C(255, 255, 255, 18), 1))
+	return h
+}
+
+// stepBits says what steps did, for a group's header: how long it thought (once done),
+// then what it read, searched, changed, ran and handed to subagents.
+func stepBits(steps []Step, working bool) []string {
+	n := func(k StepIcon) int {
+		c := 0
+		for i := range steps {
+			if steps[i].Kind == k {
+				c++
+			}
+		}
+		return c
+	}
+	plural := func(k int, one, many string) string {
+		if k == 1 {
+			return fmt.Sprintf("%d %s", k, one)
+		}
+		return fmt.Sprintf("%d %s", k, many)
+	}
+	files := map[string]bool{}
+	var thoughtMs float64
+	for i := range steps {
+		x := &steps[i]
+		switch x.Kind {
+		case IconEdit:
+			k := x.Name
+			if k == "" {
+				k = x.Cmd
+			}
+			if k == "" {
+				k = x.Verb
+			}
+			files[k] = true
+		case IconThought:
+			if x.HasMs {
+				thoughtMs += x.Ms
+			}
+		}
+	}
+	var bits []string
+	if !working && thoughtMs > 0 {
+		bits = append(bits, "Thought for "+secs(thoughtMs))
+	}
+	if r := n(IconRead); r > 0 {
+		bits = append(bits, plural(r, "file read", "files read"))
+	}
+	if s := n(IconSearch); s > 0 {
+		bits = append(bits, plural(s, "search", "searches"))
+	}
+	if len(files) > 0 {
+		bits = append(bits, plural(len(files), "file edited", "files edited"))
+	}
+	if r := n(IconRun); r > 0 {
+		bits = append(bits, plural(r, "command", "commands"))
+	}
+	if g := n(IconAgent); g > 0 {
+		bits = append(bits, plural(g, "subagent", "subagents"))
+	}
+	return bits
 }
 
 func insertShape(s []Shape, at int, sh Shape) []Shape {

@@ -96,11 +96,14 @@ func (s *Scroll) Bar(c *Ctx, x, y, w, h float32) {
 	st.Pop()
 }
 
-// Add puts the box in this frame's hit tree, under what is drawn in it.
+// Add puts the box in this frame's hit tree, under what is drawn in it. Call it with the
+// box's clip pushed, before the content. The handler joins that clip, so the rows drawn
+// after it are its children: a wheel turn over a row (whose click takes no wheel) goes on
+// up to here. A clip of its own, popped again, left it beside the rows instead, and Gio
+// gives the wheel only to the box on top and the boxes around it, so the list never moved.
+// x, y, w, h are kept for the callers; the caller's clip is the box.
 func (s *Scroll) Add(c *Ctx, x, y, w, h float32) {
-	st := clip.Rect(c.irect(x, y, w, h)).Push(c.Ops)
 	event.Op(c.Ops, &s.tag)
-	st.Pop()
 }
 
 // Reveal scrolls the least that brings top..bottom (content coordinates) into view.

@@ -130,18 +130,29 @@ jobs:
           }
       - name: Build the setup
         run: ./build.ps1 installer -Version $env:RELEASE_VERSION
-      # An older release the Go app shipped: what an update installs over. 5.0.2's release was
-      # taken down, which failed this step on every run; 5.0.3 is the oldest Go one left.
+      # An older Go release (5.0.3 or later) with a setup: what an update installs over. The
+      # oldest one still published, so taking an old release down never breaks this step (5.0.2's,
+      # then 5.0.3's and 5.0.4's, did). Not the version being built.
       - name: The 5.x setup
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           New-Item -ItemType Directory -Force old | Out-Null
-          gh release download v5.0.3 --repo ${{ github.repository }} --pattern 'Hover-Setup-5.0.3.exe' --dir old
-          if ($LASTEXITCODE -ne 0) { throw 'no 5.0.3 setup to install over' }
+          $tags = gh release list --repo ${{ github.repository }} --limit 100 --json tagName --jq '.[].tagName'
+          if ($LASTEXITCODE -ne 0) { throw 'could not list the releases' }
+          $go = $tags | Where-Object { $_ -match '^v(\d+)\.(\d+)\.(\d+)$' } | ForEach-Object { [version]$_.Substring(1) } |
+            Where-Object { $_ -ge [version]'5.0.3' -and $_ -ne [version]$env:RELEASE_VERSION } | Sort-Object
+          $old = $null
+          foreach ($v in $go) {
+            gh release download "v$v" --repo ${{ github.repository }} --pattern "Hover-Setup-$v.exe" --dir old
+            if ($LASTEXITCODE -eq 0) { $old = "old\Hover-Setup-$v.exe"; break }
+          }
+          if (-not $old) { throw "no published Go setup (5.0.3 or later, other than $env:RELEASE_VERSION) to install over" }
+          "Installing over $old"
+          "OLD_SETUP=$old" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
       - name: Install over 5.x, check, uninstall
         timeout-minutes: 10
-        run: ./tools/installer-check.ps1 -Setup "dist\Hover-Setup-$env:RELEASE_VERSION.exe" -Old old\Hover-Setup-5.0.3.exe -Built publish\hoverai.exe -Out out\installer
+        run: ./tools/installer-check.ps1 -Setup "dist\Hover-Setup-$env:RELEASE_VERSION.exe" -Old $env:OLD_SETUP -Built publish\hoverai.exe -Out out\installer
       - name: Summary
         if: always()
         run: |

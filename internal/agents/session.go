@@ -227,7 +227,7 @@ func (s KiroSession) Light() KiroSession {
 			// Only a subagent's input (its name is in it); the rest is for the desk's
 			// panels, which read the whole session.
 			sub := IsSubagent(x)
-			x.Diff, x.Output, x.Log = nil, nil, nil
+			x.Diff, x.Output, x.Log, x.Lead = nil, nil, nil, nil
 			if !sub {
 				x.Input = nil
 			}

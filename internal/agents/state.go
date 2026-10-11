@@ -248,11 +248,11 @@ func Row(x *core.KiroStep, folder string) core.JSON {
 		if x.Kind == "thought" {
 			k = "thought"
 		}
-		return core.JObj(
+		return withLead(x, core.JObj(
 			core.P("k", jst(k)), core.P("verb", jst(x.Title)), core.P("name", core.JNull), core.P("dir", core.JNull),
 			core.P("cmd", core.JOptStr(x.Target)), core.P("status", jst(x.Status)), core.P("add", core.JInt(0)), core.P("del", core.JInt(0)), core.P("diff", core.JNull),
 			core.P("out", core.JOptStr(x.Output)), core.P("exit", core.JNull), core.P("ms", optF(x.MS)),
-		)
+		))
 	}
 	icon := "think"
 	switch x.Kind {
@@ -304,12 +304,22 @@ func Row(x *core.KiroStep, folder string) core.JSON {
 			out = KeepRows(*x.Log)
 		}
 	}
-	return core.JObj(
+	return withLead(x, core.JObj(
 		core.P("k", jst(icon)), core.P("verb", jst(verb)), core.P("name", core.JOptStr(name)), core.P("dir", core.JOptStr(dir)), core.P("cmd", core.JOptStr(cmd)),
 		core.P("status", jst(x.Status)), core.P("add", core.JInt(int64(x.Added))), core.P("del", core.JInt(int64(x.Removed))),
 		core.P("diff", core.JOptStr(x.Diff)), core.P("out", core.JOptStr(out)), core.P("exit", exit),
 		core.P("ms", optF(x.MS)),
-	)
+	))
+}
+
+// withLead adds what was said before the step, only when something was: every other row
+// stays as the 2.x page wrote it.
+func withLead(x *core.KiroStep, row core.JSON) core.JSON {
+	if x.Lead == nil {
+		return row
+	}
+	props, _ := row.Props()
+	return core.JObj(append(props, core.P("lead", jst(*x.Lead)))...)
 }
 
 // Relative is the target inside the folder, relative to it with forward slashes; one

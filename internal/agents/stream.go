@@ -138,8 +138,10 @@ type KiroStream struct {
 	steps     map[string]core.KiroStep
 	began     map[string]time.Time
 	afterTool bool
-	message   *string
-	isFinal   bool
+	// leadDone: what is said now already went to a step as its Lead.
+	leadDone bool
+	message  *string
+	isFinal  bool
 	// The reasoning being said now (a "thought" step's id), and when it was last sent on.
 	thought     *string
 	thoughts    int
@@ -234,6 +236,7 @@ func (k *KiroStream) think(text string) {
 		k.began[id] = time.Now()
 		st := core.NewStep(id, "thought", "Thinking", nil, "in_progress")
 		st.Output = sp("")
+		k.lead(&st)
 		k.steps[id] = st
 		k.thought = sp(id)
 		k.thoughtSent = nil
@@ -314,6 +317,18 @@ func (k *KiroStream) trimSaid(limit int) {
 func (k *KiroStream) resetSaid() {
 	k.said, k.saidUnits = k.said[:0], 0
 	k.saidDirty = true
+	k.leadDone = false
+}
+
+// lead gives a new step what was said just before it, once: the chat shows those words in
+// their place, before the step. The words after it are a new message (afterTool), so they
+// are never shown twice, and the answer stays the last message, as it was.
+func (k *KiroStream) lead(st *core.KiroStep) {
+	if k.leadDone || len(k.said) == 0 {
+		return
+	}
+	k.leadDone, k.afterTool = true, true
+	st.Lead = sp(k.Said())
 }
 
 // Feed takes one line of output; the new phase when it changed.
@@ -624,6 +639,9 @@ func (k *KiroStream) step(u core.JSON) {
 	if !seen && next.Title == "Working" && next.Target == nil && next.Input == nil && next.Log == nil &&
 		next.Output == nil && next.Diff == nil && next.Status != "failed" {
 		return
+	}
+	if !seen {
+		k.lead(&next)
 	}
 	k.steps[id] = next
 	k.events = append(k.events, KiroEvent{Step: &next})

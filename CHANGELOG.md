@@ -5,7 +5,32 @@ What changed in each Hover release. Versions follow [Semantic Versioning](https:
 
 ## [Unreleased]
 
+### Changed
+
+- The chat shows a turn the way Claude's desktop app does: what the agent said and the tools it
+  ran, in the order it happened, then its answer. A run of tools between two things it said is
+  one box that says what they did ("2 files read · 1 search"); a click opens it to the steps. A
+  single tool is its own row. The boxes are open while the agent works and fold once it is done.
+  Before, every step sat in one list above the answer, and what the agent said before its tools
+  was lost.
+
 ### Fixed
+
+- The 3D office kept drawing under the chat view, which covers it. Each of its pictures was
+  copied and blurred on the interface thread, 7 to 28 ms by window size, 10 to 30 times a second.
+  It now stops while the chat view is open, so clicks and typing in the chat don't wait on it.
+- A chat moved between the notch's card and the app window kept the other window's width until
+  it was resized.
+
+- Menus and lists did not scroll with the mouse wheel over their rows: the model menu, the
+  start screen's folder list, the chat list and the other scrolling lists, in the notch and the
+  app window. A row took the wheel and passed it to nothing.
+- The ⋯ menu's "Open in" and "Switch agent" lists were cut off at the chat card's left edge, and
+  the part cut off could not be clicked. They now show whole, and open to the right when the
+  left has no room.
+- Resting the pointer on "Open in" or "Switch agent" kept the window redrawing nonstop.
+- Clicks took effect a frame late on Windows, and could wait behind up to three queued frames
+  while anything moved. A click's result is now drawn on the next frame, with one frame queued.
 
 - The chat did not stream. The answer appeared whole when the turn ended; it now grows word by
   word as the tool writes it (checked with Kiro; Claude Code goes through the same code, not run).

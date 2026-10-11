@@ -23,46 +23,50 @@ import (
 type ChatProps struct {
 	Open bool
 	// Wide: the chat view (d-wide).
-	Wide        bool
-	Name        string
-	Color       RGBAColor
-	Tool        string
-	ToolID      string
-	Title       string
-	Folder      string
-	Access      string
-	Asking      bool
-	Ask         AskData
-	Ctx         float32
-	Cloud       bool
-	Thread      *image.RGBA
-	ThreadGen   uint64
-	Busy        bool
-	Stopping    bool
-	Placeholder string
-	ReplyLabel  string
-	Draft       string
-	DraftGen    int
-	Compose     bool
-	Voice       string
-	Jump        bool
-	Over        bool
-	PopRows     []PopRow
-	PopPickable bool
-	Branch      string
-	Chips       []string
-	Note        string
-	NoteBtns    []string
-	Shots       []*Thumb
-	Model       string
-	ModelEffort string
-	ModelShown  bool
-	Menu        bool
-	Fly         int
-	Editors     []MOpt
-	Switch      []MOpt
-	Fm          string
-	Renaming    bool
+	Wide      bool
+	Name      string
+	Color     RGBAColor
+	Tool      string
+	ToolID    string
+	Title     string
+	Folder    string
+	Access    string
+	Asking    bool
+	Ask       AskData
+	Ctx       float32
+	Cloud     bool
+	Thread    *image.RGBA
+	ThreadGen uint64
+	// Target: this window gets the thread's pictures. LaidW, LaidH: the size the app lays it
+	// out at now.
+	Target       bool
+	LaidW, LaidH float32
+	Busy         bool
+	Stopping     bool
+	Placeholder  string
+	ReplyLabel   string
+	Draft        string
+	DraftGen     int
+	Compose      bool
+	Voice        string
+	Jump         bool
+	Over         bool
+	PopRows      []PopRow
+	PopPickable  bool
+	Branch       string
+	Chips        []string
+	Note         string
+	NoteBtns     []string
+	Shots        []*Thumb
+	Model        string
+	ModelEffort  string
+	ModelShown   bool
+	Menu         bool
+	Fly          int
+	Editors      []MOpt
+	Switch       []MOpt
+	Fm           string
+	Renaming     bool
 	// Copy is Ctrl+C: true when the thread had text selected and it was copied. Type is a
 	// printable key while the chat has the keyboard: true when it opened the reply box.
 	Copy func() bool
@@ -103,7 +107,6 @@ type chatState struct {
 	shotX                                                    [8]Touch
 	focusInput                                               bool
 	startedInput                                             bool
-	lastThreadW, lastThreadH                                 float32
 	scrollTag                                                int
 
 	// over follows the pointer over the whole pane, its children included (d-hover).
@@ -178,8 +181,8 @@ func (o *OfficeView) chatPane(c *Ctx, p *OfficeProps, x, y, w, h, radius float32
 	s.drawBlk.Add(c, x, y, w, h)
 	s.over.Update(c)
 	defer s.over.Add(c, x, y, w, h)
+	// Popped before the ⋯ menu, which opens its lists past the card's edge.
 	cl := c.RRect(x, y, w, h, R(radius)).Push(c.Ops)
-	defer cl.Pop()
 
 	hdrH := If[float32](compact, 44, 52)
 	// MARK: the header
@@ -325,8 +328,10 @@ func (o *OfficeView) chatPane(c *Ctx, p *OfficeProps, x, y, w, h, radius float32
 	threadBot := bottom - boxH - askH - noteH
 	threadH := max(threadBot-threadTop, 0)
 	// The thread's box (the column), reported when it changes.
-	if colw != s.lastThreadW || threadH != s.lastThreadH {
-		s.lastThreadW, s.lastThreadH = colw, threadH
+	// Against the app's own size, not the last one this view sent: a chat moved to another
+	// window (the notch's card, then the app window) of an unchanged size was otherwise left
+	// laid out at the other window's width.
+	if d.Target && (colw != d.LaidW || threadH != d.LaidH) {
 		o.emit(OfficeEvent{Kind: OfficeAct, A: "threadSize", X: colw, Y: threadH})
 	}
 
@@ -401,7 +406,10 @@ func (o *OfficeView) chatPane(c *Ctx, p *OfficeProps, x, y, w, h, radius float32
 		o.composer(c, p, d, x, ny, w, colw, compH, inputH, compact)
 	}
 
-	// MARK: the ⋯ menu
+	cl.Pop()
+	// MARK: the ⋯ menu, over the card's edge: Open in and Switch agent open to its left,
+	// and on the card that is outside it. Inside the card's clip they were cut off, and
+	// what was cut off could not be clicked either.
 	if d.Menu {
 		o.chatMenu(c, p, d, x, y, w, hdrH)
 	}
@@ -825,15 +833,17 @@ func (o *OfficeView) chatMenu(c *Ctx, p *OfficeProps, d *ChatProps, x, y, w, hdr
 		open := (it.id == "openin" && d.Fly == 1) || (it.id == "switch" && d.Fly == 2)
 		clicked, hovered := s.items[i].Layout(c, MenuRow{Icon: it.icon, Text: it.text, Chev: it.chev, Red: it.red, Open: open}, mx+4, ry, mw-8)
 		if hovered {
+			// Only a change is sent. Each one asks for a frame, so sending it on every
+			// frame the pointer rested on the row kept the window redrawing nonstop.
+			fly := 0
 			switch it.id {
 			case "openin":
-				o.emit(OfficeEvent{Kind: OfficeAct, A: "dFly", N: 1})
+				fly = 1
 			case "switch":
-				o.emit(OfficeEvent{Kind: OfficeAct, A: "dFly", N: 2})
-			default:
-				if d.Fly != 0 {
-					o.emit(OfficeEvent{Kind: OfficeAct, A: "dFly", N: 0})
-				}
+				fly = 2
+			}
+			if fly != d.Fly {
+				o.emit(OfficeEvent{Kind: OfficeAct, A: "dFly", N: fly})
 			}
 		}
 		if clicked {
@@ -857,9 +867,14 @@ func (o *OfficeView) chatMenu(c *Ctx, p *OfficeProps, d *ChatProps, x, y, w, hdr
 		}
 		ry += 30
 	}
-	// The list that opens to the left of a row.
+	// The list that opens to the left of a row; to its right when the left has no room (a
+	// narrow window), and never off the view.
 	if d.Fly != 0 {
-		o.flyout(c, d, mx-202, flyY-5)
+		fx := mx - 202
+		if fx < 4 {
+			fx = min(mx+mw-2, o.vw-204-4)
+		}
+		o.flyout(c, d, max(fx, 4), flyY-5)
 	}
 }
 

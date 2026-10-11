@@ -229,6 +229,9 @@ type KiroStep struct {
 	Exit            *int32
 	MS              *float64
 	Input, Log      *string
+	// Lead is what the agent said just before this step, when its message ended here: the
+	// chat shows it in its place among the steps. Nil on the steps after the first of a run.
+	Lead *string
 }
 
 func NewStep(id, kind, title string, target *string, status string) KiroStep {
@@ -249,6 +252,9 @@ func (s KiroStep) ToJSON() JSON {
 	if s.Log != nil {
 		props = append(props, P("Log", JStr(*s.Log)))
 	}
+	if s.Lead != nil {
+		props = append(props, P("Lead", JStr(*s.Lead)))
+	}
 	return JObj(props...)
 }
 
@@ -256,7 +262,7 @@ func StepFromJSON(v JSON) (KiroStep, error) {
 	r := readObj(v)
 	s := KiroStep{ID: r.text("Id"), Kind: r.text("Kind"), Title: r.text("Title"), Target: r.optText("Target"), Status: r.text("Status"),
 		Added: r.i32Or("Added", 0), Removed: r.i32Or("Removed", 0), Diff: r.optText("Diff"), Output: r.optText("Output"),
-		Exit: r.optI32("Exit"), Input: r.optText("Input"), Log: r.optText("Log")}
+		Exit: r.optI32("Exit"), Input: r.optText("Input"), Log: r.optText("Log"), Lead: r.optText("Lead")}
 	if x, ok := r.some("Ms"); ok && r.err == nil {
 		f, err := x.F64()
 		r.fail(err)
