@@ -98,8 +98,9 @@ func (t *TextField) Layout(c *Ctx, x, y, w float32, value, placeholder string, s
 // shaped at shapeScale times its size and drawn scaled back: the shaper rounds sizes up
 // to a whole pixel. Pointer events reach it through the same transform.
 func (c *Ctx) editor(ed *widget.Editor, f Font, x, y, w, h, lineH float32, ink, sel color.NRGBA) {
-	k := c.K * shapeScale
-	t := op.Affine(f32.Affine2D{}.Scale(f32.Pt(0, 0), f32.Pt(1.0/shapeScale, 1.0/shapeScale)).Offset(c.Pt(x, y))).Push(c.Ops)
+	ss := shapeAt(f.Size * c.K)
+	k := c.K * ss
+	t := op.Affine(f32.Affine2D{}.Scale(f32.Pt(0, 0), f32.Pt(1/ss, 1/ss)).Offset(c.Pt(x, y))).Push(c.Ops)
 	gtx := c.Context
 	gtx.Metric = unit.Metric{PxPerDp: k, PxPerSp: k}
 	gtx.Constraints = layout.Exact(image.Pt(int(w*k+0.5), int(h*k+0.5)))

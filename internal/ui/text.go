@@ -160,10 +160,18 @@ type line struct {
 // internal/text does for the chat.
 const shapeScale = 32
 
-// shape lays s out; widths and x0 are physical pixels, the glyphs at shapeScale.
+// shapeAt is shapeScale, or less for text so big that shapeScale times it would pass what Gio's
+// shaper can take (it panics at a size of 1024 px: a 26 px heading on a screen scaled
+// 125 % or more). px is the text's size on the screen.
+func shapeAt(px float32) float32 {
+	return min(shapeScale, max(1, float32(math.Floor(1000/float64(px)))))
+}
+
+// shape lays s out; widths and x0 are physical pixels, the glyphs at shapeAt of their size.
 func (c *Ctx) shape(s string, b TextBox) []line {
 	sh := textShaper()
-	k := c.K * shapeScale
+	ss := shapeAt(b.Size * c.K)
+	k := c.K * ss
 	p := text.Parameters{
 		Font:            b.Font.gio(),
 		PxPerEm:         fixed.Int26_6(math.Round(float64(b.Size * k * 64))),
@@ -201,7 +209,7 @@ func (c *Ctx) shape(s string, b TextBox) []line {
 	var lines []line
 	var cur line
 	first := true
-	var acc float32 // the letter spacing so far on this line, at shapeScale and 26.6
+	var acc float32 // the letter spacing so far on this line, at shapeAt and 26.6
 	for g, ok := sh.NextGlyph(); ok; g, ok = sh.NextGlyph() {
 		if b.Spacing != 0 {
 			g.X += fixed.Int26_6(acc)
@@ -210,10 +218,10 @@ func (c *Ctx) shape(s string, b TextBox) []line {
 			}
 		}
 		if first {
-			cur.x0, first = float32(g.X)/64/shapeScale, false
+			cur.x0, first = float32(g.X)/64/ss, false
 		}
 		cur.glyphs = append(cur.glyphs, g)
-		if end := float32(g.X+g.Advance) / 64 / shapeScale; end > cur.width {
+		if end := float32(g.X+g.Advance) / 64 / ss; end > cur.width {
 			cur.width = end
 		}
 		if g.Flags&text.FlagLineBreak != 0 {
@@ -269,6 +277,7 @@ func (c *Ctx) Text(s string, x, y float32, b TextBox) (w, h float32) {
 		}
 	}
 	sh := textShaper()
+	ss := shapeAt(b.Size * c.K)
 	for i, l := range lines {
 		lx := x
 		if b.W > 0 {
@@ -281,7 +290,7 @@ func (c *Ctx) Text(s string, x, y float32, b TextBox) (w, h float32) {
 		}
 		w = max(w, l.width/c.K)
 		base := (top + float32(i)*lh + asc) * c.K
-		t := op.Affine(f32.Affine2D{}.Scale(f32.Pt(0, 0), f32.Pt(1.0/shapeScale, 1.0/shapeScale)).Offset(f32.Pt(lx*c.K+l.x0, base))).Push(c.Ops)
+		t := op.Affine(f32.Affine2D{}.Scale(f32.Pt(0, 0), f32.Pt(1/ss, 1/ss)).Offset(f32.Pt(lx*c.K+l.x0, base))).Push(c.Ops)
 		paint.FillShape(c.Ops, b.Color, clip.Outline{Path: sh.Shape(l.glyphs)}.Op())
 		sh.Bitmaps(l.glyphs).Add(c.Ops)
 		t.Pop()
