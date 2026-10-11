@@ -103,7 +103,10 @@ Fill in the template. In short:
 
 ## Releases
 
-Releases are made by the maintainers: a push to `main` that raises the number in
-`VERSION` (or a `v*` tag) runs `.github/workflows/ci.yml`, which publishes the installers
-once the builds pass. Forks don't need it: `.\build.ps1 installer` and
-`make package` build the same installers locally.
+Releases are made by CI. Every pull request merged to `main` (other than one that only
+changes docs) is published as a nightly build: a pre-release with the next patch number, never
+the Latest, with the pull requests merged since the last release as its notes. You don't change
+`VERSION` or `CHANGELOG.md` for that. The maintainers make a numbered release by raising the
+number in `VERSION` (with its `CHANGELOG.md` section) or pushing a `v*` tag.
+`.github/workflows/ci.yml` publishes the installers once the builds pass. Forks don't need it:
+`.\build.ps1 installer` and `make package` build the same installers locally.
