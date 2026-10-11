@@ -427,7 +427,8 @@ func (o *OfficeView) threadWheel(c *Ctx, x, y, w, h float32) {
 			return
 		}
 		if pe, isP := e.(pointer.Event); isP {
-			o.emit(OfficeEvent{Kind: OfficeAct, A: "dWheel", D: pe.Scroll.Y / c.K})
+			// Gio: down is positive. dWheel: up is positive.
+			o.emit(OfficeEvent{Kind: OfficeAct, A: "dWheel", D: -pe.Scroll.Y / c.K})
 		}
 	}
 }
@@ -453,10 +454,12 @@ func (o *OfficeView) threadPointer(c *Ctx, x, y, w, h float32, d *ChatProps) {
 		if !isP {
 			continue
 		}
-		px, py := pe.Position.X/c.K, pe.Position.Y/c.K
+		// Gio reports the pointer from the view's corner. The chat wants it from the
+		// thread's corner (x, y), as the picture is drawn there.
+		px, py := pe.Position.X/c.K-x, pe.Position.Y/c.K-y
 		switch pe.Kind {
 		case pointer.Scroll:
-			o.emit(OfficeEvent{Kind: OfficeAct, A: "dWheel", D: pe.Scroll.Y / c.K})
+			o.emit(OfficeEvent{Kind: OfficeAct, A: "dWheel", D: -pe.Scroll.Y / c.K})
 		case pointer.Press:
 			if pe.Buttons&pointer.ButtonPrimary == 0 {
 				break
