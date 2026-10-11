@@ -455,6 +455,7 @@ func (o *OfficeView) threadPointer(c *Ctx, x, y, w, h float32, d *ChatProps) {
 	st.Pop()
 	for {
 		e, ok := c.Event(pointer.Filter{Target: &s.threadPtr, Kinds: pointer.Press | pointer.Release | pointer.Move | pointer.Drag | pointer.Leave | pointer.Cancel | pointer.Scroll,
+			ScrollX: pointer.ScrollRange{Min: math.MinInt32, Max: math.MaxInt32},
 			ScrollY: pointer.ScrollRange{Min: math.MinInt32, Max: math.MaxInt32}})
 		if !ok {
 			return
@@ -468,7 +469,18 @@ func (o *OfficeView) threadPointer(c *Ctx, x, y, w, h float32, d *ChatProps) {
 		px, py := pe.Position.X/c.K-x, pe.Position.Y/c.K-y
 		switch pe.Kind {
 		case pointer.Scroll:
-			o.emit(OfficeEvent{Kind: OfficeAct, A: "dWheel", D: -pe.Scroll.Y / c.K})
+			// Shift and the wheel, or a sideways wheel, scroll the code box or table under the
+			// pointer; the plain wheel scrolls the conversation.
+			dx, dy := pe.Scroll.X, pe.Scroll.Y
+			if pe.Modifiers.Contain(key.ModShift) {
+				dx, dy = dx+dy, 0
+			}
+			if dx != 0 {
+				o.emit(OfficeEvent{Kind: OfficeAct, A: "dWheelX", D: dx / c.K, X: px, Y: py})
+			}
+			if dy != 0 {
+				o.emit(OfficeEvent{Kind: OfficeAct, A: "dWheel", D: -dy / c.K})
+			}
 		case pointer.Press:
 			if pe.Buttons&pointer.ButtonPrimary == 0 {
 				break
