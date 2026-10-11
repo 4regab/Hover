@@ -41,6 +41,13 @@ type rig struct {
 	holdD func(bool)
 	hold3 func(bool)
 	done  func()
+	// clip is what was last put on the clipboard, urls the links that were opened.
+	clip string
+	urls []string
+	// say gives a task its answer by its prompt, for tests that need particular words.
+	say map[string]string
+	// timers: every After runs for real (the shots only let the toast's), as a window's does.
+	timers bool
 }
 
 func newRig() (*rig, error) {
@@ -61,6 +68,7 @@ func newRig() (*rig, error) {
 	var mu sync.Mutex
 	held, held3, heldC, heldD := true, true, true, true
 	var runs int
+	var r *rig
 	run := func(a agents.RunArgs) agents.KiroResult {
 		mu.Lock()
 		runs++
@@ -68,6 +76,9 @@ func newRig() (*rig, error) {
 		mu.Unlock()
 		a.Events(agents.KiroEvent{SessionID: &sid})
 		a.Progress(agents.Reading)
+		if txt, ok := r.say[a.Prompt]; ok {
+			return agents.NewResult(core.Completed, txt)
+		}
 		if res, ok := chatFixture(a, func() bool { mu.Lock(); defer mu.Unlock(); return heldC }); ok {
 			return res
 		}
@@ -111,7 +122,7 @@ func newRig() (*rig, error) {
 		return agents.NewResult(core.Completed, "## Imports tidied\n\nAll 14 files now sort their imports.\n\n```ts\nexport const tidy = (f) => f.map(sortImports);\n```")
 	}
 	hv := app.With(settings, nil, nil, run, func(id string) quota.Reading { return *reading(id) })
-	r := &rig{hv: hv, win: &fakeWin{}, dwin: &fakeWin{w: 1200, h: 720}}
+	r = &rig{hv: hv, win: &fakeWin{}, dwin: &fakeWin{w: 1200, h: 720}}
 	var qmu sync.Mutex
 	var queued []func()
 	r.pump = func() {
@@ -127,13 +138,15 @@ func newRig() (*rig, error) {
 		UIDo: func(f func()) { qmu.Lock(); queued = append(queued, f); qmu.Unlock() },
 		// No timer runs but the toast's: it goes after its 2.8 s, as the Rust shots' did.
 		After: func(d time.Duration, f func()) shell.Timer {
-			if d != 2800*time.Millisecond {
+			if d != 2800*time.Millisecond && !r.timers {
 				return stopped{}
 			}
 			return toastTimer{time.AfterFunc(d, func() { qmu.Lock(); queued = append(queued, f); qmu.Unlock() })}
 		},
 		Every: func(time.Duration, func()) shell.Timer { return stopped{} },
 		Quit:  func() {}, Headless: true,
+		SetClipboard: func(t string) { r.clip = t },
+		OpenURL:      func(u string) { r.urls = append(r.urls, u) },
 		NewNotch:     func() (shell.Window, shell.NotchPlat, error) { return r.win, plain{}, nil },
 		NewDashboard: func() (shell.Window, error) { return r.dwin, nil },
 	}

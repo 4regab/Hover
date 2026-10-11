@@ -433,3 +433,20 @@ func (s *Shell) ShotChatOpen() int32 { return s.pg().open }
 
 // ShotSettingsOut puts the notch's Settings away, leaving the office open.
 func (s *Shell) ShotSettingsOut() { s.notchS = false; s.invalidateAll() }
+
+// ShotReply is the words in the open chat's reply box.
+func (s *Shell) ShotReply() string { return s.pg().reply }
+
+// ShotNewDraft is the words in the start screen's box.
+func (s *Shell) ShotNewDraft() string { return s.pg().newDraft }
+
+// ShotCardDraft is the words in the desk card's reply box, and whether a card is out.
+func (s *Shell) ShotCardDraft() (string, bool) { return s.desk.cDraft, s.desk.hasCard }
+
+// ShotView is the office camera the app last kept: x, z and zoom.
+func (s *Shell) ShotView() (v [3]float64, ok bool) {
+	if p := s.pg(); p.view != nil {
+		return *p.view, true
+	}
+	return
+}
