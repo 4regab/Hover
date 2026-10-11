@@ -71,8 +71,6 @@ type ChatProps struct {
 	// printable key while the chat has the keyboard: true when it opened the reply box.
 	Copy func() bool
 	Type func(string) bool
-	// HasSel: words are selected in the thread, so Ctrl+C is theirs.
-	HasSel bool
 	// ListAllowed, ListShown and ListW are the chat view's session list (the header's room
 	// for the switch); MainW the chat's own width.
 	ListAllowed, ListShown bool
@@ -611,30 +609,15 @@ func (o *OfficeView) composer(c *Ctx, p *OfficeProps, d *ChatProps, x, y, w, col
 	}
 	// The words; past 140 px the reply scrolls inside.
 	ix, iwid := cx+2, iw-4
-	// Ctrl+C, with words selected in the thread and none in the box, is the thread's. The box's
-	// editor takes it in follow, so it is read first (and the box's own words copied here).
-	if d.HasSel && s.input.focused(c) {
-		for {
-			e, ok := c.Event(key.Filter{Focus: &s.input.ed, Name: "C", Required: key.ModShortcut})
-			if !ok {
-				break
-			}
-			if k, isKey := e.(key.Event); !isKey || k.State != key.Press {
-				continue
-			}
-			if a, b := s.input.ed.Selection(); a != b {
-				c.Execute(clipboard.WriteCmd{Type: "application/text", Data: io.NopCloser(strings.NewReader(s.input.ed.SelectedText()))})
-			} else if d.Copy != nil {
-				d.Copy()
-			}
-		}
-	}
+	// The box's own keys (Enter, Esc, the list's arrows, Ctrl+C and Ctrl+V) are read before the
+	// editor sees them: it takes Enter, the arrows and Ctrl+C and V for itself, so read after
+	// it they never came (Enter put a new line in and did not send).
+	o.replyKeys(c, p, d)
 	text, edited, _ := s.input.follow(c, d.Draft, d.DraftGen, false)
 	if !s.startedInput || s.focusInput {
 		s.startedInput, s.focusInput = true, false
 		c.Execute(key.FocusCmd{Tag: &s.input.ed})
 	}
-	o.replyKeys(c, p, d)
 	if text == "" {
 		c.Text(d.Placeholder, ix, cy+3, TextBox{Font: Font{Size: 13}, Color: inkFnt, W: iwid, Elide: true})
 	}
