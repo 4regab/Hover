@@ -193,6 +193,7 @@ func (s *Shell) chatProps(op *ui.OfficeProps, which int) {
 	if p.target == which {
 		if ct := p.thread; ct != nil {
 			d.Thread, d.ThreadGen, d.Jump, d.Over = ct.img, ct.gen, ct.jump, ct.over
+			d.HasSel = ct.th.HasSel
 		}
 	}
 	d.Copy = s.threadCopy

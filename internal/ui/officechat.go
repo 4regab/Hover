@@ -71,6 +71,8 @@ type ChatProps struct {
 	// printable key while the chat has the keyboard: true when it opened the reply box.
 	Copy func() bool
 	Type func(string) bool
+	// HasSel: words are selected in the thread, so Ctrl+C is theirs.
+	HasSel bool
 	// ListAllowed, ListShown and ListW are the chat view's session list (the header's room
 	// for the switch); MainW the chat's own width.
 	ListAllowed, ListShown bool
@@ -108,6 +110,7 @@ type chatState struct {
 	focusInput                                               bool
 	startedInput                                             bool
 	scrollTag                                                int
+	threadKeys                                               Focus
 
 	// over follows the pointer over the whole pane, its children included (d-hover).
 	over Pointer
@@ -436,6 +439,14 @@ func (o *OfficeView) threadWheel(c *Ctx, x, y, w, h float32) {
 // threadPointer is the thread's TouchArea: a text selection, a click, the hand cursor.
 func (o *OfficeView) threadPointer(c *Ctx, x, y, w, h float32, d *ChatProps) {
 	s := &o.ch
+	// A press in the thread gives it the keyboard (unless the reply box has it), so that
+	// Ctrl+C copies the words selected there.
+	s.threadKeys.Add(c, x, y, w, h)
+	for _, k := range s.threadKeys.Keys(c, "C") {
+		if k.State == key.Press && k.Modifiers.Contain(key.ModShortcut) && d.Copy != nil {
+			d.Copy()
+		}
+	}
 	st := clip.Rect(c.irect(x, y, w, h)).Push(c.Ops)
 	event.Op(c.Ops, &s.threadPtr)
 	if d.Over {
@@ -465,6 +476,9 @@ func (o *OfficeView) threadPointer(c *Ctx, x, y, w, h float32, d *ChatProps) {
 				break
 			}
 			s.pressed = true
+			if !s.input.focused(c) {
+				s.threadKeys.Take(c)
+			}
 			// A press in the thread takes the keys from the reply box; an empty reply box closes.
 			if d.Compose && d.Draft == "" && len(d.Shots) == 0 && len(d.Chips) == 0 {
 				o.emit(OfficeEvent{Kind: OfficeAct, A: "compose", N: 0})
@@ -597,6 +611,24 @@ func (o *OfficeView) composer(c *Ctx, p *OfficeProps, d *ChatProps, x, y, w, col
 	}
 	// The words; past 140 px the reply scrolls inside.
 	ix, iwid := cx+2, iw-4
+	// Ctrl+C, with words selected in the thread and none in the box, is the thread's. The box's
+	// editor takes it in follow, so it is read first (and the box's own words copied here).
+	if d.HasSel && s.input.focused(c) {
+		for {
+			e, ok := c.Event(key.Filter{Focus: &s.input.ed, Name: "C", Required: key.ModShortcut})
+			if !ok {
+				break
+			}
+			if k, isKey := e.(key.Event); !isKey || k.State != key.Press {
+				continue
+			}
+			if a, b := s.input.ed.Selection(); a != b {
+				c.Execute(clipboard.WriteCmd{Type: "application/text", Data: io.NopCloser(strings.NewReader(s.input.ed.SelectedText()))})
+			} else if d.Copy != nil {
+				d.Copy()
+			}
+		}
+	}
 	text, edited, _ := s.input.follow(c, d.Draft, d.DraftGen, false)
 	if !s.startedInput || s.focusInput {
 		s.startedInput, s.focusInput = true, false
