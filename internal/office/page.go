@@ -144,12 +144,17 @@ func (c *Composer) ComposeInto(frame []byte, w, h int, day bool, out []byte) []b
 			c.over[i] = [4]uint8{d, bl[i*3], bl[i*3+1], bl[i*3+2]}
 		}
 	}
-	out = out[:0]
-	for i := 0; i < len(frame)/4; i++ {
-		p := frame[i*4 : i*4+4]
+	n := len(frame) / 4
+	if cap(out) < n*3 {
+		out = make([]byte, n*3)
+	}
+	out = out[:n*3]
+	for i := 0; i < n; i++ {
+		p := frame[i*4 : i*4+4 : i*4+4]
 		a := float32(p[3]) / 255
 		u, o := c.under[i], c.over[i]
 		k := float32(o[0]) / 255
+		d := out[i*3 : i*3+3 : i*3+3]
 		for ch := 0; ch < 3; ch++ {
 			// The frame over its background, then what lies over both; the part of the
 			// background the frame lets through is under's, which already carries it. Each
@@ -158,7 +163,17 @@ func (c *Composer) ComposeInto(frame []byte, w, h int, day bool, out []byte) []b
 			t2 := float32(float32(o[ch+1]) * a)
 			t3 := float32(float32(u[ch]) * float32(1-a))
 			v := float32(float32(t1+t2) + t3)
-			out = append(out, uint8(math.Min(math.Max(math.Round(float64(v)), 0), 255)))
+			// math.Round for v >= 0 (v+0.5 is exact in float64), clamped; math.Min, Max and
+			// Round per channel were most of this loop's time.
+			r := float64(v) + 0.5
+			switch {
+			case r < 1:
+				d[ch] = 0
+			case r >= 255:
+				d[ch] = 255
+			default:
+				d[ch] = uint8(r)
+			}
 		}
 	}
 	return out

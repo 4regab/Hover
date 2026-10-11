@@ -70,7 +70,11 @@ func (c *Ctx) Shadow(x, y, w, h float32, r Radii, blur, ox, oy float32, col colo
 	if col.A == 0 || w <= 0 || h <= 0 {
 		return
 	}
-	k := c.K
+	// A wide blur is worked out at a fraction of the size and drawn scaled up: a blur of
+	// sigma s loses nothing at 1/(s/4) of the size. At full size a panel's shadow took up to
+	// 150 ms of the UI goroutine, again for each new size the panel had.
+	d := float32(max(1, math.Floor(float64(blur*c.K/2/4))))
+	k := c.K / d
 	sigma := blur * k / 2
 	pad := float32(math.Ceil(float64(3*sigma))) + 1
 	pw, ph := w*k, h*k
@@ -91,7 +95,12 @@ func (c *Ctx) Shadow(x, y, w, h float32, r Radii, blur, ox, oy float32, col colo
 		}
 		return out
 	})
-	c.image(im, (x+ox)*k-pad, (y+oy)*k-pad, 1)
+	if d == 1 {
+		c.image(im, (x+ox)*k-pad, (y+oy)*k-pad, 1)
+		return
+	}
+	im.Filter = paint.FilterLinear
+	c.imageScaled(im, ((x+ox)*k-pad)*d, ((y+oy)*k-pad)*d, d, d)
 }
 
 // blurAlpha blurs a w x h coverage map by a Gaussian of sigma, rows then columns.

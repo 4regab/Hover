@@ -28,47 +28,51 @@ func (b *Blur) Of(rgb []byte, w, h int) {
 	}
 	b.small = b.small[:sw*sh]
 	for y := 0; y < sh; y++ {
-		for x := 0; x < sw; x++ {
-			var acc [3]float32
-			for dy := 0; dy < 4; dy++ {
-				for dx := 0; dx < 4; dx++ {
-					px, py := min(x*4+dx, w-1), min(y*4+dy, h-1)
-					i := (py*w + px) * 3
-					for k := 0; k < 3; k++ {
-						acc[k] += float32(rgb[i+k])
-					}
-				}
+		row := b.small[y*sw : (y+1)*sw]
+		for i := range row {
+			row[i] = [3]float32{}
+		}
+		for dy := 0; dy < 4; dy++ {
+			src := rgb[min(y*4+dy, h-1)*w*3:][:w*3]
+			for px := 0; px < sw*4; px++ {
+				i := min(px, w-1) * 3
+				a := &row[px>>2]
+				a[0] += float32(src[i])
+				a[1] += float32(src[i+1])
+				a[2] += float32(src[i+2])
 			}
-			b.small[y*sw+x] = [3]float32{acc[0] / 16, acc[1] / 16, acc[2] / 16}
+		}
+		for i := range row {
+			row[i] = [3]float32{row[i][0] / 16, row[i][1] / 16, row[i][2] / 16}
 		}
 	}
 	const r = 2
 	for pass := 0; pass < 3; pass++ {
 		for _, horizontal := range [2]bool{true, false} {
-			lines, n := sh, sw
+			lines, n, step := sh, sw, 1
 			if !horizontal {
-				lines, n = sw, sh
-			}
-			at := func(line, i int) int {
-				if horizontal {
-					return line*sw + i
-				}
-				return i*sw + line
+				lines, n, step = sw, sh, sw
 			}
 			for line := 0; line < lines; line++ {
+				base := line * sw
+				if !horizontal {
+					base = line
+				}
 				b.line = b.line[:0]
 				for i := 0; i < n; i++ {
-					b.line = append(b.line, b.small[at(line, i)])
+					b.line = append(b.line, b.small[base+i*step])
+				}
+				// A running sum over the 2r+1 window (the edge pixel repeats past each end):
+				// the same box as adding the window up for each pixel, but for float rounding.
+				var acc [3]float32
+				for d := -r; d <= r; d++ {
+					s := b.line[max(0, min(n-1, d))]
+					acc[0], acc[1], acc[2] = acc[0]+s[0], acc[1]+s[1], acc[2]+s[2]
 				}
 				for i := 0; i < n; i++ {
-					var acc [3]float32
-					for d := -r; d <= r; d++ {
-						s := b.line[max(0, min(n-1, i+d))]
-						for k := 0; k < 3; k++ {
-							acc[k] += s[k]
-						}
-					}
-					b.small[at(line, i)] = [3]float32{acc[0] / (2*r + 1), acc[1] / (2*r + 1), acc[2] / (2*r + 1)}
+					b.small[base+i*step] = [3]float32{acc[0] / (2*r + 1), acc[1] / (2*r + 1), acc[2] / (2*r + 1)}
+					in, out := b.line[min(n-1, i+r+1)], b.line[max(0, i-r)]
+					acc[0], acc[1], acc[2] = acc[0]+in[0]-out[0], acc[1]+in[1]-out[1], acc[2]+in[2]-out[2]
 				}
 			}
 		}

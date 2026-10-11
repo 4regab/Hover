@@ -229,7 +229,7 @@ func TestANewSessionWalksInAndAGoneOneWalksOut(t *testing.T) {
 	}
 }
 
-func TestTheCameraKeepsToItsLimitsAndThePaceStaysFlatWhenIdle(t *testing.T) {
+func TestTheCameraKeepsToItsLimitsAndTheRoomIdlesWhenQuiet(t *testing.T) {
 	o, _, state := settled(t)
 	o.ZoomBy(10, 0, 0)
 	if o.User[2] != 2.8 {
@@ -247,8 +247,8 @@ func TestTheCameraKeepsToItsLimitsAndThePaceStaysFlatWhenIdle(t *testing.T) {
 	if o.User != [3]float64{0, 0, 1} {
 		t.Fatal(o.User)
 	}
-	// The pace is flat (one fixed schedule, PR #44): the empty office draws as often as a
-	// busy one, not at 10 fps.
+	// An empty office with no input idles at 10 fps (the schedule stays fixed, PR #44; only
+	// which ticks draw changes).
 	e := NewOffice(1104, 424, false)
 	empty := clone(state).(map[string]any)
 	empty["sessions"] = []any{}
@@ -262,8 +262,8 @@ func TestTheCameraKeepsToItsLimitsAndThePaceStaysFlatWhenIdle(t *testing.T) {
 			late++
 		}
 	}
-	// 10 s at a flat 60 fps schedule, on a 16 ms clock that draws every other tick: about 312.
-	if late < 300 || late > 325 {
+	// 10 s at 10 fps: about 100.
+	if late < 85 || late > 110 {
 		t.Fatalf("%d frames in 10 s", late)
 	}
 }
@@ -647,8 +647,21 @@ func TestThePaceIsTheSameOnceTheHelpersAreGone(t *testing.T) {
 		}
 		*c += 16
 	}
-	// The pace is flat (PR #44): nothing slows it once the helpers are gone, so about 312 frames in 10 s.
-	if late < 300 || late > 325 {
-		t.Fatalf("%d frames in 10 s: the same flat pace", late)
+	// With nothing going on and no input for 1.5 s the room idles at 10 fps: about 100
+	// frames in 10 s (PR #44's flat pace drew 312, each read back and copied for nothing).
+	if late < 85 || late > 110 {
+		t.Fatalf("%d frames in 10 s: an idle room should be at 10 fps", late)
+	}
+	// Anything the user does wakes it to full speed at once.
+	o.Poke()
+	busy := 0
+	for i := 0; i < 60; i++ {
+		if o.Frame(float64(*c), 16) {
+			busy++
+		}
+		*c += 16
+	}
+	if busy < 25 {
+		t.Fatalf("%d frames in 1 s after a poke", busy)
 	}
 }

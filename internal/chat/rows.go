@@ -71,14 +71,7 @@ func (th *Thread) timeline(fr *Frag, t *Turn, ti, a, b int, y0, w float32, live 
 		j++
 	}
 	// .steps::before: the thin line under the icons, 12 px in from each end.
-	// ponytail: a command line has no icon on the line, so the line is left out when one is there.
-	hasCmd := false
-	for i := a; i < len(list); i++ {
-		if list[i].Kind == IconRun && list[i].Name == "" && list[i].Cmd != "" {
-			hasCmd = true
-		}
-	}
-	if y-y0 > 24 && !hasCmd {
+	if y-y0 > 24 {
 		fr.Shapes = insertShape(fr.Shapes, lineAt, rectShape(9, y0+12, 1, y-y0-24, 0, C(255, 255, 255, 20)))
 	}
 	return y - y0
@@ -92,41 +85,46 @@ func (th *Thread) group(fr *Frag, t *Turn, ti, a, b int, y, w float32, live bool
 	if b-a == 1 {
 		return th.timeline(fr, t, ti, a, b, y, w, live)
 	}
-	const head, pad = 30, 10
+	// Claude's way: one quiet line that says what the tools did, as a sentence, with the
+	// caret just after it; open, the calls sit on the timeline under it. No box.
+	const head = 26
 	open := th.groupOpen(t, ti, a, b)
 	working := live && b == len(t.Steps)
-	at := len(fr.Shapes)
-	bits := stepBits(t.Steps[a:b], working)
-	if len(bits) == 0 {
-		bits = []string{fmt.Sprintf("%d steps", b-a)}
+	label := stepSentence(t.Steps[a:b], working)
+	if label == "" {
+		label = fmt.Sprintf("Used %d tools", b-a)
 	}
-	var spans []span
-	for k, bit := range bits {
-		if k > 0 {
-			spans = append(spans, plainC("  ·  ", C(255, 255, 255, 51)))
-		}
-		spans = append(spans, plain(bit))
-	}
-	lay, _, _ := th.sh.text(spans, lk(12, 1.4, C(0xf3, 0xf1, 0xf6, 190), 500), 0, text.AlignStart)
+	lay, _, _ := th.sh.text([]span{plain(label)}, lk(12.5, 1.4, C(255, 255, 255, 140), 500), 0, text.AlignStart)
 	// user-select: none: drawn, not copied. Folded while it works, it shimmers.
-	clip := Rect4{pad, y, max(w-2*pad-18, 0), head}
-	fr.Texts = append(fr.Texts, TextBox{Layout: lay, X: pad, Y: y + (head-lay.Height())/2, Clip: &clip, Shimmer: working && !open})
-	fr.Shapes = append(fr.Shapes, caret(w-pad-12, y+(head-12)/2, 12, C(255, 255, 255, 110), open))
-	fr.Hits = append(fr.Hits, HitRect{Rect4{0, y, w, head}, Act{Kind: ActGroup, I: a}})
+	room := max(w-18, 0)
+	clip := Rect4{0, y, room, head}
+	fr.Texts = append(fr.Texts, TextBox{Layout: lay, X: 0, Y: y + (head-lay.Height())/2, Clip: &clip, Shimmer: working && !open})
+	cx := min(lay.Width(), room) + 5
+	fr.Shapes = append(fr.Shapes, caret(cx, y+(head-12)/2, 12, C(255, 255, 255, 110), open))
+	fr.Hits = append(fr.Hits, HitRect{Rect4{-4, y, w + 8, head}, Act{Kind: ActGroup, I: a}})
 	h := float32(head)
 	if open {
-		fr.Shapes = append(fr.Shapes, rectShape(1, y+head, w-2, 1, 0, C(255, 255, 255, 13)))
 		in := &Frag{}
-		rh := th.timeline(in, t, ti, a, b, 0, w-2*pad, live)
-		fr.append(in, pad, y+head+1+6)
-		h += 1 + 6 + rh + 4
+		rh := th.timeline(in, t, ti, a, b, 0, w, live)
+		fr.append(in, 0, y+head+2)
+		h += 2 + rh
 	}
-	fr.Shapes = insertShape(fr.Shapes, at, boxShape(0, y, w, h, clear4(10), C(255, 255, 255, 6), C(255, 255, 255, 18), 1))
 	return h
 }
 
+// stepSentence is a group's header as Claude's app words it: "Thought for 18s, read 2
+// files, ran 3 commands", the first word capitalised.
+func stepSentence(steps []Step, working bool) string {
+	bits := stepBits(steps, working)
+	if len(bits) == 0 {
+		return ""
+	}
+	s := strings.Join(bits, ", ")
+	return strings.ToUpper(s[:1]) + s[1:]
+}
+
 // stepBits says what steps did, for a group's header: how long it thought (once done),
-// then what it read, searched, changed, ran and handed to subagents.
+// then what it read, searched, changed, ran, handed to subagents and the other tools.
 func stepBits(steps []Step, working bool) []string {
 	n := func(k StepIcon) int {
 		c := 0
@@ -139,9 +137,9 @@ func stepBits(steps []Step, working bool) []string {
 	}
 	plural := func(k int, one, many string) string {
 		if k == 1 {
-			return fmt.Sprintf("%d %s", k, one)
+			return one
 		}
-		return fmt.Sprintf("%d %s", k, many)
+		return fmt.Sprintf(many, k)
 	}
 	files := map[string]bool{}
 	var thoughtMs float64
@@ -165,22 +163,25 @@ func stepBits(steps []Step, working bool) []string {
 	}
 	var bits []string
 	if !working && thoughtMs > 0 {
-		bits = append(bits, "Thought for "+secs(thoughtMs))
+		bits = append(bits, "thought for "+secs(thoughtMs))
 	}
 	if r := n(IconRead); r > 0 {
-		bits = append(bits, plural(r, "file read", "files read"))
+		bits = append(bits, plural(r, "read a file", "read %d files"))
 	}
 	if s := n(IconSearch); s > 0 {
-		bits = append(bits, plural(s, "search", "searches"))
+		bits = append(bits, plural(s, "searched once", "searched %d times"))
 	}
 	if len(files) > 0 {
-		bits = append(bits, plural(len(files), "file edited", "files edited"))
+		bits = append(bits, plural(len(files), "edited a file", "edited %d files"))
 	}
 	if r := n(IconRun); r > 0 {
-		bits = append(bits, plural(r, "command", "commands"))
+		bits = append(bits, plural(r, "ran a command", "ran %d commands"))
 	}
 	if g := n(IconAgent); g > 0 {
-		bits = append(bits, plural(g, "subagent", "subagents"))
+		bits = append(bits, plural(g, "used a subagent", "used %d subagents"))
+	}
+	if o := n(IconThink); o > 0 {
+		bits = append(bits, plural(o, "used a tool", "used %d tools"))
 	}
 	return bits
 }
@@ -203,7 +204,21 @@ func cutAt(tb *TextBox, room float32) float32 {
 // the command are one text box, so the running one has one shimmer band across all of it,
 // and its time counts. It returns its height, output and all.
 func (th *Thread) commandRow(fr *Frag, x *Step, ti, j int, now bool, y, w float32, live, open bool) float32 {
-	const rowH = 30
+	// One row of the timeline like every other call (Claude's app gives each its icon): the
+	// terminal icon in its box, then the words.
+	const rowH, tx = 25, 28
+	fail := x.Status == "failed" || (x.HasExit && x.Exit != 0)
+	ic, edge := C(0xff, 0xc4, 0x6b, 255), C(255, 255, 255, 20)
+	if fail && !live {
+		ic = C(0xff, 0x7b, 0x72, 255)
+	}
+	iy := y + (rowH-19)/2
+	if live {
+		edge = C(255, 196, 107, 128)
+		fr.Shapes = append(fr.Shapes, Shape{Kind: ShapeGlow, X: 9.5, Y: iy + 9.5, W: 12, Fill: C(255, 196, 107, 64)})
+	}
+	fr.Shapes = append(fr.Shapes, boxShape(0, iy, 19, 19, clear4(6), C(0x1c, 0x1a, 0x20, 255), edge, 1),
+		svgShape(4, iy+4, 11, 11, iconSVG(IconRun, ic, 11, 2.2)))
 	verb := x.Verb
 	if live {
 		verb = verbOn(verb)
@@ -264,18 +279,18 @@ func (th *Thread) commandRow(fr *Frag, x *Step, ti, j int, now bool, y, w float3
 		right = &TextBox{X: rx, Y: y + (rowH-lay.Height())/2, Layout: lay, Text: st}
 		rx -= 12
 	}
-	avail := max(rx, 0)
+	avail := max(rx-tx, 0)
 	lay, st, _ := th.sh.text(spans, base, 0, text.AlignStart)
-	tb := TextBox{X: 0, Y: y + (rowH-lay.Height())/2, Layout: lay, Text: st, Shimmer: live}
+	tb := TextBox{X: tx, Y: y + (rowH-lay.Height())/2, Layout: lay, Text: st, Shimmer: live}
 	if tb.Layout.Width() > avail+0.01 {
 		// .cl: white-space: nowrap; text-overflow: ellipsis.
 		e := th.line("…", base, 0)
 		ew := e.Layout.Width()
 		cut := cutAt(&tb, avail-ew)
-		clip := Rect4{0, tb.Y - 2, cut, tb.Layout.Height() + 4}
+		clip := Rect4{tx, tb.Y - 2, cut, tb.Layout.Height() + 4}
 		tb.Clip = &clip
 		e.Text = ""
-		e.X, e.Y = cut, tb.Y
+		e.X, e.Y = tx+cut, tb.Y
 		fr.Texts = append(fr.Texts, e)
 	}
 	fr.text(tb)
