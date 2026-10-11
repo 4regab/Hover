@@ -283,8 +283,8 @@ func TestStepRowsSitWherePageThemPuts(t *testing.T) {
 	// copy.json's `rows`: the summary line and each timeline row, their top in #thread's
 	// content and their height. The summary line is gone: the steps sit in a box under a
 	// header of their own (Claude's way), so only the rows are compared, each against the
-	// first, which is where the page's rhythm shows. A command is one 30 px row with no
-	// icon box, where the page had a 25 px row with one.
+	// first, which is where the page's rhythm shows. A command is a 25 px row with its icon
+	// box, as the page had it.
 	want := goldenJSON(t, "expected/copy.json")
 	for _, c := range []struct {
 		name string

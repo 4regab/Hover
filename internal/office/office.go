@@ -859,7 +859,18 @@ func (o *Office) Frame(nowMs, dtMs float64) bool {
 	o.nowMs = nowMs
 	dt := clamp(dtMs/1000, 0, 0.1)
 	o.acc += dt
-	if o.acc < 1.0/60 {
+	// Full speed while something happens (a bot walks or works, the camera moves) or the
+	// user did something in the last 1.5 s; otherwise the room only idles, at 10 fps, or
+	// 1 with animations off (main.js's pacing). Each frame is read back and copied, so an
+	// idle room at 60 fps cost the CPU for nothing.
+	need := 1.0 / 60
+	if !o.Lively && o.nowMs-o.poked > 1500 {
+		need = 1.0 / 10
+		if o.Still {
+			need = 1
+		}
+	}
+	if o.acc < need {
 		return false
 	}
 	step := o.acc

@@ -309,13 +309,16 @@ func (l *Live) run(w, h uint32, still bool, wake func()) {
 		now := float64(time.Since(t0).Microseconds()) / 1000
 		dt := now - last
 		last = now
-		if !o.Frame(now, dt) && len(clicks) == 0 {
-			continue
-		}
+		drew := o.Frame(now, dt)
+		// The schedule moves on whether or not the frame was drawn: a skipped one waits for
+		// the next tick, not spins until the room's pace lets one through.
 		if after := time.Now(); nextFrame.Add(frameDur).After(after) {
 			nextFrame = nextFrame.Add(frameDur)
 		} else {
 			nextFrame = after
+		}
+		if !drew && len(clicks) == 0 {
+			continue
 		}
 		errText := ""
 		if err := r.RenderInto(o, &rgba); err != nil {

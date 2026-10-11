@@ -87,8 +87,9 @@ func TestARunningOrQueuedTurnShowsNoActs(t *testing.T) {
 // ---- commands ----------------------------------------------------------------------
 
 // A command in the timeline is one line: a long one is cut by an ellipsis there and shown
-// whole (wrapped) at the top of its output; a short one keeps its one 30 px row, with its
-// exit code and time at the right; a running one is one shimmering text.
+// whole (wrapped) at the top of its output; a short one keeps its one 25 px row (its icon on
+// the timeline, as every call has), with its exit code and time at the right; a running one
+// is one shimmering text.
 
 const (
 	longCmd = "cargo test --release -p hover-notch --test geometry -- --test-threads=1 --nocapture second_monitor_places_once_at_its_own_dpi"
@@ -153,7 +154,7 @@ func TestALongCommandIsCutByAnEllipsisInOneRow(t *testing.T) {
 	if x.Clip[2] >= r[2] {
 		t.Error("the cut is inside the row")
 	}
-	if r[3] != 30 {
+	if r[3] != 25 {
 		t.Error(r[3])
 	}
 }
@@ -174,8 +175,8 @@ func TestAShortCommandKeepsOneRowWithItsExitCodeAndTime(t *testing.T) {
 	if textWith(th, "exit 0 · 0.3s") == nil {
 		t.Error("the exit code and time, at the right")
 	}
-	if cmdRow(t, th)[3] != 30 {
-		t.Error("30 px row")
+	if cmdRow(t, th)[3] != 25 {
+		t.Error("25 px row")
 	}
 }
 
