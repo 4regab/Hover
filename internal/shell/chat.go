@@ -682,7 +682,7 @@ func (s *Shell) threadClick(x, y float32) {
 					t = keep + "\n" + m.Text
 				}
 				s.setReply(t)
-				p.compose = true
+				s.composeOpen()
 				if len(m.Images) > 0 {
 					s.AttachReply(m.Images)
 				}
@@ -702,7 +702,7 @@ func (s *Shell) threadClick(x, y float32) {
 				t = keep + "\n" + turns[i].Prompt
 			}
 			s.setReply(t)
-			p.compose = true
+			s.composeOpen()
 			s.invalidateAll()
 			return
 		case chat.ActCopy:
