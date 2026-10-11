@@ -506,7 +506,8 @@ func (o *OfficeView) startScreen(c *Ctx, p *OfficeProps, sx, w, h float32, compa
 		o.shots(c, n.Shots, 2, bx+18, by+12, s.shotX[:])
 		by += shotsH
 	}
-	text, edited, _ := s.text.follow(c, n.Draft, n.DraftGen, false)
+	// Ctrl+V and Enter are read before the editor, which takes both for itself (Enter put a new
+	// line in the box and never started the task).
 	if n.PasteImage != nil && s.text.ctrlV(c) {
 		if !n.PasteImage(2) {
 			s.text.pasteText(c)
@@ -515,6 +516,7 @@ func (o *OfficeView) startScreen(c *Ctx, p *OfficeProps, sx, w, h float32, compa
 	if s.text.enter(c) {
 		act("newGo", 0)
 	}
+	text, edited, _ := s.text.follow(c, n.Draft, n.DraftGen, false)
 	if !s.wasStart || s.focusText {
 		s.focusText = false
 		c.Execute(key.FocusCmd{Tag: &s.text.ed})

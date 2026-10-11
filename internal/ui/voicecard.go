@@ -245,6 +245,7 @@ func (v *NotchView) voiceMenuContent(c *Ctx, p *NotchProps, x, y, w float32, dra
 			foc := s.search.focused(c)
 			c.Box(ix, cy, iw, 32, R(8), RGBA(0xffffff0f))
 			c.Border(ix, cy, iw, 32, R(8), 1, If(foc, RGBA(0xc4a2ff8c), RGBA(0xffffff14)))
+			entered := s.search.enter(c) // before the editor, which takes Enter
 			text, edited, _ := s.search.sync(c, "", true)
 			if !s.searchWas {
 				s.searchWas = true
@@ -257,7 +258,7 @@ func (v *NotchView) voiceMenuContent(c *Ctx, p *NotchProps, x, y, w float32, dra
 			if edited {
 				s.act("search", text, 0)
 			}
-			if s.search.enter(c) {
+			if entered {
 				s.act("searchEnter", "", 0)
 			}
 		}
@@ -608,6 +609,7 @@ func (v *NotchView) previewLayout(c *Ctx, p *NotchProps, x, y, maxH float32, dra
 		c.Border(ix, cy, iw, taskH, R(10), 1, If(foc, RGBA(0xc4a2ff8c), RGBA(0xffffff12)))
 		given := card.Task
 		// Voice's edited task comes back the same; a rebuild never undoes typing.
+		entered := s.task.enter(c) // before the editor, which takes Enter
 		text, edited, _ := s.task.sync(c, given, false)
 		s.task.ed.ReadOnly = card.Starting
 		if foc && !s.taskHad && card.Ring >= 0 {
@@ -617,7 +619,7 @@ func (v *NotchView) previewLayout(c *Ctx, p *NotchProps, x, y, maxH float32, dra
 		if edited {
 			s.act("edit", text, 0)
 		}
-		if s.task.enter(c) {
+		if entered {
 			if card.CanStart {
 				s.act("start", "", 0)
 			}

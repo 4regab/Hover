@@ -213,7 +213,8 @@ func (o *OfficeView) newBox(c *Ctx, w, h float32, compact bool, p *OfficeProps) 
 	c.Logo(tool.ID, ix, iy, 30, 17, 15, true)
 	s.who.Add(c, ix, iy, 30, 30, true)
 	fx := ix + 30 + 9
-	text, edited, _ := s.text.follow(c, n.Draft, n.DraftGen, false)
+	// Ctrl+V and Enter are read before the editor, which takes both for itself (Enter put a new
+	// line in the box and never started the task).
 	if n.PasteImage != nil && s.text.ctrlV(c) {
 		if !n.PasteImage(2) {
 			s.text.pasteText(c)
@@ -222,6 +223,7 @@ func (o *OfficeView) newBox(c *Ctx, w, h float32, compact bool, p *OfficeProps) 
 	if s.text.enter(c) {
 		act("newGo", 0)
 	}
+	text, edited, _ := s.text.follow(c, n.Draft, n.DraftGen, false)
 	if text == "" {
 		c.Text("What should "+tool.Name+" do? Paste an image to show it.", fx, iy+4, TextBox{Font: f, Color: inkFnt, W: fieldW, Wrap: true})
 	}
