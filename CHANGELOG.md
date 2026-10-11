@@ -7,6 +7,16 @@ What changed in each Hover release. Versions follow [Semantic Versioning](https:
 
 ### Fixed
 
+- Menus and lists did not scroll with the mouse wheel over their rows: the model menu, the
+  start screen's folder list, the chat list and the other scrolling lists, in the notch and the
+  app window. A row took the wheel and passed it to nothing.
+- The ⋯ menu's "Open in" and "Switch agent" lists were cut off at the chat card's left edge, and
+  the part cut off could not be clicked. They now show whole, and open to the right when the
+  left has no room.
+- Resting the pointer on "Open in" or "Switch agent" kept the window redrawing nonstop.
+- Clicks took effect a frame late on Windows, and could wait behind up to three queued frames
+  while anything moved. A click's result is now drawn on the next frame, with one frame queued.
+
 - The chat did not stream. The answer appeared whole when the turn ended; it now grows word by
   word as the tool writes it (checked with Kiro; Claude Code goes through the same code, not run).
 - A long chat lagged on every update: each streamed chunk laid out the whole conversation twice

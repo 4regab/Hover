@@ -178,8 +178,8 @@ func (o *OfficeView) chatPane(c *Ctx, p *OfficeProps, x, y, w, h, radius float32
 	s.drawBlk.Add(c, x, y, w, h)
 	s.over.Update(c)
 	defer s.over.Add(c, x, y, w, h)
+	// Popped before the ⋯ menu, which opens its lists past the card's edge.
 	cl := c.RRect(x, y, w, h, R(radius)).Push(c.Ops)
-	defer cl.Pop()
 
 	hdrH := If[float32](compact, 44, 52)
 	// MARK: the header
@@ -401,7 +401,10 @@ func (o *OfficeView) chatPane(c *Ctx, p *OfficeProps, x, y, w, h, radius float32
 		o.composer(c, p, d, x, ny, w, colw, compH, inputH, compact)
 	}
 
-	// MARK: the ⋯ menu
+	cl.Pop()
+	// MARK: the ⋯ menu, over the card's edge: Open in and Switch agent open to its left,
+	// and on the card that is outside it. Inside the card's clip they were cut off, and
+	// what was cut off could not be clicked either.
 	if d.Menu {
 		o.chatMenu(c, p, d, x, y, w, hdrH)
 	}
@@ -825,15 +828,17 @@ func (o *OfficeView) chatMenu(c *Ctx, p *OfficeProps, d *ChatProps, x, y, w, hdr
 		open := (it.id == "openin" && d.Fly == 1) || (it.id == "switch" && d.Fly == 2)
 		clicked, hovered := s.items[i].Layout(c, MenuRow{Icon: it.icon, Text: it.text, Chev: it.chev, Red: it.red, Open: open}, mx+4, ry, mw-8)
 		if hovered {
+			// Only a change is sent. Each one asks for a frame, so sending it on every
+			// frame the pointer rested on the row kept the window redrawing nonstop.
+			fly := 0
 			switch it.id {
 			case "openin":
-				o.emit(OfficeEvent{Kind: OfficeAct, A: "dFly", N: 1})
+				fly = 1
 			case "switch":
-				o.emit(OfficeEvent{Kind: OfficeAct, A: "dFly", N: 2})
-			default:
-				if d.Fly != 0 {
-					o.emit(OfficeEvent{Kind: OfficeAct, A: "dFly", N: 0})
-				}
+				fly = 2
+			}
+			if fly != d.Fly {
+				o.emit(OfficeEvent{Kind: OfficeAct, A: "dFly", N: fly})
 			}
 		}
 		if clicked {
@@ -857,9 +862,14 @@ func (o *OfficeView) chatMenu(c *Ctx, p *OfficeProps, d *ChatProps, x, y, w, hdr
 		}
 		ry += 30
 	}
-	// The list that opens to the left of a row.
+	// The list that opens to the left of a row; to its right when the left has no room (a
+	// narrow window), and never off the view.
 	if d.Fly != 0 {
-		o.flyout(c, d, mx-202, flyY-5)
+		fx := mx - 202
+		if fx < 4 {
+			fx = min(mx+mw-2, o.vw-204-4)
+		}
+		o.flyout(c, d, max(fx, 4), flyY-5)
 	}
 }
 

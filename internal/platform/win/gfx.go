@@ -36,6 +36,7 @@ var (
 	pCreateDXGIFactory1       = dxgidll.NewProc("CreateDXGIFactory1")
 
 	iidIDXGIDevice         = guid("{54ec77fa-1377-44e6-8c32-88fd5f44c84c}")
+	iidIDXGIDevice1        = guid("{77db970f-6276-48ba-ba28-070143b4392c}")
 	iidIDXGIFactory1       = guid("{770aae78-f26f-4dba-a829-253c83d1b387}")
 	iidIDXGIFactory2       = guid("{50c83a1c-e072-4c48-87b0-3630fa36a6d0}")
 	iidID3D11Texture2D     = guid("{6f15aaf2-d208-4e89-9ab4-489535d34f9c}")
@@ -171,6 +172,16 @@ func sharedDevice() (*device, error) {
 	var adapterOf *com
 	if err := failed(d.dev.call(0, uintptr(unsafe.Pointer(&iidIDXGIDevice)), uintptr(unsafe.Pointer(&d.dxgi))), "IDXGIDevice"); err != nil {
 		return nil, err
+	}
+	// One frame queued, not DXGI's default of three: a click's frame no longer waits behind
+	// frames drawn before it, which added up to about 50 ms at 60 Hz while anything moved.
+	// IDXGIDevice1::SetMaximumFrameLatency is slot 12 (dxgi.h). Failing leaves the default.
+	var dxgi1 *com
+	if int32(d.dev.call(0, uintptr(unsafe.Pointer(&iidIDXGIDevice1)), uintptr(unsafe.Pointer(&dxgi1)))) >= 0 && dxgi1 != nil {
+		if err := failed(dxgi1.call(12, 1), "IDXGIDevice1.SetMaximumFrameLatency"); err != nil {
+			logf("%v", err)
+		}
+		dxgi1.release()
 	}
 	if err := failed(d.dxgi.call(7, uintptr(unsafe.Pointer(&adapterOf))), "IDXGIDevice.GetAdapter"); err != nil {
 		return nil, err

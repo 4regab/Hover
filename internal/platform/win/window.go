@@ -625,6 +625,10 @@ func (w *Window) paint() {
 	}
 	w.frames.Add(1)
 	w.updateCursor()
+	// What the frame asked for (a click's action, through UIDo) runs now, not after the
+	// message it posted comes round, so the frame that shows it is asked for at once. The
+	// wmDo already posted finds the queue empty.
+	drain()
 	if animating {
 		time.AfterFunc(16*time.Millisecond, w.Invalidate)
 	}
