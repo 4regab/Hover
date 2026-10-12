@@ -20,6 +20,17 @@ func (s *Shell) OpenPanel(name string) { s.openPanel(name) }
 // CloseDrawer puts the open chat away.
 func (s *Shell) CloseDrawer() { s.closeDrawer() }
 
+// CloseOffice stops the office thread and lets its GPU device go: a rig's last step, or
+// each rig would keep a device (about 400 MB) to the end of the test run.
+func (s *Shell) CloseOffice() {
+	p := s.pg()
+	stopTimer(p.pushT)
+	if p.live != nil {
+		p.live.Close()
+	}
+	p.live, p.scene, p.built = nil, nil, false
+}
+
 // WebShot is the shots' history: Kiro Web sessions as Kiro would list them, without Kiro.
 func (s *Shell) WebShot(list []agents.CloudSession, note string) {
 	s.pg().web = webList{list: list, note: note}

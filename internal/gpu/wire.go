@@ -97,6 +97,71 @@ type wDeviceDescriptor struct {
 	uncapturedErrorCallbackInfo wUncapturedErrorCallbackInfo
 }
 
+// wLimits is webgpu.h's WGPULimits; limitsUndefined is WGPU_LIMITS_INIT (every limit the
+// default).
+type wLimits struct {
+	nextInChain                               uintptr
+	maxTextureDimension1D                     uint32
+	maxTextureDimension2D                     uint32
+	maxTextureDimension3D                     uint32
+	maxTextureArrayLayers                     uint32
+	maxBindGroups                             uint32
+	maxBindGroupsPlusVertexBuffers            uint32
+	maxBindingsPerBindGroup                   uint32
+	maxDynamicUniformBuffersPerPipelineLayout uint32
+	maxDynamicStorageBuffersPerPipelineLayout uint32
+	maxSampledTexturesPerShaderStage          uint32
+	maxSamplersPerShaderStage                 uint32
+	maxStorageBuffersPerShaderStage           uint32
+	maxStorageTexturesPerShaderStage          uint32
+	maxUniformBuffersPerShaderStage           uint32
+	maxUniformBufferBindingSize               uint64
+	maxStorageBufferBindingSize               uint64
+	minUniformBufferOffsetAlignment           uint32
+	minStorageBufferOffsetAlignment           uint32
+	maxVertexBuffers                          uint32
+	_                                         [4]byte
+	maxBufferSize                             uint64
+	maxVertexAttributes                       uint32
+	maxVertexBufferArrayStride                uint32
+	maxInterStageShaderVariables              uint32
+	maxColorAttachments                       uint32
+	maxColorAttachmentBytesPerSample          uint32
+	maxComputeWorkgroupStorageSize            uint32
+	maxComputeInvocationsPerWorkgroup         uint32
+	maxComputeWorkgroupSizeX                  uint32
+	maxComputeWorkgroupSizeY                  uint32
+	maxComputeWorkgroupSizeZ                  uint32
+	maxComputeWorkgroupsPerDimension          uint32
+	maxImmediateSize                          uint32
+}
+
+func limitsUndefined() wLimits {
+	const u32, u64 = math.MaxUint32, math.MaxUint64
+	return wLimits{
+		maxTextureDimension1D: u32, maxTextureDimension2D: u32, maxTextureDimension3D: u32, maxTextureArrayLayers: u32,
+		maxBindGroups: u32, maxBindGroupsPlusVertexBuffers: u32, maxBindingsPerBindGroup: u32,
+		maxDynamicUniformBuffersPerPipelineLayout: u32, maxDynamicStorageBuffersPerPipelineLayout: u32,
+		maxSampledTexturesPerShaderStage: u32, maxSamplersPerShaderStage: u32, maxStorageBuffersPerShaderStage: u32,
+		maxStorageTexturesPerShaderStage: u32, maxUniformBuffersPerShaderStage: u32,
+		maxUniformBufferBindingSize: u64, maxStorageBufferBindingSize: u64,
+		minUniformBufferOffsetAlignment: u32, minStorageBufferOffsetAlignment: u32, maxVertexBuffers: u32,
+		maxBufferSize: u64, maxVertexAttributes: u32, maxVertexBufferArrayStride: u32, maxInterStageShaderVariables: u32,
+		maxColorAttachments: u32, maxColorAttachmentBytesPerSample: u32, maxComputeWorkgroupStorageSize: u32,
+		maxComputeInvocationsPerWorkgroup: u32, maxComputeWorkgroupSizeX: u32, maxComputeWorkgroupSizeY: u32,
+		maxComputeWorkgroupSizeZ: u32, maxComputeWorkgroupsPerDimension: u32, maxImmediateSize: u32,
+	}
+}
+
+// wNativeLimits is wgpu.h's WGPUNativeLimits, chained to the required limits.
+type wNativeLimits struct {
+	chain                                 chainedStruct
+	maxImmediateSize                      uint32
+	maxNonSamplerBindings                 uint32
+	maxBindingArrayElementsPerShaderStage uint32
+	_                                     [4]byte
+}
+
 type wShaderSourceWGSL struct {
 	chain chainedStruct
 	code  stringView
@@ -400,6 +465,7 @@ type wAdapterInfo struct {
 const (
 	sTypeShaderSourceWGSL = 0x2
 	sTypeInstanceExtras   = 0x30006
+	sTypeNativeLimits     = 0x30002
 
 	instanceBackendVulkan = 1 << 0
 	instanceBackendGL     = 1 << 1
@@ -411,6 +477,10 @@ const (
 	statusSuccess            = 1 // request adapter/device, map, pop error scope
 
 	powerLowPower = 1
+
+	// maxNonSamplerBindings is the device's room for bound buffers and textures (see
+	// RequestDevice).
+	maxNonSamplerBindings = 8192
 
 	errorFilterValidation = 1
 	errorTypeNoError      = 1

@@ -163,7 +163,7 @@ func newRig() (*rig, error) {
 	r.holdC = func(on bool) { mu.Lock(); heldC = on; mu.Unlock() }
 	r.holdD = func(on bool) { mu.Lock(); heldD = on; mu.Unlock() }
 	r.hold3 = func(on bool) { mu.Lock(); held3 = on; mu.Unlock() }
-	r.done = func() { hv.Shutdown(); os.RemoveAll(data) }
+	r.done = func() { s.CloseOffice(); hv.Shutdown(); os.RemoveAll(data) }
 	return r, nil
 }
 

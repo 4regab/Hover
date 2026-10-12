@@ -68,6 +68,13 @@ var layouts = []struct {
 	{"wDeviceDescriptor.defaultQueue", unsafe.Offsetof(wDeviceDescriptor{}.defaultQueue), 48},
 	{"wDeviceDescriptor.deviceLostCallbackInfo", unsafe.Offsetof(wDeviceDescriptor{}.deviceLostCallbackInfo), 72},
 	{"wDeviceDescriptor.uncapturedErrorCallbackInfo", unsafe.Offsetof(wDeviceDescriptor{}.uncapturedErrorCallbackInfo), 112},
+	// WGPULimits and WGPUNativeLimits (v29's webgpu.h and wgpu.h), counted from the headers.
+	{"wLimits", unsafe.Sizeof(wLimits{}), 152},
+	{"wLimits.maxUniformBufferBindingSize", unsafe.Offsetof(wLimits{}.maxUniformBufferBindingSize), 64},
+	{"wLimits.maxBufferSize", unsafe.Offsetof(wLimits{}.maxBufferSize), 96},
+	{"wLimits.maxImmediateSize", unsafe.Offsetof(wLimits{}.maxImmediateSize), 148},
+	{"wNativeLimits", unsafe.Sizeof(wNativeLimits{}), 32},
+	{"wNativeLimits.maxNonSamplerBindings", unsafe.Offsetof(wNativeLimits{}.maxNonSamplerBindings), 20},
 	{"wShaderSourceWGSL", unsafe.Sizeof(wShaderSourceWGSL{}), 32},
 	{"wShaderSourceWGSL.code", unsafe.Offsetof(wShaderSourceWGSL{}.code), 16},
 	{"wShaderModuleDescriptor", unsafe.Sizeof(wShaderModuleDescriptor{}), 24},
