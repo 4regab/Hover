@@ -43,6 +43,10 @@ type chatThread struct {
 	img        *image.RGBA
 	gen        uint64
 	jump, over bool
+	// barOn: a sideways bar's thumb is held; barID is its box, barGrab how far into the thumb it was taken.
+	barOn   bool
+	barID   [2]int
+	barGrab float32
 }
 
 // selState is a text selection being made in the thread with the pointer: where it began,
@@ -460,13 +464,38 @@ func (s *Shell) threadPointer(kind int, x, y float32, shift bool) {
 	if ct == nil {
 		return
 	}
+	// A sideways bar (under a code box or table): its thumb darkens under the pointer, a press
+	// on an arrow or the track steps its box, a press on the thumb drags it.
+	if kind == 1 && ct.barOn {
+		s.dragBar(ct, x)
+		return
+	}
+	if kind == 2 && ct.barOn {
+		ct.barOn = false
+		return
+	}
+	if kind == 0 {
+		if bb, along, ok := ct.barAt(x, y+ct.scroll); ok {
+			s.pressBar(ct, bb, along)
+			return
+		}
+	}
 	// 5: moving with no button down; 6: the pointer left. A hand over a link, a button or a
 	// line that opens. Only the cursor changes, so the thread is not painted again.
 	if kind == 5 || kind == 6 {
 		over := false
+		var hov chat.BarID
+		var hasHov bool
 		if kind == 5 {
 			h := ct.th.Hit(x, y+ct.scroll)
 			over = h.Kind == chat.HitLink || h.Kind == chat.HitAct
+			if bb, along, ok := ct.barAt(x, y+ct.scroll); ok && bb.Bar.Part(along) == chat.PartThumb {
+				hov, hasHov = chat.BarID{S: bb.ID[0], K: bb.ID[1]}, true
+			}
+		}
+		if ct.painter.HasHover != hasHov || ct.painter.Hover != hov {
+			ct.painter.HasHover, ct.painter.Hover = hasHov, hov
+			s.paintThreadSoon()
 		}
 		if ct.over != over {
 			ct.over = over
@@ -525,6 +554,44 @@ func (s *Shell) threadPointer(kind int, x, y float32, shift bool) {
 		return
 	}
 	s.paintThread()
+}
+
+// barAt is the sideways scrollbar under a point in thread coordinates, and how far along it.
+func (ct *chatThread) barAt(x, y float32) (chat.BoxBar, float32, bool) {
+	for _, bb := range ct.th.HBars() {
+		if bb.Bar.Max() <= 0 {
+			continue
+		}
+		if along, ok := bb.Bar.Along(x, y); ok {
+			return bb, along, true
+		}
+	}
+	return chat.BoxBar{}, 0, false
+}
+
+// pressBar is a press on a sideways bar. ponytail: a press on an arrow or the track steps once;
+// Chromium repeats the step while the button is held.
+func (s *Shell) pressBar(ct *chatThread, bb chat.BoxBar, along float32) {
+	part := bb.Bar.Part(along)
+	if part == chat.PartThumb {
+		t0, _ := bb.Bar.Thumb()
+		ct.barOn, ct.barID, ct.barGrab = true, bb.ID, along-t0
+		return
+	}
+	ct.th.ScrollBox(bb.ID, bb.Bar.Step(part, along))
+	s.paintThread()
+}
+
+// dragBar moves the box whose thumb is held, to the pointer at x.
+func (s *Shell) dragBar(ct *chatThread, x float32) {
+	for _, bb := range ct.th.HBars() {
+		if bb.ID == ct.barID {
+			ct.th.ScrollBox(bb.ID, bb.Bar.Drag(ct.barGrab, x-bb.Bar.X))
+			s.paintThreadSoon()
+			return
+		}
+	}
+	ct.barOn = false
 }
 
 // threadClick is a click in the open chat's thread: a summary line folds or opens its
@@ -615,7 +682,7 @@ func (s *Shell) threadClick(x, y float32) {
 					t = keep + "\n" + m.Text
 				}
 				s.setReply(t)
-				p.compose = true
+				s.composeOpen()
 				if len(m.Images) > 0 {
 					s.AttachReply(m.Images)
 				}
@@ -635,7 +702,7 @@ func (s *Shell) threadClick(x, y float32) {
 				t = keep + "\n" + turns[i].Prompt
 			}
 			s.setReply(t)
-			p.compose = true
+			s.composeOpen()
 			s.invalidateAll()
 			return
 		case chat.ActCopy:

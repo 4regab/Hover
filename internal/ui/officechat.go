@@ -108,6 +108,7 @@ type chatState struct {
 	focusInput                                               bool
 	startedInput                                             bool
 	scrollTag                                                int
+	threadKeys                                               Focus
 
 	// over follows the pointer over the whole pane, its children included (d-hover).
 	over Pointer
@@ -427,7 +428,8 @@ func (o *OfficeView) threadWheel(c *Ctx, x, y, w, h float32) {
 			return
 		}
 		if pe, isP := e.(pointer.Event); isP {
-			o.emit(OfficeEvent{Kind: OfficeAct, A: "dWheel", D: pe.Scroll.Y / c.K})
+			// Gio: down is positive. dWheel: up is positive.
+			o.emit(OfficeEvent{Kind: OfficeAct, A: "dWheel", D: -pe.Scroll.Y / c.K})
 		}
 	}
 }
@@ -435,6 +437,14 @@ func (o *OfficeView) threadWheel(c *Ctx, x, y, w, h float32) {
 // threadPointer is the thread's TouchArea: a text selection, a click, the hand cursor.
 func (o *OfficeView) threadPointer(c *Ctx, x, y, w, h float32, d *ChatProps) {
 	s := &o.ch
+	// A press in the thread gives it the keyboard (unless the reply box has it), so that
+	// Ctrl+C copies the words selected there.
+	s.threadKeys.Add(c, x, y, w, h)
+	for _, k := range s.threadKeys.Keys(c, "C") {
+		if k.State == key.Press && k.Modifiers.Contain(key.ModShortcut) && d.Copy != nil {
+			d.Copy()
+		}
+	}
 	st := clip.Rect(c.irect(x, y, w, h)).Push(c.Ops)
 	event.Op(c.Ops, &s.threadPtr)
 	if d.Over {
@@ -445,6 +455,7 @@ func (o *OfficeView) threadPointer(c *Ctx, x, y, w, h float32, d *ChatProps) {
 	st.Pop()
 	for {
 		e, ok := c.Event(pointer.Filter{Target: &s.threadPtr, Kinds: pointer.Press | pointer.Release | pointer.Move | pointer.Drag | pointer.Leave | pointer.Cancel | pointer.Scroll,
+			ScrollX: pointer.ScrollRange{Min: math.MinInt32, Max: math.MaxInt32},
 			ScrollY: pointer.ScrollRange{Min: math.MinInt32, Max: math.MaxInt32}})
 		if !ok {
 			return
@@ -453,15 +464,31 @@ func (o *OfficeView) threadPointer(c *Ctx, x, y, w, h float32, d *ChatProps) {
 		if !isP {
 			continue
 		}
-		px, py := pe.Position.X/c.K, pe.Position.Y/c.K
+		// Gio reports the pointer from the view's corner. The chat wants it from the
+		// thread's corner (x, y), as the picture is drawn there.
+		px, py := pe.Position.X/c.K-x, pe.Position.Y/c.K-y
 		switch pe.Kind {
 		case pointer.Scroll:
-			o.emit(OfficeEvent{Kind: OfficeAct, A: "dWheel", D: pe.Scroll.Y / c.K})
+			// Shift and the wheel, or a sideways wheel, scroll the code box or table under the
+			// pointer; the plain wheel scrolls the conversation.
+			dx, dy := pe.Scroll.X, pe.Scroll.Y
+			if pe.Modifiers.Contain(key.ModShift) {
+				dx, dy = dx+dy, 0
+			}
+			if dx != 0 {
+				o.emit(OfficeEvent{Kind: OfficeAct, A: "dWheelX", D: dx / c.K, X: px, Y: py})
+			}
+			if dy != 0 {
+				o.emit(OfficeEvent{Kind: OfficeAct, A: "dWheel", D: -dy / c.K})
+			}
 		case pointer.Press:
 			if pe.Buttons&pointer.ButtonPrimary == 0 {
 				break
 			}
 			s.pressed = true
+			if !s.input.focused(c) {
+				s.threadKeys.Take(c)
+			}
 			// A press in the thread takes the keys from the reply box; an empty reply box closes.
 			if d.Compose && d.Draft == "" && len(d.Shots) == 0 && len(d.Chips) == 0 {
 				o.emit(OfficeEvent{Kind: OfficeAct, A: "compose", N: 0})
@@ -594,12 +621,15 @@ func (o *OfficeView) composer(c *Ctx, p *OfficeProps, d *ChatProps, x, y, w, col
 	}
 	// The words; past 140 px the reply scrolls inside.
 	ix, iwid := cx+2, iw-4
+	// The box's own keys (Enter, Esc, the list's arrows, Ctrl+C and Ctrl+V) are read before the
+	// editor sees them: it takes Enter, the arrows and Ctrl+C and V for itself, so read after
+	// it they never came (Enter put a new line in and did not send).
+	o.replyKeys(c, p, d)
 	text, edited, _ := s.input.follow(c, d.Draft, d.DraftGen, false)
 	if !s.startedInput || s.focusInput {
 		s.startedInput, s.focusInput = true, false
 		c.Execute(key.FocusCmd{Tag: &s.input.ed})
 	}
-	o.replyKeys(c, p, d)
 	if text == "" {
 		c.Text(d.Placeholder, ix, cy+3, TextBox{Font: Font{Size: 13}, Color: inkFnt, W: iwid, Elide: true})
 	}

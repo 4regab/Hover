@@ -528,7 +528,8 @@ func (s *Shell) officeEvents(evs []ui.OfficeEvent, which int) {
 				send(office.InPointer{})
 			}
 		case ui.OfficeWheel:
-			send(office.InWheel{DY: -float64(e.D), X: float64(e.X), Y: float64(e.Y)})
+			// D is Gio's, down positive, as the page's deltaY was: down zooms out.
+			send(office.InWheel{DY: float64(e.D), X: float64(e.X), Y: float64(e.Y)})
 		case ui.OfficeKey:
 			if e.S == "\x1b" {
 				s.officeEscape(which)

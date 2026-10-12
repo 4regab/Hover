@@ -523,6 +523,7 @@ func (p *DeskCard) Layout(c *Ctx, cd *DeskCardProps, x, y, maxW, maxH float32) [
 	c.Box(ix, cy, iw, m.input, R(13), RGB(0x1b181f))
 	foc := p.input.focused(c)
 	c.Border(ix, cy, iw, m.input, R(13), 1, If(foc, RGBA(0xc4a2ff8c), RGBA(0xffffff14)))
+	sends := p.input.sendKeys(c) // before the editor, which takes Enter
 	text, edited, _ := p.input.sync(c, cd.Draft, false)
 	if text == "" && !foc {
 		c.Text(cd.Placeholder, ix+10, cy+3+4, TextBox{Font: Font{Size: 12.5}, Color: inkFnt, W: iw - 10 - 3 - 30 - 6, Elide: true})
@@ -531,7 +532,7 @@ func (p *DeskCard) Layout(c *Ctx, cd *DeskCardProps, x, y, maxW, maxH float32) [
 	if edited {
 		p.emit("cDraft", text, 0)
 	}
-	for _, e := range p.input.sendKeys(c) {
+	for _, e := range sends {
 		switch {
 		case e.Name == key.NameEscape && cd.Asking && !cd.AskQuest && text == "":
 			p.emit("answer", "deny", int(cd.SessionID))

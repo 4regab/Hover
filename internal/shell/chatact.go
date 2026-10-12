@@ -370,6 +370,14 @@ func (s *Shell) officeActMore(e ui.OfficeEvent, which int) {
 			p.thread.scroll = max(p.thread.scroll-e.D, 0)
 		}
 		s.paintThreadSoon()
+	case "dWheelX":
+		// Sideways over a code box or table: it scrolls (no smooth glide, as the wheel's up and down has none).
+		if ct := p.thread; ct != nil {
+			if id, ok := ct.th.BoxAt(e.X, e.Y+ct.scroll); ok {
+				ct.th.ScrollBox(id, ct.th.HScroll[id]+e.D)
+				s.paintThreadSoon()
+			}
+		}
 	case "dClick":
 		s.threadClick(e.X, e.Y)
 	case "dPointer":

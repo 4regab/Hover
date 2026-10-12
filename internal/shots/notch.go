@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"gioui.org/f32"
@@ -35,11 +36,13 @@ type fakeWin struct {
 	draw   func(layout.Context, float32) bool
 	router input.Router
 	w, h   int
+	// inv counts the redraws the shell asked for, which tests read to see a click did something.
+	inv atomic.Int64
 }
 
 func (f *fakeWin) SetDraw(d func(layout.Context, float32) bool) { f.draw = d }
 func (f *fakeWin) SetHandlers(shell.Handlers)                   {}
-func (f *fakeWin) Invalidate()                                  {}
+func (f *fakeWin) Invalidate()                                  { f.inv.Add(1) }
 func (f *fakeWin) Show()                                        {}
 func (f *fakeWin) Hide()                                        {}
 func (f *fakeWin) Close()                                       {}
