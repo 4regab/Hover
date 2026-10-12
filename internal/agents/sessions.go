@@ -368,6 +368,17 @@ func (k *KiroSessions) Running() int {
 
 func (k *KiroSessions) CanStart() bool { return k.Running() < k.MaxRunningNow() }
 
+// DesksFull: every desk has a session and every one of them runs, so a new task has no
+// desk. Read without copying the sessions: the new-task box asks it at every frame.
+func (k *KiroSessions) DesksFull() bool {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	if len(k.all) < MaxKept {
+		return false
+	}
+	return !slices.ContainsFunc(k.all, func(x *slot) bool { return !x.s.Busy() })
+}
+
 // MaxRunningNow is how many tasks run at once (Settings.MaxRunning on a Mac: 1 to MaxKept).
 func (k *KiroSessions) MaxRunningNow() int { return int(k.limit.Load()) }
 

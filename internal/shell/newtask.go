@@ -642,7 +642,6 @@ func (s *Shell) pasteImage(which int) bool {
 func (s *Shell) newTaskProps(op *ui.OfficeProps) {
 	p := s.pg()
 	hv := s.Hover
-	sessions := hv.Sessions.AllLight()
 	n := &op.New
 	for _, t := range core.AllTools {
 		ok, hint := toolReady(t)
@@ -652,10 +651,7 @@ func (s *Shell) newTaskProps(op *ui.OfficeProps) {
 	tool := core.AllTools[nt]
 	ready, hint := toolReady(tool)
 	folder := p.newFolder
-	full := len(sessions) >= 6
-	for i := range sessions {
-		full = full && sessions[i].Busy()
-	}
+	full := hv.Sessions.DesksFull()
 	can := hv.Sessions.CanStart()
 	note := ""
 	switch {

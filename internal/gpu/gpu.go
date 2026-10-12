@@ -365,6 +365,13 @@ func (inst Instance) RequestDevice(a Adapter, label string) (*Device, error) {
 			userdata1: devID},
 		uncapturedErrorCallbackInfo: wUncapturedErrorCallbackInfo{callback: cbUncaptured, userdata1: devID},
 	}
+	// On D3D12 wgpu makes a descriptor heap with room for this many buffers and textures
+	// at once; its default, 1,000,000, cost about 90 MB of private memory on an
+	// integrated GPU, where the heap is this computer's RAM. The office binds about 20.
+	lim := limitsUndefined()
+	nl := &wNativeLimits{chain: chainedStruct{sType: sTypeNativeLimits}, maxNonSamplerBindings: maxNonSamplerBindings}
+	lim.nextInChain = ptr(&k, nl)
+	desc.requiredLimits = ptr(&k, &lim)
 	id, p := newRequest()
 	defer takeRequest(id)
 	info := &wCallbackInfo{mode: callbackAllowProcess, callback: cbDevice, userdata1: id}
@@ -676,6 +683,9 @@ func (t Texture) View() TextureView { return TextureView{call(fnTextureCreateVie
 
 // ---- the queue -------------------------------------------------------------------------
 
+// Submit sends the commands and releases them: a submitted command buffer can't be used
+// again, and one never released keeps its device alive (wgpu-core holds the device in
+// it), so a dropped office kept its whole device, about 350 MB a time on an NVIDIA card.
 func (q Queue) Submit(cmds ...CommandBuffer) {
 	if len(cmds) == 0 {
 		return
@@ -687,6 +697,9 @@ func (q Queue) Submit(cmds ...CommandBuffer) {
 		hs[i] = c.h
 	}
 	call(fnQueueSubmit, q.h, uintptr(len(hs)), slice(&k, hs))
+	for _, c := range cmds {
+		c.Release()
+	}
 }
 
 func (q Queue) WriteBuffer(b Buffer, offset uint64, data []byte) {

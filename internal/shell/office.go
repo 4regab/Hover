@@ -153,7 +153,10 @@ func (s *Shell) officeFollow() {
 	w, h, which, ok := s.officeSize()
 	p := s.pg()
 	if p.live == nil {
-		if !ok {
+		// Under the chat view nothing of the office shows, so it isn't made: each open of
+		// the notch on a chat made a GPU device (about 400 MB) only to drop it 30 s later.
+		// Switching back (setChatView) makes it.
+		if !ok || s.chatView() {
 			return
 		}
 		p.built = true
@@ -313,7 +316,13 @@ func (s *Shell) officeFrame() {
 		localSet("view", fmtFloats(v[0], v[1], v[2]))
 	}
 	if fresh {
-		im := image.NewRGBA(image.Rect(0, 0, int(out.W), int(out.H)))
+		// The last frame's picture is drawn over (a new one only at a new size): a fresh one
+		// each frame was 300 MB of garbage every 20 s at 30 fps. Safe as the chat's own
+		// picture is (chat.Painter): the image op is made anew for each gen, on this thread.
+		im := p.scene
+		if im == nil || im.Rect.Dx() != int(out.W) || im.Rect.Dy() != int(out.H) {
+			im = image.NewRGBA(image.Rect(0, 0, int(out.W), int(out.H)))
+		}
 		for i, j := 0, 0; i+2 < len(out.RGB); i, j = i+3, j+4 {
 			im.Pix[j], im.Pix[j+1], im.Pix[j+2], im.Pix[j+3] = out.RGB[i], out.RGB[i+1], out.RGB[i+2], 255
 		}
