@@ -77,8 +77,9 @@ func (o *OfficeView) modelMenu(c *Ctx, w, h float32, p *OfficeProps) {
 		rowH[i] = mmRowH(c, mo, r, iw)
 		listH += rowH[i]
 	}
-	boxH := min(listH, max(84, h-20-170))
-	total := float32(6) + headH + boxH
+	// Everything but the list first, so the list gets all the room that is left (a fixed
+	// guess left rows unseen in the notch's short office).
+	total := float32(6) + headH
 	if m.EffortHead != "" {
 		total += headH
 	}
@@ -97,6 +98,11 @@ func (o *OfficeView) modelMenu(c *Ctx, w, h float32, p *OfficeProps) {
 		noteH = 36 + menuGap
 	}
 	total += noteH + 6
+	// The menu opens above the pill, so the list may take what is left between the view's
+	// top and the pill.
+	room := min(h-20, m.Y-14)
+	boxH := min(listH, max(84, room-total))
+	total += boxH
 	gh := min(total, h-20)
 	gx := max(8, min(m.X, w-258))
 	gy := max(8, m.Y-gh-6)
