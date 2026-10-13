@@ -8,6 +8,7 @@ import (
 	"github.com/4regab/Hover/internal/agents"
 	"github.com/4regab/Hover/internal/core"
 	"github.com/4regab/Hover/internal/notch"
+	"github.com/4regab/Hover/internal/shell"
 )
 
 // The chat view in place of the office, through its switch (shots.rs's chat_view_shots): the
@@ -114,6 +115,16 @@ func chatViewShots(r *rig, dir string) error {
 		return err
 	}
 	r.s.ListFold(0)
+	r.settle(200)
+	// Kiro sessions made outside Hover (Kiro CLI, the Kiro IDE): under their folder with a
+	// badge, and in the history beside Hover's own.
+	r.s.ShotCLI(shell.ShotCLIRow{Title: "Refactor the settings loader", Folder: r.folder, Mins: 0.5},
+		shell.ShotCLIRow{Title: "Write the release notes for 5.4 and check every link in them", Folder: r.folder, Mins: 180})
+	r.settle(200)
+	if err := shot("sidebar-cli"); err != nil {
+		return err
+	}
+	r.s.ShotCLI()
 	r.settle(200)
 	// The title bar's menus.
 	for _, b := range []struct {

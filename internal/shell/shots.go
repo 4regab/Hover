@@ -417,6 +417,25 @@ func (s *Shell) ShotChips(branch string, ctx float32) {
 	s.invalidateAll()
 }
 
+// ShotCLIRow is one of this computer's Kiro sessions for a shot: its title, its folder, and
+// how many minutes ago it was last used.
+type ShotCLIRow struct {
+	Title, Folder string
+	Mins          float64
+}
+
+// ShotCLI is this computer's Kiro sessions as listCLI would keep them (a shot has no Kiro to
+// ask). None clears them.
+func (s *Shell) ShotCLI(rows ...ShotCLIRow) {
+	p := s.pg()
+	p.cli.list = nil
+	for i, r := range rows {
+		at := core.Now().AddSecs(-60 * r.Mins)
+		p.cli.list = append(p.cli.list, cliSession{agents.CloudSession{ID: "sess_shot" + string(rune('a'+i)), Title: r.Title, Folder: r.Folder, Updated: &at}, r.Folder})
+	}
+	s.invalidateAll()
+}
+
 // ShotBar puts out the app window's title-bar menu (1 File, 2 Settings, 3 Help; 0 none).
 func (s *Shell) ShotBar(n int) { s.dview.Bar = n; s.invalidateAll() }
 

@@ -34,6 +34,7 @@ type ChatProps struct {
 	Asking    bool
 	Ask       AskData
 	Ctx       float32
+	CompactAt float32 // Kiro's auto compact percent, marked on the context ring; 0 when off
 	Cloud     bool
 	Thread    *image.RGBA
 	ThreadGen uint64
@@ -144,7 +145,8 @@ func (c *Ctx) headChipW(icon bool, text string) float32 {
 	return w
 }
 
-func (c *Ctx) headChip(t *Touch, icon string, ring float32, tick bool, text string, x, y float32) float32 {
+// tick, when above 0, marks that percent on the ring (Kiro's auto compact).
+func (c *Ctx) headChip(t *Touch, icon string, ring float32, tick float32, text string, x, y float32) float32 {
 	w := c.headChipW(icon != "" || ring >= 0, text)
 	t.Update(c)
 	fg := If(t.Hovered(), RGBA(0xf6f2ffb0), RGBA(0xf6f2ff80))
@@ -157,8 +159,13 @@ func (c *Ctx) headChip(t *Touch, icon string, ring float32, tick bool, text stri
 		mx, my := float64(cx)+6.5, float64(y)+12
 		c.strokeOnce(ringPath(mx, my, 4.5*13/12, 1), 2.2*13/12, RGBA(0xffffff24))
 		c.strokeOnce(ringPath(mx, my, 4.5*13/12, float64(min(ring, 99.9))/100), 2.2*13/12, RGBA(0xffffffbf))
-		if tick {
-			c.strokeOnce(pathf("M %g %g L %g %g", mx-4.875*0.5+0.1, my+0.9, mx-4.875*0.5-1.2, my+1.35), 1.6*13/12, RGB(0x7fe3d4))
+		if tick > 0 {
+			// A short line across the ring, as the mockup's (3.4 to 5.6 from the centre in
+			// its 12-unit box), turned clockwise from the top by the share.
+			a := 2 * math.Pi * float64(min(tick, 100)) / 100
+			sa, ca := math.Sin(a), math.Cos(a)
+			r0, r1 := 3.4*13/12.0, 5.6*13/12.0
+			c.strokeOnce(pathf("M %g %g L %g %g", mx+r0*sa, my-r0*ca, mx+r1*sa, my-r1*ca), 1.4*13/12, RGB(0x7fe3d4))
 		}
 		cx += 13 + 6
 	}
@@ -271,10 +278,10 @@ func (o *OfficeView) chatPane(c *Ctx, p *OfficeProps, x, y, w, h, radius float32
 		// The chips: branch, context, cloud.
 		cy := y + (hdrH-24)/2
 		if d.Branch != "" && hx < right {
-			hx += c.headChip(&o.chipT[0], IconGit, -1, false, d.Branch, hx, cy) + 6
+			hx += c.headChip(&o.chipT[0], IconGit, -1, 0, d.Branch, hx, cy) + 6
 		}
 		if d.Ctx >= 0 && hx < right {
-			hx += c.headChip(&o.chipT[1], "", d.Ctx, d.ToolID == "kiro", itoaUI(int(d.Ctx+0.5))+"%", hx, cy) + 6
+			hx += c.headChip(&o.chipT[1], "", d.Ctx, d.CompactAt, itoaUI(int(d.Ctx+0.5))+"%", hx, cy) + 6
 		}
 		if d.Cloud && hx < right {
 			if s.cloud.Update(c) {

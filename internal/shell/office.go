@@ -115,6 +115,7 @@ type officePage struct {
 	listHeads []listHead
 	folded    map[string]bool
 	web       webList
+	cli       cliList
 
 	// When the chat was last painted, and whether a paint is waiting for the end of the
 	// frame (paintThreadSoon).
@@ -458,6 +459,7 @@ func (s *Shell) openPanel(name string) {
 	s.send(office.InPanel{P: name})
 	if name == "history" {
 		s.listWeb()
+		s.listCLI(true)
 	}
 	s.invalidateAll()
 }
@@ -498,6 +500,7 @@ func (s *Shell) officeProps(which int) *ui.OfficeProps {
 			op.Find = p.find
 		}
 		if op.Chat {
+			s.listCLI(false)
 			op.List, p.rowsList = s.listRows(sessions, p.open)
 		}
 	}

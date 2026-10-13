@@ -142,6 +142,10 @@ func (s *Shell) chatProps(op *ui.OfficeProps, which int) {
 	if sess.Context != nil {
 		d.Ctx = float32(math.RoundToEven(*sess.Context))
 	}
+	d.CompactAt = 0
+	if sess.Tool == core.Kiro && hv.Settings.KiroAutoCompact() {
+		d.CompactAt = float32(hv.Settings.KiroCompactAt())
+	}
 	d.Cloud = sess.Cloud != nil && sess.KiroID != nil
 	d.Asking = sess.Waiting()
 	if a := sess.Asking(); a != nil {

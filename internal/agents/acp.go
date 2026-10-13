@@ -265,10 +265,11 @@ type CloudList struct {
 	Note     string
 }
 
-// CloudSession is a Kiro Web session in the user's Kiro account, as Kiro lists it.
+// CloudSession is a Kiro session as Kiro lists it: a Kiro Web one in the user's account,
+// or one on this computer (LocalSessions), whose Folder is the folder it works in.
 type CloudSession struct {
-	ID, Title string
-	Updated   *core.Stamp
+	ID, Title, Folder string
+	Updated           *core.Stamp
 }
 
 // CloudTurn is one turn of a Kiro Web conversation as its replay gave it: what was asked,
@@ -423,7 +424,35 @@ func (h *AcpHost) CloudSessions() (CloudList, error) { return h.cloudSessions() 
 // CloudTranscript is a Kiro Web session's whole conversation, from its replay, opened in
 // folder (a folder on this computer; the session works in its own sandbox). Blocks.
 func (h *AcpHost) CloudTranscript(id, folder string) ([]CloudTurn, error) {
-	return h.cloudTranscript(id, folder)
+	return h.transcript(id, folder, true)
+}
+
+// LocalSessions are the Kiro sessions kept on this computer (made by Kiro CLI on the v3
+// engine, the Kiro IDE, or Hover), each with its folder, newest first as Kiro gives them.
+// Starts the tool if it isn't up. Blocks.
+func (h *AcpHost) LocalSessions() ([]CloudSession, error) {
+	return withTool(h, func(ct *Cancel) ([]CloudSession, *callErr) {
+		if !h.canList.Load() {
+			return nil, acpErr(fmt.Sprintf("This %s CLI can’t list sessions. Update Kiro CLI.", h.name()))
+		}
+		got, err := h.listSource(ct, "local")
+		if err != nil {
+			return nil, err
+		}
+		out := []CloudSession{}
+		for _, c := range got {
+			if !c.cloud && c.s.Folder != "" {
+				out = append(out, c.s)
+			}
+		}
+		return out, nil
+	})
+}
+
+// LocalTranscript is a session on this computer's whole conversation, from its replay,
+// opened in its own folder. Blocks.
+func (h *AcpHost) LocalTranscript(id, folder string) ([]CloudTurn, error) {
+	return h.transcript(id, folder, false)
 }
 
 // SetAsking is where a question goes. Without one, whatever the settings say should be
@@ -1058,13 +1087,14 @@ func (h *AcpHost) listSource(ct *Cancel, source string) ([]listed, *callErr) {
 					}
 				}
 				title, _ := str(x, "title")
+				cwd, _ := str(x, "cwd")
 				var updated *core.Stamp
 				if u, ok := str(x, "updatedAt"); ok {
 					if st, ok := core.ParseStamp(u); ok {
 						updated = &st
 					}
 				}
-				all = append(all, listed{CloudSession{ID: id, Title: strings.TrimSpace(title), Updated: updated},
+				all = append(all, listed{CloudSession{ID: id, Title: strings.TrimSpace(title), Folder: cwd, Updated: updated},
 					strings.Contains(marks, "cloud") || strings.Contains(marks, "remote"), strings.Contains(marks, `"local"`)})
 			}
 		}
@@ -1152,7 +1182,9 @@ func (h *AcpHost) cloudSessions() (CloudList, error) {
 	})
 }
 
-func (h *AcpHost) cloudTranscript(id, folder string) ([]CloudTurn, error) {
+// transcript reads a session's conversation from its replay: a Kiro Web one (cloud), or
+// one on this computer.
+func (h *AcpHost) transcript(id, folder string, cloud bool) ([]CloudTurn, error) {
 	name := h.name()
 	return withTool(h, func(ct *Cancel) ([]CloudTurn, *callErr) {
 		if !h.canLoad.Load() {
@@ -1162,10 +1194,14 @@ func (h *AcpHost) cloudTranscript(id, folder string) ([]CloudTurn, error) {
 		turn := &acpTurn{stream: NewKiroStream(name), options: h.options(), folder: folder, token: ct, replay: newReplay(name), lastUpdate: time.Now(), denyAll: true}
 		turn.muted.Store(true)
 		h.putTurn(id, turn)
-		// A cloud session gets none of this computer's MCP servers.
+		// A cloud session gets none of this computer's MCP servers; a local one is only read
+		// here, and gets its servers when a reply loads it again.
 		mcp := acpMcp{AcpServers(nil), Signature(nil)}
-		params := core.JObj(core.P("sessionId", core.JStr(id)), core.P("cwd", core.JStr(folder)), core.P("mcpServers", mcp.json), core.P("_meta", remoteMeta()))
-		res, err := h.call("session/load", params, ct, 120*time.Second)
+		ps := []core.Prop{core.P("sessionId", core.JStr(id)), core.P("cwd", core.JStr(folder)), core.P("mcpServers", mcp.json)}
+		if cloud {
+			ps = append(ps, core.P("_meta", remoteMeta()))
+		}
+		res, err := h.call("session/load", core.JObj(ps...), ct, 120*time.Second)
 		h.tmu.Lock()
 		if h.turns[id] == turn {
 			delete(h.turns, id)
@@ -1174,10 +1210,16 @@ func (h *AcpHost) cloudTranscript(id, folder string) ([]CloudTurn, error) {
 		if err != nil {
 			return nil, err
 		}
-		// Loaded now: a reply carries on in it without loading it again.
-		h.setSessionMcp(id, mcp.sig)
-		if o, ok := acpOptions(res); ok {
-			h.setOptions(id, o)
+		if !cloud && h.canClose.Load() {
+			// Closed again, so the first reply loads it with this computer's MCP servers.
+			h.call("session/close", core.JObj(core.P("sessionId", core.JStr(id))), ct, 10*time.Second)
+		} else {
+			// Loaded now: a reply carries on in it without loading it again (a local one
+			// whose servers differ restarts the tool for it, as after computer use changes).
+			h.setSessionMcp(id, mcp.sig)
+			if o, ok := acpOptions(res); ok {
+				h.setOptions(id, o)
+			}
 		}
 		turn.mu.Lock()
 		rep := turn.replay
