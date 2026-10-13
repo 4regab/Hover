@@ -8,7 +8,8 @@ which the app starts over JSON lines on stdin and stdout. The office is the web 
 same Swift shell around a C# engine; the C# is gone, and the Go app (`cmd/hover`) is Windows
 and Linux only.
 
-**Status: it builds and its backend runs on a Mac runner; nobody has used the app on a Mac.**
+**Status: the app builds and its packaged backend runs on a Mac runner. The native app UI has
+not had a full hands-on validation pass on a Mac.**
 CI builds the Go backend and signs (ad hoc) `Hover.app` from the Swift sources on Apple
 Silicon, runs the packaged backend through `tests/macos/backend-smoke.py` against a stand-in
 agent, and uploads the app as a workflow artifact; a release puts it on the release page as a
@@ -161,10 +162,11 @@ their state and a call log (`cua.log`) in the run's temp folder. No window is ma
 harness never activates; it writes only to its temp folder (`sandbox-exec`), reaches only
 localhost, and touches no real app. Screenshots of each step are kept in that folder.
 
-## Unverified
+## Native behavior needing hands-on validation
 
-Written from the Swift and Go code and from Apple's documentation; **none of this has run on
-a Mac**. Look at these first:
+The checks below are described from the Swift and Go code and Apple's documentation. The
+packaged backend smoke test runs on a Mac CI runner, but these native interactive flows have
+not had a full hands-on validation pass. Look at these first:
 
 - The notch window (`Notch.swift`): the non-activating `NSPanel` whose `canBecomeKey` follows
   whether the office is open (if that fails, a click on the resting notch can take focus),
