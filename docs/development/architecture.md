@@ -190,9 +190,10 @@ flowchart LR
 
 A tag whose version doesn't match `VERSION` fails before anything builds. A failing job means
 nothing is published. The release waits for all four jobs, the macOS one included: it builds
-the disk images (Apple silicon and Intel), runs the packaged backend against stand-in tools
-(nothing has been run on a Mac yet; see `docs/MACOS.md`), and fails a pull request whose Mac code
-doesn't compile. Pushes that only touch Markdown, `docs/` or the README's pictures don't run CI.
+the disk images (Apple silicon and Intel) and runs the packaged Go backend against stand-in
+tools on a Mac runner. The native Swift UI and its permission prompts have not had full
+hands-on validation; see `docs/MACOS.md`. Pushes that only touch Markdown, `docs/` or the
+README's pictures don't run CI.
 
 ## What runs at run time
 
@@ -223,6 +224,16 @@ flowchart LR
 
 The child processes sit in a Windows job object or a Linux process group, so they stop
 when Hover does.
+
+## Backend and host boundary
+
+Windows and Linux run the Go application and backend in one process. macOS has a Swift host
+that starts `cmd/hover-backend` and exchanges JSON-line commands and events over stdin/stdout.
+The Mac smoke test exercises that packaged process boundary; it does not cover the native
+Swift UI. There is not yet one declared cross-platform wire schema: the in-process Go app
+calls backend behavior directly. To keep behavior aligned, future protocol work should define
+platform-neutral commands and events and run the same conformance fixtures through both a Go
+in-process adapter and the macOS JSON-line adapter.
 
 ## Packages
 

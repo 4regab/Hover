@@ -1,10 +1,11 @@
 # Testing
 
-What CI runs, what you can run yourself, and what nothing runs yet.
+What CI runs, how to run local checks, and which platform scenarios still need a real machine.
 
 ## What CI runs
 
-`.github/workflows/ci.yml` does not run the Go tests. On every push and pull request it:
+`.github/workflows/ci.yml` does not run the Go test suite. Pull requests run the workflow;
+pushes that only change Markdown, `docs/`, or `assets/readme/` are skipped. When CI runs, it:
 
 - checks that the Go code is formatted, vets it for Windows, Linux and macOS, and compiles the
   Mac backend for both Macs;
@@ -12,7 +13,8 @@ What CI runs, what you can run yourself, and what nothing runs yet.
   notch with Alt+N, folds it with Esc, starts it again to ask for the app window) and **installs
   the new setup over the oldest Go release still published**, checks what the installer promises and uninstalls;
 - builds the Linux `.deb` and tarball (compiled, not run: the runner has no Wayland desktop);
-- builds the Mac app and runs its **packaged backend** against stand-in tools.
+- builds the macOS app and runs its **packaged backend** against stand-in tools. This checks
+  the backend process and protocol, not the native Swift UI or its permission prompts.
 
 By hand (Run workflow), the `pictures` job draws every view on the Windows runner.
 
@@ -29,19 +31,20 @@ By hand (Run workflow), the `pictures` job draws every view on the Windows runne
 - `tools/set-resolution.ps1` sets the runner's screen to 1920 x 1080 first, so the open notch
   fits.
 
-## The Go tests
+## Local Go tests
 
-They live beside the code (`*_test.go`) with their fixtures in `tests/golden`. Nobody keeps
-them green any more and CI does not run them; run them when you want to know what changed:
+Tests live beside the code (`*_test.go`) with shared fixtures in `tests/golden`. CI currently
+does not run them, so run the command for your platform when a change touches tested Go code:
 
 ```sh
 go test -tags nowayland,nox11,novulkan ./cmd/... ./internal/...    # Linux
-go test ./cmd/... ./internal/...                                   # Windows
+go test ./cmd/... ./internal/...                                   # Windows or macOS
 ```
 
-(`make test`, `.\build.ps1 test`.) Two layout tests in `internal/chat` need DejaVu Sans, as the
-Chromium reference was measured with it. Timing tests (a task that sleeps, a file that must be
-written) can fail on a slow or busy machine; run them again before you look for a bug.
+(`make test`, `.\build.ps1 test`, or `mise run test-<platform>`.) Two layout tests in
+`internal/chat` need DejaVu Sans, as the Chromium reference was measured with it. Timing tests
+(a task that sleeps, a file that must be written) may be sensitive to a slow or busy machine;
+inspect the failure before treating a rerun as evidence of a code issue or a flaky test.
 
 ## Pictures
 
@@ -62,9 +65,10 @@ a green build doesn't prove the pixels are right.
   with stand-in agent, `gh`, `cua` and `lume`, against a local test site. Not run in CI.
 - `tests/macos/SettingsSmoke.swift` is Settings' own smoke test.
 
-## Not checked by anything
+## Manual platform checks
 
 Real agents (Kiro, Codex, Cursor, OpenCode, Claude Code) with approvals, a real microphone
-(Groq and local speech), a second monitor at 150%, the pull request tab with real GitHub, and
-the Linux window on a real compositor. `docs/development/go-port.md` has the list of what to
-try by hand on Windows.
+(Groq and local speech), a second monitor at 150%, the pull request tab with real GitHub, the
+native macOS UI and permissions, and the Linux window on a real compositor are not exercised
+by the routine CI workflow. The longer macOS stand-in E2E is documented above and can be run
+on a Mac.

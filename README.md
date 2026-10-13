@@ -249,14 +249,16 @@ There is no account, server or analytics.
 | Desk card, helpers, Pull request tab | ✓ | ✓ | ✓ |
 | Release package | installer | .deb, tarball | disk image (signed ad hoc) |
 
-Where a feature is off, its switch says why. The Mac app is new and hasn't been run on a Mac yet, so the macOS
-column is what the code is written to do and what builds, not something tested: see
-[docs/MACOS.md](docs/MACOS.md).
+Where a feature is off, its switch says why. CI builds the Mac app and runs its packaged Go
+backend against stand-in tools; the native Swift UI, permission prompts, and real desktop
+behavior still need hands-on Mac validation. See [docs/MACOS.md](docs/MACOS.md).
 
 ## Build from source
 
 Requires Go: the version `go.mod` names (an older Go fetches it for you). Windows needs no C
-compiler. Linux needs one and the EGL headers, because Gio draws through EGL.
+compiler. Linux needs one and the EGL headers, because Gio draws through EGL. The optional
+[mise](https://mise.jdx.dev/) setup in `mise.toml` selects Go and Node and provides task aliases;
+it does not install platform build prerequisites.
 
 On Ubuntu or Debian:
 

@@ -4,9 +4,10 @@ Hover is built and run on Windows and Linux, and compiled on macOS. You can fork
 and send changes without access to the maintainers' release machines, secrets or paid
 agent accounts.
 
-Start with [docs/development/architecture.md](docs/development/architecture.md) for how
-Hover fits together, then [testing.md](docs/development/testing.md) and
-[profiling.md](docs/development/profiling.md) for how to test and measure.
+Start with [AGENTS.md](AGENTS.md) for a short code map and the project invariants. Read
+[docs/development/architecture.md](docs/development/architecture.md) for system boundaries,
+then [testing.md](docs/development/testing.md) and [profiling.md](docs/development/profiling.md)
+for validation and performance work.
 
 ## Fork and build
 
@@ -26,9 +27,12 @@ Hover fits together, then [testing.md](docs/development/testing.md) and
    git switch -c my-change upstream/main
    ```
 
-3. Set up your platform: [Windows](docs/development/windows.md), or on Linux the
-   packages in the README's [Build from source](README.md#build-from-source). Then,
-   from the repository root:
+3. Install platform prerequisites from [Windows](docs/development/windows.md), the README's
+   [Linux build instructions](README.md#build-from-source), or [macOS](docs/MACOS.md).
+   Optionally install [mise](https://mise.jdx.dev/) and run `mise install` to select the Go
+   and Node versions in `mise.toml`. Native prerequisites such as EGL headers, Xcode, and
+   Inno Setup still come from your operating system or package manager. The existing build
+   scripts remain the supported build entry points. Then, from the repository root:
 
    ```powershell
    # Windows
@@ -41,6 +45,9 @@ Hover fits together, then [testing.md](docs/development/testing.md) and
    make
    WGPU_NATIVE_PATH=lib/libwgpu_native.so ./hover-linux
    ```
+
+   The optional mise aliases are `mise run build-windows`, `mise run build-linux`, and
+   `mise run build-macos`. Run the alias for your current platform.
 
 Only one copy of Hover runs at a time. Quit an installed Hover before you start your
 build, or your build only opens the installed one's window and exits.
@@ -83,10 +90,12 @@ Run what applies to your change and say what you ran in the pull request:
 - For memory or speed changes: before and after numbers from
   [profiling.md](docs/development/profiling.md), on the same machine and settings.
 
-The CI workflow (`.github/workflows/ci.yml`) checks the Go code for Windows, Linux and macOS
-on every pull request, builds and drives the Windows app and its installer, and builds the
-Linux packages and the Mac app. It does not run the Go tests. It uses only GitHub's own
-runners: no secrets, and no agent accounts.
+The CI workflow (`.github/workflows/ci.yml`) formats and vets the Go code for Windows, Linux,
+and macOS; builds the Windows app and installer and drives the Windows app; builds Linux
+packages; and builds the macOS app and runs its packaged backend against stand-in tools. It
+does not run the Go test suite. The longer macOS E2E flow and the full native macOS UI are not
+covered by CI. See [testing.md](docs/development/testing.md) for local commands and coverage.
+CI uses GitHub-hosted runners without agent accounts or user secrets.
 
 ## Pull requests
 
@@ -98,8 +107,8 @@ Fill in the template. In short:
 - **Performance changes.** The scenario, the counter (for example private commit on
   Windows, or USS on Linux), before and after medians over at least three runs, and
   the machine.
-- **Blocked checks.** Say plainly what you couldn't run and why (for example no Linux
-  desktop, or no Cursor account).
+- **Checks not run.** Say plainly what you couldn't run and why (for example no Linux
+  desktop, no Mac for the native UI, or no Cursor account).
 
 ## Releases
 
