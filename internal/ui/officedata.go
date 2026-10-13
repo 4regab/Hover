@@ -98,6 +98,8 @@ type ListRow struct {
 	On    bool
 	When  string
 	Shut  bool
+	// Badge marks a session that isn't Hover's yet ("CLI"); such a row has no bin.
+	Badge string
 }
 
 // Thumb is a picture attached to a reply or a task, shown small. The app makes them once;

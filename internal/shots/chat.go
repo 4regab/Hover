@@ -10,6 +10,7 @@ import (
 	"github.com/4regab/Hover/internal/chat"
 	"github.com/4regab/Hover/internal/core"
 	"github.com/4regab/Hover/internal/notch"
+	"github.com/4regab/Hover/internal/shell"
 	"github.com/4regab/Hover/internal/voice"
 )
 
@@ -231,6 +232,13 @@ func chatShots(r *rig, dir string) error {
 		if err := shot("history"); err != nil {
 			return err
 		}
+		// With Kiro sessions made outside Hover beside its own.
+		s.ShotCLI(shell.ShotCLIRow{Title: "Refactor the settings loader", Folder: r.folder, Mins: 0.5})
+		r.settle(300)
+		if err := shot("history-cli"); err != nil {
+			return err
+		}
+		s.ShotCLI()
 		s.OpenPanel("")
 		s.CloseDrawer()
 	}

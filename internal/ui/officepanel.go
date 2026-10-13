@@ -182,7 +182,7 @@ func (o *OfficeView) panelRow(c *Ctx, r PanelRow, t *rowTouch, x, y, lw float32)
 		cr := x + lw - 10
 		cy := y + 8 + (32-colH)/2
 		dw, _ := c.Measure(r.S1, mf, 0)
-		if r.Open == 1 || !hov {
+		if r.Open != 0 || !hov {
 			c.Text(r.S1, cr-dw, cy, TextBox{Font: mf, Color: inkFnt, H: row1, VAlign: Middle})
 		}
 		c.Text(r.Text, cx, cy, TextBox{Font: tf, Color: ink, W: max(cr-dw-8-cx, 0), H: row1, VAlign: Middle, Elide: true})
@@ -205,6 +205,11 @@ func (o *OfficeView) panelRow(c *Ctx, r PanelRow, t *rowTouch, x, y, lw float32)
 			wkW = tw + 24
 			tail += 5 + wkW
 		}
+		if r.Open == 2 {
+			tw, _ := c.Measure("CLI", chipF, 0)
+			wkW = tw + 12
+			tail += 5 + wkW
+		}
 		c.Text("· "+r.Count, ex, ry, TextBox{Font: mf, Color: inkFnt, W: max(cr-ex-tail, 0), H: row2, VAlign: Middle, Elide: true})
 		chx := cr - tail + 5
 		if r.Desk {
@@ -218,9 +223,15 @@ func (o *OfficeView) panelRow(c *Ctx, r PanelRow, t *rowTouch, x, y, lw float32)
 			c.Icon(IconCloud, chx+5, cyy+(17-11)/2, 11, RGB(0x8fbcff))
 			c.Text("Kiro Web", chx+19, cyy, TextBox{Font: chipF, Color: RGB(0xb8d4ff), H: 17, VAlign: Middle})
 		}
+		if r.Open == 2 {
+			cyy := ry + (row2-17)/2
+			c.Box(chx, cyy, wkW, 17, R(5), RGBA(0xffffff12))
+			c.Text("CLI", chx, cyy, TextBox{Font: chipF, Color: inkDim, W: wkW, H: 17, HAlign: Center, VAlign: Middle})
+		}
 		t.card.Add(c, x, y, lw, 48, true)
-		// Not for a Kiro Web session Hover does not keep (open 1): nothing here to delete.
-		if r.Open != 1 {
+		// Not for a session Hover does not keep (open 1 Kiro Web, 2 Kiro CLI): nothing here to
+		// delete.
+		if r.Open == 0 {
 			dx, dy := x+lw-32, y+5
 			dh := t.del.Hovered()
 			c.opacity(If[float32](hov, 1, 0), func() {

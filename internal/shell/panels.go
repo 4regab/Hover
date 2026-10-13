@@ -5,6 +5,7 @@ import (
 	"math"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/4regab/Hover/internal/agents"
 	"github.com/4regab/Hover/internal/chat"
@@ -38,6 +39,27 @@ type webList struct {
 	note string
 	// opening is the one being opened (its conversation read from the cloud).
 	opening string
+}
+
+// cliRow marks a row that is a Kiro session on this computer (Kiro CLI's, the Kiro IDE's)
+// that Hover does not have yet.
+const cliRow = "kiro-cli:"
+
+// cliList is the Kiro sessions on this computer, in the folders Hover knows, that the
+// session list and the history show beside Hover's own.
+type cliList struct {
+	listing bool
+	at      time.Time
+	list    []cliSession
+	// opening is the one being opened (its conversation read from Kiro).
+	opening string
+}
+
+// cliSession is one of them: Kiro's own record (its folder as Kiro wrote it, which a reply
+// must name), and the known folder it is grouped under.
+type cliSession struct {
+	agents.CloudSession
+	under string
 }
 
 type listHead struct {
@@ -261,10 +283,16 @@ func (s *Shell) panelRows(sessions []agents.KiroSession) (title, sub string, row
 			ms   float64
 			here *core.HistoryEntry
 			web  *agents.CloudSession
+			cli  *cliSession
 		}
 		var items []item
 		for i := range list {
 			items = append(items, item{ms: float64(list[i].Updated.UnixMS()), here: &list[i]})
+		}
+		// And this computer's Kiro sessions Hover doesn't have, by date too.
+		clis := s.cliHere(sessions, find)
+		for i := range clis {
+			items = append(items, item{ms: float64(stampMS(clis[i].Updated)), cli: &clis[i]})
 		}
 		for i := range clouds {
 			ms := 0.0
@@ -315,6 +343,22 @@ func (s *Shell) panelRows(sessions []agents.KiroSession) (title, sub string, row
 				}
 				r.Count, r.Stage, r.Open = "click to read it", int(office.StageStopped), 1
 				add(r, rowOpen{key: webRow + c.ID})
+				continue
+			}
+			if it.cli != nil {
+				c := it.cli
+				// As a Kiro Web one: Kiro's logo, that it is Kiro CLI's, no bin.
+				r := row(6)
+				r.Sub, r.Text = "kiro", cliTitle(*c)
+				r.Meta = "Not opened yet"
+				if p.cli.opening == c.ID {
+					r.Meta = "Opening…"
+				}
+				if it.ms > 0 {
+					r.S1 = stampWord(now, it.ms)
+				}
+				r.Count, r.Stage, r.Open = office.Short(c.Folder), int(office.StageStopped), 2
+				add(r, rowOpen{key: cliRow + c.ID})
 				continue
 			}
 			h := it.here
@@ -409,6 +453,20 @@ func (s *Shell) listRows(sessions []agents.KiroSession, open int32) ([]ui.ListRo
 		r := ui.ListRow{Text: h.Title, Tool: h.Tool.ID(), Stage: int(office.ParseStage(agents.Stage(h.State, agents.Working))), When: whenShort(now - at)}
 		items = append(items, item{h.Folder, r, rowOpen{key: h.Key}, at, false})
 	}
+	// This computer's Kiro sessions Hover doesn't have yet, with a badge, under their folder.
+	cli := s.cliHere(sessions, "")
+	// ponytail: the 30 newest, as the saved ones; the history panel lists them all.
+	if len(cli) > 30 {
+		cli = cli[:30]
+	}
+	for _, c := range cli {
+		at := stampMS(c.Updated)
+		r := ui.ListRow{Text: cliTitle(c), Tool: core.Kiro.ID(), Stage: int(office.StageStopped), When: whenShort(now - at), Badge: "CLI"}
+		if p.cli.opening == c.ID {
+			r.When = "Opening…"
+		}
+		items = append(items, item{c.under, r, rowOpen{key: cliRow + c.ID}, at, false})
+	}
 	sort.SliceStable(items, func(i, j int) bool {
 		if items[i].live != items[j].live {
 			return items[i].live
@@ -465,7 +523,7 @@ func (s *Shell) panelAct(e ui.OfficeEvent, which int) {
 		}
 	case "rowDelete":
 		if e.N >= 0 && e.N < len(p.rowsOpen) {
-			if r := p.rowsOpen[e.N]; r.key != "" && !strings.HasPrefix(r.key, webRow) {
+			if r := p.rowsOpen[e.N]; r.key != "" && !strings.HasPrefix(r.key, webRow) && !strings.HasPrefix(r.key, cliRow) {
 				s.askDelete(-1, r.key, s.historyTitle(r.key), false, false)
 			}
 		}
@@ -497,7 +555,7 @@ func (s *Shell) panelAct(e ui.OfficeEvent, which int) {
 				if x, ok := hv.Sessions.Get(r.id); ok {
 					s.askDelete(r.id, "", x.Title(), x.Busy(), true)
 				}
-			case r.key != "":
+			case r.key != "" && !strings.HasPrefix(r.key, cliRow):
 				s.askDelete(-1, r.key, s.historyTitle(r.key), false, false)
 			}
 		}
@@ -544,6 +602,8 @@ func (s *Shell) openRow(r rowOpen) {
 		s.openSession(r.id)
 	case strings.HasPrefix(r.key, webRow):
 		s.openWeb(r.key[len(webRow):])
+	case strings.HasPrefix(r.key, cliRow):
+		s.openCLI(r.key[len(cliRow):])
 	case r.key != "":
 		for _, x := range hv.Sessions.All() {
 			if x.Key == r.key {
@@ -629,19 +689,7 @@ func (s *Shell) listWeb() {
 		var fresh []agents.CloudSession
 		note := ""
 		if err == nil {
-			// ponytail: every Kiro session in the history is read for its id, each time; an
-			// index of ids is the upgrade.
-			have := map[string]bool{}
-			if history != nil {
-				for _, e := range history.Entries() {
-					if e.Tool != core.Kiro {
-						continue
-					}
-					if sv, ok := history.Load(e.Key); ok && sv.AcpID != nil {
-						have[*sv.AcpID] = true
-					}
-				}
-			}
+			have := kiroIDs(history)
 			total := len(got.Sessions)
 			for _, c := range got.Sessions {
 				if !have[c.ID] {
@@ -732,6 +780,198 @@ func (s *Shell) openWeb(id string) {
 				}
 			}
 			w.list = kept
+			s.officeChanged()
+			s.openSession(x.ID)
+		})
+	}()
+}
+
+// kiroIDs are the Kiro session ids in Hover's history. Blocks: run it off the UI goroutine.
+// ponytail: every Kiro session in the history is read for its id, each time; an index of
+// ids is the upgrade.
+func kiroIDs(history *core.AgentHistory) map[string]bool {
+	have := map[string]bool{}
+	if history == nil {
+		return have
+	}
+	for _, e := range history.Entries() {
+		if e.Tool != core.Kiro {
+			continue
+		}
+		if sv, ok := history.Load(e.Key); ok && sv.AcpID != nil {
+			have[*sv.AcpID] = true
+		}
+	}
+	return have
+}
+
+// kiroHost is Kiro's runtime, when Kiro is set up here (not to start it to list nothing).
+func (s *Shell) kiroHost() (agents.Runtime, bool) {
+	if r, known := agents.Known(core.Kiro); known && !r.OK() {
+		return agents.Runtime{}, false
+	}
+	for _, h := range s.Hover.Hosts {
+		if h.Tool() == core.Kiro {
+			return h, true
+		}
+	}
+	return agents.Runtime{}, false
+}
+
+// cliFresh is how long a listing of this computer's Kiro sessions is kept before the
+// session list asks Kiro again.
+const cliFresh = 2 * time.Minute
+
+// listCLI asks Kiro for the sessions on this computer, off the UI goroutine, and keeps the
+// ones in folders Hover knows (projects, chats saved or at a desk) that Hover doesn't have.
+// now: ask even if the last list is fresh (the history opening).
+// ponytail: the session list calls it every frame; it asks at most once per cliFresh, so
+// Kiro's process stays up while the chat view is shown.
+func (s *Shell) listCLI(now bool) {
+	p := s.pg()
+	if s.env.Headless || p.cli.listing || !now && !p.cli.at.IsZero() && time.Since(p.cli.at) < cliFresh {
+		return
+	}
+	host, ok := s.kiroHost()
+	if !ok {
+		return
+	}
+	hv := s.Hover
+	var known []string
+	for _, pr := range hv.Settings.Projects() {
+		known = append(known, pr.Folder)
+	}
+	for _, x := range hv.Sessions.All() {
+		known = append(known, x.Folder)
+	}
+	if hv.History != nil {
+		for _, h := range hv.History.Entries() {
+			known = append(known, h.Folder)
+		}
+	}
+	p.cli.listing, p.cli.at = true, time.Now()
+	history := hv.History
+	go func() {
+		got, err := host.LocalSessions()
+		var keep []cliSession
+		if err != nil {
+			core.Logf("kiro cli sessions: couldn't list them: %v", err)
+		} else {
+			// Each folder is resolved once: Kiro lists hundreds of sessions in a few dozen.
+			under := map[string]string{}
+			for _, f := range known {
+				if k := core.FolderKey(f); f != "" && under[k] == "" {
+					under[k] = f
+				}
+			}
+			keys := map[string]string{}
+			have := kiroIDs(history)
+			for _, c := range got {
+				k, seen := keys[c.Folder]
+				if !seen {
+					k = core.FolderKey(c.Folder)
+					keys[c.Folder] = k
+				}
+				if f := under[k]; f != "" && !have[c.ID] {
+					keep = append(keep, cliSession{c, f})
+				}
+			}
+			core.Logf("kiro cli sessions: %d listed, %d in known folders and not in Hover", len(got), len(keep))
+		}
+		s.env.UIDo(func() {
+			c := &s.page.cli
+			c.listing = false
+			// A failure keeps the last list: it is still what this computer has.
+			if err == nil {
+				c.list = keep
+			}
+			s.invalidateAll()
+		})
+	}()
+}
+
+// cliHere is the listed sessions no desk has now, newest first, that find matches.
+func (s *Shell) cliHere(sessions []agents.KiroSession, find string) []cliSession {
+	var out []cliSession
+	for _, c := range s.pg().cli.list {
+		have := false
+		for i := range sessions {
+			have = have || sessions[i].KiroID != nil && *sessions[i].KiroID == c.ID
+		}
+		if !have && (find == "" || strings.Contains(strings.ToLower(c.Title+" "+c.Folder+" kiro cli"), find)) {
+			out = append(out, c)
+		}
+	}
+	sort.SliceStable(out, func(i, j int) bool { return stampMS(out[i].Updated) > stampMS(out[j].Updated) })
+	return out
+}
+
+func stampMS(t *core.Stamp) int64 {
+	if t == nil {
+		return 0
+	}
+	return t.UnixMS()
+}
+
+// cliTitle is its title, or what it is when Kiro gave none.
+func cliTitle(c cliSession) string {
+	if c.Title == "" {
+		return "Kiro CLI session"
+	}
+	return c.Title
+}
+
+// openCLI opens a Kiro session from this computer: its conversation is read from Kiro, off
+// the UI goroutine, and it comes to a desk as a chat in its own folder.
+func (s *Shell) openCLI(id string) {
+	p := s.pg()
+	hv := s.Hover
+	var c *cliSession
+	for i := range p.cli.list {
+		if p.cli.list[i].ID == id {
+			c = &p.cli.list[i]
+		}
+	}
+	if c == nil || p.cli.opening != "" {
+		return
+	}
+	cs := *c
+	for _, x := range hv.Sessions.All() {
+		if x.KiroID != nil && *x.KiroID == id {
+			s.openSession(x.ID)
+			return
+		}
+	}
+	host, ok := s.kiroHost()
+	if !ok {
+		s.Toast("Kiro isn’t set up on this computer.")
+		return
+	}
+	if !agents.UsableFolder(cs.Folder) {
+		s.Toast("Its folder isn’t on this computer any more.")
+		return
+	}
+	p.cli.opening = cs.ID
+	s.Toast("Opening it from Kiro CLI…")
+	s.invalidateAll()
+	go func() {
+		turns, terr := host.LocalTranscript(cs.ID, cs.Folder)
+		s.env.UIDo(func() {
+			s.page.cli.opening = ""
+			x, ok := hv.Sessions.AdoptLocal(cs.ID, cs.Title, cs.Folder, cs.Updated, turns, terr)
+			if !ok {
+				s.Toast("All six desks are busy. Stop or remove a session first.")
+				s.invalidateAll()
+				return
+			}
+			c := &s.page.cli
+			kept := c.list[:0]
+			for _, o := range c.list {
+				if o.ID != cs.ID {
+					kept = append(kept, o)
+				}
+			}
+			c.list = kept
 			s.officeChanged()
 			s.openSession(x.ID)
 		})

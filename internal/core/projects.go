@@ -409,17 +409,22 @@ func plainPath(p string) string {
 // SameFolder: their resolved paths are equal, any case on Windows (where the file system
 // ignores it), exactly elsewhere. A folder that can't be resolved is compared by its text.
 func SameFolder(a, b string) bool {
-	r := func(p string) string {
-		if x, err := ResolveFolder(p); err == nil {
-			return x
-		}
-		return strings.TrimRight(strings.TrimSpace(p), `\/`)
+	x, y := FolderKey(a), FolderKey(b)
+	return x == y || runtime.GOOS != "windows" && sameInode(x, y)
+}
+
+// FolderKey is the folder as SameFolder compares it (resolved, lower case on Windows), for
+// matching many folders against many without resolving each pair again.
+func FolderKey(p string) string {
+	if x, err := ResolveFolder(p); err == nil {
+		p = x
+	} else {
+		p = strings.TrimRight(strings.TrimSpace(p), `\/`)
 	}
-	x, y := r(a), r(b)
 	if runtime.GOOS == "windows" {
-		return strings.ToLower(x) == strings.ToLower(y)
+		return strings.ToLower(p)
 	}
-	return x == y || sameInode(x, y)
+	return p
 }
 
 // sameInode: on a Mac the default volume ignores case, so two spellings count as one when

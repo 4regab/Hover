@@ -1073,6 +1073,21 @@ func (k *KiroSessions) Reattach(id int32) bool {
 // turn with its title and why). A last turn still working in the cloud is followed on.
 // The one already here when it was opened before. False when every desk is busy.
 func (k *KiroSessions) AdoptCloud(kiroID, title, folder string, updated *core.Stamp, turns []CloudTurn, turnsErr error) (KiroSession, bool) {
+	return k.adopt(kiroID, title, folder, updated, turns, turnsErr, true)
+}
+
+// AdoptLocal is AdoptCloud for a Kiro session on this computer (Kiro CLI's, the Kiro
+// IDE's): it works in folder, its own, with the access Kiro's setting gives; a reply
+// carries on in the same Kiro session, which Kiro CLI can resume again.
+func (k *KiroSessions) AdoptLocal(kiroID, title, folder string, updated *core.Stamp, turns []CloudTurn, turnsErr error) (KiroSession, bool) {
+	return k.adopt(kiroID, title, folder, updated, turns, turnsErr, false)
+}
+
+func (k *KiroSessions) adopt(kiroID, title, folder string, updated *core.Stamp, turns []CloudTurn, turnsErr error, cloud bool) (KiroSession, bool) {
+	where := "Kiro CLI"
+	if cloud {
+		where = "Kiro Web"
+	}
 	k.mu.Lock()
 	for _, x := range k.all {
 		if x.s.KiroID != nil && *x.s.KiroID == kiroID {
@@ -1088,7 +1103,7 @@ func (k *KiroSessions) AdoptCloud(kiroID, title, folder string, updated *core.St
 	}
 	title = strings.TrimSpace(title)
 	if title == "" {
-		title = "Kiro Web session"
+		title = where + " session"
 	}
 	turn := func(prompt string, steps []core.KiroStep, state core.KiroState, text string) KiroTurn {
 		t := NewTurn(prompt, nil)
@@ -1098,14 +1113,30 @@ func (k *KiroSessions) AdoptCloud(kiroID, title, folder string, updated *core.St
 		return t
 	}
 	s := NewKiroSession(core.Kiro)
-	s.Folder, s.KiroID, s.Cloud, s.Access = folder, sp(kiroID), []string{}, sp("full")
+	s.Folder, s.KiroID = folder, sp(kiroID)
+	// A local one keeps no access of its own: Kiro's setting gives it, as a new task's.
+	if cloud {
+		s.Cloud, s.Access = []string{}, sp("full")
+	}
 	running := false
 	switch {
-	case turnsErr != nil:
+	case turnsErr != nil && cloud:
 		s.Turns = append(s.Turns, turn(title, nil, core.Failed, fmt.Sprintf("Couldn’t read this conversation from Kiro Web. %v Open it there with the cloud button, or reply to carry on.", turnsErr)))
+	case turnsErr != nil:
+		s.Turns = append(s.Turns, turn(title, nil, core.Failed, fmt.Sprintf("Couldn’t read this conversation from Kiro CLI. %v Reply to carry on in it.", turnsErr)))
 	case len(turns) == 0:
-		s.Turns = append(s.Turns, turn(title, nil, core.Completed, "This Kiro Web session has no messages yet."))
+		s.Turns = append(s.Turns, turn(title, nil, core.Completed, "This "+where+" session has no messages yet."))
 	default:
+		// Kiro's local replay opens with an empty turn (no prompt, answer or step).
+		if !cloud {
+			turns = slices.DeleteFunc(slices.Clone(turns), func(c CloudTurn) bool {
+				return c.Prompt == "" && c.Text == "" && len(c.Steps) == 0
+			})
+			if len(turns) == 0 {
+				s.Turns = append(s.Turns, turn(title, nil, core.Completed, "This "+where+" session has no messages yet."))
+				break
+			}
+		}
 		for i, c := range turns {
 			prompt := c.Prompt
 			if prompt == "" && i == 0 {
@@ -1113,9 +1144,12 @@ func (k *KiroSessions) AdoptCloud(kiroID, title, folder string, updated *core.St
 			}
 			state, text := core.Completed, c.Text
 			switch {
-			case i+1 == len(turns) && !c.Completed:
+			case i+1 == len(turns) && !c.Completed && cloud:
 				running = true
 				state, text = core.Cancelled, StillWorkingText
+			case i+1 == len(turns) && !c.Completed && c.Text == "":
+				// Kiro CLI may still be working on it; Hover can't follow a local turn.
+				state, text = core.Cancelled, "Kiro hadn’t finished this when Hover opened it."
 			case c.Text == "":
 				text = "Done. Kiro didn’t leave a summary."
 			}

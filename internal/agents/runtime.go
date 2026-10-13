@@ -129,3 +129,19 @@ func (r Runtime) CloudTranscript(id, folder string) ([]CloudTurn, error) {
 	}
 	return r.Acp.CloudTranscript(id, folder)
 }
+
+// LocalSessions are the Kiro sessions on this computer (AcpHost.LocalSessions). Blocks.
+func (r Runtime) LocalSessions() ([]CloudSession, error) {
+	if r.Acp == nil {
+		return nil, errNotKiro
+	}
+	return r.Acp.LocalSessions()
+}
+
+// LocalTranscript is a local Kiro session's conversation (AcpHost.LocalTranscript). Blocks.
+func (r Runtime) LocalTranscript(id, folder string) ([]CloudTurn, error) {
+	if r.Acp == nil {
+		return nil, errNotKiro
+	}
+	return r.Acp.LocalTranscript(id, folder)
+}

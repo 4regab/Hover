@@ -200,21 +200,38 @@ func (o *OfficeView) sidebar(c *Ctx, p *OfficeProps, lw, h float32, compact bool
 				if r.When != "" {
 					tw -= ww + 10
 				}
+				bf := Font{Size: 10, Weight: 600}
+				var bw float32
+				if r.Badge != "" {
+					bw, _ = c.Measure(r.Badge, bf, 0)
+					bw += 10
+					tw -= bw + 6
+				}
 				c.Text(r.Text, lx+16+10, ry, TextBox{Font: f, Color: If(dim, RGBA(0xf6f2ff73), ink), W: max(tw, 0), H: hs[i], VAlign: Middle, Elide: true})
+				if r.Badge != "" {
+					// Just after the title (elided to its room).
+					ttw, _ := c.Measure(r.Text, f, 0)
+					bx, by := lx+16+10+min(ttw, max(tw, 0))+6, ry+(hs[i]-16)/2
+					c.Box(bx, by, bw, 16, R(4), RGBA(0xffffff12))
+					c.Text(r.Badge, bx, by, TextBox{Font: bf, Color: inkHalf, W: bw, H: 16, HAlign: Center, VAlign: Middle})
+				}
 				if r.When != "" {
-					c.opacity(If[float32](hv, 0, 1), func() {
+					c.opacity(If[float32](hv && r.Badge == "", 0, 1), func() {
 						c.Text(r.When, rx+rw-8-ww, ry, TextBox{Font: wf, Color: If(r.Stage == 3, RGB(0xff9a92), inkHalf), H: hs[i], VAlign: Middle})
 					})
 				}
 				t.row.Add(c, rx, ry, rw, hs[i], true)
-				// Delete takes the time's place while the pointer is on the row.
+				// Delete takes the time's place while the pointer is on the row; a session that
+				// isn't Hover's yet has none.
 				dx, dy := rx+rw-4-24, ry+(hs[i]-24)/2
 				dh := t.del.Hovered()
-				c.opacity(If[float32](hv, 1, 0), func() {
-					c.Box(dx, dy, 24, 24, R(6), If(dh, RGBA(0xff453a1f), Transparent))
-					c.Icon(PathBin, dx+5, dy+5, 14, If(dh, RGB(0xff9a92), inkHalf))
-				})
-				t.del.Add(c, dx, dy, 24, 24, true)
+				if r.Badge == "" {
+					c.opacity(If[float32](hv, 1, 0), func() {
+						c.Box(dx, dy, 24, 24, R(6), If(dh, RGBA(0xff453a1f), Transparent))
+						c.Icon(PathBin, dx+5, dy+5, 14, If(dh, RGB(0xff9a92), inkHalf))
+					})
+					t.del.Add(c, dx, dy, 24, 24, true)
+				}
 				if clicked {
 					o.emit(OfficeEvent{Kind: OfficeAct, A: "listClicked", N: i})
 				}
