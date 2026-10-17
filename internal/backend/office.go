@@ -5,7 +5,6 @@ import (
 	"runtime"
 	"slices"
 	"strings"
-	"unicode/utf16"
 
 	"github.com/4regab/Hover/internal/agents"
 	"github.com/4regab/Hover/internal/core"
@@ -433,7 +432,19 @@ func turn(c *ctx, s *agents.KiroSession, t *agents.KiroTurn, waiting bool) core.
 
 // MARK: Steps
 
-func units(t string) int { return len(utf16.Encode([]rune(t))) }
+// units is the UTF-16 length, which is how the office page cuts a label.
+// A walk matches utf16.Encode([]rune(t)): one unit per code point, two above
+// U+FFFF, and U+FFFD for each bad byte.
+func units(t string) int {
+	n := 0
+	for _, r := range t {
+		n++
+		if r >= 0x10000 {
+			n++
+		}
+	}
+	return n
+}
 
 // cutUnits is the start of t, at most n UTF-16 units, whole code points.
 func cutUnits(t string, n int) string {

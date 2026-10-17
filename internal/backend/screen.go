@@ -4,7 +4,6 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-	"unicode/utf16"
 
 	"github.com/4regab/Hover/internal/agents"
 	"github.com/4regab/Hover/internal/core"
@@ -59,7 +58,7 @@ func number(input *string, names []string) (int64, bool) {
 
 // cut60 is t[..59] + "…" past 60 UTF-16 units.
 func cut60(t string) string {
-	if len(utf16.Encode([]rune(t))) <= 60 {
+	if units(t) <= 60 {
 		return t
 	}
 	return cutUnits(t, 59) + "…"
