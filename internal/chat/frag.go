@@ -288,6 +288,45 @@ func (f *Frag) shift(dx, dy float32) {
 	}
 }
 
+// clone is a frag append can shift without moving this one. Layouts are shared:
+// nothing writes them after shaping. Points and clips are not, because shift
+// edits those in place.
+func (f *Frag) clone() *Frag {
+	if f == nil {
+		return nil
+	}
+	g := &Frag{
+		Texts:     append([]TextBox(nil), f.Texts...),
+		Shapes:    append([]Shape(nil), f.Shapes...),
+		Copy:      append([]Tok(nil), f.Copy...),
+		Scrollers: append([]Scroller(nil), f.Scrollers...),
+		Hits:      append([]HitRect(nil), f.Hits...),
+	}
+	for i := range g.Texts {
+		if g.Texts[i].Links != nil {
+			g.Texts[i].Links = append([]Link(nil), f.Texts[i].Links...)
+		}
+	}
+	for i := range g.Shapes {
+		if pts := g.Shapes[i].Pts; pts != nil {
+			g.Shapes[i].Pts = append([][2]float32(nil), pts...)
+		}
+	}
+	for i := range g.Scrollers {
+		src := f.Scrollers[i].Shapes
+		if src == nil {
+			continue
+		}
+		g.Scrollers[i].Shapes = append([]Shape(nil), src...)
+		for k := range g.Scrollers[i].Shapes {
+			if pts := g.Scrollers[i].Shapes[k].Pts; pts != nil {
+				g.Scrollers[i].Shapes[k].Pts = append([][2]float32(nil), pts...)
+			}
+		}
+	}
+	return g
+}
+
 // append moves other by dx, dy and adds it to f.
 func (f *Frag) append(o *Frag, dx, dy float32) {
 	o.shift(dx, dy)

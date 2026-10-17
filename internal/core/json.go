@@ -484,13 +484,20 @@ func (p *parser) hex4() (uint16, error) {
 
 func (p *parser) str() (string, error) {
 	p.i++
+	// A string with no escape and no control character is copied once. Sharing the
+	// source would keep a whole session line alive for one short field.
+	start := p.i
+	for p.i < len(p.b) && p.b[p.i] != '"' && p.b[p.i] != '\\' && p.b[p.i] >= 0x20 {
+		p.i++
+	}
+	if p.i < len(p.b) && p.b[p.i] == '"' {
+		s := strings.Clone(p.b[start:p.i])
+		p.i++
+		return s, nil
+	}
 	var out strings.Builder
+	out.WriteString(p.b[start:p.i])
 	for {
-		start := p.i
-		for p.i < len(p.b) && p.b[p.i] != '"' && p.b[p.i] != '\\' && p.b[p.i] >= 0x20 {
-			p.i++
-		}
-		out.WriteString(p.b[start:p.i])
 		c, ok := p.at(p.i)
 		if !ok {
 			return "", errors.New("unterminated string")
@@ -551,6 +558,11 @@ func (p *parser) str() (string, error) {
 		default:
 			return "", fmt.Errorf("control character in a string at %d", p.i)
 		}
+		span := p.i
+		for p.i < len(p.b) && p.b[p.i] != '"' && p.b[p.i] != '\\' && p.b[p.i] >= 0x20 {
+			p.i++
+		}
+		out.WriteString(p.b[span:p.i])
 	}
 }
 
@@ -760,8 +772,48 @@ var NewLine = func() string {
 // Compact is JsonSerializer.Serialize with default formatting: no whitespace at all.
 func (v JSON) Compact() string {
 	var o strings.Builder
+	// One buffer, instead of the doubling copies a long session pays for.
+	o.Grow(v.compactLen())
 	writeValue(&o, v, "", false, 0)
 	return o.String()
+}
+
+func (v JSON) compactLen() int {
+	switch v.kind {
+	case NullKind:
+		return 4
+	case BoolKind:
+		if v.b {
+			return 4
+		}
+		return 5
+	case NumKind:
+		return len(v.s)
+	case StrKind:
+		// Most answers are plain ASCII, where the escaped form is the text plus
+		// the quotes. A character that expands is copied once more as the buffer grows.
+		return len(v.s) + 2
+	case ArrKind:
+		n := 2
+		if len(v.arr) > 1 {
+			n += len(v.arr) - 1
+		}
+		for i := range v.arr {
+			n += v.arr[i].compactLen()
+		}
+		return n
+	case ObjKind:
+		n := 2
+		if len(v.obj) > 1 {
+			n += len(v.obj) - 1
+		}
+		for i := range v.obj {
+			n += len(v.obj[i].Key) + 3
+			n += v.obj[i].Val.compactLen()
+		}
+		return n
+	}
+	return 0
 }
 
 // Indented is WriteIndented: two spaces a level, "name": value, and the newline given
@@ -835,32 +887,65 @@ func writeValue(o *strings.Builder, v JSON, nl string, indent bool, depth int) {
 // non-ASCII character included, is \uXXXX in upper-case hex, by UTF-16 unit.
 func Escape(o *strings.Builder, s string) {
 	o.WriteByte('"')
-	for _, c := range s {
-		switch {
-		case c == '\n':
-			o.WriteString(`\n`)
-		case c == '\r':
-			o.WriteString(`\r`)
-		case c == '\t':
-			o.WriteString(`\t`)
-		case c == '\b':
-			o.WriteString(`\b`)
-		case c == '\f':
-			o.WriteString(`\f`)
-		case c == '\\':
-			o.WriteString(`\\`)
-		case c == '"' || c == '&' || c == '\'' || c == '+' || c == '<' || c == '>' || c == '`':
-			fmt.Fprintf(o, `\u%04X`, c)
-		case c >= ' ' && c <= '~':
-			o.WriteRune(c)
-		case c >= 0x10000:
-			hi, lo := utf16.EncodeRune(c)
-			fmt.Fprintf(o, `\u%04X\u%04X`, hi, lo)
-		default:
-			fmt.Fprintf(o, `\u%04X`, c)
+	start := 0
+	for i := 0; i < len(s); {
+		c := s[i]
+		if c < 0x80 {
+			if c >= ' ' && c <= '~' && c != '"' && c != '\\' && c != '&' && c != '\'' && c != '+' && c != '<' && c != '>' && c != '`' {
+				i++
+				continue
+			}
+			if i > start {
+				o.WriteString(s[start:i])
+			}
+			switch c {
+			case '\n':
+				o.WriteString(`\n`)
+			case '\r':
+				o.WriteString(`\r`)
+			case '\t':
+				o.WriteString(`\t`)
+			case '\b':
+				o.WriteString(`\b`)
+			case '\f':
+				o.WriteString(`\f`)
+			case '\\':
+				o.WriteString(`\\`)
+			default:
+				writeU4(o, rune(c))
+			}
+			i++
+			start = i
+			continue
 		}
+		r, n := utf8.DecodeRuneInString(s[i:])
+		if i > start {
+			o.WriteString(s[start:i])
+		}
+		if r >= 0x10000 {
+			hi, lo := utf16.EncodeRune(r)
+			writeU4(o, hi)
+			writeU4(o, lo)
+		} else {
+			writeU4(o, r)
+		}
+		i += n
+		start = i
+	}
+	if start < len(s) {
+		o.WriteString(s[start:])
 	}
 	o.WriteByte('"')
+}
+
+func writeU4(o *strings.Builder, r rune) {
+	const hex = "0123456789ABCDEF"
+	o.WriteByte('\\')
+	o.WriteByte('u')
+	o.WriteByte(hex[(r>>12)&0xF])
+	o.WriteByte(hex[(r>>8)&0xF])
+	o.WriteByte(hex[(r>>4)&0xF])
+	o.WriteByte(hex[r&0xF])
 }
 
 // DotnetDouble is double.ToString() on .NET Core 3.0 and later (what Utf8JsonWriter

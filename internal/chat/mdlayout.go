@@ -1,11 +1,24 @@
 package chat
 
 import (
+	"reflect"
 	"strings"
 
 	"github.com/4regab/Hover/internal/md"
 	"github.com/4regab/Hover/internal/text"
 )
+
+// blockMemo is one answer's blocks, shaped before the root's first and last
+// margins are cleared. A streaming token usually changes only the last block,
+// and shaping that block again is the whole cost of the chunk.
+type blockMemo struct {
+	w       float32
+	look    Look
+	copied  string
+	hasCopy bool
+	blocks  []md.Block
+	boxes   []Boxed
+}
 
 // mdLayout lays the block content of an answer out, as `.md` in page.html.
 type mdLayout struct {
@@ -111,9 +124,41 @@ func (m *mdLayout) para(inl []md.Inline, look Look, w, mt, mb float32) Boxed {
 }
 
 func (m *mdLayout) blocks(bs []md.Block, look Look, w float32, root bool) Boxed {
+	return m.blocksMemo(bs, look, w, root, nil)
+}
+
+// blocksMemo lays blocks out. A memo reuses a block whose bytes and the width,
+// look and copied-code state are unchanged. Images are never reused: their size
+// arrives later, and the box changes with it. append shifts a frag, so the memo
+// keeps the unshifted box and the flow gets a copy.
+func (m *mdLayout) blocksMemo(bs []md.Block, look Look, w float32, root bool, memo *blockMemo) Boxed {
+	var prev []md.Block
+	var prevBoxes []Boxed
+	if memo != nil {
+		copied, has := "", false
+		if m.copied != nil {
+			copied, has = *m.copied, true
+		}
+		if memo.w == w && memo.look == look && memo.copied == copied && memo.hasCopy == has {
+			prev, prevBoxes = memo.blocks, memo.boxes
+		}
+		memo.w, memo.look, memo.copied, memo.hasCopy = w, look, copied, has
+		memo.blocks = bs
+		memo.boxes = make([]Boxed, len(bs))
+	}
 	fl := newFlow()
 	for k, b := range bs {
-		bx := m.block(&b, look, w)
+		var bx Boxed
+		if memo != nil && k < len(prev) && prevBoxes[k].frag != nil && reflect.DeepEqual(prev[k], b) {
+			memo.boxes[k] = prevBoxes[k]
+			bx = cloneBox(prevBoxes[k])
+		} else {
+			bx = m.block(&b, look, w)
+			if memo != nil && !blockHasImage(&b) {
+				memo.boxes[k] = bx
+				bx = cloneBox(bx)
+			}
+		}
 		// .md > *:first-child { margin-top: 0 }  .md > *:last-child { margin-bottom: 0 }
 		if root && k == 0 {
 			bx.mt = 0
@@ -124,6 +169,53 @@ func (m *mdLayout) blocks(bs []md.Block, look Look, w float32, root bool) Boxed 
 		fl.add(bx, 0)
 	}
 	return fl.through()
+}
+
+func cloneBox(b Boxed) Boxed {
+	return Boxed{frag: b.frag.clone(), mt: b.mt, h: b.h, mb: b.mb}
+}
+
+func blockHasImage(b *md.Block) bool {
+	if inlinesHaveImage(b.Inlines) {
+		return true
+	}
+	for i := range b.Blocks {
+		if blockHasImage(&b.Blocks[i]) {
+			return true
+		}
+	}
+	for _, it := range b.Items {
+		if inlinesHaveImage(it.Content) {
+			return true
+		}
+		for i := range it.Lists {
+			if blockHasImage(&it.Lists[i]) {
+				return true
+			}
+		}
+	}
+	for _, c := range b.Head {
+		if inlinesHaveImage(c.Content) {
+			return true
+		}
+	}
+	for _, row := range b.Rows {
+		for _, c := range row {
+			if inlinesHaveImage(c.Content) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func inlinesHaveImage(in []md.Inline) bool {
+	for _, i := range in {
+		if i.Kind == md.ImageInline {
+			return true
+		}
+	}
+	return false
 }
 
 func (m *mdLayout) block(b *md.Block, look Look, w float32) Boxed {

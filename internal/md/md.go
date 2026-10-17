@@ -82,8 +82,32 @@ func replace(r *regexp2.Regexp, s string, f func(m *regexp2.Match) string) strin
 
 func safeURL(u string) (string, bool) { return u, is(safeRe, u) }
 
+// plainInline is text with none of the marks inline looks for. The regex pass
+// converts the whole string to runes even when nothing matches, which is most
+// of a prose answer. Characters this misses fall through to that pass.
+func plainInline(text string, image ImageFn) (string, bool) {
+	for i := 0; i < len(text); i++ {
+		switch text[i] {
+		case '`', '*', '_', '~', '[', '\\', 0, 1:
+			return "", false
+		case '!':
+			if image != nil {
+				return "", false
+			}
+		case 'h':
+			if strings.HasPrefix(text[i:], "http://") || strings.HasPrefix(text[i:], "https://") {
+				return "", false
+			}
+		}
+	}
+	return diagram.Esc(text), true
+}
+
 // inline writes the inline marks, on text already split from code spans.
 func inline(text string, image ImageFn) string {
+	if s, ok := plainInline(text, image); ok {
+		return s
+	}
 	var codes []string
 	// Code spans first, so nothing inside them is read as a mark.
 	text = replace(codeRe, text, func(m *regexp2.Match) string {
@@ -221,6 +245,15 @@ func Markdown(src string, image ImageFn) string {
 			i++
 			continue
 		}
+		// A line that cannot open a block skips the fence, heading, rule, table,
+		// quote and list expressions. A byte at or above U+0080 is not plain:
+		// JavaScript's whitespace includes U+00A0 and U+2000–U+200A, and a marker
+		// after one of those still has to reach those expressions.
+		if plainLine(line) {
+			para = append(para, diagram.Trim(line))
+			i++
+			continue
+		}
 		if h := match(headingRe, line); h != nil {
 			flush()
 			n := min(len(g(h, 1))+2, 6)
@@ -317,6 +350,37 @@ func Markdown(src string, image ImageFn) string {
 	}
 	flush()
 	return strings.Join(out, "")
+}
+
+func plainLine(line string) bool {
+	i := 0
+	for i < len(line) {
+		c := line[i]
+		if c >= 0x80 {
+			return false
+		}
+		if c == ' ' || c == '\t' || c == '\v' || c == '\f' || c == '\r' {
+			i++
+			continue
+		}
+		break
+	}
+	if i == len(line) {
+		return false
+	}
+	switch line[i] {
+	case '#', '>', '|', '`', '~', '-', '*', '+', '_', '\\':
+		return false
+	}
+	if line[i] >= '0' && line[i] <= '9' {
+		return false
+	}
+	for ; i < len(line); i++ {
+		if line[i] == '|' || line[i] >= 0x80 {
+			return false
+		}
+	}
+	return true
 }
 
 func indentOf(s string) int {

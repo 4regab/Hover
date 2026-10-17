@@ -116,8 +116,10 @@ var (
 	theFonts  *text.Fonts
 )
 
-// chatFonts are the thread's fonts: the system's and Pixelify Sans. Made once, in the
-// background from the start, since reading the system's takes seconds the first time.
+// chatFonts are the thread's fonts: the system's and Pixelify Sans. Made once.
+// The first scan reads every installed font and can take seconds; later starts
+// use the index in the platform cache directory. shell.New starts it so that
+// overlaps the window coming up.
 func chatFonts() *text.Fonts {
 	fontsOnce.Do(func() {
 		f := text.NewFonts()
