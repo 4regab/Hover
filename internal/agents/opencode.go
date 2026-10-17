@@ -2721,14 +2721,26 @@ func ocLaunch(ct *Cancel, t OpenCodeTimeouts, boxed *Boxed, servers []McpServer)
 		}
 		go func() {
 			defer pipe.Close()
+			defer func() {
+				if p := recover(); p != nil {
+					ocLog(fmt.Sprintf("%s reader stopped: %v", name, p))
+				}
+			}()
 			r := bufio.NewReader(pipe)
 			shown := 0
 			for {
-				b, err := r.ReadBytes('\n')
-				if len(b) == 0 && err != nil {
+				raw, skipped, err := core.ReadLineLimit(r, lineLimit)
+				if skipped {
+					ocLog(fmt.Sprintf("%s: dropped a line over %d bytes", name, lineLimit))
+					if err != nil {
+						return
+					}
+					continue
+				}
+				if len(raw) == 0 && err != nil {
 					return
 				}
-				line := strings.TrimRight(core.Lossy(b), "\r\n")
+				line := core.Lossy(raw)
 				// The server's first lines (and all of them when tracing): where it
 				// listens, or why it doesn't.
 				if shown < 20 || ocTrace() {

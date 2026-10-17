@@ -1397,11 +1397,7 @@ func SpacesRun(exe string, timeout time.Duration, args ...string) (int, string) 
 	stdin.Close()
 	read := func(p *os.File) chan string {
 		ch := make(chan string, 1)
-		go func() {
-			b, _ := io.ReadAll(p)
-			p.Close()
-			ch <- core.Lossy(b)
-		}()
+		go func() { ch <- drainLimited(p, 1<<20) }()
 		return ch
 	}
 	o, e := read(stdout), read(stderr)
@@ -1433,20 +1429,8 @@ func spacesStream(exe string, args []string, timeout time.Duration, ct *Cancel, 
 		readers.Add(1)
 		go func() {
 			defer readers.Done()
-			defer p.Close()
-			r := bufio.NewReader(p)
-			for {
-				b, err := r.ReadBytes('\n')
-				if len(b) > 0 {
-					// A carriage return redraws a progress line: each piece is a line.
-					for _, piece := range strings.FieldsFunc(core.Lossy(b), func(c rune) bool { return c == '\n' || c == '\r' }) {
-						rx <- piece
-					}
-				}
-				if err != nil {
-					return
-				}
-			}
+			// A carriage return redraws a progress line: each piece is a line.
+			feedLines(p, lineLimit, func(piece string) { rx <- piece })
 		}()
 	}
 	go func() { readers.Wait(); close(rx) }()

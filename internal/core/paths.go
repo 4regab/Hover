@@ -116,7 +116,8 @@ func DropPlanner(dir string) {
 var logGate sync.Mutex
 
 // Logf is Log.cs: one line, to stderr and to hover.log in the data folder. Logging must
-// never take the app down.
+// never take the app down: SIGPIPE is ignored, so a closed stderr comes back as an
+// error from the write below instead of killing the process.
 func Logf(format string, a ...any) {
 	stamp := LocalClock() + " hover: " + fmt.Sprintf(format, a...)
 	fmt.Fprintln(os.Stderr, stamp)

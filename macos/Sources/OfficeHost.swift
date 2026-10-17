@@ -39,6 +39,12 @@ func historyKey(dataFolder: URL) throws -> Data {
     return key
 }
 
+/// A closed pipe must not kill Hover. SIGPIPE is ignored at startup; the throwing
+/// write then returns an error, which is dropped.
+func writeBestEffort(_ handle: FileHandle, _ data: Data) {
+    do { try handle.write(contentsOf: data) } catch {}
+}
+
 final class BackendPipe {
     let process = Process(), input = Pipe(), output = Pipe(), errors = Pipe()
     var receive: (([String: Any]) -> Void)?
@@ -74,7 +80,10 @@ final class BackendPipe {
         }
         errors.fileHandleForReading.readabilityHandler = { handle in
             let data = handle.availableData
-            if !data.isEmpty { FileHandle.standardError.write(data) }
+            if data.isEmpty { handle.readabilityHandler = nil; return }
+            // standardError's write raises if the pipe is closed, and that exception
+            // quits the app. Copy what can be copied and drop the rest.
+            writeBestEffort(FileHandle.standardError, data)
         }
         process.terminationHandler = { [weak self] p in
             DispatchQueue.main.async {

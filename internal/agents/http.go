@@ -218,25 +218,41 @@ func (r *HttpResponse) Text() (int, string, *HttpErr) {
 	return r.Status, core.Lossy(b), nil
 }
 
-// Line is the next line of the body without its end; false at its end.
+// httpLineLimit is the longest line of an event stream. The accumulator below already
+// refuses a runaway event; the line itself has to be capped first or one line is kept
+// whole and the process is killed.
+const httpLineLimit = 8<<20 + 1
+
+// Line is the next line of the body without its end; false at its end. A line over
+// httpLineLimit is dropped and the next one is read.
 func (r *HttpResponse) Line() (string, bool, *HttpErr) {
-	b, err := r.body.ReadBytes('\n')
-	if len(b) == 0 {
-		if err == io.EOF && !r.stopped.Load() {
-			return "", false, nil
+	for {
+		b, skipped, err := core.ReadLineLimit(r.body, httpLineLimit)
+		if skipped {
+			core.Logf("http: dropped a line over %d bytes", httpLineLimit-1)
+			if err == nil {
+				continue
+			}
+			if err != io.EOF {
+				return "", false, httpWhy(r.stopped, err)
+			}
+			b = nil
 		}
-		if err == nil || err == io.EOF {
-			return "", false, &HttpErr{Kind: HttpCancelled}
+		// A blank line is a line. End of the body is no line.
+		if len(b) == 0 && err != nil {
+			if err == io.EOF && !r.stopped.Load() {
+				return "", false, nil
+			}
+			if err == io.EOF {
+				return "", false, &HttpErr{Kind: HttpCancelled}
+			}
+			return "", false, httpWhy(r.stopped, err)
 		}
-		return "", false, httpWhy(r.stopped, err)
+		if err != nil && err != io.EOF {
+			return "", false, httpWhy(r.stopped, err)
+		}
+		return core.Lossy(b), true, nil
 	}
-	if err != nil && err != io.EOF {
-		return "", false, httpWhy(r.stopped, err)
-	}
-	for len(b) > 0 && (b[len(b)-1] == '\n' || b[len(b)-1] == '\r') {
-		b = b[:len(b)-1]
-	}
-	return core.Lossy(b), true, nil
 }
 
 // Call is a whole request: the status and the body's text.

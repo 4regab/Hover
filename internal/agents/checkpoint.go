@@ -12,7 +12,6 @@ package agents
 import (
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -251,13 +250,12 @@ func (c *Checkpoints) run(repo, folder string, args ...string) (ran, error) {
 	drain := func(f *os.File) chan string {
 		ch := make(chan string, 1)
 		go func() {
-			b, _ := io.ReadAll(f)
-			f.Close()
-			ch <- core.Lossy(b)
+			ch <- drainLimited(f, 1<<20)
 		}()
 		return ch
 	}
 	out, errs := drain(outR), drain(errR)
+
 	done := make(chan error, 1)
 	go func() { done <- cmd.Wait() }()
 	select {
@@ -268,6 +266,28 @@ func (c *Checkpoints) run(repo, folder string, args ...string) (ran, error) {
 		return ran{}, errors.New(tooLong)
 	}
 	return ran{ok: cmd.ProcessState.Success(), out: <-out, err: <-errs}, nil
+}
+
+// drainLimited reads f to the end and keeps at most limit bytes. The rest is discarded
+// so git can't fill memory, and the pipe is still emptied so git doesn't block.
+func drainLimited(f *os.File, limit int) string {
+	defer f.Close()
+	var b []byte
+	tmp := make([]byte, 32<<10)
+	for {
+		n, err := f.Read(tmp)
+		if n > 0 && len(b) < limit {
+			room := limit - len(b)
+			if n > room {
+				n = room
+			}
+			b = append(b, tmp[:n]...)
+		}
+		if err != nil {
+			break
+		}
+	}
+	return core.Lossy(b)
 }
 
 // envWithout is the environment without the names given (any case on Windows, as its

@@ -147,28 +147,14 @@ func writeBrowserRelay() (string, error) {
 // readLine is one line, or false at its end; a line over the limit is read to its end and
 // skipped (an empty one is returned).
 func readLine(r *bufio.Reader) (string, bool) {
-	var buf []byte
-	over := false
-	for {
-		chunk, err := r.ReadSlice('\n')
-		if !over {
-			if len(buf)+len(chunk) > lineLimit {
-				over, buf = true, nil
-			} else {
-				buf = append(buf, chunk...)
-			}
-		}
-		if err == bufio.ErrBufferFull {
-			continue
-		}
-		if over {
-			return "", true
-		}
-		if err != nil && len(buf) == 0 {
-			return "", false
-		}
-		return strings.TrimRight(core.Lossy(buf), "\r\n"), true
+	line, skipped, err := core.ReadLineLimit(r, lineLimit)
+	if skipped && (err == nil || err == io.EOF) {
+		return "", true
 	}
+	if len(line) == 0 && err != nil {
+		return "", false
+	}
+	return core.Lossy(line), true
 }
 
 func serveBrowser(c net.Conn) {
