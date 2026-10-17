@@ -158,6 +158,9 @@ func New(hover *app.Hover, env Env, look core.Look) (*Shell, error) {
 	// The notch shows an ending as its own island (the tool's logo, a badge and the task);
 	// the system gets the words.
 	hover.OnNotify(func(t, b string) { env.UIDo(func() { s.announce(t, b) }) })
+	// The font index is the slow part of the first paint. chatFonts runs the scan
+	// once, and the UI thread waits on that same once.
+	go chatFonts()
 	return s, nil
 }
 
