@@ -107,6 +107,13 @@ func StartLive(w, h uint32, still bool, wake func()) *Live {
 	l := &Live{tx: make(chan In, 1024), done: make(chan struct{})}
 	go func() {
 		defer close(l.done)
+		defer func() {
+			if p := recover(); p != nil {
+				// A panic here is the office frame, and it used to take the whole
+				// process with it while a task was on screen.
+				core.Logf("office: stopped after a panic: %v", p)
+			}
+		}()
 		l.run(w, h, still, wake)
 	}()
 	return l

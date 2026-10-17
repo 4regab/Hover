@@ -50,12 +50,17 @@ type Session struct {
 	TagShown  float64
 }
 
-// Last is last(s): the newest turn that isn't waiting in the queue.
+// Last is last(s): the newest turn that isn't waiting in the queue. A session with no
+// turns returns an idle one: indexing [0] here panics, and this runs on the office
+// goroutine while a task streams state.
 func (s *Session) Last() *Turn {
 	for i := len(s.Turns) - 1; i >= 0; i-- {
 		if !s.Turns[i].Queued {
 			return &s.Turns[i]
 		}
+	}
+	if len(s.Turns) == 0 {
+		return &Turn{}
 	}
 	return &s.Turns[0]
 }

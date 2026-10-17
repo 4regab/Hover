@@ -1887,8 +1887,15 @@ func (h *AcpHost) handle(line string) {
 	if hasID {
 		if method == "session/request_permission" {
 			// Answered on its own goroutine: the user may take minutes, and every other
-			// session's news comes down this same pipe meanwhile.
+			// session's news comes down this same pipe meanwhile. A panic here is this
+			// question, not the process: the agent still gets an answer.
 			go func() {
+				defer func() {
+					if p := recover(); p != nil {
+						core.Logf("acp %s: permission: %v", h.name(), p)
+						h.send(core.JObj(core.P("jsonrpc", core.JStr("2.0")), core.P("id", id), core.P("result", core.JObj(core.P("outcome", core.JObj(core.P("outcome", core.JStr("cancelled"))))))))
+					}
+				}()
 				outcome := h.permission(turn, psid, p)
 				h.send(core.JObj(core.P("jsonrpc", core.JStr("2.0")), core.P("id", id), core.P("result", core.JObj(core.P("outcome", outcome)))))
 			}()
@@ -2007,15 +2014,24 @@ func mcpMissingNote(failed []string) *string {
 }
 
 // read reads lines as StreamReader.ReadLine splits them (\n, \r\n or \r), bad UTF-8
-// replaced.
+// replaced. A line over lineLimit is dropped: one tool result is a single JSON line,
+// and keeping it would grow without a bound until the process was killed. A panic here
+// used to kill the process too (it is not the run safeRun covers); it fails the turn.
 func (h *AcpHost) read(from io.ReadCloser, gen uint64) {
 	defer from.Close()
+	defer func() {
+		if p := recover(); p != nil {
+			core.Logf("acp %s: reader stopped: %v", h.name(), p)
+		}
+		h.gone(gen)
+	}()
 	r := bufio.NewReader(from)
 	for {
-		buf, err := r.ReadBytes('\n')
-		if len(buf) > 0 && (err == nil || err == io.EOF) {
-			text := strings.TrimRight(core.Lossy(buf), "\n")
-			for _, line := range strings.Split(text, "\r") {
+		raw, skipped, err := core.ReadLineLimit(r, lineLimit)
+		if skipped {
+			core.Logf("acp %s: dropped a line over %d bytes", h.name(), lineLimit)
+		} else if len(raw) > 0 {
+			for _, line := range strings.Split(core.Lossy(raw), "\r") {
 				if strings.HasPrefix(line, "{") {
 					h.handle(line)
 				}
@@ -2025,7 +2041,6 @@ func (h *AcpHost) read(from io.ReadCloser, gen uint64) {
 			break
 		}
 	}
-	h.gone(gen)
 }
 
 // acpOptions are the configOptions of a session/new, session/load or set_config_option

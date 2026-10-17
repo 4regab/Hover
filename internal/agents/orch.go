@@ -1842,12 +1842,19 @@ func serveOrch(o *Orch, name string, from io.Reader, to io.Writer) {
 	var wmu sync.Mutex
 	br := bufio.NewReader(from)
 	for {
-		line, err := br.ReadString('\n')
-		line = strings.TrimSuffix(strings.TrimSuffix(line, "\n"), "\r")
+		raw, skipped, err := core.ReadLineLimit(br, lineLimit)
+		if skipped {
+			core.Logf("orch: dropped a line over %d bytes", lineLimit)
+			if err != nil {
+				return
+			}
+			continue
+		}
 		// As Rust's lines(): the last line may lack its newline; text that isn't UTF-8 ends it.
-		if !utf8.ValidString(line) || err != nil && line == "" {
+		if !utf8.Valid(raw) || err != nil && len(raw) == 0 {
 			return
 		}
+		line := string(raw)
 		if m, perr := core.ParseJSON(line); perr == nil {
 			go func() {
 				if reply, ok := o.Answer(key, m); ok {

@@ -10,7 +10,6 @@ package agents
 // The installers are run only when the user asks, with no stdin, one at a time.
 
 import (
-	"bufio"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -208,20 +207,8 @@ func streamStep(exe string, args []string, env [][2]string, timeout time.Duratio
 		readers.Add(1)
 		go func() {
 			defer readers.Done()
-			defer p.Close()
-			r := bufio.NewReader(p)
-			for {
-				b, err := r.ReadBytes('\n')
-				if len(b) > 0 {
-					// A carriage return redraws a progress line: each piece is a line.
-					for _, piece := range strings.FieldsFunc(core.Lossy(b), func(c rune) bool { return c == '\n' || c == '\r' }) {
-						rx <- piece
-					}
-				}
-				if err != nil {
-					return
-				}
-			}
+			// A carriage return redraws a progress line: each piece is a line.
+			feedLines(p, lineLimit, func(piece string) { rx <- piece })
 		}()
 	}
 	go func() { readers.Wait(); close(rx) }()

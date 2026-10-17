@@ -1069,8 +1069,15 @@ func (h *ClaudeHost) handle(proc *claudeProc, line string) {
 		}
 		if sub, _ := str(req, "subtype"); sub == "can_use_tool" {
 			// Answered on its own goroutine: the user may take minutes, and the rest of
-			// what it says comes down this same pipe meanwhile.
+			// what it says comes down this same pipe meanwhile. A panic answers the
+			// question as an error instead of killing Hover.
 			go func() {
+				defer func() {
+					if p := recover(); p != nil {
+						claudeLog("permission: " + fmt.Sprint(p))
+						proc.write(core.JObj(core.P("type", core.JStr("control_response")), core.P("response", core.JObj(core.P("subtype", core.JStr("error")), core.P("request_id", core.JStr(id)), core.P("error", core.JStr("Hover couldn't answer that."))))))
+					}
+				}()
 				answer := h.permission(proc, id, turn, req)
 				proc.mu.Lock()
 				delete(proc.open, id)
@@ -1514,21 +1521,33 @@ func claudeExplain(message string) string {
 }
 
 // read reads lines as they come (\n or \r\n), bad UTF-8 replaced; at the end the turn it
-// was running fails with what it said on stderr.
+// was running fails with what it said on stderr. A line over lineLimit is dropped, and a
+// panic fails the turn: either one used to kill the process while a task was running.
 func (h *ClaudeHost) read(proc *claudeProc, from io.ReadCloser) {
 	defer from.Close()
+	defer h.finishRead(proc)
+	defer func() {
+		if p := recover(); p != nil {
+			claudeLog("reader stopped: " + fmt.Sprint(p))
+		}
+	}()
 	r := bufio.NewReader(from)
 	for {
-		buf, err := r.ReadBytes('\n')
-		if len(buf) > 0 && (err == nil || err == io.EOF) {
-			if line := strings.TrimSpace(core.Lossy(buf)); strings.HasPrefix(line, "{") {
-				h.handle(proc, line)
-			}
+		raw, skipped, err := core.ReadLineLimit(r, lineLimit)
+		if skipped {
+			claudeLog(fmt.Sprintf("dropped a line over %d bytes", lineLimit))
+		} else if line := strings.TrimSpace(core.Lossy(raw)); strings.HasPrefix(line, "{") {
+			h.handle(proc, line)
 		}
 		if err != nil {
 			break
 		}
 	}
+}
+
+// finishRead is the end of read, also after a panic in the reader: the turn fails
+// instead of the process exiting.
+func (h *ClaudeHost) finishRead(proc *claudeProc) {
 	was := proc.dead.Swap(true)
 	// Every request waiting on it fails at once (a cancel hook may hold its channel open).
 	proc.mu.Lock()

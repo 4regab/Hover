@@ -9,6 +9,7 @@ package backend
 
 import (
 	"bufio"
+	"errors"
 	"io"
 	"strings"
 	"sync"
@@ -128,8 +129,12 @@ func jint(n int64) core.JSON   { return core.JInt(n) }
 func jopt(s *string) core.JSON { return core.JOptStr(s) }
 func jbool(b bool) core.JSON   { return core.JBool(b) }
 
-// lineLimit is what Program.cs refuses: a longer line is treated as the end of the host.
-const lineLimit = 48 * 1024 * 1024
+// lineLimit is what Program.cs refuses. A longer line is skipped, not treated as the
+// host dying: the Mac app quits when this process exits, and one oversized command
+// (a huge paste, a picture) must not do that.
+var lineLimit = 48 * 1024 * 1024
+
+var errLongLine = errors.New("host line too long")
 
 // readCommands posts each line of the host's input to the loop as a command; the end of
 // the input shuts everything down.
@@ -137,6 +142,10 @@ func readCommands(in io.Reader, lp *Loop, out *Out) {
 	r := bufio.NewReaderSize(in, 1<<16)
 	for {
 		line, err := readLine(r)
+		if err == errLongLine {
+			out.Toast("Ignored a host message that was too long.")
+			continue
+		}
 		if err != nil {
 			break
 		}
@@ -161,25 +170,23 @@ func readCommands(in io.Reader, lp *Loop, out *Out) {
 	})
 }
 
-// readLine reads up to a newline; a line over the limit is an error (the end of the host).
+// readLine reads up to a newline. A line over the limit is discarded through its end
+// and reported as errLongLine, without keeping the bytes; the caller skips it.
 func readLine(r *bufio.Reader) (string, error) {
-	var b []byte
-	for {
-		chunk, err := r.ReadSlice('\n')
-		b = append(b, chunk...)
-		if len(b) > lineLimit {
-			return "", io.ErrShortBuffer
-		}
-		if err == nil {
-			return string(b), nil
-		}
-		if err != bufio.ErrBufferFull {
-			if len(b) > 0 && err == io.EOF {
-				return string(b), nil
-			}
+	line, skipped, err := core.ReadLineLimit(r, lineLimit)
+	if skipped {
+		if err != nil && err != io.EOF {
 			return "", err
 		}
+		return "", errLongLine
 	}
+	if err != nil && err != io.EOF {
+		return "", err
+	}
+	if len(line) == 0 && err != nil {
+		return "", err
+	}
+	return string(line), nil
 }
 
 // Run runs the backend on these pipes, until the host says `shutdown` or hangs up.

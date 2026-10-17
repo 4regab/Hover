@@ -4,6 +4,7 @@ import Security
 import ServiceManagement
 import UserNotifications
 import Carbon
+import Darwin
 
 let smoke = CommandLine.arguments.contains("--smoke-test")
 let environment = ProcessInfo.processInfo.environment
@@ -64,7 +65,7 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 DispatchQueue.global(qos: .userInitiated).async { [weak self] in
                     let started = Date()
                     let env = ShellEnvironment.resolve(base: environment)
-                    FileHandle.standardError.write(Data("Shell environment read in \(Int(Date().timeIntervalSince(started) * 1000)) ms\n".utf8))
+                    writeBestEffort(FileHandle.standardError, Data("Shell environment read in \(Int(Date().timeIntervalSince(started) * 1000)) ms\n".utf8))
                     DispatchQueue.main.async {
                         guard let self else { return }
                         do { try self.backend.start(resources: self.resources, dataFolder: self.dataFolder, key: key, env: env) }
@@ -316,10 +317,10 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }, 2, &specs, pointer, &hotHandler)
         let id = EventHotKeyID(signature: OSType(0x48565231), id: 1)
         let result = RegisterEventHotKey(UInt32(kVK_ANSI_N), UInt32(optionKey), id, GetApplicationEventTarget(), 0, &hotKey)
-        if result != noErr { FileHandle.standardError.write(Data("Option-N could not be registered: \(result)\n".utf8)) }
+        if result != noErr { writeBestEffort(FileHandle.standardError, Data("Option-N could not be registered: \(result)\n".utf8)) }
         let voiceId = EventHotKeyID(signature: OSType(0x48565231), id: 2)
         let voiceResult = RegisterEventHotKey(UInt32(kVK_Space), UInt32(controlKey | optionKey), voiceId, GetApplicationEventTarget(), 0, &voiceKey)
-        if voiceResult != noErr { FileHandle.standardError.write(Data("Control-Option-Space could not be registered: \(voiceResult)\n".utf8)) }
+        if voiceResult != noErr { writeBestEffort(FileHandle.standardError, Data("Control-Option-Space could not be registered: \(voiceResult)\n".utf8)) }
         // While one of Hover's own panels has the keyboard (the office in the notch, the
         // dashboard, Settings), the window server hands it the keys themselves and the
         // hot key never fires: Control-Option-Space reached the office as a key press and
@@ -485,7 +486,7 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate {
         case "browserNav":
             if let id = (m["id"] as? NSNumber)?.intValue { browsers.nav(id, m["what"] as? String ?? "reload") }
         case "webError":
-            FileHandle.standardError.write(Data("Office JavaScript error: \(m["text"] ?? "unknown")\n".utf8))
+            writeBestEffort(FileHandle.standardError, Data("Office JavaScript error: \(m["text"] ?? "unknown")\n".utf8))
             if smoke { finishSmoke(false, "Office JavaScript error") }
         default: backend.send(m)
         }
@@ -581,7 +582,7 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func finishSmoke(_ success: Bool, _ text: String) {
         guard !smokeFinished else { return }; smokeFinished = true
         if let root = sandboxRoot { try? JSONSerialization.data(withJSONObject: ["success": success, "detail": text]).write(to: URL(fileURLWithPath: root).appendingPathComponent("smoke-result.json")) }
-        FileHandle.standardError.write(Data("Smoke \(success ? "passed" : "failed"): \(text)\n".utf8)); NSApp.terminate(nil)
+        writeBestEffort(FileHandle.standardError, Data("Smoke \(success ? "passed" : "failed"): \(text)\n".utf8)); NSApp.terminate(nil)
     }
     func fatal(_ text: String) {
         if smoke { finishSmoke(false, text); return }
@@ -602,6 +603,11 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
     func applicationWillTerminate(_ note: Notification) { stopSpaces(); poll?.invalidate(); clock?.invalidate(); if let hotKey { UnregisterEventHotKey(hotKey) }; if let voiceKey { UnregisterEventHotKey(voiceKey) }; holdEscape(false); voice?.cancel(); backend.stop() }
 }
+
+// A write to a closed pipe (the backend's stdin, or this process's stderr while a
+// task is logging) delivers SIGPIPE. The default action kills the app before any
+// catch can run. The guardian already ignores it.
+_ = Darwin.signal(SIGPIPE, SIG_IGN)
 
 let app = NSApplication.shared
 app.setActivationPolicy(.accessory)
