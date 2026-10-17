@@ -23,6 +23,8 @@ func BenchmarkThreadLayout(b *testing.B) {
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
 		th.Sections = nil
+		// Drop the shaped-block memo so this stays a cold layout, not a cache hit.
+		th.answerMemo = nil
 		th.Set(turns, 360)
 		if th.Height <= 0 {
 			b.Fatal("empty layout")

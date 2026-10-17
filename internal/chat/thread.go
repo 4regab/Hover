@@ -119,6 +119,9 @@ type Thread struct {
 	// only once it ends, so the count starts here.
 	began         map[beganKey]time.Time
 	pendingImages []string
+	// answerMemo keeps the last answer's shaped blocks, per turn, so a streaming
+	// chunk reshapes only the block that changed.
+	answerMemo []blockMemo
 }
 
 func NewThread(sh *Shaper, who string, color Rgba) *Thread {
@@ -296,6 +299,9 @@ func (th *Thread) Set(turns []Turn, width float32) { th.lay(turns, width) }
 func (th *Thread) lay(turns []Turn, width float32) {
 	th.Width = width
 	th.Ticking = false
+	if len(th.answerMemo) > len(turns) {
+		th.answerMemo = th.answerMemo[:len(turns)]
+	}
 	for i := range turns {
 		t := &turns[i]
 		if n := len(t.Steps); t.Live && n > 0 && t.Steps[n-1].Kind == IconRun && t.Steps[n-1].Cmd != "" && !t.Steps[n-1].ended() {
@@ -560,7 +566,16 @@ func (th *Thread) turn(t *Turn, ti int, w float32, live, last bool) turnOut {
 				inset = 12
 			}
 			m := &mdLayout{sh: th.sh, imageState: th.ImageState, copied: th.Copied}
-			b := m.blocks(md.Parse(src, th.ImageRule), ansLook, w-inset, true)
+			blocks := md.Parse(src, th.ImageRule)
+			var memo *blockMemo
+			// Leads are not the streaming tail. Only the final answer grows a token at a time.
+			if final {
+				for len(th.answerMemo) <= ti {
+					th.answerMemo = append(th.answerMemo, blockMemo{})
+				}
+				memo = &th.answerMemo[ti]
+			}
+			b := m.blocksMemo(blocks, ansLook, w-inset, true, memo)
 			o.images = append(o.images, m.used...)
 			if final && failed {
 				fr.Shapes = append(fr.Shapes, rectShape(0, y, 2, b.h, 0, Bad))
