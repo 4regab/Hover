@@ -19,8 +19,16 @@ type Fonts struct {
 	fm      *fontscan.FontMap
 	faces   map[faceKey]*font.Face
 	scanned bool
-	// system is the folder the scan's index is kept in ("" for none).
+	// system is the folder the scan's index is kept in. Empty asks the
+	// typesetter for the platform cache directory; it does not turn the cache off.
 	system string
+	// The last query handed to the font map. SetQuery drops the candidate index,
+	// and a paragraph asks for the same family and weight once per rune, so an
+	// unchanged query is left where it is.
+	haveQuery bool
+	qList     string
+	qWeight   float32
+	qItalic   bool
 }
 
 type faceKey struct {
@@ -34,7 +42,8 @@ func NewFonts() *Fonts {
 }
 
 // UseSystem adds the fonts installed on this computer. cacheDir keeps the index of them,
-// so the next start does not read every file again ("" for none).
+// so the next start does not read every file again. An empty cacheDir asks the
+// typesetter for the platform cache directory.
 func (f *Fonts) UseSystem(cacheDir string) error {
 	f.scanned = true
 	f.system = cacheDir
@@ -77,14 +86,20 @@ var wght = opentype.MustNewTag("wght")
 // a copy of it set to that weight. synth says the slant was asked for and the face has
 // none, so the drawing skews it (Chromium's synthetic oblique).
 func (f *Fonts) Face(list string, r rune, weight float32, italic bool) (face *font.Face, skew bool) {
-	style := font.StyleNormal
-	if italic {
-		style = font.StyleItalic
+	if !f.haveQuery || f.qList != list || f.qWeight != weight || f.qItalic != italic {
+		style := font.StyleNormal
+		if italic {
+			style = font.StyleItalic
+		}
+		f.fm.SetQuery(fontscan.Query{
+			Families: families(list),
+			Aspect:   font.Aspect{Style: style, Weight: font.Weight(weight), Stretch: font.StretchNormal},
+		})
+		f.haveQuery = true
+		f.qList = list
+		f.qWeight = weight
+		f.qItalic = italic
 	}
-	f.fm.SetQuery(fontscan.Query{
-		Families: families(list),
-		Aspect:   font.Aspect{Style: style, Weight: font.Weight(weight), Stretch: font.StretchNormal},
-	})
 	got := f.fm.ResolveFace(r)
 	if got == nil {
 		return nil, false
