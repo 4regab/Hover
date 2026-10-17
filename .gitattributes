@@ -18,6 +18,8 @@ Makefile text eol=lf
 
 # Unix entry points and native source must remain usable after a fresh checkout.
 *.sh text eol=lf
+# Vendored bun entry point has no extension; a CR breaks the shebang.
+.cursor/skills/poteto-mode/scripts/watch-pr/watch-pr text eol=lf
 *.swift text eol=lf
 *.c text eol=lf
 *.m4a binary
