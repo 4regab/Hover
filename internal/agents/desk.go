@@ -112,40 +112,63 @@ func comps(p string) []string {
 // Real is DeskInfo.Real: the path with every link on it followed (realpath), as far as it
 // exists. ponytail: a link's target is joined as Go joins paths, so a Windows target
 // rooted without a drive (\x) lands under the link's folder, where Rust puts it on the drive.
+// An absolute target is walked from its start, so a link in a parent (macOS's /var, which
+// points at /private/var) is not left unresolved while the folder itself was.
 func Real(path string) string {
 	full, err := filepath.Abs(path)
 	if err != nil {
 		full = filepath.Clean(path)
 	}
-	vol := filepath.VolumeName(full)
-	cur, rest := vol, full[len(vol):]
-	if rest != "" && os.IsPathSeparator(rest[0]) {
-		cur += string(filepath.Separator)
-	}
-	for _, c := range comps(rest) {
-		if c == string(filepath.Separator) {
-			continue
+	hops := 0
+	for {
+		vol := filepath.VolumeName(full)
+		rest := full[len(vol):]
+		cur := vol
+		if rest != "" && os.IsPathSeparator(rest[0]) {
+			cur += string(filepath.Separator)
 		}
-		next := filepath.Join(cur, c)
-		for range 32 {
+		var names []string
+		for _, c := range comps(rest) {
+			if c != string(filepath.Separator) {
+				names = append(names, c)
+			}
+		}
+		jumped := false
+		for i, c := range names {
+			next := filepath.Join(cur, c)
 			fi, err := os.Lstat(next)
 			if err != nil || !isLink(fi) {
-				break
+				cur = next
+				continue
 			}
 			target, err := os.Readlink(next)
 			if err != nil {
-				break
+				cur = next
+				continue
 			}
 			target = plainPath(target)
-			if filepath.IsAbs(target) {
-				next = filepath.Clean(target)
-			} else {
-				next = filepath.Clean(filepath.Join(filepath.Dir(next), target))
+			hops++
+			if hops > 32 {
+				return next
 			}
+			var base string
+			if filepath.IsAbs(target) {
+				base = filepath.Clean(target)
+			} else {
+				base = filepath.Clean(filepath.Join(filepath.Dir(next), target))
+			}
+			if i+1 < len(names) {
+				full = filepath.Join(append([]string{base}, names[i+1:]...)...)
+			} else {
+				full = base
+			}
+			jumped = true
+			break
 		}
-		cur = next
+		if !jumped {
+			return cur
+		}
 	}
-	return cur
 }
 
 func samePart(a, b string) bool {

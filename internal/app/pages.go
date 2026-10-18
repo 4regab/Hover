@@ -1241,8 +1241,13 @@ func project(b *[]Block, p *core.Project, tool core.AgentTool) {
 }
 
 // LocalNote is why Local speech is off on this OS (phonon::local_note): none on Windows
-// and Linux.
-func LocalNote() string { return "" }
+// and Linux. On a Mac, Phonon does not run; voice uses the system recognizer.
+func LocalNote() string {
+	if runtime.GOOS == "darwin" {
+		return "Local speech isn’t available on macOS."
+	}
+	return ""
+}
 
 var speechModes = []core.SpeechMode{core.SpeechLocal, core.SpeechCloud}
 var cleanupProviders = []core.CleanupProvider{core.CleanupGemini, core.CleanupOpenAI, core.CleanupCustom}

@@ -101,6 +101,21 @@ jobs:
       - name: EGL
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libegl1-mesa-dev libgles2-mesa-dev
+      # The office shots draw with wgpu-native. The Windows build downloads the same
+      # DLL; the test process looks for it at WGPU_NATIVE_PATH.
+      - name: wgpu
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $dll = Join-Path $env:RUNNER_TEMP "wgpu_native.dll"
+          $zip = Join-Path $env:RUNNER_TEMP "wgpu-native.zip"
+          $tmp = Join-Path $env:RUNNER_TEMP "wgpu-native"
+          Invoke-WebRequest https://github.com/gfx-rs/wgpu-native/releases/download/v29.0.0.0/wgpu-windows-x86_64-msvc-release.zip -OutFile $zip
+          Expand-Archive $zip $tmp -Force
+          $found = Get-ChildItem $tmp -Recurse -Filter wgpu_native.dll | Select-Object -First 1
+          if (-not $found) { throw "no wgpu_native.dll in the wgpu-native release zip" }
+          Copy-Item $found.FullName $dll -Force
+          "WGPU_NATIVE_PATH=$dll" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8NoBOM -Append
       - name: Test
         env:
           CGO_ENABLED: ${{ runner.os == 'Windows' && '0' || '1' }}

@@ -283,8 +283,13 @@ func tripleOf() string {
 }
 
 // LocalNote is why Local speech is off on this OS, for Settings to show beside its choice:
-// none on Windows and Linux.
-func LocalNote() string { return "" }
+// none on Windows and Linux. On a Mac, Phonon does not run.
+func LocalNote() string {
+	if runtime.GOOS == "darwin" {
+		return "Local speech isn’t available on macOS."
+	}
+	return ""
+}
 
 // unsupported is why this device can't run Phonon, known before anything is downloaded.
 func unsupported() string {

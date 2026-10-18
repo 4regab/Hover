@@ -13,7 +13,8 @@ platform builds below. Pull requests run the workflow; pushes that only change M
 - runs `go test` on Linux (with `-tags nowayland,nox11,novulkan`), Windows and macOS.
   Linux and macOS also pass `-race`. The Windows run includes the headless chat shots,
   which are compiled only there, and skips the race detector: that needs a C compiler, and
-  the Windows build has none;
+  the Windows build has none. Those shots draw the office with the same `wgpu_native.dll`
+  the Windows build downloads (`WGPU_NATIVE_PATH`);
 - on Windows, builds `hoverai.exe` and its installer, **drives the app** (starts it, opens the
   notch with Alt+N, folds it with Esc, starts it again to ask for the app window) and **installs
   the new setup over the oldest Go release still published**, checks what the installer promises and uninstalls;
