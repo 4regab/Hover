@@ -2120,6 +2120,12 @@ func ocFinish(turn *ocTurn) {
 
 func ocExplain(message string) string {
 	lower := strings.ToLower(message)
+	// An expired Console key is sent on the free tier too, and the request dies before
+	// that tier is tried. Signing in again does not mint a replacement, so the ordinary
+	// sign-in hint would be the wrong next step.
+	if strings.Contains(lower, "api key has expired") || strings.Contains(lower, "will not renew this key") {
+		return message + "\n\nCreate a new API key in OpenCode Console and store it with “opencode auth login”. Signing in again does not renew the old key. Until then, remove the expired OpenCode credential so the free models can run without it."
+	}
 	for _, k := range []string{"api key", "unauthorized", "authentication", "not authenticated"} {
 		if strings.Contains(lower, k) {
 			return message + "\n\n" + SignInHint(core.OpenCode)

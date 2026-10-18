@@ -817,6 +817,14 @@ func TestOpencodeNeverFallsThroughToCursorsProgramOrArguments(t *testing.T) {
 	if !strings.Contains(InstallHint(core.OpenCode), "OpenCode") || strings.Contains(SignInHint(core.OpenCode), "cursor") {
 		t.Fatal("hints")
 	}
+	expired := ocExplain("This API key has expired. Signing in again will not renew this key.")
+	if !strings.Contains(expired, "OpenCode Console") || !strings.Contains(expired, "does not renew") {
+		t.Fatal(expired)
+	}
+	ordinary := ocExplain("The provider said unauthorized.")
+	if strings.Contains(ordinary, "does not renew") || !strings.Contains(ordinary, SignInHint(core.OpenCode)) {
+		t.Fatal(ordinary)
+	}
 	if strings.Contains(Exe(core.OpenCode), "cursor-agent") {
 		t.Fatal(Exe(core.OpenCode))
 	}
