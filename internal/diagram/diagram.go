@@ -279,13 +279,23 @@ func hypot(a, b float64) float64 {
 	sum, comp := 0.0, 0.0
 	for _, x := range []float64{a, b} {
 		n := x / hi
-		summand := n*n - comp
-		pre := sum + summand
-		comp = (pre - sum) - summand
+		summand := fsub(n*n, comp)
+		pre := fadd(sum, summand)
+		comp = fsub(fsub(pre, sum), summand)
 		sum = pre
 	}
 	return math.Sqrt(sum) * hi
 }
+
+// fadd and fsub are + and − in their own functions so the compiler cannot fuse a
+// multiply into them. arm64 does that by default, and the fused result is a different
+// number than the one the SVG goldens were measured with (V8, and Go on amd64).
+//
+//go:noinline
+func fadd(a, b float64) float64 { return a + b }
+
+//go:noinline
+func fsub(a, b float64) float64 { return a - b }
 
 // fmax and fmin are Rust's f64::max and min: a NaN loses (math.Max lets it win).
 func fmax(a, b float64) float64 {
@@ -415,8 +425,8 @@ func Layout(src string) (*Graph, bool) {
 		for _, l := range nd.lines {
 			widest = fmax(widest, float64(Len(l)))
 		}
-		w := widest*ch + 24
-		h := float64(len(nd.lines))*lh + 16
+		w := fadd(widest*ch, 24)
+		h := fadd(float64(len(nd.lines))*lh, 16)
 		switch nd.Shape {
 		case Diamond:
 			nd.W, nd.H = fmax(w*1.45, 64), fmax(h*1.5, 48)
@@ -431,7 +441,7 @@ func Layout(src string) (*Graph, bool) {
 	if across {
 		for _, e := range g.Edges {
 			if e.Label != "" {
-				step = fmax(step, float64(Len(e.Label))*ch+34)
+				step = fmax(step, fadd(float64(Len(e.Label))*ch, 34))
 			}
 		}
 	}
@@ -449,42 +459,42 @@ func Layout(src string) (*Graph, bool) {
 				spans[k] += g.Nodes[i].W
 			}
 		}
-		spans[k] += gap * (float64(len(l)) - 1)
+		spans[k] = fadd(spans[k], gap*fsub(float64(len(l)), 1))
 		width = fmax(width, spans[k])
 	}
 	along := 0.0
 	for k, l := range layers {
-		at := (width - spans[k]) / 2
+		at := fsub(width, spans[k]) / 2
 		for _, i := range l {
 			nd := &g.Nodes[i]
 			size := nd.W
 			if across {
 				size = nd.H
 			}
-			c, a := at+size/2, along+thick[k]/2
+			c, a := fadd(at, size/2), fadd(along, thick[k]/2)
 			if across {
 				nd.X, nd.Y = a, c
 			} else {
 				nd.X, nd.Y = c, a
 			}
-			at += size + gap
+			at = fadd(at, fadd(size, gap))
 		}
-		along += thick[k] + step
+		along = fadd(along, fadd(thick[k], step))
 	}
-	along -= step
+	along = fsub(along, step)
 	if flip {
 		for i := range g.Nodes {
 			if across {
-				g.Nodes[i].X = along - g.Nodes[i].X
+				g.Nodes[i].X = fsub(along, g.Nodes[i].X)
 			} else {
-				g.Nodes[i].Y = along - g.Nodes[i].Y
+				g.Nodes[i].Y = fsub(along, g.Nodes[i].Y)
 			}
 		}
 	}
 	if across {
-		g.SizeW, g.SizeH = along+16, width+16
+		g.SizeW, g.SizeH = fadd(along, 16), fadd(width, 16)
 	} else {
-		g.SizeW, g.SizeH = width+16, along+16
+		g.SizeW, g.SizeH = fadd(width, 16), fadd(along, 16)
 	}
 	return g, true
 }
@@ -497,7 +507,7 @@ func edgePoint(n *Node, dx, dy float64) (float64, float64) {
 		if d == 0 {
 			d = 1
 		}
-		return n.X + dx/d*r, n.Y + dy/d*r
+		return fadd(n.X, dx/d*r), fadd(n.Y, dy/d*r)
 	}
 	hw, hh := n.W/2, n.H/2
 	or := func(v float64) float64 {
@@ -508,7 +518,7 @@ func edgePoint(n *Node, dx, dy float64) (float64, float64) {
 	}
 	var t float64
 	if n.Shape == Diamond {
-		s := math.Abs(dx)/hw + math.Abs(dy)/hh
+		s := fadd(math.Abs(dx)/hw, math.Abs(dy)/hh)
 		if s == 0 || math.IsNaN(s) {
 			s = 1
 		}
@@ -516,7 +526,7 @@ func edgePoint(n *Node, dx, dy float64) (float64, float64) {
 	} else {
 		t = fmin(hw/math.Abs(or(dx)), hh/math.Abs(or(dy)))
 	}
-	return n.X + dx*t, n.Y + dy*t
+	return fadd(n.X, dx*t), fadd(n.Y, dy*t)
 }
 
 // Flowchart is SVG for a flowchart, or false when it isn't one this can read.
@@ -533,9 +543,9 @@ func Flowchart(src string) (string, bool) {
 			continue
 		}
 		a, b := &g.Nodes[e.From], &g.Nodes[e.To]
-		x1, y1 := edgePoint(a, b.X-a.X, b.Y-a.Y)
-		x2, y2 := edgePoint(b, a.X-b.X, a.Y-b.Y)
-		mx, my := (x1+x2)/2, (y1+y2)/2
+		x1, y1 := edgePoint(a, fsub(b.X, a.X), fsub(b.Y, a.Y))
+		x2, y2 := edgePoint(b, fsub(a.X, b.X), fsub(a.Y, b.Y))
+		mx, my := fadd(x1, x2)/2, fadd(y1, y2)/2
 		var path string
 		if across {
 			path = fmt.Sprintf("M%s %sC%s %s %s %s %s %s", Num(x1), Num(y1), Num(mx), Num(y1), Num(mx), Num(y2), Num(x2), Num(y2))
@@ -548,25 +558,25 @@ func Flowchart(src string) (string, bool) {
 		}
 		fmt.Fprintf(&parts, `<path class="e %s" d="%s"%s/>`, e.Kind, path, marker)
 		if e.Label != "" {
-			w := float64(Len(e.Label))*ch + 10
+			w := fadd(float64(Len(e.Label))*ch, 10)
 			fmt.Fprintf(&parts, `<g class="el"><rect x="%s" y="%s" width="%s" height="18" rx="4"/><text x="%s" y="%s">%s</text></g>`,
-				Num(mx-w/2), Num(my-9), Num(w), Num(mx), Num(my+4), Esc(e.Label))
+				Num(fsub(mx, w/2)), Num(fsub(my, 9)), Num(w), Num(mx), Num(fadd(my, 4)), Esc(e.Label))
 		}
 	}
 	for i := range g.Nodes {
 		n := &g.Nodes[i]
 		x, y, w, h := n.X, n.Y, n.W, n.H
-		l, t := x-w/2, y-h/2
+		l, t := fsub(x, w/2), fsub(y, h/2)
 		var shape string
 		switch n.Shape {
 		case Diamond:
-			shape = fmt.Sprintf(`<path d="M%s %sL%s %sL%s %sL%s %sZ"/>`, Num(x), Num(t), Num(x+w/2), Num(y), Num(x), Num(t+h), Num(l), Num(y))
+			shape = fmt.Sprintf(`<path d="M%s %sL%s %sL%s %sL%s %sZ"/>`, Num(x), Num(t), Num(fadd(x, w/2)), Num(y), Num(x), Num(fadd(t, h)), Num(l), Num(y))
 		case Circle:
 			shape = fmt.Sprintf(`<circle cx="%s" cy="%s" r="%s"/>`, Num(x), Num(y), Num(w/2))
 		case Hex:
-			shape = fmt.Sprintf(`<path d="M%s %sH%sL%s %sL%s %sH%sL%s %sZ"/>`, Num(l+12), Num(t), Num(l+w-12), Num(l+w), Num(y), Num(l+w-12), Num(t+h), Num(l+12), Num(l), Num(y))
+			shape = fmt.Sprintf(`<path d="M%s %sH%sL%s %sL%s %sH%sL%s %sZ"/>`, Num(fadd(l, 12)), Num(t), Num(fsub(fadd(l, w), 12)), Num(fadd(l, w)), Num(y), Num(fsub(fadd(l, w), 12)), Num(fadd(t, h)), Num(fadd(l, 12)), Num(l), Num(y))
 		case Flag:
-			shape = fmt.Sprintf(`<path d="M%s %sH%sV%sH%sL%s %sZ"/>`, Num(l), Num(t), Num(l+w), Num(t+h), Num(l), Num(l+12), Num(y))
+			shape = fmt.Sprintf(`<path d="M%s %sH%sV%sH%sL%s %sZ"/>`, Num(l), Num(t), Num(fadd(l, w)), Num(fadd(t, h)), Num(l), Num(fadd(l, 12)), Num(y))
 		case Stadium:
 			shape = fmt.Sprintf(`<rect x="%s" y="%s" width="%s" height="%s" rx="%s"/>`, Num(l), Num(t), Num(w), Num(h), Num(h/2))
 		case Round:
@@ -574,14 +584,15 @@ func Flowchart(src string) (string, bool) {
 		case Db:
 			shape = fmt.Sprintf(`<rect x="%s" y="%s" width="%s" height="%s" rx="%s" ry="8"/>`, Num(l), Num(t), Num(w), Num(h), Num(fmin(w/2, 14)))
 		case Sub:
-			shape = fmt.Sprintf(`<rect x="%s" y="%s" width="%s" height="%s" rx="3"/><path d="M%s %sV%sM%s %sV%s"/>`, Num(l), Num(t), Num(w), Num(h), Num(l+7), Num(t), Num(t+h), Num(l+w-7), Num(t), Num(t+h))
+			shape = fmt.Sprintf(`<rect x="%s" y="%s" width="%s" height="%s" rx="3"/><path d="M%s %sV%sM%s %sV%s"/>`, Num(l), Num(t), Num(w), Num(h), Num(fadd(l, 7)), Num(t), Num(fadd(t, h)), Num(fsub(fadd(l, w), 7)), Num(t), Num(fadd(t, h)))
 		default:
 			shape = fmt.Sprintf(`<rect x="%s" y="%s" width="%s" height="%s" rx="5"/>`, Num(l), Num(t), Num(w), Num(h))
 		}
 		count := float64(len(n.lines))
 		var text strings.Builder
 		for k, s := range n.lines {
-			fmt.Fprintf(&text, `<tspan x="%s" y="%s">%s</tspan>`, Num(x), Num(y+(float64(k)-(count-1)/2)*lh+4), Esc(s))
+			mid := fsub(float64(k), fsub(count, 1)/2)
+			fmt.Fprintf(&text, `<tspan x="%s" y="%s">%s</tspan>`, Num(x), Num(fadd(fadd(y, mid*lh), 4)), Esc(s))
 		}
 		fmt.Fprintf(&parts, `<g class="n %s">%s<text>%s</text></g>`, n.Shape.class(), shape, text.String())
 	}

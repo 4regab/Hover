@@ -91,10 +91,12 @@ Run what applies to your change and say what you ran in the pull request:
   [profiling.md](docs/development/profiling.md), on the same machine and settings.
 
 The CI workflow (`.github/workflows/ci.yml`) formats and vets the Go code for Windows, Linux,
-and macOS; builds the Windows app and installer and drives the Windows app; builds Linux
-packages; and builds the macOS app and runs its packaged backend against stand-in tools. It
-does not run the Go test suite. The longer macOS E2E flow and the full native macOS UI are not
-covered by CI. See [testing.md](docs/development/testing.md) for local commands and coverage.
+and macOS, and runs the Go test suite on those three systems (with the race detector on
+Linux and macOS); builds the Windows app and
+installer and drives the Windows app; builds Linux packages; and builds the macOS app and
+runs its packaged backend against stand-in tools. The longer macOS E2E flow and the full
+native macOS UI are not covered by CI. See [testing.md](docs/development/testing.md) for
+local commands and coverage.
 CI uses GitHub-hosted runners without agent accounts or user secrets.
 
 ## Pull requests

@@ -1,6 +1,6 @@
 # Hover on Linux. (Windows: .\build.ps1.)
 #   make               build ./hover-linux
-#   make test          the Go tests (CI does not run them)
+#   make test          the Go tests (CI runs the same)
 #   make package       .deb and tarball in dist/, at the version in VERSION
 #   make install       into $(DESTDIR)$(PREFIX) (default /usr/local; sudo for that)
 #   make uninstall

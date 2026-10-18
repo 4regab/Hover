@@ -25,7 +25,7 @@ the office still runs, and the tools show as not installed.
 .\build.ps1 run              # build, then start it
 .\build.ps1 publish          # the same, with LICENSE and the notices
 .\build.ps1 installer        # dist\Hover-Setup-<version>.exe (needs Inno Setup)
-.\build.ps1 test             # the Go tests (CI does not run them)
+.\build.ps1 test             # the Go tests (CI runs the same)
 ```
 
 The version is the number in `VERSION`; `-Version 5.0.3` overrides it.
@@ -65,7 +65,8 @@ Render every view headless (no desktop needed; the office pictures need
 ```
 
 The Go tests (`.\build.ps1 test`) need no setup. Two layout tests in `internal/chat` compare
-text widths measured in Linux Chromium with DejaVu Sans; they skip on Windows.
+text widths measured in Linux Chromium with DejaVu Sans; the fonts are in the repo, so the
+tests run on Windows too.
 
 ## Logs and debugging
 

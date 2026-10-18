@@ -113,6 +113,35 @@ func TestARunGoesFromRunningToCompleted(t *testing.T) {
 	}
 }
 
+func TestBeginDoesNotStartATurnThatAlreadyIs(t *testing.T) {
+	f := sessFolder(t, "begin-twice")
+	make, runs := gated()
+	k := NewKiroSessions(make, nil)
+	s, ok := k.Start(core.Kiro, f, "hi", nil)
+	if !ok {
+		t.Fatal("not started")
+	}
+	waitUntil(func() bool { return runs.n() == 1 })
+	k.mu.Lock()
+	again := k.begin(s.ID)
+	k.mu.Unlock()
+	again()
+	time.Sleep(30 * time.Millisecond)
+	if runs.n() != 1 {
+		t.Fatalf("a second begin started %d runs", runs.n())
+	}
+	runs.finish(0, KiroResult{State: core.Completed, Text: "done"})
+	waitUntil(func() bool { return !must(k.Get(s.ID)).Busy() })
+	k.mu.Lock()
+	idle := k.begin(s.ID)
+	k.mu.Unlock()
+	idle()
+	time.Sleep(30 * time.Millisecond)
+	if runs.n() != 1 {
+		t.Fatalf("begin with nothing waiting started a run (%d)", runs.n())
+	}
+}
+
 func TestItWillNotStartWithoutAUsableFolderOrAPrompt(t *testing.T) {
 	f := sessFolder(t, "nostart")
 	k := NewKiroSessions(func(core.AgentTool) RunTask { return func(RunArgs) KiroResult { panic("must not run") } }, nil)

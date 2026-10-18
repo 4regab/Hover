@@ -714,7 +714,16 @@ func (k *KiroSessions) BringFindingsBack(forkKey string, into *string) (int, err
 func (k *KiroSessions) begin(id int32) func() {
 	now := k.Now()
 	x := k.byID(id)
+	if x == nil {
+		return func() {}
+	}
 	ti := slices.IndexFunc(x.s.Turns, func(t KiroTurn) bool { return t.Queued || t.Result == nil })
+	// The turn that just ended and the one that queues the next both call this, and a
+	// runner that returns at once can finish the next turn in between. Starting again
+	// would index off the end, or run a turn that is already running.
+	if ti < 0 || (!x.s.Turns[ti].Queued && x.s.Turns[ti].StartedAt != (core.Stamp{})) {
+		return func() {}
+	}
 	t := &x.s.Turns[ti]
 	t.Queued = false
 	t.StartedAt = now

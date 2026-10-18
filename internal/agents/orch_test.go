@@ -644,6 +644,11 @@ func TestAnAgentReachesTheHelpersThroughTheRelayAndTheSocket(t *testing.T) {
 	defer os.RemoveAll(short)
 	t.Setenv("HOVER_BROWSER_SOCKET", filepath.Join(short, "b.sock"))
 	r := newOrchRig(t, "socket", core.DefaultDelegationLimits(), func(a RunArgs, _ *Orch, release *atomic.Bool) KiroResult { return holdRun(a, release) })
+	// Install publishes the first orch for the life of the process. This is the only
+	// test that publishes, and a repeated run (go test -count) is that same process:
+	// without dropping the previous orch, the server is looked up there and the list
+	// comes back empty.
+	orchGlobal.Store(nil)
 	r.orch.Install()
 	lead := r.lead("[hold]")
 	plain := must(r.k.Start(core.Codex, r.folder, "[hold]", nil))

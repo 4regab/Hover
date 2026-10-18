@@ -541,6 +541,17 @@ func TestAFileRequestStaysInsideTheFolder(t *testing.T) {
 	if !(fileLink && dirLink) {
 		t.Log("links can't be made here: that part of the test was skipped")
 	}
+	// macOS temp dirs are /var/folders, and /var points at /private/var. The link's
+	// target keeps the /var spelling while the folder was resolved through the link.
+	via := filepath.Join(dir, "via")
+	if linkFile(folder, via) && linkFile(filepath.Join(via, "src", "ok.txt"), filepath.Join(via, "kept.txt")) {
+		if Inside(via, "kept.txt") == "" {
+			t.Error("a link through a parent link was treated as outside")
+		}
+		if v := DeskFileText(via, sp("kept.txt")); v.Kind != FileIsText || v.Text != "hello" {
+			t.Errorf("through a parent link: %+v", v)
+		}
+	}
 
 	if v := view("src/ok.txt"); v.Kind != FileIsText || v.Text != "hello" || v.Truncated || v.Size != 5 || v.Path != "src/ok.txt" {
 		t.Errorf("%+v", v)

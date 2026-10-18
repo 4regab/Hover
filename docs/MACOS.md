@@ -46,8 +46,8 @@ Anyway.
 
 Checks: `tests/macos/backend-smoke.py <Hover.app> <sandbox>` runs the packaged backend against a
 stand-in agent in a disposable folder under `/private/tmp` (CI runs it); the app's own
-`--smoke-test` is for the same purpose. The Go tests (`go test ./internal/...`) run on a Mac too,
-and CI does not run them.
+`--smoke-test` is for the same purpose. The Go tests (`go test ./cmd/... ./internal/...`) run on a Mac too, and CI runs them
+with `-race`.
 
 Agents (Kiro, Codex, Cursor, OpenCode, Claude Code) are found through the login shell's
 `PATH`, read once at start (`$SHELL -ilc`, `ShellEnvironment.swift`), because an app opened

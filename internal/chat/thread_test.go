@@ -8,7 +8,6 @@ import (
 	"image/color"
 	"image/png"
 	"math"
-	"runtime"
 	"sort"
 	"strings"
 	"sync/atomic"
@@ -22,12 +21,6 @@ import (
 // crates/hover-chat/tests/thread.rs: the rich chat's behaviour, headless: selection and
 // copy across blocks, links, the section cache while an answer streams, and a long
 // conversation's cost.
-
-func skipWindows(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("the goldens are Linux Chromium's text measurements in DejaVu Sans; Windows lays text out in Segoe UI")
-	}
-}
 
 func juno(t testing.TB) *Thread {
 	return NewThread(NewShaper(testFonts(t)), "Juno", C(47, 201, 176, 255))
@@ -279,7 +272,6 @@ func TestALongRichConversationStaysResponsive(t *testing.T) {
 }
 
 func TestStepRowsSitWherePageThemPuts(t *testing.T) {
-	skipWindows(t)
 	// copy.json's `rows`: the summary line and each timeline row, their top in #thread's
 	// content and their height. The summary line is gone: the steps sit in a box under a
 	// header of their own (Claude's way), so only the rows are compared, each against the
@@ -403,7 +395,6 @@ func align(page, native string) []int {
 // clicked at 1/4 and 3/4 of its width in the real page (golden/gen-words.mjs), with the
 // copy of what got selected. Chromium's Linux editing behaviour, so no trailing space.
 func TestDoubleAndTripleClicksSelectWhatThePageSelects(t *testing.T) {
-	skipWindows(t)
 	var want []any
 	if err := json.Unmarshal(golden(t, "expected/words.json"), &want); err != nil {
 		t.Fatal(err)
@@ -587,7 +578,6 @@ func TestADoubleClickOnWindowsTakesTheSpacesAfterTheWord(t *testing.T) {
 // and a code block wider than the drawer gains a 10 px bar and scrolls: the boxes'
 // heights, their places relative to the first, and their scroll widths.
 func TestScrollingBoxesAreLaidOutAsThePageLaysThemOut(t *testing.T) {
-	skipWindows(t)
 	want := goldenJSON(t, "expected/scroll.json")
 	for _, name := range []string{"rich", "wide"} {
 		w := want[name].(map[string]any)
@@ -677,7 +667,6 @@ func answerThread(t testing.TB, src string, width float32, im *Images) *Thread {
 // before it (golden/gen-broken.mjs): the image boxes and the paragraphs after them sit
 // where the page puts them, relative to the answer's first paragraph.
 func TestBrokenImagesTakeTheirAltTextsRoom(t *testing.T) {
-	skipWindows(t)
 	var want []any
 	if err := json.Unmarshal(golden(t, "expected/broken.json"), &want); err != nil {
 		t.Fatal(err)
