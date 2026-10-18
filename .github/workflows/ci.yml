@@ -82,8 +82,10 @@ jobs:
           - os: macos-15
             go_test: go test -race -count=1 -timeout 20m ./cmd/... ./internal/...
     env:
+      # github.workspace is available on a job env; runner is not, so CGO_ENABLED is set
+      # on the test step. Windows matches the app build (no C compiler). Linux and macOS
+      # need cgo for the race detector and, on macOS, for Gio's Cocoa backend.
       GOCACHE: ${{ github.workspace }}/.gocache
-      CGO_ENABLED: ${{ runner.os == 'Windows' && '0' || '1' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -100,6 +102,8 @@ jobs:
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libegl1-mesa-dev libgles2-mesa-dev
       - name: Test
+        env:
+          CGO_ENABLED: ${{ runner.os == 'Windows' && '0' || '1' }}
         run: ${{ matrix.go_test }}
 
   # Whether this run is a release, and which number it carries. The builds below take both
