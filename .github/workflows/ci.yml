@@ -1,10 +1,11 @@
 name: CI
 
 # Hover on GitHub's own runners. A push to main or go-port, or a pull request, checks the Go
-# code for Windows, Linux and macOS; builds the Windows app and its installer and drives them
-# (it starts the app, then installs over the 5.x release and uninstalls); builds the Linux
-# packages; and builds the Mac app and runs its backend through the stand-in tools. No Go tests
-# run here. Every push to main that changes more than docs is a release, and the `version`
+# code for Windows, Linux and macOS; runs the Go tests on those three systems; builds the
+# Windows app and its installer and drives them (it starts the app, then installs over the 5.x
+# release and uninstalls); builds the Linux packages; and builds the Mac app and runs its
+# backend through the stand-in tools. Every push to main that changes more than docs is a
+# release, and the `version`
 # job says which number: VERSION when it is above every tag (raised by hand: a v* tag matching
 # VERSION is the same), else the next patch number after the newest tag, as an automatic
 # nightly. The same jobs then make the installers, and `release` tags the commit and
@@ -55,6 +56,51 @@ jobs:
       - run: GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 go vet ./cmd/... ./internal/...
       # The Mac backend compiles for both Macs.
       - run: GOOS=darwin GOARCH=arm64 go build -o /dev/null ./cmd/hover-backend && GOOS=darwin GOARCH=amd64 go build -o /dev/null ./cmd/hover-backend
+
+  # The Go tests, on each system the suite runs on. Linux uses the app's build tags (Gio's
+  # own Wayland, X11 and Vulkan are left out; drawing still needs the EGL headers). Windows
+  # compiles as the app does, without a C compiler, and so includes the headless chat shots,
+  # which are built only on Windows. macOS uses the system compiler, which Gio's Cocoa
+  # backend needs. Linux and macOS also run the race detector (it needs cgo; the Windows
+  # build has no C compiler, so that leg does not). -count=1 runs the tests every time
+  # instead of replaying a cached pass. The chat's saved text widths come from fonts in
+  # the repo, so a runner with different fonts still matches. Modules are cached by
+  # setup-go; the build cache is kept beside the checkout so the next run does not compile
+  # unchanged packages again.
+  test:
+    name: test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            go_test: go test -race -count=1 -timeout 20m -tags nowayland,nox11,novulkan ./cmd/... ./internal/...
+          - os: windows-2022
+            go_test: go test -count=1 -timeout 20m ./cmd/... ./internal/...
+          - os: macos-15
+            go_test: go test -race -count=1 -timeout 20m ./cmd/... ./internal/...
+    env:
+      GOCACHE: ${{ github.workspace }}/.gocache
+      CGO_ENABLED: ${{ runner.os == 'Windows' && '0' || '1' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/.gocache
+          key: go-build-${{ runner.os }}-${{ hashFiles('go.sum', 'go.mod') }}
+          restore-keys: |
+            go-build-${{ runner.os }}-
+      - name: EGL
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libegl1-mesa-dev libgles2-mesa-dev
+      - name: Test
+        run: ${{ matrix.go_test }}
 
   # Whether this run is a release, and which number it carries. The builds below take both
   # from here, so the number is chosen once. Quick: it only reads the tags.
@@ -326,7 +372,7 @@ jobs:
   release:
     # One job publishes, so the builds never race to create the release.
     if: needs.version.outputs.release == 'true'
-    needs: [check, version, windows, linux, macos]
+    needs: [check, test, version, windows, linux, macos]
     runs-on: ubuntu-22.04
     permissions:
       contents: write

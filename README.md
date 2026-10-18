@@ -305,8 +305,8 @@ works for people and AI agents changing it.
 ## Contributing
 
 Issues and pull requests are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) first. Every
-pull request builds the app on Windows, Linux and macOS and drives the Windows app; CI does not run
-the Go tests.
+pull request builds the app on Windows, Linux and macOS, runs the Go tests on those systems,
+and drives the Windows app.
 
 The macOS support builds on Arz's ([@Entourage397](https://github.com/Entourage397)) macOS
 v1.0 for Hover 2.x, which was Swift and C#.

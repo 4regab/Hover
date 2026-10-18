@@ -4,11 +4,16 @@ What CI runs, how to run local checks, and which platform scenarios still need a
 
 ## What CI runs
 
-`.github/workflows/ci.yml` does not run the Go test suite. Pull requests run the workflow;
-pushes that only change Markdown, `docs/`, or `assets/readme/` are skipped. When CI runs, it:
+`.github/workflows/ci.yml` runs the Go test suite on Linux, Windows and macOS, then the
+platform builds below. Pull requests run the workflow; pushes that only change Markdown,
+`docs/`, or `assets/readme/` are skipped. When CI runs, it:
 
 - checks that the Go code is formatted, vets it for Windows, Linux and macOS, and compiles the
   Mac backend for both Macs;
+- runs `go test` on Linux (with `-tags nowayland,nox11,novulkan`), Windows and macOS.
+  Linux and macOS also pass `-race`. The Windows run includes the headless chat shots,
+  which are compiled only there, and skips the race detector: that needs a C compiler, and
+  the Windows build has none;
 - on Windows, builds `hoverai.exe` and its installer, **drives the app** (starts it, opens the
   notch with Alt+N, folds it with Esc, starts it again to ask for the app window) and **installs
   the new setup over the oldest Go release still published**, checks what the installer promises and uninstalls;
@@ -33,18 +38,20 @@ By hand (Run workflow), the `pictures` job draws every view on the Windows runne
 
 ## Local Go tests
 
-Tests live beside the code (`*_test.go`) with shared fixtures in `tests/golden`. CI currently
-does not run them, so run the command for your platform when a change touches tested Go code:
+Tests live beside the code (`*_test.go`) with shared fixtures in `tests/golden`. Run the
+command for your platform. CI runs these, and adds `-race` on Linux and macOS:
 
 ```sh
 go test -tags nowayland,nox11,novulkan ./cmd/... ./internal/...    # Linux
 go test ./cmd/... ./internal/...                                   # Windows or macOS
 ```
 
-(`make test`, `.\build.ps1 test`, or `mise run test-<platform>`.) Two layout tests in
-`internal/chat` need DejaVu Sans, as the Chromium reference was measured with it. Timing tests
-(a task that sleeps, a file that must be written) may be sensitive to a slow or busy machine;
-inspect the failure before treating a rerun as evidence of a code issue or a flaky test.
+(`make test`, `.\build.ps1 test`, or `mise run test-<platform>`.) The chat layout tests
+compare text widths with a Chromium reference measured in DejaVu Sans and DejaVu Sans Mono.
+Those faces (DejaVu 2.37) are in `internal/chat/testdata/fonts`, and the tests use them
+instead of the fonts installed on the machine. Timing tests (a task that sleeps, a file that
+must be written) may be sensitive to a slow or busy machine; inspect the failure before
+treating a rerun as evidence of a code issue or a flaky test.
 
 ## Pictures
 

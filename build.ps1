@@ -6,7 +6,7 @@
     .\build.ps1 publish      the same, with LICENSE and THIRD-PARTY-NOTICES.txt beside them
     .\build.ps1 installer    Inno Setup installer in .\dist (the version in VERSION)
     .\build.ps1 installer -Version 5.0.3
-    .\build.ps1 test         the Go tests (CI does not run them)
+    .\build.ps1 test         the Go tests (CI runs the same)
 
   Needs Go (the version go.mod names; winget install GoLang.Go). No C compiler: the Windows
   build is plain Go. The installer needs Inno Setup 6 or 7.

@@ -15,6 +15,12 @@ import (
 // A host's key is taken once, 32 bytes, and then it is Hover's key. This test owns the
 // process's key (the other tests here never call GlobalCrypto).
 func TestTheHostsKeyIsTakenOnce(t *testing.T) {
+	// Once per process. A repeated run is that same process, so drop the key this
+	// test took last time and take it again. A second call in one run is still refused.
+	global.Lock()
+	global.set = false
+	global.crypto = nil
+	global.Unlock()
 	if UseHostKey(bytes.Repeat([]byte{1}, 31)) == nil || UseHostKey(nil) == nil {
 		t.Fatal("a key that isn't 32 bytes was taken")
 	}
