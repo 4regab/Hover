@@ -101,6 +101,7 @@ type host struct {
 	stderr bytes.Buffer
 	mu     sync.Mutex
 	seen   []string
+	all    []string
 }
 
 // startHost starts a backend on the data folder dir (made if it is missing). env is extra
@@ -138,6 +139,7 @@ func startHost(t *testing.T, dir string, env ...string) *host {
 				var m msg
 				if json.Unmarshal([]byte(line), &m) == nil {
 					h.mu.Lock()
+					h.all = append(h.all, line)
 					if len(line) > 300 {
 						line = line[:300] + "…"
 					}
@@ -372,4 +374,18 @@ func (h *host) refused(command msg, answer string) string {
 		h.t.Fatalf("%v: refused without a reason: %v", command["type"], m)
 	}
 	return str(m, "error")
+}
+
+// allLines is every line the backend has sent so far, whole.
+func (h *host) allLines() []string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return append([]string(nil), h.all...)
+}
+
+// equalJSON compares two decoded messages.
+func equalJSON(a, b any) bool {
+	x, _ := json.Marshal(a)
+	y, _ := json.Marshal(b)
+	return string(x) == string(y)
 }

@@ -185,6 +185,12 @@ try:
  send({'type':'flowchart','src':'graph LR\n A-->B','ref':2})
  fc=until(lambda m:m.get('type')=='flowchart')
  assert fc['ok'] and fc['readable'] and len(fc['graph']['nodes'])==2 and fc['svg'].startswith('<svg'),fc
+ # Keys: without a history key they live in memory for the run, and are never sent back.
+ send({'type':'secret','op':'set','name':'voice.groq','value':'smoke-key'})
+ sk=until(lambda m:m.get('type')=='secret')
+ assert sk['ok'] and sk['has'] and sk['persistent'] is False and 'smoke-key' not in json.dumps(sk),sk
+ send({'type':'palette','dark':True})
+ assert until(lambda m:m.get('type')=='palette')['palette']['dark'] is True
  send({'type':'setModel'})
  assert until(lambda m:m.get('type')=='state')['history']==[]
  send({'type':'shutdown'});p.wait(timeout=15);assert p.returncode==0

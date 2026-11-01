@@ -80,6 +80,29 @@ func (b *Backend) more(typ string, m core.JSON, s *agents.KiroSession) error {
 		b.openIn(m, s)
 	case "inspectFolder":
 		b.inspectFolder(m)
+	case "projects":
+		b.projects(m)
+	case "themes":
+		b.themes()
+	case "themeRead":
+		b.themeRead(m)
+	case "palette":
+		b.palette(m)
+	case "mcp":
+		b.mcp(m)
+	case "kiroAgents":
+		b.kiroAgents(m)
+	case "secret":
+		b.secret(m)
+	case "credits":
+		b.sendCredits()
+	case "phonon":
+		return b.phonon(m)
+	case "groqCheck":
+		b.groqCheck()
+	case "voice", "voicePress", "voiceAudio", "voiceRelease", "voiceCancel", "voiceDismiss", "voiceStartNow", "voiceHold", "voiceEdit",
+		"voiceChooseAgent", "voiceChangeAgent", "voiceToggleCloud", "voiceChangeFolder", "voiceChangeRepo", "voiceRetry", "voiceUnattach":
+		return b.voiceCommand(typ, m)
 	case "markdown":
 		b.markdown(m)
 	case "highlight":

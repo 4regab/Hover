@@ -71,8 +71,8 @@ func value(r quota.Reading) core.JSON {
 }
 
 // readAll is the `quotas` message: every quota switched on, read now. Blocks (kiro-cli
-// takes seconds).
-func readAll(settings *core.Settings, c *credentials, out *Out) core.JSON {
+// takes seconds). credits is Kiro's credits by day, or nil.
+func readAll(settings *core.Settings, c *credentials, out *Out, credits *quota.Credits) core.JSON {
 	var values []core.Prop
 	for _, id := range core.NotchItems {
 		if !settings.HasNotchItem(id) {
@@ -84,7 +84,13 @@ func readAll(settings *core.Settings, c *credentials, out *Out) core.JSON {
 		case core.NotchCodex:
 			r = quota.Codex(now)
 		case core.NotchKiro:
-			r = quota.Kiro()
+			// The report also gives Kiro's raw credits, which the credits-by-day view counts
+			// (when the host asked for it).
+			var usage *quota.KiroUsage
+			r, usage = quota.KiroRead()
+			if usage != nil && credits != nil {
+				credits.OnUsage(*usage)
+			}
 		case core.NotchClaude:
 			mac := runtime.GOOS == "darwin"
 			var host *string

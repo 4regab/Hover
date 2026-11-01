@@ -43,7 +43,7 @@ func TestNewTaskTakesModelEffortAndCloud(t *testing.T) {
 			web = s
 		}
 	}
-	if c := arr(web, "cloud"); len(c) != 1 || c[0] != "octo/repo" || str(web, "folder") != ws {
+	if c := arr(web, "cloud"); len(c) != 1 || c[0] != "octo/repo" || !core.SameFolder(str(web, "folder"), ws) {
 		t.Fatalf("the cloud task: cloud %v folder %q (workspace %q)", web["cloud"], str(web, "folder"), ws)
 	}
 	// An empty list is an empty workspace, still the cloud.

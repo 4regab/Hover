@@ -14,6 +14,7 @@ import (
 
 	"github.com/4regab/Hover/internal/agents"
 	"github.com/4regab/Hover/internal/core"
+	"github.com/4regab/Hover/internal/quota"
 )
 
 // src/Hover.Backend/Program.cs's Backend: every command the host sends (Handle) and every
@@ -88,6 +89,12 @@ type Backend struct {
 	// chats that use one.
 	listed listed
 	terms  terms
+	// Voice, the secret store and Kiro's credits, each made when the host first uses it.
+	voiceKit    voiceKit
+	secrets     *core.Secrets
+	secretsOnce sync.Once
+	credits     *quota.Credits
+	creditsOnce sync.Once
 }
 
 // decodeKey is Convert.FromBase64String.
@@ -132,6 +139,11 @@ func initialize(m core.JSON, link *Link) (*Backend, error) {
 	// it last closed to be followed on, as the Go app does at its start. After `initialized`.
 	if on, _ := boolOf(m, "reattach"); on && err == nil {
 		b.sessions.ReattachCutOff()
+	}
+	// And (`credits: true`) for Kiro's credits by day to be kept from the start: each Kiro
+	// reading is counted, and the view is made again when the history changes.
+	if on, _ := boolOf(m, "credits"); on && err == nil {
+		b.creditsOn()
 	}
 	return b, err
 }
@@ -649,10 +661,10 @@ func (b *Backend) refreshQuotas() {
 	if b.link.closed() || b.link.flags.readingQuotas.Swap(true) {
 		return
 	}
-	settings, cr, link := b.settings, b.credentials, b.link
+	settings, cr, link, credits := b.settings, b.credentials, b.link, b.credits
 	go func() {
 		defer link.flags.readingQuotas.Store(false)
-		m := readAll(settings, cr, link.out)
+		m := readAll(settings, cr, link.out, credits)
 		if !link.closed() {
 			link.out.Send(m)
 		}
@@ -1091,6 +1103,10 @@ func (b *Backend) Shutdown() {
 	// The desktops themselves are turned off by the Mac host as Hover quits (a VM takes a
 	// while to stop, and this process is about to end); nothing waits on them here.
 	b.closeTerms()
+	b.shutdownVoice()
+	if b.credits != nil {
+		b.credits.Close()
+	}
 	agents.ClearBrowserHost()
 	b.browser.stop()
 	agents.BrowserStop()

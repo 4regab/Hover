@@ -257,7 +257,7 @@ files and passes the "continue when busy" setting to the sessions.
 | Command | Answer | Does |
 |---|---|---|
 | `settings` | `settings` `{model}` | The whole model as `settings.json` holds it (`core.Model.ToJSON`). |
-| `setSetting` `{key, value}` | `settings`, then a `state` | One of `Appearance`, `Theme`, `WorkspaceSize`, `ScWorkspace`, `ChatView`, `LastEditor`, `KiroFolder`, `KiroRetryBusy`, through the `core.Settings` setter of that name. `Appearance` does not clear `Theme`; send `Theme` null for that, as the Settings page does. |
+| `setSetting` `{key, value}` | `settings`, then a `state` | One of `Appearance`, `Theme`, `WorkspaceSize`, `ScWorkspace`, `ChatView`, `LastEditor`, `KiroFolder`, `KiroRetryBusy`, and two the pages need that B2 did not list: `Voice` (the whole voice settings, checked; the local model stays Phonon's) and `ToolAgent` `{tool, agent}`; each through the `core.Settings` setter of that name. `Appearance` does not clear `Theme`; send `Theme` null for that, as the Settings page does. |
 
 **Fields on existing messages.** `state.sessions[].status` (`agents.Status`, "Reading the
 code"), `state.sessions[].activity` `{verb, obj}` (`agents.Activity`), `ended.body` (the
@@ -269,10 +269,13 @@ it fails. A command that has one (the tables below name it) answers with `ok: fa
 a session echo its `id`; the rendering commands echo a `ref` the host picks (a string up to
 64 characters, or a number), so several can be in flight.
 
-**Start, again.** `initialize` also takes `reattach: true`: after `initialized`, Kiro Web
-tasks that were still working when the host last closed come back to desks and are followed
-on (`KiroSessions.ReattachCutOff`, as the Go app does at its start). It is off unless sent, so
-the Mac host starts as before.
+**Start, again.** `initialize` also takes two flags, both off unless sent, so the Mac host
+starts as before. `reattach: true`: after `initialized`, Kiro Web tasks that were still
+working when the host last closed come back to desks and are followed on
+(`KiroSessions.ReattachCutOff`, as the Go app does at its start). `credits: true`: Kiro's
+credits by day are kept from the start (each Kiro reading is counted into `kiro-usage.json`,
+and the view is made again when the history changes); without it the first `credits` command
+starts them.
 
 **Tasks and chat** (`internal/backend/tasks.go`).
 
@@ -324,6 +327,44 @@ name, workspace, lineage), `held` and `commands` (`[{name, description}]`); each
 
 Limits: Markdown 8 MiB, code and changes 4 MiB, a flowchart 200 KiB, a name 200 characters,
 a command 16,000 characters, a saved file 1 MiB.
+
+**The rest of Settings** (`settingsmore.go`).
+
+| Command | Answer | Does |
+|---|---|---|
+| `projects` `{op}`: `list` (default), `add {folder}`, `update {project}`, `remove {id}`, `default {folder, access, make}` | `projects` `{op, ok, error, project, projects, defaultWorkspace{folder, access, path}}` | `Settings.AddProject`, `UpdateProject`, `RemoveProject`, `SetDefaultWorkspace`, `core.EnsureFolder`. |
+| `themes` | `themes` `{ok, themes[{label, path, dark, from}]}` | `core.InstalledThemes`. |
+| `themeRead` `{path}` | `themeRead` `{path, ok, theme, palette, error}` | `core.ReadTheme`, `PaletteFromTheme`. A full path to a `.json` or `.jsonc` file up to 4 MiB. Colours are `#AARRGGBB`. |
+| `palette` `{dark}` or `{theme}` | `palette` `{ok, palette}` | `core.HoverPalette`, `PaletteFromTheme`. |
+| `mcp` `{op}`: `get` (default; with `name`, that server whole), `save {draft, editing}`, `enable {name, enabled}`, `remove {name}` | `mcp` `{op, ok, servers, server, file, error, fields}` | `agents.LoadMcp`, `SaveMcp`, `SetMcpDisabled`, `RemoveMcp`, in `agents.McpFile(agents.McpHome())`. The list gives the names of variables and headers, never their values. |
+| `kiroAgents` `{folder}` | `kiroAgents` `{folder, ok, agents}` | `agents.KiroAgents`. |
+| `secret` `{op: has\|set, name, value}` | `secret` `{name, ok, has, persistent}` | `core.SystemSecrets()`; the names are `voice.groq`, `cleanup.gemini`, `cleanup.openai`, `cleanup.custom`. The value is never in an answer or an error. `persistent` is false when there is no history key this run. |
+| `credits` | `credits` `{ok, ready, view}`, and again when it changes | `quota.Credits.View`: `days`, `today`, `weekTotal`, `weekHover`, `perDay7`, `month`, `runsOut`, `topToday`. |
+
+**Voice** (`voice.go`, `internal/voice/remote.go`). The host owns the microphone and the
+shortcut; the flow (transcribing, cleaning up, routing, the preview, starting) is
+`voice.Voice`. Nothing is made until the host first sends a voice command.
+
+| Command | Does |
+|---|---|
+| `voicePress` `{trial, dictate, activeProject}` | `Voice.Press` or `Dictate`; opens a recording for the audio that follows. |
+| `voiceAudio` `{pcm}` or `{error}` | `pcm` is base64, 16 kHz mono 16-bit little-endian, up to 128 KiB a block; `error` is the text `voice.Source.Failed` returns. Dropped when nothing records. |
+| `voiceRelease`, `voiceCancel`, `voiceDismiss`, `voiceStartNow`, `voiceHold`, `voiceRetry`, `voiceToggleCloud` | `Voice.Release`, `Cancel`, `Dismiss`, `StartNow`, `Hold`, `Retry`, `ToggleCloud`. |
+| `voiceEdit` `{task}`, `voiceChooseAgent` `{tool}`, `voiceChangeAgent` `{tool}`, `voiceChangeFolder` `{project}` (an id, or null for the default workspace), `voiceChangeRepo` `{kind: folder\|empty\|named, name}`, `voiceUnattach` `{index}` | The matching `Voice` methods. |
+| `voice` | Asks for the event. |
+
+The `voice` event `{stage, level, secs, pending, preview, session, folder, text, message,
+retry, transcript, countdownTotal, canStart, tool, folderChoices, readyTools, shots,
+shotCount, shotMessage}` is sent whenever the flow moves (at most as fast as the loop turns,
+about twenty a second while recording). `stage` is `idle`, `recording`, `loading`,
+`transcribing`, `cleaning`, `resolving`, `chooseAgent`, `preview`, `editing`, `starting`,
+`started`, `dictated`, `cancelled` or `error`; `preview` is `{id, heard, cleanupNote, task,
+folder, targetName, note, tool, model, access, countdown, counting, trial, cloud, repo{kind,
+name}}`. `readyTools` is from the last check of each tool.
+
+`phonon` `{op: get\|download\|repair\|cancel\|remove}` answers (and again as a setup goes on) with
+`phonon` `{ok, error, ready, state{kind, done, total, message}, facts{...}}`, and `groqCheck`
+with `groqCheck` `{ok, said}` (it uses the Groq key kept for voice).
 
 ## Packages
 

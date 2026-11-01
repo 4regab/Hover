@@ -104,6 +104,17 @@ func (b *Backend) setSetting(m core.JSON) error {
 			return errors.New("KiroFolder is a full folder path.")
 		}
 		s.SetKiroFolder(&p)
+	case "Voice":
+		vs, err := voiceIn(v, s.Voice())
+		if err != nil {
+			return err
+		}
+		s.SetVoice(vs)
+		// What the voice flow reads (the shortcut, whether it is on) is read at the next press.
+	case "ToolAgent":
+		if err := b.setToolAgent(v); err != nil {
+			return err
+		}
 	default:
 		return fmt.Errorf("%s can't be changed this way.", clip(key, 40))
 	}
@@ -156,4 +167,81 @@ func themeIn(v core.JSON) (*core.SavedTheme, error) {
 		}
 	}
 	return &t, nil
+}
+
+// voiceIn is the voice settings a host sends ({Enabled, Shortcut, Microphone, Speech, Model,
+// Cleanup, CleanupProvider, CleanupModel, CleanupBase, Agent, Countdown, AuraColor,
+// HoldToTalk}, as the model has them): read the way settings.json is read, then bounded. The
+// local model is Phonon's to say, so it stays as it is.
+func voiceIn(v core.JSON, current core.VoiceSettings) (core.VoiceSettings, error) {
+	bad := errors.New("Voice is the voice settings: {Enabled, Shortcut, Microphone, Speech, Model, Cleanup, ...}.")
+	if v.Kind() != core.ObjKind {
+		return current, bad
+	}
+	// settings.json is read leniently (a value of the wrong kind is its default); a host's
+	// line is not, or a typo would quietly reset a setting.
+	props, _ := v.Props()
+	for _, p := range props {
+		x := p.Val
+		okKind := true
+		switch p.Key {
+		case "Enabled", "Cleanup", "HoldToTalk":
+			okKind = x.Kind() == core.BoolKind
+		case "Microphone", "Model", "CleanupModel", "CleanupBase", "Agent", "AuraColor":
+			okKind = x.Kind() == core.StrKind || x.IsNull()
+		case "Speech", "CleanupProvider":
+			okKind = x.Kind() == core.StrKind || x.Kind() == core.NumKind
+		case "Countdown":
+			n, err := x.I32()
+			okKind = x.Kind() == core.NumKind && err == nil && n >= 0 && n <= 60
+		case "Shortcut":
+			okKind = x.Kind() == core.ObjKind
+		}
+		if !okKind {
+			return current, bad
+		}
+	}
+	vs, err := core.VoiceSettingsFromJSON(v)
+	if err != nil {
+		return current, bad
+	}
+	long := func(p *string, max int) bool { return p != nil && units(*p) > max }
+	if long(vs.Microphone, 100) || long(vs.CleanupModel, 200) || long(vs.CleanupBase, 500) {
+		return current, errors.New("A voice setting is too long.")
+	}
+	if vs.CleanupBase != nil {
+		b := strings.TrimRight(*vs.CleanupBase, "/")
+		if !strings.HasPrefix(b, "https://") && !strings.HasPrefix(b, "http://") || strings.ContainsFunc(b, func(r rune) bool { return r <= ' ' || r == 0x7f }) {
+			return current, errors.New("Use the full address, starting with https://.")
+		}
+		vs.CleanupBase = &b
+	}
+	vs.Local = current.Local
+	return vs, nil
+}
+
+// setToolAgent is `setSetting` ToolAgent {tool, agent}: the agent a tool runs as (Kiro's
+// --agent, OpenCode's mode), or none for null.
+func (b *Backend) setToolAgent(v core.JSON) error {
+	bad := errors.New("ToolAgent is {tool, agent}.")
+	if v.Kind() != core.ObjKind {
+		return bad
+	}
+	tool, ok := core.ParseTool(optStrOf(v, "tool"))
+	if !ok {
+		return bad
+	}
+	o := b.settings.AgentOptions(tool)
+	o.Agent = nil
+	if x, has := v.Get("agent"); has && !x.IsNull() {
+		a, isStr := x.AsStr()
+		if !isStr || units(a) > 100 || strings.ContainsFunc(a, func(r rune) bool { return r < 0x20 || r == 0x7f }) {
+			return bad
+		}
+		if a = strings.TrimSpace(a); a != "" {
+			o.Agent = &a
+		}
+	}
+	b.settings.SetAgentOptions(tool, o)
+	return nil
 }

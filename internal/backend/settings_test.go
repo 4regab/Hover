@@ -110,7 +110,7 @@ func TestSetSettingRefusesWhatDoesNotFit(t *testing.T) {
 		{"no key", msg{"type": "setSetting", "value": true}},
 		{"key is a number", msg{"type": "setSetting", "key": 7, "value": true}},
 		{"no value", msg{"type": "setSetting", "key": "ChatView"}},
-		{"unknown setting", msg{"type": "setSetting", "key": "Voice", "value": msg{}}},
+		{"unknown setting", msg{"type": "setSetting", "key": "AgentOffers", "value": msg{}}},
 		{"a setting another command owns", msg{"type": "setSetting", "key": "KiroNoticeSeen", "value": true}},
 		{"a very long unknown name", msg{"type": "setSetting", "key": huge, "value": 1}},
 		{"appearance is a number out of range", msg{"type": "setSetting", "key": "Appearance", "value": 9}},
