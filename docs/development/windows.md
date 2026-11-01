@@ -97,10 +97,12 @@ Windows build until the owner switches over (`build.ps1 legacy`). The C# code is
 |---|---|
 | `windows\Hover` | `hoverai.exe`: a code-first WinUI 3 app (no `.xaml` files), unpackaged and self-contained. |
 | `windows\Hover.Notch` | No WinUI and no Windows call. The notch's rules: sizes, placement, outline, the open and close animation, the pointer rules, what the resting notch shows (the island), the shortcut and the tray menu. A port of `internal/notch` and `internal/app/rest.go`. |
+| `windows\Hover.Voice` | No WinUI. Voice, sound and music: the hold-to-talk shortcut, the microphone and the sound output (winmm), the voice commands and the `voice` event, the card (its content, behaviour and Direct2D painter), the aura, the chime and the office beats. The winmm and user32 calls are made on Windows only; the rest runs and is tested anywhere. |
 | `windows\Hover.Host` | No WinUI. Starts `hover-backend.exe` in a job object, speaks JSON lines to it, keeps `note.key` (DPAPI), data folder paths, the single-instance names, the old-service removal. |
 | `windows\Hover.Office` | The Direct3D 11 office. Empty until its phase. |
 | `windows\Hover.TestTools` | Programs the tests start: stand-ins for `codex-acp` and `codex`, a backend that misbehaves on purpose, a host to be killed. |
 | `windows\Hover.Tests` | `dotnet test`. |
+| `windows\Hover.Voice.Tests` | `dotnet test` for voice, sound and music (see [testing.md](testing.md#the-c-windows-app)). |
 | `windows\tools\gofixture` | A small Go program for the tests: writes and reads a secret with the Go code. |
 
 Prerequisites: the .NET 10 SDK (`winget install Microsoft.DotNet.SDK.10`) and Go as above. No
@@ -208,7 +210,36 @@ and Skip and Answer.
 
 For the checks of the real app, `HOVER_UI_DUMP=<file>` makes the app write where each place that
 answers a click is on the screen, the words of the thread and the lines the panels drew
-(`Chat\UiDump.cs`); a test reads it to click and type as a person would.
+(`Chat\UiDump.cs`), and, in a `voice` part, whether the voice card shows, what it says and where its
+buttons are; a test reads it to click and type as a person would.
+
+### Voice, sound and music
+
+Voice is the backend's flow (Groq or Phonon for the words, cleanup, the choice of folder and agent,
+the preview, starting the task) with the parts that belong to Windows done in C#. The protocol is
+in [architecture.md](architecture.md#windows-host-commands). The code is `windows\Hover.Voice` and,
+for the notch's side, `windows\Hover\Voice`.
+
+| What | Where | Notes |
+|---|---|---|
+| The shortcut | `Hover.Voice\VoiceHotkey.cs` | `RegisterHotKey` with id 2 on a message-only window of its own (`MOD_NOREPEAT`); letting go is found by asking `GetAsyncKeyState` about the key and each modifier every 30 ms. Ctrl+Alt+Space unless `Voice.Shortcut` says otherwise, and only while `Voice.Enabled`. A chord Windows refuses is said on the card in the Go app's words (error 1409: "already in use by another app, by Windows or by Hover's own shortcut"). |
+| Hold or toggle | `Hover.Voice\VoiceService.cs` | `Voice.HoldToTalk`: hold the chord and let go to finish; off (the default) a second press ends the recording. A press while an interaction is in progress is turned away and the card glows amber for 0.6 s. Dictation (an open reply box in a chat in view) writes the words into the box and shows no card. |
+| The microphone | `Hover.Voice\Microphone.cs` | winmm `waveIn`, 16 kHz mono 16-bit, four buffers of 50 ms. The device is the one named in `Voice.Microphone`; winmm cuts names at 31 characters, so a longer stored name is matched by its start (the Go rule). A missing or busy device is sent as `voiceAudio {error}` with the Go app's words: "No microphone is connected.", "The microphone “X” isn’t connected. Pick another in Settings → Voice.", "Another app is using the microphone." |
+| The audio | `Hover.Voice\VoiceProtocol.cs` | Each 50 ms buffer is a `voiceAudio {pcm}` line (base64 of 16-bit little-endian samples); a block over 128 KiB is cut into several. The last partial buffer is kept at the release. |
+| The card | `Hover.Voice\Card\*`, `Hover\Voice\*` | `CardModel` makes the card from the `voice` event; `CardController` has the menus (agent, model and effort, folder, Kiro Web repository), the picks and the keys; `CardPainter` draws it with Direct2D and DirectWrite in the notch's style; `Aura` is the orb on the listening and working cards. The notch shows the card in place of the island, takes the keyboard for Esc, Enter and the task when an interaction begins, and gives it back when the card has nothing to type into. |
+| Sound output | `Hover.Voice\AudioOutput.cs` | winmm `waveOut`, 16-bit stereo 44.1 kHz, four buffers of 100 ms. With no output device the open fails with "There is no sound output." and nothing else happens. |
+| The chime | `Hover.Voice\Beats.cs` (`Chime`) | Two quiet notes, 880 and 1320 Hz, 90 ms each; played when voice takes a screenshot. |
+| The beats | `Hover.Voice\Beats.cs`, `Hover\Voice\BeatsHost.cs` | `internal\music\office-beats.ogg` is linked into `Hover.Voice` (not copied) and decoded with NVorbis as it plays, started again at its end. The volume ramps 0.02 up and 0.03 down a frame to 0.32 (the Go `RampStep`), and the device is let go when it reaches 0. The switch is `OfficeHost.Beats` (`office.json`'s `beats`); the loop plays while it is on and the open notch or a shown window is in view. If no sound output can be opened the switch goes back off. |
+
+`hoverai.exe --shots DIR` writes the card's 82 pictures with the Go pictures' names as JPEG
+(`voice-default-preview-2x.jpg` and so on). A picture is the notch's whole window, so one wider than
+1400 pixels is cut to the middle 1400. The Go 2x pictures draw the aura at half size (the Go shots
+draw its 66 pixels in a 2x window); the C# pictures draw it at the size the app has.
+
+What is not done: the Settings → Voice page itself (shortcut, microphone, Phonon, Groq key, Try it)
+belongs to the Settings pages; the commands it needs (`setSetting` `Voice`, `phonon`, `groqCheck`,
+`secret`, `VoiceService.PressTrial`) are in place. Screenshots said aloud are taken by the backend; the
+dictation line ("Listening…", "Writing it down…") under the reply box is not drawn.
 
 The key rules for `note.key` (set aside, never overwritten) are in
 [windows-csharp.md](windows-csharp.md#c-data-formats); `Hover.Host/HistoryKey.cs` follows them.

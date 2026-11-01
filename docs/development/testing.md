@@ -139,6 +139,31 @@ What `windows\Hover.Tests` covers:
   answered from the notch's card, the first turn's checkpoint is restored (the second turn goes) and its
   message tried again, and a reply queued behind a run that never ends goes after Pause. The app writes
   where its buttons are (`HOVER_UI_DUMP`) and the test clicks there.
+- **Voice, sound and music** (`windows\Hover.Voice.Tests`, `dotnet test`; needs `HOVER_BACKEND`):
+  - *The whole voice flow through the real backend*, with a fake microphone that hands over 50 ms blocks, a fake Groq
+    on the loopback (`HOVER_GROQ_BASE`, the only address the backend takes) and the stand-in agent: press, audio blocks,
+    release, heard, preview with its countdown, and the task started on the agent (the prompt is what was heard; Groq was
+    sent a WAV of exactly the audio and the key as a bearer, and the key is in no message back); toggle mode; an edit
+    and Start now; Esc during the countdown (nothing starts); release before any audio ("Nothing was heard", the device
+    let go); Groq refusing the key (its words, no retry, the key not shown); no key at all; a missing microphone sent as
+    `voiceAudio {error}` and recovering on the next press; a microphone that fails while recording; a press while
+    one is in progress; dictation; Phonon not installed and the Groq key check.
+  - *The card*: what each stage shows (the Go card's words), the menus and what a pick sends (agent, model and effort that
+    keep each other, folder, Kiro Web repository with its search and the 15-second ask), the keys, the amber glow, the
+    screenshot chime, flash and note; the 82 pictures have the Go pictures' names (`GoVoicePictures.txt` is the Go list);
+    on Windows each is drawn on a software Direct3D device and kept as JPEG under `out\voice`, the card has the Go sizes,
+    never grows past the window, and its buttons are where the actions say; odd inputs (5,000-character text, empty
+    fields, 300 agents, twelve screenshots).
+  - *The shortcut* (Windows): Ctrl+Alt+Space sent with `keybd_event` arrives as a hotkey, holds, and letting go of the key
+    (or of Alt first) releases; toggle mode ends on the second press; a chord another program holds is refused with the
+    Go app's words; an unmappable key; the chord is free again once let go. `VoiceAppTests` (needs `HOVER_APP_EXE`) do it
+    in the real app: with no microphone the card says "No microphone is connected." and Esc clears it; a chord
+    another program holds is said on the card at start.
+  - *Microphone names*: the 31-character rule, the first device wins, devices that did not answer never match; the
+    runner has no input device and gives the Go app's error text for the default and for a named one.
+  - *Sound*: the ramp against the numbers the Go `RampStep` prints; the loop (a linked Ogg Vorbis file, 128 s) decodes,
+    never goes silent when it starts again, fades in to 0.32 and out to nothing and lets the device go; hidden office,
+    switched on while hidden, no output device and an unreadable loop; the chime; the real output opens or says why not.
 - **Windows only**: DPAPI, the job object (what is in it dies with its handle; its children too),
   killing a host process kills the backend and the agent's child, single instance, the old
   "Hover Service" task removal, and `hoverai.exe` itself (a second launch exits, the first opens

@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text.Json.Nodes;
 using Hover.Host;
+using Hover.Host.Protocol;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -127,10 +128,56 @@ public class VoiceAppTests(ITestOutputHelper output)
         }
     }
 
+    /// <summary>Puts a Groq key (a made-up one) in the data folder's secrets, sealed with the key the app will use, by the backend itself.</summary>
+    static async Task SeedGroqKey(VoiceSandbox box)
+    {
+        Directory.CreateDirectory(box.Data);
+        var historyKey = HistoryKey.LoadOrCreate(box.Data, new DpapiKeyGuard());
+        await using var backend = BackendClient.Start(new BackendOptions { ExecutablePath = TestEnvironment.Backend, DataDir = box.Data, Environment = box.Environment(null) });
+        var events = backend.Subscribe();
+        await backend.InitializeAsync(historyKey);
+        backend.Send(new RawCommand("secret", new JsonObject { ["op"] = "set", ["name"] = "voice.groq", ["value"] = Rig.FakeKey }));
+        var answer = await events.Until<UnknownEvent>(u => u.Type == "secret");
+        Assert.True(answer.Raw.GetProperty("has").GetBoolean());
+        await backend.StopAsync(TimeSpan.FromSeconds(10));
+    }
+
+    [AppFact]
+    public async Task The_chord_with_no_groq_key_says_so_and_esc_clears_the_card()
+    {
+        using var box = new VoiceSandbox();
+        using var app = new RunningApp("""{"KiroNoticeSeen": true, "Voice": {"Enabled": true, "HoldToTalk": true, "Countdown": 5}}""", box);
+        try
+        {
+            Assert.True(await Until(() => app.Log().Contains("voice hotkey Ctrl+Alt+Space registered", StringComparison.Ordinal), 40_000),
+                "the app did not take the voice shortcut\n" + app.Log());
+            Down(Ctrl);
+            Down(Alt);
+            Down(Space);
+            var shown = await Until(() => app.Dump.Showing && app.Dump.Kind == 7, 20_000);
+            LetGo();
+            Assert.True(shown, "the card did not come\n" + app.Log());
+            // With no key the speech engine is not ready, and the flow says so before it listens.
+            Assert.Equal("Add your Groq key in Settings → Voice.", app.Dump.Words);
+            Assert.True(app.Dump.Where("settings") is not null, "the card should offer Settings");
+            Down(Escape);
+            Up(Escape);
+            var cleared = await Until(() => !app.Dump.Showing, 4_000);
+            if (!cleared && app.Dump.Where("cancel") is { } chip)
+            {
+                Click(chip.X, chip.Y);
+                cleared = await Until(() => !app.Dump.Showing, 8_000);
+            }
+            Assert.True(cleared, "the card did not go\n" + app.Log());
+        }
+        finally { LetGo(); }
+    }
+
     [AppFact]
     public async Task The_chord_with_no_microphone_shows_the_go_apps_words_and_esc_clears_the_card()
     {
         using var box = new VoiceSandbox();
+        await SeedGroqKey(box);
         using var app = new RunningApp("""{"KiroNoticeSeen": true, "Voice": {"Enabled": true, "HoldToTalk": true, "Countdown": 5}}""", box);
         try
         {
