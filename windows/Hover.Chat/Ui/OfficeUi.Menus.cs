@@ -13,14 +13,16 @@ public sealed partial class OfficeUi
         public List<MenuRow> Rows = [];
         public bool Up;
         public float W = 250;
+        /// <summary>Makes the rows again each frame, for a menu whose contents arrive from the backend while it is open.</summary>
+        public Func<List<MenuRow>>? Build;
     }
 
     Menu? menu;
     bool askedProjects;
 
-    void OpenMenu(string kind, Rect4 at, List<MenuRow> rows, bool up, float width = 250, string anchor = "")
+    void OpenMenu(string kind, Rect4 at, List<MenuRow> rows, bool up, float width = 250, string anchor = "", Func<List<MenuRow>>? build = null)
     {
-        menu = new Menu { Kind = kind, At = at, Rows = rows, Up = up, W = width, Anchor = anchor.Length > 0 ? anchor : kind };
+        menu = new Menu { Kind = kind, At = at, Rows = rows, Up = up, W = width, Anchor = anchor.Length > 0 ? anchor : kind, Build = build };
         Dirty = true;
     }
 
@@ -58,6 +60,7 @@ public sealed partial class OfficeUi
 
     void PaintMenu(Menu m)
     {
+        if (m.Build is not null) m.Rows = m.Build();
         var heights = m.Rows.Select(r => RowHeight(pen, r, m.W)).ToList();
         var total = 12 + heights.Sum();
         var x = Math.Clamp(m.At.X, 8, Math.Max(w - m.W - 8, 8));
@@ -164,8 +167,11 @@ public sealed partial class OfficeUi
                 if (taskCloud) env.Send(new CloudReposCommand());
                 break;
             case "pillAgent":
-                OpenMenu("agent", t.R, [.. (state?.Tools ?? []).Select(x => new MenuRow(ToolDisplay(x), x.Id, x.Ready ? "" : x.Hint, x.Id == TaskPicks().Tool?.Id, Mark: x.Id, Disabled: false))], !ChatView || true);
-                break;
+                {
+                    List<MenuRow> Rows() => [.. (state?.Tools ?? []).Select(x => new MenuRow(ToolDisplay(x), x.Id, x.Ready ? "" : x.Hint, x.Id == TaskPicks().Tool?.Id, Mark: x.Id))];
+                    OpenMenu("agent", t.R, Rows(), true, build: Rows);
+                    break;
+                }
             case "pillWhere":
                 {
                     var rows = new List<MenuRow> { new("This computer", "here", On: !taskCloud) };
@@ -361,6 +367,13 @@ public sealed partial class OfficeUi
 
     void OpenFolderMenu(Rect4 at)
     {
+        var up = !(ChatView && OpenId is null && openKey is null);
+        List<MenuRow> Rows() => FolderRows();
+        OpenMenu("project", at, Rows(), up, 300, build: Rows);
+    }
+
+    List<MenuRow> FolderRows()
+    {
         var rows = new List<MenuRow>();
         var cur = TaskPicks().Folder;
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -370,15 +383,19 @@ public sealed partial class OfficeUi
             if (hrow.Folder.Length > 0 && seen.Add(hrow.Folder) && rows.Count < 12) rows.Add(new MenuRow(LastPart(hrow.Folder), hrow.Folder, hrow.Folder, hrow.Folder == cur));
         if (state?.Folder is { Length: > 0 } sf && seen.Add(sf)) rows.Insert(0, new MenuRow(LastPart(sf), sf, sf, sf == cur));
         if (rows.Count == 0) rows.Add(new MenuRow("No folders yet", Disabled: true));
-        OpenMenu("project", at, rows, !(ChatView && OpenId is null && openKey is null), 300);
+        return rows;
     }
 
     void OpenRepoMenu(Rect4 at)
     {
-        var rows = new List<MenuRow> { new("Empty workspace", "", "Starts with no repository.", string.IsNullOrEmpty(taskRepo)) };
-        foreach (var r in repos) rows.Add(new MenuRow(r, r, On: r == taskRepo));
-        if (reposNote.Length > 0) rows.Add(new MenuRow(reposNote, Disabled: true));
-        OpenMenu("repo", at, rows, true, 300);
+        List<MenuRow> Rows()
+        {
+            var rows = new List<MenuRow> { new("Empty workspace", "", "Starts with no repository.", string.IsNullOrEmpty(taskRepo)) };
+            foreach (var r in repos) rows.Add(new MenuRow(r, r, On: r == taskRepo));
+            if (reposNote.Length > 0) rows.Add(new MenuRow(reposNote, Disabled: true));
+            return rows;
+        }
+        OpenMenu("repo", at, Rows(), true, 300, build: Rows);
     }
 
     void OpenModelMenu(Rect4 at)

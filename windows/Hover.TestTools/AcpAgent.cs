@@ -28,6 +28,9 @@ static class AcpAgent
         string? pending = null; // the id of the prompt being answered, as JSON
         var scenario = "";
         var asked = new HashSet<string>(); // permission ids still waiting for an answer
+        // Each session/new gets a name of its own: the backend may keep one agent for the model list and for a task.
+        var made = 0;
+        var current = Session;
         Process? kid = null; // the child below
 
         // What this program was asked and what it said, for a test that has to explain a failure.
@@ -46,7 +49,7 @@ static class AcpAgent
         void Update(JsonObject update) => Print(new()
         {
             ["jsonrpc"] = "2.0", ["method"] = "session/update",
-            ["params"] = new JsonObject { ["sessionId"] = Session, ["update"] = update },
+            ["params"] = new JsonObject { ["sessionId"] = current, ["update"] = update },
         });
         void Result(string idJson, JsonNode result) => Print(new()
         {
@@ -117,7 +120,8 @@ static class AcpAgent
                 case "session/new":
                     // What the backend handed this session to start (browser, computer use).
                     File.WriteAllText(Path.Combine(root, "mcp-servers.json"), (parameters?["mcpServers"] ?? new JsonArray()).ToJsonString());
-                    result = new JsonObject { ["sessionId"] = Session };
+                    current = made++ == 0 ? Session : Session + "-" + made;
+                    result = new JsonObject { ["sessionId"] = current };
                     break;
                 case "session/cancel":
                     if (pending is not null) Result(pending, new JsonObject { ["stopReason"] = "cancelled" });
@@ -125,6 +129,7 @@ static class AcpAgent
                     continue;
                 case "session/prompt":
                     pending = id;
+                    if (parameters?["sessionId"]?.GetValue<string>() is { Length: > 0 } named) current = named;
                     var said = string.Concat((parameters?["prompt"] as JsonArray ?? []).Select(b => b?["text"]?.GetValue<string>() ?? ""));
                     scenario = new[] { "slow", "rich", "two", "crash", "long", "diff" }.FirstOrDefault(w => said.Contains("[" + w + "]", StringComparison.Ordinal)) ?? "";
                     // A child that the backend must stop with the agent: the tests look for it afterwards.
@@ -155,7 +160,7 @@ static class AcpAgent
                             ["jsonrpc"] = "2.0", ["id"] = askId, ["method"] = "session/request_permission",
                             ["params"] = new JsonObject
                             {
-                                ["sessionId"] = Session,
+                                ["sessionId"] = current,
                                 ["toolCall"] = new JsonObject { ["toolCallId"] = "edit-" + askId, ["kind"] = "edit", ["title"] = title, ["rawInput"] = new JsonObject { ["path"] = file } },
                                 ["options"] = new JsonArray(
                                     new JsonObject { ["optionId"] = "yes", ["name"] = "Allow", ["kind"] = "allow_once" },
