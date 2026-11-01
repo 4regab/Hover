@@ -10,8 +10,15 @@ using D3DBlend = Vortice.Direct3D11.Blend;
 
 namespace Hover.Office;
 
-/// <summary>What lies round the office in the page: the backdrop under it, the vignette over it, and (in the notch) the top that fades into the notch's black.</summary>
-public readonly record struct PageStyle(bool Day, double TopFadePixels = 0);
+/// <summary>The notch's shape as the office is cut to it: a box with flat top and sides and round bottom corners, in pixels of the output.</summary>
+public readonly record struct ShapeMask(double X0, double Y0, double X1, double Y1, double Radius);
+
+/// <summary>
+/// What lies round the office in the page: the backdrop under it, the vignette over it, and (in the notch) the top
+/// that fades into the notch's black. <paramref name="Shape"/> cuts the picture to the notch as it opens (the pixels
+/// outside are see-through, so the output needs an alpha channel); <paramref name="Opacity"/> fades the whole picture.
+/// </summary>
+public readonly record struct PageStyle(bool Day, double TopFadePixels = 0, ShapeMask? Shape = null, double Opacity = 1);
 
 /// <summary>
 /// WebGLRenderer.render(scene, camera) on Direct3D 11: the shadow map (redrawn only when the office says
@@ -95,7 +102,7 @@ public sealed class OfficeRenderer : IDisposable
 
         frameBuf = Own(device.CreateBuffer(new BufferDescription((uint)(FrameFloats * 4), BindFlags.ConstantBuffer, ResourceUsage.Default)));
         drawBuf = Own(device.CreateBuffer(new BufferDescription((uint)(MaxDraws * DrawStride), BindFlags.ConstantBuffer, ResourceUsage.Dynamic, CpuAccessFlags.Write)));
-        pageBuf = Own(device.CreateBuffer(new BufferDescription(64, BindFlags.ConstantBuffer, ResourceUsage.Default)));
+        pageBuf = Own(device.CreateBuffer(new BufferDescription(96, BindFlags.ConstantBuffer, ResourceUsage.Default)));
 
         // The shadow map: written as depth, read as a plain float texture.
         shadowTex = Own(device.CreateTexture2D(new Texture2DDescription
@@ -125,7 +132,8 @@ public sealed class OfficeRenderer : IDisposable
         samplers[0] = Own(device.CreateSamplerState(new SamplerDescription(Filter.MinLinearMagMipPoint, TextureAddressMode.Clamp, TextureAddressMode.Clamp, TextureAddressMode.Clamp)));
         samplers[1] = Own(device.CreateSamplerState(new SamplerDescription(Filter.MinMagMipLinear, TextureAddressMode.Clamp, TextureAddressMode.Clamp, TextureAddressMode.Clamp)));
 
-        blends[0] = Own(device.CreateBlendState(new BlendDescription()));
+        // A zero BlendDescription writes no colour at all: the opaque one is spelled out.
+        blends[0] = Own(device.CreateBlendState(BlendDescription.Opaque));
         var normal = new BlendDescription();
         normal.RenderTarget[0] = new RenderTargetBlendDescription
         {
@@ -210,8 +218,8 @@ public sealed class OfficeRenderer : IDisposable
         return new OfficeRenderer(device, desc.Description, software || warp);
     }
 
-    /// <summary>A swap chain for composition (shown by a DirectComposition visual or a SwapChainPanel), opaque.</summary>
-    public IDXGISwapChain1 CreateSwapChain(int width, int height)
+    /// <summary>A swap chain for composition (shown by a DirectComposition visual or a SwapChainPanel). With <paramref name="alpha"/> it holds premultiplied colour, so the notch's shape can cut it; otherwise it is opaque.</summary>
+    public IDXGISwapChain1 CreateSwapChain(int width, int height, bool alpha = false)
     {
         using var dxgi = Device.QueryInterface<IDXGIDevice>();
         using var adapter = dxgi.GetAdapter();
@@ -220,7 +228,7 @@ public sealed class OfficeRenderer : IDisposable
         {
             Width = (uint)Math.Max(width, 1), Height = (uint)Math.Max(height, 1), Format = Format.B8G8R8A8_UNorm, Stereo = false,
             SampleDescription = new SampleDescription(1, 0), BufferUsage = Usage.RenderTargetOutput, BufferCount = 2, Scaling = Scaling.Stretch,
-            SwapEffect = SwapEffect.FlipSequential, AlphaMode = AlphaMode.Ignore, Flags = SwapChainFlags.None,
+            SwapEffect = SwapEffect.FlipSequential, AlphaMode = alpha ? AlphaMode.Premultiplied : AlphaMode.Ignore, Flags = SwapChainFlags.None,
         };
         return factory.CreateSwapChainForComposition(Device, desc, null);
     }
@@ -326,7 +334,13 @@ public sealed class OfficeRenderer : IDisposable
     /// Draws the office into <paramref name="target"/> (BGRA or RGBA, <paramref name="outW"/> x <paramref name="outH"/>): the scene at
     /// <paramref name="sceneW"/> x <paramref name="sceneH"/> (smaller on a software adapter, shown pixel by pixel), then the page round it.
     /// </summary>
-    public void Render(OfficeModel o, ID3D11RenderTargetView target, int outW, int outH, int sceneWidth, int sceneHeight, PageStyle page)
+    public void Render(OfficeModel o, ID3D11RenderTargetView target, int outW, int outH, int sceneWidth, int sceneHeight, PageStyle page, bool redrawScene = true)
+    {
+        if (redrawScene || sceneTex is null || !ReferenceEquals(current, o) || sceneW != Math.Max(sceneWidth, 1) || sceneH != Math.Max(sceneHeight, 1)) DrawScene(o, Math.Max(sceneWidth, 1), Math.Max(sceneHeight, 1));
+        DrawPage(target, outW, outH, page);
+    }
+
+    void DrawScene(OfficeModel o, int sceneWidth, int sceneHeight)
     {
         if (!ReferenceEquals(current, o))
         {
@@ -493,8 +507,12 @@ public sealed class OfficeRenderer : IDisposable
             Context.DrawIndexed((uint)meshOf[k].Count, 0, 0);
         }
 
-        // The page: the backdrop under the frame, the vignette over it.
-        Span<float> pg = stackalloc float[16];
+    }
+
+    /// <summary>The page: the backdrop under the frame, the vignette over it, then the notch's shape and the fade.</summary>
+    void DrawPage(ID3D11RenderTargetView target, int outW, int outH, PageStyle page)
+    {
+        Span<float> pg = stackalloc float[24];
         var bg = BackdropStops(page.Day);
         for (var i = 0; i < 3; i++)
         {
@@ -507,6 +525,16 @@ public sealed class OfficeRenderer : IDisposable
         pg[13] = 0xe6 / 255f;
         pg[14] = outW;
         pg[15] = outH;
+        if (page.Shape is { } sh)
+        {
+            pg[16] = (float)sh.X0;
+            pg[17] = (float)sh.Y0;
+            pg[18] = (float)sh.X1;
+            pg[19] = (float)sh.Y1;
+            pg[20] = (float)sh.Radius;
+            pg[21] = 1;
+        }
+        pg[22] = (float)Math.Clamp(page.Opacity, 0, 1);
         Context.UpdateSubresource(pg.ToArray(), pageBuf);
         Context.OMSetRenderTargets(target, null);
         Context.RSSetViewport(new Viewport(0, 0, outW, outH, 0f, 1f));
@@ -588,6 +616,13 @@ public sealed class OfficeRenderer : IDisposable
             return bytes;
         }
         finally { Context.Unmap(staging, 0); }
+    }
+
+    /// <summary>The reason the device was removed (a driver reset, a GPU taken away), or null while it works.</summary>
+    public string? DeviceLost()
+    {
+        var hr = Device.DeviceRemovedReason;
+        return hr.Failure ? hr.ToString() : null;
     }
 
     void DropMeshes()

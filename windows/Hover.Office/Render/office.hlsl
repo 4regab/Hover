@@ -275,6 +275,10 @@ cbuffer Page : register(b2)
     float4 bg2;
     // x the top fade's height in pixels (0 for none), y its opening alpha; zw the output size in pixels.
     float4 page;
+    // The notch's shape in output pixels: left, top, right, bottom.
+    float4 shape;
+    // x the bottom corners' radius, y 1 when the shape cuts the picture, z the picture's opacity.
+    float4 shape2;
 };
 
 Texture2D frame_tex : register(t2);
@@ -312,6 +316,19 @@ PIn vs_page(uint id : SV_VertexID)
     return o;
 }
 
+// Coverage of a box with flat top and sides and round bottom corners, antialiased over one pixel.
+float shape_cover(float2 p)
+{
+    float r = shape2.x;
+    float d = max(max(shape.x - p.x, p.x - shape.z), max(shape.y - p.y, p.y - shape.w));
+    if (p.y > shape.w - r)
+    {
+        if (p.x < shape.x + r) { d = length(p - float2(shape.x + r, shape.w - r)) - r; }
+        else if (p.x > shape.z - r) { d = length(p - float2(shape.z - r, shape.w - r)) - r; }
+    }
+    return saturate(0.5 - d);
+}
+
 float4 fs_page(PIn i) : SV_Target
 {
     float w = page.z;
@@ -334,5 +351,9 @@ float4 fs_page(PIn i) : SV_Target
         float a = page.y * saturate(1.0 - px.y / page.x);
         c = c * (1.0 - a);
     }
-    return float4(c, 1.0);
+    // Premultiplied: what lies outside the notch's shape is see-through, and a fade scales colour and alpha together.
+    float cover = 1.0;
+    if (shape2.y > 0.5) { cover = shape_cover(px); }
+    float alpha = cover * shape2.z;
+    return float4(c * alpha, alpha);
 }
