@@ -101,7 +101,7 @@ sealed class UiCore : IDisposable
         });
         onEvent = e => queue.TryEnqueue(() =>
         {
-            if (disposed || (FreezeState && e is StateEvent)) return;
+            if (disposed || (FreezeState && e is StateEvent or ToastEvent)) return;
             try { Ui.Accept(e); }
             catch (Exception ex) { HostLog.Line($"panels: a message failed — {ex}"); }
             Changed?.Invoke();

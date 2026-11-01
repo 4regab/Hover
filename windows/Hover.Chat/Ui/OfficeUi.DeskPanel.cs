@@ -509,7 +509,7 @@ public sealed partial class OfficeUi
                 break;
             case 27:
                 {
-                    var pw = pen.Width(r.Sub, mono125);
+                    var pw = PromptWidth(r.Sub, mono125);
                     Tv(r.Sub, x + 16, y, h, mono125 with { Color = Rgba.Of(0xf6f2ff, 0.88) });
                     var rf = Pen.F(11.5, 400, Tone(r.Tone));
                     var rw = pen.Width(r.Right, rf);
@@ -966,11 +966,14 @@ public sealed partial class OfficeUi
         var py = ay + listH;
         var pf = Pen.Mono(12.5, Rgba.Of(0xf6f2ff, 0.88));
         var prompt = DeskRows.Prompt(term.Cwd.Length > 0 ? term.Cwd : s.Folder);
-        var pw = pen.Width(prompt, pf);
+        var pw = PromptWidth(prompt, pf);
         Tv(prompt, r.X + 16, py, ph, pf);
         var f2 = PaintField("term", false, new Rect4(r.X + 16 + pw, py + (ph - pen.LineHeight(pf)) / 2, r.W - 32 - pw, pen.LineHeight(pf)), pf, "");
         _ = f2;
         // The box under the last line is where the next command is typed: a click on the list reaches it too.
         Add(new Rect4(r.X, py, r.W, ph), "termBox");
     }
+
+    /// <summary>The width of a prompt including the space after its ">", which a text's own width leaves out.</summary>
+    float PromptWidth(string prompt, Look look) => pen.Width(prompt + "|", look) - pen.Width("|", look);
 }

@@ -63,7 +63,7 @@ static class DeskShots
         ChatShots.Turn("Desk fixture busy: make refresh() skip views that are clean", "", "working", 1,
             new StepInfo { K = "agent", Verb = "Subagent", Cmd = "Find every caller of refresh()", Status = "in_progress" },
             new StepInfo { K = "agent", Verb = "Subagent", Cmd = "Check the tests for refresh()", Status = "in_progress" },
-            new StepInfo { K = "run", Verb = "Ran", Cmd = "cargo build --release -p hover", Status = "in_progress" })) with { Ctx = 31 };
+            new StepInfo { K = "run", Verb = "Ran", Cmd = "cargo build --release -p hover", Status = "in_progress" }));
 
     static SessionInfo Done(int bot = 0) => ChatShots.Session(1, "kiro", "Desk fixture done: open a pull request for the refresh change", "done", bot,
         ChatShots.Turn("Desk fixture done: open a pull request for the refresh change", "Done. `refresh()` now returns early when nothing changed.\n\nI also added a test that checks a clean view is skipped.", "done", 3,
@@ -174,7 +174,8 @@ static class DeskShots
             }
             await Pic(core, dir, N("working"), w, h, () => Open(Busy(), 1));
             await Pic(core, dir, N("working-reply"), w, h, () => { Frame(w, h); ui.Click("field", s: "card"); ui.Char("Also keep the dirty flag in the tests"); });
-            await Pic(core, dir, N("done"), w, h, () => Open(Busy(), 2));
+            // The draft typed into the card is cleared, as the Go shots do before the next card.
+            await Pic(core, dir, N("done"), w, h, () => { ui.Key(UiKey.A, UiMods.Control); ui.Key(UiKey.Backspace, UiMods.None); Open(Busy(), 2); });
             await Pic(core, dir, N("asking"), w, h, () => Open(Asking(), 1));
             await Pic(core, dir, N("asking-corner"), w, h, () => Open(Asking(), 1, true));
             await Pic(core, dir, N("question"), w, h, () => Open(Question(), 1));
@@ -182,7 +183,9 @@ static class DeskShots
 
         // The panel's tabs, in an office of 1320 x 520, on the finished desk.
         const int tw = 1320, th = 520;
-        void Tab(string tab) { Reset(Done()); ui.OpenDeskPanel(1, tab); }
+        // The panel is on the finished desk (Juno's); Pip's run works at the next desk.
+        void Desks() => Reset(Done().At(1, 1, 1), Busy().At(2, 0, 0));
+        void Tab(string tab) { Desks(); ui.OpenDeskPanel(1, tab); }
         Term(ui);
         await Pic(core, dir, "desk-tab-terminal", tw, th, () => { Tab("terminal"); Term(ui); });
         await Pic(core, dir, "desk-tab-terminal-typing", tw, th, () => { Frame(tw, th); ui.Char("git log --oneline -3"); });
@@ -223,7 +226,7 @@ static class DeskShots
         });
         await Pic(core, dir, "desk-tab-file-md-preview", tw, th, () =>
         {
-            Reset(Done());
+            Desks();
             ui.OpenDeskPanel(1, "files");
             Frame(tw, th);
             ui.Click("drow", s: "file:README.md");
