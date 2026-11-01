@@ -688,6 +688,25 @@ public class DeskTests
     }
 
     [Fact]
+    public void The_tip_over_a_bot_a_desk_and_a_prop_says_what_a_click_does()
+    {
+        var tip = (Kind: 0, Id: 0, Hint: "");
+        var ui = new OfficeUi(new FakeShaper(), new UiEnv { Send = _ => { }, Clipboard = new FakeClipboard(), Tip = () => tip });
+        ui.Accept(new StateEvent { Tools = [new ToolInfo { Id = "kiro", Name = "Kiro", Ready = true }], Sessions = [Busy()] });
+        ui.PointerMove(900, 400);
+        string[] Drawn() { var c = new RecordingCanvas(); ui.Paint(c, 1200, 720, 1000); return [.. c.Texts]; }
+        Assert.DoesNotContain(Drawn(), t => t.Contains("Chat with", StringComparison.Ordinal));
+        tip = (1, 1, "");
+        Assert.Contains(Drawn(), t => t == "Chat with");
+        tip = (2, 1, "");
+        var desk = Drawn();
+        Assert.Contains(desk, t => t.EndsWith("’s desk", StringComparison.Ordinal));
+        Assert.Contains(desk, t => t == "Browser, terminal, files, screen…");
+        tip = (0, 0, "Session board");
+        Assert.Contains(Drawn(), t => t == "Session board");
+    }
+
+    [Fact]
     public void The_card_follows_the_bot_when_the_office_says_where_it_is()
     {
         var sent = new List<BackendCommand>();

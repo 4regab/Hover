@@ -29,6 +29,9 @@ public enum OfficeTarget
 /// <summary>A rectangle in device-independent pixels.</summary>
 public readonly record struct OfficeRect(double X, double Y, double W, double H);
 
+/// <summary>What the pointer is on in the office: Kind 1 a bot, 2 a desk (Id is its session), 0 a prop or nothing; Hint is a prop's.</summary>
+public readonly record struct OfficeTip(int Kind, int Id, string Hint);
+
 /// <summary>What the user clicked on the wall or the floor, besides a bot or a desk.</summary>
 public enum OfficeProp
 {
@@ -160,6 +163,9 @@ public sealed class OfficeHost : IDisposable
     /// <summary>A click landed on a desk that has a session at it: that session's id, and where the click was (as <see cref="BotScreenRect"/> counts).</summary>
     public event Action<int, double, double>? DeskPicked;
 
+    /// <summary>What the pointer is on in the office changed (see <see cref="Tip"/>).</summary>
+    public event Action? TipChanged;
+
     /// <summary>A click landed on a bot. The value is its session's id.</summary>
     public event Action<int>? BotPicked;
 
@@ -171,6 +177,30 @@ public sealed class OfficeHost : IDisposable
 
     /// <summary>True once the office draws into the notch, so the notch stops drawing its placeholder.</summary>
     internal bool DrawsInNotch => notchAttached;
+
+    /// <summary>What the pointer is on: 1 a bot or 2 a desk with a session at it (with that session's id), or a prop's hint; none when it is on nothing.</summary>
+    public OfficeTip Tip()
+    {
+        if (Target == OfficeTarget.None || !model.HasPointer) return default;
+        var h = model.Hovered;
+        return h.Kind switch
+        {
+            HoverKind.Bot => new OfficeTip(1, h.Id, ""),
+            HoverKind.Desk => new OfficeTip(2, h.Id, ""),
+            HoverKind.Prop => new OfficeTip(0, 0, model.Hint(h.Prop)),
+            _ => default,
+        };
+    }
+
+    OfficeTip lastTip;
+
+    void NoteTip()
+    {
+        var now = Tip();
+        if (now == lastTip) return;
+        lastTip = now;
+        TipChanged?.Invoke();
+    }
 
     /// <summary>The colours of the helpers a session's bot has out at its desk, as the office's tag says (none when the office is not shown).</summary>
     public IReadOnlyList<(byte R, byte G, byte B)> HelpersOf(int sessionId)
@@ -599,7 +629,9 @@ public sealed class OfficeHost : IDisposable
     {
         if (disposed || Target == OfficeTarget.None) return;
         PollNotchPointer();
-        if (!ctl.Tick(clock.Elapsed.TotalMilliseconds)) return;
+        var drew = ctl.Tick(clock.Elapsed.TotalMilliseconds);
+        NoteTip();
+        if (!drew) return;
         if (Target == OfficeTarget.Notch) DrawNotch(scene: true);
         else DrawDashboard(scene: true);
     }

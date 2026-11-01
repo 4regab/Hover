@@ -19,6 +19,9 @@ public sealed class UiEnv
     /// </summary>
     public Func<int, Rect4?> BotRect { get; init; } = _ => null;
 
+    /// <summary>What the pointer is on in the office: 1 a bot or 2 a desk with that session's id, and a prop's hint ("" for none).</summary>
+    public Func<(int Kind, int Id, string Hint)> Tip { get; init; } = () => (0, 0, "");
+
     /// <summary>The colours of the helpers a session's bot has out at its desk (the office's tag, <c>Tag.Helpers</c>); none when the office does not say.</summary>
     public Func<int, IReadOnlyList<(byte R, byte G, byte B)>> Helpers { get; init; } = _ => [];
 

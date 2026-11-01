@@ -45,6 +45,7 @@ public sealed partial class OfficeUi
             PaintDeskPanel(new Rect4(w - deskW - sideGap, sideGap, deskW, h - 2 * sideGap), compact ? 16 : 20, false);
         }
         PaintDeskCardLayer();
+        PaintTip();
     }
 
     /// <summary>The questions that wait, each over its bot's head (or stacked at the top when the office does not show it).</summary>

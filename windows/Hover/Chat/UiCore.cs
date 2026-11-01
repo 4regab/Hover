@@ -47,6 +47,16 @@ sealed class UiCore : IDisposable
     IReadOnlyList<(byte R, byte G, byte B)> HelpersOf(int id)
         => HelpersFixture?.Invoke(id) ?? office?.HelpersOf(id) ?? [];
 
+    (int Kind, int Id, string Hint) TipOf()
+    {
+        if (TipFixture is { } fixture) return fixture();
+        var t = office?.Tip() ?? default;
+        return (t.Kind, t.Id, t.Hint);
+    }
+
+    /// <summary>What a picture says the pointer is on, when the office is not live to say it.</summary>
+    public Func<(int Kind, int Id, string Hint)>? TipFixture { get; set; }
+
     /// <summary>The helpers a picture says a bot has out, when the office is not live to say it.</summary>
     public Func<int, IReadOnlyList<(byte R, byte G, byte B)>>? HelpersFixture { get; set; }
 
@@ -73,6 +83,7 @@ sealed class UiCore : IDisposable
             Images = Images.State,
             BotRect = BotRectOf,
             Helpers = HelpersOf,
+            Tip = TipOf,
             OpenUrl = OpenUrl,
             Log = HostLog.Line,
             InNotch = inNotch,
@@ -103,6 +114,7 @@ sealed class UiCore : IDisposable
                     case OfficeProp.History: Ui.OpenOfficePanel("history"); break;
                 }
             });
+            office.TipChanged += () => queue.TryEnqueue(() => { if (!disposed) Ui.Invalidate(); });
             Ui.OfficePanelChanged += name => office.ShowPanel(name);
             Ui.DeskChanged += id => office.MarkDeskOpen(id);
             Ui.DrawerChanged += id =>
