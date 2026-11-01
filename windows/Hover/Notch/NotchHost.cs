@@ -520,7 +520,7 @@ sealed class NotchHost : IDisposable
         }
         var path = ask.Path ?? (ask.Preview is null ? ask.Title : "");
         return new CardData(seg.Tool, ask.Title, $"{folder} · {session?.Title}", seg.Total > 1 ? $"1 of {seg.Total}" : "",
-            ask.Command ?? "", path, lines, ask.Reason, ask.Danger, ask.Allow);
+            ask.Command ?? "", path, lines, Rest.AskReason(ask), ask.Danger, ask.Allow);
     }
 
     static string LastPart(string folder)

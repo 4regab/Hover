@@ -91,6 +91,29 @@ public static class Rest
     }
 
     /// <summary>
+    /// Why the question is asked, for the card. The backend leaves out the reasons every kind of question
+    /// has ("Runs a command") and sends only what is particular, so the card puts the plain one back, as
+    /// the Go card shows it: "Runs a command", or "Edits a file · +3 −1".
+    /// </summary>
+    public static string AskReason(AskInfo ask)
+    {
+        var plain = ask.Kind switch
+        {
+            "execute" => "Runs a command",
+            "edit" => "Edits a file",
+            "delete" => "Deletes files",
+            "move" => "Moves or renames files",
+            "fetch" => "Uses the network",
+            "question" => "",
+            _ => "Uses a tool",
+        };
+        var reason = ask.Reason.Trim();
+        // Only the count of lines came: "+3 −1".
+        if (reason.StartsWith('+')) return plain.Length == 0 ? reason : plain + " · " + reason;
+        return reason.Length > 0 ? reason : plain;
+    }
+
+    /// <summary>
     /// What the island shows. A question waiting wins, else the agents at work, else an end nobody
     /// has seen; then a divider and the quotas. <paramref name="speaker"/> picks who speaks among
     /// those at work (it moves on every 3 s); <paramref name="nowMs"/> is the clock for their timers;

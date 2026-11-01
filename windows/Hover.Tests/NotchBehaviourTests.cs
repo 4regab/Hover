@@ -372,6 +372,17 @@ public sealed class IslandTests
         Assert.Equal((verb, obj), Rest.AskWords(new AskInfo { Kind = kind, Line = line }));
     }
 
+    [Theory]
+    [InlineData("execute", "", "Runs a command")]
+    [InlineData("execute", "Installs packages or uses the network", "Installs packages or uses the network")]
+    [InlineData("edit", "+3 −1", "Edits a file · +3 −1")]
+    [InlineData("delete", "", "Deletes files")]
+    [InlineData("fetch", "", "Uses the network")]
+    [InlineData("question", "", "")]
+    [InlineData("other", " ", "Uses a tool")]
+    public void The_card_gives_the_plain_reason_the_backend_leaves_out(string kind, string reason, string want)
+        => Assert.Equal(want, Rest.AskReason(new AskInfo { Kind = kind, Reason = reason }));
+
     [Fact]
     public void The_card_is_only_for_a_question()
     {
