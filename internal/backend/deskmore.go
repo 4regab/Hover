@@ -21,6 +21,7 @@ const (
 	fileTextMax = 2 * agents.DeskFileLimit // a saved file's text, bytes
 	pathMax     = 1024
 	termEvery   = 60 * time.Millisecond // output reaches the host in bursts of this size
+	termKept    = 200                   // commands a shell keeps (agents.entriesKept)
 )
 
 // terms are the shells made so far, one per chat that used one.
@@ -119,7 +120,9 @@ func (b *Backend) sendTerm(id int32, all bool) {
 	to.t.View(func(es []agents.TermEntry, c string, r bool) {
 		cwd, running, total = c, r, len(es)
 		from = max(0, min(to.sent, total-1))
-		if all || total == 0 {
+		// At the cap the oldest entry drops off the front with each new one, which moves
+		// the indexes: the host is sent the whole list then.
+		if all || total == 0 || total >= termKept {
 			from = 0
 		}
 		for _, e := range es[from:] {
