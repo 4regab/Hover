@@ -13,3 +13,5 @@ evidence/
 
 web/office/node_modules/
 __pycache__/
+publish-legacy/
+out/
