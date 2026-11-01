@@ -89,13 +89,17 @@ static class UiDump
         var acts = new JsonArray();
         foreach (var (kind, section, r) in ui.ThreadActs().Take(200))
             acts.Add(new JsonObject { ["kind"] = kind, ["section"] = section, ["x"] = r.X, ["y"] = r.Y, ["w"] = r.W, ["h"] = r.H });
+        var bots = new JsonArray();
+        foreach (var s in ui.State?.Sessions ?? [])
+            if (core.BotRectOf(s.Id) is { } b)
+                bots.Add(new JsonObject { ["id"] = s.Id, ["x"] = b.X, ["y"] = b.Y, ["w"] = b.W, ["h"] = b.H });
         var chrome = new JsonArray();
         foreach (var s in ui.ChromeTexts.Take(200)) chrome.Add(s);
         return new JsonObject
         {
             ["left"] = left, ["top"] = top, ["scale"] = scale,
             ["chatView"] = ui.ChatView, ["openId"] = ui.OpenId, ["composing"] = ui.Composing, ["replyText"] = ui.ReplyText, ["taskText"] = ui.TaskText,
-            ["toast"] = ui.ToastText, ["menu"] = ui.OpenMenuKind, ["targets"] = targets, ["acts"] = acts, ["texts"] = texts, ["chrome"] = chrome,
+            ["toast"] = ui.ToastText, ["menu"] = ui.OpenMenuKind, ["targets"] = targets, ["bots"] = bots, ["acts"] = acts, ["texts"] = texts, ["chrome"] = chrome,
             ["height"] = ui.Thread.Height, ["scroll"] = ui.ScrollY,
             ["deskCard"] = ui.DeskCardId, ["deskPanel"] = ui.DeskPanelId, ["deskTab"] = ui.DeskTabId, ["deskRows"] = ui.DeskRowCount,
             ["deskTabs"] = new JsonArray([.. ui.DeskTabs.Select(t => (JsonNode)t)]), ["officePanel"] = ui.OfficePanel,

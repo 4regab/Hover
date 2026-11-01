@@ -22,7 +22,32 @@ static class Input
     [DllImport("user32.dll")] static extern void mouse_event(uint flags, int dx, int dy, int data, nuint extra);
     [DllImport("user32.dll")] static extern void keybd_event(byte vk, byte scan, uint flags, nuint extra);
 
+    [DllImport("user32.dll")] static extern bool SetWindowPos(nint hwnd, nint after, int x, int y, int cx, int cy, uint flags);
+
     public static void Move(int x, int y) => SetCursorPos(x, y);
+
+    /// <summary>
+    /// Puts the app's window near the screen's top left corner and makes it one pixel wider. Windows places each new window a
+    /// little further down and right, and on a small screen (the runner's is 1024 wide) the right of the window ends up off the
+    /// screen, where a click is moved to the edge and lands elsewhere. The new width makes the app draw again, so that its dump
+    /// says where the window is now.
+    /// </summary>
+    public static async Task Park(Process app)
+    {
+        for (var end = Environment.TickCount64 + 15_000; Environment.TickCount64 < end;)
+        {
+            var window = Desktop.WindowOf(app, "Hover");
+            if (window != 0)
+            {
+                var r = Desktop.Rect(window);
+                // 0x0004 keeps the order of windows, 0x0010 does not activate the window.
+                SetWindowPos(window, 0, 10, 40, r.Right - r.Left + 1, r.Bottom - r.Top, 0x0004 | 0x0010);
+                await Task.Delay(700);
+                return;
+            }
+            await Task.Delay(100);
+        }
+    }
 
     public static void Click(int x, int y)
     {
@@ -259,6 +284,7 @@ public class PanelsAppTests(ITestOutputHelper output)
         {
             await AppTests.WaitForLog(data, "agent backend is ready", TimeSpan.FromSeconds(60), app);
             await Check(() => dump.Section("window") is not null, "the app window drew its panels");
+            await Input.Park(app);
 
             // The chat view, and the start screen's new-task box.
             await ClickAt("window", "view", "the chat view", n => (int)n["n"]! == 1);

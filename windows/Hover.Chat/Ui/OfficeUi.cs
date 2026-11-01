@@ -326,7 +326,7 @@ public sealed partial class OfficeUi
     // MARK: The pointer and keys
 
     /// <summary>Some of the thread still shows plain text because the backend has not answered yet.</summary>
-    public bool Waiting => thread.Sections.Any(s => s.Waiting);
+    public bool Waiting => thread.Sections.Any(s => s.Waiting) || (docThread?.Sections.Any(s => s.Waiting) ?? false);
 
     /// <summary>Requests to the backend for Markdown, colour and changes that are not answered yet.</summary>
     public int Pending => cache.InFlight;

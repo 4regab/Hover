@@ -224,7 +224,7 @@ public sealed partial class OfficeUi
                 break;
             case "openCloud":
                 if (s?.Extra is { } ex && ex.TryGetValue("kiroId", out var kid) && kid.ValueKind == System.Text.Json.JsonValueKind.String)
-                    env.OpenUrl?.Invoke("https://app.kiro.dev/tasks/" + Uri.EscapeDataString(kid.GetString() ?? ""));
+                    env.OpenUrl?.Invoke("https://app.kiro.dev/session/" + Uri.EscapeDataString(kid.GetString() ?? ""));
                 else Say("This cloud session has no web page yet.");
                 break;
             case "compose":

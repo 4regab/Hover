@@ -34,6 +34,15 @@ sealed class UiCore : IDisposable
 
     public double NowMs => clock.Elapsed.TotalMilliseconds;
 
+    readonly OfficeHost? office;
+
+    /// <summary>Where the office says a session's bot is, in the panels' own pixels (or where a picture says it is).</summary>
+    public Rect4? BotRectOf(int id)
+        => BotRectFixture?.Invoke(id) ?? (office?.BotScreenRect(id) is { } r ? new Rect4((float)r.X, (float)r.Y, (float)r.W, (float)r.H) : null);
+
+    /// <summary>Where the pictures say a bot is, when the office is not live to say it.</summary>
+    public Func<int, Rect4?>? BotRectFixture { get; set; }
+
     /// <summary>The pictures set the state themselves, so the backend's own state messages are not taken.</summary>
     public bool FreezeState { get; set; }
 
@@ -45,13 +54,14 @@ sealed class UiCore : IDisposable
         Shaper = new DwShaper(gfx);
         Images = new ImageStore(dataDir, host => Ui?.State?.Sessions.FirstOrDefault(s => OfficeUi.FilesHost(s.Key) == host)?.Folder);
         Canvas = new D2DCanvas(gfx, Shaper, Images);
+        this.office = office;
         Ui = new OfficeUi(Shaper, new UiEnv
         {
             Send = backend.Send,
             Clipboard = new Win32Clipboard(),
             PickImage = ImageDialog.Pick,
             Images = Images.State,
-            BotRect = id => office?.BotScreenRect(id) is { } r ? new Rect4((float)r.X, (float)r.Y, (float)r.W, (float)r.H) : null,
+            BotRect = BotRectOf,
             OpenUrl = OpenUrl,
             Log = HostLog.Line,
             InNotch = inNotch,

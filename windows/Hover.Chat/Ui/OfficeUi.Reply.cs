@@ -65,6 +65,9 @@ public sealed partial class OfficeUi
 
     readonly Dictionary<int, List<Chip>> chips = [];
 
+    /// <summary>Puts a chip on a chat's reply (the panels do it from the @ list and the diff; the pictures do it by hand).</summary>
+    public void AttachChip(int id, Chip chip) => AddChip(id, chip);
+
     /// <summary>The chips on a chat's unsent reply.</summary>
     public IReadOnlyList<Chip> ChipsOf(int id) => chips.TryGetValue(id, out var l) ? l : [];
 

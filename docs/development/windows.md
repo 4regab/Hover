@@ -211,7 +211,49 @@ and Skip and Answer.
 For the checks of the real app, `HOVER_UI_DUMP=<file>` makes the app write where each place that
 answers a click is on the screen, the words of the thread and the lines the panels drew
 (`Chat\UiDump.cs`), and, in a `voice` part, whether the voice card shows, what it says and where its
-buttons are; a test reads it to click and type as a person would.
+buttons are; a test reads it to click and type as a person would. The `window` part also says where the
+bots are (`bots`), which desk card and panel are open (`deskCard`, `deskPanel`, `deskTab`, `deskRows`),
+which board, TV or history panel shows (`officePanel`), how many pictures and chips the reply holds
+(`shots`, `chips`), how many rows the `@` or `/` list offers (`popRows`) and what the GitHub CLI card
+says (`ghTitle`, `ghBusy`).
+
+### The desk, the reply box and the office's panels
+
+A click on a desk in the office (`DeskPicked`) opens the desk card (`OfficeUi.DeskCard.cs`) beside the bot,
+where the office says the bot is (`OfficeHost.BotScreenRect`), else at the top right. Its tiles follow
+the backend's `desk` probe: Terminal, Files, Diff, Pull request, Linked, Agents. A tile opens the desk
+panel (`OfficeUi.DeskPanel.cs`) with the tab's rows, which `Hover.Chat\Desk\DeskRows.cs` makes from the
+backend's answers as `internal/app/desk.go` does. The card also holds the last steps, the permission
+buttons (Allow, Trust, Deny), the question buttons and a reply box. Over the office everything the backend
+sends comes through `desk`, `term`, `writeFile`, `editors`, `openIn`, `deskAction` and `gh` (`Hover.Host\Protocol\Desk.cs`).
+
+- **Terminal:** PowerShell in the session's folder (the backend runs it): run, interrupt, clear. The output
+  keeps its last lines in view and a command that never ends can be interrupted.
+- **Files:** the folder's list and changes, a file opened with its line numbers, edited and saved with
+  `writeFile` (the backend refuses a path outside the folder and the editor stays open with the reason),
+  opened in an editor with `openIn`. A binary file and a file that went while open say so and cannot be
+  edited. A Markdown file and a pull request's text are shown formatted by a second `ChatThread`
+  (`ChatThread.SetDocument`).
+- **Diff:** both sides numbered, a binary file folded, cut at 4,000 rows as the Go diff is.
+- **Pull request:** the form (title, body, branch, base; commit or draft), the open pull request with its
+  checks, and the GitHub CLI setup: install (winget), sign in with GitHub's code, Cancel.
+- **Reply box** (`OfficeUi.Composer.cs`, `OfficeUi.Reply.cs`): the stop square is Pause, as in Go (Go has no
+  Stop command; `internal/shell/chatact.go` `sendReply`). Up to four pictures of at most 8 MiB each from
+  Ctrl+V of a clipboard bitmap or the attach button; `@` lists the folder's files and a pick is a chip sent
+  with the reply (`ReplyCommand.Chips`); `/` lists the agent's commands and Hover's; the model pill opens the
+  model menu and sends `setModel`. A reply the backend refuses (it says so in a toast) comes back into the
+  box with its words, chips and pictures.
+- **The office's board, TV and history panels** (`OfficeUi.Lists.cs`) open over the office from the props
+  (`OfficeHost.PropPicked`, `ShowPanel`). History lists the saved chats by day, finds and deletes them, and
+  lists Kiro Web and Kiro CLI sessions with a click to adopt one (`webSessions`, `adoptWeb`, `cliSessions`,
+  `adoptCli`).
+- **Not on Windows, as in Go:** the helpers (`agents.OrchMcpSupported()` is false on Windows,
+  `internal/agents/orch.go`; the menu item and the new-task helpers are gated in `internal/shell/chatact.go`
+  and `newtask.go`) and the Agent browser tab (`agents.BrowserSupported()` is macOS only). The Screen tab is
+  the Screen panel of Phase 5.
+
+`hoverai.exe --shots DIR` also writes the desk's pictures with the Go pictures' names (`desk-*`, `expand-*`,
+`office-panel-*`, and the reply box's `chat-*`), drawn by `Chat\DeskShots.cs`.
 
 ### Voice, sound and music
 

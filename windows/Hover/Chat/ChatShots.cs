@@ -25,15 +25,15 @@ static class ChatShots
 
     // MARK: Fixtures
 
-    static StepInfo Read(string name, string dir) => new() { K = "read", Verb = "Read", Name = name, Dir = dir, Status = "completed" };
+    internal static StepInfo Read(string name, string dir) => new() { K = "read", Verb = "Read", Name = name, Dir = dir, Status = "completed" };
 
     static StepInfo Thought(string text) => new() { K = "thought", Verb = "Thinking", Status = "completed", Out = text, Ms = 18000 };
 
-    static StepInfo Run(string cmd, string output, int exit) => new() { K = "run", Verb = "Ran", Cmd = cmd, Status = exit == 0 ? "completed" : "failed", Out = output, Exit = exit, Ms = 2400 };
+    internal static StepInfo Run(string cmd, string output, int exit) => new() { K = "run", Verb = "Ran", Cmd = cmd, Status = exit == 0 ? "completed" : "failed", Out = output, Exit = exit, Ms = 2400 };
 
     const string Diff = "--- a/app/imports.ts\n+++ b/app/imports.ts\n@@ -1,6 +1,7 @@\n import { a } from './a';\n-import { b } from './b';\n-import { c } from './c';\n+import { c } from './c';\n+import { b } from './b';\n import { d } from './d';\n+import { e } from './e';\n \n export const all = [a, b, c, d];\n";
 
-    static StepInfo Edit(string name, string dir, string diff = Diff, int add = 3, int del = 2) => new() { K = "edit", Verb = "Edited", Name = name, Dir = dir, Status = "completed", Diff = diff, Add = add, Del = del };
+    internal static StepInfo Edit(string name, string dir, string diff = Diff, int add = 3, int del = 2) => new() { K = "edit", Verb = "Edited", Name = name, Dir = dir, Status = "completed", Diff = diff, Add = add, Del = del };
 
     const string Answer = """
         I sorted the imports in `app/imports.ts` and added the missing one.
@@ -166,6 +166,7 @@ static class ChatShots
             await Shot(core, directory, "chat-extra-huge-diff", 1200, 720, () => { ui.Accept(State(Busy(), Finished(), asking, queued, broken, withPicture, longSession, hugeSession)); ui.OpenChat(7); S(); ui.OpenFirstChange(); }, rounds: 60);
             var second = Session(8, "codex", "Another question", "waiting", 4, Turn("Delete the build folder", "", "waiting", 1)) with { Ask = Permission() with { Id = "n2", Command = "rm -rf build", Title = "Wants to delete files", Danger = true, Allow = "Delete", Reason = "Deletes files" } };
             await Shot(core, directory, "office-ask-two", 1200, 480, () => { ui.Accept(State(asking, second)); ui.CloseChat(); ui.ChatView = false; }, office: true);
+            await DeskShots.TakeAsync(directory, core);
         }
         catch (Exception e)
         {
@@ -231,7 +232,7 @@ static class ChatShots
         File.WriteAllBytes(file, png.ToArray());
     }
 
-    static async Task Shot(UiCore core, string directory, string name, int w, int h, Action setup, bool office = false, int rounds = 40)
+    internal static async Task Shot(UiCore core, string directory, string name, int w, int h, Action setup, bool office = false, int rounds = 40)
     {
         var ui = core.Ui;
         setup();

@@ -138,7 +138,24 @@ What `windows\Hover.Tests` covers:
   and access picked from their menus), its permission is answered in the chat, a reply's permission is
   answered from the notch's card, the first turn's checkpoint is restored (the second turn goes) and its
   message tried again, and a reply queued behind a run that never ends goes after Pause. The app writes
-  where its buttons are (`HOVER_UI_DUMP`) and the test clicks there.
+  where its buttons are (`HOVER_UI_DUMP`) and the test clicks there. Each of these tests first moves the app's
+  window to the screen's top left (`Input.Park`): Windows places every new window a little further down and right,
+  and on the runner's 1024-pixel screen a click on the right of a window that hangs over the edge is moved to the
+  edge and lands elsewhere.
+- **The desk** (any system): `DeskTests` (the card and its tiles, the tabs' rows, the terminal, a file opened, edited
+  and refused, a binary file, a file that went, the diff with its numbers and a 50,000-line diff cut at its budget,
+  agents, the pull request tab with and without the GitHub CLI, Open in, the cloud chip, the card's keys) and
+  `DeskReplyTests` (the stop square, a queue held after a stop, pictures pasted and refused, `@` and `/` lists, chips
+  and a chip the backend refuses, the model menu, the board, the history, the Kiro Web and Kiro CLI lists and adopt)
+  with a made-up backend; `DeskBackendTests` against a real `hover-backend` (the folder's data, the shell in the
+  folder and a command that never ends, saving and the refusal of a path outside the folder, Open in, chips, a 40 MB
+  picture, the GitHub CLI) — on Windows the shell is PowerShell.
+- **The desk in the real app** (`DeskAppTests`, Windows, needs `HOVER_APP_EXE`): a click on the desk opens its card,
+  the terminal runs a command and shows its output, a file is opened, edited and saved (the file on disk changes),
+  the diff shows the change, a picture is pasted (Ctrl+V of a clipboard bitmap) and a file attached with `@` and both
+  reach the backend and the agent, and a running turn is stopped with the square; the pull request tab with `gh`
+  hidden from the app (`PATH` and the Program Files folders) offers the setup, and with `gh` not signed in the sign-in
+  starts and is cancelled. The Install button is never clicked: it would really install `gh`.
 - **Voice, sound and music** (`windows\Hover.Voice.Tests`, `dotnet test`; needs `HOVER_BACKEND`):
   - *The whole voice flow through the real backend*, with a fake microphone that hands over 50 ms blocks, a fake Groq
     on the loopback (`HOVER_GROQ_BASE`, the only address the backend takes) and the stand-in agent: press, audio blocks,
@@ -167,7 +184,7 @@ What `windows\Hover.Tests` covers:
 - **Windows only**: DPAPI, the job object (what is in it dies with its handle; its children too),
   killing a host process kills the backend and the agent's child, single instance, the old
   "Hover Service" task removal, and `hoverai.exe` itself (a second launch exits, the first opens
-  its dashboard; killing it kills its backend; `--shots` writes the dashboard, the notch's and the panels' JPEGs: the chat view, the start screen, the new-task box, the questions, the menus and the odd inputs).
+  its dashboard; killing it kills its backend; `--shots` writes the dashboard, the notch's and the panels' JPEGs: the chat view, the start screen, the new-task box, the questions, the menus, the odd inputs, the desk card and its tabs, the expanded chat and the office's panels).
 
 Run it by hand (on Windows or, for everything not marked Windows only, on Linux). The tests start
 real programs and want these set, as the workflow does:

@@ -649,6 +649,23 @@ public class DeskTests
     }
 
     [Fact]
+    public void The_cloud_chip_opens_the_session_on_Kiro_Web_as_the_Go_chip_does()
+    {
+        var opened = new List<string>();
+        var ui = new OfficeUi(new FakeShaper(), new UiEnv { Send = _ => { }, Clipboard = new FakeClipboard(), OpenUrl = opened.Add });
+        ui.Accept(new StateEvent
+        {
+            Tools = [new ToolInfo { Id = "kiro", Name = "Kiro", Ready = true }],
+            Sessions = [Done() with { Cloud = [], Extra = new() { ["kiroId"] = J("\"abc 1\"") } }],
+        });
+        ui.OpenChat(1);
+        ui.Paint(new RecordingCanvas(), 1200, 720, 1000);
+        Assert.True(ui.Click("openCloud"));
+        // internal/shell/chatact.go dOpenCloud: agents.KiroWebSession + the session's id.
+        Assert.Equal(["https://app.kiro.dev/session/abc%201"], opened);
+    }
+
+    [Fact]
     public void The_card_follows_the_bot_when_the_office_says_where_it_is()
     {
         var sent = new List<BackendCommand>();
