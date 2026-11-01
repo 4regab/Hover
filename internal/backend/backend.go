@@ -84,6 +84,10 @@ type Backend struct {
 	// was looked at.
 	spaceMu   sync.Mutex
 	spaceBusy map[string]time.Time
+	// The Windows host's: the last Kiro Web and Kiro CLI listings, and the shells of the
+	// chats that use one.
+	listed listed
+	terms  terms
 }
 
 // decodeKey is Convert.FromBase64String.
@@ -123,7 +127,13 @@ func initialize(m core.JSON, link *Link) (*Backend, error) {
 			return nil, err
 		}
 	}
-	return newBackend(link)
+	b, err := newBackend(link)
+	// The Windows host asks (`reattach: true`) for the Kiro Web tasks that were cut off when
+	// it last closed to be followed on, as the Go app does at its start. After `initialized`.
+	if on, _ := boolOf(m, "reattach"); on && err == nil {
+		b.sessions.ReattachCutOff()
+	}
+	return b, err
 }
 
 // testRunner stands in for the tools' runners when a test sets it (never set otherwise).
@@ -676,18 +686,7 @@ func (b *Backend) handle(m core.JSON) error {
 	case "new":
 		return b.start(m)
 	case "reply":
-		if s == nil {
-			if k, ok := strOf(m, "key"); ok {
-				if w, found := b.sessions.Wake(k); found {
-					s = &w
-				}
-			}
-		}
-		images := saveImages(m)
-		text, _ := strOf(m, "text")
-		if s == nil || !b.sessions.Reply(s.ID, text, images) {
-			return errors.New("Could not send this reply. A desk may be busy.")
-		}
+		return b.reply(m, s)
 	case "stop":
 		if s != nil {
 			b.sessions.Stop(s.ID)
@@ -714,6 +713,9 @@ func (b *Backend) handle(m core.JSON) error {
 				}
 			}
 			b.sessions.Delete(key)
+			if s != nil {
+				b.closeTerm(s.ID)
+			}
 			agents.ForgetApps(key)
 			// A project's desktop goes with its last session, in the office or the history.
 			if found && !b.usesFolder(gone) {
@@ -723,6 +725,7 @@ func (b *Backend) handle(m core.JSON) error {
 		}
 	case "remove":
 		if s != nil {
+			b.closeTerm(s.ID)
 			b.sessions.Dismiss(s.ID)
 			// Off once no agent of the project is left in the office.
 			left := false
@@ -874,6 +877,9 @@ func (b *Backend) handle(m core.JSON) error {
 		})
 	case "shutdown":
 		b.Shutdown()
+	default:
+		// What only the Windows host sends (tasks.go, deskmore.go, render.go, cloud.go).
+		return b.more(typ, m, s)
 	}
 	return nil
 }
@@ -884,6 +890,23 @@ func (b *Backend) start(m core.JSON) error {
 	tool, ok := core.ParseTool(optStrOf(m, "tool"))
 	if !ok {
 		tool = b.settings.AgentTool()
+	}
+	// The Windows host's `cloud`: a Kiro Web task works in its own sandbox. The session still
+	// has a folder here, the default workspace when none usable was picked.
+	cloud, inCloud, err := cloudOf(m, tool)
+	if err != nil {
+		return err
+	}
+	if inCloud && (folder == nil || !agents.UsableFolder(*folder)) {
+		dw := b.settings.DefaultWorkspace().Path()
+		if dw == "" {
+			return errors.New("Hover can’t find your home folder for the default workspace.")
+		}
+		f, err := core.EnsureFolder(dw)
+		if err != nil {
+			return err
+		}
+		folder = &f
 	}
 	if folder == nil || !agents.UsableFolder(*folder) {
 		return errors.New("Choose an existing project folder.")
@@ -903,14 +926,20 @@ func (b *Backend) start(m core.JSON) error {
 	if a, ok := strOf(m, "access"); ok && (a == "full" || a == "risky" || a == "always" || a == "read") {
 		access = a
 	}
-	b.settings.SetKiroFolder(folder)
+	// The new-task box's model and effort pills (`model`, `effort`), set as `setModel` sets them.
+	if err := b.applyModel(tool, m); err != nil {
+		return err
+	}
+	if !inCloud {
+		b.settings.SetKiroFolder(folder)
+	}
 	b.settings.SetAgentTool(tool)
 	busy := !b.canStart()
 	prompt, _ := strOf(m, "prompt")
 	if busy {
 		return errors.New("All available desks are busy, or the prompt is empty.")
 	}
-	if _, started := b.sessions.StartAs(tool, *folder, prompt, saveImages(m), &access); !started {
+	if _, started := b.sessions.StartBound(tool, *folder, prompt, saveImages(m), &access, cloud, core.SessionExt{}); !started {
 		return errors.New("All available desks are busy, or the prompt is empty.")
 	}
 	return nil
@@ -1061,6 +1090,7 @@ func (b *Backend) Shutdown() {
 	})
 	// The desktops themselves are turned off by the Mac host as Hover quits (a VM takes a
 	// while to stop, and this process is about to end); nothing waits on them here.
+	b.closeTerms()
 	agents.ClearBrowserHost()
 	b.browser.stop()
 	agents.BrowserStop()

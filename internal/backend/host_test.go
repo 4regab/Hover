@@ -54,6 +54,7 @@ var busyRuns struct {
 func fakeRun(kind string) agents.RunTask {
 	return func(a agents.RunArgs) agents.KiroResult {
 		a.Events(agents.KiroEvent{SessionID: strp("s1")})
+		a.Progress(agents.Thinking)
 		switch kind {
 		case "busy2":
 			busyRuns.Lock()
@@ -112,7 +113,9 @@ func startHost(t *testing.T, dir string, env ...string) *host {
 	h := &host{t: t, dir: dir, lines: make(chan msg, 1024)}
 	h.cmd = exec.Command(os.Args[0])
 	h.cmd.Dir = t.TempDir()
-	h.cmd.Env = append(os.Environ(), childEnv+"=1", "HOVER_DATA_DIR="+dir, "HOVER_NO_BROWSER=1")
+	// The tools look for their own settings and credentials under the home folder: an empty one.
+	home := t.TempDir()
+	h.cmd.Env = append(os.Environ(), childEnv+"=1", "HOVER_DATA_DIR="+dir, "HOVER_NO_BROWSER=1", "HOME="+home, "USERPROFILE="+home)
 	h.cmd.Env = append(h.cmd.Env, env...)
 	h.cmd.Stderr = &h.stderr
 	in, err := h.cmd.StdinPipe()
@@ -135,6 +138,9 @@ func startHost(t *testing.T, dir string, env ...string) *host {
 				var m msg
 				if json.Unmarshal([]byte(line), &m) == nil {
 					h.mu.Lock()
+					if len(line) > 300 {
+						line = line[:300] + "…"
+					}
 					h.seen = append(h.seen, line)
 					h.mu.Unlock()
 					h.lines <- m
@@ -293,4 +299,77 @@ func tree(t *testing.T, dir string) map[string]string {
 		return nil
 	})
 	return out
+}
+
+// taskHost is a started backend whose agent-access notice was reviewed, so tasks can start,
+// with the stand-in agent kind names (see fakeRun).
+func taskHost(t *testing.T, fake string, more ...func(*core.Settings)) *host {
+	t.Helper()
+	dir := t.TempDir()
+	noticed(t, dir, more...)
+	h := startHost(t, dir, "HOVER_FAKE_RUN="+fake)
+	h.start()
+	return h
+}
+
+// newTask starts a task for the tool in a folder of its own and returns its session id and
+// folder, once the office shows it.
+func (h *host) newTask(prompt string, extra ...msg) (id float64, folder string) {
+	h.t.Helper()
+	folder = h.t.TempDir()
+	c := msg{"type": "new", "tool": "kiro", "folder": folder, "prompt": prompt}
+	for _, e := range extra {
+		for k, v := range e {
+			c[k] = v
+		}
+	}
+	h.send(c)
+	st := h.until("the task in the office", func(m msg) bool { return m["type"] == "state" && sessionAt(m, 0) != nil })
+	return num(sessionAt(st, 0), "id"), folder
+}
+
+// stage waits for a state in which session id is at that stage.
+func (h *host) stage(id float64, stage string) msg {
+	h.t.Helper()
+	return h.until("session "+stage, func(m msg) bool {
+		if m["type"] != "state" {
+			return false
+		}
+		for _, x := range arr(m, "sessions") {
+			if s := x.(map[string]any); num(s, "id") == id && s["stage"] == stage {
+				return true
+			}
+		}
+		return false
+	})
+}
+
+// sessionByID is the state's session with that id.
+func sessionByID(st msg, id float64) msg {
+	for _, x := range arr(st, "sessions") {
+		if s := x.(map[string]any); num(s, "id") == id {
+			return s
+		}
+	}
+	return nil
+}
+
+// refused sends the command and expects it to be refused: a toast, or the answer event with
+// ok false, either of which names a reason. It returns that reason.
+func (h *host) refused(command msg, answer string) string {
+	h.t.Helper()
+	h.send(command)
+	m := h.until("a refusal of "+fmt.Sprint(command["type"]), func(m msg) bool {
+		return m["type"] == "toast" || answer != "" && m["type"] == answer
+	})
+	if m["type"] == "toast" {
+		return str(m, "text")
+	}
+	if m["ok"] != false {
+		h.t.Fatalf("%v was accepted: %v", command, m)
+	}
+	if str(m, "error") == "" {
+		h.t.Fatalf("%v: refused without a reason: %v", command["type"], m)
+	}
+	return str(m, "error")
 }

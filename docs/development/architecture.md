@@ -263,6 +263,68 @@ files and passes the "continue when busy" setting to the sessions.
 code"), `state.sessions[].activity` `{verb, obj}` (`agents.Activity`), `ended.body` (the
 answer's first line, `agents.TextFirstLine(agents.Plain(text))`) and `ended.took` (seconds).
 
+**Answers and failures.** A command that has no answer event of its own shows a `toast` when
+it fails. A command that has one (the tables below name it) answers with `ok: false` and
+`error` instead, so a host waiting for it is not left waiting. Answers to commands that name
+a session echo its `id`; the rendering commands echo a `ref` the host picks (a string up to
+64 characters, or a number), so several can be in flight.
+
+**Start, again.** `initialize` also takes `reattach: true`: after `initialized`, Kiro Web
+tasks that were still working when the host last closed come back to desks and are followed
+on (`KiroSessions.ReattachCutOff`, as the Go app does at its start). It is off unless sent, so
+the Mac host starts as before.
+
+**Tasks and chat** (`internal/backend/tasks.go`).
+
+| Command | Answer | Does |
+|---|---|---|
+| `new` + `cloud` (list of `owner/name`, up to 8; `[]` is an empty workspace), `model`, `effort` | `state` | `KiroSessions.StartBound`. `cloud` is for Kiro only; with no usable `folder` the task gets the default workspace, as the new-task box does. `model` and `effort` are set as `setModel` sets them. The new-task box has no attachments, so `new` takes no `chips`. |
+| `reply` + `chips` (core.Chip JSON, up to 32) | `state` | `KiroSessions.ReplyMsg`, after `agents.CheckChips` against the chat's folder; a chip that cannot be sent stops the reply and says why. |
+| `pause` `{id}` | `state` | `KiroSessions.Pause`: the turn is cancelled through the tool, the conversation stays. |
+| `queueSendNow` `{id, uid}` | `state` (and a toast when it stops a run) | `SendNowQueued`. |
+| `queueRemove` `{id, uid}` | `queueRemove` `{id, uid, ok, text, images, chips}` | `RemoveQueued`; the words go back to the composer. |
+| `queueResume` `{id}` | `state` | `ResumeQueue`. |
+| `rename` `{id, name}` | `state` | `Rename`; up to 200 characters; empty keeps the title. |
+| `switchProvider` `{id, to}` | `switchProvider` `{id, to, ok, mode, carried, omitted, notes}` | `ParseTarget`, `SwitchProvider`. |
+| `fork` `{id, turn, to}` | `fork` `{id, ok, forkId, key}` | `Fork`, in the chat's folder; `to` defaults to the chat's own agent. |
+| `bringBack` `{id}` | `bringBack` `{id, ok, count}` | `BringFindingsBack`. |
+
+Sessions in `state` also carry `cloud` (repositories, or null), `ext` (`core.SessionExt` JSON:
+name, workspace, lineage), `held` and `commands` (`[{name, description}]`); each turn carries
+`uid`, `chips` and `switchTo`.
+
+**Kiro Web and Kiro CLI** (`cloud.go`).
+
+| Command | Answer | Does |
+|---|---|---|
+| `cloudRepos` | `cloudRepos` `{ok, done, saved, repos, error}`: first the list saved last time for this account (`done: false`), then Kiro's (`done: true`) | `Runtime.Repos`; keeps `repos.json` as the Go app does. |
+| `webSessions` | `webSessions` `{ok, sessions[{id, title, updated}], note, error}` | `Runtime.CloudSessions`, without the ones Hover has. |
+| `adoptWeb` `{id}` | `adoptWeb` `{id, ok, sessionId, error}` | `Runtime.CloudTranscript`, `AdoptCloud`. The id must be in the last `webSessions` answer. |
+| `cliSessions` | `cliSessions` `{ok, sessions[{id, title, folder, updated}], error}` | `Runtime.LocalSessions`, in folders Hover knows. |
+| `adoptCli` `{id}` | `adoptCli` `{id, ok, sessionId, error}` | `Runtime.LocalTranscript`, `AdoptLocal`. |
+
+**Desk tools** (`deskmore.go`).
+
+| Command | Answer | Does |
+|---|---|---|
+| `term` `{id, op, cmd}`; `op` is `run`, `interrupt`, `clear` or `view` (default) | `term` `{id, ok, cwd, running, total, from, entries[{cwd, cmd, lines[{text, err}], run{kind, code, ms}, cut}]}`, and again as the shell prints | `agents.NewTerm` per chat, in its folder; PowerShell on Windows. A view has every entry; updates carry the entries from `from` on. Ended with the chat and with the backend. |
+| `writeFile` `{id, path, text}` | `writeFile` `{id, path, ok, error}` | `agents.DeskWriteFile`: a file already in the chat's folder, plain UTF-8, links followed. |
+| `editors` | `editors` `{ok, choices[{id, name, last}]}` | `AvailableEditors`, `EditorChoices`. |
+| `openIn` `{id, editor, file, line, column}` | `openIn` `{id, ok, editor, said, error}` | `OpenIn`, `OpenFileManager`, or with no editor `OpenEditorOrFirst`; sets `LastEditor`. A file outside the folder is dropped. |
+| `inspectFolder` `{folder}` | `inspectFolder` `{folder, ok, git, branch, worktree, repo, reason}` | `agents.Inspect`, and the GitHub repository the remote names. |
+
+**Reading answers** (`render.go`). Each answers with `{ref, ok, ...}`.
+
+| Command | Answer | Does |
+|---|---|---|
+| `markdown` `{src, folder, files, format}` | `blocks[...]` or `html` | `md.Parse` (`format` `blocks`, the default) or `md.Markdown` (`html`); pictures through `md.ImageFor`. Blocks have `kind` (`para`, `heading`, `rule`, `code`, `diagram`, `quote`, `list`, `table`) and the fields of that kind. |
+| `highlight` `{info, text}` | `spans[{b0, b1, u0, u1, r, g, b, a, em}]` | `chat.Highlight`; byte and UTF-16 offsets. |
+| `diffLines` `{diff}` | `lines[{n, hasN, gap, text}]` | `chat.Numbered`. |
+| `flowchart` `{src}` | `readable`, `graph{dir, w, h, nodes, edges}`, `svg` | `diagram.Layout`, `diagram.Flowchart`; `readable: false` for what it cannot read. |
+
+Limits: Markdown 8 MiB, code and changes 4 MiB, a flowchart 200 KiB, a name 200 characters,
+a command 16,000 characters, a saved file 1 MiB.
+
 ## Packages
 
 | Package | What it owns | Window? |

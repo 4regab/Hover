@@ -114,6 +114,7 @@ try:
  s=state['sessions'][0];assert s['turns'][0]['answer']=='Sandbox reply',s
  # The words the Windows notch shows come with every session (added fields).
  assert s['status']=='All done' and s['activity']['verb']=='Done' and 'obj' in s['activity'],s
+ assert s['cloud'] is None and s['held'] is False and s['turns'][0]['uid'] and s['turns'][0]['chips']==[],s
  kinds=[x['k'] for x in s['turns'][0]['steps']]
  assert 'thought' in kinds and 'agent' in kinds and 'run' in kinds and 'edit' in kinds,kinds
  def desk(what):
@@ -177,6 +178,13 @@ try:
  assert model['Appearance']=='System' and model['ScWorkspace']['Key'] in ('N',78),model
  send({'type':'setSetting','key':'Appearance','value':'Dark'})
  assert until(lambda m:m.get('type')=='settings')['model']['Appearance']=='Dark'
+ # Reading an answer: the same Go functions the Go chat uses, asked by a native host.
+ send({'type':'markdown','src':'# Hi\n\nSome **bold**.','ref':1})
+ md=until(lambda m:m.get('type')=='markdown')
+ assert md['ok'] and md['ref']==1 and [b['kind'] for b in md['blocks']]==['heading','para'],md
+ send({'type':'flowchart','src':'graph LR\n A-->B','ref':2})
+ fc=until(lambda m:m.get('type')=='flowchart')
+ assert fc['ok'] and fc['readable'] and len(fc['graph']['nodes'])==2 and fc['svg'].startswith('<svg'),fc
  send({'type':'setModel'})
  assert until(lambda m:m.get('type')=='state')['history']==[]
  send({'type':'shutdown'});p.wait(timeout=15);assert p.returncode==0
