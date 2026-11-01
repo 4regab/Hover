@@ -13,7 +13,6 @@ static class TestEnvironment
 {
     public static string Backend => Require("HOVER_BACKEND");
     public static string DataTool => Require("HOVER_DATA_TOOL");
-    public static string GoFixture => Require("HOVER_GOFIXTURE");
 
     /// <summary>hoverai.exe, for the checks of the app itself; null when they are not asked for.</summary>
     public static string? AppExe => Environment.GetEnvironmentVariable("HOVER_APP_EXE") is { Length: > 0 } p ? p : null;
@@ -131,16 +130,18 @@ readonly record struct ProcessResult(int ExitCode, string Output, string Error);
 
 static class ProcessRunner
 {
-    /// <summary>Runs a program to its end and returns what it wrote.</summary>
+    /// <summary>Runs a program to its end and returns what it wrote. <paramref name="input"/>, when given, is its standard input (one line).</summary>
     public static ProcessResult Run(string file, IEnumerable<string> args, IDictionary<string, string?>? environment = null,
-        string? workingDirectory = null, TimeSpan? timeout = null)
+        string? workingDirectory = null, TimeSpan? timeout = null, string? input = null)
     {
         var info = new ProcessStartInfo(file)
         {
             UseShellExecute = false, CreateNoWindow = true,
-            RedirectStandardOutput = true, RedirectStandardError = true,
+            RedirectStandardOutput = true, RedirectStandardError = true, RedirectStandardInput = input is not null,
             StandardOutputEncoding = Encoding.UTF8, StandardErrorEncoding = Encoding.UTF8,
         };
+        // No byte order mark: the Go side reads the first line as it is.
+        if (input is not null) info.StandardInputEncoding = new UTF8Encoding(false);
         foreach (var a in args) info.ArgumentList.Add(a);
         if (workingDirectory is not null) info.WorkingDirectory = workingDirectory;
         foreach (var (name, value) in environment ?? new Dictionary<string, string?>())
@@ -149,6 +150,11 @@ static class ProcessRunner
             else info.Environment[name] = value;
         }
         using var process = Process.Start(info)!;
+        if (input is not null)
+        {
+            process.StandardInput.WriteLine(input);
+            process.StandardInput.Close();
+        }
         var output = process.StandardOutput.ReadToEndAsync();
         var error = process.StandardError.ReadToEndAsync();
         if (!process.WaitForExit(timeout ?? TimeSpan.FromSeconds(60)))

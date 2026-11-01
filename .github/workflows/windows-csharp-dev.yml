@@ -40,15 +40,14 @@ jobs:
         with:
           dotnet-version: 10.0.x
 
-      # The Go side: the backend the app starts, the tool that makes and checks data folders,
-      # and gofixture (windows/tools), which writes and reads a secret with the Go code.
+      # The Go side: the backend the app starts, and the tool that makes and checks data folders
+      # (and keeps and checks a secret with the Go code: hover-data secret).
       - name: Go programs
         run: |
           $PSNativeCommandUseErrorActionPreference = $true
           New-Item -ItemType Directory -Force out\bin, out\logs | Out-Null
           go build -o out\bin\hover-backend.exe ./cmd/hover-backend
           go build -o out\bin\hover-data.exe ./cmd/hover-data
-          go build -o out\bin\gofixture.exe ./windows/tools/gofixture
           Get-ChildItem out\bin | Select-Object Name, Length | Format-Table | Out-String | Write-Host
 
       # note.key is wrapped for the Windows user (DPAPI), so a data folder the Go code writes
@@ -90,7 +89,6 @@ jobs:
         run: |
           $env:HOVER_BACKEND = (Resolve-Path out\bin\hover-backend.exe).Path
           $env:HOVER_DATA_TOOL = (Resolve-Path out\bin\hover-data.exe).Path
-          $env:HOVER_GOFIXTURE = (Resolve-Path out\bin\gofixture.exe).Path
           $projects = Get-ChildItem windows -Directory -Filter '*.Tests' | ForEach-Object { Get-ChildItem $_.FullName -Filter '*.csproj' }
           if (-not $projects) { throw 'no test project under windows\' }
           $failed = @()

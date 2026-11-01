@@ -86,7 +86,7 @@ on a Mac.
 `.github/workflows/windows-csharp-dev.yml` runs on every push to `windows-csharp` (Phase 6
 folds it into `ci.yml`). On `windows-2022` it:
 
-- builds `hover-backend.exe`, `hover-data.exe` and `gofixture.exe` from the Go code;
+- builds `hover-backend.exe` and `hover-data.exe` from the Go code;
 - makes a Go data folder (`hover-data write`, then `dump` and `check`) and keeps it in the same
   job, because `note.key` is bound to the Windows user and cannot be carried to another machine;
 - builds `windows\Hover.Windows.slnx`;
@@ -108,7 +108,8 @@ What `windows\Hover.Tests` covers:
   the middle of a command.
 - **Data compatibility**: the Go-written folder opened by C# (the key through DPAPI, the sealed
   history and a secret read by test code of its own, then the backend started by the host), and the
-  C#-written folder read by `hover-data dump` and `check` and `gofixture`.
+  C#-written folder read by `hover-data dump`, `check` and `secret check`. The secret the Go side keeps is
+  written with `hover-data secret set`.
 - **The notch's rules against Go** (`NotchGoldenTests`): sizes, placement, easing, every frame of
   the shape, the outline text, the hit region at 108 points, the zones, the resting shape's spring,
   opening and closing, every poll of the pointer rules, the island's clock and "took" text, the
@@ -233,7 +234,6 @@ real programs and want these set, as the workflow does:
 ```powershell
 $env:HOVER_BACKEND    = "out\bin\hover-backend.exe"     # go build ./cmd/hover-backend
 $env:HOVER_DATA_TOOL  = "out\bin\hover-data.exe"        # go build ./cmd/hover-data
-$env:HOVER_GOFIXTURE  = "out\bin\gofixture.exe"         # go build ./windows/tools/gofixture
 $env:HOVER_FIXTURE_GO = "$env:TEMP\fixture-go"           # made by: hover-data write <dir> <dir>\project 2 <dir>\answer.md
 $env:HOVER_APP_EXE    = "windows\Hover\bin\Release\...\hoverai.exe"   # optional: the app's own checks
 dotnet test windows\Hover.Tests

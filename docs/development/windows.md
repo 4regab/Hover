@@ -103,7 +103,6 @@ Windows build until the owner switches over (`build.ps1 legacy`). The C# code is
 | `windows\Hover.TestTools` | Programs the tests start: stand-ins for `codex-acp` and `codex`, a backend that misbehaves on purpose, a host to be killed. |
 | `windows\Hover.Tests` | `dotnet test`. |
 | `windows\Hover.Voice.Tests` | `dotnet test` for voice, sound and music (see [testing.md](testing.md#the-c-windows-app)). |
-| `windows\tools\gofixture` | A small Go program for the tests: writes and reads a secret with the Go code. |
 
 Prerequisites: the .NET 10 SDK (`winget install Microsoft.DotNet.SDK.10`) and Go as above. No
 Visual Studio. The Windows App SDK, Windows SDK build tools and test packages come from NuGet.

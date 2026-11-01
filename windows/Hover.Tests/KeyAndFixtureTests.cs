@@ -187,12 +187,12 @@ public class GoCompatibilityTests(ITestOutputHelper output)
 {
     static Dictionary<string, string?> DataEnv(string data) => new() { ["HOVER_DATA_DIR"] = data };
 
-    static string GoSecret(string data, params string[] args)
-    {
-        var result = ProcessRunner.Run(TestEnvironment.GoFixture, args, DataEnv(data));
-        Assert.True(result.ExitCode == 0, $"gofixture {args[0]} failed ({result.ExitCode}): {result.Error}");
-        return result.Output.TrimEnd('\r', '\n');
-    }
+    /// <summary>
+    /// <c>hover-data secret set|check</c>: the Go code keeps and reads secrets.dat. The key is on standard
+    /// input, as the tool wants it; it prints no key. Returns the exit code and what the tool said.
+    /// </summary>
+    static ProcessResult GoSecret(string data, string op, string name, string key) =>
+        ProcessRunner.Run(TestEnvironment.DataTool, ["secret", op, data, name], DataEnv(data), input: key);
 
     /// <summary>secrets.dat, opened by the test's own sealing code: a JSON object of name to value.</summary>
     static string? SecretOf(string data, byte[] key, string name)
@@ -236,7 +236,8 @@ public class GoCompatibilityTests(ITestOutputHelper output)
         output.WriteLine($"C# opened the Go history {sessionKey[..8]}… with the key from note.key");
 
         // A secret written by the Go code, opened by this test.
-        GoSecret(data, "secrets-set", "voice.groq", "gsk_from_go_\u00e9");
+        var kept = GoSecret(data, "set", "voice.groq", "gsk_from_go_\u00e9");
+        Assert.True(kept.ExitCode == 0, $"hover-data secret set failed ({kept.ExitCode}): {kept.Output}{kept.Error}");
         Assert.Equal("gsk_from_go_\u00e9", SecretOf(data, key, "voice.groq"));
 
         // The Go backend, started by the C# host with that key: a run that is asked for nothing
@@ -304,7 +305,10 @@ public class GoCompatibilityTests(ITestOutputHelper output)
         var check = ProcessRunner.Run(TestEnvironment.DataTool, ["check", data], DataEnv(data));
         output.WriteLine(check.Output);
         Assert.True(check.ExitCode == 0, check.Output + check.Error);
-        Assert.Equal("gsk_from_csharp_\u00e9", GoSecret(data, "secrets-get", "voice.groq"));
+        // The Go code opens it: `check` with a key on standard input passes only for that key.
+        var same = GoSecret(data, "check", "voice.groq", "gsk_from_csharp_\u00e9");
+        Assert.True(same.ExitCode == 0, $"hover-data secret check did not open the C# secrets.dat ({same.ExitCode}): {same.Output}{same.Error}");
+        Assert.NotEqual(0, GoSecret(data, "check", "voice.groq", "gsk_another_key").ExitCode);
     }
 }
 
