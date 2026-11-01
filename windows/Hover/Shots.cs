@@ -20,6 +20,7 @@ public static class Shots
     {
         Directory.CreateDirectory(directory);
         await Save(dashboard.Root, Path.Combine(directory, "dashboard.jpg"));
+        await Hover.Windowing.NotchShots.TakeAsync(directory);
     }
 
     static async Task Save(FrameworkElement view, string file)
@@ -43,16 +44,21 @@ public static class Shots
         var bytes = new byte[pixels.Length];
         using (var reader = DataReader.FromBuffer(pixels)) reader.ReadBytes(bytes);
 
+        await WriteJpegAsync(bytes, bitmap.PixelWidth, bitmap.PixelHeight, file);
+        HostLog.Line($"picture {file} ({bitmap.PixelWidth} x {bitmap.PixelHeight})");
+    }
+
+    /// <summary>Writes opaque BGRA pixels as a JPEG file.</summary>
+    public static async Task WriteJpegAsync(byte[] bgra, int width, int height, string file)
+    {
         using var stream = new InMemoryRandomAccessStream();
         var encoder = await BitmapEncoder.CreateAsync(BitmapEncoder.JpegEncoderId, stream);
-        encoder.SetPixelData(BitmapPixelFormat.Bgra8, BitmapAlphaMode.Ignore,
-            (uint)bitmap.PixelWidth, (uint)bitmap.PixelHeight, 96, 96, bytes);
+        encoder.SetPixelData(BitmapPixelFormat.Bgra8, BitmapAlphaMode.Ignore, (uint)width, (uint)height, 96, 96, bgra);
         await encoder.FlushAsync();
 
         stream.Seek(0);
         var jpeg = new byte[stream.Size];
         using (var reader = new DataReader(stream)) { await reader.LoadAsync((uint)stream.Size); reader.ReadBytes(jpeg); }
         await File.WriteAllBytesAsync(file, jpeg);
-        HostLog.Line($"picture {file} ({bitmap.PixelWidth} x {bitmap.PixelHeight})");
     }
 }

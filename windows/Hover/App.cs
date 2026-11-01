@@ -1,5 +1,6 @@
 using System.Runtime.InteropServices;
 using Hover.Host;
+using Hover.Windowing;
 using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
@@ -32,6 +33,7 @@ public sealed class App : Application, IXamlMetadataProvider
     readonly BackendSession backend = new();
     DispatcherQueue? queue;
     DashboardWindow? dashboard;
+    NotchHost? notch;
     bool quitting;
 
     public App(LaunchOptions launch, string dataDir)
@@ -100,7 +102,13 @@ public sealed class App : Application, IXamlMetadataProvider
             HostLog.Line("started");
             // Not for pictures: they leave the machine as they found it.
             if (launch.ShotsDirectory is null) _ = Task.Run(() => OldService.RemoveOnceAsync(dataDir));
-            if (!launch.Background || showAtOnce || launch.ShotsDirectory is not null) OpenDashboard();
+            // Pictures run without the notch, the tray or the shortcut: they leave the machine as they found it.
+            if (launch.ShotsDirectory is null)
+            {
+                notch = NotchHost.TryStart(queue!, backend, new NotchCallbacks(OpenDashboard, () => _ = QuitAsync(), () => dashboard?.IsActive == true));
+            }
+            // With no notch there would be nothing to see, so the window opens.
+            if (launch.Dashboard || showAtOnce || launch.ShotsDirectory is not null || (notch is null && !launch.Background)) OpenDashboard();
             await backend.StartAsync(dataDir);
 
             if (launch.ShotsDirectory is { } directory)
@@ -124,12 +132,23 @@ public sealed class App : Application, IXamlMetadataProvider
         if (dashboard is null)
         {
             dashboard = new DashboardWindow(dataDir, backend);
-            // Until the tray and the notch exist there is nothing to leave running, so closing
-            // the dashboard quits.
+            // Closing the window hides it; the app keeps running in the tray. Quit is in the tray
+            // menu. Without a notch there is no tray to bring it back from, so closing quits.
+            dashboard.AppWindow.Closing += (_, closing) =>
+            {
+                if (quitting || notch is null) return;
+                closing.Cancel = true;
+                dashboard.AppWindow.Hide();
+                HostLog.Line("the dashboard was hidden to the tray");
+            };
+            dashboard.Activated += (_, activation) =>
+            {
+                if (activation.WindowActivationState != WindowActivationState.Deactivated) notch?.Seen();
+            };
             dashboard.Closed += (_, _) =>
             {
                 dashboard = null;
-                _ = QuitAsync();
+                if (!quitting) _ = QuitAsync();
             };
         }
         dashboard.AppWindow.Show();
@@ -142,6 +161,11 @@ public sealed class App : Application, IXamlMetadataProvider
     {
         if (quitting) return;
         quitting = true;
+        HostLog.Line("quitting");
+        // The tray icon goes first, so it does not linger after the process; then the backend
+        // writes the history and the settings and stops.
+        notch?.Dispose();
+        notch = null;
         await backend.DisposeAsync();
         Exit();
     }

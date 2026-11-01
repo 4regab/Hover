@@ -20,6 +20,12 @@ public sealed class BackendSession : IAsyncDisposable
 
     public event Action? Changed;
 
+    /// <summary>A message from the backend. Raised on the backend reader's thread, not the UI thread.</summary>
+    public event Action<BackendEvent>? Event;
+
+    /// <summary>Sends a command; nothing happens while there is no backend.</summary>
+    public void Send(BackendCommand command) => client?.Send(command);
+
     public async Task StartAsync(string dataDir)
     {
         // Null is "no key this run": the backend still starts, with the history off, and
@@ -41,6 +47,9 @@ public sealed class BackendSession : IAsyncDisposable
             client.Exited += code => Update($"The agent backend stopped ({code}).");
             await client.InitializeAsync(key);
             Ready = true;
+            // The settings the notch follows, and the first look at the tools and the quotas.
+            client.Send(new SettingsCommand());
+            client.Send(new ReadyCommand());
             Update(key is null ? "The agent backend is ready. The history is off this run: its key could not be read." : "The agent backend is ready.");
         }
         catch (Exception e) when (e is BackendException or InvalidOperationException or System.ComponentModel.Win32Exception)
@@ -52,6 +61,7 @@ public sealed class BackendSession : IAsyncDisposable
     void OnEvent(BackendEvent e)
     {
         if (e is ToastEvent toast) HostLog.Line($"backend toast: {toast.Text}");
+        Event?.Invoke(e);
     }
 
     void Update(string status)

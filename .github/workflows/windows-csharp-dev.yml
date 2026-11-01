@@ -122,6 +122,14 @@ jobs:
           $bytes = [System.IO.File]::ReadAllBytes($jpeg)
           if ($bytes.Length -lt 2000 -or $bytes[0] -ne 0xFF -or $bytes[1] -ne 0xD8) { throw "$jpeg is not a JPEG picture" }
           "dashboard.jpg: $($bytes.Length) bytes"
+          # The notch's states, named as the Go app's pictures are.
+          foreach ($name in 'notch-rest-pill-2x', 'notch-rest-working-2x', 'notch-rest-ask-2x', 'notch-rest-done-2x', 'notch-rest-card-2x', 'notch-open-office') {
+            $file = Join-Path $shots "$name.jpg"
+            if (-not (Test-Path $file)) { throw "$name.jpg was not made" }
+            $b = [System.IO.File]::ReadAllBytes($file)
+            if ($b.Length -lt 1500 -or $b[0] -ne 0xFF -or $b[1] -ne 0xD8) { throw "$name.jpg is not a JPEG picture" }
+            "$name.jpg: $($b.Length) bytes"
+          }
 
       # If the app died, Windows says which module did it.
       - name: App crash reports

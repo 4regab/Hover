@@ -16,12 +16,24 @@
     <SelfContained>true</SelfContained>
     <EnableMsixTooling>true</EnableMsixTooling>
     <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>Assets\hover.ico</ApplicationIcon>
     <StartupObject>Hover.Program</StartupObject>
     <!-- This app has its own Main; there is no App.xaml. -->
     <DefineConstants>$(DefineConstants);DISABLE_XAML_GENERATED_MAIN</DefineConstants>
   </PropertyGroup>
   <ItemGroup>
+    <!-- The Inter weights the notch's text is set in; they are looked up beside the program. -->
+    <None Include="Assets\Fonts\*.ttf" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+  <ItemGroup>
     <PackageReference Include="Microsoft.WindowsAppSDK" Version="2.6.4" />
+    <!-- The notch is drawn with Direct2D and DirectWrite onto a Direct3D 11 swap chain that
+         DirectComposition shows; Vortice is the managed binding for all four. -->
+    <PackageReference Include="Vortice.Direct2D1" Version="3.8.3" />
+    <PackageReference Include="Vortice.Direct3D11" Version="3.8.3" />
+    <PackageReference Include="Vortice.DirectComposition" Version="3.8.3" />
+    <PackageReference Include="Vortice.DXGI" Version="3.8.3" />
     <ProjectReference Include="..\Hover.Host\Hover.Host.csproj" />
+    <ProjectReference Include="..\Hover.Notch\Hover.Notch.csproj" />
   </ItemGroup>
 </Project>
