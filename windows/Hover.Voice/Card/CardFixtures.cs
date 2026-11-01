@@ -6,7 +6,8 @@ using Hover.Notch;
 namespace Hover.Voice;
 
 /// <summary>One picture of the card: its name (the Go pictures' names), the window, the scale and what to draw.</summary>
-public sealed record CardShotSpec(string Name, int Width, int Height, double Scale, VoiceView View, Action<CardUi>? Setup = null);
+/// <summary><c>OpenH</c> is the open notch's height: the room the card has.</summary>
+public sealed record CardShotSpec(string Name, int Width, int Height, double Scale, VoiceView View, Action<CardUi>? Setup = null, double OpenH = 440);
 
 /// <summary>
 /// The card's pictures, named as <c>internal/shots/voice.go</c> names them: every stage at the four
@@ -134,23 +135,23 @@ public static class CardFixtures
             foreach (var (name, stage, fill) in stages)
             {
                 var view = scene.Show(stage, fill);
-                yield return new CardShotSpec($"voice-{tag}-{name}", ww, 200, 1, view, AuraFor(view, 1));
-                if (isDefault) yield return new CardShotSpec($"voice-{tag}-{name}-2x", ww, 200, 2, view, AuraFor(view, 2));
+                yield return new CardShotSpec($"voice-{tag}-{name}", ww, 200, 1, view, AuraFor(view, 1), open.H);
+                if (isDefault) yield return new CardShotSpec($"voice-{tag}-{name}-2x", ww, 200, 2, view, AuraFor(view, 2), open.H);
             }
             if (isDefault)
             {
                 // "Take a screenshot" while listening: the flash, then the note; then the preview with the pictures it will send, each with its x.
                 var listening = scene.Show(VoiceStage.Recording, j => { j["level"] = 0.6; j["secs"] = 6.8; j["shots"] = Tools("a"); j["shotCount"] = 1; j["shotMessage"] = "Screenshot attached"; });
                 var flash = listening with { Flash = true, Note = "Screenshot attached", Shots = ["a"] };
-                yield return new CardShotSpec("voice-default-screenshot-flash-2x", ww, 200, 2, flash, ui => { AuraFor(flash, 2)(ui); ui.UpdateFlash(true, 0); ui.Thumbs = Thumb; });
+                yield return new CardShotSpec("voice-default-screenshot-flash-2x", ww, 200, 2, flash, ui => { AuraFor(flash, 2)(ui); ui.UpdateFlash(true, 0); ui.Thumbs = Thumb; }, open.H);
                 var note = flash with { Flash = false };
-                yield return new CardShotSpec("voice-default-screenshot-note-2x", ww, 200, 2, note, ui => { AuraFor(note, 2)(ui); ui.Thumbs = Thumb; });
+                yield return new CardShotSpec("voice-default-screenshot-note-2x", ww, 200, 2, note, ui => { AuraFor(note, 2)(ui); ui.Thumbs = Thumb; }, open.H);
                 var withPictures = scene.Show(VoiceStage.Preview, j =>
                 {
                     var p = scene.Preview(proj, "Hover", "", "Fix the footer: it overlaps the menu on small screens.", 2.1, "full");
                     j["preview"] = p; j["canStart"] = true; j["tool"] = "codex"; j["shots"] = Tools("a", "b");
                 });
-                yield return new CardShotSpec("voice-default-preview-screenshots-2x", ww, wh, 2, withPictures, ui => ui.Thumbs = Thumb);
+                yield return new CardShotSpec("voice-default-preview-screenshots-2x", ww, wh, 2, withPictures, ui => ui.Thumbs = Thumb, open.H);
             }
 
             // The tallest the preview gets: the agent menu open over a long task with a note.
@@ -162,7 +163,7 @@ public static class CardFixtures
             });
             scene.Ctl.Act(new CardAct("openMenu", "", 1));
             var menu = scene.Ctl.View!;
-            yield return new CardShotSpec($"voice-{tag}-menu-long", ww, wh, 1, menu);
+            yield return new CardShotSpec($"voice-{tag}-menu-long", ww, wh, 1, menu, null, open.H);
             scene.Ctl.Act(new CardAct("openMenu", "", 0));
             _ = longView;
 
@@ -170,23 +171,23 @@ public static class CardFixtures
             {
                 // Kiro Web: no folder pick, and the repo menu with its search box.
                 var cloud = scene.Show(VoiceStage.Preview, j => { j["preview"] = scene.Preview(proj, "Hover", "", Task, 2.1, "risky", "kiro", cloud: true); j["canStart"] = true; j["tool"] = "kiro"; });
-                yield return new CardShotSpec("voice-default-cloud-no-folder", ww, 200, 1, cloud);
+                yield return new CardShotSpec("voice-default-cloud-no-folder", ww, 200, 1, cloud, null, open.H);
                 scene.Ctl.Act(new CardAct("openMenu", "", 4));
                 scene.Ctl.OnBackend(new CloudReposEvent { Ok = true, Done = true, Repos = ["4regab/hoverweb", "4regab/Hover", "4regab/tasksync-mcp"] });
-                yield return new CardShotSpec("voice-default-cloud-repos", ww, wh, 1, scene.Ctl.View!);
+                yield return new CardShotSpec("voice-default-cloud-repos", ww, wh, 1, scene.Ctl.View!, null, open.H);
                 scene.Ctl.Act(new CardAct("search", "HOV"));
-                yield return new CardShotSpec("voice-default-cloud-repos-search", ww, wh, 1, scene.Ctl.View!, ui => { ui.Search.Set("HOV"); ui.SearchFocused = true; });
+                yield return new CardShotSpec("voice-default-cloud-repos-search", ww, wh, 1, scene.Ctl.View!, ui => { ui.Search.Set("HOV"); ui.SearchFocused = true; }, open.H);
                 scene.Ctl.Act(new CardAct("openMenu", "", 0));
             }
         }
 
         // The aura in a colour picked in Settings → Voice.
         var violet = scene.Show(VoiceStage.Recording, j => { j["level"] = 0.6; j["secs"] = 4.2; }) with { AuraColor = "#C4A2FF" };
-        yield return new CardShotSpec("voice-listening-violet-2x", (int)(Geometry.OpenSize(OfficeSize.Default, work).W + 2 * Geometry.Pad), 200, 2, violet, AuraFor(violet, 2));
+        yield return new CardShotSpec("voice-listening-violet-2x", (int)(Geometry.OpenSize(OfficeSize.Default, work).W + 2 * Geometry.Pad), 200, 2, violet, AuraFor(violet, 2), 440);
 
         // A press while one is in progress: the card glows amber a moment.
         var busy = scene.Show(VoiceStage.Preview, j => { j["preview"] = scene.Preview(proj, "Hover", "", Task, 2.1, "full"); j["canStart"] = true; j["tool"] = "codex"; }) with { Busy = true };
-        yield return new CardShotSpec("voice-extra-large-busy", (int)(Geometry.OpenSize(OfficeSize.ExtraLarge, work).W + 2 * Geometry.Pad), 200, 1, busy);
+        yield return new CardShotSpec("voice-extra-large-busy", (int)(Geometry.OpenSize(OfficeSize.ExtraLarge, work).W + 2 * Geometry.Pad), 200, 1, busy, null, 600);
     }
 
     /// <summary>Two made-up screens stand in for real ones: the pictures "take a screenshot" attaches.</summary>

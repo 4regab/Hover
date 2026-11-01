@@ -51,6 +51,22 @@ public sealed class CardGfx : IDisposable
         Painter = new VoiceCardPainter(Write, VoiceCardPainter.LoadInter(Write, Path.Combine(fonts, "Fonts")), Factory, Path.Combine(fonts, "Office"));
     }
 
+    /// <summary>Draws on a bitmap that is thrown away: Direct2D only takes drawing between BeginDraw and EndDraw.</summary>
+    public void Offscreen(Action body)
+    {
+        var format = new Vortice.DCommon.PixelFormat(Format.B8G8R8A8_UNorm, Vortice.DCommon.AlphaMode.Premultiplied);
+        using var target = Context.CreateBitmap(new Vortice.Mathematics.SizeI(1400, 700), IntPtr.Zero, 0, new BitmapProperties1(format, 96, 96, BitmapOptions.Target));
+        Context.Target = target;
+        Context.SetDpi(96, 96);
+        Context.BeginDraw();
+        try { body(); }
+        finally
+        {
+            Context.EndDraw().CheckError();
+            Context.Target = null;
+        }
+    }
+
     public void Dispose()
     {
         Painter?.Dispose();
@@ -149,8 +165,7 @@ public sealed class RenderTests(CardGfx gfx, ITestOutputHelper output) : IClassF
             {
                 var ui = new CardUi { Now = 0.35 };
                 spec.Setup?.Invoke(ui);
-                var openH = spec.Height > 200 ? spec.Height - 40 : 440;
-                var (bgra, w, h) = CardShot.Render(gfx.Factory, gfx.Context, gfx.Painter, spec.View, ui, spec.Width, spec.Height, spec.Scale, openH);
+                var (bgra, w, h) = CardShot.Render(gfx.Factory, gfx.Context, gfx.Painter, spec.View, ui, spec.Width, spec.Height, spec.Scale, spec.OpenH);
                 if (w > CardShot.MaxWidth) problems.Add($"{spec.Name} is {w} wide");
                 // Something was drawn: more than the desktop colour.
                 int b0 = (int)(CardShot.Desk & 0xff), g0 = (int)((CardShot.Desk >> 8) & 0xff), r0 = (int)((CardShot.Desk >> 16) & 0xff);
@@ -175,6 +190,8 @@ public sealed class RenderTests(CardGfx gfx, ITestOutputHelper output) : IClassF
     }
 
     (double W, double H) Measure(VoiceView view, CardUi? ui = null, double openH = 440) => gfx.Painter.Measure(gfx.Context, view, ui ?? new CardUi(), openH);
+
+    void Paint(VoiceView view, CardUi ui, double x) => gfx.Offscreen(() => gfx.Painter.Draw(gfx.Context, view, ui, x, 0, 440));
 
     static VoiceView Of(string name) => CardFixtures.All(Data()).First(s => s.Name == name).View;
 
@@ -219,7 +236,7 @@ public sealed class RenderTests(CardGfx gfx, ITestOutputHelper output) : IClassF
     public void The_buttons_of_a_drawn_card_answer_the_actions_the_card_asks_for()
     {
         var ui = new CardUi { Now = 0.35 };
-        gfx.Painter.Draw(gfx.Context, Of("voice-default-preview"), ui, 0, 0, 440);
+        Paint(Of("voice-default-preview"), ui, 0);
         var acts = gfx.Painter.Targets.Select(t => t.Act.Name + (t.Act.Name == "openMenu" ? t.Act.N : "")).ToList();
         output.WriteLine(string.Join(" ", acts));
         foreach (var expected in new[] { "start", "cancel", "openMenu3", "openMenu1", "openMenu2" }) Assert.Contains(expected, acts);
@@ -232,25 +249,25 @@ public sealed class RenderTests(CardGfx gfx, ITestOutputHelper output) : IClassF
         Assert.Equal(28, start.H);
 
         // In Kiro Web: the cloud switch and the repository pick, no folder pick.
-        gfx.Painter.Draw(gfx.Context, Of("voice-default-preview-kiro-cloud"), ui, 0, 0, 440);
+        Paint(Of("voice-default-preview-kiro-cloud"), ui, 0);
         acts = gfx.Painter.Targets.Select(t => t.Act.Name + (t.Act.Name == "openMenu" ? t.Act.N : "")).ToList();
         Assert.Contains("toggleCloud", acts);
         Assert.Contains("openMenu4", acts);
         Assert.DoesNotContain("openMenu3", acts);
 
         // An error with Retry has Retry and Esc; the setup error has Settings.
-        gfx.Painter.Draw(gfx.Context, Of("voice-default-error"), ui, 0, 0, 440);
+        Paint(Of("voice-default-error"), ui, 0);
         Assert.Contains(gfx.Painter.Targets, t => t.Act.Name == "retry");
         Assert.Contains(gfx.Painter.Targets, t => t.Act.Name == "cancel");
-        gfx.Painter.Draw(gfx.Context, Of("voice-default-error-setup"), ui, 0, 0, 440);
+        Paint(Of("voice-default-error-setup"), ui, 0);
         Assert.Contains(gfx.Painter.Targets, t => t.Act.Name == "settings");
 
         // The choice of an agent: a pick for each, and Settings when there is none.
-        gfx.Painter.Draw(gfx.Context, Of("voice-default-choose-agent"), ui, 0, 0, 440);
+        Paint(Of("voice-default-choose-agent"), ui, 0);
         Assert.Equal(["codex", "opencode"], gfx.Painter.Targets.Where(t => t.Act.Name == "pick").Select(t => t.Act.S));
 
         // The open agent menu: a row for each ready agent.
-        gfx.Painter.Draw(gfx.Context, Of("voice-default-menu-long"), ui, 0, 0, 440);
+        Paint(Of("voice-default-menu-long"), ui, 0);
         Assert.Equal(5, gfx.Painter.Targets.Count(t => t.Act.Name == "pick"));
         Assert.Contains(gfx.Painter.Targets, t => t.Kind == "menu");
     }
@@ -274,7 +291,7 @@ public sealed class RenderTests(CardGfx gfx, ITestOutputHelper output) : IClassF
             var (w, h) = Measure(view, ui);
             Assert.Equal(460, w);
             Assert.True(h <= 440 && h > 0, $"{h}");
-            gfx.Painter.Draw(gfx.Context, view, ui, 20, 0, 440);
+            Paint(view, ui, 20);
         }
         var many = Of("voice-default-menu-long") with
         {
