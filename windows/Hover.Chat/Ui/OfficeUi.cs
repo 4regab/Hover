@@ -86,6 +86,7 @@ public sealed partial class OfficeUi
         cache.Arrived += () =>
         {
             thread.Refresh();
+            docThread?.Refresh();
             Dirty = true;
         };
         reply = new EditBox { Multiline = true };
@@ -143,10 +144,16 @@ public sealed partial class OfficeUi
             Dirty = true;
             return;
         }
+        if (DeskAccept(e) || ListsAccept(e))
+        {
+            Dirty = true;
+            return;
+        }
         switch (e)
         {
             case StateEvent s:
                 state = s;
+                DeskStateChanged();
                 if (OpenId is { } open && s.Sessions.All(x => x.Id != open))
                 {
                     OpenId = null;
@@ -173,6 +180,7 @@ public sealed partial class OfficeUi
                 break;
             case ToastEvent t:
                 Say(t.Text);
+                RestoreReply();
                 break;
             case ForkEvent { Ok: true, ForkId: { } id }:
                 OpenChat(id);
@@ -233,6 +241,7 @@ public sealed partial class OfficeUi
     public void OpenChat(int id)
     {
         Trace($"open chat {id}");
+        if (!ChatView) DeskLeave();
         OpenId = id;
         openKey = null;
         transcript = null;
@@ -289,6 +298,8 @@ public sealed partial class OfficeUi
         Animating = false;
         NextFrameMs = double.MaxValue;
         Dirty = false;
+        DeskTick();
+        ListsTick();
         if (ToastText is not null && now > toastUntil) ToastText = null;
         if (ToastText is not null) Need(250);
         overBlocker = false;
@@ -346,12 +357,12 @@ public sealed partial class OfficeUi
     }
 
     /// <summary>Presses and releases at the middle of the topmost place the last frame drew with this id (and number, if given). False when there is none.</summary>
-    public bool Click(string id, int n = -1, int clicks = 1)
+    public bool Click(string id, int n = -1, int clicks = 1, string? s = null)
     {
         for (var i = targets.Count - 1; i >= 0; i--)
         {
             var t = targets[i];
-            if (t.Id != id || (n >= 0 && t.N != n)) continue;
+            if (t.Id != id || (n >= 0 && t.N != n) || (s is not null && t.S != s)) continue;
             float x = t.R.X + t.R.W / 2, y = t.R.Y + t.R.H / 2;
             PointerMove(x, y);
             PointerDown(x, y, clicks, UiMods.None);
@@ -362,12 +373,18 @@ public sealed partial class OfficeUi
     }
 
     /// <summary>The place the last frame drew with this id, if any.</summary>
-    public Target? Find(string id, int n = -1)
+    public Target? Find(string id, int n = -1, string? s = null)
     {
         for (var i = targets.Count - 1; i >= 0; i--)
-            if (targets[i].Id == id && (n < 0 || targets[i].N == n)) return targets[i];
+            if (targets[i].Id == id && (n < 0 || targets[i].N == n) && (s is null || targets[i].S == s)) return targets[i];
         return null;
     }
+
+    /// <summary>The words in a box of the desk, by its name (term, find, card, fileEdit, prTitle, prBody, prBranch, prBase, histFind).</summary>
+    public string Field(string key) => fields.TryGetValue(key, out var f) ? f.Box.Text : "";
+
+    /// <summary>The acts of the open tab's rows (what a click on each asks), for the tests.</summary>
+    public IEnumerable<string> DeskRowActs() => (panelLaid?.Rows ?? []).Select(r => r.Act).Where(a => a.Length > 0);
 
     /// <summary>The target under a point, topmost first.</summary>
     public Target? TargetAt(float x, float y)
@@ -400,7 +417,7 @@ public sealed partial class OfficeUi
             follow = scroll >= MaxScroll - 2;
         }
         else if (editDragging && pointerDown && boxLayout is not null && FocusedBox() is { } eb)
-            eb.Drag(boxLayout, x - editArea.X, y - editArea.Y + (focus == Focus.Reply ? replyScroll : focus == Focus.Task ? taskScroll : 0));
+            eb.Drag(boxLayout, x - editArea.X, y - editArea.Y + (focus == Focus.Reply ? replyScroll : focus == Focus.Task ? taskScroll : focus == Focus.Desk ? deskField?.Scroll ?? 0 : 0));
     }
 
     public void PointerLeave()
@@ -474,6 +491,7 @@ public sealed partial class OfficeUi
     public bool Wheel(float x, float y, float delta)
     {
         if (menu is not null) return true;
+        if (DeskWheelAt(x, y, delta) || PanelWheel(x, y, delta)) return true;
         if (ChatView && sideRect.Contains(x, y))
         {
             sideScroll = Math.Max(0, sideScroll - delta);
@@ -496,6 +514,8 @@ public sealed partial class OfficeUi
         var ctrl = (mods & UiMods.Control) != 0;
         var shift = (mods & UiMods.Shift) != 0;
         Dirty = true;
+        if (confirm is null && menu is null && DeskKey(key, mods)) return true;
+        if (confirm is null && menu is null && focus == Focus.Reply && ReplyListKey(key, shift)) return true;
         if (confirm is not null)
         {
             if (key == UiKey.Escape) { confirm = null; return true; }
@@ -539,6 +559,7 @@ public sealed partial class OfficeUi
                 else if (focus == Focus.Task) StartTask();
                 else if (focus == Focus.Title) CommitRename();
                 else if (focus == Focus.Custom) WithAsk("", SendQuestion);
+                else if (focus == Focus.Desk) DeskEnter(shift);
                 return true;
             case UiKey.Backspace: box.Backspace(ctrl, now); break;
             case UiKey.Delete: box.Delete(ctrl, now); break;
@@ -558,12 +579,13 @@ public sealed partial class OfficeUi
                 if (cut.Length > 0) env.Clipboard.Set(cut);
                 break;
             case UiKey.V when ctrl:
+                if ((focus == Focus.Reply || focus == Focus.Task) && PasteShot(focus == Focus.Task)) break;
                 if (env.Clipboard.Text() is { Length: > 0 } text) box.Insert(text, now);
                 break;
             default:
                 return false;
         }
-        if (focus == Focus.Reply) SaveDraft();
+        AfterEdit();
         return true;
     }
 
@@ -575,12 +597,13 @@ public sealed partial class OfficeUi
         var box = FocusedBox();
         if (box is null)
         {
+            if (DeskLetter(text)) return true;
             if (!ChatView && !compose && OpenCurrent() && !char.IsControl(text[0]) && Current() is not null)
             {
                 compose = true;
                 focus = Focus.Reply;
                 reply.Insert(text, now);
-                SaveDraft();
+                ReplyEdited();
                 return true;
             }
             if (ChatView && OpenCurrent() && !char.IsControl(text[0]))
@@ -588,14 +611,14 @@ public sealed partial class OfficeUi
                 compose = true;
                 focus = Focus.Reply;
                 reply.Insert(text, now);
-                SaveDraft();
+                ReplyEdited();
                 return true;
             }
             return false;
         }
         if (text.Length == 1 && char.IsControl(text[0])) return true;
         box.Insert(text, now);
-        if (focus == Focus.Reply) SaveDraft();
+        AfterEdit();
         return true;
     }
 }

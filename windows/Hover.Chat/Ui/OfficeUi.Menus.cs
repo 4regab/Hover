@@ -112,6 +112,7 @@ public sealed partial class OfficeUi
     void Activate(Target t)
     {
         clicksNow = Math.Max(clicksNow, 1);
+        if (DeskActivate(t) || ListsActivate(t)) return;
         if (t.Id != "askOpt") Trace($"click {t.Id} {t.N} {t.S}".TrimEnd());
         var s = Current();
         switch (t.Id)
@@ -161,7 +162,7 @@ public sealed partial class OfficeUi
                 focus = Focus.Task;
                 break;
             case "attach":
-                Say("Attaching pictures is not in this build yet.");
+                Attach(true);
                 break;
             case "cloud":
                 taskCloud = !taskCloud;
@@ -339,6 +340,11 @@ public sealed partial class OfficeUi
     {
         if (confirm is not { } c) return;
         confirm = null;
+        if (c.Kind == "deleteKey")
+        {
+            env.Send(new DeleteCommand(null, confirmKey));
+            return;
+        }
         if (OpenId is not { } id) return;
         switch (c.Kind)
         {
@@ -422,6 +428,17 @@ public sealed partial class OfficeUi
         var rows = new List<MenuRow>();
         if (OpenId is not null)
         {
+            AskEditors();
+            if (!ChatView) rows.Add(new MenuRow("Open in chat view", "expand"));
+            if (editorChoices.Count > 0)
+            {
+                rows.Add(new MenuRow("Open the folder in", Header: true));
+                foreach (var ed in editorChoices) rows.Add(new MenuRow(ed.Name, "editor:" + ed.Id));
+                rows.Add(new MenuRow("", Rule: true));
+            }
+            rows.Add(new MenuRow("Terminal", "terminal"));
+            rows.Add(new MenuRow("Files & changes", "files"));
+            rows.Add(new MenuRow("", Rule: true));
             rows.Add(new MenuRow("Rename", "rename"));
             rows.Add(new MenuRow("Fork this chat", "fork"));
             var others = (state?.Tools ?? []).Where(t => t.Ready && t.Id != s.Tool).ToList();
@@ -480,13 +497,20 @@ public sealed partial class OfficeUi
             case "more":
                 MoreAct(row.Id);
                 break;
+            case "rmodel":
+                ReplyModelPick(row);
+                break;
         }
     }
 
     void MoreAct(string id)
     {
         if (OpenId is not { } sid) return;
-        if (id == "rename")
+        if (id == "expand") ChatView = true;
+        else if (id == "terminal") DeskOpenTab(sid, "terminal");
+        else if (id == "files") DeskDetails(sid);
+        else if (id.StartsWith("editor:", StringComparison.Ordinal)) env.Send(new OpenInCommand(sid) { Editor = id[7..] });
+        else if (id == "rename")
         {
             Activate(new Target(default, "rename"));
         }

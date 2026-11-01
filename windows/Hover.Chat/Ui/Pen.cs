@@ -12,6 +12,9 @@ public interface IClipboard
     string? Text();
 
     void Set(string text);
+
+    /// <summary>A picture on the clipboard as a data: address (PNG, the long side at most 2000 px), or null when there is none.</summary>
+    string? ImageUrl() => null;
 }
 
 /// <summary>

@@ -88,6 +88,15 @@ public static class ProtocolJson
                 "projects" => root.Deserialize<ProjectsEvent>(Options),
                 "palette" => root.Deserialize<PaletteEvent>(Options),
                 "inspectFolder" => root.Deserialize<InspectFolderEvent>(Options),
+                "term" => root.Deserialize<TermEvent>(Options),
+                "writeFile" => root.Deserialize<WriteFileEvent>(Options),
+                "editors" => root.Deserialize<EditorsEvent>(Options),
+                "openIn" => root.Deserialize<OpenInEvent>(Options),
+                "gh" => root.Deserialize<GhEvent>(Options),
+                "webSessions" => root.Deserialize<WebSessionsEvent>(Options),
+                "cliSessions" => root.Deserialize<CliSessionsEvent>(Options),
+                "adoptWeb" => root.Deserialize<AdoptWebEvent>(Options),
+                "adoptCli" => root.Deserialize<AdoptCliEvent>(Options),
                 _ => new UnknownEvent(type, root.Clone()),
             };
         }

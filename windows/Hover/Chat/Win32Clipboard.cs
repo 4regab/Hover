@@ -31,6 +31,36 @@ sealed class Win32Clipboard : IClipboard
         return false;
     }
 
+    const uint CfDib = 8, CfDibV5 = 17;
+
+    [DllImport("kernel32.dll")] static extern nuint GlobalSize(nint block);
+
+    /// <summary>The clipboard's bitmap as a data: address (shrunk to 2000 px, kept as PNG), or null when there is none.</summary>
+    public string? ImageUrl()
+    {
+        var format = IsClipboardFormatAvailable(CfDib) ? CfDib : IsClipboardFormatAvailable(CfDibV5) ? CfDibV5 : 0;
+        if (format == 0 || !Open()) return null;
+        byte[]? dib = null;
+        try
+        {
+            var handle = GetClipboardData(format);
+            if (handle == 0) return null;
+            var size = (long)GlobalSize(handle);
+            // A bitmap of more than 256 MB is not read.
+            if (size < 40 || size > 256L * 1024 * 1024) return null;
+            var ptr = GlobalLock(handle);
+            if (ptr == 0) return null;
+            try
+            {
+                dib = new byte[size];
+                Marshal.Copy(ptr, dib, 0, (int)size);
+            }
+            finally { GlobalUnlock(handle); }
+        }
+        finally { CloseClipboard(); }
+        return Pictures.FromDib(dib);
+    }
+
     public string? Text()
     {
         if (!IsClipboardFormatAvailable(CfUnicodeText) || !Open()) return null;

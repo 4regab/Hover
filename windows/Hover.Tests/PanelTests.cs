@@ -38,7 +38,9 @@ sealed class RecordingCanvas : ICanvas
 sealed class FakeClipboard : IClipboard
 {
     public string? Value;
+    public string? Image;
     public string? Text() => Value;
+    public string? ImageUrl() => Image;
     public void Set(string text) => Value = text;
 }
 
@@ -54,6 +56,9 @@ sealed class PanelHarness
     public float W = 1200, H = 720;
     public Func<string, IReadOnlyList<MdBlock>> Markdown = src => ChatFixtures.Paragraphs(src);
 
+    /// <summary>The made-up backend's answers to the desk's commands, in the order they were asked.</summary>
+    public Action<BackendCommand>? Respond;
+
     public PanelHarness()
     {
         Ui = new OfficeUi(new FakeShaper(), new UiEnv
@@ -67,6 +72,7 @@ sealed class PanelHarness
     void Send(BackendCommand c)
     {
         Sent.Add(c);
+        Respond?.Invoke(c);
         switch (c)
         {
             case MarkdownCommand m: inbox.Enqueue(new MarkdownEvent { Ref = m.Ref, Ok = true, Blocks = [.. Markdown(m.Src)] }); break;
@@ -94,6 +100,9 @@ sealed class PanelHarness
         Ui.Accept(e);
         Frame();
     }
+
+    /// <summary>Hands an answer to the panels at the next frame (a reply to a command the panels just sent).</summary>
+    public void Later(BackendEvent e) => inbox.Enqueue(e);
 
     public void State(params SessionInfo[] sessions) => Accept(new StateEvent
     {

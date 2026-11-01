@@ -19,6 +19,9 @@ public sealed class UiEnv
     /// </summary>
     public Func<int, Rect4?> BotRect { get; init; } = _ => null;
 
+    /// <summary>Asks for a picture with the system's dialog (null: the dialog was cancelled).</summary>
+    public Func<PickedImage?>? PickImage { get; init; }
+
     /// <summary>Opens an address in the browser.</summary>
     public Action<string>? OpenUrl { get; init; }
 
@@ -43,7 +46,7 @@ public static class Bots
 }
 
 /// <summary>The keys the panels read, apart from typed characters.</summary>
-public enum UiKey { Other, Enter, Escape, Backspace, Delete, Left, Right, Up, Down, Home, End, Tab, A, C, V, X }
+public enum UiKey { Other, Enter, Escape, Backspace, Delete, Left, Right, Up, Down, Home, End, Tab, A, C, V, X, S, L }
 
 [Flags]
 public enum UiMods { None = 0, Shift = 1, Control = 2, Alt = 4 }

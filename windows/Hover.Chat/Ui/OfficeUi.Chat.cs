@@ -2,7 +2,7 @@ using Hover.Host.Protocol;
 
 namespace Hover.Chat.Ui;
 
-public enum Focus { None, Reply, Task, Title, Custom, Find }
+public enum Focus { None, Reply, Task, Title, Custom, Find, Desk }
 
 public sealed partial class OfficeUi
 {
@@ -34,6 +34,7 @@ public sealed partial class OfficeUi
         Focus.Title when renaming => title,
         Focus.Custom => customBox,
         Focus.Find => repoFind,
+        Focus.Desk => deskField?.Box,
         _ => null,
     };
 
@@ -157,7 +158,7 @@ public sealed partial class OfficeUi
         {
             var look = Pen.F(13, 400, Pen.Ink);
             inputH = Math.Max(24, reply.HeightFor(pen, bw - 10 - 7 - 4, look, 20, 140) + 6);
-            compH = 7 + inputH + 3 + 30 + 6;
+            compH = 7 + ChipsHeight() + ShotsHeight(false) + inputH + 3 + 30 + 6;
         }
         var boxH = compose ? compH + 16 : 0;
         float askH = 0;
@@ -330,7 +331,7 @@ public sealed partial class OfficeUi
 
     void PaintDock(SessionInfo s, float right, float bottom)
     {
-        var draft = reply.Text.Length > 0;
+        var draft = reply.Text.Length > 0 || ShotsOf(s.Id).Count > 0 || ChipsOf(s.Id).Count > 0;
         var r = new Rect4(right - 34 - 10, bottom - 34 - 10, 34, 34);
         var hov = Over(r);
         pen.Box(r, 17, hov ? Rgba.Of(0x282230, 0.62) : Rgba.Of(0x1c1822, 0.32));
@@ -342,64 +343,6 @@ public sealed partial class OfficeUi
         }
         Add(r, "compose");
     }
-
-    void PaintComposer(SessionInfo s, bool busy, float x, float y, float pw, float bw, float compH, float inputH)
-    {
-        var bx = x + (pw - bw) / 2;
-        var by = y + 6;
-        var foc = focus == Focus.Reply;
-        pen.Box(bx, by, bw, compH, 17, Rgba.Of(0x1b181f, 0.94));
-        pen.Border(bx, by, bw, compH, 17, 1, foc ? Rgba.Of(0xc4a2ff, 0.55) : Rgba.Of(0xffffff, 0.1));
-        Add(new Rect4(bx, by, bw, compH), "composer");
-        var cy = by + 7;
-        var cx = bx + 10;
-        var iw = bw - 10 - 7;
-        var look = Pen.F(13, 400, Pen.Ink);
-        var area = new Rect4(cx + 2, cy + 3, iw - 4, inputH - 3);
-        boxLayout = null;
-        var shaped = pen.Shape(reply.Text.Length == 0 ? " " : reply.Text, look, area.W);
-        replyScroll = reply.ScrollFor(shaped, area.H, replyScroll);
-        boxLayout = reply.Paint(pen, area, look, "Reply to " + Bots.Name(s.Bot) + "…", foc, now, replyScroll);
-        replyArea = area;
-        Add(area, "replyText");
-        cy += inputH + 3;
-        // The bar: the folder's name, the model, and the round button.
-        var bx2 = cx;
-        if (s.Folder.Length > 0)
-        {
-            var name = LastPart(s.Folder);
-            var fl = Pen.F(12.5, 400, Pen.Dim);
-            var fw = Math.Min(Math.Min(240, iw * 0.3f), 9 + 13 + 6 + pen.Width(name, fl) + 9);
-            pen.Icon(Glyphs.Folder, bx2 + 9, cy + 1 + 7.5f, 13, Pen.Dim);
-            pen.Text(name, bx2 + 9 + 13 + 6, cy + 1 + (28 - pen.LineHeight(fl)) / 2, fl, Math.Max(fw - 9 - 13 - 6 - 9, 0));
-            bx2 += fw + 4;
-        }
-        var empty = reply.Text.Trim().Length == 0;
-        var enabled = !empty || (busy && !s.Stopping);
-        var pause = empty && busy;
-        var gx = cx + iw - 30;
-        var gr = new Rect4(gx, cy, 30, 30);
-        var ghov = Over(gr) && enabled;
-        pen.Box(gr, 15, !enabled ? Rgba.Of(0xffffff, 0.07) : ghov ? Rgba.Of(0xffffff) : Pen.Ink);
-        if (pause) pen.Icon(Glyphs.Pause, gx + 7, cy + 7, 16, Rgba.Of(0x131116), 3);
-        else pen.Icon(Glyphs.Send, gx + 7, cy + 7, 16, enabled ? Rgba.Of(0x0c0b0e) : Rgba.Of(0xf6f2ff, 0.28), 2.4f);
-        Add(gr, enabled ? (pause ? "pause" : "send") : "sendOff");
-        var rx = gx - 4;
-        if (s.Stopping)
-        {
-            var sl = Pen.F(11.5, 400, Rgba.Of(0xffc46b));
-            var sw = pen.Width("Stopping…", sl);
-            pen.Text("Stopping…", rx - sw, cy + (30 - pen.LineHeight(sl)) / 2, sl);
-        }
-        else if (busy)
-        {
-            var sl = Pen.F(11.5, 400, Pen.Faint);
-            var label = reply.Text.Trim().Length > 0 ? "Sends after this run" : "";
-            var sw = pen.Width(label, sl);
-            if (sw > 0) pen.Text(label, rx - sw, cy + (30 - pen.LineHeight(sl)) / 2, sl);
-        }
-    }
-
     Rect4 replyArea;
 
     static string LastPart(string folder)
@@ -416,7 +359,9 @@ public sealed partial class OfficeUi
         var s = Current();
         if (s is null || OpenId is not { } id) return;
         var text = reply.Text.Trim();
-        if (text.Length == 0)
+        var shots = ShotsOf(id).ToList();
+        var attached = ChipsOf(id).ToList();
+        if (text.Length == 0 && shots.Count == 0 && attached.Count == 0)
         {
             // Pause, not Stop: the tool cancels the turn and the conversation stays.
             if (Busy(s) && !s.Stopping) { Trace($"pause {id}"); env.Send(new PauseCommand(id)); }
@@ -424,7 +369,7 @@ public sealed partial class OfficeUi
         }
         if (s.Ask?.Questions is { Count: > 0 } qs)
         {
-            if (qs.Count == 1 && qs[0].Custom)
+            if (qs.Count == 1 && qs[0].Custom && shots.Count == 0)
             {
                 env.Send(new AnswerCommand(id, s.Ask.Id, null, [[text]]));
                 reply.Clear();
@@ -437,7 +382,15 @@ public sealed partial class OfficeUi
             return;
         }
         Trace($"reply to {id}");
-        env.Send(new ReplyCommand(text, id));
+        env.Send(new ReplyCommand(text, id)
+        {
+            Images = shots.Count > 0 ? [.. shots] : null,
+            Chips = attached.Count > 0 ? [.. attached.Select(c => c.ToJson())] : null,
+        });
+        if (shots.Count > 0 || attached.Count > 0) lastReply = (now, id, text, shots, attached);
+        chips.Remove(id);
+        replyShots.Remove(id);
+        PopClose();
         reply.Clear();
         SaveDraft();
         compose = false;
@@ -579,11 +532,11 @@ public sealed partial class OfficeUi
         var cv = pen.Cv;
         pen.Box(0, 0, w, h, 0, Rgba.Of(0x000000, 0.5));
         var bw = Math.Min(360, w - 32);
-        var head = c.Kind switch { "restore" => "Restore to after this answer?", "delete" => "Delete this chat?", _ => "Try this message again?" };
+        var head = c.Kind switch { "restore" => "Restore to after this answer?", "delete" or "deleteKey" => "Delete this chat?", _ => "Try this message again?" };
         var body = c.Kind switch
         {
             "restore" => "The chat goes back to how it was after this answer, and the folder goes back with it. Later messages are removed.",
-            "delete" => "The chat is removed from the list and its saved history is deleted. This cannot be undone.",
+            "delete" or "deleteKey" => "The chat is removed from the list and its saved history is deleted. This cannot be undone.",
             _ => "The chat goes back to just before this message, the folder with it, and the message is sent again.",
         };
         var hf = Pen.F(14, 600, Pen.Ink);
@@ -598,7 +551,7 @@ public sealed partial class OfficeUi
         pen.Text(head, bx + 18, by + 18, hf);
         pen.Wrapped(body, bx + 18, by + 18 + pen.LineHeight(hf) + 8, bw - 36, bf);
         var yb = by + boxH - 18 - 30;
-        var yes = c.Kind switch { "restore" => "Restore", "delete" => "Delete", _ => "Try again" };
+        var yes = c.Kind switch { "restore" => "Restore", "delete" or "deleteKey" => "Delete", _ => "Try again" };
         var yw = pen.Width(yes, Pen.F(12, 600, Pen.Ink)) + 28;
         var cw = pen.Width("Cancel", Pen.F(12, 600, Pen.Ink)) + 28;
         var yr = new Rect4(bx + bw - 18 - yw, yb, yw, 30);

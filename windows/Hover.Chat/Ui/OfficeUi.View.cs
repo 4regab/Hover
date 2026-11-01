@@ -37,6 +37,14 @@ public sealed partial class OfficeUi
         PaintAsksOver(compact);
         PaintTaskFab(compact);
         if (drawer) PaintChatPane(w - sideW - sideGap, sideGap, sideW, h - 2 * sideGap, compact ? 16 : 20, false, compact);
+        PaintOfficePanel(compact);
+        // The desk: its panel on the right, its card where its desk is.
+        if (deskPanel is not null)
+        {
+            var deskW = Math.Min(720f, w - 2 * sideGap);
+            PaintDeskPanel(new Rect4(w - deskW - sideGap, sideGap, deskW, h - 2 * sideGap), compact ? 16 : 20, false);
+        }
+        PaintDeskCardLayer();
     }
 
     /// <summary>The questions that wait, each over its bot's head (or stacked at the top when the office does not show it).</summary>
@@ -116,7 +124,7 @@ public sealed partial class OfficeUi
         var look = Pen.F(13.5, 400, Pen.Ink);
         var textW = innerW - 30 - 10 - 34;
         var th = Math.Clamp(task.HeightFor(pen, textW, look, 22, 120), 22, 120);
-        var bh = 12 + Math.Max(th, 30) + 8 + 40 + 6;
+        var bh = 12 + ShotsHeight(true) + Math.Max(th, 30) + 8 + 40 + 6;
         var box = new Rect4(14, h - 14 - bh, bw, bh);
         PaintTaskBox(box, false, th);
     }
@@ -178,6 +186,11 @@ public sealed partial class OfficeUi
         Add(box, "taskBox");
         var look = Pen.F(start ? 14 : 13.5, 400, Pen.Ink);
         float cx = box.X + (start ? 18 : 12), cy = box.Y + (start ? 14 : 12);
+        if (ShotsHeight(true) > 0)
+        {
+            PaintShots(taskShots, true, cx + 3, cy + 3);
+            cy += ShotsHeight(true);
+        }
         float textX = cx, textW = box.W - (start ? 36 : 24);
         if (!start)
         {
@@ -271,11 +284,13 @@ public sealed partial class OfficeUi
         idsBeforeStart = state?.Sessions.Select(s => s.Id).ToHashSet() ?? [];
         env.Send(new NewTaskCommand(tool?.Id ?? "kiro", taskCloud ? "" : folder, text, access)
         {
+            Images = taskShots.Count > 0 ? [.. taskShots] : null,
             Cloud = taskCloud ? (taskRepo is { Length: > 0 } r ? [r] : []) : null,
             Model = model.Length > 0 ? model : null,
             Effort = effort.Length > 0 ? effort : null,
         });
         task.Clear();
+        taskShots.Clear();
         taskScroll = 0;
         taskOpen = false;
         focus = Focus.None;
@@ -288,7 +303,8 @@ public sealed partial class OfficeUi
     {
         pen.Box(0, 0, w, h, 0, Rgba.Of(0x0c0b0e));
         Block(new Rect4(0, 0, w, h));
-        listAllowed = w >= 760;
+        var deskW = deskPanel is not null ? Math.Min(560f, Math.Max(360f, w * 0.42f)) : 0f;
+        listAllowed = w >= 760 && !(deskPanel is not null && w < (env.InNotch ? 1240 : 1300));
         sideShown = listAllowed && !sideClosed;
         var lw = sideShown ? 260f : 0f;
         threadRect = default;
@@ -296,8 +312,9 @@ public sealed partial class OfficeUi
         sideRect = new Rect4(0, 0, lw, h);
         if (sideShown) PaintSidebar(lw, compact);
         var opened = OpenId is not null || openKey is not null;
-        if (opened) PaintChatPane(lw, 0, w - lw, h, 0, true, compact);
+        if (opened) PaintChatPane(lw, 0, w - lw - deskW, h, 0, true, compact);
         else PaintStart(lw, w - lw, compact);
+        if (deskPanel is not null) PaintDeskPanel(new Rect4(w - deskW, 0, deskW, h), 0, true);
         // The switch stays where the sidebar has no room, and on the start screen.
         if (!sideShown) PaintViewSwitch(12, compact ? 8 : 10, true, compact);
         if (!sideShown && listAllowed && !opened)
@@ -307,7 +324,7 @@ public sealed partial class OfficeUi
         }
     }
 
-    sealed record ListRow(string Key, int? Id, string Tool, string Title, string Folder, long At, string Stage);
+    sealed record ListRow(string Key, int? Id, string Tool, string Title, string Folder, long At, string Stage, string Badge = "");
 
     List<ListRow> ListRows()
     {
@@ -326,6 +343,10 @@ public sealed partial class OfficeUi
         }
         foreach (var (key, s) in live)
             if (!seen.Contains(key)) rows.Add(new ListRow(key, s.Id, s.Tool, s.Title, s.Folder, LiveAt(s), s.Stage));
+        // This computer's Kiro sessions Hover does not have yet, with a badge, under their folder (the 30 newest).
+        var haveKiro = state.Sessions.Select(KiroIdOf).Where(k => k.Length > 0).ToHashSet();
+        foreach (var c in cli.List.Where(c => !haveKiro.Contains(c.Id)).OrderByDescending(c => c.Updated ?? 0).Take(30))
+            rows.Add(new ListRow("cli:" + c.Id, null, "kiro", c.Title.Length > 0 ? c.Title : "Kiro CLI session", c.Folder ?? "", c.Updated ?? 0, "stopped", "CLI"));
         return [.. rows.OrderByDescending(r => r.At)];
     }
 
@@ -386,12 +407,21 @@ public sealed partial class OfficeUi
             if (sel) pen.Box(rr, 8, Rgba.Of(0xffffff, 0.06));
             else if (hov) pen.Box(rr, 8, Rgba.Of(0xffffff, 0.035));
             pen.Mark(r.Tool.Length > 0 ? r.Tool : "kiro", 16, y + 6, 18);
-            var ago = Ago(r.At);
+            var ago = r.Badge.Length > 0 && cli.Opening.Length > 0 && r.Key == "cli:" + cli.Opening ? "Opening…" : Ago(r.At);
             var af = Pen.F(11.5, 400, Rgba.Of(0xf6f2ff, 0.45));
             var aw = pen.Width(ago, af);
             pen.Text(ago, lw - 16 - 8 - aw, y + (30 - pen.LineHeight(af)) / 2, af);
+            float badgeW = 0;
+            if (r.Badge.Length > 0)
+            {
+                var bf = Pen.F(10, 500, Pen.Dim);
+                badgeW = pen.Width(r.Badge, bf) + 10;
+                pen.Box(lw - 16 - 8 - aw - 6 - badgeW, y + 7, badgeW, 16, 5, Rgba.Of(0xffffff, 0.07));
+                pen.TextIn(r.Badge, new Rect4(lw - 16 - 8 - aw - 6 - badgeW, y + 7, badgeW, 16), bf);
+                badgeW += 6;
+            }
             var color = sel ? Pen.Ink : hov ? Pen.Dim : Rgba.Of(0xf6f2ff, 0.5);
-            pen.Text(r.Title.Length > 0 ? r.Title : "New chat", 42, y + (30 - pen.LineHeight(rf)) / 2, rf with { Color = color }, lw - 42 - 16 - aw - 14);
+            pen.Text(r.Title.Length > 0 ? r.Title : "New chat", 42, y + (30 - pen.LineHeight(rf)) / 2, rf with { Color = color }, lw - 42 - 16 - aw - 14 - badgeW);
             if (y + 30 > listTop && y < h) Add(rr, "row", i, r.Key);
             y += 30;
             total += 30;
@@ -413,7 +443,7 @@ public sealed partial class OfficeUi
         var bw = Math.Min(700f, sw - 48);
         var look = Pen.F(14, 400, Pen.Ink);
         var th = Math.Clamp(task.HeightFor(pen, bw - 36, look, 56, 200), 56, 200);
-        var bh = 14 + th + 10 + 28 + 14;
+        var bh = 14 + ShotsHeight(true) + th + 10 + 28 + 14;
         var headF = Pen.F(24, 600, Pen.Ink);
         var headH = pen.LineHeight(headF);
         var chipH = 28f;
@@ -441,6 +471,12 @@ public sealed partial class OfficeUi
     {
         if (index < 0 || index >= rowKeys.Count) return;
         var (key, id) = rowKeys[index];
+        if (key.StartsWith("cli:", StringComparison.Ordinal))
+        {
+            OpenPanelRow(new PanelRow(6) { Open = 2, Key = key });
+            ChatView = true;
+            return;
+        }
         if (id is { } sid) OpenChat(sid); else OpenSaved(key);
         ChatView = true;
     }

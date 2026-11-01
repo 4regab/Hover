@@ -97,6 +97,10 @@ static class UiDump
             ["chatView"] = ui.ChatView, ["openId"] = ui.OpenId, ["composing"] = ui.Composing, ["replyText"] = ui.ReplyText, ["taskText"] = ui.TaskText,
             ["toast"] = ui.ToastText, ["menu"] = ui.OpenMenuKind, ["targets"] = targets, ["acts"] = acts, ["texts"] = texts, ["chrome"] = chrome,
             ["height"] = ui.Thread.Height, ["scroll"] = ui.ScrollY,
+            ["deskCard"] = ui.DeskCardId, ["deskPanel"] = ui.DeskPanelId, ["deskTab"] = ui.DeskTabId, ["deskRows"] = ui.DeskRowCount,
+            ["deskTabs"] = new JsonArray([.. ui.DeskTabs.Select(t => (JsonNode)t)]), ["officePanel"] = ui.OfficePanel,
+            ["chips"] = ui.OpenId is { } cid ? ui.ChipsOf(cid).Count : 0, ["shots"] = ui.OpenId is { } sid ? ui.ShotsOf(sid).Count : 0,
+            ["popRows"] = ui.PopRows.Count, ["ghTitle"] = ui.GhTitleShown, ["ghBusy"] = ui.GhState?.Busy,
         };
     }
 }

@@ -49,6 +49,7 @@ sealed class UiCore : IDisposable
         {
             Send = backend.Send,
             Clipboard = new Win32Clipboard(),
+            PickImage = ImageDialog.Pick,
             Images = Images.State,
             BotRect = id => office?.BotScreenRect(id) is { } r ? new Rect4((float)r.X, (float)r.Y, (float)r.W, (float)r.H) : null,
             OpenUrl = OpenUrl,
@@ -68,8 +69,20 @@ sealed class UiCore : IDisposable
         if (office is not null)
         {
             office.BotPicked += id => Picked(() => Ui.OpenChat(id));
-            office.DeskPicked += id => Picked(() => Ui.OpenChat(id));
-            office.PropPicked += prop => { if (prop == OfficeProp.Door) Picked(Ui.OpenNewTask); };
+            // A desk with a session at it opens its card; the board, the TV and the shelf open their panels.
+            office.DeskPicked += id => Picked(() => Ui.OpenDeskCard(id));
+            office.PropPicked += prop => Picked(() =>
+            {
+                switch (prop)
+                {
+                    case OfficeProp.Door: Ui.OpenNewTask(); break;
+                    case OfficeProp.Tv: Ui.OpenOfficePanel("tv"); break;
+                    case OfficeProp.Board: Ui.OpenOfficePanel("board"); break;
+                    case OfficeProp.History: Ui.OpenOfficePanel("history"); break;
+                }
+            });
+            Ui.OfficePanelChanged += name => office.ShowPanel(name);
+            Ui.DeskChanged += id => office.MarkDeskOpen(id);
             Ui.DrawerChanged += id =>
             {
                 if (id is { } open) office.OpenDrawer(open); else office.CloseDrawer();

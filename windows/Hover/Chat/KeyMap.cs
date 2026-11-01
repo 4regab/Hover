@@ -22,6 +22,8 @@ static class KeyMap
         0x43 => UiKey.C,
         0x56 => UiKey.V,
         0x58 => UiKey.X,
+        0x53 => UiKey.S,
+        0x4C => UiKey.L,
         _ => UiKey.Other,
     };
 
