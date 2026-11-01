@@ -16,7 +16,12 @@
     <PackageReference Include="xunit.runner.visualstudio" Version="3.1.5" />
   </ItemGroup>
   <ItemGroup>
+    <!-- Numbers the Go code printed (internal/app/notch_golden_test.go). -->
+    <None Include="golden\**" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+  <ItemGroup>
     <ProjectReference Include="..\Hover.Host\Hover.Host.csproj" />
+    <ProjectReference Include="..\Hover.Notch\Hover.Notch.csproj" />
     <ProjectReference Include="..\Hover.TestTools\Hover.TestTools.csproj" />
   </ItemGroup>
 </Project>

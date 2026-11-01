@@ -47,6 +47,10 @@ public sealed record EndedEvent : BackendEvent
     public string Tool { get; init; } = "";
     public string Task { get; init; } = "";
     public bool Ok { get; init; }
+    /// <summary>The answer's first line, as plain text (backend 881762a). Empty from an older backend.</summary>
+    public string Body { get; init; } = "";
+    /// <summary>How many seconds the turn took.</summary>
+    public double Took { get; init; }
 }
 
 public sealed record ToolPreference
@@ -146,6 +150,12 @@ public sealed record TurnInfo
     public bool Again { get; init; }
 }
 
+public sealed record ActivityInfo
+{
+    public string Verb { get; init; } = "";
+    public string Obj { get; init; } = "";
+}
+
 public sealed record SessionInfo
 {
     public int Id { get; init; }
@@ -161,6 +171,10 @@ public sealed record SessionInfo
     public string Stage { get; init; } = "";
     public bool Stopping { get; init; }
     public AskInfo? Ask { get; init; }
+    /// <summary>The notch's words for what the agent is doing, such as "Reading the code".</summary>
+    public string Status { get; init; } = "";
+    /// <summary>The verb and object of what it is doing now: "Editing", "refresh.ts".</summary>
+    public ActivityInfo Activity { get; init; } = new();
     public List<TurnInfo> Turns { get; init; } = [];
 
     [JsonExtensionData] public Dictionary<string, JsonElement>? Extra { get; init; }
@@ -223,6 +237,15 @@ public sealed record QuotaValue
 public sealed record QuotasEvent : BackendEvent
 {
     public Dictionary<string, QuotaValue> Values { get; init; } = [];
+}
+
+/// <summary>
+/// The whole settings model as settings.json holds it, answering <c>settings</c> and <c>setSetting</c>.
+/// The host reads the parts it needs from <see cref="Model"/>.
+/// </summary>
+public sealed record SettingsEvent : BackendEvent
+{
+    public JsonElement Model { get; init; }
 }
 
 /// <summary>Cua Driver as Settings shows it (macOS only; on Windows nothing is offered).</summary>

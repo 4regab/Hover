@@ -83,3 +83,6 @@ public sealed record OpenCommand(int? Id = null) : BackendCommand("open");
 public sealed record DeskCommand(int Id, string What, string? Arg = null) : BackendCommand("desk");
 
 public sealed record SetModelCommand(string Tool, string? Model = null, string? Effort = null) : BackendCommand("setModel");
+
+/// <summary>Asks for the whole settings model, answered as a <c>settings</c> event.</summary>
+public sealed record SettingsCommand() : BackendCommand("settings");

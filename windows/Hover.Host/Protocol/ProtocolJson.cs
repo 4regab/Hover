@@ -68,6 +68,7 @@ public static class ProtocolJson
                 "toast" => root.Deserialize<ToastEvent>(Options),
                 "backendFailure" => root.Deserialize<BackendFailureEvent>(Options),
                 "ended" => root.Deserialize<EndedEvent>(Options),
+                "settings" => root.Deserialize<SettingsEvent>(Options),
                 "preferences" => root.Deserialize<PreferencesEvent>(Options),
                 "state" => root.Deserialize<StateEvent>(Options),
                 "transcript" => root.Deserialize<TranscriptEvent>(Options),
