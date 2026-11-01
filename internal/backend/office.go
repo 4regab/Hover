@@ -320,7 +320,7 @@ func session(c *ctx, s *agents.KiroSession) core.JSON {
 		turns[i] = turn(c, s, &s.Turns[i], waiting)
 	}
 	verb, obj := agents.Activity(s)
-	return core.JObj(
+	props := []core.Prop{
 		core.P("id", jint(int64(s.ID))),
 		core.P("key", jst(s.Key)),
 		core.P("files", jopt(files(s))),
@@ -361,7 +361,14 @@ func session(c *ctx, s *agents.KiroSession) core.JSON {
 		core.P("ext", s.Ext.ToJSON()),
 		core.P("held", jbool(s.Held)),
 		core.P("commands", commandsJSON(s.Commands)),
-	)
+	}
+	// A Kiro Web task's id at Kiro, once the first turn has told it: the Windows chat's cloud
+	// chip opens the task's page with it (internal/shell/chatact.go dOpenCloud). Left out for a
+	// task on this computer and before the id is known, so the message of those is as it was.
+	if s.Cloud != nil && s.KiroID != nil {
+		props = append(props, core.P("kiroId", jst(*s.KiroID)))
+	}
+	return core.JObj(props...)
 }
 
 func cloudJSON(repos []string) core.JSON {
