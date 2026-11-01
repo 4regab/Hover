@@ -34,6 +34,7 @@ static class AppMenu
         var item = new MenuFlyoutItem { Text = text };
         item.Click += (_, _) =>
         {
+            if (UiDump.On) HostLog.Line($"menu: {text}");
             try { act(); }
             catch (Exception e) { HostLog.Line($"menu {text}: {e}"); }
         };
