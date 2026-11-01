@@ -122,7 +122,9 @@ public sealed partial class OfficeUi
                 menu = null;
                 break;
             case "topMenu":
-                OpenMenu("top", t.R, [new MenuRow("New task", "task"), new MenuRow("Chat view", "chat"), new MenuRow("Office view", "office")], false, 200);
+                OpenMenu("top", t.R, env.OpenSettings is null
+                    ? [new MenuRow("New task", "task"), new MenuRow("Chat view", "chat"), new MenuRow("Office view", "office")]
+                    : [new MenuRow("New task", "task"), new MenuRow("Chat view", "chat"), new MenuRow("Office view", "office"), new MenuRow("Settings", "settings")], false, 200);
                 break;
             case "newChat":
                 CloseChat();
@@ -464,6 +466,7 @@ public sealed partial class OfficeUi
         {
             case "top":
                 if (row.Id == "task") { taskOpen = true; focus = Focus.Task; }
+                else if (row.Id == "settings") env.OpenSettings?.Invoke();
                 else ChatView = row.Id == "chat";
                 break;
             case "project":

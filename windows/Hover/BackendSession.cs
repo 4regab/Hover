@@ -45,7 +45,9 @@ public sealed class BackendSession : IAsyncDisposable
             HostLog.Line($"backend started (pid {client.ProcessId})");
             client.Event += OnEvent;
             client.Exited += code => Update($"The agent backend stopped ({code}).");
-            await client.InitializeAsync(key);
+            // The Discord status is the app's (Hover.Settings' DiscordPresence), so the backend runs no client of its own; Kiro's
+            // credits by day are kept from the start, for Settings → Kiro.
+            await client.InitializeAsync(key, hostDiscord: true, credits: true);
             Ready = true;
             // The settings the notch follows, and the first look at the tools and the quotas.
             client.Send(new SettingsCommand());

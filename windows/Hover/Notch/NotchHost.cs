@@ -11,7 +11,7 @@ using static Hover.Windowing.Native;
 namespace Hover.Windowing;
 
 /// <summary>What the notch asks of the rest of the app.</summary>
-sealed record NotchCallbacks(Action OpenDashboard, Action Quit, Func<bool> DashboardFocused);
+sealed record NotchCallbacks(Action OpenDashboard, Action Quit, Func<bool> DashboardFocused, Action? OpenSettings = null);
 
 /// <summary>
 /// The notch as the user sees it: the window, the pointer and shortcut rules, the tray icon, and
@@ -142,12 +142,12 @@ sealed partial class NotchHost : IDisposable
         window.Deactivated += () => Guard("deactivate", Deactivated);
         window.TrayLeftClick += () => Guard("tray", callbacks.OpenDashboard);
         window.TrayPick += i => Guard("tray menu", () => TrayPick(i));
-        window.Pressed += (x, y) => Guard("press", () => { ctl.Stay(); if (VoicePressed(x, y)) return; if (!PanelsPressed(x, y)) office?.NotchPressed(x, y); });
-        window.Released += (x, y) => Guard("click", () => { if (VoiceReleased(x, y)) return; PanelsReleased(x, y); Clicked(x, y); office?.NotchReleased(x, y); });
-        window.Char += text => Guard("text", () => { if (VoiceChar(text)) { QueueRender(); return; } if (panels?.Ui.Char(text) == true) QueueRender(); });
+        window.Pressed += (x, y) => Guard("press", () => { ctl.Stay(); if (VoicePressed(x, y)) return; if (CfgPressed(x, y)) return; if (!PanelsPressed(x, y)) office?.NotchPressed(x, y); });
+        window.Released += (x, y) => Guard("click", () => { if (VoiceReleased(x, y)) return; if (CfgReleased(x, y)) return; PanelsReleased(x, y); Clicked(x, y); office?.NotchReleased(x, y); });
+        window.Char += text => Guard("text", () => { if (VoiceChar(text)) { QueueRender(); return; } if (CfgChar(text)) return; if (panels?.Ui.Char(text) == true) QueueRender(); });
         if (panels is not null) panels.Changed += () => Guard("panels", () => { QueueRender(); EnsureAnimating(); });
-        window.Wheel += delta => Guard("wheel", () => { if (!VoiceWheel(delta) && !PanelsWheel(delta)) office?.NotchWheel(delta); });
-        window.KeyDown += vk => Guard("key", () => { if (VoiceKey(vk)) return; if (!PanelsKey(vk)) { KeyPressed(vk); office?.NotchKey(vk); } });
+        window.Wheel += delta => Guard("wheel", () => { if (!VoiceWheel(delta) && !CfgWheel(delta) && !PanelsWheel(delta)) office?.NotchWheel(delta); });
+        window.KeyDown += vk => Guard("key", () => { if (VoiceKey(vk)) return; if (CfgKey(vk)) return; if (!PanelsKey(vk)) { KeyPressed(vk); office?.NotchKey(vk); } });
         backend.Event += e => queue.TryEnqueue(() => Guard("message", () => OnBackend(e)));
         VoiceStart();
 
@@ -283,7 +283,7 @@ sealed partial class NotchHost : IDisposable
     // MARK: The panels
 
     /// <summary>The open notch shows the office's panels over the office.</summary>
-    bool PanelsOpen => panels is not null && ctl.State != NotchState.Rest && scene.ViewVisible && scene.ViewOpacity >= 0.95;
+    bool PanelsOpen => panels is not null && !CfgWanted && ctl.State != NotchState.Rest && scene.ViewVisible && scene.ViewOpacity >= 0.95;
 
     /// <summary>A point of the window (device pixels) in the panels' own coordinates, or null when it is off the panels.</summary>
     (float X, float Y)? PanelPoint(int px, int py, bool clamp = false)
@@ -492,6 +492,7 @@ sealed partial class NotchHost : IDisposable
 
     void UpdateHover()
     {
+        CfgHover();
         if (PanelsOpen && ctl.Over)
         {
             var (cx, cy) = window.Cursor();
@@ -752,6 +753,7 @@ sealed partial class NotchHost : IDisposable
         DumpBar();
         VoiceDump();
         RenderPanels();
+        RenderSettings();
         if (office is not null)
         {
             var (ax, ay, aw, ah) = scene.OfficeArea(ctl.WindowWidth);
@@ -767,11 +769,11 @@ sealed partial class NotchHost : IDisposable
     // turn at 30, as the Go app's clock does.
     bool Moving => ctl.Animating || fade.Active(Now) || rise.Active(Now);
 
-    bool PanelsMoving => PanelsOpen && panels!.Ui.Animating;
+    bool PanelsMoving => (PanelsOpen && panels!.Ui.Animating) || CfgMoving;
 
     bool Turning => (animations && island.Seg.Kind is SegKind.Work or SegKind.Ask && ctl.State == NotchState.Rest) || VoiceTurning;
 
-    double FrameMs => Moving ? 16 : Turning ? 33 : PanelsMoving ? Math.Clamp(panels!.Ui.NextFrameMs, 16, 500) : 33;
+    double FrameMs => Moving ? 16 : Turning ? 33 : PanelsMoving ? Math.Clamp(PanelsOpen ? panels!.Ui.NextFrameMs : cfg!.NotchUi.NextFrameMs, 16, 500) : 33;
 
     void EnsureAnimating()
     {
@@ -799,7 +801,7 @@ sealed partial class NotchHost : IDisposable
                 LaunchAtLogin.Set(!LaunchAtLogin.Enabled);
                 window.SetTrayMenu(TrayMenu.Build(settings.Shortcut.Label, LaunchAtLogin.Enabled));
                 break;
-            case 5: callbacks.OpenDashboard(); break;
+            case 5: (callbacks.OpenSettings ?? callbacks.OpenDashboard)(); break;
             case 6: callbacks.Quit(); break;
         }
     }
@@ -815,6 +817,7 @@ sealed partial class NotchHost : IDisposable
         VoiceDispose();
         office?.DetachNotch();
         layer?.Dispose();
+        cfgLayer?.Dispose();
         window.Dispose();
         surface?.Dispose();
         renderer.Dispose();

@@ -192,7 +192,7 @@ public class PageTests
     [Fact]
     public void Phonon_card_shows_state_progress_facts_and_the_actions_each_state_allows()
     {
-        PhononCard Card(string json, string? removing = null) => VoiceCards.Phonon(Json.Parse(json), removing)!;
+        PhononCard Card(string json, string? removing = null) => VoicePageCards.Phonon(Json.Parse(json), removing)!;
         var notInstalled = Card("""{"ok":true,"ready":false,"state":{"kind":"notInstalled"},"facts":{"model":"Phonon-2","version":"1.0","downloadBytes":164000000,"diskBytes":2100000000,"peakDiskBytes":4000000,"folder":"C:\\Hover\\phonon"}}""");
         Assert.Equal("Not installed", notInstalled.State);
         Assert.Equal([PhononAction.Download], notInstalled.Actions.ToArray());
@@ -217,7 +217,7 @@ public class PageTests
         Assert.Equal("Can’t run on this computer", vc.State);
         Assert.Equal([PhononAction.Download], vc.Actions.ToArray());
         Assert.Equal("remove failed", Card("""{"state":{"kind":"notInstalled"},"facts":{}}""", "remove failed").Error);
-        Assert.Null(VoiceCards.Phonon(Json.Parse("""{"state":{"kind":"something else"}}"""), null));
+        Assert.Null(VoicePageCards.Phonon(Json.Parse("""{"state":{"kind":"something else"}}"""), null));
     }
 
     [Fact]

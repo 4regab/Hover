@@ -1,5 +1,8 @@
 using System.Runtime.InteropServices;
 using Hover.Chatting;
+using Hover.Configuring;
+using Hover.Settings;
+using Hover.Sharing;
 using Hover.Host;
 using Hover.Notch;
 using Hover.Speaking;
@@ -41,6 +44,8 @@ public sealed class App : Application, IXamlMetadataProvider
     BeatsHost? beats;
     Gfx? gfx;
     UiCore? panels;
+    SettingsHost? configuring;
+    DiscordHost? discord;
     bool quitting;
 
     public App(LaunchOptions launch, string dataDir)
@@ -129,13 +134,28 @@ public sealed class App : Application, IXamlMetadataProvider
                 gfx?.Dispose();
                 gfx = null;
             }
+            // Settings is drawn with the panels' canvas: with no graphics device there is none.
+            if (panels is not null)
+            {
+                configuring = new SettingsHost(queue!, backend, panels, () => notch?.VoiceFlow) { Quit = () => _ = QuitAsync() };
+            }
             // Pictures run without the notch, the tray or the shortcut: they leave the machine as they found it.
             if (launch.ShotsDirectory is null)
             {
-                notch = NotchHost.TryStart(queue!, backend, new NotchCallbacks(OpenDashboard, () => _ = QuitAsync(), () => dashboard?.IsActive == true), office, gfx, panels);
+                notch = NotchHost.TryStart(queue!, backend, new NotchCallbacks(OpenDashboard, () => _ = QuitAsync(), () => dashboard?.IsActive == true, OpenSettings), office, gfx, panels);
+                if (notch is not null && configuring is not null) notch.AttachSettings(configuring);
+                // The office's top menu has a Settings row: it opens where the office is (the open notch, else the window).
+                if (panels is not null) panels.SettingsRequested += () =>
+                {
+                    if (notch is { } n && n.Controller.State != NotchState.Rest) configuring?.ShowInNotch(Section.General);
+                    else OpenSettings();
+                };
+                // Hover on the Discord status, when the switch in Settings → Integrations is on.
+                discord = new DiscordHost(backend);
             }
             // With no notch there would be nothing to see, so the window opens.
-            if (launch.Dashboard || showAtOnce || launch.ShotsDirectory is not null || (notch is null && !launch.Background)) OpenDashboard();
+            if (launch.Settings) OpenSettings();
+            else if (launch.Dashboard || showAtOnce || launch.ShotsDirectory is not null || (notch is null && !launch.Background)) OpenDashboard();
             await backend.StartAsync(dataDir);
 
             if (launch.ShotsDirectory is { } directory)
@@ -152,13 +172,20 @@ public sealed class App : Application, IXamlMetadataProvider
         }
     }
 
+    /// <summary>Settings in the app window (the tray menu's Settings…).</summary>
+    void OpenSettings()
+    {
+        OpenDashboard();
+        configuring?.ShowInDashboard(Section.General);
+    }
+
     void OpenDashboard()
     {
         if (quitting) return;
         HostLog.Line("opening the dashboard");
         if (dashboard is null)
         {
-            dashboard = new DashboardWindow(dataDir, backend, office, panels);
+            dashboard = new DashboardWindow(dataDir, backend, office, panels, configuring);
             // Closing the window hides it; the app keeps running in the tray. Quit is in the tray
             // menu. Without a notch there is no tray to bring it back from, so closing quits.
             dashboard.AppWindow.Closing += (_, closing) =>
@@ -193,6 +220,10 @@ public sealed class App : Application, IXamlMetadataProvider
         // writes the history and the settings and stops.
         beats?.Dispose();
         beats = null;
+        discord?.Dispose();
+        discord = null;
+        configuring?.Dispose();
+        configuring = null;
         notch?.Dispose();
         notch = null;
         panels?.Dispose();

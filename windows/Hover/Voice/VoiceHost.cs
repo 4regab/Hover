@@ -167,6 +167,18 @@ sealed class VoiceHost : IDisposable
         mine.Pressed += () => queue.TryEnqueue(() => { if (!disposed && key == mine) Pressed(); });
     }
 
+    /// <summary>While a shortcut records in Settings, voice's own is let go (or the chord would press it); it is taken again after.</summary>
+    public void SuspendKey(bool suspend)
+    {
+        if (disposed) return;
+        if (suspend)
+        {
+            key?.Dispose();
+            key = null;
+        }
+        else Register(Service.Settings);
+    }
+
     /// <summary>The chord went down (WM_HOTKEY): a press, and the keys are looked at until they come up.</summary>
     void Pressed()
     {

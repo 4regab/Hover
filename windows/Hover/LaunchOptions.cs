@@ -21,11 +21,15 @@ public sealed record LaunchOptions
     /// </summary>
     public bool Dashboard { get; init; }
 
+    /// <summary><c>--settings</c>: open the app window on Settings (as the tray menu's Settings… does).</summary>
+    public bool Settings { get; init; }
+
     public static LaunchOptions Parse(string[] args)
     {
         string? shots = null;
         var background = false;
         var dashboard = false;
+        var settings = false;
         for (var i = 0; i < args.Length; i++)
         {
             switch (args[i])
@@ -39,8 +43,11 @@ public sealed record LaunchOptions
                 case "--dashboard":
                     dashboard = true;
                     break;
+                case "--settings":
+                    settings = true;
+                    break;
             }
         }
-        return new LaunchOptions { ShotsDirectory = shots, Background = background, Dashboard = dashboard };
+        return new LaunchOptions { ShotsDirectory = shots, Background = background, Dashboard = dashboard, Settings = settings };
     }
 }

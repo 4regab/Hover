@@ -4,7 +4,7 @@ using Hover.Voice;
 namespace Hover.Settings;
 
 /// <summary>The voice page's two cards, made from what the backend says (<c>phononCard</c> and <c>tryCard</c> of internal/shell/voice.go).</summary>
-public static class VoiceCards
+public static class VoicePageCards
 {
     /// <summary>The Phonon card from a <c>phonon</c> message. <paramref name="removing"/> is what a remove that failed said.</summary>
     public static PhononCard? Phonon(JsonElement raw, string? removing)

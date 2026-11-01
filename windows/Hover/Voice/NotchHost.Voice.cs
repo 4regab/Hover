@@ -36,7 +36,7 @@ sealed partial class NotchHost
             voice.Changed += () => Guard("voice", () => { UpdateRest(); EnsureAnimating(); });
             voice.Began += () => Guard("voice", VoiceBegan);
             voice.Done += () => Guard("voice", VoiceGiveBack);
-            voice.SettingsRequested += () => Guard("voice", () => { VoiceGiveBack(); callbacks.OpenDashboard(); });
+            voice.SettingsRequested += () => Guard("voice", () => { VoiceGiveBack(); if (cfg is not null) cfg.ShowInNotch(Hover.Settings.Section.Voice); else callbacks.OpenDashboard(); });
             voice.ActiveProject = () => voice.ProjectOf(panels?.Ui.OpenId);
             if (panels is not null)
             {

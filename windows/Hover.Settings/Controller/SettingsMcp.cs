@@ -170,7 +170,7 @@ public sealed partial class SettingsController
 
     void OnPhonon(JsonElement raw)
     {
-        Live.Phonon = VoiceCards.Phonon(raw, phononError);
+        Live.Phonon = VoicePageCards.Phonon(raw, phononError);
         Dirty();
     }
 

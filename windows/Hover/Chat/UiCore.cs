@@ -29,6 +29,9 @@ sealed class UiCore : IDisposable
     public D2DCanvas Canvas { get; }
     public OfficeUi Ui { get; }
 
+    /// <summary>The top menu's Settings row was picked. Raised on the UI thread.</summary>
+    public event Action? SettingsRequested;
+
     /// <summary>Something wants a new frame (a message arrived, a picture came in). Raised on the UI thread.</summary>
     public event Action? Changed;
 
@@ -65,6 +68,7 @@ sealed class UiCore : IDisposable
             OpenUrl = OpenUrl,
             Log = HostLog.Line,
             InNotch = inNotch,
+            OpenSettings = () => SettingsRequested?.Invoke(),
         });
         onEvent = e => queue.TryEnqueue(() =>
         {
