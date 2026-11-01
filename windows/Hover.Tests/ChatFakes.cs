@@ -147,6 +147,17 @@ sealed class FakeLayout : IParaLayout
         return false;
     }
 
+    public (float X, float Y, float H) CaretAt(int index)
+    {
+        foreach (var l in lines)
+        {
+            if (index >= l.Start && (index < l.End || (l.End == text.Length && index == l.End) || (hard[lines.IndexOf(l)] && index == l.End)))
+                return (Span(l.Start, index), l.Top, l.Height);
+        }
+        var last = lines[^1];
+        return (Span(last.Start, Math.Min(index, last.End)), last.Top, last.Height);
+    }
+
     public IReadOnlyList<RectF> SelectionRects(int start, int end)
     {
         var list = new List<RectF>();

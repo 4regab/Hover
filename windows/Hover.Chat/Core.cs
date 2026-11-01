@@ -60,6 +60,9 @@ public interface IParaLayout
 
     /// <summary>The rectangles of characters start to end.</summary>
     IReadOnlyList<RectF> SelectionRects(int start, int end);
+
+    /// <summary>Where a caret sits before the character at the index (the text's end allowed): x, top and height.</summary>
+    (float X, float Y, float H) CaretAt(int index);
 }
 
 /// <summary>A paragraph shaped: its layout, the text it was made of, and its links.</summary>
