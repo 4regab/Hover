@@ -508,4 +508,41 @@ public class PanelTests
         Assert.Null(told);
         Assert.Null(h.Ui.OpenId);
     }
+
+    [Fact]
+    public void The_chat_menu_forks_switches_agent_and_deletes_after_asking()
+    {
+        var turn = PanelHarness.Turn("Hi", "Hi.") with { SwitchTo = "codex" };
+        var h = new PanelHarness();
+        h.State(PanelHarness.Session(1, "done", null, PanelHarness.Turn("One", "One."), turn));
+        h.Ui.ChatView = true;
+        h.Ui.OpenChat(1);
+        h.Frame();
+        void Pick(string label)
+        {
+            h.Click("more");
+            var row = h.Ui.Targets.Last(t => t.Id == "menu" && t.S == label);
+            h.ClickAt((row.R.X + row.R.W / 2, row.R.Y + row.R.H / 2));
+        }
+        Pick("Fork this chat");
+        Assert.Equal((1, 1), (h.Last<ForkCommand>().Id, h.Last<ForkCommand>().Turn));
+        Pick("Codex");
+        Assert.Equal(("codex", 1), (h.Last<SwitchProviderCommand>().To, h.Last<SwitchProviderCommand>().Id));
+        Pick("Bring back messages");
+        Assert.Equal(1, h.Last<BringBackCommand>().Id);
+        // A fork that was made opens.
+        h.Accept(new ForkEvent { Id = 1, Ok = true, ForkId = 2 });
+        // Delete asks first.
+        h.State(PanelHarness.Session(1, "done", null, turn), PanelHarness.Session(2, "done", null, turn) with { Key = "k2" });
+        h.Ui.OpenChat(1);
+        h.Frame();
+        Pick("Delete chat");
+        Assert.DoesNotContain(h.Sent, c => c is DeleteCommand);
+        h.Click("confirmYes");
+        Assert.Equal(1, h.Last<DeleteCommand>().Id);
+        Assert.Null(h.Ui.OpenId);
+        // A refused fork says why.
+        h.Accept(new ForkEvent { Id = 1, Ok = false, Error = "Nothing to fork." });
+        Assert.Equal("Nothing to fork.", h.Ui.ToastText);
+    }
 }

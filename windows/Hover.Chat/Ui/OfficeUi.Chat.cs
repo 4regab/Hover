@@ -521,6 +521,7 @@ public sealed partial class OfficeUi
     {
         var a = hit.Act;
         var section = hit.Section;
+        Trace($"thread {a.Kind} in turn {section}");
         var s = Current();
         switch (a.Kind)
         {

@@ -214,6 +214,19 @@ public class PanelsAppTests(ITestOutputHelper output)
             return default;
         }
 
+        // A button of the thread is looked for, clicked, and clicked again if what it opens did not show up.
+        async Task ClickActUntil(string kind, int section, string opens, string what)
+        {
+            for (var attempt = 1; attempt <= 4; attempt++)
+            {
+                var p = await FindAct(kind, section, what);
+                output.WriteLine($"click {what} at {p.X},{p.Y} (try {attempt})");
+                Input.Click(p.X, p.Y);
+                if (await Until(() => dump.Where("window", opens) is not null, 4000)) return;
+            }
+            await Check(() => dump.Where("window", opens) is not null, $"{what}: '{opens}' did not show");
+        }
+
         // The layout moves while the agent works (a question goes, the answer comes), so a place is clicked only
         // once two looks, a moment apart, found it at the same spot.
         async Task ClickAt(string part, string id, string what, Func<JsonNode, bool>? pick = null)
@@ -276,14 +289,12 @@ public class PanelsAppTests(ITestOutputHelper output)
 
             // Restore the first turn's checkpoint: the second turn goes.
             Assert.Contains("And once more", dump.Texts("window"));
-            var restore = await FindAct("Restore", 0, "the first turn offers Restore");
-            Input.Click(restore.X, restore.Y);
+            await ClickActUntil("Restore", 0, "confirmYes", "the first turn's Restore");
             await ClickAt("window", "confirmYes", "confirm the restore");
             await Check(() => !dump.Texts("window").Contains("And once more"), "the second turn is gone after the restore");
 
             // Try the first message again: it goes again, and asks again.
-            var again = await FindAct("TryAgain", 0, "the first turn offers Try again");
-            Input.Click(again.X, again.Y);
+            await ClickActUntil("TryAgain", 0, "confirmYes", "the first turn's Try again");
             await ClickAt("window", "confirmYes", "confirm trying again");
             await Check(() => dump.Where("window", "askAllow") is not null, "the message went again and asks again");
             await ClickAt("window", "askAllow", "Allow again");
