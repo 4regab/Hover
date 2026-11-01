@@ -71,6 +71,15 @@ jobs:
           $PSNativeCommandUseErrorActionPreference = $true
           dotnet build windows\Hover.Windows.slnx -c Release 2>&1 | Tee-Object out\logs\build.log
 
+      # hoverai.exe looks for hover-backend.exe beside itself.
+      - name: Put the backend beside the app
+        run: |
+          $app = (Get-ChildItem windows\Hover\bin\Release -Recurse -Filter hoverai.exe | Select-Object -First 1).FullName
+          if (-not $app) { throw 'hoverai.exe was not built' }
+          Copy-Item out\bin\hover-backend.exe (Split-Path $app)
+          "HOVER_APP_EXE=$app" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+          "built $app"
+
       # Every test project under windows\, found by name, not by a list.
       - name: Tests
         timeout-minutes: 20
@@ -92,6 +101,21 @@ jobs:
           }
           if ($failed) { throw "failed: $($failed -join ', ')" }
 
+      # The app draws its own window (RenderTargetBitmap) with a data folder of its own.
+      - name: Pictures (hoverai.exe --shots)
+        run: |
+          $data = Join-Path $env:RUNNER_TEMP 'shots-data'
+          $env:HOVER_DATA_DIR = $data
+          $shots = Join-Path $PWD 'out\shots'
+          $app = Start-Process -FilePath $env:HOVER_APP_EXE -ArgumentList '--shots', $shots -PassThru
+          if (-not $app.WaitForExit(120000)) { $app.Kill($true); throw '--shots did not finish in 2 minutes' }
+          if (Test-Path "$data\hover.log") { Copy-Item "$data\hover.log" out\logs\shots-hover.log }
+          if ($app.ExitCode -ne 0) { throw "--shots exited with $($app.ExitCode)" }
+          $jpeg = Join-Path $shots 'dashboard.jpg'
+          $bytes = [System.IO.File]::ReadAllBytes($jpeg)
+          if ($bytes.Length -lt 2000 -or $bytes[0] -ne 0xFF -or $bytes[1] -ne 0xD8) { throw "$jpeg is not a JPEG picture" }
+          "dashboard.jpg: $($bytes.Length) bytes"
+
       - name: Summary
         if: always()
         run: |
@@ -100,6 +124,7 @@ jobs:
             $c = ([xml](Get-Content $trx.FullName)).TestRun.ResultSummary.Counters
             $lines += "- $($trx.BaseName): $($c.passed) passed, $($c.failed) failed, $($c.total - $c.executed) not run (of $($c.total))"
           }
+          if (Test-Path out\shots) { $lines += "- pictures: $((Get-ChildItem out\shots -Filter *.jpg).Name -join ', ')" }
           $lines | Out-File -Append -Encoding utf8 $env:GITHUB_STEP_SUMMARY
           $lines
 
