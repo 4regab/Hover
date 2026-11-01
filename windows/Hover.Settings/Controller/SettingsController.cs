@@ -104,6 +104,29 @@ public sealed partial class SettingsController
     /// <summary>Whether a key by that name is kept (the page never knows more of it).</summary>
     public bool HasSecret(string name) => secrets.TryGetValue(name, out var has) && has;
 
+    // What the page changed and the backend has not answered yet. A message that was on its way before the change must not
+    // put the old value back (and a second change made at once would be built on it), so the change is laid over every model
+    // that comes until the model has it, or a few seconds have passed (the backend turned it down or kept it in other words).
+    readonly Dictionary<string, (Func<SettingsData, SettingsData> Apply, Func<SettingsData, bool> Done, DateTime Until)> held = [];
+
+    /// <summary>Shows a change at once and keeps showing it until the backend's model has it.</summary>
+    void Hold(string key, Func<SettingsData, SettingsData> apply, Func<SettingsData, bool> done)
+    {
+        held[key] = (apply, done, DateTime.UtcNow.AddSeconds(3));
+        data = apply(data);
+    }
+
+    SettingsData Held(SettingsData parsed)
+    {
+        foreach (var key in held.Keys.ToList())
+        {
+            var (apply, done, until) = held[key];
+            if (done(parsed) || DateTime.UtcNow > until) held.Remove(key);
+            else parsed = apply(parsed);
+        }
+        return parsed;
+    }
+
     void Dirty()
     {
         blocks = null;
@@ -165,7 +188,7 @@ public sealed partial class SettingsController
         switch (e)
         {
             case SettingsEvent s:
-                data = SettingsData.From(s.Model);
+                data = Held(SettingsData.From(s.Model));
                 if (Project != "" && data.Project(Project) is null) Project = "";
                 AskKiroAgents();
                 AskThemePalette();
@@ -251,7 +274,8 @@ public sealed partial class SettingsController
             Dirty();
             return;
         }
-        // The list is in the settings model too; a change answers with both, and the model wins when it arrives.
+        // The list is in the settings model too: after a change the model is read again, so every page shows the same.
+        if (p.Op is not (null or "list")) env.Send(new SettingsCommand());
         Dirty();
     }
 

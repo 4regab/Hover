@@ -32,6 +32,9 @@ public sealed record AcpOption(string Id, string? Category, string? Current, IRe
 
 public sealed record ProjectData(string Id, string Name, string Folder, IReadOnlyList<string> Aliases, bool Voice, string Access)
 {
+    /// <summary>The same project, field for field (a record would compare the list of names by reference).</summary>
+    public bool SameAs(ProjectData? o) => o is not null && o.Id == Id && o.Name == Name && o.Folder == Folder && o.Voice == Voice && o.Access == Access && o.Aliases.SequenceEqual(Aliases);
+
     public JsonObject ToJson() => new()
     {
         ["Id"] = Id, ["Name"] = Name, ["Folder"] = Folder,

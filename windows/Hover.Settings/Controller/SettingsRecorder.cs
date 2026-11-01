@@ -97,7 +97,7 @@ public sealed partial class SettingsController
             RecorderField = null;
             if (changed)
             {
-                data = data with { Notch = chord };
+                Hold("notch-shortcut", d => d with { Notch = chord }, d => d.Notch == chord);
                 env.Send(new SetSettingCommand("ScWorkspace", new JsonObject { ["Key"] = chord.Key, ["Modifiers"] = VoiceData.ModifierText(chord.Modifiers) }));
             }
             Dirty();

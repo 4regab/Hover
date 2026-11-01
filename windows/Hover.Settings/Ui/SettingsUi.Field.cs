@@ -103,7 +103,12 @@ public sealed partial class SettingsUi
                     foreach (var s in shaped.Layout.SelectionRects(a, z))
                         Box(f.TextX + s.X0, ty + s.Y0, s.X1 - s.X0, s.Y1 - s.Y0, 0, A(C(P.Blue), 0.45f));
                 }
-                if (text.Length > 0) pen.Cv.Text(shaped.Layout, shaped.Runs, f.TextX, ty);
+                if (text.Length > 0)
+                {
+                    // What is drawn is written down for the checks: a secret box shows dots, never its words.
+                    if (pen.Drawn.Count < 2000) pen.Drawn.Add(text);
+                    pen.Cv.Text(shaped.Layout, shaped.Runs, f.TextX, ty);
+                }
                 if (focused && !f.Box.HasSelection && f.Box.CaretBlinkOn(now))
                 {
                     var (cx, cy, ch) = text.Length == 0 ? (0f, 0f, lh) : shaped.Layout.CaretAt(Math.Clamp(f.Box.Caret, 0, text.Length));

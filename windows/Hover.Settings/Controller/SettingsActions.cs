@@ -10,8 +10,8 @@ public sealed partial class SettingsController
     void Voice(Func<VoiceData, VoiceData> change)
     {
         var next = change(data.Voice);
-        // Optimistic: the page shows the pick at once; the backend's answer is the model.
-        data = data with { Voice = next };
+        // The page shows the pick at once; the backend's answer is the model.
+        Hold("voice", d => d with { Voice = next }, d => d.Voice == next);
         env.Send(new SetSettingCommand("Voice", next.ToJson()));
         Dirty();
     }
@@ -33,7 +33,10 @@ public sealed partial class SettingsController
     {
         if (Project == "" || data.Project(Project) is not { } p) return;
         lastProjectControl = controlId;
-        env.Send(new ProjectUpdateCommand(change(p).ToJson()));
+        var next = change(p);
+        // Held at once, so a second edit before the answer builds on the first.
+        Hold("project:" + p.Id, d => d with { Projects = d.Projects.Select(x => x.Id == p.Id ? next : x).ToList() }, d => next.SameAs(d.Project(p.Id)));
+        env.Send(new ProjectUpdateCommand(next.ToJson()));
     }
 
     static ToolDef? ToolOfPrefix(string id, string suffix)
@@ -81,7 +84,7 @@ public sealed partial class SettingsController
                     var set = data.NotchItems.ToList();
                     if (on && !set.Contains(item) && Array.IndexOf(PageBuilder.QuotaIds, item) >= 0) set.Add(item);
                     else if (!on) set.RemoveAll(x => x == item);
-                    data = data with { NotchItems = set };
+                    Hold("notch-items", d => d with { NotchItems = set }, d => d.NotchItems.SequenceEqual(set));
                     Save(new SaveSettingsCommand { QuotaItems = [.. set] });
                 }
                 else if (ToolOfPrefix(id, "ShowSteps") is { } tool)
@@ -113,7 +116,8 @@ public sealed partial class SettingsController
                     // Picking an appearance puts Hover's own colours back: the theme goes first.
                     env.Send(new SetSettingCommand("Theme", null));
                     env.Send(new SetSettingCommand("Appearance", PageBuilder.Appearances[index].Name));
-                    data = data with { Theme = null, Appearance = PageBuilder.Appearances[index].Name };
+                    var appearance = PageBuilder.Appearances[index].Name;
+                    Hold("appearance", d => d with { Theme = null, Appearance = appearance }, d => d.Theme is null && d.Appearance == appearance);
                     Apply();
                 }
                 break;
@@ -158,7 +162,7 @@ public sealed partial class SettingsController
         {
             var o = data.OptionsOf(e);
             var levels = PageBuilder.EffortLevels(e, o, data.OffersOf(e));
-            if (index >= 0 && index < levels.Count) env.Send(new SetModelCommand(e.Id, o.Model, levels[index]));
+            if (index >= 0 && index < levels.Count) SetModel(e, o.Model, levels[index]);
         }
         else if (ToolOfPrefix(id, "Tools") is { } t)
         {
@@ -235,11 +239,18 @@ public sealed partial class SettingsController
                     var value = models[Math.Min(Math.Max(index, 0), models.Count - 1)].Value;
                     // The first is the tool's own choice: none is saved, as the Go pick does.
                     var o = data.OptionsOf(t);
-                    env.Send(new SetModelCommand(t.Id, value == models[0].Value || value == "" ? null : value, o.Effort));
+                    SetModel(t, value == models[0].Value || value == "" ? null : value, o.Effort);
                 }
                 break;
         }
         Dirty();
+    }
+
+    /// <summary>A tool's model and effort. The backend answers with the office's state, so the settings are read again for the page.</summary>
+    void SetModel(ToolDef tool, string? model, string? effort)
+    {
+        env.Send(new SetModelCommand(tool.Id, model, effort));
+        env.Send(new SettingsCommand());
     }
 
     void SetToolAgent(ToolDef tool, string? agent)
@@ -291,9 +302,9 @@ public sealed partial class SettingsController
                 });
                 break;
             case "KiroNoticeAgain":
-                // The backend takes noticeSeen only as true (SaveSettings): see the report.
-                Say(id, "Hover can’t show it again from here yet.");
-                return;
+                // saveSettings only ever sets it, so the way back is setSetting.
+                env.Send(new SetSettingCommand("KiroNoticeSeen", JsonValue.Create(false)));
+                break;
             case "ProjectAdd":
                 env.ChooseFolder(f =>
                 {
