@@ -14,6 +14,14 @@ public static class Program
     [STAThread]
     public static int Main(string[] args)
     {
+        // Before the data folder and the single-instance check, so it answers while Hover runs.
+        // (A Windows GUI program has no console: the number shows in a terminal that pipes it, as the Go app's did.)
+        if (args.Contains("--version"))
+        {
+            Console.WriteLine("Hover " + Version);
+            return 0;
+        }
+
         var launch = LaunchOptions.Parse(args);
 
         string dataDir;
@@ -69,6 +77,10 @@ public static class Program
         instance?.Dispose();
         return App.ExitCode;
     }
+
+    /// <summary>The number in VERSION, which the build stamps (build.ps1 -Version passes it on).</summary>
+    static string Version => typeof(Program).Assembly.GetCustomAttributes(typeof(System.Reflection.AssemblyInformationalVersionAttribute), false)
+        is [System.Reflection.AssemblyInformationalVersionAttribute v, ..] ? v.InformationalVersion.Split('+')[0] : "unknown";
 
     static int Fatal(string message, bool quiet)
     {
