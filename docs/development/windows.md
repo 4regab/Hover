@@ -3,14 +3,24 @@
 Windows 10 or 11, x86-64. All commands run from the repository root in PowerShell 7
 (`pwsh`). Windows PowerShell 5.1 works for `build.ps1` too.
 
+The Windows app is C#: a WinUI 3 program in `windows/` (`hoverai.exe`) that starts the same Go
+backend the Mac app uses (`cmd/hover-backend`, as `hover-backend.exe`) and speaks JSON lines to it.
+Settings, history, secrets, the agents and the voice flow are the backend's; the windows, the notch,
+the tray, the shortcuts, the microphone, the sound, the Discord pipe and the Direct3D office are C#.
+The Go app that was the Windows build before is kept for now and builds with `.\build.ps1 legacy`
+(see [The legacy Go app](#the-legacy-go-app)). The map of what is where is
+[windows-csharp.md](windows-csharp.md).
+
 ## Prerequisites
 
 To build:
 
-1. **Go**, the version `go.mod` names (`winget install GoLang.Go`). An older Go fetches the
-   named version the first time it builds. Hover's Windows build is plain Go: no C compiler,
-   no Visual Studio.
-2. **Git.**
+1. **The .NET 10 SDK** (`winget install Microsoft.DotNet.SDK.10`). No Visual Studio: the Windows
+   App SDK, the Windows SDK build tools and the test packages come from NuGet.
+2. **Go**, the version `go.mod` names (`winget install GoLang.Go`). An older Go fetches the
+   named version the first time it builds. Go builds the backend; the Windows build is plain Go: no C
+   compiler.
+3. **Git.**
 
 Only for the installer (`.\build.ps1 installer`): **Inno Setup 6 or 7**
 (`winget install JRSoftware.InnoSetup`). You don't need it to build or run.
@@ -21,19 +31,22 @@ the office still runs, and the tools show as not installed.
 ## Build and run
 
 ```powershell
-.\build.ps1                  # publish\hoverai.exe and publish\wgpu_native.dll
+.\build.ps1                  # publish\hoverai.exe and publish\hover-backend.exe
 .\build.ps1 run              # build, then start it
 .\build.ps1 publish          # the same, with LICENSE and the notices
 .\build.ps1 installer        # dist\Hover-Setup-<version>.exe (needs Inno Setup)
-.\build.ps1 test             # the Go tests (CI runs the same)
+.\build.ps1 test             # the Go tests, then every windows\*.Tests project (results in out\)
+.\build.ps1 test -SkipGo     # only the C# tests
 ```
 
-The version is the number in `VERSION`; `-Version 5.0.3` overrides it.
+`publish\` is the whole program, self-contained: `dotnet publish windows\Hover` (Release, x64) plus
+`go build ./cmd/hover-backend` beside it. It is emptied first, so nothing an earlier build left is
+installed. The version is the number in `VERSION`; `-Version 5.0.3` overrides it, and
+`publish\hoverai.exe --version` prints it. If Go or the .NET 10 SDK is missing, the script says so
+before it builds anything.
 
-The office is drawn with wgpu-native. `build.ps1` downloads `wgpu_native.dll` the first time
-and keeps it in `publish\`; the exe looks for it beside itself.
-
-`build.ps1` stops a running `hoverai.exe` (or an older `Hover.exe`) before it builds, so the file isn't locked.
+`build.ps1` stops a running `hoverai.exe` (or an older `Hover.exe`) and `hover-backend.exe` before it
+builds, so the files aren't locked.
 
 The exe is `hoverai.exe`, not 2.x's `Hover.exe`: Discord's game list matches any path
 ending in `hover/hover.exe` (Hover: Revolt of Gamers), and the install folder is
@@ -51,61 +64,87 @@ $env:HOVER_DATA_DIR = "$env:TEMP\hover-dev"
 .\publish\hoverai.exe
 ```
 
+### The installer
+
+`packaging\windows\Hover.iss` packs everything in `publish\` (but the `.pdb` files) into
+`Hover-Setup-<version>.exe`, a per-user install in `%LOCALAPPDATA%\Programs\Hover` (no administrator).
+It keeps the AppId of the 2.x installer, so it installs over a 2.x or a 5.x (Go) install in place and
+Windows lists one product:
+
+- over 2.x it removes `Hover.exe` and moves a Run value that starts it to `hoverai.exe`; over the
+  Go app it removes `wgpu_native.dll`, which only the Go office used;
+- a running Hover (any build) and its backend are ended before the files are replaced or removed,
+  at install and at uninstall; only one Hover runs per user, so one that runs is the one in the way;
+- the uninstaller removes every file the setup put there, the Start Menu entry, the desktop
+  icon if asked for, and the `Run` value `Hover` (the setup's startup task and Launch at login in
+  Settings write the same value), when it starts this `hoverai.exe`. It never touches `%APPDATA%\Hover`.
+
+`.\build.ps1 legacy installer` makes the Go app's setup from the same script (`/DLegacy`), named
+`dist\Hover-Legacy-Setup-<version>.exe`.
+
 ## Check
 
-CI builds and drives the Windows app (`tools/app-smoke.ps1`) and its installer
-(`tools/installer-check.ps1`); [testing.md](testing.md) says what each does. Run them the
-same way when you change the shell, the notch window or the installer.
+CI builds the C# app, runs its tests, drives it (`tools/app-smoke.ps1`) and drives its installer
+(`tools/installer-check.ps1`); [testing.md](testing.md) says what each does. Run them the same way
+when you change the shell, the notch window or the installer:
 
-Render every view headless (no desktop needed; the office pictures need
-`HOVER_SHOTS_OFFICE=1`, and draw on the GPU or on WARP):
+```powershell
+.\build.ps1 publish
+.\tools\app-smoke.ps1 -Exe publish\hoverai.exe -Out $env:TEMP\hover-smoke      # needs a desktop you can leave alone
+```
+
+Render every view headless (no desktop session needed; drawn on the GPU or on WARP) as JPEGs no
+wider than 1400 px:
 
 ```powershell
 .\publish\hoverai.exe --shots $env:TEMP\hover-shots
 ```
 
-The Go tests (`.\build.ps1 test`) need no setup. Two layout tests in `internal/chat` compare
-text widths measured in Linux Chromium with DejaVu Sans; the fonts are in the repo, so the
-tests run on Windows too.
-
 ## Logs and debugging
 
 - The log is `hover.log` in the data folder (`%APPDATA%\Hover` by default, or
-  `HOVER_DATA_DIR`). Tool starts, stops, permission questions, GPU choice and errors
-  go there. `HOVER_TRACE=1` adds what the shell is doing.
-- The release build has no console (it is built with `-H=windowsgui`). To see a panic on
-  stderr, run it as a console program: `$env:CGO_ENABLED = '0'; go run ./cmd/hover`.
+  `HOVER_DATA_DIR`). The app and the backend append to the same file: the app's start and
+  quit, the backend's pid and exit code, the notch, the tray icon and the shortcut, the office's
+  graphics device, and errors.
+- The release build has no console (it is a `WinExe`). `hoverai.exe --version` prints the version
+  when its output is piped. Every host log line is also written to standard error, so a console
+  or a redirect shows them: `.\publish\hoverai.exe 2> $env:TEMP\hover.err`.
+- `HOVER_UI_DUMP=<file>` makes the app write where its buttons are on the screen (see
+  [The panels](#the-panels-chat-new-task-and-questions)); the checks of the real app read it.
 
 ## What is Windows-specific
 
-- Windows: the notch and the app window are Hover's own Win32 windows (`internal/platform/win`),
-  presented through DirectComposition for per-pixel transparency. Gio draws the interface into
-  them (Direct3D 11). The office is drawn by wgpu-native on DX12, read back and shown as an
-  image, on its own thread.
+- The notch and the app window are Win32 and WinUI windows made by `windows\Hover`; the notch is
+  drawn with Direct2D and DirectWrite onto a Direct3D 11 swap chain that DirectComposition shows,
+  for per-pixel transparency. The office is `windows\Hover.Office`, Direct3D 11 with HLSL.
 - Tray and notifications, the shortcut (`RegisterHotKey`), the notch window's click-through and
-  focus rules: `internal/platform/win` and `internal/shell/env_windows.go`.
-- Codex's Read only mode isn't offered: Codex has no sandbox on Windows.
+  focus rules: `windows\Hover\Notch`.
+- Agents are children of the backend, and the backend is in a Windows job object with
+  `KILL_ON_JOB_CLOSE`, so the backend and everything it started die with the app, however the app ends.
+- `note.key` is wrapped with DPAPI for the Windows user (`CurrentUser`, no entropy), as the Go app
+  wrapped it; a folder can be read only where it was written.
+- Codex's Read only mode isn't offered: Codex has no sandbox on Windows. The sandbox, computer use,
+  the agent browser and its tab, one-click agent setup, Cua agent desktops and Hover's own helpers
+  are off on Windows, as they were in the Go app (the sandbox runs on Linux and macOS, the rest on macOS only);
+  their Settings rows say so.
 
-## The C# app (branch `windows-csharp`)
+## The C# app
 
-The Windows app is being rewritten in C# with WinUI 3, on top of the same Go backend the
-Mac app uses. The plan is [windows-csharp.md](windows-csharp.md). The Go app above stays the
-Windows build until the owner switches over (`build.ps1 legacy`). The C# code is in
-`windows/`; the solution is `windows\Hover.Windows.slnx`.
+The code is in `windows/`; the solution is `windows\Hover.Windows.slnx`.
 
 | Project | What it is |
 |---|---|
-| `windows\Hover` | `hoverai.exe`: a code-first WinUI 3 app (no `.xaml` files), unpackaged and self-contained. |
+| `windows\Hover` | `hoverai.exe`: a code-first WinUI 3 app (no `.xaml` files), unpackaged and self-contained. The notch window, the tray, the app window, the hosts that tie the libraries below to the backend's messages, and `--shots`. |
+| `windows\Hover.Host` | No WinUI. Starts `hover-backend.exe` in a job object, speaks JSON lines to it (`Protocol\`), keeps `note.key` (DPAPI), data folder paths, the single-instance names, the old-service removal, the log. |
 | `windows\Hover.Notch` | No WinUI and no Windows call. The notch's rules: sizes, placement, outline, the open and close animation, the pointer rules, what the resting notch shows (the island), the shortcut and the tray menu. A port of `internal/notch` and `internal/app/rest.go`. |
+| `windows\Hover.Office` | The Direct3D 11 office (Vortice): scene, bots, desks, camera, picking, the HLSL, the wall pictures. |
+| `windows\Hover.Chat` | No WinUI. The panels over the office: chat thread, new-task box, menus, questions, the desk card and its tabs, the reply box. Drawn through an `ICanvas`; the app gives it Direct2D and DirectWrite. |
+| `windows\Hover.Settings` | No WinUI. The Settings pages as data, their controller and painter, the Discord status client, the Run value and the Screen capture. |
 | `windows\Hover.Voice` | No WinUI. Voice, sound and music: the hold-to-talk shortcut, the microphone and the sound output (winmm), the voice commands and the `voice` event, the card (its content, behaviour and Direct2D painter), the aura, the chime and the office beats. The winmm and user32 calls are made on Windows only; the rest runs and is tested anywhere. |
-| `windows\Hover.Host` | No WinUI. Starts `hover-backend.exe` in a job object, speaks JSON lines to it, keeps `note.key` (DPAPI), data folder paths, the single-instance names, the old-service removal. |
-| `windows\Hover.Office` | The Direct3D 11 office. Empty until its phase. |
 | `windows\Hover.TestTools` | Programs the tests start: stand-ins for `codex-acp` and `codex`, a backend that misbehaves on purpose, a host to be killed. |
-| `windows\Hover.Tests` | `dotnet test`. |
-| `windows\Hover.Voice.Tests` | `dotnet test` for voice, sound and music (see [testing.md](testing.md#the-c-windows-app)). |
+| `windows\Hover.Tests`, `Hover.Office.Tests`, `Hover.Settings.Tests`, `Hover.Voice.Tests` | `dotnet test` (see [testing.md](testing.md#the-c-windows-app)). `build.ps1 test` runs every `windows\*.Tests` project. |
 
-Prerequisites: the .NET 10 SDK (`winget install Microsoft.DotNet.SDK.10`) and Go as above. No
-Visual Studio. The Windows App SDK, Windows SDK build tools and test packages come from NuGet.
+For the edit-and-run loop, `dotnet build` is enough (the output is runnable as it is, self-contained):
 
 ```powershell
 $env:CGO_ENABLED = '0'
@@ -116,16 +155,15 @@ $env:HOVER_DATA_DIR = "$env:TEMP\hover-dev"          # your own data folder, nev
 windows\Hover\bin\Release\net10.0-windows10.0.22621.0\win-x64\hoverai.exe
 ```
 
-`hoverai.exe` looks for `hover-backend.exe` in its own folder. The `dotnet build` output is
-runnable as it is (self-contained). Packaging it is a later phase.
+`hoverai.exe` looks for `hover-backend.exe` in its own folder.
 
-- `hoverai.exe` starts as the Go app does: the notch and the tray icon, no window. `--dashboard`
-  opens the app window at start. `--background` is still accepted (it is what a normal start does
+- `hoverai.exe` starts with the notch and the tray icon, no window. `--dashboard`
+  opens the app window at start, `--settings` opens it on Settings. `--background` is still accepted (it is what a normal start does
   now). A second launch opens the dashboard of the copy that runs. Closing the dashboard hides it
   to the tray; Quit in the tray menu stops the backend (it writes the history and the settings
   first) and removes the icon. If the notch cannot be made (no graphics), the window opens and
   closing it quits.
-- `hoverai.exe --shots DIR` draws the app's views into JPEG files (at most 1400 px wide) with
+- `hoverai.exe --version` prints `Hover <version>`; `hoverai.exe --shots DIR` draws the app's views into JPEG files (at most 1400 px wide) with
   `RenderTargetBitmap`, from inside the app, and exits. No screen capture. It does not take the
   single-instance claim.
 - Single instance: the named mutex `Local\HoverRunningInstance`, and the event
@@ -259,7 +297,7 @@ sends comes through `desk`, `term`, `writeFile`, `editors`, `openIn`, `deskActio
 - **Not on Windows, as in Go:** Hover's own helpers (the Helpers switch and the agents' helper rows;
   `agents.OrchMcpSupported()` is false on Windows, `internal/agents/orch.go`; the menu item and the new-task
   helpers are gated in `internal/shell/chatact.go` and `newtask.go`) and the Agent browser tab (`agents.BrowserSupported()` is macOS only). The Screen tab is
-  the Screen panel of Phase 5.
+  the Screen panel, described with Settings below.
 
 `hoverai.exe --shots DIR` also writes the desk's pictures with the Go pictures' names (`desk-*`, `expand-*`,
 `office-panel-*`, and the reply box's `chat-*`), drawn by `Chat\DeskShots.cs` over the real office: the sessions
@@ -326,6 +364,8 @@ and put on the reply as pasted pictures are, four at most.
 The key rules for `note.key` (set aside, never overwritten) are in
 [windows-csharp.md](windows-csharp.md#c-data-formats); `Hover.Host/HistoryKey.cs` follows them.
 
+### Building on Linux, and two traps
+
 On Linux, `dotnet build` of `Hover.Host`, `Hover.TestTools` and `Hover.Tests` works, and
 `dotnet test` runs everything in the tests that is not marked Windows only. For `windows/Hover`
 there is a compile check that needs no Windows:
@@ -344,3 +384,24 @@ be read in the `App` constructor (it fails with E_UNEXPECTED), so the control st
 (`XamlControlsResources`) are merged in `OnLaunched`; and an exception that leaves the
 `Application.Start` callback ends the process with only the exit code `-1073741189`, so the
 callback catches and logs it.
+
+## The legacy Go app
+
+Until the owner switches over, the Go Windows app still builds and its setup is made from the same
+installer script. Nothing else uses it: CI builds it once to see that it does.
+
+```powershell
+.\build.ps1 legacy              # publish-legacy\hoverai.exe and wgpu_native.dll
+.\build.ps1 legacy run          # build, then start it
+.\build.ps1 legacy publish      # the same, with LICENSE and the notices
+.\build.ps1 legacy installer    # dist\Hover-Legacy-Setup-<version>.exe
+.\build.ps1 legacy test         # the Go tests (CI runs them on three systems)
+```
+
+It needs only Go (no .NET). The Go app draws with Gio (Direct3D 11) and the office with wgpu-native on
+DX12, read back and shown as an image; `build.ps1 legacy` downloads `wgpu_native.dll` the first time and
+keeps it in `publish-legacy\`. Its notch and app window are Win32 windows (`internal/platform/win`), and the
+release build is `-H=windowsgui`; to see a panic on stderr, run it as a console program:
+`$env:CGO_ENABLED = '0'; go run ./cmd/hover`. The Go tests (`.\build.ps1 legacy test`) need no setup. Two
+layout tests in `internal/chat` compare text widths measured in Linux Chromium with DejaVu Sans; the fonts are
+in the repo, so the tests run on Windows too.

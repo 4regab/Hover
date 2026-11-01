@@ -1,15 +1,18 @@
 # Architecture
 
-Hover is one Go module (`github.com/4regab/Hover`) at the repository root. One program
-(`cmd/hover`: `hoverai` on Windows, `hover` on Linux) holds the whole product. The packages in
+Hover is one Go module (`github.com/4regab/Hover`) at the repository root. On Linux one program
+(`cmd/hover`, `hover`) holds the whole product; so it did on Windows (`hoverai`), and that Go app is
+kept as the legacy Windows build. The Windows app is now a C# program (`windows/`) and the Mac app a
+Swift one (`macos/`), each running the Go backend (`cmd/hover-backend`) as a child process. The packages in
 `internal/` keep the parts that have no window apart from the parts that do, so most of the
 logic builds and runs anywhere. (The Rust version this replaced is at the git tag `rust-final`.)
 
 ## The big picture
 
-The same code builds for Windows and Linux. Nearly all of it is shared: the backend packages
+The Go app builds for Linux, and for Windows as the legacy app. Nearly all of it is shared: the backend packages
 have no window and no OS calls of their own, and the interface is one set of Go files drawn
-with Gio. What differs per OS is a thin layer of adapters, picked at compile time by file name
+with Gio. (The C# and Swift hosts draw their own interface and take the backend packages through
+`cmd/hover-backend`.) What differs per OS is a thin layer of adapters, picked at compile time by file name
 (`_windows.go`, `_linux.go`) or a `//go:build` line.
 
 ```mermaid
@@ -112,20 +115,24 @@ flowchart LR
 
 ## How the builds work
 
-Both platforms run the same `go build` of the same module. They differ in the wrapper script
-and in how the result is packaged. Windows needs no C compiler; Linux needs one for EGL.
+The backend is the same `go build` of the same module on every platform. The apps differ in the wrapper script
+and in how the result is packaged. Windows needs no C compiler and no Visual Studio (the .NET 10 SDK and Go);
+Linux needs a C compiler for EGL.
 
 ```mermaid
 flowchart TB
     src["module at the root<br/>cmd + internal + VERSION"]
 
     subgraph WinB["Windows: build.ps1"]
-        wc["go build -ldflags -H=windowsgui<br/>CGO_ENABLED=0"]
-        wexe["publish/hoverai.exe + wgpu_native.dll<br/>(downloaded, wgpu-native v29.0.0.0)"]
+        wc["dotnet publish windows/Hover<br/>(self-contained, Release, x64)"]
+        wb["go build ./cmd/hover-backend<br/>CGO_ENABLED=0"]
+        wexe["publish/hoverai.exe + hover-backend.exe<br/>+ the .NET and Windows App SDK files"]
         wpub["publish/<br/>+ LICENSE, THIRD-PARTY-NOTICES.txt"]
         wiss["Inno Setup (ISCC) + packaging/windows/Hover.iss"]
         wout["dist/Hover-Setup-version.exe"]
-        wc --> wexe --> wpub -->|"build.ps1 installer"| wiss --> wout
+        wc --> wexe
+        wb --> wexe
+        wexe --> wpub -->|"build.ps1 installer"| wiss --> wout
     end
 
     subgraph LinB["Linux: Makefile"]
@@ -139,16 +146,19 @@ flowchart TB
         lexe -->|"make install"| linst
     end
 
-    src --> wc
+    src --> wc & wb
     src --> lc
 ```
 
-- The program carries its fonts, icons, music and the Phonon locks and check sample
-  (`go:embed`), so the installers ship one executable, the wgpu-native library and the
-  licence files.
+- The Linux program carries its fonts, icons, music and the Phonon locks and check sample
+  (`go:embed`), so its packages ship one executable, the wgpu-native library and the
+  licence files. The Windows setup ships the whole `publish\` folder: `hoverai.exe` with the .NET
+  and Windows App SDK files it runs on, its fonts and `hover-backend.exe` (the backend carries the
+  Phonon files), and the licence files. `build.ps1 legacy` still makes the Go Windows app (`publish-legacy\`,
+  with `wgpu_native.dll`), and the same `Hover.iss` packs it (`/DLegacy`).
 - The version is the number in `VERSION`. `build.ps1`, the Makefile and the installers read
-  it, and put it in the program with `-ldflags "-X .../internal/shell.Version=..."`;
-  `hoverai --version` prints it.
+  it, and put it in the program (the Go builds with `-ldflags "-X .../internal/shell.Version=..."`,
+  `dotnet publish` with `-p:Version=...`); `hoverai --version` prints it.
 - The Go version is the one `go.mod` names. An older Go fetches it the first time.
 - Gio is `third_party/gioui.org` (patched; see its README), taken in by a `replace` in `go.mod`.
 
@@ -174,7 +184,7 @@ flowchart LR
     end
 
     subgraph wj["windows job (windows-2022)"]
-        wb["build.ps1 publish"] --> wd["start the app, Alt+N, Esc,<br/>second launch"] --> wi["installer over the 5.x setup,<br/>checks, uninstall"]
+        wb["build.ps1 publish<br/>(C# app + backend)"] --> wt["C# tests<br/>(every windows/*.Tests)"] --> wd["start the app, Alt+N, Esc,<br/>second launch, quit, kill"] --> wi["installer: over the 5.x setup,<br/>clean, spaces, over 2.x;<br/>uninstall each"] --> wl["the Go app still builds<br/>(build.ps1 legacy)"]
     end
 
     subgraph lj["linux job (ubuntu-22.04)"]
@@ -186,7 +196,7 @@ flowchart LR
     end
 
     subgraph pj["pictures (windows-2022)"]
-        pp["hoverai --shots: every view"]
+        pp["every view of the Go app,<br/>and hoverai.exe --shots"]
     end
 
     cj & tj & wj & lj & mj --> rel
@@ -203,7 +213,9 @@ README's pictures don't run CI.
 
 ## What runs at run time
 
-One process. The UI goroutine owns every window; the heavy work runs on goroutines of its own
+This is the Go app (Linux, and the legacy Windows build): one process. The Windows C# app and the Mac
+app are two processes, the host and the backend (see [Backend and host boundary](#backend-and-host-boundary)).
+The UI goroutine owns every window; the heavy work runs on goroutines of its own
 and reaches the UI only through `UIDo`. The agents are child processes.
 
 ```mermaid
@@ -708,6 +720,11 @@ unconfirmed stop. These are handled in code and tested against fakes only
 | Key storage | DPAPI | Secret Service, else a file only the user can read |
 | Child processes | Job object (tools die with Hover) | Process group with `Pdeathsig` |
 | Single instance | Named mutex `Local\HoverRunningInstance` | Lock file in `$XDG_RUNTIME_DIR` |
+
+The Windows column is the Go app. The C# app uses the same Windows APIs from C# (`windows/Hover/Notch`,
+`Hover.Voice`, `Hover.Settings`, `Hover.Host`): the same notch window styles, `RegisterHotKey`, winmm,
+`Shell_NotifyIcon`, DPAPI, the job object and the mutex. It draws with Direct2D and DirectWrite, and the
+office with Direct3D 11 and HLSL (`windows/Hover.Office`) in place of Gio and wgpu-native.
 
 Keep OS code in files named for the system (`_windows.go`, `_linux.go`, `_darwin.go`) or behind
 a `//go:build` line. What can be worked out without the OS (the Keychain and LaunchAgent logic in

@@ -15,31 +15,55 @@ platform builds below. Pull requests run the workflow; pushes that only change M
   which are compiled only there, and skips the race detector: that needs a C compiler, and
   the Windows build has none. Those shots draw the office with the same `wgpu_native.dll`
   the Windows build downloads (`WGPU_NATIVE_PATH`);
-- on Windows, builds `hoverai.exe` and its installer, **drives the app** (starts it, opens the
-  notch with Alt+N, folds it with Esc, starts it again to ask for the app window) and **installs
-  the new setup over the oldest Go release still published**, checks what the installer promises and uninstalls;
+- on Windows, builds the C# app and its backend with `build.ps1` (`dotnet publish`, self-contained, and
+  `go build ./cmd/hover-backend`), **runs every `windows\*.Tests` project** (see
+  [The C# Windows app](#the-c-windows-app)), **drives the app** (starts it, opens the notch with Alt+N, folds
+  it with Esc, asks for the app window with a second launch, quits from the tray menu, and kills a second copy to
+  see its backend go), draws its pictures (`hoverai.exe --shots`), builds the installer and **installs
+  the new setup four ways** (over the oldest Go release still published while that app runs, into a clean default
+  folder, twice into a folder with spaces in its name, and over a 2.x install), each time checking what the
+  installer promises and uninstalling; and checks that the Go Windows app still builds (`build.ps1 legacy installer`);
 - builds the Linux `.deb` and tarball (compiled, not run: the runner has no Wayland desktop);
 - builds the macOS app and runs its **packaged backend** against stand-in tools. This checks
   the backend process and protocol, not the native Swift UI or its permission prompts.
 
-By hand (Run workflow), the `pictures` job draws every view on the Windows runner.
+By hand (Run workflow), the `pictures` job draws every view of the Go app on the Windows runner, and the
+C# app's views with `hoverai.exe --shots`.
 
 ## The Windows checks
 
-- `tools/app-smoke.ps1 -Exe publish\hoverai.exe -Out out\app` starts the real app, presses its
-  shortcut, folds it, makes a second launch, and writes `report.json`: did each step happen,
-  and its private memory and working set at rest and after the app window opened. It exits 1
-  when a step didn't happen.
-- `tools/installer-check.ps1` installs that older setup, then the new one over it, and checks:
-  one product, the new exe in the same folder, `wgpu_native.dll` and the license installed,
-  one uninstall entry, the Start Menu entry, the Run key kept, `%APPDATA%\Hover` untouched, and
-  a clean uninstall.
+- `tools/app-smoke.ps1 -Exe publish\hoverai.exe -Out out\app` starts the real C# app with an empty
+  `HOVER_DATA_DIR` and checks, from `hover.log`, the processes and the windows: the backend is a child of
+  the app, the notch and the tray icon come up, the shortcut is registered, Alt+N opens the notch and Esc
+  folds it (the shortcut again if Esc did not; the report says which), a second launch ends and the first
+  opens its window, and Quit in the tray menu (opened with the tray message, picked with the keyboard) ends
+  the app with exit code 0 and takes the backend and the icon with it. A second copy is then killed and its
+  backend must go too (the job object). It writes `report.json`: each step, and the private memory and
+  working set of `hoverai.exe` and of `hover-backend.exe`, at rest (two seconds after everything is up, as
+  the Go app was measured), settled (ten seconds) and with the app window open. There is no screen capture:
+  what the panels drew is read from `HOVER_UI_DUMP` (`ui-dump-*.json`), the pictures come from `--shots`.
+  It exits 1 when a step didn't happen.
+- `tools/installer-check.ps1` runs four installs, each from a clean state, and writes `report.json`:
+  - **A, over 5.x:** the oldest Go setup still published goes in, its app starts, then the new setup is
+    installed over it while it runs. The old app must be stopped, `hoverai.exe` replaced, `hover-backend.exe`
+    and every file of the publish folder (but the `.pdb` files) installed, `wgpu_native.dll` removed, one
+    uninstall entry, the Start Menu entry there, the Run value and `%APPDATA%\Hover` untouched, `--version`
+    right. The installed app starts, and an uninstall while it runs stops it and leaves nothing.
+  - **B, a clean install** into the default folder (`%LOCALAPPDATA%\Programs\Hover`) with the startup task:
+    the Run value is written, the installed app is driven by `app-smoke.ps1`, then the uninstall leaves
+    no file, no Run value, no Start Menu entry and no uninstall entry, and keeps the data folder.
+  - **C, a folder with spaces** in its name (`/DIR=`), installed twice: the second install of the same
+    version changes nothing and leaves one uninstall entry; the app starts from there; the desktop icon goes.
+  - **D, over 2.x:** a `Hover.exe` and a Run value that starts it are there before the setup runs (without the
+    startup task): `Hover.exe` is removed, the Run value now starts `hoverai.exe`, and the uninstall removes
+    the value although the setup did not write it.
 - `tools/set-resolution.ps1` sets the runner's screen to 1920 x 1080 first, so the open notch
   fits.
 
 ## Local Go tests
 
-Tests live beside the code (`*_test.go`) with shared fixtures in `tests/golden`. Run the
+Tests live beside the code (`*_test.go`) with shared fixtures in `tests/golden`. The C# tests are
+under [The C# Windows app](#the-c-windows-app). Run the
 command for your platform. CI runs these, and adds `-race` on Linux and macOS:
 
 ```sh
@@ -57,7 +81,9 @@ treating a rerun as evidence of a code issue or a flaky test.
 ## Pictures
 
 `hoverai --shots DIR` draws every view headless and writes the PNGs. They are for looking at:
-a green build doesn't prove the pixels are right.
+a green build doesn't prove the pixels are right. (On Windows that is the legacy Go app,
+`build.ps1 legacy`; the C# `hoverai.exe --shots DIR` writes JPEGs no wider than 1400 px, drawn inside
+the app, and the job's picture step checks the names and that each is a JPEG.)
 
 - The office, desk, chat and expanded-chat pictures need `HOVER_SHOTS_OFFICE=1` and
   wgpu-native (`WGPU_NATIVE_PATH`, or beside the program).
@@ -83,18 +109,22 @@ on a Mac.
 
 ## The C# Windows app
 
-`.github/workflows/windows-csharp-dev.yml` runs on every push to `windows-csharp` (Phase 6
-folds it into `ci.yml`). On `windows-2022` it:
+The `windows` job of `.github/workflows/ci.yml` runs on `windows-2022` and uses `build.ps1`, so a
+local `.\build.ps1 test` does the same as CI. `.\build.ps1 test` (or `test -SkipGo`, which CI uses because
+the `test` job already runs the Go tests on three systems):
 
-- builds `hover-backend.exe` and `hover-data.exe` from the Go code;
+- builds `hover-backend.exe` and `hover-data.exe` from the Go code into `out\bin`;
 - makes a Go data folder (`hover-data write`, then `dump` and `check`) and keeps it in the same
-  job, because `note.key` is bound to the Windows user and cannot be carried to another machine;
-- builds `windows\Hover.Windows.slnx`;
+  run, because `note.key` is bound to the Windows user and cannot be carried to another machine;
+- builds `windows\Hover.Windows.slnx`, then publishes the app, so the app's own checks start the same
+  `publish\hoverai.exe` the installer ships, with `hover-backend.exe` beside it;
 - runs `dotnet test` on every `windows\*.Tests\*.csproj` it finds, so a new test project needs no
-  workflow change;
-- runs `hoverai.exe --shots` with an empty data folder;
-- uploads everything under `out\` as one artifact (`windows-csharp-<sha>`): test results (`.trx`),
-  build and app logs, pictures.
+  change to the script or the workflow, and writes `out\test-results\*.trx`.
+
+The job then drives the app and the installer (above), draws the app's pictures with an empty data folder
+(`hoverai.exe --shots`, in five minutes at most, and checks that the views the Go app has pictures of are there as JPEG)
+and keeps everything under `out\` (but the Go programs the tests built) as the artifact `windows-reports`.
+The job fails if any C# test project fails.
 
 What `windows\Hover.Tests` covers:
 
@@ -228,16 +258,18 @@ What `windows\Hover.Tests` covers:
   "Hover Service" task removal, and `hoverai.exe` itself (a second launch exits, the first opens
   its dashboard; killing it kills its backend; `--shots` writes the dashboard, the notch's and the panels' JPEGs: the chat view, the start screen, the new-task box, the questions, the menus, the odd inputs, the desk card and its tabs, the expanded chat and the office's panels).
 
-Run it by hand (on Windows or, for everything not marked Windows only, on Linux). The tests start
-real programs and want these set, as the workflow does:
+Run one project by hand (on Windows or, for everything not marked Windows only, on Linux). The tests start
+real programs and want these set, as `build.ps1 test` does:
 
 ```powershell
 $env:HOVER_BACKEND    = "out\bin\hover-backend.exe"     # go build ./cmd/hover-backend
 $env:HOVER_DATA_TOOL  = "out\bin\hover-data.exe"        # go build ./cmd/hover-data
 $env:HOVER_FIXTURE_GO = "$env:TEMP\fixture-go"           # made by: hover-data write <dir> <dir>\project 2 <dir>\answer.md
-$env:HOVER_APP_EXE    = "windows\Hover\bin\Release\...\hoverai.exe"   # optional: the app's own checks
+$env:HOVER_APP_EXE    = "publish\hoverai.exe"            # optional: the app's own checks (.\build.ps1 publish)
 dotnet test windows\Hover.Tests
 ```
+
+`.\build.ps1 test -SkipGo` sets all of these and runs every test project in one go.
 
 A test whose program is missing fails; it is not skipped. On Linux the key is the Go app's plain
 file, so the DPAPI parts are skipped and the rest runs.
