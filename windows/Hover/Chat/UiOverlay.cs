@@ -169,15 +169,23 @@ sealed class UiOverlay : Grid, IDisposable
     void OnPressed(object sender, PointerRoutedEventArgs e)
     {
         var props = e.GetCurrentPoint(this).Properties;
-        if (!props.IsLeftButtonPressed) return;
         var (x, y) = At(e);
+        if (!props.IsLeftButtonPressed)
+        {
+            if (UiDump.On) HostLog.Line($"panels: a press at {x:0},{y:0} was not the left button");
+            return;
+        }
         var tick = Environment.TickCount64;
         if (tick - lastClickAt <= 500 && Math.Abs(x - lastClick.X) <= 4 && Math.Abs(y - lastClick.Y) <= 4) clicks++;
         else clicks = 1;
         lastClickAt = tick;
         lastClick = (x, y);
         core.Ui.PointerMove(x, y);
-        if (!core.Ui.Covers(x, y)) return;
+        if (!core.Ui.Covers(x, y))
+        {
+            if (UiDump.On) HostLog.Line($"panels: a press at {x:0},{y:0} is not on the panels");
+            return;
+        }
         var used = core.Ui.PointerDown(x, y, clicks, KeyMap.Mods(Native.GetKeyState));
         if (!used) return;
         e.Handled = true;

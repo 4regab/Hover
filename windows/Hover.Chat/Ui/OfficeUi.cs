@@ -418,6 +418,7 @@ public sealed partial class OfficeUi
         clicksNow = clicks;
         modsNow = mods;
         Dirty = true;
+        Trace($"press {x:0},{y:0} on {TargetAt(x, y)?.Id ?? "nothing"}");
         if (confirm is not null)
         {
             var t = TargetAt(x, y);

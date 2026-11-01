@@ -214,6 +214,17 @@ public class PanelsAppTests(ITestOutputHelper output)
             return default;
         }
 
+        // A place is clicked again if what the click should have done did not show in the panels.
+        async Task ClickUntil(string id, string what, Func<bool> done)
+        {
+            for (var attempt = 1; attempt <= 4; attempt++)
+            {
+                await ClickAt("window", id, $"{what} (try {attempt})");
+                if (await Until(done, 3000)) return;
+            }
+            await Check(done, $"{what}: the click did not do its work");
+        }
+
         // A button of the thread is looked for, clicked, and clicked again if what it opens did not show up.
         async Task ClickActUntil(string kind, int section, string opens, string what)
         {
@@ -271,7 +282,7 @@ public class PanelsAppTests(ITestOutputHelper output)
             Assert.Equal("a\nb\n", File.ReadAllText(Path.Combine(sandbox.Project, "app.js")).Replace("\r\n", "\n"));
 
             // A reply in the same chat gives a second turn, which asks too: answered from the notch's card.
-            await ClickAt("window", "compose", "the reply circle");
+            await ClickUntil("compose", "the reply circle", () => (bool?)dump.Section("window")?["composing"] == true);
             Input.Type("And once more");
             await Check(() => (string?)dump.Section("window")?["replyText"] == "And once more", "the words reached the reply box");
             Input.Key(Input.Enter);
@@ -306,11 +317,11 @@ public class PanelsAppTests(ITestOutputHelper output)
             Input.Type("[slow] work");
             await ClickAt("window", "startTask", "the round start button");
             await Check(() => dump.Texts("window").Any(t => t.Contains("[slow] work")), "the slow task opened its chat");
-            await ClickAt("window", "compose", "the reply circle");
+            await ClickUntil("compose", "the reply circle", () => (bool?)dump.Section("window")?["composing"] == true);
             Input.Type("Then do this");
             Input.Key(Input.Enter);
             await Check(() => dump.Texts("window").Any(t => t.Contains("Queued")), "the reply is queued behind the run");
-            await ClickAt("window", "compose", "the reply circle");
+            await ClickUntil("compose", "the reply circle", () => (bool?)dump.Section("window")?["composing"] == true);
             await ClickAt("window", "pause", "the pause button");
             // Pause ends the run and sends the queued reply once; the agent asks about it.
             await Check(() => dump.Where("window", "askAllow") is not null, "the queued reply went after the pause and asks");
