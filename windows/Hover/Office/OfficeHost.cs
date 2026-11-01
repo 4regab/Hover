@@ -110,8 +110,8 @@ public sealed class OfficeHost : IDisposable
     Border? dashboardArea;
     nint dashboardWindow;
     SwapChainPanel? panel;
+    UserControl? host;
     Surface? dashboardSurface;
-    (int W, int H) dashboardPixels;
     (double X, double Y) dashboardScale = (1, 1);
 
     public OfficeHost(DispatcherQueue queue, BackendSession backend)
@@ -446,45 +446,46 @@ public sealed class OfficeHost : IDisposable
         {
             HorizontalAlignment = HorizontalAlignment.Stretch,
             VerticalAlignment = VerticalAlignment.Stretch,
-            // Without a background a panel takes no pointer events.
-            Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent),
-            IsTabStop = true,
-            UseSystemFocusVisuals = false,
         };
+        // A swap chain panel takes no Background, and an element without one takes no pointer events: the panel sits in a
+        // transparent grid, which does, inside a control that can have the keyboard. The events bubble up to it.
+        var surface = new Grid { Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent) };
+        surface.Children.Add(panel);
+        host = new UserControl { Content = surface, IsTabStop = true, UseSystemFocusVisuals = false };
         panel.SizeChanged += (_, _) => Guard("size", DashboardChanged);
         panel.CompositionScaleChanged += (_, _) => Guard("scale", DashboardChanged);
-        panel.PointerMoved += (_, e) => Guard("move", () =>
+        host.PointerMoved += (_, e) => Guard("move", () =>
         {
             var p = Dips(e);
             ctl.Pointer(p.X, p.Y, true);
         });
-        panel.PointerExited += (_, _) => Guard("leave", () => ctl.Pointer(0, 0, false));
-        panel.PointerPressed += (_, e) => Guard("press", () =>
+        host.PointerExited += (_, _) => Guard("leave", () => ctl.Pointer(0, 0, false));
+        host.PointerPressed += (_, e) => Guard("press", () =>
         {
-            if (!e.GetCurrentPoint(panel).Properties.IsLeftButtonPressed) return;
-            panel.CapturePointer(e.Pointer);
-            panel.Focus(FocusState.Pointer);
+            if (!e.GetCurrentPoint(host).Properties.IsLeftButtonPressed) return;
+            host.CapturePointer(e.Pointer);
+            host.Focus(FocusState.Pointer);
             var p = Dips(e);
             ctl.Pointer(p.X, p.Y, true);
             ctl.Down(p.X, p.Y);
         });
-        panel.PointerReleased += (_, e) => Guard("release", () =>
+        host.PointerReleased += (_, e) => Guard("release", () =>
         {
-            panel.ReleasePointerCapture(e.Pointer);
+            host.ReleasePointerCapture(e.Pointer);
             if (!ctl.IsDown) return;
             var p = Dips(e);
             ctl.Pointer(p.X, p.Y, true);
             ctl.Up();
         });
-        panel.PointerCaptureLost += (_, _) => Guard("capture", ctl.Cancel);
-        panel.DoubleTapped += (_, _) => Guard("double", ctl.DoubleClick);
-        panel.PointerWheelChanged += (_, e) => Guard("wheel", () =>
+        host.PointerCaptureLost += (_, _) => Guard("capture", ctl.Cancel);
+        host.DoubleTapped += (_, _) => Guard("double", ctl.DoubleClick);
+        host.PointerWheelChanged += (_, e) => Guard("wheel", () =>
         {
             var p = Dips(e);
-            ctl.Wheel(-e.GetCurrentPoint(panel).Properties.MouseWheelDelta * 100.0 / 120, p.X, p.Y);
+            ctl.Wheel(-e.GetCurrentPoint(host).Properties.MouseWheelDelta * 100.0 / 120, p.X, p.Y);
             e.Handled = true;
         });
-        panel.KeyDown += (_, e) => Guard("key", () =>
+        host.KeyDown += (_, e) => Guard("key", () =>
         {
             if (KeyChar((int)e.Key) is { } c)
             {
@@ -492,14 +493,14 @@ public sealed class OfficeHost : IDisposable
                 e.Handled = true;
             }
         });
-        area.Child = panel;
+        area.Child = host;
         Retarget();
     }
 
     /// <summary>A pointer event's place in the panel, in DIPs, which is the office's own size here.</summary>
     (double X, double Y) Dips(PointerRoutedEventArgs e)
     {
-        var p = e.GetCurrentPoint(panel).Position;
+        var p = e.GetCurrentPoint(host!).Position;
         return (p.X, p.Y);
     }
 
@@ -520,7 +521,6 @@ public sealed class OfficeHost : IDisposable
         if (r is null || panel is null) return;
         dashboardScale = (Math.Max(panel.CompositionScaleX, 0.01), Math.Max(panel.CompositionScaleY, 0.01));
         int w = Math.Max((int)Math.Round(panel.ActualWidth * dashboardScale.X), 1), h = Math.Max((int)Math.Round(panel.ActualHeight * dashboardScale.Y), 1);
-        dashboardPixels = (w, h);
         if (model.W != panel.ActualWidth || model.H != panel.ActualHeight) ctl.Resize(panel.ActualWidth, panel.ActualHeight);
         modelPerPixel = (panel.ActualWidth / w, panel.ActualHeight / h);
         if (dashboardSurface is null)
