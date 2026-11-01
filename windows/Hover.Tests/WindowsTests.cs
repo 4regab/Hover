@@ -244,6 +244,7 @@ public class AppTests(ITestOutputHelper output)
         {
             var log = await WaitForLog(temp.Path, "agent backend is ready", TimeSpan.FromSeconds(60), first);
             output.WriteLine(log);
+            Assert.DoesNotContain("styles did not load", log);
             Assert.False(HasWindow(first), "a background start has no window");
             var backendPid = int.Parse(System.Text.RegularExpressions.Regex.Match(log, @"backend started \(pid (\d+)\)").Groups[1].Value);
             Assert.True(BackendSmokeTests.IsRunning(backendPid));
@@ -283,6 +284,7 @@ public class AppTests(ITestOutputHelper output)
         Assert.True(app.WaitForExit(120_000), "--shots should finish by itself");
         Assert.True(app.ExitCode == 0, $"--shots exited with {app.ExitCode}. {Describe(Path.Combine(temp.Path, "data"))}");
 
+        Assert.DoesNotContain("styles did not load", Describe(Path.Combine(temp.Path, "data")));
         var picture = await File.ReadAllBytesAsync(Path.Combine(shots, "dashboard.jpg"));
         var (width, height) = Jpeg.Size(picture);
         output.WriteLine($"dashboard.jpg: {picture.Length} bytes, {width} x {height}");

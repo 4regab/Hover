@@ -42,10 +42,8 @@ public static class Program
         try
         {
             WinRT.ComWrappersSupport.InitializeComWrappers();
-            HostLog.Line("starting the application");
             Application.Start(startup =>
             {
-                HostLog.Line("on the application thread");
                 try
                 {
                     SynchronizationContext.SetSynchronizationContext(

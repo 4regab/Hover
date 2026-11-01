@@ -14,8 +14,7 @@ namespace Hover;
 /// notch, the tray and the office join it in later phases.
 ///
 /// It answers the XAML engine's questions about types with the controls library's own
-/// metadata. An app with an App.xaml gets this from the XAML compiler; this one has none, and
-/// without it the engine cannot load the controls' styles (XamlControlsResources).
+/// metadata, as the XAML compiler's generated code would for an App.xaml.
 /// </summary>
 public sealed class App : Application, IXamlMetadataProvider
 {
@@ -39,18 +38,6 @@ public sealed class App : Application, IXamlMetadataProvider
     {
         this.launch = launch;
         this.dataDir = dataDir;
-        // The controls' own styles; with no App.xaml they are merged here.
-        HostLog.Line("merging the controls' styles");
-        try
-        {
-            Resources.MergedDictionaries.Add(new XamlControlsResources());
-        }
-        catch (Exception e)
-        {
-            // Inside Application.Start an exception ends the process with only an exit code.
-            HostLog.Line($"the controls' styles did not load (0x{e.HResult:X8}) — {e}");
-        }
-        HostLog.Line("the application object is made");
         UnhandledException += (_, e) =>
         {
             HostLog.Line($"unhandled — {e.Exception}");
@@ -83,6 +70,18 @@ public sealed class App : Application, IXamlMetadataProvider
 
     protected override void OnLaunched(LaunchActivatedEventArgs args)
     {
+        // The controls' own styles; with no App.xaml they are merged here. Application.Resources
+        // cannot be read until the application has started, so not in the constructor.
+        try
+        {
+            Resources.MergedDictionaries.Add(new XamlControlsResources());
+        }
+        catch (Exception e)
+        {
+            // The window still opens, with the engine's plain styles.
+            HostLog.Line($"the controls' styles did not load (0x{e.HResult:X8}) — {e}");
+        }
+
         bool show;
         lock (Gate)
         {
