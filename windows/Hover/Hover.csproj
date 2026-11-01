@@ -28,7 +28,12 @@
     <None Include="Assets\Fonts\*.ttf" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
   <ItemGroup>
-    <PackageReference Include="Microsoft.WindowsAppSDK" Version="2.6.4" />
+    <!-- The Windows App SDK is referenced by the two components this app uses (Foundation, with
+         the app lifecycle and the unpackaged start, and WinUI, which brings the input and window
+         parts with it), not by the Microsoft.WindowsAppSDK package that adds all the others. Its
+         Windows ML component alone is onnxruntime.dll and DirectML.dll, 42 MB nothing here calls. -->
+    <PackageReference Include="Microsoft.WindowsAppSDK.Foundation" Version="2.6.4" />
+    <PackageReference Include="Microsoft.WindowsAppSDK.WinUI" Version="2.6.4" />
     <!-- The notch is drawn with Direct2D and DirectWrite onto a Direct3D 11 swap chain that
          DirectComposition shows; Vortice is the managed binding for all four. -->
     <PackageReference Include="Vortice.Direct2D1" Version="3.8.3" />

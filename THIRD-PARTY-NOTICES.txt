@@ -542,10 +542,8 @@ Sans fonts and the music, above, are shipped by this app too.
 
   Package                                                     Version        Licence
   .NET runtime (Microsoft.NETCore.App.Runtime.win-x64)        10.0.14        MIT (.NET Foundation)
-  Microsoft.WindowsAppSDK, and its component packages
-    (Base, Foundation, WinUI, InteractiveExperiences,
-     Runtime, AI, ML, Widgets, Search, DWrite)                2.6.4          Microsoft Software License Terms
-  Microsoft.Windows.AI.MachineLearning                        2.4.89         Microsoft Software License Terms
+  Microsoft.WindowsAppSDK component packages
+    (Base, Foundation, WinUI, InteractiveExperiences)         2.6.4          Microsoft Software License Terms
   Microsoft.Web.WebView2                                      1.0.3719.77    BSD 3-clause (Microsoft)
   Microsoft.Windows.SDK.NET.Ref (the Windows API projections) 10.0.22621.57  Windows SDK terms, https://aka.ms/WinSDKLicenseURL
   Vortice.Direct2D1, .Direct3D11, .DirectComposition,
@@ -556,10 +554,11 @@ Sans fonts and the music, above, are shipped by this app too.
   System.Security.Cryptography.ProtectedData                  10.0.14        MIT (Microsoft)
   System.Numerics.Tensors                                     9.0.0          MIT (Microsoft)
 
-The notices of the third-party code inside the Windows App SDK and Windows Machine Learning
-packages are the NOTICE.txt of Microsoft.WindowsAppSDK 2.6.4 and the ThirdPartyNotices.txt of
-Microsoft.Windows.AI.MachineLearning 2.4.89, in those packages on nuget.org
-(https://www.nuget.org/packages/Microsoft.WindowsAppSDK/2.6.4).
+The notices of the third-party code inside the Windows App SDK packages are the NOTICE.txt of
+Microsoft.WindowsAppSDK.Base 2.6.4 and of Microsoft.WindowsAppSDK.WinUI 2.6.4, in those packages on
+nuget.org (https://www.nuget.org/packages/Microsoft.WindowsAppSDK.Base/2.6.4 and
+https://www.nuget.org/packages/Microsoft.WindowsAppSDK.WinUI/2.6.4). The app does not ship the Windows App SDK's
+AI, Windows ML, Search, Widgets or DWrite components (so no ONNX Runtime or DirectML).
 
 ------------------------------------------------------------------------
 MIT License: .NET runtime and Microsoft's System.* packages
