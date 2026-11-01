@@ -249,14 +249,14 @@ public class DeskAppTests(ITestOutputHelper output)
             await Check(s, () => ChromeHas(s, "app.js") && ChromeHas(s, "saved from the desk"), "the diff shows the saved line");
             Assert.Contains(s.Dump.Chrome("window"), t => t.Contains("file", StringComparison.Ordinal) && t.Contains("changed", StringComparison.Ordinal));
 
-            // Screen: the desktop is taken for real (the wallpaper under the app's windows) and shown; Watch live starts and stops.
+            // Screen: the desktop is taken for real (the wallpaper under the app's windows) and shown; Watch live starts and stops. The panel's words are in the dump's chrome.
             await ClickAt(s, "deskTab", "the Screen tab", Of("screen"));
-            await Check(s, () => s.Dump.Where("window", "sWatch") is not null && s.Dump.Texts("window").Contains("Desktop"), "the Screen tab has its Watch live button");
-            await Check(s, () => !s.Dump.Texts("window").Contains("Reading…"), "the picture of the desktop arrived");
+            await Check(s, () => s.Dump.Where("window", "sWatch") is not null && ChromeHas(s, "Desktop"), "the Screen tab has its Watch live button");
+            await Check(s, () => !ChromeHas(s, "Reading…"), "the picture of the desktop arrived");
             await ClickAt(s, "sWatch", "Watch live");
-            await Check(s, () => s.Dump.Texts("window").Contains("Stop watching") && s.Dump.Texts("window").Contains("Live"), "the tab is live");
+            await Check(s, () => ChromeHas(s, "Stop watching") && ChromeHas(s, "Live"), "the tab is live");
             await ClickAt(s, "sWatch", "Stop watching");
-            await Check(s, () => s.Dump.Texts("window").Contains("Watch live") && s.Dump.Texts("window").Contains("Desktop"), "the tab stopped watching");
+            await Check(s, () => ChromeHas(s, "Watch live") && ChromeHas(s, "Desktop"), "the tab stopped watching");
 
             // The panel closes, and the chat is the way on: a picture is pasted into the reply, and a file attached with @.
             await ClickAt(s, "deskClose", "the panel's close button");
