@@ -222,33 +222,12 @@ public sealed class OfficeHost : IDisposable
     {
         // Raised on the backend reader's thread: the message is read into the office's own input there, applied on the UI thread.
         if (e is not StateEvent state) return;
-        var sessions = Map(state);
+        var sessions = OfficeStateMap.Read(state);
         queue.TryEnqueue(() => Guard("state", () =>
         {
             if (!disposed) ctl.State(sessions);
         }));
     }
-
-    static string? Word(SessionInfo s, string name) =>
-        s.Extra is not null && s.Extra.TryGetValue(name, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() : null;
-
-    /// <summary>The state message's sessions as the office reads them (act, pose and file are not typed in the protocol records).</summary>
-    internal static List<SessionInput> Map(StateEvent state) =>
-    [
-        .. state.Sessions.Select(h => new SessionInput
-        {
-            Id = h.Id, Key = h.Key, Tool = h.Tool, Bot = h.Bot, Seat = h.Seat, Title = h.Title, Folder = h.Folder, Ctx = h.Ctx,
-            Act = Word(h, "act"), Pose = Word(h, "pose"), File = Word(h, "file") ?? "",
-            Turns =
-            [
-                .. h.Turns.Select(t => new TurnInput
-                {
-                    Prompt = t.Prompt, Stage = t.Stage, Queued = t.Queued, T0 = t.T0, Took = t.Took,
-                    Steps = [.. t.Steps.Select(x => new StepInput(x.K, x.Status))],
-                }),
-            ],
-        }),
-    ];
 
     void OnClicked(Click c)
     {

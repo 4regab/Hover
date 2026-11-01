@@ -18,5 +18,8 @@
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\Hover.Office\Hover.Office.csproj" />
+    <!-- The backend's state message into the office's input (windows/Hover/Office/OfficeStateMap.cs, which has no WinUI in it). -->
+    <ProjectReference Include="..\Hover.Host\Hover.Host.csproj" />
+    <Compile Include="..\Hover\Office\OfficeStateMap.cs" Link="OfficeStateMap.cs" />
   </ItemGroup>
 </Project>
