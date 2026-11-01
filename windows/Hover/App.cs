@@ -32,7 +32,9 @@ public sealed class App : Application
         this.launch = launch;
         this.dataDir = dataDir;
         // The controls' own styles; with no App.xaml they are merged here.
+        HostLog.Line("merging the controls' styles");
         Resources.MergedDictionaries.Add(new XamlControlsResources());
+        HostLog.Line("the application object is made");
         UnhandledException += (_, e) =>
         {
             HostLog.Line($"unhandled — {e.Exception}");

@@ -26,6 +26,7 @@ public static class Program
             return Fatal($"Hover can't use its data folder: {e.Message}", quiet: launch.ShotsDirectory is not null);
         }
         HostLog.Path = DataFolder.LogFile(dataDir);
+        HostLog.Line($"main ({string.Join(' ', args)})");
 
         // Pictures do not claim the instance: they run beside an open Hover.
         SingleInstance? instance = null;
@@ -41,12 +42,15 @@ public static class Program
         try
         {
             WinRT.ComWrappersSupport.InitializeComWrappers();
+            HostLog.Line("starting the application");
             Application.Start(startup =>
             {
+                HostLog.Line("on the application thread");
                 SynchronizationContext.SetSynchronizationContext(
                     new DispatcherQueueSynchronizationContext(DispatcherQueue.GetForCurrentThread()));
                 _ = new App(launch, dataDir);
             });
+            HostLog.Line("the application ended");
         }
         catch (Exception e)
         {
