@@ -3,6 +3,8 @@ using Hover.Host;
 using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Markup;
+using Microsoft.UI.Xaml.XamlTypeInfo;
 using WinRT.Interop;
 
 namespace Hover;
@@ -10,9 +12,15 @@ namespace Hover;
 /// <summary>
 /// The application object. It owns the backend and, for now, the dashboard window; the
 /// notch, the tray and the office join it in later phases.
+///
+/// It answers the XAML engine's questions about types with the controls library's own
+/// metadata. An app with an App.xaml gets this from the XAML compiler; this one has none, and
+/// without it the engine cannot load the controls' styles (XamlControlsResources).
 /// </summary>
-public sealed class App : Application
+public sealed class App : Application, IXamlMetadataProvider
 {
+    readonly XamlControlsXamlMetaDataProvider controls = new();
+
     // A second launch can signal before the application exists; it is remembered until it does.
     static readonly object Gate = new();
     static App? current;
@@ -41,6 +49,12 @@ public sealed class App : Application
             e.Handled = true;
         };
     }
+
+    public IXamlType GetXamlType(Type type) => controls.GetXamlType(type);
+
+    public IXamlType GetXamlType(string fullName) => controls.GetXamlType(fullName);
+
+    public XmlnsDefinition[] GetXmlnsDefinitions() => controls.GetXmlnsDefinitions();
 
     /// <summary>A later launch asked for the dashboard. Callable from any thread.</summary>
     public static void RequestDashboard()
