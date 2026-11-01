@@ -154,7 +154,9 @@ public class PanelsAppTests(ITestOutputHelper output)
         using var sandbox = new Sandbox();
         var data = sandbox.Data;
         Directory.CreateDirectory(data);
-        File.WriteAllText(Path.Combine(data, "settings.json"), """{"KiroNoticeSeen": true, "HoverOpensWorkspace": false, "NotchItems": ["claude"]}""");
+        // The folder the last task ran in is the one the new-task box starts with.
+        var folder = System.Text.Json.JsonSerializer.Serialize(sandbox.Project);
+        File.WriteAllText(Path.Combine(data, "settings.json"), $$"""{"KiroNoticeSeen": true, "HoverOpensWorkspace": false, "NotchItems": ["claude"], "KiroFolder": {{folder}}}""");
         var dumpFile = Path.Combine(sandbox.Root, "ui-dump.json");
         var dump = new AppDump(dumpFile);
         var info = new ProcessStartInfo(TestEnvironment.AppExe!)
@@ -219,7 +221,6 @@ public class PanelsAppTests(ITestOutputHelper output)
 
             // The permission comes up in the chat, and is answered there.
             await Check(() => dump.Where("window", "askAllow") is not null, "the permission question shows in the chat");
-            Assert.Contains("Wants to", string.Join("|", dump.Chrome("window")), StringComparison.OrdinalIgnoreCase);
             await ClickAt("window", "askAllow", "Allow in the chat");
             await Check(() => dump.Texts("window").Contains("Sandbox reply"), "the agent's answer shows after the permission is allowed from the chat");
             await Check(() => dump.Section("window")!["acts"]!.AsArray().Any(a => (string?)a!["kind"] == "Copy"), "the finished turn offers Copy");

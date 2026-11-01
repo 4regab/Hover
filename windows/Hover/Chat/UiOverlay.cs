@@ -182,14 +182,16 @@ sealed class UiOverlay : Grid, IDisposable
         if (!used) return;
         e.Handled = true;
         Focus(FocusState.Pointer);
-        CapturePointer(e.Pointer);
+        try { CapturePointer(e.Pointer); }
+        catch (ArgumentException) { }
     }
 
     void OnReleased(object sender, PointerRoutedEventArgs e)
     {
         var (x, y) = At(e);
         core.Ui.PointerUp(x, y);
-        ReleasePointerCapture(e.Pointer);
+        // Releases whatever this overlay captured; releasing a pointer it does not hold throws.
+        ReleasePointerCaptures();
     }
 
     void OnWheel(object sender, PointerRoutedEventArgs e)

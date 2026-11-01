@@ -28,6 +28,7 @@ static class AcpAgent
         string? pending = null; // the id of the prompt being answered, as JSON
         var scenario = "";
         var asked = new HashSet<string>(); // permission ids still waiting for an answer
+        Process? kid = null; // the child below
 
         void Print(JsonObject message) => output.WriteLine(message.ToJsonString());
         void Update(JsonObject update) => Print(new()
@@ -58,7 +59,12 @@ static class AcpAgent
                 }
                 asked.Remove(id!);
                 if (asked.Count > 0) continue;
-                if (scenario == "crash") return 3;
+                if (scenario == "crash")
+                {
+                    // On Windows the child would keep this program's pipes open and the backend would not see it end.
+                    try { kid?.Kill(entireProcessTree: true); } catch (InvalidOperationException) { }
+                    return 3;
+                }
                 var cwd = Directory.GetCurrentDirectory();
                 var app = Path.Combine(cwd, "app.js");
                 Update(new() { ["sessionUpdate"] = "agent_thought_chunk", ["content"] = new JsonObject { ["type"] = "text", ["text"] = "Plan: run the build, then check it." } });
@@ -109,7 +115,7 @@ static class AcpAgent
                     var said = string.Concat((parameters?["prompt"] as JsonArray ?? []).Select(b => b?["text"]?.GetValue<string>() ?? ""));
                     scenario = new[] { "slow", "rich", "two", "crash", "long", "diff" }.FirstOrDefault(w => said.Contains("[" + w + "]", StringComparison.Ordinal)) ?? "";
                     // A child that the backend must stop with the agent: the tests look for it afterwards.
-                    var child = Process.Start(new ProcessStartInfo(Environment.ProcessPath!, ["sleep", "60"])
+                    var child = kid = Process.Start(new ProcessStartInfo(Environment.ProcessPath!, ["sleep", "60"])
                     {
                         UseShellExecute = false, CreateNoWindow = true,
                         RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true,

@@ -67,7 +67,7 @@ static class ChatShots
     internal static SessionInfo Session(int id, string tool, string title, string stage, int bot, params TurnInfo[] turns) => new()
     {
         Id = id, Key = "k" + id, Tool = tool, Bot = bot, Title = title, Folder = @"C:\work\project", Stage = stage, Turns = [.. turns],
-        Files = "f00000000000" + id + ".hover",
+        Files = $"hover://files/k{id}/",
     };
 
     internal static TurnInfo Turn(string prompt, string answer, string stage, int minutesAgo, params StepInfo[] steps) => new()
@@ -152,14 +152,19 @@ static class ChatShots
             await Shot(core, directory, "office-ask-chat", 1200, 480, () => { ui.OpenChat(3); }, office: true);
 
             // The nearby inputs: very long answers, a huge change, a broken flowchart and picture, two questions.
-            var broken = Session(5, "kiro", "Odd content", "done", 1, Turn("Show odd content", "A picture that cannot load:\n\n![the logo](https://f000000000005.hover/missing.png)\n\n```mermaid\nflowchart LR\n  A[One] -->\n```\n\nAnd text after.", "done", 1));
+            var broken = Session(5, "kiro", "Odd content", "done", 1, Turn("Show odd content", "A picture that cannot load:\n\n![the logo](missing.png)\n\n```mermaid\nflowchart LR\n  A[One] -->\n```\n\nAnd text after.", "done", 1));
             await Shot(core, directory, "chat-extra-bad-diagram-and-image", 1200, 720, () => { ui.Accept(State(Busy(), Finished(), asking, queued, broken)); ui.ChatView = true; ui.OpenChat(5); });
+            // A picture that loads: a file in the session's folder, shown at its own size.
+            var pictures = Directory.CreateTempSubdirectory("hover-shots-files.").FullName;
+            WritePng(Path.Combine(pictures, "gradient.png"), 360, 140);
+            var withPicture = Session(9, "kiro", "A picture", "done", 5, Turn("Show me a picture", "Here it is:\n\n![a gradient](gradient.png)\n\nThe size is its own.", "done", 1)) with { Folder = pictures };
+            await Shot(core, directory, "chat-extra-picture", 1200, 720, () => { ui.Accept(State(Busy(), Finished(), asking, queued, broken, withPicture)); ui.OpenChat(9); });
             var longText = string.Join("\n\n", Enumerable.Range(1, 10_000).Select(i => $"Line {i} of an answer that goes on and on and on."));
             var longSession = Session(6, "kiro", "Print everything", "done", 1, Turn("Print everything", longText, "done", 1));
-            await Shot(core, directory, "chat-extra-ten-thousand-lines", 1200, 720, () => { ui.Accept(State(Busy(), Finished(), asking, queued, broken, longSession)); ui.OpenChat(6); }, rounds: 60);
+            await Shot(core, directory, "chat-extra-ten-thousand-lines", 1200, 720, () => { ui.Accept(State(Busy(), Finished(), asking, queued, broken, withPicture, longSession)); ui.OpenChat(6); }, rounds: 60);
             var hugeDiff = "--- a/big.ts\n+++ b/big.ts\n@@ -1,3000 +1,3000 @@\n" + string.Join("\n", Enumerable.Range(1, 3000).Select(i => (i % 3 == 0 ? "+" : i % 3 == 1 ? "-" : " ") + $"const value{i} = {i};"));
             var hugeSession = Session(7, "kiro", "A huge change", "done", 1, Turn("Rewrite it all", "Rewritten.", "done", 1, Edit("big.ts", "src", hugeDiff, 1000, 1000)));
-            await Shot(core, directory, "chat-extra-huge-diff", 1200, 720, () => { ui.Accept(State(Busy(), Finished(), asking, queued, broken, longSession, hugeSession)); ui.OpenChat(7); ui.OpenFirstChange(); }, rounds: 60);
+            await Shot(core, directory, "chat-extra-huge-diff", 1200, 720, () => { ui.Accept(State(Busy(), Finished(), asking, queued, broken, withPicture, longSession, hugeSession)); ui.OpenChat(7); ui.OpenFirstChange(); }, rounds: 60);
             var second = Session(8, "codex", "Another question", "waiting", 4, Turn("Delete the build folder", "", "waiting", 1)) with { Ask = Permission() with { Id = "n2", Command = "rm -rf build", Title = "Wants to delete files", Danger = true, Allow = "Delete", Reason = "Deletes files" } };
             await Shot(core, directory, "office-ask-two", 1200, 480, () => { ui.Accept(State(asking, second)); ui.CloseChat(); ui.ChatView = false; }, office: true);
         }
@@ -169,6 +174,62 @@ static class ChatShots
             throw;
         }
         finally { core.FreezeState = false; }
+    }
+
+    /// <summary>A small PNG with a colour gradient, written by hand (stored zlib blocks), so a picture can be shown without a file in the repo.</summary>
+    static void WritePng(string file, int w, int h)
+    {
+        var raw = new byte[h * (1 + w * 3)];
+        for (var y = 0; y < h; y++)
+        {
+            var row = y * (1 + w * 3);
+            for (var x = 0; x < w; x++)
+            {
+                raw[row + 1 + x * 3] = (byte)(40 + 180 * x / w);
+                raw[row + 2 + x * 3] = (byte)(70 + 120 * y / h);
+                raw[row + 3 + x * 3] = (byte)(220 - 150 * x / w);
+            }
+        }
+        using var z = new MemoryStream();
+        z.WriteByte(0x78);
+        z.WriteByte(0x01);
+        for (var at = 0; at < raw.Length; at += 65535)
+        {
+            var n = Math.Min(65535, raw.Length - at);
+            z.WriteByte((byte)(at + n >= raw.Length ? 1 : 0));
+            z.Write([(byte)n, (byte)(n >> 8), (byte)~n, (byte)(~n >> 8)]);
+            z.Write(raw, at, n);
+        }
+        uint a = 1, b = 0;
+        foreach (var v in raw) { a = (a + v) % 65521; b = (b + a) % 65521; }
+        z.Write([(byte)(b >> 8), (byte)b, (byte)(a >> 8), (byte)a]);
+        using var png = new MemoryStream();
+        png.Write([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]);
+        void Chunk(string kind, byte[] data)
+        {
+            Span<byte> len = stackalloc byte[4];
+            System.Buffers.Binary.BinaryPrimitives.WriteUInt32BigEndian(len, (uint)data.Length);
+            png.Write(len);
+            var body = System.Text.Encoding.ASCII.GetBytes(kind).Concat(data).ToArray();
+            png.Write(body);
+            uint crc = 0xFFFFFFFF;
+            foreach (var v in body)
+            {
+                crc ^= v;
+                for (var k = 0; k < 8; k++) crc = (crc & 1) != 0 ? 0xEDB88320 ^ (crc >> 1) : crc >> 1;
+            }
+            System.Buffers.Binary.BinaryPrimitives.WriteUInt32BigEndian(len, ~crc);
+            png.Write(len);
+        }
+        var ihdr = new byte[13];
+        System.Buffers.Binary.BinaryPrimitives.WriteUInt32BigEndian(ihdr, (uint)w);
+        System.Buffers.Binary.BinaryPrimitives.WriteUInt32BigEndian(ihdr.AsSpan(4), (uint)h);
+        ihdr[8] = 8;
+        ihdr[9] = 2;
+        Chunk("IHDR", ihdr);
+        Chunk("IDAT", z.ToArray());
+        Chunk("IEND", []);
+        File.WriteAllBytes(file, png.ToArray());
     }
 
     static async Task Shot(UiCore core, string directory, string name, int w, int h, Action setup, bool office = false, int rounds = 40)

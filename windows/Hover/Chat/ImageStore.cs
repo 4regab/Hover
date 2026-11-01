@@ -31,7 +31,7 @@ sealed class ImageStore : IDisposable
     readonly Dictionary<string, Slot> slots = [];
     readonly object gate = new();
     readonly string imagesFolder;
-    readonly Func<string, string?> folderOfHost;
+    readonly Func<string, string?> folderOfFiles;
     readonly HttpClient http = new() { Timeout = TimeSpan.FromSeconds(30) };
     readonly SemaphoreSlim workers = new(2);
 
@@ -39,11 +39,11 @@ sealed class ImageStore : IDisposable
     public event Action<string>? Arrived;
 
     /// <param name="dataDir">The data folder: pictures pasted into a prompt are kept in its kiro-images folder.</param>
-    /// <param name="folderOfHost">The folder a session's files host serves (null for a host nobody serves).</param>
-    public ImageStore(string dataDir, Func<string, string?> folderOfHost)
+    /// <param name="folderOfFiles">The folder of the session whose files address starts with this (null for none).</param>
+    public ImageStore(string dataDir, Func<string, string?> folderOfFiles)
     {
         imagesFolder = Path.Combine(dataDir, "kiro-images");
-        this.folderOfHost = folderOfHost;
+        this.folderOfFiles = folderOfFiles;
     }
 
     public ImageState State(string src)
@@ -124,15 +124,29 @@ sealed class ImageStore : IDisposable
             return b64.Length > MaxBytes * 4 / 3 ? null : Convert.FromBase64String(b64);
         }
         if (!Uri.TryCreate(src, UriKind.Absolute, out var uri)) return null;
-        if (uri.Scheme is not ("http" or "https")) return null;
-        string? root = null;
-        if (uri.Host == "hover.images") root = imagesFolder;
-        else if (uri.Host.EndsWith(".hover", StringComparison.OrdinalIgnoreCase)) root = folderOfHost(uri.Host);
-        if (uri.Host == "hover.images" || uri.Host.EndsWith(".hover", StringComparison.OrdinalIgnoreCase))
+        // hover://images/<name>: a picture pasted into a prompt, kept in the data folder.
+        // hover://files/<key>/<path>: a file in the folder of the session that has that key.
+        if (uri.Scheme == "hover")
         {
-            if (root is null) return null;
-            // A file under the folder the host serves, and nowhere else.
-            var rel = Uri.UnescapeDataString(uri.AbsolutePath).TrimStart('/').Replace('/', Path.DirectorySeparatorChar);
+            string? root = null;
+            string rel;
+            if (uri.Host == "images")
+            {
+                root = imagesFolder;
+                rel = Uri.UnescapeDataString(uri.AbsolutePath).TrimStart('/');
+                if (rel.Contains('/') || rel.Contains('\\')) return null;
+            }
+            else if (uri.Host == "files")
+            {
+                var path = uri.AbsolutePath.TrimStart('/');
+                var slash = path.IndexOf('/');
+                if (slash <= 0) return null;
+                root = folderOfFiles($"hover://files/{path[..slash]}/");
+                rel = Uri.UnescapeDataString(path[(slash + 1)..]).Replace('/', Path.DirectorySeparatorChar);
+            }
+            else return null;
+            if (root is null || rel.Length == 0) return null;
+            // A file under the folder served, and nowhere else.
             var full = Path.GetFullPath(Path.Combine(root, rel));
             var rootFull = Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
             if (!full.StartsWith(rootFull, StringComparison.OrdinalIgnoreCase)) return null;
@@ -140,6 +154,7 @@ sealed class ImageStore : IDisposable
             if (!info.Exists || info.Length > MaxBytes) return null;
             return await File.ReadAllBytesAsync(full);
         }
+        if (uri.Scheme is not ("http" or "https")) return null;
         using var response = await http.GetAsync(uri, HttpCompletionOption.ResponseHeadersRead);
         if (!response.IsSuccessStatusCode) return null;
         if (response.Content.Headers.ContentLength > MaxBytes) return null;
