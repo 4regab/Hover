@@ -39,7 +39,7 @@ sealed class ImageStore : IDisposable
     public event Action<string>? Arrived;
 
     /// <param name="dataDir">The data folder: pictures pasted into a prompt are kept in its kiro-images folder.</param>
-    /// <param name="folderOfFiles">The folder of the session whose files address starts with this (null for none).</param>
+    /// <param name="folderOfFiles">The folder the session with this files host is in (null for a host nobody serves).</param>
     public ImageStore(string dataDir, Func<string, string?> folderOfFiles)
     {
         imagesFolder = Path.Combine(dataDir, "kiro-images");
@@ -125,7 +125,6 @@ sealed class ImageStore : IDisposable
         }
         if (!Uri.TryCreate(src, UriKind.Absolute, out var uri)) return null;
         // hover://images/<name>: a picture pasted into a prompt, kept in the data folder.
-        // hover://files/<key>/<path>: a file in the folder of the session that has that key.
         if (uri.Scheme == "hover")
         {
             string? root = null;
@@ -135,14 +134,6 @@ sealed class ImageStore : IDisposable
                 root = imagesFolder;
                 rel = Uri.UnescapeDataString(uri.AbsolutePath).TrimStart('/');
                 if (rel.Contains('/') || rel.Contains('\\')) return null;
-            }
-            else if (uri.Host == "files")
-            {
-                var path = uri.AbsolutePath.TrimStart('/');
-                var slash = path.IndexOf('/');
-                if (slash <= 0) return null;
-                root = folderOfFiles($"hover://files/{path[..slash]}/");
-                rel = Uri.UnescapeDataString(path[(slash + 1)..]).Replace('/', Path.DirectorySeparatorChar);
             }
             else return null;
             if (root is null || rel.Length == 0) return null;
@@ -155,6 +146,19 @@ sealed class ImageStore : IDisposable
             return await File.ReadAllBytesAsync(full);
         }
         if (uri.Scheme is not ("http" or "https")) return null;
+        // https://f<key>.hover/<path>: a file in the folder of the session that host belongs to.
+        if (uri.Host.EndsWith(".hover", StringComparison.OrdinalIgnoreCase))
+        {
+            var root = folderOfFiles(uri.Host);
+            var rel = Uri.UnescapeDataString(uri.AbsolutePath).TrimStart('/').Replace('/', Path.DirectorySeparatorChar);
+            if (root is null || rel.Length == 0) return null;
+            var full = Path.GetFullPath(Path.Combine(root, rel));
+            var rootFull = Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+            if (!full.StartsWith(rootFull, StringComparison.OrdinalIgnoreCase)) return null;
+            var info = new FileInfo(full);
+            if (!info.Exists || info.Length > MaxBytes) return null;
+            return await File.ReadAllBytesAsync(full);
+        }
         using var response = await http.GetAsync(uri, HttpCompletionOption.ResponseHeadersRead);
         if (!response.IsSuccessStatusCode) return null;
         if (response.Content.Headers.ContentLength > MaxBytes) return null;

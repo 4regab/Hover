@@ -66,8 +66,7 @@ static class ChatShots
 
     internal static SessionInfo Session(int id, string tool, string title, string stage, int bot, params TurnInfo[] turns) => new()
     {
-        Id = id, Key = "k" + id, Tool = tool, Bot = bot, Title = title, Folder = @"C:\work\project", Stage = stage, Turns = [.. turns],
-        Files = $"hover://files/k{id}/",
+        Id = id, Key = id.ToString("x32"), Tool = tool, Bot = bot, Title = title, Folder = @"C:\work\project", Stage = stage, Turns = [.. turns],
     };
 
     internal static TurnInfo Turn(string prompt, string answer, string stage, int minutesAgo, params StepInfo[] steps) => new()
@@ -164,7 +163,7 @@ static class ChatShots
             await Shot(core, directory, "chat-extra-ten-thousand-lines", 1200, 720, () => { ui.Accept(State(Busy(), Finished(), asking, queued, broken, withPicture, longSession)); ui.OpenChat(6); }, rounds: 60);
             var hugeDiff = "--- a/big.ts\n+++ b/big.ts\n@@ -1,3000 +1,3000 @@\n" + string.Join("\n", Enumerable.Range(1, 3000).Select(i => (i % 3 == 0 ? "+" : i % 3 == 1 ? "-" : " ") + $"const value{i} = {i};"));
             var hugeSession = Session(7, "kiro", "A huge change", "done", 1, Turn("Rewrite it all", "Rewritten.", "done", 1, Edit("big.ts", "src", hugeDiff, 1000, 1000)));
-            await Shot(core, directory, "chat-extra-huge-diff", 1200, 720, () => { ui.Accept(State(Busy(), Finished(), asking, queued, broken, withPicture, longSession, hugeSession)); ui.OpenChat(7); ui.OpenFirstChange(); }, rounds: 60);
+            await Shot(core, directory, "chat-extra-huge-diff", 1200, 720, () => { ui.Accept(State(Busy(), Finished(), asking, queued, broken, withPicture, longSession, hugeSession)); ui.OpenChat(7); S(); ui.OpenFirstChange(); }, rounds: 60);
             var second = Session(8, "codex", "Another question", "waiting", 4, Turn("Delete the build folder", "", "waiting", 1)) with { Ask = Permission() with { Id = "n2", Command = "rm -rf build", Title = "Wants to delete files", Danger = true, Allow = "Delete", Reason = "Deletes files" } };
             await Shot(core, directory, "office-ask-two", 1200, 480, () => { ui.Accept(State(asking, second)); ui.CloseChat(); ui.ChatView = false; }, office: true);
         }

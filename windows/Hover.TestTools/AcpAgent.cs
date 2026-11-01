@@ -30,7 +30,19 @@ static class AcpAgent
         var asked = new HashSet<string>(); // permission ids still waiting for an answer
         Process? kid = null; // the child below
 
-        void Print(JsonObject message) => output.WriteLine(message.ToJsonString());
+        // What this program was asked and what it said, for a test that has to explain a failure.
+        var trace = Path.Combine(root, "agent-log.txt");
+        void Log(string kind, string text)
+        {
+            try { File.AppendAllText(trace, $"{DateTime.UtcNow:HH:mm:ss.fff} {kind} {(text.Length > 300 ? text[..300] + "…" : text)}\n"); }
+            catch (IOException) { }
+        }
+        void Print(JsonObject message)
+        {
+            var text = message.ToJsonString();
+            Log("out", text);
+            output.WriteLine(text);
+        }
         void Update(JsonObject update) => Print(new()
         {
             ["jsonrpc"] = "2.0", ["method"] = "session/update",
@@ -44,6 +56,7 @@ static class AcpAgent
         string? line;
         while ((line = input.ReadLine()) != null)
         {
+            Log("in ", line);
             if (JsonNode.Parse(line) is not JsonObject message) continue;
             var method = message["method"]?.GetValue<string>();
             var id = message["id"]?.ToJsonString();

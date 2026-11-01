@@ -176,12 +176,17 @@ public class PanelsAppTests(ITestOutputHelper output)
         info.Environment["HOVER_UI_DUMP"] = dumpFile;
         using var app = Process.Start(info)!;
 
+        // The stand-in says "Sandbox reply"; when the backend ends a turn without having heard it, it writes its own line.
+        static bool IsAnswer(string t) => t == "Sandbox reply" || t.StartsWith("Done. ", StringComparison.Ordinal);
+
         async Task Check(Func<bool> condition, string what, int milliseconds = 30_000)
         {
             if (await Until(condition, milliseconds)) return;
             var log = DataFolder.LogFile(data);
-            var tail = File.Exists(log) ? string.Join("\n", File.ReadAllLines(log).TakeLast(25)) : "(no log)";
-            Assert.Fail($"{what}\n--- the panels:\n{dump.Summary()}\n--- the log:\n{tail}");
+            var tail = File.Exists(log) ? string.Join("\n", File.ReadAllLines(log).TakeLast(45)) : "(no log)";
+            var agent = Path.Combine(sandbox.Root, "agent-log.txt");
+            var said = File.Exists(agent) ? string.Join("\n", File.ReadAllLines(agent).TakeLast(30)) : "(the stand-in agent wrote nothing)";
+            Assert.Fail($"{what}\n--- the panels:\n{dump.Summary()}\n--- the log:\n{tail}\n--- the stand-in agent:\n{said}");
         }
 
         // The thread opens at its end: scroll up with the wheel until the button is in view.
@@ -228,7 +233,7 @@ public class PanelsAppTests(ITestOutputHelper output)
             // The permission comes up in the chat, and is answered there.
             await Check(() => dump.Where("window", "askAllow") is not null, "the permission question shows in the chat");
             await ClickAt("window", "askAllow", "Allow in the chat");
-            await Check(() => dump.Texts("window").Contains("Sandbox reply"), "the agent's answer shows after the permission is allowed from the chat");
+            await Check(() => dump.Texts("window").Any(IsAnswer), "the agent's answer shows after the permission is allowed from the chat");
             await Check(() => dump.Section("window")!["acts"]!.AsArray().Any(a => (string?)a!["kind"] == "Copy"), "the finished turn offers Copy");
             Assert.Equal("a\nb\n", File.ReadAllText(Path.Combine(sandbox.Project, "app.js")).Replace("\r\n", "\n"));
 
@@ -247,7 +252,7 @@ public class PanelsAppTests(ITestOutputHelper output)
             var allow = dump.Bar("cardAllow")!.Value;
             output.WriteLine($"click the card's allow at {allow.X},{allow.Y}");
             Input.Click(allow.X, allow.Y);
-            await Check(() => dump.Texts("window").Count(t => t == "Sandbox reply") >= 2, "the second answer shows after the permission is allowed from the notch");
+            await Check(() => dump.Texts("window").Count(IsAnswer) >= 2, "the second answer shows after the permission is allowed from the notch");
 
             // Restore the first turn's checkpoint: the second turn goes.
             Assert.Contains("And once more", dump.Texts("window"));
@@ -262,7 +267,7 @@ public class PanelsAppTests(ITestOutputHelper output)
             await ClickAt("window", "confirmYes", "confirm trying again");
             await Check(() => dump.Where("window", "askAllow") is not null, "the message went again and asks again");
             await ClickAt("window", "askAllow", "Allow again");
-            await Check(() => dump.Texts("window").Contains("Sandbox reply"), "the answer shows again");
+            await Check(() => dump.Texts("window").Any(IsAnswer), "the answer shows again");
 
             // A new task that never ends by itself: a reply is queued behind it, the run is paused, then resumed.
             await ClickAt("window", "newChat", "New chat");
@@ -279,7 +284,7 @@ public class PanelsAppTests(ITestOutputHelper output)
             // Pause ends the run and sends the queued reply once; the agent asks about it.
             await Check(() => dump.Where("window", "askAllow") is not null, "the queued reply went after the pause and asks");
             await ClickAt("window", "askAllow", "Allow the queued reply");
-            await Check(() => dump.Texts("window").Any(t => t == "Sandbox reply"), "the queued reply's answer shows");
+            await Check(() => dump.Texts("window").Any(IsAnswer), "the queued reply's answer shows");
         }
         finally
         {

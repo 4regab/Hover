@@ -43,7 +43,7 @@ sealed class UiCore : IDisposable
         this.queue = queue;
         this.backend = backend;
         Shaper = new DwShaper(gfx);
-        Images = new ImageStore(dataDir, prefix => Ui?.State?.Sessions.FirstOrDefault(s => s.Files == prefix)?.Folder);
+        Images = new ImageStore(dataDir, host => Ui?.State?.Sessions.FirstOrDefault(s => OfficeUi.FilesHost(s.Key) == host)?.Folder);
         Canvas = new D2DCanvas(gfx, Shaper, Images);
         Ui = new OfficeUi(Shaper, new UiEnv
         {

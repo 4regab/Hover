@@ -78,6 +78,13 @@ public sealed partial class OfficeUi
         Dirty = true;
     }
 
+    /// <summary>
+    /// The host a session's files are named by in its Markdown (f&lt;first 12 of the key&gt;.hover, as the Go
+    /// app names it): the backend writes a picture's address as https://host/path and the picture store
+    /// reads it from the session's folder.
+    /// </summary>
+    public static string FilesHost(string key) => key.Length >= 12 ? "f" + key[..12].ToLowerInvariant() + ".hover" : "";
+
     // MARK: Syncing the thread with the session
 
     void SyncThread(SessionInfo s, float colw)
@@ -95,7 +102,7 @@ public sealed partial class OfficeUi
         thread.Who = Bots.Name(s.Bot);
         thread.Tool = s.Tool.Length > 0 ? s.Tool : "kiro";
         thread.Folder = s.Folder;
-        thread.Files = s.Files ?? "";
+        thread.Files = FilesHost(s.Key);
         thread.HideSteps = ToolOf(s.Tool)?.HideSteps == true;
         var nowMs = new DateTimeOffset(DateTime.SpecifyKind(env.Utc(), DateTimeKind.Utc)).ToUnixTimeMilliseconds();
         turns = Turns.From(s, nowMs);
