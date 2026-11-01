@@ -42,6 +42,21 @@ public sealed partial class OfficeUi
     /// <summary>Something is moving by itself (a caret, a clock, a scroll), so frames should keep coming.</summary>
     public bool Animating { get; private set; }
 
+    /// <summary>How soon the next frame is wanted, in milliseconds, when <see cref="Animating"/>.</summary>
+    public double NextFrameMs { get; private set; } = double.MaxValue;
+
+    /// <summary>A text box has the keyboard.</summary>
+    public bool WantsKeyboard => FocusedBox() is not null;
+
+    /// <summary>Asks for a frame.</summary>
+    public void Invalidate() => Dirty = true;
+
+    void Need(double ms)
+    {
+        Animating = true;
+        if (ms < NextFrameMs) NextFrameMs = ms;
+    }
+
     /// <summary>The places the last frame drew that answer a click, topmost last.</summary>
     public IReadOnlyList<Target> Targets => targets;
 
@@ -68,6 +83,14 @@ public sealed partial class OfficeUi
 
     /// <summary>The chat thread, for the tests and the pictures.</summary>
     public ChatThread Thread => thread;
+
+    /// <summary>Where the thread is drawn in the last frame, and how far it is scrolled.</summary>
+    public Rect4 ThreadArea => threadRect;
+
+    public float ScrollY => scroll;
+
+    /// <summary>The menu that is open, if any (its kind).</summary>
+    public string? OpenMenuKind => menu?.Kind;
 
     public StateEvent? State => state;
 
@@ -217,27 +240,64 @@ public sealed partial class OfficeUi
         now = nowMs;
         pen.Cv = cv;
         targets.Clear();
+        blockers.Clear();
         Animating = false;
+        NextFrameMs = double.MaxValue;
         Dirty = false;
         if (ToastText is not null && now > toastUntil) ToastText = null;
-        if (ToastText is not null) Animating = true;
+        if (ToastText is not null) Need(250);
         overBlocker = false;
 
         var compact = h <= 620;
         if (ChatView) PaintChatView(compact);
         else PaintOffice(compact);
         PaintOverlays();
-        if (focus != Focus.None) Animating = true;
+        if (focus != Focus.None && FocusedBox() is not null) Need(265);
     }
 
     /// <summary>A layer that takes the pointer (a menu, a card): what is under it does not see the pointer.</summary>
     bool overBlocker;
 
+    readonly List<Rect4> blockers = [];
+
     void Add(Rect4 r, string id, int n = 0, string s = "") => targets.Add(new Target(r, id, n, s));
+
+    /// <summary>A drawn panel that takes the pointer but does nothing with it: the office behind does not see it.</summary>
+    void Block(Rect4 r) => blockers.Add(r);
 
     bool Over(Rect4 r) => !overBlocker && px >= 0 && r.Contains(px, py);
 
     // MARK: The pointer and keys
+
+    /// <summary>Some of the thread still shows plain text because the backend has not answered yet.</summary>
+    public bool Waiting => thread.Sections.Any(s => s.Waiting);
+
+    /// <summary>Requests to the backend for Markdown, colour and changes that are not answered yet.</summary>
+    public int Pending => cache.InFlight;
+
+    /// <summary>Presses and releases at the middle of the topmost place the last frame drew with this id (and number, if given). False when there is none.</summary>
+    public bool Click(string id, int n = -1, int clicks = 1)
+    {
+        for (var i = targets.Count - 1; i >= 0; i--)
+        {
+            var t = targets[i];
+            if (t.Id != id || (n >= 0 && t.N != n)) continue;
+            float x = t.R.X + t.R.W / 2, y = t.R.Y + t.R.H / 2;
+            PointerMove(x, y);
+            PointerDown(x, y, clicks, UiMods.None);
+            PointerUp(x, y);
+            return true;
+        }
+        return false;
+    }
+
+    /// <summary>The place the last frame drew with this id, if any.</summary>
+    public Target? Find(string id, int n = -1)
+    {
+        for (var i = targets.Count - 1; i >= 0; i--)
+            if (targets[i].Id == id && (n < 0 || targets[i].N == n)) return targets[i];
+        return null;
+    }
 
     /// <summary>The target under a point, topmost first.</summary>
     public Target? TargetAt(float x, float y)
@@ -250,7 +310,7 @@ public sealed partial class OfficeUi
     /// <summary>True when something the panels draw is under the point (the rest goes to the office behind).</summary>
     public bool Covers(float x, float y)
     {
-        if (TargetAt(x, y) is not null) return true;
+        if (TargetAt(x, y) is not null || blockers.Any(b => b.Contains(x, y))) return true;
         if (menu is not null || confirm is not null) return true;
         return ChatView || threadRect.Contains(x, y);
     }

@@ -3,6 +3,7 @@ using Microsoft.UI.Text;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
+using Hover.Chatting;
 using Hover.Windowing;
 using Windows.Graphics;
 
@@ -28,29 +29,30 @@ public sealed class DashboardWindow : Window
     /// <summary>True while this window has the keyboard.</summary>
     public bool IsActive { get; private set; }
 
-    public DashboardWindow(string dataDir, BackendSession backend, OfficeHost? office = null)
+    /// <summary>The office's panels, drawn over the office area (null when there is no graphics device).</summary>
+    internal UiOverlay? Panels { get; }
+
+    internal DashboardWindow(string dataDir, BackendSession backend, OfficeHost? office = null, UiCore? panels = null)
     {
         Title = "Hover";
         AppWindow.Resize(new SizeInt32(960, 600));
         Activated += (_, e) => IsActive = e.WindowActivationState != WindowActivationState.Deactivated;
 
         status = new TextBlock { Text = backend.Status, TextWrapping = TextWrapping.Wrap };
-        var header = new StackPanel { Spacing = 6, Padding = new Thickness(32, 24, 32, 12) };
-        header.Children.Add(new TextBlock { Text = "Hover", FontSize = 32, FontWeight = FontWeights.SemiBold });
+        // A slim bar above the office: the name and how the backend is doing. The office fills the rest.
+        status.FontSize = 12;
+        status.Opacity = 0.7;
+        status.VerticalAlignment = VerticalAlignment.Center;
+        status.TextTrimming = TextTrimming.CharacterEllipsis;
+        ToolTipService.SetToolTip(status, $"Data folder: {dataDir}");
+        var header = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 12, Padding = new Thickness(16, 0, 16, 0), Height = 36 };
+        header.Children.Add(new TextBlock { Text = "Hover", FontSize = 14, FontWeight = FontWeights.SemiBold, VerticalAlignment = VerticalAlignment.Center });
         header.Children.Add(status);
-        header.Children.Add(new TextBlock
-        {
-            Text = $"Data folder: {dataDir}",
-            TextWrapping = TextWrapping.Wrap,
-            Opacity = 0.7,
-        });
 
         OfficeArea = new Border
         {
-            Margin = new Thickness(32, 0, 32, 32),
-            CornerRadius = new CornerRadius(16),
-            BorderThickness = new Thickness(1.5),
-            BorderBrush = new SolidColorBrush(Color(0x40, 0x80, 0x80, 0x80)),
+            Margin = new Thickness(0),
+            Name = "OfficeArea",
             Child = new StackPanel
             {
                 VerticalAlignment = VerticalAlignment.Center,
@@ -71,6 +73,12 @@ public sealed class DashboardWindow : Window
         page.Children.Add(header);
         Grid.SetRow(OfficeArea, 1);
         page.Children.Add(OfficeArea);
+        if (panels is not null)
+        {
+            Panels = new UiOverlay(panels, page, DispatcherQueue);
+            Grid.SetRow(Panels, 1);
+            page.Children.Add(Panels);
+        }
         Root = page;
         Content = page;
 

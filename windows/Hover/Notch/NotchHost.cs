@@ -1,4 +1,6 @@
 using System.Diagnostics;
+using Hover.Chat.Ui;
+using Hover.Chatting;
 using Hover.Host;
 using Hover.Host.Protocol;
 using Hover.Notch;
@@ -38,6 +40,13 @@ sealed class NotchHost : IDisposable
     readonly NotchRenderer renderer;
     readonly NotchWindow window;
     readonly OfficeHost? office;
+    readonly UiCore? panels;
+    readonly bool ownsGfx;
+    UiLayer? layer;
+    bool panelsDrawn;
+    int clickCount;
+    long lastClickAt;
+    (int X, int Y) lastClickAtPos;
     readonly NotchController ctl;
     readonly NotchScene scene = new();
     readonly Stopwatch clock = Stopwatch.StartNew();
@@ -64,8 +73,10 @@ sealed class NotchHost : IDisposable
 
     public NotchController Controller => ctl;
 
-    NotchHost(DispatcherQueue queue, BackendSession backend, NotchCallbacks callbacks, Gfx gfx, NotchWindow window, OfficeHost? office)
+    NotchHost(DispatcherQueue queue, BackendSession backend, NotchCallbacks callbacks, Gfx gfx, NotchWindow window, OfficeHost? office, UiCore? panels, bool ownsGfx)
     {
+        this.panels = panels;
+        this.ownsGfx = ownsGfx;
         this.queue = queue;
         this.backend = backend;
         this.callbacks = callbacks;
@@ -94,15 +105,15 @@ sealed class NotchHost : IDisposable
     /// Makes the notch, its shortcut and its tray icon. Returns null, with the reason in the log,
     /// when the window or the graphics cannot be made; the app then runs without a notch.
     /// </summary>
-    public static NotchHost? TryStart(DispatcherQueue queue, BackendSession backend, NotchCallbacks callbacks, OfficeHost? office = null)
+    public static NotchHost? TryStart(DispatcherQueue queue, BackendSession backend, NotchCallbacks callbacks, OfficeHost? office = null, Gfx? shared = null, UiCore? panels = null)
     {
-        Gfx? gfx = null;
+        Gfx? gfx = shared;
         NotchWindow? window = null;
         try
         {
-            gfx = Gfx.Create();
+            gfx ??= Gfx.Create();
             window = new NotchWindow();
-            var host = new NotchHost(queue, backend, callbacks, gfx, window, office);
+            var host = new NotchHost(queue, backend, callbacks, gfx, window, office, panels, shared is null);
             host.Start();
             return host;
         }
@@ -110,7 +121,7 @@ sealed class NotchHost : IDisposable
         {
             HostLog.Line($"the notch could not start — {e}");
             window?.Dispose();
-            gfx?.Dispose();
+            if (shared is null) gfx?.Dispose();
             return null;
         }
     }
@@ -131,10 +142,12 @@ sealed class NotchHost : IDisposable
         window.Deactivated += () => Guard("deactivate", Deactivated);
         window.TrayLeftClick += () => Guard("tray", callbacks.OpenDashboard);
         window.TrayPick += i => Guard("tray menu", () => TrayPick(i));
-        window.Pressed += (x, y) => Guard("press", () => { ctl.Stay(); office?.NotchPressed(x, y); });
-        window.Released += (x, y) => Guard("click", () => { Clicked(x, y); office?.NotchReleased(x, y); });
-        window.Wheel += delta => Guard("wheel", () => office?.NotchWheel(delta));
-        window.KeyDown += vk => Guard("key", () => { KeyPressed(vk); office?.NotchKey(vk); });
+        window.Pressed += (x, y) => Guard("press", () => { ctl.Stay(); if (!PanelsPressed(x, y)) office?.NotchPressed(x, y); });
+        window.Released += (x, y) => Guard("click", () => { PanelsReleased(x, y); Clicked(x, y); office?.NotchReleased(x, y); });
+        window.Char += text => Guard("text", () => { if (panels?.Ui.Char(text) == true) QueueRender(); });
+        if (panels is not null) panels.Changed += () => Guard("panels", () => { QueueRender(); EnsureAnimating(); });
+        window.Wheel += delta => Guard("wheel", () => { if (!PanelsWheel(delta)) office?.NotchWheel(delta); });
+        window.KeyDown += vk => Guard("key", () => { if (!PanelsKey(vk)) { KeyPressed(vk); office?.NotchKey(vk); } });
         backend.Event += e => queue.TryEnqueue(() => Guard("message", () => OnBackend(e)));
 
         ctl.Size = settings.Size;
@@ -266,6 +279,124 @@ sealed class NotchHost : IDisposable
         }
     }
 
+    // MARK: The panels
+
+    /// <summary>The open notch shows the office's panels over the office.</summary>
+    bool PanelsOpen => panels is not null && ctl.State != NotchState.Rest && scene.ViewVisible && scene.ViewOpacity >= 0.95;
+
+    /// <summary>A point of the window (device pixels) in the panels' own coordinates, or null when it is off the panels.</summary>
+    (float X, float Y)? PanelPoint(int px, int py, bool clamp = false)
+    {
+        var (ax, ay, aw, ah) = scene.OfficeArea(ctl.WindowWidth);
+        double x = px / ctl.Scale - ax, y = py / ctl.Scale - ay;
+        if (!clamp && (x < 0 || y < 0 || x >= aw || y >= ah)) return null;
+        return ((float)x, (float)y);
+    }
+
+    bool takenByPanels;
+
+    /// <summary>The panels need the keyboard while a box of theirs has it; the notch takes it for that time and gives it back.</summary>
+    void SyncKeys()
+    {
+        if (panels is null) return;
+        var wants = PanelsOpen && panels.Ui.WantsKeyboard;
+        if (wants && !takenByPanels && !cardOpen)
+        {
+            takenByPanels = true;
+            window.RememberForeground();
+            window.SetAcceptsKeys(true);
+            window.Focus();
+        }
+        else if (!wants && takenByPanels)
+        {
+            takenByPanels = false;
+            if (!cardOpen && ctl.State == NotchState.Rest)
+            {
+                window.SetAcceptsKeys(false);
+                window.RestoreForeground();
+            }
+        }
+    }
+
+    bool PanelsPressed(int px, int py)
+    {
+        if (!PanelsOpen || PanelPoint(px, py) is not { } p) return false;
+        var tick = Environment.TickCount64;
+        if (tick - lastClickAt <= 500 && Math.Abs(px - lastClickAtPos.X) <= 4 && Math.Abs(py - lastClickAtPos.Y) <= 4) clickCount++;
+        else clickCount = 1;
+        lastClickAt = tick;
+        lastClickAtPos = (px, py);
+        panels!.Ui.PointerMove(p.X, p.Y);
+        var used = panels.Ui.PointerDown(p.X, p.Y, clickCount, KeyMap.Mods(GetKeyState));
+        SyncKeys();
+        QueueRender();
+        EnsureAnimating();
+        return used;
+    }
+
+    void PanelsReleased(int px, int py)
+    {
+        if (panels is null || !PanelsOpen || PanelPoint(px, py, clamp: true) is not { } p) return;
+        panels.Ui.PointerUp(p.X, p.Y);
+        QueueRender();
+    }
+
+    bool PanelsWheel(int delta)
+    {
+        if (!PanelsOpen) return false;
+        var (cx, cy) = window.Cursor();
+        if (PanelPoint((int)(cx - ctl.Window.Left), (int)(cy - ctl.Window.Top)) is not { } p) return false;
+        var used = panels!.Ui.Wheel(p.X, p.Y, delta / 120f * 90f);
+        if (used) { QueueRender(); EnsureAnimating(); }
+        return used;
+    }
+
+    bool PanelsKey(int vk)
+    {
+        if (!PanelsOpen || cardOpen) return false;
+        var used = panels!.Ui.Key(KeyMap.Of(vk), KeyMap.Mods(GetKeyState));
+        SyncKeys();
+        QueueRender();
+        EnsureAnimating();
+        return used;
+    }
+
+    double panelScale;
+
+    /// <summary>Draws the panels into their layer when they are shown, and takes the layer away when they are not.</summary>
+    void RenderPanels()
+    {
+        if (panels is null || surface is null) return;
+        if (!PanelsOpen)
+        {
+            if (panelsDrawn)
+            {
+                layer?.Show(false);
+                panelsDrawn = false;
+            }
+            SyncKeys();
+            return;
+        }
+        var (composition, root) = surface.Composition;
+        layer ??= new UiLayer(gfx, composition, root);
+        var (ax, ay, aw, ah) = scene.OfficeArea(ctl.WindowWidth);
+        var sc = ctl.Scale;
+        layer.Place((float)(ax * sc), (float)(ay * sc), (int)Math.Round(aw * sc), (int)Math.Round(ah * sc));
+        var first = !panelsDrawn;
+        if (first)
+        {
+            layer.Show(true);
+            panelsDrawn = true;
+            panels.Ui.Invalidate();
+        }
+        if (first || panels.Ui.Dirty || panels.Ui.Animating || panelScale != sc)
+        {
+            panelScale = sc;
+            layer.Draw(dc => panels.Paint(dc, (float)aw, (float)ah), sc);
+        }
+        SyncKeys();
+    }
+
     // MARK: Opening and closing
 
     public void Toggle()
@@ -344,6 +475,13 @@ sealed class NotchHost : IDisposable
 
     void UpdateHover()
     {
+        if (PanelsOpen && ctl.Over)
+        {
+            var (cx, cy) = window.Cursor();
+            if (PanelPoint((int)(cx - ctl.Window.Left), (int)(cy - ctl.Window.Top)) is { } pt) panels!.Ui.PointerMove(pt.X, pt.Y);
+            else panels!.Ui.PointerLeave();
+            if (panels.Ui.Dirty) QueueRender();
+        }
         string? hovered = null;
         if (ctl.Over)
         {
@@ -581,6 +719,7 @@ sealed class NotchHost : IDisposable
         FillScene();
         scene.OfficeDrawn = office?.DrawsInNotch == true;
         surface.Draw(dc => renderer.Draw(dc, scene, ctl.WindowWidth), ctl.Scale);
+        RenderPanels();
         if (office is not null)
         {
             var (ax, ay, aw, ah) = scene.OfficeArea(ctl.WindowWidth);
@@ -596,20 +735,24 @@ sealed class NotchHost : IDisposable
     // turn at 30, as the Go app's clock does.
     bool Moving => ctl.Animating || fade.Active(Now) || rise.Active(Now);
 
+    bool PanelsMoving => PanelsOpen && panels!.Ui.Animating;
+
     bool Turning => animations && island.Seg.Kind is SegKind.Work or SegKind.Ask && ctl.State == NotchState.Rest;
+
+    double FrameMs => Moving ? 16 : Turning ? 33 : PanelsMoving ? Math.Clamp(panels!.Ui.NextFrameMs, 16, 500) : 33;
 
     void EnsureAnimating()
     {
-        if (!Moving && !Turning) return;
-        animTimer.Interval = TimeSpan.FromMilliseconds(Moving ? 16 : 33);
+        if (!Moving && !Turning && !PanelsMoving) return;
+        animTimer.Interval = TimeSpan.FromMilliseconds(FrameMs);
         if (!animTimer.IsRunning) animTimer.Start();
     }
 
     void Animate()
     {
         Render();
-        if (!Moving && !Turning) animTimer.Stop();
-        else animTimer.Interval = TimeSpan.FromMilliseconds(Moving ? 16 : 33);
+        if (!Moving && !Turning && !PanelsMoving) animTimer.Stop();
+        else animTimer.Interval = TimeSpan.FromMilliseconds(FrameMs);
     }
 
     // MARK: The tray
@@ -638,9 +781,10 @@ sealed class NotchHost : IDisposable
         secondTimer.Stop();
         glowTimer.Stop();
         office?.DetachNotch();
+        layer?.Dispose();
         window.Dispose();
         surface?.Dispose();
         renderer.Dispose();
-        gfx.Dispose();
+        if (ownsGfx) gfx.Dispose();
     }
 }

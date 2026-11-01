@@ -17,7 +17,7 @@ static class Native
     public const uint LWA_ALPHA = 0x2;
 
     public const uint WM_DESTROY = 0x2, WM_SIZE = 0x5, WM_ACTIVATE = 0x6, WM_SETFOCUS = 0x7, WM_KILLFOCUS = 0x8, WM_CLOSE = 0x10,
-        WM_ERASEBKGND = 0x14, WM_SETCURSOR = 0x20, WM_MOUSEACTIVATE = 0x21, WM_KEYDOWN = 0x100, WM_SYSKEYDOWN = 0x104,
+        WM_ERASEBKGND = 0x14, WM_SETCURSOR = 0x20, WM_MOUSEACTIVATE = 0x21, WM_KEYDOWN = 0x100, WM_CHAR = 0x102, WM_SYSKEYDOWN = 0x104,
         WM_MOUSEMOVE = 0x200, WM_LBUTTONDOWN = 0x201, WM_LBUTTONUP = 0x202, WM_RBUTTONUP = 0x205, WM_MOUSELEAVE = 0x2A3,
         WM_CONTEXTMENU = 0x7B, WM_HOTKEY = 0x312, WM_POWERBROADCAST = 0x218, WM_APP = 0x8000;
     public const int MA_NOACTIVATE = 3;
@@ -28,7 +28,7 @@ static class Native
 
     public const uint GA_ROOTOWNER = 3;
 
-    public const int VK_LBUTTON = 1, VK_RBUTTON = 2, VK_MBUTTON = 4, VK_ESCAPE = 0x1B, VK_RETURN = 0x0D, VK_SHIFT = 0x10;
+    public const int VK_LBUTTON = 1, VK_RBUTTON = 2, VK_MBUTTON = 4, VK_ESCAPE = 0x1B, VK_RETURN = 0x0D, VK_SHIFT = 0x10, VK_CONTROL = 0x11, VK_MENU = 0x12;
 
     public delegate nint WndProc(nint hwnd, uint msg, nint wParam, nint lParam);
 

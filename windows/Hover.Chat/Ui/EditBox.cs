@@ -22,7 +22,7 @@ public sealed class EditBox
 
     public bool HasSelection => Caret != Anchor;
 
-    public (int A, int Z) Selection => (Math.Min(Caret, Anchor), Math.Max(Caret, Anchor));
+    public (int A, int Z) Selection => (Math.Clamp(Math.Min(Caret, Anchor), 0, Text.Length), Math.Clamp(Math.Max(Caret, Anchor), 0, Text.Length));
 
     public string SelectedText() => HasSelection ? Text[Selection.A..Selection.Z] : "";
 
@@ -148,6 +148,7 @@ public sealed class EditBox
                 break;
         }
         Caret = Math.Clamp(to, 0, Text.Length);
+        Anchor = Math.Clamp(Anchor, 0, Text.Length);
         if (!shift) Anchor = Caret;
         lastInput = now;
     }
@@ -181,7 +182,7 @@ public sealed class EditBox
     /// <summary>A press at (x, y) of the box's own text. Two clicks select a word, three the line.</summary>
     public void Press(ShapedText layout, float x, float y, int clicks, bool shift, double now = 0)
     {
-        var i = layout.Layout.IndexAt(x, y);
+        var i = Math.Clamp(layout.Layout.IndexAt(x, y), 0, Text.Length);
         lastInput = now;
         if (clicks >= 3)
         {
@@ -199,7 +200,7 @@ public sealed class EditBox
         if (!shift) Anchor = i;
     }
 
-    public void Drag(ShapedText layout, float x, float y) => Caret = layout.Layout.IndexAt(x, y);
+    public void Drag(ShapedText layout, float x, float y) => Caret = Math.Clamp(layout.Layout.IndexAt(x, y), 0, Text.Length);
 
     // MARK: Drawing
 

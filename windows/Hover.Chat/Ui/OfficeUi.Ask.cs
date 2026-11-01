@@ -227,7 +227,7 @@ public sealed partial class OfficeUi
         pen.Border(x, y, cw, ch, 14, 1, edge);
         if (over)
             pen.Cv.Polygon([(x + cw / 2 - 7, y + ch - 0.5f), (x + cw / 2 + 7, y + ch - 0.5f), (x + cw / 2, y + ch + 7)], Rgba.Of(0x0e0a12, 0.95));
-        Add(new Rect4(x, y, cw, ch), "askCard");
+        Block(new Rect4(x, y, cw, ch));
     }
 
     // MARK: Answering

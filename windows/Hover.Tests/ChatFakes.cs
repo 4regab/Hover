@@ -32,6 +32,7 @@ sealed class FakeShaper : IShaper
 sealed class FakeLayout : IParaLayout
 {
     readonly string text;
+    public string Text => text;
     readonly float[] advance;
     readonly List<LineBox> lines = [];
     readonly List<bool> hard = [];

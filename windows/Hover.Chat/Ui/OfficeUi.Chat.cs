@@ -100,13 +100,13 @@ public sealed partial class OfficeUi
         var nowMs = new DateTimeOffset(DateTime.SpecifyKind(env.Utc(), DateTimeKind.Utc)).ToUnixTimeMilliseconds();
         turns = Turns.From(s, nowMs);
         thread.Set(turns, colw);
-        if (turns.Any(t => t.Live)) Animating = true;
+        if (turns.Any(t => t.Live)) Need(500);
         if (copiedAt > 0 && now - copiedAt > 1500)
         {
             copiedAt = 0;
             thread.SetCopied(turns, null);
         }
-        else if (copiedAt > 0) Animating = true;
+        else if (copiedAt > 0) Need(250);
     }
 
     // MARK: The chat pane
@@ -125,7 +125,7 @@ public sealed partial class OfficeUi
             pen.Box(x, y, pw, ph, radius, Rgba.Of(0x0e0a12, 0.96));
             pen.Border(x, y, pw, ph, radius, 1, Rgba.Of(0xffffff, 0.1));
         }
-        Add(chatRect, "pane");
+        Block(chatRect);
         if (s is null)
         {
             var load = openKey is not null ? "Opening the chat…" : "";
@@ -169,7 +169,7 @@ public sealed partial class OfficeUi
         if (smooth is { } sm)
         {
             scroll = sm.Value(now);
-            if (sm.Done(now)) smooth = null; else Animating = true;
+            if (sm.Done(now)) smooth = null; else Need(16);
         }
         if (follow) scroll = MaxScroll;
         scroll = Math.Clamp(scroll, 0, MaxScroll);
@@ -235,7 +235,6 @@ public sealed partial class OfficeUi
         else PaintDock(s, x + pw, threadTop + threadH);
         cv.PopClip();
 
-        if (renaming && focus == Focus.Title) Animating = true;
     }
 
     // MARK: The header

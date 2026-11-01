@@ -215,7 +215,9 @@ public sealed partial class OfficeUi
         if (start)
         {
             x += Pill("pillAgent", tool?.Id ?? "kiro", null, ToolDisplay(tool), x, barY, bh, Pen.Dim, menu?.Kind == "agent") + 2;
-            x += Pill("pillWhere", null, taskCloud ? Glyphs.Cloud : Glyphs.Folder, taskCloud ? (taskRepo is { Length: > 0 } r ? LastPart(r) : "Kiro Web") : "This computer", x, barY, bh, Pen.Dim, menu?.Kind == "where") + 2;
+            x += Pill("pillWhere", null, taskCloud ? Glyphs.Cloud : Glyphs.Folder, taskCloud ? "Kiro Web" : "This computer", x, barY, bh, Pen.Dim, menu?.Kind == "where") + 2;
+            if (taskCloud)
+                x += Pill("pillRepo", null, null, taskRepo is { Length: > 0 } rp0 ? LastPart(rp0) : "Choose repo", x, barY, bh, Pen.Dim, menu?.Kind == "repo", 150) + 2;
         }
         else
         {
@@ -287,7 +289,7 @@ public sealed partial class OfficeUi
     void PaintChatView(bool compact)
     {
         pen.Box(0, 0, w, h, 0, Rgba.Of(0x0c0b0e));
-        Add(new Rect4(0, 0, w, h), "chatBackdrop");
+        Block(new Rect4(0, 0, w, h));
         listAllowed = w >= 760;
         sideShown = listAllowed && !sideClosed;
         var lw = sideShown ? 260f : 0f;

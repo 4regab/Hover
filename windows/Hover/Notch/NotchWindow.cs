@@ -29,6 +29,7 @@ sealed class NotchWindow : INotchPlatform, IDisposable
     IReadOnlyList<MenuItem?> trayMenu = [];
     nint trayIcon;
     nint captured;
+    char highSurrogate;
 
     public nint Handle { get; private set; }
 
@@ -54,6 +55,8 @@ sealed class NotchWindow : INotchPlatform, IDisposable
     /// <summary>The primary button went up at a point, in device pixels.</summary>
     public event Action<int, int>? Released;
     public event Action<int>? KeyDown;
+    /// <summary>Typed text (a character or a surrogate pair).</summary>
+    public event Action<string>? Char;
     /// <summary>The wheel turned over the window (120 per notch of the wheel, positive away from the user).</summary>
     public event Action<int>? Wheel;
     /// <summary>The system asks for the window to be drawn (it was resized or uncovered).</summary>
@@ -328,6 +331,19 @@ sealed class NotchWindow : INotchPlatform, IDisposable
             case WM_KEYDOWN:
                 KeyDown?.Invoke((int)wParam);
                 return 0;
+            case WM_CHAR:
+                {
+                    var c = (char)(int)wParam;
+                    if (char.IsHighSurrogate(c)) { highSurrogate = c; return 0; }
+                    if (char.IsLowSurrogate(c) && highSurrogate != '\0')
+                    {
+                        Char?.Invoke(new string([highSurrogate, c]));
+                        highSurrogate = '\0';
+                        return 0;
+                    }
+                    Char?.Invoke(c.ToString());
+                    return 0;
+                }
             case WM_MOUSEWHEEL:
                 // The high word of wParam, signed.
                 Wheel?.Invoke((short)((long)wParam >> 16 & 0xFFFF));
