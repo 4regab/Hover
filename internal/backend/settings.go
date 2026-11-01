@@ -32,7 +32,7 @@ func (b *Backend) sendSettings() {
 
 // setSetting is `setSetting` {key, value}. The keys are the names in settings.json that the
 // Windows pages set: Appearance, Theme, WorkspaceSize, ScWorkspace, ChatView, LastEditor,
-// KiroFolder and KiroRetryBusy. A value that does not fit changes nothing and is a toast.
+// KiroFolder, KiroRetryBusy and KiroNoticeSeen. A value that does not fit changes nothing and is a toast.
 // Like the Go setters it calls, it does one thing: the Settings page that picks an
 // appearance also clears the theme, which the host does by sending Theme null.
 func (b *Backend) setSetting(m core.JSON) error {
@@ -73,15 +73,19 @@ func (b *Backend) setSetting(m core.JSON) error {
 			return errors.New("ScWorkspace isn't a shortcut Hover knows.")
 		}
 		s.SetScWorkspace(sc)
-	case "ChatView", "KiroRetryBusy":
+	case "ChatView", "KiroRetryBusy", "KiroNoticeSeen":
 		if v.Kind() != core.BoolKind {
 			return fmt.Errorf("%s is true or false.", key)
 		}
 		on, _ := v.Bool()
-		if key == "ChatView" {
+		switch key {
+		case "ChatView":
 			s.SetChatView(on)
-		} else {
+		case "KiroRetryBusy":
 			s.SetKiroRetryBusy(on)
+		default:
+			// Settings → Kiro's "Show the note again" sets it back to false; saveSettings only ever sets it.
+			s.SetKiroNoticeSeen(on)
 		}
 	case "LastEditor":
 		id, ok := v.AsStr()

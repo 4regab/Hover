@@ -281,7 +281,7 @@ files and passes the "continue when busy" setting to the sessions.
 | Command | Answer | Does |
 |---|---|---|
 | `settings` | `settings` `{model}` | The whole model as `settings.json` holds it (`core.Model.ToJSON`). |
-| `setSetting` `{key, value}` | `settings`, then a `state` | One of `Appearance`, `Theme`, `WorkspaceSize`, `ScWorkspace`, `ChatView`, `LastEditor`, `KiroFolder`, `KiroRetryBusy`, and two the pages need that B2 did not list: `Voice` (the whole voice settings, checked; the local model stays Phonon's) and `ToolAgent` `{tool, agent}`; each through the `core.Settings` setter of that name. `Appearance` does not clear `Theme`; send `Theme` null for that, as the Settings page does. |
+| `setSetting` `{key, value}` | `settings`, then a `state` | One of `Appearance`, `Theme`, `WorkspaceSize`, `ScWorkspace`, `ChatView`, `LastEditor`, `KiroFolder`, `KiroRetryBusy`, `KiroNoticeSeen` (a bool, both ways: Settings → Kiro puts the note about tool access back with `false`; `saveSettings` `noticeSeen` still only sets it), and two the pages need that B2 did not list: `Voice` (the whole voice settings, checked; the local model stays Phonon's) and `ToolAgent` `{tool, agent}`; each through the `core.Settings` setter of that name. `Appearance` does not clear `Theme`; send `Theme` null for that, as the Settings page does. |
 
 **Fields on existing messages.** `state.sessions[].status` (`agents.Status`, "Reading the
 code"), `state.sessions[].activity` `{verb, obj}` (`agents.Activity`), `ended.body` (the
