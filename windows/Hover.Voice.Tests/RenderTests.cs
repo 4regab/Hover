@@ -142,25 +142,35 @@ public sealed class RenderTests(CardGfx gfx, ITestOutputHelper output) : IClassF
     {
         var dir = Out();
         var count = 0;
+        var problems = new List<string>();
         foreach (var spec in CardFixtures.All(Data()))
         {
-            var ui = new CardUi { Now = 0.35 };
-            spec.Setup?.Invoke(ui);
-            var openH = spec.Height > 200 ? spec.Height - 40 : 440;
-            var (bgra, w, h) = CardShot.Render(gfx.Factory, gfx.Context, gfx.Painter, spec.View, ui, spec.Width, spec.Height, spec.Scale, openH);
-            Assert.True(w <= CardShot.MaxWidth, $"{spec.Name} is {w} wide");
-            // Something was drawn: more than the desktop colour.
-            int b0 = (int)(CardShot.Desk & 0xff), g0 = (int)((CardShot.Desk >> 8) & 0xff), r0 = (int)((CardShot.Desk >> 16) & 0xff);
-            var other = 0;
-            for (var i = 0; i < w * h; i++)
-                if (bgra[i * 4] != b0 || bgra[i * 4 + 1] != g0 || bgra[i * 4 + 2] != r0) other++;
-            Assert.True(other > 2000, $"{spec.Name} drew {other} pixels");
-            var file = Path.Combine(dir, spec.Name + ".jpg");
-            JpegFile.Write(file, bgra, w, h);
-            Assert.Equal((w, h), JpegFile.Size(file));
-            count++;
+            try
+            {
+                var ui = new CardUi { Now = 0.35 };
+                spec.Setup?.Invoke(ui);
+                var openH = spec.Height > 200 ? spec.Height - 40 : 440;
+                var (bgra, w, h) = CardShot.Render(gfx.Factory, gfx.Context, gfx.Painter, spec.View, ui, spec.Width, spec.Height, spec.Scale, openH);
+                if (w > CardShot.MaxWidth) problems.Add($"{spec.Name} is {w} wide");
+                // Something was drawn: more than the desktop colour.
+                int b0 = (int)(CardShot.Desk & 0xff), g0 = (int)((CardShot.Desk >> 8) & 0xff), r0 = (int)((CardShot.Desk >> 16) & 0xff);
+                var other = 0;
+                for (var i = 0; i < w * h; i++)
+                    if (bgra[i * 4] != b0 || bgra[i * 4 + 1] != g0 || bgra[i * 4 + 2] != r0) other++;
+                if (other <= 2000) problems.Add($"{spec.Name} drew {other} pixels");
+                var file = Path.Combine(dir, spec.Name + ".jpg");
+                JpegFile.Write(file, bgra, w, h);
+                if (JpegFile.Size(file) != (w, h)) problems.Add($"{spec.Name}: the file is not {w} x {h}");
+                count++;
+            }
+            catch (Exception e)
+            {
+                var text = e.ToString();
+                problems.Add($"{spec.Name}: {text[..Math.Min(text.Length, 900)]}");
+            }
         }
         output.WriteLine($"{count} pictures in {dir} ({gfx.Adapter})");
+        Assert.True(problems.Count == 0, string.Join("\n", problems.Take(6)));
         Assert.Equal(82, count);
     }
 

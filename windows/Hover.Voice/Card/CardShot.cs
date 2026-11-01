@@ -40,6 +40,7 @@ public static class CardShot
         dc.Target = target;
         dc.SetDpi((float)(96 * scale), (float)(96 * scale));
         dc.BeginDraw();
+        Exception? failure = null;
         try
         {
             dc.AntialiasMode = AntialiasMode.PerPrimitive;
@@ -81,10 +82,17 @@ public static class CardShot
             // The card is laid out at the shape's corner, clipped to the shape.
             painter.Draw(dc, view, ui, x0, 0, openH);
         }
+        catch (Exception e)
+        {
+            failure = e;
+            throw;
+        }
         finally
         {
-            dc.EndDraw().CheckError();
+            // A failure inside the drawing is the one to report; EndDraw then fails for it too.
+            var done = dc.EndDraw();
             dc.Target = null;
+            if (failure is null) done.CheckError();
         }
 
         using var cpu = dc.CreateBitmap(new SizeI(pw, ph), IntPtr.Zero, 0, new BitmapProperties1(format, 96, 96, BitmapOptions.CpuRead | BitmapOptions.CannotDraw));
@@ -131,8 +139,12 @@ public static class CardShot
             using var list = dc.CreateCommandList();
             var target = dc.Target;
             dc.Target = list;
-            using (var black = dc.CreateSolidColorBrush(new Color4(0, 0, 0, 1))) dc.FillGeometry(outline, black);
-            dc.Target = target;
+            try
+            {
+                using var black = dc.CreateSolidColorBrush(new Color4(0, 0, 0, 1));
+                dc.FillGeometry(outline, black);
+            }
+            finally { dc.Target = target; }
             list.Close();
             using var effect = new ID2D1Effect(dc.CreateEffect(EffectGuids.Shadow));
             effect.SetInput(0, list, true);
