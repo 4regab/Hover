@@ -37,6 +37,30 @@ sealed class WindowsFactAttribute : FactAttribute
     }
 }
 
+/// <summary>Go's own <c>hover-data</c>, which reads a folder the way the Go app does (Windows: the key in note.key is wrapped for the user).</summary>
+static class GoTool
+{
+    static string Tool => TestEnvironment.DataTool ?? throw new InvalidOperationException("HOVER_DATA_TOOL must name a built hover-data. See docs/development/windows.md.");
+
+    /// <summary>The tool's output, whatever its exit code.</summary>
+    public static string Run(params string[] args)
+    {
+        var p = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(Tool, args) { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false })!;
+        var text = p.StandardOutput.ReadToEnd() + p.StandardError.ReadToEnd();
+        p.WaitForExit();
+        return text;
+    }
+
+    /// <summary><c>check</c> reads every file of the folder and would save the same bytes; it exits 0.</summary>
+    public static void Check(string dir)
+    {
+        var p = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(Tool, ["check", dir]) { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false })!;
+        var text = p.StandardOutput.ReadToEnd() + p.StandardError.ReadToEnd();
+        p.WaitForExit();
+        Assert.True(p.ExitCode == 0, "hover-data check said: " + text);
+    }
+}
+
 sealed class TempDir : IDisposable
 {
     public string Path { get; } = Directory.CreateTempSubdirectory("hover-settings.").FullName;

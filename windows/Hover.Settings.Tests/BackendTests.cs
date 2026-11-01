@@ -13,14 +13,12 @@ public class BackendTests
 {
     static string SettingsText(string dir) => File.ReadAllText(Path.Combine(dir, "settings.json"));
 
-    /// <summary>Go's own tool reads the folder back and would save the same bytes (a Windows check: note.key is wrapped for the user).</summary>
+    /// <summary>Go's own tool reads the folder back and would save the same bytes, and opens the key the host made (a Windows check: note.key is wrapped for the user).</summary>
     static void CheckWithGo(string dir)
     {
-        if (!OperatingSystem.IsWindows() || TestEnvironment.DataTool is not { } tool) return;
-        var p = Process.Start(new ProcessStartInfo(tool, ["check", dir]) { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false })!;
-        var text = p.StandardOutput.ReadToEnd() + p.StandardError.ReadToEnd();
-        p.WaitForExit();
-        Assert.True(p.ExitCode == 0, "hover-data check said: " + text);
+        if (!OperatingSystem.IsWindows() || TestEnvironment.DataTool is null) return;
+        GoTool.Check(dir);
+        Assert.Contains("history: 0 sessions", GoTool.Run("dump", dir));
     }
 
     [Fact]

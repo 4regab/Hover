@@ -125,6 +125,17 @@ public class SettingsAppTests(ITestOutputHelper output)
         Thread.Sleep(300);
     }
 
+    static void AltN()
+    {
+        keybd_event(0x12, 0, 0, 0);
+        Thread.Sleep(60);
+        keybd_event(0x4E, 0, 0, 0);
+        Thread.Sleep(60);
+        keybd_event(0x4E, 0, 2, 0);
+        keybd_event(0x12, 0, 2, 0);
+        Thread.Sleep(300);
+    }
+
     static void TypeText(string text)
     {
         foreach (var c in text)
@@ -172,6 +183,21 @@ public class SettingsAppTests(ITestOutputHelper output)
         foreach (var t in (s["targets"]?.AsArray() ?? []).Reverse())
         {
             if ((string?)t?["kind"] != kind || (string?)t["id"] != id) continue;
+            double left = (double)s["left"]!, top = (double)s["top"]!, scale = (double)s["scale"]!;
+            double x = (double)t["x"]!, y = (double)t["y"]!, w = (double)t["w"]!, h = (double)t["h"]!;
+            return ((int)Math.Round(left + (x + w / 2) * scale), (int)Math.Round(top + (y + h / 2) * scale));
+        }
+        return null;
+    }
+
+    /// <summary>A place on the office panels' dump (<c>notch</c> or <c>window</c>), by id and the text it carries.</summary>
+    static (int X, int Y)? WherePanel(JsonNode? dump, string section, string id, string? text = null)
+    {
+        var s = dump?[section];
+        if (s is null) return null;
+        foreach (var t in (s["targets"]?.AsArray() ?? []).Reverse())
+        {
+            if ((string?)t?["id"] != id || (text is not null && (string?)t["s"] != text)) continue;
             double left = (double)s["left"]!, top = (double)s["top"]!, scale = (double)s["scale"]!;
             double x = (double)t["x"]!, y = (double)t["y"]!, w = (double)t["w"]!, h = (double)t["h"]!;
             return ((int)Math.Round(left + (x + w / 2) * scale), (int)Math.Round(top + (y + h / 2) * scale));
@@ -271,5 +297,30 @@ public class SettingsAppTests(ITestOutputHelper output)
         await UntilTrue(() => s.Settings().Contains("\"ScWorkspace\"") && s.Settings().Contains("\"Key\": \"M\""), "the chord saved", output, Why);
         Assert.False((bool?)s.Read()?["settings-window"]?["recording"]);
         Assert.Contains("Ctrl+Alt+M", ((JsonArray)s.Read()!["settings-window"]!["texts"]!).Select(t => (string?)t).ToList());
+    }
+
+    [WindowsFact]
+    public async Task Settings_open_in_the_open_notch_from_its_menu_and_a_click_changes_a_setting()
+    {
+        if (AppExe is null) { output.WriteLine("HOVER_APP_EXE is not set: the real-app checks are not asked for."); return; }
+        SetCursorPos(5, 5);
+        using var s = new Session();
+        string Why() => "log:\n" + s.Log() + "\nnotch: " + s.Read()?["notch"]?["texts"]?.ToJsonString();
+        await UntilTrue(() => s.Log().Contains("hotkey Alt+N registered"), "the notch shortcut", output, Why, 60_000);
+        await Task.Delay(500);
+
+        // Alt+N opens the notch on the office, with the menu button at the top.
+        AltN();
+        var menu = await Until(() => WherePanel(s.Read(), "notch", "topMenu"), "the notch's menu button", output, Why);
+        Click(menu.X, menu.Y);
+        var row = await Until(() => WherePanel(s.Read(), "notch", "menu", "Settings"), "the Settings row in the menu", output, Why);
+        Click(row.X, row.Y);
+
+        // The page is drawn in the notch, on General, and a switch there is the real one.
+        await UntilTrue(() => s.Read()?["settings-notch"]?["texts"]?.AsArray().Any(t => (string?)t == "Launch at login") == true, "the page in the notch", output, Why);
+        Assert.Equal("General", (string?)s.Read()!["settings-notch"]!["section"]);
+        var hover = await Until(() => Where(s.Read(), "settings-notch", "Switch", "HoverOpens"), "the Open on hover switch", output, Why);
+        Click(hover.X, hover.Y);
+        await UntilTrue(() => s.Settings().Contains("\"HoverOpensWorkspace\": false"), "settings.json with Open on hover off", output, Why);
     }
 }
