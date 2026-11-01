@@ -50,7 +50,32 @@ static class Desktop
     [DllImport("user32.dll")] static extern bool EnumWindows(EnumProc proc, nint data);
     [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(nint hwnd, out uint pid);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetWindowTextW(nint hwnd, char[] text, int max);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetClassNameW(nint hwnd, char[] text, int max);
     [DllImport("shell32.dll")] static extern int Shell_NotifyIconGetRect(ref NOTIFYICONIDENTIFIER id, out RECT rect);
+
+    /// <summary>What a window is, for a failure message: its class and the program it belongs to.</summary>
+    public static string Describe(nint hwnd)
+    {
+        if (hwnd == 0) return "no window";
+        var text = new char[128];
+        var n = GetClassNameW(hwnd, text, text.Length);
+        GetWindowThreadProcessId(hwnd, out var pid);
+        string program;
+        try { program = Process.GetProcessById((int)pid).ProcessName; } catch (ArgumentException) { program = "?"; }
+        return $"0x{hwnd:X} class '{new string(text, 0, n)}' of {program} ({pid})";
+    }
+
+    /// <summary>The foreground window is one of this process's.</summary>
+    public static bool ForegroundIsOf(Process process)
+    {
+        var foreground = GetForegroundWindow();
+        if (foreground == 0) return false;
+        GetWindowThreadProcessId(foreground, out var pid);
+        return pid == process.Id;
+    }
+
+    /// <summary>The taskbar window: without one there is no tray to put an icon in.</summary>
+    public static bool HasTaskbar() => FindWindowW("Shell_TrayWnd", null) != 0;
 
     public static nint Notch() => FindWindowW("HoverNotch", null);
 
@@ -140,15 +165,43 @@ static class Desktop
         Press(VK_RETURN);
     }
 
-    public static bool RegisterOwnHotkey(int id, uint mods, uint vk) => RegisterHotKey(0, id, mods, vk);
+    /// <summary>
+    /// A shortcut held by this process, on a thread of its own: a shortcut made for a thread can only be
+    /// let go of by that thread, and a test's continuations run on any.
+    /// </summary>
+    public sealed class HotkeyHolder : IDisposable
+    {
+        readonly Thread thread;
+        readonly ManualResetEventSlim ready = new(), release = new();
 
-    public static void ReleaseOwnHotkey(int id) => UnregisterHotKey(0, id);
+        public bool Held { get; private set; }
+
+        public HotkeyHolder(uint mods, uint vk)
+        {
+            thread = new Thread(() =>
+            {
+                Held = RegisterHotKey(0, 1, mods, vk);
+                ready.Set();
+                release.Wait();
+                if (Held) UnregisterHotKey(0, 1);
+            }) { IsBackground = true };
+            thread.Start();
+            ready.Wait();
+        }
+
+        public void Dispose()
+        {
+            release.Set();
+            thread.Join();
+        }
+    }
 
     /// <summary>Where Windows keeps the tray icon of this window, or null when it has none.</summary>
-    public static RECT? TrayIconRect(nint hwnd)
+    public static RECT? TrayIconRect(nint hwnd, out int result)
     {
         var id = new NOTIFYICONIDENTIFIER { cbSize = (uint)Marshal.SizeOf<NOTIFYICONIDENTIFIER>(), hWnd = hwnd, uID = 1 };
-        return Shell_NotifyIconGetRect(ref id, out var r) == 0 ? r : null;
+        result = Shell_NotifyIconGetRect(ref id, out var r);
+        return result == 0 ? r : null;
     }
 }
 
@@ -240,10 +293,15 @@ public class NotchAppTests(ITestOutputHelper output)
             Assert.True((style & Desktop.WS_EX_NOREDIRECTIONBITMAP) != 0, "no redirection bitmap (DirectComposition draws it)");
             Assert.True((style & Desktop.WS_EX_TRANSPARENT) != 0, "click-through while the pointer is away");
 
-            // It has been showing for a while: nobody's keyboard was taken.
-            await Task.Delay(1500);
-            Assert.Equal(before, Desktop.Foreground());
-            Assert.NotEqual(notch, Desktop.Foreground());
+            // It has been showing for a while: it never became the foreground window, and no other
+            // window of the app did either. (Other programs on a build machine may change the
+            // foreground now and then; that is not the notch's doing.)
+            for (var i = 0; i < 30; i++)
+            {
+                Assert.False(Desktop.ForegroundIsOf(app), $"the app took the keyboard: {Desktop.Describe(Desktop.Foreground())}");
+                await Task.Delay(50);
+            }
+            output.WriteLine($"the foreground now: {Desktop.Describe(Desktop.Foreground())}");
         }
         finally
         {
@@ -309,13 +367,17 @@ public class NotchAppTests(ITestOutputHelper output)
             var scale = Desktop.Scale();
             Desktop.MovePointer((rect.Left + rect.Right) / 2, rect.Top + 2);
             await AppTests.WaitForLog(data, "notch: opening (peek true, focus false)", TimeSpan.FromSeconds(10), app);
-            await Task.Delay(1000);
-            Assert.Equal(before, Desktop.Foreground());
+            for (var i = 0; i < 20; i++)
+            {
+                Assert.False(Desktop.ForegroundIsOf(app), $"a peek took the keyboard: {Desktop.Describe(Desktop.Foreground())}");
+                await Task.Delay(50);
+            }
 
             // Away from the panel for longer than the grace period: it folds.
             Desktop.MovePointer(5, 5);
             await AppTests.WaitForLog(data, "notch: folding", TimeSpan.FromSeconds(10), app);
-            Assert.Equal(before, Desktop.Foreground());
+            Assert.False(Desktop.ForegroundIsOf(app), $"a fold left the keyboard with the notch: {Desktop.Describe(Desktop.Foreground())}");
+            output.WriteLine($"the foreground before {Desktop.Describe(before)}, after {Desktop.Describe(Desktop.Foreground())}");
         }
         finally
         {
@@ -341,7 +403,8 @@ public class NotchAppTests(ITestOutputHelper output)
             Assert.Equal(0, Count(ReadLog(data), "notch: folding"));
             var notch = Desktop.Notch();
             // Opened with the keyboard: it is the foreground window now, and it no longer carries the never-activate style.
-            Assert.True(await Until(() => Desktop.Foreground() == notch, 3000), "an open notch takes the keyboard");
+            Assert.True(await Until(() => Desktop.Foreground() == notch, 3000),
+                $"an open notch takes the keyboard; the foreground is {Desktop.Describe(Desktop.Foreground())}");
             Assert.True((Desktop.ExStyle(notch) & Desktop.WS_EX_NOACTIVATE) == 0);
 
             await Task.Delay(800);
@@ -361,22 +424,19 @@ public class NotchAppTests(ITestOutputHelper output)
         using var temp = new TempDirectory();
         var data = Folder(temp);
         // Alt+N is held by the test's own thread before the app starts.
-        Assert.True(Desktop.RegisterOwnHotkey(1, 0x1, 0x4E), "the test could not take Alt+N itself");
+        using var held = new Desktop.HotkeyHolder(0x1, 0x4E);
+        Assert.True(held.Held, "the test could not take Alt+N itself");
+        using var app = Start(data);
         try
         {
-            using var app = Start(data);
-            try
-            {
-                var log = await AppTests.WaitForLog(data, "hotkey Alt+N could not be registered", TimeSpan.FromSeconds(60), app);
-                output.WriteLine(log);
-                Assert.Contains("Win32 error 1409", log);
-                // The app is still up, with its notch.
-                Assert.False(app.HasExited);
-                Assert.NotEqual(0, Desktop.Notch());
-            }
-            finally { Stop(app); }
+            var log = await AppTests.WaitForLog(data, "hotkey Alt+N could not be registered", TimeSpan.FromSeconds(60), app);
+            output.WriteLine(log);
+            Assert.Contains("Win32 error 1409", log);
+            // The app is still up, with its notch.
+            Assert.False(app.HasExited);
+            Assert.NotEqual(0, Desktop.Notch());
         }
-        finally { Desktop.ReleaseOwnHotkey(1); }
+        finally { Stop(app); }
     }
 
     [AppFact]
@@ -392,9 +452,13 @@ public class NotchAppTests(ITestOutputHelper output)
             await AppTests.WaitForLog(data, "agent backend is ready", TimeSpan.FromSeconds(60), app);
             var backendPid = int.Parse(Regex.Match(ReadLog(data), @"backend started \(pid (\d+)\)").Groups[1].Value);
             var notch = Desktop.Notch();
-            var icon = Desktop.TrayIconRect(notch);
-            output.WriteLine(icon is { } r ? $"the shell has the icon at {r.Left},{r.Top} - {r.Right},{r.Bottom}" : "the shell has no icon for the window");
-            Assert.NotNull(icon);
+            // Windows took the icon (the log line is written only when Shell_NotifyIcon says so). Where the
+            // machine has a taskbar the shell can also be asked where the icon is.
+            var taskbar = Desktop.HasTaskbar();
+            var icon = Desktop.TrayIconRect(notch, out var result);
+            output.WriteLine($"taskbar window: {taskbar}; Shell_NotifyIconGetRect: 0x{result:X8}; " +
+                (icon is { } r ? $"the icon is at {r.Left},{r.Top} - {r.Right},{r.Bottom}" : "no icon rect"));
+            if (taskbar) Assert.NotNull(icon);
 
             Desktop.QuitFromTrayMenu(notch);
             Assert.True(app.WaitForExit(30_000), "Quit in the tray menu should end the app");
@@ -406,7 +470,7 @@ public class NotchAppTests(ITestOutputHelper output)
             // The backend was asked to stop, wrote what it holds and left by itself: exit code 0.
             Assert.Matches(@"backend stopped \(exit code 0\)", log);
             Assert.True(await BackendSmokeTests.Gone(backendPid), "the backend is still running");
-            Assert.Null(Desktop.TrayIconRect(notch));
+            Assert.Null(Desktop.TrayIconRect(notch, out _));
         }
         finally { Stop(app); }
     }
