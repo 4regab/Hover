@@ -142,7 +142,7 @@ camera, day/night and music choices are kept by the host in `office.json` (secti
 | 22 to 25 | `pause`, `queueSendNow`, `queueRemove`, `queueResume` | `Pause`, `SendNowQueued`, `RemoveQueued`, `ResumeQueue` | `TestPauseAndTheQueue` |
 | 26 | `rename` | `Rename` | `TestRenameKeepsTheNameWithTheChat` |
 | 27, 28 | `switchProvider`, `fork`, `bringBack` | `SwitchProvider`, `Fork`, `BringFindingsBack` | `TestSwitchForkAndBringBack` |
-| 29 | `turns[].uid/.chips/.switchTo`, `sessions[].cloud/.ext/.held/.commands` | the `KiroTurn` and `KiroSession` fields | `TestSessionsCarryTheChatsFields` |
+| 29 | `turns[].uid/.chips/.switchTo`, `sessions[].cloud/.ext/.held/.commands`, `sessions[].kiroId` (Kiro Web tasks only) | the `KiroTurn` and `KiroSession` fields | `TestSessionsCarryTheChatsFields`, `TestSessionCarriesKiroIDOnlyForAKiroWebTask` |
 | 30 to 32 | `cloudRepos`, `webSessions`, `adoptWeb`, `cliSessions`, `adoptCli` | `Runtime.Repos`, `CloudSessions`, `LocalSessions`, `AdoptCloud`, `AdoptLocal` | `TestKiroWebAndCliListingsAnswerAndEnd`, `TestAdoptTakesOnlyWhatWasListed` |
 | 33 to 36 | `markdown`, `highlight`, `diffLines`, `flowchart` | `md.Parse`, `chat.Highlight`, `chat.Numbered`, `diagram.Layout` | `render_test.go` |
 | 37 to 40 | `term`, `writeFile`, `editors`, `openIn`, `inspectFolder` | `NewTerm`, `DeskWriteFile`, `AvailableEditors`, `OpenIn`, `Inspect` | `deskmore_test.go` |

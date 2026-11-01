@@ -332,8 +332,9 @@ backend's client runs, as for the Mac host (`internal/backend/discord_test.go`).
 | `bringBack` `{id}` | `bringBack` `{id, ok, count}` | `BringFindingsBack`. |
 
 Sessions in `state` also carry `cloud` (repositories, or null), `ext` (`core.SessionExt` JSON:
-name, workspace, lineage), `held` and `commands` (`[{name, description}]`); each turn carries
-`uid`, `chips` and `switchTo`.
+name, workspace, lineage), `held` and `commands` (`[{name, description}]`), and, for a Kiro Web task
+that has its id at Kiro, `kiroId` (left out for any other session; the cloud chip opens
+`https://app.kiro.dev/session/` and the id); each turn carries `uid`, `chips` and `switchTo`.
 
 **Kiro Web and Kiro CLI** (`cloud.go`).
 
