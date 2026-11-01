@@ -8,7 +8,7 @@ namespace Hover.Windowing;
 
 /// <summary>
 /// The notch's own Win32 window: borderless, topmost, never in the taskbar, never taking the
-/// keyboard unless asked, see-through (the pixels come from <see cref="NotchPresenter"/>), and
+/// keyboard unless asked, see-through (the pixels come from <see cref="NotchSwapChain"/>), and
 /// click-through everywhere except over the shape. It also owns the global shortcut and the tray
 /// icon, because both report to a window. All of it runs on the UI thread.
 /// </summary>
@@ -23,7 +23,7 @@ sealed class NotchWindow : INotchPlatform, IDisposable
     static bool classMade;
     static readonly Dictionary<nint, NotchWindow> Windows = [];
 
-    nint lastForeground;
+    nint foregroundBefore;
     bool through = true, keys;
     bool trayShown;
     IReadOnlyList<MenuItem?> trayMenu = [];
@@ -163,11 +163,11 @@ sealed class NotchWindow : INotchPlatform, IDisposable
         ApplyStyles();
     }
 
-    public void RememberForeground() => lastForeground = GetForegroundWindow();
+    public void RememberForeground() => foregroundBefore = GetForegroundWindow();
 
     public void RestoreForeground()
     {
-        if (GetForegroundWindow() == Handle && lastForeground != 0 && IsWindow(lastForeground)) SetForegroundWindow(lastForeground);
+        if (GetForegroundWindow() == Handle && foregroundBefore != 0 && IsWindow(foregroundBefore)) SetForegroundWindow(foregroundBefore);
     }
 
     public void Focus()

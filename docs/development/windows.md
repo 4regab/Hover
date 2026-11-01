@@ -178,7 +178,7 @@ window: borderless, `WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE`, at th
 main display's work area. It never takes the keyboard unless it is opened with the shortcut or a
 question's card is opened, and it gives the keyboard back when it folds. Its pixels come from a
 swap chain made for composition with premultiplied alpha, shown by a DirectComposition visual
-(`NotchPresenter.cs`), so what is not drawn is see-through. Direct2D and DirectWrite draw the
+(`NotchSwapChain.cs`), so what is not drawn is see-through. Direct2D and DirectWrite draw the
 frame (`NotchRenderer.cs`); the text is set in the Inter files in `Assets\Fonts`. The window is
 click-through (`WS_EX_TRANSPARENT`) except over the shape and its shadow; the pointer is polled
 every 50 ms, as the Go app does.
@@ -201,7 +201,7 @@ writes it), Settings…, Quit Hover.
 
 **Where the office goes.** The open notch is the shape at its full size, `Open.W` by `Open.H`
 DIPs (1120 x 440 for Office size Default, less the 24 DIPs kept free on a small screen), at
-`x = Pad (40)`, `y = 0` inside the notch window (`NotchScene.OfficeArea`). `NotchPresenter.Composition`
+`x = Pad (40)`, `y = 0` inside the notch window (`NotchScene.OfficeArea`). `NotchSwapChain.Composition`
 gives a later view the DirectComposition device and root visual to add its own swap chain at that
 rectangle. Until then the area is a dashed frame with its size written in it. The app window has the
 same place: `DashboardWindow.OfficeArea`, a bordered area under the header.

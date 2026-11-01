@@ -52,7 +52,7 @@ sealed partial class NotchHost : IDisposable
     readonly Stopwatch clock = Stopwatch.StartNew();
     readonly Tween rise = new(), fade = new();
     readonly DispatcherQueueTimer pollTimer, animTimer, secondTimer, glowTimer;
-    NotchPresenter? surface;
+    NotchSwapChain? surface;
     NotchSettings settings = NotchSettings.Default;
     StateEvent? state;
     Dictionary<string, QuotaValue> quotas = [];
@@ -725,7 +725,7 @@ sealed partial class NotchHost : IDisposable
         var (w, h) = window.ClientSize;
         if (surface is null)
         {
-            surface = new NotchPresenter(gfx, window.Handle, w, h);
+            surface = new NotchSwapChain(gfx, window.Handle, w, h);
             HostLog.Line($"notch surface made ({w} x {h})");
         }
         else surface.Resize(w, h);

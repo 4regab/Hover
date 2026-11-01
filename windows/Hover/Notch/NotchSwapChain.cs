@@ -13,7 +13,7 @@ namespace Hover.Windowing;
 /// chain on the window itself shows black where nothing is drawn). Direct2D draws into the
 /// swap chain's buffer.
 /// </summary>
-sealed class NotchPresenter : IDisposable
+sealed class NotchSwapChain : IDisposable
 {
     readonly Gfx g;
     readonly IDXGISwapChain1 swap;
@@ -23,7 +23,7 @@ sealed class NotchPresenter : IDisposable
     ID2D1Bitmap1? buffer;
     int width, height;
 
-    public NotchPresenter(Gfx gfx, nint window, int w, int h)
+    public NotchSwapChain(Gfx gfx, nint window, int w, int h)
     {
         g = gfx;
         width = Math.Max(w, 1);
