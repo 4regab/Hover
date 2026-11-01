@@ -196,6 +196,20 @@ jobs:
           $files = Get-ChildItem publish -Recurse -File
           $files | ForEach-Object { '{0,12}  {1}' -f $_.Length, $_.FullName.Substring($root.Length + 1) } | Out-File out\logs\publish-files.txt
           "publish\: $($files.Count) files, $([math]::Round(($files | Measure-Object Length -Sum).Sum / 1MB, 1)) MB"
+      # Publishing without Go installed: the script names the missing tool before it builds or
+      # deletes anything, so the publish folder above is as it was.
+      - name: build.ps1 says so when Go is missing
+        run: |
+          $shell = (Get-Process -Id $PID).Path
+          $before = (Get-FileHash publish\hoverai.exe).Hash
+          $env:PATH = (($env:PATH -split ';') | Where-Object { $_ -and -not (Test-Path (Join-Path $_ 'go.exe')) }) -join ';'
+          $text = & $shell -NoProfile -File ./build.ps1 publish 2>&1 | Out-String
+          $code = $LASTEXITCODE
+          if ($code -eq 0) { throw "build.ps1 publish worked without Go: $text" }
+          if ($text -notmatch 'go was not found on PATH') { throw "build.ps1 did not say that Go is missing: $text" }
+          if ((Get-FileHash publish\hoverai.exe).Hash -ne $before) { throw 'build.ps1 changed publish\ before it checked for Go' }
+          "exit code ${code}: " + ($text -split "`n" | Select-Object -First 1).Trim()
+          $global:LASTEXITCODE = 0
       # The Go programs the tests need, a Go-written data folder, every windows\*.Tests project
       # (found by name, so a new test project needs no change here). The Go tests have a job of
       # their own (test), on three systems.
