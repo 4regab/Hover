@@ -13,6 +13,9 @@
     <ProjectReference Include="..\Hover.Notch\Hover.Notch.csproj" />
     <!-- Ogg Vorbis decoder (managed, MIT). The Go app uses jfreymuth/oggvorbis. -->
     <PackageReference Include="NVorbis" Version="0.10.5" />
+    <!-- The card is drawn with Direct2D and DirectWrite, as the notch is; Vortice is the managed binding. -->
+    <PackageReference Include="Vortice.Direct2D1" Version="3.8.3" />
+    <PackageReference Include="Vortice.DXGI" Version="3.8.3" />
     <!-- The loop is the Go app's own file, linked from internal/music, not copied. -->
     <EmbeddedResource Include="..\..\internal\music\office-beats.ogg" LogicalName="office-beats.ogg" Link="office-beats.ogg" />
   </ItemGroup>
