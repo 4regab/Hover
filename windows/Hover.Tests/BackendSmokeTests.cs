@@ -165,6 +165,29 @@ public class BackendSmokeTests(ITestOutputHelper output)
     }
 
     [Fact]
+    public async Task No_key_means_the_backend_runs_with_the_history_off()
+    {
+        // HistoryKey rule 4: a key that cannot be read now. The host starts the backend with no
+        // key; tasks work, and nothing is sealed that the next run could not open.
+        using var sandbox = new Sandbox();
+        var client = sandbox.Start();
+        var talk = new Conversation(client);
+        await using var cleanup = client;
+        await client.InitializeAsync(null);
+
+        var session = await RunFirstTask(talk, sandbox);
+        Assert.Equal("Sandbox reply", session.Turns[0].Answer);
+        talk.Send(new ReadyCommand());
+        Assert.Empty((await talk.Until<StateEvent>()).History);
+        Assert.Equal(0, await client.StopAsync());
+
+        var sealedFiles = Directory.Exists(Path.Combine(sandbox.Data, "agents"))
+            ? Directory.GetFiles(Path.Combine(sandbox.Data, "agents"), "*.dat") : [];
+        Assert.Empty(sealedFiles);
+        Assert.False(File.Exists(DataFolder.KeyFile(sandbox.Data)), "the host makes note.key, not the backend");
+    }
+
+    [Fact]
     public async Task History_and_settings_survive_a_restart()
     {
         using var sandbox = new Sandbox();
