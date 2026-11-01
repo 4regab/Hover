@@ -70,6 +70,9 @@ public sealed class OfficeHost : IDisposable
     const double OpenRadius = 32;
     // The top rows of the notch's office fade into the notch's black.
     const double TopFadeDips = 44;
+    // The Go office thread works in DIPs, 16 less each way than the open notch (internal/shell/office.go), and its picture
+    // is stretched over the whole view. The camera, the pointer and the tags are all in that size, so the framing is the same here.
+    const double NotchInset = 16;
 
     /// <summary>The one office, for the pictures (<c>--shots</c>), which have no other way to reach it.</summary>
     internal static OfficeHost? Current { get; private set; }
@@ -96,6 +99,8 @@ public sealed class OfficeHost : IDisposable
     bool notchAttached;
     (float X, float Y) notchOffset;
     (int X, int Y, int W, int H) notchPixels;
+    // The office's own size (DIPs) per device pixel of its surface, each way.
+    (double X, double Y) modelPerPixel = (1, 1);
     double lastPressMs = -1000;
     (int X, int Y) lastPress;
     bool secondPress;
@@ -176,8 +181,9 @@ public sealed class OfficeHost : IDisposable
     public OfficeRect? BotScreenRect(int sessionId)
     {
         if (Target == OfficeTarget.None || model.BotRect(sessionId) is not { } r) return null;
-        var (sx, sy) = Target == OfficeTarget.Notch ? (slot!.Scale, slot.Scale) : dashboardScale;
-        return new OfficeRect(r.X / sx, r.Y / sy, r.W / sx, r.H / sy);
+        // The office's picture covers the whole view, so its own size stretches to the view's.
+        var (sx, sy) = Target == OfficeTarget.Notch ? (slot!.Area.W / model.W, slot.Area.H / model.H) : (1.0, 1.0);
+        return new OfficeRect(r.X * sx, r.Y * sy, r.W * sx, r.H * sy);
     }
 
     /// <summary>The drawer opened on a session: the camera goes to its bot and the wheel and drag stop moving the view.</summary>
@@ -326,7 +332,8 @@ public sealed class OfficeHost : IDisposable
 
     bool InNotchArea(int x, int y) => x >= notchPixels.X && y >= notchPixels.Y && x < notchPixels.X + notchPixels.W && y < notchPixels.Y + notchPixels.H;
 
-    (double X, double Y) InArea(int x, int y) => (x - notchPixels.X, y - notchPixels.Y);
+    /// <summary>A place in the notch window (device pixels) as the office reads it: from the area's top left, in the office's own size.</summary>
+    (double X, double Y) InArea(int x, int y) => ((x - notchPixels.X) * modelPerPixel.X, (y - notchPixels.Y) * modelPerPixel.Y);
 
     static char? KeyChar(int vk) => vk switch
     {
@@ -417,7 +424,9 @@ public sealed class OfficeHost : IDisposable
         var sc = s.Scale;
         int w = Math.Max((int)Math.Round(s.Area.W * sc), 1), h = Math.Max((int)Math.Round(s.Area.H * sc), 1);
         notchPixels = ((int)Math.Round(s.Area.X * sc), (int)Math.Round(s.Area.Y * sc), w, h);
-        if (model.W != w || model.H != h) ctl.Resize(w, h);
+        double mw = Math.Max(s.Area.W - NotchInset, 1), mh = Math.Max(s.Area.H - NotchInset, 1);
+        if (model.W != mw || model.H != mh) ctl.Resize(mw, mh);
+        modelPerPixel = (mw / w, mh / h);
         EnsureNotchVisual(r, w, h);
         var shape = new ShapeMask((s.Shape.X - s.Area.X) * sc, -s.Area.Y * sc, (s.Shape.X + s.Shape.W - s.Area.X) * sc, (s.Shape.H - s.Area.Y) * sc, s.ShapeRadius * sc);
         var page = new PageStyle(model.Time == TimeOfDay.Day, TopFadeDips * sc, shape, s.Opacity);
@@ -487,11 +496,11 @@ public sealed class OfficeHost : IDisposable
         Retarget();
     }
 
-    /// <summary>A pointer event's place in device pixels of the panel.</summary>
+    /// <summary>A pointer event's place in the panel, in DIPs, which is the office's own size here.</summary>
     (double X, double Y) Dips(PointerRoutedEventArgs e)
     {
         var p = e.GetCurrentPoint(panel).Position;
-        return (p.X * dashboardScale.X, p.Y * dashboardScale.Y);
+        return (p.X, p.Y);
     }
 
     bool DashboardShown =>
@@ -512,7 +521,8 @@ public sealed class OfficeHost : IDisposable
         dashboardScale = (Math.Max(panel.CompositionScaleX, 0.01), Math.Max(panel.CompositionScaleY, 0.01));
         int w = Math.Max((int)Math.Round(panel.ActualWidth * dashboardScale.X), 1), h = Math.Max((int)Math.Round(panel.ActualHeight * dashboardScale.Y), 1);
         dashboardPixels = (w, h);
-        if (model.W != w || model.H != h) ctl.Resize(w, h);
+        if (model.W != panel.ActualWidth || model.H != panel.ActualHeight) ctl.Resize(panel.ActualWidth, panel.ActualHeight);
+        modelPerPixel = (panel.ActualWidth / w, panel.ActualHeight / h);
         if (dashboardSurface is null)
         {
             dashboardSurface = new Surface(r, w, h, alpha: false);
@@ -571,7 +581,7 @@ public sealed class OfficeHost : IDisposable
     {
         if (panel is null) return;
         dashboardScale = (Math.Max(panel.CompositionScaleX, 0.01), Math.Max(panel.CompositionScaleY, 0.01));
-        ctl.Resize(Math.Max(panel.ActualWidth * dashboardScale.X, 1), Math.Max(panel.ActualHeight * dashboardScale.Y, 1));
+        ctl.Resize(Math.Max(panel.ActualWidth, 1), Math.Max(panel.ActualHeight, 1));
     }
 
     void OnFrame()
@@ -668,7 +678,8 @@ public sealed class OfficeHost : IDisposable
         var r = EnsureRenderer();
         if (r is null) return null;
         Settle();
-        ctl.Resize(width, height);
+        var inset = cutToNotch ? NotchInset : 0;
+        ctl.Resize(Math.Max(width / scale - inset, 1), Math.Max(height / scale - inset, 1));
         var shape = cutToNotch ? new ShapeMask(0, -1, width, height, OpenRadius * scale) : (ShapeMask?)null;
         var (sw, sh) = r.SceneSize(width, height);
         return r.RenderToBytes(model, width, height, new PageStyle(model.Time == TimeOfDay.Day, cutToNotch ? TopFadeDips * scale : 0, shape), sw, sh);

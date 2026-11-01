@@ -58,17 +58,21 @@ public sealed class OfficeRenderTests(Gpu gpu, ITestOutputHelper output) : IClas
         return dir;
     }
 
-    (OfficeModel Office, Fixture.Clock Clock) Make(double w, double h, TimeOfDay time = TimeOfDay.Night)
+    // The Go office works in the open notch's size less 16 each way and stretches its picture over the whole area
+    // (internal/shell/office.go); the camera, the tags and the pointer are all in that size.
+    const int ModelW = NotchW - 16, ModelH = NotchH - 16;
+
+    (OfficeModel Office, Fixture.Clock Clock) Make(TimeOfDay time = TimeOfDay.Night)
     {
         var now = Fixture.Now();
-        var o = new OfficeModel(w, h, false, gpu.Text) { WallClock = () => (now, 0) };
+        var o = new OfficeModel(ModelW, ModelH, false, gpu.Text) { WallClock = () => (now, 0) };
         o.ApplyTime(time);
         return (o, new Fixture.Clock());
     }
 
-    (OfficeModel Office, Fixture.Clock Clock, JsonObject State) Settled(double w, double h, TimeOfDay time = TimeOfDay.Night)
+    (OfficeModel Office, Fixture.Clock Clock, JsonObject State) Settled(TimeOfDay time = TimeOfDay.Night)
     {
-        var (o, clock) = Make(w, h, time);
+        var (o, clock) = Make(time);
         var state = Fixture.State();
         o.State(Fixture.Inputs(state));
         clock.Run(o, 400);
@@ -150,7 +154,7 @@ public sealed class OfficeRenderTests(Gpu gpu, ITestOutputHelper output) : IClas
     public void Warp_draws_the_office_in_the_notch_area_and_keeps_a_picture()
     {
         if (!gpu.Ready(output)) return;
-        var (o, _, _) = Settled(NotchW, NotchH);
+        var (o, _, _) = Settled();
         var bgra = Shoot("notch-open-office", o, NotchW, NotchH);
         LooksLikeAnOffice(bgra, "the settled office");
         // The top 44 px fade into the notch's black; the vignette darkens the corners.
@@ -163,22 +167,23 @@ public sealed class OfficeRenderTests(Gpu gpu, ITestOutputHelper output) : IClas
     public void Every_bot_is_drawn_where_the_scene_puts_it()
     {
         if (!gpu.Ready(output)) return;
-        var (empty, clock) = Make(NotchW, NotchH);
+        var (empty, clock) = Make();
         empty.State(Fixture.Inputs(EmptyState()));
         clock.Run(empty, 400);
         var without = Shoot("office-empty", empty, NotchW, NotchH);
         LooksLikeAnOffice(without, "the empty office");
 
-        var (o, _, _) = Settled(NotchW, NotchH);
+        var (o, _, _) = Settled();
         var with = Shoot("office-scene-night", o, NotchW, NotchH);
         var tags = o.Tags();
         Assert.Equal(5, tags.Count);
         foreach (var t in tags)
         {
-            Assert.InRange(t.X, 0, NotchW);
-            Assert.InRange(t.Y, 0, NotchH);
+            Assert.InRange(t.X, 0, ModelW);
+            Assert.InRange(t.Y, 0, ModelH);
             // Under the tag (the head projected) the bot, its desk screen and its seat make the picture differ from the empty room's.
-            var d = BoxDiff(with, without, NotchW, NotchH, t.X, t.Y + 22, 26);
+            // The picture is the office's size stretched over the area.
+            var d = BoxDiff(with, without, NotchW, NotchH, t.X * NotchW / ModelW, (t.Y + 22) * NotchH / ModelH, 26);
             output.WriteLine($"session {t.Id} ({t.Name}) at {t.X:F0},{t.Y:F0}: {d:F1} apart from the empty room");
             Assert.True(d > 3, $"no bot where the scene puts session {t.Id} ({d:F1})");
             // The rectangle a prompt would be drawn at holds the tag point and is smaller than a desk's neighbourhood.
@@ -200,7 +205,7 @@ public sealed class OfficeRenderTests(Gpu gpu, ITestOutputHelper output) : IClas
     public void A_click_on_a_bot_picks_that_bot_and_the_wall_props_pick_their_panels()
     {
         if (!gpu.Ready(output)) return;
-        var (o, _, _) = Settled(NotchW, NotchH);
+        var (o, _, _) = Settled();
         foreach (var t in o.Tags())
         {
             // The head is a few pixels under the tag point.
@@ -224,8 +229,8 @@ public sealed class OfficeRenderTests(Gpu gpu, ITestOutputHelper output) : IClas
     public void Day_is_brighter_than_night()
     {
         if (!gpu.Ready(output)) return;
-        var (n, _, _) = Settled(NotchW, NotchH, TimeOfDay.Night);
-        var (d, _, _) = Settled(NotchW, NotchH, TimeOfDay.Day);
+        var (n, _, _) = Settled(TimeOfDay.Night);
+        var (d, _, _) = Settled(TimeOfDay.Day);
         var night = Shoot("office-night", n, NotchW, NotchH);
         var day = Shoot("office-day", d, NotchW, NotchH);
         LooksLikeAnOffice(day, "day");
@@ -240,7 +245,7 @@ public sealed class OfficeRenderTests(Gpu gpu, ITestOutputHelper output) : IClas
     public void Eight_and_more_sessions_fill_the_room_without_breaking_it()
     {
         if (!gpu.Ready(output)) return;
-        var (o, clock) = Make(NotchW, NotchH);
+        var (o, clock) = Make();
         o.State(Fixture.Inputs(Many(Fixture.State(), 9)));
         clock.Run(o, 500);
         Assert.Equal(9, o.Sessions.Count);
@@ -252,7 +257,7 @@ public sealed class OfficeRenderTests(Gpu gpu, ITestOutputHelper output) : IClas
     public void A_bot_asking_and_the_open_drawer_and_the_panels_move_the_camera_and_draw()
     {
         if (!gpu.Ready(output)) return;
-        var (o, clock, state) = Settled(NotchW, NotchH);
+        var (o, clock, state) = Settled();
         var asking = Clone(state);
         asking["sessions"]![3]!["turns"]![0]!["stage"] = "waiting";
         o.State(Fixture.Inputs(asking));
@@ -280,7 +285,7 @@ public sealed class OfficeRenderTests(Gpu gpu, ITestOutputHelper output) : IClas
     public void Zoomed_out_and_zoomed_in_still_draw()
     {
         if (!gpu.Ready(output)) return;
-        var (o, clock, _) = Settled(NotchW, NotchH);
+        var (o, clock, _) = Settled();
         o.ZoomBy(0.001, 0, 0);
         clock.Run(o, 200);
         LooksLikeAnOffice(Shoot("office-zoomed-out", o, NotchW, NotchH), "zoomed out");
@@ -296,11 +301,11 @@ public sealed class OfficeRenderTests(Gpu gpu, ITestOutputHelper output) : IClas
         if (!gpu.Ready(output)) return;
         var w = NotchW * 3 / 2;
         var h = NotchH * 3 / 2;
-        var (o, _, _) = Settled(w, h);
+        var (o, _, _) = Settled();
         var bgra = Shoot("office-dpi150", o, w, h);
         LooksLikeAnOffice(bgra, "150 %");
         var (a, _, _) = Stats(bgra);
-        var (o1, _, _) = Settled(NotchW, NotchH);
+        var (o1, _, _) = Settled();
         var (b, _, _) = Stats(gpu.Renderer!.RenderToBytes(o1, NotchW, NotchH, new PageStyle(false, 44), gpu.Renderer.SceneSize(NotchW, NotchH).Width, gpu.Renderer.SceneSize(NotchW, NotchH).Height));
         Assert.InRange(a, b - 12, b + 12);
     }
@@ -309,7 +314,7 @@ public sealed class OfficeRenderTests(Gpu gpu, ITestOutputHelper output) : IClas
     public void A_new_device_after_a_lost_one_draws_the_same_picture()
     {
         if (!gpu.Ready(output)) return;
-        var (o, _, _) = Settled(NotchW, NotchH);
+        var (o, _, _) = Settled();
         var first = gpu.Renderer!.RenderToBytes(o, NotchW, NotchH, new PageStyle(false), 560, 220);
         using var again = OfficeRenderer.Create(warp: true);
         var second = again.RenderToBytes(o, NotchW, NotchH, new PageStyle(false), 560, 220);
