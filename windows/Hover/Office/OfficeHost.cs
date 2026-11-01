@@ -507,16 +507,20 @@ public sealed class OfficeHost : IDisposable
         });
         host.PointerReleased += (_, e) => Guard("release", () =>
         {
-            host.ReleasePointerCapture(e.Pointer);
-            if (!ctl.IsDown)
+            // The capture is let go after the click is read: letting it go raises PointerCaptureLost at once, and that cancels the press.
+            try
             {
-                if (Chatting.UiDump.On) HostLog.Line("office: a release without a press");
-                return;
+                if (!ctl.IsDown)
+                {
+                    if (Chatting.UiDump.On) HostLog.Line("office: a release without a press");
+                    return;
+                }
+                var p = Dips(e);
+                ctl.Pointer(p.X, p.Y, true);
+                ctl.Up();
+                if (Chatting.UiDump.On) HostLog.Line($"office: click at {p.X:0},{p.Y:0} found {model.Hovered.Kind} {model.Hovered.Id}");
             }
-            var p = Dips(e);
-            ctl.Pointer(p.X, p.Y, true);
-            ctl.Up();
-            if (Chatting.UiDump.On) HostLog.Line($"office: click at {p.X:0},{p.Y:0} found {model.Hovered.Kind} {model.Hovered.Id} (dragging {model.Dragging})");
+            finally { host.ReleasePointerCapture(e.Pointer); }
         });
         host.PointerCaptureLost += (_, _) => Guard("capture", ctl.Cancel);
         host.DoubleTapped += (_, _) => Guard("double", ctl.DoubleClick);
