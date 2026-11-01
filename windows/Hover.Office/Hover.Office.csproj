@@ -6,5 +6,21 @@
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
     <RootNamespace>Hover.Office</RootNamespace>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
+  <ItemGroup>
+    <!-- Direct3D 11 for the scene, Direct2D and DirectWrite for the text on the wall pictures
+         (the TV, the board, the clock), the HLSL compiler for office.hlsl. -->
+    <PackageReference Include="Vortice.Direct3D11" Version="3.8.3" />
+    <PackageReference Include="Vortice.D3DCompiler" Version="3.8.3" />
+    <PackageReference Include="Vortice.Direct2D1" Version="3.8.3" />
+    <PackageReference Include="Vortice.DXGI" Version="3.8.3" />
+  </ItemGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="Render\office.hlsl" LogicalName="office.hlsl" />
+    <!-- The two fonts the wall pictures are set in (the Go office embeds the same files). They are
+         copied beside any program that uses this one, and looked up there. -->
+    <None Include="..\..\internal\office\assets\PixelifySans.ttf" Link="Assets\Office\PixelifySans.ttf" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\internal\office\assets\Inter-Regular.ttf" Link="Assets\Office\Inter-Regular.ttf" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
 </Project>
