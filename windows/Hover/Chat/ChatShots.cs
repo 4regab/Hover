@@ -245,8 +245,39 @@ static class ChatShots
         }
         if (ui.Waiting || ui.Pending != 0 || ui.Dirty) HostLog.Line($"picture {name} did not settle: waiting {ui.Waiting}, in flight {ui.Pending}, dirty {ui.Dirty}");
         var file = Path.Combine(directory, name + ".jpg");
-        await Hover.Shots.WriteJpegAsync(pixels, w, h, file);
-        HostLog.Line($"picture {file} ({w} x {h})");
+        // The pictures are at most 1400 px wide: a wider office (Extra large is 1560) is shrunk to fit.
+        var (fw, fh) = (w, h);
+        pixels = FitWidth(pixels, ref fw, ref fh);
+        await Hover.Shots.WriteJpegAsync(pixels, fw, fh, file);
+        HostLog.Line($"picture {file} ({fw} x {fh})");
+    }
+
+    /// <summary>Opaque BGRA pixels shrunk (each new pixel the mean of the old ones under it) to at most <paramref name="max"/> wide; as they are when they already fit.</summary>
+    static byte[] FitWidth(byte[] bgra, ref int w, ref int h, int max = 1400)
+    {
+        if (w <= max) return bgra;
+        int nw = max, nh = Math.Max((int)Math.Round(h * (double)max / w), 1);
+        double sx = (double)w / nw, sy = (double)h / nh;
+        var output = new byte[nw * nh * 4];
+        for (var y = 0; y < nh; y++)
+        {
+            int y0 = (int)(y * sy), y1 = Math.Min(Math.Max((int)Math.Ceiling((y + 1) * sy), y0 + 1), h);
+            for (var x = 0; x < nw; x++)
+            {
+                int x0 = (int)(x * sx), x1 = Math.Min(Math.Max((int)Math.Ceiling((x + 1) * sx), x0 + 1), w);
+                int b = 0, g = 0, r = 0, n = 0;
+                for (var yy = y0; yy < y1; yy++)
+                    for (var xx = x0; xx < x1; xx++)
+                    {
+                        var i = (yy * w + xx) * 4;
+                        b += bgra[i]; g += bgra[i + 1]; r += bgra[i + 2]; n++;
+                    }
+                var o = (y * nw + x) * 4;
+                output[o] = (byte)(b / n); output[o + 1] = (byte)(g / n); output[o + 2] = (byte)(r / n); output[o + 3] = 255;
+            }
+        }
+        (w, h) = (nw, nh);
+        return output;
     }
 
     /// <summary>Draws the panels at 1x over the background (the office, in an office view) and returns opaque BGRA pixels.</summary>

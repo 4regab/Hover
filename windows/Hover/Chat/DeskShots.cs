@@ -203,7 +203,7 @@ static class DeskShots
                 var (tx, ty) = Tag(id);
                 ui.OpenDeskCard(id, corner ? 5000 : tx + 40, corner ? 5000 : ty + 20);
                 // The bot of the open card shows as hot (the office marks it on its next frame).
-                OfficeHost.Current?.RunForShot(2);
+                OfficeHost.Current?.RunForShot(12);
             }
             await Pic(core, dir, N("working"), w, h, () => Open(Busy(), 2));
             await Pic(core, dir, N("working-reply"), w, h, () => { Frame(w, h); ui.Click("field", s: "card"); ui.Char("Also keep the dirty flag in the tests"); });
@@ -218,7 +218,7 @@ static class DeskShots
         const int tw = 1320, th = 520;
         // The panel is on the finished desk (Juno's); Pip's run works at the next desk.
         void Desks() { var p = Pair(Busy()); Reset(p[0], p[1]); }
-        void Tab(string tab) { Desks(); ui.OpenDeskPanel(1, tab); OfficeHost.Current?.RunForShot(2); }
+        void Tab(string tab) { Desks(); ui.OpenDeskPanel(1, tab); OfficeHost.Current?.RunForShot(12); }
         Term(ui);
         await Pic(core, dir, "desk-tab-terminal", tw, th, () => { Tab("terminal"); Term(ui); });
         await Pic(core, dir, "desk-tab-terminal-typing", tw, th, () => { Frame(tw, th); ui.Char("git log --oneline -3"); });
