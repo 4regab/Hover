@@ -336,4 +336,25 @@ public class SettingsAppTests(ITestOutputHelper output)
         Click(hover.X, hover.Y);
         await UntilTrue(() => s.Settings().Contains("\"HoverOpensWorkspace\": false"), "settings.json with Open on hover off", output, Why);
     }
+
+    [WindowsFact]
+    public async Task The_Settings_menu_of_the_bar_opens_the_page_it_names()
+    {
+        if (AppExe is null) { output.WriteLine("HOVER_APP_EXE is not set: the real-app checks are not asked for."); return; }
+        using var s = new Session("--dashboard");
+        string Why() => "log:\n" + s.Log() + "\nmenubar: " + s.Read()?["menubar"]?.ToJsonString();
+        await Park(s.App);
+
+        // The bar has File, Settings and Help in this order, each with a place on the screen.
+        await UntilTrue(() => (s.Read()?["menubar"]?["items"]?.AsArray().Select(i => (string?)i!["title"]).ToList() ?? []).SequenceEqual(["File", "Settings", "Help"]), "the three menus", output, Why);
+        var bar = s.Read()!["menubar"]!["items"]!.AsArray();
+        var title = bar[1]!;
+        Click((int)((double)title["x"]! + (double)title["w"]! / 2), (int)((double)title["y"]! + (double)title["h"]! / 2));
+        await Task.Delay(600);
+        // General, Integrations, Projects, Voice: the fourth.
+        for (var i = 0; i < 4; i++) Key(0x28);
+        Key(0x0D);
+        await UntilTrue(() => (string?)s.Read()?["settings-window"]?["section"] == "Voice", "the Voice page", output, Why);
+        Assert.Contains("Voice control", ((JsonArray)s.Read()!["settings-window"]!["texts"]!).Select(t => (string?)t).ToList());
+    }
 }

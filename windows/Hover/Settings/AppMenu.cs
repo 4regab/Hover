@@ -1,4 +1,6 @@
 using System.Diagnostics;
+using System.Runtime.InteropServices;
+using System.Text.Json.Nodes;
 using Hover.Chatting;
 using Hover.Host;
 using Hover.Settings;
@@ -75,6 +77,35 @@ static class AppMenu
         if (Version is { Length: > 0 } version) help.Items.Add(new MenuFlyoutItem { Text = "Hover " + version, IsEnabled = false });
         bar.Items.Add(help);
         return bar;
+    }
+
+    [DllImport("user32.dll")] static extern bool ClientToScreen(nint hwnd, ref Pt point);
+
+    [StructLayout(LayoutKind.Sequential)] struct Pt { public int X, Y; }
+
+    /// <summary>For the checks of the real app (<c>HOVER_UI_DUMP</c>, section <c>menubar</c>): where each title of the bar is on the screen.</summary>
+    public static void Track(MenuBar bar, nint window)
+    {
+        if (!UiDump.On || window == 0) return;
+        bar.LayoutUpdated += (_, _) =>
+        {
+            if (bar.XamlRoot is not { } root) return;
+            var scale = root.RasterizationScale;
+            var origin = new Pt();
+            ClientToScreen(window, ref origin);
+            var items = new JsonArray();
+            foreach (var item in bar.Items)
+            {
+                var at = item.TransformToVisual(null).TransformPoint(new Windows.Foundation.Point(0, 0));
+                items.Add(new JsonObject
+                {
+                    ["title"] = item.Title,
+                    ["x"] = Math.Round(origin.X + at.X * scale), ["y"] = Math.Round(origin.Y + at.Y * scale),
+                    ["w"] = Math.Round(item.ActualWidth * scale), ["h"] = Math.Round(item.ActualHeight * scale),
+                });
+            }
+            UiDump.Set("menubar", new JsonObject { ["items"] = items });
+        };
     }
 
     static void OpenUrl(string url)

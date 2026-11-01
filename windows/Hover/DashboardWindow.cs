@@ -55,7 +55,7 @@ public sealed class DashboardWindow : Window
         var header = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 12, Padding = new Thickness(16, 0, 16, 0), Height = 36 };
         header.Children.Add(new TextBlock { Text = "Hover", FontSize = 14, FontWeight = FontWeights.SemiBold, VerticalAlignment = VerticalAlignment.Center });
         // File, Settings and Help, as the Go app's title bar has them.
-        header.Children.Add(AppMenu.Build(new AppMenu.Actions(
+        var menuBar = AppMenu.Build(new AppMenu.Actions(
             NewChat: () =>
             {
                 settings?.CloseDash();
@@ -71,7 +71,9 @@ public sealed class DashboardWindow : Window
             },
             CloseWindow: Close,
             OpenSettings: section => settings?.ShowInDashboard(section),
-            DataFolder: dataDir)));
+            DataFolder: dataDir));
+        header.Children.Add(menuBar);
+        AppMenu.Track(menuBar, WinRT.Interop.WindowNative.GetWindowHandle(this));
         header.Children.Add(status);
 
         OfficeArea = new Border
