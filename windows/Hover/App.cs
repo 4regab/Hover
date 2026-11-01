@@ -1,6 +1,8 @@
 using System.Runtime.InteropServices;
 using Hover.Chatting;
 using Hover.Host;
+using Hover.Notch;
+using Hover.Speaking;
 using Hover.Windowing;
 using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
@@ -36,6 +38,7 @@ public sealed class App : Application, IXamlMetadataProvider
     DashboardWindow? dashboard;
     NotchHost? notch;
     OfficeHost? office;
+    BeatsHost? beats;
     Gfx? gfx;
     UiCore? panels;
     bool quitting;
@@ -108,6 +111,10 @@ public sealed class App : Application, IXamlMetadataProvider
             if (launch.ShotsDirectory is null) _ = Task.Run(() => OldService.RemoveOnceAsync(dataDir));
             // The 3D office, shown in the open notch or in the dashboard.
             office = new OfficeHost(queue!, backend);
+            // The office beats: played while the switch is on and an office (the open notch, or a shown window) is in view.
+            // Pictures leave the machine as they found it, so they make no sound.
+            if (launch.ShotsDirectory is null)
+                beats = new BeatsHost(queue!, office, () => notch?.Controller.State != NotchState.Rest || dashboard?.AppWindow.IsVisible == true);
             // The panels share one graphics device with the notch.
             try
             {
@@ -184,6 +191,8 @@ public sealed class App : Application, IXamlMetadataProvider
         HostLog.Line("quitting");
         // The tray icon goes first, so it does not linger after the process; then the backend
         // writes the history and the settings and stops.
+        beats?.Dispose();
+        beats = null;
         notch?.Dispose();
         notch = null;
         panels?.Dispose();

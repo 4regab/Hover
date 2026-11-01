@@ -19,7 +19,7 @@ sealed record NotchCallbacks(Action OpenDashboard, Action Quit, Func<bool> Dashb
 /// <see cref="NotchController"/> (the rules) to <see cref="NotchWindow"/> (Windows) and
 /// <see cref="NotchRenderer"/> (the pixels). Everything runs on the UI thread.
 /// </summary>
-sealed class NotchHost : IDisposable
+sealed partial class NotchHost : IDisposable
 {
     const int ShortcutId = 1;
 
@@ -142,13 +142,14 @@ sealed class NotchHost : IDisposable
         window.Deactivated += () => Guard("deactivate", Deactivated);
         window.TrayLeftClick += () => Guard("tray", callbacks.OpenDashboard);
         window.TrayPick += i => Guard("tray menu", () => TrayPick(i));
-        window.Pressed += (x, y) => Guard("press", () => { ctl.Stay(); if (!PanelsPressed(x, y)) office?.NotchPressed(x, y); });
-        window.Released += (x, y) => Guard("click", () => { PanelsReleased(x, y); Clicked(x, y); office?.NotchReleased(x, y); });
-        window.Char += text => Guard("text", () => { if (panels?.Ui.Char(text) == true) QueueRender(); });
+        window.Pressed += (x, y) => Guard("press", () => { ctl.Stay(); if (VoicePressed(x, y)) return; if (!PanelsPressed(x, y)) office?.NotchPressed(x, y); });
+        window.Released += (x, y) => Guard("click", () => { if (VoiceReleased(x, y)) return; PanelsReleased(x, y); Clicked(x, y); office?.NotchReleased(x, y); });
+        window.Char += text => Guard("text", () => { if (VoiceChar(text)) { QueueRender(); return; } if (panels?.Ui.Char(text) == true) QueueRender(); });
         if (panels is not null) panels.Changed += () => Guard("panels", () => { QueueRender(); EnsureAnimating(); });
-        window.Wheel += delta => Guard("wheel", () => { if (!PanelsWheel(delta)) office?.NotchWheel(delta); });
-        window.KeyDown += vk => Guard("key", () => { if (!PanelsKey(vk)) { KeyPressed(vk); office?.NotchKey(vk); } });
+        window.Wheel += delta => Guard("wheel", () => { if (!VoiceWheel(delta) && !PanelsWheel(delta)) office?.NotchWheel(delta); });
+        window.KeyDown += vk => Guard("key", () => { if (VoiceKey(vk)) return; if (!PanelsKey(vk)) { KeyPressed(vk); office?.NotchKey(vk); } });
         backend.Event += e => queue.TryEnqueue(() => Guard("message", () => OnBackend(e)));
+        VoiceStart();
 
         ctl.Size = settings.Size;
         ctl.HoverOpens = settings.HoverOpens;
@@ -504,7 +505,9 @@ sealed class NotchHost : IDisposable
             var (x, y) = window.Cursor();
             double dx = (x - ctl.Window.Left) / ctl.Scale, dy = (y - ctl.Window.Top) / ctl.Scale;
             hovered = renderer.Targets.LastOrDefault(t => t.Action != "shape" && t.Contains(dx, dy))?.Action;
+            VoiceHover(dx, dy);
         }
+        else VoiceHover(-1, -1);
         if (hovered == scene.Hover) return;
         scene.Hover = hovered;
         QueueRender();
@@ -590,7 +593,9 @@ sealed class NotchHost : IDisposable
         }
         island = next;
         var seg = next.Seg;
-        var kind = next.Kind;
+        // Voice's card, while an interaction shows, takes the island's place (kind 3, as the Go app numbers it).
+        var voiceCard = VoiceCurrent();
+        var kind = voiceCard is not null ? (IslandKind)3 : next.Kind;
         var atRest = ctl.State == NotchState.Rest;
         var words = seg.Kind switch
         {
@@ -622,10 +627,12 @@ sealed class NotchHost : IDisposable
             }
             if (glowTimer.IsRunning) glow = seg.State switch { EndState.Completed => 0x32d74bu, EndState.Failed => 0xff453au, _ => 0u };
         }
+        // A press turned away while voice is busy: the card glows amber a moment.
+        if (voiceCard?.Busy == true) glow = 0xffb340;
         if (atRest) scene.Glow = glow;
         old = (true, kind, next.Key, words, ends);
-        // A question waits: hovering does not open the office.
-        ctl.Asking = seg.Kind == SegKind.Ask;
+        // A question waits, or voice's card is up: hovering does not open the office.
+        ctl.Asking = seg.Kind == SegKind.Ask || voiceCard is not null;
 
         // The one-second clock runs while someone works or asks; the speaker moves on every 3 s.
         var busy = seg.Kind is SegKind.Work or SegKind.Ask;
@@ -638,8 +645,9 @@ sealed class NotchHost : IDisposable
 
         scene.Island = next;
         scene.Card = card;
-        scene.Kind = (RestKind)(int)kind;
-        ctl.RestKind = (RestKind)(int)kind;
+        var restKind = voiceCard is not null ? RestKind.Card : (RestKind)(int)kind;
+        scene.Kind = restKind;
+        ctl.RestKind = restKind;
         ctl.Still = !animations;
         var rest = MeasureRest(kind);
         if (ctl.RestTarget != rest) ctl.SetRest(rest);
@@ -650,6 +658,11 @@ sealed class NotchHost : IDisposable
     Size MeasureRest(IslandKind kind)
     {
         FillScene(measureOnly: true);
+        if (scene.Voice is not null && scene.VoiceUi is not null)
+        {
+            var (vw, vh) = renderer.VoiceSize(scene, gfx.Context);
+            return Geometry.RestSize(RestKind.Card, vw, vh);
+        }
         switch (kind)
         {
             case IslandKind.Pill:
@@ -733,9 +746,11 @@ sealed class NotchHost : IDisposable
     {
         if (surface is null || disposed) return;
         FillScene();
+        VoiceFrame();
         scene.OfficeDrawn = office?.DrawsInNotch == true;
         surface.Draw(dc => renderer.Draw(dc, scene, ctl.WindowWidth), ctl.Scale);
         DumpBar();
+        VoiceDump();
         RenderPanels();
         if (office is not null)
         {
@@ -754,7 +769,7 @@ sealed class NotchHost : IDisposable
 
     bool PanelsMoving => PanelsOpen && panels!.Ui.Animating;
 
-    bool Turning => animations && island.Seg.Kind is SegKind.Work or SegKind.Ask && ctl.State == NotchState.Rest;
+    bool Turning => (animations && island.Seg.Kind is SegKind.Work or SegKind.Ask && ctl.State == NotchState.Rest) || VoiceTurning;
 
     double FrameMs => Moving ? 16 : Turning ? 33 : PanelsMoving ? Math.Clamp(panels!.Ui.NextFrameMs, 16, 500) : 33;
 
@@ -797,6 +812,7 @@ sealed class NotchHost : IDisposable
         animTimer.Stop();
         secondTimer.Stop();
         glowTimer.Stop();
+        VoiceDispose();
         office?.DetachNotch();
         layer?.Dispose();
         window.Dispose();

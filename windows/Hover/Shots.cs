@@ -28,6 +28,7 @@ public static class Shots
         });
         if (panels is not null) await Hover.Chatting.ChatShots.TakeAsync(directory, panels);
         await Hover.Windowing.NotchShots.TakeAsync(directory, panels);
+        await Hover.Speaking.VoiceShots.TakeAsync(directory, panels);
     }
 
     static async Task Save(FrameworkElement view, string file, Action<byte[], int, int, double>? after = null)

@@ -23,6 +23,9 @@ sealed class NotchScene
     public double ShapeX, ShapeW, ShapeH, ShapeR, ShapeEar;
     public uint ShapeFill;
     public double MiniOpacity, ViewOpacity;
+    /// <summary>Voice's card, shown in place of the island while an interaction does, and its keyboard and pointer state.</summary>
+    public Hover.Voice.VoiceView? Voice;
+    public Hover.Voice.CardUi? VoiceUi;
     public bool ViewVisible, ShadowOn;
     /// <summary>The 3D office is drawing in the office area, so the placeholder is not.</summary>
     public bool OfficeDrawn;

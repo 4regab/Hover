@@ -67,6 +67,9 @@ public sealed class VoiceService : IDisposable
     /// <summary>Dictation heard these words (and took these screenshots). Raised on the backend reader's thread, before the interaction is dismissed.</summary>
     public event Action<VoiceState>? Dictated;
 
+    /// <summary>Dictation could not write the words down; this is why, in the card's words.</summary>
+    public event Action<string>? DictationFailed;
+
     /// <summary>A press was turned away because an interaction is in progress.</summary>
     public event Action? Busy;
 
@@ -136,6 +139,7 @@ public sealed class VoiceService : IDisposable
                     EndDictation();
                     break;
                 case VoiceStage.Error or VoiceStage.Cancelled or VoiceStage.Idle:
+                    if (v.Stage == VoiceStage.Error) DictationFailed?.Invoke(v.Message);
                     EndDictation();
                     break;
             }

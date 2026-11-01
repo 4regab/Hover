@@ -21,7 +21,7 @@ namespace Hover.Windowing;
 /// island or the question's card at rest, and the place the office goes when it is open. It
 /// holds no state between frames except caches of fonts and outlines.
 /// </summary>
-sealed class NotchRenderer : IDisposable
+sealed partial class NotchRenderer : IDisposable
 {
     record struct Font(float Size, FontWeight Weight, bool Mono = false);
 
@@ -56,6 +56,7 @@ sealed class NotchRenderer : IDisposable
         brush?.Dispose();
         round?.Dispose();
         dashed?.Dispose();
+        DisposeVoice();
     }
 
     // MARK: Text
@@ -629,7 +630,8 @@ sealed class NotchRenderer : IDisposable
             dc.PushAxisAlignedClip(Rc(s.ShapeX, 0, s.ShapeW, s.ShapeH), AntialiasMode.PerPrimitive);
             alpha = s.MiniOpacity * s.Fade;
             var ox = s.ShapeX + (s.ShapeW - s.RestW) / 2;
-            if (s.Kind == RestKind.Pill) Pill(s, ox + 11, true);
+            if (s.Voice is not null && s.VoiceUi is not null && s.Kind == RestKind.Card) DrawVoice(s, ox);
+            else if (s.Kind == RestKind.Pill) Pill(s, ox + 11, true);
             else if (s.Kind == RestKind.Card && s.Card is not null) Card(s, ox + 14, 12, true);
             alpha = 1;
             dc.PopAxisAlignedClip();

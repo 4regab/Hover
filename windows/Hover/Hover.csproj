@@ -37,5 +37,7 @@
     <ProjectReference Include="..\Hover.Chat\Hover.Chat.csproj" />
     <ProjectReference Include="..\Hover.Notch\Hover.Notch.csproj" />
     <ProjectReference Include="..\Hover.Office\Hover.Office.csproj" />
+    <!-- Voice, sound and music: the shortcut, the microphone, the voice card and the beats (office-beats.ogg is linked into it). -->
+    <ProjectReference Include="..\Hover.Voice\Hover.Voice.csproj" />
   </ItemGroup>
 </Project>

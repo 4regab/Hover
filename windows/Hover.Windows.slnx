@@ -7,4 +7,6 @@
   <Project Path="Hover.Office.Tests/Hover.Office.Tests.csproj" />
   <Project Path="Hover.TestTools/Hover.TestTools.csproj" />
   <Project Path="Hover.Tests/Hover.Tests.csproj" />
+  <Project Path="Hover.Voice/Hover.Voice.csproj" />
+  <Project Path="Hover.Voice.Tests/Hover.Voice.Tests.csproj" />
 </Solution>
