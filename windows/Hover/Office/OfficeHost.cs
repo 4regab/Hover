@@ -762,6 +762,7 @@ public sealed class OfficeHost : IDisposable
     // ---- for --shots ---------------------------------------------------------------------------------
 
     bool shotFrozen;
+    string shotKey = "", shotSize = "";
 
     /// <summary>For <c>--shots</c>: the office is this size and shows these sessions at their desks, and takes no other state.</summary>
     internal void ShowForShot(StateEvent state, int width, int height)
@@ -769,7 +770,13 @@ public sealed class OfficeHost : IDisposable
         shotFrozen = true;
         ctl.Resize(width, height);
         ctl.State(OfficeStateMap.Read(state));
-        RunForShot(600);
+        // The bots walk in and sit down once (the frames are dear: about 12 ms each on the runner); a new size lets the camera
+        // settle, and a state that only changes what they say needs a moment.
+        var key = string.Join(',', (state.Sessions ?? []).Select(s => $"{s.Id}/{s.Seat}/{s.Bot}"));
+        var size = $"{width}x{height}";
+        RunForShot(key != shotKey ? 450 : size != shotSize ? 60 : 4);
+        shotKey = key;
+        shotSize = size;
         settled = true;
     }
 

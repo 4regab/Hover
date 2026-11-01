@@ -326,11 +326,14 @@ public class DeskAppTests(ITestOutputHelper output)
             await ClickAt(s, "ghStart", "Sign in with GitHub");
             // Busy (with GitHub's code), or it failed at once for want of a network; Cancel ends the first.
             await Check(s, () => s.Dump.Where("window", "ghCancel") is not null || s.Dump.Section("window")?["ghBusy"]?.GetValue<bool>() == false && ChromeHas(s, "Sign in with GitHub"), "the sign-in started or ended");
-            if (s.Dump.Where("window", "ghCancel") is not null)
+            // A Cancel that comes while gh is still starting can be followed by the sign-in showing itself once more: Cancel is pressed
+            // again until the card is back at its start.
+            for (var attempt = 1; attempt <= 3 && s.Dump.Where("window", "ghCancel") is not null; attempt++)
             {
-                await ClickAt(s, "ghCancel", "Cancel");
-                await Check(s, () => s.Dump.Where("window", "ghCancel") is null && s.Dump.Where("window", "ghStart") is not null, "Cancel ended the sign-in");
+                await ClickAt(s, "ghCancel", $"Cancel (try {attempt})");
+                await Until(() => s.Dump.Where("window", "ghCancel") is null, 8000);
             }
+            await Check(s, () => s.Dump.Where("window", "ghCancel") is null && s.Dump.Where("window", "ghStart") is not null, "Cancel ended the sign-in");
         }
         finally { output.WriteLine(s.Dump.Summary()); }
     }

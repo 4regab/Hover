@@ -126,6 +126,8 @@ static class DeskShots
     static void Fixtures(OfficeUi ui, SessionInfo session, params SessionInfo[] more)
     {
         ui.Accept(ChatShots.State([session, .. more]));
+        // What each desk reads from its folder is the same for both of the pair.
+        void Put(OfficeUi u, string what, string json) { DeskShots.Put(u, what, json); DeskShots.Put(u, what, json, null, 2); }
         Put(ui, "probe", Probe);
         Put(ui, "files", Files);
         Put(ui, "diff", Diff);
@@ -170,18 +172,19 @@ static class DeskShots
             Fixtures(ui, s, more);
             Seat(core, [s, .. more]);
         }
-        // Two desks: Pip's run that works (or asks), and Juno's that is done.
-        SessionInfo[] Pair(SessionInfo first) => [first.At(1, 0, 0), Done().At(2, 1, 1)];
+        // Two desks, the same in every picture so that the office seats them once: Juno's run that is done (session 1, the panel's
+        // desk) and Pip's, which works, asks or has a question (session 2).
+        SessionInfo[] Pair(SessionInfo pip) => [Done().At(1, 0, 1), pip.At(2, 1, 0)];
 
         // The office alone, with the helpers out, and the tip over a bot and over a desk.
         await Pic(core, dir, "desk-helpers", 1320, 520, () => { var p = Pair(Busy()); Reset(p[0], p[1]); });
         await Pic(core, dir, "desk-tip-bot", 1320, 520, () =>
         {
-            var (tx, ty) = Tag(1);
+            var (tx, ty) = Tag(2);
             ui.PointerMove(tx + 30, ty + 60);
-            core.TipFixture = () => (1, 1, "");
+            core.TipFixture = () => (1, 2, "");
         });
-        await Pic(core, dir, "desk-tip-desk", 1320, 520, () => core.TipFixture = () => (2, 1, ""));
+        await Pic(core, dir, "desk-tip-desk", 1320, 520, () => core.TipFixture = () => (2, 2, ""));
         core.TipFixture = null;
         ui.PointerMove(-1, -1);
 
@@ -197,19 +200,19 @@ static class DeskShots
                 var (tx, ty) = Tag(id);
                 ui.OpenDeskCard(id, corner ? 5000 : tx + 40, corner ? 5000 : ty + 20);
             }
-            await Pic(core, dir, N("working"), w, h, () => Open(Busy(), 1));
+            await Pic(core, dir, N("working"), w, h, () => Open(Busy(), 2));
             await Pic(core, dir, N("working-reply"), w, h, () => { Frame(w, h); ui.Click("field", s: "card"); ui.Char("Also keep the dirty flag in the tests"); });
             // The draft typed into the card is cleared, as the Go shots do before the next card.
-            await Pic(core, dir, N("done"), w, h, () => { ui.Key(UiKey.A, UiMods.Control); ui.Key(UiKey.Backspace, UiMods.None); Open(Busy(), 2); });
-            await Pic(core, dir, N("asking"), w, h, () => Open(Asking(), 1));
-            await Pic(core, dir, N("asking-corner"), w, h, () => Open(Asking(), 1, true));
-            await Pic(core, dir, N("question"), w, h, () => Open(Question(), 1));
+            await Pic(core, dir, N("done"), w, h, () => { ui.Key(UiKey.A, UiMods.Control); ui.Key(UiKey.Backspace, UiMods.None); Open(Busy(), 1); });
+            await Pic(core, dir, N("asking"), w, h, () => Open(Asking(), 2));
+            await Pic(core, dir, N("asking-corner"), w, h, () => Open(Asking(), 2, true));
+            await Pic(core, dir, N("question"), w, h, () => Open(Question(), 2));
         }
 
         // The panel's tabs, in an office of 1320 x 520, on the finished desk.
         const int tw = 1320, th = 520;
         // The panel is on the finished desk (Juno's); Pip's run works at the next desk.
-        void Desks() => Reset(Done().At(1, 1, 1), Busy().At(2, 0, 0));
+        void Desks() { var p = Pair(Busy()); Reset(p[0], p[1]); }
         void Tab(string tab) { Desks(); ui.OpenDeskPanel(1, tab); }
         Term(ui);
         await Pic(core, dir, "desk-tab-terminal", tw, th, () => { Tab("terminal"); Term(ui); });
@@ -246,7 +249,7 @@ static class DeskShots
         await Pic(core, dir, "desk-tab-file-edit-busy", tw, th, () =>
         {
             Esc();
-            ui.Accept(ChatShots.State(Busy()));
+            ui.Accept(ChatShots.State(Busy().At(1, 1, 1)));
             Frame(tw, th);
         });
         await Pic(core, dir, "desk-tab-file-md-preview", tw, th, () =>
@@ -275,7 +278,7 @@ static class DeskShots
         await Pic(core, dir, "desk-tab-pr-creating", tw, th, () => { Frame(tw, th); ui.Click("prCreate"); });
         await Pic(core, dir, "desk-tab-pr-create-failed", tw, th, () => ui.Accept(new DeskActionEvent { Id = 1, What = "prCreate", Data = J("""{"error":"Couldn’t push: the remote rejected it (protected branch).","steps":["made the branch hover/refresh-skips-clean-views","committed 3 files"]}""") }));
         await Pic(core, dir, "desk-tab-pr-create-done", tw, th, () => ui.Accept(new DeskActionEvent { Id = 1, What = "prCreate", Data = J("""{"ok":true,"url":"https://github.com/4regab/Hover/pull/58","steps":[]}""") }));
-        await Pic(core, dir, "desk-tab-pr-create-busy", tw, th, () => { ui.Accept(ChatShots.State(Busy())); Put(ui, "pr", Create.Replace("\"busy\":false", "\"busy\":true")); Frame(tw, th); });
+        await Pic(core, dir, "desk-tab-pr-create-busy", tw, th, () => { ui.Accept(ChatShots.State(Busy().At(1, 1, 1))); Put(ui, "pr", Create.Replace("\"busy\":false", "\"busy\":true")); Frame(tw, th); });
         await Pic(core, dir, "desk-tab-linked", tw, th, () => Tab("linked"));
         await Pic(core, dir, "desk-tab-agents", tw, th, () => Tab("agents"));
         await Pic(core, dir, "desk-tab-agents-open", tw, th, () => { Frame(tw, th); ui.Click("drow", s: "sa:a2"); ui.Click("drow", s: "sa:a1"); });
@@ -306,7 +309,7 @@ static class DeskShots
             Seat(core, doneChat, live, asking);
             ui.OpenChat(s.Id);
             // The office's camera goes to the bot whose chat is open.
-            OfficeHost.Current?.RunForShot(400);
+            OfficeHost.Current?.RunForShot(150);
             Frame(1200, 720);
             ui.Click("compose");
             ui.Char(draft);
@@ -351,12 +354,21 @@ static class DeskShots
         await Pic(core, dir, "chat-default-reply-pause", 1200, 720, () => { ui.Accept(ChatShots.State(ChatShots.Busy())); ui.CloseChat(); ui.OpenChat(1); Frame(1200, 720); ui.Click("compose"); }, false);
 
         // The panels over the office.
-        var many = new[] { ChatShots.Busy(), ChatShots.Finished(), ChatShots.Session(3, "codex", "Install three.js", "waiting", 3, ChatShots.Turn("Install three.js", "", "waiting", 1)) with { Ctx = 62 } };
-        void Panel(string name, SessionInfo[] sessions) { ui.CloseDeskPanel(); ui.ChatView = false; ui.CloseChat(); ui.Accept(ChatShots.State(sessions)); Seat(core, sessions); ui.OpenOfficePanel(name); OfficeHost.Current?.RunForShot(400); }
+        var many = new[] { doneChat with { Id = 2 }, live, asking };
+        void Panel(string name, SessionInfo[] sessions, bool seat = true)
+        {
+            ui.CloseDeskPanel();
+            ui.ChatView = false;
+            ui.CloseChat();
+            ui.Accept(ChatShots.State(sessions));
+            if (seat) Seat(core, sessions);
+            ui.OpenOfficePanel(name);
+            OfficeHost.Current?.RunForShot(150);
+        }
         await Pic(core, dir, "office-panel-board", 1200, 480, () => Panel("board", many));
         // A board of more sessions than fit: it scrolls.
         var lots = Enumerable.Range(1, 14).Select(i => ChatShots.Session(10 + i, i % 3 == 0 ? "codex" : "kiro", $"Session {i}: " + (i % 2 == 0 ? "tidy the imports" : "check the second monitor"), i % 4 == 0 ? "working" : i % 4 == 1 ? "done" : i % 4 == 2 ? "waiting" : "failed", i % 6, ChatShots.Turn("Prompt", "Answer", "done", i))).ToArray();
-        await Pic(core, dir, "office-panel-board-long", 1200, 480, () => Panel("board", lots));
+        await Pic(core, dir, "office-panel-board-long", 1200, 480, () => Panel("board", lots, false));
         await Pic(core, dir, "office-panel-tv", 1200, 480, () => Panel("tv", many));
         await Pic(core, dir, "office-panel-history", 1200, 480, () => Panel("history", many));
         var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
@@ -380,9 +392,8 @@ static class DeskShots
             ui.OpenOfficePanel("");
             ui.ChatView = false;
             ui.CloseChat();
-            var asks = Asking().At(1, 0, 0);
-            ui.Accept(ChatShots.State(asks));
-            Seat(core, asks);
+            var p = Pair(Asking());
+            Reset(p[0], p[1]);
         });
         core.BotRectFixture = null;
         core.HelpersFixture = null;
