@@ -207,7 +207,6 @@ public sealed partial class OfficeUi
         var nameLook = Pen.F(11.5, 600, Mix(Rgba.Of(0xffffff), bot, 0.45f));
         var name = (Bots.Name(s.Bot) + "’s desk").ToUpperInvariant();
         var nw = pen.Width(name, nameLook);
-        pen.Text(name, tx, hy + (20 - pen.LineHeight(nameLook)) / 2, nameLook);
         var clock = "";
         if (turn is not null)
         {
@@ -225,26 +224,36 @@ public sealed partial class OfficeUi
             5 => (Rgba.Of(0xffc46b), Rgba.Of(0xffb340, 0.12)),
             _ => (Rgba.Of(0xf6f2ff, 0.6), Rgba.Of(0xffffff, 0.055)),
         };
-        var cx = tx + nw + 8;
         var grey = Rgba.Of(0xffffff, 0.6);
         var greyBg = Rgba.Of(0xffffff, 0.055);
-        cx += CardChip(null, what, cfg, cbg, cx, hy, 0) + 5;
         var accessId = s.Access.Length > 0 ? s.Access : "full";
         var folderName = s.Folder.Length > 0 ? LastPart(s.Folder) : "";
-        var rowRight = x + w - 6;
-        var buttonsW = CardChipW(DeskIcons.Code, "Editor") + 5 + CardChipW(DeskIcons.Expand, "Expand") + 5;
-        if (folderName.Length > 0)
-        {
-            var fw = CardChipW(DeskIcons.Folder, folderName);
-            var over = cx + fw + 5 + buttonsW + 40 - rowRight;
-            cx += CardChip(DeskIcons.Folder, folderName, grey, greyBg, cx, hy, over > 0 ? Math.Max(fw - over, 48) : 0) + 5;
-        }
+        // The row as internal/ui/deskcard.go lays it out when it is too full: the folder's chip gives first (down to 48), then the
+        // name (down to its "…"); the buttons never do, and what is left runs past the card, which clips it.
+        var specs = new List<(string? Icon, string Text, Rgba Fg, Rgba Bg, bool Shrink)> { (null, what, cfg, cbg, false) };
+        if (folderName.Length > 0) specs.Add((DeskIcons.Folder, folderName, grey, greyBg, true));
         if (accessId.Length > 0)
         {
             var amber = accessId == "full";
-            cx += CardChip(DeskIcons.Shield, AccessLabel(accessId), amber ? Rgba.Of(0xffc46b) : grey, amber ? Rgba.Of(0xffb340, 0.09) : greyBg, cx, hy, 0) + 5;
+            specs.Add((DeskIcons.Shield, AccessLabel(accessId), amber ? Rgba.Of(0xffc46b) : grey, amber ? Rgba.Of(0xffb340, 0.09) : greyBg, false));
         }
-        if (s.Ctx is { } ctx) cx += CardChip(null, ctx + "%", grey, greyBg, cx, hy, 0) + 5;
+        if (s.Ctx is { } ctx) specs.Add((null, ctx + "%", grey, greyBg, false));
+        var total = specs.Sum(sp => CardChipW(sp.Icon, sp.Text) + 5) + CardChipW(DeskIcons.Code, "Editor") + 5 + CardChipW(DeskIcons.Expand, "Expand") + 5;
+        var over = nw + 8 + total - 5 - (x + w - 6 - tx);
+        var widths = new float[specs.Count];
+        for (var i = 0; i < specs.Count; i++)
+        {
+            if (!specs[i].Shrink || over <= 0) continue;
+            var natural = CardChipW(specs[i].Icon, specs[i].Text);
+            var cut = Math.Min(over, natural - Math.Min(natural, 48));
+            over -= cut;
+            widths[i] = natural - cut;
+        }
+        var kickerW = nw;
+        if (over > 0) kickerW = nw - Math.Min(over, Math.Max(nw - pen.Width("…", nameLook), 0));
+        pen.Text(name, tx, hy + (20 - pen.LineHeight(nameLook)) / 2, nameLook, kickerW);
+        var cx = tx + kickerW + 8;
+        for (var i = 0; i < specs.Count; i++) cx += CardChip(specs[i].Icon, specs[i].Text, specs[i].Fg, specs[i].Bg, cx, hy, widths[i]) + 5;
         var ed = CardChipButton("cardEditor", DeskIcons.Code, "Editor", cx, hy);
         cx += ed + 5;
         var ex = CardChipButton("cardExpand", DeskIcons.Expand, "Expand", cx, hy);

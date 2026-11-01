@@ -686,7 +686,7 @@ public sealed partial class OfficeUi
         }
     }
 
-    /// <summary>The reply box's list takes the arrows, Tab and Enter while it has something to pick, and Escape.</summary>
+    /// <summary>The reply box's list takes the Up and Down keys, Tab and Enter while it has something to pick, and Escape.</summary>
     bool ReplyListKey(UiKey key, bool shift)
     {
         if (pop is null) return false;

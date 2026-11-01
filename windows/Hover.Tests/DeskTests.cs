@@ -166,7 +166,8 @@ public class DeskTests
         Assert.Equal("1", hot);
         Assert.Equal(1, h.Ui.DeskCardId);
         Assert.Contains(h.Sent, x => x is DeskCommand { What: "probe" });
-        Assert.Contains("MOSS’S DESK", c.Texts);
+        // The name gives way to the chips when the row is full, down to its "…" (internal/ui/deskcard.go; the Go picture shows that too).
+        Assert.Contains("…", c.Texts);
         Assert.Contains("Open the chat with Moss", c.Texts);
         // Until the probe is back, the tiles say what the session's own steps do.
         Assert.Contains("Terminal", c.Texts);
