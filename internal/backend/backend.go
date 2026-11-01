@@ -95,49 +95,74 @@ func decodeKey(text string) ([]byte, error) {
 	return b, nil
 }
 
-// initialize is the first command: `initialize` with the Keychain key as base64. The key is
-// used once, in place of note.key; history that can't be opened with it stops the backend
-// rather than be replaced by an empty one.
+// initialize is the first command: `initialize` with the host's key as base64 (the Mac's
+// from its Keychain, the Windows host's from DPAPI). The key is used once, in place of
+// note.key; history that can't be opened with it stops the backend rather than be replaced
+// by an empty one. With no `key` (missing or null) the host has none this run, say because
+// its key file is locked just now: the backend runs with the history off, so no session is
+// kept that the next run could not open, and note.key is neither read nor made here. A key
+// that is there but not a valid base64 string of 32 bytes is refused, as before.
 func initialize(m core.JSON, link *Link) (*Backend, error) {
 	if t, _ := strOf(m, "type"); t != "initialize" {
 		return nil, errors.New("Initialize the backend first.")
 	}
-	k, _ := strOf(m, "key")
-	key, err := decodeKey(k)
-	if err != nil {
-		return nil, err
-	}
-	if err := core.UseHostKey(key); err != nil {
-		return nil, err
+	if v, has := m.Get("key"); !has || v.IsNull() {
+		if err := core.UseNoHostKey(); err != nil {
+			return nil, err
+		}
+	} else {
+		k, ok := v.AsStr()
+		if !ok {
+			return nil, errors.New("The history key isn't valid base64.")
+		}
+		key, err := decodeKey(k)
+		if err != nil {
+			return nil, err
+		}
+		if err := core.UseHostKey(key); err != nil {
+			return nil, err
+		}
 	}
 	return newBackend(link)
 }
 
+// testRunner stands in for the tools' runners when a test sets it (never set otherwise).
+var testRunner func(core.AgentTool) agents.RunTask
+
 func newBackend(link *Link) (*Backend, error) {
+	// No key this run (see initialize): there is no history, and nothing below reads or
+	// replaces one.
 	crypto := core.GlobalCrypto()
-	if crypto == nil {
-		return nil, errors.New("The history key is not available.")
-	}
-	// Do not let an invalid Keychain key turn existing encrypted history into an empty index
-	// that a later session would overwrite.
 	dir := core.AgentsDir()
-	index := filepath.Join(dir, "index.dat")
-	if st, err := os.Stat(index); err == nil && !st.IsDir() {
-		raw, err := core.ReadFile(index)
-		if err != nil {
-			return nil, err
+	if crypto != nil {
+		// Do not let an invalid Keychain key turn existing encrypted history into an empty
+		// index that a later session would overwrite.
+		index := filepath.Join(dir, "index.dat")
+		if st, err := os.Stat(index); err == nil && !st.IsDir() {
+			raw, err := core.ReadFile(index)
+			if err != nil {
+				return nil, err
+			}
+			plain := crypto.Open(raw)
+			if len(plain) == 0 {
+				return nil, errors.New("The history key cannot decrypt existing history.")
+			}
+			if _, err := core.ParseJSON(plain); err != nil {
+				return nil, fmt.Errorf("The history index can't be read: %v", err)
+			}
 		}
-		plain := crypto.Open(raw)
-		if len(plain) == 0 {
-			return nil, errors.New("The history key cannot decrypt existing history.")
-		}
-		if _, err := core.ParseJSON(plain); err != nil {
-			return nil, fmt.Errorf("The history index can't be read: %v", err)
-		}
+	} else {
+		core.Logf("no key this run: sessions aren't kept")
 	}
-	_ = os.MkdirAll(dir, 0o755)
+	// The old planner went with the workspace in 2.0 (what app.Start does first). After the
+	// key checks above, so a refused start changes no file.
+	core.DropPlanner(core.Support())
 	settings := core.LoadSettings(core.SettingsFile())
-	history := core.NewAgentHistory(dir, crypto)
+	var history *core.AgentHistory
+	if crypto != nil {
+		_ = os.MkdirAll(dir, 0o755)
+		history = core.NewAgentHistory(dir, crypto)
+	}
 	maxRun := LoadMaxRunning(filepath.Join(core.Support(), "backend.json"))
 
 	var runtimes []agents.Runtime
@@ -155,6 +180,9 @@ func newBackend(link *Link) (*Backend, error) {
 		return agents.Switches{On: settings.AgentSpaces(), Linux: settings.SpaceImage() == "linux"}
 	})
 	sessions := agents.NewKiroSessions(func(tool core.AgentTool) agents.RunTask {
+		if testRunner != nil {
+			return testRunner(tool)
+		}
 		for _, r := range runtimes {
 			if r.Tool() == tool {
 				return agents.AroundSpaces(r.Runner())
@@ -177,6 +205,8 @@ func newBackend(link *Link) (*Backend, error) {
 		}
 		return nil
 	})
+	// Continuing a Kiro turn that stopped on a busy model reads the live setting too.
+	sessions.SetRetryWhenBusy(settings.KiroRetryBusy)
 	for _, r := range runtimes {
 		// What the tool offers (models, efforts) fills in its settings page.
 		r.OnOptionsSeen(func(t core.AgentTool, offers []core.AcpOption) { settings.SetAgentOffers(t, offers); link.push() })
@@ -204,7 +234,9 @@ func newBackend(link *Link) (*Backend, error) {
 	sessions.OnChanged(func() { link.push() })
 	// Hover on the Discord status, when the switch in Settings → Integrations is on.
 	agents.DiscordStart(settings, sessions)
-	history.OnChanged(func() { link.push() })
+	if history != nil {
+		history.OnChanged(func() { link.push() })
+	}
 	// The tool and outcome let the native island show the tool's logo with a badge.
 	sessions.OnEnded(func(s agents.KiroSession, r agents.KiroResult) {
 		if link.closed() {
@@ -255,6 +287,14 @@ func newBackend(link *Link) (*Backend, error) {
 
 func (b *Backend) closing() bool { return b.link.closed() }
 
+// entries are the saved sessions, newest first; none while the history is off.
+func (b *Backend) entries() []core.HistoryEntry {
+	if b.history == nil {
+		return nil
+	}
+	return b.history.Entries()
+}
+
 // dispatch is one command: the first makes the backend, the rest are its to handle. A
 // failure before the backend exists is `backendFailure` (the host stops); after, a toast.
 func dispatch(h *Host, command core.JSON, link *Link) {
@@ -295,8 +335,7 @@ func dispatch(h *Host, command core.JSON, link *Link) {
 // sendState is the office's state: every session, the tools and the history.
 func (b *Backend) sendState() {
 	sessions := b.sessions.All()
-	history := b.history.Entries()
-	b.link.out.Send(snapshot(b.ctx(sessions, history)))
+	b.link.out.Send(snapshot(b.ctx(sessions, b.entries())))
 }
 
 func (b *Backend) ctx(sessions []agents.KiroSession, history []core.HistoryEntry) *ctx {
@@ -457,7 +496,7 @@ func (b *Backend) usesFolder(folder string) bool {
 			return true
 		}
 	}
-	for _, e := range b.history.Entries() {
+	for _, e := range b.entries() {
 		if agents.SameProject(e.Folder, folder) {
 			return true
 		}
@@ -656,7 +695,7 @@ func (b *Backend) handle(m core.JSON) error {
 			if s != nil {
 				gone, found = s.Folder, true
 			} else {
-				for _, e := range b.history.Entries() {
+				for _, e := range b.entries() {
 					if e.Key == key {
 						gone, found = e.Folder, true
 						break
@@ -1018,7 +1057,9 @@ func (b *Backend) Shutdown() {
 	for b.sessions.Running() > 0 && time.Now().Before(until) {
 		time.Sleep(25 * time.Millisecond)
 	}
-	b.history.Flush()
+	if b.history != nil {
+		b.history.Flush()
+	}
 	b.settings.Flush()
 }
 
