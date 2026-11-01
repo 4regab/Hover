@@ -131,6 +131,9 @@ static class DeskShots
         Put(ui, "probe", Probe);
         Put(ui, "files", Files);
         Put(ui, "diff", Diff);
+        // Every surface the tabs ask for is answered here: the backend's own answers are not taken (it does not know these sessions), and
+        // an ask left open keeps the panels drawing again and again.
+        Put(ui, "pr", Create);
         Put(ui, "terminal", """{"commands":[{"id":"1","turn":0,"cmd":"cargo build --release -p hover","status":"completed","exit":0,"ms":41000,"out":"Compiling hover v5.0.0\nFinished release [optimized] target(s) in 41s"},{"id":"2","turn":0,"cmd":"npm test","status":"failed","exit":1,"ms":3200,"out":"FAIL src/view.test.ts\n  expected 3, got 2"}]}""");
         Put(ui, "agents", """{"agents":[{"id":"a1","turn":0,"name":"Subagent","task":"Find every caller of refresh()","prompt":"Look for every call to refresh() in the repository.","status":"completed","ms":18000,"out":"Found 4 callers: view.ts, app.ts, tests."},{"id":"a2","turn":0,"name":"Subagent","task":"Check the tests for refresh()","prompt":"Read the tests.","status":"in_progress","ms":null,"out":null}],"running":1}""");
         Put(ui, "linked", """{"gh":true,"prs":[{"url":"https://github.com/4regab/Hover/pull/12","repo":"4regab/Hover","number":12,"title":"Chat view: the sessions down the left","state":"open","isDraft":false,"additions":120,"deletions":18,"head":"feat/chat-view"}]}""");
