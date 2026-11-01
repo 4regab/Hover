@@ -94,6 +94,27 @@ function Set-Env([string]$Name, [string]$Value) {
     [Environment]::SetEnvironmentVariable($Name, $Value, "Process")
 }
 
+# Empties a folder file by file. After a program ran from the folder, Windows' font cache holds the
+# font files it drew with for a while, and deleting the folder as a whole then fails. A file that
+# stays is tried again, then kept with a warning: the build writes the same file over it.
+function Clear-Folder([string]$Path) {
+    if (-not (Test-Path $Path)) { return }
+    $left = @()
+    for ($try = 1; $try -le 5; $try++) {
+        $left = @()
+        foreach ($file in Get-ChildItem $Path -Recurse -File -Force) {
+            try { Remove-Item -LiteralPath $file.FullName -Force -ErrorAction Stop } catch { $left += $file.FullName }
+        }
+        if ($left.Count -eq 0) { break }
+        Start-Sleep -Seconds 2
+    }
+    $folders = Get-ChildItem $Path -Recurse -Directory -Force | Sort-Object { $_.FullName.Length } -Descending
+    foreach ($folder in $folders) {
+        if (-not (Get-ChildItem $folder.FullName -Force)) { Remove-Item -LiteralPath $folder.FullName -Force -ErrorAction SilentlyContinue }
+    }
+    if ($left.Count -gt 0) { Write-Warning "in use, so kept: $($left -join ', ')" }
+}
+
 # The C# app: dotnet publish (self-contained, Release, x64) and the Go backend beside it.
 function Build-Hover {
     Require-Go
@@ -101,7 +122,7 @@ function Build-Hover {
     Stop-Hover
     $v = Get-ProjectVersion
     # A clean folder, so nothing an earlier build (or the legacy build) left is ever installed.
-    if (Test-Path $publishDir) { Remove-Item $publishDir -Recurse -Force }
+    Clear-Folder $publishDir
     New-Item -ItemType Directory -Path $publishDir -Force | Out-Null
     Push-Location $PSScriptRoot
     try {
