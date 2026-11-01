@@ -92,7 +92,7 @@ public static class VoicePageCards
     };
 
     /// <summary>Try it's card for a stage of a trial (null: nothing to show).</summary>
-    public static TryCard? Try(VoiceState st, SettingsData settings)
+    public static TryCard? Try(VoiceSnapshot st, SettingsData settings)
     {
         string Fmt(double secs) => ((int)secs).ToString(System.Globalization.CultureInfo.InvariantCulture);
         switch (st.Stage)

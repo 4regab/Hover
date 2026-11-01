@@ -44,7 +44,7 @@ public sealed class App : Application, IXamlMetadataProvider
     BeatsHost? beats;
     Gfx? gfx;
     UiCore? panels;
-    SettingsHost? configuring;
+    SettingsPane? configuring;
     DiscordHost? discord;
     bool quitting;
 
@@ -137,7 +137,7 @@ public sealed class App : Application, IXamlMetadataProvider
             // Settings is drawn with the panels' canvas: with no graphics device there is none.
             if (panels is not null)
             {
-                configuring = new SettingsHost(queue!, backend, panels, () => notch?.VoiceFlow) { Quit = () => _ = QuitAsync() };
+                configuring = new SettingsPane(queue!, backend, panels, () => notch?.VoiceFlow) { Quit = () => _ = QuitAsync() };
             }
             // Pictures run without the notch, the tray or the shortcut: they leave the machine as they found it.
             if (launch.ShotsDirectory is null)

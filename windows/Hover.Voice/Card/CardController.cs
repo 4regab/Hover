@@ -104,13 +104,13 @@ public sealed class VoiceCardController : IDisposable
 
     public int Menu { get { lock (gate) return OpenMenu(service.State); } }
 
-    VoicePreview? MenuPreview(VoiceState st) =>
+    VoicePreview? MenuPreview(VoiceSnapshot st) =>
         st.Stage is VoiceStage.Preview or VoiceStage.Editing && st.Preview is { Trial: false } p ? p : null;
 
     /// <summary>The open menu, or 0 when the interaction it was opened for has gone.</summary>
-    int OpenMenu(VoiceState st) => MenuPreview(st) is { } p && menuId == p.Id ? menu : 0;
+    int OpenMenu(VoiceSnapshot st) => MenuPreview(st) is { } p && menuId == p.Id ? menu : 0;
 
-    CardContext Context(VoiceState st)
+    CardContext Context(VoiceSnapshot st)
     {
         var tools = state?.Tools ?? [];
         return new CardContext
@@ -136,7 +136,7 @@ public sealed class VoiceCardController : IDisposable
     }
 
     /// <summary>The view of any stage (the pictures draw one the backend never sent).</summary>
-    public VoiceView? ViewOf(VoiceState st)
+    public VoiceView? ViewOf(VoiceSnapshot st)
     {
         lock (gate)
         {
@@ -158,7 +158,7 @@ public sealed class VoiceCardController : IDisposable
         }
     }
 
-    IReadOnlyList<CardTool> ToolsOf(VoiceState st, CardContext c)
+    IReadOnlyList<CardTool> ToolsOf(VoiceSnapshot st, CardContext c)
     {
         if (st.Stage == VoiceStage.ChooseAgent && st.Pending is { } pend) return pend.Tools.Select(t => new CardTool(t, VoiceCards.ToolName(c, t))).ToList();
         if (MenuPreview(st) is { } p && OpenMenu(st) == 1)
@@ -170,7 +170,7 @@ public sealed class VoiceCardController : IDisposable
         return [];
     }
 
-    VoiceView MenuOf(VoiceView view, VoiceState st, CardContext c)
+    VoiceView MenuOf(VoiceView view, VoiceSnapshot st, CardContext c)
     {
         var which = OpenMenu(st);
         if (MenuPreview(st) is not { } p || which == 0) return view;
@@ -247,7 +247,7 @@ public sealed class VoiceCardController : IDisposable
 
     // MARK: The backend
 
-    void OnVoice(VoiceState st)
+    void OnVoice(VoiceSnapshot st)
     {
         string? toast = null;
         var chime = false;
@@ -312,7 +312,7 @@ public sealed class VoiceCardController : IDisposable
         if (!shift && st.Stage is VoiceStage.Preview or VoiceStage.Editing && VoiceCards.Build(st, Context(st))?.CanStart == true) Act(new CardAct("start"));
     }
 
-    int OpenMenuOf(VoiceState st)
+    int OpenMenuOf(VoiceSnapshot st)
     {
         lock (gate) return OpenMenu(st);
     }
@@ -392,7 +392,7 @@ public sealed class VoiceCardController : IDisposable
         Changed?.Invoke();
     }
 
-    void OpenMenuTo(int which, VoiceState st)
+    void OpenMenuTo(int which, VoiceSnapshot st)
     {
         var p = MenuPreview(st);
         if (p is null)
@@ -413,7 +413,7 @@ public sealed class VoiceCardController : IDisposable
         if (ask) service.Send(new RawCommand("cloudRepos"));
     }
 
-    void PickOption(string id, VoiceState st)
+    void PickOption(string id, VoiceSnapshot st)
     {
         if (MenuPreview(st) is null) return;
         int which;
@@ -437,7 +437,7 @@ public sealed class VoiceCardController : IDisposable
         lock (gate) (menu, menuId, repoQuery) = (0, 0, "");
     }
 
-    void SearchEnter(VoiceState st)
+    void SearchEnter(VoiceSnapshot st)
     {
         string query;
         List<string> list;

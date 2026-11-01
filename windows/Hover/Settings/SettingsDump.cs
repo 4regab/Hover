@@ -8,7 +8,7 @@ namespace Hover.Configuring;
 static class SettingsDump
 {
     /// <summary>The page as a test reads it. Places are in the page's own pixels; <c>left</c>, <c>top</c> and <c>scale</c> take them to the screen.</summary>
-    public static JsonObject Describe(SettingsHost host, SettingsUi ui, double left, double top, double scale)
+    public static JsonObject Describe(SettingsPane host, SettingsUi ui, double left, double top, double scale)
     {
         var targets = new JsonArray();
         foreach (var (kind, id, r) in ui.Targets.Take(600))

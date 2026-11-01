@@ -39,7 +39,7 @@ has its reason.
 
 | # | Go package | What it does on Windows | Where it is now |
 |---|---|---|---|
-| 1 | `internal/core` | Data folder, `settings.json`, key, sealed history, `secrets.dat`, projects, themes, single instance | **Backend.** DPAPI key and the `%APPDATA%` path: `Hover.Host` (`HistoryKey.cs`, `DataFolder.cs`); single instance: `Hover.Host/SingleInstance.cs`; launch at login: `Hover.Settings/Windows/RunValue.cs`; dark-mode watch: `Hover/Settings/SettingsHost.cs`. |
+| 1 | `internal/core` | Data folder, `settings.json`, key, sealed history, `secrets.dat`, projects, themes, single instance | **Backend.** DPAPI key and the `%APPDATA%` path: `Hover.Host` (`HistoryKey.cs`, `DataFolder.cs`); single instance: `Hover.Host/InstanceLock.cs`; launch at login: `Hover.Settings/Windows/RunValue.cs`; dark-mode watch: `Hover/Settings/SettingsPane.cs`. |
 | 2 | `internal/agents` | ACP host, OpenCode, Claude Code, sessions, permissions, checkpoints, desk panels, editors, terminal, Discord status, job objects | **Backend.** The host adds an outer job object (`Hover.Host/JobObject.cs`) so the backend and its tree die with the host. The Discord status is shown by the host (`initialize {hostDiscord: true}`; `Hover/Discord/DiscordHost.cs`, `Hover.Settings/Discord/DiscordPresence.cs`). |
 | 3 | `internal/diagram` | Mermaid flowchart to layout and SVG | **Backend** (`flowchart`). The chat draws the SVG natively (`Hover.Chat/SvgScene.cs`). |
 | 4 | `internal/md` | Markdown to HTML and to blocks | **Backend** (`markdown`). |
@@ -50,8 +50,8 @@ has its reason.
 | 9 | `internal/office` | 3D scene, bots, desks, wall canvases, camera, picking, pacing, `office.wgsl` | `Hover.Office` (`Scene.cs`, `Bot.cs`, `OfficeController.cs`, `OfficeWalls.cs`, `Render/OfficeRenderer.cs`, the HLSL); `Hover/Office/OfficeHost.cs` puts it in the notch and the app window. Its input is the backend's `state`. |
 | 10 | `internal/quota` | Claude, Kiro, Codex, Cursor readings and the 5-minute poll; Kiro credits by day | **Backend** (`quotas`, `credits`). The ring text: `Hover.Notch/Island.cs`. |
 | 11 | `internal/app` | Settings pages as data, shared state, resting notch content, key names, desk card data | Split: `hover.go` is `newBackend` in `internal/backend`; `pages.go` and `view.go` are `Hover.Settings/Pages`; `rest.go` is `Hover.Notch/Island.cs`; `keys.go` is `Hover.Notch/Shortcut.cs`; `desk.go` is `Hover.Chat/Desk/DeskRows.cs`. |
-| 12 | `internal/notch` | Notch size, placement, outline, openness animation, hover rules, hit region | `Hover.Notch` (`Geometry.cs`, `NotchController.cs`, `SvgPath.cs`). `Hover.Tests` compares it with numbers the Go code prints (`golden/notch.json`). |
-| 13 | `internal/platform/win` | Win32 windows, DirectComposition, tray, `RegisterHotKey`, file pickers | `Hover/Notch` (`NotchWindow.cs`, `NotchSurface.cs`, `Native.cs`), `Hover/Settings/Dialogs.cs`, `Hover/Chat/Win32Clipboard.cs`. |
+| 12 | `internal/notch` | Notch size, placement, outline, openness animation, hover rules, hit region | `Hover.Notch` (`Geometry.cs`, `NotchController.cs`, `PathData.cs`). `Hover.Tests` compares it with numbers the Go code prints (`golden/notch.json`). |
+| 13 | `internal/platform/win` | Win32 windows, DirectComposition, tray, `RegisterHotKey`, file pickers | `Hover/Notch` (`NotchWindow.cs`, `NotchPresenter.cs`, `Native.cs`), `Hover/Settings/Dialogs.cs`, `Hover/Chat/Win32Clipboard.cs`. |
 | 14 | `internal/audio` | Sound output (winmm waveOut) | `Hover.Voice/AudioOutput.cs`. |
 | 15 | `internal/music` | Office beats (Ogg Vorbis loop, fade 0.32), chime | `Hover.Voice/Beats.cs` (NVorbis decodes `office-beats.ogg`, linked from `internal/music`); `Hover/Voice/BeatsHost.cs`. |
 | 16 | `internal/screen` | Screen panel capture (`PrintWindow` per agent window over the wallpaper), voice screenshots | Panel: `Hover.Settings/Windows/ScreenCapture.cs`, `Hover/Screen/*`, `Hover.Chat/Ui/OfficeUi.DeskScreen.cs`. Voice screenshots stay in the backend. |

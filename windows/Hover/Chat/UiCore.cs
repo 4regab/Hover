@@ -112,7 +112,7 @@ sealed class UiCore : IDisposable
             Log = HostLog.Line,
             InNotch = inNotch,
             OpenSettings = () => SettingsRequested?.Invoke(),
-            OpenSettingsPage = page => SettingsPageRequested?.Invoke(page),
+            ShowSettingsPage = page => SettingsPageRequested?.Invoke(page),
             Screen = ScreenFeed = new Hover.Screening.ScreenFeed(new Hover.Screening.ScreenSource(), Images, queue),
         });
         onEvent = e => queue.TryEnqueue(() =>

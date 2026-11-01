@@ -90,7 +90,7 @@ sealed partial class NotchHost
     }
 
     /// <summary>"Listening…" while the words are said and "Writing it down…" until they are in the box (internal/shell/voice.go dictationChanged).</summary>
-    void DictationStage(VoiceState st)
+    void DictationStage(VoiceSnapshot st)
     {
         if (voice?.Service.Dictating != true)
         {
@@ -120,7 +120,7 @@ sealed partial class NotchHost
 
     /// <summary>The aura moves while the listening and working cards show, a box with the keyboard blinks its caret, and a screenshot's flash fades.</summary>
     bool VoiceTurning => voice is not null && voiceView is not null && ctl.State == NotchState.Rest
-        && ((animations && voice.Animating) || voice.Ui.WantsKeyboard || voice.Ui.Flash > 0.001);
+        && ((animations && voice.Animating) || voice.Ui.TakesKeys || voice.Ui.Flash > 0.001);
 
     /// <summary>One frame: the aura's picture, the flash, the caret's blink.</summary>
     void VoiceFrame()

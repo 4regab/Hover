@@ -31,7 +31,7 @@ public sealed partial class SettingsUi
     public string? FocusId { get; private set; }
 
     /// <summary>A text box has the keyboard.</summary>
-    public bool WantsKeyboard => FocusId is not null;
+    public bool TakesKeys => FocusId is not null;
 
     /// <summary>What the focused box holds, for the checks of the real app. Secret fields answer with their length only.</summary>
     public int FocusedLength => FocusId is { } id && fields.TryGetValue(id, out var f) ? f.Box.Text.Length : 0;

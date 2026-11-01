@@ -253,7 +253,7 @@ sealed class D2DCanvas(Gfx g, DwShaper shaper, ImageStore images) : ICanvas, IDi
         {
             if (!glyphs.TryGetValue(layer.Path + layer.EvenOdd, out var geometry))
             {
-                var cmds = SvgPath.Parse(layer.Path);
+                var cmds = PathData.Parse(layer.Path);
                 if (cmds is null) continue;
                 geometry = glyphs[layer.Path + layer.EvenOdd] = GeometryOf(cmds, layer.EvenOdd);
             }

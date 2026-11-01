@@ -282,12 +282,12 @@ sealed class Rig : IAsyncDisposable
     public FakeMic Mic { get; } = new();
     public BackendClient Client { get; private set; } = null!;
     public VoiceService Service { get; private set; } = null!;
-    public List<VoiceState> States { get; } = [];
+    public List<VoiceSnapshot> States { get; } = [];
     public List<StateEvent> Tasks { get; } = [];
     public List<BackendEvent> Others { get; } = [];
     public const string FakeKey = "gsk_fake_key_for_tests";
     readonly object gate = new();
-    readonly List<(Func<VoiceState, bool> Test, TaskCompletionSource<VoiceState> Done)> waiting = [];
+    readonly List<(Func<VoiceSnapshot, bool> Test, TaskCompletionSource<VoiceSnapshot> Done)> waiting = [];
 
     /// <summary>Starts the backend with the voice settings given as JSON members of the Voice setting.</summary>
     public static async Task<Rig> Start(JsonObject? voice = null, bool key = true)
@@ -331,9 +331,9 @@ sealed class Rig : IAsyncDisposable
             lock (gate) Tasks.Add(s);
             return;
         }
-        if (VoiceState.From(e) is { } v)
+        if (VoiceSnapshot.From(e) is { } v)
         {
-            List<(Func<VoiceState, bool> Test, TaskCompletionSource<VoiceState> Done)> hit;
+            List<(Func<VoiceSnapshot, bool> Test, TaskCompletionSource<VoiceSnapshot> Done)> hit;
             lock (gate)
             {
                 States.Add(v);
@@ -348,9 +348,9 @@ sealed class Rig : IAsyncDisposable
     public int Mark { get { lock (gate) return States.Count; } }
 
     /// <summary>The first `voice` event after <paramref name="after"/> that the test accepts.</summary>
-    public async Task<VoiceState> Wait(Func<VoiceState, bool> test, int after = 0, int seconds = 25)
+    public async Task<VoiceSnapshot> Wait(Func<VoiceSnapshot, bool> test, int after = 0, int seconds = 25)
     {
-        TaskCompletionSource<VoiceState> done = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        TaskCompletionSource<VoiceSnapshot> done = new(TaskCreationOptions.RunContinuationsAsynchronously);
         lock (gate)
         {
             var seen = States.Skip(after).FirstOrDefault(test);
@@ -367,7 +367,7 @@ sealed class Rig : IAsyncDisposable
         return await done.Task;
     }
 
-    public Task<VoiceState> Stage(VoiceStage stage, int after = 0) => Wait(s => s.Stage == stage, after);
+    public Task<VoiceSnapshot> Stage(VoiceStage stage, int after = 0) => Wait(s => s.Stage == stage, after);
 
     /// <summary>The newest `state` message that has a session the test wants.</summary>
     public async Task<SessionInfo> Session(int id, Func<SessionInfo, bool>? test = null, int seconds = 25)

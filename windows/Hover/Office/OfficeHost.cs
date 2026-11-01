@@ -98,7 +98,7 @@ public sealed class OfficeHost : IDisposable
     NotchSlot? slot;
     IDCompositionDevice? notchDevice;
     IDCompositionVisual? notchRoot, notchVisual;
-    Surface? notchSurface;
+    Surface? notchPresenter;
     bool notchAttached;
     (float X, float Y) notchOffset;
     (int X, int Y, int W, int H) notchPixels;
@@ -421,17 +421,17 @@ public sealed class OfficeHost : IDisposable
     void EnsureNotchVisual(OfficeRenderer r, int w, int h)
     {
         var s = slot!;
-        if (notchSurface is not null && !ReferenceEquals(notchRoot, s.Root)) DropNotch();
-        if (notchSurface is null)
+        if (notchPresenter is not null && !ReferenceEquals(notchRoot, s.Root)) DropNotch();
+        if (notchPresenter is null)
         {
-            notchSurface = new Surface(r, w, h, alpha: true);
+            notchPresenter = new Surface(r, w, h, alpha: true);
             notchDevice = s.Composition;
             notchRoot = s.Root;
             notchDevice.CreateVisual(out notchVisual).CheckError();
-            notchVisual!.SetContent(notchSurface.Swap).CheckError();
+            notchVisual!.SetContent(notchPresenter.Swap).CheckError();
             notchOffset = (float.NaN, float.NaN);
         }
-        else notchSurface.Resize(w, h);
+        else notchPresenter.Resize(w, h);
         var off = ((float)(s.Area.X * s.Scale), (float)(s.Area.Y * s.Scale));
         if (off != notchOffset)
         {
@@ -468,9 +468,9 @@ public sealed class OfficeHost : IDisposable
     {
         HideNotch();
         notchVisual?.Dispose();
-        notchSurface?.Dispose();
+        notchPresenter?.Dispose();
         notchVisual = null;
-        notchSurface = null;
+        notchPresenter = null;
         notchRoot = null;
         notchDevice = null;
     }
@@ -490,8 +490,8 @@ public sealed class OfficeHost : IDisposable
         var shape = new ShapeMask((s.Shape.X - s.Area.X) * sc, -s.Area.Y * sc, (s.Shape.X + s.Shape.W - s.Area.X) * sc, (s.Shape.H - s.Area.Y) * sc, s.ShapeRadius * sc);
         var page = new PageStyle(model.Time == TimeOfDay.Day, TopFadeDips * sc, shape, s.Opacity);
         var (sw, sh) = r.SceneSize(w, h);
-        r.Render(model, notchSurface!.Rtv(), w, h, sw, sh, page, redrawScene: scene);
-        notchSurface.Present();
+        r.Render(model, notchPresenter!.Rtv(), w, h, sw, sh, page, redrawScene: scene);
+        notchPresenter.Present();
     }
 
     // ---- the app window ----------------------------------------------------------------------------

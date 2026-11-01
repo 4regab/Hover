@@ -150,7 +150,7 @@ What `windows\Hover.Tests` covers:
   TestNotchGolden` (with `HOVER_UPDATE_GOLDEN=1`); the same test fails in Go when the file is out of
   date. `NotchControllerTests` run the whole behaviour (peek, fold, click-away, shortcut, displays
   changing) against a desktop that is not there; `IslandTests` the island for no sessions, work, a
-  question, an end nobody saw, and a very long text; `SvgPathTests` the outline and mark readers.
+  question, an end nobody saw, and a very long text; `PathDataTests` the outline and mark readers.
 - **The real notch** (`NotchAppTests`, Windows, needs `HOVER_APP_EXE`): the window is where the
   rules put it and has the right styles; the app never becomes the foreground window while the notch
   shows, peeks or folds; the pointer goes to the window only over the shape (`WindowFromPoint` and

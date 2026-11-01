@@ -252,7 +252,7 @@ public sealed class VoiceCardPainter : IDisposable
         {
             sink.SetFillMode(evenOdd ? FillMode.Alternate : FillMode.Winding);
             var open = false;
-            foreach (var c in SvgPath.Parse(path) ?? [])
+            foreach (var c in PathData.Parse(path) ?? [])
             {
                 switch (c.Op)
                 {

@@ -52,14 +52,14 @@ sealed partial class NotchHost : IDisposable
     readonly Stopwatch clock = Stopwatch.StartNew();
     readonly Tween rise = new(), fade = new();
     readonly DispatcherQueueTimer pollTimer, animTimer, secondTimer, glowTimer;
-    NotchSurface? surface;
+    NotchPresenter? surface;
     NotchSettings settings = NotchSettings.Default;
     StateEvent? state;
     Dictionary<string, QuotaValue> quotas = [];
     Island island = new(IslandKind.None, new Seg(), false, [], "");
     Unseen? unseen;
     CardData? card;
-    bool cardOpen, renderQueued, animations = true, disposed;
+    bool cardOpen, drawQueued, animations = true, disposed;
     int speaker, ticks;
     string? lastShortcut;
     NotchState lastState = NotchState.Rest;
@@ -300,7 +300,7 @@ sealed partial class NotchHost : IDisposable
     void SyncKeys()
     {
         if (panels is null) return;
-        var wants = PanelsOpen && panels.Ui.WantsKeyboard;
+        var wants = PanelsOpen && panels.Ui.TakesKeys;
         if (wants && !takenByPanels && !cardOpen)
         {
             takenByPanels = true;
@@ -725,7 +725,7 @@ sealed partial class NotchHost : IDisposable
         var (w, h) = window.ClientSize;
         if (surface is null)
         {
-            surface = new NotchSurface(gfx, window.Handle, w, h);
+            surface = new NotchPresenter(gfx, window.Handle, w, h);
             HostLog.Line($"notch surface made ({w} x {h})");
         }
         else surface.Resize(w, h);
@@ -734,11 +734,11 @@ sealed partial class NotchHost : IDisposable
 
     void QueueRender()
     {
-        if (renderQueued || disposed) return;
-        renderQueued = true;
+        if (drawQueued || disposed) return;
+        drawQueued = true;
         queue.TryEnqueue(() =>
         {
-            renderQueued = false;
+            drawQueued = false;
             Guard("draw", Render);
         });
     }

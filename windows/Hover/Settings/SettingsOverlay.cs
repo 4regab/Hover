@@ -21,12 +21,12 @@ using PixelFormat = Vortice.DCommon.PixelFormat;
 namespace Hover.Configuring;
 
 /// <summary>
-/// Settings in the app window: drawn by <see cref="SettingsHost"/> onto a bitmap that fills the place of the office. It takes the pointer and the
+/// Settings in the app window: drawn by <see cref="SettingsPane"/> onto a bitmap that fills the place of the office. It takes the pointer and the
 /// keyboard while it shows; the office behind it keeps the rest of the time.
 /// </summary>
 sealed class SettingsOverlay : Grid, IDisposable
 {
-    readonly SettingsHost host;
+    readonly SettingsPane host;
     readonly SettingsUi ui;
     readonly Image image = new() { Stretch = Stretch.Fill, IsHitTestVisible = false };
     readonly DispatcherQueueTimer timer;
@@ -50,7 +50,7 @@ sealed class SettingsOverlay : Grid, IDisposable
     /// <summary>Frames drawn, for the tests and the log.</summary>
     public int Frames { get; private set; }
 
-    public SettingsOverlay(SettingsHost host, DispatcherQueue queue)
+    public SettingsOverlay(SettingsPane host, DispatcherQueue queue)
     {
         this.host = host;
         ui = host.DashUi;

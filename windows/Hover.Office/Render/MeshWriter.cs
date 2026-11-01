@@ -19,7 +19,7 @@ public struct Vertex
 }
 
 /// <summary>The triangles of each kind of geometry, in the winding the shader and the rasteriser expect (counter-clockwise front faces). A port of geometry() in internal/office/render.go.</summary>
-public static class MeshBuilder
+public static class MeshWriter
 {
     static readonly float[] White = [1, 1, 1];
 

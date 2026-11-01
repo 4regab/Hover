@@ -483,7 +483,7 @@ public sealed partial class OfficeUi
 
     void ReplyModelPick(MenuRow row)
     {
-        if (row.Id == "compact") { env.OpenSettingsPage?.Invoke("kiro"); return; }
+        if (row.Id == "compact") { env.ShowSettingsPage?.Invoke("kiro"); return; }
         if (Current() is not { } s || ToolOf(s.Tool) is not { } tool) return;
         var model = tool.Model;
         var effort = tool.Effort;

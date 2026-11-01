@@ -55,7 +55,7 @@ public sealed partial class OfficeUi
         if (r.Header) return 24;
         if (r.Note.Length == 0) return 30;
         var lh = pen.LineHeight(Pen.F(12.5, 600, Pen.Ink));
-        return 7 + lh + 1 + pen.WrappedHeight(r.Note, w - 12 - 16 - (r.On ? 20 : 0), Pen.F(11, 400, Pen.Faint)) + 7;
+        return 7 + lh + 1 + pen.HeightWhenWrapped(r.Note, w - 12 - 16 - (r.On ? 20 : 0), Pen.F(11, 400, Pen.Faint)) + 7;
     }
 
     void PaintMenu(Menu m)
@@ -502,7 +502,7 @@ public sealed partial class OfficeUi
                 if (row.Id.Length > 0) taskAccess = row.Id;
                 break;
             case "model":
-                if (row.Id == "compact") env.OpenSettingsPage?.Invoke("kiro");
+                if (row.Id == "compact") env.ShowSettingsPage?.Invoke("kiro");
                 else if (row.Id.StartsWith("model:", StringComparison.Ordinal))
                 {
                     taskModel = row.Id[6..].Length > 0 ? row.Id[6..] : null;

@@ -16,7 +16,7 @@ public readonly record struct PathCmd(PathOp Op, double X1 = 0, double Y1 = 0, d
 /// build its own geometry from them. Handles M L H V C S A Z, upper and lower case, numbers
 /// that run together ("-.5.25") and arc flags with no space after them ("00-.81").
 /// </summary>
-public static class SvgPath
+public static class PathData
 {
     /// <summary>The steps, or null when the text is not path data this reader understands.</summary>
     public static List<PathCmd>? Parse(string d)
@@ -30,7 +30,7 @@ public static class SvgPath
         char cmd = ' ';
         while (true)
         {
-            s.SkipSeparators();
+            s.PassSeparators();
             if (s.End) break;
             var c = s.Peek();
             if (char.IsLetter(c))
@@ -134,14 +134,14 @@ public static class SvgPath
 
         public void Next() => i++;
 
-        public void SkipSeparators()
+        public void PassSeparators()
         {
             while (i < text.Length && (char.IsWhiteSpace(text[i]) || text[i] == ',')) i++;
         }
 
         public bool Number(out double value)
         {
-            SkipSeparators();
+            PassSeparators();
             value = 0;
             var start = i;
             if (i < text.Length && (text[i] is '+' or '-')) i++;
@@ -168,7 +168,7 @@ public static class SvgPath
         /// <summary>An arc flag: one character, 0 or 1, which may be followed at once by the next number.</summary>
         public bool Flag(out bool value)
         {
-            SkipSeparators();
+            PassSeparators();
             value = false;
             if (i >= text.Length || text[i] is not ('0' or '1')) return false;
             value = text[i] == '1';

@@ -4,10 +4,10 @@ using Hover.Host;
 namespace Hover.Voice;
 
 /// <summary>An open sound stream. Closing it lets the device go, so a quiet Hover holds no stream.</summary>
-public interface IAudioOutput : IDisposable { }
+public interface ISoundSink : IDisposable { }
 
 /// <summary>An opened stream, or the reason there is none.</summary>
-public sealed record AudioOpen(IAudioOutput? Output, string? Error);
+public sealed record AudioOpen(ISoundSink? Output, string? Error);
 
 /// <summary>
 /// Starts a stream. <c>fill</c> is called on a thread of the stream's own to fill each buffer with
@@ -36,7 +36,7 @@ public static class AudioOutput
     }
 }
 
-sealed unsafe class WinMmOutput : IAudioOutput
+sealed unsafe class WinMmOutput : ISoundSink
 {
     const int Buffers = 4;
     const int BufferFrames = AudioOutput.Rate / 10;

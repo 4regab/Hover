@@ -279,7 +279,7 @@ public sealed class OfficeRenderer : IDisposable
         };
         var key = keys[node];
         if (meshes.TryGetValue(key, out var m)) return m;
-        var (v, ix) = MeshBuilder.Build(geo, merged);
+        var (v, ix) = MeshWriter.Build(geo, merged);
         if (v.Count == 0) v.Add(default);
         if (ix.Count == 0) ix.Add(0);
         var vb = Device.CreateBuffer(CollectionsMarshal.AsSpan(v), BindFlags.VertexBuffer);

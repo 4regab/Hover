@@ -327,7 +327,7 @@ public sealed partial class OfficeUi
             case 0: return 6 + pen.LineHeight(Pen.F(12, 600, Pen.Ink)) + 8;
             case 1: case 3: return CardParts(r, lw).CardH + 6;
             case 2: return 10 + pen.LineHeight(Pen.F(22, 600, Pen.Ink)) + pen.LineHeight(Pen.F(11, 400, Pen.Ink)) + 10 + 16;
-            case 4: return pen.WrappedHeight(r.Text, lw, Pen.F(12.5, 400, Pen.Ink));
+            case 4: return pen.HeightWhenWrapped(r.Text, lw, Pen.F(12.5, 400, Pen.Ink));
             case 6: return 48;
         }
         return 0;

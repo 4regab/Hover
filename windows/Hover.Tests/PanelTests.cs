@@ -72,7 +72,7 @@ sealed class PanelHarness
             Send = Send,
             Clipboard = Clip,
             PickImage = () => Pick?.Invoke(),
-            OpenSettingsPage = page => OpenPage?.Invoke(page),
+            ShowSettingsPage = page => OpenPage?.Invoke(page),
             Utc = () => new DateTime(2026, 11, 1, 7, 20, 0, DateTimeKind.Utc),
         });
     }

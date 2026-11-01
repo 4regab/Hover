@@ -58,7 +58,7 @@ public sealed partial class OfficeUi
     public double NextFrameMs { get; private set; } = double.MaxValue;
 
     /// <summary>A text box has the keyboard.</summary>
-    public bool WantsKeyboard => FocusedBox() is not null;
+    public bool TakesKeys => FocusedBox() is not null;
 
     /// <summary>Asks for a frame.</summary>
     public void Invalidate() => Dirty = true;

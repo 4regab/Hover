@@ -37,10 +37,10 @@ public static class Program
         HostLog.Line($"main ({string.Join(' ', args)})");
 
         // Pictures do not claim the instance: they run beside an open Hover.
-        SingleInstance? instance = null;
+        InstanceLock? instance = null;
         if (launch.ShotsDirectory is null)
         {
-            instance = SingleInstance.Claim(App.RequestDashboard);
+            instance = InstanceLock.Claim(App.RequestDashboard);
             // Another copy runs, and has been asked to open its dashboard.
             if (instance is null) return 0;
         }

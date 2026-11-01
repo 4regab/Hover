@@ -203,7 +203,7 @@ sealed partial class NotchRenderer : IDisposable
     /// <summary>The outline of the notch as a closed shape.</summary>
     ID2D1PathGeometry Outline(NotchScene s)
     {
-        var cmds = SvgPath.Parse(Geometry.Outline(s.ShapeW, s.ShapeH, s.ShapeR, s.ShapeEar, s.ShapeX));
+        var cmds = PathData.Parse(Geometry.Outline(s.ShapeW, s.ShapeH, s.ShapeR, s.ShapeEar, s.ShapeX));
         return GeometryOf(cmds ?? [], false);
     }
 
@@ -227,7 +227,7 @@ sealed partial class NotchRenderer : IDisposable
         {
             if (!glyphs.TryGetValue(layer.Path, out var geometry))
             {
-                var cmds = SvgPath.Parse(layer.Path);
+                var cmds = PathData.Parse(layer.Path);
                 if (cmds is null) continue;
                 geometry = glyphs[layer.Path] = GeometryOf(cmds, layer.EvenOdd);
             }
@@ -257,7 +257,7 @@ sealed partial class NotchRenderer : IDisposable
             default: color = 0xffb340; d = "M 5 2.7 L 5 5.4 M 5 7.1 L 5 7.1"; break;
         }
         Box(x + 1, y + 1, 10, 10, 5, color);
-        var cmds = SvgPath.Parse(d);
+        var cmds = PathData.Parse(d);
         if (cmds is null) return;
         round ??= g.D2D.CreateStrokeStyle(new StrokeStyleProperties1 { StartCap = CapStyle.Round, EndCap = CapStyle.Round, LineJoin = LineJoin.Round });
         var saved = dc.Transform;

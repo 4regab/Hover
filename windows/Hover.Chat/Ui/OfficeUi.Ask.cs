@@ -84,7 +84,7 @@ public sealed partial class OfficeUi
         {
             cy += over ? 6 : 8;
             string command = a.Command ?? "", path = a.Path ?? "", preview = a.Preview ?? "";
-            float Mono(string t, float wrapW) => pen.WrappedHeight(t, wrapW, MonoAsk);
+            float Mono(string t, float wrapW) => pen.HeightWhenWrapped(t, wrapW, MonoAsk);
             float preH;
             var dollarW = pen.Width("$", MonoAsk);
             if (command.Length > 0) preH = Mono(command, iw - 18 - dollarW - 8);
@@ -137,7 +137,7 @@ public sealed partial class OfficeUi
             if (!dry) pen.Text(q.Header.ToUpperInvariant(), cx, cy, qf);
             cy += pen.LineHeight(qf) + 3;
             var ql = Pen.F(12, 400, Rgba.Of(0xffffff, 0.86));
-            var th = Math.Min(pen.WrappedHeight(q.Question, iw, ql), 31);
+            var th = Math.Min(pen.HeightWhenWrapped(q.Question, iw, ql), 31);
             if (!dry)
             {
                 pen.Cv.PushClip(new Rect4(cx, cy, iw, 31));
@@ -161,14 +161,14 @@ public sealed partial class OfficeUi
                 cy += pen.LineHeight(qf) + 3;
                 var ql = Pen.F(12, 400, Rgba.Of(0xffffff, 0.86));
                 if (!dry) pen.Wrapped(q.Question, cx, cy, iw, ql);
-                cy += pen.WrappedHeight(q.Question, iw, ql) + 6;
+                cy += pen.HeightWhenWrapped(q.Question, iw, ql) + 6;
                 var of = Pen.F(11.5, 500, Rgba.Of(0xffffff));
                 var df = Pen.F(10.5, 400, Rgba.Of(0xffffff, 0.55));
                 foreach (var op in q.Options)
                 {
-                    var lh = pen.WrappedHeight(op.Label, iw - 18, of);
+                    var lh = pen.HeightWhenWrapped(op.Label, iw - 18, of);
                     var ih = 10 + lh;
-                    if (op.Description.Length > 0) ih += 1 + pen.WrappedHeight(op.Description, iw - 18, df);
+                    if (op.Description.Length > 0) ih += 1 + pen.HeightWhenWrapped(op.Description, iw - 18, df);
                     var oh = Math.Max(26, ih);
                     if (!dry)
                     {

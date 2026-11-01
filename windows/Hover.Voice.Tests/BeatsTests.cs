@@ -39,7 +39,7 @@ sealed class FakeSpeaker
         return peak;
     }
 
-    sealed class Stream(FakeSpeaker owner) : IAudioOutput
+    sealed class Stream(FakeSpeaker owner) : ISoundSink
     {
         bool closed;
 

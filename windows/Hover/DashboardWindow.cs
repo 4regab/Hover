@@ -39,7 +39,7 @@ public sealed class DashboardWindow : Window
     /// <summary>Settings, drawn over the office when it is open (null when there is no graphics device).</summary>
     internal SettingsOverlay? SettingsView { get; }
 
-    internal DashboardWindow(string dataDir, BackendSession backend, OfficeHost? office = null, UiCore? panels = null, SettingsHost? settings = null)
+    internal DashboardWindow(string dataDir, BackendSession backend, OfficeHost? office = null, UiCore? panels = null, SettingsPane? settings = null)
     {
         Title = "Hover";
         AppWindow.Resize(new SizeInt32(960, 600));

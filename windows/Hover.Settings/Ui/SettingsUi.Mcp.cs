@@ -151,7 +151,7 @@ public sealed partial class SettingsUi
         var right = 8 + kw + 8 + 28 + 8 + 28 + 8 + SwitchW;
         var tw = x + width - 12 - right - tx;
         var colH = Tl(13) + 2 + 11 * MonoLH;
-        if (warn != "") colH += 2 + pen.WrappedHeight(warn, tw, F(12));
+        if (warn != "") colH += 2 + pen.HeightWhenWrapped(warn, tw, F(12));
         var rh = Math.Max(46, 18 + Math.Max(colH, 28));
         float Mid(float ch) => y + 9 + (rh - 18 - ch) / 2;
         DrawTile(x + 12, Mid(24), srv.Remote ? "globe" : "terminal", srv.Remote ? Tint.Blue : Tint.Gray);
@@ -183,7 +183,7 @@ public sealed partial class SettingsUi
         var (rw, _) = PillSize(remove);
         var text = "Remove " + name + " from Kiro? The Kiro IDE uses this list too.";
         var tw = width - 24 - 10 - cw - 10 - rw;
-        var th = pen.WrappedHeight(text, tw, F(12.5f));
+        var th = pen.HeightWhenWrapped(text, tw, F(12.5f));
         var rh = 24 + Math.Max(th, bh);
         Box(x, y, width, rh, 0, A(C(P.Red), 0.07f));
         pen.Wrapped(text, x + 12, y + (rh - th) / 2, tw, F(12.5f, 400, Dim));

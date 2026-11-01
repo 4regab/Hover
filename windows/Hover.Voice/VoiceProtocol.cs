@@ -40,9 +40,9 @@ public sealed record VoicePending(long Id, string Text, IReadOnlyList<string> To
 public sealed record FolderChoice(string Id, string Name, string Folder);
 
 /// <summary>One `voice` event.</summary>
-public sealed record VoiceState
+public sealed record VoiceSnapshot
 {
-    public static readonly VoiceState Idle = new();
+    public static readonly VoiceSnapshot Idle = new();
 
     public VoiceStage Stage { get; init; }
     public double Level { get; init; }
@@ -69,15 +69,15 @@ public sealed record VoiceState
     public bool Fresh => Stage is VoiceStage.Idle or VoiceStage.Started or VoiceStage.Dictated or VoiceStage.Cancelled or VoiceStage.Error;
 
     /// <summary>The event in a message, or null when the message is not one.</summary>
-    public static VoiceState? From(BackendEvent e) => e is UnknownEvent { Type: "voice" } u ? Parse(u.Raw) : null;
+    public static VoiceSnapshot? From(BackendEvent e) => e is UnknownEvent { Type: "voice" } u ? Parse(u.Raw) : null;
 
-    public static VoiceState? Parse(JsonElement raw)
+    public static VoiceSnapshot? Parse(JsonElement raw)
     {
         if (raw.ValueKind != JsonValueKind.Object) return null;
         var stage = Str(raw, "stage", 40);
         var kind = Enum.GetNames<VoiceStage>().ToList().FindIndex(n => string.Equals(n, stage, StringComparison.OrdinalIgnoreCase));
         if (kind < 0) return null;
-        return new VoiceState
+        return new VoiceSnapshot
         {
             Stage = (VoiceStage)kind,
             Level = Math.Clamp(Num(raw, "level"), 0, 1),

@@ -54,7 +54,7 @@ public sealed partial class OfficeUi
         }
         if (!busy && gh?.Error is { Length: > 0 } error)
         {
-            var th = pen.WrappedHeight(error, iw - 20, Pen.F(12, 400, Pen.Ink));
+            var th = pen.HeightWhenWrapped(error, iw - 20, Pen.F(12, 400, Pen.Ink));
             pen.Box(ix, cy, iw, th + 14, 8, Rgba.Of(0xff453a, 0.1));
             pen.Wrapped(error, ix + 10, cy + 7, iw - 20, Pen.F(12, 400, Rgba.Of(0xffb0aa)));
             cy += th + 14 + 10;
@@ -162,7 +162,7 @@ public sealed partial class OfficeUi
         if (blocked)
         {
             const string note = "The agent is still working in this folder; open it when the run ends.";
-            var bh = pen.WrappedHeight(note, iw - 20, Pen.F(11.5, 400, Pen.Ink));
+            var bh = pen.HeightWhenWrapped(note, iw - 20, Pen.F(11.5, 400, Pen.Ink));
             pen.Box(ix, cy, iw, bh + 14, 8, Amber with { A = 20 });
             pen.Wrapped(note, ix + 10, cy + 7, iw - 20, Pen.F(11.5, 400, Rgba.Of(0xffd59a)));
             cy += bh + 14 + 8;
@@ -201,10 +201,10 @@ public sealed partial class OfficeUi
         if (p.HasResult && new Jv(p.Result)["error"].StrOrNull() is { } error)
         {
             var steps = string.Join(", ", new Jv(p.Result)["steps"].Strings());
-            var eh = pen.WrappedHeight(error, iw - 20, Pen.F(12, 400, Pen.Ink));
+            var eh = pen.HeightWhenWrapped(error, iw - 20, Pen.F(12, 400, Pen.Ink));
             var sh = 0f;
             var said = steps.Length > 0 ? "Done before it: " + steps + "." : "";
-            if (said.Length > 0) sh = pen.WrappedHeight(said, iw - 20, Pen.F(12, 400, Pen.Ink)) + 2;
+            if (said.Length > 0) sh = pen.HeightWhenWrapped(said, iw - 20, Pen.F(12, 400, Pen.Ink)) + 2;
             pen.Box(ix, cy, iw, 7 + eh + sh + 7, 8, Rgba.Of(0xff453a, 0.1));
             pen.Wrapped(error, ix + 10, cy + 7, iw - 20, Pen.F(12, 400, Rgba.Of(0xffb0aa)));
             if (said.Length > 0) pen.Wrapped(said, ix + 10, cy + 7 + eh + 2, iw - 20, Pen.F(12, 400, Rgba.Of(0xffb0aa, 0.7)));

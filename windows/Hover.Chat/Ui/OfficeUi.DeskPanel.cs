@@ -337,8 +337,8 @@ public sealed partial class OfficeUi
         if (e is null) return;
         var tf = Pen.F(13, 600, Pen.Dim);
         var bf = Pen.F(12, 400, Pen.Faint);
-        var th = pen.WrappedHeight(e.Title, r.W - 40, tf);
-        var bh = e.Text.Length > 0 ? pen.WrappedHeight(e.Text, Math.Min(340, r.W - 40), bf) : 0;
+        var th = pen.HeightWhenWrapped(e.Title, r.W - 40, tf);
+        var bh = e.Text.Length > 0 ? pen.HeightWhenWrapped(e.Text, Math.Min(340, r.W - 40), bf) : 0;
         var total = 26 + 6 + th + (bh > 0 ? 6 + bh : 0);
         var cy = r.Y + (r.H - total) / 2;
         pen.Icon(DeskIcons.Of(e.Icon), r.X + (r.W - 26) / 2, cy, 26, Pen.Faint);
@@ -421,7 +421,7 @@ public sealed partial class OfficeUi
                 pen.Wrapped(r.Text, x + 14, y + 7, w - 28, Pen.F(11.5, 400, Rgba.Of(0xffd59a)));
                 break;
             case 3:
-                pen.Wrapped(r.Text, x + 6, y + (h - pen.WrappedHeight(r.Text, w - 12, Pen.F(12, 400, Pen.Faint))) / 2, w - 12, Pen.F(12, 400, Pen.Faint));
+                pen.Wrapped(r.Text, x + 6, y + (h - pen.HeightWhenWrapped(r.Text, w - 12, Pen.F(12, 400, Pen.Faint))) / 2, w - 12, Pen.F(12, 400, Pen.Faint));
                 break;
             case 4:
                 {
@@ -870,7 +870,7 @@ public sealed partial class OfficeUi
     float PaintFileWarning(string text, float x, float y, float w)
     {
         var f = Pen.F(12, 400, Amber);
-        var th = pen.WrappedHeight(text, w - 32 - 14 - 8, f);
+        var th = pen.HeightWhenWrapped(text, w - 32 - 14 - 8, f);
         var h = th + 16;
         pen.Box(x, y, w, h, 0, Amber with { A = 13 });
         pen.Icon(DeskIcons.Warning, x + 16, y + (h - 14) / 2, 14, Amber);

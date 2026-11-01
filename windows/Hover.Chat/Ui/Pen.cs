@@ -102,7 +102,7 @@ public sealed class Pen(IShaper shaper)
         return shaped.Layout.Height;
     }
 
-    public float WrappedHeight(string text, float width, Look look) => text.Length == 0 ? 0 : Shape(text, look, width).Layout.Height;
+    public float HeightWhenWrapped(string text, float width, Look look) => text.Length == 0 ? 0 : Shape(text, look, width).Layout.Height;
 
     // MARK: Shapes
 

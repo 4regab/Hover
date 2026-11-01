@@ -67,7 +67,7 @@ public sealed class CardUi
     }
 
     /// <summary>The place keys go: false when neither text box has the keyboard.</summary>
-    public bool WantsKeyboard => TaskFocused || SearchFocused;
+    public bool TakesKeys => TaskFocused || SearchFocused;
 
     public VoiceEditor? Focused => SearchFocused ? Search : TaskFocused ? Task : null;
 

@@ -110,7 +110,7 @@ public sealed partial class SettingsUi
 
     float TextW(string s, float size, float weight = 400) => pen.Width(s, F(size, weight));
 
-    float SubH(string s, float width) => s.Length == 0 ? 0 : pen.WrappedHeight(s, width, F(11.5f, 400, Dim));
+    float SubH(string s, float width) => s.Length == 0 ? 0 : pen.HeightWhenWrapped(s, width, F(11.5f, 400, Dim));
 
     float Sub(string s, float x, float y, float width) => pen.Wrapped(s, x, y, width, F(11.5f, 400, Dim));
 

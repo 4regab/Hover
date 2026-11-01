@@ -180,7 +180,7 @@ public sealed partial class OfficeUi
         var f115 = Pen.F(11.5, 400, Pen.Ink);
         if (helpers.Count > 0) nowH += 2 + 3 + Math.Max(11, pen.LineHeight(f115));
         var tw = w - 12 - 20 - 6;
-        var ih = box.Text.Length == 0 ? pen.LineHeight(f125) : pen.WrappedHeight(box.Text, tw, f125);
+        var ih = box.Text.Length == 0 ? pen.LineHeight(f125) : pen.HeightWhenWrapped(box.Text, tw, f125);
         var input = Math.Max(28, Math.Min(96, Math.Max(ih, pen.LineHeight(f125)) + 6)) + 6;
         var rest = 2 * 6 + hd + TilesHeight(tight) + input + 28 + 4 * 5;
         var nowCap = Math.Max(56, Math.Min(104, maxH - rest));

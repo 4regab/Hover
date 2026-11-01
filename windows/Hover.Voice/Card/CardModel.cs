@@ -198,7 +198,7 @@ public static class VoiceCards
     }
 
     /// <summary>The card for the stage, or null when it shows nothing (idle, or Try it's).</summary>
-    public static VoiceCard? Build(VoiceState st, CardContext c)
+    public static VoiceCard? Build(VoiceSnapshot st, CardContext c)
     {
         if (c.Trial && st.Stage != VoiceStage.Idle) return null;
         switch (st.Stage)
@@ -262,7 +262,7 @@ public static class VoiceCards
         return null;
     }
 
-    static VoiceCard Preview(VoicePreview p, CardContext c, VoiceState st)
+    static VoiceCard Preview(VoicePreview p, CardContext c, VoiceSnapshot st)
     {
         // In Kiro Web no folder here is used, so the default workspace's note (and that it will
         // be made) says nothing; other notes (an error, cleanup) stay.

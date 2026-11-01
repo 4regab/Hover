@@ -117,7 +117,7 @@ public sealed partial class OfficeUi
         var cy = y + 22 + 8;
         var note = st.Err.Length > 0 ? st.Err : supported ? ScreenInfo.Note(info, live, Bots.Name(s.Bot)) : DeskTiles.ScreenNote;
         var nf = Pen.F(11.5, 400, Pen.Faint);
-        var noteH = supported ? pen.WrappedHeight(note, w, nf) + 8 : 0;
+        var noteH = supported ? pen.HeightWhenWrapped(note, w, nf) + 8 : 0;
         var ah = Math.Max(120, y + h - cy - noteH);
         pen.Box(x, cy, w, ah, 10, Rgba.Of(0x000000));
         pen.Border(x, cy, w, ah, 10, 1, Rgba.Of(0xffffff, 0.08));

@@ -8,7 +8,7 @@ namespace Hover.Voice.Tests;
 /// <summary>The voice messages: what the host sends, and that nothing the backend sends can hurt the host.</summary>
 public class ProtocolTests
 {
-    static VoiceState? Parse(string json) => VoiceState.Parse(JsonDocument.Parse(json).RootElement);
+    static VoiceSnapshot? Parse(string json) => VoiceSnapshot.Parse(JsonDocument.Parse(json).RootElement);
 
     [Fact]
     public void A_voice_event_is_read_with_its_preview_and_lists()
@@ -49,7 +49,7 @@ public class ProtocolTests
         Assert.Null(Parse("""{"stage":"dancing"}"""));
         Assert.Null(Parse("""{"stage":5}"""));
         Assert.Null(Parse("""{}"""));
-        Assert.Null(VoiceState.Parse(JsonDocument.Parse("[1]").RootElement));
+        Assert.Null(VoiceSnapshot.Parse(JsonDocument.Parse("[1]").RootElement));
         var v = Parse("""
             {"stage":"error","level":"loud","secs":-4,"pending":5,"preview":"x","session":"1","folder":3,"message":["a"],"retry":"yes",
              "folderChoices":[1,{"id":4}],"readyTools":[1,"codex",null],"shots":{"a":1},"countdownTotal":1e99,"canStart":1,"tool":9}
@@ -84,9 +84,9 @@ public class ProtocolTests
     [Fact]
     public void A_message_of_another_type_is_not_a_voice_event()
     {
-        Assert.Null(VoiceState.From(new ToastEvent { Text = "x" }));
-        Assert.Null(VoiceState.From(new UnknownEvent("phonon", JsonDocument.Parse("""{"stage":"idle"}""").RootElement)));
-        Assert.NotNull(VoiceState.From(new UnknownEvent("voice", JsonDocument.Parse("""{"stage":"idle"}""").RootElement)));
+        Assert.Null(VoiceSnapshot.From(new ToastEvent { Text = "x" }));
+        Assert.Null(VoiceSnapshot.From(new UnknownEvent("phonon", JsonDocument.Parse("""{"stage":"idle"}""").RootElement)));
+        Assert.NotNull(VoiceSnapshot.From(new UnknownEvent("voice", JsonDocument.Parse("""{"stage":"idle"}""").RootElement)));
     }
 
     [Fact]

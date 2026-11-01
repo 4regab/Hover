@@ -18,7 +18,7 @@ namespace Hover.Configuring;
 /// <c>app.Host</c>: the pickers, Launch at login, the system's light or dark, the voice flow's Try it and its shortcut, and the theme
 /// the app window wears. Everything runs on the UI thread.
 /// </summary>
-sealed class SettingsHost : IDisposable
+sealed class SettingsPane : IDisposable
 {
     readonly DispatcherQueue queue;
     readonly BackendSession backend;
@@ -63,7 +63,7 @@ sealed class SettingsHost : IDisposable
     /// <summary>The user chose Quit on the page.</summary>
     public Action Quit { get; set; } = () => { };
 
-    public SettingsHost(DispatcherQueue queue, BackendSession backend, UiCore core, Func<VoiceHost?> voice)
+    public SettingsPane(DispatcherQueue queue, BackendSession backend, UiCore core, Func<VoiceHost?> voice)
     {
         this.queue = queue;
         this.backend = backend;
@@ -83,7 +83,7 @@ sealed class SettingsHost : IDisposable
             catch (Exception ex) { HostLog.Line($"settings: a message failed — {ex}"); }
         });
         backend.Event += onEvent;
-        backend.Changed += () => queue.TryEnqueue(StartIfReady);
+        backend.Changed += () => queue.TryEnqueue(BeginWhenReady);
         // Windows' own light or dark is watched: the appearance "System" follows it.
         lastDark = SystemTheme.IsDark();
         themeTimer = queue.CreateTimer();
@@ -98,10 +98,10 @@ sealed class SettingsHost : IDisposable
             Changed?.Invoke();
         };
         themeTimer.Start();
-        StartIfReady();
+        BeginWhenReady();
     }
 
-    void StartIfReady()
+    void BeginWhenReady()
     {
         if (disposed || started || !backend.Ready) return;
         started = true;
@@ -185,7 +185,7 @@ sealed class SettingsHost : IDisposable
 
     // MARK: The app's side of Settings
 
-    sealed class Env(SettingsHost host) : ISettingsEnv
+    sealed class Env(SettingsPane host) : ISettingsEnv
     {
         readonly Hover.Settings.RunValue run = new();
 

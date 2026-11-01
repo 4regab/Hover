@@ -10,12 +10,12 @@ namespace Hover.Windowing;
 
 /// <summary>
 /// The notch's part of Settings: the page over the open notch (in a layer of its own, above the office and the panels), the pointer
-/// and the keyboard for it, and the shortcuts let go while one records. The page itself is <see cref="SettingsHost"/>; a port of the
+/// and the keyboard for it, and the shortcuts let go while one records. The page itself is <see cref="SettingsPane"/>; a port of the
 /// notch parts of <c>internal/shell/windows.go</c> (<c>ShowSettingsIn</c>) and <c>internal/ui/overlay.go</c>.
 /// </summary>
 sealed partial class NotchHost
 {
-    SettingsHost? cfg;
+    SettingsPane? cfg;
     UiLayer? cfgLayer;
     bool cfgDrawn, cfgKeys, cfgRecording;
     double cfgScale;
@@ -24,7 +24,7 @@ sealed partial class NotchHost
     internal VoiceHost? VoiceFlow => voice;
 
     /// <summary>Ties Settings to the notch. Called once, after the notch is made.</summary>
-    public void AttachSettings(SettingsHost host)
+    public void AttachSettings(SettingsPane host)
     {
         cfg = host;
         host.Changed += () => Guard("settings", () =>
@@ -158,7 +158,7 @@ sealed partial class NotchHost
     }
 
     /// <summary>The page needs the keyboard while a box of it has the focus or a shortcut records; the notch takes it for that time and gives it back.</summary>
-    bool CfgWantsKeys => CfgOpen && (cfg!.NotchUi.WantsKeyboard || cfg.Controller.Recording);
+    bool CfgWantsKeys => CfgOpen && (cfg!.NotchUi.TakesKeys || cfg.Controller.Recording);
 
     void CfgSyncKeys()
     {

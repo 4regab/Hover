@@ -10,7 +10,7 @@ namespace Hover.Host;
 /// and a C# copy keep out of each other's way and either one answers the other's launch.
 /// </summary>
 [SupportedOSPlatform("windows")]
-public sealed class SingleInstance : IDisposable
+public sealed class InstanceLock : IDisposable
 {
     public const string MutexName = @"Local\HoverRunningInstance";
     public const string ShowEventName = @"Local\HoverShowApp";
@@ -19,7 +19,7 @@ public sealed class SingleInstance : IDisposable
     readonly EventWaitHandle show;
     readonly RegisteredWaitHandle registration;
 
-    SingleInstance(Mutex mutex, EventWaitHandle show, Action onShow)
+    InstanceLock(Mutex mutex, EventWaitHandle show, Action onShow)
     {
         this.mutex = mutex;
         this.show = show;
@@ -33,7 +33,7 @@ public sealed class SingleInstance : IDisposable
     /// case the running copy has been asked to open its dashboard. <paramref name="onShow"/>
     /// is called, on a pool thread, for every later launch.
     /// </summary>
-    public static SingleInstance? Claim(Action onShow, string mutexName = MutexName, string showName = ShowEventName)
+    public static InstanceLock? Claim(Action onShow, string mutexName = MutexName, string showName = ShowEventName)
     {
         var mutex = new Mutex(initiallyOwned: true, mutexName, out var first);
         if (!first)
@@ -48,7 +48,7 @@ public sealed class SingleInstance : IDisposable
             }
             return null;
         }
-        return new SingleInstance(mutex, new EventWaitHandle(false, EventResetMode.AutoReset, showName), onShow);
+        return new InstanceLock(mutex, new EventWaitHandle(false, EventResetMode.AutoReset, showName), onShow);
     }
 
     public void Dispose()

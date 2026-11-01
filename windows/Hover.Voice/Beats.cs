@@ -32,7 +32,7 @@ public sealed class Beats : IDisposable
     readonly Func<Stream> loop;
     bool want, seen = true;
     double ramp;
-    IAudioOutput? output;
+    ISoundSink? output;
     long volumeBits;
 
     /// <param name="want">Whether the music is switched on (office.json's <c>beats</c>).</param>
@@ -133,7 +133,7 @@ public sealed class Beats : IDisposable
     /// </summary>
     public bool Frame()
     {
-        IAudioOutput? closing = null;
+        ISoundSink? closing = null;
         bool moving;
         lock (gate)
         {
@@ -156,7 +156,7 @@ public sealed class Beats : IDisposable
 
     public void Dispose()
     {
-        IAudioOutput? closing;
+        ISoundSink? closing;
         lock (gate)
         {
             closing = output;

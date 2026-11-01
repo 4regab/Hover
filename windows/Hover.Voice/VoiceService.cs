@@ -28,7 +28,7 @@ public sealed class VoiceService : IDisposable
     readonly Channel<Func<Task>> work = Channel.CreateUnbounded<Func<Task>>(new UnboundedChannelOptions { SingleReader = true });
     readonly Task worker;
     readonly object gate = new();
-    VoiceState state = VoiceState.Idle;
+    VoiceSnapshot state = VoiceSnapshot.Idle;
     VoiceSettings settings = new();
     IMicrophone? mic;
     bool trial, dictating, polling, starting, disposed;
@@ -51,7 +51,7 @@ public sealed class VoiceService : IDisposable
         worker = Task.Run(RunAsync);
     }
 
-    public VoiceState State { get { lock (gate) return state; } }
+    public VoiceSnapshot State { get { lock (gate) return state; } }
 
     public VoiceSettings Settings { get { lock (gate) return settings; } }
 
@@ -62,10 +62,10 @@ public sealed class VoiceService : IDisposable
     public bool Dictating { get { lock (gate) return dictating; } }
 
     /// <summary>The backend's `voice` event arrived. Raised on the backend reader's thread.</summary>
-    public event Action<VoiceState>? Changed;
+    public event Action<VoiceSnapshot>? Changed;
 
     /// <summary>Dictation heard these words (and took these screenshots). Raised on the backend reader's thread, before the interaction is dismissed.</summary>
-    public event Action<VoiceState>? Dictated;
+    public event Action<VoiceSnapshot>? Dictated;
 
     /// <summary>Dictation could not write the words down; this is why, in the card's words.</summary>
     public event Action<string>? DictationFailed;
@@ -101,12 +101,12 @@ public sealed class VoiceService : IDisposable
                 if (GroqCheck.From(e) is { } g) GroqChecked?.Invoke(g);
                 return;
         }
-        if (VoiceState.From(e) is { } v) Apply(v);
+        if (VoiceSnapshot.From(e) is { } v) Apply(v);
     }
 
-    void Apply(VoiceState v)
+    void Apply(VoiceSnapshot v)
     {
-        VoiceState before;
+        VoiceSnapshot before;
         bool wasDictating;
         lock (gate)
         {
@@ -155,7 +155,7 @@ public sealed class VoiceService : IDisposable
     }
 
     /// <summary>The Started and Cancelled cards close by themselves, as in the Go app.</summary>
-    void CloseLater(VoiceState v, VoiceState before)
+    void CloseLater(VoiceSnapshot v, VoiceSnapshot before)
     {
         if (v.Stage == before.Stage && v.Session == before.Session) return;
         bool isTrial;
@@ -193,7 +193,7 @@ public sealed class VoiceService : IDisposable
     /// </summary>
     public PressResult Press(bool trial = false, bool dictate = false, string? activeProject = null)
     {
-        VoiceState st;
+        VoiceSnapshot st;
         bool fresh;
         lock (gate)
         {

@@ -41,7 +41,7 @@ sealed class VoiceHost : IDisposable
     public event Action? SettingsRequested;
 
     /// <summary>Dictation: the words (and the screenshots) for the open chat's reply box.</summary>
-    public event Action<VoiceState>? Dictated;
+    public event Action<VoiceSnapshot>? Dictated;
 
     /// <summary>Dictation could not write the words down: why.</summary>
     public event Action<string>? DictationFailed;
@@ -136,7 +136,7 @@ sealed class VoiceHost : IDisposable
     public void SetScale(double value) => scale = value <= 0 ? 1 : value;
 
     /// <summary>A stage the card shows or does not: the notch keeps the keyboard while it has something to type into.</summary>
-    void Moved(VoiceState st)
+    void Moved(VoiceSnapshot st)
     {
         if (disposed) return;
         if (st.Stage is VoiceStage.Idle or VoiceStage.Started or VoiceStage.Cancelled) Done?.Invoke();

@@ -106,14 +106,14 @@ public class HostDeathTests
 }
 
 /// <summary>One copy of Hover per user, by the names the Go app uses.</summary>
-public class SingleInstanceTests
+public class InstanceLockTests
 {
     [Fact]
     [SupportedOSPlatform("windows")]
     public void The_names_are_the_ones_the_Go_app_uses()
     {
-        Assert.Equal(@"Local\HoverRunningInstance", SingleInstance.MutexName);
-        Assert.Equal(@"Local\HoverShowApp", SingleInstance.ShowEventName);
+        Assert.Equal(@"Local\HoverRunningInstance", InstanceLock.MutexName);
+        Assert.Equal(@"Local\HoverShowApp", InstanceLock.ShowEventName);
     }
 
     [WindowsFact]
@@ -124,19 +124,19 @@ public class SingleInstanceTests
         var (mutex, show) = ($@"Local\HoverTest-{id}", $@"Local\HoverTestShow-{id}");
         var asked = new TaskCompletionSource();
 
-        var first = SingleInstance.Claim(() => asked.TrySetResult(), mutex, show);
+        var first = InstanceLock.Claim(() => asked.TrySetResult(), mutex, show);
         Assert.NotNull(first);
 
-        Assert.Null(SingleInstance.Claim(() => Assert.Fail("the second copy must not run"), mutex, show));
+        Assert.Null(InstanceLock.Claim(() => Assert.Fail("the second copy must not run"), mutex, show));
         await asked.Task.WaitAsync(TimeSpan.FromSeconds(10));
 
         // Asked twice, told twice: the event is not a one-time latch.
         var again = new TaskCompletionSource();
-        var second = SingleInstance.Claim(() => again.TrySetResult(), mutex, show);
+        var second = InstanceLock.Claim(() => again.TrySetResult(), mutex, show);
         Assert.Null(second);
 
         first!.Dispose();
-        using var next = SingleInstance.Claim(() => { }, mutex, show);
+        using var next = InstanceLock.Claim(() => { }, mutex, show);
         Assert.NotNull(next);
     }
 }

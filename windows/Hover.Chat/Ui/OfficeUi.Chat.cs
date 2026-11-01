@@ -167,7 +167,7 @@ public sealed partial class OfficeUi
         float noteH = 0;
         var noteW = Math.Min(pw - 20, ColumnMax);
         var note = s.Held ? "The queue is held after a stop." : "";
-        if (note.Length > 0) noteH = 4 + 8 + pen.WrappedHeight(note, noteW - 16, Pen.F(12, 400, Pen.Ink)) + 6 + 20 + 8 + 2 + 2;
+        if (note.Length > 0) noteH = 4 + 8 + pen.HeightWhenWrapped(note, noteW - 16, Pen.F(12, 400, Pen.Ink)) + 6 + 20 + 8 + 2 + 2;
 
         var threadTop = y + hdrH + 1;
         var threadH = Math.Max(bottom - boxH - askH - noteH - threadTop, 0);
@@ -215,7 +215,7 @@ public sealed partial class OfficeUi
         {
             ny += 4;
             var nx = x + (pw - noteW) / 2;
-            var th = pen.WrappedHeight(note, noteW - 16, Pen.F(12, 400, Pen.Ink));
+            var th = pen.HeightWhenWrapped(note, noteW - 16, Pen.F(12, 400, Pen.Ink));
             var nh = 8 + th + 6 + 20 + 8 + 2;
             pen.Box(nx, ny, noteW, nh, 12, Rgba.Of(0xffb340, 0.1));
             pen.Border(nx, ny, noteW, nh, 12, 1, Rgba.Of(0xffb340, 0.22));
@@ -552,7 +552,7 @@ public sealed partial class OfficeUi
         };
         var hf = Pen.F(14, 600, Pen.Ink);
         var bf = Pen.F(12, 400, Pen.Dim);
-        var bh = pen.WrappedHeight(body, bw - 36, bf);
+        var bh = pen.HeightWhenWrapped(body, bw - 36, bf);
         var boxH = 18 + pen.LineHeight(hf) + 8 + bh + 16 + 30 + 18;
         var bx = (w - bw) / 2;
         var by = (h - boxH) / 2;

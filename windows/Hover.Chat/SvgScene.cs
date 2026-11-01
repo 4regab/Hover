@@ -168,7 +168,7 @@ public static class SvgScene
                     }
                 case "path":
                     {
-                        var cmds = SvgPath.Parse(n.Attr.GetValueOrDefault("d") ?? "");
+                        var cmds = PathData.Parse(n.Attr.GetValueOrDefault("d") ?? "");
                         if (cmds is null) break;
                         Shape(cmds, true, st, m);
                         if (st.Marker.Length > 0) Marker(st, m, cmds);

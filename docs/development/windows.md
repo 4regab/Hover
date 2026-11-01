@@ -178,7 +178,7 @@ window: borderless, `WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE`, at th
 main display's work area. It never takes the keyboard unless it is opened with the shortcut or a
 question's card is opened, and it gives the keyboard back when it folds. Its pixels come from a
 swap chain made for composition with premultiplied alpha, shown by a DirectComposition visual
-(`NotchSurface.cs`), so what is not drawn is see-through. Direct2D and DirectWrite draw the
+(`NotchPresenter.cs`), so what is not drawn is see-through. Direct2D and DirectWrite draw the
 frame (`NotchRenderer.cs`); the text is set in the Inter files in `Assets\Fonts`. The window is
 click-through (`WS_EX_TRANSPARENT`) except over the shape and its shadow; the pointer is polled
 every 50 ms, as the Go app does.
@@ -201,7 +201,7 @@ writes it), Settings…, Quit Hover.
 
 **Where the office goes.** The open notch is the shape at its full size, `Open.W` by `Open.H`
 DIPs (1120 x 440 for Office size Default, less the 24 DIPs kept free on a small screen), at
-`x = Pad (40)`, `y = 0` inside the notch window (`NotchScene.OfficeArea`). `NotchSurface.Composition`
+`x = Pad (40)`, `y = 0` inside the notch window (`NotchScene.OfficeArea`). `NotchPresenter.Composition`
 gives a later view the DirectComposition device and root visual to add its own swap chain at that
 rectangle. Until then the area is a dashed frame with its size written in it. The app window has the
 same place: `DashboardWindow.OfficeArea`, a bordered area under the header.
@@ -318,7 +318,7 @@ is `windows\Hover.Settings`; the app's side is `windows\Hover\Settings`.
 | The pages | `Hover.Settings\Pages\*` | `PageBuilder` makes the blocks (groups, switches, segments, pickers, fields, sliders, tiles, links) of each page with the Go words. Windows rules as in Go: Sandbox, Computer use, Agent browser, Agent desktops and the one-click Setup are shown off with the Go notes; there are no Cua rows. Cua, Setup and the `integ.*` actions are Mac only. |
 | The controller | `Hover.Settings\Controller\*` | Every control is a typed backend command (`setSetting`, `projects`, `themes`, `themeRead`, `palette`, `mcp`, `kiroAgents`, `secret`, `credits`, `phonon`, `groqCheck`; `Hover.Host\Protocol\SettingsMore.cs`). settings.json is written by the backend alone. A change shows at once and is held until the backend's `settings` has it (3 s at most), so two changes within 400 ms are both kept. |
 | The painter | `Hover.Settings\Ui\*` | Draws a page, its menus and its fields on any `ICanvas`; the notch draws it with Direct2D into its window and the app window draws the same page onto a bitmap that fills the place of the office (`SettingsOverlay`). Keys, the wheel, text fields and the shortcut recorder go through `SettingsUi`. |
-| In the app | `Hover\Settings\SettingsHost.cs`, `NotchHost.Settings.cs`, `SettingsOverlay.cs` | The open notch has a Settings row in the ≡ menu; the app window has Settings in its menu bar and the tray's Settings… opens it (`hoverai.exe --settings` does too). The voice card's Settings button opens Settings → Voice. While the shortcut records, the notch's and the voice hotkey are let go (`VoiceHost.SuspendKey`). |
+| In the app | `Hover\Settings\SettingsPane.cs`, `NotchHost.Settings.cs`, `SettingsOverlay.cs` | The open notch has a Settings row in the ≡ menu; the app window has Settings in its menu bar and the tray's Settings… opens it (`hoverai.exe --settings` does too). The voice card's Settings button opens Settings → Voice. While the shortcut records, the notch's and the voice hotkey are let go (`VoiceHost.SuspendKey`). |
 | The menu bar | `Hover\Settings\AppMenu.cs` | File / Settings / Help as in `internal/ui/barmenu.go`, the system's own `MenuBar` in the app window's header. |
 | Projects | `Hover.Settings\Controller\SettingsActions.cs` | Add (the folder picker), edit a project's name, folder and access, remove the entry only (the folder and its sessions stay), and the default workspace folder and access; a folder that is gone is said on its row and the page still opens. |
 | Themes | `Hover.Settings\Pages\Palettes.cs` | The backend lists the installed VS Code, Cursor, Kiro and Windsurf themes and reads a theme file (comments and trailing commas allowed); the palette comes from the backend (`palette`) as Go applies it. Hover's own light and dark are constants. A file with no theme colours says "That file has no VS Code theme colours in it." and changes nothing. Appearance → System follows the system's light or dark, looked at every 2 s. |

@@ -49,7 +49,7 @@ public static class CardShot
             using var outline = factory.CreatePathGeometry();
             using (var sink = outline.Open())
             {
-                var cmds = SvgPath.Parse(Geometry.Outline(rest.W, rest.H, r, ear, x0)) ?? [];
+                var cmds = PathData.Parse(Geometry.Outline(rest.W, rest.H, r, ear, x0)) ?? [];
                 var open = false;
                 foreach (var c in cmds)
                 {
