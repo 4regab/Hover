@@ -214,11 +214,18 @@ public class AppTests(ITestOutputHelper output)
                 var log = await new StreamReader(stream).ReadToEndAsync();
                 if (log.Contains(text)) return log;
             }
-            if (mustRun is { HasExited: true }) Assert.Fail($"the app ended ({mustRun.ExitCode}) before the log said '{text}'");
+            if (mustRun is { HasExited: true }) Assert.Fail($"the app ended ({mustRun.ExitCode}) before the log said '{text}'. {Describe(dataDir)}");
             await Task.Delay(200);
         }
         Assert.Fail($"the log never said '{text}'");
         return "";
+    }
+
+    /// <summary>What the app wrote to its log, for a failure message.</summary>
+    static string Describe(string dataDir)
+    {
+        var file = DataFolder.LogFile(dataDir);
+        return File.Exists(file) ? "hover.log:\n" + File.ReadAllText(file) : "There is no hover.log.";
     }
 
     static bool HasWindow(Process p)
@@ -274,7 +281,7 @@ public class AppTests(ITestOutputHelper output)
         var shots = Path.Combine(temp.Path, "shots");
         using var app = Launch(Path.Combine(temp.Path, "data"), "--shots", shots);
         Assert.True(app.WaitForExit(120_000), "--shots should finish by itself");
-        Assert.Equal(0, app.ExitCode);
+        Assert.True(app.ExitCode == 0, $"--shots exited with {app.ExitCode}. {Describe(Path.Combine(temp.Path, "data"))}");
 
         var picture = await File.ReadAllBytesAsync(Path.Combine(shots, "dashboard.jpg"));
         var (width, height) = Jpeg.Size(picture);

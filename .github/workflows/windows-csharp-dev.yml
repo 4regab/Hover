@@ -79,6 +79,10 @@ jobs:
           Copy-Item out\bin\hover-backend.exe (Split-Path $app)
           "HOVER_APP_EXE=$app" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
           "built $app"
+          # What the build put beside the app: the resource files (.pri) are what a code-first
+          # WinUI app starts from, so they are listed.
+          Get-ChildItem (Split-Path $app) -Recurse -File | ForEach-Object { '{0,12}  {1}' -f $_.Length, $_.FullName.Substring((Split-Path $app).Length + 1) } | Out-File out\logs\app-files.txt
+          Get-ChildItem (Split-Path $app) -File | Where-Object { $_.Name -match '\.pri$|^hoverai|^Microsoft\.UI\.Xaml\.dll$' } | Format-Table Name, Length | Out-String | Write-Host
 
       # Every test project under windows\, found by name, not by a list.
       - name: Tests
@@ -101,13 +105,16 @@ jobs:
           }
           if ($failed) { throw "failed: $($failed -join ', ')" }
 
-      # The app draws its own window (RenderTargetBitmap) with a data folder of its own.
+      # The app draws its own window (RenderTargetBitmap) with a data folder of its own. It runs
+      # even when a test failed, so that its log is there to read.
       - name: Pictures (hoverai.exe --shots)
+        if: ${{ !cancelled() && env.HOVER_APP_EXE != '' }}
         run: |
           $data = Join-Path $env:RUNNER_TEMP 'shots-data'
           $env:HOVER_DATA_DIR = $data
           $shots = Join-Path $PWD 'out\shots'
-          $app = Start-Process -FilePath $env:HOVER_APP_EXE -ArgumentList '--shots', $shots -PassThru
+          $app = Start-Process -FilePath $env:HOVER_APP_EXE -ArgumentList '--shots', $shots -PassThru `
+            -RedirectStandardError out\logs\shots-stderr.txt -RedirectStandardOutput out\logs\shots-stdout.txt
           if (-not $app.WaitForExit(120000)) { $app.Kill($true); throw '--shots did not finish in 2 minutes' }
           if (Test-Path "$data\hover.log") { Copy-Item "$data\hover.log" out\logs\shots-hover.log }
           if ($app.ExitCode -ne 0) { throw "--shots exited with $($app.ExitCode)" }
@@ -115,6 +122,16 @@ jobs:
           $bytes = [System.IO.File]::ReadAllBytes($jpeg)
           if ($bytes.Length -lt 2000 -or $bytes[0] -ne 0xFF -or $bytes[1] -ne 0xD8) { throw "$jpeg is not a JPEG picture" }
           "dashboard.jpg: $($bytes.Length) bytes"
+
+      # If the app died, Windows says which module did it.
+      - name: App crash reports
+        if: ${{ failure() }}
+        run: |
+          Get-WinEvent -FilterHashtable @{ LogName = 'Application'; StartTime = (Get-Date).AddMinutes(-30) } -ErrorAction SilentlyContinue |
+            Where-Object { $_.Message -match 'hoverai|hover-backend' } |
+            ForEach-Object { "$($_.TimeCreated) $($_.ProviderName) $($_.Id)`n$($_.Message)`n" } |
+            Out-File out\logs\app-events.txt
+          if (Test-Path out\logs\app-events.txt) { Get-Content out\logs\app-events.txt -TotalCount 60 }
 
       - name: Summary
         if: always()

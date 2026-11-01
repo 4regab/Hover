@@ -36,13 +36,24 @@ public static class Program
             if (instance is null) return 0;
         }
 
-        WinRT.ComWrappersSupport.InitializeComWrappers();
-        Application.Start(startup =>
+        // A crash in the runtime, before any window, would leave nothing behind but an exit code.
+        AppDomain.CurrentDomain.UnhandledException += (_, e) => HostLog.Line($"crashed — {e.ExceptionObject}");
+        try
         {
-            SynchronizationContext.SetSynchronizationContext(
-                new DispatcherQueueSynchronizationContext(DispatcherQueue.GetForCurrentThread()));
-            _ = new App(launch, dataDir);
-        });
+            WinRT.ComWrappersSupport.InitializeComWrappers();
+            Application.Start(startup =>
+            {
+                SynchronizationContext.SetSynchronizationContext(
+                    new DispatcherQueueSynchronizationContext(DispatcherQueue.GetForCurrentThread()));
+                _ = new App(launch, dataDir);
+            });
+        }
+        catch (Exception e)
+        {
+            HostLog.Line($"the application did not start — {e}");
+            instance?.Dispose();
+            return 1;
+        }
 
         instance?.Dispose();
         return App.ExitCode;
