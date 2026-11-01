@@ -20,7 +20,14 @@ public sealed record RawCommand(string CommandType, JsonObject? Fields = null) :
 /// The first command. <paramref name="Key"/> is the 32-byte history key as base64; with none
 /// the backend runs with the history off.
 /// </summary>
-public sealed record InitializeCommand(string? Key = null) : BackendCommand("initialize");
+public sealed record InitializeCommand(string? Key = null) : BackendCommand("initialize")
+{
+    /// <summary>Kiro's credits by day are kept from the start (the Kiro page of Settings shows them).</summary>
+    public bool? Credits { get; init; }
+
+    /// <summary>The host shows the Discord status itself, so the backend starts no Discord client (the status shows once).</summary>
+    public bool? HostDiscord { get; init; }
+}
 
 public sealed record ReadyCommand() : BackendCommand("ready");
 

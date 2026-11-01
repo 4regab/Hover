@@ -134,7 +134,10 @@ func initialize(m core.JSON, link *Link) (*Backend, error) {
 			return nil, err
 		}
 	}
-	b, err := newBackend(link)
+	// The Windows host shows the Discord status itself (it is an OS binding there): with
+	// `hostDiscord: true` the backend starts no Discord client, so the status shows once.
+	hostDiscord, _ := boolOf(m, "hostDiscord")
+	b, err := newBackend(link, hostDiscord)
 	// The Windows host asks (`reattach: true`) for the Kiro Web tasks that were cut off when
 	// it last closed to be followed on, as the Go app does at its start. After `initialized`.
 	if on, _ := boolOf(m, "reattach"); on && err == nil {
@@ -151,7 +154,7 @@ func initialize(m core.JSON, link *Link) (*Backend, error) {
 // testRunner stands in for the tools' runners when a test sets it (never set otherwise).
 var testRunner func(core.AgentTool) agents.RunTask
 
-func newBackend(link *Link) (*Backend, error) {
+func newBackend(link *Link, hostDiscord bool) (*Backend, error) {
 	// No key this run (see initialize): there is no history, and nothing below reads or
 	// replaces one.
 	crypto := core.GlobalCrypto()
@@ -254,8 +257,11 @@ func newBackend(link *Link) (*Backend, error) {
 	agents.OnCuaChange(func() { link.with(func(b *Backend) { b.sendComputerUse() }) })
 	agents.OnSpacesChange(func() { link.with(func(b *Backend) { b.sendSpaces(); b.link.push() }) })
 	sessions.OnChanged(func() { link.push() })
-	// Hover on the Discord status, when the switch in Settings → Integrations is on.
-	agents.DiscordStart(settings, sessions)
+	// Hover on the Discord status, when the switch in Settings → Integrations is on. A host
+	// that does it itself (hostDiscord) leaves it to the host.
+	if !hostDiscord {
+		agents.DiscordStart(settings, sessions)
+	}
 	if history != nil {
 		history.OnChanged(func() { link.push() })
 	}

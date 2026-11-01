@@ -300,6 +300,9 @@ working when the host last closed come back to desks and are followed on
 credits by day are kept from the start (each Kiro reading is counted into `kiro-usage.json`,
 and the view is made again when the history changes); without it the first `credits` command
 starts them.
+`hostDiscord: true`: the host shows the Discord status itself (the Windows host does, as an OS
+binding), so the backend starts no Discord client and the status is shown once; without it the
+backend's client runs, as for the Mac host (`internal/backend/discord_test.go`).
 
 **Tasks and chat** (`internal/backend/tasks.go`).
 

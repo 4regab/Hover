@@ -158,10 +158,14 @@ public sealed class BackendClient : IAsyncDisposable
     /// the backend to say it is ready. Throws <see cref="BackendException"/> with the backend's
     /// own reason when it refuses the key (a history it cannot open, say).
     /// </summary>
-    public async Task InitializeAsync(byte[]? historyKey, TimeSpan? timeout = null)
+    public async Task InitializeAsync(byte[]? historyKey, TimeSpan? timeout = null, bool hostDiscord = false, bool credits = false)
     {
         var queue = Subscribe();
-        Send(new InitializeCommand(historyKey is null ? null : Convert.ToBase64String(historyKey)));
+        Send(new InitializeCommand(historyKey is null ? null : Convert.ToBase64String(historyKey))
+        {
+            HostDiscord = hostDiscord ? true : null,
+            Credits = credits ? true : null,
+        });
         await queue.Until<InitializedEvent>(timeout: timeout ?? TimeSpan.FromSeconds(30)).ConfigureAwait(false);
     }
 
