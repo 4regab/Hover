@@ -234,6 +234,7 @@ public sealed partial class OfficeUi
 
     void Answer(SessionInfo s, AskInfo a, string answer)
     {
+        Trace($"answer {answer} to {a.Id}");
         env.Send(new AnswerCommand(s.Id, a.Id, answer));
         Dirty = true;
     }

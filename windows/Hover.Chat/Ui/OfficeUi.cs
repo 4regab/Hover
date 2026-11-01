@@ -212,8 +212,11 @@ public sealed partial class OfficeUi
     string ToolName(string id) => ToolOf(id)?.Name is { Length: > 0 } n ? n : id.Length > 0 ? char.ToUpperInvariant(id[0]) + id[1..] : "Kiro";
 
     /// <summary>Opens an office session's chat.</summary>
+    void Trace(string text) => env.Log?.Invoke("panels: " + text);
+
     public void OpenChat(int id)
     {
+        Trace($"open chat {id}");
         OpenId = id;
         openKey = null;
         transcript = null;
@@ -243,6 +246,7 @@ public sealed partial class OfficeUi
 
     public void CloseChat()
     {
+        Trace("close chat");
         OpenId = null;
         openKey = null;
         transcript = null;
@@ -486,7 +490,7 @@ public sealed partial class OfficeUi
         if (key == UiKey.Escape)
         {
             if (focus == Focus.Title) { renaming = false; focus = Focus.None; return true; }
-            if (compose && focus == Focus.Reply) { compose = false; focus = Focus.None; return true; }
+            if (compose && focus == Focus.Reply) { Trace("escape closes the reply box"); compose = false; focus = Focus.None; return true; }
             if (taskOpen) { taskOpen = false; focus = Focus.None; return true; }
             if (!ChatView && OpenId is not null) { CloseChat(); return true; }
             return false;

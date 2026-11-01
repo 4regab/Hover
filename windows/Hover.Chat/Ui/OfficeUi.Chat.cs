@@ -419,7 +419,7 @@ public sealed partial class OfficeUi
         if (text.Length == 0)
         {
             // Pause, not Stop: the tool cancels the turn and the conversation stays.
-            if (Busy(s) && !s.Stopping) env.Send(new PauseCommand(id));
+            if (Busy(s) && !s.Stopping) { Trace($"pause {id}"); env.Send(new PauseCommand(id)); }
             return;
         }
         if (s.Ask?.Questions is { Count: > 0 } qs)
@@ -436,6 +436,7 @@ public sealed partial class OfficeUi
             Say("Answer the question above first, or skip it.");
             return;
         }
+        Trace($"reply to {id}");
         env.Send(new ReplyCommand(text, id));
         reply.Clear();
         SaveDraft();

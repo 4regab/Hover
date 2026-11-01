@@ -112,6 +112,7 @@ public sealed partial class OfficeUi
     void Activate(Target t)
     {
         clicksNow = Math.Max(clicksNow, 1);
+        if (t.Id != "askOpt") Trace($"click {t.Id} {t.N} {t.S}".TrimEnd());
         var s = Current();
         switch (t.Id)
         {
@@ -192,7 +193,7 @@ public sealed partial class OfficeUi
                     var rows = new List<MenuRow> { new((tool is null ? "The agent" : ToolDisplay(tool)) + " may", Header: true) };
                     foreach (var (id, label, note) in AccessChoices)
                         rows.Add(new MenuRow(label, id, id == "risky" && tool?.Id == "codex" ? "Asks to write outside the folder or go online. Codex runs the rest." : note, id == cur));
-                    rows.Add(new MenuRow("For this task only. Settings keeps the default.", Header: false, Disabled: true));
+                    rows.Add(new MenuRow("", Note: "For this task only. Settings keeps the default.", Disabled: true));
                     OpenMenu("access", t.R, rows, true, 270);
                     break;
                 }
