@@ -259,11 +259,13 @@ Windows is GitHub's `windows-2022` runner. [testing.md](testing.md) has the deta
 
 ### Memory
 
-Measured by `tools/app-smoke.ps1` on the runner (private bytes; the Go app was one process, the C# app is
-the app and its backend), the notch at rest two seconds after everything is up, and with the app window
-open:
+Measured by `tools/app-smoke.ps1` on the runner (run 41330606525), as the Go app was: the notch at rest two
+seconds after everything is up, and with the app window open. The Go app was one process; the C# app is the
+app and its backend, so the total is the number to put beside the Go one.
 
 | | Go app (`7d0a1c9`) | C# `hoverai.exe` | C# `hover-backend.exe` | C# total |
 |---|---|---|---|---|
-| At rest, private MB | 70.8 | 51.0 | 52.0 | 103.0 |
-| With the app window, private MB | 483.4 | 120.2 | 52.0 | 172.2 |
+| At rest, private MB | 70.8 | 50.8 | 51.8 | 102.6 |
+| With the app window, private MB | 483.4 | 118.8 | 51.8 | 170.6 |
+| At rest, working set MB | 43.6 | 106.0 | 17.7 | 123.7 |
+| With the app window, working set MB | 230.5 | 215.1 | 17.7 | 232.7 |
