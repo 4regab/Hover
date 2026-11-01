@@ -224,6 +224,9 @@ public sealed partial class OfficeUi
             case "titleBox":
                 focus = Focus.Title;
                 break;
+            case "botTag":
+                OpenChat(t.N);
+                break;
             case "openCloud":
                 if (s?.Extra is { } ex && ex.TryGetValue("kiroId", out var kid) && kid.ValueKind == System.Text.Json.JsonValueKind.String)
                     env.OpenUrl?.Invoke("https://app.kiro.dev/session/" + Uri.EscapeDataString(kid.GetString() ?? ""));

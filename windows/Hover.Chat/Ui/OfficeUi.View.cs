@@ -34,6 +34,7 @@ public sealed partial class OfficeUi
         PaintViewSwitch(12, compact ? 8 : 10, false, compact);
         var drawer = OpenId is not null || openKey is not null;
         if (!drawer) PaintMenuButton(compact);
+        PaintTags();
         PaintAsksOver(compact);
         PaintTaskFab(compact);
         if (drawer) PaintChatPane(w - sideW - sideGap, sideGap, sideW, h - 2 * sideGap, compact ? 16 : 20, false, compact);
@@ -56,10 +57,16 @@ public sealed partial class OfficeUi
         var fallbackY = compact ? 52f : 58f;
         foreach (var s in state.Sessions)
         {
-            if (s.Ask is not { } a) continue;
+            if (s.Ask is not { } a || !AskOver(s)) continue;
             var ah = AskCard(a, s, true, cw, 0, 0, true);
             float ax, ay;
-            if (env.BotRect(s.Id) is { } bot)
+            // The card stands on the bot's name tag, over its chip (internal/ui/officeview.go tag); without a tag, over the bot.
+            if (TagOf(s.Id) is { } tag)
+            {
+                ax = Math.Clamp(tag.X - cw / 2, 8, w - cw - 8);
+                ay = Math.Max(tag.Y - TagH - 4 - ah, 8);
+            }
+            else if (env.BotRect(s.Id) is { } bot)
             {
                 ax = Math.Clamp(bot.X + bot.W / 2 - cw / 2, 8, w - cw - 8);
                 ay = bot.Y - ah - 14;

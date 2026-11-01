@@ -19,6 +19,9 @@ public sealed class UiEnv
     /// </summary>
     public Func<int, Rect4?> BotRect { get; init; } = _ => null;
 
+    /// <summary>The bots' name tags with what each says, standing on the office's own pixels (internal/ui/officeview.go tag).</summary>
+    public Func<IReadOnlyList<BotTag>> Tags { get; init; } = () => [];
+
     /// <summary>What the pointer is on in the office: 1 a bot or 2 a desk with that session's id, and a prop's hint ("" for none).</summary>
     public Func<(int Kind, int Id, string Hint)> Tip { get; init; } = () => (0, 0, "");
 
@@ -55,6 +58,9 @@ public static class Bots
 }
 
 /// <summary>The keys the panels read, apart from typed characters.</summary>
+/// <summary>A bot's name tag: the bubble over it says <paramref name="Text"/>; it stands on (X, Y). Stage is the office's (2 done, 3 failed, 4 stopped).</summary>
+public sealed record BotTag(int Id, float X, float Y, string Name, Rgba Color, string Tool, string Text, int Stage, bool Hot);
+
 public enum UiKey { Other, Enter, Escape, Backspace, Delete, Left, Right, Up, Down, Home, End, Tab, A, C, V, X, S, L }
 
 [Flags]

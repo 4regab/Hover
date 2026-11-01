@@ -54,6 +54,15 @@ sealed class UiCore : IDisposable
         return (t.Kind, t.Id, t.Hint ?? "");
     }
 
+    internal static BotTag BotTagOf(Hover.Office.Tag t)
+        => new(t.Id, (float)t.X, (float)t.Y, t.Name, Rgba.Of((uint)(t.Color.R << 16 | t.Color.G << 8 | t.Color.B)), t.Tool ?? "", t.Text ?? "", (int)t.Stage, t.Hot);
+
+    IReadOnlyList<BotTag> TagsOf()
+        => TagsFixture?.Invoke() ?? (office?.Tags() is { Count: > 0 } list ? [.. list.Select(BotTagOf)] : []);
+
+    /// <summary>The name tags a picture says the office has, when it is not live to say it.</summary>
+    public Func<IReadOnlyList<BotTag>>? TagsFixture { get; set; }
+
     /// <summary>What a picture says the pointer is on, when the office is not live to say it.</summary>
     public Func<(int Kind, int Id, string Hint)>? TipFixture { get; set; }
 
@@ -84,6 +93,7 @@ sealed class UiCore : IDisposable
             BotRect = BotRectOf,
             Helpers = HelpersOf,
             Tip = TipOf,
+            Tags = TagsOf,
             OpenUrl = OpenUrl,
             Log = HostLog.Line,
             InNotch = inNotch,

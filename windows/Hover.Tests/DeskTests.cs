@@ -707,6 +707,29 @@ public class DeskTests
     }
 
     [Fact]
+    public void A_bot_has_a_name_tag_with_its_bubble_a_question_hides_the_bubble_and_the_tag_opens_the_chat()
+    {
+        var sent = new List<BackendCommand>();
+        var tags = new List<BotTag> { new(1, 400, 200, "Pip", Rgba.Of(0x9b6bff), "kiro", "Reading the code", 1, false) };
+        var ui = new OfficeUi(new FakeShaper(), new UiEnv { Send = sent.Add, Clipboard = new FakeClipboard(), Tags = () => tags });
+        ui.Accept(new StateEvent { Tools = [new ToolInfo { Id = "kiro", Name = "Kiro", Ready = true }], Sessions = [Busy()] });
+        var c = new RecordingCanvas();
+        ui.Paint(c, 1200, 720, 1000);
+        Assert.Contains("Pip", c.Texts);
+        Assert.Contains("Reading the code", c.Texts);
+        Assert.True(ui.Click("botTag", 1));
+        Assert.Contains(sent, x => x is OpenCommand { Id: 1 });
+        ui.CloseChat();
+        // A question stands on the tag in place of the bubble (internal/ui/officeview.go tag).
+        ui.Accept(new StateEvent { Tools = [new ToolInfo { Id = "kiro", Name = "Kiro", Ready = true }], Sessions = [Busy() with { Stage = "waiting", Ask = new AskInfo { Id = "a1", Kind = "execute", Title = "Wants to run a command", Command = "npm test", Allow = "Run" } }] });
+        c = new RecordingCanvas();
+        ui.Paint(c, 1200, 720, 1000);
+        Assert.Contains("Pip", c.Texts);
+        Assert.DoesNotContain("Reading the code", c.Texts);
+        Assert.Contains("Wants to run a command", c.Texts);
+    }
+
+    [Fact]
     public void The_card_follows_the_bot_when_the_office_says_where_it_is()
     {
         var sent = new List<BackendCommand>();

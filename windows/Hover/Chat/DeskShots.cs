@@ -123,6 +123,7 @@ static class DeskShots
         office.ShowForShot(ChatShots.State([.. sessions.Select((s, i) => s with { Seat = i })]), shotW, shotH);
         core.BotRectFixture = id => office.BotForShot(id) is { } r ? new Rect4((float)r.X, (float)r.Y, (float)r.W, (float)r.H) : null;
         core.HelpersFixture = id => office.TagForShot(id)?.Helpers ?? [];
+        core.TagsFixture = () => [.. office.TagsForShot().Select(UiCore.BotTagOf)];
     }
 
     /// <summary>Where the office drew the session's name tag.</summary>
@@ -351,6 +352,7 @@ static class DeskShots
         });
         core.BotRectFixture = null;
         core.HelpersFixture = null;
+        core.TagsFixture = null;
         ui.CloseDeskPanel();
         ui.CloseDeskCard();
     }

@@ -206,10 +206,25 @@ public sealed class OfficeHost : IDisposable
     void NoteTip()
     {
         var now = Tip();
-        if (now == lastTip) return;
+        // The name tags move with the bots and the camera, and their words are typed: the panels draw them again when they change.
+        var tags = Target == OfficeTarget.None ? "" : string.Join('|', model.Tags().Select(t => $"{t.Id}:{t.X:0}:{t.Y:0}:{t.Text}:{(int)t.Stage}:{t.Hot}"));
+        if (now == lastTip && tags == lastTags) return;
         lastTip = now;
+        lastTags = tags;
         TipChanged?.Invoke();
     }
+
+    /// <summary>The bots' name tags in the units <see cref="BotScreenRect"/> counts in (none when the office is not shown).</summary>
+    public IReadOnlyList<Tag> Tags()
+    {
+        if (Target == OfficeTarget.None) return [];
+        var tags = model.Tags();
+        if (Target != OfficeTarget.Notch || slot is null) return tags;
+        var (sx, sy) = (slot.Area.W / model.W, slot.Area.H / model.H);
+        return [.. tags.Select(t => t with { X = t.X * sx, Y = t.Y * sy })];
+    }
+
+    string lastTags = "";
 
     /// <summary>The colours of the helpers a session's bot has out at its desk, as the office's tag says (none when the office is not shown).</summary>
     public IReadOnlyList<(byte R, byte G, byte B)> HelpersOf(int sessionId)
@@ -766,6 +781,9 @@ public sealed class OfficeHost : IDisposable
     /// <summary>For <c>--shots</c>: where a session's name tag is, and its helpers' colours (in the office's own pixels).</summary>
     internal (double X, double Y, IReadOnlyList<(byte R, byte G, byte B)> Helpers)? TagForShot(int sessionId)
         => model.Tags().FirstOrDefault(t => t.Id == sessionId) is { } tag ? (tag.X, tag.Y, tag.Helpers) : null;
+
+    /// <summary>For <c>--shots</c>: the name tags as the office now has them.</summary>
+    internal IReadOnlyList<Tag> TagsForShot() => model.Tags();
 
     /// <summary>For <c>--shots</c>: where a session's bot is.</summary>
     internal OfficeRect? BotForShot(int sessionId) => model.BotRect(sessionId) is { } r ? new OfficeRect(r.X, r.Y, r.W, r.H) : null;
