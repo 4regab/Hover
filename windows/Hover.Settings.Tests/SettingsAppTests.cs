@@ -205,6 +205,13 @@ public class SettingsAppTests(ITestOutputHelper output)
         return null;
     }
 
+    /// <summary>The middle of a place of the dump, in screen pixels.</summary>
+    static (int X, int Y) Center(JsonNode section, JsonNode t)
+    {
+        double left = (double)section["left"]!, top = (double)section["top"]!, scale = (double)section["scale"]!;
+        return ((int)Math.Round(left + ((double)t["x"]! + (double)t["w"]! / 2) * scale), (int)Math.Round(top + ((double)t["y"]! + (double)t["h"]! / 2) * scale));
+    }
+
     static async Task<T> Until<T>(Func<T?> find, string what, ITestOutputHelper output, Func<string>? why = null, int ms = 40_000) where T : struct
     {
         for (var end = Environment.TickCount64 + ms; Environment.TickCount64 < end;)
@@ -244,23 +251,29 @@ public class SettingsAppTests(ITestOutputHelper output)
         Click(hover.X, hover.Y);
         await UntilTrue(() => s.Settings().Contains("\"HoverOpensWorkspace\": false"), "settings.json with Open on hover off", output, Why);
 
-        // Segments: Appearance Light, and the page wears Hover's light colours.
-        var light = await Until(() => Where(s.Read(), "settings-window", "Seg", "Appearance", 1), "the appearance segments", output, Why);
-        _ = light;
-        var segs = s.Read()!["settings-window"]!["targets"]!.AsArray().Where(t => (string?)t!["kind"] == "Seg" && (string?)t["id"] == "Appearance").OrderBy(t => (double)t!["x"]!).ToList();
-        Assert.Equal(3, segs.Count);
-        var dump = s.Read()!["settings-window"]!;
-        double sc = (double)dump["scale"]!, left = (double)dump["left"]!, top = (double)dump["top"]!;
-        var lightSeg = segs[1]!;
-        Click((int)Math.Round(left + ((double)lightSeg["x"]! + (double)lightSeg["w"]! / 2) * sc), (int)Math.Round(top + ((double)lightSeg["y"]! + (double)lightSeg["h"]! / 2) * sc));
+        // Segments: Appearance Light, and the page wears Hover's light colours. The row is below the window's bottom edge: the wheel brings it up.
+        (int X, int Y)? light = null;
+        for (var i = 0; i < 25 && light is null; i++)
+        {
+            var d = s.Read()?["settings-window"];
+            var segs = (d?["targets"]?.AsArray() ?? []).Where(t => (string?)t!["kind"] == "Seg" && (string?)t["id"] == "Appearance" && (double)t["h"]! >= 20).OrderBy(t => (double)t!["x"]!).ToList();
+            if (segs.Count == 3) light = Center(d!, segs[1]!);
+            else
+            {
+                Wheel((int)Math.Round((double)d!["left"]! + 600 * (double)d["scale"]!), (int)Math.Round((double)d["top"]! + 300 * (double)d["scale"]!), -3);
+                await Task.Delay(200);
+            }
+        }
+        Assert.NotNull(light);
+        Click(light.Value.X, light.Value.Y);
         await UntilTrue(() => s.Settings().Contains("\"Appearance\": \"Light\"") && (bool?)s.Read()?["settings-window"]?["dark"] == false, "the light appearance", output, Why);
 
         // The sidebar: Voice. Its page is long, so the wheel scrolls to the box for the cleanup model.
-        var voice = await Until(() => Where(s.Read(), "settings-window", "Section", "", 3), "the Voice section", output, Why);
-        _ = voice;
         var sections = s.Read()!["settings-window"]!["targets"]!.AsArray().Where(t => (string?)t!["kind"] == "Section").OrderBy(t => (double)t!["y"]!).ToList();
-        var v = sections[3]!;
-        Click((int)Math.Round(left + ((double)v["x"]! + (double)v["w"]! / 2) * sc), (int)Math.Round(top + ((double)v["y"]! + (double)v["h"]! / 2) * sc));
+        Assert.True(sections.Count >= 5, "the sidebar has its sections");
+        double left = (double)s.Read()!["settings-window"]!["left"]!, top = (double)s.Read()!["settings-window"]!["top"]!, sc = (double)s.Read()!["settings-window"]!["scale"]!;
+        var voice = Center(s.Read()!["settings-window"]!, sections[3]!);
+        Click(voice.X, voice.Y);
         await UntilTrue(() => (string?)s.Read()?["settings-window"]?["section"] == "Voice", "the Voice page", output, Why);
 
         (int X, int Y)? field = null;

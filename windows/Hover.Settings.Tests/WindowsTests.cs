@@ -71,6 +71,21 @@ public class WindowsTests
 
     static ScreenFrame Capture() => ScreenCapture.Capture([(uint)Environment.ProcessId]);
 
+    /// <summary>
+    /// The capture of this process once <paramref name="shows"/> is true of it, for up to 3 s. A window made a moment ago has no picture
+    /// in the compositor until it has painted, so the first captures can be empty; the panel itself takes a new frame every second.
+    /// </summary>
+    static ScreenFrame CaptureWhen(Func<ScreenFrame, bool> shows)
+    {
+        var frame = Capture();
+        for (var i = 0; i < 30 && !shows(frame); i++)
+        {
+            Thread.Sleep(100);
+            frame = Capture();
+        }
+        return frame;
+    }
+
     [WindowsFact]
     public void The_capture_shows_the_desktop_with_only_the_agents_window_over_it()
     {
@@ -83,7 +98,7 @@ public class WindowsTests
         var hwnd = PlainWindow(100, 80, 200, 120);
         try
         {
-            var frame = Capture();
+            var frame = CaptureWhen(f => f.At(200, 140) != desktop);
             var inside = frame.At(200, 140);
             Assert.NotEqual(desktop, inside);
             // Outside the window it is the desktop, not this test's other windows.
@@ -109,7 +124,7 @@ public class WindowsTests
             var desktop = ScreenCapture.Capture([]);
             Assert.Equal(desktop.At(200, 150), other.At(200, 150));
             Assert.Equal(desktop.Bgra, other.Bgra);
-            Assert.NotEqual(desktop.At(200, 150), Capture().At(200, 150));
+            Assert.NotEqual(desktop.At(200, 150), CaptureWhen(f => f.At(200, 150) != desktop.At(200, 150)).At(200, 150));
         }
         finally { DestroyWindow(hwnd); }
     }
@@ -119,7 +134,7 @@ public class WindowsTests
     {
         var desktop = ScreenCapture.Capture([]).At(200, 150);
         var hwnd = PlainWindow(100, 100, 200, 100);
-        Assert.NotEqual(desktop, Capture().At(200, 150));
+        Assert.NotEqual(desktop, CaptureWhen(f => f.At(200, 150) != desktop).At(200, 150));
         ShowWindow(hwnd, 6);
         Assert.Equal(desktop, Capture().At(200, 150));
         DestroyWindow(hwnd);
@@ -134,7 +149,7 @@ public class WindowsTests
         var hwnd = PlainWindow(sw - 50, 50, 200, 100);
         try
         {
-            var frame = Capture();
+            var frame = CaptureWhen(f => f.At(sw - 10, 80) != desktop);
             Assert.NotEqual(desktop, frame.At(sw - 10, 80));
             Assert.Equal(frame.At(sw - 10, 80), frame.At(sw - 1, 149));
         }
