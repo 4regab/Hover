@@ -109,10 +109,26 @@ What `windows\Hover.Tests` covers:
 - **Data compatibility**: the Go-written folder opened by C# (the key through DPAPI, the sealed
   history and a secret read by test code of its own, then the backend started by the host), and the
   C#-written folder read by `hover-data dump` and `check` and `gofixture`.
+- **The notch's rules against Go** (`NotchGoldenTests`): sizes, placement, easing, every frame of
+  the shape, the outline text, the hit region at 108 points, the zones, the resting shape's spring,
+  opening and closing, every poll of the pointer rules, the island's clock and "took" text, the
+  quota numbers, the tray menu, and the virtual key and label of every key. The inputs and the Go
+  answers are in `windows\Hover.Tests\golden\notch.json`, written by `go test ./internal/app -run
+  TestNotchGolden` (with `HOVER_UPDATE_GOLDEN=1`); the same test fails in Go when the file is out of
+  date. `NotchControllerTests` run the whole behaviour (peek, fold, click-away, shortcut, displays
+  changing) against a desktop that is not there; `IslandTests` the island for no sessions, work, a
+  question, an end nobody saw, and a very long text; `SvgPathTests` the outline and mark readers.
+- **The real notch** (`NotchAppTests`, Windows, needs `HOVER_APP_EXE`): the window is where the
+  rules put it and has the right styles; the app never becomes the foreground window while the notch
+  shows, peeks or folds; the pointer goes to the window only over the shape (`WindowFromPoint` and
+  the style bit); Alt+N, sent as keys, opens and folds it and an open notch holds the keyboard; a
+  shortcut another program holds is reported (error 1409) and the app goes on; the tray icon is
+  added, and Quit in its menu, picked with the keyboard, stops the backend with exit code 0 and
+  removes the icon; closing the dashboard hides it and a second launch brings it back.
 - **Windows only**: DPAPI, the job object (what is in it dies with its handle; its children too),
   killing a host process kills the backend and the agent's child, single instance, the old
   "Hover Service" task removal, and `hoverai.exe` itself (a second launch exits, the first opens
-  its dashboard; killing it kills its backend; `--shots` writes a JPEG).
+  its dashboard; killing it kills its backend; `--shots` writes the dashboard and the notch's JPEGs).
 
 Run it by hand (on Windows or, for everything not marked Windows only, on Linux). The tests start
 real programs and want these set, as the workflow does:

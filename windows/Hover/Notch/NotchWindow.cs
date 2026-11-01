@@ -218,8 +218,19 @@ sealed class NotchWindow : INotchPlatform, IDisposable
         data.hIcon = trayIcon;
         data.szTip = "Hover";
         trayShown = Shell_NotifyIconW(NIM_ADD, ref data);
-        HostLog.Line(trayShown ? "tray icon added" : $"tray icon could not be added ({Marshal.GetLastWin32Error()})");
+        // Changing an icon only works on one the shell has, so this asks the shell whether it took it.
+        HostLog.Line(trayShown
+            ? $"tray icon added (the shell has it: {TrayModify()})"
+            : $"tray icon could not be added ({Marshal.GetLastWin32Error()})");
         return trayShown;
+    }
+
+    bool TrayModify()
+    {
+        var data = TrayData();
+        data.uFlags = NIF_TIP;
+        data.szTip = "Hover";
+        return Shell_NotifyIconW(NIM_MODIFY, ref data);
     }
 
     public bool TrayVisible => trayShown;
@@ -230,7 +241,7 @@ sealed class NotchWindow : INotchPlatform, IDisposable
         var data = TrayData();
         Shell_NotifyIconW(NIM_DELETE, ref data);
         trayShown = false;
-        HostLog.Line("tray icon removed");
+        HostLog.Line($"tray icon removed (the shell still has it: {TrayModify()})");
     }
 
     /// <summary>A balloon from the tray icon.</summary>

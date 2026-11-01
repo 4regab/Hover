@@ -96,6 +96,7 @@ Windows build until the owner switches over (`build.ps1 legacy`). The C# code is
 | Project | What it is |
 |---|---|
 | `windows\Hover` | `hoverai.exe`: a code-first WinUI 3 app (no `.xaml` files), unpackaged and self-contained. |
+| `windows\Hover.Notch` | No WinUI and no Windows call. The notch's rules: sizes, placement, outline, the open and close animation, the pointer rules, what the resting notch shows (the island), the shortcut and the tray menu. A port of `internal/notch` and `internal/app/rest.go`. |
 | `windows\Hover.Host` | No WinUI. Starts `hover-backend.exe` in a job object, speaks JSON lines to it, keeps `note.key` (DPAPI), data folder paths, the single-instance names, the old-service removal. |
 | `windows\Hover.Office` | The Direct3D 11 office. Empty until its phase. |
 | `windows\Hover.TestTools` | Programs the tests start: stand-ins for `codex-acp` and `codex`, a backend that misbehaves on purpose, a host to be killed. |
@@ -117,8 +118,12 @@ windows\Hover\bin\Release\net10.0-windows10.0.22621.0\win-x64\hoverai.exe
 `hoverai.exe` looks for `hover-backend.exe` in its own folder. The `dotnet build` output is
 runnable as it is (self-contained). Packaging it is a later phase.
 
-- `hoverai.exe --background` starts without a window. A second launch then opens the dashboard,
-  as it will for a Hover started at login.
+- `hoverai.exe` starts as the Go app does: the notch and the tray icon, no window. `--dashboard`
+  opens the app window at start. `--background` is still accepted (it is what a normal start does
+  now). A second launch opens the dashboard of the copy that runs. Closing the dashboard hides it
+  to the tray; Quit in the tray menu stops the backend (it writes the history and the settings
+  first) and removes the icon. If the notch cannot be made (no graphics), the window opens and
+  closing it quits.
 - `hoverai.exe --shots DIR` draws the app's views into JPEG files (at most 1400 px wide) with
   `RenderTargetBitmap`, from inside the app, and exits. No screen capture. It does not take the
   single-instance claim.
@@ -126,6 +131,41 @@ runnable as it is (self-contained). Packaging it is a later phase.
   `Local\HoverShowApp` that a second launch sets. These are the Go app's names, so a Go copy
   and a C# copy keep out of each other's way.
 - The log is `hover.log` in the data folder; the C# host and the Go backend append to the same file.
+
+### The notch
+
+The notch is a Win32 window of its own (`windows\Hover\Notch\NotchWindow.cs`), not a WinUI
+window: borderless, `WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE`, at the top centre of the
+main display's work area. It never takes the keyboard unless it is opened with the shortcut or a
+question's card is opened, and it gives the keyboard back when it folds. Its pixels come from a
+swap chain made for composition with premultiplied alpha, shown by a DirectComposition visual
+(`NotchSurface.cs`), so what is not drawn is see-through. Direct2D and DirectWrite draw the
+frame (`NotchRenderer.cs`); the text is set in the Inter files in `Assets\Fonts`. The window is
+click-through (`WS_EX_TRANSPARENT`) except over the shape and its shadow; the pointer is polled
+every 50 ms, as the Go app does.
+
+The rules are in `windows\Hover.Notch` and use the Go numbers. `windows\Hover.Tests\golden\notch.json`
+is written by `internal/app/notch_golden_test.go` from the Go code; the C# tests feed the same
+inputs to the C# code and compare. Change either side and a test fails until the file is written
+again:
+
+```powershell
+$env:HOVER_UPDATE_GOLDEN = '1'; go test ./internal/app -run TestNotchGolden
+```
+
+What the resting notch shows comes from the backend's `state` (the sessions' `status`,
+`activity`, `ask`), `ended` (`body`, `took`), `quotas` and `settings` messages. Alt+N (or the
+`ScWorkspace` setting) is `RegisterHotKey` on the notch window; a refusal is logged with
+Windows' error code (1409: already taken) and said once in a tray balloon. The tray menu is the Go
+app's: Open Agent Office, Open App Window, Launch at Login (the `Run` value `Hover`, as the Go app
+writes it), Settings…, Quit Hover.
+
+**Where the office goes.** The open notch is the shape at its full size, `Open.W` by `Open.H`
+DIPs (1120 x 440 for Office size Default, less the 24 DIPs kept free on a small screen), at
+`x = Pad (40)`, `y = 0` inside the notch window (`NotchScene.OfficeArea`). `NotchSurface.Composition`
+gives a later view the DirectComposition device and root visual to add its own swap chain at that
+rectangle. Until then the area is a dashed frame with its size written in it. The app window has the
+same place: `DashboardWindow.OfficeArea`, a bordered area under the header.
 
 The key rules for `note.key` (set aside, never overwritten) are in
 [windows-csharp.md](windows-csharp.md#c-data-formats); `Hover.Host/HistoryKey.cs` follows them.

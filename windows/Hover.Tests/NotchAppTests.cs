@@ -373,8 +373,10 @@ public class NotchAppTests(ITestOutputHelper output)
                 await Task.Delay(50);
             }
 
-            // Away from the panel for longer than the grace period: it folds.
-            Desktop.MovePointer(5, 5);
+            // Away from the panel for longer than the grace period: it folds. (On a small screen the open
+            // panel reaches the corner, so the pointer goes to the bottom of the screen.)
+            var work = Desktop.WorkArea();
+            Desktop.MovePointer((work.Left + work.Right) / 2, work.Bottom - 10);
             await AppTests.WaitForLog(data, "notch: folding", TimeSpan.FromSeconds(10), app);
             Assert.False(Desktop.ForegroundIsOf(app), $"a fold left the keyboard with the notch: {Desktop.Describe(Desktop.Foreground())}");
             output.WriteLine($"the foreground before {Desktop.Describe(before)}, after {Desktop.Describe(Desktop.Foreground())}");
@@ -449,6 +451,8 @@ public class NotchAppTests(ITestOutputHelper output)
         try
         {
             var log = await AppTests.WaitForLog(data, "tray icon added", TimeSpan.FromSeconds(60), app);
+            // The shell took the icon: changing an icon works only on one it has.
+            Assert.Contains("tray icon added (the shell has it: True)", log);
             await AppTests.WaitForLog(data, "agent backend is ready", TimeSpan.FromSeconds(60), app);
             var backendPid = int.Parse(Regex.Match(ReadLog(data), @"backend started \(pid (\d+)\)").Groups[1].Value);
             var notch = Desktop.Notch();
@@ -458,19 +462,18 @@ public class NotchAppTests(ITestOutputHelper output)
             var icon = Desktop.TrayIconRect(notch, out var result);
             output.WriteLine($"taskbar window: {taskbar}; Shell_NotifyIconGetRect: 0x{result:X8}; " +
                 (icon is { } r ? $"the icon is at {r.Left},{r.Top} - {r.Right},{r.Bottom}" : "no icon rect"));
-            if (taskbar) Assert.NotNull(icon);
+            // The rect is a bonus: some shells answer "not shown" for an icon that sits in the overflow.
 
             Desktop.QuitFromTrayMenu(notch);
             Assert.True(app.WaitForExit(30_000), "Quit in the tray menu should end the app");
             Assert.Equal(0, app.ExitCode);
             log = ReadLog(data);
             output.WriteLine(log);
-            Assert.Contains("tray icon removed", log);
+            Assert.Contains("tray icon removed (the shell still has it: False)", log);
             Assert.Contains("quitting", log);
             // The backend was asked to stop, wrote what it holds and left by itself: exit code 0.
             Assert.Matches(@"backend stopped \(exit code 0\)", log);
             Assert.True(await BackendSmokeTests.Gone(backendPid), "the backend is still running");
-            Assert.Null(Desktop.TrayIconRect(notch, out _));
         }
         finally { Stop(app); }
     }
