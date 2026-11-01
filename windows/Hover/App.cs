@@ -41,7 +41,15 @@ public sealed class App : Application, IXamlMetadataProvider
         this.dataDir = dataDir;
         // The controls' own styles; with no App.xaml they are merged here.
         HostLog.Line("merging the controls' styles");
-        Resources.MergedDictionaries.Add(new XamlControlsResources());
+        try
+        {
+            Resources.MergedDictionaries.Add(new XamlControlsResources());
+        }
+        catch (Exception e)
+        {
+            // Inside Application.Start an exception ends the process with only an exit code.
+            HostLog.Line($"the controls' styles did not load (0x{e.HResult:X8}) — {e}");
+        }
         HostLog.Line("the application object is made");
         UnhandledException += (_, e) =>
         {

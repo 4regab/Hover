@@ -46,9 +46,18 @@ public static class Program
             Application.Start(startup =>
             {
                 HostLog.Line("on the application thread");
-                SynchronizationContext.SetSynchronizationContext(
-                    new DispatcherQueueSynchronizationContext(DispatcherQueue.GetForCurrentThread()));
-                _ = new App(launch, dataDir);
+                try
+                {
+                    SynchronizationContext.SetSynchronizationContext(
+                        new DispatcherQueueSynchronizationContext(DispatcherQueue.GetForCurrentThread()));
+                    _ = new App(launch, dataDir);
+                }
+                catch (Exception e)
+                {
+                    // An exception that leaves this callback ends the process with only an exit code.
+                    HostLog.Line($"the application object was not made (0x{e.HResult:X8}) — {e}");
+                    Environment.Exit(1);
+                }
             });
             HostLog.Line("the application ended");
         }
