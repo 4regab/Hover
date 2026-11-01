@@ -194,7 +194,18 @@ public class PanelsAppTests(ITestOutputHelper output)
         {
             for (var i = 0; i < 12; i++)
             {
-                if (dump.Act("window", kind, section) is { } p) return p;
+                if (dump.Act("window", kind, section) is { } p)
+                {
+                    // Looked at twice, a moment apart, so a layout that is still moving is not clicked.
+                    for (var k = 0; k < 20; k++)
+                    {
+                        await Task.Delay(400);
+                        var again = dump.Act("window", kind, section);
+                        if (again is { } q && q == p) return p;
+                        if (again is { } moved) p = moved;
+                    }
+                    return p;
+                }
                 var spot = dump.Where("window", "compose") ?? dump.Where("window", "composer");
                 if (spot is { } w) Input.Wheel(w.X, w.Y, 4);
                 await Task.Delay(300);
@@ -203,10 +214,19 @@ public class PanelsAppTests(ITestOutputHelper output)
             return default;
         }
 
+        // The layout moves while the agent works (a question goes, the answer comes), so a place is clicked only
+        // once two looks, a moment apart, found it at the same spot.
         async Task ClickAt(string part, string id, string what, Func<JsonNode, bool>? pick = null)
         {
             await Check(() => dump.Where(part, id, pick) is not null, $"no '{id}' to click ({what})");
-            var p = dump.Where(part, id, pick)!.Value;
+            (int X, int Y) p = dump.Where(part, id, pick)!.Value;
+            for (var i = 0; i < 30; i++)
+            {
+                await Task.Delay(400);
+                var again = dump.Where(part, id, pick);
+                if (again is { } q && q == p) break;
+                if (again is { } moved) p = moved;
+            }
             output.WriteLine($"click {what} at {p.X},{p.Y}");
             Input.Click(p.X, p.Y);
         }
