@@ -2,9 +2,13 @@ package app
 
 import (
 	"encoding/json"
+	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
+	"sort"
 	"testing"
 
 	"github.com/4regab/Hover/internal/core"
@@ -19,11 +23,21 @@ import (
 //
 //	HOVER_UPDATE_GOLDEN=1 go test ./internal/app -run TestNotchGolden
 //
-// writes it again.
+// writes it again, on amd64 only: the Go compiler fuses x*y+z into one instruction on arm64
+// (every Mac the runners have), which changes the last bits of the easing numbers. The file
+// holds the amd64 numbers, and every platform's numbers have to agree with them to within the
+// same tolerance the C# test uses (1e-9, relative above 1).
 
 const notchGoldenFile = "../../windows/Hover.Tests/golden/notch.json"
 
 type obj = map[string]any
+
+// sz and rc build the notch's sizes and rectangles with their fields named, as go vet wants.
+func sz(w, h float64) notch.Size { return notch.Size{W: w, H: h} }
+
+func rc(left, top, right, bottom int) notch.Rect {
+	return notch.Rect{Left: left, Top: top, Right: right, Bottom: bottom}
+}
 
 func rect(r notch.Rect) []int { return []int{r.Left, r.Top, r.Right, r.Bottom} }
 
@@ -33,7 +47,7 @@ func notchGolden() obj {
 	// Sizes and placement.
 	var open, place []obj
 	for _, size := range []notch.OfficeSize{notch.SizeDefault, notch.SizeSmall, notch.SizeLarge, notch.SizeExtraLarge} {
-		for _, work := range []notch.Size{{1920, 1040}, {1280, 600}, {2560, 1400}, {800, 500}} {
+		for _, work := range []notch.Size{sz(1920, 1040), sz(1280, 600), sz(2560, 1400), sz(800, 500)} {
 			o := notch.OpenSize(size, work)
 			open = append(open, obj{"size": int(size), "workW": work.W, "workH": work.H, "w": o.W, "h": o.H})
 		}
@@ -43,12 +57,12 @@ func notchGolden() obj {
 		scale float64
 		open  notch.Size
 	}{
-		{notch.Rect{0, 0, 1920, 1040}, 1, notch.Size{1120, 440}},
-		{notch.Rect{-2560, 0, 0, 1400}, 1.5, notch.Size{1120, 440}},
-		{notch.Rect{0, 40, 1366, 728}, 1, notch.Size{840, 340}},
-		{notch.Rect{0, 0, 3840, 2120}, 2, notch.Size{1560, 600}},
-		{notch.Rect{101, 3, 1920, 1043}, 1.25, notch.Size{1120, 440}},
-		{notch.Rect{0, 0, 1921, 1040}, 1.75, notch.Size{1121, 441}},
+		{rc(0, 0, 1920, 1040), 1, sz(1120, 440)},
+		{rc(-2560, 0, 0, 1400), 1.5, sz(1120, 440)},
+		{rc(0, 40, 1366, 728), 1, sz(840, 340)},
+		{rc(0, 0, 3840, 2120), 2, sz(1560, 600)},
+		{rc(101, 3, 1920, 1043), 1.25, sz(1120, 440)},
+		{rc(0, 0, 1921, 1040), 1.75, sz(1121, 441)},
 	} {
 		place = append(place, obj{"work": rect(c.work), "scale": c.scale, "openW": c.open.W, "openH": c.open.H, "rect": rect(notch.Placement(c.work, c.scale, c.open))})
 	}
@@ -83,10 +97,10 @@ func notchGolden() obj {
 
 	// Frames.
 	var frames []obj
-	for _, rest := range []notch.Size{{128, 24}, {108, 32}, {500, 182}, {0, 0}} {
+	for _, rest := range []notch.Size{sz(128, 24), sz(108, 32), sz(500, 182), sz(0, 0)} {
 		for _, t := range []float64{0, 0.1, 0.2, 0.35, 0.5, 0.8, 0.999, 1, 1.04} {
 			for _, closing := range []bool{false, true} {
-				f := notch.FrameWay(t, rest, notch.Size{1120, 440}, closing)
+				f := notch.FrameWay(t, rest, sz(1120, 440), closing)
 				frames = append(frames, obj{
 					"t": t, "restW": rest.W, "restH": rest.H, "openW": 1120.0, "openH": 440.0, "closing": closing,
 					"w": f.W, "h": f.H, "r": f.R, "ear": f.Ear, "view": f.ViewOpacity, "mini": f.MiniOpacity, "fill": f.FillMix, "hit": f.ViewHit,
@@ -106,9 +120,9 @@ func notchGolden() obj {
 	// Hit test.
 	var hits []obj
 	winW := 1200.0
-	for _, rest := range []notch.Size{{128, 24}, {0, 0}, {500, 182}} {
+	for _, rest := range []notch.Size{sz(128, 24), sz(0, 0), sz(500, 182)} {
 		for _, t := range []float64{0, 0.5, 1} {
-			f := notch.FrameAt(t, rest, notch.Size{1120, 440})
+			f := notch.FrameAt(t, rest, sz(1120, 440))
 			for _, p := range [][2]float64{{600, 10}, {664, 10}, {704, 10}, {100, 300}, {600, 2}, {600, -1}, {600, 439}, {600, 450}, {45, 300}, {60, 435}, {1140, 20}, {600, 200}} {
 				hits = append(hits, obj{"restW": rest.W, "restH": rest.H, "t": t, "x": p[0], "y": p[1], "hit": notch.Hittable(p[0], p[1], winW, f, 24, 4)})
 			}
@@ -123,14 +137,14 @@ func notchGolden() obj {
 		scale float64
 		rest  notch.Size
 	}{
-		{notch.Rect{0, 0, 1920, 1040}, 1, notch.Size{}},
-		{notch.Rect{0, 0, 1920, 1040}, 1, notch.Size{500, 182}},
-		{notch.Rect{-2560, 0, 0, 1400}, 1.5, notch.Size{108, 32}},
-		{notch.Rect{3, 7, 1919, 1041}, 1.25, notch.Size{60, 3}},
+		{rc(0, 0, 1920, 1040), 1, notch.Size{}},
+		{rc(0, 0, 1920, 1040), 1, sz(500, 182)},
+		{rc(-2560, 0, 0, 1400), 1.5, sz(108, 32)},
+		{rc(3, 7, 1919, 1041), 1.25, sz(60, 3)},
 	} {
 		zones = append(zones, obj{
 			"work": rect(c.work), "scale": c.scale, "restW": c.rest.W, "restH": c.rest.H,
-			"zone": rect(notch.Zone(c.work, c.scale, c.rest)), "panel": rect(notch.PanelZone(c.work, c.scale, notch.Size{1120, 440})),
+			"zone": rect(notch.Zone(c.work, c.scale, c.rest)), "panel": rect(notch.PanelZone(c.work, c.scale, sz(1120, 440))),
 		})
 	}
 	g["zones"] = zones
@@ -278,6 +292,56 @@ func notchGolden() obj {
 	return g
 }
 
+// near says where got and want first differ ("" for none). Numbers are equal to within 1e-9 times
+// the larger of 1 and the wanted number; everything else must be equal.
+func near(path string, got, want any) string {
+	switch w := want.(type) {
+	case float64:
+		g, ok := got.(float64)
+		if !ok || !(math.Abs(g-w) <= 1e-9*math.Max(1, math.Abs(w))) {
+			return fmt.Sprintf("%s: got %v, the file has %v", path, got, want)
+		}
+	case map[string]any:
+		g, ok := got.(map[string]any)
+		if !ok {
+			return fmt.Sprintf("%s: got %T, the file has an object", path, got)
+		}
+		keys := make([]string, 0, len(w))
+		for k := range w {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for _, k := range keys {
+			if _, has := g[k]; !has {
+				return fmt.Sprintf("%s.%s: missing", path, k)
+			}
+			if d := near(path+"."+k, g[k], w[k]); d != "" {
+				return d
+			}
+		}
+		for k := range g {
+			if _, has := w[k]; !has {
+				return fmt.Sprintf("%s.%s: not in the file", path, k)
+			}
+		}
+	case []any:
+		g, ok := got.([]any)
+		if !ok || len(g) != len(w) {
+			return fmt.Sprintf("%s: got %d items, the file has %d", path, len(g), len(w))
+		}
+		for i := range w {
+			if d := near(fmt.Sprintf("%s[%d]", path, i), g[i], w[i]); d != "" {
+				return d
+			}
+		}
+	default:
+		if !reflect.DeepEqual(got, want) {
+			return fmt.Sprintf("%s: got %v, the file has %v", path, got, want)
+		}
+	}
+	return ""
+}
+
 func TestNotchGolden(t *testing.T) {
 	got, err := json.MarshalIndent(notchGolden(), "", "  ")
 	if err != nil {
@@ -286,6 +350,9 @@ func TestNotchGolden(t *testing.T) {
 	got = append(got, '\n')
 	file := filepath.FromSlash(notchGoldenFile)
 	if os.Getenv("HOVER_UPDATE_GOLDEN") != "" {
+		if runtime.GOARCH != "amd64" {
+			t.Fatalf("the file holds the amd64 numbers; %s fuses multiply-adds and would change them. Write it on amd64", runtime.GOARCH)
+		}
 		if err := os.MkdirAll(filepath.Dir(file), 0o755); err != nil {
 			t.Fatal(err)
 		}
@@ -306,7 +373,7 @@ func TestNotchGolden(t *testing.T) {
 	if err := json.Unmarshal(want, &b); err != nil {
 		t.Fatalf("%s is not JSON: %v", file, err)
 	}
-	if !reflect.DeepEqual(a, b) {
-		t.Fatalf("%s is out of date with the Go notch code; run: HOVER_UPDATE_GOLDEN=1 go test ./internal/app -run TestNotchGolden", file)
+	if d := near("$", a, b); d != "" {
+		t.Fatalf("%s is out of date with the Go notch code (%s); on amd64 run: HOVER_UPDATE_GOLDEN=1 go test ./internal/app -run TestNotchGolden", file, d)
 	}
 }
