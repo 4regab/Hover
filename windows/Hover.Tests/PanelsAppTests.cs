@@ -73,7 +73,13 @@ sealed class AppDump(string file)
     {
         for (var i = 0; i < 5; i++)
         {
-            try { return File.Exists(file) ? JsonNode.Parse(File.ReadAllText(file)) : null; }
+            try
+            {
+                if (!File.Exists(file)) return null;
+                // Shared so that the app can replace the file while it is read.
+                using var stream = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+                return JsonNode.Parse(new StreamReader(stream).ReadToEnd());
+            }
             catch (IOException) { Thread.Sleep(20); }
             catch (System.Text.Json.JsonException) { Thread.Sleep(20); }
         }

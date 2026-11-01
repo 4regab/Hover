@@ -26,16 +26,26 @@ static class UiDump
         {
             if (Sections.TryGetValue(name, out var old) && old == text) return;
             Sections[name] = text;
-            try
+            var all = new JsonObject();
+            foreach (var (key, value) in Sections) all[key] = JsonNode.Parse(value);
+            var json = all.ToJsonString();
+            // A reader may have the file open for a moment; try again, and if it still cannot be written
+            // forget this section's text so the next frame writes it.
+            for (var attempt = 0; attempt < 8; attempt++)
             {
-                var all = new JsonObject();
-                foreach (var (key, value) in Sections) all[key] = JsonNode.Parse(value);
-                var temp = Path + ".tmp";
-                File.WriteAllText(temp, all.ToJsonString());
-                File.Move(temp, Path!, overwrite: true);
+                try
+                {
+                    var temp = Path + ".tmp";
+                    File.WriteAllText(temp, json);
+                    File.Move(temp, Path!, overwrite: true);
+                    return;
+                }
+                catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+                {
+                    Thread.Sleep(15);
+                }
             }
-            catch (IOException e) { HostLog.Line($"ui dump: {e.Message}"); }
-            catch (UnauthorizedAccessException e) { HostLog.Line($"ui dump: {e.Message}"); }
+            Sections.Remove(name);
         }
     }
 
