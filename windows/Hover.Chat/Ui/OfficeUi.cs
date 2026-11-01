@@ -299,6 +299,7 @@ public sealed partial class OfficeUi
         NextFrameMs = double.MaxValue;
         Dirty = false;
         DeskTick();
+        ScreenTick();
         ListsTick();
         if (ToastText is not null && now > toastUntil) ToastText = null;
         if (ToastText is not null) Need(250);

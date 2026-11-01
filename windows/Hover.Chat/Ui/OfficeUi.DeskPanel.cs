@@ -180,6 +180,9 @@ public sealed partial class OfficeUi
             case "terminal":
                 PaintTerminal(s, new Rect4(r.X, by, r.W, bh));
                 break;
+            case "screen":
+                PaintScreen(s, new Rect4(r.X + 10, by, r.W - 20, bh - 12));
+                break;
             case "pr" when pr["setup"].Has:
                 PaintGhSetup(s, new Rect4(r.X + 10, by, r.W - 20, bh - 12));
                 break;

@@ -23,7 +23,8 @@ public static class DeskTiles
 
     public const string AgentBrowserNote = "Agent browser needs macOS.";
 
-    public const string ScreenNote = "The Screen view is part of the Screen panel, which this build does not have yet.";
+    /// <summary>Why the Screen tab is grey where the app cannot take pictures of the screen.</summary>
+    public const string ScreenNote = "The Screen view isn’t available here.";
 
     public static int IndexOf(string id) => Array.FindIndex(Surfaces, s => s.Id == id);
 
@@ -87,10 +88,6 @@ public static class DeskTiles
                     enabled = false;
                     reason = AgentBrowserNote;
                     break;
-                case "screen":
-                    enabled = false;
-                    reason = ScreenNote;
-                    break;
             }
             if (cloud && id is "terminal" or "files")
             {
@@ -134,7 +131,7 @@ public static class DeskTiles
                     detail = running > 0 ? DeskRows.Num(running) + " working" : agents > 0 ? N(agents, "subagent", "subagents") : "None yet";
                     break;
                 case "screen":
-                    detail = "Desktop";
+                    detail = ScreenInfo.Of(s).Detail;
                     break;
             }
             if (enabled) reason = "";

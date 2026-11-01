@@ -1,6 +1,4 @@
-using System.Text.Json;
 using Hover.Host;
-using Hover.Host.Protocol;
 using Hover.Settings;
 using Windows.Foundation;
 using Windows.Graphics.Imaging;
@@ -13,27 +11,6 @@ sealed record ScreenPicture(byte[] Jpeg, int Width, int Height)
 {
     /// <summary>The picture as the chat's pictures are named: a data address.</summary>
     public string DataUrl => "data:image/jpeg;base64," + Convert.ToBase64String(Jpeg);
-}
-
-/// <summary>What the backend says about a session for the Screen panel: whether it is testing with computer use, and the apps it opened.</summary>
-sealed record ScreenApps(bool Testing, IReadOnlyList<uint> Pids, bool Named)
-{
-    /// <summary>Reads <c>testing</c> and <c>apps</c> from a session of the <c>state</c> message (they come with the fields the host does not type).</summary>
-    public static ScreenApps Of(SessionInfo? s)
-    {
-        if (s?.Extra is not { } extra) return new ScreenApps(false, [], false);
-        var testing = extra.TryGetValue("testing", out var t) && t.ValueKind == JsonValueKind.True;
-        var pids = new List<uint>();
-        var named = false;
-        if (extra.TryGetValue("apps", out var apps) && apps.ValueKind == JsonValueKind.Object)
-        {
-            named = true;
-            if (apps.TryGetProperty("pids", out var list) && list.ValueKind == JsonValueKind.Array)
-                foreach (var p in list.EnumerateArray())
-                    if (p.ValueKind == JsonValueKind.Number && p.TryGetUInt32(out var pid)) pids.Add(pid);
-        }
-        return new ScreenApps(testing, pids, named);
-    }
 }
 
 /// <summary>
@@ -53,18 +30,24 @@ sealed class ScreenSource
     /// <summary>Whether this system can show the panel at all.</summary>
     public static bool Supported => ScreenCapture.Supported;
 
-    /// <summary>The desktop with the windows of <paramref name="pids"/> over it, or the desktop alone when <paramref name="live"/> is false. Off the UI thread.</summary>
-    public async Task<ScreenPicture> TakeAsync(IReadOnlyCollection<uint> pids, bool live)
+    /// <summary>The desktop with the windows of <paramref name="pids"/> over it, or the desktop alone when <paramref name="live"/> is false, scaled to fit 1280 x 800. Off the UI thread.</summary>
+    public async Task<ScreenFrame> CaptureAsync(IReadOnlyCollection<uint> pids, bool live)
     {
         await one.WaitAsync();
         try
         {
             var wall = await WallpaperAsync();
             var frame = await Task.Run(() => ScreenCapture.Capture(live ? pids : [], wall));
-            var small = ScreenCapture.Scaled(frame, ScreenCapture.Width, MaxHeight);
-            return new ScreenPicture(await JpegAsync(small), small.Width, small.Height);
+            return ScreenCapture.Scaled(frame, ScreenCapture.Width, MaxHeight);
         }
         finally { one.Release(); }
+    }
+
+    /// <summary>The same as a JPEG.</summary>
+    public async Task<ScreenPicture> TakeAsync(IReadOnlyCollection<uint> pids, bool live)
+    {
+        var small = await CaptureAsync(pids, live);
+        return new ScreenPicture(await JpegAsync(small), small.Width, small.Height);
     }
 
     /// <summary>The wallpaper covering the screen, from the file Windows names (or its own copy of it); null when there is none to read.</summary>

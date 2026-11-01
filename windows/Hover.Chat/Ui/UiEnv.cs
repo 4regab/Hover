@@ -1,3 +1,4 @@
+using Hover.Chat.Desk;
 using Hover.Host.Protocol;
 
 namespace Hover.Chat.Ui;
@@ -35,6 +36,9 @@ public sealed class UiEnv
     public Action<string>? OpenUrl { get; init; }
 
     public Action<string>? Log { get; init; }
+
+    /// <summary>The Screen tab's pictures; null where the app cannot take them (the tab is grey).</summary>
+    public IScreenFeed? Screen { get; init; }
 
     /// <summary>Opens Settings (the top menu's Settings row); null leaves the row out.</summary>
     public Action? OpenSettings { get; init; }

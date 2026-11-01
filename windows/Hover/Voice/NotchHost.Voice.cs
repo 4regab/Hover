@@ -47,10 +47,28 @@ sealed partial class NotchHost
                     var typed = panels.Ui.ReplyText;
                     var gap = typed.Length == 0 || char.IsWhiteSpace(typed[^1]) ? "" : " ";
                     panels.Ui.Char(gap + heard.Text);
+                    // Screenshots said for go with the reply, as pasted ones do (the files are the backend's, in kiro-images).
+                    var images = Path.Combine(folder, "kiro-images");
+                    foreach (var shot in heard.Shots)
+                        if (DictationShots.UrlOf(shot, images) is { } url) panels.Ui.AttachShot(false, url);
+                    ShowDictation("");
                     QueueRender();
                 });
+                // Under the box: what dictation is doing, and why it could not for five seconds (not a balloon).
+                voice.Service.Changed += st => queue.TryEnqueue(() => Guard("voice", () => DictationStage(st)));
+                voice.DictationFailed += why => Guard("voice", () =>
+                {
+                    dictationError = why;
+                    ShowDictation(why);
+                    _ = Task.Delay(5000).ContinueWith(_ => queue.TryEnqueue(() => Guard("voice", () =>
+                    {
+                        if (dictationError != why) return;
+                        dictationError = "";
+                        ShowDictation("");
+                    })));
+                });
             }
-            voice.DictationFailed += why => Guard("voice", () => window.TrayNotify("Voice", why));
+            else voice.DictationFailed += why => Guard("voice", () => window.TrayNotify("Voice", why));
         }
         catch (Exception e)
         {
@@ -61,6 +79,33 @@ sealed partial class NotchHost
     }
 
     public VoiceHost? Voice => voice;
+
+    string dictationError = "";
+
+    void ShowDictation(string line)
+    {
+        if (panels is null) return;
+        panels.Ui.DictationLine = line;
+        QueueRender();
+    }
+
+    /// <summary>"Listening…" while the words are said and "Writing it down…" until they are in the box (internal/shell/voice.go dictationChanged).</summary>
+    void DictationStage(VoiceState st)
+    {
+        if (voice?.Service.Dictating != true)
+        {
+            // Done, or turned away: what an error said stays its five seconds.
+            if (dictationError.Length == 0) ShowDictation("");
+            return;
+        }
+        dictationError = "";
+        ShowDictation(st.Stage switch
+        {
+            VoiceStage.Recording => "Listening…",
+            VoiceStage.Loading or VoiceStage.Transcribing or VoiceStage.Cleaning => "Writing it down…",
+            _ => "",
+        });
+    }
 
     /// <summary>The card to draw in the resting notch, or null; keeps the scene's copy.</summary>
     VoiceView? VoiceCurrent()

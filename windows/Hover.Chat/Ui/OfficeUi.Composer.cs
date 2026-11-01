@@ -93,8 +93,31 @@ public sealed partial class OfficeUi
             var sl = Pen.F(11.5, 400, Rgba.Of(0xffc46b));
             var sw = pen.Width("Stopping…", sl);
             pen.Text("Stopping…", rx - sw, cy + (30 - pen.LineHeight(sl)) / 2, sl);
+            rx -= 64;
+        }
+        // What dictation into this box is doing ("Listening…", "Writing it down…"), or why it could not (internal/ui/officechat.go).
+        if (DictationLine.Length > 0)
+        {
+            var vl = Pen.F(11.5, 400, Rgba.Of(0xff8fa3));
+            var vw = Math.Min(pen.Width(DictationLine, vl), 120);
+            pen.Text(DictationLine, rx - vw, cy + (30 - pen.LineHeight(vl)) / 2, vl, 120);
         }
         PaintPop(bx, by, bw);
+    }
+
+    string dictationLine = "";
+
+    /// <summary>What dictation into the reply box is doing, said at the right of the box's bar ("" for nothing); the app sets it.</summary>
+    public string DictationLine
+    {
+        get => dictationLine;
+        set
+        {
+            value ??= "";
+            if (dictationLine == value) return;
+            dictationLine = value;
+            Dirty = true;
+        }
     }
 
     /// <summary>The last reply that carried pictures or chips, kept for a moment: the backend may refuse one of them.</summary>

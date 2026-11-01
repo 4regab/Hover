@@ -217,7 +217,17 @@ public sealed partial class OfficeUi
         OpenDeskPanel(id, surface);
     }
 
-    List<DeskTile> Tiles(SessionInfo s) => DeskTiles.Of(Got(s.Id, "probe"), s, null, 0);
+    List<DeskTile> Tiles(SessionInfo s)
+    {
+        var tiles = DeskTiles.Of(Got(s.Id, "probe"), s, null, 0);
+        // The Screen tab is the app's to show: grey where it takes no pictures.
+        if (env.Screen is not { Supported: true })
+        {
+            var i = tiles.FindIndex(t => t.Id == "screen");
+            if (i >= 0) tiles[i] = tiles[i] with { Enabled = false, Reason = DeskTiles.ScreenNote };
+        }
+        return tiles;
+    }
 
     // MARK: Asking
 
