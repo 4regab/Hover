@@ -219,12 +219,16 @@ says (`ghTitle`, `ghBusy`).
 
 ### The desk, the reply box and the office's panels
 
-A click on a desk in the office (`DeskPicked`) opens the desk card (`OfficeUi.DeskCard.cs`) beside the bot,
-where the office says the bot is (`OfficeHost.BotScreenRect`), else at the top right. Its tiles follow
-the backend's `desk` probe: Terminal, Files, Diff, Pull request, Linked, Agents. A tile opens the desk
+A click on a desk in the office (`DeskPicked`, with the place of the click) opens the desk card
+(`OfficeUi.DeskCard.cs`) there, 6 to the right and 12 above the click and held inside the office, as
+`internal/ui/officeview.go` places it; with no click it sits by the bot (`OfficeHost.BotScreenRect`), else at the
+top right. The office takes the pointer only where the panels have nothing (`OfficeHost.Covered`): a press the
+panels take is not also a click on the office behind them, and the office lets go of the pointer after it has read
+the click, not before. Its tiles follow the backend's `desk` probe: Terminal, Files, Diff, Pull request, Linked, Agents. A tile opens the desk
 panel (`OfficeUi.DeskPanel.cs`) with the tab's rows, which `Hover.Chat\Desk\DeskRows.cs` makes from the
 backend's answers as `internal/app/desk.go` does. The card also holds the last steps, the permission
-buttons (Allow, Trust, Deny), the question buttons and a reply box. Over the office everything the backend
+buttons (Allow, Trust, Deny), the question buttons, a line saying how many helpers the bot has out at its
+desk (the office's tag, `OfficeHost.HelpersOf`) and a reply box. Over the office everything the backend
 sends comes through `desk`, `term`, `writeFile`, `editors`, `openIn`, `deskAction` and `gh` (`Hover.Host\Protocol\Desk.cs`).
 
 - **Terminal:** PowerShell in the session's folder (the backend runs it): run, interrupt, clear. The output
@@ -247,13 +251,21 @@ sends comes through `desk`, `term`, `writeFile`, `editors`, `openIn`, `deskActio
   (`OfficeHost.PropPicked`, `ShowPanel`). History lists the saved chats by day, finds and deletes them, and
   lists Kiro Web and Kiro CLI sessions with a click to adopt one (`webSessions`, `adoptWeb`, `cliSessions`,
   `adoptCli`).
-- **Not on Windows, as in Go:** the helpers (`agents.OrchMcpSupported()` is false on Windows,
-  `internal/agents/orch.go`; the menu item and the new-task helpers are gated in `internal/shell/chatact.go`
-  and `newtask.go`) and the Agent browser tab (`agents.BrowserSupported()` is macOS only). The Screen tab is
+- **Name tags, bubbles and tips** (`OfficeUi.Tags.cs`, `OfficeUi.Tip.cs`): each bot has its tag standing on the point
+  the office gives (`OfficeHost.Tags`): the tool's mark and the bot's name, a bubble with what it says, and a
+  click on the tag opens its chat. A question stands on the tag in place of the bubble, and not at all while that
+  desk's card is open (the card shows it). Beside the pointer, a tip says "Chat with Pip" over a bot,
+  "Pip's desk" with what the desk holds over a desk, and a prop's own hint ("Session board"). The bubble's tail
+  and Go's pixel face for names and hints are not drawn.
+- **Not on Windows, as in Go:** Hover's own helpers (the Helpers switch and the agents' helper rows;
+  `agents.OrchMcpSupported()` is false on Windows, `internal/agents/orch.go`; the menu item and the new-task
+  helpers are gated in `internal/shell/chatact.go` and `newtask.go`) and the Agent browser tab (`agents.BrowserSupported()` is macOS only). The Screen tab is
   the Screen panel of Phase 5.
 
 `hoverai.exe --shots DIR` also writes the desk's pictures with the Go pictures' names (`desk-*`, `expand-*`,
-`office-panel-*`, and the reply box's `chat-*`), drawn by `Chat\DeskShots.cs`.
+`office-panel-*`, and the reply box's `chat-*`), drawn by `Chat\DeskShots.cs` over the real office: the sessions
+sit at their desks (`OfficeHost.ShowForShot`), so the card, the tags and the helpers are where the office puts them.
+The pictures take none of the backend's answers about their made-up sessions (`UiCore.FreezeState`).
 
 ### Voice, sound and music
 

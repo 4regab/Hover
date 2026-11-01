@@ -144,7 +144,8 @@ What `windows\Hover.Tests` covers:
   edge and lands elsewhere.
 - **The desk** (any system): `DeskTests` (the card and its tiles, the tabs' rows, the terminal, a file opened, edited
   and refused, a binary file, a file that went, the diff with its numbers and a 50,000-line diff cut at its budget,
-  agents, the pull request tab with and without the GitHub CLI, Open in, the cloud chip, the card's keys) and
+  agents, the pull request tab with and without the GitHub CLI, Open in, the cloud chip, the card at the place of the
+  click with its helpers line, the name tags and the tips, the card's keys) and
   `DeskReplyTests` (the stop square, a queue held after a stop, pictures pasted and refused, `@` and `/` lists, chips
   and a chip the backend refuses, the model menu, the board, the history, the Kiro Web and Kiro CLI lists and adopt)
   with a made-up backend; `DeskBackendTests` against a real `hover-backend` (the folder's data, the shell in the
