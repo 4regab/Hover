@@ -581,17 +581,24 @@ sealed class NotchHost : IDisposable
 
     // MARK: Animation
 
-    bool Moving => ctl.Animating || fade.Active(Now) || rise.Active(Now) || (animations && island.Seg.Kind is SegKind.Work or SegKind.Ask && ctl.State == NotchState.Rest);
+    // The shape and the changing words move at 60 frames a second; the rings of the agents at work
+    // turn at 30, as the Go app's clock does.
+    bool Moving => ctl.Animating || fade.Active(Now) || rise.Active(Now);
+
+    bool Turning => animations && island.Seg.Kind is SegKind.Work or SegKind.Ask && ctl.State == NotchState.Rest;
 
     void EnsureAnimating()
     {
-        if (Moving) { if (!animTimer.IsRunning) animTimer.Start(); }
+        if (!Moving && !Turning) return;
+        animTimer.Interval = TimeSpan.FromMilliseconds(Moving ? 16 : 33);
+        if (!animTimer.IsRunning) animTimer.Start();
     }
 
     void Animate()
     {
         Render();
-        if (!Moving) animTimer.Stop();
+        if (!Moving && !Turning) animTimer.Stop();
+        else animTimer.Interval = TimeSpan.FromMilliseconds(Moving ? 16 : 33);
     }
 
     // MARK: The tray

@@ -65,7 +65,10 @@ static class NotchShots
         yield return new Shot("notch-rest-pill-2x", 2, 60, Make([Session(1, "kiro", "waking", "Waking up"), Session(2, "codex", "working", "Reading", "npm test")]), T: 1.3);
         // An end nobody has seen: the tool's mark with its badge and the task.
         yield return new Shot("notch-rest-done-2x", 2, 60, Make([], new Unseen(2, "codex", EndState.Completed, "Look for dead code", 187)));
-        yield return new Shot("notch-rest-working-2x", 2, 60, Make([Session(1, "kiro", "working", "Editing", "refresh.ts"), Session(2, "cursor", "working", "Running", "npm test")]), T: 0.4);
+        // Two agents at work, the second one Cursor.
+        yield return new Shot("notch-rest-working-2x", 2, 60, Make([Session(1, "kiro", "waking", "Waking up"), Session(2, "cursor", "working", "Running", "npm test")]), T: 0.4);
+        // What an agent does, in the verb and the object: Editing refresh.ts.
+        yield return new Shot("notch-rest-activity-2x", 2, 60, Make([Session(1, "kiro", "working", "Editing", "refresh.ts"), Session(2, "cursor", "working", "Running", "npm test")]), T: 0.4);
         var asking = Session(1, "kiro", "waiting", "Reading", ask: NpmInstall);
         yield return new Shot("notch-rest-ask-2x", 2, 60, Make([asking]), T: 0.4, Glow: 0xffb340);
         yield return new Shot("notch-rest-card-2x", 2, 220, Make([asking], card: true), NpmCard, 0.4, Glow: 0xffb340);
