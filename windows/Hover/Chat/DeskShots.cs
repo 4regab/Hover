@@ -353,7 +353,7 @@ static class DeskShots
             ui.AttachChip(2, new Hover.Chat.Desk.Chip("terminal", "npm test", "npm test", "FAIL src/view.test.ts"));
         }, false);
         await Pic(core, dir, "office-chat-images", 1200, 720, () => { ui.ChatView = false; ui.AttachShot(false, OnePixel); ui.AttachShot(false, OnePixel); }, true);
-        await Pic(core, dir, "chat-view-chat-model-menu", 1200, 720, () => { ui.ChatView = true; Frame(1200, 720); ui.Click("modelPill"); }, false);
+        await Pic(core, dir, "chat-view-chat-model-menu", 1200, 720, () => { ui.Accept(new PreferencesEvent { KiroAutoCompact = true, KiroCompactAt = 80 }); ui.ChatView = true; Frame(1200, 720); ui.Click("modelPill"); }, false);
         var held = ChatShots.Session(4, "kiro", "A long run", "done", 3, ChatShots.Turn("Refactor", "Stopped.", "stopped", 2), ChatShots.Turn("And then add a test", "", "done", 0) with { Queued = true, Uid = "u1" }) with { Held = true };
         await Pic(core, dir, "chat-held-note", 1200, 720, () => { ui.Key(UiKey.Escape, UiMods.None); ChatOf(held); }, false);
         await Pic(core, dir, "chat-default-reply-pause", 1200, 720, () => { ui.Accept(ChatShots.State(ChatShots.Busy())); ui.CloseChat(); ui.OpenChat(1); Frame(1200, 720); ui.Click("compose"); }, false);

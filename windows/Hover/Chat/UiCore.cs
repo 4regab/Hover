@@ -87,7 +87,7 @@ sealed class UiCore : IDisposable
     /// </summary>
     static bool Frozen(BackendEvent e) => e is StateEvent or ToastEvent or TermEvent or WriteFileEvent or EditorsEvent or OpenInEvent or DeskEvent
         or DeskActionEvent or GhEvent or ForkEvent or BringBackEvent or SwitchProviderEvent or QueueRemoveEvent or WebSessionsEvent or CliSessionsEvent
-        or AdoptWebEvent or AdoptCliEvent;
+        or AdoptWebEvent or AdoptCliEvent or PreferencesEvent;
 
     public UiCore(Gfx gfx, DispatcherQueue queue, BackendSession backend, string dataDir, OfficeHost? office, bool inNotch)
     {
