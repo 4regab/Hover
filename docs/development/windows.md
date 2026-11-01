@@ -85,3 +85,54 @@ tests run on Windows too.
 - Tray and notifications, the shortcut (`RegisterHotKey`), the notch window's click-through and
   focus rules: `internal/platform/win` and `internal/shell/env_windows.go`.
 - Codex's Read only mode isn't offered: Codex has no sandbox on Windows.
+
+## The C# app (branch `windows-csharp`)
+
+The Windows app is being rewritten in C# with WinUI 3, on top of the same Go backend the
+Mac app uses. The plan is [windows-csharp.md](windows-csharp.md). The Go app above stays the
+Windows build until the owner switches over (`build.ps1 legacy`). The C# code is in
+`windows/`; the solution is `windows\Hover.Windows.slnx`.
+
+| Project | What it is |
+|---|---|
+| `windows\Hover` | `hoverai.exe`: a code-first WinUI 3 app (no `.xaml` files), unpackaged and self-contained. |
+| `windows\Hover.Host` | No WinUI. Starts `hover-backend.exe` in a job object, speaks JSON lines to it, keeps `note.key` (DPAPI), data folder paths, the single-instance names, the old-service removal. |
+| `windows\Hover.Office` | The Direct3D 11 office. Empty until its phase. |
+| `windows\Hover.TestTools` | Programs the tests start: stand-ins for `codex-acp` and `codex`, a backend that misbehaves on purpose, a host to be killed. |
+| `windows\Hover.Tests` | `dotnet test`. |
+| `windows\tools\gofixture` | A small Go program for the tests: writes and reads a secret with the Go code. |
+
+Prerequisites: the .NET 10 SDK (`winget install Microsoft.DotNet.SDK.10`) and Go as above. No
+Visual Studio. The Windows App SDK, Windows SDK build tools and test packages come from NuGet.
+
+```powershell
+$env:CGO_ENABLED = '0'
+go build -o out\bin\hover-backend.exe ./cmd/hover-backend
+dotnet build windows\Hover.Windows.slnx -c Release
+Copy-Item out\bin\hover-backend.exe windows\Hover\bin\Release\net10.0-windows10.0.22621.0\win-x64\
+$env:HOVER_DATA_DIR = "$env:TEMP\hover-dev"          # your own data folder, never the real one
+windows\Hover\bin\Release\net10.0-windows10.0.22621.0\win-x64\hoverai.exe
+```
+
+`hoverai.exe` looks for `hover-backend.exe` in its own folder. The `dotnet build` output is
+runnable as it is (self-contained). Packaging it is a later phase.
+
+- `hoverai.exe --background` starts without a window. A second launch then opens the dashboard,
+  as it will for a Hover started at login.
+- `hoverai.exe --shots DIR` draws the app's views into JPEG files (at most 1400 px wide) with
+  `RenderTargetBitmap`, from inside the app, and exits. No screen capture. It does not take the
+  single-instance claim.
+- Single instance: the named mutex `Local\HoverRunningInstance`, and the event
+  `Local\HoverShowApp` that a second launch sets. These are the Go app's names, so a Go copy
+  and a C# copy keep out of each other's way.
+- The log is `hover.log` in the data folder; the C# host and the Go backend append to the same file.
+
+The key rules for `note.key` (set aside, never overwritten) are in
+[windows-csharp.md](windows-csharp.md#c-data-formats); `Hover.Host/HistoryKey.cs` follows them.
+
+On Linux, `dotnet build windows/Hover.Host`, `Hover.TestTools` and `Hover.Tests` work, and so
+does the compile of `windows/Hover` (`dotnet msbuild windows/Hover/Hover.csproj -restore
+-t:CoreCompile -p:EnableWindowsTargeting=true -p:WindowsAppSDKSelfContained=false
+-p:SelfContained=false`). A full build of `windows/Hover` does not run there: the Windows App
+SDK build runs `mt.exe` and `MakePri.exe`, which are Windows programs. The runner is the build
+that counts.

@@ -1,0 +1,111 @@
+name: Windows C# (dev)
+
+# The C# Windows app on its own branch, while it is being written. Every push to windows-csharp
+# builds the Go programs it needs, makes a Go-written data folder, builds windows/, runs every
+# test project under windows/, draws the app's picture and keeps all of it in one artifact.
+# Phase 6 of the plan folds this into ci.yml and deletes it. No secrets.
+#
+# Later work needs no edit here: every windows/*.Tests/*.csproj is tested, and whatever a test
+# or step puts under out/ is uploaded.
+on:
+  push:
+    branches: ['windows-csharp']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One group per commit: pushes that follow each other never cancel a run in progress.
+concurrency:
+  group: windows-csharp-dev-${{ github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  windows:
+    runs-on: windows-2022
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+      DOTNET_NOLOGO: '1'
+      CGO_ENABLED: '0'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      # The Go side: the backend the app starts, the tool that makes and checks data folders,
+      # and gofixture (windows/tools), which writes and reads a secret with the Go code.
+      - name: Go programs
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          New-Item -ItemType Directory -Force out\bin, out\logs | Out-Null
+          go build -o out\bin\hover-backend.exe ./cmd/hover-backend
+          go build -o out\bin\hover-data.exe ./cmd/hover-data
+          go build -o out\bin\gofixture.exe ./windows/tools/gofixture
+          Get-ChildItem out\bin | Select-Object Name, Length | Format-Table | Out-String | Write-Host
+
+      # note.key is wrapped for the Windows user (DPAPI), so a data folder the Go code writes
+      # can only be read where it was written: it is made and read inside this one job.
+      - name: Go data folder (settings, key, sealed history)
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          $fx = Join-Path $env:RUNNER_TEMP 'fixture-go'
+          New-Item -ItemType Directory -Force $fx, "$fx\project" | Out-Null
+          Set-Content -Path "$fx\answer.md" -Value 'Sample **answer**.'
+          $env:HOVER_DATA_DIR = $fx      # Go's log goes here, not to the runner's %APPDATA%
+          $hd = (Resolve-Path out\bin\hover-data.exe).Path
+          & $hd write $fx "$fx\project" 2 "$fx\answer.md"   # prints the session key
+          & $hd dump  $fx                                   # expect: history: 1 sessions
+          & $hd check $fx                                   # exit 0: Go would save the same bytes
+          "HOVER_FIXTURE_GO=$fx" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+
+      - name: Build windows\Hover.Windows.slnx
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          dotnet build windows\Hover.Windows.slnx -c Release 2>&1 | Tee-Object out\logs\build.log
+
+      # Every test project under windows\, found by name, not by a list.
+      - name: Tests
+        timeout-minutes: 20
+        run: |
+          $env:HOVER_BACKEND = (Resolve-Path out\bin\hover-backend.exe).Path
+          $env:HOVER_DATA_TOOL = (Resolve-Path out\bin\hover-data.exe).Path
+          $env:HOVER_GOFIXTURE = (Resolve-Path out\bin\gofixture.exe).Path
+          $projects = Get-ChildItem windows -Directory -Filter '*.Tests' | ForEach-Object { Get-ChildItem $_.FullName -Filter '*.csproj' }
+          if (-not $projects) { throw 'no test project under windows\' }
+          $failed = @()
+          foreach ($p in $projects) {
+            "::group::dotnet test $($p.Name)"
+            dotnet test $p.FullName -c Release `
+              --logger "trx;LogFileName=$($p.BaseName).trx" `
+              --logger "console;verbosity=normal" `
+              --results-directory out\test-results
+            if ($LASTEXITCODE -ne 0) { $failed += $p.Name }
+            "::endgroup::"
+          }
+          if ($failed) { throw "failed: $($failed -join ', ')" }
+
+      - name: Summary
+        if: always()
+        run: |
+          $lines = @('### Windows C# (dev)', '')
+          foreach ($trx in Get-ChildItem out\test-results -Filter *.trx -ErrorAction SilentlyContinue) {
+            $c = ([xml](Get-Content $trx.FullName)).TestRun.ResultSummary.Counters
+            $lines += "- $($trx.BaseName): $($c.passed) passed, $($c.failed) failed, $($c.total - $c.executed) not run (of $($c.total))"
+          }
+          $lines | Out-File -Append -Encoding utf8 $env:GITHUB_STEP_SUMMARY
+          $lines
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: windows-csharp-${{ github.sha }}
+          path: out/
+          if-no-files-found: error

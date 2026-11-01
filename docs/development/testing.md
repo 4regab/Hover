@@ -80,3 +80,51 @@ Real agents (Kiro, Codex, Cursor, OpenCode, Claude Code) with approvals, a real 
 native macOS UI and permissions, and the Linux window on a real compositor are not exercised
 by the routine CI workflow. The longer macOS stand-in E2E is documented above and can be run
 on a Mac.
+
+## The C# Windows app
+
+`.github/workflows/windows-csharp-dev.yml` runs on every push to `windows-csharp` (Phase 6
+folds it into `ci.yml`). On `windows-2022` it:
+
+- builds `hover-backend.exe`, `hover-data.exe` and `gofixture.exe` from the Go code;
+- makes a Go data folder (`hover-data write`, then `dump` and `check`) and keeps it in the same
+  job, because `note.key` is bound to the Windows user and cannot be carried to another machine;
+- builds `windows\Hover.Windows.slnx`;
+- runs `dotnet test` on every `windows\*.Tests\*.csproj` it finds, so a new test project needs no
+  workflow change;
+- runs `hoverai.exe --shots` with an empty data folder;
+- uploads everything under `out\` as one artifact (`windows-csharp-<sha>`): test results (`.trx`),
+  build and app logs, pictures.
+
+What `windows\Hover.Tests` covers:
+
+- **The backend flows of `tests/macos/backend-smoke.py`**, run by the C# host against the real
+  `hover-backend` and `Hover.TestTools` in place of Codex: settings, a task with its permission
+  question and a reply, the desk panels, sealed history and a wrong key, a restart, stop, and the
+  host's end closing the backend's stdin. Computer use is a Mac feature and is not part of them.
+- **The line client's inputs**: bad JSON, bytes that are not UTF-8, a line over the limit (and
+  the first line past it), a very large line under the limit, an unknown message type, a known
+  type with fields of the wrong kind, CRLF, a handler that throws, and a backend that exits in
+  the middle of a command.
+- **Data compatibility**: the Go-written folder opened by C# (the key through DPAPI, the sealed
+  history and a secret read by test code of its own, then the backend started by the host), and the
+  C#-written folder read by `hover-data dump` and `check` and `gofixture`.
+- **Windows only**: DPAPI, the job object (what is in it dies with its handle; its children too),
+  killing a host process kills the backend and the agent's child, single instance, the old
+  "Hover Service" task removal, and `hoverai.exe` itself (a second launch exits, the first opens
+  its dashboard; killing it kills its backend; `--shots` writes a JPEG).
+
+Run it by hand (on Windows or, for everything not marked Windows only, on Linux). The tests start
+real programs and want these set, as the workflow does:
+
+```powershell
+$env:HOVER_BACKEND    = "out\bin\hover-backend.exe"     # go build ./cmd/hover-backend
+$env:HOVER_DATA_TOOL  = "out\bin\hover-data.exe"        # go build ./cmd/hover-data
+$env:HOVER_GOFIXTURE  = "out\bin\gofixture.exe"         # go build ./windows/tools/gofixture
+$env:HOVER_FIXTURE_GO = "$env:TEMP\fixture-go"           # made by: hover-data write <dir> <dir>\project 2 <dir>\answer.md
+$env:HOVER_APP_EXE    = "windows\Hover\bin\Release\...\hoverai.exe"   # optional: the app's own checks
+dotnet test windows\Hover.Tests
+```
+
+A test whose program is missing fails; it is not skipped. On Linux the key is the Go app's plain
+file, so the DPAPI parts are skipped and the rest runs.

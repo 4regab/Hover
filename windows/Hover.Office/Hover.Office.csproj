@@ -1,0 +1,7 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Phase 3 fills this in (the Direct3D 11 office). Empty on purpose until then. -->
+  <PropertyGroup>
+    <TargetFramework>net10.0-windows10.0.22621.0</TargetFramework>
+    <RootNamespace>Hover.Office</RootNamespace>
+  </PropertyGroup>
+</Project>
