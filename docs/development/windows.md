@@ -282,7 +282,10 @@ sends comes through `desk`, `term`, `writeFile`, `editors`, `openIn`, `deskActio
   Stop command; `internal/shell/chatact.go` `sendReply`). Up to four pictures of at most 8 MiB each from
   Ctrl+V of a clipboard bitmap or the attach button; `@` lists the folder's files and a pick is a chip sent
   with the reply (`ReplyCommand.Chips`); `/` lists the agent's commands and Hover's; the model pill opens the
-  model menu and sends `setModel`. A reply the backend refuses (it says so in a toast) comes back into the
+  model menu and sends `setModel`; Kiro's menu ends with its compact row ("Auto compact at 80%", from the
+  backend's `preferences`), which opens Settings at Kiro's page, and the context ring in the chat's header has a tick
+  at that percent; the other agents' menus end with a note. The cloud chip in the header shows for a Kiro Web task
+  whose `kiroId` the backend has sent and opens its page on Kiro Web. A reply the backend refuses (it says so in a toast) comes back into the
   box with its words, chips and pictures.
 - **The office's board, TV and history panels** (`OfficeUi.Lists.cs`) open over the office from the props
   (`OfficeHost.PropPicked`, `ShowPanel`). History lists the saved chats by day, finds and deletes them, and

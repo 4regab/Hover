@@ -59,6 +59,9 @@ sealed class PanelHarness
     /// <summary>The made-up backend's answers to the desk's commands, in the order they were asked.</summary>
     public Action<BackendCommand>? Respond;
 
+    /// <summary>The page of Settings the panels ask for by name.</summary>
+    public Action<string>? OpenPage;
+
     /// <summary>What the system's picture dialog answers.</summary>
     public Func<PickedImage?>? Pick;
 
@@ -69,6 +72,7 @@ sealed class PanelHarness
             Send = Send,
             Clipboard = Clip,
             PickImage = () => Pick?.Invoke(),
+            OpenSettingsPage = page => OpenPage?.Invoke(page),
             Utc = () => new DateTime(2026, 11, 1, 7, 20, 0, DateTimeKind.Utc),
         });
     }

@@ -43,6 +43,9 @@ public sealed class UiEnv
     /// <summary>Opens Settings (the top menu's Settings row); null leaves the row out.</summary>
     public Action? OpenSettings { get; init; }
 
+    /// <summary>Opens Settings at a page by name ("kiro": the model menu's compact row); null leaves that row without effect.</summary>
+    public Action<string>? OpenSettingsPage { get; init; }
+
     /// <summary>The panels are in the notch (a prompt over the bot is shown there) rather than the app window.</summary>
     public bool InNotch { get; init; }
 

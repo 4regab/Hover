@@ -664,6 +664,10 @@ public class DeskTests
         Assert.True(ui.Click("openCloud"));
         // internal/shell/chatact.go dOpenCloud: agents.KiroWebSession + the session's id.
         Assert.Equal(["https://app.kiro.dev/session/abc%201"], opened);
+        // Without the id (the backend sends it once the first turn has told it) the chip is not there, as in Go (d.Cloud needs KiroID).
+        ui.Accept(new StateEvent { Tools = [new ToolInfo { Id = "kiro", Name = "Kiro", Ready = true }], Sessions = [Done() with { Cloud = [] }] });
+        ui.Paint(new RecordingCanvas(), 1200, 720, 1000);
+        Assert.False(ui.Click("openCloud"));
     }
 
     [Fact]

@@ -475,6 +475,7 @@ public sealed partial class OfficeUi
                 rows.Add(new MenuRow(t.EffortLabel.Length > 0 ? t.EffortLabel : "Effort", Header: true));
                 foreach (var l in levels) rows.Add(new MenuRow(l, "effort:" + l, On: l == effort));
             }
+            rows.AddRange(ModelFooter(t));
             return rows;
         }
         OpenMenu("rmodel", at, Rows(), true, 240, build: Rows);
@@ -482,6 +483,7 @@ public sealed partial class OfficeUi
 
     void ReplyModelPick(MenuRow row)
     {
+        if (row.Id == "compact") { env.OpenSettingsPage?.Invoke("kiro"); return; }
         if (Current() is not { } s || ToolOf(s.Tool) is not { } tool) return;
         var model = tool.Model;
         var effort = tool.Effort;

@@ -35,6 +35,9 @@ sealed class UiCore : IDisposable
     /// <summary>The top menu's Settings row was picked. Raised on the UI thread.</summary>
     public event Action? SettingsRequested;
 
+    /// <summary>The panels asked for a page of Settings by name ("kiro").</summary>
+    public event Action<string>? SettingsPageRequested;
+
     /// <summary>Something wants a new frame (a message arrived, a picture came in). Raised on the UI thread.</summary>
     public event Action? Changed;
 
@@ -109,6 +112,7 @@ sealed class UiCore : IDisposable
             Log = HostLog.Line,
             InNotch = inNotch,
             OpenSettings = () => SettingsRequested?.Invoke(),
+            OpenSettingsPage = page => SettingsPageRequested?.Invoke(page),
             Screen = ScreenFeed = new Hover.Screening.ScreenFeed(new Hover.Screening.ScreenSource(), Images, queue),
         });
         onEvent = e => queue.TryEnqueue(() =>

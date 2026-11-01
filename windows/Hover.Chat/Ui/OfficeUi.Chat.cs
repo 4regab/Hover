@@ -295,16 +295,27 @@ public sealed partial class OfficeUi
             // A small ring that fills as the context does.
             var ring = (float)Math.Clamp(ctx / 100.0, 0, 1);
             pen.Icon("<circle cx=\"12\" cy=\"12\" r=\"9\" opacity=\".25\"/>" + ArcBody(ring), hx + 7, cy + 6, 12, ctx >= 90 ? Pen.Red : ctx >= 70 ? Pen.Amber : Pen.Dim, 3);
+            // Kiro's auto compact: a short line across the ring where the chat is compacted (internal/ui/officechat.go headChip).
+            if (s.Tool == "kiro" && kiroAutoCompact && kiroCompactAt is > 0 and <= 100) pen.Icon(TickBody(kiroCompactAt), hx + 7, cy + 6, 12, Rgba.Of(0x7fe3d4), 2);
             pen.Text(label, hx + 7 + 12 + 5, cy + (24 - pen.LineHeight(Pen.F(11, 500, Pen.Dim))) / 2, Pen.F(11, 500, Pen.Dim));
             hx += cw + 6;
         }
-        if (s.Cloud is not null && hx < right)
+        if (HasWebPage(s) && hx < right)
         {
             var cy = y + (hdrH - 24) / 2;
             var hov = Over(new Rect4(hx, cy, 28, 24));
             pen.Icon(Glyphs.Cloud, hx + 7.5f, cy + 5.5f, 13, hov ? Rgba.Of(0xa9cbff) : Rgba.Of(0x8fbcff));
             Add(new Rect4(hx, cy, 28, 24), "openCloud");
         }
+    }
+
+    /// <summary>A short line across the context ring, turned clockwise from the top by the share (the 24-unit box of <see cref="ArcBody"/>).</summary>
+    static string TickBody(int at)
+    {
+        var a = 2 * Math.PI * at / 100;
+        double sa = Math.Sin(a), ca = Math.Cos(a);
+        var f = System.Globalization.CultureInfo.InvariantCulture;
+        return string.Create(f, $"<path d=\"M{12 + 6.5 * sa:0.###} {12 - 6.5 * ca:0.###}L{12 + 11.5 * sa:0.###} {12 - 11.5 * ca:0.###}\"/>");
     }
 
     static string ArcBody(float share)

@@ -228,9 +228,7 @@ public sealed partial class OfficeUi
                 OpenChat(t.N);
                 break;
             case "openCloud":
-                if (s?.Extra is { } ex && ex.TryGetValue("kiroId", out var kid) && kid.ValueKind == System.Text.Json.JsonValueKind.String)
-                    env.OpenUrl?.Invoke("https://app.kiro.dev/session/" + Uri.EscapeDataString(kid.GetString() ?? ""));
-                else Say("This cloud session has no web page yet.");
+                if (s is not null && HasWebPage(s)) env.OpenUrl?.Invoke("https://app.kiro.dev/session/" + Uri.EscapeDataString(KiroIdOf(s)));
                 break;
             case "compose":
                 compose = true;
@@ -423,7 +421,19 @@ public sealed partial class OfficeUi
             rows.Add(new MenuRow(tool?.EffortLabel is { Length: > 0 } el ? el : "Effort", Header: true));
             foreach (var l in levels) rows.Add(new MenuRow(l, "effort:" + l, On: l == effort));
         }
+        rows.AddRange(ModelFooter(tool));
         OpenMenu("model", at, rows, true, 240);
+    }
+
+    /// <summary>A Kiro Web task whose id at Kiro the backend has sent (<c>kiroId</c>, once the first turn has told it): the chip that opens its page needs both.</summary>
+    static bool HasWebPage(SessionInfo s) => s.Cloud is not null && KiroIdOf(s).Length > 0;
+
+    /// <summary>The end of a model menu (internal/shell/newtask.go): Kiro's row says when it compacts and opens its Settings; the others keep a note.</summary>
+    IEnumerable<MenuRow> ModelFooter(ToolInfo? tool)
+    {
+        yield return new MenuRow("", Rule: true);
+        if (tool?.Id == "kiro") yield return new MenuRow(kiroAutoCompact ? $"Auto compact at {kiroCompactAt}%" : "Auto compact is off", "compact");
+        else yield return new MenuRow("Used by " + (tool is null ? "the agent" : ToolDisplay(tool)) + " from its next turn.", Disabled: true);
     }
 
     void OpenMoreMenu(Rect4 at)
@@ -492,7 +502,8 @@ public sealed partial class OfficeUi
                 if (row.Id.Length > 0) taskAccess = row.Id;
                 break;
             case "model":
-                if (row.Id.StartsWith("model:", StringComparison.Ordinal))
+                if (row.Id == "compact") env.OpenSettingsPage?.Invoke("kiro");
+                else if (row.Id.StartsWith("model:", StringComparison.Ordinal))
                 {
                     taskModel = row.Id[6..].Length > 0 ? row.Id[6..] : null;
                     taskEffort = null;

@@ -201,6 +201,38 @@ public class DeskReplyTests
         Assert.Equal("rmodel", h.Ui.OpenMenuKind);
     }
 
+    [Fact]
+    public void The_model_menu_ends_with_Kiros_compact_row_that_opens_its_Settings_and_with_a_note_for_the_other_agents()
+    {
+        var h = new PanelHarness();
+        string? page = null;
+        h.OpenPage = p => page = p;
+        ToolInfo[] tools =
+        [
+            new() { Id = "kiro", Name = "Kiro", Ready = true, Model = "auto", Models = [new ModelInfo { Id = "auto", Name = "Auto" }] },
+            new() { Id = "codex", Name = "Codex", Ready = true, Models = [new ModelInfo { Id = "gpt", Name = "GPT" }] },
+        ];
+        h.Accept(new StateEvent { CanStart = true, Tool = "kiro", Folder = @"C:\work\project", Tools = [.. tools], Sessions = [Session(), Session(id: 2) with { Tool = "codex" }] });
+        h.Ui.ChatView = true;
+        h.Ui.OpenChat(1);
+        h.Frame();
+        Compose(h);
+        // Kiro's picker says when it compacts (internal/shell/newtask.go), as Settings has it.
+        Assert.True(h.Click("modelPill"));
+        Assert.Contains("Auto compact is off", h.Frame().Texts);
+        h.Accept(new PreferencesEvent { KiroAutoCompact = true, KiroCompactAt = 80 });
+        Assert.Contains("Auto compact at 80%", h.Frame().Texts);
+        Assert.True(h.Click("menu", s: "Auto compact at 80%"));
+        Assert.Equal("kiro", page);
+        // The other agents keep a note.
+        h.Ui.CloseChat();
+        h.Ui.OpenChat(2);
+        h.Frame();
+        Compose(h);
+        Assert.True(h.Click("modelPill"));
+        Assert.Contains("Used by Codex from its next turn.", h.Frame().Texts);
+    }
+
     // MARK: Pictures
 
     [Fact]

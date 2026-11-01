@@ -73,6 +73,10 @@ public sealed partial class OfficeUi
     public IReadOnlyList<Target> Targets => targets;
 
     /// <summary>The words a frame shows as a toast, if any.</summary>
+    /// <summary>Kiro's auto compact as Settings has it (the backend's <c>preferences</c>): the model menu's last row and the context ring's tick.</summary>
+    bool kiroAutoCompact;
+    int kiroCompactAt;
+
     public string? ToastText { get; private set; }
 
     double toastUntil;
@@ -178,6 +182,10 @@ public sealed partial class OfficeUi
                     focus = Focus.Reply;
                 }
                 else Say("That message already left the queue.");
+                break;
+            case PreferencesEvent p:
+                kiroAutoCompact = p.KiroAutoCompact;
+                kiroCompactAt = p.KiroCompactAt;
                 break;
             case ToastEvent t:
                 Say(t.Text);

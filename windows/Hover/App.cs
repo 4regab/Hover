@@ -150,6 +150,17 @@ public sealed class App : Application, IXamlMetadataProvider
                     if (notch is { } n && n.Controller.State != NotchState.Rest) configuring?.ShowInNotch(Section.General);
                     else OpenSettings();
                 };
+                // The reply box's model menu ends with Kiro's compact row, which opens Settings at Kiro's page.
+                if (panels is not null) panels.SettingsPageRequested += page =>
+                {
+                    var section = page == "kiro" ? Section.Kiro : Section.General;
+                    if (notch is { } n && n.Controller.State != NotchState.Rest) configuring?.ShowInNotch(section);
+                    else
+                    {
+                        OpenDashboard();
+                        configuring?.ShowInDashboard(section);
+                    }
+                };
                 // Hover on the Discord status, when the switch in Settings → Integrations is on.
                 discord = new DiscordHost(backend);
             }
