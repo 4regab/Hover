@@ -22,7 +22,8 @@ platform builds below. Pull requests run the workflow; pushes that only change M
   see its backend go), draws its pictures (`hoverai.exe --shots`), builds the installer and **installs
   the new setup four ways** (over the oldest Go release still published while that app runs, into a clean default
   folder, twice into a folder with spaces in its name (the second time while the app runs), and over a 2.x install), each time checking what the
-  installer promises and uninstalling; and checks that the Go Windows app still builds (`build.ps1 legacy installer`);
+  installer promises and uninstalling; runs `build.ps1 legacy` in Windows PowerShell 5.1 (`powershell.exe`; every other step uses PowerShell 7), and checks that
+  the Go Windows app still builds (`build.ps1 legacy installer`);
 - builds the Linux `.deb` and tarball (compiled, not run: the runner has no Wayland desktop);
 - builds the macOS app and runs its **packaged backend** against stand-in tools. This checks
   the backend process and protocol, not the native Swift UI or its permission prompts.

@@ -1,7 +1,7 @@
 # Developing Hover on Windows
 
 Windows 10 or 11, x86-64. All commands run from the repository root in PowerShell 7
-(`pwsh`). Windows PowerShell 5.1 works for `build.ps1` too.
+(`pwsh`). Windows PowerShell 5.1 works for `build.ps1` too (CI runs `build.ps1 legacy` in it).
 
 The Windows app is C#: a WinUI 3 program in `windows/` (`hoverai.exe`) that starts the same Go
 backend the Mac app uses (`cmd/hover-backend`, as `hover-backend.exe`) and speaks JSON lines to it.

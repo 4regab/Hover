@@ -290,6 +290,20 @@ jobs:
       - name: Install over 5.x, clean install, over 2.x, uninstall
         timeout-minutes: 25
         run: ./tools/installer-check.ps1 -Setup "dist\Hover-Setup-$env:RELEASE_VERSION.exe" -Old $env:OLD_SETUP -Built publish\hoverai.exe -Out out\installer -ExpectVersion $env:RELEASE_VERSION
+      # docs/development/windows.md says build.ps1 works in Windows PowerShell 5.1 (powershell.exe, the
+      # one every Windows 10 and 11 has) as well as PowerShell 7 (pwsh, which every step above uses). The
+      # script is parsed whole by 5.1 and its quickest build (the Go app, no dotnet; it also downloads
+      # wgpu_native.dll) is run by it.
+      - name: build.ps1 in Windows PowerShell 5.1
+        run: |
+          $ps = Join-Path $env:WINDIR 'System32\WindowsPowerShell\v1.0\powershell.exe'
+          $v = (& $ps -NoProfile -Command '$PSVersionTable.PSVersion.ToString()' | Out-String).Trim()
+          if (-not $v.StartsWith('5.1.')) { throw "powershell.exe is version '$v', not 5.1" }
+          & $ps -NoProfile -File ./build.ps1 legacy -Version $env:RELEASE_VERSION
+          if ($LASTEXITCODE -ne 0) { throw "build.ps1 legacy failed in Windows PowerShell $v (exit code $LASTEXITCODE)" }
+          $app = (& publish-legacy\hoverai.exe --version | Out-String).Trim()
+          if ($app -ne "Hover $env:RELEASE_VERSION") { throw "the app built there says '$app'" }
+          "Windows PowerShell ${v}: build.ps1 legacy made $app"
       # The Go Windows app is kept until the owner switches over: it must still build, and so
       # must its setup (the same Hover.iss, told so with /DLegacy).
       - name: Legacy Go app still builds
