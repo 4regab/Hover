@@ -166,6 +166,17 @@ public class DeskAppTests(ITestOutputHelper output)
         await Check(s, done, $"{what}: the click did not do its work");
     }
 
+    // What the stand-in agent wrote, read while it may still be writing.
+    static string AgentSaid(string file)
+    {
+        try
+        {
+            using var f = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            return new StreamReader(f).ReadToEnd();
+        }
+        catch (IOException) { return ""; }
+    }
+
     static Func<JsonNode, bool> Of(string text) => n => (string?)n["s"] == text;
 
     static bool IsAnswer(string t) => t == "Sandbox reply" || t.StartsWith("Done. ", StringComparison.Ordinal);
@@ -242,6 +253,8 @@ public class DeskAppTests(ITestOutputHelper output)
             await ClickAt(s, "deskClose", "the panel's close button");
             await Check(s, () => s.Dump.Section("window")?["deskPanel"] is null, "the panel closed");
             await ClickUntil(s, "view", "the chat view", () => (bool?)s.Dump.Section("window")?["chatView"] == true, n => (int)n["n"]! == 1);
+            // The chat view lists the sessions down the left: the one that ran is opened from there.
+            await ClickUntil(s, "row", "the session in the list", () => s.Dump.Section("window")?["openId"] is not null, n => (int)n["n"]! == 0);
             await ClickUntil(s, "compose", "the reply circle", () => (bool?)s.Dump.Section("window")?["composing"] == true);
             Chords.SetBitmap(24, 16);
             Chords.Ctrl(Chords.V);
@@ -252,10 +265,10 @@ public class DeskAppTests(ITestOutputHelper output)
             await Check(s, () => (int?)s.Dump.Section("window")?["chips"] == 1, "the picked file is a chip");
             Input.Type("please");
             Input.Key(Input.Enter);
-            // The picture reached the backend (it keeps it in the data folder) and the chip reached the agent.
-            await Check(s, () => Directory.Exists(Path.Combine(s.Data, "kiro-images")) && Directory.GetFiles(Path.Combine(s.Data, "kiro-images")).Length >= 1, "the backend kept the picture");
+            // The picture and the chip reached the agent: its prompt has an image and the "Attached by Hover" note.
             var agentLog = Path.Combine(s.Sandbox.Root, "agent-log.txt");
-            await Check(s, () => File.Exists(agentLog) && File.ReadAllText(agentLog).Contains("Attached by Hover", StringComparison.Ordinal), "the agent was sent the attached file");
+            await Check(s, () => AgentSaid(agentLog).Contains("\"type\":\"image\"", StringComparison.Ordinal), "the agent was sent the picture");
+            await Check(s, () => AgentSaid(agentLog).Contains("Attached by Hover", StringComparison.Ordinal), "the agent was sent the attached file");
             await Check(s, () => s.Dump.Where("window", "askAllow") is not null, "the reply asks");
             await ClickAt(s, "askAllow", "Allow the reply");
             await Check(s, () => s.Dump.Texts("window").Count(IsAnswer) >= 2, "the second answer shows");
