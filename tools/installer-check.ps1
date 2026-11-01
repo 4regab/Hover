@@ -5,7 +5,7 @@
 #
 #   A  over a 5.x (Go) install while that app runs; the new app starts; uninstall while it runs
 #   B  into nothing, the default folder: the installed app is driven by app-smoke.ps1; uninstall
-#   C  into a folder with spaces in its name, twice (the same version again); uninstall
+#   C  into a folder with spaces in its name, twice (the same version again, while the app runs); uninstall
 #   D  over a 2.x install: its Hover.exe and its Run value; uninstall removes the Run value too
 #
 # Old is the 5.x setup (the oldest Go release's Hover-Setup-*.exe that CI finds).
@@ -158,11 +158,15 @@ try {
   $report.c_first_setup_exit = Run-Setup $Setup (Join-Path $Out 'c-first-setup.log') $spaced 'desktopicon'
   Check 'c_installed' (Test-Path (Join-Path $spaced 'hoverai.exe'))
   $firstHash = Hash (Join-Path $spaced 'hoverai.exe')
-  $report.c_second_setup_exit = Run-Setup $Setup (Join-Path $Out 'c-second-setup.log') $spaced 'desktopicon'
-  Check 'c_second_install_same_files' ((Hash (Join-Path $spaced 'hoverai.exe')) -eq $firstHash)
-  Check 'c_one_uninstall_entry' ((Uninstall-Entries).Count -eq 1)
   $run = Start-App (Join-Path $spaced 'hoverai.exe') 'c-app-data'
   Check 'c_installed_app_starts' ($run.Up -and -not $run.Process.HasExited)
+  # The same version again, while the app runs: it is stopped, and the files are the same.
+  $report.c_second_setup_exit = Run-Setup $Setup (Join-Path $Out 'c-second-setup.log') $spaced 'desktopicon'
+  Check 'c_running_app_stopped_by_install' ($run.Process.HasExited -and -not (Hover-Running))
+  Check 'c_second_install_same_files' ((Hash (Join-Path $spaced 'hoverai.exe')) -eq $firstHash)
+  Check 'c_one_uninstall_entry' ((Uninstall-Entries).Count -eq 1)
+  $again = Start-App (Join-Path $spaced 'hoverai.exe') 'c-app-data-2'
+  Check 'c_app_starts_after_second_install' ($again.Up -and -not $again.Process.HasExited)
   Stop-All
   $report.c_uninstall_exit = Run-Uninstall $spaced
   Check-Gone 'c' $spaced

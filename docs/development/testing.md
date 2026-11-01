@@ -21,7 +21,7 @@ platform builds below. Pull requests run the workflow; pushes that only change M
   it with Esc, asks for the app window with a second launch, quits from the tray menu, and kills a second copy to
   see its backend go), draws its pictures (`hoverai.exe --shots`), builds the installer and **installs
   the new setup four ways** (over the oldest Go release still published while that app runs, into a clean default
-  folder, twice into a folder with spaces in its name, and over a 2.x install), each time checking what the
+  folder, twice into a folder with spaces in its name (the second time while the app runs), and over a 2.x install), each time checking what the
   installer promises and uninstalling; and checks that the Go Windows app still builds (`build.ps1 legacy installer`);
 - builds the Linux `.deb` and tarball (compiled, not run: the runner has no Wayland desktop);
 - builds the macOS app and runs its **packaged backend** against stand-in tools. This checks
@@ -52,8 +52,9 @@ C# app's views with `hoverai.exe --shots`.
   - **B, a clean install** into the default folder (`%LOCALAPPDATA%\Programs\Hover`) with the startup task:
     the Run value is written, the installed app is driven by `app-smoke.ps1`, then the uninstall leaves
     no file, no Run value, no Start Menu entry and no uninstall entry, and keeps the data folder.
-  - **C, a folder with spaces** in its name (`/DIR=`), installed twice: the second install of the same
-    version changes nothing and leaves one uninstall entry; the app starts from there; the desktop icon goes.
+  - **C, a folder with spaces** in its name (`/DIR=`), installed twice: the app runs from there when the
+    second install of the same version comes, which stops it, changes no file and leaves one uninstall entry;
+    the app starts again; the desktop icon goes with the uninstall.
   - **D, over 2.x:** a `Hover.exe` and a Run value that starts it are there before the setup runs (without the
     startup task): `Hover.exe` is removed, the Run value now starts `hoverai.exe`, and the uninstall removes
     the value although the setup did not write it.
