@@ -186,6 +186,24 @@ public sealed class OfficeHost : IDisposable
         return new OfficeRect(r.X * sx, r.Y * sy, r.W * sx, r.H * sy);
     }
 
+    /// <summary>
+    /// The office beats switch, kept in office.json as <c>beats</c> ("on", "off"; off when the file has none), as the Go and Mac builds keep it.
+    /// The office draws only; the audio phase plays the loop while this is on and follows <see cref="BeatsChanged"/>.
+    /// </summary>
+    public bool Beats
+    {
+        get => store.Get("beats") == "on";
+        set
+        {
+            if (Beats == value) return;
+            store.Set("beats", value ? "on" : "off");
+            BeatsChanged?.Invoke(value);
+        }
+    }
+
+    /// <summary>The beats switch was turned on or off (the new value).</summary>
+    public event Action<bool>? BeatsChanged;
+
     /// <summary>The drawer opened on a session: the camera goes to its bot and the wheel and drag stop moving the view.</summary>
     public void OpenDrawer(int sessionId) => ctl.Drawer(sessionId, true);
 
