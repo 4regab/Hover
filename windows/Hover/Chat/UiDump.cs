@@ -17,7 +17,13 @@ static class UiDump
 
     public static bool On => !string.IsNullOrEmpty(Path);
 
-    /// <summary>Sets one part of the file (the window's or the notch's) and writes the file when it changed.</summary>
+    static bool pending, writing;
+
+    /// <summary>
+    /// Sets one part of the file (the window's or the notch's). The file is written in the background and
+    /// written again until it has been, because a reader (or a virus scanner) may hold it for a moment and
+    /// the panels may draw nothing more that would write it later.
+    /// </summary>
     public static void Set(string name, JsonObject section)
     {
         if (!On) return;
@@ -26,26 +32,41 @@ static class UiDump
         {
             if (Sections.TryGetValue(name, out var old) && old == text) return;
             Sections[name] = text;
-            var all = new JsonObject();
-            foreach (var (key, value) in Sections) all[key] = JsonNode.Parse(value);
-            var json = all.ToJsonString();
-            // A reader may have the file open for a moment; try again, and if it still cannot be written
-            // forget this section's text so the next frame writes it.
-            for (var attempt = 0; attempt < 8; attempt++)
+            pending = true;
+            if (writing) return;
+            writing = true;
+        }
+        _ = Task.Run(WriteLoop);
+    }
+
+    static void WriteLoop()
+    {
+        while (true)
+        {
+            string json;
+            lock (Gate)
             {
-                try
+                if (!pending)
                 {
-                    var temp = Path + ".tmp";
-                    File.WriteAllText(temp, json);
-                    File.Move(temp, Path!, overwrite: true);
+                    writing = false;
                     return;
                 }
-                catch (Exception e) when (e is IOException or UnauthorizedAccessException)
-                {
-                    Thread.Sleep(15);
-                }
+                pending = false;
+                var all = new JsonObject();
+                foreach (var (key, value) in Sections) all[key] = JsonNode.Parse(value);
+                json = all.ToJsonString();
             }
-            Sections.Remove(name);
+            try
+            {
+                var temp = Path + ".tmp";
+                File.WriteAllText(temp, json);
+                File.Move(temp, Path!, overwrite: true);
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+            {
+                lock (Gate) pending = true;
+                Thread.Sleep(30);
+            }
         }
     }
 
