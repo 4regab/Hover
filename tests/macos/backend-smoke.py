@@ -66,7 +66,7 @@ esac
 cua.chmod(0o700)
 env = dict(os.environ, PATH=str(root/'fake-bin')+':/usr/bin:/bin', HOVER_DATA_DIR=str(root/'integration-data'))
 key = base64.b64encode(bytes(range(32))).decode()
-def launch():
+def launch(keyed=True):
  p=subprocess.Popen([str(app/'Contents/Resources/hover-guardian'),str(app/'Contents/Resources/backend/hover-backend')],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,env=env)
  q=queue.Queue()
  def read():
@@ -85,7 +85,7 @@ def launch():
    if m.get('type')=='toast':raise AssertionError(m)
    if predicate(m):return m
   raise AssertionError('Backend timeout')
- send({'type':'initialize','key':key});until(lambda m:m.get('type')=='initialized')
+ send({'type':'initialize','key':key} if keyed else {'type':'initialize'});until(lambda m:m.get('type')=='initialized')
  return p,send,until
 p,send,until=launch()
 try:
@@ -112,6 +112,8 @@ try:
  send({'type':'answer','id':session['id'],'ask':session['ask']['id'],'answer':'allow'})
  state=until(lambda m:m.get('type')=='state' and m['sessions'] and m['sessions'][0]['stage']=='done')
  s=state['sessions'][0];assert s['turns'][0]['answer']=='Sandbox reply',s
+ # The words the Windows notch shows come with every session (added fields).
+ assert s['status']=='All done' and s['activity']['verb']=='Done' and 'obj' in s['activity'],s
  kinds=[x['k'] for x in s['turns'][0]['steps']]
  assert 'thought' in kinds and 'agent' in kinds and 'run' in kinds and 'edit' in kinds,kinds
  def desk(what):
@@ -166,6 +168,20 @@ try:
  try:os.kill(child,0)
  except ProcessLookupError:pass
  else:raise AssertionError('Fixture descendant survived host EOF')
+ # The Windows host's start without a history key, and its settings commands: the history is off,
+ # the sealed files are not touched, and one setting changes through `setSetting`.
+ sealed={f.name:f.read_bytes() for f in (root/'integration-data/agents').glob('*')}
+ p,send,until=launch(keyed=False)
+ send({'type':'settings'})
+ model=until(lambda m:m.get('type')=='settings')['model']
+ assert model['Appearance']=='System' and model['ScWorkspace']['Key'] in ('N',78),model
+ send({'type':'setSetting','key':'Appearance','value':'Dark'})
+ assert until(lambda m:m.get('type')=='settings')['model']['Appearance']=='Dark'
+ send({'type':'setModel'})
+ assert until(lambda m:m.get('type')=='state')['history']==[]
+ send({'type':'shutdown'});p.wait(timeout=15);assert p.returncode==0
+ assert sealed=={f.name:f.read_bytes() for f in (root/'integration-data/agents').glob('*')},'History files changed without a key'
+ assert not (root/'integration-data/note.key').exists()
  print('Packaged backend passed: fake-tool launch, approvals, reply, cancellation, encrypted history, restart, deletion and crash cleanup.')
 finally:
  if p.poll() is None:

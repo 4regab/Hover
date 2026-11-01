@@ -242,9 +242,20 @@ func newBackend(link *Link) (*Backend, error) {
 		if link.closed() {
 			return
 		}
+		// body is the answer's first line and took the turn's seconds, as the Go app's own
+		// notice gives them (app.Hover.ended).
+		took := 0.0
+		if t := s.Current(); t != nil {
+			end := sessions.Now()
+			if t.EndedAt != nil {
+				end = *t.EndedAt
+			}
+			took = end.SecsSince(t.StartedAt)
+		}
 		link.out.Send(core.JObj(
 			core.P("type", jst("ended")), core.P("title", jst(s.Tool.Name()+": "+s.Title())), core.P("text", jst(r.State.Name())),
 			core.P("tool", jst(s.Tool.ID())), core.P("task", jst(s.Title())), core.P("ok", jbool(r.State == core.Completed)),
+			core.P("body", jst(agents.TextFirstLine(agents.Plain(r.Text)))), core.P("took", core.JDouble(took)),
 		))
 	})
 
@@ -797,6 +808,11 @@ func (b *Backend) handle(m core.JSON) error {
 		b.link.push()
 	case "getSettings":
 		b.sendPreferences()
+	// The Windows host's: the whole settings model, and one setting changed by its name.
+	case "settings":
+		b.sendSettings()
+	case "setSetting":
+		return b.setSetting(m)
 	case "saveSettings":
 		b.savePreferences(m)
 		b.sendPreferences()

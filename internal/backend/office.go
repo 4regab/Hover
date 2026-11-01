@@ -319,6 +319,7 @@ func session(c *ctx, s *agents.KiroSession) core.JSON {
 	for i := range s.Turns {
 		turns[i] = turn(c, s, &s.Turns[i], waiting)
 	}
+	verb, obj := agents.Activity(s)
 	return core.JObj(
 		core.P("id", jint(int64(s.ID))),
 		core.P("key", jst(s.Key)),
@@ -349,6 +350,10 @@ func session(c *ctx, s *agents.KiroSession) core.JSON {
 		// The apps its computer use opened: the screen shows only these over the desktop.
 		core.P("apps", appsv),
 		core.P("turns", core.JArr(turns...)),
+		// The notch's words for it: "Reading the code", and the verb and object ("Editing",
+		// "refresh.ts"). After the page's own names, so those keep their places.
+		core.P("status", jst(agents.Status(s))),
+		core.P("activity", core.JObj(core.P("verb", jst(verb)), core.P("obj", jst(obj)))),
 	)
 }
 

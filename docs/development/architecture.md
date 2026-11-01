@@ -235,6 +235,34 @@ calls backend behavior directly. To keep behavior aligned, future protocol work 
 platform-neutral commands and events and run the same conformance fixtures through both a Go
 in-process adapter and the macOS JSON-line adapter.
 
+### Windows host commands
+
+The C# Windows app starts `hover-backend` the way the Swift app does, and the backend answers
+a few more commands for it. They are all additive. A new event is sent only in answer to a
+new command, so the Mac host never sees one; new fields on existing messages are ignored by
+a host that does not read them (the Swift host reads messages as dictionaries). Every value
+is checked in the backend, because the host's line is untrusted: wrong types, over-long text
+and unknown ids are refused with a `toast`, and change nothing. Tests: `internal/backend/*_test.go`
+start this package's test binary as the backend and send real JSON lines (`host_test.go`).
+
+**Start.** `initialize` with no `key`, or `key: null`, runs the backend with the history off:
+`note.key` is neither read nor made, saved chats are left alone, and nothing is kept. A host
+sends it when its key file cannot be read just now. A `key` that is present but is not a
+base64 string of 32 bytes is still `backendFailure`, as is a key that cannot open an existing
+`agents/index.dat` (nothing is changed then). Every start removes the old `planner.dat*`
+files and passes the "continue when busy" setting to the sessions.
+
+**Settings** (`internal/backend/settings.go`).
+
+| Command | Answer | Does |
+|---|---|---|
+| `settings` | `settings` `{model}` | The whole model as `settings.json` holds it (`core.Model.ToJSON`). |
+| `setSetting` `{key, value}` | `settings`, then a `state` | One of `Appearance`, `Theme`, `WorkspaceSize`, `ScWorkspace`, `ChatView`, `LastEditor`, `KiroFolder`, `KiroRetryBusy`, through the `core.Settings` setter of that name. `Appearance` does not clear `Theme`; send `Theme` null for that, as the Settings page does. |
+
+**Fields on existing messages.** `state.sessions[].status` (`agents.Status`, "Reading the
+code"), `state.sessions[].activity` `{verb, obj}` (`agents.Activity`), `ended.body` (the
+answer's first line, `agents.TextFirstLine(agents.Plain(text))`) and `ended.took` (seconds).
+
 ## Packages
 
 | Package | What it owns | Window? |
