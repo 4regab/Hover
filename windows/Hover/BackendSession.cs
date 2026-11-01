@@ -75,7 +75,8 @@ public sealed class BackendSession : IAsyncDisposable
     public async ValueTask DisposeAsync()
     {
         if (client is null) return;
-        await client.StopAsync(TimeSpan.FromSeconds(10));
+        var code = await client.StopAsync(TimeSpan.FromSeconds(10));
+        HostLog.Line($"backend stopped (exit code {code})");
         await client.DisposeAsync();
         client = null;
     }

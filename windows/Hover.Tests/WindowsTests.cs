@@ -191,7 +191,7 @@ sealed class AppFactAttribute : FactAttribute
 /// <summary>hoverai.exe itself, started the way a user starts it.</summary>
 public class AppTests(ITestOutputHelper output)
 {
-    static Process Launch(string dataDir, params string[] args)
+    internal static Process Launch(string dataDir, params string[] args)
     {
         var info = new ProcessStartInfo(TestEnvironment.AppExe!)
         {
@@ -202,7 +202,7 @@ public class AppTests(ITestOutputHelper output)
         return Process.Start(info)!;
     }
 
-    static async Task<string> WaitForLog(string dataDir, string text, TimeSpan timeout, Process? mustRun = null)
+    internal static async Task<string> WaitForLog(string dataDir, string text, TimeSpan timeout, Process? mustRun = null)
     {
         var file = DataFolder.LogFile(dataDir);
         var end = DateTime.UtcNow + timeout;
@@ -228,11 +228,12 @@ public class AppTests(ITestOutputHelper output)
         return File.Exists(file) ? "hover.log:\n" + File.ReadAllText(file) : "There is no hover.log.";
     }
 
-    static bool HasWindow(Process p)
-    {
-        p.Refresh();
-        return p.MainWindowHandle != 0;
-    }
+    /// <summary>
+    /// The app window is open: a visible window of the process titled "Hover". The notch is a window
+    /// of the process too, so the process's "main window" can no longer say.
+    /// </summary>
+    [SupportedOSPlatform("windows")]
+    static bool HasWindow(Process p) => Desktop.WindowOf(p, "Hover") != 0;
 
     [AppFact]
     [SupportedOSPlatform("windows")]
@@ -258,7 +259,6 @@ public class AppTests(ITestOutputHelper output)
             Assert.Contains("a second launch asked for the dashboard", log);
             for (var i = 0; i < 100 && !HasWindow(first); i++) await Task.Delay(100);
             Assert.True(HasWindow(first), "the first copy should have its dashboard open now");
-            Assert.Equal("Hover", first.MainWindowTitle);
 
             // Only one copy runs: the second one left no process behind.
             Assert.Single(Process.GetProcessesByName("hoverai"));

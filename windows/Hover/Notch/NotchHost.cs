@@ -174,6 +174,7 @@ sealed class NotchHost : IDisposable
         var shortcut = next.Shortcut != settings.Shortcut;
         var appearance = next.Appearance != settings.Appearance;
         settings = next;
+        HostLog.Line($"notch settings: hover opens {next.HoverOpens}, {next.Items.Count} quotas, size {next.Size}, shortcut {next.Shortcut.Label}");
         ctl.HoverOpens = next.HoverOpens;
         ctl.Size = next.Size;
         if (appearance) ApplyAppearance();
