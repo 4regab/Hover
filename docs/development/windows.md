@@ -167,6 +167,49 @@ gives a later view the DirectComposition device and root visual to add its own s
 rectangle. Until then the area is a dashed frame with its size written in it. The app window has the
 same place: `DashboardWindow.OfficeArea`, a bordered area under the header.
 
+### The panels: chat, new task and questions
+
+The office's panels (`internal/ui` in the Go app) are `Hover.Chat.Ui.OfficeUi`: the switch between the
+office and the chat view, the session list, the chat (header, thread, reply box), the new-task box and
+its menus (agent, where it runs, folder, access, model), the question over a bot and at the end of a
+chat, the rewind confirmation and the toast. `OfficeUi` knows nothing of Windows: it follows the
+backend's messages (`Accept`), draws a frame on an `ICanvas` (`Paint`), reads the pointer and the keys
+against the places the last frame drew (`PointerDown`, `Key`, `Char`) and sends the backend commands the
+Go shell sends (`new`, `reply`, `answer`, `pause`, `queueSendNow`, `queueRemove`, `queueResume`, `rename`,
+`switchProvider`, `fork`, `bringBack`, `restore`, `again`, `delete`). Because it is plain C# the tests
+run all of it on any system with a fixed-width shaper and a canvas that writes down what was drawn.
+
+The chat thread (`Hover.Chat`: Markdown, code colour, numbered changes, tables, flowcharts, pictures,
+selection and copy) is laid out by `ChatThread` and painted by `ThreadPainter`. Markdown, colour,
+changes and flowcharts are read by the backend (`markdown`, `highlight`, `diffLines`, `flowchart`); the
+thread shows plain text for an answer until the backend's reply arrives. The chat is drawn natively with
+DirectWrite and Direct2D, not in a WebView2: DirectWrite sets the paragraphs (`DwShaper`, with Inter
+beside the app and Consolas for code), `D2DCanvas` draws shapes, text, the flowcharts (`SvgScene` reads
+the SVG the backend writes and the icons), the tools' marks and pictures (`ImageStore` reads a file the
+session serves or the web, decodes it with the system's imaging and shows the broken-image mark when it
+cannot). Selection runs over every text box in document order, so it crosses paragraphs, lists, tables
+and code; copying writes the text the page would copy.
+
+Two hosts draw the same `OfficeUi` (one shows at a time, so a chat opened in one is open in the other):
+
+- **The open notch** (`Notch\NotchHost.cs`, `Chat\UiLayer.cs`): a second composition swap chain, its own
+  visual kept above the other visuals of the notch window (the 3D office is one), so the panels draw over
+  the office. Pointer, wheel, keys and typed text (`WM_CHAR`) go to the panels first; what they do not use
+  goes to the office. While one of their boxes has the keyboard the notch takes it and gives it back.
+- **The app window** (`Chat\UiOverlay.cs`): the panels drawn onto a bitmap shown over the office area. The
+  overlay takes the pointer only where the panels have something (it is hit-testable or not as the
+  pointer moves), so the office behind it still gets the rest.
+
+A question reaches the user in three places, all answering with `answer`: the notch's island and card
+(`Allow`, `Trust`, `Deny`, Esc, Enter, Shift+Enter), over the bot in the office (`OfficeHost.BotScreenRect`;
+the cards stack at the top when the office does not show the bot), and at the end of the chat. A question
+with choices shows them as buttons that toggle, a box for one's own answer where the agent takes one,
+and Skip and Answer.
+
+For the checks of the real app, `HOVER_UI_DUMP=<file>` makes the app write where each place that
+answers a click is on the screen, the words of the thread and the lines the panels drew
+(`Chat\UiDump.cs`); a test reads it to click and type as a person would.
+
 The key rules for `note.key` (set aside, never overwritten) are in
 [windows-csharp.md](windows-csharp.md#c-data-formats); `Hover.Host/HistoryKey.cs` follows them.
 

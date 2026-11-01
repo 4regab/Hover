@@ -48,8 +48,6 @@ public sealed partial class OfficeUi
         foreach (var s in state.Sessions)
         {
             if (s.Ask is not { } a) continue;
-            // The drawer shows the open chat's own question; the bot's card would repeat it.
-            if (OpenId == s.Id && !ChatView) continue;
             var ah = AskCard(a, s, true, cw, 0, 0, true);
             float ax, ay;
             if (env.BotRect(s.Id) is { } bot)

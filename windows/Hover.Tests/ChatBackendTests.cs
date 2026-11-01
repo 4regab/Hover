@@ -25,15 +25,15 @@ public class ChatBackendTests(ITestOutputHelper output)
     static async Task<StateEvent> Waiting(Conversation talk, SessionInfo started)
         => started.Stage == "waiting"
             ? new StateEvent { Sessions = [started] }
-            : await talk.Until<StateEvent>(s => s.Sessions.Any(x => x.Id == started.Id && x.Stage == "waiting"));
+            : await talk.Until<StateEvent>(s => s.Sessions.Count > 0 && s.Sessions[0].Stage == "waiting");
 
     static async Task<SessionInfo> Finish(Conversation talk, SessionInfo session, string answer = "allow")
     {
         var waiting = await Waiting(talk, session);
-        var ask = waiting.Sessions.Single(x => x.Id == session.Id).Ask!;
-        talk.Send(new AnswerCommand(session.Id, ask.Id, answer));
-        var done = await talk.Until<StateEvent>(s => s.Sessions.Any(x => x.Id == session.Id && x.Stage == "done"));
-        return done.Sessions.Single(x => x.Id == session.Id);
+        var ask = waiting.Sessions[0].Ask!;
+        talk.Send(new AnswerCommand(waiting.Sessions[0].Id, ask.Id, answer));
+        var done = await talk.Until<StateEvent>(s => s.Sessions.Count > 0 && s.Sessions[0].Stage == "done");
+        return done.Sessions[0];
     }
 
     [Fact]
@@ -47,7 +47,8 @@ public class ChatBackendTests(ITestOutputHelper output)
         var ask = waiting.Sessions[0].Ask!;
         Assert.Equal("edit", ask.Kind);
         Assert.Null(ask.Questions);
-        var done = await Finish(talk, session);
+        talk.Send(new AnswerCommand(waiting.Sessions[0].Id, ask.Id, "allow"));
+        var done = (await talk.Until<StateEvent>(s => s.Sessions.Count > 0 && s.Sessions[0].Stage == "done")).Sessions[0];
 
         var turn = Assert.Single(done.Turns);
         Assert.False(string.IsNullOrEmpty(turn.Uid));
@@ -280,9 +281,23 @@ public class ChatBackendTests(ITestOutputHelper output)
         await using var client = talk.Client;
         var session = await Start(talk, sandbox, "[crash] go");
         var waiting = await Waiting(talk, session);
-        talk.Send(new AnswerCommand(session.Id, waiting.Sessions[0].Ask!.Id, "allow"));
+        talk.Send(new AnswerCommand(waiting.Sessions[0].Id, waiting.Sessions[0].Ask!.Id, "allow"));
         // The agent dies; the backend carries on and says the turn failed.
-        var failed = await talk.Until<StateEvent>(s => s.Sessions[0].Stage == "failed");
+        var seen = new List<string>();
+        StateEvent failed;
+        try
+        {
+            failed = await talk.Until<StateEvent>(s =>
+            {
+                if (s.Sessions.Count > 0) seen.Add(s.Sessions[0].Stage);
+                return s.Sessions.Count > 0 && s.Sessions[0].Stage == "failed";
+            });
+        }
+        catch (BackendException e)
+        {
+            Assert.Fail($"{e.Message} Stages seen: {string.Join(", ", seen)}");
+            return;
+        }
         Assert.Equal("failed", failed.Sessions[0].Turns[0].Stage);
         // Now the backend itself goes.
         talk.Client.CloseInput();

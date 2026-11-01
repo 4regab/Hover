@@ -125,10 +125,24 @@ What `windows\Hover.Tests` covers:
   shortcut another program holds is reported (error 1409) and the app goes on; the tray icon is
   added, and Quit in its menu, picked with the keyboard, stops the backend with exit code 0 and
   removes the icon; closing the dashboard hides it and a second launch brings it back.
+- **The panels** (`PanelTests`, any system): the start screen starts a task with the tool, folder, access
+  and model its pills show; the agent, where-it-runs, repository and access menus; a permission answered
+  (`allow`, `trust`, `deny`) from the chat and over the bot; two questions at once answered one by one; a
+  question with choices; a reply sent, an empty box pausing the run, a reply queued then sent now or taken
+  back into the box; a checkpoint restored only after the confirmation; selected text copied; a chat
+  renamed; a 10,000-line answer, a huge change, a broken flowchart and a picture that fails to load; Escape
+  keeping the draft. `ChatThreadTests` and `ChatBackendTests` (a real `hover-backend` and the stand-in
+  agent: what `state` carries, the rendering commands, queue, pause, stop, rename, checkpoints) cover the thread.
+- **The whole flow in the real app** (`PanelsAppTests`, Windows, needs `HOVER_APP_EXE`): with real mouse
+  and keyboard input and the stand-in agent, a task is started from the chat view's new-task box (agent
+  and access picked from their menus), its permission is answered in the chat, a reply's permission is
+  answered from the notch's card, the first turn's checkpoint is restored (the second turn goes) and its
+  message tried again, and a reply queued behind a run that never ends goes after Pause. The app writes
+  where its buttons are (`HOVER_UI_DUMP`) and the test clicks there.
 - **Windows only**: DPAPI, the job object (what is in it dies with its handle; its children too),
   killing a host process kills the backend and the agent's child, single instance, the old
   "Hover Service" task removal, and `hoverai.exe` itself (a second launch exits, the first opens
-  its dashboard; killing it kills its backend; `--shots` writes the dashboard and the notch's JPEGs).
+  its dashboard; killing it kills its backend; `--shots` writes the dashboard, the notch's and the panels' JPEGs: the chat view, the start screen, the new-task box, the questions, the menus and the odd inputs).
 
 Run it by hand (on Windows or, for everything not marked Windows only, on Linux). The tests start
 real programs and want these set, as the workflow does:

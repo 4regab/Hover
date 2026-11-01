@@ -137,14 +137,14 @@ static class ChatShots
 
             // A question at the end of the chat, and a queued reply.
             var asking = Session(3, "kiro", "Install three.js", "waiting", 2, Turn("Install three.js 0.171", "", "waiting", 1, Read("package.json", "."))) with { Ask = Permission() };
-            await Shot(core, directory, "chat-default-ask", 1200, 720, () => { ui.Accept(State(Busy(), Finished(), asking)); ui.OpenChat(3); });
+            await Shot(core, directory, "chat-default-ask", 1200, 720, () => { Esc(); ui.Accept(State(Busy(), Finished(), asking)); ui.OpenChat(3); });
             var queued = Session(4, "kiro", "A long run", "working", 3,
                 Turn("Refactor the settings page", "Working through the files.", "working", 2, Read("settings.rs", "src")),
                 Turn("And then add a test for it", "", "done", 0) with { Queued = true, Uid = "u1" });
-            await Shot(core, directory, "chat-default-queued", 1200, 720, () => { ui.Accept(State(Busy(), Finished(), asking, queued)); ui.OpenChat(4); });
+            await Shot(core, directory, "chat-default-queued", 1200, 720, () => { Esc(); ui.Accept(State(Busy(), Finished(), asking, queued)); ui.OpenChat(4); });
 
             // The office with the new-task circle and box.
-            await Shot(core, directory, "new-task-box", 1200, 720, () => { Esc(); ui.ChatView = false; ui.CloseChat(); ui.Accept(State(Busy(), Finished())); S(); ui.Click("fab"); S(); ui.Char("The whole notch, explained once more."); }, office: true);
+            await Shot(core, directory, "new-task-box", 1200, 720, () => { Esc(); ui.ChatView = false; ui.CloseChat(); ui.ClearTask(); ui.Accept(State(Busy(), Finished())); S(); ui.Click("fab"); S(); ui.Char("The whole notch, explained once more."); }, office: true);
             await Shot(core, directory, "office-fab-rest", 1200, 720, () => { ui.Key(UiKey.Escape, UiMods.None); ui.Key(UiKey.Escape, UiMods.None); }, office: true);
 
             // The questions over the bots, and in the drawer.

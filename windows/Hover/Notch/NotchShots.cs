@@ -96,6 +96,8 @@ static class NotchShots
             ui.Accept(Hover.Chatting.ChatShots.State(Hover.Chatting.ChatShots.Busy(), Hover.Chatting.ChatShots.Finished()));
             ui.ChatView = false;
             ui.CloseChat();
+            ui.ClearTask();
+            ui.Key(Hover.Chat.Ui.UiKey.Escape, Hover.Chat.Ui.UiMods.None);
             ui.Click("fab");
             ui.Char("Tidy the imports again");
         });

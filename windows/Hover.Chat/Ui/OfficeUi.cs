@@ -297,6 +297,9 @@ public sealed partial class OfficeUi
     /// <summary>Requests to the backend for Markdown, colour and changes that are not answered yet.</summary>
     public int Pending => cache.InFlight;
 
+    /// <summary>Empties the new-task box.</summary>
+    public void ClearTask() => task.Clear();
+
     /// <summary>Scrolls the thread to its top.</summary>
     public void ScrollToTop() => ScrollTo(0);
 
