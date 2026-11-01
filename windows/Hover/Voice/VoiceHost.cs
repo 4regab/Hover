@@ -17,7 +17,7 @@ sealed class VoiceHost : IDisposable
     readonly DispatcherQueue queue;
     readonly BackendSession backend;
     VoiceHotkey? key;
-    bool disposed;
+    bool disposed, wasShowing;
 
     public VoiceService Service { get; }
     public VoiceCardController Card { get; }
@@ -62,7 +62,15 @@ sealed class VoiceHost : IDisposable
         Service.SettingsChanged += s => queue.TryEnqueue(() => Register(s));
         Service.Dictated += v => queue.TryEnqueue(() => Dictated?.Invoke(v));
         Service.DictationFailed += why => queue.TryEnqueue(() => DictationFailed?.Invoke(why));
-        Card.Changed += () => queue.TryEnqueue(() => { if (!disposed) Changed?.Invoke(); });
+        // The card hears every state message of the backend (for its tools and sessions); the notch is redrawn only for a card that shows or has just gone.
+        Card.Changed += () => queue.TryEnqueue(() =>
+        {
+            if (disposed) return;
+            var showing = Card.View is not null;
+            if (!showing && !wasShowing) return;
+            wasShowing = showing;
+            Changed?.Invoke();
+        });
         Card.SettingsRequested += () => queue.TryEnqueue(() => SettingsRequested?.Invoke());
         Service.Changed += st => queue.TryEnqueue(() => Moved(st));
     }
@@ -132,7 +140,7 @@ sealed class VoiceHost : IDisposable
     {
         if (disposed) return;
         if (st.Stage is VoiceStage.Idle or VoiceStage.Started or VoiceStage.Cancelled) Done?.Invoke();
-        else if (Service.Dictating) { }
+        wasShowing = Card.View is not null;
         Changed?.Invoke();
     }
 
