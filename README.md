@@ -253,7 +253,9 @@ On Windows Hover is a C# (WinUI 3) app that starts the Go backend, `hover-backen
 backend the Mac app uses; settings, history, keys and the agents work the same as before, and the
 installer swaps the 5.x Go app for it without touching your data folder. Not on Windows, by design
 (as in the Go app): the sandbox (Linux and macOS), and computer use, Cua agent desktops, the agent
-browser with its Browser tab, and one-click agent setup (macOS). Their switches say so.
+browser with its Browser tab, and one-click agent setup (macOS). Their switches say so. Hover's own helpers (the
+menu item that lets an agent ask other agents for help) are not offered on Windows either, as in the Go app; the small
+bots for an agent's own subagents show on every system.
 
 Where a feature is off, its switch says why. CI builds the Mac app and runs its packaged Go
 backend against stand-in tools; the native Swift UI, permission prompts, and real desktop
