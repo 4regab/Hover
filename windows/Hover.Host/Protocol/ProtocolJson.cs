@@ -97,6 +97,12 @@ public static class ProtocolJson
                 "cliSessions" => root.Deserialize<CliSessionsEvent>(Options),
                 "adoptWeb" => root.Deserialize<AdoptWebEvent>(Options),
                 "adoptCli" => root.Deserialize<AdoptCliEvent>(Options),
+                "themes" => root.Deserialize<ThemesEvent>(Options),
+                "themeRead" => root.Deserialize<ThemeReadEvent>(Options),
+                "mcp" => root.Deserialize<McpEvent>(Options),
+                "kiroAgents" => root.Deserialize<KiroAgentsEvent>(Options),
+                "secret" => root.Deserialize<SecretEvent>(Options),
+                "credits" => root.Deserialize<CreditsEvent>(Options),
                 _ => new UnknownEvent(type, root.Clone()),
             };
         }
