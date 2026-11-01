@@ -127,7 +127,7 @@ jobs:
             'notch-open-ask', 'notch-open-chat', 'notch-open-new-task',
             'chat-view-chat', 'chat-view-home', 'chat-default-done', 'chat-default-ask', 'chat-default-queued', 'new-task-box', 'office-ask-over',
             'settings-general-dark', 'settings-general-light', 'settings-integrations-dark', 'settings-projects-registered', 'settings-voice-cloud', 'settings-kiro-credits-dark',
-            'settings-kiro-mcp-list', 'settings-codex-model-menu', 'notch-open-settings', 'notch-open-settings-small') {
+            'settings-kiro-mcp-list', 'settings-codex-model-menu', 'notch-open-settings', 'notch-open-settings-small', 'screen-capture') {
             $file = Join-Path $shots "$name.jpg"
             if (-not (Test-Path $file)) { throw "$name.jpg was not made" }
             $b = [System.IO.File]::ReadAllBytes($file)

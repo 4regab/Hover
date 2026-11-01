@@ -186,7 +186,12 @@ public static class ScreenCapture
     public static ScreenFrame Scaled(ScreenFrame f, int maxW, int maxH)
     {
         var (w, h) = Fit(f.Width, f.Height, maxW, maxH);
-        if (w == f.Width && h == f.Height) return f;
+        return w == f.Width && h == f.Height ? f : Resize(f, w, h);
+    }
+
+    /// <summary>The frame at exactly this size (bilinear), larger or smaller.</summary>
+    public static ScreenFrame Resize(ScreenFrame f, int w, int h)
+    {
         var px = new byte[w * h * 4];
         for (var y = 0; y < h; y++)
         {
@@ -209,6 +214,22 @@ public static class ScreenCapture
                 px[(y * w + x) * 4 + 3] = 255;
             }
         }
+        return new ScreenFrame(w, h, px);
+    }
+
+    /// <summary>A picture drawn to fill a w x h screen as the desktop does: covering it, centred (<c>screen.Cover</c>).</summary>
+    public static ScreenFrame Cover(ScreenFrame src, int w, int h)
+    {
+        w = Math.Max(w, 1);
+        h = Math.Max(h, 1);
+        double sw = Math.Max(src.Width, 1), sh = Math.Max(src.Height, 1);
+        var k = Math.Max(w / sw, h / sh);
+        int bw = Math.Max((int)Math.Ceiling(sw * k), w), bh = Math.Max((int)Math.Ceiling(sh * k), h);
+        var big = bw == src.Width && bh == src.Height ? src : Resize(src, bw, bh);
+        var ox = (bw - w) / 2;
+        var oy = (bh - h) / 2;
+        var px = new byte[w * h * 4];
+        for (var y = 0; y < h; y++) Buffer.BlockCopy(big.Bgra, ((y + oy) * bw + ox) * 4, px, y * w * 4, w * 4);
         return new ScreenFrame(w, h, px);
     }
 }

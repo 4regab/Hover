@@ -210,6 +210,40 @@ public class WindowsTests
         Assert.Same(small, ScreenCapture.Scaled(small, 10, 10));
     }
 
+    static ScreenFrame Solid(int w, int h, Func<int, int, (byte R, byte G, byte B)> colour)
+    {
+        var px = new byte[w * h * 4];
+        for (var y = 0; y < h; y++)
+            for (var x = 0; x < w; x++)
+            {
+                var (r, g, b) = colour(x, y);
+                var i = (y * w + x) * 4;
+                px[i] = b; px[i + 1] = g; px[i + 2] = r; px[i + 3] = 255;
+            }
+        return new ScreenFrame(w, h, px);
+    }
+
+    [Fact]
+    public void A_wallpaper_covers_the_screen_and_the_middle_of_it_is_kept()
+    {
+        // Wider than the screen: the sides go, the middle stays (red left of the middle, blue right of it).
+        var wide = Solid(4, 2, (x, _) => x < 2 ? ((byte)255, (byte)0, (byte)0) : ((byte)0, (byte)0, (byte)255));
+        var a = ScreenCapture.Cover(wide, 2, 2);
+        Assert.Equal((2, 2), (a.Width, a.Height));
+        Assert.Equal((255, 0, 0), a.At(0, 0));
+        Assert.Equal((0, 0, 255), a.At(1, 1));
+        // Taller than the screen: the top and the bottom go.
+        var tall = Solid(2, 4, (_, y) => y < 2 ? ((byte)0, (byte)255, (byte)0) : ((byte)255, (byte)255, (byte)255));
+        var b = ScreenCapture.Cover(tall, 4, 4);
+        Assert.Equal((0, 255, 0), b.At(0, 0));
+        Assert.Equal((255, 255, 255), b.At(3, 3));
+        // The same shape scales to the screen's size, larger or smaller, and is opaque.
+        var c = ScreenCapture.Cover(Solid(10, 10, (_, _) => ((byte)9, (byte)8, (byte)7)), 40, 30);
+        Assert.Equal((40, 30), (c.Width, c.Height));
+        Assert.Equal((9, 8, 7), c.At(39, 29));
+        Assert.Equal(255, c.Bgra[3]);
+    }
+
     [Fact]
     public void Off_Windows_the_capture_says_it_is_not_there_instead_of_failing_late()
     {
