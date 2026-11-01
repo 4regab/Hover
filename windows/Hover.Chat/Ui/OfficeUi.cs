@@ -86,7 +86,8 @@ public sealed partial class OfficeUi
         cache.Arrived += () =>
         {
             thread.Refresh();
-            docThread?.Refresh();
+            // A Markdown file or a pull request's text shown as plain words while it waited: the panel's rows are made again with the answer.
+            if (docThread?.Refresh() == true) deskVersion++;
             Dirty = true;
         };
         reply = new EditBox { Multiline = true };

@@ -731,6 +731,18 @@ public class DeskTests
     }
 
     [Fact]
+    public void A_pull_requests_text_is_shown_formatted_once_the_backend_has_read_it()
+    {
+        var h = Open();
+        h.Ui.OpenDeskPanel(1, "pr");
+        Desk(h, "pr", """{"number":7,"title":"Skip clean views","state":"open","isDraft":false,"url":"https://github.com/o/r/pull/7","head":"feat","base":"main","additions":1,"deletions":0,"changedFiles":1,"body":"Some **words** here","checks":[],"pass":0,"fail":0,"pending":0,"skip":0}""");
+        // The first layout shows plain words and asks; the answer comes while the frames are drawn, and the rows are made again with it.
+        h.Frame();
+        Assert.False(h.Ui.Waiting, "the description is still waiting for words the backend has already sent");
+        Assert.Contains(h.Sent, c => c is MarkdownCommand);
+    }
+
+    [Fact]
     public void The_card_follows_the_bot_when_the_office_says_where_it_is()
     {
         var sent = new List<BackendCommand>();
