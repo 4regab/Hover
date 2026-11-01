@@ -30,13 +30,13 @@ for validation and performance work.
 3. Install platform prerequisites from [Windows](docs/development/windows.md), the README's
    [Linux build instructions](README.md#build-from-source), or [macOS](docs/MACOS.md).
    Optionally install [mise](https://mise.jdx.dev/) and run `mise install` to select the Go
-   and Node versions in `mise.toml`. Native prerequisites such as EGL headers, Xcode, and
-   Inno Setup still come from your operating system or package manager. The existing build
+   and Node versions in `mise.toml`. Native prerequisites such as EGL headers, Xcode, the .NET 10 SDK
+   (Windows), and Inno Setup still come from your operating system or package manager. The existing build
    scripts remain the supported build entry points. Then, from the repository root:
 
    ```powershell
    # Windows
-   .\build.ps1 run              # build and start Hover
+   .\build.ps1 run              # build and start Hover (the C# app and its Go backend: needs the .NET 10 SDK and Go)
    ```
 
    ```sh

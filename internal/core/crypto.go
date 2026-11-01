@@ -197,6 +197,20 @@ func UseHostKey(key []byte) error {
 	return nil
 }
 
+// UseNoHostKey is a host that has no key this run (its key file is locked just now, so it
+// can't tell whether the old key would open): the history is off, as when LoadOrCreateCrypto
+// finds the key unreadable. It pins that, so nothing later loads or makes note.key behind
+// the host's back. Under the same rules as UseHostKey: once, and before anything asked.
+func UseNoHostKey() error {
+	global.Lock()
+	defer global.Unlock()
+	if global.set {
+		return errors.New("Invalid or repeated history key initialization.")
+	}
+	global.crypto, global.set = nil, true
+	return nil
+}
+
 // GUIDN is Guid.NewGuid().ToString("N"): a version-4 GUID as 32 lower-case hex digits.
 func GUIDN() string {
 	var b [16]byte

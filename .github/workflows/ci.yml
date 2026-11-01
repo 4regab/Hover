@@ -2,8 +2,9 @@ name: CI
 
 # Hover on GitHub's own runners. A push to main or go-port, or a pull request, checks the Go
 # code for Windows, Linux and macOS; runs the Go tests on those three systems; builds the
-# Windows app and its installer and drives them (it starts the app, then installs over the 5.x
-# release and uninstalls); builds the Linux packages; and builds the Mac app and runs its
+# Windows app (C#, over the Go backend) and its installer, runs the C# tests and drives the app
+# and the installer (it installs over the 5.x release, into a clean folder and over a 2.x
+# install, and uninstalls); builds the Linux packages; and builds the Mac app and runs its
 # backend through the stand-in tools. Every push to main that changes more than docs is a
 # release, and the `version`
 # job says which number: VERSION when it is above every tag (raised by hand: a v* tag matching
@@ -14,7 +15,7 @@ name: CI
 # automatic nightly is always a pre-release, never the Latest, and its notes are GitHub's
 # list of the pull requests merged since the last release.
 # No secrets and no agent accounts. By hand (workflow_dispatch), `pictures` also draws every
-# view on the Windows runner.
+# view of the Go app and of the C# app on the Windows runner.
 on:
   push:
     branches: ['main', 'go-port']
@@ -159,12 +160,17 @@ jobs:
           echo "version $ver, release: $release, automatic: $auto (VERSION says $file, newest release ${top:-none})"
           { echo "release=$release"; echo "version=$ver"; echo "auto=$auto"; } >> "$GITHUB_OUTPUT"
 
+  # The Windows app: the C# program in windows/ and the Go backend it starts. Built and tested
+  # with build.ps1; the app and then its installer are driven on the runner's desktop.
   windows:
     needs: version
     runs-on: windows-2022
+    timeout-minutes: 75
     env:
       RELEASE: ${{ needs.version.outputs.release }}
       RELEASE_VERSION: ${{ needs.version.outputs.version }}
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+      DOTNET_NOLOGO: '1'
     defaults:
       run:
         shell: pwsh
@@ -177,14 +183,77 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-      # hoverai.exe and wgpu_native.dll in publish\, as the installer takes them. No C compiler.
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      # hoverai.exe (dotnet publish, self-contained) and hover-backend.exe in publish\, as the
+      # installer takes them. No Visual Studio and no C compiler.
       - name: Build
-        run: ./build.ps1 publish -Version $env:RELEASE_VERSION
+        run: |
+          ./build.ps1 publish -Version $env:RELEASE_VERSION
+          New-Item -ItemType Directory -Force out\logs | Out-Null
+          $root = (Resolve-Path publish).Path
+          $files = Get-ChildItem publish -Recurse -File
+          $files | ForEach-Object { '{0,12}  {1}' -f $_.Length, $_.FullName.Substring($root.Length + 1) } | Out-File out\logs\publish-files.txt
+          "publish\: $($files.Count) files, $([math]::Round(($files | Measure-Object Length -Sum).Sum / 1MB, 1)) MB"
+      # Publishing without Go installed: the script names the missing tool before it builds or
+      # deletes anything, so the publish folder above is as it was.
+      - name: build.ps1 says so when Go is missing
+        run: |
+          $shell = (Get-Process -Id $PID).Path
+          $before = (Get-FileHash publish\hoverai.exe).Hash
+          $env:PATH = (($env:PATH -split ';') | Where-Object { $_ -and -not (Test-Path (Join-Path $_ 'go.exe')) }) -join ';'
+          $text = & $shell -NoProfile -File ./build.ps1 publish 2>&1 | Out-String
+          $code = $LASTEXITCODE
+          if ($code -eq 0) { throw "build.ps1 publish worked without Go: $text" }
+          if ($text -notmatch 'go was not found on PATH') { throw "build.ps1 did not say that Go is missing: $text" }
+          if ((Get-FileHash publish\hoverai.exe).Hash -ne $before) { throw 'build.ps1 changed publish\ before it checked for Go' }
+          "exit code ${code}: " + ($text -split "`n" | Select-Object -First 1).Trim()
+          $global:LASTEXITCODE = 0
+      # The Go programs the tests need, a Go-written data folder, every windows\*.Tests project
+      # (found by name, so a new test project needs no change here). The Go tests have a job of
+      # their own (test), on three systems.
+      - name: C# tests
+        timeout-minutes: 25
+        run: ./build.ps1 test -SkipGo -Version $env:RELEASE_VERSION
       - name: Screen 1920 x 1080
         run: ./tools/set-resolution.ps1
+      # Starts the app with an empty data folder, opens the notch with its shortcut, asks for the
+      # window with a second launch, quits from the tray menu, and kills a second copy to see
+      # the backend go with it. Memory is measured at rest and with the window open.
       - name: Drive the app
-        timeout-minutes: 5
-        run: ./tools/app-smoke.ps1 -Exe publish\hoverai.exe -Out out\app
+        timeout-minutes: 10
+        run: ./tools/app-smoke.ps1 -Exe publish\hoverai.exe -Out out\app -ExpectVersion $env:RELEASE_VERSION
+      # The app draws its own window and the notch (RenderTargetBitmap and Direct3D read back) with a
+      # data folder of its own. It runs even when a step before it failed, so that its log is there to read.
+      - name: Pictures (hoverai.exe --shots)
+        if: ${{ !cancelled() }}
+        run: |
+          $data = Join-Path $env:RUNNER_TEMP 'shots-data'
+          $env:HOVER_DATA_DIR = $data
+          $shots = Join-Path $PWD 'out\shots'
+          New-Item -ItemType Directory -Force out\logs | Out-Null
+          $app = Start-Process -FilePath publish\hoverai.exe -ArgumentList '--shots', $shots -PassThru `
+            -RedirectStandardError out\logs\shots-stderr.txt -RedirectStandardOutput out\logs\shots-stdout.txt
+          if (-not $app.WaitForExit(300000)) { $app.Kill($true); throw '--shots did not finish in 5 minutes' }
+          if (Test-Path "$data\hover.log") { Copy-Item "$data\hover.log" out\logs\shots-hover.log }
+          if ($app.ExitCode -ne 0) { throw "--shots exited with $($app.ExitCode)" }
+          $jpeg = Join-Path $shots 'dashboard.jpg'
+          $bytes = [System.IO.File]::ReadAllBytes($jpeg)
+          if ($bytes.Length -lt 2000 -or $bytes[0] -ne 0xFF -or $bytes[1] -ne 0xD8) { throw "$jpeg is not a JPEG picture" }
+          "dashboard.jpg: $($bytes.Length) bytes"
+          # The notch's states, named as the Go app's pictures are.
+          foreach ($name in 'notch-rest-pill-2x', 'notch-rest-working-2x', 'notch-rest-ask-2x', 'notch-rest-done-2x', 'notch-rest-card-2x', 'notch-open-office',
+            'notch-open-ask', 'notch-open-chat', 'notch-open-new-task',
+            'chat-view-chat', 'chat-view-home', 'chat-default-done', 'chat-default-ask', 'chat-default-queued', 'new-task-box', 'office-ask-over',
+            'settings-general-dark', 'settings-general-light', 'settings-integrations-dark', 'settings-projects-registered', 'settings-voice-cloud', 'settings-kiro-credits-dark',
+            'settings-kiro-mcp-list', 'settings-codex-model-menu', 'notch-open-settings', 'notch-open-settings-small', 'screen-capture', 'desk-tab-screen', 'desk-tab-screen-live', 'desk-tab-small-screen') {
+            $file = Join-Path $shots "$name.jpg"
+            if (-not (Test-Path $file)) { throw "$name.jpg was not made" }
+            $b = [System.IO.File]::ReadAllBytes($file)
+            if ($b.Length -lt 1500 -or $b[0] -ne 0xFF -or $b[1] -ne 0xD8) { throw "$name.jpg is not a JPEG picture" }
+            "$name.jpg: $($b.Length) bytes"
+          }
       - name: Inno Setup
         run: |
           if (-not (Test-Path "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe")) {
@@ -215,23 +284,70 @@ jobs:
           if (-not $old) { throw "no published Go setup (5.0.3 or later, other than $env:RELEASE_VERSION) to install over" }
           "Installing over $old"
           "OLD_SETUP=$old" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
-      - name: Install over 5.x, check, uninstall
-        timeout-minutes: 10
-        run: ./tools/installer-check.ps1 -Setup "dist\Hover-Setup-$env:RELEASE_VERSION.exe" -Old $env:OLD_SETUP -Built publish\hoverai.exe -Out out\installer
+      # Four installs, each from a clean state (tools/installer-check.ps1): over the 5.x Go app while it
+      # runs, into the default folder (the installed app is driven as above), into a folder with spaces
+      # in its name twice, and over a 2.x install. Each ends with an uninstall that leaves nothing.
+      - name: Install over 5.x, clean install, over 2.x, uninstall
+        timeout-minutes: 25
+        run: ./tools/installer-check.ps1 -Setup "dist\Hover-Setup-$env:RELEASE_VERSION.exe" -Old $env:OLD_SETUP -Built publish\hoverai.exe -Out out\installer -ExpectVersion $env:RELEASE_VERSION
+      # docs/development/windows.md says build.ps1 works in Windows PowerShell 5.1 (powershell.exe, the
+      # one every Windows 10 and 11 has) as well as PowerShell 7 (pwsh, which every step above uses). The
+      # script is parsed whole by 5.1 and its quickest build (the Go app, no dotnet; it also downloads
+      # wgpu_native.dll) is run by it.
+      - name: build.ps1 in Windows PowerShell 5.1
+        run: |
+          $ps = Join-Path $env:WINDIR 'System32\WindowsPowerShell\v1.0\powershell.exe'
+          $v = (& $ps -NoProfile -Command '$PSVersionTable.PSVersion.ToString()' | Out-String).Trim()
+          if (-not $v.StartsWith('5.1.')) { throw "powershell.exe is version '$v', not 5.1" }
+          & $ps -NoProfile -File ./build.ps1 legacy -Version $env:RELEASE_VERSION
+          if ($LASTEXITCODE -ne 0) { throw "build.ps1 legacy failed in Windows PowerShell $v (exit code $LASTEXITCODE)" }
+          $app = (& publish-legacy\hoverai.exe --version | Out-String).Trim()
+          if ($app -ne "Hover $env:RELEASE_VERSION") { throw "the app built there says '$app'" }
+          "Windows PowerShell ${v}: build.ps1 legacy made $app"
+      # The Go Windows app is kept until the owner switches over: it must still build, and so
+      # must its setup (the same Hover.iss, told so with /DLegacy).
+      - name: Legacy Go app still builds
+        run: |
+          ./build.ps1 legacy installer -Version $env:RELEASE_VERSION
+          $v = (& publish-legacy\hoverai.exe --version | Out-String).Trim()
+          if ($v -ne "Hover $env:RELEASE_VERSION") { throw "the legacy app says '$v'" }
+          if (-not (Test-Path publish-legacy\wgpu_native.dll)) { throw 'no wgpu_native.dll beside the legacy app' }
+          if (-not (Test-Path "dist\Hover-Legacy-Setup-$env:RELEASE_VERSION.exe")) { throw 'no legacy setup' }
+          "legacy: $v"
+      # If the app died, Windows says which module did it.
+      - name: App crash reports
+        if: ${{ failure() }}
+        run: |
+          New-Item -ItemType Directory -Force out\logs | Out-Null
+          Get-WinEvent -FilterHashtable @{ LogName = 'Application'; StartTime = (Get-Date).AddMinutes(-60) } -ErrorAction SilentlyContinue |
+            Where-Object { $_.Message -match 'hoverai|hover-backend' } |
+            ForEach-Object { "$($_.TimeCreated) $($_.ProviderName) $($_.Id)`n$($_.Message)`n" } |
+            Out-File out\logs\app-events.txt
+          if (Test-Path out\logs\app-events.txt) { Get-Content out\logs\app-events.txt -TotalCount 60 }
       - name: Summary
         if: always()
         run: |
-          foreach ($pair in @(@('out\app\report.json', 'Go app on Windows'), @('out\installer\report.json', 'Installer on Windows'))) {
+          $lines = @('### Windows C# app', '')
+          foreach ($trx in Get-ChildItem out\test-results -Filter *.trx -ErrorAction SilentlyContinue) {
+            $c = ([xml](Get-Content $trx.FullName)).TestRun.ResultSummary.Counters
+            $lines += "- $($trx.BaseName): $($c.passed) passed, $($c.failed) failed, $($c.total - $c.executed) not run (of $($c.total))"
+          }
+          if (Test-Path out\shots) { $lines += "- pictures: $((Get-ChildItem out\shots -Filter *.jpg).Count)" }
+          $lines | Out-File -Append -Encoding utf8 $env:GITHUB_STEP_SUMMARY
+          foreach ($pair in @(@('out\app\report.json', 'App on Windows'), @('out\installer\report.json', 'Installer on Windows'), @('out\installer\b-smoke\report.json', 'Installed app on Windows'))) {
             if (Test-Path $pair[0]) {
               $r = Get-Content $pair[0] -Raw | ConvertFrom-Json
               @('', "### $($pair[1])", '') + ($r.PSObject.Properties | Where-Object Name -ne 'log' | ForEach-Object { "    $($_.Name) = $($_.Value)" }) | Out-File -Append -Encoding utf8 $env:GITHUB_STEP_SUMMARY
             }
           }
+      # The Go programs the tests built (out\bin) are left out.
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: windows-reports
-          path: out/
+          path: |
+            out/
+            !out/bin/
           if-no-files-found: warn
       - uses: actions/upload-artifact@v4
         with:
@@ -357,12 +473,16 @@ jobs:
             dist/Hover-${{ env.RELEASE_VERSION }}-macos-x64.dmg
           if-no-files-found: error
 
-  # Every view drawn on the Windows runner (WARP, no GPU), by hand only. Slow (about ten
-  # minutes), and not a check: the pictures are for looking at.
+  # Every view drawn on the Windows runner (WARP, no GPU), by hand only: the Go app's, and the
+  # C# app's from `hoverai.exe --shots`. Slow (about ten minutes), and not a check: the pictures
+  # are for looking at.
   pictures:
     if: github.event_name == 'workflow_dispatch'
     runs-on: windows-2022
     timeout-minutes: 30
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+      DOTNET_NOLOGO: '1'
     defaults:
       run:
         shell: pwsh
@@ -371,21 +491,38 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-      # Only for wgpu_native.dll, which the office draws with.
-      - name: Build
-        run: ./build.ps1 publish
-      - name: Draw them
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      # Only for wgpu_native.dll, which the Go app's office draws with.
+      - name: Build the Go app
+        run: ./build.ps1 legacy publish
+      - name: Draw them (Go app)
         run: |
           $env:CGO_ENABLED = '0'
           $env:HOVER_SHOTS_OFFICE = '1'
-          $env:WGPU_NATIVE_PATH = (Resolve-Path publish\wgpu_native.dll).Path
+          $env:WGPU_NATIVE_PATH = (Resolve-Path publish-legacy\wgpu_native.dll).Path
           go run ./cmd/ui-shots out\all
           if ($LASTEXITCODE -ne 0) { throw 'ui-shots failed' }
           Write-Host "$((Get-ChildItem out\all -Filter *.png).Count) pictures"
+      - name: Build the C# app
+        run: ./build.ps1 publish
+      - name: Draw them (C# app, hoverai.exe --shots)
+        run: |
+          $env:HOVER_DATA_DIR = Join-Path $env:RUNNER_TEMP 'shots-data'
+          $app = Start-Process -FilePath publish\hoverai.exe -ArgumentList '--shots', (Join-Path $PWD 'out\csharp') -PassThru
+          if (-not $app.WaitForExit(600000)) { $app.Kill($true); throw '--shots did not finish in 10 minutes' }
+          if ($app.ExitCode -ne 0) { throw "--shots exited with $($app.ExitCode)" }
+          Write-Host "$((Get-ChildItem out\csharp -Filter *.jpg).Count) pictures"
       - uses: actions/upload-artifact@v4
         with:
           name: pictures-windows
           path: out/all/
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pictures-windows-csharp
+          path: out/csharp/
           if-no-files-found: error
 
   release:

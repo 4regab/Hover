@@ -4,15 +4,19 @@
 //	hover-data write <data> <project> <turns> <answer.md>   settings, key, one sealed session; prints its key
 //	hover-data dump <data>                                   what the folder holds, read by the port
 //	hover-data steps <data> [n]                              the newest n sessions' steps (read only)
+//	hover-data secret set <data> <name>                      keep a key, sealed (the key is on stdin; never printed)
+//	hover-data secret check <data> <name>                    exit 0 when the key is kept (with a key on stdin: when it is that one)
 //	hover-data where                                         the data folder Hover would use
 package main
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
+	"strings"
 
 	"github.com/4regab/Hover/internal/core"
 )
@@ -95,6 +99,8 @@ func main() {
 			}
 			fmt.Printf("  %s… %s %s %q %d turns, %d answer bytes, updated %s\n", x.Key[:min(8, len(x.Key))], x.Tool.Name(), x.State.Name(), x.Title, n, bytes, x.Updated.ISO())
 		}
+	case cmd == "secret" && len(a) >= 5:
+		os.Exit(secret(a[2], a[3], a[4], os.Stdin, os.Stdout, os.Stderr))
 	case cmd == "where":
 		fmt.Println(core.Support())
 	case cmd == "check" && len(a) >= 3:
@@ -161,7 +167,7 @@ func main() {
 			}
 		}
 	default:
-		fmt.Fprintln(os.Stderr, "hover-data write <data> <project> <turns> <answer.md> | dump <data> | steps <data> [sessions] | check <data> | where")
+		fmt.Fprintln(os.Stderr, "hover-data write <data> <project> <turns> <answer.md> | dump <data> | steps <data> [sessions] | check <data> | secret set|check <data> <name> | where")
 		os.Exit(2)
 	}
 }
@@ -239,3 +245,66 @@ func check(data string) int {
 }
 
 func ptr[T any](v T) *T { return &v }
+
+// secret is `secret set|check <data> <name>`: secrets.dat in the data folder, sealed with its
+// note.key, as Hover keeps it. The key is read from the first line of stdin and is never
+// printed, nor is any of it in an error. set exits 0 once it is kept for good; check exits 0
+// when the key is kept and, when stdin has a key, only if it is that one.
+func secret(op, data, name string, in io.Reader, out, errOut io.Writer) int {
+	known := []string{core.GroqSecret}
+	for _, c := range []core.CleanupProvider{core.CleanupGemini, core.CleanupOpenAI, core.CleanupCustom} {
+		known = append(known, c.Secret())
+	}
+	ok := false
+	for _, k := range known {
+		ok = ok || k == name
+	}
+	if !ok || op != "set" && op != "check" {
+		fmt.Fprintf(errOut, "secret set|check <data> <name>; the names are %v\n", known)
+		return 2
+	}
+	// Check reads only: it makes no key where there is none.
+	var crypto *core.Crypto
+	if op == "set" {
+		crypto = key(data)
+	} else if stored, err := os.ReadFile(filepath.Join(data, "note.key")); err == nil {
+		if raw, kerr := (core.SystemKeyGuard{}).Unwrap(stored); kerr == nil && len(raw) == 32 {
+			crypto = core.CryptoWithKey([32]byte(raw))
+		}
+	}
+	if crypto == nil {
+		fmt.Fprintln(errOut, "no key for the data folder")
+		return 1
+	}
+	store := core.NewSecrets(filepath.Join(data, "secrets.dat"), crypto)
+	line := ""
+	if text, _ := io.ReadAll(io.LimitReader(in, 1<<16)); len(text) > 0 {
+		line = strings.TrimSpace(strings.SplitN(strings.ReplaceAll(string(text), "\r", ""), "\n", 2)[0])
+	}
+	if op == "set" {
+		if line == "" {
+			fmt.Fprintln(errOut, "the key is the first line of stdin")
+			return 2
+		}
+		if _, err := store.Set(name, &line); err != nil {
+			fmt.Fprintln(errOut, "the key couldn’t be saved")
+			return 1
+		}
+		fmt.Fprintf(out, "%s: kept in %s\n", name, filepath.Join(data, "secrets.dat"))
+		return 0
+	}
+	got, has := store.Get(name)
+	switch {
+	case !has:
+		fmt.Fprintf(out, "%s: not kept\n", name)
+		return 1
+	case line != "" && line != got:
+		fmt.Fprintf(out, "%s: kept, but not the key given\n", name)
+		return 1
+	case line != "":
+		fmt.Fprintf(out, "%s: kept, and it is the key given\n", name)
+	default:
+		fmt.Fprintf(out, "%s: kept\n", name)
+	}
+	return 0
+}

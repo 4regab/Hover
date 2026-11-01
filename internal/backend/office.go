@@ -319,7 +319,8 @@ func session(c *ctx, s *agents.KiroSession) core.JSON {
 	for i := range s.Turns {
 		turns[i] = turn(c, s, &s.Turns[i], waiting)
 	}
-	return core.JObj(
+	verb, obj := agents.Activity(s)
+	props := []core.Prop{
 		core.P("id", jint(int64(s.ID))),
 		core.P("key", jst(s.Key)),
 		core.P("files", jopt(files(s))),
@@ -349,7 +350,48 @@ func session(c *ctx, s *agents.KiroSession) core.JSON {
 		// The apps its computer use opened: the screen shows only these over the desktop.
 		core.P("apps", appsv),
 		core.P("turns", core.JArr(turns...)),
-	)
+		// The notch's words for it: "Reading the code", and the verb and object ("Editing",
+		// "refresh.ts"). After the page's own names, so those keep their places.
+		core.P("status", jst(agents.Status(s))),
+		core.P("activity", core.JObj(core.P("verb", jst(verb)), core.P("obj", jst(obj)))),
+		// The Windows chat's: Kiro Web's repositories (none for a task on this computer), the
+		// links the session keeps (its name, workspace, lineage), a queue held after a stop,
+		// and the agent's own slash commands.
+		core.P("cloud", cloudJSON(s.Cloud)),
+		core.P("ext", s.Ext.ToJSON()),
+		core.P("held", jbool(s.Held)),
+		core.P("commands", commandsJSON(s.Commands)),
+	}
+	// A Kiro Web task's id at Kiro, once the first turn has told it: the Windows chat's cloud
+	// chip opens the task's page with it (internal/shell/chatact.go dOpenCloud). Left out for a
+	// task on this computer and before the id is known, so the message of those is as it was.
+	if s.Cloud != nil && s.KiroID != nil {
+		props = append(props, core.P("kiroId", jst(*s.KiroID)))
+	}
+	return core.JObj(props...)
+}
+
+func cloudJSON(repos []string) core.JSON {
+	if repos == nil {
+		return core.JNull
+	}
+	return strArray(repos)
+}
+
+func commandsJSON(list [][2]string) core.JSON {
+	out := make([]core.JSON, len(list))
+	for i, c := range list {
+		out[i] = core.JObj(core.P("name", jst(c[0])), core.P("description", jst(c[1])))
+	}
+	return core.JArr(out...)
+}
+
+func chipsJSON(chips []core.Chip) core.JSON {
+	out := make([]core.JSON, len(chips))
+	for i, c := range chips {
+		out[i] = c.ToJSON()
+	}
+	return core.JArr(out...)
 }
 
 // space is the session's project desktop: its name and the project's, how it is getting on
@@ -427,6 +469,11 @@ func turn(c *ctx, s *agents.KiroSession, t *agents.KiroTurn, waiting bool) core.
 		// folder's checkpoints were kept.
 		core.P("restore", jbool(c.checkpoints && t.Result != nil && t.After != nil)),
 		core.P("again", jbool(c.checkpoints && t.Before != nil)),
+		// What names this message in the queue commands, what was attached to it (chips as
+		// core.Chip JSON), and a switch of agent that goes with it.
+		core.P("uid", jst(t.UID)),
+		core.P("chips", chipsJSON(t.Chips)),
+		core.P("switchTo", jopt(t.SwitchTo)),
 	)
 }
 

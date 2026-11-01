@@ -350,6 +350,16 @@ func (t *Term) Interrupt() {
 	t.notify()
 }
 
+// Close ends the shell and what it started (the chat it belonged to is gone, or Hover is
+// quitting); what the shell still prints is dropped. Entries stay for View.
+func (t *Term) Close() {
+	g := t.inner
+	g.mu.Lock()
+	g.gen++
+	g.endShell()
+	g.mu.Unlock()
+}
+
 // Seed is for the screenshots: these commands show, without a shell behind them.
 func (t *Term) Seed(entries []TermEntry) {
 	t.inner.mu.Lock()

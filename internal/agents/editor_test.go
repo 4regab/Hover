@@ -27,7 +27,9 @@ func editorTemp(t *testing.T, name string) string {
 // recorder is a stand-in editor that writes each argument it gets on a line of its own.
 func recorder(t *testing.T, dir string) (string, string) {
 	exe, log := filepath.Join(dir, "fake-editor"), filepath.Join(dir, "args.log")
-	script := fmt.Sprintf("#!/bin/sh\nfor a in \"$@\"; do printf '%%s\\n' \"$a\" >> '%s'; done\n", log)
+	// The log appears whole: the lines go to a part file that is renamed when the last is written,
+	// so a reader that sees the log never sees only the first arguments.
+	script := fmt.Sprintf("#!/bin/sh\n: >> '%[1]s.part'\nfor a in \"$@\"; do printf '%%s\\n' \"$a\" >> '%[1]s.part'; done\nmv '%[1]s.part' '%[1]s'\n", log)
 	if err := os.WriteFile(exe, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}

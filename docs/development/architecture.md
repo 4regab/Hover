@@ -1,15 +1,18 @@
 # Architecture
 
-Hover is one Go module (`github.com/4regab/Hover`) at the repository root. One program
-(`cmd/hover`: `hoverai` on Windows, `hover` on Linux) holds the whole product. The packages in
+Hover is one Go module (`github.com/4regab/Hover`) at the repository root. On Linux one program
+(`cmd/hover`, `hover`) holds the whole product; so it did on Windows (`hoverai`), and that Go app is
+kept as the legacy Windows build. The Windows app is now a C# program (`windows/`) and the Mac app a
+Swift one (`macos/`), each running the Go backend (`cmd/hover-backend`) as a child process. The packages in
 `internal/` keep the parts that have no window apart from the parts that do, so most of the
 logic builds and runs anywhere. (The Rust version this replaced is at the git tag `rust-final`.)
 
 ## The big picture
 
-The same code builds for Windows and Linux. Nearly all of it is shared: the backend packages
+The Go app builds for Linux, and for Windows as the legacy app. Nearly all of it is shared: the backend packages
 have no window and no OS calls of their own, and the interface is one set of Go files drawn
-with Gio. What differs per OS is a thin layer of adapters, picked at compile time by file name
+with Gio. (The C# and Swift hosts draw their own interface and take the backend packages through
+`cmd/hover-backend`.) What differs per OS is a thin layer of adapters, picked at compile time by file name
 (`_windows.go`, `_linux.go`) or a `//go:build` line.
 
 ```mermaid
@@ -112,20 +115,24 @@ flowchart LR
 
 ## How the builds work
 
-Both platforms run the same `go build` of the same module. They differ in the wrapper script
-and in how the result is packaged. Windows needs no C compiler; Linux needs one for EGL.
+The backend is the same `go build` of the same module on every platform. The apps differ in the wrapper script
+and in how the result is packaged. Windows needs no C compiler and no Visual Studio (the .NET 10 SDK and Go);
+Linux needs a C compiler for EGL.
 
 ```mermaid
 flowchart TB
     src["module at the root<br/>cmd + internal + VERSION"]
 
     subgraph WinB["Windows: build.ps1"]
-        wc["go build -ldflags -H=windowsgui<br/>CGO_ENABLED=0"]
-        wexe["publish/hoverai.exe + wgpu_native.dll<br/>(downloaded, wgpu-native v29.0.0.0)"]
+        wc["dotnet publish windows/Hover<br/>(self-contained, Release, x64)"]
+        wb["go build ./cmd/hover-backend<br/>CGO_ENABLED=0"]
+        wexe["publish/hoverai.exe + hover-backend.exe<br/>+ the .NET and Windows App SDK files"]
         wpub["publish/<br/>+ LICENSE, THIRD-PARTY-NOTICES.txt"]
         wiss["Inno Setup (ISCC) + packaging/windows/Hover.iss"]
         wout["dist/Hover-Setup-version.exe"]
-        wc --> wexe --> wpub -->|"build.ps1 installer"| wiss --> wout
+        wc --> wexe
+        wb --> wexe
+        wexe --> wpub -->|"build.ps1 installer"| wiss --> wout
     end
 
     subgraph LinB["Linux: Makefile"]
@@ -139,37 +146,45 @@ flowchart TB
         lexe -->|"make install"| linst
     end
 
-    src --> wc
+    src --> wc & wb
     src --> lc
 ```
 
-- The program carries its fonts, icons, music and the Phonon locks and check sample
-  (`go:embed`), so the installers ship one executable, the wgpu-native library and the
-  licence files.
+- The Linux program carries its fonts, icons, music and the Phonon locks and check sample
+  (`go:embed`), so its packages ship one executable, the wgpu-native library and the
+  licence files. The Windows setup ships the whole `publish\` folder: `hoverai.exe` with the .NET
+  and Windows App SDK files it runs on, its fonts and `hover-backend.exe` (the backend carries the
+  Phonon files), and the licence files. `build.ps1 legacy` still makes the Go Windows app (`publish-legacy\`,
+  with `wgpu_native.dll`), and the same `Hover.iss` packs it (`/DLegacy`).
 - The version is the number in `VERSION`. `build.ps1`, the Makefile and the installers read
-  it, and put it in the program with `-ldflags "-X .../internal/shell.Version=..."`;
-  `hoverai --version` prints it.
+  it, and put it in the program (the Go builds with `-ldflags "-X .../internal/shell.Version=..."`,
+  `dotnet publish` with `-p:Version=...`); `hoverai --version` prints it.
 - The Go version is the one `go.mod` names. An older Go fetches it the first time.
 - Gio is `third_party/gioui.org` (patched; see its README), taken in by a `replace` in `go.mod`.
 
 ### CI and releases
 
-`.github/workflows/ci.yml` runs on GitHub's own runners. It runs no Go tests. One job per OS
-builds and checks what it ships, and on a release the same jobs build the installers from the
-build they just checked.
+`.github/workflows/ci.yml` runs on GitHub's own runners. A `test` job runs the Go tests
+(`go test ./cmd/... ./internal/...`) on Windows, macOS and Linux; Linux and macOS add the race
+detector. One job per OS builds and checks what it ships, and on a release the same jobs build
+the installers from the build they just checked.
 
 ```mermaid
 flowchart LR
-    push["push to main or go-port<br/>or a pull request"] --> cj & wj & lj & mj
-    tag["push of tag vX.Y.Z, or of a new<br/>VERSION to main"] --> cj & wj & lj & mj
+    push["push to main or go-port<br/>or a pull request"] --> cj & tj & wj & lj & mj
+    tag["push of tag vX.Y.Z, or of a new<br/>VERSION to main"] --> cj & tj & wj & lj & mj
     hand["Run workflow, by hand"] --> pj
 
     subgraph cj["check (ubuntu-22.04)"]
         c1["VERSION matches version.go, gofmt,<br/>go vet for Linux, Windows and macOS,<br/>the Mac backend builds"]
     end
 
+    subgraph tj["test (ubuntu-22.04, windows-2022, macos-15)"]
+        t1["go test ./cmd/... ./internal/...<br/>(the backend tests run this binary<br/>as the backend, over a pipe)"]
+    end
+
     subgraph wj["windows job (windows-2022)"]
-        wb["build.ps1 publish"] --> wd["start the app, Alt+N, Esc,<br/>second launch"] --> wi["installer over the 5.x setup,<br/>checks, uninstall"]
+        wb["build.ps1 publish<br/>(C# app + backend)"] --> wt["C# tests<br/>(every windows/*.Tests)"] --> wd["start the app, Alt+N, Esc,<br/>second launch, quit, kill"] --> wi["installer: over the 5.x setup,<br/>clean, spaces, over 2.x;<br/>uninstall each"] --> wl["the Go app still builds<br/>(build.ps1 legacy)"]
     end
 
     subgraph lj["linux job (ubuntu-22.04)"]
@@ -181,15 +196,16 @@ flowchart LR
     end
 
     subgraph pj["pictures (windows-2022)"]
-        pp["hoverai --shots: every view"]
+        pp["every view of the Go app,<br/>and hoverai.exe --shots"]
     end
 
-    cj & wj & lj & mj --> rel
+    cj & tj & wj & lj & mj --> rel
     rel["release job (release only)<br/>tags the commit; Latest GitHub release with the .exe, .deb, .tar.gz, .dmg"]
 ```
 
 A tag whose version doesn't match `VERSION` fails before anything builds. A failing job means
-nothing is published. The release waits for all four jobs, the macOS one included: it builds
+nothing is published. The release waits for the check, the tests and the Windows, Linux and
+macOS jobs, the macOS one included: it builds
 the disk images (Apple silicon and Intel) and runs the packaged Go backend against stand-in
 tools on a Mac runner. The native Swift UI and its permission prompts have not had full
 hands-on validation; see `docs/MACOS.md`. Pushes that only touch Markdown, `docs/` or the
@@ -197,7 +213,9 @@ README's pictures don't run CI.
 
 ## What runs at run time
 
-One process. The UI goroutine owns every window; the heavy work runs on goroutines of its own
+This is the Go app (Linux, and the legacy Windows build): one process. The Windows C# app and the Mac
+app are two processes, the host and the backend (see [Backend and host boundary](#backend-and-host-boundary)).
+The UI goroutine owns every window; the heavy work runs on goroutines of its own
 and reaches the UI only through `UIDo`. The agents are child processes.
 
 ```mermaid
@@ -227,13 +245,166 @@ when Hover does.
 
 ## Backend and host boundary
 
-Windows and Linux run the Go application and backend in one process. macOS has a Swift host
-that starts `cmd/hover-backend` and exchanges JSON-line commands and events over stdin/stdout.
-The Mac smoke test exercises that packaged process boundary; it does not cover the native
-Swift UI. There is not yet one declared cross-platform wire schema: the in-process Go app
-calls backend behavior directly. To keep behavior aligned, future protocol work should define
-platform-neutral commands and events and run the same conformance fixtures through both a Go
-in-process adapter and the macOS JSON-line adapter.
+`cmd/hover-backend` (`internal/backend`) is the part of Hover with no window: the sessions,
+the agents, the history, the settings, the quotas and the voice flow, behind JSON lines on
+stdin and stdout (`wire.go`). Two hosts start it. macOS has a Swift host
+(`macos/Sources`). Windows has the C# host in `windows/`: `Hover.Host` starts
+`hover-backend` with `HOVER_DATA_DIR` set, holds it in a job object so the backend and its
+child agents end with the host, sends `initialize` first (with the history key kept by DPAPI,
+or without one when the key file cannot be read this run, which keeps the history off), and
+`hoverai.exe` draws the notch, the office and the chat from its `state`. Linux, and the Go
+Windows app that stays beside the C# one until the owner switches over, run the Go
+application and the backend in one process, calling the backend's behavior directly.
+
+The hosts share no schema file. The Swift host reads messages as dictionaries and ignores
+what it does not know, so the backend only grows: new fields on existing messages, and new
+events sent only in answer to new commands. A change is covered by a Go test that sends the
+JSON line to a backend process (`internal/backend/*_test.go`), and by the Mac smoke test
+(`tests/macos/backend-smoke.py`, which checks the new fields and the Windows commands that
+have no platform code), which exercises the packaged process boundary; it does not cover the
+native Swift UI.
+
+Who writes what: the backend alone writes `settings.json`, the sealed history
+(`agents/*.dat`) and `secrets.dat`, so their bytes cannot drift between hosts. The host gives
+it the key and keeps `note.key`. `hover-data` (`cmd/hover-data`) writes and reads a data
+folder with the Go code, including `secret set` and `secret check` (the key is read from
+stdin and never printed), for tests that open a folder on both sides.
+
+### Windows host commands
+
+The C# Windows app starts `hover-backend` the way the Swift app does, and the backend answers
+a few more commands for it. They are all additive. A new event is sent only in answer to a
+new command, so the Mac host never sees one; new fields on existing messages are ignored by
+a host that does not read them (the Swift host reads messages as dictionaries). Every value
+is checked in the backend, because the host's line is untrusted: wrong types, over-long text
+and unknown ids are refused (a `toast`, or `ok: false` in the command's answer) and change
+nothing. Tests: `internal/backend/*_test.go` start this package's test binary as the backend
+and send real JSON lines (`host_test.go`).
+
+**Start.** `initialize` with no `key`, or `key: null`, runs the backend with the history off:
+`note.key` is neither read nor made, saved chats are left alone, and nothing is kept. A host
+sends it when its key file cannot be read just now. A `key` that is present but is not a
+base64 string of 32 bytes is still `backendFailure`, as is a key that cannot open an existing
+`agents/index.dat` (nothing is changed then). Every start removes the old `planner.dat*`
+files and passes the "continue when busy" setting to the sessions.
+
+**Settings** (`internal/backend/settings.go`).
+
+| Command | Answer | Does |
+|---|---|---|
+| `settings` | `settings` `{model}` | The whole model as `settings.json` holds it (`core.Model.ToJSON`). |
+| `setSetting` `{key, value}` | `settings`, then a `state` | One of `Appearance`, `Theme`, `WorkspaceSize`, `ScWorkspace`, `ChatView`, `LastEditor`, `KiroFolder`, `KiroRetryBusy`, `KiroNoticeSeen` (a bool, both ways: Settings → Kiro puts the note about tool access back with `false`; `saveSettings` `noticeSeen` still only sets it), and two the pages need that B2 did not list: `Voice` (the whole voice settings, checked; the local model stays Phonon's) and `ToolAgent` `{tool, agent}`; each through the `core.Settings` setter of that name. `Appearance` does not clear `Theme`; send `Theme` null for that, as the Settings page does. |
+
+**Fields on existing messages.** `state.sessions[].status` (`agents.Status`, "Reading the
+code"), `state.sessions[].activity` `{verb, obj}` (`agents.Activity`), `ended.body` (the
+answer's first line, `agents.TextFirstLine(agents.Plain(text))`) and `ended.took` (seconds).
+
+**Answers and failures.** A command that has no answer event of its own shows a `toast` when
+it fails. A command that has one (the tables below name it) answers with `ok: false` and
+`error` instead, so a host waiting for it is not left waiting. Answers to commands that name
+a session echo its `id`; the rendering commands echo a `ref` the host picks (a string up to
+64 characters, or a number), so several can be in flight.
+
+**Start, again.** `initialize` also takes two flags, both off unless sent, so the Mac host
+starts as before. `reattach: true`: after `initialized`, Kiro Web tasks that were still
+working when the host last closed come back to desks and are followed on
+(`KiroSessions.ReattachCutOff`, as the Go app does at its start). `credits: true`: Kiro's
+credits by day are kept from the start (each Kiro reading is counted into `kiro-usage.json`,
+and the view is made again when the history changes); without it the first `credits` command
+starts them.
+`hostDiscord: true`: the host shows the Discord status itself (the Windows host does, as an OS
+binding), so the backend starts no Discord client and the status is shown once; without it the
+backend's client runs, as for the Mac host (`internal/backend/discord_test.go`).
+
+**Tasks and chat** (`internal/backend/tasks.go`).
+
+| Command | Answer | Does |
+|---|---|---|
+| `new` + `cloud` (list of `owner/name`, up to 8; `[]` is an empty workspace), `model`, `effort` | `state` | `KiroSessions.StartBound`. `cloud` is for Kiro only; with no usable `folder` the task gets the default workspace, as the new-task box does. `model` and `effort` are set as `setModel` sets them. The new-task box has no attachments, so `new` takes no `chips`. |
+| `reply` + `chips` (core.Chip JSON, up to 32) | `state` | `KiroSessions.ReplyMsg`, after `agents.CheckChips` against the chat's folder; a chip that cannot be sent stops the reply and says why. |
+| `pause` `{id}` | `state` | `KiroSessions.Pause`: the turn is cancelled through the tool, the conversation stays. |
+| `queueSendNow` `{id, uid}` | `state` (and a toast when it stops a run) | `SendNowQueued`. |
+| `queueRemove` `{id, uid}` | `queueRemove` `{id, uid, ok, text, images, chips}` | `RemoveQueued`; the words go back to the composer. |
+| `queueResume` `{id}` | `state` | `ResumeQueue`. |
+| `rename` `{id, name}` | `state` | `Rename`; up to 200 characters; empty keeps the title. |
+| `switchProvider` `{id, to}` | `switchProvider` `{id, to, ok, mode, carried, omitted, notes}` | `ParseTarget`, `SwitchProvider`. |
+| `fork` `{id, turn, to}` | `fork` `{id, ok, forkId, key}` | `Fork`, in the chat's folder; `to` defaults to the chat's own agent. |
+| `bringBack` `{id}` | `bringBack` `{id, ok, count}` | `BringFindingsBack`. |
+
+Sessions in `state` also carry `cloud` (repositories, or null), `ext` (`core.SessionExt` JSON:
+name, workspace, lineage), `held` and `commands` (`[{name, description}]`), and, for a Kiro Web task
+that has its id at Kiro, `kiroId` (left out for any other session; the cloud chip opens
+`https://app.kiro.dev/session/` and the id); each turn carries `uid`, `chips` and `switchTo`.
+
+**Kiro Web and Kiro CLI** (`cloud.go`).
+
+| Command | Answer | Does |
+|---|---|---|
+| `cloudRepos` | `cloudRepos` `{ok, done, saved, repos, error}`: first the list saved last time for this account (`done: false`), then Kiro's (`done: true`) | `Runtime.Repos`; keeps `repos.json` as the Go app does. |
+| `webSessions` | `webSessions` `{ok, sessions[{id, title, updated}], note, error}` | `Runtime.CloudSessions`, without the ones Hover has. |
+| `adoptWeb` `{id}` | `adoptWeb` `{id, ok, sessionId, error}` | `Runtime.CloudTranscript`, `AdoptCloud`. The id must be in the last `webSessions` answer. |
+| `cliSessions` | `cliSessions` `{ok, sessions[{id, title, folder, updated}], error}` | `Runtime.LocalSessions`, in folders Hover knows. |
+| `adoptCli` `{id}` | `adoptCli` `{id, ok, sessionId, error}` | `Runtime.LocalTranscript`, `AdoptLocal`. |
+
+**Desk tools** (`deskmore.go`).
+
+| Command | Answer | Does |
+|---|---|---|
+| `term` `{id, op, cmd}`; `op` is `run`, `interrupt`, `clear` or `view` (default) | `term` `{id, ok, cwd, running, total, from, entries[{cwd, cmd, lines[{text, err}], run{kind, code, ms}, cut}]}`, and again as the shell prints | `agents.NewTerm` per chat, in its folder; PowerShell on Windows. A view has every entry; updates carry the entries from `from` on. Ended with the chat and with the backend. |
+| `writeFile` `{id, path, text}` | `writeFile` `{id, path, ok, error}` | `agents.DeskWriteFile`: a file already in the chat's folder, plain UTF-8, links followed. |
+| `editors` | `editors` `{ok, choices[{id, name, last}]}` | `AvailableEditors`, `EditorChoices`. |
+| `openIn` `{id, editor, file, line, column}` | `openIn` `{id, ok, editor, said, error}` | `OpenIn`, `OpenFileManager`, or with no editor `OpenEditorOrFirst`; sets `LastEditor`. A file outside the folder is dropped. |
+| `inspectFolder` `{folder}` | `inspectFolder` `{folder, ok, git, branch, worktree, repo, reason}` | `agents.Inspect`, and the GitHub repository the remote names. |
+
+**Reading answers** (`render.go`). Each answers with `{ref, ok, ...}`.
+
+| Command | Answer | Does |
+|---|---|---|
+| `markdown` `{src, folder, files, format}` | `blocks[...]` or `html` | `md.Parse` (`format` `blocks`, the default) or `md.Markdown` (`html`); pictures through `md.ImageFor`. Blocks have `kind` (`para`, `heading`, `rule`, `code`, `diagram`, `quote`, `list`, `table`) and the fields of that kind. |
+| `highlight` `{info, text}` | `spans[{b0, b1, u0, u1, r, g, b, a, em}]` | `chat.Highlight`; byte and UTF-16 offsets. |
+| `diffLines` `{diff}` | `lines[{n, hasN, gap, text}]` | `chat.Numbered`. |
+| `flowchart` `{src}` | `readable`, `graph{dir, w, h, nodes, edges}`, `svg` | `diagram.Layout`, `diagram.Flowchart`; `readable: false` for what it cannot read. |
+
+Limits: Markdown 8 MiB, code and changes 4 MiB, a flowchart 200 KiB, a name 200 characters,
+a command 16,000 characters, a saved file 1 MiB.
+
+**The rest of Settings** (`settingsmore.go`).
+
+| Command | Answer | Does |
+|---|---|---|
+| `projects` `{op}`: `list` (default), `add {folder}`, `update {project}`, `remove {id}`, `default {folder, access, make}` | `projects` `{op, ok, error, project, projects, defaultWorkspace{folder, access, path}}` | `Settings.AddProject`, `UpdateProject`, `RemoveProject`, `SetDefaultWorkspace`, `core.EnsureFolder`. |
+| `themes` | `themes` `{ok, themes[{label, path, dark, from}]}` | `core.InstalledThemes`. |
+| `themeRead` `{path}` | `themeRead` `{path, ok, theme, palette, error}` | `core.ReadTheme`, `PaletteFromTheme`. A full path to a `.json` or `.jsonc` file up to 4 MiB. Colours are `#AARRGGBB`. |
+| `palette` `{dark}` or `{theme}` | `palette` `{ok, palette}` | `core.HoverPalette`, `PaletteFromTheme`. |
+| `mcp` `{op}`: `get` (default; with `name`, that server whole), `save {draft, editing}`, `enable {name, enabled}`, `remove {name}` | `mcp` `{op, ok, servers, server, file, error, fields}` | `agents.LoadMcp`, `SaveMcp`, `SetMcpDisabled`, `RemoveMcp`, in `agents.McpFile(agents.McpHome())`. The list gives the names of variables and headers, never their values. |
+| `kiroAgents` `{folder}` | `kiroAgents` `{folder, ok, agents}` | `agents.KiroAgents`. |
+| `secret` `{op: has\|set, name, value}` | `secret` `{name, ok, has, persistent}` | `core.SystemSecrets()`; the names are `voice.groq`, `cleanup.gemini`, `cleanup.openai`, `cleanup.custom`. The value is never in an answer or an error. `persistent` is false when there is no history key this run. |
+| `credits` | `credits` `{ok, ready, view}`, and again when it changes | `quota.Credits.View`: `days`, `today`, `weekTotal`, `weekHover`, `perDay7`, `month`, `runsOut`, `topToday`. |
+
+**Voice** (`voice.go`, `internal/voice/remote.go`). The host owns the microphone and the
+shortcut; the flow (transcribing, cleaning up, routing, the preview, starting) is
+`voice.Voice`. Nothing is made until the host first sends a voice command.
+
+| Command | Does |
+|---|---|
+| `voicePress` `{trial, dictate, activeProject}` | `Voice.Press` or `Dictate`; opens a recording for the audio that follows. |
+| `voiceAudio` `{pcm}` or `{error}` | `pcm` is base64, 16 kHz mono 16-bit little-endian, up to 128 KiB a block; `error` is the text `voice.Source.Failed` returns. Dropped when nothing records. |
+| `voiceRelease`, `voiceCancel`, `voiceDismiss`, `voiceStartNow`, `voiceHold`, `voiceRetry`, `voiceToggleCloud` | `Voice.Release`, `Cancel`, `Dismiss`, `StartNow`, `Hold`, `Retry`, `ToggleCloud`. |
+| `voiceEdit` `{task}`, `voiceChooseAgent` `{tool}`, `voiceChangeAgent` `{tool}`, `voiceChangeFolder` `{project}` (an id, or null for the default workspace), `voiceChangeRepo` `{kind: folder\|empty\|named, name}`, `voiceUnattach` `{index}` | The matching `Voice` methods. |
+| `voice` | Asks for the event. |
+
+The `voice` event `{stage, level, secs, pending, preview, session, folder, text, message,
+retry, transcript, countdownTotal, canStart, tool, folderChoices, readyTools, shots,
+shotCount, shotMessage}` is sent whenever the flow moves (at most as fast as the loop turns,
+about twenty a second while recording). `stage` is `idle`, `recording`, `loading`,
+`transcribing`, `cleaning`, `resolving`, `chooseAgent`, `preview`, `editing`, `starting`,
+`started`, `dictated`, `cancelled` or `error`; `preview` is `{id, heard, cleanupNote, task,
+folder, targetName, note, tool, model, access, countdown, counting, trial, cloud, repo{kind,
+name}}`. `readyTools` is from the last check of each tool.
+
+`phonon` `{op: get\|download\|repair\|cancel\|remove}` answers (and again as a setup goes on) with
+`phonon` `{ok, error, ready, state{kind, done, total, message}, facts{...}}`, and `groqCheck`
+with `groqCheck` `{ok, said}` (it uses the Groq key kept for voice).
 
 ## Packages
 
@@ -251,7 +422,7 @@ in-process adapter and the macOS JSON-line adapter.
 | `internal/shell` | The glue: windows, timers, the notch (`notchctl.go`), the office (`office.go`), chat, desk, new task, voice, and the system bindings (`env_windows.go`, `env_linux.go`). | Yes |
 | `internal/platform` | `win` (Win32 windows, Direct3D 11, DirectComposition, tray), `linux` (D-Bus tray and notifications, portals, pickers, clipboard), `wayland` (the notch as a layer-shell surface, the app window, keyboard, input method). | Yes |
 | `internal/voice`, `audio`, `music`, `screen` | Voice (capture, Groq, cleanup, Phonon), the system's audio output, the office's beats, the Screen panel's capture. | No |
-| `internal/backend`, `cmd/hover-backend` | The Mac app's backend: core, agents and quota behind JSON lines on stdin and stdout. | No |
+| `internal/backend`, `cmd/hover-backend` | The backend of the Mac app and of the C# Windows app: core, agents, quota and voice behind JSON lines on stdin and stdout. | No |
 | `internal/shots`, `cmd/ui-shots`, `cmd/office-shot` | The pictures (`--shots`), and the office alone. Not part of the product's work. | Yes |
 | `cmd/notch-spike`, `cmd/hover-data` | The first notch prototype (Windows), and a tool that writes and reads a data folder. Not shipped. | Yes / No |
 
@@ -550,6 +721,11 @@ unconfirmed stop. These are handled in code and tested against fakes only
 | Key storage | DPAPI | Secret Service, else a file only the user can read |
 | Child processes | Job object (tools die with Hover) | Process group with `Pdeathsig` |
 | Single instance | Named mutex `Local\HoverRunningInstance` | Lock file in `$XDG_RUNTIME_DIR` |
+
+The Windows column is the Go app. The C# app uses the same Windows APIs from C# (`windows/Hover/Notch`,
+`Hover.Voice`, `Hover.Settings`, `Hover.Host`): the same notch window styles, `RegisterHotKey`, winmm,
+`Shell_NotifyIcon`, DPAPI, the job object and the mutex. It draws with Direct2D and DirectWrite, and the
+office with Direct3D 11 and HLSL (`windows/Hover.Office`) in place of Gio and wgpu-native.
 
 Keep OS code in files named for the system (`_windows.go`, `_linux.go`, `_darwin.go`) or behind
 a `//go:build` line. What can be worked out without the OS (the Keychain and LaunchAgent logic in

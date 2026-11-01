@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- The chat thread with no window and no Windows call: the turns of a session laid out as
+       positioned text, shapes and click areas, with selection and copy. Text is measured by a
+       shaper the caller gives (DirectWrite in the app, a fixed-width stand-in in the tests), so
+       Hover.Tests runs all of it on any system. -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>Hover.Chat</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Hover.Host\Hover.Host.csproj" />
+    <ProjectReference Include="..\Hover.Notch\Hover.Notch.csproj" />
+  </ItemGroup>
+</Project>

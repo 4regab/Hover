@@ -79,7 +79,7 @@ Download the latest build from [Releases](https://github.com/4regab/Hover/releas
 
 | Platform | Package |
 |---|---|
-| Windows 10/11 (x64) | `Hover-Setup-<version>.exe`. It installs over a 2.x install in place and keeps your data. |
+| Windows 10/11 (x64) | `Hover-Setup-<version>.exe`. It installs over a 2.x or a 5.x install in place and keeps your data. Windows 10 version 2004 or newer. |
 | Ubuntu 22.04+ and Debian-based (x64) | `hover_<version>_amd64.deb` |
 | Other Linux (x64) | `hover-<version>-linux-x86_64.tar.gz`, or [build from source](#build-from-source) |
 | macOS 14+ (Apple Silicon or Intel) | `Hover-<version>-macos-arm64.dmg` (Apple silicon) or `Hover-<version>-macos-x64.dmg` (Intel). Open it and drag Hover to Applications. It isn't notarized yet, so open it the first time with right-click → Open. See [docs/MACOS.md](docs/MACOS.md). |
@@ -249,14 +249,23 @@ There is no account, server or analytics.
 | Desk card, helpers, Pull request tab | ✓ | ✓ | ✓ |
 | Release package | installer | .deb, tarball | disk image (signed ad hoc) |
 
+On Windows Hover is a C# (WinUI 3) app that starts the Go backend, `hover-backend.exe`, the same
+backend the Mac app uses; settings, history, keys and the agents work the same as before, and the
+installer swaps the 5.x Go app for it without touching your data folder. Not on Windows, by design
+(as in the Go app): the sandbox (Linux and macOS), and computer use, Cua agent desktops, the agent
+browser with its Browser tab, and one-click agent setup (macOS). Their switches say so. Hover's own helpers (the
+menu item that lets an agent ask other agents for help) are not offered on Windows either, as in the Go app; the small
+bots for an agent's own subagents show on every system.
+
 Where a feature is off, its switch says why. CI builds the Mac app and runs its packaged Go
 backend against stand-in tools; the native Swift UI, permission prompts, and real desktop
 behavior still need hands-on Mac validation. See [docs/MACOS.md](docs/MACOS.md).
 
 ## Build from source
 
-Requires Go: the version `go.mod` names (an older Go fetches it for you). Windows needs no C
-compiler. Linux needs one and the EGL headers, because Gio draws through EGL. The optional
+Requires Go: the version `go.mod` names (an older Go fetches it for you). Windows also needs the
+.NET 10 SDK (`winget install Microsoft.DotNet.SDK.10`), because the Windows app is C#; it needs no C
+compiler and no Visual Studio. Linux needs a C compiler and the EGL headers, because Gio draws through EGL. The optional
 [mise](https://mise.jdx.dev/) setup in `mise.toml` selects Go and Node and provides task aliases;
 it does not install platform build prerequisites.
 
@@ -266,14 +275,18 @@ On Ubuntu or Debian:
 sudo apt install build-essential libegl1-mesa-dev libgles2-mesa-dev
 ```
 
-The office is drawn with wgpu-native, which is a separate library beside the program:
-`build.ps1` fetches `wgpu_native.dll` and `make wgpu` fetches `libwgpu_native.so`.
+On Linux the office is drawn with wgpu-native, which is a separate library beside the program:
+`make wgpu` fetches `libwgpu_native.so`. The Windows app draws the office with Direct3D 11 and needs
+no extra library.
 
 ```powershell
 # Windows
+$env:HOVER_DATA_DIR = "$env:TEMP\hover-dev"   # an empty data folder of your own, so a build never touches your settings
 .\build.ps1 run              # build and run
-.\build.ps1 publish          # hoverai.exe and wgpu_native.dll in .\publish
+.\build.ps1 publish          # hoverai.exe, hover-backend.exe and what they run on, in .\publish
 .\build.ps1 installer        # Hover-Setup-<version>.exe in .\dist (needs Inno Setup 6 or 7)
+.\build.ps1 test             # the Go tests, then the C# tests
+.\build.ps1 legacy           # the Go Windows app that came before, in .\publish-legacy (needs only Go)
 ```
 
 ```sh
@@ -305,8 +318,8 @@ works for people and AI agents changing it.
 ## Contributing
 
 Issues and pull requests are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) first. Every
-pull request builds the app on Windows, Linux and macOS, runs the Go tests on those systems,
-and drives the Windows app.
+pull request builds the app on Windows, Linux and macOS, runs the Go tests on those systems and
+the C# tests on Windows, and drives the Windows app and its installer.
 
 The macOS support builds on Arz's ([@Entourage397](https://github.com/Entourage397)) macOS
 v1.0 for Hover 2.x, which was Swift and C#.

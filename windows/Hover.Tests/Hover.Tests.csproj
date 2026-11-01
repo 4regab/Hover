@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- `dotnet test` from windows/. The tests start real programs and need these set:
+         HOVER_BACKEND     hover-backend(.exe)       go build ./cmd/hover-backend
+         HOVER_DATA_TOOL   hover-data(.exe)          go build ./cmd/hover-data
+         HOVER_APP_EXE     hoverai.exe (optional)    the app's own checks; Windows only
+       docs/development/windows.md has the commands. -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <IsPackable>false</IsPackable>
+    <RootNamespace>Hover.Tests</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.11.0" />
+    <PackageReference Include="xunit" Version="2.9.3" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="3.1.5" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- Numbers the Go code printed (internal/app/notch_golden_test.go). -->
+    <None Include="golden\**" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Hover.Host\Hover.Host.csproj" />
+    <ProjectReference Include="..\Hover.Chat\Hover.Chat.csproj" />
+    <ProjectReference Include="..\Hover.Notch\Hover.Notch.csproj" />
+    <ProjectReference Include="..\Hover.TestTools\Hover.TestTools.csproj" />
+  </ItemGroup>
+</Project>

@@ -1,0 +1,32 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- `dotnet test` for voice, sound and music. The voice flow runs against the real hover-backend
+       (HOVER_BACKEND, as in Hover.Tests) with the stand-in agent and a fake Groq on this
+       computer's loopback; the shortcut and the microphone checks need Windows. -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <IsPackable>false</IsPackable>
+    <RootNamespace>Hover.Voice.Tests</RootNamespace>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.11.0" />
+    <PackageReference Include="xunit" Version="2.9.3" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="3.1.5" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- A software Direct3D 11 device (WARP) for drawing the card on a machine with no GPU. -->
+    <PackageReference Include="Vortice.Direct3D11" Version="3.8.3" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- The fonts the card is drawn in, linked from where the app and the office keep them. -->
+    <None Include="..\Hover\Assets\Fonts\*.ttf" Link="Assets\Fonts\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\internal\office\assets\PixelifySans.ttf" Link="Assets\Office\PixelifySans.ttf" CopyToOutputDirectory="PreserveNewest" />
+    <!-- The names of the Go app's voice pictures (internal/shots/voice.go): the C# set must be the same. -->
+    <None Include="GoVoicePictures.txt" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Hover.Voice\Hover.Voice.csproj" />
+    <ProjectReference Include="..\Hover.Host\Hover.Host.csproj" />
+    <ProjectReference Include="..\Hover.TestTools\Hover.TestTools.csproj" />
+  </ItemGroup>
+</Project>
