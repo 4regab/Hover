@@ -130,9 +130,21 @@ runnable as it is (self-contained). Packaging it is a later phase.
 The key rules for `note.key` (set aside, never overwritten) are in
 [windows-csharp.md](windows-csharp.md#c-data-formats); `Hover.Host/HistoryKey.cs` follows them.
 
-On Linux, `dotnet build windows/Hover.Host`, `Hover.TestTools` and `Hover.Tests` work, and so
-does the compile of `windows/Hover` (`dotnet msbuild windows/Hover/Hover.csproj -restore
--t:CoreCompile -p:EnableWindowsTargeting=true -p:WindowsAppSDKSelfContained=false
--p:SelfContained=false`). A full build of `windows/Hover` does not run there: the Windows App
-SDK build runs `mt.exe` and `MakePri.exe`, which are Windows programs. The runner is the build
-that counts.
+On Linux, `dotnet build` of `Hover.Host`, `Hover.TestTools` and `Hover.Tests` works, and
+`dotnet test` runs everything in the tests that is not marked Windows only. For `windows/Hover`
+there is a compile check that needs no Windows:
+
+```sh
+dotnet build windows/Hover/Hover.csproj -p:EnableWindowsTargeting=true \
+  -p:WindowsAppSDKSelfContained=false -p:SelfContained=false
+```
+
+It compiles the C# and then stops with `MSB6003 ... MakePri.exe could not be run`: the Windows
+App SDK build runs `mt.exe` and `MakePri.exe`, which are Windows programs, so a full build, and
+running the app, need Windows. The runner is the build that counts.
+
+Two things learned the hard way about a code-first WinUI 3 app: `Application.Resources` cannot
+be read in the `App` constructor (it fails with E_UNEXPECTED), so the control styles
+(`XamlControlsResources`) are merged in `OnLaunched`; and an exception that leaves the
+`Application.Start` callback ends the process with only the exit code `-1073741189`, so the
+callback catches and logs it.

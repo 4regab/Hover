@@ -98,7 +98,7 @@ jobs:
             "::group::dotnet test $($p.Name)"
             dotnet test $p.FullName -c Release `
               --logger "trx;LogFileName=$($p.BaseName).trx" `
-              --logger "console;verbosity=normal" `
+              --logger "console;verbosity=detailed" `
               --results-directory out\test-results
             if ($LASTEXITCODE -ne 0) { $failed += $p.Name }
             "::endgroup::"
