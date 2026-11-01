@@ -63,12 +63,32 @@ sealed class UiCore : IDisposable
             Changed?.Invoke();
         });
         backend.Event += onEvent;
+        // The office and the panels: a click on a bot or its desk opens its chat, the door opens the new-task box,
+        // and the office moves its camera to the bot whose chat is open.
+        if (office is not null)
+        {
+            office.BotPicked += id => Picked(() => Ui.OpenChat(id));
+            office.DeskPicked += id => Picked(() => Ui.OpenChat(id));
+            office.PropPicked += prop => { if (prop == OfficeProp.Door) Picked(Ui.OpenNewTask); };
+            Ui.DrawerChanged += id =>
+            {
+                if (id is { } open) office.OpenDrawer(open); else office.CloseDrawer();
+            };
+        }
         Images.Arrived += src => queue.TryEnqueue(() =>
         {
             if (disposed) return;
             Ui.ImageArrived(src);
             Changed?.Invoke();
         });
+    }
+
+    void Picked(Action act)
+    {
+        if (disposed) return;
+        try { act(); }
+        catch (Exception e) { HostLog.Line($"panels: a pick failed — {e}"); }
+        Changed?.Invoke();
     }
 
     static void OpenUrl(string url)

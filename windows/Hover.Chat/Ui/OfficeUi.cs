@@ -34,6 +34,18 @@ public sealed partial class OfficeUi
     /// <summary>The office session whose chat is open, if any.</summary>
     public int? OpenId { get; private set; }
 
+    /// <summary>A chat opened or closed in the office: the session's id, or null. The office moves its camera to that bot.</summary>
+    public event Action<int?>? DrawerChanged;
+
+    /// <summary>Opens the new-task box over the office (the door was clicked).</summary>
+    public void OpenNewTask()
+    {
+        ChatView = false;
+        taskOpen = true;
+        focus = Focus.Task;
+        Dirty = true;
+    }
+
     string? openKey;
 
     /// <summary>Something changed since the last frame, so a new one is worth drawing.</summary>
@@ -135,7 +147,11 @@ public sealed partial class OfficeUi
         {
             case StateEvent s:
                 state = s;
-                if (OpenId is { } open && s.Sessions.All(x => x.Id != open)) OpenId = null;
+                if (OpenId is { } open && s.Sessions.All(x => x.Id != open))
+                {
+                    OpenId = null;
+                    DrawerChanged?.Invoke(null);
+                }
                 OpenStarted();
                 if (!askedProjects)
                 {
@@ -223,6 +239,7 @@ public sealed partial class OfficeUi
         compose = false;
         ResetThreadView();
         env.Send(new OpenCommand(id));
+        DrawerChanged?.Invoke(id);
         Dirty = true;
     }
 
@@ -240,6 +257,7 @@ public sealed partial class OfficeUi
         transcript = null;
         compose = false;
         ResetThreadView();
+        DrawerChanged?.Invoke(null);
         env.Send(new HistoryCommand(key));
         Dirty = true;
     }
@@ -252,6 +270,7 @@ public sealed partial class OfficeUi
         transcript = null;
         compose = false;
         env.Send(new OpenCommand());
+        DrawerChanged?.Invoke(null);
         Dirty = true;
     }
 

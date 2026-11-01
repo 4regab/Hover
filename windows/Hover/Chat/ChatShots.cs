@@ -66,7 +66,7 @@ static class ChatShots
 
     internal static SessionInfo Session(int id, string tool, string title, string stage, int bot, params TurnInfo[] turns) => new()
     {
-        Id = id, Key = id.ToString("x32"), Tool = tool, Bot = bot, Title = title, Folder = @"C:\work\project", Stage = stage, Turns = [.. turns],
+        Id = id, Key = id.ToString("x").PadRight(32, 'c'), Tool = tool, Bot = bot, Title = title, Folder = @"C:\work\project", Stage = stage, Turns = [.. turns],
     };
 
     internal static TurnInfo Turn(string prompt, string answer, string stage, int minutesAgo, params StepInfo[] steps) => new()

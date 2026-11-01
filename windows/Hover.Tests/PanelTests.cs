@@ -486,4 +486,26 @@ public class PanelTests
         Assert.NotNull(h.Ui.OpenId);
         Assert.Contains(h.Sent, x => x is OpenCommand);
     }
+
+    [Fact]
+    public void Opening_and_closing_a_chat_tells_the_office_and_the_door_opens_the_new_task_box()
+    {
+        var h = new PanelHarness();
+        h.State(PanelHarness.Session(1, "done", null, PanelHarness.Turn("Hi", "Hi.")));
+        int? told = -1;
+        h.Ui.DrawerChanged += id => told = id;
+        h.Ui.OpenChat(1);
+        Assert.Equal(1, told);
+        h.Frame();
+        h.Ui.CloseChat();
+        Assert.Null(told);
+        h.Ui.OpenNewTask();
+        h.Frame();
+        Assert.NotNull(h.Ui.Find("taskText"));
+        // The session going away closes its chat too.
+        h.Ui.OpenChat(1);
+        h.State();
+        Assert.Null(told);
+        Assert.Null(h.Ui.OpenId);
+    }
 }
