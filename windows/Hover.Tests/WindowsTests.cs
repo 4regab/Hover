@@ -281,7 +281,8 @@ public class AppTests(ITestOutputHelper output)
         using var temp = new TempDirectory();
         var shots = Path.Combine(temp.Path, "shots");
         using var app = Launch(Path.Combine(temp.Path, "data"), "--shots", shots);
-        Assert.True(app.WaitForExit(120_000), "--shots should finish by itself");
+        // The job's own picture step waits five minutes: the pictures of the notch, the chat, the desk, Settings and the voice card take about three.
+        Assert.True(app.WaitForExit(300_000), "--shots should finish by itself");
         Assert.True(app.ExitCode == 0, $"--shots exited with {app.ExitCode}. {Describe(Path.Combine(temp.Path, "data"))}");
 
         Assert.DoesNotContain("styles did not load", Describe(Path.Combine(temp.Path, "data")));
