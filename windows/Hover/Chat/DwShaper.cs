@@ -29,8 +29,8 @@ sealed class DwShaper(Gfx g) : IShaper, IDisposable
     {
         var (text, runs, _) = Runs.Build(spans, look);
         using var one = new DwLayout(this, text, runs, look, 0, Align.Start);
-        using var narrow = new DwLayout(this, text, runs, look, 1, Align.Start);
-        return (narrow.MinContent(), one.Width);
+        using var tight = new DwLayout(this, text, runs, look, 1, Align.Start);
+        return (tight.MinContent(), one.Width);
     }
 
     DwLayout Make(string text, IReadOnlyList<StyleRun> runs, Look look, float width, Align align) => new(this, text, runs, look, width, align);
