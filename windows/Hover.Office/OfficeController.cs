@@ -277,4 +277,9 @@ public sealed class OfficeStore(string file)
     public TimeOfDay? Time() => Get("time") switch { "night" => TimeOfDay.Night, "day" => TimeOfDay.Day, _ => null };
 
     public void SetTime(TimeOfDay? t) => Set("time", t switch { TimeOfDay.Night => "night", TimeOfDay.Day => "day", _ => "" });
+
+    /// <summary>The office beats switch: on only when the file says "on", as the Go build reads it.</summary>
+    public bool Beats() => Get("beats") == "on";
+
+    public void SetBeats(bool on) => Set("beats", on ? "on" : "off");
 }

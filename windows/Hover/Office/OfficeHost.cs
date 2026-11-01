@@ -192,11 +192,11 @@ public sealed class OfficeHost : IDisposable
     /// </summary>
     public bool Beats
     {
-        get => store.Get("beats") == "on";
+        get => store.Beats();
         set
         {
-            if (Beats == value) return;
-            store.Set("beats", value ? "on" : "off");
+            if (store.Beats() == value) return;
+            store.SetBeats(value);
             BeatsChanged?.Invoke(value);
         }
     }

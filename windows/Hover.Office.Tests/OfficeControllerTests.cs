@@ -142,8 +142,10 @@ public sealed class OfficeControllerTests
             Assert.Null(store.Time());
             store.SetView(1.5, -2, 1.25);
             store.SetTime(TimeOfDay.Day);
-            store.Set("beats", "on");
+            Assert.False(store.Beats());
+            store.SetBeats(true);
             var again = new OfficeStore(file);
+            Assert.True(again.Beats());
             Assert.Equal((1.5, -2.0, 1.25), again.View());
             Assert.Equal(TimeOfDay.Day, again.Time());
             Assert.Equal("on", again.Get("beats"));
