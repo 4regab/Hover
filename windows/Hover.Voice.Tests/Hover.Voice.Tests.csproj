@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- `dotnet test` for voice, sound and music. The voice flow runs against the real hover-backend
+       (HOVER_BACKEND, as in Hover.Tests) with the stand-in agent and a fake Groq on this
+       computer's loopback; the shortcut and the microphone checks need Windows. -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <IsPackable>false</IsPackable>
+    <RootNamespace>Hover.Voice.Tests</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.11.0" />
+    <PackageReference Include="xunit" Version="2.9.3" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="3.1.5" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Hover.Voice\Hover.Voice.csproj" />
+    <ProjectReference Include="..\Hover.Host\Hover.Host.csproj" />
+    <ProjectReference Include="..\Hover.TestTools\Hover.TestTools.csproj" />
+  </ItemGroup>
+</Project>

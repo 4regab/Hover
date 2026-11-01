@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Voice, sound and music with no window: the hold-to-talk shortcut, the microphone (winmm),
+       the voice commands and the `voice` event, the card's content, the aura, the sound output
+       (winmm), the chime and the office beats. The winmm and user32 calls are made only on
+       Windows; everything else runs in a plain test process, on Linux too. -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>Hover.Voice</RootNamespace>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Hover.Host\Hover.Host.csproj" />
+    <ProjectReference Include="..\Hover.Notch\Hover.Notch.csproj" />
+    <!-- Ogg Vorbis decoder (managed, MIT). The Go app uses jfreymuth/oggvorbis. -->
+    <PackageReference Include="NVorbis" Version="0.10.5" />
+    <!-- The loop is the Go app's own file, linked from internal/music, not copied. -->
+    <EmbeddedResource Include="..\..\internal\music\office-beats.ogg" LogicalName="office-beats.ogg" Link="office-beats.ogg" />
+  </ItemGroup>
+</Project>
