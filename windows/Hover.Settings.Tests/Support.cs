@@ -193,6 +193,8 @@ sealed class RecordingCanvas : ICanvas
 {
     public readonly List<(Rect4 R, Rgba C)> Fills = [];
     public int Texts;
+    /// <summary>The opacity of the colour of each run of text drawn (the app's canvas draws the colours a layout was shaped with).</summary>
+    public readonly List<byte> TextAlpha = [];
     public int Svgs;
     public readonly Stack<float> Opacity = new();
     public float Dimmed;
@@ -208,7 +210,11 @@ sealed class RecordingCanvas : ICanvas
     public void Line(IReadOnlyList<(float X, float Y)> points, float width, Rgba c) { }
     public void Polygon(IReadOnlyList<(float X, float Y)> points, Rgba c) { }
     public void Glow(float cx, float cy, float radius, Rgba c) { }
-    public void Text(IParaLayout layout, IReadOnlyList<StyleRun> runs, float x, float y) => Texts++;
+    public void Text(IParaLayout layout, IReadOnlyList<StyleRun> runs, float x, float y)
+    {
+        Texts++;
+        foreach (var r in runs) TextAlpha.Add(r.Color.A);
+    }
     public void Svg(string svg, Rect4 r) => Svgs++;
     public void Image(string src, Rect4 r, float radius, bool cover) { }
     public void BrokenImage(float x, float y) { }

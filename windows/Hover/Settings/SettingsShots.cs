@@ -61,7 +61,7 @@ static class SettingsShots
         var agents = offers
             ? "\"AgentOffers\":{" + string.Join(",", new[] { "kiro", "codex", "opencode", "claude" }.Select(t => $"\"{t}\":[{Offers(t)}]")) + "}"
             : "\"AgentOffers\":null";
-        return $$"""{"HoverOpensWorkspace":true,"NotchItems":["claude","kiro","codex","cursor"],"WorkspaceSize":"Default","Appearance":"{{appearance}}","KiroNoticeSeen":true,"ScWorkspace":{"Key":"N","Modifiers":"Alt"},"Voice":{"Enabled":true,"Shortcut":{"Key":"Space","Modifiers":"Control, Alt"},"Speech":"Cloud","Model":"whisper-large-v3-turbo","Cleanup":true,"CleanupProvider":"Gemini","Countdown":5},{{agents}}{{(extra.Length > 0 ? "," + extra : "")}}}""";
+        return $$"""{"HoverOpensWorkspace":true,"NotchItems":["claude","kiro","codex","cursor"],"WorkspaceSize":"Default","Appearance":"{{appearance}}","KiroNoticeSeen":true,"ScWorkspace":{"Key":"N","Modifiers":"Alt"},"Voice":{"Enabled":true,"Shortcut":{"Key":"Space","Modifiers":"Control, Alt"},"Speech":"Cloud","Model":"whisper-large-v3-turbo","Cleanup":false,"CleanupProvider":"Gemini","Countdown":5},{{agents}}{{(extra.Length > 0 ? "," + extra : "")}}}""";
     }
 
     static StateEvent Tools(bool ready = true) => new()
@@ -221,10 +221,12 @@ static class SettingsShots
     {
         var ui = new SettingsUi(core.Shaper, c, new SettingsUiEnv { Back = () => { }, Clipboard = new Clip(), InNotch = notch });
         byte[] layer = [];
-        // Twice: the first lays the page out (its height, the places of the controls), the second draws it as it is.
+        // The Go notch pictures are the notch's window: the panel inside 40 px of the desktop at the sides and below.
+        var (lw, lh, lx) = notch ? (w - 80, h - 40, 40) : (w, h, 0);
+        // Three times: the first lays the page out (its height, the places of the controls), the others draw it as it is.
         for (var round = 0; round < 3; round++)
         {
-            layer = Layer(core, ui, w, h);
+            layer = Layer(core, ui, lw, lh);
             if (round == 0) after?.Invoke(ui, c);
         }
         // Over the colour the Go shots' window has behind the page.
@@ -237,7 +239,7 @@ static class SettingsShots
             output[i + 2] = (byte)((back >> 16) & 0xff);
             output[i + 3] = 255;
         }
-        ChatShots.Over(output, w, h, 0, 0, layer, w, h);
+        ChatShots.Over(output, w, h, lx, 0, layer, lw, lh);
         var file = Path.Combine(directory, name + ".jpg");
         await Hover.Shots.WriteJpegAsync(output, w, h, file);
         HostLog.Line($"picture {file} ({w} x {h})");

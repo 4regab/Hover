@@ -35,20 +35,8 @@ sealed class DimCanvas : ICanvas
     public void Polygon(IReadOnlyList<(float X, float Y)> points, Rgba c) => Inner.Polygon(points, D(c));
     public void Glow(float cx, float cy, float radius, Rgba c) => Inner.Glow(cx, cy, radius, D(c));
 
-    public void Text(IParaLayout layout, IReadOnlyList<StyleRun> runs, float x, float y)
-    {
-        if (Opacity >= 1)
-        {
-            Inner.Text(layout, runs, x, y);
-            return;
-        }
-        var dimmed = runs.Select(r => new StyleRun
-        {
-            Start = r.Start, End = r.End, Size = r.Size, Weight = r.Weight, Italic = r.Italic, Strike = r.Strike, Underline = r.Underline,
-            Code = r.Code, Family = r.Family, Color = D(r.Color), UnderlineColor = D(r.UnderlineColor), Gap = r.Gap,
-        }).ToList();
-        Inner.Text(layout, dimmed, x, y);
-    }
+    // Text is shaped in faded colours by the pen that draws while the opacity is below 1 (see SettingsUi.Opacity): the colours are in the layout.
+    public void Text(IParaLayout layout, IReadOnlyList<StyleRun> runs, float x, float y) => Inner.Text(layout, runs, x, y);
 
     public void Svg(string svg, Rect4 r) => Inner.Svg(svg, r);
     public void Image(string src, Rect4 r, float radius, bool cover) => Inner.Image(src, r, radius, cover);

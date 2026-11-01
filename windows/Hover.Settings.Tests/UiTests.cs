@@ -79,6 +79,20 @@ public class UiTests
     }
 
     [Fact]
+    public void A_row_that_is_switched_off_draws_its_text_faded_and_the_rest_in_full()
+    {
+        var page = new Page("{}");
+        page.Ctl.Open(Section.Integrations);
+        page.Canvas.TextAlpha.Clear();
+        page.Paint();
+        // Computer use, Agent desktops, Sandbox and Agent browser are off on Windows: their text is 40 % of its colour (255 * 0.4 = 102).
+        Assert.Contains((byte)102, page.Canvas.TextAlpha);
+        Assert.Contains((byte)255, page.Canvas.TextAlpha);
+        // Texts drawn in the faded pen are still on the page for the checks.
+        Assert.Contains("Computer use", page.Ui.Texts);
+    }
+
+    [Fact]
     public void The_page_draws_text_and_shapes_and_every_section_in_the_sidebar_answers_a_click()
     {
         var p = new Page();

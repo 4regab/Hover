@@ -36,7 +36,11 @@ readonly record struct Hit(Rect4 R, Rect4 Clip, TK K, string Id, int N = 0, stri
 /// </summary>
 public sealed partial class SettingsUi
 {
-    readonly Pen pen;
+    // The pen in use: the plain one, or while a faded row draws, one that shapes text in faded colours.
+    Pen pen;
+    readonly Pen plainPen;
+    readonly IShaper shaper;
+    readonly Dictionary<int, Pen> fadedPens = [];
     readonly DimCanvas dim = new();
     readonly SettingsController ctl;
     readonly SettingsUiEnv env;
@@ -63,7 +67,8 @@ public sealed partial class SettingsUi
 
     public SettingsUi(IShaper shaper, SettingsController controller, SettingsUiEnv env)
     {
-        pen = new Pen(shaper);
+        this.shaper = shaper;
+        pen = plainPen = new Pen(shaper);
         ctl = controller;
         this.env = env;
         ctl.Changed += () => Dirty = true;
@@ -119,10 +124,23 @@ public sealed partial class SettingsUi
     void Opacity(float a, Action draw)
     {
         if (a >= 1) { draw(); return; }
-        var cv = pen.Cv;
+        var outer = pen;
+        var cv = outer.Cv;
         cv.PushOpacity(a);
+        // The app's canvas draws a text layout in the colours it was shaped with, so the faded text is shaped faded: by a pen of its
+        // own for each opacity (it keeps its own cache of lines).
+        var key = (int)Math.Round(dim.Opacity * 1000);
+        if (!fadedPens.TryGetValue(key, out var faded)) fadedPens[key] = faded = new Pen(new FadedShaper(shaper, dim.Opacity));
+        faded.Cv = dim;
+        pen = faded;
         try { draw(); }
-        finally { cv.PopOpacity(); }
+        finally
+        {
+            pen = outer;
+            foreach (var t in faded.Drawn) if (outer.Drawn.Count < 2000) outer.Drawn.Add(t);
+            faded.Drawn.Clear();
+            cv.PopOpacity();
+        }
     }
 
     // MARK: Hits
@@ -177,7 +195,7 @@ public sealed partial class SettingsUi
     {
         dim.Inner = canvas;
         pen.Cv = dim;
-        pen.Drawn.Clear();
+        plainPen.Drawn.Clear();
         hits.Clear();
         sliders.Clear();
         w = width;
