@@ -769,13 +769,19 @@ public sealed class OfficeHost : IDisposable
         shotFrozen = true;
         ctl.Resize(width, height);
         ctl.State(OfficeStateMap.Read(state));
+        RunForShot(600);
+        settled = true;
+    }
+
+    /// <summary>For <c>--shots</c>: the office runs this many frames (the camera goes to a bot whose chat opened, the bots walk).</summary>
+    internal void RunForShot(int frames)
+    {
         var t = clock.Elapsed.TotalMilliseconds;
-        for (var i = 0; i < 600; i++)
+        for (var i = 0; i < frames; i++)
         {
             model.Frame(t, 16);
             t += 16;
         }
-        settled = true;
     }
 
     /// <summary>For <c>--shots</c>: where a session's name tag is, and its helpers' colours (in the office's own pixels).</summary>

@@ -54,6 +54,31 @@ static class DeskShots
         return sb.ToString();
     }
 
+    /// <summary>A screen that is not one: a diagonal gradient with a window on it; a live one has a red mark in the window's title.</summary>
+    static Hover.Settings.ScreenFrame MadeUpScreen(bool live)
+    {
+        const int w = 1280, h = 800;
+        var px = new byte[w * h * 4];
+        for (var y = 0; y < h; y++)
+            for (var x = 0; x < w; x++)
+            {
+                var t = (x / (double)w + y / (double)h) / 2;
+                var i = (y * w + x) * 4;
+                px[i] = (byte)(0x8c + (0x9a - 0x8c) * t);
+                px[i + 1] = (byte)(0x7d + (0x3d - 0x7d) * t);
+                px[i + 2] = (byte)(0x2e + (0x6a - 0x2e) * t);
+                px[i + 3] = 255;
+                bool inWindow = x is >= 250 and < 990 && y is >= 120 and < 700;
+                if (!inWindow) continue;
+                var title = y < 150;
+                var red = live && title && x is >= 266 and < 282 && y is >= 128 and < 144;
+                px[i] = (byte)(red ? 0x3a : title ? 0x2d : 0xe9);
+                px[i + 1] = (byte)(red ? 0x45 : title ? 0x2d : 0xf0);
+                px[i + 2] = (byte)(red ? 0xff : title ? 0x30 : 0xf3);
+            }
+        return new Hover.Settings.ScreenFrame(w, h, px);
+    }
+
     /// <summary>The session as another desk of the office: its id, its seat and its bot (Pip, Juno…).</summary>
     static SessionInfo At(this SessionInfo s, int id, int seat, int bot)
         => s with { Id = id, Key = id.ToString("x").PadRight(32, 'c'), Seat = seat, Bot = bot };
@@ -254,8 +279,12 @@ static class DeskShots
         await Pic(core, dir, "desk-tab-linked", tw, th, () => Tab("linked"));
         await Pic(core, dir, "desk-tab-agents", tw, th, () => Tab("agents"));
         await Pic(core, dir, "desk-tab-agents-open", tw, th, () => { Frame(tw, th); ui.Click("drow", s: "sa:a2"); ui.Click("drow", s: "sa:a1"); });
+        // The Screen tab with a made-up screen (a gradient with one window), as the Go shots have; then watching it live.
+        core.ScreenFeed.Fixture = live => MadeUpScreen(live);
+        await Pic(core, dir, "desk-tab-screen", tw, th, () => Tab("screen"));
+        await Pic(core, dir, "desk-tab-screen-live", tw, th, () => { Frame(tw, th); ui.Click("sWatch"); });
         // Every tab at Small, the shortest office (840 x 340).
-        foreach (var tab in new[] { "terminal", "files", "diff", "pr", "linked", "agents" })
+        foreach (var tab in new[] { "terminal", "files", "diff", "pr", "linked", "agents", "screen" })
             await Pic(core, dir, $"desk-tab-small-{tab}", 840, 340, () => { Tab(tab); if (tab == "terminal") Term(ui); if (tab == "pr") Put(ui, "pr", PrOpen); });
         await Pic(core, dir, "desk-tab-small-pr-description", 840, 340, () => { Tab("pr"); Put(ui, "pr", PrText); });
         await Pic(core, dir, "desk-tab-small-pr-create", 840, 340, () => { Tab("pr"); Put(ui, "pr", Create); });
@@ -276,6 +305,8 @@ static class DeskShots
             Fixtures(ui, doneChat, live, asking);
             Seat(core, doneChat, live, asking);
             ui.OpenChat(s.Id);
+            // The office's camera goes to the bot whose chat is open.
+            OfficeHost.Current?.RunForShot(400);
             Frame(1200, 720);
             ui.Click("compose");
             ui.Char(draft);
@@ -321,7 +352,7 @@ static class DeskShots
 
         // The panels over the office.
         var many = new[] { ChatShots.Busy(), ChatShots.Finished(), ChatShots.Session(3, "codex", "Install three.js", "waiting", 3, ChatShots.Turn("Install three.js", "", "waiting", 1)) with { Ctx = 62 } };
-        void Panel(string name, SessionInfo[] sessions) { ui.CloseDeskPanel(); ui.ChatView = false; ui.CloseChat(); ui.Accept(ChatShots.State(sessions)); Seat(core, sessions); ui.OpenOfficePanel(name); }
+        void Panel(string name, SessionInfo[] sessions) { ui.CloseDeskPanel(); ui.ChatView = false; ui.CloseChat(); ui.Accept(ChatShots.State(sessions)); Seat(core, sessions); ui.OpenOfficePanel(name); OfficeHost.Current?.RunForShot(400); }
         await Pic(core, dir, "office-panel-board", 1200, 480, () => Panel("board", many));
         // A board of more sessions than fit: it scrolls.
         var lots = Enumerable.Range(1, 14).Select(i => ChatShots.Session(10 + i, i % 3 == 0 ? "codex" : "kiro", $"Session {i}: " + (i % 2 == 0 ? "tidy the imports" : "check the second monitor"), i % 4 == 0 ? "working" : i % 4 == 1 ? "done" : i % 4 == 2 ? "waiting" : "failed", i % 6, ChatShots.Turn("Prompt", "Answer", "done", i))).ToArray();
