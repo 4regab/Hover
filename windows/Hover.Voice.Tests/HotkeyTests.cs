@@ -212,6 +212,35 @@ public class HotkeyTests(ITestOutputHelper output)
         Assert.True(again is not null, why);
     }
 
+    [WindowsFact]
+    public async Task Hotkeys_made_and_let_go_again_and_again_never_call_a_procedure_that_was_collected()
+    {
+        // Each hotkey has a window class of its own. With one named by the thread's number, a later thread with the same number
+        // found the old class and its procedure, and the process died when that object had been collected.
+        for (var i = 0; i < 80; i++)
+        {
+            var k = VoiceHotkey.Register(VoiceSettings.DefaultShortcut, out var why);
+            Assert.True(k is not null, why);
+            k!.Dispose();
+            GC.Collect();
+            GC.WaitForPendingFinalizers();
+        }
+        using var key = VoiceHotkey.Register(VoiceSettings.DefaultShortcut, out var error);
+        Assert.True(key is not null, error);
+        var pressed = 0;
+        key!.Pressed += () => Interlocked.Increment(ref pressed);
+        try
+        {
+            GC.Collect();
+            GC.WaitForPendingFinalizers();
+            Down(Ctrl);
+            Down(Alt);
+            Down(Space);
+            Assert.True(await Until(() => pressed == 1), "the chord did not arrive as a hotkey");
+        }
+        finally { LetGo(); }
+    }
+
     [Fact]
     public async Task Without_windows_the_service_still_presses_and_releases_through_the_wire()
     {

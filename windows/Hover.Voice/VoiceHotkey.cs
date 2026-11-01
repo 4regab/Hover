@@ -45,6 +45,7 @@ public sealed class VoiceHotkey : IDisposable
     }
 
     [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)] static extern ushort RegisterClassExW(ref WNDCLASSEXW cls);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)] static extern bool UnregisterClassW(string name, nint instance);
     [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     static extern nint CreateWindowExW(uint exStyle, string className, string title, uint style, int x, int y, int w, int h, nint parent, nint menu, nint instance, nint param);
     [DllImport("user32.dll")] static extern bool DestroyWindow(nint hwnd);
@@ -58,6 +59,8 @@ public sealed class VoiceHotkey : IDisposable
     [DllImport("user32.dll")] static extern void PostQuitMessage(int code);
     [DllImport("user32.dll")] static extern short GetAsyncKeyState(int vk);
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode)] static extern nint GetModuleHandleW(string? name);
+
+    static int classes;
 
     readonly Thread thread;
     readonly ManualResetEventSlim made = new(false);
@@ -131,7 +134,9 @@ public sealed class VoiceHotkey : IDisposable
 
     void Run(uint mods)
     {
-        var name = "HoverVoiceKeys" + Environment.CurrentManagedThreadId.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        // A class of this object's own: a class named by the thread would be found again by a later thread of the same number, and
+        // its window would call the procedure of an object that is gone.
+        var name = "HoverVoiceKeys" + Interlocked.Increment(ref classes).ToString(System.Globalization.CultureInfo.InvariantCulture);
         var cls = new WNDCLASSEXW
         {
             cbSize = (uint)Marshal.SizeOf<WNDCLASSEXW>(),
@@ -166,6 +171,8 @@ public sealed class VoiceHotkey : IDisposable
             TranslateMessage(ref msg);
             DispatchMessageW(ref msg);
         }
+        UnregisterClassW(name, cls.hInstance);
+        GC.KeepAlive(proc);
     }
 
     nint Handle(nint window, uint msg, nint wParam, nint lParam)
