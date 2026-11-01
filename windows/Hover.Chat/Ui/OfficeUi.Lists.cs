@@ -79,7 +79,7 @@ public sealed partial class OfficeUi
     /// <summary>The session list asks Kiro for this computer's sessions when it shows, at most every two minutes.</summary>
     void ListsTick()
     {
-        if (ChatView && sideShown && state is not null) AskCli(false);
+        if (ChatView && !sideClosed && w >= 760 && state is not null) AskCli(false);
     }
 
     bool ListsAccept(BackendEvent e)

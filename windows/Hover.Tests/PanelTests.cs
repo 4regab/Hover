@@ -59,12 +59,16 @@ sealed class PanelHarness
     /// <summary>The made-up backend's answers to the desk's commands, in the order they were asked.</summary>
     public Action<BackendCommand>? Respond;
 
+    /// <summary>What the system's picture dialog answers.</summary>
+    public Func<PickedImage?>? Pick;
+
     public PanelHarness()
     {
         Ui = new OfficeUi(new FakeShaper(), new UiEnv
         {
             Send = Send,
             Clipboard = Clip,
+            PickImage = () => Pick?.Invoke(),
             Utc = () => new DateTime(2026, 11, 1, 7, 20, 0, DateTimeKind.Utc),
         });
     }
@@ -115,9 +119,9 @@ sealed class PanelHarness
         Sessions = [.. sessions],
     });
 
-    public bool Click(string id, int n = -1)
+    public bool Click(string id, int n = -1, string? s = null)
     {
-        var ok = Ui.Click(id, n);
+        var ok = Ui.Click(id, n, 1, s);
         Frame();
         return ok;
     }
