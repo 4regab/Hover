@@ -165,6 +165,10 @@ func startHost(t *testing.T, dir string, env ...string) *host {
 				_ = h.cmd.Process.Kill()
 			}
 		}
+		// A test binary built with -race reports a race in the backend here.
+		if strings.Contains(h.stderr.String(), "DATA RACE") {
+			t.Errorf("the backend has a data race:\n%s", h.stderr.String())
+		}
 	})
 	return h
 }

@@ -352,3 +352,35 @@ func TestCreditsByDay(t *testing.T) {
 	}
 	h.stop()
 }
+
+// A secrets.dat that Go wrote (the way hover-data does) opens in the backend with the same
+// key, and a backend that has another key reads it as none and does not touch it.
+func TestASecretsFileGoWroteOpensInTheBackend(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "secrets.dat")
+	k := "from-go-side-key"
+	if _, err := core.NewSecrets(file, core.CryptoWithKey([32]byte(testKeyBytes))).Set("voice.groq", &k); err != nil {
+		t.Fatal(err)
+	}
+	before, _ := os.ReadFile(file)
+	h := startHost(t, dir)
+	h.start()
+	if g := h.ask(msg{"type": "secret", "name": "voice.groq"}, "secret"); g["has"] != true {
+		t.Fatalf("the Go-written file did not open: %v", g)
+	}
+	h.stop()
+	other := make([]byte, 32)
+	for i := range other {
+		other[i] = 7
+	}
+	h2 := startHost(t, dir)
+	h2.send(msg{"type": "initialize", "key": b64(other)})
+	h2.next("initialized")
+	if g := h2.ask(msg{"type": "secret", "name": "voice.groq"}, "secret"); g["has"] != false {
+		t.Fatalf("another key opened it: %v", g)
+	}
+	h2.stop()
+	if after, _ := os.ReadFile(file); string(before) != string(after) {
+		t.Fatal("reading with another key changed secrets.dat")
+	}
+}

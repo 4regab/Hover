@@ -154,18 +154,23 @@ flowchart TB
 
 ### CI and releases
 
-`.github/workflows/ci.yml` runs on GitHub's own runners. It runs no Go tests. One job per OS
-builds and checks what it ships, and on a release the same jobs build the installers from the
-build they just checked.
+`.github/workflows/ci.yml` runs on GitHub's own runners. A `test` job runs the Go tests
+(`go test ./cmd/... ./internal/...`) on Windows, macOS and Linux; Linux and macOS add the race
+detector. One job per OS builds and checks what it ships, and on a release the same jobs build
+the installers from the build they just checked.
 
 ```mermaid
 flowchart LR
-    push["push to main or go-port<br/>or a pull request"] --> cj & wj & lj & mj
-    tag["push of tag vX.Y.Z, or of a new<br/>VERSION to main"] --> cj & wj & lj & mj
+    push["push to main or go-port<br/>or a pull request"] --> cj & tj & wj & lj & mj
+    tag["push of tag vX.Y.Z, or of a new<br/>VERSION to main"] --> cj & tj & wj & lj & mj
     hand["Run workflow, by hand"] --> pj
 
     subgraph cj["check (ubuntu-22.04)"]
         c1["VERSION matches version.go, gofmt,<br/>go vet for Linux, Windows and macOS,<br/>the Mac backend builds"]
+    end
+
+    subgraph tj["test (ubuntu-22.04, windows-2022, macos-15)"]
+        t1["go test ./cmd/... ./internal/...<br/>(the backend tests run this binary<br/>as the backend, over a pipe)"]
     end
 
     subgraph wj["windows job (windows-2022)"]
@@ -184,12 +189,13 @@ flowchart LR
         pp["hoverai --shots: every view"]
     end
 
-    cj & wj & lj & mj --> rel
+    cj & tj & wj & lj & mj --> rel
     rel["release job (release only)<br/>tags the commit; Latest GitHub release with the .exe, .deb, .tar.gz, .dmg"]
 ```
 
 A tag whose version doesn't match `VERSION` fails before anything builds. A failing job means
-nothing is published. The release waits for all four jobs, the macOS one included: it builds
+nothing is published. The release waits for the check, the tests and the Windows, Linux and
+macOS jobs, the macOS one included: it builds
 the disk images (Apple silicon and Intel) and runs the packaged Go backend against stand-in
 tools on a Mac runner. The native Swift UI and its permission prompts have not had full
 hands-on validation; see `docs/MACOS.md`. Pushes that only touch Markdown, `docs/` or the
@@ -227,13 +233,30 @@ when Hover does.
 
 ## Backend and host boundary
 
-Windows and Linux run the Go application and backend in one process. macOS has a Swift host
-that starts `cmd/hover-backend` and exchanges JSON-line commands and events over stdin/stdout.
-The Mac smoke test exercises that packaged process boundary; it does not cover the native
-Swift UI. There is not yet one declared cross-platform wire schema: the in-process Go app
-calls backend behavior directly. To keep behavior aligned, future protocol work should define
-platform-neutral commands and events and run the same conformance fixtures through both a Go
-in-process adapter and the macOS JSON-line adapter.
+`cmd/hover-backend` (`internal/backend`) is the part of Hover with no window: the sessions,
+the agents, the history, the settings, the quotas and the voice flow, behind JSON lines on
+stdin and stdout (`wire.go`). Two hosts start it. macOS has a Swift host
+(`macos/Sources`). Windows has the C# host in `windows/`: `Hover.Host` starts
+`hover-backend` with `HOVER_DATA_DIR` set, holds it in a job object so the backend and its
+child agents end with the host, sends `initialize` first (with the history key kept by DPAPI,
+or without one when the key file cannot be read this run, which keeps the history off), and
+`hoverai.exe` draws the notch, the office and the chat from its `state`. Linux, and the Go
+Windows app that stays beside the C# one until the owner switches over, run the Go
+application and the backend in one process, calling the backend's behavior directly.
+
+The hosts share no schema file. The Swift host reads messages as dictionaries and ignores
+what it does not know, so the backend only grows: new fields on existing messages, and new
+events sent only in answer to new commands. A change is covered by a Go test that sends the
+JSON line to a backend process (`internal/backend/*_test.go`), and by the Mac smoke test
+(`tests/macos/backend-smoke.py`, which checks the new fields and the Windows commands that
+have no platform code), which exercises the packaged process boundary; it does not cover the
+native Swift UI.
+
+Who writes what: the backend alone writes `settings.json`, the sealed history
+(`agents/*.dat`) and `secrets.dat`, so their bytes cannot drift between hosts. The host gives
+it the key and keeps `note.key`. `hover-data` (`cmd/hover-data`) writes and reads a data
+folder with the Go code, including `secret set` and `secret check` (the key is read from
+stdin and never printed), for tests that open a folder on both sides.
 
 ### Windows host commands
 
@@ -242,8 +265,9 @@ a few more commands for it. They are all additive. A new event is sent only in a
 new command, so the Mac host never sees one; new fields on existing messages are ignored by
 a host that does not read them (the Swift host reads messages as dictionaries). Every value
 is checked in the backend, because the host's line is untrusted: wrong types, over-long text
-and unknown ids are refused with a `toast`, and change nothing. Tests: `internal/backend/*_test.go`
-start this package's test binary as the backend and send real JSON lines (`host_test.go`).
+and unknown ids are refused (a `toast`, or `ok: false` in the command's answer) and change
+nothing. Tests: `internal/backend/*_test.go` start this package's test binary as the backend
+and send real JSON lines (`host_test.go`).
 
 **Start.** `initialize` with no `key`, or `key: null`, runs the backend with the history off:
 `note.key` is neither read nor made, saved chats are left alone, and nothing is kept. A host
@@ -382,7 +406,7 @@ with `groqCheck` `{ok, said}` (it uses the Groq key kept for voice).
 | `internal/shell` | The glue: windows, timers, the notch (`notchctl.go`), the office (`office.go`), chat, desk, new task, voice, and the system bindings (`env_windows.go`, `env_linux.go`). | Yes |
 | `internal/platform` | `win` (Win32 windows, Direct3D 11, DirectComposition, tray), `linux` (D-Bus tray and notifications, portals, pickers, clipboard), `wayland` (the notch as a layer-shell surface, the app window, keyboard, input method). | Yes |
 | `internal/voice`, `audio`, `music`, `screen` | Voice (capture, Groq, cleanup, Phonon), the system's audio output, the office's beats, the Screen panel's capture. | No |
-| `internal/backend`, `cmd/hover-backend` | The Mac app's backend: core, agents and quota behind JSON lines on stdin and stdout. | No |
+| `internal/backend`, `cmd/hover-backend` | The backend of the Mac app and of the C# Windows app: core, agents, quota and voice behind JSON lines on stdin and stdout. | No |
 | `internal/shots`, `cmd/ui-shots`, `cmd/office-shot` | The pictures (`--shots`), and the office alone. Not part of the product's work. | Yes |
 | `cmd/notch-spike`, `cmd/hover-data` | The first notch prototype (Windows), and a tool that writes and reads a data folder. Not shipped. | Yes / No |
 
