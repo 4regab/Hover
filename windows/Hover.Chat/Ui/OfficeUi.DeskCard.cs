@@ -124,7 +124,8 @@ public sealed partial class OfficeUi
         var w = Math.Min(CardMaxW, maxW);
         var iw = w - 12;
         var nw2 = iw - 16;
-        var stage = StageNumber(s.Stage);
+        // A run that waits on a permission is still working to the card (internal/shell/panels.go stageOf reads the run's phase, not the question).
+        var stage = StageNumber(s.Stage == "waiting" ? "working" : s.Stage);
         var busy = Busy(s);
         var ask = s.Ask;
         var question = ask?.Questions is { Count: > 0 };

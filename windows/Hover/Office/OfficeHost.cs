@@ -163,6 +163,15 @@ public sealed class OfficeHost : IDisposable
     /// <summary>A click landed on a desk that has a session at it: that session's id, and where the click was (as <see cref="BotScreenRect"/> counts).</summary>
     public event Action<int, double, double>? DeskPicked;
 
+    /// <summary>
+    /// Whether the panels drawn over the office have something at a place (in the office's own pixels). A press, a move or the wheel
+    /// there belongs to the panels and not to the office behind them; an event that lands on the office anyway (the panels take the
+    /// pointer only once it has moved) must not click it.
+    /// </summary>
+    public Func<double, double, bool>? Covered { get; set; }
+
+    bool Under(double x, double y) => Covered?.Invoke(x, y) == true;
+
     /// <summary>What the pointer is on in the office changed (see <see cref="Tip"/>).</summary>
     public event Action? TipChanged;
 
@@ -255,7 +264,7 @@ public sealed class OfficeHost : IDisposable
     void OnBackend(BackendEvent e)
     {
         // Raised on the backend reader's thread: the message is read into the office's own input there, applied on the UI thread.
-        if (e is not StateEvent state) return;
+        if (e is not StateEvent state || shotFrozen) return;
         var sessions = OfficeStateMap.Read(state);
         queue.TryEnqueue(() => Guard("state", () =>
         {
@@ -492,15 +501,17 @@ public sealed class OfficeHost : IDisposable
         host.PointerMoved += (_, e) => Guard("move", () =>
         {
             var p = Dips(e);
-            ctl.Pointer(p.X, p.Y, true);
+            if (Under(p.X, p.Y)) ctl.Pointer(0, 0, false);
+            else ctl.Pointer(p.X, p.Y, true);
         });
         host.PointerExited += (_, _) => Guard("leave", () => ctl.Pointer(0, 0, false));
         host.PointerPressed += (_, e) => Guard("press", () =>
         {
             if (!e.GetCurrentPoint(host).Properties.IsLeftButtonPressed) return;
+            var p = Dips(e);
+            if (Under(p.X, p.Y)) return;
             host.CapturePointer(e.Pointer);
             host.Focus(FocusState.Pointer);
-            var p = Dips(e);
             ctl.Pointer(p.X, p.Y, true);
             ctl.Down(p.X, p.Y);
             if (Chatting.UiDump.On) HostLog.Line($"office: press at {p.X:0},{p.Y:0}");
@@ -527,6 +538,7 @@ public sealed class OfficeHost : IDisposable
         host.PointerWheelChanged += (_, e) => Guard("wheel", () =>
         {
             var p = Dips(e);
+            if (Under(p.X, p.Y)) return;
             ctl.Wheel(-e.GetCurrentPoint(host).Properties.MouseWheelDelta * 100.0 / 120, p.X, p.Y);
             e.Handled = true;
         });
@@ -731,6 +743,32 @@ public sealed class OfficeHost : IDisposable
         var (sw, sh) = r.SceneSize(width, height);
         return r.RenderToBytes(model, width, height, new PageStyle(model.Time == TimeOfDay.Day, cutToNotch ? TopFadeDips * scale : 0, shape), sw, sh);
     }
+
+    // ---- for --shots ---------------------------------------------------------------------------------
+
+    bool shotFrozen;
+
+    /// <summary>For <c>--shots</c>: the office is this size and shows these sessions at their desks, and takes no other state.</summary>
+    internal void ShowForShot(StateEvent state, int width, int height)
+    {
+        shotFrozen = true;
+        ctl.Resize(width, height);
+        ctl.State(OfficeStateMap.Read(state));
+        var t = clock.Elapsed.TotalMilliseconds;
+        for (var i = 0; i < 600; i++)
+        {
+            model.Frame(t, 16);
+            t += 16;
+        }
+        settled = true;
+    }
+
+    /// <summary>For <c>--shots</c>: where a session's name tag is, and its helpers' colours (in the office's own pixels).</summary>
+    internal (double X, double Y, IReadOnlyList<(byte R, byte G, byte B)> Helpers)? TagForShot(int sessionId)
+        => model.Tags().FirstOrDefault(t => t.Id == sessionId) is { } tag ? (tag.X, tag.Y, tag.Helpers) : null;
+
+    /// <summary>For <c>--shots</c>: where a session's bot is.</summary>
+    internal OfficeRect? BotForShot(int sessionId) => model.BotRect(sessionId) is { } r ? new OfficeRect(r.X, r.Y, r.W, r.H) : null;
 
     public void Dispose()
     {

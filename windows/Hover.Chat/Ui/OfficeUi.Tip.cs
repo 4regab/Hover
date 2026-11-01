@@ -12,7 +12,8 @@ public sealed partial class OfficeUi
     void PaintTip()
     {
         if (ChatView || px < 0 || menu is not null || confirm is not null || Covers(px, py)) return;
-        var (kind, id, hint) = env.Tip();
+        var (kind, id, said) = env.Tip();
+        var hint = said ?? "";
         if (kind is 1 or 2 && DeskSession(id) is { } s)
         {
             var f = Pen.F(12, 400, Pen.Ink);

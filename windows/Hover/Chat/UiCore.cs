@@ -51,7 +51,7 @@ sealed class UiCore : IDisposable
     {
         if (TipFixture is { } fixture) return fixture();
         var t = office?.Tip() ?? default;
-        return (t.Kind, t.Id, t.Hint);
+        return (t.Kind, t.Id, t.Hint ?? "");
     }
 
     /// <summary>What a picture says the pointer is on, when the office is not live to say it.</summary>
@@ -114,6 +114,7 @@ sealed class UiCore : IDisposable
                     case OfficeProp.History: Ui.OpenOfficePanel("history"); break;
                 }
             });
+            office.Covered = (x, y) => Ui.Covers((float)x, (float)y);
             office.TipChanged += () => queue.TryEnqueue(() => { if (!disposed) Ui.Invalidate(); });
             Ui.OfficePanelChanged += name => office.ShowPanel(name);
             Ui.DeskChanged += id => office.MarkDeskOpen(id);
