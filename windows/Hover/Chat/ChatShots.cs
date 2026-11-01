@@ -243,6 +243,7 @@ static class ChatShots
             if (!ui.Waiting && ui.Pending == 0 && !ui.Dirty) break;
             await Task.Delay(100);
         }
+        if (ui.Waiting || ui.Pending != 0 || ui.Dirty) HostLog.Line($"picture {name} did not settle: waiting {ui.Waiting}, in flight {ui.Pending}, dirty {ui.Dirty}");
         var file = Path.Combine(directory, name + ".jpg");
         await Hover.Shots.WriteJpegAsync(pixels, w, h, file);
         HostLog.Line($"picture {file} ({w} x {h})");
