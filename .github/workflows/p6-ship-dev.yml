@@ -1,0 +1,145 @@
+name: P6 ship (temporary)
+
+# TEMPORARY, Phase 6 only: the ci.yml windows job without the C# tests and the pictures, run on
+# every push that touches the build, the installer or their scripts. Deleted before the item ends.
+on:
+  push:
+    branches: ['windows-csharp']
+    paths: ['build.ps1', 'packaging/**', 'tools/**', 'THIRD-PARTY-NOTICES.txt', '.github/workflows/p6-ship-dev.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: p6-ship-${{ github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  windows:
+    runs-on: windows-2022
+    timeout-minutes: 75
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+      DOTNET_NOLOGO: '1'
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+      # The number the builds read from VERSION is the one chosen above (the file in this
+      # checkout only; nothing is committed).
+      - name: Version
+        run: |
+          $v = (Get-Content VERSION -TotalCount 1).Trim()
+          "RELEASE_VERSION=$v" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      # hoverai.exe (dotnet publish, self-contained) and hover-backend.exe in publish\, as the
+      # installer takes them. No Visual Studio and no C compiler.
+      - name: Build
+        run: |
+          ./build.ps1 publish -Version $env:RELEASE_VERSION
+          New-Item -ItemType Directory -Force out\logs | Out-Null
+          $root = (Resolve-Path publish).Path
+          $files = Get-ChildItem publish -Recurse -File
+          $files | ForEach-Object { '{0,12}  {1}' -f $_.Length, $_.FullName.Substring($root.Length + 1) } | Out-File out\logs\publish-files.txt
+          "publish\: $($files.Count) files, $([math]::Round(($files | Measure-Object Length -Sum).Sum / 1MB, 1)) MB"
+      - name: Screen 1920 x 1080
+        run: ./tools/set-resolution.ps1
+      # Starts the app with an empty data folder, opens the notch with its shortcut, asks for the
+      # window with a second launch, quits from the tray menu, and kills a second copy to see
+      # the backend go with it. Memory is measured at rest and with the window open.
+      - name: Drive the app
+        timeout-minutes: 10
+        run: ./tools/app-smoke.ps1 -Exe publish\hoverai.exe -Out out\app -ExpectVersion $env:RELEASE_VERSION
+      - name: Inno Setup
+        run: |
+          if (-not (Test-Path "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe")) {
+            $setup = Join-Path $env:RUNNER_TEMP 'innosetup-6.7.3.exe'
+            Invoke-WebRequest 'https://github.com/jrsoftware/issrc/releases/download/is-6_7_3/innosetup-6.7.3.exe' -OutFile $setup
+            $process = Start-Process $setup -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/SP-', '/ALLUSERS' -Wait -PassThru
+            if ($process.ExitCode -ne 0) { throw "Inno Setup install failed: $($process.ExitCode)" }
+          }
+      - name: Build the setup
+        run: ./build.ps1 installer -Version $env:RELEASE_VERSION
+      # An older Go release (5.0.3 or later) with a setup: what an update installs over. The
+      # oldest one still published, so taking an old release down never breaks this step (5.0.2's,
+      # then 5.0.3's and 5.0.4's, did). Not the version being built.
+      - name: The 5.x setup
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          New-Item -ItemType Directory -Force old | Out-Null
+          $tags = gh release list --repo ${{ github.repository }} --limit 100 --json tagName --jq '.[].tagName'
+          if ($LASTEXITCODE -ne 0) { throw 'could not list the releases' }
+          $go = $tags | Where-Object { $_ -match '^v(\d+)\.(\d+)\.(\d+)$' } | ForEach-Object { [version]$_.Substring(1) } |
+            Where-Object { $_ -ge [version]'5.0.3' -and $_ -ne [version]$env:RELEASE_VERSION } | Sort-Object
+          $old = $null
+          foreach ($v in $go) {
+            gh release download "v$v" --repo ${{ github.repository }} --pattern "Hover-Setup-$v.exe" --dir old
+            if ($LASTEXITCODE -eq 0) { $old = "old\Hover-Setup-$v.exe"; break }
+          }
+          if (-not $old) { throw "no published Go setup (5.0.3 or later, other than $env:RELEASE_VERSION) to install over" }
+          "Installing over $old"
+          "OLD_SETUP=$old" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+      # Four installs, each from a clean state (tools/installer-check.ps1): over the 5.x Go app while it
+      # runs, into the default folder (the installed app is driven as above), into a folder with spaces
+      # in its name twice, and over a 2.x install. Each ends with an uninstall that leaves nothing.
+      - name: Install over 5.x, clean install, over 2.x, uninstall
+        timeout-minutes: 25
+        run: ./tools/installer-check.ps1 -Setup "dist\Hover-Setup-$env:RELEASE_VERSION.exe" -Old $env:OLD_SETUP -Built publish\hoverai.exe -Out out\installer -ExpectVersion $env:RELEASE_VERSION
+      # The Go Windows app is kept until the owner switches over: it must still build, and so
+      # must its setup (the same Hover.iss, told so with /DLegacy).
+      - name: Legacy Go app still builds
+        run: |
+          ./build.ps1 legacy installer -Version $env:RELEASE_VERSION
+          $v = (& publish-legacy\hoverai.exe --version | Out-String).Trim()
+          if ($v -ne "Hover $env:RELEASE_VERSION") { throw "the legacy app says '$v'" }
+          if (-not (Test-Path publish-legacy\wgpu_native.dll)) { throw 'no wgpu_native.dll beside the legacy app' }
+          if (-not (Test-Path "dist\Hover-Legacy-Setup-$env:RELEASE_VERSION.exe")) { throw 'no legacy setup' }
+          "legacy: $v"
+      # If the app died, Windows says which module did it.
+      - name: App crash reports
+        if: ${{ failure() }}
+        run: |
+          New-Item -ItemType Directory -Force out\logs | Out-Null
+          Get-WinEvent -FilterHashtable @{ LogName = 'Application'; StartTime = (Get-Date).AddMinutes(-60) } -ErrorAction SilentlyContinue |
+            Where-Object { $_.Message -match 'hoverai|hover-backend' } |
+            ForEach-Object { "$($_.TimeCreated) $($_.ProviderName) $($_.Id)`n$($_.Message)`n" } |
+            Out-File out\logs\app-events.txt
+          if (Test-Path out\logs\app-events.txt) { Get-Content out\logs\app-events.txt -TotalCount 60 }
+      - name: Summary
+        if: always()
+        run: |
+          $lines = @('### Windows C# app', '')
+          foreach ($trx in Get-ChildItem out\test-results -Filter *.trx -ErrorAction SilentlyContinue) {
+            $c = ([xml](Get-Content $trx.FullName)).TestRun.ResultSummary.Counters
+            $lines += "- $($trx.BaseName): $($c.passed) passed, $($c.failed) failed, $($c.total - $c.executed) not run (of $($c.total))"
+          }
+          if (Test-Path out\shots) { $lines += "- pictures: $((Get-ChildItem out\shots -Filter *.jpg).Count)" }
+          $lines | Out-File -Append -Encoding utf8 $env:GITHUB_STEP_SUMMARY
+          foreach ($pair in @(@('out\app\report.json', 'App on Windows'), @('out\installer\report.json', 'Installer on Windows'), @('out\installer\b-smoke\report.json', 'Installed app on Windows'))) {
+            if (Test-Path $pair[0]) {
+              $r = Get-Content $pair[0] -Raw | ConvertFrom-Json
+              @('', "### $($pair[1])", '') + ($r.PSObject.Properties | Where-Object Name -ne 'log' | ForEach-Object { "    $($_.Name) = $($_.Value)" }) | Out-File -Append -Encoding utf8 $env:GITHUB_STEP_SUMMARY
+            }
+          }
+      # The Go programs the tests built (out\bin) are left out.
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: windows-reports
+          path: |
+            out/
+            !out/bin/
+          if-no-files-found: warn
+      - uses: actions/upload-artifact@v4
+        with:
+          name: installer-windows
+          path: dist/Hover-Setup-${{ env.RELEASE_VERSION }}.exe
+          if-no-files-found: error

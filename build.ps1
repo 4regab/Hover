@@ -224,6 +224,8 @@ function Test-CSharp {
         Invoke-Checked $data @("check", $fixture)   # exit 0: Go would save the same bytes
         Set-Env "HOVER_DATA_DIR" $saved["HOVER_DATA_DIR"]
 
+        # The whole solution builds, tests and tools included; the tests then build what they need again.
+        Invoke-Checked dotnet @("build", "windows\Hover.Windows.slnx", "-c", "Release", "--nologo", "-v", "minimal")
         $app = Build-Hover
         Set-Env "HOVER_BACKEND" (Join-Path $bin "hover-backend.exe")
         Set-Env "HOVER_DATA_TOOL" $data
