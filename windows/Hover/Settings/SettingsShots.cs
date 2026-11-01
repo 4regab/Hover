@@ -293,15 +293,20 @@ static class SettingsShots
         await Shot(core, directory, "settings-integrations-computer-use-here", 1200, 720, Page(Model("Dark"), true, Section.Integrations));
 
         // Projects.
-        const string Registered = """
-            "Projects":[{"Id":"p1","Name":"Hover","Folder":"C:\\work\\hover","Aliases":["the app","hover app"],"Voice":true,"Access":"full"},
-                        {"Id":"p2","Name":"Website","Folder":"C:\\work\\site","Aliases":[],"Voice":true,"Access":"risky"},
+        // Two projects whose folders are there (as in the Go pictures, the folder and what to say) and one whose folder has gone.
+        var folders = Directory.CreateTempSubdirectory("hover-shots-projects.").FullName;
+        var hover = Directory.CreateDirectory(Path.Combine(folders, "Hover")).FullName;
+        var site = Directory.CreateDirectory(Path.Combine(folders, "Website")).FullName;
+        string Esc(string path) => path.Replace("\\", "\\\\");
+        var registered = $$"""
+            "Projects":[{"Id":"p1","Name":"Hover","Folder":"{{Esc(hover)}}","Aliases":["the app","hover app"],"Voice":true,"Access":"full"},
+                        {"Id":"p2","Name":"Website","Folder":"{{Esc(site)}}","Aliases":[],"Voice":true,"Access":"risky"},
                         {"Id":"p3","Name":"Notes","Folder":"C:\\gone\\notes","Aliases":[],"Voice":false,"Access":"read"}]
             """;
         foreach (var (suffix, w) in new[] { ("", 1200), ("-narrow", 840) })
         {
-            await Shot(core, directory, $"settings-projects-registered{suffix}", w, 620, Page(Model("Dark", Registered), true, Section.Projects));
-            await Shot(core, directory, $"settings-project-page{suffix}", w, 620, Page(Model("Dark", Registered), true, Section.Projects, c => c.OpenProject("p1")));
+            await Shot(core, directory, $"settings-projects-registered{suffix}", w, 620, Page(Model("Dark", registered), true, Section.Projects));
+            await Shot(core, directory, $"settings-project-page{suffix}", w, 620, Page(Model("Dark", registered), true, Section.Projects, c => c.OpenProject("p1")));
         }
 
         // Voice: cloud, and every state of the local model, and Try it.

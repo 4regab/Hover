@@ -54,19 +54,65 @@ public class WindowsTests
     [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     static extern nint CreateWindowExW(uint exStyle, string cls, string title, uint style, int x, int y, int w, int h, nint parent, nint menu, nint instance, nint param);
 
-    [DllImport("user32.dll")] static extern bool DestroyWindow(nint hwnd);
     [DllImport("user32.dll")] static extern bool ShowWindow(nint hwnd, int command);
+    [DllImport("user32.dll")] static extern nint SendMessageW(nint hwnd, uint message, nint wParam, nint lParam);
+    [DllImport("user32.dll")] static extern int GetMessageW(out Msg msg, nint hwnd, uint min, uint max);
+    [DllImport("user32.dll")] static extern bool TranslateMessage(ref Msg msg);
+    [DllImport("user32.dll")] static extern nint DispatchMessageW(ref Msg msg);
+    [DllImport("user32.dll")] static extern bool PostThreadMessageW(uint thread, uint message, nint wParam, nint lParam);
+    [DllImport("kernel32.dll")] static extern uint GetCurrentThreadId();
+
+    [StructLayout(LayoutKind.Sequential)]
+    struct Msg { public nint Hwnd; public uint Message; public nint WParam, LParam; public uint Time; public int X, Y; }
 
     // SS_WHITERECT: a rectangle in the window colour. The desktop of a test machine can be black, so no test here says what the
     // colour is; each one says whether the window's pixels are the desktop's or not, and all of the window's pixels are alike.
-    const uint WsPopup = 0x80000000, WsVisible = 0x10000000, SsWhiteRect = 0x6;
+    const uint WsPopup = 0x80000000, WsVisible = 0x10000000, SsWhiteRect = 0x6, WmClose = 0x10, WmQuit = 0x12;
 
-    /// <summary>A visible window of this process that draws one colour and nothing else.</summary>
-    static nint PlainWindow(int x, int y, int w, int h)
+    /// <summary>
+    /// A visible window of this process that draws one colour and nothing else. It lives on a thread of its own that takes its
+    /// messages, as a window of a program does: without that it is never painted, and has no picture for the capture to take.
+    /// </summary>
+    sealed class PlainWindow : IDisposable
     {
-        var hwnd = CreateWindowExW(0, "STATIC", "", WsPopup | WsVisible | SsWhiteRect, x, y, w, h, 0, 0, 0, 0);
-        Assert.NotEqual(0, hwnd);
-        return hwnd;
+        public nint Hwnd { get; }
+        readonly Thread thread;
+        readonly uint threadId;
+
+        public PlainWindow(int x, int y, int w, int h)
+        {
+            nint hwnd = 0;
+            uint id = 0;
+            using var ready = new ManualResetEventSlim();
+            thread = new Thread(() =>
+            {
+                hwnd = CreateWindowExW(0, "STATIC", "", WsPopup | WsVisible | SsWhiteRect, x, y, w, h, 0, 0, 0, 0);
+                id = GetCurrentThreadId();
+                ready.Set();
+                while (GetMessageW(out var msg, 0, 0, 0) > 0)
+                {
+                    TranslateMessage(ref msg);
+                    DispatchMessageW(ref msg);
+                }
+            }) { IsBackground = true };
+            thread.Start();
+            ready.Wait();
+            Assert.NotEqual(0, hwnd);
+            Hwnd = hwnd;
+            threadId = id;
+        }
+
+        public void Minimise() => ShowWindow(Hwnd, 6);
+
+        /// <summary>The window is closed (its thread sees to it).</summary>
+        public void Close() => SendMessageW(Hwnd, WmClose, 0, 0);
+
+        public void Dispose()
+        {
+            Close();
+            PostThreadMessageW(threadId, WmQuit, 0, 0);
+            thread.Join(2000);
+        }
     }
 
     static ScreenFrame Capture() => ScreenCapture.Capture([(uint)Environment.ProcessId]);
@@ -95,8 +141,7 @@ public class WindowsTests
         Assert.Equal((sw, sh), (empty.Width, empty.Height));
         var desktop = empty.At(10, 10);
 
-        var hwnd = PlainWindow(100, 80, 200, 120);
-        try
+        using (new PlainWindow(100, 80, 200, 120))
         {
             var frame = CaptureWhen(f => f.At(200, 140) != desktop);
             var inside = frame.At(200, 140);
@@ -110,14 +155,12 @@ public class WindowsTests
             Assert.Equal(desktop, frame.At(300, 200));
             Assert.Equal(desktop, frame.At(99, 79));
         }
-        finally { DestroyWindow(hwnd); }
     }
 
     [WindowsFact]
     public void A_window_of_another_process_is_not_in_it_and_with_no_process_there_is_only_the_desktop()
     {
-        var hwnd = PlainWindow(120, 100, 160, 100);
-        try
+        using (new PlainWindow(120, 100, 160, 100))
         {
             // Some other process id: the window of this one is not asked for.
             var other = ScreenCapture.Capture([1u]);
@@ -126,18 +169,17 @@ public class WindowsTests
             Assert.Equal(desktop.Bgra, other.Bgra);
             Assert.NotEqual(desktop.At(200, 150), CaptureWhen(f => f.At(200, 150) != desktop.At(200, 150)).At(200, 150));
         }
-        finally { DestroyWindow(hwnd); }
     }
 
     [WindowsFact]
     public void A_minimised_window_and_a_closed_one_are_left_out_and_nothing_throws()
     {
         var desktop = ScreenCapture.Capture([]).At(200, 150);
-        var hwnd = PlainWindow(100, 100, 200, 100);
+        using var window = new PlainWindow(100, 100, 200, 100);
         Assert.NotEqual(desktop, CaptureWhen(f => f.At(200, 150) != desktop).At(200, 150));
-        ShowWindow(hwnd, 6);
+        window.Minimise();
         Assert.Equal(desktop, Capture().At(200, 150));
-        DestroyWindow(hwnd);
+        window.Close();
         Assert.Equal(desktop, Capture().At(200, 150));
     }
 
@@ -146,14 +188,12 @@ public class WindowsTests
     {
         var (sw, _) = ScreenCapture.Size();
         var desktop = ScreenCapture.Capture([]).At(sw - 10, 80);
-        var hwnd = PlainWindow(sw - 50, 50, 200, 100);
-        try
+        using (new PlainWindow(sw - 50, 50, 200, 100))
         {
             var frame = CaptureWhen(f => f.At(sw - 10, 80) != desktop);
             Assert.NotEqual(desktop, frame.At(sw - 10, 80));
             Assert.Equal(frame.At(sw - 10, 80), frame.At(sw - 1, 149));
         }
-        finally { DestroyWindow(hwnd); }
     }
 
     [Fact]
