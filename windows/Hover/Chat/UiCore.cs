@@ -26,6 +26,9 @@ sealed class UiCore : IDisposable
     public Gfx Gfx { get; }
     public DwShaper Shaper { get; }
     public ImageStore Images { get; }
+
+    /// <summary>The Screen tab's pictures (the pictures of <c>--shots</c> give it a made-up screen).</summary>
+    public Hover.Screening.ScreenFeed ScreenFeed { get; }
     public D2DCanvas Canvas { get; }
     public OfficeUi Ui { get; }
 
@@ -75,6 +78,14 @@ sealed class UiCore : IDisposable
     /// <summary>The pictures set the state themselves, so the backend's own state messages are not taken.</summary>
     public bool FreezeState { get; set; }
 
+    /// <summary>
+    /// What the backend says that a picture does not take while the state is frozen: its state, and its answers about the made-up
+    /// sessions the pictures show (it does not know them: "That chat isn't here."). The pictures feed those themselves.
+    /// </summary>
+    static bool Frozen(BackendEvent e) => e is StateEvent or ToastEvent or TermEvent or WriteFileEvent or EditorsEvent or OpenInEvent or DeskEvent
+        or DeskActionEvent or GhEvent or ForkEvent or BringBackEvent or SwitchProviderEvent or QueueRemoveEvent or WebSessionsEvent or CliSessionsEvent
+        or AdoptWebEvent or AdoptCliEvent;
+
     public UiCore(Gfx gfx, DispatcherQueue queue, BackendSession backend, string dataDir, OfficeHost? office, bool inNotch)
     {
         Gfx = gfx;
@@ -98,10 +109,11 @@ sealed class UiCore : IDisposable
             Log = HostLog.Line,
             InNotch = inNotch,
             OpenSettings = () => SettingsRequested?.Invoke(),
+            Screen = ScreenFeed = new Hover.Screening.ScreenFeed(new Hover.Screening.ScreenSource(), Images, queue),
         });
         onEvent = e => queue.TryEnqueue(() =>
         {
-            if (disposed || (FreezeState && e is StateEvent or ToastEvent)) return;
+            if (disposed || (FreezeState && Frozen(e))) return;
             try { Ui.Accept(e); }
             catch (Exception ex) { HostLog.Line($"panels: a message failed — {ex}"); }
             Changed?.Invoke();
