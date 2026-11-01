@@ -155,7 +155,7 @@ public sealed class OfficeRenderTests(Gpu gpu, ITestOutputHelper output) : IClas
     {
         if (!gpu.Ready(output)) return;
         var (o, _, _) = Settled();
-        var bgra = Shoot("notch-open-office", o, NotchW, NotchH);
+        var bgra = Shoot("office-notch-night", o, NotchW, NotchH);
         LooksLikeAnOffice(bgra, "the settled office");
         // The top 44 px fade into the notch's black; the vignette darkens the corners.
         var (top, _, _) = Stats(bgra[..(NotchW * 6 * 4)]);
