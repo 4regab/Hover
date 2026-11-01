@@ -28,8 +28,7 @@ public class BackendTests
     {
         using var temp = new TempDir();
         var dir = Path.Combine(temp.Path, "data");
-        Directory.CreateDirectory(dir);
-        var key = System.Security.Cryptography.RandomNumberGenerator.GetBytes(32);
+        var key = Rig.KeyFor(dir);
 
         await using (var rig = await Rig.StartAsync(dir, key))
         {
@@ -111,7 +110,7 @@ public class BackendTests
     public async Task Two_settings_changed_within_400_ms_are_both_kept()
     {
         using var temp = new TempDir();
-        var key = System.Security.Cryptography.RandomNumberGenerator.GetBytes(32);
+        var key = Rig.KeyFor(temp.Path);
         await using (var rig = await Rig.StartAsync(temp.Path, key))
         {
             rig.Do(c => c.Picked("WorkspaceSize", 0));
@@ -131,7 +130,7 @@ public class BackendTests
     public async Task A_key_saved_from_the_voice_page_is_sealed_in_secrets_dat_and_never_in_a_message_or_the_log()
     {
         using var temp = new TempDir();
-        var key = System.Security.Cryptography.RandomNumberGenerator.GetBytes(32);
+        var key = Rig.KeyFor(temp.Path);
         var groq = "gsk_" + new string('Z', 1996);
         Assert.Equal(2000, groq.Length);
         await using (var rig = await Rig.StartAsync(temp.Path, key))
@@ -273,29 +272,44 @@ public class BackendTests
     public async Task Installed_themes_are_listed_and_one_is_applied_as_Hover_colours_and_Appearance_puts_them_back()
     {
         using var temp = new TempDir();
-        var home = Directory.CreateDirectory(Path.Combine(temp.Path, "home")).FullName;
-        Extension(home, "acme-night", """{ "name": "Acme Night", "type": "dark", "colors": { "editor.background": "#102030", "editor.foreground": "#E0E0E0", "sideBar.background": "#0A1520", "button.background": "#2B7BFF" } }""");
-        // A theme file that cannot be read is left out of the list, not an error.
-        Extension(home, "broken", "{ this is not json");
-        await using var rig = await Rig.StartAsync(Path.Combine(temp.Path, "data"), home: home);
-        rig.Do(c => c.Open(Section.General));
-        await rig.Until(c => c.Installed.Any(t => t.Label == "acme-night theme"), "the theme listed");
-        Assert.DoesNotContain(rig.Read(c => c.Installed), t => t.Label.StartsWith("broken"));
-        var tile = rig.Read(c => c.Blocks).First(b => b.Kind == BlockKind.Tiles).Tiles.First(t => t.From == "VS Code" && t.Name.Contains("cme"));
-        Assert.False(tile.Picked);
-        Assert.Equal(0xFF102030u, tile.Palette.Surface);
+        // Windows: the backend asks the system for the profile folder (HOME is not read), so the two extensions go into the real
+        // one, under names of their own, and are taken out again. Elsewhere HOME is a folder of the test's.
+        var home = OperatingSystem.IsWindows()
+            ? Environment.GetFolderPath(Environment.SpecialFolder.UserProfile)
+            : Directory.CreateDirectory(Path.Combine(temp.Path, "home")).FullName;
+        var tag = Guid.NewGuid().ToString("N")[..8];
+        var good = "acme-night-" + tag;
+        var bad = "broken-" + tag;
+        var made = new[] { Extension(home, good, """{ "name": "Acme Night", "type": "dark", "colors": { "editor.background": "#102030", "editor.foreground": "#E0E0E0", "sideBar.background": "#0A1520", "button.background": "#2B7BFF" } }"""),
+            // A theme file that cannot be read is left out of the list, not an error.
+            Extension(home, bad, "{ this is not json") };
+        try
+        {
+            await using var rig = await Rig.StartAsync(Path.Combine(temp.Path, "data"), home: home);
+            rig.Do(c => c.Open(Section.General));
+            await rig.Until(c => c.Installed.Any(t => t.Label == good + " theme"), "the theme listed");
+            Assert.DoesNotContain(rig.Read(c => c.Installed), t => t.Label.StartsWith(bad));
+            var tile = rig.Read(c => c.Blocks).First(b => b.Kind == BlockKind.Tiles).Tiles.First(t => t.From == "VS Code" && t.Name.Contains(good));
+            Assert.False(tile.Picked);
+            Assert.Equal(0xFF102030u, tile.Palette.Surface);
 
-        rig.Do(c => c.PickTile(tile.Id));
-        await rig.Until(c => c.Data.Theme is { Name: "acme-night theme", Dark: true }, "the theme set");
-        await rig.Until(c => c.Palette.Surface == 0xFF102030u, "the palette");
-        Assert.True(rig.Read(c => c.Palette.Dark));
-        Assert.Equal(0xFF0A1520u, rig.Read(c => c.Palette.Panel));
-        Assert.Equal(0xFF2B7BFFu, rig.Read(c => c.Palette.Blue));
-        Assert.True(rig.Read(c => c.Blocks).First(b => b.Kind == BlockKind.Tiles).Tiles.Any(t => t.Picked && t.Name.Contains("cme")));
-        // An appearance puts Hover's own colours back (the theme goes first).
-        rig.Do(c => c.Picked("Appearance", 1));
-        await rig.Until(c => c.Data.Theme is null && c.Data.Appearance == "Light", "Hover's colours");
-        Assert.Equal(Palettes.HoverLight.Surface, rig.Read(c => c.Palette.Surface));
+            rig.Do(c => c.PickTile(tile.Id));
+            await rig.Until(c => c.Data.Theme is { Dark: true } t && t.Name == good + " theme", "the theme set");
+            await rig.Until(c => c.Palette.Surface == 0xFF102030u, "the palette");
+            Assert.True(rig.Read(c => c.Palette.Dark));
+            Assert.Equal(0xFF0A1520u, rig.Read(c => c.Palette.Panel));
+            Assert.Equal(0xFF2B7BFFu, rig.Read(c => c.Palette.Blue));
+            Assert.True(rig.Read(c => c.Blocks).First(b => b.Kind == BlockKind.Tiles).Tiles.Any(t => t.Picked && t.Name.Contains(good)));
+            // An appearance puts Hover's own colours back (the theme goes first).
+            rig.Do(c => c.Picked("Appearance", 1));
+            await rig.Until(c => c.Data.Theme is null && c.Data.Appearance == "Light", "Hover's colours");
+            Assert.Equal(Palettes.HoverLight.Surface, rig.Read(c => c.Palette.Surface));
+        }
+        finally
+        {
+            foreach (var dir in made)
+                try { Directory.Delete(dir, recursive: true); } catch (IOException) { } catch (UnauthorizedAccessException) { }
+        }
     }
 
     [Fact]

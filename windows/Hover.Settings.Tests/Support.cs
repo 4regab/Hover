@@ -262,6 +262,16 @@ sealed class Rig : IAsyncDisposable
         Ctl = new SettingsController(Env);
     }
 
+    /// <summary>
+    /// The key a test hands the backend. On Windows it is the one in <c>note.key</c>, wrapped for the user as the app makes it,
+    /// so that Go's own tool can open the folder afterwards; elsewhere it is a new one.
+    /// </summary>
+    public static byte[] KeyFor(string dir)
+    {
+        Directory.CreateDirectory(dir);
+        return OperatingSystem.IsWindows() ? Hover.Host.HistoryKey.LoadOrCreate(dir, new Hover.Host.DpapiKeyGuard())! : RandomNumberGenerator.GetBytes(32);
+    }
+
     public static async Task<Rig> StartAsync(string dir, byte[]? key = null, Action<string>? prepare = null, string? home = null)
     {
         key ??= RandomNumberGenerator.GetBytes(32);

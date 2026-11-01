@@ -101,7 +101,7 @@ public static class ProtocolJson
                 "themeRead" => root.Deserialize<ThemeReadEvent>(Options),
                 "mcp" => root.Deserialize<McpEvent>(Options),
                 "kiroAgents" => root.Deserialize<KiroAgentsEvent>(Options),
-                "secret" => root.Deserialize<SecretEvent>(Options),
+                // "secret" stays an UnknownEvent here: the voice code and its tests wait for it that way. Settings reads it with SettingsEvents.Read.
                 "credits" => root.Deserialize<CreditsEvent>(Options),
                 _ => new UnknownEvent(type, root.Clone()),
             };

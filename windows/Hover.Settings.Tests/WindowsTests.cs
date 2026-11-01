@@ -57,12 +57,14 @@ public class WindowsTests
     [DllImport("user32.dll")] static extern bool DestroyWindow(nint hwnd);
     [DllImport("user32.dll")] static extern bool ShowWindow(nint hwnd, int command);
 
-    const uint WsPopup = 0x80000000, WsVisible = 0x10000000, SsBlackRect = 0x4;
+    // SS_WHITERECT: a rectangle in the window colour. The desktop of a test machine can be black, so no test here says what the
+    // colour is; each one says whether the window's pixels are the desktop's or not, and all of the window's pixels are alike.
+    const uint WsPopup = 0x80000000, WsVisible = 0x10000000, SsWhiteRect = 0x6;
 
-    /// <summary>A visible window of this process that draws a black rectangle and nothing else.</summary>
-    static nint BlackWindow(int x, int y, int w, int h)
+    /// <summary>A visible window of this process that draws one colour and nothing else.</summary>
+    static nint PlainWindow(int x, int y, int w, int h)
     {
-        var hwnd = CreateWindowExW(0, "STATIC", "", WsPopup | WsVisible | SsBlackRect, x, y, w, h, 0, 0, 0, 0);
+        var hwnd = CreateWindowExW(0, "STATIC", "", WsPopup | WsVisible | SsWhiteRect, x, y, w, h, 0, 0, 0, 0);
         Assert.NotEqual(0, hwnd);
         return hwnd;
     }
@@ -78,18 +80,20 @@ public class WindowsTests
         Assert.Equal((sw, sh), (empty.Width, empty.Height));
         var desktop = empty.At(10, 10);
 
-        var hwnd = BlackWindow(100, 80, 200, 120);
+        var hwnd = PlainWindow(100, 80, 200, 120);
         try
         {
             var frame = Capture();
-            Assert.Equal((0, 0, 0), frame.At(200, 140));
+            var inside = frame.At(200, 140);
+            Assert.NotEqual(desktop, inside);
             // Outside the window it is the desktop, not this test's other windows.
             Assert.Equal(desktop, frame.At(10, 10));
             Assert.Equal(desktop, frame.At(310, 210));
             // The window's edges are where Windows has it.
-            Assert.Equal((0, 0, 0), frame.At(100, 80));
-            Assert.Equal((0, 0, 0), frame.At(299, 199));
+            Assert.Equal(inside, frame.At(100, 80));
+            Assert.Equal(inside, frame.At(299, 199));
             Assert.Equal(desktop, frame.At(300, 200));
+            Assert.Equal(desktop, frame.At(99, 79));
         }
         finally { DestroyWindow(hwnd); }
     }
@@ -97,14 +101,15 @@ public class WindowsTests
     [WindowsFact]
     public void A_window_of_another_process_is_not_in_it_and_with_no_process_there_is_only_the_desktop()
     {
-        var hwnd = BlackWindow(120, 100, 160, 100);
+        var hwnd = PlainWindow(120, 100, 160, 100);
         try
         {
-            // Some other process id: the black window of this one is not asked for.
+            // Some other process id: the window of this one is not asked for.
             var other = ScreenCapture.Capture([1u]);
             var desktop = ScreenCapture.Capture([]);
             Assert.Equal(desktop.At(200, 150), other.At(200, 150));
-            Assert.NotEqual((0, 0, 0), other.At(200, 150));
+            Assert.Equal(desktop.Bgra, other.Bgra);
+            Assert.NotEqual(desktop.At(200, 150), Capture().At(200, 150));
         }
         finally { DestroyWindow(hwnd); }
     }
@@ -113,8 +118,8 @@ public class WindowsTests
     public void A_minimised_window_and_a_closed_one_are_left_out_and_nothing_throws()
     {
         var desktop = ScreenCapture.Capture([]).At(200, 150);
-        var hwnd = BlackWindow(100, 100, 200, 100);
-        Assert.Equal((0, 0, 0), Capture().At(200, 150));
+        var hwnd = PlainWindow(100, 100, 200, 100);
+        Assert.NotEqual(desktop, Capture().At(200, 150));
         ShowWindow(hwnd, 6);
         Assert.Equal(desktop, Capture().At(200, 150));
         DestroyWindow(hwnd);
@@ -125,11 +130,13 @@ public class WindowsTests
     public void A_window_partly_off_the_screen_is_cut_by_the_screen()
     {
         var (sw, _) = ScreenCapture.Size();
-        var hwnd = BlackWindow(sw - 50, 50, 200, 100);
+        var desktop = ScreenCapture.Capture([]).At(sw - 10, 80);
+        var hwnd = PlainWindow(sw - 50, 50, 200, 100);
         try
         {
             var frame = Capture();
-            Assert.Equal((0, 0, 0), frame.At(sw - 10, 80));
+            Assert.NotEqual(desktop, frame.At(sw - 10, 80));
+            Assert.Equal(frame.At(sw - 10, 80), frame.At(sw - 1, 149));
         }
         finally { DestroyWindow(hwnd); }
     }
