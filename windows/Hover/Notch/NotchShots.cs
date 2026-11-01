@@ -175,6 +175,9 @@ static class NotchShots
                 output[o + 3] = 255;
             }
         }
+        // The open notch's office is not drawn by the notch renderer: the 3D office is put in its area.
+        if (shot.Openness > 0)
+            OfficeShots.PasteNotch(output, cw, ph, x0, shot.Scale, scene.OfficeArea(WindowWidth), shot.Name);
         return (output, cw, ph);
     }
 }

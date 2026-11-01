@@ -34,6 +34,7 @@ public sealed class App : Application, IXamlMetadataProvider
     DispatcherQueue? queue;
     DashboardWindow? dashboard;
     NotchHost? notch;
+    OfficeHost? office;
     bool quitting;
 
     public App(LaunchOptions launch, string dataDir)
@@ -102,10 +103,12 @@ public sealed class App : Application, IXamlMetadataProvider
             HostLog.Line("started");
             // Not for pictures: they leave the machine as they found it.
             if (launch.ShotsDirectory is null) _ = Task.Run(() => OldService.RemoveOnceAsync(dataDir));
+            // The 3D office, shown in the open notch or in the dashboard.
+            office = new OfficeHost(queue!, backend);
             // Pictures run without the notch, the tray or the shortcut: they leave the machine as they found it.
             if (launch.ShotsDirectory is null)
             {
-                notch = NotchHost.TryStart(queue!, backend, new NotchCallbacks(OpenDashboard, () => _ = QuitAsync(), () => dashboard?.IsActive == true));
+                notch = NotchHost.TryStart(queue!, backend, new NotchCallbacks(OpenDashboard, () => _ = QuitAsync(), () => dashboard?.IsActive == true), office);
             }
             // With no notch there would be nothing to see, so the window opens.
             if (launch.Dashboard || showAtOnce || launch.ShotsDirectory is not null || (notch is null && !launch.Background)) OpenDashboard();
@@ -131,7 +134,7 @@ public sealed class App : Application, IXamlMetadataProvider
         HostLog.Line("opening the dashboard");
         if (dashboard is null)
         {
-            dashboard = new DashboardWindow(dataDir, backend);
+            dashboard = new DashboardWindow(dataDir, backend, office);
             // Closing the window hides it; the app keeps running in the tray. Quit is in the tray
             // menu. Without a notch there is no tray to bring it back from, so closing quits.
             dashboard.AppWindow.Closing += (_, closing) =>
@@ -166,6 +169,8 @@ public sealed class App : Application, IXamlMetadataProvider
         // writes the history and the settings and stops.
         notch?.Dispose();
         notch = null;
+        office?.Dispose();
+        office = null;
         await backend.DisposeAsync();
         Exit();
     }

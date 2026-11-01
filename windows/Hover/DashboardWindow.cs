@@ -3,6 +3,7 @@ using Microsoft.UI.Text;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
+using Hover.Windowing;
 using Windows.Graphics;
 
 namespace Hover;
@@ -27,7 +28,7 @@ public sealed class DashboardWindow : Window
     /// <summary>True while this window has the keyboard.</summary>
     public bool IsActive { get; private set; }
 
-    public DashboardWindow(string dataDir, BackendSession backend)
+    public DashboardWindow(string dataDir, BackendSession backend, OfficeHost? office = null)
     {
         Title = "Hover";
         AppWindow.Resize(new SizeInt32(960, 600));
@@ -74,6 +75,7 @@ public sealed class DashboardWindow : Window
         Content = page;
 
         backend.Changed += () => DispatcherQueue.TryEnqueue(() => status.Text = backend.Status);
+        office?.AttachDashboard(OfficeArea, WinRT.Interop.WindowNative.GetWindowHandle(this));
     }
 
     static Windows.UI.Color Color(byte a, byte r, byte g, byte b) => Windows.UI.Color.FromArgb(a, r, g, b);

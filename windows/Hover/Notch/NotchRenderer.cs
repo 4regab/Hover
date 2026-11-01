@@ -635,7 +635,7 @@ sealed class NotchRenderer : IDisposable
             dc.PopAxisAlignedClip();
         }
 
-        if (s.ViewVisible && s.ViewOpacity > 0) DrawOfficeArea(s, windowWidth);
+        if (s.ViewVisible && s.ViewOpacity > 0 && !s.OfficeDrawn) DrawOfficeArea(s, windowWidth);
     }
 
     /// <summary>

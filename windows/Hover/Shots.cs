@@ -19,11 +19,17 @@ public static class Shots
     public static async Task TakeAsync(string directory, DashboardWindow dashboard)
     {
         Directory.CreateDirectory(directory);
-        await Save(dashboard.Root, Path.Combine(directory, "dashboard.jpg"));
+        await Save(dashboard.Root, Path.Combine(directory, "dashboard.jpg"), (pixels, w, h, scale) =>
+        {
+            // The 3D office is a swap chain, which the element tree's picture does not hold: it is put in its area.
+            var origin = dashboard.OfficeArea.TransformToVisual(dashboard.Root).TransformPoint(new Windows.Foundation.Point(0, 0));
+            Hover.Windowing.OfficeShots.PasteDashboard(pixels, w, h, scale,
+                new Hover.Windowing.OfficeRect(origin.X, origin.Y, dashboard.OfficeArea.ActualWidth, dashboard.OfficeArea.ActualHeight));
+        });
         await Hover.Windowing.NotchShots.TakeAsync(directory);
     }
 
-    static async Task Save(FrameworkElement view, string file)
+    static async Task Save(FrameworkElement view, string file, Action<byte[], int, int, double>? after = null)
     {
         // Wait until the view has been laid out and drawn once.
         if (!view.IsLoaded)
@@ -44,6 +50,7 @@ public static class Shots
         var bytes = new byte[pixels.Length];
         using (var reader = DataReader.FromBuffer(pixels)) reader.ReadBytes(bytes);
 
+        after?.Invoke(bytes, bitmap.PixelWidth, bitmap.PixelHeight, scale);
         await WriteJpegAsync(bytes, bitmap.PixelWidth, bitmap.PixelHeight, file);
         HostLog.Line($"picture {file} ({bitmap.PixelWidth} x {bitmap.PixelHeight})");
     }

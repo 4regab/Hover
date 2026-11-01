@@ -17,6 +17,7 @@ sealed class NotchWindow : INotchPlatform, IDisposable
     const string ClassName = "HoverNotch";
     const uint TrayCallback = (uint)WM_APP + 3;
     const uint TrayId = 1;
+    const uint WM_MOUSEWHEEL = 0x20A;
 
     static WndProc? procedure;
     static bool classMade;
@@ -53,6 +54,8 @@ sealed class NotchWindow : INotchPlatform, IDisposable
     /// <summary>The primary button went up at a point, in device pixels.</summary>
     public event Action<int, int>? Released;
     public event Action<int>? KeyDown;
+    /// <summary>The wheel turned over the window (120 per notch of the wheel, positive away from the user).</summary>
+    public event Action<int>? Wheel;
     /// <summary>The system asks for the window to be drawn (it was resized or uncovered).</summary>
     public event Action? Invalidated;
 
@@ -324,6 +327,10 @@ sealed class NotchWindow : INotchPlatform, IDisposable
                 return 0;
             case WM_KEYDOWN:
                 KeyDown?.Invoke((int)wParam);
+                return 0;
+            case WM_MOUSEWHEEL:
+                // The high word of wParam, signed.
+                Wheel?.Invoke((short)((long)wParam >> 16 & 0xFFFF));
                 return 0;
             case WM_CLOSE:
                 // Alt+F4 on a tool window: the notch is not closed that way.

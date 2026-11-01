@@ -1,7 +1,10 @@
 <Project Sdk="Microsoft.NET.Sdk">
-  <!-- Phase 3 fills this in (the Direct3D 11 office). Empty on purpose until then. -->
+  <!-- The 3D office: a port of internal/office (scene, bots, desks, wall canvases, camera, picking,
+       frame pacing) to C#, with Direct3D 11 (Vortice) and HLSL in place of wgpu and WGSL. It has no
+       app dependency: the app maps the backend's messages to this project's own input. The scene
+       logic runs on any system; only drawing needs Windows. -->
   <PropertyGroup>
-    <TargetFramework>net10.0-windows10.0.22621.0</TargetFramework>
+    <TargetFramework>net10.0</TargetFramework>
     <RootNamespace>Hover.Office</RootNamespace>
   </PropertyGroup>
 </Project>

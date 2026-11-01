@@ -24,6 +24,8 @@ sealed class NotchScene
     public uint ShapeFill;
     public double MiniOpacity, ViewOpacity;
     public bool ViewVisible, ShadowOn;
+    /// <summary>The 3D office is drawing in the office area, so the placeholder is not.</summary>
+    public bool OfficeDrawn;
     public double Openness;
     /// <summary>The open size, and the resting size the island or card is laid out at.</summary>
     public double OpenW, OpenH, RestW, RestH;

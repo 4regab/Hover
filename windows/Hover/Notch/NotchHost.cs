@@ -37,6 +37,7 @@ sealed class NotchHost : IDisposable
     readonly Gfx gfx;
     readonly NotchRenderer renderer;
     readonly NotchWindow window;
+    readonly OfficeHost? office;
     readonly NotchController ctl;
     readonly NotchScene scene = new();
     readonly Stopwatch clock = Stopwatch.StartNew();
@@ -63,13 +64,14 @@ sealed class NotchHost : IDisposable
 
     public NotchController Controller => ctl;
 
-    NotchHost(DispatcherQueue queue, BackendSession backend, NotchCallbacks callbacks, Gfx gfx, NotchWindow window)
+    NotchHost(DispatcherQueue queue, BackendSession backend, NotchCallbacks callbacks, Gfx gfx, NotchWindow window, OfficeHost? office)
     {
         this.queue = queue;
         this.backend = backend;
         this.callbacks = callbacks;
         this.gfx = gfx;
         this.window = window;
+        this.office = office;
         renderer = new NotchRenderer(gfx);
         ctl = new NotchController(window, () => Now);
 
@@ -92,7 +94,7 @@ sealed class NotchHost : IDisposable
     /// Makes the notch, its shortcut and its tray icon. Returns null, with the reason in the log,
     /// when the window or the graphics cannot be made; the app then runs without a notch.
     /// </summary>
-    public static NotchHost? TryStart(DispatcherQueue queue, BackendSession backend, NotchCallbacks callbacks)
+    public static NotchHost? TryStart(DispatcherQueue queue, BackendSession backend, NotchCallbacks callbacks, OfficeHost? office = null)
     {
         Gfx? gfx = null;
         NotchWindow? window = null;
@@ -100,7 +102,7 @@ sealed class NotchHost : IDisposable
         {
             gfx = Gfx.Create();
             window = new NotchWindow();
-            var host = new NotchHost(queue, backend, callbacks, gfx, window);
+            var host = new NotchHost(queue, backend, callbacks, gfx, window, office);
             host.Start();
             return host;
         }
@@ -129,9 +131,10 @@ sealed class NotchHost : IDisposable
         window.Deactivated += () => Guard("deactivate", Deactivated);
         window.TrayLeftClick += () => Guard("tray", callbacks.OpenDashboard);
         window.TrayPick += i => Guard("tray menu", () => TrayPick(i));
-        window.Pressed += (x, y) => Guard("press", ctl.Stay);
-        window.Released += (x, y) => Guard("click", () => Clicked(x, y));
-        window.KeyDown += vk => Guard("key", () => KeyPressed(vk));
+        window.Pressed += (x, y) => Guard("press", () => { ctl.Stay(); office?.NotchPressed(x, y); });
+        window.Released += (x, y) => Guard("click", () => { Clicked(x, y); office?.NotchReleased(x, y); });
+        window.Wheel += delta => Guard("wheel", () => office?.NotchWheel(delta));
+        window.KeyDown += vk => Guard("key", () => { KeyPressed(vk); office?.NotchKey(vk); });
         backend.Event += e => queue.TryEnqueue(() => Guard("message", () => OnBackend(e)));
 
         ctl.Size = settings.Size;
@@ -576,7 +579,15 @@ sealed class NotchHost : IDisposable
     {
         if (surface is null || disposed) return;
         FillScene();
+        scene.OfficeDrawn = office?.DrawsInNotch == true;
         surface.Draw(dc => renderer.Draw(dc, scene, ctl.WindowWidth), ctl.Scale);
+        if (office is not null)
+        {
+            var (ax, ay, aw, ah) = scene.OfficeArea(ctl.WindowWidth);
+            var (composition, root) = surface.Composition;
+            office.UpdateNotch(new NotchSlot(window.Handle, gfx.Device, composition, root, new OfficeRect(ax, ay, aw, ah), ctl.Scale,
+                new OfficeRect(scene.ShapeX, 0, scene.ShapeW, scene.ShapeH), scene.ShapeR, scene.ViewOpacity, scene.ViewVisible));
+        }
     }
 
     // MARK: Animation
@@ -626,6 +637,7 @@ sealed class NotchHost : IDisposable
         animTimer.Stop();
         secondTimer.Stop();
         glowTimer.Stop();
+        office?.DetachNotch();
         window.Dispose();
         surface?.Dispose();
         renderer.Dispose();
