@@ -25,6 +25,9 @@ public sealed class Pen(IShaper shaper)
 
     readonly Dictionary<(string, Look, float, Align), ShapedText> cache = [];
 
+    /// <summary>The single lines drawn in the frame, in order (for the checks of the real app).</summary>
+    public List<string> Drawn { get; } = [];
+
     // MARK: Looks
 
     public static readonly Rgba Ink = Palette.Ink, Dim = Palette.Dim, Faint = Palette.Faint;
@@ -69,6 +72,7 @@ public sealed class Pen(IShaper shaper)
         if (text.Length == 0) return 0;
         if (maxW > 0) text = Fit(text, look, maxW);
         var shaped = Shape(text, look);
+        if (Drawn.Count < 2000) Drawn.Add(text);
         Cv.Text(shaped.Layout, shaped.Runs, x, y);
         return shaped.Layout.Width;
     }
@@ -79,6 +83,7 @@ public sealed class Pen(IShaper shaper)
         if (text.Length == 0) return 0;
         text = Fit(text, look, r.W - 2 * pad);
         var shaped = Shape(text, look);
+        if (Drawn.Count < 2000) Drawn.Add(text);
         var x = left ? r.X + pad : r.X + (r.W - shaped.Layout.Width) / 2;
         Cv.Text(shaped.Layout, shaped.Runs, x, r.Y + (r.H - shaped.Layout.Height) / 2);
         return shaped.Layout.Width;
@@ -89,6 +94,7 @@ public sealed class Pen(IShaper shaper)
     {
         if (text.Length == 0) return 0;
         var shaped = Shape(text, look, width);
+        if (Drawn.Count < 2000) Drawn.Add(text);
         Cv.Text(shaped.Layout, shaped.Runs, x, y);
         return shaped.Layout.Height;
     }

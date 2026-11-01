@@ -363,6 +363,20 @@ sealed class NotchHost : IDisposable
 
     double panelScale;
 
+    /// <summary>For the checks of the real app: where the island's and the card's buttons are on the screen.</summary>
+    void DumpBar()
+    {
+        if (!UiDump.On) return;
+        var targets = new System.Text.Json.Nodes.JsonArray();
+        foreach (var t in renderer.Targets)
+            targets.Add(new System.Text.Json.Nodes.JsonObject { ["action"] = t.Action, ["x"] = t.X, ["y"] = t.Y, ["w"] = t.W, ["h"] = t.H });
+        UiDump.Set("bar", new System.Text.Json.Nodes.JsonObject
+        {
+            ["left"] = ctl.Window.Left, ["top"] = ctl.Window.Top, ["scale"] = ctl.Scale, ["open"] = ctl.State != NotchState.Rest,
+            ["card"] = cardOpen, ["asking"] = island.Seg.Kind == SegKind.Ask, ["targets"] = targets,
+        });
+    }
+
     /// <summary>Draws the panels into their layer when they are shown, and takes the layer away when they are not.</summary>
     void RenderPanels()
     {
@@ -393,6 +407,8 @@ sealed class NotchHost : IDisposable
         {
             panelScale = sc;
             layer.Draw(dc => panels.Paint(dc, (float)aw, (float)ah), sc);
+            if (UiDump.On)
+                UiDump.Set("notch", UiDump.Describe(panels, ctl.Window.Left + ax * sc, ctl.Window.Top + ay * sc, sc));
         }
         SyncKeys();
     }
@@ -719,6 +735,7 @@ sealed class NotchHost : IDisposable
         FillScene();
         scene.OfficeDrawn = office?.DrawsInNotch == true;
         surface.Draw(dc => renderer.Draw(dc, scene, ctl.WindowWidth), ctl.Scale);
+        DumpBar();
         RenderPanels();
         if (office is not null)
         {

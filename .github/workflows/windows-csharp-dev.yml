@@ -115,7 +115,7 @@ jobs:
           $shots = Join-Path $PWD 'out\shots'
           $app = Start-Process -FilePath $env:HOVER_APP_EXE -ArgumentList '--shots', $shots -PassThru `
             -RedirectStandardError out\logs\shots-stderr.txt -RedirectStandardOutput out\logs\shots-stdout.txt
-          if (-not $app.WaitForExit(120000)) { $app.Kill($true); throw '--shots did not finish in 2 minutes' }
+          if (-not $app.WaitForExit(300000)) { $app.Kill($true); throw '--shots did not finish in 5 minutes' }
           if (Test-Path "$data\hover.log") { Copy-Item "$data\hover.log" out\logs\shots-hover.log }
           if ($app.ExitCode -ne 0) { throw "--shots exited with $($app.ExitCode)" }
           $jpeg = Join-Path $shots 'dashboard.jpg'
@@ -123,7 +123,9 @@ jobs:
           if ($bytes.Length -lt 2000 -or $bytes[0] -ne 0xFF -or $bytes[1] -ne 0xD8) { throw "$jpeg is not a JPEG picture" }
           "dashboard.jpg: $($bytes.Length) bytes"
           # The notch's states, named as the Go app's pictures are.
-          foreach ($name in 'notch-rest-pill-2x', 'notch-rest-working-2x', 'notch-rest-ask-2x', 'notch-rest-done-2x', 'notch-rest-card-2x', 'notch-open-office') {
+          foreach ($name in 'notch-rest-pill-2x', 'notch-rest-working-2x', 'notch-rest-ask-2x', 'notch-rest-done-2x', 'notch-rest-card-2x', 'notch-open-office',
+            'notch-open-ask', 'notch-open-chat', 'notch-open-new-task',
+            'chat-view-chat', 'chat-view-home', 'chat-default-done', 'chat-default-ask', 'chat-default-queued', 'new-task-box', 'office-ask-over') {
             $file = Join-Path $shots "$name.jpg"
             if (-not (Test-Path $file)) { throw "$name.jpg was not made" }
             $b = [System.IO.File]::ReadAllBytes($file)

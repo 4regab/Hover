@@ -133,7 +133,7 @@ public sealed class App : Application, IXamlMetadataProvider
 
             if (launch.ShotsDirectory is { } directory)
             {
-                await Shots.TakeAsync(directory, dashboard!);
+                await Shots.TakeAsync(directory, dashboard!, panels);
                 await QuitAsync();
             }
         }

@@ -25,7 +25,7 @@ static class NotchShots
     static readonly Size Open = new(1120, 440);
     static readonly double WindowWidth = Open.W + 2 * Geometry.Pad;
 
-    sealed record Shot(string Name, double Scale, int Height, Island Island, CardData? Card = null, double T = 1.3, double Openness = 0, uint Glow = 0);
+    sealed record Shot(string Name, double Scale, int Height, Island Island, CardData? Card = null, double T = 1.3, double Openness = 0, uint Glow = 0, Action<Hover.Chat.Ui.OfficeUi>? Panels = null);
 
     static SessionInfo Session(int id, string tool, string stage, string verb, string obj = "", AskInfo? ask = null, double? took = null) => new()
     {
@@ -72,7 +72,33 @@ static class NotchShots
         var asking = Session(1, "kiro", "waiting", "Reading", ask: NpmInstall);
         yield return new Shot("notch-rest-ask-2x", 2, 60, Make([asking]), T: 0.4, Glow: 0xffb340);
         yield return new Shot("notch-rest-card-2x", 2, 220, Make([asking], card: true), NpmCard, 0.4, Glow: 0xffb340);
-        yield return new Shot("notch-open-office", 1, 480, Make([]), Openness: 1);
+        yield return new Shot("notch-open-office", 1, 480, Make([]), Openness: 1, Panels: ui =>
+        {
+            ui.Accept(Hover.Chatting.ChatShots.State(Hover.Chatting.ChatShots.Busy(), Hover.Chatting.ChatShots.Finished()));
+            ui.ChatView = false;
+            ui.CloseChat();
+        });
+        var asking3 = Hover.Chatting.ChatShots.Session(3, "kiro", "Upgrade three.js to 0.171", "waiting", 2, Hover.Chatting.ChatShots.Turn("Upgrade three.js to 0.171", "", "waiting", 1)) with { Ask = Hover.Chatting.ChatShots.Permission() };
+        yield return new Shot("notch-open-ask", 1, 480, Make([]), Openness: 1, Panels: ui =>
+        {
+            ui.Accept(Hover.Chatting.ChatShots.State(Hover.Chatting.ChatShots.Busy(), Hover.Chatting.ChatShots.Finished(), asking3));
+            ui.ChatView = false;
+            ui.CloseChat();
+        });
+        yield return new Shot("notch-open-chat", 1, 480, Make([]), Openness: 1, Panels: ui =>
+        {
+            ui.Accept(Hover.Chatting.ChatShots.State(Hover.Chatting.ChatShots.Busy(), Hover.Chatting.ChatShots.Finished(), asking3));
+            ui.ChatView = false;
+            ui.OpenChat(3);
+        });
+        yield return new Shot("notch-open-new-task", 1, 480, Make([]), Openness: 1, Panels: ui =>
+        {
+            ui.Accept(Hover.Chatting.ChatShots.State(Hover.Chatting.ChatShots.Busy(), Hover.Chatting.ChatShots.Finished()));
+            ui.ChatView = false;
+            ui.CloseChat();
+            ui.Click("fab");
+            ui.Char("Tidy the imports again");
+        });
 
         // The nearby inputs: nothing to show, a quota with no reading and a failed one, a very long
         // text, several questions, a failed end, and a screen at 150 %.
@@ -87,20 +113,36 @@ static class NotchShots
         yield return new Shot("notch-rest-pill-150", 1.5, 60, Make([Session(1, "kiro", "working", "Thinking")]), T: 0.9);
     }
 
-    public static async Task TakeAsync(string directory)
+    internal static async Task TakeAsync(string directory, Hover.Chatting.UiCore? panels = null)
     {
         Directory.CreateDirectory(directory);
         try
         {
-            using var gfx = Gfx.Create();
+            // The panels' own graphics when there are panels: their brushes and fonts belong to that device.
+            var own = panels is null ? Gfx.Create() : null;
+            var gfx = panels?.Gfx ?? own!;
             using var renderer = new NotchRenderer(gfx);
             foreach (var shot in Fixtures())
             {
                 var file = Path.Combine(directory, shot.Name + ".jpg");
-                var (bgra, w, h) = Draw(gfx, renderer, shot);
+                if (shot.Panels is { } setup && panels is not null)
+                {
+                    panels.FreezeState = true;
+                    setup(panels.Ui);
+                    // The Markdown and the colours come from the backend; wait for them.
+                    for (var i = 0; i < 40; i++)
+                    {
+                        Hover.Chatting.ChatShots.RenderLayer(panels, 1120, 440, shot.Scale);
+                        if (!panels.Ui.Waiting && panels.Ui.Pending == 0 && !panels.Ui.Dirty) break;
+                        await Task.Delay(100);
+                    }
+                }
+                var (bgra, w, h) = Draw(gfx, renderer, shot, shot.Panels is not null ? panels : null);
                 await Hover.Shots.WriteJpegAsync(bgra, w, h, file);
                 HostLog.Line($"picture {file} ({w} x {h})");
             }
+            if (panels is not null) panels.FreezeState = false;
+            own?.Dispose();
         }
         catch (Exception e)
         {
@@ -133,7 +175,7 @@ static class NotchShots
     }
 
     /// <summary>Draws the shot offscreen and returns opaque BGRA pixels over the desktop colour, cut to at most 1400 wide.</summary>
-    static (byte[] Pixels, int W, int H) Draw(Gfx gfx, NotchRenderer renderer, Shot shot)
+    static (byte[] Pixels, int W, int H) Draw(Gfx gfx, NotchRenderer renderer, Shot shot, Hover.Chatting.UiCore? panels)
     {
         var scene = Scene(renderer, gfx, shot);
         int pw = (int)Math.Round(WindowWidth * shot.Scale), ph = (int)Math.Round(shot.Height * shot.Scale);
@@ -178,6 +220,14 @@ static class NotchShots
         // The open notch's office is not drawn by the notch renderer: the 3D office is put in its area.
         if (shot.Openness > 0)
             OfficeShots.PasteNotch(output, cw, ph, x0, shot.Scale, scene.OfficeArea(WindowWidth), shot.Name);
+        // The office's panels go over the office.
+        if (shot.Openness > 0 && panels is not null && shot.Panels is not null)
+        {
+            var (ax, ay, aw, ah) = scene.OfficeArea(WindowWidth);
+            var layer = Hover.Chatting.ChatShots.RenderLayer(panels, (float)aw, (float)ah, shot.Scale);
+            int lw = (int)Math.Round(aw * shot.Scale), lh = (int)Math.Round(ah * shot.Scale);
+            Hover.Chatting.ChatShots.Over(output, cw, ph, (int)Math.Round(ax * shot.Scale) - x0, (int)Math.Round(ay * shot.Scale), layer, lw, lh);
+        }
         return (output, cw, ph);
     }
 }

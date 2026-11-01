@@ -38,6 +38,13 @@ sealed class UiOverlay : Grid, IDisposable
     (double X, double Y) lastClick;
     bool disposed;
 
+    /// <summary>The window this overlay is in (for the screen places the checks of the real app read).</summary>
+    public nint WindowHandle { get; set; }
+
+    [DllImport("user32.dll")] static extern bool ClientToScreen(nint hwnd, ref POINT point);
+
+    [StructLayout(LayoutKind.Sequential)] struct POINT { public int X, Y; }
+
     /// <summary>The last frame's size in device pixels.</summary>
     public (int W, int H) PixelSize => (pixelW, pixelH);
 
@@ -133,6 +140,13 @@ sealed class UiOverlay : Grid, IDisposable
         finally { cpu.Unmap(); }
         bitmap!.Invalidate();
         Frames++;
+        if (UiDump.On && WindowHandle != 0)
+        {
+            var origin = TransformToVisual(null).TransformPoint(new Windows.Foundation.Point(0, 0));
+            var p = new POINT();
+            ClientToScreen(WindowHandle, ref p);
+            UiDump.Set("window", UiDump.Describe(core, p.X + origin.X * scale, p.Y + origin.Y * scale, scale));
+        }
     }
 
     // MARK: The pointer

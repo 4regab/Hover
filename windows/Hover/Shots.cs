@@ -16,7 +16,7 @@ public static class Shots
     /// <summary>No picture is wider than this; a wider view is drawn smaller.</summary>
     public const int MaxWidth = 1400;
 
-    public static async Task TakeAsync(string directory, DashboardWindow dashboard)
+    internal static async Task TakeAsync(string directory, DashboardWindow dashboard, Hover.Chatting.UiCore? panels = null)
     {
         Directory.CreateDirectory(directory);
         await Save(dashboard.Root, Path.Combine(directory, "dashboard.jpg"), (pixels, w, h, scale) =>
@@ -26,7 +26,8 @@ public static class Shots
             Hover.Windowing.OfficeShots.PasteDashboard(pixels, w, h, scale,
                 new Hover.Windowing.OfficeRect(origin.X, origin.Y, dashboard.OfficeArea.ActualWidth, dashboard.OfficeArea.ActualHeight));
         });
-        await Hover.Windowing.NotchShots.TakeAsync(directory);
+        if (panels is not null) await Hover.Chatting.ChatShots.TakeAsync(directory, panels);
+        await Hover.Windowing.NotchShots.TakeAsync(directory, panels);
     }
 
     static async Task Save(FrameworkElement view, string file, Action<byte[], int, int, double>? after = null)

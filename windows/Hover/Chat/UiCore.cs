@@ -34,6 +34,9 @@ sealed class UiCore : IDisposable
 
     public double NowMs => clock.Elapsed.TotalMilliseconds;
 
+    /// <summary>The pictures set the state themselves, so the backend's own state messages are not taken.</summary>
+    public bool FreezeState { get; set; }
+
     public UiCore(Gfx gfx, DispatcherQueue queue, BackendSession backend, string dataDir, OfficeHost? office, bool inNotch)
     {
         Gfx = gfx;
@@ -54,7 +57,7 @@ sealed class UiCore : IDisposable
         });
         onEvent = e => queue.TryEnqueue(() =>
         {
-            if (disposed) return;
+            if (disposed || (FreezeState && e is StateEvent)) return;
             try { Ui.Accept(e); }
             catch (Exception ex) { HostLog.Line($"panels: a message failed — {ex}"); }
             Changed?.Invoke();

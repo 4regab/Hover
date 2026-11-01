@@ -21,9 +21,15 @@ public class ChatBackendTests(ITestOutputHelper output)
         return s.Sessions[0];
     }
 
+    /// <summary>The state in which the session waits for the user: the one it started in when it already did (a fast machine), else the next one that says so.</summary>
+    static async Task<StateEvent> Waiting(Conversation talk, SessionInfo started)
+        => started.Stage == "waiting"
+            ? new StateEvent { Sessions = [started] }
+            : await talk.Until<StateEvent>(s => s.Sessions.Any(x => x.Id == started.Id && x.Stage == "waiting"));
+
     static async Task<SessionInfo> Finish(Conversation talk, SessionInfo session, string answer = "allow")
     {
-        var waiting = await talk.Until<StateEvent>(s => s.Sessions.Any(x => x.Id == session.Id && x.Stage == "waiting"));
+        var waiting = await Waiting(talk, session);
         var ask = waiting.Sessions.Single(x => x.Id == session.Id).Ask!;
         talk.Send(new AnswerCommand(session.Id, ask.Id, answer));
         var done = await talk.Until<StateEvent>(s => s.Sessions.Any(x => x.Id == session.Id && x.Stage == "done"));
@@ -37,7 +43,7 @@ public class ChatBackendTests(ITestOutputHelper output)
         var talk = await Conversation.Open(sandbox);
         await using var client = talk.Client;
         var session = await Start(talk, sandbox, "Tidy it");
-        var waiting = await talk.Until<StateEvent>(s => s.Sessions[0].Stage == "waiting");
+        var waiting = await Waiting(talk, session);
         var ask = waiting.Sessions[0].Ask!;
         Assert.Equal("edit", ask.Kind);
         Assert.Null(ask.Questions);
@@ -273,7 +279,7 @@ public class ChatBackendTests(ITestOutputHelper output)
         var talk = await Conversation.Open(sandbox);
         await using var client = talk.Client;
         var session = await Start(talk, sandbox, "[crash] go");
-        var waiting = await talk.Until<StateEvent>(s => s.Sessions[0].Stage == "waiting");
+        var waiting = await Waiting(talk, session);
         talk.Send(new AnswerCommand(session.Id, waiting.Sessions[0].Ask!.Id, "allow"));
         // The agent dies; the backend carries on and says the turn failed.
         var failed = await talk.Until<StateEvent>(s => s.Sessions[0].Stage == "failed");

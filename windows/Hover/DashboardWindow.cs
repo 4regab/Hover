@@ -75,7 +75,7 @@ public sealed class DashboardWindow : Window
         page.Children.Add(OfficeArea);
         if (panels is not null)
         {
-            Panels = new UiOverlay(panels, page, DispatcherQueue);
+            Panels = new UiOverlay(panels, page, DispatcherQueue) { WindowHandle = WinRT.Interop.WindowNative.GetWindowHandle(this) };
             Grid.SetRow(Panels, 1);
             page.Children.Add(Panels);
         }

@@ -56,7 +56,7 @@ public class ProtocolJsonTests
             {"type":"state","canStart":true,"maxRunning":3,"folder":null,"tool":"codex",
              "tools":[{"id":"codex","name":"Codex","ready":true,"future":1}],
              "sessions":[{"id":7,"key":"k","stage":"waiting","ctx":null,"ask":{"id":"a1","kind":"edit"},
-               "turns":[{"prompt":"p","answer":"a","t0":5,"woke":null,"steps":[{"k":"run","verb":"Ran","status":"completed","cmd":"npm"}]}]}],
+               "turns":[{"prompt":"p","answer":"a","t0":5,"woke":null,"steps":[{"k":"run","verb":"Ran","status":"completed","later":"npm"}]}]}],
              "history":[{"key":"h","tool":"codex","title":"T","folder":"f","at":9,"stage":"done","turns":2}]}
             """;
         var state = Assert.IsType<StateEvent>(ProtocolJson.Parse(Encoding.UTF8.GetBytes(json), out var problem));
@@ -68,7 +68,7 @@ public class ProtocolJsonTests
         Assert.Equal("a1", state.Sessions[0].Ask!.Id);
         Assert.Equal("run", state.Sessions[0].Turns[0].Steps[0].K);
         // What the host does not read yet is kept, not lost.
-        Assert.Equal("npm", state.Sessions[0].Turns[0].Steps[0].Extra!["cmd"].GetString());
+        Assert.Equal("npm", state.Sessions[0].Turns[0].Steps[0].Extra!["later"].GetString());
         Assert.Equal(1, state.Tools[0].Extra!["future"].GetInt32());
         Assert.Equal(2, state.History[0].Turns);
     }

@@ -84,6 +84,27 @@ public sealed partial class OfficeUi
     /// <summary>The chat thread, for the tests and the pictures.</summary>
     public ChatThread Thread => thread;
 
+    /// <summary>The words of the thread, box by box, as a selection would copy them.</summary>
+    public IEnumerable<string> ThreadTexts => thread.Sections.SelectMany(s => s.Frag.Texts.Select(t => t.Text));
+
+    /// <summary>The buttons of the thread (Copy, Restore, Try again, Send now and so on) that are in view, in the panels' coordinates.</summary>
+    public IEnumerable<(string Kind, int Section, Rect4 R)> ThreadActs()
+    {
+        for (var si = 0; si < thread.Sections.Count; si++)
+        {
+            var s = thread.Sections[si];
+            foreach (var hit in s.Frag.Hits)
+            {
+                var r = new Rect4(threadRect.X + Palette.ThreadPad[3] + hit.R.X, threadRect.Y + s.Y + hit.R.Y - scroll, hit.R.W, hit.R.H);
+                if (r.Bottom < threadRect.Y || r.Y > threadRect.Bottom) continue;
+                yield return (hit.Act.Kind.ToString(), si, r);
+            }
+        }
+    }
+
+    /// <summary>The lines of text the panels' own chrome drew in the last frame (titles, buttons, the list).</summary>
+    public IEnumerable<string> ChromeTexts => pen.Drawn;
+
     /// <summary>Where the thread is drawn in the last frame, and how far it is scrolled.</summary>
     public Rect4 ThreadArea => threadRect;
 
@@ -241,6 +262,7 @@ public sealed partial class OfficeUi
         pen.Cv = cv;
         targets.Clear();
         blockers.Clear();
+        pen.Drawn.Clear();
         Animating = false;
         NextFrameMs = double.MaxValue;
         Dirty = false;
@@ -274,6 +296,28 @@ public sealed partial class OfficeUi
 
     /// <summary>Requests to the backend for Markdown, colour and changes that are not answered yet.</summary>
     public int Pending => cache.InFlight;
+
+    /// <summary>Scrolls the thread to its top.</summary>
+    public void ScrollToTop() => ScrollTo(0);
+
+    /// <summary>Opens the first change of the newest turn in the thread, as a click on a file under the answer does.</summary>
+    public void OpenFirstChange()
+    {
+        if (turns.Count == 0) return;
+        var section = turns.Count - 1;
+        var step = turns[section].Steps.FindIndex(x => x.HasBlock && x.Diff.Length > 0);
+        if (step < 0) return;
+        if (thread.OpenDiff(turns, section, step) is { } at) ScrollTo(at - 40);
+        Dirty = true;
+    }
+
+    /// <summary>Asks to restore the newest turn, as its Restore button does (the user still confirms).</summary>
+    public void AskRestore()
+    {
+        if (turns.Count == 0) return;
+        confirm = (turns.Count - 1, "restore");
+        Dirty = true;
+    }
 
     /// <summary>Presses and releases at the middle of the topmost place the last frame drew with this id (and number, if given). False when there is none.</summary>
     public bool Click(string id, int n = -1, int clicks = 1)

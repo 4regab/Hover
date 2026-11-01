@@ -98,7 +98,7 @@ public sealed partial class OfficeUi
                 pen.Wrapped(r.Note, tx, cy + 7 + pen.LineHeight(lf) + 1, rr.Right - tx - 8 - (r.On ? 20 : 0), Pen.F(11, 400, Pen.Faint));
             }
             if (r.On) pen.Icon(Icons.Check, rr.Right - 8 - 12, cy + (r.Note.Length > 0 ? 10 : (rh - 12) / 2), 12, Pen.Lilac);
-            if (!r.Disabled) Add(rr, "menu", i);
+            if (!r.Disabled) Add(rr, "menu", i, r.Label);
             cy += rh;
         }
         overBlocker = false;
