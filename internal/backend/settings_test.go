@@ -88,7 +88,7 @@ func TestSetSettingChangesOneSettingAndKeepsTheFileFormat(t *testing.T) {
 	got := core.LoadModel(file)
 	if got.Appearance != core.AppearanceDark || got.WorkspaceSize != core.WorkspaceLarge || !got.ChatView || !got.RetryBusy() ||
 		got.LastEditor == nil || *got.LastEditor != "zed" || got.Theme != nil || got.KiroFolder != nil ||
-		got.ScWorkspace.Label() != "Ctrl+Alt+M" {
+		got.ScWorkspace.LabelFor(false) != "Ctrl+Alt+M" {
 		t.Fatalf("the saved model: %+v", got)
 	}
 }
