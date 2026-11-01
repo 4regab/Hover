@@ -206,29 +206,7 @@ public class DeskAppTests(ITestOutputHelper output)
 
             // The office: the bot sits at its desk; a click on the desk opens the card, a click on the bot opens the chat.
             await ClickUntil(s, "view", "the office view", () => (bool?)s.Dump.Section("window")?["chatView"] == false, n => (int)n["n"]! == 0);
-            await Check(s, () => s.Dump.Section("window")?["bots"]?.AsArray().Count > 0, "the office says where the bot is", 60_000);
-            var opened = false;
-            for (var round = 0; round < 3 && !opened; round++)
-            {
-                var bot = s.Dump.Section("window")!["bots"]!.AsArray()[0]!;
-                double left = (double)s.Dump.Section("window")!["left"]!, top = (double)s.Dump.Section("window")!["top"]!, scale = (double)s.Dump.Section("window")!["scale"]!;
-                double bx = (double)bot["x"]! + (double)bot["w"]! / 2, by = (double)bot["y"]! + (double)bot["h"]!;
-                foreach (var dy in new[] { 8, 20, 32, 44, 56, 70 })
-                {
-                    foreach (var dx in new[] { 0, -24, 24, 48, -48 })
-                    {
-                        var x = (int)Math.Round(left + (bx + dx) * scale);
-                        var y = (int)Math.Round(top + (by + dy) * scale);
-                        Input.Click(x, y);
-                        await Task.Delay(300);
-                        if (s.Dump.Section("window")?["deskCard"] is not null) { opened = true; output.WriteLine($"the desk was at +{dx},+{dy} from the bot's feet"); break; }
-                        // A click on the bot opens its chat: put that away and go on.
-                        if (s.Dump.Where("window", "close") is not null) Input.Click(s.Dump.Where("window", "close")!.Value.X, s.Dump.Where("window", "close")!.Value.Y);
-                    }
-                    if (opened) break;
-                }
-                if (!opened) await Task.Delay(1500);
-            }
+            await ClickTheDesk(s);
             await Check(s, () => s.Dump.Section("window")?["deskCard"] is not null, "a click on the desk opened its card");
             await Check(s, () => s.Dump.Where("window", "cardTile", Of("terminal")) is not null, "the card has its tiles");
             Assert.NotNull(s.Dump.Where("window", "cardChat"));
@@ -332,6 +310,46 @@ public class DeskAppTests(ITestOutputHelper output)
             }
         }
         finally { output.WriteLine(s.Dump.Summary()); }
+    }
+
+    // The office says where the bot is (its box, in the panels' pixels). The desk is in front of it, to its right: the points
+    // are fractions of that box, and the first is the middle of the part of the desk the bot does not cover (found with the
+    // office's own picking). A click on the bot opens its chat instead: that is put away and the next point tried.
+    async Task ClickTheDesk(Session s)
+    {
+        JsonNode? Bot() => s.Dump.Section("window")?["bots"]?.AsArray().FirstOrDefault();
+        double[]? seen = null;
+        var since = Environment.TickCount64;
+        bool Still()
+        {
+            if (Bot() is not { } b) return false;
+            double[] now = [(double)b["x"]!, (double)b["y"]!, (double)b["w"]!, (double)b["h"]!];
+            if (seen is null || now.Zip(seen, (a, c) => Math.Abs(a - c) > 0.5).Any(moved => moved)) { seen = now; since = Environment.TickCount64; }
+            return Environment.TickCount64 - since >= 1500;
+        }
+        await Check(s, () => Bot() is not null, "the office says where the bot is", 60_000);
+        await Check(s, Still, "the bot stands still at its desk", 60_000);
+        var spots = new List<(double Fx, double Fy)> { (1.3, 0.75), (1.45, 0.6), (1.2, 0.9), (1.5, 0.85), (1.6, 0.7), (1.1, 1.0), (-0.3, 0.75), (-0.45, 0.6) };
+        for (var fy = 0.2; fy <= 1.5; fy += 0.15)
+            for (var fx = -0.8; fx <= 2.2; fx += 0.2) spots.Add((fx, fy));
+        foreach (var (fx, fy) in spots.Take(80))
+        {
+            var window = s.Dump.Section("window")!;
+            var bot = Bot()!;
+            double left = (double)window["left"]!, top = (double)window["top"]!, scale = (double)window["scale"]!;
+            var x = (int)Math.Round(left + ((double)bot["x"]! + fx * (double)bot["w"]!) * scale);
+            var y = (int)Math.Round(top + ((double)bot["y"]! + fy * (double)bot["h"]!) * scale);
+            Input.Click(x, y);
+            await Task.Delay(300);
+            if (s.Dump.Section("window")?["deskCard"] is not null) { output.WriteLine($"the desk was at {fx:0.00} of the bot's width and {fy:0.00} of its height"); return; }
+            if (s.Dump.Where("window", "close") is { } close)
+            {
+                Input.Click(close.X, close.Y);
+                await Check(s, () => s.Dump.Section("window")?["openId"] is null, "the chat the click opened was put away");
+                seen = null;
+                await Check(s, Still, "the office stands still again", 30_000);
+            }
+        }
     }
 
     async Task OpenPanelFromTheChatMenu(Session s, string row)

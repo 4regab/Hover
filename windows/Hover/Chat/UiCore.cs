@@ -82,10 +82,10 @@ sealed class UiCore : IDisposable
         // and the office moves its camera to the bot whose chat is open.
         if (office is not null)
         {
-            office.BotPicked += id => Picked(() => Ui.OpenChat(id));
+            office.BotPicked += id => Picked($"bot {id}", () => Ui.OpenChat(id));
             // A desk with a session at it opens its card; the board, the TV and the shelf open their panels.
-            office.DeskPicked += id => Picked(() => Ui.OpenDeskCard(id));
-            office.PropPicked += prop => Picked(() =>
+            office.DeskPicked += id => Picked($"desk {id}", () => Ui.OpenDeskCard(id));
+            office.PropPicked += prop => Picked($"prop {prop}", () =>
             {
                 switch (prop)
                 {
@@ -110,9 +110,10 @@ sealed class UiCore : IDisposable
         });
     }
 
-    void Picked(Action act)
+    void Picked(string what, Action act)
     {
         if (disposed) return;
+        if (UiDump.On) HostLog.Line($"panels: the office picked {what}");
         try { act(); }
         catch (Exception e) { HostLog.Line($"panels: a pick failed — {e}"); }
         Changed?.Invoke();
