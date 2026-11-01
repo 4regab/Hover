@@ -17,7 +17,7 @@ description = "Build the Windows app"
 run_windows = "pwsh -NoProfile -File ./build.ps1"
 
 [tasks.test-windows]
-description = "Run Go tests on Windows"
+description = "Run the Go and C# tests on Windows"
 run_windows = "pwsh -NoProfile -File ./build.ps1 test"
 
 [tasks.build-macos]
