@@ -182,6 +182,46 @@ What `windows\Hover.Tests` covers:
   - *Sound*: the ramp against the numbers the Go `RampStep` prints; the loop (a linked Ogg Vorbis file, 128 s) decodes,
     never goes silent when it starts again, fades in to 0.32 and out to nothing and lets the device go; hidden office,
     switched on while hidden, no output device and an unreadable loop; the chime; the real output opens or says why not.
+- **Settings, the Discord status and the Screen capture** (`windows\Hover.Settings.Tests`, `dotnet test`; needs `HOVER_BACKEND`):
+  - *The pages* (any system): every page of `internal/app/pages.go` opens from the sidebar with the Go words; the Windows
+    rules (Sandbox, Computer use, Agent browser, Agent desktops and Setup shown off with their notes, no Cua rows); each
+    kind of control (switch, segments, picker, shortcut, slider, field, tile, link) answers the pointer and the keys on a
+    canvas that writes down what it was asked; a row that is switched off draws its text faded (the app's canvas draws the
+    colours a text was shaped with).
+  - *Round trips through the real backend*: each kind of control is changed, the backend is stopped and started again on the
+    same folder, and the setting is still there; `settings.json` passes `hover-data check` and `hover-data dump` opens the
+    key the host made (Windows: `note.key` is wrapped for the user). A Groq key saved from the Voice page is in
+    `secrets.dat` (`hover-data secret check`), in no message the backend sent and in no line of the log. A project is
+    added and made the default; a project whose folder has gone says so and the page still opens; a VS Code theme file
+    with comments is applied, and a broken one, an empty one and a missing one say "That file has no VS Code theme colours
+    in it." and change nothing. Installed themes are listed (Windows: written into the real profile under a name of their own and removed again) and one is applied as Hover colours; Appearance puts Hover's own back.
+  - *Nearby inputs*: a 2,000-character Groq key is kept; a key with a control character is refused under its field; two
+    settings changed within 400 ms are both kept; a read-only `settings.json` does not stop the pages; Discord not running
+    is not an error.
+  - *Discord* (any system): the status client against a fake named-pipe server: the handshake, the `SET_ACTIVITY`
+    payloads, the 5 s gap, "Idle" and "N agents working", a ping and a refusal, Discord closing the pipe after the hello, and Discord not running at first and started later.
+    `internal/backend/discord_test.go` checks that `initialize {hostDiscord: true}` starts no Go client.
+  - *Windows only*: Launch at login writes and removes the Run value with the quoted path of `hoverai.exe` (on a key of the
+    test's own); the Screen capture shows only the windows of the processes asked for over the desktop (another process, a
+    minimised window, a closed one and one partly off the screen); a folder written by the Go app (`HOVER_FIXTURE_GO`)
+    shows on the Kiro page and a change is read back by Go.
+  - *The real app* (`SettingsAppTests`, needs `HOVER_APP_EXE`): `hoverai.exe --settings` shows the page in the app
+    window and a click on a switch, a click on a segment, the wheel and a typed text change what the backend writes to
+    `settings.json`; a shortcut is recorded from the real keyboard; Alt+N opens the notch and its menu opens Settings in
+    it, where a click on a switch is written. The places come from `HOVER_UI_DUMP` (`settings-window`, `settings-notch`).
+  - *Pictures*: `--shots` writes the `settings-*` and `notch-open-settings*` pictures with the Go names (the Mac-only
+    Cua and Setup pictures are not made); the job checks that ten of them are there and are JPEG. `screen-capture.jpg`
+    is the Screen capture of the app's own window over the wallpaper on the runner.
+  - *The Screen tab* (`windows\Hover.Tests\ScreenPanelTests`, any system): the tile is open with a feed and grey without
+    one, and its line says Desktop, Desktop + its apps or Live; the desktop alone is asked for once at rest and shown whole
+    in its box; Watch live asks for the agent's processes four times a second and Stop takes the desktop again; an agent
+    testing is live without the button; a failure is said under the last picture; the pictures are let go when replaced and
+    when the panel shuts; the desktop is taken again when the tab comes back. The wallpaper covers the screen and keeps its
+    middle (`WindowsTests`). `desk-tab-screen`, `desk-tab-screen-live` and `desk-tab-small-screen` are drawn with a made-up
+    screen.
+  - *Dictation*: the line under the reply box (`DictationLineTests`) and the reading of the screenshots said aloud
+    (`DictationShotsTests`: a picture in `kiro-images` becomes a data address of its kind; another folder, a name that starts
+    like it, a climbing path, a file that is not a picture, an empty one, one over 8 MB and an odd name are not read).
 - **Windows only**: DPAPI, the job object (what is in it dies with its handle; its children too),
   killing a host process kills the backend and the agent's child, single instance, the old
   "Hover Service" task removal, and `hoverai.exe` itself (a second launch exits, the first opens

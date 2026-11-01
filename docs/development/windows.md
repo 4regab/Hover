@@ -267,6 +267,34 @@ sends comes through `desk`, `term`, `writeFile`, `editors`, `openIn`, `deskActio
 sit at their desks (`OfficeHost.ShowForShot`), so the card, the tags and the helpers are where the office puts them.
 The pictures take none of the backend's answers about their made-up sessions (`UiCore.FreezeState`).
 
+### Settings, the menus, themes, Launch at login, Discord and the Screen panel
+
+Settings is the Go app's `internal/app/pages.go` as data, drawn by the same toolkit as the chat (`Hover.Chat`'s
+`ICanvas`, `Pen` and `EditBox`), so the open notch and the app window show the same page from the same code. The library
+is `windows\Hover.Settings`; the app's side is `windows\Hover\Settings`.
+
+| What | Where | Notes |
+|---|---|---|
+| The pages | `Hover.Settings\Pages\*` | `PageBuilder` makes the blocks (groups, switches, segments, pickers, fields, sliders, tiles, links) of each page with the Go words. Windows rules as in Go: Sandbox, Computer use, Agent browser, Agent desktops and the one-click Setup are shown off with the Go notes; there are no Cua rows. Cua, Setup and the `integ.*` actions are Mac only. |
+| The controller | `Hover.Settings\Controller\*` | Every control is a typed backend command (`setSetting`, `projects`, `themes`, `themeRead`, `palette`, `mcp`, `kiroAgents`, `secret`, `credits`, `phonon`, `groqCheck`; `Hover.Host\Protocol\SettingsMore.cs`). settings.json is written by the backend alone. A change shows at once and is held until the backend's `settings` has it (3 s at most), so two changes within 400 ms are both kept. |
+| The painter | `Hover.Settings\Ui\*` | Draws a page, its menus and its fields on any `ICanvas`; the notch draws it with Direct2D into its window and the app window draws the same page onto a bitmap that fills the place of the office (`SettingsOverlay`). Keys, the wheel, text fields and the shortcut recorder go through `SettingsUi`. |
+| In the app | `Hover\Settings\SettingsHost.cs`, `NotchHost.Settings.cs`, `SettingsOverlay.cs` | The open notch has a Settings row in the ≡ menu; the app window has Settings in its menu bar and the tray's Settings… opens it (`hoverai.exe --settings` does too). The voice card's Settings button opens Settings → Voice. While the shortcut records, the notch's and the voice hotkey are let go (`VoiceHost.SuspendKey`). |
+| The menu bar | `Hover\Settings\AppMenu.cs` | File / Settings / Help as in `internal/ui/barmenu.go`, the system's own `MenuBar` in the app window's header. |
+| Projects | `Hover.Settings\Controller\SettingsActions.cs` | Add (the folder picker), edit a project's name, folder and access, remove the entry only (the folder and its sessions stay), and the default workspace folder and access; a folder that is gone is said on its row and the page still opens. |
+| Themes | `Hover.Settings\Pages\Palettes.cs` | The backend lists the installed VS Code, Cursor, Kiro and Windsurf themes and reads a theme file (comments and trailing commas allowed); the palette comes from the backend (`palette`) as Go applies it. Hover's own light and dark are constants. A file with no theme colours says "That file has no VS Code theme colours in it." and changes nothing. Appearance → System follows the system's light or dark, looked at every 2 s. |
+| Launch at login | `Hover.Settings\Windows\RunValue.cs` | The C# app writes the value `Hover` under `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`: the path of `hoverai.exe` in quotes, as the Go app writes it. Off removes it. The backend is not asked. |
+| Voice page | `Hover.Settings\Pages\VoicePage.cs` | The shortcut recorder, the microphones (`MicDevices.Names()`), hold or toggle, the Groq key and the cleanup key (sent to `secret` and never shown or logged; the page only knows that one is kept), Phonon install, repair and remove with progress, and Try it (`VoiceHost.PressTrial()`). |
+| The Discord status | `Hover.Settings\Discord\DiscordPresence.cs`, `Hover\Discord\DiscordHost.cs` | The C# app talks to Discord on the named pipe `discord-ipc-0` to `9` with the Go rules (a change at most every 5 s, a look every 30 s, "Idle" or "N agents working", the tools' names up to 128 characters). `BackendSession` sends `initialize {hostDiscord: true}`, so the backend starts no client of its own and the status shows once. Not running Discord is not an error: it is tried again at the next look. |
+| The Screen tab | `Hover.Settings\Windows\ScreenCapture.cs`, `Hover\Screen\*`, `Hover.Chat\Ui\OfficeUi.DeskScreen.cs` | The desk's Screen tab shows a frame of the main display with only the windows of the processes in `state.sessions[].apps` over the wallpaper (`Cover`ed to the screen, as Go does): each visible window gets its own picture with `PrintWindow` (`PW_RENDERFULLCONTENT`), so what is over it does not show. A minimised or closed window is left out; the frame fits 1280 x 800. At rest it is the desktop once; Watch live, or the agent testing with computer use (`state.sessions[].testing`), takes a picture about four times a second. `ScreenFeed` (app) makes each picture off the UI thread and keeps it in the panels' picture store as `hover://screen/N` (`ImageStore.Put`, `Forget`), and the tab lets the one it replaced go. The line under the picture is Go's. |
+
+`hoverai.exe --shots DIR` writes the Settings pictures with the Go pictures' names (`settings-*` and `notch-open-settings*`)
+as JPEG. The Go pictures have a 36 px menu bar strip at the top that these do not. The checks of the real app read the
+page with `HOVER_UI_DUMP` (`settings-window` for the app window, `settings-notch` for the open notch): the sections, the
+focus and the place of every control.
+
+The data folder is `hover-data`'s to check: `hover-data check <dir>` after a run of the C# app must exit 0, and
+`hover-data secret check <dir> voice.groq` must find the key a Voice page saved.
+
 ### Voice, sound and music
 
 Voice is the backend's flow (Groq or Phonon for the words, cleanup, the choice of folder and agent,
@@ -290,10 +318,11 @@ for the notch's side, `windows\Hover\Voice`.
 1400 pixels is cut to the middle 1400. The Go 2x pictures draw the aura at half size (the Go shots
 draw its 66 pixels in a 2x window); the C# pictures draw it at the size the app has.
 
-What is not done: the Settings → Voice page itself (shortcut, microphone, Phonon, Groq key, Try it)
-belongs to the Settings pages; the commands it needs (`setSetting` `Voice`, `phonon`, `groqCheck`,
-`secret`, `VoiceService.PressTrial`) are in place. Screenshots said aloud are taken by the backend; the
-dictation line ("Listening…", "Writing it down…") under the reply box is not drawn.
+The Settings → Voice page is in [Settings](#settings-the-menus-themes-launch-at-login-discord-and-the-screen-panel) above. Screenshots said aloud
+are taken by the backend. During dictation the reply box's bar says "Listening…" and then "Writing it down…" at its right
+(`OfficeUi.DictationLine`, set from `VoiceService.Changed`); a dictation error is said there for five seconds, not as a balloon.
+The screenshots said for go with the reply are read from the data folder's `kiro-images` (`DictationShots`; no other path is read)
+and put on the reply as pasted pictures are, four at most.
 
 The key rules for `note.key` (set aside, never overwritten) are in
 [windows-csharp.md](windows-csharp.md#c-data-formats); `Hover.Host/HistoryKey.cs` follows them.
