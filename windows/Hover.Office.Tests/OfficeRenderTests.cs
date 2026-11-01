@@ -181,6 +181,11 @@ public sealed class OfficeRenderTests(Gpu gpu, ITestOutputHelper output) : IClas
             var d = BoxDiff(with, without, NotchW, NotchH, t.X, t.Y + 22, 26);
             output.WriteLine($"session {t.Id} ({t.Name}) at {t.X:F0},{t.Y:F0}: {d:F1} apart from the empty room");
             Assert.True(d > 3, $"no bot where the scene puts session {t.Id} ({d:F1})");
+            // The rectangle a prompt would be drawn at holds the tag point and is smaller than a desk's neighbourhood.
+            var rect = o.BotRect(t.Id) ?? throw new Xunit.Sdk.XunitException($"no rectangle for session {t.Id}");
+            Assert.True(t.X >= rect.X - 1 && t.X <= rect.X + rect.W + 1 && t.Y >= rect.Y - 1 && t.Y <= rect.Y + rect.H + 1, $"session {t.Id}: tag {t.X:F0},{t.Y:F0} is outside its rectangle {rect}");
+            Assert.InRange(rect.W, 8, 200);
+            Assert.InRange(rect.H, 12, 250);
         }
     }
 

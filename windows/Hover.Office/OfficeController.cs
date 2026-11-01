@@ -25,6 +25,9 @@ public sealed class OfficeController(OfficeModel model, Func<int>? hourNow = nul
     /// <summary>The user changed the camera or the time of day: persist it (office.json).</summary>
     public event Action? Changed;
 
+    /// <summary>The primary button went down over the office and has not come up.</summary>
+    public bool IsDown => isDown;
+
     public bool Visible
     {
         get => visible;
@@ -88,6 +91,18 @@ public sealed class OfficeController(OfficeModel model, Func<int>? hourNow = nul
             Changed?.Invoke();
         }
         Clicked?.Invoke(c);
+    }
+
+    /// <summary>The press was taken away from the office (focus lost, capture lost): no click, no drag.</summary>
+    public void Cancel()
+    {
+        Model.Poke();
+        isDown = false;
+        if (Model.Dragging)
+        {
+            Model.Dragging = false;
+            Changed?.Invoke();
+        }
     }
 
     /// <summary>The wheel turned over the office at (x, y): dy is a browser's deltaY, positive away from the screen's top (zoom out).</summary>

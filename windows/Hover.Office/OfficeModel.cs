@@ -867,6 +867,30 @@ public sealed partial class OfficeModel
         return outp;
     }
 
+    /// <summary>
+    /// Where a session's bot is on screen, in pixels of the office (from its top left): the box round the bot's hit volume,
+    /// as the camera sees it now. Null when there is no such session.
+    /// </summary>
+    public (double X, double Y, double W, double H)? BotRect(int sessionId)
+    {
+        var s = Sessions.FirstOrDefault(x => x.Id == sessionId);
+        if (s is null) return null;
+        var (view, proj) = Camera();
+        var vp = proj * view;
+        var m = G.World()[s.B.Hit];
+        double x0 = double.MaxValue, y0 = double.MaxValue, x1 = double.MinValue, y1 = double.MinValue;
+        for (var i = 0; i < 8; i++)
+        {
+            var p = vp.Point(m.Point(new V3((i & 1) - 0.5, ((i >> 1) & 1) - 0.5, ((i >> 2) & 1) - 0.5)));
+            double sx = (p.X + 1) / 2 * W, sy = (1 - p.Y) / 2 * H;
+            x0 = Math.Min(x0, sx);
+            y0 = Math.Min(y0, sy);
+            x1 = Math.Max(x1, sx);
+            y1 = Math.Max(y1, sy);
+        }
+        return (x0, y0, x1 - x0, y1 - y0);
+    }
+
     /// <summary>short(f): the last part of a path.</summary>
     public static string Short(string f)
     {
