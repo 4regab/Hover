@@ -26,7 +26,7 @@ public sealed class JobObject : IDisposable
         if (job == 0) throw new InvalidOperationException("CreateJobObject failed.", new System.ComponentModel.Win32Exception());
 
         var info = new ExtendedLimitInformation();
-        info.Basic.LimitFlags = KillOnJobClose;
+        info.Flags = KillOnJobClose;
         if (!SetInformationJobObject(job, JobObjectExtendedLimitInformation, ref info, (uint)Marshal.SizeOf<ExtendedLimitInformation>()))
         {
             var error = new System.ComponentModel.Win32Exception();
@@ -50,36 +50,19 @@ public sealed class JobObject : IDisposable
         if (h != 0) CloseHandle(h);
     }
 
-    [StructLayout(LayoutKind.Sequential)]
-    struct BasicLimitInformation
-    {
-        public long PerProcessUserTimeLimit;
-        public long PerJobUserTimeLimit;
-        public uint LimitFlags;
-        public nuint MinimumWorkingSetSize;
-        public nuint MaximumWorkingSetSize;
-        public uint ActiveProcessLimit;
-        public nuint Affinity;
-        public uint PriorityClass;
-        public uint SchedulingClass;
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    struct IoCounters
-    {
-        public ulong ReadOperationCount, WriteOperationCount, OtherOperationCount;
-        public ulong ReadTransferCount, WriteTransferCount, OtherTransferCount;
-    }
-
+    // The 144 bytes the API takes for the extended limit information (winnt.h). The names here are
+    // this file's own: only the sizes and the order matter to the call, and only Flags is set.
     [StructLayout(LayoutKind.Sequential)]
     struct ExtendedLimitInformation
     {
-        public BasicLimitInformation Basic;
-        public IoCounters Io;
-        public nuint ProcessMemoryLimit;
-        public nuint JobMemoryLimit;
-        public nuint PeakProcessMemoryUsed;
-        public nuint PeakJobMemoryUsed;
+        public long UserTimePerProcess, UserTimePerJob;
+        public uint Flags;
+        public nuint WorkingSetMin, WorkingSetMax;
+        public uint ProcessCountMax;
+        public nuint CpuAffinity;
+        public uint PriorityClass, SchedulingClass;
+        public ulong ReadOps, WriteOps, OtherOps, ReadBytes, WriteBytes, OtherBytes;
+        public nuint ProcessMemoryMax, JobMemoryMax, ProcessMemoryPeak, JobMemoryPeak;
     }
 
     [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
