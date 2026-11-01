@@ -1,5 +1,6 @@
 <Solution>
   <Project Path="Hover/Hover.csproj" />
+  <Project Path="Hover.Chat/Hover.Chat.csproj" />
   <Project Path="Hover.Host/Hover.Host.csproj" />
   <Project Path="Hover.Notch/Hover.Notch.csproj" />
   <Project Path="Hover.Office/Hover.Office.csproj" />

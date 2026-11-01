@@ -95,10 +95,41 @@ public sealed record ToolInfo
     public string Access { get; init; } = "";
     public bool ReadOnly { get; init; }
     public bool HideSteps { get; init; }
-    public string Model { get; init; } = "";
+    public string? Model { get; init; }
     public string? Effort { get; init; }
+    /// <summary>What the tool offers: id, name and, for a model with levels of its own, those levels.</summary>
+    public List<ModelInfo> Models { get; init; } = [];
+    public List<string> Efforts { get; init; } = [];
+    /// <summary>"Effort" or "Reasoning": what the tool calls the second pick.</summary>
+    public string EffortLabel { get; init; } = "";
+    /// <summary>The tool can ask the user a question with choices.</summary>
+    public bool Questions { get; init; }
 
     [JsonExtensionData] public Dictionary<string, JsonElement>? Extra { get; init; }
+}
+
+public sealed record ModelInfo
+{
+    public string Id { get; init; } = "";
+    public string Name { get; init; } = "";
+    public List<string>? Levels { get; init; }
+}
+
+/// <summary>One choice of a question: its label and a line under it.</summary>
+public sealed record AskOption
+{
+    public string Label { get; init; } = "";
+    public string Description { get; init; } = "";
+}
+
+/// <summary>A question an agent asks with choices (Claude's AskUserQuestion and the like).</summary>
+public sealed record AskQuestion
+{
+    public string Header { get; init; } = "";
+    public string Question { get; init; } = "";
+    public List<AskOption> Options { get; init; } = [];
+    public bool Multiple { get; init; }
+    public bool Custom { get; init; }
 }
 
 /// <summary>What an agent waits on the user for: a permission or a question.</summary>
@@ -117,6 +148,8 @@ public sealed record AskInfo
     public bool Danger { get; init; }
     public string Allow { get; init; } = "";
     public int More { get; init; }
+    /// <summary>Set for a question with choices; null for a permission.</summary>
+    public List<AskQuestion>? Questions { get; init; }
 
     [JsonExtensionData] public Dictionary<string, JsonElement>? Extra { get; init; }
 }
@@ -126,9 +159,21 @@ public sealed record StepInfo
 {
     public string K { get; init; } = "";
     public string Verb { get; init; } = "";
+    /// <summary>The file's name, and its folder, for a step about a file.</summary>
+    public string? Name { get; init; }
+    public string? Dir { get; init; }
+    /// <summary>The command, pattern or address a step was about.</summary>
+    public string? Cmd { get; init; }
     public string Status { get; init; } = "";
+    public int Add { get; init; }
+    public int Del { get; init; }
+    /// <summary>A change, as a unified diff.</summary>
+    public string? Diff { get; init; }
     public string? Out { get; init; }
+    public int? Exit { get; init; }
     public double? Ms { get; init; }
+    /// <summary>What the agent said just before this step.</summary>
+    public string? Lead { get; init; }
 
     [JsonExtensionData] public Dictionary<string, JsonElement>? Extra { get; init; }
 }
@@ -148,6 +193,11 @@ public sealed record TurnInfo
     public double? Credits { get; init; }
     public bool Restore { get; init; }
     public bool Again { get; init; }
+    /// <summary>Names this message in the queue commands.</summary>
+    public string Uid { get; init; } = "";
+    /// <summary>What was attached to it, as the backend keeps it (core.Chip JSON).</summary>
+    public List<JsonElement> Chips { get; init; } = [];
+    public string? SwitchTo { get; init; }
 }
 
 public sealed record ActivityInfo
@@ -176,8 +226,24 @@ public sealed record SessionInfo
     /// <summary>The verb and object of what it is doing now: "Editing", "refresh.ts".</summary>
     public ActivityInfo Activity { get; init; } = new();
     public List<TurnInfo> Turns { get; init; } = [];
+    /// <summary>Where the session's files are served from, when its folder is still there.</summary>
+    public string? Files { get; init; }
+    /// <summary>Kiro Web's repositories; null for a task on this computer.</summary>
+    public List<string>? Cloud { get; init; }
+    /// <summary>The session's name, workspace and lineage (core.SessionExt JSON).</summary>
+    public JsonElement Ext { get; init; }
+    /// <summary>A queue held after a stop.</summary>
+    public bool Held { get; init; }
+    /// <summary>The agent's own slash commands.</summary>
+    public List<SlashCommand> Commands { get; init; } = [];
 
     [JsonExtensionData] public Dictionary<string, JsonElement>? Extra { get; init; }
+}
+
+public sealed record SlashCommand
+{
+    public string Name { get; init; } = "";
+    public string Description { get; init; } = "";
 }
 
 public sealed record HistoryRow

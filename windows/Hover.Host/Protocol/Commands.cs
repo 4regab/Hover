@@ -53,11 +53,28 @@ public sealed record SaveSettingsCommand() : BackendCommand("saveSettings")
     public ToolSetting[]? Tools { get; init; }
 }
 
-/// <summary>Starts a task. <paramref name="Access"/> is full, risky, always or read; null is the tool's own.</summary>
-public sealed record NewTaskCommand(string Tool, string Folder, string Prompt, string? Access = null) : BackendCommand("new");
+/// <summary>
+/// Starts a task. <paramref name="Access"/> is full, risky, always or read; null is the tool's own.
+/// <see cref="Cloud"/> lists Kiro Web repositories (an empty list is an empty workspace); null is a
+/// task on this computer. <see cref="Model"/> and <see cref="Effort"/> are the box's two pills.
+/// </summary>
+public sealed record NewTaskCommand(string Tool, string Folder, string Prompt, string? Access = null) : BackendCommand("new")
+{
+    public string[]? Cloud { get; init; }
+    public string? Model { get; init; }
+    public string? Effort { get; init; }
+    /// <summary>Pictures as data: URLs.</summary>
+    public string[]? Images { get; init; }
+}
 
 /// <summary>A reply to a session, by the id the office knows it by or by its history key.</summary>
-public sealed record ReplyCommand(string Text, int? Id = null, string? Key = null) : BackendCommand("reply");
+public sealed record ReplyCommand(string Text, int? Id = null, string? Key = null) : BackendCommand("reply")
+{
+    /// <summary>Pictures as data: URLs.</summary>
+    public string[]? Images { get; init; }
+    /// <summary>Attachments, as core.Chip JSON.</summary>
+    public System.Text.Json.JsonElement[]? Chips { get; init; }
+}
 
 public sealed record StopCommand(int Id) : BackendCommand("stop");
 

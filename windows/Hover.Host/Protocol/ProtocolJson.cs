@@ -76,6 +76,18 @@ public static class ProtocolJson
                 "deskAction" => root.Deserialize<DeskActionEvent>(Options),
                 "quotas" => root.Deserialize<QuotasEvent>(Options),
                 "computerUse" => root.Deserialize<ComputerUseEvent>(Options),
+                "markdown" => root.Deserialize<MarkdownEvent>(Options),
+                "highlight" => root.Deserialize<HighlightEvent>(Options),
+                "diffLines" => root.Deserialize<DiffLinesEvent>(Options),
+                "flowchart" => root.Deserialize<FlowchartEvent>(Options),
+                "queueRemove" => root.Deserialize<QueueRemoveEvent>(Options),
+                "switchProvider" => root.Deserialize<SwitchProviderEvent>(Options),
+                "fork" => root.Deserialize<ForkEvent>(Options),
+                "bringBack" => root.Deserialize<BringBackEvent>(Options),
+                "cloudRepos" => root.Deserialize<CloudReposEvent>(Options),
+                "projects" => root.Deserialize<ProjectsEvent>(Options),
+                "palette" => root.Deserialize<PaletteEvent>(Options),
+                "inspectFolder" => root.Deserialize<InspectFolderEvent>(Options),
                 _ => new UnknownEvent(type, root.Clone()),
             };
         }

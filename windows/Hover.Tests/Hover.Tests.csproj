@@ -21,6 +21,7 @@
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\Hover.Host\Hover.Host.csproj" />
+    <ProjectReference Include="..\Hover.Chat\Hover.Chat.csproj" />
     <ProjectReference Include="..\Hover.Notch\Hover.Notch.csproj" />
     <ProjectReference Include="..\Hover.TestTools\Hover.TestTools.csproj" />
   </ItemGroup>

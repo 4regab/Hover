@@ -34,6 +34,7 @@
     <PackageReference Include="Vortice.DirectComposition" Version="3.8.3" />
     <PackageReference Include="Vortice.DXGI" Version="3.8.3" />
     <ProjectReference Include="..\Hover.Host\Hover.Host.csproj" />
+    <ProjectReference Include="..\Hover.Chat\Hover.Chat.csproj" />
     <ProjectReference Include="..\Hover.Notch\Hover.Notch.csproj" />
     <ProjectReference Include="..\Hover.Office\Hover.Office.csproj" />
   </ItemGroup>
