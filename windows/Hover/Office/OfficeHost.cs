@@ -54,7 +54,7 @@ public enum OfficeProp
 /// <list type="bullet">
 /// <item><see cref="DeskPicked"/>, <see cref="BotPicked"/> and <see cref="PropPicked"/>: the user
 /// clicked a desk with a session at it, a bot, or a prop. The first two give the session's <c>id</c>
-/// from the backend's <c>state</c> message.</item>
+/// from the backend's <c>state</c> message; a desk also gives where it was clicked.</item>
 /// <item><see cref="BotScreenRect"/>: where a session's bot is on screen, to draw a prompt over it.</item>
 /// <item><see cref="OpenDrawer"/>, <see cref="CloseDrawer"/>, <see cref="ShowPanel"/> and
 /// <see cref="MarkDeskOpen"/> tell the office what is open over it: the camera goes to that bot or prop,
@@ -157,8 +157,8 @@ public sealed class OfficeHost : IDisposable
 
     // ---- what other code uses --------------------------------------------------------------
 
-    /// <summary>A click landed on a desk that has a session at it. The value is that session's id.</summary>
-    public event Action<int>? DeskPicked;
+    /// <summary>A click landed on a desk that has a session at it: that session's id, and where the click was (as <see cref="BotScreenRect"/> counts).</summary>
+    public event Action<int, double, double>? DeskPicked;
 
     /// <summary>A click landed on a bot. The value is its session's id.</summary>
     public event Action<int>? BotPicked;
@@ -171,6 +171,10 @@ public sealed class OfficeHost : IDisposable
 
     /// <summary>True once the office draws into the notch, so the notch stops drawing its placeholder.</summary>
     internal bool DrawsInNotch => notchAttached;
+
+    /// <summary>The colours of the helpers a session's bot has out at its desk, as the office's tag says (none when the office is not shown).</summary>
+    public IReadOnlyList<(byte R, byte G, byte B)> HelpersOf(int sessionId)
+        => Target == OfficeTarget.None ? [] : model.Tags().FirstOrDefault(t => t.Id == sessionId)?.Helpers ?? [];
 
     /// <summary>
     /// Where a session's bot is on screen, in DIPs from the top left of the surface that shows the
@@ -237,8 +241,12 @@ public sealed class OfficeHost : IDisposable
                 BotPicked?.Invoke(c.Id);
                 break;
             case ClickKind.Desk:
-                DeskPicked?.Invoke(c.Id);
+            {
+                // Where the desk was clicked, in the same units as BotScreenRect: the desk's card sits there.
+                var (sx, sy) = Target == OfficeTarget.Notch && slot is not null ? (slot.Area.W / model.W, slot.Area.H / model.H) : (1.0, 1.0);
+                DeskPicked?.Invoke(c.Id, c.X * sx, c.Y * sy);
                 break;
+            }
             case ClickKind.Panel:
                 PropPicked?.Invoke(c.Panel switch { "tv" => OfficeProp.Tv, "board" => OfficeProp.Board, _ => OfficeProp.History });
                 break;
@@ -465,14 +473,20 @@ public sealed class OfficeHost : IDisposable
             var p = Dips(e);
             ctl.Pointer(p.X, p.Y, true);
             ctl.Down(p.X, p.Y);
+            if (Chatting.UiDump.On) HostLog.Line($"office: press at {p.X:0},{p.Y:0}");
         });
         host.PointerReleased += (_, e) => Guard("release", () =>
         {
             host.ReleasePointerCapture(e.Pointer);
-            if (!ctl.IsDown) return;
+            if (!ctl.IsDown)
+            {
+                if (Chatting.UiDump.On) HostLog.Line("office: a release without a press");
+                return;
+            }
             var p = Dips(e);
             ctl.Pointer(p.X, p.Y, true);
             ctl.Up();
+            if (Chatting.UiDump.On) HostLog.Line($"office: click at {p.X:0},{p.Y:0} found {model.Hovered.Kind} {model.Hovered.Id} (dragging {model.Dragging})");
         });
         host.PointerCaptureLost += (_, _) => Guard("capture", ctl.Cancel);
         host.DoubleTapped += (_, _) => Guard("double", ctl.DoubleClick);

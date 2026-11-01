@@ -43,6 +43,13 @@ sealed class UiCore : IDisposable
     public Rect4? BotRectOf(int id)
         => BotRectFixture?.Invoke(id) ?? (office?.BotScreenRect(id) is { } r ? new Rect4((float)r.X, (float)r.Y, (float)r.W, (float)r.H) : null);
 
+    /// <summary>The colours of the helpers a bot has out at its desk, from the office's tag (or from what a picture says).</summary>
+    IReadOnlyList<(byte R, byte G, byte B)> HelpersOf(int id)
+        => HelpersFixture?.Invoke(id) ?? office?.HelpersOf(id) ?? [];
+
+    /// <summary>The helpers a picture says a bot has out, when the office is not live to say it.</summary>
+    public Func<int, IReadOnlyList<(byte R, byte G, byte B)>>? HelpersFixture { get; set; }
+
     /// <summary>Where the pictures say a bot is, when the office is not live to say it.</summary>
     public Func<int, Rect4?>? BotRectFixture { get; set; }
 
@@ -65,6 +72,7 @@ sealed class UiCore : IDisposable
             PickImage = ImageDialog.Pick,
             Images = Images.State,
             BotRect = BotRectOf,
+            Helpers = HelpersOf,
             OpenUrl = OpenUrl,
             Log = HostLog.Line,
             InNotch = inNotch,
@@ -84,7 +92,7 @@ sealed class UiCore : IDisposable
         {
             office.BotPicked += id => Picked($"bot {id}", () => Ui.OpenChat(id));
             // A desk with a session at it opens its card; the board, the TV and the shelf open their panels.
-            office.DeskPicked += id => Picked($"desk {id}", () => Ui.OpenDeskCard(id));
+            office.DeskPicked += (id, x, y) => Picked($"desk {id}", () => Ui.OpenDeskCard(id, (float)x, (float)y));
             office.PropPicked += prop => Picked($"prop {prop}", () =>
             {
                 switch (prop)

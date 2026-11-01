@@ -174,6 +174,10 @@ public sealed partial class OfficeUi
             nowH += ah;
             if (meta.Length > 0) nowH += 2 + lh;
         }
+        // The helpers the bot has out at its desk (the office's tag): their colours and a line under the rest.
+        var helpers = env.Helpers(id);
+        var f115 = Pen.F(11.5, 400, Pen.Ink);
+        if (helpers.Count > 0) nowH += 2 + 3 + Math.Max(11, pen.LineHeight(f115));
         var tw = w - 12 - 20 - 6;
         var ih = box.Text.Length == 0 ? pen.LineHeight(f125) : pen.WrappedHeight(box.Text, tw, f125);
         var input = Math.Max(28, Math.Min(96, Math.Max(ih, pen.LineHeight(f125)) + 6)) + 6;
@@ -281,6 +285,8 @@ public sealed partial class OfficeUi
                 var aw = pen.Width("Answer…", Pen.F(11.5, 600, Pen.Ink)) + 20;
                 CardAskButton("cardAnswer", "Answer…", 1, nx + nw2 - aw, ny);
             }
+            // The helpers' line goes under the buttons (26 high, 2 apart), not over them.
+            ny += 26 + 2;
         }
         else if (live.Count > 0)
         {
@@ -303,7 +309,22 @@ public sealed partial class OfficeUi
             var col = stage == 3 ? Rgba.Of(0xffb0aa) : Rgba.Of(0xe9e7ec);
             var ah = pen.Wrapped(cutAnswer, nx, ny, nw2, f125 with { Color = col });
             ny += ah;
-            if (meta.Length > 0) pen.Text(meta, nx, ny + 2, Pen.F(12, 400, Pen.Dim));
+            if (meta.Length > 0)
+            {
+                pen.Text(meta, nx, ny + 2, Pen.F(12, 400, Pen.Dim));
+                ny += 2 + lh;
+            }
+        }
+        if (helpers.Count > 0)
+        {
+            var hx = nx;
+            foreach (var (r, g, b) in helpers)
+            {
+                pen.Box(hx, ny + 3 + 5, 12, 11, 3, Rgba.Of((uint)(r << 16 | g << 8 | b)));
+                hx += 12 + 4;
+            }
+            var says = helpers.Count == 1 ? "A helper is on a subagent task at the desk" : $"{helpers.Count} helpers are on subagent tasks at the desk";
+            pen.Text(" " + says, hx, ny + 3 + (22 - pen.LineHeight(f115)) / 2, Pen.F(11.5, 400, Rgba.Of(0xffffff, 0.5)), Math.Max(nx + nw2 - hx, 0));
         }
         pen.Cv.PopClip();
         cy += shownNow + 5;
@@ -437,11 +458,16 @@ public sealed partial class OfficeUi
         return w;
     }
 
-    /// <summary>Where the card goes: by its desk's bot when the office says where that is, else at the top right.</summary>
+    /// <summary>Where the card goes: where the desk was clicked (internal/ui/officeview.go), else by its desk's bot when the office says where that is, else at the top right.</summary>
     (float X, float Y) CardPlace(int id, float cw, float ch)
     {
         float cx, cy;
-        if (env.BotRect(id) is { } bot)
+        if (cardAt is { } at)
+        {
+            cx = at.X + 6;
+            cy = at.Y - 12;
+        }
+        else if (env.BotRect(id) is { } bot)
         {
             cx = bot.X + bot.W + 6;
             cy = bot.Y - 12;

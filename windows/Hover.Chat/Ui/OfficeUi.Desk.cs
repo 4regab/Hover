@@ -98,11 +98,15 @@ public sealed partial class OfficeUi
 
     // MARK: Opening and closing
 
-    /// <summary>A click on a desk with a session at it: its card.</summary>
-    public void OpenDeskCard(int id)
+    /// <summary>Where the desk was clicked, in the panels' pixels: the card sits there (internal/shell/desk.go deskOpenCard).</summary>
+    (float X, float Y)? cardAt;
+
+    /// <summary>A click on a desk with a session at it: its card, where the click was when the office says where that was.</summary>
+    public void OpenDeskCard(int id, float? x = null, float? y = null)
     {
         if (DeskSession(id) is null) return;
         Trace($"desk card {id}");
+        cardAt = x is { } cx && y is { } cy ? (cx, cy) : null;
         menu = null;
         CloseChat();
         taskOpen = false;

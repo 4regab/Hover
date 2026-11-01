@@ -19,6 +19,9 @@ public sealed class UiEnv
     /// </summary>
     public Func<int, Rect4?> BotRect { get; init; } = _ => null;
 
+    /// <summary>The colours of the helpers a session's bot has out at its desk (the office's tag, <c>Tag.Helpers</c>); none when the office does not say.</summary>
+    public Func<int, IReadOnlyList<(byte R, byte G, byte B)>> Helpers { get; init; } = _ => [];
+
     /// <summary>Asks for a picture with the system's dialog (null: the dialog was cancelled).</summary>
     public Func<PickedImage?>? PickImage { get; init; }
 

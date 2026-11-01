@@ -666,6 +666,28 @@ public class DeskTests
     }
 
     [Fact]
+    public void The_card_sits_where_the_desk_was_clicked_and_says_how_many_helpers_are_out()
+    {
+        var ui = new OfficeUi(new FakeShaper(), new UiEnv
+        {
+            Send = _ => { }, Clipboard = new FakeClipboard(),
+            Helpers = id => id == 1 ? [(0x9b, 0x6b, 0xff), (0xff, 0x9f, 0x0a)] : [],
+        });
+        ui.Accept(new StateEvent { Tools = [new ToolInfo { Id = "kiro", Name = "Kiro", Ready = true }], Sessions = [Busy()] });
+        // internal/ui/officeview.go: the card's corner is 6 right of the click and 12 above it, held inside the office.
+        ui.OpenDeskCard(1, 300, 200);
+        var canvas = new RecordingCanvas();
+        ui.Paint(canvas, 1200, 720, 1000);
+        Assert.Equal(306, ui.DeskCardRect.X, 0.5);
+        Assert.Equal(188, ui.DeskCardRect.Y, 0.5);
+        // internal/shell/desk.go: the line under the status box, with a coloured square for each helper.
+        Assert.Contains(canvas.Texts, t => t.Contains("2 helpers are on subagent tasks at the desk", StringComparison.Ordinal));
+        ui.OpenDeskCard(1, 5000, 5000);
+        ui.Paint(new RecordingCanvas(), 1200, 720, 1000);
+        Assert.True(ui.DeskCardRect.X + ui.DeskCardRect.W <= 1200 - 8 + 0.5 && ui.DeskCardRect.Y + ui.DeskCardRect.H <= 720 - 8 + 0.5, "a click far past the office's corner holds the card inside it");
+    }
+
+    [Fact]
     public void The_card_follows_the_bot_when_the_office_says_where_it_is()
     {
         var sent = new List<BackendCommand>();
