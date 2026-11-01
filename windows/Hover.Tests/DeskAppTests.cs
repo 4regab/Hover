@@ -265,9 +265,10 @@ public class DeskAppTests(ITestOutputHelper output)
             await Check(s, () => (int?)s.Dump.Section("window")?["chips"] == 1, "the picked file is a chip");
             Input.Type("please");
             Input.Key(Input.Enter);
-            // The picture and the chip reached the agent: its prompt has an image and the "Attached by Hover" note.
+            // The picture and the chip reached the agent: the stand-in takes no images, so its prompt names the picture's file ("Attached image")
+            // and has the "Attached by Hover" note for the chip.
             var agentLog = Path.Combine(s.Sandbox.Root, "agent-log.txt");
-            await Check(s, () => AgentSaid(agentLog).Contains("\"type\":\"image\"", StringComparison.Ordinal), "the agent was sent the picture");
+            await Check(s, () => AgentSaid(agentLog).Contains("Attached image (read it from this file)", StringComparison.Ordinal), "the agent was sent the picture");
             await Check(s, () => AgentSaid(agentLog).Contains("Attached by Hover", StringComparison.Ordinal), "the agent was sent the attached file");
             await Check(s, () => s.Dump.Where("window", "askAllow") is not null, "the reply asks");
             await ClickAt(s, "askAllow", "Allow the reply");
