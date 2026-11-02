@@ -110,7 +110,8 @@ public sealed partial class OfficeUi
         var nowMs = new DateTimeOffset(DateTime.SpecifyKind(env.Utc(), DateTimeKind.Utc)).ToUnixTimeMilliseconds();
         turns = Turns.From(s, nowMs);
         thread.Set(turns, colw);
-        if (turns.Any(t => t.Live)) Need(500);
+        // The running step shimmers and the clock counts: ten frames a second, as the Go chat repaints its thread.
+        if (turns.Any(t => t.Live)) Need(100);
         if (copiedAt > 0 && now - copiedAt > 1500)
         {
             copiedAt = 0;
@@ -193,6 +194,7 @@ public sealed partial class OfficeUi
 
         cv.PushClip(new Rect4(x, threadTop, pw, threadH));
         cv.PushMove(cx0, threadTop);
+        painter.Time = now / 1000;
         painter.HoverBar = HBarAt(px, py) is { } hb ? (hb.Section, hb.Scroller) : hDrag is { } hd ? (hd.Section, hd.Scroller) : null;
         painter.Paint(thread, cv, scroll, threadH);
         cv.PopMove();
@@ -206,7 +208,7 @@ public sealed partial class OfficeUi
         cv.PopClip();
 
         // "Latest": the reader is well above the end of the thread.
-        if (MaxScroll - scroll > 240)
+        if (MaxScroll - scroll > 160)
         {
             var tw = pen.Width("Latest", Pen.F(11, 400, Pen.Ink));
             var jw = 10 + 12 + 5 + tw + 10;

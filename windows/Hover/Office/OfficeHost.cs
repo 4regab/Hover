@@ -391,7 +391,7 @@ public sealed class OfficeHost : IDisposable
         if (Target != OfficeTarget.Notch || OfficeNative.CursorIn(slot!.Window) is not { } c || !InNotchArea(c.X, c.Y)) return;
         var (px, py) = InArea(c.X, c.Y);
         // A browser's deltaY: 100 for a notch of the wheel, negative when it turns away from the user.
-        ctl.Wheel(-delta * 100.0 / 120, px, py);
+        ctl.Wheel(-Hover.Chat.Ui.OfficeUi.WheelDips(delta), px, py);
     }
 
     /// <summary>A key went down in the notch window (virtual-key code).</summary>
@@ -585,7 +585,7 @@ public sealed class OfficeHost : IDisposable
         {
             var p = Dips(e);
             if (Under(p.X, p.Y)) return;
-            ctl.Wheel(-e.GetCurrentPoint(host).Properties.MouseWheelDelta * 100.0 / 120, p.X, p.Y);
+            ctl.Wheel(-Hover.Chat.Ui.OfficeUi.WheelDips(e.GetCurrentPoint(host).Properties.MouseWheelDelta), p.X, p.Y);
             e.Handled = true;
         });
         host.KeyDown += (_, e) => Guard("key", () =>

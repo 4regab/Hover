@@ -605,4 +605,75 @@ public class Sweep3Tests
         h.Ui.NewChat();
         Assert.Equal(closes, h.Sent.Count(c => c is OpenCommand));
     }
+
+    // MARK: The feel: numbers from the Go app
+
+    [Fact]
+    public void One_notch_of_the_wheel_is_60_DIPs_as_in_the_Go_app()
+    {
+        Assert.Equal(60, OfficeUi.WheelDips(120));
+        Assert.Equal(-60, OfficeUi.WheelDips(-120));
+        Assert.Equal(30, OfficeUi.WheelDips(60));
+    }
+
+    [Fact]
+    public void The_Latest_button_shows_once_the_reader_is_160_pixels_above_the_end()
+    {
+        var answer = string.Join("\n\n", Enumerable.Range(0, 80).Select(i => "Paragraph number " + i));
+        var h = new PanelHarness();
+        h.State(PanelHarness.Session(1, "done", null, PanelHarness.Turn("Tidy", answer)));
+        h.Ui.ChatView = true;
+        h.Ui.OpenChat(1);
+        h.Frame();
+        Assert.DoesNotContain("Latest", h.Frame().Texts);
+        var area = h.Ui.ThreadArea;
+        var at = (X: area.X + area.W / 2, Y: area.Y + area.H / 2);
+        void Up(float by) { h.Ui.Wheel(at.X, at.Y, by); h.Now += 3000; h.Frame(); }
+        Up(150);
+        Assert.DoesNotContain("Latest", h.Frame().Texts);
+        Up(20);
+        Assert.Contains("Latest", h.Frame().Texts);
+        Assert.True(h.Click("latest"));
+        h.Now += 3000;
+        Assert.DoesNotContain("Latest", h.Frame().Texts);
+    }
+
+    static List<string> StepColours(PanelHarness h, string text) => h.Canvas.Ops.Where(o => o.StartsWith("text " + text, StringComparison.Ordinal)).ToList();
+
+    [Fact]
+    public void The_running_step_shimmers_ten_times_a_second_and_a_finished_one_does_not()
+    {
+        var running = new StepInfo { K = "run", Verb = "Running", Cmd = "cargo build --release", Status = "in_progress" };
+        var h = new PanelHarness();
+        h.State(PanelHarness.Session(1, "working", null, PanelHarness.Turn("Make it faster", "", "working", running)));
+        h.Ui.ChatView = true;
+        h.Ui.OpenChat(1);
+        h.Frame();
+        Assert.True(h.Ui.NextFrameMs <= 100, $"the next frame is wanted in {h.Ui.NextFrameMs} ms, not within a tenth of a second");
+        var live = h.Canvas.Drawn.Where(t => t.Text.Contains("cargo build", StringComparison.Ordinal)).Select(t => t.Text).Distinct().ToList();
+        Assert.NotEmpty(live);
+        string Ink() => string.Join("|", h.Canvas.Ops.Where(o => o.Contains("cargo build", StringComparison.Ordinal) && o.StartsWith("text ", StringComparison.Ordinal)));
+        var a = Ink();
+        h.Now += 400;
+        h.Frame();
+        var b = Ink();
+        Assert.NotEqual(a, b);
+        // The band is one loop of 2 s: the same colours come round again.
+        h.Now += 2000;
+        h.Frame();
+        Assert.Equal(b, Ink());
+
+        // A step that has ended keeps its colour whatever the time.
+        var done = new StepInfo { K = "run", Verb = "Ran", Cmd = "cargo build --release", Status = "completed" };
+        var d = new PanelHarness();
+        d.State(PanelHarness.Session(1, "done", null, PanelHarness.Turn("Make it faster", "Done.", "done", done)));
+        d.Ui.ChatView = true;
+        d.Ui.OpenChat(1);
+        d.Frame();
+        string DoneInk() => string.Join("|", d.Canvas.Ops.Where(o => o.Contains("cargo build", StringComparison.Ordinal) && o.StartsWith("text ", StringComparison.Ordinal)));
+        var c0 = DoneInk();
+        d.Now += 400;
+        d.Frame();
+        Assert.Equal(c0, DoneInk());
+    }
 }

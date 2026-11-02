@@ -257,10 +257,10 @@ sealed class UiOverlay : Grid, IDisposable
         // A sideways wheel, or the wheel with Shift, scrolls the code box or table under the pointer (the Go app does the same).
         if (props.IsHorizontalMouseWheel || KeyMap.Mods(Native.GetKeyState).HasFlag(Hover.Chat.Ui.UiMods.Shift))
         {
-            if (core.Ui.WheelSideways(x, y, (props.IsHorizontalMouseWheel ? -delta : delta) / 120f * 90f)) e.Handled = true;
+            if (core.Ui.WheelSideways(x, y, OfficeUi.WheelDips(props.IsHorizontalMouseWheel ? -delta : delta))) e.Handled = true;
             return;
         }
-        if (core.Ui.Wheel(x, y, delta / 120f * 90f)) e.Handled = true;
+        if (core.Ui.Wheel(x, y, OfficeUi.WheelDips(delta))) e.Handled = true;
     }
 
     // MARK: The keyboard

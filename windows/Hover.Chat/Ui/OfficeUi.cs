@@ -144,6 +144,15 @@ public sealed partial class OfficeUi
 
     public float ScrollY => scroll;
 
+    /// <summary>
+    /// What one notch of the wheel moves a list, the thread or the office's camera, in DIPs. The Go app's value: Gio reports 120 units a notch at
+    /// twice the scale, so 60 (internal/ui/scroll.go, officechat.go). The Settings pages use the same.
+    /// </summary>
+    public const float WheelStep = 60;
+
+    /// <summary>The DIPs a wheel turn moves, from the system's units (120 to a notch).</summary>
+    public static float WheelDips(int units) => units / 120f * WheelStep;
+
     /// <summary>How far the reply box's words are scrolled (for the tests).</summary>
     public float ReplyScrollY => replyScroll;
 

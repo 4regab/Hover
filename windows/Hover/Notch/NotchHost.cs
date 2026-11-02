@@ -370,11 +370,11 @@ sealed partial class NotchHost : IDisposable
         // With Shift held the wheel scrolls the code box or table under the pointer sideways.
         if ((GetKeyState(VK_SHIFT) & 0x8000) != 0)
         {
-            var sideways = panels!.Ui.WheelSideways(p.X, p.Y, delta / 120f * 90f);
+            var sideways = panels!.Ui.WheelSideways(p.X, p.Y, OfficeUi.WheelDips(delta));
             if (sideways) { QueueRender(); EnsureAnimating(); }
             return sideways || panels.Ui.Covers(p.X, p.Y);
         }
-        var used = panels!.Ui.Wheel(p.X, p.Y, delta / 120f * 90f);
+        var used = panels!.Ui.Wheel(p.X, p.Y, OfficeUi.WheelDips(delta));
         if (used) { QueueRender(); EnsureAnimating(); }
         // Over a card, a box or a toast of the panels the wheel is not the office's: it would zoom the room behind them.
         return used || panels.Ui.Covers(p.X, p.Y);
