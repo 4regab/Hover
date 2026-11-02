@@ -43,8 +43,7 @@ public static class DisplayScale
         if (r != 0) return "DisplayConfigGetDeviceInfo failed: " + r;
         // Cur and Min are steps from the recommended scale (Min is negative or zero); the scale of step 0 is not given, so the
         // recommended one is found from the current one: recommended = Steps[index(current scale) - Cur], which needs the real scale.
-        var dpi = GetDpiForSystem();
-        int current = (int)Math.Round(dpi / 96.0 * 100);
+        int current = Now();
         int at = Array.IndexOf(Steps, current);
         string text = "paths " + np + "; scale now " + current + "%; steps min " + g.Min + ", cur " + g.Cur + ", max " + g.Max;
         if (at < 0) return text + "; the current scale is not one of the standard steps";
@@ -60,7 +59,20 @@ public static class DisplayScale
         return text + "; asked for " + percent + "%: " + (r == 0 ? "done" : "failed " + r);
     }
 
-    [DllImport("user32.dll")] public static extern uint GetDpiForSystem();
+    [StructLayout(LayoutKind.Sequential)] public struct Pt { public int X, Y; }
+    [DllImport("user32.dll")] static extern IntPtr MonitorFromPoint(Pt p, uint flags);
+    [DllImport("shcore.dll")] static extern int GetDpiForMonitor(IntPtr monitor, int type, out uint x, out uint y);
+    [DllImport("user32.dll")] static extern bool SetProcessDpiAwarenessContext(IntPtr context);
+
+    // The scale of the main display as it is now. The process must be aware of the display's scale, or Windows answers 100 %; the
+    // system's own scale is fixed at sign-in, the display's is what Settings > Display changes.
+    static int Now()
+    {
+        try { SetProcessDpiAwarenessContext((IntPtr)(-4)); } catch (Exception) { }
+        uint x, y;
+        if (GetDpiForMonitor(MonitorFromPoint(new Pt(), 1), 0, out x, out y) != 0) return 100;
+        return (int)Math.Round(x / 96.0 * 100);
+    }
 }
 '@
 [DisplayScale]::Run($Percent)
