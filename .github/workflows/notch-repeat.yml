@@ -1,0 +1,76 @@
+# TEMPORARY: runs the live notch test again and again, to make an intermittent failure happen on
+# purpose and keep its log. Started by hand only. Deleted in the last commit of the item that made it.
+name: Notch repeat
+
+on:
+  workflow_dispatch:
+    inputs:
+      runs:
+        description: How many times to run the test
+        default: '25'
+      load:
+        description: 'Keep every core busy while it runs (true or false)'
+        default: 'false'
+      test:
+        description: Part of the test name to run
+        default: Settings_open_in_the_open_notch
+
+# Its own group: it never cancels or waits for ci.yml.
+concurrency:
+  group: notch-repeat-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  repeat:
+    runs-on: windows-2022
+    timeout-minutes: 150
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+      DOTNET_NOLOGO: '1'
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - name: Build the app
+        run: ./build.ps1 publish
+      - name: Build the test project
+        run: dotnet build windows\Hover.Settings.Tests\Hover.Settings.Tests.csproj -c Release --nologo -v minimal
+      - name: Screen 1920 x 1080
+        run: ./tools/set-resolution.ps1
+      - name: Load
+        if: ${{ inputs.load == 'true' }}
+        run: |
+          $n = [Environment]::ProcessorCount
+          1..$n | ForEach-Object { Start-Process pwsh -ArgumentList '-NoProfile', '-Command', '$x = 0; while ($true) { $x++ }' -WindowStyle Hidden }
+          "$n busy loops started"
+      - name: Run the test
+        run: |
+          $env:HOVER_APP_EXE = (Resolve-Path publish\hoverai.exe).Path
+          New-Item -ItemType Directory -Force out\repeat | Out-Null
+          $runs = [int]'${{ inputs.runs }}'
+          $filter = 'FullyQualifiedName~${{ inputs.test }}'
+          $passed = 0
+          $failed = @()
+          for ($i = 1; $i -le $runs; $i++) {
+            $text = & dotnet test windows\Hover.Settings.Tests\Hover.Settings.Tests.csproj -c Release --no-build --filter $filter `
+              --logger "trx;LogFileName=run-$i.trx" --logger "console;verbosity=detailed" --results-directory out\repeat 2>&1 | Out-String
+            if ($LASTEXITCODE -eq 0) { $passed++ } else { $failed += $i; Set-Content -Path "out\repeat\failed-$i.txt" -Value $text }
+            "run ${i}: exit code $LASTEXITCODE (passed so far $passed)"
+          }
+          $line = "runs $runs, passed $passed, failed $($failed.Count)$(if ($failed.Count) { ' (' + ($failed -join ', ') + ')' })"
+          $line
+          "### Notch repeat", '', $line, '', "load: ${{ inputs.load }}" | Out-File -Append -Encoding utf8 $env:GITHUB_STEP_SUMMARY
+          if ($failed.Count -gt 0) { exit 1 }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: notch-repeat
+          path: out/repeat/
+          if-no-files-found: warn
