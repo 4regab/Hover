@@ -87,7 +87,7 @@ sealed class UiCore : IDisposable
     /// </summary>
     static bool Frozen(BackendEvent e) => e is StateEvent or ToastEvent or TermEvent or WriteFileEvent or EditorsEvent or OpenInEvent or DeskEvent
         or DeskActionEvent or GhEvent or ForkEvent or BringBackEvent or SwitchProviderEvent or QueueRemoveEvent or WebSessionsEvent or CliSessionsEvent
-        or AdoptWebEvent or AdoptCliEvent or PreferencesEvent;
+        or AdoptWebEvent or AdoptCliEvent or PreferencesEvent or SettingsEvent;
 
     public UiCore(Gfx gfx, DispatcherQueue queue, BackendSession backend, string dataDir, OfficeHost? office, bool inNotch)
     {
@@ -111,6 +111,7 @@ sealed class UiCore : IDisposable
             OpenUrl = OpenUrl,
             Log = HostLog.Line,
             InNotch = inNotch,
+            PickFolder = () => Hover.Configuring.Dialogs.Folder("Choose a folder"),
             OpenSettings = () => SettingsRequested?.Invoke(),
             TimeMode = () => office?.TimeMode ?? 0,
             SetTime = mode => office?.SetTimeMode(mode),

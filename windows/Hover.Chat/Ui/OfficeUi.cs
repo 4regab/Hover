@@ -173,6 +173,10 @@ public sealed partial class OfficeUi
                     askedProjects = true;
                     env.Send(new ProjectsCommand());
                 }
+                NoticeAsk();
+                break;
+            case SettingsEvent se:
+                NoticeFrom(se.Model);
                 break;
             case TranscriptEvent t when t.Session.Key == openKey:
                 transcript = t.Session;
@@ -189,6 +193,8 @@ public sealed partial class OfficeUi
             case PreferencesEvent p:
                 kiroAutoCompact = p.KiroAutoCompact;
                 kiroCompactAt = p.KiroCompactAt;
+                // Only "seen" is taken from here: the way back to "not seen" is the settings model's (setSetting), which says so itself.
+                if (p.NoticeSeen) noticeSeen = true;
                 break;
             case ToastEvent t:
                 Say(t.Text);
@@ -411,7 +417,7 @@ public sealed partial class OfficeUi
     public bool Covers(float x, float y)
     {
         if (TargetAt(x, y) is not null || blockers.Any(b => b.Contains(x, y))) return true;
-        if (menu is not null || confirm is not null) return true;
+        if (menu is not null || confirm is not null || NoticeShown) return true;
         return ChatView || threadRect.Contains(x, y);
     }
 
@@ -456,6 +462,12 @@ public sealed partial class OfficeUi
         modsNow = mods;
         Dirty = true;
         Trace($"press {x:0},{y:0} on {TargetAt(x, y)?.Id ?? "nothing"}");
+        // Under the note nothing takes a press: only Got it does.
+        if (NoticeShown)
+        {
+            if (TargetAt(x, y) is { Id: "noticeOk" } ok) Activate(ok);
+            return true;
+        }
         if (confirm is not null)
         {
             var t = TargetAt(x, y);
@@ -513,6 +525,7 @@ public sealed partial class OfficeUi
 
     public bool Wheel(float x, float y, float delta)
     {
+        if (NoticeShown) return true;
         // The wheel over an open menu scrolls the menu; with a menu open it never reaches the chat or the office behind it.
         if (menu is { } open)
         {
@@ -559,6 +572,13 @@ public sealed partial class OfficeUi
         var ctrl = (mods & UiMods.Control) != 0;
         var shift = (mods & UiMods.Shift) != 0;
         Dirty = true;
+        if (NoticeShown)
+        {
+            // Enter answers the note; any other key is not the panels' (Escape still folds the notch).
+            if (key != UiKey.Enter) return false;
+            NoticeSeenNow();
+            return true;
+        }
         if (confirm is null && menu is null && DeskKey(key, mods)) return true;
         if (confirm is null && menu is null && focus == Focus.Reply && ReplyListKey(key, shift)) return true;
         if (confirm is not null)
@@ -638,7 +658,7 @@ public sealed partial class OfficeUi
     /// <summary>Typed text. With no box focused in the chat, a printable key opens the reply box.</summary>
     public bool Char(string text)
     {
-        if (text.Length == 0 || confirm is not null || menu is not null) return false;
+        if (text.Length == 0 || confirm is not null || menu is not null || NoticeShown) return false;
         Dirty = true;
         var box = FocusedBox();
         if (box is null)

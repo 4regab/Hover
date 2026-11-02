@@ -40,6 +40,8 @@ public class SettingsAppTests(ITestOutputHelper output)
         {
             Data = Directory.CreateTempSubdirectory("hover-settings-app.").FullName;
             Dump = Path.Combine(Data, "ui-dump.json");
+            // The first-task note stands over the office until it is answered; these checks click the office's menu button.
+            File.WriteAllText(Path.Combine(Data, "settings.json"), """{"KiroNoticeSeen": true}""");
             var info = new ProcessStartInfo(AppExe!, args) { UseShellExecute = false, WorkingDirectory = Path.GetDirectoryName(AppExe!)! };
             info.Environment["HOVER_DATA_DIR"] = Data;
             info.Environment["HOVER_UI_DUMP"] = Dump;

@@ -246,6 +246,8 @@ jobs:
           foreach ($name in 'notch-rest-pill-2x', 'notch-rest-working-2x', 'notch-rest-ask-2x', 'notch-rest-done-2x', 'notch-rest-card-2x', 'notch-open-office',
             'notch-open-ask', 'notch-open-chat', 'notch-open-new-task',
             'chat-view-chat', 'chat-view-home', 'chat-default-done', 'chat-default-ask', 'chat-default-queued', 'new-task-box', 'office-menu', 'office-ask-over',
+            'office-notice', 'office-notice-small', 'office-model-menu-long', 'office-model-menu-small', 'chat-view-home-model-menu-min', 'office-fab-cloud-repos',
+            'office-repo-menu-small', 'office-repo-menu-small-end', 'chat-view-home-project-menu-min', 'office-fab-open-long-model', 'office-fab-open-small', 'chat-view-home-bar-min',
             'settings-general-dark', 'settings-general-light', 'settings-integrations-dark', 'settings-projects-registered', 'settings-voice-cloud', 'settings-kiro-credits-dark',
             'settings-kiro-mcp-list', 'settings-codex-model-menu', 'notch-open-settings', 'notch-open-settings-small', 'screen-capture', 'desk-tab-screen', 'desk-tab-screen-live', 'desk-tab-small-screen') {
             $file = Join-Path $shots "$name.jpg"

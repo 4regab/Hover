@@ -130,6 +130,8 @@ static class NotchShots
                 if (shot.Panels is { } setup && panels is not null)
                 {
                     panels.FreezeState = true;
+                    // The first-task note is not part of these pictures (the data folder of --shots has never seen it).
+                    panels.Ui.Accept(new Hover.Host.Protocol.PreferencesEvent { NoticeSeen = true });
                     setup(panels.Ui);
                     // The Markdown and the colours come from the backend; wait for them.
                     for (var i = 0; i < 40; i++)

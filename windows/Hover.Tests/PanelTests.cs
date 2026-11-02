@@ -65,10 +65,11 @@ sealed class PanelHarness
     /// <summary>What the system's picture dialog answers.</summary>
     public Func<PickedImage?>? Pick;
 
-    public PanelHarness()
+    public PanelHarness(bool inNotch = false)
     {
         Ui = new OfficeUi(new FakeShaper(), new UiEnv
         {
+            InNotch = inNotch,
             Send = Send,
             Clipboard = Clip,
             PickImage = () => Pick?.Invoke(),

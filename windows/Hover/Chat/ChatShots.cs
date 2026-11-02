@@ -111,6 +111,9 @@ static class ChatShots
     {
         var ui = core.Ui;
         core.FreezeState = true;
+        // The data folder of a run of --shots has never been through the first-task note, and the pictures are of the office and its menus: the
+        // note is shown by the pictures of the note, and by no other.
+        ui.Accept(new PreferencesEvent { NoticeSeen = true });
         // Paints once so the places on the screen are known before a click.
         void S(int h = 720) => RenderLayer(core, 1200, h, 1);
         void Esc() => ui.Key(UiKey.Escape, UiMods.None);
@@ -169,6 +172,7 @@ static class ChatShots
             var second = Session(8, "codex", "Another question", "waiting", 4, Turn("Delete the build folder", "", "waiting", 1)) with { Ask = Permission() with { Id = "n2", Command = "rm -rf build", Title = "Wants to delete files", Danger = true, Allow = "Delete", Reason = "Deletes files" } };
             await Shot(core, directory, "office-ask-two", 1200, 480, () => { ui.Accept(State(asking, second)); ui.CloseChat(); ui.ChatView = false; }, office: true);
             await DeskShots.TakeAsync(directory, core);
+            await MenuShots.TakeAsync(directory, core);
         }
         catch (Exception e)
         {

@@ -5,7 +5,7 @@ namespace Hover.Chat.Ui;
 public sealed partial class OfficeUi
 {
     /// <summary>A row of a menu. <paramref name="Pin"/>: the leading and trailing pinned rows stay in view while the rows between them scroll.</summary>
-    sealed record MenuRow(string Label, string Id = "", string Note = "", bool On = false, bool Header = false, bool Rule = false, string? Mark = null, bool Disabled = false, bool Pin = false);
+    sealed record MenuRow(string Label, string Id = "", string Note = "", bool On = false, bool Header = false, bool Rule = false, string? Mark = null, bool Disabled = false, bool Pin = false, string? Icon = null);
 
     sealed class Menu
     {
@@ -57,6 +57,8 @@ public sealed partial class OfficeUi
             pen.TextIn(toast, new Rect4(gx, gy, gw, gh), f);
             Block(new Rect4(gx, gy, gw, gh));
         }
+        // The note before the first task is over everything else.
+        if (NoticeShown) PaintNotice();
     }
 
     static float RowHeight(Pen pen, MenuRow r, float w)
@@ -264,6 +266,11 @@ public sealed partial class OfficeUi
             pen.Mark(r.Mark, tx, cy + (rh - 18) / 2, 18);
             tx += 26;
         }
+        else if (r.Icon is not null)
+        {
+            pen.Icon(r.Icon, tx + 1, cy + (rh - 16) / 2, 16, hov ? Pen.Ink : Pen.Dim);
+            tx += 26;
+        }
         var labelW = rr.Right - tx - 8 - (r.On ? 20 : 0);
         if (r.Note.Length == 0) pen.Text(r.Label, tx, cy + (rh - pen.LineHeight(lf)) / 2, lf, labelW);
         else
@@ -296,6 +303,9 @@ public sealed partial class OfficeUi
                 break;
             case "menuTime":
                 env.SetTime?.Invoke(t.N);
+                break;
+            case "noticeOk":
+                NoticeSeenNow();
                 break;
             case "newChat":
                 CloseChat();
@@ -559,11 +569,15 @@ public sealed partial class OfficeUi
         var cur = TaskPicks().Folder;
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var p in projects)
-            if (p.Folder.Length > 0 && seen.Add(p.Folder)) rows.Add(new MenuRow(p.Name.Length > 0 ? p.Name : LastPart(p.Folder), p.Folder, p.Folder, p.Folder == cur));
+            if (p.Folder.Length > 0 && seen.Add(p.Folder)) rows.Add(new MenuRow(p.Name.Length > 0 ? p.Name : LastPart(p.Folder), p.Folder, p.Folder, p.Folder == cur, Icon: Glyphs.Folder));
         foreach (var hrow in state?.History ?? [])
-            if (hrow.Folder.Length > 0 && seen.Add(hrow.Folder) && rows.Count < 12) rows.Add(new MenuRow(LastPart(hrow.Folder), hrow.Folder, hrow.Folder, hrow.Folder == cur));
-        if (state?.Folder is { Length: > 0 } sf && seen.Add(sf)) rows.Insert(0, new MenuRow(LastPart(sf), sf, sf, sf == cur));
-        if (rows.Count == 0) rows.Add(new MenuRow("No folders yet", Disabled: true));
+            if (hrow.Folder.Length > 0 && seen.Add(hrow.Folder) && rows.Count < 12) rows.Add(new MenuRow(LastPart(hrow.Folder), hrow.Folder, hrow.Folder, hrow.Folder == cur, Icon: Glyphs.Folder));
+        if (state?.Folder is { Length: > 0 } sf && seen.Add(sf)) rows.Insert(0, new MenuRow(LastPart(sf), sf, sf, sf == cur, Icon: Glyphs.Folder));
+        // As the Go menu: the recent folders under a heading, then "Open folder…", which asks the system for one. A fresh install has
+        // no recent folder, so this row is the only way to a first task; it stays in view under a long list.
+        if (rows.Count > 0) rows.Insert(0, new MenuRow("Recent", Header: true, Pin: true));
+        if (rows.Count > 0) rows.Add(new MenuRow("", Rule: true, Pin: true));
+        rows.Add(new MenuRow("Open folder…", "openFolder", Pin: true, Icon: Glyphs.FolderOpen));
         return rows;
     }
 
@@ -594,6 +608,18 @@ public sealed partial class OfficeUi
         }
         rows.AddRange(ModelFooter(tool));
         OpenMenu("model", at, PinModelEnds(rows), true, 240);
+    }
+
+    /// <summary>"Open folder…": the system's folder dialog; the folder picked is the task's. Where the app cannot show one, a toast says so.</summary>
+    void PickFolderNow()
+    {
+        if (env.PickFolder is not { } pick)
+        {
+            Say("In Hover this opens a folder picker.");
+            return;
+        }
+        if (pick() is { Length: > 0 } folder) taskFolder = folder;
+        Dirty = true;
     }
 
     /// <summary>
@@ -700,7 +726,8 @@ public sealed partial class OfficeUi
                 else if (row.Id == "settings") env.OpenSettings?.Invoke();
                 break;
             case "project":
-                taskFolder = row.Id;
+                if (row.Id == "openFolder") PickFolderNow();
+                else taskFolder = row.Id;
                 break;
             case "agent":
                 taskTool = row.Id;

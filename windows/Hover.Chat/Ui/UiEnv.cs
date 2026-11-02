@@ -40,6 +40,9 @@ public sealed class UiEnv
     /// <summary>The Screen tab's pictures; null where the app cannot take them (the tab is grey).</summary>
     public IScreenFeed? Screen { get; init; }
 
+    /// <summary>The system's folder dialog: the folder the user picked, or null when it was cancelled. Null here: the menu's "Open folder…" says it cannot.</summary>
+    public Func<string?>? PickFolder { get; init; }
+
     /// <summary>Opens Settings (the top menu's Settings row); null leaves the row out.</summary>
     public Action? OpenSettings { get; init; }
 

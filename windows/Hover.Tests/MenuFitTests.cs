@@ -15,7 +15,7 @@ public class MenuFitTests
 {
     const int Models = 40, Repos = 45, Projects = 30;
 
-    static PanelHarness Rig(float w, float h, string pickedFolder = @"C:\work\project0")
+    internal static PanelHarness Rig(float w, float h, string pickedFolder = @"C:\work\project0")
     {
         var rig = new PanelHarness { W = w, H = h };
         var models = Enumerable.Range(1, Models).Select(i => new ModelInfo { Id = "m" + i, Name = "Model number " + i }).ToList();
@@ -36,13 +36,13 @@ public class MenuFitTests
         return rig;
     }
 
-    static void StartScreen(PanelHarness h)
+    internal static void StartScreen(PanelHarness h)
     {
         h.Ui.ChatView = true;
         h.Frame();
     }
 
-    static void OfficeBox(PanelHarness h)
+    internal static void OfficeBox(PanelHarness h)
     {
         h.Ui.ChatView = false;
         h.Frame();
@@ -84,7 +84,7 @@ public class MenuFitTests
     }
 
     /// <summary>Kiro Web: the where pill is Kiro's, and the repositories were listed.</summary>
-    static void Cloud(PanelHarness h)
+    internal static void Cloud(PanelHarness h)
     {
         Assert.True(h.Click("pillWhere"));
         Assert.True(h.Click("menu", 1));
@@ -98,7 +98,7 @@ public class MenuFitTests
                 yield return [w, h, i];
     }
 
-    static bool Inside(Rect4 r, Rect4 outer) => r.X >= outer.X - 0.01 && r.Y >= outer.Y - 0.01 && r.Right <= outer.Right + 0.01 && r.Bottom <= outer.Bottom + 0.01;
+    internal static bool Inside(Rect4 r, Rect4 outer) => r.X >= outer.X - 0.01 && r.Y >= outer.Y - 0.01 && r.Right <= outer.Right + 0.01 && r.Bottom <= outer.Bottom + 0.01;
 
     [Theory]
     [MemberData(nameof(Cases))]
@@ -197,6 +197,7 @@ public class MenuFitTests
         Assert.True(rig.Click("menu", s: "me/repo-" + Repos), "the last repository can be clicked");
         Assert.Null(rig.Ui.OpenMenuKind);
         Assert.Contains("repo-" + Repos, rig.Frame().Texts);
+        Assert.NotNull(rig.Ui.Find("pillRepo"));
 
         // Opening the list again shows the pick, ticked, where it is.
         Assert.True(rig.Click("pillRepo"));
