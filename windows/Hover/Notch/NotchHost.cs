@@ -506,6 +506,7 @@ sealed partial class NotchHost : IDisposable
         ctl.Shape();
         UpdateHover();
         EnsureAnimating();
+        DiagWatch();
     }
 
     void UpdateHover()
@@ -770,6 +771,7 @@ sealed partial class NotchHost : IDisposable
     void Render()
     {
         if (surface is null || disposed) return;
+        var began = UiDump.On ? Stopwatch.GetTimestamp() : 0;
         FillScene();
         VoiceFrame();
         scene.OfficeDrawn = office?.DrawsInNotch == true;
@@ -785,6 +787,7 @@ sealed partial class NotchHost : IDisposable
             office.UpdateNotch(new NotchSlot(window.Handle, gfx.Device, composition, root, new OfficeRect(ax, ay, aw, ah), ctl.Scale,
                 new OfficeRect(scene.ShapeX, 0, scene.ShapeW, scene.ShapeH), scene.ShapeR, scene.ViewOpacity, scene.ViewVisible));
         }
+        if (began != 0) DiagFrame(began);
     }
 
     // MARK: Animation
@@ -809,7 +812,11 @@ sealed partial class NotchHost : IDisposable
     void Animate()
     {
         Render();
-        if (!Moving && !Turning && !PanelsMoving) animTimer.Stop();
+        if (!Moving && !Turning && !PanelsMoving)
+        {
+            animTimer.Stop();
+            DiagStopped();
+        }
         else animTimer.Interval = TimeSpan.FromMilliseconds(FrameMs);
     }
 

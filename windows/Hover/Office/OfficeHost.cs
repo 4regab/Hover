@@ -514,7 +514,16 @@ public sealed class OfficeHost : IDisposable
         var (sw, sh) = r.SceneSize(w, h);
         r.Render(model, notchSwapChain!.Rtv(), w, h, sw, sh, page, redrawScene: scene);
         notchSwapChain.Present();
+        lastNotchDraw = clock.Elapsed.TotalMilliseconds;
     }
+
+    double lastNotchDraw = -1;
+
+    /// <summary>For the log (<c>HOVER_UI_DUMP</c>): where the office is shown and when it last drew in the notch.</summary>
+    internal string Diagnose() =>
+        $"shown in {Target}, graphics {(renderer is null ? "none" : renderer.AdapterName)}, view in the notch {notchAttached}, " +
+        $"last notch frame {(lastNotchDraw < 0 ? "never" : $"{clock.Elapsed.TotalMilliseconds - lastNotchDraw:0} ms ago")}, " +
+        $"next graphics try in {Math.Max(0, (nextRendererTry - DateTime.UtcNow).TotalSeconds):0} s";
 
     // ---- the app window ----------------------------------------------------------------------------
 
