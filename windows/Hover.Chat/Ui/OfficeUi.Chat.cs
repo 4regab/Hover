@@ -163,15 +163,22 @@ public sealed partial class OfficeUi
             compH = 7 + ChipsHeight(bw - 10 - 7 - 2) + ShotsHeight(false) + inputH + 3 + 30 + 6;
         }
         var boxH = compose ? compH + 16 : 0;
-        float askH = 0;
+        float askH = 0, askFull = 0, askCard = 0;
         var askW = Math.Min(pw - 28, ColumnMax);
-        if (s.Ask is { } ask && OpenId is not null) askH = 4 + AskCard(ask, s, false, askW, 0, 0, true) + (compose ? 0 : 8);
         float noteH = 0;
         var noteW = Math.Min(pw - 20, ColumnMax);
         var note = s.Held ? "The queue is held after a stop." : "";
         if (note.Length > 0) noteH = 4 + 8 + pen.HeightWhenWrapped(note, noteW - 16, Pen.F(12, 400, Pen.Ink)) + 6 + 20 + 8 + 2 + 2;
-
         var threadTop = y + hdrH + 1;
+        if (s.Ask is { } ask && OpenId is not null)
+        {
+            askFull = AskCard(ask, s, false, askW, 0, 0, true);
+            // A question taller than the room scrolls inside its card; the thread keeps 80 px at least.
+            var room = bottom - boxH - noteH - threadTop - 4 - (compose ? 0 : 8) - 80;
+            askCard = Math.Min(askFull, Math.Max(room, 96f));
+            askH = 4 + askCard + (compose ? 0 : 8);
+        }
+
         var threadH = Math.Max(bottom - boxH - askH - noteH - threadTop, 0);
         // Smooth scrolling steps with the clock.
         SyncThread(s, colw);
@@ -236,9 +243,9 @@ public sealed partial class OfficeUi
         {
             ny += 4;
             var ax = x + (pw - askW) / 2;
-            var ah = AskCard(q, s, false, askW, 0, 0, true);
+            var ah = askCard;
             AskFrame(q, false, ax, ny, askW, ah);
-            AskCard(q, s, false, askW, ax, ny, false);
+            PaintAskScrolled(q, s, askFull, new Rect4(ax, ny, askW, ah));
             ny += ah + (compose ? 0 : 8);
         }
         if (compose) PaintComposer(s, busy, x, ny, pw, bw, compH, inputH);

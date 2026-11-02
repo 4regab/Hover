@@ -215,6 +215,41 @@ public sealed partial class OfficeUi
         return cy + pad - y;
     }
 
+    /// <summary>The card of the open chat in <paramref name="box"/>; when it is taller than the box (<paramref name="full"/>) it scrolls inside it, with a bar and a fade as in a menu.</summary>
+    void PaintAskScrolled(AskInfo a, SessionInfo s, float full, Rect4 box)
+    {
+        if (askScrollFor != a.Id)
+        {
+            askScrollFor = a.Id;
+            askScroll.ToStart();
+        }
+        askRect = box;
+        askScroll.Set(full, box.H);
+        var before = targets.Count;
+        pen.Cv.PushClip(box);
+        AskCard(a, s, false, box.W, box.X, box.Y - askScroll.Off, false);
+        askScroll.PaintFade(pen.Cv, box, a.Danger ? Rgba.Of(0x1c0e14, 0.95) : Rgba.Of(0x1c1415, 0.95));
+        pen.Cv.PopClip();
+        ClipTargets(before, box);
+        if (askScroll.Max <= 0) return;
+        var strip = MenuScroll.Strip(box);
+        Add(strip, "askBar");
+        askScroll.PaintBar(pen.Cv, box, Over(strip));
+    }
+
+    readonly MenuScroll askScroll = new();
+    string askScrollFor = "";
+    Rect4 askRect;
+
+    /// <summary>The wheel over the open chat's question moves it when it is cut.</summary>
+    bool AskWheel(float x, float y, float delta)
+    {
+        if (askScroll.Max <= 0 || OpenId is null || Current()?.Ask is null || !askRect.Contains(x, y)) return false;
+        askScroll.By(-delta);
+        Dirty = true;
+        return true;
+    }
+
     /// <summary>The card's box: its fill, its line and, over a bot, the tail that points at it.</summary>
     void AskFrame(AskInfo a, bool over, float x, float y, float cw, float ch)
     {

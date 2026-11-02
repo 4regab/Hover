@@ -139,6 +139,8 @@ public class SweepTests
         new("chat view: permission", h => ChatPane(h, 3, true)),
         new("chat view: question", h => ChatPane(h, 4, true)),
         new("chat view: failed", h => ChatPane(h, 5, true)),
+        new("office: drawer, long question", h => { h.Accept(h.Ui.State! with { Sessions = [Chat(6, "waiting", "Many choices", Sweep3Tests.LongQuestion(), PanelHarness.Turn("Pick", "Words.", "waiting"))] }); ChatPane(h, 6, false); }),
+        new("chat view: long question", h => { h.Accept(h.Ui.State! with { Sessions = [Chat(6, "waiting", "Many choices", Sweep3Tests.LongQuestion(), PanelHarness.Turn("Pick", "Words.", "waiting"))] }); ChatPane(h, 6, true); }),
         new("chat view: reply box", h => { ChatPane(h, 1, true); Assert.True(h.Click("compose")); h.Type(Words + Words + Words + LongWord); }),
         new("chat view: reply box with a / list", h => { ChatPane(h, 1, true); Assert.True(h.Click("compose")); h.Type("/"); }),
         new("chat view: restore asked", h => { ChatPane(h, 1, true); h.Ui.AskRestore(); h.Frame(); }),
@@ -181,17 +183,16 @@ public class SweepTests
     static readonly HashSet<string> Plain =
     [
         "taskBox", "taskText", "replyText", "composer", "field", "menuSearch", "titleBox", "menuBox", "menuBar", "cardAway", "noticeBox", "confirmBox",
-        "vbar", "hbar", "deskPanel", "deskCard", "officePanel", "termBox", "askCustom", "sideEdge",
+        "vbar", "hbar", "askBar", "deskPanel", "deskCard", "officePanel", "termBox", "askCustom", "sideEdge",
         // A button that cannot be used yet is plainly disabled: it is drawn faint and the Go app leaves it out of what the pointer reacts to.
         "startOff", "sendOff", "cardSendOff",
     ];
 
     /// <summary>
-    /// Places that scroll with a list or a card, so that a row at the edge is cut by the window, and cards that grow with their
-    /// choices (the Go card does too): they may reach past the window's edge.
+    /// Places that scroll with a list, so that a row at the edge is cut by the window: they may reach past the window's edge. (A question
+    /// scrolls inside its card now, so its places are held to the window like any other.)
     /// </summary>
-    static bool MayReachPast(Target t) => t.Id is "panelRow" or "panelDelete" or "row" or "rowDelete" or "head" or "drow" or "prCheck" or "prCreate" or "docRow" or "field" or "cardExpand"
-        || t.Id.StartsWith("ask", StringComparison.Ordinal);
+    static bool MayReachPast(Target t) => t.Id is "panelRow" or "panelDelete" or "row" or "rowDelete" or "head" or "drow" or "prCheck" or "prCreate" or "docRow" or "field" or "cardExpand";
 
     /// <summary>
     /// Places that look the same with the pointer on them by design: the side that is already picked (the tab, the switch's side, the time

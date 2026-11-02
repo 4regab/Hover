@@ -578,6 +578,9 @@ public sealed partial class OfficeUi
                     focus = Focus.Custom;
                 });
                 break;
+            case "askBar":
+                askScroll.BarDown(askRect, py);
+                break;
             case "confirmNo":
                 confirm = null;
                 break;

@@ -481,6 +481,7 @@ public sealed partial class OfficeUi
             open.Scroll.BarMove(open.List, y);
         }
         if (deskMenuOpen) openScroll.BarMove(openList, y);
+        askScroll.BarMove(askRect, y);
         if (sideDrag && pointerDown) { sideW = Math.Clamp(x, 200, 420); Dirty = true; }
         else if (hDrag is not null && pointerDown) HBarDrag(x);
         else if (dragging) DragTo(x, y);
@@ -564,6 +565,7 @@ public sealed partial class OfficeUi
         hDrag = null;
         menu?.Scroll.BarUp();
         openScroll.BarUp();
+        askScroll.BarUp();
         if (dragging)
         {
             dragging = false;
@@ -602,7 +604,7 @@ public sealed partial class OfficeUi
             Dirty = true;
             return true;
         }
-        if (DeskWheelAt(x, y, delta) || PanelWheel(x, y, delta)) return true;
+        if (DeskWheelAt(x, y, delta) || PanelWheel(x, y, delta) || AskWheel(x, y, delta)) return true;
         if (ChatView && sideRect.Contains(x, y))
         {
             sideScroll = Math.Max(0, sideScroll - delta);

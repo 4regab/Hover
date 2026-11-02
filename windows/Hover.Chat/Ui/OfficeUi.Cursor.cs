@@ -8,7 +8,7 @@ public sealed partial class OfficeUi
     /// <summary>Places that answer a click but are not buttons: a card, a box, a layer. The pointer keeps its normal shape over them.</summary>
     static readonly HashSet<string> NoHand =
     [
-        "taskBox", "composer", "menuBox", "menuBar", "deskPanel", "deskCard", "officePanel", "cardAway", "noticeBox", "confirmBox", "vbar",
+        "taskBox", "composer", "menuBox", "menuBar", "askBar", "deskPanel", "deskCard", "officePanel", "cardAway", "noticeBox", "confirmBox", "vbar",
         // A button that cannot be used yet (the Go app leaves a disabled button out of what the pointer reacts to).
         "startOff", "sendOff", "cardSendOff",
     ];

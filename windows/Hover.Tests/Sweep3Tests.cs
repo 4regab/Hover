@@ -410,4 +410,68 @@ public class Sweep3Tests
         h.Ui.PointerMove(row.X + row.W / 2, row.Y + row.H / 2);
         Assert.Contains(h.Frame().Texts, t => t.StartsWith(@"C:\Users", StringComparison.Ordinal) && !t.EndsWith("…", StringComparison.Ordinal));
     }
+
+    // MARK: A question taller than the pane
+
+    internal static AskInfo LongQuestion() => new()
+    {
+        Id = "qlong", Kind = "question", Title = "Many choices",
+        Questions =
+        [
+            new AskQuestion
+            {
+                Header = "Database", Question = "Which database should the app use, and why would you pick it over the others on the list?",
+                Options = [.. Enumerable.Range(0, 8).Select(i => new AskOption { Label = $"Choice {i} with a rather long name that wraps", Description = "A description that also runs on for a while so that the card is tall." })],
+                Custom = true,
+            },
+            new AskQuestion
+            {
+                Header = "Cache", Question = "And which cache?",
+                Options = [.. Enumerable.Range(0, 6).Select(i => new AskOption { Label = $"Cache {i}", Description = "Another long description for this one, to make the card taller still." })],
+            },
+        ],
+    };
+
+    [Theory]
+    [InlineData(828f, 346f)]
+    [InlineData(880f, 480f)]
+    public void A_question_with_many_long_options_scrolls_inside_its_card_and_leaves_the_thread_room(float w, float height)
+    {
+        var h = new PanelHarness { W = w, H = height };
+        h.State(PanelHarness.Session(1, "waiting", LongQuestion(), PanelHarness.Turn("Pick", "Some words before the question.", "waiting")));
+        h.Ui.ChatView = true;
+        h.Ui.OpenChat(1);
+        h.Frame();
+        var bar = h.Ui.Find("askBar")!.Value.R;
+        Assert.True(bar.H >= 96 && bar.Bottom <= height, $"the card {bar} is inside the {w} x {height} window");
+        Assert.True(h.Ui.ThreadArea.H >= 79, $"the thread keeps {h.Ui.ThreadArea.H} px");
+        Assert.Null(h.Ui.Find("askAnswer"));
+
+        // Pick a choice in the first question, scroll to the end with the wheel over the card, pick one in the second, and answer.
+        Assert.True(h.Click("askOpt", 0, s: "Choice 0 with a rather long name that wraps"));
+        for (var i = 0; i < 40; i++) Assert.True(h.Ui.Wheel(bar.X + bar.W / 2, bar.Y + bar.H / 2, -90));
+        h.Frame();
+        var answer = h.Ui.Find("askAnswer");
+        Assert.NotNull(answer);
+        Assert.True(answer!.Value.R.Bottom <= bar.Bottom + 0.5f && answer.Value.R.Y >= bar.Y - 0.5f, $"Answer {answer.Value.R} is inside the card {bar}");
+        Assert.True(h.Click("askOpt", 1, s: "Cache 5"));
+        Assert.True(h.Click("askAnswer"));
+        Assert.Equal([["Choice 0 with a rather long name that wraps"], ["Cache 5"]], h.Last<AnswerCommand>().Answers);
+
+        // And back to the top with the bar: a press above the thumb pages up.
+        var h2 = new PanelHarness { W = w, H = height };
+        h2.State(PanelHarness.Session(1, "waiting", LongQuestion(), PanelHarness.Turn("Pick", "Words.", "waiting")));
+        h2.Ui.ChatView = true;
+        h2.Ui.OpenChat(1);
+        h2.Frame();
+        var strip = h2.Ui.Find("askBar")!.Value.R;
+        h2.Ui.PointerMove(strip.X + 6, strip.Bottom - 6);
+        h2.Ui.PointerDown(strip.X + 6, strip.Bottom - 6, 1, UiMods.None);
+        h2.Ui.PointerUp(strip.X + 6, strip.Bottom - 6);
+        h2.Frame();
+        var first = h2.Ui.Find("askOpt", 0, "Choice 0 with a rather long name that wraps");
+        Assert.True(first is null || first.Value.R.Y < strip.Y + 1, "a press at the bottom of the bar paged the card down");
+        var moved = h2.Ui.Targets.Where(t => t.Id == "askOpt").Select(t => t.S).FirstOrDefault();
+        Assert.NotEqual("Choice 0 with a rather long name that wraps", moved);
+    }
 }
