@@ -286,6 +286,8 @@ public class AppTests(ITestOutputHelper output)
         Assert.True(app.ExitCode == 0, $"--shots exited with {app.ExitCode}. {Describe(Path.Combine(temp.Path, "data"))}");
 
         Assert.DoesNotContain("styles did not load", Describe(Path.Combine(temp.Path, "data")));
+        // The app quits after the pictures: a frame of the panels drawn after the graphics device was disposed is logged as "frame failed".
+        Assert.DoesNotContain("frame failed", Describe(Path.Combine(temp.Path, "data")));
         var picture = await File.ReadAllBytesAsync(Path.Combine(shots, "dashboard.jpg"));
         var (width, height) = Jpeg.Size(picture);
         output.WriteLine($"dashboard.jpg: {picture.Length} bytes, {width} x {height}");

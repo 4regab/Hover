@@ -23,6 +23,9 @@ sealed class UiCore : IDisposable
     readonly Action<BackendEvent> onEvent;
     bool disposed;
 
+    /// <summary>The panels were disposed (the app is quitting): nothing may be drawn with their canvas and the graphics device after this.</summary>
+    public bool IsDisposed => disposed;
+
     public Gfx Gfx { get; }
     public DwShaper Shaper { get; }
     public ImageStore Images { get; }
