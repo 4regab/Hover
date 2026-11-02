@@ -14,7 +14,8 @@ public sealed partial class OfficeUi
         if (ChatView || px < 0 || menu is not null || confirm is not null || Covers(px, py)) return;
         var (kind, id, said) = env.Tip();
         var hint = said ?? "";
-        if (kind is 1 or 2 && DeskSession(id) is { } s)
+        // Not over the bot whose chat is open (internal/shell/office.go); and none while a desk card is open, which Covers answers.
+        if (kind is 1 or 2 && !(kind == 1 && OpenId == id) && DeskSession(id) is { } s)
         {
             var f = Pen.F(12, 400, Pen.Ink);
             var bf = Pen.F(12, 600, Rgba.Of(0xffffff));

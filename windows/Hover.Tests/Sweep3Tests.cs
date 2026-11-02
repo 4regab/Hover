@@ -316,4 +316,65 @@ public class Sweep3Tests
         h.Frame();
         Assert.Null(h.Ui.OpenMenuKind);
     }
+
+    // MARK: Tips
+
+    static OfficeUi TipUi(Func<(int Kind, int Id, string Hint)> tip, SessionInfo session)
+    {
+        var ui = new OfficeUi(new FakeShaper(), new UiEnv { Send = _ => { }, Clipboard = new FakeClipboard(), Tip = tip });
+        ui.Accept(new StateEvent { Tools = [new ToolInfo { Id = "kiro", Name = "Kiro", Ready = true }], Sessions = [session] });
+        return ui;
+    }
+
+    [Fact]
+    public void The_tip_over_a_bot_is_not_shown_while_its_chat_is_open_or_while_a_desk_card_is_open()
+    {
+        var session = PanelHarness.Session(1, "working", null, PanelHarness.Turn("Go", "", "working"));
+        var tip = (Kind: 1, Id: 1, Hint: "");
+        var ui = TipUi(() => tip, session);
+        string[] Drawn() { var c = new RecordingCanvas(); ui.Paint(c, 1200, 720, 1000); return [.. c.Texts]; }
+        ui.PointerMove(900, 400);
+        Assert.Contains("Chat with", Drawn());
+
+        // The bot whose chat is open needs no "Chat with".
+        ui.OpenChat(1);
+        ui.ChatView = false;
+        ui.PointerMove(100, 400);
+        Assert.DoesNotContain("Chat with", Drawn());
+        // Another bot's tip still shows.
+        tip = (1, 2, "");
+        ui.Accept(new StateEvent { Tools = [new ToolInfo { Id = "kiro", Name = "Kiro", Ready = true }], Sessions = [session, session with { Id = 2, Key = "k2" }] });
+        Assert.Contains("Chat with", Drawn());
+
+        // With a desk card open neither a bot nor a desk has its tip.
+        ui.CloseChat();
+        ui.OpenDeskCard(1);
+        tip = (1, 1, "");
+        Assert.DoesNotContain("Chat with", Drawn());
+        tip = (2, 1, "");
+        Assert.DoesNotContain(Drawn(), t => t.EndsWith("’s desk", StringComparison.Ordinal) && t != "Pip’s desk".ToUpperInvariant());
+    }
+
+    [Fact]
+    public void The_office_and_chat_switch_names_the_half_the_pointer_is_on()
+    {
+        var h = new PanelHarness();
+        h.State();
+        h.Ui.ChatView = false;
+        h.Frame();
+        var office = h.Ui.Targets.First(t => t.Id == "view" && t.N == 0).R;
+        var chat = h.Ui.Targets.First(t => t.Id == "view" && t.N == 1).R;
+        Assert.DoesNotContain("Office", h.Frame().Texts);
+        h.Ui.PointerMove(office.X + office.W / 2, office.Y + office.H / 2);
+        var c = h.Frame();
+        Assert.Contains("Office", c.Texts);
+        Assert.DoesNotContain("Chat", c.Texts);
+        h.Ui.PointerMove(chat.X + chat.W / 2, chat.Y + chat.H / 2);
+        c = h.Frame();
+        Assert.Contains("Chat", c.Texts);
+        Assert.DoesNotContain("Office", c.Texts);
+        // The name sits under the switch.
+        var name = c.Drawn.Single(t => t.Text == "Chat").R;
+        Assert.True(name.Y > chat.Bottom, $"the name {name} is under the switch {chat}");
+    }
 }

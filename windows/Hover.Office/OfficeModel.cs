@@ -652,9 +652,18 @@ public sealed partial class OfficeModel
         return new Click(ClickKind.Nothing);
     }
 
+    /// <summary>The date and time in full, as the wall clock's tip and toast say it (internal/shell/office.go fullDate).</summary>
+    public string FullDate()
+    {
+        var (ms, offset) = WallClock();
+        return DateTimeOffset.FromUnixTimeMilliseconds((long)ms).ToOffset(TimeSpan.FromMinutes(offset))
+            .ToString("dddd d MMMM yyyy 'at' HH:mm:ss", System.Globalization.CultureInfo.InvariantCulture);
+    }
+
     /// <summary>The prop's tooltip ("Office overview", "Make it day"…); the clock's is the date.</summary>
     public string Hint(Prop p) => p switch
     {
+        Prop.Clock => FullDate(),
         Prop.TV => "Office overview",
         Prop.Board => "Session board",
         Prop.Door => "New task",

@@ -134,8 +134,19 @@ public sealed partial class OfficeUi
             var cell = new Rect4(x + 3 + i * (half - 3), y + 3, half - 3, vh - 6);
             if (on) pen.Box(cell, (vh - 6) / 2, Rgba.Of(0xffffff, 0.09));
             var ic = i == 0 ? Glyphs.Office : Glyphs.Chat;
-            pen.Icon(ic, cell.X + (cell.W - 15) / 2, cell.Y + (cell.H - 15) / 2, 15, on ? Pen.Lilac : Over(cell) ? Pen.Dim : Rgba.Of(0xf6f2ff, 0.45));
+            var hov = Over(cell);
+            pen.Icon(ic, cell.X + (cell.W - 15) / 2, cell.Y + (cell.H - 15) / 2, 15, on ? Pen.Lilac : hov ? Pen.Dim : Rgba.Of(0xf6f2ff, 0.45));
             Add(cell, "view", i);
+            if (!hov) continue;
+            // The name of the half the pointer is on, under it (internal/ui/officeview.go).
+            var name = i == 0 ? "Office" : "Chat";
+            var tf = Pen.F(11.5, 500, Rgba.Of(0xf6f2ff));
+            var tw = pen.Width(name, tf);
+            var tx = x + (i == 0 ? 0 : half);
+            var ty = y + vh + 6;
+            pen.Box(tx, ty, tw + 16, pen.LineHeight(tf) + 8, 8, Rgba.Of(0x0a060e, 0.9));
+            pen.Border(tx, ty, tw + 16, pen.LineHeight(tf) + 8, 8, 1, Rgba.Of(0xffffff, 0.1));
+            pen.Text(name, tx + 8, ty + 4, tf);
         }
     }
 

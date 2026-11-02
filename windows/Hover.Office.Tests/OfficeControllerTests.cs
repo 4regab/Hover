@@ -100,6 +100,16 @@ public sealed class OfficeControllerTests
     }
 
     [Fact]
+    public void The_wall_clocks_tip_is_the_date_in_full_and_the_other_props_keep_theirs()
+    {
+        var (o, _, _) = Fixture.Settled();
+        // 2 November 2026, 14:20:05 at UTC+1.
+        o.WallClock = () => (new DateTimeOffset(2026, 11, 2, 14, 20, 5, TimeSpan.FromHours(1)).ToUnixTimeMilliseconds(), 60);
+        Assert.Equal("Monday 2 November 2026 at 14:20:05", o.Hint(Prop.Clock));
+        Assert.Equal("Session board", o.Hint(Prop.Board));
+    }
+
+    [Fact]
     public void The_time_of_day_follows_the_clock_unless_picked()
     {
         var hour = 3;
