@@ -503,4 +503,49 @@ public class SweepFixTests
         h.Type("hello");
         Assert.Equal("hello", h.Ui.TaskText);
     }
+    // MARK: Scrolling to both ends
+
+    public static IEnumerable<object[]> ScrollSizes => [[828f, 346f], [880f, 480f], [1200f, 720f]];
+
+    [Theory]
+    [MemberData(nameof(ScrollSizes))]
+    public void The_thread_the_list_at_the_side_and_the_history_panel_reach_both_ends_with_the_wheel(float w, float h)
+    {
+        var rig = SweepTests.Rig(w, h);
+        rig.Ui.ChatView = true;
+        rig.Ui.OpenChat(1);
+        rig.Frame();
+
+        // The thread: to its top, then to its end, where the last buttons of the last turn are clear of the reply circle.
+        var area = rig.Ui.ThreadArea;
+        var mid = (X: area.X + area.W / 2, Y: area.Y + area.H / 2);
+        for (var i = 0; i < 400; i++) { rig.Ui.Wheel(mid.X, mid.Y, 90); rig.Now += 600; rig.Frame(); }
+        Assert.Equal(0, rig.Ui.ScrollY, 1);
+        for (var i = 0; i < 400; i++) { rig.Ui.Wheel(mid.X, mid.Y, -90); rig.Now += 600; rig.Frame(); }
+        var end = rig.Ui.Thread.Height - area.H;
+        Assert.True(Math.Abs(rig.Ui.ScrollY - end) < 2, $"the thread stopped at {rig.Ui.ScrollY}, its end is {end}");
+        var last = rig.Ui.ThreadActs().OrderBy(a => a.R.Bottom).Last();
+        Assert.True(last.R.Bottom <= area.Bottom - 40, $"the last button {last.R} is under the reply circle (the thread ends at {area.Bottom})");
+
+        // The list at the side: the last chat can be reached, and the first again.
+        rig.Ui.CloseChat();
+        rig.Frame();
+        var side = rig.Ui.Targets.First(t => t.Id == "row").R;
+        var at = (X: side.X + 20, Y: side.Y + 10);
+        for (var i = 0; i < 400; i++) { rig.Ui.Wheel(at.X, at.Y, -90); rig.Frame(); }
+        var rows = rig.Ui.Targets.Where(t => t.Id == "row").ToList();
+        Assert.Contains(rows, t => t.S == "h33" && t.R.Bottom <= h + 0.5);
+        for (var i = 0; i < 400; i++) { rig.Ui.Wheel(at.X, at.Y, 90); rig.Frame(); }
+        Assert.Contains(rig.Ui.Targets, t => t.Id == "head" && t.R.Y >= 0);
+        Assert.Contains(rig.Ui.Targets, t => t.Id == "row" && t.S == "k1");
+
+        // The history panel over the office: its last row.
+        rig.Ui.ChatView = false;
+        rig.Ui.OpenOfficePanel("history");
+        rig.Frame();
+        var panel = rig.Ui.Targets.First(t => t.Id == "panelRow").R;
+        for (var i = 0; i < 400; i++) { rig.Ui.Wheel(panel.X + 20, panel.Y + 10, -90); rig.Frame(); }
+        var lastRow = rig.Ui.Targets.Where(t => t.Id == "panelRow").OrderBy(t => t.R.Y).Last();
+        Assert.True(lastRow.R.Bottom <= h + 0.5, $"the last row of the history {lastRow.R} is past the window's end {h}");
+    }
 }

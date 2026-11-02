@@ -167,7 +167,7 @@ public class SweepTests
                 yield return [w, h, i, all[i].Name];
     }
 
-    static PanelHarness Rig(float w, float h)
+    internal static PanelHarness Rig(float w, float h)
     {
         var rig = MenuFitTests.Rig(w, h);
         rig.Markdown = Blocks;
