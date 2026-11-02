@@ -24,6 +24,13 @@ public class WindowsTests
             // The value is the path in quotes, as the Go app writes it.
             using (var k = Registry.CurrentUser.OpenSubKey(key)!)
                 Assert.Equal("\"" + exe + "\"", k.GetValue("Hover"));
+            // A path with spaces is quoted too: unquoted, Windows would start "C:\Program" at login.
+            var spaced = @"C:\Program Files\Hover app\hoverai.exe";
+            Assert.True(run.Set(true, spaced));
+            using (var k = Registry.CurrentUser.OpenSubKey(key)!)
+                Assert.Equal("\"" + spaced + "\"", k.GetValue("Hover"));
+            Assert.Equal(spaced, run.Path);
+            Assert.True(run.Set(true, exe));
             // Turned on again it is one value, not two.
             Assert.True(run.Set(true, exe));
             using (var k = Registry.CurrentUser.OpenSubKey(key)!)
