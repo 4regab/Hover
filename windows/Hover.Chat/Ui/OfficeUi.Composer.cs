@@ -23,7 +23,7 @@ public sealed partial class OfficeUi
         var iw = bw - 10 - 7;
         var look = Pen.F(13, 400, Pen.Ink);
         var id = OpenId ?? -1;
-        cy += PaintChips(cx + 2, cy, cx + iw);
+        cy += PaintChips(cx + 2, cy, iw - 2);
         if (ShotsOf(id).Count > 0)
         {
             PaintShots(ShotsOf(id), false, cx + 3, cy + 3);

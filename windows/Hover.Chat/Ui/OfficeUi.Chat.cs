@@ -158,7 +158,7 @@ public sealed partial class OfficeUi
         {
             var look = Pen.F(13, 400, Pen.Ink);
             inputH = Math.Max(24, reply.HeightFor(pen, bw - 10 - 7 - 4, look, 20, 140) + 6);
-            compH = 7 + ChipsHeight() + ShotsHeight(false) + inputH + 3 + 30 + 6;
+            compH = 7 + ChipsHeight(bw - 10 - 7 - 2) + ShotsHeight(false) + inputH + 3 + 30 + 6;
         }
         var boxH = compose ? compH + 16 : 0;
         float askH = 0;

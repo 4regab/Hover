@@ -191,28 +191,68 @@ public sealed partial class OfficeUi
 
     // MARK: The chips row
 
-    float ChipsHeight() => OpenId is { } id && chips.TryGetValue(id, out var l) && l.Count > 0 ? 22 + 5 : 0;
+    const int MaxChipRows = 3;
 
-    float PaintChips(float x, float y, float maxX)
+    static readonly Look ChipLook = Pen.F(11, 400, Rgba.Of(0xf6f2ff, 0.8));
+
+    /// <summary>
+    /// Where the chips of the open chat go in a row <paramref name="width"/> wide: they wrap onto up to three rows, and what is
+    /// still left is counted in a last "+N" chip (removing a chip brings the next one into view), so that what is sent is what
+    /// the box shows or counts.
+    /// </summary>
+    (List<(int I, float X, int Row, float W)> Placed, int Hidden, int Rows) ChipLayout(float width)
+    {
+        var placed = new List<(int, float, int, float)>();
+        if (OpenId is not { } id || !chips.TryGetValue(id, out var l) || l.Count == 0) return (placed, 0, 0);
+        float x = 0;
+        var row = 0;
+        var i = 0;
+        for (; i < l.Count; i++)
+        {
+            var cw = Math.Min(Math.Min(8 + pen.Width(l[i].Shown, ChipLook) + 4 + 16 + 3, 220), width);
+            if (x > 0 && x + cw > width) { row++; x = 0; }
+            if (row >= MaxChipRows) break;
+            placed.Add((i, x, row, cw));
+            x += cw + 5;
+        }
+        var hidden = l.Count - i;
+        // The "+N" chip needs room at the end of the last row: give up chips from the end until it fits.
+        while (hidden > 0 && placed.Count > 0 && placed[^1].Item2 + placed[^1].Item4 + 5 + PlusWidth(hidden) > width)
+        {
+            placed.RemoveAt(placed.Count - 1);
+            hidden++;
+        }
+        return (placed, hidden, placed.Count == 0 ? 1 : placed[^1].Item3 + 1);
+    }
+
+    float PlusWidth(int hidden) => 8 + pen.Width("+" + hidden, ChipLook) + 8;
+
+    float ChipsHeight(float width) => ChipLayout(width).Rows * (22 + 5);
+
+    float PaintChips(float x, float y, float width)
     {
         if (OpenId is not { } id || !chips.TryGetValue(id, out var l) || l.Count == 0) return 0;
-        var cx = x;
-        var f = Pen.F(11, 400, Rgba.Of(0xf6f2ff, 0.8));
-        for (var i = 0; i < l.Count; i++)
+        var (placed, hidden, rows) = ChipLayout(width);
+        foreach (var (i, cx, row, cw) in placed)
         {
             var shown = l[i].Shown;
-            var tw = pen.Width(shown, f);
-            var cw = Math.Min(8 + tw + 4 + 16 + 3, 220);
-            if (cx + cw > maxX) break;
-            pen.Box(cx, y, cw, 22, 7, Rgba.Of(0xffffff, 0.07));
-            pen.Text(shown, cx + 8, y + (22 - pen.LineHeight(f)) / 2, f, cw - 8 - 3 - 16 - 4);
-            var xr = new Rect4(cx + cw - 3 - 16, y + 3, 16, 16);
+            var cy = y + row * (22 + 5);
+            pen.Box(x + cx, cy, cw, 22, 7, Rgba.Of(0xffffff, 0.07));
+            pen.Text(shown, x + cx + 8, cy + (22 - pen.LineHeight(ChipLook)) / 2, ChipLook, cw - 8 - 3 - 16 - 4);
+            var xr = new Rect4(x + cx + cw - 3 - 16, cy + 3, 16, 16);
             if (Over(xr)) pen.Box(xr, 5, Rgba.Of(0xffffff, 0.12));
             pen.Icon(DeskIcons.Close, xr.X + 3, xr.Y + 3, 10, Pen.Dim);
             Add(xr, "unchip", i);
-            cx += cw + 5;
         }
-        return 22 + 5;
+        if (hidden > 0)
+        {
+            var pw = PlusWidth(hidden);
+            var px0 = placed.Count > 0 ? x + placed[^1].X + placed[^1].W + 5 : x;
+            var cy = y + (placed.Count > 0 ? placed[^1].Row : 0) * (22 + 5);
+            pen.Box(px0, cy, pw, 22, 7, Rgba.Of(0xffffff, 0.07));
+            pen.TextIn("+" + hidden, new Rect4(px0, cy, pw, 22), ChipLook);
+        }
+        return rows * (22 + 5);
     }
 
     // MARK: The @ and / list
