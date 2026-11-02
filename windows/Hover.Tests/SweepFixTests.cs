@@ -134,4 +134,180 @@ public class SweepFixTests
         Assert.Equal("project", rig.Ui.OpenMenuKind);
         Assert.Equal(0, rig.FolderAsked);
     }
+    // MARK: Keys, the reply box and the chat
+
+    static PanelHarness OpenChat(int id = 1, bool chatView = false, TurnInfo? turn = null, string stage = "done")
+    {
+        var h = new PanelHarness();
+        h.State(PanelHarness.Session(id, stage, null, turn ?? PanelHarness.Turn("Tidy it", "Done. " + new string('x', 40))));
+        h.Ui.ChatView = chatView;
+        h.Ui.OpenChat(id);
+        h.Frame();
+        return h;
+    }
+
+    [Fact]
+    public void Escape_closes_the_panel_over_the_office_before_the_notch_folds()
+    {
+        var h = new PanelHarness();
+        h.State();
+        h.Ui.OpenOfficePanel("history");
+        h.Frame();
+        Assert.Equal("history", h.Ui.OfficePanel);
+        Assert.True(h.Key(UiKey.Escape), "Escape was left to the notch, which folds");
+        Assert.Equal("", h.Ui.OfficePanel);
+        Assert.False(h.Key(UiKey.Escape), "with nothing left to close, Escape is the notch's");
+    }
+
+    [Fact]
+    public void A_box_with_the_keyboard_takes_every_plain_key_so_the_office_behind_does_not_zoom()
+    {
+        var h = new PanelHarness();
+        h.State();
+        h.Ui.ChatView = false;
+        h.Frame();
+        Assert.True(h.Click("fab"));
+        Assert.True(h.Ui.TakesKeys);
+        // The digits and the minus and plus keys are the office camera's; typed in a name they are the box's alone.
+        Assert.True(h.Key(UiKey.Other), "a plain key the box does not use is left to the office");
+        Assert.False(h.Key(UiKey.Other, UiMods.Control), "Ctrl+key chords stay the host's");
+    }
+
+    [Fact]
+    public void A_press_on_the_thread_takes_the_keyboard_from_the_reply_box_and_an_empty_box_closes()
+    {
+        var h = OpenChat();
+        Assert.True(h.Click("compose"));
+        Assert.True(h.Ui.Composing);
+        var area = h.Ui.ThreadArea;
+        h.ClickAt((area.X + 4, area.Y + 4));
+        Assert.False(h.Ui.Composing, "an empty reply box closes at a press on the thread");
+
+        // With words in it, it stays; typing then gives it the keyboard back, and Escape closes it without leaving the chat.
+        Assert.True(h.Click("compose"));
+        h.Type("keep me");
+        h.ClickAt((area.X + 4, area.Y + 4));
+        Assert.True(h.Ui.Composing);
+        h.Type("!");
+        Assert.Equal("keep me!", h.Ui.ReplyText);
+        h.ClickAt((area.X + 4, area.Y + 4));
+        Assert.True(h.Key(UiKey.Escape));
+        Assert.False(h.Ui.Composing);
+        Assert.Equal(1, h.Ui.OpenId);
+        Assert.Equal("keep me!", h.Ui.ReplyText);
+    }
+
+    [Fact]
+    public void A_new_name_is_saved_when_the_title_box_is_left()
+    {
+        var h = OpenChat(chatView: true);
+        Assert.True(h.Click("rename"));
+        h.Type("A better name");
+        var area = h.Ui.ThreadArea;
+        h.ClickAt((area.X + 4, area.Y + 4));
+        Assert.Equal("A better name", h.Last<RenameCommand>().Name);
+        Assert.Null(h.Ui.Find("titleBox"));
+    }
+
+    [Fact]
+    public void Taking_a_queued_message_back_or_editing_a_sent_one_keeps_what_was_already_written()
+    {
+        var h = OpenChat(chatView: true);
+        Assert.True(h.Click("compose"));
+        h.Type("keep me");
+        h.Accept(new QueueRemoveEvent { Ok = true, Text = "queued words" });
+        Assert.Equal("keep me\nqueued words", h.Ui.ReplyText);
+        var edit = h.Ui.ThreadActs().First(a => a.Kind == "EditPrompt");
+        h.ClickAt((edit.R.X + edit.R.W / 2, edit.R.Y + edit.R.H / 2));
+        Assert.Equal("keep me\nqueued words\nTidy it", h.Ui.ReplyText);
+    }
+
+    [Fact]
+    public void Retry_goes_only_for_the_newest_turn_of_a_chat_that_is_not_busy_and_takes_the_prompts_pictures()
+    {
+        var turn = PanelHarness.Turn("Tidy it", "Done.") with { Images = ["data:image/png;base64,AAAA"] };
+        var h = OpenChat(chatView: true, turn: turn);
+        var retry = h.Ui.ThreadActs().FirstOrDefault(a => a.Kind == "Retry");
+        Assert.NotEqual(default, retry);
+        h.ClickAt((retry.R.X + retry.R.W / 2, retry.R.Y + retry.R.H / 2));
+        var sent = h.Last<ReplyCommand>();
+        Assert.Equal("Tidy it", sent.Text);
+        Assert.Equal(["data:image/png;base64,AAAA"], sent.Images);
+
+        // While a run is in flight the button does nothing.
+        var busy = OpenChat(chatView: true, turn: PanelHarness.Turn("Tidy it", "Done.") with { Stage = "done" }, stage: "working");
+        var again = busy.Ui.ThreadActs().FirstOrDefault(a => a.Kind == "Retry");
+        if (again != default) busy.ClickAt((again.R.X + again.R.W / 2, again.R.Y + again.R.H / 2));
+        Assert.DoesNotContain(busy.Sent, c => c is ReplyCommand);
+    }
+
+    [Fact]
+    public void A_stray_Enter_does_not_delete_a_chat_but_the_Delete_button_does()
+    {
+        var h = OpenChat(chatView: true);
+        Assert.True(h.Click("more"));
+        Assert.True(h.Click("menu", s: "Delete chat"));
+        Assert.Contains("Delete this chat?", h.Frame().Texts);
+        h.Key(UiKey.Enter);
+        Assert.DoesNotContain(h.Sent, c => c is DeleteCommand);
+        Assert.Contains("Delete this chat?", h.Frame().Texts);
+        Assert.True(h.Click("confirmYes"));
+        Assert.Contains(h.Sent, c => c is DeleteCommand);
+    }
+
+    [Fact]
+    public void A_question_with_two_parts_is_not_sent_with_one_of_them_unanswered()
+    {
+        var ask = new AskInfo
+        {
+            Id = "q1", Kind = "question", Title = "Two questions",
+            Questions =
+            [
+                new AskQuestion { Header = "A", Question = "Which database?", Options = [new AskOption { Label = "Postgres" }, new AskOption { Label = "SQLite" }] },
+                new AskQuestion { Header = "B", Question = "Which cache?", Options = [new AskOption { Label = "Redis" }, new AskOption { Label = "None" }] },
+            ],
+        };
+        var h = new PanelHarness();
+        h.State(PanelHarness.Session(1, "waiting", ask, PanelHarness.Turn("Pick", "", "waiting")));
+        h.Ui.ChatView = true;
+        h.Ui.OpenChat(1);
+        h.Frame();
+        Assert.True(h.Click("askOpt", 0, s: "Postgres"));
+        Assert.True(h.Click("askAnswer"));
+        Assert.Equal("Answer each question first.", h.Ui.ToastText);
+        Assert.DoesNotContain(h.Sent, c => c is AnswerCommand);
+        Assert.True(h.Click("askOpt", 1, s: "None"));
+        Assert.True(h.Click("askAnswer"));
+        Assert.Equal([["Postgres"], ["None"]], h.Last<AnswerCommand>().Answers);
+    }
+
+    [Fact]
+    public void The_thread_keeps_room_under_its_last_turn_for_the_reply_circle()
+    {
+        var h = OpenChat(chatView: true);
+        Assert.Equal(56, h.Ui.Thread.ExtraBottom);
+    }
+
+    [Fact]
+    public void The_pointer_is_the_hand_over_a_button_the_text_cursor_over_a_box_of_words_and_the_arrow_elsewhere()
+    {
+        var h = new PanelHarness();
+        h.State();
+        h.Ui.ChatView = false;
+        h.Frame();
+        UiCursor At(string id) { var r = h.Ui.Find(id)!.Value.R; return h.Ui.CursorAt(r.X + r.W / 2, r.Y + r.H / 2); }
+        Assert.Equal(UiCursor.Hand, At("fab"));
+        Assert.Equal(UiCursor.Hand, At("topMenu"));
+        Assert.Equal(UiCursor.Arrow, h.Ui.CursorAt(300, 300));
+        Assert.True(h.Click("fab"));
+        Assert.Equal(UiCursor.Text, At("taskText"));
+        Assert.Equal(UiCursor.Hand, At("pillAccess"));
+        // A button with nothing to send yet is not a button for the pointer.
+        Assert.Equal(UiCursor.Arrow, At("startOff"));
+        // A menu takes the pointer from what is under it.
+        Assert.True(h.Click("pillAccess"));
+        Assert.Equal(UiCursor.Arrow, h.Ui.CursorAt(5, 5));
+        var row = h.Ui.Targets.Last(t => t.Id == "menu").R;
+        Assert.Equal(UiCursor.Hand, h.Ui.CursorAt(row.X + row.W / 2, row.Y + row.H / 2));
+    }
 }

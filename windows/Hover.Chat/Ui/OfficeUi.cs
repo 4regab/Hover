@@ -86,7 +86,8 @@ public sealed partial class OfficeUi
         this.env = env;
         pen = new Pen(shaper);
         cache = new RenderCache(env.Send, env.Images);
-        thread = new ChatThread(shaper, cache, "Kiro");
+        // Room under the last turn for the reply circle over the thread's corner (internal/shell/chat.go: 56).
+        thread = new ChatThread(shaper, cache, "Kiro") { ExtraBottom = 56 };
         cache.Arrived += () =>
         {
             thread.Refresh();
@@ -191,12 +192,7 @@ public sealed partial class OfficeUi
                 transcript = t.Session;
                 break;
             case QueueRemoveEvent q:
-                if (q.Ok)
-                {
-                    reply.SetText(q.Text);
-                    compose = true;
-                    focus = Focus.Reply;
-                }
+                if (q.Ok) PutInReplyBox(q.Text);
                 else Say("That message already left the queue.");
                 break;
             case PreferencesEvent p:
@@ -471,6 +467,8 @@ public sealed partial class OfficeUi
         modsNow = mods;
         Dirty = true;
         Trace($"press {x:0},{y:0} on {TargetAt(x, y)?.Id ?? "nothing"}");
+        // Leaving the title's box saves the new name (Enter does too; Escape undoes it).
+        if (renaming && focus == Focus.Title && TargetAt(x, y) is not { Id: "titleBox" }) CommitRename();
         // Under the note nothing takes a press: only Got it does.
         if (NoticeShown)
         {
@@ -593,7 +591,8 @@ public sealed partial class OfficeUi
         if (confirm is not null)
         {
             if (key == UiKey.Escape) { confirm = null; return true; }
-            if (key == UiKey.Enter) { Activate(new Target(default, "confirmYes")); return true; }
+            // Enter confirms a restore or a new try, but never a delete: that is a click on Delete, so a stray Enter cannot remove a chat.
+            if (key == UiKey.Enter && confirm.Value.Kind is not ("delete" or "deleteKey")) { Activate(new Target(default, "confirmYes")); return true; }
             return true;
         }
         if (menu is { } open)
@@ -605,9 +604,12 @@ public sealed partial class OfficeUi
         if (key == UiKey.Escape)
         {
             if (focus == Focus.Title) { renaming = false; focus = Focus.None; return true; }
-            if (compose && focus == Focus.Reply) { Trace("escape closes the reply box"); compose = false; focus = Focus.None; return true; }
+            // The reply box closes first, with the keyboard in it or not, and keeps what was written (internal/shell/chatact.go).
+            if (compose && OpenCurrent()) { Trace("escape closes the reply box"); PopClose(); compose = false; focus = Focus.None; return true; }
             if (taskOpen) { taskOpen = false; focus = Focus.None; return true; }
             if (!ChatView && OpenId is not null) { CloseChat(); return true; }
+            // Then the panel over the office (history, board, overview); past those the notch folds.
+            if (OfficePanel.Length > 0) { OpenOfficePanel(""); return true; }
             return false;
         }
         var box = FocusedBox();
@@ -658,7 +660,9 @@ public sealed partial class OfficeUi
                 if (env.Clipboard.Text() is { Length: > 0 } text) box.Insert(text, now);
                 break;
             default:
-                return false;
+                // A box with the keyboard takes every plain key. Left to the host, the digits and the minus and plus keys
+                // would also zoom and reset the office's camera behind it (they are its keys), while a name is typed.
+                return (mods & (UiMods.Control | UiMods.Alt)) == 0;
         }
         AfterEdit();
         return true;
@@ -683,7 +687,8 @@ public sealed partial class OfficeUi
         if (box is null)
         {
             if (DeskLetter(text)) return true;
-            if (!ChatView && !compose && OpenCurrent() && !char.IsControl(text[0]) && Current() is not null)
+            // After a press on the thread the reply box may still be open but without the keyboard: typing gives it back.
+            if (!ChatView && OpenCurrent() && !char.IsControl(text[0]) && Current() is not null)
             {
                 compose = true;
                 focus = Focus.Reply;

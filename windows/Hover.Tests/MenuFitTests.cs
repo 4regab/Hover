@@ -57,7 +57,7 @@ public class MenuFitTests
     }
 
     /// <summary>Every menu, by where it opens from: the steps that open it and the kind it must be.</summary>
-    static readonly (string Name, string Kind, Action<PanelHarness> Open)[] All =
+    internal static readonly (string Name, string Kind, Action<PanelHarness> Open)[] All =
     [
         ("top menu", "top", h => { StartOffice(h); Assert.True(h.Click("topMenu")); }),
         ("start: agent", "agent", h => { StartScreen(h); Assert.True(h.Click("pillAgent")); }),

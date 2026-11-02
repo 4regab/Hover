@@ -410,6 +410,16 @@ public sealed partial class OfficeUi
         Dirty = true;
     }
 
+    /// <summary>Words go into the reply box after what is already written there, on a line of their own (the Go box: "draft", a break, the words); the box opens with the keyboard in it.</summary>
+    void PutInReplyBox(string words)
+    {
+        reply.SetText(reply.Text.Trim().Length > 0 ? reply.Text + "\n" + words : words);
+        SaveDraft();
+        compose = true;
+        focus = Focus.Reply;
+        Dirty = true;
+    }
+
     void CommitRename()
     {
         var s = Current();
@@ -424,6 +434,8 @@ public sealed partial class OfficeUi
 
     void ThreadDown(float x, float y, int clicks, UiMods mods)
     {
+        // A press on the thread takes the keyboard from the reply box, and an empty reply box closes (internal/ui/officechat.go).
+        if (compose && reply.Text.Length == 0 && Current() is { } cur && ShotsOf(cur.Id).Count == 0 && ChipsOf(cur.Id).Count == 0) { PopClose(); compose = false; }
         focus = Focus.None;
         var tx = x - threadRect.X;
         var ty = y - threadRect.Y + scroll;
@@ -507,8 +519,13 @@ public sealed partial class OfficeUi
                 if (thread.OpenDiff(turns, section, a.I) is { } at) ScrollTo(at - 40);
                 break;
             case ActKind.Retry:
-                if (OpenId is { } rid && section < turns.Count) env.Send(new ReplyCommand(turns[section].Prompt, rid));
-                follow = true;
+                // The newest turn's prompt again, with its pictures; never while a run is in flight, a message waits, or for an older turn.
+                if (OpenId is { } rid && s is not null && section == turns.Count - 1 && !Busy(s) && !turns.Any(t => t.Queued))
+                {
+                    var again = turns[section];
+                    env.Send(new ReplyCommand(again.Prompt, rid) { Images = again.Images.Count > 0 ? [.. again.Images] : null });
+                    follow = true;
+                }
                 break;
             case ActKind.Restore:
                 confirm = (section, "restore");
@@ -523,12 +540,7 @@ public sealed partial class OfficeUi
                 if (OpenId is { } sid && section < turns.Count) env.Send(new QueueSendNowCommand(sid, turns[section].Uid));
                 break;
             case ActKind.EditPrompt:
-                if (section < turns.Count)
-                {
-                    reply.SetText(turns[section].Prompt);
-                    compose = true;
-                    focus = Focus.Reply;
-                }
+                if (section < turns.Count) PutInReplyBox(turns[section].Prompt);
                 break;
         }
         Dirty = true;

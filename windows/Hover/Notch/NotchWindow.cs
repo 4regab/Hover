@@ -144,6 +144,21 @@ sealed class NotchWindow : INotchPlatform, IDisposable
 
     public (int X, int Y) Cursor() => GetCursorPos(out var p) ? (p.X, p.Y) : (-10000, -10000);
 
+    /// <summary>The system cursor the window shows over its client area: 0 the arrow (the class's own), 1 the hand, 2 the text cursor.</summary>
+    public int CursorShape
+    {
+        get => cursorShape;
+        set
+        {
+            if (cursorShape == value) return;
+            cursorShape = value;
+            if (value != 0) SetCursor(LoadCursorW(0, value == 1 ? 32649 : 32513));
+            else SetCursor(LoadCursorW(0, 32512));
+        }
+    }
+
+    int cursorShape;
+
     public bool Buttons() => (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0 || (GetAsyncKeyState(VK_RBUTTON) & 0x8000) != 0 || (GetAsyncKeyState(VK_MBUTTON) & 0x8000) != 0;
 
     /// <summary>Puts the window at the rectangle (device pixels), topmost, without taking the keyboard.</summary>
@@ -315,6 +330,10 @@ sealed class NotchWindow : INotchPlatform, IDisposable
                 break;
             case WM_MOUSEACTIVATE when !keys:
                 return MA_NOACTIVATE;
+            case WM_SETCURSOR when cursorShape != 0 && (lParam & 0xFFFF) == 1:
+                // Over the client area the panels say what the pointer is on: the hand over a button, the text cursor over a box of words.
+                SetCursor(LoadCursorW(0, cursorShape == 1 ? 32649 : 32513));
+                return 1;
             case WM_ERASEBKGND:
                 return 1;
             case WM_SIZE:

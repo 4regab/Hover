@@ -250,9 +250,10 @@ public sealed partial class OfficeUi
             if (own.Length > 0) picked.Add(own);
             answers[i] = [.. picked];
         }
-        if (answers.All(x => x.Length == 0))
+        // Every question needs an answer (the Go card refuses with these words).
+        if (answers.Any(x => x.Length == 0))
         {
-            Say("Pick an answer first, or skip the question.");
+            Say(answers.Length > 1 ? "Answer each question first." : "Pick an answer first.");
             return;
         }
         env.Send(new AnswerCommand(s.Id, a.Id, null, answers));

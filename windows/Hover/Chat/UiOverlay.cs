@@ -66,7 +66,7 @@ sealed class UiOverlay : Grid, IDisposable
         host.AddHandler(PointerPressedEvent, new PointerEventHandler(OnPressed), true);
         host.AddHandler(PointerReleasedEvent, new PointerEventHandler(OnReleased), true);
         host.AddHandler(PointerCanceledEvent, new PointerEventHandler(OnReleased), true);
-        host.AddHandler(PointerExitedEvent, new PointerEventHandler((_, _) => core.Ui.PointerLeave()), true);
+        host.AddHandler(PointerExitedEvent, new PointerEventHandler((_, _) => { core.Ui.PointerLeave(); ProtectedCursor = null; }), true);
         host.AddHandler(PointerWheelChangedEvent, new PointerEventHandler(OnWheel), true);
         host.AddHandler(KeyDownEvent, new KeyEventHandler(OnKeyDown), true);
         host.CharacterReceived += OnChar;
@@ -157,10 +157,26 @@ sealed class UiOverlay : Grid, IDisposable
         return ((float)p.X, (float)p.Y);
     }
 
+    // The pointer's shapes, made once. The overlay is only hit-testable where the panels have something, so the shape is theirs there.
+    static readonly Microsoft.UI.Input.InputCursor HandCursor = Microsoft.UI.Input.InputSystemCursor.Create(Microsoft.UI.Input.InputSystemCursorShape.Hand);
+    static readonly Microsoft.UI.Input.InputCursor TextCursor = Microsoft.UI.Input.InputSystemCursor.Create(Microsoft.UI.Input.InputSystemCursorShape.IBeam);
+
+    void ShowCursor(float x, float y)
+    {
+        ProtectedCursor = core.Ui.CursorAt(x, y) switch
+        {
+            Hover.Chat.Ui.UiCursor.Hand => HandCursor,
+            Hover.Chat.Ui.UiCursor.Text => TextCursor,
+            _ => null,
+        };
+    }
+
     void OnMoved(object sender, PointerRoutedEventArgs e)
     {
         var (x, y) = At(e);
         core.Ui.PointerMove(x, y);
+        // The shape follows what the last frame drew under the pointer.
+        ShowCursor(x, y);
         // The overlay takes the pointer where the panels have something; elsewhere the office behind sees it.
         var covers = core.Ui.Covers(x, y);
         if (IsHitTestVisible != covers) IsHitTestVisible = covers;

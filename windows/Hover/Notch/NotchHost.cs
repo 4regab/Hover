@@ -499,13 +499,19 @@ sealed partial class NotchHost : IDisposable
     void UpdateHover()
     {
         CfgHover();
+        var shape = 0;
         if (PanelsOpen && ctl.Over)
         {
             var (cx, cy) = window.Cursor();
-            if (PanelPoint((int)(cx - ctl.Window.Left), (int)(cy - ctl.Window.Top)) is { } pt) panels!.Ui.PointerMove(pt.X, pt.Y);
+            if (PanelPoint((int)(cx - ctl.Window.Left), (int)(cy - ctl.Window.Top)) is { } pt)
+            {
+                panels!.Ui.PointerMove(pt.X, pt.Y);
+                shape = (int)panels.Ui.CursorAt(pt.X, pt.Y);
+            }
             else panels!.Ui.PointerLeave();
             if (panels.Ui.Dirty) QueueRender();
         }
+        window.CursorShape = shape;
         string? hovered = null;
         if (ctl.Over)
         {

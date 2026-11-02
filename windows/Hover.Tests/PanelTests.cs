@@ -14,26 +14,63 @@ sealed class RecordingCanvas : ICanvas
     public int Broken, Fills;
     int clips;
 
-    public void PushClip(Rect4 r) => clips++;
-    public void PopClip() => clips--;
-    public void PushMove(float dx, float dy) { }
-    public void PopMove() { }
-    public void PushOpacity(float opacity) { }
-    public void PopOpacity() { }
+    /// <summary>A line of text as drawn: its words, the box it takes, and the clip it was drawn under (null: none), all in the window's pixels.</summary>
+    public readonly record struct DrawnText(string Text, Rect4 R, Rect4? Clip);
+
+    public readonly List<DrawnText> Drawn = [];
+
+    /// <summary>Every call of the frame as one line each, in order: two frames that differ in what they draw differ here.</summary>
+    public readonly List<string> Ops = [];
+
+    float moveX, moveY;
+    readonly Stack<(float X, float Y)> moves = new();
+    readonly List<Rect4> clipBoxes = [];
+
+    Rect4 Moved(Rect4 r) => new(r.X + moveX, r.Y + moveY, r.W, r.H);
+
+    /// <summary>The part of the window every clip of the stack leaves (null when nothing is clipped).</summary>
+    Rect4? Clip()
+    {
+        if (clipBoxes.Count == 0) return null;
+        var c = clipBoxes[0];
+        foreach (var b in clipBoxes.Skip(1))
+        {
+            float x = Math.Max(c.X, b.X), y = Math.Max(c.Y, b.Y);
+            c = new Rect4(x, y, Math.Max(Math.Min(c.Right, b.Right) - x, 0), Math.Max(Math.Min(c.Bottom, b.Bottom) - y, 0));
+        }
+        return c;
+    }
+
+    public void PushClip(Rect4 r) { clips++; clipBoxes.Add(Moved(r)); Ops.Add($"clip {r}"); }
+    public void PopClip() { clips--; clipBoxes.RemoveAt(clipBoxes.Count - 1); Ops.Add("unclip"); }
+    public void PushMove(float dx, float dy) { moves.Push((dx, dy)); moveX += dx; moveY += dy; Ops.Add($"move {dx},{dy}"); }
+    public void PopMove() { var (dx, dy) = moves.Pop(); moveX -= dx; moveY -= dy; Ops.Add("unmove"); }
+    public void PushOpacity(float opacity) => Ops.Add($"opacity {opacity}");
+    public void PopOpacity() => Ops.Add("unopacity");
     /// <summary>Every filled box of the frame, in the order drawn, for the checks of what is on the screen.</summary>
     public readonly List<(Rect4 R, Rgba C)> Boxes = [];
 
-    public void Fill(Rect4 r, float[] radius, Rgba c) { Fills++; Boxes.Add((r, c)); }
-    public void Stroke(Rect4 r, float[] radius, float width, Rgba c) { }
-    public void Line(IReadOnlyList<(float X, float Y)> points, float width, Rgba c) { }
-    public void Polygon(IReadOnlyList<(float X, float Y)> points, Rgba c) { }
-    public void Glow(float cx, float cy, float radius, Rgba c) { }
-    public void Text(IParaLayout layout, IReadOnlyList<StyleRun> runs, float x, float y) => Texts.Add(((FakeLayout)layout).Text);
-    public void Svg(string svg, Rect4 r) => Svgs.Add(svg);
-    public void Image(string src, Rect4 r, float radius, bool cover) { }
-    public void BrokenImage(float x, float y) => Broken++;
-    public void Path(IReadOnlyList<Hover.Notch.PathCmd> path, Rgba? fill, Rgba? stroke, float strokeWidth, bool evenOdd, float[]? dash) { }
-    public void Label(string text, float x, float y, float size, float weight, Rgba c, Align anchor, FontFamily family) => Texts.Add(text);
+    public void Fill(Rect4 r, float[] radius, Rgba c) { Fills++; Boxes.Add((Moved(r), c)); Ops.Add($"fill {r} {c}"); }
+    public void Stroke(Rect4 r, float[] radius, float width, Rgba c) => Ops.Add($"stroke {r} {width} {c}");
+    public void Line(IReadOnlyList<(float X, float Y)> points, float width, Rgba c) => Ops.Add($"line {points.Count} {points.FirstOrDefault()} {width} {c}");
+    public void Polygon(IReadOnlyList<(float X, float Y)> points, Rgba c) => Ops.Add($"polygon {points.Count} {points.FirstOrDefault()} {c}");
+    public void Glow(float cx, float cy, float radius, Rgba c) => Ops.Add($"glow {cx},{cy} {radius} {c}");
+    public void Text(IParaLayout layout, IReadOnlyList<StyleRun> runs, float x, float y)
+    {
+        var text = ((FakeLayout)layout).Text;
+        Texts.Add(text);
+        Drawn.Add(new DrawnText(text, Moved(new Rect4(x, y, layout.Width, layout.Height)), Clip()));
+        Ops.Add($"text {text} {x},{y} {string.Join('/', runs.Select(r => r.Color))}");
+    }
+    public void Svg(string svg, Rect4 r) { Svgs.Add(svg); Ops.Add($"svg {svg.GetHashCode()} {r}"); }
+    public void Image(string src, Rect4 r, float radius, bool cover) => Ops.Add($"image {src.Length} {r}");
+    public void BrokenImage(float x, float y) { Broken++; Ops.Add("broken"); }
+    public void Path(IReadOnlyList<Hover.Notch.PathCmd> path, Rgba? fill, Rgba? stroke, float strokeWidth, bool evenOdd, float[]? dash) => Ops.Add($"path {path.Count} {fill} {stroke}");
+    public void Label(string text, float x, float y, float size, float weight, Rgba c, Align anchor, FontFamily family)
+    {
+        Texts.Add(text);
+        Ops.Add($"label {text} {x},{y} {c}");
+    }
 
     public bool Balanced => clips == 0;
 }

@@ -97,6 +97,7 @@ static class Native
     [DllImport("user32.dll")] public static extern bool GetWindowRect(nint hwnd, out RECT rect);
     [DllImport("user32.dll")] public static extern bool IsWindowVisible(nint hwnd);
     [DllImport("user32.dll")] public static extern nint LoadCursorW(nint instance, nint name);
+    [DllImport("user32.dll")] public static extern nint SetCursor(nint cursor);
     [DllImport("user32.dll")] public static extern bool GetCursorPos(out POINT p);
     [DllImport("user32.dll")] public static extern short GetAsyncKeyState(int vk);
     [DllImport("user32.dll")] public static extern short GetKeyState(int vk);
