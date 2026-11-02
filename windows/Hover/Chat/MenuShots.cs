@@ -150,6 +150,8 @@ static class MenuShots
             Paint(1200, 720);
             if (ui.Find("showSide") is not null) ui.Click("showSide");
             Paint(1200, 720);
+            // The picture before folded the first folder; this one is of a row, so the folder is opened again.
+            if (ui.Targets.All(t => t.Id != "row") && ui.Targets.FirstOrDefault(t => t.Id == "head") is { Id: "head" } shut) { ui.Click("head", shut.N); Paint(1200, 720); }
             if (ui.Targets.FirstOrDefault(t => t.Id == "row") is { Id: "row" } row) ui.PointerMove(row.R.X + 60, row.R.Y + row.R.H / 2);
             Paint(1200, 720);
         }, false);

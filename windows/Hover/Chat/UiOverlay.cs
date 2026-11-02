@@ -72,7 +72,7 @@ sealed class UiOverlay : Grid, IDisposable
         host.AddHandler(PointerPressedEvent, new PointerEventHandler(OnPressed), true);
         host.AddHandler(PointerReleasedEvent, new PointerEventHandler(OnReleased), true);
         host.AddHandler(PointerCanceledEvent, new PointerEventHandler(OnReleased), true);
-        host.AddHandler(PointerExitedEvent, new PointerEventHandler((_, _) => { core.Ui.PointerLeave(); ProtectedCursor = null; (host as CursorGrid)?.Show(null); }), true);
+        host.AddHandler(PointerExitedEvent, new PointerEventHandler((_, _) => { core.Ui.PointerLeave(); ProtectedCursor = null; (host as CursorGrid)?.Show(null); PointerShape.Shape = 0; }), true);
         host.AddHandler(PointerWheelChangedEvent, new PointerEventHandler(OnWheel), true);
         host.AddHandler(KeyDownEvent, new KeyEventHandler(OnKeyDown), true);
         host.CharacterReceived += OnChar;
@@ -168,9 +168,19 @@ sealed class UiOverlay : Grid, IDisposable
     static readonly Microsoft.UI.Input.InputCursor TextCursor = Microsoft.UI.Input.InputSystemCursor.Create(Microsoft.UI.Input.InputSystemCursorShape.IBeam);
     static readonly Microsoft.UI.Input.InputCursor ResizeCursor = Microsoft.UI.Input.InputSystemCursor.Create(Microsoft.UI.Input.InputSystemCursorShape.SizeWestEast);
 
+    bool shapeApplied;
+
     void ShowCursor(float x, float y)
     {
-        var cursor = core.Ui.CursorAt(x, y) switch
+        var shape = core.Ui.CursorAt(x, y);
+        // The windows answer the system's question with this shape (see PointerShape); the window is taken in on the first move.
+        if (!shapeApplied && WindowHandle != 0)
+        {
+            shapeApplied = true;
+            PointerShape.Apply(WindowHandle);
+        }
+        PointerShape.Shape = (int)shape;
+        var cursor = shape switch
         {
             Hover.Chat.Ui.UiCursor.Hand => HandCursor,
             Hover.Chat.Ui.UiCursor.Text => TextCursor,
