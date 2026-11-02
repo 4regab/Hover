@@ -19,6 +19,8 @@ public sealed partial class OfficeUi
     readonly Dictionary<string, AskState> asks = [];
     EditBox? customBox;
     int customQ;
+    /// <summary>The question the custom-answer box in use belongs to, so Enter answers that one and not the first that asks.</summary>
+    string customAsk = "";
 
     AskState AskOf(AskInfo a)
     {

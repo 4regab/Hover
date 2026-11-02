@@ -654,7 +654,7 @@ public sealed partial class OfficeUi
                 if (focus == Focus.Reply) SendReply();
                 else if (focus == Focus.Task) StartTask();
                 else if (focus == Focus.Title) CommitRename();
-                else if (focus == Focus.Custom) WithAsk("", SendQuestion);
+                else if (focus == Focus.Custom && customAsk.Length > 0) WithAsk(customAsk, SendQuestion);
                 else if (focus == Focus.Desk) DeskEnter(shift);
                 return true;
             case UiKey.Backspace: box.Backspace(ctrl, now); break;

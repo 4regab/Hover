@@ -560,6 +560,7 @@ public sealed partial class OfficeUi
                     var st = AskOf(a);
                     customBox = st.Custom[t.N];
                     customQ = t.N;
+                    customAsk = a.Id;
                     focus = Focus.Custom;
                 });
                 break;
