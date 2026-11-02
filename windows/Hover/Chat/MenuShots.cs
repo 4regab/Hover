@@ -120,6 +120,36 @@ static class MenuShots
             Paint(828, 346);
         });
 
+        // The same list with "deep" typed in its search box: the matches stay.
+        await Shot("office-repo-menu-search", 1200, 480, () =>
+        {
+            Box(1200, 480);
+            ui.Click("cloud");
+            Paint(1200, 480);
+            ui.Click("pillRepo");
+            Paint(1200, 480);
+            foreach (var ch in "deep") ui.Char(ch.ToString());
+        });
+        // A box with no folder: the chip says Choose a folder, in amber.
+        await Shot("office-fab-no-folder", 828, 346, () => { Reset(828, 346); ui.Accept(Long() with { Folder = null }); Paint(828, 346); ui.Click("fab"); Paint(828, 346); ui.Char("Tidy the imports again"); });
+        // The chat view's list: one heading per folder, a folded folder, and the delete button under the pointer.
+        await Shot("chat-view-sidebar-folded", 1200, 720, () =>
+        {
+            Reset(1200, 720);
+            ui.ChatView = true;
+            Paint(1200, 720);
+            if (ui.Targets.FirstOrDefault(t => t.Id == "head") is { Id: "head" } head) ui.Click("head", head.N);
+            Paint(1200, 720);
+        }, false);
+        await Shot("chat-view-sidebar-delete", 1200, 720, () =>
+        {
+            Reset(1200, 720);
+            ui.ChatView = true;
+            Paint(1200, 720);
+            if (ui.Targets.FirstOrDefault(t => t.Id == "row") is { Id: "row" } row) ui.PointerMove(row.R.X + 60, row.R.Y + row.R.H / 2);
+            Paint(1200, 720);
+        }, false);
+
         // The folders (with Open folder… under them) and the new-task bar with long names, small.
         await Shot("chat-view-home-project-menu-min", 880, 480, () => { Reset(880, 480); ui.ChatView = true; Paint(880, 480); ui.Click("pillFolder"); }, false);
         await Shot("office-fab-open-long-model", 1200, 480, () => { Box(1200, 480); ui.Char("Tidy the imports again"); });
