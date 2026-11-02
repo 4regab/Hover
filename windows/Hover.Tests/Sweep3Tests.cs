@@ -749,4 +749,125 @@ public class Sweep3Tests
         end.Frame();
         Assert.True(end.Ui.Thread.Height - end.Ui.ScrollY - end.Ui.ThreadArea.H < 2, "still at the end");
     }
+
+    // MARK: Undo in a box of words
+
+    [Fact]
+    public void A_box_undoes_typing_a_word_at_a_time_and_a_pause_starts_a_new_step()
+    {
+        var box = new EditBox { Multiline = true };
+        double t = 0;
+        void Type(string text) { foreach (var ch in text) { box.Insert(ch.ToString(), t); t += 80; } }
+        Type("hello world again");
+        Assert.True(box.CanUndo);
+        // A word and the spaces after it are one step.
+        Assert.True(box.Undo(t));
+        Assert.Equal("hello world ", box.Text);
+        Assert.True(box.Undo(t));
+        Assert.Equal("hello ", box.Text);
+        Assert.True(box.Undo(t));
+        Assert.Equal("", box.Text);
+        Assert.False(box.Undo(t));
+        // And back again.
+        Assert.True(box.Redo(t));
+        Assert.Equal("hello ", box.Text);
+        Assert.True(box.Redo(t));
+        Assert.True(box.Redo(t));
+        Assert.Equal("hello world again", box.Text);
+        Assert.Equal(box.Text.Length, box.Caret);
+        Assert.False(box.Redo(t));
+
+        // A pause of a second ends a step in the middle of a word.
+        var slow = new EditBox();
+        slow.Insert("a", 0);
+        slow.Insert("b", 200);
+        slow.Insert("c", 2500);
+        slow.Insert("d", 2700);
+        Assert.True(slow.Undo(3000));
+        Assert.Equal("ab", slow.Text);
+        Assert.True(slow.Undo(3000));
+        Assert.Equal("", slow.Text);
+    }
+
+    [Fact]
+    public void A_box_undoes_a_run_of_Backspace_a_paste_and_a_cut_each_as_one_step_and_a_new_edit_drops_the_redo()
+    {
+        var box = new EditBox { Multiline = true };
+        box.SetText("one two three", caretAtEnd: true);
+        Assert.False(box.CanUndo, "words put in by the program are not an edit");
+        box.Backspace(false, 10);
+        box.Backspace(false, 20);
+        box.Backspace(false, 30);
+        Assert.Equal("one two th", box.Text);
+        Assert.True(box.Undo(40));
+        Assert.Equal("one two three", box.Text);
+        Assert.Equal(13, box.Caret);
+        Assert.False(box.Undo(40));
+
+        // A paste is a step; so is a cut, with its selection back after the undo.
+        box.Insert("PASTED TEXT", 100);
+        Assert.Equal("one two threePASTED TEXT", box.Text);
+        box.SelectAll();
+        var cut = box.Cut(200);
+        Assert.Equal("one two threePASTED TEXT", cut);
+        Assert.Equal("", box.Text);
+        Assert.True(box.Undo(210));
+        Assert.Equal("one two threePASTED TEXT", box.Text);
+        Assert.True(box.Undo(210));
+        Assert.Equal("one two three", box.Text);
+        Assert.True(box.CanRedo);
+
+        // Typing after an undo drops what could have been put back.
+        box.Insert("x", 300);
+        Assert.False(box.CanRedo);
+
+        // The caret moving ends a step: the next letters are another one.
+        var moved = new EditBox();
+        moved.Insert("a", 0);
+        moved.Insert("b", 50);
+        moved.Move(Dir.Left, false, false, null, 60);
+        moved.Insert("c", 70);
+        Assert.Equal("acb", moved.Text);
+        Assert.True(moved.Undo(80));
+        Assert.Equal("ab", moved.Text);
+
+        // Delete (forward) runs join too.
+        var fwd = new EditBox();
+        fwd.SetText("abcdef", caretAtEnd: false);
+        fwd.Delete(false, 0);
+        fwd.Delete(false, 10);
+        Assert.Equal("cdef", fwd.Text);
+        Assert.True(fwd.Undo(20));
+        Assert.Equal("abcdef", fwd.Text);
+    }
+
+    [Fact]
+    public void Ctrl_Z_and_Ctrl_Y_undo_and_redo_in_the_reply_box_and_Ctrl_Shift_Z_redoes()
+    {
+        var h = new PanelHarness();
+        h.State(PanelHarness.Session(1, "done", null, PanelHarness.Turn("Tidy", "Done.")));
+        h.Ui.ChatView = true;
+        h.Ui.OpenChat(1);
+        h.Frame();
+        Assert.True(h.Click("compose"));
+        h.Type("first words");
+        h.Now += 3000;
+        h.Frame();
+        Assert.Equal("first words", h.Ui.ReplyText);
+        Assert.True(h.Key(UiKey.Z, UiMods.Control));
+        Assert.Equal("first ", h.Ui.ReplyText);
+        Assert.True(h.Key(UiKey.Y, UiMods.Control));
+        Assert.Equal("first words", h.Ui.ReplyText);
+        Assert.True(h.Key(UiKey.Z, UiMods.Control));
+        Assert.True(h.Key(UiKey.Z, UiMods.Control | UiMods.Shift));
+        Assert.Equal("first words", h.Ui.ReplyText);
+        // With nothing to take back the key is still the box's.
+        for (var i = 0; i < 10; i++) h.Key(UiKey.Z, UiMods.Control);
+        Assert.Equal("", h.Ui.ReplyText);
+        Assert.True(h.Key(UiKey.Z, UiMods.Control));
+        // Sending empties the box for good: undo does not bring the sent words back.
+        h.Type("send me");
+        h.Key(UiKey.Enter);
+        Assert.Contains(h.Sent, c => c is ReplyCommand { Text: "send me" });
+    }
 }

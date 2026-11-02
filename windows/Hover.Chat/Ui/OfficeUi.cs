@@ -734,6 +734,12 @@ public sealed partial class OfficeUi
                 var cut = box.Cut(now);
                 if (cut.Length > 0) env.Clipboard.Set(cut);
                 break;
+            case UiKey.Z when ctrl:
+                if (!(shift ? box.Redo(now) : box.Undo(now))) return true;
+                break;
+            case UiKey.Y when ctrl:
+                if (!box.Redo(now)) return true;
+                break;
             case UiKey.V when ctrl:
                 if ((focus == Focus.Reply || focus == Focus.Task) && PasteShot(focus == Focus.Task)) break;
                 if (env.Clipboard.Text() is { Length: > 0 } text) box.Insert(text, now);

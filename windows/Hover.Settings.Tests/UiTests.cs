@@ -268,6 +268,23 @@ public class UiTests
     }
 
     [Fact]
+    public void Ctrl_Z_and_Ctrl_Y_undo_and_redo_typing_in_a_field()
+    {
+        var p = new Page("""{"Voice":{"Speech":"Cloud","CleanupModel":"old"}}""");
+        p.Ctl.Open(Section.Voice);
+        p.Paint();
+        p.Click("Field", "VoiceCleanupModel");
+        p.Type("1234");
+        Assert.True(p.Ui.Texts.Contains("old1234"));
+        p.Key(UiKey.Z, UiMods.Control);
+        Assert.True(p.Ui.Texts.Contains("old"), "typing is undone in one step");
+        p.Key(UiKey.Y, UiMods.Control);
+        Assert.True(p.Ui.Texts.Contains("old1234"));
+        p.Key(UiKey.Z, UiMods.Control | UiMods.Shift);
+        Assert.True(p.Ui.Texts.Contains("old1234"));
+    }
+
+    [Fact]
     public void A_shortcut_records_the_next_chord_and_says_what_is_missing()
     {
         var p = new Page();

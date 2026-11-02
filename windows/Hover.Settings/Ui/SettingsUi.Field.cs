@@ -234,6 +234,12 @@ public sealed partial class SettingsUi
                 case UiKey.V when word:
                     if (env.Clipboard.Text() is { Length: > 0 } clip) box.Insert(clip, now);
                     break;
+                case UiKey.Z when word:
+                    if (!(shift ? box.Redo(now) : box.Undo(now))) return true;
+                    break;
+                case UiKey.Y when word:
+                    if (!box.Redo(now)) return true;
+                    break;
                 case UiKey.Tab:
                     // On to the next control (back with Shift): the box saves what it holds.
                     MoveFocus(shift ? -1 : 1);
