@@ -83,6 +83,17 @@ public sealed class App : Application, IXamlMetadataProvider
         app.queue.TryEnqueue(app.OpenDashboard);
     }
 
+    /// <summary><c>hoverai.exe --quit</c> was run: Hover ends in order. Callable from any thread.</summary>
+    public static void RequestQuit()
+    {
+        HostLog.Line("a quit was asked for (hoverai.exe --quit)");
+        App? app;
+        lock (Gate) app = current;
+        // Before the app is up there is nothing to end in order; the process ends.
+        if (app?.queue is null) Environment.Exit(0);
+        else app.queue.TryEnqueue(() => _ = app.QuitAsync());
+    }
+
     protected override void OnLaunched(LaunchActivatedEventArgs args)
     {
         // The controls' own styles; with no App.xaml they are merged here. Application.Resources

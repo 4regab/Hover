@@ -103,6 +103,11 @@ procedure StopHover;
 var
   Code: Integer;
 begin
+  { The C# app is asked to end in order first (its agents are told, the history and the settings are written): its own
+    hoverai.dll beside it says which program this is, because the Go app and 2.x do not know --quit. Up to 20 seconds; a
+    program that is still there after that is ended below. }
+  if FileExists(ExpandConstant('{app}\hoverai.dll')) and FileExists(ExpandConstant('{app}\{#MyAppExe}')) then
+    Exec(ExpandConstant('{app}\{#MyAppExe}'), '--quit', '', SW_HIDE, ewWaitUntilTerminated, Code);
   Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /T /IM {#MyAppExe}', '', SW_HIDE, ewWaitUntilTerminated, Code);
   Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /T /IM {#OldAppExe}', '', SW_HIDE, ewWaitUntilTerminated, Code);
   Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /T /IM {#BackendExe}', '', SW_HIDE, ewWaitUntilTerminated, Code);

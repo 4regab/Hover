@@ -24,12 +24,16 @@ public sealed record LaunchOptions
     /// <summary><c>--settings</c>: open the app window on Settings (as the tray menu's Settings… does).</summary>
     public bool Settings { get; init; }
 
+    /// <summary><c>--quit</c>: ask the running copy to end in order and wait for it, then exit (the setup does this before it replaces the files).</summary>
+    public bool Quit { get; init; }
+
     public static LaunchOptions Parse(string[] args)
     {
         string? shots = null;
         var background = false;
         var dashboard = false;
         var settings = false;
+        var quit = false;
         for (var i = 0; i < args.Length; i++)
         {
             switch (args[i])
@@ -46,8 +50,11 @@ public sealed record LaunchOptions
                 case "--settings":
                     settings = true;
                     break;
+                case "--quit":
+                    quit = true;
+                    break;
             }
         }
-        return new LaunchOptions { ShotsDirectory = shots, Background = background, Dashboard = dashboard, Settings = settings };
+        return new LaunchOptions { ShotsDirectory = shots, Background = background, Dashboard = dashboard, Settings = settings, Quit = quit };
     }
 }

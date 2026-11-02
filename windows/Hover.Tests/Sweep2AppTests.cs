@@ -135,8 +135,11 @@ public class Sweep2AppTests(ITestOutputHelper output)
         Assert.True(await Until(() => run.Log().Contains("notch ready")), "the notch came up\n" + Why());
         var notch = Desktop.Notch();
         Assert.NotEqual(0, notch);
-        Assert.True(await Until(() => Desktop.TrayIconRect(notch, out _) is not null, 20_000), "the shell has the icon at the start\n" + Why());
-        var added = Count(run.Log(), "tray icon added");
+        // The app asks the shell when it adds the icon, and says so (a change to an icon works only on one the shell has). Where the icon sits
+        // can also be asked from outside, but some shells answer "not shown" for an icon in the overflow, so that is only written down.
+        Assert.Contains("tray icon added (the shell has it: True)", run.Log());
+        var added = Count(run.Log(), "tray icon added (the shell has it: True)");
+        output.WriteLine($"before: Shell_NotifyIconGetRect says {(Desktop.TrayIconRect(notch, out var first) is { } r0 ? $"{r0.Left},{r0.Top}" : $"no icon (0x{first:X8})")}");
 
         try
         {
@@ -153,8 +156,9 @@ public class Sweep2AppTests(ITestOutputHelper output)
                 await Until(() => Desktop.HasTaskbar(), 30_000);
             }
             // The icon is there again, and the app says it put it back.
-            var back = await Until(() => Count(run.Log(), "tray icon added") > added && Desktop.TrayIconRect(notch, out _) is not null, 60_000);
+            var back = await Until(() => Count(run.Log(), "tray icon added (the shell has it: True)") > added, 60_000);
             output.WriteLine(Why());
+            output.WriteLine($"after: Shell_NotifyIconGetRect says {(Desktop.TrayIconRect(notch, out var second) is { } r1 ? $"{r1.Left},{r1.Top}" : $"no icon (0x{second:X8})")}");
             Assert.True(back, "Hover's tray icon did not come back after Explorer restarted\n" + Why());
             Assert.Contains("the taskbar was made again", run.Log());
         }
@@ -186,6 +190,28 @@ public class Sweep2AppTests(ITestOutputHelper output)
         output.WriteLine($"window {r.Left},{r.Top} to {r.Right},{r.Bottom}; work area {work.Left},{work.Top} to {work.Right},{work.Bottom}");
         Assert.InRange(Math.Abs(cx - wx), 0, 4);
         Assert.InRange(Math.Abs(cy - wy), 0, 4);
+    }
+
+    // MARK: The setup asks Hover to quit
+
+    /// <summary>`hoverai.exe --quit`, as the setup runs it before it replaces the files: the running copy ends in order, and the command waits.</summary>
+    [WindowsFact]
+    public async Task Hover_quit_ends_the_running_copy_in_order_and_its_backend_with_it()
+    {
+        if (Skip(output)) return;
+        using var run = new Run(["--background"]);
+        string Why() => "log:\n" + run.Log();
+        Assert.True(await Until(() => run.Log().Contains("notch ready")), "the notch came up\n" + Why());
+        Assert.True(await Until(() => run.Log().Contains("backend: The agent backend is ready")), "the backend ready\n" + Why());
+
+        var ask = Process.Start(new ProcessStartInfo(TestEnvironment.AppExe!, "--quit") { UseShellExecute = false, WorkingDirectory = Path.GetDirectoryName(TestEnvironment.AppExe!)! })!;
+        Assert.True(ask.WaitForExit(40_000), "hoverai.exe --quit did not return\n" + Why());
+        Assert.Equal(0, ask.ExitCode);
+        Assert.True(run.App.WaitForExit(15_000), "the running copy ended\n" + Why());
+        Assert.Equal(0, run.App.ExitCode);
+        var log = run.Log();
+        Assert.Contains("a quit was asked for", log);
+        Assert.Matches(@"backend stopped \(exit code 0\)", log);
     }
 
     // MARK: Windows light and dark
@@ -303,9 +329,11 @@ public class Sweep2AppTests(ITestOutputHelper output)
         string classes = "";
         Assert.True(await Until(() => IsPicker(run.App, out classes), 20_000), "a dialog window\n" + Why());
         output.WriteLine("the dialog holds: " + classes);
-        // The Explorer-style picker is drawn by DirectUI; the old tree picker holds a tree view instead.
+        // The Explorer-style picker is drawn by DirectUI and has the address bar (breadcrumbs) and the search box; the old window that
+        // SHBrowseForFolder shows is a tree in a small dialog, with neither. (This picker's side list is a tree view too.)
         Assert.Contains("DirectUIHWND", classes);
-        Assert.DoesNotContain("SysTreeView32", classes);
+        Assert.Contains("Address Band Root", classes);
+        Assert.Contains("Search Box", classes);
 
         Input.Key(Input.Escape);
         Assert.True(await Until(() => !IsPicker(run.App, out _), 10_000), "the dialog closing on Escape");
