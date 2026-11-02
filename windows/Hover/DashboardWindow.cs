@@ -203,17 +203,36 @@ public sealed class DashboardWindow : Window
         menuBar.Resources["MenuBarItemForegroundPressed"] = ink;
         menuBar.Resources["MenuBarItemForegroundSelected"] = ink;
         menuBar.VerticalAlignment = VerticalAlignment.Center;
+        // The words start 6 pixels in, and sit 1 pixel apart.
+        menuBar.Margin = new Thickness(6, 0, 0, 0);
         foreach (var item in menuBar.Items)
         {
-            item.FontSize = 12.5;
             item.Height = 26;
-            item.Padding = new Thickness(9, 0, 9, 0);
+            item.Margin = new Thickness(0, 0, 1, 0);
             item.CornerRadius = new CornerRadius(6);
             item.VerticalAlignment = VerticalAlignment.Center;
+            // A word is a button inside the item, with its own size and padding (10 and 4 pixels): the word is 12.5 pixels, 9 pixels from each side.
+            item.Loaded += (_, _) =>
+            {
+                if (FindButton(item) is not { } button) return;
+                button.FontSize = 12.5;
+                button.Padding = new Thickness(9, 0, 9, 0);
+            };
             // The Go bar has no focus ring; the word lights while its menu is out. (The system draws a white ring on the first word when
             // the window opens, as the first thing that can have the keyboard.)
             item.FocusVisualPrimaryThickness = item.FocusVisualSecondaryThickness = new Thickness(0);
         }
+    }
+
+    static Button? FindButton(DependencyObject parent)
+    {
+        for (var i = 0; i < Microsoft.UI.Xaml.Media.VisualTreeHelper.GetChildrenCount(parent); i++)
+        {
+            var child = Microsoft.UI.Xaml.Media.VisualTreeHelper.GetChild(parent, i);
+            if (child is Button button) return button;
+            if (FindButton(child) is { } found) return found;
+        }
+        return null;
     }
 
     /// <summary>The backend's problem, if it has one, in the bar; nothing while it is starting or well.</summary>
