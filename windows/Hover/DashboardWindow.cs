@@ -40,7 +40,7 @@ public sealed class DashboardWindow : Window
     internal DashboardWindow(string dataDir, BackendSession backend, OfficeHost? office = null, UiCore? panels = null, SettingsPane? settings = null)
     {
         Title = "Hover";
-        AppWindow.Resize(new SizeInt32(960, 600));
+        WindowMinimum.Apply(AppWindow, WinRT.Interop.WindowNative.GetWindowHandle(this));
         Activated += (_, e) => IsActive = e.WindowActivationState != WindowActivationState.Deactivated;
 
         // One title bar, as the Go app has (internal/ui/dashboard.go): Hover's dark bar holds File, Settings and Help on the left, and

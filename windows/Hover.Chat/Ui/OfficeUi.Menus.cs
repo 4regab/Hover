@@ -5,7 +5,11 @@ namespace Hover.Chat.Ui;
 public sealed partial class OfficeUi
 {
     /// <summary>A row of a menu. <paramref name="Pin"/>: the leading and trailing pinned rows stay in view while the rows between them scroll.</summary>
-    sealed record MenuRow(string Label, string Id = "", string Note = "", bool On = false, bool Header = false, bool Rule = false, string? Mark = null, bool Disabled = false, bool Pin = false, string? Icon = null);
+    sealed record MenuRow(string Label, string Id = "", string Note = "", bool On = false, bool Header = false, bool Rule = false, string? Mark = null, bool Disabled = false, bool Pin = false, string? Icon = null, bool Search = false)
+    {
+        /// <summary>A row that can be picked: not a heading, a rule, a note or the search box.</summary>
+        public bool Pickable => !Header && !Rule && !Disabled && !Search;
+    }
 
     sealed class Menu
     {
@@ -25,6 +29,11 @@ public sealed partial class OfficeUi
         public bool RevealHot;
         /// <summary>Where the last frame drew the box, and the part of it that scrolls.</summary>
         public Rect4 Box, List;
+        /// <summary>The search box of a menu that has one (the Kiro Web repositories): it has the keys while the menu is open.</summary>
+        public EditBox? Search;
+        public ShapedText? SearchLayout;
+        public Rect4 SearchArea;
+        public float SearchScroll;
     }
 
     Menu? menu;
@@ -64,6 +73,7 @@ public sealed partial class OfficeUi
     static float RowHeight(Pen pen, MenuRow r, float w)
     {
         if (r.Rule) return 9;
+        if (r.Search) return 36;
         if (r.Header) return 24;
         if (r.Note.Length == 0) return 30;
         var lh = pen.LineHeight(Pen.F(12.5, 600, Pen.Ink));
@@ -283,6 +293,22 @@ public sealed partial class OfficeUi
             return;
         }
         if (r.Rule) { pen.Box(x + 10, cy + 4, mw - 20, 1, 0, Rgba.Of(0xffffff, 0.06)); return; }
+        if (r.Search && m.Search is { } search)
+        {
+            // The Go menu's box (internal/ui/officenew.go repoMenu): 32 high, the keyboard is in it from the start, the placeholder is "Search repositories".
+            var field = new Rect4(x + 6, cy, mw - 12, 32);
+            pen.Box(field, 8, new Rgba(0xff, 0xff, 0xff, 0x0f));
+            pen.Border(field.X, field.Y, field.W, field.H, 8, 1, Rgba.Of(0xc4a2ff, 0.55));
+            var look = Pen.F(12.5, 400, Pen.Ink);
+            var line = pen.LineHeight(look);
+            var area = new Rect4(field.X + 10, field.Y + (32 - line) / 2, field.W - 20, line);
+            var shaped = pen.Shape(search.Text.Length == 0 ? " " : search.Text, look, area.W);
+            m.SearchScroll = search.ScrollFor(shaped, area.H, m.SearchScroll);
+            m.SearchLayout = search.Paint(pen, area, look, "Search repositories", true, now, m.SearchScroll);
+            m.SearchArea = area;
+            Add(field, "menuSearch");
+            return;
+        }
         if (r.Header)
         {
             pen.Text(r.Label.ToUpperInvariant(), x + 14, cy + (rh - pen.LineHeight(Pen.F(10.5, 600, Pen.Faint))) / 2, Pen.F(10.5, 600, Pen.Faint));
@@ -402,7 +428,17 @@ public sealed partial class OfficeUi
                 OpenRepoMenu(t.R);
                 break;
             case "pillFolder":
-                OpenFolderMenu(t.R);
+                // The Go box's folder chip opens the system's folder dialog at once. Here it does so while the box has no folder; with one,
+                // it opens the list of recent folders (which ends in "Open folder…"). The start screen's chip is always the list.
+                if (TaskPicks().Folder.Length == 0 && !(ChatView && OpenId is null && openKey is null)) PickFolderNow();
+                else OpenFolderMenu(t.R);
+                break;
+            case "menuSearch":
+                if (menu is { Search: { } sb, SearchLayout: { } sl } sm)
+                {
+                    sb.Press(sl, px - sm.SearchArea.X, py - sm.SearchArea.Y + sm.SearchScroll, clicksNow, (modsNow & UiMods.Shift) != 0, now);
+                    sm.Hot = -1;
+                }
                 break;
             case "pillAccess":
                 {
@@ -615,16 +651,78 @@ public sealed partial class OfficeUi
         return rows;
     }
 
+    /// <summary>A repository matches what is typed when it contains the words, in any case; nothing typed matches all (internal/shell/newtask.go repoMatches).</summary>
+    public static bool RepoMatches(string name, string query)
+    {
+        var q = query.Trim();
+        return q.Length == 0 || name.Contains(q, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// The Kiro Web repositories (internal/ui/officenew.go repoMenu): the heading "Kiro Web clones", a search box that has the keyboard,
+    /// "Empty workspace", then the repositories that match what is typed. Enter picks the first match.
+    /// </summary>
     void OpenRepoMenu(Rect4 at)
     {
+        var search = new EditBox();
         List<MenuRow> Rows()
         {
-            var rows = new List<MenuRow> { new("Empty workspace", "", "Starts with no repository.", string.IsNullOrEmpty(taskRepo)) };
-            foreach (var r in repos) rows.Add(new MenuRow(r, r, On: r == taskRepo));
-            if (reposNote.Length > 0) rows.Add(new MenuRow(reposNote, Disabled: true));
+            var rows = new List<MenuRow> { new("Kiro Web clones", Header: true, Pin: true), new("", Search: true, Pin: true) };
+            rows.Add(new MenuRow("Empty workspace", "", "Starts with no repository.", string.IsNullOrEmpty(taskRepo)));
+            var query = search.Text.Trim();
+            var matches = repos.Where(r => RepoMatches(r, query)).ToList();
+            foreach (var r in matches) rows.Add(new MenuRow(r, r, On: r == taskRepo));
+            if (repos.Count > 0 && matches.Count == 0) rows.Add(new MenuRow($"No repository matches “{query}”.", Disabled: true, Pin: true));
+            else if (reposNote.Length > 0) rows.Add(new MenuRow(reposNote, Disabled: true, Pin: true));
             return rows;
         }
         OpenMenu("repo", at, Rows(), true, 300, build: Rows);
+        menu!.Search = search;
+    }
+
+    /// <summary>
+    /// A key in a menu that has a search box: the editing keys go to the box, and Enter picks the first repository that matches what is
+    /// typed when no row is lit (and only when something is typed, as the Go menu does). The Up and Down keys stay the menu's.
+    /// </summary>
+    bool MenuSearchKey(Menu m, UiKey key, UiMods mods)
+    {
+        if (m.Search is not { } box) return false;
+        var ctrl = (mods & UiMods.Control) != 0;
+        var shift = (mods & UiMods.Shift) != 0;
+        var before = box.Version;
+        switch (key)
+        {
+            case UiKey.Backspace: box.Backspace(ctrl, now); break;
+            case UiKey.Delete: box.Delete(ctrl, now); break;
+            case UiKey.Left: box.Move(Dir.Left, shift, ctrl, m.SearchLayout, now); break;
+            case UiKey.Right: box.Move(Dir.Right, shift, ctrl, m.SearchLayout, now); break;
+            case UiKey.Home: box.Move(Dir.Home, shift, ctrl, m.SearchLayout, now); break;
+            case UiKey.End: box.Move(Dir.End, shift, ctrl, m.SearchLayout, now); break;
+            case UiKey.A when ctrl: box.SelectAll(); break;
+            case UiKey.C when ctrl:
+                if (box.HasSelection) env.Clipboard.Set(box.SelectedText());
+                break;
+            case UiKey.X when ctrl:
+                var cut = box.Cut(now);
+                if (cut.Length > 0) env.Clipboard.Set(cut);
+                break;
+            case UiKey.V when ctrl:
+                if (env.Clipboard.Text() is { Length: > 0 } text) box.Insert(text, now);
+                break;
+            case UiKey.Enter:
+                if (m.Hot >= 0) return false;
+                if (box.Text.Trim().Length > 0 && m.Rows.FirstOrDefault(r => r.Pickable && r.Id.Length > 0) is { } first) MenuPick(m, first);
+                break;
+            default:
+                return false;
+        }
+        if (box.Version != before)
+        {
+            m.Scroll.ToStart();
+            m.Hot = -1;
+        }
+        Dirty = true;
+        return true;
     }
 
     void OpenModelMenu(Rect4 at)
@@ -718,7 +816,7 @@ public sealed partial class OfficeUi
     void MenuKey(Menu m, UiKey key)
     {
         var n = m.Rows.Count;
-        bool Pickable(int i) => m.Rows[i] is { Header: false, Rule: false, Disabled: false };
+        bool Pickable(int i) => m.Rows[i].Pickable;
         int Next(int from, int dir)
         {
             for (var i = from + dir; i >= 0 && i < n; i += dir)

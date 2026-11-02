@@ -148,15 +148,14 @@ public class StartTaskTests
         Assert.True(rig.Click("menu", s: "Codex"));
         Assert.True(rig.Click("pillAccess"));
         Assert.True(rig.Click("menu", s: "Ask always"));
-        Assert.True(rig.Click("pillFolder"));
-        Assert.Contains("Open folder…", rig.Canvas.Texts);
-        // With the dialog cancelled nothing is picked.
+        // No folder yet: the chip says so, and a click opens the folder dialog at once (as the Go box does). Cancelled, nothing is picked.
+        Assert.Contains("Choose a folder", rig.Canvas.Texts);
         rig.Chosen = null;
-        Assert.True(rig.Click("menu", s: "Open folder…"));
-        Assert.Null(ui.OpenMenuKind);
         Assert.True(rig.Click("pillFolder"));
+        Assert.Null(ui.OpenMenuKind);
+        Assert.Contains("Choose a folder", rig.Canvas.Texts);
         rig.Chosen = rig.Project;
-        Assert.True(rig.Click("menu", s: "Open folder…"));
+        Assert.True(rig.Click("pillFolder"));
         Assert.Contains("project", rig.Canvas.Texts);
 
         // An empty box does not send. Typed words do, by the round button.

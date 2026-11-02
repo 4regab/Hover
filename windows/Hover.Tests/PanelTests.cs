@@ -20,7 +20,10 @@ sealed class RecordingCanvas : ICanvas
     public void PopMove() { }
     public void PushOpacity(float opacity) { }
     public void PopOpacity() { }
-    public void Fill(Rect4 r, float[] radius, Rgba c) => Fills++;
+    /// <summary>Every filled box of the frame, in the order drawn, for the checks of what is on the screen.</summary>
+    public readonly List<(Rect4 R, Rgba C)> Boxes = [];
+
+    public void Fill(Rect4 r, float[] radius, Rgba c) { Fills++; Boxes.Add((r, c)); }
     public void Stroke(Rect4 r, float[] radius, float width, Rgba c) { }
     public void Line(IReadOnlyList<(float X, float Y)> points, float width, Rgba c) { }
     public void Polygon(IReadOnlyList<(float X, float Y)> points, Rgba c) { }
@@ -80,8 +83,13 @@ sealed class PanelHarness
             SetBeats = on => BeatsOn = on,
             OpenSettings = () => SettingsOpened++,
             Utc = () => new DateTime(2026, 11, 1, 7, 20, 0, DateTimeKind.Utc),
+            PickFolder = () => { FolderAsked++; return FolderAnswer; },
         });
     }
+
+    /// <summary>What the made-up folder dialog answers (null: cancelled), and how often it was shown.</summary>
+    public string? FolderAnswer;
+    public int FolderAsked;
 
     /// <summary>The office menu's state in the made-up app: the time of day (0 clock, 1 night, 2 day), the beats switch, and how often Settings was asked for.</summary>
     public int TimeMode, SettingsOpened;
@@ -286,7 +294,7 @@ public class PanelTests
         Assert.Contains(h.Sent, c => c is CloudReposCommand);
         h.Accept(new CloudReposEvent { Ok = true, Done = true, Repos = ["me/app", "me/site"] });
         h.Click("pillRepo");
-        h.Click("menu", 1);
+        h.Click("menu", s: "me/app");
         h.Click("taskText");
         h.Type("web task");
         h.Click("startTask");

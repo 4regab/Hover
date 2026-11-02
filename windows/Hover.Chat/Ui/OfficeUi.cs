@@ -138,7 +138,10 @@ public sealed partial class OfficeUi
     public (float W, float H) ViewSize => (w, h);
 
     /// <summary>The rows of the open menu that can be picked (not a heading, a rule or a note), by their index, for the checks.</summary>
-    public IReadOnlyList<int> OpenMenuPickable => menu is null ? [] : [.. Enumerable.Range(0, menu.Rows.Count).Where(i => menu.Rows[i] is { Header: false, Rule: false, Disabled: false })];
+    public IReadOnlyList<int> OpenMenuPickable => menu is null ? [] : [.. Enumerable.Range(0, menu.Rows.Count).Where(i => menu.Rows[i].Pickable)];
+
+    /// <summary>The words in the open menu's search box, or null when the menu has none.</summary>
+    public string? MenuSearchText => menu?.Search?.Text;
 
     public StateEvent? State => state;
 
@@ -596,7 +599,7 @@ public sealed partial class OfficeUi
         if (menu is { } open)
         {
             if (key == UiKey.Escape) menu = null;
-            else MenuKey(open, key);
+            else if (!MenuSearchKey(open, key, mods)) MenuKey(open, key);
             return true;
         }
         if (key == UiKey.Escape)
@@ -664,6 +667,16 @@ public sealed partial class OfficeUi
     /// <summary>Typed text. With no box focused in the chat, a printable key opens the reply box.</summary>
     public bool Char(string text)
     {
+        // A menu with a search box (the Kiro Web repositories) takes what is typed.
+        if (text.Length > 0 && confirm is null && !NoticeShown && menu is { Search: { } search } searching)
+        {
+            if (char.IsControl(text[0])) return true;
+            search.Insert(text, now);
+            searching.Scroll.ToStart();
+            searching.Hot = -1;
+            Dirty = true;
+            return true;
+        }
         if (text.Length == 0 || confirm is not null || menu is not null || NoticeShown) return false;
         Dirty = true;
         var box = FocusedBox();

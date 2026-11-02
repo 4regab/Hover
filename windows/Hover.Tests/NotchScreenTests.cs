@@ -272,15 +272,26 @@ public class NotchScreenTests(ITestOutputHelper output)
                     double left = (double)section["left"]!, top = (double)section["top"]!, scale = (double)section["scale"]!;
                     var targets = AppDump.Items(section, "targets").ToList();
 
-                    // The new-task button's dot is a solid disc of one colour, 6 DIPs wide, that nothing in the office has.
+                    // The new-task button: dark glass with a light + in it. Its lilac dot is drawn only while words wait in the box, which
+                    // they do not here (the Go button is the same), so the + is what shows the button is on the screen.
                     var fab = targets.LastOrDefault(t => (string?)t["id"] == "fab");
                     if (fab is null) problems.Add($"round {round}: no new-task button in the dump");
                     else
                     {
-                        double x = (double)fab["x"]!, y = (double)fab["y"]!, w = (double)fab["w"]!;
-                        var dot = picture.CountNear(left + (x + w - 8) * scale, top + (y + 1) * scale, left + (x + w - 2) * scale, top + (y + 7) * scale, Lilac, 8);
-                        output.WriteLine($"round {round}: {dot} pixels of the new-task button's dot are lilac (a full dot is about {Math.PI * 9 * scale * scale:0})");
-                        if (dot < 12) problems.Add($"round {round}: the new-task button's dot is not on the screen ({dot} lilac pixels)");
+                        double x = (double)fab["x"]!, y = (double)fab["y"]!, w = (double)fab["w"]!, h = (double)fab["h"]!;
+                        var back = picture.At((int)Math.Round(left + (x + 4) * scale), (int)Math.Round(top + (y + h / 2) * scale));
+                        var glass = back.R + back.G + back.B;
+                        var plus = 0;
+                        for (var py = (int)Math.Floor(top + (y + 8) * scale); py < (int)Math.Ceiling(top + (y + h - 8) * scale); py++)
+                        for (var px = (int)Math.Floor(left + (x + 8) * scale); px < (int)Math.Ceiling(left + (x + w - 8) * scale); px++)
+                        {
+                            var (r, g, b) = picture.At(px, py);
+                            if (r + g + b >= glass + 120) plus++;
+                        }
+                        output.WriteLine($"round {round}: the new-task button's glass is {back}; {plus} pixels of its middle are clearly lighter (its +)");
+                        if (plus < 10 || Math.Max(back.R, Math.Max(back.G, back.B)) > 100)
+                            problems.Add($"round {round}: the new-task button is not on the screen ({plus} pixels of its +, glass {back})");
+                        if ((string?)section["taskText"] is { Length: > 0 }) problems.Add($"round {round}: words are waiting in the box, which this check does not expect");
                     }
 
                     // The menu button: dark glass with three light bars. The bars are the ink at 62 % over what the glass shows there.

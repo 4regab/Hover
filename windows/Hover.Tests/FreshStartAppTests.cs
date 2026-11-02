@@ -37,7 +37,15 @@ public class FreshStartAppTests(ITestOutputHelper output)
             projects.Add(new JsonObject { ["Id"] = $"p{i:00}", ["Name"] = $"Project {i:00}", ["Folder"] = Path.Combine(sandbox.Root, $"project-{i:00}"), ["Aliases"] = new JsonArray() });
         projects.Add(new JsonObject { ["Id"] = "p99", ["Name"] = "zz-sandbox", ["Folder"] = sandbox.Project, ["Aliases"] = new JsonArray() });
         var settings = new JsonObject { ["HoverOpensWorkspace"] = false, ["Projects"] = projects };
-        if (notch) settings["NotchItems"] = new JsonArray("claude");
+        if (notch)
+        {
+            settings["NotchItems"] = new JsonArray("claude");
+            // The box's folder chip opens the folder dialog at once while the box has no folder (as the Go box does), and a test cannot
+            // answer that dialog: the box starts in a folder, so that the chip opens the list.
+            var start = Path.Combine(sandbox.Root, "project-01");
+            Directory.CreateDirectory(start);
+            settings["KiroFolder"] = start;
+        }
         return settings.ToJsonString();
     }
 

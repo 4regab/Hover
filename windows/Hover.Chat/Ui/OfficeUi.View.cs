@@ -150,7 +150,8 @@ public sealed partial class OfficeUi
             pen.Box(r, 18, Rgba.Of(0x1c1822, hov ? 0.95 : 0.82));
             pen.Border(r.X, r.Y, r.W, r.H, 18, 1, Rgba.Of(0xffffff, 0.14));
             pen.Icon(Glyphs.Plus, r.X + 10, r.Y + 10, 16, Pen.Ink);
-            pen.Box(r.Right - 8, r.Y + 1, 6, 6, 3, Pen.Lilac);
+            // The dot says there are words waiting in the box (the Go button shows it only then).
+            if (task.Text.Length > 0) pen.Box(r.Right - 8, r.Y + 1, 6, 6, 3, Pen.Lilac);
             Add(r, "fab");
             return;
         }
@@ -335,7 +336,8 @@ public sealed partial class OfficeUi
             if (taskCloud)
                 specs.Add(new PillSpec("pillRepo", null, null, taskRepo is { Length: > 0 } rp ? LastPart(rp) : "Choose repo", Pen.Dim, menu?.Kind == "repo", 1, Chevron: false));
             else
-                specs.Add(new PillSpec("pillFolder", null, Glyphs.Folder, folder.Length > 0 ? LastPart(folder) : "Folder", Pen.Dim, menu?.Kind == "project", 1, Chevron: false));
+                // No folder: "Choose a folder" in amber, as the Go box says it; a click opens the folder dialog.
+                specs.Add(new PillSpec("pillFolder", null, Glyphs.Folder, folder.Length > 0 ? LastPart(folder) : "Choose a folder", folder.Length > 0 ? Pen.Dim : Rgba.Of(0xffb36b), menu?.Kind == "project", 1, Chevron: false));
         }
         // Not in Kiro Web: every task there runs with full access, so there is nothing to pick (the Go box leaves the chip out).
         if (!taskCloud)

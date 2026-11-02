@@ -25,6 +25,12 @@ public static class Shots
             var origin = dashboard.OfficeArea.TransformToVisual(dashboard.Root).TransformPoint(new Windows.Foundation.Point(0, 0));
             Hover.Windowing.OfficeShots.PasteDashboard(pixels, w, h, scale,
                 new Hover.Windowing.OfficeRect(origin.X, origin.Y, dashboard.OfficeArea.ActualWidth, dashboard.OfficeArea.ActualHeight));
+            // The panels (the switch, the menu button, the + circle, the bots' tags) are a layer of their own that the element tree's picture
+            // leaves out: they are drawn over the office, as the window shows them.
+            if (panels is null) return;
+            var layer = Hover.Chatting.ChatShots.RenderLayer(panels, (float)dashboard.OfficeArea.ActualWidth, (float)dashboard.OfficeArea.ActualHeight, scale);
+            Hover.Chatting.ChatShots.Over(pixels, w, h, (int)Math.Round(origin.X * scale), (int)Math.Round(origin.Y * scale), layer,
+                (int)Math.Round(dashboard.OfficeArea.ActualWidth * scale), (int)Math.Round(dashboard.OfficeArea.ActualHeight * scale));
         });
         if (panels is not null) await Hover.Chatting.ChatShots.TakeAsync(directory, panels);
         await Hover.Windowing.NotchShots.TakeAsync(directory, panels);
