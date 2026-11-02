@@ -103,7 +103,8 @@ public class PagesAgainstGoTests
 
     /// <summary>
     /// What is left out of the comparison, and why:
-    /// the folder lines (the Go dump names the Linux home); the line that names the program an agent runs (Windows runs <c>codex-acp</c> and
+    /// the folder lines (the Go dump names the Linux home), and which problem a project's folder has (on Linux a path like C:\work is not a
+    /// full path, on Windows it is a full path that is not there); the line that names the program an agent runs (Windows runs <c>codex-acp</c> and
     /// <c>cursor-agent</c>); and Codex's Read only, which the Go page on Windows leaves out with the note the C# page gives (the dump was made on Linux,
     /// where the sandbox works).
     /// </summary>
@@ -114,6 +115,7 @@ public class PagesAgainstGoTests
             var line = raw;
             if (line.Contains("row \"Location\"") || line.Contains("row \"Default workspace\"")) continue;
             if (line.StartsWith("[Footnote] \"", StringComparison.Ordinal) && line.Contains(" runs in the background as an ACP server (")) continue;
+            line = line.Replace("isn’t a full path.", "can’t be used.").Replace("isn’t there any more.", "can’t be used.");
             if (line.Contains("id=CodexTools"))
             {
                 line = line.Replace(" Read only isn’t offered, because Codex’s read-only mode needs a sandbox it doesn’t have on Windows.", "")
