@@ -110,7 +110,10 @@ wider than 1400 px:
   when its output is piped. Every host log line is also written to standard error, so a console
   or a redirect shows them: `.\publish\hoverai.exe 2> $env:TEMP\hover.err`.
 - `HOVER_UI_DUMP=<file>` makes the app write where its buttons are on the screen (see
-  [The panels](#the-panels-chat-new-task-and-questions)); the checks of the real app read it.
+  [The panels](#the-panels-chat-new-task-and-questions)); the checks of the real app read it. With it
+  set, `HOVER_SLOW_OFFICE_MS=<ms>` makes the office wait that long before it makes its graphics device, and
+  the log says when a notch frame is slow, when the frame timer stops, and once a second why the open
+  notch has no panels.
 
 ## What is Windows-specific
 

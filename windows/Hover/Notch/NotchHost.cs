@@ -52,6 +52,7 @@ sealed partial class NotchHost : IDisposable
     readonly Stopwatch clock = Stopwatch.StartNew();
     readonly Tween rise = new(), fade = new();
     readonly DispatcherQueueTimer pollTimer, animTimer, secondTimer, glowTimer;
+    readonly FramePump pump = new();
     NotchSwapChain? surface;
     NotchSettings settings = NotchSettings.Default;
     StateEvent? state;
@@ -802,17 +803,22 @@ sealed partial class NotchHost : IDisposable
 
     double FrameMs => Moving ? 16 : Turning ? 33 : PanelsMoving ? Math.Clamp(PanelsOpen ? panels!.Ui.NextFrameMs : cfg!.NotchUi.NextFrameMs, 16, 500) : 33;
 
+    bool Busy => Moving || Turning || PanelsMoving;
+
     void EnsureAnimating()
     {
-        if (!Moving && !Turning && !PanelsMoving) return;
+        if (!Busy) return;
         animTimer.Interval = TimeSpan.FromMilliseconds(FrameMs);
         if (!animTimer.IsRunning) animTimer.Start();
     }
 
+    // The first frame with the office makes a graphics device, which can outlast the whole opening; its picture of the clock is then old.
+    // The timer stops only after a frame that began when nothing moved (the panels come up in such a frame, not in the one before).
     void Animate()
     {
+        pump.Begin(Busy);
         Render();
-        if (!Moving && !Turning && !PanelsMoving)
+        if (pump.CanStop(Busy))
         {
             animTimer.Stop();
             DiagStopped();

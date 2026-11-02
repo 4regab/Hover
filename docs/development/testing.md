@@ -166,6 +166,16 @@ What `windows\Hover.Tests` covers:
   lilac icon of the office/chat switch and the menu button's bars. The clicking checks never saw the pixels, and the
   pictures paste the panels onto the office in software. The first round also opens the office menu with a click and
   picks night, day and the clock, which office.json must keep. The copies and `hover.log` are in `out\notch-live`.
+- **The panels when the first office frame is slow** (`FramePumpTests`, any system; `SettingsAppTests`, Windows, needs
+  `HOVER_APP_EXE`). The first frame with the office makes a Direct3D device, which on the runner's software one took
+  390 to 510 ms of the 560 ms opening. The frame timer used to stop after that frame, which had been drawn at the
+  middle of the opening, and the notch stayed open with no panels (`NotchHost.PanelsOpen` waits for the office at
+  0.95). `FramePump` stops the timer only after a frame that began when nothing moved; `FramePumpTests` replay the
+  slow frame with a clock. `Settings_open_in_the_open_notch_after_a_slow_first_office_frame` starts the app with
+  `HOVER_SLOW_OFFICE_MS=700` (read only with `HOVER_UI_DUMP`: the office waits that long before it makes its device)
+  and still has to find the menu button, open Settings and click a switch. With `HOVER_UI_DUMP` the log also names a
+  frame longer than 80 ms, the moment the frame timer stops, and once a second, while the notch is open and the panels
+  are not, every term of the panels' rule with the keyboard's window and the window under the pointer.
 - **Lists, the first-task note and the new-task bar** (any system, no window; the cases of v5.0.18's report):
   - `MenuFitTests` opens every menu the panels have (top, agent, where, access, folder, model, repository, the chat's
     more menu, the reply box's model menu, each from the office's box and the start screen or the chat) in four windows
