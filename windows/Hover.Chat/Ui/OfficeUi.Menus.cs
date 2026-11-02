@@ -5,7 +5,7 @@ namespace Hover.Chat.Ui;
 public sealed partial class OfficeUi
 {
     /// <summary>A row of a menu. <paramref name="Pin"/>: the leading and trailing pinned rows stay in view while the rows between them scroll.</summary>
-    sealed record MenuRow(string Label, string Id = "", string Note = "", bool On = false, bool Header = false, bool Rule = false, string? Mark = null, bool Disabled = false, bool Pin = false, string? Icon = null, bool Search = false)
+    sealed record MenuRow(string Label, string Id = "", string Note = "", bool On = false, bool Header = false, bool Rule = false, string? Mark = null, bool Disabled = false, bool Pin = false, string? Icon = null, bool Search = false, bool OneLine = false)
     {
         /// <summary>A row that can be picked: not a heading, a rule, a note or the search box.</summary>
         public bool Pickable => !Header && !Rule && !Disabled && !Search;
@@ -77,6 +77,8 @@ public sealed partial class OfficeUi
         if (r.Header) return 24;
         if (r.Note.Length == 0) return 30;
         var lh = pen.LineHeight(Pen.F(12.5, 600, Pen.Ink));
+        // A path is one line, cut with an ellipsis; the whole of it is in the tip.
+        if (r.OneLine) return 7 + lh + 1 + pen.LineHeight(Pen.F(11, 400, Pen.Faint)) + 7;
         return 7 + lh + 1 + pen.HeightWhenWrapped(r.Note, w - 12 - 16 - (r.On ? 20 : 0), Pen.F(11, 400, Pen.Faint)) + 7;
     }
 
@@ -245,8 +247,13 @@ public sealed partial class OfficeUi
             Add(strip, "menuBar");
             m.Scroll.PaintBar(pen.Cv, list, Over(strip));
         }
+        // The row under the pointer whose line was cut says the whole of it.
+        if (rowTip is { } whole) PaintHintBox(whole, px + 14, py + 16);
+        rowTip = null;
         overBlocker = false;
     }
+
+    string? rowTip;
 
     /// <summary>The colour of a menu's panel, which the fade at the edge of a scrolling list runs into.</summary>
     static readonly Rgba MenuPanel = Rgba.Of(0x16121c, 0.985);
@@ -336,7 +343,14 @@ public sealed partial class OfficeUi
         else
         {
             pen.Text(r.Label, tx, cy + 7, lf, labelW);
-            pen.Wrapped(r.Note, tx, cy + 7 + pen.LineHeight(lf) + 1, rr.Right - tx - 8 - (r.On ? 20 : 0), Pen.F(11, 400, Pen.Faint));
+            var noteW = rr.Right - tx - 8 - (r.On ? 20 : 0);
+            var noteLook = Pen.F(11, 400, Pen.Faint);
+            if (!r.OneLine) pen.Wrapped(r.Note, tx, cy + 7 + pen.LineHeight(lf) + 1, noteW, noteLook);
+            else
+            {
+                pen.Text(r.Note, tx, cy + 7 + pen.LineHeight(lf) + 1, noteLook, noteW);
+                if (shown && Over(seen) && pen.Width(r.Note, noteLook) > noteW) rowTip = r.Note;
+            }
         }
         if (r.On) pen.Icon(Icons.Check, rr.Right - 8 - 12, cy + (r.Note.Length > 0 ? 10 : (rh - 12) / 2), 12, Pen.Lilac);
         if (!r.Disabled && shown) Add(seen, "menu", i, r.Label);
@@ -669,10 +683,10 @@ public sealed partial class OfficeUi
         var cur = TaskPicks().Folder;
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var p in projects)
-            if (p.Folder.Length > 0 && seen.Add(p.Folder)) rows.Add(new MenuRow(p.Name.Length > 0 ? p.Name : LastPart(p.Folder), p.Folder, p.Folder, p.Folder == cur, Icon: Glyphs.Folder));
+            if (p.Folder.Length > 0 && seen.Add(p.Folder)) rows.Add(new MenuRow(p.Name.Length > 0 ? p.Name : LastPart(p.Folder), p.Folder, p.Folder, p.Folder == cur, Icon: Glyphs.Folder, OneLine: true));
         foreach (var hrow in state?.History ?? [])
-            if (hrow.Folder.Length > 0 && seen.Add(hrow.Folder) && rows.Count < 12) rows.Add(new MenuRow(LastPart(hrow.Folder), hrow.Folder, hrow.Folder, hrow.Folder == cur, Icon: Glyphs.Folder));
-        if (state?.Folder is { Length: > 0 } sf && seen.Add(sf)) rows.Insert(0, new MenuRow(LastPart(sf), sf, sf, sf == cur, Icon: Glyphs.Folder));
+            if (hrow.Folder.Length > 0 && seen.Add(hrow.Folder) && rows.Count < 12) rows.Add(new MenuRow(LastPart(hrow.Folder), hrow.Folder, hrow.Folder, hrow.Folder == cur, Icon: Glyphs.Folder, OneLine: true));
+        if (state?.Folder is { Length: > 0 } sf && seen.Add(sf)) rows.Insert(0, new MenuRow(LastPart(sf), sf, sf, sf == cur, Icon: Glyphs.Folder, OneLine: true));
         // As the Go menu: the recent folders under a heading, then "Open folder…", which asks the system for one. A fresh install has
         // no recent folder, so this row is the only way to a first task; it stays in view under a long list.
         if (rows.Count > 0) rows.Insert(0, new MenuRow("Recent", Header: true, Pin: true));

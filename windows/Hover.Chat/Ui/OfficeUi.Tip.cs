@@ -45,17 +45,18 @@ public sealed partial class OfficeUi
             cx += pen.Text(name, cx, y + (30 - nh) / 2, bf) + 7;
             if (kind == 2) pen.Text(sub, cx, y + (30 - pen.LineHeight(sf)) / 2, sf with { Color = Rgba.Of(0xf6f2ff, 0.4) });
         }
-        if (hint.Length > 0)
-        {
-            // Go sets this in a pixel face; there is none here, so it is the semibold sans.
-            var hf = Pen.F(12, 600, Rgba.Of(0xf6f2ff));
-            var tw = pen.Width(hint, hf);
-            var th = pen.LineHeight(hf);
-            var x = px + 14;
-            var y = py + 16;
-            pen.Box(x, y, tw + 18, th + 8, 8, Rgba.Of(0x0a060e, 0.85));
-            pen.Border(x, y, tw + 18, th + 8, 8, 1, Rgba.Of(0xffffff, 0.1));
-            pen.Text(hint, x + 9, y + 4, hf);
-        }
+        if (hint.Length > 0) PaintHintBox(hint, px + 14, py + 16);
+    }
+
+    /// <summary>A line of words in a small box at (x, y), kept inside the window (Go sets it in a pixel face; there is none here, so it is the semibold sans).</summary>
+    void PaintHintBox(string hint, float x, float y)
+    {
+        var hf = Pen.F(12, 600, Rgba.Of(0xf6f2ff));
+        var tw = Math.Min(pen.Width(hint, hf), Math.Max(w - 12 - 18, 0));
+        var th = pen.LineHeight(hf);
+        x = Math.Max(Math.Min(x, w - tw - 18 - 6), 6);
+        pen.Box(x, y, tw + 18, th + 8, 8, Rgba.Of(0x0a060e, 0.85));
+        pen.Border(x, y, tw + 18, th + 8, 8, 1, Rgba.Of(0xffffff, 0.1));
+        pen.Text(hint, x + 9, y + 4, hf, tw);
     }
 }

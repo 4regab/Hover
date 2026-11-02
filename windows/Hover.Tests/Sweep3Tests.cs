@@ -377,4 +377,37 @@ public class Sweep3Tests
         var name = c.Drawn.Single(t => t.Text == "Chat").R;
         Assert.True(name.Y > chat.Bottom, $"the name {name} is under the switch {chat}");
     }
+
+    // MARK: The folder list
+
+    [Fact]
+    public void A_folder_row_shows_its_path_on_one_cut_line_and_says_the_whole_of_it_in_a_tip()
+    {
+        var path = @"C:\Users\someone\Documents\clients\acme\projects\a-very-long-folder-name\app";
+        var h = new PanelHarness { W = 828, H = 346 };
+        h.Accept(new StateEvent
+        {
+            CanStart = true, Tool = "kiro", Folder = path,
+            Tools = [new ToolInfo { Id = "kiro", Name = "Kiro", Ready = true, Access = "full" }],
+            History = [new HistoryRow { Key = "a", Tool = "kiro", Title = "Chat a", Folder = path.Replace("app", "api"), At = 1_793_000_300_000 }],
+        });
+        h.Ui.ChatView = true;
+        h.Frame();
+        Assert.True(h.Click("pillFolder"));
+        Assert.Equal("project", h.Ui.OpenMenuKind);
+        var rows = h.Ui.Targets.Where(t => t.Id == "menu" && t.S is "app" or "api").ToList();
+        Assert.Equal(2, rows.Count);
+        // Two lines high (the name and one cut line); the wrapped path was a third line taller or more.
+        Assert.All(rows, r => Assert.InRange(r.R.H, 30, 52));
+        var c = h.Frame();
+        Assert.DoesNotContain(path, c.Texts);
+        var cut = c.Texts.Where(t => t.StartsWith(@"C:\Users", StringComparison.Ordinal)).ToList();
+        Assert.Equal(2, cut.Count);
+        Assert.All(cut, t => Assert.EndsWith("…", t));
+
+        // The pointer on a row says the path in full.
+        var row = rows[0].R;
+        h.Ui.PointerMove(row.X + row.W / 2, row.Y + row.H / 2);
+        Assert.Contains(h.Frame().Texts, t => t.StartsWith(@"C:\Users", StringComparison.Ordinal) && !t.EndsWith("…", StringComparison.Ordinal));
+    }
 }
