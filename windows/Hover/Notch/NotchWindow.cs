@@ -152,12 +152,14 @@ sealed class NotchWindow : INotchPlatform, IDisposable
         {
             if (cursorShape == value) return;
             cursorShape = value;
-            if (value != 0) SetCursor(LoadCursorW(0, value == 1 ? 32649 : 32513));
-            else SetCursor(LoadCursorW(0, 32512));
+            SetCursor(LoadCursorW(0, CursorId(value)));
         }
     }
 
     int cursorShape;
+
+    /// <summary>The system cursor for a shape: 1 the hand (IDC_HAND), 2 the text cursor (IDC_IBEAM), 3 left and right (IDC_SIZEWE); the class's own otherwise.</summary>
+    static nint CursorId(int shape) => shape switch { 1 => 32649, 2 => 32513, 3 => 32644, _ => 32512 };
 
     public bool Buttons() => (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0 || (GetAsyncKeyState(VK_RBUTTON) & 0x8000) != 0 || (GetAsyncKeyState(VK_MBUTTON) & 0x8000) != 0;
 
@@ -332,7 +334,7 @@ sealed class NotchWindow : INotchPlatform, IDisposable
                 return MA_NOACTIVATE;
             case WM_SETCURSOR when cursorShape != 0 && (lParam & 0xFFFF) == 1:
                 // Over the client area the panels say what the pointer is on: the hand over a button, the text cursor over a box of words.
-                SetCursor(LoadCursorW(0, cursorShape == 1 ? 32649 : 32513));
+                SetCursor(LoadCursorW(0, CursorId(cursorShape)));
                 return 1;
             case WM_ERASEBKGND:
                 return 1;

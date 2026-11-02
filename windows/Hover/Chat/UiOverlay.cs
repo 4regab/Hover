@@ -160,6 +160,7 @@ sealed class UiOverlay : Grid, IDisposable
     // The pointer's shapes, made once. The overlay is only hit-testable where the panels have something, so the shape is theirs there.
     static readonly Microsoft.UI.Input.InputCursor HandCursor = Microsoft.UI.Input.InputSystemCursor.Create(Microsoft.UI.Input.InputSystemCursorShape.Hand);
     static readonly Microsoft.UI.Input.InputCursor TextCursor = Microsoft.UI.Input.InputSystemCursor.Create(Microsoft.UI.Input.InputSystemCursorShape.IBeam);
+    static readonly Microsoft.UI.Input.InputCursor ResizeCursor = Microsoft.UI.Input.InputSystemCursor.Create(Microsoft.UI.Input.InputSystemCursorShape.SizeWestEast);
 
     void ShowCursor(float x, float y)
     {
@@ -167,6 +168,7 @@ sealed class UiOverlay : Grid, IDisposable
         {
             Hover.Chat.Ui.UiCursor.Hand => HandCursor,
             Hover.Chat.Ui.UiCursor.Text => TextCursor,
+            Hover.Chat.Ui.UiCursor.ResizeColumn => ResizeCursor,
             _ => null,
         };
     }
@@ -221,7 +223,14 @@ sealed class UiOverlay : Grid, IDisposable
     void OnWheel(object sender, PointerRoutedEventArgs e)
     {
         var (x, y) = At(e);
-        var delta = e.GetCurrentPoint(this).Properties.MouseWheelDelta;
+        var props = e.GetCurrentPoint(this).Properties;
+        var delta = props.MouseWheelDelta;
+        // A sideways wheel, or the wheel with Shift, scrolls the code box or table under the pointer (the Go app does the same).
+        if (props.IsHorizontalMouseWheel || KeyMap.Mods(Native.GetKeyState).HasFlag(Hover.Chat.Ui.UiMods.Shift))
+        {
+            if (core.Ui.WheelSideways(x, y, (props.IsHorizontalMouseWheel ? -delta : delta) / 120f * 90f)) e.Handled = true;
+            return;
+        }
         if (core.Ui.Wheel(x, y, delta / 120f * 90f)) e.Handled = true;
     }
 

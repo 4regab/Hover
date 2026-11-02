@@ -282,8 +282,10 @@ public sealed partial class OfficeUi
         if (!start)
         {
             // The agent's logo before the words, and a fold at the end.
+            var logo = new Rect4(cx, cy, 30, 30);
+            if (Over(logo) || menu?.Kind == "agent") pen.Box(logo, 9, Rgba.Of(0xffffff, 0.08));
             pen.Mark(tool?.Id ?? "kiro", cx, cy, 30);
-            Add(new Rect4(cx, cy, 30, 30), "pillAgent");
+            Add(logo, "pillAgent");
             textX = cx + 30 + 10;
             textW = box.W - 24 - 30 - 10 - 34;
         }
@@ -327,7 +329,7 @@ public sealed partial class OfficeUi
             if (ToolSupportsCloud(tool))
             {
                 var cloud = new Rect4(x, barY, 28, bh);
-                pen.Box(cloud, 8, taskCloud ? Rgba.Of(0x8fbcff, 0.18) : Over(cloud) ? Rgba.Of(0xffffff, 0.043) : Rgba.Clear);
+                pen.Box(cloud, 8, taskCloud ? Rgba.Of(0x8fbcff, Over(cloud) ? 0.28 : 0.18) : Over(cloud) ? Rgba.Of(0xffffff, 0.043) : Rgba.Clear);
                 pen.Icon(Glyphs.Cloud, x + 7, barY + 7, 14, taskCloud ? Rgba.Of(0x8fbcff) : Pen.Dim);
                 Add(cloud, "cloud");
                 x += 28 + 2;
@@ -405,7 +407,7 @@ public sealed partial class OfficeUi
         var deskW = deskPanel is not null ? Math.Min(560f, Math.Max(360f, w * 0.42f)) : 0f;
         listAllowed = w >= 760 && !(deskPanel is not null && w < (env.InNotch ? 1240 : 1300));
         sideShown = listAllowed && !sideClosed;
-        var lw = sideShown ? 260f : 0f;
+        var lw = sideShown ? Math.Clamp(sideW, 200f, Math.Max(Math.Min(420f, w - 400f), 200f)) : 0f;
         threadRect = default;
         chatRect = default;
         sideRect = new Rect4(0, 0, lw, h);
@@ -446,8 +448,11 @@ public sealed partial class OfficeUi
         var haveKiro = state.Sessions.Select(KiroIdOf).Where(k => k.Length > 0).ToHashSet();
         foreach (var c in cli.List.Where(c => !haveKiro.Contains(c.Id)).OrderByDescending(c => c.Updated ?? 0).Take(30))
             rows.Add(new ListRow("cli:" + c.Id, null, "kiro", c.Title.Length > 0 ? c.Title : "Kiro CLI session", c.Folder ?? "", c.Updated ?? 0, "stopped", "CLI"));
-        return [.. rows.OrderByDescending(r => r.At)];
+        // The chats that are running or wait on the user come first, then the rest by time (the Go list).
+        return [.. rows.OrderByDescending(IsLiveRow).ThenByDescending(r => r.At)];
     }
+
+    static bool IsLiveRow(ListRow r) => r.Id is not null && r.Stage is "working" or "waiting" or "waking" or "queued";
 
     static long LiveAt(SessionInfo s) => s.Turns.Count > 0 && s.Turns[^1].T0 > 0 ? s.Turns[^1].T0 : DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
 
@@ -482,56 +487,93 @@ public sealed partial class OfficeUi
         var listTop = y;
         pen.Cv.PushClip(new Rect4(0, listTop, lw - 1, h - listTop));
         y -= sideScroll;
-        string? group = null;
-        var gf = Pen.F(12.5, 400, Pen.Dim);
-        var rf = Pen.F(13, 400, Rgba.Of(0xf6f2ff, 0.5));
+        var gf = Pen.F(12, 500, Pen.Dim);
+        var rf = Pen.F(13, 400, Pen.Ink);
         var selected = OpenId is { } oid ? rows.FirstOrDefault(r => r.Id == oid)?.Key : openKey;
         var total = 0f;
-        for (var i = 0; i < rows.Count; i++)
+        // One heading per folder, in the order the folders first appear (the live chats come first); a click on it folds its chats.
+        var order = rows.Select(r => r.Folder).Distinct().ToList();
+        for (var f = 0; f < order.Count; f++)
         {
-            var r = rows[i];
-            var g = r.Folder.Length > 0 ? LastPart(r.Folder) : "Cloud";
-            if (g != group)
+            var folder = order[f];
+            var shut = folded.Contains(folder);
+            y += f == 0 ? 0 : 12;
+            total += f == 0 ? 0 : 12;
+            var hr = new Rect4(8, y, lw - 16, 28);
+            var hh = Over(hr);
+            var hc = hh ? Rgba.Of(0xf6f2ff, 0.7) : Rgba.Of(0xf6f2ff, 0.5);
+            pen.Icon(Glyphs.Folder, hr.X + 8, y + 7, 14, hc);
+            pen.Text(folder.Length > 0 ? LastPart(folder) : "No folder", hr.X + 8 + 14 + 7, y + (28 - pen.LineHeight(gf)) / 2, gf with { Color = hc }, Math.Max(hr.W - 8 - 14 - 7 - 7 - 13 - 8, 0));
+            if (hh || shut) pen.Icon(shut ? Glyphs.ChevronRight : Glyphs.Chevron, hr.Right - 8 - 13, y + 7.5f, 13, Rgba.Of(0xf6f2ff, 0.5));
+            if (y + 28 > listTop && y < h) Add(hr, "head", f, folder);
+            y += 28;
+            total += 28;
+            if (shut) continue;
+            for (var i = 0; i < rows.Count; i++)
             {
-                group = g;
-                y += 6;
-                pen.Icon(Glyphs.Folder, 16, y + 7, 15, Pen.Dim);
-                pen.Text(g, 37, y + (28 - pen.LineHeight(gf)) / 2, gf, lw - 37 - 12);
-                y += 28 + 2;
-                total += 36;
+                var r = rows[i];
+                if (r.Folder != folder) continue;
+                var rr = new Rect4(8, y, lw - 16, 30);
+                var sel = r.Key == selected;
+                var live = r.Id is not null && r.Stage is "working" or "waiting" or "waking" or "queued";
+                var bin = new Rect4(rr.Right - 4 - 24, y + 3, 24, 24);
+                // The delete button shows while the pointer is on the row; a Kiro CLI session that is not Hover's yet has none.
+                var canDelete = r.Badge.Length == 0;
+                var binHot = canDelete && Over(bin);
+                var hov = Over(rr) || binHot;
+                var dim = !live && !sel && !hov;
+                if (sel) pen.Box(rr, 7, Rgba.Of(0xffffff, 0.07));
+                else if (hov) pen.Box(rr, 7, Rgba.Of(0xffffff, 0.043));
+                if (dim) pen.Cv.PushOpacity(0.45f);
+                pen.Mark(r.Tool.Length > 0 ? r.Tool : "kiro", 16, y + 6, 18);
+                if (dim) pen.Cv.PopOpacity();
+                // An amber ring round the logo while the chat waits on you.
+                if (r.Id is not null && r.Stage == "waiting") pen.Border(13, y + 3, 24, 24, 12, 1.5f, Rgba.Of(0xffc46b));
+                var ago = r.Badge.Length > 0 && cli.Opening.Length > 0 && r.Key == "cli:" + cli.Opening ? "Opening…" : live ? "" : Ago(r.At);
+                var af = Pen.F(11.5, 400, Rgba.Of(0xf6f2ff, 0.5));
+                var aw = ago.Length > 0 ? pen.Width(ago, af) : 0;
+                if (ago.Length > 0 && !(hov && canDelete)) pen.Text(ago, rr.Right - 8 - aw, y + (30 - pen.LineHeight(af)) / 2, af);
+                float badgeW = 0;
+                if (r.Badge.Length > 0)
+                {
+                    var bf = Pen.F(10, 500, Pen.Dim);
+                    badgeW = pen.Width(r.Badge, bf) + 10;
+                    pen.Box(lw - 16 - 8 - aw - 6 - badgeW, y + 7, badgeW, 16, 5, Rgba.Of(0xffffff, 0.07));
+                    pen.TextIn(r.Badge, new Rect4(lw - 16 - 8 - aw - 6 - badgeW, y + 7, badgeW, 16), bf);
+                    badgeW += 6;
+                }
+                var color = dim ? Rgba.Of(0xf6f2ff, 0.45) : Pen.Ink;
+                pen.Text(r.Title.Length > 0 ? r.Title : "New chat", 42, y + (30 - pen.LineHeight(rf)) / 2, rf with { Color = color }, Math.Max(lw - 42 - 16 - aw - 14 - badgeW - (hov && canDelete ? 20 : 0), 0));
+                if (y + 30 > listTop && y < h)
+                {
+                    Add(rr, "row", i, r.Key);
+                    if (hov && canDelete)
+                    {
+                        if (binHot) pen.Box(bin, 6, Rgba.Of(0xff453a, 0.12));
+                        pen.Icon(Desk.DeskIcons.Trash, bin.X + 5, bin.Y + 5, 14, binHot ? Rgba.Of(0xff9a92) : Rgba.Of(0xf6f2ff, 0.5));
+                        Add(bin, "rowDelete", i, r.Key);
+                    }
+                }
+                y += 30;
+                total += 30;
             }
-            var rr = new Rect4(8, y, lw - 16, 30);
-            var sel = r.Key == selected;
-            var hov = Over(rr);
-            if (sel) pen.Box(rr, 8, Rgba.Of(0xffffff, 0.06));
-            else if (hov) pen.Box(rr, 8, Rgba.Of(0xffffff, 0.035));
-            pen.Mark(r.Tool.Length > 0 ? r.Tool : "kiro", 16, y + 6, 18);
-            var ago = r.Badge.Length > 0 && cli.Opening.Length > 0 && r.Key == "cli:" + cli.Opening ? "Opening…" : Ago(r.At);
-            var af = Pen.F(11.5, 400, Rgba.Of(0xf6f2ff, 0.45));
-            var aw = pen.Width(ago, af);
-            pen.Text(ago, lw - 16 - 8 - aw, y + (30 - pen.LineHeight(af)) / 2, af);
-            float badgeW = 0;
-            if (r.Badge.Length > 0)
-            {
-                var bf = Pen.F(10, 500, Pen.Dim);
-                badgeW = pen.Width(r.Badge, bf) + 10;
-                pen.Box(lw - 16 - 8 - aw - 6 - badgeW, y + 7, badgeW, 16, 5, Rgba.Of(0xffffff, 0.07));
-                pen.TextIn(r.Badge, new Rect4(lw - 16 - 8 - aw - 6 - badgeW, y + 7, badgeW, 16), bf);
-                badgeW += 6;
-            }
-            var color = sel ? Pen.Ink : hov ? Pen.Dim : Rgba.Of(0xf6f2ff, 0.5);
-            pen.Text(r.Title.Length > 0 ? r.Title : "New chat", 42, y + (30 - pen.LineHeight(rf)) / 2, rf with { Color = color }, lw - 42 - 16 - aw - 14 - badgeW);
-            if (y + 30 > listTop && y < h) Add(rr, "row", i, r.Key);
-            y += 30;
-            total += 30;
         }
         pen.Cv.PopClip();
+        // A drag on the list's right edge resizes it (200 to 420 wide, as the Go list).
+        Add(new Rect4(lw - 4, 0, 8, h), "sideEdge");
         var maxScroll = Math.Max(total + 40 - (h - listTop), 0);
         sideScroll = Math.Clamp(sideScroll, 0, maxScroll);
         rowKeys = [.. rows.Select(r => (r.Key, r.Id))];
     }
 
     List<(string Key, int? Id)> rowKeys = [];
+
+    /// <summary>The list's width (dragged at its edge) and the folders folded in it.</summary>
+    float sideW = 260;
+
+    bool sideDrag;
+
+    readonly HashSet<string> folded = [];
 
     // MARK: The start screen
 

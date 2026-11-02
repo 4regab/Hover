@@ -310,4 +310,135 @@ public class SweepFixTests
         var row = h.Ui.Targets.Last(t => t.Id == "menu").R;
         Assert.Equal(UiCursor.Hand, h.Ui.CursorAt(row.X + row.W / 2, row.Y + row.H / 2));
     }
+    // MARK: The list at the side of the chat view
+
+    static PanelHarness SideList(float w = 1200, float h = 720)
+    {
+        var rig = new PanelHarness { W = w, H = h };
+        HistoryRow Row(string key, string folder, long at) => new() { Key = key, Tool = "kiro", Title = "Chat " + key, Folder = folder, At = at };
+        rig.Accept(new StateEvent
+        {
+            CanStart = true, Tool = "kiro", Folder = @"C:\work\x",
+            Tools = [new ToolInfo { Id = "kiro", Name = "Kiro", Ready = true, Access = "full" }],
+            Sessions = [PanelHarness.Session(1, "working", null, PanelHarness.Turn("Busy one", "", "working")) with { Folder = @"C:\work\y", Key = "live" }],
+            // Three saved chats in two folders, the folders interleaved by time.
+            History = [Row("a", @"C:\work\x", 1_793_000_300_000), Row("b", @"C:\work\z", 1_793_000_200_000), Row("c", @"C:\work\x", 1_793_000_100_000)],
+        });
+        rig.Ui.ChatView = true;
+        rig.Frame();
+        return rig;
+    }
+
+    static IEnumerable<string> Heads(PanelHarness rig) => rig.Ui.Targets.Where(t => t.Id == "head").Select(t => t.S);
+
+    [Fact]
+    public void The_list_has_one_heading_per_folder_with_the_running_chats_first_and_a_click_on_a_heading_folds_its_chats()
+    {
+        var rig = SideList();
+        // Folders in the order they first appear: the running chat's folder first, then x (a and c together), then z.
+        Assert.Equal([@"C:\work\y", @"C:\work\x", @"C:\work\z"], Heads(rig));
+        Assert.Equal(["live", "a", "c", "b"], rig.Ui.Targets.Where(t => t.Id == "row").OrderBy(t => t.R.Y).Select(t => t.S));
+        Assert.True(rig.Click("head", s: @"C:\work\x"));
+        Assert.Equal(["live", "b"], rig.Ui.Targets.Where(t => t.Id == "row").OrderBy(t => t.R.Y).Select(t => t.S));
+        Assert.True(rig.Click("head", s: @"C:\work\x"));
+        Assert.Equal(4, rig.Ui.Targets.Count(t => t.Id == "row"));
+    }
+
+    [Fact]
+    public void A_row_has_a_delete_button_under_the_pointer_that_asks_before_it_deletes_the_chat()
+    {
+        var rig = SideList();
+        Assert.Null(rig.Ui.Find("rowDelete"));
+        var a = rig.Ui.Find("row", s: "a")!.Value.R;
+        rig.Ui.PointerMove(a.X + 40, a.Y + a.H / 2);
+        rig.Frame();
+        Assert.NotNull(rig.Ui.Find("rowDelete", s: "a"));
+        Assert.True(rig.Click("rowDelete", s: "a"));
+        Assert.Contains("Delete this chat?", rig.Frame().Texts);
+        Assert.DoesNotContain(rig.Sent, c => c is DeleteCommand);
+        rig.Key(UiKey.Enter);
+        Assert.DoesNotContain(rig.Sent, c => c is DeleteCommand);
+        Assert.True(rig.Click("confirmYes"));
+        Assert.Equal("a", rig.Last<DeleteCommand>().Key);
+
+        // A chat that is running is deleted by its number, and its view closes if it was open.
+        var live = rig.Ui.Find("row", s: "live")!.Value.R;
+        rig.Ui.PointerMove(live.X + 40, live.Y + live.H / 2);
+        rig.Frame();
+        Assert.True(rig.Click("rowDelete", s: "live"));
+        Assert.True(rig.Click("confirmNo"));
+        Assert.DoesNotContain(rig.Sent, c => c is DeleteCommand { Id: 1 });
+        rig.Ui.PointerMove(live.X + 40, live.Y + live.H / 2);
+        rig.Frame();
+        Assert.True(rig.Click("rowDelete", s: "live"));
+        Assert.True(rig.Click("confirmYes"));
+        Assert.Equal(1, rig.Last<DeleteCommand>().Id);
+    }
+
+    [Fact]
+    public void The_lists_edge_is_dragged_to_make_it_wider_or_narrower_between_200_and_420()
+    {
+        var rig = SideList();
+        var edge = rig.Ui.Find("sideEdge")!.Value.R;
+        Assert.Equal(260, edge.X + 4, 1);
+        Assert.Equal(UiCursor.ResizeColumn, rig.Ui.CursorAt(edge.X + 4, 300));
+        void Drag(float to)
+        {
+            var e = rig.Ui.Find("sideEdge")!.Value.R;
+            rig.Ui.PointerMove(e.X + 4, 300);
+            rig.Ui.PointerDown(e.X + 4, 300, 1, UiMods.None);
+            rig.Ui.PointerMove(to, 300);
+            rig.Ui.PointerUp(to, 300);
+            rig.Frame();
+        }
+        Drag(380);
+        Assert.Equal(380, rig.Ui.Find("sideEdge")!.Value.R.X + 4, 1);
+        Drag(900);
+        Assert.Equal(420, rig.Ui.Find("sideEdge")!.Value.R.X + 4, 1);
+        Drag(50);
+        Assert.Equal(200, rig.Ui.Find("sideEdge")!.Value.R.X + 4, 1);
+    }
+    // MARK: Wide code boxes and tables
+
+    [Fact]
+    public void A_code_line_wider_than_its_box_is_scrolled_sideways_by_the_wheel_with_Shift_the_bar_and_its_thumb()
+    {
+        var long8 = string.Concat(Enumerable.Repeat("someFunction(argument) + ", 14)) + "1;";
+        var h = new PanelHarness { Markdown = SweepTests.Blocks };
+        h.State(PanelHarness.Session(1, "done", null, PanelHarness.Turn("Show it", "Here:\n\n```ts\n" + long8 + "\n```")));
+        h.Ui.ChatView = true;
+        h.Ui.OpenChat(1);
+        h.Frame();
+        var area = h.Ui.ThreadArea;
+        (float X, float Y, float Len, float Content, float Pos) Bar()
+        {
+            var b = h.Ui.Thread.HBars().Single();
+            return (area.X + b.X, area.Y + b.Y - h.Ui.ScrollY, b.Len, b.Content, b.Pos);
+        }
+        var bar = Bar();
+        Assert.True(bar.Content > bar.Len, "the line is wider than its box");
+        Assert.Equal(0, bar.Pos);
+        // Over the box, the wheel with Shift (or turned sideways) moves it; a wheel turned away from the user goes right.
+        Assert.True(h.Ui.WheelSideways(bar.X + 40, bar.Y - 12, -90));
+        Assert.Equal(90, Bar().Pos, 1);
+        Assert.True(h.Ui.WheelSideways(bar.X + 40, bar.Y - 12, 30));
+        Assert.Equal(60, Bar().Pos, 1);
+        // Not over a box: nothing.
+        Assert.False(h.Ui.WheelSideways(area.X + 5, area.Y + 2, -90));
+        // The bar's end button steps by 40, the track pages, and the thumb is dragged.
+        h.ClickAt((bar.X + bar.Len - 5, bar.Y + 5));
+        Assert.Equal(100, Bar().Pos, 1);
+        h.ClickAt((bar.X + 5, bar.Y + 5));
+        Assert.Equal(60, Bar().Pos, 1);
+        h.ClickAt((bar.X + bar.Len - 30, bar.Y + 5));
+        Assert.True(Bar().Pos > 60, "the track pages toward the press");
+        var before = Bar().Pos;
+        var thumbX = bar.X + 10 + 2 + 30;
+        h.Ui.PointerMove(thumbX, bar.Y + 5);
+        h.Ui.PointerDown(thumbX, bar.Y + 5, 1, UiMods.None);
+        h.Ui.PointerMove(thumbX + 60, bar.Y + 5);
+        h.Ui.PointerUp(thumbX + 60, bar.Y + 5);
+        h.Frame();
+        Assert.NotEqual(before, Bar().Pos);
+    }
 }

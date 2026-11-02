@@ -184,7 +184,7 @@ public sealed partial class OfficeUi
 
         cv.PushClip(new Rect4(x, threadTop, pw, threadH));
         cv.PushMove(cx0, threadTop);
-        painter.HoverBar = null;
+        painter.HoverBar = HBarAt(px, py) is { } hb ? (hb.Section, hb.Scroller) : hDrag is { } hd ? (hd.Section, hd.Scroller) : null;
         painter.Paint(thread, cv, scroll, threadH);
         cv.PopMove();
         // The thread's own scroll bar, at the pane's right edge.
@@ -240,7 +240,8 @@ public sealed partial class OfficeUi
             ny += ah + (compose ? 0 : 8);
         }
         if (compose) PaintComposer(s, busy, x, ny, pw, bw, compH, inputH);
-        else PaintDock(s, x + pw, threadTop + threadH);
+        // The reply circle needs room under the header: a question that fills the pane takes it away (the question is answered first).
+        else if (threadH >= 56) PaintDock(s, x + pw, threadTop + threadH);
         cv.PopClip();
 
     }
@@ -432,8 +433,61 @@ public sealed partial class OfficeUi
 
     // MARK: The thread's pointer
 
+    // MARK: The sideways bars of wide code boxes and tables
+
+    /// <summary>The box (code, table) whose own bar is under the point, in the panels' coordinates, and the bar as drawn.</summary>
+    (int Section, int Scroller, Bar Bar, float Along)? HBarAt(float x, float y)
+    {
+        if (!OpenCurrent() || !threadRect.Contains(x, y)) return null;
+        foreach (var (section, scroller, bx, by, len, content, pos) in thread.HBars())
+        {
+            var bar = new Bar(false, threadRect.X + bx, threadRect.Y + by - scroll, len, content, len, pos);
+            if (bar.Max > 0 && bar.Along(x, y) is { } along) return (section, scroller, bar, along);
+        }
+        return null;
+    }
+
+    (int Section, int Scroller, float Grab)? hDrag;
+
+    /// <summary>A press on a box's own bar: the end buttons and the track step it, the thumb is taken. True when the press was on a bar.</summary>
+    bool HBarDown(float x, float y)
+    {
+        if (HBarAt(x, y) is not { } hit) return false;
+        var part = hit.Bar.PartAt(hit.Along);
+        if (part == Bar.Part.Thumb) hDrag = (hit.Section, hit.Scroller, hit.Along - hit.Bar.Thumb().Start);
+        else thread.ScrollBox(hit.Section, hit.Scroller, hit.Bar.Step(part, hit.Along));
+        Dirty = true;
+        return true;
+    }
+
+    /// <summary>The thumb of a box's bar follows the pointer.</summary>
+    void HBarDrag(float x)
+    {
+        if (hDrag is not { } d) return;
+        foreach (var (section, scroller, bx, by, len, content, pos) in thread.HBars())
+        {
+            if (section != d.Section || scroller != d.Scroller) continue;
+            var bar = new Bar(false, threadRect.X + bx, threadRect.Y + by - scroll, len, content, len, pos);
+            thread.ScrollBox(section, scroller, bar.Drag(d.Grab, x - bar.X));
+            Dirty = true;
+        }
+    }
+
+    /// <summary>The wheel turned sideways (or with Shift) over a code box or a table: it scrolls that box. False when there is none under the point.</summary>
+    public bool WheelSideways(float x, float y, float delta)
+    {
+        if (!OpenCurrent() || !threadRect.Contains(x, y)) return false;
+        if (thread.BoxAt(x - threadRect.X, y - threadRect.Y + scroll) is not { } box) return false;
+        var bar = thread.HBars().FirstOrDefault(b => b.Section == box.Section && b.Scroller == box.Scroller);
+        if (bar.Content <= bar.Len) return false;
+        thread.ScrollBox(box.Section, box.Scroller, bar.Pos - delta);
+        Dirty = true;
+        return true;
+    }
+
     void ThreadDown(float x, float y, int clicks, UiMods mods)
     {
+        if (HBarDown(x, y)) return;
         // A press on the thread takes the keyboard from the reply box, and an empty reply box closes (internal/ui/officechat.go).
         if (compose && reply.Text.Length == 0 && Current() is { } cur && ShotsOf(cur.Id).Count == 0 && ChipsOf(cur.Id).Count == 0) { PopClose(); compose = false; }
         focus = Focus.None;
@@ -555,11 +609,11 @@ public sealed partial class OfficeUi
         var cv = pen.Cv;
         pen.Box(0, 0, w, h, 0, Rgba.Of(0x000000, 0.5));
         var bw = Math.Min(360, w - 32);
-        var head = c.Kind switch { "restore" => "Restore to after this answer?", "delete" or "deleteKey" => "Delete this chat?", _ => "Try this message again?" };
+        var head = c.Kind switch { "restore" => "Restore to after this answer?", "delete" or "deleteKey" or "deleteLive" => "Delete this chat?", _ => "Try this message again?" };
         var body = c.Kind switch
         {
             "restore" => "The chat goes back to how it was after this answer, and the folder goes back with it. Later messages are removed.",
-            "delete" or "deleteKey" => "The chat is removed from the list and its saved history is deleted. This cannot be undone.",
+            "delete" or "deleteKey" or "deleteLive" => "The chat is removed from the list and its saved history is deleted. This cannot be undone.",
             _ => "The chat goes back to just before this message, the folder with it, and the message is sent again.",
         };
         var hf = Pen.F(14, 600, Pen.Ink);
@@ -574,7 +628,7 @@ public sealed partial class OfficeUi
         pen.Text(head, bx + 18, by + 18, hf);
         pen.Wrapped(body, bx + 18, by + 18 + pen.LineHeight(hf) + 8, bw - 36, bf);
         var yb = by + boxH - 18 - 30;
-        var yes = c.Kind switch { "restore" => "Restore", "delete" or "deleteKey" => "Delete", _ => "Try again" };
+        var yes = c.Kind switch { "restore" => "Restore", "delete" or "deleteKey" or "deleteLive" => "Delete", _ => "Try again" };
         var yw = pen.Width(yes, Pen.F(12, 600, Pen.Ink)) + 28;
         var cw = pen.Width("Cancel", Pen.F(12, 600, Pen.Ink)) + 28;
         var yr = new Rect4(bx + bw - 18 - yw, yb, yw, 30);

@@ -142,7 +142,7 @@ sealed partial class NotchHost : IDisposable
         window.Deactivated += () => Guard("deactivate", Deactivated);
         window.TrayLeftClick += () => Guard("tray", callbacks.OpenDashboard);
         window.TrayPick += i => Guard("tray menu", () => TrayPick(i));
-        window.Pressed += (x, y) => Guard("press", () => { ctl.Stay(); if (VoicePressed(x, y)) return; if (CfgPressed(x, y)) return; if (!PanelsPressed(x, y)) office?.NotchPressed(x, y); });
+        window.Pressed += (x, y) => Guard("press", () => { ctl.Stay(); if (VoicePressed(x, y)) return; if (CfgPressed(x, y)) return; if (!PanelsPressed(x, y) && !PanelsCover(x, y)) office?.NotchPressed(x, y); });
         window.Released += (x, y) => Guard("click", () => { if (VoiceReleased(x, y)) return; if (CfgReleased(x, y)) return; PanelsReleased(x, y); Clicked(x, y); office?.NotchReleased(x, y); });
         window.Char += text => Guard("text", () => { if (VoiceChar(text)) { QueueRender(); return; } if (CfgChar(text)) return; if (panels?.Ui.Char(text) == true) QueueRender(); });
         if (panels is not null) panels.Changed += () => Guard("panels", () => { QueueRender(); EnsureAnimating(); });
@@ -342,14 +342,25 @@ sealed partial class NotchHost : IDisposable
         QueueRender();
     }
 
+    /// <summary>A press at a place the panels drew over (a card, a toast, a gap in a list) is theirs even when nothing there answers it: the office behind must not take it as a click on its floor.</summary>
+    bool PanelsCover(int px, int py) => PanelsOpen && PanelPoint(px, py) is { } p && panels!.Ui.Covers(p.X, p.Y);
+
     bool PanelsWheel(int delta)
     {
         if (!PanelsOpen) return false;
         var (cx, cy) = window.Cursor();
         if (PanelPoint((int)(cx - ctl.Window.Left), (int)(cy - ctl.Window.Top)) is not { } p) return false;
+        // With Shift held the wheel scrolls the code box or table under the pointer sideways.
+        if ((GetKeyState(VK_SHIFT) & 0x8000) != 0)
+        {
+            var sideways = panels!.Ui.WheelSideways(p.X, p.Y, delta / 120f * 90f);
+            if (sideways) { QueueRender(); EnsureAnimating(); }
+            return sideways || panels.Ui.Covers(p.X, p.Y);
+        }
         var used = panels!.Ui.Wheel(p.X, p.Y, delta / 120f * 90f);
         if (used) { QueueRender(); EnsureAnimating(); }
-        return used;
+        // Over a card, a box or a toast of the panels the wheel is not the office's: it would zoom the room behind them.
+        return used || panels.Ui.Covers(p.X, p.Y);
     }
 
     bool PanelsKey(int vk)

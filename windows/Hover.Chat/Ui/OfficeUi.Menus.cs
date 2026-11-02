@@ -375,6 +375,25 @@ public sealed partial class OfficeUi
             case "row":
                 OpenRow(t.N);
                 break;
+            case "head":
+                // A folder's heading folds its chats, and opens them again.
+                if (!folded.Remove(t.S)) folded.Add(t.S);
+                break;
+            case "rowDelete":
+                if (t.N >= 0 && t.N < rowKeys.Count)
+                {
+                    var (dkey, did) = rowKeys[t.N];
+                    if (did is { } liveId) confirm = (liveId, "deleteLive");
+                    else if (!dkey.StartsWith("cli:", StringComparison.Ordinal))
+                    {
+                        confirm = (0, "deleteKey");
+                        confirmKey = dkey;
+                    }
+                }
+                break;
+            case "sideEdge":
+                sideDrag = true;
+                break;
             case "showSide":
                 sideClosed = false;
                 break;
@@ -597,6 +616,13 @@ public sealed partial class OfficeUi
         if (c.Kind == "deleteKey")
         {
             env.Send(new DeleteCommand(null, confirmKey));
+            return;
+        }
+        if (c.Kind == "deleteLive")
+        {
+            // A chat of the list, open or not: it goes from the office and the history; its own view closes if it was open.
+            env.Send(new DeleteCommand(c.Turn));
+            if (OpenId == c.Turn) CloseChat();
             return;
         }
         if (OpenId is not { } id) return;

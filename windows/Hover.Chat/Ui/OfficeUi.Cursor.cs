@@ -1,7 +1,7 @@
 namespace Hover.Chat.Ui;
 
 /// <summary>The pointer's shape over the panels, as the Go app sets it: the hand over a button, the text cursor over a box of words.</summary>
-public enum UiCursor { Normal, Hand, Text }
+public enum UiCursor { Normal, Hand, Text, ResizeColumn }
 
 public sealed partial class OfficeUi
 {
@@ -27,12 +27,13 @@ public sealed partial class OfficeUi
         if (menu is not null && !(top is { } m && m.Id.StartsWith("menu", StringComparison.Ordinal))) return UiCursor.Normal;
         if (top is { } t)
         {
+            if (t.Id == "sideEdge") return UiCursor.ResizeColumn;
             if (TextBoxes.Contains(t.Id)) return UiCursor.Text;
             return NoHand.Contains(t.Id) ? UiCursor.Normal : UiCursor.Hand;
         }
         // The thread: the hand over a link or a button in it, the text cursor over the rest of it.
         if (OpenCurrent() && threadRect.Contains(x, y))
-            return thread.Hit(x - threadRect.X, y - threadRect.Y + scroll).Kind is HitKind.Link or HitKind.Act ? UiCursor.Hand : UiCursor.Text;
+            return HBarAt(x, y) is not null ? UiCursor.Normal : thread.Hit(x - threadRect.X, y - threadRect.Y + scroll).Kind is HitKind.Link or HitKind.Act ? UiCursor.Hand : UiCursor.Text;
         return UiCursor.Normal;
     }
 }

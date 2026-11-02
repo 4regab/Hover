@@ -439,7 +439,9 @@ public sealed partial class OfficeUi
             open.Scroll.BarMove(open.List, y);
         }
         if (deskMenuOpen) openScroll.BarMove(openList, y);
-        if (dragging) DragTo(x, y);
+        if (sideDrag && pointerDown) { sideW = Math.Clamp(x, 200, 420); Dirty = true; }
+        else if (hDrag is not null && pointerDown) HBarDrag(x);
+        else if (dragging) DragTo(x, y);
         else if (barDrag is { } bd && pointerDown)
         {
             var bar = new Bar(true, 0, threadRect.Y, threadRect.H, thread.Height, threadRect.H, scroll);
@@ -516,6 +518,8 @@ public sealed partial class OfficeUi
         px = x;
         py = y;
         pointerDown = false;
+        sideDrag = false;
+        hDrag = null;
         menu?.Scroll.BarUp();
         openScroll.BarUp();
         if (dragging)
@@ -592,7 +596,7 @@ public sealed partial class OfficeUi
         {
             if (key == UiKey.Escape) { confirm = null; return true; }
             // Enter confirms a restore or a new try, but never a delete: that is a click on Delete, so a stray Enter cannot remove a chat.
-            if (key == UiKey.Enter && confirm.Value.Kind is not ("delete" or "deleteKey")) { Activate(new Target(default, "confirmYes")); return true; }
+            if (key == UiKey.Enter && confirm.Value.Kind is not ("delete" or "deleteKey" or "deleteLive")) { Activate(new Target(default, "confirmYes")); return true; }
             return true;
         }
         if (menu is { } open)

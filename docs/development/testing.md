@@ -199,6 +199,23 @@ What `windows\Hover.Tests` covers:
   taller than its office less 16 px), the wheel, the pick. The copies (`notice-open.png`, `folder-list-open.png`,
   `folder-picked.png`) are in `out\notch-live`. Not run: the system's folder dialog itself (a modal window the test cannot
   answer); `StartTaskTests` answers it with a fake.
+- **The sweep** (`SweepTests`, any system): the panels are put in 51 states (the office with and without its box, the
+  history, board and overview panels, the drawer and the chat view in each stage of a chat, the question and permission
+  cards, the desk card and each tab, the note, a confirm, and every menu from `MenuFitTests`) at 828 x 346 (the open
+  notch), 880 x 480 (the app window's smallest), 1200 x 720 and 1920 x 1080, with data that is hard on a layout (34 chats
+  with long titles, words and paths with no spaces, wide tables and code, right-to-left text, emoji). In each state:
+  every place that answers a click is inside the window; no two overlap unless one is wholly inside the other, or is a
+  layer put over on purpose; no line of text runs off the window or is cut at its side by a clip; every button looks
+  different with the pointer on it (the places that do not by design are named in the test, with the reason); and the
+  pointer is the hand over a button, the text cursor over a box of words, the resize cursor on the list's edge. The
+  fixture's Markdown is made up, and the shaper has fixed letters, so a width is a rule of thumb: the pictures are what
+  to look at. The first run found a few dozen faults (listed in the sweep report, reports/sweep1.md).
+  `SweepFixTests` holds the checks of the single faults it found (each failed before its fix): the repository search,
+  the folder chip, the Escape order, the keys that must not reach the office, the reply box and the thread, a saved rename,
+  drafts kept, Retry, Enter and delete, a question with two parts, the list at the side (folders, fold, delete, resize),
+  and sideways scrolling of wide code.
+- **The window's smallest size** (`WindowSizeAppTests`, Windows, needs `HOVER_APP_EXE`): the app window answers the
+  system's `WM_GETMINMAXINFO` with 880 x 480 scaled by the display, and stays that size when asked for 300 x 200.
 - **The panels** (`PanelTests`, any system): the start screen starts a task with the tool, folder, access
   and model its pills show; the agent, where-it-runs, repository and access menus; a permission answered
   (`allow`, `trust`, `deny`) from the chat and over the bot; two questions at once answered one by one; a

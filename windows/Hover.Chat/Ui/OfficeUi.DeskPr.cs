@@ -189,8 +189,8 @@ public sealed partial class OfficeUi
         void Check(string id, bool on, string label)
         {
             var row = new Rect4(ix, cy, iw, 24);
-            pen.Box(ix, cy + 4, 16, 16, 5, on ? Rgba.Of(0x9b6bff) : Rgba.Of(0xffffff, 0.07));
-            pen.Border(ix, cy + 4, 16, 16, 5, 1, on ? Rgba.Of(0x9b6bff) : Rgba.Of(0xffffff, 0.18));
+            pen.Box(ix, cy + 4, 16, 16, 5, on ? (Over(row) ? Rgba.Of(0xad85ff) : Rgba.Of(0x9b6bff)) : Rgba.Of(0xffffff, 0.07));
+            pen.Border(ix, cy + 4, 16, 16, 5, 1, on ? Rgba.Of(0x9b6bff) : Rgba.Of(0xffffff, Over(row) ? 0.4 : 0.18));
             if (on) pen.Icon(DeskIcons.Check, ix + 2, cy + 6, 12, Rgba.Of(0xffffff));
             Tv(label, ix + 16 + 8, cy, 24, Pen.F(12.5, 400, Rgba.Of(0xececf0)), iw - 24);
             Add(row, "prCheck", 0, id);
