@@ -441,4 +441,66 @@ public class SweepFixTests
         h.Frame();
         Assert.NotEqual(before, Bar().Pos);
     }
+    [Fact]
+    public void A_click_on_the_empty_floor_puts_away_the_box_then_the_open_chat_then_the_open_panel()
+    {
+        var h = OpenChat();
+        Assert.Equal(1, h.Ui.OpenId);
+        h.Ui.OpenNewTask();
+        h.Frame();
+        Assert.NotNull(h.Ui.Find("taskText"));
+        h.Ui.FloorClicked();
+        h.Frame();
+        Assert.Null(h.Ui.Find("taskText"));
+        Assert.Equal(1, h.Ui.OpenId);
+        h.Ui.FloorClicked();
+        h.Frame();
+        Assert.Null(h.Ui.OpenId);
+        h.Ui.OpenOfficePanel("history");
+        h.Frame();
+        h.Ui.FloorClicked();
+        h.Frame();
+        Assert.Equal("", h.Ui.OfficePanel);
+    }
+    [Fact]
+    public void A_tool_that_is_not_ready_is_refused_at_the_pick_with_its_hint_and_Read_only_is_offered_only_where_it_works()
+    {
+        var h = new PanelHarness();
+        h.Accept(new StateEvent
+        {
+            CanStart = true, Tool = "kiro", Folder = @"C:\work\project",
+            Tools =
+            [
+                new ToolInfo { Id = "kiro", Name = "Kiro", Ready = true, Access = "full", ReadOnly = true },
+                new ToolInfo { Id = "codex", Name = "Codex", Ready = false, Hint = "Codex is not signed in. Open Settings to sign in.", Access = "risky" },
+                new ToolInfo { Id = "cursor", Name = "Cursor", Ready = true, Access = "risky", ReadOnly = false },
+            ],
+        });
+        h.Ui.ChatView = true;
+        h.Frame();
+        Assert.True(h.Click("pillAgent"));
+        Assert.True(h.Click("menu", s: "Codex"));
+        Assert.Equal("Codex is not signed in. Open Settings to sign in.", h.Ui.ToastText);
+        Assert.Contains("Kiro", h.Frame().Texts);
+        // Kiro can be read only; Cursor cannot.
+        Assert.True(h.Click("pillAccess"));
+        Assert.Contains("Read only", h.Frame().Texts);
+        h.Key(UiKey.Escape);
+        Assert.True(h.Click("pillAgent"));
+        Assert.True(h.Click("menu", s: "Cursor"));
+        Assert.True(h.Click("pillAccess"));
+        Assert.DoesNotContain("Read only", h.Frame().Texts);
+    }
+    [Fact]
+    public void The_start_screens_box_has_the_keyboard_when_the_chat_view_opens()
+    {
+        var h = new PanelHarness();
+        h.State();
+        h.Ui.ChatView = false;
+        h.Frame();
+        Assert.True(h.Click("view", 1));
+        Assert.True(h.Ui.TakesKeys);
+        h.Type("hello");
+        Assert.Equal("hello", h.Ui.TaskText);
+    }
 }

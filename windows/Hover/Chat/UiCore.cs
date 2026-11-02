@@ -143,6 +143,9 @@ sealed class UiCore : IDisposable
                     case OfficeProp.Tv: Ui.OpenOfficePanel("tv"); break;
                     case OfficeProp.Board: Ui.OpenOfficePanel("board"); break;
                     case OfficeProp.History: Ui.OpenOfficePanel("history"); break;
+                    // The wall clock says the date in full for a moment (internal/shell/office.go fullDate).
+                    case OfficeProp.Clock: Ui.Say(DateTime.Now.ToString("dddd d MMMM yyyy 'at' HH:mm:ss", System.Globalization.CultureInfo.InvariantCulture)); break;
+                    case OfficeProp.Floor: Ui.FloorClicked(); break;
                 }
             });
             office.Covered = (x, y) => Ui.Covers((float)x, (float)y);

@@ -37,6 +37,15 @@ public sealed partial class OfficeUi
     /// <summary>A chat opened or closed in the office: the session's id, or null. The office moves its camera to that bot.</summary>
     public event Action<int?>? DrawerChanged;
 
+    /// <summary>The empty floor of the office was clicked: it puts away the new-task box, else the open chat, else the open panel (internal/shell/office.go officeNothing).</summary>
+    public void FloorClicked()
+    {
+        if (taskOpen) { taskOpen = false; focus = Focus.None; }
+        else if (!ChatView && OpenId is not null) CloseChat();
+        else if (OfficePanel.Length > 0) OpenOfficePanel("");
+        Dirty = true;
+    }
+
     /// <summary>Opens the new-task box over the office (the door was clicked).</summary>
     public void OpenNewTask()
     {

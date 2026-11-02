@@ -45,6 +45,8 @@ public enum OfficeProp
     Door,
     /// <summary>The wall clock: the date toast.</summary>
     Clock,
+    /// <summary>The empty floor: it puts away the new-task box, then the open chat, then the open panel.</summary>
+    Floor,
 }
 
 /// <summary>
@@ -323,6 +325,9 @@ public sealed class OfficeHost : IDisposable
                 break;
             case ClickKind.Toast:
                 PropPicked?.Invoke(OfficeProp.Clock);
+                break;
+            case ClickKind.Nothing:
+                PropPicked?.Invoke(OfficeProp.Floor);
                 break;
         }
     }

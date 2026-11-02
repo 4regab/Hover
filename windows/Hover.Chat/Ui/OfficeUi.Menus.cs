@@ -355,6 +355,8 @@ public sealed partial class OfficeUi
             case "view":
                 ChatView = t.N == 1;
                 menu = null;
+                // The start screen's box has the keyboard as soon as the screen shows (the Go list does the same).
+                if (ChatView && OpenId is null && openKey is null) focus = Focus.Task;
                 break;
             case "topMenu":
                 OpenMenu("top", t.R, env.OpenSettings is null
@@ -464,7 +466,8 @@ public sealed partial class OfficeUi
                     var cur = TaskPicks().Access;
                     var tool = TaskPicks().Tool;
                     var rows = new List<MenuRow> { new((tool is null ? "The agent" : ToolDisplay(tool)) + " may", Header: true, Pin: true) };
-                    foreach (var (id, label, note) in AccessChoices)
+                    // Read only is offered where the tool can do it (internal/shell/newtask.go).
+                    foreach (var (id, label, note) in AccessChoices.Where(c => c.Id != "read" || tool?.ReadOnly == true || cur == "read"))
                         rows.Add(new MenuRow(label, id, id == "risky" && tool?.Id == "codex" ? "Asks to write outside the folder or go online. Codex runs the rest." : note, id == cur));
                     rows.Add(new MenuRow("", Note: "For this task only. Settings keeps the default.", Disabled: true, Pin: true));
                     OpenMenu("access", t.R, rows, true, 270);
@@ -888,6 +891,12 @@ public sealed partial class OfficeUi
                 else taskFolder = row.Id;
                 break;
             case "agent":
+                // A tool that is not ready is refused here, with its hint (the Go box does the same), not when the task is sent.
+                if (ToolOf(row.Id) is { Ready: false } notReady)
+                {
+                    Say(notReady.Hint.Length > 0 ? notReady.Hint : ToolDisplay(notReady) + " is not ready yet.");
+                    break;
+                }
                 taskTool = row.Id;
                 // The new tool's own access, model and effort until the user picks.
                 taskAccess = taskModel = taskEffort = null;
