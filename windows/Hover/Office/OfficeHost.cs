@@ -456,10 +456,12 @@ public sealed class OfficeHost : IDisposable
         }
         if (!notchAttached)
         {
+            // With no reference visual, insertAbove = TRUE puts the visual below all its siblings (IDCompositionVisual::AddVisual): the
+            // office is the bottom view of the notch and the panels' layers (UiLayer) go over it, whichever is added first.
             notchRoot!.AddVisual(notchVisual!, true, null!).CheckError();
             notchDevice!.Commit().CheckError();
             notchAttached = true;
-            HostLog.Line($"office: drawing in the notch ({w} x {h}); its view is put above the other visuals");
+            HostLog.Line($"office: drawing in the notch ({w} x {h}); its view is put below the other visuals");
         }
     }
 

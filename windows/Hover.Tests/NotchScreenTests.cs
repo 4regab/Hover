@@ -211,6 +211,40 @@ public class NotchScreenTests(ITestOutputHelper output)
         Desktop.MovePointer(5, 5);
         using var app = Process.Start(info)!;
         var problems = new List<string>();
+
+        string? SavedTime() => System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, string>>(
+            File.Exists(Path.Combine(sandbox.Data, "office.json")) ? File.ReadAllText(Path.Combine(sandbox.Data, "office.json")) : "{}")!.GetValueOrDefault("time");
+
+        // The menu button opens the office menu: three time-of-day icons and the rows, and a pick of the time is kept in office.json.
+        async Task MenuChecks(int round)
+        {
+            if (dump.Where("notch", "topMenu") is not { } button) { problems.Add($"round {round}: no menu button to click"); return; }
+            Input.Click(button.X, button.Y);
+            var opened = await Until(() => (string?)dump.Section("notch")?["menu"] == "top" && dump.Where("notch", "menuTime") is not null, 5000);
+            await Task.Delay(800);
+            var rect = Desktop.Rect(Desktop.Notch());
+            DesktopPicture.Take(rect.Left, rect.Top, rect.Right - rect.Left, rect.Bottom - rect.Top).SavePng(Path.Combine(report, "menu-open.png"));
+            var targets = AppDump.Items(dump.Section("notch"), "targets").ToList();
+            if (!opened) { problems.Add("the menu button did not open the menu"); return; }
+            foreach (var row in new[] { "Chill beats", "Session history", "Settings" })
+                if (!targets.Any(t => (string?)t["id"] == "menu" && (string?)t["s"] == row)) problems.Add($"the office menu has no '{row}' row");
+            if (targets.Count(t => (string?)t["id"] == "menuTime") != 3) problems.Add("the office menu does not have three time-of-day icons");
+
+            // Night, day, then the clock again: each is kept as the Go app keeps it ("night", "day", "").
+            foreach (var (n, saved) in new[] { (1, "night"), (2, "day"), (0, "") })
+            {
+                if (dump.Where("notch", "menuTime", t => (int)t["n"]! == n) is not { } icon) { problems.Add($"no time-of-day icon {n}"); continue; }
+                Input.Click(icon.X, icon.Y);
+                if (!await Until(() => SavedTime() == saved, 5000)) problems.Add($"the time-of-day icon {n} did not save '{saved}' in office.json (it has '{SavedTime()}')");
+            }
+
+            // The button again puts the menu away.
+            if (dump.Where("notch", "topMenu") is { } again) Input.Click(again.X, again.Y);
+            if (!await Until(() => (string?)dump.Section("notch")?["menu"] is null, 5000)) problems.Add("the menu button did not close the menu");
+            Desktop.MovePointer(5, 5);
+            await Task.Delay(500);
+        }
+
         try
         {
             await AppTests.WaitForLog(sandbox.Data, "hotkey Alt+N registered", TimeSpan.FromSeconds(60), app);
@@ -249,6 +283,21 @@ public class NotchScreenTests(ITestOutputHelper output)
                         if (dot < 12) problems.Add($"round {round}: the new-task button's dot is not on the screen ({dot} lilac pixels)");
                     }
 
+                    // The menu button: dark glass with three light bars. The bars are the ink at 62 % over what the glass shows there.
+                    var menuButton = targets.LastOrDefault(t => (string?)t["id"] == "topMenu");
+                    if (menuButton is null) problems.Add($"round {round}: no menu button in the dump");
+                    else
+                    {
+                        double x = (double)menuButton["x"]!, y = (double)menuButton["y"]!, w = (double)menuButton["w"]!, h = (double)menuButton["h"]!;
+                        var back = picture.At((int)Math.Round(left + (x + 2) * scale), (int)Math.Round(top + (y + 2) * scale));
+                        byte Mix(int ink, int under) => (byte)Math.Round(ink * 0.62 + under * 0.38);
+                        var bars = picture.CountNear(left + x * scale, top + y * scale, left + (x + w) * scale, top + (y + h) * scale,
+                            (Mix(0xF6, back.R), Mix(0xF2, back.G), Mix(0xFF, back.B)), 30);
+                        output.WriteLine($"round {round}: the menu button's glass is {back}; {bars} pixels are the colour of its bars");
+                        if (bars < 15 || Math.Max(back.R, Math.Max(back.G, back.B)) > 100)
+                            problems.Add($"round {round}: the menu button is not on the screen ({bars} pixels of its bars, glass {back})");
+                    }
+
                     // The office/chat switch: its active icon is drawn in the same lilac.
                     var cell = targets.FirstOrDefault(t => (string?)t["id"] == "view" && (int)t["n"]! == 0);
                     if (cell is null) problems.Add($"round {round}: no office/chat switch in the dump");
@@ -260,6 +309,8 @@ public class NotchScreenTests(ITestOutputHelper output)
                         if (icon < 6) problems.Add($"round {round}: the office/chat switch is not on the screen ({icon} lilac pixels)");
                     }
                 }
+
+                if (round == 1) await MenuChecks(round);
 
                 // Folded again, and long enough for the animation to end.
                 Desktop.AltN();

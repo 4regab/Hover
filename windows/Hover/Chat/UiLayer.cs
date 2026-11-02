@@ -73,9 +73,11 @@ sealed class UiLayer : IDisposable
     public void Show(bool on)
     {
         if (visual is null) return;
-        // Adding again moves it to the top, which keeps it above a visual added after it.
         if (shown) root.RemoveVisual(visual);
-        if (on) root.AddVisual(visual, true, null!);
+        // With no reference visual, insertAbove = TRUE puts the visual above NO sibling, which is below all of them; FALSE puts it
+        // below no sibling, which is above all of them (IDCompositionVisual::AddVisual). The panels must be above the office,
+        // whichever of them was added first.
+        if (on) root.AddVisual(visual, false, null!);
         shown = on;
         composition.Commit();
         HostLog.Line($"{name}: layer {(on ? "put above the other visuals" : "taken away")}");
