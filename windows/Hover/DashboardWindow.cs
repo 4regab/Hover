@@ -210,6 +210,9 @@ public sealed class DashboardWindow : Window
             item.Padding = new Thickness(9, 0, 9, 0);
             item.CornerRadius = new CornerRadius(6);
             item.VerticalAlignment = VerticalAlignment.Center;
+            // The Go bar has no focus ring; the word lights while its menu is out. (The system draws a white ring on the first word when
+            // the window opens, as the first thing that can have the keyboard.)
+            item.FocusVisualPrimaryThickness = item.FocusVisualSecondaryThickness = new Thickness(0);
         }
     }
 

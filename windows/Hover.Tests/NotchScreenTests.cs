@@ -290,10 +290,16 @@ public class NotchScreenTests(ITestOutputHelper output)
                     {
                         double x = (double)menuButton["x"]!, y = (double)menuButton["y"]!, w = (double)menuButton["w"]!, h = (double)menuButton["h"]!;
                         var back = picture.At((int)Math.Round(left + (x + 2) * scale), (int)Math.Round(top + (y + 2) * scale));
-                        byte Mix(int ink, int under) => (byte)Math.Round(ink * 0.62 + under * 0.38);
-                        var bars = picture.CountNear(left + x * scale, top + y * scale, left + (x + w) * scale, top + (y + h) * scale,
-                            (Mix(0xF6, back.R), Mix(0xF2, back.G), Mix(0xFF, back.B)), 30);
-                        output.WriteLine($"round {round}: the menu button's glass is {back}; {bars} pixels are the colour of its bars");
+                        // The bars are about 1.5 pixels thick, so most of their pixels are part covered: any pixel clearly lighter than the glass counts.
+                        var glass = back.R + back.G + back.B;
+                        var bars = 0;
+                        for (var py = (int)Math.Floor(top + y * scale); py < (int)Math.Ceiling(top + (y + h) * scale); py++)
+                        for (var px = (int)Math.Floor(left + x * scale); px < (int)Math.Ceiling(left + (x + w) * scale); px++)
+                        {
+                            var (r, g, b) = picture.At(px, py);
+                            if (r + g + b >= glass + 120) bars++;
+                        }
+                        output.WriteLine($"round {round}: the menu button's glass is {back}; {bars} pixels of its box are clearly lighter (its bars)");
                         if (bars < 15 || Math.Max(back.R, Math.Max(back.G, back.B)) > 100)
                             problems.Add($"round {round}: the menu button is not on the screen ({bars} pixels of its bars, glass {back})");
                     }
