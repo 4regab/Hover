@@ -71,11 +71,12 @@ sealed partial class NotchRenderer : IDisposable
         return formats[f] = (format, ellipsis);
     }
 
-    IDWriteTextLayout LayoutOf(string text, Font f, double maxW, double maxH, bool elide, bool middle)
+    IDWriteTextLayout LayoutOf(string text, Font f, double maxW, double maxH, bool elide, bool middle, bool charWrap = false)
     {
         var (format, ellipsis) = FormatOf(f);
         var layout = g.Write.CreateTextLayout(text, format, (float)(maxW > 0 ? maxW : 100000), (float)(maxH > 0 ? maxH : 100000));
-        layout.WordWrapping = WordWrapping.NoWrap;
+        // charWrap breaks a line at any character (a command or a path has no spaces to break at), as the Go card does.
+        layout.WordWrapping = charWrap && maxW > 0 ? WordWrapping.Character : WordWrapping.NoWrap;
         layout.ParagraphAlignment = middle ? ParagraphAlignment.Center : ParagraphAlignment.Near;
         if (elide) layout.SetTrimming(new Trimming { Granularity = TrimmingGranularity.Character }, ellipsis);
         return layout;
@@ -97,11 +98,19 @@ sealed partial class NotchRenderer : IDisposable
     }
 
     /// <summary>Draws the text at (x, y); with a height it is centred in it, with a width wider text is cut with an ellipsis.</summary>
-    void Text(string text, Font f, double x, double y, uint rgb, double a = 1, double w = 0, double h = 0, bool elide = false)
+    void Text(string text, Font f, double x, double y, uint rgb, double a = 1, double w = 0, double h = 0, bool elide = false, bool charWrap = false)
     {
         if (text.Length == 0) return;
-        using var layout = LayoutOf(text, f, w, h, elide && w > 0, h > 0);
+        using var layout = LayoutOf(text, f, w, h, elide && w > 0, h > 0, charWrap);
         dc.DrawTextLayout(new Vector2((float)x, (float)y), layout, Brush(rgb, a));
+    }
+
+    /// <summary>How tall the text is when it breaks at any character to fit the width; an empty line is one line tall.</summary>
+    double WrappedHeight(string text, Font f, double w)
+    {
+        if (text.Length == 0 || w <= 0) return LineHeight(f);
+        using var layout = LayoutOf(text, f, w, 0, false, false, charWrap: true);
+        return Math.Max(layout.Metrics.Height, LineHeight(f));
     }
 
     // MARK: Shapes
@@ -531,21 +540,23 @@ sealed partial class NotchRenderer : IDisposable
 
         // The command or the change, in mono, in a box that stops growing at 150.
         const double iw = w - 24;
-        var lines = new List<(string Text, Font Font, uint Color, double X, double W)>();
+        // Each line breaks at any character to fit the box (the Go card does), and the box grows with them up to 150. The path over
+        // a change is dim.
+        var lines = new List<(string Text, Font Font, uint Color, double Alpha, double X, double W)>();
         if (card.Command.Length > 0)
         {
             var pw = Width("$  ", Mono(12.5f));
-            lines.Add(("$  ", Mono(12.5f), 0xffb340, 0, 0));
-            lines.Add((card.Command, Mono(12.5f), White, pw, iw - pw));
+            lines.Add(("$  ", Mono(12.5f), 0xffb340, 1, 0, 0));
+            lines.Add((card.Command, Mono(12.5f), White, 1, pw, iw - pw));
         }
-        else lines.Add((card.Path, card.Preview.Count > 0 ? Mono(11.5f) : Mono(12.5f), card.Preview.Count > 0 ? White : White, 0, iw));
+        else lines.Add((card.Path, card.Preview.Count > 0 ? Mono(11.5f) : Mono(12.5f), White, card.Preview.Count > 0 ? DimInk : 1, 0, iw));
         foreach (var l in card.Preview)
-            lines.Add((l.Text, Mono(11.5f), l.Kind switch { 1 => 0x9df0ae, -1 => 0xffaaa4, _ => White }, 0, iw));
+            lines.Add((l.Text, Mono(11.5f), l.Kind switch { 1 => 0x9df0ae, -1 => 0xffaaa4, _ => White }, 1, 0, iw));
         double preH = 0;
         for (var i = 0; i < lines.Count; i++)
         {
             if (card.Command.Length > 0 && i == 0) continue;
-            preH += LineHeight(lines[i].Font);
+            preH += WrappedHeight(lines[i].Text, lines[i].Font, lines[i].W);
         }
         var boxH = Math.Min(preH + 19, 150);
         if (draw)
@@ -562,8 +573,8 @@ sealed partial class NotchRenderer : IDisposable
                     Text(l.Text, l.Font, x + 12, ly, l.Color);
                     continue;
                 }
-                Text(l.Text, l.Font, x + 12 + l.X, ly, l.Color, 1, l.W, 0, true);
-                ly += LineHeight(l.Font);
+                Text(l.Text, l.Font, x + 12 + l.X, ly, l.Color, l.Alpha, l.W, 0, false, true);
+                ly += WrappedHeight(l.Text, l.Font, l.W);
             }
             dc.PopAxisAlignedClip();
         }

@@ -243,7 +243,7 @@ jobs:
           if ($bytes.Length -lt 2000 -or $bytes[0] -ne 0xFF -or $bytes[1] -ne 0xD8) { throw "$jpeg is not a JPEG picture" }
           "dashboard.jpg: $($bytes.Length) bytes"
           # The notch's states, named as the Go app's pictures are.
-          foreach ($name in 'notch-rest-pill-2x', 'notch-rest-working-2x', 'notch-rest-ask-2x', 'notch-rest-done-2x', 'notch-rest-card-2x', 'notch-open-office',
+          foreach ($name in 'notch-rest-pill-2x', 'notch-rest-working-2x', 'notch-rest-ask-2x', 'notch-rest-done-2x', 'notch-rest-card-2x', 'notch-rest-card-long-2x', 'notch-rest-card-diff-2x', 'notch-open-office',
             'notch-open-ask', 'notch-open-chat', 'notch-open-new-task',
             'chat-view-chat', 'chat-view-home', 'chat-default-done', 'chat-default-ask', 'chat-default-queued', 'new-task-box', 'office-menu', 'office-ask-over',
             'office-notice', 'office-notice-small', 'office-model-menu-long', 'office-model-menu-small', 'chat-view-home-model-menu-min', 'office-fab-cloud-repos',
