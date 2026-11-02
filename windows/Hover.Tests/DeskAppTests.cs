@@ -196,6 +196,19 @@ public class DeskAppTests(ITestOutputHelper output)
         await ClickAt(s, "pillAgent", "the agent pill");
         await Check(s, () => s.Dump.Where("window", "menu", Of("Codex")) is not null, "Codex is in the agent menu");
         await ClickAt(s, "menu", "Codex", Of("Codex"));
+        // The box refuses a tool the backend has not finished checking (as the Go box does) and says so for a moment, so a pick in the
+        // first second after the chat view opens can miss: the app's log showed the pick, the pill still said Kiro, and the stand-in agent
+        // had been asked its first question only 1 s before (runs 41480224570 at 125 % and 41492318125). The pick is made again until it holds.
+        for (var attempt = 0; attempt < 8; attempt++)
+        {
+            await Task.Delay(600);
+            if (ChromeHas(s, "Codex")) break;
+            output.WriteLine($"the pick of Codex did not hold (attempt {attempt + 1}); the app's toast says: {s.Dump.Section("window")?["toast"]?.ToJsonString() ?? "(nothing)"}");
+            await ClickAt(s, "pillAgent", "the agent pill");
+            await Check(s, () => s.Dump.Where("window", "menu", Of("Codex")) is not null, "Codex is in the agent menu");
+            await ClickAt(s, "menu", "Codex", Of("Codex"));
+        }
+        Assert.True(ChromeHas(s, "Codex"), "the agent pill never said Codex\n" + s.Dump.Summary());
         await ClickAt(s, "pillAccess", "the access pill");
         await ClickAt(s, "menu", "Ask always", Of("Ask always"));
         await ClickAt(s, "taskText", "the task box");
