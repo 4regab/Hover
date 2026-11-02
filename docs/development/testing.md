@@ -203,7 +203,7 @@ What `windows\Hover.Tests` covers:
     asks, is allowed from the panels, and its answer is in the chat; the second note after `setSetting` false.
 - **A first task in the real app** (`FreshStartAppTests`, Windows, needs `HOVER_APP_EXE`): the same flow with real mouse,
   wheel and keyboard on a data folder that has never run and has 30 registered folders. In the app window: the note,
-  Got it, the chat view, the folder chip, the wheel to the last of the 30 folders (it is not in view when the list opens),
+  Got it, the chat view, the folder chip, one notch of the wheel (the list moves 60 DIPs), the wheel on to the last of the 30 folders (it is not in view when the list opens),
   the agent and access pills, a task sent by the round button and one by Enter, both allowed and answered. In the open
   notch: the note, Got it, + , the folder pill, a screen copy of the list (it must be inside the notch's window and no
   taller than its office less 16 px), the wheel, the pick. The copies (`notice-open.png`, `folder-list-open.png`,

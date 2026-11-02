@@ -121,6 +121,13 @@ public class FreshStartAppTests(ITestOutputHelper output)
         Assert.True(run.Dump.Where(part, "menu", n => (string?)n["s"] == row) is null, $"'{row}' is the last of {Projects} folders and must not be in view when the list opens");
         var middle = run.Dump.Where(part, "menuBox")!.Value;
         output.WriteLine($"the list's box is at {middle.X},{middle.Y} ({(double)box["w"]!} x {(double)box["h"]!})");
+        // One notch of the real wheel moves the list 60 DIPs, as in the Go app (the panels' units, so the display's scale does not enter).
+        var probe = AppDump.Items(run.Dump.Section(part), "targets").Where(t => (string?)t["id"] == "menu" && ((string?)t["s"] ?? "").Length > 0).ElementAt(2);
+        var probeName = (string?)probe["s"];
+        var probeY = (double)probe["y"]!;
+        Input.Wheel(middle.X, middle.Y, -1);
+        await Check(run, () => AppDump.Items(run.Dump.Section(part), "targets").LastOrDefault(t => (string?)t["id"] == "menu" && (string?)t["s"] == probeName) is { } m && Math.Abs((double)m["y"]! - (probeY - 60)) <= 1.5,
+            $"one notch of the wheel moved the list 60 DIPs ('{probeName}' was at {probeY})");
         for (var i = 0; i < 40 && run.Dump.Where(part, "menu", n => (string?)n["s"] == row) is null; i++)
         {
             Input.Wheel(middle.X, middle.Y, -3);
