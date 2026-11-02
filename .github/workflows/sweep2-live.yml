@@ -27,9 +27,9 @@ jobs:
       - uses: actions/checkout@v4
       - name: Settings from .github/sweep2-live.cfg
         run: |
-          $cfg = @{ project = 'Hover.Tests'; test = 'Sweep2AppTests'; runs = '1'; scale = '' }
+          $cfg = @{ project = 'Hover.Tests'; test = 'Sweep2AppTests'; runs = '1'; scale = ''; filter = '' }
           foreach ($line in Get-Content .github/sweep2-live.cfg) {
-            if ($line -match '^\s*(project|test|runs|scale)\s*=\s*(\S+)\s*$') { $cfg[$Matches[1]] = $Matches[2] }
+            if ($line -match '^\s*(project|test|runs|scale|filter)\s*=\s*(\S+)\s*$') { $cfg[$Matches[1]] = $Matches[2] }
           }
           $cfg.GetEnumerator() | ForEach-Object { "LIVE_$($_.Key.ToUpper())=$($_.Value)" } | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
           $cfg.GetEnumerator() | ForEach-Object { "$($_.Key) = $($_.Value)" }
@@ -65,9 +65,11 @@ jobs:
           $env:HOVER_DATA_TOOL = (Resolve-Path out\bin\hover-data.exe).Path
           New-Item -ItemType Directory -Force out\live | Out-Null
           $failed = 0
+          $filter = if ($env:LIVE_FILTER) { $env:LIVE_FILTER } else { "FullyQualifiedName~$env:LIVE_TEST" }
+          "filter: $filter"
           for ($i = 1; $i -le [int]$env:LIVE_RUNS; $i++) {
             "=== run $i ===" | Tee-Object -FilePath out\live\console.txt -Append
-            dotnet test windows\$env:LIVE_PROJECT\$env:LIVE_PROJECT.csproj -c Release --no-build --filter "FullyQualifiedName~$env:LIVE_TEST" `
+            dotnet test windows\$env:LIVE_PROJECT\$env:LIVE_PROJECT.csproj -c Release --no-build --filter $filter `
               --logger "trx;LogFileName=live-$i.trx" --logger "console;verbosity=detailed" --results-directory out\live 2>&1 | Tee-Object -FilePath out\live\console.txt -Append
             if ($LASTEXITCODE -ne 0) { $failed++ }
           }
