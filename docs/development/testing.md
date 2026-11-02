@@ -317,6 +317,44 @@ What `windows\Hover.Tests` covers:
     window and a click on a switch, a click on a segment, the wheel and a typed text change what the backend writes to
     `settings.json`; a shortcut is recorded from the real keyboard; Alt+N opens the notch and its menu opens Settings in
     it, where a click on a switch is written. The places come from `HOVER_UI_DUMP` (`settings-window`, `settings-notch`).
+  - *The Settings sweep* (`SettingsSweepTests`, any system, no backend): every page in 36 states (each section; a tool that is
+    ready, not installed or needs a sign-in; Kiro's MCP list, its add form, its remove question and a broken file; Voice with the
+    local model not installed, downloading, failed and ready; a project's page; a picker open; a shortcut recording; a key box with
+    the keyboard) in the app window and in the open notch at 828 x 346, 880 x 480, 1200 x 720 and 1920 x 1080. In each: every
+    place that answers the pointer is inside the window and no two overlap unless one holds the other; no line of text runs off the
+    window or is cut at its side; every control looks different with the pointer on it (a switch, a segment and a slider show no
+    hover look in the Go app either) and has the pointer the Go app gives it (the hand, the text cursor over a box, the normal
+    shape on the page); a row or a greyed button that is off says why; the page scrolls to both ends by the wheel and by its bar
+    and does not scroll behind an open menu. `Text_reads_against_what_is_behind_it_in_every_appearance_and_theme` paints every
+    page in Dark, Light, System with Windows dark and light, and seven themes (Dark+, Light+, Monokai, Solarized Light and Dark,
+    High Contrast, a pastel one; their palettes are the numbers `core.PaletteFromTheme` makes) and requires 4.5 to 1 against what
+    is behind each line of text (3 to 1 for large text). Text of a row that is switched off is left out (WCAG leaves inactive
+    controls out; the words that say why the row is off are not faded, so they are checked), and so is the single letter on a coloured
+    tile (it repeats the first letter of the name beside it).
+  - *The keyboard* (`SettingsKeyboardTests`): Tab and Shift+Tab visit every control of every state above, once each and round
+    again, and the control is in view after each step; Space and Enter work a switch, a button, a link, a project row; the Up and
+    Down keys step a group of segments, the sidebar, a slider (and a picker's menu with Enter and Escape); a text box is entered
+    and left with Tab (saving); a shortcut is recorded from the keyboard alone; Hold to try holds while the key is down. The
+    same file holds the checks of the single faults the sweep found (each failed on the old code): the pointer's shape, the
+    wheel step of 60, a toast that goes, a shortcut that stops recording when the pointer goes elsewhere, a form box that lets
+    go of the keyboard when its form closes, the red mark on a bad variable name, a long name cut with an ellipsis.
+  - *The pages against the Go pages* (`PagesAgainstGoTests`, any system): 40 pages (the ten sections in four states: tools ready,
+    tools not ready, local voice, and a model with projects, tool options, voice and notch settings) compared row for row with
+    what `app.Build` makes, as text: each row's label, sub line, lead, enabled state and control (kind, id, name, labels, options,
+    what is on, placeholder, buttons). The Go side is `golden/pages-go.txt`; `golden/pages-dump.go.txt` is the recipe that makes
+    it (a text file, so no Go build sees it). Left out of the comparison, with the reason in the test: the folder lines (the dump
+    names the Linux home), the line that names the program an agent runs (Windows runs `codex-acp` and `cursor-agent`), and Codex's
+    Read only, which Windows leaves out with a note.
+  - *Sweep 2 in the real app* (`Sweep2AppTests`, Windows, needs `HOVER_APP_EXE`): the tray icon comes back when Explorer is ended
+    and starts again (the log says the app added it again, and asked the shell); the app window has an icon and opens in the middle
+    of the work area; the System appearance follows Windows switching between light and dark while the app runs (the registry
+    value is written by the test and put back); a killed backend is said in the title bar ("Quit Hover from its tray menu and open
+    it again") and once from the tray; Add a project opens the system's folder picker (the window with the address bar and the
+    search box) and Escape closes it without adding anything; Settings in the app window and in the open notch shows the hand over
+    a switch and Tab and Space work it from the keyboard (the dump names where the keyboard is); the panels step aside while
+    Settings shows; Alt then S opens the Settings menu of the bar; `hoverai.exe --quit` ends the running copy in order, its backend
+    with it. `InstanceLockTests` holds the request to quit with names of their own. Where a shell answers "not shown" for an icon in
+    the overflow, `Shell_NotifyIconGetRect` is only written down; the app asks the shell itself and logs the answer.
   - *Pictures*: `--shots` writes the `settings-*` and `notch-open-settings*` pictures with the Go names (the Mac-only
     Cua and Setup pictures are not made); the job checks that ten of them are there and are JPEG. `screen-capture.jpg`
     is the Screen capture of the app's own window over the wallpaper on the runner.

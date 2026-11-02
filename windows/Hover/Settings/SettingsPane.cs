@@ -100,11 +100,13 @@ sealed class SettingsPane : IDisposable
             var dark = SystemTheme.IsDark();
             // For the checks of the real app: what each look at Windows' setting found (a line only when it changed, and the first few).
             if (UiDump.On && (dark != lastDark || themeLooks++ < 3)) HostLog.Line($"windows setting looked at: dark {dark} (was {lastDark})");
+            // The palette follows what Windows says now, whichever message read the setting last: a settings message that arrives between
+            // two looks can carry the new value into the palette, and the look that follows then finds nothing changed (a page left dark
+            // under a light Windows, found by the live check).
+            if (Controller.Apply()) Changed?.Invoke();
             if (dark == lastDark) return;
             lastDark = dark;
             HostLog.Line($"windows is now {(dark ? "dark" : "light")}");
-            Controller.Apply();
-            Changed?.Invoke();
             SystemThemeChanged?.Invoke();
         };
         themeTimer.Start();

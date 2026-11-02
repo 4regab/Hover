@@ -255,7 +255,6 @@ public class Sweep2AppTests(ITestOutputHelper output)
         Assert.True(await Until(() => Dark() == true, 15_000), "the page in dark colours after Windows went dark\n" + Why());
         theme.Set(dark: false);
         Assert.True(await Until(() => Dark() == false, 15_000), "the page in light colours after Windows went light again\n" + Why());
-        Assert.Contains("windows is now dark", run.Log());
     }
 
     // MARK: A backend that is gone

@@ -74,7 +74,11 @@ Windows lists one product:
 - over 2.x it removes `Hover.exe` and moves a Run value that starts it to `hoverai.exe`; over the
   Go app it removes `wgpu_native.dll`, which only the Go office used;
 - a running Hover (any build) and its backend are ended before the files are replaced or removed,
-  at install and at uninstall; only one Hover runs per user, so one that runs is the one in the way;
+  at install and at uninstall; only one Hover runs per user, so one that runs is the one in the way.
+  The C# app (found by the `hoverai.dll` beside it) is asked first with `hoverai.exe --quit`: it ends in
+  order, its agents are told and the history and settings are written, and the command waits up to
+  20 seconds. What is still there after that, and the Go app and 2.x, which do not know `--quit`, are
+  ended with `taskkill`;
 - the uninstaller removes every file the setup put there, the Start Menu entry, the desktop
   icon if asked for, and the `Run` value `Hover` (the setup's startup task and Launch at login in
   Settings write the same value), when it starts this `hoverai.exe`. It never touches `%APPDATA%\Hover`.
@@ -338,6 +342,24 @@ is `windows\Hover.Settings`; the app's side is `windows\Hover\Settings`.
 as JPEG. The Go pictures have a 36 px menu bar strip at the top that these do not. The checks of the real app read the
 page with `HOVER_UI_DUMP` (`settings-window` for the app window, `settings-notch` for the open notch): the sections, the
 focus and the place of every control.
+
+Sweep 2 changed these things in the app (checks in [testing.md](testing.md)):
+
+- *Keyboard in Settings.* Tab and Shift+Tab visit every control in the order drawn (the sidebar and each group of segments are one
+  stop; the Up and Down keys step inside them), Space and Enter work the one that has the keyboard, PageUp, PageDown, Home and End
+  scroll the page, and a ring shows where the keyboard is once a key has moved it. In the open notch a press on the page takes
+  the keyboard (as a press in a box does) and gives it back when Settings closes. The Go page reaches about half of these.
+- *Pointer in Settings.* The hand over a control, the text cursor over a box, in both hosts.
+- *Readable text.* The secondary text, links, red and amber messages and a theme's own text colour are moved away from their
+  background until they reach 4.5 to 1 on every surface they are drawn on (`SettingsUi.MakeInks`); a palette that already reads well
+  keeps its colours. The picked section and the option under the pointer in a menu are filled with the accent darkened until white
+  words read on it. The words that say why a row is off are not faded with the row.
+- *App window.* It opens in the middle of the work area with the program's icon, File / Settings / Help open with Alt and F, S or H,
+  the folder picker is the system's `IFileOpenDialog` (the Go app's), and the panels under Settings neither see the pointer nor the keys.
+- *Tray and life cycle.* The tray icon is added again when Explorer broadcasts `TaskbarCreated` (it restarted, or it was not up when
+  Hover started at login; ten tries a second apart if the shell is not ready), the menu is closed properly (`WM_NULL`), the notch
+  and Settings follow Windows switching between light and dark (a Windows with no setting reads as light, as in the Go app), and a
+  backend that stops says what to do in the title bar and once from the tray.
 
 The data folder is `hover-data`'s to check: `hover-data check <dir>` after a run of the C# app must exit 0, and
 `hover-data secret check <dir> voice.groq` must find the key a Voice page saved.

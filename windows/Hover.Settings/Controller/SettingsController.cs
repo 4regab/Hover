@@ -305,12 +305,13 @@ public sealed partial class SettingsController
     }
 
     /// <summary>Works out the palette again (the system's dark mode changed, or a theme or the appearance did) and tells whoever draws.</summary>
-    public void Apply()
+    public bool Apply()
     {
         var palette = PaletteForSettings();
-        if (palette == Palette) return;
+        if (palette == Palette) return false;
         Palette = palette;
         PaletteChanged?.Invoke(palette);
+        return true;
     }
 
     void AskThemePalette()
