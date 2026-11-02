@@ -676,4 +676,56 @@ public class Sweep3Tests
         d.Frame();
         Assert.Equal(c0, DoneInk());
     }
+
+    // MARK: The reader's place
+
+    [Fact]
+    public void A_new_width_keeps_the_reader_at_the_same_turn_and_the_same_share_of_it()
+    {
+        var turns = Enumerable.Range(0, 16)
+            .Select(i => PanelHarness.Turn("Question " + i, string.Join(" ", Enumerable.Repeat("word" + i, 200 + i * 25))))
+            .ToArray();
+        var h = new PanelHarness();
+        h.State(PanelHarness.Session(1, "done", null, turns));
+        h.Ui.ChatView = true;
+        h.Ui.OpenChat(1);
+        h.Frame();
+        var area = h.Ui.ThreadArea;
+        // Up from the end to the middle of the chat.
+        for (var i = 0; i < 40; i++) { h.Ui.Wheel(area.X + 100, area.Y + 100, 60); h.Now += 700; h.Frame(); }
+        (int Turn, float Share, float Y) Place()
+        {
+            var secs = h.Ui.Thread.Sections;
+            for (var i = 0; i < secs.Count; i++)
+                if (secs[i].Y + secs[i].H > h.Ui.ScrollY) return (i, (h.Ui.ScrollY - secs[i].Y) / secs[i].H, secs[i].Y);
+            return (-1, 0, 0);
+        }
+        var before = Place();
+        Assert.InRange(before.Turn, 3, 12);
+        var width = h.Ui.ThreadArea.W;
+
+        h.W = 860;
+        h.Now += 1000;
+        h.Frame();
+        h.Now += 1000;
+        h.Frame();
+        Assert.True(Math.Abs(h.Ui.ThreadArea.W - width) > 50, $"the thread's width changed ({width} to {h.Ui.ThreadArea.W})");
+        var after = Place();
+        Assert.Equal(before.Turn, after.Turn);
+        Assert.InRange(after.Share, before.Share - 0.02f, before.Share + 0.02f);
+        Assert.True(Math.Abs(after.Y - before.Y) > 100, "the lines wrap differently, so the same pixel place would be another part of the chat");
+
+        // A reader at the end stays at the end.
+        var end = new PanelHarness();
+        end.State(PanelHarness.Session(1, "done", null, turns));
+        end.Ui.ChatView = true;
+        end.Ui.OpenChat(1);
+        end.Frame();
+        end.W = 860;
+        end.Now += 1000;
+        end.Frame();
+        end.Now += 1000;
+        end.Frame();
+        Assert.True(end.Ui.Thread.Height - end.Ui.ScrollY - end.Ui.ThreadArea.H < 2, "still at the end");
+    }
 }

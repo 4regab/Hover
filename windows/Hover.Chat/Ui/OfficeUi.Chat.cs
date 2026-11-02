@@ -90,7 +90,10 @@ public sealed partial class OfficeUi
 
     // MARK: Syncing the thread with the session
 
-    void SyncThread(SessionInfo s, float colw)
+    /// <summary>The width the thread was last laid out at, to see a change of it.</summary>
+    float threadW;
+
+    void SyncThread(SessionInfo s, float colw, float viewH)
     {
         var id = s.Id != 0 ? s.Id : SessionKey(s).GetHashCode();
         var changed = shownSession != id || shownKey != s.Key;
@@ -109,7 +112,33 @@ public sealed partial class OfficeUi
         thread.HideSteps = ToolOf(s.Tool)?.HideSteps == true;
         var nowMs = new DateTimeOffset(DateTime.SpecifyKind(env.Utc(), DateTimeKind.Utc)).ToUnixTimeMilliseconds();
         turns = Turns.From(s, nowMs);
+        // A new width keeps the reader at the same place: the turn at the top of the view and how far down it (as a share of the
+        // turn), not the same number of pixels, which are a different part of the chat once the lines wrap otherwise
+        // (internal/shell/chat.go). A reader near the end stays at the end.
+        var anchor = -1;
+        var frac = 0f;
+        var near = thread.Height - scroll - viewH < 40;
+        var widthChanged = threadW > 0 && Math.Abs(threadW - colw) > 0.01f && !changed;
+        if (widthChanged && !near)
+        {
+            for (var i = 0; i < thread.Sections.Count; i++)
+            {
+                var sec = thread.Sections[i];
+                if (sec.Y + sec.H <= scroll) continue;
+                anchor = i;
+                frac = (scroll - sec.Y) / Math.Max(sec.H, 1);
+                break;
+            }
+        }
         thread.Set(turns, colw);
+        threadW = colw;
+        if (anchor >= 0 && anchor < thread.Sections.Count)
+        {
+            scroll = thread.Sections[anchor].Y + frac * thread.Sections[anchor].H;
+            smooth = null;
+            follow = false;
+        }
+        else if (widthChanged && near) follow = true;
         // The running step shimmers and the clock counts: ten frames a second, as the Go chat repaints its thread.
         if (turns.Any(t => t.Live)) Need(100);
         if (copiedAt > 0 && now - copiedAt > 1500)
@@ -182,7 +211,7 @@ public sealed partial class OfficeUi
 
         var threadH = Math.Max(bottom - boxH - askH - noteH - threadTop, 0);
         // Smooth scrolling steps with the clock.
-        SyncThread(s, colw);
+        SyncThread(s, colw, threadH);
         threadRect = new Rect4(cx0, threadTop, colw, threadH);
         if (smooth is { } sm)
         {
