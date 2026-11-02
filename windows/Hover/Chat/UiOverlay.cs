@@ -22,6 +22,12 @@ namespace Hover.Chatting;
 /// over the office. The pointer and the keyboard are read from the page the overlay sits in; the overlay
 /// takes the pointer only where the panels have something, so the office behind it still gets the rest.
 /// </summary>
+/// <summary>The window's page: the element that carries the pointer's shape for everything in it (ProtectedCursor is only open to a subclass).</summary>
+sealed class CursorGrid : Grid
+{
+    public void Show(Microsoft.UI.Input.InputCursor? cursor) => ProtectedCursor = cursor;
+}
+
 sealed class UiOverlay : Grid, IDisposable
 {
     readonly UiCore core;
@@ -66,7 +72,7 @@ sealed class UiOverlay : Grid, IDisposable
         host.AddHandler(PointerPressedEvent, new PointerEventHandler(OnPressed), true);
         host.AddHandler(PointerReleasedEvent, new PointerEventHandler(OnReleased), true);
         host.AddHandler(PointerCanceledEvent, new PointerEventHandler(OnReleased), true);
-        host.AddHandler(PointerExitedEvent, new PointerEventHandler((_, _) => { core.Ui.PointerLeave(); ProtectedCursor = null; }), true);
+        host.AddHandler(PointerExitedEvent, new PointerEventHandler((_, _) => { core.Ui.PointerLeave(); ProtectedCursor = null; (host as CursorGrid)?.Show(null); }), true);
         host.AddHandler(PointerWheelChangedEvent, new PointerEventHandler(OnWheel), true);
         host.AddHandler(KeyDownEvent, new KeyEventHandler(OnKeyDown), true);
         host.CharacterReceived += OnChar;
@@ -164,13 +170,17 @@ sealed class UiOverlay : Grid, IDisposable
 
     void ShowCursor(float x, float y)
     {
-        ProtectedCursor = core.Ui.CursorAt(x, y) switch
+        var cursor = core.Ui.CursorAt(x, y) switch
         {
             Hover.Chat.Ui.UiCursor.Hand => HandCursor,
             Hover.Chat.Ui.UiCursor.Text => TextCursor,
             Hover.Chat.Ui.UiCursor.ResizeColumn => ResizeCursor,
             _ => null,
         };
+        // The overlay is hit-testable only where the panels have something, and only after a move has told it so; the page under it is
+        // always there, so the shape is the page's when the page can carry it.
+        if (host is CursorGrid page) page.Show(cursor);
+        ProtectedCursor = cursor;
     }
 
     void OnMoved(object sender, PointerRoutedEventArgs e)

@@ -109,7 +109,7 @@ public sealed class DashboardWindow : Window
         };
 
         // The window's own background is not part of the element tree, so the pictures draw this.
-        var page = new Grid { Background = (Brush)Application.Current.Resources["ApplicationPageBackgroundThemeBrush"] };
+        var page = new CursorGrid { Background = (Brush)Application.Current.Resources["ApplicationPageBackgroundThemeBrush"] };
         page.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         page.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
         page.Children.Add(bar);

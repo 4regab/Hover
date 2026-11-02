@@ -552,4 +552,24 @@ public class SweepFixTests
         var lastRow = rig.Ui.Targets.Where(t => t.Id == "panelRow").OrderBy(t => t.R.Y).Last();
         Assert.True(lastRow.R.Bottom <= h + 0.5, $"the last row of the history {lastRow.R} is past the window's end {h}");
     }
+    [Fact]
+    public void Shift_and_a_press_in_the_thread_grows_the_selection_from_where_it_began()
+    {
+        var h = OpenChat(chatView: true, turn: PanelHarness.Turn("Tidy it", "alpha beta gamma delta epsilon zeta eta theta"));
+        var answer = h.Ui.Thread.Sections[0].Frag.Texts.First(t => t.Text.StartsWith("alpha", StringComparison.Ordinal));
+        var area = h.Ui.ThreadArea;
+        float Y() => area.Y + h.Ui.Thread.Sections[0].Y + answer.Y + answer.Layout.Height / 2 - h.Ui.ScrollY;
+        float X(int chars) => area.X + Palette.ThreadPad[3] + answer.X + chars * 6f + 1;
+        h.Ui.PointerMove(X(0), Y());
+        h.Ui.PointerDown(X(0), Y(), 1, UiMods.None);
+        h.Ui.PointerMove(X(5), Y());
+        h.Ui.PointerUp(X(5), Y());
+        h.Frame();
+        Assert.Equal("alpha", h.Ui.Thread.SelectedText());
+        h.Ui.PointerMove(X(16), Y());
+        h.Ui.PointerDown(X(16), Y(), 1, UiMods.Shift);
+        h.Ui.PointerUp(X(16), Y());
+        h.Frame();
+        Assert.Equal("alpha beta gamma", h.Ui.Thread.SelectedText());
+    }
 }

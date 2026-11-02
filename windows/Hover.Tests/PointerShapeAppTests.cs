@@ -79,17 +79,17 @@ public class PointerShapeAppTests(ITestOutputHelper output)
             if (again is { } q && q == p) break;
             if (again is { } moved) p = moved;
         }
-        Input.Move(p.X + 3, p.Y);
-        await Task.Delay(200);
-        Input.Move(p.X, p.Y);
-        // The shape follows the pointer within a frame or two; it is read until it is what is wanted, or the time is up.
+        // A hand moves: the system hears several moves, a little apart, and the shape follows the last of them. The shape after each is logged.
+        var seen = new List<string>();
         nint last = 0;
-        for (var i = 0; i < 25; i++)
+        foreach (var dx in new[] { 2, -2, 1, -1, 2, 0 })
         {
-            await Task.Delay(150);
+            Input.Move(p.X + dx, p.Y + (dx & 1));
+            await Task.Delay(350);
             last = Shape();
+            seen.Add($"0x{last:X}");
         }
-        output.WriteLine($"the pointer on {what} at {p.X},{p.Y} shows 0x{last:X}");
+        output.WriteLine($"the pointer on {what} at {p.X},{p.Y} shows {string.Join(", ", seen)}");
         return last;
     }
 

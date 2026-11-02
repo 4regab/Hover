@@ -507,6 +507,14 @@ public sealed partial class OfficeUi
             case HitKind.Text:
                 dragging = true;
                 dragLink = null;
+                // Shift and a press grows the selection that is there from its anchor (the Go thread does too).
+                if ((mods & UiMods.Shift) != 0 && thread.HasSel)
+                {
+                    dragUnit = Unit.Char;
+                    dragAnchor = thread.SelAnchor;
+                    thread.Select(dragAnchor, hit.Pos);
+                    return;
+                }
                 dragUnit = clicks >= 3 ? Unit.Para : clicks == 2 ? Unit.Word : Unit.Char;
                 dragAnchor = hit.Pos;
                 if (dragUnit == Unit.Char) thread.Select(hit.Pos, hit.Pos);
