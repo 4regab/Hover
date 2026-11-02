@@ -88,7 +88,9 @@ sealed class UiOverlay : Grid, IDisposable
 
     void Tick()
     {
-        if (disposed || XamlRoot is null || ActualWidth < 2 || ActualHeight < 2) return;
+        // The app disposes the panels and then the graphics device while this window's timer still runs: a last frame would draw with a
+        // device that is gone (a NullReferenceException logged at every quit).
+        if (disposed || core.IsDisposed || XamlRoot is null || ActualWidth < 2 || ActualHeight < 2) return;
         var now = core.NowMs;
         var ui = core.Ui;
         if (!ui.Dirty && !(ui.Animating && now >= nextAt)) return;
@@ -169,10 +171,14 @@ sealed class UiOverlay : Grid, IDisposable
     static readonly Microsoft.UI.Input.InputCursor ResizeCursor = Microsoft.UI.Input.InputSystemCursor.Create(Microsoft.UI.Input.InputSystemCursorShape.SizeWestEast);
 
     bool shapeApplied;
+    int movesLogged;
 
     void ShowCursor(float x, float y)
     {
         var shape = core.Ui.CursorAt(x, y);
+        // For the checks of the real app (HOVER_UI_DUMP): the first moves the page heard, and every change of the shape chosen.
+        if (UiDump.On && (movesLogged++ < 12 || (int)shape != PointerShape.Shape))
+            HostLog.Line($"pointer shape: moved to {x:0},{y:0} over {core.Ui.TargetAt(x, y)?.Id ?? "nothing"}: shape {(int)shape} (was {PointerShape.Shape}), overlay hit-testable {IsHitTestVisible}");
         // The windows answer the system's question with this shape (see PointerShape); the window is taken in on the first move.
         if (!shapeApplied && WindowHandle != 0)
         {

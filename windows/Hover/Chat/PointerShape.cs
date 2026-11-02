@@ -1,4 +1,5 @@
 using System.Runtime.InteropServices;
+using Hover.Host;
 
 namespace Hover.Chatting;
 
@@ -31,23 +32,48 @@ static class PointerShape
     public static void Apply(nint top)
     {
         if (top == 0) return;
-        SetWindowSubclass(top, Keep, 2, 0);
+        var ok = SetWindowSubclass(top, Keep, 2, 0);
+        var classes = new List<string>();
         EnumChildWindows(top, (child, _) =>
         {
-            SetWindowSubclass(child, Keep, 2, 0);
+            ok &= SetWindowSubclass(child, Keep, 2, 0);
+            classes.Add($"0x{child:X} {ClassOf(child)}");
             return true;
         }, 0);
+        // For the checks of the real app (HOVER_UI_DUMP): which windows took the answer.
+        if (UiDump.On) HostLog.Line($"pointer shape: top 0x{top:X} {ClassOf(top)} and {classes.Count} windows inside took the answer (all taken: {ok}): {string.Join("; ", classes)}");
     }
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetClassNameW(nint hwnd, char[] text, int max);
+
+    static string ClassOf(nint hwnd)
+    {
+        var text = new char[128];
+        var n = GetClassNameW(hwnd, text, text.Length);
+        return new string(text, 0, n);
+    }
+
+    static int asked;
+    static int lastLogged = -1;
 
     static nint Id(int shape) => shape switch { 1 => 32649, 2 => 32513, 3 => 32644, _ => 32512 };
 
     static nint Answer(nint hwnd, uint message, nint wParam, nint lParam, nuint id, nuint data)
     {
         // Over the client area only (the low word is the hit-test code, 1 is HTCLIENT): the title bar and the borders are the system's.
-        if (message == WM_SETCURSOR && Shape != 0 && (lParam & 0xFFFF) == 1)
+        if (message == WM_SETCURSOR)
         {
-            SetCursor(LoadCursorW(0, Id(Shape)));
-            return 1;
+            // For the checks of the real app: the first questions, and every change of the shape asked for.
+            if (UiDump.On && (asked++ < 12 || Shape != lastLogged))
+            {
+                lastLogged = Shape;
+                HostLog.Line($"pointer shape: WM_SETCURSOR to 0x{hwnd:X} {ClassOf(hwnd)}, hit test {lParam & 0xFFFF}, the panels want shape {Shape}");
+            }
+            if (Shape != 0 && (lParam & 0xFFFF) == 1)
+            {
+                SetCursor(LoadCursorW(0, Id(Shape)));
+                return 1;
+            }
         }
         return DefSubclassProc(hwnd, message, wParam, lParam);
     }

@@ -19,6 +19,10 @@ public class PointerShapeAppTests(ITestOutputHelper output)
     [StructLayout(LayoutKind.Sequential)] struct CURSORINFO { public int cbSize, flags; public nint hCursor; public int x, y; }
 
     [DllImport("user32.dll")] static extern bool GetCursorInfo(ref CURSORINFO info);
+    [DllImport("user32.dll")] static extern bool GetCursorPos(out Desktop.POINT point);
+    [DllImport("user32.dll")] static extern uint GetDpiForWindow(nint hwnd);
+    [DllImport("user32.dll")] static extern nint GetAncestor(nint hwnd, uint flags);
+    [DllImport("user32.dll")] static extern int GetSystemMetrics(int index);
     [DllImport("user32.dll")] static extern nint LoadCursorW(nint instance, nint name);
 
     const int Normal = 32512, Text = 32513, ResizeColumn = 32644, Hand = 32649;
@@ -95,6 +99,37 @@ public class PointerShapeAppTests(ITestOutputHelper output)
 
     static nint Of(int id) => LoadCursorW(0, id);
 
+    static string OutFolder()
+    {
+        for (var d = new DirectoryInfo(AppContext.BaseDirectory); d is not null; d = d.Parent)
+            if (File.Exists(Path.Combine(d.FullName, "build.ps1"))) return Path.Combine(d.FullName, "out", "notch-live");
+        return Path.Combine(Path.GetTempPath(), "hover-notch-live");
+    }
+
+    /// <summary>
+    /// What the machine says at the moment the pointer is on a place: the window the system finds there, the app window's rectangle,
+    /// scale and foreground state, where the pointer really is, the cursor handles, and a copy of the screen with the place marked.
+    /// </summary>
+    void Diagnose(Run run, string what, (int X, int Y) p)
+    {
+        var at = Desktop.WindowAt(p.X, p.Y);
+        var root = at == 0 ? 0 : GetAncestor(at, 2);
+        var window = Desktop.WindowOf(run.App, "Hover");
+        GetCursorPos(out var real);
+        var info = new CURSORINFO { cbSize = Marshal.SizeOf<CURSORINFO>() };
+        GetCursorInfo(ref info);
+        var foreground = Desktop.Foreground();
+        string Rect(nint h) { if (h == 0) return "none"; var r = Desktop.Rect(h); return $"{r.Left},{r.Top} to {r.Right},{r.Bottom}"; }
+        output.WriteLine($"DIAGNOSIS for {what} at {p.X},{p.Y}:");
+        output.WriteLine($"  the pointer is really at {real.X},{real.Y}; cursor flags {info.flags}, handle 0x{info.hCursor:X}; handles: normal 0x{Of(Normal):X}, hand 0x{Of(Hand):X}, text 0x{Of(Text):X}, resize 0x{Of(ResizeColumn):X}");
+        output.WriteLine($"  the window the system finds at the place: {Desktop.Describe(at)}, rect {Rect(at)}; its top-level window: {Desktop.Describe(root)}, rect {Rect(root)}");
+        output.WriteLine($"  the app window: {Desktop.Describe(window)}, rect {Rect(window)}, dpi {(window == 0 ? 0 : GetDpiForWindow(window))}; the screen is {GetSystemMetrics(0)} x {GetSystemMetrics(1)}");
+        output.WriteLine($"  the foreground window: {Desktop.Describe(foreground)}, rect {Rect(foreground)}; the app window is the foreground: {foreground == window && window != 0}, the place is in the app window: {window != 0 && (at == window || root == window)}");
+        var picture = DesktopPicture.Take(0, 0, GetSystemMetrics(0), GetSystemMetrics(1));
+        picture.Mark(p.X, p.Y);
+        picture.SavePng(Path.Combine(OutFolder(), $"pointer-{what.Replace(' ', '-')}.png"));
+    }
+
     [AppFact]
     public async Task In_the_app_window_the_pointer_is_the_hand_over_a_button_the_text_cursor_over_the_box_and_the_resize_cursor_on_the_lists_edge()
     {
@@ -103,7 +138,21 @@ public class PointerShapeAppTests(ITestOutputHelper output)
         await Input.Park(run.App);
         Assert.True(await Until(() => run.Dump.Section("window") is not null), "the app window drew its panels");
 
-        Assert.Equal(Of(Hand), await ShapeOn(run, "window", "view", "the chat view switch", n => (int)n["n"]! == 1));
+        // First what the machine says at three places (the chat view switch, the + circle, the menu button), then the shapes. The log is for the
+        // report: it is written whatever the shapes turn out to be.
+        var shapes = new Dictionary<string, nint>();
+        foreach (var (id, what, pick) in new (string, string, Func<JsonNode, bool>?)[]
+        {
+            ("view", "the chat view switch", n => (int)n["n"]! == 1), ("fab", "the + circle", null), ("topMenu", "the menu button", null),
+        })
+        {
+            shapes[id] = await ShapeOn(run, "window", id, what, pick);
+            if (run.Dump.Where("window", id, pick) is { } placed) Diagnose(run, what, placed);
+        }
+        output.WriteLine("the hover log of the app, the lines about the pointer:\n" + string.Join("\n", File.ReadAllLines(DataFolder.LogFile(run.Sandbox.Data)).Where(l => l.Contains("pointer shape"))));
+        Assert.Equal(Of(Hand), shapes["view"]);
+        Assert.Equal(Of(Hand), shapes["fab"]);
+        Assert.Equal(Of(Hand), shapes["topMenu"]);
         // Into the chat view: its start screen has a box of words, and the list has an edge.
         var view = run.Dump.Where("window", "view", n => (int)n["n"]! == 1)!.Value;
         Input.Click(view.X, view.Y);

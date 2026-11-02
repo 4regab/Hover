@@ -103,6 +103,19 @@ sealed class DesktopPicture
         return n;
     }
 
+    /// <summary>Draws a red cross, 11 pixels across, at a place of the screen (for a copy that says where the pointer was put).</summary>
+    public void Mark(int x, int y)
+    {
+        for (var d = -5; d <= 5; d++)
+            foreach (var (px, py) in new[] { (x + d, y), (x, y + d), (x + d, y + d), (x + d, y - d) })
+            {
+                int cx = px - Left, cy = py - Top;
+                if (cx < 0 || cy < 0 || cx >= Width || cy >= Height) continue;
+                var i = (cy * Width + cx) * 4;
+                bgra[i] = 0; bgra[i + 1] = 0; bgra[i + 2] = 255;
+            }
+    }
+
     /// <summary>The copy as a PNG file, for the report.</summary>
     public void SavePng(string file)
     {
