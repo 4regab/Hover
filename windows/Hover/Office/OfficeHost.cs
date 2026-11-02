@@ -716,6 +716,8 @@ public sealed class OfficeHost : IDisposable
     {
         if (renderer is not null) return renderer;
         if (DateTime.UtcNow < nextRendererTry) return null;
+        // For the checks of the real app (HOVER_UI_DUMP): a graphics device that is slow to make, as the runner's software one is when cold.
+        if (Chatting.UiDump.On && int.TryParse(Environment.GetEnvironmentVariable("HOVER_SLOW_OFFICE_MS"), out var slow) && slow > 0) Thread.Sleep(slow);
         try
         {
             // The notch makes its device the same way, so both are on the same adapter.
