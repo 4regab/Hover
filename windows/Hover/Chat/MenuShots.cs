@@ -70,6 +70,17 @@ static class MenuShots
             ui.Accept(Projects());
             ui.Accept(Repos());
             Paint(w, h);
+            // A picture of Kiro Web leaves its switch on; the next picture starts from This computer.
+            if (ui.TaskCloud)
+            {
+                ui.Click("fab");
+                Paint(w, h);
+                ui.Click("cloud");
+                Paint(w, h);
+                ui.Key(UiKey.Escape, UiMods.None);
+                ui.Key(UiKey.Escape, UiMods.None);
+                Paint(w, h);
+            }
         }
         void Box(int w, int h)
         {
@@ -78,6 +89,10 @@ static class MenuShots
             Paint(w, h);
         }
         Task Shot(string name, int w, int h, Action setup, bool office = true) => ChatShots.Shot(core, directory, name, w, h, setup, office);
+
+        // A toast of an earlier picture ("Attached to Moss's reply.") lasts 3.5 seconds of the panels' clock; these pictures have none.
+        await Task.Delay(4500);
+        Paint(1200, 480);
 
         // The note before the first task: the Go picture's size, and the notch of the owner's PC.
         await Shot("office-notice", 1200, 480, () => { Reset(1200, 480); ui.Accept(Unseen()); });

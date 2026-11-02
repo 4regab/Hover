@@ -124,7 +124,9 @@ the `test` job already runs the Go tests on three systems):
   change to the script or the workflow, and writes `out\test-results\*.trx`.
 
 The job then drives the app and the installer (above), draws the app's pictures with an empty data folder
-(`hoverai.exe --shots`, in five minutes at most, and checks that the views the Go app has pictures of are there as JPEG)
+(`hoverai.exe --shots`, in five minutes at most, and checks that the views the Go app has pictures of are there as JPEG;
+among them the first-task note, the long model and repository lists, and the new-task bar at 828 x 346 and 880 x 480:
+`office-notice`, `office-model-menu-long`, `office-fab-cloud-repos`, `office-fab-open-long-model` and their `-small` and `-min` twins)
 and keeps everything under `out\` (but the Go programs the tests built) as the artifact `windows-reports`.
 The job fails if any C# test project fails.
 
@@ -164,6 +166,39 @@ What `windows\Hover.Tests` covers:
   lilac icon of the office/chat switch and the menu button's bars. The clicking checks never saw the pixels, and the
   pictures paste the panels onto the office in software. The first round also opens the office menu with a click and
   picks night, day and the clock, which office.json must keep. The copies and `hover.log` are in `out\notch-live`.
+- **Lists, the first-task note and the new-task bar** (any system, no window; the cases of v5.0.18's report):
+  - `MenuFitTests` opens every menu the panels have (top, agent, where, access, folder, model, repository, the chat's
+    more menu, the reply box's model menu, each from the office's box and the start screen or the chat) in four windows
+    (828 x 346 the notch of the owner's PC, 840 x 340 the Small notch, 880 x 480 the app window's smallest, 1560 x 600)
+    with 40 models, 45 repositories and 30 folders. Each box must be inside the window with 8 px to spare and no taller
+    than the window less 16; the wheel must bring every row that can be picked into view, whole and inside the box,
+    without the box moving and without the chat behind it scrolling; a model menu keeps its heading, effort levels and
+    last row in view; a menu opens on its picked row; the bar can be dragged and a press in its track pages; Up, Down,
+    Home, End and Enter pick and Escape closes. It also covers the reply box's `@` list and the desk's "Open file in" menu
+    in a short window. `UiTests` (`windows\Hover.Settings.Tests`) does the same for a Settings picker with 41 options.
+    On the old code 42 of the 71 cases of the first test failed (a model menu 1458 px tall in a 600 px window).
+  - `NoticeTests`: the panels ask for the settings once; the note shows only when the backend's settings say
+    `KiroNoticeSeen` is false (a model without the key, or a preferences message that says false, changes nothing); its
+    words and Got it are inside the window in the four sizes; under it a press, the wheel and typing do nothing and
+    Escape is left to the notch; Got it (click or Enter) sends `saveSettings {noticeSeen: true}`; `setSetting` false (Settings
+    > Kiro > Show the note again) brings it back.
+  - `TaskBarTests`: at the same sizes and 520 x 420, with a 41-letter model name, a 45-letter folder and a 36-letter
+    repository, the pills of the new-task bar stay inside the box, do not run into each other or the send button, the send
+    button is 30 (box) or 32 (start screen) wide, and a name that does not fit is cut with an ellipsis. 9 of 11 cases failed
+    on the old bar.
+  - `StartTaskTests` joins the panels (with a shaper of fixed letters) to a real `hover-backend` and the stand-in agent on
+    a data folder that has never run: the backend refuses a task sent too early; the note shows and Got it saves the
+    setting (read back with `settings`); an agent, "Ask always" and a folder are picked (Open folder… with the dialog
+    answered by the test, and cancelled first); the words are sent by the round button and again with Enter; the agent
+    asks, is allowed from the panels, and its answer is in the chat; the second note after `setSetting` false.
+- **A first task in the real app** (`FreshStartAppTests`, Windows, needs `HOVER_APP_EXE`): the same flow with real mouse,
+  wheel and keyboard on a data folder that has never run and has 30 registered folders. In the app window: the note,
+  Got it, the chat view, the folder chip, the wheel to the last of the 30 folders (it is not in view when the list opens),
+  the agent and access pills, a task sent by the round button and one by Enter, both allowed and answered. In the open
+  notch: the note, Got it, + , the folder pill, a screen copy of the list (it must be inside the notch's window and no
+  taller than its office less 16 px), the wheel, the pick. The copies (`notice-open.png`, `folder-list-open.png`,
+  `folder-picked.png`) are in `out\notch-live`. Not run: the system's folder dialog itself (a modal window the test cannot
+  answer); `StartTaskTests` answers it with a fake.
 - **The panels** (`PanelTests`, any system): the start screen starts a task with the tool, folder, access
   and model its pills show; the agent, where-it-runs, repository and access menus; a permission answered
   (`allow`, `trust`, `deny`) from the chat and over the bot; two questions at once answered one by one; a

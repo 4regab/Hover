@@ -131,6 +131,12 @@ public sealed partial class OfficeUi
     /// <summary>The menu that is open, if any (its kind).</summary>
     public string? OpenMenuKind => menu?.Kind;
 
+    /// <summary>The new task is for Kiro Web (a repository to clone), for the pictures and the checks.</summary>
+    public bool TaskCloud => taskCloud;
+
+    /// <summary>The size the last frame was drawn at, for the checks of the real app.</summary>
+    public (float W, float H) ViewSize => (w, h);
+
     /// <summary>The rows of the open menu that can be picked (not a heading, a rule or a note), by their index, for the checks.</summary>
     public IReadOnlyList<int> OpenMenuPickable => menu is null ? [] : [.. Enumerable.Range(0, menu.Rows.Count).Where(i => menu.Rows[i] is { Header: false, Rule: false, Disabled: false })];
 

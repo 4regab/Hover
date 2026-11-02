@@ -20,8 +20,8 @@ public sealed class MenuScroll
     public float Content { get; private set; }
     public float View { get; private set; }
 
-    /// <summary>How far the list can be scrolled; 0 when all of it is in view.</summary>
-    public float Max => Math.Max(Content - View, 0);
+    /// <summary>How far the list can be scrolled; 0 when all of it is in view (a leftover under half a pixel is rounding, not a row).</summary>
+    public float Max => Content - View > 0.5f ? Content - View : 0;
 
     public bool Dragging => grab is not null;
 

@@ -134,6 +134,9 @@ public sealed partial class OfficeUi
         var mw = Math.Max(Math.Min(m.W, w - 16), 0);
         var hs = new float[n];
         for (var i = 0; i < n; i++) hs[i] = RowHeight(pen, rows[i], mw);
+        // The effort levels are one row of buttons, as in the Go menu: the first level has the row's height and the others none.
+        for (var i = 0; i < n; i++)
+            if (IsEffort(rows[i])) hs[i] = i > 0 && IsEffort(rows[i - 1]) ? 0 : 32;
         // The pinned rows at the top and the bottom (a heading, the effort levels, a note) stay in view; the rows between them scroll.
         int head = 0, foot = 0;
         while (head < n && rows[head].Pin) head++;
@@ -245,9 +248,40 @@ public sealed partial class OfficeUi
     }
 
     /// <summary>One row of a menu at (x, cy). A row of the scrolling part is cut to <paramref name="clip"/>: only what shows answers the pointer.</summary>
+    static bool IsEffort(MenuRow r) => r.Id.StartsWith("effort:", StringComparison.Ordinal);
+
+    /// <summary>
+    /// The levels of a model's effort side by side in one row (internal/ui/officemenus.go modelMenu): equal buttons 26 high, the picked
+    /// one lilac. Drawn with the first level; each level is a target with its own row's index.
+    /// </summary>
+    void PaintEffortRow(Menu m, int first, float x, float cy, float mw, Rect4? clip)
+    {
+        var count = 1;
+        while (first + count < m.Rows.Count && IsEffort(m.Rows[first + count])) count++;
+        var inner = mw - 12;
+        var bw = (inner - 8 - 3 * (count - 1)) / count;
+        var look = Pen.F(11.5, 500, Pen.Ink);
+        for (var k = 0; k < count; k++)
+        {
+            var r = m.Rows[first + k];
+            var cell = new Rect4(x + 6 + 4 + k * (bw + 3), cy + 2, bw, 26);
+            var seen = clip is { } c ? Cut(cell, c) : cell;
+            var shown = seen.W > 0 && seen.H > 0;
+            var hov = (shown && Over(seen)) || m.Hot == first + k;
+            pen.Box(cell, 8, r.On ? new Rgba(0x90, 0x46, 0xff, 0x59) : hov ? new Rgba(0xff, 0xff, 0xff, 0x17) : new Rgba(0xff, 0xff, 0xff, 0x0d));
+            pen.TextIn(r.Label, cell, look, pad: 4);
+            if (shown) Add(seen, "menu", first + k, r.Label);
+        }
+    }
+
     void PaintMenuRow(Menu m, int i, float x, float cy, float mw, float rh, Rect4? clip)
     {
         var r = m.Rows[i];
+        if (IsEffort(r))
+        {
+            if (i == 0 || !IsEffort(m.Rows[i - 1])) PaintEffortRow(m, i, x, cy, mw, clip);
+            return;
+        }
         if (r.Rule) { pen.Box(x + 10, cy + 4, mw - 20, 1, 0, Rgba.Of(0xffffff, 0.06)); return; }
         if (r.Header)
         {

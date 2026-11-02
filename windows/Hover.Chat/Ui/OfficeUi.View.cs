@@ -551,12 +551,13 @@ public sealed partial class OfficeUi
         var chipY = top + headH + 10;
         var fl = folder.Length > 0 ? LastPart(folder) : "Choose a folder";
         var ff = Pen.F(13, 400, Pen.Dim);
-        var fw = pen.Width(fl, ff) + 16 + 6 + 13 + 12;
+        // The Go chip's numbers (internal/ui/officelist.go): 10 at each side, the icon 15, 7 each side of the words, the chevron 13.
+        var fw = 10 + 15 + 7 + pen.Width(fl, ff) + 7 + 13 + 10;
         var chip = new Rect4(cx - fw / 2, chipY, fw, chipH);
         var chov = Over(chip) || menu?.Kind == "project";
-        pen.Icon(Glyphs.Folder, chip.X + 6, chipY + 7, 14, chov ? Pen.Ink : Pen.Dim);
-        pen.Text(fl, chip.X + 6 + 14 + 8, chipY + (chipH - pen.LineHeight(ff)) / 2, ff with { Color = chov ? Pen.Ink : Pen.Dim });
-        pen.Icon(Glyphs.Chevron, chip.Right - 6 - 13, chipY + 7.5f, 13, chov ? Pen.Ink : Pen.Dim);
+        pen.Icon(Glyphs.Folder, chip.X + 10, chipY + (chipH - 15) / 2, 15, chov ? Pen.Ink : Pen.Dim);
+        pen.Text(fl, chip.X + 10 + 15 + 7, chipY + (chipH - pen.LineHeight(ff)) / 2, ff with { Color = chov ? Pen.Ink : Pen.Dim });
+        pen.Icon(Glyphs.Chevron, chip.Right - 10 - 13, chipY + (chipH - 13) / 2, 13, chov ? Pen.Ink : Pen.Dim);
         Add(chip, "pillFolder");
         var box = new Rect4(cx - bw / 2, chipY + chipH + 22, bw, bh);
         PaintTaskBox(box, true, th);
