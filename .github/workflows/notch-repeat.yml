@@ -1,19 +1,13 @@
 # TEMPORARY: runs the live notch test again and again, to make an intermittent failure happen on
-# purpose and keep its log. Started by hand only. Deleted in the last commit of the item that made it.
+# purpose and keep its log. Started by a push of its settings file only. Deleted in the last commit of the item that made it.
 name: Notch repeat
 
+# A workflow can only be started by hand when its file is on the default branch, which this work
+# must not touch. So a push of .github/notch-repeat.cfg (lines "runs=25", "load=false", "test=...") starts it.
 on:
-  workflow_dispatch:
-    inputs:
-      runs:
-        description: How many times to run the test
-        default: '25'
-      load:
-        description: 'Keep every core busy while it runs (true or false)'
-        default: 'false'
-      test:
-        description: Part of the test name to run
-        default: Settings_open_in_the_open_notch
+  push:
+    branches: [windows-csharp]
+    paths: ['.github/notch-repeat.cfg']
 
 # Its own group: it never cancels or waits for ci.yml.
 concurrency:
@@ -32,6 +26,14 @@ jobs:
         shell: pwsh
     steps:
       - uses: actions/checkout@v4
+      - name: Settings from .github/notch-repeat.cfg
+        run: |
+          $cfg = @{ runs = '25'; load = 'false'; test = 'Settings_open_in_the_open_notch' }
+          foreach ($line in Get-Content .github/notch-repeat.cfg) {
+            if ($line -match '^\s*(runs|load|test)\s*=\s*(\S+)\s*$') { $cfg[$Matches[1]] = $Matches[2] }
+          }
+          $cfg.GetEnumerator() | ForEach-Object { "REPEAT_$($_.Key.ToUpper())=$($_.Value)" } | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+          $cfg.GetEnumerator() | ForEach-Object { "$($_.Key) = $($_.Value)" }
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
@@ -45,7 +47,7 @@ jobs:
       - name: Screen 1920 x 1080
         run: ./tools/set-resolution.ps1
       - name: Load
-        if: ${{ inputs.load == 'true' }}
+        if: ${{ env.REPEAT_LOAD == 'true' }}
         run: |
           $n = [Environment]::ProcessorCount
           1..$n | ForEach-Object { Start-Process pwsh -ArgumentList '-NoProfile', '-Command', '$x = 0; while ($true) { $x++ }' -WindowStyle Hidden }
@@ -54,8 +56,8 @@ jobs:
         run: |
           $env:HOVER_APP_EXE = (Resolve-Path publish\hoverai.exe).Path
           New-Item -ItemType Directory -Force out\repeat | Out-Null
-          $runs = [int]'${{ inputs.runs }}'
-          $filter = 'FullyQualifiedName~${{ inputs.test }}'
+          $runs = [int]$env:REPEAT_RUNS
+          $filter = "FullyQualifiedName~$env:REPEAT_TEST"
           $passed = 0
           $failed = @()
           for ($i = 1; $i -le $runs; $i++) {
@@ -66,7 +68,7 @@ jobs:
           }
           $line = "runs $runs, passed $passed, failed $($failed.Count)$(if ($failed.Count) { ' (' + ($failed -join ', ') + ')' })"
           $line
-          "### Notch repeat", '', $line, '', "load: ${{ inputs.load }}" | Out-File -Append -Encoding utf8 $env:GITHUB_STEP_SUMMARY
+          "### Notch repeat", '', $line, '', "load: $env:REPEAT_LOAD" | Out-File -Append -Encoding utf8 $env:GITHUB_STEP_SUMMARY
           if ($failed.Count -gt 0) { exit 1 }
       - uses: actions/upload-artifact@v4
         if: always()
