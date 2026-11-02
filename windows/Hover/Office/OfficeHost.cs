@@ -445,7 +445,7 @@ public sealed class OfficeHost : IDisposable
             notchRoot!.AddVisual(notchVisual!, true, null!).CheckError();
             notchDevice!.Commit().CheckError();
             notchAttached = true;
-            HostLog.Line($"office: drawing in the notch ({w} x {h})");
+            HostLog.Line($"office: drawing in the notch ({w} x {h}); its view is put above the other visuals");
         }
     }
 
@@ -462,6 +462,7 @@ public sealed class OfficeHost : IDisposable
             HostLog.Line($"office: hiding the notch view failed ({e.Message})");
         }
         notchAttached = false;
+        HostLog.Line("office: its view in the notch is taken away");
     }
 
     void DropNotch()

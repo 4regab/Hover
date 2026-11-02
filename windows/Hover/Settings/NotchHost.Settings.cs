@@ -198,7 +198,7 @@ sealed partial class NotchHost
             return;
         }
         var (composition, root) = surface.Composition;
-        cfgLayer ??= new UiLayer(gfx, composition, root);
+        cfgLayer ??= new UiLayer(gfx, composition, root, "settings");
         var (ax, ay, aw, ah) = scene.OfficeArea(ctl.WindowWidth);
         var sc = ctl.Scale;
         cfgLayer.Place((float)(ax * sc), (float)(ay * sc), (int)Math.Round(aw * sc), (int)Math.Round(ah * sc));

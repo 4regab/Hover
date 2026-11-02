@@ -17,6 +17,7 @@ sealed class UiLayer : IDisposable
     readonly Gfx g;
     readonly IDCompositionDevice composition;
     readonly IDCompositionVisual root;
+    readonly string name;
     IDXGISwapChain1? swap;
     IDCompositionVisual? visual;
     ID2D1Bitmap1? buffer;
@@ -24,11 +25,12 @@ sealed class UiLayer : IDisposable
     float offsetX, offsetY;
     bool shown;
 
-    public UiLayer(Gfx gfx, IDCompositionDevice composition, IDCompositionVisual root)
+    public UiLayer(Gfx gfx, IDCompositionDevice composition, IDCompositionVisual root, string name)
     {
         g = gfx;
         this.composition = composition;
         this.root = root;
+        this.name = name;
     }
 
     /// <summary>The layer's place and size in the window, in device pixels.</summary>
@@ -76,6 +78,7 @@ sealed class UiLayer : IDisposable
         if (on) root.AddVisual(visual, true, null!);
         shown = on;
         composition.Commit();
+        HostLog.Line($"{name}: layer {(on ? "put above the other visuals" : "taken away")}");
     }
 
     ID2D1Bitmap1 Buffer()

@@ -43,7 +43,7 @@ sealed partial class NotchHost : IDisposable
     readonly UiCore? panels;
     readonly bool ownsGfx;
     UiLayer? layer;
-    bool panelsDrawn;
+    bool panelsDrawn, panelsLogged;
     int clickCount;
     long lastClickAt;
     (int X, int Y) lastClickAtPos;
@@ -382,7 +382,13 @@ sealed partial class NotchHost : IDisposable
     void RenderPanels()
     {
         if (panels is null || surface is null) return;
-        if (!PanelsOpen)
+        var open = PanelsOpen;
+        if (open != panelsLogged)
+        {
+            panelsLogged = open;
+            HostLog.Line($"panels: {(open ? "open" : "closed")} in the notch (state {ctl.State}, view shown {scene.ViewVisible} at {scene.ViewOpacity:0.00}, Settings wanted {CfgWanted}, office drawn {office?.DrawsInNotch == true})");
+        }
+        if (!open)
         {
             if (panelsDrawn)
             {
@@ -393,7 +399,7 @@ sealed partial class NotchHost : IDisposable
             return;
         }
         var (composition, root) = surface.Composition;
-        layer ??= new UiLayer(gfx, composition, root);
+        layer ??= new UiLayer(gfx, composition, root, "panels");
         var (ax, ay, aw, ah) = scene.OfficeArea(ctl.WindowWidth);
         var sc = ctl.Scale;
         layer.Place((float)(ax * sc), (float)(ay * sc), (int)Math.Round(aw * sc), (int)Math.Round(ah * sc));
