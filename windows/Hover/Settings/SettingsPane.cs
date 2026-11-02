@@ -28,6 +28,7 @@ sealed class SettingsPane : IDisposable
     readonly Action<BackendEvent> onEvent;
     readonly Env env;
     bool disposed, started, lastDark, voiceHooked;
+    int themeLooks;
 
     public SettingsController Controller { get; }
 
@@ -97,6 +98,8 @@ sealed class SettingsPane : IDisposable
         themeTimer.Tick += (_, _) =>
         {
             var dark = SystemTheme.IsDark();
+            // For the checks of the real app: what each look at Windows' setting found (a line only when it changed, and the first few).
+            if (UiDump.On && (dark != lastDark || themeLooks++ < 3)) HostLog.Line($"windows setting looked at: dark {dark} (was {lastDark})");
             if (dark == lastDark) return;
             lastDark = dark;
             HostLog.Line($"windows is now {(dark ? "dark" : "light")}");

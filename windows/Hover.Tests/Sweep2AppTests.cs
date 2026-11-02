@@ -248,7 +248,7 @@ public class Sweep2AppTests(ITestOutputHelper output)
         using var theme = new SystemTheme();
         theme.Set(dark: false);
         using var run = new Run(["--settings"]);
-        string Why() => "log:\n" + run.Log();
+        string Why() => "log:\n" + run.Log() + "\nsettings-window dark: " + run.Dump.Section("settings-window")?["dark"]?.ToJsonString() + "\nsetting now: " + Registry.GetValue(@"HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize", "AppsUseLightTheme", "(none)");
         bool? Dark() => (bool?)run.Dump.Section("settings-window")?["dark"];
         Assert.True(await Until(() => Dark() == false, 40_000), "the page in Windows' light colours\n" + Why());
         theme.Set(dark: true);
