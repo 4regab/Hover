@@ -213,9 +213,16 @@ What `windows\Hover.Tests` covers:
   `SweepFixTests` holds the checks of the single faults it found (each failed before its fix): the repository search,
   the folder chip, the Escape order, the keys that must not reach the office, the reply box and the thread, a saved rename,
   drafts kept, Retry, Enter and delete, a question with two parts, the list at the side (folders, fold, delete, resize),
-  and sideways scrolling of wide code.
+  and sideways scrolling of wide code. The pictures `office-repo-menu-search`, `office-fab-no-folder`, `chat-view-sidebar-folded` and `chat-view-sidebar-delete` show the new states.
 - **The window's smallest size** (`WindowSizeAppTests`, Windows, needs `HOVER_APP_EXE`): the app window answers the
   system's `WM_GETMINMAXINFO` with 880 x 480 scaled by the display, and stays that size when asked for 300 x 200.
+- **The pointer's shape** (`PointerShapeAppTests`, Windows, needs `HOVER_APP_EXE`): the real cursor (`GetCursorInfo`) over the app
+  window and over the open notch, with the pointer moved by mouse input (`SetCursorPos` alone sends the XAML window no
+  pointer-moved event): the hand over the chat view switch, the + circle, the menu button and the agent pill, the text cursor in
+  the task box, the resize cursor on the chat list's edge, the normal shape over a plain place. It also logs the window the
+  system finds under the point, the app window's rectangle, scale and foreground state, and the cursor handles, and writes a
+  screen copy with the point marked (`out\notch-live\pointer-*.png`). The shots test fails if the log of the quit has "frame failed"
+  (the panels drawing after the graphics device was disposed).
 - **The panels** (`PanelTests`, any system): the start screen starts a task with the tool, folder, access
   and model its pills show; the agent, where-it-runs, repository and access menus; a permission answered
   (`allow`, `trust`, `deny`) from the chat and over the bot; two questions at once answered one by one; a
