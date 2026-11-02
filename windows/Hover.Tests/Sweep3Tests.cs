@@ -293,8 +293,10 @@ public class Sweep3Tests
     }
 
     [Fact]
-    public void A_button_under_a_toast_gets_no_hover_look_and_no_click_either()
+    public void A_toast_is_only_shown_so_the_button_under_it_still_lights_and_answers()
     {
+        // A live run (the desk test, run 41503855394) clicked the Diff tab under the "Saved." toast and the press went to nothing: the
+        // toast must not take the press, as in the Go app, where it is only drawn.
         var h = new PanelHarness { W = 400, H = 346 };
         h.State();
         h.Ui.ChatView = false;
@@ -309,12 +311,31 @@ public class Sweep3Tests
         Assert.True(toast.Contains(at.X, at.Y), $"the toast {toast} is over the point {at} of the button {button}");
         h.Ui.PointerMove(at.X, at.Y);
         var c = h.Frame();
-        Assert.False(Lit(c, button));
-        Assert.True(h.Ui.TargetAt(at.X, at.Y) is null, "nothing answers under the toast");
+        Assert.True(Lit(c, button), "the button is lit under the toast");
+        Assert.Equal("topMenu", h.Ui.TargetAt(at.X, at.Y)?.Id);
         h.Ui.PointerDown(at.X, at.Y, 1, UiMods.None);
         h.Ui.PointerUp(at.X, at.Y);
         h.Frame();
-        Assert.Null(h.Ui.OpenMenuKind);
+        Assert.Equal("top", h.Ui.OpenMenuKind);
+    }
+
+    [Fact]
+    public void A_question_over_a_bot_that_the_open_chat_covers_answers_no_click()
+    {
+        // The drawer comes over the office: the card of another bot's question, drawn under it, is a button nobody can see.
+        var rig = SweepTests.Rig(880, 480);
+        rig.Ui.ChatView = false;
+        rig.Ui.OpenChat(1);
+        rig.Frame();
+        var allow = rig.Ui.Find("askAllow", s: "a1")!.Value.R;
+        var at = (X: allow.X + allow.W / 2, Y: allow.Y + allow.H / 2);
+        Assert.True(rig.Ui.Covers(at.X, at.Y));
+        Assert.NotEqual("askAllow", rig.Ui.TargetAt(at.X, at.Y)?.Id);
+        rig.Ui.PointerMove(at.X, at.Y);
+        rig.Ui.PointerDown(at.X, at.Y, 1, UiMods.None);
+        rig.Ui.PointerUp(at.X, at.Y);
+        rig.Frame();
+        Assert.DoesNotContain(rig.Sent, c => c is AnswerCommand);
     }
 
     // MARK: Tips

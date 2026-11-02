@@ -353,9 +353,9 @@ public sealed partial class OfficeUi
         pen.Cv = cv;
         targets.Clear();
         // The layers of the last frame are kept: a button painted before a layer does not know yet that the layer comes over it.
-        (blockers, lastBlockers) = (lastBlockers, blockers);
+        (layers, lastLayers) = (lastLayers, layers);
+        layers.Clear();
         blockers.Clear();
-        blockerAt.Clear();
         pen.Drawn.Clear();
         Animating = false;
         NextFrameMs = double.MaxValue;
@@ -377,29 +377,35 @@ public sealed partial class OfficeUi
     /// <summary>A layer that takes the pointer (a menu, a card): what is under it does not see the pointer.</summary>
     bool overBlocker;
 
-    List<Rect4> blockers = [], lastBlockers = [];
+    readonly List<Rect4> blockers = [];
 
-    /// <summary>For each layer in <see cref="blockers"/>, how many places had been added when it came: those lie under it.</summary>
-    readonly List<int> blockerAt = [];
+    /// <summary>
+    /// The layers that take the pointer from what is under them, in the order they were drawn, this frame and the last: for this
+    /// frame also how many places had been added when each came (those lie under it).
+    /// </summary>
+    List<(Rect4 R, int At)> layers = [], lastLayers = [];
 
     void Add(Rect4 r, string id, int n = 0, string s = "") => targets.Add(new Target(r, id, n, s));
 
-    /// <summary>A drawn panel that takes the pointer but does nothing with it: the office behind does not see it. What was added before it lies under it.</summary>
-    void Block(Rect4 r)
+    /// <summary>
+    /// A drawn panel that takes the pointer but does nothing with it: the office behind does not see it. It also keeps the places drawn
+    /// before it from lighting up under it. A toast passes the pointer on (<paramref name="takesPointer"/> off): it is only shown, as in the Go app.
+    /// </summary>
+    void Block(Rect4 r, bool takesPointer = true)
     {
         blockers.Add(r);
-        blockerAt.Add(targets.Count);
+        if (takesPointer) layers.Add((r, targets.Count));
     }
 
     /// <summary>
-    /// The pointer is on this place and nothing drawn over it is. Layers come later in the frame than what they cover, so the
+    /// The pointer is on this place and no layer drawn over it is. Layers come later in the frame than what they cover, so the
     /// ones that are still to come are those the last frame had past the ones drawn so far.
     /// </summary>
     bool Over(Rect4 r)
     {
         if (overBlocker || px < 0 || !r.Contains(px, py)) return false;
-        for (var k = blockers.Count; k < lastBlockers.Count; k++)
-            if (lastBlockers[k].Contains(px, py)) return false;
+        for (var k = layers.Count; k < lastLayers.Count; k++)
+            if (lastLayers[k].R.Contains(px, py)) return false;
         return true;
     }
 
@@ -471,8 +477,8 @@ public sealed partial class OfficeUi
     {
         // A place added before a layer that is over the point is under that layer, and does not answer.
         var floor = 0;
-        for (var k = 0; k < blockers.Count; k++)
-            if (blockerAt[k] > floor && blockers[k].Contains(x, y)) floor = blockerAt[k];
+        foreach (var (r, at) in layers)
+            if (at > floor && r.Contains(x, y)) floor = at;
         for (var i = targets.Count - 1; i >= floor; i--)
             if (targets[i].Contains(x, y)) return targets[i];
         return null;

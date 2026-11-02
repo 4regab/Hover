@@ -64,7 +64,7 @@ public sealed partial class OfficeUi
             pen.Box(gx, gy, gw, gh, 12, Rgba.Of(0x0a060e, 0.94));
             pen.Border(gx, gy, gw, gh, 12, 1, Rgba.Of(0xffffff, 0.12));
             pen.TextIn(toast, new Rect4(gx, gy, gw, gh), f);
-            Block(new Rect4(gx, gy, gw, gh));
+            Block(new Rect4(gx, gy, gw, gh), takesPointer: false);
         }
         // The note before the first task is over everything else.
         if (NoticeShown) PaintNotice();
