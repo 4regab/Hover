@@ -88,7 +88,7 @@ public class PointerShapeAppTests(ITestOutputHelper output)
         nint last = 0;
         foreach (var dx in new[] { 2, -2, 1, -1, 2, 0 })
         {
-            Input.Move(p.X + dx, p.Y + (dx & 1));
+            Input.MoveLikeMouse(p.X + dx, p.Y + (dx & 1));
             await Task.Delay(350);
             last = Shape();
             seen.Add($"0x{last:X}");
@@ -163,7 +163,7 @@ public class PointerShapeAppTests(ITestOutputHelper output)
         // A plain place: the corner of the office, away from anything the panels drew.
         var area = run.Dump.Section("window")!;
         double left = (double)area["left"]!, top = (double)area["top"]!, scale = (double)area["scale"]!;
-        Input.Move((int)(left + 600 * scale), (int)(top + 60 * scale));
+        Input.MoveLikeMouse((int)(left + 600 * scale), (int)(top + 60 * scale));
         await Task.Delay(1500);
         Assert.Equal(Of(Normal), Shape());
     }
