@@ -366,7 +366,8 @@ sealed partial class NotchHost : IDisposable
     bool PanelsKey(int vk)
     {
         if (!PanelsOpen || cardOpen) return false;
-        var used = panels!.Ui.Key(KeyMap.Of(vk), KeyMap.Mods(GetKeyState));
+        var mods = KeyMap.Mods(GetKeyState);
+        var used = panels!.Ui.Key(KeyMap.Of(vk), mods) || panels.Ui.TakesPlainKey(mods);
         SyncKeys();
         QueueRender();
         EnsureAnimating();

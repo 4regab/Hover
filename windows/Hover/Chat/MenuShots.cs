@@ -138,6 +138,8 @@ static class MenuShots
             Reset(1200, 720);
             ui.ChatView = true;
             Paint(1200, 720);
+            if (ui.Find("showSide") is not null) ui.Click("showSide");
+            Paint(1200, 720);
             if (ui.Targets.FirstOrDefault(t => t.Id == "head") is { Id: "head" } head) ui.Click("head", head.N);
             Paint(1200, 720);
         }, false);
@@ -145,6 +147,8 @@ static class MenuShots
         {
             Reset(1200, 720);
             ui.ChatView = true;
+            Paint(1200, 720);
+            if (ui.Find("showSide") is not null) ui.Click("showSide");
             Paint(1200, 720);
             if (ui.Targets.FirstOrDefault(t => t.Id == "row") is { Id: "row" } row) ui.PointerMove(row.R.X + 60, row.R.Y + row.R.H / 2);
             Paint(1200, 720);

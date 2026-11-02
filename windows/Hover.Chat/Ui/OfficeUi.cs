@@ -69,6 +69,12 @@ public sealed partial class OfficeUi
     /// <summary>A text box has the keyboard.</summary>
     public bool TakesKeys => FocusedBox() is not null;
 
+    /// <summary>
+    /// A box with the keyboard takes every plain key (not Ctrl or Alt chords). The notch must not give such a key to the office as well:
+    /// the digits and the minus and plus keys are the office camera's, and would zoom and reset the room while a name is typed.
+    /// </summary>
+    public bool TakesPlainKey(UiMods mods) => TakesKeys && (mods & (UiMods.Control | UiMods.Alt)) == 0;
+
     /// <summary>Asks for a frame.</summary>
     public void Invalidate() => Dirty = true;
 
@@ -673,9 +679,9 @@ public sealed partial class OfficeUi
                 if (env.Clipboard.Text() is { Length: > 0 } text) box.Insert(text, now);
                 break;
             default:
-                // A box with the keyboard takes every plain key. Left to the host, the digits and the minus and plus keys
-                // would also zoom and reset the office's camera behind it (they are its keys), while a name is typed.
-                return (mods & (UiMods.Control | UiMods.Alt)) == 0;
+                // The key is not handled here, so that the window still gets the character it types (a handled key down
+                // stops the character). The notch asks TakesPlainKey: see below.
+                return false;
         }
         AfterEdit();
         return true;

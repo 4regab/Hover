@@ -166,11 +166,15 @@ public class SweepFixTests
         h.State();
         h.Ui.ChatView = false;
         h.Frame();
+        Assert.False(h.Ui.TakesPlainKey(UiMods.None), "no box has the keyboard yet");
         Assert.True(h.Click("fab"));
         Assert.True(h.Ui.TakesKeys);
-        // The digits and the minus and plus keys are the office camera's; typed in a name they are the box's alone.
-        Assert.True(h.Key(UiKey.Other), "a plain key the box does not use is left to the office");
-        Assert.False(h.Key(UiKey.Other, UiMods.Control), "Ctrl+key chords stay the host's");
+        // The digits and the minus and plus keys are the office camera's; typed in a name they are the box's alone (the notch asks this).
+        Assert.True(h.Ui.TakesPlainKey(UiMods.None), "a plain key typed in the box would also reach the office");
+        Assert.True(h.Ui.TakesPlainKey(UiMods.Shift));
+        Assert.False(h.Ui.TakesPlainKey(UiMods.Control), "Ctrl+key chords stay the host's");
+        // The panels themselves leave such a key unhandled, so that the window still gets the character typed with it.
+        Assert.False(h.Key(UiKey.Other));
     }
 
     [Fact]

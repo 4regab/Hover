@@ -387,6 +387,9 @@ static class DeskShots
         {
             ui.OpenOfficePanel("");
             ui.ChatView = true;
+            // An earlier picture may have put the list away; this one is of the list.
+            ChatShots.RenderLayer(core, 1200, 720, 1);
+            if (ui.Find("showSide") is not null) ui.Click("showSide");
             ui.Accept(ChatShots.State(ChatShots.Busy(), ChatShots.Finished()));
             ui.Accept(new CliSessionsEvent { Ok = true, Sessions = [new ListedSession { Id = "c1", Title = "Fix the installer", Folder = @"C:\work\project", Updated = now - 14_400_000 }] });
         }, false);
