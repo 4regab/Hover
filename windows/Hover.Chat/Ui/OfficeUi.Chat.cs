@@ -599,10 +599,10 @@ public sealed partial class OfficeUi
                 }
                 break;
             case ActKind.Restore:
-                confirm = (section, "restore");
-                break;
             case ActKind.TryAgain:
-                confirm = (section, "again");
+                // Both change the project's files, so they ask first; never while a run goes (internal/shell/chatact.go askRewind).
+                if (s is not null && Busy(s)) Say("Stop the run first.");
+                else confirm = (section, a.Kind == ActKind.Restore ? "restore" : "again");
                 break;
             case ActKind.Edit:
                 if (OpenId is { } eid && section < turns.Count) env.Send(new QueueRemoveCommand(eid, turns[section].Uid));
@@ -620,18 +620,30 @@ public sealed partial class OfficeUi
 
     // MARK: Rewind confirmation
 
+    /// <summary>What Restore and Try again ask, in the Go app's words (internal/shell/chatact.go askRewind).</summary>
+    string RewindWords(bool restore, int turn)
+    {
+        var s = Current();
+        var folder = s is null ? "" : LastPart(s.Folder);
+        var later = Math.Max((s?.Turns.Count ?? 0) - (turn + 1), 0);
+        var leave = later == 1 ? "1 message after it leaves" : $"{later} messages after it leave";
+        const string undone = " Changes made since, by the agent or by you, are undone.";
+        if (restore)
+            return $"The files in “{folder}” go back to how they were after this answer" + (later > 0 ? $", and the {leave} this chat." : ".") + undone;
+        return $"The files in “{folder}” go back to how they were before this message, and it is sent again." + (later > 0 ? $" The {leave} this chat." : "") + undone;
+    }
+
     void PaintConfirm()
     {
         if (confirm is not { } c) return;
         var cv = pen.Cv;
         pen.Box(0, 0, w, h, 0, Rgba.Of(0x000000, 0.5));
         var bw = Math.Min(360, w - 32);
-        var head = c.Kind switch { "restore" => "Restore to after this answer?", "delete" or "deleteKey" or "deleteLive" => "Delete this chat?", _ => "Try this message again?" };
+        var head = c.Kind switch { "restore" => "Restore to here?", "delete" or "deleteKey" or "deleteLive" => "Delete this chat?", _ => "Try again from here?" };
         var body = c.Kind switch
         {
-            "restore" => "The chat goes back to how it was after this answer, and the folder goes back with it. Later messages are removed.",
-            "delete" or "deleteKey" or "deleteLive" => "The chat is removed from the list and its saved history is deleted. This cannot be undone.",
-            _ => "The chat goes back to just before this message, the folder with it, and the message is sent again.",
+            "restore" or "again" => RewindWords(c.Kind == "restore", c.Turn),
+            _ => "The chat is removed from the list and its saved history is deleted. This cannot be undone.",
         };
         var hf = Pen.F(14, 600, Pen.Ink);
         var bf = Pen.F(12, 400, Pen.Dim);

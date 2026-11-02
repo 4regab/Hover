@@ -949,6 +949,14 @@ public sealed partial class OfficeUi
         }
     }
 
+    /// <summary>Forks from the last turn that ended; with none, says so (internal/shell/chatact.go forkChat).</summary>
+    void ForkChat(int sid)
+    {
+        var turn = DeskSession(sid)?.Turns.FindLastIndex(t => !t.Queued && t.Stage is "done" or "failed" or "stopped") ?? -1;
+        if (turn < 0) Say("Nothing has ended yet to fork from.");
+        else env.Send(new ForkCommand(sid, turn));
+    }
+
     void MoreAct(string id)
     {
         if (OpenId is not { } sid) return;
@@ -960,7 +968,7 @@ public sealed partial class OfficeUi
         {
             Activate(new Target(default, "rename"));
         }
-        else if (id == "fork") env.Send(new ForkCommand(sid, Math.Max(turns.Count - 1, 0)));
+        else if (id == "fork") ForkChat(sid);
         else if (id == "bringBack") env.Send(new BringBackCommand(sid));
         else if (id == "delete") confirm = (0, "delete");
         else if (id.StartsWith("switch:", StringComparison.Ordinal)) env.Send(new SwitchProviderCommand(sid, id[7..]));

@@ -59,6 +59,8 @@ public sealed record QueueRemoveEvent : BackendEvent
     public int Id { get; init; }
     public string? Uid { get; init; }
     public bool Ok { get; init; }
+    /// <summary>Why the message could not be taken back, when <see cref="Ok"/> is false.</summary>
+    public string? Error { get; init; }
     public string Text { get; init; } = "";
     public List<string> Images { get; init; } = [];
     public List<JsonElement> Chips { get; init; } = [];

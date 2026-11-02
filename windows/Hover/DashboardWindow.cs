@@ -60,11 +60,8 @@ public sealed class DashboardWindow : Window
         header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         // File, Settings and Help, as the Go app's title bar has them.
         var menuBar = AppMenu.Build(new AppMenu.Actions(
-            NewChat: () =>
-            {
-                settings?.CloseDash();
-                if (panels is not null) { panels.Ui.ChatView = true; panels.Ui.CloseChat(); panels.Ui.Invalidate(); }
-            },
+            // As the Go app's newChat: the open chat is put away for the start screen. It does not leave Settings or change the view.
+            NewChat: () => panels?.Ui.NewChat(),
             OpenFolder: () =>
             {
                 // A folder for the next task: it is the one the new-task box starts with.

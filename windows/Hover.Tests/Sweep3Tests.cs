@@ -474,4 +474,135 @@ public class Sweep3Tests
         var moved = h2.Ui.Targets.Where(t => t.Id == "askOpt").Select(t => t.S).FirstOrDefault();
         Assert.NotEqual("Choice 0 with a rather long name that wraps", moved);
     }
+
+    // MARK: Words and guards from the Go app
+
+    static PanelHarness TwoTurns(string stage = "done", bool second = true)
+    {
+        var first = PanelHarness.Turn("Change it", "Changed.") with { Restore = true, Again = true };
+        var next = PanelHarness.Turn("And then this", "Done again.") with { Restore = true, Again = true };
+        var h = new PanelHarness();
+        h.State(PanelHarness.Session(1, stage, null, second ? [first, next] : [first]) with { Folder = @"C:\work\project" });
+        h.Ui.ChatView = true;
+        h.Ui.OpenChat(1);
+        h.Frame();
+        return h;
+    }
+
+    static void ClickAct(PanelHarness h, ActKind kind, int section)
+    {
+        var hit = h.Ui.Thread.Sections[section].Frag.Hits.First(x => x.Act.Kind == kind);
+        h.ClickAt(h.InThread(section, hit.R));
+    }
+
+    [Fact]
+    public void Restore_and_Try_again_ask_in_the_Go_apps_words_with_the_folder_and_the_messages_that_go()
+    {
+        var h = TwoTurns();
+        ClickAct(h, ActKind.Restore, 0);
+        var c = h.Frame();
+        Assert.Contains("Restore to here?", c.Texts);
+        Assert.Contains(c.Texts, t => t == "The files in “project” go back to how they were after this answer, and the 1 message after it leaves this chat. Changes made since, by the agent or by you, are undone.");
+        h.Click("confirmNo");
+
+        ClickAct(h, ActKind.TryAgain, 0);
+        c = h.Frame();
+        Assert.Contains("Try again from here?", c.Texts);
+        Assert.Contains(c.Texts, t => t == "The files in “project” go back to how they were before this message, and it is sent again. The 1 message after it leaves this chat. Changes made since, by the agent or by you, are undone.");
+        h.Click("confirmNo");
+
+        // The newest turn has nothing after it: no clause about messages that leave.
+        ClickAct(h, ActKind.TryAgain, 1);
+        Assert.Contains(h.Frame().Texts, t => t == "The files in “project” go back to how they were before this message, and it is sent again. Changes made since, by the agent or by you, are undone.");
+        h.Click("confirmNo");
+        ClickAct(h, ActKind.Restore, 1);
+        Assert.Contains(h.Frame().Texts, t => t == "The files in “project” go back to how they were after this answer. Changes made since, by the agent or by you, are undone.");
+        h.Click("confirmNo");
+
+        // Three messages after it: the plural reads as the Go app writes it.
+        var third = PanelHarness.Turn("Third", "Three.") with { Restore = true, Again = true };
+        var fourth = PanelHarness.Turn("Fourth", "Four.") with { Restore = true, Again = true };
+        var s = h.Ui.State!.Sessions[0];
+        h.Accept(h.Ui.State! with { Sessions = [s with { Turns = [.. s.Turns, third, fourth] }] });
+        ClickAct(h, ActKind.Restore, 0);
+        Assert.Contains(h.Frame().Texts, t => t.Contains("and the 3 messages after it leave this chat.", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Restore_and_Try_again_say_to_stop_the_run_first_while_one_goes()
+    {
+        var first = PanelHarness.Turn("Change it", "Changed.") with { Restore = true, Again = true };
+        var h = new PanelHarness();
+        h.State(PanelHarness.Session(1, "working", null, first, PanelHarness.Turn("Now this", "", "working")));
+        h.Ui.ChatView = true;
+        h.Ui.OpenChat(1);
+        h.Frame();
+        var acts = h.Ui.ThreadActs().Where(a => a.Kind is "Restore" or "TryAgain").ToList();
+        Assert.NotEmpty(acts);
+        h.ClickAt((acts[0].R.X + acts[0].R.W / 2, acts[0].R.Y + acts[0].R.H / 2));
+        Assert.Equal("Stop the run first.", h.Ui.ToastText);
+        Assert.DoesNotContain("Restore to here?", h.Frame().Texts);
+        Assert.DoesNotContain("Try again from here?", h.Frame().Texts);
+    }
+
+    [Fact]
+    public void Fork_goes_from_the_last_turn_that_ended_and_says_so_when_none_has_and_when_it_is_done()
+    {
+        // A first turn still working: nothing has ended.
+        var working = PanelHarness.Turn("Go", "", "working");
+        var h = new PanelHarness();
+        h.State(PanelHarness.Session(1, "working", null, working));
+        h.Ui.ChatView = true;
+        h.Ui.OpenChat(1);
+        h.Frame();
+        Assert.True(h.Click("more"));
+        Assert.True(h.Click("menu", s: "Fork this chat"));
+        Assert.DoesNotContain(h.Sent, c => c is ForkCommand);
+        Assert.Equal("Nothing has ended yet to fork from.", h.Ui.ToastText);
+
+        // An ended turn and then one that waits in the queue: it forks from the ended one.
+        var ended = PanelHarness.Turn("Done one", "Yes.");
+        var queued = PanelHarness.Turn("Later", "", "queued") with { Queued = true };
+        var h2 = new PanelHarness();
+        h2.State(PanelHarness.Session(1, "working", null, ended, PanelHarness.Turn("Now", "", "working"), queued));
+        h2.Ui.ChatView = true;
+        h2.Ui.OpenChat(1);
+        h2.Frame();
+        Assert.True(h2.Click("more"));
+        Assert.True(h2.Click("menu", s: "Fork this chat"));
+        Assert.Equal(0, h2.Last<ForkCommand>().Turn);
+
+        // The copy opens, and the toast says which is which.
+        h2.Accept(new ForkEvent { Id = 1, Ok = true, ForkId = 7 });
+        Assert.Equal("Forked. This is the copy; the original is unchanged.", h2.Ui.ToastText);
+    }
+
+    [Fact]
+    public void Edit_on_a_message_that_already_went_says_so_in_the_Go_apps_words()
+    {
+        var h = TwoTurns(second: false);
+        h.Accept(new QueueRemoveEvent { Id = 1, Uid = "u1", Ok = false, Error = "That message was already sent." });
+        Assert.Equal("That message was already sent.", h.Ui.ToastText);
+        h.Accept(new QueueRemoveEvent { Id = 1, Uid = "u1", Ok = false });
+        Assert.Equal("That message was already sent.", h.Ui.ToastText);
+    }
+
+    [Fact]
+    public void New_chat_in_a_menu_puts_the_open_chat_away_and_changes_nothing_else()
+    {
+        var h = TwoTurns(second: false);
+        Assert.Equal(1, h.Ui.OpenId);
+        h.Ui.OpenDeskCard(1);
+        h.Frame();
+        h.Ui.ChatView = false;
+        h.Ui.NewChat();
+        h.Frame();
+        Assert.Null(h.Ui.OpenId);
+        Assert.Null(h.Ui.DeskCardId);
+        Assert.False(h.Ui.ChatView, "the view stays as it was");
+        // With nothing open it sends no second close.
+        var closes = h.Sent.Count(c => c is OpenCommand);
+        h.Ui.NewChat();
+        Assert.Equal(closes, h.Sent.Count(c => c is OpenCommand));
+    }
 }

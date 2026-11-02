@@ -461,7 +461,7 @@ public class PanelTests
         var restore = h.Ui.Thread.Sections[0].Frag.Hits.First(x => x.Act.Kind == ActKind.Restore);
         h.ClickAt(h.InThread(0, restore.R));
         Assert.DoesNotContain(h.Sent, c => c is RestoreCommand);
-        Assert.Contains("Restore to after this answer?", h.Frame().Texts);
+        Assert.Contains("Restore to here?", h.Frame().Texts);
         h.Click("confirmNo");
         Assert.DoesNotContain(h.Sent, c => c is RestoreCommand);
         restore = h.Ui.Thread.Sections[0].Frag.Hits.First(x => x.Act.Kind == ActKind.Restore);

@@ -211,7 +211,7 @@ public sealed partial class OfficeUi
                 break;
             case QueueRemoveEvent q:
                 if (q.Ok) PutInReplyBox(q.Text);
-                else Say("That message already left the queue.");
+                else Say(q.Error ?? "That message was already sent.");
                 break;
             case PreferencesEvent p:
                 kiroAutoCompact = p.KiroAutoCompact;
@@ -225,6 +225,7 @@ public sealed partial class OfficeUi
                 break;
             case ForkEvent { Ok: true, ForkId: { } id }:
                 OpenChat(id);
+                Say("Forked. This is the copy; the original is unchanged.");
                 break;
             case ForkEvent { Ok: false } f:
                 Say(f.Error ?? "Could not fork this chat.");
@@ -309,6 +310,14 @@ public sealed partial class OfficeUi
         ResetThreadView();
         DrawerChanged?.Invoke(null);
         env.Send(new HistoryCommand(key));
+        Dirty = true;
+    }
+
+    /// <summary>New chat in a menu: the open chat is put away for the start screen, and a desk card or panel with it (internal/shell/chat.go newChat).</summary>
+    public void NewChat()
+    {
+        DeskLeave();
+        if (OpenId is not null || openKey is not null) CloseChat();
         Dirty = true;
     }
 
