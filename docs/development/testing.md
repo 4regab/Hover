@@ -209,9 +209,9 @@ What `windows\Hover.Tests` covers:
   taller than its office less 16 px), the wheel, the pick. The copies (`notice-open.png`, `folder-list-open.png`,
   `folder-picked.png`) are in `out\notch-live`. Not run: the system's folder dialog itself (a modal window the test cannot
   answer); `StartTaskTests` answers it with a fake.
-- **The sweep** (`SweepTests`, any system): the panels are put in 51 states (the office with and without its box, the
+- **The sweep** (`SweepTests`, any system): the panels are put in 53 states (the office with and without its box, the
   history, board and overview panels, the drawer and the chat view in each stage of a chat, the question and permission
-  cards, the desk card and each tab, the note, a confirm, and every menu from `MenuFitTests`) at 828 x 346 (the open
+  cards (and a question with fourteen long choices), the desk card and each tab, the note, a confirm, and every menu from `MenuFitTests`) at 828 x 346 (the open
   notch), 880 x 480 (the app window's smallest), 1200 x 720 and 1920 x 1080, with data that is hard on a layout (34 chats
   with long titles, words and paths with no spaces, wide tables and code, right-to-left text, emoji). In each state:
   every place that answers a click is inside the window; no two overlap unless one is wholly inside the other, or is a
@@ -224,6 +224,18 @@ What `windows\Hover.Tests` covers:
   the folder chip, the Escape order, the keys that must not reach the office, the reply box and the thread, a saved rename,
   drafts kept, Retry, Enter and delete, a question with two parts, the list at the side (folders, fold, delete, resize),
   and sideways scrolling of wide code. The pictures `office-repo-menu-search`, `office-fab-no-folder`, `chat-view-sidebar-folded` and `chat-view-sidebar-delete` show the new states.
+- **Sweep 3, the small faults sweeps 1 and 2 left** (`Sweep3Tests`, any system; each check failed on the code before its fix, reports/sweep3.md): the
+  custom-answer box answers the chat it belongs to and not the first that asks; reply chips that do not fit wrap onto rows (three at most) and the rest
+  is counted in a "+N" chip; the wheel over a reply box with more lines than fit scrolls the box, over the desk's tab strip it moves the tabs sideways
+  (or does nothing), over the desk card's status box it scrolls that; Escape in a box of the desk panel leaves the box; a question taller than the pane
+  scrolls inside its card (wheel, bar, fade) and the thread keeps 80 px; a button under a panel drawn over it has no hover look and answers no click,
+  while a toast is only shown and lets both through; tips (the name under the office/chat switch, the date on the wall clock, none over the bot whose
+  chat is open); a folder's path is one cut line with the whole of it in a tip; the desk card's title is cut with an ellipsis and its Editor and Expand
+  buttons stay whole; Restore, Try again, Fork, Edit and New chat in the Go words and guards; one wheel notch is 60 DIPs, the Latest button shows 160 px
+  above the end, the running step shimmers and the panels repaint ten times a second while a run is live; a new width keeps the reader at the same turn;
+  Ctrl+Z, Ctrl+Y and Ctrl+Shift+Z in the text boxes of the panels and of Settings (`EditBox`, a step is a word or a pause, a run of Backspace, a paste or a cut).
+  `SweepTests` holds the card places to the window now (a question no longer reaches past it). The notch card's wrapped command and dim path are
+  drawn only on Windows, so they are checked by the pictures `notch-rest-card-long-2x` and `notch-rest-card-diff-2x` (the job checks they are made).
 - **The window's smallest size** (`WindowSizeAppTests`, Windows, needs `HOVER_APP_EXE`): the app window answers the
   system's `WM_GETMINMAXINFO` with 880 x 480 scaled by the display, and stays that size when asked for 300 x 200.
 - **The pointer's shape** (`PointerShapeAppTests`, Windows, needs `HOVER_APP_EXE`): the real cursor (`GetCursorInfo`) over the app
