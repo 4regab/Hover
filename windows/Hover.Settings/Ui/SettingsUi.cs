@@ -78,7 +78,12 @@ public sealed partial class SettingsUi
     public bool Dirty { get; private set; } = true;
 
     /// <summary>A caret is blinking or the pointer is held on something that moves: frames keep coming.</summary>
-    public bool Animating => FocusId is not null || barDragging || sliderId is not null;
+    public bool Animating => FocusId is not null || barDragging || sliderId is not null || ToastLive;
+
+    /// <summary>A toast is showing, so a frame is due when it ends (it would stay on the screen until something else drew).</summary>
+    bool ToastLive => ctl.ToastText is not null && (DateTime.UtcNow - ctl.ToastAt).TotalSeconds < ToastSeconds + 0.5;
+
+    const double ToastSeconds = 5;
 
     public double NextFrameMs => 250;
 
@@ -86,6 +91,9 @@ public sealed partial class SettingsUi
 
     /// <summary>The places the last frame drew that answer the pointer, for the checks of the real app: (kind, id, rectangle).</summary>
     public IEnumerable<(string Kind, string Id, Rect4 R)> Targets => hits.Select(t => (t.K.ToString(), t.Id, t.Clip));
+
+    /// <summary>The same places with their index (the section, the segment, the tile), for the checks.</summary>
+    public IEnumerable<(string Kind, string Id, int N, Rect4 R)> IndexedTargets => hits.Select(t => (t.K.ToString(), t.Id, t.N, t.Clip));
 
     /// <summary>The lines of text the last frame drew.</summary>
     public IEnumerable<string> Texts => pen.Drawn;
@@ -98,9 +106,108 @@ public sealed partial class SettingsUi
 
     static readonly Rgba White = new(255, 255, 255);
 
-    Rgba Ink => C(P.Ink);
-    Rgba Dim => C(P.InkDim);
+    Rgba Ink => inkText;
+
+    /// <summary>The lines of text the last frame drew faded (a row that is switched off), for the checks.</summary>
+    public IEnumerable<string> FadedTexts => fadedLog;
+
+    readonly List<string> fadedLog = [];
     Rgba Faint => C(P.InkFaint);
+
+    // The secondary text colour, the link blue, the red of a message and the amber of a warning, each made readable (4.5 to 1) on the
+    // surfaces it is drawn on, whatever the palette is: Apple's secondary label on white is 3.3 to 1, the accent colours of a
+    // light theme are lighter still. A palette that already reads well keeps its own colour.
+    Rgba inkText, dimInk, linkInk, redInk, amberInk, selectionFill, redFill;
+    AppPalette? inkFor;
+
+    Rgba Dim => dimInk;
+    Rgba LinkInk => linkInk;
+    Rgba RedInk => redInk;
+    Rgba AmberInk => amberInk;
+
+    /// <summary>The fill of the picked section and of the option the pointer is on: the accent, darkened until white words read on it.</summary>
+    Rgba SelectionFill => selectionFill;
+
+    void MakeInks()
+    {
+        if (ReferenceEquals(inkFor, P)) return;
+        inkFor = P;
+        var panel = C(P.Panel);
+        var surface = C(P.Surface);
+        var sheet = C(P.Sheet);
+        var wash = Over(C(P.Wash), surface);
+        var fill = Over(C(P.Fill), surface);
+        var badge = Over(A(C(P.Ink), 0.07f), surface);
+        // The places a button sits on: the page, a card, a menu, a box, a button (also lit by the pointer), the picked segment.
+        var lit = Over(A(C(P.Ink), 0.16f), fill);
+        var backs = new[] { panel, surface, sheet, wash, fill, badge, lit, Over(C(P.Fill), panel), Over(C(P.Wash), panel), Over(C(P.WashStrong), surface), C(P.Thumb), Over(C(P.RowHover), surface) };
+        // A theme's own text colour is kept unless it is too close to its background (Solarized's is 4.1 to 1).
+        inkText = Legible(C(P.Ink), 4.5, backs);
+        dimInk = Legible(C(P.InkDim), 4.5, backs);
+        linkInk = Legible(C(P.Blue), 4.5, panel, surface);
+        var redTint = Over(A(C(P.Red), 0.07f), surface);
+        redInk = Legible(C(P.Red), 4.5, panel, surface, fill, redTint);
+        var amberTint = Over(Rgba.Of(0xff9f0a, 0.15), surface);
+        amberInk = Legible(Rgba.Of(0xffb340), 4.5, panel, surface, amberTint);
+        selectionFill = Legible(White, C(P.Blue), 4.5);
+        redFill = Legible(White, C(P.Red), 4.5);
+    }
+
+    // MARK: Contrast (WCAG 2): the ratio of two opaque colours' luminance
+
+    static double Channel(byte v)
+    {
+        var c = v / 255.0;
+        return c <= 0.03928 ? c / 12.92 : Math.Pow((c + 0.055) / 1.055, 2.4);
+    }
+
+    internal static double Luminance(Rgba c) => 0.2126 * Channel(c.R) + 0.7152 * Channel(c.G) + 0.0722 * Channel(c.B);
+
+    /// <summary>A colour laid over an opaque one, as the screen shows it.</summary>
+    internal static Rgba Over(Rgba top, Rgba under)
+    {
+        var a = top.A / 255.0;
+        byte Mix(byte t, byte u) => (byte)Math.Round(t * a + u * (1 - a));
+        return new Rgba(Mix(top.R, under.R), Mix(top.G, under.G), Mix(top.B, under.B));
+    }
+
+    internal static double Ratio(Rgba a, Rgba b)
+    {
+        double la = Luminance(a), lb = Luminance(b);
+        if (la < lb) (la, lb) = (lb, la);
+        return (la + 0.05) / (lb + 0.05);
+    }
+
+    /// <summary>The text colour, made more opaque and then darker or lighter (away from the surfaces) until it reads on each of them.</summary>
+    internal static Rgba Legible(Rgba fg, double need, params Rgba[] surfaces)
+    {
+        var c = fg;
+        var lightSurface = surfaces.Average(s => Luminance(s)) > 0.4;
+        for (var i = 0; i < 60; i++)
+        {
+            if (surfaces.All(s => Ratio(Over(c, s), s) >= need)) return c;
+            if (c.A < 255) c = c with { A = (byte)Math.Min(255, c.A + 10) };
+            else
+            {
+                var to = lightSurface ? 0 : 255;
+                byte Step(byte v) => (byte)Math.Round(v + (to - v) * 0.06);
+                c = new Rgba(Step(c.R), Step(c.G), Step(c.B));
+            }
+        }
+        return c;
+    }
+
+    /// <summary>The background itself, moved away from white until white words read on it: for a fill that carries white text.</summary>
+    internal static Rgba Legible(Rgba white, Rgba background, double need)
+    {
+        var c = background;
+        for (var i = 0; i < 60 && Ratio(white, c) < need; i++)
+        {
+            byte Step(byte v) => (byte)Math.Round(v * 0.94);
+            c = new Rgba(Step(c.R), Step(c.G), Step(c.B), background.A);
+        }
+        return c;
+    }
 
     Look F(float size, float weight = 400, Rgba? color = null) => new(size, 1.3f, color ?? Ink, weight);
 
@@ -137,7 +244,7 @@ public sealed partial class SettingsUi
         finally
         {
             pen = outer;
-            foreach (var t in faded.Drawn) if (outer.Drawn.Count < 2000) outer.Drawn.Add(t);
+            foreach (var t in faded.Drawn) if (outer.Drawn.Count < 2000) { outer.Drawn.Add(t); fadedLog.Add(t); }
             faded.Drawn.Clear();
             cv.PopOpacity();
         }
@@ -149,6 +256,8 @@ public sealed partial class SettingsUi
 
     void Add(Rect4 r, TK k, string id, int n = 0, string s = "", bool on = false)
     {
+        // Tab reaches it whether or not it is in view; the page scrolls to it.
+        if (IsStop(k)) stops.Add(new Stop(k, id, n, r, s, on));
         var c = Intersect(r, clip);
         if (c.W <= 0 || c.H <= 0) return;
         hits.Add(new Hit(r, c, k, id, n, s, on));
@@ -196,12 +305,16 @@ public sealed partial class SettingsUi
         dim.Inner = canvas;
         pen.Cv = dim;
         plainPen.Drawn.Clear();
+        fadedLog.Clear();
         hits.Clear();
+        stops.Clear();
+        drawnFields.Clear();
         sliders.Clear();
         w = width;
         h = height;
         now = nowMs;
         P = ctl.Palette;
+        MakeInks();
         Dirty = false;
         clip = new Rect4(-1e6f, -1e6f, 2e6f, 2e6f);
         var radius = env.InNotch ? 32f : 0f;
@@ -216,6 +329,7 @@ public sealed partial class SettingsUi
             lastSection = section;
             lastProject = ctl.Project;
             Unfocus(commit: false);
+            ctl.StopRecording();
         }
 
         var backSpec = new PillSpec("Agent office", "chevron-left", 9, 4, 13, 500, Ink, C(P.Fill), true);
@@ -231,7 +345,8 @@ public sealed partial class SettingsUi
         var top = 10 + rowH + 8;
         Page(0, top, w, h - top);
         if (ctl.Menu is { } menu) DrawMenu(menu);
-        if (ctl.ToastText is { } toast && (DateTime.UtcNow - ctl.ToastAt).TotalSeconds < 5) Toast(toast);
+        AfterPaint();
+        if (ctl.ToastText is { } toast && (DateTime.UtcNow - ctl.ToastAt).TotalSeconds < ToastSeconds) Toast(toast);
     }
 
     void Toast(string text)

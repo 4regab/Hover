@@ -123,9 +123,15 @@ public sealed class DashboardWindow : Window
         }
         if (settings is not null && panels is not null)
         {
-            SettingsView = new SettingsOverlay(settings, DispatcherQueue) { WindowHandle = WinRT.Interop.WindowNative.GetWindowHandle(this) };
+            SettingsView = new SettingsOverlay(settings, DispatcherQueue) { WindowHandle = WinRT.Interop.WindowNative.GetWindowHandle(this), Page = page };
             Grid.SetRow(SettingsView, 1);
             page.Children.Add(SettingsView);
+            // While Settings shows, the office's panels under it step aside: a press on a Settings control must not also press the panel beneath.
+            settings.DashOpenChanged += () => DispatcherQueue.TryEnqueue(() =>
+            {
+                if (Panels is not null) Panels.Visibility = settings.DashOpen ? Visibility.Collapsed : Visibility.Visible;
+                if (!settings.DashOpen) panels?.Ui.Invalidate();
+            });
             // A theme colours Settings, its menus and the app window; Hover's own colours follow the appearance.
             ApplyPalette(page, settings.Controller.Palette);
             settings.PaletteChanged += palette => DispatcherQueue.TryEnqueue(() => ApplyPalette(page, palette));

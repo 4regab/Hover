@@ -135,8 +135,9 @@ public sealed partial class SettingsUi
                 pen.TextIn(labels[i], new Rect4(x + 2 + i * sw, y + 2, sw, sh), look);
             }
         });
+        // The one picked (or the first, when none is) is where Tab stops; the Up and Down keys step inside the group.
         if (enabled)
-            for (var i = 0; i < labels.Count; i++) Add(new Rect4(x + 2 + i * sw, y + 2, sw, sh), TK.Seg, id, i);
+            for (var i = 0; i < labels.Count; i++) Add(new Rect4(x + 2 + i * sw, y + 2, sw, sh), TK.Seg, id, i, "", i == picked || (picked < 0 && i == 0));
     }
 
     // MARK: Slider: a whole number from lo to hi, told when the pointer lets go
@@ -154,6 +155,7 @@ public sealed partial class SettingsUi
     void DrawSlider(float x, float y, float width, int lo, int hi, int value, bool enabled, string id)
     {
         var dragging = sliderId == id;
+        value = SliderShown(id, value);
         var shown = dragging ? sliderValue : value;
         var track = width - 16;
         var knob = track * (shown - lo) / Math.Max(1, hi - lo);
@@ -165,7 +167,7 @@ public sealed partial class SettingsUi
             Box(x + knob, y + 6, 16, 16, 8, C(P.Thumb));
         });
         sliders[id] = (x, width, lo, hi);
-        if (enabled) Add(new Rect4(x, y, width, SliderH), TK.Slider, id);
+        if (enabled) Add(new Rect4(x, y, width, SliderH), TK.Slider, id, 0, value.ToString());
     }
 
     // MARK: Rings, tiles, marks

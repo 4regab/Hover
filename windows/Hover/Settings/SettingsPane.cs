@@ -51,6 +51,9 @@ sealed class SettingsPane : IDisposable
 
     public event Action? DashOpenChanged;
 
+    /// <summary>Settings was asked for in the app window (from a menu, say), whether or not it was open: the page takes the keyboard.</summary>
+    public event Action? DashShown;
+
     /// <summary>The notch is to fold (its close button, Esc).</summary>
     public event Action? FoldRequested;
 
@@ -133,6 +136,7 @@ sealed class SettingsPane : IDisposable
             DashOpenChanged?.Invoke();
         }
         Changed?.Invoke();
+        DashShown?.Invoke();
     }
 
     public void CloseNotch()

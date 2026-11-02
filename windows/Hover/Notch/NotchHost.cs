@@ -149,6 +149,7 @@ sealed partial class NotchHost : IDisposable
         if (panels is not null) panels.Changed += () => Guard("panels", () => { QueueRender(); EnsureAnimating(); });
         window.Wheel += delta => Guard("wheel", () => { if (!VoiceWheel(delta) && !CfgWheel(delta) && !PanelsWheel(delta)) office?.NotchWheel(delta); });
         window.KeyDown += vk => Guard("key", () => { if (VoiceKey(vk)) return; if (CfgKey(vk)) return; if (!PanelsKey(vk)) { KeyPressed(vk); office?.NotchKey(vk); } });
+        window.KeyUp += vk => Guard("key up", () => CfgKeyUp(vk));
         backend.Event += e => queue.TryEnqueue(() => Guard("message", () => OnBackend(e)));
         VoiceStart();
 
@@ -524,6 +525,12 @@ sealed partial class NotchHost : IDisposable
             }
             else panels!.Ui.PointerLeave();
             if (panels.Ui.Dirty) QueueRender();
+        }
+        // Settings, over the office, has the pointer's shape of its own: the hand over a control, the text cursor over a box.
+        else if (CfgOpen && ctl.Over && cfg is not null)
+        {
+            var (cx, cy) = window.Cursor();
+            if (CfgPoint((int)(cx - ctl.Window.Left), (int)(cy - ctl.Window.Top)) is { } pt) shape = (int)cfg.NotchUi.CursorAt(pt.X, pt.Y);
         }
         window.CursorShape = shape;
         string? hovered = null;

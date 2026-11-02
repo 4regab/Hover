@@ -83,7 +83,7 @@ public static class Bots
 /// <summary>A bot's name tag: the bubble over it says <paramref name="Text"/>; it stands on (X, Y). Stage is the office's (2 done, 3 failed, 4 stopped).</summary>
 public sealed record BotTag(int Id, float X, float Y, string Name, Rgba Color, string Tool, string Text, int Stage, bool Hot);
 
-public enum UiKey { Other, Enter, Escape, Backspace, Delete, Left, Right, Up, Down, Home, End, Tab, A, C, V, X, S, L }
+public enum UiKey { Other, Enter, Escape, Backspace, Delete, Left, Right, Up, Down, Home, End, Tab, A, C, V, X, S, L, Space, PageUp, PageDown }
 
 [Flags]
 public enum UiMods { None = 0, Shift = 1, Control = 2, Alt = 4 }

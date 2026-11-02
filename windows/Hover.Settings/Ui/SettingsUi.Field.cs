@@ -57,6 +57,7 @@ public sealed partial class SettingsUi
         bool mono = false, bool multi = false, bool bad = false)
     {
         var f = Field(id, secret, multi);
+        drawnFields.Add(id);
         f.Live = live;
         f.Mono = mono;
         var focused = FocusId == id;
@@ -77,7 +78,7 @@ public sealed partial class SettingsUi
             var text = Shown(f);
             if (text.Length == 0 && !focused)
             {
-                var ph = (mono ? Mono(12, Faint) : F(12.5f, 400, Faint));
+                var ph = (mono ? Mono(12, Dim) : F(12.5f, 400, Dim));
                 if (multi) pen.Text(placeholder, inner.X, r.Y + 7, ph, inner.W);
                 else pen.TextIn(placeholder, inner, ph, left: true);
             }
@@ -185,12 +186,17 @@ public sealed partial class SettingsUi
                     {
                         Commit(id, f);
                         Unfocus(commit: false);
+                        kfocus = (TK.Field, id, 0);
                         return true;
                     }
                     break;
                 case UiKey.Escape:
                     if (f.Live is not null) ctl.McpAct("McpCancel", "");
-                    else Unfocus(commit: false);
+                    else
+                    {
+                        Unfocus(commit: false);
+                        kfocus = (TK.Field, id, 0);
+                    }
                     return true;
                 case UiKey.Backspace:
                     box.Backspace(word, now);
@@ -229,6 +235,8 @@ public sealed partial class SettingsUi
                     if (env.Clipboard.Text() is { Length: > 0 } clip) box.Insert(clip, now);
                     break;
                 case UiKey.Tab:
+                    // On to the next control (back with Shift): the box saves what it holds.
+                    MoveFocus(shift ? -1 : 1);
                     return true;
                 default:
                     return false;
@@ -236,6 +244,7 @@ public sealed partial class SettingsUi
             TellLive(f);
             return true;
         }
+        if (PageKey(key, mods)) return true;
         if (key == UiKey.Escape)
         {
             if (ctl.Menu is not null) ctl.CloseMenu();

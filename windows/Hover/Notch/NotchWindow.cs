@@ -55,6 +55,8 @@ sealed class NotchWindow : INotchPlatform, IDisposable
     /// <summary>The primary button went up at a point, in device pixels.</summary>
     public event Action<int, int>? Released;
     public event Action<int>? KeyDown;
+    /// <summary>A key came up (Settings' Hold to try ends with it).</summary>
+    public event Action<int>? KeyUp;
     /// <summary>Typed text (a character or a surrogate pair).</summary>
     public event Action<string>? Char;
     /// <summary>The wheel turned over the window (120 per notch of the wheel, positive away from the user).</summary>
@@ -351,6 +353,9 @@ sealed class NotchWindow : INotchPlatform, IDisposable
                 return 0;
             case WM_KEYDOWN:
                 KeyDown?.Invoke((int)wParam);
+                return 0;
+            case WM_KEYUP:
+                KeyUp?.Invoke((int)wParam);
                 return 0;
             case WM_CHAR:
                 {

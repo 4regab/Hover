@@ -37,6 +37,7 @@ public sealed partial class SettingsUi
     {
         var cv = pen.Cv;
         var count = hits.Count;
+        var stopCount = stops.Count;
         var drawn = pen.Drawn.Count;
         pen.Cv = Null;
         try { return draw(); }
@@ -44,6 +45,7 @@ public sealed partial class SettingsUi
         {
             pen.Cv = cv;
             if (hits.Count > count) hits.RemoveRange(count, hits.Count - count);
+            if (stops.Count > stopCount) stops.RemoveRange(stopCount, stops.Count - stopCount);
             if (pen.Drawn.Count > drawn) pen.Drawn.RemoveRange(drawn, pen.Drawn.Count - drawn);
         }
     }
@@ -53,7 +55,7 @@ public sealed partial class SettingsUi
     {
         var hover = Hot(TK.Mini, action, what.GetHashCode());
         if (hover) Box(x, y, 28, 28, 7, C(P.RowHover));
-        Icon(icon, x + 7, y + 7, 14, hover ? hotColour : Faint);
+        Icon(icon, x + 7, y + 7, 14, hover ? hotColour : Dim);
         Add(new Rect4(x, y, 28, 28), TK.Mini, action, what.GetHashCode(), what);
     }
 
@@ -80,7 +82,7 @@ public sealed partial class SettingsUi
         hh += field(y + hh);
         if (!string.IsNullOrEmpty(problem))
         {
-            var eh = pen.Wrapped(problem, x, y + hh + 5, width, F(11.5f, 400, C(P.Red)));
+            var eh = pen.Wrapped(problem, x, y + hh + 5, width, F(11.5f, 400, RedInk));
             hh += 5 + eh;
         }
         return hh;
@@ -107,7 +109,7 @@ public sealed partial class SettingsUi
             var h2 = Labelled("Arguments", null, ix + hw + 8, cy, hw, fy => McpFieldAt($"mcpf:{k}:args", "args", f.Args, "One per line", false, true, ix + hw + 8, fy, hw));
             cy += Math.Max(h1, h2) + 12;
         }
-        pen.Text(f.Remote ? "Headers" : "Environment variables", ix, cy, F(11.5f, 400, Faint));
+        pen.Text(f.Remote ? "Headers" : "Environment variables", ix, cy, F(11.5f, 400, Dim));
         cy += Tl(11.5f);
         var kw = (iw - 6 - 6 - 28) / 2.4f;
         var vw = kw * 1.4f;
@@ -115,20 +117,21 @@ public sealed partial class SettingsUi
         {
             cy += 6;
             var pair = f.Pairs[i];
-            var fh = McpFieldAt($"mcpf:{k}:k{i}", $"k{i}", pair.Key, f.Remote ? "Authorization" : "API_KEY", false, false, ix, cy, kw);
+            // The name goes red as it is typed, if Kiro could not use it.
+            var fh = McpFieldAt($"mcpf:{k}:k{i}", $"k{i}", pair.Key, f.Remote ? "Authorization" : "API_KEY", f.PairBad(pair.Key, pair.Value), false, ix, cy, kw);
             McpFieldAt($"mcpf:{k}:v{i}", $"v{i}", pair.Value, "value", false, false, ix + kw + 6, cy, vw);
             MiniIcon("McpPairDel", i.ToString(), "close", Ink, ix + kw + 6 + vw + 6, cy + (fh - 28) / 2);
             cy += fh;
         }
         if (f.PairsProblem is { } pp)
         {
-            var eh = pen.Wrapped(pp, ix, cy + 6, iw, F(11.5f, 400, C(P.Red)));
+            var eh = pen.Wrapped(pp, ix, cy + 6, iw, F(11.5f, 400, RedInk));
             cy += 6 + eh;
         }
         var add = new PillSpec("Add one", "add", 10, 3, 12, 500, Ink, C(P.Fill), true);
         var (_, ah) = DrawPill(ix, cy + 6, 0, add, TK.Act, "McpPairAdd");
         cy += 6 + ah + 12;
-        var nh = pen.Wrapped("Saved in Kiro's file as plain text, as Kiro keeps it.", ix, cy, iw, F(11.5f, 400, Faint));
+        var nh = pen.Wrapped("Saved in Kiro's file as plain text, as Kiro keeps it.", ix, cy, iw, F(11.5f, 400, Dim));
         cy += nh + 12;
         var saving = Small(f.Editing is not null ? "Save" : "Add server") with { Fg = Rgba.Of(0x0c0b0e), Bg = Rgba.Of(0xf6f2ff) };
         var cancel = Small("Cancel");
@@ -161,14 +164,14 @@ public sealed partial class SettingsUi
             pen.Text(srv.Name, tx, ty, F(13), tw);
             pen.Text(ServerLine(srv), tx, ty + Tl(13) + 2, Mono(11, Dim), tw);
         });
-        if (warn != "") pen.Wrapped(warn, tx, ty + Tl(13) + 2 + 11 * MonoLH + 2, tw, F(12, 400, Rgba.Of(0xffb340)));
+        if (warn != "") pen.Wrapped(warn, tx, ty + Tl(13) + 2 + 11 * MonoLH + 2, tw, F(12, 400, AmberInk));
         var rx = x + width - 12 - right + 8;
         Box(rx, Mid(20), kw, 20, 10, A(Ink, 0.05f));
-        pen.TextIn(kind, new Rect4(rx, Mid(20), kw, 20), F(11, 500, Faint));
+        pen.TextIn(kind, new Rect4(rx, Mid(20), kw, 20), F(11, 500, Dim));
         rx += kw + 8;
         MiniIcon("McpEdit", srv.Name, "rename", Ink, rx, Mid(28));
         rx += 28 + 8;
-        MiniIcon("McpRemove", srv.Name, "delete", C(P.Red), rx, Mid(28));
+        MiniIcon("McpRemove", srv.Name, "delete", RedInk, rx, Mid(28));
         rx += 28 + 8;
         DrawSwitch(rx, Mid(SwitchH), on, true, "Mcp:" + srv.Name);
         return rh;
@@ -178,7 +181,7 @@ public sealed partial class SettingsUi
     float McpAsk(string name, float x, float y, float width)
     {
         var cancel = Small("Cancel");
-        var remove = Small("Remove") with { Bg = C(P.Red), Fg = White };
+        var remove = Small("Remove") with { Bg = redFill, Fg = White };
         var (cw, bh) = PillSize(cancel);
         var (rw, _) = PillSize(remove);
         var text = "Remove " + name + " from Kiro? The Kiro IDE uses this list too.";
@@ -200,7 +203,7 @@ public sealed partial class SettingsUi
         var head = cut >= 0 ? title[..cut] : title;
         var count = cut >= 0 ? title[(cut + 3)..] : "";
         var hw = pen.Text(head.ToUpperInvariant(), x + 12, y + 10, F(10.5f, 600, Dim));
-        if (count != "") pen.Text("· " + count, x + 12 + hw + 6, y + 10, F(10.5f, 400, Faint));
+        if (count != "") pen.Text("· " + count, x + 12 + hw + 6, y + 10, F(10.5f, 400, Dim));
         var top = y + 10 + Tl(10.5f) + 6;
         var editing = m.Form?.Editing ?? "";
         var host = -1;
@@ -214,7 +217,7 @@ public sealed partial class SettingsUi
             var cy = top;
             if (m.Error is { } err)
             {
-                var eh = pen.Wrapped(err, x + 12, cy + 12, width - 24, F(12.5f, 400, Rgba.Of(0xffb340)));
+                var eh = pen.Wrapped(err, x + 12, cy + 12, width - 24, F(12.5f, 400, AmberInk));
                 cy += 24 + eh;
             }
             for (var i = 0; i < m.Servers.Count; i++)
@@ -244,7 +247,7 @@ public sealed partial class SettingsUi
             }
             if (m.Notice is { } note)
             {
-                var nh = pen.Wrapped(note, x + 12, cy + 12, width - 24, F(12, 400, C(P.Red)));
+                var nh = pen.Wrapped(note, x + 12, cy + 12, width - 24, F(12, 400, RedInk));
                 cy += 24 + nh;
             }
             return cy - top;
@@ -256,7 +259,7 @@ public sealed partial class SettingsUi
         ny += Sub(McpView.Note, x + 12, ny, width - 24);
         if (m.HasFile)
         {
-            var spec = new PillSpec("Open mcp.json in your editor", "", 6, 3, 12, 500, C(P.Blue), Rgba.Clear, true);
+            var spec = new PillSpec("Open mcp.json in your editor", "", 6, 3, 12, 500, LinkInk, Rgba.Clear, true);
             var (_, bh) = DrawPill(x + 6, ny, 0, spec, TK.Act, "McpOpen");
             ny += bh;
         }

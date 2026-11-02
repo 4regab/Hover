@@ -90,7 +90,7 @@ sealed class UiOverlay : Grid, IDisposable
     {
         // The app disposes the panels and then the graphics device while this window's timer still runs: a last frame would draw with a
         // device that is gone (a NullReferenceException logged at every quit).
-        if (disposed || core.IsDisposed || XamlRoot is null || ActualWidth < 2 || ActualHeight < 2) return;
+        if (disposed || core.IsDisposed || XamlRoot is null || ActualWidth < 2 || ActualHeight < 2 || Away) return;
         var now = core.NowMs;
         var ui = core.Ui;
         if (!ui.Dirty && !(ui.Animating && now >= nextAt)) return;
@@ -166,8 +166,8 @@ sealed class UiOverlay : Grid, IDisposable
     }
 
     // The pointer's shapes, made once. The overlay is only hit-testable where the panels have something, so the shape is theirs there.
-    static readonly Microsoft.UI.Input.InputCursor HandCursor = Microsoft.UI.Input.InputSystemCursor.Create(Microsoft.UI.Input.InputSystemCursorShape.Hand);
-    static readonly Microsoft.UI.Input.InputCursor TextCursor = Microsoft.UI.Input.InputSystemCursor.Create(Microsoft.UI.Input.InputSystemCursorShape.IBeam);
+    internal static readonly Microsoft.UI.Input.InputCursor HandCursor = Microsoft.UI.Input.InputSystemCursor.Create(Microsoft.UI.Input.InputSystemCursorShape.Hand);
+    internal static readonly Microsoft.UI.Input.InputCursor TextCursor = Microsoft.UI.Input.InputSystemCursor.Create(Microsoft.UI.Input.InputSystemCursorShape.IBeam);
     static readonly Microsoft.UI.Input.InputCursor ResizeCursor = Microsoft.UI.Input.InputSystemCursor.Create(Microsoft.UI.Input.InputSystemCursorShape.SizeWestEast);
 
     int shapeShown, movesLogged;
@@ -192,8 +192,12 @@ sealed class UiOverlay : Grid, IDisposable
         ProtectedCursor = cursor;
     }
 
+    /// <summary>Settings is over the office in this window: the panels under it neither see the pointer nor the keys (they would press the buttons beneath it).</summary>
+    bool Away => Visibility != Visibility.Visible;
+
     void OnMoved(object sender, PointerRoutedEventArgs e)
     {
+        if (Away) return;
         var (x, y) = At(e);
         core.Ui.PointerMove(x, y);
         // The shape follows what the last frame drew under the pointer.
@@ -205,6 +209,7 @@ sealed class UiOverlay : Grid, IDisposable
 
     void OnPressed(object sender, PointerRoutedEventArgs e)
     {
+        if (Away) return;
         var props = e.GetCurrentPoint(this).Properties;
         var (x, y) = At(e);
         if (!props.IsLeftButtonPressed)
@@ -233,6 +238,7 @@ sealed class UiOverlay : Grid, IDisposable
 
     void OnReleased(object sender, PointerRoutedEventArgs e)
     {
+        if (Away) return;
         var (x, y) = At(e);
         core.Ui.PointerUp(x, y);
         // Releases whatever this overlay captured; releasing a pointer it does not hold throws.
@@ -241,6 +247,7 @@ sealed class UiOverlay : Grid, IDisposable
 
     void OnWheel(object sender, PointerRoutedEventArgs e)
     {
+        if (Away) return;
         var (x, y) = At(e);
         var props = e.GetCurrentPoint(this).Properties;
         var delta = props.MouseWheelDelta;
@@ -258,7 +265,7 @@ sealed class UiOverlay : Grid, IDisposable
     void OnKeyDown(object sender, KeyRoutedEventArgs e)
     {
         // Only while the overlay has the keyboard, which a press on the panels gave it.
-        if (FocusManager.GetFocusedElement(XamlRoot) != this) return;
+        if (Away || FocusManager.GetFocusedElement(XamlRoot) != this) return;
         var vk = (int)e.Key;
         if (core.Ui.Key(KeyMap.Of(vk), KeyMap.Mods(Native.GetKeyState))) e.Handled = true;
     }
@@ -267,7 +274,7 @@ sealed class UiOverlay : Grid, IDisposable
 
     void OnChar(UIElement sender, CharacterReceivedRoutedEventArgs e)
     {
-        if (FocusManager.GetFocusedElement(XamlRoot) != this) return;
+        if (Away || FocusManager.GetFocusedElement(XamlRoot) != this) return;
         var c = e.Character;
         string text;
         if (char.IsHighSurrogate(c)) { highSurrogate = c; return; }

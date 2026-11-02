@@ -21,6 +21,8 @@ public sealed partial class SettingsUi
         py = y;
         var was = hot;
         hot = HitAt(x, y);
+        // A move of the pointer over the menu takes the highlight from the keys.
+        if (!Equals(was, hot) && hot is { K: TK.MenuItem }) menuKbd = false;
         // The credits chart names the day under the pointer.
         if (!Equals(was, hot) || ctl.Section == Section.Kiro) Dirty = true;
         if (sliderId is { } sid && sliders.TryGetValue(sid, out var s))
@@ -52,13 +54,19 @@ public sealed partial class SettingsUi
         hot = pressed = HitAt(x, y);
         pointerDown = true;
         Dirty = true;
+        // The pointer takes the keyboard's place: the ring goes, and a shortcut that was recording stops unless this is its own button.
+        kring = false;
+        kfocus = null;
+        menuKbd = false;
         var t = pressed;
         if (t is null)
         {
             Unfocus(commit: true);
+            ctl.StopRecording();
             return;
         }
         var hit = t.Value;
+        if (hit.K != TK.Shortcut) ctl.StopRecording();
         // A click anywhere but in the box that has the keyboard takes the keyboard away from it.
         if (hit.K != TK.Field && FocusId is not null) Unfocus(commit: true);
         switch (hit.K)
@@ -187,12 +195,12 @@ public sealed partial class SettingsUi
         {
             if (menuScroll.Max > 0 && menuBox.Contains(x, y))
             {
-                menuScroll.By(-dy * 48);
+                menuScroll.By(-dy * WheelStep);
                 Dirty = true;
             }
             return;
         }
-        var step = -dy * 48;
+        var step = -dy * WheelStep;
         if (sideRect.Contains(x, y) && sideContent > sideView)
             sideOff = Math.Clamp(sideOff + step, 0, sideContent - sideView);
         else
@@ -227,4 +235,25 @@ public sealed partial class SettingsUi
 
     /// <summary>The height of what the pane holds, for the checks.</summary>
     public float PaneContentHeight => paneContent;
+
+    /// <summary>The height of the pane's view, for the checks.</summary>
+    public float PaneViewHeight => paneView;
+
+    /// <summary>A notch of the wheel moves the page 60 pixels, as the Go window does (<c>platform/win/window.go</c>).</summary>
+    const float WheelStep = 60;
+
+    /// <summary>
+    /// The pointer's shape over a point: the hand over a control, the text cursor over a box, the normal shape over the page and its
+    /// bars (<c>internal/ui/input.go</c>, <c>widgets.go</c>).
+    /// </summary>
+    public UiCursor CursorAt(float x, float y)
+    {
+        if (x < 0 || y < 0) return UiCursor.Normal;
+        return HitAt(x, y)?.K switch
+        {
+            null or TK.Pane or TK.Bar or TK.MenuOutside => UiCursor.Normal,
+            TK.Field => UiCursor.Text,
+            _ => UiCursor.Hand,
+        };
+    }
 }

@@ -43,6 +43,9 @@ sealed class SettingsOverlay : Grid, IDisposable
     /// <summary>The window this overlay is in (for the screen places the checks of the real app read).</summary>
     public nint WindowHandle { get; set; }
 
+    /// <summary>The window's page, which carries the pointer's shape with the overlay (as the panels' overlay does).</summary>
+    internal CursorGrid? Page { get; init; }
+
     [DllImport("user32.dll")] static extern bool ClientToScreen(nint hwnd, ref Point point);
 
     [StructLayout(LayoutKind.Sequential)] struct Point { public int X, Y; }
@@ -61,15 +64,17 @@ sealed class SettingsOverlay : Grid, IDisposable
         Children.Add(image);
         SizeChanged += (_, _) => ui.Invalidate();
         PointerMoved += OnMoved;
+        KeyUp += OnKeyUp;
         PointerPressed += OnPressed;
         PointerReleased += OnReleased;
         PointerCanceled += OnReleased;
-        PointerExited += (_, _) => ui.PointerLeave();
+        PointerExited += (_, _) => { ui.PointerLeave(); ProtectedCursor = null; Page?.Show(null); shapeShown = 0; };
         PointerWheelChanged += OnWheel;
         KeyDown += OnKeyDown;
         CharacterReceived += OnChar;
         host.Changed += () => ui.Invalidate();
         host.DashOpenChanged += OnOpenChanged;
+        host.DashShown += () => queue.TryEnqueue(() => { if (host.DashOpen) Focus(FocusState.Programmatic); });
         timer = queue.CreateTimer();
         timer.Interval = TimeSpan.FromMilliseconds(16);
         timer.Tick += (_, _) => Tick();
@@ -164,10 +169,30 @@ sealed class SettingsOverlay : Grid, IDisposable
         return ((float)p.X, (float)p.Y);
     }
 
+    int shapeShown, movesLogged;
+
+    /// <summary>The pointer's shape follows what the last frame drew under the pointer: the hand over a control, the text cursor over a box.</summary>
+    void ShowCursor(float x, float y)
+    {
+        var shape = ui.CursorAt(x, y);
+        if (UiDump.On && (movesLogged++ < 12 || (int)shape != shapeShown))
+            HostLog.Line($"settings pointer shape: moved to {x:0},{y:0}: shape {(int)shape} (was {shapeShown})");
+        shapeShown = (int)shape;
+        var cursor = shape switch
+        {
+            Hover.Chat.Ui.UiCursor.Hand => Chatting.UiOverlay.HandCursor,
+            Hover.Chat.Ui.UiCursor.Text => Chatting.UiOverlay.TextCursor,
+            _ => null,
+        };
+        Page?.Show(cursor);
+        ProtectedCursor = cursor;
+    }
+
     void OnMoved(object sender, PointerRoutedEventArgs e)
     {
         var (x, y) = At(e);
         ui.PointerMove(x, y);
+        ShowCursor(x, y);
     }
 
     void OnPressed(object sender, PointerRoutedEventArgs e)
@@ -221,6 +246,11 @@ sealed class SettingsOverlay : Grid, IDisposable
         // While a shortcut records, every chord is the recorder's.
         if (ui.RawKey(vk, Modifiers())) { e.Handled = true; return; }
         if (ui.Key(Chatting.KeyMap.Of(vk), Chatting.KeyMap.Mods(Native.GetKeyState))) e.Handled = true;
+    }
+
+    void OnKeyUp(object sender, KeyRoutedEventArgs e)
+    {
+        if (ui.KeyUp(Chatting.KeyMap.Of((int)e.Key))) e.Handled = true;
     }
 
     char highSurrogate;

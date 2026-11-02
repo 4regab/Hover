@@ -29,7 +29,7 @@ public sealed partial class SettingsUi
                 float ix = sx + 8, iy = y + 8 + i * 34 - sideOff, iw = SideW - 16;
                 var picked = i == current;
                 var hover = Hot(TK.Section, "", i);
-                var bg = picked ? C(P.Blue) : hover ? C(P.RowHover) : Rgba.Clear;
+                var bg = picked ? SelectionFill : hover ? C(P.RowHover) : Rgba.Clear;
                 if (bg.A > 0) Box(ix, iy, iw, 34, 8, bg);
                 if (s.Tool() is { } tool) pen.Mark(tool.Id, ix + 8, iy + 5, 24);
                 else
@@ -38,7 +38,7 @@ public sealed partial class SettingsUi
                     DrawTile(ix + 8, iy + 5, icon, tint);
                 }
                 pen.TextIn(s.Title(), new Rect4(ix + 8 + 24 + 10, iy + 5, iw - 8 - 24 - 10, 24), F(13, 400, picked ? White : Ink), left: true);
-                Add(new Rect4(ix, iy, iw, 34), TK.Section, "", i);
+                Add(new Rect4(ix, iy, iw, 34), TK.Section, "", i, "", picked);
             }
         });
         ScrollBar(sideRect, sideContent, sideView, ref sideOff, "side");
@@ -93,7 +93,8 @@ public sealed partial class SettingsUi
         switch (b.Kind)
         {
             case BlockKind.Title:
-                pen.Text(b.Text, x, y, F(20, 600));
+                // A long name (a project's) is cut with an ellipsis at the pane's edge, not by the edge.
+                pen.Text(b.Text, x, y, F(20, 600), width);
                 // A title with a lead line under it sits close to it.
                 return Tl(20) + (k + 1 < blocks.Count && blocks[k + 1].Kind == BlockKind.Lead ? 4 : 14);
             case BlockKind.Lead:
@@ -117,7 +118,7 @@ public sealed partial class SettingsUi
                 }
             case BlockKind.Link:
                 {
-                    var spec = new PillSpec(b.Text, b.Icon, 6, 3, 12, 500, b.Dim ? Dim : C(P.Blue), Rgba.Clear, true);
+                    var spec = new PillSpec(b.Text, b.Icon, 6, 3, 12, 500, b.Dim ? Dim : LinkInk, Rgba.Clear, true);
                     var (lw, lh) = DrawPill(x + 8, y, 0, spec, TK.Link, b.Id);
                     if (b.Status != "")
                     {
@@ -174,9 +175,9 @@ public sealed partial class SettingsUi
 
     PillSpec ShortcutPill(Control c) => Standard(c.Text) with { Bold = true };
 
-    PillSpec ChipPill(Btn b, bool enabled) => new(b.Text, "", 10, 3, 12.5f, 500, b.Red ? C(P.Red) : Ink, C(P.Fill), enabled);
+    PillSpec ChipPill(Btn b, bool enabled) => new(b.Text, "", 10, 3, 12.5f, 500, b.Red ? RedInk : Ink, C(P.Fill), enabled);
 
-    PillSpec RemovePill() => new("Remove key", "", 4, 3, 12.5f, 500, C(P.Red), Rgba.Clear, true);
+    PillSpec RemovePill() => new("Remove key", "", 4, 3, 12.5f, 500, RedInk, Rgba.Clear, true);
 
     float BadgeW(string s) => TextW(s, 11) + 14;
 
@@ -271,6 +272,8 @@ public sealed partial class SettingsUi
             if (Hot(TK.Open, ctlr.Open)) Box(x, y, width, rh, 0, A(Ink, 0.03f));
             Add(new Rect4(x, y, width, rh), TK.Open, ctlr.Open);
         }
+        // A row that is switched off is drawn faded, but the words that say why are not: they are the one thing on it to read.
+        float subX = 0, subY = 0, subW = 0;
         Opacity(r.Enabled ? 1 : 0.4f, () =>
         {
             var lx = x + 12;
@@ -298,7 +301,15 @@ public sealed partial class SettingsUi
             var ty = Mid(TextCol(r, tw));
             pen.Text(r.Label, tx, ty, F(13), tw);
             ty += Tl(13);
-            if (r.Sub != "") ty += 2 + Sub(r.Sub, tx, ty + 2, tw);
+            if (r.Sub != "")
+            {
+                if (r.Enabled) ty += 2 + Sub(r.Sub, tx, ty + 2, tw);
+                else
+                {
+                    (subX, subY, subW) = (tx, ty + 2, tw);
+                    ty += 2 + SubH(r.Sub, tw);
+                }
+            }
             if (r.Progress >= 0)
             {
                 ty += 2 + 4;
@@ -307,6 +318,7 @@ public sealed partial class SettingsUi
             }
             if (ctlr.Kind != ControlKind.None) DrawControl(r, x + width - 12 - cw, Mid(ch), cw, ch);
         });
+        if (!r.Enabled && r.Sub != "") Sub(r.Sub, subX, subY, subW);
     }
 
     void DrawControl(Row r, float x, float y, float cw, float ch)
@@ -328,7 +340,7 @@ public sealed partial class SettingsUi
             case ControlKind.Slider:
                 {
                     DrawSlider(x, y, 200, c.Min, c.Max, c.Value, r.Enabled, c.Id);
-                    var shown = sliderId == c.Id ? sliderValue : c.Value;
+                    var shown = sliderId == c.Id ? sliderValue : SliderShown(c.Id, c.Value);
                     pen.TextIn($"{shown} %", new Rect4(x + 210, y, 44, ch), F(12.5f), left: false);
                     break;
                 }
@@ -360,7 +372,7 @@ public sealed partial class SettingsUi
                     {
                         var bw = BadgeW(g.Label);
                         Box(bx, y + (ch - 20) / 2, bw, 20, 5, g.On ? Rgba.Of(0xff9f0a, 0.15) : A(Ink, 0.07f));
-                        pen.TextIn(g.Label, new Rect4(bx, y + (ch - 20) / 2, bw, 20), F(11, 400, g.On ? Rgba.Of(0xffb340) : Dim));
+                        pen.TextIn(g.Label, new Rect4(bx, y + (ch - 20) / 2, bw, 20), F(11, 400, g.On ? AmberInk : Dim));
                         bx += bw + 6;
                     }
                     foreach (var b in c.Buttons)
@@ -370,7 +382,7 @@ public sealed partial class SettingsUi
                         DrawPill(bx, y + (ch - bh) / 2, 0, spec, TK.Button, b.Id);
                         bx += bw + 6;
                     }
-                    if (c.Open != "") Icon("chevron-right", bx + 2, y + (ch - 12) / 2, 12, Faint);
+                    if (c.Open != "") Icon("chevron-right", bx + 2, y + (ch - 12) / 2, 12, Dim);
                     break;
                 }
             case ControlKind.Hold:
@@ -442,6 +454,10 @@ public sealed partial class SettingsUi
             menuScroll.Set(content, list.H);
             var on = menu.Options.ToList().FindIndex(o => o.On);
             if (on >= 0) menuScroll.Center(on * 26f, on * 26f + 26);
+            // Opened with the keyboard, the picked option has the highlight.
+            menuIndex = on >= 0 ? on : 0;
+            menuKbd = menuKbdNext;
+            menuKbdNext = false;
         }
         menuScroll.Set(content, list.H);
         Box(mx - 1, my + 3, mw + 2, mh + 2, 11, new Rgba(0, 0, 0, 60));
@@ -454,8 +470,8 @@ public sealed partial class SettingsUi
                 var o = menu.Options[i];
                 var iy = my + 5 + i * 26 - menuScroll.Off;
                 if (iy + 26 <= list.Y || iy >= list.Bottom) continue;
-                var hover = Hot(TK.MenuItem, menu.Id, i);
-                if (hover) Box(mx + 5, iy, mw - 10, 26, 6, C(P.Blue));
+                var hover = Hot(TK.MenuItem, menu.Id, i) || (menuKbd && i == menuIndex);
+                if (hover) Box(mx + 5, iy, mw - 10, 26, 6, SelectionFill);
                 var ink = hover ? White : Ink;
                 if (o.On) Icon("check", mx + 5 + 8 + 1, iy + 7, 12, ink);
                 pen.TextIn(o.Label, new Rect4(mx + 5 + 8 + 14 + 6, iy, mw - 5 - 8 - 14 - 6 - 8, 26), F(13, 400, ink), left: true);
