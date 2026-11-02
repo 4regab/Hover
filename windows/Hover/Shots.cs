@@ -49,12 +49,17 @@ public static class Shots
         }
         await Task.Delay(400);
 
-        var scale = Math.Min(1.0, MaxWidth / Math.Max(1.0, view.ActualWidth));
-        var width = Math.Max(1, (int)Math.Round(view.ActualWidth * scale));
-        var height = Math.Max(1, (int)Math.Round(view.ActualHeight * scale));
+        // The size asked of RenderAsync is in the view's own units, and the picture comes out that many times the display scale larger
+        // (at 150 % a 1185 wide window made a 1778 wide picture): the limit is on the pixels, so the display scale is counted.
+        var display = view.XamlRoot?.RasterizationScale ?? 1.0;
+        var shrink = Math.Min(1.0, MaxWidth / Math.Max(1.0, view.ActualWidth * display));
+        var width = Math.Max(1, (int)Math.Round(view.ActualWidth * shrink));
+        var height = Math.Max(1, (int)Math.Round(view.ActualHeight * shrink));
 
         var bitmap = new RenderTargetBitmap();
         await bitmap.RenderAsync(view, width, height);
+        // Pixels for each of the view's units, as the picture really is (the callback places layers with it).
+        var scale = bitmap.PixelWidth / Math.Max(1.0, view.ActualWidth);
         var pixels = await bitmap.GetPixelsAsync();
         var bytes = new byte[pixels.Length];
         using (var reader = DataReader.FromBuffer(pixels)) reader.ReadBytes(bytes);

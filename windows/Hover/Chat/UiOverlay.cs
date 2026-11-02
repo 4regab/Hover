@@ -65,6 +65,7 @@ sealed class UiOverlay : Grid, IDisposable
         Background = new SolidColorBrush(Windows.UI.Color.FromArgb(0, 0, 0, 0));
         IsHitTestVisible = false;
         IsTabStop = true;
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(this, "Hover office");
         Children.Add(image);
         SizeChanged += (_, _) => core.Ui.Invalidate();
         // Moved to a screen with another scale (or the scale was changed): the size in DIPs can stay, the pixels do not.

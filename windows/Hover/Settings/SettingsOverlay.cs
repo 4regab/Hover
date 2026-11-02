@@ -60,6 +60,9 @@ sealed class SettingsOverlay : Grid, IDisposable
         // A brush of any colour makes the whole of the overlay answer the pointer.
         Background = new SolidColorBrush(Windows.UI.Color.FromArgb(1, 0, 0, 0));
         IsTabStop = true;
+        // The page is one picture to the system; at least a screen reader says what the picture holds (the controls inside it are not
+        // exposed to UI Automation: see docs/development/windows.md).
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(this, "Hover settings");
         Visibility = Visibility.Collapsed;
         Children.Add(image);
         SizeChanged += (_, _) => ui.Invalidate();
