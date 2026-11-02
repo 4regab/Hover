@@ -289,7 +289,7 @@ public class SweepFixTests
     }
 
     [Fact]
-    public void The_pointer_is_the_hand_over_a_button_the_text_cursor_over_a_box_of_words_and_the_arrow_elsewhere()
+    public void The_pointer_is_the_hand_over_a_button_the_text_cursor_over_a_box_of_words_and_the_normal_shape_elsewhere()
     {
         var h = new PanelHarness();
         h.State();
@@ -298,15 +298,15 @@ public class SweepFixTests
         UiCursor At(string id) { var r = h.Ui.Find(id)!.Value.R; return h.Ui.CursorAt(r.X + r.W / 2, r.Y + r.H / 2); }
         Assert.Equal(UiCursor.Hand, At("fab"));
         Assert.Equal(UiCursor.Hand, At("topMenu"));
-        Assert.Equal(UiCursor.Arrow, h.Ui.CursorAt(300, 300));
+        Assert.Equal(UiCursor.Normal, h.Ui.CursorAt(300, 300));
         Assert.True(h.Click("fab"));
         Assert.Equal(UiCursor.Text, At("taskText"));
         Assert.Equal(UiCursor.Hand, At("pillAccess"));
         // A button with nothing to send yet is not a button for the pointer.
-        Assert.Equal(UiCursor.Arrow, At("startOff"));
+        Assert.Equal(UiCursor.Normal, At("startOff"));
         // A menu takes the pointer from what is under it.
         Assert.True(h.Click("pillAccess"));
-        Assert.Equal(UiCursor.Arrow, h.Ui.CursorAt(5, 5));
+        Assert.Equal(UiCursor.Normal, h.Ui.CursorAt(5, 5));
         var row = h.Ui.Targets.Last(t => t.Id == "menu").R;
         Assert.Equal(UiCursor.Hand, h.Ui.CursorAt(row.X + row.W / 2, row.Y + row.H / 2));
     }

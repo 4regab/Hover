@@ -144,7 +144,7 @@ sealed class NotchWindow : INotchPlatform, IDisposable
 
     public (int X, int Y) Cursor() => GetCursorPos(out var p) ? (p.X, p.Y) : (-10000, -10000);
 
-    /// <summary>The system cursor the window shows over its client area: 0 the arrow (the class's own), 1 the hand, 2 the text cursor.</summary>
+    /// <summary>The system cursor the window shows over its client area: 0 the normal shape (the class's own), 1 the hand, 2 the text cursor.</summary>
     public int CursorShape
     {
         get => cursorShape;
