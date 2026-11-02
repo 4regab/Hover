@@ -33,6 +33,11 @@ public sealed partial class SettingsUi
             }
         }
         if (barDragging) DragBar(y);
+        if (ctl.Menu is not null)
+        {
+            menuScroll.BarMove(menuList, y);
+            if (menuScroll.Dragging) Dirty = true;
+        }
         if (pointerDown && FocusId is { } id && fields.TryGetValue(id, out var f) && f.Shaped is { } shaped && pressed is { K: TK.Field } p && p.Id == id)
         {
             f.Box.Drag(shaped, x - f.TextX, y - f.TextY);
@@ -72,6 +77,9 @@ public sealed partial class SettingsUi
                     sliderValue = SliderAt(x, s.X, s.W, s.Lo, s.Hi);
                 }
                 break;
+            case TK.Bar when hit.Id == "menuList":
+                menuScroll.BarDown(menuList, y);
+                break;
             case TK.Bar:
                 barDragging = true;
                 barDragId = hit.Id;
@@ -94,6 +102,7 @@ public sealed partial class SettingsUi
         pressed = null;
         hot = up;
         Dirty = true;
+        menuScroll.BarUp();
         if (sliderId is { } sid)
         {
             sliderId = null;
@@ -173,7 +182,16 @@ public sealed partial class SettingsUi
 
     public void Wheel(float x, float y, float dy)
     {
-        if (ctl.Menu is not null) return;
+        // The wheel over an open picker's menu scrolls the menu; with a menu open it never scrolls the page behind it.
+        if (ctl.Menu is not null)
+        {
+            if (menuScroll.Max > 0 && menuBox.Contains(x, y))
+            {
+                menuScroll.By(-dy * 48);
+                Dirty = true;
+            }
+            return;
+        }
         var step = -dy * 48;
         if (sideRect.Contains(x, y) && sideContent > sideView)
             sideOff = Math.Clamp(sideOff + step, 0, sideContent - sideView);
@@ -197,6 +215,12 @@ public sealed partial class SettingsUi
         if (side) sideOff = off; else paneOff = off;
         Dirty = true;
     }
+
+    /// <summary>Where the last frame drew the open picker's menu, or null when none is open, for the checks.</summary>
+    public Rect4? MenuBox => ctl.Menu is null ? null : menuBox;
+
+    /// <summary>The options of the open picker's menu that the last frame drew in view, by their index, for the checks.</summary>
+    public IEnumerable<int> MenuOptionsInView => hits.Where(h => h.K == TK.MenuItem).Select(h => h.N);
 
     /// <summary>The pane's scroll, for the checks.</summary>
     public float PaneScroll => paneOff;

@@ -13,7 +13,7 @@ public sealed partial class OfficeUi
     {
         var id = t.Id;
         var deskOwn = id.StartsWith("card", StringComparison.Ordinal) || id is "deskTab" or "deskClose" or "drow" or "drowBtn" or "attachDiff" or "fileBack"
-            or "fEdit" or "fMode" or "fSave" or "fCancel" or "openPill" or "openIn" or "openAway" or "openMenuBox" or "termTab" or "termBox" or "field" or "docRow"
+            or "fEdit" or "fMode" or "fSave" or "fCancel" or "openPill" or "openIn" or "openAway" or "openMenuBox" or "openBar" or "termTab" or "termBox" or "field" or "docRow"
             or "ghStart" or "ghCancel" or "ghCopy" or "ghOpen" or "prCheck" or "prCreate" or "prOpened" or "deskPanel" or "sWatch"
             or "attachReply" or "unshot" or "unshotTask" or "unchip" or "popRow" or "modelPill" or "folderChip";
         if (!deskOwn) return false;
@@ -70,6 +70,9 @@ public sealed partial class OfficeUi
                 deskMenuOpen = false;
                 break;
             case "openMenuBox":
+                break;
+            case "openBar":
+                openScroll.BarDown(openList, py);
                 break;
             case "openIn":
                 deskMenuOpen = false;

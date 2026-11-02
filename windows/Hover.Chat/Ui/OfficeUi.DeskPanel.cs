@@ -194,6 +194,11 @@ public sealed partial class OfficeUi
                 break;
         }
         if (deskMenuOpen) PaintOpenMenu(r);
+        else
+        {
+            openScroll.ToStart();
+            openMenu = default;
+        }
         pen.Cv.PopClip();
         if (deskFocusPending && deskTab == "terminal" && fields.TryGetValue("term", out var tf) && tf.Layout is not null)
         {
@@ -894,20 +899,28 @@ public sealed partial class OfficeUi
         var away = new Rect4(r.X, r.Y, r.W, r.H);
         Add(away, "openAway");
         var choices = editorChoices;
-        var mh = 12f + 24;
+        var content = 0f;
         for (var i = 0; i < choices.Count; i++)
         {
-            if (choices[i].Id == "fm" && i > 0) mh += 9;
-            mh += 30;
+            if (choices[i].Id == "fm" && i > 0) content += 9;
+            content += 30;
         }
         var mx = r.Right - 214;
         var my = r.Y + 52 + 44 - 6;
+        // No taller than the panel it drops in: the editors scroll inside under the heading.
+        const float head = 6 + 24, foot = 6;
+        var mh = Math.Min(head + content + foot, Math.Max(r.Bottom - 8 - my, head + foot + 60));
+        var list = new Rect4(mx, my + head, 204, mh - head - foot);
+        openScroll.Set(content, list.H);
+        openMenu = new Rect4(mx, my, 204, mh);
+        openList = list;
         pen.Box(mx, my, 204, mh, 10, Rgba.Of(0x1b181e));
         pen.Border(mx, my, 204, mh, 10, 1, Rgba.Of(0xffffff, 0.1));
-        Block(new Rect4(mx, my, 204, mh));
-        Add(new Rect4(mx, my, 204, mh), "openMenuBox");
+        Block(openMenu);
+        Add(openMenu, "openMenuBox");
         Tv("Open file in", mx + 14, my + 6, 24, Pen.F(11, 400, Pen.Faint));
-        var cy = my + 6 + 24;
+        var cy = list.Y - openScroll.Off;
+        pen.Cv.PushClip(list);
         for (var i = 0; i < choices.Count; i++)
         {
             var c = choices[i];
@@ -917,19 +930,36 @@ public sealed partial class OfficeUi
                 cy += 9;
             }
             var row = new Rect4(mx + 6, cy, 192, 30);
-            var hov = Over(row);
-            if (hov) pen.Box(row, 7, Rgba.Of(0xffffff, 0.05));
-            EditorMark(c, mx + 14, cy + 7.5f);
-            Tv(c.Name, mx + 6 + 8 + 15 + 10, cy, 30, Pen.F(13, 400, hov ? Pen.Ink : Pen.Dim));
-            if (c.Last)
+            var seen = Cut(row, list);
+            if (seen.H > 0)
             {
-                var lf = Pen.F(11, 400, Pen.Faint);
-                Tv("Last used", mx + 204 - 14 - pen.Width("Last used", lf), cy, 30, lf);
+                var hov = Over(seen);
+                if (hov) pen.Box(row, 7, Rgba.Of(0xffffff, 0.05));
+                EditorMark(c, mx + 14, cy + 7.5f);
+                Tv(c.Name, mx + 6 + 8 + 15 + 10, cy, 30, Pen.F(13, 400, hov ? Pen.Ink : Pen.Dim));
+                if (c.Last)
+                {
+                    var lf = Pen.F(11, 400, Pen.Faint);
+                    Tv("Last used", mx + 204 - 14 - pen.Width("Last used", lf), cy, 30, lf);
+                }
+                Add(seen, "openIn", i, c.Id);
             }
-            Add(row, "openIn", i, c.Id);
             cy += 30;
         }
+        pen.Cv.PopClip();
+        openScroll.PaintFade(pen.Cv, list, Rgba.Of(0x1b181e));
+        if (openScroll.Max > 0)
+        {
+            var strip = MenuScroll.Strip(list);
+            Add(strip, "openBar");
+            openScroll.PaintBar(pen.Cv, list, Over(strip));
+        }
     }
+
+    /// <summary>The scroll of the editors in the "Open file in" menu, and where the last frame drew the menu and its list.</summary>
+    readonly MenuScroll openScroll = new();
+
+    Rect4 openMenu, openList;
 
     // MARK: The terminal
 

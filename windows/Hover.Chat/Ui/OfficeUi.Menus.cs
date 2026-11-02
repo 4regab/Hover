@@ -4,7 +4,8 @@ namespace Hover.Chat.Ui;
 
 public sealed partial class OfficeUi
 {
-    sealed record MenuRow(string Label, string Id = "", string Note = "", bool On = false, bool Header = false, bool Rule = false, string? Mark = null, bool Disabled = false);
+    /// <summary>A row of a menu. <paramref name="Pin"/>: the leading and trailing pinned rows stay in view while the rows between them scroll.</summary>
+    sealed record MenuRow(string Label, string Id = "", string Note = "", bool On = false, bool Header = false, bool Rule = false, string? Mark = null, bool Disabled = false, bool Pin = false);
 
     sealed class Menu
     {
@@ -15,6 +16,15 @@ public sealed partial class OfficeUi
         public float W = 250;
         /// <summary>Makes the rows again each frame, for a menu whose contents arrive from the backend while it is open.</summary>
         public Func<List<MenuRow>>? Build;
+        /// <summary>The scroll of the rows between the pinned ones.</summary>
+        public readonly MenuScroll Scroll = new();
+        /// <summary>The menu has opened on its picked row (or has none to open on).</summary>
+        public bool Centered;
+        /// <summary>The row the Up and Down keys are on, or -1.</summary>
+        public int Hot = -1;
+        public bool RevealHot;
+        /// <summary>Where the last frame drew the box, and the part of it that scrolls.</summary>
+        public Rect4 Box, List;
     }
 
     Menu? menu;
@@ -66,7 +76,9 @@ public sealed partial class OfficeUi
     {
         var compact = h <= 620;
         const float mw = 184;
-        var box = new Rect4(w - mw - (compact ? 10 : 16), compact ? 48 : 64, mw, 5 + 30 + 4 + m.Rows.Count * 32 + 5);
+        var bh = 5 + 30 + 4 + m.Rows.Count * 32 + 5;
+        var box = new Rect4(Math.Max(w - mw - (compact ? 10 : 16), 8), Math.Clamp(compact ? 48 : 64, 8, Math.Max(h - 8 - bh, 8)), mw, bh);
+        m.Box = box;
         PaintGlass(box, 13);
         Add(box, "menuBox");
         var white = Rgba.Of(0xffffff);
@@ -90,7 +102,7 @@ public sealed partial class OfficeUi
         for (var i = 0; i < m.Rows.Count; i++)
         {
             var row = new Rect4(box.X + 5, ry, mw - 10, 32);
-            if (Over(row)) pen.Box(row, 8, new Rgba(0xff, 0xff, 0xff, 0x17));
+            if (Over(row) || m.Hot == i) pen.Box(row, 8, new Rgba(0xff, 0xff, 0xff, 0x17));
             var on = m.Rows[i].Id == "beats" && env.Beats();
             var icon = m.Rows[i].Id switch { "beats" => Glyphs.Notes, "history" => Glyphs.History, _ => Glyphs.Cog };
             pen.Icon(icon, row.X + 8, ry + (32 - 15) / 2, 15, on ? gold : quiet);
@@ -114,50 +126,153 @@ public sealed partial class OfficeUi
             return;
         }
         if (m.Build is not null) m.Rows = m.Build();
-        var heights = m.Rows.Select(r => RowHeight(pen, r, m.W)).ToList();
-        var total = 12 + heights.Sum();
-        var x = Math.Clamp(m.At.X, 8, Math.Max(w - m.W - 8, 8));
-        var y = m.Up ? m.At.Y - total - 6 : m.At.Bottom + 6;
-        y = Math.Clamp(y, 8, Math.Max(h - total - 8, 8));
-        var box = new Rect4(x, y, m.W, total);
-        for (var i = 0; i < 4; i++) pen.Box(x - i * 2, y + 6 - i, m.W + i * 4, total + i * 2, 14 + i * 2, Rgba.Of(0x000000, 0.06));
-        pen.Box(box, 14, Rgba.Of(0x16121c, 0.985));
-        pen.Border(x, y, m.W, total, 14, 1, Rgba.Of(0xffffff, 0.12));
-        Add(box, "menuBox");
-        var cy = y + 6;
-        for (var i = 0; i < m.Rows.Count; i++)
+        var rows = m.Rows;
+        var n = rows.Count;
+        const float pad = 6;
+        var mw = Math.Max(Math.Min(m.W, w - 16), 0);
+        var hs = new float[n];
+        for (var i = 0; i < n; i++) hs[i] = RowHeight(pen, rows[i], mw);
+        // The pinned rows at the top and the bottom (a heading, the effort levels, a note) stay in view; the rows between them scroll.
+        int head = 0, foot = 0;
+        while (head < n && rows[head].Pin) head++;
+        while (foot < n - head && rows[n - 1 - foot].Pin) foot++;
+        float sumHead = 0, sumFoot = 0, sumList = 0;
+        for (var i = 0; i < n; i++)
         {
-            var r = m.Rows[i];
-            var rh = heights[i];
-            if (r.Rule) { pen.Box(x + 10, cy + 4, m.W - 20, 1, 0, Rgba.Of(0xffffff, 0.06)); cy += rh; continue; }
-            if (r.Header)
-            {
-                pen.Text(r.Label.ToUpperInvariant(), x + 14, cy + (rh - pen.LineHeight(Pen.F(10.5, 600, Pen.Faint))) / 2, Pen.F(10.5, 600, Pen.Faint));
-                cy += rh;
-                continue;
-            }
-            var rr = new Rect4(x + 6, cy, m.W - 12, rh);
-            var hov = Over(rr) && !r.Disabled;
-            if (hov) pen.Box(rr, 8, Rgba.Of(0xffffff, 0.09));
-            var tx = rr.X + 8;
-            var lf = Pen.F(12.5, r.Note.Length > 0 ? 600 : 500, r.Disabled ? Pen.Faint : Pen.Ink);
-            if (r.Mark is not null)
-            {
-                pen.Mark(r.Mark, tx, cy + (rh - 18) / 2, 18);
-                tx += 26;
-            }
-            var labelW = rr.Right - tx - 8 - (r.On ? 20 : 0);
-            if (r.Note.Length == 0) pen.Text(r.Label, tx, cy + (rh - pen.LineHeight(lf)) / 2, lf, labelW);
-            else
-            {
-                pen.Text(r.Label, tx, cy + 7, lf, labelW);
-                pen.Wrapped(r.Note, tx, cy + 7 + pen.LineHeight(lf) + 1, rr.Right - tx - 8 - (r.On ? 20 : 0), Pen.F(11, 400, Pen.Faint));
-            }
-            if (r.On) pen.Icon(Icons.Check, rr.Right - 8 - 12, cy + (r.Note.Length > 0 ? 10 : (rh - 12) / 2), 12, Pen.Lilac);
-            if (!r.Disabled) Add(rr, "menu", i, r.Label);
-            cy += rh;
+            if (i < head) sumHead += hs[i];
+            else if (i >= n - foot) sumFoot += hs[i];
+            else sumList += hs[i];
+        }
+        // A window too short for the pinned rows lets everything scroll.
+        var avail = Math.Max(h - 16, 0);
+        if (2 * pad + sumHead + sumFoot > avail)
+        {
+            sumList += sumHead + sumFoot;
+            sumHead = sumFoot = 0;
+            head = foot = 0;
+        }
+        var natural = 2 * pad + sumHead + sumList + sumFoot;
+        // The menu opens on the side of its pill that was asked for; when it does not fit there it takes the side with more room.
+        var above = m.At.Y - 6 - 8;
+        var below = h - 8 - (m.At.Bottom + 6);
+        var up = m.Up;
+        var room = up ? above : below;
+        if (natural > room && (up ? below : above) > room)
+        {
+            up = !up;
+            room = up ? above : below;
+        }
+        // Never taller than the room, nor the window less 16; at least the pinned rows and a few rows of the list (84, as the Go menu).
+        var boxH = Math.Min(Math.Min(natural, Math.Max(room, 2 * pad + sumHead + sumFoot + Math.Min(sumList, 84))), Math.Max(avail, 2 * pad));
+        var listH = Math.Max(boxH - 2 * pad - sumHead - sumFoot, 0);
+        var x = Math.Clamp(m.At.X, 8, Math.Max(w - mw - 8, 8));
+        var y = Math.Clamp(up ? m.At.Y - 6 - boxH : m.At.Bottom + 6, 8, Math.Max(h - 8 - boxH, 8));
+        var box = new Rect4(x, y, mw, boxH);
+        m.Box = box;
+        for (var i = 0; i < 4; i++) pen.Box(x - i * 2, y + 6 - i, mw + i * 4, boxH + i * 2, 14 + i * 2, Rgba.Of(0x000000, 0.06));
+        pen.Box(box, 14, MenuPanel);
+        pen.Border(x, y, mw, boxH, 14, 1, Rgba.Of(0xffffff, 0.12));
+        Add(box, "menuBox");
+
+        var listTop = y + pad + sumHead;
+        var list = new Rect4(x, listTop, mw, listH);
+        m.List = list;
+        m.Scroll.Set(sumList, listH);
+        var tops = new float[n];
+        float at = 0;
+        for (var i = head; i < n - foot; i++)
+        {
+            tops[i] = at;
+            at += hs[i];
+        }
+        // It opens on the picked row; a list that fills in later (the repositories) does so when its picked row arrives, unless the user scrolled.
+        if (!m.Centered && !m.Scroll.Touched)
+        {
+            for (var i = head; i < n - foot; i++)
+                if (rows[i].On)
+                {
+                    m.Scroll.Center(tops[i], tops[i] + hs[i]);
+                    m.Centered = true;
+                    break;
+                }
+            if (m.Build is null) m.Centered = true;
+        }
+        if (m.RevealHot)
+        {
+            m.RevealHot = false;
+            if (m.Hot >= head && m.Hot < n - foot) m.Scroll.Reveal(tops[m.Hot], tops[m.Hot] + hs[m.Hot]);
+        }
+
+        var cy = y + pad;
+        for (var i = 0; i < head; i++)
+        {
+            PaintMenuRow(m, i, x, cy, mw, hs[i], null);
+            cy += hs[i];
+        }
+        pen.Cv.PushClip(list);
+        for (var i = head; i < n - foot; i++)
+        {
+            var ry = listTop - m.Scroll.Off + tops[i];
+            if (ry + hs[i] <= listTop || ry >= list.Bottom) continue;
+            PaintMenuRow(m, i, x, ry, mw, hs[i], list);
+        }
+        pen.Cv.PopClip();
+        m.Scroll.PaintFade(pen.Cv, list, MenuPanel);
+        cy = list.Bottom;
+        for (var i = n - foot; i < n; i++)
+        {
+            PaintMenuRow(m, i, x, cy, mw, hs[i], null);
+            cy += hs[i];
+        }
+        if (m.Scroll.Max > 0)
+        {
+            var strip = MenuScroll.Strip(list);
+            Add(strip, "menuBar");
+            m.Scroll.PaintBar(pen.Cv, list, Over(strip));
         }
         overBlocker = false;
+    }
+
+    /// <summary>The colour of a menu's panel, which the fade at the edge of a scrolling list runs into.</summary>
+    static readonly Rgba MenuPanel = Rgba.Of(0x16121c, 0.985);
+
+    static Rect4 Cut(Rect4 a, Rect4 b)
+    {
+        float x = Math.Max(a.X, b.X), y = Math.Max(a.Y, b.Y);
+        return new Rect4(x, y, Math.Max(Math.Min(a.Right, b.Right) - x, 0), Math.Max(Math.Min(a.Bottom, b.Bottom) - y, 0));
+    }
+
+    /// <summary>One row of a menu at (x, cy). A row of the scrolling part is cut to <paramref name="clip"/>: only what shows answers the pointer.</summary>
+    void PaintMenuRow(Menu m, int i, float x, float cy, float mw, float rh, Rect4? clip)
+    {
+        var r = m.Rows[i];
+        if (r.Rule) { pen.Box(x + 10, cy + 4, mw - 20, 1, 0, Rgba.Of(0xffffff, 0.06)); return; }
+        if (r.Header)
+        {
+            pen.Text(r.Label.ToUpperInvariant(), x + 14, cy + (rh - pen.LineHeight(Pen.F(10.5, 600, Pen.Faint))) / 2, Pen.F(10.5, 600, Pen.Faint));
+            return;
+        }
+        var rr = new Rect4(x + 6, cy, mw - 12, rh);
+        var seen = clip is { } c ? Cut(rr, c) : rr;
+        var shown = seen.W > 0 && seen.H > 0;
+        var hov = !r.Disabled && ((shown && Over(seen)) || m.Hot == i);
+        if (hov) pen.Box(rr, 8, Rgba.Of(0xffffff, 0.09));
+        var tx = rr.X + 8;
+        var lf = Pen.F(12.5, r.Note.Length > 0 ? 600 : 500, r.Disabled ? Pen.Faint : Pen.Ink);
+        if (r.Mark is not null)
+        {
+            pen.Mark(r.Mark, tx, cy + (rh - 18) / 2, 18);
+            tx += 26;
+        }
+        var labelW = rr.Right - tx - 8 - (r.On ? 20 : 0);
+        if (r.Note.Length == 0) pen.Text(r.Label, tx, cy + (rh - pen.LineHeight(lf)) / 2, lf, labelW);
+        else
+        {
+            pen.Text(r.Label, tx, cy + 7, lf, labelW);
+            pen.Wrapped(r.Note, tx, cy + 7 + pen.LineHeight(lf) + 1, rr.Right - tx - 8 - (r.On ? 20 : 0), Pen.F(11, 400, Pen.Faint));
+        }
+        if (r.On) pen.Icon(Icons.Check, rr.Right - 8 - 12, cy + (r.Note.Length > 0 ? 10 : (rh - 12) / 2), 12, Pen.Lilac);
+        if (!r.Disabled && shown) Add(seen, "menu", i, r.Label);
     }
 
     // MARK: Actions
@@ -249,10 +364,10 @@ public sealed partial class OfficeUi
                 {
                     var cur = TaskPicks().Access;
                     var tool = TaskPicks().Tool;
-                    var rows = new List<MenuRow> { new((tool is null ? "The agent" : ToolDisplay(tool)) + " may", Header: true) };
+                    var rows = new List<MenuRow> { new((tool is null ? "The agent" : ToolDisplay(tool)) + " may", Header: true, Pin: true) };
                     foreach (var (id, label, note) in AccessChoices)
                         rows.Add(new MenuRow(label, id, id == "risky" && tool?.Id == "codex" ? "Asks to write outside the folder or go online. Codex runs the rest." : note, id == cur));
-                    rows.Add(new MenuRow("", Note: "For this task only. Settings keeps the default.", Disabled: true));
+                    rows.Add(new MenuRow("", Note: "For this task only. Settings keeps the default.", Disabled: true, Pin: true));
                     OpenMenu("access", t.R, rows, true, 270);
                     break;
                 }
@@ -478,7 +593,19 @@ public sealed partial class OfficeUi
             foreach (var l in levels) rows.Add(new MenuRow(l, "effort:" + l, On: l == effort));
         }
         rows.AddRange(ModelFooter(tool));
-        OpenMenu("model", at, rows, true, 240);
+        OpenMenu("model", at, PinModelEnds(rows), true, 240);
+    }
+
+    /// <summary>
+    /// A model menu scrolls its models inside the box and keeps the heading, the effort levels and the last row in view
+    /// (internal/ui/officemenus.go modelMenu): the heading is pinned, and so is everything from the rule after the models.
+    /// </summary>
+    static List<MenuRow> PinModelEnds(List<MenuRow> rows)
+    {
+        var tail = rows.FindIndex(1, r => r.Rule);
+        for (var i = 0; i < rows.Count; i++)
+            if (i == 0 || (tail > 0 && i >= tail)) rows[i] = rows[i] with { Pin = true };
+        return rows;
     }
 
     /// <summary>A Kiro Web task whose id at Kiro the backend has sent (<c>kiroId</c>, once the first turn has told it): the chip that opens its page needs both.</summary>
@@ -525,6 +652,34 @@ public sealed partial class OfficeUi
         }
         else rows.Add(new MenuRow("This chat is saved. Open it in the office to change it.", Disabled: true));
         OpenMenu("more", at, rows, false, 230);
+    }
+
+    /// <summary>The Up and Down keys (and Home and End) move a lit row over the rows that can be picked, Enter picks it.</summary>
+    void MenuKey(Menu m, UiKey key)
+    {
+        var n = m.Rows.Count;
+        bool Pickable(int i) => m.Rows[i] is { Header: false, Rule: false, Disabled: false };
+        int Next(int from, int dir)
+        {
+            for (var i = from + dir; i >= 0 && i < n; i += dir)
+                if (Pickable(i)) return i;
+            return -1;
+        }
+        var to = key switch
+        {
+            UiKey.Down => Next(m.Hot < 0 ? -1 : m.Hot, 1),
+            UiKey.Up => Next(m.Hot < 0 ? n : m.Hot, -1),
+            UiKey.Home => Next(-1, 1),
+            UiKey.End => Next(n, -1),
+            _ => -1,
+        };
+        if (to >= 0)
+        {
+            m.Hot = to;
+            m.RevealHot = true;
+        }
+        else if (key == UiKey.Enter && m.Hot >= 0 && m.Hot < n && Pickable(m.Hot)) MenuPick(m, m.Rows[m.Hot]);
+        Dirty = true;
     }
 
     void MenuPick(Menu m, MenuRow row)

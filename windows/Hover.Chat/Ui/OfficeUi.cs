@@ -131,6 +131,9 @@ public sealed partial class OfficeUi
     /// <summary>The menu that is open, if any (its kind).</summary>
     public string? OpenMenuKind => menu?.Kind;
 
+    /// <summary>The rows of the open menu that can be picked (not a heading, a rule or a note), by their index, for the checks.</summary>
+    public IReadOnlyList<int> OpenMenuPickable => menu is null ? [] : [.. Enumerable.Range(0, menu.Rows.Count).Where(i => menu.Rows[i] is { Header: false, Rule: false, Disabled: false })];
+
     public StateEvent? State => state;
 
     public bool Composing => compose;
@@ -418,6 +421,13 @@ public sealed partial class OfficeUi
         px = x;
         py = y;
         Dirty = true;
+        if (menu is { } open)
+        {
+            // The pointer takes over from the keys' row; a held bar follows the pointer.
+            open.Hot = -1;
+            open.Scroll.BarMove(open.List, y);
+        }
+        if (deskMenuOpen) openScroll.BarMove(openList, y);
         if (dragging) DragTo(x, y);
         else if (barDrag is { } bd && pointerDown)
         {
@@ -456,7 +466,8 @@ public sealed partial class OfficeUi
         if (menu is not null)
         {
             var t = TargetAt(x, y);
-            if (t is { } mt && mt.Id.StartsWith("menu", StringComparison.Ordinal)) Activate(mt);
+            if (t is { Id: "menuBar" }) menu.Scroll.BarDown(menu.List, y);
+            else if (t is { } mt && mt.Id.StartsWith("menu", StringComparison.Ordinal)) Activate(mt);
             else if (t is { } other && other.Id == menu.Anchor) menu = null;
             else
             {
@@ -486,6 +497,8 @@ public sealed partial class OfficeUi
         px = x;
         py = y;
         pointerDown = false;
+        menu?.Scroll.BarUp();
+        openScroll.BarUp();
         if (dragging)
         {
             dragging = false;
@@ -500,7 +513,29 @@ public sealed partial class OfficeUi
 
     public bool Wheel(float x, float y, float delta)
     {
-        if (menu is not null) return true;
+        // The wheel over an open menu scrolls the menu; with a menu open it never reaches the chat or the office behind it.
+        if (menu is { } open)
+        {
+            if (open.Scroll.Max > 0 && open.Box.Contains(x, y))
+            {
+                open.Scroll.By(-delta);
+                Dirty = true;
+            }
+            return true;
+        }
+        // The same over the desk's "Open file in" menu and the reply box's @ and / list.
+        if (deskMenuOpen && openMenu.Contains(x, y))
+        {
+            openScroll.By(-delta);
+            Dirty = true;
+            return true;
+        }
+        if (pop is { } listed && listed.Scroll.Max > 0 && listed.Box.Contains(x, y))
+        {
+            listed.Scroll.By(-delta);
+            Dirty = true;
+            return true;
+        }
         if (DeskWheelAt(x, y, delta) || PanelWheel(x, y, delta)) return true;
         if (ChatView && sideRect.Contains(x, y))
         {
@@ -532,9 +567,10 @@ public sealed partial class OfficeUi
             if (key == UiKey.Enter) { Activate(new Target(default, "confirmYes")); return true; }
             return true;
         }
-        if (menu is not null)
+        if (menu is { } open)
         {
-            if (key == UiKey.Escape) { menu = null; return true; }
+            if (key == UiKey.Escape) menu = null;
+            else MenuKey(open, key);
             return true;
         }
         if (key == UiKey.Escape)

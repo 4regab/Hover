@@ -224,6 +224,10 @@ public sealed partial class OfficeUi
         public string Q = "";
         public List<(char Kind, string S)> Items = [];
         public List<PopRow> Rows = [];
+        /// <summary>The list scrolls when the room over the reply box is short; <see cref="Shown"/> is the lit row the scroll last followed.</summary>
+        public readonly MenuScroll Scroll = new();
+        public int Shown = -1;
+        public Rect4 Box;
     }
 
     /// <summary>A row of the list: 0 a heading, 1 a file, 2 a command, 3 a line of words.</summary>
@@ -413,18 +417,43 @@ public sealed partial class OfficeUi
         if (pop is null || pop.Rows.Count == 0) return;
         var rows = pop.Rows;
         float Hh(PopRow r) => r.Kind switch { 0 => 26, 3 => 34, _ => 30 };
-        var total = 8 + rows.Sum(Hh);
+        var content = rows.Sum(Hh);
+        // No taller than the room over the box: what does not fit scrolls, and follows the row the keys light.
+        var total = Math.Min(8 + content, Math.Max(by - 8 - 8, 60));
         var y = by - total - 8;
+        var list = new Rect4(bx, y + 4, bw, total - 8);
+        pop.Scroll.Set(content, list.H);
+        if (pop.Shown != pop.Sel)
+        {
+            pop.Shown = pop.Sel;
+            float at = 0;
+            foreach (var r in rows)
+            {
+                if (r.Idx >= 0 && r.Idx == pop.Sel && r.Kind is 1 or 2)
+                {
+                    pop.Scroll.Reveal(at, at + Hh(r));
+                    break;
+                }
+                at += Hh(r);
+            }
+        }
+        pop.Box = new Rect4(bx, y, bw, total);
         for (var i = 0; i < 4; i++) pen.Box(bx - i * 2, y + 8 - i, bw + i * 4, total + i * 2, 12 + i * 2, Rgba.Of(0x000000, 0.08));
         pen.Box(bx, y, bw, total, 12, Rgba.Of(0x1a1820));
         pen.Border(bx, y, bw, total, 12, 1, Rgba.Of(0xffffff, 0.09));
         Block(new Rect4(bx, y, bw, total));
-        var ry = y + 4;
+        var ry = y + 4 - pop.Scroll.Off;
+        pen.Cv.PushClip(list);
         foreach (var r in rows)
         {
             var rh = Hh(r);
             var rx = bx + 4;
             var rw = bw - 8;
+            if (ry + rh <= list.Y || ry >= list.Bottom)
+            {
+                ry += rh;
+                continue;
+            }
             switch (r.Kind)
             {
                 case 0:
@@ -436,8 +465,9 @@ public sealed partial class OfficeUi
                 default:
                     {
                         var rr = new Rect4(rx, ry, rw, rh);
-                        if (r.Sel || Over(rr)) pen.Box(rr, 7, Rgba.Of(0xffffff, 0.05));
-                        Add(rr, "popRow", r.Idx);
+                        var seen = Cut(rr, list);
+                        if (r.Sel || Over(seen)) pen.Box(rr, 7, Rgba.Of(0xffffff, 0.05));
+                        Add(seen, "popRow", r.Idx);
                         var tx = rx + 8;
                         if (r.Kind == 1)
                         {
@@ -454,6 +484,8 @@ public sealed partial class OfficeUi
             }
             ry += rh;
         }
+        pen.Cv.PopClip();
+        pop.Scroll.PaintFade(pen.Cv, list, Rgba.Of(0x1a1820));
     }
 
     // MARK: The model of the open chat's agent
@@ -476,7 +508,7 @@ public sealed partial class OfficeUi
                 foreach (var l in levels) rows.Add(new MenuRow(l, "effort:" + l, On: l == effort));
             }
             rows.AddRange(ModelFooter(t));
-            return rows;
+            return PinModelEnds(rows);
         }
         OpenMenu("rmodel", at, Rows(), true, 240, build: Rows);
     }

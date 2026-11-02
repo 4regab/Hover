@@ -424,24 +424,55 @@ public sealed partial class SettingsUi
         Add(new Rect4(0, 0, w, h), TK.MenuOutside, "");
         var mw = 180f;
         foreach (var o in menu.Options) mw = Math.Max(mw, 5 + 8 + 14 + 6 + TextW(o.Label, 13) + 14 + 5);
-        var mh = 10 + 26f * menu.Options.Count;
+        mw = Math.Min(mw, Math.Max(w - 16, 0));
+        var content = 26f * menu.Options.Count;
+        // No taller than the window less 16: a long list (the models) scrolls inside its box and opens on the picked option.
+        var mh = Math.Min(10 + content, Math.Max(h - 16, 10));
         var mx = Math.Min(menu.X, w - mw - 8);
         var my = Math.Min(menu.Y + 4, h - mh - 8);
         if (mx < 0) mx = 0;
         if (my < 0) my = 0;
+        var list = new Rect4(mx, my + 5, mw, mh - 10);
+        menuBox = new Rect4(mx, my, mw, mh);
+        menuList = list;
+        if (!ReferenceEquals(menu, menuShown))
+        {
+            menuShown = menu;
+            menuScroll = new MenuScroll();
+            menuScroll.Set(content, list.H);
+            var on = menu.Options.ToList().FindIndex(o => o.On);
+            if (on >= 0) menuScroll.Center(on * 26f, on * 26f + 26);
+        }
+        menuScroll.Set(content, list.H);
         Box(mx - 1, my + 3, mw + 2, mh + 2, 11, new Rgba(0, 0, 0, 60));
         Box(mx, my, mw, mh, 10, C(P.Sheet));
         Frame(mx, my, mw, mh, 10, 1, C(P.SheetEdge));
-        for (var i = 0; i < menu.Options.Count; i++)
+        Clipped(list, () =>
         {
-            var o = menu.Options[i];
-            var iy = my + 5 + i * 26;
-            var hover = Hot(TK.MenuItem, menu.Id, i);
-            if (hover) Box(mx + 5, iy, mw - 10, 26, 6, C(P.Blue));
-            var ink = hover ? White : Ink;
-            if (o.On) Icon("check", mx + 5 + 8 + 1, iy + 7, 12, ink);
-            pen.TextIn(o.Label, new Rect4(mx + 5 + 8 + 14 + 6, iy, mw - 5 - 8 - 14 - 6 - 8, 26), F(13, 400, ink), left: true);
-            Add(new Rect4(mx + 5, iy, mw - 10, 26), TK.MenuItem, menu.Id, i);
+            for (var i = 0; i < menu.Options.Count; i++)
+            {
+                var o = menu.Options[i];
+                var iy = my + 5 + i * 26 - menuScroll.Off;
+                if (iy + 26 <= list.Y || iy >= list.Bottom) continue;
+                var hover = Hot(TK.MenuItem, menu.Id, i);
+                if (hover) Box(mx + 5, iy, mw - 10, 26, 6, C(P.Blue));
+                var ink = hover ? White : Ink;
+                if (o.On) Icon("check", mx + 5 + 8 + 1, iy + 7, 12, ink);
+                pen.TextIn(o.Label, new Rect4(mx + 5 + 8 + 14 + 6, iy, mw - 5 - 8 - 14 - 6 - 8, 26), F(13, 400, ink), left: true);
+                Add(new Rect4(mx + 5, iy, mw - 10, 26), TK.MenuItem, menu.Id, i);
+            }
+        });
+        menuScroll.PaintFade(pen.Cv, list, C(P.Sheet));
+        if (menuScroll.Max > 0)
+        {
+            Add(MenuScroll.Strip(list), TK.Bar, "menuList");
+            menuScroll.PaintBar(pen.Cv, list, Hot(TK.Bar, "menuList") || menuScroll.Dragging);
         }
     }
+
+    /// <summary>The scroll of the open picker's options, which menu it is for, and where the last frame drew its box and its list.</summary>
+    MenuScroll menuScroll = new();
+
+    OpenMenu? menuShown;
+    Rect4 menuBox, menuList;
 }
