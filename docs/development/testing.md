@@ -368,6 +368,12 @@ What `windows\Hover.Tests` covers:
   - *Dictation*: the line under the reply box (`DictationLineTests`) and the reading of the screenshots said aloud
     (`DictationShotsTests`: a picture in `kiro-images` becomes a data address of its kind; another folder, a name that starts
     like it, a climbing path, a file that is not a picture, an empty one, one over 8 MB and an odd name are not read).
+- **At 150 % display scale** (the last live step of the `windows` job): `tools/set-scale.ps1 -Percent 150` sets the scale of the
+  main display with the call Settings > Display makes (`DisplayConfigSetDeviceInfo`), after `tools/set-resolution.ps1` has given the
+  runner 1920 x 1080 (at its default size 100 % is the only choice). `Sweep2AppTests`, `WindowSizeAppTests`, `PointerShapeAppTests`, the
+  pictures and `SettingsAppTests` run again there. The test processes are DPI aware (`DpiAwareness`), or the pixels they click would be
+  the shrunk ones Windows gives a process that is not. Run by hand, `tools/set-scale.ps1` alone says what the display allows (at 1920 x 1080:
+  100 to 175 %). The runner has one display, so a window moved to a second monitor with another scale is not run.
 - **Windows only**: DPAPI, the job object (what is in it dies with its handle; its children too),
   killing a host process kills the backend and the agent's child, single instance, the old
   "Hover Service" task removal, and `hoverai.exe` itself (a second launch exits, the first opens

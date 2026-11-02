@@ -317,6 +317,30 @@ jobs:
           if (-not (Test-Path publish-legacy\wgpu_native.dll)) { throw 'no wgpu_native.dll beside the legacy app' }
           if (-not (Test-Path "dist\Hover-Legacy-Setup-$env:RELEASE_VERSION.exe")) { throw 'no legacy setup' }
           "legacy: $v"
+      # The display scale is set to 150 % (tools/set-scale.ps1, the call Settings > Display makes) and the app's own checks that
+      # depend on pixels run again: the window's smallest size, the pointer's shape, Settings by mouse and keyboard, the pictures, the
+      # tray, the window's icon and place. The test processes are DPI aware, so the places the app writes down are the places they
+      # click. Last, because the scale stays set for what follows.
+      - name: Live checks at 150 % display scale
+        timeout-minutes: 20
+        run: |
+          ./tools/set-resolution.ps1
+          ./tools/set-scale.ps1
+          ./tools/set-scale.ps1 -Percent 150
+          Start-Sleep -Seconds 5
+          $after = ./tools/set-scale.ps1
+          $after
+          if ($after -notmatch 'scale now 150%') { throw "the display is not at 150 %: $after" }
+          $env:HOVER_APP_EXE = (Resolve-Path publish\hoverai.exe).Path
+          $env:HOVER_BACKEND = (Resolve-Path out\bin\hover-backend.exe).Path
+          $env:HOVER_DATA_TOOL = (Resolve-Path out\bin\hover-data.exe).Path
+          New-Item -ItemType Directory -Force out\scale150 | Out-Null
+          dotnet test windows\Hover.Tests\Hover.Tests.csproj -c Release --no-build --filter 'FullyQualifiedName~Sweep2AppTests|FullyQualifiedName~WindowSizeAppTests|FullyQualifiedName~PointerShapeAppTests|FullyQualifiedName~AppTests.Shots' `
+            --logger 'trx;LogFileName=Hover.Tests.scale150.trx' --logger 'console;verbosity=normal' --results-directory out\scale150
+          if ($LASTEXITCODE -ne 0) { throw 'Hover.Tests failed at 150 %' }
+          dotnet test windows\Hover.Settings.Tests\Hover.Settings.Tests.csproj -c Release --no-build --filter 'FullyQualifiedName~SettingsAppTests' `
+            --logger 'trx;LogFileName=Hover.Settings.Tests.scale150.trx' --logger 'console;verbosity=normal' --results-directory out\scale150
+          if ($LASTEXITCODE -ne 0) { throw 'Hover.Settings.Tests failed at 150 %' }
       # If the app died, Windows says which module did it.
       - name: App crash reports
         if: ${{ failure() }}
