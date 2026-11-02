@@ -321,7 +321,7 @@ public sealed class BackendClient : IAsyncDisposable
 
         var code = process.ExitCode;
         if (!stopping && !failureSeen)
-            Deliver(new BackendFailureEvent { Text = $"The agent backend stopped ({code}). Quit and reopen Hover." });
+            Deliver(new BackendFailureEvent { Text = $"The agent backend stopped ({code}). Quit Hover from its tray menu and open it again." });
         exited.TrySetResult(code);
         EventQueue[] snapshot;
         lock (queues) snapshot = [.. queues];

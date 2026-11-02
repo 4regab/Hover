@@ -241,11 +241,26 @@ sealed partial class NotchHost : IDisposable
         {
             "Dark" => true,
             "Light" => false,
-            // The system's choice for apps: 1 is light; no value is read as dark.
-            _ => Registry.GetValue(@"HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize", "AppsUseLightTheme", null) is not int light || light == 0,
+            // The system's choice for apps; with none made, Windows is light (as the Go app reads it).
+            _ => Hover.Configuring.SystemTheme.IsDark(),
         };
         scene.Dark = dark;
         scene.Panel = dark ? 0x000000u : 0xf2f2f7u;
+    }
+
+    /// <summary>Windows switched between light and dark while Hover runs.</summary>
+    public void ThemeChanged()
+    {
+        if (disposed || settings.Appearance is "Dark" or "Light") return;
+        ApplyAppearance();
+        QueueRender();
+    }
+
+    /// <summary>A line from the tray icon (a balloon).</summary>
+    public void Tell(string title, string text)
+    {
+        HostLog.Line($"tray balloon: {title} — {text}");
+        window.TrayNotify(title, text);
     }
 
     // MARK: The shortcut

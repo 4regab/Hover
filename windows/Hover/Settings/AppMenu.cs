@@ -45,14 +45,15 @@ static class AppMenu
     {
         var bar = new MenuBar();
 
-        var file = new MenuBarItem { Title = "File" };
+        // Alt and the first letter open a menu (Windows' own way to use a menu bar from the keyboard).
+        var file = new MenuBarItem { Title = "File", AccessKey = "F" };
         file.Items.Add(Item("New chat", a.NewChat));
         file.Items.Add(Item("Open folder…", a.OpenFolder));
         file.Items.Add(new MenuFlyoutSeparator());
         file.Items.Add(Item("Close window", a.CloseWindow));
         bar.Items.Add(file);
 
-        var settings = new MenuBarItem { Title = "Settings" };
+        var settings = new MenuBarItem { Title = "Settings", AccessKey = "S" };
         foreach (var s in new[] { Section.General, Section.Integrations, Section.Projects, Section.Voice })
         {
             var section = s;
@@ -67,7 +68,7 @@ static class AppMenu
         }
         bar.Items.Add(settings);
 
-        var help = new MenuBarItem { Title = "Help" };
+        var help = new MenuBarItem { Title = "Help", AccessKey = "H" };
         foreach (var (name, url, rule) in Help)
         {
             if (rule) help.Items.Add(new MenuFlyoutSeparator());

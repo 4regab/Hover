@@ -19,7 +19,7 @@ static class Native
     public const uint WM_DESTROY = 0x2, WM_SIZE = 0x5, WM_ACTIVATE = 0x6, WM_SETFOCUS = 0x7, WM_KILLFOCUS = 0x8, WM_CLOSE = 0x10,
         WM_ERASEBKGND = 0x14, WM_SETCURSOR = 0x20, WM_MOUSEACTIVATE = 0x21, WM_KEYDOWN = 0x100, WM_KEYUP = 0x101, WM_CHAR = 0x102, WM_SYSKEYDOWN = 0x104,
         WM_MOUSEMOVE = 0x200, WM_LBUTTONDOWN = 0x201, WM_LBUTTONUP = 0x202, WM_RBUTTONUP = 0x205, WM_MOUSELEAVE = 0x2A3,
-        WM_CONTEXTMENU = 0x7B, WM_HOTKEY = 0x312, WM_POWERBROADCAST = 0x218, WM_APP = 0x8000;
+        WM_CONTEXTMENU = 0x7B, WM_NULL = 0, WM_TIMER = 0x113, WM_GETICON = 0x7F, WM_SETICON = 0x80, WM_HOTKEY = 0x312, WM_POWERBROADCAST = 0x218, WM_APP = 0x8000;
     public const int MA_NOACTIVATE = 3;
     public const int WA_INACTIVE = 0;
     public const int PBT_APMRESUMEAUTOMATIC = 0x12;
@@ -112,6 +112,13 @@ static class Native
     [DllImport("user32.dll", SetLastError = true)] public static extern bool UnregisterHotKey(nint hwnd, int id);
     [DllImport("user32.dll")] public static extern bool PostMessageW(nint hwnd, uint msg, nint wParam, nint lParam);
     [DllImport("user32.dll")] public static extern int GetSystemMetrics(int index);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern uint RegisterWindowMessageW(string name);
+    [DllImport("user32.dll")] public static extern nuint SetTimer(nint hwnd, nuint id, uint ms, nint proc);
+    [DllImport("user32.dll")] public static extern bool KillTimer(nint hwnd, nuint id);
+    [DllImport("user32.dll")] public static extern nint SendMessageW(nint hwnd, uint msg, nint wParam, nint lParam);
+    [DllImport("user32.dll")] public static extern uint GetDpiForWindow(nint hwnd);
+    [DllImport("user32.dll")] public static extern int GetSystemMetricsForDpi(int index, uint dpi);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern uint PrivateExtractIconsW(string file, int index, int cx, int cy, out nint icon, out uint id, uint count, uint flags);
     [DllImport("user32.dll")] public static extern nint SetCapture(nint hwnd);
     [DllImport("user32.dll")] public static extern bool ReleaseCapture();
 

@@ -38,7 +38,16 @@ static class WindowMinimum
         var work = Microsoft.UI.Windowing.DisplayArea.GetFromWindowId(window.Id, Microsoft.UI.Windowing.DisplayAreaFallback.Nearest).WorkArea;
         var (w, h) = First(dpi == 0 ? 1 : dpi / 96.0, work.Width, work.Height);
         window.Resize(new Windows.Graphics.SizeInt32(w, h));
+        // In the middle of the work area, as the Go window opens (internal/platform/win/window.go): left to Windows, a window of this size
+        // is put a little down and right of the last one and can hang over the edge of a small screen.
+        var (x, y) = Centre(work.X, work.Y, work.Width, work.Height, w, h);
+        window.Move(new Windows.Graphics.PointInt32(x, y));
+        WindowIcon.Ensure(hwnd);
     }
+
+    /// <summary>The top left corner of a window of this size in the middle of a work area (never outside it).</summary>
+    public static (int X, int Y) Centre(int workX, int workY, int workWidth, int workHeight, int width, int height)
+        => (workX + Math.Max(0, (workWidth - width) / 2), workY + Math.Max(0, (workHeight - height) / 2));
 
     static nint Answer(nint hwnd, uint message, nint wParam, nint lParam, nuint id, nuint data)
     {

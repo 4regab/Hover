@@ -51,6 +51,9 @@ sealed class SettingsPane : IDisposable
 
     public event Action? DashOpenChanged;
 
+    /// <summary>Windows switched between light and dark.</summary>
+    public event Action? SystemThemeChanged;
+
     /// <summary>Settings was asked for in the app window (from a menu, say), whether or not it was open: the page takes the keyboard.</summary>
     public event Action? DashShown;
 
@@ -90,7 +93,7 @@ sealed class SettingsPane : IDisposable
         // Windows' own light or dark is watched: the appearance "System" follows it.
         lastDark = SystemTheme.IsDark();
         themeTimer = queue.CreateTimer();
-        themeTimer.Interval = TimeSpan.FromSeconds(2);
+        themeTimer.Interval = TimeSpan.FromSeconds(1);
         themeTimer.Tick += (_, _) =>
         {
             var dark = SystemTheme.IsDark();
@@ -99,6 +102,7 @@ sealed class SettingsPane : IDisposable
             HostLog.Line($"windows is now {(dark ? "dark" : "light")}");
             Controller.Apply();
             Changed?.Invoke();
+            SystemThemeChanged?.Invoke();
         };
         themeTimer.Start();
         BeginWhenReady();

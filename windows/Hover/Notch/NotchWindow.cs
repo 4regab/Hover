@@ -19,6 +19,15 @@ sealed class NotchWindow : INotchPlatform, IDisposable
     const uint TrayId = 1;
     const uint WM_MOUSEWHEEL = 0x20A;
 
+    /// <summary>
+    /// The message Explorer broadcasts when it makes the taskbar again (it was restarted, or it was not up yet when Hover started at
+    /// login): every icon in the notification area is gone then, and each program has to add its own again.
+    /// </summary>
+    static readonly uint TaskbarCreated = RegisterWindowMessageW("TaskbarCreated");
+
+    const nuint TrayRetryTimer = 7;
+    int trayTries;
+
     static WndProc? procedure;
     static bool classMade;
     static readonly Dictionary<nint, NotchWindow> Windows = [];
@@ -247,7 +256,30 @@ sealed class NotchWindow : INotchPlatform, IDisposable
         HostLog.Line(trayShown
             ? $"tray icon added (the shell has it: {TrayModify()})"
             : $"tray icon could not be added ({Marshal.GetLastWin32Error()})");
+        if (!trayShown) ArmTrayRetry();
         return trayShown;
+    }
+
+    /// <summary>The shell may not be ready yet (Hover started at login before the taskbar): try again every second, ten times.</summary>
+    void ArmTrayRetry()
+    {
+        if (Handle == 0 || trayTries >= 10) return;
+        trayTries++;
+        SetTimer(Handle, TrayRetryTimer, 1000, 0);
+    }
+
+    /// <summary>The taskbar was made again: the icon is added again. If the shell still has it (a broadcast with no restart), nothing changes.</summary>
+    void TrayRebuild()
+    {
+        HostLog.Line("the taskbar was made again (Explorer started)");
+        if (trayShown && TrayModify())
+        {
+            HostLog.Line("tray icon: the shell still has it");
+            return;
+        }
+        trayShown = false;
+        trayTries = 0;
+        TrayStart();
     }
 
     bool TrayModify()
@@ -262,6 +294,7 @@ sealed class NotchWindow : INotchPlatform, IDisposable
 
     public void TrayStop()
     {
+        if (Handle != 0) KillTimer(Handle, TrayRetryTimer);
         if (!trayShown) return;
         var data = TrayData();
         Shell_NotifyIconW(NIM_DELETE, ref data);
@@ -301,6 +334,8 @@ sealed class NotchWindow : INotchPlatform, IDisposable
             // The menu closes when it is clicked away only if the window is in the foreground.
             SetForegroundWindow(Handle);
             var picked = TrackPopupMenu(menu, TPM_RIGHTBUTTON | TPM_RETURNCMD, p.X, p.Y, 0, Handle, 0);
+            // Windows asks for this after a menu from a notification icon: without it the menu can fail to close when it is clicked away.
+            PostMessageW(Handle, WM_NULL, 0, 0);
             return picked - 1;
         }
         finally { DestroyMenu(menu); }
@@ -324,8 +359,17 @@ sealed class NotchWindow : INotchPlatform, IDisposable
 
     nint OnMessage(nint hwnd, uint msg, nint wParam, nint lParam)
     {
+        if (msg == TaskbarCreated)
+        {
+            TrayRebuild();
+            return 0;
+        }
         switch (msg)
         {
+            case WM_TIMER when (nuint)wParam == TrayRetryTimer:
+                KillTimer(hwnd, TrayRetryTimer);
+                if (!trayShown) TrayStart();
+                return 0;
             case WM_HOTKEY:
                 Hotkey?.Invoke((int)wParam);
                 return 0;

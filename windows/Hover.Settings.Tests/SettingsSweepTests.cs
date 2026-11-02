@@ -145,7 +145,7 @@ public class SettingsSweepTests
     const string LongPath = @"C:\Users\someone\Documents\a-very-long-folder-name-without-any-space\and-another-one-just-as-long\src\components";
 
     /// <summary>A settings model with something in every part: notch items, a theme-free appearance, long project names, voice on, tool options.</summary>
-    static readonly string Model = $$"""
+    internal static readonly string Model = $$"""
     {
       "HoverOpensWorkspace": true, "WorkspaceSize": "Default", "Appearance": "System", "KiroNoticeSeen": true,
       "NotchItems": ["kiro", "codex"], "KiroFolder": "{{LongPath.Replace("\\", "\\\\")}}", "AgentTool": "Kiro",

@@ -1,0 +1,17 @@
+{
+  "HoverOpensWorkspace": true, "WorkspaceSize": "Default", "Appearance": "System", "KiroNoticeSeen": true,
+  "NotchItems": ["kiro", "codex"], "KiroFolder": "C:\\Users\\someone\\Documents\\a-very-long-folder-name-without-any-space\\and-another-one-just-as-long\\src\\components", "AgentTool": "Kiro",
+  "KiroAutoCompact": true, "KiroCompactAt": 70, "KiroModel": "auto", "KiroApproval": "Risky",
+  "Agents": { "codex": { "Model": "gpt-5", "Effort": "high", "Approval": "Always", "IdleMinutes": 10 }, "claude": { "ReadOnly": true } },
+  "AgentOffers": {
+    "codex": [ { "Id": "model", "Category": "model", "Current": "gpt-5", "Choices": [ { "Value": "gpt-5", "Name": "GPT-5", "Levels": ["low", "medium", "high"] }, { "Value": "gpt-5-mini", "Name": "GPT-5 mini" } ] } ],
+    "kiro": [ { "Id": "model", "Category": "model", "Current": "auto", "Choices": [ { "Value": "auto", "Name": "Auto" }, { "Value": "claude-sonnet", "Name": "Claude Sonnet" } ] } ]
+  },
+  "Projects": [
+    { "Id": "p1", "Name": "wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww", "Folder": "C:\\Users\\someone\\Documents\\a-very-long-folder-name-without-any-space\\and-another-one-just-as-long\\src\\components", "Aliases": ["one", "uno"], "Voice": true, "Access": "risky" },
+    { "Id": "p2", "Name": "Docs", "Folder": "C:\\work\\docs", "Aliases": [], "Voice": false, "Access": "read" },
+    { "Id": "p3", "Name": "App", "Folder": "C:\\work\\app", "Aliases": ["a"], "Voice": true, "Access": "full" }
+  ],
+  "DefaultWorkspace": { "Folder": "C:\\Users\\me\\Hover", "Access": "risky" },
+  "Voice": { "Enabled": true, "Speech": "Cloud", "Model": "whisper-large-v3-turbo", "Cleanup": true, "CleanupProvider": "Custom", "CleanupModel": "wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww", "CleanupBase": "https://example.com/v1/wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww", "Countdown": 5, "HoldToTalk": true, "Microphone": "Microphone (USB audio device with a long name)" }
+}

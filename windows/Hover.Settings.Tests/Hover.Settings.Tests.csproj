@@ -16,5 +16,7 @@
     <ProjectReference Include="..\Hover.Settings\Hover.Settings.csproj" />
     <ProjectReference Include="..\Hover.Host\Hover.Host.csproj" />
     <ProjectReference Include="..\Hover.Voice\Hover.Voice.csproj" />
+    <!-- What the Go code printed (golden/pages-dump.go.txt says how). -->
+    <None Include="golden\**" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

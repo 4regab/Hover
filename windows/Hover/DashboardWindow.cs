@@ -131,6 +131,7 @@ public sealed class DashboardWindow : Window
             {
                 if (Panels is not null) Panels.Visibility = settings.DashOpen ? Visibility.Collapsed : Visibility.Visible;
                 if (!settings.DashOpen) panels?.Ui.Invalidate();
+                if (Hover.Chatting.UiDump.On) Hover.Chatting.UiDump.Set("panels-away", new System.Text.Json.Nodes.JsonObject { ["away"] = settings.DashOpen });
             });
             // A theme colours Settings, its menus and the app window; Hover's own colours follow the appearance.
             ApplyPalette(page, settings.Controller.Palette);
@@ -247,6 +248,8 @@ public sealed class DashboardWindow : Window
         problem.Text = text ?? "";
         problem.Visibility = text is null ? Visibility.Collapsed : Visibility.Visible;
         ToolTipService.SetToolTip(problem, text);
+        // For the checks of the real app: what the bar says.
+        if (Hover.Chatting.UiDump.On) Hover.Chatting.UiDump.Set("bar-problem", new System.Text.Json.Nodes.JsonObject { ["text"] = text });
     }
 
     /// <summary>
