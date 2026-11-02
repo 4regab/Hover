@@ -253,4 +253,67 @@ public class Sweep3Tests
             Assert.True(r.Right <= ncard.Right - 6 + 0.5f, $"{id} {r} is cut by the narrow card {ncard}");
         }
     }
+
+    // MARK: Layers over a button
+
+    static bool Lit(RecordingCanvas c, Rect4 button) => c.Boxes.Any(b => b.R.X == button.X && b.R.Y == button.Y && b.R.W == button.W && b.R.H == button.H);
+
+    [Fact]
+    public void A_button_under_a_panel_drawn_over_it_gets_no_hover_look_and_no_click()
+    {
+        var h = new PanelHarness();
+        h.State();
+        h.Ui.ChatView = false;
+        h.Frame();
+        var button = h.Ui.Find("topMenu")!.Value.R;
+        var at = (X: button.X + button.W / 2, Y: button.Y + button.H / 2);
+
+        // Nothing over it: the pointer lights it, shows its name and is the hand.
+        h.Ui.PointerMove(at.X, at.Y);
+        var c = h.Frame();
+        Assert.True(Lit(c, button), "the button is lit under the pointer");
+        Assert.Contains("Menu", c.Texts);
+        Assert.Equal(UiCursor.Hand, h.Ui.CursorAt(at.X, at.Y));
+
+        // The history panel comes over the place: the button is under it.
+        h.Ui.OpenOfficePanel("history");
+        h.Frame();
+        h.Ui.PointerMove(0, 0);
+        h.Frame();
+        h.Ui.PointerMove(at.X, at.Y);
+        c = h.Frame();
+        Assert.True(h.Ui.OfficePanel.Length > 0 && h.Ui.Find("officePanel")!.Value.R.Contains(at.X, at.Y), "the panel is over the button");
+        Assert.False(Lit(c, button), "a button under the panel is not lit");
+        Assert.DoesNotContain("Menu", c.Texts);
+        Assert.NotEqual("topMenu", h.Ui.TargetAt(at.X, at.Y)?.Id);
+        h.Ui.PointerDown(at.X, at.Y, 1, UiMods.None);
+        h.Ui.PointerUp(at.X, at.Y);
+        h.Frame();
+        Assert.Null(h.Ui.OpenMenuKind);
+    }
+
+    [Fact]
+    public void A_button_under_a_toast_gets_no_hover_look_and_no_click_either()
+    {
+        var h = new PanelHarness { W = 400, H = 346 };
+        h.State();
+        h.Ui.ChatView = false;
+        h.Frame();
+        var button = h.Ui.Find("topMenu")!.Value.R;
+        h.Ui.Say("Codex is not signed in. Open Settings to sign in. Open it again.");
+        h.Frame();
+        h.Frame();
+        // The point is on the button's edge that the toast reaches.
+        var at = (X: button.X + 3, Y: button.Y + button.H / 2);
+        var toast = h.Canvas.Drawn.Single(t => t.Text.StartsWith("Codex is not", StringComparison.Ordinal)).R;
+        Assert.True(toast.Contains(at.X, at.Y), $"the toast {toast} is over the point {at} of the button {button}");
+        h.Ui.PointerMove(at.X, at.Y);
+        var c = h.Frame();
+        Assert.False(Lit(c, button));
+        Assert.True(h.Ui.TargetAt(at.X, at.Y) is null, "nothing answers under the toast");
+        h.Ui.PointerDown(at.X, at.Y, 1, UiMods.None);
+        h.Ui.PointerUp(at.X, at.Y);
+        h.Frame();
+        Assert.Null(h.Ui.OpenMenuKind);
+    }
 }

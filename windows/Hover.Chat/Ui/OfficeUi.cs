@@ -334,7 +334,10 @@ public sealed partial class OfficeUi
         now = nowMs;
         pen.Cv = cv;
         targets.Clear();
+        // The layers of the last frame are kept: a button painted before a layer does not know yet that the layer comes over it.
+        (blockers, lastBlockers) = (lastBlockers, blockers);
         blockers.Clear();
+        blockerAt.Clear();
         pen.Drawn.Clear();
         Animating = false;
         NextFrameMs = double.MaxValue;
@@ -356,14 +359,31 @@ public sealed partial class OfficeUi
     /// <summary>A layer that takes the pointer (a menu, a card): what is under it does not see the pointer.</summary>
     bool overBlocker;
 
-    readonly List<Rect4> blockers = [];
+    List<Rect4> blockers = [], lastBlockers = [];
+
+    /// <summary>For each layer in <see cref="blockers"/>, how many places had been added when it came: those lie under it.</summary>
+    readonly List<int> blockerAt = [];
 
     void Add(Rect4 r, string id, int n = 0, string s = "") => targets.Add(new Target(r, id, n, s));
 
-    /// <summary>A drawn panel that takes the pointer but does nothing with it: the office behind does not see it.</summary>
-    void Block(Rect4 r) => blockers.Add(r);
+    /// <summary>A drawn panel that takes the pointer but does nothing with it: the office behind does not see it. What was added before it lies under it.</summary>
+    void Block(Rect4 r)
+    {
+        blockers.Add(r);
+        blockerAt.Add(targets.Count);
+    }
 
-    bool Over(Rect4 r) => !overBlocker && px >= 0 && r.Contains(px, py);
+    /// <summary>
+    /// The pointer is on this place and nothing drawn over it is. Layers come later in the frame than what they cover, so the
+    /// ones that are still to come are those the last frame had past the ones drawn so far.
+    /// </summary>
+    bool Over(Rect4 r)
+    {
+        if (overBlocker || px < 0 || !r.Contains(px, py)) return false;
+        for (var k = blockers.Count; k < lastBlockers.Count; k++)
+            if (lastBlockers[k].Contains(px, py)) return false;
+        return true;
+    }
 
     // MARK: The pointer and keys
 
@@ -431,7 +451,11 @@ public sealed partial class OfficeUi
     /// <summary>The target under a point, topmost first.</summary>
     public Target? TargetAt(float x, float y)
     {
-        for (var i = targets.Count - 1; i >= 0; i--)
+        // A place added before a layer that is over the point is under that layer, and does not answer.
+        var floor = 0;
+        for (var k = 0; k < blockers.Count; k++)
+            if (blockerAt[k] > floor && blockers[k].Contains(x, y)) floor = blockerAt[k];
+        for (var i = targets.Count - 1; i >= floor; i--)
             if (targets[i].Contains(x, y)) return targets[i];
         return null;
     }
