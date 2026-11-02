@@ -63,6 +63,8 @@ sealed class SettingsOverlay : Grid, IDisposable
         Visibility = Visibility.Collapsed;
         Children.Add(image);
         SizeChanged += (_, _) => ui.Invalidate();
+        // Moved to a screen with another scale (or the scale was changed): the size in DIPs can stay, the pixels do not.
+        Loaded += (_, _) => { if (XamlRoot is not null) XamlRoot.Changed += (_, _) => ui.Invalidate(); };
         PointerMoved += OnMoved;
         KeyUp += OnKeyUp;
         PointerPressed += OnPressed;

@@ -27,9 +27,9 @@ jobs:
       - uses: actions/checkout@v4
       - name: Settings from .github/sweep2-live.cfg
         run: |
-          $cfg = @{ project = 'Hover.Tests'; test = 'Sweep2AppTests'; runs = '1' }
+          $cfg = @{ project = 'Hover.Tests'; test = 'Sweep2AppTests'; runs = '1'; scale = '' }
           foreach ($line in Get-Content .github/sweep2-live.cfg) {
-            if ($line -match '^\s*(project|test|runs)\s*=\s*(\S+)\s*$') { $cfg[$Matches[1]] = $Matches[2] }
+            if ($line -match '^\s*(project|test|runs|scale)\s*=\s*(\S+)\s*$') { $cfg[$Matches[1]] = $Matches[2] }
           }
           $cfg.GetEnumerator() | ForEach-Object { "LIVE_$($_.Key.ToUpper())=$($_.Value)" } | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
           $cfg.GetEnumerator() | ForEach-Object { "$($_.Key) = $($_.Value)" }
@@ -48,6 +48,16 @@ jobs:
           go build -o out\bin\hover-data.exe ./cmd/hover-data
       - name: Build the tests
         run: dotnet build windows\$env:LIVE_PROJECT\$env:LIVE_PROJECT.csproj -c Release --nologo -v minimal
+      - name: Display scale
+        run: |
+          ./tools/set-resolution.ps1
+          "before: " + (./tools/set-scale.ps1)
+          if ($env:LIVE_SCALE) {
+            "asking: " + (./tools/set-scale.ps1 -Percent ([int]$env:LIVE_SCALE))
+            Start-Sleep -Seconds 5
+            "after: " + (./tools/set-scale.ps1)
+          }
+        continue-on-error: true
       - name: Run the live checks
         run: |
           $env:HOVER_APP_EXE = (Resolve-Path publish\hoverai.exe).Path

@@ -67,6 +67,8 @@ sealed class UiOverlay : Grid, IDisposable
         IsTabStop = true;
         Children.Add(image);
         SizeChanged += (_, _) => core.Ui.Invalidate();
+        // Moved to a screen with another scale (or the scale was changed): the size in DIPs can stay, the pixels do not.
+        Loaded += (_, _) => { if (XamlRoot is not null) XamlRoot.Changed += (_, _) => core.Ui.Invalidate(); };
 
         host.AddHandler(PointerMovedEvent, new PointerEventHandler(OnMoved), true);
         host.AddHandler(PointerPressedEvent, new PointerEventHandler(OnPressed), true);
