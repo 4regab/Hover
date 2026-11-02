@@ -83,14 +83,41 @@ public sealed partial class OfficeUi
         }
     }
 
+    /// <summary>
+    /// The HUD's glass (internal/ui/glass.go Glass): a soft shadow, a dark violet fill and a faint edge. The Go build also shows a blurred copy
+    /// of the office through it; the office is a surface of its own here, so only the fill's see-through shows it.
+    /// </summary>
+    void PaintGlass(Rect4 r, float radius)
+    {
+        for (var i = 0; i < 5; i++) pen.Box(r.X - i * 3, r.Y + 8 - i, r.W + i * 6, r.H + i * 4, radius + i * 3, Rgba.Of(0x000000, 0.05));
+        pen.Box(r, radius, new Rgba(0x16, 0x0f, 0x1e, 0xb8));
+        pen.Border(r.X, r.Y, r.W, r.H, radius, 1, new Rgba(0xff, 0xff, 0xff, 0x17));
+    }
+
+    /// <summary>The HUD's one button (internal/ui/officeview.go hud): a glass pill with the menu icon in a quiet square, and its name under it while the pointer is on it.</summary>
     void PaintMenuButton(bool compact)
     {
-        var r = new Rect4(w - 12 - 36, compact ? 8 : 10, 36, 36);
-        var hov = Over(r) || menu?.Kind == "top";
-        pen.Box(r, 11, Rgba.Of(0x0a060e, 0.8));
-        pen.Border(r.X, r.Y, r.W, r.H, 11, 1, Rgba.Of(0xffffff, hov ? 0.2 : 0.1));
-        pen.Icon(Glyphs.Menu, r.X + 10, r.Y + 10, 16, hov ? Pen.Ink : Pen.Dim);
-        Add(r, "topMenu");
+        float m = compact ? 10 : 16, bh = compact ? 32 : 40, pad = compact ? 2 : 3;
+        float sw = compact ? 28 : 34, sh = compact ? 28 : 32;
+        var glass = new Rect4(w - (sw + 2 * pad) - m, m, sw + 2 * pad, bh);
+        PaintGlass(glass, compact ? 10 : 13);
+        var inner = new Rect4(glass.X + pad, glass.Y + pad, sw, sh);
+        var open = menu?.Kind == "top";
+        var hov = Over(inner);
+        if (open) pen.Box(inner, compact ? 8 : 10, new Rgba(0xff, 0xff, 0xff, 0x1f));
+        else if (hov) pen.Box(inner, compact ? 8 : 10, new Rgba(0xff, 0xff, 0xff, 0x10));
+        var isz = compact ? 15f : 18f;
+        pen.Icon(Glyphs.Menu, inner.X + (sw - isz) / 2, inner.Y + (sh - isz) / 2, isz, hov || open ? Rgba.Of(0xf6f2ff) : new Rgba(0xf6, 0xf2, 0xff, 0x9e));
+        Add(inner, "topMenu");
+        if (!hov || open) return;
+        var tf = Pen.F(11.5, 500, Rgba.Of(0xf6f2ff));
+        var tw = pen.Width("Menu", tf);
+        var th = pen.LineHeight(tf);
+        var tx = w - (tw + 16) - m;
+        var ty = m + bh + 6;
+        pen.Box(tx, ty, tw + 16, th + 8, 7, new Rgba(0x0a, 0x06, 0x0e, 0xe6));
+        pen.Border(tx, ty, tw + 16, th + 8, 7, 1, new Rgba(0xff, 0xff, 0xff, 0x1a));
+        pen.Text("Menu", tx + 8, ty + 4, tf);
     }
 
     /// <summary>The switch between the office and the chat view: two icons in a pill.</summary>

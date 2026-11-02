@@ -58,8 +58,61 @@ public sealed partial class OfficeUi
         return 7 + lh + 1 + pen.HeightWhenWrapped(r.Note, w - 12 - 16 - (r.On ? 20 : 0), Pen.F(11, 400, Pen.Faint)) + 7;
     }
 
+    /// <summary>
+    /// The menu of the HUD's button (internal/ui/officeview.go hud): the time of day as three icons (follow the clock, night, day), then
+    /// Chill beats, Session history and Settings. Picking the time or the beats leaves the menu open; the other rows close it.
+    /// </summary>
+    void PaintTopMenu(Menu m)
+    {
+        var compact = h <= 620;
+        const float mw = 184;
+        var box = new Rect4(w - mw - (compact ? 10 : 16), compact ? 48 : 64, mw, 5 + 30 + 4 + m.Rows.Count * 32 + 5);
+        PaintGlass(box, 13);
+        Add(box, "menuBox");
+        var white = Rgba.Of(0xffffff);
+        var quiet = new Rgba(0xf6, 0xf2, 0xff, 0x9e);
+        float tx = box.X + 5, ty = box.Y + 5;
+        pen.Box(tx, ty, mw - 10, 30, 9, new Rgba(0xff, 0xff, 0xff, 0x0d));
+        var cw = (mw - 10 - 4 - 2 * 2) / 3;
+        var mode = env.TimeMode();
+        string[] times = [Glyphs.Auto, Glyphs.Night, Glyphs.Sun];
+        for (var i = 0; i < 3; i++)
+        {
+            var x = tx + 2 + i * (cw + 2);
+            var cell = new Rect4(x, ty + 2, cw, 26);
+            if (mode == i) pen.Box(cell, 7, new Rgba(0xff, 0xff, 0xff, 0x24));
+            pen.Icon(times[i], x + (cw - 15) / 2, ty + (30 - 15) / 2, 15, mode == i || Over(cell) ? white : quiet);
+            Add(cell, "menuTime", i);
+        }
+        var gold = Rgba.Of(0xffd27a);
+        var lf = Pen.F(12.5, 500, Rgba.Of(0xf6f2ff));
+        var ry = ty + 30 + 4;
+        for (var i = 0; i < m.Rows.Count; i++)
+        {
+            var row = new Rect4(box.X + 5, ry, mw - 10, 32);
+            if (Over(row)) pen.Box(row, 8, new Rgba(0xff, 0xff, 0xff, 0x17));
+            var on = m.Rows[i].Id == "beats" && env.Beats();
+            var icon = m.Rows[i].Id switch { "beats" => Glyphs.Notes, "history" => Glyphs.History, _ => Glyphs.Cog };
+            pen.Icon(icon, row.X + 8, ry + (32 - 15) / 2, 15, on ? gold : quiet);
+            pen.Text(m.Rows[i].Label, row.X + 8 + 15 + 9, ry + (32 - pen.LineHeight(lf)) / 2, lf);
+            if (on)
+            {
+                var onLook = Pen.F(11, 600, gold);
+                pen.Text("On", row.Right - 8 - pen.Width("On", onLook), ry + (32 - pen.LineHeight(onLook)) / 2, onLook);
+            }
+            Add(row, "menu", i, m.Rows[i].Label);
+            ry += 32;
+        }
+        overBlocker = false;
+    }
+
     void PaintMenu(Menu m)
     {
+        if (m.Kind == "top")
+        {
+            PaintTopMenu(m);
+            return;
+        }
         if (m.Build is not null) m.Rows = m.Build();
         var heights = m.Rows.Select(r => RowHeight(pen, r, m.W)).ToList();
         var total = 12 + heights.Sum();
@@ -123,8 +176,11 @@ public sealed partial class OfficeUi
                 break;
             case "topMenu":
                 OpenMenu("top", t.R, env.OpenSettings is null
-                    ? [new MenuRow("New task", "task"), new MenuRow("Chat view", "chat"), new MenuRow("Office view", "office")]
-                    : [new MenuRow("New task", "task"), new MenuRow("Chat view", "chat"), new MenuRow("Office view", "office"), new MenuRow("Settings", "settings")], false, 200);
+                    ? [new MenuRow("Chill beats", "beats"), new MenuRow("Session history", "history")]
+                    : [new MenuRow("Chill beats", "beats"), new MenuRow("Session history", "history"), new MenuRow("Settings", "settings")], false, 184);
+                break;
+            case "menuTime":
+                env.SetTime?.Invoke(t.N);
                 break;
             case "newChat":
                 CloseChat();
@@ -473,14 +529,20 @@ public sealed partial class OfficeUi
 
     void MenuPick(Menu m, MenuRow row)
     {
+        if (m.Kind == "top" && row.Id == "beats")
+        {
+            // The switch is turned and the menu stays open, so the row shows the change.
+            env.SetBeats?.Invoke(!env.Beats());
+            Dirty = true;
+            return;
+        }
         menu = null;
         var (tool, _, _, _, _) = TaskPicks();
         switch (m.Kind)
         {
             case "top":
-                if (row.Id == "task") { taskOpen = true; focus = Focus.Task; }
+                if (row.Id == "history") OpenOfficePanel(OfficePanel == "history" ? "" : "history");
                 else if (row.Id == "settings") env.OpenSettings?.Invoke();
-                else ChatView = row.Id == "chat";
                 break;
             case "project":
                 taskFolder = row.Id;

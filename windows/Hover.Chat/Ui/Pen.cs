@@ -151,6 +151,13 @@ public static class Glyphs
     public const string Sidebar = "<rect x=\"3\" y=\"4\" width=\"18\" height=\"16\" rx=\"3\"/><path d=\"M9 4v16\"/>";
     public const string Down = "<path d=\"M12 5v14M5 12l7 7 7-7\"/>";
     public const string Menu = "<path d=\"M4 7h16M4 12h16M4 17h16\"/>";
+    // The office menu's own icons (internal/ui/officeview.go): the time of day (follow the clock, night, day), the beats, the history.
+    public const string Auto = "<path d=\"M12 4a8 8 0 1 0 0 16 8 8 0 0 0 0-16Z M12 4a8 8 0 0 0 0 16Z\"/>";
+    public const string Night = "<path d=\"M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5Z\"/>";
+    public const string Sun = "<path d=\"M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8Z M12 2v2 M12 20v2 M4.9 4.9l1.4 1.4 M17.7 17.7l1.4 1.4 M2 12h2 M20 12h2 M4.9 19.1l1.4-1.4 M17.7 6.3l1.4-1.4\"/>";
+    public const string Notes = "<path d=\"M9 18V5l12-2v13 M6 15a3 3 0 1 0 0 6 3 3 0 0 0 0-6Z M18 13a3 3 0 1 0 0 6 3 3 0 0 0 0-6Z\"/>";
+    public const string History = "<path d=\"M3 12a9 9 0 1 0 3-6.7L3 8 M3 3v5h5 M12 7v5l3 2\"/>";
+    public const string Cog = "<path d=\"M 9.671 4.136 a 2.34 2.34 0 0 1 4.659 0 a 2.34 2.34 0 0 0 3.319 1.915 a 2.34 2.34 0 0 1 2.33 4.033 a 2.34 2.34 0 0 0 0 3.831 a 2.34 2.34 0 0 1 -2.33 4.033 a 2.34 2.34 0 0 0 -3.319 1.915 a 2.34 2.34 0 0 1 -4.659 0 a 2.34 2.34 0 0 0 -3.32 -1.915 a 2.34 2.34 0 0 1 -2.33 -4.033 a 2.34 2.34 0 0 0 0 -3.831 A 2.34 2.34 0 0 1 6.35 6.051 a 2.34 2.34 0 0 0 3.319 -1.915 M 9 12 A 3 3 0 1 0 15 12 A 3 3 0 1 0 9 12 Z\"/>";
     public const string Git = "<circle cx=\"6\" cy=\"6\" r=\"2.2\"/><circle cx=\"6\" cy=\"18\" r=\"2.2\"/><circle cx=\"18\" cy=\"8\" r=\"2.2\"/><path d=\"M6 8.2v7.6M18 10.2c0 4-6 3-11 6\"/>";
     public const string Image = "<rect x=\"3\" y=\"3\" width=\"18\" height=\"18\" rx=\"2\"/><circle cx=\"9\" cy=\"9\" r=\"2\"/><path d=\"m21 15-3.1-3.1a2 2 0 0 0-2.8 0L6 21\"/>";
     public const string Search = "<circle cx=\"11\" cy=\"11\" r=\"7\"/><path d=\"m20 20-3.5-3.5\"/>";

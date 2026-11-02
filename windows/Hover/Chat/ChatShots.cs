@@ -145,6 +145,8 @@ static class ChatShots
             // The office with the new-task circle and box.
             await Shot(core, directory, "new-task-box", 1200, 720, () => { Esc(); ui.ChatView = false; ui.CloseChat(); ui.ClearTask(); ui.Accept(State(Busy(), Finished())); S(); ui.Click("fab"); S(); ui.Char("The whole notch, explained once more."); }, office: true);
             await Shot(core, directory, "office-fab-rest", 1200, 720, () => { ui.Key(UiKey.Escape, UiMods.None); ui.Key(UiKey.Escape, UiMods.None); }, office: true);
+            // The HUD's menu (the Go picture of the same name): the time of day as three icons, then Chill beats, Session history and Settings.
+            await Shot(core, directory, "office-menu", 1200, 480, () => { ui.Click("topMenu"); }, office: true);
 
             // The questions over the bots, and in the drawer.
             await Shot(core, directory, "office-ask-over", 1200, 480, () => { Esc(); Esc(); ui.Accept(State(Busy(), Finished(), asking)); ui.ChatView = false; ui.CloseChat(); }, office: true);

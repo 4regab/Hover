@@ -73,9 +73,18 @@ sealed class PanelHarness
             Clipboard = Clip,
             PickImage = () => Pick?.Invoke(),
             ShowSettingsPage = page => OpenPage?.Invoke(page),
+            TimeMode = () => TimeMode,
+            SetTime = mode => TimeMode = mode,
+            Beats = () => BeatsOn,
+            SetBeats = on => BeatsOn = on,
+            OpenSettings = () => SettingsOpened++,
             Utc = () => new DateTime(2026, 11, 1, 7, 20, 0, DateTimeKind.Utc),
         });
     }
+
+    /// <summary>The office menu's state in the made-up app: the time of day (0 clock, 1 night, 2 day), the beats switch, and how often Settings was asked for.</summary>
+    public int TimeMode, SettingsOpened;
+    public bool BeatsOn;
 
     void Send(BackendCommand c)
     {
@@ -199,6 +208,41 @@ public class PanelTests
         Assert.Equal("full", cmd.Access);
         Assert.Null(cmd.Cloud);
         Assert.Equal("", h.Ui.TaskText);
+    }
+
+    [Fact]
+    public void The_office_menu_picks_the_time_of_day_turns_the_beats_and_opens_the_history_and_Settings()
+    {
+        var h = new PanelHarness { TimeMode = 1 };
+        h.State();
+        h.Click("topMenu");
+        Assert.Equal("top", h.Ui.OpenMenuKind);
+        Assert.Equal(["Chill beats", "Session history", "Settings"], h.Canvas.Texts.Where(t => t is "Chill beats" or "Session history" or "Settings").ToArray());
+        Assert.DoesNotContain("On", h.Canvas.Texts);
+
+        // The time of day: three icons; a pick is kept and the menu stays open.
+        Assert.True(h.Click("menuTime", 2));
+        Assert.Equal(2, h.TimeMode);
+        Assert.True(h.Click("menuTime", 0));
+        Assert.Equal(0, h.TimeMode);
+        Assert.Equal("top", h.Ui.OpenMenuKind);
+
+        // Chill beats: the switch turns, the menu stays open, and the row says On.
+        Assert.True(h.Click("menu", 0));
+        Assert.True(h.BeatsOn);
+        Assert.Equal("top", h.Ui.OpenMenuKind);
+        Assert.Contains("On", h.Frame().Texts);
+
+        // Session history closes the menu and opens the history panel; Settings closes it and asks for Settings.
+        Assert.True(h.Click("menu", 1));
+        Assert.Null(h.Ui.OpenMenuKind);
+        Assert.Equal("history", h.Ui.OfficePanel);
+        h.Ui.OpenOfficePanel("");
+        h.Frame();
+        Assert.True(h.Click("topMenu"));
+        Assert.True(h.Click("menu", 2));
+        Assert.Null(h.Ui.OpenMenuKind);
+        Assert.Equal(1, h.SettingsOpened);
     }
 
     [Fact]

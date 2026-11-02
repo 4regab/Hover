@@ -158,6 +158,12 @@ What `windows\Hover.Tests` covers:
   shortcut another program holds is reported (error 1409) and the app goes on; the tray icon is
   added, and Quit in its menu, picked with the keyboard, stops the backend with exit code 0 and
   removes the icon; closing the dashboard hides it and a second launch brings it back.
+- **The panels on the screen of the open notch** (`NotchScreenTests`, Windows, needs `HOVER_APP_EXE`): the notch is opened and
+  folded three times with Alt+N, and each time the test copies the screen (`BitBlt`, the picture Windows composes) over
+  the notch and looks for the panels' own colours at the places the dump gives: the lilac dot of the new-task button, the
+  lilac icon of the office/chat switch and the menu button's bars. The clicking checks never saw the pixels, and the
+  pictures paste the panels onto the office in software. The first round also opens the office menu with a click and
+  picks night, day and the clock, which office.json must keep. The copies and `hover.log` are in `out\notch-live`.
 - **The panels** (`PanelTests`, any system): the start screen starts a task with the tool, folder, access
   and model its pills show; the agent, where-it-runs, repository and access menus; a permission answered
   (`allow`, `trust`, `deny`) from the chat and over the bot; two questions at once answered one by one; a

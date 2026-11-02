@@ -262,6 +262,20 @@ public sealed class OfficeHost : IDisposable
     /// <summary>The beats switch was turned on or off (the new value).</summary>
     public event Action<bool>? BeatsChanged;
 
+    /// <summary>
+    /// The time of day the office menu's picker shows: 0 follows the clock, 1 night, 2 day. It is the saved <c>time</c> of office.json
+    /// from the start (the Go build keeps the same file and the same words), and follows a click on the room's window.
+    /// </summary>
+    public int TimeMode => model.ManualTime switch { null => 0, TimeOfDay.Night => 1, _ => 2 };
+
+    /// <summary>The picker was used: the room takes the time at once and office.json keeps it (0 follows the clock again).</summary>
+    public void SetTimeMode(int mode)
+    {
+        TimeOfDay? t = mode switch { 1 => TimeOfDay.Night, 2 => TimeOfDay.Day, _ => null };
+        ctl.SetTime(t);
+        store.SetTime(t);
+    }
+
     /// <summary>The drawer opened on a session: the camera goes to its bot and the wheel and drag stop moving the view.</summary>
     public void OpenDrawer(int sessionId) => ctl.Drawer(sessionId, true);
 
@@ -442,10 +456,12 @@ public sealed class OfficeHost : IDisposable
         }
         if (!notchAttached)
         {
+            // With no reference visual, insertAbove = TRUE puts the visual below all its siblings (IDCompositionVisual::AddVisual): the
+            // office is the bottom view of the notch and the panels' layers (UiLayer) go over it, whichever is added first.
             notchRoot!.AddVisual(notchVisual!, true, null!).CheckError();
             notchDevice!.Commit().CheckError();
             notchAttached = true;
-            HostLog.Line($"office: drawing in the notch ({w} x {h})");
+            HostLog.Line($"office: drawing in the notch ({w} x {h}); its view is put below the other visuals");
         }
     }
 
@@ -462,6 +478,7 @@ public sealed class OfficeHost : IDisposable
             HostLog.Line($"office: hiding the notch view failed ({e.Message})");
         }
         notchAttached = false;
+        HostLog.Line("office: its view in the notch is taken away");
     }
 
     void DropNotch()

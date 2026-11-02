@@ -112,6 +112,10 @@ sealed class UiCore : IDisposable
             Log = HostLog.Line,
             InNotch = inNotch,
             OpenSettings = () => SettingsRequested?.Invoke(),
+            TimeMode = () => office?.TimeMode ?? 0,
+            SetTime = mode => office?.SetTimeMode(mode),
+            Beats = () => office?.Beats ?? false,
+            SetBeats = on => { if (office is not null) office.Beats = on; },
             ShowSettingsPage = page => SettingsPageRequested?.Invoke(page),
             Screen = ScreenFeed = new Hover.Screening.ScreenFeed(new Hover.Screening.ScreenSource(), Images, queue),
         });
@@ -142,6 +146,8 @@ sealed class UiCore : IDisposable
             });
             office.Covered = (x, y) => Ui.Covers((float)x, (float)y);
             office.TipChanged += () => queue.TryEnqueue(() => { if (!disposed) Ui.Invalidate(); });
+            // The beats go off again when there is no sound output: the menu's row shows it.
+            office.BeatsChanged += _ => queue.TryEnqueue(() => { if (!disposed) Ui.Invalidate(); });
             Ui.OfficePanelChanged += name => office.ShowPanel(name);
             Ui.DeskChanged += id => office.MarkDeskOpen(id);
             Ui.DrawerChanged += id =>
