@@ -136,8 +136,10 @@ public class StartTaskTests
         var queue = rig.Client.Subscribe();
         Assert.True(rig.Click("noticeOk"));
         Assert.False(ui.NoticeShown);
+        // The panels asked for the settings when they started: that reply may still be on its way, and says the note is not seen. The one
+        // that counts is the first that says it is (the run 41440945992 re-run took the early one on a slow machine).
         rig.Client.Send(new SettingsCommand());
-        var settings = await queue.Until<SettingsEvent>();
+        var settings = await queue.Until<SettingsEvent>(e => e.Model.TryGetProperty("KiroNoticeSeen", out var seen) && seen.ValueKind == System.Text.Json.JsonValueKind.True);
         Assert.True(settings.Model.GetProperty("KiroNoticeSeen").GetBoolean());
         Assert.DoesNotContain("Before an agent starts", rig.Canvas.Texts);
 
