@@ -46,6 +46,18 @@ public sealed class UiEnv
     /// <summary>Opens Settings at a page by name ("kiro": the model menu's compact row); null leaves that row without effect.</summary>
     public Action<string>? ShowSettingsPage { get; init; }
 
+    /// <summary>The office's time of day for the menu's picker: 0 follows the clock, 1 night, 2 day.</summary>
+    public Func<int> TimeMode { get; init; } = () => 0;
+
+    /// <summary>The picker was used (0 follows the clock, 1 night, 2 day); null leaves the picker without effect.</summary>
+    public Action<int>? SetTime { get; init; }
+
+    /// <summary>Whether the office beats are on, for the menu's Chill beats row.</summary>
+    public Func<bool> Beats { get; init; } = () => false;
+
+    /// <summary>The Chill beats row was used (the new value); null leaves the row without effect.</summary>
+    public Action<bool>? SetBeats { get; init; }
+
     /// <summary>The panels are in the notch (a prompt over the bot is shown there) rather than the app window.</summary>
     public bool InNotch { get; init; }
 

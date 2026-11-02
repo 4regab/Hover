@@ -262,6 +262,20 @@ public sealed class OfficeHost : IDisposable
     /// <summary>The beats switch was turned on or off (the new value).</summary>
     public event Action<bool>? BeatsChanged;
 
+    /// <summary>
+    /// The time of day the office menu's picker shows: 0 follows the clock, 1 night, 2 day. It is the saved <c>time</c> of office.json
+    /// from the start (the Go build keeps the same file and the same words), and follows a click on the room's window.
+    /// </summary>
+    public int TimeMode => model.ManualTime switch { null => 0, TimeOfDay.Night => 1, _ => 2 };
+
+    /// <summary>The picker was used: the room takes the time at once and office.json keeps it (0 follows the clock again).</summary>
+    public void SetTimeMode(int mode)
+    {
+        TimeOfDay? t = mode switch { 1 => TimeOfDay.Night, 2 => TimeOfDay.Day, _ => null };
+        ctl.SetTime(t);
+        store.SetTime(t);
+    }
+
     /// <summary>The drawer opened on a session: the camera goes to its bot and the wheel and drag stop moving the view.</summary>
     public void OpenDrawer(int sessionId) => ctl.Drawer(sessionId, true);
 
