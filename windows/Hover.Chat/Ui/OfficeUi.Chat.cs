@@ -23,7 +23,9 @@ public sealed partial class OfficeUi
     Tail dragTail;
     Unit dragUnit;
     (bool Vertical, float Grab)? barDrag;
-    float replyScroll;
+    float replyScroll, replyMax;
+    (int Version, int Caret) replyFollowed;
+    Rect4 composerRect;
     (int Turn, string Kind)? confirm;
     Rect4 confirmBox;
 

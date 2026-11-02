@@ -153,5 +153,5 @@ public sealed partial class OfficeUi
     }
 
     /// <summary>The wheel over the desk's panel.</summary>
-    bool DeskWheelAt(float x, float y, float delta) => DeskWheel(x, y, delta);
+    bool DeskWheelAt(float x, float y, float delta) => DeskWheel(x, y, delta) || CardWheel(x, y, delta);
 }

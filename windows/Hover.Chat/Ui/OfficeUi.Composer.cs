@@ -32,7 +32,12 @@ public sealed partial class OfficeUi
         var area = new Rect4(cx + 2, cy + 3, iw - 4, inputH - 3);
         boxLayout = null;
         var shaped = pen.Shape(reply.Text.Length == 0 ? " " : reply.Text, look, area.W);
-        replyScroll = reply.ScrollFor(shaped, area.H, replyScroll);
+        // The caret is followed when the words or the caret moved; otherwise the place the wheel left the words in stays.
+        replyMax = Math.Max(0, shaped.Layout.Height - area.H);
+        var movedTo = (reply.Version, reply.Caret);
+        replyScroll = movedTo != replyFollowed ? reply.ScrollFor(shaped, area.H, replyScroll) : Math.Clamp(replyScroll, 0, replyMax);
+        replyFollowed = movedTo;
+        composerRect = new Rect4(bx, by, bw, compH);
         boxLayout = reply.Paint(pen, area, look, (busy ? "Queue a reply" : "Reply to " + Bots.Name(s.Bot)) + "…", foc, now, replyScroll);
         replyArea = area;
         Add(area, "replyText");

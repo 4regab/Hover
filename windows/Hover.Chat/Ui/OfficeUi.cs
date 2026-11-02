@@ -144,6 +144,9 @@ public sealed partial class OfficeUi
 
     public float ScrollY => scroll;
 
+    /// <summary>How far the reply box's words are scrolled (for the tests).</summary>
+    public float ReplyScrollY => replyScroll;
+
     /// <summary>The menu that is open, if any (its kind).</summary>
     public string? OpenMenuKind => menu?.Kind;
 
@@ -579,6 +582,13 @@ public sealed partial class OfficeUi
         if (ChatView && sideRect.Contains(x, y))
         {
             sideScroll = Math.Max(0, sideScroll - delta);
+            Dirty = true;
+            return true;
+        }
+        // Over a reply box with more lines than fit the wheel moves the words, not the thread behind it.
+        if (compose && OpenCurrent() && replyMax > 0 && composerRect.Contains(x, y))
+        {
+            replyScroll = Math.Clamp(replyScroll - delta, 0, replyMax);
             Dirty = true;
             return true;
         }

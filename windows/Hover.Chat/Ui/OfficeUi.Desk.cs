@@ -112,6 +112,7 @@ public sealed partial class OfficeUi
         taskOpen = false;
         deskCard = id;
         deskPanel = null;
+        nowScroll.ToStart();
         ChatView = false;
         deskForce = true;
         CardBox(id).SetText(cardDrafts.GetValueOrDefault(id, ""));
@@ -141,6 +142,7 @@ public sealed partial class OfficeUi
         if (deskPanel != id || deskTab != tab) deskScroll = 0;
         deskPanel = id;
         deskTab = tab;
+        tabFollowed = "";
         deskMenuOpen = false;
         deskForce = true;
         deskFocusPending = tab == "terminal";
@@ -679,7 +681,9 @@ public sealed partial class OfficeUi
                     if (key == UiKey.Down) { DeskTermHistory(1); return true; }
                 }
             }
-            if (key == UiKey.Escape && focus != Focus.Desk) { CloseDeskPanel(); return true; }
+            // Escape leaves a box of the panel first (the terminal's prompt, the find box, the pull request form); then it closes the panel.
+            if (key == UiKey.Escape && focus == Focus.Desk) { focus = Focus.None; return true; }
+            if (key == UiKey.Escape) { CloseDeskPanel(); return true; }
         }
         if (deskCard is { } cid && DeskSession(cid) is { } s)
         {

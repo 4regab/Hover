@@ -7,7 +7,9 @@ public sealed partial class OfficeUi
 {
     // The desk panel (desk.slint, internal/ui/deskpanel.go and deskrows.go): the surfaces as tabs along the top, and the one shown.
 
-    float deskScroll, tabOff, listW = 640, lastTotal, lastListH;
+    float deskScroll, tabOff, tabMax, listW = 640, lastTotal, lastListH;
+    string tabFollowed = "";
+    Rect4 deskTabsRect;
     bool deskFocusPending;
     Laid? panelLaid;
     (int Ver, string Tab, int W, int Id, bool Prefs)? laidSig;
@@ -231,7 +233,10 @@ public sealed partial class OfficeUi
         }
         total = Math.Max(total - 2, 0);
         float left = 0;
-        for (var i = 0; i < shown.Count; i++)
+        // The open tab is brought into view when it changes; after that the wheel's place stays.
+        var follow = deskTab != tabFollowed;
+        tabFollowed = deskTab;
+        for (var i = 0; follow && i < shown.Count; i++)
         {
             if (shown[i].Id == deskTab)
             {
@@ -240,7 +245,9 @@ public sealed partial class OfficeUi
             }
             left += widths[i] + 2;
         }
-        tabOff = Math.Clamp(tabOff, 0, Math.Max(0, total - avail));
+        tabMax = Math.Max(0, total - avail);
+        tabOff = Math.Clamp(tabOff, 0, tabMax);
+        deskTabsRect = new Rect4(r.X, r.Y, r.W, 52);
         pen.Cv.PushClip(new Rect4(r.X + 10, r.Y, avail, 52));
         var cx = r.X + 10 - tabOff;
         for (var i = 0; i < shown.Count; i++)
@@ -390,6 +397,16 @@ public sealed partial class OfficeUi
     {
         if (deskPanel is null) return false;
         if (!DeskPanelRect.Contains(x, y)) return false;
+        // Over the tab strip the wheel moves the tabs sideways when they do not all fit, and otherwise does nothing.
+        if (deskTabsRect.Contains(x, y))
+        {
+            if (tabMax > 0)
+            {
+                tabOff = Math.Clamp(tabOff - delta, 0, tabMax);
+                Dirty = true;
+            }
+            return true;
+        }
         if (deskListRect.Contains(x, y) || deskTab is "pr" or "terminal")
         {
             var max = deskTab == "pr" && Got(deskPanel.Value, "pr")["none"].Bool() ? Math.Max(0, prContent - prView) : Math.Max(0, (panelLaid?.Total ?? 0) - deskListRect.H);
