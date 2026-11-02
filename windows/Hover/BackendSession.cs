@@ -15,6 +15,9 @@ public sealed class BackendSession : IAsyncDisposable
     /// <summary>One line for the dashboard: starting, ready, or why not.</summary>
     public string Status { get; private set; } = "Starting the agent backend…";
 
+    /// <summary>What is wrong with the backend, or null while it starts or runs well. The app window shows it in its title bar and shows nothing otherwise.</summary>
+    public string? Problem { get; private set; }
+
     /// <summary>True once the backend answered <c>initialize</c>.</summary>
     public bool Ready { get; private set; }
 
@@ -35,7 +38,7 @@ public sealed class BackendSession : IAsyncDisposable
         var exe = BackendOptions.BesideApp();
         if (!File.Exists(exe))
         {
-            Update($"The agent backend is missing: {exe}");
+            Update($"The agent backend is missing: {exe}", problem: true);
             return;
         }
 
@@ -44,7 +47,7 @@ public sealed class BackendSession : IAsyncDisposable
             client = BackendClient.Start(new BackendOptions { ExecutablePath = exe, DataDir = dataDir });
             HostLog.Line($"backend started (pid {client.ProcessId})");
             client.Event += OnEvent;
-            client.Exited += code => Update($"The agent backend stopped ({code}).");
+            client.Exited += code => Update($"The agent backend stopped ({code}).", problem: true);
             // The Discord status is the app's (Hover.Settings' DiscordPresence), so the backend runs no client of its own; Kiro's
             // credits by day are kept from the start, for Settings → Kiro.
             await client.InitializeAsync(key, hostDiscord: true, credits: true);
@@ -52,11 +55,11 @@ public sealed class BackendSession : IAsyncDisposable
             // The settings the notch follows, and the first look at the tools and the quotas.
             client.Send(new SettingsCommand());
             client.Send(new ReadyCommand());
-            Update(key is null ? "The agent backend is ready. The history is off this run: its key could not be read." : "The agent backend is ready.");
+            Update(key is null ? "The agent backend is ready. The history is off this run: its key could not be read." : "The agent backend is ready.", problem: key is null);
         }
         catch (Exception e) when (e is BackendException or InvalidOperationException or System.ComponentModel.Win32Exception)
         {
-            Update($"The agent backend did not start: {e.Message}");
+            Update($"The agent backend did not start: {e.Message}", problem: true);
         }
     }
 
@@ -66,10 +69,11 @@ public sealed class BackendSession : IAsyncDisposable
         Event?.Invoke(e);
     }
 
-    void Update(string status)
+    void Update(string status, bool problem = false)
     {
         HostLog.Line($"backend: {status}");
         Status = status;
+        Problem = problem ? status : null;
         Changed?.Invoke();
     }
 
