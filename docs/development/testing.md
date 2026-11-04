@@ -236,6 +236,13 @@ What `windows\Hover.Tests` covers:
   Ctrl+Z, Ctrl+Y and Ctrl+Shift+Z in the text boxes of the panels and of Settings (`EditBox`, a step is a word or a pause, a run of Backspace, a paste or a cut).
   `SweepTests` holds the card places to the window now (a question no longer reaches past it). The notch card's wrapped command and dim path are
   drawn only on Windows, so they are checked by the pictures `notch-rest-card-long-2x` and `notch-rest-card-diff-2x` (the job checks they are made).
+- **Sweep 4, every picture looked at** (`SweepTests` rule "switch", any system; reports/sweep4.md): the chat view drops the office/chat switch when the
+  list is hidden over an open chat (Go's rule), so the header's show-list button and the title are clear; the sweep now has the states "chat view: done,
+  list hidden" and "chat view: start, list hidden", and a rule that no word or button lies under the switch (it failed on the old code with the title,
+  the show-list button and the rename place under the switch). Faded buttons and icons are faded on screen (`D2DCanvas` ignored the fade before, so a
+  disabled button looked live; the pictures `desk-tab-pr-creating` and the dim sidebar icons show it). Menus are solid, the Delete row and the Restore
+  button are red as in Go, the start screen's menus open below their pills with the Go words and icons, and a toast no longer leaks into the next picture.
+  The sidebar and file pictures start from the same state as Go's (an open chat; the tree, not the find words).
 - **The window's smallest size** (`WindowSizeAppTests`, Windows, needs `HOVER_APP_EXE`): the app window answers the
   system's `WM_GETMINMAXINFO` with 880 x 480 scaled by the display, and stays that size when asked for 300 x 200.
 - **The pointer's shape** (`PointerShapeAppTests`, Windows, needs `HOVER_APP_EXE`): the real cursor (`GetCursorInfo`) over the app
