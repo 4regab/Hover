@@ -36,13 +36,18 @@ public class SettingsAppTests(ITestOutputHelper output)
         public readonly string Data, Dump;
         public readonly Process App;
 
-        public Session(params string[] args)
+        public Session(params string[] args) : this(null, args) { }
+
+        public Session(Dictionary<string, string>? env, params string[] args)
         {
             Data = Directory.CreateTempSubdirectory("hover-settings-app.").FullName;
             Dump = Path.Combine(Data, "ui-dump.json");
+            // The first-task note stands over the office until it is answered; these checks click the office's menu button.
+            File.WriteAllText(Path.Combine(Data, "settings.json"), """{"KiroNoticeSeen": true}""");
             var info = new ProcessStartInfo(AppExe!, args) { UseShellExecute = false, WorkingDirectory = Path.GetDirectoryName(AppExe!)! };
             info.Environment["HOVER_DATA_DIR"] = Data;
             info.Environment["HOVER_UI_DUMP"] = Dump;
+            foreach (var (name, value) in env ?? []) info.Environment[name] = value;
             App = Process.Start(info)!;
         }
 
@@ -318,6 +323,24 @@ public class SettingsAppTests(ITestOutputHelper output)
         if (AppExe is null) { output.WriteLine("HOVER_APP_EXE is not set: the real-app checks are not asked for."); return; }
         SetCursorPos(5, 5);
         using var s = new Session();
+        await SettingsOpenInTheNotch(s);
+    }
+
+    /// <summary>
+    /// The office's graphics device takes 700 ms to make, longer than the notch's 560 ms opening (WARP's took 390 to 510 ms on a cold
+    /// runner, and the notch stayed open with no panels). The panels must come up all the same.
+    /// </summary>
+    [WindowsFact]
+    public async Task Settings_open_in_the_open_notch_after_a_slow_first_office_frame()
+    {
+        if (AppExe is null) { output.WriteLine("HOVER_APP_EXE is not set: the real-app checks are not asked for."); return; }
+        SetCursorPos(5, 5);
+        using var s = new Session(new Dictionary<string, string> { ["HOVER_SLOW_OFFICE_MS"] = "700" });
+        await SettingsOpenInTheNotch(s);
+    }
+
+    async Task SettingsOpenInTheNotch(Session s)
+    {
         string Why() => "log:\n" + s.Log() + "\nnotch: " + s.Read()?["notch"]?["texts"]?.ToJsonString();
         await UntilTrue(() => s.Log().Contains("hotkey Alt+N registered"), "the notch shortcut", output, Why, 60_000);
         await Task.Delay(500);

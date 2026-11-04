@@ -24,8 +24,86 @@ static class Dialogs
 
     const uint ReturnOnlyFileSystemFolders = 0x1, EditBox = 0x10, NewDialogStyle = 0x40;
 
+    // The system's own folder picker (IFileOpenDialog), the one the Go app uses (internal/platform/win/pick.go): the Explorer-style window
+    // with the address bar and the search, not the small tree the old SHBrowseForFolder shows.
+    [ComImport, Guid("DC1C5A9C-E88A-4DDE-A5A1-60F82A20AEF7")] class FileOpenDialog { }
+
+    [ComImport, Guid("43826d1e-e718-42ee-bc55-a1e261c37bfe"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    interface IShellItem
+    {
+        void BindToHandler(nint context, ref Guid handler, ref Guid iid, out nint result);
+        void GetParent(out IShellItem parent);
+        void GetDisplayName(uint form, [MarshalAs(UnmanagedType.LPWStr)] out string name);
+    }
+
+    // The slots are in the interface's own order (IModalWindow, then IFileDialog); only the ones used have real signatures.
+    [ComImport, Guid("d57c7288-d4ad-4768-be02-9d969532d960"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    interface IFileOpenDialog
+    {
+        [PreserveSig] int Show(nint owner);
+        void SetFileTypes(uint count, nint specs);
+        void SetFileTypeIndex(uint index);
+        void GetFileTypeIndex(out uint index);
+        void Advise(nint events, out uint cookie);
+        void Unadvise(uint cookie);
+        void SetOptions(uint options);
+        void GetOptions(out uint options);
+        void SetDefaultFolder(IShellItem item);
+        void SetFolder(IShellItem item);
+        void GetFolder(out IShellItem item);
+        void GetCurrentSelection(out IShellItem item);
+        void SetFileName([MarshalAs(UnmanagedType.LPWStr)] string name);
+        void GetFileName([MarshalAs(UnmanagedType.LPWStr)] out string name);
+        void SetTitle([MarshalAs(UnmanagedType.LPWStr)] string title);
+        void SetOkButtonLabel([MarshalAs(UnmanagedType.LPWStr)] string text);
+        void SetFileNameLabel([MarshalAs(UnmanagedType.LPWStr)] string text);
+        void GetResult(out IShellItem item);
+    }
+
+    const uint PickFolders = 0x20, ForceFileSystem = 0x40, FileSystemPath = 0x80058000;
+
+    /// <summary>The window the dialog belongs to: the one with the keyboard, else the one in front, so that it opens over the notch and not under it.</summary>
+    static nint Owner()
+    {
+        var active = GetActiveWindow();
+        return active != 0 ? active : GetForegroundWindow();
+    }
+
+    [DllImport("user32.dll")] static extern nint GetForegroundWindow();
+
     /// <summary>A folder the user picked, or null when the dialog was cancelled.</summary>
     public static string? Folder(string title)
+    {
+        _ = OleInitialize(0);
+        try
+        {
+            var dialog = (IFileOpenDialog)new FileOpenDialog();
+            try
+            {
+                dialog.GetOptions(out var options);
+                dialog.SetOptions(options | PickFolders | ForceFileSystem);
+                dialog.SetTitle(title);
+                // Cancelled is an HRESULT, not a failure.
+                if (dialog.Show(Owner()) < 0) return null;
+                dialog.GetResult(out var item);
+                try
+                {
+                    item.GetDisplayName(FileSystemPath, out var path);
+                    return string.IsNullOrEmpty(path) ? null : path;
+                }
+                finally { Marshal.ReleaseComObject(item); }
+            }
+            finally { Marshal.ReleaseComObject(dialog); }
+        }
+        catch (Exception e) when (e is COMException or InvalidCastException or MarshalDirectiveException)
+        {
+            // No picker on this system (a stripped-down Windows): the older folder window still works.
+            Hover.Host.HostLog.Line($"folder dialog: the system's picker could not be made, using the older one — {e.Message}");
+            return FolderOlder(title);
+        }
+    }
+
+    static string? FolderOlder(string title)
     {
         _ = OleInitialize(0);
         var name = Marshal.AllocHGlobal(520 * 2);
@@ -101,8 +179,9 @@ static class SystemTheme
         try
         {
             using var key = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize");
-            return key?.GetValue("AppsUseLightTheme") is int light ? light == 0 : true;
+            // With no value Windows is light (the Go app reads it so: core.SystemLook).
+            return key?.GetValue("AppsUseLightTheme") is int light && light == 0;
         }
-        catch (Exception e) when (e is System.Security.SecurityException or UnauthorizedAccessException or IOException) { return true; }
+        catch (Exception e) when (e is System.Security.SecurityException or UnauthorizedAccessException or IOException) { return false; }
     }
 }

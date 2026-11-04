@@ -52,6 +52,7 @@ sealed partial class NotchHost : IDisposable
     readonly Stopwatch clock = Stopwatch.StartNew();
     readonly Tween rise = new(), fade = new();
     readonly DispatcherQueueTimer pollTimer, animTimer, secondTimer, glowTimer;
+    readonly FramePump pump = new();
     NotchSwapChain? surface;
     NotchSettings settings = NotchSettings.Default;
     StateEvent? state;
@@ -142,12 +143,13 @@ sealed partial class NotchHost : IDisposable
         window.Deactivated += () => Guard("deactivate", Deactivated);
         window.TrayLeftClick += () => Guard("tray", callbacks.OpenDashboard);
         window.TrayPick += i => Guard("tray menu", () => TrayPick(i));
-        window.Pressed += (x, y) => Guard("press", () => { ctl.Stay(); if (VoicePressed(x, y)) return; if (CfgPressed(x, y)) return; if (!PanelsPressed(x, y)) office?.NotchPressed(x, y); });
+        window.Pressed += (x, y) => Guard("press", () => { ctl.Stay(); if (VoicePressed(x, y)) return; if (CfgPressed(x, y)) return; if (!PanelsPressed(x, y) && !PanelsCover(x, y)) office?.NotchPressed(x, y); });
         window.Released += (x, y) => Guard("click", () => { if (VoiceReleased(x, y)) return; if (CfgReleased(x, y)) return; PanelsReleased(x, y); Clicked(x, y); office?.NotchReleased(x, y); });
         window.Char += text => Guard("text", () => { if (VoiceChar(text)) { QueueRender(); return; } if (CfgChar(text)) return; if (panels?.Ui.Char(text) == true) QueueRender(); });
         if (panels is not null) panels.Changed += () => Guard("panels", () => { QueueRender(); EnsureAnimating(); });
         window.Wheel += delta => Guard("wheel", () => { if (!VoiceWheel(delta) && !CfgWheel(delta) && !PanelsWheel(delta)) office?.NotchWheel(delta); });
         window.KeyDown += vk => Guard("key", () => { if (VoiceKey(vk)) return; if (CfgKey(vk)) return; if (!PanelsKey(vk)) { KeyPressed(vk); office?.NotchKey(vk); } });
+        window.KeyUp += vk => Guard("key up", () => CfgKeyUp(vk));
         backend.Event += e => queue.TryEnqueue(() => Guard("message", () => OnBackend(e)));
         VoiceStart();
 
@@ -239,11 +241,26 @@ sealed partial class NotchHost : IDisposable
         {
             "Dark" => true,
             "Light" => false,
-            // The system's choice for apps: 1 is light; no value is read as dark.
-            _ => Registry.GetValue(@"HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize", "AppsUseLightTheme", null) is not int light || light == 0,
+            // The system's choice for apps; with none made, Windows is light (as the Go app reads it).
+            _ => Hover.Configuring.SystemTheme.IsDark(),
         };
         scene.Dark = dark;
         scene.Panel = dark ? 0x000000u : 0xf2f2f7u;
+    }
+
+    /// <summary>Windows switched between light and dark while Hover runs.</summary>
+    public void ThemeChanged()
+    {
+        if (disposed || settings.Appearance is "Dark" or "Light") return;
+        ApplyAppearance();
+        QueueRender();
+    }
+
+    /// <summary>A line from the tray icon (a balloon).</summary>
+    public void Tell(string title, string text)
+    {
+        HostLog.Line($"tray balloon: {title} — {text}");
+        window.TrayNotify(title, text);
     }
 
     // MARK: The shortcut
@@ -342,20 +359,32 @@ sealed partial class NotchHost : IDisposable
         QueueRender();
     }
 
+    /// <summary>A press at a place the panels drew over (a card, a toast, a gap in a list) is theirs even when nothing there answers it: the office behind must not take it as a click on its floor.</summary>
+    bool PanelsCover(int px, int py) => PanelsOpen && PanelPoint(px, py) is { } p && panels!.Ui.Covers(p.X, p.Y);
+
     bool PanelsWheel(int delta)
     {
         if (!PanelsOpen) return false;
         var (cx, cy) = window.Cursor();
         if (PanelPoint((int)(cx - ctl.Window.Left), (int)(cy - ctl.Window.Top)) is not { } p) return false;
-        var used = panels!.Ui.Wheel(p.X, p.Y, delta / 120f * 90f);
+        // With Shift held the wheel scrolls the code box or table under the pointer sideways.
+        if ((GetKeyState(VK_SHIFT) & 0x8000) != 0)
+        {
+            var sideways = panels!.Ui.WheelSideways(p.X, p.Y, OfficeUi.WheelDips(delta));
+            if (sideways) { QueueRender(); EnsureAnimating(); }
+            return sideways || panels.Ui.Covers(p.X, p.Y);
+        }
+        var used = panels!.Ui.Wheel(p.X, p.Y, OfficeUi.WheelDips(delta));
         if (used) { QueueRender(); EnsureAnimating(); }
-        return used;
+        // Over a card, a box or a toast of the panels the wheel is not the office's: it would zoom the room behind them.
+        return used || panels.Ui.Covers(p.X, p.Y);
     }
 
     bool PanelsKey(int vk)
     {
         if (!PanelsOpen || cardOpen) return false;
-        var used = panels!.Ui.Key(KeyMap.Of(vk), KeyMap.Mods(GetKeyState));
+        var mods = KeyMap.Mods(GetKeyState);
+        var used = panels!.Ui.Key(KeyMap.Of(vk), mods) || panels.Ui.TakesPlainKey(mods);
         SyncKeys();
         QueueRender();
         EnsureAnimating();
@@ -494,18 +523,31 @@ sealed partial class NotchHost : IDisposable
         ctl.Shape();
         UpdateHover();
         EnsureAnimating();
+        DiagWatch();
     }
 
     void UpdateHover()
     {
         CfgHover();
+        var shape = 0;
         if (PanelsOpen && ctl.Over)
         {
             var (cx, cy) = window.Cursor();
-            if (PanelPoint((int)(cx - ctl.Window.Left), (int)(cy - ctl.Window.Top)) is { } pt) panels!.Ui.PointerMove(pt.X, pt.Y);
+            if (PanelPoint((int)(cx - ctl.Window.Left), (int)(cy - ctl.Window.Top)) is { } pt)
+            {
+                panels!.Ui.PointerMove(pt.X, pt.Y);
+                shape = (int)panels.Ui.CursorAt(pt.X, pt.Y);
+            }
             else panels!.Ui.PointerLeave();
             if (panels.Ui.Dirty) QueueRender();
         }
+        // Settings, over the office, has the pointer's shape of its own: the hand over a control, the text cursor over a box.
+        else if (CfgOpen && ctl.Over && cfg is not null)
+        {
+            var (cx, cy) = window.Cursor();
+            if (CfgPoint((int)(cx - ctl.Window.Left), (int)(cy - ctl.Window.Top)) is { } pt) shape = (int)cfg.NotchUi.CursorAt(pt.X, pt.Y);
+        }
+        window.CursorShape = shape;
         string? hovered = null;
         if (ctl.Over)
         {
@@ -752,6 +794,7 @@ sealed partial class NotchHost : IDisposable
     void Render()
     {
         if (surface is null || disposed) return;
+        var began = UiDump.On ? Stopwatch.GetTimestamp() : 0;
         FillScene();
         VoiceFrame();
         scene.OfficeDrawn = office?.DrawsInNotch == true;
@@ -767,6 +810,7 @@ sealed partial class NotchHost : IDisposable
             office.UpdateNotch(new NotchSlot(window.Handle, gfx.Device, composition, root, new OfficeRect(ax, ay, aw, ah), ctl.Scale,
                 new OfficeRect(scene.ShapeX, 0, scene.ShapeW, scene.ShapeH), scene.ShapeR, scene.ViewOpacity, scene.ViewVisible));
         }
+        if (began != 0) DiagFrame(began);
     }
 
     // MARK: Animation
@@ -781,17 +825,26 @@ sealed partial class NotchHost : IDisposable
 
     double FrameMs => Moving ? 16 : Turning ? 33 : PanelsMoving ? Math.Clamp(PanelsOpen ? panels!.Ui.NextFrameMs : cfg!.NotchUi.NextFrameMs, 16, 500) : 33;
 
+    bool Busy => Moving || Turning || PanelsMoving;
+
     void EnsureAnimating()
     {
-        if (!Moving && !Turning && !PanelsMoving) return;
+        if (!Busy) return;
         animTimer.Interval = TimeSpan.FromMilliseconds(FrameMs);
         if (!animTimer.IsRunning) animTimer.Start();
     }
 
+    // The first frame with the office makes a graphics device, which can outlast the whole opening; its picture of the clock is then old.
+    // The timer stops only after a frame that began when nothing moved (the panels come up in such a frame, not in the one before).
     void Animate()
     {
+        pump.Begin(Busy);
         Render();
-        if (!Moving && !Turning && !PanelsMoving) animTimer.Stop();
+        if (pump.CanStop(Busy))
+        {
+            animTimer.Stop();
+            DiagStopped();
+        }
         else animTimer.Interval = TimeSpan.FromMilliseconds(FrameMs);
     }
 

@@ -24,6 +24,9 @@ public static class Program
 
         var launch = LaunchOptions.Parse(args);
 
+        // Before the data folder and the claim: it only asks the running copy to end, and waits.
+        if (launch.Quit) return InstanceLock.AskToQuit(TimeSpan.FromSeconds(20)) ? 0 : 1;
+
         string dataDir;
         try
         {
@@ -40,7 +43,7 @@ public static class Program
         InstanceLock? instance = null;
         if (launch.ShotsDirectory is null)
         {
-            instance = InstanceLock.Claim(App.RequestDashboard);
+            instance = InstanceLock.Claim(App.RequestDashboard, onQuit: App.RequestQuit);
             // Another copy runs, and has been asked to open its dashboard.
             if (instance is null) return 0;
         }

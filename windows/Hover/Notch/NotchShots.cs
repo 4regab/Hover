@@ -72,6 +72,14 @@ static class NotchShots
         var asking = Session(1, "kiro", "waiting", "Reading", ask: NpmInstall);
         yield return new Shot("notch-rest-ask-2x", 2, 60, Make([asking]), T: 0.4, Glow: 0xffb340);
         yield return new Shot("notch-rest-card-2x", 2, 220, Make([asking], card: true), NpmCard, 0.4, Glow: 0xffb340);
+        // A long command breaks at any character and the box grows with it; the path over a change is dim.
+        var longCommand = "npm install three@0.171.0 --save-exact --prefix ./packages/renderer/very/long/path/that/has/no/spaces/at/all --registry https://registry.example.com/";
+        yield return new Shot("notch-rest-card-long-2x", 2, 260, Make([asking], card: true), NpmCard with { Command = longCommand }, 0.4, Glow: 0xffb340);
+        yield return new Shot("notch-rest-card-diff-2x", 2, 240, Make([asking], card: true), NpmCard with
+        {
+            Title = "Wants to edit a file", Command = "", Path = "src/components/LayoutManager.tsx", Reason = "Changes 2 lines", Allow = "Allow",
+            Preview = [new PreviewLine("function layout(rows) {", 0), new PreviewLine("  return rows.map(old);", -1), new PreviewLine("  return rows.map(next);", 1)],
+        }, 0.4, Glow: 0xffb340);
         yield return new Shot("notch-open-office", 1, 480, Make([]), Openness: 1, Panels: ui =>
         {
             ui.Accept(Hover.Chatting.ChatShots.State(Hover.Chatting.ChatShots.Busy(), Hover.Chatting.ChatShots.Finished()));
@@ -130,6 +138,8 @@ static class NotchShots
                 if (shot.Panels is { } setup && panels is not null)
                 {
                     panels.FreezeState = true;
+                    // The first-task note is not part of these pictures (the data folder of --shots has never seen it).
+                    panels.Ui.Accept(new Hover.Host.Protocol.PreferencesEvent { NoticeSeen = true });
                     setup(panels.Ui);
                     // The Markdown and the colours come from the backend; wait for them.
                     for (var i = 0; i < 40; i++)

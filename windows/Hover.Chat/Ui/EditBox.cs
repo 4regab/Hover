@@ -20,6 +20,69 @@ public sealed class EditBox
 
     double lastInput;
 
+    // MARK: Undo
+
+    /// <summary>What an edit was: typing, backspace and Delete of one character each join the edit before them; anything else is a step of its own.</summary>
+    enum EditKind { Typing, Back, Fwd, Other }
+
+    sealed record Snap(string Text, int Caret, int Anchor);
+
+    /// <summary>A pause this long between two edits starts a new undo step.</summary>
+    const double UndoPauseMs = 1000;
+
+    const int UndoDepth = 200;
+
+    readonly List<Snap> undoStack = [], redoStack = [];
+
+    /// <summary>The edit before is still open: the next one of the same kind, soon enough and at the caret it left, joins it.</summary>
+    bool editOpen;
+    EditKind openKind;
+    double openAt;
+    int openCaret;
+
+    public bool CanUndo => undoStack.Count > 0;
+
+    public bool CanRedo => redoStack.Count > 0;
+
+    /// <summary>
+    /// Takes back the last step: a run of typing up to a word (and the spaces after it) or to a pause, a run of Backspace or Delete, a
+    /// paste, a cut, or any replaced selection. False when there is nothing to take back.
+    /// </summary>
+    public bool Undo(double now = 0) => Step(undoStack, redoStack, now);
+
+    /// <summary>Puts back what <see cref="Undo"/> took.</summary>
+    public bool Redo(double now = 0) => Step(redoStack, undoStack, now);
+
+    bool Step(List<Snap> from, List<Snap> to, double now)
+    {
+        if (from.Count == 0) return false;
+        to.Add(new Snap(Text, Caret, Anchor));
+        var s = from[^1];
+        from.RemoveAt(from.Count - 1);
+        Text = s.Text;
+        Caret = s.Caret;
+        Anchor = s.Anchor;
+        editOpen = false;
+        lastInput = now;
+        Version++;
+        return true;
+    }
+
+    /// <summary>Notes the step an edit begins (or joins), before the words change.</summary>
+    void Remember(EditKind kind, double now, string typed, int at, int caret, int anchor)
+    {
+        var startsWord = kind == EditKind.Typing && typed.Length > 0 && !char.IsWhiteSpace(typed[0]) && at > 0 && char.IsWhiteSpace(Text[at - 1]);
+        var join = editOpen && kind == openKind && kind != EditKind.Other && now - openAt <= UndoPauseMs && caret == openCaret && !startsWord;
+        if (!join)
+        {
+            undoStack.Add(new Snap(Text, caret, anchor));
+            if (undoStack.Count > UndoDepth) undoStack.RemoveAt(0);
+        }
+        redoStack.Clear();
+        openKind = kind;
+        openAt = now;
+    }
+
     public bool HasSelection => Caret != Anchor;
 
     public (int A, int Z) Selection => (Math.Clamp(Math.Min(Caret, Anchor), 0, Text.Length), Math.Clamp(Math.Max(Caret, Anchor), 0, Text.Length));
@@ -31,6 +94,10 @@ public sealed class EditBox
         Text = Clean(text);
         Caret = Anchor = caretAtEnd ? Text.Length : 0;
         Version++;
+        // Words put in by the program (a draft coming back, a box emptied by a send) are not something to undo.
+        undoStack.Clear();
+        redoStack.Clear();
+        editOpen = false;
     }
 
     public void Clear() => SetText("");
@@ -47,7 +114,9 @@ public sealed class EditBox
     }
 
     /// <summary>Replaces the selection (or inserts at the caret) with the text.</summary>
-    public void Insert(string s, double now = 0)
+    public void Insert(string s, double now = 0) => Edit(s, now, !HasSelection && s.Length is > 0 and <= 2 ? EditKind.Typing : EditKind.Other, null);
+
+    void Edit(string s, double now, EditKind kind, (int Caret, int Anchor)? before)
     {
         s = Clean(s);
         if (s.Length == 0 && !HasSelection) return;
@@ -55,37 +124,50 @@ public sealed class EditBox
         var room = MaxLength - (Text.Length - (z - a));
         if (room <= 0) return;
         if (s.Length > room) s = s[..room];
-        Text = Text[..a] + s + Text[z..];
+        var next = Text[..a] + s + Text[z..];
+        if (next != Text) Remember(kind, now, s, a, before?.Caret ?? Caret, before?.Anchor ?? Anchor);
+        Text = next;
         Caret = Anchor = a + s.Length;
         lastInput = now;
         Version++;
+        editOpen = true;
+        openCaret = Caret;
     }
 
     public void Backspace(bool word, double now = 0)
     {
+        var kind = EditKind.Back;
+        var before = (Caret, Anchor);
         if (!HasSelection)
         {
             if (Caret == 0) return;
             Anchor = word ? WordLeft(Caret) : Step(Caret, -1);
+            if (word) kind = EditKind.Other;
         }
-        Insert("", now);
+        else kind = EditKind.Other;
+        Edit("", now, kind, before);
     }
 
     public void Delete(bool word, double now = 0)
     {
+        var kind = EditKind.Fwd;
+        var before = (Caret, Anchor);
         if (!HasSelection)
         {
             if (Caret >= Text.Length) return;
             Anchor = word ? WordRight(Caret) : Step(Caret, 1);
             (Caret, Anchor) = (Anchor, Caret);
+            if (word) kind = EditKind.Other;
         }
-        Insert("", now);
+        else kind = EditKind.Other;
+        Edit("", now, kind, before);
     }
 
     public void SelectAll()
     {
         Anchor = 0;
         Caret = Text.Length;
+        editOpen = false;
     }
 
     /// <summary>The selection is taken out and returned (a cut).</summary>
@@ -151,6 +233,7 @@ public sealed class EditBox
         Anchor = Math.Clamp(Anchor, 0, Text.Length);
         if (!shift) Anchor = Caret;
         lastInput = now;
+        editOpen = false;
     }
 
     static int LineOf(ShapedText? l, int i)
@@ -184,6 +267,7 @@ public sealed class EditBox
     {
         var i = Math.Clamp(layout.Layout.IndexAt(x, y), 0, Text.Length);
         lastInput = now;
+        editOpen = false;
         if (clicks >= 3)
         {
             var k = LineOf(layout, i);

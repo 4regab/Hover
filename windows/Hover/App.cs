@@ -47,6 +47,7 @@ public sealed class App : Application, IXamlMetadataProvider
     SettingsPane? configuring;
     DiscordHost? discord;
     bool quitting;
+    string? told;
 
     public App(LaunchOptions launch, string dataDir)
     {
@@ -80,6 +81,17 @@ public sealed class App : Application, IXamlMetadataProvider
             }
         }
         app.queue.TryEnqueue(app.OpenDashboard);
+    }
+
+    /// <summary><c>hoverai.exe --quit</c> was run: Hover ends in order. Callable from any thread.</summary>
+    public static void RequestQuit()
+    {
+        HostLog.Line("a quit was asked for (hoverai.exe --quit)");
+        App? app;
+        lock (Gate) app = current;
+        // Before the app is up there is nothing to end in order; the process ends.
+        if (app?.queue is null) Environment.Exit(0);
+        else app.queue.TryEnqueue(() => _ = app.QuitAsync());
     }
 
     protected override void OnLaunched(LaunchActivatedEventArgs args)
@@ -144,6 +156,15 @@ public sealed class App : Application, IXamlMetadataProvider
             {
                 notch = NotchHost.TryStart(queue!, backend, new NotchCallbacks(OpenDashboard, () => _ = QuitAsync(), () => dashboard?.IsActive == true, OpenSettings), office, gfx, panels);
                 if (notch is not null && configuring is not null) notch.AttachSettings(configuring);
+                // Windows' light or dark can change while Hover runs: the notch follows it with Settings.
+                if (configuring is not null) configuring.SystemThemeChanged += () => notch?.ThemeChanged();
+                // A backend that is gone leaves nothing to show in the notch: the tray says so once (the app window's bar says it too).
+                if (notch is not null) backend.Changed += () => queue!.TryEnqueue(() =>
+                {
+                    if (quitting || backend.Problem is not { } problem || problem == told) return;
+                    told = problem;
+                    notch?.Tell("Hover", problem);
+                });
                 // The office's top menu has a Settings row: it opens where the office is (the open notch, else the window).
                 if (panels is not null) panels.SettingsRequested += () =>
                 {

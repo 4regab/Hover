@@ -137,6 +137,9 @@ try {
   Check 'a_installed_app_starts' ($run.Up -and -not $run.Process.HasExited)
   $report.a_uninstall_exit = Run-Uninstall $app
   Check 'a_running_app_stopped_by_uninstall' ($run.Process.HasExited -and -not (Hover-Running))
+  # The uninstaller asked the C# app to end first (hoverai.exe --quit), so it wrote what it holds and its backend left by itself.
+  $aLog = Get-Content (Join-Path $Out 'a-new-app-data\hover.log') -Raw
+  Check 'a_running_app_stopped_in_order_by_uninstall' (($aLog -match 'a quit was asked for') -and ($aLog -match 'backend stopped \(exit code 0\)'))
   Check-Gone 'a' $app
 
   # ---- B: into nothing, the default folder. The installed app is driven end to end.
@@ -163,8 +166,22 @@ try {
   # The same version again, while the app runs: it is stopped, and the files are the same.
   $report.c_second_setup_exit = Run-Setup $Setup (Join-Path $Out 'c-second-setup.log') $spaced 'desktopicon'
   Check 'c_running_app_stopped_by_install' ($run.Process.HasExited -and -not (Hover-Running))
+  $cLog = Get-Content (Join-Path $Out 'c-app-data\hover.log') -Raw
+  Check 'c_running_app_stopped_in_order_by_install' (($cLog -match 'a quit was asked for') -and ($cLog -match 'backend stopped \(exit code 0\)'))
   Check 'c_second_install_same_files' ((Hash (Join-Path $spaced 'hoverai.exe')) -eq $firstHash)
   Check 'c_one_uninstall_entry' ((Uninstall-Entries).Count -eq 1)
+  # What the user sees: the shortcuts start this program, and Apps & features names it, its publisher, its icon and its version.
+  $shell = New-Object -ComObject WScript.Shell
+  $target = Join-Path $spaced 'hoverai.exe'
+  $startLink = $shell.CreateShortcut((Join-Path $startMenu 'Hover.lnk'))
+  $desktopLink = $shell.CreateShortcut((Join-Path ([Environment]::GetFolderPath('Desktop')) 'Hover.lnk'))
+  $report.c_start_menu_shortcut = "$($startLink.TargetPath) | icon $($startLink.IconLocation)"
+  $report.c_desktop_shortcut = "$($desktopLink.TargetPath) | icon $($desktopLink.IconLocation)"
+  Check 'c_start_menu_shortcut_starts_hover' ($startLink.TargetPath -eq $target)
+  Check 'c_desktop_shortcut_starts_hover' ($desktopLink.TargetPath -eq $target)
+  $entry = Get-ItemProperty @(Uninstall-Entries)[0].PSPath
+  $report.c_uninstall_entry = "$($entry.DisplayName) | $($entry.Publisher) | $($entry.DisplayVersion) | $($entry.DisplayIcon)"
+  Check 'c_uninstall_entry_words' (($entry.DisplayName -like 'Hover*') -and ($entry.Publisher -eq 'Hover') -and ($entry.DisplayIcon -like '*hoverai.exe*') -and ($entry.DisplayVersion -match '^\d+\.\d+\.\d+'))
   $again = Start-App (Join-Path $spaced 'hoverai.exe') 'c-app-data-2'
   Check 'c_app_starts_after_second_install' ($again.Up -and -not $again.Process.HasExited)
   Stop-All

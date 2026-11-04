@@ -26,6 +26,20 @@ static class Input
 
     public static void Move(int x, int y) => SetCursorPos(x, y);
 
+    [DllImport("user32.dll")] static extern int GetSystemMetrics(int index);
+
+    /// <summary>
+    /// Moves the pointer as a mouse does, with an input event. <see cref="Move"/> sets the position but sends the XAML window no pointer-moved
+    /// event (the app's log of the pointer in run 41439002570 had none), so a hover or a pointer shape that follows the moves needs this.
+    /// </summary>
+    public static void MoveLikeMouse(int x, int y)
+    {
+        int w = Math.Max(GetSystemMetrics(0) - 1, 1), h = Math.Max(GetSystemMetrics(1) - 1, 1);
+        // 0x0001 moves, 0x8000 says the numbers are a place on the screen from 0 to 65535 across.
+        mouse_event(0x0001 | 0x8000, (int)Math.Ceiling(x * 65535.0 / w), (int)Math.Ceiling(y * 65535.0 / h), 0, 0);
+        Thread.Sleep(120);
+    }
+
     /// <summary>
     /// Puts the app's window near the screen's top left corner and makes it one pixel wider. Windows places each new window a
     /// little further down and right, and on a small screen (the runner's is 1024 wide) the right of the window ends up off the

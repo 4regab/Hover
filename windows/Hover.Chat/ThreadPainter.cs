@@ -11,6 +11,9 @@ public sealed class ThreadPainter
     /// <summary>The sideways scroll bar whose thumb is under the pointer (it darkens).</summary>
     public (int Section, int Scroller)? HoverBar { get; set; }
 
+    /// <summary>The painter's clock in seconds, for the live step's shimmer (a 2 s loop).</summary>
+    public double Time { get; set; }
+
     /// <summary>
     /// Draws the thread from <paramref name="scroll"/> (thread pixels) into a view of the given size.
     /// The canvas's origin is the view's top left.
@@ -58,10 +61,10 @@ public sealed class ThreadPainter
                 if (t.Clip is { } clip)
                 {
                     cv.PushClip(clip);
-                    cv.Text(t.Layout, t.Runs, t.X - off, t.Y);
+                    cv.Text(t.Layout, RunsOf(t), t.X - off, t.Y);
                     cv.PopClip();
                 }
-                else cv.Text(t.Layout, t.Runs, t.X - off, t.Y);
+                else cv.Text(t.Layout, RunsOf(t), t.X - off, t.Y);
             }
             cv.PopMove();
         }
@@ -72,6 +75,49 @@ public sealed class ThreadPainter
             var hover = HoverBar == (section, scroller);
             new Bar(false, x, y - scroll, len, content, len, pos).Paint(cv, hover, [0, 0, 9, 9]);
         }
+    }
+
+    /// <summary>The longest text the shimmer colours one character at a time; past it the line stays as it is.</summary>
+    const int ShimmerChars = 400;
+
+    /// <summary>
+    /// The runs a text box is drawn with. The running line has one light band that crosses it every 2 s, entering at the left and leaving at
+    /// the right: the Go chat's `shine` (internal/chat/paint.go), a gradient from dim to white across twice the line's width, which here
+    /// is each character's own colour. All the text of one box shares the band.
+    /// </summary>
+    IReadOnlyList<StyleRun> RunsOf(TextBox t)
+    {
+        if (!t.Shimmer || t.Text.Length == 0 || t.Text.Length > ShimmerChars) return t.Runs;
+        var sw = Math.Max(t.Layout.Width, 1f);
+        var phase = Time / 2;
+        phase -= Math.Floor(phase);
+        var dim = Palette.Dim;
+        var runs = new List<StyleRun>(t.Text.Length);
+        foreach (var r in t.Runs)
+        {
+            if (r.Gap > 0 || r.End <= r.Start || r.End > t.Text.Length)
+            {
+                runs.Add(r);
+                continue;
+            }
+            for (var i = r.Start; i < r.End; i++)
+            {
+                // A character that is half of a surrogate pair goes with the other half.
+                var end = i + 1 < r.End && char.IsHighSurrogate(t.Text[i]) ? i + 2 : i + 1;
+                var u = (t.Layout.CaretAt(i).X + 1.5 * sw - 2 * sw * phase) / (2 * sw);
+                u -= Math.Floor(u);
+                var m = u <= 0.3 || u >= 0.7 ? 0 : u <= 0.5 ? (u - 0.3) / 0.2 : (0.7 - u) / 0.2;
+                byte Lift(byte a) => (byte)Math.Round(a + (255 - a) * m);
+                runs.Add(new StyleRun
+                {
+                    Start = i, End = end, Size = r.Size, Weight = r.Weight, Italic = r.Italic, Strike = r.Strike, Underline = r.Underline,
+                    Code = r.Code, Family = r.Family, UnderlineColor = r.UnderlineColor, Gap = r.Gap,
+                    Color = new Rgba(Lift(dim.R), Lift(dim.G), Lift(dim.B), Lift(dim.A)),
+                });
+                i = end - 1;
+            }
+        }
+        return runs;
     }
 
     static void Shape(ICanvas cv, Shape sh)

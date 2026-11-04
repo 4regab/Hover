@@ -18,12 +18,17 @@ static class KeyMap
         0x24 => UiKey.Home,
         0x23 => UiKey.End,
         0x09 => UiKey.Tab,
+        0x20 => UiKey.Space,
+        0x21 => UiKey.PageUp,
+        0x22 => UiKey.PageDown,
         0x41 => UiKey.A,
         0x43 => UiKey.C,
         0x56 => UiKey.V,
         0x58 => UiKey.X,
         0x53 => UiKey.S,
         0x4C => UiKey.L,
+        0x5A => UiKey.Z,
+        0x59 => UiKey.Y,
         _ => UiKey.Other,
     };
 

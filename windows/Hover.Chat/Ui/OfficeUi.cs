@@ -37,6 +37,15 @@ public sealed partial class OfficeUi
     /// <summary>A chat opened or closed in the office: the session's id, or null. The office moves its camera to that bot.</summary>
     public event Action<int?>? DrawerChanged;
 
+    /// <summary>The empty floor of the office was clicked: it puts away the new-task box, else the open chat, else the open panel (internal/shell/office.go officeNothing).</summary>
+    public void FloorClicked()
+    {
+        if (taskOpen) { taskOpen = false; focus = Focus.None; }
+        else if (!ChatView && OpenId is not null) CloseChat();
+        else if (OfficePanel.Length > 0) OpenOfficePanel("");
+        Dirty = true;
+    }
+
     /// <summary>Opens the new-task box over the office (the door was clicked).</summary>
     public void OpenNewTask()
     {
@@ -59,6 +68,12 @@ public sealed partial class OfficeUi
 
     /// <summary>A text box has the keyboard.</summary>
     public bool TakesKeys => FocusedBox() is not null;
+
+    /// <summary>
+    /// A box with the keyboard takes every plain key (not Ctrl or Alt chords). The notch must not give such a key to the office as well:
+    /// the digits and the minus and plus keys are the office camera's, and would zoom and reset the room while a name is typed.
+    /// </summary>
+    public bool TakesPlainKey(UiMods mods) => TakesKeys && (mods & (UiMods.Control | UiMods.Alt)) == 0;
 
     /// <summary>Asks for a frame.</summary>
     public void Invalidate() => Dirty = true;
@@ -86,7 +101,8 @@ public sealed partial class OfficeUi
         this.env = env;
         pen = new Pen(shaper);
         cache = new RenderCache(env.Send, env.Images);
-        thread = new ChatThread(shaper, cache, "Kiro");
+        // Room under the last turn for the reply circle over the thread's corner (internal/shell/chat.go: 56).
+        thread = new ChatThread(shaper, cache, "Kiro") { ExtraBottom = 56 };
         cache.Arrived += () =>
         {
             thread.Refresh();
@@ -128,8 +144,32 @@ public sealed partial class OfficeUi
 
     public float ScrollY => scroll;
 
+    /// <summary>
+    /// What one notch of the wheel moves a list, the thread or the office's camera, in DIPs. The Go app's value: Gio reports 120 units a notch at
+    /// twice the scale, so 60 (internal/ui/scroll.go, officechat.go). The Settings pages use the same.
+    /// </summary>
+    public const float WheelStep = 60;
+
+    /// <summary>The DIPs a wheel turn moves, from the system's units (120 to a notch).</summary>
+    public static float WheelDips(int units) => units / 120f * WheelStep;
+
+    /// <summary>How far the reply box's words are scrolled (for the tests).</summary>
+    public float ReplyScrollY => replyScroll;
+
     /// <summary>The menu that is open, if any (its kind).</summary>
     public string? OpenMenuKind => menu?.Kind;
+
+    /// <summary>The new task is for Kiro Web (a repository to clone), for the pictures and the checks.</summary>
+    public bool TaskCloud => taskCloud;
+
+    /// <summary>The size the last frame was drawn at, for the checks of the real app.</summary>
+    public (float W, float H) ViewSize => (w, h);
+
+    /// <summary>The rows of the open menu that can be picked (not a heading, a rule or a note), by their index, for the checks.</summary>
+    public IReadOnlyList<int> OpenMenuPickable => menu is null ? [] : [.. Enumerable.Range(0, menu.Rows.Count).Where(i => menu.Rows[i].Pickable)];
+
+    /// <summary>The words in the open menu's search box, or null when the menu has none.</summary>
+    public string? MenuSearchText => menu?.Search?.Text;
 
     public StateEvent? State => state;
 
@@ -170,22 +210,23 @@ public sealed partial class OfficeUi
                     askedProjects = true;
                     env.Send(new ProjectsCommand());
                 }
+                NoticeAsk();
+                break;
+            case SettingsEvent se:
+                NoticeFrom(se.Model);
                 break;
             case TranscriptEvent t when t.Session.Key == openKey:
                 transcript = t.Session;
                 break;
             case QueueRemoveEvent q:
-                if (q.Ok)
-                {
-                    reply.SetText(q.Text);
-                    compose = true;
-                    focus = Focus.Reply;
-                }
-                else Say("That message already left the queue.");
+                if (q.Ok) PutInReplyBox(q.Text);
+                else Say(q.Error ?? "That message was already sent.");
                 break;
             case PreferencesEvent p:
                 kiroAutoCompact = p.KiroAutoCompact;
                 kiroCompactAt = p.KiroCompactAt;
+                // Only "seen" is taken from here: the way back to "not seen" is the settings model's (setSetting), which says so itself.
+                if (p.NoticeSeen) noticeSeen = true;
                 break;
             case ToastEvent t:
                 Say(t.Text);
@@ -193,6 +234,7 @@ public sealed partial class OfficeUi
                 break;
             case ForkEvent { Ok: true, ForkId: { } id }:
                 OpenChat(id);
+                Say("Forked. This is the copy; the original is unchanged.");
                 break;
             case ForkEvent { Ok: false } f:
                 Say(f.Error ?? "Could not fork this chat.");
@@ -218,6 +260,13 @@ public sealed partial class OfficeUi
     public void ImageArrived(string src)
     {
         if (thread.Refresh(src)) Dirty = true;
+    }
+
+    /// <summary>Puts a toast away at once (a picture of the panels starts without the toast of the one before it).</summary>
+    public void ClearToast()
+    {
+        ToastText = null;
+        Dirty = true;
     }
 
     public void Say(string text)
@@ -280,6 +329,14 @@ public sealed partial class OfficeUi
         Dirty = true;
     }
 
+    /// <summary>New chat in a menu: the open chat is put away for the start screen, and a desk card or panel with it (internal/shell/chat.go newChat).</summary>
+    public void NewChat()
+    {
+        DeskLeave();
+        if (OpenId is not null || openKey is not null) CloseChat();
+        Dirty = true;
+    }
+
     public void CloseChat()
     {
         Trace("close chat");
@@ -302,6 +359,9 @@ public sealed partial class OfficeUi
         now = nowMs;
         pen.Cv = cv;
         targets.Clear();
+        // The layers of the last frame are kept: a button painted before a layer does not know yet that the layer comes over it.
+        (layers, lastLayers) = (lastLayers, layers);
+        layers.Clear();
         blockers.Clear();
         pen.Drawn.Clear();
         Animating = false;
@@ -326,12 +386,35 @@ public sealed partial class OfficeUi
 
     readonly List<Rect4> blockers = [];
 
+    /// <summary>
+    /// The layers that take the pointer from what is under them, in the order they were drawn, this frame and the last: for this
+    /// frame also how many places had been added when each came (those lie under it).
+    /// </summary>
+    List<(Rect4 R, int At)> layers = [], lastLayers = [];
+
     void Add(Rect4 r, string id, int n = 0, string s = "") => targets.Add(new Target(r, id, n, s));
 
-    /// <summary>A drawn panel that takes the pointer but does nothing with it: the office behind does not see it.</summary>
-    void Block(Rect4 r) => blockers.Add(r);
+    /// <summary>
+    /// A drawn panel that takes the pointer but does nothing with it: the office behind does not see it. It also keeps the places drawn
+    /// before it from lighting up under it. A toast passes the pointer on (<paramref name="takesPointer"/> off): it is only shown, as in the Go app.
+    /// </summary>
+    void Block(Rect4 r, bool takesPointer = true)
+    {
+        blockers.Add(r);
+        if (takesPointer) layers.Add((r, targets.Count));
+    }
 
-    bool Over(Rect4 r) => !overBlocker && px >= 0 && r.Contains(px, py);
+    /// <summary>
+    /// The pointer is on this place and no layer drawn over it is. Layers come later in the frame than what they cover, so the
+    /// ones that are still to come are those the last frame had past the ones drawn so far.
+    /// </summary>
+    bool Over(Rect4 r)
+    {
+        if (overBlocker || px < 0 || !r.Contains(px, py)) return false;
+        for (var k = layers.Count; k < lastLayers.Count; k++)
+            if (lastLayers[k].R.Contains(px, py)) return false;
+        return true;
+    }
 
     // MARK: The pointer and keys
 
@@ -399,7 +482,11 @@ public sealed partial class OfficeUi
     /// <summary>The target under a point, topmost first.</summary>
     public Target? TargetAt(float x, float y)
     {
-        for (var i = targets.Count - 1; i >= 0; i--)
+        // A place added before a layer that is over the point is under that layer, and does not answer.
+        var floor = 0;
+        foreach (var (r, at) in layers)
+            if (at > floor && r.Contains(x, y)) floor = at;
+        for (var i = targets.Count - 1; i >= floor; i--)
             if (targets[i].Contains(x, y)) return targets[i];
         return null;
     }
@@ -408,7 +495,7 @@ public sealed partial class OfficeUi
     public bool Covers(float x, float y)
     {
         if (TargetAt(x, y) is not null || blockers.Any(b => b.Contains(x, y))) return true;
-        if (menu is not null || confirm is not null) return true;
+        if (menu is not null || confirm is not null || NoticeShown) return true;
         return ChatView || threadRect.Contains(x, y);
     }
 
@@ -418,7 +505,17 @@ public sealed partial class OfficeUi
         px = x;
         py = y;
         Dirty = true;
-        if (dragging) DragTo(x, y);
+        if (menu is { } open)
+        {
+            // The pointer takes over from the keys' row; a held bar follows the pointer.
+            open.Hot = -1;
+            open.Scroll.BarMove(open.List, y);
+        }
+        if (deskMenuOpen) openScroll.BarMove(openList, y);
+        askScroll.BarMove(askRect, y);
+        if (sideDrag && pointerDown) { sideW = Math.Clamp(x, 200, 420); Dirty = true; }
+        else if (hDrag is not null && pointerDown) HBarDrag(x);
+        else if (dragging) DragTo(x, y);
         else if (barDrag is { } bd && pointerDown)
         {
             var bar = new Bar(true, 0, threadRect.Y, threadRect.H, thread.Height, threadRect.H, scroll);
@@ -446,6 +543,14 @@ public sealed partial class OfficeUi
         modsNow = mods;
         Dirty = true;
         Trace($"press {x:0},{y:0} on {TargetAt(x, y)?.Id ?? "nothing"}");
+        // Leaving the title's box saves the new name (Enter does too; Escape undoes it).
+        if (renaming && focus == Focus.Title && TargetAt(x, y) is not { Id: "titleBox" }) CommitRename();
+        // Under the note nothing takes a press: only Got it does.
+        if (NoticeShown)
+        {
+            if (TargetAt(x, y) is { Id: "noticeOk" } ok) Activate(ok);
+            return true;
+        }
         if (confirm is not null)
         {
             var t = TargetAt(x, y);
@@ -456,7 +561,8 @@ public sealed partial class OfficeUi
         if (menu is not null)
         {
             var t = TargetAt(x, y);
-            if (t is { } mt && mt.Id.StartsWith("menu", StringComparison.Ordinal)) Activate(mt);
+            if (t is { Id: "menuBar" }) menu.Scroll.BarDown(menu.List, y);
+            else if (t is { } mt && mt.Id.StartsWith("menu", StringComparison.Ordinal)) Activate(mt);
             else if (t is { } other && other.Id == menu.Anchor) menu = null;
             else
             {
@@ -486,6 +592,11 @@ public sealed partial class OfficeUi
         px = x;
         py = y;
         pointerDown = false;
+        sideDrag = false;
+        hDrag = null;
+        menu?.Scroll.BarUp();
+        openScroll.BarUp();
+        askScroll.BarUp();
         if (dragging)
         {
             dragging = false;
@@ -500,11 +611,41 @@ public sealed partial class OfficeUi
 
     public bool Wheel(float x, float y, float delta)
     {
-        if (menu is not null) return true;
-        if (DeskWheelAt(x, y, delta) || PanelWheel(x, y, delta)) return true;
+        if (NoticeShown) return true;
+        // The wheel over an open menu scrolls the menu; with a menu open it never reaches the chat or the office behind it.
+        if (menu is { } open)
+        {
+            if (open.Scroll.Max > 0 && open.Box.Contains(x, y))
+            {
+                open.Scroll.By(-delta);
+                Dirty = true;
+            }
+            return true;
+        }
+        // The same over the desk's "Open file in" menu and the reply box's @ and / list.
+        if (deskMenuOpen && openMenu.Contains(x, y))
+        {
+            openScroll.By(-delta);
+            Dirty = true;
+            return true;
+        }
+        if (pop is { } listed && listed.Scroll.Max > 0 && listed.Box.Contains(x, y))
+        {
+            listed.Scroll.By(-delta);
+            Dirty = true;
+            return true;
+        }
+        if (DeskWheelAt(x, y, delta) || PanelWheel(x, y, delta) || AskWheel(x, y, delta)) return true;
         if (ChatView && sideRect.Contains(x, y))
         {
             sideScroll = Math.Max(0, sideScroll - delta);
+            Dirty = true;
+            return true;
+        }
+        // Over a reply box with more lines than fit the wheel moves the words, not the thread behind it.
+        if (compose && OpenCurrent() && replyMax > 0 && composerRect.Contains(x, y))
+        {
+            replyScroll = Math.Clamp(replyScroll - delta, 0, replyMax);
             Dirty = true;
             return true;
         }
@@ -524,25 +665,37 @@ public sealed partial class OfficeUi
         var ctrl = (mods & UiMods.Control) != 0;
         var shift = (mods & UiMods.Shift) != 0;
         Dirty = true;
+        if (NoticeShown)
+        {
+            // Enter answers the note; any other key is not the panels' (Escape still folds the notch).
+            if (key != UiKey.Enter) return false;
+            NoticeSeenNow();
+            return true;
+        }
         if (confirm is null && menu is null && DeskKey(key, mods)) return true;
         if (confirm is null && menu is null && focus == Focus.Reply && ReplyListKey(key, shift)) return true;
         if (confirm is not null)
         {
             if (key == UiKey.Escape) { confirm = null; return true; }
-            if (key == UiKey.Enter) { Activate(new Target(default, "confirmYes")); return true; }
+            // Enter confirms a restore or a new try, but never a delete: that is a click on Delete, so a stray Enter cannot remove a chat.
+            if (key == UiKey.Enter && confirm.Value.Kind is not ("delete" or "deleteKey" or "deleteLive")) { Activate(new Target(default, "confirmYes")); return true; }
             return true;
         }
-        if (menu is not null)
+        if (menu is { } open)
         {
-            if (key == UiKey.Escape) { menu = null; return true; }
+            if (key == UiKey.Escape) menu = null;
+            else if (!MenuSearchKey(open, key, mods)) MenuKey(open, key);
             return true;
         }
         if (key == UiKey.Escape)
         {
             if (focus == Focus.Title) { renaming = false; focus = Focus.None; return true; }
-            if (compose && focus == Focus.Reply) { Trace("escape closes the reply box"); compose = false; focus = Focus.None; return true; }
+            // The reply box closes first, with the keyboard in it or not, and keeps what was written (internal/shell/chatact.go).
+            if (compose && OpenCurrent()) { Trace("escape closes the reply box"); PopClose(); compose = false; focus = Focus.None; return true; }
             if (taskOpen) { taskOpen = false; focus = Focus.None; return true; }
             if (!ChatView && OpenId is not null) { CloseChat(); return true; }
+            // Then the panel over the office (history, board, overview); past those the notch folds.
+            if (OfficePanel.Length > 0) { OpenOfficePanel(""); return true; }
             return false;
         }
         var box = FocusedBox();
@@ -568,7 +721,7 @@ public sealed partial class OfficeUi
                 if (focus == Focus.Reply) SendReply();
                 else if (focus == Focus.Task) StartTask();
                 else if (focus == Focus.Title) CommitRename();
-                else if (focus == Focus.Custom) WithAsk("", SendQuestion);
+                else if (focus == Focus.Custom && customAsk.Length > 0) WithAsk(customAsk, SendQuestion);
                 else if (focus == Focus.Desk) DeskEnter(shift);
                 return true;
             case UiKey.Backspace: box.Backspace(ctrl, now); break;
@@ -588,11 +741,19 @@ public sealed partial class OfficeUi
                 var cut = box.Cut(now);
                 if (cut.Length > 0) env.Clipboard.Set(cut);
                 break;
+            case UiKey.Z when ctrl:
+                if (!(shift ? box.Redo(now) : box.Undo(now))) return true;
+                break;
+            case UiKey.Y when ctrl:
+                if (!box.Redo(now)) return true;
+                break;
             case UiKey.V when ctrl:
                 if ((focus == Focus.Reply || focus == Focus.Task) && PasteShot(focus == Focus.Task)) break;
                 if (env.Clipboard.Text() is { Length: > 0 } text) box.Insert(text, now);
                 break;
             default:
+                // The key is not handled here, so that the window still gets the character it types (a handled key down
+                // stops the character). The notch asks TakesPlainKey: see below.
                 return false;
         }
         AfterEdit();
@@ -602,13 +763,24 @@ public sealed partial class OfficeUi
     /// <summary>Typed text. With no box focused in the chat, a printable key opens the reply box.</summary>
     public bool Char(string text)
     {
-        if (text.Length == 0 || confirm is not null || menu is not null) return false;
+        // A menu with a search box (the Kiro Web repositories) takes what is typed.
+        if (text.Length > 0 && confirm is null && !NoticeShown && menu is { Search: { } search } searching)
+        {
+            if (char.IsControl(text[0])) return true;
+            search.Insert(text, now);
+            searching.Scroll.ToStart();
+            searching.Hot = -1;
+            Dirty = true;
+            return true;
+        }
+        if (text.Length == 0 || confirm is not null || menu is not null || NoticeShown) return false;
         Dirty = true;
         var box = FocusedBox();
         if (box is null)
         {
             if (DeskLetter(text)) return true;
-            if (!ChatView && !compose && OpenCurrent() && !char.IsControl(text[0]) && Current() is not null)
+            // After a press on the thread the reply box may still be open but without the keyboard: typing gives it back.
+            if (!ChatView && OpenCurrent() && !char.IsControl(text[0]) && Current() is not null)
             {
                 compose = true;
                 focus = Focus.Reply;

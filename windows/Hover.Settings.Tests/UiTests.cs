@@ -268,6 +268,23 @@ public class UiTests
     }
 
     [Fact]
+    public void Ctrl_Z_and_Ctrl_Y_undo_and_redo_typing_in_a_field()
+    {
+        var p = new Page("""{"Voice":{"Speech":"Cloud","CleanupModel":"old"}}""");
+        p.Ctl.Open(Section.Voice);
+        p.Paint();
+        p.Click("Field", "VoiceCleanupModel");
+        p.Type("1234");
+        Assert.True(p.Ui.Texts.Contains("old1234"));
+        p.Key(UiKey.Z, UiMods.Control);
+        Assert.True(p.Ui.Texts.Contains("old"), "typing is undone in one step");
+        p.Key(UiKey.Y, UiMods.Control);
+        Assert.True(p.Ui.Texts.Contains("old1234"));
+        p.Key(UiKey.Z, UiMods.Control | UiMods.Shift);
+        Assert.True(p.Ui.Texts.Contains("old1234"));
+    }
+
+    [Fact]
     public void A_shortcut_records_the_next_chord_and_says_what_is_missing()
     {
         var p = new Page();
@@ -529,5 +546,48 @@ public class UiTests
         var p = new Page(inNotch: true);
         Assert.Contains("Agent office", p.Ui.Texts);
         Assert.Contains(p.Ui.Targets, t => t.Kind == "Close");
+    }
+
+    [Theory]
+    [InlineData(346f)]
+    [InlineData(480f)]
+    public void A_long_picker_menu_stays_in_the_window_and_the_wheel_reaches_its_last_option(float height)
+    {
+        var p = new Page("""{"Voice":{"Enabled":true,"Speech":"Cloud","Microphone":"Microphone number 30"}}""", inNotch: true, height: height);
+        p.Env.Mics = [.. Enumerable.Range(1, 40).Select(i => "Microphone number " + i)];
+        p.Ctl.Open(Section.Voice);
+        p.Paint();
+        // Opened low in the window, where a menu of 41 options (26 px each) has most room above it and none below.
+        p.Ctl.OpenPicker("VoiceMicrophone", 400, height - 60);
+        p.Paint();
+        var box = p.Ui.MenuBox!.Value;
+        Assert.True(box.Y >= 0 && box.Bottom <= p.H - 8 + 0.01 && box.H <= p.H - 16 + 0.01, $"the menu {box} is not inside a window {p.H} tall");
+
+        var shown = new SortedSet<int>();
+        void Note()
+        {
+            foreach (var t in p.Ui.Targets.Where(t => t.Kind == "MenuItem"))
+                Assert.True(t.R.Y >= box.Y - 0.01 && t.R.Bottom <= box.Bottom + 0.01, $"an option at {t.R} is outside the menu {box}");
+            foreach (var n in p.Ui.MenuOptionsInView) shown.Add(n);
+        }
+        // It opens on the picked option (the 30th of the 40, after "System default"): it is in view before any wheel.
+        Note();
+        Assert.Contains(30, shown);
+        var pane = p.Ui.PaneScroll;
+        var (x, y) = (box.X + box.W / 2, box.Y + box.H / 2);
+        p.Ui.PointerMove(x, y);
+        for (var i = 0; i < 80; i++) { p.Ui.Wheel(x, y, 1); p.Paint(); Note(); }
+        Assert.Contains(0, shown);
+        for (var i = 0; i < 80; i++) { p.Ui.Wheel(x, y, -1); p.Paint(); Note(); }
+        Assert.Contains(40, shown);
+        Assert.Equal(41, shown.Count);
+        // The page behind did not scroll, and the menu did not move.
+        Assert.Equal(pane, p.Ui.PaneScroll);
+        Assert.Equal(box, p.Ui.MenuBox!.Value);
+
+        // The last option can be picked from there.
+        p.Click(p.Ui.Targets.Where(t => t.Kind == "MenuItem").OrderBy(t => t.R.Y).Last().R);
+        Assert.Null(p.Ctl.Menu);
+        Assert.Equal("Microphone number 40", p.Ctl.Data.Voice.Microphone);
     }
 }

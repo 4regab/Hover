@@ -23,7 +23,9 @@ public sealed partial class OfficeUi
     Tail dragTail;
     Unit dragUnit;
     (bool Vertical, float Grab)? barDrag;
-    float replyScroll;
+    float replyScroll, replyMax;
+    (int Version, int Caret) replyFollowed;
+    Rect4 composerRect;
     (int Turn, string Kind)? confirm;
     Rect4 confirmBox;
 
@@ -88,7 +90,10 @@ public sealed partial class OfficeUi
 
     // MARK: Syncing the thread with the session
 
-    void SyncThread(SessionInfo s, float colw)
+    /// <summary>The width the thread was last laid out at, to see a change of it.</summary>
+    float threadW;
+
+    void SyncThread(SessionInfo s, float colw, float viewH)
     {
         var id = s.Id != 0 ? s.Id : SessionKey(s).GetHashCode();
         var changed = shownSession != id || shownKey != s.Key;
@@ -107,8 +112,35 @@ public sealed partial class OfficeUi
         thread.HideSteps = ToolOf(s.Tool)?.HideSteps == true;
         var nowMs = new DateTimeOffset(DateTime.SpecifyKind(env.Utc(), DateTimeKind.Utc)).ToUnixTimeMilliseconds();
         turns = Turns.From(s, nowMs);
+        // A new width keeps the reader at the same place: the turn at the top of the view and how far down it (as a share of the
+        // turn), not the same number of pixels, which are a different part of the chat once the lines wrap otherwise
+        // (internal/shell/chat.go). A reader near the end stays at the end.
+        var anchor = -1;
+        var frac = 0f;
+        var near = thread.Height - scroll - viewH < 40;
+        var widthChanged = threadW > 0 && Math.Abs(threadW - colw) > 0.01f && !changed;
+        if (widthChanged && !near)
+        {
+            for (var i = 0; i < thread.Sections.Count; i++)
+            {
+                var sec = thread.Sections[i];
+                if (sec.Y + sec.H <= scroll) continue;
+                anchor = i;
+                frac = (scroll - sec.Y) / Math.Max(sec.H, 1);
+                break;
+            }
+        }
         thread.Set(turns, colw);
-        if (turns.Any(t => t.Live)) Need(500);
+        threadW = colw;
+        if (anchor >= 0 && anchor < thread.Sections.Count)
+        {
+            scroll = thread.Sections[anchor].Y + frac * thread.Sections[anchor].H;
+            smooth = null;
+            follow = false;
+        }
+        else if (widthChanged && near) follow = true;
+        // The running step shimmers and the clock counts: ten frames a second, as the Go chat repaints its thread.
+        if (turns.Any(t => t.Live)) Need(100);
         if (copiedAt > 0 && now - copiedAt > 1500)
         {
             copiedAt = 0;
@@ -130,7 +162,7 @@ public sealed partial class OfficeUi
         if (wide) pen.Box(x, y, pw, ph, 0, Rgba.Of(0x0d0c0f));
         else
         {
-            pen.Box(x, y, pw, ph, radius, Rgba.Of(0x0e0a12, 0.96));
+            pen.Box(x, y, pw, ph, radius, Rgba.Of(0x0e0a12, 0.985));
             pen.Border(x, y, pw, ph, radius, 1, Rgba.Of(0xffffff, 0.1));
         }
         Block(chatRect);
@@ -158,21 +190,28 @@ public sealed partial class OfficeUi
         {
             var look = Pen.F(13, 400, Pen.Ink);
             inputH = Math.Max(24, reply.HeightFor(pen, bw - 10 - 7 - 4, look, 20, 140) + 6);
-            compH = 7 + ChipsHeight() + ShotsHeight(false) + inputH + 3 + 30 + 6;
+            compH = 7 + ChipsHeight(bw - 10 - 7 - 2) + ShotsHeight(false) + inputH + 3 + 30 + 6;
         }
         var boxH = compose ? compH + 16 : 0;
-        float askH = 0;
+        float askH = 0, askFull = 0, askCard = 0;
         var askW = Math.Min(pw - 28, ColumnMax);
-        if (s.Ask is { } ask && OpenId is not null) askH = 4 + AskCard(ask, s, false, askW, 0, 0, true) + (compose ? 0 : 8);
         float noteH = 0;
         var noteW = Math.Min(pw - 20, ColumnMax);
         var note = s.Held ? "The queue is held after a stop." : "";
         if (note.Length > 0) noteH = 4 + 8 + pen.HeightWhenWrapped(note, noteW - 16, Pen.F(12, 400, Pen.Ink)) + 6 + 20 + 8 + 2 + 2;
-
         var threadTop = y + hdrH + 1;
+        if (s.Ask is { } ask && OpenId is not null)
+        {
+            askFull = AskCard(ask, s, false, askW, 0, 0, true);
+            // A question taller than the room scrolls inside its card; the thread keeps 80 px at least.
+            var room = bottom - boxH - noteH - threadTop - 4 - (compose ? 0 : 8) - 80;
+            askCard = Math.Min(askFull, Math.Max(room, 96f));
+            askH = 4 + askCard + (compose ? 0 : 8);
+        }
+
         var threadH = Math.Max(bottom - boxH - askH - noteH - threadTop, 0);
         // Smooth scrolling steps with the clock.
-        SyncThread(s, colw);
+        SyncThread(s, colw, threadH);
         threadRect = new Rect4(cx0, threadTop, colw, threadH);
         if (smooth is { } sm)
         {
@@ -184,7 +223,8 @@ public sealed partial class OfficeUi
 
         cv.PushClip(new Rect4(x, threadTop, pw, threadH));
         cv.PushMove(cx0, threadTop);
-        painter.HoverBar = null;
+        painter.Time = now / 1000;
+        painter.HoverBar = HBarAt(px, py) is { } hb ? (hb.Section, hb.Scroller) : hDrag is { } hd ? (hd.Section, hd.Scroller) : null;
         painter.Paint(thread, cv, scroll, threadH);
         cv.PopMove();
         // The thread's own scroll bar, at the pane's right edge.
@@ -197,7 +237,7 @@ public sealed partial class OfficeUi
         cv.PopClip();
 
         // "Latest": the reader is well above the end of the thread.
-        if (MaxScroll - scroll > 240)
+        if (MaxScroll - scroll > 160)
         {
             var tw = pen.Width("Latest", Pen.F(11, 400, Pen.Ink));
             var jw = 10 + 12 + 5 + tw + 10;
@@ -234,13 +274,14 @@ public sealed partial class OfficeUi
         {
             ny += 4;
             var ax = x + (pw - askW) / 2;
-            var ah = AskCard(q, s, false, askW, 0, 0, true);
+            var ah = askCard;
             AskFrame(q, false, ax, ny, askW, ah);
-            AskCard(q, s, false, askW, ax, ny, false);
+            PaintAskScrolled(q, s, askFull, new Rect4(ax, ny, askW, ah));
             ny += ah + (compose ? 0 : 8);
         }
         if (compose) PaintComposer(s, busy, x, ny, pw, bw, compH, inputH);
-        else PaintDock(s, x + pw, threadTop + threadH);
+        // The reply circle needs room under the header: a question that fills the pane takes it away (the question is answered first).
+        else if (threadH >= 56) PaintDock(s, x + pw, threadTop + threadH);
         cv.PopClip();
 
     }
@@ -410,6 +451,16 @@ public sealed partial class OfficeUi
         Dirty = true;
     }
 
+    /// <summary>Words go into the reply box after what is already written there, on a line of their own (the Go box: "draft", a break, the words); the box opens with the keyboard in it.</summary>
+    void PutInReplyBox(string words)
+    {
+        reply.SetText(reply.Text.Trim().Length > 0 ? reply.Text + "\n" + words : words);
+        SaveDraft();
+        compose = true;
+        focus = Focus.Reply;
+        Dirty = true;
+    }
+
     void CommitRename()
     {
         var s = Current();
@@ -422,8 +473,63 @@ public sealed partial class OfficeUi
 
     // MARK: The thread's pointer
 
+    // MARK: The sideways bars of wide code boxes and tables
+
+    /// <summary>The box (code, table) whose own bar is under the point, in the panels' coordinates, and the bar as drawn.</summary>
+    (int Section, int Scroller, Bar Bar, float Along)? HBarAt(float x, float y)
+    {
+        if (!OpenCurrent() || !threadRect.Contains(x, y)) return null;
+        foreach (var (section, scroller, bx, by, len, content, pos) in thread.HBars())
+        {
+            var bar = new Bar(false, threadRect.X + bx, threadRect.Y + by - scroll, len, content, len, pos);
+            if (bar.Max > 0 && bar.Along(x, y) is { } along) return (section, scroller, bar, along);
+        }
+        return null;
+    }
+
+    (int Section, int Scroller, float Grab)? hDrag;
+
+    /// <summary>A press on a box's own bar: the end buttons and the track step it, the thumb is taken. True when the press was on a bar.</summary>
+    bool HBarDown(float x, float y)
+    {
+        if (HBarAt(x, y) is not { } hit) return false;
+        var part = hit.Bar.PartAt(hit.Along);
+        if (part == Bar.Part.Thumb) hDrag = (hit.Section, hit.Scroller, hit.Along - hit.Bar.Thumb().Start);
+        else thread.ScrollBox(hit.Section, hit.Scroller, hit.Bar.Step(part, hit.Along));
+        Dirty = true;
+        return true;
+    }
+
+    /// <summary>The thumb of a box's bar follows the pointer.</summary>
+    void HBarDrag(float x)
+    {
+        if (hDrag is not { } d) return;
+        foreach (var (section, scroller, bx, by, len, content, pos) in thread.HBars())
+        {
+            if (section != d.Section || scroller != d.Scroller) continue;
+            var bar = new Bar(false, threadRect.X + bx, threadRect.Y + by - scroll, len, content, len, pos);
+            thread.ScrollBox(section, scroller, bar.Drag(d.Grab, x - bar.X));
+            Dirty = true;
+        }
+    }
+
+    /// <summary>The wheel turned sideways (or with Shift) over a code box or a table: it scrolls that box. False when there is none under the point.</summary>
+    public bool WheelSideways(float x, float y, float delta)
+    {
+        if (!OpenCurrent() || !threadRect.Contains(x, y)) return false;
+        if (thread.BoxAt(x - threadRect.X, y - threadRect.Y + scroll) is not { } box) return false;
+        var bar = thread.HBars().FirstOrDefault(b => b.Section == box.Section && b.Scroller == box.Scroller);
+        if (bar.Content <= bar.Len) return false;
+        thread.ScrollBox(box.Section, box.Scroller, bar.Pos - delta);
+        Dirty = true;
+        return true;
+    }
+
     void ThreadDown(float x, float y, int clicks, UiMods mods)
     {
+        if (HBarDown(x, y)) return;
+        // A press on the thread takes the keyboard from the reply box, and an empty reply box closes (internal/ui/officechat.go).
+        if (compose && reply.Text.Length == 0 && Current() is { } cur && ShotsOf(cur.Id).Count == 0 && ChipsOf(cur.Id).Count == 0) { PopClose(); compose = false; }
         focus = Focus.None;
         var tx = x - threadRect.X;
         var ty = y - threadRect.Y + scroll;
@@ -441,6 +547,14 @@ public sealed partial class OfficeUi
             case HitKind.Text:
                 dragging = true;
                 dragLink = null;
+                // Shift and a press grows the selection that is there from its anchor (the Go thread does too).
+                if ((mods & UiMods.Shift) != 0 && thread.HasSel)
+                {
+                    dragUnit = Unit.Char;
+                    dragAnchor = thread.SelAnchor;
+                    thread.Select(dragAnchor, hit.Pos);
+                    return;
+                }
                 dragUnit = clicks >= 3 ? Unit.Para : clicks == 2 ? Unit.Word : Unit.Char;
                 dragAnchor = hit.Pos;
                 if (dragUnit == Unit.Char) thread.Select(hit.Pos, hit.Pos);
@@ -507,14 +621,19 @@ public sealed partial class OfficeUi
                 if (thread.OpenDiff(turns, section, a.I) is { } at) ScrollTo(at - 40);
                 break;
             case ActKind.Retry:
-                if (OpenId is { } rid && section < turns.Count) env.Send(new ReplyCommand(turns[section].Prompt, rid));
-                follow = true;
+                // The newest turn's prompt again, with its pictures; never while a run is in flight, a message waits, or for an older turn.
+                if (OpenId is { } rid && s is not null && section == turns.Count - 1 && !Busy(s) && !turns.Any(t => t.Queued))
+                {
+                    var again = turns[section];
+                    env.Send(new ReplyCommand(again.Prompt, rid) { Images = again.Images.Count > 0 ? [.. again.Images] : null });
+                    follow = true;
+                }
                 break;
             case ActKind.Restore:
-                confirm = (section, "restore");
-                break;
             case ActKind.TryAgain:
-                confirm = (section, "again");
+                // Both change the project's files, so they ask first; never while a run goes (internal/shell/chatact.go askRewind).
+                if (s is not null && Busy(s)) Say("Stop the run first.");
+                else confirm = (section, a.Kind == ActKind.Restore ? "restore" : "again");
                 break;
             case ActKind.Edit:
                 if (OpenId is { } eid && section < turns.Count) env.Send(new QueueRemoveCommand(eid, turns[section].Uid));
@@ -523,12 +642,7 @@ public sealed partial class OfficeUi
                 if (OpenId is { } sid && section < turns.Count) env.Send(new QueueSendNowCommand(sid, turns[section].Uid));
                 break;
             case ActKind.EditPrompt:
-                if (section < turns.Count)
-                {
-                    reply.SetText(turns[section].Prompt);
-                    compose = true;
-                    focus = Focus.Reply;
-                }
+                if (section < turns.Count) PutInReplyBox(turns[section].Prompt);
                 break;
         }
         Dirty = true;
@@ -537,18 +651,30 @@ public sealed partial class OfficeUi
 
     // MARK: Rewind confirmation
 
+    /// <summary>What Restore and Try again ask, in the Go app's words (internal/shell/chatact.go askRewind).</summary>
+    string RewindWords(bool restore, int turn)
+    {
+        var s = Current();
+        var folder = s is null ? "" : LastPart(s.Folder);
+        var later = Math.Max((s?.Turns.Count ?? 0) - (turn + 1), 0);
+        var leave = later == 1 ? "1 message after it leaves" : $"{later} messages after it leave";
+        const string undone = " Changes made since, by the agent or by you, are undone.";
+        if (restore)
+            return $"The files in “{folder}” go back to how they were after this answer" + (later > 0 ? $", and the {leave} this chat." : ".") + undone;
+        return $"The files in “{folder}” go back to how they were before this message, and it is sent again." + (later > 0 ? $" The {leave} this chat." : "") + undone;
+    }
+
     void PaintConfirm()
     {
         if (confirm is not { } c) return;
         var cv = pen.Cv;
         pen.Box(0, 0, w, h, 0, Rgba.Of(0x000000, 0.5));
         var bw = Math.Min(360, w - 32);
-        var head = c.Kind switch { "restore" => "Restore to after this answer?", "delete" or "deleteKey" => "Delete this chat?", _ => "Try this message again?" };
+        var head = c.Kind switch { "restore" => "Restore to here?", "delete" or "deleteKey" or "deleteLive" => "Delete this chat?", _ => "Try again from here?" };
         var body = c.Kind switch
         {
-            "restore" => "The chat goes back to how it was after this answer, and the folder goes back with it. Later messages are removed.",
-            "delete" or "deleteKey" => "The chat is removed from the list and its saved history is deleted. This cannot be undone.",
-            _ => "The chat goes back to just before this message, the folder with it, and the message is sent again.",
+            "restore" or "again" => RewindWords(c.Kind == "restore", c.Turn),
+            _ => "The chat is removed from the list and its saved history is deleted. This cannot be undone.",
         };
         var hf = Pen.F(14, 600, Pen.Ink);
         var bf = Pen.F(12, 400, Pen.Dim);
@@ -562,15 +688,16 @@ public sealed partial class OfficeUi
         pen.Text(head, bx + 18, by + 18, hf);
         pen.Wrapped(body, bx + 18, by + 18 + pen.LineHeight(hf) + 8, bw - 36, bf);
         var yb = by + boxH - 18 - 30;
-        var yes = c.Kind switch { "restore" => "Restore", "delete" or "deleteKey" => "Delete", _ => "Try again" };
+        var yes = c.Kind switch { "restore" => "Restore", "delete" or "deleteKey" or "deleteLive" => "Delete", _ => "Try again" };
         var yw = pen.Width(yes, Pen.F(12, 600, Pen.Ink)) + 28;
         var cw = pen.Width("Cancel", Pen.F(12, 600, Pen.Ink)) + 28;
         var yr = new Rect4(bx + bw - 18 - yw, yb, yw, 30);
         var cr = new Rect4(yr.X - 8 - cw, yb, cw, 30);
         pen.Box(cr, 8, Rgba.Of(0xffffff, Over(cr) ? 0.17 : 0.1));
         pen.TextIn("Cancel", cr, Pen.F(12, 600, Pen.Ink));
-        pen.Box(yr, 8, Over(yr) ? Rgba.Of(0xffffff) : Rgba.Of(0xf5f5f7));
-        pen.TextIn(yes, yr, Pen.F(12, 600, Rgba.Of(0x000000)));
+        // The Go dialog's button is red with white words (internal/ui/officemenus.go confirm), for every kind.
+        pen.Box(yr, 8, Over(yr) ? Rgba.Of(0xff453a) : new Rgba(0xff, 0x45, 0x3a, 0xd9));
+        pen.TextIn(yes, yr, Pen.F(12, 600, Rgba.Of(0xffffff)));
         Add(confirmBox, "confirmBox");
         Add(cr, "confirmNo");
         Add(yr, "confirmYes");

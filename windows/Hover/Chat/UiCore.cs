@@ -23,6 +23,9 @@ sealed class UiCore : IDisposable
     readonly Action<BackendEvent> onEvent;
     bool disposed;
 
+    /// <summary>The panels were disposed (the app is quitting): nothing may be drawn with their canvas and the graphics device after this.</summary>
+    public bool IsDisposed => disposed;
+
     public Gfx Gfx { get; }
     public DwShaper Shaper { get; }
     public ImageStore Images { get; }
@@ -87,7 +90,7 @@ sealed class UiCore : IDisposable
     /// </summary>
     static bool Frozen(BackendEvent e) => e is StateEvent or ToastEvent or TermEvent or WriteFileEvent or EditorsEvent or OpenInEvent or DeskEvent
         or DeskActionEvent or GhEvent or ForkEvent or BringBackEvent or SwitchProviderEvent or QueueRemoveEvent or WebSessionsEvent or CliSessionsEvent
-        or AdoptWebEvent or AdoptCliEvent or PreferencesEvent;
+        or AdoptWebEvent or AdoptCliEvent or PreferencesEvent or SettingsEvent;
 
     public UiCore(Gfx gfx, DispatcherQueue queue, BackendSession backend, string dataDir, OfficeHost? office, bool inNotch)
     {
@@ -111,6 +114,7 @@ sealed class UiCore : IDisposable
             OpenUrl = OpenUrl,
             Log = HostLog.Line,
             InNotch = inNotch,
+            PickFolder = () => Hover.Configuring.Dialogs.Folder("Choose a folder"),
             OpenSettings = () => SettingsRequested?.Invoke(),
             TimeMode = () => office?.TimeMode ?? 0,
             SetTime = mode => office?.SetTimeMode(mode),
@@ -142,6 +146,9 @@ sealed class UiCore : IDisposable
                     case OfficeProp.Tv: Ui.OpenOfficePanel("tv"); break;
                     case OfficeProp.Board: Ui.OpenOfficePanel("board"); break;
                     case OfficeProp.History: Ui.OpenOfficePanel("history"); break;
+                    // The wall clock says the date in full for a moment (internal/shell/office.go fullDate).
+                    case OfficeProp.Clock: Ui.Say(DateTime.Now.ToString("dddd d MMMM yyyy 'at' HH:mm:ss", System.Globalization.CultureInfo.InvariantCulture)); break;
+                    case OfficeProp.Floor: Ui.FloorClicked(); break;
                 }
             });
             office.Covered = (x, y) => Ui.Covers((float)x, (float)y);

@@ -4,7 +4,12 @@ namespace Hover.Chat.Ui;
 
 public sealed partial class OfficeUi
 {
-    sealed record MenuRow(string Label, string Id = "", string Note = "", bool On = false, bool Header = false, bool Rule = false, string? Mark = null, bool Disabled = false);
+    /// <summary>A row of a menu. <paramref name="Pin"/>: the leading and trailing pinned rows stay in view while the rows between them scroll.</summary>
+    sealed record MenuRow(string Label, string Id = "", string Note = "", bool On = false, bool Header = false, bool Rule = false, string? Mark = null, bool Disabled = false, bool Pin = false, string? Icon = null, bool Search = false, bool OneLine = false, bool Red = false)
+    {
+        /// <summary>A row that can be picked: not a heading, a rule, a note or the search box.</summary>
+        public bool Pickable => !Header && !Rule && !Disabled && !Search;
+    }
 
     sealed class Menu
     {
@@ -15,6 +20,20 @@ public sealed partial class OfficeUi
         public float W = 250;
         /// <summary>Makes the rows again each frame, for a menu whose contents arrive from the backend while it is open.</summary>
         public Func<List<MenuRow>>? Build;
+        /// <summary>The scroll of the rows between the pinned ones.</summary>
+        public readonly MenuScroll Scroll = new();
+        /// <summary>The menu has opened on its picked row (or has none to open on).</summary>
+        public bool Centered;
+        /// <summary>The row the Up and Down keys are on, or -1.</summary>
+        public int Hot = -1;
+        public bool RevealHot;
+        /// <summary>Where the last frame drew the box, and the part of it that scrolls.</summary>
+        public Rect4 Box, List;
+        /// <summary>The search box of a menu that has one (the Kiro Web repositories): it has the keys while the menu is open.</summary>
+        public EditBox? Search;
+        public ShapedText? SearchLayout;
+        public Rect4 SearchArea;
+        public float SearchScroll;
     }
 
     Menu? menu;
@@ -45,16 +64,21 @@ public sealed partial class OfficeUi
             pen.Box(gx, gy, gw, gh, 12, Rgba.Of(0x0a060e, 0.94));
             pen.Border(gx, gy, gw, gh, 12, 1, Rgba.Of(0xffffff, 0.12));
             pen.TextIn(toast, new Rect4(gx, gy, gw, gh), f);
-            Block(new Rect4(gx, gy, gw, gh));
+            Block(new Rect4(gx, gy, gw, gh), takesPointer: false);
         }
+        // The note before the first task is over everything else.
+        if (NoticeShown) PaintNotice();
     }
 
     static float RowHeight(Pen pen, MenuRow r, float w)
     {
         if (r.Rule) return 9;
+        if (r.Search) return 36;
         if (r.Header) return 24;
         if (r.Note.Length == 0) return 30;
         var lh = pen.LineHeight(Pen.F(12.5, 600, Pen.Ink));
+        // A path is one line, cut with an ellipsis; the whole of it is in the tip.
+        if (r.OneLine) return 7 + lh + 1 + pen.LineHeight(Pen.F(11, 400, Pen.Faint)) + 7;
         return 7 + lh + 1 + pen.HeightWhenWrapped(r.Note, w - 12 - 16 - (r.On ? 20 : 0), Pen.F(11, 400, Pen.Faint)) + 7;
     }
 
@@ -66,7 +90,9 @@ public sealed partial class OfficeUi
     {
         var compact = h <= 620;
         const float mw = 184;
-        var box = new Rect4(w - mw - (compact ? 10 : 16), compact ? 48 : 64, mw, 5 + 30 + 4 + m.Rows.Count * 32 + 5);
+        var bh = 5 + 30 + 4 + m.Rows.Count * 32 + 5;
+        var box = new Rect4(Math.Max(w - mw - (compact ? 10 : 16), 8), Math.Clamp(compact ? 48 : 64, 8, Math.Max(h - 8 - bh, 8)), mw, bh);
+        m.Box = box;
         PaintGlass(box, 13);
         Add(box, "menuBox");
         var white = Rgba.Of(0xffffff);
@@ -90,7 +116,7 @@ public sealed partial class OfficeUi
         for (var i = 0; i < m.Rows.Count; i++)
         {
             var row = new Rect4(box.X + 5, ry, mw - 10, 32);
-            if (Over(row)) pen.Box(row, 8, new Rgba(0xff, 0xff, 0xff, 0x17));
+            if (Over(row) || m.Hot == i) pen.Box(row, 8, new Rgba(0xff, 0xff, 0xff, 0x17));
             var on = m.Rows[i].Id == "beats" && env.Beats();
             var icon = m.Rows[i].Id switch { "beats" => Glyphs.Notes, "history" => Glyphs.History, _ => Glyphs.Cog };
             pen.Icon(icon, row.X + 8, ry + (32 - 15) / 2, 15, on ? gold : quiet);
@@ -114,50 +140,226 @@ public sealed partial class OfficeUi
             return;
         }
         if (m.Build is not null) m.Rows = m.Build();
-        var heights = m.Rows.Select(r => RowHeight(pen, r, m.W)).ToList();
-        var total = 12 + heights.Sum();
-        var x = Math.Clamp(m.At.X, 8, Math.Max(w - m.W - 8, 8));
-        var y = m.Up ? m.At.Y - total - 6 : m.At.Bottom + 6;
-        y = Math.Clamp(y, 8, Math.Max(h - total - 8, 8));
-        var box = new Rect4(x, y, m.W, total);
-        for (var i = 0; i < 4; i++) pen.Box(x - i * 2, y + 6 - i, m.W + i * 4, total + i * 2, 14 + i * 2, Rgba.Of(0x000000, 0.06));
-        pen.Box(box, 14, Rgba.Of(0x16121c, 0.985));
-        pen.Border(x, y, m.W, total, 14, 1, Rgba.Of(0xffffff, 0.12));
-        Add(box, "menuBox");
-        var cy = y + 6;
-        for (var i = 0; i < m.Rows.Count; i++)
+        var rows = m.Rows;
+        var n = rows.Count;
+        const float pad = 6;
+        var mw = Math.Max(Math.Min(m.W, w - 16), 0);
+        var hs = new float[n];
+        for (var i = 0; i < n; i++) hs[i] = RowHeight(pen, rows[i], mw);
+        // The effort levels are one row of buttons, as in the Go menu: the first level has the row's height and the others none.
+        for (var i = 0; i < n; i++)
+            if (IsEffort(rows[i])) hs[i] = i > 0 && IsEffort(rows[i - 1]) ? 0 : 32;
+        // The pinned rows at the top and the bottom (a heading, the effort levels, a note) stay in view; the rows between them scroll.
+        int head = 0, foot = 0;
+        while (head < n && rows[head].Pin) head++;
+        while (foot < n - head && rows[n - 1 - foot].Pin) foot++;
+        float sumHead = 0, sumFoot = 0, sumList = 0;
+        for (var i = 0; i < n; i++)
         {
-            var r = m.Rows[i];
-            var rh = heights[i];
-            if (r.Rule) { pen.Box(x + 10, cy + 4, m.W - 20, 1, 0, Rgba.Of(0xffffff, 0.06)); cy += rh; continue; }
-            if (r.Header)
-            {
-                pen.Text(r.Label.ToUpperInvariant(), x + 14, cy + (rh - pen.LineHeight(Pen.F(10.5, 600, Pen.Faint))) / 2, Pen.F(10.5, 600, Pen.Faint));
-                cy += rh;
-                continue;
-            }
-            var rr = new Rect4(x + 6, cy, m.W - 12, rh);
-            var hov = Over(rr) && !r.Disabled;
-            if (hov) pen.Box(rr, 8, Rgba.Of(0xffffff, 0.09));
-            var tx = rr.X + 8;
-            var lf = Pen.F(12.5, r.Note.Length > 0 ? 600 : 500, r.Disabled ? Pen.Faint : Pen.Ink);
-            if (r.Mark is not null)
-            {
-                pen.Mark(r.Mark, tx, cy + (rh - 18) / 2, 18);
-                tx += 26;
-            }
-            var labelW = rr.Right - tx - 8 - (r.On ? 20 : 0);
-            if (r.Note.Length == 0) pen.Text(r.Label, tx, cy + (rh - pen.LineHeight(lf)) / 2, lf, labelW);
+            if (i < head) sumHead += hs[i];
+            else if (i >= n - foot) sumFoot += hs[i];
+            else sumList += hs[i];
+        }
+        // A window too short for the pinned rows lets everything scroll.
+        var avail = Math.Max(h - 16, 0);
+        if (2 * pad + sumHead + sumFoot > avail)
+        {
+            sumList += sumHead + sumFoot;
+            sumHead = sumFoot = 0;
+            head = foot = 0;
+        }
+        var natural = 2 * pad + sumHead + sumList + sumFoot;
+        // The menu opens on the side of its pill that was asked for; when it does not fit there it takes the side with more room.
+        var above = m.At.Y - 6 - 8;
+        var below = h - 8 - (m.At.Bottom + 6);
+        var up = m.Up;
+        var room = up ? above : below;
+        if (natural > room && (up ? below : above) > room)
+        {
+            up = !up;
+            room = up ? above : below;
+        }
+        // Never taller than the room, nor the window less 16; at least the pinned rows and a few rows of the list (84, as the Go menu).
+        var boxH = Math.Min(Math.Min(natural, Math.Max(room, 2 * pad + sumHead + sumFoot + Math.Min(sumList, 84))), Math.Max(avail, 2 * pad));
+        var listH = Math.Max(boxH - 2 * pad - sumHead - sumFoot, 0);
+        var x = Math.Clamp(m.At.X, 8, Math.Max(w - mw - 8, 8));
+        var y = Math.Clamp(up ? m.At.Y - 6 - boxH : m.At.Bottom + 6, 8, Math.Max(h - 8 - boxH, 8));
+        var box = new Rect4(x, y, mw, boxH);
+        m.Box = box;
+        for (var i = 0; i < 4; i++) pen.Box(x - i * 2, y + 6 - i, mw + i * 4, boxH + i * 2, 14 + i * 2, Rgba.Of(0x000000, 0.06));
+        pen.Box(box, 14, MenuPanel);
+        pen.Border(x, y, mw, boxH, 14, 1, Rgba.Of(0xffffff, 0.12));
+        Add(box, "menuBox");
+
+        var listTop = y + pad + sumHead;
+        var list = new Rect4(x, listTop, mw, listH);
+        m.List = list;
+        m.Scroll.Set(sumList, listH);
+        var tops = new float[n];
+        float at = 0;
+        for (var i = head; i < n - foot; i++)
+        {
+            tops[i] = at;
+            at += hs[i];
+        }
+        // It opens on the picked row; a list that fills in later (the repositories) does so when its picked row arrives, unless the user scrolled.
+        if (!m.Centered && !m.Scroll.Touched)
+        {
+            for (var i = head; i < n - foot; i++)
+                if (rows[i].On)
+                {
+                    m.Scroll.Center(tops[i], tops[i] + hs[i]);
+                    m.Centered = true;
+                    break;
+                }
+            if (m.Build is null) m.Centered = true;
+        }
+        if (m.RevealHot)
+        {
+            m.RevealHot = false;
+            if (m.Hot >= head && m.Hot < n - foot) m.Scroll.Reveal(tops[m.Hot], tops[m.Hot] + hs[m.Hot]);
+        }
+
+        var cy = y + pad;
+        for (var i = 0; i < head; i++)
+        {
+            PaintMenuRow(m, i, x, cy, mw, hs[i], null);
+            cy += hs[i];
+        }
+        pen.Cv.PushClip(list);
+        for (var i = head; i < n - foot; i++)
+        {
+            var ry = listTop - m.Scroll.Off + tops[i];
+            if (ry + hs[i] <= listTop || ry >= list.Bottom) continue;
+            PaintMenuRow(m, i, x, ry, mw, hs[i], list);
+        }
+        pen.Cv.PopClip();
+        m.Scroll.PaintFade(pen.Cv, list, MenuPanel);
+        cy = list.Bottom;
+        for (var i = n - foot; i < n; i++)
+        {
+            PaintMenuRow(m, i, x, cy, mw, hs[i], null);
+            cy += hs[i];
+        }
+        if (m.Scroll.Max > 0)
+        {
+            var strip = MenuScroll.Strip(list);
+            Add(strip, "menuBar");
+            m.Scroll.PaintBar(pen.Cv, list, Over(strip));
+        }
+        // The row under the pointer whose line was cut says the whole of it.
+        if (rowTip is { } whole) PaintHintBox(whole, px + 14, py + 16);
+        rowTip = null;
+        overBlocker = false;
+    }
+
+    string? rowTip;
+
+    /// <summary>The chat view's start screen: its pills open their menus below them, as the Go app does.</summary>
+    bool OnStartScreen => ChatView && OpenId is null && openKey is null;
+
+    /// <summary>The colour of a menu's panel, which the fade at the edge of a scrolling list runs into.</summary>
+    static readonly Rgba MenuPanel = Rgba.Of(0x16121c);
+
+    /// <summary>The text and icon of a row that destroys something (internal/ui/barmenu.go).</summary>
+    static readonly Rgba RedInk = Rgba.Of(0xff9a92);
+
+    static Rect4 Cut(Rect4 a, Rect4 b)
+    {
+        float x = Math.Max(a.X, b.X), y = Math.Max(a.Y, b.Y);
+        return new Rect4(x, y, Math.Max(Math.Min(a.Right, b.Right) - x, 0), Math.Max(Math.Min(a.Bottom, b.Bottom) - y, 0));
+    }
+
+    /// <summary>One row of a menu at (x, cy). A row of the scrolling part is cut to <paramref name="clip"/>: only what shows answers the pointer.</summary>
+    static bool IsEffort(MenuRow r) => r.Id.StartsWith("effort:", StringComparison.Ordinal);
+
+    /// <summary>
+    /// The levels of a model's effort side by side in one row (internal/ui/officemenus.go modelMenu): equal buttons 26 high, the picked
+    /// one lilac. Drawn with the first level; each level is a target with its own row's index.
+    /// </summary>
+    void PaintEffortRow(Menu m, int first, float x, float cy, float mw, Rect4? clip)
+    {
+        var count = 1;
+        while (first + count < m.Rows.Count && IsEffort(m.Rows[first + count])) count++;
+        var inner = mw - 12;
+        var bw = (inner - 8 - 3 * (count - 1)) / count;
+        var look = Pen.F(11.5, 500, Pen.Ink);
+        for (var k = 0; k < count; k++)
+        {
+            var r = m.Rows[first + k];
+            var cell = new Rect4(x + 6 + 4 + k * (bw + 3), cy + 2, bw, 26);
+            var seen = clip is { } c ? Cut(cell, c) : cell;
+            var shown = seen.W > 0 && seen.H > 0;
+            var hov = (shown && Over(seen)) || m.Hot == first + k;
+            pen.Box(cell, 8, r.On ? new Rgba(0x90, 0x46, 0xff, 0x59) : hov ? new Rgba(0xff, 0xff, 0xff, 0x17) : new Rgba(0xff, 0xff, 0xff, 0x0d));
+            pen.TextIn(r.Label, cell, look, pad: 4);
+            if (shown) Add(seen, "menu", first + k, r.Label);
+        }
+    }
+
+    void PaintMenuRow(Menu m, int i, float x, float cy, float mw, float rh, Rect4? clip)
+    {
+        var r = m.Rows[i];
+        if (IsEffort(r))
+        {
+            if (i == 0 || !IsEffort(m.Rows[i - 1])) PaintEffortRow(m, i, x, cy, mw, clip);
+            return;
+        }
+        if (r.Rule) { pen.Box(x + 10, cy + 4, mw - 20, 1, 0, Rgba.Of(0xffffff, 0.06)); return; }
+        if (r.Search && m.Search is { } search)
+        {
+            // The Go menu's box (internal/ui/officenew.go repoMenu): 32 high, the keyboard is in it from the start, the placeholder is "Search repositories".
+            var field = new Rect4(x + 6, cy, mw - 12, 32);
+            pen.Box(field, 8, new Rgba(0xff, 0xff, 0xff, 0x0f));
+            pen.Border(field.X, field.Y, field.W, field.H, 8, 1, Rgba.Of(0xc4a2ff, 0.55));
+            var look = Pen.F(12.5, 400, Pen.Ink);
+            var line = pen.LineHeight(look);
+            var area = new Rect4(field.X + 10, field.Y + (32 - line) / 2, field.W - 20, line);
+            var shaped = pen.Shape(search.Text.Length == 0 ? " " : search.Text, look, area.W);
+            m.SearchScroll = search.ScrollFor(shaped, area.H, m.SearchScroll);
+            m.SearchLayout = search.Paint(pen, area, look, "Search repositories", true, now, m.SearchScroll);
+            m.SearchArea = area;
+            Add(field, "menuSearch");
+            return;
+        }
+        if (r.Header)
+        {
+            pen.Text(r.Label.ToUpperInvariant(), x + 14, cy + (rh - pen.LineHeight(Pen.F(10.5, 600, Pen.Faint))) / 2, Pen.F(10.5, 600, Pen.Faint));
+            return;
+        }
+        var rr = new Rect4(x + 6, cy, mw - 12, rh);
+        var seen = clip is { } c ? Cut(rr, c) : rr;
+        var shown = seen.W > 0 && seen.H > 0;
+        var hov = !r.Disabled && ((shown && Over(seen)) || m.Hot == i);
+        if (hov) pen.Box(rr, 8, Rgba.Of(0xffffff, 0.09));
+        var tx = rr.X + 8;
+        var lf = Pen.F(12.5, r.Note.Length > 0 ? 600 : 500, r.Disabled ? Pen.Faint : r.Red ? RedInk : Pen.Ink);
+        if (r.Mark is not null)
+        {
+            pen.Mark(r.Mark, tx, cy + (rh - 18) / 2, 18);
+            tx += 26;
+        }
+        else if (r.Icon is not null)
+        {
+            pen.Icon(r.Icon, tx + 1, cy + (rh - 16) / 2, 16, r.Red ? RedInk : hov ? Pen.Ink : Pen.Dim);
+            tx += 26;
+        }
+        var labelW = rr.Right - tx - 8 - (r.On ? 20 : 0);
+        if (r.Note.Length == 0) pen.Text(r.Label, tx, cy + (rh - pen.LineHeight(lf)) / 2, lf, labelW);
+        else
+        {
+            pen.Text(r.Label, tx, cy + 7, lf, labelW);
+            var noteW = rr.Right - tx - 8 - (r.On ? 20 : 0);
+            var noteLook = Pen.F(11, 400, Pen.Faint);
+            if (!r.OneLine) pen.Wrapped(r.Note, tx, cy + 7 + pen.LineHeight(lf) + 1, noteW, noteLook);
             else
             {
-                pen.Text(r.Label, tx, cy + 7, lf, labelW);
-                pen.Wrapped(r.Note, tx, cy + 7 + pen.LineHeight(lf) + 1, rr.Right - tx - 8 - (r.On ? 20 : 0), Pen.F(11, 400, Pen.Faint));
+                pen.Text(r.Note, tx, cy + 7 + pen.LineHeight(lf) + 1, noteLook, noteW);
+                if (shown && Over(seen) && pen.Width(r.Note, noteLook) > noteW) rowTip = r.Note;
             }
-            if (r.On) pen.Icon(Icons.Check, rr.Right - 8 - 12, cy + (r.Note.Length > 0 ? 10 : (rh - 12) / 2), 12, Pen.Lilac);
-            if (!r.Disabled) Add(rr, "menu", i, r.Label);
-            cy += rh;
         }
-        overBlocker = false;
+        if (r.On) pen.Icon(Icons.Check, rr.Right - 8 - 12, cy + (r.Note.Length > 0 ? 10 : (rh - 12) / 2), 12, Pen.Lilac);
+        if (!r.Disabled && shown) Add(seen, "menu", i, r.Label);
     }
 
     // MARK: Actions
@@ -173,6 +375,8 @@ public sealed partial class OfficeUi
             case "view":
                 ChatView = t.N == 1;
                 menu = null;
+                // The start screen's box has the keyboard as soon as the screen shows (the Go list does the same).
+                if (ChatView && OpenId is null && openKey is null) focus = Focus.Task;
                 break;
             case "topMenu":
                 OpenMenu("top", t.R, env.OpenSettings is null
@@ -182,6 +386,9 @@ public sealed partial class OfficeUi
             case "menuTime":
                 env.SetTime?.Invoke(t.N);
                 break;
+            case "noticeOk":
+                NoticeSeenNow();
+                break;
             case "newChat":
                 CloseChat();
                 ChatView = true;
@@ -189,6 +396,25 @@ public sealed partial class OfficeUi
                 break;
             case "row":
                 OpenRow(t.N);
+                break;
+            case "head":
+                // A folder's heading folds its chats, and opens them again.
+                if (!folded.Remove(t.S)) folded.Add(t.S);
+                break;
+            case "rowDelete":
+                if (t.N >= 0 && t.N < rowKeys.Count)
+                {
+                    var (dkey, did) = rowKeys[t.N];
+                    if (did is { } liveId) confirm = (liveId, "deleteLive");
+                    else if (!dkey.StartsWith("cli:", StringComparison.Ordinal))
+                    {
+                        confirm = (0, "deleteKey");
+                        confirmKey = dkey;
+                    }
+                }
+                break;
+            case "sideEdge":
+                sideDrag = true;
                 break;
             case "showSide":
                 sideClosed = false;
@@ -229,31 +455,44 @@ public sealed partial class OfficeUi
             case "pillAgent":
                 {
                     List<MenuRow> Rows() => [.. (state?.Tools ?? []).Select(x => new MenuRow(ToolDisplay(x), x.Id, x.Ready ? "" : x.Hint, x.Id == TaskPicks().Tool?.Id, Mark: x.Id))];
-                    OpenMenu("agent", t.R, Rows(), true, build: Rows);
+                    OpenMenu("agent", t.R, Rows(), !OnStartScreen, build: Rows);
                     break;
                 }
             case "pillWhere":
                 {
-                    var rows = new List<MenuRow> { new("This computer", "here", On: !taskCloud) };
-                    if (ToolSupportsCloud(TaskPicks().Tool)) rows.Add(new MenuRow("Kiro Web", "cloud", "Runs in Kiro's cloud on a repository.", taskCloud));
-                    OpenMenu("where", t.R, rows, true);
+                    // The start screen's list is the Go one (internal/ui/officelist.go): a laptop and a cloud, with what each does.
+                    var rows = new List<MenuRow> { new("This computer", "here", "On this computer, in the folder", !taskCloud, Icon: Glyphs.Laptop, OneLine: OnStartScreen) };
+                    if (ToolSupportsCloud(TaskPicks().Tool))
+                        rows.Add(new MenuRow("Kiro cloud", "cloud", taskRepo is { Length: > 0 } rp ? "In a sandbox on " + rp + ", with a PR at the end" : "In an empty sandbox", taskCloud, Icon: Glyphs.Cloud, OneLine: OnStartScreen));
+                    OpenMenu("where", t.R, rows, !OnStartScreen, 248);
                     break;
                 }
             case "pillRepo":
                 OpenRepoMenu(t.R);
                 break;
             case "pillFolder":
-                OpenFolderMenu(t.R);
+                // The Go box's folder chip opens the system's folder dialog at once. Here it does so while the box has no folder; with one,
+                // it opens the list of recent folders (which ends in "Open folder…"). The start screen's chip is always the list.
+                if (TaskPicks().Folder.Length == 0 && !(ChatView && OpenId is null && openKey is null)) PickFolderNow();
+                else OpenFolderMenu(t.R);
+                break;
+            case "menuSearch":
+                if (menu is { Search: { } sb, SearchLayout: { } sl } sm)
+                {
+                    sb.Press(sl, px - sm.SearchArea.X, py - sm.SearchArea.Y + sm.SearchScroll, clicksNow, (modsNow & UiMods.Shift) != 0, now);
+                    sm.Hot = -1;
+                }
                 break;
             case "pillAccess":
                 {
                     var cur = TaskPicks().Access;
                     var tool = TaskPicks().Tool;
-                    var rows = new List<MenuRow> { new((tool is null ? "The agent" : ToolDisplay(tool)) + " may", Header: true) };
-                    foreach (var (id, label, note) in AccessChoices)
-                        rows.Add(new MenuRow(label, id, id == "risky" && tool?.Id == "codex" ? "Asks to write outside the folder or go online. Codex runs the rest." : note, id == cur));
-                    rows.Add(new MenuRow("", Note: "For this task only. Settings keeps the default.", Disabled: true));
-                    OpenMenu("access", t.R, rows, true, 270);
+                    var rows = new List<MenuRow> { new((tool is null ? "The agent" : ToolDisplay(tool)) + " may", Header: true, Pin: true) };
+                    // Read only is offered where the tool can do it (internal/shell/newtask.go).
+                    foreach (var (id, label, note) in AccessChoices.Where(c => c.Id != "read" || tool?.ReadOnly == true || cur == "read"))
+                        rows.Add(new MenuRow(label, id, id == "risky" && tool?.Id == "codex" ? "Asks to write outside the folder or go online. Codex runs the rest." : note, id == cur, Icon: id == "read" ? Glyphs.Eye : Glyphs.Shield, OneLine: OnStartScreen));
+                    rows.Add(new MenuRow("", Note: "For this task only. Settings keeps the default.", Disabled: true, Pin: true));
+                    OpenMenu("access", t.R, rows, !OnStartScreen, 270);
                     break;
                 }
             case "pillModel":
@@ -343,8 +582,12 @@ public sealed partial class OfficeUi
                     var st = AskOf(a);
                     customBox = st.Custom[t.N];
                     customQ = t.N;
+                    customAsk = a.Id;
                     focus = Focus.Custom;
                 });
+                break;
+            case "askBar":
+                askScroll.BarDown(askRect, py);
                 break;
             case "confirmNo":
                 confirm = null;
@@ -404,6 +647,13 @@ public sealed partial class OfficeUi
             env.Send(new DeleteCommand(null, confirmKey));
             return;
         }
+        if (c.Kind == "deleteLive")
+        {
+            // A chat of the list, open or not: it goes from the office and the history; its own view closes if it was open.
+            env.Send(new DeleteCommand(c.Turn));
+            if (OpenId == c.Turn) CloseChat();
+            return;
+        }
         if (OpenId is not { } id) return;
         switch (c.Kind)
         {
@@ -444,24 +694,96 @@ public sealed partial class OfficeUi
         var cur = TaskPicks().Folder;
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var p in projects)
-            if (p.Folder.Length > 0 && seen.Add(p.Folder)) rows.Add(new MenuRow(p.Name.Length > 0 ? p.Name : LastPart(p.Folder), p.Folder, p.Folder, p.Folder == cur));
+            if (p.Folder.Length > 0 && seen.Add(p.Folder)) rows.Add(new MenuRow(p.Name.Length > 0 ? p.Name : LastPart(p.Folder), p.Folder, p.Folder, p.Folder == cur, Icon: Glyphs.Folder, OneLine: true));
         foreach (var hrow in state?.History ?? [])
-            if (hrow.Folder.Length > 0 && seen.Add(hrow.Folder) && rows.Count < 12) rows.Add(new MenuRow(LastPart(hrow.Folder), hrow.Folder, hrow.Folder, hrow.Folder == cur));
-        if (state?.Folder is { Length: > 0 } sf && seen.Add(sf)) rows.Insert(0, new MenuRow(LastPart(sf), sf, sf, sf == cur));
-        if (rows.Count == 0) rows.Add(new MenuRow("No folders yet", Disabled: true));
+            if (hrow.Folder.Length > 0 && seen.Add(hrow.Folder) && rows.Count < 12) rows.Add(new MenuRow(LastPart(hrow.Folder), hrow.Folder, hrow.Folder, hrow.Folder == cur, Icon: Glyphs.Folder, OneLine: true));
+        if (state?.Folder is { Length: > 0 } sf && seen.Add(sf)) rows.Insert(0, new MenuRow(LastPart(sf), sf, sf, sf == cur, Icon: Glyphs.Folder, OneLine: true));
+        // As the Go menu: the recent folders under a heading, then "Open folder…", which asks the system for one. A fresh install has
+        // no recent folder, so this row is the only way to a first task; it stays in view under a long list.
+        if (rows.Count > 0) rows.Insert(0, new MenuRow("Recent", Header: true, Pin: true));
+        if (rows.Count > 0) rows.Add(new MenuRow("", Rule: true, Pin: true));
+        rows.Add(new MenuRow("Open folder…", "openFolder", Pin: true, Icon: Glyphs.FolderOpen));
         return rows;
     }
 
+    /// <summary>A repository matches what is typed when it contains the words, in any case; nothing typed matches all (internal/shell/newtask.go repoMatches).</summary>
+    public static bool RepoMatches(string name, string query)
+    {
+        var q = query.Trim();
+        return q.Length == 0 || name.Contains(q, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// The Kiro Web repositories (internal/ui/officenew.go repoMenu): the heading "Kiro Web clones", a search box that has the keyboard,
+    /// "Empty workspace", then the repositories that match what is typed. Enter picks the first match.
+    /// </summary>
     void OpenRepoMenu(Rect4 at)
     {
+        var search = new EditBox();
         List<MenuRow> Rows()
         {
-            var rows = new List<MenuRow> { new("Empty workspace", "", "Starts with no repository.", string.IsNullOrEmpty(taskRepo)) };
-            foreach (var r in repos) rows.Add(new MenuRow(r, r, On: r == taskRepo));
-            if (reposNote.Length > 0) rows.Add(new MenuRow(reposNote, Disabled: true));
+            var rows = new List<MenuRow> { new("Kiro Web clones", Header: true, Pin: true), new("", Search: true, Pin: true) };
+            rows.Add(new MenuRow("Empty workspace", "", "Starts with no repository.", string.IsNullOrEmpty(taskRepo)));
+            var query = search.Text.Trim();
+            var matches = repos.Where(r => RepoMatches(r, query)).ToList();
+            foreach (var r in matches) rows.Add(new MenuRow(r, r, On: r == taskRepo));
+            if (repos.Count > 0 && matches.Count == 0) rows.Add(new MenuRow($"No repository matches “{query}”.", Disabled: true, Pin: true));
+            else if (reposNote.Length > 0) rows.Add(new MenuRow(reposNote, Disabled: true, Pin: true));
             return rows;
         }
         OpenMenu("repo", at, Rows(), true, 300, build: Rows);
+        menu!.Search = search;
+    }
+
+    /// <summary>
+    /// A key in a menu that has a search box: the editing keys go to the box, and Enter picks the first repository that matches what is
+    /// typed when no row is lit (and only when something is typed, as the Go menu does). The Up and Down keys stay the menu's.
+    /// </summary>
+    bool MenuSearchKey(Menu m, UiKey key, UiMods mods)
+    {
+        if (m.Search is not { } box) return false;
+        var ctrl = (mods & UiMods.Control) != 0;
+        var shift = (mods & UiMods.Shift) != 0;
+        var before = box.Version;
+        switch (key)
+        {
+            case UiKey.Backspace: box.Backspace(ctrl, now); break;
+            case UiKey.Delete: box.Delete(ctrl, now); break;
+            case UiKey.Left: box.Move(Dir.Left, shift, ctrl, m.SearchLayout, now); break;
+            case UiKey.Right: box.Move(Dir.Right, shift, ctrl, m.SearchLayout, now); break;
+            case UiKey.Home: box.Move(Dir.Home, shift, ctrl, m.SearchLayout, now); break;
+            case UiKey.End: box.Move(Dir.End, shift, ctrl, m.SearchLayout, now); break;
+            case UiKey.A when ctrl: box.SelectAll(); break;
+            case UiKey.C when ctrl:
+                if (box.HasSelection) env.Clipboard.Set(box.SelectedText());
+                break;
+            case UiKey.X when ctrl:
+                var cut = box.Cut(now);
+                if (cut.Length > 0) env.Clipboard.Set(cut);
+                break;
+            case UiKey.Z when ctrl:
+                if (!(shift ? box.Redo(now) : box.Undo(now))) return true;
+                break;
+            case UiKey.Y when ctrl:
+                if (!box.Redo(now)) return true;
+                break;
+            case UiKey.V when ctrl:
+                if (env.Clipboard.Text() is { Length: > 0 } text) box.Insert(text, now);
+                break;
+            case UiKey.Enter:
+                if (m.Hot >= 0) return false;
+                if (box.Text.Trim().Length > 0 && m.Rows.FirstOrDefault(r => r.Pickable && r.Id.Length > 0) is { } first) MenuPick(m, first);
+                break;
+            default:
+                return false;
+        }
+        if (box.Version != before)
+        {
+            m.Scroll.ToStart();
+            m.Hot = -1;
+        }
+        Dirty = true;
+        return true;
     }
 
     void OpenModelMenu(Rect4 at)
@@ -478,7 +800,31 @@ public sealed partial class OfficeUi
             foreach (var l in levels) rows.Add(new MenuRow(l, "effort:" + l, On: l == effort));
         }
         rows.AddRange(ModelFooter(tool));
-        OpenMenu("model", at, rows, true, 240);
+        OpenMenu("model", at, PinModelEnds(rows), true, 240);
+    }
+
+    /// <summary>"Open folder…": the system's folder dialog; the folder picked is the task's. Where the app cannot show one, a toast says so.</summary>
+    void PickFolderNow()
+    {
+        if (env.PickFolder is not { } pick)
+        {
+            Say("In Hover this opens a folder picker.");
+            return;
+        }
+        if (pick() is { Length: > 0 } folder) taskFolder = folder;
+        Dirty = true;
+    }
+
+    /// <summary>
+    /// A model menu scrolls its models inside the box and keeps the heading, the effort levels and the last row in view
+    /// (internal/ui/officemenus.go modelMenu): the heading is pinned, and so is everything from the rule after the models.
+    /// </summary>
+    static List<MenuRow> PinModelEnds(List<MenuRow> rows)
+    {
+        var tail = rows.FindIndex(1, r => r.Rule);
+        for (var i = 0; i < rows.Count; i++)
+            if (i == 0 || (tail > 0 && i >= tail)) rows[i] = rows[i] with { Pin = true };
+        return rows;
     }
 
     /// <summary>A Kiro Web task whose id at Kiro the backend has sent (<c>kiroId</c>, once the first turn has told it): the chip that opens its page needs both.</summary>
@@ -521,10 +867,38 @@ public sealed partial class OfficeUi
             }
             if (s.Turns.Any(x => x.SwitchTo is not null)) rows.Add(new MenuRow("Bring back messages", "bringBack"));
             rows.Add(new MenuRow("", Rule: true));
-            rows.Add(new MenuRow("Delete chat", "delete"));
+            rows.Add(new MenuRow("Delete chat", "delete", Icon: Glyphs.Bin, Red: true));
         }
         else rows.Add(new MenuRow("This chat is saved. Open it in the office to change it.", Disabled: true));
         OpenMenu("more", at, rows, false, 230);
+    }
+
+    /// <summary>The Up and Down keys (and Home and End) move a lit row over the rows that can be picked, Enter picks it.</summary>
+    void MenuKey(Menu m, UiKey key)
+    {
+        var n = m.Rows.Count;
+        bool Pickable(int i) => m.Rows[i].Pickable;
+        int Next(int from, int dir)
+        {
+            for (var i = from + dir; i >= 0 && i < n; i += dir)
+                if (Pickable(i)) return i;
+            return -1;
+        }
+        var to = key switch
+        {
+            UiKey.Down => Next(m.Hot < 0 ? -1 : m.Hot, 1),
+            UiKey.Up => Next(m.Hot < 0 ? n : m.Hot, -1),
+            UiKey.Home => Next(-1, 1),
+            UiKey.End => Next(n, -1),
+            _ => -1,
+        };
+        if (to >= 0)
+        {
+            m.Hot = to;
+            m.RevealHot = true;
+        }
+        else if (key == UiKey.Enter && m.Hot >= 0 && m.Hot < n && Pickable(m.Hot)) MenuPick(m, m.Rows[m.Hot]);
+        Dirty = true;
     }
 
     void MenuPick(Menu m, MenuRow row)
@@ -545,9 +919,16 @@ public sealed partial class OfficeUi
                 else if (row.Id == "settings") env.OpenSettings?.Invoke();
                 break;
             case "project":
-                taskFolder = row.Id;
+                if (row.Id == "openFolder") PickFolderNow();
+                else taskFolder = row.Id;
                 break;
             case "agent":
+                // A tool that is not ready is refused here, with its hint (the Go box does the same), not when the task is sent.
+                if (ToolOf(row.Id) is { Ready: false } notReady)
+                {
+                    Say(notReady.Hint.Length > 0 ? notReady.Hint : ToolDisplay(notReady) + " is not ready yet.");
+                    break;
+                }
                 taskTool = row.Id;
                 // The new tool's own access, model and effort until the user picks.
                 taskAccess = taskModel = taskEffort = null;
@@ -582,6 +963,14 @@ public sealed partial class OfficeUi
         }
     }
 
+    /// <summary>Forks from the last turn that ended; with none, says so (internal/shell/chatact.go forkChat).</summary>
+    void ForkChat(int sid)
+    {
+        var turn = DeskSession(sid)?.Turns.FindLastIndex(t => !t.Queued && t.Stage is "done" or "failed" or "stopped") ?? -1;
+        if (turn < 0) Say("Nothing has ended yet to fork from.");
+        else env.Send(new ForkCommand(sid, turn));
+    }
+
     void MoreAct(string id)
     {
         if (OpenId is not { } sid) return;
@@ -593,7 +982,7 @@ public sealed partial class OfficeUi
         {
             Activate(new Target(default, "rename"));
         }
-        else if (id == "fork") env.Send(new ForkCommand(sid, Math.Max(turns.Count - 1, 0)));
+        else if (id == "fork") ForkChat(sid);
         else if (id == "bringBack") env.Send(new BringBackCommand(sid));
         else if (id == "delete") confirm = (0, "delete");
         else if (id.StartsWith("switch:", StringComparison.Ordinal)) env.Send(new SwitchProviderCommand(sid, id[7..]));

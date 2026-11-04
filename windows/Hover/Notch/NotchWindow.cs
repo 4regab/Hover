@@ -19,6 +19,15 @@ sealed class NotchWindow : INotchPlatform, IDisposable
     const uint TrayId = 1;
     const uint WM_MOUSEWHEEL = 0x20A;
 
+    /// <summary>
+    /// The message Explorer broadcasts when it makes the taskbar again (it was restarted, or it was not up yet when Hover started at
+    /// login): every icon in the notification area is gone then, and each program has to add its own again.
+    /// </summary>
+    static readonly uint TaskbarCreated = RegisterWindowMessageW("TaskbarCreated");
+
+    const nuint TrayRetryTimer = 7;
+    int trayTries;
+
     static WndProc? procedure;
     static bool classMade;
     static readonly Dictionary<nint, NotchWindow> Windows = [];
@@ -55,6 +64,8 @@ sealed class NotchWindow : INotchPlatform, IDisposable
     /// <summary>The primary button went up at a point, in device pixels.</summary>
     public event Action<int, int>? Released;
     public event Action<int>? KeyDown;
+    /// <summary>A key came up (Settings' Hold to try ends with it).</summary>
+    public event Action<int>? KeyUp;
     /// <summary>Typed text (a character or a surrogate pair).</summary>
     public event Action<string>? Char;
     /// <summary>The wheel turned over the window (120 per notch of the wheel, positive away from the user).</summary>
@@ -144,6 +155,23 @@ sealed class NotchWindow : INotchPlatform, IDisposable
 
     public (int X, int Y) Cursor() => GetCursorPos(out var p) ? (p.X, p.Y) : (-10000, -10000);
 
+    /// <summary>The system cursor the window shows over its client area: 0 the normal shape (the class's own), 1 the hand, 2 the text cursor.</summary>
+    public int CursorShape
+    {
+        get => cursorShape;
+        set
+        {
+            if (cursorShape == value) return;
+            cursorShape = value;
+            SetCursor(LoadCursorW(0, CursorId(value)));
+        }
+    }
+
+    int cursorShape;
+
+    /// <summary>The system cursor for a shape: 1 the hand (IDC_HAND), 2 the text cursor (IDC_IBEAM), 3 left and right (IDC_SIZEWE); the class's own otherwise.</summary>
+    static nint CursorId(int shape) => shape switch { 1 => 32649, 2 => 32513, 3 => 32644, _ => 32512 };
+
     public bool Buttons() => (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0 || (GetAsyncKeyState(VK_RBUTTON) & 0x8000) != 0 || (GetAsyncKeyState(VK_MBUTTON) & 0x8000) != 0;
 
     /// <summary>Puts the window at the rectangle (device pixels), topmost, without taking the keyboard.</summary>
@@ -228,7 +256,30 @@ sealed class NotchWindow : INotchPlatform, IDisposable
         HostLog.Line(trayShown
             ? $"tray icon added (the shell has it: {TrayModify()})"
             : $"tray icon could not be added ({Marshal.GetLastWin32Error()})");
+        if (!trayShown) ArmTrayRetry();
         return trayShown;
+    }
+
+    /// <summary>The shell may not be ready yet (Hover started at login before the taskbar): try again every second, ten times.</summary>
+    void ArmTrayRetry()
+    {
+        if (Handle == 0 || trayTries >= 10) return;
+        trayTries++;
+        SetTimer(Handle, TrayRetryTimer, 1000, 0);
+    }
+
+    /// <summary>The taskbar was made again: the icon is added again. If the shell still has it (a broadcast with no restart), nothing changes.</summary>
+    void TrayRebuild()
+    {
+        HostLog.Line("the taskbar was made again (Explorer started)");
+        if (trayShown && TrayModify())
+        {
+            HostLog.Line("tray icon: the shell still has it");
+            return;
+        }
+        trayShown = false;
+        trayTries = 0;
+        TrayStart();
     }
 
     bool TrayModify()
@@ -243,6 +294,7 @@ sealed class NotchWindow : INotchPlatform, IDisposable
 
     public void TrayStop()
     {
+        if (Handle != 0) KillTimer(Handle, TrayRetryTimer);
         if (!trayShown) return;
         var data = TrayData();
         Shell_NotifyIconW(NIM_DELETE, ref data);
@@ -282,6 +334,8 @@ sealed class NotchWindow : INotchPlatform, IDisposable
             // The menu closes when it is clicked away only if the window is in the foreground.
             SetForegroundWindow(Handle);
             var picked = TrackPopupMenu(menu, TPM_RIGHTBUTTON | TPM_RETURNCMD, p.X, p.Y, 0, Handle, 0);
+            // Windows asks for this after a menu from a notification icon: without it the menu can fail to close when it is clicked away.
+            PostMessageW(Handle, WM_NULL, 0, 0);
             return picked - 1;
         }
         finally { DestroyMenu(menu); }
@@ -305,8 +359,17 @@ sealed class NotchWindow : INotchPlatform, IDisposable
 
     nint OnMessage(nint hwnd, uint msg, nint wParam, nint lParam)
     {
+        if (msg == TaskbarCreated)
+        {
+            TrayRebuild();
+            return 0;
+        }
         switch (msg)
         {
+            case WM_TIMER when (nuint)wParam == TrayRetryTimer:
+                KillTimer(hwnd, TrayRetryTimer);
+                if (!trayShown) TrayStart();
+                return 0;
             case WM_HOTKEY:
                 Hotkey?.Invoke((int)wParam);
                 return 0;
@@ -315,6 +378,10 @@ sealed class NotchWindow : INotchPlatform, IDisposable
                 break;
             case WM_MOUSEACTIVATE when !keys:
                 return MA_NOACTIVATE;
+            case WM_SETCURSOR when cursorShape != 0 && (lParam & 0xFFFF) == 1:
+                // Over the client area the panels say what the pointer is on: the hand over a button, the text cursor over a box of words.
+                SetCursor(LoadCursorW(0, CursorId(cursorShape)));
+                return 1;
             case WM_ERASEBKGND:
                 return 1;
             case WM_SIZE:
@@ -330,6 +397,9 @@ sealed class NotchWindow : INotchPlatform, IDisposable
                 return 0;
             case WM_KEYDOWN:
                 KeyDown?.Invoke((int)wParam);
+                return 0;
+            case WM_KEYUP:
+                KeyUp?.Invoke((int)wParam);
                 return 0;
             case WM_CHAR:
                 {

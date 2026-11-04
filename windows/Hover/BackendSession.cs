@@ -11,6 +11,7 @@ namespace Hover;
 public sealed class BackendSession : IAsyncDisposable
 {
     BackendClient? client;
+    bool stopping;
 
     /// <summary>One line for the dashboard: starting, ready, or why not.</summary>
     public string Status { get; private set; } = "Starting the agent backend…";
@@ -47,7 +48,14 @@ public sealed class BackendSession : IAsyncDisposable
             client = BackendClient.Start(new BackendOptions { ExecutablePath = exe, DataDir = dataDir });
             HostLog.Line($"backend started (pid {client.ProcessId})");
             client.Event += OnEvent;
-            client.Exited += code => Update($"The agent backend stopped ({code}).", problem: true);
+            // A backend that ends by itself leaves the app without agents: say what to do. (The backend's own words, when it gave a reason, are
+            // kept: it said them just before.)
+            client.Exited += code =>
+            {
+                if (stopping) return;
+                if (Problem is not null && failureSaid) return;
+                Update($"The agent backend stopped ({code}). Quit Hover from its tray menu and open it again.", problem: true);
+            };
             // The Discord status is the app's (Hover.Settings' DiscordPresence), so the backend runs no client of its own; Kiro's
             // credits by day are kept from the start, for Settings → Kiro.
             await client.InitializeAsync(key, hostDiscord: true, credits: true);
@@ -63,9 +71,17 @@ public sealed class BackendSession : IAsyncDisposable
         }
     }
 
+    bool failureSaid;
+
     void OnEvent(BackendEvent e)
     {
         if (e is ToastEvent toast) HostLog.Line($"backend toast: {toast.Text}");
+        // The backend gives up with a reason (a history it cannot open, say) and then waits to be let go: the words are the bar's.
+        if (e is BackendFailureEvent failure && !stopping)
+        {
+            failureSaid = true;
+            Update(failure.Text, problem: true);
+        }
         Event?.Invoke(e);
     }
 
@@ -80,6 +96,7 @@ public sealed class BackendSession : IAsyncDisposable
     /// <summary>Quits the backend in order, so it writes the history and the settings first.</summary>
     public async ValueTask DisposeAsync()
     {
+        stopping = true;
         if (client is null) return;
         var code = await client.StopAsync(TimeSpan.FromSeconds(10));
         HostLog.Line($"backend stopped (exit code {code})");

@@ -22,6 +22,12 @@ namespace Hover.Chatting;
 /// over the office. The pointer and the keyboard are read from the page the overlay sits in; the overlay
 /// takes the pointer only where the panels have something, so the office behind it still gets the rest.
 /// </summary>
+/// <summary>The window's page: the element that carries the pointer's shape for everything in it (ProtectedCursor is only open to a subclass).</summary>
+sealed class CursorGrid : Grid
+{
+    public void Show(Microsoft.UI.Input.InputCursor? cursor) => ProtectedCursor = cursor;
+}
+
 sealed class UiOverlay : Grid, IDisposable
 {
     readonly UiCore core;
@@ -59,14 +65,17 @@ sealed class UiOverlay : Grid, IDisposable
         Background = new SolidColorBrush(Windows.UI.Color.FromArgb(0, 0, 0, 0));
         IsHitTestVisible = false;
         IsTabStop = true;
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(this, "Hover office");
         Children.Add(image);
         SizeChanged += (_, _) => core.Ui.Invalidate();
+        // Moved to a screen with another scale (or the scale was changed): the size in DIPs can stay, the pixels do not.
+        Loaded += (_, _) => { if (XamlRoot is not null) XamlRoot.Changed += (_, _) => core.Ui.Invalidate(); };
 
         host.AddHandler(PointerMovedEvent, new PointerEventHandler(OnMoved), true);
         host.AddHandler(PointerPressedEvent, new PointerEventHandler(OnPressed), true);
         host.AddHandler(PointerReleasedEvent, new PointerEventHandler(OnReleased), true);
         host.AddHandler(PointerCanceledEvent, new PointerEventHandler(OnReleased), true);
-        host.AddHandler(PointerExitedEvent, new PointerEventHandler((_, _) => core.Ui.PointerLeave()), true);
+        host.AddHandler(PointerExitedEvent, new PointerEventHandler((_, _) => { core.Ui.PointerLeave(); ProtectedCursor = null; (host as CursorGrid)?.Show(null); shapeShown = 0; }), true);
         host.AddHandler(PointerWheelChangedEvent, new PointerEventHandler(OnWheel), true);
         host.AddHandler(KeyDownEvent, new KeyEventHandler(OnKeyDown), true);
         host.CharacterReceived += OnChar;
@@ -82,7 +91,9 @@ sealed class UiOverlay : Grid, IDisposable
 
     void Tick()
     {
-        if (disposed || XamlRoot is null || ActualWidth < 2 || ActualHeight < 2) return;
+        // The app disposes the panels and then the graphics device while this window's timer still runs: a last frame would draw with a
+        // device that is gone (a NullReferenceException logged at every quit).
+        if (disposed || core.IsDisposed || XamlRoot is null || ActualWidth < 2 || ActualHeight < 2 || Away) return;
         var now = core.NowMs;
         var ui = core.Ui;
         if (!ui.Dirty && !(ui.Animating && now >= nextAt)) return;
@@ -157,10 +168,43 @@ sealed class UiOverlay : Grid, IDisposable
         return ((float)p.X, (float)p.Y);
     }
 
+    // The pointer's shapes, made once. The overlay is only hit-testable where the panels have something, so the shape is theirs there.
+    internal static readonly Microsoft.UI.Input.InputCursor HandCursor = Microsoft.UI.Input.InputSystemCursor.Create(Microsoft.UI.Input.InputSystemCursorShape.Hand);
+    internal static readonly Microsoft.UI.Input.InputCursor TextCursor = Microsoft.UI.Input.InputSystemCursor.Create(Microsoft.UI.Input.InputSystemCursorShape.IBeam);
+    static readonly Microsoft.UI.Input.InputCursor ResizeCursor = Microsoft.UI.Input.InputSystemCursor.Create(Microsoft.UI.Input.InputSystemCursorShape.SizeWestEast);
+
+    int shapeShown, movesLogged;
+
+    void ShowCursor(float x, float y)
+    {
+        var shape = core.Ui.CursorAt(x, y);
+        // For the checks of the real app (HOVER_UI_DUMP): the first moves the page heard, and every change of the shape chosen.
+        if (UiDump.On && (movesLogged++ < 12 || (int)shape != shapeShown))
+            HostLog.Line($"pointer shape: moved to {x:0},{y:0} over {core.Ui.TargetAt(x, y)?.Id ?? "nothing"}: shape {(int)shape} (was {shapeShown}), overlay hit-testable {IsHitTestVisible}");
+        shapeShown = (int)shape;
+        var cursor = shape switch
+        {
+            Hover.Chat.Ui.UiCursor.Hand => HandCursor,
+            Hover.Chat.Ui.UiCursor.Text => TextCursor,
+            Hover.Chat.Ui.UiCursor.ResizeColumn => ResizeCursor,
+            _ => null,
+        };
+        // The overlay is hit-testable only where the panels have something, and only after a move has told it so; the page under it is
+        // always there, so the shape is the page's when the page can carry it.
+        if (host is CursorGrid page) page.Show(cursor);
+        ProtectedCursor = cursor;
+    }
+
+    /// <summary>Settings is over the office in this window: the panels under it neither see the pointer nor the keys (they would press the buttons beneath it).</summary>
+    bool Away => Visibility != Visibility.Visible;
+
     void OnMoved(object sender, PointerRoutedEventArgs e)
     {
+        if (Away) return;
         var (x, y) = At(e);
         core.Ui.PointerMove(x, y);
+        // The shape follows what the last frame drew under the pointer.
+        ShowCursor(x, y);
         // The overlay takes the pointer where the panels have something; elsewhere the office behind sees it.
         var covers = core.Ui.Covers(x, y);
         if (IsHitTestVisible != covers) IsHitTestVisible = covers;
@@ -168,6 +212,7 @@ sealed class UiOverlay : Grid, IDisposable
 
     void OnPressed(object sender, PointerRoutedEventArgs e)
     {
+        if (Away) return;
         var props = e.GetCurrentPoint(this).Properties;
         var (x, y) = At(e);
         if (!props.IsLeftButtonPressed)
@@ -196,6 +241,7 @@ sealed class UiOverlay : Grid, IDisposable
 
     void OnReleased(object sender, PointerRoutedEventArgs e)
     {
+        if (Away) return;
         var (x, y) = At(e);
         core.Ui.PointerUp(x, y);
         // Releases whatever this overlay captured; releasing a pointer it does not hold throws.
@@ -204,9 +250,17 @@ sealed class UiOverlay : Grid, IDisposable
 
     void OnWheel(object sender, PointerRoutedEventArgs e)
     {
+        if (Away) return;
         var (x, y) = At(e);
-        var delta = e.GetCurrentPoint(this).Properties.MouseWheelDelta;
-        if (core.Ui.Wheel(x, y, delta / 120f * 90f)) e.Handled = true;
+        var props = e.GetCurrentPoint(this).Properties;
+        var delta = props.MouseWheelDelta;
+        // A sideways wheel, or the wheel with Shift, scrolls the code box or table under the pointer (the Go app does the same).
+        if (props.IsHorizontalMouseWheel || KeyMap.Mods(Native.GetKeyState).HasFlag(Hover.Chat.Ui.UiMods.Shift))
+        {
+            if (core.Ui.WheelSideways(x, y, OfficeUi.WheelDips(props.IsHorizontalMouseWheel ? -delta : delta))) e.Handled = true;
+            return;
+        }
+        if (core.Ui.Wheel(x, y, OfficeUi.WheelDips(delta))) e.Handled = true;
     }
 
     // MARK: The keyboard
@@ -214,7 +268,7 @@ sealed class UiOverlay : Grid, IDisposable
     void OnKeyDown(object sender, KeyRoutedEventArgs e)
     {
         // Only while the overlay has the keyboard, which a press on the panels gave it.
-        if (FocusManager.GetFocusedElement(XamlRoot) != this) return;
+        if (Away || FocusManager.GetFocusedElement(XamlRoot) != this) return;
         var vk = (int)e.Key;
         if (core.Ui.Key(KeyMap.Of(vk), KeyMap.Mods(Native.GetKeyState))) e.Handled = true;
     }
@@ -223,7 +277,7 @@ sealed class UiOverlay : Grid, IDisposable
 
     void OnChar(UIElement sender, CharacterReceivedRoutedEventArgs e)
     {
-        if (FocusManager.GetFocusedElement(XamlRoot) != this) return;
+        if (Away || FocusManager.GetFocusedElement(XamlRoot) != this) return;
         var c = e.Character;
         string text;
         if (char.IsHighSurrogate(c)) { highSurrogate = c; return; }

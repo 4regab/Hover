@@ -40,7 +40,7 @@ public sealed class DashboardWindow : Window
     internal DashboardWindow(string dataDir, BackendSession backend, OfficeHost? office = null, UiCore? panels = null, SettingsPane? settings = null)
     {
         Title = "Hover";
-        AppWindow.Resize(new SizeInt32(960, 600));
+        WindowMinimum.Apply(AppWindow, WinRT.Interop.WindowNative.GetWindowHandle(this));
         Activated += (_, e) => IsActive = e.WindowActivationState != WindowActivationState.Deactivated;
 
         // One title bar, as the Go app has (internal/ui/dashboard.go): Hover's dark bar holds File, Settings and Help on the left, and
@@ -60,11 +60,8 @@ public sealed class DashboardWindow : Window
         header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         // File, Settings and Help, as the Go app's title bar has them.
         var menuBar = AppMenu.Build(new AppMenu.Actions(
-            NewChat: () =>
-            {
-                settings?.CloseDash();
-                if (panels is not null) { panels.Ui.ChatView = true; panels.Ui.CloseChat(); panels.Ui.Invalidate(); }
-            },
+            // As the Go app's newChat: the open chat is put away for the start screen. It does not leave Settings or change the view.
+            NewChat: () => panels?.Ui.NewChat(),
             OpenFolder: () =>
             {
                 // A folder for the next task: it is the one the new-task box starts with.
@@ -109,7 +106,7 @@ public sealed class DashboardWindow : Window
         };
 
         // The window's own background is not part of the element tree, so the pictures draw this.
-        var page = new Grid { Background = (Brush)Application.Current.Resources["ApplicationPageBackgroundThemeBrush"] };
+        var page = new CursorGrid { Background = (Brush)Application.Current.Resources["ApplicationPageBackgroundThemeBrush"] };
         page.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         page.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
         page.Children.Add(bar);
@@ -123,9 +120,16 @@ public sealed class DashboardWindow : Window
         }
         if (settings is not null && panels is not null)
         {
-            SettingsView = new SettingsOverlay(settings, DispatcherQueue) { WindowHandle = WinRT.Interop.WindowNative.GetWindowHandle(this) };
+            SettingsView = new SettingsOverlay(settings, DispatcherQueue) { WindowHandle = WinRT.Interop.WindowNative.GetWindowHandle(this), Page = page };
             Grid.SetRow(SettingsView, 1);
             page.Children.Add(SettingsView);
+            // While Settings shows, the office's panels under it step aside: a press on a Settings control must not also press the panel beneath.
+            settings.DashOpenChanged += () => DispatcherQueue.TryEnqueue(() =>
+            {
+                if (Panels is not null) Panels.Visibility = settings.DashOpen ? Visibility.Collapsed : Visibility.Visible;
+                if (!settings.DashOpen) panels?.Ui.Invalidate();
+                if (Hover.Chatting.UiDump.On) Hover.Chatting.UiDump.Set("panels-away", new System.Text.Json.Nodes.JsonObject { ["away"] = settings.DashOpen });
+            });
             // A theme colours Settings, its menus and the app window; Hover's own colours follow the appearance.
             ApplyPalette(page, settings.Controller.Palette);
             settings.PaletteChanged += palette => DispatcherQueue.TryEnqueue(() => ApplyPalette(page, palette));
@@ -241,6 +245,8 @@ public sealed class DashboardWindow : Window
         problem.Text = text ?? "";
         problem.Visibility = text is null ? Visibility.Collapsed : Visibility.Visible;
         ToolTipService.SetToolTip(problem, text);
+        // For the checks of the real app: what the bar says.
+        if (Hover.Chatting.UiDump.On) Hover.Chatting.UiDump.Set("bar-problem", new System.Text.Json.Nodes.JsonObject { ["text"] = text });
     }
 
     /// <summary>

@@ -25,6 +25,12 @@ public static class Shots
             var origin = dashboard.OfficeArea.TransformToVisual(dashboard.Root).TransformPoint(new Windows.Foundation.Point(0, 0));
             Hover.Windowing.OfficeShots.PasteDashboard(pixels, w, h, scale,
                 new Hover.Windowing.OfficeRect(origin.X, origin.Y, dashboard.OfficeArea.ActualWidth, dashboard.OfficeArea.ActualHeight));
+            // The panels (the switch, the menu button, the + circle, the bots' tags) are a layer of their own that the element tree's picture
+            // leaves out: they are drawn over the office, as the window shows them.
+            if (panels is null) return;
+            var layer = Hover.Chatting.ChatShots.RenderLayer(panels, (float)dashboard.OfficeArea.ActualWidth, (float)dashboard.OfficeArea.ActualHeight, scale);
+            Hover.Chatting.ChatShots.Over(pixels, w, h, (int)Math.Round(origin.X * scale), (int)Math.Round(origin.Y * scale), layer,
+                (int)Math.Round(dashboard.OfficeArea.ActualWidth * scale), (int)Math.Round(dashboard.OfficeArea.ActualHeight * scale));
         });
         if (panels is not null) await Hover.Chatting.ChatShots.TakeAsync(directory, panels);
         await Hover.Windowing.NotchShots.TakeAsync(directory, panels);
@@ -43,12 +49,17 @@ public static class Shots
         }
         await Task.Delay(400);
 
-        var scale = Math.Min(1.0, MaxWidth / Math.Max(1.0, view.ActualWidth));
-        var width = Math.Max(1, (int)Math.Round(view.ActualWidth * scale));
-        var height = Math.Max(1, (int)Math.Round(view.ActualHeight * scale));
+        // The size asked of RenderAsync is in the view's own units, and the picture comes out that many times the display scale larger
+        // (at 150 % a 1185 wide window made a 1778 wide picture): the limit is on the pixels, so the display scale is counted.
+        var display = view.XamlRoot?.RasterizationScale ?? 1.0;
+        var shrink = Math.Min(1.0, MaxWidth / Math.Max(1.0, view.ActualWidth * display));
+        var width = Math.Max(1, (int)Math.Round(view.ActualWidth * shrink));
+        var height = Math.Max(1, (int)Math.Round(view.ActualHeight * shrink));
 
         var bitmap = new RenderTargetBitmap();
         await bitmap.RenderAsync(view, width, height);
+        // Pixels for each of the view's units, as the picture really is (the callback places layers with it).
+        var scale = bitmap.PixelWidth / Math.Max(1.0, view.ActualWidth);
         var pixels = await bitmap.GetPixelsAsync();
         var bytes = new byte[pixels.Length];
         using (var reader = DataReader.FromBuffer(pixels)) reader.ReadBytes(bytes);

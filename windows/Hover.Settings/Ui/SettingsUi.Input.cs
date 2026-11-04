@@ -21,6 +21,8 @@ public sealed partial class SettingsUi
         py = y;
         var was = hot;
         hot = HitAt(x, y);
+        // A move of the pointer over the menu takes the highlight from the keys.
+        if (!Equals(was, hot) && hot is { K: TK.MenuItem }) menuKbd = false;
         // The credits chart names the day under the pointer.
         if (!Equals(was, hot) || ctl.Section == Section.Kiro) Dirty = true;
         if (sliderId is { } sid && sliders.TryGetValue(sid, out var s))
@@ -33,6 +35,11 @@ public sealed partial class SettingsUi
             }
         }
         if (barDragging) DragBar(y);
+        if (ctl.Menu is not null)
+        {
+            menuScroll.BarMove(menuList, y);
+            if (menuScroll.Dragging) Dirty = true;
+        }
         if (pointerDown && FocusId is { } id && fields.TryGetValue(id, out var f) && f.Shaped is { } shaped && pressed is { K: TK.Field } p && p.Id == id)
         {
             f.Box.Drag(shaped, x - f.TextX, y - f.TextY);
@@ -47,13 +54,19 @@ public sealed partial class SettingsUi
         hot = pressed = HitAt(x, y);
         pointerDown = true;
         Dirty = true;
+        // The pointer takes the keyboard's place: the ring goes, and a shortcut that was recording stops unless this is its own button.
+        kring = false;
+        kfocus = null;
+        menuKbd = false;
         var t = pressed;
         if (t is null)
         {
             Unfocus(commit: true);
+            ctl.StopRecording();
             return;
         }
         var hit = t.Value;
+        if (hit.K != TK.Shortcut) ctl.StopRecording();
         // A click anywhere but in the box that has the keyboard takes the keyboard away from it.
         if (hit.K != TK.Field && FocusId is not null) Unfocus(commit: true);
         switch (hit.K)
@@ -71,6 +84,9 @@ public sealed partial class SettingsUi
                     sliderId = hit.Id;
                     sliderValue = SliderAt(x, s.X, s.W, s.Lo, s.Hi);
                 }
+                break;
+            case TK.Bar when hit.Id == "menuList":
+                menuScroll.BarDown(menuList, y);
                 break;
             case TK.Bar:
                 barDragging = true;
@@ -94,6 +110,7 @@ public sealed partial class SettingsUi
         pressed = null;
         hot = up;
         Dirty = true;
+        menuScroll.BarUp();
         if (sliderId is { } sid)
         {
             sliderId = null;
@@ -173,8 +190,17 @@ public sealed partial class SettingsUi
 
     public void Wheel(float x, float y, float dy)
     {
-        if (ctl.Menu is not null) return;
-        var step = -dy * 48;
+        // The wheel over an open picker's menu scrolls the menu; with a menu open it never scrolls the page behind it.
+        if (ctl.Menu is not null)
+        {
+            if (menuScroll.Max > 0 && menuBox.Contains(x, y))
+            {
+                menuScroll.By(-dy * WheelStep);
+                Dirty = true;
+            }
+            return;
+        }
+        var step = -dy * WheelStep;
         if (sideRect.Contains(x, y) && sideContent > sideView)
             sideOff = Math.Clamp(sideOff + step, 0, sideContent - sideView);
         else
@@ -198,9 +224,36 @@ public sealed partial class SettingsUi
         Dirty = true;
     }
 
+    /// <summary>Where the last frame drew the open picker's menu, or null when none is open, for the checks.</summary>
+    public Rect4? MenuBox => ctl.Menu is null ? null : menuBox;
+
+    /// <summary>The options of the open picker's menu that the last frame drew in view, by their index, for the checks.</summary>
+    public IEnumerable<int> MenuOptionsInView => hits.Where(h => h.K == TK.MenuItem).Select(h => h.N);
+
     /// <summary>The pane's scroll, for the checks.</summary>
     public float PaneScroll => paneOff;
 
     /// <summary>The height of what the pane holds, for the checks.</summary>
     public float PaneContentHeight => paneContent;
+
+    /// <summary>The height of the pane's view, for the checks.</summary>
+    public float PaneViewHeight => paneView;
+
+    /// <summary>A notch of the wheel moves the page 60 pixels, as the Go window does (<c>platform/win/window.go</c>).</summary>
+    const float WheelStep = 60;
+
+    /// <summary>
+    /// The pointer's shape over a point: the hand over a control, the text cursor over a box, the normal shape over the page and its
+    /// bars (<c>internal/ui/input.go</c>, <c>widgets.go</c>).
+    /// </summary>
+    public UiCursor CursorAt(float x, float y)
+    {
+        if (x < 0 || y < 0) return UiCursor.Normal;
+        return HitAt(x, y)?.K switch
+        {
+            null or TK.Pane or TK.Bar or TK.MenuOutside => UiCursor.Normal,
+            TK.Field => UiCursor.Text,
+            _ => UiCursor.Hand,
+        };
+    }
 }

@@ -7,7 +7,9 @@ public sealed partial class OfficeUi
 {
     // The desk panel (desk.slint, internal/ui/deskpanel.go and deskrows.go): the surfaces as tabs along the top, and the one shown.
 
-    float deskScroll, tabOff, listW = 640, lastTotal, lastListH;
+    float deskScroll, tabOff, tabMax, listW = 640, lastTotal, lastListH;
+    string tabFollowed = "";
+    Rect4 deskTabsRect;
     bool deskFocusPending;
     Laid? panelLaid;
     (int Ver, string Tab, int W, int Id, bool Prefs)? laidSig;
@@ -194,6 +196,11 @@ public sealed partial class OfficeUi
                 break;
         }
         if (deskMenuOpen) PaintOpenMenu(r);
+        else
+        {
+            openScroll.ToStart();
+            openMenu = default;
+        }
         pen.Cv.PopClip();
         if (deskFocusPending && deskTab == "terminal" && fields.TryGetValue("term", out var tf) && tf.Layout is not null)
         {
@@ -226,7 +233,10 @@ public sealed partial class OfficeUi
         }
         total = Math.Max(total - 2, 0);
         float left = 0;
-        for (var i = 0; i < shown.Count; i++)
+        // The open tab is brought into view when it changes; after that the wheel's place stays.
+        var follow = deskTab != tabFollowed;
+        tabFollowed = deskTab;
+        for (var i = 0; follow && i < shown.Count; i++)
         {
             if (shown[i].Id == deskTab)
             {
@@ -235,7 +245,9 @@ public sealed partial class OfficeUi
             }
             left += widths[i] + 2;
         }
-        tabOff = Math.Clamp(tabOff, 0, Math.Max(0, total - avail));
+        tabMax = Math.Max(0, total - avail);
+        tabOff = Math.Clamp(tabOff, 0, tabMax);
+        deskTabsRect = new Rect4(r.X, r.Y, r.W, 52);
         pen.Cv.PushClip(new Rect4(r.X + 10, r.Y, avail, 52));
         var cx = r.X + 10 - tabOff;
         for (var i = 0; i < shown.Count; i++)
@@ -385,6 +397,16 @@ public sealed partial class OfficeUi
     {
         if (deskPanel is null) return false;
         if (!DeskPanelRect.Contains(x, y)) return false;
+        // Over the tab strip the wheel moves the tabs sideways when they do not all fit, and otherwise does nothing.
+        if (deskTabsRect.Contains(x, y))
+        {
+            if (tabMax > 0)
+            {
+                tabOff = Math.Clamp(tabOff - delta, 0, tabMax);
+                Dirty = true;
+            }
+            return true;
+        }
         if (deskListRect.Contains(x, y) || deskTab is "pr" or "terminal")
         {
             var max = deskTab == "pr" && Got(deskPanel.Value, "pr")["none"].Bool() ? Math.Max(0, prContent - prView) : Math.Max(0, (panelLaid?.Total ?? 0) - deskListRect.H);
@@ -462,9 +484,8 @@ public sealed partial class OfficeUi
                 {
                     pen.Box(rect, 0, Rgba.Of(0x0b0a0d));
                     var hov = Over(rect);
-                    Tv(r.Num, x, y, h, mono115 with { Color = Rgba.Of(0xffffff, 0.22) }, 0);
-                    var nw = pen.Width(r.Num, mono115);
-                    if (nw < 44) { }
+                    // Right-aligned in 44 px (internal/ui/deskrows.go).
+                    Tv(r.Num, x + 44 - pen.Width(r.Num, mono115), y, h, mono115 with { Color = Rgba.Of(0xffffff, 0.22) }, 0);
                     Tv(r.Text, x + 56, y, h, mono115 with { Color = Rgba.Of(0xd6d3dc) }, 0);
                     if (r.Act.Length > 0 && hov) OpenLineButton(r.Act, x + w - 86, y, h, false);
                     break;
@@ -642,7 +663,7 @@ public sealed partial class OfficeUi
                         pen.Box(cx, y + (h - 19) / 2, bw, 19, 6, Rgba.Of(0xffffff, 0.055));
                         pen.TextIn(r.Sub, new Rect4(cx, y + (h - 19) / 2, bw, 19), f);
                     }
-                    if (r.Act.Length > 0) DeskButton("drowBtn", "Create PR", null, x + w - 6, y + (h - 26) / 2, false, true, idx, r.Act, rightAligned: true);
+                    if (r.Act.Length > 0) DeskButton("drowBtn", "Create PR", null, x + w - 6, y + (h - 26) / 2, true, true, idx, r.Act, rightAligned: true);
                     break;
                 }
         }
@@ -894,20 +915,28 @@ public sealed partial class OfficeUi
         var away = new Rect4(r.X, r.Y, r.W, r.H);
         Add(away, "openAway");
         var choices = editorChoices;
-        var mh = 12f + 24;
+        var content = 0f;
         for (var i = 0; i < choices.Count; i++)
         {
-            if (choices[i].Id == "fm" && i > 0) mh += 9;
-            mh += 30;
+            if (choices[i].Id == "fm" && i > 0) content += 9;
+            content += 30;
         }
         var mx = r.Right - 214;
         var my = r.Y + 52 + 44 - 6;
+        // No taller than the panel it drops in: the editors scroll inside under the heading.
+        const float head = 6 + 24, foot = 6;
+        var mh = Math.Min(head + content + foot, Math.Max(r.Bottom - 8 - my, head + foot + 60));
+        var list = new Rect4(mx, my + head, 204, mh - head - foot);
+        openScroll.Set(content, list.H);
+        openMenu = new Rect4(mx, my, 204, mh);
+        openList = list;
         pen.Box(mx, my, 204, mh, 10, Rgba.Of(0x1b181e));
         pen.Border(mx, my, 204, mh, 10, 1, Rgba.Of(0xffffff, 0.1));
-        Block(new Rect4(mx, my, 204, mh));
-        Add(new Rect4(mx, my, 204, mh), "openMenuBox");
+        Block(openMenu);
+        Add(openMenu, "openMenuBox");
         Tv("Open file in", mx + 14, my + 6, 24, Pen.F(11, 400, Pen.Faint));
-        var cy = my + 6 + 24;
+        var cy = list.Y - openScroll.Off;
+        pen.Cv.PushClip(list);
         for (var i = 0; i < choices.Count; i++)
         {
             var c = choices[i];
@@ -917,19 +946,36 @@ public sealed partial class OfficeUi
                 cy += 9;
             }
             var row = new Rect4(mx + 6, cy, 192, 30);
-            var hov = Over(row);
-            if (hov) pen.Box(row, 7, Rgba.Of(0xffffff, 0.05));
-            EditorMark(c, mx + 14, cy + 7.5f);
-            Tv(c.Name, mx + 6 + 8 + 15 + 10, cy, 30, Pen.F(13, 400, hov ? Pen.Ink : Pen.Dim));
-            if (c.Last)
+            var seen = Cut(row, list);
+            if (seen.H > 0)
             {
-                var lf = Pen.F(11, 400, Pen.Faint);
-                Tv("Last used", mx + 204 - 14 - pen.Width("Last used", lf), cy, 30, lf);
+                var hov = Over(seen);
+                if (hov) pen.Box(row, 7, Rgba.Of(0xffffff, 0.05));
+                EditorMark(c, mx + 14, cy + 7.5f);
+                Tv(c.Name, mx + 6 + 8 + 15 + 10, cy, 30, Pen.F(13, 400, hov ? Pen.Ink : Pen.Dim));
+                if (c.Last)
+                {
+                    var lf = Pen.F(11, 400, Pen.Faint);
+                    Tv("Last used", mx + 204 - 14 - pen.Width("Last used", lf), cy, 30, lf);
+                }
+                Add(seen, "openIn", i, c.Id);
             }
-            Add(row, "openIn", i, c.Id);
             cy += 30;
         }
+        pen.Cv.PopClip();
+        openScroll.PaintFade(pen.Cv, list, Rgba.Of(0x1b181e));
+        if (openScroll.Max > 0)
+        {
+            var strip = MenuScroll.Strip(list);
+            Add(strip, "openBar");
+            openScroll.PaintBar(pen.Cv, list, Over(strip));
+        }
     }
+
+    /// <summary>The scroll of the editors in the "Open file in" menu, and where the last frame drew the menu and its list.</summary>
+    readonly MenuScroll openScroll = new();
+
+    Rect4 openMenu, openList;
 
     // MARK: The terminal
 

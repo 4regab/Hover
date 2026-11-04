@@ -85,12 +85,12 @@ public sealed partial class OfficeUi
 
     /// <summary>
     /// The HUD's glass (internal/ui/glass.go Glass): a soft shadow, a dark violet fill and a faint edge. The Go build also shows a blurred copy
-    /// of the office through it; the office is a surface of its own here, so only the fill's see-through shows it.
+    /// of the office through it; here there is no blur, so the fill is nearly solid (a sharp scene under 28 % see-through shows its words through).
     /// </summary>
     void PaintGlass(Rect4 r, float radius)
     {
         for (var i = 0; i < 5; i++) pen.Box(r.X - i * 3, r.Y + 8 - i, r.W + i * 6, r.H + i * 4, radius + i * 3, Rgba.Of(0x000000, 0.05));
-        pen.Box(r, radius, new Rgba(0x16, 0x0f, 0x1e, 0xb8));
+        pen.Box(r, radius, new Rgba(0x16, 0x0f, 0x1e, 0xe6));
         pen.Border(r.X, r.Y, r.W, r.H, radius, 1, new Rgba(0xff, 0xff, 0xff, 0x17));
     }
 
@@ -134,8 +134,19 @@ public sealed partial class OfficeUi
             var cell = new Rect4(x + 3 + i * (half - 3), y + 3, half - 3, vh - 6);
             if (on) pen.Box(cell, (vh - 6) / 2, Rgba.Of(0xffffff, 0.09));
             var ic = i == 0 ? Glyphs.Office : Glyphs.Chat;
-            pen.Icon(ic, cell.X + (cell.W - 15) / 2, cell.Y + (cell.H - 15) / 2, 15, on ? Pen.Lilac : Over(cell) ? Pen.Dim : Rgba.Of(0xf6f2ff, 0.45));
+            var hov = Over(cell);
+            pen.Icon(ic, cell.X + (cell.W - 15) / 2, cell.Y + (cell.H - 15) / 2, 15, on ? Pen.Lilac : hov ? Pen.Dim : Rgba.Of(0xf6f2ff, 0.45));
             Add(cell, "view", i);
+            if (!hov) continue;
+            // The name of the half the pointer is on, under it (internal/ui/officeview.go).
+            var name = i == 0 ? "Office" : "Chat";
+            var tf = Pen.F(11.5, 500, Rgba.Of(0xf6f2ff));
+            var tw = pen.Width(name, tf);
+            var tx = x + (i == 0 ? 0 : half);
+            var ty = y + vh + 6;
+            pen.Box(tx, ty, tw + 16, pen.LineHeight(tf) + 8, 8, Rgba.Of(0x0a060e, 0.9));
+            pen.Border(tx, ty, tw + 16, pen.LineHeight(tf) + 8, 8, 1, Rgba.Of(0xffffff, 0.1));
+            pen.Text(name, tx + 8, ty + 4, tf);
         }
     }
 
@@ -150,7 +161,8 @@ public sealed partial class OfficeUi
             pen.Box(r, 18, Rgba.Of(0x1c1822, hov ? 0.95 : 0.82));
             pen.Border(r.X, r.Y, r.W, r.H, 18, 1, Rgba.Of(0xffffff, 0.14));
             pen.Icon(Glyphs.Plus, r.X + 10, r.Y + 10, 16, Pen.Ink);
-            pen.Box(r.Right - 8, r.Y + 1, 6, 6, 3, Pen.Lilac);
+            // The dot says there are words waiting in the box (the Go button shows it only then).
+            if (task.Text.Length > 0) pen.Box(r.Right - 8, r.Y + 1, 6, 6, 3, Pen.Lilac);
             Add(r, "fab");
             return;
         }
@@ -191,23 +203,74 @@ public sealed partial class OfficeUi
         return effort.Length > 0 ? name + " · " + effort : name;
     }
 
-    /// <summary>A pill in the box's bar: an icon, words and a chevron. Returns its width.</summary>
-    float Pill(string id, string? mark, string? icon, string text, float x, float y, float h0, Rgba fg, bool open, float maxW = 220)
+    /// <summary>
+    /// A pill in the box's bar: an icon, words and (unless <paramref name="Chevron"/> is off, as the Go box's folder and access chips have it) a chevron.
+    /// <paramref name="Rank"/> is how late it gives up width when the bar is short: 0 first (the model), 1 next, 2 last.
+    /// </summary>
+    sealed record PillSpec(string Id, string? Mark, string? Icon, string Text, Rgba Fg, bool Open, int Rank, bool Chevron = true)
     {
-        var f = Pen.F(12.5, 500, fg);
-        var tw = pen.Width(text, f);
-        var iw = mark is not null || icon is not null ? 16f + 6 : 0f;
-        var pw = Math.Min(maxW, 9 + iw + tw + 6 + 13 + 9);
+        /// <summary>Everything but the words: the sides, the icon or logo, the gap and the chevron.</summary>
+        public float Fixed => 9 + (Mark is not null || Icon is not null ? 16f + 6 : 0f) + (Chevron ? 6 + 13 : 0) + 9;
+    }
+
+    static readonly Look PillLook = Pen.F(12.5, 500, Pen.Dim);
+
+    /// <summary>
+    /// The widths of the bar's pills in <paramref name="room"/>: each at its words' width when they all fit. When they do not, the model
+    /// gives up width first, then the folder or repository, then the rest, each down to a few words and then to a few letters, so no
+    /// pill runs into the next or off the bar. A pill that still cannot be shown at all gets 0 (the model first).
+    /// </summary>
+    float[] FitPills(List<PillSpec> specs, float room)
+    {
+        var n = specs.Count;
+        var w = new float[n];
+        float Words(int i) => pen.Width(specs[i].Text, PillLook with { Weight = 500 });
+        for (var i = 0; i < n; i++) w[i] = specs[i].Fixed + Words(i);
+        var over = w.Sum() + 2 * Math.Max(n - 1, 0) - room;
+        // Down to eight letters or so first, then to three, the least ranked first.
+        foreach (var keep in new[] { 56f, 26f })
+            foreach (var rank in new[] { 0, 1, 2 })
+                for (var i = 0; i < n && over > 0; i++)
+                {
+                    if (specs[i].Rank != rank) continue;
+                    var cut = Math.Min(over, Math.Max(w[i] - (specs[i].Fixed + Math.Min(Words(i), keep)), 0));
+                    w[i] -= cut;
+                    over -= cut;
+                }
+        // No room even for that: the model goes, then the others share what is there.
+        for (var i = 0; i < n && over > 0; i++)
+            if (specs[i].Rank == 0 && w[i] > 0)
+            {
+                over -= w[i] + 2;
+                w[i] = 0;
+            }
+        if (over > 0)
+        {
+            var shown = w.Count(x => x > 0);
+            var each = Math.Max((room - 2 * Math.Max(shown - 1, 0)) / Math.Max(shown, 1), 0);
+            for (var i = 0; i < n; i++) if (w[i] > 0) w[i] = Math.Min(w[i], each);
+        }
+        return w;
+    }
+
+    /// <summary>Draws a pill <paramref name="pw"/> wide (its words cut with an ellipsis where they do not fit) and makes it a target. Returns the width.</summary>
+    float DrawPill(PillSpec p, float x, float y, float h0, float pw)
+    {
+        if (pw <= 0) return 0;
+        var f = Pen.F(12.5, 500, p.Fg);
         var r = new Rect4(x, y, pw, h0);
-        var hov = Over(r) || open;
+        var hov = Over(r) || p.Open;
         if (hov) pen.Box(r, 8, Rgba.Of(0xffffff, 0.043));
         var tx = x + 9;
-        if (mark is not null) { pen.Mark(mark, tx, y + (h0 - 16) / 2, 16); tx += 22; }
-        else if (icon is not null) { pen.Icon(icon, tx + 1, y + (h0 - 14) / 2, 14, hov ? Pen.Ink : fg); tx += 22; }
-        var color = hov ? Pen.Ink : fg;
-        pen.Text(text, tx, y + (h0 - pen.LineHeight(f)) / 2, f with { Color = color }, Math.Max(pw - (tx - x) - 6 - 13 - 9, 0));
-        pen.Icon(Glyphs.Chevron, x + pw - 9 - 13, y + (h0 - 13) / 2, 13, color);
-        Add(r, id);
+        if (p.Mark is not null) { pen.Mark(p.Mark, tx, y + (h0 - 16) / 2, 16); tx += 22; }
+        else if (p.Icon is not null) { pen.Icon(p.Icon, tx + 1, y + (h0 - 14) / 2, 14, hov ? Pen.Ink : p.Fg); tx += 22; }
+        var color = hov ? Pen.Ink : p.Fg;
+        var tail = p.Chevron ? 6 + 13 + 9 : 9;
+        // Pen.Text takes a width of 0 to mean "no limit", so a pill with no room for words draws none.
+        var room = pw - (tx - x) - tail;
+        if (room > 4) pen.Text(p.Text, tx, y + (h0 - pen.LineHeight(f)) / 2, f with { Color = color }, room);
+        if (p.Chevron) pen.Icon(Glyphs.Chevron, x + pw - 9 - 13, y + (h0 - 13) / 2, 13, color);
+        Add(r, p.Id);
         return pw;
     }
 
@@ -230,8 +293,10 @@ public sealed partial class OfficeUi
         if (!start)
         {
             // The agent's logo before the words, and a fold at the end.
+            var logo = new Rect4(cx, cy, 30, 30);
+            if (Over(logo) || menu?.Kind == "agent") pen.Box(logo, 9, Rgba.Of(0xffffff, 0.08));
             pen.Mark(tool?.Id ?? "kiro", cx, cy, 30);
-            Add(new Rect4(cx, cy, 30, 30), "pillAgent");
+            Add(logo, "pillAgent");
             textX = cx + 30 + 10;
             textW = box.W - 24 - 30 - 10 - 34;
         }
@@ -258,41 +323,53 @@ public sealed partial class OfficeUi
         pen.Icon(Glyphs.Plus, x + 7, barY + 7, 14, Over(attach) ? Pen.Ink : Pen.Dim);
         Add(attach, "attach");
         x += 28 + 2;
+        // The round button is at the right and keeps its size; the pills between share what is left (FitPills).
+        var gs = start ? 32f : 30f;
+        var send = new Rect4(box.Right - (start ? 14 : 8) - gs, barY + (bh - gs) / 2, gs, gs);
+        var specs = new List<PillSpec>();
         if (start)
         {
-            x += Pill("pillAgent", tool?.Id ?? "kiro", null, ToolDisplay(tool), x, barY, bh, Pen.Dim, menu?.Kind == "agent") + 2;
-            x += Pill("pillWhere", null, taskCloud ? Glyphs.Cloud : Glyphs.Folder, taskCloud ? "Kiro Web" : "This computer", x, barY, bh, Pen.Dim, menu?.Kind == "where") + 2;
+            specs.Add(new PillSpec("pillAgent", tool?.Id ?? "kiro", null, ToolDisplay(tool), Pen.Dim, menu?.Kind == "agent", 1));
+            specs.Add(new PillSpec("pillWhere", null, taskCloud ? Glyphs.Cloud : Glyphs.Laptop, taskCloud ? "Kiro cloud" : "This computer", Pen.Dim, menu?.Kind == "where", 1));
             if (taskCloud)
-                x += Pill("pillRepo", null, null, taskRepo is { Length: > 0 } rp0 ? LastPart(rp0) : "Choose repo", x, barY, bh, Pen.Dim, menu?.Kind == "repo", 150) + 2;
+                specs.Add(new PillSpec("pillRepo", null, null, taskRepo is { Length: > 0 } rp0 ? LastPart(rp0) : "Choose repo", Pen.Dim, menu?.Kind == "repo", 1));
         }
         else
         {
-            var cloud = new Rect4(x, barY, 28, bh);
-            var cloudOn = taskCloud;
-            pen.Box(cloud, 8, cloudOn ? Rgba.Of(0x8fbcff, 0.18) : Over(cloud) ? Rgba.Of(0xffffff, 0.043) : Rgba.Clear);
-            pen.Icon(Glyphs.Cloud, x + 7, barY + 7, 14, cloudOn ? Rgba.Of(0x8fbcff) : Pen.Dim);
-            if (ToolSupportsCloud(tool)) Add(cloud, "cloud");
-            x += 28 + 2;
+            // The cloud switch is Kiro's only (the Go box hides it for the others, and so takes none of the bar).
+            if (ToolSupportsCloud(tool))
+            {
+                var cloud = new Rect4(x, barY, 28, bh);
+                pen.Box(cloud, 8, taskCloud ? Rgba.Of(0x8fbcff, Over(cloud) ? 0.28 : 0.18) : Over(cloud) ? Rgba.Of(0xffffff, 0.043) : Rgba.Clear);
+                pen.Icon(Glyphs.Cloud, x + 7, barY + 7, 14, taskCloud ? Rgba.Of(0x8fbcff) : Pen.Dim);
+                Add(cloud, "cloud");
+                x += 28 + 2;
+            }
+            // The folder and the access are chips without a chevron, as in the Go box.
             if (taskCloud)
-                x += Pill("pillRepo", null, null, taskRepo is { Length: > 0 } rp ? LastPart(rp) : "Choose repo", x, barY, bh, Pen.Dim, menu?.Kind == "repo", 150) + 2;
-            else if (folder.Length > 0 || true)
-                x += Pill("pillFolder", null, Glyphs.Folder, folder.Length > 0 ? LastPart(folder) : "Folder", x, barY, bh, Pen.Dim, menu?.Kind == "project", 150) + 2;
+                specs.Add(new PillSpec("pillRepo", null, null, taskRepo is { Length: > 0 } rp ? LastPart(rp) : "Choose repo", Pen.Dim, menu?.Kind == "repo", 1, Chevron: false));
+            else
+                // No folder: "Choose a folder" in amber, as the Go box says it; a click opens the folder dialog.
+                specs.Add(new PillSpec("pillFolder", null, Glyphs.Folder, folder.Length > 0 ? LastPart(folder) : "Choose a folder", folder.Length > 0 ? Pen.Dim : Rgba.Of(0xffb36b), menu?.Kind == "project", 1, Chevron: false));
         }
-        var amber = access == "full";
-        x += Pill("pillAccess", null, Glyphs.Shield, AccessLabel(access), x, barY, bh, amber ? Pen.Amber : Pen.Dim, menu?.Kind == "access") + 2;
-        // The round button at the right; the model before it.
-        var gs = start ? 32f : 30f;
-        var send = new Rect4(box.Right - (start ? 14 : 8) - gs, barY + (bh - gs) / 2, gs, gs);
+        // Not in Kiro Web: every task there runs with full access, so there is nothing to pick (the Go box leaves the chip out).
+        if (!taskCloud)
+            specs.Add(new PillSpec("pillAccess", null, Glyphs.Shield, AccessLabel(access), access == "full" ? Pen.Amber : Pen.Dim, menu?.Kind == "access", 2, Chevron: start));
+        specs.Add(new PillSpec("pillModel", null, null, ModelLabel(tool, model, effort), Pen.Dim, menu?.Kind == "model", 0));
+        var widths = FitPills(specs, send.X - 4 - x);
+        for (var i = 0; i < specs.Count; i++)
+        {
+            // The model pill ends at the send button; the others follow the attach button.
+            if (specs[i].Id == "pillModel")
+                DrawPill(specs[i], send.X - 4 - widths[i], barY, bh, widths[i]);
+            else
+                x += DrawPill(specs[i], x, barY, bh, widths[i]) + 2;
+        }
         var enabled = task.Text.Trim().Length > 0;
         var hov = Over(send) && enabled;
         pen.Box(send, gs / 2, !enabled ? Rgba.Of(0xffffff, 0.07) : hov ? Rgba.Of(0xffffff) : Pen.Ink);
         pen.Icon(Glyphs.Send, send.X + (gs - 16) / 2, send.Y + (gs - 16) / 2, 16, enabled ? Rgba.Of(0x0c0b0e) : Rgba.Of(0xf6f2ff, 0.28), 2.4f);
         Add(send, enabled ? "startTask" : "startOff");
-        var mlabel = ModelLabel(tool, model, effort);
-        var mf = Pen.F(12.5, 500, Pen.Dim);
-        var mpw = Math.Min(Math.Max(send.X - 4 - x, 40), 9 + pen.Width(mlabel, mf) + 6 + 13 + 9);
-        if (tool is { Models.Count: > 0 } || tool is not null)
-            Pill("pillModel", null, null, mlabel, send.X - 4 - mpw, barY, bh, Pen.Dim, menu?.Kind == "model", mpw);
     }
 
     float taskScroll;
@@ -341,7 +418,7 @@ public sealed partial class OfficeUi
         var deskW = deskPanel is not null ? Math.Min(560f, Math.Max(360f, w * 0.42f)) : 0f;
         listAllowed = w >= 760 && !(deskPanel is not null && w < (env.InNotch ? 1240 : 1300));
         sideShown = listAllowed && !sideClosed;
-        var lw = sideShown ? 260f : 0f;
+        var lw = sideShown ? Math.Clamp(sideW, 200f, Math.Max(Math.Min(420f, w - 400f), 200f)) : 0f;
         threadRect = default;
         chatRect = default;
         sideRect = new Rect4(0, 0, lw, h);
@@ -350,8 +427,9 @@ public sealed partial class OfficeUi
         if (opened) PaintChatPane(lw, 0, w - lw - deskW, h, 0, true, compact);
         else PaintStart(lw, w - lw, compact);
         if (deskPanel is not null) PaintDeskPanel(new Rect4(w - deskW, 0, deskW, h), 0, true);
-        // The switch stays where the sidebar has no room, and on the start screen.
-        if (!sideShown) PaintViewSwitch(12, compact ? 8 : 10, true, compact);
+        // The switch goes with the sidebar when that is closed over an open chat (the header's show button is then the way back).
+        // It stays where the sidebar has no room, and on the start screen (internal/ui/officeview.go).
+        if (!sideShown && (!listAllowed || !opened)) PaintViewSwitch(12, compact ? 8 : 10, true, compact);
         if (!sideShown && listAllowed && !opened)
         {
             var bx = 12 + (compact ? 68 : 76) + 6;
@@ -382,8 +460,11 @@ public sealed partial class OfficeUi
         var haveKiro = state.Sessions.Select(KiroIdOf).Where(k => k.Length > 0).ToHashSet();
         foreach (var c in cli.List.Where(c => !haveKiro.Contains(c.Id)).OrderByDescending(c => c.Updated ?? 0).Take(30))
             rows.Add(new ListRow("cli:" + c.Id, null, "kiro", c.Title.Length > 0 ? c.Title : "Kiro CLI session", c.Folder ?? "", c.Updated ?? 0, "stopped", "CLI"));
-        return [.. rows.OrderByDescending(r => r.At)];
+        // The chats that are running or wait on the user come first, then the rest by time (the Go list).
+        return [.. rows.OrderByDescending(IsLiveRow).ThenByDescending(r => r.At)];
     }
+
+    static bool IsLiveRow(ListRow r) => r.Id is not null && r.Stage is "working" or "waiting" or "waking" or "queued";
 
     static long LiveAt(SessionInfo s) => s.Turns.Count > 0 && s.Turns[^1].T0 > 0 ? s.Turns[^1].T0 : DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
 
@@ -418,56 +499,93 @@ public sealed partial class OfficeUi
         var listTop = y;
         pen.Cv.PushClip(new Rect4(0, listTop, lw - 1, h - listTop));
         y -= sideScroll;
-        string? group = null;
-        var gf = Pen.F(12.5, 400, Pen.Dim);
-        var rf = Pen.F(13, 400, Rgba.Of(0xf6f2ff, 0.5));
+        var gf = Pen.F(12, 500, Pen.Dim);
+        var rf = Pen.F(13, 400, Pen.Ink);
         var selected = OpenId is { } oid ? rows.FirstOrDefault(r => r.Id == oid)?.Key : openKey;
         var total = 0f;
-        for (var i = 0; i < rows.Count; i++)
+        // One heading per folder, in the order the folders first appear (the live chats come first); a click on it folds its chats.
+        var order = rows.Select(r => r.Folder).Distinct().ToList();
+        for (var f = 0; f < order.Count; f++)
         {
-            var r = rows[i];
-            var g = r.Folder.Length > 0 ? LastPart(r.Folder) : "Cloud";
-            if (g != group)
+            var folder = order[f];
+            var shut = folded.Contains(folder);
+            y += f == 0 ? 0 : 12;
+            total += f == 0 ? 0 : 12;
+            var hr = new Rect4(8, y, lw - 16, 28);
+            var hh = Over(hr);
+            var hc = hh ? Rgba.Of(0xf6f2ff, 0.7) : Rgba.Of(0xf6f2ff, 0.5);
+            pen.Icon(Glyphs.Folder, hr.X + 8, y + 7, 14, hc);
+            pen.Text(folder.Length > 0 ? LastPart(folder) : "No folder", hr.X + 8 + 14 + 7, y + (28 - pen.LineHeight(gf)) / 2, gf with { Color = hc }, Math.Max(hr.W - 8 - 14 - 7 - 7 - 13 - 8, 0));
+            if (hh || shut) pen.Icon(shut ? Glyphs.ChevronRight : Glyphs.Chevron, hr.Right - 8 - 13, y + 7.5f, 13, Rgba.Of(0xf6f2ff, 0.5));
+            if (y + 28 > listTop && y < h) Add(hr, "head", f, folder);
+            y += 28;
+            total += 28;
+            if (shut) continue;
+            for (var i = 0; i < rows.Count; i++)
             {
-                group = g;
-                y += 6;
-                pen.Icon(Glyphs.Folder, 16, y + 7, 15, Pen.Dim);
-                pen.Text(g, 37, y + (28 - pen.LineHeight(gf)) / 2, gf, lw - 37 - 12);
-                y += 28 + 2;
-                total += 36;
+                var r = rows[i];
+                if (r.Folder != folder) continue;
+                var rr = new Rect4(8, y, lw - 16, 30);
+                var sel = r.Key == selected;
+                var live = r.Id is not null && r.Stage is "working" or "waiting" or "waking" or "queued";
+                var bin = new Rect4(rr.Right - 4 - 24, y + 3, 24, 24);
+                // The delete button shows while the pointer is on the row; a Kiro CLI session that is not Hover's yet has none.
+                var canDelete = r.Badge.Length == 0;
+                var binHot = canDelete && Over(bin);
+                var hov = Over(rr) || binHot;
+                var dim = !live && !sel && !hov;
+                if (sel) pen.Box(rr, 7, Rgba.Of(0xffffff, 0.07));
+                else if (hov) pen.Box(rr, 7, Rgba.Of(0xffffff, 0.043));
+                if (dim) pen.Cv.PushOpacity(0.45f);
+                pen.Mark(r.Tool.Length > 0 ? r.Tool : "kiro", 16, y + 6, 18);
+                if (dim) pen.Cv.PopOpacity();
+                // An amber ring round the logo while the chat waits on you.
+                if (r.Id is not null && r.Stage == "waiting") pen.Border(13, y + 3, 24, 24, 12, 1.5f, Rgba.Of(0xffc46b));
+                var ago = r.Badge.Length > 0 && cli.Opening.Length > 0 && r.Key == "cli:" + cli.Opening ? "Opening…" : live ? "" : Ago(r.At);
+                var af = Pen.F(11.5, 400, Rgba.Of(0xf6f2ff, 0.5));
+                var aw = ago.Length > 0 ? pen.Width(ago, af) : 0;
+                if (ago.Length > 0 && !(hov && canDelete)) pen.Text(ago, rr.Right - 8 - aw, y + (30 - pen.LineHeight(af)) / 2, af);
+                float badgeW = 0;
+                if (r.Badge.Length > 0)
+                {
+                    var bf = Pen.F(10, 500, Pen.Dim);
+                    badgeW = pen.Width(r.Badge, bf) + 10;
+                    pen.Box(lw - 16 - 8 - aw - 6 - badgeW, y + 7, badgeW, 16, 5, Rgba.Of(0xffffff, 0.07));
+                    pen.TextIn(r.Badge, new Rect4(lw - 16 - 8 - aw - 6 - badgeW, y + 7, badgeW, 16), bf);
+                    badgeW += 6;
+                }
+                var color = dim ? Rgba.Of(0xf6f2ff, 0.45) : Pen.Ink;
+                pen.Text(r.Title.Length > 0 ? r.Title : "New chat", 42, y + (30 - pen.LineHeight(rf)) / 2, rf with { Color = color }, Math.Max(lw - 42 - 16 - aw - 14 - badgeW - (hov && canDelete ? 20 : 0), 0));
+                if (y + 30 > listTop && y < h)
+                {
+                    Add(rr, "row", i, r.Key);
+                    if (hov && canDelete)
+                    {
+                        if (binHot) pen.Box(bin, 6, Rgba.Of(0xff453a, 0.12));
+                        pen.Icon(Desk.DeskIcons.Trash, bin.X + 5, bin.Y + 5, 14, binHot ? Rgba.Of(0xff9a92) : Rgba.Of(0xf6f2ff, 0.5));
+                        Add(bin, "rowDelete", i, r.Key);
+                    }
+                }
+                y += 30;
+                total += 30;
             }
-            var rr = new Rect4(8, y, lw - 16, 30);
-            var sel = r.Key == selected;
-            var hov = Over(rr);
-            if (sel) pen.Box(rr, 8, Rgba.Of(0xffffff, 0.06));
-            else if (hov) pen.Box(rr, 8, Rgba.Of(0xffffff, 0.035));
-            pen.Mark(r.Tool.Length > 0 ? r.Tool : "kiro", 16, y + 6, 18);
-            var ago = r.Badge.Length > 0 && cli.Opening.Length > 0 && r.Key == "cli:" + cli.Opening ? "Opening…" : Ago(r.At);
-            var af = Pen.F(11.5, 400, Rgba.Of(0xf6f2ff, 0.45));
-            var aw = pen.Width(ago, af);
-            pen.Text(ago, lw - 16 - 8 - aw, y + (30 - pen.LineHeight(af)) / 2, af);
-            float badgeW = 0;
-            if (r.Badge.Length > 0)
-            {
-                var bf = Pen.F(10, 500, Pen.Dim);
-                badgeW = pen.Width(r.Badge, bf) + 10;
-                pen.Box(lw - 16 - 8 - aw - 6 - badgeW, y + 7, badgeW, 16, 5, Rgba.Of(0xffffff, 0.07));
-                pen.TextIn(r.Badge, new Rect4(lw - 16 - 8 - aw - 6 - badgeW, y + 7, badgeW, 16), bf);
-                badgeW += 6;
-            }
-            var color = sel ? Pen.Ink : hov ? Pen.Dim : Rgba.Of(0xf6f2ff, 0.5);
-            pen.Text(r.Title.Length > 0 ? r.Title : "New chat", 42, y + (30 - pen.LineHeight(rf)) / 2, rf with { Color = color }, lw - 42 - 16 - aw - 14 - badgeW);
-            if (y + 30 > listTop && y < h) Add(rr, "row", i, r.Key);
-            y += 30;
-            total += 30;
         }
         pen.Cv.PopClip();
+        // A drag on the list's right edge resizes it (200 to 420 wide, as the Go list).
+        Add(new Rect4(lw - 4, 0, 8, h), "sideEdge");
         var maxScroll = Math.Max(total + 40 - (h - listTop), 0);
         sideScroll = Math.Clamp(sideScroll, 0, maxScroll);
         rowKeys = [.. rows.Select(r => (r.Key, r.Id))];
     }
 
     List<(string Key, int? Id)> rowKeys = [];
+
+    /// <summary>The list's width (dragged at its edge) and the folders folded in it.</summary>
+    float sideW = 260;
+
+    bool sideDrag;
+
+    readonly HashSet<string> folded = [];
 
     // MARK: The start screen
 
@@ -489,12 +607,13 @@ public sealed partial class OfficeUi
         var chipY = top + headH + 10;
         var fl = folder.Length > 0 ? LastPart(folder) : "Choose a folder";
         var ff = Pen.F(13, 400, Pen.Dim);
-        var fw = pen.Width(fl, ff) + 16 + 6 + 13 + 12;
+        // The Go chip's numbers (internal/ui/officelist.go): 10 at each side, the icon 15, 7 each side of the words, the chevron 13.
+        var fw = 10 + 15 + 7 + pen.Width(fl, ff) + 7 + 13 + 10;
         var chip = new Rect4(cx - fw / 2, chipY, fw, chipH);
         var chov = Over(chip) || menu?.Kind == "project";
-        pen.Icon(Glyphs.Folder, chip.X + 6, chipY + 7, 14, chov ? Pen.Ink : Pen.Dim);
-        pen.Text(fl, chip.X + 6 + 14 + 8, chipY + (chipH - pen.LineHeight(ff)) / 2, ff with { Color = chov ? Pen.Ink : Pen.Dim });
-        pen.Icon(Glyphs.Chevron, chip.Right - 6 - 13, chipY + 7.5f, 13, chov ? Pen.Ink : Pen.Dim);
+        pen.Icon(Glyphs.Folder, chip.X + 10, chipY + (chipH - 15) / 2, 15, chov ? Pen.Ink : Pen.Dim);
+        pen.Text(fl, chip.X + 10 + 15 + 7, chipY + (chipH - pen.LineHeight(ff)) / 2, ff with { Color = chov ? Pen.Ink : Pen.Dim });
+        pen.Icon(Glyphs.Chevron, chip.Right - 10 - 13, chipY + (chipH - 13) / 2, 13, chov ? Pen.Ink : Pen.Dim);
         Add(chip, "pillFolder");
         var box = new Rect4(cx - bw / 2, chipY + chipH + 22, bw, bh);
         PaintTaskBox(box, true, th);

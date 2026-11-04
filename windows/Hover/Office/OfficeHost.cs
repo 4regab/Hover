@@ -45,6 +45,8 @@ public enum OfficeProp
     Door,
     /// <summary>The wall clock: the date toast.</summary>
     Clock,
+    /// <summary>The empty floor: it puts away the new-task box, then the open chat, then the open panel.</summary>
+    Floor,
 }
 
 /// <summary>
@@ -324,6 +326,9 @@ public sealed class OfficeHost : IDisposable
             case ClickKind.Toast:
                 PropPicked?.Invoke(OfficeProp.Clock);
                 break;
+            case ClickKind.Nothing:
+                PropPicked?.Invoke(OfficeProp.Floor);
+                break;
         }
     }
 
@@ -386,7 +391,7 @@ public sealed class OfficeHost : IDisposable
         if (Target != OfficeTarget.Notch || OfficeNative.CursorIn(slot!.Window) is not { } c || !InNotchArea(c.X, c.Y)) return;
         var (px, py) = InArea(c.X, c.Y);
         // A browser's deltaY: 100 for a notch of the wheel, negative when it turns away from the user.
-        ctl.Wheel(-delta * 100.0 / 120, px, py);
+        ctl.Wheel(-Hover.Chat.Ui.OfficeUi.WheelDips(delta), px, py);
     }
 
     /// <summary>A key went down in the notch window (virtual-key code).</summary>
@@ -509,7 +514,16 @@ public sealed class OfficeHost : IDisposable
         var (sw, sh) = r.SceneSize(w, h);
         r.Render(model, notchSwapChain!.Rtv(), w, h, sw, sh, page, redrawScene: scene);
         notchSwapChain.Present();
+        lastNotchDraw = clock.Elapsed.TotalMilliseconds;
     }
+
+    double lastNotchDraw = -1;
+
+    /// <summary>For the log (<c>HOVER_UI_DUMP</c>): where the office is shown and when it last drew in the notch.</summary>
+    internal string Diagnose() =>
+        $"shown in {Target}, graphics {(renderer is null ? "none" : renderer.AdapterName)}, view in the notch {notchAttached}, " +
+        $"last notch frame {(lastNotchDraw < 0 ? "never" : $"{clock.Elapsed.TotalMilliseconds - lastNotchDraw:0} ms ago")}, " +
+        $"next graphics try in {Math.Max(0, (nextRendererTry - DateTime.UtcNow).TotalSeconds):0} s";
 
     // ---- the app window ----------------------------------------------------------------------------
 
@@ -571,7 +585,7 @@ public sealed class OfficeHost : IDisposable
         {
             var p = Dips(e);
             if (Under(p.X, p.Y)) return;
-            ctl.Wheel(-e.GetCurrentPoint(host).Properties.MouseWheelDelta * 100.0 / 120, p.X, p.Y);
+            ctl.Wheel(-Hover.Chat.Ui.OfficeUi.WheelDips(e.GetCurrentPoint(host).Properties.MouseWheelDelta), p.X, p.Y);
             e.Handled = true;
         });
         host.KeyDown += (_, e) => Guard("key", () =>
@@ -702,6 +716,8 @@ public sealed class OfficeHost : IDisposable
     {
         if (renderer is not null) return renderer;
         if (DateTime.UtcNow < nextRendererTry) return null;
+        // For the checks of the real app (HOVER_UI_DUMP): a graphics device that is slow to make, as the runner's software one is when cold.
+        if (Chatting.UiDump.On && int.TryParse(Environment.GetEnvironmentVariable("HOVER_SLOW_OFFICE_MS"), out var slow) && slow > 0) Thread.Sleep(slow);
         try
         {
             // The notch makes its device the same way, so both are on the same adapter.

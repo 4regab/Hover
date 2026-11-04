@@ -19,7 +19,7 @@ static class SettingsDump
         {
             ["left"] = left, ["top"] = top, ["scale"] = scale,
             ["section"] = host.Controller.Section.ToString(), ["project"] = host.Controller.Project, ["recording"] = host.Controller.Recording,
-            ["focus"] = ui.FocusId, ["focusLength"] = ui.FocusedLength, ["scroll"] = ui.PaneScroll, ["content"] = ui.PaneContentHeight,
+            ["focus"] = ui.FocusId, ["focusLength"] = ui.FocusedLength, ["keyboard"] = ui.KeyboardAt, ["ring"] = ui.RingShown, ["scroll"] = ui.PaneScroll, ["content"] = ui.PaneContentHeight,
             ["menu"] = host.Controller.Menu?.Id, ["dark"] = host.Controller.Palette.Dark, ["targets"] = targets, ["texts"] = texts,
         };
     }

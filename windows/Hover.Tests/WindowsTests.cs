@@ -114,6 +114,34 @@ public class InstanceLockTests
     {
         Assert.Equal(@"Local\HoverRunningInstance", InstanceLock.MutexName);
         Assert.Equal(@"Local\HoverShowApp", InstanceLock.ShowEventName);
+        Assert.Equal(@"Local\HoverQuitApp", InstanceLock.QuitEventName);
+    }
+
+    [WindowsFact]
+    [SupportedOSPlatform("windows")]
+    public async Task A_request_to_quit_reaches_the_running_copy_and_waits_until_it_is_gone()
+    {
+        var id = Guid.NewGuid().ToString("N");
+        var (mutex, show, quit) = ($@"Local\HoverTest-{id}", $@"Local\HoverTestShow-{id}", $@"Local\HoverTestQuit-{id}");
+
+        // Nothing runs: there is nothing to wait for.
+        Assert.True(InstanceLock.AskToQuit(TimeSpan.FromSeconds(1), mutex, quit));
+
+        var asked = new TaskCompletionSource();
+        var first = InstanceLock.Claim(() => { }, mutex, show, () => asked.TrySetResult(), quit);
+        Assert.NotNull(first);
+        // A copy that does not end by the timeout: false, and it was asked.
+        Assert.False(InstanceLock.AskToQuit(TimeSpan.FromMilliseconds(600), mutex, quit));
+        await asked.Task.WaitAsync(TimeSpan.FromSeconds(10));
+
+        // One that ends when it is asked: true, once its mutex is released.
+        first!.Dispose();
+        var gone = new TaskCompletionSource();
+        InstanceLock? second = null;
+        second = InstanceLock.Claim(() => { }, mutex, show, () => Task.Run(() => { second!.Dispose(); gone.TrySetResult(); }), quit);
+        Assert.NotNull(second);
+        Assert.True(InstanceLock.AskToQuit(TimeSpan.FromSeconds(10), mutex, quit));
+        await gone.Task.WaitAsync(TimeSpan.FromSeconds(10));
     }
 
     [WindowsFact]
@@ -286,6 +314,8 @@ public class AppTests(ITestOutputHelper output)
         Assert.True(app.ExitCode == 0, $"--shots exited with {app.ExitCode}. {Describe(Path.Combine(temp.Path, "data"))}");
 
         Assert.DoesNotContain("styles did not load", Describe(Path.Combine(temp.Path, "data")));
+        // The app quits after the pictures: a frame of the panels drawn after the graphics device was disposed is logged as "frame failed".
+        Assert.DoesNotContain("frame failed", Describe(Path.Combine(temp.Path, "data")));
         var picture = await File.ReadAllBytesAsync(Path.Combine(shots, "dashboard.jpg"));
         var (width, height) = Jpeg.Size(picture);
         output.WriteLine($"dashboard.jpg: {picture.Length} bytes, {width} x {height}");

@@ -28,6 +28,7 @@ sealed class SettingsPane : IDisposable
     readonly Action<BackendEvent> onEvent;
     readonly Env env;
     bool disposed, started, lastDark, voiceHooked;
+    int themeLooks;
 
     public SettingsController Controller { get; }
 
@@ -50,6 +51,12 @@ sealed class SettingsPane : IDisposable
     public event Action? NotchOpenChanged;
 
     public event Action? DashOpenChanged;
+
+    /// <summary>Windows switched between light and dark.</summary>
+    public event Action? SystemThemeChanged;
+
+    /// <summary>Settings was asked for in the app window (from a menu, say), whether or not it was open: the page takes the keyboard.</summary>
+    public event Action? DashShown;
 
     /// <summary>The notch is to fold (its close button, Esc).</summary>
     public event Action? FoldRequested;
@@ -87,15 +94,20 @@ sealed class SettingsPane : IDisposable
         // Windows' own light or dark is watched: the appearance "System" follows it.
         lastDark = SystemTheme.IsDark();
         themeTimer = queue.CreateTimer();
-        themeTimer.Interval = TimeSpan.FromSeconds(2);
+        themeTimer.Interval = TimeSpan.FromSeconds(1);
         themeTimer.Tick += (_, _) =>
         {
             var dark = SystemTheme.IsDark();
+            // For the checks of the real app: what each look at Windows' setting found (a line only when it changed, and the first few).
+            if (UiDump.On && (dark != lastDark || themeLooks++ < 3)) HostLog.Line($"windows setting looked at: dark {dark} (was {lastDark})");
+            // The palette follows what Windows says now, whichever message read the setting last: a settings message that arrives between
+            // two looks can carry the new value into the palette, and the look that follows then finds nothing changed (a page left dark
+            // under a light Windows, found by the live check).
+            if (Controller.Apply()) Changed?.Invoke();
             if (dark == lastDark) return;
             lastDark = dark;
             HostLog.Line($"windows is now {(dark ? "dark" : "light")}");
-            Controller.Apply();
-            Changed?.Invoke();
+            SystemThemeChanged?.Invoke();
         };
         themeTimer.Start();
         BeginWhenReady();
@@ -133,6 +145,7 @@ sealed class SettingsPane : IDisposable
             DashOpenChanged?.Invoke();
         }
         Changed?.Invoke();
+        DashShown?.Invoke();
     }
 
     public void CloseNotch()

@@ -99,7 +99,7 @@ static class UiDump
         {
             ["left"] = left, ["top"] = top, ["scale"] = scale,
             ["chatView"] = ui.ChatView, ["openId"] = ui.OpenId, ["composing"] = ui.Composing, ["replyText"] = ui.ReplyText, ["taskText"] = ui.TaskText,
-            ["toast"] = ui.ToastText, ["menu"] = ui.OpenMenuKind, ["targets"] = targets, ["bots"] = bots, ["acts"] = acts, ["texts"] = texts, ["chrome"] = chrome,
+            ["toast"] = ui.ToastText, ["menu"] = ui.OpenMenuKind, ["notice"] = ui.NoticeShown, ["viewW"] = ui.ViewSize.W, ["viewH"] = ui.ViewSize.H, ["targets"] = targets, ["bots"] = bots, ["acts"] = acts, ["texts"] = texts, ["chrome"] = chrome,
             ["height"] = ui.Thread.Height, ["scroll"] = ui.ScrollY,
             ["deskCard"] = ui.DeskCardId, ["deskPanel"] = ui.DeskPanelId, ["deskTab"] = ui.DeskTabId, ["deskRows"] = ui.DeskRowCount,
             ["deskTabs"] = new JsonArray([.. ui.DeskTabs.Select(t => (JsonNode)t)]), ["officePanel"] = ui.OfficePanel,

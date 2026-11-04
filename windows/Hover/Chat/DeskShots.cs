@@ -241,6 +241,12 @@ static class DeskShots
         {
             Tab("files");
             Frame(tw, th);
+            // The words of the picture before ("view" in the find box) stay in the box; this picture is of the tree.
+            ui.Click("field", s: "find");
+            ui.Key(UiKey.A, UiMods.Control);
+            ui.Key(UiKey.Backspace, UiMods.None);
+            Esc();
+            Frame(tw, th);
             ui.Click("drow", s: "dir:src");
             Frame(tw, th);
             ui.Click("drow", s: "file:src/refresh.ts");
@@ -387,7 +393,11 @@ static class DeskShots
         {
             ui.OpenOfficePanel("");
             ui.ChatView = true;
+            // An earlier picture may have put the list away; this one is of the list.
+            ChatShots.RenderLayer(core, 1200, 720, 1);
+            if (ui.Find("showSide") is not null) ui.Click("showSide");
             ui.Accept(ChatShots.State(ChatShots.Busy(), ChatShots.Finished()));
+            ui.OpenChat(1);
             ui.Accept(new CliSessionsEvent { Ok = true, Sessions = [new ListedSession { Id = "c1", Title = "Fix the installer", Folder = @"C:\work\project", Updated = now - 14_400_000 }] });
         }, false);
 

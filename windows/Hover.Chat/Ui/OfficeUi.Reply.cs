@@ -191,28 +191,68 @@ public sealed partial class OfficeUi
 
     // MARK: The chips row
 
-    float ChipsHeight() => OpenId is { } id && chips.TryGetValue(id, out var l) && l.Count > 0 ? 22 + 5 : 0;
+    const int MaxChipRows = 3;
 
-    float PaintChips(float x, float y, float maxX)
+    static readonly Look ChipLook = Pen.F(11, 400, Rgba.Of(0xf6f2ff, 0.8));
+
+    /// <summary>
+    /// Where the chips of the open chat go in a row <paramref name="width"/> wide: they wrap onto up to three rows, and what is
+    /// still left is counted in a last "+N" chip (removing a chip brings the next one into view), so that what is sent is what
+    /// the box shows or counts.
+    /// </summary>
+    (List<(int I, float X, int Row, float W)> Placed, int Hidden, int Rows) ChipLayout(float width)
+    {
+        var placed = new List<(int, float, int, float)>();
+        if (OpenId is not { } id || !chips.TryGetValue(id, out var l) || l.Count == 0) return (placed, 0, 0);
+        float x = 0;
+        var row = 0;
+        var i = 0;
+        for (; i < l.Count; i++)
+        {
+            var cw = Math.Min(Math.Min(8 + pen.Width(l[i].Shown, ChipLook) + 4 + 16 + 3, 220), width);
+            if (x > 0 && x + cw > width) { row++; x = 0; }
+            if (row >= MaxChipRows) break;
+            placed.Add((i, x, row, cw));
+            x += cw + 5;
+        }
+        var hidden = l.Count - i;
+        // The "+N" chip needs room at the end of the last row: give up chips from the end until it fits.
+        while (hidden > 0 && placed.Count > 0 && placed[^1].Item2 + placed[^1].Item4 + 5 + PlusWidth(hidden) > width)
+        {
+            placed.RemoveAt(placed.Count - 1);
+            hidden++;
+        }
+        return (placed, hidden, placed.Count == 0 ? 1 : placed[^1].Item3 + 1);
+    }
+
+    float PlusWidth(int hidden) => 8 + pen.Width("+" + hidden, ChipLook) + 8;
+
+    float ChipsHeight(float width) => ChipLayout(width).Rows * (22 + 5);
+
+    float PaintChips(float x, float y, float width)
     {
         if (OpenId is not { } id || !chips.TryGetValue(id, out var l) || l.Count == 0) return 0;
-        var cx = x;
-        var f = Pen.F(11, 400, Rgba.Of(0xf6f2ff, 0.8));
-        for (var i = 0; i < l.Count; i++)
+        var (placed, hidden, rows) = ChipLayout(width);
+        foreach (var (i, cx, row, cw) in placed)
         {
             var shown = l[i].Shown;
-            var tw = pen.Width(shown, f);
-            var cw = Math.Min(8 + tw + 4 + 16 + 3, 220);
-            if (cx + cw > maxX) break;
-            pen.Box(cx, y, cw, 22, 7, Rgba.Of(0xffffff, 0.07));
-            pen.Text(shown, cx + 8, y + (22 - pen.LineHeight(f)) / 2, f, cw - 8 - 3 - 16 - 4);
-            var xr = new Rect4(cx + cw - 3 - 16, y + 3, 16, 16);
+            var cy = y + row * (22 + 5);
+            pen.Box(x + cx, cy, cw, 22, 7, Rgba.Of(0xffffff, 0.07));
+            pen.Text(shown, x + cx + 8, cy + (22 - pen.LineHeight(ChipLook)) / 2, ChipLook, cw - 8 - 3 - 16 - 4);
+            var xr = new Rect4(x + cx + cw - 3 - 16, cy + 3, 16, 16);
             if (Over(xr)) pen.Box(xr, 5, Rgba.Of(0xffffff, 0.12));
             pen.Icon(DeskIcons.Close, xr.X + 3, xr.Y + 3, 10, Pen.Dim);
             Add(xr, "unchip", i);
-            cx += cw + 5;
         }
-        return 22 + 5;
+        if (hidden > 0)
+        {
+            var pw = PlusWidth(hidden);
+            var px0 = placed.Count > 0 ? x + placed[^1].X + placed[^1].W + 5 : x;
+            var cy = y + (placed.Count > 0 ? placed[^1].Row : 0) * (22 + 5);
+            pen.Box(px0, cy, pw, 22, 7, Rgba.Of(0xffffff, 0.07));
+            pen.TextIn("+" + hidden, new Rect4(px0, cy, pw, 22), ChipLook);
+        }
+        return rows * (22 + 5);
     }
 
     // MARK: The @ and / list
@@ -224,6 +264,10 @@ public sealed partial class OfficeUi
         public string Q = "";
         public List<(char Kind, string S)> Items = [];
         public List<PopRow> Rows = [];
+        /// <summary>The list scrolls when the room over the reply box is short; <see cref="Shown"/> is the lit row the scroll last followed.</summary>
+        public readonly MenuScroll Scroll = new();
+        public int Shown = -1;
+        public Rect4 Box;
     }
 
     /// <summary>A row of the list: 0 a heading, 1 a file, 2 a command, 3 a line of words.</summary>
@@ -413,18 +457,43 @@ public sealed partial class OfficeUi
         if (pop is null || pop.Rows.Count == 0) return;
         var rows = pop.Rows;
         float Hh(PopRow r) => r.Kind switch { 0 => 26, 3 => 34, _ => 30 };
-        var total = 8 + rows.Sum(Hh);
+        var content = rows.Sum(Hh);
+        // No taller than the room over the box: what does not fit scrolls, and follows the row the keys light.
+        var total = Math.Min(8 + content, Math.Max(by - 8 - 8, 60));
         var y = by - total - 8;
+        var list = new Rect4(bx, y + 4, bw, total - 8);
+        pop.Scroll.Set(content, list.H);
+        if (pop.Shown != pop.Sel)
+        {
+            pop.Shown = pop.Sel;
+            float at = 0;
+            foreach (var r in rows)
+            {
+                if (r.Idx >= 0 && r.Idx == pop.Sel && r.Kind is 1 or 2)
+                {
+                    pop.Scroll.Reveal(at, at + Hh(r));
+                    break;
+                }
+                at += Hh(r);
+            }
+        }
+        pop.Box = new Rect4(bx, y, bw, total);
         for (var i = 0; i < 4; i++) pen.Box(bx - i * 2, y + 8 - i, bw + i * 4, total + i * 2, 12 + i * 2, Rgba.Of(0x000000, 0.08));
         pen.Box(bx, y, bw, total, 12, Rgba.Of(0x1a1820));
         pen.Border(bx, y, bw, total, 12, 1, Rgba.Of(0xffffff, 0.09));
         Block(new Rect4(bx, y, bw, total));
-        var ry = y + 4;
+        var ry = y + 4 - pop.Scroll.Off;
+        pen.Cv.PushClip(list);
         foreach (var r in rows)
         {
             var rh = Hh(r);
             var rx = bx + 4;
             var rw = bw - 8;
+            if (ry + rh <= list.Y || ry >= list.Bottom)
+            {
+                ry += rh;
+                continue;
+            }
             switch (r.Kind)
             {
                 case 0:
@@ -436,8 +505,9 @@ public sealed partial class OfficeUi
                 default:
                     {
                         var rr = new Rect4(rx, ry, rw, rh);
-                        if (r.Sel || Over(rr)) pen.Box(rr, 7, Rgba.Of(0xffffff, 0.05));
-                        Add(rr, "popRow", r.Idx);
+                        var seen = Cut(rr, list);
+                        if (r.Sel || Over(seen)) pen.Box(rr, 7, Rgba.Of(0xffffff, 0.05));
+                        Add(seen, "popRow", r.Idx);
                         var tx = rx + 8;
                         if (r.Kind == 1)
                         {
@@ -454,6 +524,8 @@ public sealed partial class OfficeUi
             }
             ry += rh;
         }
+        pen.Cv.PopClip();
+        pop.Scroll.PaintFade(pen.Cv, list, Rgba.Of(0x1a1820));
     }
 
     // MARK: The model of the open chat's agent
@@ -476,7 +548,7 @@ public sealed partial class OfficeUi
                 foreach (var l in levels) rows.Add(new MenuRow(l, "effort:" + l, On: l == effort));
             }
             rows.AddRange(ModelFooter(t));
-            return rows;
+            return PinModelEnds(rows);
         }
         OpenMenu("rmodel", at, Rows(), true, 240, build: Rows);
     }

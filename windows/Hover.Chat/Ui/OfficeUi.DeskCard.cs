@@ -14,6 +14,16 @@ public sealed partial class OfficeUi
     /// <summary>Where the card sits in the last frame (for the tests and the dump).</summary>
     public Rect4 DeskCardRect { get; private set; }
 
+    /// <summary>The card's status box in the last frame, and how far its content is scrolled and can be (for the tests).</summary>
+    public Rect4 DeskCardStatusRect { get; private set; }
+
+    public float DeskCardStatusScroll => nowScroll.Off;
+
+    public float DeskCardStatusScrollMax => nowScroll.Max;
+
+    /// <summary>The status box scrolls with the wheel when its content is taller than the room it has (internal/ui/deskcard.go).</summary>
+    readonly MenuScroll nowScroll = new();
+
     static int StageNumber(string stage) => stage switch
     {
         "working" => 1,
@@ -229,7 +239,8 @@ public sealed partial class OfficeUi
         var accessId = s.Access.Length > 0 ? s.Access : "full";
         var folderName = s.Folder.Length > 0 ? LastPart(s.Folder) : "";
         // The row as internal/ui/deskcard.go lays it out when it is too full: the folder's chip gives first (down to 48), then the
-        // name (down to its "…"); the buttons never do, and what is left runs past the card, which clips it.
+        // name (down to its "…"); the buttons never do. Go lets what is left run past the card and clips it; here the chips at the
+        // end (context, access, folder) are left out until the buttons fit whole.
         var specs = new List<(string? Icon, string Text, Rgba Fg, Rgba Bg, bool Shrink)> { (null, what, cfg, cbg, false) };
         if (folderName.Length > 0) specs.Add((DeskIcons.Folder, folderName, grey, greyBg, true));
         if (accessId.Length > 0)
@@ -238,35 +249,52 @@ public sealed partial class OfficeUi
             specs.Add((DeskIcons.Shield, AccessLabel(accessId), amber ? Rgba.Of(0xffc46b) : grey, amber ? Rgba.Of(0xffb340, 0.09) : greyBg, false));
         }
         if (s.Ctx is { } ctx) specs.Add((null, ctx + "%", grey, greyBg, false));
-        var total = specs.Sum(sp => CardChipW(sp.Icon, sp.Text) + 5) + CardChipW(DeskIcons.Code, "Editor") + 5 + CardChipW(DeskIcons.Expand, "Expand") + 5;
-        var over = nw + 8 + total - 5 - (x + w - 6 - tx);
-        var widths = new float[specs.Count];
-        for (var i = 0; i < specs.Count; i++)
+        (float[] Widths, float KickerW, float Over) FitRow(int count)
         {
-            if (!specs[i].Shrink || over <= 0) continue;
-            var natural = CardChipW(specs[i].Icon, specs[i].Text);
-            var cut = Math.Min(over, natural - Math.Min(natural, 48));
-            over -= cut;
-            widths[i] = natural - cut;
+            var total = specs.Take(count).Sum(sp => CardChipW(sp.Icon, sp.Text) + 5) + CardChipW(DeskIcons.Code, "Editor") + 5 + CardChipW(DeskIcons.Expand, "Expand") + 5;
+            var over = nw + 8 + total - 5 - (x + w - 6 - tx);
+            var widths = new float[count];
+            for (var i = 0; i < count; i++)
+            {
+                if (!specs[i].Shrink || over <= 0) continue;
+                var natural = CardChipW(specs[i].Icon, specs[i].Text);
+                var cut = Math.Min(over, natural - Math.Min(natural, 48));
+                over -= cut;
+                widths[i] = natural - cut;
+            }
+            var kickerW = nw;
+            if (over > 0)
+            {
+                var cutName = Math.Min(over, Math.Max(nw - pen.Width("…", nameLook), 0));
+                kickerW = nw - cutName;
+                over -= cutName;
+            }
+            return (widths, kickerW, over);
         }
-        var kickerW = nw;
-        if (over > 0) kickerW = nw - Math.Min(over, Math.Max(nw - pen.Width("…", nameLook), 0));
+        var shownChips = specs.Count;
+        var fit = FitRow(shownChips);
+        while (fit.Over > 0 && shownChips > 1) fit = FitRow(--shownChips);
+        var widths = fit.Widths;
+        var kickerW = fit.KickerW;
         pen.Text(name, tx, hy + (20 - pen.LineHeight(nameLook)) / 2, nameLook, kickerW);
         var cx = tx + kickerW + 8;
-        for (var i = 0; i < specs.Count; i++) cx += CardChip(specs[i].Icon, specs[i].Text, specs[i].Fg, specs[i].Bg, cx, hy, widths[i]) + 5;
+        for (var i = 0; i < shownChips; i++) cx += CardChip(specs[i].Icon, specs[i].Text, specs[i].Fg, specs[i].Bg, cx, hy, widths[i]) + 5;
         var ed = CardChipButton("cardEditor", DeskIcons.Code, "Editor", cx, hy);
         cx += ed + 5;
         var ex = CardChipButton("cardExpand", DeskIcons.Expand, "Expand", cx, hy);
         var rowEnd = cx + ex;
-        pen.Text(s.Title.Length > 0 ? s.Title : "New chat", tx, hy + 20 + 2, Pen.F(13, 600, Rgba.Of(0xffffff)), 0);
+        pen.Text(s.Title.Length > 0 ? s.Title : "New chat", tx, hy + 20 + 2, Pen.F(13, 600, Rgba.Of(0xffffff)), Math.Max(x + w - 6 - tx, 0));
         cy += hd + 5;
 
         // The status box: its last steps, the question, or the answer.
         var shownNow = Math.Min(nowH, nowCap);
         pen.Box(ix, cy, iw, shownNow, 11, Rgba.Of(0xffffff, 0.03));
         pen.Border(ix, cy, iw, shownNow, 11, 1, Rgba.Of(0xffffff, 0.05));
-        pen.Cv.PushClip(new Rect4(ix, cy, iw, shownNow));
-        var ny = cy + 6;
+        var nowBox = DeskCardStatusRect = new Rect4(ix, cy, iw, shownNow);
+        nowScroll.Set(nowH, shownNow);
+        var targetsBefore = targets.Count;
+        pen.Cv.PushClip(nowBox);
+        var ny = cy + 6 - nowScroll.Off;
         var nx = ix + 8;
         if (ask is not null)
         {
@@ -336,7 +364,11 @@ public sealed partial class OfficeUi
             var says = helpers.Count == 1 ? "A helper is on a subagent task at the desk" : $"{helpers.Count} helpers are on subagent tasks at the desk";
             pen.Text(" " + says, hx, ny + 3 + (22 - pen.LineHeight(f115)) / 2, Pen.F(11.5, 400, Rgba.Of(0xffffff, 0.5)), Math.Max(nx + nw2 - hx, 0));
         }
+        // Past the cap the cut lines fade out at the box's edge, as in a menu.
+        nowScroll.PaintFade(pen.Cv, nowBox, Rgba.Of(0x16111a, 0.95));
         pen.Cv.PopClip();
+        // A button scrolled half out of the box answers only where it is seen.
+        ClipTargets(targetsBefore, nowBox);
         cy += shownNow + 5;
 
         // The tiles, four to a row.
@@ -406,6 +438,30 @@ public sealed partial class OfficeUi
 
     static Rgba Mix(Rgba a, Rgba b, float t) => new(
         (byte)(a.R + (b.R - a.R) * t), (byte)(a.G + (b.G - a.G) * t), (byte)(a.B + (b.B - a.B) * t), 255);
+
+    /// <summary>Keeps the places added since <paramref name="from"/> to what shows in <paramref name="clip"/>: a place scrolled out of it goes.</summary>
+    void ClipTargets(int from, Rect4 clip)
+    {
+        for (var i = from; i < targets.Count; i++)
+        {
+            var r = targets[i].R;
+            var x0 = Math.Max(r.X, clip.X);
+            var y0 = Math.Max(r.Y, clip.Y);
+            var x1 = Math.Min(r.Right, clip.Right);
+            var y1 = Math.Min(r.Bottom, clip.Bottom);
+            if (x1 <= x0 || y1 <= y0) targets.RemoveAt(i--);
+            else targets[i] = targets[i] with { R = new Rect4(x0, y0, x1 - x0, y1 - y0) };
+        }
+    }
+
+    /// <summary>The wheel over the card's status box moves its content when it is cut.</summary>
+    bool CardWheel(float x, float y, float delta)
+    {
+        if (deskCard is null || nowScroll.Max <= 0 || !DeskCardStatusRect.Contains(x, y)) return false;
+        nowScroll.By(-delta);
+        Dirty = true;
+        return true;
+    }
 
     string AskTitleOf(AskInfo a) => a.Title.Length > 0 ? a.Title : a.Questions is { Count: > 0 } ? "Has a question" : "Wants to continue";
 

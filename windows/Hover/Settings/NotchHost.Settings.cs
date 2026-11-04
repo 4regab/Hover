@@ -17,7 +17,7 @@ sealed partial class NotchHost
 {
     SettingsPane? cfg;
     UiLayer? cfgLayer;
-    bool cfgDrawn, cfgKeys, cfgRecording;
+    bool cfgDrawn, cfgKeys, cfgRecording, cfgPointed;
     double cfgScale;
 
     /// <summary>The voice flow, for Settings' Try it and its shortcut's error.</summary>
@@ -100,6 +100,8 @@ sealed partial class NotchHost
         var ui = cfg!.NotchUi;
         ui.PointerMove(p.X, p.Y);
         ui.PointerDown(p.X, p.Y, clickCount, (GetKeyState(0x10) & 0x8000) != 0);
+        // A press on the page asks for the keyboard (Tab, Space, Enter and the Up and Down keys work from then on), as a press in a box does.
+        cfgPointed = true;
         CfgSyncKeys();
         QueueRender();
         EnsureAnimating();
@@ -138,6 +140,14 @@ sealed partial class NotchHost
         return true;
     }
 
+    bool CfgKeyUp(int vk)
+    {
+        if (!CfgOpen || cardOpen) return false;
+        var used = cfg!.NotchUi.KeyUp(KeyMap.Of(vk));
+        if (used) QueueRender();
+        return used;
+    }
+
     bool CfgChar(string text)
     {
         if (!CfgOpen) return false;
@@ -158,7 +168,7 @@ sealed partial class NotchHost
     }
 
     /// <summary>The page needs the keyboard while a box of it has the focus or a shortcut records; the notch takes it for that time and gives it back.</summary>
-    bool CfgWantsKeys => CfgOpen && (cfg!.NotchUi.TakesKeys || cfg.Controller.Recording);
+    bool CfgWantsKeys => CfgOpen && (cfg!.NotchUi.TakesKeys || cfg.NotchUi.HasKeyboardFocus || cfg.Controller.Recording || cfgPointed);
 
     void CfgSyncKeys()
     {
@@ -189,6 +199,7 @@ sealed partial class NotchHost
         if (cfg is null || surface is null) return;
         if (!CfgOpen)
         {
+            cfgPointed = false;
             if (cfgDrawn)
             {
                 cfgLayer?.Show(false);

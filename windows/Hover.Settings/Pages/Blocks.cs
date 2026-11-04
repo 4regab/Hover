@@ -173,6 +173,19 @@ public sealed class McpForm
 
     /// <summary>New for each opening, so the painter tells one form from the next.</summary>
     public int Serial { get; init; }
+
+    static bool AsciiAlnum(char c) => c is >= 'a' and <= 'z' or >= 'A' and <= 'Z' or >= '0' and <= '9';
+
+    /// <summary>A variable name (a header name for a remote server) that Kiro can use (<c>McpDraft.pairNameOk</c>).</summary>
+    bool PairNameOk(string k)
+    {
+        if (k.Length == 0) return false;
+        if (Remote) return k.All(c => AsciiAlnum(c) || c == '-');
+        return (k[0] is >= 'a' and <= 'z' or >= 'A' and <= 'Z' or '_') && k.All(c => AsciiAlnum(c) || c == '_');
+    }
+
+    /// <summary>This row fails its check; an empty row is dropped, so it does not (<c>McpDraft.PairBad</c>).</summary>
+    public bool PairBad(string key, string value) => (key.Trim().Length > 0 || value.Trim().Length > 0) && !PairNameOk(key.Trim());
 }
 
 /// <summary>Kiro's MCP servers: the list from ~/.kiro/settings/mcp.json (the backend reads it again whenever asked), and what the user is doing to it.</summary>

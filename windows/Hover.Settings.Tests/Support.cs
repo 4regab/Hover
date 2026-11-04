@@ -98,6 +98,9 @@ sealed class FixedLayout : IParaLayout
     readonly float size, lineH;
     readonly List<LineBox> lines = [];
 
+    /// <summary>The words the layout holds.</summary>
+    public string Text => text;
+
     public FixedLayout(string text, IReadOnlyList<StyleRun> runs, float width)
     {
         this.text = text;

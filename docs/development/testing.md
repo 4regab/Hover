@@ -124,7 +124,9 @@ the `test` job already runs the Go tests on three systems):
   change to the script or the workflow, and writes `out\test-results\*.trx`.
 
 The job then drives the app and the installer (above), draws the app's pictures with an empty data folder
-(`hoverai.exe --shots`, in five minutes at most, and checks that the views the Go app has pictures of are there as JPEG)
+(`hoverai.exe --shots`, in five minutes at most, and checks that the views the Go app has pictures of are there as JPEG;
+among them the first-task note, the long model and repository lists, and the new-task bar at 828 x 346 and 880 x 480:
+`office-notice`, `office-model-menu-long`, `office-fab-cloud-repos`, `office-fab-open-long-model` and their `-small` and `-min` twins)
 and keeps everything under `out\` (but the Go programs the tests built) as the artifact `windows-reports`.
 The job fails if any C# test project fails.
 
@@ -164,6 +166,93 @@ What `windows\Hover.Tests` covers:
   lilac icon of the office/chat switch and the menu button's bars. The clicking checks never saw the pixels, and the
   pictures paste the panels onto the office in software. The first round also opens the office menu with a click and
   picks night, day and the clock, which office.json must keep. The copies and `hover.log` are in `out\notch-live`.
+- **The panels when the first office frame is slow** (`FramePumpTests`, any system; `SettingsAppTests`, Windows, needs
+  `HOVER_APP_EXE`). The first frame with the office makes a Direct3D device, which on the runner's software one took
+  390 to 510 ms of the 560 ms opening. The frame timer used to stop after that frame, which had been drawn at the
+  middle of the opening, and the notch stayed open with no panels (`NotchHost.PanelsOpen` waits for the office at
+  0.95). `FramePump` stops the timer only after a frame that began when nothing moved; `FramePumpTests` replay the
+  slow frame with a clock. `Settings_open_in_the_open_notch_after_a_slow_first_office_frame` starts the app with
+  `HOVER_SLOW_OFFICE_MS=700` (read only with `HOVER_UI_DUMP`: the office waits that long before it makes its device)
+  and still has to find the menu button, open Settings and click a switch. With `HOVER_UI_DUMP` the log also names a
+  frame longer than 80 ms, the moment the frame timer stops, and once a second, while the notch is open and the panels
+  are not, every term of the panels' rule with the keyboard's window and the window under the pointer.
+- **Lists, the first-task note and the new-task bar** (any system, no window; the cases of v5.0.18's report):
+  - `MenuFitTests` opens every menu the panels have (top, agent, where, access, folder, model, repository, the chat's
+    more menu, the reply box's model menu, each from the office's box and the start screen or the chat) in four windows
+    (828 x 346 the notch of the owner's PC, 840 x 340 the Small notch, 880 x 480 the app window's smallest, 1560 x 600)
+    with 40 models, 45 repositories and 30 folders. Each box must be inside the window with 8 px to spare and no taller
+    than the window less 16; the wheel must bring every row that can be picked into view, whole and inside the box,
+    without the box moving and without the chat behind it scrolling; a model menu keeps its heading, effort levels and
+    last row in view; a menu opens on its picked row; the bar can be dragged and a press in its track pages; Up, Down,
+    Home, End and Enter pick and Escape closes. It also covers the reply box's `@` list and the desk's "Open file in" menu
+    in a short window. `UiTests` (`windows\Hover.Settings.Tests`) does the same for a Settings picker with 41 options.
+    On the old code 42 of the 71 cases of the first test failed (a model menu 1458 px tall in a 600 px window).
+  - `NoticeTests`: the panels ask for the settings once; the note shows only when the backend's settings say
+    `KiroNoticeSeen` is false (a model without the key, or a preferences message that says false, changes nothing); its
+    words and Got it are inside the window in the four sizes; under it a press, the wheel and typing do nothing and
+    Escape is left to the notch; Got it (click or Enter) sends `saveSettings {noticeSeen: true}`; `setSetting` false (Settings
+    > Kiro > Show the note again) brings it back.
+  - `TaskBarTests`: at the same sizes and 520 x 420, with a 41-letter model name, a 45-letter folder and a 36-letter
+    repository, the pills of the new-task bar stay inside the box, do not run into each other or the send button, the send
+    button is 30 (box) or 32 (start screen) wide, and a name that does not fit is cut with an ellipsis. 9 of 11 cases failed
+    on the old bar.
+  - `StartTaskTests` joins the panels (with a shaper of fixed letters) to a real `hover-backend` and the stand-in agent on
+    a data folder that has never run: the backend refuses a task sent too early; the note shows and Got it saves the
+    setting (read back with `settings`); an agent, "Ask always" and a folder are picked (Open folder… with the dialog
+    answered by the test, and cancelled first); the words are sent by the round button and again with Enter; the agent
+    asks, is allowed from the panels, and its answer is in the chat; the second note after `setSetting` false.
+- **A first task in the real app** (`FreshStartAppTests`, Windows, needs `HOVER_APP_EXE`): the same flow with real mouse,
+  wheel and keyboard on a data folder that has never run and has 30 registered folders. In the app window: the note,
+  Got it, the chat view, the folder chip, one notch of the wheel (the list moves 60 DIPs), the wheel on to the last of the 30 folders (it is not in view when the list opens),
+  the agent and access pills, a task sent by the round button and one by Enter, both allowed and answered. In the open
+  notch: the note, Got it, + , the folder pill, a screen copy of the list (it must be inside the notch's window and no
+  taller than its office less 16 px), the wheel, the pick. The copies (`notice-open.png`, `folder-list-open.png`,
+  `folder-picked.png`) are in `out\notch-live`. Not run: the system's folder dialog itself (a modal window the test cannot
+  answer); `StartTaskTests` answers it with a fake.
+- **The sweep** (`SweepTests`, any system): the panels are put in 53 states (the office with and without its box, the
+  history, board and overview panels, the drawer and the chat view in each stage of a chat, the question and permission
+  cards (and a question with fourteen long choices), the desk card and each tab, the note, a confirm, and every menu from `MenuFitTests`) at 828 x 346 (the open
+  notch), 880 x 480 (the app window's smallest), 1200 x 720 and 1920 x 1080, with data that is hard on a layout (34 chats
+  with long titles, words and paths with no spaces, wide tables and code, right-to-left text, emoji). In each state:
+  every place that answers a click is inside the window; no two overlap unless one is wholly inside the other, or is a
+  layer put over on purpose; no line of text runs off the window or is cut at its side by a clip; every button looks
+  different with the pointer on it (the places that do not by design are named in the test, with the reason); and the
+  pointer is the hand over a button, the text cursor over a box of words, the resize cursor on the list's edge. The
+  fixture's Markdown is made up, and the shaper has fixed letters, so a width is a rule of thumb: the pictures are what
+  to look at. The first run found a few dozen faults (listed in the sweep report, reports/sweep1.md).
+  `SweepFixTests` holds the checks of the single faults it found (each failed before its fix): the repository search,
+  the folder chip, the Escape order, the keys that must not reach the office, the reply box and the thread, a saved rename,
+  drafts kept, Retry, Enter and delete, a question with two parts, the list at the side (folders, fold, delete, resize),
+  and sideways scrolling of wide code. The pictures `office-repo-menu-search`, `office-fab-no-folder`, `chat-view-sidebar-folded` and `chat-view-sidebar-delete` show the new states.
+- **Sweep 3, the small faults sweeps 1 and 2 left** (`Sweep3Tests`, any system; each check failed on the code before its fix, reports/sweep3.md): the
+  custom-answer box answers the chat it belongs to and not the first that asks; reply chips that do not fit wrap onto rows (three at most) and the rest
+  is counted in a "+N" chip; the wheel over a reply box with more lines than fit scrolls the box, over the desk's tab strip it moves the tabs sideways
+  (or does nothing), over the desk card's status box it scrolls that; Escape in a box of the desk panel leaves the box; a question taller than the pane
+  scrolls inside its card (wheel, bar, fade) and the thread keeps 80 px; a button under a panel drawn over it has no hover look and answers no click,
+  while a toast is only shown and lets both through; tips (the name under the office/chat switch, the date on the wall clock, none over the bot whose
+  chat is open); a folder's path is one cut line with the whole of it in a tip; the desk card's title is cut with an ellipsis and its Editor and Expand
+  buttons stay whole; Restore, Try again, Fork, Edit and New chat in the Go words and guards; one wheel notch is 60 DIPs, the Latest button shows 160 px
+  above the end, the running step shimmers and the panels repaint ten times a second while a run is live; a new width keeps the reader at the same turn;
+  Ctrl+Z, Ctrl+Y and Ctrl+Shift+Z in the text boxes of the panels and of Settings (`EditBox`, a step is a word or a pause, a run of Backspace, a paste or a cut).
+  `SweepTests` holds the card places to the window now (a question no longer reaches past it). The notch card's wrapped command and dim path are
+  drawn only on Windows, so they are checked by the pictures `notch-rest-card-long-2x` and `notch-rest-card-diff-2x` (the job checks they are made).
+- **Sweep 4, every picture looked at** (`SweepTests` rule "switch", any system; reports/sweep4.md): the chat view drops the office/chat switch when the
+  list is hidden over an open chat (Go's rule), so the header's show-list button and the title are clear; the sweep now has the states "chat view: done,
+  list hidden" and "chat view: start, list hidden", and a rule that no word or button lies under the switch (it failed on the old code with the title,
+  the show-list button and the rename place under the switch). Faded buttons and icons are faded on screen (`D2DCanvas` ignored the fade before, so a
+  disabled button looked live; the pictures `desk-tab-pr-creating` and the dim sidebar icons show it). Menus are solid, the Delete row and the Restore
+  button are red as in Go, the start screen's menus open below their pills with the Go words and icons, and a toast no longer leaks into the next picture.
+  The sidebar and file pictures start from the same state as Go's (an open chat; the tree, not the find words). `Sweep4Tests` (any system) checks that the
+  line numbers of an open file end on one line (they were left-aligned against the panel's edge; it failed on the old code).
+- **The window's smallest size** (`WindowSizeAppTests`, Windows, needs `HOVER_APP_EXE`): the app window answers the
+  system's `WM_GETMINMAXINFO` with 880 x 480 scaled by the display, and stays that size when asked for 300 x 200.
+- **The pointer's shape** (`PointerShapeAppTests`, Windows, needs `HOVER_APP_EXE`): the real cursor (`GetCursorInfo`) over the app
+  window and over the open notch, with the pointer moved by mouse input (`SetCursorPos` alone sends the XAML window no
+  pointer-moved event): the hand over the chat view switch, the + circle, the menu button and the agent pill, the text cursor in
+  the task box, the resize cursor on the chat list's edge, the normal shape over a plain place. It also logs the window the
+  system finds under the point, the app window's rectangle, scale and foreground state, and the cursor handles, and writes a
+  screen copy with the point marked (`out\notch-live\pointer-*.png`). The shots test fails if the log of the quit has "frame failed"
+  (the panels drawing after the graphics device was disposed).
 - **The panels** (`PanelTests`, any system): the start screen starts a task with the tool, folder, access
   and model its pills show; the agent, where-it-runs, repository and access menus; a permission answered
   (`allow`, `trust`, `deny`) from the chat and over the bot; two questions at once answered one by one; a
@@ -248,6 +337,44 @@ What `windows\Hover.Tests` covers:
     window and a click on a switch, a click on a segment, the wheel and a typed text change what the backend writes to
     `settings.json`; a shortcut is recorded from the real keyboard; Alt+N opens the notch and its menu opens Settings in
     it, where a click on a switch is written. The places come from `HOVER_UI_DUMP` (`settings-window`, `settings-notch`).
+  - *The Settings sweep* (`SettingsSweepTests`, any system, no backend): every page in 36 states (each section; a tool that is
+    ready, not installed or needs a sign-in; Kiro's MCP list, its add form, its remove question and a broken file; Voice with the
+    local model not installed, downloading, failed and ready; a project's page; a picker open; a shortcut recording; a key box with
+    the keyboard) in the app window and in the open notch at 828 x 346, 880 x 480, 1200 x 720 and 1920 x 1080. In each: every
+    place that answers the pointer is inside the window and no two overlap unless one holds the other; no line of text runs off the
+    window or is cut at its side; every control looks different with the pointer on it (a switch, a segment and a slider show no
+    hover look in the Go app either) and has the pointer the Go app gives it (the hand, the text cursor over a box, the normal
+    shape on the page); a row or a greyed button that is off says why; the page scrolls to both ends by the wheel and by its bar
+    and does not scroll behind an open menu. `Text_reads_against_what_is_behind_it_in_every_appearance_and_theme` paints every
+    page in Dark, Light, System with Windows dark and light, and seven themes (Dark+, Light+, Monokai, Solarized Light and Dark,
+    High Contrast, a pastel one; their palettes are the numbers `core.PaletteFromTheme` makes) and requires 4.5 to 1 against what
+    is behind each line of text (3 to 1 for large text). Text of a row that is switched off is left out (WCAG leaves inactive
+    controls out; the words that say why the row is off are not faded, so they are checked), and so is the single letter on a coloured
+    tile (it repeats the first letter of the name beside it).
+  - *The keyboard* (`SettingsKeyboardTests`): Tab and Shift+Tab visit every control of every state above, once each and round
+    again, and the control is in view after each step; Space and Enter work a switch, a button, a link, a project row; the Up and
+    Down keys step a group of segments, the sidebar, a slider (and a picker's menu with Enter and Escape); a text box is entered
+    and left with Tab (saving); a shortcut is recorded from the keyboard alone; Hold to try holds while the key is down. The
+    same file holds the checks of the single faults the sweep found (each failed on the old code): the pointer's shape, the
+    wheel step of 60, a toast that goes, a shortcut that stops recording when the pointer goes elsewhere, a form box that lets
+    go of the keyboard when its form closes, the red mark on a bad variable name, a long name cut with an ellipsis.
+  - *The pages against the Go pages* (`PagesAgainstGoTests`, any system): 40 pages (the ten sections in four states: tools ready,
+    tools not ready, local voice, and a model with projects, tool options, voice and notch settings) compared row for row with
+    what `app.Build` makes, as text: each row's label, sub line, lead, enabled state and control (kind, id, name, labels, options,
+    what is on, placeholder, buttons). The Go side is `golden/pages-go.txt`; `golden/pages-dump.go.txt` is the recipe that makes
+    it (a text file, so no Go build sees it). Left out of the comparison, with the reason in the test: the folder lines (the dump
+    names the Linux home), the line that names the program an agent runs (Windows runs `codex-acp` and `cursor-agent`), and Codex's
+    Read only, which Windows leaves out with a note.
+  - *Sweep 2 in the real app* (`Sweep2AppTests`, Windows, needs `HOVER_APP_EXE`): the tray icon comes back when Explorer is ended
+    and starts again (the log says the app added it again, and asked the shell); the app window has an icon and opens in the middle
+    of the work area; the System appearance follows Windows switching between light and dark while the app runs (the registry
+    value is written by the test and put back); a killed backend is said in the title bar ("Quit Hover from its tray menu and open
+    it again") and once from the tray; Add a project opens the system's folder picker (the window with the address bar and the
+    search box) and Escape closes it without adding anything; Settings in the app window and in the open notch shows the hand over
+    a switch and Tab and Space work it from the keyboard (the dump names where the keyboard is); the panels step aside while
+    Settings shows; Alt then S opens the Settings menu of the bar; `hoverai.exe --quit` ends the running copy in order, its backend
+    with it. `InstanceLockTests` holds the request to quit with names of their own. Where a shell answers "not shown" for an icon in
+    the overflow, `Shell_NotifyIconGetRect` is only written down; the app asks the shell itself and logs the answer.
   - *Pictures*: `--shots` writes the `settings-*` and `notch-open-settings*` pictures with the Go names (the Mac-only
     Cua and Setup pictures are not made); the job checks that ten of them are there and are JPEG. `screen-capture.jpg`
     is the Screen capture of the app's own window over the wallpaper on the runner.
@@ -261,6 +388,12 @@ What `windows\Hover.Tests` covers:
   - *Dictation*: the line under the reply box (`DictationLineTests`) and the reading of the screenshots said aloud
     (`DictationShotsTests`: a picture in `kiro-images` becomes a data address of its kind; another folder, a name that starts
     like it, a climbing path, a file that is not a picture, an empty one, one over 8 MB and an odd name are not read).
+- **At 150 % display scale** (the last live step of the `windows` job): `tools/set-scale.ps1 -Percent 150` sets the scale of the
+  main display with the call Settings > Display makes (`DisplayConfigSetDeviceInfo`), after `tools/set-resolution.ps1` has given the
+  runner 1920 x 1080 (at its default size 100 % is the only choice). `Sweep2AppTests`, `WindowSizeAppTests`, `PointerShapeAppTests`, the
+  pictures and `SettingsAppTests` run again there. The test processes are DPI aware (`DpiAwareness`), or the pixels they click would be
+  the shrunk ones Windows gives a process that is not. Run by hand, `tools/set-scale.ps1` alone says what the display allows (at 1920 x 1080:
+  100 to 175 %). The runner has one display, so a window moved to a second monitor with another scale is not run.
 - **Windows only**: DPAPI, the job object (what is in it dies with its handle; its children too),
   killing a host process kills the backend and the agent's child, single instance, the old
   "Hover Service" task removal, and `hoverai.exe` itself (a second launch exits, the first opens

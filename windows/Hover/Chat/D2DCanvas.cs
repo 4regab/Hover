@@ -32,6 +32,8 @@ sealed class D2DCanvas(Gfx g, DwShaper shaper, ImageStore images) : ICanvas, IDi
     {
         dc = context;
         moves.Clear();
+        fades.Clear();
+        fade = 1;
         brush?.Dispose();
         brush = null;
     }
@@ -39,7 +41,7 @@ sealed class D2DCanvas(Gfx g, DwShaper shaper, ImageStore images) : ICanvas, IDi
     ID2D1SolidColorBrush Brush(Rgba c)
     {
         brush ??= dc.CreateSolidColorBrush(new Color4(0, 0, 0, 1));
-        brush.Color = new Color4(c.R / 255f, c.G / 255f, c.B / 255f, c.A / 255f);
+        brush.Color = new Color4(c.R / 255f, c.G / 255f, c.B / 255f, c.A / 255f * fade);
         return brush;
     }
 
@@ -57,10 +59,18 @@ sealed class D2DCanvas(Gfx g, DwShaper shaper, ImageStore images) : ICanvas, IDi
 
     public void PopMove() => dc.Transform = moves.Pop();
 
-    // ponytail: nothing in the panels fades by layer; opacity is applied by the colours drawn.
-    public void PushOpacity(float opacity) { }
+    // ponytail: opacity is applied to the colour of each brush, not to a layer, so two shapes that overlap inside a faded
+    // part show through each other. The panels fade only buttons and icons, whose parts do not overlap.
+    readonly Stack<float> fades = new();
+    float fade = 1;
 
-    public void PopOpacity() { }
+    public void PushOpacity(float opacity)
+    {
+        fades.Push(fade);
+        fade *= opacity;
+    }
+
+    public void PopOpacity() => fade = fades.Count > 0 ? fades.Pop() : 1;
 
     static bool Same(float[] r) => r[0] == r[1] && r[1] == r[2] && r[2] == r[3];
 
@@ -262,6 +272,7 @@ sealed class D2DCanvas(Gfx g, DwShaper shaper, ImageStore images) : ICanvas, IDi
                 var gs = stops.Select(st => new GradientStop { Position = (float)st.Offset, Color = new Color4(((st.Color >> 16) & 0xff) / 255f, ((st.Color >> 8) & 0xff) / 255f, (st.Color & 0xff) / 255f, 1) }).ToArray();
                 using var collection = dc.CreateGradientStopCollection(gs);
                 using var gradient = dc.CreateLinearGradientBrush(new LinearGradientBrushProperties { StartPoint = new Vector2((float)spec.X, (float)spec.Y), EndPoint = new Vector2((float)(spec.X + spec.W), (float)spec.Y) }, collection);
+                gradient.Opacity = fade;
                 dc.FillGeometry(geometry, gradient);
             }
             else dc.FillGeometry(geometry, Brush(Rgba.Of(layer.Solid)));
@@ -289,7 +300,7 @@ sealed class D2DCanvas(Gfx g, DwShaper shaper, ImageStore images) : ICanvas, IDi
             oy = r.Y + (r.H - size.Height * k) / 2;
         }
         using var bb = dc.CreateBitmapBrush(bitmap, new BitmapBrushProperties1 { ExtendModeX = ExtendMode.Clamp, ExtendModeY = ExtendMode.Clamp, InterpolationMode = InterpolationMode.Linear },
-            new BrushProperties { Opacity = 1, Transform = Matrix3x2.CreateScale(sx, sy) * Matrix3x2.CreateTranslation(ox, oy) });
+            new BrushProperties { Opacity = fade, Transform = Matrix3x2.CreateScale(sx, sy) * Matrix3x2.CreateTranslation(ox, oy) });
         PushClip(r);
         dc.FillRoundedRectangle(new RoundedRectangle(Rc(r), radius, radius), bb);
         PopClip();

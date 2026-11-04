@@ -85,7 +85,7 @@ static class ChatShots
         CanStart = true, Tool = "kiro", Folder = @"C:\work\project", MaxRunning = 4,
         Tools =
         [
-            new ToolInfo { Id = "kiro", Name = "Kiro", Ready = true, Access = "full", Model = "auto", Models = [new ModelInfo { Id = "auto", Name = "Auto" }, new ModelInfo { Id = "opus", Name = "Opus 5.5", Levels = ["Low", "High"] }] },
+            new ToolInfo { Id = "kiro", Name = "Kiro", Ready = true, ReadOnly = true, Access = "full", Model = "auto", Models = [new ModelInfo { Id = "auto", Name = "Auto" }, new ModelInfo { Id = "opus", Name = "Opus 5.5", Levels = ["Low", "High"] }] },
             new ToolInfo { Id = "codex", Name = "Codex", Ready = true, Access = "risky", Models = [new ModelInfo { Id = "gpt", Name = "GPT" }] },
             new ToolInfo { Id = "claude", Name = "Claude Code", Ready = true, Access = "risky" },
         ],
@@ -111,6 +111,9 @@ static class ChatShots
     {
         var ui = core.Ui;
         core.FreezeState = true;
+        // The data folder of a run of --shots has never been through the first-task note, and the pictures are of the office and its menus: the
+        // note is shown by the pictures of the note, and by no other.
+        ui.Accept(new PreferencesEvent { NoticeSeen = true });
         // Paints once so the places on the screen are known before a click.
         void S(int h = 720) => RenderLayer(core, 1200, h, 1);
         void Esc() => ui.Key(UiKey.Escape, UiMods.None);
@@ -169,6 +172,7 @@ static class ChatShots
             var second = Session(8, "codex", "Another question", "waiting", 4, Turn("Delete the build folder", "", "waiting", 1)) with { Ask = Permission() with { Id = "n2", Command = "rm -rf build", Title = "Wants to delete files", Danger = true, Allow = "Delete", Reason = "Deletes files" } };
             await Shot(core, directory, "office-ask-two", 1200, 480, () => { ui.Accept(State(asking, second)); ui.CloseChat(); ui.ChatView = false; }, office: true);
             await DeskShots.TakeAsync(directory, core);
+            await MenuShots.TakeAsync(directory, core);
         }
         catch (Exception e)
         {
@@ -237,6 +241,7 @@ static class ChatShots
     internal static async Task Shot(UiCore core, string directory, string name, int w, int h, Action setup, bool office = false, int rounds = 40)
     {
         var ui = core.Ui;
+        ui.ClearToast();
         setup();
         byte[] pixels = [];
         for (var round = 0; round < rounds; round++)
