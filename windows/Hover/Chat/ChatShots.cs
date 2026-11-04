@@ -241,6 +241,7 @@ static class ChatShots
     internal static async Task Shot(UiCore core, string directory, string name, int w, int h, Action setup, bool office = false, int rounds = 40)
     {
         var ui = core.Ui;
+        ui.ClearToast();
         setup();
         byte[] pixels = [];
         for (var round = 0; round < rounds; round++)

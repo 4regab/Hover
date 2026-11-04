@@ -162,7 +162,7 @@ public sealed partial class OfficeUi
         if (wide) pen.Box(x, y, pw, ph, 0, Rgba.Of(0x0d0c0f));
         else
         {
-            pen.Box(x, y, pw, ph, radius, Rgba.Of(0x0e0a12, 0.96));
+            pen.Box(x, y, pw, ph, radius, Rgba.Of(0x0e0a12, 0.985));
             pen.Border(x, y, pw, ph, radius, 1, Rgba.Of(0xffffff, 0.1));
         }
         Block(chatRect);
@@ -695,8 +695,9 @@ public sealed partial class OfficeUi
         var cr = new Rect4(yr.X - 8 - cw, yb, cw, 30);
         pen.Box(cr, 8, Rgba.Of(0xffffff, Over(cr) ? 0.17 : 0.1));
         pen.TextIn("Cancel", cr, Pen.F(12, 600, Pen.Ink));
-        pen.Box(yr, 8, Over(yr) ? Rgba.Of(0xffffff) : Rgba.Of(0xf5f5f7));
-        pen.TextIn(yes, yr, Pen.F(12, 600, Rgba.Of(0x000000)));
+        // The Go dialog's button is red with white words (internal/ui/officemenus.go confirm), for every kind.
+        pen.Box(yr, 8, Over(yr) ? Rgba.Of(0xff453a) : new Rgba(0xff, 0x45, 0x3a, 0xd9));
+        pen.TextIn(yes, yr, Pen.F(12, 600, Rgba.Of(0xffffff)));
         Add(confirmBox, "confirmBox");
         Add(cr, "confirmNo");
         Add(yr, "confirmYes");

@@ -262,6 +262,13 @@ public sealed partial class OfficeUi
         if (thread.Refresh(src)) Dirty = true;
     }
 
+    /// <summary>Puts a toast away at once (a picture of the panels starts without the toast of the one before it).</summary>
+    public void ClearToast()
+    {
+        ToastText = null;
+        Dirty = true;
+    }
+
     public void Say(string text)
     {
         ToastText = text;

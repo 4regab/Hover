@@ -5,7 +5,7 @@ namespace Hover.Chat.Ui;
 public sealed partial class OfficeUi
 {
     /// <summary>A row of a menu. <paramref name="Pin"/>: the leading and trailing pinned rows stay in view while the rows between them scroll.</summary>
-    sealed record MenuRow(string Label, string Id = "", string Note = "", bool On = false, bool Header = false, bool Rule = false, string? Mark = null, bool Disabled = false, bool Pin = false, string? Icon = null, bool Search = false, bool OneLine = false)
+    sealed record MenuRow(string Label, string Id = "", string Note = "", bool On = false, bool Header = false, bool Rule = false, string? Mark = null, bool Disabled = false, bool Pin = false, string? Icon = null, bool Search = false, bool OneLine = false, bool Red = false)
     {
         /// <summary>A row that can be picked: not a heading, a rule, a note or the search box.</summary>
         public bool Pickable => !Header && !Rule && !Disabled && !Search;
@@ -256,7 +256,10 @@ public sealed partial class OfficeUi
     string? rowTip;
 
     /// <summary>The colour of a menu's panel, which the fade at the edge of a scrolling list runs into.</summary>
-    static readonly Rgba MenuPanel = Rgba.Of(0x16121c, 0.985);
+    static readonly Rgba MenuPanel = Rgba.Of(0x16121c);
+
+    /// <summary>The text and icon of a row that destroys something (internal/ui/barmenu.go).</summary>
+    static readonly Rgba RedInk = Rgba.Of(0xff9a92);
 
     static Rect4 Cut(Rect4 a, Rect4 b)
     {
@@ -327,7 +330,7 @@ public sealed partial class OfficeUi
         var hov = !r.Disabled && ((shown && Over(seen)) || m.Hot == i);
         if (hov) pen.Box(rr, 8, Rgba.Of(0xffffff, 0.09));
         var tx = rr.X + 8;
-        var lf = Pen.F(12.5, r.Note.Length > 0 ? 600 : 500, r.Disabled ? Pen.Faint : Pen.Ink);
+        var lf = Pen.F(12.5, r.Note.Length > 0 ? 600 : 500, r.Disabled ? Pen.Faint : r.Red ? RedInk : Pen.Ink);
         if (r.Mark is not null)
         {
             pen.Mark(r.Mark, tx, cy + (rh - 18) / 2, 18);
@@ -335,7 +338,7 @@ public sealed partial class OfficeUi
         }
         else if (r.Icon is not null)
         {
-            pen.Icon(r.Icon, tx + 1, cy + (rh - 16) / 2, 16, hov ? Pen.Ink : Pen.Dim);
+            pen.Icon(r.Icon, tx + 1, cy + (rh - 16) / 2, 16, r.Red ? RedInk : hov ? Pen.Ink : Pen.Dim);
             tx += 26;
         }
         var labelW = rr.Right - tx - 8 - (r.On ? 20 : 0);
@@ -859,7 +862,7 @@ public sealed partial class OfficeUi
             }
             if (s.Turns.Any(x => x.SwitchTo is not null)) rows.Add(new MenuRow("Bring back messages", "bringBack"));
             rows.Add(new MenuRow("", Rule: true));
-            rows.Add(new MenuRow("Delete chat", "delete"));
+            rows.Add(new MenuRow("Delete chat", "delete", Icon: Glyphs.Bin, Red: true));
         }
         else rows.Add(new MenuRow("This chat is saved. Open it in the office to change it.", Disabled: true));
         OpenMenu("more", at, rows, false, 230);

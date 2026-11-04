@@ -85,12 +85,12 @@ public sealed partial class OfficeUi
 
     /// <summary>
     /// The HUD's glass (internal/ui/glass.go Glass): a soft shadow, a dark violet fill and a faint edge. The Go build also shows a blurred copy
-    /// of the office through it; the office is a surface of its own here, so only the fill's see-through shows it.
+    /// of the office through it; here there is no blur, so the fill is nearly solid (a sharp scene under 28 % see-through shows its words through).
     /// </summary>
     void PaintGlass(Rect4 r, float radius)
     {
         for (var i = 0; i < 5; i++) pen.Box(r.X - i * 3, r.Y + 8 - i, r.W + i * 6, r.H + i * 4, radius + i * 3, Rgba.Of(0x000000, 0.05));
-        pen.Box(r, radius, new Rgba(0x16, 0x0f, 0x1e, 0xb8));
+        pen.Box(r, radius, new Rgba(0x16, 0x0f, 0x1e, 0xe6));
         pen.Border(r.X, r.Y, r.W, r.H, radius, 1, new Rgba(0xff, 0xff, 0xff, 0x17));
     }
 
