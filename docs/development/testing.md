@@ -242,7 +242,8 @@ What `windows\Hover.Tests` covers:
   the show-list button and the rename place under the switch). Faded buttons and icons are faded on screen (`D2DCanvas` ignored the fade before, so a
   disabled button looked live; the pictures `desk-tab-pr-creating` and the dim sidebar icons show it). Menus are solid, the Delete row and the Restore
   button are red as in Go, the start screen's menus open below their pills with the Go words and icons, and a toast no longer leaks into the next picture.
-  The sidebar and file pictures start from the same state as Go's (an open chat; the tree, not the find words).
+  The sidebar and file pictures start from the same state as Go's (an open chat; the tree, not the find words). `Sweep4Tests` (any system) checks that the
+  line numbers of an open file end on one line (they were left-aligned against the panel's edge; it failed on the old code).
 - **The window's smallest size** (`WindowSizeAppTests`, Windows, needs `HOVER_APP_EXE`): the app window answers the
   system's `WM_GETMINMAXINFO` with 880 x 480 scaled by the display, and stays that size when asked for 300 x 200.
 - **The pointer's shape** (`PointerShapeAppTests`, Windows, needs `HOVER_APP_EXE`): the real cursor (`GetCursorInfo`) over the app
