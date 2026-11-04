@@ -484,9 +484,8 @@ public sealed partial class OfficeUi
                 {
                     pen.Box(rect, 0, Rgba.Of(0x0b0a0d));
                     var hov = Over(rect);
-                    Tv(r.Num, x, y, h, mono115 with { Color = Rgba.Of(0xffffff, 0.22) }, 0);
-                    var nw = pen.Width(r.Num, mono115);
-                    if (nw < 44) { }
+                    // Right-aligned in 44 px (internal/ui/deskrows.go).
+                    Tv(r.Num, x + 44 - pen.Width(r.Num, mono115), y, h, mono115 with { Color = Rgba.Of(0xffffff, 0.22) }, 0);
                     Tv(r.Text, x + 56, y, h, mono115 with { Color = Rgba.Of(0xd6d3dc) }, 0);
                     if (r.Act.Length > 0 && hov) OpenLineButton(r.Act, x + w - 86, y, h, false);
                     break;

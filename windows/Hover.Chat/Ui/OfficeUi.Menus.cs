@@ -461,9 +461,9 @@ public sealed partial class OfficeUi
             case "pillWhere":
                 {
                     // The start screen's list is the Go one (internal/ui/officelist.go): a laptop and a cloud, with what each does.
-                    var rows = new List<MenuRow> { new("This computer", "here", "On this computer, in the folder", !taskCloud, Icon: Glyphs.Laptop) };
+                    var rows = new List<MenuRow> { new("This computer", "here", "On this computer, in the folder", !taskCloud, Icon: Glyphs.Laptop, OneLine: OnStartScreen) };
                     if (ToolSupportsCloud(TaskPicks().Tool))
-                        rows.Add(new MenuRow("Kiro cloud", "cloud", taskRepo is { Length: > 0 } rp ? "In a sandbox on " + rp + ", with a PR at the end" : "In an empty sandbox", taskCloud, Icon: Glyphs.Cloud));
+                        rows.Add(new MenuRow("Kiro cloud", "cloud", taskRepo is { Length: > 0 } rp ? "In a sandbox on " + rp + ", with a PR at the end" : "In an empty sandbox", taskCloud, Icon: Glyphs.Cloud, OneLine: OnStartScreen));
                     OpenMenu("where", t.R, rows, !OnStartScreen, 248);
                     break;
                 }
@@ -490,7 +490,7 @@ public sealed partial class OfficeUi
                     var rows = new List<MenuRow> { new((tool is null ? "The agent" : ToolDisplay(tool)) + " may", Header: true, Pin: true) };
                     // Read only is offered where the tool can do it (internal/shell/newtask.go).
                     foreach (var (id, label, note) in AccessChoices.Where(c => c.Id != "read" || tool?.ReadOnly == true || cur == "read"))
-                        rows.Add(new MenuRow(label, id, id == "risky" && tool?.Id == "codex" ? "Asks to write outside the folder or go online. Codex runs the rest." : note, id == cur, Icon: id == "read" ? Glyphs.Eye : Glyphs.Shield));
+                        rows.Add(new MenuRow(label, id, id == "risky" && tool?.Id == "codex" ? "Asks to write outside the folder or go online. Codex runs the rest." : note, id == cur, Icon: id == "read" ? Glyphs.Eye : Glyphs.Shield, OneLine: OnStartScreen));
                     rows.Add(new MenuRow("", Note: "For this task only. Settings keeps the default.", Disabled: true, Pin: true));
                     OpenMenu("access", t.R, rows, !OnStartScreen, 270);
                     break;

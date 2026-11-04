@@ -573,3 +573,27 @@ public class SweepFixTests
         Assert.Equal("alpha beta gamma", h.Ui.Thread.SelectedText());
     }
 }
+
+/// <summary>Sweep 4: faults found by looking at the pictures (reports/sweep4.md).</summary>
+public class Sweep4Tests
+{
+    [Fact]
+    public void The_line_numbers_of_an_open_file_end_on_one_line_as_in_Go()
+    {
+        var h = SweepTests.Rig(1200, 720);
+        h.Ui.OpenDeskCard(1);
+        h.Frame();
+        h.Accept(new DeskEvent { Id = 1, What = "probe", Data = System.Text.Json.JsonDocument.Parse("""{"folder":true,"git":true,"branch":"main","changed":1,"add":1,"del":0,"gh":true,"ghAuth":true,"pr":null,"commands":0,"agents":0,"running":0,"pages":0,"linked":0}""").RootElement.Clone() });
+        h.Ui.OpenDeskPanel(1, "files");
+        h.Frame();
+        h.Accept(new DeskEvent { Id = 1, What = "files", Data = System.Text.Json.JsonDocument.Parse("""{"git":true,"branch":"main","changed":[],"touched":[],"tree":["a.ts"],"more":false}""").RootElement.Clone() });
+        h.Frame();
+        Assert.True(h.Click("drow", s: "file:a.ts"));
+        var text = string.Join("\n", Enumerable.Range(1, 12).Select(i => "line " + i));
+        h.Accept(new DeskEvent { Id = 1, What = "file", Arg = "a.ts", Data = System.Text.Json.JsonDocument.Parse("{\"path\":\"a.ts\",\"text\":\"" + text.Replace("\n", "\\n") + "\",\"truncated\":false,\"size\":100}").RootElement.Clone() });
+        h.Frame();
+        var nine = h.Canvas.Drawn.First(d => d.Text == "9");
+        var ten = h.Canvas.Drawn.First(d => d.Text == "10");
+        Assert.True(Math.Abs(nine.R.Right - ten.R.Right) < 0.5f, $"9 ends at {nine.R.Right} and 10 at {ten.R.Right}");
+    }
+}
