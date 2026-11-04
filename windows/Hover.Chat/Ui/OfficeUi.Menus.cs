@@ -255,6 +255,9 @@ public sealed partial class OfficeUi
 
     string? rowTip;
 
+    /// <summary>The chat view's start screen: its pills open their menus below them, as the Go app does.</summary>
+    bool OnStartScreen => ChatView && OpenId is null && openKey is null;
+
     /// <summary>The colour of a menu's panel, which the fade at the edge of a scrolling list runs into.</summary>
     static readonly Rgba MenuPanel = Rgba.Of(0x16121c);
 
@@ -452,14 +455,16 @@ public sealed partial class OfficeUi
             case "pillAgent":
                 {
                     List<MenuRow> Rows() => [.. (state?.Tools ?? []).Select(x => new MenuRow(ToolDisplay(x), x.Id, x.Ready ? "" : x.Hint, x.Id == TaskPicks().Tool?.Id, Mark: x.Id))];
-                    OpenMenu("agent", t.R, Rows(), true, build: Rows);
+                    OpenMenu("agent", t.R, Rows(), !OnStartScreen, build: Rows);
                     break;
                 }
             case "pillWhere":
                 {
-                    var rows = new List<MenuRow> { new("This computer", "here", On: !taskCloud) };
-                    if (ToolSupportsCloud(TaskPicks().Tool)) rows.Add(new MenuRow("Kiro Web", "cloud", "Runs in Kiro's cloud on a repository.", taskCloud));
-                    OpenMenu("where", t.R, rows, true);
+                    // The start screen's list is the Go one (internal/ui/officelist.go): a laptop and a cloud, with what each does.
+                    var rows = new List<MenuRow> { new("This computer", "here", "On this computer, in the folder", !taskCloud, Icon: Glyphs.Laptop) };
+                    if (ToolSupportsCloud(TaskPicks().Tool))
+                        rows.Add(new MenuRow("Kiro cloud", "cloud", taskRepo is { Length: > 0 } rp ? "In a sandbox on " + rp + ", with a PR at the end" : "In an empty sandbox", taskCloud, Icon: Glyphs.Cloud));
+                    OpenMenu("where", t.R, rows, !OnStartScreen, 248);
                     break;
                 }
             case "pillRepo":
@@ -485,9 +490,9 @@ public sealed partial class OfficeUi
                     var rows = new List<MenuRow> { new((tool is null ? "The agent" : ToolDisplay(tool)) + " may", Header: true, Pin: true) };
                     // Read only is offered where the tool can do it (internal/shell/newtask.go).
                     foreach (var (id, label, note) in AccessChoices.Where(c => c.Id != "read" || tool?.ReadOnly == true || cur == "read"))
-                        rows.Add(new MenuRow(label, id, id == "risky" && tool?.Id == "codex" ? "Asks to write outside the folder or go online. Codex runs the rest." : note, id == cur));
+                        rows.Add(new MenuRow(label, id, id == "risky" && tool?.Id == "codex" ? "Asks to write outside the folder or go online. Codex runs the rest." : note, id == cur, Icon: id == "read" ? Glyphs.Eye : Glyphs.Shield));
                     rows.Add(new MenuRow("", Note: "For this task only. Settings keeps the default.", Disabled: true, Pin: true));
-                    OpenMenu("access", t.R, rows, true, 270);
+                    OpenMenu("access", t.R, rows, !OnStartScreen, 270);
                     break;
                 }
             case "pillModel":

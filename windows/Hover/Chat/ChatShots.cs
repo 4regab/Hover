@@ -85,7 +85,7 @@ static class ChatShots
         CanStart = true, Tool = "kiro", Folder = @"C:\work\project", MaxRunning = 4,
         Tools =
         [
-            new ToolInfo { Id = "kiro", Name = "Kiro", Ready = true, Access = "full", Model = "auto", Models = [new ModelInfo { Id = "auto", Name = "Auto" }, new ModelInfo { Id = "opus", Name = "Opus 5.5", Levels = ["Low", "High"] }] },
+            new ToolInfo { Id = "kiro", Name = "Kiro", Ready = true, ReadOnly = true, Access = "full", Model = "auto", Models = [new ModelInfo { Id = "auto", Name = "Auto" }, new ModelInfo { Id = "opus", Name = "Opus 5.5", Levels = ["Low", "High"] }] },
             new ToolInfo { Id = "codex", Name = "Codex", Ready = true, Access = "risky", Models = [new ModelInfo { Id = "gpt", Name = "GPT" }] },
             new ToolInfo { Id = "claude", Name = "Claude Code", Ready = true, Access = "risky" },
         ],
