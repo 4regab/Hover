@@ -427,8 +427,9 @@ public sealed partial class OfficeUi
         if (opened) PaintChatPane(lw, 0, w - lw - deskW, h, 0, true, compact);
         else PaintStart(lw, w - lw, compact);
         if (deskPanel is not null) PaintDeskPanel(new Rect4(w - deskW, 0, deskW, h), 0, true);
-        // The switch stays where the sidebar has no room, and on the start screen.
-        if (!sideShown) PaintViewSwitch(12, compact ? 8 : 10, true, compact);
+        // The switch goes with the sidebar when that is closed over an open chat (the header's show button is then the way back).
+        // It stays where the sidebar has no room, and on the start screen (internal/ui/officeview.go).
+        if (!sideShown && (!listAllowed || !opened)) PaintViewSwitch(12, compact ? 8 : 10, true, compact);
         if (!sideShown && listAllowed && !opened)
         {
             var bx = 12 + (compact ? 68 : 76) + 6;

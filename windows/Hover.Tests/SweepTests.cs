@@ -135,6 +135,8 @@ public class SweepTests
         new("chat view: start", h => MenuFitTests.StartScreen(h)),
         new("chat view: start with words", h => { MenuFitTests.StartScreen(h); Assert.True(h.Click("taskText")); h.Type(Words + Words + Words + LongWord); }),
         new("chat view: done", h => ChatPane(h, 1, true)),
+        new("chat view: done, list hidden", h => { ChatPane(h, 1, true); h.Click("hideSide"); h.Frame(); }),
+        new("chat view: start, list hidden", h => { MenuFitTests.StartScreen(h); h.Click("hideSide"); h.Frame(); }),
         new("chat view: working with a queued message", h => ChatPane(h, 2, true)),
         new("chat view: permission", h => ChatPane(h, 3, true)),
         new("chat view: question", h => ChatPane(h, 4, true)),
@@ -254,6 +256,18 @@ public class SweepTests
                 // runs past the card, which clips it (the Go picture desk-card-small-working shows the same).
                 && !targets.Any(t => t.Id == "deskCard" && Math.Abs(t.R.X - d.Clip.Value.X) < 1 && Math.Abs(t.R.Y - d.Clip.Value.Y) < 1))
                 Bad("text", $"'{Short(d.Text)}' {d.R} is cut at its side by the clip {d.Clip}");
+        }
+
+        // 3b. The office/chat switch is a layer, but it must never lie over a word or a button other than the floor under it.
+        var sw = targets.Where(t => t.Id == "view").Select(t => t.R).ToList();
+        if (sw.Count > 0)
+        {
+            var box = new Rect4(sw.Min(r => r.X), sw.Min(r => r.Y), sw.Max(r => r.Right) - sw.Min(r => r.X), sw.Max(r => r.Bottom) - sw.Min(r => r.Y));
+            static bool Cross(Rect4 a, Rect4 b) => Math.Min(a.Right, b.Right) - Math.Max(a.X, b.X) > 2.5f && Math.Min(a.Bottom, b.Bottom) - Math.Max(a.Y, b.Y) > 2.5f;
+            foreach (var d in rig.Canvas.Drawn)
+                if (d.Text.Trim().Length > 0 && Cross(d.R, box)) Bad("switch", $"'{Short(d.Text)}' {d.R} is under the office/chat switch {box}");
+            foreach (var t in targets)
+                if (t.Id != "view" && !Plain.Contains(t.Id) && !IsLayer(t) && t.R.W < w * 0.5f && Cross(t.R, box)) Bad("switch", $"{Id(t)} {t.R} is under the office/chat switch {box}");
         }
 
         // 4. A hover state: the frame with the pointer on a place differs from the frame with the pointer away.
