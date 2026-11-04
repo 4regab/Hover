@@ -137,6 +137,8 @@ static class MenuShots
         {
             Reset(1200, 720);
             ui.ChatView = true;
+            // A chat is open, as in the Go picture (its list and a chat beside it).
+            ui.OpenChat(1);
             Paint(1200, 720);
             if (ui.Find("showSide") is not null) ui.Click("showSide");
             Paint(1200, 720);
@@ -147,6 +149,8 @@ static class MenuShots
         {
             Reset(1200, 720);
             ui.ChatView = true;
+            // A chat is open, as in the Go picture (its list and a chat beside it).
+            ui.OpenChat(1);
             Paint(1200, 720);
             if (ui.Find("showSide") is not null) ui.Click("showSide");
             Paint(1200, 720);
