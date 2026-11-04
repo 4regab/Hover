@@ -663,7 +663,7 @@ public sealed partial class OfficeUi
                         pen.Box(cx, y + (h - 19) / 2, bw, 19, 6, Rgba.Of(0xffffff, 0.055));
                         pen.TextIn(r.Sub, new Rect4(cx, y + (h - 19) / 2, bw, 19), f);
                     }
-                    if (r.Act.Length > 0) DeskButton("drowBtn", "Create PR", null, x + w - 6, y + (h - 26) / 2, false, true, idx, r.Act, rightAligned: true);
+                    if (r.Act.Length > 0) DeskButton("drowBtn", "Create PR", null, x + w - 6, y + (h - 26) / 2, true, true, idx, r.Act, rightAligned: true);
                     break;
                 }
         }

@@ -330,7 +330,7 @@ public sealed partial class OfficeUi
         if (start)
         {
             specs.Add(new PillSpec("pillAgent", tool?.Id ?? "kiro", null, ToolDisplay(tool), Pen.Dim, menu?.Kind == "agent", 1));
-            specs.Add(new PillSpec("pillWhere", null, taskCloud ? Glyphs.Cloud : Glyphs.Folder, taskCloud ? "Kiro Web" : "This computer", Pen.Dim, menu?.Kind == "where", 1));
+            specs.Add(new PillSpec("pillWhere", null, taskCloud ? Glyphs.Cloud : Glyphs.Laptop, taskCloud ? "Kiro cloud" : "This computer", Pen.Dim, menu?.Kind == "where", 1));
             if (taskCloud)
                 specs.Add(new PillSpec("pillRepo", null, null, taskRepo is { Length: > 0 } rp0 ? LastPart(rp0) : "Choose repo", Pen.Dim, menu?.Kind == "repo", 1));
         }
