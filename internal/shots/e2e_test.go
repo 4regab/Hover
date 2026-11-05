@@ -1769,16 +1769,31 @@ func TestOfficeDragResetAndKeys(t *testing.T) {
 	u.session("Why does the notch blink on a second monitor?")
 	u.r.s.CloseChat()
 	u.r.s.ToggleView()
-	view := func() [3]float64 {
+	// The camera is kept when the office thread sends a frame with it. A slow runner (Windows CI)
+	// can take seconds to send one, so wait until the view differs from prev, for up to 8 s,
+	// instead of reading it after a fixed time. A view that never changes returns after the wait.
+	view := func(prev ...[3]float64) [3]float64 {
 		u.wait(600)
 		v, _ := u.r.s.ShotView()
+		for end := time.Now().Add(8 * time.Second); len(prev) > 0 && v == prev[0] && time.Now().Before(end); {
+			u.wait(200)
+			v, _ = u.r.s.ShotView()
+		}
+		// It eases to its place over several frames: read again until two reads agree.
+		for end := time.Now().Add(8 * time.Second); len(prev) > 0 && time.Now().Before(end); {
+			last := v
+			u.wait(400)
+			if v, _ = u.r.s.ShotView(); v == last {
+				break
+			}
+		}
 		return v
 	}
 	u.wait(1500)
 	v0 := view()
 	// Zoom in first (a drag does not move a camera that shows it all), then drag.
 	u.wheel(600, 400, -300)
-	v1 := view()
+	v1 := view(v0)
 	if v1[2] <= v0[2] {
 		t.Fatalf("no zoom to start from: %v then %v", v0, v1)
 	}
@@ -1786,7 +1801,7 @@ func TestOfficeDragResetAndKeys(t *testing.T) {
 	u.drag(700, 450)
 	u.drag(760, 470)
 	u.up(760, 470)
-	v2 := view()
+	v2 := view(v1)
 	if v2[0] == v1[0] && v2[1] == v1[1] {
 		t.Errorf("dragging the zoomed office did not move the camera: %v", v2)
 	}
@@ -1794,7 +1809,7 @@ func TestOfficeDragResetAndKeys(t *testing.T) {
 	u.click(300, 600)
 	u.down(300, 600)
 	u.up(300, 600)
-	v3 := view()
+	v3 := view(v2)
 	if v3 != [3]float64{0, 0, 1} {
 		t.Errorf("a double click left the camera at %v, want 0 0 1", v3)
 	}
