@@ -257,9 +257,8 @@ browser with its Browser tab, and one-click agent setup (macOS). Their switches 
 menu item that lets an agent ask other agents for help) are not offered on Windows either, as in the Go app; the small
 bots for an agent's own subagents show on every system.
 
-Where a feature is off, its switch says why. CI builds the Mac app and runs its packaged Go
-backend against stand-in tools; the native Swift UI, permission prompts, and real desktop
-behavior still need hands-on Mac validation. See [docs/MACOS.md](docs/MACOS.md).
+Where a feature is off, its switch says why. CI builds the Mac app; the native
+Swift UI, permission prompts, and real desktop behavior still need hands-on Mac validation. See [docs/MACOS.md](docs/MACOS.md).
 
 ## Build from source
 
@@ -285,7 +284,6 @@ $env:HOVER_DATA_DIR = "$env:TEMP\hover-dev"   # an empty data folder of your own
 .\build.ps1 run              # build and run
 .\build.ps1 publish          # hoverai.exe, hover-backend.exe and what they run on, in .\publish
 .\build.ps1 installer        # Hover-Setup-<version>.exe in .\dist (needs Inno Setup 6 or 7)
-.\build.ps1 test             # the Go tests, then the C# tests
 .\build.ps1 legacy           # the Go Windows app that came before, in .\publish-legacy (needs only Go)
 ```
 
@@ -307,8 +305,7 @@ scripts/build-macos.sh             # dist/macos-osx-arm64/Hover.app, signed ad h
 The Mac app is Swift (`macos/`) around the web office (`web/office/`), on the Go backend
 `cmd/hover-backend`; `scripts/build-macos.sh` builds all three into `Hover.app` (`HOVER_ARCH=x64`
 for Intel). CI builds and signs it ad hoc and puts it on each release as a disk image for
-Apple silicon and one for Intel; it runs the packaged backend against stand-in tools
-(`tests/macos/backend-smoke.py`) and nothing more, and the app isn't notarized yet.
+Apple silicon and one for Intel; it does not run the app, and the app isn't notarized yet.
 [docs/MACOS.md](docs/MACOS.md) has the permissions it asks for.
 
 Developer documentation is in [`docs/development`](docs/development): architecture,

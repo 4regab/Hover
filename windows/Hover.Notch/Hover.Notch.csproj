@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <!-- The notch's rules with no window and no Windows call: sizes, placement, the shape's
        outline, the open and close animation, the pointer rules, and what the resting notch
-       shows. Hover.Tests runs it on any system and compares it with numbers the Go code prints. -->
+       shows. It builds on any system. -->
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
     <RootNamespace>Hover.Notch</RootNamespace>

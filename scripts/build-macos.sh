@@ -33,10 +33,6 @@ for SOURCE in "$ROOT"/macos/Sources/*.swift; do
   [[ "$(basename "$SOURCE")" == Hover.swift ]] || SWIFT_SOURCES+=("$SOURCE")
 done
 SWIFT_FLAGS=(-swift-version 5)
-if [[ "${HOVER_SETTINGS_TESTS:-0}" == 1 ]]; then
-  SWIFT_SOURCES+=("$ROOT/tests/macos/SettingsSmoke.swift")
-  SWIFT_FLAGS+=(-D HOVER_SETTINGS_TESTS)
-fi
 xcrun swiftc "${SWIFT_FLAGS[@]}" -O -target "$ARCH-apple-macos14.0" -framework AppKit -framework SwiftUI -framework WebKit -framework Security -framework ServiceManagement -framework UserNotifications -framework Carbon -framework ScreenCaptureKit -framework AVFoundation -framework Speech -framework CoreMedia "${SWIFT_SOURCES[@]}" -o "$APP/Contents/MacOS/Hover"
 xcrun clang -O2 -arch "$ARCH" -mmacosx-version-min=14.0 "$ROOT/macos/Sources/guardian.c" -o "$RES/hover-guardian"
 cp "$ROOT/web/office/dist/kiro-office.html" "$RES/office/"

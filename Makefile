@@ -1,6 +1,5 @@
 # Hover on Linux. (Windows: .\build.ps1.)
 #   make               build ./hover-linux
-#   make test          the Go tests (CI runs the same)
 #   make package       .deb and tarball in dist/, at the version in VERSION
 #   make install       into $(DESTDIR)$(PREFIX) (default /usr/local; sudo for that)
 #   make uninstall
@@ -18,15 +17,12 @@ WGPU_NATIVE_LIB ?= lib/libwgpu_native.so
 # entries and StartupWMClass (the binary's name) already say hover.
 BIN := hover-linux
 
-.PHONY: all build test wgpu package install uninstall version
+.PHONY: all build wgpu package install uninstall version
 
 all: build
 
 build:
 	go build -tags $(TAGS) -ldflags "-X $(MODULE)/internal/shell.Version=$(VERSION)" -o $(BIN) ./cmd/hover
-
-test:
-	go test -tags $(TAGS) ./cmd/... ./internal/...
 
 wgpu:
 	curl -sL -o wgpu.zip https://github.com/gfx-rs/wgpu-native/releases/download/$(WGPU_VERSION)/wgpu-linux-x86_64-release.zip

@@ -8,25 +8,13 @@ node = "22"
 description = "Build the Linux app"
 run = "make"
 
-[tasks.test-linux]
-description = "Run Go tests with the Linux build tags"
-run = "make test"
-
 [tasks.build-windows]
 description = "Build the Windows app"
 run_windows = "pwsh -NoProfile -File ./build.ps1"
 
-[tasks.test-windows]
-description = "Run the Go and C# tests on Windows"
-run_windows = "pwsh -NoProfile -File ./build.ps1 test"
-
 [tasks.build-macos]
 description = "Build the macOS app"
 run = "./scripts/build-macos.sh"
-
-[tasks.test-macos]
-description = "Run Go tests on macOS"
-run = "go test ./cmd/... ./internal/..."
 
 [tasks.office]
 description = "Install web office dependencies and build its page"

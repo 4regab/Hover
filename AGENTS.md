@@ -21,7 +21,7 @@ Windows build is kept for now as `build.ps1 legacy`. The Rust implementation is 
 | macOS windows, menu bar, voice, native host | `macos/Sources/` |
 | macOS office page and bridge | `web/office/`, `macos/Sources/OfficeHost.swift` |
 | Build and packaging | `build.ps1`, `Makefile`, `scripts/`, `packaging/` (`packaging/windows/Hover.iss` packs the C# publish folder) |
-| Stand-ins, golden fixtures, smoke and E2E flows | `tests/`, `tools/` |
+| Sample state for the office tool, helper scripts | `tests/golden/fixtures/`, `tools/` |
 
 The large `internal/agents` package intentionally keeps closely-coupled agent modules
 together. Prefer small changes within the package; introduce a package boundary only when it
@@ -35,7 +35,6 @@ removes a real dependency problem.
 - Build prerequisites and commands: [Build from source](README.md#build-from-source),
   [Windows](docs/development/windows.md) (what is where in the C# app:
   [windows-csharp.md](docs/development/windows-csharp.md)), and [macOS](docs/MACOS.md).
-- What CI and local checks cover: [docs/development/testing.md](docs/development/testing.md).
 - Performance measurements: [docs/development/profiling.md](docs/development/profiling.md).
 - Contribution workflow and release rules: [CONTRIBUTING.md](CONTRIBUTING.md).
 - Go port notes are historical: [docs/history/go-port.md](docs/history/go-port.md).
@@ -58,8 +57,8 @@ authoritative implementation.
   Windows has a C# UI and macOS a Swift UI, both on the Go backend.
 - The backend speaks JSON lines to its host: Swift on macOS, C# on Windows. Linux uses the Go
   app directly. Keep changes to that bridge compatible with both hosts' message handling
-  (`macos/Sources`, `windows/Hover.Host/Protocol`); `tests/macos/backend-smoke.py` and
-  `windows/Hover.Tests` run it against the real backend.
+  (`macos/Sources`, `windows/Hover.Host/Protocol`). The repository has no automated tests, so check a
+  bridge change by running both hosts against the real backend.
 - Only one normal Hover instance runs per user. For local development, use a separate empty
   `HOVER_DATA_DIR` so a build cannot alter personal settings or history.
 - `VERSION` is not always the next release version: CI can publish automatic nightly versions
@@ -73,23 +72,20 @@ authoritative implementation.
 
 ## Build and check
 
-Run commands from the repository root. See the linked testing guide for what CI covers and
-what needs a real desktop.
+Run commands from the repository root. The repository has no automated tests. CI formats and vets
+the Go code and builds the apps.
 
 ```powershell
 .\build.ps1 run             # the C# app and hover-backend (needs the .NET 10 SDK and Go)
-.\build.ps1 test            # the Go tests, then every windows\*.Tests project
 .\build.ps1 legacy          # the Go Windows app (needs only Go)
 ```
 
 ```sh
 make
-make test
 ```
 
 ```sh
 scripts/build-macos.sh
-go test ./cmd/... ./internal/...
 ```
 
 For Linux Go commands, use `-tags nowayland,nox11,novulkan` as the Makefile does. Linux builds
@@ -98,11 +94,11 @@ command line tools and Node for the web office.
 
 Before handing off a change:
 
-- Format touched Go files with `gofmt` and run the relevant checks from
-  [testing.md](docs/development/testing.md).
+- Format touched Go files with `gofmt` and run `go vet` for each system you touched (the commands
+  are in [CONTRIBUTING.md](CONTRIBUTING.md)).
 - For UI changes, render and inspect screenshots; a successful compile does not verify layout.
-- For agent or protocol changes, use the stand-ins and fixtures where possible; report any
-  real-agent or platform check you could not run.
+- For agent or protocol changes, run the agent; report any real-agent or platform check you could
+  not run.
 - Keep generated binaries and package output (`publish/`, `publish-legacy/`, `dist/`, `out/`, `lib/`,
   `hover-linux`) out of commits.
 

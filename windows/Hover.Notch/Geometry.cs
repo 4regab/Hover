@@ -3,8 +3,7 @@ using System.Globalization;
 namespace Hover.Notch;
 
 // The notch's sizes, placement, outline, animation and pointer rules. The numbers are the
-// ones internal/notch uses in the Go app; Hover.Tests compares results with values that Go
-// code prints (Hover.Tests/golden/notch.json), so a change on either side shows up.
+// ones internal/notch uses in the Go app.
 
 /// <summary>A width and height in device-independent pixels (DIPs).</summary>
 public readonly record struct Size(double W, double H);

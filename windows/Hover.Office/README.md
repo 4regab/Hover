@@ -55,17 +55,10 @@ Everything on the UI thread. `OfficeHost` follows the backend's `state` message 
 - `Beats` and `BeatsChanged`: the switch in `office.json`. The office plays nothing; the audio phase follows it.
 - `Target`: `None`, `Notch` or `Dashboard`. The notch wins while its view is open.
 
-## Tests and pictures
+## Pictures
 
-`dotnet test windows/Hover.Office.Tests`:
-
-- Scene logic against `golden/office.json`, printed by `internal/office/golden_test.go`.
-- Input rules and `office.json`.
-- On Windows: drawing on WARP (not blank, bots where the scene puts them, day brighter than night, nine sessions,
-  a bot asking, drawer and panels, zoomed out and in, 150 %, a second device), and the wall text.
-  The pictures are JPEG files (no wider than 1400 px) in `out/office/`, which the dev workflow uploads.
-
-`hoverai.exe --shots DIR` pastes the office into `notch-open-office.jpg` and `dashboard.jpg`.
+`hoverai.exe --shots DIR` draws the office views as JPEG files (no wider than 1400 px), and pastes the office into
+`notch-open-office.jpg` and `dashboard.jpg`.
 
 ## Known differences from Go
 

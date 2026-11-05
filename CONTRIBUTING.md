@@ -6,8 +6,7 @@ agent accounts.
 
 Start with [AGENTS.md](AGENTS.md) for a short code map and the project invariants. Read
 [docs/development/architecture.md](docs/development/architecture.md) for system boundaries,
-then [testing.md](docs/development/testing.md) and [profiling.md](docs/development/profiling.md)
-for validation and performance work.
+then [profiling.md](docs/development/profiling.md) for performance work.
 
 ## Fork and build
 
@@ -85,18 +84,13 @@ Run what applies to your change and say what you ran in the pull request:
   `-tags nowayland,nox11,novulkan`.
 - For UI changes: render it with `hoverai --shots DIR` and look at the pictures. A
   green build doesn't prove the pixels are right.
-- For agent, permission or storage changes: run an agent, or the stand-in agents described
-  in [testing.md](docs/development/testing.md).
+- For agent, permission or storage changes: run an agent and look at what it did.
 - For memory or speed changes: before and after numbers from
   [profiling.md](docs/development/profiling.md), on the same machine and settings.
 
 The CI workflow (`.github/workflows/ci.yml`) formats and vets the Go code for Windows, Linux,
-and macOS, and runs the Go test suite on those three systems (with the race detector on
-Linux and macOS); builds the Windows app and
-installer and drives the Windows app; builds Linux packages; and builds the macOS app and
-runs its packaged backend against stand-in tools. The longer macOS E2E flow and the full
-native macOS UI are not covered by CI. See [testing.md](docs/development/testing.md) for
-local commands and coverage.
+and macOS; builds the Windows app and its installer; builds Linux packages; and builds the macOS
+app. It runs no tests and does not run the apps.
 CI uses GitHub-hosted runners without agent accounts or user secrets.
 
 ## Pull requests
