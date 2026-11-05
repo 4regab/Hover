@@ -13,9 +13,7 @@ tools, quota reads and Phonon's Python are separate processes: add them up on th
 Get-Process hoverai | Select-Object Name, PrivateMemorySize64, WorkingSet64
 ```
 
-`tools/app-smoke.ps1` reads the same two numbers for you: `rest_private_mb` and
-`rest_working_set_mb` with the notch at rest, and `private_mb` and `working_set_mb` after the
-app window has been opened. CI keeps its `report.json` in the `windows-reports` artifact.
+Read the same two numbers with the notch at rest, and again after the app window has been opened.
 
 Compare builds on the same machine and settings, as the median of at least three runs.
 

@@ -11,10 +11,8 @@ and Linux only.
 **Status: the app builds and its packaged backend runs on a Mac runner. The native app UI has
 not had a full hands-on validation pass on a Mac.**
 CI builds the Go backend and signs (ad hoc) `Hover.app` from the Swift sources on Apple
-Silicon, runs the packaged backend through `tests/macos/backend-smoke.py` against a stand-in
-agent, and uploads the app as a workflow artifact; a release puts it on the release page as a
-disk image for Apple silicon and one for Intel. `tests/macos/e2e/run.sh` (below) is written to
-run a longer pass in the background, and CI does not run it. The Go Keychain and data-folder code
+Silicon and uploads the app as a workflow artifact; a release puts it on the release page as a
+disk image for Apple silicon and one for Intel. Nothing runs the app in CI. The Go Keychain and data-folder code
 was checked on a Mac runner, reading and writing the same items the Rust app did, before the
 Rust app was removed; nothing runs it now.
 Everything that needs AppKit, the window server, the Keychain or a
@@ -44,10 +42,8 @@ Developer ID (`HOVER_SIGN_IDENTITY`) and notarizes. The release's disk images ar
 hoc, so macOS asks once: right-click → Open, or System Settings → Privacy & Security → Open
 Anyway.
 
-Checks: `tests/macos/backend-smoke.py <Hover.app> <sandbox>` runs the packaged backend against a
-stand-in agent in a disposable folder under `/private/tmp` (CI runs it); the app's own
-`--smoke-test` is for the same purpose. The Go tests (`go test ./cmd/... ./internal/...`) run on a Mac too, and CI runs them
-with `-race`.
+Checks: the app's own `--smoke-test` is the way to start the packaged backend in a disposable
+folder by hand.
 
 Agents (Kiro, Codex, Cursor, OpenCode, Claude Code) are found through the login shell's
 `PATH`, read once at start (`$SHELL -ilc`, `ShellEnvironment.swift`), because an app opened
@@ -140,28 +136,6 @@ that acts. Hover's hot keys are Carbon hot keys and the pointer is read with
 →
 General has the switch, but the Mac Settings does not list what is missing.
 
-## End-to-end run, in the background
-
-```sh
-scripts/sandbox.sh -- scripts/build-macos.sh
-tests/macos/e2e/run.sh "$PWD/dist/macos-osx-arm64/Hover.app"
-```
-
-It drives the real office page, its bridge (`OfficeHost.swift`), Hover's browser and the
-screen feed with the packaged Go backend (`hover-backend`), a stand-in agent
-(`tests/macos/e2e/fake-agent.py`) and a stand-in `gh`, against a local test site: a task
-from the circle, an approval, two subagents and their helpers, the desk card, the agent
-driving Hover's browser over its MCP relay, the agent's desktop (apps, activity, Control's
-input as Hover maps it), the answer, every desk panel, Create pull request (a real push to a
-local remote), a reply from the card, the window button, and agent desktops through
-stand-ins for `cua` and `lume` (a Space made before the run, the agent's computer use
-reaching it over the relay, the viewer laid over the panel, an app and files dropped on the
-notch, deletion). The stand-ins are `tests/macos/e2e/fake-cua.py` and `fake-lume.py`,
-copied as `cua` and `lume` into a `bin` folder that leads the backend's `PATH`; they keep
-their state and a call log (`cua.log`) in the run's temp folder. No window is made and the
-harness never activates; it writes only to its temp folder (`sandbox-exec`), reaches only
-localhost, and touches no real app. Screenshots of each step are kept in that folder.
-
 ## Native behavior needing hands-on validation
 
 The checks below are described from the Swift and Go code and Apple's documentation. The
@@ -186,8 +160,8 @@ not had a full hands-on validation pass. Look at these first:
   srt 0.0.78), Claude Code under `srt` (it writes `~/.claude.json` through a temp file), and
   whether every agent passes the browser token in its MCP server's environment.
 - Computer use's guard, Cua's install, the daemon, and the permission check.
-- Agent desktops: Cua's `cua` and Lume as Hover calls them (the arguments are checked against
-  the stand-in in `tests/macos/e2e`, not against a real `cua spaces`), a macOS 26 VM's size
+- Agent desktops: Cua's `cua` and Lume as Hover calls them (the arguments were checked against
+  a stand-in, not against a real `cua spaces`), a macOS 26 VM's size
   and memory on a real Mac, the viewer's stream, and dragging a window or files to the notch.
 - The GitHub CLI flows (Homebrew install, device-code sign-in, Create pull request) and
   agent setup against the real installers.

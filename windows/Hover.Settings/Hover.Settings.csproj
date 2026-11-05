@@ -2,7 +2,7 @@
   <!-- Settings with no window and no Windows call: the pages as data (internal/app/pages.go), what a
        click or a key in them asks of the backend (view.go), the page's own drawing on the panels'
        canvas, and the Discord status client. Text is measured by the shaper the caller gives, so
-       Hover.Settings.Tests runs all of it on any system. -->
+       it builds on any system. -->
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
     <RootNamespace>Hover.Settings</RootNamespace>

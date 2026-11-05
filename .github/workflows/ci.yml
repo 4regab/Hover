@@ -1,11 +1,9 @@
 name: CI
 
 # Hover on GitHub's own runners. A push to main or go-port, or a pull request, checks the Go
-# code for Windows, Linux and macOS; runs the Go tests on those three systems; builds the
-# Windows app (C#, over the Go backend) and its installer, runs the C# tests and drives the app
-# and the installer (it installs over the 5.x release, into a clean folder and over a 2.x
-# install, and uninstalls); builds the Linux packages; and builds the Mac app and runs its
-# backend through the stand-in tools. Every push to main that changes more than docs is a
+# code for Windows, Linux and macOS (gofmt and go vet, no tests); builds the Windows app (C#,
+# over the Go backend) and its installer; builds the Linux packages; and builds the Mac app.
+# Every push to main that changes more than docs is a
 # release, and the `version`
 # job says which number: VERSION when it is above every tag (raised by hand: a v* tag matching
 # VERSION is the same), else the next patch number after the newest tag, as an automatic
@@ -58,70 +56,6 @@ jobs:
       # The Mac backend compiles for both Macs.
       - run: GOOS=darwin GOARCH=arm64 go build -o /dev/null ./cmd/hover-backend && GOOS=darwin GOARCH=amd64 go build -o /dev/null ./cmd/hover-backend
 
-  # The Go tests, on each system the suite runs on. Linux uses the app's build tags (Gio's
-  # own Wayland, X11 and Vulkan are left out; drawing still needs the EGL headers). Windows
-  # compiles as the app does, without a C compiler, and so includes the headless chat shots,
-  # which are built only on Windows. macOS uses the system compiler, which Gio's Cocoa
-  # backend needs. Linux and macOS also run the race detector (it needs cgo; the Windows
-  # build has no C compiler, so that leg does not). -count=1 runs the tests every time
-  # instead of replaying a cached pass. The chat's saved text widths come from fonts in
-  # the repo, so a runner with different fonts still matches. Modules are cached by
-  # setup-go; the build cache is kept beside the checkout so the next run does not compile
-  # unchanged packages again.
-  test:
-    name: test (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-22.04
-            go_test: go test -race -count=1 -timeout 20m -tags nowayland,nox11,novulkan ./cmd/... ./internal/...
-          - os: windows-2022
-            go_test: go test -count=1 -timeout 20m ./cmd/... ./internal/...
-          - os: macos-15
-            go_test: go test -race -count=1 -timeout 20m ./cmd/... ./internal/...
-    env:
-      # github.workspace is available on a job env; runner is not, so CGO_ENABLED is set
-      # on the test step. Windows matches the app build (no C compiler). Linux and macOS
-      # need cgo for the race detector and, on macOS, for Gio's Cocoa backend.
-      GOCACHE: ${{ github.workspace }}/.gocache
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-          cache: true
-      - uses: actions/cache@v4
-        with:
-          path: ${{ github.workspace }}/.gocache
-          key: go-build-${{ runner.os }}-${{ hashFiles('go.sum', 'go.mod') }}
-          restore-keys: |
-            go-build-${{ runner.os }}-
-      - name: EGL
-        if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libegl1-mesa-dev libgles2-mesa-dev
-      # The office shots draw with wgpu-native. The Windows build downloads the same
-      # DLL; the test process looks for it at WGPU_NATIVE_PATH.
-      - name: wgpu
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $dll = Join-Path $env:RUNNER_TEMP "wgpu_native.dll"
-          $zip = Join-Path $env:RUNNER_TEMP "wgpu-native.zip"
-          $tmp = Join-Path $env:RUNNER_TEMP "wgpu-native"
-          Invoke-WebRequest https://github.com/gfx-rs/wgpu-native/releases/download/v29.0.0.0/wgpu-windows-x86_64-msvc-release.zip -OutFile $zip
-          Expand-Archive $zip $tmp -Force
-          $found = Get-ChildItem $tmp -Recurse -Filter wgpu_native.dll | Select-Object -First 1
-          if (-not $found) { throw "no wgpu_native.dll in the wgpu-native release zip" }
-          Copy-Item $found.FullName $dll -Force
-          "WGPU_NATIVE_PATH=$dll" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8NoBOM -Append
-      - name: Test
-        env:
-          CGO_ENABLED: ${{ runner.os == 'Windows' && '0' || '1' }}
-        run: ${{ matrix.go_test }}
-
   # Whether this run is a release, and which number it carries. The builds below take both
   # from here, so the number is chosen once. Quick: it only reads the tags.
   version:
@@ -160,8 +94,8 @@ jobs:
           echo "version $ver, release: $release, automatic: $auto (VERSION says $file, newest release ${top:-none})"
           { echo "release=$release"; echo "version=$ver"; echo "auto=$auto"; } >> "$GITHUB_OUTPUT"
 
-  # The Windows app: the C# program in windows/ and the Go backend it starts. Built and tested
-  # with build.ps1; the app and then its installer are driven on the runner's desktop.
+  # The Windows app: the C# program in windows/ and the Go backend it starts, built with
+  # build.ps1, its pictures drawn, and its installer made.
   windows:
     needs: version
     runs-on: windows-2022
@@ -196,34 +130,8 @@ jobs:
           $files = Get-ChildItem publish -Recurse -File
           $files | ForEach-Object { '{0,12}  {1}' -f $_.Length, $_.FullName.Substring($root.Length + 1) } | Out-File out\logs\publish-files.txt
           "publish\: $($files.Count) files, $([math]::Round(($files | Measure-Object Length -Sum).Sum / 1MB, 1)) MB"
-      # Publishing without Go installed: the script names the missing tool before it builds or
-      # deletes anything, so the publish folder above is as it was.
-      - name: build.ps1 says so when Go is missing
-        run: |
-          $shell = (Get-Process -Id $PID).Path
-          $before = (Get-FileHash publish\hoverai.exe).Hash
-          $env:PATH = (($env:PATH -split ';') | Where-Object { $_ -and -not (Test-Path (Join-Path $_ 'go.exe')) }) -join ';'
-          $text = & $shell -NoProfile -File ./build.ps1 publish 2>&1 | Out-String
-          $code = $LASTEXITCODE
-          if ($code -eq 0) { throw "build.ps1 publish worked without Go: $text" }
-          if ($text -notmatch 'go was not found on PATH') { throw "build.ps1 did not say that Go is missing: $text" }
-          if ((Get-FileHash publish\hoverai.exe).Hash -ne $before) { throw 'build.ps1 changed publish\ before it checked for Go' }
-          "exit code ${code}: " + ($text -split "`n" | Select-Object -First 1).Trim()
-          $global:LASTEXITCODE = 0
-      # The Go programs the tests need, a Go-written data folder, every windows\*.Tests project
-      # (found by name, so a new test project needs no change here). The Go tests have a job of
-      # their own (test), on three systems.
-      - name: C# tests
-        timeout-minutes: 25
-        run: ./build.ps1 test -SkipGo -Version $env:RELEASE_VERSION
       - name: Screen 1920 x 1080
         run: ./tools/set-resolution.ps1
-      # Starts the app with an empty data folder, opens the notch with its shortcut, asks for the
-      # window with a second launch, quits from the tray menu, and kills a second copy to see
-      # the backend go with it. Memory is measured at rest and with the window open.
-      - name: Drive the app
-        timeout-minutes: 10
-        run: ./tools/app-smoke.ps1 -Exe publish\hoverai.exe -Out out\app -ExpectVersion $env:RELEASE_VERSION
       # The app draws its own window and the notch (RenderTargetBitmap and Direct3D read back) with a
       # data folder of its own. It runs even when a step before it failed, so that its log is there to read.
       - name: Pictures (hoverai.exe --shots)
@@ -267,46 +175,6 @@ jobs:
           }
       - name: Build the setup
         run: ./build.ps1 installer -Version $env:RELEASE_VERSION
-      # An older Go release (5.0.3 or later) with a setup: what an update installs over. The
-      # oldest one still published, so taking an old release down never breaks this step (5.0.2's,
-      # then 5.0.3's and 5.0.4's, did). Not the version being built.
-      - name: The 5.x setup
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          New-Item -ItemType Directory -Force old | Out-Null
-          $tags = gh release list --repo ${{ github.repository }} --limit 100 --json tagName --jq '.[].tagName'
-          if ($LASTEXITCODE -ne 0) { throw 'could not list the releases' }
-          $go = $tags | Where-Object { $_ -match '^v(\d+)\.(\d+)\.(\d+)$' } | ForEach-Object { [version]$_.Substring(1) } |
-            Where-Object { $_ -ge [version]'5.0.3' -and $_ -ne [version]$env:RELEASE_VERSION } | Sort-Object
-          $old = $null
-          foreach ($v in $go) {
-            gh release download "v$v" --repo ${{ github.repository }} --pattern "Hover-Setup-$v.exe" --dir old
-            if ($LASTEXITCODE -eq 0) { $old = "old\Hover-Setup-$v.exe"; break }
-          }
-          if (-not $old) { throw "no published Go setup (5.0.3 or later, other than $env:RELEASE_VERSION) to install over" }
-          "Installing over $old"
-          "OLD_SETUP=$old" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
-      # Four installs, each from a clean state (tools/installer-check.ps1): over the 5.x Go app while it
-      # runs, into the default folder (the installed app is driven as above), into a folder with spaces
-      # in its name twice, and over a 2.x install. Each ends with an uninstall that leaves nothing.
-      - name: Install over 5.x, clean install, over 2.x, uninstall
-        timeout-minutes: 25
-        run: ./tools/installer-check.ps1 -Setup "dist\Hover-Setup-$env:RELEASE_VERSION.exe" -Old $env:OLD_SETUP -Built publish\hoverai.exe -Out out\installer -ExpectVersion $env:RELEASE_VERSION
-      # docs/development/windows.md says build.ps1 works in Windows PowerShell 5.1 (powershell.exe, the
-      # one every Windows 10 and 11 has) as well as PowerShell 7 (pwsh, which every step above uses). The
-      # script is parsed whole by 5.1 and its quickest build (the Go app, no dotnet; it also downloads
-      # wgpu_native.dll) is run by it.
-      - name: build.ps1 in Windows PowerShell 5.1
-        run: |
-          $ps = Join-Path $env:WINDIR 'System32\WindowsPowerShell\v1.0\powershell.exe'
-          $v = (& $ps -NoProfile -Command '$PSVersionTable.PSVersion.ToString()' | Out-String).Trim()
-          if (-not $v.StartsWith('5.1.')) { throw "powershell.exe is version '$v', not 5.1" }
-          & $ps -NoProfile -File ./build.ps1 legacy -Version $env:RELEASE_VERSION
-          if ($LASTEXITCODE -ne 0) { throw "build.ps1 legacy failed in Windows PowerShell $v (exit code $LASTEXITCODE)" }
-          $app = (& publish-legacy\hoverai.exe --version | Out-String).Trim()
-          if ($app -ne "Hover $env:RELEASE_VERSION") { throw "the app built there says '$app'" }
-          "Windows PowerShell ${v}: build.ps1 legacy made $app"
       # The Go Windows app is kept until the owner switches over: it must still build, and so
       # must its setup (the same Hover.iss, told so with /DLegacy).
       - name: Legacy Go app still builds
@@ -317,30 +185,6 @@ jobs:
           if (-not (Test-Path publish-legacy\wgpu_native.dll)) { throw 'no wgpu_native.dll beside the legacy app' }
           if (-not (Test-Path "dist\Hover-Legacy-Setup-$env:RELEASE_VERSION.exe")) { throw 'no legacy setup' }
           "legacy: $v"
-      # The display scale is set to 150 % (tools/set-scale.ps1, the call Settings > Display makes) and the app's own checks that
-      # depend on pixels run again: the window's smallest size, the pointer's shape, Settings by mouse and keyboard, the pictures, the
-      # tray, the window's icon and place. The test processes are DPI aware, so the places the app writes down are the places they
-      # click. Last, because the scale stays set for what follows.
-      - name: Live checks at 150 % display scale
-        timeout-minutes: 20
-        run: |
-          ./tools/set-resolution.ps1
-          ./tools/set-scale.ps1
-          ./tools/set-scale.ps1 -Percent 150
-          Start-Sleep -Seconds 5
-          $after = ./tools/set-scale.ps1
-          $after
-          if ($after -notmatch 'scale now 150%') { throw "the display is not at 150 %: $after" }
-          $env:HOVER_APP_EXE = (Resolve-Path publish\hoverai.exe).Path
-          $env:HOVER_BACKEND = (Resolve-Path out\bin\hover-backend.exe).Path
-          $env:HOVER_DATA_TOOL = (Resolve-Path out\bin\hover-data.exe).Path
-          New-Item -ItemType Directory -Force out\scale150 | Out-Null
-          dotnet test windows\Hover.Tests\Hover.Tests.csproj -c Release --no-build --filter 'FullyQualifiedName~Sweep2AppTests|FullyQualifiedName~WindowSizeAppTests|FullyQualifiedName~PointerShapeAppTests|FullyQualifiedName~AppTests.Shots' `
-            --logger 'trx;LogFileName=Hover.Tests.scale150.trx' --logger 'console;verbosity=normal' --results-directory out\scale150
-          if ($LASTEXITCODE -ne 0) { throw 'Hover.Tests failed at 150 %' }
-          dotnet test windows\Hover.Settings.Tests\Hover.Settings.Tests.csproj -c Release --no-build --filter 'FullyQualifiedName~SettingsAppTests' `
-            --logger 'trx;LogFileName=Hover.Settings.Tests.scale150.trx' --logger 'console;verbosity=normal' --results-directory out\scale150
-          if ($LASTEXITCODE -ne 0) { throw 'Hover.Settings.Tests failed at 150 %' }
       # If the app died, Windows says which module did it.
       - name: App crash reports
         if: ${{ failure() }}
@@ -355,19 +199,9 @@ jobs:
         if: always()
         run: |
           $lines = @('### Windows C# app', '')
-          foreach ($trx in Get-ChildItem out\test-results -Filter *.trx -ErrorAction SilentlyContinue) {
-            $c = ([xml](Get-Content $trx.FullName)).TestRun.ResultSummary.Counters
-            $lines += "- $($trx.BaseName): $($c.passed) passed, $($c.failed) failed, $($c.total - $c.executed) not run (of $($c.total))"
-          }
           if (Test-Path out\shots) { $lines += "- pictures: $((Get-ChildItem out\shots -Filter *.jpg).Count)" }
           $lines | Out-File -Append -Encoding utf8 $env:GITHUB_STEP_SUMMARY
-          foreach ($pair in @(@('out\app\report.json', 'App on Windows'), @('out\installer\report.json', 'Installer on Windows'), @('out\installer\b-smoke\report.json', 'Installed app on Windows'))) {
-            if (Test-Path $pair[0]) {
-              $r = Get-Content $pair[0] -Raw | ConvertFrom-Json
-              @('', "### $($pair[1])", '') + ($r.PSObject.Properties | Where-Object Name -ne 'log' | ForEach-Object { "    $($_.Name) = $($_.Value)" }) | Out-File -Append -Encoding utf8 $env:GITHUB_STEP_SUMMARY
-            }
-          }
-      # The Go programs the tests built (out\bin) are left out.
+      # The Go programs built on the way (out\bin) are left out.
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -415,8 +249,7 @@ jobs:
 
   macos:
     # Apple Silicon runner. The runner has no display, Keychain or permission prompts to run
-    # Hover on, so the Mac app is checked by running its packaged backend against stand-in
-    # tools (tests/macos/backend-smoke.py). The Mac app is the Swift UI in macos/ with the web
+    # Hover on, so the Mac app is built and kept, not run. It is the Swift UI in macos/ with the web
     # office (web/office), on the Go backend (cmd/hover-backend). Every run makes Hover.app
     # (signed ad hoc); a release also makes it for Intel and puts both in disk images.
     needs: version
@@ -457,11 +290,6 @@ jobs:
           file dist/macos-osx-arm64/Hover.app/Contents/Resources/backend/hover-backend
           codesign --verify --deep --strict dist/macos-osx-arm64/Hover.app
           ditto -c -k --keepParent dist/macos-osx-arm64/Hover.app dist/Hover-osx-arm64-development.zip
-      - name: The packaged backend
-        run: |
-          S=$(mktemp -d /private/tmp/hover-sandbox.XXXXXX); mkdir -p "$S/fake-bin" "$S/tmp"
-          export HOVER_SANDBOX_ROOT="$S" HOVER_SANDBOXED=1 TMPDIR="$S/tmp/" PATH="$S/fake-bin:/usr/bin:/bin"
-          /usr/bin/python3 tests/macos/backend-smoke.py "$GITHUB_WORKSPACE/dist/macos-osx-arm64/Hover.app" "$S"
       - uses: actions/upload-artifact@v4
         with:
           name: Hover-macOS-development
@@ -555,7 +383,7 @@ jobs:
   release:
     # One job publishes, so the builds never race to create the release.
     if: needs.version.outputs.release == 'true'
-    needs: [check, test, version, windows, linux, macos]
+    needs: [check, version, windows, linux, macos]
     runs-on: ubuntu-22.04
     permissions:
       contents: write

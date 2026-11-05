@@ -1,7 +1,7 @@
 # Developing Hover on Windows
 
 Windows 10 or 11, x86-64. All commands run from the repository root in PowerShell 7
-(`pwsh`). Windows PowerShell 5.1 works for `build.ps1` too (CI runs `build.ps1 legacy` in it).
+(`pwsh`). Windows PowerShell 5.1 works for `build.ps1` too.
 
 The Windows app is C#: a WinUI 3 program in `windows/` (`hoverai.exe`) that starts the same Go
 backend the Mac app uses (`cmd/hover-backend`, as `hover-backend.exe`) and speaks JSON lines to it.
@@ -35,8 +35,6 @@ the office still runs, and the tools show as not installed.
 .\build.ps1 run              # build, then start it
 .\build.ps1 publish          # the same, with LICENSE and the notices
 .\build.ps1 installer        # dist\Hover-Setup-<version>.exe (needs Inno Setup)
-.\build.ps1 test             # the Go tests, then every windows\*.Tests project (results in out\)
-.\build.ps1 test -SkipGo     # only the C# tests
 ```
 
 `publish\` is the whole program, self-contained: `dotnet publish windows\Hover` (Release, x64) plus
@@ -88,13 +86,12 @@ Windows lists one product:
 
 ## Check
 
-CI builds the C# app, runs its tests, drives it (`tools/app-smoke.ps1`) and drives its installer
-(`tools/installer-check.ps1`); [testing.md](testing.md) says what each does. Run them the same way
-when you change the shell, the notch window or the installer:
+CI builds the C# app and its installer and runs no tests. When you change the shell, the notch window
+or the installer, build and run it yourself:
 
 ```powershell
 .\build.ps1 publish
-.\tools\app-smoke.ps1 -Exe publish\hoverai.exe -Out $env:TEMP\hover-smoke      # needs a desktop you can leave alone
+.\publish\hoverai.exe      # needs a desktop you can leave alone
 ```
 
 Render every view headless (no desktop session needed; drawn on the GPU or on WARP) as JPEGs no
@@ -148,8 +145,6 @@ The code is in `windows/`; the solution is `windows\Hover.Windows.slnx`.
 | `windows\Hover.Chat` | No WinUI. The panels over the office: chat thread, new-task box, menus, questions, the desk card and its tabs, the reply box. Drawn through an `ICanvas`; the app gives it Direct2D and DirectWrite. |
 | `windows\Hover.Settings` | No WinUI. The Settings pages as data, their controller and painter, the Discord status client, the Run value and the Screen capture. |
 | `windows\Hover.Voice` | No WinUI. Voice, sound and music: the hold-to-talk shortcut, the microphone and the sound output (winmm), the voice commands and the `voice` event, the card (its content, behaviour and Direct2D painter), the aura, the chime and the office beats. The winmm and user32 calls are made on Windows only; the rest runs and is tested anywhere. |
-| `windows\Hover.TestTools` | Programs the tests start: stand-ins for `codex-acp` and `codex`, a backend that misbehaves on purpose, a host to be killed. |
-| `windows\Hover.Tests`, `Hover.Office.Tests`, `Hover.Settings.Tests`, `Hover.Voice.Tests` | `dotnet test` (see [testing.md](testing.md#the-c-windows-app)). `build.ps1 test` runs every `windows\*.Tests` project. |
 
 For the edit-and-run loop, `dotnet build` is enough (the output is runnable as it is, self-contained):
 
@@ -190,14 +185,7 @@ frame (`NotchRenderer.cs`); the text is set in the Inter files in `Assets\Fonts`
 click-through (`WS_EX_TRANSPARENT`) except over the shape and its shadow; the pointer is polled
 every 50 ms, as the Go app does.
 
-The rules are in `windows\Hover.Notch` and use the Go numbers. `windows\Hover.Tests\golden\notch.json`
-is written by `internal/app/notch_golden_test.go` from the Go code; the C# tests feed the same
-inputs to the C# code and compare. Change either side and a test fails until the file is written
-again:
-
-```powershell
-$env:HOVER_UPDATE_GOLDEN = '1'; go test ./internal/app -run TestNotchGolden
-```
+The rules are in `windows\Hover.Notch` and use the Go numbers (`internal/notch`).
 
 What the resting notch shows comes from the backend's `state` (the sessions' `status`,
 `activity`, `ask`), `ended` (`body`, `took`), `quotas` and `settings` messages. Alt+N (or the
@@ -222,8 +210,7 @@ chat, the rewind confirmation and the toast. `OfficeUi` knows nothing of Windows
 backend's messages (`Accept`), draws a frame on an `ICanvas` (`Paint`), reads the pointer and the keys
 against the places the last frame drew (`PointerDown`, `Key`, `Char`) and sends the backend commands the
 Go shell sends (`new`, `reply`, `answer`, `pause`, `queueSendNow`, `queueRemove`, `queueResume`, `rename`,
-`switchProvider`, `fork`, `bringBack`, `restore`, `again`, `delete`). Because it is plain C# the tests
-run all of it on any system with a fixed-width shaper and a canvas that writes down what was drawn.
+`switchProvider`, `fork`, `bringBack`, `restore`, `again`, `delete`). Because it is plain C# it builds on any system.
 
 The chat thread (`Hover.Chat`: Markdown, code colour, numbered changes, tables, flowcharts, pictures,
 selection and copy) is laid out by `ChatThread` and painted by `ThreadPainter`. Markdown, colour,
@@ -343,7 +330,7 @@ as JPEG. The Go pictures have a 36 px menu bar strip at the top that these do no
 page with `HOVER_UI_DUMP` (`settings-window` for the app window, `settings-notch` for the open notch): the sections, the
 focus and the place of every control.
 
-Sweep 2 changed these things in the app (checks in [testing.md](testing.md)):
+Sweep 2 changed these things in the app:
 
 - *Keyboard in Settings.* Tab and Shift+Tab visit every control in the order drawn (the sidebar and each group of segments are one
   stop; the Up and Down keys step inside them), Space and Enter work the one that has the keyboard, PageUp, PageDown, Home and End
@@ -398,8 +385,8 @@ The key rules for `note.key` (set aside, never overwritten) are in
 
 ### Building on Linux, and two traps
 
-On Linux, `dotnet build` of `Hover.Host`, `Hover.TestTools` and `Hover.Tests` works, and
-`dotnet test` runs everything in the tests that is not marked Windows only. For `windows/Hover`
+On Linux, `dotnet build` of the libraries (`Hover.Host`, `Hover.Notch`, `Hover.Chat` and the others except
+`Hover`) works. For `windows/Hover`
 there is a compile check that needs no Windows:
 
 ```sh
@@ -427,13 +414,10 @@ installer script. Nothing else uses it: CI builds it once to see that it does.
 .\build.ps1 legacy run          # build, then start it
 .\build.ps1 legacy publish      # the same, with LICENSE and the notices
 .\build.ps1 legacy installer    # dist\Hover-Legacy-Setup-<version>.exe
-.\build.ps1 legacy test         # the Go tests (CI runs them on three systems)
 ```
 
 It needs only Go (no .NET). The Go app draws with Gio (Direct3D 11) and the office with wgpu-native on
 DX12, read back and shown as an image; `build.ps1 legacy` downloads `wgpu_native.dll` the first time and
 keeps it in `publish-legacy\`. Its notch and app window are Win32 windows (`internal/platform/win`), and the
 release build is `-H=windowsgui`; to see a panic on stderr, run it as a console program:
-`$env:CGO_ENABLED = '0'; go run ./cmd/hover`. The Go tests (`.\build.ps1 legacy test`) need no setup. Two
-layout tests in `internal/chat` compare text widths measured in Linux Chromium with DejaVu Sans; the fonts are
-in the repo, so the tests run on Windows too.
+`$env:CGO_ENABLED = '0'; go run ./cmd/hover`.

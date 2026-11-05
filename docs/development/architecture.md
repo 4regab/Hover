@@ -164,10 +164,9 @@ flowchart TB
 
 ### CI and releases
 
-`.github/workflows/ci.yml` runs on GitHub's own runners. A `test` job runs the Go tests
-(`go test ./cmd/... ./internal/...`) on Windows, macOS and Linux; Linux and macOS add the race
-detector. One job per OS builds and checks what it ships, and on a release the same jobs build
-the installers from the build they just checked.
+`.github/workflows/ci.yml` runs on GitHub's own runners. A `check` job formats and vets the Go
+code for Windows, macOS and Linux. One job per OS builds what it ships, and on a release the same
+jobs build the installers from the build they just made. CI runs no tests.
 
 ```mermaid
 flowchart LR
@@ -179,12 +178,8 @@ flowchart LR
         c1["VERSION matches version.go, gofmt,<br/>go vet for Linux, Windows and macOS,<br/>the Mac backend builds"]
     end
 
-    subgraph tj["test (ubuntu-22.04, windows-2022, macos-15)"]
-        t1["go test ./cmd/... ./internal/...<br/>(the backend tests run this binary<br/>as the backend, over a pipe)"]
-    end
-
     subgraph wj["windows job (windows-2022)"]
-        wb["build.ps1 publish<br/>(C# app + backend)"] --> wt["C# tests<br/>(every windows/*.Tests)"] --> wd["start the app, Alt+N, Esc,<br/>second launch, quit, kill"] --> wi["installer: over the 5.x setup,<br/>clean, spaces, over 2.x;<br/>uninstall each"] --> wl["the Go app still builds<br/>(build.ps1 legacy)"]
+        wb["build.ps1 publish<br/>(C# app + backend)"] --> wp["hoverai.exe --shots"] --> wi["the installer"] --> wl["the Go app still builds<br/>(build.ps1 legacy)"]
     end
 
     subgraph lj["linux job (ubuntu-22.04)"]
@@ -192,22 +187,21 @@ flowchart LR
     end
 
     subgraph mj["macos job (macos-15, Apple Silicon)"]
-        mc["build-macos.sh, the packaged backend<br/>against stand-ins; release: Intel too,<br/>disk images"]
+        mc["build-macos.sh; release: Intel too,<br/>disk images"]
     end
 
     subgraph pj["pictures (windows-2022)"]
         pp["every view of the Go app,<br/>and hoverai.exe --shots"]
     end
 
-    cj & tj & wj & lj & mj --> rel
+    cj & wj & lj & mj --> rel
     rel["release job (release only)<br/>tags the commit; Latest GitHub release with the .exe, .deb, .tar.gz, .dmg"]
 ```
 
 A tag whose version doesn't match `VERSION` fails before anything builds. A failing job means
-nothing is published. The release waits for the check, the tests and the Windows, Linux and
+nothing is published. The release waits for the check and the Windows, Linux and
 macOS jobs, the macOS one included: it builds
-the disk images (Apple silicon and Intel) and runs the packaged Go backend against stand-in
-tools on a Mac runner. The native Swift UI and its permission prompts have not had full
+the disk images (Apple silicon and Intel) on a Mac runner. The native Swift UI and its permission prompts have not had full
 hands-on validation; see `docs/MACOS.md`. Pushes that only touch Markdown, `docs/` or the
 README's pictures don't run CI.
 
@@ -258,11 +252,7 @@ application and the backend in one process, calling the backend's behavior direc
 
 The hosts share no schema file. The Swift host reads messages as dictionaries and ignores
 what it does not know, so the backend only grows: new fields on existing messages, and new
-events sent only in answer to new commands. A change is covered by a Go test that sends the
-JSON line to a backend process (`internal/backend/*_test.go`), and by the Mac smoke test
-(`tests/macos/backend-smoke.py`, which checks the new fields and the Windows commands that
-have no platform code), which exercises the packaged process boundary; it does not cover the
-native Swift UI.
+events sent only in answer to new commands. A change is checked by sending the JSON line to a backend process and reading its answer by hand.
 
 Who writes what: the backend alone writes `settings.json`, the sealed history
 (`agents/*.dat`) and `secrets.dat`, so their bytes cannot drift between hosts. The host gives
@@ -278,8 +268,7 @@ new command, so the Mac host never sees one; new fields on existing messages are
 a host that does not read them (the Swift host reads messages as dictionaries). Every value
 is checked in the backend, because the host's line is untrusted: wrong types, over-long text
 and unknown ids are refused (a `toast`, or `ok: false` in the command's answer) and change
-nothing. Tests: `internal/backend/*_test.go` start this package's test binary as the backend
-and send real JSON lines (`host_test.go`).
+nothing.
 
 **Start.** `initialize` with no `key`, or `key: null`, runs the backend with the history off:
 `note.key` is neither read nor made, saved chats are left alone, and nothing is kept. A host
@@ -314,7 +303,7 @@ and the view is made again when the history changes); without it the first `cred
 starts them.
 `hostDiscord: true`: the host shows the Discord status itself (the Windows host does, as an OS
 binding), so the backend starts no Discord client and the status is shown once; without it the
-backend's client runs, as for the Mac host (`internal/backend/discord_test.go`).
+backend's client runs, as for the Mac host.
 
 **Tasks and chat** (`internal/backend/tasks.go`).
 
@@ -685,8 +674,8 @@ Hover doesn't offer it there.
 
 Not verified: whether each real tool sends reasoning text, which tools send
 `usage_update`, OpenCode's `task` and `reasoning` events, the diff line numbers, and an
-unconfirmed stop. These are handled in code and tested against fakes only
-(`internal/agents/*_test.go`). The voice live smoke used `fake-agent` (in the Rust tools, tag
+unconfirmed stop. These are handled in code and were checked against fakes only.
+The voice live smoke used `fake-agent` (in the Rust tools, tag
 `rust-final`), not the real tools.
 
 ## The office's frames and their lifetime
@@ -771,7 +760,7 @@ in a WKWebView), and it starts `hover-backend` (`cmd/hover-backend`) through
   `AcpHost` runs it; map its access modes in `AcpHost.configure` and
   `permission`. Otherwise write a runtime like `opencode.go` and put it behind
   `Runtime`. Add its logo to `internal/ui/marks.go`, its colour to `tools` in
-  `internal/shell/office.go`, and a settings page in `pages.go`. Test it against a stand-in
-  like `internal/agents/fakeacp_test.go`.
+  `internal/shell/office.go`, and a settings page in `pages.go`. Try it against a stand-in
+  agent before a real one.
 - **A quota.** `internal/quota/read.go` and `quota.go`; the notch item id in
   `settings.go`'s notch items.
