@@ -307,6 +307,38 @@ func TestTheUserSetLimitsHoldForCountParallelWorkAndDepth(t *testing.T) {
 	r.release.Store(true)
 }
 
+// A cancel that lands while the helper's session is starting (the run has no session to stop
+// yet) used to be undone: the run went back to running and the session went on. Here the
+// cancel is made from the change hook the start raises, which is that moment on any
+// machine; on a slow one it was a rare failure of the test above.
+func TestAHelperCancelledWhileItsSessionStartsStaysCancelledAndStops(t *testing.T) {
+	r := newOrchRig(t, "cancel-start", core.DelegationLimits{MaxHelpers: 3, MaxParallel: 1, MaxDepth: 1}, func(a RunArgs, _ *Orch, release *atomic.Bool) KiroResult {
+		return holdRun(a, release)
+	})
+	lead := r.lead("hold")
+	var once sync.Once
+	r.k.OnChanged(func() {
+		if len(r.k.All()) < 2 {
+			return
+		}
+		once.Do(func() {
+			for _, h := range r.orch.HelpersOf(lead.Key) {
+				r.orch.Cancel(lead.Key, h.Run)
+			}
+		})
+	})
+	if _, err := r.ask(lead.Key, "kiro", "x", nil); err != nil {
+		t.Fatal(err)
+	}
+	waitFor20(t, "cancelled", func() bool { return r.orch.HelpersOf(lead.Key)[0].State == HelperCancelled })
+	// Only the lead is left running: the helper's session was stopped, and the run stays cancelled.
+	waitFor20(t, "the helper's session stopped", func() bool { return r.k.Running() == 1 })
+	time.Sleep(100 * time.Millisecond)
+	if st := r.orch.HelpersOf(lead.Key)[0].State; st != HelperCancelled {
+		t.Error("the run went back to", st)
+	}
+}
+
 func TestAWaitThatRunsOutOfTimeDoesNotCancelAndAWaitingLeadGivesUpItsPlace(t *testing.T) {
 	r := newOrchRig(t, "wait", core.DefaultDelegationLimits(), func(a RunArgs, _ *Orch, release *atomic.Bool) KiroResult { return holdRun(a, release) })
 	r.k.SetMaxRunning(1)

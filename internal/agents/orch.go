@@ -869,7 +869,12 @@ func (o *Orch) startRun(id string) {
 		return
 	}
 	o.mu.Lock()
-	if r := o.find(id); r != nil {
+	// A cancel can land while the session starts, when the run has no session to stop yet: it
+	// settles the run as cancelled. The run must stay settled, and the session that just
+	// started must not go on without it.
+	settled := true
+	if r := o.find(id); r != nil && !r.State.Finished() {
+		settled = false
 		r.State = HelperRunning
 		r.Session = sp(s.Key)
 		r.Note = note
@@ -878,6 +883,11 @@ func (o *Orch) startRun(id string) {
 	delete(o.st.starting, id)
 	o.save()
 	o.mu.Unlock()
+	if settled {
+		o.sessions.Stop(s.ID)
+		o.ring()
+		return
+	}
 	o.ring()
 	core.Logf("orch: run %s started on %s", id, p.ID)
 }
