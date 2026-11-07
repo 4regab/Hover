@@ -392,18 +392,5 @@ static class SettingsShots
         // The notch: the page inside its rounded panel, at the default size and the small one.
         await Shot(core, directory, "notch-open-settings", 1200, 480, Page(Model("Dark"), true, Section.General), notch: true);
         await Shot(core, directory, "notch-open-settings-small", 920, 380, Page(Model("Dark"), true, Section.General), notch: true);
-
-        // The Screen panel's own capture: the desktop with only this app's windows over it (no Go picture is of this, it is Windows' own).
-        try
-        {
-            var picture = await new Hover.Screening.ScreenSource().TakeAsync([(uint)Environment.ProcessId], live: true);
-            var file = Path.Combine(directory, "screen-capture.jpg");
-            await File.WriteAllBytesAsync(file, picture.Jpeg);
-            HostLog.Line($"picture {file} ({picture.Width} x {picture.Height})");
-        }
-        catch (Exception e)
-        {
-            HostLog.Line("the screen capture picture failed — " + e);
-        }
     }
 }

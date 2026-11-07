@@ -143,7 +143,7 @@ The code is in `windows/`; the solution is `windows\Hover.Windows.slnx`.
 | `windows\Hover.Notch` | No WinUI and no Windows call. The notch's rules: sizes, placement, outline, the open and close animation, the pointer rules, what the resting notch shows (the island), the shortcut and the tray menu. A port of `internal/notch` and `internal/app/rest.go`. |
 | `windows\Hover.Office` | The Direct3D 11 office (Vortice): scene, bots, desks, camera, picking, the HLSL, the wall pictures. |
 | `windows\Hover.Chat` | No WinUI. The panels over the office: chat thread, new-task box, menus, questions, the desk card and its tabs, the reply box. Drawn through an `ICanvas`; the app gives it Direct2D and DirectWrite. |
-| `windows\Hover.Settings` | No WinUI. The Settings pages as data, their controller and painter, the Discord status client, the Run value and the Screen capture. |
+| `windows\Hover.Settings` | No WinUI. The Settings pages as data, their controller and painter, the Discord status client and the Run value. |
 | `windows\Hover.Voice` | No WinUI. Voice, sound and music: the hold-to-talk shortcut, the microphone and the sound output (winmm), the voice commands and the `voice` event, the card (its content, behaviour and Direct2D painter), the aura, the chime and the office beats. The winmm and user32 calls are made on Windows only; the rest runs and is tested anywhere. |
 
 For the edit-and-run loop, `dotnet build` is enough (the output is runnable as it is, self-contained):
@@ -258,7 +258,7 @@ A click on a desk in the office (`DeskPicked`, with the place of the click) open
 `internal/ui/officeview.go` places it; with no click it sits by the bot (`OfficeHost.BotScreenRect`), else at the
 top right. The office takes the pointer only where the panels have nothing (`OfficeHost.Covered`): a press the
 panels take is not also a click on the office behind them, and the office lets go of the pointer after it has read
-the click, not before. Its tiles follow the backend's `desk` probe: Terminal, Files, Diff, Pull request, Linked, Agents. A tile opens the desk
+the click, not before. Its tiles follow the backend's `desk` probe: Terminal, Files, Diff, Pull request, Agents. A tile opens the desk
 panel (`OfficeUi.DeskPanel.cs`) with the tab's rows, which `Hover.Chat\Desk\DeskRows.cs` makes from the
 backend's answers as `internal/app/desk.go` does. The card also holds the last steps, the permission
 buttons (Allow, Trust, Deny), the question buttons, a line saying how many helpers the bot has out at its
@@ -296,15 +296,14 @@ sends comes through `desk`, `term`, `writeFile`, `editors`, `openIn`, `deskActio
   and Go's pixel face for names and hints are not drawn.
 - **Not on Windows, as in Go:** Hover's own helpers (the Helpers switch and the agents' helper rows;
   `agents.OrchMcpSupported()` is false on Windows, `internal/agents/orch.go`; the menu item and the new-task
-  helpers are gated in `internal/shell/chatact.go` and `newtask.go`) and the Agent browser tab (`agents.BrowserSupported()` is macOS only). The Screen tab is
-  the Screen panel, described with Settings below.
+  helpers are gated in `internal/shell/chatact.go` and `newtask.go`) and the Agent browser tab (`agents.BrowserSupported()` is macOS only).
 
 `hoverai.exe --shots DIR` also writes the desk's pictures with the Go pictures' names (`desk-*`, `expand-*`,
 `office-panel-*`, and the reply box's `chat-*`), drawn by `Chat\DeskShots.cs` over the real office: the sessions
 sit at their desks (`OfficeHost.ShowForShot`), so the card, the tags and the helpers are where the office puts them.
 The pictures take none of the backend's answers about their made-up sessions (`UiCore.FreezeState`).
 
-### Settings, the menus, themes, Launch at login, Discord and the Screen panel
+### Settings, the menus, themes, Launch at login and Discord
 
 Settings is the Go app's `internal/app/pages.go` as data, drawn by the same toolkit as the chat (`Hover.Chat`'s
 `ICanvas`, `Pen` and `EditBox`), so the open notch and the app window show the same page from the same code. The library
@@ -323,7 +322,6 @@ is `windows\Hover.Settings`; the app's side is `windows\Hover\Settings`.
 | Launch at login | `Hover.Settings\Windows\RunValue.cs` | The C# app writes the value `Hover` under `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`: the path of `hoverai.exe` in quotes, as the Go app writes it. Off removes it. The backend is not asked. |
 | Voice page | `Hover.Settings\Pages\VoicePage.cs` | The shortcut recorder, the microphones (`MicDevices.Names()`), hold or toggle, the Groq key and the cleanup key (sent to `secret` and never shown or logged; the page only knows that one is kept), Phonon install, repair and remove with progress, and Try it (`VoiceHost.PressTrial()`). |
 | The Discord status | `Hover.Settings\Discord\DiscordPresence.cs`, `Hover\Discord\DiscordHost.cs` | The C# app talks to Discord on the named pipe `discord-ipc-0` to `9` with the Go rules (a change at most every 5 s, a look every 30 s, "Idle" or "N agents working", the tools' names up to 128 characters). `BackendSession` sends `initialize {hostDiscord: true}`, so the backend starts no client of its own and the status shows once. Not running Discord is not an error: it is tried again at the next look. |
-| The Screen tab | `Hover.Settings\Windows\ScreenCapture.cs`, `Hover\Screen\*`, `Hover.Chat\Ui\OfficeUi.DeskScreen.cs` | The desk's Screen tab shows a frame of the main display with only the windows of the processes in `state.sessions[].apps` over the wallpaper (`Cover`ed to the screen, as Go does): each visible window gets its own picture with `PrintWindow` (`PW_RENDERFULLCONTENT`), so what is over it does not show. A minimised or closed window is left out; the frame fits 1280 x 800. At rest it is the desktop once; Watch live, or the agent testing with computer use (`state.sessions[].testing`), takes a picture about four times a second. `ScreenFeed` (app) makes each picture off the UI thread and keeps it in the panels' picture store as `hover://screen/N` (`ImageStore.Put`, `Forget`), and the tab lets the one it replaced go. The line under the picture is Go's. |
 
 `hoverai.exe --shots DIR` writes the Settings pictures with the Go pictures' names (`settings-*` and `notch-open-settings*`)
 as JPEG. The Go pictures have a 36 px menu bar strip at the top that these do not. The checks of the real app read the
@@ -374,7 +372,7 @@ for the notch's side, `windows\Hover\Voice`.
 1400 pixels is cut to the middle 1400. The Go 2x pictures draw the aura at half size (the Go shots
 draw its 66 pixels in a 2x window); the C# pictures draw it at the size the app has.
 
-The Settings → Voice page is in [Settings](#settings-the-menus-themes-launch-at-login-discord-and-the-screen-panel) above. Screenshots said aloud
+The Settings → Voice page is in [Settings](#settings-the-menus-themes-launch-at-login-and-discord) above. Screenshots said aloud
 are taken by the backend. During dictation the reply box's bar says "Listening…" and then "Writing it down…" at its right
 (`OfficeUi.DictationLine`, set from `VoiceService.Changed`); a dictation error is said there for five seconds, not as a balloon.
 The screenshots said for go with the reply are read from the data folder's `kiro-images` (`DictationShots`; no other path is read)

@@ -6,7 +6,7 @@ namespace Hover.Chat.Ui;
 public sealed partial class OfficeUi
 {
     // The desk card (office.slint's DeskCard, internal/ui/deskcard.go): who works here and on what, what it does now (its
-    // last steps, the question it waits on, or the answer it gave), its eight surfaces as tiles, a reply box and the chat.
+    // last steps, the question it waits on, or the answer it gave), its six surfaces as tiles, a reply box and the chat.
 
     const float CardMaxW = 408;
     const int AnswerLines = 4;
@@ -371,14 +371,14 @@ public sealed partial class OfficeUi
         ClipTargets(targetsBefore, nowBox);
         cy += shownNow + 5;
 
-        // The tiles, four to a row.
+        // The tiles, three to a row.
         var th = tight ? 26f : 36f;
         for (var i = 0; i < tiles.Count; i++)
         {
             var t = tiles[i];
-            var tlx = ix + i % 4 * (iw + 4) / 4;
-            var tly = cy + i / 4 * (th + 4);
-            var tlw = (iw - 12) / 4;
+            var tlx = ix + i % 3 * (iw + 4) / 3;
+            var tly = cy + i / 3 * (th + 4);
+            var tlw = (iw - 12) / 3;
             var tr = new Rect4(tlx, tly, tlw, th);
             var hov = Over(tr) && t.Enabled;
             pen.Box(tr, 9, hov ? bot with { A = 51 } : Rgba.Of(0xffffff, t.Enabled ? 0.043 : 0.027));
@@ -396,7 +396,7 @@ public sealed partial class OfficeUi
                 pen.Box(tix + 9, ry - 6, bw, 14, 7, Rgba.Of(0x3b82f6));
                 pen.TextIn(t.Badge.ToString(), new Rect4(tix + 9, ry - 6, bw, 14), Pen.F(9, 600, Rgba.Of(0xffffff)));
             }
-            var title = t.Title == "Linked pull requests" ? "Linked PRs" : t.Title;
+            var title = t.Title;
             var tl = Pen.F(11, 600, t.Enabled ? Rgba.Of(0xececf0) : Rgba.Of(0xececf0, 0.38));
             pen.Text(title, tix + 14 + 5, ry + (15 - pen.LineHeight(tl)) / 2, tl, Math.Max(tlx + tlw - 5 - (tix + 14 + 5), 0));
             if (!tight) pen.Text(detail, tix, ry + 15 + 1, Pen.F(11, 500, Rgba.Of(0xececf0, 0.45)), Math.Max(tlw - 12, 0));

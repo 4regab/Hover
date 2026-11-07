@@ -22,7 +22,7 @@ static class DeskShots
 
     const string OnePixel = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
 
-    const string Probe = """{"folder":true,"git":true,"branch":"feat/refresh","changed":3,"add":29,"del":11,"gh":true,"ghAuth":true,"pr":null,"commands":4,"agents":2,"running":2,"pages":0,"linked":1}""";
+    const string Probe = """{"folder":true,"git":true,"branch":"feat/refresh","changed":3,"add":29,"del":11,"gh":true,"ghAuth":true,"pr":null,"commands":4,"agents":2,"running":2,"pages":0,}""";
 
     const string Files = """{"git":true,"branch":"feat/refresh","changed":[{"path":"src/refresh.ts","status":"M","old":null,"add":12,"del":3},{"path":"src/view.test.ts","status":"A","old":null,"add":24,"del":0}],"touched":[],"more":false,"tree":["README.md","docs/guide.md","docs/setup.md","package.json","src/app.ts","src/refresh.ts","src/view.test.ts","src/view.ts"]}""";
 
@@ -54,30 +54,6 @@ static class DeskShots
         return sb.ToString();
     }
 
-    /// <summary>A screen that is not one: a diagonal gradient with a window on it; a live one has a red mark in the window's title.</summary>
-    static Hover.Settings.ScreenFrame MadeUpScreen(bool live)
-    {
-        const int w = 1280, h = 800;
-        var px = new byte[w * h * 4];
-        for (var y = 0; y < h; y++)
-            for (var x = 0; x < w; x++)
-            {
-                var t = (x / (double)w + y / (double)h) / 2;
-                var i = (y * w + x) * 4;
-                px[i] = (byte)(0x8c + (0x9a - 0x8c) * t);
-                px[i + 1] = (byte)(0x7d + (0x3d - 0x7d) * t);
-                px[i + 2] = (byte)(0x2e + (0x6a - 0x2e) * t);
-                px[i + 3] = 255;
-                bool inWindow = x is >= 250 and < 990 && y is >= 120 and < 700;
-                if (!inWindow) continue;
-                var title = y < 150;
-                var red = live && title && x is >= 266 and < 282 && y is >= 128 and < 144;
-                px[i] = (byte)(red ? 0x3a : title ? 0x2d : 0xe9);
-                px[i + 1] = (byte)(red ? 0x45 : title ? 0x2d : 0xf0);
-                px[i + 2] = (byte)(red ? 0xff : title ? 0x30 : 0xf3);
-            }
-        return new Hover.Settings.ScreenFrame(w, h, px);
-    }
 
     /// <summary>The session as another desk of the office: its id, its seat and its bot (Pip, Juno…).</summary>
     static SessionInfo At(this SessionInfo s, int id, int seat, int bot)
@@ -136,7 +112,6 @@ static class DeskShots
         Put(ui, "pr", Create);
         Put(ui, "terminal", """{"commands":[{"id":"1","turn":0,"cmd":"cargo build --release -p hover","status":"completed","exit":0,"ms":41000,"out":"Compiling hover v5.0.0\nFinished release [optimized] target(s) in 41s"},{"id":"2","turn":0,"cmd":"npm test","status":"failed","exit":1,"ms":3200,"out":"FAIL src/view.test.ts\n  expected 3, got 2"}]}""");
         Put(ui, "agents", """{"agents":[{"id":"a1","turn":0,"name":"Subagent","task":"Find every caller of refresh()","prompt":"Look for every call to refresh() in the repository.","status":"completed","ms":18000,"out":"Found 4 callers: view.ts, app.ts, tests."},{"id":"a2","turn":0,"name":"Subagent","task":"Check the tests for refresh()","prompt":"Read the tests.","status":"in_progress","ms":null,"out":null}],"running":1}""");
-        Put(ui, "linked", """{"gh":true,"prs":[{"url":"https://github.com/4regab/Hover/pull/12","repo":"4regab/Hover","number":12,"title":"Chat view: the sessions down the left","state":"open","isDraft":false,"additions":120,"deletions":18,"head":"feat/chat-view"}]}""");
         ui.Accept(new EditorsEvent { Ok = true, Choices = [new EditorChoice { Id = "vscode", Name = "Visual Studio Code", Last = true }, new EditorChoice { Id = "cursor", Name = "Cursor" }, new EditorChoice { Id = "fm", Name = "File Explorer" }] });
     }
 
@@ -290,15 +265,10 @@ static class DeskShots
         await Pic(core, dir, "desk-tab-pr-create-failed", tw, th, () => ui.Accept(new DeskActionEvent { Id = 1, What = "prCreate", Data = J("""{"error":"Couldn’t push: the remote rejected it (protected branch).","steps":["made the branch hover/refresh-skips-clean-views","committed 3 files"]}""") }));
         await Pic(core, dir, "desk-tab-pr-create-done", tw, th, () => ui.Accept(new DeskActionEvent { Id = 1, What = "prCreate", Data = J("""{"ok":true,"url":"https://github.com/4regab/Hover/pull/58","steps":[]}""") }));
         await Pic(core, dir, "desk-tab-pr-create-busy", tw, th, () => { ui.Accept(ChatShots.State(Busy().At(1, 1, 1))); Put(ui, "pr", Create.Replace("\"busy\":false", "\"busy\":true")); Frame(tw, th); });
-        await Pic(core, dir, "desk-tab-linked", tw, th, () => Tab("linked"));
         await Pic(core, dir, "desk-tab-agents", tw, th, () => Tab("agents"));
         await Pic(core, dir, "desk-tab-agents-open", tw, th, () => { Frame(tw, th); ui.Click("drow", s: "sa:a2"); ui.Click("drow", s: "sa:a1"); });
-        // The Screen tab with a made-up screen (a gradient with one window), as the Go shots have; then watching it live.
-        core.ScreenFeed.Fixture = live => MadeUpScreen(live);
-        await Pic(core, dir, "desk-tab-screen", tw, th, () => Tab("screen"));
-        await Pic(core, dir, "desk-tab-screen-live", tw, th, () => { Frame(tw, th); ui.Click("sWatch"); });
         // Every tab at Small, the shortest office (840 x 340).
-        foreach (var tab in new[] { "terminal", "files", "diff", "pr", "linked", "agents", "screen" })
+        foreach (var tab in new[] { "terminal", "files", "diff", "pr", "agents" })
             await Pic(core, dir, $"desk-tab-small-{tab}", 840, 340, () => { Tab(tab); if (tab == "terminal") Term(ui); if (tab == "pr") Put(ui, "pr", PrOpen); });
         await Pic(core, dir, "desk-tab-small-pr-description", 840, 340, () => { Tab("pr"); Put(ui, "pr", PrText); });
         await Pic(core, dir, "desk-tab-small-pr-create", 840, 340, () => { Tab("pr"); Put(ui, "pr", Create); });

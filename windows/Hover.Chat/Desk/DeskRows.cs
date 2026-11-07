@@ -87,7 +87,7 @@ public static class DeskRows
 {
     // Row heights (px) and the width of a character in the fonts the rows use.
     public const float GapH = 8, HeadH = 32, FileH = 30, TreeH = 30, LineH = 18, DiffFileH = 34, HunkH = 22, PreH = 17,
-        TermH = 20, AgentH = 46, SectionH = 24, LinkedH = 50, CheckH = 26, SummaryH = 30, FaintH = 24;
+        TermH = 20, AgentH = 46, SectionH = 24, CheckH = 26, SummaryH = 30, FaintH = 24;
     public const float CharMono = 6.95f, CharProse = 6.5f, CharTerm = 7.55f;
 
     /// <summary>The most lines of one command's output that are shown (its end).</summary>
@@ -671,31 +671,6 @@ public static class DeskRows
                     v.Add(R(22, 20) with { Text = l });
                 }
             }
-        }
-        return new Laid(v);
-    }
-
-    /// <summary>Linked pull requests: the ones the session mentions.</summary>
-    public static Laid LinkedRows(Jv linked)
-    {
-        var v = new List<DRow>();
-        if (!linked["gh"].Bool()) v.Add(R(2, 34) with { Text = "Set up the GitHub CLI in the Pull request tab to see their state." });
-        foreach (var p in linked["prs"].Items())
-        {
-            var repoNum = $"{p["repo"].Str()}#{p["number"].Long()}";
-            var r = R(23, LinkedH) with { Text = p["title"].StrOrNull() ?? repoNum, Act = "ext:" + p["url"].Str() };
-            var sub = repoNum;
-            if (p["head"].StrOrNull() is { } head) sub += " · " + head;
-            if (p["error"].StrOrNull() is { } err) sub += " · " + err;
-            r = r with { Sub = sub };
-            if (p["state"].StrOrNull() is { } st)
-            {
-                var (word, tone) = PrState(st, p["isDraft"].Bool());
-                r = r with { Badge = word, Tone = tone };
-            }
-            if (p["additions"].Long() > 0) r = r with { Add = "+" + Num(p["additions"].Long()) };
-            if (p["deletions"].Long() > 0) r = r with { Del = "−" + Num(p["deletions"].Long()) };
-            v.Add(r);
         }
         return new Laid(v);
     }
