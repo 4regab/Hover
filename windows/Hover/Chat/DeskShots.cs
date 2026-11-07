@@ -22,7 +22,7 @@ static class DeskShots
 
     const string OnePixel = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
 
-    const string Probe = """{"folder":true,"git":true,"branch":"feat/refresh","changed":3,"add":29,"del":11,"gh":true,"ghAuth":true,"pr":null,"commands":4,"agents":2,"running":2,"pages":0,}""";
+    const string Probe = """{"folder":true,"git":true,"branch":"feat/refresh","changed":3,"add":29,"del":11,"gh":true,"ghAuth":true,"pr":null,"commands":4,"agents":2,"running":2,"pages":0}""";
 
     const string Files = """{"git":true,"branch":"feat/refresh","changed":[{"path":"src/refresh.ts","status":"M","old":null,"add":12,"del":3},{"path":"src/view.test.ts","status":"A","old":null,"add":24,"del":0}],"touched":[],"more":false,"tree":["README.md","docs/guide.md","docs/setup.md","package.json","src/app.ts","src/refresh.ts","src/view.test.ts","src/view.ts"]}""";
 
