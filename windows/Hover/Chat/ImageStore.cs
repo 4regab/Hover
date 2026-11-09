@@ -73,30 +73,6 @@ sealed class ImageStore : IDisposable
         }
     }
 
-    /// <summary>A picture made in memory (opaque B8G8R8A8), ready at once under an address of its own: the Screen tab's.</summary>
-    public void Put(string src, int width, int height, byte[] bgra)
-    {
-        if (width < 1 || height < 1 || bgra.Length < width * height * 4) return;
-        Slot? old;
-        lock (gate)
-        {
-            slots.TryGetValue(src, out old);
-            slots[src] = new Slot { Pixels = bgra, W = width, H = height };
-        }
-        old?.Bitmap?.Dispose();
-    }
-
-    /// <summary>Lets a picture go: its pixels and its bitmap.</summary>
-    public void Forget(string src)
-    {
-        Slot? slot;
-        lock (gate)
-        {
-            if (!slots.Remove(src, out slot)) return;
-        }
-        slot?.Bitmap?.Dispose();
-    }
-
     /// <summary>The picture as a bitmap for this context, or null when it is not ready.</summary>
     public ID2D1Bitmap1? BitmapFor(ID2D1DeviceContext dc, string src)
     {

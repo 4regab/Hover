@@ -124,13 +124,6 @@ public sealed partial class OfficeUi
                     if (pr["error"].Has && !pr["setup"].Has && !pr["none"].Has) return Laid.Nothing("pr", "No pull request", pr["error"].Str());
                     return new Laid([]);
                 }
-            case "linked":
-                {
-                    var l = Got(id, "linked");
-                    if (!l.Has) return Laid.Wait;
-                    if (l["prs"].Count == 0) return Laid.Nothing("linked", "No linked pull requests", "Pull requests this session mentions show here.");
-                    return DeskRows.LinkedRows(l);
-                }
             case "agents":
                 {
                     var a = Got(id, "agents");
@@ -182,9 +175,6 @@ public sealed partial class OfficeUi
             case "terminal":
                 PaintTerminal(s, new Rect4(r.X, by, r.W, bh));
                 break;
-            case "screen":
-                PaintScreen(s, new Rect4(r.X + 10, by, r.W - 20, bh - 12));
-                break;
             case "pr" when pr["setup"].Has:
                 PaintGhSetup(s, new Rect4(r.X + 10, by, r.W - 20, bh - 12));
                 break;
@@ -225,7 +215,7 @@ public sealed partial class OfficeUi
         float total = 0;
         foreach (var t in shown)
         {
-            var title = t.Id == "linked" ? "Linked PRs" : t.Title;
+            var title = t.Title;
             var tw = 9 + 15 + 6 + pen.Width(title, tf) + 9;
             if (t.Badge > 0) tw += 6 + Math.Max(14, pen.Width(t.Badge.ToString(), Pen.F(9, 600, Pen.Ink)) + 6);
             widths.Add(tw);
@@ -260,7 +250,7 @@ public sealed partial class OfficeUi
             else if (hov) pen.Box(tr, 7, Rgba.Of(0xffffff, 0.05));
             var col = on ? Pen.Ink : hov ? Pen.Dim : Pen.Faint;
             pen.Icon(DeskIcons.Of(t.Id), cx + 9, r.Y + 11 + 7.5f, 15, col);
-            var title = t.Id == "linked" ? "Linked PRs" : t.Title;
+            var title = t.Title;
             var tx = cx + 9 + 15 + 6;
             pen.Text(title, tx, r.Y + 11 + (30 - pen.LineHeight(tf)) / 2, tf with { Color = col });
             tx += pen.Width(title, tf) + 6;
@@ -623,33 +613,6 @@ public sealed partial class OfficeUi
             case 25:
                 PaintDocRow(r, x, y, w, h);
                 break;
-            case 23:
-                {
-                    if (r.Act.Length > 0) Add(rect, "drow", idx, r.Act);
-                    if (Over(rect)) pen.Box(rect, 10, RowHover);
-                    var cx = x + 10;
-                    if (r.Badge.Length > 0)
-                    {
-                        var (fg, bg) = PrTone(r.Tone);
-                        cx += Pill(r.Badge, fg, bg, cx, y + (h - 22) / 2) + 10;
-                    }
-                    var rx = x + w - 10;
-                    pen.Icon(DeskIcons.External, rx - 13, y + (h - 13) / 2, 13, Pen.Faint);
-                    rx -= 13 + 10;
-                    foreach (var (text, col) in new[] { (r.Del, Bad), (r.Add, Ok) })
-                    {
-                        if (text.Length == 0) continue;
-                        rx -= pen.Width(text, mono11);
-                        Tv(text, rx, y, h, mono11 with { Color = col });
-                        rx -= 10;
-                    }
-                    var tf = Pen.F(13, 500, Pen.Ink);
-                    var sf = Pen.F(11.5, 400, Pen.Faint);
-                    var ty = y + (h - (pen.LineHeight(tf) + 2 + pen.LineHeight(sf))) / 2;
-                    pen.Text(r.Text, cx, ty, tf, Math.Max(rx - cx, 0));
-                    pen.Text(r.Sub, cx, ty + pen.LineHeight(tf) + 2, sf, Math.Max(rx - cx, 0));
-                    break;
-                }
             case 24:
                 {
                     var cx = x + 4;

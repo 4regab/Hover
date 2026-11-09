@@ -11,8 +11,6 @@ public static class DeskIcons
     public static readonly string Files = P("M 20 7 h -3 a 2 2 0 0 1 -2 -2 V 2 M 9 18 a 2 2 0 0 1 -2 -2 V 4 a 2 2 0 0 1 2 -2 h 7 l 4 4 v 10 a 2 2 0 0 1 -2 2 Z M 3 7.6 v 12.8 A 1.6 1.6 0 0 0 4.6 22 h 9.8");
     public static readonly string Diff = P("M 15 2 H 6 a 2 2 0 0 0 -2 2 v 16 a 2 2 0 0 0 2 2 h 12 a 2 2 0 0 0 2 -2 V 7 Z M 9 10 h 6 M 12 7 v 6 M 9 17 h 6");
     public static readonly string PullRequest = P("M 15 18 A 3 3 0 1 0 21 18 A 3 3 0 1 0 15 18 Z M 3 6 A 3 3 0 1 0 9 6 A 3 3 0 1 0 3 6 Z M 13 6 h 3 a 2 2 0 0 1 2 2 v 7 M 6 9 v 12");
-    public static readonly string Linked = P("M 9 17 H 7 A 5 5 0 0 1 7 7 h 2 M 15 7 h 2 a 5 5 0 1 1 0 10 h -2 M 8 12 h 8");
-    public static readonly string Screen = P("M 4 3 H 20 A 2 2 0 0 1 22 5 V 15 A 2 2 0 0 1 20 17 H 4 A 2 2 0 0 1 2 15 V 5 A 2 2 0 0 1 4 3 Z M 8 21 h 8 M 12 17 v 4");
     public static readonly string File = P("M 14 2 H 6 a 2 2 0 0 0 -2 2 v 16 a 2 2 0 0 0 2 2 h 12 a 2 2 0 0 0 2 -2 V 8 Z M 14 2 v 6 h 6");
     public static readonly string Back = P("M 12 19 l -7 -7 l 7 -7 M 19 12 H 5");
     public static readonly string Search = P("M 11 4 a 7 7 0 1 0 0 14 7 7 0 0 0 0 -14 Z M 20 20 l -3.5 -3.5");
@@ -52,9 +50,7 @@ public static class DeskIcons
         "files" => Files,
         "diff" => Diff,
         "pr" => PullRequest,
-        "linked" => Linked,
         "agents" => Bot,
-        "screen" => Screen,
         "file" => File,
         "folder" => Folder,
         _ => Globe,

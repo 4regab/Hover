@@ -46,7 +46,7 @@
     <ProjectReference Include="..\Hover.Office\Hover.Office.csproj" />
     <!-- Voice, sound and music: the shortcut, the microphone, the voice card and the beats (office-beats.ogg is linked into it). -->
     <ProjectReference Include="..\Hover.Voice\Hover.Voice.csproj" />
-    <!-- Settings: the pages, the painter, the Discord status, the Run value and the Screen capture. -->
+    <!-- Settings: the pages, the painter, the Discord status and the Run value. -->
     <ProjectReference Include="..\Hover.Settings\Hover.Settings.csproj" />
   </ItemGroup>
 </Project>

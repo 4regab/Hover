@@ -6,8 +6,8 @@ using Hover.Host.Protocol;
 namespace Hover.Chat.Ui;
 
 /// <summary>
-/// The desk: a card for a click on a desk (who works there and on what, its eight surfaces as tiles, a reply
-/// box) and the panel the tiles open (terminal, files, diff, pull request, linked pull requests, agents). This
+/// The desk: a card for a click on a desk (who works there and on what, its six surfaces as tiles, a reply
+/// box) and the panel the tiles open (terminal, files, diff, pull request, agents). This
 /// part keeps the state and the data the backend sends (`desk`, `term`, `gh` and the rest) and what a click or a
 /// key asks; the card and the panel are drawn in the other parts. It is internal/shell/desk.go.
 /// </summary>
@@ -130,7 +130,7 @@ public sealed partial class OfficeUi
         Dirty = true;
     }
 
-    /// <summary>The panel for a desk on a tab (a surface id: terminal, files, diff, pr, linked, agents).</summary>
+    /// <summary>The panel for a desk on a tab (a surface id: terminal, files, diff, pr, agents).</summary>
     public void OpenDeskPanel(int id, string tab)
     {
         if (DeskSession(id) is null) return;
@@ -222,12 +222,6 @@ public sealed partial class OfficeUi
     List<DeskTile> Tiles(SessionInfo s)
     {
         var tiles = DeskTiles.Of(Got(s.Id, "probe"), s, null, 0);
-        // The Screen tab is the app's to show: grey where it takes no pictures.
-        if (env.Screen is not { Supported: true })
-        {
-            var i = tiles.FindIndex(t => t.Id == "screen");
-            if (i >= 0) tiles[i] = tiles[i] with { Enabled = false, Reason = DeskTiles.ScreenNote };
-        }
         return tiles;
     }
 
@@ -238,7 +232,7 @@ public sealed partial class OfficeUi
         "files" => 3000,
         "file" => 4000,
         "diff" => 2500,
-        "pr" or "linked" => 30000,
+        "pr" => 30000,
         "probe" => 4000,
         _ => 1500,
     };
@@ -277,7 +271,7 @@ public sealed partial class OfficeUi
         var ask = tab switch
         {
             "files" when pr.HasFile => "file",
-            "files" or "diff" or "pr" or "linked" or "terminal" or "agents" => tab,
+            "files" or "diff" or "pr" or "terminal" or "agents" => tab,
             _ => "",
         };
         // The terminal that the agent's own commands fill is read on its tab; the user's own shell pushes itself.
@@ -730,7 +724,7 @@ public sealed partial class OfficeUi
         var surface = char.ToUpperInvariant(text[0]) switch
         {
             'B' => "browser", 'T' => "terminal", 'F' => "files", 'D' => "diff",
-            'P' => "pr", 'L' => "linked", 'A' => "agents", 'S' => "screen",
+            'P' => "pr", 'A' => "agents",
             _ => "",
         };
         if (surface.Length == 0) return false;

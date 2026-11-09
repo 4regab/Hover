@@ -30,8 +30,6 @@ sealed class UiCore : IDisposable
     public DwShaper Shaper { get; }
     public ImageStore Images { get; }
 
-    /// <summary>The Screen tab's pictures (the pictures of <c>--shots</c> give it a made-up screen).</summary>
-    public Hover.Screening.ScreenFeed ScreenFeed { get; }
     public D2DCanvas Canvas { get; }
     public OfficeUi Ui { get; }
 
@@ -121,7 +119,6 @@ sealed class UiCore : IDisposable
             Beats = () => office?.Beats ?? false,
             SetBeats = on => { if (office is not null) office.Beats = on; },
             ShowSettingsPage = page => SettingsPageRequested?.Invoke(page),
-            Screen = ScreenFeed = new Hover.Screening.ScreenFeed(new Hover.Screening.ScreenSource(), Images, queue),
         });
         onEvent = e => queue.TryEnqueue(() =>
         {

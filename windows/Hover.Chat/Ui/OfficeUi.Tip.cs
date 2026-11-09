@@ -23,7 +23,7 @@ public sealed partial class OfficeUi
             var inner = 6f + 20 + 7;
             if (kind == 1) inner += pen.Width("Chat with", f) + 7;
             inner += pen.Width(name, bf);
-            const string sub = "Browser, terminal, files, screen…";
+            const string sub = "Browser, terminal, files, diff…";
             var sf = Pen.F(11, 400, Pen.Ink);
             if (kind == 2) inner += 7 + pen.Width(sub, sf);
             var tw = inner + 11;
@@ -34,7 +34,7 @@ public sealed partial class OfficeUi
             pen.Border(x, y, tw, 30, 10, 1, Rgba.Of(0xffffff, 0.1));
             var cx = x + 6;
             pen.Box(cx, y + 5, 20, 20, 6, Bots.Color(s.Bot) with { A = 77 });
-            pen.Icon(kind == 1 ? Glyphs.Chat : DeskIcons.Screen, cx + 3.5f, y + 8.5f, 13, Rgba.Of(0xffffff));
+            pen.Icon(kind == 1 ? Glyphs.Chat : DeskIcons.Terminal, cx + 3.5f, y + 8.5f, 13, Rgba.Of(0xffffff));
             cx += 20 + 7;
             if (kind == 1)
             {

@@ -158,7 +158,7 @@ jobs:
             'office-repo-menu-small', 'office-repo-menu-small-end', 'chat-view-home-project-menu-min', 'office-fab-open-long-model', 'office-fab-open-small', 'chat-view-home-bar-min',
             'office-repo-menu-search', 'office-fab-no-folder', 'chat-view-sidebar-folded', 'chat-view-sidebar-delete',
             'settings-general-dark', 'settings-general-light', 'settings-integrations-dark', 'settings-projects-registered', 'settings-voice-cloud', 'settings-kiro-credits-dark',
-            'settings-kiro-mcp-list', 'settings-codex-model-menu', 'notch-open-settings', 'notch-open-settings-small', 'screen-capture', 'desk-tab-screen', 'desk-tab-screen-live', 'desk-tab-small-screen') {
+            'settings-kiro-mcp-list', 'settings-codex-model-menu', 'notch-open-settings', 'notch-open-settings-small') {
             $file = Join-Path $shots "$name.jpg"
             if (-not (Test-Path $file)) { throw "$name.jpg was not made" }
             $b = [System.IO.File]::ReadAllBytes($file)
