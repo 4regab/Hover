@@ -15,3 +15,5 @@ web/office/node_modules/
 __pycache__/
 publish-legacy/
 out/
+# Personal Kiro steering (not shared)
+.kiro/steering/windows-first-ui.md
