@@ -232,8 +232,8 @@ public enum NotchState { Rest, Peek, Open }
 
 public enum NotchAction { None, Peek, Collapse }
 
-/// <summary>What the 50 ms poll sees of the pointer.</summary>
-public readonly record struct Pointer(bool InZone, bool InPanel, bool Buttons, bool Popover, bool HoverOpens);
+/// <summary>What the 50 ms poll sees of the pointer. <c>Held</c> is Ctrl down: a way to reach what is under the notch (a browser tab) without it opening.</summary>
+public readonly record struct Pointer(bool InZone, bool InPanel, bool Buttons, bool Popover, bool HoverOpens, bool Held = false);
 
 /// <summary>The pointer rules: dwell to peek, a grace period to leave, re-arming after a collapse. Times are in ms.</summary>
 public sealed class HoverRules
@@ -252,6 +252,12 @@ public sealed class HoverRules
                 {
                     zoneSince = -1;
                     armed = true;
+                    return NotchAction.None;
+                }
+                // Ctrl held restarts the dwell, so the peek comes only after Ctrl is let go and the pointer rests again.
+                if (p.Held)
+                {
+                    zoneSince = -1;
                     return NotchAction.None;
                 }
                 if (!armed || p.Buttons || !p.HoverOpens) return NotchAction.None;

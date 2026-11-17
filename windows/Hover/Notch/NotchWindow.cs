@@ -174,6 +174,8 @@ sealed class NotchWindow : INotchPlatform, IDisposable
 
     public bool Buttons() => (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0 || (GetAsyncKeyState(VK_RBUTTON) & 0x8000) != 0 || (GetAsyncKeyState(VK_MBUTTON) & 0x8000) != 0;
 
+    public bool CtrlHeld() => (GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0;
+
     /// <summary>Puts the window at the rectangle (device pixels), topmost, without taking the keyboard.</summary>
     public void Place(Rect window)
     {

@@ -17,6 +17,9 @@ public interface INotchPlatform
     /// <summary>True while a mouse button is down.</summary>
     bool Buttons();
 
+    /// <summary>True while Ctrl is down.</summary>
+    bool CtrlHeld();
+
     void Place(Rect window);
 
     void Raise();
@@ -152,7 +155,7 @@ public sealed class NotchController
         var (x, y) = plat.Cursor();
         var zone = Geometry.Zone(Work, Scale, Rest);
         var panel = Geometry.PanelZone(Work, Scale, OpenSize);
-        var p = new Pointer(zone.Contains(x, y), panel.Contains(x, y), plat.Buttons(), Popover, HoverOpens && !Asking);
+        var p = new Pointer(zone.Contains(x, y), panel.Contains(x, y), plat.Buttons(), Popover, HoverOpens && !Asking, plat.CtrlHeld());
         var action = hover.Poll((long)Now, p);
         // The window takes the pointer only over the shape (and its shadow).
         var f = CurrentFrame;
